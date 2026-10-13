@@ -1,0 +1,23 @@
+# Khoá bí mật: không bao giờ commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Công cụ trên máy cá nhân
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# Node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+
+# Hệ điều hành
+Thumbs.db
+Desktop.ini
+.DS_Store
