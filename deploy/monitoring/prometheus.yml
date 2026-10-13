@@ -1,0 +1,13 @@
+# Prometheus trên máy dev: lấy số liệu từ ba tiến trình đang chạy bằng npm run dev*.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: commerio
+    static_configs:
+      - targets: ["host.docker.internal:3000"]
+        labels: { process: api }
+      - targets: ["host.docker.internal:3001"]
+        labels: { process: worker }
+      - targets: ["host.docker.internal:3002"]
+        labels: { process: realtime }
