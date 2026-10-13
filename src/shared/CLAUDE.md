@@ -8,8 +8,8 @@ Nền kỹ thuật chung cho mọi module và tiến trình. **Không chứa ngh
 | `db/client.ts` | Pool PostgreSQL + Drizzle. `getDb()` trả transaction đang mở nếu có; `inTransaction(fn)` mở transaction hoặc dùng lại transaction của bên gọi (`AsyncLocalStorage`) |
 | `errors/` | `AppError` và middleware lỗi tập trung, trả Problem Details (RFC 9457): `type` = `/problems/<code>`, `status`, `detail`, `instance` |
 | `http/validate.ts` | Middleware Zod kiểm `body`/`query`/`params`, gom mọi lỗi vào một phản hồi 400 |
-| `observability/` | prom-client (`/metrics`, histogram thời gian request), cổng vận hành cho `worker`/`realtime` |
-| `logger.ts` | pino, log dạng JSON |
+| `observability/` | prom-client (`/metrics`, histogram thời gian request), cổng vận hành (`/health`, `/metrics`) chạy riêng cho cả ba tiến trình |
+| `logger.ts` | pino, log dạng JSON; che header `Authorization`, `Cookie`, `Set-Cookie`. Không log mật khẩu, token, khoá cổng thanh toán |
 | `lifecycle.ts` | Dừng êm khi nhận SIGTERM/SIGINT |
 | `module.ts` | Kiểu `ModuleDefinition` mà mỗi module export |
 

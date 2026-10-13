@@ -4,6 +4,8 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   API_PORT: z.coerce.number().int().positive().default(3000),
+  // Cổng nội bộ của api cho /metrics; worker và realtime dùng luôn cổng của mình làm cổng vận hành.
+  API_OPS_PORT: z.coerce.number().int().positive().default(9464),
   WORKER_PORT: z.coerce.number().int().positive().default(3001),
   REALTIME_PORT: z.coerce.number().int().positive().default(3002),
   // Không bắt buộc lúc khởi động để test không cần DB; getDb() báo lỗi nếu thiếu.

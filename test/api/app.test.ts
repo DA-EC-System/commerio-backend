@@ -12,10 +12,9 @@ describe('khung api', () => {
     expect(res.body).toEqual({ status: 'ok' });
   });
 
-  it('GET /metrics trả số liệu Prometheus', async () => {
+  it('không lộ /metrics trên cổng API', async () => {
     const res = await request(app).get('/metrics');
-    expect(res.status).toBe(200);
-    expect(res.text).toContain('http_request_duration_seconds');
+    expect(res.status).toBe(404);
   });
 
   it('đường dẫn không có trả 404 dạng Problem Details', async () => {
