@@ -1,0 +1,37 @@
+{
+  "id": "db2b1436-7395-4bc4-b5c6-1586fa109a53",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {},
+  "enums": {},
+  "schemas": {
+    "access": "access",
+    "assistant": "assistant",
+    "audit": "audit",
+    "auth": "auth",
+    "catalog": "catalog",
+    "channel": "channel",
+    "files": "files",
+    "finance": "finance",
+    "fulfillment": "fulfillment",
+    "inbox": "inbox",
+    "inventory": "inventory",
+    "payment": "payment",
+    "platform": "platform",
+    "pricing": "pricing",
+    "purchasing": "purchasing",
+    "report": "report",
+    "sales": "sales",
+    "staff": "staff"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

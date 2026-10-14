@@ -1,0 +1,50 @@
+# Hạ tầng cho máy dev. Ứng dụng chạy bằng `npm run dev` trên máy, không chạy trong compose.
+# Chạy: npm run infra:up    Thêm Prometheus + Grafana: docker compose -f deploy/compose.yaml --profile monitoring up -d
+name: commerio
+
+services:
+  postgres:
+    # Ảnh postgres 18 có sẵn pgvector, cần cho module assistant.
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: commerio
+      POSTGRES_PASSWORD: commerio
+      POSTGRES_DB: commerio
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commerio -d commerio"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:8
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  kafka:
+    # Một node KRaft, đủ cho dev. Máy dev kết nối localhost:9092.
+    image: apache/kafka:4.1.0
+    ports:
+      - "127.0.0.1:9092:9092"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: [monitoring]
+    ports:
+      - "127.0.0.1:3030:3000"
+
+volumes:
+  pgdata:
