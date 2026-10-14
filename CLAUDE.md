@@ -43,6 +43,18 @@ Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn địn
 - Đầu vào HTTP luôn qua `validate({ body, query, params })`; controller đọc `res.locals.validated`.
 - Tiền dùng `numeric` trong DB và `decimal.js` trong code, không dùng `number`.
 
+## Test: đặt file ở đâu
+
+**Mọi file test nằm trong `test/`, tên kết thúc bằng `.test.ts`. Không bao giờ đặt test trong `src/`.** CI chỉ quét `test/**/*.test.ts`, file đặt chỗ khác bị bỏ qua mà không báo.
+
+| Test cái gì | Đặt ở |
+|---|---|
+| Một hàm/lớp trong `src/<đường dẫn>/<file>.ts`, không DB, không mạng | `test/unit/<đường dẫn>/<file>.test.ts` (đi theo đúng cấu trúc `src/`) |
+| Endpoint HTTP qua `createApp()` | `test/api/<module>.test.ts` |
+| Cần PostgreSQL thật | `test/integration/<module>/<tên>.test.ts` |
+
+Import code bằng `#src/...ts`. **Đọc `test/CLAUDE.md` trước khi viết hoặc sửa test** (quy tắc để CI chạy được).
+
 ## Git
 
 Git Flow: `main` (phát hành) ← `develop` (tích hợp) ← `feature/<tên>`. PR vào `develop`, CI phải xanh. Không commit `.env`, khoá cổng thanh toán, JWT secret; cấu hình mẫu đặt trong `.env.example`. Cổng thanh toán chỉ chạy sandbox, dữ liệu demo là dữ liệu giả.

@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, describe, expect, it } from 'vitest';
-import { closeServer } from '../lifecycle.ts';
-import { startOpsServer } from './ops-server.ts';
+import { closeServer } from '#src/shared/lifecycle.ts';
+import { startOpsServer } from '#src/shared/observability/ops-server.ts';
 
 describe('cổng vận hành', () => {
   const server = startOpsServer(0, () => {});
