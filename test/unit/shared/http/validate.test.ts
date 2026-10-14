@@ -2,8 +2,8 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { errorHandler } from '../errors/error-handler.ts';
-import { validate } from './validate.ts';
+import { errorHandler } from '#src/shared/errors/error-handler.ts';
+import { validate } from '#src/shared/http/validate.ts';
 
 function buildApp() {
   const app = express();

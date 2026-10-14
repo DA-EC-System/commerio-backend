@@ -42,6 +42,6 @@ Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới k
 ## Thêm nghiệp vụ vào module
 
 1. Khai bảng trong `repository/schema.ts` bằng `<tên>Schema.table(...)`, rồi `npm run db:generate`.
-2. Viết `domain` và `service`, kèm unit test đặt cạnh file.
+2. Viết `domain` và `service`, kèm unit test ở `test/unit/modules/<tên>/...` (không đặt trong `src/`, xem `test/CLAUDE.md`).
 3. Viết `api/` (router + Zod), gắn router vào `ModuleDefinition` trong `index.ts`; `app.ts` tự mount tại `/api/v1/<tên>`.
 4. Viết `CLAUDE.md` cho module: nghiệp vụ, bất biến, sự kiện phát và nghe, module nào gọi vào.

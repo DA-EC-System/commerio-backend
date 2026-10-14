@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app.ts';
-import { modules } from '../../src/modules/registry.ts';
+import { createApp } from '#src/app.ts';
+import { modules } from '#src/modules/registry.ts';
 
 const app = createApp();
 
