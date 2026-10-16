@@ -30,6 +30,19 @@ describe('khung api', () => {
     expect(res.body.type).toBe('/problems/malformed-json');
   });
 
+  it('GET /api/openapi.json trả tài liệu OpenAPI 3.1 có /health', async () => {
+    const res = await request(app).get('/api/openapi.json');
+    expect(res.status).toBe(200);
+    expect(res.body.openapi).toBe('3.1.0');
+    expect(res.body.paths).toHaveProperty('/health');
+  });
+
+  it('GET /api/docs/ trả trang Swagger UI', async () => {
+    const res = await request(app).get('/api/docs/');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+  });
+
   it('đủ 19 module, tên không trùng', () => {
     const names = modules.map((m) => m.name);
     expect(names).toHaveLength(19);
