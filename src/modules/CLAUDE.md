@@ -20,7 +20,7 @@ Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới k
 | Module | Dữ liệu | Ghi chú |
 |---|---|---|
 | `platform` | Công ty, phân hệ đang bật, khoá công ty | Các công ty dùng hệ thống |
-| `auth` | Mật khẩu băm, liên kết Google, refresh token | |
+| `identity` | Mật khẩu băm, liên kết Google, refresh token | |
 | `staff` | Nhân viên, thư mời, khoá tài khoản | |
 | `access` | Vai trò có sẵn và tuỳ biến, quyền chi tiết | Mọi module kiểm quyền qua đây |
 | `audit` | Nhật ký thao tác | |
