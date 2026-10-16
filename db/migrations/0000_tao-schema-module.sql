@@ -4,8 +4,6 @@ CREATE SCHEMA "assistant";
 --> statement-breakpoint
 CREATE SCHEMA "audit";
 --> statement-breakpoint
-CREATE SCHEMA "auth";
---> statement-breakpoint
 CREATE SCHEMA "catalog";
 --> statement-breakpoint
 CREATE SCHEMA "channel";
@@ -15,6 +13,8 @@ CREATE SCHEMA "files";
 CREATE SCHEMA "finance";
 --> statement-breakpoint
 CREATE SCHEMA "fulfillment";
+--> statement-breakpoint
+CREATE SCHEMA "identity";
 --> statement-breakpoint
 CREATE SCHEMA "inbox";
 --> statement-breakpoint
