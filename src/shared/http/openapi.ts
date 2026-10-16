@@ -16,14 +16,19 @@ export type OpenApiDocument = ReturnType<OpenApiGeneratorV31['generateDocument']
 /** Thân lỗi mà `errorHandler` trả về (RFC 9457). */
 export const ProblemDetailsSchema = z
   .object({
-    type: z.string().meta({ example: '/problems/validation-failed' }),
-    title: z.string().meta({ example: 'validation-failed' }),
-    status: z.number().int().meta({ example: 400 }),
+    type: z.string().meta({ example: '/problems/validation_failed' }),
+    title: z.string().meta({ example: 'validation_failed' }),
+    status: z.number().int().meta({ example: 422 }),
     detail: z.string().meta({ example: 'Dữ liệu gửi lên không hợp lệ' }),
     instance: z.string().meta({ example: '/api/v1/catalog/products' }),
+    code: z.string().meta({ example: 'validation_failed', description: 'Mã lỗi cho máy đọc, viết gạch dưới' }),
+    errors: z
+      .record(z.string(), z.string())
+      .optional()
+      .meta({ example: { 'ceo.email': 'Email không hợp lệ' }, description: 'Lỗi theo ô, chỉ có ở 422' }),
   })
   .catchall(z.unknown())
-  .meta({ id: 'ProblemDetails', description: 'Lỗi theo RFC 9457. Lỗi kiểm dữ liệu có thêm mảng `errors`.' });
+  .meta({ id: 'ProblemDetails', description: 'Lỗi theo RFC 9457 kèm `code`. Lỗi kiểm dữ liệu (422) có thêm `errors` theo ô.' });
 
 /** Dùng trong `responses` của route: `{ 404: problemResponse('Không tìm thấy sản phẩm') }`. */
 export function problemResponse(description: string) {

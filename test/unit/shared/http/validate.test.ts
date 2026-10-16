@@ -29,11 +29,29 @@ describe('validate', () => {
     expect(res.body).toEqual({ params: { id: 7 }, body: { name: 'Áo thun' } });
   });
 
-  it('gom lỗi của mọi phần rồi trả 400', async () => {
+  it('gom lỗi của mọi phần rồi trả 422 với errors theo ô', async () => {
     const res = await request(buildApp()).post('/items/abc').send({ name: '' });
-    expect(res.status).toBe(400);
-    expect(res.body.type).toBe('/problems/validation-failed');
-    expect(res.body.errors).toHaveLength(2);
-    expect(res.body.errors.map((e: { in: string }) => e.in).sort()).toEqual(['body', 'params']);
+    expect(res.status).toBe(422);
+    expect(res.body.type).toBe('/problems/validation_failed');
+    expect(res.body.code).toBe('validation_failed');
+    expect(Object.keys(res.body.errors).sort()).toEqual(['id', 'name']);
+    expect(typeof res.body.errors.name).toBe('string');
+  });
+
+  it('trường lồng nối bằng dấu chấm, cả thân sai kiểu thì khoá là tên phần', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post('/nested', validate({ body: z.object({ ceo: z.object({ email: z.email() }) }) }), (_req, res) => {
+      res.end();
+    });
+    app.post('/whole', validate({ body: z.array(z.string()) }), (_req, res) => {
+      res.end();
+    });
+    app.use(errorHandler);
+
+    const nested = await request(app).post('/nested').send({ ceo: { email: 'khong-phai-email' } });
+    expect(Object.keys(nested.body.errors)).toEqual(['ceo.email']);
+    const whole = await request(app).post('/whole').send({ a: 1 });
+    expect(Object.keys(whole.body.errors)).toEqual(['body']);
   });
 });

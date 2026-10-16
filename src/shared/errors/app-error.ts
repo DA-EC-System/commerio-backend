@@ -1,6 +1,7 @@
 /**
  * Lỗi nghiệp vụ có chủ đích. Middleware lỗi đổi thành Problem Details (RFC 9457).
- * `code` là định danh ổn định cho client (vd `stock-insufficient`), `message` là câu cho người đọc.
+ * `code` là định danh ổn định cho client, viết gạch dưới (vd `insufficient_stock`), `message` là câu cho người đọc.
+ * Danh sách mã đã chốt với FE ở Documents/21.
  */
 export class AppError extends Error {
   readonly status: number;
