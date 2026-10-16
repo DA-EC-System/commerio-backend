@@ -21,13 +21,13 @@ describe('khung api', () => {
     const res = await request(app).get('/khong-ton-tai');
     expect(res.status).toBe(404);
     expect(res.headers['content-type']).toContain('application/problem+json');
-    expect(res.body).toMatchObject({ type: '/problems/not-found', status: 404, instance: '/khong-ton-tai' });
+    expect(res.body).toMatchObject({ type: '/problems/not_found', code: 'not_found', status: 404, instance: '/khong-ton-tai' });
   });
 
   it('JSON hỏng trả 400', async () => {
     const res = await request(app).post('/health').set('content-type', 'application/json').send('{hong');
     expect(res.status).toBe(400);
-    expect(res.body.type).toBe('/problems/malformed-json');
+    expect(res.body.type).toBe('/problems/malformed_json');
   });
 
   it('GET /api/openapi.json trả tài liệu OpenAPI 3.1 có /health', async () => {
