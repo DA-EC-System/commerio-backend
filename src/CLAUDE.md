@@ -11,4 +11,4 @@ Toàn bộ mã chạy. Không có bước build: Node 24 chạy thẳng file `.t
 
 Chiều phụ thuộc chỉ đi một hướng: `entrypoints` → `app.ts` → `modules` → `shared`. Đi ngược lại thì `npm run depcruise` báo lỗi.
 
-Unit test đặt cạnh file được test (`validate.ts` ↔ `validate.test.ts`). Test xuyên nhiều lớp nằm ở `test/`.
+Không đặt file test trong `src/`. Mọi test nằm ở `test/`, xem `test/CLAUDE.md`.

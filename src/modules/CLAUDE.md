@@ -20,7 +20,7 @@ Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới k
 | Module | Dữ liệu | Ghi chú |
 |---|---|---|
 | `platform` | Công ty, phân hệ đang bật, khoá công ty | Các công ty dùng hệ thống |
-| `auth` | Mật khẩu băm, liên kết Google, refresh token | |
+| `identity` | Mật khẩu băm, liên kết Google, refresh token | |
 | `staff` | Nhân viên, thư mời, khoá tài khoản | |
 | `access` | Vai trò có sẵn và tuỳ biến, quyền chi tiết | Mọi module kiểm quyền qua đây |
 | `audit` | Nhật ký thao tác | |
@@ -42,6 +42,22 @@ Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới k
 ## Thêm nghiệp vụ vào module
 
 1. Khai bảng trong `repository/schema.ts` bằng `<tên>Schema.table(...)`, rồi `npm run db:generate`.
-2. Viết `domain` và `service`, kèm unit test đặt cạnh file.
+2. Viết `domain` và `service`, kèm unit test ở `test/unit/modules/<tên>/...` (không đặt trong `src/`, xem `test/CLAUDE.md`).
 3. Viết `api/` (router + Zod), gắn router vào `ModuleDefinition` trong `index.ts`; `app.ts` tự mount tại `/api/v1/<tên>`.
+   Khai Swagger trong `api/openapi.ts` rồi gắn vào `openapi` của `ModuleDefinition`. Dùng **chính schema Zod** đã truyền cho `validate()`, đặt `.meta({ id: 'TenSchema' })` cho schema dùng lại; đường dẫn viết tương đối, giữ `:id` như Express:
+
+   ```ts
+   export function registerCatalogOpenApi(registry: OpenAPIRegistry) {
+     registry.registerPath({
+       method: 'get',
+       path: '/products/:productId',
+       summary: 'Xem một sản phẩm',
+       request: { params: ProductParams },
+       responses: {
+         200: { description: 'Sản phẩm', content: { 'application/json': { schema: ProductSchema } } },
+         404: problemResponse('Không tìm thấy sản phẩm'),
+       },
+     });
+   }
+   ```
 4. Viết `CLAUDE.md` cho module: nghiệp vụ, bất biến, sự kiện phát và nghe, module nào gọi vào.

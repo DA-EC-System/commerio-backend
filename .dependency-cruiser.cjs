@@ -54,7 +54,6 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '\\.test\\.ts$' },
     tsConfig: { fileName: 'tsconfig.json' },
     enhancedResolveOptions: { extensions: ['.ts', '.js'] },
   },

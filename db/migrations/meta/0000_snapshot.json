@@ -9,7 +9,7 @@
     "access": "access",
     "assistant": "assistant",
     "audit": "audit",
-    "auth": "auth",
+    "identity": "identity",
     "catalog": "catalog",
     "channel": "channel",
     "files": "files",

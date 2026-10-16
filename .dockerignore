@@ -5,5 +5,4 @@ coverage
 .env
 .env.*
 test
-**/*.test.ts
 **/CLAUDE.md
