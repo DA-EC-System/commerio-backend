@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
-const env = { NODE_ENV: 'test', LOG_LEVEL: 'silent' };
+// Test gọi đăng nhập nhiều lần từ cùng một IP, nên nới giới hạn.
+const env = { NODE_ENV: 'test', LOG_LEVEL: 'silent', AUTH_RATE_LIMIT: '10000' };
 
 export default defineConfig({
   test: {

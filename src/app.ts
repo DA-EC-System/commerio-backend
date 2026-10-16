@@ -1,3 +1,4 @@
+import cookieParser from 'cookie-parser';
 import express, { type Express } from 'express';
 import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
@@ -35,6 +36,7 @@ export function createApp(): Express {
   app.use(pinoHttp({ logger }));
   app.use(metricsMiddleware);
   app.use(express.json({ limit: '1mb' }));
+  app.use(cookieParser());
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
