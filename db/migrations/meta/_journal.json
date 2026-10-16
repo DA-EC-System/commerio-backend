@@ -8,6 +8,27 @@
       "when": 1791899932861,
       "tag": "0000_tao-schema-module",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792156124031,
+      "tag": "0001_nen-tang",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792156155850,
+      "tag": "0002_seed-quyen",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792156158360,
+      "tag": "0003_rls",
+      "breakpoints": true
     }
   ]
 }
