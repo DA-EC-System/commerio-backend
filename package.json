@@ -24,6 +24,7 @@
     "check": "npm run lint && npm run typecheck && npm run depcruise && npm test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:staging": "node --env-file=.env.staging node_modules/drizzle-kit/bin.cjs migrate",
     "infra:up": "docker compose -f deploy/compose.yaml up -d",
     "infra:down": "docker compose -f deploy/compose.yaml down"
   },
