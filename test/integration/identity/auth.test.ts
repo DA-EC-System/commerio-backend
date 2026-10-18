@@ -48,13 +48,15 @@ describe('đăng ký công ty (UC-PI-01)', () => {
 
   it('AC-5, 19: email đã có tài khoản trả 409 email_taken, không tạo công ty mới', async () => {
     const { email } = await registerCompany();
-    const before = await db.query('select count(*)::int as n from platform.companies');
-    const res = await request(app).post('/api/v1/identity/register').send(registerBody(email.toUpperCase()));
+    // Đếm theo tên riêng của lần đăng ký này: file test khác chạy song song cũng tạo công ty.
+    const name = `Công ty trùng email ${uniqueEmail('ten')}`;
+    const body = registerBody(email.toUpperCase(), { company: { name, taxCode: '0312345678' } });
+    const res = await request(app).post('/api/v1/identity/register').send(body);
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('email_taken');
     expect(res.body.errors).toHaveProperty(['ceo.email']);
-    const after = await db.query('select count(*)::int as n from platform.companies');
-    expect(after.rows[0].n).toBe(before.rows[0].n);
+    const after = await db.query('select count(*)::int as n from platform.companies where name = $1', [name]);
+    expect(after.rows[0].n).toBe(0);
   });
 
   it('AC-6: chọn Trợ lý AI mà chưa đồng ý gửi dữ liệu thì 422 errors.assistantDataConsent', async () => {

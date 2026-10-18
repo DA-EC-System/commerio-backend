@@ -12,7 +12,7 @@
 | `POST /refresh` | Xoay vòng refresh token, giữ công ty nếu còn dùng được | staff, platform, access |
 | `POST /logout` | Thu hồi refresh token, xoá cookie | |
 | `GET /me` | Tài khoản và các công ty | staff, platform, access |
-| `POST /change-password` | Băm mật khẩu mới, bỏ cờ thư mời, nhật ký cấp tài khoản | staff, audit |
+| `POST /change-password` | Băm mật khẩu mới, bỏ cờ thư mời, thu hồi mọi refresh token và cấp cookie mới, nhật ký cấp tài khoản, **một transaction** | staff, audit |
 
 ## Bất biến
 
@@ -20,13 +20,13 @@
 - Sai email hay sai mật khẩu: cùng lỗi 401 `invalid_credentials`, cùng thời gian (email không có vẫn chạy argon2 trên bản băm giả).
 - Refresh token: 32 byte ngẫu nhiên, DB chỉ lưu SHA-256, sống 30 ngày, cookie `commerio_refresh` (`HttpOnly; Secure; SameSite=Strict; Path=/api/v1/identity`). Mỗi lần refresh cấp token mới, token cũ thu hồi.
 - Access token: JWT EdDSA 15 phút, mang `sub` (tài khoản), `cid` (công ty), `perms` (đã bỏ quyền của phân hệ chưa bật), `pwc` (còn mật khẩu thư mời). Ký và kiểm ở `src/shared/auth/`.
-- Còn mật khẩu thư mời: chỉ `me`, `change-password`, `refresh`, `logout` chạy được. Đổi xong, FE gọi `refresh` để lấy token không còn `pwc`.
+- Còn mật khẩu thư mời: chỉ `me`, `change-password`, `refresh`, `logout` chạy được. Đổi xong, mọi phiên khác mất refresh token (cookie cũ hết hiệu lực); phản hồi đặt cookie mới, FE gọi `refresh` bằng cookie đó để lấy token không còn `pwc`. Access token đã phát vẫn sống tới hạn (≤ 15 phút).
 - Không thuộc công ty trả 404 `not_found`; công ty khoá 403 `company_locked`; tài khoản khoá trong công ty 403 `account_locked`.
-- `login`, `register` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP (bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis).
+- `login`, `register` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP; `change-password` giới hạn 5 lần lỗi mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). Bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis.
 
 ## Cho module khác
 
-- `loadCompanyAccess(accountId, companyId)`: trạng thái công ty, membership, quyền thô (chưa lọc theo phân hệ) và phân hệ bật, đọc thẳng DB. Chỉ `src/wiring.ts` dùng, để dựng `ctx.authorize`; token còn hạn mà công ty, tài khoản vừa bị khoá hay vừa mất quyền thì request kế tiếp đã bị chặn.
+- `loadCompanyAccess(accountId, companyId)`: trạng thái công ty, membership, quyền thô (chưa lọc theo phân hệ) và phân hệ bật, đọc thẳng DB. `src/wiring.ts` dùng để dựng `ctx.authorize`, và router identity truyền cho router `access` (kiểm `permission_not_held` theo quyền hiện tại); token còn hạn mà công ty, tài khoản vừa bị khoá hay vừa mất quyền thì request kế tiếp đã bị chặn.
 - Router gắn thêm router của `access` (`/identity/roles`, `/identity/permissions`, #8).
 
 ## Chưa làm
