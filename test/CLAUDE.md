@@ -22,6 +22,7 @@ Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERU
 | `rls.ts` | `asCompany(companyId, fn)`: chạy như request trong công ty (role `commerio_app`), rồi rollback |
 | `state.ts` | `lockCompany`, `suspendMembership`, `setModuleEnabled`, `revokePermission` (chỉ cho vai trò tuỳ biến) |
 | `catalog.ts` | `createVariant(companyId, { sku?, categoryName? })` → `{ variantId, productId, categoryId, sku }` (mỗi lần một danh mục và sản phẩm mới, ghi trong `withCompany`; không truyền `categoryName` trùng trong một công ty) |
+| `sales.ts` | `createOrder(companyId, { lines: { variantId, quantity, unitPrice }[], paymentMethod?, source? })` → `{ orderId, code, total }` (ghi bảng sales trong `withCompany`, chép SKU, tên sản phẩm từ biến thể; đơn tay mặc định `prepaid`, đơn sàn không có phương thức; không tạo `payment.order_payments`) |
 
 Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<module>/helpers.ts`.
 

@@ -60,9 +60,11 @@ describe('Row-Level Security theo công ty (AC-16)', () => {
   });
 
   it('không sửa được vai trò có sẵn trong công ty', async () => {
-    await expect(
-      asCompany(companyA, (c) => c.query("update access.roles set name = 'Đổi' where id = $1", [BUILTIN_ROLES.ceo.id])),
-    ).rejects.toThrow(/row-level security/);
+    // Policy RESTRICTIVE của 0011 lọc dòng vai trò có sẵn khỏi UPDATE: 0 dòng, không lỗi.
+    const res = await asCompany(companyA, (c) =>
+      c.query("update access.roles set name = 'Đổi' where id = $1", [BUILTIN_ROLES.ceo.id]),
+    );
+    expect(res.rowCount).toBe(0);
   });
 
   it('chưa đặt app.company_id thì không thấy dòng nào', async () => {

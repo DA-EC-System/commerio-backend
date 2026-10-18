@@ -1,4 +1,4 @@
-import { integer, numeric, timestamp } from 'drizzle-orm/pg-core';
+import { customType, integer, numeric, timestamp } from 'drizzle-orm/pg-core';
 
 /** `created_at`, `updated_at` cho bảng sửa được. Bảng chỉ thêm (nhật ký, outbox) chỉ dùng `createdAt`. */
 export const timestamps = {
@@ -11,3 +11,6 @@ export const version = { version: integer('version').notNull().default(1) };
 
 /** Cột tiền: `numeric(18,2)` (về Node là chuỗi, tính bằng `decimal.js`). */
 export const money = (name: string) => numeric(name, { precision: 18, scale: 2 });
+
+/** Cột `bytea` (khoá cổng, token sàn đã mã hoá); drizzle-orm chưa có kiểu sẵn. */
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });

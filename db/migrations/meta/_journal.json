@@ -57,6 +57,34 @@
       "when": 1792300681184,
       "tag": "0007_san-pham-gia-kho-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792305196384,
+      "tag": "0008_ban-hang-kenh",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792306813942,
+      "tag": "0009_thanh-toan-tai-chinh-bao-cao",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792306816140,
+      "tag": "0010_p3-p5-rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792306818623,
+      "tag": "0011_vai-tro-co-san-rls",
+      "breakpoints": true
     }
   ]
 }
