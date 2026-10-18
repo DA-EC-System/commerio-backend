@@ -38,6 +38,7 @@ export const stockReceipts = inventorySchema.table(
     orderId: uuid('order_id'),
     status: docStatus('status').notNull().default('draft'),
     note: text('note'),
+    reference: text('reference'),
     createdBy: uuid('created_by'),
     postedBy: uuid('posted_by'),
     postedAt: timestamp('posted_at', { withTimezone: true }),
@@ -78,7 +79,7 @@ export const stockReceiptLines = inventorySchema.table(
 export const stockLevels = inventorySchema.table(
   'stock_levels',
   {
-    variantId: uuid('variant_id').primaryKey(),
+    variantId: uuid('variant_id').notNull(),
     companyId: uuid('company_id').notNull(),
     onHand: integer('on_hand').notNull().default(0),
     reserved: integer('reserved').notNull().default(0),
@@ -86,7 +87,9 @@ export const stockLevels = inventorySchema.table(
     ...timestamps,
     ...version,
   },
+  // Khoá theo công ty: id biến thể của công ty khác không chiếm được dòng tồn (#16 A17).
   (t) => [
+    primaryKey({ columns: [t.companyId, t.variantId] }),
     check('stock_levels_on_hand', sql`${t.onHand} >= 0`),
     check('stock_levels_reserved', sql`${t.reserved} >= 0`),
     check('stock_levels_reserved_le_on_hand', sql`${t.reserved} <= ${t.onHand}`),
@@ -104,6 +107,7 @@ export const stockIssues = inventorySchema.table(
     orderId: uuid('order_id'),
     status: docStatus('status').notNull().default('draft'),
     note: text('note'),
+    reference: text('reference'),
     createdBy: uuid('created_by'),
     postedBy: uuid('posted_by'),
     postedAt: timestamp('posted_at', { withTimezone: true }),
@@ -190,13 +194,13 @@ export const reorderRules = inventorySchema.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
-    variantId: uuid('variant_id').notNull().unique(),
+    variantId: uuid('variant_id').notNull(),
     minQty: integer('min_qty').notNull(),
     alertActive: boolean('alert_active').notNull().default(false),
     ...timestamps,
     ...version,
   },
-  (t) => [check('reorder_rules_min_qty', sql`${t.minQty} >= 0`)],
+  (t) => [unique().on(t.companyId, t.variantId), check('reorder_rules_min_qty', sql`${t.minQty} >= 0`)],
 );
 
 /**

@@ -70,7 +70,10 @@ export const products = catalogSchema.table(
     ...version,
   },
   (t) => [
-    uniqueIndex('products_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    // Tên chỉ không trùng giữa sản phẩm chưa lưu trữ: tên của sản phẩm đã lưu trữ dùng lại được (#12 B1).
+    uniqueIndex('products_company_lower_name_uq')
+      .on(t.companyId, sql`lower(${t.name})`)
+      .where(sql`${t.archivedAt} is null`),
     index().on(t.categoryId),
   ],
 );
