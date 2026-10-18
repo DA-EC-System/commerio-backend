@@ -10,7 +10,7 @@ Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vite
 | `api/` | Gọi HTTP vào `createApp()` bằng Supertest, không mở cổng thật | Không DB |
 | `integration/` | Repository, transaction, migration, RLS trên PostgreSQL thật | Docker đang chạy. `global-setup.ts` dựng một container `pgvector/pgvector:pg18` cho cả lượt, chạy mọi migration trong `db/migrations`; `setup.ts` đặt `DATABASE_URL` trước khi file test import code. Dữ liệu dùng chung giữa các file: mỗi test tự tạo công ty, email riêng (vd `randomUUID()`), không giả định bảng trống |
 
-Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERUSER CREATEROLE`, chủ các bảng) giống user `postgres` của Supabase; `TEST_PG_IMAGE=pgvector/pgvector:pg17` để chạy trên PostgreSQL 17 như staging.
+Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERUSER CREATEROLE`, chủ các bảng) giống user `postgres` của Supabase, riêng extension `vector` (cần superuser) do `global-setup.ts` bật trước; `TEST_PG_IMAGE=pgvector/pgvector:pg17` để chạy trên PostgreSQL 17 như staging.
 
 ### Helper dùng chung (`integration/helpers/`)
 

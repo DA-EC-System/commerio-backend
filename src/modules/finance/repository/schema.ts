@@ -5,6 +5,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgSchema,
   primaryKey,
   text,
@@ -32,10 +33,16 @@ export const voucherPurpose = financeSchema.enum('voucher_purpose', [
   'customer_refund',
   'unmatched_refund',
 ]);
+export const matchStatus = financeSchema.enum('match_status', ['matched', 'discrepancy', 'refund_tagged']);
+export const settlementLineKind = financeSchema.enum('settlement_line_kind', ['order', 'adjustment', 'reserve']);
+export const discrepancyReason = financeSchema.enum('discrepancy_reason', [
+  'order_not_found',
+  'revenue_mismatch',
+  'formula_mismatch',
+]);
 
 // `order_id`, `order_line_id` (sales), `variant_id` (catalog), `payment_transaction_id` (payment), người lập (staff) là
-// uuid thường, không khoá ngoại chéo schema (19-D1). `settlement_line_id`, `supplier_invoice_id` trỏ bảng của CB-4,
-// khoá ngoại thêm khi có bảng đích.
+// uuid thường, không khoá ngoại chéo schema (19-D1).
 //
 // Chứng từ đảo (19-D20, D14): dòng mới cùng bảng, `reversal_of_id` trỏ gốc (mỗi chứng từ đảo một lần), số tiền âm,
 // bắt buộc có lý do.
@@ -117,7 +124,9 @@ export const receipts = financeSchema.table(
     source: receiptSource('source').notNull(),
     paymentTransactionId: uuid('payment_transaction_id').unique(),
     unmatchedReceiptId: uuid('unmatched_receipt_id').references(() => unmatchedReceipts.id),
-    settlementLineId: uuid('settlement_line_id').unique(),
+    settlementLineId: uuid('settlement_line_id')
+      .unique()
+      .references(() => settlementLines.id),
     amount: money('amount').notNull(),
     status: voucherStatus('status').notNull().default('posted'),
     postedAt: timestamp('posted_at', { withTimezone: true }).notNull().defaultNow(),
@@ -146,7 +155,7 @@ export const paymentVouchers = financeSchema.table(
     companyId: uuid('company_id').notNull(),
     number: text('number').notNull(),
     purpose: voucherPurpose('purpose').notNull(),
-    supplierInvoiceId: uuid('supplier_invoice_id'),
+    supplierInvoiceId: uuid('supplier_invoice_id').references(() => supplierInvoices.id),
     orderId: uuid('order_id'),
     unmatchedReceiptId: uuid('unmatched_receipt_id').references(() => unmatchedReceipts.id),
     amount: money('amount').notNull(),
@@ -170,6 +179,83 @@ export const paymentVouchers = financeSchema.table(
     check('payment_vouchers_one_source', sql`num_nonnulls(${t.supplierInvoiceId}, ${t.orderId}, ${t.unmatchedReceiptId}) <= 1`),
     check('payment_vouchers_amount_sign', sql`${t.amount} <> 0 and (${t.reversalOfId} is null) = (${t.amount} > 0)`),
     check('payment_vouchers_reversal_reason', sql`(${t.reversalOfId} is null) = (${t.reversalReason} is null)`),
+  ],
+);
+
+/** Hoá đơn nhà cung cấp (UC-PF-08); `supplier_id`, `purchase_order_id` trỏ purchasing, không khoá ngoại (19-D1). */
+export const supplierInvoices = financeSchema.table(
+  'supplier_invoices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    supplierId: uuid('supplier_id').notNull(),
+    purchaseOrderId: uuid('purchase_order_id'),
+    invoiceNo: text('invoice_no').notNull(),
+    invoiceDate: date('invoice_date').notNull(),
+    amount: money('amount').notNull(),
+    amountDue: money('amount_due').notNull(),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    index().on(t.supplierId),
+    index().on(t.purchaseOrderId),
+    check('supplier_invoices_amount', sql`${t.amount} > 0`),
+  ],
+);
+
+/** Bảng kê thanh toán của sàn; `shop_id` trỏ channel, `payment_status` giữ nguyên chữ của sàn (PAID, PROCESSING…). */
+export const settlementStatements = financeSchema.table(
+  'settlement_statements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id').notNull(),
+    externalStatementId: text('external_statement_id').notNull(),
+    statementTime: timestamp('statement_time', { withTimezone: true }).notNull(),
+    settlementAmount: money('settlement_amount').notNull(),
+    paymentStatus: text('payment_status').notNull(),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [unique().on(t.companyId, t.externalStatementId), index().on(t.shopId)],
+);
+
+/**
+ * Dòng đối soát, một dòng mỗi giao dịch của bảng kê; chạy lại đối soát không sinh trùng nhờ `external_transaction_id`.
+ * Khớp khi `revenue − Σfees − shipping_cost ± adjustment = settlement` (API 12.8, T23); `raw` là bản gốc của sàn.
+ */
+export const settlementLines = financeSchema.table(
+  'settlement_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    statementId: uuid('statement_id')
+      .notNull()
+      .references(() => settlementStatements.id),
+    kind: settlementLineKind('kind').notNull(),
+    externalTransactionId: text('external_transaction_id').notNull(),
+    orderId: uuid('order_id'),
+    externalOrderId: text('external_order_id'),
+    revenue: money('revenue').notNull(),
+    fees: jsonb('fees').notNull(),
+    shippingCost: money('shipping_cost').notNull().default('0'),
+    adjustment: money('adjustment').notNull().default('0'),
+    settlement: money('settlement').notNull(),
+    matchStatus: matchStatus('match_status').notNull(),
+    discrepancyReason: discrepancyReason('discrepancy_reason'),
+    raw: jsonb('raw').notNull(),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    unique().on(t.companyId, t.externalTransactionId),
+    index().on(t.statementId),
+    index().on(t.orderId),
+    check(
+      'settlement_lines_discrepancy_reason',
+      sql`(${t.matchStatus} = 'discrepancy') = (${t.discrepancyReason} is not null)`,
+    ),
   ],
 );
 

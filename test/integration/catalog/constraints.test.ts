@@ -81,6 +81,21 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     await expect(insert('GIÀY CHẠY BỘ')).rejects.toThrow(/products_company_lower_name_uq/);
   });
 
+  it('tên của sản phẩm đã lưu trữ dùng lại được (#12 B1)', async () => {
+    const company = randomUUID();
+    const category = await insertCategory(company, 'Dép');
+    const insert = (name: string, archived: boolean) =>
+      db().query(
+        `insert into catalog.products (company_id, category_id, name, archived_at)
+         values ($1, $2, $3, case when $4 then now() end)`,
+        [company, category, name, archived],
+      );
+    await insert('Dép lê', true);
+    await insert('dép lê', true);
+    await expect(insert('Dép Lê', false)).resolves.toBeDefined();
+    await expect(insert('DÉP LÊ', false)).rejects.toThrow(/products_company_lower_name_uq/);
+  });
+
   it('SKU không trùng trong một công ty, khác công ty thì được', async () => {
     const company = randomUUID();
     await createVariant(company, { sku: 'MU-0001' });
