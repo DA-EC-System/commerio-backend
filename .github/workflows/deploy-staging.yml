@@ -122,7 +122,7 @@ jobs:
           umask 077
           # Nháy đơn: compose không nội suy '$' trong giá trị (mật khẩu có '$' vẫn đúng). PEM viết '\n' trên một dòng.
           put() {
-            case "$2" in *"'"* | *$'\n'*) echo "::error::$1 không được chứa nháy đơn hay xuống dòng"; exit 1 ;; esac
+            case "$2" in *"'"* | *$'\n'*) echo "::error::$1 không được chứa nháy đơn hay xuống dòng" >&2; exit 1 ;; esac
             echo "$1='$2'"
           }
           {

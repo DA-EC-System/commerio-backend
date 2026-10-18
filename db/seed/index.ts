@@ -14,7 +14,8 @@ try {
 } catch (err) {
   // Lỗi truy vấn của Drizzle có cả tham số (email, băm mật khẩu) trong message: chỉ in lỗi gốc của PostgreSQL.
   const cause = (err as { cause?: { code?: string; message?: string } }).cause;
-  console.error(cause?.code ? `Lỗi PostgreSQL ${cause.code}: ${cause.message}` : err instanceof Error ? err.message : err);
+  if (cause) console.error(`Lỗi cơ sở dữ liệu ${cause.code ?? ''}: ${cause.message}`);
+  else console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;
 } finally {
   await closeDb();
