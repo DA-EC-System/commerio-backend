@@ -8,9 +8,9 @@ import { type EventEnvelope, topicOf } from '../../../../shared/events/envelope.
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { EVENT_SCHEMAS, type EventPayload, type EventType } from '../../domain/events.ts';
 import { insertOutboxMessage } from '../../repository/outbox.ts';
-import { type ConsumerScope, type Handler, register, startSharedConsumers } from './consumer.ts';
+import type { ConsumerScope, Handler } from './consumer.ts';
 import { registerOutboxMetrics } from './metrics.ts';
-import { createRelay } from './relay.ts';
+import { register, startSharedConsumers } from './registry.ts';
 import { outboxOptions } from './runtime.ts';
 
 /**
@@ -60,6 +60,8 @@ export async function startOutboxBackground(_ctx: ModuleContext): Promise<() => 
   const options = outboxOptions();
   const controller = new AbortController();
   registerOutboxMetrics(options.topicPrefix);
+  // Nạp client Kafka (thư viện native) chỉ trong worker, không trong api.
+  const { createRelay } = await import('./relay.ts');
   const relay = createRelay(options);
   relay.start();
   const stopConsumers = startSharedConsumers(options, controller.signal);

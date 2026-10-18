@@ -58,7 +58,12 @@ export async function replayDlq(options: OutboxOptions, dlqTopic: string, { dryR
         if (Number(message.offset) === end - 1) ends.delete(partition);
       },
     });
-    while (ends.size > 0) await sleep(100);
+    // Broker chết giữa chừng thì client giao lại mãi: bỏ cuộc sau 5 phút, chưa commit gì nên chạy lại an toàn.
+    const deadline = Date.now() + 5 * 60_000;
+    while (ends.size > 0) {
+      if (Date.now() > deadline) throw new Error(`Đẩy lại ${dlqTopic} quá 5 phút, đã đẩy ${count}; chạy lại sau`);
+      await sleep(100);
+    }
     if (!dryRun) {
       await consumer.commitOffsets(
         [...targets].map(([partition, end]) => ({ topic: dlqTopic, partition, offset: String(end) })),

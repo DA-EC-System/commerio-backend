@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { z } from 'zod';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { type EventEnvelope, topicOf } from '../../../../shared/events/envelope.ts';
@@ -16,7 +17,7 @@ import {
   type Producer,
 } from './kafka.ts';
 import { countDeadLettered } from './metrics.ts';
-import { type OutboxOptions, outboxLogger, outboxOptions, retryUntilAborted } from './runtime.ts';
+import { type OutboxOptions, outboxLogger } from './runtime.ts';
 
 /**
  * `shared`: một group cho mọi bản sao worker, mỗi sự kiện một bản xử lý, chống trùng bằng `processed_events`,
@@ -70,7 +71,7 @@ const NETWORK_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE
 export function isConnectionError(err: unknown): boolean {
   let underQuery = false;
   for (let e = err, depth = 0; e instanceof Error && depth < 5; e = e.cause, depth++) {
-    if (e.name === 'DrizzleQueryError') underQuery = true;
+    if (e instanceof DrizzleQueryError) underQuery = true;
     const code = (e as { code?: unknown }).code;
     if (typeof code === 'string' && (code.startsWith('08') || /^57P0[123]$/.test(code))) return true;
     if (typeof code === 'string' && underQuery && NETWORK_CODES.has(code)) return true;
@@ -144,7 +145,7 @@ export async function processMessage(message: IncomingMessage, attempt: number, 
     if (!(err instanceof HandlerFailure)) throw err;
     // instance (realtime) không DB, không thử lại: lỗi gì cũng chỉ ghi log.
     if (spec.scope === 'instance') {
-      outboxLogger.error({ err: err.cause, consumer: spec.consumer, eventId: parsed.eventId }, 'handler lỗi');
+      outboxLogger.error({ reason: dlqReason(err.cause), consumer: spec.consumer, eventId: parsed.eventId }, 'handler lỗi');
       return { kind: 'done' };
     }
     if (isConnectionError(err.cause)) throw err;
@@ -179,6 +180,7 @@ async function callHandler(envelope: EventEnvelope<EventType>, handler: Handler)
   }
 }
 
+class StoppedError extends Error {}
 
 export function createConsumerRunner(options: OutboxOptions, spec: ConsumerSpec, kafka: Kafka = createKafka(options)): ConsumerRunner {
   const shared = spec.scope === 'shared';
@@ -240,7 +242,7 @@ export function createConsumerRunner(options: OutboxOptions, spec: ConsumerSpec,
     } catch (err) {
       // DB chết lâu thì không gõ cửa mỗi giây: chờ lùi 1 s → 30 s.
       delayMs = Math.min(1_000 * 2 ** infraFailures++, 30_000);
-      outboxLogger.error({ err, consumer: spec.consumer, topic, partition, offset: message.offset }, 'lỗi hạ tầng khi xử lý sự kiện, giao lại');
+      outboxLogger.error({ reason: dlqReason(err), consumer: spec.consumer, topic, partition, offset: message.offset }, 'lỗi hạ tầng khi xử lý sự kiện, giao lại');
     }
     // Dừng riêng partition này rồi ném: client tua lại đúng offset, không lưu offset, partition khác chạy tiếp.
     const resume = pause();
@@ -268,13 +270,14 @@ export function createConsumerRunner(options: OutboxOptions, spec: ConsumerSpec,
         consumer = kafka.consumer({ kafkaJS: { groupId, fromBeginning: shared, autoCommit: shared } });
         await consumer.connect();
         await consumer.subscribe({ topics });
-        if (stopped) throw new Error('consumer đã dừng');
+        if (stopped) throw new StoppedError();
         await consumer.run({ eachMessage });
       } catch (err) {
         await consumer?.disconnect().catch(() => undefined);
         await dlqProducer?.disconnect().catch(() => undefined);
         consumer = dlqProducer = undefined;
-        throw err;
+        // Đã dừng giữa lúc khởi động: xong êm, để retryUntilAborted không gọi lại mãi.
+        if (!(err instanceof StoppedError)) throw err;
       }
     },
     async stop() {
@@ -284,52 +287,5 @@ export function createConsumerRunner(options: OutboxOptions, spec: ConsumerSpec,
       await dlqProducer?.disconnect().catch(() => undefined);
     },
     assignment: () => consumer?.assignment() ?? [],
-  };
-}
-
-// ---------- Sổ đăng ký cho registerConsumer ----------
-
-interface Entry {
-  scope: ConsumerScope;
-  handlers: Map<string, Handler>;
-  started: boolean;
-}
-
-const registry = new Map<string, Entry>();
-const runners: ConsumerRunner[] = [];
-let background: { options: OutboxOptions; signal: AbortSignal } | undefined;
-
-function launch(name: string, entry: Entry, options: OutboxOptions, signal: AbortSignal): void {
-  entry.started = true;
-  const runner = createConsumerRunner(options, { consumer: name, scope: entry.scope, handlers: entry.handlers });
-  runners.push(runner);
-  void retryUntilAborted(`consumer ${name}`, signal, () => runner.start());
-}
-
-export function register(type: EventType, handler: Handler, consumer: string, scope: ConsumerScope): void {
-  if (!Object.hasOwn(EVENT_SCHEMAS, type)) throw new Error(`Loại sự kiện ${type} không có trong danh mục`);
-  let entry = registry.get(consumer);
-  if (entry && entry.scope !== scope) throw new Error(`Consumer ${consumer} đã đăng ký với scope ${entry.scope}`);
-  if (entry?.started) throw new Error(`Consumer ${consumer} đã chạy: đăng ký mọi loại của nó trong một khối đồng bộ`);
-  if (entry?.handlers.has(type)) throw new Error(`Consumer ${consumer} đã đăng ký ${type}`);
-  if (!entry) {
-    const created: Entry = (entry = { scope, handlers: new Map(), started: false });
-    registry.set(consumer, created);
-    // Khởi động ở lượt kế để các loại đăng ký liền sau trong cùng khối gộp vào một group.
-    setImmediate(() => {
-      if (created.started) return;
-      if (scope === 'instance') launch(consumer, created, outboxOptions(), new AbortController().signal);
-      else if (background) launch(consumer, created, background.options, background.signal);
-    });
-  }
-  entry.handlers.set(type, handler);
-}
-
-/** Worker: chạy mọi consumer `shared` đã và sẽ đăng ký. Trả hàm dừng. */
-export function startSharedConsumers(opts: OutboxOptions, signal: AbortSignal): () => Promise<void> {
-  background = { options: opts, signal };
-  for (const [name, entry] of registry) if (entry.scope === 'shared' && !entry.started) launch(name, entry, opts, signal);
-  return async () => {
-    await Promise.all(runners.map((runner) => runner.stop()));
   };
 }

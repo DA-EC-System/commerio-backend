@@ -213,7 +213,14 @@ describe('consumer shared', () => {
     await producer.disconnect();
     const marker = await publishBelow(company, variant, 6);
     await relayAll(relay);
-    await waitFor(() => seen.some((s) => s.eventId === marker));
+    // Chờ giao dịch của handler commit (dấu processed_events), không chỉ chờ handler được gọi.
+    await waitFor(async () => {
+      const r = await testPool().query(
+        "select 1 from platform.processed_events where consumer = 'e2e' and event_id = $1",
+        [marker],
+      );
+      return r.rowCount === 1;
+    });
 
     expect(seen.filter((s) => s.eventId === eventId)).toHaveLength(1);
     const processed = await testPool().query(

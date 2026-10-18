@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type ConsumerScope,
@@ -115,9 +116,7 @@ describe('processMessage', () => {
   });
 
   it('instance: lỗi mang mã mạng của handler cũng chỉ ghi log', async () => {
-    const reset = Object.assign(new Error('Failed query', { cause: Object.assign(new Error('x'), { code: 'ECONNRESET' }) }), {
-      name: 'DrizzleQueryError',
-    });
+    const reset = new DrizzleQueryError('select 1', [], Object.assign(new Error('x'), { code: 'ECONNRESET' }));
     const d = deps('instance', failing(reset));
     expect(await processMessage(message(envelope()), 0, d)).toEqual({ kind: 'done' });
   });
@@ -142,7 +141,7 @@ describe('isConnectionError', () => {
     ['lớp 08', withCode('08006')],
     ['server cắt kết nối 57P01', withCode('57P01')],
     ['mã nằm ở cause (DrizzleQueryError)', new Error('Failed query', { cause: withCode('57P01') })],
-    ['mã mạng dưới truy vấn DB', Object.assign(new Error('Failed query', { cause: withCode('ECONNRESET') }), { name: 'DrizzleQueryError' })],
+    ['mã mạng dưới truy vấn DB', new DrizzleQueryError('select 1', [], withCode('ECONNRESET'))],
     ['mất kết nối giữa truy vấn, không mã', new Error('Connection terminated unexpectedly')],
   ])('nhận %s', (_name, err) => {
     expect(isConnectionError(err)).toBe(true);

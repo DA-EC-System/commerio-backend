@@ -69,7 +69,7 @@ node --env-file=.env src/modules/platform/service/outbox/replay-dlq.ts commerio.
 node --env-file=.env src/modules/platform/service/outbox/replay-dlq.ts commerio.inventory.dlq
 ```
 
-Script đọc từ chỗ lần đẩy trước dừng tới offset cuối lúc bắt đầu. `eventId` giữ nguyên: consumer `shared` đã xử lý sự kiện đó thì bỏ qua; consumer `instance` nhận lại. Trên Git Bash thêm `MSYS_NO_PATHCONV=1` trước lệnh `docker compose exec`.
+Script đọc từ chỗ lần đẩy trước dừng tới offset cuối lúc bắt đầu. Script hỏng giữa chừng (quá 5 phút) thì chưa commit gì: chạy lại sẽ đẩy lại cả phần đã đẩy, consumer `shared` bỏ qua nhờ chống trùng. `eventId` giữ nguyên: consumer `shared` đã xử lý sự kiện đó thì bỏ qua; consumer `instance` nhận lại. Trên Git Bash thêm `MSYS_NO_PATHCONV=1` trước lệnh `docker compose exec`.
 
 ## Test
 
