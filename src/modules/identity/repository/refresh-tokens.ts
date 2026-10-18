@@ -42,6 +42,14 @@ export async function revokeRefreshToken(id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Thu hồi mọi refresh token còn hiệu lực của tài khoản (đổi mật khẩu). */
+export async function revokeAllRefreshTokens(accountId: string): Promise<void> {
+  await getDb()
+    .update(refreshTokens)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(refreshTokens.accountId, accountId), isNull(refreshTokens.revokedAt)));
+}
+
 export async function setRefreshTokenCompany(id: string, companyId: string): Promise<void> {
   await getDb().update(refreshTokens).set({ companyId }).where(eq(refreshTokens.id, id));
 }

@@ -19,6 +19,7 @@ import {
 import {
   findActiveRefreshToken,
   insertRefreshToken,
+  revokeAllRefreshTokens,
   revokeRefreshToken,
   setRefreshTokenCompany,
 } from '../repository/refresh-tokens.ts';
@@ -256,8 +257,15 @@ export async function logout(refreshToken: string | undefined): Promise<void> {
   if (row) await revokeRefreshToken(row.id);
 }
 
-/** UC-PI-04. Nhật ký cấp tài khoản, `company_id` trống (Documents/21 V12). */
-export async function changePassword(accountId: string, input: { currentPassword: string; newPassword: string }) {
+/**
+ * UC-PI-04. Nhật ký cấp tài khoản, `company_id` trống (Documents/21 V12). Đổi xong thì mọi phiên refresh
+ * của tài khoản bị thu hồi, kể cả phiên đang gọi; trả refresh token mới cho người vừa đổi (giữ công ty của phiên).
+ */
+export async function changePassword(
+  accountId: string,
+  input: { currentPassword: string; newPassword: string },
+  refreshToken: string | undefined,
+): Promise<string> {
   const account = await findAccountById(accountId);
   if (!account) throw invalidRefresh();
   const fieldError = (field: string, message: string) =>
@@ -268,9 +276,15 @@ export async function changePassword(accountId: string, input: { currentPassword
   if (input.newPassword === input.currentPassword) {
     throw fieldError('newPassword', 'Mật khẩu mới phải khác mật khẩu hiện tại');
   }
-  const passwordHash = await hashPassword(input.newPassword);
-  await inTransaction(async () => {
+  const [passwordHash, session] = await Promise.all([
+    hashPassword(input.newPassword),
+    refreshToken ? findActiveRefreshToken(hashToken(refreshToken)) : undefined,
+  ]);
+  const companyId = session?.accountId === account.id ? session.companyId : null;
+  return inTransaction(async () => {
     await updatePassword(account.id, passwordHash);
+    await revokeAllRefreshTokens(account.id);
+    const token = await newRefreshToken(account.id, companyId);
     await recordAudit({
       companyId: null,
       actorId: account.id,
@@ -279,5 +293,6 @@ export async function changePassword(accountId: string, input: { currentPassword
       entityId: account.id,
       after: { passwordChanged: true },
     });
+    return token;
   });
 }

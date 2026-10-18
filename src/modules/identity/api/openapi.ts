@@ -88,13 +88,16 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
     method: 'post',
     path: '/change-password',
     summary: 'Đổi mật khẩu (UC-PI-04)',
-    description: 'Gọi được khi còn mật khẩu thư mời. Đổi xong gọi `refresh` để lấy token không còn cờ bắt đổi mật khẩu.',
+    description:
+      'Gọi được khi còn mật khẩu thư mời. Đổi xong mọi phiên khác bị đăng xuất; phản hồi đặt cookie `commerio_refresh` mới, ' +
+      'gọi `refresh` bằng cookie đó để lấy token không còn cờ bắt đổi mật khẩu. Lỗi quá 5 lần trong 15 phút thì 429.',
     security: bearer,
     request: { body: json(ChangePasswordBody) },
     responses: {
-      204: { description: 'Đã đổi mật khẩu' },
+      204: { description: 'Đã đổi mật khẩu, đặt cookie refresh mới' },
       401: problemResponse('`unauthorized`'),
       422: problemResponse('`validation_failed`: `errors.currentPassword` hoặc `errors.newPassword`'),
+      429: problemResponse('`too_many_requests`: lỗi quá 5 lần trong 15 phút với tài khoản này'),
     },
   });
 }
