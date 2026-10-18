@@ -1,6 +1,6 @@
 # test/
 
-Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vitest chỉ quét `test/**/*.test.ts`. File đặt sai chỗ hoặc sai tên thì **bị bỏ qua mà không báo lỗi**.
+Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vitest chỉ quét `test/**/*.test.ts`. Có hai project: `unit` (`unit/`, `api/`) và `integration`; chạy riêng bằng `npx vitest run --project unit`. File đặt sai chỗ hoặc sai tên thì **bị bỏ qua mà không báo lỗi**.
 
 ## Đặt file ở đâu
 
@@ -8,7 +8,7 @@ Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vite
 |---|---|---|
 | `unit/` | Một hàm, một lớp, không I/O thật | Không DB, không mạng |
 | `api/` | Gọi HTTP vào `createApp()` bằng Supertest, không mở cổng thật | Không DB |
-| `integration/` (chưa có) | Repository, transaction, migration trên PostgreSQL thật | Testcontainers, cần Docker (máy CI của GitHub có sẵn) |
+| `integration/` | Repository, transaction, migration, RLS trên PostgreSQL thật | Docker đang chạy. `global-setup.ts` dựng một container `pgvector/pgvector:pg18` cho cả lượt, chạy mọi migration trong `db/migrations`; `setup.ts` đặt `DATABASE_URL` trước khi file test import code. Dữ liệu dùng chung giữa các file: mỗi test tự tạo công ty, email riêng (vd `randomUUID()`), không giả định bảng trống |
 
 `unit/` đi theo đúng cấu trúc của `src/`: test của `src/shared/http/validate.ts` là `test/unit/shared/http/validate.test.ts`; test của `src/modules/inventory/domain/stock.ts` là `test/unit/modules/inventory/domain/stock.test.ts`.
 
