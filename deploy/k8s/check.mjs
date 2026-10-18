@@ -1,10 +1,12 @@
 // Kiểm tĩnh bản build của một overlay, những điều kubeconform không bắt được (#36).
 // Đầu vào: mảng JSON các object, từ  kubectl kustomize deploy/k8s/overlays/<nơi> | yq ea -o=json -I=0 '[.]'
 // Thoát mã 1 và in từng lỗi nếu có.
-import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
-const docs = JSON.parse(readFileSync(0, 'utf8'));
+// Đọc stdin bất đồng bộ: readFileSync(0) ném EAGAIN khi stdin là pipe non-blocking (runner Linux của CI).
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+const docs = JSON.parse(input);
 const errors = [];
 const NS = 'commerio';
 const APPS = ['api', 'worker', 'realtime'];
