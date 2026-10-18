@@ -5,7 +5,7 @@ Mỗi file là lệnh khởi động một tiến trình. Cả ba dùng chung m�
 | File | Cổng (env) | Hiện có | Sẽ thêm |
 |---|---|---|---|
 | `api.ts` | `API_PORT` 3000, `API_OPS_PORT` 9464 | App từ `app.ts` (`/health`, router module) trên cổng public; `/metrics` trên cổng vận hành riêng | Route nghiệp vụ theo từng module |
-| `worker.ts` | `WORKER_PORT` 3001 | Cổng vận hành (`/health`, `/metrics`) | Đọc outbox đẩy lên Kafka; consumer đẩy tồn lên sàn, gửi email, dựng bảng cho `report` |
+| `worker.ts` | `WORKER_PORT` 3001 | Cổng vận hành (`/health`, `/metrics`); gọi `startBackground(ctx)` của mọi module có khai | Relay outbox (#38), consumer, tra cứu định kỳ: viết trong module, không sửa file này |
 | `realtime.ts` | `REALTIME_PORT` 3002 | Cổng vận hành | Kênh SSE; mỗi bản sao một consumer group Kafka để bản nào cũng nhận đủ sự kiện |
 
 Quy tắc:

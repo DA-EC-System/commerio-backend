@@ -43,6 +43,20 @@ describe('khung api', () => {
     expect(res.headers['content-type']).toContain('text/html');
   });
 
+  it('tin proxy đúng số tầng TRUST_PROXY_HOPS, mặc định 0', () => {
+    expect(app.get('trust proxy')).toBe(0);
+  });
+
+  it('module đã gắn router rỗng vẫn trả 404 Problem Details cho đường dẫn chưa có (AC-12)', async () => {
+    const mounted = modules.filter((m) => m.router).map((m) => m.name);
+    expect(mounted).toEqual(expect.arrayContaining(['catalog', 'pricing', 'inventory', 'sales', 'payment', 'finance', 'platform', 'staff', 'files']));
+    for (const name of mounted) {
+      const res = await request(app).get(`/api/v1/${name}/khong-ton-tai`);
+      expect(res.status, name).toBe(404);
+      expect(res.body.code).toBe('not_found');
+    }
+  });
+
   it('đủ 19 module, tên không trùng', () => {
     const names = modules.map((m) => m.name);
     expect(names).toHaveLength(19);

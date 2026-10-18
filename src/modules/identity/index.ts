@@ -6,6 +6,8 @@ import { identityRouter } from './api/routes.ts';
 
 export const identityModule: ModuleDefinition = {
   name: 'identity',
-  router: identityRouter(),
+  router: identityRouter,
   openapi: registerIdentityOpenApi,
 };
+
+export { loadCompanyAccess } from './service/auth-service.ts';

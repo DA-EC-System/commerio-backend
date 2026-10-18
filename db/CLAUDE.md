@@ -8,6 +8,9 @@ Migration của PostgreSQL. Một database, mỗi module một schema cùng tên
 - `0002_seed-quyen.sql` danh mục quyền và bốn vai trò có sẵn (`Documents/21` mục 8), cùng nguồn với `src/modules/access/domain/catalog.ts`. Đổi danh mục thì thêm migration seed mới và sửa file đó; test integration so DB với file đó.
 - Thứ Drizzle không sinh được (Row-Level Security policy, `CREATE EXTENSION vector`, trigger): `npx drizzle-kit generate --custom --name <mo-ta>` tạo file SQL trống rồi viết tay.
 - `0003_rls.sql` role `commerio_app`, quyền trên bảng, chính sách RLS.
+- `0004_outbox.sql` bảng `platform.outbox_messages`, `platform.processed_events`; `0005_outbox-rls-ten-vai-tro.sql` RLS và quyền chỉ-INSERT của outbox, unique tên vai trò theo chữ thường (`roles_company_lower_name_uq`).
+- Index **biểu thức** cần `NULLS NOT DISTINCT` (vd `(company_id, lower(name))` với vai trò có sẵn `company_id` trống) Drizzle không sinh được: viết trong migration `--custom`, không khai trong `schema.ts` để `db:generate` sau này không đòi xoá; ghi chú trong `schema.ts` trỏ tới migration đó.
+- Staging là PostgreSQL 17 trên Supabase, chạy migration bằng user không phải superuser. Không dùng tính năng chỉ có ở PG18 (`uuidv7()`, cột ảo). Test integration đã chạy migration bằng role `NOSUPERUSER CREATEROLE` cho giống; thử trên PG17: `TEST_PG_IMAGE=pgvector/pgvector:pg17 npx vitest run --project integration`.
 
 ## Row-Level Security
 
@@ -18,6 +21,10 @@ Bảng thuộc công ty có `company_id` và chính sách `company_isolation`: c
 - Bảng mới tạo bằng migration tự cấp quyền cho `commerio_app` (`ALTER DEFAULT PRIVILEGES`), nhưng **phải tự viết** `ENABLE ROW LEVEL SECURITY` và policy trong một migration `--custom`.
 - Bảng chung không có RLS: `platform.companies`, `staff.accounts`, `access.permissions`, `identity.refresh_tokens` (chỉ luồng xác thực đọc). Vai trò có sẵn (`company_id` trống) công ty nào cũng đọc được nhưng không sửa được.
 
-Khi hai người cùng sinh migration trên hai nhánh, số thứ tự trùng nhau. Người merge sau xoá migration của mình, rebase lên `develop` rồi sinh lại.
+- `test/integration/shared/rls-coverage.test.ts` quét mọi bảng: bảng có `company_id` thiếu RLS/policy, hay quyền của `commerio_app` khác mong đợi, là đỏ. Bảng cố ý khác thì thêm vào `RLS_EXCEPTIONS`/`EXPECTED_PRIVILEGES` trong file đó kèm lý do.
 
-Seed dữ liệu demo (dữ liệu giả, không dùng thông tin khách hàng thật) sẽ đặt ở `db/seed/`.
+## Hai nhánh cùng sinh migration: người merge sau **bắt buộc** sinh lại
+
+`drizzle-kit migrate` chạy mọi migration đang chờ trong **một** giao dịch, và chỉ chạy migration có `when` (trong `meta/_journal.json`) **lớn hơn** migration cuối đã chạy trên DB đó. Migration sinh trên nhánh khác trước nhưng merge sau sẽ bị **bỏ qua im lặng** trên DB đã có dữ liệu (staging), trong khi test (DB trống) vẫn xanh. Vì vậy người merge sau xoá migration của mình (file `.sql`, snapshot, dòng journal), rebase lên `develop` rồi sinh lại. `test/unit/db/journal.test.ts` đỏ nếu `when` không tăng theo `idx`.
+
+Seed dữ liệu demo (dữ liệu giả, không dùng thông tin khách hàng thật) đặt ở `db/seed/`, chạy bằng `npm run db:seed` (`db/seed/index.ts`, #37).

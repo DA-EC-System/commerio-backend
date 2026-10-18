@@ -1,13 +1,26 @@
 // API công khai của module `platform`: công ty, phân hệ đang bật, trạng thái khoá công ty.
 // Module khác chỉ được import từ file này.
 import type { ModuleDefinition } from '../../shared/module.ts';
+import { registerPlatformOpenApi } from './api/openapi.ts';
+import { platformRouter } from './api/routes.ts';
 import { CORE_MODULES, type ModuleCode, OPTIONAL_MODULES, type OptionalModule } from './domain/modules.ts';
 import { type CompanyRow, enabledModuleCodes, findCompanies, insertCompany, insertModules } from './repository/companies.ts';
+import { startOutboxBackground } from './service/outbox/public.ts';
 
-export const platformModule: ModuleDefinition = { name: 'platform' };
+export const platformModule: ModuleDefinition = {
+  name: 'platform',
+  router: platformRouter,
+  openapi: registerPlatformOpenApi,
+  startBackground: startOutboxBackground,
+};
 
 export { CORE_MODULES, OPTIONAL_MODULES };
 export type { CompanyRow, ModuleCode, OptionalModule };
+
+// Sự kiện giữa module (Documents/21 D4–D7). Thân của publishEvent, registerConsumer do #38 viết.
+export type { EventEnvelope } from '../../shared/events/envelope.ts';
+export { EVENT_SCHEMAS, EVENT_TYPES, type EventPayload, type EventType } from './domain/events.ts';
+export { publishEvent, registerConsumer } from './service/outbox/public.ts';
 
 /**
  * Tạo công ty mới và bật mười phân hệ lõi cùng các phân hệ tuỳ chọn đã chọn (UC-PI-01 bước 6, 7).

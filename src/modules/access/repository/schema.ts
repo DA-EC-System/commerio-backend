@@ -14,7 +14,10 @@ export const permissions = accessSchema.table('permissions', {
   description: text('description').notNull(),
 });
 
-/** Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty. */
+/**
+ * Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
+ * Tên không trùng theo chữ thường: index `roles_company_lower_name_uq` viết tay ở migration 0005 (Drizzle không sinh được).
+ */
 export const roles = accessSchema.table(
   'roles',
   {

@@ -26,7 +26,12 @@ describe('authenticate', () => {
     const token = await signAccessToken({ ...claims, companyId: 'c1', permissions: ['catalog.product.view'] });
     const res = await request(buildApp()).get('/private').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ...claims, companyId: 'c1', permissions: ['catalog.product.view'] });
+    expect(res.body).toEqual({
+      ...claims,
+      companyId: 'c1',
+      permissions: ['catalog.product.view'],
+      expiresAt: expect.any(Number),
+    });
   });
 
   it('thiếu header hoặc không phải Bearer thì 401 unauthorized', async () => {

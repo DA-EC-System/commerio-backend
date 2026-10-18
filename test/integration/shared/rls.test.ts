@@ -1,27 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
+import { testPool } from '../helpers/db.ts';
+import { asCompany } from '../helpers/rls.ts';
 
-const pool = new pg.Pool({ connectionString: inject('databaseUrl') });
-afterAll(() => pool.end());
+const pool = testPool();
 
 const companyA = randomUUID();
 const companyB = randomUUID();
-
-/** Chạy `fn` như một request trong công ty: role commerio_app và app.company_id, rồi rollback. */
-async function asCompany<T>(companyId: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    await client.query('set local role commerio_app');
-    await client.query("select set_config('app.company_id', $1, true)", [companyId]);
-    return await fn(client);
-  } finally {
-    await client.query('rollback');
-    client.release();
-  }
-}
 
 beforeAll(async () => {
   // Role đăng nhập là chủ bảng nên bỏ qua RLS: dùng để dựng dữ liệu hai công ty.

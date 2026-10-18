@@ -18,6 +18,19 @@ const EnvSchema = z.object({
   JWT_PUBLIC_KEY: z.string().min(1).optional(),
   // Số lần gọi đăng nhập, đăng ký mỗi 15 phút cho một IP.
   AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
+  // Số tầng proxy đứng trước api (Caddy, Ingress) để req.ip là IP thật của khách; máy dev chạy thẳng thì 0.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+  KAFKA_BROKERS: z.string().min(1).default('localhost:9092'),
+  KAFKA_CLIENT_ID: z.string().min(1).default('commerio'),
+  // Topic là <tiền tố>.<module>; mỗi worktree chạy song song đặt tiền tố riêng để không tiêu sự kiện của nhau.
+  KAFKA_TOPIC_PREFIX: z.string().min(1).default('commerio'),
+  // Khoá mã hoá khoá cổng thanh toán lưu trong DB: 32 byte, base64.
+  PAYMENT_CREDENTIALS_KEY: z
+    .string()
+    .refine((s) => Buffer.from(s, 'base64').length === 32, 'Cần 32 byte dạng base64')
+    .optional(),
+  // URL công khai của api, dùng làm địa chỉ IPN và trang quay về cho cổng thanh toán.
+  PUBLIC_API_URL: z.url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

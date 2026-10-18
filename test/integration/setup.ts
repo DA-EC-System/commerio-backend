@@ -5,5 +5,6 @@ process.env.DATABASE_URL = inject('databaseUrl');
 
 afterAll(async () => {
   const { closeDb } = await import('#src/shared/db/client.ts');
-  await closeDb();
+  const { closeTestPool } = await import('./helpers/db.ts');
+  await Promise.all([closeDb(), closeTestPool()]);
 });

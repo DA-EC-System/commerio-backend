@@ -1,46 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import pg from 'pg';
 import request from 'supertest';
-import { afterAll, describe, expect, inject, it } from 'vitest';
-import { createApp } from '#src/app.ts';
+import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
 import { CORE_MODULES } from '#src/modules/platform/domain/modules.ts';
+import { registerBody, registerCompany, uniqueEmail } from '../helpers/company.ts';
+import { testPool } from '../helpers/db.ts';
+import { login, PASSWORD, refreshCookie, testApp } from '../helpers/http.ts';
 
-const app = createApp();
-const db = new pg.Pool({ connectionString: inject('databaseUrl') });
-afterAll(() => db.end());
-
-const PASSWORD = 'MatKhau123';
-const uniqueEmail = () => `ceo-${randomUUID()}@test.vn`;
-
-function registerBody(email: string, overrides: Record<string, unknown> = {}) {
-  return {
-    company: { name: 'Công ty Thử Nghiệm', taxCode: '0312345678' },
-    ceo: { fullName: 'Nguyễn Văn Thử', email, password: PASSWORD },
-    optionalModules: ['purchasing', 'report'],
-    assistantDataConsent: false,
-    ...overrides,
-  };
-}
-
-async function registerCompany(email = uniqueEmail(), overrides: Record<string, unknown> = {}) {
-  const res = await request(app).post('/api/v1/identity/register').send(registerBody(email, overrides));
-  expect(res.status).toBe(201);
-  return { email, companyId: res.body.companyId as string };
-}
-
-function refreshCookie(res: request.Response): string {
-  const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
-  const cookie = cookies.find((c) => c.startsWith('commerio_refresh='));
-  if (!cookie) throw new Error('Không có cookie refresh');
-  return cookie.split(';')[0]!;
-}
-
-async function login(email: string, password = PASSWORD) {
-  const res = await request(app).post('/api/v1/identity/login').send({ email, password });
-  expect(res.status).toBe(200);
-  return { token: res.body.accessToken as string, cookie: refreshCookie(res), body: res.body };
-}
+const app = testApp();
+const db = testPool();
 
 const accountId = async (email: string) =>
   (await db.query<{ id: string }>('select id from staff.accounts where email = $1', [email])).rows[0]?.id;

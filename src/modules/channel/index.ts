@@ -1,5 +1,11 @@
 // API công khai của module `channel`: gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn. Không đổi tồn.
 // Module khác chỉ được import từ file này.
 import type { ModuleDefinition } from '../../shared/module.ts';
+import { registerChannelOpenApi } from './api/openapi.ts';
+import { channelRouter } from './api/routes.ts';
 
-export const channelModule: ModuleDefinition = { name: 'channel' };
+export const channelModule: ModuleDefinition = {
+  name: 'channel',
+  router: channelRouter,
+  openapi: registerChannelOpenApi,
+};

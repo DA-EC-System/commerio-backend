@@ -1,10 +1,15 @@
 // API công khai của module `access`: vai trò có sẵn và tuỳ biến, quyền chi tiết.
 // Module khác chỉ được import từ file này.
 import type { ModuleDefinition } from '../../shared/module.ts';
+import { registerAccessOpenApi } from './api/openapi.ts';
+import { accessRouter } from './api/routes.ts';
 import { BUILTIN_ROLES, permissionModule } from './domain/catalog.ts';
 import { insertMemberRole, rolePermissionRows } from './repository/roles.ts';
 
 export const accessModule: ModuleDefinition = { name: 'access' };
+
+// Không gắn tại /api/v1/access: identity gắn router này dưới /api/v1/identity (/identity/roles, /identity/permissions).
+export { accessRouter, registerAccessOpenApi };
 
 export { BUILTIN_ROLES, permissionModule };
 export const assignRole = insertMemberRole;

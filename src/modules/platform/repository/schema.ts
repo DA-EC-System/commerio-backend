@@ -1,4 +1,5 @@
-import { boolean, pgSchema, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { bigint, boolean, index, jsonb, pgSchema, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { timestamps, version } from '../../../shared/db/columns.ts';
 
 // Mọi bảng của module `platform` khai báo trong schema này.
@@ -52,4 +53,36 @@ export const companyModules = platformSchema.table(
     ...version,
   },
   (t) => [primaryKey({ columns: [t.companyId, t.moduleCode] })],
+);
+
+/**
+ * Outbox (Documents/21 D4, D5): sự kiện ghi cùng giao dịch nghiệp vụ, relay của worker đẩy lên Kafka.
+ * `company_id` trống với sự kiện cấp nền tảng. Role ứng dụng chỉ được INSERT (0005), nên `event_id`
+ * sinh ở ứng dụng, không dùng RETURNING; relay đọc bằng role chủ bảng.
+ */
+export const outboxMessages = platformSchema.table(
+  'outbox_messages',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    eventId: uuid('event_id').notNull().unique(),
+    companyId: uuid('company_id'),
+    type: text('type').notNull(),
+    topic: text('topic').notNull(),
+    key: text('key').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+  },
+  (t) => [index('outbox_messages_unpublished_idx').on(t.id).where(sql`${t.publishedAt} is null`)],
+);
+
+/** Sự kiện consumer đã xử lý, chống xử lý trùng (D7). Không thuộc công ty nên không có RLS. */
+export const processedEvents = platformSchema.table(
+  'processed_events',
+  {
+    consumer: text('consumer').notNull(),
+    eventId: uuid('event_id').notNull(),
+    processedAt: timestamp('processed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.consumer, t.eventId] })],
 );

@@ -29,6 +29,20 @@
       "when": 1792156158360,
       "tag": "0003_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792291512890,
+      "tag": "0004_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792291516379,
+      "tag": "0005_outbox-rls-ten-vai-tro",
+      "breakpoints": true
     }
   ]
 }
