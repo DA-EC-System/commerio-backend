@@ -3,11 +3,14 @@
 import type { ModuleDefinition } from '../../shared/module.ts';
 import { registerPaymentOpenApi } from './api/openapi.ts';
 import { paymentRouter } from './api/routes.ts';
+import { startPaymentBackground } from './service/overdue-query.ts';
 
 export const paymentModule: ModuleDefinition = {
   name: 'payment',
   router: paymentRouter,
   openapi: registerPaymentOpenApi,
+  // Tra cứu quá hạn mỗi 60 giây trong worker (§12.4, #27 A8).
+  startBackground: startPaymentBackground,
 };
 
 export {
@@ -28,6 +31,7 @@ export { markCodCollected, markPaid, markRefunded, revertPaid, revertRefunded } 
 export {
   type PaymentContext,
   recordGatewayTransaction,
+  type TransactionRefsLookup,
   type VerifiedGatewayPayment,
   type VerifiedPaymentHandler,
   verifiedPaymentHandlerOf,

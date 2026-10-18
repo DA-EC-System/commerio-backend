@@ -43,10 +43,14 @@ export async function loadGatewayCredentials(gateway: Gateway): Promise<Credenti
   return row?.credentialsEnc ? decryptCredentials(row.credentialsEnc, aadOf(row.companyId, gateway)) : undefined;
 }
 
-function webhookUrlOf(receiverKey: string | null): string | null {
-  if (!receiverKey || !env.PUBLIC_API_URL) return null;
-  return `${env.PUBLIC_API_URL.replace(/\/+$/, '')}/api/v1/payment/webhooks/sepay/${receiverKey}`;
-}
+/** `<PUBLIC_API_URL>/api/v1/payment/webhooks/<path>`; chưa đặt `PUBLIC_API_URL` thì `null`. */
+const webhookUrl = (path: string) =>
+  env.PUBLIC_API_URL ? `${env.PUBLIC_API_URL.replace(/\/+$/, '')}/api/v1/payment/webhooks/${path}` : null;
+
+const webhookUrlOf = (receiverKey: string | null) => (receiverKey ? webhookUrl(`sepay/${receiverKey}`) : null);
+
+/** VNPay khai IPN theo merchant, không theo request (#27 A13): một URL chung, mã thanh toán toàn hệ thống tìm ra công ty. */
+const vnpayIpnUrl = () => webhookUrl('vnpay');
 
 type AccountName = (id: string) => Promise<UserRef | null>;
 
@@ -83,7 +87,7 @@ async function toView(
             accountName: credentials.accountName!,
           }
         : null,
-    webhookUrl: gateway === 'vietqr' ? webhookUrlOf(row.webhookReceiverKey) : null,
+    webhookUrl: gateway === 'vietqr' ? webhookUrlOf(row.webhookReceiverKey) : gateway === 'vnpay' ? vnpayIpnUrl() : null,
   };
 }
 
