@@ -1,5 +1,5 @@
 import { type CookieOptions, type Request, type Response, Router } from 'express';
-import { rateLimit } from 'express-rate-limit';
+import { type Options, rateLimit } from 'express-rate-limit';
 import type { z } from 'zod';
 import { authenticate, getAuth } from '../../../shared/auth/authenticate.ts';
 import { env } from '../../../shared/config/env.ts';
@@ -8,6 +8,7 @@ import { validate } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
 import { accessRouter } from '../../access/index.ts';
 import * as auth from '../service/auth-service.ts';
+import { loadCompanyAccess } from '../service/auth-service.ts';
 import { ChangePasswordBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
 
 /** Refresh token nằm trong cookie HttpOnly, chỉ gửi kèm các đường dẫn /identity (Documents/21 A1). */
@@ -31,7 +32,7 @@ function readRefreshCookie(req: Request): string | undefined {
 const body = <T extends z.ZodType>(res: Response) => (res.locals.validated as { body: z.output<T> }).body;
 
 // Chặn dò mật khẩu và đăng ký hàng loạt: đếm theo IP trong 15 phút.
-const authLimiter = () =>
+const authLimiter = (options: Partial<Options> = {}) =>
   rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: env.AUTH_RATE_LIMIT,
@@ -40,7 +41,11 @@ const authLimiter = () =>
     handler: (_req, _res, next) => {
       next(new AppError(429, 'too_many_requests', 'Thử quá nhiều lần, hãy đợi 15 phút rồi thử lại'));
     },
+    ...options,
   });
+
+/** Số lần đổi mật khẩu lỗi tối đa mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). */
+const CHANGE_PASSWORD_LIMIT = 5;
 
 export function identityRouter(ctx: ModuleContext): Router {
   const router = Router();
@@ -85,15 +90,23 @@ export function identityRouter(ctx: ModuleContext): Router {
     '/change-password',
     authenticate({ allowPasswordChange: true }),
     validate({ body: ChangePasswordBody }),
-    async (_req, res) => {
-      await auth.changePassword(getAuth(res).accountId, body<typeof ChangePasswordBody>(res));
+    // Sau validate: body sai định dạng không bị đếm; chỉ đếm lần lỗi, theo tài khoản.
+    authLimiter({
+      limit: CHANGE_PASSWORD_LIMIT,
+      skipSuccessfulRequests: true,
+      keyGenerator: (_req, res) => getAuth(res).accountId,
+    }),
+    async (req, res) => {
+      const accountId = getAuth(res).accountId;
+      setRefreshCookie(res, await auth.changePassword(accountId, body<typeof ChangePasswordBody>(res), readRefreshCookie(req)));
       res.status(204).end();
     },
   );
 
   // Vai trò và quyền (/identity/roles, /identity/permissions) do module access phục vụ. Gắn sau route của
-  // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh.
-  router.use(accessRouter(ctx));
+  // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh. Access cần
+  // quyền thô hiện tại của người gọi (Documents/21 D1) nên nhận thêm loader của identity.
+  router.use(accessRouter({ ...ctx, loadCompanyAccess }));
 
   return router;
 }
