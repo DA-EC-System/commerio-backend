@@ -1,8 +1,8 @@
-// Hàm nguồn cho báo cáo (#29, plan chuẩn bị 4.5): chỉ #29 viết thân ở file này, không sửa inventory/index.ts.
-import type { Decimal } from 'decimal.js';
-import { notImplemented } from '../../../shared/errors/app-error.ts';
+// Hàm nguồn cho báo cáo (#29). Gọi trong `withCompany` của bên gọi.
+import { Decimal } from 'decimal.js';
+import { cogsByOrder } from '../repository/daily-totals.ts';
 
-/** Giá vốn hàng đã xuất của từng đơn (tổng `quantity × unit_cost` các phiếu xuất đã ghi sổ). */
-export async function getOrderCogs(_orderIds: readonly string[]): Promise<Map<string, Decimal>> {
-  throw notImplemented('getOrderCogs', '#29');
+/** Giá vốn hàng đã xuất của từng đơn (tổng `quantity × unit_cost` các phiếu xuất đã ghi sổ); đơn chưa xuất vắng mặt. */
+export async function getOrderCogs(orderIds: readonly string[]): Promise<Map<string, Decimal>> {
+  return new Map((await cogsByOrder(orderIds)).map((r) => [r.orderId, new Decimal(r.cogs)]));
 }
