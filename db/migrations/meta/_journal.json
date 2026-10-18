@@ -85,6 +85,27 @@
       "when": 1792306818623,
       "tag": "0011_vai-tro-co-san-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792307776292,
+      "tag": "0012_vector",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792307777810,
+      "tag": "0013_phan-he-tuy-chon-doi-soat",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792307779978,
+      "tag": "0014_phan-he-tuy-chon-doi-soat-rls",
+      "breakpoints": true
     }
   ]
 }

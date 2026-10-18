@@ -23,6 +23,8 @@ export async function setup(project: TestProject): Promise<void> {
   await admin.connect();
   await admin.query(`create role ${MIGRATOR} login password '${MIGRATOR}' nosuperuser createrole`);
   await admin.query(`grant create on database "${container.getDatabase()}" to ${MIGRATOR}`);
+  // pgvector cần superuser (xem migration 0012).
+  await admin.query('create extension if not exists vector');
   await admin.end();
 
   const url = new URL(container.getConnectionUri());

@@ -28,8 +28,21 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   fulfillment: ['order_status_history', 'pick_batch_orders', 'pick_batches'],
   channel: ['channel_listings', 'raw_orders', 'shops', 'webhook_events'],
   payment: ['gateway_configs', 'order_payments', 'payment_links', 'payment_transactions', 'webhook_events'],
-  finance: ['doc_counters', 'payment_vouchers', 'receipts', 'sales_invoice_lines', 'sales_invoices', 'unmatched_receipts'],
+  finance: [
+    'doc_counters',
+    'payment_vouchers',
+    'receipts',
+    'sales_invoice_lines',
+    'sales_invoices',
+    'settlement_lines',
+    'settlement_statements',
+    'supplier_invoices',
+    'unmatched_receipts',
+  ],
   report: ['daily_channel_summary'],
+  purchasing: ['purchase_order_lines', 'purchase_orders', 'suppliers'],
+  inbox: ['conversation_notes', 'conversation_tags', 'conversations', 'message_channels', 'messages', 'tags'],
+  assistant: ['document_chunks', 'document_roles', 'documents'],
 };
 
 // Hình dạng schema sau khi chạy đủ migration trên DB trống (AC-7).
