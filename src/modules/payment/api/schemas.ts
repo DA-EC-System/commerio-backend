@@ -99,3 +99,56 @@ export const OrderPayment = z
     ),
   })
   .meta({ id: 'OrderPayment' });
+
+// — Giao dịch cổng (#27, §12.3 hai dòng cuối, §12.8 PaymentTransaction)
+
+/** Ngày `yyyy-mm-dd` → đầu ngày (hoặc đầu ngày hôm sau, cho `to`) theo giờ Việt Nam (C6). */
+const dayVn = (label: string, nextDay = false) =>
+  z.iso
+    .date(`${label} dạng yyyy-mm-dd`)
+    .transform((d) => new Date(Date.parse(`${d}T00:00:00+07:00`) + (nextDay ? 86_400_000 : 0)))
+    .optional()
+    .meta({ description: 'Trọn ngày theo giờ Việt Nam (C6)' });
+
+export const TransactionListQuery = z.object({
+  page: z.coerce.number('Trang là số nguyên từ 1').int('Trang là số nguyên từ 1').min(1, 'Trang là số nguyên từ 1').default(1),
+  pageSize: z.coerce
+    .number('Cỡ trang từ 1 đến 100')
+    .int('Cỡ trang từ 1 đến 100')
+    .min(1, 'Cỡ trang từ 1 đến 100')
+    .max(100, 'Cỡ trang từ 1 đến 100')
+    .default(20),
+  gateway: z.enum(GATEWAYS, 'Cổng là vnpay, momo, zalopay hoặc vietqr').optional(),
+  status: z.enum(['pending', 'succeeded', 'failed', 'needs_review'], 'Trạng thái không hợp lệ').optional(),
+  from: dayVn('Từ ngày'),
+  to: dayVn('Đến ngày', true),
+  search: z.string().trim().max(100, 'Từ khoá tối đa 100 ký tự').optional(),
+});
+
+export const TransactionParams = z.object({ id: z.string() });
+
+const DocRef = z.object({ id: z.uuid(), number: z.string() });
+
+export const PaymentTransaction = z
+  .object({
+    id: z.uuid(),
+    gateway: GatewaySchema,
+    gatewayTxnId: z.string(),
+    paymentCode: z.string().nullable(),
+    order: z.object({ id: z.uuid(), code: z.string(), customerName: z.string().nullable() }).nullable(),
+    amount: z.number().int(),
+    source: z.enum(['webhook', 'query', 'sepay']),
+    status: z.enum(['pending', 'succeeded', 'failed', 'needs_review']),
+    occurredAt: z.string(),
+    receipt: DocRef.nullable(),
+    unmatchedReceiptId: z.uuid().nullable(),
+  })
+  .meta({ id: 'PaymentTransaction' });
+
+export const PaymentTransactionDetail = PaymentTransaction.extend({
+  rawPayload: z.unknown().meta({ description: 'Payload của cổng, đã bỏ trường chữ ký' }),
+}).meta({ id: 'PaymentTransactionDetail' });
+
+export const TransactionPage = z
+  .object({ items: z.array(PaymentTransaction), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() })
+  .meta({ id: 'PaymentTransactionPage' });

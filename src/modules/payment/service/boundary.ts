@@ -31,14 +31,14 @@ export interface OrderPaymentState {
   paidAt: Date | null;
 }
 
-interface PaidOrder {
+export interface PaidOrder {
   id: string;
   method: PaymentMethod;
   total: Decimal;
 }
 
 /** Trạng thái từ dòng `order_payments`; đơn chưa xác nhận (chưa có dòng) suy từ phương thức (A8). */
-function stateOf(order: PaidOrder, row: OrderPaymentRow | undefined): OrderPaymentState {
+export function stateOf(order: PaidOrder, row: OrderPaymentRow | undefined): OrderPaymentState {
   return {
     orderId: order.id,
     method: order.method,
@@ -50,7 +50,7 @@ function stateOf(order: PaidOrder, row: OrderPaymentRow | undefined): OrderPayme
 }
 
 /** Đơn có trạng thái tiền: đơn sàn (không có phương thức), đơn công ty khác, id lạ → 404. */
-async function orderWithPayment(orderId: string): Promise<PaidOrder> {
+export async function orderWithPayment(orderId: string): Promise<PaidOrder> {
   requireCompany('mark*');
   const order = await getOrderForPayment(orderId);
   if (!order?.paymentMethod) throw new AppError(404, 'not_found', 'Không tìm thấy đơn hàng có trạng thái thanh toán');
@@ -58,7 +58,7 @@ async function orderWithPayment(orderId: string): Promise<PaidOrder> {
 }
 
 /** Ngoài `withCompany` là role chủ bảng (RLS không có hiệu lực): đọc/ghi được đơn mọi công ty theo id. */
-function requireCompany(fn: string): string {
+export function requireCompany(fn: string): string {
   const companyId = currentCompanyId();
   if (!companyId) throw new Error(`${fn} phải gọi trong withCompany của bên gọi`);
   return companyId;

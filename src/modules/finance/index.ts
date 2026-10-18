@@ -14,3 +14,5 @@ export { issueInvoiceForOrder, recordCodCollected } from './service/boundary.ts'
 export { getDailyFinanceTotals } from './service/daily-totals.ts';
 // Tiêm vào payment qua ctx.onVerifiedPayment ở src/wiring.ts (A11): finance → payment một chiều.
 export { handleVerifiedPayment } from './service/verified-payment.ts';
+// Tiêm vào payment qua ctx.financeRefsOf (#27 A21): phiếu thu của giao dịch cổng.
+export { getTransactionRefs } from './service/transaction-refs.ts';

@@ -7,7 +7,15 @@ import { VietqrGateway } from './vietqr.ts';
 import { VnpayGateway } from './vnpay.ts';
 import { ZalopayGateway } from './zalopay.ts';
 
-export type { CreatedPayment, PaymentGateway, PaymentInput } from './common.ts';
+export type {
+  CallbackInput,
+  CallbackOutcome,
+  CreatedPayment,
+  GatewayResult,
+  PaymentGateway,
+  PaymentInput,
+  QueryTarget,
+} from './common.ts';
 
 const gateways: Record<Gateway, PaymentGateway> = {
   vnpay: VnpayGateway,
