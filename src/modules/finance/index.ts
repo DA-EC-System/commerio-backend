@@ -9,3 +9,8 @@ export const financeModule: ModuleDefinition = {
   router: financeRouter,
   openapi: registerFinanceOpenApi,
 };
+
+export { issueInvoiceForOrder, recordCodCollected } from './service/boundary.ts';
+export { getDailyFinanceTotals } from './service/daily-totals.ts';
+// Tiêm vào payment qua ctx.onVerifiedPayment ở src/wiring.ts (A11): finance → payment một chiều.
+export { handleVerifiedPayment } from './service/verified-payment.ts';

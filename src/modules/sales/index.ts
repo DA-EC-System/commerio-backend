@@ -9,3 +9,12 @@ export const salesModule: ModuleDefinition = {
   router: salesRouter,
   openapi: registerSalesOpenApi,
 };
+
+export {
+  getOrderForPayment,
+  type OrderForPayment,
+  type OrderSource,
+  type OrderStatus,
+  type PaymentMethod,
+} from './service/payment-boundary.ts';
+export { getOrderChannels } from './service/daily-totals.ts';

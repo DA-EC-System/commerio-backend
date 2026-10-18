@@ -19,6 +19,8 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'platform.processed_events': ['SELECT', 'INSERT'],
   // Thẻ kho chỉ thêm, sai thì lập phiếu ngược (Documents/21 K10).
   'inventory.stock_moves': ['SELECT', 'INSERT'],
+  // Lịch sử chuyển trạng thái đơn chỉ thêm.
+  'fulfillment.order_status_history': ['SELECT', 'INSERT'],
 };
 
 interface TableInfo {

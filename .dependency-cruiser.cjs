@@ -100,6 +100,8 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
+    // Tính cả `import type`: khung export chỉ chia kiểu vẫn phải đi đúng chiều lớp.
+    tsPreCompilationDeps: true,
     tsConfig: { fileName: 'tsconfig.json' },
     enhancedResolveOptions: { extensions: ['.ts', '.js'] },
   },
