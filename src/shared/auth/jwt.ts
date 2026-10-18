@@ -17,6 +17,8 @@ export interface AccessClaims {
   readonly permissions: readonly string[];
   /** Còn mật khẩu trong thư mời: chỉ được gọi vài API (Documents/21 V10). */
   readonly mustChangePassword: boolean;
+  /** Hết hạn lúc nào (giây epoch, `exp` của token): kênh SSE đóng đúng lúc này (Documents/21 D11). */
+  readonly expiresAt: number;
 }
 
 let keys: Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> | undefined;
@@ -37,7 +39,7 @@ function loadKeys() {
   return keys;
 }
 
-export async function signAccessToken(claims: AccessClaims): Promise<string> {
+export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): Promise<string> {
   const { privateKey } = await loadKeys();
   return new SignJWT({
     cid: claims.companyId,
@@ -62,6 +64,7 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
       companyId: typeof payload.cid === 'string' ? payload.cid : null,
       permissions: Array.isArray(payload.perms) ? payload.perms.map(String) : [],
       mustChangePassword: payload.pwc === true,
+      expiresAt: Number(payload.exp),
     };
   } catch {
     throw new AppError(401, 'unauthorized', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');

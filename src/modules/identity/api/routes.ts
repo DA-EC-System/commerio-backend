@@ -5,6 +5,8 @@ import { authenticate, getAuth } from '../../../shared/auth/authenticate.ts';
 import { env } from '../../../shared/config/env.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { validate } from '../../../shared/http/validate.ts';
+import type { ModuleContext } from '../../../shared/module.ts';
+import { accessRouter } from '../../access/index.ts';
 import * as auth from '../service/auth-service.ts';
 import { ChangePasswordBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
 
@@ -40,7 +42,7 @@ const authLimiter = () =>
     },
   });
 
-export function identityRouter(): Router {
+export function identityRouter(ctx: ModuleContext): Router {
   const router = Router();
 
   router.post('/register', authLimiter(), validate({ body: RegisterBody }), async (_req, res) => {
@@ -88,6 +90,10 @@ export function identityRouter(): Router {
       res.status(204).end();
     },
   );
+
+  // Vai trò và quyền (/identity/roles, /identity/permissions) do module access phục vụ. Gắn sau route của
+  // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh.
+  router.use(accessRouter(ctx));
 
   return router;
 }

@@ -37,14 +37,50 @@ Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới k
 | `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
 | `notification` | Không có bảng | Đẩy thông báo qua `realtime`, không có `repository/schema.ts` |
 | `assistant` | Tài liệu nội bộ, vector | pgvector |
-| `report` | Bảng dựng từ sự kiện | Dựng lại được bằng cách phát lại Kafka |
+| `report` | Bảng dựng từ sự kiện | Dựng lại bằng cách tính lại từ dữ liệu gốc, không phát lại Kafka (Documents/21 D7) |
+
+## Lớp module: ai được gọi ai
+
+Đồ thị gọi giữa module phải không vòng. Module chỉ import `index.ts` của module **cùng lớp hoặc lớp thấp hơn** (bảng dưới, trên xuống là thấp lên cao). `npm run depcruise` kiểm bằng hằng `LAYERS` trong `.dependency-cruiser.cjs`; đổi bảng này thì đổi cả hằng đó.
+
+| Lớp | Module |
+|---|---|
+| 1 | `platform`, `staff`, `access`, `audit`, `files` (trong lớp: `staff` gọi `access`, `access` không gọi `staff`) |
+| 2 | `catalog` |
+| 3 | `pricing` |
+| 4 | `identity` (đăng ký gọi `pricing` tạo bảng giá chuẩn, V13) |
+| 5 | `inventory` |
+| 6 | `sales` |
+| 7 | `payment` |
+| 8 | `finance` |
+| 9 | `fulfillment` |
+| 10 | `channel`, `report`, `notification`, `purchasing`, `inbox`, `assistant` |
+
+Chỗ cần gọi ngược lớp (vd catalog lấy giá chuẩn của pricing, webhook của payment giao cho finance) đi qua `ModuleContext`: module khai trường mình cần trong kiểu tham số của `router(ctx)`/`startBackground(ctx)`, `src/wiring.ts` truyền hàm của module kia vào. Không dùng biến toàn cục kiểu `configure…`.
+
+## Router và quyền
+
+`router` của module là hàm `(ctx: ModuleContext) => Router`; `app.ts` gắn tại `/api/v1/<tên>`. Mọi module đã có `api/routes.ts` và `api/openapi.ts` rỗng: thêm route vào đó, không cần sửa `index.ts`. Router của `access` gắn dưới `/api/v1/identity` (`/identity/roles`, `/identity/permissions`); `notification` chỉ có `openapi` (stream `/api/v1/notification/stream` do tiến trình realtime phục vụ).
+
+```ts
+router.post('/products', ctx.authorize('catalog.product.manage'), validate({ body: CreateProductBody }), async (_req, res) => {
+  const { companyId } = getAuth(res);
+  res.status(201).json(await withCompany(companyId!, () => createProduct(body(res))));
+});
+```
+
+## Sự kiện giữa module
+
+Phát bằng `publishEvent({ type, aggregateId, payload })` trong giao dịch nghiệp vụ, nghe bằng `registerConsumer(type, handler, { consumer })`, cả hai export từ `platform/index.ts` (thân do #38 viết). Danh mục loại sự kiện và schema Zod của payload ở `platform/domain/events.ts`; tiền trong payload là chuỗi thập phân. Topic `<KAFKA_TOPIC_PREFIX>.<module phát>`, key là `aggregateId`. Thêm loại sự kiện là sửa file dùng chung: PR riêng, báo bên nghe.
+
+Việc nền của module (consumer, tra cứu định kỳ) khai ở `startBackground` của `ModuleDefinition`; `worker` gọi lúc khởi động và dừng khi tắt.
 
 ## Thêm nghiệp vụ vào module
 
 1. Khai bảng trong `repository/schema.ts` bằng `<tên>Schema.table(...)`, rồi `npm run db:generate`.
 2. Viết `domain` và `service`, kèm unit test ở `test/unit/modules/<tên>/...` (không đặt trong `src/`, xem `test/CLAUDE.md`).
-3. Viết `api/` (router + Zod), gắn router vào `ModuleDefinition` trong `index.ts`; `app.ts` tự mount tại `/api/v1/<tên>`.
-   Khai Swagger trong `api/openapi.ts` rồi gắn vào `openapi` của `ModuleDefinition`. Dùng **chính schema Zod** đã truyền cho `validate()`, đặt `.meta({ id: 'TenSchema' })` cho schema dùng lại; đường dẫn viết tương đối, giữ `:id` như Express:
+3. Viết `api/` (router + Zod) trong `api/routes.ts` đã có sẵn; `app.ts` tự mount tại `/api/v1/<tên>`.
+   Khai Swagger trong `api/openapi.ts` (đã gắn vào `openapi` của `ModuleDefinition`). Dùng **chính schema Zod** đã truyền cho `validate()`, đặt `.meta({ id: 'TenSchema' })` cho schema dùng lại; đường dẫn viết tương đối, giữ `:id` như Express:
 
    ```ts
    export function registerCatalogOpenApi(registry: OpenAPIRegistry) {

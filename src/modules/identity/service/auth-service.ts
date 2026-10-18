@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { type AccessLoader, assertCompanyAccess, type CompanyAccess } from '../../../shared/auth/company-access.ts';
 import { type AccessClaims, signAccessToken } from '../../../shared/auth/jwt.ts';
 import { inTransaction } from '../../../shared/db/client.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
@@ -12,7 +13,6 @@ import {
   findAccountByEmail,
   findAccountById,
   findMembership,
-  type MembershipRow,
   membershipsOfAccount,
   updatePassword,
 } from '../../staff/index.ts';
@@ -102,31 +102,52 @@ async function membershipViews(accountId: string): Promise<MembershipView[]> {
 }
 
 /**
+ * Trạng thái tài khoản trong công ty, đọc thẳng DB; `null` khi không thuộc công ty. Không ném lỗi.
+ * `authorize` gọi ở mỗi request (qua `src/wiring.ts`): quyền thô, chưa lọc theo phân hệ.
+ */
+async function readCompanyAccess(
+  accountId: string,
+  companyId: string,
+): Promise<(CompanyAccess & { companyName: string; roles: string[] }) | null> {
+  const [membership, companies] = await Promise.all([findMembership(accountId, companyId), getCompanies([companyId])]);
+  const company = companies.get(companyId);
+  if (!membership || !company) return null;
+  const [enabledModules, access] = await Promise.all([
+    getEnabledModules(companyId),
+    rolesAndPermissions([membership.id]),
+  ]);
+  const { roles, permissions } = access.get(membership.id) ?? { roles: [], permissions: [] };
+  return {
+    companyStatus: company.status,
+    membershipStatus: membership.status,
+    permissions,
+    enabledModules,
+    companyName: company.name,
+    roles,
+  };
+}
+
+export const loadCompanyAccess: AccessLoader = readCompanyAccess;
+
+/**
  * Kiểm membership còn dùng được rồi dựng ngữ cảnh công ty. Không thuộc công ty trả 404 như bản ghi
  * của công ty khác (Documents/21 C4); công ty khoá 403 `company_locked`; tài khoản khoá 403 `account_locked`.
  */
 async function companyContext(accountId: string, companyId: string): Promise<CompanyContext> {
-  const membership: MembershipRow | undefined = await findMembership(accountId, companyId);
-  const company = membership ? (await getCompanies([companyId])).get(companyId) : undefined;
-  if (!membership || !company) throw new AppError(404, 'not_found', 'Không tìm thấy công ty');
-  if (company.status === 'locked') throw new AppError(403, 'company_locked', 'Công ty đang bị khoá');
-  if (membership.status === 'suspended') {
-    throw new AppError(403, 'account_locked', 'Tài khoản của bạn đang bị khoá trong công ty này');
-  }
-  const enabledModules = await getEnabledModules(companyId);
-  const access = (await rolesAndPermissions([membership.id])).get(membership.id) ?? { roles: [], permissions: [] };
-  const enabled = new Set<string>(enabledModules);
+  const access = await readCompanyAccess(accountId, companyId);
+  assertCompanyAccess(access);
+  const enabled = new Set<string>(access.enabledModules);
   return {
     companyId,
-    companyName: company.name,
+    companyName: access.companyName,
     roles: access.roles,
     // Quyền của phân hệ chưa bật không có hiệu lực (Documents/21 mục 8).
     permissions: access.permissions.filter((p) => enabled.has(permissionModule(p))),
-    enabledModules,
+    enabledModules: [...access.enabledModules],
   };
 }
 
-function claimsFor(account: AccountRow, context: CompanyContext | null): AccessClaims {
+function claimsFor(account: AccountRow, context: CompanyContext | null): Omit<AccessClaims, 'expiresAt'> {
   return {
     accountId: account.id,
     companyId: context?.companyId ?? null,

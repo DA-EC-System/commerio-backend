@@ -56,10 +56,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
 /** Hai quyền chỉ vai trò có sẵn được mang, không cấp cho vai trò tuỳ biến (Documents/21 M3). */
 export const BUILTIN_ONLY_PERMISSIONS: readonly string[] = ['platform.module.manage', 'platform.audit.view'];
 
-/** Phân hệ của một mã quyền: phần trước dấu chấm đầu tiên. */
-export function permissionModule(code: string): string {
-  return code.slice(0, code.indexOf('.'));
-}
+/** Phân hệ của một mã quyền: phần trước dấu chấm đầu tiên (cùng luật `authorize` dùng). */
+export { moduleOfPermission as permissionModule } from '../../../shared/auth/company-access.ts';
 
 export interface BuiltinRoleDef {
   readonly id: string;

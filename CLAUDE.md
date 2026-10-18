@@ -14,7 +14,7 @@ Modular monolith: một mã nguồn, 19 module, mỗi module bốn lớp và m�
 | `worker` | `src/entrypoints/worker.ts` | Việc nền: outbox → Kafka, đẩy tồn lên sàn, email, dựng số liệu |
 | `realtime` | `src/entrypoints/realtime.ts` | Giữ kết nối SSE, đẩy sự kiện xuống trình duyệt |
 
-Stack: Node.js 24 (chạy thẳng `.ts`, không build), Express 5, TypeScript 6, Zod 4, Drizzle ORM + PostgreSQL 18, Redis, Kafka (`@confluentinc/kafka-javascript`, chưa cài), pino, prom-client, Vitest.
+Stack: Node.js 24 (chạy thẳng `.ts`, không build), Express 5, TypeScript 6, Zod 4, Drizzle ORM + PostgreSQL 18, Redis, Kafka (`@confluentinc/kafka-javascript`, chỉ dùng trong `src/modules/platform/service/outbox/`), `decimal.js`, pino, prom-client, Vitest.
 
 ## Lệnh
 
@@ -34,6 +34,8 @@ Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn địn
 2. Repository chỉ truy vấn schema của chính module. Không join chéo schema; cần dữ liệu module khác thì gọi hàm trong `index.ts` của module đó.
 3. Nghiệp vụ nhiều module trong một giao dịch: bọc bằng `inTransaction()` (`src/shared/db/client.ts`). Module được gọi tự đi chung transaction qua `AsyncLocalStorage`.
 4. `shared` không biết module nào tồn tại.
+5. Module chỉ gọi module cùng lớp hoặc lớp thấp hơn (bảng lớp ở `src/modules/CLAUDE.md`). Cần hàm của module lớp trên thì nhận qua `ModuleContext` do `src/wiring.ts` dựng.
+6. Route kiểm quyền bằng `ctx.authorize('<mã quyền>')` đặt trước `validate()`; truy vấn dữ liệu công ty chạy trong `withCompany(companyId, fn)` (`src/shared/db/client.ts`).
 
 ## Quy ước code
 

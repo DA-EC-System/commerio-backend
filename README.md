@@ -85,6 +85,25 @@ Migration chỉ đồng bộ **cấu trúc bảng** và **dữ liệu cố đị
 | `npm test` hoặc `infra:up` báo không kết nối được Docker | Mở Docker Desktop, chờ chạy xong rồi thử lại |
 | Cổng 5432 đã bị chiếm | Máy đang có PostgreSQL khác. Tắt nó, hoặc đổi cổng trong `deploy/compose.yaml` và `DATABASE_URL` cho khớp |
 
+## Chạy song song nhiều worktree
+
+Khi nhiều nhánh làm cùng lúc trên một máy (mỗi nhánh một `git worktree`), các bản dùng chung một bộ Docker (`npm run infra:up` một lần) nhưng mỗi bản một cổng, một database, một tiền tố topic Kafka:
+
+| Worktree | `API_PORT` | `API_OPS_PORT` | `WORKER_PORT` | `REALTIME_PORT` | Database | `KAFKA_TOPIC_PREFIX` |
+|---|---|---|---|---|---|---|
+| gốc | 3000 | 9464 | 3001 | 3002 | `commerio` | `commerio` |
+| n = 1..5 | 3000+100n | 9464+n | 3001+100n | 3002+100n | `commerio_<n>` | `commerio-w<n>` |
+
+Với worktree n:
+
+```bash
+cp ../backend/.env .env    # .env không theo git, worktree mới chưa có; sửa cổng, DATABASE_URL, KAFKA_TOPIC_PREFIX theo bảng
+docker compose -f deploy/compose.yaml exec postgres createdb -U commerio commerio_<n>
+npm run db:migrate
+```
+
+Role `commerio_app` ở mức cụm, migration `0003` tạo lại an toàn. Test integration không cần gì thêm (mỗi lượt một container riêng). Prometheus chỉ lấy số liệu của bản gốc.
+
 ## Nhánh
 
 Theo Git Flow: `main` là bản phát hành, `develop` là nhánh tích hợp, mỗi việc đi trên `feature/<tên>` rồi mở PR vào `develop`.

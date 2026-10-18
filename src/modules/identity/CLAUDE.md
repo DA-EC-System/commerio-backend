@@ -24,7 +24,11 @@
 - Không thuộc công ty trả 404 `not_found`; công ty khoá 403 `company_locked`; tài khoản khoá trong công ty 403 `account_locked`.
 - `login`, `register` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP (bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis).
 
+## Cho module khác
+
+- `loadCompanyAccess(accountId, companyId)`: trạng thái công ty, membership, quyền thô (chưa lọc theo phân hệ) và phân hệ bật, đọc thẳng DB. Chỉ `src/wiring.ts` dùng, để dựng `ctx.authorize`; token còn hạn mà công ty, tài khoản vừa bị khoá hay vừa mất quyền thì request kế tiếp đã bị chặn.
+- Router gắn thêm router của `access` (`/identity/roles`, `/identity/permissions`, #8).
+
 ## Chưa làm
 
 - Đăng nhập Google: commerio-backend#7.
-- Chặn token còn hạn khi công ty hoặc tài khoản vừa bị khoá: #8 (middleware `authorize` kiểm lại trạng thái).
