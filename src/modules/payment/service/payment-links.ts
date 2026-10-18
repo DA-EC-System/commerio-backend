@@ -8,6 +8,7 @@ import { getOrderForPayment, type OrderForPayment } from '../../sales/index.ts';
 import { bankNameOf } from '../domain/banks.ts';
 import type { Credentials, Gateway } from '../domain/gateways.ts';
 import { gatewayBlockReason, orderBlockReason } from '../domain/link-rules.ts';
+import { initialPaymentStatus } from '../domain/order-payment.ts';
 import { newPaymentCode } from '../domain/payment-code.ts';
 import { parseVietQr } from '../domain/vietqr.ts';
 import { findOrderPayment, insertOrderPaymentIfMissing, type OrderPaymentRow } from '../repository/order-payments.ts';
@@ -63,7 +64,7 @@ const isLive = (link: PaymentLinkRow | undefined): link is PaymentLinkRow => !!l
 
 /** Trạng thái tiền: dòng `order_payments`, chưa có thì suy từ phương thức của đơn (A8 PR chuẩn bị). */
 const paymentStatusOf = (order: OrderForPayment, row: OrderPaymentRow | undefined) =>
-  row?.status ?? (order.paymentMethod === 'cod' ? 'cod_pending' : 'unpaid');
+  row?.status ?? initialPaymentStatus(order.paymentMethod ?? 'prepaid');
 
 function assertOrderAllowsLink(order: OrderForPayment, row: OrderPaymentRow | undefined): void {
   const reason = orderBlockReason({ ...order, paymentStatus: paymentStatusOf(order, row) });

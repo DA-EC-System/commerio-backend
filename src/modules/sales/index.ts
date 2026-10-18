@@ -17,4 +17,10 @@ export {
   type OrderStatus,
   type PaymentMethod,
 } from './service/payment-boundary.ts';
+export {
+  getOrderLines,
+  getOrdersForFinance,
+  type OrderForFinance,
+  type OrderLineForInvoice,
+} from './service/finance-boundary.ts';
 export { getOrderChannels } from './service/daily-totals.ts';
