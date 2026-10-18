@@ -4,3 +4,8 @@ import type { ModuleDefinition } from '../../shared/module.ts';
 import { registerNotificationOpenApi } from './api/openapi.ts';
 
 export const notificationModule: ModuleDefinition = { name: 'notification', openapi: registerNotificationOpenApi };
+
+// Cho src/entrypoints/realtime.ts.
+export { createRealtimeApp } from './api/app.ts';
+export { createHub, type Hub } from './service/hub.ts';
+export { notificationHandlers, startNotifications } from './service/consumer.ts';
