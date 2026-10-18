@@ -10,4 +10,6 @@ export const identityModule: ModuleDefinition = {
   openapi: registerIdentityOpenApi,
 };
 
-export { loadCompanyAccess } from './service/auth-service.ts';
+export { loadCompanyAccess, register } from './service/auth-service.ts';
+// Seed dữ liệu demo (db/seed, #37) tạo tài khoản nhân viên và kiểm tài khoản đã có.
+export { hashPassword, verifyPassword } from './service/passwords.ts';
