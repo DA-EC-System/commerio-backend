@@ -1,0 +1,10 @@
+# Nạp dashboard từ file (deploy/monitoring/dashboards); sửa trên giao diện không được lưu, sửa file JSON rồi deploy lại.
+apiVersion: 1
+providers:
+  - name: commerio
+    folder: Commerio
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
