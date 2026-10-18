@@ -56,3 +56,46 @@ export const GatewayConfig = z
 export const GatewaySummary = z.object({ gateway: GatewaySchema, configured: z.boolean() }).meta({ id: 'GatewaySummary' });
 
 export const GatewayParams = z.object({ gateway: GatewaySchema });
+
+// `orderId` sai định dạng trả 404 ở service (như đơn không có), nên ở đây chỉ là chuỗi.
+export const OrderParams = z.object({ orderId: z.string() });
+
+export const CreateLinkBody = z
+  .object({ gateway: z.enum(GATEWAYS, 'Chọn một trong 4 cổng: vnpay, momo, zalopay, vietqr') })
+  .meta({ id: 'CreatePaymentLinkRequest' });
+
+const linkStatus = z.enum(['active', 'paid', 'expired', 'cancelled']);
+
+export const PaymentLink = z
+  .object({
+    id: z.uuid(),
+    orderId: z.uuid(),
+    gateway: GatewaySchema,
+    paymentCode: z.string().meta({ example: 'CMABCDEFGH23' }),
+    amount: z.number().int(),
+    payUrl: z.string().nullable(),
+    qrContent: z.string().meta({ description: 'Chuỗi để vẽ QR: VietQR là chuỗi EMVCo; MoMo là `qrCodeUrl` (momo://…); ZaloPay `qr_code` hoặc `order_url`; VNPay bằng `payUrl`' }),
+    bankTransfer: z
+      .object({ bankBin: z.string(), bankName: z.string(), accountNo: z.string(), accountName: z.string(), content: z.string() })
+      .nullable(),
+    expiresAt: z.string(),
+    status: linkStatus,
+    createdAt: z.string(),
+    createdBy: z.object({ id: z.uuid(), name: z.string() }).nullable(),
+  })
+  .meta({ id: 'PaymentLink' });
+
+export const OrderPayment = z
+  .object({
+    orderId: z.uuid(),
+    method: z.enum(['prepaid', 'cod']),
+    status: z.enum(['unpaid', 'paid', 'cod_pending', 'cod_collected', 'not_collected']),
+    refundStatus: z.enum(['none', 'pending_refund', 'refunded']),
+    amount: z.number().int(),
+    paidAt: z.string().nullable(),
+    activeLink: PaymentLink.nullable(),
+    links: z.array(
+      PaymentLink.pick({ id: true, gateway: true, paymentCode: true, amount: true, status: true, expiresAt: true, createdAt: true }),
+    ),
+  })
+  .meta({ id: 'OrderPayment' });

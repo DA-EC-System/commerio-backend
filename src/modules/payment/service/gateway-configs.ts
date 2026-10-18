@@ -4,7 +4,6 @@ import { env } from '../../../shared/config/env.ts';
 import { withCompany } from '../../../shared/db/client.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../audit/index.ts';
-import { findAccountById } from '../../staff/index.ts';
 import { bankNameOf } from '../domain/banks.ts';
 import { type Credentials, GATEWAYS, type Gateway, maskCredentials } from '../domain/gateways.ts';
 import {
@@ -15,6 +14,8 @@ import {
   updateGatewayConfigIfVersion,
 } from '../repository/gateway-configs.ts';
 import { decryptCredentials, encryptCredentials } from './credentials-cipher.ts';
+import { pgError } from './pg-error.ts';
+import { type UserRef, userRef } from './user-ref.ts';
 
 const ENTITY = 'payment.gateway_configs';
 
@@ -28,7 +29,7 @@ export interface GatewayConfigView {
   configured: boolean;
   version: number;
   updatedAt: string | null;
-  updatedBy: { id: string; name: string } | null;
+  updatedBy: UserRef | null;
   credentials: Record<string, { last4: string }> | null;
   display: { bankBin: string; bankName: string; accountName: string } | null;
   webhookUrl: string | null;
@@ -47,17 +48,12 @@ function webhookUrlOf(receiverKey: string | null): string | null {
   return `${env.PUBLIC_API_URL.replace(/\/+$/, '')}/api/v1/payment/webhooks/sepay/${receiverKey}`;
 }
 
-type AccountName = (id: string) => Promise<{ id: string; name: string } | null>;
-
-async function accountName(id: string) {
-  const account = await findAccountById(id);
-  return account ? { id: account.id, name: account.fullName } : null;
-}
+type AccountName = (id: string) => Promise<UserRef | null>;
 
 async function toView(
   gateway: Gateway,
   row: GatewayConfigRow | undefined,
-  nameOf: AccountName = accountName,
+  nameOf: AccountName = userRef,
 ): Promise<GatewayConfigView> {
   if (!row?.credentialsEnc) {
     return {
@@ -97,7 +93,7 @@ export async function listGatewayConfigs(companyId: string): Promise<GatewayConf
     const byGateway = new Map((await findGatewayConfigs()).map((r) => [r.gateway, r]));
     // Bốn cổng thường do cùng một người lưu: tra tên mỗi người một lần.
     const names = new Map<string, ReturnType<AccountName>>();
-    const nameOf: AccountName = (id) => names.get(id) ?? names.set(id, accountName(id)).get(id)!;
+    const nameOf: AccountName = (id) => names.get(id) ?? names.set(id, userRef(id)).get(id)!;
     const views: GatewayConfigView[] = [];
     for (const gateway of GATEWAYS) views.push(await toView(gateway, byGateway.get(gateway), nameOf));
     return views;
@@ -114,8 +110,6 @@ export async function listGatewaySummaries(companyId: string): Promise<{ gateway
 
 const snapshot = (gateway: Gateway, version: number) => ({ gateway, configured: true, version });
 
-/** Mã lỗi PostgreSQL (Drizzle bọc lỗi gốc trong `cause`). */
-const pgCode = (err: unknown) => (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
 
 /** 409 kèm bản hiện tại đã che. Trong `withCompany` cùng công ty thì đọc chung giao dịch đang mở. */
 async function conflict(companyId: string, gateway: Gateway): Promise<AppError> {
@@ -161,7 +155,7 @@ export async function saveGatewayConfig(
     });
   } catch (err) {
     // Hai lần tạo cùng lúc: unique (company_id, gateway) chặn lần sau; giao dịch đã hỏng nên đọc bản hiện tại ở giao dịch mới.
-    if (pgCode(err) === '23505') throw await conflict(caller.companyId, gateway);
+    if (pgError(err).code === '23505') throw await conflict(caller.companyId, gateway);
     throw err;
   }
 }

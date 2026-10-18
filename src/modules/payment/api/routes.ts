@@ -4,8 +4,9 @@ import { AppError } from '../../../shared/errors/app-error.ts';
 import { validate } from '../../../shared/http/validate.ts';
 import { type Credentials, GATEWAYS, type Gateway, isGateway } from '../domain/gateways.ts';
 import { listGatewayConfigs, listGatewaySummaries, saveGatewayConfig } from '../service/gateway-configs.ts';
+import { createPaymentLink, getOrderPaymentView } from '../service/payment-links.ts';
 import type { PaymentContext } from '../service/webhook-handler.ts';
-import { gatewayConfigBodyOf } from './schemas.ts';
+import { CreateLinkBody, gatewayConfigBodyOf, OrderParams } from './schemas.ts';
 
 const validateGatewayBody = Object.fromEntries(GATEWAYS.map((g) => [g, validate({ body: gatewayConfigBodyOf(g) })])) as Record<
   Gateway,
@@ -53,6 +54,23 @@ export function paymentRouter(ctx: PaymentContext): Router {
     const { credentials, version } = (res.locals.validated as { body: { credentials: Credentials; version: number } }).body;
     const gateway = res.locals.gateway as Gateway;
     res.json(await saveGatewayConfig({ accountId, companyId: companyId! }, gateway, credentials, version));
+  });
+
+  router.post(
+    '/orders/:orderId/links',
+    createLink,
+    validate({ params: OrderParams, body: CreateLinkBody }),
+    async (req, res) => {
+      const { accountId, companyId } = getAuth(res);
+      const { params, body } = res.locals.validated as { params: { orderId: string }; body: { gateway: Gateway } };
+      const result = await createPaymentLink({ accountId, companyId: companyId!, ip: req.ip ?? '' }, params.orderId, body.gateway);
+      res.status(result.created ? 201 : 200).json(result.link);
+    },
+  );
+
+  router.get('/orders/:orderId', ctx.authorize('sales.order.view'), validate({ params: OrderParams }), async (_req, res) => {
+    const { orderId } = (res.locals.validated as { params: { orderId: string } }).params;
+    res.json(await getOrderPaymentView(getAuth(res).companyId!, orderId));
   });
 
   return router;

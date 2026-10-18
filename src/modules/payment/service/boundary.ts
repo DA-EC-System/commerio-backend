@@ -1,8 +1,11 @@
 // Khung cho fulfillment (#25) và finance (#27) gọi (plan chuẩn bị 4.5, A8, R1, R2; Documents/21 §11, D15):
 // #23, #27 viết thân ở file này, không sửa payment/index.ts. Gọi trong `withCompany` của bên gọi.
 import type { Decimal } from 'decimal.js';
+import { currentCompanyId } from '../../../shared/db/client.ts';
 import { notImplemented } from '../../../shared/errors/app-error.ts';
 import type { PaymentMethod } from '../../sales/index.ts';
+import { findOrderPayment, insertOrderPaymentIfMissing } from '../repository/order-payments.ts';
+import { cancelActiveLinks } from '../repository/payment-links.ts';
 import type { gateway, paymentStatus, refundStatus } from '../repository/schema.ts';
 
 export type Gateway = (typeof gateway.enumValues)[number];
@@ -22,13 +25,20 @@ export interface OrderPaymentState {
 // — fulfillment (#25) gọi
 
 /** Tạo dòng trạng thái tiền khi xác nhận đơn: `unpaid` (trả trước) hoặc `cod_pending`. Gọi lại không đổi gì. */
-export async function initOrderPayment(_orderId: string, _method: PaymentMethod): Promise<void> {
-  throw notImplemented('initOrderPayment', '#23');
+export async function initOrderPayment(orderId: string, method: PaymentMethod): Promise<void> {
+  const companyId = currentCompanyId();
+  if (!companyId) throw new Error('initOrderPayment phải gọi trong withCompany của bên gọi');
+  await insertOrderPaymentIfMissing(companyId, orderId, method === 'cod' ? 'cod_pending' : 'unpaid');
 }
 
-/** Huỷ mã `active` của đơn (huỷ đơn, QT-36). */
-export async function cancelActiveLink(_orderId: string): Promise<void> {
-  throw notImplemented('cancelActiveLink', '#23');
+/**
+ * Huỷ mã `active` của đơn (huỷ đơn, QT-36), trong giao dịch của bên gọi. Bên gọi đổi `sales.orders` **trước** rồi mới gọi
+ * hàm này: tạo mã khoá dòng đơn trước rồi tới `order_payments`, cùng thứ tự thì không deadlock và không chèn mã cho đơn
+ * vừa huỷ (plan #23 A7). Không gọi API huỷ của cổng (ba cổng không có API huỷ đơn chưa trả, A14).
+ */
+export async function cancelActiveLink(orderId: string): Promise<void> {
+  await findOrderPayment(orderId, 'update');
+  await cancelActiveLinks(orderId);
 }
 
 /** Huỷ đơn đã thu tiền: hoàn tiền `none` → `pending_refund`. */
