@@ -1,0 +1,93 @@
+import { type CookieOptions, type Request, type Response, Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
+import type { z } from 'zod';
+import { authenticate, getAuth } from '../../../shared/auth/authenticate.ts';
+import { env } from '../../../shared/config/env.ts';
+import { AppError } from '../../../shared/errors/app-error.ts';
+import { validate } from '../../../shared/http/validate.ts';
+import * as auth from '../service/auth-service.ts';
+import { ChangePasswordBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
+
+/** Refresh token nằm trong cookie HttpOnly, chỉ gửi kèm các đường dẫn /identity (Documents/21 A1). */
+export const REFRESH_COOKIE = 'commerio_refresh';
+const cookieOptions: CookieOptions = {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'strict',
+  path: '/api/v1/identity',
+};
+
+function setRefreshCookie(res: Response, token: string) {
+  res.cookie(REFRESH_COOKIE, token, { ...cookieOptions, maxAge: auth.REFRESH_TOKEN_TTL_DAYS * 24 * 3600 * 1000 });
+}
+
+function readRefreshCookie(req: Request): string | undefined {
+  const value: unknown = req.cookies?.[REFRESH_COOKIE];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+const body = <T extends z.ZodType>(res: Response) => (res.locals.validated as { body: z.output<T> }).body;
+
+// Chặn dò mật khẩu và đăng ký hàng loạt: đếm theo IP trong 15 phút.
+const authLimiter = () =>
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: env.AUTH_RATE_LIMIT,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler: (_req, _res, next) => {
+      next(new AppError(429, 'too_many_requests', 'Thử quá nhiều lần, hãy đợi 15 phút rồi thử lại'));
+    },
+  });
+
+export function identityRouter(): Router {
+  const router = Router();
+
+  router.post('/register', authLimiter(), validate({ body: RegisterBody }), async (_req, res) => {
+    res.status(201).json(await auth.register(body<typeof RegisterBody>(res)));
+  });
+
+  router.post('/login', authLimiter(), validate({ body: LoginBody }), async (_req, res) => {
+    const { refreshToken, ...result } = await auth.login(body<typeof LoginBody>(res));
+    setRefreshCookie(res, refreshToken);
+    res.json(result);
+  });
+
+  router.post('/refresh', async (req, res) => {
+    try {
+      const session = await auth.refresh(readRefreshCookie(req));
+      setRefreshCookie(res, session.refreshToken);
+      res.json({ accessToken: session.accessToken });
+    } catch (err) {
+      res.clearCookie(REFRESH_COOKIE, cookieOptions);
+      throw err;
+    }
+  });
+
+  router.post('/logout', async (req, res) => {
+    await auth.logout(readRefreshCookie(req));
+    res.clearCookie(REFRESH_COOKIE, cookieOptions);
+    res.status(204).end();
+  });
+
+  router.get('/me', authenticate({ allowPasswordChange: true }), async (_req, res) => {
+    res.json(await auth.me(getAuth(res).accountId));
+  });
+
+  router.post('/select-company', authenticate(), validate({ body: SelectCompanyBody }), async (req, res) => {
+    const { companyId } = body<typeof SelectCompanyBody>(res);
+    res.json(await auth.selectCompany(getAuth(res), companyId, readRefreshCookie(req)));
+  });
+
+  router.post(
+    '/change-password',
+    authenticate({ allowPasswordChange: true }),
+    validate({ body: ChangePasswordBody }),
+    async (_req, res) => {
+      await auth.changePassword(getAuth(res).accountId, body<typeof ChangePasswordBody>(res));
+      res.status(204).end();
+    },
+  );
+
+  return router;
+}

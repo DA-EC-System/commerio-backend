@@ -24,13 +24,18 @@
     "check": "npm run lint && npm run typecheck && npm run depcruise && npm test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:staging": "node --env-file=.env.staging node_modules/drizzle-kit/bin.cjs migrate",
     "infra:up": "docker compose -f deploy/compose.yaml up -d",
     "infra:down": "docker compose -f deploy/compose.yaml down"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@node-rs/argon2": "^2.2.2",
+    "cookie-parser": "^1.4.7",
     "drizzle-orm": "^0.45.4",
     "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "jose": "^6.2.12",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
     "pino-http": "^11.0.0",
@@ -41,6 +46,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@testcontainers/postgresql": "^12.2.1",
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",

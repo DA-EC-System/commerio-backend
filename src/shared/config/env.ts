@@ -12,6 +12,12 @@ const EnvSchema = z.object({
   API_DOCS_ENABLED: z.stringbool().default(true),
   // Không bắt buộc lúc khởi động để test không cần DB; getDb() báo lỗi nếu thiếu.
   DATABASE_URL: z.string().min(1).optional(),
+  // Cặp khoá Ed25519 dạng PEM ký access token; xuống dòng trong PEM viết `\n` được.
+  // Thiếu thì máy dev tự sinh khoá tạm (token mất hiệu lực khi khởi động lại); production bắt buộc có.
+  JWT_PRIVATE_KEY: z.string().min(1).optional(),
+  JWT_PUBLIC_KEY: z.string().min(1).optional(),
+  // Số lần gọi đăng nhập, đăng ký mỗi 15 phút cho một IP.
+  AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

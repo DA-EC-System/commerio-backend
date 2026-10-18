@@ -4,6 +4,8 @@ Nền kỹ thuật chung cho mọi module và tiến trình. **Không chứa ngh
 
 | Đường dẫn | Nội dung |
 |---|---|
+| `auth/` | `signAccessToken`, `verifyAccessToken` (JWT EdDSA 15 phút, `jose`); middleware `authenticate()` đọc `Authorization: Bearer`, đặt `res.locals.auth`, đọc lại bằng `getAuth(res)`. Thiếu hoặc sai token 401 `unauthorized`; còn mật khẩu thư mời 403 `password_change_required` trừ route truyền `allowPasswordChange` |
+| `db/columns.ts` | Cột chung `created_at`, `updated_at`, `version` cho bảng Drizzle |
 | `config/env.ts` | Đọc và kiểm biến môi trường bằng Zod một lần lúc khởi động. Thêm biến mới thì thêm vào đây và `.env.example` |
 | `db/client.ts` | Pool PostgreSQL + Drizzle. `getDb()` trả transaction đang mở nếu có; `inTransaction(fn)` mở transaction hoặc dùng lại transaction của bên gọi (`AsyncLocalStorage`) |
 | `errors/` | `AppError` và middleware lỗi tập trung, trả Problem Details (RFC 9457): `type` = `/problems/<code>`, `status`, `detail`, `instance`, `code` (mã gạch dưới, vd `version_conflict`). Hợp đồng lỗi với FE ở `Documents/21` |
@@ -17,5 +19,5 @@ Nền kỹ thuật chung cho mọi module và tiến trình. **Không chứa ngh
 ## Chưa có, sẽ thêm vào đây
 
 - Ngữ cảnh công ty đi theo request và Row-Level Security (đặt `app.company_id` trong transaction), xem `docs/17` mục 3.
-- Middleware `authenticate` (JWT bằng `jose`) và `authorize`. Phần kiểm quyền gọi sang module `access`, nên `authorize` nhận hàm kiểm quyền qua tham số thay vì import module.
+- Middleware `authorize` (#8). Phần kiểm quyền gọi sang module `access`, nên `authorize` nhận hàm kiểm quyền qua tham số thay vì import module.
 - Outbox và client Kafka (`events/`), Redis (`cache/`), OpenTelemetry, `decimal.js` cho tiền.
