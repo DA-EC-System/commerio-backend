@@ -1,0 +1,154 @@
+# Test luật cảnh báo: docker run --rm -v "$PWD/deploy/monitoring/rules:/r" --entrypoint promtool prom/prometheus:v3.5.0 test rules /r/alerts.test.yml
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Ba tiến trình đều chạy: không cảnh báo.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="commerio",process="api"}'
+        values: '1x10'
+      - series: 'up{job="commerio",process="worker"}'
+        values: '1x10'
+      - series: 'up{job="commerio",process="realtime"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CommerioProcessDown
+
+  # Prometheus thấy worker nhưng /metrics không trả lời (up == 0).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="commerio",process="api"}'
+        values: '1x10'
+      - series: 'up{job="commerio",process="worker"}'
+        values: '1 1 0x10'
+      - series: 'up{job="commerio",process="realtime"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CommerioProcessDown
+      - eval_time: 5m
+        alertname: CommerioProcessDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: commerio
+              process: worker
+            exp_annotations:
+              summary: Tiến trình worker không trả /metrics hoặc không có pod nào chạy
+
+  # kubectl scale deploy/worker --replicas=0: target biến mất, không có mẫu up == 0.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="commerio",process="api"}'
+        values: '1x10'
+      - series: 'up{job="commerio",process="realtime"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CommerioProcessDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: commerio
+              process: worker
+            exp_annotations:
+              summary: Tiến trình worker không trả /metrics hoặc không có pod nào chạy
+
+  # 10% yêu cầu trả 5xx trong 5 phút: bắn. Yêu cầu /health không tính.
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="commerio",process="api",method="GET",route="/api/v1/x",status="200"}'
+        values: '0+90x20'
+      - series: 'http_request_duration_seconds_count{job="commerio",process="api",method="GET",route="/api/v1/x",status="500"}'
+        values: '0+10x20'
+      - series: 'http_request_duration_seconds_count{job="commerio",process="api",method="GET",route="/health",status="200"}'
+        values: '0+1000x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CommerioHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Hơn 5% yêu cầu tới api trả 5xx trong 5 phút
+
+  # 1% lỗi: không bắn.
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="commerio",process="api",method="GET",route="/api/v1/x",status="200"}'
+        values: '0+99x20'
+      - series: 'http_request_duration_seconds_count{job="commerio",process="api",method="GET",route="/api/v1/x",status="500"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CommerioHighErrorRate
+
+  # Outbox: sự kiện cũ nhất chờ hơn 60 giây suốt 5 phút thì bắn; dưới 60 giây thì không.
+  - interval: 1m
+    input_series:
+      - series: 'outbox_oldest_pending_age_seconds{job="commerio",process="worker"}'
+        values: '0 30 70x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CommerioOutboxLagging
+      - eval_time: 8m
+        alertname: CommerioOutboxLagging
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: commerio
+              process: worker
+            exp_annotations:
+              summary: Sự kiện outbox chờ gửi lên Kafka quá 60 giây
+  - interval: 1m
+    input_series:
+      - series: 'outbox_oldest_pending_age_seconds{job="commerio",process="worker"}'
+        values: '0 30 50x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CommerioOutboxLagging
+
+  # DLQ: counter chưa có nhãn trước, chuỗi xuất hiện lần đầu ở 1 vẫn phải bắn.
+  - interval: 1m
+    input_series:
+      - series: 'outbox_dead_lettered_total{job="commerio",process="worker",topic="commerio.sales",consumer="report"}'
+        values: '_x5 1x20'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: CommerioDeadLettered
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: commerio
+              process: worker
+              topic: commerio.sales
+              consumer: report
+            exp_annotations:
+              summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
+      # Quá 10 phút không thêm sự kiện nào: thôi bắn.
+      - eval_time: 20m
+        alertname: CommerioDeadLettered
+
+  # DLQ tăng thêm trên chuỗi đã có.
+  - interval: 1m
+    input_series:
+      - series: 'outbox_dead_lettered_total{job="commerio",process="worker",topic="commerio.sales",consumer="report"}'
+        values: '2x15 3x10'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CommerioDeadLettered
+      - eval_time: 18m
+        alertname: CommerioDeadLettered
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: commerio
+              process: worker
+              topic: commerio.sales
+              consumer: report
+            exp_annotations:
+              summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
