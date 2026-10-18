@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  docInputErrors,
   docNumber,
   isBelowMin,
   nextAlertState,
@@ -89,5 +90,30 @@ describe('số phiếu (V32)', () => {
 
   it('quá 6 chữ số thì giữ nguyên số', () => {
     expect(docNumber('receipt', 1_234_567)).toBe('PN-1234567');
+  });
+});
+
+describe('luật dòng phiếu theo loại (A7, AC-8)', () => {
+  const v1 = '00000000-0000-4000-8000-000000000001';
+  const v2 = '00000000-0000-4000-8000-000000000002';
+
+  it('phiếu nhập: dòng thiếu giá nhập báo ở lines.<i>.unitCost', () => {
+    expect(docInputErrors('receipt', '', [{ variantId: v1, quantity: 1, unitCost: 10 }, { variantId: v2, quantity: 1 }])).toEqual({
+      'lines.1.unitCost': 'Giá nhập là số nguyên đồng, không âm',
+    });
+  });
+
+  it('phiếu xuất: thiếu lý do báo ở note; giá gửi kèm không sao', () => {
+    expect(docInputErrors('issue', '  ', [{ variantId: v1, quantity: 1, unitCost: 5 }])).toEqual({ note: 'Nhập lý do xuất kho' });
+  });
+
+  it('biến thể lặp báo ở dòng sau', () => {
+    expect(docInputErrors('issue', 'hỏng', [{ variantId: v1, quantity: 1 }, { variantId: v1, quantity: 2 }])).toEqual({
+      'lines.1.variantId': 'Biến thể bị lặp',
+    });
+  });
+
+  it('hợp lệ thì không có lỗi', () => {
+    expect(docInputErrors('receipt', '', [{ variantId: v1, quantity: 3, unitCost: 0 }])).toEqual({});
   });
 });

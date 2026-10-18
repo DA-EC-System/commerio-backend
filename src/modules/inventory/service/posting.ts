@@ -10,8 +10,7 @@ import {
   insertMove,
   type LevelRow,
   lockLevels,
-  setIssueLineCost,
-  setReceiptLineCost,
+  setLineCost,
   setRuleAlert,
   updateLevel,
 } from '../repository/levels.ts';
@@ -90,12 +89,20 @@ export async function applyStockMoves(input: PostInput): Promise<Map<string, str
       unitCost,
       doneBy: input.doneBy,
     });
-    if (input.direction === 'out') await setIssueLineCost(line.lineId, unitCost);
-    else if (input.cost === 'current') await setReceiptLineCost(line.lineId, unitCost);
+    if (input.direction === 'out') await setLineCost('issue', line.lineId, unitCost);
+    else if (input.cost === 'current') await setLineCost('receipt', line.lineId, unitCost);
     costs.set(line.variantId, unitCost);
     await applyAvailableChange(level, available(before));
   }
   return costs;
+}
+
+/** Giữ thêm (`delta` > 0) hoặc trả (`delta` < 0) hàng trên dòng tồn đã khoá; chỗ duy nhất ngoài ghi sổ đổi `reserved`. */
+export async function changeReserved(level: LevelRow, delta: number): Promise<void> {
+  const availableBefore = available(level);
+  level.reserved += delta;
+  await updateLevel(level);
+  await applyAvailableChange(level, availableBefore);
 }
 
 /**

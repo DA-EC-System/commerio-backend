@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import request from 'supertest';
 import { createVariant } from '../helpers/catalog.ts';
 import { registerCompany } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
+import { testApp } from '../helpers/http.ts';
 import type { EventType } from '#src/modules/platform/index.ts';
 import { stockIssueLines, stockIssues, stockReceiptLines, stockReceipts } from '#src/modules/inventory/repository/schema.ts';
 import { applyStockMoves } from '#src/modules/inventory/service/posting.ts';
@@ -108,4 +110,30 @@ export async function alertActive(companyId: string, variantId: string): Promise
     [companyId, variantId],
   );
   return rows[0]?.alert_active ?? null;
+}
+
+/** Gọi /api/v1/inventory bằng token đã chọn công ty. */
+export function inv(token: string) {
+  const app = testApp();
+  const auth = (r: request.Test) => r.set('Authorization', `Bearer ${token}`);
+  const base = '/api/v1/inventory';
+  return {
+    get: (path: string) => auth(request(app).get(base + path)),
+    post: (path: string, body: object) => auth(request(app).post(base + path).send(body)),
+    put: (path: string, body: object) => auth(request(app).put(base + path).send(body)),
+  };
+}
+
+/** Ngừng bán biến thể như `DELETE /catalog/products/:id/variants/:variantId` để lại (cột `archived_at`). */
+export async function archiveVariant(variantId: string) {
+  await testPool().query('update catalog.product_variants set archived_at = now() where id = $1', [variantId]);
+}
+
+/** Lập phiếu nhập tay qua API rồi ghi sổ; trả phiếu sau ghi sổ. */
+export async function postReceipt(token: string, variantId: string, quantity: number, unitCost: number) {
+  const created = await inv(token).post('/documents', { type: 'receipt', note: '', lines: [{ variantId, quantity, unitCost }] });
+  if (created.status !== 201) throw new Error(`lập phiếu nhập: ${created.status} ${JSON.stringify(created.body)}`);
+  const posted = await inv(token).post(`/documents/${created.body.id}/post`, { version: created.body.version });
+  if (posted.status !== 200) throw new Error(`ghi sổ: ${posted.status} ${JSON.stringify(posted.body)}`);
+  return posted.body;
 }

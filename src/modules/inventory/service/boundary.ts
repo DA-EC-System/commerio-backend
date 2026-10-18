@@ -18,11 +18,10 @@ import {
   closeActiveReservations,
   companyOfTransaction,
   lockLevels,
-  reservationsOfOrder,
-  updateLevel,
+  activeReservations,
   upsertActiveReservation,
 } from '../repository/levels.ts';
-import { applyAvailableChange, applyStockMoves } from './posting.ts';
+import { applyStockMoves, changeReserved } from './posting.ts';
 
 export interface StockLine {
   variantId: string;
@@ -50,23 +49,19 @@ export async function reserve(
 ): Promise<{ shortLines: { variantId: string; requested: number; available: number }[] }> {
   companyOfTransaction();
   const requested = byVariant(lines);
-  const held = new Map(
-    (await reservationsOfOrder(orderId)).filter((r) => r.status === 'active').map((r) => [r.variantId, r.quantity]),
-  );
   const levels = await lockLevels([...requested.keys()], false);
+  // Đọc sau khoá: mọi lần ghi giữ chỗ của một biến thể đứng sau khoá dòng tồn của nó (A6), nên hai lần reserve
+  // cùng đơn chạy song song không cùng thấy "chưa giữ".
+  const held = new Map((await activeReservations(orderId)).map((r) => [r.variantId, r.quantity]));
   const shortLines = [];
   for (const [variantId, want] of [...requested].sort(([a], [b]) => a.localeCompare(b))) {
     const already = held.get(variantId) ?? 0;
     const level = levels.get(variantId);
     const add = level ? Math.max(0, Math.min(want - already, level.onHand - level.reserved)) : 0;
-    if (add > 0) {
-      const availableBefore = level!.onHand - level!.reserved;
-      await upsertActiveReservation(orderId, variantId, already + add);
-      level!.reserved += add;
-      await updateLevel(level!);
-      await applyAvailableChange(level!, availableBefore);
-    }
-    if (already + add < want) shortLines.push({ variantId, requested: want, available: already + add });
+    const placed = add > 0 && (await upsertActiveReservation(orderId, variantId, already + add));
+    if (placed) await changeReserved(level!, add);
+    const got = already + (placed ? add : 0);
+    if (got < want) shortLines.push({ variantId, requested: want, available: got });
   }
   return { shortLines };
 }
@@ -74,19 +69,18 @@ export async function reserve(
 /** Trả mọi giữ chỗ `active` của đơn (huỷ đơn); không còn gì để trả thì không làm gì. */
 export async function release(orderId: string): Promise<void> {
   companyOfTransaction();
-  const active = (await reservationsOfOrder(orderId)).filter((r) => r.status === 'active');
+  const active = await activeReservations(orderId);
   if (active.length === 0) return;
   const levels = await lockLevels(
     active.map((r) => r.variantId),
     false,
   );
-  for (const r of await closeActiveReservations(orderId, 'released')) {
+  const closed = await closeActiveReservations(orderId, 'released');
+  const missing = closed.map((r) => r.variantId).filter((v) => !levels.has(v));
+  for (const [v, l] of await lockLevels(missing, false)) levels.set(v, l);
+  for (const r of closed) {
     const level = levels.get(r.variantId);
-    if (!level) continue;
-    const availableBefore = level.onHand - level.reserved;
-    level.reserved -= r.quantity;
-    await updateLevel(level);
-    await applyAvailableChange(level, availableBefore);
+    if (level) await changeReserved(level, -r.quantity);
   }
 }
 
@@ -101,19 +95,23 @@ export async function issueForOrder(
   companyOfTransaction();
   const existing = await findOrderIssue(orderId);
   if (existing) return existingIssue(existing);
-  const active = (await reservationsOfOrder(orderId)).filter((r) => r.status === 'active');
-  if (active.length === 0) throw new AppError(409, 'not_reserved', 'Đơn chưa giữ hàng nên chưa xuất kho được');
+  const active = await activeReservations(orderId);
+  if (active.length === 0) throw notReserved();
 
   const number = docNumber('issue', await nextDocSeq('issue'));
-  const actorId = opts.actorId ?? null;
-  const issueId = await insertOrderIssue({ orderId, number, actorId });
-  if (!issueId) return existingIssue((await findOrderIssue(orderId))!);
-
+  // Bộ đếm `issue` khoá tuần tự mọi lần lập phiếu xuất của công ty: lần gọi đồng thời thấy phiếu vừa commit ở đây.
+  const raced = await findOrderIssue(orderId);
+  if (raced) return existingIssue(raced);
   await lockLevels(
     active.map((r) => r.variantId),
     false,
   );
+  // Tiêu giữ chỗ trước khi chèn phiếu: giữ chỗ vừa bị trả thì 409, không để lại phiếu rỗng.
   const consumed = await closeActiveReservations(orderId, 'consumed');
+  if (consumed.length === 0) throw notReserved();
+  const actorId = opts.actorId ?? null;
+  const issueId = await insertOrderIssue({ orderId, number, actorId });
+  if (!issueId) throw new Error('Phiếu xuất của đơn vừa được lập ở giao dịch khác');
   const lines = await insertIssueLines(issueId, consumed);
   const costs = await applyStockMoves({
     direction: 'out',
@@ -199,6 +197,8 @@ export async function receiveReturn(
   });
   return { receiptId, number };
 }
+
+const notReserved = () => new AppError(409, 'not_reserved', 'Đơn chưa giữ hàng nên chưa xuất kho được');
 
 const alreadyProcessed = (number: string) =>
   new AppError(409, 'already_processed', `Đơn đã có phiếu nhập hoàn ${number}`);

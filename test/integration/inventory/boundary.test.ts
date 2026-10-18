@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { issueForOrder, receiveReturn, release, reserve } from '#src/modules/inventory/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testPool } from '../helpers/db.ts';
-import { companyWithVariants, eventsOf, levelOf, movesOf, receive } from './helpers.ts';
+import { companyWithVariants, eventsOf, levelOf, movesOf, receive, setRule } from './helpers.ts';
 
 // Thân 4 hàm biên cho sales (#24), fulfillment (#25) gọi (plan #16 A10, A11, A17; S-4, S-5, S-6).
 const reservationsOf = async (orderId: string) =>
@@ -73,13 +73,39 @@ describe('reserve, release (S-4)', () => {
   it('giữ hàng làm khả dụng xuống dưới ngưỡng thì phát below_threshold (A9)', async () => {
     const { companyId, variants: [v] } = await companyWithVariants();
     await receive(companyId, v!, 6, 1000);
-    await testPool().query('insert into inventory.reorder_rules (company_id, variant_id, min_qty) values ($1, $2, 5)', [companyId, v]);
+    await setRule(companyId, v!, 5);
     await withCompany(companyId, () => reserve(randomUUID(), [{ variantId: v!, quantity: 2 }]));
     expect(await eventsOf(companyId, 'inventory.below_threshold')).toEqual([{ variantId: v, available: 4, minQty: 5 }]);
   });
 
   it('gọi ngoài withCompany thì lỗi, không giữ gì', async () => {
     await expect(reserve(randomUUID(), [{ variantId: randomUUID(), quantity: 1 }])).rejects.toThrow();
+  });
+});
+
+describe('reserve, release: gọi đồng thời và sau khi xuất (diff-review)', () => {
+  it('hai lần reserve cùng đơn chạy song song: reserved bằng đúng tổng giữ chỗ', async () => {
+    const { companyId, variants: [v] } = await companyWithVariants();
+    await receive(companyId, v!, 10, 1000);
+    const order = randomUUID();
+    await Promise.all([
+      withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 5 }])),
+      withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 5 }])),
+    ]);
+    expect(await reservationsOf(order)).toEqual([{ variant_id: v, quantity: 5, status: 'active' }]);
+    expect(await levelOf(companyId, v!)).toMatchObject({ onHand: 10, reserved: 5 });
+  });
+
+  it('reserve cho đơn đã xuất kho không giữ thêm (giữ chỗ đã tiêu không bật lại)', async () => {
+    const { companyId, variants: [v] } = await companyWithVariants();
+    await receive(companyId, v!, 10, 1000);
+    const order = randomUUID();
+    await withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 2 }]));
+    await withCompany(companyId, () => issueForOrder(order));
+    const res = await withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 2 }]));
+    expect(res.shortLines).toEqual([{ variantId: v, requested: 2, available: 0 }]);
+    expect(await levelOf(companyId, v!)).toMatchObject({ onHand: 8, reserved: 0 });
+    expect(await reservationsOf(order)).toEqual([{ variant_id: v, quantity: 2, status: 'consumed' }]);
   });
 });
 
@@ -131,6 +157,17 @@ describe('issueForOrder (S-5)', () => {
     expect(new Set([x.issueId, y.issueId, z.issueId]).size).toBe(1);
     expect(z.lines).toEqual([expect.objectContaining({ variantId: v, quantity: 2 })]);
     expect((await levelOf(companyId, v!))!.onHand).toBe(3);
+  });
+
+  it('xuất sau khi đơn đã trả giữ chỗ → 409 not_reserved, không lập phiếu', async () => {
+    const { companyId, variants: [v] } = await companyWithVariants();
+    await receive(companyId, v!, 5, 1000);
+    const order = randomUUID();
+    await withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 1 }]));
+    await withCompany(companyId, () => release(order));
+    await expect(withCompany(companyId, () => issueForOrder(order))).rejects.toMatchObject({ status: 409, code: 'not_reserved' });
+    const issues = await testPool().query('select 1 from inventory.stock_issues where order_id = $1', [order]);
+    expect(issues.rowCount).toBe(0);
   });
 
   it('đơn không có giữ chỗ → 409 not_reserved', async () => {
