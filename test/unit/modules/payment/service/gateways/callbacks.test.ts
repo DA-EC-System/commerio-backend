@@ -185,6 +185,13 @@ describe('ZaloPay callback', () => {
     expect(zalopay.codeOf(input({ body: { data: noUnderscore, mac: 'x', type: 1 } }))).toBeNull();
   });
 
+  it('data ký đúng nhưng thiếu zp_trans_id → lỗi, không dựng khoá "undefined"', () => {
+    const noTxn = JSON.stringify({ app_trans_id: '261018_CMABCDEFGHJK', amount: 150000 });
+    expect(() =>
+      zalopay.readCallback(input({ body: { data: noTxn, mac: hmac('sha256', credentials.key2, noTxn), type: 1 } }), credentials),
+    ).toThrow(/zp_trans_id/);
+  });
+
   it('phản hồi: 1 đã ghi, 2 đã xử lý, -1 sai mac hoặc không thấy mã, 0 lỗi để ZaloPay gửi lại', () => {
     expect(zalopay.respond('recorded')).toEqual({ status: 200, body: { return_code: 1, return_message: 'success' } });
     expect(zalopay.respond('duplicate').body).toMatchObject({ return_code: 2 });
@@ -227,6 +234,21 @@ describe('SePay (cổng vietqr)', () => {
     expect(vietqr.readCallback(input({ body: { ...tx, content: 'chuyen tien hang thang' }, headers: auth }), credentials)).toMatchObject({
       paymentCode: null,
     });
+  });
+
+  it('code của SePay không đúng dạng mã (tiền tố công ty khác) → tìm trong content; content chữ thường vẫn khớp', () => {
+    expect(vietqr.readCallback(input({ body: { ...tx, code: 'DH123' }, headers: auth }), credentials)).toMatchObject({
+      paymentCode: 'CMABCDEFGHJK',
+    });
+    expect(
+      vietqr.readCallback(input({ body: { ...tx, content: 'ck cmabcdefghjk' }, headers: auth }), credentials),
+    ).toMatchObject({ paymentCode: 'CMABCDEFGHJK' });
+  });
+
+  it('thiếu id giao dịch → lỗi (cổng gửi lại), không dựng khoá chống trùng "undefined"', () => {
+    const { id: _id, ...noId } = tx;
+    void _id;
+    expect(() => vietqr.readCallback(input({ body: noId, headers: auth }), credentials)).toThrow(/thiếu id/);
   });
 
   it('thiếu header, sai key, sai tiền tố → bad_signature', () => {
