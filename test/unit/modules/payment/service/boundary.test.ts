@@ -1,10 +1,8 @@
 import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
 import {
-  cancelActiveLink,
   getDailyPaymentFees,
   getOrderPayments,
-  initOrderPayment,
   markCodCollected,
   markCodNotCollected,
   markDelivered,
@@ -21,8 +19,6 @@ const notImplemented = { status: 501, code: 'not_implemented' };
 // Khung của payment cho fulfillment (#25), finance (#27), báo cáo (#29) (AC-10, plan chuẩn bị 4.5, A8, A11, R2).
 describe('khung payment', () => {
   it('hàm fulfillment gọi báo 501 not_implemented', async () => {
-    await expect(initOrderPayment('o1', 'cod')).rejects.toMatchObject(notImplemented);
-    await expect(cancelActiveLink('o1')).rejects.toMatchObject(notImplemented);
     await expect(markRefundPending('o1')).rejects.toMatchObject(notImplemented);
     await expect(markCodNotCollected('o1')).rejects.toMatchObject(notImplemented);
     await expect(markDelivered('o1', new Date())).rejects.toMatchObject(notImplemented);

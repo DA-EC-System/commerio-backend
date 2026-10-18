@@ -1,7 +1,16 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { z } from 'zod';
 import { problemResponse } from '../../../shared/http/openapi.ts';
-import { GatewayConfig, GatewayConfigRequest, GatewayParams, GatewaySummary } from './schemas.ts';
+import {
+  CreateLinkBody,
+  GatewayConfig,
+  GatewayConfigRequest,
+  GatewayParams,
+  GatewaySummary,
+  OrderParams,
+  OrderPayment,
+  PaymentLink,
+} from './schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
 const bearer = [{ bearerAuth: [] }];
@@ -38,6 +47,38 @@ export function registerPaymentOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: cổng không thuộc 4 cổng'),
       409: problemResponse('`version_conflict` kèm `current` (đã che)'),
       422: problemResponse('`validation_failed`: `errors["credentials.<ô>"]`, `errors.version`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/orders/:orderId/links',
+    summary: 'Tạo mã QR/link thanh toán cho đơn (UC-PF-01)',
+    description:
+      'Cần `payment.link.create`. Đơn tay/hộp thư trả trước, chưa thu. Mỗi đơn tối đa một mã còn hạn (15 phút): đơn đã có mã còn hạn thì trả 200 mã đó, kể cả gửi cổng khác, không gọi cổng. Mã đã quá hạn thì chuyển `expired` và tạo mã mới.',
+    security: bearer,
+    request: { params: OrderParams, body: json(CreateLinkBody) },
+    responses: {
+      201: { description: 'Mã mới', ...json(PaymentLink) },
+      200: { description: 'Mã đang còn hạn của đơn', ...json(PaymentLink) },
+      ...auth,
+      404: problemResponse('`not_found`: đơn không có hoặc của công ty khác'),
+      409: problemResponse('`payment_not_allowed`: đơn COD, đơn sàn, đã thanh toán, đã huỷ, tổng có phần lẻ đồng, hoặc ngoài hạn mức MoMo (1.000–50.000.000 đ); `detail` nêu lý do'),
+      422: problemResponse('`gateway_not_configured` kèm `errors.gateway`; `validation_failed` khi `gateway` sai'),
+      502: problemResponse('`gateway_unavailable`: cổng lỗi, quá 10 giây, hoặc từ chối khoá; không ghi gì'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/orders/:orderId',
+    summary: 'Trạng thái thanh toán của đơn',
+    description:
+      'Cần `sales.order.view`. Đơn chưa xác nhận (chưa có dòng trạng thái tiền) trả trạng thái suy từ đơn. `activeLink` là mã còn hạn; trong `links` (mới nhất trước, tối đa 20) mã quá hạn hiện `expired`.',
+    security: bearer,
+    request: { params: OrderParams },
+    responses: {
+      200: { description: 'Trạng thái thanh toán', ...json(OrderPayment) },
+      ...auth,
+      404: problemResponse('`not_found`: đơn không có, của công ty khác, hoặc đơn sàn'),
     },
   });
 }
