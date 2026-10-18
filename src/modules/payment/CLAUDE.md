@@ -26,7 +26,13 @@ Cấu hình khoá cổng (UC-PF-11), mã QR/link thanh toán (UC-PF-01), trạng
 |---|---|---|
 | `initOrderPayment(orderId, method)` | fulfillment #25 khi xác nhận đơn | Tạo dòng `unpaid`/`cod_pending`, có rồi thì thôi. Trong `withCompany` của bên gọi |
 | `cancelActiveLink(orderId)` | fulfillment #25 khi huỷ đơn | Mã `active` → `cancelled`. **Bên gọi đổi `sales.orders` trước rồi mới gọi hàm này, cùng giao dịch** |
-| `markPaid`, `markRefundPending`, … | #27 | Còn là khung 501 |
+| `markRefundPending(orderId)` | fulfillment #25 khi huỷ **mọi** đơn tay/hộp thư | `paid` → hoàn tiền `pending_refund` (`updated_at` = lúc huỷ, tab Cần hoàn tiền); chưa thu, chưa xác nhận, đã chờ hoàn → trả nguyên; `cod_collected` → 409 `payment_state_changed`. Gọi sau `cancelActiveLink` |
+| `markCodNotCollected(orderId)` | fulfillment #25 khi giao COD thất bại hoặc huỷ đơn COD chưa giao | `cod_pending` → `not_collected`; đơn trả trước, chưa xác nhận → trả nguyên; `cod_collected` → 409 |
+| `markDelivered(orderId, at)` | fulfillment #25 khi giao xong | Ghi `delivered_at` lần đầu (tab COD lọc theo ngày giao, R2) |
+| `getOrderPayments(ids)` | chỉ finance | Trạng thái tiền theo lô; đơn chưa có dòng không có trong kết quả |
+| `markPaid`, `markCodCollected`, `markRefunded`, … | chỉ finance | Còn là khung 501 (PR sau của #27) |
+
+`markRefundPending`, `markCodNotCollected` trả 404 cho đơn sàn (không có trạng thái tiền) và đơn công ty khác: #25 không gọi cho đơn sàn; `markDelivered` với đơn không có dòng thì bỏ qua. **Thứ tự khoá cho mọi hàm trên:** bên gọi đổi `sales.orders` trước (giữ khoá dòng đơn), rồi mới gọi hàm payment (khoá `order_payments`), cùng giao dịch; ngược lại thì deadlock với tạo mã, webhook, COD (đơn trước, `order_payments` sau). Mọi hàm phải gọi trong `withCompany` (ngoài đó là role chủ bảng, RLS không có hiệu lực).
 
 Payment gọi `sales.getOrderForPayment(orderId, { lock?: 'share' })` để đọc đơn.
 
