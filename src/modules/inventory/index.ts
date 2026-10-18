@@ -9,3 +9,6 @@ export const inventoryModule: ModuleDefinition = {
   router: inventoryRouter,
   openapi: registerInventoryOpenApi,
 };
+
+export { issueForOrder, receiveReturn, release, reserve, type StockLine } from './service/boundary.ts';
+export { getOrderCogs } from './service/daily-totals.ts';

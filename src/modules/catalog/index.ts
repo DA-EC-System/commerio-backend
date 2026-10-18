@@ -9,3 +9,7 @@ export const catalogModule: ModuleDefinition = {
   router: catalogRouter,
   openapi: registerCatalogOpenApi,
 };
+
+export { getVariants, type VariantSummary } from './service/variants.ts';
+// Giá chuẩn đi vào catalog qua ctx (A12): catalog không import pricing, src/wiring.ts tiêm `standardPrices`.
+export { type CatalogContext, type StandardPriceLookup, standardPricesOf } from './service/standard-price.ts';

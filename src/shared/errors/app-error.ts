@@ -16,3 +16,8 @@ export class AppError extends Error {
     this.extensions = extensions;
   }
 }
+
+/** Khung export đã chốt chữ ký nhưng chưa có thân: 501 `not_implemented`, ghi issue sẽ viết thân. */
+export function notImplemented(fn: string, issue: string): AppError {
+  return new AppError(501, 'not_implemented', `${fn} chưa làm (${issue})`);
+}
