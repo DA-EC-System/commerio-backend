@@ -1,0 +1,196 @@
+# Ba tiến trình cùng một image, chỉ khác lệnh (docs/17). Image "commerio-backend" được overlay đổi tên và tag.
+# Cổng có tên "metrics" là chỗ Prometheus lấy số liệu (deploy/monitoring/k8s/prometheus.yml).
+# enableServiceLinks: false để Kubernetes không tiêm API_PORT=tcp://…, REALTIME_PORT=tcp://… đè biến của app.
+# runAsUser 1000 = user node của image: runAsNonRoot cần uid dạng số.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+spec:
+  # Một bản sao: rate limit đăng nhập đếm trong bộ nhớ từng bản sao.
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api
+          image: commerio-backend
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-env
+          ports:
+            - name: http
+              containerPort: 3000
+            - name: metrics
+              containerPort: 9464
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          # Chờ Endpoints gỡ pod cũ rồi mới SIGTERM, để rolling update không trả lỗi.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app.kubernetes.io/name: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+    spec:
+      enableServiceLinks: false
+      # Dừng relay outbox có thể chờ tới 30 giây (messageTimeoutMs).
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: worker
+          image: commerio-backend
+          command: ["node", "src/entrypoints/worker.ts"]
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-env
+          ports:
+            - name: metrics
+              containerPort: 3001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime
+  labels:
+    app.kubernetes.io/name: realtime
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: realtime
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: realtime
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: realtime
+          image: commerio-backend
+          command: ["node", "src/entrypoints/realtime.ts"]
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-env
+          # Một cổng cho stream SSE, /health và /metrics; Caddy chỉ đưa /api/v1/notification/stream ra ngoài.
+          ports:
+            - name: metrics
+              containerPort: 3002
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app.kubernetes.io/name: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime
+spec:
+  selector:
+    app.kubernetes.io/name: realtime
+  ports:
+    - name: http
+      port: 3002
+      targetPort: metrics

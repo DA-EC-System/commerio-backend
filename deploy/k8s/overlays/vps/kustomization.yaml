@@ -1,0 +1,58 @@
+# k3s trên VPS (Documents/21 D13), cài với --disable traefik: Caddy giữ cổng 80/443 qua ServiceLB.
+# Chưa chạy thật: chờ VPS (#36 lát 8). Cách chạy: deploy/k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: commerio
+
+resources:
+  - ../../base
+  - caddy-data.yaml
+
+# Image của CI (#37, amd64 + arm64). Deploy đổi tag sang sha-<7 ký tự> của commit.
+images:
+  - name: commerio-backend
+    newName: ghcr.io/da-ec-system/commerio-backend
+    newTag: develop
+
+secretGenerator:
+  - name: app-env
+    envs:
+      - .env
+  - name: grafana-admin
+    envs:
+      - grafana/.env
+
+configMapGenerator:
+  - name: caddy-site
+    behavior: replace
+    envs:
+      - caddy/.env
+
+patches:
+  # GHCR private: Secret ghcr tạo tay trên VPS từ PAT read:packages (README).
+  - target:
+      kind: Deployment
+      name: api|worker|realtime
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: ghcr
+  # Chứng chỉ HTTPS giữ qua các lần khởi động lại; FE là dist/ do workflow của repo FE chép lên máy (như #37).
+  - target:
+      kind: Deployment
+      name: caddy
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/1
+        value:
+          name: data
+          persistentVolumeClaim:
+            claimName: caddy-data
+      - op: replace
+        path: /spec/template/spec/volumes/2
+        value:
+          name: fe
+          hostPath:
+            path: /opt/commerio/site
+            type: DirectoryOrCreate
