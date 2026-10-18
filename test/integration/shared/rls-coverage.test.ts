@@ -17,6 +17,8 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'audit.audit_logs': ['SELECT', 'INSERT'],
   'platform.outbox_messages': ['INSERT'],
   'platform.processed_events': ['SELECT', 'INSERT'],
+  // Thẻ kho chỉ thêm, sai thì lập phiếu ngược (Documents/21 K10).
+  'inventory.stock_moves': ['SELECT', 'INSERT'],
 };
 
 interface TableInfo {

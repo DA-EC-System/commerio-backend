@@ -9,6 +9,7 @@ Migration của PostgreSQL. Một database, mỗi module một schema cùng tên
 - Thứ Drizzle không sinh được (Row-Level Security policy, `CREATE EXTENSION vector`, trigger): `npx drizzle-kit generate --custom --name <mo-ta>` tạo file SQL trống rồi viết tay.
 - `0003_rls.sql` role `commerio_app`, quyền trên bảng, chính sách RLS.
 - `0004_outbox.sql` bảng `platform.outbox_messages`, `platform.processed_events`; `0005_outbox-rls-ten-vai-tro.sql` RLS và quyền chỉ-INSERT của outbox, unique tên vai trò theo chữ thường (`roles_company_lower_name_uq`).
+- `0006_san-pham-gia-kho.sql` 18 bảng catalog, pricing, inventory (ERD core, thêm `variant_attribute_values.position`, `stock_moves.done_by`, `inventory.doc_counters`; tên danh mục, thuộc tính, giá trị thuộc tính, sản phẩm không trùng theo chữ thường); `0007_san-pham-gia-kho-rls.sql` RLS 18 bảng, thẻ kho `stock_moves` chỉ thêm (không UPDATE, DELETE).
 - Index **biểu thức** cần `NULLS NOT DISTINCT` (vd `(company_id, lower(name))` với vai trò có sẵn `company_id` trống) Drizzle không sinh được: viết trong migration `--custom`, không khai trong `schema.ts` để `db:generate` sau này không đòi xoá; ghi chú trong `schema.ts` trỏ tới migration đó.
 - Staging là PostgreSQL 17 trên Supabase, chạy migration bằng user không phải superuser. Không dùng tính năng chỉ có ở PG18 (`uuidv7()`, cột ảo). Test integration đã chạy migration bằng role `NOSUPERUSER CREATEROLE` cho giống; thử trên PG17: `TEST_PG_IMAGE=pgvector/pgvector:pg17 npx vitest run --project integration`.
 

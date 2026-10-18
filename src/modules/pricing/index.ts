@@ -9,3 +9,6 @@ export const pricingModule: ModuleDefinition = {
   router: pricingRouter,
   openapi: registerPricingOpenApi,
 };
+
+// getStandardPrices: catalog dùng qua src/wiring.ts (V22, A12); createStandardPricelist: identity gọi khi đăng ký (V13).
+export { createStandardPricelist, getStandardPrices } from './service/standard-prices.ts';

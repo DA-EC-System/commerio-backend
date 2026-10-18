@@ -43,6 +43,20 @@
       "when": 1792291516379,
       "tag": "0005_outbox-rls-ten-vai-tro",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792300675688,
+      "tag": "0006_san-pham-gia-kho",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792300681184,
+      "tag": "0007_san-pham-gia-kho-rls",
+      "breakpoints": true
     }
   ]
 }
