@@ -98,6 +98,8 @@ const EnvelopeSchema = z.object({
   companyId: z.uuid().nullable(),
   aggregateId: z.string().min(1),
   occurredAt: z.iso.datetime({ offset: true }),
+  // Tuỳ chọn: message gửi trước khi có trường này (Kafka giữ 7 ngày) hay đẩy lại từ DLQ không có nó.
+  sequence: z.number().int().positive().optional(),
   payload: z.unknown(),
 });
 

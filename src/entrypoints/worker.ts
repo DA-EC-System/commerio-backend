@@ -13,12 +13,21 @@ const opsServer = startOpsServer(env.WORKER_PORT, () => {
 
 const ctx = createModuleContext();
 const stops: (() => Promise<void>)[] = [];
-for (const module of modules) {
-  if (module.startBackground) stops.push(await module.startBackground(ctx));
-}
+let stopping = false;
 
+// Đăng ký trước vòng khởi động: SIGTERM đến giữa vòng thì không khởi động module kế tiếp.
 onShutdown('worker', async () => {
+  stopping = true;
   await Promise.all(stops.map((stop) => stop()));
   await closeServer(opsServer);
   await closeDb();
 });
+
+for (const module of modules) {
+  if (stopping) break;
+  if (!module.startBackground) continue;
+  const stop = await module.startBackground(ctx);
+  // Module trả về sau khi đã bắt đầu dừng: dừng nó ngay thay vì để chạy tiếp.
+  if (stopping) await stop();
+  else stops.push(stop);
+}

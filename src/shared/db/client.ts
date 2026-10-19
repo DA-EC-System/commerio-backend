@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { env } from '../config/env.ts';
+import { logger } from '../logger.ts';
 
 export type Database = NodePgDatabase;
 export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
@@ -14,6 +15,11 @@ function rootDb(): Database {
   if (!database) {
     if (!env.DATABASE_URL) throw new Error('Chưa đặt DATABASE_URL');
     pool = new pg.Pool({ connectionString: env.DATABASE_URL });
+    // Kết nối rảnh bị server cắt (restart, failover): pool bỏ kết nối đó và tự mở cái mới khi cần.
+    // Thiếu listener thì EventEmitter ném và tiến trình thoát. Không log cả `err`: `err.client` mang mật khẩu DB.
+    pool.on('error', (err: Error & { code?: string }) => {
+      logger.error({ code: err.code, reason: err.message }, 'kết nối PostgreSQL rảnh bị đứt');
+    });
     database = drizzle({ client: pool });
   }
   return database;

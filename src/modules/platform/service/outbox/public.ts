@@ -11,6 +11,8 @@ import { insertOutboxMessage } from '../../repository/outbox.ts';
 import type { ConsumerScope, Handler } from './consumer.ts';
 import { registerOutboxMetrics } from './metrics.ts';
 import { register, startSharedConsumers } from './registry.ts';
+
+export { stopInstanceConsumers } from './registry.ts';
 import { outboxOptions } from './runtime.ts';
 
 /**

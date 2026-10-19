@@ -30,9 +30,11 @@ registerConsumer('inventory.below_threshold', async (event) => { ... }, { consum
 | `shared` (mặc định) | `worker` | mỗi sự kiện một bản sao worker | `withCompany(event.companyId)` + ghi `processed_events` cùng giao dịch | thử lại sau 1 s, 5 s, 30 s; vẫn lỗi → `<topic>.dlq` |
 | `instance` | tiến trình gọi (vd `realtime`) | mọi bản sao, chỉ sự kiện mới | không giao dịch | ghi log, bỏ qua |
 
+Tiến trình chạy consumer `instance` gọi `stopInstanceConsumers()` (export ở `platform/index.ts`) trong `onShutdown`, trước khi đóng DB: hàm này ngắt consumer và dừng vòng nối lại Kafka.
+
 - Đăng ký mọi loại của một tên consumer **liền nhau trong một khối đồng bộ** (lúc import hoặc đầu `startBackground`). Thêm loại vào tên đã chạy thì ném lỗi.
 - **Đúng một lần chỉ với tác động trong DB.** Gọi ra ngoài (đẩy tồn lên sàn, email) là "ít nhất một lần": gửi giá trị tuyệt đối (số tồn), không gửi chênh lệch.
-- Lỗi mất kết nối DB không bị đẩy vào DLQ: message được giao lại. Mất kết nối giữa truy vấn hiện làm worker thoát (chưa gắn listener `error` cho pool, sửa ở PR dọn dẹp); sự kiện không mất vì offset chưa commit.
+- Lỗi mất kết nối DB không bị đẩy vào DLQ: message được giao lại; sự kiện không mất vì offset chưa commit. Kết nối rảnh bị server cắt chỉ ghi log, không làm worker thoát (listener `error` của pool, `src/shared/db/client.ts`).
 - Message lỗi giữ partition của nó đứng tối đa ~36 s trong lúc thử lại; partition khác chạy tiếp.
 - Tên consumer `shared` **mới** đọc topic từ đầu phần Kafka còn giữ (tới 7 ngày, mọi công ty): handler gọi ra ngoài phải chịu được sự kiện cũ, hoặc tự bỏ sự kiện có `occurredAt` quá xa.
 - Lỗi mạng của chính handler (gọi API sàn hỏng) tính là lỗi handler: thử lại rồi DLQ. Chỉ lỗi kết nối PostgreSQL mới được giao lại không giới hạn (chờ lùi 1 s → 30 s).
@@ -43,7 +45,9 @@ Kafka giữ thứ tự trong một partition; key = `aggregateId` nên các sự
 
 Giới hạn đã biết:
 - Sau khi một sự kiện sang DLQ, sự kiện sau cùng key đi trước nó; đẩy lại DLQ thì nó tới muộn.
-- Lô relay hỏng giữa chừng do hết `message.timeout.ms` (Kafka chập chờn) có thể làm consumer thấy m2, m1, m2: m2 lần hai bị bỏ qua vì trùng, trạng thái cuối là m1. Sẽ thêm `sequence` vào envelope ở PR dọn dẹp trước #21.
+- Lô relay hỏng giữa chừng do hết `message.timeout.ms` (Kafka chập chờn) có thể làm consumer thấy m2, m1, m2: m2 lần hai bị bỏ qua vì trùng, trạng thái cuối là m1.
+
+**`sequence`** trong envelope là `id` dòng outbox. Consumer cần trạng thái cuối đúng (vd đẩy tồn lên sàn) lưu `sequence` lớn nhất đã xử lý theo `aggregateId` và bỏ sự kiện có `sequence` nhỏ hơn hoặc bằng: ca m2, m1, m2 ở trên ra m2. Chỉ so trong cùng một `aggregateId`, và chỉ đúng khi bên phát khoá dòng đối tượng trước khi ghi outbox (điều kiện ở đầu mục). Message gửi trước khi có trường này, hay đẩy lại từ DLQ cũ, không có `sequence`: consumer xử lý như sự kiện không rõ thứ tự.
 
 ## Chạy worker
 
