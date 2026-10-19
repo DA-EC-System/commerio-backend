@@ -103,8 +103,7 @@ export function identityRouter(ctx: ModuleContext): Router {
   );
 
   // Vai trò và quyền (/identity/roles, /identity/permissions) do module access phục vụ. Gắn sau route của
-  // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh. Access cần
-  // quyền thô hiện tại của người gọi (Documents/21 D1) nên nhận thêm loader của identity.
+  // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh.
   router.use(accessRouter(ctx));
 
   return router;
