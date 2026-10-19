@@ -62,6 +62,8 @@ describe('tạo mã: bên thắng biến mất trước khi bên thua đọc l�
     const res = await createLink(s.sale.token, o.orderId, 'momo');
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('/problems/payment_not_allowed');
+    // Lý do theo trạng thái mới của đơn (luật bước 1), không phải câu dự phòng.
+    expect(res.body.detail).not.toBe('Mã thanh toán của đơn vừa thay đổi, tạo lại mã');
     const links = await linksOf(o.orderId);
     expect(links.map((l: { gateway: string }) => l.gateway)).toEqual(['vietqr']);
   });
