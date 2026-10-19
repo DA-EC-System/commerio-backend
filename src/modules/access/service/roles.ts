@@ -1,7 +1,7 @@
 // Vai trò tuỳ biến (UC-PI-06). Thứ tự kiểm theo plan #8 P4; mã lỗi theo Documents/21 I3, V4–V8, D2, D3.
-import { z } from 'zod';
 import { withCompany } from '../../../shared/db/client.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
+import { isUuid } from '../../../shared/uuid.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { getEnabledModules } from '../../platform/index.ts';
@@ -75,8 +75,7 @@ function nameRace(err: unknown): never {
 }
 
 async function findRole(id: string): Promise<Found> {
-  // Mã không phải uuid thì PostgreSQL ném 22P02; coi như không tìm thấy (Documents/21 V6).
-  if (!z.uuid().safeParse(id).success) throw notFound();
+  if (!isUuid(id)) throw notFound();
   const [role] = await findRoles(id);
   if (!role) throw notFound();
   if (role.companyId === null) throw builtinRole();

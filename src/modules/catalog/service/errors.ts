@@ -1,5 +1,4 @@
 // Lỗi nghiệp vụ dùng chung của catalog (Documents/21 5.3, C3, V6, V24). Mã lỗi đã chốt với FE.
-import { z } from 'zod';
 import { AppError } from '../../../shared/errors/app-error.ts';
 
 /** Người gọi đã qua `ctx.authorize`: công ty đang chọn và tài khoản (ghi nhật ký). */
@@ -29,9 +28,7 @@ export const lastVariant = () =>
 export const invalid = (errors: Record<string, string>) =>
   new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', { errors });
 
-/** Id không phải uuid thì PostgreSQL ném 22P02; coi như không có (V6). */
-const UUID = z.uuid();
-export const isUuid = (id: string) => UUID.safeParse(id).success;
+export { isUuid } from '../../../shared/uuid.ts';
 
 export { pgError } from '../../../shared/db/pg-error.ts';
 

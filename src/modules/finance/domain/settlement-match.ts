@@ -2,9 +2,9 @@
 import { Decimal } from 'decimal.js';
 import { FEE_KEYS, type SettlementLineInput } from './tiktok-settlement.ts';
 
-export type MatchStatus = 'matched' | 'discrepancy' | 'refund_tagged';
-export type DiscrepancyReason = 'order_not_found' | 'revenue_mismatch' | 'formula_mismatch';
-export interface MatchResult {
+type MatchStatus = 'matched' | 'discrepancy' | 'refund_tagged';
+type DiscrepancyReason = 'order_not_found' | 'revenue_mismatch' | 'formula_mismatch';
+interface MatchResult {
   matchStatus: MatchStatus;
   discrepancyReason: DiscrepancyReason | null;
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { vnDayParam } from '../../../shared/http/vn-day.ts';
 
 // Hợp đồng /finance (Documents/21 §12.5, §12.8, C1, C3, C6, V8; plan #27 PR3). Tiền là số nguyên đồng (T1).
 
@@ -14,12 +15,7 @@ export const page = {
 };
 
 const isoDay = (label: string) => z.iso.date(`${label} dạng yyyy-mm-dd`);
-/** Ngày `yyyy-mm-dd` → đầu ngày (hoặc đầu ngày hôm sau, cho `to`) theo giờ Việt Nam (C6). */
-const dayVn = (label: string, nextDay = false) =>
-  isoDay(label)
-    .transform((d) => new Date(Date.parse(`${d}T00:00:00+07:00`) + (nextDay ? 86_400_000 : 0)))
-    .optional();
-export const range = { from: dayVn('Từ ngày'), to: dayVn('Đến ngày', true) };
+export const range = { from: vnDayParam('Từ ngày'), to: vnDayParam('Đến ngày', true) };
 
 export const IdParams = z.object({ id: z.string() });
 

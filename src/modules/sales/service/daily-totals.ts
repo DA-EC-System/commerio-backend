@@ -1,5 +1,5 @@
 // Hàm nguồn cho báo cáo (#29). Gọi trong `withCompany` của bên gọi.
-import { currentCompanyId } from '../../../shared/db/client.ts';
+import { requireCompanyId } from '../../../shared/db/client.ts';
 import { channelsOf } from '../repository/daily-totals.ts';
 import type { OrderSource } from './payment-boundary.ts';
 
@@ -10,7 +10,7 @@ import type { OrderSource } from './payment-boundary.ts';
 export async function getOrderChannels(
   orderIds: readonly string[],
 ): Promise<Map<string, { source: OrderSource; shopId: string | null }>> {
-  if (!currentCompanyId()) throw new Error('getOrderChannels phải gọi trong withCompany: số liệu thuộc một công ty');
+  requireCompanyId('getOrderChannels');
   return new Map(
     (await channelsOf(orderIds)).map((o) => [o.id, { source: o.source, shopId: o.source === 'marketplace' ? o.shopId : null }]),
   );

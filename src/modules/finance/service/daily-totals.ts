@@ -1,6 +1,6 @@
 // Hàm nguồn cho báo cáo (#29, plan #29 A1–A3). Gọi trong `withCompany` của bên gọi.
 import { Decimal } from 'decimal.js';
-import { currentCompanyId } from '../../../shared/db/client.ts';
+import { requireCompanyId } from '../../../shared/db/client.ts';
 import { financeDays, settlementByOrder } from '../repository/daily-totals.ts';
 
 export interface DailyFinanceTotal {
@@ -27,7 +27,7 @@ export interface DailyFinanceTotal {
  * có đơn (plan #29 A2).
  */
 export async function getDailyFinanceTotals(range: { from: string; to: string }): Promise<DailyFinanceTotal[]> {
-  if (!currentCompanyId()) throw new Error('getDailyFinanceTotals phải gọi trong withCompany: số liệu thuộc một công ty');
+  requireCompanyId('getDailyFinanceTotals');
   const days = await financeDays(range.from, range.to);
   const invoiced = [...new Set(days.filter((d) => d.invoice_net !== 0).map((d) => d.order_id))];
   const settlement = new Map((await settlementByOrder(invoiced)).map((s) => [s.order_id, s]));

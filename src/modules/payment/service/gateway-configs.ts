@@ -14,7 +14,7 @@ import {
   updateGatewayConfigIfVersion,
 } from '../repository/gateway-configs.ts';
 import { decryptCredentials, encryptCredentials } from './credentials-cipher.ts';
-import { pgError } from './pg-error.ts';
+import { pgError } from '../../../shared/db/pg-error.ts';
 import { type UserRef, userRef } from './user-ref.ts';
 
 const ENTITY = 'payment.gateway_configs';

@@ -4,11 +4,10 @@ import type { z } from 'zod';
 import { authenticate, getAuth } from '../../../shared/auth/authenticate.ts';
 import { env } from '../../../shared/config/env.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
-import { validate } from '../../../shared/http/validate.ts';
+import { validate, validated } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
 import { accessRouter } from '../../access/index.ts';
 import * as auth from '../service/auth-service.ts';
-import { loadCompanyAccess } from '../service/auth-service.ts';
 import { ChangePasswordBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
 
 /** Refresh token nằm trong cookie HttpOnly, chỉ gửi kèm các đường dẫn /identity (Documents/21 A1). */
@@ -29,7 +28,7 @@ function readRefreshCookie(req: Request): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
 }
 
-const body = <T extends z.ZodType>(res: Response) => (res.locals.validated as { body: z.output<T> }).body;
+const body = <T extends z.ZodType>(res: Response) => validated<T>(res, 'body');
 
 // Chặn dò mật khẩu và đăng ký hàng loạt: đếm theo IP trong 15 phút.
 const authLimiter = (options: Partial<Options> = {}) =>
@@ -106,7 +105,7 @@ export function identityRouter(ctx: ModuleContext): Router {
   // Vai trò và quyền (/identity/roles, /identity/permissions) do module access phục vụ. Gắn sau route của
   // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh. Access cần
   // quyền thô hiện tại của người gọi (Documents/21 D1) nên nhận thêm loader của identity.
-  router.use(accessRouter({ ...ctx, loadCompanyAccess }));
+  router.use(accessRouter(ctx));
 
   return router;
 }

@@ -63,7 +63,7 @@ Payment gọi `sales.getOrderForPayment(orderId, { lock?: 'share' })` để đ�
 
 Tra cứu quá hạn (`service/overdue-query.ts`, `startBackground` của module, chạy trong worker): mỗi 60 giây, tối đa 20 mã `active` quá hạn ≤ 24 giờ; gọi cổng ngoài giao dịch; đã trả → như webhook `source=query` (không ghi được phiếu thu thì mã cũng `expired`), chưa trả → `expired`; cổng lỗi thì mã xuống cuối hàng chờ. Mã giao dịch cổng trùng với dòng của công ty khác (unique toàn hệ thống) → lỗi, không báo "đã xử lý". Không giữ advisory lock (chống trùng ở DB).
 
-Giới hạn: access log `pinoHttp` ghi URL webhook (chữ ký VNPay, `receiverKey` SePay); che ở PR dọn dẹp sau đợt (`src/shared/logger.ts`). Webhook thật trên máy dev cần URL HTTPS công khai: `cloudflared tunnel --url http://localhost:<API_PORT>`, đặt `PUBLIC_API_URL` bằng URL đó rồi khởi động lại api.
+Access log không ghi query (chữ ký VNPay) và che `receiverKey` SePay (`src/shared/logger.ts`). Trang khách quay về sau khi trả tiền: `<PUBLIC_WEB_URL>/thanh-toan/ket-qua` (chưa đặt thì gốc của API). Webhook thật trên máy dev cần URL HTTPS công khai: `cloudflared tunnel --url http://localhost:<API_PORT>`, đặt `PUBLIC_API_URL` bằng URL đó rồi khởi động lại api.
 
 ## Test
 

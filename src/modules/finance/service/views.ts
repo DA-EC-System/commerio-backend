@@ -1,5 +1,4 @@
 // Mảnh dùng chung của các API tài chính (Documents/21 §12.8): tham chiếu đơn, người, chứng từ; trang; tìm kiếm.
-import { z } from 'zod';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { getOrdersForFinance, type OrderForFinance } from '../../sales/index.ts';
 import { findAccountById } from '../../staff/index.ts';
@@ -13,7 +12,7 @@ export interface Page {
 }
 
 export const money = (v: string) => Number(v);
-export const isUuid = (id: string) => z.uuid().safeParse(id).success;
+export { isUuid } from '../../../shared/uuid.ts';
 export const notFound = (what: string) => new AppError(404, 'not_found', `Không tìm thấy ${what}`);
 
 /** Đơn của các dòng (một truy vấn sales, T8). */

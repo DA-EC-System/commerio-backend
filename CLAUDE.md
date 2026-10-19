@@ -42,7 +42,7 @@ Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn địn
 - Định danh bằng tiếng Anh (`Order`, `ProductVariant`, `stockThreshold`); comment, tài liệu, thông báo lỗi cho người đọc bằng tiếng Việt.
 - Import tương đối phải có đuôi `.ts`. Chỉ viết cú pháp TypeScript xoá được: không `enum`, `namespace`, parameter property. Dùng union literal hoặc object `as const` thay `enum`.
 - Lỗi nghiệp vụ ném `AppError(status, code, message)`; middleware trả về dạng Problem Details (RFC 9457). Không tự `res.status(4xx)` trong controller.
-- Đầu vào HTTP luôn qua `validate({ body, query, params })`; controller đọc `res.locals.validated`.
+- Đầu vào HTTP luôn qua `validate({ body, query, params })`; controller đọc lại bằng `validated<typeof Schema>(res, 'body')` (`src/shared/http/validate.ts`).
 - Tiền dùng `numeric` trong DB và `decimal.js` trong code, không dùng `number`.
 
 ## Test: đặt file ở đâu

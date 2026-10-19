@@ -1,7 +1,7 @@
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { AppError } from '../errors/app-error.ts';
 import { readAccessClaims } from './authenticate.ts';
-import { type AccessLoader, assertCompanyAccess, moduleOfPermission } from './company-access.ts';
+import { type AccessLoader, assertCompanyAccess, type CompanyAccess, moduleOfPermission } from './company-access.ts';
 
 export { type AccessLoader, assertCompanyAccess, type CompanyAccess, moduleOfPermission } from './company-access.ts';
 
@@ -27,6 +27,35 @@ export function createAuthorize(loader: AccessLoader): Authorize {
       throw new AppError(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
     }
     res.locals.auth = claims;
+    res.locals.access = access;
     next();
   };
+}
+
+/**
+ * Qua khi một trong các middleware `authorize` qua: `anyOf(ctx.authorize('a'), ctx.authorize('b'))`. Thử lần lượt,
+ * chỉ thử tiếp khi bị 403 `forbidden`; lỗi khác (401, 404, công ty khoá, phân hệ tắt…) trả ngay.
+ */
+export function anyOf(...checks: readonly RequestHandler[]): RequestHandler {
+  return async (req, res, next) => {
+    for (const [i, check] of checks.entries()) {
+      try {
+        // `authorize` ném lỗi thay vì gọi next(err), nên chờ nó xong rồi mới quyết.
+        await check(req, res, next);
+        return;
+      } catch (err) {
+        if (i === checks.length - 1 || !(err instanceof AppError && err.code === 'forbidden')) throw err;
+      }
+    }
+  };
+}
+
+/**
+ * Quyền thô hiện tại của người gọi mà `authorize` vừa đọc từ DB (gồm quyền của phân hệ đang tắt, D1): route cần
+ * quyền phụ (vd xem giá vốn) đọc ở đây thay vì nạp lần hai. Chỉ gọi sau `ctx.authorize(...)`.
+ */
+export function getAccess(res: Response): CompanyAccess {
+  const access = res.locals.access as CompanyAccess | undefined;
+  if (!access) throw new Error('getAccess chỉ gọi được sau authorize');
+  return access;
 }

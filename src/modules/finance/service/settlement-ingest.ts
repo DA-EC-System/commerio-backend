@@ -2,7 +2,7 @@
 // gắn nhãn hoàn, khớp lại dòng chưa thấy đơn. Gọi trong `withCompany` của bên gọi; một giao dịch cho cả lần nhận.
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { logger } from '../../../shared/logger.ts';
-import { currentCompanyId } from '../../../shared/db/client.ts';
+import { requireCompanyId } from '../../../shared/db/client.ts';
 import { publishEvent } from '../../platform/index.ts';
 import { findMarketplaceOrders } from '../../sales/index.ts';
 import { matchLine } from '../domain/settlement-match.ts';
@@ -113,8 +113,7 @@ export async function ingestSettlementStatement(
   statement: SettlementStatementInput,
   lines: readonly SettlementLineInput[],
 ): Promise<{ statementId: string; created: boolean }> {
-  const companyId = currentCompanyId();
-  if (!companyId) throw new Error('ingestSettlementStatement phải gọi trong withCompany');
+  const companyId = requireCompanyId('ingestSettlementStatement');
   await lockCompanySettlements(companyId);
 
   const { id: statementId, created } = await upsertStatement(companyId, shopId, statement);

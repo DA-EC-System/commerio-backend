@@ -2,7 +2,7 @@
 // các danh sách tài chính. Sales không gọi payment, finance (R1). Gọi trong `withCompany` của bên gọi; đơn công ty
 // khác không thấy qua RLS.
 import { Decimal } from 'decimal.js';
-import { z } from 'zod';
+import { isUuid } from '../../../shared/uuid.ts';
 import { findOrderLines, findOrdersByExternalId, findOrdersForFinance } from '../repository/orders-for-finance.ts';
 import type { OrderSource, OrderStatus, PaymentMethod } from './payment-boundary.ts';
 
@@ -27,7 +27,6 @@ export interface OrderForFinance {
   customerPhone: string | null;
 }
 
-const isUuid = (id: string) => z.uuid().safeParse(id).success;
 
 /** Dòng đơn (SKU, tên, đơn giá đã chép lúc tạo đơn), theo thứ tự tạo. Đơn không thấy → mảng rỗng. */
 export async function getOrderLines(orderId: string): Promise<OrderLineForInvoice[]> {
