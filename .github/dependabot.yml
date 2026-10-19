@@ -1,0 +1,11 @@
+# Dependabot chỉ đọc file này trên nhánh mặc định (main): có hiệu lực sau lần phát hành develop → main.
+version: 2
+updates:
+  # Phiên bản các action trong .github/workflows (checkout, setup-node, ...).
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
