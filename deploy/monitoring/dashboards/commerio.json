@@ -231,6 +231,8 @@
             "uid": "prometheus"
           },
           "expr": "up{job=\"commerio\"}",
+          "instant": true,
+          "range": false,
           "legendFormat": "{{process}} {{pod}}"
         }
       ]

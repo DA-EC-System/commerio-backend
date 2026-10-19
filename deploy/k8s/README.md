@@ -48,10 +48,10 @@ Bật Kubernetes trong Docker Desktop (Settings → Kubernetes), cần thêm kho
    docker compose -f deploy/compose.yaml exec postgres createdb -U commerio commerio_k8s
    DATABASE_URL=<chuỗi postgres:// tới localhost:5432/commerio_k8s, user và mật khẩu dev như deploy/compose.yaml> npm run db:migrate
    ```
-2. **Image:** `docker build -f deploy/docker/Dockerfile -t commerio-backend:local .` (Docker Desktop dùng chung kho image với Kubernetes).
+2. **Image:** `docker build -f deploy/docker/Dockerfile -t commerio-backend:local .` (Docker Desktop dùng chung kho image với Kubernetes). Build lại khi cluster đang chạy thì tag không đổi, pod không tự thay: `$K rollout restart deploy/api deploy/worker deploy/realtime`.
 3. **Bí mật:** chép `overlays/local/.env.example` → `.env` và `overlays/local/grafana/.env.example` → `grafana/.env`, điền (mật khẩu Grafana để trống thì Grafana dùng `admin/admin`). Giá trị **không** đặt trong dấu nháy (Kustomize giữ nguyên dấu nháy). Hai file đã gitignore.
-4. **Chạy:** `kubectl --context docker-desktop apply -k deploy/k8s/overlays/local`, chờ `$K get pods` đều `Running` và `READY 1/1`.
-5. **Mở:** ứng dụng ở `http://localhost:8036` (LoadBalancer của Docker Desktop có thể nghe cả mạng LAN, khác compose chỉ mở `127.0.0.1`; chưa đo) (`/api/docs` là Swagger). Caddy không có `/health` (mọi đường dẫn ngoài `/api` là FE), nên kiểm qua `/api`: `curl -i localhost:8036/api/v1/identity/me` ra 401. Muốn gọi thẳng `api`: `$K port-forward svc/api 3036:3000`.
+4. **Chạy:** `kubectl --context docker-desktop apply -k deploy/k8s/overlays/local`, chờ `$K get pods` đều `Running` và `READY 1/1` (khoảng 30 giây). Lần đầu `worker`, `realtime` ghi vài giây lỗi `Connection refused` tới `kafka:9092` rồi tự nối lại khi Kafka sẵn sàng.
+5. **Mở:** ứng dụng ở `http://localhost:8036` (`/api/docs` là Swagger). LoadBalancer của Docker Desktop nghe mọi địa chỉ của máy (`::`:8036), khác compose chỉ mở `127.0.0.1`: tắt cluster khi ngồi mạng lạ. Caddy không có `/health` (mọi đường dẫn ngoài `/api` là FE), nên kiểm qua `/api`: `curl -i localhost:8036/api/v1/identity/me` ra 401. Muốn gọi thẳng `api`: `$K port-forward svc/api 3036:3000`.
 6. **Grafana, Prometheus:** `$K port-forward svc/grafana 3030:3000` → `http://localhost:3030` (admin / mật khẩu ở `grafana/.env`), dashboard "Commerio" trong thư mục Commerio. `$K port-forward svc/prometheus 9090` → `http://localhost:9090/alerts`.
 7. **Tắt:** `kubectl --context docker-desktop delete namespace commerio` (xoá cả PVC của Kafka).
 
@@ -70,7 +70,7 @@ Chưa chạy thật (chờ VPS). Thay compose của `deploy/staging` trên cùng
 3. Điền `overlays/vps/.env` (DB Supabase, JWT), `grafana/.env`, `caddy/.env` (`SITE_ADDRESS=<tên miền>`), không dấu nháy. FE: `dist/` chép vào `/opt/commerio/site`.
 4. `kubectl apply -k deploy/k8s/overlays/vps`. Đổi image theo commit: `kubectl -n commerio set image deploy/api api=ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (tương tự `worker`, `realtime`).
 
-Tổng `requests` khoảng 570m CPU, 1,6 GiB RAM, cộng k3s; máy 2 GB không đủ, 4 GB đủ. Số `resources` là ước lượng, đo lại bằng panel RAM của dashboard.
+Tổng `requests` khoảng 570m CPU, 1,7 GiB RAM, cộng k3s; máy 2 GB không đủ, 4 GB đủ. Đo trên Docker Desktop (19/10/2026, cgroup `memory.peak` sau smoke và rolling update): Kafka 586Mi, Grafana 182Mi, api 73Mi, worker 72Mi, realtime 61Mi, Prometheus 42Mi, Caddy 16Mi, đều dưới `limits`. Đo lại bằng panel RAM của dashboard khi có tải thật.
 
 ## Giám sát
 

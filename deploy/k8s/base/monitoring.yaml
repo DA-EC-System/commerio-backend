@@ -142,10 +142,11 @@ spec:
             - name: dashboards
               mountPath: /var/lib/grafana/dashboards
               readOnly: true
+          # Đo trên Docker Desktop 19/10/2026: 171–182Mi sau khi nạp dashboard.
           resources:
             requests:
               cpu: 50m
-              memory: 128Mi
+              memory: 192Mi
             limits:
               memory: 384Mi
       volumes:

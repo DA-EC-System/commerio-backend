@@ -71,6 +71,23 @@ else if (!mounts.some((m) => m.mountPath === logDirs)) errors.push(`kafka: KAFKA
 // /metrics, Prometheus, Grafana không mở ra ngoài: chỉ caddy được là LoadBalancer/NodePort.
 for (const d of docs.filter((x) => x.kind === 'Service')) {
   if (['LoadBalancer', 'NodePort'].includes(d.spec.type) && d.metadata.name !== 'caddy') errors.push(`Service/${d.metadata.name}: chỉ caddy được mở ra ngoài`);
+  // targetPort theo tên phải có trên pod được chọn, không thì Service không có đích (vd đổi tên cổng realtime).
+  const pods = workloads.filter((w) => Object.entries(d.spec.selector ?? {}).every(([k, v]) => w.spec.template.metadata.labels?.[k] === v));
+  for (const p of d.spec.ports ?? []) {
+    if (typeof p.targetPort !== 'string') continue;
+    const ok = pods.some((w) => w.spec.template.spec.containers.some((c) => c.ports?.some((cp) => cp.name === p.targetPort)));
+    if (!ok) errors.push(`Service/${d.metadata.name}: targetPort ${p.targetPort} không có trên pod nào được chọn`);
+  }
+}
+
+// Panel stat hiện giá trị hiện tại: truy vấn range + lastNotNull giữ cả pod đã bị thay (đo ở lát 7).
+for (const cm of docs.filter((x) => x.kind === 'ConfigMap' && x.metadata.name.startsWith('grafana-dashboards'))) {
+  for (const [file, text] of Object.entries(cm.data ?? {})) {
+    const panels = JSON.parse(text).panels.flatMap((p) => [p, ...(p.panels ?? [])]);
+    for (const p of panels.filter((x) => x.type === 'stat')) {
+      if (p.targets?.some((t) => t.instant !== true)) errors.push(`${file}: panel stat "${p.title}" cần truy vấn instant`);
+    }
+  }
 }
 
 if (errors.length) {
