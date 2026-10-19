@@ -50,7 +50,7 @@ const fieldError = (field: string, message: string) =>
 /** Nhớ tạm trong một lượt danh sách: tên người, khoản thu chưa khớp đọc một lần mỗi id. */
 const newCache = () => ({ names: new Map<string, ReturnType<typeof userRef>>(), unmatched: new Map<string, ReturnType<typeof findUnmatched>>() });
 
-async function view(v: VoucherRow, orders?: Orders, cache = newCache()) {
+export async function view(v: VoucherRow, orders?: Orders, cache = newCache()) {
   const o = orders ?? (await ordersOf([v.orderId]));
   const uid = v.unmatchedReceiptId;
   if (uid && !cache.unmatched.has(uid)) cache.unmatched.set(uid, findUnmatched(uid));
@@ -178,7 +178,7 @@ const alreadyProcessed = (number: string | undefined) =>
  * chưa khớp → `refunded`. Chứng từ gốc đã xử lý → 409 `already_processed` nêu số phiếu đã có; đơn không chờ hoàn → 409
  * `payment_state_changed` kèm `current: OrderPayment`.
  */
-async function postLocked(caller: Caller, v: VoucherRow): Promise<VoucherRow> {
+export async function postLocked(caller: Caller, v: VoucherRow): Promise<VoucherRow> {
   if (v.purpose === 'customer_refund' && v.orderId) {
     if (!(await getOrderForPayment(v.orderId, { lock: 'share' }))) throw notFound('đơn hàng');
     try {

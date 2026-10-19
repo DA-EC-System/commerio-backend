@@ -22,12 +22,14 @@ export async function cleanupOutbox(prefix: string): Promise<void> {
 }
 
 export function toKafkaMessage(row: OutboxRow) {
-  const envelope: EventEnvelope = {
+  // Relay luôn gửi `sequence`; kiểu chung để tuỳ chọn cho bên nhận đọc message cũ.
+  const envelope: EventEnvelope & { sequence: number } = {
     eventId: row.eventId,
     type: row.type,
     companyId: row.companyId,
     aggregateId: row.key,
     occurredAt: row.createdAt.toISOString(),
+    sequence: row.id,
     payload: row.payload,
   };
   return { key: row.key, value: JSON.stringify(envelope), headers: { type: row.type, eventId: row.eventId } };

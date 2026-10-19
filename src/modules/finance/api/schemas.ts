@@ -92,6 +92,15 @@ export const CodConfirmationBody = z
   })
   .meta({ id: 'CodConfirmationRequest' });
 
+export const UnmatchedListQuery = z.object({
+  ...page,
+  ...range,
+  status: z.enum(['open', 'assigned', 'refunded'], 'Trạng thái là open, assigned hoặc refunded').default('open'),
+  reason: z.enum(['no_payment_code', 'amount_mismatch', 'order_cancelled'], 'Lý do không hợp lệ').optional(),
+});
+export const AssignBody = z.object({ orderId: z.string('Chọn đơn để gán').toLowerCase(), version }).meta({ id: 'AssignUnmatchedRequest' });
+export const RefundUnmatchedBody = z.object({ paidOn, note, version }).meta({ id: 'RefundUnmatchedRequest' });
+
 export const RefundBody = z.object({ orderId: z.string('Chọn đơn cần hoàn').toLowerCase(), paidOn, note }).meta({ id: 'RefundRequest' });
 
 // — Response (Swagger)
@@ -196,6 +205,24 @@ export const CodConfirmationResult = z
   .object({ receipts: z.array(z.object({ orderId: z.uuid(), receipt: DocRef })) })
   .meta({ id: 'CodConfirmationResult' });
 
+export const UnmatchedReceipt = z
+  .object({
+    id: z.uuid(),
+    receivedAt: z.string(),
+    amount: z.number().int(),
+    transferContent: z.string().nullable(),
+    gateway: z.enum(['vnpay', 'momo', 'zalopay', 'vietqr']).nullable(),
+    reason: z.enum(['no_payment_code', 'amount_mismatch', 'order_cancelled']),
+    status: z.enum(['open', 'assigned', 'refunded']),
+    suggestedOrder: OrderRef.nullable(),
+    assignedOrder: OrderRef.nullable(),
+    receipt: DocRef.nullable(),
+    voucher: DocRef.nullable(),
+    version: z.number().int(),
+  })
+  .meta({ id: 'UnmatchedReceipt' });
+export const AssignResult = z.object({ unmatchedReceipt: UnmatchedReceipt, receipt: Receipt }).meta({ id: 'AssignUnmatchedResult' });
+export const UnmatchedPage = pageOf(UnmatchedReceipt, 'UnmatchedReceiptPage');
 export const InvoicePage = pageOf(InvoiceSummary, 'InvoicePage');
 export const ReceiptPage = pageOf(Receipt, 'ReceiptPage');
 export const VoucherPage = pageOf(PaymentVoucher, 'PaymentVoucherPage');

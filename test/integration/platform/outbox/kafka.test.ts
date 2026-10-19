@@ -198,7 +198,8 @@ describe('consumer shared', () => {
       topic: `${prefix}.inventory`,
       messages: [
         src.relay.toKafkaMessage({
-          id: row.id,
+          // pg trả bigint dạng chuỗi; relay thật đọc qua Drizzle (mode number) nên sequence là số.
+          id: Number(row.id),
           eventId,
           companyId: company,
           type: row.type,

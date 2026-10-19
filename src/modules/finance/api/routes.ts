@@ -15,7 +15,9 @@ import {
   updateDraft,
 } from '../service/payment-vouchers.ts';
 import type { FinanceContext } from '../service/settlement-views.ts';
+import { assignUnmatched, listUnmatched, refundUnmatched } from '../service/unmatched.ts';
 import {
+  AssignBody,
   CodConfirmationBody,
   CodListQuery,
   CreateVoucherBody,
@@ -24,6 +26,8 @@ import {
   ReceiptListQuery,
   RefundBody,
   RefundListQuery,
+  RefundUnmatchedBody,
+  UnmatchedListQuery,
   UpdateVoucherBody,
   VersionBody,
   VersionQuery,
@@ -86,6 +90,16 @@ export function financeRouter(ctx: FinanceContext): Router {
   });
   router.post('/cod-confirmations', write, validate({ body: CodConfirmationBody }), async (_req, res) => {
     res.json(await confirmCod(caller(res), input<typeof CodConfirmationBody>(res, 'body').orderIds));
+  });
+
+  router.get('/unmatched-receipts', view, validate({ query: UnmatchedListQuery }), async (_req, res) => {
+    res.json(await listUnmatched(caller(res).companyId, input<typeof UnmatchedListQuery>(res, 'query')));
+  });
+  router.post('/unmatched-receipts/:id/assign', write, validate({ params: IdParams, body: AssignBody }), async (_req, res) => {
+    res.json(await assignUnmatched(caller(res), id(res), input<typeof AssignBody>(res, 'body')));
+  });
+  router.post('/unmatched-receipts/:id/refund', write, validate({ params: IdParams, body: RefundUnmatchedBody }), async (_req, res) => {
+    res.status(201).json(await refundUnmatched(caller(res), id(res), input<typeof RefundUnmatchedBody>(res, 'body')));
   });
 
   router.get('/refunds', view, validate({ query: RefundListQuery }), async (_req, res) => {
