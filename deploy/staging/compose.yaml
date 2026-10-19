@@ -50,7 +50,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *health
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3002/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3003/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 
   redis:
     image: redis:8

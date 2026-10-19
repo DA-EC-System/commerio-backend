@@ -89,10 +89,10 @@ Migration chỉ đồng bộ **cấu trúc bảng** và **dữ liệu cố đị
 
 Khi nhiều nhánh làm cùng lúc trên một máy (mỗi nhánh một `git worktree`), các bản dùng chung một bộ Docker (`npm run infra:up` một lần) nhưng mỗi bản một cổng, một database, một tiền tố topic Kafka:
 
-| Worktree | `API_PORT` | `API_OPS_PORT` | `WORKER_PORT` | `REALTIME_PORT` | Database | `KAFKA_TOPIC_PREFIX` |
-|---|---|---|---|---|---|---|
-| gốc | 3000 | 9464 | 3001 | 3002 | `commerio` | `commerio` |
-| n = 1..5 | 3000+100n | 9464+n | 3001+100n | 3002+100n | `commerio_<n>` | `commerio-w<n>` |
+| Worktree | `API_PORT` | `API_OPS_PORT` | `WORKER_PORT` | `REALTIME_PORT` | `REALTIME_OPS_PORT` | Database | `KAFKA_TOPIC_PREFIX` |
+|---|---|---|---|---|---|---|---|
+| gốc | 3000 | 9464 | 3001 | 3002 | 3003 | `commerio` | `commerio` |
+| n = 1..5 | 3000+100n | 9464+n | 3001+100n | 3002+100n | 3003+100n | `commerio_<n>` | `commerio-w<n>` |
 
 Một lần, trong `.env` của bản gốc: thêm cặp khoá JWT. Thiếu khoá thì mỗi tiến trình tự sinh khoá riêng, nên token do `api` cấp bị `realtime` (kênh thông báo) trả 401.
 
@@ -109,6 +109,15 @@ npm run db:migrate
 ```
 
 Role `commerio_app` ở mức cụm, migration `0003` tạo lại an toàn. Test integration không cần gì thêm (mỗi lượt một container riêng). Prometheus chỉ lấy số liệu của bản gốc.
+
+## Tài liệu khác
+
+| Chủ đề | File |
+|---|---|
+| Kiến trúc, luật ranh giới, quy ước code | [CLAUDE.md](CLAUDE.md), và `CLAUDE.md` của [src/](src/CLAUDE.md), [src/entrypoints/](src/entrypoints/CLAUDE.md), [src/modules/](src/modules/CLAUDE.md) (module đã có nghiệp vụ có thêm file riêng), [src/shared/](src/shared/CLAUDE.md), [db/](db/CLAUDE.md), [test/](test/CLAUDE.md), [deploy/](deploy/CLAUDE.md) |
+| Sự kiện giữa module: outbox, Kafka, consumer, DLQ | [src/modules/platform/service/outbox/README.md](src/modules/platform/service/outbox/README.md) |
+| Staging: chạy, secret, log, deploy lại | [deploy/staging/README.md](deploy/staging/README.md) |
+| Kubernetes, Prometheus, Grafana | [deploy/k8s/README.md](deploy/k8s/README.md) |
 
 ## Nhánh
 

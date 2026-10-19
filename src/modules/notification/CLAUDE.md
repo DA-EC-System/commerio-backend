@@ -16,7 +16,7 @@ publishEvent (module phát, trong giao dịch) → outbox → relay (worker) →
 | `service/hub.ts` | Kết nối đang mở theo công ty; `dispatch`, `closeAll` (gỡ hết rồi mới đóng) |
 | `service/consumer.ts` | `notificationHandlers(hub)`, `startNotifications(hub)` (đăng ký consumer, gauge `notification_open_streams`); gọi một lần ở realtime |
 | `api/routes.ts` | `GET /stream`: token (401, 403 `password_change_required`), `company_not_selected`, truy cập công ty từ DB lúc mở (404, `company_locked`, `account_locked`), header SSE, `retry: 3000`, heartbeat 25 s, đóng đúng lúc token hết hạn |
-| `api/app.ts` | `createRealtimeApp`: stream + `/health` + `/metrics` trên `REALTIME_PORT` |
+| `api/app.ts` | `createRealtimeApp`: chỉ stream, trên `REALTIME_PORT`. `/health`, `/metrics` ở cổng vận hành `REALTIME_OPS_PORT` (`src/entrypoints/realtime.ts`) |
 | `api/openapi.ts` | Operation trên Swagger của api (stream do realtime phục vụ) |
 
 ## Ai nhận gì (D11, Thành duyệt A1 = "hoặc" ngày 18/10/2026)

@@ -9,5 +9,5 @@ scrape_configs:
         labels: { process: api }
       - targets: ["host.docker.internal:3001"]
         labels: { process: worker }
-      - targets: ["host.docker.internal:3002"]
+      - targets: ["host.docker.internal:3003"]
         labels: { process: realtime }

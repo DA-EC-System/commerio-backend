@@ -146,10 +146,12 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
-          # Một cổng cho stream SSE, /health và /metrics; Caddy chỉ đưa /api/v1/notification/stream ra ngoài.
+          # Cổng stream SSE (Caddy đưa ra ngoài) tách khỏi cổng vận hành /health, /metrics (REALTIME_OPS_PORT).
           ports:
-            - name: metrics
+            - name: http
               containerPort: 3002
+            - name: metrics
+              containerPort: 3003
           readinessProbe:
             httpGet:
               path: /health
@@ -193,4 +195,4 @@ spec:
   ports:
     - name: http
       port: 3002
-      targetPort: metrics
+      targetPort: http

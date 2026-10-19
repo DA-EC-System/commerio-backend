@@ -15,7 +15,7 @@ resources:
 
 configMapGenerator:
   # Biến chung của api, worker, realtime; bí mật (DATABASE_URL, JWT…) ở Secret app-env của overlay.
-  # Không đặt API_PORT, WORKER_PORT, REALTIME_PORT: dùng mặc định của src/shared/config/env.ts.
+  # Không đặt API_PORT, WORKER_PORT, REALTIME_PORT, REALTIME_OPS_PORT: dùng mặc định của src/shared/config/env.ts.
   - name: app-config
     literals:
       # Đứng sau một tầng Caddy: req.ip là IP khách.
