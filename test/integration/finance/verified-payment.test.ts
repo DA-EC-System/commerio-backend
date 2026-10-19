@@ -119,7 +119,8 @@ describe('handleVerifiedPayment', () => {
     const key = `SHARED${Date.now()}`;
     expect(await handle(verified(b, { eventKey: key, gatewayTxnId: key }))).toEqual({ outcome: 'recorded' });
     await expect(handle(verified(a, { eventKey: key, gatewayTxnId: key }))).rejects.toThrow(/công ty khác/);
-    expect((await moneyRows(a.companyId)).txns).toEqual([]);
+    const r = await moneyRows(a.companyId);
+    expect([r.txns, r.events]).toEqual([[], []]);
     expect(await orderPayment(a.orderId)).toMatchObject({ status: 'unpaid' });
   });
 
