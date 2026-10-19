@@ -20,9 +20,18 @@ Hoá đơn bán, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soá
 
 **Thứ tự khoá (A4):** dòng `sales.orders` (`getOrderForPayment(id, { lock: 'share' })`, nhiều đơn thì theo id tăng dần) **trước**, rồi hàm payment khoá `order_payments`. Không khoá dòng đơn sau khi đã khoá `order_payments` (deadlock với tạo mã, huỷ đơn).
 
+## Đối soát tiền sàn (#30, UC-PF-10)
+
+- **Bảng:** `settlement_statements` (một bảng kê của sàn, unique mã bảng kê), `settlement_lines` (một giao dịch, unique `external_transaction_id` theo công ty, `raw` là bản gốc).
+- **Ánh xạ** (`domain/tiktok-settlement.ts`, khuôn OAS TikTok, sàn giả lập dùng chung): số của sàn là số có dấu cộng lại ra tiền về. Lưu theo dấu kế toán: ô phí (7 ô `commission`…`other`, chuỗi `toFixed(2)`) và `shipping_cost` **dương = chi phí**, âm = sàn hoàn phí; `adjustment` dương = sàn trả thêm. Dấu của sàn thật chưa đo được (OAS mâu thuẫn): đổi một hằng `DEDUCTION_SIGN`. Báo cáo (#29) cộng thẳng `fees` như chi phí.
+- **Khớp** (`domain/settlement-match.ts`, Documents/21 T23–T25, lệch T23 đã duyệt): dòng đơn — không thấy đơn (theo gian hàng + mã đơn sàn, `sales.findMarketplaceOrders`) → công thức `doanh thu − phí − vận chuyển + điều chỉnh = tiền về` → có hoàn (`refund_tagged`, không so doanh thu) → doanh thu = `orders.total` → `matched`. Dòng điều chỉnh, giữ lại chỉ kiểm công thức.
+- **Phiếu thu** (D19, lệch T24 đã duyệt): dòng không lệch, tiền về dương, bảng kê `PAID` → một phiếu `settlement`; dòng âm không phiếu.
+- **Nhận bảng kê** (`service/settlement-ingest.ts`, trong `withCompany`): khoá advisory theo công ty → upsert bảng kê (khác gian hàng → 422) → chèn dòng mới (trùng bỏ qua) → khớp lại mọi `order_not_found` của công ty → sinh phiếu còn thiếu. Một giao dịch.
+- **API** (`api/settlement-*.ts`): cần thêm phân hệ Kênh bán (`module_disabled`); tên gian hàng qua `ctx.shopsOf` (`channel.getShops`, tiêm ở `src/wiring.ts`). `POST /settlements/dev/import` chỉ ngoài production. Kéo từ sàn (vòng lặp, `POST /settlements/run`) chờ sàn giả lập (#17, #19).
+
 ## Gọi module khác
 
-finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.
+finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`, `findMarketplaceOrders`), identity (`loadCompanyAccess` cho phân hệ Kênh bán), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.
 
 ## API (gắn tại `/api/v1/finance`)
 
