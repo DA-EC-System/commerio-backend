@@ -17,10 +17,10 @@ export const platformModule: ModuleDefinition = {
 export { CORE_MODULES, OPTIONAL_MODULES };
 export type { CompanyRow, ModuleCode, OptionalModule };
 
-// Sự kiện giữa module (Documents/21 D4–D7). Thân của publishEvent, registerConsumer do #38 viết.
+// Sự kiện giữa module (Documents/21 D4–D7), cách dùng ở service/outbox/README.md.
 export type { EventEnvelope } from '../../shared/events/envelope.ts';
 export { EVENT_SCHEMAS, EVENT_TYPES, type EventPayload, type EventType } from './domain/events.ts';
-export { publishEvent, registerConsumer } from './service/outbox/public.ts';
+export { publishEvent, registerConsumer, stopInstanceConsumers } from './service/outbox/public.ts';
 
 /**
  * Tạo công ty mới và bật mười phân hệ lõi cùng các phân hệ tuỳ chọn đã chọn (UC-PI-01 bước 6, 7).

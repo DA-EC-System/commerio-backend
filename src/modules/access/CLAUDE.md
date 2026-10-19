@@ -27,7 +27,8 @@ Vai trò có sẵn và tuỳ biến, danh mục quyền (UC-PI-06). Hợp đồn
 - `permission_not_held` so với **quyền thô hiện tại** của người gọi đọc từ DB (`loadCompanyAccess` của identity, nhận qua `AccessRouterContext`), kể cả quyền của phân hệ đang tắt; không dùng `perms` trong token (D1).
 - Quyền của phân hệ đang tắt: gửi lên thì 422 `errors.permissions`; `PUT` giữ nguyên các quyền đó mà vai trò đang có (D2).
 - Tên trùng không phân biệt hoa thường, tính cả tên vai trò có sẵn (D3). Kiểm bằng `lower()` của PostgreSQL như index; ghi đua bị `23505` thì cũng ra 409 `role_name_taken`.
-- Mọi truy vấn vai trò chạy trong `withCompany`. **RLS chưa chặn công ty xoá hay đổi vai trò có sẵn qua `DELETE`/`UPDATE role_permissions`** (lỗ sẽ vá ở CB-3), nên service luôn kiểm `builtin_role` trước mọi câu ghi và chỉ ghi theo id vai trò tuỳ biến đã đọc được.
+- Mọi truy vấn vai trò chạy trong `withCompany`. RLS chặn công ty sửa, xoá vai trò có sẵn và quyền của chúng (`test/integration/access/builtin-role-rls.test.ts`); service vẫn kiểm `builtin_role` trước mọi câu ghi và chỉ ghi theo id vai trò tuỳ biến đã đọc được.
+- **Lỗ còn mở:** `access.member_roles.role_id` vẫn trỏ được tới vai trò tuỳ biến của công ty khác (khoá ngoại bỏ qua RLS). Trước khi gán vai trò, đọc vai trò đó dưới `withCompany` của công ty mình. DB tự chặn sẽ làm ở commerio-backend#62.
 - `:id` không phải uuid trả 404 `not_found` như vai trò không tồn tại.
 
 ## Cho module khác (`index.ts`)

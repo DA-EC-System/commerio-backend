@@ -30,6 +30,16 @@ describe('khung api', () => {
     expect(res.body.type).toBe('/problems/malformed_json');
   });
 
+  it('thân JSON quá 1 MB trả 413 payload_too_large, kể cả khi chưa đăng nhập', async () => {
+    const res = await request(app)
+      .post('/api/v1/identity/me')
+      .set('content-type', 'application/json')
+      .send(JSON.stringify({ x: 'a'.repeat(1_100_000) }));
+    expect(res.status).toBe(413);
+    expect(res.headers['content-type']).toContain('application/problem+json');
+    expect(res.body).toMatchObject({ type: '/problems/payload_too_large', code: 'payload_too_large', status: 413 });
+  });
+
   it('GET /api/openapi.json trả tài liệu OpenAPI 3.1 có /health', async () => {
     const res = await request(app).get('/api/openapi.json');
     expect(res.status).toBe(200);

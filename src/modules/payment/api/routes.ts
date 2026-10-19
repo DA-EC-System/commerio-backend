@@ -1,12 +1,17 @@
 import { type RequestHandler, Router } from 'express';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
+import { env } from '../../../shared/config/env.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { validate } from '../../../shared/http/validate.ts';
 import { type Credentials, GATEWAYS, type Gateway, isGateway } from '../domain/gateways.ts';
 import { listGatewayConfigs, listGatewaySummaries, saveGatewayConfig } from '../service/gateway-configs.ts';
 import { createPaymentLink, getOrderPaymentView } from '../service/payment-links.ts';
+import { getTransaction, listTransactions, type TransactionQuery } from '../service/transactions.ts';
 import type { PaymentContext } from '../service/webhook-handler.ts';
-import { CreateLinkBody, gatewayConfigBodyOf, OrderParams } from './schemas.ts';
+import { simulatePayment } from '../service/webhooks.ts';
+import { listUnpaidOrders } from '../service/order-list.ts';
+import { CreateLinkBody, gatewayConfigBodyOf, OrderParams, TransactionListQuery, TransactionParams, UnpaidOrderListQuery } from './schemas.ts';
+import { webhookRouter } from './webhooks.ts';
 
 const validateGatewayBody = Object.fromEntries(GATEWAYS.map((g) => [g, validate({ body: gatewayConfigBodyOf(g) })])) as Record<
   Gateway,
@@ -27,6 +32,7 @@ const requireGateway: RequestHandler = (req, res, next) => {
  */
 export function paymentRouter(ctx: PaymentContext): Router {
   const router = Router();
+  router.use('/webhooks', webhookRouter(ctx));
   const manageGateways = ctx.authorize('payment.gateway.manage');
   const createLink = ctx.authorize('payment.link.create');
 
@@ -72,6 +78,30 @@ export function paymentRouter(ctx: PaymentContext): Router {
     const { orderId } = (res.locals.validated as { params: { orderId: string } }).params;
     res.json(await getOrderPaymentView(getAuth(res).companyId!, orderId));
   });
+
+  // Đơn chưa thu cho hộp gán khoản thu chưa khớp (#27 R1): chỉ người xử lý khoản thu dùng.
+  router.get('/orders', ctx.authorize('finance.voucher.create'), validate({ query: UnpaidOrderListQuery }), async (_req, res) => {
+    const { query } = res.locals.validated as { query: { page: number; pageSize: number; search?: string } };
+    res.json(await listUnpaidOrders(getAuth(res).companyId!, query));
+  });
+
+  // Giao dịch cổng (#27, §12.3): `from`/`to` là trọn ngày giờ VN (C6).
+  const viewTransactions = ctx.authorize('payment.transaction.view');
+  router.get('/transactions', viewTransactions, validate({ query: TransactionListQuery }), async (_req, res) => {
+    const { query } = res.locals.validated as { query: TransactionQuery };
+    res.json(await listTransactions(ctx, getAuth(res).companyId!, query));
+  });
+  router.get('/transactions/:id', viewTransactions, validate({ params: TransactionParams }), async (_req, res) => {
+    const { id } = (res.locals.validated as { params: { id: string } }).params;
+    res.json(await getTransaction(ctx, getAuth(res).companyId!, id));
+  });
+
+  // Mô phỏng trả tiền cho demo/E2E (§12.11, #27 A12): không gắn ở production.
+  if (env.NODE_ENV !== 'production') {
+    router.post('/dev/simulate/:paymentCode', createLink, async (req, res) => {
+      res.json(await simulatePayment(ctx, getAuth(res).companyId!, String(req.params.paymentCode)));
+    });
+  }
 
   return router;
 }

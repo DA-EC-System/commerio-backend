@@ -64,6 +64,11 @@ services:
   grafana:
     image: grafana/grafana:12.1.0
     profiles: [monitoring]
+    # Cùng datasource và dashboard "Commerio" với Kubernetes (deploy/monitoring). Máy dev đăng nhập admin/admin.
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3030:3000"
 

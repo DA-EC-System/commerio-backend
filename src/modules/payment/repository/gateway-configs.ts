@@ -42,3 +42,12 @@ export async function updateGatewayConfigIfVersion(
     .returning();
   return row;
 }
+
+/** Công ty sở hữu URL webhook SePay, tra **mọi công ty** bằng role chủ bảng (ngoài `withCompany`, D16, T12). */
+export async function findCompanyByReceiverKey(receiverKey: string): Promise<string | undefined> {
+  const [row] = await getDb()
+    .select({ companyId: gatewayConfigs.companyId })
+    .from(gatewayConfigs)
+    .where(and(eq(gatewayConfigs.webhookReceiverKey, receiverKey), eq(gatewayConfigs.gateway, 'vietqr')));
+  return row?.companyId;
+}

@@ -1,0 +1,19 @@
+# ConfigMap cho Prometheus, Grafana trong Kubernetes; deploy/k8s/base kéo thư mục này vào.
+# Máy dev dùng cùng provisioning và dashboard qua deploy/compose.yaml (profile monitoring).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml=k8s/prometheus.yml
+      - alerts.yml=rules/alerts.yml
+  - name: grafana-datasources
+    files:
+      - grafana/provisioning/datasources/prometheus.yml
+  - name: grafana-dashboard-provider
+    files:
+      - grafana/provisioning/dashboards/commerio.yml
+  - name: grafana-dashboards
+    files:
+      - dashboards/commerio.json

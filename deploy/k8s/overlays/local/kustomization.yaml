@@ -1,0 +1,35 @@
+# Kubernetes của Docker Desktop trên máy (Documents/21 D13). Cách chạy: deploy/k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Đặt lại ở overlay để Secret sinh ở đây cùng namespace với Deployment của base.
+namespace: commerio
+
+resources:
+  - ../../base
+
+# Image tự build trên máy: docker build -f deploy/docker/Dockerfile -t commerio-backend:local .
+images:
+  - name: commerio-backend
+    newTag: local
+
+secretGenerator:
+  # Chép .env.example thành .env (đã gitignore) rồi điền.
+  - name: app-env
+    envs:
+      - .env
+  - name: grafana-admin
+    envs:
+      - grafana/.env
+
+patches:
+  # Không chiếm cổng 80 của máy: mở http://localhost:8036.
+  - target:
+      kind: Service
+      name: caddy
+    patch: |-
+      - op: replace
+        path: /spec/ports
+        value:
+          - name: http
+            port: 8036
+            targetPort: http

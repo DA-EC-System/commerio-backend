@@ -58,6 +58,17 @@ describe('processMessage', () => {
     expect(d.runHandler).toHaveBeenCalledWith(e, expect.any(Function));
   });
 
+  it('handler nhận sequence của envelope; message cũ không có sequence vẫn chạy, không sang DLQ', async () => {
+    const d = deps('shared');
+    const withSeq = envelope({ sequence: 42 });
+    const withoutSeq = envelope();
+    expect(await processMessage(message(withSeq), 0, d)).toEqual({ kind: 'done' });
+    expect(await processMessage(message(withoutSeq), 0, d)).toEqual({ kind: 'done' });
+    expect(d.runHandler).toHaveBeenNthCalledWith(1, withSeq, expect.any(Function));
+    expect(d.runHandler).toHaveBeenNthCalledWith(2, withoutSeq, expect.any(Function));
+    expect(d.sendToDlq).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['value không phải JSON', 'không phải json', /JSON/],
     ['payload sai schema', envelope({ payload: { variantId: 'x' } }), /payload sai/],

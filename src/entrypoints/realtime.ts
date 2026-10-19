@@ -1,4 +1,5 @@
 import { createHub, createRealtimeApp, startNotifications } from '../modules/notification/index.ts';
+import { stopInstanceConsumers } from '../modules/platform/index.ts';
 import { env } from '../shared/config/env.ts';
 import { closeDb } from '../shared/db/client.ts';
 import { closeServer, onShutdown } from '../shared/lifecycle.ts';
@@ -14,9 +15,9 @@ const server = createRealtimeApp({ hub }).listen(env.REALTIME_PORT, () => {
 });
 
 onShutdown('realtime', async () => {
-  // server.close() chờ mọi stream đang mở, nên đóng stream trước. Consumer Kafka dừng theo tiến trình
-  // (platform chưa export hàm dừng consumer instance).
+  // server.close() chờ mọi stream đang mở, nên đóng stream trước; rồi ngắt consumer Kafka, cuối cùng là DB.
   hub.closeAll();
   await closeServer(server);
+  await stopInstanceConsumers();
   await closeDb();
 });

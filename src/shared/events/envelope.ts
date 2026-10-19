@@ -13,6 +13,12 @@ export interface EventEnvelope<TType extends string = string, TPayload = unknown
   readonly aggregateId: string;
   /** Thời điểm xảy ra, ISO 8601. */
   readonly occurredAt: string;
+  /**
+   * Số thứ tự tăng dần (`id` dòng outbox). Consumer bỏ sự kiện có `sequence` ≤ số đã xử lý của cùng
+   * `aggregateId` (chỉ đúng khi bên phát khoá dòng đối tượng trước khi ghi outbox, xem outbox/README.md).
+   * Trống với message gửi trước khi có trường này hoặc phát lại từ DLQ cũ.
+   */
+  readonly sequence?: number;
   readonly payload: TPayload;
 }
 
