@@ -74,6 +74,8 @@ describe('logger', () => {
     await request(app).get('/loi');
     log.error({ err: queryError(['GOC-BIMAT']) }, 'goc');
     log.error(queryError(['TRUCTIEP-BIMAT\nX']), 'truc tiep');
+    // Lỗi pg trần (không qua Drizzle) mang `detail` chép giá trị dòng vi phạm.
+    log.error({ err: Object.assign(new Error('duplicate key'), { code: '23505', detail: 'Key (email)=(DETAIL-BIMAT)' }) }, 'tran');
 
     const all = lines.join('\n');
     expect(all).not.toMatch(/BIMAT/);

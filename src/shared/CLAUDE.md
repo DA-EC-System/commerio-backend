@@ -18,7 +18,7 @@ Nền kỹ thuật chung cho mọi module và tiến trình. **Không chứa ngh
 | `http/validate.ts` | Middleware Zod kiểm `body`/`query`/`params`, gom mọi lỗi vào một phản hồi 422 `validation_failed`, `errors: { "ceo.email": "…" }` |
 | `http/openapi.ts` | Sinh tài liệu OpenAPI 3.1 từ schema Zod (`@asteasolutions/zod-to-openapi`), Swagger UI ở `/api/docs`, JSON ở `/api/openapi.json`; `problemResponse()` cho phản hồi lỗi |
 | `observability/` | prom-client (`/metrics`, histogram thời gian request), cổng vận hành (`/health`, `/metrics`) chạy riêng cho cả ba tiến trình |
-| `logger.ts` | pino, log dạng JSON. `redact` che header `Authorization`, `Cookie`, `Set-Cookie`; bỏ query string khỏi `req.url` và bỏ `req.query` (chữ ký cổng thanh toán), che khoá trong `/webhooks/sepay/<khoá>`; bỏ `params` và dòng `params:` của lỗi Drizzle. Phủ mọi logger con, kể cả `pino-http` của api và realtime. Không log mật khẩu, token, khoá cổng thanh toán |
+| `logger.ts` | pino, log dạng JSON. `redact` che header `Authorization`, `Cookie`, `Set-Cookie`; bỏ query string khỏi `req.url` và bỏ `req.query` (chữ ký cổng thanh toán), che khoá trong `/webhooks/sepay/<khoá>`; bỏ `params` và dòng `params:` của lỗi Drizzle, bỏ `detail` của lỗi PostgreSQL. Phủ mọi logger con, kể cả `pino-http` của api và realtime. Không log mật khẩu, token, khoá cổng thanh toán |
 | `lifecycle.ts` | Dừng êm khi nhận SIGTERM/SIGINT |
 
 Trong lúc các nhánh làm song song (đợt A, B), không issue nào sửa thư mục này; cần đổi thì báo trưởng nhóm, gom vào một PR nhỏ sau đợt.

@@ -69,11 +69,9 @@ function toView(r: Found): RoleView {
 
 const snapshot = (r: { name: string; permissions: readonly string[] }) => ({ name: r.name, permissions: [...r.permissions] });
 
-const pgCode = (err: unknown) => pgError(err).code;
-
 /** Hai người cùng đặt một tên: unique index chặn người sau. */
 function nameRace(err: unknown): never {
-  throw pgCode(err) === '23505' ? nameTaken() : err;
+  throw pgError(err).code === '23505' ? nameTaken() : err;
 }
 
 async function findRole(id: string): Promise<Found> {
@@ -171,7 +169,7 @@ export async function deleteRole(caller: Caller, id: string, version: number): P
     });
   }).catch((err: unknown) => {
     // Người khác vừa gán vai trò này cho tài khoản: khoá ngoại member_roles chặn xoá.
-    if (pgCode(err) === '23503') throw new AppError(409, 'role_in_use', 'Vai trò đang được gán cho tài khoản');
+    if (pgError(err).code === '23503') throw new AppError(409, 'role_in_use', 'Vai trò đang được gán cho tài khoản');
     throw err;
   });
 }
