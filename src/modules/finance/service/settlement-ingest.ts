@@ -1,6 +1,7 @@
 // Nhận một bảng kê thanh toán của sàn (UC-PF-10; plan #30 A9, Documents/21 T23–T26): lưu, khớp từng dòng với đơn sàn,
 // gắn nhãn hoàn, khớp lại dòng chưa thấy đơn. Gọi trong `withCompany` của bên gọi; một giao dịch cho cả lần nhận.
 import { AppError } from '../../../shared/errors/app-error.ts';
+import { logger } from '../../../shared/logger.ts';
 import { currentCompanyId } from '../../../shared/db/client.ts';
 import { publishEvent } from '../../platform/index.ts';
 import { findMarketplaceOrders } from '../../sales/index.ts';
@@ -51,6 +52,10 @@ async function upsertStatement(companyId: string, shopId: string, input: Settlem
     existing.paymentStatus !== values.paymentStatus ||
     existing.settlementAmount !== values.settlementAmount ||
     existing.statementTime.getTime() !== values.statementTime.getTime();
+  if (existing.paymentStatus === 'PAID' && values.paymentStatus !== 'PAID') {
+    // Phiếu thu đã sinh không tự đảo (chứng từ đảo là UC-PF-09, chưa có issue): để người xem lại (plan #30 7b).
+    logger.warn({ statementId: existing.id, paymentStatus: values.paymentStatus }, 'bảng kê đã PAID đổi trạng thái');
+  }
   if (changed) await updateStatement(existing.id, values);
   return { id: existing.id, created: false };
 }
