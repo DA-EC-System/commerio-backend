@@ -108,4 +108,17 @@ describe('issueInvoiceForOrder (AC-5)', () => {
       await expect(withCompany(other.companyId, () => issueInvoiceForOrder(id))).rejects.toMatchObject({ status: 404 });
     }
   });
+
+  it('đơn không có dòng hàng nào → 409 order_has_no_lines, không lập hoá đơn, không tốn số (#63 B16)', async () => {
+    const { companyId, order, v1 } = await orderOfTwoLines();
+    // Dựng tay: chưa đường ghi nào tạo đơn rỗng (sales #24 chưa có), DB cũng không cấm.
+    await testPool().query('delete from sales.order_lines where order_id = $1', [order.orderId]);
+    await expect(withCompany(companyId, () => issueInvoiceForOrder(order.orderId))).rejects.toMatchObject({
+      status: 409,
+      code: 'order_has_no_lines',
+    });
+    expect(await invoicesOf(order.orderId)).toHaveLength(0);
+    const other = await createOrder(companyId, { lines: [{ variantId: v1.variantId, quantity: 1, unitPrice: 1000 }] });
+    expect(await withCompany(companyId, () => issueInvoiceForOrder(other.orderId))).toMatchObject({ number: 'HD-000001' });
+  });
 });

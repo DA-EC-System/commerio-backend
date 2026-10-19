@@ -13,8 +13,9 @@ import {
   insertGatewayConfig,
   updateGatewayConfigIfVersion,
 } from '../repository/gateway-configs.ts';
-import { decryptCredentials, encryptCredentials } from './credentials-cipher.ts';
+import { decryptCredentials, encryptCredentials, isCredentialsUnreadable } from './credentials-cipher.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
+import { logger } from '../../../shared/logger.ts';
 import { type UserRef, userRef } from './user-ref.ts';
 
 const ENTITY = 'payment.gateway_configs';
@@ -71,16 +72,23 @@ async function toView(
       webhookUrl: null,
     };
   }
-  const credentials = decryptCredentials(row.credentialsEnc, aadOf(row.companyId, gateway));
+  let credentials: Credentials | undefined;
+  try {
+    credentials = decryptCredentials(row.credentialsEnc, aadOf(row.companyId, gateway));
+  } catch (err) {
+    if (!isCredentialsUnreadable(err)) throw err;
+    // Khoá chủ đổi hoặc bản mã hỏng: vẫn hiện cổng đã cấu hình để Admin lưu lại khoá theo `version` (#63 B6).
+    logger.warn({ companyId: row.companyId, gateway }, 'khoá cổng đã lưu không giải mã được');
+  }
   return {
     gateway,
     configured: true,
     version: row.version,
     updatedAt: row.updatedAt.toISOString(),
     updatedBy: row.updatedBy ? await nameOf(row.updatedBy) : null,
-    credentials: maskCredentials(credentials),
+    credentials: credentials ? maskCredentials(credentials) : null,
     display:
-      gateway === 'vietqr'
+      gateway === 'vietqr' && credentials
         ? {
             bankBin: credentials.bankBin!,
             bankName: bankNameOf(credentials.bankBin!),
