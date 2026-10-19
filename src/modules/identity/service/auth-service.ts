@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { type AccessLoader, assertCompanyAccess, type CompanyAccess } from '../../../shared/auth/company-access.ts';
 import { type AccessClaims, signAccessToken } from '../../../shared/auth/jwt.ts';
 import { inTransaction } from '../../../shared/db/client.ts';
+import { pgError } from '../../../shared/db/pg-error.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { BUILTIN_ROLES, assignRole, permissionModule, rolesAndPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
@@ -193,8 +194,9 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
       return { companyId, email: input.ceo.email };
     });
   } catch (err) {
-    // Hai người đăng ký cùng email cùng lúc: ràng buộc UNIQUE chặn người sau.
-    if ((err as { code?: string }).code === '23505') throw emailTaken();
+    // Hai người đăng ký cùng email cùng lúc: ràng buộc UNIQUE chặn người sau (#51).
+    const { code, constraint } = pgError(err);
+    if (code === '23505' && constraint === 'accounts_email_unique') throw emailTaken();
     throw err;
   }
 }

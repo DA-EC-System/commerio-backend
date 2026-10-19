@@ -1,6 +1,7 @@
 // Vai trò tuỳ biến (UC-PI-06). Thứ tự kiểm theo plan #8 P4; mã lỗi theo Documents/21 I3, V4–V8, D2, D3.
 import { z } from 'zod';
 import { withCompany } from '../../../shared/db/client.ts';
+import { pgError } from '../../../shared/db/pg-error.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { getEnabledModules } from '../../platform/index.ts';
@@ -68,12 +69,9 @@ function toView(r: Found): RoleView {
 
 const snapshot = (r: { name: string; permissions: readonly string[] }) => ({ name: r.name, permissions: [...r.permissions] });
 
-/** Mã lỗi PostgreSQL (Drizzle bọc lỗi gốc trong `cause`). */
-const pgCode = (err: unknown) => (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
-
 /** Hai người cùng đặt một tên: unique index chặn người sau. */
 function nameRace(err: unknown): never {
-  throw pgCode(err) === '23505' ? nameTaken() : err;
+  throw pgError(err).code === '23505' ? nameTaken() : err;
 }
 
 async function findRole(id: string): Promise<Found> {
@@ -171,7 +169,7 @@ export async function deleteRole(caller: Caller, id: string, version: number): P
     });
   }).catch((err: unknown) => {
     // Người khác vừa gán vai trò này cho tài khoản: khoá ngoại member_roles chặn xoá.
-    if (pgCode(err) === '23503') throw new AppError(409, 'role_in_use', 'Vai trò đang được gán cho tài khoản');
+    if (pgError(err).code === '23503') throw new AppError(409, 'role_in_use', 'Vai trò đang được gán cho tài khoản');
     throw err;
   });
 }

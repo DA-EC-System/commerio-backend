@@ -9,3 +9,5 @@ export const channelModule: ModuleDefinition = {
   router: channelRouter,
   openapi: registerChannelOpenApi,
 };
+
+export { getShops, type ShopRef } from './service/shops-lookup.ts';
