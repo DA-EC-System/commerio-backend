@@ -26,7 +26,7 @@
 
 ## Cho module khác
 
-- `loadCompanyAccess(accountId, companyId)`: trạng thái công ty, membership, quyền thô (chưa lọc theo phân hệ) và phân hệ bật, đọc thẳng DB. `src/wiring.ts` dùng để dựng `ctx.authorize`, và router identity truyền cho router `access` (kiểm `permission_not_held` theo quyền hiện tại); token còn hạn mà công ty, tài khoản vừa bị khoá hay vừa mất quyền thì request kế tiếp đã bị chặn.
+- `loadCompanyAccess(accountId, companyId)`: trạng thái công ty, membership, quyền thô (chưa lọc theo phân hệ) và phân hệ bật, đọc thẳng DB. `src/wiring.ts` dùng để dựng `ctx.authorize`; route cần quyền phụ đọc lại kết quả đó bằng `getAccess(res)` (`src/shared/auth/authorize.ts`), không gọi lần hai; token còn hạn mà công ty, tài khoản vừa bị khoá hay vừa mất quyền thì request kế tiếp đã bị chặn.
 - Router gắn thêm router của `access` (`/identity/roles`, `/identity/permissions`, #8).
 
 ## Chưa làm

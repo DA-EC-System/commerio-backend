@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { vnDayParam } from '../../../shared/http/vn-day.ts';
 import { GATEWAYS, type Gateway } from '../domain/gateways.ts';
 
 const text = (label: string) =>
@@ -125,14 +126,6 @@ export const UnpaidOrderPage = z
 
 // — Giao dịch cổng (#27, §12.3 hai dòng cuối, §12.8 PaymentTransaction)
 
-/** Ngày `yyyy-mm-dd` → đầu ngày (hoặc đầu ngày hôm sau, cho `to`) theo giờ Việt Nam (C6). */
-const dayVn = (label: string, nextDay = false) =>
-  z.iso
-    .date(`${label} dạng yyyy-mm-dd`)
-    .transform((d) => new Date(Date.parse(`${d}T00:00:00+07:00`) + (nextDay ? 86_400_000 : 0)))
-    .optional()
-    .meta({ description: 'Trọn ngày theo giờ Việt Nam (C6)' });
-
 export const TransactionListQuery = z.object({
   page: z.coerce.number('Trang là số nguyên từ 1').int('Trang là số nguyên từ 1').min(1, 'Trang là số nguyên từ 1').default(1),
   pageSize: z.coerce
@@ -143,8 +136,8 @@ export const TransactionListQuery = z.object({
     .default(20),
   gateway: z.enum(GATEWAYS, 'Cổng là vnpay, momo, zalopay hoặc vietqr').optional(),
   status: z.enum(['pending', 'succeeded', 'failed', 'needs_review'], 'Trạng thái không hợp lệ').optional(),
-  from: dayVn('Từ ngày'),
-  to: dayVn('Đến ngày', true),
+  from: vnDayParam('Từ ngày'),
+  to: vnDayParam('Đến ngày', true),
   search: z.string().trim().max(100, 'Từ khoá tối đa 100 ký tự').optional(),
 });
 

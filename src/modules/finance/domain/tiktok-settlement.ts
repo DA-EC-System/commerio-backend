@@ -18,9 +18,9 @@ export const FEE_KEYS = [
   'tax',
   'other',
 ] as const;
-export type FeeKey = (typeof FEE_KEYS)[number];
+type FeeKey = (typeof FEE_KEYS)[number];
 export type SettlementFees = Record<FeeKey, Decimal>;
-export type SettlementLineKind = 'order' | 'adjustment' | 'reserve';
+type SettlementLineKind = 'order' | 'adjustment' | 'reserve';
 
 /** Ô phí của từng trường `fee_tax_breakdown.fee` (Documents/12 §7.3 mở rộng); trường không có ở đây vào `other`. */
 const FEE_FIELD_KEY: Record<string, FeeKey> = {
@@ -210,12 +210,12 @@ export function mapTikTokStatement(st: TikTokStatement): SettlementStatementInpu
     throw new SettlementMappingError('currency', 'Chỉ nhận bảng kê bằng VND');
   }
   const t = st.statement_time;
-  if (!Number.isInteger(t) || (t as number) < 0 || (t as number) > MAX_UNIX_SECONDS) {
+  if (t === undefined || !Number.isInteger(t) || t < 0 || t > MAX_UNIX_SECONDS) {
     throw new SettlementMappingError('statement_time', 'statement_time phải là giây Unix');
   }
   return {
     externalStatementId,
-    statementTime: new Date((st.statement_time as number) * 1000),
+    statementTime: new Date(t * 1000),
     settlementAmount: money(st.settlement_amount, 'settlement_amount', true),
     paymentStatus: text(st.payment_status, 'payment_status'),
   };

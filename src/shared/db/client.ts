@@ -77,6 +77,16 @@ export function currentCompanyId(): string | null {
   return current.getStore()?.companyId ?? null;
 }
 
+/**
+ * Mã công ty của `withCompany` đang mở; ngoài đó thì ném lỗi lập trình. Hàm ranh giới cho module khác gọi dùng ở đầu:
+ * ngoài `withCompany` là role chủ bảng, RLS không có hiệu lực, đọc ghi được dữ liệu mọi công ty.
+ */
+export function requireCompanyId(fn: string): string {
+  const companyId = currentCompanyId();
+  if (!companyId) throw new Error(`${fn} phải gọi trong withCompany của bên gọi`);
+  return companyId;
+}
+
 export async function closeDb(): Promise<void> {
   await pool?.end();
   pool = undefined;

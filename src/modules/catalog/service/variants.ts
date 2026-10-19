@@ -1,6 +1,6 @@
 // Biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B2–B5, B8, B10, B11) và `getVariants`
 // cho module khác (Documents/21 §11; chữ ký chốt ở plan chuẩn bị 4.5, không đổi).
-import { currentCompanyId, withCompany } from '../../../shared/db/client.ts';
+import { requireCompanyId, withCompany } from '../../../shared/db/client.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { touchProduct } from '../repository/products.ts';
 import { findVariants, insertVariant, lockVariants, setVariantArchived } from '../repository/variants.ts';
@@ -29,7 +29,7 @@ export interface VariantSummary {
  */
 export async function getVariants(ids?: readonly string[]): Promise<VariantSummary[]> {
   // Ngoài `withCompany` (role chủ bảng) RLS không có hiệu lực: hàm sẽ trả biến thể của mọi công ty.
-  if (!currentCompanyId()) throw new Error('getVariants phải gọi trong withCompany');
+  requireCompanyId('getVariants');
   const rows = await findVariants(ids ? { ids: ids.filter(isUuid) } : {});
   return rows.map((v) => ({
     id: v.id,

@@ -1,12 +1,10 @@
 // Tồn, thẻ kho, giữ chỗ, ngưỡng. Mọi hàm chạy trong `withCompany` của bên gọi (RLS + `company_id` của giao dịch).
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { currentCompanyId, getDb } from '../../../shared/db/client.ts';
+import { getDb, requireCompanyId } from '../../../shared/db/client.ts';
 import { reorderRules, reservations, stockIssueLines, stockLevels, stockMoves, stockReceiptLines } from './schema.ts';
 
 export function companyOfTransaction(): string {
-  const companyId = currentCompanyId();
-  if (!companyId) throw new Error('Thao tác kho phải chạy trong withCompany');
-  return companyId;
+  return requireCompanyId('Thao tác kho');
 }
 
 export interface LevelRow {

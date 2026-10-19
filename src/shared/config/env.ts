@@ -31,6 +31,8 @@ const EnvSchema = z.object({
     .optional(),
   // URL công khai của api, dùng làm địa chỉ IPN và trang quay về cho cổng thanh toán.
   PUBLIC_API_URL: z.url().optional(),
+  // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.
+  PUBLIC_WEB_URL: z.url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

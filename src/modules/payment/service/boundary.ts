@@ -1,8 +1,8 @@
 // Hàm cho fulfillment (#25) và finance (#27) gọi (plan chuẩn bị 4.5, A8, R1, R2; Documents/21 §11, D15, T30):
 // gọi trong `withCompany` của bên gọi, đi chung giao dịch của bên gọi.
 import type { Decimal } from 'decimal.js';
-import { z } from 'zod';
-import { currentCompanyId } from '../../../shared/db/client.ts';
+import { requireCompanyId } from '../../../shared/db/client.ts';
+import { isUuid } from '../../../shared/uuid.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { getOrderForPayment, getOrdersForFinance, type PaymentMethod } from '../../sales/index.ts';
 import { initialPaymentStatus } from '../domain/order-payment.ts';
@@ -53,17 +53,10 @@ export function stateOf(order: PaidOrder, row: OrderPaymentRow | undefined): Ord
 
 /** Đơn có trạng thái tiền: đơn sàn (không có phương thức), đơn công ty khác, id lạ → 404. */
 export async function orderWithPayment(orderId: string): Promise<PaidOrder> {
-  requireCompany('mark*');
+  requireCompanyId('mark*');
   const order = await getOrderForPayment(orderId);
   if (!order?.paymentMethod) throw new AppError(404, 'not_found', 'Không tìm thấy đơn hàng có trạng thái thanh toán');
   return { id: order.id, method: order.paymentMethod, total: order.total };
-}
-
-/** Ngoài `withCompany` là role chủ bảng (RLS không có hiệu lực): đọc/ghi được đơn mọi công ty theo id. */
-export function requireCompany(fn: string): string {
-  const companyId = currentCompanyId();
-  if (!companyId) throw new Error(`${fn} phải gọi trong withCompany của bên gọi`);
-  return companyId;
 }
 
 const stateChanged =(current: OrderPaymentState, message: string) =>
@@ -73,7 +66,7 @@ const stateChanged =(current: OrderPaymentState, message: string) =>
 
 /** Tạo dòng trạng thái tiền khi xác nhận đơn: `unpaid` (trả trước) hoặc `cod_pending`. Gọi lại không đổi gì. */
 export async function initOrderPayment(orderId: string, method: PaymentMethod): Promise<void> {
-  await insertOrderPaymentIfMissing(requireCompany('initOrderPayment'), orderId, initialPaymentStatus(method));
+  await insertOrderPaymentIfMissing(requireCompanyId('initOrderPayment'), orderId, initialPaymentStatus(method));
 }
 
 /**
@@ -115,8 +108,8 @@ export async function markCodNotCollected(orderId: string): Promise<OrderPayment
 
 /** Đơn giao xong: ghi `order_payments.delivered_at` lần đầu, tab COD lọc theo ngày giao (R2). Đơn không có dòng: thôi. */
 export async function markDelivered(orderId: string, at: Date): Promise<void> {
-  requireCompany('markDelivered');
-  if (!z.uuid().safeParse(orderId).success) return;
+  requireCompanyId('markDelivered');
+  if (!isUuid(orderId)) return;
   await setDeliveredAtIfMissing(orderId, at);
 }
 
@@ -124,8 +117,8 @@ export async function markDelivered(orderId: string, at: Date): Promise<void> {
 
 /** Trạng thái tiền của nhiều đơn; đơn không có dòng (đơn sàn, chưa xác nhận) không có trong kết quả. */
 export async function getOrderPayments(orderIds: readonly string[]): Promise<Map<string, OrderPaymentState>> {
-  requireCompany('getOrderPayments');
-  const valid = orderIds.filter((id) => z.uuid().safeParse(id).success);
+  requireCompanyId('getOrderPayments');
+  const valid = orderIds.filter(isUuid);
   const rows = valid.length > 0 ? await findOrderPayments(valid) : [];
   if (rows.length === 0) return new Map();
   const orders = await getOrdersForFinance(rows.map((r) => r.orderId));
@@ -144,7 +137,7 @@ export type ListedOrderPayment = OrderPaymentState & { deliveredAt: Date | null;
 
 /** Đơn có dòng trạng thái tiền theo bộ lọc; chỉ finance gọi (R1). Đơn không còn thấy (RLS) bị bỏ. */
 export async function listOrderPayments(filter: OrderPaymentFilter): Promise<ListedOrderPayment[]> {
-  requireCompany('listOrderPayments');
+  requireCompanyId('listOrderPayments');
   const rows = await findOrderPaymentsWhere(filter);
   const orders = rows.length > 0 ? await getOrdersForFinance(rows.map((r) => r.orderId)) : new Map();
   return rows.flatMap((row) => {

@@ -1,7 +1,7 @@
 // Hàm cho fulfillment (#25) gọi (plan chuẩn bị 4.5; Documents/21 §11, T17): gọi trong `withCompany` của bên gọi.
 import { Decimal } from 'decimal.js';
-import { z } from 'zod';
-import { currentCompanyId } from '../../../shared/db/client.ts';
+import { requireCompanyId } from '../../../shared/db/client.ts';
+import { isUuid } from '../../../shared/uuid.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { publishEvent } from '../../platform/index.ts';
 import { getOrderLines, getOrdersForFinance } from '../../sales/index.ts';
@@ -19,9 +19,8 @@ const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy đơn 
 export async function issueInvoiceForOrder(
   orderId: string,
 ): Promise<{ invoiceId: string; number: string; total: Decimal; created: boolean }> {
-  const companyId = currentCompanyId();
-  if (!companyId) throw new Error('issueInvoiceForOrder phải gọi trong withCompany');
-  if (!z.uuid().safeParse(orderId).success) throw notFound();
+  const companyId = requireCompanyId('issueInvoiceForOrder');
+  if (!isUuid(orderId)) throw notFound();
   const toResult = (inv: InvoiceRow, created: boolean) => ({
     invoiceId: inv.id,
     number: inv.number,
@@ -65,8 +64,7 @@ export async function issueInvoiceForOrder(
  * không có: kế toán xác nhận COD qua API; #25 không gọi hàm này.
  */
 export async function recordCodCollected(orderId: string, amount: Decimal): Promise<{ receiptId: string; number: string }> {
-  const companyId = currentCompanyId();
-  if (!companyId) throw new Error('recordCodCollected phải gọi trong withCompany');
+  const companyId = requireCompanyId('recordCodCollected');
   const order = (await getOrdersForFinance([orderId])).get(orderId);
   if (!order) throw notFound();
   if (!order.total.equals(amount)) {
