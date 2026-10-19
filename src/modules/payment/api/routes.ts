@@ -9,7 +9,8 @@ import { createPaymentLink, getOrderPaymentView } from '../service/payment-links
 import { getTransaction, listTransactions, type TransactionQuery } from '../service/transactions.ts';
 import type { PaymentContext } from '../service/webhook-handler.ts';
 import { simulatePayment } from '../service/webhooks.ts';
-import { CreateLinkBody, gatewayConfigBodyOf, OrderParams, TransactionListQuery, TransactionParams } from './schemas.ts';
+import { listUnpaidOrders } from '../service/order-list.ts';
+import { CreateLinkBody, gatewayConfigBodyOf, OrderParams, TransactionListQuery, TransactionParams, UnpaidOrderListQuery } from './schemas.ts';
 import { webhookRouter } from './webhooks.ts';
 
 const validateGatewayBody = Object.fromEntries(GATEWAYS.map((g) => [g, validate({ body: gatewayConfigBodyOf(g) })])) as Record<
@@ -76,6 +77,12 @@ export function paymentRouter(ctx: PaymentContext): Router {
   router.get('/orders/:orderId', ctx.authorize('sales.order.view'), validate({ params: OrderParams }), async (_req, res) => {
     const { orderId } = (res.locals.validated as { params: { orderId: string } }).params;
     res.json(await getOrderPaymentView(getAuth(res).companyId!, orderId));
+  });
+
+  // Đơn chưa thu cho hộp gán khoản thu chưa khớp (#27 R1): chỉ người xử lý khoản thu dùng.
+  router.get('/orders', ctx.authorize('finance.voucher.create'), validate({ query: UnpaidOrderListQuery }), async (_req, res) => {
+    const { query } = res.locals.validated as { query: { page: number; pageSize: number; search?: string } };
+    res.json(await listUnpaidOrders(getAuth(res).companyId!, query));
   });
 
   // Giao dịch cổng (#27, §12.3): `from`/`to` là trọn ngày giờ VN (C6).

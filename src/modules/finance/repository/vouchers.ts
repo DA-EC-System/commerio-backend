@@ -63,6 +63,21 @@ export async function findRefundVouchersOfOrders(orderIds: readonly string[]) {
     );
 }
 
+/** Phiếu chi hoàn khoản thu chưa khớp đã ghi sổ. */
+export async function findRefundVouchersOfUnmatched(ids: readonly string[]) {
+  if (ids.length === 0) return [];
+  return getDb()
+    .select({ unmatchedId: paymentVouchers.unmatchedReceiptId, id: paymentVouchers.id, number: paymentVouchers.number })
+    .from(paymentVouchers)
+    .where(
+      and(
+        eq(paymentVouchers.purpose, 'unmatched_refund'),
+        eq(paymentVouchers.status, 'posted'),
+        inArray(paymentVouchers.unmatchedReceiptId, [...ids]),
+      ),
+    );
+}
+
 export interface VoucherFilter {
   purpose?: VoucherRow['purpose'];
   status?: VoucherRow['status'];

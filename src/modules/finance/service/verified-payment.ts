@@ -1,12 +1,11 @@
 // Điều phối kết quả cổng đã kiểm chữ ký (Documents/21 §12.4 bước 4; plan chuẩn bị A11, plan #27 A4): khoá dòng đơn →
 // ghi giao dịch (`payment.recordGatewayTransaction`, chống trùng) → `payment.markPaid` + phiếu thu, hoặc khoản thu chưa
 // khớp → outbox, một giao dịch. src/wiring.ts tiêm hàm này vào payment qua `ctx.onVerifiedPayment`.
-import { getOrderPayments, markPaid, recordGatewayTransaction, type VerifiedPaymentHandler } from '../../payment/index.ts';
-import { publishEvent } from '../../platform/index.ts';
+import { getOrderPayments, recordGatewayTransaction, type VerifiedPaymentHandler } from '../../payment/index.ts';
 import { getOrderForPayment } from '../../sales/index.ts';
 import { decidePayment } from '../domain/payment-outcome.ts';
-import { insertReceipt, insertUnmatchedReceipt } from '../repository/receipts.ts';
-import { nextDocNumber } from './doc-numbers.ts';
+import { insertUnmatchedReceipt } from '../repository/receipts.ts';
+import { postOrderReceipt } from './order-receipt.ts';
 
 /** Nội dung chuyển khoản (chỉ SePay có) cho khoản thu chưa khớp, để kế toán dò. */
 const transferContentOf = (raw: unknown) => {
@@ -46,32 +45,14 @@ export const handleVerifiedPayment: VerifiedPaymentHandler = async (payment) => 
     return { outcome: 'unmatched' };
   }
 
-  const orderId = order!.id;
-  await markPaid(orderId, { paymentTransactionId: transactionId, paymentLinkId: payment.paymentLinkId });
-  const receipt = await insertReceipt({
+  await postOrderReceipt({
     companyId: payment.companyId,
-    number: await nextDocNumber('receipt'),
-    orderId,
+    orderId: order!.id,
     source: 'gateway',
+    amount: payment.amount,
+    gateway: payment.gateway,
     paymentTransactionId: transactionId,
-    amount: payment.amount.toFixed(2),
-  });
-  await publishEvent({
-    type: 'payment.succeeded',
-    aggregateId: orderId,
-    payload: { orderId, paymentTransactionId: transactionId, gateway: payment.gateway, amount: receipt.amount },
-  });
-  await publishEvent({
-    type: 'finance.receipt_posted',
-    aggregateId: receipt.id,
-    payload: {
-      receiptId: receipt.id,
-      orderId,
-      amount: receipt.amount,
-      source: 'gateway',
-      postedAt: receipt.postedAt.toISOString(),
-      reversalOf: null,
-    },
+    paymentLinkId: payment.paymentLinkId,
   });
   return { outcome: 'recorded' };
 };

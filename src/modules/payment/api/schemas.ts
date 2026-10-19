@@ -100,6 +100,29 @@ export const OrderPayment = z
   })
   .meta({ id: 'OrderPayment' });
 
+// — Đơn chưa thu cho hộp gán khoản thu chưa khớp (#27 R1, §12.11)
+
+export const UnpaidOrderListQuery = z.object({
+  page: z.coerce.number('Trang là số nguyên từ 1').int('Trang là số nguyên từ 1').min(1, 'Trang là số nguyên từ 1').default(1),
+  pageSize: z.coerce
+    .number('Cỡ trang từ 1 đến 100')
+    .int('Cỡ trang từ 1 đến 100')
+    .min(1, 'Cỡ trang từ 1 đến 100')
+    .max(100, 'Cỡ trang từ 1 đến 100')
+    .default(20),
+  status: z.literal('unpaid', 'Chỉ hỗ trợ status=unpaid').default('unpaid'),
+  search: z.string().trim().max(100, 'Từ khoá tối đa 100 ký tự').optional(),
+});
+
+export const UnpaidOrderPage = z
+  .object({
+    items: z.array(z.object({ order: z.object({ id: z.uuid(), code: z.string(), customerName: z.string().nullable() }), amount: z.number().int() })),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+  })
+  .meta({ id: 'UnpaidOrderPage' });
+
 // — Giao dịch cổng (#27, §12.3 hai dòng cuối, §12.8 PaymentTransaction)
 
 /** Ngày `yyyy-mm-dd` → đầu ngày (hoặc đầu ngày hôm sau, cho `to`) theo giờ Việt Nam (C6). */
