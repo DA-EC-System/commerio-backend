@@ -33,11 +33,7 @@ export const invalid = (errors: Record<string, string>) =>
 const UUID = z.uuid();
 export const isUuid = (id: string) => UUID.safeParse(id).success;
 
-/** Mã lỗi PostgreSQL và tên ràng buộc (Drizzle bọc lỗi gốc trong `cause`). */
-export function pgError(err: unknown): { code?: string; constraint?: string } {
-  const e = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
-  return e.code ? e : (e.cause ?? {});
-}
+export { pgError } from '../../../shared/db/pg-error.ts';
 
 /** Phần chung của một dòng nhật ký thao tác trong công ty. */
 export function auditOf(caller: Caller, action: 'create' | 'update' | 'delete', entityType: string, entityId: string) {
