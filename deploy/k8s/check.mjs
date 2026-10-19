@@ -85,7 +85,7 @@ for (const cm of docs.filter((x) => x.kind === 'ConfigMap' && x.metadata.name.st
   for (const [file, text] of Object.entries(cm.data ?? {})) {
     const panels = JSON.parse(text).panels.flatMap((p) => [p, ...(p.panels ?? [])]);
     for (const p of panels.filter((x) => x.type === 'stat')) {
-      if (p.targets?.some((t) => t.instant !== true)) errors.push(`${file}: panel stat "${p.title}" cần truy vấn instant`);
+      if (p.targets?.some((t) => t.instant !== true || t.range === true)) errors.push(`${file}: panel stat "${p.title}" cần truy vấn instant`);
     }
   }
 }
