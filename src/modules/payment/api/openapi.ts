@@ -14,6 +14,8 @@ import {
   TransactionListQuery,
   TransactionPage,
   TransactionParams,
+  UnpaidOrderListQuery,
+  UnpaidOrderPage,
 } from './schemas.ts';
 import { registerWebhookOpenApi } from './openapi-webhooks.ts';
 
@@ -87,6 +89,15 @@ export function registerPaymentOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: đơn không có, của công ty khác, hoặc đơn sàn'),
     },
   });  registry.registerPath({
+    method: 'get',
+    path: '/orders',
+    summary: 'Đơn chưa thu (hộp gán khoản thu chưa khớp, R1)',
+    description: 'Cần `finance.voucher.create`. Đơn đã xác nhận, trả trước, `unpaid`; `search` theo mã đơn, tên khách.',
+    security: bearer,
+    request: { query: UnpaidOrderListQuery },
+    responses: { 200: { description: 'Trang đơn chưa thu', ...json(UnpaidOrderPage) }, ...auth, 422: problemResponse('`validation_failed`') },
+  });
+  registry.registerPath({
     method: 'get',
     path: '/transactions',
     summary: 'Giao dịch cổng của công ty (UC-PF-03, tab Giao dịch cổng)',

@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm';
 import { getDb } from '../../../shared/db/client.ts';
 import { salesInvoiceLines, salesInvoices } from './schema.ts';
 
@@ -30,4 +30,34 @@ export async function insertInvoice(
     .insert(salesInvoiceLines)
     .values(lines.map((l) => ({ ...l, companyId: invoice.companyId, invoiceId: row!.id })));
   return row!;
+}
+
+export interface InvoiceFilter {
+  status?: InvoiceRow['status'];
+  from?: Date;
+  to?: Date;
+}
+
+/** Hoá đơn của công ty (RLS) theo bộ lọc, mới nhất trước. */
+export async function findInvoices(f: InvoiceFilter): Promise<InvoiceRow[]> {
+  return getDb()
+    .select()
+    .from(salesInvoices)
+    .where(
+      and(
+        f.status ? eq(salesInvoices.status, f.status) : undefined,
+        f.from ? gte(salesInvoices.issuedAt, f.from) : undefined,
+        f.to ? lt(salesInvoices.issuedAt, f.to) : undefined,
+      ),
+    )
+    .orderBy(desc(salesInvoices.issuedAt), desc(salesInvoices.number));
+}
+
+export async function findInvoice(id: string): Promise<InvoiceRow | undefined> {
+  const [row] = await getDb().select().from(salesInvoices).where(eq(salesInvoices.id, id));
+  return row;
+}
+
+export async function findInvoiceLines(invoiceId: string) {
+  return getDb().select().from(salesInvoiceLines).where(eq(salesInvoiceLines.invoiceId, invoiceId));
 }
