@@ -14,7 +14,7 @@ export interface DailyFinanceTotal {
   refunded: Decimal;
   /** Số hoá đơn gốc − số hoá đơn đảo của đơn trong ngày: hệ số cho giá vốn, phí sàn, vận chuyển sàn (A1). */
   invoiceNet: number;
-  /** Phí sàn, vận chuyển sàn của **cả đơn** (chưa nhân hệ số); 0 khi `invoiceNet = 0` hoặc chưa đối soát. */
+  /** Phí sàn, vận chuyển sàn của **cả đơn** (chưa nhân hệ số); chỉ tra cho đơn có hoá đơn trong khoảng, còn lại 0. */
   platformFee: Decimal;
   shippingCost: Decimal;
   /** Đơn đã có dòng đối soát (mọi trạng thái khớp). */
@@ -30,7 +30,7 @@ export async function getDailyFinanceTotals(range: { from: string; to: string })
   const invoiced = [...new Set(days.filter((d) => d.invoice_net !== 0).map((d) => d.order_id))];
   const settlement = new Map((await settlementByOrder(invoiced)).map((s) => [s.order_id, s]));
   return days.map((d) => {
-    const s = d.invoice_net !== 0 ? settlement.get(d.order_id) : undefined;
+    const s = settlement.get(d.order_id);
     return {
       day: d.day,
       orderId: d.order_id,

@@ -1,7 +1,8 @@
 // Đọc báo cáo cho API (Documents/21 §12.7). Mọi hàm chạy trong `withCompany` của công ty người xem.
 import { getShops } from '../../channel/index.ts';
 import { withCompany } from '../../../shared/db/client.ts';
-import { eachDay, type ReportFigures, type StoredRow, sumFigures } from '../domain/figures.ts';
+import { eachDay } from '../domain/days.ts';
+import { type ReportFigures, sumFigures } from '../domain/figures.ts';
 import type { OrderSource } from '../domain/summary.ts';
 import { readDays } from '../repository/summary.ts';
 
@@ -40,11 +41,7 @@ export async function overview(viewer: Viewer, range: Range) {
 export async function byShop(viewer: Viewer, range: Range) {
   return withCompany(viewer.companyId, async () => {
     const { rows, asOf } = await load(range);
-    const groups = new Map<string, StoredRow[]>();
-    for (const r of rows) {
-      const key = `${r.source}|${r.shopId ?? ''}`;
-      groups.set(key, [...(groups.get(key) ?? []), r]);
-    }
+    const groups = Map.groupBy(rows, (r) => `${r.source}|${r.shopId ?? ''}`);
     const shopIds = [...new Set(rows.flatMap((r) => (r.shopId ? [r.shopId] : [])))];
     const shops = await getShops(shopIds);
     const shopOf = (id: string | null): ShopFigures['shop'] =>
@@ -65,8 +62,7 @@ export async function byShop(viewer: Viewer, range: Range) {
 export async function daily(viewer: Viewer, range: Range, filter: { source?: OrderSource; shopId?: string }) {
   return withCompany(viewer.companyId, async () => {
     const { rows, asOf } = await load(range, filter);
-    const byDay = new Map<string, StoredRow[]>();
-    for (const r of rows) byDay.set(r.day, [...(byDay.get(r.day) ?? []), r]);
+    const byDay = Map.groupBy(rows, (r) => r.day);
     const items = eachDay(range.from, range.to).map((day) => ({ day, ...sumFigures(byDay.get(day) ?? [], viewer.canCost) }));
     return { ...range, asOf, items };
   });

@@ -26,7 +26,7 @@ function rangeOf(res: Response): reports.Range {
 function filterOf(res: Response) {
   const { source, shopId } = queryOf(res);
   if (shopId && source && source !== 'marketplace') throw invalid({ shopId: 'Gian hàng chỉ đi với nguồn marketplace' });
-  return { ...(shopId ? { shopId, source: 'marketplace' as const } : source ? { source } : {}) };
+  return shopId ? { shopId, source: 'marketplace' as const } : source ? { source } : {};
 }
 
 /** Quyền giá vốn đọc từ DB mỗi request như `authorize` (D1): thu quyền thì lần gọi sau thấy `null` ngay. */
@@ -69,15 +69,15 @@ export function reportRouter(ctx: ModuleContext): Router {
       csv = figuresCsv([['Từ ngày', () => o.from], ['Đến ngày', () => o.to]], [o], viewer.canCost);
     } else if (report === 'shops') {
       const s = await reports.byShop(viewer, range);
-      const total = { ...s.total, source: 'total' as const, shop: null };
       csv = figuresCsv(
         [
           ['Nguồn', (r) => sourceLabel(r.source)],
           ['Sàn', (r) => r.shop?.platform ?? null],
           ['Gian hàng', (r) => r.shop?.shopName ?? null],
         ],
-        [...s.items, total],
+        s.items,
         viewer.canCost,
+        { label: 'Tổng', figures: s.total },
       );
     } else {
       const d = await reports.daily(viewer, range, filter);

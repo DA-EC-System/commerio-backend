@@ -3,6 +3,7 @@ import type { ReportFigures } from './figures.ts';
 import type { OrderSource } from './summary.ts';
 
 type Cell = string | number | null;
+export type Column<T> = [label: string, cell: (row: T) => Cell];
 
 /**
  * Một ô: bọc ngoặc kép khi có `,` `"` hay xuống dòng. Ô chữ bắt đầu bằng `= + - @` thêm dấu nháy để Excel không chạy
@@ -21,32 +22,40 @@ export function toCsv(rows: readonly (readonly Cell[])[]): Buffer {
 
 const SOURCE_LABEL: Record<OrderSource, string> = { marketplace: 'Sàn', inbox: 'Hộp thư', manual: 'Đơn tạo tay' };
 
+const COST_COLUMNS: Column<ReportFigures>[] = [
+  ['Giá vốn', (f) => f.cogs],
+  ['Lãi', (f) => f.profit],
+];
+
 /** Cột số theo `ReportFigures`; thiếu quyền giá vốn thì không có cột Giá vốn, Lãi (D18). */
-function figureColumns(canCost: boolean): [string, (f: ReportFigures) => Cell][] {
+function figureColumns(canCost: boolean): Column<ReportFigures>[] {
   return [
     ['Doanh thu', (f) => f.revenue],
     ['Tiền đã thu', (f) => f.cashCollected],
     ['Phí sàn', (f) => f.platformFee],
     ['Phí cổng', (f) => f.paymentFee],
     ['Phí vận chuyển', (f) => f.shippingFee],
-    ...(canCost
-      ? ([
-          ['Giá vốn', (f) => f.cogs],
-          ['Lãi', (f) => f.profit],
-        ] as [string, (f: ReportFigures) => Cell][])
-      : []),
+    ...(canCost ? COST_COLUMNS : []),
     ['Phí sàn chờ đối soát', (f) => (f.feesPending ? 'có' : 'không')],
   ];
 }
 
-/** Bảng CSV có các cột đầu cho trước (`lead`) rồi tới cột số. */
+/**
+ * Bảng CSV: các cột đầu cho trước (`lead`) rồi tới cột số. `total` thêm dòng cuối: nhãn ở cột đầu, các cột đầu khác
+ * để trống.
+ */
 export function figuresCsv<T extends ReportFigures>(
-  lead: [string, (row: T) => Cell][],
+  lead: Column<T>[],
   rows: readonly T[],
   canCost: boolean,
+  total?: { label: string; figures: ReportFigures },
 ): Buffer {
-  const columns = [...lead, ...figureColumns(canCost)] as [string, (row: T) => Cell][];
-  return toCsv([columns.map(([label]) => label), ...rows.map((row) => columns.map(([, cell]) => cell(row)))]);
+  const figures = figureColumns(canCost);
+  const body = rows.map((row) => [...lead.map(([, cell]) => cell(row)), ...figures.map(([, cell]) => cell(row))]);
+  const footer = total
+    ? [[total.label, ...lead.slice(1).map(() => null), ...figures.map(([, cell]) => cell(total.figures))]]
+    : [];
+  return toCsv([[...lead, ...figures].map(([label]) => label), ...body, ...footer]);
 }
 
-export const sourceLabel = (source: OrderSource | 'total') => (source === 'total' ? 'Tổng' : SOURCE_LABEL[source]);
+export const sourceLabel = (source: OrderSource) => SOURCE_LABEL[source];

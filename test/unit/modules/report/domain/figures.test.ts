@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eachDay, resolveRange, type StoredRow, sumFigures } from '#src/modules/report/domain/figures.ts';
+import { resolveRange, type StoredRow, sumFigures } from '#src/modules/report/domain/figures.ts';
 
 const stored = (over: Partial<StoredRow> = {}): StoredRow => ({
   day: '2026-10-18',
@@ -46,13 +46,6 @@ describe('sumFigures (AC-1, AC-2, AC-11, AC-12)', () => {
       feesPending: false,
     });
     expect(sumFigures([], false)).toMatchObject({ cogs: null, profit: null });
-  });
-});
-
-describe('eachDay', () => {
-  it('mọi ngày từ from tới to, cả hai đầu', () => {
-    expect(eachDay('2026-10-30', '2026-11-02')).toEqual(['2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02']);
-    expect(eachDay('2026-10-18', '2026-10-18')).toEqual(['2026-10-18']);
   });
 });
 

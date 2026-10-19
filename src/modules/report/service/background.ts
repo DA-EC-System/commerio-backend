@@ -1,12 +1,12 @@
 // Việc nền của report trong worker (plan #29 A5): consumer nghe chứng từ tài chính, vòng quét 15 phút cho 60 ngày gần
 // nhất. Sự kiện chỉ là tín hiệu "ngày D đã đổi"; số luôn tính lại từ module nguồn (Documents/21 D7, D18).
-import { type EventEnvelope, registerConsumer } from '../../platform/index.ts';
+import { registerConsumer } from '../../platform/index.ts';
 import { logger } from '../../../shared/logger.ts';
 import { addDays, dayOfSourceEvent, type SourceEvent, vnDay } from '../domain/days.ts';
 import { findCompaniesWithSummary } from '../repository/summary.ts';
 import { recompute } from './recompute.ts';
 
-export const REPORT_CONSUMER = 'report-daily-summary';
+const REPORT_CONSUMER = 'report-daily-summary';
 const SWEEP_INTERVAL_MS = 15 * 60_000;
 const SWEEP_DAYS = 60;
 
@@ -14,8 +14,8 @@ const SWEEP_DAYS = 60;
  * Tính lại ngày của chứng từ trong sự kiện. Chạy trong `withCompany` của sự kiện (consumer `shared`), `recompute` dùng
  * lại giao dịch đó. Giao lặp, sai thứ tự đều cho cùng kết quả.
  */
-export async function onSourceEvent(event: EventEnvelope<SourceEvent['type'], SourceEvent['payload']>): Promise<void> {
-  const day = dayOfSourceEvent({ type: event.type, payload: event.payload } as SourceEvent);
+export async function onSourceEvent(event: SourceEvent & { companyId: string | null }): Promise<void> {
+  const day = dayOfSourceEvent(event);
   await recompute(event.companyId!, day, day);
 }
 

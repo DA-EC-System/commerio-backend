@@ -1,7 +1,8 @@
 // Dựng dòng `report.daily_channel_summary` từ số của các module nguồn (plan #29 A1, A2, A12, AC-12). Thuần, không I/O.
 import { Decimal } from 'decimal.js';
+import type { OrderSource } from '../../sales/index.ts';
 
-export type OrderSource = 'marketplace' | 'inbox' | 'manual';
+export type { OrderSource };
 
 /** Số đọc từ bốn hàm nguồn cho một khoảng ngày (kiểu khớp `finance`, `payment`, `inventory`, `sales` `index.ts`). */
 export interface SourceData {
@@ -35,7 +36,8 @@ export interface SummaryRow {
   feesPending: boolean;
 }
 
-const MONEY = ['revenue', 'cashCollected', 'platformFee', 'paymentFee', 'shippingFee', 'cogs'] as const;
+/** Các cột tiền (trừ lãi, là hiệu của chúng). */
+export const MONEY = ['revenue', 'cashCollected', 'platformFee', 'paymentFee', 'shippingFee', 'cogs'] as const;
 
 /** Làm tròn tới đồng, nửa lên; số âm ra xa 0 (−0,5 → −1). */
 const toDong = (v: Decimal) => v.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);

@@ -1,7 +1,7 @@
 // Số liệu trả cho API báo cáo (Documents/21 §12.7, §12.8 `ReportFigures`; plan #29 AC-12, AC-15). Thuần, không I/O.
 import { Decimal } from 'decimal.js';
 import { addDays, daysBetween } from './days.ts';
-import type { OrderSource } from './summary.ts';
+import { MONEY, type OrderSource } from './summary.ts';
 
 /** Dòng đã lưu của bảng, tiền là chuỗi số nguyên đồng (`.00`, làm tròn lúc tính lại). */
 export interface StoredRow {
@@ -30,8 +30,6 @@ export interface ReportFigures {
   feesPending: boolean;
 }
 
-const MONEY = ['revenue', 'cashCollected', 'platformFee', 'paymentFee', 'shippingFee', 'cogs'] as const;
-
 /** Cộng các dòng; lãi là hiệu các tổng (QT-45), nên `total` luôn bằng tổng các dòng con. */
 export function sumFigures(rows: readonly StoredRow[], canCost: boolean): ReportFigures {
   const sum = Object.fromEntries(
@@ -50,12 +48,8 @@ export function sumFigures(rows: readonly StoredRow[], canCost: boolean): Report
   };
 }
 
-export function eachDay(from: string, to: string): string[] {
-  return Array.from({ length: daysBetween(from, to) }, (_, i) => addDays(from, i));
-}
-
-export const DEFAULT_DAYS = 30;
-export const MAX_DAYS = 366;
+const DEFAULT_DAYS = 30;
+const MAX_DAYS = 366;
 
 /**
  * Khoảng ngày của API (§12.7): thiếu cả hai là 30 ngày tính tới hôm nay; chỉ có `to` thì `from = to − 29`; chỉ có

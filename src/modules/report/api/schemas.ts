@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { orderSource } from '../repository/schema.ts';
 
 // Hợp đồng /report (Documents/21 §12.7, §12.8). Khoảng ngày mặc định, giới hạn 366 ngày kiểm ở routes.ts
 // (`resolveRange`, cần "hôm nay" giờ VN), lỗi vẫn là 422 theo ô như `validate()`.
 
 const day = (label: string) => z.iso.date(`${label} dạng YYYY-MM-DD`).optional();
-const source = z.enum(['marketplace', 'inbox', 'manual'], 'Nguồn là marketplace, inbox hoặc manual');
+const source = z.enum(orderSource.enumValues, 'Nguồn là marketplace, inbox hoặc manual');
 
 export const RangeQuery = z.object({ from: day('Từ ngày'), to: day('Đến ngày') });
 export const DailyQuery = RangeQuery.extend({
