@@ -1,7 +1,7 @@
 // Bảng kê và dòng đối soát tiền sàn (#30). Chạy trong `withCompany` của bên gọi (RLS theo công ty).
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../shared/db/client.ts';
-import { settlementLines, settlementStatements } from './schema.ts';
+import { receipts, settlementLines, settlementStatements } from './schema.ts';
 
 export type StatementRow = typeof settlementStatements.$inferSelect;
 export type LineInsert = typeof settlementLines.$inferInsert;
@@ -63,4 +63,25 @@ export async function updateLineMatch(
     .update(settlementLines)
     .set({ ...values, version: sql`${settlementLines.version} + 1`, updatedAt: sql`now()` })
     .where(eq(settlementLines.id, id));
+}
+
+/**
+ * Dòng đủ điều kiện phiếu thu mà chưa có phiếu (A4, cùng luật `needsReceipt` của domain): bảng kê `PAID`, không lệch,
+ * tiền về dương. Theo thứ tự tạo để số phiếu ổn định.
+ */
+export async function findLinesAwaitingReceipt() {
+  return getDb()
+    .select({ id: settlementLines.id, orderId: settlementLines.orderId, settlement: settlementLines.settlement })
+    .from(settlementLines)
+    .innerJoin(settlementStatements, eq(settlementStatements.id, settlementLines.statementId))
+    .leftJoin(receipts, eq(receipts.settlementLineId, settlementLines.id))
+    .where(
+      and(
+        eq(settlementStatements.paymentStatus, 'PAID'),
+        ne(settlementLines.matchStatus, 'discrepancy'),
+        gt(settlementLines.settlement, '0'),
+        isNull(receipts.id),
+      ),
+    )
+    .orderBy(settlementLines.createdAt, settlementLines.id);
 }

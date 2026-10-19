@@ -2,6 +2,7 @@
 // gắn nhãn hoàn, khớp lại dòng chưa thấy đơn. Gọi trong `withCompany` của bên gọi; một giao dịch cho cả lần nhận.
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { currentCompanyId } from '../../../shared/db/client.ts';
+import { publishEvent } from '../../platform/index.ts';
 import { findMarketplaceOrders } from '../../sales/index.ts';
 import { matchLine } from '../domain/settlement-match.ts';
 import {
@@ -11,7 +12,9 @@ import {
   type SettlementStatementInput,
   type TikTokTransaction,
 } from '../domain/tiktok-settlement.ts';
+import { insertReceipt } from '../repository/receipts.ts';
 import {
+  findLinesAwaitingReceipt,
   findOrderNotFoundLines,
   findStatementByExternalId,
   insertLinesIgnoringExisting,
@@ -20,6 +23,7 @@ import {
   updateLineMatch,
   updateStatement,
 } from '../repository/settlements.ts';
+import { nextDocNumber } from './doc-numbers.ts';
 
 const feesJson = (fees: SettlementLineInput['fees']) =>
   Object.fromEntries(FEE_KEYS.map((k) => [k, fees[k].toFixed(2)]));
@@ -69,6 +73,32 @@ async function rematchOrderNotFound(): Promise<void> {
   }
 }
 
+/** Phiếu thu `settlement` cho mọi dòng đủ điều kiện còn thiếu (D19, A4), kèm sự kiện cho báo cáo (#29). */
+async function postPendingReceipts(companyId: string): Promise<void> {
+  for (const line of await findLinesAwaitingReceipt()) {
+    const receipt = await insertReceipt({
+      companyId,
+      number: await nextDocNumber('receipt'),
+      orderId: line.orderId,
+      source: 'settlement',
+      settlementLineId: line.id,
+      amount: line.settlement,
+    });
+    await publishEvent({
+      type: 'finance.receipt_posted',
+      aggregateId: receipt.id,
+      payload: {
+        receiptId: receipt.id,
+        orderId: receipt.orderId,
+        amount: receipt.amount,
+        source: 'settlement',
+        postedAt: receipt.postedAt.toISOString(),
+        reversalOf: null,
+      },
+    });
+  }
+}
+
 /**
  * Nhận bảng kê `statement` của gian hàng `shopId` với các dòng đã ánh xạ. Nhận lại an toàn: bảng kê cập nhật trạng
  * thái, dòng đã có (theo mã giao dịch của sàn) bỏ qua.
@@ -109,5 +139,6 @@ export async function ingestSettlementStatement(
     }),
   );
   await rematchOrderNotFound();
+  await postPendingReceipts(companyId);
   return { statementId, created };
 }
