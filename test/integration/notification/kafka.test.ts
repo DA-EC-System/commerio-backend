@@ -81,14 +81,14 @@ describe('outbox → Kafka → realtime → trình duyệt (AC-2, AC-3)', () => 
     const second = await orderCreated(a.companyId, 'DH-2');
     const committed = performance.now();
     await relayAll();
-    await clientA.until((t) => t.includes(`id: ${second}`));
+    // Hai đơn khác nhau nằm ở partition khác nhau: Kafka chỉ giữ thứ tự trong một đối tượng, nên đơn sau có thể tới
+    // trước. Chờ đủ cả hai, không chỉ chờ đơn sau (#65: chờ đơn sau rồi kiểm đơn trước làm test chập chờn trên CI).
+    await clientA.until((t) => t.includes(`id: ${first}`) && t.includes(`id: ${second}`));
     const elapsed = performance.now() - committed;
 
     // Đo giờ thật có chủ ý: đây là bằng chứng AC-2 (≤ 2 s); đo trên máy 0,1–0,4 s nên còn dư nhiều cho CI.
     expect(elapsed).toBeLessThan(2_000);
     const text = clientA.text();
-    // Hai đơn khác nhau nằm ở partition khác nhau: Kafka chỉ giữ thứ tự trong một đối tượng, nên chỉ kiểm cả hai tới.
-    expect(text).toContain(`id: ${first}`);
     expect(text).toContain('event: sales.order_created');
     expect(text).toContain('"total":150000');
     expect(clientB.text()).not.toContain(first);
