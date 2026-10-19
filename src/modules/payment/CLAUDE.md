@@ -36,8 +36,11 @@ Cấu hình khoá cổng (UC-PF-11), mã QR/link thanh toán (UC-PF-01), trạng
 | `getOrderPayments(ids)` | chỉ finance | Trạng thái tiền theo lô; đơn chưa có dòng không có trong kết quả |
 | `markPaid(orderId, by)` | chỉ finance (webhook, gán khoản thu) | `unpaid` → `paid`, mã `active`/`expired` → `paid`; lệch → 409 |
 | `recordGatewayTransaction(payment, status)` | chỉ finance (handler webhook) | Ghi `webhook_events` rồi `payment_transactions`; trùng → `duplicate` |
-| `markCodCollected`, `markRefunded` | chỉ finance | Khung 501 (PR3 của #27); `revertPaid`, `revertRefunded` chờ UC-PF-09 |
+| `markCodCollected(orderIds)` | chỉ finance (xác nhận COD) | Cả lô `cod_pending` đã giao → `cod_collected`; lệch → 409 kèm `orders: [{ orderId, status }]` (finance gắn mã đơn); khoá theo thứ tự `order_id` |
+| `markRefunded(orderId)` | chỉ finance (ghi sổ phiếu chi hoàn tiền) | `pending_refund` → `refunded`; lệch → 409 kèm `current` |
+| `listOrderPayments(filter)`, `getPaymentTransactions(ids)`, `getOrderPaymentView(companyId, orderId)` | chỉ finance (danh sách COD, hoàn tiền; cổng của phiếu thu; `current` của 409) | Đọc, trong `withCompany` |
 | `getDailyPaymentFees({ from, to })` | report (#29) | Phí cổng theo ngày giờ VN và đơn, từ giao dịch `succeeded` có `fee` |
+| `revertPaid`, `revertRefunded` | — | Khung 501, chờ UC-PF-09 |
 
 `markRefundPending`, `markCodNotCollected` trả 404 cho đơn sàn (không có trạng thái tiền) và đơn công ty khác: #25 không gọi cho đơn sàn; `markDelivered` với đơn không có dòng thì bỏ qua. **Thứ tự khoá cho mọi hàm trên:** bên gọi đổi `sales.orders` trước (giữ khoá dòng đơn), rồi mới gọi hàm payment (khoá `order_payments`), cùng giao dịch; ngược lại thì deadlock với tạo mã, webhook, COD (đơn trước, `order_payments` sau). Mọi hàm phải gọi trong `withCompany` (ngoài đó là role chủ bảng, RLS không có hiệu lực).
 

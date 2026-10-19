@@ -2,10 +2,11 @@
 import { Decimal } from 'decimal.js';
 import { z } from 'zod';
 import { currentCompanyId } from '../../../shared/db/client.ts';
-import { AppError, notImplemented } from '../../../shared/errors/app-error.ts';
+import { AppError } from '../../../shared/errors/app-error.ts';
 import { publishEvent } from '../../platform/index.ts';
 import { getOrderLines, getOrdersForFinance } from '../../sales/index.ts';
 import { findPostedInvoiceOfOrder, type InvoiceRow, insertInvoice, lockInvoiceOfOrder } from '../repository/invoices.ts';
+import { collectCod } from './cod.ts';
 import { nextDocNumber } from './doc-numbers.ts';
 
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy đơn hàng');
@@ -58,7 +59,19 @@ export async function issueInvoiceForOrder(
   return toResult(invoice, true);
 }
 
-/** Phiếu thu COD của đơn đã giao (finance dùng cho `POST /finance/cod-confirmations`, PR3 của #27). */
-export async function recordCodCollected(_orderId: string, _amount: Decimal): Promise<{ receiptId: string; number: string }> {
-  throw notImplemented('recordCodCollected', '#27');
+/**
+ * Thu COD một đơn đã giao trong giao dịch của bên gọi (cùng đường `POST /finance/cod-confirmations`, T18): đơn
+ * `cod_collected`, phiếu thu `cod` = tổng đơn. `amount` khác tổng đơn → 422 (QT-38 không thu một phần). Bên gọi hiện
+ * không có: kế toán xác nhận COD qua API; #25 không gọi hàm này.
+ */
+export async function recordCodCollected(orderId: string, amount: Decimal): Promise<{ receiptId: string; number: string }> {
+  const companyId = currentCompanyId();
+  if (!companyId) throw new Error('recordCodCollected phải gọi trong withCompany');
+  const order = (await getOrdersForFinance([orderId])).get(orderId);
+  if (!order) throw notFound();
+  if (!order.total.equals(amount)) {
+    throw new AppError(422, 'amount_mismatch', 'Số tiền COD khác tổng đơn', { errors: { amount: 'Phải bằng tổng đơn' } });
+  }
+  const { receipt } = (await collectCod(companyId, null, [orderId]))[0]!;
+  return { receiptId: receipt.id, number: receipt.number };
 }

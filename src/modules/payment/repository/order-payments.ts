@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { getDb } from '../../../shared/db/client.ts';
 import { orderPayments, type paymentStatus } from './schema.ts';
 
@@ -46,4 +46,30 @@ export async function findOrderPayments(orderIds: readonly string[]): Promise<Or
     .select()
     .from(orderPayments)
     .where(inArray(orderPayments.orderId, [...orderIds]));
+}
+
+export interface OrderPaymentFilter {
+  status?: OrderPaymentRow['status'];
+  refundStatus?: OrderPaymentRow['refundStatus'];
+  /** `true`: chỉ đơn đã giao (tab COD chờ thu). */
+  delivered?: boolean;
+  deliveredFrom?: Date;
+  deliveredTo?: Date;
+}
+
+/** Dòng trạng thái tiền của công ty (RLS) theo bộ lọc, ngày giao mới nhất trước rồi tới cập nhật mới nhất. */
+export async function findOrderPaymentsWhere(f: OrderPaymentFilter): Promise<OrderPaymentRow[]> {
+  return getDb()
+    .select()
+    .from(orderPayments)
+    .where(
+      and(
+        f.status ? eq(orderPayments.status, f.status) : undefined,
+        f.refundStatus ? eq(orderPayments.refundStatus, f.refundStatus) : undefined,
+        f.delivered ? isNotNull(orderPayments.deliveredAt) : undefined,
+        f.deliveredFrom ? gte(orderPayments.deliveredAt, f.deliveredFrom) : undefined,
+        f.deliveredTo ? lt(orderPayments.deliveredAt, f.deliveredTo) : undefined,
+      ),
+    )
+    .orderBy(sql`${orderPayments.deliveredAt} desc nulls last`, desc(orderPayments.updatedAt));
 }
