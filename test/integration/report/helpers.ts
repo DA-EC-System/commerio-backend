@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createVariant } from '../helpers/catalog.ts';
 import { createOrder } from '../helpers/sales.ts';
+import { testPool } from '../helpers/db.ts';
 import { receive } from '../inventory/helpers.ts';
+import { shops } from '#src/modules/channel/repository/schema.ts';
 import {
   paymentVouchers,
   receipts,
@@ -219,4 +221,14 @@ export async function gatewayTxn(
         occurredAt: new Date(options.occurredAt),
       }),
   );
+}
+
+/** Gian hàng sàn của công ty với đúng `shopId` mà đơn sàn của `createOrder` mang (đơn sàn giả không có gian hàng thật). */
+export async function shopFor(companyId: string, orderId: string, shopName: string) {
+  const { rows } = await testPool().query<{ shop_id: string }>('select shop_id from sales.orders where id = $1', [orderId]);
+  const shopId = rows[0]!.shop_id;
+  await withCompany(companyId, () =>
+    getDb().insert(shops).values({ id: shopId, companyId, platform: 'tiktok', externalShopId: randomUUID(), shopName }),
+  );
+  return shopId;
 }

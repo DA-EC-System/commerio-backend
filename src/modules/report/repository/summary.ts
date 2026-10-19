@@ -9,6 +9,46 @@ export async function lockCompanySummary(companyId: string): Promise<void> {
   await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${`report.summary:${companyId}`}, 0))`);
 }
 
+/** Dòng của công ty trong [from, to], lọc tuỳ chọn theo nguồn, gian hàng; kèm thời điểm tính lại gần nhất (`asOf`). */
+export async function readDays(
+  from: string,
+  to: string,
+  filter: { source?: SummaryRow['source'] | undefined; shopId?: string | undefined } = {},
+) {
+  const t = dailyChannelSummary;
+  return getDb()
+    .select({
+      day: t.day,
+      source: t.source,
+      shopId: t.shopId,
+      revenue: t.revenue,
+      cashCollected: t.cashCollected,
+      platformFee: t.platformFee,
+      paymentFee: t.paymentFee,
+      shippingFee: t.shippingFee,
+      cogs: t.cogs,
+      feesPending: t.feesPending,
+      updatedAt: t.updatedAt,
+    })
+    .from(t)
+    .where(
+      and(
+        between(t.day, from, to),
+        filter.source ? eq(t.source, filter.source) : undefined,
+        filter.shopId ? eq(t.shopId, filter.shopId) : undefined,
+      ),
+    );
+}
+
+/**
+ * Công ty đã có dòng trong bảng, cho vòng quét của worker. Gọi **ngoài** `withCompany`: chạy bằng role chủ bảng (bỏ qua
+ * RLS), chỉ đọc `company_id`.
+ */
+export async function findCompaniesWithSummary(): Promise<string[]> {
+  const rows = await getDb().selectDistinct({ companyId: dailyChannelSummary.companyId }).from(dailyChannelSummary);
+  return rows.map((r) => r.companyId);
+}
+
 /** Thay mọi dòng của công ty trong [from, to] bằng `rows` (số đã làm tròn tới đồng). */
 export async function replaceDays(companyId: string, from: string, to: string, rows: readonly SummaryRow[]): Promise<void> {
   await getDb()
