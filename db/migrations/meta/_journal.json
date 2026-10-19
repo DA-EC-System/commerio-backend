@@ -113,6 +113,20 @@
       "when": 1792318157320,
       "tag": "0015_khoa-ton-theo-cong-ty-ten-luu-tru",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792406093243,
+      "tag": "0016_rang-buoc-vai-tro-doi-mat-khau",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792406105018,
+      "tag": "0017_rang-buoc-gan-vai-tro-tai-khoan",
+      "breakpoints": true
     }
   ]
 }

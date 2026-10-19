@@ -1,4 +1,4 @@
-import { boolean, index, pgSchema, text, unique, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { timestamps, version } from '../../../shared/db/columns.ts';
 
 // Mọi bảng của module `staff` khai báo trong schema này.
@@ -18,6 +18,8 @@ export const accounts = staffSchema.table('accounts', {
   mustChangePassword: boolean('must_change_password').notNull().default(false),
   googleSub: text('google_sub').unique(),
   isPlatformAdmin: boolean('is_platform_admin').notNull().default(false),
+  // Lần đổi mật khẩu gần nhất; access token mang dấu này, khác thì 401 (#62). Trống: chưa từng đổi.
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
   ...timestamps,
   ...version,
 });
