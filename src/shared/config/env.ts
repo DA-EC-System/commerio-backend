@@ -8,6 +8,8 @@ const EnvSchema = z.object({
   API_OPS_PORT: z.coerce.number().int().positive().default(9464),
   WORKER_PORT: z.coerce.number().int().positive().default(3001),
   REALTIME_PORT: z.coerce.number().int().positive().default(3002),
+  // Cổng vận hành của realtime (/health, /metrics), tách khỏi cổng stream mà proxy đưa ra ngoài.
+  REALTIME_OPS_PORT: z.coerce.number().int().positive().default(3003),
   // Swagger UI ở /api/docs. Tắt khi chạy production thật.
   API_DOCS_ENABLED: z.stringbool().default(true),
   // Không bắt buộc lúc khởi động để test không cần DB; getDb() báo lỗi nếu thiếu.

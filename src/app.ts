@@ -30,7 +30,7 @@ const healthMount: OpenApiMount = {
 };
 
 // Ráp ứng dụng HTTP: middleware chung → route module → 404 → xử lý lỗi tập trung.
-// /metrics không nằm ở đây mà ở cổng vận hành riêng (OPS_PORT), không đưa ra Ingress.
+// /metrics không nằm ở đây mà ở cổng vận hành riêng (API_OPS_PORT), không đưa ra ngoài.
 export function createApp(ctx: ModuleContext = createModuleContext()): Express {
   const app = express();
   app.disable('x-powered-by');

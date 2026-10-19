@@ -7,7 +7,7 @@ Cả hệ chạy trên Kubernetes (#36, `Documents/21` D13): ba tiến trình `a
 trình duyệt ──► caddy ───┼─ /api/*                        ─► api:3000      ├─► PostgreSQL (ngoài cluster)
  (LoadBalancer)          └─ /  (dist/ của FE)                worker ───────┘
                                                              api, worker, realtime ◄─► kafka
-prometheus ──► /metrics của api:9464, worker:3001, realtime:3002 (cổng tên "metrics")
+prometheus ──► /metrics của api:9464, worker:3001, realtime:3003 (cổng tên "metrics")
 grafana ──► prometheus          (cả hai chỉ có ClusterIP, mở bằng kubectl port-forward)
 ```
 

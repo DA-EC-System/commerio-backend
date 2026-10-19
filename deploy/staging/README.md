@@ -53,7 +53,7 @@ Cần Docker Desktop. Tất cả lệnh chạy ở gốc repo backend.
    (cd /tmp/fe && pnpm install --frozen-lockfile && pnpm build)   # để trống VITE_API_BASE_URL, VITE_USE_MOCKS
    ```
 3. **Cấu hình:** `cp deploy/staging/.env.example deploy/staging/.env` rồi điền `DATABASE_URL`, cặp khoá JWT, `FE_DIST=/tmp/fe/dist`; image tự build thì `IMAGE=commerio-backend`, `IMAGE_TAG=local`. Trước khi merge, trỏ DB Docker của máy (`postgres://commerio:commerio@host.docker.internal:5432/commerio_<n>`), không trỏ Supabase: staging chỉ nhận code đã merge.
-4. **Chạy:** `docker compose -f deploy/staging/compose.yaml up -d --wait`, mở `http://localhost:8037`. Chrome nhận cookie `Secure` trên `http://localhost` nên không cần HTTPS; mở qua IP LAN của máy thì cookie refresh không được lưu.
+4. **Chạy:** `docker compose -f deploy/staging/compose.yaml up -d --wait`, mở `http://localhost:8037`. Chrome nhận cookie `Secure` trên `http://localhost` nên không cần HTTPS. Cổng chỉ mở trên `127.0.0.1` (`HTTP_PORT` trong `.env`); muốn cho máy khác trong LAN vào thì đổi `HTTP_PORT`, nhưng qua `http://<IP LAN>` cookie refresh `Secure` không được lưu.
 5. **Tắt:** `docker compose -f deploy/staging/compose.yaml down` (project `commerio-staging`, không đụng `deploy/compose.yaml` của máy dev).
 
 ## Xem trạng thái, log, deploy lại
