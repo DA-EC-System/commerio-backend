@@ -3,7 +3,7 @@
 // khác không thấy qua RLS.
 import { Decimal } from 'decimal.js';
 import { z } from 'zod';
-import { findOrderLines, findOrdersForFinance } from '../repository/orders-for-finance.ts';
+import { findOrderLines, findOrdersByExternalId, findOrdersForFinance } from '../repository/orders-for-finance.ts';
 import type { OrderSource, OrderStatus, PaymentMethod } from './payment-boundary.ts';
 
 export interface OrderLineForInvoice {
@@ -42,4 +42,18 @@ export async function getOrdersForFinance(ids: readonly string[]): Promise<Map<s
   if (valid.length === 0) return new Map();
   const rows = await findOrdersForFinance(valid);
   return new Map(rows.map((r) => [r.id, { ...r, total: new Decimal(r.total) }]));
+}
+
+/**
+ * Đơn sàn theo mã đơn của sàn trong một gian hàng (đối soát #30, A6), khoá theo unique (công ty, gian hàng, mã đơn
+ * sàn). Mã không thấy (không có, gian hàng khác, công ty khác) không có trong kết quả.
+ */
+export async function findMarketplaceOrders(
+  shopId: string,
+  externalOrderIds: readonly string[],
+): Promise<Map<string, { id: string; total: Decimal }>> {
+  const codes = [...new Set(externalOrderIds)];
+  if (!isUuid(shopId) || codes.length === 0) return new Map();
+  const rows = await findOrdersByExternalId(shopId, codes);
+  return new Map(rows.map((r) => [r.externalOrderId!, { id: r.id, total: new Decimal(r.total) }]));
 }

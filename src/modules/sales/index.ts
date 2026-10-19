@@ -18,6 +18,7 @@ export {
   type PaymentMethod,
 } from './service/payment-boundary.ts';
 export {
+  findMarketplaceOrders,
   getOrderLines,
   getOrdersForFinance,
   type OrderForFinance,

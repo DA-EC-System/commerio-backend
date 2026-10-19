@@ -1,5 +1,5 @@
 // Đọc đơn cho finance (#27 A2). Chỉ schema sales: đơn, dòng đơn, khách; không join chéo schema.
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '../../../shared/db/client.ts';
 import { customers, orderLines, orders } from './schema.ts';
 
@@ -34,4 +34,11 @@ export async function findOrdersForFinance(ids: readonly string[]) {
     .from(orders)
     .leftJoin(customers, eq(customers.id, orders.customerId))
     .where(inArray(orders.id, [...ids]));
+}
+
+export async function findOrdersByExternalId(shopId: string, externalOrderIds: readonly string[]) {
+  return getDb()
+    .select({ id: orders.id, externalOrderId: orders.externalOrderId, total: orders.total })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), inArray(orders.externalOrderId, [...externalOrderIds])));
 }
