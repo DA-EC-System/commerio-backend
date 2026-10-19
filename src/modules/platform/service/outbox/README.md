@@ -34,7 +34,7 @@ Tiến trình chạy consumer `instance` gọi `stopInstanceConsumers()` (export
 
 - Đăng ký mọi loại của một tên consumer **liền nhau trong một khối đồng bộ** (lúc import hoặc đầu `startBackground`). Thêm loại vào tên đã chạy thì ném lỗi.
 - **Đúng một lần chỉ với tác động trong DB.** Gọi ra ngoài (đẩy tồn lên sàn, email) là "ít nhất một lần": gửi giá trị tuyệt đối (số tồn), không gửi chênh lệch.
-- Lỗi mất kết nối DB không bị đẩy vào DLQ: message được giao lại; sự kiện không mất vì offset chưa commit. Kết nối rảnh bị server cắt chỉ ghi log, không làm worker thoát (listener `error` của pool, `src/shared/db/client.ts`).
+- Lỗi mất kết nối DB không bị đẩy vào DLQ: message được giao lại; sự kiện không mất vì offset chưa commit. Kết nối bị server cắt (kể cả khi relay đang giữ giao dịch chờ Kafka) chỉ ghi log, không làm worker thoát (`src/shared/db/client.ts`).
 - Message lỗi giữ partition của nó đứng tối đa ~36 s trong lúc thử lại; partition khác chạy tiếp.
 - Tên consumer `shared` **mới** đọc topic từ đầu phần Kafka còn giữ (tới 7 ngày, mọi công ty): handler gọi ra ngoài phải chịu được sự kiện cũ, hoặc tự bỏ sự kiện có `occurredAt` quá xa.
 - Lỗi mạng của chính handler (gọi API sàn hỏng) tính là lỗi handler: thử lại rồi DLQ. Chỉ lỗi kết nối PostgreSQL mới được giao lại không giới hạn (chờ lùi 1 s → 30 s).

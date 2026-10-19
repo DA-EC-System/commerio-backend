@@ -15,11 +15,16 @@ function rootDb(): Database {
   if (!database) {
     if (!env.DATABASE_URL) throw new Error('Chưa đặt DATABASE_URL');
     pool = new pg.Pool({ connectionString: env.DATABASE_URL });
-    // Kết nối rảnh bị server cắt (restart, failover): pool bỏ kết nối đó và tự mở cái mới khi cần.
-    // Thiếu listener thì EventEmitter ném và tiến trình thoát. Không log cả `err`: `err.client` mang mật khẩu DB.
-    pool.on('error', (err: Error & { code?: string }) => {
-      logger.error({ code: err.code, reason: err.message }, 'kết nối PostgreSQL rảnh bị đứt');
+    // Kết nối bị server cắt (restart, failover), lúc rảnh hay lúc đang giữ giao dịch mà chưa chạy truy vấn:
+    // client phát `error`, thiếu listener thì EventEmitter ném và tiến trình thoát. Nghe trên từng client (một dòng
+    // log); pool phát lại lỗi của client rảnh nên cũng cần listener. Pool bỏ kết nối hỏng, truy vấn đang chờ thì lỗi.
+    // Không log cả `err`: `err.client` mang mật khẩu DB.
+    pool.on('connect', (client) => {
+      client.on('error', (err: Error & { code?: string }) => {
+        logger.error({ code: err.code, reason: err.message }, 'kết nối PostgreSQL bị đứt');
+      });
     });
+    pool.on('error', () => undefined);
     database = drizzle({ client: pool });
   }
   return database;

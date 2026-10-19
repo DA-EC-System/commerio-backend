@@ -97,7 +97,7 @@ Khi nhiều nhánh làm cùng lúc trên một máy (mỗi nhánh một `git wor
 Một lần, trong `.env` của bản gốc: thêm cặp khoá JWT. Thiếu khoá thì mỗi tiến trình tự sinh khoá riêng, nên token do `api` cấp bị `realtime` (kênh thông báo) trả 401.
 
 ```bash
-node -e 'const { generateKeyPairSync } = require("node:crypto"); const k = generateKeyPairSync("ed25519"); const line = (n, p) => console.log(`${n}=${p.trim().replace(/\n/g, "\\n")}`); line("JWT_PRIVATE_KEY", k.privateKey.export({ type: "pkcs8", format: "pem" })); line("JWT_PUBLIC_KEY", k.publicKey.export({ type: "spki", format: "pem" }));' >> .env
+node -e 'console.log(); const { generateKeyPairSync } = require("node:crypto"); const k = generateKeyPairSync("ed25519"); const line = (n, p) => console.log(n + "=" + JSON.stringify(p.trim())); line("JWT_PRIVATE_KEY", k.privateKey.export({ type: "pkcs8", format: "pem" })); line("JWT_PUBLIC_KEY", k.publicKey.export({ type: "spki", format: "pem" }));' >> .env
 ```
 
 Với worktree n:
