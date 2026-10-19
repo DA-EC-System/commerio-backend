@@ -34,7 +34,7 @@ Không nghe sự kiện nào.
 | `release(orderId)` | sales/fulfillment (huỷ đơn) | Trả mọi giữ chỗ `active`; gọi lại không lỗi |
 | `issueForOrder(orderId, { actorId? })` | fulfillment (#25) | Lập và ghi sổ phiếu `PX-…` `kind = 'order'` từ phần đang giữ, giá vốn lúc xuất. Đơn đã có phiếu chưa huỷ → trả phiếu đó (kể cả gọi đồng thời). Không có giữ chỗ → 409 `not_reserved` |
 | `receiveReturn(orderId, lines, { note?, actorId? })` | fulfillment (#25, API `/inventory/returns`) | Phiếu `PN-…` `kind = 'delivery_return'` đã ghi sổ, giá vốn hiện tại, không đổi bình quân. Dòng số 0 bị bỏ; mọi dòng 0 → 422 `errors.lines`; vượt số đã xuất → 422 `errors["lines.<i>.quantity"]`; biến thể không có trong phiếu xuất → 422 `errors["lines.<i>.variantId"]`; khác số đã xuất mà không ghi chú → 422 `errors.note`. Đơn chưa có phiếu xuất đã ghi sổ → 409 `not_issued`; đã có phiếu nhập hoàn chưa huỷ → 409 `already_processed` |
-| `getOrderCogs(orderIds)` | report (#29) | Khung, #29 viết thân ở `service/daily-totals.ts` |
+| `getOrderCogs(orderIds)` | report (#29) | Giá vốn đã xuất của từng đơn: Σ `quantity × unit_cost` phiếu xuất theo đơn đã ghi sổ; đơn chưa xuất vắng mặt (`service/daily-totals.ts`) |
 
 Hàm biên không ghi nhật ký thao tác (bên gọi ghi thao tác của họ) và không kiểm `orderId` có thật (đơn là của sales). `reference` (mã đơn) của phiếu theo đơn để trống: chữ ký chưa nhận mã đơn.
 
