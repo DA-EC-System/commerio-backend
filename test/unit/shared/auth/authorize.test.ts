@@ -45,7 +45,7 @@ function buildApp(loader: AccessLoader) {
 }
 
 const token = (companyId: string | null = COMPANY, mustChangePassword = false) =>
-  signAccessToken({ accountId: ACCOUNT, companyId, permissions: [], mustChangePassword });
+  signAccessToken({ accountId: ACCOUNT, companyId, permissions: [], mustChangePassword, passwordChangedAt: null });
 
 async function call(loader: AccessLoader, path: string, bearer?: string, body: unknown = { name: 'Áo' }) {
   const { app, handler } = buildApp(loader);

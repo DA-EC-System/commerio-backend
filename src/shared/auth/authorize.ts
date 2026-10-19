@@ -1,7 +1,6 @@
 import type { RequestHandler, Response } from 'express';
 import { AppError } from '../errors/app-error.ts';
 import { readAccessClaims } from './authenticate.ts';
-import { assertTokenCurrent } from './jwt.ts';
 import { type AccessLoader, assertCompanyAccess, type CompanyAccess, moduleOfPermission } from './company-access.ts';
 
 export { type AccessLoader, assertCompanyAccess, type CompanyAccess, moduleOfPermission } from './company-access.ts';
@@ -21,8 +20,7 @@ export function createAuthorize(loader: AccessLoader): Authorize {
     const claims = await readAccessClaims(req);
     if (!claims.companyId) throw new AppError(403, 'company_not_selected', 'Chưa chọn công ty làm việc');
     const access = await loader(claims.accountId, claims.companyId);
-    if (access) assertTokenCurrent(claims, access.passwordChangedAt);
-    assertCompanyAccess(access);
+    assertCompanyAccess(access, claims);
     if (!access.enabledModules.includes(moduleOfPermission(permission))) {
       throw new AppError(403, 'module_disabled', 'Phân hệ này đang tắt');
     }

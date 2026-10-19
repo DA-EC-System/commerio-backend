@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { type AccessLoader, assertCompanyAccess, type CompanyAccess } from '../../../shared/auth/company-access.ts';
-import { type AccessClaims, assertTokenCurrent, type SignClaims, signAccessToken } from '../../../shared/auth/jwt.ts';
+import { type AccessClaims, assertTokenCurrent, signAccessToken } from '../../../shared/auth/jwt.ts';
 import { inTransaction } from '../../../shared/db/client.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
@@ -150,7 +150,7 @@ async function companyContext(accountId: string, companyId: string): Promise<Com
   };
 }
 
-function claimsFor(account: AccountRow, context: CompanyContext | null): SignClaims {
+function claimsFor(account: AccountRow, context: CompanyContext | null): Omit<AccessClaims, 'expiresAt'> {
   return {
     accountId: account.id,
     companyId: context?.companyId ?? null,

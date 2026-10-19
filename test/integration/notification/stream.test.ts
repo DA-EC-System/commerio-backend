@@ -70,7 +70,7 @@ describe('mở stream: xác thực và truy cập công ty (S1)', () => {
   });
 
   it('còn mật khẩu thư mời → 403 password_change_required', async () => {
-    const token = await signAccessToken({ accountId: randomUUID(), companyId: randomUUID(), permissions: [], mustChangePassword: true });
+    const token = await signAccessToken({ accountId: randomUUID(), companyId: randomUUID(), permissions: [], mustChangePassword: true, passwordChangedAt: null });
     expect(await problem(await open(token))).toMatchObject({ status: 403, type: '/problems/password_change_required' });
   });
 

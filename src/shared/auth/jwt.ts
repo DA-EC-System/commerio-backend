@@ -41,15 +41,13 @@ function loadKeys() {
   return keys;
 }
 
-export type SignClaims = Omit<AccessClaims, 'expiresAt' | 'passwordChangedAt'> & { readonly passwordChangedAt?: number | null };
-
-export async function signAccessToken(claims: SignClaims): Promise<string> {
+export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): Promise<string> {
   const { privateKey } = await loadKeys();
   return new SignJWT({
     cid: claims.companyId,
     perms: claims.permissions,
     pwc: claims.mustChangePassword,
-    pca: claims.passwordChangedAt ?? null,
+    pca: claims.passwordChangedAt,
   })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)

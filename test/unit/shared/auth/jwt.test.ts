@@ -9,6 +9,7 @@ describe('access token', () => {
       companyId: null,
       permissions: [],
       mustChangePassword: false,
+      passwordChangedAt: null,
     });
     const claims = await verifyAccessToken(token);
     const iat = JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString()).iat as number;
@@ -18,9 +19,9 @@ describe('access token', () => {
 });
 
 describe('dấu đổi mật khẩu trong access token (#62)', () => {
-  const base = { accountId: '7d1b6c1e-0000-4000-8000-000000000001', companyId: null, permissions: [], mustChangePassword: false };
+  const base = { accountId: '7d1b6c1e-0000-4000-8000-000000000001', companyId: null, permissions: [], mustChangePassword: false, passwordChangedAt: null };
 
-  it('token không có dấu (phát trước #62) qua được khi tài khoản chưa từng đổi mật khẩu', async () => {
+  it('token không có dấu (chưa từng đổi, hoặc phát trước #62: thiếu claim cũng đọc ra null) qua được khi DB trống', async () => {
     const claims = await verifyAccessToken(await signAccessToken(base));
     expect(claims.passwordChangedAt).toBeNull();
     expect(() => assertTokenCurrent(claims, null)).not.toThrow();
