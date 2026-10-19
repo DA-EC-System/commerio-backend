@@ -16,3 +16,5 @@ export { getDailyFinanceTotals } from './service/daily-totals.ts';
 export { handleVerifiedPayment } from './service/verified-payment.ts';
 // Tiêm vào payment qua ctx.financeRefsOf (#27 A21): phiếu thu của giao dịch cổng.
 export { getTransactionRefs } from './service/transaction-refs.ts';
+// Tên gian hàng cho đối soát (#30 A7): src/wiring.ts tiêm channel.getShops qua ctx.shopsOf.
+export type { FinanceContext, ShopInfo } from './service/settlement-views.ts';

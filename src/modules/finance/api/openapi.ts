@@ -24,6 +24,7 @@ import {
   VoucherListQuery,
   VoucherPage,
 } from './schemas.ts';
+import { registerSettlementOpenApi } from './settlement-openapi.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
 const bearer = [{ bearerAuth: [] }];
@@ -145,4 +146,6 @@ export function registerFinanceOpenApi(registry: OpenAPIRegistry): void {
       422: invalid,
     },
   });
+
+  registerSettlementOpenApi(registry);
 }
