@@ -2,6 +2,8 @@ import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import type { z } from 'zod';
 import { problemResponse } from '../../../shared/http/openapi.ts';
 import {
+  AssignBody,
+  AssignResult,
   CodConfirmationBody,
   CodConfirmationResult,
   CodListQuery,
@@ -18,6 +20,9 @@ import {
   RefundBody,
   RefundListQuery,
   RefundPage,
+  RefundUnmatchedBody,
+  UnmatchedListQuery,
+  UnmatchedPage,
   UpdateVoucherBody,
   VersionBody,
   VersionQuery,
@@ -56,6 +61,7 @@ export function registerFinanceOpenApi(registry: OpenAPIRegistry): void {
   get('/payment-vouchers', 'Phiếu chi (lọc `from`/`to` theo `paidOn`)', VoucherListQuery, VoucherPage, { 422: invalid });
   get('/payment-vouchers/:id', 'Một phiếu chi', undefined, PaymentVoucher, { 404: notFound('phiếu chi') });
   get('/cod-orders', 'Đơn COD (mặc định `cod_pending` đã giao; `from`/`to` theo ngày giao)', CodListQuery, CodPage, { 422: invalid });
+  get('/unmatched-receipts', 'Khoản thu chưa khớp (mặc định `open`; `search` theo nội dung chuyển khoản)', UnmatchedListQuery, UnmatchedPage, { 422: invalid });
   get('/refunds', 'Đơn cần hoàn tiền (mặc định `pending_refund`)', RefundListQuery, RefundPage, { 422: invalid });
 
   registry.registerPath({
@@ -128,6 +134,36 @@ export function registerFinanceOpenApi(registry: OpenAPIRegistry): void {
       404: notFound('đơn'),
       409: problemResponse('`payment_state_changed` kèm `orders: [{ orderId, code, status }]` các đơn lệch; cả lô không đổi'),
       422: problemResponse('`errors.orderIds`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/unmatched-receipts/:id/assign',
+    summary: 'Gán khoản thu chưa khớp vào đơn chưa thu (UC-PF-07)',
+    description: `${WRITE} Đơn trả trước \`unpaid\`, chưa huỷ, tổng bằng số tiền khoản. Cùng giao dịch: phiếu thu \`unmatched_assignment\`, đơn \`paid\`, khoản \`assigned\`.`,
+    security: bearer,
+    request: { params: IdParams, body: json(AssignBody) },
+    responses: {
+      200: { description: 'Khoản và phiếu thu', ...json(AssignResult) },
+      ...auth,
+      404: notFound('khoản hoặc đơn'),
+      409: problemResponse('`already_processed` kèm `current`; `version_conflict` kèm `current`; `payment_state_changed` kèm `current: OrderPayment`'),
+      422: problemResponse('`amount_mismatch` kèm `errors.orderId`; `errors.version`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/unmatched-receipts/:id/refund',
+    summary: 'Hoàn khoản thu chưa khớp cho người chuyển (UC-PF-07)',
+    description: `${WRITE} Lập và ghi sổ phiếu chi \`unmatched_refund\` = số tiền khoản; khoản \`refunded\`.`,
+    security: bearer,
+    request: { params: IdParams, body: json(RefundUnmatchedBody) },
+    responses: {
+      201: { description: 'Phiếu chi đã ghi sổ', ...json(PaymentVoucher) },
+      ...auth,
+      404: notFound('khoản thu chưa khớp'),
+      409: problemResponse('`already_processed` kèm `current`; `version_conflict` kèm `current`'),
+      422: invalid,
     },
   });
   registry.registerPath({

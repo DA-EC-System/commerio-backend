@@ -63,7 +63,7 @@ export function getInvoice(companyId: string, id: string) {
   });
 }
 
-async function receiptViews(rows: ReceiptRow[], orders: Orders) {
+export async function receiptViews(rows: ReceiptRow[], orders: Orders) {
   const txns = await getPaymentTransactions(rows.flatMap((r) => (r.paymentTransactionId ? [r.paymentTransactionId] : [])));
   return rows.map((r) => ({
     id: r.id,

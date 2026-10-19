@@ -62,6 +62,38 @@ export async function findReceipt(id: string): Promise<ReceiptRow | undefined> {
   return row;
 }
 
+export interface UnmatchedFilter {
+  status?: UnmatchedRow['status'];
+  reason?: UnmatchedRow['reason'];
+  from?: Date;
+  to?: Date;
+}
+
+/** Khoản thu chưa khớp của công ty (RLS), mới nhận trước. */
+export async function findUnmatchedList(f: UnmatchedFilter): Promise<UnmatchedRow[]> {
+  return getDb()
+    .select()
+    .from(unmatchedReceipts)
+    .where(
+      and(
+        f.status ? eq(unmatchedReceipts.status, f.status) : undefined,
+        f.reason ? eq(unmatchedReceipts.reason, f.reason) : undefined,
+        f.from ? gte(unmatchedReceipts.receivedAt, f.from) : undefined,
+        f.to ? lt(unmatchedReceipts.receivedAt, f.to) : undefined,
+      ),
+    )
+    .orderBy(desc(unmatchedReceipts.receivedAt), desc(unmatchedReceipts.id));
+}
+
+/** Phiếu thu gán từ các khoản thu chưa khớp. */
+export async function findReceiptsOfUnmatched(ids: readonly string[]) {
+  if (ids.length === 0) return [];
+  return getDb()
+    .select({ unmatchedId: receipts.unmatchedReceiptId, id: receipts.id, number: receipts.number })
+    .from(receipts)
+    .where(and(inArray(receipts.unmatchedReceiptId, [...ids]), eq(receipts.status, 'posted')));
+}
+
 /** Khoản thu chưa khớp; `lock` khoá dòng tới hết giao dịch (gán, hoàn tiền). */
 export async function findUnmatched(id: string, lock?: 'update'): Promise<UnmatchedRow | undefined> {
   const query = getDb().select().from(unmatchedReceipts).where(eq(unmatchedReceipts.id, id));
