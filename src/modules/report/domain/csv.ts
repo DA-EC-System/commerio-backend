@@ -6,13 +6,13 @@ type Cell = string | number | null;
 export type Column<T> = [label: string, cell: (row: T) => Cell];
 
 /**
- * Một ô: bọc ngoặc kép khi có `,` `"` hay xuống dòng. Ô chữ bắt đầu bằng `= + - @` thêm dấu nháy để Excel không chạy
+ * Một ô: bọc ngoặc kép khi có `,` `"` hay xuống dòng. Ô chữ bắt đầu bằng `= + - @`, Tab, CR thêm dấu nháy để Excel không chạy
  * như công thức (tên gian hàng đến từ sàn, không tin được).
  */
 export function csvCell(value: Cell): string {
   if (value === null) return '';
   if (typeof value === 'number') return String(value);
-  const text = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  const text = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 

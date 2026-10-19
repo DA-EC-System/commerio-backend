@@ -60,7 +60,6 @@ export function reportRouter(ctx: ModuleContext): Router {
 
   router.get('/export', ...view, ctx.authorize('report.dashboard.export'), validate({ query: ExportQuery }), async (_req, res) => {
     const range = rangeOf(res);
-    const filter = filterOf(res);
     const viewer = await viewerOf(res);
     const report = queryOf(res).report!;
     let csv: Buffer;
@@ -80,7 +79,7 @@ export function reportRouter(ctx: ModuleContext): Router {
         { label: 'Tổng', figures: s.total },
       );
     } else {
-      const d = await reports.daily(viewer, range, filter);
+      const d = await reports.daily(viewer, range, filterOf(res));
       csv = figuresCsv([['Ngày', (r) => r.day]], d.items, viewer.canCost);
     }
     res

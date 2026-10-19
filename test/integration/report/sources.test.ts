@@ -14,6 +14,7 @@ import {
   reverseRefund,
   settlementLine,
 } from './helpers.ts';
+import { getShops } from '#src/modules/channel/index.ts';
 import { getDailyFinanceTotals } from '#src/modules/finance/index.ts';
 import { getOrderCogs } from '#src/modules/inventory/index.ts';
 import { getDailyPaymentFees } from '#src/modules/payment/index.ts';
@@ -147,5 +148,17 @@ describe('sales.getOrderChannels', () => {
     expect(channels.get(manual.orderId)).toEqual({ source: 'manual', shopId: null });
     expect(channels.get(market.orderId)).toMatchObject({ source: 'marketplace', shopId: expect.any(String) });
     expect(channels.size).toBe(2);
+  });
+});
+
+describe('hàm nguồn ngoài withCompany', () => {
+  it('ném lỗi lập trình thay vì đọc số của mọi công ty bằng role chủ bảng', async () => {
+    const range = { from: '2026-10-18', to: '2026-10-18' };
+    const id = randomUUID();
+    await expect(getDailyFinanceTotals(range)).rejects.toThrow(/withCompany/);
+    await expect(getDailyPaymentFees(range)).rejects.toThrow(/withCompany/);
+    await expect(getOrderCogs([id])).rejects.toThrow(/withCompany/);
+    await expect(getOrderChannels([id])).rejects.toThrow(/withCompany/);
+    await expect(getShops([id])).rejects.toThrow(/withCompany/);
   });
 });

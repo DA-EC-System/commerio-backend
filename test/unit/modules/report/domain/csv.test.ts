@@ -19,8 +19,9 @@ describe('CSV (plan #29 A9)', () => {
     expect(csvCell(null)).toBe('');
   });
 
-  it('chặn công thức khi mở bằng Excel: ô chữ bắt đầu bằng = + - @ được thêm dấu nháy', () => {
+  it('chặn công thức khi mở bằng Excel: ô chữ bắt đầu bằng = + - @, Tab được thêm dấu nháy', () => {
     expect(csvCell('=HYPERLINK("x")')).toBe(`"'=HYPERLINK(""x"")"`);
     expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(csvCell('\t=1')).toBe("'\t=1");
   });
 });

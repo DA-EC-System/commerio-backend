@@ -42,6 +42,9 @@ CSV (`domain/csv.ts`): UTF-8 có BOM, CRLF, tiêu đề tiếng Việt; ô chữ
 - Công ty chưa có dòng nào không được vòng quét thấy (không có hàm liệt kê công ty ở platform): sự kiện đầu tiên bị DLQ thì chạy `rebuild.ts`.
 - Đảo hoá đơn mà hàng không về kho: giá vốn vẫn bị trừ ngược theo hoá đơn đảo.
 - Hoàn tiền cho đơn đã giao mà không đảo hoá đơn chỉ giảm tiền đã thu, không giảm doanh thu.
+- Đảo rồi lập lại hoá đơn trong cùng ngày cho hệ số 0: hoá đơn mới chưa đối soát không bật `fees_pending` (chưa có luồng lập lại hoá đơn).
+- Danh sách đơn đi thành tham số bind: dựng lại một khoảng có hơn ~65.000 đơn thì chia khoảng nhỏ hơn.
+- Hàm nguồn và `channel.getShops` phải gọi trong `withCompany` (ném lỗi nếu không), vì ngoài đó là role chủ bảng.
 
 ## Test
 

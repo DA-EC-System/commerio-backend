@@ -56,7 +56,8 @@ describe('consumer báo cáo (AC-5)', () => {
     expect(events.map((e) => e.type)).toEqual(['finance.receipt_posted', 'finance.invoice_posted']);
 
     for (const e of events) await consume(e);
-    const today = vnDay(new Date());
+    // Ngày của chứng từ lấy từ chính sự kiện (không dùng "hôm nay": chạy qua nửa đêm giờ VN thì lệch).
+    const today = vnDay((events[0]!.payload as { postedAt: string }).postedAt);
     const expected = [
       { day: today, source: 'manual', revenue: '150000.00', cash_collected: '150000.00', payment_fee: '1100.00', platform_fee: '0.00', fees_pending: false },
     ];
