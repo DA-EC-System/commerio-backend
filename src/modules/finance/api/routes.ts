@@ -2,7 +2,6 @@ import { type Response, Router } from 'express';
 import type { z } from 'zod';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
 import { validate } from '../../../shared/http/validate.ts';
-import type { ModuleContext } from '../../../shared/module.ts';
 import { confirmCod, listCodOrders } from '../service/cod.ts';
 import { getInvoice, getReceipt, listInvoices, listReceipts } from '../service/documents.ts';
 import {
@@ -15,6 +14,7 @@ import {
   refundOrder,
   updateDraft,
 } from '../service/payment-vouchers.ts';
+import type { FinanceContext } from '../service/settlement-views.ts';
 import { assignUnmatched, listUnmatched, refundUnmatched } from '../service/unmatched.ts';
 import {
   AssignBody,
@@ -33,6 +33,7 @@ import {
   VersionQuery,
   VoucherListQuery,
 } from './schemas.ts';
+import { mountSettlementRoutes } from './settlement-routes.ts';
 
 type Part = 'body' | 'query' | 'params';
 const input = <S extends z.ZodType>(res: Response, part: Part) => (res.locals.validated as Record<Part, unknown>)[part] as z.output<S>;
@@ -46,7 +47,7 @@ const id = (res: Response) => input<typeof IdParams>(res, 'params').id;
  * Route của module `finance`, gắn tại /api/v1/finance (Documents/21 §12.5). Xem: `finance.invoice.view`; ghi tiền:
  * `finance.voucher.create` (T7). Kiểm quyền trước kiểm dữ liệu.
  */
-export function financeRouter(ctx: ModuleContext): Router {
+export function financeRouter(ctx: FinanceContext): Router {
   const router = Router();
   const view = ctx.authorize('finance.invoice.view');
   const write = ctx.authorize('finance.voucher.create');
@@ -107,6 +108,8 @@ export function financeRouter(ctx: ModuleContext): Router {
   router.post('/refunds', write, validate({ body: RefundBody }), async (_req, res) => {
     res.status(201).json(await refundOrder(caller(res), input<typeof RefundBody>(res, 'body')));
   });
+
+  mountSettlementRoutes(router, ctx);
 
   return router;
 }

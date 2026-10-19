@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Hợp đồng /finance (Documents/21 §12.5, §12.8, C1, C3, C6, V8; plan #27 PR3). Tiền là số nguyên đồng (T1).
 
-const page = {
+export const page = {
   page: z.coerce.number('Trang là số nguyên từ 1').int('Trang là số nguyên từ 1').min(1, 'Trang là số nguyên từ 1').default(1),
   pageSize: z.coerce
     .number('Cỡ trang từ 1 đến 100')
@@ -19,7 +19,7 @@ const dayVn = (label: string, nextDay = false) =>
   isoDay(label)
     .transform((d) => new Date(Date.parse(`${d}T00:00:00+07:00`) + (nextDay ? 86_400_000 : 0)))
     .optional();
-const range = { from: dayVn('Từ ngày'), to: dayVn('Đến ngày', true) };
+export const range = { from: dayVn('Từ ngày'), to: dayVn('Đến ngày', true) };
 
 export const IdParams = z.object({ id: z.string() });
 
@@ -105,11 +105,11 @@ export const RefundBody = z.object({ orderId: z.string('Chọn đơn cần hoàn
 
 // — Response (Swagger)
 
-const OrderRef = z.object({ id: z.uuid(), code: z.string(), customerName: z.string().nullable() });
+export const OrderRef = z.object({ id: z.uuid(), code: z.string(), customerName: z.string().nullable() });
 const OrderRefPhone = OrderRef.extend({ customerPhone: z.string().nullable() });
-const DocRef = z.object({ id: z.uuid(), number: z.string() });
+export const DocRef = z.object({ id: z.uuid(), number: z.string() });
 const UserRef = z.object({ id: z.uuid(), name: z.string() });
-const pageOf = <T extends z.ZodType>(item: T, id: string) =>
+export const pageOf = <T extends z.ZodType>(item: T, id: string) =>
   z.object({ items: z.array(item), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() }).meta({ id });
 
 export const InvoiceSummary = z
