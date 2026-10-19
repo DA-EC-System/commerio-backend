@@ -1,8 +1,9 @@
 // Tra cứu quá hạn (Documents/21 §12.4; UC-PF-03 ngoại lệ b1; plan #27 A8): mỗi 60 giây trong worker, hỏi cổng các mã
 // `active` đã quá hạn không quá 24 giờ. Đã trả → ghi như webhook (`source=query`); chưa trả hoặc cổng không biết mã →
-// `expired`. Gọi cổng **ngoài** giao dịch. Không giữ advisory lock: hai worker cùng hỏi một mã thì chống trùng ở DB
-// (`webhook_events`, `payment_transactions` unique; `expired` chỉ đổi khi còn `active`), giá là cổng bị hỏi hai lần.
-import { withCompany } from '../../../shared/db/client.ts';
+// `expired`. Gọi cổng **ngoài** giao dịch. Mỗi lúc một lượt trên mọi bản sao worker: khoá phiên `payment.overdue_query`
+// (#63 B20); lượt khác đang chạy thì bỏ lượt này. Phần ghi vẫn chống trùng ở DB (`webhook_events`, `payment_transactions`
+// unique; `expired` chỉ đổi khi còn `active`) cho ca khoá mất giữa chừng.
+import { withCompany, withSessionLock } from '../../../shared/db/client.ts';
 import { logger } from '../../../shared/logger.ts';
 import { expireLink, findOverdueLinksAnyCompany, touchLink } from '../repository/payment-links.ts';
 import { loadGatewayCredentials } from './gateway-configs.ts';
@@ -12,11 +13,19 @@ import { toPayment } from './webhooks.ts';
 
 const INTERVAL_MS = 60_000;
 const BATCH = 20;
+const OVERDUE_QUERY_LOCK = 'payment.overdue_query';
 /** MoMo khuyên ≥ 30 giây cho tra cứu (#27 ground-truth D4); cổng khác 10 giây như tạo mã. */
 const timeoutOf = (gateway: string) => (gateway === 'momo' ? 30_000 : 10_000);
 
-/** Một lượt tra cứu. Lỗi của một mã (mạng, cổng) chỉ ghi log, mã giữ `active` cho lượt sau. */
-export async function runOverdueQuery(ctx: PaymentContext, now: Date = new Date()): Promise<void> {
+/**
+ * Một lượt tra cứu; lượt khác (bản sao worker khác) đang chạy thì trả `busy`. Lỗi của một mã (mạng, cổng) chỉ ghi log,
+ * mã giữ `active` cho lượt sau.
+ */
+export async function runOverdueQuery(ctx: PaymentContext, now: Date = new Date()): Promise<void | 'busy'> {
+  return withSessionLock(OVERDUE_QUERY_LOCK, () => queryBatch(ctx, now));
+}
+
+async function queryBatch(ctx: PaymentContext, now: Date): Promise<void> {
   const handler = verifiedPaymentHandlerOf(ctx);
   for (const link of await findOverdueLinksAnyCompany(now, BATCH)) {
     try {
@@ -40,7 +49,7 @@ export async function runOverdueQuery(ctx: PaymentContext, now: Date = new Date(
 
 /** Việc nền của payment trong worker: một lượt mỗi 60 giây, không chồng lượt; trả hàm dừng chờ lượt đang chạy. */
 export async function startPaymentBackground(ctx: PaymentContext): Promise<() => Promise<void>> {
-  let running: Promise<void> | undefined;
+  let running: Promise<unknown> | undefined;
   const timer = setInterval(() => {
     running ??= runOverdueQuery(ctx)
       .catch((err: unknown) => logger.error({ err }, 'tra cứu quá hạn lỗi'))
