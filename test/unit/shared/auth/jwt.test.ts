@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ACCESS_TOKEN_TTL_SECONDS, assertTokenCurrent, signAccessToken, verifyAccessToken } from '#src/shared/auth/jwt.ts';
+import { assertTokenCurrent } from '#src/shared/auth/company-access.ts';
+import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken, verifyAccessToken } from '#src/shared/auth/jwt.ts';
 
 describe('access token', () => {
   it('verifyAccessToken trả expiresAt (giây epoch) đúng 15 phút sau lúc ký', async () => {

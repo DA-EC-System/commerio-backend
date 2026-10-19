@@ -74,13 +74,3 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
     throw new AppError(401, 'unauthorized', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
   }
 }
-
-/**
- * Token phát trước lần đổi mật khẩu gần nhất hết hiệu lực ngay (#62): dấu trong token phải bằng
- * `password_changed_at` hiện tại (so tới mili giây, nên không lọt token phát cùng giây với lần đổi). Khác thì 401.
- */
-export function assertTokenCurrent(claims: AccessClaims, passwordChangedAt: Date | null): void {
-  if (claims.passwordChangedAt !== (passwordChangedAt?.getTime() ?? null)) {
-    throw new AppError(401, 'unauthorized', 'Phiên đăng nhập đã hết hiệu lực vì mật khẩu vừa được đổi, hãy đăng nhập lại');
-  }
-}

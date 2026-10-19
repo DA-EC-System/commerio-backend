@@ -28,7 +28,7 @@ Vai trò có sẵn và tuỳ biến, danh mục quyền (UC-PI-06). Hợp đồn
 - Quyền của phân hệ đang tắt: gửi lên thì 422 `errors.permissions`; `PUT` giữ nguyên các quyền đó mà vai trò đang có (D2).
 - Tên trùng không phân biệt hoa thường, tính cả tên vai trò có sẵn (D3). Kiểm bằng `lower()` của PostgreSQL như index; ghi đua bị `23505` thì cũng ra 409 `role_name_taken`.
 - Mọi truy vấn vai trò chạy trong `withCompany`. RLS chặn công ty sửa, xoá vai trò có sẵn và quyền của chúng (`test/integration/access/builtin-role-rls.test.ts`); service vẫn kiểm `builtin_role` trước mọi câu ghi và chỉ ghi theo id vai trò tuỳ biến đã đọc được.
-- Gán vai trò (`assignRole`): DB từ chối vai trò tuỳ biến của công ty khác và membership của công ty khác (trigger `member_roles_company_fk`, migration 0017, lỗi `23503` tên `member_roles_company_fk`, cả khi chạy bằng chủ bảng). Service vẫn đọc vai trò dưới `withCompany` trước khi gán để trả 404/422 rõ ràng; lỗi trigger là lưới cuối. `kind` ràng với `company_id` bằng CHECK `roles_kind_company_check` (0016).
+- Gán vai trò (`assignRole`): DB từ chối vai trò tuỳ biến của công ty khác và membership của công ty khác (trigger `member_roles_company_fk`, migration 0017, lỗi `23503` tên `member_roles_company_fk`, cả khi chạy bằng chủ bảng). `assignRole` không tự đọc gì: bên gọi (#7) đọc vai trò dưới `withCompany` trước khi gán để trả 404/422 rõ ràng, và đổi `23503 member_roles_company_fk` (đọc bằng `pgError`) ra 404/422 thay vì để lọt 500; trigger là lưới cuối. `kind` ràng với `company_id` bằng CHECK `roles_kind_company_check` (0016).
 - `:id` không phải uuid trả 404 `not_found` như vai trò không tồn tại.
 
 ## Cho module khác (`index.ts`)

@@ -1,6 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { type AccessLoader, assertCompanyAccess, type CompanyAccess } from '../../../shared/auth/company-access.ts';
-import { type AccessClaims, assertTokenCurrent, signAccessToken } from '../../../shared/auth/jwt.ts';
+import {
+  type AccessLoader,
+  assertCompanyAccess,
+  assertTokenCurrent,
+  type CompanyAccess,
+} from '../../../shared/auth/company-access.ts';
+import { type AccessClaims, signAccessToken } from '../../../shared/auth/jwt.ts';
 import { inTransaction } from '../../../shared/db/client.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
@@ -138,7 +143,8 @@ export const loadCompanyAccess: AccessLoader = readCompanyAccess;
  */
 async function companyContext(accountId: string, companyId: string): Promise<CompanyContext> {
   const access = await readCompanyAccess(accountId, companyId);
-  assertCompanyAccess(access);
+  // Không so dấu token ở đây: `refresh` không có access token; `selectCompany` đã so qua `callerAccount`.
+  assertCompanyAccess(access, null);
   const enabled = new Set<string>(access.enabledModules);
   return {
     companyId,
