@@ -18,7 +18,7 @@ const ofPrefix = (prefix: string) =>
 /** Một relay mỗi lúc cho mỗi tiền tố (D6). Khoá tự nhả khi giao dịch kết thúc. */
 export async function tryLockRelay(prefix: string): Promise<boolean> {
   const result = await getDb().execute<{ locked: boolean }>(
-    sql`select pg_try_advisory_xact_lock(hashtext(${`platform.outbox_relay:${prefix}`})) as locked`,
+    sql`select pg_try_advisory_xact_lock(hashtextextended(${`platform.outbox_relay:${prefix}`}, 0)) as locked`,
   );
   return result.rows[0]!.locked;
 }
