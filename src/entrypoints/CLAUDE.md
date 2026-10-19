@@ -8,7 +8,7 @@ Mỗi file là lệnh khởi động một tiến trình. Cả ba dùng chung m�
 | `worker.ts` | `WORKER_PORT` 3001 (vận hành) | Gọi `startBackground(ctx)` của mọi module có khai: relay outbox và consumer `shared` (platform, #38), tra cứu thanh toán quá hạn (payment), dựng lại báo cáo (report). Việc nền mới viết trong module, không sửa file này |
 | `realtime.ts` | `REALTIME_PORT` 3002 (stream), `REALTIME_OPS_PORT` 3003 (vận hành) | Kênh SSE thông báo (#33): consumer Kafka `instance` (mỗi bản sao một group) đẩy sự kiện xuống trình duyệt. Cổng stream chỉ có `/api/v1/notification/stream` |
 
-Cổng vận hành (`/health`, `/metrics`) dựng bằng `startOpsServer` (`src/shared/observability/ops-server.ts`); probe của Kubernetes và Prometheus dùng cổng có tên `metrics` (`deploy/k8s/base/app.yaml`).
+Cổng vận hành của worker và realtime (`/health`, `/metrics`) dựng bằng `startOpsServer` (`src/shared/observability/ops-server.ts`). Prometheus lấy số liệu ở cổng có tên `metrics` của cả ba tiến trình; probe của worker, realtime cũng ở cổng đó, còn api probe `/health` trên cổng `http` (`deploy/k8s/base/app.yaml`).
 
 Quy tắc:
 

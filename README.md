@@ -114,10 +114,10 @@ Role `commerio_app` ở mức cụm, migration `0003` tạo lại an toàn. Test
 
 | Chủ đề | File |
 |---|---|
-| Kiến trúc, luật ranh giới, quy ước code | `CLAUDE.md`, và `CLAUDE.md` của `src/`, `src/entrypoints/`, `src/modules/` (kèm từng module), `src/shared/`, `db/`, `test/`, `deploy/` |
-| Sự kiện giữa module: outbox, Kafka, consumer, DLQ | `src/modules/platform/service/outbox/README.md` |
-| Staging: chạy, secret, log, deploy lại | `deploy/staging/README.md` |
-| Kubernetes, Prometheus, Grafana | `deploy/k8s/README.md` |
+| Kiến trúc, luật ranh giới, quy ước code | [CLAUDE.md](CLAUDE.md), và `CLAUDE.md` của [src/](src/CLAUDE.md), [src/entrypoints/](src/entrypoints/CLAUDE.md), [src/modules/](src/modules/CLAUDE.md) (module đã có nghiệp vụ có thêm file riêng), [src/shared/](src/shared/CLAUDE.md), [db/](db/CLAUDE.md), [test/](test/CLAUDE.md), [deploy/](deploy/CLAUDE.md) |
+| Sự kiện giữa module: outbox, Kafka, consumer, DLQ | [src/modules/platform/service/outbox/README.md](src/modules/platform/service/outbox/README.md) |
+| Staging: chạy, secret, log, deploy lại | [deploy/staging/README.md](deploy/staging/README.md) |
+| Kubernetes, Prometheus, Grafana | [deploy/k8s/README.md](deploy/k8s/README.md) |
 
 ## Nhánh
 
