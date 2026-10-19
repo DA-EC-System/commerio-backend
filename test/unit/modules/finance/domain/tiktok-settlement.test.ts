@@ -205,6 +205,7 @@ describe('lỗi ánh xạ', () => {
     ['thiếu settlement_amount', { settlement_amount: undefined }, 'settlement_amount'],
     ['thiếu id', { id: '' }, 'id'],
     ['thiếu order_id ở dòng đơn', { order_id: undefined }, 'order_id'],
+    ['tiền vượt numeric(18,2)', { revenue_amount: '10000000000000000' }, 'revenue_amount'],
   ])('%s → SettlementMappingError có tên trường', (_name, over, field) => {
     expect(() => mapTikTokTransaction(order(over as Partial<TikTokTransaction>))).toThrow(SettlementMappingError);
     try {
@@ -235,6 +236,8 @@ describe('bảng kê', () => {
 
   it.each([
     ['thiếu id', { id: '' }, 'id'],
+    ['tiền tệ khác VND', { currency: 'USD' }, 'currency'],
+    ['thời điểm quá lớn', { statement_time: 1e15 }, 'statement_time'],
     ['thời điểm không phải số nguyên', { statement_time: '1760832000' }, 'statement_time'],
     ['thiếu trạng thái', { payment_status: undefined }, 'payment_status'],
     ['tiền có phần lẻ', { settlement_amount: '1.5' }, 'settlement_amount'],

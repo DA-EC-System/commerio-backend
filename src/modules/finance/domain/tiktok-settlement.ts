@@ -99,6 +99,9 @@ export class SettlementMappingError extends Error {
 }
 
 const MONEY = /^-?\d+(\.\d+)?$/;
+const MONEY_LIMIT = new Decimal('1e16');
+/** Giây Unix tới hết năm 9999. */
+const MAX_UNIX_SECONDS = 253_402_300_799;
 
 /** Tiền sàn trả dạng chuỗi; thiếu hoặc rỗng là 0 trừ khi bắt buộc. VND không có phần lẻ (Documents/21 T1). */
 function money(value: unknown, field: string, required = false): Decimal {
@@ -111,6 +114,8 @@ function money(value: unknown, field: string, required = false): Decimal {
   }
   const amount = new Decimal(value);
   if (!amount.isInteger()) throw new SettlementMappingError(field, `${field} có phần lẻ đồng`);
+  // Cột tiền là numeric(18,2): trị tuyệt đối dưới 10^16.
+  if (amount.abs().greaterThanOrEqualTo(MONEY_LIMIT)) throw new SettlementMappingError(field, `${field} quá lớn`);
   return amount;
 }
 
@@ -200,7 +205,12 @@ export interface SettlementStatementInput {
 /** Bảng kê → đầu vào đối soát. `statement_time` là giây Unix. */
 export function mapTikTokStatement(st: TikTokStatement): SettlementStatementInput {
   const externalStatementId = text(st.id, 'id');
-  if (!Number.isInteger(st.statement_time)) {
+  // Tiền của hệ thống là đồng (Documents/21 T1); sàn không ghi tiền tệ thì coi là VND.
+  if (st.currency !== undefined && st.currency !== 'VND') {
+    throw new SettlementMappingError('currency', 'Chỉ nhận bảng kê bằng VND');
+  }
+  const t = st.statement_time;
+  if (!Number.isInteger(t) || (t as number) < 0 || (t as number) > MAX_UNIX_SECONDS) {
     throw new SettlementMappingError('statement_time', 'statement_time phải là giây Unix');
   }
   return {

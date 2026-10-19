@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
+import { mapTikTokStatement, mapTikTokTransaction } from '#src/modules/finance/domain/tiktok-settlement.ts';
+import { ingestSettlementStatement } from '#src/modules/finance/service/settlement-ingest.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { ingest, linesOf, marketplaceOrder, orderTx, statement, statementsOf } from './settlement-helpers.ts';
@@ -165,15 +169,14 @@ describe('nhận lại, khớp lại (AC-7, AC-7b)', () => {
 });
 
 describe('giao dịch và RLS', () => {
-  it('lỗi ở một dòng (tiền vượt numeric(18,2)) → không còn bảng kê, dòng nào', async () => {
+  it('lỗi DB ở dòng sau (vượt numeric(18,2), ánh xạ đã chặn nên dựng thẳng) → không còn bảng kê, dòng nào', async () => {
     const { companyId, shopId } = await setup();
     const o = await marketplaceOrder(companyId, shopId, 100000);
-    const huge = '99999999999999999999';
-    const txs = [
-      orderTx(o.externalOrderId, 100000),
-      orderTx('SO-x', 0, { revenue_amount: huge, settlement_amount: huge }),
-    ];
-    await expect(ingest(companyId, shopId, statement(), txs)).rejects.toThrow();
+    const ok = mapTikTokTransaction(orderTx(o.externalOrderId, 100000));
+    const bad = { ...mapTikTokTransaction(orderTx('SO-x', 0)), settlement: new Decimal('1e20') };
+    await expect(
+      withCompany(companyId, () => ingestSettlementStatement(shopId, mapTikTokStatement(statement()), [ok, bad])),
+    ).rejects.toThrow();
     expect(await statementsOf(companyId)).toHaveLength(0);
     expect(await linesOf(companyId)).toHaveLength(0);
   });

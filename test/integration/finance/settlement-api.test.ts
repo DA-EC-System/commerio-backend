@@ -234,6 +234,37 @@ describe('POST /finance/settlements/dev/import (AC-12)', () => {
   });
 });
 
+describe('POST /finance/settlements/dev/import: giới hạn (review diff)', () => {
+  it('tiền tệ khác VND, tiền vượt numeric(18,2), thời điểm vô lý → 422, không 500', async () => {
+    const c = await company();
+    const send = (b: object) => request(app).post(`${API}/settlements/dev/import`).set('Authorization', c.auth).send(b);
+    const huge = '10000000000000000';
+    const res = await send({
+      shopId: c.shopId,
+      statement: statement({ currency: 'USD' }),
+      transactions: [orderTx('SO-1', 1000, { revenue_amount: huge })],
+    });
+    expect(res.status).toBe(422);
+    expect(Object.keys(res.body.errors).sort()).toEqual(['statement.currency', 'transactions.0.revenue_amount']);
+    const late = await send({ shopId: c.shopId, statement: statement({ statement_time: 1e15 }), transactions: [] });
+    expect([late.status, Object.keys(late.body.errors ?? {})]).toEqual([422, ['statement.statement_time']]);
+    const { rowCount } = await testPool().query('select 1 from finance.settlement_statements where company_id = $1', [
+      c.companyId,
+    ]);
+    expect(rowCount).toBe(0);
+  });
+
+  it('tiền lớn nhất vừa numeric(18,2) vẫn nhận; currency VND nhận', async () => {
+    const c = await company();
+    const max = '9999999999999999';
+    const res = await request(app)
+      .post(`${API}/settlements/dev/import`)
+      .set('Authorization', c.auth)
+      .send({ shopId: c.shopId, statement: statement({ currency: 'VND', settlement_amount: max }), transactions: [] });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe('quyền, phân hệ, công ty (AC-11, AC-13)', () => {
   const routes = (statementId: string, shopId: string) =>
     [
