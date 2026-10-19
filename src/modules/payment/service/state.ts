@@ -6,7 +6,8 @@ import { initialPaymentStatus } from '../domain/order-payment.ts';
 import { findOrderPayment, insertOrderPaymentIfMissing, updateOrderPayment } from '../repository/order-payments.ts';
 import { markLinkPaid } from '../repository/payment-links.ts';
 import { getOrdersForFinance } from '../../sales/index.ts';
-import { type OrderPaymentState, orderWithPayment, requireCompany, stateOf } from './boundary.ts';
+import { requireCompanyId } from '../../../shared/db/client.ts';
+import { type OrderPaymentState, orderWithPayment, stateOf } from './boundary.ts';
 
 /** `unpaid` → `paid`, `paid_at` = bây giờ; mã của giao dịch `active`/`expired` → `paid` (§12.2, T15). */
 export async function markPaid(
@@ -15,7 +16,7 @@ export async function markPaid(
 ): Promise<OrderPaymentState> {
   const order = await orderWithPayment(orderId);
   // Đơn chưa xác nhận mà khách đã trả qua mã: tạo dòng như lúc tạo mã (A8).
-  await insertOrderPaymentIfMissing(requireCompany('markPaid'), orderId, initialPaymentStatus(order.method));
+  await insertOrderPaymentIfMissing(requireCompanyId('markPaid'), orderId, initialPaymentStatus(order.method));
   const row = await findOrderPayment(orderId, 'update');
   if (row?.status !== 'unpaid') {
     throw new AppError(409, 'payment_state_changed', 'Đơn không còn ở trạng thái chưa thu', { current: stateOf(order, row) });
@@ -31,7 +32,7 @@ export async function markPaid(
  * theo thứ tự `order_id` để hai lô chồng nhau không deadlock; bên gọi đã khoá dòng đơn trước (A4). Đơn không thấy → 404.
  */
 export async function markCodCollected(orderIds: readonly string[]): Promise<OrderPaymentState[]> {
-  requireCompany('markCodCollected');
+  requireCompanyId('markCodCollected');
   const ids = [...new Set(orderIds)].toSorted();
   const orders = await getOrdersForFinance(ids);
   if (orders.size !== ids.length) throw new AppError(404, 'not_found', 'Không tìm thấy đơn hàng');

@@ -2,7 +2,14 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { type AccessLoader, type CompanyAccess, createAuthorize, moduleOfPermission } from '#src/shared/auth/authorize.ts';
+import {
+  type AccessLoader,
+  anyOf,
+  type CompanyAccess,
+  createAuthorize,
+  getAccess,
+  moduleOfPermission,
+} from '#src/shared/auth/authorize.ts';
 import { signAccessToken } from '#src/shared/auth/jwt.ts';
 import { errorHandler } from '#src/shared/errors/error-handler.ts';
 import { validate } from '#src/shared/http/validate.ts';
@@ -114,6 +121,40 @@ describe('createAuthorize', () => {
     expect(loader).toHaveBeenCalledWith(ACCOUNT, COMPANY);
     expect(handler).toHaveBeenCalledOnce();
     expect(res.body.auth).toMatchObject({ accountId: ACCOUNT, companyId: COMPANY });
+  });
+
+  it('để quyền đã đọc trong getAccess(res): handler không phải đọc DB lần hai', async () => {
+    const loader = vi.fn<AccessLoader>(async () => active);
+    const app = express();
+    app.get('/access', createAuthorize(loader)('catalog.product.manage'), (_req, res) => {
+      res.json(getAccess(res));
+    });
+    const res = await request(app).get('/access').set('Authorization', `Bearer ${await token()}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(active);
+    expect(loader).toHaveBeenCalledOnce();
+  });
+
+  it('anyOf: qua khi có một trong các quyền; thiếu cả hai thì 403 forbidden; lỗi khác không thử tiếp', async () => {
+    const app = express();
+    const authorize = createAuthorize(async () => active);
+    const either = anyOf(authorize('sales.order.view'), authorize('catalog.product.manage'));
+    const neither = anyOf(authorize('sales.order.view'), authorize('sales.order.create'));
+    app.get('/either', either, (_req, res) => void res.json({ ok: true }));
+    app.get('/neither', neither, (_req, res) => void res.json({ ok: true }));
+    app.use(errorHandler);
+    const bearer = `Bearer ${await token()}`;
+
+    expect((await request(app).get('/either').set('Authorization', bearer)).status).toBe(200);
+    const denied = await request(app).get('/neither').set('Authorization', bearer);
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('forbidden');
+    const anonymous = await request(app).get('/either');
+    expect(anonymous.status).toBe(401);
+  });
+
+  it('getAccess ngoài route có authorize là lỗi lập trình', () => {
+    expect(() => getAccess({ locals: {} } as express.Response)).toThrow(/authorize/);
   });
 
   it('có quyền mà body sai vẫn ra 422 như thường', async () => {

@@ -1,7 +1,6 @@
 import { type Response, Router } from 'express';
-import type { z } from 'zod';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
-import { validate } from '../../../shared/http/validate.ts';
+import { validate, validated as input } from '../../../shared/http/validate.ts';
 import { confirmCod, listCodOrders } from '../service/cod.ts';
 import { getInvoice, getReceipt, listInvoices, listReceipts } from '../service/documents.ts';
 import {
@@ -35,8 +34,6 @@ import {
 } from './schemas.ts';
 import { mountSettlementRoutes } from './settlement-routes.ts';
 
-type Part = 'body' | 'query' | 'params';
-const input = <S extends z.ZodType>(res: Response, part: Part) => (res.locals.validated as Record<Part, unknown>)[part] as z.output<S>;
 const caller = (res: Response) => {
   const { companyId, accountId } = getAuth(res);
   return { companyId: companyId!, accountId };

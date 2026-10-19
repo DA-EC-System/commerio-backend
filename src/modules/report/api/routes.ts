@@ -1,10 +1,10 @@
 import { type Response, Router } from 'express';
 import type { z } from 'zod';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
+import { getAccess } from '../../../shared/auth/authorize.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
-import { validate } from '../../../shared/http/validate.ts';
+import { validate, validated } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
-import { loadCompanyAccess } from '../../identity/index.ts';
 import { figuresCsv, sourceLabel } from '../domain/csv.ts';
 import { vnDay } from '../domain/days.ts';
 import { resolveRange } from '../domain/figures.ts';
@@ -12,7 +12,8 @@ import * as reports from '../service/queries.ts';
 import { DailyQuery, ExportQuery, RangeQuery } from './schemas.ts';
 
 type Query = z.output<typeof ExportQuery>;
-const queryOf = (res: Response) => (res.locals.validated as { query: Partial<Query> }).query;
+// Mỗi route một schema query; đọc chung qua dạng rộng nhất (ExportQuery), trường không có thì trống.
+const queryOf = (res: Response): Partial<Query> => validated<typeof ExportQuery>(res, 'query');
 const invalid = (errors: Record<string, string>) =>
   new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', { errors });
 
@@ -29,11 +30,9 @@ function filterOf(res: Response) {
   return shopId ? { shopId, source: 'marketplace' as const } : source ? { source } : {};
 }
 
-/** Quyền giá vốn đọc từ DB mỗi request như `authorize` (D1): thu quyền thì lần gọi sau thấy `null` ngay. */
-async function viewerOf(res: Response): Promise<reports.Viewer> {
-  const { accountId, companyId } = getAuth(res);
-  const access = await loadCompanyAccess(accountId, companyId!);
-  return { companyId: companyId!, canCost: access?.permissions.includes('inventory.cost.view') ?? false };
+/** Quyền giá vốn từ lần đọc DB của `authorize` trong request này (D1): thu quyền thì lần gọi sau thấy `null` ngay. */
+function viewerOf(res: Response): reports.Viewer {
+  return { companyId: getAuth(res).companyId!, canCost: getAccess(res).permissions.includes('inventory.cost.view') };
 }
 
 /** Route của module `report`, gắn tại /api/v1/report (Documents/21 §12.7). */
@@ -44,23 +43,23 @@ export function reportRouter(ctx: ModuleContext): Router {
 
   router.get('/overview', ...view, validate({ query: RangeQuery }), async (_req, res) => {
     const range = rangeOf(res);
-    res.json(await reports.overview(await viewerOf(res), range));
+    res.json(await reports.overview(viewerOf(res), range));
   });
 
   router.get('/shops', ...view, validate({ query: RangeQuery }), async (_req, res) => {
     const range = rangeOf(res);
-    res.json(await reports.byShop(await viewerOf(res), range));
+    res.json(await reports.byShop(viewerOf(res), range));
   });
 
   router.get('/daily', ...view, validate({ query: DailyQuery }), async (_req, res) => {
     const range = rangeOf(res);
     const filter = filterOf(res);
-    res.json(await reports.daily(await viewerOf(res), range, filter));
+    res.json(await reports.daily(viewerOf(res), range, filter));
   });
 
   router.get('/export', ...view, ctx.authorize('report.dashboard.export'), validate({ query: ExportQuery }), async (_req, res) => {
     const range = rangeOf(res);
-    const viewer = await viewerOf(res);
+    const viewer = viewerOf(res);
     const report = queryOf(res).report!;
     let csv: Buffer;
     if (report === 'overview') {

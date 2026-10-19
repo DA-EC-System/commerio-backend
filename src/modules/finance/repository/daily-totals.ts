@@ -1,12 +1,7 @@
 // Tổng theo ngày (giờ VN) và đơn cho báo cáo (#29). Chạy trong `withCompany` của bên gọi: RLS chỉ cho thấy công ty đó.
-import { type SQL, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { getDb } from '../../../shared/db/client.ts';
-
-/** `col` nằm trong [from 00:00, to + 1 ngày 00:00) giờ VN; viết theo cột trần để dùng được index. */
-const inVnDays = (col: SQL, from: string, to: string) =>
-  sql`${col} >= (${from}::date::timestamp at time zone 'Asia/Ho_Chi_Minh')
-    and ${col} < ((${to}::date + 1)::timestamp at time zone 'Asia/Ho_Chi_Minh')`;
-const vnDay = (col: SQL) => sql`to_char(${col} at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD')`;
+import { inVnDays, vnDayOf as vnDay } from '../../../shared/db/vn-time.ts';
 
 export type FinanceDayRow = {
   day: string;

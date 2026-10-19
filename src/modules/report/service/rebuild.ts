@@ -3,13 +3,14 @@
 // `to` mặc định hôm nay (giờ VN). Không có `--all`: platform chưa có hàm liệt kê công ty (plan #29 A5).
 import { z } from 'zod';
 import { closeDb } from '../../../shared/db/client.ts';
+import { isUuid } from '../../../shared/uuid.ts';
 import { vnDay } from '../domain/days.ts';
 import { recompute } from './recompute.ts';
 
 if (import.meta.main) {
   const [companyId, from, to = vnDay(new Date())] = process.argv.slice(2);
   const day = z.iso.date();
-  if (!z.uuid().safeParse(companyId).success || !day.safeParse(from).success || !day.safeParse(to).success || from! > to) {
+  if (!isUuid(companyId ?? '') || !day.safeParse(from).success || !day.safeParse(to).success || from! > to) {
     console.error('Cách dùng: node --env-file=.env src/modules/report/service/rebuild.ts <companyId> <from> [to]');
     process.exit(2);
   }

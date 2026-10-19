@@ -40,7 +40,7 @@ Hàm biên không ghi nhật ký thao tác (bên gọi ghi thao tác của họ)
 
 ## Quyền ở API (`api/routes.ts`)
 
-`inventory.stock.view` xem tồn và phiếu; `inventory.receipt.create` lập, sửa, ghi sổ, huỷ phiếu; `inventory.reorder.manage` đặt ngưỡng. Hai quyền đổi dữ liệu trả về đọc từ DB mỗi request bằng `identity.loadCompanyAccess` (D1): `inventory.cost.view` thấy giá vốn, giá trị tồn, giá trên thẻ kho và mọi dòng phiếu; chỉ có `inventory.receipt.create` thì thấy giá nhập trên phiếu nhập tay.
+`inventory.stock.view` xem tồn và phiếu; `inventory.receipt.create` lập, sửa, ghi sổ, huỷ phiếu; `inventory.reorder.manage` đặt ngưỡng. Hai quyền đổi dữ liệu trả về đọc từ DB mỗi request (`getAccess(res)`, lần đọc của `authorize`, D1): `inventory.cost.view` thấy giá vốn, giá trị tồn, giá trên thẻ kho và mọi dòng phiếu; chỉ có `inventory.receipt.create` thì thấy giá nhập trên phiếu nhập tay.
 
 ## Giới hạn đã biết
 

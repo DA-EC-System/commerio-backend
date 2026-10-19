@@ -1,10 +1,9 @@
 import type { RequestHandler, Response, Router } from 'express';
-import type { z } from 'zod';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
+import { getAccess } from '../../../shared/auth/authorize.ts';
 import { env } from '../../../shared/config/env.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
-import { validate } from '../../../shared/http/validate.ts';
-import { loadCompanyAccess } from '../../identity/index.ts';
+import { validate, validated as input } from '../../../shared/http/validate.ts';
 import {
   type FinanceContext,
   getSettlement,
@@ -15,19 +14,14 @@ import {
 import { IdParams } from './schemas.ts';
 import { SettlementImportBody, SettlementLineListQuery, SettlementListQuery } from './settlement-schemas.ts';
 
-type Part = 'body' | 'query' | 'params';
-const input = <S extends z.ZodType>(res: Response, part: Part) =>
-  (res.locals.validated as Record<Part, unknown>)[part] as z.output<S>;
 const companyOf = (res: Response) => getAuth(res).companyId!;
 
 /**
  * Đối soát cần phân hệ Kênh bán (§12.6, M4). `authorize` chỉ kiểm phân hệ của mã quyền (`finance`), nên kiểm thêm ở
  * đây, sau `authorize` (401, 403 quyền trước), trước `validate()` (403 trước 422) (plan #30 A8).
  */
-const channelEnabled: RequestHandler = async (_req, res, next) => {
-  const { accountId, companyId } = getAuth(res);
-  const access = await loadCompanyAccess(accountId, companyId!);
-  if (!access?.enabledModules.includes('channel'))
+const channelEnabled: RequestHandler = (_req, res, next) => {
+  if (!getAccess(res).enabledModules.includes('channel'))
     throw new AppError(403, 'module_disabled', 'Phân hệ Kênh bán đang tắt');
   next();
 };

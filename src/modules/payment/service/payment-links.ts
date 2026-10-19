@@ -20,7 +20,7 @@ import {
   type PaymentLinkRow,
 } from '../repository/payment-links.ts';
 import { GatewayFactory } from './gateways/index.ts';
-import { pgError } from './pg-error.ts';
+import { pgError } from '../../../shared/db/pg-error.ts';
 import { loadGatewayCredentials } from './gateway-configs.ts';
 import { type UserRef, userRef } from './user-ref.ts';
 
@@ -100,6 +100,10 @@ async function toView(link: PaymentLinkRow, vietqrCredentials?: Credentials): Pr
 /** Gốc URL công khai của API; máy dev chưa đặt `PUBLIC_API_URL` thì `localhost` (sandbox nhận, A6). */
 const publicApiBase = () => (env.PUBLIC_API_URL ?? `http://localhost:${env.API_PORT}`).replace(/\/+$/, '');
 
+/** Trang kết quả của FE mà cổng đưa khách quay về; chưa đặt `PUBLIC_WEB_URL` thì dùng gốc của API như trước. */
+export const paymentReturnUrl = (publicWebUrl: string | undefined, apiBase: string): string =>
+  `${(publicWebUrl ?? new URL(apiBase).origin).replace(/\/+$/, '')}/thanh-toan/ket-qua`;
+
 export interface Caller {
   companyId: string;
   accountId: string;
@@ -153,7 +157,7 @@ async function createPaymentLinkOnce(
         expiresAt,
         clientIp: caller.ip,
         ipnBaseUrl: `${publicApiBase()}/api/v1/payment/webhooks`,
-        returnUrl: `${new URL(publicApiBase()).origin}/thanh-toan/ket-qua`,
+        returnUrl: paymentReturnUrl(env.PUBLIC_WEB_URL, publicApiBase()),
       },
       credentials,
       AbortSignal.timeout(GATEWAY_TIMEOUT_MS),

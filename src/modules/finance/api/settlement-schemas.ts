@@ -55,7 +55,7 @@ export const SettlementStatement = z
   })
   .meta({ id: 'SettlementStatement' });
 
-export const SettlementFees = z
+const SettlementFees = z
   .object({
     commission: money,
     transactionFee: money,
@@ -67,7 +67,7 @@ export const SettlementFees = z
   })
   .meta({ id: 'SettlementFees', description: 'Chi phí dương = sàn thu; âm = sàn hoàn phí (plan #30 A3)' });
 
-export const SettlementLine = z
+const SettlementLine = z
   .object({
     id: z.uuid(),
     statementId: z.uuid(),

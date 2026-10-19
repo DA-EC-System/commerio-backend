@@ -3,8 +3,8 @@ import { and, desc, eq, getTableColumns, gt, gte, isNull, lt, ne, sql } from 'dr
 import { getDb } from '../../../shared/db/client.ts';
 import { receipts, settlementLines, settlementStatements } from './schema.ts';
 
-export type StatementRow = typeof settlementStatements.$inferSelect;
-export type LineInsert = typeof settlementLines.$inferInsert;
+type StatementRow = typeof settlementStatements.$inferSelect;
+type LineInsert = typeof settlementLines.$inferInsert;
 
 /**
  * Khoá các lần nhận bảng kê của một công ty tới hết giao dịch (plan #30 A9): hai lần nhận song song chạy nối tiếp, cả

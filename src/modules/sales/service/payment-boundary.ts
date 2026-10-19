@@ -1,7 +1,7 @@
 // Đọc đơn cho payment, finance (plan chuẩn bị 4.5, A8; Documents/21 §11; #23 viết thân). Sales không gọi payment (R1).
 // Gọi trong `withCompany` của bên gọi.
 import { Decimal } from 'decimal.js';
-import { z } from 'zod';
+import { isUuid } from '../../../shared/uuid.ts';
 import { findOrderForPayment } from '../repository/orders-for-payment.ts';
 import type { fulfillmentStatus, orderSource, paymentMethod } from '../repository/schema.ts';
 
@@ -26,7 +26,7 @@ export interface OrderForPayment {
  * cho đơn đang bị huỷ song song (plan #23 A7).
  */
 export async function getOrderForPayment(orderId: string, opts?: { lock?: 'share' }): Promise<OrderForPayment | null> {
-  if (!z.uuid().safeParse(orderId).success) return null;
+  if (!isUuid(orderId)) return null;
   const row = await findOrderForPayment(orderId, opts?.lock);
   if (!row) return null;
   return {

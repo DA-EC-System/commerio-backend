@@ -1,7 +1,6 @@
 import { type Response, Router } from 'express';
-import type { z } from 'zod';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
-import { validate } from '../../../shared/http/validate.ts';
+import { validate, validated } from '../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
 import * as products from '../service/products.ts';
@@ -21,9 +20,6 @@ import {
   VariantParams,
   VersionQuery,
 } from './schemas.ts';
-
-const validated = <T extends z.ZodType>(res: Response, part: 'body' | 'query' | 'params') =>
-  (res.locals.validated as Record<string, z.output<T>>)[part]!;
 
 function caller(res: Response): Caller {
   const { accountId, companyId } = getAuth(res);

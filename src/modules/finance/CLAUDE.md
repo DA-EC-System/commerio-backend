@@ -31,7 +31,7 @@ Hoá đơn bán, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soá
 
 ## Gọi module khác
 
-finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`, `findMarketplaceOrders`), identity (`loadCompanyAccess` cho phân hệ Kênh bán), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.
+finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`, `findMarketplaceOrders`), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.
 
 ## API (gắn tại `/api/v1/finance`)
 
