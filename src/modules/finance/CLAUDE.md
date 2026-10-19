@@ -14,7 +14,7 @@ Hoá đơn bán, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soá
 
 ## Luồng tiền (finance điều phối, payment giữ trạng thái; plan chuẩn bị A11)
 
-- **Webhook, tra cứu, mô phỏng:** payment kiểm chữ ký rồi gọi `handleVerifiedPayment` (tiêm qua `ctx.onVerifiedPayment` ở `src/wiring.ts`). Quyết định ở `domain/payment-outcome.ts` (thuần): thất bại → giao dịch `failed`; không đơn / đơn huỷ / lệch tiền / đơn không `unpaid` → khoản thu chưa khớp; còn lại → `payment.markPaid` + phiếu thu + sự kiện `payment.succeeded`, `finance.receipt_posted`.
+- **Webhook, tra cứu, mô phỏng:** payment kiểm chữ ký rồi gọi `handleVerifiedPayment` (tiêm qua `ctx.onVerifiedPayment` ở `src/wiring.ts`). Quyết định ở `domain/payment-outcome.ts` (thuần): thất bại → giao dịch `failed`; không đơn / đơn huỷ / lệch tiền / đơn không `unpaid` → khoản thu chưa khớp; còn lại → `payment.markPaid` + phiếu thu + sự kiện `payment.succeeded`, `finance.receipt_posted`. Hai khoản khác nhau cùng trả một đơn song song: bên thua bị `markPaid` ném 409 → lùi savepoint, xử lý lại thành khoản thu chưa khớp `amount_mismatch`, cổng nhận "đã nhận" (#63 B21; giống khi tới tuần tự).
 - **COD (T18):** `POST /cod-confirmations` tất cả hoặc không gì; mỗi đơn một phiếu thu `cod` = tổng đơn. `recordCodCollected` là cùng đường cho một đơn (#25 không gọi).
 - **Hoàn tiền (T20):** `POST /refunds` (một bước) hoặc phiếu chi nháp → `/post`; ghi sổ gọi `payment.markRefunded`. Bên ghi sổ sau → 409 `already_processed` nêu số phiếu đã có.
 

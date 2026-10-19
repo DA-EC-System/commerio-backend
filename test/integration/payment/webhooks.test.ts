@@ -242,6 +242,58 @@ describe('POST /payment/webhooks/sepay/:receiverKey', () => {
     nothingWritten(await moneyRows(other.companyId));
   });
 
+  it('hai lần chuyển khác nhau cùng mã tới song song: một phiếu thu, bên thua thành khoản thu chưa khớp, cả hai 200 success (#63 B21)', async () => {
+    const l = await linkedOrder('vietqr');
+    const key = await receiverKeyOf(l.companyId);
+    const holder = await testPool().connect();
+    try {
+      // Giữ khoá dòng order_payments để cả hai webhook cùng đọc `unpaid` rồi cùng chờ ở `markPaid`.
+      await holder.query('begin');
+      const locked = await holder.query('select status from payment.order_payments where order_id = $1 for update', [l.orderId]);
+      expect(locked.rows).toEqual([{ status: 'unpaid' }]);
+      const holderPid = (await holder.query('select pg_backend_pid() as pid')).rows[0].pid;
+      const pending = [1, 2].map((n) => sepay(key, sepayTx(`CK lan ${n} ${l.link.paymentCode}`)).then((r) => r));
+      let blocked = 0;
+      for (let i = 0; i < 100 && blocked < 2; i++) {
+        // Chỉ đếm phiên chờ sau `holder` (file integration khác chạy song song không làm sai số đếm). Khoá dòng xếp hàng:
+        // phiên thứ hai bị phiên thứ nhất chặn, không phải `holder`, nên đếm hai tầng.
+        const r = await testPool().query(
+          `with direct as (select pid from pg_stat_activity where pg_blocking_pids(pid) @> array[$1]::int[])
+           select (select count(*) from direct)::int + (select count(*) from pg_stat_activity
+             where pid not in (select pid from direct) and pg_blocking_pids(pid) && array(select pid from direct))::int as n`,
+          [holderPid],
+        );
+        blocked = r.rows[0].n;
+        if (blocked < 2) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(blocked).toBe(2);
+      await holder.query('commit');
+      const replies = await Promise.all(pending);
+      expect(replies.map((r) => [r.status, r.body])).toEqual([
+        [200, { success: true }],
+        [200, { success: true }],
+      ]);
+    } finally {
+      // Assert hỏng giữa chừng thì không trả kết nối còn giữ khoá về pool.
+      await holder.query('rollback').catch(() => undefined);
+      holder.release();
+    }
+    const r = await moneyRows(l.companyId);
+    expect(r.receipts).toHaveLength(1);
+    expect(r.txns.map((t) => t.status).toSorted()).toEqual(['needs_review', 'succeeded']);
+    const loser = r.txns.find((t) => t.status === 'needs_review')!;
+    expect(r.unmatched).toEqual([
+      expect.objectContaining({ reason: 'amount_mismatch', status: 'open', amount: '150000.00', transfer_content: expect.stringContaining(l.link.paymentCode) }),
+    ]);
+    expect((await testPool().query('select id from payment.payment_transactions where gateway_txn_id = $1', [loser.gateway_txn_id])).rows[0].id).toBe(
+      r.unmatched[0]!.payment_transaction_id,
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.outbox.map((e) => e.type)).toEqual(['payment.succeeded', 'finance.receipt_posted']);
+    expect(await orderPayment(l.orderId)).toMatchObject({ status: 'paid' });
+    expect(await linkStatus(l.link.id)).toBe('paid');
+  });
+
   it('tiền ra → 200 success, không ghi; sai API key → 401 success:false; receiverKey lạ → 404 (AC-11, AC-12, AC-15)', async () => {
     const l = await linkedOrder('vietqr');
     const key = await receiverKeyOf(l.companyId);
