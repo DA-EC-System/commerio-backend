@@ -48,13 +48,14 @@ describe('logger', () => {
     });
     app.get('/api/v1/payment/webhooks/vnpay', (_req, res) => void res.status(200).end());
 
-    await request(app).post('/api/v1/payment/webhooks/sepay/KHOA-BIMAT?x=1');
+    // Express khớp route không phân biệt hoa thường, nên che cả `/SEPAY/`.
+    await request(app).post('/api/v1/payment/webhooks/SEPAY/KHOA-BIMAT?x=1');
     await request(app).get('/api/v1/payment/webhooks/vnpay?vnp_Amount=1000&vnp_SecureHash=CHUKY-BIMAT');
 
     const records = lines.map((l) => JSON.parse(l) as { msg: string; req?: { url?: string; query?: unknown } });
     expect(records.map((r) => r.req?.url)).toEqual([
-      '/api/v1/payment/webhooks/sepay/[ẩn]',
-      '/api/v1/payment/webhooks/sepay/[ẩn]',
+      '/api/v1/payment/webhooks/SEPAY/[ẩn]',
+      '/api/v1/payment/webhooks/SEPAY/[ẩn]',
       '/api/v1/payment/webhooks/vnpay',
     ]);
     expect(records.every((r) => r.req !== undefined && !('query' in r.req))).toBe(true);
@@ -74,6 +75,10 @@ describe('logger', () => {
     await request(app).get('/loi');
     log.error({ err: queryError(['GOC-BIMAT']) }, 'goc');
     log.error(queryError(['TRUCTIEP-BIMAT\nX']), 'truc tiep');
+    // Lỗi bọc lỗi truy vấn: stack mang hai đoạn `params:` (của lỗi ngoài và lỗi trong `cause`).
+    const inner = queryError(['LONG-BIMAT']);
+    const outer = new Error(inner.message, { cause: inner });
+    log.error({ err: outer }, 'long');
     // Lỗi pg trần (không qua Drizzle) mang `detail` chép giá trị dòng vi phạm.
     log.error({ err: Object.assign(new Error('duplicate key'), { code: '23505', detail: 'Key (email)=(DETAIL-BIMAT)' }) }, 'tran');
 
