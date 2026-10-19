@@ -25,14 +25,27 @@ export function encryptCredentials(credentials: Credentials, aad: string, key: B
   return Buffer.concat([Buffer.from([VERSION]), iv, cipher.getAuthTag(), body]);
 }
 
-/** Ném lỗi khi bản mã bị sửa, sai khoá chủ hoặc không thuộc đúng (công ty, cổng). */
+const CREDENTIALS_UNREADABLE = 'payment_credentials_unreadable';
+
+/** Lỗi giải mã của `decryptCredentials` (#63 B6); thiếu khoá chủ không tính. */
+export const isCredentialsUnreadable = (err: unknown): boolean =>
+  err instanceof AppError && err.code === CREDENTIALS_UNREADABLE;
+
+/**
+ * Ném 500 `payment_credentials_unreadable` khi bản mã bị sửa, sai phiên bản, sai khoá chủ hoặc không thuộc đúng
+ * (công ty, cổng). Không giữ lỗi gốc của crypto.
+ */
 export function decryptCredentials(data: Buffer, aad: string, key: Buffer = masterKey()): Credentials {
-  if (data[0] !== VERSION) throw new Error('Bản mã khoá cổng không đúng phiên bản');
-  const iv = data.subarray(1, 1 + IV_LENGTH);
-  const tag = data.subarray(1 + IV_LENGTH, 1 + IV_LENGTH + TAG_LENGTH);
-  const decipher = createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAAD(Buffer.from(aad));
-  decipher.setAuthTag(tag);
-  const plain = Buffer.concat([decipher.update(data.subarray(1 + IV_LENGTH + TAG_LENGTH)), decipher.final()]);
-  return JSON.parse(plain.toString('utf8')) as Credentials;
+  try {
+    if (data[0] !== VERSION) throw new Error('sai phiên bản');
+    const iv = data.subarray(1, 1 + IV_LENGTH);
+    const tag = data.subarray(1 + IV_LENGTH, 1 + IV_LENGTH + TAG_LENGTH);
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAAD(Buffer.from(aad));
+    decipher.setAuthTag(tag);
+    const plain = Buffer.concat([decipher.update(data.subarray(1 + IV_LENGTH + TAG_LENGTH)), decipher.final()]);
+    return JSON.parse(plain.toString('utf8')) as Credentials;
+  } catch {
+    throw new AppError(500, CREDENTIALS_UNREADABLE, 'Khoá cổng đã lưu không giải mã được (khoá chủ đã đổi hoặc bản mã hỏng)');
+  }
 }

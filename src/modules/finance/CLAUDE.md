@@ -6,7 +6,7 @@ Hoá đơn bán, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soá
 
 | Bảng | Ghi chú |
 |---|---|
-| `sales_invoices`, `sales_invoice_lines` | Hoá đơn tự sinh khi xuất kho (`issueInvoiceForOrder`). Dòng = dòng hàng của đơn; `total` = tổng đơn, gồm phí vận chuyển (`shippingFee` = tổng − dòng). Mỗi đơn tối đa một hoá đơn `posted` chưa đảo (unique một phần) |
+| `sales_invoices`, `sales_invoice_lines` | Hoá đơn tự sinh khi xuất kho (`issueInvoiceForOrder`). Dòng = dòng hàng của đơn; `total` = tổng đơn, gồm phí vận chuyển (`shippingFee` = tổng − dòng). Mỗi đơn tối đa một hoá đơn `posted` chưa đảo (unique một phần). Đơn không có dòng → 409 `order_has_no_lines` (#63 B16) |
 | `receipts` | Phiếu thu, không có nháp. `source`: `gateway` (webhook, tra cứu), `cod`, `settlement` (#30), `unmatched_assignment`. Unique `payment_transaction_id` |
 | `payment_vouchers` | Phiếu chi nháp → ghi sổ. Đúng một chứng từ gốc theo `purpose`; số tiền = số phải chi (T19). `supplier_payment` chưa làm (422) |
 | `unmatched_receipts` | Tiền về không gán được: `no_payment_code`, `amount_mismatch`, `order_cancelled`. Luôn có `payment_transaction_id` |

@@ -21,6 +21,7 @@ import {
 } from '../repository/payment-links.ts';
 import { GatewayFactory } from './gateways/index.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
+import { isCredentialsUnreadable } from './credentials-cipher.ts';
 import { loadGatewayCredentials } from './gateway-configs.ts';
 import { type UserRef, userRef } from './user-ref.ts';
 
@@ -84,9 +85,18 @@ function bankTransferOf(link: PaymentLinkRow, credentials: Credentials | undefin
   };
 }
 
+/** Khoá chỉ để lấy tên chủ tài khoản: không đọc được (khoá hỏng, máy thiếu khoá chủ) thì bỏ trống, không chặn xem mã (#63 B6). */
+const vietqrCredentialsForView = () =>
+  loadGatewayCredentials('vietqr').catch((err: unknown) => {
+    if (isCredentialsUnreadable(err) || (err instanceof AppError && err.code === 'payment_credentials_key_missing')) {
+      return undefined;
+    }
+    throw err;
+  });
+
 /** Trong `withCompany`. `vietqrCredentials` truyền sẵn khi vừa giải mã, không thì đọc lại. */
 async function toView(link: PaymentLinkRow, vietqrCredentials?: Credentials): Promise<PaymentLinkView> {
-  const credentials = link.gateway === 'vietqr' ? (vietqrCredentials ?? (await loadGatewayCredentials('vietqr'))) : undefined;
+  const credentials = link.gateway === 'vietqr' ? (vietqrCredentials ?? (await vietqrCredentialsForView())) : undefined;
   return {
     ...baseView(link),
     orderId: link.orderId,
@@ -131,7 +141,15 @@ async function createPaymentLinkOnce(
     assertOrderAllowsLink(order, await findOrderPayment(orderId));
     const live = await findActiveLink(orderId);
     if (isLive(live)) return { existing: await toView(live) };
-    const credentials = await loadGatewayCredentials(gateway);
+    const credentials = await loadGatewayCredentials(gateway).catch((err: unknown) => {
+      if (isCredentialsUnreadable(err)) return null;
+      throw err;
+    });
+    if (credentials === null) {
+      throw new AppError(422, 'gateway_not_configured', 'Khoá cổng đã lưu không đọc được', {
+        errors: { gateway: 'Khoá cổng đã lưu không đọc được, Admin cần lưu lại khoá' },
+      });
+    }
     if (!credentials) {
       throw new AppError(422, 'gateway_not_configured', 'Cổng thanh toán này chưa được cấu hình', {
         errors: { gateway: 'Cổng chưa được cấu hình khoá' },
@@ -205,6 +223,9 @@ async function createPaymentLinkOnce(
         return live ? toView(live) : undefined;
       });
       if (winner) return { created: false, link: winner };
+      // Mã bên thắng vừa rời `active` (đơn huỷ, khách vừa trả): làm lại từ bước 1, luật đơn báo 409 đúng lý do (#63 B8).
+      if (!retried) return createPaymentLinkOnce(caller, orderId, gateway, true);
+      throw notAllowed('Mã thanh toán của đơn vừa thay đổi, tạo lại mã');
     }
     if (code === '23505' && constraint === 'payment_links_payment_code_unique' && !retried) {
       return createPaymentLinkOnce(caller, orderId, gateway, true);

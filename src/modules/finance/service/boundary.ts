@@ -14,7 +14,7 @@ const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy đơn 
 /**
  * Hoá đơn bán của đơn, trong cùng giao dịch ghi sổ phiếu xuất (QT-39, T17). Dòng hoá đơn là dòng hàng của đơn; `total` là
  * tổng đơn, gồm phí vận chuyển (plan #27 A20). Đơn đã có hoá đơn `posted` chưa đảo thì trả hoá đơn đó, `created: false`.
- * Đơn không thấy → 404.
+ * Đơn không thấy → 404; đơn không có dòng hàng → 409 `order_has_no_lines`.
  */
 export async function issueInvoiceForOrder(
   orderId: string,
@@ -35,6 +35,8 @@ export async function issueInvoiceForOrder(
   const order = (await getOrdersForFinance([orderId])).get(orderId);
   if (!order) throw notFound();
   const lines = await getOrderLines(orderId);
+  // T17: dòng hoá đơn = dòng đơn; đơn rỗng mà vẫn lập thì ghi doanh thu không có hàng (#63 B16).
+  if (lines.length === 0) throw new AppError(409, 'order_has_no_lines', 'Đơn không có dòng hàng, không lập được hoá đơn');
   const invoice = await insertInvoice(
     { companyId, number: await nextDocNumber('invoice'), orderId, total: order.total.toFixed(2) },
     lines.map((l) => ({

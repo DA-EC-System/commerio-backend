@@ -13,6 +13,9 @@ describe('mã hoá khoá cổng', () => {
     for (const value of Object.values(creds)) expect(enc.includes(Buffer.from(value))).toBe(false);
   });
 
+  // Lỗi giải mã có tên để bên đọc xử lý riêng, không ra 500 lạ (#63 B6).
+  const unreadable = expect.objectContaining({ status: 500, code: 'payment_credentials_unreadable' });
+
   it('hai lần mã hoá cùng nội dung ra hai bản mã khác nhau (iv ngẫu nhiên)', () => {
     expect(encryptCredentials(creds, 'c1:momo', key).equals(encryptCredentials(creds, 'c1:momo', key))).toBe(false);
   });
@@ -20,7 +23,7 @@ describe('mã hoá khoá cổng', () => {
   it('đổi một byte bản mã thì giải mã thất bại', () => {
     const enc = encryptCredentials(creds, 'c1:momo', key);
     enc[enc.length - 1]! ^= 0xff;
-    expect(() => decryptCredentials(enc, 'c1:momo', key)).toThrow();
+    expect(() => decryptCredentials(enc, 'c1:momo', key)).toThrow(unreadable);
   });
 
   it('bản mã chép sang công ty khác hoặc cổng khác thì không giải mã được', () => {
@@ -31,7 +34,7 @@ describe('mã hoá khoá cổng', () => {
 
   it('sai khoá chủ thì không giải mã được', () => {
     const enc = encryptCredentials(creds, 'c1:momo', key);
-    expect(() => decryptCredentials(enc, 'c1:momo', randomBytes(32))).toThrow();
+    expect(() => decryptCredentials(enc, 'c1:momo', randomBytes(32))).toThrow(unreadable);
   });
 
   it('chưa đặt PAYMENT_CREDENTIALS_KEY thì báo 500 payment_credentials_key_missing', () => {
