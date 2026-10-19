@@ -34,7 +34,7 @@ export function notificationRouter({ hub, loadAccess = loadCompanyAccess, heartb
     const claims = await readAccessClaims(req);
     if (!claims.companyId) throw new AppError(403, 'company_not_selected', 'Chưa chọn công ty làm việc');
     const access = await loadAccess(claims.accountId, claims.companyId);
-    assertCompanyAccess(access);
+    assertCompanyAccess(access, claims);
     // Client đã đóng trong lúc đọc DB: sự kiện `close` đã qua, gắn listener lúc này sẽ không bao giờ chạy.
     if (res.destroyed) return;
 

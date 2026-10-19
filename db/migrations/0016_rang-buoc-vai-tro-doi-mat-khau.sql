@@ -1,0 +1,2 @@
+ALTER TABLE "staff"."accounts" ADD COLUMN "password_changed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "access"."roles" ADD CONSTRAINT "roles_kind_company_check" CHECK (("access"."roles"."kind" = 'builtin') = ("access"."roles"."company_id" is null));

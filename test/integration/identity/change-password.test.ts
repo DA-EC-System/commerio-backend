@@ -2,7 +2,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { registerCompany } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
-import { login, PASSWORD, refreshCookie, testApp } from '../helpers/http.ts';
+import { login, PASSWORD, refreshCookie, selectCompany, testApp } from '../helpers/http.ts';
 
 // Hai lỗ bảo mật của đổi mật khẩu (#4) vá trong #8 PR2 (plan P8, P9).
 const changePassword = (token: string, body: object, cookie?: string) => {
@@ -79,5 +79,47 @@ describe('đổi mật khẩu thu hồi mọi phiên khác (AC-B2)', () => {
     expect(res.status).toBe(422);
     expect(await activeTokens(email)).toBe(2);
     expect((await refresh(second.cookie)).status).toBe(200);
+  });
+});
+
+describe('đổi mật khẩu cắt access token đã phát (#62 AC-3)', () => {
+  const api = () => request(testApp());
+  const claimsOf = (token: string) => JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
+
+  it('token cũ (có và chưa chọn công ty) bị 401 ở request kế tiếp; refresh bằng cookie mới giữ công ty và dùng được', async () => {
+    const { email, companyId } = await registerCompany();
+    const { token, cookie } = await login(email);
+    const selected = await api().post('/api/v1/identity/select-company').set('Authorization', `Bearer ${token}`).set('Cookie', cookie).send({ companyId });
+    expect(selected.status).toBe(200);
+    const companyToken = selected.body.accessToken as string;
+    expect((await api().get('/api/v1/identity/roles').set('Authorization', `Bearer ${companyToken}`)).status).toBe(200);
+
+    const res = await changePassword(token, { currentPassword: PASSWORD, newPassword: 'MatKhauMoi9' }, cookie);
+    expect(res.status).toBe(204);
+
+    const unauthorized = { status: 401, body: expect.objectContaining({ type: '/problems/unauthorized' }) };
+    expect(await api().get('/api/v1/identity/roles').set('Authorization', `Bearer ${companyToken}`)).toMatchObject(unauthorized);
+    expect(await api().get('/api/v1/identity/me').set('Authorization', `Bearer ${token}`)).toMatchObject(unauthorized);
+    expect(
+      await api().post('/api/v1/identity/select-company').set('Authorization', `Bearer ${token}`).send({ companyId }),
+    ).toMatchObject(unauthorized);
+    expect(await changePassword(token, { currentPassword: 'MatKhauMoi9', newPassword: 'MatKhauMoi10' })).toMatchObject(unauthorized);
+
+    const renewed = await refresh(refreshCookie(res));
+    expect(renewed.status).toBe(200);
+    const fresh = renewed.body.accessToken as string;
+    expect(claimsOf(fresh).cid).toBe(companyId);
+    expect((await api().get('/api/v1/identity/roles').set('Authorization', `Bearer ${fresh}`)).status).toBe(200);
+    expect((await api().get('/api/v1/identity/me').set('Authorization', `Bearer ${fresh}`)).status).toBe(200);
+  });
+
+  it('token đăng nhập sau khi đổi dùng được; tài khoản chưa từng đổi không bị ảnh hưởng', async () => {
+    const { email, companyId } = await registerCompany();
+    const { token } = await login(email);
+    expect((await api().get('/api/v1/identity/me').set('Authorization', `Bearer ${token}`)).status).toBe(200);
+    expect((await changePassword(token, { currentPassword: PASSWORD, newPassword: 'MatKhauMoi9' })).status).toBe(204);
+    const again = await login(email, 'MatKhauMoi9');
+    const companyToken = await selectCompany(again.token, companyId);
+    expect((await api().get('/api/v1/identity/roles').set('Authorization', `Bearer ${companyToken}`)).status).toBe(200);
   });
 });

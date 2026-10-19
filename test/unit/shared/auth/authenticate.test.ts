@@ -15,7 +15,7 @@ function buildApp(allowPasswordChange = false) {
   return app;
 }
 
-const claims = { accountId: '7d1b6c1e-0000-4000-8000-000000000001', companyId: null, permissions: [], mustChangePassword: false };
+const claims = { accountId: '7d1b6c1e-0000-4000-8000-000000000001', companyId: null, permissions: [], mustChangePassword: false, passwordChangedAt: null };
 
 afterEach(() => {
   vi.useRealTimers();

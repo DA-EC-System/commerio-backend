@@ -19,6 +19,8 @@ export interface AccessClaims {
   readonly mustChangePassword: boolean;
   /** Hết hạn lúc nào (giây epoch, `exp` của token): kênh SSE đóng đúng lúc này (Documents/21 D11). */
   readonly expiresAt: number;
+  /** `staff.accounts.password_changed_at` lúc ký (ms epoch); `null` khi chưa từng đổi hoặc token phát trước #62. */
+  readonly passwordChangedAt: number | null;
 }
 
 let keys: Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> | undefined;
@@ -45,6 +47,7 @@ export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): 
     cid: claims.companyId,
     perms: claims.permissions,
     pwc: claims.mustChangePassword,
+    pca: claims.passwordChangedAt,
   })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
@@ -65,6 +68,7 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
       permissions: Array.isArray(payload.perms) ? payload.perms.map(String) : [],
       mustChangePassword: payload.pwc === true,
       expiresAt: Number(payload.exp),
+      passwordChangedAt: typeof payload.pca === 'number' ? payload.pca : null,
     };
   } catch {
     throw new AppError(401, 'unauthorized', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');

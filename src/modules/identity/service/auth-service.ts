@@ -1,5 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { type AccessLoader, assertCompanyAccess, type CompanyAccess } from '../../../shared/auth/company-access.ts';
+import {
+  type AccessLoader,
+  assertCompanyAccess,
+  assertTokenCurrent,
+  type CompanyAccess,
+} from '../../../shared/auth/company-access.ts';
 import { type AccessClaims, signAccessToken } from '../../../shared/auth/jwt.ts';
 import { inTransaction } from '../../../shared/db/client.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
@@ -124,6 +129,7 @@ async function readCompanyAccess(
     membershipStatus: membership.status,
     permissions,
     enabledModules,
+    passwordChangedAt: membership.passwordChangedAt,
     companyName: company.name,
     roles,
   };
@@ -137,7 +143,8 @@ export const loadCompanyAccess: AccessLoader = readCompanyAccess;
  */
 async function companyContext(accountId: string, companyId: string): Promise<CompanyContext> {
   const access = await readCompanyAccess(accountId, companyId);
-  assertCompanyAccess(access);
+  // Không so dấu token ở đây: `refresh` không có access token; `selectCompany` đã so qua `callerAccount`.
+  assertCompanyAccess(access, null);
   const enabled = new Set<string>(access.enabledModules);
   return {
     companyId,
@@ -155,7 +162,16 @@ function claimsFor(account: AccountRow, context: CompanyContext | null): Omit<Ac
     companyId: context?.companyId ?? null,
     permissions: context?.permissions ?? [],
     mustChangePassword: account.mustChangePassword,
+    passwordChangedAt: account.passwordChangedAt?.getTime() ?? null,
   };
+}
+
+/** Tài khoản của người gọi chỉ dùng access token; token phát trước lần đổi mật khẩu gần nhất thì 401 (#62). */
+async function callerAccount(auth: AccessClaims): Promise<AccountRow> {
+  const account = await findAccountById(auth.accountId);
+  if (!account) throw invalidRefresh();
+  assertTokenCurrent(auth, account.passwordChangedAt);
+  return account;
 }
 
 export interface RegisterInput {
@@ -214,9 +230,8 @@ export async function login(input: { email: string; password: string }) {
   };
 }
 
-export async function me(accountId: string) {
-  const account = await findAccountById(accountId);
-  if (!account) throw invalidRefresh();
+export async function me(auth: AccessClaims) {
+  const account = await callerAccount(auth);
   return {
     account: toAccountView(account),
     memberships: account.isPlatformAdmin ? [] : await membershipViews(account.id),
@@ -225,8 +240,7 @@ export async function me(accountId: string) {
 
 /** Cấp access token gắn công ty; phiên refresh hiện tại (nếu có) nhớ công ty để tải lại trang vẫn giữ. */
 export async function selectCompany(auth: AccessClaims, companyId: string, refreshToken: string | undefined) {
-  const account = await findAccountById(auth.accountId);
-  if (!account) throw invalidRefresh();
+  const account = await callerAccount(auth);
   const context = await companyContext(account.id, companyId);
   if (refreshToken) {
     const row = await findActiveRefreshToken(hashToken(refreshToken));
@@ -264,12 +278,12 @@ export async function logout(refreshToken: string | undefined): Promise<void> {
  * của tài khoản bị thu hồi, kể cả phiên đang gọi; trả refresh token mới cho người vừa đổi (giữ công ty của phiên).
  */
 export async function changePassword(
-  accountId: string,
+  auth: AccessClaims,
   input: { currentPassword: string; newPassword: string },
   refreshToken: string | undefined,
 ): Promise<string> {
-  const account = await findAccountById(accountId);
-  if (!account) throw invalidRefresh();
+  // Kiểm token trước argon2: token đã chết thì 401, không tốn băm, không ra 422.
+  const account = await callerAccount(auth);
   const fieldError = (field: string, message: string) =>
     new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', { errors: { [field]: message } });
   if (!(await verifyPassword(account.passwordHash, input.currentPassword))) {

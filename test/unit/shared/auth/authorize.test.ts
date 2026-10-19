@@ -22,6 +22,7 @@ const active: CompanyAccess = {
   membershipStatus: 'active',
   permissions: ['catalog.product.manage', 'purchasing.order.manage'],
   enabledModules: ['catalog', 'sales'],
+  passwordChangedAt: null,
 };
 
 function buildApp(loader: AccessLoader) {
@@ -44,7 +45,7 @@ function buildApp(loader: AccessLoader) {
 }
 
 const token = (companyId: string | null = COMPANY, mustChangePassword = false) =>
-  signAccessToken({ accountId: ACCOUNT, companyId, permissions: [], mustChangePassword });
+  signAccessToken({ accountId: ACCOUNT, companyId, permissions: [], mustChangePassword, passwordChangedAt: null });
 
 async function call(loader: AccessLoader, path: string, bearer?: string, body: unknown = { name: 'Áo' }) {
   const { app, handler } = buildApp(loader);
@@ -79,6 +80,14 @@ describe('createAuthorize', () => {
     const { res } = await call(async () => null, '/products', await token());
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('not_found');
+  });
+
+  it('token phát trước lần đổi mật khẩu: 401 unauthorized, trước cả company_locked (#62)', async () => {
+    const changed = { ...active, companyStatus: 'locked' as const, passwordChangedAt: new Date() };
+    const { res, handler } = await call(async () => changed, '/products', await token());
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('unauthorized');
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('công ty bị khoá: 403 company_locked', async () => {
