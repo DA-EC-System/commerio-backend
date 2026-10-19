@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type TikTokTransaction,
+  mapTikTokStatement,
   mapTikTokTransaction,
   SettlementMappingError,
+  type TikTokStatement,
+  type TikTokTransaction,
 } from '#src/modules/finance/domain/tiktok-settlement.ts';
 
 // Ánh xạ giao dịch bảng kê OAS TikTok 202501 → dòng đối soát (plan #30 AC-1, A3): số có dấu của sàn cộng lại ra tiền
@@ -214,5 +216,35 @@ describe('lỗi ánh xạ', () => {
 
   it('chấp nhận phần lẻ bằng 0 ("1000.00")', () => {
     expect(mapTikTokTransaction(order({ revenue_amount: '200000.00' })).revenue.toFixed(2)).toBe('200000.00');
+  });
+});
+
+describe('bảng kê', () => {
+  it('đọc id, thời điểm (giây Unix), tiền về, trạng thái trả tiền', () => {
+    const st = mapTikTokStatement({
+      id: 'st-1',
+      statement_time: 1760832000,
+      settlement_amount: '162000',
+      payment_status: 'PAID',
+    });
+    expect(st.externalStatementId).toBe('st-1');
+    expect(st.statementTime.toISOString()).toBe('2025-10-19T00:00:00.000Z');
+    expect(st.settlementAmount.toFixed(2)).toBe('162000.00');
+    expect(st.paymentStatus).toBe('PAID');
+  });
+
+  it.each([
+    ['thiếu id', { id: '' }, 'id'],
+    ['thời điểm không phải số nguyên', { statement_time: '1760832000' }, 'statement_time'],
+    ['thiếu trạng thái', { payment_status: undefined }, 'payment_status'],
+    ['tiền có phần lẻ', { settlement_amount: '1.5' }, 'settlement_amount'],
+  ])('%s → SettlementMappingError', (_n, over, field) => {
+    const base = { id: 'st-1', statement_time: 1760832000, settlement_amount: '1', payment_status: 'PAID' };
+    try {
+      mapTikTokStatement({ ...base, ...over } as TikTokStatement);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as SettlementMappingError).field).toBe(field);
+    }
   });
 });

@@ -10,7 +10,10 @@ import { createOrder } from '../helpers/sales.ts';
 // Tìm đơn sàn theo (gian hàng, mã đơn sàn) cho đối soát (plan #30 lát 3, A6).
 async function marketplaceOrder(companyId: string, unitPrice = 120000) {
   const v = await createVariant(companyId);
-  const order = await createOrder(companyId, { source: 'marketplace', lines: [{ variantId: v.variantId, quantity: 1, unitPrice }] });
+  const order = await createOrder(companyId, {
+    source: 'marketplace',
+    lines: [{ variantId: v.variantId, quantity: 1, unitPrice }],
+  });
   const { rows } = await testPool().query<{ shop_id: string; external_order_id: string }>(
     'select shop_id, external_order_id from sales.orders where id = $1',
     [order.orderId],

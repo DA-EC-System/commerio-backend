@@ -179,3 +179,34 @@ export function mapTikTokTransaction(tx: TikTokTransaction): SettlementLineInput
     raw: tx,
   };
 }
+
+/** Phần của bảng kê OAS (`GET /finance/202309/statements`, phần tử `statements[]`) mà đối soát đọc. */
+export interface TikTokStatement {
+  id?: string;
+  statement_time?: number;
+  settlement_amount?: string;
+  payment_status?: string;
+  [field: string]: unknown;
+}
+
+export interface SettlementStatementInput {
+  externalStatementId: string;
+  statementTime: Date;
+  settlementAmount: Decimal;
+  /** Giữ nguyên chữ của sàn: `PAID`, `FAILED`, `PROCESSING`… */
+  paymentStatus: string;
+}
+
+/** Bảng kê → đầu vào đối soát. `statement_time` là giây Unix. */
+export function mapTikTokStatement(st: TikTokStatement): SettlementStatementInput {
+  const externalStatementId = text(st.id, 'id');
+  if (!Number.isInteger(st.statement_time)) {
+    throw new SettlementMappingError('statement_time', 'statement_time phải là giây Unix');
+  }
+  return {
+    externalStatementId,
+    statementTime: new Date((st.statement_time as number) * 1000),
+    settlementAmount: money(st.settlement_amount, 'settlement_amount', true),
+    paymentStatus: text(st.payment_status, 'payment_status'),
+  };
+}
