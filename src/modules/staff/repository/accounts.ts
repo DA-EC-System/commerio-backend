@@ -9,6 +9,7 @@ export interface AccountRow {
   passwordHash: string | null;
   mustChangePassword: boolean;
   isPlatformAdmin: boolean;
+  passwordChangedAt: Date | null;
 }
 
 export interface MembershipRow {
@@ -24,6 +25,7 @@ const accountColumns = {
   passwordHash: accounts.passwordHash,
   mustChangePassword: accounts.mustChangePassword,
   isPlatformAdmin: accounts.isPlatformAdmin,
+  passwordChangedAt: accounts.passwordChangedAt,
 };
 
 export async function findAccountByEmail(email: string): Promise<AccountRow | undefined> {
@@ -47,6 +49,7 @@ export async function updatePassword(id: string, passwordHash: string): Promise<
     .set({
       passwordHash,
       mustChangePassword: false,
+      passwordChangedAt: new Date(),
       updatedAt: new Date(),
       version: sql`${accounts.version} + 1`,
     })
@@ -66,10 +69,20 @@ export async function membershipsOfAccount(accountId: string): Promise<Membershi
     .orderBy(memberships.createdAt);
 }
 
-export async function findMembership(accountId: string, companyId: string): Promise<MembershipRow | undefined> {
+/** Membership kèm `passwordChangedAt` của tài khoản (join cùng schema), để `authorize` so dấu token không tốn thêm truy vấn. */
+export async function findMembership(
+  accountId: string,
+  companyId: string,
+): Promise<(MembershipRow & { passwordChangedAt: Date | null }) | undefined> {
   const [row] = await getDb()
-    .select({ id: memberships.id, companyId: memberships.companyId, status: memberships.status })
+    .select({
+      id: memberships.id,
+      companyId: memberships.companyId,
+      status: memberships.status,
+      passwordChangedAt: accounts.passwordChangedAt,
+    })
     .from(memberships)
+    .innerJoin(accounts, eq(accounts.id, memberships.accountId))
     .where(and(eq(memberships.accountId, accountId), eq(memberships.companyId, companyId)));
   return row;
 }

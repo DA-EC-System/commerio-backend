@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { readAccessClaims } from '../../../shared/auth/authenticate.ts';
 import { type AccessLoader, assertCompanyAccess } from '../../../shared/auth/authorize.ts';
+import { assertTokenCurrent } from '../../../shared/auth/jwt.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { loadCompanyAccess } from '../../identity/index.ts';
 import { effectivePermissions } from '../domain/rules.ts';
@@ -34,6 +35,7 @@ export function notificationRouter({ hub, loadAccess = loadCompanyAccess, heartb
     const claims = await readAccessClaims(req);
     if (!claims.companyId) throw new AppError(403, 'company_not_selected', 'Chưa chọn công ty làm việc');
     const access = await loadAccess(claims.accountId, claims.companyId);
+    if (access) assertTokenCurrent(claims, access.passwordChangedAt);
     assertCompanyAccess(access);
     // Client đã đóng trong lúc đọc DB: sự kiện `close` đã qua, gắn listener lúc này sẽ không bao giờ chạy.
     if (res.destroyed) return;

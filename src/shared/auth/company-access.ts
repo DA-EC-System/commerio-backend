@@ -8,6 +8,8 @@ export interface CompanyAccess {
   /** Mọi quyền của các vai trò, chưa lọc theo phân hệ bật, để phân biệt `module_disabled` với `forbidden`. */
   readonly permissions: readonly string[];
   readonly enabledModules: readonly string[];
+  /** Lần đổi mật khẩu gần nhất của tài khoản, so với dấu trong token bằng `assertTokenCurrent` (#62). */
+  readonly passwordChangedAt: Date | null;
 }
 
 /** `null` khi tài khoản không thuộc công ty. Module `identity` cung cấp, `src/wiring.ts` tiêm vào. */

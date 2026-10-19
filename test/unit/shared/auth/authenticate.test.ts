@@ -31,6 +31,7 @@ describe('authenticate', () => {
       companyId: 'c1',
       permissions: ['catalog.product.view'],
       expiresAt: expect.any(Number),
+      passwordChangedAt: null,
     });
   });
 

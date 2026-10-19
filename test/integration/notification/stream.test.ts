@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Server } from 'node:http';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import request from 'supertest';
 import { addMember, createCompany, createCustomRole } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
-import { login } from '../helpers/http.ts';
+import { login, PASSWORD, selectCompany, testApp } from '../helpers/http.ts';
 import { lockCompany, setModuleEnabled, suspendMembership } from '../helpers/state.ts';
 import { loadCompanyAccess } from '#src/modules/identity/index.ts';
 import { createHub } from '#src/modules/notification/index.ts';
@@ -268,5 +269,20 @@ describe('stream đang mở (AC-1, AC-3, AC-4, AC-5, AC-9, A9)', () => {
     expect(await stream.ended(2_000)).toBe(true);
     await expect(Promise.race([closing.then(() => 'đã đóng'), sleep(2_000).then(() => 'treo')])).resolves.toBe('đã đóng');
     expect(localHub.size()).toBe(0);
+  });
+});
+
+describe('mở stream bằng token phát trước lần đổi mật khẩu (#62 AC-3)', () => {
+  it('token cũ → 401 unauthorized; token sau khi đăng nhập lại mở được', async () => {
+    const { companyId, ceo } = await createCompany();
+    const { token } = await login(ceo.email);
+    const changed = await request(testApp())
+      .post('/api/v1/identity/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: PASSWORD, newPassword: 'MatKhauMoi9' });
+    expect(changed.status).toBe(204);
+    expect(await problem(await open(ceo.token))).toMatchObject({ status: 401, type: '/problems/unauthorized' });
+    const again = await login(ceo.email, 'MatKhauMoi9');
+    await connect(await selectCompany(again.token, companyId));
   });
 });

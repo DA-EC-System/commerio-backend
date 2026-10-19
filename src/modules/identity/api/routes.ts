@@ -77,7 +77,7 @@ export function identityRouter(ctx: ModuleContext): Router {
   });
 
   router.get('/me', authenticate({ allowPasswordChange: true }), async (_req, res) => {
-    res.json(await auth.me(getAuth(res).accountId));
+    res.json(await auth.me(getAuth(res)));
   });
 
   router.post('/select-company', authenticate(), validate({ body: SelectCompanyBody }), async (req, res) => {
@@ -96,8 +96,7 @@ export function identityRouter(ctx: ModuleContext): Router {
       keyGenerator: (_req, res) => getAuth(res).accountId,
     }),
     async (req, res) => {
-      const accountId = getAuth(res).accountId;
-      setRefreshCookie(res, await auth.changePassword(accountId, body<typeof ChangePasswordBody>(res), readRefreshCookie(req)));
+      setRefreshCookie(res, await auth.changePassword(getAuth(res), body<typeof ChangePasswordBody>(res), readRefreshCookie(req)));
       res.status(204).end();
     },
   );

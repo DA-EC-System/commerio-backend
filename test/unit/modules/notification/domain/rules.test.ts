@@ -12,6 +12,7 @@ const ALL_MODULES = ['sales', 'fulfillment', 'payment', 'finance', 'inventory', 
 const access = (permissions: string[], enabledModules = ALL_MODULES): CompanyAccess => ({
   companyStatus: 'active',
   membershipStatus: 'active',
+  passwordChangedAt: null,
   permissions,
   enabledModules,
 });

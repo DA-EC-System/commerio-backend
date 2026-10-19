@@ -19,6 +19,8 @@ export interface AccessClaims {
   readonly mustChangePassword: boolean;
   /** Hết hạn lúc nào (giây epoch, `exp` của token): kênh SSE đóng đúng lúc này (Documents/21 D11). */
   readonly expiresAt: number;
+  /** `staff.accounts.password_changed_at` lúc ký (ms epoch); `null` khi chưa từng đổi hoặc token phát trước #62. */
+  readonly passwordChangedAt: number | null;
 }
 
 let keys: Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> | undefined;
@@ -39,12 +41,15 @@ function loadKeys() {
   return keys;
 }
 
-export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): Promise<string> {
+export type SignClaims = Omit<AccessClaims, 'expiresAt' | 'passwordChangedAt'> & { readonly passwordChangedAt?: number | null };
+
+export async function signAccessToken(claims: SignClaims): Promise<string> {
   const { privateKey } = await loadKeys();
   return new SignJWT({
     cid: claims.companyId,
     perms: claims.permissions,
     pwc: claims.mustChangePassword,
+    pca: claims.passwordChangedAt ?? null,
   })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
@@ -65,8 +70,19 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
       permissions: Array.isArray(payload.perms) ? payload.perms.map(String) : [],
       mustChangePassword: payload.pwc === true,
       expiresAt: Number(payload.exp),
+      passwordChangedAt: typeof payload.pca === 'number' ? payload.pca : null,
     };
   } catch {
     throw new AppError(401, 'unauthorized', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
+  }
+}
+
+/**
+ * Token phát trước lần đổi mật khẩu gần nhất hết hiệu lực ngay (#62): dấu trong token phải bằng
+ * `password_changed_at` hiện tại (so tới mili giây, nên không lọt token phát cùng giây với lần đổi). Khác thì 401.
+ */
+export function assertTokenCurrent(claims: AccessClaims, passwordChangedAt: Date | null): void {
+  if (claims.passwordChangedAt !== (passwordChangedAt?.getTime() ?? null)) {
+    throw new AppError(401, 'unauthorized', 'Phiên đăng nhập đã hết hiệu lực vì mật khẩu vừa được đổi, hãy đăng nhập lại');
   }
 }
