@@ -9,6 +9,8 @@ import { initialPaymentStatus } from '../domain/order-payment.ts';
 import {
   findOrderPayment,
   findOrderPayments,
+  findOrderPaymentsWhere,
+  type OrderPaymentFilter,
   insertOrderPaymentIfMissing,
   type OrderPaymentRow,
   setDeliveredAtIfMissing,
@@ -135,4 +137,20 @@ export async function getOrderPayments(orderIds: readonly string[]): Promise<Map
     }
   }
   return result;
+}
+
+/** Trạng thái tiền kèm ngày giao, ngày cập nhật cuối, cho danh sách tài chính (tab COD, Cần hoàn tiền; plan #27 A3). */
+export type ListedOrderPayment = OrderPaymentState & { deliveredAt: Date | null; updatedAt: Date };
+
+/** Đơn có dòng trạng thái tiền theo bộ lọc; chỉ finance gọi (R1). Đơn không còn thấy (RLS) bị bỏ. */
+export async function listOrderPayments(filter: OrderPaymentFilter): Promise<ListedOrderPayment[]> {
+  requireCompany('listOrderPayments');
+  const rows = await findOrderPaymentsWhere(filter);
+  const orders = rows.length > 0 ? await getOrdersForFinance(rows.map((r) => r.orderId)) : new Map();
+  return rows.flatMap((row) => {
+    const order = orders.get(row.orderId);
+    if (!order?.paymentMethod) return [];
+    const state = stateOf({ id: order.id, method: order.paymentMethod, total: order.total }, row);
+    return [{ ...state, deliveredAt: row.deliveredAt, updatedAt: row.updatedAt }];
+  });
 }

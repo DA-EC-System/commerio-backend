@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { withCompany } from '../../../shared/db/client.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { getOrdersForFinance } from '../../sales/index.ts';
+import type { Gateway } from '../domain/gateways.ts';
+import { requireCompany } from './boundary.ts';
 import {
   countTransactions,
   findTransactions,
@@ -75,4 +77,19 @@ export function getTransaction(ctx: PaymentContext, companyId: string, id: strin
     if (rows.length === 0) throw new AppError(404, 'not_found', 'Không tìm thấy giao dịch');
     return (await toViews(ctx, rows, true))[0]!;
   });
+}
+
+/** Cổng, mã thanh toán của các giao dịch (RLS) cho phiếu thu, khoản thu chưa khớp của finance (plan #27 A3). */
+export async function getPaymentTransactions(
+  ids: readonly string[],
+): Promise<Map<string, { gateway: Gateway; paymentCode: string | null; orderId: string | null; occurredAt: Date }>> {
+  requireCompany('getPaymentTransactions');
+  const valid = ids.filter((id) => z.uuid().safeParse(id).success);
+  const rows = await findTransactionsByIds(valid);
+  return new Map(
+    rows.map(({ transaction: t, paymentCode }) => [
+      t.id,
+      { gateway: t.gateway, paymentCode: paymentCode ?? null, orderId: t.orderId, occurredAt: t.occurredAt },
+    ]),
+  );
 }
