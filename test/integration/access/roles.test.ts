@@ -302,6 +302,29 @@ describe('PUT /identity/roles/:id', () => {
     expect(await auditOf(r1.id)).toHaveLength(2);
   });
 
+  it('AC-11: PUT tên hoặc quyền sai → 422 theo ô name / permissions, vai trò không đổi', async () => {
+    const a = await companyWithAdmin();
+    const role = await createRole(a.admin.token, 'Giữ nguyên', ['sales.order.view']);
+    const before = await roleRow(role.id);
+    const cases: [object, string][] = [
+      [{ permissions: ['sales.order.view'] }, 'name'],
+      [{ name: '   ', permissions: ['sales.order.view'] }, 'name'],
+      [{ name: 'x'.repeat(61), permissions: ['sales.order.view'] }, 'name'],
+      [{ name: 'Rỗng' }, 'permissions'],
+      [{ name: 'Rỗng', permissions: [] }, 'permissions'],
+      [{ name: 'Lạ', permissions: ['catalog.product.fly'] }, 'permissions'],
+      [{ name: 'Nền tảng', permissions: ['platform.audit.view'] }, 'permissions'],
+    ];
+    for (const [body, field] of cases) {
+      const res = await call('put', `/roles/${role.id}`, a.ceo.token, { ...body, version: 1 });
+      expect(res.status, JSON.stringify(body)).toBe(422);
+      expect(res.body.code).toBe('validation_failed');
+      expect(Object.keys(res.body.errors)).toContain(field);
+    }
+    expect(await roleRow(role.id)).toEqual(before);
+    expect(await auditOf(role.id)).toHaveLength(1);
+  });
+
   it('AC-13: Admin thêm quyền mình không có, hoặc sửa/xoá vai trò đang có quyền đó → 403, không đổi', async () => {
     const a = await companyWithAdmin();
     const own = await createRole(a.admin.token, 'Kho cơ bản', ['inventory.stock.view']);
@@ -384,6 +407,23 @@ describe('PUT /identity/roles/:id', () => {
     });
     expect(res.status).toBe(200);
     expect((await roleRow(role.id))?.permissions).toEqual(['catalog.product.view', 'purchasing.order.manage']);
+  });
+
+  it('AC-D2b: Admin sửa vai trò đang giữ quyền phân hệ tắt mà Admin không mang → 403 permission_not_held, không đổi', async () => {
+    const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
+    const admin = await addMember(companyId, 'admin');
+    expect(ADMIN_PERMS).not.toContain('purchasing.order.manage');
+    const role = await createRole(ceo.token, 'Mua hàng', ['purchasing.order.manage', 'catalog.product.view']);
+    await setModuleEnabled(companyId, 'purchasing', false);
+    const before = await roleRow(role.id);
+    const res = await call('put', `/roles/${role.id}`, admin.token, {
+      name: 'Mua hàng (tạm dừng)',
+      permissions: ['catalog.product.view'],
+      version: 1,
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('permission_not_held');
+    expect(await roleRow(role.id)).toEqual(before);
   });
 
   it('S-3: bỏ quyền khỏi vai trò tuỳ biến → người mang vai trò bị chặn ngay ở lần gọi kế tiếp (D1)', async () => {

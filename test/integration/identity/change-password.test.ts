@@ -41,6 +41,17 @@ describe('đổi mật khẩu: giới hạn số lần sai theo tài khoản (AC
     expect((await changePassword(otherToken, { currentPassword: 'SaiSai123', newPassword: 'MatKhauMoi9' })).status).toBe(422);
   });
 
+  it('mật khẩu mới trùng mật khẩu hiện tại là lần lỗi bị đếm: 5 lần 422 errors.newPassword, lần 6 bị 429', async () => {
+    const { email } = await registerCompany();
+    const { token } = await login(email);
+    for (let i = 0; i < 5; i++) {
+      const res = await changePassword(token, { currentPassword: PASSWORD, newPassword: PASSWORD });
+      expect(res.status).toBe(422);
+      expect(res.body.errors).toHaveProperty('newPassword');
+    }
+    expect((await changePassword(token, { currentPassword: PASSWORD, newPassword: 'MatKhauMoi9' })).status).toBe(429);
+  });
+
   it('đổi thành công không bị đếm', async () => {
     const { email } = await registerCompany();
     let password = PASSWORD;
