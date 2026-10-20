@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { issueForOrder, receiveReturn, release, reserve } from '#src/modules/inventory/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testPool } from '../helpers/db.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 import { companyWithVariants, eventsOf, levelOf, movesOf, receive, setRule } from './helpers.ts';
 
 // Thân 4 hàm biên cho sales (#24), fulfillment (#25) gọi (plan #16 A10, A11, A17; S-4, S-5, S-6).
@@ -88,10 +89,16 @@ describe('reserve, release: gọi đồng thời và sau khi xuất (diff-review
     const { companyId, variants: [v] } = await companyWithVariants();
     await receive(companyId, v!, 10, 1000);
     const order = randomUUID();
-    await Promise.all([
-      withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 5 }])),
-      withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 5 }])),
-    ]);
+    // Giữ khoá dòng tồn: cả hai lần reserve chờ ở `lockLevels`; đọc giữ chỗ trước khoá thì cả hai thấy "chưa giữ".
+    await raceBehindLock(
+      (holder) => holder.query('select 1 from inventory.stock_levels where company_id = $1 and variant_id = $2 for update', [companyId, v]),
+      2,
+      () =>
+        Promise.all([
+          withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 5 }])),
+          withCompany(companyId, () => reserve(order, [{ variantId: v!, quantity: 5 }])),
+        ]),
+    );
     expect(await reservationsOf(order)).toEqual([{ variant_id: v, quantity: 5, status: 'active' }]);
     expect(await levelOf(companyId, v!)).toMatchObject({ onHand: 10, reserved: 5 });
   });

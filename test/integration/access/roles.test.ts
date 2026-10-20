@@ -1,9 +1,11 @@
+import type { PoolClient } from 'pg';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, testApp } from '../helpers/http.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 import { lockCompany, setModuleEnabled, suspendMembership } from '../helpers/state.ts';
 
 // API vai trò và quyền (commerio-backend#8, UC-PI-06, Documents/21 mục 3, D2, D3).
@@ -435,6 +437,52 @@ describe('PUT /identity/roles/:id', () => {
     const res = await call('get', '/roles', member.token);
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('forbidden');
+  });
+});
+
+// Người khác đang ghi (chưa commit) nên bước kiểm trước khi ghi không thấy; ràng buộc DB chặn, service đổi thành 409.
+describe('chạy đua ghi vai trò (#8 plan 7b: 23505, 23503)', () => {
+  const insertRole = (companyId: string, name: string) => (holder: PoolClient) =>
+    holder.query("insert into access.roles (company_id, name, kind) values ($1, $2, 'custom')", [companyId, name]);
+
+  it('tạo vai trò cùng tên với vai trò đang được ghi → 409 role_name_taken, chỉ một vai trò', async () => {
+    const a = await companyWithAdmin();
+    const res = await raceBehindLock(insertRole(a.companyId, 'Đua tên'), 1, () =>
+      call('post', '/roles', a.admin.token, { name: 'Đua tên', permissions: ['sales.order.view'] }).then((r) => r),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_name_taken');
+    expect(res.body.errors).toHaveProperty('name');
+    expect(await roleCount(a.companyId)).toBe(1);
+  });
+
+  it('đổi tên trùng vai trò đang được ghi → 409 role_name_taken, vai trò không đổi', async () => {
+    const a = await companyWithAdmin();
+    const role = await createRole(a.admin.token, 'Tên cũ', ['sales.order.view']);
+    const before = await roleRow(role.id);
+    const res = await raceBehindLock(insertRole(a.companyId, 'Đua tên'), 1, () =>
+      call('put', `/roles/${role.id}`, a.admin.token, { name: 'Đua tên', permissions: ['sales.order.view'], version: 1 }).then((r) => r),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_name_taken');
+    expect(await roleRow(role.id)).toEqual(before);
+  });
+
+  it('xoá vai trò đang được gán cho nhân viên → 409 role_in_use, vai trò còn nguyên', async () => {
+    const a = await companyWithAdmin();
+    const role = await createRole(a.admin.token, 'Sắp gán', ['sales.order.view']);
+    const member = await addMember(a.companyId, 'sale');
+    const before = await roleRow(role.id);
+    const assign = (holder: PoolClient) =>
+      holder.query('insert into access.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
+        member.membershipId,
+        role.id,
+        a.companyId,
+      ]);
+    const res = await raceBehindLock(assign, 1, () => call('delete', `/roles/${role.id}?version=1`, a.admin.token).then((r) => r));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_in_use');
+    expect(await roleRow(role.id)).toEqual(before);
   });
 });
 

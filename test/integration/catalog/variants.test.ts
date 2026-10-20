@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../helpers/company.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, valueId, uniq } from './helpers.ts';
 
 // Thêm, ngừng bán biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B3, B5, B8, B11).
@@ -128,7 +129,12 @@ describe('DELETE /catalog/products/:id/variants/:variantId', () => {
 describe('chạy đua (S-3 c, d; plan B5)', () => {
   it('hai lần ngừng bán song song trên sản phẩm còn 2 biến thể: một 204, một 409, còn đúng 1 biến thể đang bán', async () => {
     const product = await shirt();
-    const results = await Promise.all(product.variants.map((v) => stop(product.id, v.id)));
+    // Giữ khoá dòng sản phẩm: cả hai request phải chờ (thiếu khoá công ty thì cả hai đã đếm "còn 2" trước khi chờ).
+    const results = await raceBehindLock(
+      (holder) => holder.query('select 1 from catalog.products where id = $1 for update', [product.id]),
+      2,
+      () => Promise.all(product.variants.map((v) => stop(product.id, v.id))),
+    );
     expect(results.map((r) => r.status).sort()).toEqual([204, 409]);
     expect((await detailOf(product.id)).variantCount).toBe(1);
   });
