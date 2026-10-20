@@ -1,0 +1,28 @@
+# Số liệu của máy VPS (CPU, RAM, đĩa, mạng) cho dashboard "Máy VPS". node-exporter chạy thẳng trên máy
+# (apt prometheus-node-exporter, cổng 9100), không chạy trong cụm: nó cần hostPath, hostNetwork mà Pod Security
+# baseline của namespace chặn. Tường lửa (ufw) chỉ cho dải pod 10.42.0.0/16 gọi cổng này, không mở ra internet.
+# Service không có selector, EndpointSlice trỏ IP của máy: Prometheus gọi node-exporter:9100 (job "node").
+# Đổi VPS thì sửa IP dưới đây.
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+spec:
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: 9100
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: node-exporter-vps
+  labels:
+    kubernetes.io/service-name: node-exporter
+addressType: IPv4
+endpoints:
+  - addresses: ["116.118.6.7"]
+ports:
+  - name: metrics
+    port: 9100
+    protocol: TCP

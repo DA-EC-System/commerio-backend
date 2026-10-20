@@ -8,6 +8,7 @@ resources:
   - ../../base
   - caddy-data.yaml
   - ci-deployer.yaml
+  - node-exporter.yaml
 
 # Image của CI (#37, amd64 + arm64): backend từ repo này, FE từ repo FE.
 # Deploy đổi tag sang sha-<7 ký tự> của commit (ci-deploy/commerio-deploy.sh).

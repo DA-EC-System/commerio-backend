@@ -17,3 +17,4 @@ configMapGenerator:
   - name: grafana-dashboards
     files:
       - dashboards/commerio.json
+      - dashboards/vps.json
