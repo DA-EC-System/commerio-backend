@@ -69,7 +69,8 @@ Chạy trên VPS staging từ 20/10/2026 (Ubuntu 24.04, 2 vCPU, 4 GB). Secret, l
    `kubectl -n commerio create secret docker-registry ghcr --docker-server=ghcr.io --docker-username=<tài khoản> --docker-password=<PAT>` (tạo namespace trước: `kubectl create namespace commerio`).
 3. Điền `overlays/vps/.env` (DB Supabase, JWT), `grafana/.env`, `caddy/.env` (`SITE_ADDRESS=<tên miền>`), không dấu nháy.
 4. `kubectl apply -k deploy/k8s/overlays/vps`. Sửa manifest sau này thì chép thư mục `deploy/` mới lên máy rồi apply lại (giữ các file `.env`); apply đặt lại tag `develop`, tức bản mới nhất đã qua CI.
-5. Tài khoản deploy cho CI: `bash deploy/k8s/overlays/vps/ci-deploy/setup.sh` (root). Script tạo user `ci-deploy`, cài `/usr/local/bin/commerio-deploy`, viết kubeconfig từ token của ServiceAccount `ci-deployer` (`overlays/vps/ci-deployer.yaml`: chỉ `get`/`patch` 4 Deployment `api`, `worker`, `realtime`, `fe`, không đọc Secret), và sinh một khoá cho mỗi repo chưa có. Khoá trong `authorized_keys` có `restrict` và forced command, nên chỉ chạy được `commerio-deploy fe` hoặc `commerio-deploy backend` với một tag dạng `sha-<7 ký tự>`: không shell, không chuyển cổng. Đưa khoá riêng vào secret rồi xoá, không in ra màn hình:
+5. Số liệu máy cho dashboard "Máy VPS": `apt install prometheus-node-exporter` (nghe cổng 9100). Tường lửa chỉ mở 22, 80, 443 ra ngoài và cho dải pod, service của cụm (`10.42.0.0/16`, `10.43.0.0/16`), nên cổng 9100 không ra internet. Đổi VPS thì sửa IP trong `overlays/vps/node-exporter.yaml`.
+6. Tài khoản deploy cho CI: `bash deploy/k8s/overlays/vps/ci-deploy/setup.sh` (root). Script tạo user `ci-deploy`, cài `/usr/local/bin/commerio-deploy`, viết kubeconfig từ token của ServiceAccount `ci-deployer` (`overlays/vps/ci-deployer.yaml`: chỉ `get`/`patch` 4 Deployment `api`, `worker`, `realtime`, `fe`, không đọc Secret), và sinh một khoá cho mỗi repo chưa có. Khoá trong `authorized_keys` có `restrict` và forced command, nên chỉ chạy được `commerio-deploy fe` hoặc `commerio-deploy backend` với một tag dạng `sha-<7 ký tự>`: không shell, không chuyển cổng. Đưa khoá riêng vào secret rồi xoá, không in ra màn hình:
    ```bash
    ssh <vps> 'cat /root/ci-deploy-backend.key' | gh secret set STAGING_SSH_KEY --repo DA-EC-System/commerio-backend
    ssh <vps> 'cat /root/ci-deploy-fe.key' | gh secret set STAGING_SSH_KEY --repo DA-EC-System/FE
@@ -83,6 +84,10 @@ Tổng `requests` khoảng 570m CPU, 1,7 GiB RAM, cộng k3s; máy 2 GB không �
 
 Dashboard "Commerio" (`deploy/monitoring/dashboards/commerio.json`, cũng nạp vào Grafana của máy dev qua `deploy/compose.yaml` profile `monitoring`): tần suất, tỉ lệ 5xx, p95 theo route của `api`; tiến trình đang chạy, CPU, RAM, event loop; outbox (đang chờ, tuổi cũ nhất, DLQ); số stream SSE. Hàng "Nghiệp vụ" để trống cho metric đơn, thanh toán (#24, #25, #27). Sửa dashboard: sửa file JSON rồi apply lại (Grafana không lưu sửa trên giao diện).
 
+Dashboard "Máy VPS" (`deploy/monitoring/dashboards/vps.json`, chỉ có số liệu ở overlay `vps`): CPU theo loại (cả `steal`), RAM và swap, tải hệ thống so với số nhân, ổ `/`, mạng, đọc ghi đĩa. Số liệu lấy từ `prometheus-node-exporter` cài thẳng trên VPS (job `node`, `overlays/vps/node-exporter.yaml`).
+
+Mở Grafana và Prometheus của VPS từ máy mình: `bash deploy/k8s/overlays/vps/monitor.sh` (PowerShell: `.\deploy\k8s\overlays\vps\monitor.ps1`; tham số là Host SSH, mặc định `commerio_vps`). Script chép mật khẩu admin Grafana vào clipboard, mở `http://localhost:3031` (Grafana) và `http://localhost:9091/alerts` (Prometheus) qua một đường hầm SSH; Ctrl+C để đóng, port-forward trên VPS tắt theo.
+
 Luật cảnh báo (`deploy/monitoring/rules/alerts.yml`, test ở `alerts.test.yml`) hiện ở `/alerts` của Prometheus, chưa gửi đi đâu:
 
 | Cảnh báo | Khi nào |
@@ -91,3 +96,7 @@ Luật cảnh báo (`deploy/monitoring/rules/alerts.yml`, test ở `alerts.test.
 | `CommerioHighErrorRate` | hơn 5% yêu cầu (trừ `/health`) trả 5xx, suốt 5 phút |
 | `CommerioOutboxLagging` | sự kiện outbox chờ hơn 60 giây, suốt 5 phút. Im lặng khi worker không đọc được DB (số liệu ra NaN) |
 | `CommerioDeadLettered` | có sự kiện vào DLQ trong 10 phút qua. Báo nhầm một lần ngay sau khi Prometheus khởi động lại (số liệu không lưu qua lần khởi động) |
+| `VpsCpuHigh` | CPU máy VPS trên 80%, suốt 15 phút |
+| `VpsMemoryLow` | RAM còn trống (MemAvailable) của máy dưới 15%, suốt 10 phút |
+| `VpsDiskFull` | ổ `/` dùng hơn 85% (k3s bắt đầu xoá image), suốt 10 phút |
+| `VpsNodeExporterDown` | không lấy được số liệu máy, quá 5 phút |

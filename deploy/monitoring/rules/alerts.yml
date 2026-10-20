@@ -47,3 +47,41 @@ groups:
           severity: warning
         annotations:
           summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
+
+  # Máy VPS (job "node", dashboard "Máy VPS"). Overlay local không có node-exporter: các luật này im lặng.
+  - name: vps
+    rules:
+      - alert: VpsCpuHigh
+        expr: 1 - avg(rate(node_cpu_seconds_total{job="node",mode="idle"}[5m])) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: CPU máy VPS trên 80% suốt 15 phút
+
+      # MemAvailable: phần RAM cấp được ngay, đã tính bộ đệm đĩa trả lại được.
+      - alert: VpsMemoryLow
+        expr: node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"} < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: RAM còn trống của máy VPS dưới 15% suốt 10 phút
+
+      - alert: VpsDiskFull
+        expr: |
+          1 - node_filesystem_avail_bytes{job="node",mountpoint="/",fstype!="rootfs"}
+            / node_filesystem_size_bytes{job="node",mountpoint="/",fstype!="rootfs"} > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ổ / của máy VPS đã dùng hơn 85% (k3s bắt đầu xoá image ở mức này)
+
+      - alert: VpsNodeExporterDown
+        expr: up{job="node"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Không lấy được số liệu máy VPS (dịch vụ prometheus-node-exporter)
