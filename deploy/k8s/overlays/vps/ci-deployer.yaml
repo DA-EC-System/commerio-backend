@@ -1,0 +1,42 @@
+# Quyền của CI khi deploy (ci-deploy/commerio-deploy.sh): chỉ đổi image và xem rollout của 4 Deployment,
+# không đọc Secret, không tạo hay xoá gì. Token nằm trong Secret ci-deployer-token, chỉ root trên VPS đọc được
+# (ci-deploy/setup.sh chép vào kubeconfig của tài khoản ci-deploy).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ci-deployer-token
+  annotations:
+    kubernetes.io/service-account.name: ci-deployer
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["api", "worker", "realtime", "fe"]
+    verbs: ["get", "patch"]
+  # rollout status theo dõi Deployment và ReplicaSet của nó.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-deployer
+subjects:
+  - kind: ServiceAccount
+    name: ci-deployer

@@ -7,6 +7,7 @@ namespace: commerio
 resources:
   - namespace.yaml
   - app.yaml
+  - fe.yaml
   - kafka.yaml
   - caddy/caddy.yaml
   - monitoring.yaml
@@ -21,7 +22,6 @@ configMapGenerator:
       # Đứng sau một tầng Caddy: req.ip là IP khách.
       - TRUST_PROXY_HOPS=1
       - KAFKA_BROKERS=kafka:9092
-  # Chép nguyên deploy/staging/Caddyfile (#37); CI so hai file (.github/workflows/k8s.yml).
   - name: caddyfile
     files:
       - caddy/Caddyfile

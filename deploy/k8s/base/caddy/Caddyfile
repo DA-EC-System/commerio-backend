@@ -15,10 +15,8 @@
 		reverse_proxy api:3000
 	}
 
-	# FE là SPA (createBrowserRouter): đường dẫn không phải file thì trả index.html.
+	# Còn lại là FE (Deployment fe, image của repo FE); SPA và cache do Caddy trong image đó lo.
 	handle {
-		root * /srv/fe
-		try_files {path} /index.html
-		file_server
+		reverse_proxy fe:80
 	}
 }

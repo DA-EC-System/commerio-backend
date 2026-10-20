@@ -8,8 +8,11 @@ resources:
   - ../../base
 
 # Image tự build trên máy: docker build -f deploy/docker/Dockerfile -t commerio-backend:local .
+# và trong repo FE: docker build -t commerio-fe:local .
 images:
   - name: commerio-backend
+    newTag: local
+  - name: commerio-fe
     newTag: local
 
 secretGenerator:

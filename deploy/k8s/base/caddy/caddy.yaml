@@ -1,5 +1,5 @@
 # Cổng vào duy nhất (thay Ingress; k3s cài với --disable traefik): FE ở /, API ở /api, SSE tới realtime.
-# Caddyfile chép nguyên từ deploy/staging/Caddyfile (#37). Overlay vps đổi /data sang PVC và /srv/fe sang thư mục FE trên máy.
+# Overlay vps đổi /data sang PVC để giữ chứng chỉ HTTPS.
 apiVersion: v1
 kind: Service
 metadata:
@@ -56,9 +56,6 @@ spec:
               readOnly: true
             - name: data
               mountPath: /data
-            - name: fe
-              mountPath: /srv/fe
-              readOnly: true
           resources:
             requests:
               cpu: 20m
@@ -70,6 +67,4 @@ spec:
           configMap:
             name: caddyfile
         - name: data
-          emptyDir: {}
-        - name: fe
           emptyDir: {}
