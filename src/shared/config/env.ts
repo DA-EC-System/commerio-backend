@@ -35,6 +35,9 @@ const EnvSchema = z.object({
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.
   PUBLIC_WEB_URL: z.url().optional(),
+  // OAuth client ID loại Web của Google (Google Identity Services, #7): `aud` của ID token phải bằng giá trị này.
+  // BE không cần client secret. Thiếu thì `POST /identity/google` trả 503 `google_unavailable`.
+  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   // Gửi thư (OTP mời nhân viên, #7): Gmail `smtps://<địa chỉ>:<App Password>@smtp.gmail.com:465` ở staging,
   // Mailpit `smtp://localhost:1025` ở máy dev. Thiếu thì worker vẫn chạy, mỗi lần gửi báo lỗi vĩnh viễn.
   SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),

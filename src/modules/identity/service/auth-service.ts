@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from 'node:crypto';
 import {
   type AccessLoader,
   assertCompanyAccess,
@@ -19,43 +18,34 @@ import {
   findAccountByEmail,
   findAccountById,
   findMembership,
-  membershipsOfAccount,
   updatePassword,
 } from '../../staff/index.ts';
 import {
   findActiveRefreshToken,
-  insertRefreshToken,
   revokeAllRefreshTokens,
   revokeRefreshToken,
   setRefreshTokenCompany,
 } from '../repository/refresh-tokens.ts';
+import { countLogin } from './metrics.ts';
 import { hashPassword, verifyPassword } from './passwords.ts';
+import {
+  type CompanyContext,
+  claimsFor,
+  hashToken,
+  type LoginResult,
+  membershipViews,
+  newRefreshToken,
+  startSession,
+  toAccountView,
+} from './session.ts';
 
-export const REFRESH_TOKEN_TTL_DAYS = 30;
-
-export interface AccountView {
-  id: string;
-  email: string;
-  fullName: string;
-  isPlatformAdmin: boolean;
-  mustChangePassword: boolean;
-}
-
-export interface MembershipView {
-  companyId: string;
-  companyName: string;
-  companyStatus: 'active' | 'locked';
-  status: 'active' | 'locked';
-  roles: string[];
-}
-
-export interface CompanyContext {
-  companyId: string;
-  companyName: string;
-  roles: string[];
-  permissions: string[];
-  enabledModules: string[];
-}
+export {
+  type AccountView,
+  type CompanyContext,
+  type LoginResult,
+  type MembershipView,
+  REFRESH_TOKEN_TTL_DAYS,
+} from './session.ts';
 
 /** Refresh token gốc chỉ đi ra cookie; DB giữ bản băm. */
 export interface Session {
@@ -65,48 +55,6 @@ export interface Session {
 
 const invalidCredentials = () => new AppError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng');
 const invalidRefresh = () => new AppError(401, 'unauthorized', 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại');
-
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
-
-function toAccountView(a: AccountRow): AccountView {
-  return {
-    id: a.id,
-    email: a.email,
-    fullName: a.fullName,
-    isPlatformAdmin: a.isPlatformAdmin,
-    mustChangePassword: a.mustChangePassword,
-  };
-}
-
-async function newRefreshToken(accountId: string, companyId: string | null): Promise<string> {
-  const token = randomBytes(32).toString('base64url');
-  await insertRefreshToken({
-    accountId,
-    companyId,
-    tokenHash: hashToken(token),
-    expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 3600 * 1000),
-  });
-  return token;
-}
-
-async function membershipViews(accountId: string): Promise<MembershipView[]> {
-  const memberships = await membershipsOfAccount(accountId);
-  const companies = await getCompanies(memberships.map((m) => m.companyId));
-  const access = await rolesAndPermissions(memberships.map((m) => m.id));
-  return memberships.flatMap((m) => {
-    const company = companies.get(m.companyId);
-    if (!company) return [];
-    return [
-      {
-        companyId: company.id,
-        companyName: company.name,
-        companyStatus: company.status,
-        status: m.status === 'suspended' ? 'locked' : 'active',
-        roles: access.get(m.id)?.roles ?? [],
-      },
-    ];
-  });
-}
 
 /**
  * Trạng thái tài khoản trong công ty, đọc thẳng DB; `null` khi không thuộc công ty. Không ném lỗi.
@@ -153,16 +101,6 @@ async function companyContext(accountId: string, companyId: string): Promise<Com
     // Quyền của phân hệ chưa bật không có hiệu lực (Documents/21 mục 8).
     permissions: access.permissions.filter((p) => enabled.has(permissionModule(p))),
     enabledModules: [...access.enabledModules],
-  };
-}
-
-function claimsFor(account: AccountRow, context: CompanyContext | null): Omit<AccessClaims, 'expiresAt'> {
-  return {
-    accountId: account.id,
-    companyId: context?.companyId ?? null,
-    permissions: context?.permissions ?? [],
-    mustChangePassword: account.mustChangePassword,
-    passwordChangedAt: account.passwordChangedAt?.getTime() ?? null,
   };
 }
 
@@ -218,16 +156,16 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
 }
 
 /** UC-PI-03: đăng nhập chưa gắn công ty; sai email hay sai mật khẩu đều cùng một lỗi (Documents/21 V2). */
-export async function login(input: { email: string; password: string }) {
+export async function login(input: { email: string; password: string }): Promise<LoginResult> {
   const account = await findAccountByEmail(input.email);
   const ok = await verifyPassword(account?.passwordHash, input.password);
-  if (!account || !ok) throw invalidCredentials();
-  return {
-    accessToken: await signAccessToken(claimsFor(account, null)),
-    refreshToken: await newRefreshToken(account.id, null),
-    account: toAccountView(account),
-    memberships: account.isPlatformAdmin ? [] : await membershipViews(account.id),
-  };
+  if (!account || !ok) {
+    countLogin('password', 'invalid');
+    throw invalidCredentials();
+  }
+  const session = await startSession(account);
+  countLogin('password', 'ok');
+  return session;
 }
 
 export async function me(auth: AccessClaims) {

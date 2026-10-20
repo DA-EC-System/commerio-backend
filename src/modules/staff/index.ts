@@ -13,10 +13,12 @@ export const staffModule: ModuleDefinition = {
 export type { AccountRow, MembershipRow } from './repository/accounts.ts';
 export {
   findAccountByEmail,
+  findAccountByGoogleSub,
   findAccountById,
   findMembership,
   insertAccount as createAccount,
   insertMembership as createMembership,
+  linkGoogleSub,
   membershipsOfAccount,
   updatePassword,
 } from './repository/accounts.ts';

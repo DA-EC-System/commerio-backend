@@ -6,6 +6,8 @@ const env = {
   LOG_LEVEL: 'silent',
   AUTH_RATE_LIMIT: '10000',
   MAIL_FROM: 'Commerio <no-reply@commerio.test>',
+  // ID token Google trong test ký bằng khoá tự sinh (setGoogleKeySource), aud là client id này.
+  GOOGLE_CLIENT_ID: 'test-client.apps.googleusercontent.com',
 };
 
 export default defineConfig({

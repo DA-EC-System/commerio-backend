@@ -46,6 +46,16 @@ Seed tạo bốn tài khoản `ceo@`, `admin@`, `sale@`, `kho@commerio.dev`, m�
 
 Cần quyền đủ để thử mọi API thì dùng `ceo@commerio.dev`.
 
+### Đăng nhập Google
+
+`POST /api/v1/identity/google` nhận ID token lấy từ Google Identity Services, chỉ đăng nhập tài khoản đã có (liên kết theo email đã xác minh ở lần đầu), không tạo tài khoản. Cần một OAuth client ID:
+
+1. Vào Google Cloud Console, **APIs & Services → Credentials → Create credentials → OAuth client ID**, loại **Web application**.
+2. **Authorized JavaScript origins**: thêm gốc của FE, vd `http://localhost:5173` cho máy dev và domain staging. Không cần redirect URI vì không làm luồng chuyển hướng.
+3. Đặt `GOOGLE_CLIENT_ID=<client id>` vào `.env` của BE và cấu hình tương ứng của FE. BE không cần client secret.
+
+Chưa đặt `GOOGLE_CLIENT_ID` thì API trả 503 `google_unavailable`; đăng nhập mật khẩu không bị ảnh hưởng.
+
 ## Thử cổng thanh toán (sandbox)
 
 Bốn cổng `vnpay`, `momo`, `zalopay`, `vietqr`, **chỉ sandbox**. Không ghi khoá thật vào README, `.env.example` hay commit; khoá sandbox lấy ở trang đăng ký của từng cổng.

@@ -8,7 +8,8 @@ import { validate, validated } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
 import { accessRouter } from '../../access/index.ts';
 import * as auth from '../service/auth-service.ts';
-import { ChangePasswordBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
+import { loginWithGoogle } from '../service/google.ts';
+import { ChangePasswordBody, GoogleLoginBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
 
 /** Refresh token nằm trong cookie HttpOnly, chỉ gửi kèm các đường dẫn /identity (Documents/21 A1). */
 export const REFRESH_COOKIE = 'commerio_refresh';
@@ -55,6 +56,13 @@ export function identityRouter(ctx: ModuleContext): Router {
 
   router.post('/login', authLimiter(), validate({ body: LoginBody }), async (_req, res) => {
     const { refreshToken, ...result } = await auth.login(body<typeof LoginBody>(res));
+    setRefreshCookie(res, refreshToken);
+    res.json(result);
+  });
+
+  // Chỉ đăng nhập tài khoản đã có, không đăng ký (#7 [A]). Dùng chung bộ đếm theo IP với /login.
+  router.post('/google', authLimiter(), validate({ body: GoogleLoginBody }), async (_req, res) => {
+    const { refreshToken, ...result } = await loginWithGoogle(body<typeof GoogleLoginBody>(res).credential);
     setRefreshCookie(res, refreshToken);
     res.json(result);
   });

@@ -12,6 +12,13 @@ const email = z
 
 export const newPassword = newPasswordSchema;
 
+export const GoogleLoginBody = z
+  .object({
+    // ID token lấy từ Google Identity Services (Documents/21 A3, A6).
+    credential: z.string().min(20, 'Thiếu ID token của Google').max(4096, 'ID token quá dài'),
+  })
+  .meta({ id: 'GoogleLoginBody' });
+
 export const RegisterBody = z
   .object({
     company: z.object({
