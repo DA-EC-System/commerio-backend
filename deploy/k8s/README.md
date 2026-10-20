@@ -78,7 +78,7 @@ Chạy trên VPS staging từ 20/10/2026 (Ubuntu 24.04, 2 vCPU, 4 GB). Secret, l
    ```
    Đổi image bằng tay: `kubectl -n commerio set image deploy/api api=ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (tương tự `worker`, `realtime`, `fe`).
 
-Tổng `requests` khoảng 570m CPU, 1,7 GiB RAM, cộng k3s; máy 2 GB không đủ, 4 GB đủ. Đo trên Docker Desktop (19/10/2026, cgroup `memory.peak` sau smoke và rolling update): Kafka 586Mi, Grafana 182Mi, api 73Mi, worker 72Mi, realtime 61Mi, Prometheus 42Mi, Caddy 16Mi, đều dưới `limits`. Đo lại bằng panel RAM của dashboard khi có tải thật.
+Tổng `requests` khoảng 530m CPU, 1,1 GiB RAM (hạ 20/10/2026 cho sát số đo trên VPS; heap Kafka bắt đầu 256 MB, nở tới 512 MB), cộng k3s khoảng 0,7 GB; máy 2 GB không đủ, 4 GB đủ. Đo trên VPS (20/10/2026, `kubectl top` lúc rảnh): Kafka 356Mi, Grafana 100Mi, worker 76Mi, api 71Mi, realtime 61Mi, Prometheus 26Mi, Caddy 11Mi, FE 11Mi; k3s 540 MB, containerd 183 MB. Đo trên Docker Desktop (19/10/2026, cgroup `memory.peak` sau smoke và rolling update): Kafka 586Mi, Grafana 182Mi, api 73Mi, worker 72Mi, realtime 61Mi, Prometheus 42Mi, Caddy 16Mi, đều dưới `limits`. Đo lại bằng panel RAM của dashboard khi có tải thật.
 
 ## Giám sát
 

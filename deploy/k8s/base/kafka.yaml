@@ -64,28 +64,33 @@ spec:
             - name: KAFKA_NUM_PARTITIONS
               value: "3"
             - name: KAFKA_HEAP_OPTS
-              value: -Xmx512m -Xms512m
+              # Bắt đầu 256 MB, nở tới 512 MB khi cần: heap cố định 256 MB bị Full GC liên tục (sau GC vẫn còn ~173 MB),
+              # cố định 512 MB thì giữ RAM cả lúc rảnh (đo trên VPS 20/10/2026).
+              value: -Xms256m -Xmx512m
             # Có biến KAFKA_* thì ảnh bỏ cấu hình mặc định; thiếu dòng này dữ liệu nằm ở /tmp, mất khi pod khởi động lại.
             - name: KAFKA_LOG_DIRS
               value: /var/lib/kafka/data
           ports:
             - name: broker
               containerPort: 9092
+          # Chỉ kiểm cổng: kafka-broker-api-versions.sh khởi động một JVM mỗi lần (~2 s, 1,4 nhân), 10 s một lần
+          # là ~0,3 nhân thường trực trên VPS 2 nhân (dashboard "Máy VPS", 20/10/2026). Cổng có thể mở trước khi
+          # broker nhận yêu cầu được; worker, realtime tự nối lại nếu gọi sớm.
           readinessProbe:
-            exec:
-              command: ["sh", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-            initialDelaySeconds: 20
+            tcpSocket:
+              port: broker
+            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 10
           volumeMounts:
             - name: data
               mountPath: /var/lib/kafka/data
           resources:
+            # RSS đo trên VPS 20/10/2026: 467 MB với heap cố định 512 MB; limit chừa chỗ cho heap 512 MB + ~150 MB ngoài heap.
             requests:
               cpu: 200m
-              memory: 768Mi
+              memory: 448Mi
             limits:
-              memory: 1Gi
+              memory: 768Mi
   volumeClaimTemplates:
     - metadata:
         name: data
