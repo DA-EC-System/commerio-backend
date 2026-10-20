@@ -51,6 +51,14 @@ services:
       retries: 10
       start_period: 20s
 
+  mailpit:
+    # Hộp thư giả cho máy dev (#7): app gửi SMTP tới localhost:1025 (SMTP_URL=smtp://localhost:1025),
+    # xem thư ở http://localhost:8025. Không gửi ra ngoài.
+    image: axllent/mailpit:v1.31.4
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
   prometheus:
     image: prom/prometheus:v3.5.0
     profiles: [monitoring]

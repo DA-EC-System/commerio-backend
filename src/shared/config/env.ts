@@ -35,6 +35,11 @@ const EnvSchema = z.object({
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.
   PUBLIC_WEB_URL: z.url().optional(),
+  // Gửi thư (OTP mời nhân viên, #7): Gmail `smtps://<địa chỉ>:<App Password>@smtp.gmail.com:465` ở staging,
+  // Mailpit `smtp://localhost:1025` ở máy dev. Thiếu thì worker vẫn chạy, mỗi lần gửi báo lỗi vĩnh viễn.
+  SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),
+  // Người gửi, vd `Commerio <ten@gmail.com>`; Gmail đòi trùng tài khoản đăng nhập SMTP.
+  MAIL_FROM: z.string().min(3).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
