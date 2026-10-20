@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { newPaymentCode } from '#src/modules/payment/domain/payment-code.ts';
 import { addMember, createCompany } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { createLink as create, linksOf, order, orderPaymentOf, shop } from './helpers.ts';
 
 vi.hoisted(() => {
   process.env.PAYMENT_CREDENTIALS_KEY = Buffer.alloc(32, 9).toString('base64');
+});
+// Mã thanh toán vẫn ngẫu nhiên như thật; test trùng mã đặt giá trị cho riêng một lần gọi.
+vi.mock(import('#src/modules/payment/domain/payment-code.ts'), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, newPaymentCode: vi.fn(actual.newPaymentCode) };
 });
 
 // Tạo mã QR/link (commerio-backend#23 PR2, UC-PF-01; Documents/21 §12.3, §12.8, §12.9, T9, T10; plan A7, A9).
@@ -13,6 +19,8 @@ vi.hoisted(() => {
 const MOMO_OK = { resultCode: 0, payUrl: 'https://test-payment.momo.vn/v2/gateway/pay?t=abc', qrCodeUrl: 'momo://app?isScanQR=true' };
 const momoReturns = (status: number, body: unknown) =>
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(body), { status }));
+/** Ca không được gọi cổng: lỡ gọi thì lỗi ngay, không đi ra mạng thật. */
+const noNetwork = () => vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('không được gọi mạng'));
 
 const count = async (sql: string, id: string) => Number((await testPool().query(sql, [id])).rows[0].count);
 const auditCount = (companyId: string) =>
@@ -80,7 +88,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     const s = await shop('vietqr', 'momo');
     const o = await order(s);
     const first = await create(s.sale.token, o.orderId, 'vietqr');
-    const spy = vi.spyOn(globalThis, 'fetch');
+    const spy = noNetwork();
     const again = await create(s.sale.token, o.orderId, 'momo');
     expect(again.status).toBe(200);
     expect(again.body.id).toBe(first.body.id);
@@ -118,7 +126,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     ])('%s', async (_name, options) => {
       const s = await shop('momo');
       const o = await order(s, 150000, options);
-      const spy = vi.spyOn(globalThis, 'fetch');
+      const spy = noNetwork();
       const res = await create(s.sale.token, o.orderId, 'momo');
       expect(res.status).toBe(409);
       expect(res.body.type).toBe('/problems/payment_not_allowed');
@@ -174,7 +182,7 @@ describe('POST /payment/orders/:orderId/links', () => {
   it('cổng chưa cấu hình → 422 gateway_not_configured kèm errors.gateway, không gọi ra ngoài (AC-17)', async () => {
     const s = await shop('vietqr');
     const o = await order(s);
-    const spy = vi.spyOn(globalThis, 'fetch');
+    const spy = noNetwork();
     const res = await create(s.sale.token, o.orderId, 'zalopay');
     expect(res.status).toBe(422);
     expect(res.body.type).toBe('/problems/gateway_not_configured');
@@ -198,6 +206,51 @@ describe('POST /payment/orders/:orderId/links', () => {
     expect(await linksOf(o.orderId)).toHaveLength(0);
     expect(await orderPaymentOf(o.orderId)).toBeUndefined();
     expect(await auditCount(s.companyId)).toBe(0);
+  });
+
+  it('gọi cổng với signal hết hạn sau 10 giây (AC-18 "quá 10 s")', async () => {
+    const s = await shop('momo');
+    const o = await order(s);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const spy = momoReturns(200, MOMO_OK);
+    expect((await create(s.sale.token, o.orderId, 'momo')).status).toBe(201);
+    expect(timeout.mock.calls).toEqual([[10_000]]);
+    expect(spy.mock.calls[0]?.[1]?.signal).toBe(timeout.mock.results[0]?.value);
+  });
+
+  it('ghi nhật ký lỗi ở bước ghi → 500, không còn mã, không còn dòng order_payments; hết lỗi thì tạo lại được (A7 bước 3)', async () => {
+    const s = await shop('vietqr');
+    const o = await order(s);
+    // Trigger chỉ làm hỏng nhật ký mã thanh toán của công ty này (file test khác chạy song song không bị ảnh hưởng).
+    await testPool().query(`
+      create or replace function audit.loi_nhat_ky_ma_tt() returns trigger language plpgsql as $$
+      begin
+        if new.entity_type = 'payment.payment_links' and new.company_id = '${s.companyId}' then raise exception 'lỗi giả'; end if;
+        return new;
+      end $$;
+      drop trigger if exists loi_nhat_ky_ma_tt on audit.audit_logs;
+      create trigger loi_nhat_ky_ma_tt before insert on audit.audit_logs for each row execute function audit.loi_nhat_ky_ma_tt();`);
+    try {
+      expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(500);
+      expect(await linksOf(o.orderId)).toHaveLength(0);
+      expect(await orderPaymentOf(o.orderId)).toBeUndefined();
+    } finally {
+      await testPool().query('drop trigger if exists loi_nhat_ky_ma_tt on audit.audit_logs; drop function if exists audit.loi_nhat_ky_ma_tt();');
+    }
+    expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(201);
+    expect(await auditCount(s.companyId)).toBe(1);
+  });
+
+  it('mã thanh toán sinh ra trùng mã đã có → tự sinh mã khác, 201, một mã (D14)', async () => {
+    const s = await shop('vietqr');
+    const taken = (await create(s.sale.token, (await order(s)).orderId, 'vietqr')).body.paymentCode as string;
+    const o = await order(s);
+    vi.mocked(newPaymentCode).mockClear().mockReturnValueOnce(taken);
+    const res = await create(s.sale.token, o.orderId, 'vietqr');
+    expect(res.status).toBe(201);
+    expect(res.body.paymentCode).not.toBe(taken);
+    expect(vi.mocked(newPaymentCode)).toHaveBeenCalledTimes(2);
+    expect((await linksOf(o.orderId)).map((l: { payment_code: string }) => l.payment_code)).toEqual([res.body.paymentCode]);
   });
 
   it('đơn bị huỷ trong lúc chờ cổng → 409, không ghi (A7 bước 3)', async () => {
