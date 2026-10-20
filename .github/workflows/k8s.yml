@@ -46,12 +46,3 @@ jobs:
 
       - name: Dashboard là JSON hợp lệ
         run: node -e "JSON.parse(require('fs').readFileSync('deploy/monitoring/dashboards/commerio.json', 'utf8'))"
-
-      # Caddyfile trong cluster phải giống staging compose (#37).
-      - name: Caddyfile khớp staging
-        run: |
-          if [ -f deploy/staging/Caddyfile ]; then
-            cmp deploy/staging/Caddyfile deploy/k8s/base/caddy/Caddyfile
-          else
-            echo "Chưa có deploy/staging/Caddyfile (#37 chưa merge), bỏ qua"
-          fi

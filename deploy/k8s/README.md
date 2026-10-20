@@ -1,11 +1,11 @@
 # Kubernetes
 
-Cả hệ chạy trên Kubernetes (#36, `Documents/21` D13): ba tiến trình `api`, `worker`, `realtime` cùng một image, Kafka, Caddy làm cổng vào, Prometheus và Grafana có dashboard. Viết bằng Kustomize: `base/` là phần chung, mỗi nơi chạy một overlay.
+Cả hệ chạy trên Kubernetes (#36, `Documents/21` D13): ba tiến trình `api`, `worker`, `realtime` cùng một image, FE (image của repo FE), Kafka, Caddy làm cổng vào, Prometheus và Grafana có dashboard. Viết bằng Kustomize: `base/` là phần chung, mỗi nơi chạy một overlay.
 
 ```
                          ┌─ /api/v1/notification/stream* ─► realtime:3002 ─┐
 trình duyệt ──► caddy ───┼─ /api/*                        ─► api:3000      ├─► PostgreSQL (ngoài cluster)
- (LoadBalancer)          └─ /  (dist/ của FE)                worker ───────┘
+ (LoadBalancer)          └─ /                             ─► fe:80         worker ───────┘
                                                              api, worker, realtime ◄─► kafka
 prometheus ──► /metrics của api:9464, worker:3001, realtime:3003 (cổng tên "metrics")
 grafana ──► prometheus          (cả hai chỉ có ClusterIP, mở bằng kubectl port-forward)
@@ -13,10 +13,10 @@ grafana ──► prometheus          (cả hai chỉ có ClusterIP, mở bằng
 
 | Overlay | Nơi chạy | Image | Database |
 |---|---|---|---|
-| `overlays/local` | Kubernetes của Docker Desktop | `commerio-backend:local` tự build | DB Docker của máy qua `host.docker.internal` |
-| `overlays/vps` | k3s trên VPS staging, thay compose của `deploy/staging` | `ghcr.io/da-ec-system/commerio-backend` (amd64 + arm64) | Supabase |
+| `overlays/local` | Kubernetes của Docker Desktop | `commerio-backend:local`, `commerio-fe:local` tự build | DB Docker của máy qua `host.docker.internal` |
+| `overlays/vps` | k3s trên VPS staging | `ghcr.io/da-ec-system/commerio-backend`, `ghcr.io/da-ec-system/commerio-fe` (amd64 + arm64) | Supabase |
 
-- Caddyfile ở `base/caddy/` chép nguyên `deploy/staging/Caddyfile`; CI (`.github/workflows/k8s.yml`) báo đỏ nếu hai file khác nhau.
+- FE là Deployment `fe` chạy image của repo FE (`Dockerfile` ở gốc repo đó: build `dist/`, Caddy trong image phục vụ SPA ở cổng 8080). Caddy cổng vào chuyển `/` sang Service `fe`, `/api` sang `api`: cùng origin (V38).
 - Migration **không** chạy trong cluster: runner CI chạy trước khi đổi image (`Documents/21` V36, workflow `deploy-staging.yml`). Trên máy: `npm run db:migrate` trỏ đúng database.
 - Không có Redis (code chưa dùng). `api` một bản sao vì rate limit đăng nhập đếm trong bộ nhớ.
 - Cấu hình Prometheus, luật cảnh báo, provisioning Grafana và dashboard nằm ở `deploy/monitoring/` (Kustomize không đọc file ngoài thư mục kustomization, nên thư mục đó có `kustomization.yaml` riêng).
@@ -48,7 +48,7 @@ Bật Kubernetes trong Docker Desktop (Settings → Kubernetes), cần thêm kho
    docker compose -f deploy/compose.yaml exec postgres createdb -U commerio commerio_k8s
    DATABASE_URL=<chuỗi postgres:// tới localhost:5432/commerio_k8s, user và mật khẩu dev như deploy/compose.yaml> npm run db:migrate
    ```
-2. **Image:** `docker build -f deploy/docker/Dockerfile -t commerio-backend:local .` (Docker Desktop dùng chung kho image với Kubernetes). Build lại khi cluster đang chạy thì tag không đổi, pod không tự thay: `$K rollout restart deploy/api deploy/worker deploy/realtime`.
+2. **Image:** `docker build -f deploy/docker/Dockerfile -t commerio-backend:local .`, và ở gốc repo FE: `docker build -t commerio-fe:local .` (Docker Desktop dùng chung kho image với Kubernetes). Build lại khi cluster đang chạy thì tag không đổi, pod không tự thay: `$K rollout restart deploy/api deploy/worker deploy/realtime deploy/fe`.
 3. **Bí mật:** chép `overlays/local/.env.example` → `.env` và `overlays/local/grafana/.env.example` → `grafana/.env`, điền (mật khẩu Grafana để trống thì Grafana dùng `admin/admin`). Giá trị **không** đặt trong dấu nháy (Kustomize giữ nguyên dấu nháy). Hai file đã gitignore.
 4. **Chạy:** `kubectl --context docker-desktop apply -k deploy/k8s/overlays/local`, chờ `$K get pods` đều `Running` và `READY 1/1` (khoảng 30 giây). Lần đầu `worker`, `realtime` ghi vài giây lỗi `Connection refused` tới `kafka:9092` rồi tự nối lại khi Kafka sẵn sàng.
 5. **Mở:** ứng dụng ở `http://localhost:8036` (`/api/docs` là Swagger). LoadBalancer của Docker Desktop nghe mọi địa chỉ của máy (`::`:8036), khác compose chỉ mở `127.0.0.1`: tắt cluster khi ngồi mạng lạ. Caddy không có `/health` (mọi đường dẫn ngoài `/api` là FE), nên kiểm qua `/api`: `curl -i localhost:8036/api/v1/identity/me` ra 401. Muốn gọi thẳng `api`: `$K port-forward svc/api 3036:3000`.
@@ -62,13 +62,20 @@ Thử nhanh:
 
 ## Lên VPS (k3s)
 
-Chưa chạy thật (chờ VPS). Thay compose của `deploy/staging` trên cùng máy; muốn quay lại thì `k3s-killall.sh` rồi `docker compose up -d` như `deploy/staging/README.md`.
+Chạy trên VPS staging từ 20/10/2026 (Ubuntu 24.04, 2 vCPU, 4 GB). Secret, log, deploy lại: `deploy/staging/README.md`.
 
 1. Cài k3s không có Traefik (Caddy giữ cổng 80/443 qua ServiceLB của k3s): `curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -`. Không mở cổng 6443 ra ngoài; deploy chạy `kubectl` trên chính VPS qua SSH. Máy sau NAT (IP công khai NAT 1:1) **không** đặt `--node-external-ip` khi dùng `externalTrafficPolicy: Local`.
 2. Secret kéo image GHCR private (PAT `read:packages`, như `GHCR_PULL_TOKEN` của #37):
    `kubectl -n commerio create secret docker-registry ghcr --docker-server=ghcr.io --docker-username=<tài khoản> --docker-password=<PAT>` (tạo namespace trước: `kubectl create namespace commerio`).
-3. Điền `overlays/vps/.env` (DB Supabase, JWT), `grafana/.env`, `caddy/.env` (`SITE_ADDRESS=<tên miền>`), không dấu nháy. FE: `dist/` chép vào `/opt/commerio/site`.
-4. `kubectl apply -k deploy/k8s/overlays/vps`. Đổi image theo commit: `kubectl -n commerio set image deploy/api api=ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (tương tự `worker`, `realtime`).
+3. Điền `overlays/vps/.env` (DB Supabase, JWT), `grafana/.env`, `caddy/.env` (`SITE_ADDRESS=<tên miền>`), không dấu nháy.
+4. `kubectl apply -k deploy/k8s/overlays/vps`. Sửa manifest sau này thì chép thư mục `deploy/` mới lên máy rồi apply lại (giữ các file `.env`); apply đặt lại tag `develop`, tức bản mới nhất đã qua CI.
+5. Tài khoản deploy cho CI: `bash deploy/k8s/overlays/vps/ci-deploy/setup.sh` (root). Script tạo user `ci-deploy`, cài `/usr/local/bin/commerio-deploy`, viết kubeconfig từ token của ServiceAccount `ci-deployer` (`overlays/vps/ci-deployer.yaml`: chỉ `get`/`patch` 4 Deployment `api`, `worker`, `realtime`, `fe`, không đọc Secret), và sinh một khoá cho mỗi repo chưa có. Khoá trong `authorized_keys` có `restrict` và forced command, nên chỉ chạy được `commerio-deploy fe` hoặc `commerio-deploy backend` với một tag dạng `sha-<7 ký tự>`: không shell, không chuyển cổng. Đưa khoá riêng vào secret rồi xoá, không in ra màn hình:
+   ```bash
+   ssh <vps> 'cat /root/ci-deploy-backend.key' | gh secret set STAGING_SSH_KEY --repo DA-EC-System/commerio-backend
+   ssh <vps> 'cat /root/ci-deploy-fe.key' | gh secret set STAGING_SSH_KEY --repo DA-EC-System/FE
+   ssh <vps> 'shred -u /root/ci-deploy-*.key'
+   ```
+   Đổi image bằng tay: `kubectl -n commerio set image deploy/api api=ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (tương tự `worker`, `realtime`, `fe`).
 
 Tổng `requests` khoảng 570m CPU, 1,7 GiB RAM, cộng k3s; máy 2 GB không đủ, 4 GB đủ. Đo trên Docker Desktop (19/10/2026, cgroup `memory.peak` sau smoke và rolling update): Kafka 586Mi, Grafana 182Mi, api 73Mi, worker 72Mi, realtime 61Mi, Prometheus 42Mi, Caddy 16Mi, đều dưới `limits`. Đo lại bằng panel RAM của dashboard khi có tải thật.
 
