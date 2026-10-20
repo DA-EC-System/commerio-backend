@@ -71,12 +71,14 @@ spec:
           ports:
             - name: broker
               containerPort: 9092
+          # Chỉ kiểm cổng: kafka-broker-api-versions.sh khởi động một JVM mỗi lần (~2 s, 1,4 nhân), 10 s một lần
+          # là ~0,3 nhân thường trực trên VPS 2 nhân (dashboard "Máy VPS", 20/10/2026). Cổng có thể mở trước khi
+          # broker nhận yêu cầu được; worker, realtime tự nối lại nếu gọi sớm.
           readinessProbe:
-            exec:
-              command: ["sh", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-            initialDelaySeconds: 20
+            tcpSocket:
+              port: broker
+            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 10
           volumeMounts:
             - name: data
               mountPath: /var/lib/kafka/data
