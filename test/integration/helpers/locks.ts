@@ -5,7 +5,8 @@ import { testPool } from './db.ts';
 
 /**
  * Số phiên đang chờ sau `holderPid`: chờ thẳng, cộng phiên chờ sau các phiên đó (khoá dòng xếp hàng: phiên sau bị
- * phiên trước chặn, không phải `holder`). Chỉ đếm phiên của lượt này, file test khác chạy song song không làm sai số.
+ * phiên trước chặn, không phải `holder`). Tầng một chỉ có phiên chờ `holder` của lượt này; tầng hai có thể lẫn phiên của
+ * file khác nếu nó chờ đúng khoá mà request đua đang giữ (hiếm), khi đó số đếm lệch và hàm gọi ném lỗi rõ.
  */
 async function blockedBehind(holderPid: number): Promise<number> {
   const r = await testPool().query<{ n: number }>(

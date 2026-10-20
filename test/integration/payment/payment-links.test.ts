@@ -223,19 +223,19 @@ describe('POST /payment/orders/:orderId/links', () => {
     const o = await order(s);
     // Trigger chỉ làm hỏng nhật ký mã thanh toán của công ty này (file test khác chạy song song không bị ảnh hưởng).
     await testPool().query(`
-      create or replace function audit.loi_nhat_ky_ma_tt() returns trigger language plpgsql as $$
+      create or replace function audit.fail_payment_link_audit() returns trigger language plpgsql as $$
       begin
         if new.entity_type = 'payment.payment_links' and new.company_id = '${s.companyId}' then raise exception 'lỗi giả'; end if;
         return new;
       end $$;
-      drop trigger if exists loi_nhat_ky_ma_tt on audit.audit_logs;
-      create trigger loi_nhat_ky_ma_tt before insert on audit.audit_logs for each row execute function audit.loi_nhat_ky_ma_tt();`);
+      drop trigger if exists fail_payment_link_audit on audit.audit_logs;
+      create trigger fail_payment_link_audit before insert on audit.audit_logs for each row execute function audit.fail_payment_link_audit();`);
     try {
       expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(500);
       expect(await linksOf(o.orderId)).toHaveLength(0);
       expect(await orderPaymentOf(o.orderId)).toBeUndefined();
     } finally {
-      await testPool().query('drop trigger if exists loi_nhat_ky_ma_tt on audit.audit_logs; drop function if exists audit.loi_nhat_ky_ma_tt();');
+      await testPool().query('drop trigger if exists fail_payment_link_audit on audit.audit_logs; drop function if exists audit.fail_payment_link_audit();');
     }
     expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(201);
     expect(await auditCount(s.companyId)).toBe(1);
