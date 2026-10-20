@@ -86,7 +86,7 @@ Dashboard "Commerio" (`deploy/monitoring/dashboards/commerio.json`, cũng nạp 
 
 Dashboard "Máy VPS" (`deploy/monitoring/dashboards/vps.json`, chỉ có số liệu ở overlay `vps`): CPU theo loại (cả `steal`), RAM và swap, tải hệ thống so với số nhân, ổ `/`, mạng, đọc ghi đĩa. Số liệu lấy từ `prometheus-node-exporter` cài thẳng trên VPS (job `node`, `overlays/vps/node-exporter.yaml`).
 
-Mở Grafana và Prometheus của VPS từ máy mình: `bash deploy/k8s/overlays/vps/monitor.sh` (PowerShell: `.\deploy\k8s\overlaysps\monitor.ps1`; tham số là Host SSH, mặc định `commerio_vps`). Script chép mật khẩu admin Grafana vào clipboard, mở `http://localhost:3031` (Grafana) và `http://localhost:9091/alerts` (Prometheus) qua một đường hầm SSH; Ctrl+C để đóng, port-forward trên VPS tắt theo.
+Mở Grafana và Prometheus của VPS từ máy mình: `bash deploy/k8s/overlays/vps/monitor.sh` (PowerShell: `.\deploy\k8s\overlays\vps\monitor.ps1`; tham số là Host SSH, mặc định `commerio_vps`). Script chép mật khẩu admin Grafana vào clipboard, mở `http://localhost:3031` (Grafana) và `http://localhost:9091/alerts` (Prometheus) qua một đường hầm SSH; Ctrl+C để đóng, port-forward trên VPS tắt theo.
 
 Luật cảnh báo (`deploy/monitoring/rules/alerts.yml`, test ở `alerts.test.yml`) hiện ở `/alerts` của Prometheus, chưa gửi đi đâu:
 
