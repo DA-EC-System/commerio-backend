@@ -72,6 +72,29 @@ export async function withCompany<T>(companyId: string, fn: (tx: Transaction) =>
   });
 }
 
+/**
+ * Chạy `fn` khi giữ được khoá advisory **phiên** `hashtextextended(key, 0)` trên một kết nối riêng; phiên khác đang giữ
+ * thì trả `'busy'` ngay. Cho việc nền kéo dài qua nhiều giao dịch và lời gọi mạng, nơi khoá giao dịch không giữ được.
+ * `fn` chạy ngoài giao dịch (tự mở `withCompany`). Xong thì nhả khoá rồi huỷ kết nối, không trả về pool.
+ * Cần kết nối giữ phiên (PostgreSQL thẳng, Supabase Session pooler); PgBouncer chế độ transaction không giữ được khoá.
+ */
+export async function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T | 'busy'> {
+  rootDb();
+  const client = await pool!.connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      'select pg_try_advisory_lock(hashtextextended($1, 0)) as locked',
+      [key],
+    );
+    return rows[0]!.locked ? await fn() : 'busy';
+  } finally {
+    // Nhả ngay phía server: huỷ kết nối không chờ phiên đóng, lượt liền sau có thể còn thấy khoá. Lỗi nhả (kết nối
+    // đứt) thì thôi, phiên chết cũng nhả khoá; không che lỗi của `fn`.
+    await client.query('select pg_advisory_unlock_all()').catch(() => undefined);
+    client.release(true);
+  }
+}
+
 /** Công ty của giao dịch đang mở bằng withCompany; `null` khi ở ngoài. */
 export function currentCompanyId(): string | null {
   return current.getStore()?.companyId ?? null;

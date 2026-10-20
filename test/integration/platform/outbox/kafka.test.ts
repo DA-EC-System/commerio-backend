@@ -144,7 +144,7 @@ describe('relay', () => {
     const holder = await testPool().connect();
     try {
       await holder.query('begin');
-      await holder.query('select pg_advisory_xact_lock(hashtext($1))', [`platform.outbox_relay:${prefix}`]);
+      await holder.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`platform.outbox_relay:${prefix}`]);
       expect(await relay.tick()).toBe('busy');
       expect(await unpublished([id])).toBe(1);
     } finally {

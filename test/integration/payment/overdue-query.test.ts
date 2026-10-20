@@ -124,3 +124,67 @@ describe('runOverdueQuery (AC-19)', () => {
     expect((await moneyRows(l.companyId)).receipts).toHaveLength(1);
   });
 });
+
+describe('runOverdueQuery: một lượt mỗi lúc (#63 B20, Documents/21 §12.4 "giữ advisory lock")', () => {
+  it('hai lượt chạy song song (hai bản sao worker): mỗi mã chỉ hỏi cổng một lần, một lượt trả busy', async () => {
+    const l = await linkedOrder('zalopay');
+    await overdue(l);
+    const asked: string[] = [];
+    // Cổng giả giữ lượt A ở lần hỏi đầu tới khi lượt B xong: không dựa vào thời gian.
+    let entered!: () => void;
+    const inFetch = new Promise<void>((resolve) => (entered = resolve));
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      asked.push(/CM[A-Z0-9]{10}/.exec(String(init?.body ?? ''))?.[0] ?? '');
+      entered();
+      await gate;
+      return new Response(JSON.stringify({ return_code: 2 }), { status: 200 });
+    });
+    const first = runOverdueQuery(ctx, NOW);
+    await inFetch;
+    const second = runOverdueQuery(ctx, NOW);
+    // Có khoá: B trả busy ngay. Thiếu khoá: B đọc cùng lô và hỏi lại rồi kẹt ở cổng; thả cổng sau 2 giây để test đỏ
+    // (B không busy) thay vì treo.
+    const fallback = setTimeout(open, 2_000);
+    try {
+      expect(await second).toBe('busy');
+    } finally {
+      clearTimeout(fallback);
+      open();
+      await first;
+    }
+    expect(asked.filter((code) => code === l.link.paymentCode)).toHaveLength(1);
+    expect(await linkStatus(l.link.id)).toBe('expired');
+  });
+
+  it('phiên khác đang giữ khoá tra cứu → lượt này trả busy, không hỏi cổng, mã giữ active; nhả khoá thì lượt sau chạy', async () => {
+    const l = await linkedOrder('zalopay');
+    await overdue(l);
+    const asked = fakeGateways({});
+    const holder = await testPool().connect();
+    try {
+      await holder.query("select pg_advisory_lock(hashtextextended('payment.overdue_query', 0))");
+      expect(await runOverdueQuery(ctx, NOW)).toBe('busy');
+      expect(asked).toEqual([]);
+      expect(await linkStatus(l.link.id)).toBe('active');
+    } finally {
+      await holder.query("select pg_advisory_unlock(hashtextextended('payment.overdue_query', 0))");
+      holder.release();
+    }
+    await runOverdueQuery(ctx, NOW);
+    expect(await linkStatus(l.link.id)).toBe('expired');
+  });
+
+  it('lượt ném lỗi vẫn nhả khoá: lượt sau chạy được', async () => {
+    const l = await linkedOrder('zalopay');
+    await overdue(l);
+    // Lỗi của từng mã bị nuốt trong vòng lặp; lỗi lọt ra khỏi lượt là lỗi đọc danh sách mã. Gây nó bằng cách gọi lượt
+    // trong `withCompany`: `findOverdueLinksAnyCompany` ném lỗi lập trình khi đứng trong giao dịch của một công ty.
+    const { withCompany } = await import('#src/shared/db/client.ts');
+    await expect(withCompany(l.companyId, () => runOverdueQuery(ctx, NOW))).rejects.toThrow('findOverdueLinksAnyCompany');
+    fakeGateways({});
+    expect(await runOverdueQuery(ctx, NOW)).toBeUndefined();
+    expect(await linkStatus(l.link.id)).toBe('expired');
+  });
+});

@@ -9,7 +9,7 @@ export type InvoiceRow = typeof salesInvoices.$inferSelect;
  * tự, bên sau thấy hoá đơn bên trước đã commit thay vì đụng unique một phần (23505).
  */
 export async function lockInvoiceOfOrder(orderId: string): Promise<void> {
-  await getDb().execute(sql`select pg_advisory_xact_lock(hashtext(${`finance.invoice:${orderId}`}))`);
+  await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${`finance.invoice:${orderId}`}, 0))`);
 }
 
 /** Hoá đơn `posted` chưa bị đảo của đơn (tối đa một, unique một phần). */
