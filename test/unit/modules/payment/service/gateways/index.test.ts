@@ -31,7 +31,7 @@ describe('VNPay (không gọi mạng)', () => {
   const creds = { tmnCode: 'TESTCODE', hashSecret: 'SECRETHASHKEY123' };
 
   it('dựng URL vpcpay đủ tham số, tiền × 100, giờ VN, ký HMAC-SHA512 trên tham số sắp xếp', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch');
+    const spy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('không được gọi mạng'));
     const out = await GatewayFactory.of('vnpay').createPayment(input, creds, signal);
     expect(spy).not.toHaveBeenCalled();
     const url = new URL(out.payUrl!);
@@ -160,7 +160,7 @@ describe('ZaloPay', () => {
 
 describe('VietQR (không gọi mạng)', () => {
   it('chuỗi EMVCo tới tài khoản công ty, nội dung là mã thanh toán', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch');
+    const spy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('không được gọi mạng'));
     const creds = { bankBin: '970422', accountNo: '0123456789', accountName: 'CONG TY THU', sepayApiKey: 'SEPAY-KEY-1234' };
     const out = await GatewayFactory.of('vietqr').createPayment(input, creds, signal);
     expect(spy).not.toHaveBeenCalled();

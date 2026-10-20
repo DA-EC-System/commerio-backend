@@ -1,9 +1,11 @@
+import type { PoolClient } from 'pg';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, testApp } from '../helpers/http.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 import { lockCompany, setModuleEnabled, suspendMembership } from '../helpers/state.ts';
 
 // API vai trò và quyền (commerio-backend#8, UC-PI-06, Documents/21 mục 3, D2, D3).
@@ -302,6 +304,29 @@ describe('PUT /identity/roles/:id', () => {
     expect(await auditOf(r1.id)).toHaveLength(2);
   });
 
+  it('AC-11: PUT tên hoặc quyền sai → 422 theo ô name / permissions, vai trò không đổi', async () => {
+    const a = await companyWithAdmin();
+    const role = await createRole(a.admin.token, 'Giữ nguyên', ['sales.order.view']);
+    const before = await roleRow(role.id);
+    const cases: [object, string][] = [
+      [{ permissions: ['sales.order.view'] }, 'name'],
+      [{ name: '   ', permissions: ['sales.order.view'] }, 'name'],
+      [{ name: 'x'.repeat(61), permissions: ['sales.order.view'] }, 'name'],
+      [{ name: 'Rỗng' }, 'permissions'],
+      [{ name: 'Rỗng', permissions: [] }, 'permissions'],
+      [{ name: 'Lạ', permissions: ['catalog.product.fly'] }, 'permissions'],
+      [{ name: 'Nền tảng', permissions: ['platform.audit.view'] }, 'permissions'],
+    ];
+    for (const [body, field] of cases) {
+      const res = await call('put', `/roles/${role.id}`, a.ceo.token, { ...body, version: 1 });
+      expect(res.status, JSON.stringify(body)).toBe(422);
+      expect(res.body.code).toBe('validation_failed');
+      expect(Object.keys(res.body.errors)).toContain(field);
+    }
+    expect(await roleRow(role.id)).toEqual(before);
+    expect(await auditOf(role.id)).toHaveLength(1);
+  });
+
   it('AC-13: Admin thêm quyền mình không có, hoặc sửa/xoá vai trò đang có quyền đó → 403, không đổi', async () => {
     const a = await companyWithAdmin();
     const own = await createRole(a.admin.token, 'Kho cơ bản', ['inventory.stock.view']);
@@ -386,6 +411,23 @@ describe('PUT /identity/roles/:id', () => {
     expect((await roleRow(role.id))?.permissions).toEqual(['catalog.product.view', 'purchasing.order.manage']);
   });
 
+  it('AC-D2b: Admin sửa vai trò đang giữ quyền phân hệ tắt mà Admin không mang → 403 permission_not_held, không đổi', async () => {
+    const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
+    const admin = await addMember(companyId, 'admin');
+    expect(ADMIN_PERMS).not.toContain('purchasing.order.manage');
+    const role = await createRole(ceo.token, 'Mua hàng', ['purchasing.order.manage', 'catalog.product.view']);
+    await setModuleEnabled(companyId, 'purchasing', false);
+    const before = await roleRow(role.id);
+    const res = await call('put', `/roles/${role.id}`, admin.token, {
+      name: 'Mua hàng (tạm dừng)',
+      permissions: ['catalog.product.view'],
+      version: 1,
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('permission_not_held');
+    expect(await roleRow(role.id)).toEqual(before);
+  });
+
   it('S-3: bỏ quyền khỏi vai trò tuỳ biến → người mang vai trò bị chặn ngay ở lần gọi kế tiếp (D1)', async () => {
     const a = await companyWithAdmin();
     const role = await createRole(a.admin.token, 'Xem vai trò', ['identity.role.view', 'catalog.product.view']);
@@ -395,6 +437,52 @@ describe('PUT /identity/roles/:id', () => {
     const res = await call('get', '/roles', member.token);
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('forbidden');
+  });
+});
+
+// Người khác đang ghi (chưa commit) nên bước kiểm trước khi ghi không thấy; ràng buộc DB chặn, service đổi thành 409.
+describe('chạy đua ghi vai trò (#8 plan 7b: 23505, 23503)', () => {
+  const insertRole = (companyId: string, name: string) => (holder: PoolClient) =>
+    holder.query("insert into access.roles (company_id, name, kind) values ($1, $2, 'custom')", [companyId, name]);
+
+  it('tạo vai trò cùng tên với vai trò đang được ghi → 409 role_name_taken, chỉ một vai trò', async () => {
+    const a = await companyWithAdmin();
+    const res = await raceBehindLock(insertRole(a.companyId, 'Đua tên'), 1, () =>
+      call('post', '/roles', a.admin.token, { name: 'Đua tên', permissions: ['sales.order.view'] }).then((r) => r),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_name_taken');
+    expect(res.body.errors).toHaveProperty('name');
+    expect(await roleCount(a.companyId)).toBe(1);
+  });
+
+  it('đổi tên trùng vai trò đang được ghi → 409 role_name_taken, vai trò không đổi', async () => {
+    const a = await companyWithAdmin();
+    const role = await createRole(a.admin.token, 'Tên cũ', ['sales.order.view']);
+    const before = await roleRow(role.id);
+    const res = await raceBehindLock(insertRole(a.companyId, 'Đua tên'), 1, () =>
+      call('put', `/roles/${role.id}`, a.admin.token, { name: 'Đua tên', permissions: ['sales.order.view'], version: 1 }).then((r) => r),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_name_taken');
+    expect(await roleRow(role.id)).toEqual(before);
+  });
+
+  it('xoá vai trò đang được gán cho nhân viên → 409 role_in_use, vai trò còn nguyên', async () => {
+    const a = await companyWithAdmin();
+    const role = await createRole(a.admin.token, 'Sắp gán', ['sales.order.view']);
+    const member = await addMember(a.companyId, 'sale');
+    const before = await roleRow(role.id);
+    const assign = (holder: PoolClient) =>
+      holder.query('insert into access.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
+        member.membershipId,
+        role.id,
+        a.companyId,
+      ]);
+    const res = await raceBehindLock(assign, 1, () => call('delete', `/roles/${role.id}?version=1`, a.admin.token).then((r) => r));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_in_use');
+    expect(await roleRow(role.id)).toEqual(before);
   });
 });
 
