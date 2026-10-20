@@ -87,6 +87,14 @@ export async function memberRoleRows(membershipIds: readonly string[]) {
     .where(inArray(memberRoles.membershipId, [...membershipIds]));
 }
 
+export async function membershipIdsWithRole(roleId: string): Promise<string[]> {
+  const rows = await getDb()
+    .select({ membershipId: memberRoles.membershipId })
+    .from(memberRoles)
+    .where(eq(memberRoles.roleId, roleId));
+  return rows.map((r) => r.membershipId);
+}
+
 /** Xoá mọi vai trò của membership rồi gán `roleIds`, trong giao dịch của bên gọi. */
 export async function replaceMemberRoleRows(membershipId: string, companyId: string, roleIds: readonly string[]): Promise<void> {
   const db = getDb();

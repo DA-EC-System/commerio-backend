@@ -1,6 +1,7 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../shared/http/openapi.ts';
 import { registerAccessOpenApi } from '../../access/index.ts';
+import { registerStaffOpenApi } from '../../staff/index.ts';
 import {
   ChangePasswordBody,
   GoogleLoginBody,
@@ -20,6 +21,7 @@ const bearer = [{ bearerAuth: [] }];
 export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
   registry.registerComponent('securitySchemes', 'bearerAuth', { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' });
   registerAccessOpenApi(registry);
+  registerStaffOpenApi(registry);
 
   registry.registerPath({
     method: 'post',

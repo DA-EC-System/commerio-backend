@@ -1,5 +1,5 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
-import { getDb } from '../../../shared/db/client.ts';
+import { and, count, eq, inArray, isNull, type SQL, sql } from 'drizzle-orm';
+import { getDb, requireCompanyId } from '../../../shared/db/client.ts';
 import { accounts, memberships } from './schema.ts';
 
 export interface AccountRow {
@@ -108,4 +108,108 @@ export async function findMembership(
     .innerJoin(accounts, eq(accounts.id, memberships.accountId))
     .where(and(eq(memberships.accountId, accountId), eq(memberships.companyId, companyId)));
   return row;
+}
+
+// Nhân viên trong công ty (#7 [B]). Các hàm dưới chạy trong withCompany: RLS của memberships chỉ cho thấy công ty
+// đang chọn; vẫn lọc thêm `company_id` cho rõ.
+
+export interface MemberRow {
+  membershipId: string;
+  accountId: string;
+  email: string;
+  fullName: string;
+  status: 'active' | 'suspended';
+  mustChangePassword: boolean;
+  joinedAt: Date;
+  version: number;
+}
+
+export interface StaffQuery {
+  search?: string;
+  status?: 'active' | 'locked';
+  page: number;
+  pageSize: number;
+}
+
+const memberColumns = {
+  membershipId: memberships.id,
+  accountId: accounts.id,
+  email: accounts.email,
+  fullName: accounts.fullName,
+  status: memberships.status,
+  mustChangePassword: accounts.mustChangePassword,
+  joinedAt: memberships.createdAt,
+  version: memberships.version,
+};
+
+export async function findMemberByAccount(accountId: string): Promise<MemberRow | undefined> {
+  const companyId = requireCompanyId('findMemberByAccount');
+  const [row] = await getDb()
+    .select(memberColumns)
+    .from(memberships)
+    .innerJoin(accounts, eq(accounts.id, memberships.accountId))
+    .where(and(eq(memberships.companyId, companyId), eq(memberships.accountId, accountId)));
+  return row;
+}
+
+/** Chuỗi tìm cho `ILIKE … ESCAPE '\'`: `\`, `%`, `_` của người dùng là ký tự thường, không phải ký tự đại diện. */
+const containsPattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+/** `membershipIds` (lọc theo vai trò, bên gọi lấy từ access) rỗng thì không có ai. */
+export async function listMembers(
+  query: StaffQuery & { membershipIds?: readonly string[] },
+): Promise<{ rows: MemberRow[]; total: number }> {
+  const companyId = requireCompanyId('listMembers');
+  if (query.membershipIds?.length === 0) return { rows: [], total: 0 };
+  const conditions: SQL[] = [eq(memberships.companyId, companyId)];
+  if (query.search) {
+    const pattern = containsPattern(query.search);
+    conditions.push(
+      sql`(${accounts.fullName} ilike ${pattern} escape '\\' or ${accounts.email} ilike ${pattern} escape '\\')`,
+    );
+  }
+  if (query.status) conditions.push(eq(memberships.status, query.status === 'locked' ? 'suspended' : 'active'));
+  if (query.membershipIds) conditions.push(inArray(memberships.id, [...query.membershipIds]));
+  const where = and(...conditions);
+  const db = getDb();
+  // Tuần tự: hai câu cùng một kết nối giao dịch.
+  const [counted] = await db
+    .select({ total: count() })
+    .from(memberships)
+    .innerJoin(accounts, eq(accounts.id, memberships.accountId))
+    .where(where);
+  const rows = await db
+    .select(memberColumns)
+    .from(memberships)
+    .innerJoin(accounts, eq(accounts.id, memberships.accountId))
+    .where(where)
+    .orderBy(accounts.fullName, memberships.id)
+    .limit(query.pageSize)
+    .offset((query.page - 1) * query.pageSize);
+  return { rows, total: counted?.total ?? 0 };
+}
+
+/** Tăng `version` của membership nếu khớp (đổi vai trò); `false` khi người khác vừa sửa. */
+export async function bumpMembershipVersion(id: string, version: number): Promise<boolean> {
+  const rows = await getDb()
+    .update(memberships)
+    .set({ version: sql`${memberships.version} + 1`, updatedAt: new Date() })
+    .where(and(eq(memberships.id, id), eq(memberships.version, version)))
+    .returning({ id: memberships.id });
+  return rows.length === 1;
+}
+
+/** Khoá, mở khoá: chỉ ghi khi `version` khớp và đang ở `from`; `false` khi người khác vừa sửa. */
+export async function updateMembershipStatus(
+  id: string,
+  version: number,
+  from: 'active' | 'suspended',
+  to: 'active' | 'suspended',
+): Promise<boolean> {
+  const rows = await getDb()
+    .update(memberships)
+    .set({ status: to, version: sql`${memberships.version} + 1`, updatedAt: new Date() })
+    .where(and(eq(memberships.id, id), eq(memberships.version, version), eq(memberships.status, from)))
+    .returning({ id: memberships.id });
+  return rows.length === 1;
 }

@@ -4,11 +4,10 @@ import type { ModuleDefinition } from '../../shared/module.ts';
 import { registerStaffOpenApi } from './api/openapi.ts';
 import { staffRouter } from './api/routes.ts';
 
-export const staffModule: ModuleDefinition = {
-  name: 'staff',
-  router: staffRouter,
-  openapi: registerStaffOpenApi,
-};
+export const staffModule: ModuleDefinition = { name: 'staff' };
+
+// Không gắn tại /api/v1/staff: identity gắn router này dưới /api/v1/identity (/identity/staff, Documents/21 I1).
+export { registerStaffOpenApi, staffRouter };
 
 export type { AccountRow, MembershipRow } from './repository/accounts.ts';
 export {

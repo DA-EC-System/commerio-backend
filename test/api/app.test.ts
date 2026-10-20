@@ -59,7 +59,9 @@ describe('khung api', () => {
 
   it('module đã gắn router rỗng vẫn trả 404 Problem Details cho đường dẫn chưa có (AC-12)', async () => {
     const mounted = modules.filter((m) => m.router).map((m) => m.name);
-    expect(mounted).toEqual(expect.arrayContaining(['catalog', 'pricing', 'inventory', 'sales', 'payment', 'finance', 'platform', 'staff', 'files']));
+    // `access`, `staff` không tự gắn: router của hai module này nằm dưới /api/v1/identity (Documents/21 I1, #7).
+    expect(mounted).toEqual(expect.arrayContaining(['catalog', 'pricing', 'inventory', 'sales', 'payment', 'finance', 'platform', 'files']));
+    expect(mounted).not.toContain('staff');
     for (const name of mounted) {
       const res = await request(app).get(`/api/v1/${name}/khong-ton-tai`);
       expect(res.status, name).toBe(404);
