@@ -35,4 +35,4 @@ Vai trò có sẵn và tuỳ biến, danh mục quyền (UC-PI-06). Hợp đồn
 
 `BUILTIN_ROLES`, `permissionModule`, `assignRole`, `rolesAndPermissions` (identity, staff dùng); `accessRouter`, `registerAccessOpenApi` (chỉ identity gắn).
 
-Cho staff (#7): `findRolesWithPermissions(roleIds)` (vai trò thấy được kèm quyền, cờ `isCeo`; id không thấy thì không có trong kết quả), `memberRolesOf(membershipIds)`, `replaceMemberRoles(membershipId, companyId, roleIds)` (xoá rồi gán trong giao dịch của bên gọi). Ba hàm chạy trong `withCompany` của bên gọi (`requireCompanyId`), ngoài đó thì ném lỗi lập trình.
+Cho staff (#7): `findRolesWithPermissions(roleIds)` (vai trò thấy được kèm quyền, cờ `isCeo`; id không thấy thì không có trong kết quả), `memberRolesOf(membershipIds)`, `replaceMemberRoles(membershipId, companyId, roleIds)` (xoá rồi gán trong giao dịch của bên gọi), `membershipIdsWithRole(roleId)` (lọc danh sách nhân viên theo vai trò). Bốn hàm chạy trong `withCompany` của bên gọi (`requireCompanyId`), ngoài đó thì ném lỗi lập trình.

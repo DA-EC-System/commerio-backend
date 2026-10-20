@@ -1,6 +1,7 @@
 import { createLocalJWKSet, errors, exportJWK, generateKeyPair, type JWTPayload, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { setGoogleKeySource, verifyGoogleCredential } from '#src/modules/identity/service/google.ts';
+import { googleLinkStep, setGoogleKeySource, verifyGoogleCredential } from '#src/modules/identity/service/google.ts';
+import type { AccountRow } from '#src/modules/staff/index.ts';
 
 const CLIENT_ID = 'test-client.apps.googleusercontent.com';
 let privateKey: CryptoKey;
@@ -86,4 +87,24 @@ describe('verifyGoogleCredential', () => {
       setGoogleKeySource(googleKeys);
     }
   });
+});
+
+// Tài khoản tìm theo email khi chưa thấy `sub` (#7 spec 6.7): request cùng người vừa liên kết xong giữa hai lần đọc.
+describe('googleLinkStep', () => {
+  const account = (googleSub: string | null): AccountRow => ({
+    id: 'a1',
+    email: 'a@x.vn',
+    fullName: 'A',
+    passwordHash: null,
+    mustChangePassword: false,
+    isPlatformAdmin: false,
+    passwordChangedAt: null,
+    googleSub,
+  });
+
+  it('không có tài khoản → not_found', () => expect(googleLinkStep(undefined, 'g-1')).toBe('not_found'));
+  it('chưa liên kết → link', () => expect(googleLinkStep(account(null), 'g-1')).toBe('link'));
+  it('đã liên kết đúng sub này (request khác vừa ghi) → linked, không 401', () =>
+    expect(googleLinkStep(account('g-1'), 'g-1')).toBe('linked'));
+  it('đã liên kết sub khác → not_found', () => expect(googleLinkStep(account('g-2'), 'g-1')).toBe('not_found'));
 });

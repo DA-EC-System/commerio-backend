@@ -23,7 +23,7 @@
 - Access token: JWT EdDSA 15 phút, mang `sub` (tài khoản), `cid` (công ty), `perms` (đã bỏ quyền của phân hệ chưa bật), `pwc` (còn mật khẩu thư mời). Ký và kiểm ở `src/shared/auth/`.
 - Còn mật khẩu thư mời: chỉ `me`, `change-password`, `refresh`, `logout` chạy được. Đổi xong, mọi phiên khác mất refresh token (cookie cũ hết hiệu lực); phản hồi đặt cookie mới, FE gọi `refresh` bằng cookie đó để lấy token không còn `pwc`. Mọi access token đã phát trước lần đổi (kể cả của chính phiên vừa đổi) bị 401 ở request kế tiếp: token mang dấu `password_changed_at` (claim `pca`), `authorize`, kênh SSE, `me`, `select-company`, `change-password` so với DB (#62). Token còn `pwc` vẫn ra 403 `password_change_required` trước bước này ở route không cho phép `pwc`.
 - Không thuộc công ty trả 404 `not_found`; công ty khoá 403 `company_locked`; tài khoản khoá trong công ty 403 `account_locked`.
-- `login`, `google`, `register` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP (chung bộ đếm); `change-password` giới hạn 5 lần lỗi mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). Bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis.
+- `login`, `google`, `register` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP, mỗi API một bộ đếm riêng; `change-password` giới hạn 5 lần lỗi mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). Bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis.
 
 ## Cho module khác
 

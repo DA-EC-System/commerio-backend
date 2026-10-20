@@ -99,7 +99,8 @@ async function lostRace(accountId: string): Promise<AppError> {
 /** Đích là CEO hoặc chính mình: 403 trước mọi bước khác (sau 404). */
 async function loadTarget(caller: Caller, accountId: string) {
   const target = await loadMember(accountId);
-  if (isProtectedTarget({ callerId: caller.accountId, targetId: accountId, targetRoles: target.roles })) {
+  // So bằng id đọc từ DB: uuid trong URL có thể viết hoa (PostgreSQL vẫn tìm thấy) mà id trong token viết thường.
+  if (isProtectedTarget({ callerId: caller.accountId, targetId: target.row.accountId, targetRoles: target.roles })) {
     throw protectedAccount();
   }
   return target;

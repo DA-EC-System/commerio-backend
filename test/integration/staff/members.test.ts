@@ -5,6 +5,7 @@ import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, testApp } from '../helpers/http.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 
 const app = testApp();
 const db = testPool();
@@ -15,9 +16,10 @@ const putRoles = (token: string, accountId: string, body: object) =>
 const lock = (token: string, accountId: string, version: number, action: 'lock' | 'unlock' = 'lock') =>
   request(app).post(`/api/v1/identity/staff/${accountId}/${action}`).set('Authorization', `Bearer ${token}`).send({ version });
 const memberAudits = (membershipId: string) =>
-  db.query("select action, before, after from audit.audit_logs where entity_type = 'staff.memberships' and entity_id = $1", [
-    membershipId,
-  ]);
+  db.query(
+    "select action, before, after from audit.audit_logs where entity_type = 'staff.memberships' and entity_id = $1 order by id",
+    [membershipId],
+  );
 
 async function rename(accountId: string, fullName: string) {
   await db.query('update staff.accounts set full_name = $2 where id = $1', [accountId, fullName]);
@@ -137,6 +139,16 @@ describe('đổi vai trò', () => {
     }
   });
 
+  it('AC-B4: id của chính mình viết hoa vẫn là chính mình → 403 protected_account, không tự khoá được', async () => {
+    const a = await createCompany();
+    const admin = await addMember(a.companyId, 'admin');
+    const custom = await createCustomRole(a.companyId, ['identity.account.view']);
+    const upper = admin.accountId.toUpperCase();
+    expect((await putRoles(admin.token, upper, { roleIds: [custom], version: 1 })).body.code).toBe('protected_account');
+    expect((await lock(admin.token, upper, 1)).body.code).toBe('protected_account');
+    expect((await get('/api/v1/identity/staff', admin.token)).status).toBe(200);
+  });
+
   it('AC-B6: version lệch → 409 version_conflict kèm current mới nhất, không đổi gì, không ghi nhật ký', async () => {
     const a = await createCompany();
     const target = await addMember(a.companyId, 'sale');
@@ -182,7 +194,12 @@ describe('khoá, mở khoá', () => {
   it('hai lần khoá cùng version chạy song song: một 200, một 409', async () => {
     const a = await createCompany();
     const target = await addMember(a.companyId, 'sale');
-    const [x, y] = await Promise.all([lock(a.ceo.token, target.accountId, 1), lock(a.ceo.token, target.accountId, 1)]);
+    // Cả hai đã qua bước so version rồi mới tới câu ghi: người sau chỉ bị chặn ở UPDATE có điều kiện.
+    const [x, y] = await raceBehindLock(
+      (holder) => holder.query('select 1 from staff.memberships where id = $1 for update', [target.membershipId]),
+      2,
+      () => Promise.all([lock(a.ceo.token, target.accountId, 1), lock(a.ceo.token, target.accountId, 1)]),
+    );
     expect([x.status, y.status].sort()).toEqual([200, 409]);
     expect((await memberAudits(target.membershipId)).rows).toHaveLength(1);
   });

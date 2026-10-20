@@ -98,6 +98,17 @@ async function linkAccount(account: AccountRow, sub: string): Promise<void> {
   if ((await findAccountById(account.id))?.googleSub !== sub) throw accountNotFound();
 }
 
+/**
+ * Việc cần làm với tài khoản tìm theo email khi chưa tìm thấy theo `sub`. Đã gắn đúng `sub` này: request khác của cùng
+ * người vừa liên kết xong giữa hai lần đọc, coi như đã liên kết (spec #7 mục 6.7). Gắn `sub` khác: không đổi liên kết
+ * (Documents/21 V11).
+ */
+export function googleLinkStep(account: AccountRow | undefined, sub: string): 'link' | 'linked' | 'not_found' {
+  if (!account) return 'not_found';
+  if (account.googleSub === null) return 'link';
+  return account.googleSub === sub ? 'linked' : 'not_found';
+}
+
 /** UC-PI-03 extend: đăng nhập bằng Google, phản hồi như `/login`. */
 export async function loginWithGoogle(credential: string): Promise<LoginResult> {
   let identity;
@@ -111,10 +122,10 @@ export async function loginWithGoogle(credential: string): Promise<LoginResult> 
     let account = await findAccountByGoogleSub(identity.sub);
     if (!account) {
       const byEmail = await findAccountByEmail(identity.email);
-      // Đã gắn `sub` khác: không đổi liên kết (Documents/21 V11).
-      if (!byEmail || byEmail.googleSub !== null) throw accountNotFound();
-      await linkAccount(byEmail, identity.sub);
-      account = byEmail;
+      const step = googleLinkStep(byEmail, identity.sub);
+      if (step === 'not_found') throw accountNotFound();
+      if (step === 'link') await linkAccount(byEmail!, identity.sub);
+      account = byEmail!;
     }
     const session = await startSession(account);
     countLogin('google', 'ok');

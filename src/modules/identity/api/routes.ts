@@ -61,7 +61,7 @@ export function identityRouter(ctx: ModuleContext): Router {
     res.json(result);
   });
 
-  // Chỉ đăng nhập tài khoản đã có, không đăng ký (#7 [A]). Dùng chung bộ đếm theo IP với /login.
+  // Chỉ đăng nhập tài khoản đã có, không đăng ký (#7 [A]). Giới hạn theo IP như /login (bộ đếm riêng).
   router.post('/google', authLimiter(), validate({ body: GoogleLoginBody }), async (_req, res) => {
     const { refreshToken, ...result } = await loginWithGoogle(body<typeof GoogleLoginBody>(res).credential);
     setRefreshCookie(res, refreshToken);

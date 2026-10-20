@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { errors } from 'jose';
+import type { PoolClient } from 'pg';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
@@ -7,6 +8,7 @@ import { setGoogleKeySource } from '#src/modules/identity/service/google.ts';
 import { addMember, createCompany, registerCompany, uniqueEmail } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { refreshCookie, testApp } from '../helpers/http.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 import { lockCompany, suspendMembership } from '../helpers/state.ts';
 import { useFakeGoogle } from './helpers.ts';
 
@@ -142,20 +144,36 @@ describe('đăng nhập Google', () => {
     expect(select.body.code).toBe('password_change_required');
   });
 
-  it('chạy đua: hai lần liên kết cùng tài khoản với hai sub khác nhau → đúng một 200, một 401', async () => {
+  // Giao dịch giữ khoá đóng vai request kia đang liên kết dở: request đua đã đọc thấy `google_sub` trống, chỉ bị chặn
+  // ở câu UPDATE có điều kiện, rồi đọc lại sau khi bên kia commit.
+  const linkingInFlight = (email: string, sub: string) => (holder: PoolClient) =>
+    holder.query('update staff.accounts set google_sub = $2 where email = $1', [email, sub]);
+
+  it('chạy đua: hai lần liên kết cùng tài khoản với hai sub khác nhau → request sau 401, giữ liên kết trước', async () => {
     const { email } = await registerCompany();
-    const [x, y] = await Promise.all([
+    const first = `g-${randomUUID()}`;
+    const res = await raceBehindLock(linkingInFlight(email, first), 1, async () =>
       google(await googleToken({ email, sub: `g-${randomUUID()}` })),
-      google(await googleToken({ email, sub: `g-${randomUUID()}` })),
-    ]);
-    expect([x.status, y.status].sort()).toEqual([200, 401]);
-    expect((await linkLogs((await account(email)).id)).rows).toHaveLength(1);
+    );
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('google_account_not_found');
+    expect((await account(email)).google_sub).toBe(first);
   });
 
-  it('chạy đua: hai lần đăng nhập cùng sub lần đầu → cả hai 200, một dòng nhật ký', async () => {
+  it('chạy đua: hai lần đăng nhập cùng sub lần đầu → request sau vẫn 200, không ghi nhật ký lần hai', async () => {
     const { email } = await registerCompany();
     const sub = `g-${randomUUID()}`;
-    const [x, y] = await Promise.all([google(await googleToken({ email, sub })), google(await googleToken({ email, sub }))]);
+    const credential = await googleToken({ email, sub });
+    const res = await raceBehindLock(linkingInFlight(email, sub), 1, () => google(credential));
+    expect(res.status).toBe(200);
+    expect((await linkLogs((await account(email)).id)).rows).toHaveLength(0);
+  });
+
+  it('Promise.all hai lần liên kết cùng sub → cả hai 200, đúng một dòng nhật ký', async () => {
+    const { email } = await registerCompany();
+    const sub = `g-${randomUUID()}`;
+    const credential = await googleToken({ email, sub });
+    const [x, y] = await Promise.all([google(credential), google(credential)]);
     expect([x.status, y.status]).toEqual([200, 200]);
     expect((await linkLogs((await account(email)).id)).rows).toHaveLength(1);
   });
