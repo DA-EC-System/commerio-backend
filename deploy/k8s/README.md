@@ -96,3 +96,7 @@ Luật cảnh báo (`deploy/monitoring/rules/alerts.yml`, test ở `alerts.test.
 | `CommerioHighErrorRate` | hơn 5% yêu cầu (trừ `/health`) trả 5xx, suốt 5 phút |
 | `CommerioOutboxLagging` | sự kiện outbox chờ hơn 60 giây, suốt 5 phút. Im lặng khi worker không đọc được DB (số liệu ra NaN) |
 | `CommerioDeadLettered` | có sự kiện vào DLQ trong 10 phút qua. Báo nhầm một lần ngay sau khi Prometheus khởi động lại (số liệu không lưu qua lần khởi động) |
+| `VpsCpuHigh` | CPU máy VPS trên 80%, suốt 15 phút |
+| `VpsMemoryLow` | RAM còn trống (MemAvailable) của máy dưới 15%, suốt 10 phút |
+| `VpsDiskFull` | ổ `/` dùng hơn 85% (k3s bắt đầu xoá image), suốt 10 phút |
+| `VpsNodeExporterDown` | không lấy được số liệu máy, quá 5 phút |

@@ -152,3 +152,80 @@ tests:
               consumer: report
             exp_annotations:
               summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
+
+  # Máy VPS: CPU idle 10% (dùng 90%) suốt 20 phút thì báo; RAM còn 10%; ổ dùng 90%.
+  - interval: 1m
+    input_series:
+      - series: 'node_cpu_seconds_total{job="node",cpu="0",mode="idle"}'
+        values: '0+6x30'
+      - series: 'node_memory_MemAvailable_bytes{job="node"}'
+        values: '400x30'
+      - series: 'node_memory_MemTotal_bytes{job="node"}'
+        values: '4000x30'
+      - series: 'node_filesystem_avail_bytes{job="node",mountpoint="/",fstype="ext4"}'
+        values: '10x30'
+      - series: 'node_filesystem_size_bytes{job="node",mountpoint="/",fstype="ext4"}'
+        values: '100x30'
+      - series: 'up{job="node"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: VpsCpuHigh
+      - eval_time: 25m
+        alertname: VpsCpuHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: CPU máy VPS trên 80% suốt 15 phút
+      - eval_time: 15m
+        alertname: VpsMemoryLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node
+            exp_annotations:
+              summary: RAM còn trống của máy VPS dưới 15% suốt 10 phút
+      - eval_time: 15m
+        alertname: VpsDiskFull
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node
+              mountpoint: /
+              fstype: ext4
+            exp_annotations:
+              summary: Ổ / của máy VPS đã dùng hơn 85% (k3s bắt đầu xoá image ở mức này)
+      - eval_time: 15m
+        alertname: VpsNodeExporterDown
+
+  # Máy rảnh: CPU idle gần 100%, RAM còn 50%, ổ dùng 30%, node-exporter mất 6 phút thì chỉ báo VpsNodeExporterDown.
+  - interval: 1m
+    input_series:
+      - series: 'node_cpu_seconds_total{job="node",cpu="0",mode="idle"}'
+        values: '0+58x30'
+      - series: 'node_memory_MemAvailable_bytes{job="node"}'
+        values: '2000x30'
+      - series: 'node_memory_MemTotal_bytes{job="node"}'
+        values: '4000x30'
+      - series: 'node_filesystem_avail_bytes{job="node",mountpoint="/",fstype="ext4"}'
+        values: '70x30'
+      - series: 'node_filesystem_size_bytes{job="node",mountpoint="/",fstype="ext4"}'
+        values: '100x30'
+      - series: 'up{job="node"}'
+        values: '1x10 0x20'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: VpsCpuHigh
+      - eval_time: 25m
+        alertname: VpsMemoryLow
+      - eval_time: 25m
+        alertname: VpsDiskFull
+      - eval_time: 18m
+        alertname: VpsNodeExporterDown
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node
+            exp_annotations:
+              summary: Không lấy được số liệu máy VPS (dịch vụ prometheus-node-exporter)
