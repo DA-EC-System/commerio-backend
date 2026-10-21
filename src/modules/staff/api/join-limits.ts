@@ -1,8 +1,8 @@
 // Giới hạn tần suất của API công khai /join/* (#7 spec 6.11). Bộ đếm trong bộ nhớ của từng bản sao api; chốt chặn
 // bền (5 lần sai mỗi mã, 5 lần gửi mỗi link) nằm ở DB. Ngưỡng nhân `JOIN_RATE_LIMIT_SCALE` để test chỉnh được.
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { type Options, rateLimit } from 'express-rate-limit';
-import { decodeJwt } from 'jose';
+import { type PurposeClaims, type TokenPurpose, verifyPurposeToken } from '../../../shared/auth/purpose-token.ts';
 import { sha256Hex } from '../../../shared/crypto/codes.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 
@@ -51,14 +51,29 @@ export function joinLimiter(spec: JoinLimit, options: Partial<Options> = {}): Re
 export const emailKey = (email: string) => `email:${sha256Hex(email)}`;
 
 /**
- * Claim đọc từ token **chưa kiểm chữ ký**, chỉ để chia bộ đếm theo lời mời hay email; token không đọc được thì chung
- * một khoá. Token thật vẫn được kiểm ở service.
+ * Kiểm chữ ký token (EdDSA, rẻ) trước các bộ đếm theo lời mời, theo email: khoá lấy từ claim đã xác thực, nên người
+ * không cầm token thật không đốt được bộ đếm của người khác. Token sai thì chỉ bộ đếm theo IP tính; service vẫn kiểm
+ * lại và trả lỗi của luồng.
  */
-export function unverifiedClaim(token: string, claim: 'jti' | 'em'): string {
-  try {
-    const value = decodeJwt(token)[claim];
-    return typeof value === 'string' ? value : 'invalid';
-  } catch {
-    return 'invalid';
-  }
+export function readClaims(purpose: TokenPurpose, token: (res: Response) => string): RequestHandler {
+  return async (_req, res, next) => {
+    res.locals.joinClaims = await verifyPurposeToken(purpose, token(res)).catch(() => undefined);
+    next();
+  };
+}
+
+export const verifiedClaims = (res: Response): PurposeClaims | undefined =>
+  res.locals.joinClaims as PurposeClaims | undefined;
+
+/** Bộ đếm chỉ tính request có token đã xác thực, khoá theo `key(claims)`. */
+export function claimLimiter(
+  spec: JoinLimit,
+  key: (claims: PurposeClaims, res: Response) => string,
+  options: Partial<Options> = {},
+) {
+  return joinLimiter(spec, {
+    skip: (_req, res) => !verifiedClaims(res),
+    keyGenerator: (_req, res) => key(verifiedClaims(res)!, res),
+    ...options,
+  });
 }
