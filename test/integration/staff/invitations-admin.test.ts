@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
@@ -6,6 +7,7 @@ import { verifyPurposeToken } from '#src/shared/auth/purpose-token.ts';
 import { addMember, createCompany, createCustomRole, uniqueEmail } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, PASSWORD, testApp } from '../helpers/http.ts';
+import { raceBehindLock } from '../helpers/locks.ts';
 import { accountIdOf, pendingInvitation } from './helpers.ts';
 
 const app = testApp();
@@ -140,6 +142,11 @@ describe('hàng đợi lời mời', () => {
     expect(res.body.items.find((i: { id: string }) => i.id === fresh.id).existingAccount).toBe(false);
     expect(JSON.stringify(res.body)).not.toMatch(/argon2|password|otp/i);
 
+    // Người cầm link đã xin mã (email, họ tên chưa xác minh) mà lời mời còn open: không lộ cho Admin.
+    await db.query("update staff.invitations set email = $2, full_name = 'Người Lạ' where id = $1", [
+      open.body.id,
+      uniqueEmail('chua-xac-minh'),
+    ]);
     const opened = await as(own.ceo.token).list({ status: 'open' });
     expect(opened.body.items.map((i: { id: string }) => i.id)).toEqual([open.body.id]);
     expect(opened.body.items[0]).toMatchObject({ email: null, fullName: null, submittedAt: null });
@@ -299,40 +306,53 @@ describe('duyệt, từ chối', () => {
   });
 });
 
+// Chạy đua tất định (spec 6.7, 6.14): giao dịch giữ khoá đóng vai phiên đang duyệt dở; các request đua bị chặn sau nó.
+const lockInvitation = (id: string) => (holder: PoolClient) =>
+  holder.query('select 1 from staff.invitations where id = $1 for update', [id]);
+
 describe('duyệt chạy đồng thời', () => {
-  it('hai Admin duyệt cùng lúc: một 200, một 409; chỉ một tài khoản, một membership', async () => {
+  it('hai Admin duyệt cùng lúc: một 200, một 409 version_conflict; chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
     const inv = await pending();
-    const results = await Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]);
+    const results = await raceBehindLock(lockInvitation(inv.id), 2, () =>
+      Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
+    );
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(results.find((r) => r.status === 409)!.body.code).toBe('version_conflict');
     const accounts = await db.query<{ id: string }>('select id from staff.accounts where email = $1', [inv.email]);
     expect(accounts.rows).toHaveLength(1);
     const memberships = await db.query('select 1 from staff.memberships where account_id = $1', [accounts.rows[0]!.id]);
     expect(memberships.rowCount).toBe(1);
   });
 
-  it('duyệt và từ chối cùng lúc: đúng một bên thắng', async () => {
+  it('duyệt và từ chối cùng lúc: đúng một bên thắng, bên kia 409 version_conflict', async () => {
     const inv = await pending();
-    const [approved, rejected] = await Promise.all([ceo.approve(inv.id, inv.version), ceo.reject(inv.id, inv.version)]);
+    const [approved, rejected] = await raceBehindLock(lockInvitation(inv.id), 2, () =>
+      Promise.all([ceo.approve(inv.id, inv.version), ceo.reject(inv.id, inv.version)]),
+    );
     expect([approved.status, rejected.status].sort()).toEqual([200, 409]);
+    expect([approved, rejected].find((r) => r.status === 409)!.body.code).toBe('version_conflict');
     const status = (await invitationRow(inv.id)).status;
     expect(status).toBe(approved.status === 200 ? 'approved' : 'rejected');
     const accounts = await db.query('select 1 from staff.accounts where email = $1', [inv.email]);
     expect(accounts.rowCount).toBe(status === 'approved' ? 1 : 0);
   });
 
-  it('hai lời mời cùng email mới (hai công ty) cùng được duyệt: một 200, một 409 email_taken', async () => {
-    const other = await createCompany();
-    const email = uniqueEmail('hai-noi');
-    const a = await pending({ email });
-    const b = await pendingInvitation(other.companyId, {
-      createdBy: await accountIdOf(other.ceo.email),
-      roleIds: [SALE],
-      email,
-    });
-    const results = await Promise.all([ceo.approve(a.id, a.version), as(other.ceo.token).approve(b.id, b.version)]);
-    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-    expect(results.find((r) => r.status === 409)!.body.code).toBe('email_taken');
-    expect((await db.query('select 1 from staff.accounts where email = $1', [email])).rowCount).toBe(1);
+  it('tài khoản cùng email vừa được tạo ở phiên khác lúc đang duyệt (vd lời mời ở công ty khác) → 409 email_taken, không tạo gì', async () => {
+    const inv = await pending();
+    // Phiên giữ khoá chèn tài khoản cùng email mà chưa commit: lúc duyệt chưa thấy, câu INSERT bị chặn ở unique.
+    const res = await raceBehindLock(
+      (holder) => holder.query("insert into staff.accounts (email, full_name) values ($1, 'Phiên Khác')", [inv.email]),
+      1,
+      () => ceo.approve(inv.id, inv.version),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('email_taken');
+    expect(await invitationRow(inv.id)).toMatchObject({ status: 'pending', version: inv.version });
+    const accounts = await db.query<{ id: string }>('select id from staff.accounts where email = $1', [inv.email]);
+    expect(accounts.rows).toHaveLength(1);
+    expect(
+      (await db.query('select 1 from staff.memberships where account_id = $1', [accounts.rows[0]!.id])).rowCount,
+    ).toBe(0);
   });
 });

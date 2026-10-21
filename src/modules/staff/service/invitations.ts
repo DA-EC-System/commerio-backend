@@ -93,8 +93,9 @@ async function views(rows: readonly InvitationRow[]): Promise<InvitationView[]> 
       id: r.id,
       status: r.status,
       expired: isLinkExpired(r, now),
-      email: r.email,
-      fullName: r.fullName,
+      // Còn `open` thì email, họ tên chưa qua OTP (người cầm link tự gõ): không đưa cho Admin (Documents/21 mục 3.1).
+      email: r.status === 'open' ? null : r.email,
+      fullName: r.status === 'open' ? null : r.fullName,
       roles: found.map((role) => ({ id: role.id, name: role.name })).sort((x, y) => x.name.localeCompare(y.name, 'vi')),
       outdated: found.length < new Set(r.roleIds).size,
       // Tài khoản tạo lúc duyệt (email mới) sinh sau lúc nộp; tài khoản đã có thì có trước.
