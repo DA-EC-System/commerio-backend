@@ -22,6 +22,14 @@ const db = testPool();
 const join = joinApi(app);
 const NEW_PASSWORD = 'MatKhauMoi9';
 const currentStep = () => Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS);
+/** Mã 6 số không trùng mã của các bước quanh hiện tại (mã sai chắc chắn, kể cả khi bước đổi giữa test). */
+function wrongCode(secret: Buffer): string {
+  const near = new Set([-2, -1, 0, 1, 2].map((d) => totpAt(secret, currentStep() + d)));
+  for (let n = 0; ; n++) {
+    const code = String(n).padStart(6, '0');
+    if (!near.has(code)) return code;
+  }
+}
 const post = (path: string, body: object) => request(app).post(`/api/v1/identity/${path}`).send(body);
 
 afterEach(() => setMailTransport(null));
@@ -79,7 +87,7 @@ describe('2FA lúc tham gia qua link', () => {
     const secret = base32Decode(setup.body.secret);
     const wrong = await post('join/2fa/confirm', {
       registrationToken: c.registrationToken,
-      code: '000000' === totpAt(secret, currentStep()) ? '111111' : '000000',
+      code: wrongCode(secret),
     });
     expect(wrong.status).toBe(422);
     expect(Object.keys(wrong.body.errors)).toEqual(['code']);
@@ -101,6 +109,8 @@ describe('2FA lúc tham gia qua link', () => {
       .set('Authorization', `Bearer ${company.ceo.token}`)
       .send({ version: inv.rows[0]!.version });
     expect(approved.status).toBe(200);
+    // Đã duyệt (mốc xác nhận 2FA của lời mời đã xoá): nộp lại báo link đã dùng, không đẩy về bước 2FA.
+    expect((await join.complete(body)).body.code).toBe('invitation_used');
     const account = await db.query<{
       id: string;
       totp_secret_enc: Buffer;
@@ -136,11 +146,10 @@ describe('2FA lúc tham gia qua link', () => {
     const missing = await join.complete({ registrationToken: c.registrationToken, password: PASSWORD });
     expect(missing.status).toBe(422);
     expect(Object.keys(missing.body.errors)).toEqual(['totpCode']);
-    const wrongCode = totpAt(raw, currentStep()) === '000000' ? '111111' : '000000';
     const wrong = await post('join/complete', {
       registrationToken: c.registrationToken,
       password: PASSWORD,
-      totpCode: wrongCode,
+      totpCode: wrongCode(raw),
     });
     expect(Object.keys(wrong.body.errors)).toEqual(['totpCode']);
     const ok = await post('join/complete', {

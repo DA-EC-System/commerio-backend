@@ -72,8 +72,10 @@ const twoFactorLimiter = (
     skipSuccessfulRequests: true,
     keyGenerator,
     ...(skip ? { skip } : {}),
-    handler: (_req, _res, next) => {
+    handler: (req, res, next) => {
       countTwoFactor('locked');
+      // Khoá bộ đếm chỉ chứa id tài khoản (`mfa:<id>`, `setup:<id>`).
+      req.log.warn({ limiterKey: keyGenerator(req, res) }, 'khoá nhập mã 2FA vì sai quá nhiều lần');
       next(new AppError(429, 'too_many_requests', 'Sai mã quá nhiều lần, hãy đợi 15 phút rồi thử lại'));
     },
   });

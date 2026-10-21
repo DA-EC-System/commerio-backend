@@ -22,7 +22,6 @@ export {
   findMembership,
   insertAccount as createAccount,
   insertMembership as createMembership,
-  isPlatformAdmin,
   linkGoogleSub,
   membershipsOfAccount,
   saveTotpSecret,

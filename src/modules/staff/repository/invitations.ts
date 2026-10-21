@@ -202,8 +202,16 @@ export async function saveInvitationTotpSecret(id: string, email: string, sealed
   return rows.length === 1;
 }
 
-/** [D] Xác nhận 2FA của lời mời bằng một mã đúng: ghi lúc xác nhận và bản băm mã khôi phục (duyệt thì chép sang tài khoản). */
-export async function confirmInvitationTotp(id: string, email: string, recoveryHashes: string[]): Promise<boolean> {
+/**
+ * [D] Xác nhận 2FA của lời mời bằng một mã đúng: ghi lúc xác nhận và bản băm mã khôi phục (duyệt thì chép sang tài
+ * khoản). `sealed` là bản mã vừa dùng để kiểm mã: `setup` chen giữa thì secret đã đổi, không xác nhận.
+ */
+export async function confirmInvitationTotp(
+  id: string,
+  email: string,
+  sealed: Buffer,
+  recoveryHashes: string[],
+): Promise<boolean> {
   const t = invitations;
   const rows = await getDb()
     .update(t)
@@ -214,7 +222,7 @@ export async function confirmInvitationTotp(id: string, email: string, recoveryH
         eq(t.id, id),
         eq(t.status, 'claimed'),
         eq(t.email, email),
-        isNotNull(t.totpSecretEnc),
+        eq(t.totpSecretEnc, sealed),
         sql`${t.expiresAt} > now()`,
       ),
     )

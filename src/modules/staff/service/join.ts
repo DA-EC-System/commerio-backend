@@ -199,10 +199,12 @@ export async function join2faConfirm(registrationToken: string, code: string): P
   const codes = await withCompany(cid, async () => {
     const row = await findInvitation(jti);
     assertClaimedBy(row, em);
-    const step = row.totpSecretEnc ? matchTotp(openTotpSecret(row.totpSecretEnc, jti), code, Date.now()) : null;
-    if (step === null) throw fieldError('code', 'Mã không đúng, hãy nhập mã đang hiện trên app');
+    const sealed = row.totpSecretEnc;
+    const step = sealed ? matchTotp(openTotpSecret(sealed, jti), code, Date.now()) : null;
+    if (!sealed || step === null) throw fieldError('code', 'Mã không đúng, hãy nhập mã đang hiện trên app');
     const recovery = newRecoveryCodes();
-    if (!(await confirmInvitationTotp(jti, em, recovery.hashes))) throw linkUsed();
+    // Không trúng: secret vừa bị thay ở tab khác (nhập mã của secret mới), hay link đã đổi trạng thái.
+    if (!(await confirmInvitationTotp(jti, em, sealed, recovery.hashes))) throw linkUsed();
     return recovery.codes;
   });
   logger.info({ invitationId: jti }, 'người được mời đã xác nhận xác thực hai lớp');
@@ -242,6 +244,8 @@ export async function completeJoin(input: {
     }
     accountId = account.id;
   } else {
+    // Đã nộp, đã duyệt hay từ chối: đừng đẩy người dùng về bước 2FA.
+    if (row.status !== 'claimed') throw linkUsed();
     // [D] Email mới phải xác nhận 2FA trước khi nộp (AC-D8).
     if (twoFactorRequired() && !row.totpConfirmedAt) {
       throw fieldError('totpCode', 'Thiết lập xác thực hai lớp trước khi nộp');
@@ -254,7 +258,10 @@ export async function completeJoin(input: {
     const requireTotp = twoFactorRequired() && nxt === 'set_password';
     if (await submitInvitation(jti, em, { passwordHash, accountId, requireTotp })) return 'pending';
     const row = await findInvitation(jti);
-    return !row || isLinkExpired(row, new Date()) ? 'invalid' : 'used';
+    if (!row || isLinkExpired(row, new Date())) return 'invalid';
+    // `setup` vừa chạy lại ở tab khác nên mất xác nhận cũ.
+    if (requireTotp && row.status === 'claimed' && !row.totpConfirmedAt) return 'totp_missing';
+    return 'used';
   }).catch((err: unknown) => {
     // Đã có yêu cầu khác của email này chờ duyệt trong công ty.
     const { code, constraint } = pgError(err);
@@ -263,6 +270,7 @@ export async function completeJoin(input: {
   });
   if (outcome === 'already_member') throw alreadyMember();
   if (outcome === 'invalid') throw invalidLink();
+  if (outcome === 'totp_missing') throw fieldError('totpCode', 'Thiết lập xác thực hai lớp trước khi nộp');
   if (outcome === 'used') throw linkUsed();
   countTransition('pending');
   logger.info({ invitationId: jti }, 'đã nộp yêu cầu tham gia');
