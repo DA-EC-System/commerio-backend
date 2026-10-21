@@ -63,7 +63,7 @@ describe('seed demo có 2FA', () => {
   });
 
   it('không có totpSecret thì tài khoản demo chưa bật 2FA (thiết lập ở lần đăng nhập đầu)', async () => {
-    const { totpSecret: _omit, ...input } = demoInput();
+    const input: ReturnType<typeof demoInput> = { ...demoInput(), totpSecret: '' };
     await seedDemo(input);
     const rows = await totpColumns(Object.values(input.accounts).map((a) => a.email));
     for (const row of rows) expect(row.totp_enabled_at).toBeNull();
