@@ -1,5 +1,5 @@
-import { and, count, eq, inArray, isNull, type SQL, sql } from 'drizzle-orm';
-import { getDb, requireCompanyId } from '../../../shared/db/client.ts';
+import { and, count, eq, inArray, isNotNull, isNull, type SQL, sql } from 'drizzle-orm';
+import { currentCompanyId, getDb, requireCompanyId } from '../../../shared/db/client.ts';
 import { accounts, memberships } from './schema.ts';
 
 export interface AccountRow {
@@ -12,6 +12,10 @@ export interface AccountRow {
   passwordChangedAt: Date | null;
   /** `sub` của tài khoản Google đã liên kết (#7 [A]); `null` khi chưa liên kết. */
   googleSub: string | null;
+  /** Secret TOTP đã mã hoá (#7 [D]); có cả khi đang thiết lập dở. */
+  totpSecretEnc: Buffer | null;
+  /** Lúc bật 2FA; `null` khi chưa bật. */
+  totpEnabledAt: Date | null;
 }
 
 export interface MembershipRow {
@@ -29,6 +33,8 @@ const accountColumns = {
   isPlatformAdmin: accounts.isPlatformAdmin,
   passwordChangedAt: accounts.passwordChangedAt,
   googleSub: accounts.googleSub,
+  totpSecretEnc: accounts.totpSecretEnc,
+  totpEnabledAt: accounts.totpEnabledAt,
 };
 
 export async function findAccountByEmail(email: string): Promise<AccountRow | undefined> {
@@ -70,6 +76,102 @@ export async function findAccountSummaries(
     .select({ id: accounts.id, fullName: accounts.fullName, createdAt: accounts.createdAt })
     .from(accounts)
     .where(inArray(accounts.id, [...new Set(ids)]));
+}
+
+// Xác thực hai lớp (#7 [D], spec 6.7). Ghi bằng role chủ bảng: commerio_app không UPDATE được staff.accounts
+// (migration 0017), nên gọi trong withCompany là lỗi lập trình.
+function requireOwner(fn: string): void {
+  if (currentCompanyId() !== null) throw new Error(`${fn} phải chạy ngoài withCompany (migration 0017)`);
+}
+
+const updatedAccount = (rows: { id: string }[]) => rows.length === 1;
+
+/** Ghi secret khi chưa bật 2FA; gọi lại thì ghi đè bản chưa xác nhận. `false` khi đã bật hoặc không có tài khoản. */
+export async function saveTotpSecret(accountId: string, encrypted: Buffer): Promise<boolean> {
+  requireOwner('saveTotpSecret');
+  return updatedAccount(
+    await getDb()
+      .update(accounts)
+      .set({ totpSecretEnc: encrypted, updatedAt: new Date(), version: sql`${accounts.version} + 1` })
+      .where(and(eq(accounts.id, accountId), isNull(accounts.totpEnabledAt)))
+      .returning({ id: accounts.id }),
+  );
+}
+
+/** Bật 2FA một lần, ghi bước của mã vừa xác nhận và bản băm mã khôi phục. `false` khi đã bật hoặc chưa có secret. */
+export async function enableTotp(accountId: string, step: number, recoveryHashes: string[]): Promise<boolean> {
+  requireOwner('enableTotp');
+  return updatedAccount(
+    await getDb()
+      .update(accounts)
+      .set({
+        totpEnabledAt: new Date(),
+        totpLastStep: step,
+        recoveryCodeHashes: recoveryHashes,
+        updatedAt: new Date(),
+        version: sql`${accounts.version} + 1`,
+      })
+      .where(and(eq(accounts.id, accountId), isNull(accounts.totpEnabledAt), isNotNull(accounts.totpSecretEnc)))
+      .returning({ id: accounts.id }),
+  );
+}
+
+/** Dùng mã của bước `step`: chỉ tiến, không dùng lại cùng bước. `false` khi mã đã dùng hoặc chưa bật 2FA. */
+export async function advanceTotpStep(accountId: string, step: number): Promise<boolean> {
+  requireOwner('advanceTotpStep');
+  return updatedAccount(
+    await getDb()
+      .update(accounts)
+      .set({ totpLastStep: step })
+      .where(
+        and(
+          eq(accounts.id, accountId),
+          isNotNull(accounts.totpEnabledAt),
+          sql`(${accounts.totpLastStep} is null or ${accounts.totpLastStep} < ${step})`,
+        ),
+      )
+      .returning({ id: accounts.id }),
+  );
+}
+
+/** Dùng một mã khôi phục (bản băm): xoá khỏi danh sách; hai lần cùng mã thì đúng một lần `true`. */
+export async function consumeRecoveryCode(accountId: string, hash: string): Promise<boolean> {
+  requireOwner('consumeRecoveryCode');
+  return updatedAccount(
+    await getDb()
+      .update(accounts)
+      .set({ recoveryCodeHashes: sql`array_remove(${accounts.recoveryCodeHashes}, ${hash})` })
+      .where(and(eq(accounts.id, accountId), sql`${hash} = any(${accounts.recoveryCodeHashes})`))
+      .returning({ id: accounts.id }),
+  );
+}
+
+/** Đặt lại 2FA (quản trị nền tảng): xoá secret, cờ bật, bước, mã khôi phục. `false` khi không có tài khoản. */
+export async function clearTotp(accountId: string): Promise<boolean> {
+  requireOwner('clearTotp');
+  return updatedAccount(
+    await getDb()
+      .update(accounts)
+      .set({
+        totpSecretEnc: null,
+        totpEnabledAt: null,
+        totpLastStep: null,
+        recoveryCodeHashes: [],
+        updatedAt: new Date(),
+        version: sql`${accounts.version} + 1`,
+      })
+      .where(eq(accounts.id, accountId))
+      .returning({ id: accounts.id }),
+  );
+}
+
+/** Đọc cờ quản trị nền tảng từ DB mỗi lần, không tin claim trong token (spec 6.10). */
+export async function isPlatformAdmin(accountId: string): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ isPlatformAdmin: accounts.isPlatformAdmin })
+    .from(accounts)
+    .where(eq(accounts.id, accountId));
+  return row?.isPlatformAdmin ?? false;
 }
 
 export async function insertAccount(input: { email: string; fullName: string; passwordHash: string }): Promise<string> {

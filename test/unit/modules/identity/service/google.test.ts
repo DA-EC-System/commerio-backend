@@ -100,6 +100,8 @@ describe('googleLinkStep', () => {
     isPlatformAdmin: false,
     passwordChangedAt: null,
     googleSub,
+    totpSecretEnc: null,
+    totpEnabledAt: null,
   });
 
   it('không có tài khoản → not_found', () => expect(googleLinkStep(undefined, 'g-1')).toBe('not_found'));

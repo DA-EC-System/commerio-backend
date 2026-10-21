@@ -200,6 +200,9 @@ export async function decideInvitation(
       passwordHash: null,
       otpHash: null,
       otpExpiresAt: null,
+      // [D] secret và mã khôi phục đã chép sang tài khoản lúc duyệt (CHECK `invitations_decided_clean`, 0020).
+      totpSecretEnc: null,
+      recoveryCodeHashes: [],
       ...bump,
     })
     .where(inCompany('decideInvitation', eq(t.id, id), eq(t.version, version), eq(t.status, 'pending')))

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -11,7 +12,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { timestamps, version } from '../../../shared/db/columns.ts';
+import { bytea, timestamps, version } from '../../../shared/db/columns.ts';
 
 // Mọi bảng của module `staff` khai báo trong schema này.
 export const staffSchema = pgSchema('staff');
@@ -22,19 +23,34 @@ export const membershipStatus = staffSchema.enum('membership_status', ['active',
  * Tài khoản đăng nhập, dùng chung mọi công ty nên không có RLS (docs/19 D3, D25).
  * Email lưu chữ thường; mật khẩu băm argon2id.
  */
-export const accounts = staffSchema.table('accounts', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  email: text('email').notNull().unique(),
-  fullName: text('full_name').notNull(),
-  passwordHash: text('password_hash'),
-  mustChangePassword: boolean('must_change_password').notNull().default(false),
-  googleSub: text('google_sub').unique(),
-  isPlatformAdmin: boolean('is_platform_admin').notNull().default(false),
-  // Lần đổi mật khẩu gần nhất; access token mang dấu này, khác thì 401 (#62). Trống: chưa từng đổi.
-  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
-  ...timestamps,
-  ...version,
-});
+export const accounts = staffSchema.table(
+  'accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull().unique(),
+    fullName: text('full_name').notNull(),
+    passwordHash: text('password_hash'),
+    mustChangePassword: boolean('must_change_password').notNull().default(false),
+    googleSub: text('google_sub').unique(),
+    isPlatformAdmin: boolean('is_platform_admin').notNull().default(false),
+    // Lần đổi mật khẩu gần nhất; access token mang dấu này, khác thì 401 (#62). Trống: chưa từng đổi.
+    passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
+    // Xác thực hai lớp (#7 [D], D40): secret TOTP mã hoá AES-256-GCM bằng `TOTP_ENCRYPTION_KEY`, AAD
+    // `totp:<accountId>`. Ghi bằng role chủ bảng (migration 0017).
+    totpSecretEnc: bytea('totp_secret_enc'),
+    totpEnabledAt: timestamp('totp_enabled_at', { withTimezone: true }),
+    // Bước 30 giây của mã đã dùng gần nhất: mỗi mã chỉ dùng một lần.
+    totpLastStep: bigint('totp_last_step', { mode: 'number' }),
+    // SHA-256 của 2 mã khôi phục còn dùng được.
+    recoveryCodeHashes: text('recovery_code_hashes')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [check('accounts_totp_enabled_has_secret', sql`${t.totpEnabledAt} is null or ${t.totpSecretEnc} is not null`)],
+);
 
 /** Tài khoản thuộc công ty nào; khoá tài khoản tính theo công ty (docs/19 D5). */
 export const memberships = staffSchema.table(
@@ -93,6 +109,13 @@ export const invitations = staffSchema.table(
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     decidedBy: uuid('decided_by').references(() => accounts.id),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
+    // [D] 2FA thiết lập lúc tham gia (email mới): AAD `totp:<invitationId>`; duyệt thì mã hoá lại cho tài khoản.
+    totpSecretEnc: bytea('totp_secret_enc'),
+    totpConfirmedAt: timestamp('totp_confirmed_at', { withTimezone: true }),
+    recoveryCodeHashes: text('recovery_code_hashes')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     ...timestamps,
     ...version,
   },
@@ -130,7 +153,8 @@ export const invitations = staffSchema.table(
     ),
     check(
       'invitations_decided_clean',
-      sql`${t.status} not in ('approved', 'rejected') or (${t.passwordHash} is null and ${t.otpHash} is null)`,
+      sql`${t.status} not in ('approved', 'rejected') or (${t.passwordHash} is null and ${t.otpHash} is null and ${t.totpSecretEnc} is null and cardinality(${t.recoveryCodeHashes}) = 0)`,
     ),
+    check('invitations_totp_confirmed_has_secret', sql`${t.totpConfirmedAt} is null or ${t.totpSecretEnc} is not null`),
   ],
 );

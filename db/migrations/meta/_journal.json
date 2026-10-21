@@ -141,6 +141,13 @@
       "when": 1792548248559,
       "tag": "0019_thu-moi-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792550255935,
+      "tag": "0020_xac-thuc-hai-yeu-to",
+      "breakpoints": true
     }
   ]
 }

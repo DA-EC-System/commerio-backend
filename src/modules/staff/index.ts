@@ -12,13 +12,19 @@ export { registerStaffOpenApi, staffRouter };
 
 export type { AccountRow, MembershipRow } from './repository/accounts.ts';
 export {
+  advanceTotpStep,
+  clearTotp,
+  consumeRecoveryCode,
+  enableTotp,
   findAccountByEmail,
   findAccountByGoogleSub,
   findAccountById,
   findMembership,
   insertAccount as createAccount,
   insertMembership as createMembership,
+  isPlatformAdmin,
   linkGoogleSub,
   membershipsOfAccount,
+  saveTotpSecret,
   updatePassword,
 } from './repository/accounts.ts';
