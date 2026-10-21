@@ -28,7 +28,7 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 - `/join/verify` tăng bộ đếm sai trước khi so mã, commit rồi mới ném 422 `errors.code`. Mã đúng thì link gắn email (`claimed`), rồi mới xét tài khoản: đã là thành viên 409 `already_member`, quản trị nền tảng 422 `errors.email`.
 - `/join/complete`: argon2 chạy ngoài giao dịch; tài khoản đã có thì kiểm mật khẩu của nó, không đổi. Chưa tạo tài khoản: chỉ lúc duyệt mới tạo.
 - Duyệt khoá dòng lời mời trước (thứ tự lời mời → tài khoản → membership → vai trò), kiểm lại vai trò theo quyền người duyệt (409 `invitation_outdated` khi vai trò đã bị xoá). Hết hạn link không chặn duyệt.
-- Giới hạn theo IP đứng trước `validate`; theo email (băm SHA-256), theo lời mời (`jti` đọc từ token chưa kiểm chữ ký) đứng sau. Ngưỡng nhân `JOIN_RATE_LIMIT_SCALE`.
+- Giới hạn theo IP đứng trước `validate`; theo email (băm SHA-256), theo lời mời đứng sau và chỉ tính token đã kiểm chữ ký (`readClaims`, `claimLimiter`), nên token rác kèm email người khác không đốt được bộ đếm của họ. Ngưỡng nhân `JOIN_RATE_LIMIT_SCALE`.
 - Metric `otp_requests_total{result}`, `invitation_transitions_total{to}` (`service/metrics.ts`).
 
 ## Bất biến
