@@ -35,6 +35,13 @@ export function createLogger(destination?: DestinationStream): Logger {
         'res.headers["set-cookie"]',
         'req.url',
         'req.query',
+        // Phòng khi có chỗ log body: token, mã, mật khẩu của luồng xác thực, tham gia (#7).
+        'req.body.credential',
+        'req.body.token',
+        'req.body.registrationToken',
+        'req.body.code',
+        'req.body.password',
+        'req.body.confirmPassword',
         'err.params',
         'err.detail',
         'err.message',

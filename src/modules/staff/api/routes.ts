@@ -1,19 +1,26 @@
 import { type Response, Router } from 'express';
 import { getAuth } from '../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../shared/auth/authorize.ts';
+import { env } from '../../../shared/config/env.ts';
 import { validate, validated } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
 import { approveInvitation, createInvitation, listInvitations, rejectInvitation } from '../service/invitations.ts';
+import { checkInvitation, completeJoin, requestOtp, RetryLaterError, verifyOtp } from '../service/join.ts';
 import { type Caller, changeRoles, listStaff, setLocked } from '../service/members.ts';
 import {
   ChangeRolesBody,
   CreateInvitationBody,
   InvitationListQuery,
   InvitationParams,
+  JoinCheckBody,
+  JoinCompleteBody,
+  JoinOtpBody,
+  JoinVerifyBody,
   StaffListQuery,
   StaffParams,
   VersionBody,
 } from './schemas.ts';
+import { emailKey, joinLimiter, joinLimits, unverifiedClaim } from './join-limits.ts';
 
 /**
  * Route của module `staff`, gắn dưới /api/v1/identity (`identity` gắn sau router của `access`), như
@@ -83,6 +90,62 @@ export function staffRouter(ctx: ModuleContext): Router {
       },
     );
   }
+
+  // Tham gia qua link (#7 [C]): công khai. Giới hạn theo IP đứng trước validate; giới hạn theo email, lời mời cần body
+  // đã chuẩn hoá nên đứng sau.
+  const limits = joinLimits(env.JOIN_RATE_LIMIT_SCALE);
+  const otpBody = (res: Response) => validated<typeof JoinOtpBody>(res, 'body');
+  const verifyBody = (res: Response) => validated<typeof JoinVerifyBody>(res, 'body');
+  const completeBody = (res: Response) => validated<typeof JoinCompleteBody>(res, 'body');
+
+  router.post('/join/check', joinLimiter(limits.check), validate({ body: JoinCheckBody }), async (_req, res) => {
+    res.json(await checkInvitation(validated<typeof JoinCheckBody>(res, 'body').token));
+  });
+
+  router.post(
+    '/join/otp',
+    joinLimiter(limits.otpIp),
+    validate({ body: JoinOtpBody }),
+    joinLimiter(limits.otpEmail, { keyGenerator: (_req, res) => emailKey(otpBody(res).email) }),
+    joinLimiter(limits.otpInvitation, {
+      keyGenerator: (_req, res) => `invitation:${unverifiedClaim(otpBody(res).token, 'jti')}`,
+    }),
+    async (_req, res) => {
+      try {
+        await requestOtp(otpBody(res));
+      } catch (err) {
+        if (err instanceof RetryLaterError) res.setHeader('Retry-After', String(err.retryAfterSeconds));
+        throw err;
+      }
+      res.status(202).json({});
+    },
+  );
+
+  router.post(
+    '/join/verify',
+    joinLimiter(limits.verifyIp),
+    validate({ body: JoinVerifyBody }),
+    joinLimiter(limits.verifyInvitation, {
+      keyGenerator: (_req, res) => `invitation:${unverifiedClaim(verifyBody(res).token, 'jti')}`,
+    }),
+    async (_req, res) => {
+      res.json(await verifyOtp(verifyBody(res)));
+    },
+  );
+
+  router.post(
+    '/join/complete',
+    joinLimiter(limits.completeIp),
+    validate({ body: JoinCompleteBody }),
+    // Chỉ đếm lần lỗi (sai mật khẩu tài khoản đã có), theo email trong token đăng ký.
+    joinLimiter(limits.completeEmail, {
+      skipSuccessfulRequests: true,
+      keyGenerator: (_req, res) => emailKey(unverifiedClaim(completeBody(res).registrationToken, 'em')),
+    }),
+    async (_req, res) => {
+      res.json(await completeJoin(completeBody(res)));
+    },
+  );
 
   return router;
 }

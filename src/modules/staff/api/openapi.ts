@@ -8,6 +8,13 @@ import {
   InvitationListQuery,
   InvitationPage,
   InvitationParams,
+  JoinCheckBody,
+  JoinCheckSchema,
+  JoinCompleteBody,
+  JoinCompleteSchema,
+  JoinOtpBody,
+  JoinVerifyBody,
+  JoinVerifySchema,
   RejectedInvitationSchema,
   StaffListQuery,
   StaffMemberSchema,
@@ -132,6 +139,71 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`'),
       409: problemResponse('`version_conflict` kèm `current`'),
       422: problemResponse('`validation_failed`'),
+    },
+  });
+
+  // Tham gia qua link: công khai, không trả 401 (FE coi 401 là hết phiên).
+  const tooMany = problemResponse('`too_many_requests`, có `Retry-After`');
+  registry.registerPath({
+    method: 'post',
+    path: '/join/check',
+    summary: 'Mở link mời (UC-PI-09)',
+    description: 'Token lấy sau `#` của link. Công khai, giới hạn theo IP.',
+    request: { body: json(JoinCheckBody) },
+    responses: {
+      200: { description: 'Tên công ty và hạn link', ...json(JoinCheckSchema) },
+      409: problemResponse('`invitation_used`: đã nộp, đã duyệt hoặc đã từ chối'),
+      410: problemResponse('`invitation_invalid`: sai chữ ký, không phải link mời, quá 72 giờ, không còn lời mời'),
+      429: tooMany,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/join/otp',
+    summary: 'Xin mã xác minh email (UC-PI-09)',
+    description:
+      'Worker gửi mã 6 chữ số tới email, sống 5 phút. Phản hồi như nhau dù email có tài khoản hay không. Xin lại sau ' +
+      '60 giây, tối đa 5 lần mỗi link; giới hạn theo IP, email, lời mời.',
+    request: { body: json(JoinOtpBody) },
+    responses: {
+      202: { description: 'Đã nhận, thư sẽ được gửi' },
+      409: problemResponse('`invitation_used`: link đã gắn email khác, hoặc đã nộp'),
+      410: problemResponse('`invitation_invalid`'),
+      422: problemResponse('`validation_failed` (`errors.email`, `errors.fullName`)'),
+      429: tooMany,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/join/verify',
+    summary: 'Nhập mã xác minh (UC-PI-09)',
+    description:
+      'Mã đúng thì link gắn với email này. `next`: `set_password` (email mới) hoặc `sign_in` (đã có tài khoản).',
+    request: { body: json(JoinVerifyBody) },
+    responses: {
+      200: { description: 'Token đăng ký và bước kế tiếp', ...json(JoinVerifySchema) },
+      409: problemResponse('`invitation_used`, `already_member`'),
+      410: problemResponse('`invitation_invalid`'),
+      422: problemResponse(
+        '`validation_failed`: `errors.code` (sai, hết hạn, chưa xin mã, đã sai 5 lần), `errors.email` (quản trị nền tảng)',
+      ),
+      429: tooMany,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/join/complete',
+    summary: 'Nộp yêu cầu tham gia (UC-PI-09)',
+    description:
+      '`set_password`: mật khẩu mới và `confirmPassword`. `sign_in`: mật khẩu của tài khoản đã có, không đổi. ' +
+      'Chưa tạo tài khoản: chờ Admin duyệt.',
+    request: { body: json(JoinCompleteBody) },
+    responses: {
+      200: { description: 'Đã nộp, chờ duyệt', ...json(JoinCompleteSchema) },
+      409: problemResponse('`already_member`, `invitation_used`'),
+      410: problemResponse('`registration_expired` (token đăng ký sai hoặc quá 30 phút), `invitation_invalid`'),
+      422: problemResponse('`validation_failed` (`errors.password`, `errors.confirmPassword`)'),
+      429: tooMany,
     },
   });
 }

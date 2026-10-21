@@ -17,6 +17,19 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 | `GET /staff` | `identity.account.view` | Trang `StaffMember`: `search` (họ tên, email, `ILIKE` có thoát `\`, `%`, `_`), `status`, `roleId`, `page`, `pageSize` |
 | `PUT /staff/:accountId/roles` | `identity.account.manage` | Thay trọn vai trò theo `version` của membership, nhật ký `update` (`before.roles`, `after.roles`, chỉ id) |
 | `POST /staff/:accountId/lock`, `/unlock` | `identity.account.manage` | Đổi `status` theo `version`, nhật ký `update` (`before.status`, `after.status`) |
+| `POST /invitations` | `identity.account.manage` | Tạo link `<PUBLIC_WEB_URL>/tham-gia#<token>` (token `invite`, 72 giờ, `jti` = id lời mời, `cid` = công ty), nhật ký `create` trên `staff.invitations` |
+| `GET /invitations` | `identity.account.view` | Trang `Invitation`, `status` mặc định `pending` |
+| `POST /invitations/:id/approve`, `/reject` | `identity.account.manage` | Duyệt: tạo tài khoản (email mới) hoặc dùng tài khoản đã có, thêm membership, vai trò, nhật ký `create` trên `staff.memberships`. Từ chối: nhật ký `update` trên `staff.invitations` |
+| `POST /join/check`, `/join/otp`, `/join/verify`, `/join/complete` | Công khai, rate limit (`api/join-limits.ts`) | Người được mời: mở link, xin mã (202, worker gửi thư), nhập mã (`registrationToken` 30 phút, `next`), nộp (`pending`) |
+
+## Luồng mời (#7 [C], `service/invitations.ts`, `service/join.ts`)
+
+- `/join/otp` ghi email, họ tên rồi phát `staff.invitation_otp_requested` cùng giao dịch. Consumer `staff-invitation-otp` (`service/otp-consumer.ts`, đăng ký ở `service/background.ts`) sinh mã, lưu bản băm, gửi thư (`service/otp-mail.ts`). Bỏ sự kiện cũ hơn 5 phút, lệch `requestedAt`, lời mời đã đổi hay đã gửi thư. SMTP lỗi tạm thì ném để outbox thử lại; lỗi vĩnh viễn log `error`, không ném (cảnh báo `CommerioMailPermanentFailure`).
+- `/join/verify` tăng bộ đếm sai trước khi so mã, commit rồi mới ném 422 `errors.code`. Mã đúng thì link gắn email (`claimed`), rồi mới xét tài khoản: đã là thành viên 409 `already_member`, quản trị nền tảng 422 `errors.email`.
+- `/join/complete`: argon2 chạy ngoài giao dịch; tài khoản đã có thì kiểm mật khẩu của nó, không đổi. Chưa tạo tài khoản: chỉ lúc duyệt mới tạo.
+- Duyệt khoá dòng lời mời trước (thứ tự lời mời → tài khoản → membership → vai trò), kiểm lại vai trò theo quyền người duyệt (409 `invitation_outdated` khi vai trò đã bị xoá). Hết hạn link không chặn duyệt.
+- Giới hạn theo IP đứng trước `validate`; theo email (băm SHA-256), theo lời mời (`jti` đọc từ token chưa kiểm chữ ký) đứng sau. Ngưỡng nhân `JOIN_RATE_LIMIT_SCALE`.
+- Metric `otp_requests_total{result}`, `invitation_transitions_total{to}` (`service/metrics.ts`).
 
 ## Bất biến
 
@@ -26,6 +39,8 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 - Khoá có hiệu lực ngay: `authorize` đọc trạng thái membership từ DB mỗi request (403 `account_locked`). Kênh SSE đang mở đóng chậm nhất khi token hết hạn.
 - `accountId` sai dạng, của công ty khác hay không tồn tại: 404 `not_found` (C4, V6).
 - Không log email, họ tên; log dùng id.
+- `/join/*` không trả 401 (FE coi 401 là hết phiên): lỗi là 409, 410, 422 hoặc 429.
+- Lời mời: không log, không trả mã OTP, token link, token đăng ký, mật khẩu băm; nhật ký chỉ ghi id.
 
 ## Cho module khác (`index.ts`)
 

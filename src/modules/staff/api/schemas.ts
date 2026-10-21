@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { newPasswordSchema } from '../../../shared/auth/password-policy.ts';
 import { INVITATION_STATUSES } from '../domain/invitation-machine.ts';
 
 const version = z.number('Thiếu version').int().positive();
@@ -105,3 +106,51 @@ export const ApprovedInvitationSchema = z
   .meta({ id: 'ApprovedInvitation' });
 
 export const RejectedInvitationSchema = z.object({ invitation: InvitationSchema }).meta({ id: 'RejectedInvitation' });
+
+// Tham gia qua link (#7 [C], Documents/21 mục 3.1), API công khai: token đặt trong body.
+const token = z.string('Thiếu token').min(1, 'Thiếu token').max(4096, 'Token quá dài');
+const email = z
+  .string('Nhập email')
+  .trim()
+  .toLowerCase()
+  .max(254, 'Email tối đa 254 ký tự')
+  .pipe(z.email('Email không hợp lệ'))
+  .meta({ example: 'nhanvien@congty.vn' });
+
+export const JoinCheckBody = z.object({ token }).meta({ id: 'JoinCheckRequest' });
+
+export const JoinOtpBody = z
+  .object({
+    token,
+    email,
+    fullName: z.string('Nhập họ tên').trim().min(2, 'Họ tên tối thiểu 2 ký tự').max(100, 'Họ tên tối đa 100 ký tự'),
+  })
+  .meta({ id: 'JoinOtpRequest' });
+
+export const JoinVerifyBody = z
+  .object({ token, email, code: z.string('Nhập mã').regex(/^\d{6}$/, 'Mã gồm 6 chữ số') })
+  .meta({ id: 'JoinVerifyRequest' });
+
+export const JoinCompleteBody = z
+  .object({
+    registrationToken: token,
+    password: newPasswordSchema,
+    // Bắt buộc khi `next = set_password` (service kiểm sau khi đọc token).
+    confirmPassword: z.string().max(200).optional(),
+  })
+  .refine((b) => b.confirmPassword === undefined || b.confirmPassword === b.password, {
+    path: ['confirmPassword'],
+    message: 'Mật khẩu nhập lại không khớp',
+  })
+  .meta({ id: 'JoinCompleteRequest' });
+
+export const JoinCheckSchema = z.object({ companyName: z.string(), expiresAt: z.string() }).meta({ id: 'JoinCheck' });
+
+export const JoinVerifySchema = z
+  .object({
+    registrationToken: z.string().meta({ description: 'Sống 30 phút, gửi lại ở `/join/complete`' }),
+    next: z.enum(['set_password', 'sign_in']),
+  })
+  .meta({ id: 'JoinVerify' });
+
+export const JoinCompleteSchema = z.object({ status: z.literal('pending') }).meta({ id: 'JoinComplete' });
