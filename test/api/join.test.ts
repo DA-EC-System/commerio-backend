@@ -68,21 +68,18 @@ describe('API tham gia qua link', () => {
     expect(Object.keys(mismatch.body.errors)).toEqual(['confirmPassword']);
   });
 
-  it('AC-C5: vượt giới hạn theo email, theo IP → 429 too_many_requests kèm Retry-After', async () => {
+  it('AC-C5: vượt giới hạn theo IP → 429 too_many_requests kèm Retry-After, dù token sai', async () => {
     const app = createApp();
     const otp = (email: string) =>
       request(app)
         .post('/api/v1/identity/join/otp')
         .send({ token: 'khong-phai-jwt', email, fullName: 'Người Được Mời' });
+    // Token sai không tính vào bộ đếm theo email (chỉ token thật mới tính): cùng email vẫn tới service.
     expect((await otp('a@x.vn')).status).toBe(410);
-    // Cùng email (khác hoa thường, thừa khoảng trắng): giới hạn theo email, 1 lần.
-    const byEmail = await otp(' A@X.vn ');
-    expect(byEmail.status).toBe(429);
-    expect(byEmail.body).toMatchObject({ type: '/problems/too_many_requests', status: 429, code: 'too_many_requests' });
-    expect(Number(byEmail.headers['retry-after'])).toBeGreaterThan(0);
-    // IP đã dùng 2 lần: email khác cũng bị chặn.
+    expect((await otp(' A@X.vn ')).status).toBe(410);
     const byIp = await otp('b@x.vn');
     expect(byIp.status).toBe(429);
+    expect(byIp.body).toMatchObject({ type: '/problems/too_many_requests', status: 429, code: 'too_many_requests' });
     expect(Number(byIp.headers['retry-after'])).toBeGreaterThan(0);
   });
 

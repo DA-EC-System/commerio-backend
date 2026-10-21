@@ -118,6 +118,7 @@ export async function consumeOtpAttempt(id: string, email: string): Promise<{ ot
         inArray(t.status, ['open', 'claimed']),
         isNotNull(t.otpHash),
         sql`${t.otpExpiresAt} > now()`,
+        sql`${t.expiresAt} > now()`,
         sql`${t.otpAttempts} < ${OTP_MAX_ATTEMPTS}`,
       ),
     )
@@ -138,6 +139,7 @@ export async function markClaimed(id: string, email: string): Promise<boolean> {
         eq(t.email, email),
         inArray(t.status, ['open', 'claimed']),
         isNotNull(t.otpHash),
+        sql`${t.expiresAt} > now()`,
       ),
     )
     .returning({ id: t.id });
