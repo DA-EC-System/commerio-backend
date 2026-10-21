@@ -3,8 +3,9 @@
 import type { ModuleDefinition } from '../../shared/module.ts';
 import { registerStaffOpenApi } from './api/openapi.ts';
 import { staffRouter } from './api/routes.ts';
+import { startStaffBackground } from './service/background.ts';
 
-export const staffModule: ModuleDefinition = { name: 'staff' };
+export const staffModule: ModuleDefinition = { name: 'staff', startBackground: startStaffBackground };
 
 // Không gắn tại /api/v1/staff: identity gắn router này dưới /api/v1/identity (/identity/staff, Documents/21 I1).
 export { registerStaffOpenApi, staffRouter };
