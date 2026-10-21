@@ -111,6 +111,9 @@ export async function requestOtp(input: { token: string; email: string; fullName
   logger.info({ invitationId }, 'đã nhận yêu cầu mã OTP lời mời');
 }
 
+const twoFactorRequired = () => env.TWO_FACTOR_MODE === 'required';
+const wrongTotp = () => fieldError('totpCode', 'Mã xác thực hai lớp không đúng hoặc đã dùng');
+
 /**
  * Mã đúng thì link gắn với email này (`claimed`, Q13), rồi mới xét tài khoản: đã là thành viên 409, quản trị nền tảng
  * 422 (Q5, Q14). Mã sai vẫn commit bộ đếm rồi mới ném.
@@ -119,8 +122,9 @@ export async function verifyOtp(input: {
   token: string;
   email: string;
   code: string;
-}): Promise<{ registrationToken: string; next: JoinNext }> {
+}): Promise<{ registrationToken: string; next: JoinNext; twoFactorRequired: boolean }> {
   const { invitationId, companyId } = await linkOf(input.token);
+  let accountHasTwoFactor = false;
   const outcome = await withCompany(companyId, async () => {
     assertUsable(await findInvitation(invitationId), input.email);
     const attempt = await consumeOtpAttempt(invitationId, input.email);
@@ -129,6 +133,7 @@ export async function verifyOtp(input: {
     const account = await findAccountByEmail(input.email);
     if (account && (await findMemberByAccount(account.id))) return 'already_member';
     if (account?.isPlatformAdmin) return 'platform_admin';
+    accountHasTwoFactor = account?.totpEnabledAt != null;
     return account ? 'sign_in' : 'set_password';
   });
   if (outcome === 'wrong_code') {
@@ -145,15 +150,10 @@ export async function verifyOtp(input: {
     em: input.email,
     nxt: outcome,
   });
-  return { registrationToken, next: outcome };
+  // [D] FE cần bước 2FA không: email mới thì thiết lập (`/join/2fa/*`), tài khoản đã bật thì nhập mã lúc `complete`.
+  const needsTwoFactor = twoFactorRequired() && (outcome === 'set_password' || accountHasTwoFactor);
+  return { registrationToken, next: outcome, twoFactorRequired: needsTwoFactor };
 }
-
-/**
- * Nộp yêu cầu tham gia (`claimed → pending`). Email mới: băm mật khẩu vừa đặt; tài khoản đã có: kiểm mật khẩu của tài
- * khoản đó, không đổi (Q4). Argon2 chạy ngoài giao dịch. Chưa tạo tài khoản: Admin duyệt mới tạo (Q6).
- */
-const twoFactorRequired = () => env.TWO_FACTOR_MODE === 'required';
-const wrongTotp = () => fieldError('totpCode', 'Mã xác thực hai lớp không đúng hoặc đã dùng');
 
 /** Token đăng ký (sau OTP, 30 phút): sai, hết hạn hay thiếu claim thì 410 `registration_expired` (Q17). */
 async function registrationOf(token: string): Promise<{ jti: string; cid: string; em: string; nxt: JoinNext }> {
@@ -166,9 +166,13 @@ async function registrationOf(token: string): Promise<{ jti: string; cid: string
   return { jti, cid, em, nxt };
 }
 
-/** [D] 2FA lúc tham gia chỉ cho email mới; tài khoản đã có dùng 2FA của tài khoản. */
+/** [D] 2FA lúc tham gia chỉ khi `TWO_FACTOR_MODE=required` và chỉ cho email mới; tài khoản đã có dùng 2FA của tài khoản. */
 async function newAccountRegistration(token: string) {
   const registration = await registrationOf(token);
+  // TWO_FACTOR_MODE=off: FE thấy `twoFactorRequired: false` ở `/join/verify` và bỏ qua bước này.
+  if (!twoFactorRequired()) {
+    throw new AppError(409, 'two_factor_disabled', 'Hệ thống chưa bật xác thực hai lớp, bỏ qua bước này');
+  }
   if (registration.nxt !== 'set_password') {
     throw fieldError('registrationToken', 'Tài khoản đã có: xác thực hai lớp thiết lập ở tài khoản, không ở đây');
   }
@@ -211,6 +215,10 @@ export async function join2faConfirm(registrationToken: string, code: string): P
   return { recoveryCodes: codes };
 }
 
+/**
+ * Nộp yêu cầu tham gia (`claimed → pending`). Email mới: băm mật khẩu vừa đặt; tài khoản đã có: kiểm mật khẩu của tài
+ * khoản đó, không đổi (Q4). Argon2 chạy ngoài giao dịch. Chưa tạo tài khoản: Admin duyệt mới tạo (Q6).
+ */
 export async function completeJoin(input: {
   registrationToken: string;
   password: string;

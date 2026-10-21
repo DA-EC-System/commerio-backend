@@ -69,13 +69,19 @@ async function claimed(email: string) {
   await deliverOtp(link.id);
   const verified = await join.verify(link.token, email, codeIn(sent.at(-1)!));
   expect(verified.status).toBe(200);
-  return { ...link, registrationToken: verified.body.registrationToken as string, next: verified.body.next as string };
+  return {
+    ...link,
+    registrationToken: verified.body.registrationToken as string,
+    next: verified.body.next as string,
+    twoFactorRequired: verified.body.twoFactorRequired as boolean,
+  };
 }
 
 describe('2FA lúc tham gia qua link', () => {
   it('AC-D8: email mới chưa xác nhận 2FA → complete 422 errors.totpCode; thiết lập xong thì nộp được, duyệt xong tài khoản có 2FA bật sẵn', async () => {
     const email = uniqueEmail('moi-2fa');
     const c = await claimed(email);
+    expect(c.twoFactorRequired).toBe(true);
     const body = { registrationToken: c.registrationToken, password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD };
     const early = await join.complete(body);
     expect(early.status).toBe(422);
@@ -143,6 +149,7 @@ describe('2FA lúc tham gia qua link', () => {
     const raw = RAW;
     const c = await claimed(known.email);
     expect(c.next).toBe('sign_in');
+    expect(c.twoFactorRequired).toBe(true);
     const missing = await join.complete({ registrationToken: c.registrationToken, password: PASSWORD });
     expect(missing.status).toBe(422);
     expect(Object.keys(missing.body.errors)).toEqual(['totpCode']);
@@ -163,6 +170,7 @@ describe('2FA lúc tham gia qua link', () => {
   it('tài khoản đã có chưa bật 2FA: nộp không cần mã (thiết lập ở lần đăng nhập sau); join/2fa/* chỉ cho email mới', async () => {
     const known = await registerCompany();
     const c = await claimed(known.email);
+    expect(c.twoFactorRequired).toBe(false);
     const setup = await post('join/2fa/setup', { registrationToken: c.registrationToken });
     expect(setup.status).toBe(422);
     expect(Object.keys(setup.body.errors)).toEqual(['registrationToken']);

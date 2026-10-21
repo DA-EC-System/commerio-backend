@@ -220,7 +220,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     request: { body: json(JoinTwoFactorSetupBody) },
     responses: {
       200: { description: 'Secret mới', ...json(JoinTwoFactorSetupSchema) },
-      409: problemResponse('`invitation_used`'),
+      409: problemResponse('`two_factor_disabled` (hệ thống chưa bật 2FA), `invitation_used`'),
       410: problemResponse('`registration_expired`, `invitation_invalid`'),
       422: problemResponse('`validation_failed` (`errors.registrationToken`: tài khoản đã có)'),
       429: tooMany,
@@ -234,7 +234,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     request: { body: json(JoinTwoFactorConfirmBody) },
     responses: {
       200: { description: '2 mã khôi phục', ...json(JoinRecoveryCodesSchema) },
-      409: problemResponse('`invitation_used`'),
+      409: problemResponse('`two_factor_disabled`, `invitation_used`'),
       410: problemResponse('`registration_expired`, `invitation_invalid`'),
       422: problemResponse('`validation_failed` (`errors.code`)'),
       429: tooMany,

@@ -155,6 +155,10 @@ export const JoinVerifySchema = z
   .object({
     registrationToken: z.string().meta({ description: 'Sống 30 phút, gửi lại ở `/join/complete`' }),
     next: z.enum(['set_password', 'sign_in']),
+    twoFactorRequired: z.boolean().meta({
+      description:
+        '`set_password`: phải thiết lập 2FA (`/join/2fa/*`) trước khi nộp; `sign_in`: tài khoản đã bật 2FA, nộp kèm `totpCode`',
+    }),
   })
   .meta({ id: 'JoinVerify' });
 
