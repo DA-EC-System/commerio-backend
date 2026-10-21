@@ -8,6 +8,8 @@ const env = {
   MAIL_FROM: 'Commerio <no-reply@commerio.test>',
   // ID token Google trong test ký bằng khoá tự sinh (setGoogleKeySource), aud là client id này.
   GOOGLE_CLIENT_ID: 'test-client.apps.googleusercontent.com',
+  // Gốc FE của link mời (#7 [C]).
+  PUBLIC_WEB_URL: 'https://commerio.test',
 };
 
 export default defineConfig({
