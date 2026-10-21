@@ -4,11 +4,15 @@ import { assertTokenCurrent } from '../../../shared/auth/company-access.ts';
 import type { AccessClaims } from '../../../shared/auth/jwt.ts';
 import { PurposeTokenError, verifyPurposeToken } from '../../../shared/auth/purpose-token.ts';
 import { matchTotp } from '../../../shared/crypto/totp.ts';
+import { inTransaction } from '../../../shared/db/client.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import { logger } from '../../../shared/logger.ts';
+import { isUuid } from '../../../shared/uuid.ts';
+import { recordAudit } from '../../audit/index.ts';
 import {
   type AccountRow,
   advanceTotpStep,
+  clearTotp,
   consumeRecoveryCode,
   enableTotp,
   findAccountById,
@@ -19,6 +23,7 @@ import {
   saveTotpSecret,
   sealTotpSecret,
 } from '../../staff/index.ts';
+import { revokeAllRefreshTokens } from '../repository/refresh-tokens.ts';
 import { countLogin, countTwoFactor } from './metrics.ts';
 import { type LoginResult, startSession } from './session.ts';
 
@@ -109,4 +114,32 @@ export async function loginSecondFactor(input: {
   const session = await startSession(account);
   countLogin('mfa', 'ok');
   return session;
+}
+
+/**
+ * Quản trị nền tảng đặt lại 2FA khi người dùng mất điện thoại và hết mã khôi phục (#7 [D], AC-D10): xoá secret, cờ bật,
+ * mã khôi phục, thu hồi mọi refresh token; lần đăng nhập sau phải thiết lập lại. Nhật ký cấp nền tảng. Gọi lại vẫn được.
+ * Admin, CEO công ty không làm được vì tài khoản dùng chung nhiều công ty (Q11).
+ */
+export async function resetTwoFactor(accountId: string, actorId: string): Promise<void> {
+  if (!isUuid(accountId)) throw new AppError(404, 'not_found', 'Không tìm thấy tài khoản');
+  await inTransaction(async () => {
+    if (!(await clearTotp(accountId))) throw new AppError(404, 'not_found', 'Không tìm thấy tài khoản');
+    await revokeAllRefreshTokens(accountId);
+    await recordAudit({
+      companyId: null,
+      actorId,
+      action: 'update',
+      entityType: 'staff.accounts',
+      entityId: accountId,
+      after: { twoFactorReset: true },
+    });
+  });
+  logger.info({ accountId, actorId }, 'quản trị nền tảng đã đặt lại xác thực hai lớp');
+}
+
+/** Loader cho guard quản trị nền tảng (`src/wiring.ts`): cờ và dấu đổi mật khẩu đọc thẳng DB. */
+export async function platformAdminOf(accountId: string) {
+  const account = await findAccountById(accountId);
+  return account && { isPlatformAdmin: account.isPlatformAdmin, passwordChangedAt: account.passwordChangedAt };
 }

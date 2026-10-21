@@ -16,6 +16,7 @@ describe('joinLimits', () => {
       verifyInvitation: { limit: 10, windowMs: MIN15 },
       completeIp: { limit: 20, windowMs: MIN15 },
       completeEmail: { limit: 5, windowMs: MIN15 },
+      twoFactorInvitation: { limit: 5, windowMs: MIN15 },
     });
   });
 

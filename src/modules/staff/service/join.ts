@@ -2,8 +2,10 @@
 // phải giữ bộ đếm (sai OTP) commit trước rồi mới ném (spec 6.7). Mọi lỗi là 409, 410, 422 hoặc 429, không có 401: FE
 // coi 401 là hết phiên (Review Focus 1).
 import { PurposeTokenError, signPurposeToken, verifyPurposeToken } from '../../../shared/auth/purpose-token.ts';
+import { env } from '../../../shared/config/env.ts';
 import { safeEqualHex } from '../../../shared/crypto/codes.ts';
 import { hashPassword, verifyPassword } from '../../../shared/crypto/password.ts';
+import { matchTotp } from '../../../shared/crypto/totp.ts';
 import { withCompany } from '../../../shared/db/client.ts';
 import { pgError } from '../../../shared/db/pg-error.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
@@ -12,16 +14,19 @@ import { isUuid } from '../../../shared/uuid.ts';
 import { getCompanies, publishEvent } from '../../platform/index.ts';
 import { isLinkExpired } from '../domain/invitation-machine.ts';
 import { OTP_MAX_SENDS, OTP_RESEND_SECONDS, otpHash } from '../domain/otp.ts';
-import { findAccountByEmail, findMemberByAccount } from '../repository/accounts.ts';
+import { advanceTotpStep, findAccountByEmail, findMemberByAccount } from '../repository/accounts.ts';
 import {
+  confirmInvitationTotp,
   consumeOtpAttempt,
   findInvitation,
   type InvitationRow,
   markClaimed,
   requestOtpWrite,
+  saveInvitationTotpSecret,
   submitInvitation,
 } from '../repository/invitations.ts';
 import { countOtpRequest, countTransition } from './metrics.ts';
+import { newRecoveryCodes, newTotpSetup, openTotpSecret, sealTotpSecret } from './totp-secrets.ts';
 
 export type JoinNext = 'set_password' | 'sign_in';
 
@@ -147,24 +152,78 @@ export async function verifyOtp(input: {
  * Nộp yêu cầu tham gia (`claimed → pending`). Email mới: băm mật khẩu vừa đặt; tài khoản đã có: kiểm mật khẩu của tài
  * khoản đó, không đổi (Q4). Argon2 chạy ngoài giao dịch. Chưa tạo tài khoản: Admin duyệt mới tạo (Q6).
  */
-export async function completeJoin(input: {
-  registrationToken: string;
-  password: string;
-  confirmPassword?: string;
-}): Promise<{ status: 'pending' }> {
-  const claims = await verifyPurposeToken('join', input.registrationToken).catch((err: unknown) => {
+const twoFactorRequired = () => env.TWO_FACTOR_MODE === 'required';
+const wrongTotp = () => fieldError('totpCode', 'Mã xác thực hai lớp không đúng hoặc đã dùng');
+
+/** Token đăng ký (sau OTP, 30 phút): sai, hết hạn hay thiếu claim thì 410 `registration_expired` (Q17). */
+async function registrationOf(token: string): Promise<{ jti: string; cid: string; em: string; nxt: JoinNext }> {
+  const claims = await verifyPurposeToken('join', token).catch((err: unknown) => {
     if (err instanceof PurposeTokenError) throw registrationExpired();
     throw err;
   });
   const { jti, cid, em, nxt } = claims;
   if (!jti || !cid || !em || !nxt || !isUuid(jti) || !isUuid(cid)) throw registrationExpired();
+  return { jti, cid, em, nxt };
+}
+
+/** [D] 2FA lúc tham gia chỉ cho email mới; tài khoản đã có dùng 2FA của tài khoản. */
+async function newAccountRegistration(token: string) {
+  const registration = await registrationOf(token);
+  if (registration.nxt !== 'set_password') {
+    throw fieldError('registrationToken', 'Tài khoản đã có: xác thực hai lớp thiết lập ở tài khoản, không ở đây');
+  }
+  return registration;
+}
+
+/** Link còn hạn, còn `claimed` với đúng email của token đăng ký. */
+function assertClaimedBy(row: InvitationRow | undefined, email: string): asserts row is InvitationRow {
+  if (!row || isLinkExpired(row, new Date())) throw invalidLink();
+  if (row.status !== 'claimed' || row.email !== email) throw linkUsed();
+}
+
+/** [D] Secret mới cho người được mời (email mới); gọi lại thì thay secret, phải xác nhận lại. */
+export async function join2faSetup(registrationToken: string): Promise<{ secret: string; otpauthUrl: string }> {
+  const { jti, cid, em } = await newAccountRegistration(registrationToken);
+  const setup = newTotpSetup(em);
+  await withCompany(cid, async () => {
+    assertClaimedBy(await findInvitation(jti), em);
+    if (!(await saveInvitationTotpSecret(jti, em, sealTotpSecret(setup.raw, jti)))) throw linkUsed();
+  });
+  logger.info({ invitationId: jti }, 'người được mời bắt đầu thiết lập xác thực hai lớp');
+  return { secret: setup.secret, otpauthUrl: setup.otpauthUrl };
+}
+
+/** [D] Xác nhận bằng một mã từ app; trả 2 mã khôi phục một lần. Duyệt xong tài khoản có 2FA bật sẵn. */
+export async function join2faConfirm(registrationToken: string, code: string): Promise<{ recoveryCodes: string[] }> {
+  const { jti, cid, em } = await newAccountRegistration(registrationToken);
+  const codes = await withCompany(cid, async () => {
+    const row = await findInvitation(jti);
+    assertClaimedBy(row, em);
+    const step = row.totpSecretEnc ? matchTotp(openTotpSecret(row.totpSecretEnc, jti), code, Date.now()) : null;
+    if (step === null) throw fieldError('code', 'Mã không đúng, hãy nhập mã đang hiện trên app');
+    const recovery = newRecoveryCodes();
+    if (!(await confirmInvitationTotp(jti, em, recovery.hashes))) throw linkUsed();
+    return recovery.codes;
+  });
+  logger.info({ invitationId: jti }, 'người được mời đã xác nhận xác thực hai lớp');
+  return { recoveryCodes: codes };
+}
+
+export async function completeJoin(input: {
+  registrationToken: string;
+  password: string;
+  confirmPassword?: string;
+  totpCode?: string;
+}): Promise<{ status: 'pending' }> {
+  const { jti, cid, em, nxt } = await registrationOf(input.registrationToken);
   if (nxt === 'set_password' && input.confirmPassword === undefined) {
     throw fieldError('confirmPassword', 'Nhập lại mật khẩu');
   }
   // Link hết hạn báo trước khi kiểm mật khẩu (spec 6.5).
-  await withCompany(cid, async () => {
-    const row = await findInvitation(jti);
-    if (!row || isLinkExpired(row, new Date())) throw invalidLink();
+  const row = await withCompany(cid, async () => {
+    const found = await findInvitation(jti);
+    if (!found || isLinkExpired(found, new Date())) throw invalidLink();
+    return found;
   });
 
   let passwordHash: string | null = null;
@@ -174,14 +233,26 @@ export async function completeJoin(input: {
     // Không có tài khoản vẫn chạy argon2 trên bản băm giả để cùng thời gian.
     const ok = await verifyPassword(account?.passwordHash, input.password);
     if (!ok || !account) throw fieldError('password', 'Mật khẩu không đúng');
+    // [D] Tài khoản đã bật 2FA thì cần cả mã (AC-D9); mã dùng rồi không dùng lại được.
+    if (twoFactorRequired() && account.totpEnabledAt && account.totpSecretEnc) {
+      const step = input.totpCode
+        ? matchTotp(openTotpSecret(account.totpSecretEnc, account.id), input.totpCode, Date.now())
+        : null;
+      if (step === null || !(await advanceTotpStep(account.id, step))) throw wrongTotp();
+    }
     accountId = account.id;
   } else {
+    // [D] Email mới phải xác nhận 2FA trước khi nộp (AC-D8).
+    if (twoFactorRequired() && !row.totpConfirmedAt) {
+      throw fieldError('totpCode', 'Thiết lập xác thực hai lớp trước khi nộp');
+    }
     passwordHash = await hashPassword(input.password);
   }
 
   const outcome = await withCompany(cid, async () => {
     if (accountId && (await findMemberByAccount(accountId))) return 'already_member';
-    if (await submitInvitation(jti, em, { passwordHash, accountId })) return 'pending';
+    const requireTotp = twoFactorRequired() && nxt === 'set_password';
+    if (await submitInvitation(jti, em, { passwordHash, accountId, requireTotp })) return 'pending';
     const row = await findInvitation(jti);
     return !row || isLinkExpired(row, new Date()) ? 'invalid' : 'used';
   }).catch((err: unknown) => {

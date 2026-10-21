@@ -11,5 +11,7 @@ export const identityModule: ModuleDefinition = {
 };
 
 export { loadCompanyAccess, register } from './service/auth-service.ts';
+// Quản trị nền tảng đặt lại 2FA (#7 [D]): platform nhận qua `ctx` do src/wiring.ts tiêm.
+export { platformAdminOf, resetTwoFactor } from './service/two-factor.ts';
 // Seed dữ liệu demo (db/seed, #37) tạo tài khoản nhân viên và kiểm tài khoản đã có.
 export { hashPassword, verifyPassword } from './service/passwords.ts';

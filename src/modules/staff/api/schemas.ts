@@ -137,6 +137,11 @@ export const JoinCompleteBody = z
     password: newPasswordSchema,
     // Bắt buộc khi `next = set_password` (service kiểm sau khi đọc token).
     confirmPassword: z.string().max(200).optional(),
+    // [D] Tài khoản đã có, đã bật 2FA (khi TWO_FACTOR_MODE=required).
+    totpCode: z
+      .string()
+      .regex(/^\d{6}$/, 'Mã gồm 6 chữ số')
+      .optional(),
   })
   .refine((b) => b.confirmPassword === undefined || b.confirmPassword === b.password, {
     path: ['confirmPassword'],
@@ -154,3 +159,18 @@ export const JoinVerifySchema = z
   .meta({ id: 'JoinVerify' });
 
 export const JoinCompleteSchema = z.object({ status: z.literal('pending') }).meta({ id: 'JoinComplete' });
+
+// [D] 2FA lúc tham gia (email mới), Documents/21 mục 3.1.
+export const JoinTwoFactorSetupBody = z.object({ registrationToken: token }).meta({ id: 'JoinTwoFactorSetupRequest' });
+
+export const JoinTwoFactorConfirmBody = z
+  .object({ registrationToken: token, code: z.string('Nhập mã').regex(/^\d{6}$/, 'Mã gồm 6 chữ số') })
+  .meta({ id: 'JoinTwoFactorConfirmRequest' });
+
+export const JoinTwoFactorSetupSchema = z
+  .object({ secret: z.string(), otpauthUrl: z.string() })
+  .meta({ id: 'JoinTwoFactorSetup' });
+
+export const JoinRecoveryCodesSchema = z
+  .object({ recoveryCodes: z.array(z.string()).meta({ description: '2 mã, chỉ trả lần này' }) })
+  .meta({ id: 'JoinRecoveryCodes' });

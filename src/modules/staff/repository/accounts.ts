@@ -174,8 +174,27 @@ export async function isPlatformAdmin(accountId: string): Promise<boolean> {
   return row?.isPlatformAdmin ?? false;
 }
 
-export async function insertAccount(input: { email: string; fullName: string; passwordHash: string }): Promise<string> {
-  const [row] = await getDb().insert(accounts).values(input).returning({ id: accounts.id });
+/**
+ * Tạo tài khoản. Duyệt lời mời đã thiết lập 2FA (#7 [D]) truyền sẵn `id` (secret mã hoá với AAD theo id) và cột TOTP:
+ * `commerio_app` chỉ INSERT được `staff.accounts`, không UPDATE (migration 0017).
+ */
+export async function insertAccount(input: {
+  id?: string;
+  email: string;
+  fullName: string;
+  passwordHash: string;
+  totp?: { secretEnc: Buffer; recoveryCodeHashes: string[] };
+}): Promise<string> {
+  const { totp, ...values } = input;
+  const [row] = await getDb()
+    .insert(accounts)
+    .values({
+      ...values,
+      ...(totp
+        ? { totpSecretEnc: totp.secretEnc, totpEnabledAt: new Date(), recoveryCodeHashes: totp.recoveryCodeHashes }
+        : {}),
+    })
+    .returning({ id: accounts.id });
   return row!.id;
 }
 

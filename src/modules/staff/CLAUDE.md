@@ -21,6 +21,7 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 | `GET /invitations` | `identity.account.view` | Trang `Invitation`, `status` mặc định `pending` |
 | `POST /invitations/:id/approve`, `/reject` | `identity.account.manage` | Duyệt: tạo tài khoản (email mới) hoặc dùng tài khoản đã có, thêm membership, vai trò, nhật ký `create` trên `staff.memberships`. Từ chối: nhật ký `update` trên `staff.invitations` |
 | `POST /join/check`, `/join/otp`, `/join/verify`, `/join/complete` | Công khai, rate limit (`api/join-limits.ts`) | Người được mời: mở link, xin mã (202, worker gửi thư), nhập mã (`registrationToken` 30 phút, `next`), nộp (`pending`) |
+| `POST /join/2fa/setup`, `/join/2fa/confirm` | Công khai | [D] Email mới thiết lập 2FA trước khi nộp (khi `TWO_FACTOR_MODE=required`): secret mã hoá AAD `totp:<invitationId>`, xác nhận trả 2 mã khôi phục |
 
 ## Luồng mời (#7 [C], `service/invitations.ts`, `service/join.ts`)
 
@@ -30,6 +31,12 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 - Duyệt khoá dòng lời mời trước (thứ tự lời mời → tài khoản → membership → vai trò), kiểm lại vai trò theo quyền người duyệt (409 `invitation_outdated` khi vai trò đã bị xoá). Hết hạn link không chặn duyệt.
 - Giới hạn theo IP đứng trước `validate`; theo email (băm SHA-256), theo lời mời (`jti` đọc từ token chưa kiểm chữ ký) đứng sau. Ngưỡng nhân `JOIN_RATE_LIMIT_SCALE`.
 - Metric `otp_requests_total{result}`, `invitation_transitions_total{to}` (`service/metrics.ts`).
+- [D] `TWO_FACTOR_MODE=required`: email mới phải xác nhận 2FA trước `complete` (422 `errors.totpCode`); tài khoản đã có, đã bật 2FA thì `complete` cần `totpCode`. Duyệt email mới chép 2FA sang tài khoản mới (giải mã AAD lời mời, mã hoá lại AAD `totp:<accountId>` với id sinh trước, vì `commerio_app` chỉ INSERT `staff.accounts`).
+
+## Xác thực hai lớp (#7 [D])
+
+- Cột TOTP của `staff.accounts` (migration 0020) ghi bằng role chủ bảng: `saveTotpSecret`, `enableTotp`, `advanceTotpStep` (chỉ tiến, chống dùng lại mã), `consumeRecoveryCode`, `clearTotp`; gọi trong `withCompany` là lỗi lập trình.
+- `service/totp-secrets.ts`: `sealTotpSecret`, `openTotpSecret` (`TOTP_ENCRYPTION_KEY`), `newTotpSetup`, `newRecoveryCodes` (2 mã), `hashRecoveryCode`; identity dùng qua `index.ts`.
 
 ## Bất biến
 
@@ -44,5 +51,5 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 
 ## Cho module khác (`index.ts`)
 
-- `identity`: `findAccountByEmail`, `findAccountById`, `findAccountByGoogleSub`, `linkGoogleSub`, `createAccount`, `createMembership`, `findMembership`, `membershipsOfAccount`, `updatePassword`; `staffRouter`, `registerStaffOpenApi` (identity gắn).
+- `identity`: hàm TOTP ở trên, `isPlatformAdmin`, `findAccountByEmail`, `findAccountById`, `findAccountByGoogleSub`, `linkGoogleSub`, `createAccount`, `createMembership`, `findMembership`, `membershipsOfAccount`, `updatePassword`; `staffRouter`, `registerStaffOpenApi` (identity gắn).
 - Gọi `access` (`findRolesWithPermissions`, `memberRolesOf`, `replaceMemberRoles`, `membershipIdsWithRole`) và `audit`. `access` không gọi `staff`.

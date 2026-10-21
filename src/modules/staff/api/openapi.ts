@@ -13,6 +13,10 @@ import {
   JoinCompleteBody,
   JoinCompleteSchema,
   JoinOtpBody,
+  JoinRecoveryCodesSchema,
+  JoinTwoFactorConfirmBody,
+  JoinTwoFactorSetupBody,
+  JoinTwoFactorSetupSchema,
   JoinVerifyBody,
   JoinVerifySchema,
   RejectedInvitationSchema,
@@ -202,7 +206,37 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Đã nộp, chờ duyệt', ...json(JoinCompleteSchema) },
       409: problemResponse('`already_member`, `invitation_used`'),
       410: problemResponse('`registration_expired` (token đăng ký sai hoặc quá 30 phút), `invitation_invalid`'),
-      422: problemResponse('`validation_failed` (`errors.password`, `errors.confirmPassword`)'),
+      422: problemResponse('`validation_failed` (`errors.password`, `errors.confirmPassword`, `errors.totpCode`)'),
+      429: tooMany,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/join/2fa/setup',
+    summary: 'Thiết lập xác thực hai lớp lúc tham gia (UC-PI-09)',
+    description:
+      'Chỉ khi `next = set_password`. Gọi lại thì sinh secret mới, phải xác nhận lại. FE vẽ QR từ `otpauthUrl`, hiện ' +
+      '`secret` làm setup key.',
+    request: { body: json(JoinTwoFactorSetupBody) },
+    responses: {
+      200: { description: 'Secret mới', ...json(JoinTwoFactorSetupSchema) },
+      409: problemResponse('`invitation_used`'),
+      410: problemResponse('`registration_expired`, `invitation_invalid`'),
+      422: problemResponse('`validation_failed` (`errors.registrationToken`: tài khoản đã có)'),
+      429: tooMany,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/join/2fa/confirm',
+    summary: 'Xác nhận xác thực hai lớp lúc tham gia (UC-PI-09)',
+    description: 'Mã đúng thì `complete` nộp được; duyệt xong tài khoản có 2FA bật sẵn. Mã khôi phục chỉ trả lần này.',
+    request: { body: json(JoinTwoFactorConfirmBody) },
+    responses: {
+      200: { description: '2 mã khôi phục', ...json(JoinRecoveryCodesSchema) },
+      409: problemResponse('`invitation_used`'),
+      410: problemResponse('`registration_expired`, `invitation_invalid`'),
+      422: problemResponse('`validation_failed` (`errors.code`)'),
       429: tooMany,
     },
   });

@@ -1,5 +1,6 @@
 // Lời mời phía Admin (#7 [C], UC-PI-05): tạo link, hàng đợi, duyệt, từ chối. Thứ tự lỗi theo spec 6.5; luồng ghi
 // theo spec 6.7 "Tạo link", "Approve", "Reject". Mã lỗi theo Documents/21 mục 3.1.
+import { randomUUID } from 'node:crypto';
 import { signPurposeToken } from '../../../shared/auth/purpose-token.ts';
 import { env } from '../../../shared/config/env.ts';
 import { withCompany } from '../../../shared/db/client.ts';
@@ -35,6 +36,7 @@ import {
   staffMemberOf,
 } from './members.ts';
 import { countTransition } from './metrics.ts';
+import { openTotpSecret, sealTotpSecret } from './totp-secrets.ts';
 
 /** Documents/21 mục 3.1 `Invitation`. */
 export interface InvitationView {
@@ -126,6 +128,28 @@ function assertGrant(caller: Caller, requestedIds: readonly string[], found: rea
   if (check === 'not_held') throw notHeld();
 }
 
+/**
+ * Email mới: tạo tài khoản bằng mật khẩu người được mời đã đặt. [D] 2FA đã xác nhận lúc tham gia thì tài khoản có 2FA
+ * bật sẵn: secret giải mã bằng AAD của lời mời, mã hoá lại bằng AAD của tài khoản (id sinh trước), chép mã khôi phục.
+ */
+async function createInvitedAccount(row: InvitationRow): Promise<string> {
+  const id = randomUUID();
+  const totp =
+    row.totpConfirmedAt && row.totpSecretEnc
+      ? {
+          secretEnc: sealTotpSecret(openTotpSecret(row.totpSecretEnc, row.id), id),
+          recoveryCodeHashes: row.recoveryCodeHashes,
+        }
+      : undefined;
+  return insertAccount({
+    id,
+    email: row.email!,
+    fullName: row.fullName!,
+    passwordHash: row.passwordHash!,
+    ...(totp ? { totp } : {}),
+  });
+}
+
 /** Link chỉ trả lần này; DB giữ `id` (= `jti`), không giữ token. */
 export async function createInvitation(
   caller: Caller,
@@ -178,9 +202,7 @@ export async function approveInvitation(
     if (existing && (await findMemberByAccount(existing))) throw alreadyMember();
     // Email mới mà lúc duyệt đã có tài khoản (đăng ký bằng đường khác, hay lời mời ở công ty khác vừa được duyệt).
     if (!row.accountId && existing) throw emailTaken();
-    const accountId =
-      row.accountId ??
-      (await insertAccount({ email: row.email!, fullName: row.fullName!, passwordHash: row.passwordHash! }));
+    const accountId = row.accountId ?? (await createInvitedAccount(row));
     const membershipId = await insertMembership(caller.companyId, accountId);
     await replaceMemberRoles(membershipId, caller.companyId, row.roleIds);
     const decided = await decideInvitation(row.id, version, {

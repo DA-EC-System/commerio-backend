@@ -5,7 +5,15 @@ import { env } from '../../../shared/config/env.ts';
 import { validate, validated } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
 import { approveInvitation, createInvitation, listInvitations, rejectInvitation } from '../service/invitations.ts';
-import { checkInvitation, completeJoin, requestOtp, RetryLaterError, verifyOtp } from '../service/join.ts';
+import {
+  checkInvitation,
+  completeJoin,
+  join2faConfirm,
+  join2faSetup,
+  requestOtp,
+  RetryLaterError,
+  verifyOtp,
+} from '../service/join.ts';
 import { type Caller, changeRoles, listStaff, setLocked } from '../service/members.ts';
 import {
   ChangeRolesBody,
@@ -15,6 +23,8 @@ import {
   JoinCheckBody,
   JoinCompleteBody,
   JoinOtpBody,
+  JoinTwoFactorConfirmBody,
+  JoinTwoFactorSetupBody,
   JoinVerifyBody,
   StaffListQuery,
   StaffParams,
@@ -140,6 +150,29 @@ export function staffRouter(ctx: ModuleContext): Router {
     claimLimiter(limits.completeEmail, (claims) => emailKey(claims.em ?? ''), { skipSuccessfulRequests: true }),
     async (_req, res) => {
       res.json(await completeJoin(completeBody(res)));
+    },
+  );
+
+  // [D] 2FA lúc tham gia (email mới). Sai mã đếm theo lời mời của token đăng ký đã kiểm chữ ký.
+  router.post(
+    '/join/2fa/setup',
+    joinLimiter(limits.completeIp),
+    validate({ body: JoinTwoFactorSetupBody }),
+    async (_req, res) => {
+      res.json(await join2faSetup(validated<typeof JoinTwoFactorSetupBody>(res, 'body').registrationToken));
+    },
+  );
+
+  const confirmBody = (res: Response) => validated<typeof JoinTwoFactorConfirmBody>(res, 'body');
+  router.post(
+    '/join/2fa/confirm',
+    joinLimiter(limits.completeIp),
+    validate({ body: JoinTwoFactorConfirmBody }),
+    readClaims('join', (res) => confirmBody(res).registrationToken),
+    claimLimiter(limits.twoFactorInvitation, (claims) => `join-2fa:${claims.jti}`, { skipSuccessfulRequests: true }),
+    async (_req, res) => {
+      const { registrationToken, code } = confirmBody(res);
+      res.json(await join2faConfirm(registrationToken, code));
     },
   );
 
