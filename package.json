@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#src/*": "./src/*"
+  },
   "engines": {
     "node": ">=24"
   },
@@ -25,12 +28,14 @@
     "infra:down": "docker compose -f deploy/compose.yaml down"
   },
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
     "drizzle-orm": "^0.45.4",
     "express": "^5.3.0",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
     "pino-http": "^11.0.0",
     "prom-client": "^15.1.3",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -39,6 +44,7 @@
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "@types/swagger-ui-express": "^4.1.8",
     "dependency-cruiser": "^18.6.0",
     "drizzle-kit": "^0.31.11",
     "eslint": "^10.12.0",

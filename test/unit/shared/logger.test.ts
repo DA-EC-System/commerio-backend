@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLogger } from './logger.ts';
+import { createLogger } from '#src/shared/logger.ts';
 
 describe('logger', () => {
   it('ẩn header Authorization, Cookie, Set-Cookie', () => {
