@@ -159,7 +159,9 @@ export function staffRouter(ctx: ModuleContext): Router {
     joinLimiter(limits.completeIp),
     validate({ body: JoinTwoFactorSetupBody }),
     async (_req, res) => {
-      res.json(await join2faSetup(validated<typeof JoinTwoFactorSetupBody>(res, 'body').registrationToken));
+      const setup = await join2faSetup(validated<typeof JoinTwoFactorSetupBody>(res, 'body').registrationToken);
+      // Phản hồi chứa secret: không cho lưu cache.
+      res.set('Cache-Control', 'no-store').json(setup);
     },
   );
 
@@ -172,7 +174,7 @@ export function staffRouter(ctx: ModuleContext): Router {
     claimLimiter(limits.twoFactorInvitation, (claims) => `join-2fa:${claims.jti}`, { skipSuccessfulRequests: true }),
     async (_req, res) => {
       const { registrationToken, code } = confirmBody(res);
-      res.json(await join2faConfirm(registrationToken, code));
+      res.set('Cache-Control', 'no-store').json(await join2faConfirm(registrationToken, code));
     },
   );
 

@@ -53,7 +53,7 @@ Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữ
 | `TOTP_ENCRYPTION_KEY` | 32 byte base64 (`openssl rand -base64 32`), riêng với khoá cổng thanh toán. **Đổi khoá là mất mọi secret 2FA đã lưu** |
 | `TWO_FACTOR_MODE` | `required` để bắt buộc 2FA; mặc định `off` |
 
-Trước khi đặt `TWO_FACTOR_MODE=required`, báo cả nhóm: mọi tài khoản phải thiết lập 2FA ở lần đăng nhập kế tiếp. Muốn tài khoản demo có 2FA sẵn thì job `migrate` cần thêm `TOTP_ENCRYPTION_KEY` (cùng khoá trên VPS, secret `STAGING_TOTP_ENCRYPTION_KEY`) và `DEMO_TOTP_SECRET` cho bước seed. Chỉ thêm vào workflow sau khi đã tạo secret: secret chưa đặt thành chuỗi rỗng và `TOTP_ENCRYPTION_KEY` rỗng làm seed dừng. Mất điện thoại và hết mã khôi phục: quản trị nền tảng gọi `POST /api/v1/platform/accounts/:accountId/2fa/reset`.
+Trước khi đặt `TWO_FACTOR_MODE=required`, báo cả nhóm: mọi tài khoản phải thiết lập 2FA ở lần đăng nhập kế tiếp. Lúc chuyển từ `off` sang `required`, thu hồi các phiên cũ (cấp lúc chỉ cần mật khẩu, kể cả của tài khoản đã tự bật 2FA): `update identity.refresh_tokens set revoked_at = now() where revoked_at is null;`. Muốn tài khoản demo có 2FA sẵn thì job `migrate` cần thêm `TOTP_ENCRYPTION_KEY` (cùng khoá trên VPS, secret `STAGING_TOTP_ENCRYPTION_KEY`) và `DEMO_TOTP_SECRET` cho bước seed. Chỉ thêm vào workflow sau khi đã tạo secret: secret chưa đặt thành chuỗi rỗng và `TOTP_ENCRYPTION_KEY` rỗng làm seed dừng. Mất điện thoại và hết mã khôi phục: quản trị nền tảng gọi `POST /api/v1/platform/accounts/:accountId/2fa/reset`.
 
 ## Chạy giống staging trên máy
 

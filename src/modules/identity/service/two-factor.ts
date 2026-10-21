@@ -23,9 +23,9 @@ import {
   saveTotpSecret,
   sealTotpSecret,
 } from '../../staff/index.ts';
-import { revokeAllRefreshTokens } from '../repository/refresh-tokens.ts';
+import { findActiveRefreshToken, revokeAllRefreshTokens } from '../repository/refresh-tokens.ts';
 import { countLogin, countTwoFactor } from './metrics.ts';
-import { type LoginResult, startSession } from './session.ts';
+import { hashToken, type LoginResult, newRefreshToken, startSession } from './session.ts';
 
 const unauthorized = () =>
   new AppError(401, 'unauthorized', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn, hãy đăng nhập lại');
@@ -54,23 +54,37 @@ export async function beginSetup(auth: AccessClaims): Promise<{ secret: string; 
   return { secret: setup.secret, otpauthUrl: setup.otpauthUrl };
 }
 
-/** Mã đúng thì bật 2FA, ghi bước của mã (không dùng lại được ở `/login/2fa`), trả 2 mã khôi phục một lần. */
-export async function confirmSetup(auth: AccessClaims, code: string): Promise<{ recoveryCodes: string[] }> {
+/**
+ * Mã đúng thì bật 2FA, ghi bước của mã (không dùng lại được ở `/login/2fa`), trả 2 mã khôi phục một lần. Mọi refresh
+ * token cấp trước đó chỉ qua mật khẩu nên bị thu hồi (không thì phiên đó `refresh` ra token không cờ mà chưa từng nhập
+ * mã); phiên đang xác nhận nhận cookie mới, giống đổi mật khẩu.
+ */
+export async function confirmSetup(
+  auth: AccessClaims,
+  code: string,
+  refreshToken: string | undefined,
+): Promise<{ recoveryCodes: string[]; refreshToken: string }> {
   const account = await caller(auth);
   if (account.totpEnabledAt) throw alreadyEnabled();
+  const sealed = account.totpSecretEnc;
   // Chưa gọi `setup` thì không có mã nào đúng.
-  const step = account.totpSecretEnc
-    ? matchTotp(openTotpSecret(account.totpSecretEnc, account.id), code, Date.now())
-    : null;
-  if (step === null) {
+  const step = sealed ? matchTotp(openTotpSecret(sealed, account.id), code, Date.now()) : null;
+  if (!sealed || step === null) {
     countTwoFactor('invalid');
     throw wrongSetupCode();
   }
   const { codes, hashes } = newRecoveryCodes();
-  if (!(await enableTotp(account.id, step, hashes))) throw alreadyEnabled();
+  const session = refreshToken ? await findActiveRefreshToken(hashToken(refreshToken)) : undefined;
+  const companyId = session?.accountId === account.id ? session.companyId : null;
+  const token = await inTransaction(async () => {
+    // `setup` chen giữa thì secret đã đổi: không bật bằng secret mà mã chưa kiểm.
+    if (!(await enableTotp(account.id, step, hashes, sealed))) throw alreadyEnabled();
+    await revokeAllRefreshTokens(account.id);
+    return newRefreshToken(account.id, companyId);
+  });
   countTwoFactor('ok');
   logger.info({ accountId: account.id }, 'đã bật xác thực hai lớp');
-  return { recoveryCodes: codes };
+  return { recoveryCodes: codes, refreshToken: token };
 }
 
 /**

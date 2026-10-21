@@ -170,7 +170,9 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
     method: 'post',
     path: '/2fa/confirm',
     summary: 'Xác nhận thiết lập bằng một mã từ app',
-    description: '2FA bật từ đây; gọi `refresh` để lấy token không còn cờ. Mã khôi phục chỉ trả lần này.',
+    description:
+      '2FA bật từ đây. Mọi phiên khác bị đăng xuất; phản hồi đặt cookie `commerio_refresh` mới, gọi `refresh` bằng ' +
+      'cookie đó để lấy token không còn cờ. Mã khôi phục chỉ trả lần này.',
     security: bearer,
     request: { body: json(ConfirmTwoFactorBody) },
     responses: {

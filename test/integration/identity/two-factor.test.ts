@@ -132,7 +132,13 @@ describe('2FA bắt buộc', () => {
     expect(hashes.rows[0]!.recovery_code_hashes).toHaveLength(2);
     expect(hashes.rows[0]!.recovery_code_hashes).not.toContain(ok.body.recoveryCodes[0]);
 
-    const refreshed = await request(app).post('/api/v1/identity/refresh').set('Cookie', refreshCookie(login));
+    // Phiên cấp lúc chưa bật 2FA (chỉ qua mật khẩu) bị thu hồi: không refresh ra token không cờ được (review bảo mật
+    // [D], C1). Phiên vừa xác nhận nhận cookie mới.
+    expect(ok.headers['cache-control']).toBe('no-store');
+    const stale = await request(app).post('/api/v1/identity/refresh').set('Cookie', refreshCookie(login));
+    expect(stale.status).toBe(401);
+    const refreshed = await request(app).post('/api/v1/identity/refresh').set('Cookie', refreshCookie(ok));
+    expect(refreshed.status).toBe(200);
     expect((await verifyAccessToken(refreshed.body.accessToken)).twoFactorSetupRequired).toBe(false);
     for (const path of ['setup', 'confirm']) {
       const again = await request(app)

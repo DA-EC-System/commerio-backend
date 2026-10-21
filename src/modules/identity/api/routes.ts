@@ -129,16 +129,24 @@ export function identityRouter(ctx: ModuleContext): Router {
 
   // Thiết lập 2FA: gọi được khi token còn cờ `tfs` hay `pwc` (Q18).
   const setupAuth = authenticate({ allowPasswordChange: true, allowTwoFactorSetup: true });
+  // Phản hồi chứa secret hay mã khôi phục: không cho lưu cache.
   router.post('/2fa/setup', setupAuth, async (_req, res) => {
-    res.json(await beginSetup(getAuth(res)));
+    const setup = await beginSetup(getAuth(res));
+    res.set('Cache-Control', 'no-store').json(setup);
   });
   router.post(
     '/2fa/confirm',
     setupAuth,
     validate({ body: ConfirmTwoFactorBody }),
     twoFactorLimiter((_req, res) => `setup:${getAuth(res).accountId}`),
-    async (_req, res) => {
-      res.json(await confirmSetup(getAuth(res), body<typeof ConfirmTwoFactorBody>(res).code));
+    async (req, res) => {
+      const { refreshToken, ...result } = await confirmSetup(
+        getAuth(res),
+        body<typeof ConfirmTwoFactorBody>(res).code,
+        readRefreshCookie(req),
+      );
+      setRefreshCookie(res, refreshToken);
+      res.set('Cache-Control', 'no-store').json(result);
     },
   );
 

@@ -98,8 +98,16 @@ export async function saveTotpSecret(accountId: string, encrypted: Buffer): Prom
   );
 }
 
-/** Bật 2FA một lần, ghi bước của mã vừa xác nhận và bản băm mã khôi phục. `false` khi đã bật hoặc chưa có secret. */
-export async function enableTotp(accountId: string, step: number, recoveryHashes: string[]): Promise<boolean> {
+/**
+ * Bật 2FA một lần, ghi bước của mã vừa xác nhận và bản băm mã khôi phục. `false` khi đã bật, chưa có secret, hoặc
+ * secret đã bị thay (`expectedSecret`: bản mã vừa dùng để kiểm mã; `setup` chen giữa thì không bật bằng secret mới).
+ */
+export async function enableTotp(
+  accountId: string,
+  step: number,
+  recoveryHashes: string[],
+  expectedSecret?: Buffer,
+): Promise<boolean> {
   requireOwner('enableTotp');
   return updatedAccount(
     await getDb()
@@ -111,7 +119,13 @@ export async function enableTotp(accountId: string, step: number, recoveryHashes
         updatedAt: new Date(),
         version: sql`${accounts.version} + 1`,
       })
-      .where(and(eq(accounts.id, accountId), isNull(accounts.totpEnabledAt), isNotNull(accounts.totpSecretEnc)))
+      .where(
+        and(
+          eq(accounts.id, accountId),
+          isNull(accounts.totpEnabledAt),
+          expectedSecret ? eq(accounts.totpSecretEnc, expectedSecret) : isNotNull(accounts.totpSecretEnc),
+        ),
+      )
       .returning({ id: accounts.id }),
   );
 }
