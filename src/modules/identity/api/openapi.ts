@@ -1,8 +1,10 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../shared/http/openapi.ts';
 import { registerAccessOpenApi } from '../../access/index.ts';
+import { registerStaffOpenApi } from '../../staff/index.ts';
 import {
   ChangePasswordBody,
+  GoogleLoginBody,
   LoginBody,
   LoginResponse,
   MeResponse,
@@ -19,6 +21,7 @@ const bearer = [{ bearerAuth: [] }];
 export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
   registry.registerComponent('securitySchemes', 'bearerAuth', { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' });
   registerAccessOpenApi(registry);
+  registerStaffOpenApi(registry);
 
   registry.registerPath({
     method: 'post',
@@ -43,6 +46,25 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
       401: problemResponse('`invalid_credentials`: sai email hoặc mật khẩu'),
       422: problemResponse('`validation_failed`'),
       429: problemResponse('`too_many_requests`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/google',
+    summary: 'Đăng nhập bằng Google cho tài khoản đã có (UC-PI-03)',
+    description:
+      'Body là ID token lấy từ Google Identity Services. Tìm tài khoản theo `sub` đã liên kết, không có thì theo email ' +
+      'đã xác minh (lần đầu thì liên kết). Không tạo tài khoản. Phản hồi và cookie như `/login`.',
+    request: { body: json(GoogleLoginBody) },
+    responses: {
+      200: { description: 'Đăng nhập được', ...json(LoginResponse) },
+      401: problemResponse(
+        '`google_token_invalid`: chữ ký, `iss`, `aud`, hạn, email chưa xác minh; `google_account_not_found`: không có ' +
+          'tài khoản, hoặc tài khoản đã gắn Google khác',
+      ),
+      422: problemResponse('`validation_failed`'),
+      429: problemResponse('`too_many_requests`'),
+      503: problemResponse('`google_unavailable`: không lấy được khoá của Google hoặc máy chủ chưa cấu hình Google'),
     },
   });
   registry.registerPath({

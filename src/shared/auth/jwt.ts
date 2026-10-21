@@ -25,7 +25,8 @@ export interface AccessClaims {
 
 let keys: Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> | undefined;
 
-function loadKeys() {
+/** Cặp khoá Ed25519 ký access token; token mục đích riêng (`purpose-token.ts`) ký cùng khoá, khác issuer. */
+export function signingKeys() {
   keys ??= (async () => {
     if (env.JWT_PRIVATE_KEY && env.JWT_PUBLIC_KEY) {
       const pem = (s: string) => s.replace(/\\n/g, '\n');
@@ -42,7 +43,7 @@ function loadKeys() {
 }
 
 export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): Promise<string> {
-  const { privateKey } = await loadKeys();
+  const { privateKey } = await signingKeys();
   return new SignJWT({
     cid: claims.companyId,
     perms: claims.permissions,
@@ -59,7 +60,7 @@ export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): 
 
 /** Kiểm chữ ký và hạn của access token. Sai hay hết hạn thì 401 `unauthorized`. */
 export async function verifyAccessToken(token: string): Promise<AccessClaims> {
-  const { publicKey } = await loadKeys();
+  const { publicKey } = await signingKeys();
   try {
     const { payload } = await jwtVerify(token, publicKey, { issuer: ISSUER, algorithms: [ALG] });
     return {

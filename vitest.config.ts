@@ -1,7 +1,14 @@
 import { defineConfig } from 'vitest/config';
 
-// Test gọi đăng nhập nhiều lần từ cùng một IP, nên nới giới hạn.
-const env = { NODE_ENV: 'test', LOG_LEVEL: 'silent', AUTH_RATE_LIMIT: '10000' };
+// Test gọi đăng nhập nhiều lần từ cùng một IP, nên nới giới hạn. Không đặt SMTP_URL: test gửi thư qua transport giả.
+const env = {
+  NODE_ENV: 'test',
+  LOG_LEVEL: 'silent',
+  AUTH_RATE_LIMIT: '10000',
+  MAIL_FROM: 'Commerio <no-reply@commerio.test>',
+  // ID token Google trong test ký bằng khoá tự sinh (setGoogleKeySource), aud là client id này.
+  GOOGLE_CLIENT_ID: 'test-client.apps.googleusercontent.com',
+};
 
 export default defineConfig({
   test: {

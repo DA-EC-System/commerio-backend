@@ -60,7 +60,7 @@ Chỗ cần gọi ngược lớp (vd catalog lấy giá chuẩn của pricing, w
 
 ## Router và quyền
 
-`router` của module là hàm `(ctx: ModuleContext) => Router`; `app.ts` gắn tại `/api/v1/<tên>`. Mọi module đã có `api/routes.ts` và `api/openapi.ts` rỗng: thêm route vào đó, không cần sửa `index.ts`. Router của `access` gắn dưới `/api/v1/identity` (`/identity/roles`, `/identity/permissions`); `notification` chỉ có `openapi` (stream `/api/v1/notification/stream` do tiến trình realtime phục vụ).
+`router` của module là hàm `(ctx: ModuleContext) => Router`; `app.ts` gắn tại `/api/v1/<tên>`. Mọi module đã có `api/routes.ts` và `api/openapi.ts` rỗng: thêm route vào đó, không cần sửa `index.ts`. Router của `access` và `staff` gắn dưới `/api/v1/identity` (`/identity/roles`, `/identity/permissions`, `/identity/staff`); `notification` chỉ có `openapi` (stream `/api/v1/notification/stream` do tiến trình realtime phục vụ).
 
 ```ts
 router.post('/products', ctx.authorize('catalog.product.manage'), validate({ body: CreateProductBody }), async (_req, res) => {

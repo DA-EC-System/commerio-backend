@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { newPasswordSchema } from '../../../shared/auth/password-policy.ts';
 import { OPTIONAL_MODULES } from '../../platform/index.ts';
 
 // Quy tắc khớp FE `src/features/auth/schemas.ts` (Documents/21 A5, V14).
@@ -9,12 +10,14 @@ const email = z
   .pipe(z.email('Email không hợp lệ'))
   .meta({ example: 'ceo@congty.vn' });
 
-export const newPassword = z
-  .string()
-  .min(8, 'Mật khẩu tối thiểu 8 ký tự')
-  .max(72, 'Mật khẩu tối đa 72 ký tự')
-  .regex(/[A-Za-z]/, 'Mật khẩu cần có ít nhất một chữ cái')
-  .regex(/\d/, 'Mật khẩu cần có ít nhất một chữ số');
+export const newPassword = newPasswordSchema;
+
+export const GoogleLoginBody = z
+  .object({
+    // ID token lấy từ Google Identity Services (Documents/21 A3, A6).
+    credential: z.string().min(20, 'Thiếu ID token của Google').max(4096, 'ID token quá dài'),
+  })
+  .meta({ id: 'GoogleLoginBody' });
 
 export const RegisterBody = z
   .object({

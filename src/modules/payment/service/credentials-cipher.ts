@@ -1,14 +1,10 @@
 // Mã hoá khoá cổng lưu ở `payment.gateway_configs.credentials_enc` (Documents/21 T4, T11; plan #23 A2).
-// AES-256-GCM, khoá chủ `PAYMENT_CREDENTIALS_KEY`. AAD = "<companyId>:<gateway>": bản mã chép sang dòng khác không giải mã được.
-// Định dạng: 1 byte phiên bản | iv 12 byte | tag 16 byte | bản mã của JSON các ô.
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+// AES-256-GCM (`shared/crypto/aes-gcm.ts`), khoá chủ `PAYMENT_CREDENTIALS_KEY`. AAD = "<companyId>:<gateway>":
+// bản mã chép sang dòng khác không giải mã được. Bản rõ là JSON các ô.
 import { env } from '../../../shared/config/env.ts';
+import { decryptBytes, encryptBytes } from '../../../shared/crypto/aes-gcm.ts';
 import { AppError } from '../../../shared/errors/app-error.ts';
 import type { Credentials } from '../domain/gateways.ts';
-
-const VERSION = 1;
-const IV_LENGTH = 12;
-const TAG_LENGTH = 16;
 
 function masterKey(): Buffer {
   if (!env.PAYMENT_CREDENTIALS_KEY) {
@@ -18,11 +14,7 @@ function masterKey(): Buffer {
 }
 
 export function encryptCredentials(credentials: Credentials, aad: string, key: Buffer = masterKey()): Buffer {
-  const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  cipher.setAAD(Buffer.from(aad));
-  const body = Buffer.concat([cipher.update(JSON.stringify(credentials), 'utf8'), cipher.final()]);
-  return Buffer.concat([Buffer.from([VERSION]), iv, cipher.getAuthTag(), body]);
+  return encryptBytes(Buffer.from(JSON.stringify(credentials), 'utf8'), aad, key);
 }
 
 const CREDENTIALS_UNREADABLE = 'payment_credentials_unreadable';
@@ -37,14 +29,7 @@ export const isCredentialsUnreadable = (err: unknown): boolean =>
  */
 export function decryptCredentials(data: Buffer, aad: string, key: Buffer = masterKey()): Credentials {
   try {
-    if (data[0] !== VERSION) throw new Error('sai phiên bản');
-    const iv = data.subarray(1, 1 + IV_LENGTH);
-    const tag = data.subarray(1 + IV_LENGTH, 1 + IV_LENGTH + TAG_LENGTH);
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAAD(Buffer.from(aad));
-    decipher.setAuthTag(tag);
-    const plain = Buffer.concat([decipher.update(data.subarray(1 + IV_LENGTH + TAG_LENGTH)), decipher.final()]);
-    return JSON.parse(plain.toString('utf8')) as Credentials;
+    return JSON.parse(decryptBytes(data, aad, key).toString('utf8')) as Credentials;
   } catch {
     throw new AppError(500, CREDENTIALS_UNREADABLE, 'Khoá cổng đã lưu không giải mã được (khoá chủ đã đổi hoặc bản mã hỏng)');
   }

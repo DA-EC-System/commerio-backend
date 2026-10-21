@@ -59,6 +59,49 @@ export async function findRoles(id?: string) {
   }));
 }
 
+/** Id và tên của các vai trò thấy được trong `ids`, kèm quyền (id không thấy thì không có trong kết quả). */
+export async function rolesWithPermissionRows(ids: readonly string[]) {
+  if (ids.length === 0) return [];
+  const db = getDb();
+  const rows = await db
+    .select({ id: roles.id, name: roles.name })
+    .from(roles)
+    .where(inArray(roles.id, [...ids]));
+  if (rows.length === 0) return [];
+  const perms = await db
+    .select({ roleId: rolePermissions.roleId, code: rolePermissions.permissionCode })
+    .from(rolePermissions)
+    .where(inArray(rolePermissions.roleId, rows.map((r) => r.id)));
+  return rows.map((r) => ({
+    ...r,
+    permissions: perms.filter((p) => p.roleId === r.id).map((p) => p.code).sort(),
+  }));
+}
+
+/** Cặp (membership, vai trò) của các membership. */
+export async function memberRoleRows(membershipIds: readonly string[]) {
+  if (membershipIds.length === 0) return [];
+  return getDb()
+    .select({ membershipId: memberRoles.membershipId, roleId: memberRoles.roleId })
+    .from(memberRoles)
+    .where(inArray(memberRoles.membershipId, [...membershipIds]));
+}
+
+export async function membershipIdsWithRole(roleId: string): Promise<string[]> {
+  const rows = await getDb()
+    .select({ membershipId: memberRoles.membershipId })
+    .from(memberRoles)
+    .where(eq(memberRoles.roleId, roleId));
+  return rows.map((r) => r.membershipId);
+}
+
+/** Xoá mọi vai trò của membership rồi gán `roleIds`, trong giao dịch của bên gọi. */
+export async function replaceMemberRoleRows(membershipId: string, companyId: string, roleIds: readonly string[]): Promise<void> {
+  const db = getDb();
+  await db.delete(memberRoles).where(eq(memberRoles.membershipId, membershipId));
+  if (roleIds.length > 0) await db.insert(memberRoles).values(roleIds.map((roleId) => ({ membershipId, roleId, companyId })));
+}
+
 /** Có vai trò khác (có sẵn hoặc của công ty) cùng tên, không phân biệt hoa thường như index `roles_company_lower_name_uq`. */
 export async function roleNameExists(name: string, exceptId?: string): Promise<boolean> {
   const rows = await getDb()

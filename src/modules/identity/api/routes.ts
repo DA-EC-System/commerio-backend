@@ -7,8 +7,10 @@ import { AppError } from '../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../shared/module.ts';
 import { accessRouter } from '../../access/index.ts';
+import { staffRouter } from '../../staff/index.ts';
 import * as auth from '../service/auth-service.ts';
-import { ChangePasswordBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
+import { loginWithGoogle } from '../service/google.ts';
+import { ChangePasswordBody, GoogleLoginBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
 
 /** Refresh token nằm trong cookie HttpOnly, chỉ gửi kèm các đường dẫn /identity (Documents/21 A1). */
 export const REFRESH_COOKIE = 'commerio_refresh';
@@ -59,6 +61,13 @@ export function identityRouter(ctx: ModuleContext): Router {
     res.json(result);
   });
 
+  // Chỉ đăng nhập tài khoản đã có, không đăng ký (#7 [A]). Giới hạn theo IP như /login (bộ đếm riêng).
+  router.post('/google', authLimiter(), validate({ body: GoogleLoginBody }), async (_req, res) => {
+    const { refreshToken, ...result } = await loginWithGoogle(body<typeof GoogleLoginBody>(res).credential);
+    setRefreshCookie(res, refreshToken);
+    res.json(result);
+  });
+
   router.post('/refresh', async (req, res) => {
     try {
       const session = await auth.refresh(readRefreshCookie(req));
@@ -104,6 +113,8 @@ export function identityRouter(ctx: ModuleContext): Router {
   // Vai trò và quyền (/identity/roles, /identity/permissions) do module access phục vụ. Gắn sau route của
   // identity để middleware không đường dẫn bên access (nếu có) không chặn được /login, /refresh.
   router.use(accessRouter(ctx));
+  // Nhân viên (/identity/staff, #7) do module staff phục vụ, gắn cùng cách.
+  router.use(staffRouter(ctx));
 
   return router;
 }
