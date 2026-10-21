@@ -77,6 +77,9 @@ export const EVENT_SCHEMAS = {
     reversalOf: id.nullable(),
   }),
   'purchasing.order_submitted': z.object({ purchaseOrderId: id, code: z.string() }),
+  // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
+  // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
+  'staff.invitation_otp_requested': z.object({ invitationId: id, requestedAt: timestamp }),
 } as const;
 
 export type EventType = keyof typeof EVENT_SCHEMAS;
