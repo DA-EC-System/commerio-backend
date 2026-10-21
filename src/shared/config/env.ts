@@ -56,8 +56,14 @@ const EnvSchema = z.object({
 
 export type Env = z.infer<typeof EnvSchema>;
 
+// Bật 2FA bắt buộc mà thiếu khoá mã hoá secret thì không khởi động.
+const CheckedEnvSchema = EnvSchema.refine((e) => e.TWO_FACTOR_MODE === 'off' || e.TOTP_ENCRYPTION_KEY !== undefined, {
+  path: ['TOTP_ENCRYPTION_KEY'],
+  message: 'TWO_FACTOR_MODE=required cần TOTP_ENCRYPTION_KEY',
+});
+
 function loadEnv(): Env {
-  const result = EnvSchema.safeParse(process.env);
+  const result = CheckedEnvSchema.safeParse(process.env);
   if (!result.success) {
     throw new Error(`Biến môi trường không hợp lệ:\n${z.prettifyError(result.error)}`);
   }

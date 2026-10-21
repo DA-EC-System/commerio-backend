@@ -5,11 +5,14 @@ import { type AccessClaims, verifyAccessToken } from './jwt.ts';
 interface AuthenticateOptions {
   /** Cho tài khoản còn mật khẩu thư mời gọi API này (me, đổi mật khẩu). Mặc định chặn. */
   readonly allowPasswordChange?: boolean;
+  /** Cho tài khoản chưa thiết lập 2FA gọi API này (me, đổi mật khẩu, `2fa/setup`, `2fa/confirm`; Q18). Mặc định chặn. */
+  readonly allowTwoFactorSetup?: boolean;
 }
 
 /**
  * Đọc và kiểm access token ở header `Authorization: Bearer <token>`.
- * Thiếu hoặc sai thì 401 `unauthorized`; còn mật khẩu thư mời thì 403 `password_change_required`.
+ * Thiếu hoặc sai thì 401 `unauthorized`; còn mật khẩu thư mời thì 403 `password_change_required`; chưa thiết lập 2FA
+ * thì 403 `two_factor_setup_required` (kiểm sau).
  */
 export async function readAccessClaims(req: Request, options: AuthenticateOptions = {}): Promise<AccessClaims> {
   const header = req.get('authorization');
@@ -18,6 +21,9 @@ export async function readAccessClaims(req: Request, options: AuthenticateOption
   const claims = await verifyAccessToken(token);
   if (claims.mustChangePassword && !options.allowPasswordChange) {
     throw new AppError(403, 'password_change_required', 'Cần đổi mật khẩu trước khi tiếp tục');
+  }
+  if (claims.twoFactorSetupRequired && !options.allowTwoFactorSetup) {
+    throw new AppError(403, 'two_factor_setup_required', 'Cần thiết lập xác thực hai lớp trước khi tiếp tục');
   }
   return claims;
 }

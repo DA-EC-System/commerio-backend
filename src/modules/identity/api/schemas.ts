@@ -97,3 +97,38 @@ export const RefreshResponse = z.object({ accessToken: z.string() }).meta({ id: 
 export const RegisterResponse = z
   .object({ companyId: z.uuid(), email: z.string() })
   .meta({ id: 'RegisterCompanyResponse' });
+
+// Xác thực hai lớp (#7 [D], Documents/21 mục 2.1).
+const totpCode = z.string('Nhập mã').regex(/^\d{6}$/, 'Mã gồm 6 chữ số');
+
+export const SecondFactorBody = z
+  .object({
+    mfaToken: z.string('Thiếu mfaToken').min(1, 'Thiếu mfaToken').max(4096),
+    code: totpCode.optional(),
+    recoveryCode: z.string().min(1).max(40).optional(),
+  })
+  .refine((b) => (b.code === undefined) !== (b.recoveryCode === undefined), {
+    path: ['code'],
+    message: 'Nhập mã từ app hoặc mã khôi phục (một trong hai)',
+  })
+  .meta({ id: 'SecondFactorRequest' });
+
+export const ConfirmTwoFactorBody = z.object({ code: totpCode }).meta({ id: 'ConfirmTwoFactorRequest' });
+
+export const MfaChallengeResponse = z
+  .object({
+    mfaRequired: z.literal(true),
+    mfaToken: z.string().meta({ description: 'Sống 5 phút, gửi lại ở `/login/2fa`' }),
+  })
+  .meta({ id: 'MfaChallenge' });
+
+export const TwoFactorSetupResponse = z
+  .object({
+    secret: z.string().meta({ description: 'Base32, hiện làm setup key' }),
+    otpauthUrl: z.string().meta({ description: 'FE vẽ QR từ chuỗi này' }),
+  })
+  .meta({ id: 'TwoFactorSetup' });
+
+export const RecoveryCodesResponse = z
+  .object({ recoveryCodes: z.array(z.string()).meta({ description: '2 mã, chỉ trả lần này' }) })
+  .meta({ id: 'RecoveryCodes' });

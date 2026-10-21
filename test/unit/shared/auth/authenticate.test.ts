@@ -6,16 +6,22 @@ import { authenticate, getAuth } from '#src/shared/auth/authenticate.ts';
 import { signAccessToken } from '#src/shared/auth/jwt.ts';
 import { errorHandler } from '#src/shared/errors/error-handler.ts';
 
-function buildApp(allowPasswordChange = false) {
+function buildApp(allowPasswordChange = false, allowTwoFactorSetup = false) {
   const app = express();
-  app.get('/private', authenticate({ allowPasswordChange }), (_req, res) => {
+  app.get('/private', authenticate({ allowPasswordChange, allowTwoFactorSetup }), (_req, res) => {
     res.json(getAuth(res));
   });
   app.use(errorHandler);
   return app;
 }
 
-const claims = { accountId: '7d1b6c1e-0000-4000-8000-000000000001', companyId: null, permissions: [], mustChangePassword: false, passwordChangedAt: null };
+const claims = {
+  accountId: '7d1b6c1e-0000-4000-8000-000000000001',
+  companyId: null,
+  permissions: [],
+  mustChangePassword: false,
+  passwordChangedAt: null,
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -30,6 +36,7 @@ describe('authenticate', () => {
       ...claims,
       companyId: 'c1',
       permissions: ['catalog.product.view'],
+      twoFactorSetupRequired: false,
       expiresAt: expect.any(Number),
     });
   });
@@ -45,7 +52,12 @@ describe('authenticate', () => {
 
   it('token ký bằng khoá khác thì 401', async () => {
     const { privateKey } = await generateKeyPair('EdDSA');
-    const forged = await new SignJWT({}).setProtectedHeader({ alg: 'EdDSA' }).setIssuer('commerio').setSubject('x').setExpirationTime('5m').sign(privateKey);
+    const forged = await new SignJWT({})
+      .setProtectedHeader({ alg: 'EdDSA' })
+      .setIssuer('commerio')
+      .setSubject('x')
+      .setExpirationTime('5m')
+      .sign(privateKey);
     const res = await request(buildApp()).get('/private').set('Authorization', `Bearer ${forged}`);
     expect(res.status).toBe(401);
   });
@@ -65,5 +77,32 @@ describe('authenticate', () => {
     expect(blocked.body.code).toBe('password_change_required');
     const allowed = await request(buildApp(true)).get('/private').set('Authorization', `Bearer ${token}`);
     expect(allowed.status).toBe(200);
+  });
+
+  // #7 [D] (Q18): tài khoản chưa bật 2FA khi TWO_FACTOR_MODE=required mang cờ `tfs`.
+  it('chưa thiết lập 2FA thì 403 two_factor_setup_required, trừ route cho phép', async () => {
+    const token = await signAccessToken({ ...claims, twoFactorSetupRequired: true });
+    const blocked = await request(buildApp()).get('/private').set('Authorization', `Bearer ${token}`);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.type).toBe('/problems/two_factor_setup_required');
+    const allowed = await request(buildApp(false, true)).get('/private').set('Authorization', `Bearer ${token}`);
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.twoFactorSetupRequired).toBe(true);
+  });
+
+  it('mang cả hai cờ: báo password_change_required trước; route cho cả hai thì qua', async () => {
+    const token = await signAccessToken({ ...claims, mustChangePassword: true, twoFactorSetupRequired: true });
+    const app = (pwc: boolean, tfs: boolean) =>
+      request(buildApp(pwc, tfs)).get('/private').set('Authorization', `Bearer ${token}`);
+    expect((await app(false, false)).body.code).toBe('password_change_required');
+    expect((await app(true, false)).body.code).toBe('two_factor_setup_required');
+    expect((await app(false, true)).body.code).toBe('password_change_required');
+    expect((await app(true, true)).status).toBe(200);
+  });
+
+  it('token cũ không có claim tfs đọc ra false', async () => {
+    const token = await signAccessToken(claims);
+    const res = await request(buildApp()).get('/private').set('Authorization', `Bearer ${token}`);
+    expect(res.body.twoFactorSetupRequired).toBe(false);
   });
 });
