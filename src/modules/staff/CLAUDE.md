@@ -8,6 +8,7 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 |---|---|
 | `staff.accounts` | Tài khoản dùng chung mọi công ty, **không RLS**. Email chữ thường, unique; `google_sub` unique. `commerio_app` chỉ SELECT, INSERT (migration 0017): mọi UPDATE (mật khẩu, liên kết Google) chạy ngoài `withCompany` bằng role chủ bảng |
 | `staff.memberships` | (công ty, tài khoản) unique; `status` `active`/`suspended` (API gọi `suspended` là `locked`); `version` cho khoá lạc quan. RLS `company_isolation` |
+| `staff.invitations` | Lời mời bằng link (#7 [C], D39): `open → claimed → pending → approved \| rejected` (`domain/invitation-machine.ts`), mỗi bước một UPDATE có điều kiện (`repository/invitations.ts`). `id` là `jti` của token link, DB không lưu token. OTP chỉ lưu bản băm (`domain/otp.ts`). CHECK đặt tên `invitations_*`; một yêu cầu `pending` mỗi email mỗi công ty (`invitations_one_pending_per_email`). RLS có `WITH CHECK`; `commerio_app` không DELETE (migration 0019) |
 
 ## API (gắn dưới `/api/v1/identity`, router do `identity` gắn sau router của `access`)
 

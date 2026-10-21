@@ -19,6 +19,8 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'platform.processed_events': ['SELECT', 'INSERT'],
   // Tài khoản dùng chung mọi công ty, không RLS: request trong công ty chỉ đọc và tạo (mời nhân viên), không sửa, không xoá (#62).
   'staff.accounts': ['SELECT', 'INSERT'],
+  // Lời mời không xoá, chỉ đổi trạng thái (#7 [C], spec 6.3).
+  'staff.invitations': ['SELECT', 'INSERT', 'UPDATE'],
   // Thẻ kho chỉ thêm, sai thì lập phiếu ngược (Documents/21 K10).
   'inventory.stock_moves': ['SELECT', 'INSERT'],
   // Lịch sử chuyển trạng thái đơn chỉ thêm.
