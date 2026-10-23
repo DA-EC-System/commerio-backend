@@ -8,11 +8,14 @@ resources:
   - ../../base
 
 # Image tự build trên máy: docker build -f deploy/docker/Dockerfile -t commerio-backend:local .
-# và trong repo FE: docker build -t commerio-fe:local .
+# và trong repo FE: docker build -t commerio-fe:local . ;
+# docker build --build-arg VITE_USE_MOCKS=true --build-arg BASE_PATH=/mock/ -t commerio-fe-mock:local .
 images:
   - name: commerio-backend
     newTag: local
   - name: commerio-fe
+    newTag: local
+  - name: commerio-fe-mock
     newTag: local
 
 secretGenerator:

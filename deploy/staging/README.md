@@ -5,7 +5,8 @@ Bản chạy chung cho FE, demo GVHD cuối mỗi phase (#37, `Documents/21` D12
 ```
 trình duyệt ──► Caddy ─┬─ /api/v1/notification/stream* ─► realtime:3002
                        ├─ /api/*                        ─► api:3000 ─► Supabase
-                       └─ /                             ─► fe:80 (SPA)
+                       ├─ /mock/*  (bỏ tiền tố)         ─► fe-mock:80 (SPA, MSW, dữ liệu giả)
+                       └─ /                             ─► fe:80 (SPA, gọi backend thật)
 ```
 
 FE và API cùng một origin nên **không bật CORS**, và cookie refresh (`HttpOnly; Secure; SameSite=Strict; Path=/api/v1/identity`) được trình duyệt gửi kèm. Chỉ Caddy mở cổng ra ngoài (80, 443); `/metrics`, Prometheus, Grafana, Kafka chỉ ở mạng của cluster. Cổng 6443 của k3s không mở ra ngoài.
@@ -22,7 +23,7 @@ Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước
 | `tag-develop` | Gắn tag `develop` cho image vừa build, chỉ sau khi migration xanh |
 | `deploy` | SSH vào `ci-deploy@<VPS>` gửi tag; VPS chạy `commerio-deploy backend`: `kubectl set image` cho `api`, `worker`, `realtime` rồi chờ rollout. **Bỏ qua khi chưa đặt biến `STAGING_SSH_HOST`** |
 
-Repo FE có workflow cùng tên: build image `ghcr.io/da-ec-system/commerio-fe:sha-<7 ký tự>` rồi `commerio-deploy fe` đổi image của Deployment `fe`.
+Repo FE có workflow cùng tên: build hai image `ghcr.io/da-ec-system/commerio-fe:sha-<7 ký tự>` (gọi backend thật) và `commerio-fe-mock:sha-<7 ký tự>` (MSW, `/mock/`), rồi `commerio-deploy fe` đổi image của Deployment `fe` và `fe-mock`.
 
 Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữa có thể không có image riêng.
 

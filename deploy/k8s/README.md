@@ -13,10 +13,10 @@ grafana ──► prometheus          (cả hai chỉ có ClusterIP, mở bằng
 
 | Overlay | Nơi chạy | Image | Database |
 |---|---|---|---|
-| `overlays/local` | Kubernetes của Docker Desktop | `commerio-backend:local`, `commerio-fe:local` tự build | DB Docker của máy qua `host.docker.internal` |
-| `overlays/vps` | k3s trên VPS staging | `ghcr.io/da-ec-system/commerio-backend`, `ghcr.io/da-ec-system/commerio-fe` (amd64 + arm64) | Supabase |
+| `overlays/local` | Kubernetes của Docker Desktop | `commerio-backend:local`, `commerio-fe:local`, `commerio-fe-mock:local` tự build | DB Docker của máy qua `host.docker.internal` |
+| `overlays/vps` | k3s trên VPS staging | `ghcr.io/da-ec-system/commerio-backend`, `ghcr.io/da-ec-system/commerio-fe`, `ghcr.io/da-ec-system/commerio-fe-mock` (amd64 + arm64) | Supabase |
 
-- FE là Deployment `fe` chạy image của repo FE (`Dockerfile` ở gốc repo đó: build `dist/`, Caddy trong image phục vụ SPA ở cổng 8080). Caddy cổng vào chuyển `/` sang Service `fe`, `/api` sang `api`: cùng origin (V38).
+- FE có hai bản cùng commit: `fe` gọi backend thật ở `/`, `fe-mock` chạy MSW (dữ liệu giả) ở `/mock/`, để làm giao diện khi backend chưa có API. Caddy bỏ tiền tố `/mock` trước khi chuyển vào `fe-mock`. `fe` là Deployment chạy image của repo FE (`Dockerfile` ở gốc repo đó: build `dist/`, Caddy trong image phục vụ SPA ở cổng 8080). Caddy cổng vào chuyển `/` sang Service `fe`, `/api` sang `api`: cùng origin (V38).
 - Migration **không** chạy trong cluster: runner CI chạy trước khi đổi image (`Documents/21` V36, workflow `deploy-staging.yml`). Trên máy: `npm run db:migrate` trỏ đúng database.
 - Không có Redis (code chưa dùng). `api` một bản sao vì rate limit đăng nhập đếm trong bộ nhớ.
 - Cấu hình Prometheus, luật cảnh báo, provisioning Grafana và dashboard nằm ở `deploy/monitoring/` (Kustomize không đọc file ngoài thư mục kustomization, nên thư mục đó có `kustomization.yaml` riêng).
@@ -48,7 +48,7 @@ Bật Kubernetes trong Docker Desktop (Settings → Kubernetes), cần thêm kho
    docker compose -f deploy/compose.yaml exec postgres createdb -U commerio commerio_k8s
    DATABASE_URL=<chuỗi postgres:// tới localhost:5432/commerio_k8s, user và mật khẩu dev như deploy/compose.yaml> npm run db:migrate
    ```
-2. **Image:** `docker build -f deploy/docker/Dockerfile -t commerio-backend:local .`, và ở gốc repo FE: `docker build -t commerio-fe:local .` (Docker Desktop dùng chung kho image với Kubernetes). Build lại khi cluster đang chạy thì tag không đổi, pod không tự thay: `$K rollout restart deploy/api deploy/worker deploy/realtime deploy/fe`.
+2. **Image:** `docker build -f deploy/docker/Dockerfile -t commerio-backend:local .`, và ở gốc repo FE: `docker build -t commerio-fe:local .` cùng `docker build --build-arg VITE_USE_MOCKS=true --build-arg BASE_PATH=/mock/ -t commerio-fe-mock:local .` (Docker Desktop dùng chung kho image với Kubernetes). Build lại khi cluster đang chạy thì tag không đổi, pod không tự thay: `$K rollout restart deploy/api deploy/worker deploy/realtime deploy/fe`.
 3. **Bí mật:** chép `overlays/local/.env.example` → `.env` và `overlays/local/grafana/.env.example` → `grafana/.env`, điền (mật khẩu Grafana để trống thì Grafana dùng `admin/admin`). Giá trị **không** đặt trong dấu nháy (Kustomize giữ nguyên dấu nháy). Hai file đã gitignore.
 4. **Chạy:** `kubectl --context docker-desktop apply -k deploy/k8s/overlays/local`, chờ `$K get pods` đều `Running` và `READY 1/1` (khoảng 30 giây). Lần đầu `worker`, `realtime` ghi vài giây lỗi `Connection refused` tới `kafka:9092` rồi tự nối lại khi Kafka sẵn sàng.
 5. **Mở:** ứng dụng ở `http://localhost:8036` (`/api/docs` là Swagger). LoadBalancer của Docker Desktop nghe mọi địa chỉ của máy (`::`:8036), khác compose chỉ mở `127.0.0.1`: tắt cluster khi ngồi mạng lạ. Caddy không có `/health` (mọi đường dẫn ngoài `/api` là FE), nên kiểm qua `/api`: `curl -i localhost:8036/api/v1/identity/me` ra 401. Muốn gọi thẳng `api`: `$K port-forward svc/api 3036:3000`.

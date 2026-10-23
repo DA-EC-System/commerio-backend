@@ -19,6 +19,9 @@ images:
   - name: commerio-fe
     newName: ghcr.io/da-ec-system/commerio-fe
     newTag: develop
+  - name: commerio-fe-mock
+    newName: ghcr.io/da-ec-system/commerio-fe-mock
+    newTag: develop
 
 secretGenerator:
   - name: app-env
@@ -38,7 +41,7 @@ patches:
   # GHCR private: Secret ghcr tạo tay trên VPS từ PAT read:packages (README).
   - target:
       kind: Deployment
-      name: api|worker|realtime|fe
+      name: api|worker|realtime|fe|fe-mock
     patch: |-
       - op: add
         path: /spec/template/spec/imagePullSecrets
