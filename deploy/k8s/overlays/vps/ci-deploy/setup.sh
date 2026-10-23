@@ -2,7 +2,7 @@
 # Chạy một lần bằng root trên VPS, sau kubectl apply -k deploy/k8s/overlays/vps (cần Secret ci-deployer-token).
 # Tạo tài khoản ci-deploy (không mật khẩu, chỉ đăng nhập bằng khoá có forced command), cài commerio-deploy,
 # viết kubeconfig từ token của ServiceAccount ci-deployer, sinh khoá cho repo nào chưa có.
-# Khoá riêng để ở /root/ci-deploy-<fe|backend>.key: đưa vào secret STAGING_SSH_KEY của repo tương ứng rồi xoá (README).
+# Khoá riêng để ở /root/ci-deploy-<fe|backend|test-ui>.key: đưa vào secret STAGING_SSH_KEY của repo tương ứng rồi xoá (README).
 # Chạy lại không sao: giữ khoá đã cài, viết lại kubeconfig và script.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -43,7 +43,7 @@ unset token
 
 keys=$home/.ssh/authorized_keys
 touch "$keys"
-for t in fe backend; do
+for t in fe backend test-ui; do
   grep -q "commerio-deploy $t\"" "$keys" && continue
   rm -f "/root/ci-deploy-$t.key" "/root/ci-deploy-$t.key.pub"
   ssh-keygen -q -t ed25519 -N '' -C "github-actions commerio-deploy $t" -f "/root/ci-deploy-$t.key"

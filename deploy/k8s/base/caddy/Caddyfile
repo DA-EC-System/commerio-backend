@@ -22,6 +22,12 @@
 		reverse_proxy fe-mock:80
 	}
 
+	# Bản mẫu giao diện HTML tĩnh (repo Test_UI, Deployment test-ui): /mock_test/, bỏ tiền tố trước khi chuyển vào.
+	redir /mock_test /mock_test/ 308
+	handle_path /mock_test/* {
+		reverse_proxy test-ui:80
+	}
+
 	# Còn lại là FE (Deployment fe, image của repo FE, gọi backend thật); SPA và cache do Caddy trong image đó lo.
 	handle {
 		reverse_proxy fe:80

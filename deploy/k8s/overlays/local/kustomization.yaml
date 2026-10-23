@@ -17,6 +17,9 @@ images:
     newTag: local
   - name: commerio-fe-mock
     newTag: local
+  # Trong repo Test_UI: docker build -t commerio-test-ui:local .
+  - name: commerio-test-ui
+    newTag: local
 
 secretGenerator:
   # Chép .env.example thành .env (đã gitignore) rồi điền.
