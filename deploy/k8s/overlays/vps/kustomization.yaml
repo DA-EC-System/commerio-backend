@@ -41,7 +41,7 @@ patches:
   # GHCR private: Secret ghcr tạo tay trên VPS từ PAT read:packages (README).
   - target:
       kind: Deployment
-      name: api|worker|realtime|fe|fe-mock
+      name: ^(worker|(api|realtime|fe|fe-mock)-(blue|green))$
     patch: |-
       - op: add
         path: /spec/template/spec/imagePullSecrets

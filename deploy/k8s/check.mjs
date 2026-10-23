@@ -36,7 +36,8 @@ for (const d of workloads) {
     if (!r.requests?.cpu || !r.requests?.memory || !r.limits?.memory) {
       errors.push(`${where}/${c.name}: thiếu requests.cpu, requests.memory hoặc limits.memory`);
     }
-    if (APPS.includes(d.metadata.name)) images.add(c.image);
+    // api, realtime có hai bản blue, green (base/bluegreen); so theo tên gốc.
+    if (APPS.includes(d.metadata.name.replace(/-(blue|green)$/, ''))) images.add(c.image);
 
     // Mọi ConfigMap, Secret được tham chiếu phải có trong bản build (cùng namespace, đúng tên có hash).
     for (const e of c.envFrom ?? []) {

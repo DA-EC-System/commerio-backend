@@ -8,6 +8,9 @@ resources:
   - namespace.yaml
   - app.yaml
   - fe.yaml
+  # api, realtime, fe, fe-mock: hai bản blue, green (bluegreen/workloads).
+  - bluegreen/blue
+  - bluegreen/green
   - kafka.yaml
   - caddy/caddy.yaml
   - monitoring.yaml

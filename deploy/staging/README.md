@@ -21,7 +21,7 @@ Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước
 | `image` | Build `linux/amd64` + `linux/arm64`, đẩy `ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (nhãn `org.opencontainers.image.revision` = commit) |
 | `migrate` | Từ runner: `npm run db:migrate` rồi `npm run db:seed` lên Supabase (image không có `drizzle-kit`, V36) |
 | `tag-develop` | Gắn tag `develop` cho image vừa build, chỉ sau khi migration xanh |
-| `deploy` | SSH vào `ci-deploy@<VPS>` gửi tag; VPS chạy `commerio-deploy backend`: `kubectl set image` cho `api`, `worker`, `realtime` rồi chờ rollout. **Bỏ qua khi chưa đặt biến `STAGING_SSH_HOST`** |
+| `deploy` | SSH vào `ci-deploy@<VPS>` gửi tag; VPS chạy `commerio-deploy backend`: blue-green cho `api`, `realtime` (bật màu nghỉ với image mới, chờ sẵn sàng, chuyển Service, tắt màu cũ), rolling update cho `worker` (`deploy/k8s/README.md`). **Bỏ qua khi chưa đặt biến `STAGING_SSH_HOST`** |
 
 Repo FE có workflow cùng tên: build hai image `ghcr.io/da-ec-system/commerio-fe:sha-<7 ký tự>` (gọi backend thật) và `commerio-fe-mock:sha-<7 ký tự>` (MSW, `/mock/`), rồi `commerio-deploy fe` đổi image của Deployment `fe` và `fe-mock`.
 
@@ -55,7 +55,7 @@ Các lệnh dưới chạy trên VPS bằng root (`K="kubectl -n commerio"`).
 - **Log:** `$K logs deploy/api -f` (tương tự `worker`, `realtime`, `fe`, `caddy`; thêm `--since=1h` để giới hạn).
 - **Deploy lại một commit cũ:**
   - Qua CI: mở run của commit đó trong Actions → "Re-run all jobs" (trong 30 ngày kể từ run gốc).
-  - Trên VPS: `$K set image deploy/api api=ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (tương tự `worker`, `realtime`), hoặc `$K rollout undo deploy/<tên>` để về bản ngay trước.
+  - Trên VPS, quay về bản vừa thay: `sudo -u ci-deploy -H env SSH_ORIGINAL_COMMAND=rollback commerio-deploy backend` (hoặc `fe`): bật lại màu vừa nghỉ, vẫn giữ image cũ, rồi chuyển Service về đó. Về một commit bất kỳ: `SSH_ORIGINAL_COMMAND=sha-<7 ký tự>`.
   - Chỉ lùi được code, **không lùi schema**: migration đã chạy vẫn giữ. Migration mới phải tương thích với code của bản trước một bước.
 
 ## Supabase
