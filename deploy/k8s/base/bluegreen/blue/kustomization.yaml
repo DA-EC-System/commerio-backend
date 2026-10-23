@@ -1,0 +1,11 @@
+# Bản blue của api, realtime, fe, fe-mock (bluegreen/workloads).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+nameSuffix: -blue
+resources:
+  - ../workloads
+labels:
+  - pairs:
+      color: blue
+    includeSelectors: true
+    includeTemplates: true
