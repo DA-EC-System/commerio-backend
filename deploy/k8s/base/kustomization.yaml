@@ -8,7 +8,7 @@ resources:
   - namespace.yaml
   - app.yaml
   - fe.yaml
-  # api, realtime, fe, fe-mock: hai bản blue, green (bluegreen/workloads).
+  # api, realtime, fe, fe-mock, test-ui: hai bản blue, green (bluegreen/workloads).
   - bluegreen/blue
   - bluegreen/green
   - kafka.yaml

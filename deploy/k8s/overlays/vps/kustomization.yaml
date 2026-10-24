@@ -10,7 +10,7 @@ resources:
   - ci-deployer.yaml
   - node-exporter.yaml
 
-# Image của CI (#37, amd64 + arm64): backend từ repo này, FE từ repo FE.
+# Image của CI (#37, amd64 + arm64): backend từ repo này, FE từ repo FE, test-ui từ repo Test_UI.
 # Deploy đổi tag sang sha-<7 ký tự> của commit (ci-deploy/commerio-deploy.sh).
 images:
   - name: commerio-backend
@@ -22,6 +22,10 @@ images:
   - name: commerio-fe-mock
     newName: ghcr.io/da-ec-system/commerio-fe-mock
     newTag: develop
+  # Repo Test_UI chỉ có nhánh main; tag main là bản mới nhất.
+  - name: commerio-test-ui
+    newName: ghcr.io/da-ec-system/commerio-test-ui
+    newTag: main
 
 secretGenerator:
   - name: app-env
@@ -41,7 +45,7 @@ patches:
   # GHCR private: Secret ghcr tạo tay trên VPS từ PAT read:packages (README).
   - target:
       kind: Deployment
-      name: ^(worker|(api|realtime|fe|fe-mock)-(blue|green))$
+      name: ^(worker|(api|realtime|fe|fe-mock|test-ui)-(blue|green))$
     patch: |-
       - op: add
         path: /spec/template/spec/imagePullSecrets

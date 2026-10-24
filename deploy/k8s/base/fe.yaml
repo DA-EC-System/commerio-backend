@@ -21,3 +21,15 @@ spec:
     - name: http
       port: 80
       targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-ui
+spec:
+  selector:
+    app.kubernetes.io/name: test-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
