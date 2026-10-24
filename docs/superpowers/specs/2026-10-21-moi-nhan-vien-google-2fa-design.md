@@ -2,7 +2,7 @@
 
 - **Ngày:** 21/10/2026
 - **Người soạn:** Khang (cùng Claude), theo issue commerio-backend#7 và thảo luận 20–21/10/2026
-- **Trạng thái:** chờ duyệt spec. Duyệt xong mới lên plan (Backend, Report, Documents)
+- **Trạng thái:** đã duyệt (Khang, 21/10/2026). Thành chốt phần tài liệu 21/10/2026 (Documents#4), kèm một thay đổi: mã khôi phục giảm từ 10 xuống 2
 - **Thay cho:** phần "mời nhân viên kèm mật khẩu tạm" của #7 bản 16/10
 
 Spec gồm bốn phần, ký hiệu dùng xuyên suốt:
@@ -55,7 +55,7 @@ Spec gồm bốn phần, ký hiệu dùng xuyên suốt:
 | Q8 | Không gửi thư báo kết quả duyệt | Nhóm chốt |
 | Q9 | Thư OTP do worker gửi qua Gmail SMTP; worker tự sinh mã, chỉ lưu bản băm | Mã không đi qua Kafka |
 | Q10 | Giữ đăng nhập Google, chỉ để đăng nhập tài khoản đã có | Đề bài "xác thực OAuth2/JWT" |
-| Q11 | 2FA TOTP bắt buộc mọi tài khoản, kể cả CEO và quản trị nền tảng; 10 mã khôi phục; quản trị nền tảng reset | Nhóm tự thêm. Admin công ty không reset vì tài khoản dùng chung nhiều công ty |
+| Q11 | 2FA TOTP bắt buộc mọi tài khoản, kể cả CEO và quản trị nền tảng; 2 mã khôi phục (Thành và Khang giảm từ 10, 21/10/2026); quản trị nền tảng reset | Nhóm tự thêm. Admin công ty không reset vì tài khoản dùng chung nhiều công ty |
 | Q12 | [D] làm sau cùng, cắt được; bật bằng cờ `TWO_FACTOR_MODE` | Trễ hạn thì P1 vẫn chạy |
 
 Chốt thêm khi viết spec (từ điểm mở của bản thiết kế chi tiết):
@@ -104,7 +104,7 @@ Admin      GET  /identity/invitations?status=pending                  → hàng 
 
 ### 5.4 [D] Xác thực hai lớp
 - Đã bật: `/login`, `/google` trả `{ mfaRequired: true, mfaToken }`, không cấp phiên. `POST /identity/login/2fa` với `code` hoặc `recoveryCode` → phiên như `/login`.
-- Chưa bật: đăng nhập cấp token mang cờ `tfs`; chỉ gọi được các API ở Q18; API khác 403 `two_factor_setup_required`. `POST /identity/2fa/setup` → `{ secret, otpauthUrl }` (FE vẽ QR, hiện secret làm setup key); `POST /identity/2fa/confirm { code }` → 10 mã khôi phục; FE gọi `refresh` để bỏ cờ.
+- Chưa bật: đăng nhập cấp token mang cờ `tfs`; chỉ gọi được các API ở Q18; API khác 403 `two_factor_setup_required`. `POST /identity/2fa/setup` → `{ secret, otpauthUrl }` (FE vẽ QR, hiện secret làm setup key); `POST /identity/2fa/confirm { code }` → 2 mã khôi phục; FE gọi `refresh` để bỏ cờ.
 - Mất điện thoại và hết mã khôi phục: quản trị nền tảng gọi `POST /platform/accounts/:accountId/2fa/reset`.
 
 ---
@@ -223,7 +223,7 @@ Route có quyền: `ctx.authorize` → `validate`. Route công khai: rate limit 
 | `POST /identity/join/verify` | `{ token, email, code: 6 chữ số }` | 200 `{ registrationToken, next: 'set_password' \| 'sign_in' }` | 422 → 410 → 409 `invitation_used` → 422 `errors.code` (sai, hết hạn, chưa có mã, đã sai 5 lần thì mã hết hiệu lực) → 409 `already_member` → 422 `errors.email` (quản trị nền tảng) |
 | `POST /identity/join/complete` | `{ registrationToken, password, confirmPassword?, totpCode? }` | 200 `{ status: 'pending' }` | 422 (mật khẩu sai quy tắc A5; `confirmPassword` khác khi `set_password`) → 410 `registration_expired` (token đăng ký sai hoặc quá 30 phút) → 410 `invitation_invalid` (link hết hạn) → 422 `errors.password` (sai mật khẩu khi `sign_in`) → [D] 422 `errors.totpCode` → 409 `already_member` → 409 `invitation_used` |
 | [D] `POST /identity/join/2fa/setup` | `{ registrationToken }` | 200 `{ secret, otpauthUrl }` | 410 `registration_expired`, 409 `invitation_used` |
-| [D] `POST /identity/join/2fa/confirm` | `{ registrationToken, code }` | 200 `{ recoveryCodes: string[10] }` | 410, 409, 422 `errors.code` |
+| [D] `POST /identity/join/2fa/confirm` | `{ registrationToken, code }` | 200 `{ recoveryCodes: string[2] }` | 410, 409, 422 `errors.code` |
 
 **[D]**
 
@@ -374,7 +374,7 @@ Chi tiết từng PR nằm trong plan. Tóm tắt:
 4. [C] Migration và repository lời mời; sự kiện và consumer OTP (sửa danh mục sự kiện bằng PR riêng); API Admin; API công khai.
 5. [D] Migration TOTP và hàm TOTP; cờ `tfs`, `/2fa/*`, `/login/2fa`; bước 2FA trong luồng mời và guard quản trị nền tảng; seed demo, bật `TWO_FACTOR_MODE=required` ở staging.
 
-[A] và [B] làm được ngay, không phụ thuộc tài liệu mới vì không đổi hợp đồng đã chốt. [C] và [D] chờ Thành cập nhật `Documents/21`, `docs/19`. Cắt [D] thì không merge phần 5, hoặc để `TWO_FACTOR_MODE=off`.
+[A] và [B] làm được ngay, không phụ thuộc tài liệu mới vì không đổi hợp đồng đã chốt. [C] và [D] chờ `Documents/21`, `docs/19` được chốt (Thành chốt 21/10/2026, Documents#4). Cắt [D] thì không merge phần 5, hoặc để `TWO_FACTOR_MODE=off`.
 
 ## 8. Ảnh hưởng tới FE (Khoa)
 - FE#2: nút Google gửi `{ credential }` (đã đúng); [D] bước nhập mã sau đăng nhập; màn thiết lập khi gặp `two_factor_setup_required`.
@@ -383,7 +383,7 @@ Chi tiết từng PR nằm trong plan. Tóm tắt:
 - Mock MSW đổi theo hợp đồng mới.
 
 ## 9. Ảnh hưởng tới Documents
-- `14-danh-sach-use-case.md`: dòng UC-PI-05; UC mới cho người được mời (đề xuất UC-PI-09 "Tham gia công ty qua link mời", tác nhân "Người được mời") hoặc gộp vào UC-PI-05, Thành chọn; QT-10 thêm mã xác thực hai lớp.
+- `14-danh-sach-use-case.md`: dòng UC-PI-05; UC mới cho người được mời (đề xuất UC-PI-09 "Tham gia công ty qua link mời", tác nhân "Người được mời") hoặc gộp vào UC-PI-05; Thành chọn tách riêng (21/10/2026); QT-10 thêm mã xác thực hai lớp.
 - `17-modular-monolith.md`: bảng thư viện thêm `nodemailer`; bỏ `openid-client` (không làm luồng chuyển hướng, A6).
 - `19-mo-hinh-du-lieu.md`: sửa D26; thêm D39 (`staff.invitations`), D40 (cột TOTP).
 - `20-ke-hoach-implement.md`: phạm vi #7 và các phần mới.
@@ -448,7 +448,7 @@ Chi tiết từng PR nằm trong plan. Tóm tắt:
 - **AC-D4** Mã khôi phục dùng được một lần.
 - **AC-D5** Sai 5 lần trong 15 phút → 429, kể cả mã đúng.
 - **AC-D6** Tài khoản chưa bật → token có cờ `tfs`; API ngoài Q18 → 403 `two_factor_setup_required`.
-- **AC-D7** `setup` trả `secret` base32 và `otpauthUrl`, DB chỉ giữ bản mã hoá; `confirm` sai → 422 `errors.code`; đúng → 10 mã khôi phục, 2FA bật, `refresh` cho token không còn cờ.
+- **AC-D7** `setup` trả `secret` base32 và `otpauthUrl`, DB chỉ giữ bản mã hoá; `confirm` sai → 422 `errors.code`; đúng → 2 mã khôi phục, 2FA bật, `refresh` cho token không còn cờ.
 - **AC-D8** Đăng ký qua link (`set_password`) chưa xác nhận 2FA → `complete` 422; duyệt xong tài khoản có 2FA bật sẵn.
 - **AC-D9** Tài khoản đã có, đã bật 2FA, tham gia qua link → `complete` thiếu hoặc sai `totpCode` → 422 `errors.totpCode`.
 - **AC-D10** Quản trị nền tảng reset → xoá 2FA và mã khôi phục, thu hồi refresh token, lần sau phải thiết lập lại, nhật ký cấp nền tảng; Admin, CEO công ty gọi → 403.

@@ -127,6 +127,20 @@
       "when": 1792406105018,
       "tag": "0017_rang-buoc-gan-vai-tro-tai-khoan",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792548232670,
+      "tag": "0018_thu-moi-link",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792548248559,
+      "tag": "0019_thu-moi-rls",
+      "breakpoints": true
     }
   ]
 }

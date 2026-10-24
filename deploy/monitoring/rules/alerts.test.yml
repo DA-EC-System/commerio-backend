@@ -229,3 +229,54 @@ tests:
               job: node
             exp_annotations:
               summary: Không lấy được số liệu máy VPS (dịch vụ prometheus-node-exporter)
+
+  # Thư OTP lỗi vĩnh viễn lần đầu (chuỗi mới ở 1): bắn.
+  - interval: 1m
+    input_series:
+      - series: 'mail_send_total{job="commerio",process="worker",template="invitation_otp",result="ok"}'
+        values: '0+1x20'
+      - series: 'mail_send_total{job="commerio",process="worker",template="invitation_otp",result="permanent"}'
+        values: '_x5 1x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CommerioMailPermanentFailure
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: commerio
+              process: worker
+              template: invitation_otp
+              result: permanent
+            exp_annotations:
+              summary: Gửi thư mẫu invitation_otp lỗi vĩnh viễn trong 15 phút qua
+
+  # Lỗi vĩnh viễn tăng thêm sau khi chuỗi đã có từ lâu: bắn; 15 phút không tăng: thôi.
+  - interval: 1m
+    input_series:
+      - series: 'mail_send_total{job="commerio",process="worker",template="invitation_otp",result="permanent"}'
+        values: '1x20 2x40'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: CommerioMailPermanentFailure
+      - eval_time: 25m
+        alertname: CommerioMailPermanentFailure
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: commerio
+              process: worker
+              template: invitation_otp
+              result: permanent
+            exp_annotations:
+              summary: Gửi thư mẫu invitation_otp lỗi vĩnh viễn trong 15 phút qua
+      - eval_time: 45m
+        alertname: CommerioMailPermanentFailure
+
+  # Chỉ có thư gửi được: không bắn.
+  - interval: 1m
+    input_series:
+      - series: 'mail_send_total{job="commerio",process="worker",template="invitation_otp",result="ok"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: CommerioMailPermanentFailure

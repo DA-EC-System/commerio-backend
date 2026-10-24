@@ -35,6 +35,8 @@ const EnvSchema = z.object({
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.
   PUBLIC_WEB_URL: z.url().optional(),
+  // Nhân ngưỡng giới hạn tần suất của /identity/join/* (#7 spec 6.11); test đặt lớn để không chạm ngưỡng.
+  JOIN_RATE_LIMIT_SCALE: z.coerce.number().positive().default(1),
   // OAuth client ID loại Web của Google (Google Identity Services, #7): `aud` của ID token phải bằng giá trị này.
   // BE không cần client secret. Thiếu thì `POST /identity/google` trả 503 `google_unavailable`.
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),

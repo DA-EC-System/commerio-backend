@@ -87,6 +87,12 @@ async function loadMember(accountId: string): Promise<{ row: MemberRow; roles: R
   return { row, roles };
 }
 
+/** Nhân viên của công ty đang chọn theo tài khoản (sau khi duyệt lời mời). Chạy trong `withCompany`. */
+export async function staffMemberOf(accountId: string): Promise<StaffMember> {
+  const { row, roles } = await loadMember(accountId);
+  return toStaffMember(row, roles);
+}
+
 const conflict = (member: StaffMember) =>
   new AppError(409, 'version_conflict', `Nhân viên "${member.fullName}" vừa được người khác cập nhật`, { current: member });
 

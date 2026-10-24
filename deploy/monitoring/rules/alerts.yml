@@ -48,6 +48,18 @@ groups:
         annotations:
           summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
 
+      # Thư lỗi vĩnh viễn (hết hạn mức Gmail, sai App Password, chưa cấu hình SMTP): thử lại vô ích, người được mời
+      # không nhận được mã OTP (#7). Vế "chuỗi chưa có 15 phút trước" như CommerioDeadLettered.
+      - alert: CommerioMailPermanentFailure
+        expr: |
+          increase(mail_send_total{job="commerio",result="permanent"}[15m]) > 0
+          or (mail_send_total{job="commerio",result="permanent"}
+            unless mail_send_total{job="commerio",result="permanent"} offset 15m)
+        labels:
+          severity: warning
+        annotations:
+          summary: Gửi thư mẫu {{ $labels.template }} lỗi vĩnh viễn trong 15 phút qua
+
   # Máy VPS (job "node", dashboard "Máy VPS"). Overlay local không có node-exporter: các luật này im lặng.
   - name: vps
     rules:

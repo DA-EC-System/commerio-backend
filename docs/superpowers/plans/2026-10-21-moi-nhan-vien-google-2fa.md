@@ -18,7 +18,7 @@
 - Dữ liệu công ty chạy trong `withCompany(companyId, fn)`. Mọi UPDATE `staff.accounts` chạy ngoài `withCompany` (migration 0017).
 - Luật lớp: `staff` → `access`, `audit`, `platform` được; `access` → `staff` cấm; `staff` không import `identity`, `payment`. `shared` không biết module.
 - Test chỉ ở `test/`, tên `.test.ts`; không gọi mạng thật; đọc `test/CLAUDE.md` trước khi viết test.
-- Hằng số chốt: link 72 giờ; token đăng ký 30 phút; `mfaToken` 5 phút; OTP 6 chữ số, sống 5 phút, sai tối đa 5 lần mỗi mã, gửi lại sau 60 giây, tối đa 5 lần gửi mỗi link; sự kiện OTP cũ hơn 5 phút bị bỏ; TOTP SHA-1, 6 số, bước 30 giây, lệch ±1 bước; 10 mã khôi phục; 2FA sai 5 lần trong 15 phút → 429.
+- Hằng số chốt: link 72 giờ; token đăng ký 30 phút; `mfaToken` 5 phút; OTP 6 chữ số, sống 5 phút, sai tối đa 5 lần mỗi mã, gửi lại sau 60 giây, tối đa 5 lần gửi mỗi link; sự kiện OTP cũ hơn 5 phút bị bỏ; TOTP SHA-1, 6 số, bước 30 giây, lệch ±1 bước; 2 mã khôi phục (giảm từ 10, Thành và Khang 21/10/2026); 2FA sai 5 lần trong 15 phút → 429.
 - Issuer token: `commerio` (access, có sẵn), `commerio-invite`, `commerio-join`, `commerio-mfa`.
 - API công khai `/join/*` không trả 401 (Q16, Q17); chỉ `/google`, `/login/2fa` trả 401.
 - Mã lỗi mới, đúng tên: `google_unavailable` 503, `invitation_invalid` 410, `invitation_used` 409, `invitation_outdated` 409, `registration_expired` 410, `two_factor_invalid` 401, `two_factor_setup_required` 403, `two_factor_already_enabled` 409.
@@ -354,7 +354,7 @@ it('AC-B6: 409 kèm current là StaffMember mới nhất, không ghi nhật ký'
 
 ---
 
-> **Cổng:** B7 trở đi chờ Thành duyệt T-D1, T-D2 (Phần 3).
+> **Cổng:** B7 trở đi chờ Thành duyệt T-D1, T-D2 (Phần 3). Thành đã duyệt 21/10/2026 (Documents#4).
 
 ### Task B7: [C] Bảng `staff.invitations`, RLS, máy trạng thái
 
@@ -636,7 +636,7 @@ Nhánh `khang/7-moi-nhan-vien-2fa` từ `main`. Đặc tả UC làm bằng skill
 
 **Nội dung phải có** (spec 5.3, Q2–Q5, Q13, Q14, [D] spec 5.4):
 - Tác nhân chính "Người được mời"; Dependencies: `UC-PI-05 (xảy ra trước)`, `UC-PI-03 Đăng nhập (xảy ra sau)`.
-- Luồng chính: mở link → hệ thống hiện tên công ty → nhập email, họ tên → hệ thống gửi mã 6 số tới email (hết hạn sau 5 phút) → nhập mã → hệ thống kiểm mã → nhập mật khẩu và nhập lại → thiết lập xác thực hai lớp (quét mã QR hoặc nhập setup key, nhập một mã từ app, nhận 10 mã khôi phục) → hệ thống báo đăng ký thành công, chờ Admin duyệt.
+- Luồng chính: mở link → hệ thống hiện tên công ty → nhập email, họ tên → hệ thống gửi mã 6 số tới email (hết hạn sau 5 phút) → nhập mã → hệ thống kiểm mã → nhập mật khẩu và nhập lại → thiết lập xác thực hai lớp (quét mã QR hoặc nhập setup key, nhập một mã từ app, nhận 2 mã khôi phục) → hệ thống báo đăng ký thành công, chờ Admin duyệt.
 - Ngoại lệ: link hết hạn hoặc đã được dùng; mã sai, hết hạn, sai quá 5 lần; xin mã lại trước 60 giây hoặc quá 5 lần; email đã có tài khoản ở công ty khác (đăng nhập bằng mật khẩu của tài khoản đó, không đặt lại); email đã là thành viên công ty; email của quản trị nền tảng; mật khẩu sai quy tắc hoặc nhập lại không khớp; quá 30 phút sau khi xác minh mã thì phải xác minh lại.
 
 - [ ] **Step 1:** Chạy `/use-case UC-PI-09` (cần T-D3 đã thêm UC vào `Documents/14`).
@@ -775,5 +775,5 @@ Nhánh `khang/7-moi-nhan-vien-2fa` từ `main`. Mọi task là sửa markdown; k
 
 - **Phủ spec:** mục 3 (Q1–Q19) → B4–B14, T-D1; mục 6.3 → B7, B12, T-R5, T-D2; mục 6.5 → B4, B6, B10, B11, B13, B14, T-D1; mục 6.7 (đồng thời) → test đua ở B4, B6, B10, B11, B12, B13; mục 6.8 → B3, B9; mục 6.11 → B11; mục 6.12 → B3, B4, B9, B13; mục 8 → T-D1, T-D4; mục 9 → T-D1..T-D4; mục 10 → T-R1..T-R6; mục 11 (AC) → B4, B6, B10, B11, B13, B14.
 - **Kiểu nhất quán:** `Caller`, `StaffMember`, `Page`, `RoleWithPermissions`, `InvitationRow`, `InvitationView`, `LoginResult`, `PurposeClaims` định nghĩa một lần ở task đầu tiên dùng, task sau chỉ nhắc tên.
-- **Đã chốt với Khang (21/10/2026):** TOTP tự viết bằng `node:crypto` (B12; T-D4 ghi vào `docs/17`). UC-PI-09 tách riêng khỏi UC-PI-05; đây là đề xuất của Khang, Thành chốt ở T-D3. Nếu Thành chọn gộp thì bỏ T-R2, chuyển nội dung vào T-R1.
+- **Đã chốt với Khang (21/10/2026):** TOTP tự viết bằng `node:crypto` (B12; T-D4 ghi vào `docs/17`). UC-PI-09 tách riêng khỏi UC-PI-05: Khang đề xuất, Thành chốt 21/10/2026, giữ T-R2. Mã khôi phục giảm từ 10 xuống 2 (Thành và Khang, 21/10/2026).
 - **Cách thực thi:** native (superpowers:executing-plans), một lượt review cả nhánh ở cuối.
