@@ -20,6 +20,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'finance.receipt_posted': { receiptId: id(), orderId: null, amount: '-50000.00', source: 'gateway', postedAt: at, reversalOf: id() },
   'finance.voucher_posted': { voucherId: id(), purpose: 'customer_refund', orderId: id(), amount: '50000.00', paidOn: '2026-10-18', reversalOf: null },
   'purchasing.order_submitted': { purchaseOrderId: id(), code: 'PO-0001' },
+  'staff.invitation_otp_requested': { invitationId: id(), requestedAt: '2026-10-21T00:00:00.000Z' },
 };
 
 describe('danh mục sự kiện (AC-11)', () => {
@@ -45,5 +46,11 @@ describe('danh mục sự kiện (AC-11)', () => {
     expect(
       EVENT_SCHEMAS['fulfillment.order_status_changed'].safeParse({ ...SAMPLES['fulfillment.order_status_changed'], to: 'shipped' }).success,
     ).toBe(false);
+  });
+
+  it('xin mã OTP lời mời: thiếu requestedAt, hay requestedAt không phải thời điểm, bị từ chối (#7 [C])', () => {
+    const schema = EVENT_SCHEMAS['staff.invitation_otp_requested'];
+    expect(schema.safeParse({ invitationId: id() }).success).toBe(false);
+    expect(schema.safeParse({ invitationId: id(), requestedAt: 'hom qua' }).success).toBe(false);
   });
 });
