@@ -1,15 +1,15 @@
 // Dữ liệu demo P1 (#37, Documents/21 V37, D12): một công ty, bốn tài khoản theo bốn vai trò có sẵn.
 // CEO đi qua đăng ký thật (argon2, nhật ký); nhân viên tạo bằng hàm công khai của staff/access vì API mời
 // nhân viên (#7) chưa có, nên chưa có nhật ký thao tác. Chạy lại nhiều lần không sinh trùng.
-import { assignRole, BUILTIN_ROLES, rolesAndPermissions } from '#src/modules/access/index.ts';
-import { hashPassword, register, verifyPassword } from '#src/modules/identity/index.ts';
+import { assignRole, BUILTIN_ROLES, rolesAndPermissions } from '#src/modules/core/access/index.ts';
+import { hashPassword, register, verifyPassword } from '#src/modules/core/identity/index.ts';
 import {
   createAccount,
   createMembership,
   findAccountByEmail,
   findMembership,
   membershipsOfAccount,
-} from '#src/modules/staff/index.ts';
+} from '#src/modules/core/staff/index.ts';
 import { inTransaction } from '#src/shared/db/client.ts';
 import { AppError } from '#src/shared/errors/app-error.ts';
 

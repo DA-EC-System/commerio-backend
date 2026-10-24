@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
+import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { seedDemo, type SeedDemoInput } from '../../../db/seed/demo.ts';
 import { registerCompany, uniqueEmail } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';

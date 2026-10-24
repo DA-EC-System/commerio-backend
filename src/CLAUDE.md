@@ -7,7 +7,7 @@ Toàn bộ mã chạy. Không có bước build: Node 24 chạy thẳng file `.t
 | `entrypoints/` | Điểm khởi động của ba tiến trình `api`, `worker`, `realtime` |
 | `app.ts` | Ráp ứng dụng Express cho `api`: middleware chung → router từng module → 404 → xử lý lỗi |
 | `wiring.ts` | Dựng `ModuleContext` (`authorize`, hàm nối giữa module) cho `app.ts` và `worker`. Chỉ import `index.ts` của module |
-| `modules/` | 19 module nghiệp vụ, mỗi module bốn lớp |
+| `modules/` | 6 module lớn gồm 19 module con, mỗi module con bốn lớp |
 | `shared/` | Nền dùng chung: cấu hình, DB, lỗi, middleware HTTP, log, số liệu |
 
 Chiều phụ thuộc chỉ đi một hướng: `entrypoints` → `app.ts` → `wiring.ts` → `modules` → `shared`. Đi ngược lại thì `npm run depcruise` báo lỗi.

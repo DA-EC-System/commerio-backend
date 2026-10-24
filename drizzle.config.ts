@@ -8,7 +8,7 @@ try {
 
 export default defineConfig({
   dialect: 'postgresql',
-  schema: './src/modules/*/repository/schema.ts',
+  schema: './src/modules/*/*/repository/schema.ts',
   out: './db/migrations',
   dbCredentials: { url: process.env.DATABASE_URL ?? '' },
 });

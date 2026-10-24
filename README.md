@@ -1,6 +1,6 @@
 # commerio-backend
 
-Backend của Commerio, hệ thống thương mại điện tử doanh nghiệp (đồ án chuyên ngành). Kiến trúc modular monolith: một mã nguồn, 19 module, ba tiến trình `api`, `worker`, `realtime` dùng chung một image.
+Backend của Commerio, hệ thống thương mại điện tử doanh nghiệp (đồ án chuyên ngành). Kiến trúc modular monolith: một mã nguồn, 6 module lớn (19 module con), ba tiến trình `api`, `worker`, `realtime` dùng chung một image.
 
 ## Chạy trên máy
 
@@ -105,7 +105,7 @@ Không cần khoá, tunnel hay cổng nào: lấy `paymentCode` (dạng `CM...`)
 | MoMo | Cổng developer của MoMo (tìm "MoMo for Developers"), xem tài liệu để lấy thông tin test |
 | ZaloPay | Cổng developer của ZaloPay (tìm "ZaloPay Sandbox"), xem tài liệu để lấy `app_id`, `key1`, `key2` test |
 
-Thông tin test (thẻ, tài khoản ví) lấy trong tài liệu của từng cổng, đừng chép vào repo. Chi tiết thiết kế: `src/modules/payment/CLAUDE.md`.
+Thông tin test (thẻ, tài khoản ví) lấy trong tài liệu của từng cổng, đừng chép vào repo. Chi tiết thiết kế: `src/modules/finance/payment/CLAUDE.md`.
 
 ## Database
 
@@ -206,7 +206,7 @@ Role `commerio_app` ở mức cụm, migration `0003` tạo lại an toàn. Test
 | Chủ đề | File |
 |---|---|
 | Kiến trúc, luật ranh giới, quy ước code | [CLAUDE.md](CLAUDE.md), và `CLAUDE.md` của [src/](src/CLAUDE.md), [src/entrypoints/](src/entrypoints/CLAUDE.md), [src/modules/](src/modules/CLAUDE.md) (module đã có nghiệp vụ có thêm file riêng), [src/shared/](src/shared/CLAUDE.md), [db/](db/CLAUDE.md), [test/](test/CLAUDE.md), [deploy/](deploy/CLAUDE.md) |
-| Sự kiện giữa module: outbox, Kafka, consumer, DLQ | [src/modules/platform/service/outbox/README.md](src/modules/platform/service/outbox/README.md) |
+| Sự kiện giữa module: outbox, Kafka, consumer, DLQ | [src/modules/core/platform/service/outbox/README.md](src/modules/core/platform/service/outbox/README.md) |
 | Staging: chạy, secret, log, deploy lại | [deploy/staging/README.md](deploy/staging/README.md) |
 | Kubernetes, Prometheus, Grafana | [deploy/k8s/README.md](deploy/k8s/README.md) |
 

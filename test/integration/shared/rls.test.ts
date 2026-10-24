@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
+import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { testPool } from '../helpers/db.ts';
 import { asCompany } from '../helpers/rls.ts';
 

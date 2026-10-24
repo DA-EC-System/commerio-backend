@@ -25,9 +25,9 @@ Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERU
 | `catalog.ts` | `createVariant(companyId, { sku?, categoryName? })` → `{ variantId, productId, categoryId, sku }` (mỗi lần một danh mục và sản phẩm mới, ghi trong `withCompany`; không truyền `categoryName` trùng trong một công ty) |
 | `sales.ts` | `createOrder(companyId, { lines: { variantId, quantity, unitPrice }[], paymentMethod?, source? })` → `{ orderId, code, total }` (ghi bảng sales trong `withCompany`, chép SKU, tên sản phẩm từ biến thể; đơn tay mặc định `prepaid`, đơn sàn không có phương thức; không tạo `payment.order_payments`) |
 
-Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<module>/helpers.ts`.
+Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<lớn>/<con>/helpers.ts`.
 
-`unit/` đi theo đúng cấu trúc của `src/`: test của `src/shared/http/validate.ts` là `test/unit/shared/http/validate.test.ts`; test của `src/modules/inventory/domain/stock.ts` là `test/unit/modules/inventory/domain/stock.test.ts`.
+`unit/` đi theo đúng cấu trúc của `src/`: test của `src/shared/http/validate.ts` là `test/unit/shared/http/validate.test.ts`; test của `src/modules/product/inventory/domain/stock.ts` là `test/unit/modules/product/inventory/domain/stock.test.ts`.
 
 ## Quy tắc để CI chạy được
 

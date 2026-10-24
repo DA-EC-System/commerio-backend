@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { expect } from 'vitest';
-import { BUILTIN_ROLES } from '#src/modules/access/domain/catalog.ts';
-import { hashPassword } from '#src/modules/identity/service/passwords.ts';
-import type { OptionalModule } from '#src/modules/platform/domain/modules.ts';
+import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
+import { hashPassword } from '#src/modules/core/identity/service/passwords.ts';
+import type { OptionalModule } from '#src/modules/core/platform/domain/modules.ts';
 import { testPool } from './db.ts';
 import { login, PASSWORD, selectCompany, testApp } from './http.ts';
 
