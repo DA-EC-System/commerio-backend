@@ -3,6 +3,8 @@
 import type { ModuleDefinition } from '../../shared/module.ts';
 import { registerPlatformOpenApi } from './api/openapi.ts';
 import { platformRouter } from './api/routes.ts';
+
+export type { PlatformContext } from './api/routes.ts';
 import { CORE_MODULES, type ModuleCode, OPTIONAL_MODULES, type OptionalModule } from './domain/modules.ts';
 import { type CompanyRow, enabledModuleCodes, findCompanies, insertCompany, insertModules } from './repository/companies.ts';
 import { startOutboxBackground } from './service/outbox/public.ts';

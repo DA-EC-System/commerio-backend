@@ -94,6 +94,12 @@ describe('API tham gia qua link', () => {
         '/api/v1/identity/invitations',
         '/api/v1/identity/invitations/{id}/approve',
         '/api/v1/identity/invitations/{id}/reject',
+        '/api/v1/identity/join/2fa/setup',
+        '/api/v1/identity/join/2fa/confirm',
+        '/api/v1/identity/login/2fa',
+        '/api/v1/identity/2fa/setup',
+        '/api/v1/identity/2fa/confirm',
+        '/api/v1/platform/accounts/{accountId}/2fa/reset',
       ]),
     );
   });

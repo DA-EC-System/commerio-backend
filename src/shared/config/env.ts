@@ -31,6 +31,13 @@ const EnvSchema = z.object({
     .string()
     .refine((s) => Buffer.from(s, 'base64').length === 32, 'Cần 32 byte dạng base64')
     .optional(),
+  // Khoá mã hoá secret TOTP của 2FA (#7 [D]), riêng với khoá cổng thanh toán: 32 byte, base64.
+  TOTP_ENCRYPTION_KEY: z
+    .string()
+    .refine((s) => Buffer.from(s, 'base64').length === 32, 'Cần 32 byte dạng base64')
+    .optional(),
+  // `required`: mọi tài khoản phải bật 2FA (#7 [D]); `off` (mặc định): luồng đăng nhập, tham gia như chưa có 2FA.
+  TWO_FACTOR_MODE: z.enum(['off', 'required']).default('off'),
   // URL công khai của api, dùng làm địa chỉ IPN và trang quay về cho cổng thanh toán.
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.
@@ -49,8 +56,14 @@ const EnvSchema = z.object({
 
 export type Env = z.infer<typeof EnvSchema>;
 
+// Bật 2FA bắt buộc mà thiếu khoá mã hoá secret thì không khởi động.
+const CheckedEnvSchema = EnvSchema.refine((e) => e.TWO_FACTOR_MODE === 'off' || e.TOTP_ENCRYPTION_KEY !== undefined, {
+  path: ['TOTP_ENCRYPTION_KEY'],
+  message: 'TWO_FACTOR_MODE=required cần TOTP_ENCRYPTION_KEY',
+});
+
 function loadEnv(): Env {
-  const result = EnvSchema.safeParse(process.env);
+  const result = CheckedEnvSchema.safeParse(process.env);
   if (!result.success) {
     throw new Error(`Biến môi trường không hợp lệ:\n${z.prettifyError(result.error)}`);
   }

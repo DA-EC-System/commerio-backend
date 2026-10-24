@@ -10,7 +10,7 @@ import { logger } from '../../../shared/logger.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { type AccountRow, findAccountByEmail, findAccountByGoogleSub, findAccountById, linkGoogleSub } from '../../staff/index.ts';
 import { countLogin } from './metrics.ts';
-import { type LoginResult, startSession } from './session.ts';
+import { afterFirstFactor, isMfaChallenge, type LoginResult, type MfaChallenge } from './session.ts';
 
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 
@@ -110,7 +110,7 @@ export function googleLinkStep(account: AccountRow | undefined, sub: string): 'l
 }
 
 /** UC-PI-03 extend: đăng nhập bằng Google, phản hồi như `/login`. */
-export async function loginWithGoogle(credential: string): Promise<LoginResult> {
+export async function loginWithGoogle(credential: string): Promise<LoginResult | MfaChallenge> {
   let identity;
   try {
     identity = await verifyGoogleCredential(credential);
@@ -127,9 +127,9 @@ export async function loginWithGoogle(credential: string): Promise<LoginResult> 
       if (step === 'link') await linkAccount(byEmail!, identity.sub);
       account = byEmail!;
     }
-    const session = await startSession(account);
-    countLogin('google', 'ok');
-    return session;
+    const result = await afterFirstFactor(account);
+    countLogin('google', isMfaChallenge(result) ? 'mfa_required' : 'ok');
+    return result;
   } catch (err) {
     if (err instanceof AppError && err.code === 'google_account_not_found') countLogin('google', 'not_found');
     throw err;

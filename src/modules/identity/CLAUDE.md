@@ -36,3 +36,13 @@
 - Liên kết lần đầu: `UPDATE … WHERE google_sub IS NULL` ngoài `withCompany` (migration 0017). Không trúng dòng thì đọc lại: cùng `sub` coi như đã liên kết; tài khoản đã gắn `sub` khác hoặc `sub` đã gắn tài khoản khác thì 401 `google_account_not_found` (Documents/21 V11).
 - Test thay khoá của Google bằng `setGoogleKeySource` (`test/integration/identity/helpers.ts`), không gọi mạng.
 - `service/session.ts`: `startSession(account)` dựng phiên chung cho `/login`, `/google`. Metric `auth_login_total{method,result}` (`service/metrics.ts`).
+
+## Xác thực hai lớp (#7 [D], `service/two-factor.ts`)
+
+- Bật bằng `TWO_FACTOR_MODE=required` (mặc định `off`: luồng như chưa có 2FA, kể cả tài khoản đã có cột TOTP). Cần `TOTP_ENCRYPTION_KEY`.
+- `/login`, `/google` qua `afterFirstFactor` (`service/session.ts`): tài khoản đã bật thì trả `{ mfaRequired: true, mfaToken }` (token `mfa`, 5 phút), không cookie; chưa bật thì cấp phiên với cờ `tfs`.
+- `/login/2fa`: đúng một trong `code`, `recoveryCode`. Mã TOTP ±1 bước; `advanceTotpStep` chỉ cho bước tiến, nên mã đã dùng (kể cả hai request song song) ra 401 `two_factor_invalid`. Sai 5 lần trong 15 phút theo tài khoản (đếm sau khi kiểm chữ ký `mfaToken`) → 429 kể cả mã đúng.
+- Cờ `tfs`: `authenticate`, `authorize` chặn bằng 403 `two_factor_setup_required` (sau `password_change_required`); chỉ `me`, `change-password`, `2fa/setup`, `2fa/confirm` cho phép (Q18), `refresh`, `logout` dùng cookie. Confirm thu hồi mọi refresh token (phiên cấp lúc chỉ qua mật khẩu không được nâng lên phiên không cờ) và đặt cookie mới cho phiên đang xác nhận; FE gọi `refresh` bằng cookie đó để có token không cờ.
+- `/2fa/setup` ghi secret mã hoá (AAD `totp:<accountId>`, `staff/service/totp-secrets.ts`); `/2fa/confirm` bật và trả 2 mã khôi phục một lần, DB giữ SHA-256. Cột TOTP ghi bằng role chủ bảng (hàm ở `staff`).
+- Phản hồi chứa secret, mã khôi phục đặt `Cache-Control: no-store`. Quản trị nền tảng đặt lại 2FA ở `POST /api/v1/platform/accounts/:accountId/2fa/reset` (`resetTwoFactor`, guard `ctx.authorizePlatform` do `src/wiring.ts` tiêm): xoá cột TOTP, thu hồi refresh token, nhật ký cấp nền tảng; access token đang có vẫn sống tới hết hạn (tối đa 15 phút).
+- Metric `two_factor_verifications_total{result}` (`ok`, `invalid`, `replay`, `recovery`, `locked`); `auth_login_total` thêm `mfa_required` và `method=mfa`.

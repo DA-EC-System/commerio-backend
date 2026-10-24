@@ -18,6 +18,8 @@ const BASE = {
   verifyInvitation: [10, MIN15],
   completeIp: [20, MIN15],
   completeEmail: [5, MIN15],
+  // [D] Sai mã ở /join/2fa/confirm, theo lời mời.
+  twoFactorInvitation: [5, MIN15],
 } as const;
 
 export type JoinLimitName = keyof typeof BASE;

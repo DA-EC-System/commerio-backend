@@ -1,18 +1,24 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
+import { z } from 'zod';
 import { problemResponse } from '../../../shared/http/openapi.ts';
 import { registerAccessOpenApi } from '../../access/index.ts';
 import { registerStaffOpenApi } from '../../staff/index.ts';
 import {
   ChangePasswordBody,
+  ConfirmTwoFactorBody,
   GoogleLoginBody,
   LoginBody,
   LoginResponse,
   MeResponse,
+  MfaChallengeResponse,
+  RecoveryCodesResponse,
   RefreshResponse,
   RegisterBody,
   RegisterResponse,
+  SecondFactorBody,
   SelectCompanyBody,
   SelectCompanyResponse,
+  TwoFactorSetupResponse,
 } from './schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
@@ -42,7 +48,10 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
     description: 'Đặt cookie HttpOnly `commerio_refresh`. Access token chưa gắn công ty; gọi `select-company` để chọn.',
     request: { body: json(LoginBody) },
     responses: {
-      200: { description: 'Đăng nhập được', ...json(LoginResponse) },
+      200: {
+        description: 'Đăng nhập được; tài khoản đã bật 2FA (khi `TWO_FACTOR_MODE=required`) thì chỉ có `mfaToken`',
+        ...json(z.union([LoginResponse, MfaChallengeResponse])),
+      },
       401: problemResponse('`invalid_credentials`: sai email hoặc mật khẩu'),
       422: problemResponse('`validation_failed`'),
       429: problemResponse('`too_many_requests`'),
@@ -57,7 +66,7 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
       'đã xác minh (lần đầu thì liên kết). Không tạo tài khoản. Phản hồi và cookie như `/login`.',
     request: { body: json(GoogleLoginBody) },
     responses: {
-      200: { description: 'Đăng nhập được', ...json(LoginResponse) },
+      200: { description: 'Như `/login`', ...json(z.union([LoginResponse, MfaChallengeResponse])) },
       401: problemResponse(
         '`google_token_invalid`: chữ ký, `iss`, `aud`, hạn, email chưa xác minh; `google_account_not_found`: không có ' +
           'tài khoản, hoặc tài khoản đã gắn Google khác',
@@ -102,7 +111,9 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: { description: 'Token và ngữ cảnh công ty', ...json(SelectCompanyResponse) },
       401: problemResponse('`unauthorized`'),
-      403: problemResponse('`company_locked`, `account_locked`, `password_change_required`'),
+      403: problemResponse(
+        '`company_locked`, `account_locked`, `password_change_required`, `two_factor_setup_required`',
+      ),
       404: problemResponse('`not_found`: tài khoản không thuộc công ty này'),
     },
   });
@@ -120,6 +131,56 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
       401: problemResponse('`unauthorized`'),
       422: problemResponse('`validation_failed`: `errors.currentPassword` hoặc `errors.newPassword`'),
       429: problemResponse('`too_many_requests`: lỗi quá 5 lần trong 15 phút với tài khoản này'),
+    },
+  });
+
+  // Xác thực hai lớp (#7 [D], Documents/21 mục 2.1).
+  registry.registerPath({
+    method: 'post',
+    path: '/login/2fa',
+    summary: 'Nhập mã xác thực hai lớp sau khi đăng nhập (UC-PI-03)',
+    description:
+      'Gửi `mfaToken` của `/login` hoặc `/google` kèm đúng một trong `code` (6 số từ app) và `recoveryCode`. Thành ' +
+      'công trả và đặt cookie như `/login`. Sai 5 lần trong 15 phút thì 429, kể cả lần sau nhập đúng.',
+    request: { body: json(SecondFactorBody) },
+    responses: {
+      200: { description: 'Đăng nhập được', ...json(LoginResponse) },
+      401: problemResponse(
+        '`unauthorized`: `mfaToken` sai hoặc quá 5 phút; `two_factor_invalid`: mã sai, mã đã dùng, mã khôi phục đã dùng',
+      ),
+      422: problemResponse('`validation_failed` (`errors.code`)'),
+      429: problemResponse('`too_many_requests`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/2fa/setup',
+    summary: 'Bắt đầu thiết lập xác thực hai lớp',
+    description:
+      'Gọi được khi token còn cờ chưa thiết lập 2FA. Gọi lại thì sinh secret mới, secret cũ không dùng được nữa. FE vẽ QR ' +
+      'từ `otpauthUrl`, hiện `secret` làm setup key.',
+    security: bearer,
+    responses: {
+      200: { description: 'Secret mới', ...json(TwoFactorSetupResponse) },
+      401: problemResponse('`unauthorized`'),
+      409: problemResponse('`two_factor_already_enabled`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/2fa/confirm',
+    summary: 'Xác nhận thiết lập bằng một mã từ app',
+    description:
+      '2FA bật từ đây. Mọi phiên khác bị đăng xuất; phản hồi đặt cookie `commerio_refresh` mới, gọi `refresh` bằng ' +
+      'cookie đó để lấy token không còn cờ. Mã khôi phục chỉ trả lần này.',
+    security: bearer,
+    request: { body: json(ConfirmTwoFactorBody) },
+    responses: {
+      200: { description: '2 mã khôi phục', ...json(RecoveryCodesResponse) },
+      401: problemResponse('`unauthorized`'),
+      409: problemResponse('`two_factor_already_enabled`'),
+      422: problemResponse('`validation_failed` (`errors.code`: mã sai)'),
+      429: problemResponse('`too_many_requests`: sai 5 lần trong 15 phút'),
     },
   });
 }

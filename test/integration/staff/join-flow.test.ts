@@ -37,7 +37,17 @@ describe('tham gia qua link', () => {
 
     const verified = await join.verify(link.token, email, codeIn(sent[0]!));
     expect(verified.status).toBe(200);
-    expect(verified.body).toEqual({ registrationToken: expect.any(String), next: 'set_password' });
+    expect(verified.body).toEqual({
+      registrationToken: expect.any(String),
+      next: 'set_password',
+      twoFactorRequired: false,
+    });
+    // TWO_FACTOR_MODE mặc định off: không có bước 2FA.
+    const setup = await request(app)
+      .post('/api/v1/identity/join/2fa/setup')
+      .send({ registrationToken: verified.body.registrationToken });
+    expect(setup.status).toBe(409);
+    expect(setup.body.code).toBe('two_factor_disabled');
 
     const password = 'MatKhauMoi9';
     const completed = await join.complete({

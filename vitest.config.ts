@@ -11,6 +11,8 @@ const env = {
   // Gốc FE của link mời (#7 [C]).
   PUBLIC_WEB_URL: 'https://commerio.test',
   JOIN_RATE_LIMIT_SCALE: '1000',
+  // Khoá giả cố định cho secret TOTP (#7 [D]); test 2FA tự đặt TWO_FACTOR_MODE=required trong vi.hoisted.
+  TOTP_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
 };
 
 export default defineConfig({

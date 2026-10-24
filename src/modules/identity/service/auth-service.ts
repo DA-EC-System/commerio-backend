@@ -29,13 +29,15 @@ import {
 import { countLogin } from './metrics.ts';
 import { hashPassword, verifyPassword } from './passwords.ts';
 import {
+  afterFirstFactor,
   type CompanyContext,
   claimsFor,
   hashToken,
+  isMfaChallenge,
   type LoginResult,
+  type MfaChallenge,
   membershipViews,
   newRefreshToken,
-  startSession,
   toAccountView,
 } from './session.ts';
 
@@ -156,16 +158,16 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
 }
 
 /** UC-PI-03: đăng nhập chưa gắn công ty; sai email hay sai mật khẩu đều cùng một lỗi (Documents/21 V2). */
-export async function login(input: { email: string; password: string }): Promise<LoginResult> {
+export async function login(input: { email: string; password: string }): Promise<LoginResult | MfaChallenge> {
   const account = await findAccountByEmail(input.email);
   const ok = await verifyPassword(account?.passwordHash, input.password);
   if (!account || !ok) {
     countLogin('password', 'invalid');
     throw invalidCredentials();
   }
-  const session = await startSession(account);
-  countLogin('password', 'ok');
-  return session;
+  const result = await afterFirstFactor(account);
+  countLogin('password', isMfaChallenge(result) ? 'mfa_required' : 'ok');
+  return result;
 }
 
 export async function me(auth: AccessClaims) {

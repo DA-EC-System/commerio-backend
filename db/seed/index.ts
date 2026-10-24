@@ -1,4 +1,5 @@
-// npm run db:seed: nạp dữ liệu demo vào DATABASE_URL. Mật khẩu chung của tài khoản demo lấy từ SEED_PASSWORD.
+// npm run db:seed: nạp dữ liệu demo vào DATABASE_URL. Mật khẩu chung của tài khoản demo lấy từ SEED_PASSWORD; có
+// DEMO_TOTP_SECRET (cần cả TOTP_ENCRYPTION_KEY) thì tài khoản demo bật 2FA bằng secret đó.
 // Logic nằm ở demo.ts (file này không được tsc kiểm, giữ thật ngắn).
 import { closeDb } from '#src/shared/db/client.ts';
 import { defaultDemo, seedDemo } from './demo.ts';
@@ -9,7 +10,7 @@ if (!password || password.length < 8) {
   process.exit(1);
 }
 try {
-  const { companyId } = await seedDemo(defaultDemo(password));
+  const { companyId } = await seedDemo(defaultDemo(password, process.env.DEMO_TOTP_SECRET || undefined));
   console.log(`Đã nạp dữ liệu demo, công ty ${companyId}`);
 } catch (err) {
   // Lỗi truy vấn của Drizzle có cả tham số (email, băm mật khẩu) trong message: chỉ in lỗi gốc của PostgreSQL.

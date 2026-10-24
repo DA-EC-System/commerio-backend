@@ -12,6 +12,10 @@ export { registerStaffOpenApi, staffRouter };
 
 export type { AccountRow, MembershipRow } from './repository/accounts.ts';
 export {
+  advanceTotpStep,
+  clearTotp,
+  consumeRecoveryCode,
+  enableTotp,
   findAccountByEmail,
   findAccountByGoogleSub,
   findAccountById,
@@ -20,5 +24,16 @@ export {
   insertMembership as createMembership,
   linkGoogleSub,
   membershipsOfAccount,
+  saveTotpSecret,
   updatePassword,
 } from './repository/accounts.ts';
+
+// Secret TOTP và mã khôi phục (#7 [D]): identity dùng khi thiết lập 2FA và ở bước nhập mã.
+export {
+  hashRecoveryCode,
+  newRecoveryCodes,
+  newTotpSetup,
+  openTotpSecret,
+  RECOVERY_CODE_COUNT,
+  sealTotpSecret,
+} from './service/totp-secrets.ts';

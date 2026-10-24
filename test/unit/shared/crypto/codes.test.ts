@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { randomDigits, safeEqualHex, sha256Hex } from '#src/shared/crypto/codes.ts';
+import {
+  generateRecoveryCodes,
+  normalizeRecoveryCode,
+  randomDigits,
+  safeEqualHex,
+  sha256Hex,
+} from '#src/shared/crypto/codes.ts';
 
 describe('randomDigits', () => {
   it('randomDigits(6) luôn đủ 6 chữ số, kể cả số 0 đầu', () => {
@@ -24,5 +30,20 @@ describe('safeEqualHex', () => {
 
   it('safeEqualHex trả false khi độ dài khác, không ném', () => {
     expect(safeEqualHex('ab', 'abcd')).toBe(false);
+  });
+});
+
+// Mã khôi phục 2FA (#7 [D]): 2 mã mỗi tài khoản (Thành và Khang chốt 21/10/2026), DB chỉ giữ bản băm.
+describe('mã khôi phục', () => {
+  it('đủ số mã, mỗi mã 10 ký tự base32, không trùng nhau', () => {
+    const codes = generateRecoveryCodes(50);
+    expect(codes).toHaveLength(50);
+    for (const code of codes) expect(code).toMatch(/^[A-Z2-7]{10}$/);
+    expect(new Set(codes).size).toBe(50);
+  });
+
+  it('người dùng gõ chữ thường, gạch nối, khoảng trắng vẫn khớp', () => {
+    expect(normalizeRecoveryCode(' abcde-fgh23 ')).toBe('ABCDEFGH23');
+    expect(normalizeRecoveryCode('ABCDE FGH23')).toBe('ABCDEFGH23');
   });
 });

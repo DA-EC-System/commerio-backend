@@ -3,17 +3,20 @@
 import type { CatalogContext } from './modules/catalog/index.ts';
 import { getShops } from './modules/channel/index.ts';
 import { type FinanceContext, getTransactionRefs, handleVerifiedPayment } from './modules/finance/index.ts';
-import { loadCompanyAccess } from './modules/identity/index.ts';
+import { loadCompanyAccess, platformAdminOf, resetTwoFactor } from './modules/identity/index.ts';
 import type { PaymentContext } from './modules/payment/index.ts';
+import type { PlatformContext } from './modules/platform/index.ts';
 import { getStandardPrices } from './modules/pricing/index.ts';
 import { createAuthorize } from './shared/auth/authorize.ts';
+import { createPlatformAdminGuard } from './shared/auth/platform-admin.ts';
 import type { ModuleContext } from './shared/module.ts';
 
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
 export type AppContext = ModuleContext &
   Required<Pick<CatalogContext, 'standardPrices'>> &
   Required<Pick<PaymentContext, 'onVerifiedPayment' | 'financeRefsOf'>> &
-  Required<Pick<FinanceContext, 'shopsOf'>>;
+  Required<Pick<FinanceContext, 'shopsOf'>> &
+  Required<Pick<PlatformContext, 'authorizePlatform' | 'resetAccountTwoFactor'>>;
 
 export function createModuleContext(): AppContext {
   return {
@@ -26,5 +29,8 @@ export function createModuleContext(): AppContext {
     financeRefsOf: getTransactionRefs,
     // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát.
     shopsOf: getShops,
+    // #7 [D]: platform (lớp dưới) cần guard quản trị nền tảng và hàm đặt lại 2FA của identity.
+    authorizePlatform: createPlatformAdminGuard(platformAdminOf),
+    resetAccountTwoFactor: resetTwoFactor,
   };
 }

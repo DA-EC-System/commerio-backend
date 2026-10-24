@@ -21,6 +21,8 @@ export interface AccessClaims {
   readonly expiresAt: number;
   /** `staff.accounts.password_changed_at` lúc ký (ms epoch); `null` khi chưa từng đổi hoặc token phát trước #62. */
   readonly passwordChangedAt: number | null;
+  /** Chưa thiết lập 2FA khi `TWO_FACTOR_MODE=required` (claim `tfs`, #7 [D]): chỉ vài API dùng được (Q18). */
+  readonly twoFactorSetupRequired: boolean;
 }
 
 let keys: Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> | undefined;
@@ -42,13 +44,16 @@ export function signingKeys() {
   return keys;
 }
 
-export async function signAccessToken(claims: Omit<AccessClaims, 'expiresAt'>): Promise<string> {
+export async function signAccessToken(
+  claims: Omit<AccessClaims, 'expiresAt' | 'twoFactorSetupRequired'> & { twoFactorSetupRequired?: boolean },
+): Promise<string> {
   const { privateKey } = await signingKeys();
   return new SignJWT({
     cid: claims.companyId,
     perms: claims.permissions,
     pwc: claims.mustChangePassword,
     pca: claims.passwordChangedAt,
+    ...(claims.twoFactorSetupRequired ? { tfs: true } : {}),
   })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
@@ -70,6 +75,8 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
       mustChangePassword: payload.pwc === true,
       expiresAt: Number(payload.exp),
       passwordChangedAt: typeof payload.pca === 'number' ? payload.pca : null,
+      // Token phát trước #7 [D] không có claim này.
+      twoFactorSetupRequired: payload.tfs === true,
     };
   } catch {
     throw new AppError(401, 'unauthorized', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');

@@ -153,7 +153,7 @@ export async function markClaimed(id: string, email: string): Promise<boolean> {
 export async function submitInvitation(
   id: string,
   email: string,
-  input: { passwordHash: string | null; accountId: string | null },
+  input: { passwordHash: string | null; accountId: string | null; requireTotp?: boolean },
 ): Promise<boolean> {
   const t = invitations;
   const rows = await getDb()
@@ -171,6 +171,58 @@ export async function submitInvitation(
         eq(t.id, id),
         eq(t.status, 'claimed'),
         eq(t.email, email),
+        sql`${t.expiresAt} > now()`,
+        // [D] email mới khi 2FA bắt buộc: phải xác nhận 2FA trước khi nộp.
+        ...(input.requireTotp ? [isNotNull(t.totpConfirmedAt)] : []),
+      ),
+    )
+    .returning({ id: t.id });
+  return rows.length === 1;
+}
+
+/**
+ * [D] Thiết lập 2FA lúc tham gia (email mới): ghi secret đã mã hoá (AAD `totp:<invitationId>`). Gọi lại thì thay secret,
+ * bỏ xác nhận cũ. Chỉ khi link còn `claimed` với đúng email và còn hạn.
+ */
+export async function saveInvitationTotpSecret(id: string, email: string, sealed: Buffer): Promise<boolean> {
+  const t = invitations;
+  const rows = await getDb()
+    .update(t)
+    .set({ totpSecretEnc: sealed, totpConfirmedAt: null, recoveryCodeHashes: [], ...bump })
+    .where(
+      inCompany(
+        'saveInvitationTotpSecret',
+        eq(t.id, id),
+        eq(t.status, 'claimed'),
+        eq(t.email, email),
+        sql`${t.expiresAt} > now()`,
+      ),
+    )
+    .returning({ id: t.id });
+  return rows.length === 1;
+}
+
+/**
+ * [D] Xác nhận 2FA của lời mời bằng một mã đúng: ghi lúc xác nhận và bản băm mã khôi phục (duyệt thì chép sang tài
+ * khoản). `sealed` là bản mã vừa dùng để kiểm mã: `setup` chen giữa thì secret đã đổi, không xác nhận.
+ */
+export async function confirmInvitationTotp(
+  id: string,
+  email: string,
+  sealed: Buffer,
+  recoveryHashes: string[],
+): Promise<boolean> {
+  const t = invitations;
+  const rows = await getDb()
+    .update(t)
+    .set({ totpConfirmedAt: sql`now()`, recoveryCodeHashes: recoveryHashes, ...bump })
+    .where(
+      inCompany(
+        'confirmInvitationTotp',
+        eq(t.id, id),
+        eq(t.status, 'claimed'),
+        eq(t.email, email),
+        eq(t.totpSecretEnc, sealed),
         sql`${t.expiresAt} > now()`,
       ),
     )
@@ -202,6 +254,10 @@ export async function decideInvitation(
       passwordHash: null,
       otpHash: null,
       otpExpiresAt: null,
+      // [D] secret và mã khôi phục đã chép sang tài khoản lúc duyệt (CHECK `invitations_decided_clean`, 0020).
+      totpSecretEnc: null,
+      totpConfirmedAt: null,
+      recoveryCodeHashes: [],
       ...bump,
     })
     .where(inCompany('decideInvitation', eq(t.id, id), eq(t.version, version), eq(t.status, 'pending')))

@@ -19,3 +19,20 @@ export function safeEqualHex(a: string, b: string): boolean {
   if (left.length !== right.length || left.length * 2 !== a.length || right.length * 2 !== b.length) return false;
   return timingSafeEqual(left, right);
 }
+
+const RECOVERY_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const RECOVERY_LENGTH = 10;
+
+/** Mã khôi phục 2FA: `count` mã, mỗi mã 10 ký tự base32 (50 bit). Chỉ hiện một lần; DB giữ bản băm. */
+export function generateRecoveryCodes(count: number): string[] {
+  const codes = new Set<string>();
+  while (codes.size < count) {
+    let code = '';
+    for (let i = 0; i < RECOVERY_LENGTH; i++) code += RECOVERY_ALPHABET[randomInt(RECOVERY_ALPHABET.length)];
+    codes.add(code);
+  }
+  return [...codes];
+}
+
+/** Bỏ khoảng trắng, gạch nối, đổi chữ hoa: người dùng gõ `abcde-fgh23` vẫn khớp. */
+export const normalizeRecoveryCode = (code: string): string => code.replace(/[\s-]/g, '').toUpperCase();

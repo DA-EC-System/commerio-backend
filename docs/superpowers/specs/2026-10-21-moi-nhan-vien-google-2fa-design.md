@@ -220,9 +220,9 @@ Route có quyền: `ctx.authorize` → `validate`. Route công khai: rate limit 
 |---|---|---|---|
 | `POST /identity/join/check` | `{ token }` | 200 `{ companyName, expiresAt }` | 410 `invitation_invalid` (sai chữ ký, sai issuer, hết hạn, không còn dòng) → 409 `invitation_used` (đã `pending`, `approved`, `rejected`) |
 | `POST /identity/join/otp` | `{ token, email (≤254, chữ thường), fullName (2..100) }` | 202 `{}`, như nhau dù email có tài khoản hay không | 422 → 410 → 409 `invitation_used` (đã gắn email khác, hoặc đã nộp) → 429 `too_many_requests` (chưa qua 60 giây, có `Retry-After`; hết 5 lần gửi; vượt giới hạn IP, email) |
-| `POST /identity/join/verify` | `{ token, email, code: 6 chữ số }` | 200 `{ registrationToken, next: 'set_password' \| 'sign_in' }` | 422 → 410 → 409 `invitation_used` → 422 `errors.code` (sai, hết hạn, chưa có mã, đã sai 5 lần thì mã hết hiệu lực) → 409 `already_member` → 422 `errors.email` (quản trị nền tảng) |
+| `POST /identity/join/verify` | `{ token, email, code: 6 chữ số }` | 200 `{ registrationToken, next: 'set_password' \| 'sign_in', twoFactorRequired }` (thêm 21/10/2026, Khang chọn) | 422 → 410 → 409 `invitation_used` → 422 `errors.code` (sai, hết hạn, chưa có mã, đã sai 5 lần thì mã hết hiệu lực) → 409 `already_member` → 422 `errors.email` (quản trị nền tảng) |
 | `POST /identity/join/complete` | `{ registrationToken, password, confirmPassword?, totpCode? }` | 200 `{ status: 'pending' }` | 422 (mật khẩu sai quy tắc A5; `confirmPassword` khác khi `set_password`) → 410 `registration_expired` (token đăng ký sai hoặc quá 30 phút) → 410 `invitation_invalid` (link hết hạn) → 422 `errors.password` (sai mật khẩu khi `sign_in`) → [D] 422 `errors.totpCode` → 409 `already_member` → 409 `invitation_used` |
-| [D] `POST /identity/join/2fa/setup` | `{ registrationToken }` | 200 `{ secret, otpauthUrl }` | 410 `registration_expired`, 409 `invitation_used` |
+| [D] `POST /identity/join/2fa/setup` | `{ registrationToken }` | 200 `{ secret, otpauthUrl }` | 410 `registration_expired`, 409 `two_factor_disabled` (tắt 2FA), 422 `errors.registrationToken` (`sign_in`), 409 `invitation_used` |
 | [D] `POST /identity/join/2fa/confirm` | `{ registrationToken, code }` | 200 `{ recoveryCodes: string[2] }` | 410, 409, 422 `errors.code` |
 
 **[D]**
@@ -231,7 +231,7 @@ Route có quyền: `ctx.authorize` → `validate`. Route công khai: rate limit 
 |---|---|---|---|---|
 | `POST /identity/login/2fa` | `mfaToken` | `{ mfaToken, code? \| recoveryCode? }` (đúng một) | 200 như `/login` | 422 → 401 `unauthorized` (mfaToken sai, quá 5 phút) → 429 → 401 `two_factor_invalid` (sai, đã dùng) |
 | `POST /identity/2fa/setup` | access token, cho phép cờ `tfs`, `pwc` | — | 200 `{ secret, otpauthUrl }` | 409 `two_factor_already_enabled` |
-| `POST /identity/2fa/confirm` | như trên | `{ code }` | 200 `{ recoveryCodes }` | 422 `errors.code`, 409 `two_factor_already_enabled`, 429 |
+| `POST /identity/2fa/confirm` | như trên | `{ code }` | 200 `{ recoveryCodes }`, đặt cookie refresh mới, thu hồi phiên cũ | 422 `errors.code`, 409 `two_factor_already_enabled`, 429 |
 | `POST /platform/accounts/:accountId/2fa/reset` | quản trị nền tảng | — | 204 (gọi lại vẫn 204) | 401, 403 `forbidden`, 404 |
 
 **Mã lỗi mới** (thêm vào `Documents/21`): `google_unavailable` 503, `invitation_invalid` 410, `invitation_used` 409, `invitation_outdated` 409, `registration_expired` 410, `two_factor_invalid` 401, `two_factor_setup_required` 403, `two_factor_already_enabled` 409. Dùng lại: `google_token_invalid`, `google_account_not_found`, `protected_account`, `permission_not_held`, `already_member`, `email_taken`, `version_conflict`, `too_many_requests`, `forbidden`, `not_found`, `validation_failed`.
@@ -463,3 +463,5 @@ Chi tiết từng PR nằm trong plan. Tóm tắt:
 5. Bật `TWO_FACTOR_MODE=required` trên staging buộc mọi tài khoản hiện có thiết lập ở lần đăng nhập sau: báo trước cả nhóm; tài khoản demo trong seed có secret cố định.
 6. Guard quản trị nền tảng làm ở đây, trùng phạm vi với #10 (UC-PI-08): #10 dùng lại guard này.
 7. Tên hàm hiện có (`revokeAllRefreshTokens`, schema mật khẩu) đã đối chiếu; chỗ nào lệch `docs/17`, `docs/19` lúc làm thì hỏi trước theo `CLAUDE.md`.
+8. Reset 2FA không cắt access token đang dùng (sống tới 15 phút); Khang chọn giữ (21/10/2026). Muốn cắt ngay thì thêm mốc phiên vào tài khoản.
+9. Ai biết mật khẩu và thiết lập 2FA trước chủ tài khoản thì giữ tài khoản (lần đầu bật, hoặc sau reset); chủ tài khoản nhờ quản trị nền tảng reset rồi đổi mật khẩu.
