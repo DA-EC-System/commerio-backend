@@ -4,6 +4,8 @@ Backend của **Commerio**, hệ thống thương mại điện tử doanh nghi�
 
 Quyết định kiến trúc nằm ở repo tài liệu của đồ án: `docs/17-modular-monolith.md` (kiến trúc, 19 module, thư viện), `docs/16-design-pattern.md` (pattern theo bài toán), `docs/19-mo-hinh-du-lieu.md` (mô hình dữ liệu). Code lệch tài liệu thì hỏi trước, đừng tự chọn bên nào đúng.
 
+**Phạm vi MVP (từ 26/10/2026):** mọi chức năng trong `Documents/so-do-vong-doi/chuc-nang-vong-doi.html` (nhập hàng, kho, lên sàn TikTok Shop và Shopee, đơn và kiện, trả hàng, tiền, nền tảng). Thiết kế đích: `Documents/25-vong-doi-ly-tuong.md`. Code hiện tại vẫn theo mô hình cũ (`Documents/21`: đơn một enum, trừ tồn theo đơn, chưa có kiện). Đổi schema hay trạng thái sang mô hình mới thì bám máy trạng thái của `Documents/25`.
+
 ## Kiến trúc
 
 Modular monolith: một mã nguồn, 19 module, mỗi module bốn lớp và một schema PostgreSQL riêng. Một Docker image chạy ba tiến trình:
