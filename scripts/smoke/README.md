@@ -1,6 +1,6 @@
-# Smoke test sàn: Shopee, Lazada
+# Smoke test sàn: Lazada
 
-Hai script kiểm tra tài khoản developer gọi được API thật trước khi viết adapter trong module `channel`. Không phụ thuộc thư viện ngoài, không đụng DB. Token uỷ quyền lưu ở `backend/.smoke-tokens.json` (đã gitignore).
+Script kiểm tra tài khoản developer gọi được API thật trước khi viết adapter trong module `channel`. Không phụ thuộc thư viện ngoài, không đụng DB. Token uỷ quyền lưu ở `backend/.smoke-tokens.json` (đã gitignore).
 
 ## Chuẩn bị
 
@@ -8,25 +8,11 @@ Hai script kiểm tra tài khoản developer gọi được API thật trước 
 2. Điền vào `backend/.env` (mẫu ở `.env.example`):
 
 ```
-SHOPEE_PARTNER_ID=        # Test Partner ID
-SHOPEE_PARTNER_KEY=       # Test Partner Key
-SHOPEE_REDIRECT_URL=      # trùng URL khai báo trong app
-# SHOPEE_HOST=            # mặc định sandbox; nếu console ghi domain khác thì đặt ở đây
-
 LAZADA_APP_KEY=
 LAZADA_APP_SECRET=
 LAZADA_REDIRECT_URL=
 # LAZADA_ACCESS_TOKEN=     # token từ nút Get Token (tài khoản mượn), có thì không cần auth-url, token
 # LAZADA_API_URL=         # mặc định https://api.lazada.vn/rest
-```
-
-## Shopee (sandbox)
-
-```bash
-npm run smoke:shopee -- auth-url                  # in link, mở bằng trình duyệt, đăng nhập shop thử
-npm run smoke:shopee -- token <code> <shop_id>    # code, shop_id lấy từ URL quay về; code chỉ dùng được một lần, hạn 10 phút
-npm run smoke:shopee -- check                     # get_shop_info, get_item_list, get_order_list
-npm run smoke:shopee -- refresh                   # access_token hết hạn sau khoảng 4 giờ
 ```
 
 ## Lazada
@@ -58,9 +44,6 @@ Mỗi bước in `OK` hoặc `LỖI` kèm phản hồi của sàn. Lỗi hay g�
 
 | Sàn | Lỗi | Nghĩa |
 |---|---|---|
-| Shopee | `error_sign` | Sai partner key, hoặc dùng key Live trên host sandbox |
-| Shopee | `error_param` ở `auth_partner` | Redirect URL không khớp app, hoặc link quá 5 phút |
-| Shopee | `error_auth` / `invalid_access_token` | Token hết hạn, chạy `refresh` |
 | Lazada | `IncompleteSignature` | Sai app secret |
 | Lazada | `InvalidCode` | Code đã dùng hoặc hết hạn, chạy lại `auth-url` |
 | Lazada | `AppWhiteIpLimit` / `InsufficientPermission` | App chưa được duyệt hoặc thiếu quyền API |

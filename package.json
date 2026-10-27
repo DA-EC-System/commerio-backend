@@ -26,7 +26,6 @@
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:staging": "node --env-file=.env.staging node_modules/drizzle-kit/bin.cjs migrate",
     "db:seed": "node --env-file-if-exists=.env db/seed/index.ts",
-    "smoke:shopee": "node --env-file-if-exists=.env scripts/smoke/shopee.ts",
     "smoke:lazada": "node --env-file-if-exists=.env scripts/smoke/lazada.ts",
     "infra:up": "docker compose -f deploy/compose.yaml up -d",
     "infra:down": "docker compose -f deploy/compose.yaml down"
