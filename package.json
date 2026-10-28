@@ -21,6 +21,7 @@
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:blackbox": "vitest run --config vitest.blackbox.config.ts",
     "check": "npm run lint && npm run typecheck && npm run depcruise && npm test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
