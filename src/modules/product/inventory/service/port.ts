@@ -15,7 +15,7 @@ export interface StockSnapshot {
 }
 
 // shortcut: tạm khoá luôn 0 vì chưa có phiếu kho chờ duyệt; tính từ phiếu giảm `pending` khi làm B3 (spec #111 Q4).
-const lockedOf = (_variantId: string) => 0;
+export const lockedOf = (_variantId: string) => 0;
 
 /**
  * Các con số của những biến thể thuộc công ty trong `variantIds`; biến thể chưa có dòng tồn trả số 0. Id của công ty
