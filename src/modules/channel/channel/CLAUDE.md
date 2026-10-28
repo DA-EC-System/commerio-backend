@@ -21,6 +21,7 @@ Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (
 
 - `getShops(ids)`: tên, sàn của gian hàng (report).
 - `markNeedsReauth(shopId, reason)`: gọi trong `withCompany` khi làm mới token thất bại (#102) hoặc sàn báo gỡ app (#133).
+- **Cổng quyết toán cho finance** (#117, `service/settlement-port.ts`, tiêm qua `ctx.settlementSource` ở `src/wiring.ts`): `settlementTransactions(companyId, shopId, from, to)`, `settlementPayouts(companyId, shopId, from)` gọi `getTransactions`/`getPayouts` của adapter (Lazada `/finance/transaction/details/get` lật trang 500, `/finance/payout/status/get`); `shopsToSettle()` các gian hàng `active` mọi công ty cho vòng kéo 6 giờ. Adapter chưa có `getTransactions` thì 422 `marketplace_unsupported` (lần chạy `failed`), chưa có `getPayouts` thì coi như không có kỳ nào. Dấu, tên khoản giữ nguyên của sàn; finance tự đổi loại (`kindOfTransaction`). Dạng phản hồi theo tài liệu Lazada, chưa so với dữ liệu thật.
 
 ## Listing (#104)
 

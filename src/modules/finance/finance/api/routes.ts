@@ -34,6 +34,7 @@ import {
 } from './schemas.ts';
 import { mountConfigRoutes } from './config-routes.ts';
 import { mountLedgerRoutes } from './ledger-routes.ts';
+import { mountPaymentRoutes } from './payment-routes.ts';
 import { mountSettlementRoutes } from './settlement-routes.ts';
 
 const caller = (res: Response) => {
@@ -111,6 +112,7 @@ export function financeRouter(ctx: FinanceContext): Router {
   mountSettlementRoutes(router, ctx);
   mountConfigRoutes(router, ctx);
   mountLedgerRoutes(router, ctx);
+  mountPaymentRoutes(router, ctx);
 
   return router;
 }
