@@ -36,6 +36,20 @@
       "when": 1793192460630,
       "tag": "0004_gian-hang-lazada",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793197348835,
+      "tag": "0005_listing-lazada",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793197351490,
+      "tag": "0006_rls-category-maps",
+      "breakpoints": true
     }
   ]
 }
