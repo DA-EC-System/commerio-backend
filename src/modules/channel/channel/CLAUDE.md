@@ -22,6 +22,20 @@ Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (
 - `getShops(ids)`: tên, sàn của gian hàng (report).
 - `markNeedsReauth(shopId, reason)`: gọi trong `withCompany` khi làm mới token thất bại (#102) hoặc sàn báo gỡ app (#133).
 
+## Listing (#104)
+
+Máy trạng thái ở `domain/listing.ts` (§18.3, cùng bảng FE). Mỗi lần chuyển ghi `core.state_transitions` (`entity_type = 'listings'`); thao tác của sàn có `actor_id` null. Gian hàng gọi được sàn qua `shopSession(id)` (`connecting`, `active`, còn token), không thì 409 `shop_not_connected`.
+
+- **Ghép danh mục** (`service/categories.ts`, bảng `category_maps`): danh mục Commerio → danh mục lá của sàn kèm thuộc tính bắt buộc cấp sản phẩm; ghép phải đủ, đúng lựa chọn của sàn (422 `errors["attributes.<tên>"]`).
+- **Đẩy** (`service/listings.ts`): một SKU Commerio là một sản phẩm trên sàn, SellerSku = SKU. Ghi `pushing` và commit trước, gọi sàn ngoài giao dịch, ghi kết quả sau: sàn cho bán ngay (`item_status: Active`) thì `go_live`, không thì `send_review`; lỗi thì `fail` kèm `pushError`. Ảnh: catalog chưa lưu ảnh nên request mang `imageUrls` theo sản phẩm, BE đưa lên sàn và lưu `external_image_urls`. Thất bại theo dòng: `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`, `already_listed` (sửa nội dung `/product/update` chưa làm).
+- **Đồng bộ** (`service/listing-sync.ts`, route `sync`; #102 sẽ chạy định kỳ): đọc trạng thái sàn **chỉ theo SellerSku của mình** (shop thử dùng chung) → `approve`/`reject`/`hold`/`release` (`syncAction`); `pushing` quá 30 phút → `fail`; đẩy giá chuẩn và khả dụng của listing `stock_sync`/`price_sync` khác `synced`, theo lô 20, lỗi ghi theo từng SKU (`stock_sync_error`, `price_sync_error`).
+- **Consumer** `inventory.stock_changed` (`channel-stock-push`) chỉ đánh dấu `stock_sync = pending` (ghi DB, đúng một lần); lần `sync` sau mới gọi sàn, không gọi sàn trong giao dịch của consumer.
+- **Thiết lập lần đầu** (`service/setup.ts`, §18.2): gợi ý SKU sàn có SellerSku trùng SKU Commerio, tạo listing `live`, đẩy khả dụng, `finish_setup`. Chỉ chế độ `push`; `stocktake` cần phiếu kiểm kê (#112).
+- **Ngắt kèm `zeroStock`**: route gọi `pushZeroStock` trước khi ngắt; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt.
+- **Cổng sang `product`** (`service/product-port.ts`): `getVariants`, `standardPricesOf`. Cân nặng, kích thước, mô tả chờ #110 thêm vào `getVariants` (tới đó đẩy báo `dimensions_missing`); `availableOf` chờ #111 (tới đó tồn đẩy lên là 0). Test thay bằng `setProductPort`.
+
+Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `SkuId` (SellerSku bị bỏ); lỗi nghiệp vụ sản phẩm cũng mang `type: ISP`, chỉ `6`, `901`, `1000`, `4154` là lỗi tạm; POST mang payload gửi bằng form body.
+
 ## Chưa làm
 
-Thiết lập lần đầu, ghép SKU, đẩy tồn và giá, `zeroStock` khi ngắt (#104); tự làm mới token và hàng chờ `pendingJobs` (#102, tới đó `pendingJobs` = 0); kéo đơn khi nối lại (#105, `reconnect.pulledFrom` chỉ báo mốc); push (#133).
+Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ (#102); kéo đơn khi nối lại (#105, `reconnect.pulledFrom` chỉ báo mốc); push (#133); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.

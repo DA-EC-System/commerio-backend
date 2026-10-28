@@ -161,9 +161,7 @@ export async function listShops(): Promise<{ items: Shop[] }> {
 }
 
 export async function getShop(id: string): Promise<Shop & { statusHistory: StatusChange[] }> {
-  requireCompanyId('getShop');
-  const row = isUuid(id) ? await findShopRow(id) : undefined;
-  if (!row) throw notFound();
+  const row = await ownShop(id);
   return { ...(await shopView(row)), statusHistory: await getStatusHistory(ENTITY, id) };
 }
 

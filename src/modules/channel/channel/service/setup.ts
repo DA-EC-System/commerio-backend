@@ -76,11 +76,10 @@ export async function finishSetup(
   if (picked.length !== new Set(input.externalSkuIds).size) errors.externalSkuIds = 'Có SKU sàn không còn để ghép';
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
-  const remoteIds = new Map(picked.map((p) => [p.externalSkuId, p]));
   await withCompany(actor.companyId, async () => {
     const { shop } = await shopSession(shopId);
     const { to } = assertTransition(shopMachine, shop.status, 'finish_setup', { actor });
-    for (const p of remoteIds.values()) {
+    for (const p of picked) {
       const row = await insertListing({
         companyId: actor.companyId,
         shopId: shop.id,

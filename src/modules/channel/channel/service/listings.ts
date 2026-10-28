@@ -5,7 +5,7 @@ import { assertTransition, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type ListingAction, type ListingStatus, listingMachine } from '../domain/listing.ts';
-import { listCategoryMaps } from '../repository/category-maps.ts';
+import { type CategoryMapRow, listCategoryMaps } from '../repository/category-maps.ts';
 import {
   findListingRow,
   insertListing,
@@ -15,7 +15,7 @@ import {
   updateListing,
 } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
-import { MarketplaceError } from './marketplaces/index.ts';
+import { type MarketplaceAdapter, MarketplaceError } from './marketplaces/index.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 
@@ -146,6 +146,9 @@ const fail = (variantId: string, sku: string, code: string, message: string, sta
 
 interface PushContext {
   actor: Actor;
+  shopId: string;
+  adapter: MarketplaceAdapter;
+  accessToken: string;
   imageUrls: Record<string, string[]>;
 }
 
@@ -175,7 +178,7 @@ export async function pushListings(
       ),
     };
   });
-  const ctx: PushContext = { actor, imageUrls: input.imageUrls };
+  const ctx: PushContext = { actor, shopId: shop.id, adapter, accessToken, imageUrls: input.imageUrls };
   const results: PushResult[] = [];
   for (const variantId of ids) {
     const v = variants.get(variantId);
@@ -183,24 +186,19 @@ export async function pushListings(
       results.push(fail(variantId, v?.sku ?? variantId, 'not_found', 'Biến thể không còn bán'));
       continue;
     }
-    results.push(await pushOne(ctx, shop.id, v, prices.get(v.id) ?? null, available.get(v.id) ?? 0, maps.get(v.categoryId), {
-      adapter,
-      accessToken,
-    }));
+    results.push(await pushOne(ctx, v, prices.get(v.id) ?? null, available.get(v.id) ?? 0, maps.get(v.categoryId)));
   }
   return { results };
 }
 
 async function pushOne(
   ctx: PushContext,
-  shopId: string,
   v: ListingVariant,
   price: Decimal | null,
   quantity: number,
-  map: { externalCategoryId: string; attributes: Record<string, string> } | undefined,
-  sess: { adapter: Awaited<ReturnType<typeof shopSession>>['adapter']; accessToken: string },
+  map: CategoryMapRow | undefined,
 ): Promise<PushResult> {
-  const { actor } = ctx;
+  const { actor, shopId } = ctx;
   const existing = await withCompany(actor.companyId, () => findListingRow(shopId, v.id));
   if (existing?.status === 'pushing') return fail(v.id, v.sku, 'push_in_progress', 'Đang đẩy, chờ sàn trả kết quả', 'pushing');
   if (existing?.status === 'platform_hold') return fail(v.id, v.sku, 'platform_hold', 'Sàn đang khoá listing này', 'platform_hold');
@@ -236,8 +234,8 @@ async function pushOne(
   const priceText = price.toFixed(0);
   try {
     const imageUrls =
-      row.externalImageUrls?.length ? row.externalImageUrls : await uploadAll(sess, sourceImages ?? []);
-    const createdOnPlatform = await sess.adapter.createProduct(sess.accessToken, {
+      row.externalImageUrls?.length ? row.externalImageUrls : await uploadAll(ctx, sourceImages ?? []);
+    const createdOnPlatform = await ctx.adapter.createProduct(ctx.accessToken, {
       externalCategoryId: map.externalCategoryId,
       attributes: map.attributes,
       name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
@@ -279,9 +277,9 @@ async function pushOne(
   }
 }
 
-async function uploadAll(sess: { adapter: { uploadImage(t: string, u: string): Promise<string> }; accessToken: string }, urls: string[]) {
+async function uploadAll(ctx: PushContext, urls: string[]) {
   const out: string[] = [];
-  for (const url of urls) out.push(await sess.adapter.uploadImage(sess.accessToken, url));
+  for (const url of urls) out.push(await ctx.adapter.uploadImage(ctx.accessToken, url));
   return out;
 }
 
