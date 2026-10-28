@@ -1,13 +1,20 @@
 // API công khai của module `channel`: gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn. Không đổi tồn.
 // Module khác chỉ được import từ file này.
+import { registerConsumer } from '../../core/index.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
+import { markStockPending } from './service/listing-sync.ts';
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
   router: channelRouter,
   openapi: registerChannelOpenApi,
+  // Tồn đổi thì listing chờ đẩy tồn (chỉ ghi DB, đúng một lần); lần `sync` sau mới gọi sàn, không gọi sàn trong giao dịch.
+  async startBackground() {
+    registerConsumer('inventory.stock_changed', (e) => markStockPending(e.payload.variantId), { consumer: 'channel-stock-push' });
+    return async () => {};
+  },
 };
 
 export { getShops, type ShopRef } from './service/shops-lookup.ts';

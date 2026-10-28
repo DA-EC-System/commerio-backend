@@ -38,12 +38,13 @@ describe('getVariants', () => {
         categoryId: category.id,
         categoryName: 'Áo',
         archived: false,
+        businessStatus: 'selling',
         attributes: [
           { attributeId: color.id, attributeName: 'Màu', valueId: valueId(color, 'Đen'), value: 'Đen', code: 'DEN' },
           { attributeId: size.id, attributeName: 'Size', valueId: valueId(size, 'XL'), value: 'XL', code: 'XL' },
         ],
       },
-      expect.objectContaining({ id: shirt.variants[1]!.id, sku: 'AO-0002-TRANG-XL', archived: true }),
+      expect.objectContaining({ id: shirt.variants[1]!.id, sku: 'AO-0002-TRANG-XL', archived: true, businessStatus: 'archived' }),
       expect.objectContaining({ id: old.variants[0]!.id, archived: true }),
     ]);
 

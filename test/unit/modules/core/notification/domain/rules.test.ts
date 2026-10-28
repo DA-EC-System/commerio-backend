@@ -33,7 +33,7 @@ describe('bảng loại sự kiện → quyền (D11, plan A1, A2)', () => {
     ['payment.succeeded', ['ceo', 'admin', 'sale']],
     ['inventory.below_threshold', ['ceo', 'admin', 'warehouse']],
     ['inventory.receipt_posted', ['ceo', 'admin', 'warehouse']],
-    ['purchasing.order_submitted', ['ceo']],
+    ['purchasing.request_submitted', ['ceo']],
   ];
   it.each(table)('%s tới đúng vai trò có sẵn', (type, receivers) => {
     for (const role of Object.keys(ROLES) as (keyof typeof ROLES)[]) {
@@ -56,7 +56,7 @@ describe('bảng loại sự kiện → quyền (D11, plan A1, A2)', () => {
     const noPurchasing = effectivePermissions(
       access(['sales.order.view', 'purchasing.request.approve'], ALL_MODULES.filter((m) => m !== 'purchasing')),
     );
-    expect(canReceive(noPurchasing, 'purchasing.order_submitted')).toBe(false);
+    expect(canReceive(noPurchasing, 'purchasing.request_submitted')).toBe(false);
     expect(canReceive(noPurchasing, 'sales.order_created')).toBe(true);
   });
 });
@@ -89,7 +89,7 @@ describe('toMessage: chỉ gửi trường cho phép, tiền là số nguyên đ
   it('các loại còn lại giữ đủ trường của danh mục', () => {
     const orderId = id();
     const variantId = id();
-    const purchaseOrderId = id();
+    const requestId = id();
     expect(toMessage(envelope('fulfillment.order_status_changed', { orderId, from: 'confirmed', to: 'picking', isShortStock: true }))!.payload).toEqual({
       orderId,
       from: 'confirmed',
@@ -97,7 +97,7 @@ describe('toMessage: chỉ gửi trường cho phép, tiền là số nguyên đ
       isShortStock: true,
     });
     expect(toMessage(envelope('inventory.below_threshold', { variantId, available: 1, minQty: 5 }))!.payload).toEqual({ variantId, available: 1, minQty: 5 });
-    expect(toMessage(envelope('purchasing.order_submitted', { purchaseOrderId, code: 'PO-0001' }))!.payload).toEqual({ purchaseOrderId, code: 'PO-0001' });
+    expect(toMessage(envelope('purchasing.request_submitted', { requestId, number: 'DN-000001' }))!.payload).toEqual({ requestId, number: 'DN-000001' });
   });
 
   it('loại ngoài bảng → null (không gửi)', () => {

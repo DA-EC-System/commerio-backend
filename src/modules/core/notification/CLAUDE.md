@@ -28,7 +28,7 @@ publishEvent (module phát, trong giao dịch) → outbox → relay (worker) →
 | Thanh toán thành công | `payment.succeeded` | `sales.order.view`, `finance.invoice.view` | `orderId`, `amount` (không gửi mã giao dịch, cổng: T13) |
 | Tồn dưới ngưỡng | `inventory.below_threshold` | `inventory.stock.view` | `variantId`, `available`, `minQty` |
 | Hàng nhập về | `inventory.receipt_posted` | `inventory.stock.view` | `receiptId`, `number`, `kind` |
-| Đơn mua chờ duyệt | `purchasing.order_submitted` | `purchasing.request.approve` | `purchaseOrderId`, `code` |
+| Đề nghị nhập chờ duyệt | `purchasing.request_submitted` | `purchasing.request.approve` | `requestId`, `number` |
 
 Quyền của phân hệ đang tắt không tính. Loại không có trong bảng thì không gửi ai. `data` không có `companyId`, `aggregateId`.
 
