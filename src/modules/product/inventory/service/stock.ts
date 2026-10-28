@@ -6,7 +6,7 @@ import type { VariantSummary } from '../../catalog/index.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { toDong } from '../domain/stock.ts';
 import { allLevels, findLevel, latestMoves, lockLevel, setMinQty } from '../repository/levels.ts';
-import { namesOf, notFound, toStockLevel, type Viewer } from './views.ts';
+import { type IncomingLookup, namesOf, notFound, toStockLevel, type Viewer } from './views.ts';
 
 const MOVES_LIMIT = 100;
 
@@ -15,6 +15,7 @@ const MOVES_LIMIT = 100;
  * lưu trữ còn hàng (A2); `summary` tính trên toàn bộ danh sách đó, `totalValue` là tổng các `stockValue` đã làm tròn (A4).
  */
 export async function listStock(
+  incomingOf: IncomingLookup,
   viewer: Viewer,
   q: {
     page: number;
@@ -29,9 +30,10 @@ export async function listStock(
     // Cùng một kết nối của giao dịch: đọc tuần tự (Promise.all không nhanh hơn, node-pg cảnh báo).
     const variants = await getVariants();
     const levels = await allLevels();
+    const incoming = await incomingOf();
     const all = variants
       .filter((v) => !v.archived || (levels.get(v.id)?.onHand ?? 0) !== 0 || (levels.get(v.id)?.quarantine ?? 0) !== 0)
-      .map((v) => toStockLevel(v, levels.get(v.id), viewer))
+      .map((v) => toStockLevel(v, levels.get(v.id), viewer, incoming.get(v.id) ?? 0))
       .sort((a, b) => a.productName.localeCompare(b.productName, 'vi') || a.sku.localeCompare(b.sku, 'vi'));
     const search = q.search?.toLowerCase();
     const items = all.filter(
@@ -64,10 +66,11 @@ async function ownVariant(variantId: string): Promise<VariantSummary> {
 }
 
 /** Tồn một biến thể và 100 dòng thẻ kho mới nhất. */
-export async function getStock(viewer: Viewer, variantId: string) {
+export async function getStock(incomingOf: IncomingLookup, viewer: Viewer, variantId: string) {
   return withCompany(viewer.companyId, async () => {
     const variant = await ownVariant(variantId);
-    const level = toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer);
+    const incoming = (await incomingOf([variant.id])).get(variant.id) ?? 0;
+    const level = toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming);
     const moves = await latestMoves(variant.id, MOVES_LIMIT);
     const names = await namesOf(moves.map((m) => m.doneBy));
     return {
@@ -90,16 +93,22 @@ export async function getStock(viewer: Viewer, variantId: string) {
  * Đặt hoặc bỏ ngưỡng. Khoá dòng tồn trước nên hai người đặt cùng lúc xếp hàng và người sau nhận 409. `version` là
  * `version` của dòng tồn (`reorderVersion`).
  */
-export async function setReorderRule(viewer: Viewer, variantId: string, input: { minQty: number | null; version: number }) {
+export async function setReorderRule(
+  incomingOf: IncomingLookup,
+  viewer: Viewer,
+  variantId: string,
+  input: { minQty: number | null; version: number },
+) {
   return withCompany(viewer.companyId, async () => {
     const variant = await ownVariant(variantId);
+    const incoming = (await incomingOf([variant.id])).get(variant.id) ?? 0;
     // Chưa có dòng tồn thì `reorderVersion` là 0 (FE gửi 0); dòng vừa tạo để khoá mang `version` 1.
     const existed = (await findLevel(variant.id)) !== null;
     const level = await lockLevel(variant.id);
     const currentVersion = existed ? level.version : 0;
     if (currentVersion !== input.version) {
       throw new AppError(409, 'version_conflict', 'Ngưỡng tồn vừa được người khác sửa. Xem lại số mới rồi lưu lại', {
-        current: toStockLevel(variant, level, viewer),
+        current: toStockLevel(variant, level, viewer, incoming),
       });
     }
     if (level.minQty !== input.minQty) {
@@ -114,6 +123,6 @@ export async function setReorderRule(viewer: Viewer, variantId: string, input: {
         after: input.minQty === null ? null : { minQty: input.minQty },
       });
     }
-    return toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer);
+    return toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming);
   });
 }

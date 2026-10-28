@@ -337,17 +337,17 @@ describe('consumer shared', () => {
 describe('đăng ký qua platform/index.ts (AC-6)', () => {
   it('registerConsumer + startBackground của platform: relay và handler chạy, hàm dừng ngắt được', async () => {
     const got: string[] = [];
-    src.platform.registerConsumer('purchasing.order_submitted', async (event) => void got.push(event.eventId), {
+    src.platform.registerConsumer('purchasing.request_submitted', async (event) => void got.push(event.eventId), {
       consumer: 'qua-index',
     });
     const stop = await src.platform.platformModule.startBackground!({} as ModuleContext);
     try {
-      const purchaseOrderId = randomUUID();
+      const requestId = randomUUID();
       const id = await src.db.withCompany(randomUUID(), () =>
         src.platform.publishEvent({
-          type: 'purchasing.order_submitted',
-          aggregateId: purchaseOrderId,
-          payload: { purchaseOrderId, code: 'DM1' },
+          type: 'purchasing.request_submitted',
+          aggregateId: requestId,
+          payload: { requestId, number: 'DN-000001' },
         }),
       );
       await waitFor(() => got.includes(id), 60_000);

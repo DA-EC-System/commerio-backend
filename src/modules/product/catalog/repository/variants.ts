@@ -53,6 +53,7 @@ export async function findVariants(filter: { productId?: string; ids?: readonly 
       productId: productVariants.productId,
       sku: productVariants.sku,
       archivedAt: productVariants.archivedAt,
+      businessStatus: productVariants.businessStatus,
       productName: products.name,
       productArchivedAt: products.archivedAt,
       categoryId: categories.id,

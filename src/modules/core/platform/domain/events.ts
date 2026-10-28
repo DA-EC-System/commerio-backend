@@ -85,7 +85,14 @@ export const EVENT_SCHEMAS = {
     effectiveFrom: z.iso.date(),
     supersededId: id.nullable(),
   }),
-  'purchasing.order_submitted': z.object({ purchaseOrderId: id, code: z.string() }),
+  // Đề nghị nhập gửi (hoặc gửi lại) CEO duyệt (#108).
+  'purchasing.request_submitted': z.object({ requestId: id, number: z.string() }),
+  // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý.
+  'purchasing.goods_receipt_posted': z.object({
+    receiptId: id,
+    requestId: id,
+    lines: z.array(z.object({ variantId: id, accepted: z.int().nonnegative(), defective: z.int().nonnegative() })),
+  }),
   // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
   // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
   'staff.invitation_otp_requested': z.object({ invitationId: id, requestedAt: timestamp }),

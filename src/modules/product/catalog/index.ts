@@ -11,5 +11,13 @@ export const catalogModule: ModuleDefinition = {
 };
 
 export { getVariants, type VariantSummary } from './service/variants.ts';
+// Sản phẩm mới từ đề nghị nhập (#108): purchasing kiểm khi lập, tạo khi duyệt, trong giao dịch của purchasing.
+export {
+  categoryNames,
+  createPurchaseProducts,
+  type NewProductErrors,
+  type NewProductItem,
+  validateNewProducts,
+} from './service/purchase-products.ts';
 // Giá chuẩn là cột của SKU (Documents/19 D9).
 export { type CatalogContext, standardPricesOf } from './service/standard-price.ts';

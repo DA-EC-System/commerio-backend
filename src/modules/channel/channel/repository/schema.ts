@@ -60,6 +60,11 @@ export const listingStatus = channelSchema.enum('listing_status', [
 ]);
 /** `unmanaged`: SKU sàn ghép vào "không quản tồn" (combo), CEO duyệt; không trừ tồn, không đẩy tồn. */
 export const listingMode = channelSchema.enum('listing_mode', ['mapped', 'unmanaged']);
+export interface SyncError {
+  code: string;
+  message: string;
+  at: string;
+}
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
 
@@ -89,6 +94,12 @@ export const listings = channelSchema.table(
     stockSync: syncState('stock_sync').notNull().default('pending'),
     priceSync: syncState('price_sync').notNull().default('pending'),
     platformStock: integer('platform_stock'),
+    /** Lỗi lần đẩy gần nhất của riêng SKU này (§18.4): `{ code, message, at }`, null khi đã đồng bộ. */
+    stockSyncError: jsonb('stock_sync_error').$type<SyncError>(),
+    priceSyncError: jsonb('price_sync_error').$type<SyncError>(),
+    lastPushedAt: timestamp('last_pushed_at', { withTimezone: true }),
+    /** Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau. */
+    externalImageUrls: text('external_image_urls').array(),
     listedPrice: money('listed_price'),
     manualPrice: money('manual_price'),
     priceCalcId: uuid('price_calc_id'),
@@ -108,6 +119,25 @@ export const listings = channelSchema.table(
     check('listings_push_attempts', sql`${t.pushAttempts} >= 0`),
     check('listings_prices', sql`${t.listedPrice} >= 0 and ${t.manualPrice} >= 0`),
   ],
+);
+
+/**
+ * Ghép danh mục Commerio → danh mục lá của sàn, kèm thuộc tính bắt buộc của danh mục đó (#104 A2). Đẩy sản phẩm thuộc
+ * danh mục chưa ghép thì lỗi theo dòng `category_unmapped`.
+ */
+export const categoryMaps = channelSchema.table(
+  'category_maps',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    platform: marketplace('platform').notNull(),
+    categoryId: uuid('category_id').notNull(),
+    externalCategoryId: text('external_category_id').notNull(),
+    attributes: jsonb('attributes').$type<Record<string, string>>().notNull().default({}),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [unique().on(t.companyId, t.platform, t.categoryId)],
 );
 
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
