@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { MAX_REASON } from '../domain/receipt.ts';
+import { GOODS_RECEIPT_STATUSES } from '../domain/receipt-machine.ts';
 import { MAX_LINES, MAX_QTY, MAX_UNIT_COST } from '../domain/request.ts';
 import { PURCHASE_REQUEST_STATUSES } from '../domain/request-machine.ts';
 
@@ -119,6 +121,52 @@ export const RequestActionInput = z
   })
   .meta({ id: 'PurchaseRequestActionInput' });
 
+// ---------- Phiếu nhận ----------
+
+export const ReceiptListQuery = z.object({
+  ...page,
+  status: z.enum(GOODS_RECEIPT_STATUSES, 'Trạng thái không hợp lệ').optional(),
+  requestId: z.uuid('Đề nghị không hợp lệ').optional(),
+});
+
+const deliveryMode = z.enum(['waiting', 'left'], 'Chọn cách giao');
+
+export const GoodsReceiptCreateInput = z
+  .object({ requestId: z.string('Chọn đề nghị nhập'), deliveryMode, note: text(500) })
+  .meta({ id: 'GoodsReceiptCreateInput' });
+
+const countMessage = 'Nhập số nguyên từ 0';
+const count = z.number(countMessage).int(countMessage).min(0, countMessage).max(MAX_QTY, countMessage);
+
+export const GoodsReceiptLineInput = z
+  .object({
+    lineId: z.string('Thiếu dòng đề nghị').meta({ description: 'Id dòng đề nghị nhập' }),
+    announced: count,
+    accepted: count,
+    defectKept: count,
+    returnedOnSpot: count,
+    reason: text(MAX_REASON),
+  })
+  .meta({ id: 'GoodsReceiptLineInput' });
+
+export const GoodsReceiptUpdateInput = z
+  .object({
+    deliveryMode,
+    note: text(500),
+    attachmentIds: z
+      .array(z.string(), 'Danh sách tệp không hợp lệ')
+      .max(10, 'Tối đa 10 tệp')
+      .default([])
+      .meta({ description: 'Chưa hỗ trợ tới #114: khác rỗng trả 422 `errors.attachments`' }),
+    lines: z.array(GoodsReceiptLineInput, 'Danh sách dòng không hợp lệ').max(MAX_LINES, `Tối đa ${MAX_LINES} dòng`).default([]),
+    version,
+  })
+  .meta({ id: 'GoodsReceiptUpdateInput' });
+
+export const ReceiptActionInput = z
+  .object({ version, reason: z.string('Lý do tối đa 500 ký tự').max(500, 'Lý do tối đa 500 ký tự').nullish() })
+  .meta({ id: 'GoodsReceiptActionInput' });
+
 // ---------- Response: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1) ----------
 
 const iso = z.iso.datetime();
@@ -223,3 +271,73 @@ export const PurchaseRequestPage = z
   })
   .strict()
   .meta({ id: 'PurchaseRequestPage' });
+
+const receiptSummaryShape = {
+  id: z.uuid(),
+  number: z.string(),
+  status: z.enum(GOODS_RECEIPT_STATUSES),
+  request: z.object({ id: z.uuid(), number: z.string() }).strict(),
+  supplier: z.object({ id: z.string(), name: z.string() }).strict(),
+  deliveryMode: z.enum(['waiting', 'left']),
+  note: z.string(),
+  totalAnnounced: z.number().int(),
+  shortQty: z.number().int(),
+  createdBy: z.string(),
+  createdById: z.string(),
+  createdAt: iso,
+  postedBy: z.string().nullable(),
+  postedAt: iso.nullable(),
+  version: z.number().int(),
+};
+
+export const GoodsReceiptSummary = z.object(receiptSummaryShape).strict().meta({ id: 'GoodsReceiptSummary' });
+
+export const GoodsReceiptLine = z
+  .object({
+    lineId: z.uuid().meta({ description: 'Id dòng đề nghị nhập' }),
+    variantId: z.uuid(),
+    sku: z.string(),
+    productName: z.string(),
+    attributesLabel: z.string(),
+    outstanding: z.number().int().meta({ description: 'Còn chờ của dòng đề nghị lúc này' }),
+    announced: z.number().int(),
+    accepted: z.number().int(),
+    defectKept: z.number().int(),
+    returnedOnSpot: z.number().int(),
+    short: z.number().int(),
+    reason: z.string(),
+  })
+  .strict()
+  .meta({ id: 'GoodsReceiptLine' });
+
+export const GoodsReceipt = z
+  .object({
+    ...receiptSummaryShape,
+    lines: z.array(GoodsReceiptLine),
+    attachments: z.array(z.object({ fileId: z.string(), name: z.string(), url: z.string(), contentType: z.string() }).strict()),
+    requestCreatedById: z.string().meta({ description: 'Người lập đề nghị: người ghi sổ phải khác' }),
+    shortResolution: z
+      .object({
+        kind: z.enum(['follow_up', 'close_short', 'supplier_wrong']),
+        followUp: z.object({ type: z.literal('goods_receipt'), id: z.uuid(), number: z.string() }).strict().nullable(),
+        note: z.string(),
+        by: z.string(),
+        at: iso,
+      })
+      .strict()
+      .nullable(),
+    followUps: z.array(z.object({ type: z.literal('supplier_return'), id: z.uuid(), number: z.string() }).strict()),
+    statusHistory: z.array(StatusChange),
+  })
+  .strict()
+  .meta({ id: 'GoodsReceipt' });
+
+export const GoodsReceiptPage = z
+  .object({
+    items: z.array(GoodsReceiptSummary),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+  })
+  .strict()
+  .meta({ id: 'GoodsReceiptPage' });
