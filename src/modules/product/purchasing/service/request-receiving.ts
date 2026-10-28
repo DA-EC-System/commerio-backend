@@ -12,21 +12,20 @@ import { checkTransition } from './transitions.ts';
 
 /**
  * Sau khi cộng số nhận của một phiếu: hết còn chờ thì đề nghị sang Nhận xong và mọi phiếu thiếu tự Đã xử lý (giao bù
- * bằng phiếu vừa ghi); còn chờ thì sang Nhận một phần (chỉ ghi lịch sử khi đổi từ Đã đặt). Luôn tăng `version`.
+ * bằng phiếu vừa ghi); còn chờ thì sang Nhận một phần (chỉ ghi lịch sử khi đổi từ Đã đặt). Đề nghị đã Nhận xong từ phiếu
+ * trước (phiếu này chỉ có thiếu hoặc trả tại chỗ) thì không chuyển nữa. Luôn tăng `version`.
  */
 export async function applyReceiving(request: RequestRow, posted: { receiptId: string; actorId: string }): Promise<void> {
   const left = (await findLines([request.id])).reduce((s, l) => s + outstanding(l), 0);
-  const action = left === 0 ? 'receive_all' : request.status === 'ordered' ? 'receive_partial' : null;
-  if (!action) {
+  const action = left > 0 ? (request.status === 'ordered' ? 'receive_partial' : null) : request.status === 'received' ? null : 'receive_all';
+  if (action) {
+    const { to } = assertTransition(purchaseRequestMachine, request.status, action, { actor: null });
+    await updateRequest(request.id, { status: to });
+    await recordTransition({ entityType: ENTITY, entityId: request.id, from: request.status, to, action, actorId: null });
+  } else {
     await updateRequest(request.id, {});
-    return;
   }
-  const { to } = assertTransition(purchaseRequestMachine, request.status, action, { actor: null });
-  await updateRequest(request.id, { status: to });
-  await recordTransition({ entityType: ENTITY, entityId: request.id, from: request.status, to, action, actorId: null });
-  if (to === 'received') {
-    await autoResolveShort(request.id, { kind: 'follow_up', followUpReceiptId: posted.receiptId, by: posted.actorId });
-  }
+  if (left === 0) await autoResolveShort(request.id, { kind: 'follow_up', followUpReceiptId: posted.receiptId, by: posted.actorId });
 }
 
 export type AutoResolution =

@@ -182,6 +182,24 @@ describe('ghi sổ phiếu nhận', () => {
     expect(await rows('select count(*)::int as n from product.supplier_returns where source_id = $1', [r.id])).toEqual([{ n: 1 }]);
   });
 
+  it('đề nghị đã nhận đủ, phiếu đang kiểm còn lại chỉ có trả tại chỗ hoặc thiếu → vẫn ghi sổ được, phiếu thiếu tự Đã xử lý', async () => {
+    const v = await newVariant();
+    const req = await orderedRequest(A, A.supplierId, [{ variantId: v, quantity: 5, unitCost: 1000 }]);
+    const full = await counted(A.kho, req.id, [{ announced: 5, accepted: 5 }]);
+    const returned = await counted(A.kho, req.id, [{ announced: 2, returnedOnSpot: 2, reason: 'Giao dư, trả người giao' }]);
+    const short = await counted(A.kho, req.id, [{ announced: 1, reason: 'Báo giao 1 nhưng không có hàng' }]);
+    expect((await post(A.kho, full)).status).toBe(200);
+
+    const r2 = await post(A.kho, returned);
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+    expect(r2.body.status).toBe('matched');
+    const r3 = await post(A.kho, short, 'post_short');
+    expect(r3.status, JSON.stringify(r3.body)).toBe(200);
+    expect(GoodsReceipt.parse(r3.body)).toMatchObject({ status: 'resolved', shortResolution: { kind: 'follow_up', followUp: { id: short.id } } });
+    expect((await pur(A.buyer).get(`/requests/${req.id}`)).body.status).toBe('received');
+    expect((await stockOf(v)).onHand).toBe(5);
+  });
+
   it('chỉ có hàng trả tại chỗ → ghi sổ được, không thẻ kho, không stock_changed, không phiếu trả NCC', async () => {
     const v = await newVariant();
     const req = await orderedRequest(A, A.supplierId, [{ variantId: v, quantity: 5, unitCost: 1000 }]);
