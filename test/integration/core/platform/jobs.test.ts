@@ -3,7 +3,18 @@ import { PgBoss } from 'pg-boss';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { jobBoss, stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
-import { DEAD_QUEUE, defineQueue, JobDataSchema, sendJob, workQueue } from '#src/modules/core/platform/service/jobs/queues.ts';
+import {
+  countHeld,
+  DEAD_QUEUE,
+  defineQueue,
+  HoldJob,
+  JobDataSchema,
+  releaseHeld,
+  scheduleForShop,
+  sendJob,
+  unscheduleForShop,
+  workQueue,
+} from '#src/modules/core/platform/service/jobs/queues.ts';
 import { inTransaction, withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { asCompany } from '../../helpers/rls.ts';
@@ -118,4 +129,41 @@ describe('hàng việc nền pg-boss (#102)', () => {
       await (await jobBoss()).offWork(queue.name);
     }
   }, 30_000);
+});
+
+describe('giữ việc khi gian hàng mất token, lịch theo gian hàng (#102 A3, A5)', () => {
+  it('AC-4: handler ném HoldJob thì việc được giữ (không tốn lượt thử); trả lại thì chạy tiếp ở hàng gốc', async () => {
+    const queue = testQueue({ attempts: 1 });
+    const { companyId } = await createCompany();
+    const shopId = randomUUID();
+    const runs: string[] = [];
+    let authorized = false;
+    await workQueue(queue, async (d) => {
+      runs.push(d.marker);
+      if (!authorized) throw new HoldJob('mất token');
+    });
+    await sendJob(queue, { companyId, shopId, marker: 'giữ' });
+    await vi.waitFor(async () => expect((await countHeld([shopId])).get(shopId)).toBe(1), { timeout: 20_000, interval: 500 });
+    const boss = await jobBoss();
+    expect(await boss.findJobs(DEAD_QUEUE, { data: { shopId } })).toHaveLength(0);
+
+    authorized = true;
+    expect(await releaseHeld(shopId)).toBe(1);
+    expect((await countHeld([shopId])).get(shopId) ?? 0).toBe(0);
+    await vi.waitFor(() => expect(runs).toEqual(['giữ', 'giữ']), { timeout: 20_000, interval: 500 });
+    await boss.offWork(queue.name);
+  }, 45_000);
+
+  it('A3: lịch theo gian hàng có khoá là shopId; bỏ lịch thì hết', async () => {
+    const queue = testQueue({ policy: 'stately' });
+    const { companyId } = await createCompany();
+    const shopId = randomUUID();
+    await scheduleForShop(queue, '*/15 * * * *', { companyId, shopId, marker: 'lịch' });
+    const boss = await jobBoss();
+    expect(await boss.getSchedules(queue.name, shopId)).toEqual([
+      expect.objectContaining({ name: queue.name, key: shopId, cron: '*/15 * * * *', data: { companyId, shopId, marker: 'lịch' } }),
+    ]);
+    await unscheduleForShop(queue, shopId);
+    expect(await boss.getSchedules(queue.name, shopId)).toEqual([]);
+  });
 });

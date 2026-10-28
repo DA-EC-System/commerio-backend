@@ -9,6 +9,15 @@ import { jobBoss } from './boss.ts';
 /** Hàng chứa việc đã thử hết lượt mà vẫn lỗi. Admin xem và chạy lại; không có worker. */
 export const DEAD_QUEUE = 'platform.dead';
 
+/**
+ * Hàng giữ việc của gian hàng mất token (A5): không có worker, giữ 60 ngày (refresh token Lazada sống 30 ngày).
+ * Dữ liệu là dữ liệu gốc kèm `queue` (hàng gốc); id giữ bằng id việc gốc nên giữ lại hai lần vẫn chỉ một việc.
+ */
+export const HELD_QUEUE = 'platform.held';
+
+/** Handler ném lỗi này khi việc chưa chạy được tới lúc gian hàng nối lại: việc được giữ, không tốn lượt thử. */
+export class HoldJob extends Error {}
+
 /** Mọi việc mang công ty: API việc lỗi lọc theo đây, handler mở `withCompany` bằng nó. */
 export const JobDataSchema = z.object({ companyId: z.uuid(), shopId: z.uuid().optional() });
 export type JobData = z.infer<typeof JobDataSchema>;
@@ -44,6 +53,7 @@ function ensureQueue(queue: Queue<JobData>): Promise<void> {
     done = (async () => {
       const boss = await jobBoss();
       await boss.createQueue(DEAD_QUEUE, { retentionSeconds: 30 * 86_400 });
+      await boss.createQueue(HELD_QUEUE, { retentionSeconds: 60 * 86_400 });
       const { policy = 'standard', attempts = 5, retryDelaySeconds = 60, expireInSeconds = 300 } = queue.options;
       await boss.createQueue(queue.name, {
         policy,
@@ -96,8 +106,60 @@ export async function workQueue<T extends JobData>(
     try {
       await handler(data);
     } catch (err) {
+      if (err instanceof HoldJob) {
+        await boss.send(HELD_QUEUE, { ...data, queue: queue.name }, { id: job!.id });
+        logger.info({ queue: queue.name, jobId: job!.id, shopId: data.shopId, reason: err.message }, 'giữ việc nền');
+        return;
+      }
       logger.warn({ queue: queue.name, jobId: job!.id, retryCount: job!.retryCount, reason: (err as Error).message }, 'việc nền lỗi');
       throw err;
     }
   });
+}
+
+/** Hàng giữ chưa có thì tạo (gian hàng chưa từng chạy việc nào vẫn đếm, trả được). */
+async function heldQueue() {
+  const boss = await jobBoss();
+  await boss.createQueue(HELD_QUEUE, { retentionSeconds: 60 * 86_400 });
+  return boss;
+}
+
+/** Số việc đang giữ của từng gian hàng (`Shop.pendingJobs`). Gian hàng không có việc giữ thì không có trong Map. */
+export async function countHeld(shopIds: readonly string[]): Promise<Map<string, number>> {
+  const boss = await heldQueue();
+  const counts = new Map<string, number>();
+  for (const shopId of shopIds) {
+    const n = (await boss.findJobs(HELD_QUEUE, { data: { shopId } })).length;
+    if (n > 0) counts.set(shopId, n);
+  }
+  return counts;
+}
+
+/**
+ * Trả việc đang giữ của gian hàng về hàng gốc (gian hàng vừa nối lại, `reconnect.jobsRun`). Gửi lại rồi xoá bản giữ;
+ * dừng giữa hai bước thì lần sau gửi thêm một bản, handler phải chạy lại an toàn (mọi việc gọi sàn đều thế).
+ */
+export async function releaseHeld(shopId: string): Promise<number> {
+  const boss = await heldQueue();
+  const held = await boss.findJobs<JobData & { queue: string }>(HELD_QUEUE, { data: { shopId } });
+  for (const job of held) {
+    const { queue, ...data } = job.data;
+    await boss.send(queue, data);
+    await boss.deleteJob(HELD_QUEUE, job.id);
+  }
+  return held.length;
+}
+
+/** Lịch chạy định kỳ của một gian hàng (A3), khoá lịch là `shopId`; đặt lại thì thay lịch cũ. Giờ theo Việt Nam. */
+export async function scheduleForShop<T extends JobData>(queue: Queue<T>, cron: string, data: T & { shopId: string }): Promise<void> {
+  const parsed = queue.schema.parse(data);
+  await ensureQueue(queue);
+  const boss = await jobBoss();
+  await boss.schedule(queue.name, cron, parsed, { key: data.shopId, singletonKey: data.shopId, tz: 'Asia/Ho_Chi_Minh' });
+}
+
+export async function unscheduleForShop(queue: Queue<JobData>, shopId: string): Promise<void> {
+  await ensureQueue(queue);
+  const boss = await jobBoss();
+  await boss.unschedule(queue.name, shopId);
 }

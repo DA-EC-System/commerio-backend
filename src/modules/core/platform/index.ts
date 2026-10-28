@@ -25,9 +25,14 @@ export { publishEvent, registerConsumer, stopInstanceConsumers } from './service
 
 // Việc nền (#102): khai hàng, gửi việc trong giao dịch, nhận việc trong `startBackground`. Cách dùng ở CLAUDE.md.
 export {
+  countHeld,
   defineQueue,
+  HoldJob,
   JobDataSchema,
+  releaseHeld,
+  scheduleForShop,
   sendJob,
+  unscheduleForShop,
   workQueue,
   type JobData,
   type Queue,
