@@ -1,5 +1,5 @@
-import { createHub, createRealtimeApp, startNotifications } from '../modules/notification/index.ts';
-import { stopInstanceConsumers } from '../modules/platform/index.ts';
+import { createHub, createRealtimeApp, startNotifications } from '../modules/core/index.ts';
+import { stopInstanceConsumers } from '../modules/core/index.ts';
 import { env } from '../shared/config/env.ts';
 import { closeDb } from '../shared/db/client.ts';
 import { closeServer, onShutdown } from '../shared/lifecycle.ts';

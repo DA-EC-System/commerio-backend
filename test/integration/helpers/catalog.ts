@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { categories, products, productVariants } from '#src/modules/catalog/repository/schema.ts';
+import { categories, products, productVariants } from '#src/modules/product/catalog/repository/schema.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 
 /**

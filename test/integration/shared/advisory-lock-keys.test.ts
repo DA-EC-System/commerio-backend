@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
-import { lockInvoiceOfOrder } from '#src/modules/finance/repository/invoices.ts';
-import { tryLockRelay } from '#src/modules/platform/repository/outbox.ts';
+import { lockInvoiceOfOrder } from '#src/modules/finance/finance/repository/invoices.ts';
+import { tryLockRelay } from '#src/modules/core/platform/repository/outbox.ts';
 import { getDb, inTransaction } from '#src/shared/db/client.ts';
 import { pgError } from '#src/shared/db/pg-error.ts';
 import { testPool } from '../helpers/db.ts';

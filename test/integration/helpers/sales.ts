@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import { eq, inArray } from 'drizzle-orm';
-import { products, productVariants } from '#src/modules/catalog/repository/schema.ts';
-import type { OrderSource, PaymentMethod } from '#src/modules/sales/index.ts';
-import { orderLines, orders } from '#src/modules/sales/repository/schema.ts';
+import { products, productVariants } from '#src/modules/product/catalog/repository/schema.ts';
+import type { OrderSource, PaymentMethod } from '#src/modules/order/sales/index.ts';
+import { orderLines, orders } from '#src/modules/order/sales/repository/schema.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 
 interface OrderLineInput {

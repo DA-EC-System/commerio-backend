@@ -1,62 +1,67 @@
 # src/modules/
 
-19 module nghiệp vụ (`docs/17` mục 2). Tên module trùng tên schema PostgreSQL. `registry.ts` liệt kê đủ 19 module cho `app.ts`.
+6 module lớn gồm 19 module con (`docs/17` mục 2). Tên module con trùng tên schema PostgreSQL và đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
 
-## Cấu trúc một module
+## Cấu trúc
 
 ```
-<tên>/
-├─ index.ts        API công khai: ModuleDefinition, hàm cho module khác gọi, kiểu dữ liệu được phép lộ ra
-├─ api/            routes, controller, schema Zod cho request/response. Chỉ lớp này biết Express
-├─ service/        nghiệp vụ, mở transaction, gọi module khác qua index.ts của module đó
-├─ domain/         entity, State Machine, luật thuần. Không I/O, không import lớp nào khác
-└─ repository/     schema.ts (bảng Drizzle trong pgSchema của module) và các hàm truy vấn
+<lớn>/
+├─ index.ts        API công khai DUY NHẤT của module lớn: re-export index.ts của các module con, mảng <lớn>Modules
+└─ <con>/
+   ├─ index.ts     API của module con: ModuleDefinition, hàm cho module khác gọi, kiểu dữ liệu được phép lộ ra
+   ├─ api/         routes, controller, schema Zod cho request/response. Chỉ lớp này biết Express
+   ├─ service/     nghiệp vụ, mở transaction, gọi module khác qua index.ts
+   ├─ domain/      entity, State Machine, luật thuần. Không I/O, không import lớp nào khác
+   └─ repository/  schema.ts (bảng Drizzle trong pgSchema của module con) và các hàm truy vấn
 ```
 
 Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới không gọi ngược lên lớp trên. Repository lấy kết nối bằng `getDb()` để tự đi chung transaction của bên gọi.
 
+Import giữa module (dependency-cruiser kiểm):
+- Khác module lớn: chỉ import `modules/<lớn>/index.ts`.
+- Cùng module lớn: import `index.ts` của module con kia (`../../payment/index.ts`), không import thẳng `service/`, `repository/`.
+- Module con không import `index.ts` của module lớn chứa nó (thành vòng).
+- Repository được join sang schema của module con khác trong cùng module lớn; không join sang schema của module lớn khác.
+
 ## Bảng module
 
-| Module | Dữ liệu | Ghi chú |
-|---|---|---|
-| `platform` | Công ty, phân hệ đang bật, khoá công ty | Các công ty dùng hệ thống |
-| `identity` | Mật khẩu băm, liên kết Google, refresh token | |
-| `staff` | Nhân viên, thư mời, khoá tài khoản | |
-| `access` | Vai trò có sẵn và tuỳ biến, quyền chi tiết | Mọi module kiểm quyền qua đây |
-| `audit` | Nhật ký thao tác | |
-| `files` | Thông tin tệp | Nội dung tệp ở SeaweedFS/S3 |
-| `catalog` | Danh mục, thuộc tính, sản phẩm, biến thể, quy tắc SKU | Đọc nhiều, sẽ có cache Redis |
-| `pricing` | Bảng giá chuẩn, giá theo kênh | |
-| `inventory` | Tồn, giữ hàng, phiếu nhập/xuất/nhập hoàn, giá vốn, ngưỡng tồn | **Nơi duy nhất đổi số tồn** |
-| `purchasing` | Nhà cung cấp, đơn mua, đợt nhận hàng | |
-| `sales` | Đơn hàng, kênh nguồn, hồ sơ khách hàng | |
-| `fulfillment` | State Machine duyệt đơn, lịch sử chuyển trạng thái, lô nhặt/đóng gói | Mỗi lần chuyển trạng thái phải ghi lịch sử |
-| `finance` | Hoá đơn, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soát | Chứng từ đã ghi sổ không sửa, chỉ lập phiếu đảo |
-| `payment` | Mã thanh toán, giao dịch, cấu hình cổng | VNPay, MoMo, ZaloPay, VietQR, chỉ sandbox |
-| `channel` | Gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn | Chỉ đọc số tồn khả dụng, không đổi tồn |
-| `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
-| `notification` | Không có bảng | Đẩy thông báo qua `realtime`, không có `repository/schema.ts` |
-| `assistant` | Tài liệu nội bộ, vector | pgvector |
-| `report` | Bảng dựng từ sự kiện | Dựng lại bằng cách tính lại từ dữ liệu gốc, không phát lại Kafka (Documents/21 D7) |
+| Module lớn | Module con | Dữ liệu | Ghi chú |
+|---|---|---|---|
+| `core` | `platform` | Công ty, phân hệ đang bật, khoá công ty | Các công ty dùng hệ thống |
+| | `identity` | Mật khẩu băm, liên kết Google, refresh token | |
+| | `staff` | Nhân viên, thư mời, khoá tài khoản | |
+| | `access` | Vai trò có sẵn và tuỳ biến, quyền chi tiết | Mọi module kiểm quyền qua đây |
+| | `audit` | Nhật ký thao tác | |
+| | `files` | Thông tin tệp | Nội dung tệp ở SeaweedFS/S3 |
+| | `notification` | Không có bảng | Đẩy thông báo qua `realtime`, không có `repository/schema.ts` |
+| `product` | `catalog` | Danh mục, thuộc tính, sản phẩm, biến thể, quy tắc SKU | Đọc nhiều, sẽ có cache Redis |
+| | `pricing` | Bảng giá chuẩn, giá theo kênh | |
+| | `inventory` | Tồn, giữ hàng, phiếu nhập/xuất/nhập hoàn, giá vốn, ngưỡng tồn | **Nơi duy nhất đổi số tồn** |
+| | `purchasing` | Nhà cung cấp, đơn mua, đợt nhận hàng | |
+| `order` | `sales` | Đơn hàng, kênh nguồn, hồ sơ khách hàng | |
+| | `fulfillment` | State Machine duyệt đơn, lịch sử chuyển trạng thái, lô nhặt/đóng gói | Mỗi lần chuyển trạng thái phải ghi lịch sử |
+| `finance` | `payment` | Mã thanh toán, giao dịch, cấu hình cổng | VNPay, MoMo, ZaloPay, VietQR, chỉ sandbox |
+| | `finance` | Hoá đơn, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soát | Chứng từ đã ghi sổ không sửa, chỉ lập phiếu đảo |
+| `channel` | `channel` | Gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn | Chỉ đọc số tồn khả dụng, không đổi tồn |
+| | `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
+| `insight` | `report` | Bảng dựng từ sự kiện | Dựng lại bằng cách tính lại từ dữ liệu gốc, không phát lại Kafka (Documents/21 D7) |
+| | `assistant` | Tài liệu nội bộ, vector | pgvector |
 
-## Lớp module: ai được gọi ai
+## Lớp module lớn: ai được gọi ai
 
-Đồ thị gọi giữa module phải không vòng. Module chỉ import `index.ts` của module **cùng lớp hoặc lớp thấp hơn** (bảng dưới, trên xuống là thấp lên cao). `npm run depcruise` kiểm bằng hằng `LAYERS` trong `.dependency-cruiser.cjs`; đổi bảng này thì đổi cả hằng đó.
+Đồ thị gọi giữa module phải không vòng. Module lớn chỉ import `index.ts` của module lớn **cùng lớp hoặc lớp thấp hơn** (bảng dưới, trên xuống là thấp lên cao). `npm run depcruise` kiểm bằng hằng `LAYERS` trong `.dependency-cruiser.cjs`; đổi bảng này thì đổi cả hằng đó.
 
-| Lớp | Module |
+| Lớp | Module lớn |
 |---|---|
-| 1 | `platform`, `staff`, `access`, `audit`, `files` (trong lớp: `staff` gọi `access`, `access` không gọi `staff`) |
-| 2 | `catalog` |
-| 3 | `pricing` |
-| 4 | `identity` (đăng ký gọi `pricing` tạo bảng giá chuẩn, V13) |
-| 5 | `inventory` |
-| 6 | `sales` |
-| 7 | `payment` |
-| 8 | `finance` |
-| 9 | `fulfillment` |
-| 10 | `channel`, `report`, `notification`, `purchasing`, `inbox`, `assistant` |
+| 1 | `core` (trong đó: `staff` gọi `access`, `access` không gọi `staff`) |
+| 2 | `product` |
+| 3 | `order` |
+| 4 | `finance` (payment và finance đều đọc đơn của `sales`) |
+| 5 | `channel`, `insight` |
 
-Chỗ cần gọi ngược lớp (vd catalog lấy giá chuẩn của pricing, webhook của payment giao cho finance) đi qua `ModuleContext`: module khai trường mình cần trong kiểu tham số của `router(ctx)`/`startBackground(ctx)`, `src/wiring.ts` truyền hàm của module kia vào. Không dùng biến toàn cục kiểu `configure…`.
+Chỗ cần gọi ngược chiều có hai cách, cả hai đều qua `ModuleContext`: module con khai trường mình cần trong kiểu tham số của `router(ctx)`/`startBackground(ctx)`. Không dùng biến toàn cục kiểu `configure…`.
+- **Khác module lớn** (vd finance cần tên gian hàng của channel; sau này identity gọi pricing tạo bảng giá chuẩn khi đăng ký, V13): `src/wiring.ts` truyền hàm vào.
+- **Cùng module lớn, import thẳng sẽ thành vòng** (catalog lấy giá chuẩn của pricing; webhook của payment giao cho finance): `index.ts` của module lớn bọc module con bằng `withContext` (`src/shared/module.ts`), xem `catalogContext` ở `product/index.ts`, `paymentContext` ở `finance/index.ts`.
 
 ## Router và quyền
 
@@ -71,14 +76,14 @@ router.post('/products', ctx.authorize('catalog.product.manage'), validate({ bod
 
 ## Sự kiện giữa module
 
-Phát bằng `publishEvent({ type, aggregateId, payload })` trong giao dịch nghiệp vụ, nghe bằng `registerConsumer(type, handler, { consumer })`, cả hai export từ `platform/index.ts` (thân do #38 viết). Danh mục loại sự kiện và schema Zod của payload ở `platform/domain/events.ts`; tiền trong payload là chuỗi thập phân. Topic `<KAFKA_TOPIC_PREFIX>.<module phát>`, key là `aggregateId`. Thêm loại sự kiện là sửa file dùng chung: PR riêng, báo bên nghe.
+Phát bằng `publishEvent({ type, aggregateId, payload })` trong giao dịch nghiệp vụ, nghe bằng `registerConsumer(type, handler, { consumer })`, cả hai export từ `core/index.ts` (code ở `core/platform/`, thân do #38 viết). Danh mục loại sự kiện và schema Zod của payload ở `core/platform/domain/events.ts`; tiền trong payload là chuỗi thập phân. Topic `<KAFKA_TOPIC_PREFIX>.<module phát>`, key là `aggregateId`. Thêm loại sự kiện là sửa file dùng chung: PR riêng, báo bên nghe.
 
 Việc nền của module (consumer, tra cứu định kỳ) khai ở `startBackground` của `ModuleDefinition`; `worker` gọi lúc khởi động và dừng khi tắt.
 
 ## Thêm nghiệp vụ vào module
 
 1. Khai bảng trong `repository/schema.ts` bằng `<tên>Schema.table(...)`, rồi `npm run db:generate`.
-2. Viết `domain` và `service`, kèm unit test ở `test/unit/modules/<tên>/...` (không đặt trong `src/`, xem `test/CLAUDE.md`).
+2. Viết `domain` và `service`, kèm unit test ở `test/unit/modules/<lớn>/<con>/...` (không đặt trong `src/`, xem `test/CLAUDE.md`).
 3. Viết `api/` (router + Zod) trong `api/routes.ts` đã có sẵn; `app.ts` tự mount tại `/api/v1/<tên>`.
    Khai Swagger trong `api/openapi.ts` (đã gắn vào `openapi` của `ModuleDefinition`). Dùng **chính schema Zod** đã truyền cho `validate()`, đặt `.meta({ id: 'TenSchema' })` cho schema dùng lại; đường dẫn viết tương đối, giữ `:id` như Express:
 

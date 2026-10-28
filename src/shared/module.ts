@@ -21,3 +21,16 @@ export interface ModuleDefinition {
   /** Việc nền chạy trong tiến trình worker (relay outbox, consumer, tra cứu định kỳ); trả hàm dừng. */
   readonly startBackground?: (ctx: ModuleContext) => Promise<() => Promise<void>>;
 }
+
+/**
+ * Bọc module để router và việc nền nhận `ctx` đã thêm hàm của module con khác cùng module lớn.
+ * Dùng trong index.ts của module lớn khi hai module con import thẳng nhau sẽ thành vòng.
+ */
+export function withContext(module: ModuleDefinition, extend: (ctx: ModuleContext) => ModuleContext): ModuleDefinition {
+  const { router, startBackground } = module;
+  return {
+    ...module,
+    ...(router && { router: (ctx: ModuleContext) => router(extend(ctx)) }),
+    ...(startBackground && { startBackground: (ctx: ModuleContext) => startBackground(extend(ctx)) }),
+  };
+}

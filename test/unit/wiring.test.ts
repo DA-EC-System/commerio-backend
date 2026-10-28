@@ -1,15 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { handleVerifiedPayment } from '#src/modules/finance/index.ts';
-import { getStandardPrices } from '#src/modules/pricing/index.ts';
+import { getShops } from '#src/modules/channel/index.ts';
+import { getTransactionRefs, handleVerifiedPayment, paymentContext } from '#src/modules/finance/index.ts';
+import { catalogContext, getStandardPrices } from '#src/modules/product/index.ts';
 import { createModuleContext } from '#src/wiring.ts';
 
-// src/wiring.ts nối hàm của module lớp trên vào module lớp dưới (plan chuẩn bị A11, A12, R4).
+// src/wiring.ts nối hàm giữa module lớn (#30 A7); index.ts của module lớn nối module con bên trong (A11, A12, #27 A21).
 describe('createModuleContext', () => {
-  it('tiêm standardPrices là getStandardPrices của pricing', () => {
-    expect(createModuleContext().standardPrices).toBe(getStandardPrices);
+  it('tiêm shopsOf là getShops của channel', () => {
+    expect(createModuleContext().shopsOf).toBe(getShops);
+  });
+});
+
+describe('nối trong module lớn', () => {
+  it('catalogContext tiêm standardPrices là getStandardPrices của pricing', () => {
+    expect(catalogContext(createModuleContext()).standardPrices).toBe(getStandardPrices);
   });
 
-  it('tiêm onVerifiedPayment là handleVerifiedPayment của finance', () => {
-    expect(createModuleContext().onVerifiedPayment).toBe(handleVerifiedPayment);
+  it('paymentContext tiêm hàm của finance và giữ các trường sẵn có', () => {
+    const ctx = paymentContext(createModuleContext());
+    expect(ctx.onVerifiedPayment).toBe(handleVerifiedPayment);
+    expect(ctx.financeRefsOf).toBe(getTransactionRefs);
+    expect(ctx.shopsOf).toBe(getShops);
   });
 });
