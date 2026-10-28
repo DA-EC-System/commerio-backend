@@ -3,7 +3,8 @@ import { env } from '../../../../../shared/config/env.ts';
 import type { MarketplaceAdapter } from './common.ts';
 import { createLazadaAdapter } from './lazada.ts';
 
-export { type MarketplaceAdapter, MarketplaceError, type SellerInfo, type TokenSet } from './common.ts';
+export type * from './common.ts';
+export { MarketplaceError } from './common.ts';
 
 const lazada = createLazadaAdapter({
   appKey: env.LAZADA_APP_KEY,

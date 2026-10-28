@@ -76,6 +76,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'webhook_events',
   ],
   channel: [
+    'category_maps',
     'conversation_notes',
     'conversation_tags',
     'conversations',

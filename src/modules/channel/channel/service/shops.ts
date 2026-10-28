@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { assertTransition, getStatusHistory, recordTransition, type StatusChange } from '../../../core/index.ts';
 import { PurposeTokenError, signPurposeToken, verifyPurposeToken } from '../../../../shared/auth/purpose-token.ts';
 import { env } from '../../../../shared/config/env.ts';
-import { encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
+import { decryptBytes, encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -86,7 +86,7 @@ function toShop(row: ShopRow, listingCount: number): Shop {
   };
 }
 
-async function shopView(row: ShopRow): Promise<Shop> {
+export async function shopView(row: ShopRow): Promise<Shop> {
   return toShop(row, (await countListingsOnPlatform([row.id])).get(row.id) ?? 0);
 }
 
@@ -109,7 +109,7 @@ function toAppError(err: MarketplaceError): AppError {
   }
 }
 
-async function onMarketplace<T>(fn: () => Promise<T>): Promise<T> {
+export async function onMarketplace<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
@@ -135,6 +135,24 @@ function tokenColumns(shopId: string, tokens: TokenSet) {
   };
 }
 
+/** Gian hàng của công ty đang đặt trong `withCompany`; không có (kể cả `id` sai định dạng) thì 404. */
+export async function ownShop(id: string): Promise<ShopRow> {
+  requireCompanyId('ownShop');
+  const shop = isUuid(id) ? await findShopRow(id) : undefined;
+  if (!shop) throw notFound();
+  return shop;
+}
+
+/** Gian hàng gọi được sàn (`connecting`, `active`) kèm adapter và access token đã giải mã. Gọi trong `withCompany`. */
+export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter: MarketplaceAdapter; accessToken: string }> {
+  const shop = await ownShop(id);
+  if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
+    throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+  }
+  const accessToken = decryptBytes(shop.accessTokenEnc, `${shop.id}:access`, tokenKey()).toString();
+  return { shop, adapter: adapterOf(shop.platform), accessToken };
+}
+
 export async function listShops(): Promise<{ items: Shop[] }> {
   requireCompanyId('listShops');
   const rows = await listShopRows();
@@ -143,9 +161,7 @@ export async function listShops(): Promise<{ items: Shop[] }> {
 }
 
 export async function getShop(id: string): Promise<Shop & { statusHistory: StatusChange[] }> {
-  requireCompanyId('getShop');
-  const row = isUuid(id) ? await findShopRow(id) : undefined;
-  if (!row) throw notFound();
+  const row = await ownShop(id);
   return { ...(await shopView(row)), statusHistory: await getStatusHistory(ENTITY, id) };
 }
 
@@ -238,17 +254,10 @@ async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller
   }
 }
 
-export async function disconnectShop(
-  actor: Actor,
-  id: string,
-  input: { version: number; zeroStock: boolean },
-): Promise<Shop> {
-  requireCompanyId('disconnectShop');
-  const row = isUuid(id) ? await findShopRow(id) : undefined;
-  if (!row) throw notFound();
+/** Đẩy tồn 0 (`zeroStock`) do route gọi trước, ngoài giao dịch (`listing-sync.ts` `pushZeroStock`). */
+export async function disconnectShop(actor: Actor, id: string, input: { version: number }): Promise<Shop> {
+  const row = await ownShop(id);
   const { to } = assertTransition(shopMachine, row.status, 'disconnect', { actor });
-  // Đẩy tồn 0 trước khi ngắt cần đẩy tồn của #104 (#103 B5).
-  if (input.zeroStock) throw unsupported();
   const updated = await updateShop(
     id,
     { version: input.version, status: row.status },
