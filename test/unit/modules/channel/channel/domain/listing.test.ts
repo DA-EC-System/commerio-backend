@@ -1,6 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { listingMachine } from '#src/modules/channel/channel/domain/listing.ts';
+import { listingMachine, syncAction } from '#src/modules/channel/channel/domain/listing.ts';
+
+describe('syncAction: trạng thái trên sàn → thao tác', () => {
+  it.each([
+    ['under_review', 'live', 'approve'],
+    ['under_review', 'rejected', 'reject'],
+    ['under_review', 'review', null],
+    ['live', 'hold', 'hold'],
+    ['hidden', 'hold', 'hold'],
+    ['platform_hold', 'live', 'release'],
+    ['platform_hold', 'hold', null],
+    ['live', 'live', null],
+    // Sàn tắt hay xoá sản phẩm ngoài app: chưa có mũi tên trên sơ đồ, để nguyên.
+    ['live', 'inactive', null],
+    ['rejected', 'live', null],
+  ] as const)('%s + sàn %s → %s', (status, remote, action) => {
+    expect(syncAction(status, remote)).toBe(action);
+  });
+});
 
 const staff = { accountId: 'a', permissions: ['channel.listing.manage'], enabledModules: ['channel'] };
 

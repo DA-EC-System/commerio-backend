@@ -44,5 +44,20 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   },
 ]);
 
+/** Trạng thái trên sàn đã chuẩn hoá (adapter `RemoteState`). */
+export type RemoteState = 'review' | 'live' | 'rejected' | 'hold' | 'inactive' | 'deleted';
+
+/**
+ * Thao tác của sàn cần áp khi đồng bộ, null khi không đổi. Sàn tắt hay xoá sản phẩm ngoài app chưa có mũi tên trên
+ * sơ đồ C2 nên để nguyên.
+ */
+export function syncAction(status: ListingStatus, remote: RemoteState): ListingAction | null {
+  if (status === 'under_review' && remote === 'live') return 'approve';
+  if (status === 'under_review' && remote === 'rejected') return 'reject';
+  if ((status === 'live' || status === 'hidden') && remote === 'hold') return 'hold';
+  if (status === 'platform_hold' && remote === 'live') return 'release';
+  return null;
+}
+
 /** Listing kẹt `pushing` quá lâu (server chết giữa lúc gọi sàn): lần đồng bộ sau chuyển `push_failed` (§18.3). */
 export const STALE_PUSH_MS = 30 * 60_000;

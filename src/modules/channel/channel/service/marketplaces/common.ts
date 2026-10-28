@@ -1,5 +1,6 @@
 // Kiểu chung của adapter sàn (Strategy, #103 B7). Chỉ adapter gọi HTTP sàn, ký request và biết mã lỗi của sàn;
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
+import type { RemoteState } from '../../domain/listing.ts';
 
 export interface TokenSet {
   accessToken: string;
@@ -56,7 +57,7 @@ export interface CreatedProduct {
  * Trạng thái sản phẩm trên sàn, đã chuẩn hoá: `review` chờ duyệt, `live` đang bán, `rejected` bị từ chối,
  * `hold` sàn khoá, `inactive` đã tắt, `deleted` đã xoá.
  */
-export type RemoteState = 'review' | 'live' | 'rejected' | 'hold' | 'inactive' | 'deleted';
+export type { RemoteState };
 
 export interface RemoteSku {
   externalProductId: string;

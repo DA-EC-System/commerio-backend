@@ -50,3 +50,11 @@ export async function updateListing(
     .returning();
   return row;
 }
+
+/** Listing của biến thể ở các trạng thái cho trước chuyển `stock_sync = pending`. */
+export async function markStockPendingRows(variantId: string, statuses: readonly ListingStatus[]): Promise<void> {
+  await getDb()
+    .update(listings)
+    .set({ stockSync: 'pending' })
+    .where(and(eq(listings.variantId, variantId), inArray(listings.status, [...statuses])));
+}

@@ -8,6 +8,7 @@ import {
   DelistBody,
   ListingList,
   ListingParams,
+  ListingSyncResult,
   PushBody,
   PushResults,
   CategoryMap,
@@ -185,6 +186,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
     responses: { 200: { description: 'Kết quả theo biến thể', ...json(PushResults) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/sync',
+    summary: 'Đồng bộ listing với sàn (#104)',
+    description:
+      'Cần `channel.shop.sync`. Đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá); listing kẹt `pushing` quá 30 phút chuyển `push_failed`; đẩy giá chuẩn và số khả dụng của listing `stockSync`/`priceSync` khác `synced`, theo lô 20, lỗi ghi theo từng SKU. #102 sẽ chạy định kỳ.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Tóm tắt', ...json(ListingSyncResult) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

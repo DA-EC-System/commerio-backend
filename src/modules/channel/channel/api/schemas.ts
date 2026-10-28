@@ -203,3 +203,13 @@ export const PushResult = z
   .meta({ id: 'PushResult' });
 
 export const PushResults = z.object({ results: z.array(PushResult) }).strict().meta({ id: 'PushResults' });
+
+export const ListingSyncResult = z
+  .object({
+    checked: z.number().int().meta({ description: 'Số listing đã đọc trạng thái từ sàn' }),
+    changed: z.number().int().meta({ description: 'Số listing đổi trạng thái' }),
+    pushed: z.number().int().meta({ description: 'Số SKU đã đẩy giá, tồn' }),
+    errors: z.number().int().meta({ description: 'Số SKU đẩy lỗi (xem `stockSyncError`, `priceSyncError`)' }),
+  })
+  .strict()
+  .meta({ id: 'ListingSyncResult' });

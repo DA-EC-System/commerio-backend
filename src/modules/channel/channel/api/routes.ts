@@ -5,6 +5,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
+import { syncListings } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import { productPort } from '../service/product-port.ts';
 import * as shops from '../service/shops.ts';
@@ -120,6 +121,11 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.post('/shops/:id/listings/push', manage, validate({ params: ShopParams, body: PushBody }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await listings.pushListings(productPort(ctx), actor(res), id, validated<typeof PushBody>(res, 'body')));
+  });
+
+  router.post('/shops/:id/listings/sync', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await syncListings(productPort(ctx), actor(res), id));
   });
 
   router.post(
