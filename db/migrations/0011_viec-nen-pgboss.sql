@@ -492,10 +492,9 @@ CREATE INDEX IF NOT EXISTS job_dep_parent_idx ON pgboss.job_dependency (parent_n
   ;
 INSERT INTO pgboss.version(version) VALUES ('46');
 
--- Quyền cho app: chỉ DML và gọi hàm, không DDL (pg-boss không tạo bảng lúc chạy khi không bật partition, persistQueueStats, reindex).
+-- Quyền cho commerio_app tối thiểu như outbox: chỉ gửi việc trong giao dịch nghiệp vụ (INSERT vào bảng việc chung,
+-- đọc id trả về, đọc cấu hình hàng). Nhận, xong, lỗi, lịch, bảo trì chạy bằng role chủ bảng của worker.
+-- Bản pg-boss mới thêm bảng thì migration nâng cấp tự cấp quyền, không dùng ALTER DEFAULT PRIVILEGES.
 GRANT USAGE ON SCHEMA pgboss TO commerio_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA pgboss TO commerio_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA pgboss TO commerio_app;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pgboss TO commerio_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pgboss GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO commerio_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pgboss GRANT USAGE, SELECT ON SEQUENCES TO commerio_app;
+GRANT SELECT ON pgboss.queue TO commerio_app;
+GRANT INSERT, SELECT (id) ON pgboss.job_common TO commerio_app;
