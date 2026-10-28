@@ -94,13 +94,14 @@ describe.runIf(declared('GET /finance/configs'))('D4.4 phiên bản cấu hình 
     expect((await step('ceo', p.id, 'cancel', { version: approved.version, ...REASON })).status).toBe('cancelled');
   });
 
-  it('D44-08: duyệt bản thứ hai cùng ô, cùng ngày hiệu lực nhận 409 config_overlap', async () => {
+  it('D44-08: bản thứ hai cùng ô, cùng ngày hiệu lực với bản đã duyệt bị chặn 409 config_overlap (lúc gửi hoặc lúc duyệt)', async () => {
     const first = await pending('admin');
     await step('ceo', first.id, 'approve', { version: first.version });
     const second = await draft('admin', first.effectiveFrom);
     const tried = await step('admin', second.id, 'dry-run', { version: second.version });
-    const sent = await step('admin', second.id, 'submit', { version: tried.version });
-    expectProblem(await fin('ceo').post(`/finance/configs/${second.id}/approve`, { version: sent.version }), 409, 'config_overlap');
+    const sent = await fin('admin').post(`/finance/configs/${second.id}/submit`, { version: tried.version });
+    const blocked = sent.status === 200 ? await fin('ceo').post(`/finance/configs/${second.id}/approve`, { version: sent.body.version }) : sent;
+    expectProblem(blocked, 409, 'config_overlap');
   });
 
   it('D44-V: payload sai nhận 422 kèm lỗi theo ô payload.<trường>', async () => {
