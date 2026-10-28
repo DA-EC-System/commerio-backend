@@ -9,12 +9,13 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { fakeAdapter } from './helpers.ts';
 
 const DAY = 24 * 3600_000;
 
 // Adapter giả: code `c-<seller>` đổi được token `tok-<seller>`; token `tok-<seller>` đọc ra seller đó.
 // Code `down` giả lỗi tạm của sàn.
-registerAdapter('lazada', {
+registerAdapter('lazada', fakeAdapter({
   authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
   async exchangeCode(code) {
     if (code === 'down') throw new MarketplaceError('unavailable', 'ServiceTimeout');
@@ -32,7 +33,7 @@ registerAdapter('lazada', {
     if (accessToken === 'tok-bad') throw new MarketplaceError('unauthorized', 'IllegalAccessToken', 'Invalid token');
     return { externalShopId: accessToken.slice(4), shopName: `Shop ${accessToken.slice(4, 12)}`, region: 'VN' };
   },
-});
+}));
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
