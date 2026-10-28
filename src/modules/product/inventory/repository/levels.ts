@@ -1,6 +1,6 @@
 // Tồn và thẻ kho. Mọi hàm chạy trong `withCompany` của bên gọi (RLS + `company_id` của giao dịch).
 // Ghi sổ theo phiếu kho, phiếu nhận, kiện làm ở các issue vòng đời (Documents/21 mục 15, 16, 19).
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { stockLevels, stockMoves } from './schema.ts';
 
@@ -51,6 +51,15 @@ export async function findLevel(variantId: string): Promise<LevelRow | null> {
     .from(stockLevels)
     .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
   return row ?? null;
+}
+
+export async function levelsOf(variantIds: readonly string[]): Promise<Map<string, LevelRow>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select(levelCols)
+    .from(stockLevels)
+    .where(and(eq(stockLevels.companyId, companyOfTransaction()), inArray(stockLevels.variantId, [...variantIds])));
+  return new Map(rows.map((r) => [r.variantId, r]));
 }
 
 export async function allLevels(): Promise<Map<string, LevelRow>> {

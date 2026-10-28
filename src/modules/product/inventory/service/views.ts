@@ -1,8 +1,9 @@
 // Dựng dữ liệu trả về FE (Documents/21 mục 15.1): tên người, nhãn biến thể, ẩn giá theo quyền (K3).
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import type { ModuleContext } from '../../../../shared/module.ts';
 import type { VariantSummary } from '../../catalog/index.ts';
 import { findAccountById } from '../../../core/index.ts';
-import { isBelowMin, stockValue, toDong } from '../domain/stock.ts';
+import { availableQty, isBelowMin, stockValue, toDong } from '../domain/stock.ts';
 import type { LevelRow } from '../repository/levels.ts';
 
 /** Người gọi đã qua `ctx.authorize`, kèm quyền đổi dữ liệu trả về (đọc từ DB mỗi request, D1). */
@@ -25,15 +26,29 @@ export async function namesOf(ids: readonly (string | null)[]): Promise<Map<stri
 
 const attributesLabel = (v: VariantSummary) => v.attributes.map((a) => a.value).join(' / ');
 
+/** Đang về theo biến thể, do purchasing tính (#108); inventory nhận qua `ctx` vì purchasing đã import inventory. */
+export type IncomingLookup = (variantIds?: readonly string[]) => Promise<Map<string, number>>;
+
+/** `ctx` của router inventory: `product/index.ts` tiêm `incomingOf` của purchasing. */
+export interface InventoryContext extends ModuleContext {
+  readonly incomingOf?: IncomingLookup;
+}
+
+/** Hàm đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 rõ ràng thay vì trả đang về 0. */
+export function incomingLookupOf(ctx: InventoryContext): IncomingLookup {
+  if (!ctx.incomingOf) throw new AppError(500, 'internal_error', 'Chưa nối số đang về của purchasing (src/modules/product/index.ts)');
+  return ctx.incomingOf;
+}
+
 /**
- * Các con số của một SKU. Tạm khoá, đang về, đang thiếu tính từ phiếu chờ duyệt, đề nghị nhập, kiện thiếu hàng: các
- * nguồn đó có ở issue vòng đời (Documents/21 mục 15–19), tới lúc đó bằng 0.
+ * Các con số của một SKU. `incoming` là đang về của đề nghị nhập (#108). Tạm khoá, đang thiếu tính từ phiếu chờ duyệt,
+ * kiện thiếu hàng: các nguồn đó có ở issue vòng đời (Documents/21 mục 15–19), tới lúc đó bằng 0.
  */
-export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, viewer: Viewer) {
+export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, viewer: Viewer, incoming: number) {
   const onHand = level?.onHand ?? 0;
   const reserved = level?.reserved ?? 0;
   const locked = 0;
-  const available = Math.max(0, onHand - reserved - locked);
+  const available = availableQty(onHand, reserved, locked);
   const avgCost = level?.avgCost ?? '0';
   const minQty = level?.minQty ?? null;
   return {
@@ -48,7 +63,7 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
     locked,
     available,
     quarantine: level?.quarantine ?? 0,
-    incoming: 0,
+    incoming,
     shortage: 0,
     negative: level?.invariantBroken ?? false,
     minQty,

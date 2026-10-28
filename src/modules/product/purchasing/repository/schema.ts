@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, date, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { boolean, check, date, index, integer, jsonb, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module con `purchasing` khai báo trong schema của module lớn `product` (Documents/19 D1).
@@ -7,18 +7,23 @@ import { approval, approvalCheck, money, timestamps, version } from '../../../..
 // là uuid thường: không đặt khoá ngoại sang module con khác.
 export const purchasingSchema = pgSchema('product');
 
-/** Nhà cung cấp; ngừng giao dịch thì `active = false` (`supplier_inactive`), không xoá. */
-export const suppliers = purchasingSchema.table('suppliers', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  companyId: uuid('company_id').notNull(),
-  name: text('name').notNull(),
-  phone: text('phone'),
-  email: text('email'),
-  address: text('address'),
-  active: boolean('active').notNull().default(true),
-  ...timestamps,
-  ...version,
-});
+/** Nhà cung cấp; ngừng giao dịch thì `active = false` (`supplier_inactive`), không xoá. Tên không trùng (chữ thường). */
+export const suppliers = purchasingSchema.table(
+  'suppliers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    name: text('name').notNull(),
+    phone: text('phone'),
+    email: text('email'),
+    address: text('address'),
+    note: text('note'),
+    active: boolean('active').notNull().default(true),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [uniqueIndex('suppliers_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`)],
+);
 
 /** Đề nghị nhập (25 §3.1, Documents/21 mục 16.3). */
 export const purchaseRequestStatus = purchasingSchema.enum('purchase_request_status', [
@@ -94,7 +99,8 @@ export const purchaseRequestLines = purchasingSchema.table(
     ...version,
   },
   (t) => [
-    index().on(t.requestId),
+    // Một SKU một dòng trong một đề nghị; dòng sản phẩm mới (`variant_id` trống) không bị chặn.
+    unique('purchase_request_lines_request_variant_uq').on(t.requestId, t.variantId),
     index().on(t.variantId),
     check('purchase_request_lines_item', sql`${t.variantId} is not null or ${t.newProductName} is not null`),
     check('purchase_request_lines_ordered', sql`${t.orderedQty} > 0`),

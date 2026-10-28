@@ -20,6 +20,8 @@ export interface VariantSummary {
   categoryName: string;
   /** Không còn bán: biến thể ngừng bán **hoặc** sản phẩm đã lưu trữ (plan #12 B10). */
   archived: boolean;
+  /** Trạng thái kinh doanh của SKU; nhập được khi `selling` hoặc `paused` (FE `purchasable`). */
+  businessStatus: 'selling' | 'paused' | 'discontinued' | 'archived';
   attributes: { attributeId: string; attributeName: string; valueId: string; value: string; code: string }[];
 }
 
@@ -39,6 +41,7 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
     categoryId: v.categoryId,
     categoryName: v.categoryName,
     archived: v.archivedAt !== null || v.productArchivedAt !== null,
+    businessStatus: v.businessStatus,
     attributes: v.attributes,
   }));
 }
