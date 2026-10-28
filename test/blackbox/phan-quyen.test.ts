@@ -1,7 +1,7 @@
 import { describe, expect, inject, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { api, type Role } from './lib/client.ts';
-import { declared } from './lib/contract.ts';
+import { served } from './lib/contract.ts';
 
 // Ma trận quyền (Documents/kiem-thu/ma-tran-quyen.md, sinh từ BUILTIN_ROLES) kiểm trên route đọc của server: vai trò
 // có một trong các quyền của route thì 200, không thì 403 `forbidden`. Chỉ route GET để không đổi dữ liệu.
@@ -29,8 +29,9 @@ const ROUTES: [route: string, permissions: string[]][] = [
   ['GET /channel/shops', ['channel.shop.view']],
 ];
 
+const live = (await Promise.all(ROUTES.map(async (r) => ((await served(r[0])) ? [r] : [])))).flat();
 const cases = Object.entries(ROLE_OF).flatMap(([role, builtin]) =>
-  ROUTES.filter(([route]) => declared(route)).map(([route, permissions]) => {
+  live.map(([route, permissions]) => {
     const held: readonly string[] = BUILTIN_ROLES[builtin].permissions;
     return [role as Role, route, permissions.some((p) => held.includes(p)) ? 200 : 403] as const;
   }),

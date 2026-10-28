@@ -21,3 +21,49 @@ jobs:
       - run: npm test
       - name: Build image
         run: docker build -f deploy/docker/Dockerfile -t commerio-backend .
+
+  # Bộ test hộp đen (#120, test/CLAUDE.md mục Hộp đen): gọi HTTP vào api thật dựng ngay trong runner.
+  # DB là container tạm của job, mật khẩu seed ở đây không phải bí mật.
+  blackbox:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: commerio
+          POSTGRES_PASSWORD: commerio
+          POSTGRES_DB: commerio
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U commerio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://commerio:commerio@localhost:5432/commerio
+      SEED_PASSWORD: HopDenCI2026
+      BLACKBOX_PASSWORD: HopDenCI2026
+      BLACKBOX_BASE_URL: http://127.0.0.1:3000
+      LOG_LEVEL: warn
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run db:seed
+      - name: Bật api
+        run: |
+          nohup npm start > api.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000/health > /dev/null && exit 0
+            sleep 1
+          done
+          cat api.log
+          exit 1
+      - run: npm run test:blackbox
+      - name: Log của api
+        if: failure()
+        run: cat api.log

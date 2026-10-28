@@ -119,3 +119,21 @@ jobs:
           KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       - name: Đổi image trên k3s
         run: ssh "$SSH_USER@$HOST" "${{ needs.image.outputs.tag }}"
+
+  # Bộ test hộp đen (#120) gọi vào staging sau khi đổi image xong. Tài khoản QA do `db:seed` ở job migrate tạo,
+  # cùng mật khẩu seed. Chưa đặt biến STAGING_API_URL (vd https://<tên miền>) thì bỏ qua.
+  blackbox:
+    needs: deploy
+    if: vars.STAGING_API_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run test:blackbox
+        env:
+          BLACKBOX_BASE_URL: ${{ vars.STAGING_API_URL }}
+          BLACKBOX_PASSWORD: ${{ secrets.STAGING_SEED_PASSWORD }}

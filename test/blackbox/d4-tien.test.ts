@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { api, type Role } from './lib/client.ts';
-import { declared, expectProblem, ruleViolations } from './lib/contract.ts';
+import { expectProblem, ruleViolations, served } from './lib/contract.ts';
 
 // Tiền theo sổ dòng (Documents/21 §21, ca D4.x của Documents/26 §3.3). Server chưa có route (#116–#118 chưa merge)
 // thì bỏ qua cả nhóm. Ca cần sàn (lệch tiền, kéo quyết toán thật) ở test integration và sàn giả lập #115.
@@ -46,7 +46,7 @@ afterAll(async () => {
   }
 });
 
-describe.runIf(declared('GET /finance/configs'))('D4.4 phiên bản cấu hình tiền (§21.4)', () => {
+describe.runIf(await served('GET /finance/configs'))('D4.4 phiên bản cấu hình tiền (§21.4)', () => {
   it('D44-01: chưa chạy thử thì gửi duyệt nhận 422 dry_run_required; chạy thử rồi gửi thì pending_approval', async () => {
     const d = await draft('admin');
     expectProblem(await fin('admin').post(`/finance/configs/${d.id}/submit`, { version: d.version }), 422, 'dry_run_required');
@@ -116,7 +116,7 @@ describe.runIf(declared('GET /finance/configs'))('D4.4 phiên bản cấu hình 
   });
 });
 
-describe.runIf(declared('GET /finance/ledger'))('D4.1 sổ tiền (§21.1)', () => {
+describe.runIf(await served('GET /finance/ledger'))('D4.1 sổ tiền (§21.1)', () => {
   it('D41-01: danh sách dòng là Page kèm totals, tiền là số nguyên đồng', async () => {
     const res = await fin('ceo').get('/finance/ledger?pageSize=5');
     expect(res.status).toBe(200);
@@ -135,7 +135,7 @@ describe.runIf(declared('GET /finance/ledger'))('D4.1 sổ tiền (§21.1)', () 
   });
 });
 
-describe.runIf(declared('GET /finance/payments'))('D4.2, D4.3 trạng thái tiền, đối soát (§21.2, §21.3)', () => {
+describe.runIf(await served('GET /finance/payments'))('D4.2, D4.3 trạng thái tiền, đối soát (§21.2, §21.3)', () => {
   it('D42-L: danh sách trạng thái tiền là Page kèm counts; Sale không xem được', async () => {
     const res = await fin('ceo').get('/finance/payments');
     expect(res.status).toBe(200);

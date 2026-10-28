@@ -24,9 +24,9 @@ export interface Res {
   body: any;
 }
 
-/** Một request; `path` bắt đầu bằng `/` là tương đối với `/api/v1`, còn lại là đường dẫn đầy đủ (vd `/health`). */
+/** Một request; `path` tương đối với `/api/v1`, trừ đường dẫn bắt đầu bằng `/api/` (vd `/api/openapi.json`). */
 export async function call(method: string, path: string, init: { token?: string; body?: unknown } = {}): Promise<Res> {
-  const url = `${BASE_URL}${path.startsWith('/api/') || path === '/health' ? '' : '/api/v1'}${path}`;
+  const url = `${BASE_URL}${path.startsWith('/api/') ? '' : '/api/v1'}${path}`;
   const headers: Record<string, string> = {};
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';

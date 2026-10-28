@@ -1,7 +1,7 @@
 // Kiểm response theo hợp đồng (Documents/21 §1, §1.1 R1–R5) mà không cần biết server chạy code nào.
 import { expect, inject } from 'vitest';
 import { z } from 'zod';
-import type { Res } from './client.ts';
+import { api, type Res } from './client.ts';
 
 /** Lỗi dạng Problem Details (C1): đúng mã HTTP, `code`, `type`, content type. */
 export function expectProblem(res: Res, status: number, code: string) {
@@ -46,10 +46,14 @@ export function expectContract(schema: z.ZodType, body: unknown) {
   expect(ruleViolations(body)).toEqual([]);
 }
 
-/** Server có khai route này không (`GET /finance/configs`). Tắt tài liệu API thì coi như có. */
-export function declared(route: string): boolean {
+/**
+ * Server đã có route này chưa (`GET /finance/configs`), để bỏ qua ca của module chưa merge. Đọc `/api/openapi.json`;
+ * server tắt tài liệu API thì gọi thử route GET bằng token CEO: route danh sách có thật không bao giờ trả 404.
+ */
+export async function served(route: string): Promise<boolean> {
+  const [method, path] = route.split(' ') as [string, string];
   const routes = inject('routes');
-  if (!routes) return true;
-  const [method, path] = route.split(' ');
-  return routes.includes(`${method} /api/v1${path!.replace(/:(\w+)/g, '{$1}')}`);
+  if (routes) return routes.includes(`${method} /api/v1${path.replace(/:(\w+)/g, '{$1}')}`);
+  if (method !== 'GET') return true;
+  return (await api(inject('tokens').ceo).get(path)).status !== 404;
 }

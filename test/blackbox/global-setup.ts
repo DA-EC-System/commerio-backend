@@ -44,10 +44,11 @@ async function prepareLead(ceo: string) {
 /** Đăng nhập mỗi tài khoản một lần cho cả lượt (giới hạn đăng nhập theo IP của server), chia token cho các file. */
 export default async function setup(project: TestProject) {
   if (!BASE_URL || !PASSWORD) throw new Error('Cần BLACKBOX_BASE_URL và BLACKBOX_PASSWORD (mật khẩu seed của server đó)');
-  const health = await call('GET', '/health').catch((err: unknown) => {
-    throw new Error(`Không gọi được ${BASE_URL}/health: ${String(err)}`);
+  // Staging chỉ đưa /api/* tới api (Caddy), nên hỏi một route API thay cho /health.
+  const probe = await call('GET', '/identity/me').catch((err: unknown) => {
+    throw new Error(`Không gọi được ${BASE_URL}/api/v1: ${String(err)}`);
   });
-  if (health.status !== 200) throw new Error(`${BASE_URL}/health trả ${health.status}`);
+  if (probe.status !== 401) throw new Error(`${BASE_URL}/api/v1/identity/me không token trả ${probe.status}, không phải api Commerio`);
 
   const tokens = {} as Record<Role, string>;
   const companyOf = {} as Record<Role, string>;
