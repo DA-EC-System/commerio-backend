@@ -30,7 +30,7 @@ describe('POST /catalog/attributes', () => {
     expect(await auditOf(res.body.id)).toEqual([
       {
         action: 'create',
-        entity_type: 'catalog.attributes',
+        entity_type: 'product.attributes',
         before: null,
         after: { name, values: ['Xanh navy (XANHNA)', 'Đỏ đô (DODO)', 'S (S1)'] },
       },

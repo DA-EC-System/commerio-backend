@@ -12,7 +12,7 @@ const belowThreshold = (variantId = randomUUID()) =>
 const rowOf = async (eventId: string) =>
   (
     await testPool().query(
-      'select company_id, type, topic, key, payload, published_at from platform.outbox_messages where event_id = $1',
+      'select company_id, type, topic, key, payload, published_at from core.outbox_messages where event_id = $1',
       [eventId],
     )
   ).rows;
@@ -74,7 +74,7 @@ describe('dọn outbox (AC-10)', () => {
   const insert = async (prefix: string, publishedAgo: string | null, createdAgo: string) => {
     const eventId = randomUUID();
     await testPool().query(
-      `insert into platform.outbox_messages (event_id, company_id, type, topic, key, payload, created_at, published_at)
+      `insert into core.outbox_messages (event_id, company_id, type, topic, key, payload, created_at, published_at)
        values ($1, $2, 'inventory.below_threshold', $3, 'k', '{}', now() - $4::interval,
                case when $5::interval is null then null else now() - $5::interval end)`,
       [eventId, randomUUID(), `${prefix}.inventory`, createdAgo, publishedAgo],
@@ -98,13 +98,13 @@ describe('dọn outbox (AC-10)', () => {
   it('xoá processed_events quá 7 ngày', async () => {
     const [oldId, newId] = [randomUUID(), randomUUID()];
     await testPool().query(
-      `insert into platform.processed_events (consumer, event_id, processed_at)
+      `insert into core.processed_events (consumer, event_id, processed_at)
        values ('don', $1, now() - interval '8 days'), ('don', $2, now() - interval '6 days')`,
       [oldId, newId],
     );
     await cleanupOutbox(`t${randomUUID().slice(0, 8)}`);
     const { rows } = await testPool().query(
-      "select event_id from platform.processed_events where consumer = 'don' and event_id = any($1)",
+      "select event_id from core.processed_events where consumer = 'don' and event_id = any($1)",
       [[oldId, newId]],
     );
     expect(rows).toEqual([{ event_id: newId }]);

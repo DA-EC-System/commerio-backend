@@ -15,7 +15,7 @@ Báo cáo CEO: tổng quan, lãi theo gian hàng, chuỗi theo ngày, xuất CSV
 | Doanh thu | `finance.getDailyFinanceTotals`: hoá đơn gốc và đảo (cả gốc đã `reversed`) | ngày ghi hoá đơn; đảo trừ vào ngày đảo |
 | Tiền đã thu | phiếu thu có đơn − phiếu chi hoàn tiền khách không nháp | ngày phiếu thu / `paid_on` |
 | Phí cổng | `payment.getDailyPaymentFees`: giao dịch `succeeded` có `fee` (hiện chưa cổng nào trả phí → 0) | ngày giao dịch |
-| Giá vốn | `inventory.getOrderCogs` × hệ số hoá đơn ròng của (ngày, đơn) | ngày hoá đơn |
+| Giá vốn | `order.getOrderCogs` (dòng kiện đã trừ tồn × giá vốn chốt lúc bàn giao) × hệ số hoá đơn ròng của (ngày, đơn) | ngày hoá đơn |
 | Phí sàn, vận chuyển sàn | Σ `fees`, `shipping_cost` mọi dòng đối soát `kind = order` của đơn × hệ số hoá đơn ròng | ngày hoá đơn |
 | Nguồn, gian hàng | `sales.getOrderChannels` | — |
 

@@ -90,7 +90,7 @@ describe('phiếu thu theo dòng (AC-6)', () => {
     expect(await receiptsOf(companyId)).toHaveLength(0);
 
     const o = await marketplaceOrder(companyId, shopId, 100000);
-    await testPool().query('update sales.orders set external_order_id = $2 where id = $1', [o.orderId, code]);
+    await testPool().query('update "order".orders set external_order_id = $2 where id = $1', [o.orderId, code]);
     await ingest(companyId, shopId, statement(), []);
 
     expect((await receiptsOf(companyId)).map((r) => [r.tx, r.order_id])).toEqual([[late.id, o.orderId]]);

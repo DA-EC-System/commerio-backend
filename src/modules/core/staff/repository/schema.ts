@@ -14,7 +14,7 @@ import {
 import { timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `staff` khai báo trong schema này.
-export const staffSchema = pgSchema('staff');
+export const staffSchema = pgSchema('core');
 
 export const membershipStatus = staffSchema.enum('membership_status', ['active', 'suspended']);
 

@@ -21,7 +21,7 @@ export interface AttributeInput {
 
 export type AttributeView = Awaited<ReturnType<typeof findAttributes>>[number];
 
-const ENTITY = 'catalog.attributes';
+const ENTITY = 'product.attributes';
 const taken = () => nameTaken('Đã có thuộc tính cùng tên');
 const snapshot = (a: AttributeInput | AttributeView) => ({ name: a.name, values: a.values.map((v) => `${v.value} (${v.code})`) });
 

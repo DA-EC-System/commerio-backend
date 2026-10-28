@@ -14,7 +14,7 @@ vi.hoisted(() => {
 /** Sửa một byte trong phần bản mã của khoá cổng: GCM từ chối khi giải mã. */
 const corrupt = (companyId: string, gateway: string) =>
   testPool().query(
-    `update payment.gateway_configs set credentials_enc = set_byte(credentials_enc, 40, (get_byte(credentials_enc, 40) + 1) % 256)
+    `update finance.gateway_configs set credentials_enc = set_byte(credentials_enc, 40, (get_byte(credentials_enc, 40) + 1) % 256)
      where company_id = $1 and gateway = $2`,
     [companyId, gateway],
   );
@@ -86,7 +86,7 @@ describe('khoá cổng đã lưu không giải mã được (#63 B6)', () => {
     expect(res.status).toBe(422);
     expect(res.body.type).toBe('/problems/gateway_not_configured');
     expect(res.body.errors.gateway).toBeTruthy();
-    const links = await testPool().query('select count(*)::int n from payment.payment_links where order_id = $1', [o.orderId]);
+    const links = await testPool().query('select count(*)::int n from finance.payment_links where order_id = $1', [o.orderId]);
     expect(links.rows[0].n).toBe(0);
   });
 });

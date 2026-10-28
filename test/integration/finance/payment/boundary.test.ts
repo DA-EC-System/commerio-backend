@@ -7,13 +7,13 @@ import { testPool } from '../../helpers/db.ts';
 
 // Hàm ranh giới payment cho fulfillment #25 (Documents/21 §11, D15, QT-36; plan #23 A14). Gọi trong withCompany của bên gọi.
 const orderPayment = async (orderId: string) =>
-  (await testPool().query('select company_id, status, refund_status from payment.order_payments where order_id = $1', [orderId]))
+  (await testPool().query('select company_id, status, refund_status from finance.order_payments where order_id = $1', [orderId]))
     .rows[0];
 
 async function insertLink(companyId: string, orderId: string, status = 'active') {
   const code = `CM${randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
   const r = await testPool().query<{ id: string }>(
-    `insert into payment.payment_links (company_id, order_id, gateway, payment_code, amount, expires_at, status)
+    `insert into finance.payment_links (company_id, order_id, gateway, payment_code, amount, expires_at, status)
      values ($1, $2, 'vietqr', $3, 150000, now() + interval '15 minutes', $4) returning id`,
     [companyId, orderId, code, status],
   );
@@ -21,7 +21,7 @@ async function insertLink(companyId: string, orderId: string, status = 'active')
 }
 
 const linkStatus = async (id: string) =>
-  (await testPool().query('select status, version from payment.payment_links where id = $1', [id])).rows[0];
+  (await testPool().query('select status, version from finance.payment_links where id = $1', [id])).rows[0];
 
 describe('initOrderPayment (AC-26)', () => {
   it('đơn trả trước tạo dòng unpaid, đơn COD tạo cod_pending; gọi lại không đổi gì', async () => {

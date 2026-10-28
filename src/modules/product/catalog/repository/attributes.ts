@@ -11,7 +11,7 @@ import { attributes, attributeValues } from './schema.ts';
 export const orderedNow = (i: number) => sql`now() + ${i} * interval '1 microsecond'`;
 
 // Subquery viết SQL có bí danh: Drizzle in cột không kèm tên bảng khi chỉ select một bảng.
-const used = sql`exists (select 1 from catalog.variant_attribute_values vav where vav.attribute_value_id = attribute_values.id)`;
+const used = sql`exists (select 1 from product.variant_attribute_values vav where vav.attribute_value_id = attribute_values.id)`;
 
 export async function findAttributes(id?: string) {
   const rows = await getDb()
@@ -20,9 +20,9 @@ export async function findAttributes(id?: string) {
       name: attributes.name,
       version: attributes.version,
       // Sản phẩm có biến thể (kể cả ngừng bán) dùng một giá trị của thuộc tính (mock FE `toAttribute`).
-      productCount: sql<number>`(select count(distinct pv.product_id)::int from catalog.product_variants pv
-        join catalog.variant_attribute_values vav on vav.variant_id = pv.id
-        join catalog.attribute_values av on av.id = vav.attribute_value_id
+      productCount: sql<number>`(select count(distinct pv.product_id)::int from product.product_variants pv
+        join product.variant_attribute_values vav on vav.variant_id = pv.id
+        join product.attribute_values av on av.id = vav.attribute_value_id
         where av.attribute_id = attributes.id)`,
     })
     .from(attributes)

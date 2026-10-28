@@ -70,7 +70,7 @@ export async function initOrderPayment(orderId: string, method: PaymentMethod): 
 }
 
 /**
- * Huỷ mã `active` của đơn (huỷ đơn, QT-36), trong giao dịch của bên gọi. Bên gọi đổi `sales.orders` **trước** rồi mới gọi
+ * Huỷ mã `active` của đơn (huỷ đơn, QT-36), trong giao dịch của bên gọi. Bên gọi đổi `"order".orders` **trước** rồi mới gọi
  * hàm này: tạo mã khoá dòng đơn trước rồi tới `order_payments`, cùng thứ tự thì không deadlock và không chèn mã cho đơn
  * vừa huỷ (plan #23 A7). Không gọi API huỷ của cổng (ba cổng không có API huỷ đơn chưa trả, A14).
  */

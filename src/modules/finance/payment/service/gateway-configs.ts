@@ -18,7 +18,7 @@ import { pgError } from '../../../../shared/db/pg-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type UserRef, userRef } from './user-ref.ts';
 
-const ENTITY = 'payment.gateway_configs';
+const ENTITY = 'finance.gateway_configs';
 
 export interface Caller {
   companyId: string;

@@ -38,7 +38,7 @@ describe('POST /catalog/products/:id/variants', () => {
     expect(res.body.attributes.map((a: { value: string }) => a.value)).toEqual(['Xám', 'M']);
     expect(await detailOf(product.id)).toMatchObject({ version: 1, variantCount: 3 });
     expect(await auditOf(res.body.id)).toEqual([
-      { action: 'create', entity_type: 'catalog.product_variants', before: null, after: { product: product.name, sku: 'AO-0003-XAM-M', attributes: ['Xám', 'M'] } },
+      { action: 'create', entity_type: 'product.product_variants', before: null, after: { product: product.name, sku: 'AO-0003-XAM-M', attributes: ['Xám', 'M'] } },
     ]);
   });
 
@@ -131,7 +131,7 @@ describe('chạy đua (S-3 c, d; plan B5)', () => {
     const product = await shirt();
     // Giữ khoá dòng sản phẩm: cả hai request phải chờ (thiếu khoá công ty thì cả hai đã đếm "còn 2" trước khi chờ).
     const results = await raceBehindLock(
-      (holder) => holder.query('select 1 from catalog.products where id = $1 for update', [product.id]),
+      (holder) => holder.query('select 1 from product.products where id = $1 for update', [product.id]),
       2,
       () => Promise.all(product.variants.map((v) => stop(product.id, v.id))),
     );

@@ -17,12 +17,12 @@ const lock = (token: string, accountId: string, version: number, action: 'lock' 
   request(app).post(`/api/v1/identity/staff/${accountId}/${action}`).set('Authorization', `Bearer ${token}`).send({ version });
 const memberAudits = (membershipId: string) =>
   db.query(
-    "select action, before, after from audit.audit_logs where entity_type = 'staff.memberships' and entity_id = $1 order by id",
+    "select action, before, after from core.audit_logs where entity_type = 'core.memberships' and entity_id = $1 order by id",
     [membershipId],
   );
 
 async function rename(accountId: string, fullName: string) {
-  await db.query('update staff.accounts set full_name = $2 where id = $1', [accountId, fullName]);
+  await db.query('update core.accounts set full_name = $2 where id = $1', [accountId, fullName]);
 }
 
 // Quản lý nhân viên (#7 [B], spec 6.5, AC-B1..B7).
@@ -53,7 +53,7 @@ describe('danh sách nhân viên', () => {
     const a = await createCompany();
     const sale = await addMember(a.companyId, 'sale');
     const kho = await addMember(a.companyId, 'warehouse');
-    await db.query("update staff.memberships set status = 'suspended' where id = $1", [kho.membershipId]);
+    await db.query("update core.memberships set status = 'suspended' where id = $1", [kho.membershipId]);
     const locked = await get('/api/v1/identity/staff?status=locked', a.ceo.token);
     expect(locked.body.items.map((m: { accountId: string }) => m.accountId)).toEqual([kho.accountId]);
     const sales = await get(`/api/v1/identity/staff?roleId=${BUILTIN_ROLES.sale.id}`, a.ceo.token);
@@ -127,7 +127,7 @@ describe('đổi vai trò', () => {
   it('AC-B4: đích là CEO hoặc chính người gọi → 403 protected_account cho đổi vai trò, khoá, mở khoá', async () => {
     const a = await createCompany();
     const admin = await addMember(a.companyId, 'admin');
-    const ceoId = (await db.query<{ id: string }>('select id from staff.accounts where email = $1', [a.ceo.email])).rows[0]!.id;
+    const ceoId = (await db.query<{ id: string }>('select id from core.accounts where email = $1', [a.ceo.email])).rows[0]!.id;
     for (const [token, accountId] of [
       [admin.token, ceoId],
       [admin.token, admin.accountId],
@@ -196,7 +196,7 @@ describe('khoá, mở khoá', () => {
     const target = await addMember(a.companyId, 'sale');
     // Cả hai đã qua bước so version rồi mới tới câu ghi: người sau chỉ bị chặn ở UPDATE có điều kiện.
     const [x, y] = await raceBehindLock(
-      (holder) => holder.query('select 1 from staff.memberships where id = $1 for update', [target.membershipId]),
+      (holder) => holder.query('select 1 from core.memberships where id = $1 for update', [target.membershipId]),
       2,
       () => Promise.all([lock(a.ceo.token, target.accountId, 1), lock(a.ceo.token, target.accountId, 1)]),
     );

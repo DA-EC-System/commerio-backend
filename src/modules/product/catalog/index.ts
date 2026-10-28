@@ -11,5 +11,5 @@ export const catalogModule: ModuleDefinition = {
 };
 
 export { getVariants, type VariantSummary } from './service/variants.ts';
-// Giá chuẩn đi vào catalog qua ctx (A12): catalog không import pricing, src/modules/product/index.ts tiêm `standardPrices`.
-export { type CatalogContext, type StandardPriceLookup, standardPricesOf } from './service/standard-price.ts';
+// Giá chuẩn là cột của SKU (Documents/19 D9).
+export { type CatalogContext, standardPricesOf } from './service/standard-price.ts';

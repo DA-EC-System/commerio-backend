@@ -3,7 +3,7 @@ import { getDb } from '../../../../shared/db/client.ts';
 import { docCounters } from './schema.ts';
 
 /**
- * Cấp số của (công ty, loại chứng từ); `next_number` là số kế tiếp sẽ cấp, cùng nghĩa với `inventory.doc_counters`
+ * Cấp số của (công ty, loại chứng từ); `next_number` là số kế tiếp sẽ cấp, cùng nghĩa với `product.doc_counters`
  * (#16). Một câu upsert khoá dòng đếm tới hết giao dịch: giao dịch song song nhận số liền nhau, rollback thì số được
  * dùng lại (không lỗ hổng).
  */

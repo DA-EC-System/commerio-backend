@@ -24,7 +24,7 @@ describe('GET/POST /catalog/categories', () => {
 
     const logs = await auditOf(res.body.id);
     expect(logs).toEqual([
-      { action: 'create', entity_type: 'catalog.categories', before: null, after: { name, skuPattern: 'AO-{SEQ:4}-{VAL}' } },
+      { action: 'create', entity_type: 'product.categories', before: null, after: { name, skuPattern: 'AO-{SEQ:4}-{VAL}' } },
     ]);
   });
 

@@ -72,7 +72,7 @@ const unpublished = async (eventIds: string[]) =>
   Number(
     (
       await testPool().query(
-        'select count(*) from platform.outbox_messages where event_id = any($1) and published_at is null',
+        'select count(*) from core.outbox_messages where event_id = any($1) and published_at is null',
         [eventIds],
       )
     ).rows[0].count,
@@ -112,7 +112,7 @@ describe('relay', () => {
     const platformRow = randomUUID();
     const v = randomUUID();
     await testPool().query(
-      `insert into platform.outbox_messages (event_id, type, topic, key, payload)
+      `insert into core.outbox_messages (event_id, type, topic, key, payload)
        values ($1, 'inventory.stock_changed', $2, $3, $4)`,
       [platformRow, `${prefix}.inventory`, v, { variantId: v, onHand: 1, reserved: 0, available: 1 }],
     );
@@ -191,7 +191,7 @@ describe('consumer shared', () => {
     expect(seen[0]).toEqual({ eventId, companyId: company, role: 'commerio_app' });
 
     // Giao lại đúng message đó (như worker chết sau khi gửi, trước khi đánh dấu), rồi một sự kiện mốc cùng key.
-    const row = (await testPool().query('select * from platform.outbox_messages where event_id = $1', [eventId])).rows[0];
+    const row = (await testPool().query('select * from core.outbox_messages where event_id = $1', [eventId])).rows[0];
     const producer = src.kafka.createProducer(src.kafka.createKafka(options()), options());
     await producer.connect();
     await producer.send({
@@ -217,7 +217,7 @@ describe('consumer shared', () => {
     // Chờ giao dịch của handler commit (dấu processed_events), không chỉ chờ handler được gọi.
     await waitFor(async () => {
       const r = await testPool().query(
-        "select 1 from platform.processed_events where consumer = 'e2e' and event_id = $1",
+        "select 1 from core.processed_events where consumer = 'e2e' and event_id = $1",
         [marker],
       );
       return r.rowCount === 1;
@@ -225,12 +225,12 @@ describe('consumer shared', () => {
 
     expect(seen.filter((s) => s.eventId === eventId)).toHaveLength(1);
     const processed = await testPool().query(
-      "select count(*) from platform.processed_events where consumer = 'e2e' and event_id = $1",
+      "select count(*) from core.processed_events where consumer = 'e2e' and event_id = $1",
       [eventId],
     );
     expect(Number(processed.rows[0].count)).toBe(1);
     const effects = await testPool().query(
-      "select count(*) from platform.outbox_messages where type = 'inventory.stock_changed' and key = $1",
+      "select count(*) from core.outbox_messages where type = 'inventory.stock_changed' and key = $1",
       [variant],
     );
     expect(Number(effects.rows[0].count)).toBe(2); // một cho sự kiện gốc, một cho sự kiện mốc
@@ -284,7 +284,7 @@ describe('consumer shared', () => {
     expect(dead.headers['x-error']).toContain('lỗi thử');
     // Tác động của handler lỗi (onHand 9) đã rollback; consumer `e2e` của test trước cũng nghe loại này và ghi onHand 0.
     const effects = await testPool().query(
-      `select count(*) from platform.outbox_messages
+      `select count(*) from core.outbox_messages
        where type = 'inventory.stock_changed' and key = $1 and payload->>'onHand' = '9'`,
       [variant],
     );

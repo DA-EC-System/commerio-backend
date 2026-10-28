@@ -20,7 +20,7 @@ const COMPANY = '7d1b6c1e-0000-4000-8000-0000000000c1';
 const active: CompanyAccess = {
   companyStatus: 'active',
   membershipStatus: 'active',
-  permissions: ['catalog.product.manage', 'purchasing.order.manage'],
+  permissions: ['catalog.product.manage', 'purchasing.request.manage'],
   enabledModules: ['catalog', 'sales'],
   passwordChangedAt: null,
 };
@@ -38,7 +38,7 @@ function buildApp(loader: AccessLoader) {
     validate({ body: z.object({ name: z.string().min(1) }) }),
     handler,
   );
-  app.post('/purchase-orders', authorize('purchasing.order.manage'), handler);
+  app.post('/purchase-orders', authorize('purchasing.request.manage'), handler);
   app.post('/orders', authorize('sales.order.create'), handler);
   app.use(errorHandler);
   return { app, handler };

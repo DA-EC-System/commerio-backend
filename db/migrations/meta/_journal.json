@@ -5,141 +5,29 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1791899932861,
-      "tag": "0000_tao-schema-module",
+      "when": 1793174775638,
+      "tag": "0000_mo-rong",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1792156124031,
-      "tag": "0001_nen-tang",
+      "when": 1793174777703,
+      "tag": "0001_tao-bang",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1792156155850,
-      "tag": "0002_seed-quyen",
+      "when": 1793174779777,
+      "tag": "0002_rls-quyen",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1792156158360,
-      "tag": "0003_rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1792291512890,
-      "tag": "0004_outbox",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1792291516379,
-      "tag": "0005_outbox-rls-ten-vai-tro",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1792300675688,
-      "tag": "0006_san-pham-gia-kho",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1792300681184,
-      "tag": "0007_san-pham-gia-kho-rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1792305196384,
-      "tag": "0008_ban-hang-kenh",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1792306813942,
-      "tag": "0009_thanh-toan-tai-chinh-bao-cao",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1792306816140,
-      "tag": "0010_p3-p5-rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1792306818623,
-      "tag": "0011_vai-tro-co-san-rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1792307776292,
-      "tag": "0012_vector",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1792307777810,
-      "tag": "0013_phan-he-tuy-chon-doi-soat",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1792307779978,
-      "tag": "0014_phan-he-tuy-chon-doi-soat-rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
-      "version": "7",
-      "when": 1792318157320,
-      "tag": "0015_khoa-ton-theo-cong-ty-ten-luu-tru",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1792406093243,
-      "tag": "0016_rang-buoc-vai-tro-doi-mat-khau",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1792406105018,
-      "tag": "0017_rang-buoc-gan-vai-tro-tai-khoan",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1792548232670,
-      "tag": "0018_thu-moi-link",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
-      "when": 1792548248559,
-      "tag": "0019_thu-moi-rls",
+      "when": 1793174781856,
+      "tag": "0003_seed-quyen",
       "breakpoints": true
     }
   ]

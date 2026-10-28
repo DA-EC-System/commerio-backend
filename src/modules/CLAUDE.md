@@ -1,6 +1,6 @@
 # src/modules/
 
-6 module lớn gồm 19 module con (`docs/17` mục 2). Tên module con trùng tên schema PostgreSQL và đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
+6 module lớn gồm 18 module con (`Documents/17` mục 2). Mỗi module lớn một schema PostgreSQL cùng tên (`Documents/19` D1); module con có đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
 
 ## Cấu trúc
 
@@ -12,7 +12,7 @@
    ├─ api/         routes, controller, schema Zod cho request/response. Chỉ lớp này biết Express
    ├─ service/     nghiệp vụ, mở transaction, gọi module khác qua index.ts
    ├─ domain/      entity, State Machine, luật thuần. Không I/O, không import lớp nào khác
-   └─ repository/  schema.ts (bảng Drizzle trong pgSchema của module con) và các hàm truy vấn
+   └─ repository/  schema.ts (bảng Drizzle trong pgSchema của module lớn) và các hàm truy vấn
 ```
 
 Luồng gọi: `api` → `service` → (`domain`, `repository`). Lớp dưới không gọi ngược lên lớp trên. Repository lấy kết nối bằng `getDb()` để tự đi chung transaction của bên gọi.
@@ -21,7 +21,7 @@ Import giữa module (dependency-cruiser kiểm):
 - Khác module lớn: chỉ import `modules/<lớn>/index.ts`.
 - Cùng module lớn: import `index.ts` của module con kia (`../../payment/index.ts`), không import thẳng `service/`, `repository/`.
 - Module con không import `index.ts` của module lớn chứa nó (thành vòng).
-- Repository được join sang schema của module con khác trong cùng module lớn; không join sang schema của module lớn khác.
+- Repository được join sang bảng của module con khác trong cùng module lớn (cùng schema); không join sang schema của module lớn khác. Khoá ngoại chỉ đặt trong một module con.
 
 ## Bảng module
 
@@ -35,14 +35,13 @@ Import giữa module (dependency-cruiser kiểm):
 | | `files` | Thông tin tệp | Nội dung tệp ở SeaweedFS/S3 |
 | | `notification` | Không có bảng | Đẩy thông báo qua `realtime`, không có `repository/schema.ts` |
 | `product` | `catalog` | Danh mục, thuộc tính, sản phẩm, biến thể, quy tắc SKU | Đọc nhiều, sẽ có cache Redis |
-| | `pricing` | Bảng giá chuẩn, giá theo kênh | |
-| | `inventory` | Tồn, giữ hàng, phiếu nhập/xuất/nhập hoàn, giá vốn, ngưỡng tồn | **Nơi duy nhất đổi số tồn** |
-| | `purchasing` | Nhà cung cấp, đơn mua, đợt nhận hàng | |
-| `order` | `sales` | Đơn hàng, kênh nguồn, hồ sơ khách hàng | |
-| | `fulfillment` | State Machine duyệt đơn, lịch sử chuyển trạng thái, lô nhặt/đóng gói | Mỗi lần chuyển trạng thái phải ghi lịch sử |
+| | `inventory` | Các con số tồn, thẻ kho, phiếu kho (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về, xuất theo kiện), giá vốn, ngưỡng tồn | **Nơi duy nhất đổi số tồn** |
+| | `purchasing` | Nhà cung cấp, đề nghị nhập, phiếu nhận, phiếu trả NCC | |
+| `order` | `sales` | Đơn (4 trạng thái), kênh nguồn, hồ sơ khách hàng, yêu cầu trả | |
+| | `fulfillment` | Kiện (giữ hàng, đóng gói, bàn giao, giao, hoàn), hàng trả không khớp, giá vốn theo đơn | Mỗi lần chuyển trạng thái ghi `core.state_transitions` |
 | `finance` | `payment` | Mã thanh toán, giao dịch, cấu hình cổng | VNPay, MoMo, ZaloPay, VietQR, chỉ sandbox |
-| | `finance` | Hoá đơn, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soát | Chứng từ đã ghi sổ không sửa, chỉ lập phiếu đảo |
-| `channel` | `channel` | Gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn | Chỉ đọc số tồn khả dụng, không đổi tồn |
+| | `finance` | Hoá đơn, phiếu thu, phiếu chi, khoản thu chưa khớp, sổ tiền theo đơn, trạng thái tiền của đơn, đối soát, phiên bản cấu hình phí và thuế | Chứng từ đã ghi sổ không sửa, chỉ lập phiếu đảo; sổ tiền chỉ thêm |
+| `channel` | `channel` | Gian hàng sàn, token, listing kiêm ghép SKU, lần tính giá theo sàn, dữ liệu gốc sàn | Chỉ đọc số tồn khả dụng, không đổi tồn |
 | | `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
 | `insight` | `report` | Bảng dựng từ sự kiện | Dựng lại bằng cách tính lại từ dữ liệu gốc, không phát lại Kafka (Documents/21 D7) |
 | | `assistant` | Tài liệu nội bộ, vector | pgvector |
@@ -60,8 +59,8 @@ Import giữa module (dependency-cruiser kiểm):
 | 5 | `channel`, `insight` |
 
 Chỗ cần gọi ngược chiều có hai cách, cả hai đều qua `ModuleContext`: module con khai trường mình cần trong kiểu tham số của `router(ctx)`/`startBackground(ctx)`. Không dùng biến toàn cục kiểu `configure…`.
-- **Khác module lớn** (vd finance cần tên gian hàng của channel; sau này identity gọi pricing tạo bảng giá chuẩn khi đăng ký, V13): `src/wiring.ts` truyền hàm vào.
-- **Cùng module lớn, import thẳng sẽ thành vòng** (catalog lấy giá chuẩn của pricing; webhook của payment giao cho finance): `index.ts` của module lớn bọc module con bằng `withContext` (`src/shared/module.ts`), xem `catalogContext` ở `product/index.ts`, `paymentContext` ở `finance/index.ts`.
+- **Khác module lớn** (vd finance cần tên gian hàng của channel): `src/wiring.ts` truyền hàm vào.
+- **Cùng module lớn, import thẳng sẽ thành vòng** (webhook của payment giao cho finance): `index.ts` của module lớn bọc module con bằng `withContext` (`src/shared/module.ts`), xem `paymentContext` ở `finance/index.ts`.
 
 ## Router và quyền
 

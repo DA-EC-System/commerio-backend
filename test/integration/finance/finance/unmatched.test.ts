@@ -80,7 +80,7 @@ describe('POST /finance/unmatched-receipts/:id/assign (AC-35)', () => {
     expect(res.body.receipt).toMatchObject({ source: 'unmatched_assignment', amount: 90000, unmatchedReceiptId: l.noCode.id, order: { id: target.orderId } });
     expect(await orderPayment(target.orderId)).toMatchObject({ status: 'paid' });
     const events = (
-      await testPool().query("select type from platform.outbox_messages where company_id = $1 and payload->>'orderId' = $2", [l.companyId, target.orderId])
+      await testPool().query("select type from core.outbox_messages where company_id = $1 and payload->>'orderId' = $2", [l.companyId, target.orderId])
     ).rows.map((r) => r.type);
     expect(events.toSorted()).toEqual(['finance.receipt_posted', 'payment.succeeded']);
   });
@@ -100,7 +100,7 @@ describe('POST /finance/unmatched-receipts/:id/assign (AC-35)', () => {
     expect(stale.body.current).toMatchObject({ id: l.noCode.id, version: 1 });
 
     const cancelled = await unpaidOrder(l, 90000);
-    await testPool().query("update sales.orders set status = 'cancelled' where id = $1", [cancelled.orderId]); // của #25
+    await testPool().query("update \"order\".orders set status = 'cancelled' where id = $1", [cancelled.orderId]); // của #25
     const c = await api('post', `/unmatched-receipts/${l.noCode.id}/assign`, t, { orderId: cancelled.orderId, version: 1 });
     expect(c.status).toBe(409);
     expect(c.body.type).toContain('payment_state_changed');

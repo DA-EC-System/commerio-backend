@@ -23,7 +23,7 @@ app.post(
     res.json({ companyId: getAuth(res).companyId });
   },
 );
-app.post('/purchase-orders', authorize('purchasing.order.manage'), (_req, res) => {
+app.post('/purchase-orders', authorize('purchasing.request.manage'), (_req, res) => {
   res.json({ ok: true });
 });
 app.use(errorHandler);
@@ -108,8 +108,8 @@ describe('authorize trên DB thật (#8 AC-1..5)', () => {
   it('token của công ty khác (đã rời công ty): 404 not_found', async () => {
     const { companyId } = await createCompany();
     const member = await addMember(companyId, 'admin');
-    await testPool().query('delete from access.member_roles where membership_id = $1', [member.membershipId]);
-    await testPool().query('delete from staff.memberships where id = $1', [member.membershipId]);
+    await testPool().query('delete from core.member_roles where membership_id = $1', [member.membershipId]);
+    await testPool().query('delete from core.memberships where id = $1', [member.membershipId]);
     const res = await post('/products', member.token);
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('not_found');

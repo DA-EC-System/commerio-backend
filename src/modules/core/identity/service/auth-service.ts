@@ -141,7 +141,7 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
         companyId: null,
         actorId: accountId,
         action: 'create',
-        entityType: 'platform.companies',
+        entityType: 'core.companies',
         entityId: companyId,
         after: { ...input.company, ceoEmail: input.ceo.email, optionalModules: input.optionalModules },
       });
@@ -243,7 +243,7 @@ export async function changePassword(
       companyId: null,
       actorId: account.id,
       action: 'update',
-      entityType: 'staff.accounts',
+      entityType: 'core.accounts',
       entityId: account.id,
       after: { passwordChanged: true },
     });

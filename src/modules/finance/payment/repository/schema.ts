@@ -15,7 +15,7 @@ import {
 import { bytea, money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `payment` khai báo trong schema này.
-export const paymentSchema = pgSchema('payment');
+export const paymentSchema = pgSchema('finance');
 
 export const paymentStatus = paymentSchema.enum('payment_status', [
   'unpaid',

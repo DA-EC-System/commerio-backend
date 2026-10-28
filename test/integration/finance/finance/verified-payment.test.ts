@@ -68,7 +68,7 @@ describe('handleVerifiedPayment', () => {
 
   it('đơn đã huỷ → order_cancelled; đơn đã paid bằng giao dịch khác → amount_mismatch (AC-16, T15)', async () => {
     const cancelled = await linkedOrder();
-    await testPool().query("update sales.orders set status = 'cancelled' where id = $1", [cancelled.orderId]); // dựng tay: #25
+    await testPool().query("update \"order\".orders set status = 'cancelled' where id = $1", [cancelled.orderId]); // dựng tay: #25
     expect(await handle(verified(cancelled))).toEqual({ outcome: 'unmatched' });
     expect((await moneyRows(cancelled.companyId)).unmatched[0]).toMatchObject({ reason: 'order_cancelled' });
     expect(await orderPayment(cancelled.orderId)).toMatchObject({ status: 'unpaid' });
@@ -83,7 +83,7 @@ describe('handleVerifiedPayment', () => {
 
   it('mã đã expired, đơn còn unpaid, đủ tiền → nhận như thường, mã expired → paid (AC-16, T15)', async () => {
     const l = await linkedOrder();
-    await testPool().query("update payment.payment_links set status = 'expired' where id = $1", [l.link.id]); // dựng tay: tra cứu quá hạn
+    await testPool().query("update finance.payment_links set status = 'expired' where id = $1", [l.link.id]); // dựng tay: tra cứu quá hạn
     expect(await handle(verified(l))).toEqual({ outcome: 'recorded' });
     expect(await linkStatus(l.link.id)).toBe('paid');
   });

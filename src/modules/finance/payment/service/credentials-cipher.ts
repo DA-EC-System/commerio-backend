@@ -1,4 +1,4 @@
-// Mã hoá khoá cổng lưu ở `payment.gateway_configs.credentials_enc` (Documents/21 T4, T11; plan #23 A2).
+// Mã hoá khoá cổng lưu ở `finance.gateway_configs.credentials_enc` (Documents/21 T4, T11; plan #23 A2).
 // AES-256-GCM (`shared/crypto/aes-gcm.ts`), khoá chủ `PAYMENT_CREDENTIALS_KEY`. AAD = "<companyId>:<gateway>":
 // bản mã chép sang dòng khác không giải mã được. Bản rõ là JSON các ô.
 import { env } from '../../../../shared/config/env.ts';

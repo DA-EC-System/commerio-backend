@@ -26,12 +26,12 @@ async function counts(input: SeedDemoInput) {
   const emails = Object.values(input.accounts).map((a) => a.email);
   const { rows } = await db.query<{ companies: string; accounts: string; memberships: string; member_roles: string }>(
     `select
-       (select count(distinct m.company_id) from staff.memberships m join staff.accounts a on a.id = m.account_id
+       (select count(distinct m.company_id) from core.memberships m join core.accounts a on a.id = m.account_id
           where a.email = any($1)) companies,
-       (select count(*) from staff.accounts where email = any($1)) accounts,
-       (select count(*) from staff.memberships m join staff.accounts a on a.id = m.account_id where a.email = any($1)) memberships,
-       (select count(*) from access.member_roles r join staff.memberships m on m.id = r.membership_id
-          join staff.accounts a on a.id = m.account_id where a.email = any($1)) member_roles`,
+       (select count(*) from core.accounts where email = any($1)) accounts,
+       (select count(*) from core.memberships m join core.accounts a on a.id = m.account_id where a.email = any($1)) memberships,
+       (select count(*) from core.member_roles r join core.memberships m on m.id = r.membership_id
+          join core.accounts a on a.id = m.account_id where a.email = any($1)) member_roles`,
     [emails],
   );
   return rows[0];
@@ -39,8 +39,8 @@ async function counts(input: SeedDemoInput) {
 
 async function roleOf(email: string, companyId: string): Promise<string[]> {
   const { rows } = await db.query<{ role_id: string }>(
-    `select r.role_id from access.member_roles r join staff.memberships m on m.id = r.membership_id
-       join staff.accounts a on a.id = m.account_id where a.email = $1 and m.company_id = $2`,
+    `select r.role_id from core.member_roles r join core.memberships m on m.id = r.membership_id
+       join core.accounts a on a.id = m.account_id where a.email = $1 and m.company_id = $2`,
     [email, companyId],
   );
   return rows.map((r) => r.role_id);
@@ -83,10 +83,10 @@ describe('seed dữ liệu demo P1 (#37 AC-4)', () => {
     const { companyId } = await seedDemo(input);
     // Mỗi nhân viên một giao dịch: chết sau admin thì sale, kho chưa có gì.
     for (const email of [input.accounts.sale.email, input.accounts.kho.email]) {
-      const where = 'in (select m.id from staff.memberships m join staff.accounts a on a.id = m.account_id where a.email = $1)';
-      await db.query(`delete from access.member_roles where membership_id ${where}`, [email]);
-      await db.query('delete from staff.memberships where account_id = (select id from staff.accounts where email = $1)', [email]);
-      await db.query('delete from staff.accounts where email = $1', [email]);
+      const where = 'in (select m.id from core.memberships m join core.accounts a on a.id = m.account_id where a.email = $1)';
+      await db.query(`delete from core.member_roles where membership_id ${where}`, [email]);
+      await db.query('delete from core.memberships where account_id = (select id from core.accounts where email = $1)', [email]);
+      await db.query('delete from core.accounts where email = $1', [email]);
     }
 
     await seedDemo(input);
@@ -101,7 +101,7 @@ describe('seed dữ liệu demo P1 (#37 AC-4)', () => {
     const { companyId } = await registerCompany(input.accounts.ceo.email);
 
     await expect(seedDemo({ ...input, password: 'MatKhauKhac99' })).rejects.toThrow(/ceo-/);
-    const { rows } = await db.query('select count(*)::int n from staff.memberships where company_id = $1', [companyId]);
+    const { rows } = await db.query('select count(*)::int n from core.memberships where company_id = $1', [companyId]);
     expect(rows[0].n).toBe(1);
   });
 

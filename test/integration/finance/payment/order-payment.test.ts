@@ -39,7 +39,7 @@ describe('GET /payment/orders/:orderId', () => {
     const s = await shop('vietqr');
     const o = await order(s);
     const first = await createLink(s.sale.token, o.orderId, 'vietqr');
-    await testPool().query("update payment.payment_links set expires_at = now() - interval '1 minute' where id = $1", [first.body.id]);
+    await testPool().query("update finance.payment_links set expires_at = now() - interval '1 minute' where id = $1", [first.body.id]);
     const stale = await get(s.sale.token, o.orderId);
     expect(stale.body.activeLink).toBeNull();
     expect(stale.body.links).toEqual([expect.objectContaining({ id: first.body.id, status: 'expired' })]);

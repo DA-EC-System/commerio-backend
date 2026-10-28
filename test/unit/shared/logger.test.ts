@@ -15,7 +15,7 @@ function capture() {
 /** Lỗi như Drizzle ném khi truy vấn hỏng: message và stack mang nguyên tham số. */
 const queryError = (params: unknown[]) =>
   new DrizzleQueryError(
-    'insert into staff.accounts (email, password_hash) values ($1, $2)',
+    'insert into core.accounts (email, password_hash) values ($1, $2)',
     params,
     Object.assign(new Error('duplicate key value violates unique constraint "accounts_email_unique"'), {
       code: '23505',
@@ -90,8 +90,8 @@ describe('logger', () => {
       .flatMap((r) => (r.err?.type === 'DrizzleQueryError' ? [r.err] : []));
     expect(errors).toHaveLength(3);
     for (const err of errors) {
-      expect(err.message).toBe('Failed query: insert into staff.accounts (email, password_hash) values ($1, $2)');
-      expect(err.stack).toContain('Failed query: insert into staff.accounts');
+      expect(err.message).toBe('Failed query: insert into core.accounts (email, password_hash) values ($1, $2)');
+      expect(err.stack).toContain('Failed query: insert into core.accounts');
       expect(err.stack).toMatch(/\n {4}at /);
       expect(err).not.toHaveProperty('params');
     }

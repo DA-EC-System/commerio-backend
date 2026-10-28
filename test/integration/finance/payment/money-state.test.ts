@@ -30,7 +30,7 @@ async function confirmed(paymentMethod: 'prepaid' | 'cod' = 'prepaid') {
 }
 
 const setStatus = (orderId: string, status: string, refundStatus = 'none') =>
-  testPool().query('update payment.order_payments set status = $2, refund_status = $3 where order_id = $1', [
+  testPool().query('update finance.order_payments set status = $2, refund_status = $3 where order_id = $1', [
     orderId,
     status,
     refundStatus,
@@ -39,7 +39,7 @@ const setStatus = (orderId: string, status: string, refundStatus = 'none') =>
 const row = async (orderId: string) =>
   (
     await testPool().query(
-      'select status, refund_status, delivered_at, version, updated_at > created_at as touched from payment.order_payments where order_id = $1',
+      'select status, refund_status, delivered_at, version, updated_at > created_at as touched from finance.order_payments where order_id = $1',
       [orderId],
     )
   ).rows[0];

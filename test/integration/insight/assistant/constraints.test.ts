@@ -8,7 +8,7 @@ const vectorOf = (dimensions: number) => `[${Array.from({ length: dimensions }, 
 
 async function insertDocument(companyId: string): Promise<string> {
   const res = await testPool().query<{ id: string }>(
-    `insert into assistant.documents (company_id, file_id, title, uploaded_by)
+    `insert into insight.documents (company_id, file_id, title, uploaded_by)
      values ($1, $2, 'Chính sách đổi trả', $3) returning id`,
     [companyId, randomUUID(), randomUUID()],
   );
@@ -17,7 +17,7 @@ async function insertDocument(companyId: string): Promise<string> {
 
 const insertChunk = (c: pg.Pool | pg.PoolClient, companyId: string, documentId: string, embedding: string) =>
   c.query(
-    `insert into assistant.document_chunks (company_id, document_id, chunk_index, content, embedding)
+    `insert into insight.document_chunks (company_id, document_id, chunk_index, content, embedding)
      values ($1, $2, 0, 'Đổi trả trong 7 ngày', $3::vector)`,
     [companyId, documentId, embedding],
   );
@@ -29,7 +29,7 @@ describe('ràng buộc bảng assistant (AC-9)', () => {
     const document = await insertDocument(company);
     const res = await asCompany(company, async (c) => {
       await insertChunk(c, company, document, vectorOf(1536));
-      return c.query<{ dims: number }>('select vector_dims(embedding) as dims from assistant.document_chunks');
+      return c.query<{ dims: number }>('select vector_dims(embedding) as dims from insight.document_chunks');
     });
     expect(res.rows).toEqual([{ dims: 1536 }]);
   });

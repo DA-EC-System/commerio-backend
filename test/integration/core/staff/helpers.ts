@@ -10,7 +10,7 @@ import { testPool } from '../../helpers/db.ts';
 import { PASSWORD } from '../../helpers/http.ts';
 
 export async function accountIdOf(email: string): Promise<string> {
-  const res = await testPool().query<{ id: string }>('select id from staff.accounts where email = $1', [email]);
+  const res = await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [email]);
   return res.rows[0]!.id;
 }
 
@@ -25,7 +25,7 @@ export async function pendingInvitation(
   const email = options.email ?? uniqueEmail('moi');
   const passwordHash = options.existingAccountId ? null : await hashPassword(PASSWORD);
   const res = await testPool().query<{ id: string; version: number }>(
-    `insert into staff.invitations
+    `insert into core.invitations
        (company_id, role_ids, created_by, expires_at, status, email, full_name, submitted_at, password_hash, account_id)
      values ($1, $2, $3, now() + interval '72 hours', 'pending', $4, 'Nhân Viên Mới', now(), $5, $6)
      returning id, version`,
@@ -64,7 +64,7 @@ export async function deliverOtp(invitationId: string): Promise<void> {
     payload: unknown;
     created_at: Date;
   }>(
-    `select event_id, company_id, key, payload, created_at from platform.outbox_messages
+    `select event_id, company_id, key, payload, created_at from core.outbox_messages
      where type = 'staff.invitation_otp_requested' and key = $1 order by id desc limit 1`,
     [invitationId],
   );
@@ -85,7 +85,7 @@ export const otpEvents = async (invitationId: string) =>
   Number(
     (
       await testPool().query(
-        "select count(*) from platform.outbox_messages where type = 'staff.invitation_otp_requested' and key = $1",
+        "select count(*) from core.outbox_messages where type = 'staff.invitation_otp_requested' and key = $1",
         [invitationId],
       )
     ).rows[0].count,

@@ -24,7 +24,7 @@ const noNetwork = () => vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Erro
 
 const count = async (sql: string, id: string) => Number((await testPool().query(sql, [id])).rows[0].count);
 const auditCount = (companyId: string) =>
-  count("select count(*) from audit.audit_logs where company_id = $1 and entity_type = 'payment.payment_links'", companyId);
+  count("select count(*) from core.audit_logs where company_id = $1 and entity_type = 'finance.payment_links'", companyId);
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -61,7 +61,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     expect(links[0]).toMatchObject({ id: res.body.id, status: 'active', amount: '150000.00', payment_code: res.body.paymentCode });
     expect(await orderPaymentOf(o.orderId)).toEqual({ status: 'unpaid', refund_status: 'none' });
     const audit = await testPool().query(
-      "select action, actor_id, after from audit.audit_logs where entity_type = 'payment.payment_links' and entity_id = $1",
+      "select action, actor_id, after from core.audit_logs where entity_type = 'finance.payment_links' and entity_id = $1",
       [res.body.id],
     );
     expect(audit.rows).toEqual([
@@ -102,7 +102,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     const o = await order(s);
     const first = await create(s.sale.token, o.orderId, 'vietqr');
     // Lùi hạn bằng SQL (dựng tay, L004): trong sản phẩm là 15 phút trôi qua.
-    await testPool().query("update payment.payment_links set expires_at = now() - interval '1 minute' where id = $1", [first.body.id]);
+    await testPool().query("update finance.payment_links set expires_at = now() - interval '1 minute' where id = $1", [first.body.id]);
     const second = await create(s.sale.token, o.orderId, 'vietqr');
     expect(second.status).toBe(201);
     expect(second.body.id).not.toBe(first.body.id);
@@ -138,7 +138,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     it('đơn đã thanh toán (dòng paid dựng tay: markPaid là #27)', async () => {
       const s = await shop('vietqr');
       const o = await order(s);
-      await testPool().query("insert into payment.order_payments (order_id, company_id, status) values ($1, $2, 'paid')", [
+      await testPool().query("insert into finance.order_payments (order_id, company_id, status) values ($1, $2, 'paid')", [
         o.orderId,
         s.companyId,
       ]);
@@ -148,7 +148,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     it('đơn đã huỷ (dựng tay: huỷ đơn là #25)', async () => {
       const s = await shop('vietqr');
       const o = await order(s);
-      await testPool().query("update sales.orders set status = 'cancelled' where id = $1", [o.orderId]);
+      await testPool().query("update \"order\".orders set status = 'cancelled' where id = $1", [o.orderId]);
       expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(409);
     });
 
@@ -223,19 +223,19 @@ describe('POST /payment/orders/:orderId/links', () => {
     const o = await order(s);
     // Trigger chỉ làm hỏng nhật ký mã thanh toán của công ty này (file test khác chạy song song không bị ảnh hưởng).
     await testPool().query(`
-      create or replace function audit.fail_payment_link_audit() returns trigger language plpgsql as $$
+      create or replace function core.fail_payment_link_audit() returns trigger language plpgsql as $$
       begin
-        if new.entity_type = 'payment.payment_links' and new.company_id = '${s.companyId}' then raise exception 'lỗi giả'; end if;
+        if new.entity_type = 'finance.payment_links' and new.company_id = '${s.companyId}' then raise exception 'lỗi giả'; end if;
         return new;
       end $$;
-      drop trigger if exists fail_payment_link_audit on audit.audit_logs;
-      create trigger fail_payment_link_audit before insert on audit.audit_logs for each row execute function audit.fail_payment_link_audit();`);
+      drop trigger if exists fail_payment_link_audit on core.audit_logs;
+      create trigger fail_payment_link_audit before insert on core.audit_logs for each row execute function core.fail_payment_link_audit();`);
     try {
       expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(500);
       expect(await linksOf(o.orderId)).toHaveLength(0);
       expect(await orderPaymentOf(o.orderId)).toBeUndefined();
     } finally {
-      await testPool().query('drop trigger if exists fail_payment_link_audit on audit.audit_logs; drop function if exists audit.fail_payment_link_audit();');
+      await testPool().query('drop trigger if exists fail_payment_link_audit on core.audit_logs; drop function if exists core.fail_payment_link_audit();');
     }
     expect((await create(s.sale.token, o.orderId, 'vietqr')).status).toBe(201);
     expect(await auditCount(s.companyId)).toBe(1);
@@ -257,7 +257,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     const s = await shop('momo');
     const o = await order(s);
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      await testPool().query("update sales.orders set status = 'cancelled' where id = $1", [o.orderId]);
+      await testPool().query("update \"order\".orders set status = 'cancelled' where id = $1", [o.orderId]);
       return new Response(JSON.stringify(MOMO_OK));
     });
     const res = await create(s.sale.token, o.orderId, 'momo');
@@ -272,7 +272,7 @@ describe('POST /payment/orders/:orderId/links', () => {
     const s = await shop('vietqr');
     const o = await order(s);
     if (withRow) {
-      await testPool().query("insert into payment.order_payments (order_id, company_id, status) values ($1, $2, 'unpaid')", [
+      await testPool().query("insert into finance.order_payments (order_id, company_id, status) values ($1, $2, 'unpaid')", [
         o.orderId,
         s.companyId,
       ]);
@@ -280,13 +280,13 @@ describe('POST /payment/orders/:orderId/links', () => {
     const holder = await testPool().connect();
     try {
       await holder.query('begin');
-      await holder.query("update sales.orders set status = 'cancelled' where id = $1", [o.orderId]);
+      await holder.query("update \"order\".orders set status = 'cancelled' where id = $1", [o.orderId]);
       const pending = create(s.sale.token, o.orderId, 'vietqr').then((r) => r);
       // Chờ tới khi yêu cầu tạo mã thật sự bị chặn bởi giao dịch huỷ, rồi mới commit.
       let blocked = false;
       for (let i = 0; i < 100 && !blocked; i++) {
         const r = await testPool().query(
-          "select count(*)::int n from pg_stat_activity where cardinality(pg_blocking_pids(pid)) > 0 and query ilike '%sales%orders%for share%'",
+          "select count(*)::int n from pg_stat_activity where cardinality(pg_blocking_pids(pid)) > 0 and query ilike '%\"orders\"%for share%'",
         );
         blocked = r.rows[0].n > 0;
         if (!blocked) await new Promise((resolve) => setTimeout(resolve, 50));

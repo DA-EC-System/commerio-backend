@@ -33,7 +33,7 @@ function captureMail(fail?: object): SentMail[] {
 /** Lời mời đã xin mã (như `/join/otp`), cùng sự kiện mà bước đó phát. */
 async function requestedInvitation(): Promise<{ id: string; companyId: string; email: string; event: OtpEvent }> {
   const { email: ceoEmail, companyId } = await registerCompany();
-  const ceo = await db.query<{ id: string }>('select id from staff.accounts where email = $1', [ceoEmail]);
+  const ceo = await db.query<{ id: string }>('select id from core.accounts where email = $1', [ceoEmail]);
   const email = uniqueEmail('moi');
   const { id, requestedAt } = await withCompany(companyId, async () => {
     const row = await insertInvitation({ companyId, roleIds: [randomUUID()], createdBy: ceo.rows[0]!.id });
@@ -60,7 +60,7 @@ const consume = (event: OtpEvent) => withCompany(event.companyId!, () => handleO
 const row = async (id: string) =>
   (
     await db.query<{ otp_hash: string | null; otp_expires_at: Date | null; otp_requested_at: Date }>(
-      'select otp_hash, otp_expires_at, otp_requested_at from staff.invitations where id = $1',
+      'select otp_hash, otp_expires_at, otp_requested_at from core.invitations where id = $1',
       [id],
     )
   ).rows[0]!;
@@ -85,7 +85,7 @@ describe('consumer OTP lời mời', () => {
     expect((await row(inv.id)).otp_hash).toBe(otpHash(code, inv.id));
     // Tính bằng đồng hồ DB: đồng hồ container có thể lệch đồng hồ của Node vài giây.
     const ttl = await db.query<{ seconds: number }>(
-      'select extract(epoch from otp_expires_at - now())::float as seconds from staff.invitations where id = $1',
+      'select extract(epoch from otp_expires_at - now())::float as seconds from core.invitations where id = $1',
       [inv.id],
     );
     expect(ttl.rows[0]!.seconds).toBeGreaterThan(240);
@@ -98,7 +98,7 @@ describe('consumer OTP lời mời', () => {
     const sent = captureMail();
     const inv = await requestedInvitation();
     const old = await db.query<{ at: Date }>(
-      "update staff.invitations set otp_requested_at = date_trunc('milliseconds', now()) - interval '330 seconds' where id = $1 returning otp_requested_at as at",
+      "update core.invitations set otp_requested_at = date_trunc('milliseconds', now()) - interval '330 seconds' where id = $1 returning otp_requested_at as at",
       [inv.id],
     );
     const before = await counter('otp_requests_total', { result: 'stale' });
@@ -123,7 +123,7 @@ describe('consumer OTP lời mời', () => {
     const sent = captureMail();
     const inv = await requestedInvitation();
     await db.query(
-      "update staff.invitations set status = 'pending', submitted_at = now(), password_hash = 'argon2-gia' where id = $1",
+      "update core.invitations set status = 'pending', submitted_at = now(), password_hash = 'argon2-gia' where id = $1",
       [inv.id],
     );
     await expect(consume(inv.event)).resolves.toBeUndefined();
@@ -171,7 +171,7 @@ describe('consumer OTP lời mời', () => {
     const stored = await row(inv.id);
     expect(stored.otp_requested_at.toISOString()).toBe(inv.event.payload.requestedAt);
     const micros = await db.query<{ micros: number }>(
-      'select (extract(microseconds from otp_requested_at)::int % 1000) as micros from staff.invitations where id = $1',
+      'select (extract(microseconds from otp_requested_at)::int % 1000) as micros from core.invitations where id = $1',
       [inv.id],
     );
     expect(micros.rows[0]!.micros).toBe(0);

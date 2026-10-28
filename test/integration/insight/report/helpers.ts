@@ -12,7 +12,6 @@ import {
   settlementLines,
   settlementStatements,
 } from '#src/modules/finance/finance/repository/schema.ts';
-import { issueForOrder, reserve } from '#src/modules/product/inventory/index.ts';
 import { paymentTransactions } from '#src/modules/finance/payment/repository/schema.ts';
 import type { OrderSource } from '#src/modules/order/sales/index.ts';
 import { getDb, withCompany } from '#src/shared/db/client.ts';
@@ -24,7 +23,10 @@ import { getDb, withCompany } from '#src/shared/db/client.ts';
 const docNumber = (prefix: string) => `${prefix}-T${randomUUID().slice(0, 8)}`;
 const money = (n: number | string) => Number(n).toFixed(2);
 
-/** Đơn đã xuất kho như #25 sẽ làm: nhập tồn với giá vốn, tạo đơn, giữ hàng, ghi sổ phiếu xuất (hàm thật của #16). */
+/**
+ * Đơn đã bàn giao một kiện: nhập tồn với giá vốn, tạo đơn, rồi ghi kiện và dòng kiện đã trừ tồn với giá vốn chốt lúc
+ * bàn giao (Documents/21 mục 19.2), ghi thẳng bằng role chủ bảng tới khi có API kiện (issue D2).
+ */
 export async function issuedOrder(
   companyId: string,
   options: { unitCost: number | string; unitPrice: number; quantity?: number; source?: OrderSource },
@@ -36,10 +38,16 @@ export async function issuedOrder(
     lines: [{ variantId, quantity, unitPrice: options.unitPrice }],
     ...(options.source ? { source: options.source } : {}),
   });
-  await withCompany(companyId, async () => {
-    await reserve(order.orderId, [{ variantId, quantity }]);
-    await issueForOrder(order.orderId);
-  });
+  const pkg = await testPool().query<{ id: string }>(
+    `insert into "order".packages (company_id, code, order_id, status, handed_over_at)
+     values ($1, $2, $3, 'in_transit', now()) returning id`,
+    [companyId, `KH-T${randomUUID().slice(0, 8)}`, order.orderId],
+  );
+  await testPool().query(
+    `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, unit_cost, stock_deducted)
+     select $1, $2, l.id, l.variant_id, l.quantity, $4, true from "order".order_lines l where l.order_id = $3`,
+    [companyId, pkg.rows[0]!.id, order.orderId, String(options.unitCost)],
+  );
   return order;
 }
 
@@ -225,7 +233,7 @@ export async function gatewayTxn(
 
 /** Gian hàng sàn của công ty với đúng `shopId` mà đơn sàn của `createOrder` mang (đơn sàn giả không có gian hàng thật). */
 export async function shopFor(companyId: string, orderId: string, shopName: string) {
-  const { rows } = await testPool().query<{ shop_id: string }>('select shop_id from sales.orders where id = $1', [orderId]);
+  const { rows } = await testPool().query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [orderId]);
   const shopId = rows[0]!.shop_id;
   await withCompany(companyId, () =>
     getDb().insert(shops).values({ id: shopId, companyId, platform: 'tiktok', externalShopId: randomUUID(), shopName }),

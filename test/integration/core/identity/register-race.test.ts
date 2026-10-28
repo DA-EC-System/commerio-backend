@@ -8,7 +8,7 @@ const app = testApp();
 const db = testPool();
 
 // #51: hai lần đăng ký cùng email chạy song song. Cả hai qua được bước kiểm email trước khi ghi,
-// bên ghi sau đụng UNIQUE của staff.accounts; Drizzle bọc lỗi nên mã 23505 nằm ở `cause`.
+// bên ghi sau đụng UNIQUE của core.accounts; Drizzle bọc lỗi nên mã 23505 nằm ở `cause`.
 describe('đăng ký trùng email đồng thời (#51)', () => {
   it('một bên 201, bên kia 409 email_taken theo ô ceo.email; chỉ một tài khoản và một công ty', async () => {
     // Lặp vài lượt để chắc có lượt cả hai cùng qua bước kiểm trước khi ghi.
@@ -27,9 +27,9 @@ describe('đăng ký trùng email đồng thời (#51)', () => {
       const loser = results.find((r) => r.status === 409)!;
       expect(loser.body.code).toBe('email_taken');
       expect(loser.body.errors).toHaveProperty(['ceo.email']);
-      const accounts = await db.query('select count(*)::int as n from staff.accounts where email = $1', [email]);
+      const accounts = await db.query('select count(*)::int as n from core.accounts where email = $1', [email]);
       expect(accounts.rows[0].n).toBe(1);
-      const companies = await db.query('select count(*)::int as n from platform.companies where name = any($1)', [names]);
+      const companies = await db.query('select count(*)::int as n from core.companies where name = any($1)', [names]);
       expect(companies.rows[0].n).toBe(1);
     }
   });

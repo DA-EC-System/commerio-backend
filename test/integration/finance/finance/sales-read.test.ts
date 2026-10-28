@@ -33,7 +33,7 @@ describe('sales.getOrderLines, getOrdersForFinance (A2)', () => {
     expect([...orders.keys()]).toEqual([order.orderId]);
     expect(orders.get(order.orderId)).toMatchObject({
       code: order.code,
-      status: 'pending_confirmation',
+      status: 'unpaid',
       source: 'manual',
       paymentMethod: 'prepaid',
       customerName: null,

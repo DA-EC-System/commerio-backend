@@ -207,7 +207,7 @@ async function createPaymentLinkOnce(
         companyId: caller.companyId,
         actorId: caller.accountId,
         action: 'create',
-        entityType: 'payment.payment_links',
+        entityType: 'finance.payment_links',
         entityId: row.id,
         after: { orderId, gateway, paymentCode, amount: Number(row.amount), expiresAt: row.expiresAt.toISOString() },
       });

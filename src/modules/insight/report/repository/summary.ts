@@ -1,4 +1,4 @@
-// Đọc, ghi `report.daily_channel_summary`. Chạy trong `withCompany` của bên gọi (RLS theo công ty).
+// Đọc, ghi `insight.daily_channel_summary`. Chạy trong `withCompany` của bên gọi (RLS theo công ty).
 import { and, between, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { SummaryRow } from '../domain/summary.ts';

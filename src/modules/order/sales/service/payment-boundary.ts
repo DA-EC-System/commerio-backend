@@ -3,9 +3,9 @@
 import { Decimal } from 'decimal.js';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { findOrderForPayment } from '../repository/orders-for-payment.ts';
-import type { fulfillmentStatus, orderSource, paymentMethod } from '../repository/schema.ts';
+import type { orderSource, orderStatus, paymentMethod } from '../repository/schema.ts';
 
-export type OrderStatus = (typeof fulfillmentStatus.enumValues)[number];
+export type OrderStatus = (typeof orderStatus.enumValues)[number];
 export type OrderSource = (typeof orderSource.enumValues)[number];
 export type PaymentMethod = (typeof paymentMethod.enumValues)[number];
 

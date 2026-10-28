@@ -1,160 +1,98 @@
 import { randomUUID } from 'node:crypto';
-import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../../helpers/db.ts';
 import { asCompany } from '../../helpers/rls.ts';
 
-type Queryable = Pick<pg.Pool, 'query'> | pg.PoolClient;
-const docNumber = (prefix: string) => `${prefix}-${randomUUID().slice(0, 8)}`;
+const db = () => testPool();
 
-async function insertReceipt(
-  db: Queryable,
-  companyId: string,
-  fields: { kind: string; purchaseOrderId?: string | null; orderId?: string | null; status?: string },
-): Promise<string> {
-  const res = await db.query<{ id: string }>(
-    `insert into inventory.stock_receipts (company_id, number, kind, purchase_order_id, order_id, status)
-     values ($1, $2, $3, $4, $5, coalesce($6, 'draft')::inventory.doc_status) returning id`,
-    [companyId, docNumber('PN'), fields.kind, fields.purchaseOrderId ?? null, fields.orderId ?? null, fields.status ?? null],
-  );
-  return res.rows[0]!.id;
-}
-
-const insertIssue = (companyId: string, orderId: string | null, status = 'draft', kind = 'order') =>
-  testPool().query(
-    `insert into inventory.stock_issues (company_id, number, kind, order_id, status) values ($1, $2, $3, $4, $5)`,
-    [companyId, docNumber('PX'), kind, orderId, status],
+const insertLevel = (c: string, cols: { on_hand: number; reserved?: number; quarantine?: number; invariant_broken?: boolean }) =>
+  db().query(
+    `insert into product.stock_levels (company_id, variant_id, on_hand, reserved, quarantine, invariant_broken)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [c, randomUUID(), cols.on_hand, cols.reserved ?? 0, cols.quarantine ?? 0, cols.invariant_broken ?? false],
   );
 
-const insertLevel = (companyId: string, onHand: number, reserved: number) =>
-  testPool().query('insert into inventory.stock_levels (company_id, variant_id, on_hand, reserved) values ($1, $2, $3, $4)', [
-    companyId,
-    randomUUID(),
-    onHand,
-    reserved,
-  ]);
-
-/** Một dòng thẻ kho của phiếu nhập đã có, trong giao dịch `c` của công ty. */
-async function insertMove(c: pg.PoolClient, companyId: string): Promise<void> {
-  const receipt = await insertReceipt(c, companyId, { kind: 'manual' });
-  const variant = randomUUID();
-  const line = await c.query<{ id: string }>(
-    `insert into inventory.stock_receipt_lines (company_id, receipt_id, variant_id, quantity, unit_cost)
-     values ($1, $2, $3, 5, 100000) returning id`,
-    [companyId, receipt, variant],
-  );
-  await c.query(
-    `insert into inventory.stock_moves (company_id, variant_id, qty_change, on_hand_after, receipt_line_id, unit_cost)
-     values ($1, $2, 5, 5, $3, 100000)`,
-    [companyId, variant, line.rows[0]!.id],
-  );
-}
-
-// Ràng buộc của inventory (plan chuẩn bị 4.2, 4.3; 19-D34, D35; AC-9).
-describe('ràng buộc bảng inventory (AC-9)', () => {
-  it('tồn mới mặc định 0, giá vốn 0', async () => {
-    const company = randomUUID();
-    const variant = randomUUID();
-    await testPool().query('insert into inventory.stock_levels (company_id, variant_id) values ($1, $2)', [company, variant]);
-    const res = await testPool().query('select on_hand, reserved, avg_cost from inventory.stock_levels where variant_id = $1', [
-      variant,
-    ]);
-    expect(res.rows[0]).toEqual({ on_hand: 0, reserved: 0, avg_cost: '0.00' });
+// Bất biến tồn kiểu "không làm tệ hơn" (25 §7.1, Documents/19 mục 3.2).
+describe('bất biến tồn', () => {
+  it('tồn thực âm hoặc đang giữ vượt tồn thực bị từ chối khi chưa bật cờ Tồn âm', async () => {
+    const c = randomUUID();
+    await expect(insertLevel(c, { on_hand: -1 })).rejects.toThrow(/"stock_levels_invariant"/);
+    await expect(insertLevel(c, { on_hand: 2, reserved: 3 })).rejects.toThrow(/"stock_levels_invariant"/);
+    await expect(insertLevel(c, { on_hand: 3, reserved: 3 })).resolves.toBeDefined();
   });
 
-  it('tồn âm bị từ chối', async () => {
-    await expect(insertLevel(randomUUID(), -1, -1)).rejects.toThrow(/"stock_levels_on_hand"/);
+  it('hai ngoại lệ (bàn giao bắt buộc, kiểm kê đã duyệt) ghi được khi bật cờ Tồn âm', async () => {
+    await expect(insertLevel(randomUUID(), { on_hand: -2, invariant_broken: true })).resolves.toBeDefined();
   });
 
-  it('số giữ chỗ lớn hơn tồn bị từ chối', async () => {
-    await expect(insertLevel(randomUUID(), 2, 3)).rejects.toThrow(/"stock_levels_reserved_le_on_hand"/);
+  it('chờ xử lý, đang giữ không bao giờ âm, kể cả khi bật cờ', async () => {
+    const c = randomUUID();
+    await expect(insertLevel(c, { on_hand: 0, quarantine: -1, invariant_broken: true })).rejects.toThrow(/"stock_levels_quarantine"/);
+    await expect(insertLevel(c, { on_hand: 0, reserved: -1, invariant_broken: true })).rejects.toThrow(/"stock_levels_reserved"/);
   });
+});
 
-  it('phiếu nhập mua thiếu purchase_order_id bị từ chối; phiếu lập tay mang order_id bị từ chối', async () => {
-    const company = randomUUID();
-    await expect(insertReceipt(testPool(), company, { kind: 'purchase' })).rejects.toThrow(/check constraint/);
-    await expect(insertReceipt(testPool(), company, { kind: 'manual', orderId: randomUUID() })).rejects.toThrow(
-      /check constraint/,
-    );
-    await expect(insertReceipt(testPool(), company, { kind: 'purchase', purchaseOrderId: randomUUID() })).resolves.toBeDefined();
-  });
-
-  it('mỗi đơn tối đa một phiếu nhập hoàn chưa huỷ', async () => {
-    const company = randomUUID();
-    const order = randomUUID();
-    await insertReceipt(testPool(), company, { kind: 'delivery_return', orderId: order, status: 'cancelled' });
-    await insertReceipt(testPool(), company, { kind: 'delivery_return', orderId: order });
-    await expect(insertReceipt(testPool(), company, { kind: 'delivery_return', orderId: order })).rejects.toThrow(
-      /stock_receipts_one_return_per_order/,
-    );
-  });
-
-  it('mỗi đơn tối đa một phiếu xuất chưa huỷ; huỷ rồi thì lập lại được', async () => {
-    const company = randomUUID();
-    const order = randomUUID();
-    await insertIssue(company, order, 'cancelled');
-    await insertIssue(company, order);
-    await expect(insertIssue(company, order)).rejects.toThrow(/stock_issues_one_per_order/);
-  });
-
-  it('phiếu xuất theo đơn phải có order_id, phiếu xuất tay thì không', async () => {
-    const company = randomUUID();
-    await expect(insertIssue(company, null, 'draft', 'order')).rejects.toThrow(/check constraint/);
-    await expect(insertIssue(company, randomUUID(), 'draft', 'manual')).rejects.toThrow(/check constraint/);
-  });
-
-  it('số phiếu không trùng trong một công ty', async () => {
-    const company = randomUUID();
-    const insert = () =>
-      testPool().query(
-        "insert into inventory.stock_issues (company_id, number, kind, status) values ($1, 'PX-000001', 'manual', 'draft')",
-        [company],
+describe('thẻ kho chỉ thêm', () => {
+  it('role ứng dụng ghi được, không sửa, không xoá', async () => {
+    const c = randomUUID();
+    const insert = (q: (s: string, v: unknown[]) => Promise<unknown>) =>
+      q(
+        `insert into product.stock_moves (company_id, variant_id, bucket, qty_change, balance_after, source_type, source_id)
+         values ($1, $2, 'on_hand', 1, 1, 'stock_document', $3)`,
+        [c, randomUUID(), randomUUID()],
       );
-    await insert();
-    await expect(insert()).rejects.toThrow(/duplicate key/);
-  });
-
-  it('thẻ kho chỉ thêm: role ứng dụng ghi được, không sửa, không xoá', async () => {
-    const company = randomUUID();
-    await expect(asCompany(company, (c) => insertMove(c, company))).resolves.toBeUndefined();
+    await expect(asCompany(c, (x) => insert((s, v) => x.query(s, v)))).resolves.toBeDefined();
     await expect(
-      asCompany(company, async (c) => {
-        await insertMove(c, company);
-        await c.query('update inventory.stock_moves set qty_change = 6');
+      asCompany(c, async (x) => {
+        await insert((s, v) => x.query(s, v));
+        await x.query('update product.stock_moves set qty_change = 2');
       }),
     ).rejects.toThrow(/permission denied/);
     await expect(
-      asCompany(company, async (c) => {
-        await insertMove(c, company);
-        await c.query('delete from inventory.stock_moves');
+      asCompany(c, async (x) => {
+        await insert((s, v) => x.query(s, v));
+        await x.query('delete from product.stock_moves');
       }),
     ).rejects.toThrow(/permission denied/);
   });
+});
 
-  it('dòng thẻ kho trỏ đúng một dòng phiếu', async () => {
-    const company = randomUUID();
-    await expect(
-      testPool().query(
-        `insert into inventory.stock_moves (company_id, variant_id, qty_change, on_hand_after) values ($1, $2, 1, 1)`,
-        [company, randomUUID()],
-      ),
-    ).rejects.toThrow(/check constraint/);
+describe('phiếu kho', () => {
+  const insertDoc = (c: string, cols: Record<string, unknown>) => {
+    const all = { company_id: c, number: `PK-${randomUUID().slice(0, 8)}`, kind: 'write_off', ...cols };
+    const keys = Object.keys(all);
+    return db().query<{ id: string }>(
+      `insert into product.stock_documents (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
+      Object.values(all),
+    );
+  };
+
+  it('người duyệt trùng người lập bị từ chối; kiểm kê phải có thời điểm đếm; ghi sổ phải có thời điểm ghi sổ', async () => {
+    const c = randomUUID();
+    const u = randomUUID();
+    await expect(insertDoc(c, { created_by: u, approved_by: u })).rejects.toThrow(/"stock_documents_second_person"/);
+    await expect(insertDoc(c, { kind: 'stocktake' })).rejects.toThrow(/"stock_documents_counted_at"/);
+    await expect(insertDoc(c, { status: 'posted' })).rejects.toThrow(/"stock_documents_posted"/);
   });
 
-  it('bộ đếm số chứng từ cấp số bằng UPDATE … RETURNING dưới role ứng dụng, chỉ thấy của công ty mình', async () => {
-    const company = randomUUID();
-    await testPool().query("insert into inventory.doc_counters (company_id, doc_type) values ($1, 'receipt')", [company]);
-    const next = await asCompany(company, (c) =>
-      c.query<{ issued: number }>(
-        `update inventory.doc_counters set next_number = next_number + 1
-         where company_id = $1 and doc_type = 'receipt' and period = '' returning next_number - 1 as issued`,
-        [company],
-      ),
-    );
-    expect(next.rows).toEqual([{ issued: 1 }]);
-    const other = await asCompany(randomUUID(), (c) =>
-      c.query('select 1 from inventory.doc_counters where company_id = $1', [company]),
-    );
-    expect(other.rowCount).toBe(0);
+  it('phiếu xuất theo kiện phải trỏ kiện; kiểm kê đầu kỳ chỉ là phiếu kiểm kê', async () => {
+    const c = randomUUID();
+    await expect(insertDoc(c, { kind: 'shipment' })).rejects.toThrow(/"stock_documents_shipment_source"/);
+    await expect(insertDoc(c, { kind: 'shipment', source_type: 'package', source_id: randomUUID() })).resolves.toBeDefined();
+    await expect(insertDoc(c, { is_opening: true })).rejects.toThrow(/"stock_documents_opening"/);
+  });
+
+  it('dòng kiểm hàng về: bán lại + hỏng + trả NCC phải bằng số quét', async () => {
+    const c = randomUUID();
+    const doc = (await insertDoc(c, { kind: 'return_inspection' })).rows[0]!.id;
+    const line = (scanned: number, resell: number, damaged: number, toSupplier: number) =>
+      db().query(
+        `insert into product.stock_document_lines
+           (company_id, document_id, variant_id, expected_qty, scanned_qty, resell_qty, damaged_qty, to_supplier_qty)
+         values ($1, $2, $3, 3, $4, $5, $6, $7)`,
+        [c, doc, randomUUID(), scanned, resell, damaged, toSupplier],
+      );
+    await expect(line(3, 2, 1, 0)).resolves.toBeDefined();
+    await expect(line(3, 2, 0, 0)).rejects.toThrow(/"stock_document_lines_inspection_sum"/);
   });
 });

@@ -7,7 +7,7 @@ import { testPool } from '../../helpers/db.ts';
 
 const db = testPool();
 const roleIdsOf = async (membershipId: string) =>
-  (await db.query<{ role_id: string }>('select role_id from access.member_roles where membership_id = $1 order by role_id', [membershipId]))
+  (await db.query<{ role_id: string }>('select role_id from core.member_roles where membership_id = $1 order by role_id', [membershipId]))
     .rows.map((r) => r.role_id);
 
 // Hàm vai trò access cho staff gọi (#7 [B]), chạy trong withCompany của bên gọi.

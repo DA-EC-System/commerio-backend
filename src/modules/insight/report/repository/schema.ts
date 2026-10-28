@@ -2,7 +2,7 @@ import { bigint, boolean, date, pgSchema, unique, uuid } from 'drizzle-orm/pg-co
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `report` khai báo trong schema này.
-export const reportSchema = pgSchema('report');
+export const reportSchema = pgSchema('insight');
 
 /** Bản riêng của schema này, cùng giá trị với `sales.order_source` (plan chuẩn bị A5). */
 export const orderSource = reportSchema.enum('order_source', ['marketplace', 'inbox', 'manual']);

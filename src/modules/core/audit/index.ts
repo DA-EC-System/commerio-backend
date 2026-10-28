@@ -11,7 +11,7 @@ export interface AuditEntry {
   companyId: string | null;
   actorId: string | null;
   action: 'create' | 'update' | 'delete';
-  /** Bảng của đối tượng, vd `platform.companies`. */
+  /** Bảng của đối tượng, vd `core.companies`. */
   entityType: string;
   entityId: string | null;
   before?: unknown;

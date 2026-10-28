@@ -18,7 +18,7 @@ describe('tham gia qua link', () => {
   it('email mới: mở link, xin mã, nhập mã, đặt mật khẩu, chờ duyệt; Admin duyệt; nhân viên đăng nhập bằng mật khẩu đã đặt', async () => {
     const sent = captureMail();
     const { companyId, ceo } = await createCompany();
-    const company = await db.query<{ name: string }>('select name from platform.companies where id = $1', [companyId]);
+    const company = await db.query<{ name: string }>('select name from core.companies where id = $1', [companyId]);
     const link = await newLink(app, ceo.token, [BUILTIN_ROLES.sale.id]);
     const email = uniqueEmail('nhan-vien');
 
@@ -49,12 +49,12 @@ describe('tham gia qua link', () => {
     expect(completed.body).toEqual({ status: 'pending' });
     // AC-C8: mật khẩu băm argon2id, chưa có tài khoản.
     const row = await db.query<{ status: string; password_hash: string; account_id: string | null }>(
-      'select status, password_hash, account_id from staff.invitations where id = $1',
+      'select status, password_hash, account_id from core.invitations where id = $1',
       [link.id],
     );
     expect(row.rows[0]).toMatchObject({ status: 'pending', account_id: null });
     expect(row.rows[0]!.password_hash).toMatch(/^\$argon2id\$/);
-    expect((await db.query('select 1 from staff.accounts where email = $1', [email])).rowCount).toBe(0);
+    expect((await db.query('select 1 from core.accounts where email = $1', [email])).rowCount).toBe(0);
 
     const queue = await request(app).get('/api/v1/identity/invitations').set('Authorization', `Bearer ${ceo.token}`);
     const item = queue.body.items.find((i: { id: string }) => i.id === link.id);

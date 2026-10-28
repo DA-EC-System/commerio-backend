@@ -4,10 +4,6 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { registerCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import type { EventType } from '#src/modules/core/platform/index.ts';
-import { stockIssueLines, stockIssues, stockReceiptLines, stockReceipts } from '#src/modules/product/inventory/repository/schema.ts';
-import { applyStockMoves } from '#src/modules/product/inventory/service/posting.ts';
-import { getDb, withCompany } from '#src/shared/db/client.ts';
 
 /** Công ty mới qua API đăng ký (không cần token) và `n` biến thể của nó. */
 export async function companyWithVariants(n = 1) {
@@ -17,99 +13,59 @@ export async function companyWithVariants(n = 1) {
   return { companyId, variants };
 }
 
-export interface Level {
-  onHand: number;
-  reserved: number;
-  avgCost: string;
-}
-
-/** Dòng tồn đọc bằng role chủ bảng; chưa có dòng thì `null`. */
-export async function levelOf(companyId: string, variantId: string): Promise<Level | null> {
-  const { rows } = await testPool().query<{ on_hand: number; reserved: number; avg_cost: string }>(
-    'select on_hand, reserved, avg_cost from inventory.stock_levels where company_id = $1 and variant_id = $2',
-    [companyId, variantId],
-  );
-  const r = rows[0];
-  return r ? { onHand: r.on_hand, reserved: r.reserved, avgCost: r.avg_cost } : null;
-}
-
-/** Payload các sự kiện của công ty trong outbox, cũ trước. */
-export async function eventsOf(companyId: string, type: EventType): Promise<Record<string, unknown>[]> {
-  const { rows } = await testPool().query<{ payload: Record<string, unknown> }>(
-    'select payload from platform.outbox_messages where company_id = $1 and type = $2 order by id',
-    [companyId, type],
-  );
-  return rows.map((r) => r.payload);
-}
-
-export async function movesOf(companyId: string, variantId: string) {
-  const { rows } = await testPool().query<{ qty_change: number; on_hand_after: number; unit_cost: string | null; done_by: string | null }>(
-    'select qty_change, on_hand_after, unit_cost, done_by from inventory.stock_moves where company_id = $1 and variant_id = $2 order by id',
-    [companyId, variantId],
-  );
-  return rows;
-}
-
-const number = (prefix: string) => `${prefix}-T${randomUUID().slice(0, 8)}`;
-
 /**
- * Ghi sổ một phiếu nhập tay một dòng như luồng ghi sổ thật (phiếu `done` + khung `applyStockMoves`), dùng để có tồn
- * khi API phiếu (lát 3) chưa có. Trạng thái tạo ra giống hệt `POST /inventory/documents/:id/post`.
+ * Nhập `quantity` hàng vào tồn thực bằng một phiếu kiểm kê đã ghi sổ, ghi thẳng bằng role chủ bảng: luồng ghi sổ
+ * qua API làm ở issue phiếu kho (Documents/21 mục 15). Giá vốn bình quân tính lại như lúc nhận hàng.
  */
-export async function receive(companyId: string, variantId: string, quantity: number, unitCost: number | string) {
-  await withCompany(companyId, async () => {
-    const [doc] = await getDb()
-      .insert(stockReceipts)
-      .values({ companyId, number: number('PN'), kind: 'manual', status: 'done', postedAt: new Date() })
-      .returning({ id: stockReceipts.id });
-    const [line] = await getDb()
-      .insert(stockReceiptLines)
-      .values({ companyId, receiptId: doc!.id, variantId, quantity, unitCost: String(unitCost) })
-      .returning({ id: stockReceiptLines.id });
-    await applyStockMoves({
-      direction: 'in',
-      cost: 'weighted',
-      doneBy: null,
-      lines: [{ variantId, quantity, lineId: line!.id, unitCost }],
-    });
-  });
+export async function receive(companyId: string, variantId: string, quantity: number, unitCost: number | string, doneBy?: string) {
+  const db = await testPool().connect();
+  try {
+    await db.query('begin');
+    const doc = await db.query<{ id: string }>(
+      `insert into product.stock_documents (company_id, number, kind, status, counted_at, posted_at)
+       values ($1, $2, 'stocktake', 'posted', now(), now()) returning id`,
+      [companyId, `KK-T${randomUUID().slice(0, 8)}`],
+    );
+    const level = await db.query<{ on_hand: number }>(
+      `insert into product.stock_levels (company_id, variant_id, on_hand, avg_cost) values ($1, $2, $3, $4)
+       on conflict (company_id, variant_id) do update set
+         avg_cost = round((stock_levels.on_hand * stock_levels.avg_cost + excluded.on_hand * excluded.avg_cost)
+                          / (stock_levels.on_hand + excluded.on_hand), 2),
+         on_hand = stock_levels.on_hand + excluded.on_hand,
+         version = stock_levels.version + 1
+       returning on_hand`,
+      [companyId, variantId, quantity, String(unitCost)],
+    );
+    await db.query(
+      `insert into product.stock_moves
+         (company_id, variant_id, bucket, qty_change, balance_after, unit_cost, source_type, source_id, done_by)
+       values ($1, $2, 'on_hand', $3, $4, $5, 'stock_document', $6, $7)`,
+      [companyId, variantId, quantity, level.rows[0]!.on_hand, String(unitCost), doc.rows[0]!.id, doneBy ?? null],
+    );
+    await db.query('commit');
+  } catch (err) {
+    await db.query('rollback');
+    throw err;
+  } finally {
+    db.release();
+  }
 }
 
-/** Phiếu xuất tay đã ghi sổ (như lát 3 sẽ làm), nhiều dòng; lỗi của khung (vd `insufficient_stock`) ném ra nguyên vẹn. */
-export async function issueManual(companyId: string, lines: { variantId: string; quantity: number }[]) {
-  return withCompany(companyId, async () => {
-    const [doc] = await getDb()
-      .insert(stockIssues)
-      .values({ companyId, number: number('PX'), kind: 'manual', status: 'done', note: 'hàng hỏng', postedAt: new Date() })
-      .returning({ id: stockIssues.id });
-    const moveLines = [];
-    for (const l of lines) {
-      const [row] = await getDb()
-        .insert(stockIssueLines)
-        .values({ companyId, issueId: doc!.id, variantId: l.variantId, quantity: l.quantity })
-        .returning({ id: stockIssueLines.id });
-      moveLines.push({ ...l, lineId: row!.id });
-    }
-    await applyStockMoves({ direction: 'out', cost: 'current', doneBy: null, lines: moveLines });
-    return doc!.id;
-  });
-}
-
-/** Ngưỡng tồn đặt thẳng vào bảng (API ngưỡng là lát 4); `alert_active` như lúc chưa từng cảnh báo. */
-export async function setRule(companyId: string, variantId: string, minQty: number) {
-  await testPool().query('insert into inventory.reorder_rules (company_id, variant_id, min_qty) values ($1, $2, $3)', [
-    companyId,
-    variantId,
-    minQty,
-  ]);
-}
-
-export async function alertActive(companyId: string, variantId: string): Promise<boolean | null> {
-  const { rows } = await testPool().query<{ alert_active: boolean }>(
-    'select alert_active from inventory.reorder_rules where company_id = $1 and variant_id = $2',
-    [companyId, variantId],
+/** Đặt số đang giữ, chờ xử lý của dòng tồn (nguồn thật là kiện, phiếu kiểm hàng về: issue vòng đời). */
+export async function setBuckets(companyId: string, variantId: string, b: { reserved?: number; quarantine?: number }) {
+  await testPool().query(
+    `update product.stock_levels set reserved = coalesce($3, reserved), quarantine = coalesce($4, quarantine)
+     where company_id = $1 and variant_id = $2`,
+    [companyId, variantId, b.reserved ?? null, b.quarantine ?? null],
   );
-  return rows[0]?.alert_active ?? null;
+}
+
+/** Lưu trữ biến thể như thao tác `archive` của catalog (Documents/21 mục 17.3). */
+export async function archiveVariant(variantId: string) {
+  await testPool().query(
+    "update product.product_variants set business_status = 'archived', archived_at = now() where id = $1",
+    [variantId],
+  );
 }
 
 /** Gọi /api/v1/inventory bằng token đã chọn công ty. */
@@ -122,18 +78,4 @@ export function inv(token: string) {
     post: (path: string, body: object) => auth(request(app).post(base + path).send(body)),
     put: (path: string, body: object) => auth(request(app).put(base + path).send(body)),
   };
-}
-
-/** Ngừng bán biến thể như `DELETE /catalog/products/:id/variants/:variantId` để lại (cột `archived_at`). */
-export async function archiveVariant(variantId: string) {
-  await testPool().query('update catalog.product_variants set archived_at = now() where id = $1', [variantId]);
-}
-
-/** Lập phiếu nhập tay qua API rồi ghi sổ; trả phiếu sau ghi sổ. */
-export async function postReceipt(token: string, variantId: string, quantity: number, unitCost: number) {
-  const created = await inv(token).post('/documents', { type: 'receipt', note: '', lines: [{ variantId, quantity, unitCost }] });
-  if (created.status !== 201) throw new Error(`lập phiếu nhập: ${created.status} ${JSON.stringify(created.body)}`);
-  const posted = await inv(token).post(`/documents/${created.body.id}/post`, { version: created.body.version });
-  if (posted.status !== 200) throw new Error(`ghi sổ: ${posted.status} ${JSON.stringify(posted.body)}`);
-  return posted.body;
 }

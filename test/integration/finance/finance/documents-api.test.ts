@@ -16,7 +16,7 @@ vi.hoisted(() => {
 async function invoicedAndPaid() {
   const l = await paidOrder();
   // Phí vận chuyển 30.000 đ: tổng đơn 180.000, dòng hàng 150.000 (dựng tay cột của #24, A20).
-  await testPool().query("update sales.orders set shipping_fee = 30000, total = 180000 where id = $1", [l.orderId]);
+  await testPool().query("update \"order\".orders set shipping_fee = 30000, total = 180000 where id = $1", [l.orderId]);
   const inv = await withCompany(l.companyId, () => issueInvoiceForOrder(l.orderId));
   return { ...l, invoiceId: inv.invoiceId };
 }

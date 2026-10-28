@@ -14,7 +14,7 @@ const columns = {
   updatedAt: products.updatedAt,
   version: products.version,
   // SQL có bí danh: cột trong `sql` của Drizzle không kèm tên bảng.
-  variantCount: sql<number>`(select count(*)::int from catalog.product_variants pv
+  variantCount: sql<number>`(select count(*)::int from product.product_variants pv
     where pv.product_id = products.id and pv.archived_at is null)`,
 };
 
@@ -44,7 +44,7 @@ export async function listProducts(filter: ProductFilter) {
     filter.categoryId ? eq(products.categoryId, filter.categoryId) : undefined,
     filter.search
       ? sql`(strpos(lower(${products.name}), lower(${filter.search})) > 0 or exists (
-          select 1 from catalog.product_variants pv
+          select 1 from product.product_variants pv
           where pv.product_id = products.id and strpos(lower(pv.sku), lower(${filter.search})) > 0))`
       : undefined,
   );

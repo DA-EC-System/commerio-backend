@@ -32,12 +32,12 @@ const as = (token: string) => ({
 });
 
 const invitationRow = async (id: string) =>
-  (await db.query('select * from staff.invitations where id = $1', [id])).rows[0] as Record<string, unknown>;
+  (await db.query('select * from core.invitations where id = $1', [id])).rows[0] as Record<string, unknown>;
 const invitationCount = async (companyId: string) =>
-  Number((await db.query('select count(*) from staff.invitations where company_id = $1', [companyId])).rows[0].count);
+  Number((await db.query('select count(*) from core.invitations where company_id = $1', [companyId])).rows[0].count);
 const auditOf = (entityId: string) =>
   db.query<{ action: string; entity_type: string; actor_id: string; before: unknown; after: unknown }>(
-    'select action, entity_type, actor_id, before, after from audit.audit_logs where entity_id = $1 order by id',
+    'select action, entity_type, actor_id, before, after from core.audit_logs where entity_id = $1 order by id',
     [entityId],
   );
 
@@ -69,7 +69,7 @@ describe('tạo link mời', () => {
     expect((row.expires_at as Date).getTime() - (row.created_at as Date).getTime()).toBe(72 * 3600_000);
     expect(new Date(res.body.expiresAt).getTime()).toBe((row.expires_at as Date).getTime());
     expect((await auditOf(res.body.id)).rows).toEqual([
-      { action: 'create', entity_type: 'staff.invitations', actor_id: ceoId, before: null, after: { roles: [SALE] } },
+      { action: 'create', entity_type: 'core.invitations', actor_id: ceoId, before: null, after: { roles: [SALE] } },
     ]);
   });
 
@@ -143,7 +143,7 @@ describe('hàng đợi lời mời', () => {
     expect(JSON.stringify(res.body)).not.toMatch(/argon2|password|otp/i);
 
     // Người cầm link đã xin mã (email, họ tên chưa xác minh) mà lời mời còn open: không lộ cho Admin.
-    await db.query("update staff.invitations set email = $2, full_name = 'Người Lạ' where id = $1", [
+    await db.query("update core.invitations set email = $2, full_name = 'Người Lạ' where id = $1", [
       open.body.id,
       uniqueEmail('chua-xac-minh'),
     ]);
@@ -177,14 +177,14 @@ describe('duyệt, từ chối', () => {
     const row = await invitationRow(inv.id);
     expect(row).toMatchObject({ status: 'approved', account_id: accountId, decided_by: ceoId, password_hash: null });
     const membership = await db.query<{ id: string; status: string }>(
-      'select id, status from staff.memberships where company_id = $1 and account_id = $2',
+      'select id, status from core.memberships where company_id = $1 and account_id = $2',
       [company.companyId, accountId],
     );
     expect(membership.rows[0]!.status).toBe('active');
     expect((await auditOf(membership.rows[0]!.id)).rows).toEqual([
       {
         action: 'create',
-        entity_type: 'staff.memberships',
+        entity_type: 'core.memberships',
         actor_id: ceoId,
         before: null,
         after: { invitationId: inv.id, roles: [SALE] },
@@ -197,7 +197,7 @@ describe('duyệt, từ chối', () => {
   it('AC-C14: duyệt tài khoản đã có → chỉ thêm membership và vai trò, không tạo tài khoản, không đổi mật khẩu', async () => {
     const other = await createCompany();
     const existing = await addMember(other.companyId, 'sale');
-    const before = await db.query('select password_hash, version from staff.accounts where id = $1', [
+    const before = await db.query('select password_hash, version from core.accounts where id = $1', [
       existing.accountId,
     ]);
     const inv = await pending({ existingAccountId: existing.accountId, email: existing.email });
@@ -205,10 +205,10 @@ describe('duyệt, từ chối', () => {
     expect(res.status).toBe(200);
     expect(res.body.member.accountId).toBe(existing.accountId);
     expect(
-      (await db.query('select count(*) from staff.accounts where email = $1', [existing.email])).rows[0].count,
+      (await db.query('select count(*) from core.accounts where email = $1', [existing.email])).rows[0].count,
     ).toBe('1');
     expect(
-      (await db.query('select password_hash, version from staff.accounts where id = $1', [existing.accountId])).rows,
+      (await db.query('select password_hash, version from core.accounts where id = $1', [existing.accountId])).rows,
     ).toEqual(before.rows);
     const { body } = await login(existing.email);
     expect(body.memberships).toHaveLength(2);
@@ -221,11 +221,11 @@ describe('duyệt, từ chối', () => {
     expect(Object.keys(res.body)).toEqual(['invitation']);
     expect(res.body.invitation).toMatchObject({ status: 'rejected', version: inv.version + 1 });
     expect(await invitationRow(inv.id)).toMatchObject({ status: 'rejected', decided_by: ceoId, password_hash: null });
-    expect((await db.query('select 1 from staff.accounts where email = $1', [inv.email])).rowCount).toBe(0);
+    expect((await db.query('select 1 from core.accounts where email = $1', [inv.email])).rowCount).toBe(0);
     expect((await auditOf(inv.id)).rows).toEqual([
       {
         action: 'update',
-        entity_type: 'staff.invitations',
+        entity_type: 'core.invitations',
         actor_id: ceoId,
         before: { status: 'pending' },
         after: { status: 'rejected' },
@@ -246,13 +246,13 @@ describe('duyệt, từ chối', () => {
       expect(res.status, code).toBe(status);
       expect(res.body.code).toBe(code);
       expect(await invitationRow(inv.id)).toMatchObject({ status: 'pending', version: inv.version });
-      expect((await db.query('select 1 from staff.accounts where email = $1', [inv.email])).rowCount).toBe(0);
+      expect((await db.query('select 1 from core.accounts where email = $1', [inv.email])).rowCount).toBe(0);
     }
   });
 
   it('AC-C16: email đã có tài khoản do đường khác → 409 email_taken; đã là thành viên → 409 already_member', async () => {
     const taken = await pending();
-    await db.query("insert into staff.accounts (email, full_name) values ($1, 'Đăng Ký Riêng')", [taken.email]);
+    await db.query("insert into core.accounts (email, full_name) values ($1, 'Đăng Ký Riêng')", [taken.email]);
     const takenRes = await ceo.approve(taken.id, taken.version);
     expect(takenRes.status).toBe(409);
     expect(takenRes.body.code).toBe('email_taken');
@@ -301,14 +301,14 @@ describe('duyệt, từ chối', () => {
 
   it('Review Focus 4: link đã quá 72 giờ nhưng yêu cầu đã pending thì vẫn duyệt được', async () => {
     const inv = await pending();
-    await db.query("update staff.invitations set expires_at = now() - interval '1 hour' where id = $1", [inv.id]);
+    await db.query("update core.invitations set expires_at = now() - interval '1 hour' where id = $1", [inv.id]);
     expect((await ceo.approve(inv.id, inv.version)).status).toBe(200);
   });
 });
 
 // Chạy đua tất định (spec 6.7, 6.14): giao dịch giữ khoá đóng vai phiên đang duyệt dở; các request đua bị chặn sau nó.
 const lockInvitation = (id: string) => (holder: PoolClient) =>
-  holder.query('select 1 from staff.invitations where id = $1 for update', [id]);
+  holder.query('select 1 from core.invitations where id = $1 for update', [id]);
 
 describe('duyệt chạy đồng thời', () => {
   it('hai Admin duyệt cùng lúc: một 200, một 409 version_conflict; chỉ một tài khoản, một membership', async () => {
@@ -319,9 +319,9 @@ describe('duyệt chạy đồng thời', () => {
     );
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
     expect(results.find((r) => r.status === 409)!.body.code).toBe('version_conflict');
-    const accounts = await db.query<{ id: string }>('select id from staff.accounts where email = $1', [inv.email]);
+    const accounts = await db.query<{ id: string }>('select id from core.accounts where email = $1', [inv.email]);
     expect(accounts.rows).toHaveLength(1);
-    const memberships = await db.query('select 1 from staff.memberships where account_id = $1', [accounts.rows[0]!.id]);
+    const memberships = await db.query('select 1 from core.memberships where account_id = $1', [accounts.rows[0]!.id]);
     expect(memberships.rowCount).toBe(1);
   });
 
@@ -334,7 +334,7 @@ describe('duyệt chạy đồng thời', () => {
     expect([approved, rejected].find((r) => r.status === 409)!.body.code).toBe('version_conflict');
     const status = (await invitationRow(inv.id)).status;
     expect(status).toBe(approved.status === 200 ? 'approved' : 'rejected');
-    const accounts = await db.query('select 1 from staff.accounts where email = $1', [inv.email]);
+    const accounts = await db.query('select 1 from core.accounts where email = $1', [inv.email]);
     expect(accounts.rowCount).toBe(status === 'approved' ? 1 : 0);
   });
 
@@ -342,17 +342,17 @@ describe('duyệt chạy đồng thời', () => {
     const inv = await pending();
     // Phiên giữ khoá chèn tài khoản cùng email mà chưa commit: lúc duyệt chưa thấy, câu INSERT bị chặn ở unique.
     const res = await raceBehindLock(
-      (holder) => holder.query("insert into staff.accounts (email, full_name) values ($1, 'Phiên Khác')", [inv.email]),
+      (holder) => holder.query("insert into core.accounts (email, full_name) values ($1, 'Phiên Khác')", [inv.email]),
       1,
       () => ceo.approve(inv.id, inv.version),
     );
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('email_taken');
     expect(await invitationRow(inv.id)).toMatchObject({ status: 'pending', version: inv.version });
-    const accounts = await db.query<{ id: string }>('select id from staff.accounts where email = $1', [inv.email]);
+    const accounts = await db.query<{ id: string }>('select id from core.accounts where email = $1', [inv.email]);
     expect(accounts.rows).toHaveLength(1);
     expect(
-      (await db.query('select 1 from staff.memberships where account_id = $1', [accounts.rows[0]!.id])).rowCount,
+      (await db.query('select 1 from core.memberships where account_id = $1', [accounts.rows[0]!.id])).rowCount,
     ).toBe(0);
   });
 });

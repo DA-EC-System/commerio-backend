@@ -16,7 +16,7 @@ export interface CategoryInput {
   skuPattern: string;
 }
 
-const ENTITY = 'catalog.categories';
+const ENTITY = 'product.categories';
 const collator = new Intl.Collator('vi');
 const taken = () => nameTaken('Đã có danh mục cùng tên');
 

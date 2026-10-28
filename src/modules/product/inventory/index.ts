@@ -1,5 +1,6 @@
-// API công khai của module `inventory`: tồn, giữ hàng, phiếu nhập/xuất/nhập hoàn, giá vốn, ngưỡng tồn. Nơi duy nhất đổi số tồn.
-// Module khác chỉ được import từ file này.
+// API công khai của module `inventory`: các con số tồn, thẻ kho, phiếu kho, ngưỡng tồn. Nơi duy nhất đổi số tồn.
+// Module khác chỉ được import từ file này. Hàm ghi sổ cho phiếu nhận, kiện, kiểm hàng về làm ở các issue vòng đời
+// (Documents/21 mục 15–19).
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerInventoryOpenApi } from './api/openapi.ts';
 import { inventoryRouter } from './api/routes.ts';
@@ -9,6 +10,3 @@ export const inventoryModule: ModuleDefinition = {
   router: inventoryRouter,
   openapi: registerInventoryOpenApi,
 };
-
-export { issueForOrder, receiveReturn, release, reserve, type StockLine } from './service/boundary.ts';
-export { getOrderCogs } from './service/daily-totals.ts';

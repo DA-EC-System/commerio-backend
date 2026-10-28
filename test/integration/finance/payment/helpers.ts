@@ -49,10 +49,10 @@ export function createLink(token: string | undefined, orderId: string, gateway: 
 export const linksOf = async (orderId: string) =>
   (
     await testPool().query(
-      'select id, status, gateway, amount, payment_code, gateway_order_ref, expires_at from payment.payment_links where order_id = $1 order by created_at',
+      'select id, status, gateway, amount, payment_code, gateway_order_ref, expires_at from finance.payment_links where order_id = $1 order by created_at',
       [orderId],
     )
   ).rows;
 
 export const orderPaymentOf = async (orderId: string) =>
-  (await testPool().query('select status, refund_status from payment.order_payments where order_id = $1', [orderId])).rows[0];
+  (await testPool().query('select status, refund_status from finance.order_payments where order_id = $1', [orderId])).rows[0];
