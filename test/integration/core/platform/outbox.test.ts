@@ -6,7 +6,7 @@ import { asCompany } from '../../helpers/rls.ts';
 
 const insertOutbox = (c: pg.PoolClient, companyId: string | null) =>
   c.query(
-    `insert into platform.outbox_messages (event_id, company_id, type, topic, key, payload)
+    `insert into core.outbox_messages (event_id, company_id, type, topic, key, payload)
      values ($1, $2, 'inventory.stock_changed', 'commerio.inventory', $3, '{}')`,
     [randomUUID(), companyId, randomUUID()],
   );
@@ -20,11 +20,11 @@ describe('bảng outbox (AC-9)', () => {
 
   it('role ứng dụng không đọc, không sửa outbox', async () => {
     const company = randomUUID();
-    await expect(asCompany(company, (c) => c.query('select 1 from platform.outbox_messages'))).rejects.toThrow(
+    await expect(asCompany(company, (c) => c.query('select 1 from core.outbox_messages'))).rejects.toThrow(
       /permission denied/,
     );
     await expect(
-      asCompany(company, (c) => c.query('update platform.outbox_messages set published_at = now()')),
+      asCompany(company, (c) => c.query('update core.outbox_messages set published_at = now()')),
     ).rejects.toThrow(/permission denied/);
   });
 
@@ -38,7 +38,7 @@ describe('bảng outbox (AC-9)', () => {
     const eventId = randomUUID();
     const insert = () =>
       testPool().query(
-        `insert into platform.outbox_messages (event_id, type, topic, key, payload)
+        `insert into core.outbox_messages (event_id, type, topic, key, payload)
          values ($1, 'platform.x', 'commerio.platform', 'k', '{}')`,
         [eventId],
       );
@@ -50,12 +50,12 @@ describe('bảng outbox (AC-9)', () => {
     const company = randomUUID();
     await asCompany(company, async (c) => {
       const eventId = randomUUID();
-      await c.query("insert into platform.processed_events (consumer, event_id) values ('report', $1)", [eventId]);
+      await c.query("insert into core.processed_events (consumer, event_id) values ('report', $1)", [eventId]);
       await expect(
-        c.query("insert into platform.processed_events (consumer, event_id) values ('report', $1)", [eventId]),
+        c.query("insert into core.processed_events (consumer, event_id) values ('report', $1)", [eventId]),
       ).rejects.toThrow(/duplicate key/);
     });
-    await expect(asCompany(company, (c) => c.query('delete from platform.processed_events'))).rejects.toThrow(
+    await expect(asCompany(company, (c) => c.query('delete from core.processed_events'))).rejects.toThrow(
       /permission denied/,
     );
   });

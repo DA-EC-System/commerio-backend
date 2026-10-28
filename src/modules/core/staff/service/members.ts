@@ -51,7 +51,7 @@ export interface Page<T> {
   pageSize: number;
 }
 
-const ENTITY = 'staff.memberships';
+const ENTITY = 'core.memberships';
 
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy nhân viên');
 export const protectedAccount = () =>

@@ -19,7 +19,7 @@ export interface AccessClaims {
   readonly mustChangePassword: boolean;
   /** Hết hạn lúc nào (giây epoch, `exp` của token): kênh SSE đóng đúng lúc này (Documents/21 D11). */
   readonly expiresAt: number;
-  /** `staff.accounts.password_changed_at` lúc ký (ms epoch); `null` khi chưa từng đổi hoặc token phát trước #62. */
+  /** `core.accounts.password_changed_at` lúc ký (ms epoch); `null` khi chưa từng đổi hoặc token phát trước #62. */
   readonly passwordChangedAt: number | null;
 }
 

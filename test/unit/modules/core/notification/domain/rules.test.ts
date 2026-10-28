@@ -20,7 +20,7 @@ const perms = (...codes: string[]) => effectivePermissions(access(codes));
 
 // Quyền của bốn vai trò có sẵn liên quan tới thông báo (đo trên DB, ground-truth p3-role-perms.txt).
 const ROLES = {
-  ceo: perms('sales.order.view', 'finance.invoice.view', 'inventory.stock.view', 'purchasing.order.approve'),
+  ceo: perms('sales.order.view', 'finance.invoice.view', 'inventory.stock.view', 'purchasing.request.approve'),
   admin: perms('sales.order.view', 'inventory.stock.view'),
   sale: perms('sales.order.view'),
   warehouse: perms('inventory.stock.view'),
@@ -54,7 +54,7 @@ describe('bảng loại sự kiện → quyền (D11, plan A1, A2)', () => {
 
   it('quyền của phân hệ đang tắt không tính', () => {
     const noPurchasing = effectivePermissions(
-      access(['sales.order.view', 'purchasing.order.approve'], ALL_MODULES.filter((m) => m !== 'purchasing')),
+      access(['sales.order.view', 'purchasing.request.approve'], ALL_MODULES.filter((m) => m !== 'purchasing')),
     );
     expect(canReceive(noPurchasing, 'purchasing.order_submitted')).toBe(false);
     expect(canReceive(noPurchasing, 'sales.order_created')).toBe(true);

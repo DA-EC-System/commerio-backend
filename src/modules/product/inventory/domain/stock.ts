@@ -34,30 +34,3 @@ export function nextAlertState(state: { available: number; minQty: number | null
   const below = isBelowMin(state.available, state.minQty);
   return { alertActive: below, fire: below && !state.alertActive };
 }
-
-/** `PN-000001` (phiếu nhập), `PX-000001` (phiếu xuất), đánh số riêng mỗi công ty. */
-export function docNumber(type: 'receipt' | 'issue', n: number): string {
-  return `${type === 'receipt' ? 'PN' : 'PX'}-${String(n).padStart(6, '0')}`;
-}
-
-export interface DocLineInput {
-  variantId: string;
-  quantity: number;
-  unitCost?: number | undefined;
-}
-
-/**
- * Luật dòng phiếu phụ thuộc loại phiếu (plan #16 A7; câu báo lỗi theo mock FE `validateDocInput`): phiếu nhập cần giá
- * nhập từng dòng, phiếu xuất tay cần lý do, mỗi biến thể một dòng. Giới hạn số kiểm ở schema Zod.
- */
-export function docInputErrors(type: 'receipt' | 'issue', note: string, lines: readonly DocLineInput[]): Record<string, string> {
-  const errors: Record<string, string> = {};
-  if (type === 'issue' && !note.trim()) errors.note = 'Nhập lý do xuất kho';
-  const seen = new Set<string>();
-  lines.forEach((line, i) => {
-    if (seen.has(line.variantId)) errors[`lines.${i}.variantId`] = 'Biến thể bị lặp';
-    seen.add(line.variantId);
-    if (type === 'receipt' && line.unitCost === undefined) errors[`lines.${i}.unitCost`] = 'Giá nhập là số nguyên đồng, không âm';
-  });
-  return errors;
-}

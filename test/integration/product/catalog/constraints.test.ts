@@ -7,7 +7,7 @@ const db = () => testPool();
 
 async function insertCategory(companyId: string, name: string): Promise<string> {
   const res = await db().query<{ id: string }>(
-    `insert into catalog.categories (company_id, name, sku_pattern) values ($1, $2, 'AO-{SEQ}') returning id`,
+    `insert into product.categories (company_id, name, sku_pattern) values ($1, $2, 'AO-{SEQ}') returning id`,
     [companyId, name],
   );
   return res.rows[0]!.id;
@@ -15,14 +15,14 @@ async function insertCategory(companyId: string, name: string): Promise<string> 
 
 async function insertAttribute(companyId: string, name: string): Promise<string> {
   const res = await db().query<{ id: string }>(
-    'insert into catalog.attributes (company_id, name) values ($1, $2) returning id',
+    'insert into product.attributes (company_id, name) values ($1, $2) returning id',
     [companyId, name],
   );
   return res.rows[0]!.id;
 }
 
 const insertValue = (companyId: string, attributeId: string, value: string, code: string) =>
-  db().query('insert into catalog.attribute_values (company_id, attribute_id, value, code) values ($1, $2, $3, $4)', [
+  db().query('insert into product.attribute_values (company_id, attribute_id, value, code) values ($1, $2, $3, $4)', [
     companyId,
     attributeId,
     value,
@@ -40,7 +40,7 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
 
   it('danh mục mới có số thứ tự SKU bắt đầu từ 1', async () => {
     const id = await insertCategory(randomUUID(), 'Quần');
-    const res = await db().query('select sku_next_seq from catalog.categories where id = $1', [id]);
+    const res = await db().query('select sku_next_seq from product.categories where id = $1', [id]);
     expect(res.rows[0]).toEqual({ sku_next_seq: 1 });
   });
 
@@ -72,7 +72,7 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     const company = randomUUID();
     const category = await insertCategory(company, 'Giày');
     const insert = (name: string) =>
-      db().query('insert into catalog.products (company_id, category_id, name) values ($1, $2, $3)', [
+      db().query('insert into product.products (company_id, category_id, name) values ($1, $2, $3)', [
         company,
         category,
         name,
@@ -86,7 +86,7 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     const category = await insertCategory(company, 'Dép');
     const insert = (name: string, archived: boolean) =>
       db().query(
-        `insert into catalog.products (company_id, category_id, name, archived_at)
+        `insert into product.products (company_id, category_id, name, archived_at)
          values ($1, $2, $3, case when $4 then now() end)`,
         [company, category, name, archived],
       );

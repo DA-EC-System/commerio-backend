@@ -5,13 +5,13 @@ import { asCompany } from '../../helpers/rls.ts';
 import { invoice, issuedOrder, receipt, reverseInvoice, settlementLine } from './helpers.ts';
 import { recompute } from '#src/modules/insight/report/service/recompute.ts';
 
-// Tính lại bảng report.daily_channel_summary (plan #29 lát 3, A4; AC-8, AC-13, AC-16, AC-17).
+// Tính lại bảng insight.daily_channel_summary (plan #29 lát 3, A4; AC-8, AC-13, AC-16, AC-17).
 
 async function tableOf(companyId: string) {
   const { rows } = await testPool().query(
     `select to_char(day, 'YYYY-MM-DD') as day, source, shop_id, revenue, cash_collected, platform_fee, payment_fee,
             shipping_fee, cogs, profit, fees_pending
-       from report.daily_channel_summary where company_id = $1 order by day, source, shop_id` /* enum: marketplace, inbox, manual */,
+       from insight.daily_channel_summary where company_id = $1 order by day, source, shop_id` /* enum: marketplace, inbox, manual */,
     [companyId],
   );
   return rows;
@@ -59,7 +59,7 @@ describe('recompute (lát 3)', () => {
     ]);
     const byShop = new Map(rows.filter((r) => r.source === 'marketplace').map((r) => [r.shop_id, r]));
     const shopOf = async (orderId: string) =>
-      (await testPool().query('select shop_id from sales.orders where id = $1', [orderId])).rows[0].shop_id as string;
+      (await testPool().query('select shop_id from "order".orders where id = $1', [orderId])).rows[0].shop_id as string;
     expect(byShop.get(await shopOf(settled.orderId))).toMatchObject(
       row('2026-10-18', 'marketplace', {
         revenue: '200000.00',
@@ -80,7 +80,7 @@ describe('recompute (lát 3)', () => {
     const before = await tableOf(companyId);
     await recompute(companyId, '2026-10-17', '2026-10-21');
     expect(await tableOf(companyId)).toEqual(before);
-    await testPool().query('delete from report.daily_channel_summary where company_id = $1', [companyId]);
+    await testPool().query('delete from insight.daily_channel_summary where company_id = $1', [companyId]);
     await recompute(companyId, '2026-10-17', '2026-10-21');
     expect(await tableOf(companyId)).toEqual(before);
   });
@@ -92,11 +92,11 @@ describe('recompute (lát 3)', () => {
     await recompute(other.companyId, '2026-10-17', '2026-10-21');
     const otherBefore = await tableOf(other.companyId);
     await testPool().query(
-      "update report.daily_channel_summary set revenue = 1 where company_id = $1 and day = '2026-10-20'",
+      "update insight.daily_channel_summary set revenue = 1 where company_id = $1 and day = '2026-10-20'",
       [companyId],
     );
     await testPool().query(
-      "insert into report.daily_channel_summary (company_id, day, source, revenue) values ($1, '2026-10-19', 'inbox', 5)",
+      "insert into insight.daily_channel_summary (company_id, day, source, revenue) values ($1, '2026-10-19', 'inbox', 5)",
       [companyId],
     );
     await recompute(companyId, '2026-10-19', '2026-10-19');
@@ -118,7 +118,7 @@ describe('recompute (lát 3)', () => {
     const b = await sample();
     await recompute(a.companyId, '2026-10-18', '2026-10-18');
     await recompute(b.companyId, '2026-10-18', '2026-10-18');
-    const seen = await asCompany(a.companyId, (c) => c.query('select distinct company_id from report.daily_channel_summary'));
+    const seen = await asCompany(a.companyId, (c) => c.query('select distinct company_id from insight.daily_channel_summary'));
     expect(seen.rows).toEqual([{ company_id: a.companyId }]);
   });
 });

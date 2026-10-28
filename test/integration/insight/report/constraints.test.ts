@@ -4,7 +4,7 @@ import { testPool } from '../../helpers/db.ts';
 
 const insertDay = (companyId: string, source: string, shopId: string | null) =>
   testPool().query(
-    "insert into report.daily_channel_summary (company_id, day, source, shop_id) values ($1, '2026-10-18', $2, $3)",
+    "insert into insight.daily_channel_summary (company_id, day, source, shop_id) values ($1, '2026-10-18', $2, $3)",
     [companyId, source, shopId],
   );
 
@@ -21,7 +21,7 @@ describe('ràng buộc bảng report (AC-9)', () => {
     await insertDay(company, 'marketplace', randomUUID());
     await insertDay(company, 'marketplace', randomUUID());
     const res = await testPool().query(
-      'select revenue, profit, fees_pending from report.daily_channel_summary where company_id = $1',
+      'select revenue, profit, fees_pending from insight.daily_channel_summary where company_id = $1',
       [company],
     );
     expect(res.rows).toEqual([

@@ -29,5 +29,5 @@ Bản ghi của công ty khác trả 404 (RLS không thấy); id không phải u
 ## Gọi vào và gọi ra
 
 - Module khác gọi `getVariants(ids?)` (`index.ts`) trong `withCompany` của mình: biến thể kèm sản phẩm, danh mục, thuộc tính theo `position`; `archived` = biến thể ngừng bán hoặc sản phẩm lưu trữ.
-- Giá chuẩn của chi tiết sản phẩm lấy qua `ctx.standardPrices` (`standardPricesOf`), không import `pricing`; chưa có thì `null`. API trả số nguyên đồng.
+- Giá chuẩn của chi tiết sản phẩm là cột `product_variants.standard_price` (`standardPricesOf`, `Documents/19` D9: bỏ module con pricing); chưa đặt thì `null`. API trả số nguyên đồng. Trạng thái kinh doanh `business_status` (CHECK khớp `archived_at`); ngừng bán kiểu cũ đặt `archived`, máy trạng thái đầy đủ ở issue B1 (`Documents/21` mục 17).
 - Catalog chỉ gọi `audit` (nhật ký). Không phát sự kiện.

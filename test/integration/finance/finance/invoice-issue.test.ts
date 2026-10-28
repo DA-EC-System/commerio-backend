@@ -40,7 +40,7 @@ const linesOf = async (invoiceId: string) =>
 const invoiceEvents = async (companyId: string) =>
   (
     await testPool().query(
-      "select payload from platform.outbox_messages where company_id = $1 and type = 'finance.invoice_posted'",
+      "select payload from core.outbox_messages where company_id = $1 and type = 'finance.invoice_posted'",
       [companyId],
     )
   ).rows.map((r) => r.payload);
@@ -112,7 +112,7 @@ describe('issueInvoiceForOrder (AC-5)', () => {
   it('đơn không có dòng hàng nào → 409 order_has_no_lines, không lập hoá đơn, không tốn số (#63 B16)', async () => {
     const { companyId, order, v1 } = await orderOfTwoLines();
     // Dựng tay: chưa đường ghi nào tạo đơn rỗng (sales #24 chưa có), DB cũng không cấm.
-    await testPool().query('delete from sales.order_lines where order_id = $1', [order.orderId]);
+    await testPool().query('delete from "order".order_lines where order_id = $1', [order.orderId]);
     await expect(withCompany(companyId, () => issueInvoiceForOrder(order.orderId))).rejects.toMatchObject({
       status: 409,
       code: 'order_has_no_lines',

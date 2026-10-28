@@ -21,7 +21,7 @@ export async function marketplaceOrder(companyId: string, shopId: string, total:
     lines: [{ variantId: v.variantId, quantity: 1, unitPrice: total }],
   });
   const externalOrderId = `SO-${randomUUID().slice(0, 8)}`;
-  await testPool().query('update sales.orders set shop_id = $2, external_order_id = $3 where id = $1', [
+  await testPool().query('update "order".orders set shop_id = $2, external_order_id = $3 where id = $1', [
     order.orderId,
     shopId,
     externalOrderId,
@@ -102,7 +102,7 @@ export async function receiptsOf(companyId: string) {
 
 export async function receiptEvents(companyId: string) {
   const { rows } = await testPool().query(
-    "select payload from platform.outbox_messages where company_id = $1 and type = 'finance.receipt_posted'",
+    "select payload from core.outbox_messages where company_id = $1 and type = 'finance.receipt_posted'",
     [companyId],
   );
   return rows.map((r) => r.payload);

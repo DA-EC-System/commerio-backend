@@ -13,7 +13,7 @@ const columns = {
   version: categories.version,
   updatedAt: categories.updatedAt,
   // Đếm cả sản phẩm đã lưu trữ: cùng điều kiện với `in_use` khi xoá (V25).
-  productCount: sql<number>`(select count(*)::int from catalog.products p where p.category_id = categories.id)`,
+  productCount: sql<number>`(select count(*)::int from product.products p where p.category_id = categories.id)`,
 };
 
 export type CategoryRow = Awaited<ReturnType<typeof findCategories>>[number];

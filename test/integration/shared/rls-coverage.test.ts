@@ -6,25 +6,27 @@ const ALL: readonly Privilege[] = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 
 /** Bảng có `company_id` mà cố ý không bật RLS. Thêm bảng vào đây phải có lý do, người review thấy trong diff. */
 const RLS_EXCEPTIONS: Record<string, string> = {
-  'identity.refresh_tokens': 'chỉ luồng xác thực đọc, chạy bằng role chủ bảng; commerio_app không có quyền nào',
+  'core.refresh_tokens': 'chỉ luồng xác thực đọc, chạy bằng role chủ bảng; commerio_app không có quyền nào',
 };
 
 /** Quyền của commerio_app khác mặc định (SELECT, INSERT, UPDATE, DELETE). */
 const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
-  'identity.refresh_tokens': [],
-  'platform.companies': ['SELECT'],
-  'access.permissions': ['SELECT'],
-  'audit.audit_logs': ['SELECT', 'INSERT'],
-  'platform.outbox_messages': ['INSERT'],
-  'platform.processed_events': ['SELECT', 'INSERT'],
+  'core.refresh_tokens': [],
+  'core.companies': ['SELECT'],
+  'core.permissions': ['SELECT'],
+  'core.audit_logs': ['SELECT', 'INSERT'],
+  'core.outbox_messages': ['INSERT'],
+  'core.processed_events': ['SELECT', 'INSERT'],
   // Tài khoản dùng chung mọi công ty, không RLS: request trong công ty chỉ đọc và tạo (mời nhân viên), không sửa, không xoá (#62).
-  'staff.accounts': ['SELECT', 'INSERT'],
+  'core.accounts': ['SELECT', 'INSERT'],
   // Lời mời không xoá, chỉ đổi trạng thái (#7 [C], spec 6.3).
-  'staff.invitations': ['SELECT', 'INSERT', 'UPDATE'],
+  'core.invitations': ['SELECT', 'INSERT', 'UPDATE'],
   // Thẻ kho chỉ thêm, sai thì lập phiếu ngược (Documents/21 K10).
-  'inventory.stock_moves': ['SELECT', 'INSERT'],
-  // Lịch sử chuyển trạng thái đơn chỉ thêm.
-  'fulfillment.order_status_history': ['SELECT', 'INSERT'],
+  'product.stock_moves': ['SELECT', 'INSERT'],
+  // Lịch sử chuyển trạng thái của mọi thực thể chỉ thêm (N4).
+  'core.state_transitions': ['SELECT', 'INSERT'],
+  // Sổ tiền chỉ thêm, sai thì ghi dòng điều chỉnh (T1).
+  'finance.ledger_entries': ['SELECT', 'INSERT'],
 };
 
 interface TableInfo {

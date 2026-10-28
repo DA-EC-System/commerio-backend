@@ -1,7 +1,7 @@
 import { bigint, index, jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 // Mọi bảng của module `audit` khai báo trong schema này.
-export const auditSchema = pgSchema('audit');
+export const auditSchema = pgSchema('core');
 
 export const auditAction = auditSchema.enum('audit_action', ['create', 'update', 'delete']);
 

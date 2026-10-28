@@ -49,7 +49,7 @@ export async function findAccountByGoogleSub(sub: string): Promise<AccountRow | 
 /**
  * Liên kết Google lần đầu: chỉ ghi khi tài khoản chưa gắn `sub` nào, `true` khi ghi được. Hai request liên kết
  * cùng lúc thì request sau chờ khoá dòng rồi không trúng dòng. Chạy ngoài `withCompany` (migration 0017:
- * `commerio_app` không được UPDATE `staff.accounts`). `sub` đã gắn tài khoản khác thì ném 23505
+ * `commerio_app` không được UPDATE `core.accounts`). `sub` đã gắn tài khoản khác thì ném 23505
  * `accounts_google_sub_unique`.
  */
 export async function linkGoogleSub(accountId: string, sub: string): Promise<boolean> {

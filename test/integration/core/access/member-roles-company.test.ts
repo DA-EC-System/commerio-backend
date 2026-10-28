@@ -20,7 +20,7 @@ async function asOwner<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
 }
 
 const insertMemberRole = (c: pg.PoolClient, membershipId: string, roleId: string, companyId: string) =>
-  c.query('insert into access.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
+  c.query('insert into core.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
     membershipId,
     roleId,
     companyId,
@@ -60,7 +60,7 @@ describe('gán vai trò chéo công ty bị DB từ chối (#62 AC-1)', () => {
   it('đổi role_id của dòng có sẵn sang vai trò của B bị từ chối', async () => {
     const t = await twoCompanies();
     await expect(
-      asOwner((c) => c.query('update access.member_roles set role_id = $1 where membership_id = $2', [t.roleB, t.memberA])),
+      asOwner((c) => c.query('update core.member_roles set role_id = $1 where membership_id = $2', [t.roleB, t.memberA])),
     ).rejects.toMatchObject(crossCompany);
   });
 
@@ -69,26 +69,26 @@ describe('gán vai trò chéo công ty bị DB từ chối (#62 AC-1)', () => {
     const res = await asCompany(t.a, async (c) => {
       await insertMemberRole(c, t.memberA, BUILTIN_ROLES.admin.id, t.a);
       await insertMemberRole(c, t.memberA, t.roleA, t.a);
-      return c.query('select count(*)::int as n from access.member_roles where membership_id = $1', [t.memberA]);
+      return c.query('select count(*)::int as n from core.member_roles where membership_id = $1', [t.memberA]);
     });
     expect(res.rows[0].n).toBe(3);
   });
 });
 
 describe('commerio_app không sửa, không xoá được tài khoản dùng chung (#62 AC-2)', () => {
-  it('UPDATE và DELETE staff.accounts bị từ chối quyền (42501); SELECT vẫn được', async () => {
+  it('UPDATE và DELETE core.accounts bị từ chối quyền (42501); SELECT vẫn được', async () => {
     const { companyId } = await createCompany();
     const member = await addMember(companyId, 'sale');
     await expect(
-      asCompany(companyId, (c) => c.query("update staff.accounts set full_name = 'Bị sửa' where id = $1", [member.accountId])),
+      asCompany(companyId, (c) => c.query("update core.accounts set full_name = 'Bị sửa' where id = $1", [member.accountId])),
     ).rejects.toMatchObject({ code: '42501' });
     await expect(
-      asCompany(companyId, (c) => c.query('update staff.accounts set password_hash = null where id = $1', [member.accountId])),
+      asCompany(companyId, (c) => c.query('update core.accounts set password_hash = null where id = $1', [member.accountId])),
     ).rejects.toMatchObject({ code: '42501' });
     await expect(
-      asCompany(companyId, (c) => c.query('delete from staff.accounts where id = $1', [member.accountId])),
+      asCompany(companyId, (c) => c.query('delete from core.accounts where id = $1', [member.accountId])),
     ).rejects.toMatchObject({ code: '42501' });
-    const read = await asCompany(companyId, (c) => c.query('select email from staff.accounts where id = $1', [member.accountId]));
+    const read = await asCompany(companyId, (c) => c.query('select email from core.accounts where id = $1', [member.accountId]));
     expect(read.rows).toEqual([{ email: member.email }]);
   });
 });
@@ -98,14 +98,14 @@ describe('roles.kind ràng với company_id (#62 AC-4)', () => {
     const { companyId } = await createCompany();
     await expect(
       asCompany(companyId, (c) =>
-        c.query("insert into access.roles (company_id, name, kind) values ($1, 'Giả có sẵn', 'builtin')", [companyId]),
+        c.query("insert into core.roles (company_id, name, kind) values ($1, 'Giả có sẵn', 'builtin')", [companyId]),
       ),
     ).rejects.toMatchObject({ code: '23514', constraint: 'roles_kind_company_check' });
   });
 
   it('chủ bảng cũng không tạo được vai trò tuỳ biến trống công ty', async () => {
     await expect(
-      asOwner((c) => c.query("insert into access.roles (company_id, name, kind) values (null, 'Tuỳ biến mồ côi', 'custom')")),
+      asOwner((c) => c.query("insert into core.roles (company_id, name, kind) values (null, 'Tuỳ biến mồ côi', 'custom')")),
     ).rejects.toMatchObject({ code: '23514', constraint: 'roles_kind_company_check' });
   });
 });

@@ -1,4 +1,4 @@
-// Dựng dòng `report.daily_channel_summary` từ số của các module nguồn (plan #29 A1, A2, A12, AC-12). Thuần, không I/O.
+// Dựng dòng `insight.daily_channel_summary` từ số của các module nguồn (plan #29 A1, A2, A12, AC-12). Thuần, không I/O.
 import { Decimal } from 'decimal.js';
 import type { OrderSource } from '../../../order/index.ts';
 

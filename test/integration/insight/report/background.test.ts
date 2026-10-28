@@ -22,7 +22,7 @@ vi.hoisted(() => {
 
 async function outboxEnvelopes(companyId: string): Promise<EventEnvelope[]> {
   const { rows } = await testPool().query(
-    `select event_id, type, company_id, key, created_at, payload from platform.outbox_messages
+    `select event_id, type, company_id, key, created_at, payload from core.outbox_messages
       where company_id = $1 and type like 'finance.%' order by id`,
     [companyId],
   );
@@ -41,7 +41,7 @@ const consume = (e: EventEnvelope) => withCompany(e.companyId!, () => onSourceEv
 async function summary(companyId: string) {
   const { rows } = await testPool().query(
     `select to_char(day, 'YYYY-MM-DD') as day, source, revenue, cash_collected, payment_fee, platform_fee, fees_pending
-       from report.daily_channel_summary where company_id = $1 order by day, source`,
+       from insight.daily_channel_summary where company_id = $1 order by day, source`,
     [companyId],
   );
   return rows;

@@ -1,31 +1,17 @@
-// Giá chuẩn trong chi tiết sản phẩm (V22). Chiều import là pricing → catalog (plan chuẩn bị A12), nên catalog
-// không import pricing mà nhận hàm tra giá qua `ctx` do src/modules/product/index.ts dựng (K4).
-import type { Decimal } from 'decimal.js';
-import { AppError } from '../../../../shared/errors/app-error.ts';
+// Giá chuẩn trong chi tiết sản phẩm là cột `standard_price` của SKU (Documents/19 D9: bỏ module con pricing).
+import { Decimal } from 'decimal.js';
 import type { ModuleContext } from '../../../../shared/module.ts';
-
-export type StandardPriceLookup = (variantIds: readonly string[]) => Promise<Map<string, Decimal | null>>;
+import { standardPricesByVariant } from '../repository/variants.ts';
 
 /** `ctx` mà router của catalog nhận. */
-export interface CatalogContext extends ModuleContext {
-  readonly standardPrices?: StandardPriceLookup;
-}
+export type CatalogContext = ModuleContext;
 
-/**
- * Giá chuẩn của từng biến thể, đủ mọi id đầu vào (chưa có giá thì `null`). Pricing chưa làm (`ctx` không có hàm
- * tra giá, hoặc hàm báo 501 `not_implemented` tới khi #14 xong) thì mọi giá `null`, không lỗi (A12). Lỗi khác ném ra.
- */
+/** Giá chuẩn của từng biến thể, đủ mọi id đầu vào (chưa có giá thì `null`). Gọi trong `withCompany`. */
 export async function standardPricesOf(
-  ctx: CatalogContext,
+  _ctx: CatalogContext,
   variantIds: readonly string[],
 ): Promise<Map<string, Decimal | null>> {
-  let found = new Map<string, Decimal | null>();
-  if (ctx.standardPrices) {
-    try {
-      found = await ctx.standardPrices(variantIds);
-    } catch (err) {
-      if (!(err instanceof AppError && err.code === 'not_implemented')) throw err;
-    }
-  }
+  const rows = variantIds.length ? await standardPricesByVariant(variantIds) : [];
+  const found = new Map(rows.map((r) => [r.id, r.standardPrice === null ? null : new Decimal(r.standardPrice)]));
   return new Map(variantIds.map((id) => [id, found.get(id) ?? null]));
 }

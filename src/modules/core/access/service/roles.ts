@@ -41,7 +41,7 @@ export interface RoleView {
 }
 
 const BUILTIN_ORDER: readonly string[] = Object.values(BUILTIN_ROLES).map((r) => r.id);
-const ENTITY = 'access.roles';
+const ENTITY = 'core.roles';
 
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy vai trò');
 const builtinRole = () => new AppError(403, 'builtin_role', 'Vai trò có sẵn không sửa hay xoá được');

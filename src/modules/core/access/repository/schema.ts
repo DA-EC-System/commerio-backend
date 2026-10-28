@@ -3,7 +3,7 @@ import { check, index, pgSchema, primaryKey, text, unique, uuid } from 'drizzle-
 import { timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `access` khai báo trong schema này.
-export const accessSchema = pgSchema('access');
+export const accessSchema = pgSchema('core');
 
 export const roleKind = accessSchema.enum('role_kind', ['builtin', 'custom']);
 
@@ -50,7 +50,7 @@ export const rolePermissions = accessSchema.table(
 );
 
 /**
- * Vai trò của một membership (staff.memberships, không đặt khoá ngoại chéo module).
+ * Vai trò của một membership (core.memberships, không đặt khoá ngoại chéo module).
  * Có `company_id` để RLS lọc thẳng, không phải tra sang staff. Trigger `member_roles_company_fk` (migration 0017,
  * viết tay) bắt vai trò trống công ty hoặc cùng công ty, và membership cùng công ty (#62).
  */

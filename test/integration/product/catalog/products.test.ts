@@ -51,7 +51,7 @@ describe('POST /catalog/products', () => {
     expect(await auditOf(res.body.id)).toEqual([
       {
         action: 'create',
-        entity_type: 'catalog.products',
+        entity_type: 'product.products',
         before: null,
         after: { name, category: category.name, description: 'Mô tả', images: 0, variants: ['AO-0012-DEN-XL', 'AO-0013-TRANG-XL'] },
       },

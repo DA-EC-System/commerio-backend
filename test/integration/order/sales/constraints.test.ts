@@ -8,7 +8,7 @@ const insertOrder = (
   fields: { source: string; paymentMethod?: string | null; shopId?: string | null; externalOrderId?: string | null },
 ) =>
   testPool().query(
-    `insert into sales.orders (company_id, code, source, payment_method, shop_id, external_order_id, subtotal, total)
+    `insert into "order".orders (company_id, code, source, payment_method, shop_id, external_order_id, subtotal, total)
      values ($1, $2, $3, $4, $5, $6, 100000, 100000)`,
     [
       companyId,
@@ -54,20 +54,20 @@ describe('ràng buộc bảng sales (AC-9)', () => {
     );
   });
 
-  it('đơn mới mặc định chờ xác nhận', async () => {
+  it('đơn mới mặc định chờ thanh toán (unpaid)', async () => {
     const company = randomUUID();
     await insertOrder(company, { source: 'manual', paymentMethod: 'prepaid' });
-    const res = await testPool().query('select status, shipping_fee from sales.orders where company_id = $1', [company]);
-    expect(res.rows).toEqual([{ status: 'pending_confirmation', shipping_fee: '0.00' }]);
+    const res = await testPool().query('select status, shipping_fee from "order".orders where company_id = $1', [company]);
+    expect(res.rows).toEqual([{ status: 'unpaid', shipping_fee: '0.00' }]);
   });
 
   it('bộ đếm mã đơn chỉ thấy của công ty mình', async () => {
     const company = randomUUID();
-    await testPool().query("insert into sales.doc_counters (company_id, doc_type) values ($1, 'order')", [company]);
-    const own = await asCompany(company, (c) => c.query('select next_number from sales.doc_counters'));
+    await testPool().query("insert into \"order\".doc_counters (company_id, doc_type) values ($1, 'order')", [company]);
+    const own = await asCompany(company, (c) => c.query('select next_number from "order".doc_counters'));
     expect(own.rows).toEqual([{ next_number: 1 }]);
     const other = await asCompany(randomUUID(), (c) =>
-      c.query('select 1 from sales.doc_counters where company_id = $1', [company]),
+      c.query('select 1 from "order".doc_counters where company_id = $1', [company]),
     );
     expect(other.rowCount).toBe(0);
   });

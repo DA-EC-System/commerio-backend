@@ -4,7 +4,7 @@ import { testPool } from '../../helpers/db.ts';
 
 const insertChannel = (companyId: string, kind: string, externalAccountId: string) =>
   testPool().query<{ id: string }>(
-    `insert into inbox.message_channels (company_id, kind, external_account_id, display_name)
+    `insert into channel.message_channels (company_id, kind, external_account_id, display_name)
      values ($1, $2, $3, 'Kênh thử') returning id`,
     [companyId, kind, externalAccountId],
   );
@@ -25,12 +25,12 @@ describe('ràng buộc bảng inbox (AC-9)', () => {
     const company = randomUUID();
     const channel = (await insertChannel(company, 'email', randomUUID())).rows[0]!.id;
     const conversation = await testPool().query<{ id: string }>(
-      'insert into inbox.conversations (company_id, message_channel_id) values ($1, $2) returning id',
+      'insert into channel.conversations (company_id, message_channel_id) values ($1, $2) returning id',
       [company, channel],
     );
     const insertMessage = (externalId: string) =>
       testPool().query(
-        `insert into inbox.messages (company_id, conversation_id, external_message_id, direction, type, content)
+        `insert into channel.messages (company_id, conversation_id, external_message_id, direction, type, content)
          values ($1, $2, $3, 'inbound', 'text', '{"text":"Chào shop"}')`,
         [company, conversation.rows[0]!.id, externalId],
       );

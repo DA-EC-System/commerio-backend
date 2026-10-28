@@ -12,7 +12,7 @@ import {
 import { timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `assistant` khai báo trong schema này.
-export const assistantSchema = pgSchema('assistant');
+export const assistantSchema = pgSchema('insight');
 
 export const docProcessing = assistantSchema.enum('doc_processing', ['processing', 'ready', 'failed']);
 

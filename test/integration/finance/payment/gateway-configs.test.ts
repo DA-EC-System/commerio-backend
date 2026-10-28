@@ -26,7 +26,7 @@ const VIETQR = { bankBin: '970422', accountNo: '0123456789', accountName: 'CONG 
 
 async function configRow(companyId: string, gateway: string) {
   const r = await testPool().query(
-    'select id, credentials_enc, is_configured, webhook_receiver_key, version, updated_by from payment.gateway_configs where company_id = $1 and gateway = $2',
+    'select id, credentials_enc, is_configured, webhook_receiver_key, version, updated_by from finance.gateway_configs where company_id = $1 and gateway = $2',
     [companyId, gateway],
   );
   return r.rows[0] as
@@ -37,7 +37,7 @@ async function configRow(companyId: string, gateway: string) {
 const auditOf = async (entityId: string) =>
   (
     await testPool().query(
-      "select action, actor_id, before, after from audit.audit_logs where entity_type = 'payment.gateway_configs' and entity_id = $1 order by id",
+      "select action, actor_id, before, after from core.audit_logs where entity_type = 'finance.gateway_configs' and entity_id = $1 order by id",
       [entityId],
     )
   ).rows;

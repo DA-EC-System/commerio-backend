@@ -27,17 +27,17 @@ describe('luật cấp quyền cho vai trò tuỳ biến', () => {
   });
 
   it('disabledCodes: các mã thuộc phân hệ không bật', () => {
-    expect(disabledCodes(['purchasing.order.manage', 'catalog.product.view'], ['catalog'])).toEqual([
-      'purchasing.order.manage',
+    expect(disabledCodes(['purchasing.request.manage', 'catalog.product.view'], ['catalog'])).toEqual([
+      'purchasing.request.manage',
     ]);
   });
 
   it('PUT giữ quyền của phân hệ đang tắt mà vai trò đang có, bỏ trùng, sắp xếp (D2)', () => {
     const merged = mergeKeptPermissions(
       ['catalog.product.view', 'catalog.product.view'],
-      ['purchasing.order.manage', 'catalog.product.manage'],
+      ['purchasing.request.manage', 'catalog.product.manage'],
       ['catalog'],
     );
-    expect(merged).toEqual(['catalog.product.view', 'purchasing.order.manage']);
+    expect(merged).toEqual(['catalog.product.view', 'purchasing.request.manage']);
   });
 });

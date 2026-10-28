@@ -100,7 +100,7 @@ describe('nhận bảng kê: hoàn tiền (AC-5)', () => {
 
     const [line] = await linesOf(companyId);
     expect(line).toMatchObject({ match_status: 'refund_tagged', discrepancy_reason: null, order_id: o.orderId });
-    const { rowCount } = await testPool().query('select 1 from payment.order_payments where order_id = $1', [
+    const { rowCount } = await testPool().query('select 1 from finance.order_payments where order_id = $1', [
       o.orderId,
     ]);
     expect(rowCount).toBe(0);
@@ -160,7 +160,7 @@ describe('nhận lại, khớp lại (AC-7, AC-7b)', () => {
     });
 
     const o = await marketplaceOrder(companyId, shopId, 100000);
-    await testPool().query('update sales.orders set external_order_id = $2 where id = $1', [o.orderId, code]);
+    await testPool().query('update "order".orders set external_order_id = $2 where id = $1', [o.orderId, code]);
     await ingest(companyId, shopId, statement(), []);
 
     const line = (await linesOf(companyId)).find((l) => l.tx === late.id)!;

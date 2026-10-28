@@ -97,7 +97,7 @@ const sepayTx = (content: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const receiverKeyOf = async (companyId: string) =>
-  (await testPool().query("select webhook_receiver_key k from payment.gateway_configs where company_id = $1 and gateway = 'vietqr'", [companyId]))
+  (await testPool().query("select webhook_receiver_key k from finance.gateway_configs where company_id = $1 and gateway = 'vietqr'", [companyId]))
     .rows[0].k as string;
 const sepay = (key: string, body: unknown, apiKey: string = CREDENTIALS.vietqr.sepayApiKey) =>
   request(testApp()).post(`${V1}/sepay/${key}`).set('Authorization', `Apikey ${apiKey}`).send(body as object);
@@ -141,7 +141,7 @@ describe('GET /payment/webhooks/vnpay (IPN)', () => {
     });
 
     const unconfigured = await linkedOrder('vnpay');
-    await testPool().query("delete from payment.gateway_configs where company_id = $1 and gateway = 'vnpay'", [unconfigured.companyId]); // dựng tay
+    await testPool().query("delete from finance.gateway_configs where company_id = $1 and gateway = 'vnpay'", [unconfigured.companyId]); // dựng tay
     expect(
       (await request(testApp()).get(`${V1}/vnpay`).query(vnpayQuery(unconfigured.link.paymentCode))).body,
     ).toMatchObject({ RspCode: '01' });
@@ -184,7 +184,7 @@ describe('POST /payment/webhooks/momo (IPN)', () => {
     expect((await moneyRows(l.companyId)).receipts).toHaveLength(1);
     // Payload lưu lại không có chữ ký (AC-40, A18).
     const stored = await testPool().query(
-      'select t.raw_payload, e.payload from payment.payment_transactions t join payment.webhook_events e on e.event_key = t.gateway_txn_id where t.company_id = $1',
+      'select t.raw_payload, e.payload from finance.payment_transactions t join finance.webhook_events e on e.event_key = t.gateway_txn_id where t.company_id = $1',
       [l.companyId],
     );
     expect(stored.rows[0].raw_payload).not.toHaveProperty('signature');
@@ -249,7 +249,7 @@ describe('POST /payment/webhooks/sepay/:receiverKey', () => {
     try {
       // Giữ khoá dòng order_payments để cả hai webhook cùng đọc `unpaid` rồi cùng chờ ở `markPaid`.
       await holder.query('begin');
-      const locked = await holder.query('select status from payment.order_payments where order_id = $1 for update', [l.orderId]);
+      const locked = await holder.query('select status from finance.order_payments where order_id = $1 for update', [l.orderId]);
       expect(locked.rows).toEqual([{ status: 'unpaid' }]);
       const holderPid = (await holder.query('select pg_backend_pid() as pid')).rows[0].pid;
       const pending = [1, 2].map((n) => sepay(key, sepayTx(`CK lan ${n} ${l.link.paymentCode}`)).then((r) => r));
@@ -285,7 +285,7 @@ describe('POST /payment/webhooks/sepay/:receiverKey', () => {
     expect(r.unmatched).toEqual([
       expect.objectContaining({ reason: 'amount_mismatch', status: 'open', amount: '150000.00', transfer_content: expect.stringContaining(l.link.paymentCode) }),
     ]);
-    expect((await testPool().query('select id from payment.payment_transactions where gateway_txn_id = $1', [loser.gateway_txn_id])).rows[0].id).toBe(
+    expect((await testPool().query('select id from finance.payment_transactions where gateway_txn_id = $1', [loser.gateway_txn_id])).rows[0].id).toBe(
       r.unmatched[0]!.payment_transaction_id,
     );
     expect(r.events).toHaveLength(2);

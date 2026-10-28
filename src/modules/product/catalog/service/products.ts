@@ -41,7 +41,7 @@ export interface UpdateProductInput {
   version: number;
 }
 
-const ENTITY = 'catalog.products';
+const ENTITY = 'product.products';
 const taken = () => nameTaken('Đã có sản phẩm cùng tên');
 
 function toListItem(p: ProductRow) {

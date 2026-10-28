@@ -15,16 +15,16 @@ describe('sales.getOrderForPayment', () => {
     const order = await createOrder(companyId, { lines: [{ variantId, quantity: 2, unitPrice: 75000 }] });
     // Khách gắn với đơn là việc của #24; dựng tay bằng SQL (L004).
     const customer = await testPool().query<{ id: string }>(
-      "insert into sales.customers (company_id, name, phone, email) values ($1, 'Khách Thử', '0900000000', 'khach@test.vn') returning id",
+      "insert into \"order\".customers (company_id, name, phone, email) values ($1, 'Khách Thử', '0900000000', 'khach@test.vn') returning id",
       [companyId],
     );
-    await testPool().query('update sales.orders set customer_id = $1 where id = $2', [customer.rows[0]!.id, order.orderId]);
+    await testPool().query('update "order".orders set customer_id = $1 where id = $2', [customer.rows[0]!.id, order.orderId]);
 
     const found = await withCompany(companyId, () => getOrderForPayment(order.orderId));
     expect(found).toMatchObject({
       id: order.orderId,
       code: order.code,
-      status: 'pending_confirmation',
+      status: 'unpaid',
       source: 'manual',
       paymentMethod: 'prepaid',
       customer: { id: customer.rows[0]!.id, name: 'Khách Thử', phone: '0900000000', email: 'khach@test.vn' },
@@ -57,7 +57,7 @@ describe('sales.getOrderForPayment', () => {
     const holder = await testPool().connect();
     try {
       await holder.query('begin');
-      await holder.query("update sales.orders set status = 'cancelled' where id = $1", [order.orderId]);
+      await holder.query("update \"order\".orders set status = 'cancelled' where id = $1", [order.orderId]);
       let settled = false;
       const read = withCompany(companyId, () => getOrderForPayment(order.orderId, { lock: 'share' })).finally(() => {
         settled = true;

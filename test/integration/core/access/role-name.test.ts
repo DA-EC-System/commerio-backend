@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { testPool } from '../../helpers/db.ts';
 
 const insertRole = (companyId: string | null, name: string, kind = 'custom') =>
-  testPool().query('insert into access.roles (company_id, name, kind) values ($1, $2, $3)', [companyId, name, kind]);
+  testPool().query('insert into core.roles (company_id, name, kind) values ($1, $2, $3)', [companyId, name, kind]);
 
 // Index roles_company_lower_name_uq (migration 0005, Documents/21 D3).
 describe('tên vai trò không phân biệt hoa thường (AC-9)', () => {

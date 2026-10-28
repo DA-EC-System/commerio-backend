@@ -6,9 +6,9 @@ import type { Gateway } from './gateways.ts';
 export interface OrderFacts {
   /** Trống với đơn sàn (19-D11). */
   paymentMethod: 'prepaid' | 'cod' | null;
-  /** Trạng thái duyệt đơn (`sales.orders.status`). */
+  /** Trạng thái duyệt đơn (`"order".orders.status`). */
   status: string;
-  /** Trạng thái tiền (`payment.order_payments.status`, hoặc suy từ đơn khi chưa có dòng). */
+  /** Trạng thái tiền (`finance.order_payments.status`, hoặc suy từ đơn khi chưa có dòng). */
   paymentStatus: string;
   total: Decimal;
 }

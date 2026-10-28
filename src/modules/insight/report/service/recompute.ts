@@ -1,6 +1,6 @@
 // Tính lại số liệu báo cáo từ dữ liệu gốc của các module nguồn (Documents/21 D7, D18; plan #29 A4).
 import { getDailyFinanceTotals } from '../../../finance/index.ts';
-import { getOrderCogs } from '../../../product/index.ts';
+import { getOrderCogs } from '../../../order/index.ts';
 import { getDailyPaymentFees } from '../../../finance/index.ts';
 import { getOrderChannels } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';

@@ -44,17 +44,17 @@ export async function addMember(companyId: string, role: keyof typeof ROLE_IDS |
   const db = testPool();
   const email = uniqueEmail('nv');
   const account = await db.query<{ id: string }>(
-    'insert into staff.accounts (email, full_name, password_hash) values ($1, $2, $3) returning id',
+    'insert into core.accounts (email, full_name, password_hash) values ($1, $2, $3) returning id',
     [email, 'Nhân Viên Thử', await hashPassword(PASSWORD)],
   );
   const accountId = account.rows[0]!.id;
   const membership = await db.query<{ id: string }>(
-    'insert into staff.memberships (company_id, account_id) values ($1, $2) returning id',
+    'insert into core.memberships (company_id, account_id) values ($1, $2) returning id',
     [companyId, accountId],
   );
   const membershipId = membership.rows[0]!.id;
   const roleId = role in ROLE_IDS ? ROLE_IDS[role as keyof typeof ROLE_IDS] : role;
-  await db.query('insert into access.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
+  await db.query('insert into core.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
     membershipId,
     roleId,
     companyId,
@@ -67,12 +67,12 @@ export async function addMember(companyId: string, role: keyof typeof ROLE_IDS |
 export async function createCustomRole(companyId: string, permissions: readonly string[]): Promise<string> {
   const db = testPool();
   const role = await db.query<{ id: string }>(
-    "insert into access.roles (company_id, name, kind) values ($1, $2, 'custom') returning id",
+    "insert into core.roles (company_id, name, kind) values ($1, $2, 'custom') returning id",
     [companyId, `Vai trò ${randomUUID()}`],
   );
   const roleId = role.rows[0]!.id;
   for (const code of permissions) {
-    await db.query('insert into access.role_permissions (role_id, permission_code) values ($1, $2)', [roleId, code]);
+    await db.query('insert into core.role_permissions (role_id, permission_code) values ($1, $2)', [roleId, code]);
   }
   return roleId;
 }

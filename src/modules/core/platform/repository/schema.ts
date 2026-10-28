@@ -3,7 +3,7 @@ import { bigint, boolean, index, jsonb, pgSchema, primaryKey, text, timestamp, u
 import { timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `platform` khai báo trong schema này.
-export const platformSchema = pgSchema('platform');
+export const platformSchema = pgSchema('core');
 
 export const companyStatus = platformSchema.enum('company_status', ['active', 'locked']);
 
@@ -85,4 +85,29 @@ export const processedEvents = platformSchema.table(
     processedAt: timestamp('processed_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.consumer, t.eventId] })],
+);
+
+export const transitionSource = platformSchema.enum('transition_source', ['user', 'marketplace', 'system']);
+
+/**
+ * Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ
+ * thêm. `entity_type` là tên bảng (vd `packages`), `actor_id` trống khi sàn hoặc hệ thống chuyển. Thực thể nằm ở
+ * module khác nên không có khoá ngoại.
+ */
+export const stateTransitions = platformSchema.table(
+  'state_transitions',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: uuid('entity_id').notNull(),
+    fromState: text('from_state'),
+    toState: text('to_state').notNull(),
+    action: text('action').notNull(),
+    actorId: uuid('actor_id'),
+    source: transitionSource('source').notNull(),
+    reason: text('reason'),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.entityType, t.entityId, t.at)],
 );

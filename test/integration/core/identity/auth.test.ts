@@ -10,25 +10,25 @@ const app = testApp();
 const db = testPool();
 
 const accountId = async (email: string) =>
-  (await db.query<{ id: string }>('select id from staff.accounts where email = $1', [email])).rows[0]?.id;
+  (await db.query<{ id: string }>('select id from core.accounts where email = $1', [email])).rows[0]?.id;
 
 describe('đăng ký công ty (UC-PI-01)', () => {
   it('AC-1, 2, 3: tạo công ty, CEO, phân hệ lõi cộng phân hệ đã chọn, nhật ký cấp nền tảng', async () => {
     const { email, companyId } = await registerCompany();
-    const account = await db.query('select id, password_hash, must_change_password from staff.accounts where email = $1', [email]);
+    const account = await db.query('select id, password_hash, must_change_password from core.accounts where email = $1', [email]);
     expect(account.rows[0].password_hash).toMatch(/^\$argon2id\$/);
     expect(account.rows[0].must_change_password).toBe(false);
-    const membership = await db.query('select id, status from staff.memberships where company_id = $1', [companyId]);
+    const membership = await db.query('select id, status from core.memberships where company_id = $1', [companyId]);
     expect(membership.rows).toEqual([{ id: expect.any(String), status: 'active' }]);
-    const roles = await db.query('select role_id from access.member_roles where membership_id = $1', [membership.rows[0].id]);
+    const roles = await db.query('select role_id from core.member_roles where membership_id = $1', [membership.rows[0].id]);
     expect(roles.rows).toEqual([{ role_id: BUILTIN_ROLES.ceo.id }]);
     const modules = await db.query<{ module_code: string }>(
-      'select module_code from platform.company_modules where company_id = $1 and enabled',
+      'select module_code from core.company_modules where company_id = $1 and enabled',
       [companyId],
     );
     expect(modules.rows.map((m) => m.module_code).sort()).toEqual([...CORE_MODULES, 'purchasing', 'report'].sort());
     const log = await db.query(
-      "select company_id, actor_id, action from audit.audit_logs where entity_type = 'platform.companies' and entity_id = $1",
+      "select company_id, actor_id, action from core.audit_logs where entity_type = 'core.companies' and entity_id = $1",
       [companyId],
     );
     expect(log.rows).toEqual([{ company_id: null, actor_id: account.rows[0].id, action: 'create' }]);
@@ -55,7 +55,7 @@ describe('đăng ký công ty (UC-PI-01)', () => {
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('email_taken');
     expect(res.body.errors).toHaveProperty(['ceo.email']);
-    const after = await db.query('select count(*)::int as n from platform.companies where name = $1', [name]);
+    const after = await db.query('select count(*)::int as n from core.companies where name = $1', [name]);
     expect(after.rows[0].n).toBe(0);
   });
 
@@ -71,13 +71,13 @@ describe('đăng ký công ty (UC-PI-01)', () => {
 
   it('AC-21: lỗi giữa chừng thì không còn dòng nào của lần đăng ký đó', async () => {
     await db.query(`
-      create or replace function audit.thu_loi() returns trigger language plpgsql as $$
+      create or replace function core.thu_loi() returns trigger language plpgsql as $$
       begin
         if new.after->>'name' = 'Công ty Gây Lỗi' then raise exception 'lỗi giả'; end if;
         return new;
       end $$;
-      drop trigger if exists thu_loi on audit.audit_logs;
-      create trigger thu_loi before insert on audit.audit_logs for each row execute function audit.thu_loi();`);
+      drop trigger if exists thu_loi on core.audit_logs;
+      create trigger thu_loi before insert on core.audit_logs for each row execute function core.thu_loi();`);
     try {
       const email = uniqueEmail();
       const res = await request(app)
@@ -85,10 +85,10 @@ describe('đăng ký công ty (UC-PI-01)', () => {
         .send(registerBody(email, { company: { name: 'Công ty Gây Lỗi', taxCode: '0312345678' } }));
       expect(res.status).toBe(500);
       expect(await accountId(email)).toBeUndefined();
-      const companies = await db.query("select 1 from platform.companies where name = 'Công ty Gây Lỗi'");
+      const companies = await db.query("select 1 from core.companies where name = 'Công ty Gây Lỗi'");
       expect(companies.rowCount).toBe(0);
     } finally {
-      await db.query('drop trigger if exists thu_loi on audit.audit_logs; drop function if exists audit.thu_loi();');
+      await db.query('drop trigger if exists thu_loi on core.audit_logs; drop function if exists core.thu_loi();');
     }
   });
 });
@@ -110,7 +110,7 @@ describe('đăng nhập (UC-PI-03)', () => {
     expect(setCookie).toMatch(/Secure/);
     expect(setCookie).toMatch(/SameSite=Strict/);
     const raw = refreshCookie(res).split('=')[1]!;
-    const stored = await db.query('select 1 from identity.refresh_tokens where token_hash = $1', [raw]);
+    const stored = await db.query('select 1 from core.refresh_tokens where token_hash = $1', [raw]);
     expect(stored.rowCount).toBe(0);
     const payload = JSON.parse(Buffer.from(res.body.accessToken.split('.')[1], 'base64url').toString());
     expect(payload.exp - payload.iat).toBe(15 * 60);
@@ -149,8 +149,8 @@ describe('chọn công ty', () => {
   it('AC-10, 18: công ty khoá 403 company_locked, tài khoản khoá 403 account_locked; login vẫn 200', async () => {
     const locked = await registerCompany();
     const suspended = await registerCompany();
-    await db.query("update platform.companies set status = 'locked' where id = $1", [locked.companyId]);
-    await db.query("update staff.memberships set status = 'suspended' where company_id = $1", [suspended.companyId]);
+    await db.query("update core.companies set status = 'locked' where id = $1", [locked.companyId]);
+    await db.query("update core.memberships set status = 'suspended' where company_id = $1", [suspended.companyId]);
 
     const a = await login(locked.email);
     expect(a.body.memberships[0]).toMatchObject({ companyStatus: 'locked', status: 'active' });
@@ -223,7 +223,7 @@ describe('refresh và đăng xuất', () => {
 describe('mật khẩu thư mời và đổi mật khẩu (UC-PI-04)', () => {
   it('AC-13, 20: còn mật khẩu thư mời thì đăng nhập được, chỉ gọi được me và đổi mật khẩu', async () => {
     const { email, companyId } = await registerCompany();
-    await db.query('update staff.accounts set must_change_password = true where email = $1', [email]);
+    await db.query('update core.accounts set must_change_password = true where email = $1', [email]);
     const { token, body } = await login(email);
     expect(body.account.mustChangePassword).toBe(true);
     const select = await request(app)
@@ -239,7 +239,7 @@ describe('mật khẩu thư mời và đổi mật khẩu (UC-PI-04)', () => {
 
   it('AC-14, 20: đổi mật khẩu trả 204, bỏ cờ, ghi nhật ký cấp tài khoản; mật khẩu cũ hết dùng được', async () => {
     const { email } = await registerCompany();
-    await db.query('update staff.accounts set must_change_password = true where email = $1', [email]);
+    await db.query('update core.accounts set must_change_password = true where email = $1', [email]);
     const { token } = await login(email);
     const res = await request(app)
       .post('/api/v1/identity/change-password')
@@ -247,9 +247,9 @@ describe('mật khẩu thư mời và đổi mật khẩu (UC-PI-04)', () => {
       .send({ currentPassword: PASSWORD, newPassword: 'MatKhauMoi456' });
     expect(res.status).toBe(204);
     const id = await accountId(email);
-    const account = await db.query('select must_change_password from staff.accounts where id = $1', [id]);
+    const account = await db.query('select must_change_password from core.accounts where id = $1', [id]);
     expect(account.rows[0].must_change_password).toBe(false);
-    const log = await db.query("select company_id from audit.audit_logs where entity_type = 'staff.accounts' and entity_id = $1", [id]);
+    const log = await db.query("select company_id from core.audit_logs where entity_type = 'core.accounts' and entity_id = $1", [id]);
     expect(log.rows).toEqual([{ company_id: null }]);
     const old = await request(app).post('/api/v1/identity/login').send({ email, password: PASSWORD });
     expect(old.status).toBe(401);

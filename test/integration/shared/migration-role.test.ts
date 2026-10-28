@@ -7,7 +7,7 @@ describe('role chạy migration và test', () => {
   it('không phải superuser, có CREATEROLE, là chủ các bảng đã tạo', async () => {
     const res = await testPool().query<{ super: boolean; createrole: boolean; owner: string; me: string }>(`
       select r.rolsuper as super, r.rolcreaterole as createrole, current_user as me,
-             (select tableowner from pg_tables where schemaname = 'platform' and tablename = 'outbox_messages') as owner
+             (select tableowner from pg_tables where schemaname = 'core' and tablename = 'outbox_messages') as owner
       from pg_roles r where r.rolname = current_user`);
     const row = res.rows[0]!;
     expect(row).toMatchObject({ super: false, createrole: true });

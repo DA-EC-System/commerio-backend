@@ -2,7 +2,7 @@ import { index, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 // Mọi bảng của module `identity` khai báo trong schema này.
 // Không đặt tên `auth`: Supabase đã có sẵn schema `auth` cho hệ thống đăng nhập của nó.
-export const identitySchema = pgSchema('identity');
+export const identitySchema = pgSchema('core');
 
 /**
  * Refresh token, chỉ lưu bản băm SHA-256. Thuộc tài khoản chứ không thuộc công ty,

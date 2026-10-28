@@ -85,8 +85,8 @@ describe('mở stream: xác thực và truy cập công ty (S1)', () => {
   it('không còn thuộc công ty → 404; tài khoản khoá → 403 account_locked; công ty khoá → 403 company_locked', async () => {
     const { companyId } = await createCompany();
     const removed = await addMember(companyId, 'sale');
-    await testPool().query('delete from access.member_roles where membership_id = $1', [removed.membershipId]);
-    await testPool().query('delete from staff.memberships where id = $1', [removed.membershipId]);
+    await testPool().query('delete from core.member_roles where membership_id = $1', [removed.membershipId]);
+    await testPool().query('delete from core.memberships where id = $1', [removed.membershipId]);
     expect(await problem(await open(removed.token))).toMatchObject({ status: 404, type: '/problems/not_found' });
 
     const suspended = await addMember(companyId, 'sale');

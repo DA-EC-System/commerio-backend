@@ -16,7 +16,7 @@ const ctx = paymentContext(createModuleContext());
 afterEach(() => vi.restoreAllMocks());
 
 async function overdue(l: { link: { id: string } }, minutesAgo = 5) {
-  await testPool().query('update payment.payment_links set expires_at = $2 where id = $1', [
+  await testPool().query('update finance.payment_links set expires_at = $2 where id = $1', [
     l.link.id,
     new Date(NOW.getTime() - minutesAgo * 60_000),
   ]);

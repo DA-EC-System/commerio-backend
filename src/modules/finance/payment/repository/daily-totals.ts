@@ -6,7 +6,7 @@ import { inVnDays, vnDayOf } from '../../../../shared/db/vn-time.ts';
 export async function feesByDay(from: string, to: string) {
   const result = await getDb().execute<{ day: string; order_id: string; fee: string }>(sql`
     select ${vnDayOf(sql`occurred_at`)} as day, order_id, sum(fee)::text as fee
-      from payment.payment_transactions
+      from finance.payment_transactions
      where status = 'succeeded' and fee is not null and order_id is not null
        and ${inVnDays(sql`occurred_at`, from, to)}
      group by 1, 2 order by 1, 2`);

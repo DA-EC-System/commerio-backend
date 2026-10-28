@@ -2,11 +2,11 @@
 
 Backend của **Commerio**, hệ thống thương mại điện tử doanh nghiệp (đồ án chuyên ngành, nhóm Nguyễn Công Thành, Nguyễn Chí Duy Khang). Ba vai trò: Admin, Sale, Khách hàng.
 
-Quyết định kiến trúc nằm ở repo tài liệu của đồ án: `docs/17-modular-monolith.md` (kiến trúc, 19 module, thư viện), `docs/16-design-pattern.md` (pattern theo bài toán), `docs/19-mo-hinh-du-lieu.md` (mô hình dữ liệu). Code lệch tài liệu thì hỏi trước, đừng tự chọn bên nào đúng.
+Quyết định kiến trúc nằm ở repo tài liệu của đồ án: `Documents/17-modular-monolith.md` (kiến trúc, 6 module lớn, thư viện), `Documents/16-design-pattern.md` (pattern theo bài toán), `Documents/19-mo-hinh-du-lieu.md` (mô hình dữ liệu MVP vòng đời). Code lệch tài liệu thì hỏi trước, đừng tự chọn bên nào đúng.
 
 ## Kiến trúc
 
-Modular monolith: một mã nguồn, 6 module lớn gồm 19 module con; mỗi module con bốn lớp và một schema PostgreSQL riêng. Một Docker image chạy ba tiến trình:
+Modular monolith: một mã nguồn, 6 module lớn gồm 18 module con; mỗi module con bốn lớp; mỗi module lớn một schema PostgreSQL. Một Docker image chạy ba tiến trình:
 
 | Tiến trình | File | Việc |
 |---|---|---|
@@ -31,7 +31,7 @@ Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn địn
 ## Luật ranh giới (dependency-cruiser kiểm trong CI)
 
 1. Module lớn khác chỉ import từ `src/modules/<lớn>/index.ts`; trong cùng module lớn, module con gọi nhau qua `src/modules/<lớn>/<con>/index.ts`.
-2. Repository truy vấn schema của module con mình, được join sang schema của module con khác trong cùng module lớn. Cần dữ liệu của module lớn khác thì gọi hàm trong `index.ts` của module lớn đó, không join chéo.
+2. Repository truy vấn bảng của module con mình, được join sang bảng của module con khác trong cùng module lớn (cùng schema). Cần dữ liệu của module lớn khác thì gọi hàm trong `index.ts` của module lớn đó, không join chéo.
 3. Nghiệp vụ nhiều module trong một giao dịch: bọc bằng `inTransaction()` (`src/shared/db/client.ts`). Module được gọi tự đi chung transaction qua `AsyncLocalStorage`.
 4. `shared` không biết module nào tồn tại.
 5. Module lớn chỉ gọi module lớn cùng lớp hoặc lớp thấp hơn (bảng lớp ở `src/modules/CLAUDE.md`). Cần hàm của module lớn lớp trên thì nhận qua `ModuleContext` do `src/wiring.ts` dựng; hai module con cùng module lớn mà import nhau sẽ thành vòng thì `index.ts` của module lớn tiêm bằng `withContext` (`src/shared/module.ts`).

@@ -14,8 +14,8 @@ describe('helper test dùng chung', () => {
 
     const seen = await asCompany(companyId, (c) =>
       c.query(
-        `select v.sku, p.id as product_id, c.name as category from catalog.product_variants v
-         join catalog.products p on p.id = v.product_id join catalog.categories c on c.id = p.category_id
+        `select v.sku, p.id as product_id, c.name as category from product.product_variants v
+         join product.products p on p.id = v.product_id join product.categories c on c.id = p.category_id
          where v.id = $1`,
         [v.variantId],
       ),
@@ -24,7 +24,7 @@ describe('helper test dùng chung', () => {
 
     const other = await createCompany();
     const hidden = await asCompany(other.companyId, (c) =>
-      c.query('select 1 from catalog.product_variants where id = $1', [v.variantId]),
+      c.query('select 1 from product.product_variants where id = $1', [v.variantId]),
     );
     expect(hidden.rowCount).toBe(0);
   });
@@ -49,7 +49,7 @@ describe('helper test dùng chung', () => {
     const seen = await asCompany(companyId, (c) =>
       c.query(
         `select o.code, o.source, o.payment_method, o.status, o.total, l.sku, l.quantity, l.line_total
-         from sales.orders o join sales.order_lines l on l.order_id = o.id where o.id = $1`,
+         from "order".orders o join "order".order_lines l on l.order_id = o.id where o.id = $1`,
         [order.orderId],
       ),
     );
@@ -58,7 +58,7 @@ describe('helper test dùng chung', () => {
         code: order.code,
         source: 'manual',
         payment_method: 'cod',
-        status: 'pending_confirmation',
+        status: 'unpaid',
         total: '300000.00',
         sku: 'QUAN-0001',
         quantity: 2,
@@ -67,7 +67,7 @@ describe('helper test dùng chung', () => {
     ]);
 
     const hidden = await asCompany(randomUUID(), (c) =>
-      c.query('select 1 from sales.orders where id = $1', [order.orderId]),
+      c.query('select 1 from "order".orders where id = $1', [order.orderId]),
     );
     expect(hidden.rowCount).toBe(0);
   });
@@ -80,7 +80,7 @@ describe('helper test dùng chung', () => {
       lines: [{ variantId: v.variantId, quantity: 1, unitPrice: 99000 }],
     });
     const res = await asCompany(companyId, (c) =>
-      c.query('select payment_method, shop_id is not null as has_shop from sales.orders where id = $1', [order.orderId]),
+      c.query('select payment_method, shop_id is not null as has_shop from "order".orders where id = $1', [order.orderId]),
     );
     expect(res.rows).toEqual([{ payment_method: null, has_shop: true }]);
   });

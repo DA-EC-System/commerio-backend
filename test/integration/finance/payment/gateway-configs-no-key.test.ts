@@ -28,7 +28,7 @@ describe('cấu hình cổng khi thiếu PAYMENT_CREDENTIALS_KEY', () => {
       .send({ credentials: { partnerCode: 'MOMO', accessKey: 'ACCESSKEY-0001', secretKey: 'SECRETKEY-ABCDEF-9999' }, version: 0 });
     expect(save.status).toBe(500);
     expect(save.body.type).toBe('/problems/payment_credentials_key_missing');
-    const rows = await testPool().query('select count(*)::int n from payment.gateway_configs where company_id = $1', [companyId]);
+    const rows = await testPool().query('select count(*)::int n from finance.gateway_configs where company_id = $1', [companyId]);
     expect(rows.rows[0].n).toBe(0);
   });
 
@@ -39,14 +39,14 @@ describe('cấu hình cổng khi thiếu PAYMENT_CREDENTIALS_KEY', () => {
     // Dựng tay như dữ liệu một máy khác (có khoá chủ) đã ghi: máy này không đặt khoá nên không lưu qua API được.
     const credentials = { bankBin: '970422', accountNo: '0123456789', accountName: 'CONG TY THU', sepayApiKey: 'SEPAY-KEY-55667788' };
     await testPool().query(
-      `insert into payment.gateway_configs (company_id, gateway, credentials_enc, is_configured, webhook_receiver_key)
+      `insert into finance.gateway_configs (company_id, gateway, credentials_enc, is_configured, webhook_receiver_key)
        values ($1, 'vietqr', $2, true, $3)`,
       [companyId, encryptCredentials(credentials, `${companyId}:vietqr`, randomBytes(32)), randomBytes(24).toString('base64url')],
     );
     const paymentCode = newPaymentCode();
     const qr = buildVietQr({ bankBin: '970422', accountNo: '0123456789', amount: new Decimal(150000), content: paymentCode });
     await testPool().query(
-      `insert into payment.payment_links (company_id, order_id, gateway, payment_code, amount, qr_content, expires_at)
+      `insert into finance.payment_links (company_id, order_id, gateway, payment_code, amount, qr_content, expires_at)
        values ($1, $2, 'vietqr', $3, 150000, $4, now() + interval '15 minutes')`,
       [companyId, o.orderId, paymentCode, qr],
     );

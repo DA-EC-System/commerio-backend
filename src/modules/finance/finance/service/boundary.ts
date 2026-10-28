@@ -37,11 +37,13 @@ export async function issueInvoiceForOrder(
   const lines = await getOrderLines(orderId);
   // T17: dòng hoá đơn = dòng đơn; đơn rỗng mà vẫn lập thì ghi doanh thu không có hàng (#63 B16).
   if (lines.length === 0) throw new AppError(409, 'order_has_no_lines', 'Đơn không có dòng hàng, không lập được hoá đơn');
+  const unmapped = lines.some((l) => l.variantId === null);
+  if (unmapped) throw new AppError(409, 'unmapped_sku', 'Đơn còn dòng chưa ghép SKU, không lập được hoá đơn');
   const invoice = await insertInvoice(
     { companyId, number: await nextDocNumber('invoice'), orderId, total: order.total.toFixed(2) },
     lines.map((l) => ({
       orderLineId: l.id,
-      variantId: l.variantId,
+      variantId: l.variantId!,
       quantity: l.quantity,
       unitPrice: l.unitPrice.toFixed(2),
     })),

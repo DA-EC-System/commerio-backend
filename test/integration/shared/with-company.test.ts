@@ -17,10 +17,10 @@ beforeAll(async () => {
   // Role đăng nhập là chủ bảng nên bỏ qua RLS: dựng một membership cho mỗi công ty.
   for (const company of [companyA, companyB]) {
     const account = await pool.query<{ id: string }>(
-      'insert into staff.accounts (email, full_name) values ($1, $2) returning id',
+      'insert into core.accounts (email, full_name) values ($1, $2) returning id',
       [`${company}@test.vn`, 'Người thử'],
     );
-    await pool.query('insert into staff.memberships (company_id, account_id) values ($1, $2)', [
+    await pool.query('insert into core.memberships (company_id, account_id) values ($1, $2)', [
       company,
       account.rows[0]!.id,
     ]);
@@ -34,7 +34,7 @@ describe('withCompany (AC-6)', () => {
         sql`select current_user as role, current_setting('app.company_id', true) as company`,
       );
       expect(who).toEqual({ role: 'commerio_app', company: companyA });
-      const members = await rows<{ company_id: string }>(sql`select company_id from staff.memberships`);
+      const members = await rows<{ company_id: string }>(sql`select company_id from core.memberships`);
       expect(members.map((m) => m.company_id)).toEqual([companyA]);
       expect(currentCompanyId()).toBe(companyA);
     });
@@ -74,12 +74,12 @@ describe('withCompany (AC-6)', () => {
   it('lỗi giữa chừng thì rollback cả giao dịch', async () => {
     await expect(
       withCompany(companyA, async () => {
-        await getDb().execute(sql`insert into audit.audit_logs (company_id, action, entity_type, entity_id)
+        await getDb().execute(sql`insert into core.audit_logs (company_id, action, entity_type, entity_id)
           values (${companyA}, 'create', 'test.rollback', ${randomUUID()})`);
         throw new Error('lỗi giả');
       }),
     ).rejects.toThrow('lỗi giả');
-    const left = await pool.query("select 1 from audit.audit_logs where entity_type = 'test.rollback'");
+    const left = await pool.query("select 1 from core.audit_logs where entity_type = 'test.rollback'");
     expect(left.rowCount).toBe(0);
   });
 

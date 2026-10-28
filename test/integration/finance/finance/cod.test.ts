@@ -20,7 +20,7 @@ const receiptsOf = async (companyId: string) =>
     .rows;
 const auditCount = async (companyId: string) =>
   Number(
-    (await testPool().query("select count(*) from audit.audit_logs where company_id = $1 and entity_type = 'finance.receipts'", [companyId]))
+    (await testPool().query("select count(*) from core.audit_logs where company_id = $1 and entity_type = 'finance.receipts'", [companyId]))
       .rows[0].count,
   );
 

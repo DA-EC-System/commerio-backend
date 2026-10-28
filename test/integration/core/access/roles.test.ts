@@ -21,12 +21,12 @@ function call(method: Method, path: string, token?: string, body?: object) {
 }
 
 const roleCount = async (companyId: string) =>
-  Number((await testPool().query('select count(*) from access.roles where company_id = $1', [companyId])).rows[0].count);
+  Number((await testPool().query('select count(*) from core.roles where company_id = $1', [companyId])).rows[0].count);
 
 async function roleRow(id: string) {
-  const role = await testPool().query('select name, company_id, version from access.roles where id = $1', [id]);
+  const role = await testPool().query('select name, company_id, version from core.roles where id = $1', [id]);
   const perms = await testPool().query<{ permission_code: string }>(
-    'select permission_code from access.role_permissions where role_id = $1 order by 1',
+    'select permission_code from core.role_permissions where role_id = $1 order by 1',
     [id],
   );
   return role.rows[0] ? { ...role.rows[0], permissions: perms.rows.map((p) => p.permission_code) } : undefined;
@@ -35,7 +35,7 @@ async function roleRow(id: string) {
 const auditOf = async (entityId: string) =>
   (
     await testPool().query(
-      "select action, company_id, actor_id, before, after from audit.audit_logs where entity_type = 'access.roles' and entity_id = $1 order by id",
+      "select action, company_id, actor_id, before, after from core.audit_logs where entity_type = 'core.roles' and entity_id = $1 order by id",
       [entityId],
     )
   ).rows;
@@ -109,14 +109,14 @@ describe('GET /identity/permissions (AC-8)', () => {
   it('bật purchasing thì có quyền purchasing.*; Sale (thiếu identity.role.view) bị 403', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
     const codes = ((await call('get', '/permissions', ceo.token)).body as { code: string }[]).map((p) => p.code);
-    expect(codes).toContain('purchasing.order.approve');
+    expect(codes).toContain('purchasing.request.approve');
     const sale = await addMember(companyId, 'sale');
     expect((await call('get', '/permissions', sale.token)).body.code).toBe('forbidden');
   });
 });
 
 describe('GET /identity/roles (AC-6, 9, S-5)', () => {
-  it('AC-9: có sẵn trước theo CEO, Admin, Sale, Nhân viên kho, rồi tuỳ biến theo tên; đủ trường', async () => {
+  it('AC-9: có sẵn trước theo CEO, Admin, Sale, Nhân viên kho, Mua hàng, rồi tuỳ biến theo tên; đủ trường', async () => {
     const a = await companyWithAdmin();
     await createRole(a.admin.token, 'Thủ quỹ', ['catalog.product.view']);
     await createRole(a.admin.token, 'Bán hàng online', ['sales.order.view']);
@@ -127,6 +127,7 @@ describe('GET /identity/roles (AC-6, 9, S-5)', () => {
       'Admin',
       'Sale',
       'Nhân viên kho',
+      'Mua hàng',
       'Bán hàng online',
       'Thủ quỹ',
     ]);
@@ -228,7 +229,7 @@ describe('POST /identity/roles', () => {
 
   it('AC-D2a: mã quyền của phân hệ đang tắt → 422 errors.permissions', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: [] });
-    const res = await call('post', '/roles', ceo.token, { name: 'Mua hàng', permissions: ['purchasing.order.manage'] });
+    const res = await call('post', '/roles', ceo.token, { name: 'Mua hàng tạm', permissions: ['purchasing.request.manage'] });
     expect(res.status).toBe(422);
     expect(res.body.errors).toHaveProperty('permissions');
     expect(await roleCount(companyId)).toBe(0);
@@ -393,11 +394,11 @@ describe('PUT /identity/roles/:id', () => {
 
   it('AC-D2a, AC-D2b: PUT gửi quyền phân hệ tắt → 422; PUT giữ quyền phân hệ tắt mà vai trò đang có', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
-    const role = await createRole(ceo.token, 'Mua hàng', ['purchasing.order.manage', 'catalog.product.view']);
+    const role = await createRole(ceo.token, 'Mua hàng tạm', ['purchasing.request.manage', 'catalog.product.view']);
     await setModuleEnabled(companyId, 'purchasing', false);
     const bad = await call('put', `/roles/${role.id}`, ceo.token, {
-      name: 'Mua hàng',
-      permissions: ['purchasing.order.approve'],
+      name: 'Mua hàng tạm',
+      permissions: ['purchasing.request.approve'],
       version: 1,
     });
     expect(bad.status).toBe(422);
@@ -408,14 +409,14 @@ describe('PUT /identity/roles/:id', () => {
       version: 1,
     });
     expect(res.status).toBe(200);
-    expect((await roleRow(role.id))?.permissions).toEqual(['catalog.product.view', 'purchasing.order.manage']);
+    expect((await roleRow(role.id))?.permissions).toEqual(['catalog.product.view', 'purchasing.request.manage']);
   });
 
   it('AC-D2b: Admin sửa vai trò đang giữ quyền phân hệ tắt mà Admin không mang → 403 permission_not_held, không đổi', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
     const admin = await addMember(companyId, 'admin');
-    expect(ADMIN_PERMS).not.toContain('purchasing.order.manage');
-    const role = await createRole(ceo.token, 'Mua hàng', ['purchasing.order.manage', 'catalog.product.view']);
+    expect(ADMIN_PERMS).not.toContain('purchasing.request.manage');
+    const role = await createRole(ceo.token, 'Mua hàng tạm', ['purchasing.request.manage', 'catalog.product.view']);
     await setModuleEnabled(companyId, 'purchasing', false);
     const before = await roleRow(role.id);
     const res = await call('put', `/roles/${role.id}`, admin.token, {
@@ -443,7 +444,7 @@ describe('PUT /identity/roles/:id', () => {
 // Người khác đang ghi (chưa commit) nên bước kiểm trước khi ghi không thấy; ràng buộc DB chặn, service đổi thành 409.
 describe('chạy đua ghi vai trò (#8 plan 7b: 23505, 23503)', () => {
   const insertRole = (companyId: string, name: string) => (holder: PoolClient) =>
-    holder.query("insert into access.roles (company_id, name, kind) values ($1, $2, 'custom')", [companyId, name]);
+    holder.query("insert into core.roles (company_id, name, kind) values ($1, $2, 'custom')", [companyId, name]);
 
   it('tạo vai trò cùng tên với vai trò đang được ghi → 409 role_name_taken, chỉ một vai trò', async () => {
     const a = await companyWithAdmin();
@@ -474,7 +475,7 @@ describe('chạy đua ghi vai trò (#8 plan 7b: 23505, 23503)', () => {
     const member = await addMember(a.companyId, 'sale');
     const before = await roleRow(role.id);
     const assign = (holder: PoolClient) =>
-      holder.query('insert into access.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
+      holder.query('insert into core.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
         member.membershipId,
         role.id,
         a.companyId,
@@ -506,7 +507,7 @@ describe('DELETE /identity/roles/:id', () => {
     expect(inUse.body.code).toBe('role_in_use');
     expect(await roleRow(role.id)).toBeDefined();
 
-    await testPool().query('delete from access.member_roles where membership_id = $1', [member.membershipId]);
+    await testPool().query('delete from core.member_roles where membership_id = $1', [member.membershipId]);
     const res = await call('delete', `/roles/${role.id}?version=1`, a.admin.token);
     expect(res.status).toBe(204);
     expect(await roleRow(role.id)).toBeUndefined();

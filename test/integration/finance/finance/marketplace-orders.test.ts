@@ -15,7 +15,7 @@ async function marketplaceOrder(companyId: string, unitPrice = 120000) {
     lines: [{ variantId: v.variantId, quantity: 1, unitPrice }],
   });
   const { rows } = await testPool().query<{ shop_id: string; external_order_id: string }>(
-    'select shop_id, external_order_id from sales.orders where id = $1',
+    'select shop_id, external_order_id from "order".orders where id = $1',
     [order.orderId],
   );
   return { ...order, shopId: rows[0]!.shop_id, externalOrderId: rows[0]!.external_order_id };

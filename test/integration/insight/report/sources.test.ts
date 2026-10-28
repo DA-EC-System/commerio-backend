@@ -16,7 +16,7 @@ import {
 } from './helpers.ts';
 import { getShops } from '#src/modules/channel/channel/index.ts';
 import { getDailyFinanceTotals } from '#src/modules/finance/finance/index.ts';
-import { getOrderCogs } from '#src/modules/product/inventory/index.ts';
+import { getOrderCogs } from '#src/modules/order/index.ts';
 import { getDailyPaymentFees } from '#src/modules/finance/payment/index.ts';
 import { getOrderChannels } from '#src/modules/order/sales/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -103,8 +103,8 @@ describe('finance.getDailyFinanceTotals', () => {
   });
 });
 
-describe('inventory.getOrderCogs', () => {
-  it('giá vốn = Σ số lượng × giá vốn lúc xuất của phiếu xuất đã ghi sổ; đơn chưa xuất vắng mặt', async () => {
+describe('order.getOrderCogs', () => {
+  it('giá vốn = Σ số lượng × giá vốn chốt lúc bàn giao của dòng kiện đã trừ tồn; đơn chưa bàn giao vắng mặt', async () => {
     const { companyId } = await registerCompany();
     const issued = await issuedOrder(companyId, { unitCost: '33333.33', unitPrice: 50000, quantity: 3 });
     const notIssued = await manualOrder(companyId);

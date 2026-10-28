@@ -32,7 +32,7 @@ export const orderRefWithPhone = (orders: Orders, id: string) => {
 type UserRef = { id: string; name: string };
 
 /**
- * `UserRef` (§12.8); `staff.accounts` không có RLS nên đọc được trong `withCompany`. `cache` dùng chung trong một lượt
+ * `UserRef` (§12.8); `core.accounts` không có RLS nên đọc được trong `withCompany`. `cache` dùng chung trong một lượt
  * danh sách: mỗi người đọc một lần.
  */
 export function userRef(id: string | null, cache = new Map<string, Promise<UserRef | null>>()): Promise<UserRef | null> {

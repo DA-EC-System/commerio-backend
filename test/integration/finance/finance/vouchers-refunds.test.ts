@@ -20,7 +20,7 @@ const draftBody = (orderId: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const events = async (companyId: string) =>
-  (await testPool().query("select payload from platform.outbox_messages where company_id = $1 and type = 'finance.voucher_posted'", [companyId]))
+  (await testPool().query("select payload from core.outbox_messages where company_id = $1 and type = 'finance.voucher_posted'", [companyId]))
     .rows;
 
 describe('POST /finance/payment-vouchers (AC-28)', () => {

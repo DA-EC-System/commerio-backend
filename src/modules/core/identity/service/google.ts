@@ -80,7 +80,7 @@ async function linkAccount(account: AccountRow, sub: string): Promise<void> {
         companyId: null,
         actorId: account.id,
         action: 'update',
-        entityType: 'staff.accounts',
+        entityType: 'core.accounts',
         entityId: account.id,
         after: { googleLinked: true },
       });

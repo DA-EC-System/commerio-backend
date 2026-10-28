@@ -1,23 +1,24 @@
 # db/
 
-Migration của PostgreSQL. Một database, mỗi module một schema cùng tên (`notification` không có schema).
+Migration của PostgreSQL. Một database, **mỗi module lớn một schema cùng tên**: `core`, `product`, `order`, `finance`, `channel`, `insight` (`Documents/19` D1; `notification` không có bảng). Module con khai bảng trong `src/modules/<lớn>/<con>/repository/schema.ts` với `pgSchema('<lớn>')`. Thiết kế từng bảng: `Documents/19-mo-hinh-du-lieu.md` mục 3.
 
-- `migrations/`: do `drizzle-kit` sinh ra, **không sửa tay** file đã merge vào `develop`. Muốn đổi thì sửa `src/modules/<lớn>/<con>/repository/schema.ts` rồi chạy `npm run db:generate -- --name <mo-ta>` để có migration mới.
-- `0000_tao-schema-module.sql` tạo 18 schema rỗng.
-- `0001_nen-tang.sql` bảng của platform, identity, staff, access, audit, files (ERD `nen-tang`).
-- `0002_seed-quyen.sql` danh mục quyền và bốn vai trò có sẵn (`Documents/21` mục 8), cùng nguồn với `src/modules/core/access/domain/catalog.ts`. Đổi danh mục thì thêm migration seed mới và sửa file đó; test integration so DB với file đó.
-- Thứ Drizzle không sinh được (Row-Level Security policy, `CREATE EXTENSION vector`, trigger): `npx drizzle-kit generate --custom --name <mo-ta>` tạo file SQL trống rồi viết tay.
-- `0003_rls.sql` role `commerio_app`, quyền trên bảng, chính sách RLS.
-- `0004_outbox.sql` bảng `platform.outbox_messages`, `platform.processed_events`; `0005_outbox-rls-ten-vai-tro.sql` RLS và quyền chỉ-INSERT của outbox, unique tên vai trò theo chữ thường (`roles_company_lower_name_uq`).
-- `0006_san-pham-gia-kho.sql` 18 bảng catalog, pricing, inventory (ERD core, thêm `variant_attribute_values.position`, `stock_moves.done_by`, `inventory.doc_counters`; tên danh mục, thuộc tính, giá trị thuộc tính, sản phẩm không trùng theo chữ thường); `0007_san-pham-gia-kho-rls.sql` RLS 18 bảng, thẻ kho `stock_moves` chỉ thêm (không UPDATE, DELETE).
-- `0008_ban-hang-kenh.sql` 12 bảng sales, fulfillment, channel; `0009_thanh-toan-tai-chinh-bao-cao.sql` 12 bảng payment, finance, report (ERD core, mở rộng, cộng cột của plan chuẩn bị A7, R2: `payment_code`, `(gateway, gateway_txn_id)`, `webhook_receiver_key` unique toàn hệ thống; chứng từ đảo số âm, một lần, có lý do; một hoá đơn `posted` chưa đảo mỗi đơn; `order_payments.delivered_at`, `paid_at`; `sales.doc_counters`, `finance.doc_counters`); `0010_p3-p5-rls.sql` RLS 24 bảng, lịch sử trạng thái đơn `fulfillment.order_status_history` chỉ thêm.
-- `0011_vai-tro-co-san-rls.sql` policy `RESTRICTIVE` cho UPDATE, DELETE trên `access.roles`, `access.role_permissions`: công ty chỉ sửa, xoá vai trò của mình và quyền của chúng (vá lỗ của 0003: xoá được vai trò có sẵn, xoá hay chuyển quyền của nó).
-- `0012_vector.sql` `CREATE EXTENSION IF NOT EXISTS vector` (pgvector không "trusted", cần superuser: test bật sẵn trong `global-setup.ts`, Supabase bật bằng extension cho phép hoặc dashboard); `0013_phan-he-tuy-chon-doi-soat.sql` 15 bảng purchasing, inbox, assistant (`document_chunks.embedding vector(1536)`), `finance.supplier_invoices`, `settlement_statements`, `settlement_lines` (cộng `kind`, `external_transaction_id` unique theo công ty, `shipping_cost`, `adjustment`, `discrepancy_reason`, `raw`), khoá ngoại `receipts.settlement_line_id`, `payment_vouchers.supplier_invoice_id`; `0014_phan-he-tuy-chon-doi-soat-rls.sql` RLS 15 bảng.
-- `0015_khoa-ton-theo-cong-ty-ten-luu-tru.sql` `inventory.stock_levels` khoá chính `(company_id, variant_id)`, `reorder_rules` unique `(company_id, variant_id)` (id biến thể của công ty khác không chiếm được dòng tồn, ngưỡng); tên sản phẩm chỉ không trùng giữa sản phẩm chưa lưu trữ; `reference` (mã đơn) cho phiếu nhập, phiếu xuất. Tên khoá chính cũ `stock_levels_pkey` điền tay vào SQL sinh ra (drizzle-kit chưa tự lấy được).
-- `0016_rang-buoc-vai-tro-doi-mat-khau.sql` cột `staff.accounts.password_changed_at` (dấu cắt access token cũ), CHECK `roles_kind_company_check` (vai trò có sẵn trống công ty, tuỳ biến có công ty); `0017_rang-buoc-gan-vai-tro-tai-khoan.sql` trigger `member_roles_company_fk` (vai trò trống công ty hoặc cùng công ty, membership cùng công ty; mọi role kể cả chủ bảng, lỗi `23503` tên `member_roles_company_fk`), `commerio_app` không UPDATE, DELETE được `staff.accounts` (#62).
-- `0018_thu-moi-link.sql` bảng `staff.invitations` (lời mời bằng link, #7 [C], D39): enum `invitation_status`, 7 CHECK `invitations_*` theo trạng thái, unique một phần `invitations_one_pending_per_email`; `0019_thu-moi-rls.sql` RLS có `WITH CHECK`, `commerio_app` không DELETE.
+**`order` là từ khoá SQL**: SQL viết tay phải ghi `"order".orders`, không ghi `order.orders` (Drizzle tự thêm ngoặc kép).
+
+- `migrations/`: do `drizzle-kit` sinh ra, **không sửa tay** file đã merge vào `develop`. Muốn đổi thì sửa `schema.ts` rồi chạy `npm run db:generate -- --name <mo-ta>` để có migration mới.
+- Bộ migration dựng lại từ đầu ngày 28/10/2026 khi gom 6 module lớn (chưa có dữ liệu thật; staging xoá DB rồi chạy lại):
+  - `0000_mo-rong.sql` extension `vector` (pgvector, không "trusted": test bật sẵn trong `global-setup.ts`, Supabase bật bằng danh sách cho phép) và `btree_gist` (ràng buộc EXCLUDE).
+  - `0001_tao-bang.sql` 6 schema, 79 bảng, enum, CHECK, index (drizzle sinh).
+  - `0002_rls-quyen.sql` (viết tay) role `commerio_app` và quyền trên 6 schema; vòng lặp bật RLS + policy `company_isolation` (USING và WITH CHECK) cho **mọi bảng có `company_id`**, trừ `core.refresh_tokens` (không RLS, `commerio_app` không có quyền) và `core.roles` (vai trò có sẵn có `company_id` trống); policy riêng và RESTRICTIVE cho `core.roles`, `core.role_permissions`; index `roles_company_lower_name_uq`; bảng chỉ thêm (`core.audit_logs`, `core.processed_events`, `core.state_transitions`, `product.stock_moves`, `finance.ledger_entries`: không UPDATE, DELETE); outbox chỉ INSERT; `core.accounts` không UPDATE, DELETE; `core.invitations` không DELETE; trigger `member_roles_company_fk`; EXCLUDE `config_versions_no_overlap` (không hai phiên bản cấu hình `scheduled`/`active` chồng ngày cùng công ty, loại, gian hàng).
+  - `0003_seed-quyen.sql` danh mục quyền và năm vai trò có sẵn (CEO, Admin, Sale, Nhân viên kho, Mua hàng), **sinh từ** `src/modules/core/access/domain/catalog.ts`; test integration so DB với file đó. Đổi danh mục thì sửa file đó và thêm migration seed mới.
+- Thứ Drizzle không sinh được (RLS, extension, trigger, EXCLUDE): `npx drizzle-kit generate --custom --name <mo-ta>` tạo file SQL trống rồi viết tay. Bảng thêm sau **phải tự bật RLS** trong migration `--custom` (vòng lặp của 0002 chỉ chạy một lần).
 - Index **biểu thức** cần `NULLS NOT DISTINCT` (vd `(company_id, lower(name))` với vai trò có sẵn `company_id` trống) Drizzle không sinh được: viết trong migration `--custom`, không khai trong `schema.ts` để `db:generate` sau này không đòi xoá; ghi chú trong `schema.ts` trỏ tới migration đó.
 - Staging là PostgreSQL 17 trên Supabase, chạy migration bằng user không phải superuser. Không dùng tính năng chỉ có ở PG18 (`uuidv7()`, cột ảo). Test integration đã chạy migration bằng role `NOSUPERUSER CREATEROLE` cho giống; thử trên PG17: `TEST_PG_IMAGE=pgvector/pgvector:pg17 npx vitest run --project integration`.
+
+## Ràng buộc nghiệp vụ trong DB
+
+- Bảng có bước duyệt dùng cột chung `approval` (`created_by`, `approved_by`, `approved_at`, `self_approved`) và CHECK `approvalCheck` (`src/shared/db/columns.ts`): người duyệt khác người lập, trừ khi `self_approved` (CEO, hoặc công ty một người; service quyết). Người thứ hai giữa hai cột khác (COD, thất lạc, kết quả trả NCC, chốt lệch) là CHECK riêng của bảng.
+- Trạng thái kéo theo cột bắt buộc (đã ghi sổ thì có `posted_at`, hoàn tiền NCC thì có số tiền…) là CHECK. Quy tắc trải nhiều bảng (`đạt + lỗi ≤ còn chờ`, người ghi sổ phiếu nhận khác người lập đề nghị) do service kiểm.
+- Tồn: `stock_levels_invariant` cho phép tồn thực âm hoặc nhỏ hơn đang giữ **chỉ khi** bật `invariant_broken` (hai ngoại lệ của `25` §7.1).
 
 ## Row-Level Security
 
@@ -25,8 +26,8 @@ Bảng thuộc công ty có `company_id` và chính sách `company_isolation`: c
 
 - **Request trong một công ty:** transaction chạy `SET LOCAL ROLE commerio_app` và `set_config('app.company_id', <id>, true)`. Role này không phải chủ bảng nên RLS có hiệu lực; chưa đặt `app.company_id` thì không thấy dòng nào.
 - **Luồng không thuộc công ty nào** (đăng ký, đăng nhập, chọn công ty, quản trị nền tảng, worker): chạy bằng role đăng nhập, là chủ bảng nên bỏ qua RLS. Vì vậy không bật `FORCE ROW LEVEL SECURITY`.
-- Bảng mới tạo bằng migration tự cấp quyền cho `commerio_app` (`ALTER DEFAULT PRIVILEGES`), nhưng **phải tự viết** `ENABLE ROW LEVEL SECURITY` và policy trong một migration `--custom`.
-- Bảng chung không có RLS: `platform.companies`, `staff.accounts`, `access.permissions`, `identity.refresh_tokens` (chỉ luồng xác thực đọc). Trong công ty, `staff.accounts` chỉ đọc và thêm (0017). Vai trò có sẵn (`company_id` trống) công ty nào cũng đọc được nhưng không sửa, không xoá được, kể cả quyền của nó (0003 + 0011).
+- Bảng mới tạo bằng migration tự cấp quyền cho `commerio_app` (`ALTER DEFAULT PRIVILEGES` của 0002), nhưng **phải tự viết** `ENABLE ROW LEVEL SECURITY` và policy trong một migration `--custom`.
+- Bảng chung không có RLS: `core.companies`, `core.accounts`, `core.permissions`, `core.refresh_tokens` (chỉ luồng xác thực đọc). Trong công ty, `core.accounts` chỉ đọc và thêm. Vai trò có sẵn (`company_id` trống) công ty nào cũng đọc được nhưng không sửa, không xoá được, kể cả quyền của nó (0002).
 
 - `test/integration/shared/rls-coverage.test.ts` quét mọi bảng: bảng có `company_id` thiếu RLS/policy, hay quyền của `commerio_app` khác mong đợi, là đỏ. Bảng cố ý khác thì thêm vào `RLS_EXCEPTIONS`/`EXPECTED_PRIVILEGES` trong file đó kèm lý do.
 

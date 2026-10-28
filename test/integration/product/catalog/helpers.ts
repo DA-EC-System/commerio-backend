@@ -79,7 +79,7 @@ export async function createProduct(token: string, body: { name: string; categor
 /** Dòng nhật ký của một đối tượng, cũ trước. */
 export async function auditOf(entityId: string) {
   const res = await testPool().query<{ action: string; entity_type: string; before: unknown; after: unknown }>(
-    'select action, entity_type, before, after from audit.audit_logs where entity_id = $1 order by created_at, id',
+    'select action, entity_type, before, after from core.audit_logs where entity_id = $1 order by created_at, id',
     [entityId],
   );
   return res.rows;

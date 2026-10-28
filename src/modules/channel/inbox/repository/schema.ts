@@ -2,7 +2,7 @@ import { index, integer, jsonb, pgSchema, primaryKey, text, timestamp, unique, u
 import { bytea, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `inbox` khai báo trong schema này.
-export const inboxSchema = pgSchema('inbox');
+export const inboxSchema = pgSchema('channel');
 
 export const messageKind = inboxSchema.enum('message_kind', [
   'messenger',

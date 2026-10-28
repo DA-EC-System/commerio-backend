@@ -5,7 +5,7 @@ import { asCompany } from '../../helpers/rls.ts';
 
 const insertLink = (companyId: string, orderId: string, paymentCode: string, status = 'active') =>
   testPool().query(
-    `insert into payment.payment_links (company_id, order_id, gateway, payment_code, amount, expires_at, status)
+    `insert into finance.payment_links (company_id, order_id, gateway, payment_code, amount, expires_at, status)
      values ($1, $2, 'vnpay', $3, 150000, now() + interval '15 minutes', $4)`,
     [companyId, orderId, paymentCode, status],
   );
@@ -32,7 +32,7 @@ describe('ràng buộc bảng payment (AC-9)', () => {
     const txn = `TXN-${randomUUID()}`;
     const insertTxn = (companyId: string, gateway: string) =>
       testPool().query(
-        `insert into payment.payment_transactions (company_id, gateway, gateway_txn_id, amount, source, occurred_at)
+        `insert into finance.payment_transactions (company_id, gateway, gateway_txn_id, amount, source, occurred_at)
          values ($1, $2, $3, 150000, 'webhook', now())`,
         [companyId, gateway, txn],
       );
@@ -45,7 +45,7 @@ describe('ràng buộc bảng payment (AC-9)', () => {
     const key = randomUUID().replaceAll('-', '');
     const insert = () =>
       testPool().query(
-        "insert into payment.gateway_configs (company_id, gateway, webhook_receiver_key) values ($1, 'vietqr', $2)",
+        "insert into finance.gateway_configs (company_id, gateway, webhook_receiver_key) values ($1, 'vietqr', $2)",
         [randomUUID(), key],
       );
     await insert();
@@ -56,7 +56,7 @@ describe('ràng buộc bảng payment (AC-9)', () => {
     const company = randomUUID();
     const insert = (gateway: string) =>
       testPool().query(
-        `insert into payment.webhook_events (company_id, gateway, event_key, payload) values ($1, $2, '1001', '{}')`,
+        `insert into finance.webhook_events (company_id, gateway, event_key, payload) values ($1, $2, '1001', '{}')`,
         [company, gateway],
       );
     await insert('vnpay');
@@ -68,15 +68,15 @@ describe('ràng buộc bảng payment (AC-9)', () => {
     const company = randomUUID();
     const order = randomUUID();
     await testPool().query(
-      "insert into payment.order_payments (order_id, company_id, status) values ($1, $2, 'cod_pending')",
+      "insert into finance.order_payments (order_id, company_id, status) values ($1, $2, 'cod_pending')",
       [order, company],
     );
     const own = await asCompany(company, (c) =>
-      c.query('select refund_status, paid_at, delivered_at from payment.order_payments where order_id = $1', [order]),
+      c.query('select refund_status, paid_at, delivered_at from finance.order_payments where order_id = $1', [order]),
     );
     expect(own.rows).toEqual([{ refund_status: 'none', paid_at: null, delivered_at: null }]);
     const other = await asCompany(randomUUID(), (c) =>
-      c.query('select 1 from payment.order_payments where order_id = $1', [order]),
+      c.query('select 1 from finance.order_payments where order_id = $1', [order]),
     );
     expect(other.rowCount).toBe(0);
   });

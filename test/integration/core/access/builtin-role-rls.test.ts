@@ -13,20 +13,20 @@ describe('RLS vai trò có sẵn: công ty không ghi được (P11)', () => {
   it('vẫn đọc được vai trò có sẵn và quyền của chúng', async () => {
     const companyId = randomUUID();
     const res = await asCompany(companyId, (c) =>
-      c.query('select count(*)::int as n from access.role_permissions where role_id = $1', [SALE]),
+      c.query('select count(*)::int as n from core.role_permissions where role_id = $1', [SALE]),
     );
     expect(res.rows[0].n).toBeGreaterThan(0);
   });
 
   it('không xoá được quyền của vai trò có sẵn', async () => {
     const companyId = randomUUID();
-    const res = await asCompany(companyId, (c) => c.query('delete from access.role_permissions where role_id = $1', [SALE]));
+    const res = await asCompany(companyId, (c) => c.query('delete from core.role_permissions where role_id = $1', [SALE]));
     expect(res.rowCount).toBe(0);
   });
 
   it('không xoá được vai trò có sẵn', async () => {
     const companyId = randomUUID();
-    const res = await asCompany(companyId, (c) => c.query('delete from access.roles where id = $1', [WAREHOUSE]));
+    const res = await asCompany(companyId, (c) => c.query('delete from core.roles where id = $1', [WAREHOUSE]));
     expect(res.rowCount).toBe(0);
   });
 
@@ -34,7 +34,7 @@ describe('RLS vai trò có sẵn: công ty không ghi được (P11)', () => {
     const companyId = randomUUID();
     const own = await createCustomRole(companyId, []);
     const res = await asCompany(companyId, (c) =>
-      c.query('update access.role_permissions set role_id = $1 where role_id = $2', [own, SALE]),
+      c.query('update core.role_permissions set role_id = $1 where role_id = $2', [own, SALE]),
     );
     expect(res.rowCount).toBe(0);
   });
@@ -42,7 +42,7 @@ describe('RLS vai trò có sẵn: công ty không ghi được (P11)', () => {
   it('không nhận được vai trò có sẵn về công ty mình', async () => {
     const companyId = randomUUID();
     const res = await asCompany(companyId, (c) =>
-      c.query('update access.roles set company_id = $1 where id = $2', [companyId, SALE]),
+      c.query('update core.roles set company_id = $1 where id = $2', [companyId, SALE]),
     );
     expect(res.rowCount).toBe(0);
   });
@@ -51,8 +51,8 @@ describe('RLS vai trò có sẵn: công ty không ghi được (P11)', () => {
     const companyId = randomUUID();
     const own = await createCustomRole(companyId, ['sales.order.view', 'sales.order.create']);
     const deleted = await asCompany(companyId, async (c) => {
-      const role = await c.query('delete from access.roles where id = $1', [own]);
-      const left = await c.query('select count(*)::int as n from access.role_permissions where role_id = $1', [own]);
+      const role = await c.query('delete from core.roles where id = $1', [own]);
+      const left = await c.query('select count(*)::int as n from core.role_permissions where role_id = $1', [own]);
       return [role.rowCount, left.rows[0].n];
     });
     expect(deleted).toEqual([1, 0]);
@@ -62,13 +62,13 @@ describe('RLS vai trò có sẵn: công ty không ghi được (P11)', () => {
     const companyId = randomUUID();
     const own = await createCustomRole(companyId, ['sales.order.view']);
     const counts = await asCompany(companyId, async (c) => {
-      const renamed = await c.query("update access.roles set name = 'Đổi tên' where id = $1", [own]);
+      const renamed = await c.query("update core.roles set name = 'Đổi tên' where id = $1", [own]);
       const moved = await c.query(
-        "update access.role_permissions set permission_code = 'sales.order.create' where role_id = $1",
+        "update core.role_permissions set permission_code = 'sales.order.create' where role_id = $1",
         [own],
       );
-      const perms = await c.query('delete from access.role_permissions where role_id = $1', [own]);
-      const role = await c.query('delete from access.roles where id = $1', [own]);
+      const perms = await c.query('delete from core.role_permissions where role_id = $1', [own]);
+      const role = await c.query('delete from core.roles where id = $1', [own]);
       return [renamed.rowCount, moved.rowCount, perms.rowCount, role.rowCount];
     });
     expect(counts).toEqual([1, 1, 1, 1]);

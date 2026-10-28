@@ -27,10 +27,10 @@ afterEach(() => {
 
 const link = () => newLink(app, company.ceo.token, [BUILTIN_ROLES.sale.id]);
 const row = async (id: string) =>
-  (await db.query('select * from staff.invitations where id = $1', [id])).rows[0] as Record<string, unknown>;
+  (await db.query('select * from core.invitations where id = $1', [id])).rows[0] as Record<string, unknown>;
 /** Bỏ thời gian chờ 60 giây trước lần xin mã kế tiếp. */
 const skipCooldown = (id: string) =>
-  db.query("update staff.invitations set otp_requested_at = otp_requested_at - interval '61 seconds' where id = $1", [
+  db.query("update core.invitations set otp_requested_at = otp_requested_at - interval '61 seconds' where id = $1", [
     id,
   ]);
 const errorKeys = (res: { body: { errors?: object } }) => Object.keys(res.body.errors ?? {});
@@ -55,7 +55,7 @@ async function claimed(email: string) {
 describe('tham gia qua link: ca biên', () => {
   it('AC-C3: link hết hạn hay không còn lời mời → 410 invitation_invalid ở check, otp, verify; không phát sự kiện', async () => {
     const expired = await link();
-    await db.query("update staff.invitations set expires_at = now() - interval '1 hour' where id = $1", [expired.id]);
+    await db.query("update core.invitations set expires_at = now() - interval '1 hour' where id = $1", [expired.id]);
     const ghost = await signPurposeToken('invite', { jti: randomUUID(), cid: company.companyId });
     for (const token of [expired.token, ghost]) {
       for (const res of [
@@ -97,7 +97,7 @@ describe('tham gia qua link: ca biên', () => {
     expect(Number(again.headers['retry-after'])).toBeGreaterThan(0);
     expect(Number(again.headers['retry-after'])).toBeLessThanOrEqual(60);
     await db.query(
-      "update staff.invitations set otp_send_count = 5, otp_requested_at = now() - interval '2 minutes' where id = $1",
+      "update core.invitations set otp_send_count = 5, otp_requested_at = now() - interval '2 minutes' where id = $1",
       [l.id],
     );
     expect((await join.otp(l.token, email)).status).toBe(429);
@@ -124,7 +124,7 @@ describe('tham gia qua link: ca biên', () => {
     const l = await link();
     const email = uniqueEmail();
     const code = await requestCode(l, email, sent);
-    await db.query("update staff.invitations set otp_expires_at = now() - interval '1 hour' where id = $1", [l.id]);
+    await db.query("update core.invitations set otp_expires_at = now() - interval '1 hour' where id = $1", [l.id]);
     const res = await join.verify(l.token, email, code);
     expect(res.status).toBe(422);
     expect(errorKeys(res)).toEqual(['code']);
@@ -169,7 +169,7 @@ describe('tham gia qua link: ca biên', () => {
   it('AC-C9: email đã có tài khoản ở công ty khác → sign_in; sai mật khẩu → 422 errors.password; đúng → pending, không đổi mật khẩu; không lộ công ty kia', async () => {
     const other = await createCompany();
     const known = await addMember(other.companyId, 'sale');
-    const before = await db.query('select password_hash, version from staff.accounts where id = $1', [known.accountId]);
+    const before = await db.query('select password_hash, version from core.accounts where id = $1', [known.accountId]);
     const c = await claimed(known.email);
     expect(c.next).toBe('sign_in');
     const wrong = await join.complete({ registrationToken: c.registrationToken, password: 'SaiMatKhau1' });
@@ -178,9 +178,9 @@ describe('tham gia qua link: ca biên', () => {
     const ok = await join.complete({ registrationToken: c.registrationToken, password: PASSWORD });
     expect(ok.body).toEqual({ status: 'pending' });
     expect(await row(c.id)).toMatchObject({ status: 'pending', account_id: known.accountId, password_hash: null });
-    const after = await db.query('select password_hash, version from staff.accounts where id = $1', [known.accountId]);
+    const after = await db.query('select password_hash, version from core.accounts where id = $1', [known.accountId]);
     expect(after.rows).toEqual(before.rows);
-    const name = (await db.query('select name from platform.companies where id = $1', [other.companyId])).rows[0].name;
+    const name = (await db.query('select name from core.companies where id = $1', [other.companyId])).rows[0].name;
     for (const res of [wrong, ok, await join.check(c.token)]) {
       expect(JSON.stringify(res.body)).not.toContain(other.companyId);
       expect(JSON.stringify(res.body)).not.toContain(name);
@@ -197,7 +197,7 @@ describe('tham gia qua link: ca biên', () => {
     expect(already.body.member).toBeUndefined();
 
     const adminEmail = uniqueEmail('quan-tri');
-    await db.query("insert into staff.accounts (email, full_name, is_platform_admin) values ($1, 'Quản Trị', true)", [
+    await db.query("insert into core.accounts (email, full_name, is_platform_admin) values ($1, 'Quản Trị', true)", [
       adminEmail,
     ]);
     const l2 = await link();
@@ -219,7 +219,7 @@ describe('tham gia qua link: ca biên', () => {
 
   it('complete khi link đã hết hạn → 410 invitation_invalid', async () => {
     const c = await claimed(uniqueEmail());
-    await db.query("update staff.invitations set expires_at = now() - interval '1 hour' where id = $1", [c.id]);
+    await db.query("update core.invitations set expires_at = now() - interval '1 hour' where id = $1", [c.id]);
     const res = await join.complete({
       registrationToken: c.registrationToken,
       password: NEW_PASSWORD,
@@ -253,7 +253,7 @@ describe('tham gia qua link: ca biên', () => {
       await join.complete({ registrationToken, password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD }),
       await join.check(l.token),
     );
-    const audit = await db.query('select before, after from audit.audit_logs where company_id = $1', [
+    const audit = await db.query('select before, after from core.audit_logs where company_id = $1', [
       company.companyId,
     ]);
     const text = JSON.stringify([...responses.map((r) => r.body), verified.body.next, audit.rows]);

@@ -16,7 +16,7 @@ describe('errorHandler', () => {
     app.get('/loi', (_req, _res, next) =>
       next(
         new DrizzleQueryError(
-          'update payment.gateway_configs set credentials = $1',
+          'update finance.gateway_configs set credentials = $1',
           ['KHOA-BIMAT'],
           Object.assign(new Error('could not serialize access'), { code: '40001' }),
         ),

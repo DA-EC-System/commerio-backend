@@ -15,7 +15,7 @@ const activeTokens = async (email: string) =>
   Number(
     (
       await testPool().query(
-        `select count(*) from identity.refresh_tokens t join staff.accounts a on a.id = t.account_id
+        `select count(*) from core.refresh_tokens t join core.accounts a on a.id = t.account_id
          where a.email = $1 and t.revoked_at is null and t.expires_at > now()`,
         [email],
       )

@@ -36,8 +36,8 @@ describe('tạo mã: bên thắng biến mất trước khi bên thua đọc l�
       'đơn bị huỷ, mã bên thắng cancelled',
       (orderId: string) =>
         testPool().query(
-          `with o as (update sales.orders set status = 'cancelled' where id = $1)
-           update payment.payment_links set status = 'cancelled' where order_id = $1 and status = 'active'`,
+          `with o as (update "order".orders set status = 'cancelled' where id = $1)
+           update finance.payment_links set status = 'cancelled' where order_id = $1 and status = 'active'`,
           [orderId],
         ),
     ],
@@ -45,8 +45,8 @@ describe('tạo mã: bên thắng biến mất trước khi bên thua đọc l�
       'khách vừa trả mã bên thắng',
       (orderId: string) =>
         testPool().query(
-          `with p as (update payment.order_payments set status = 'paid', paid_at = now() where order_id = $1)
-           update payment.payment_links set status = 'paid' where order_id = $1 and status = 'active'`,
+          `with p as (update finance.order_payments set status = 'paid', paid_at = now() where order_id = $1)
+           update finance.payment_links set status = 'paid' where order_id = $1 and status = 'active'`,
           [orderId],
         ),
     ],

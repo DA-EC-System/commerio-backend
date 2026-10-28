@@ -16,7 +16,7 @@ interface OrderLineInput {
  * Một đơn của công ty, ghi thẳng vào bảng của sales trong `withCompany` như request thật (D17: link/QR không chờ API
  * tạo đơn #24). Dòng đơn chép SKU, tên sản phẩm của biến thể (tạo bằng `createVariant`). Đơn tay mặc định trả trước;
  * đơn sàn không có phương thức thanh toán, có gian hàng và mã đơn sàn ngẫu nhiên (19-D11, D32). Không tạo
- * `payment.order_payments` (việc của payment khi xác nhận đơn, A8).
+ * `finance.order_payments` (việc của payment khi xác nhận đơn, A8).
  */
 export async function createOrder(
   companyId: string,

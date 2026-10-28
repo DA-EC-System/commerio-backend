@@ -20,11 +20,11 @@ const google = (credential: string) => request(app).post('/api/v1/identity/googl
 const selectCompany = (token: string, companyId: string) =>
   request(app).post('/api/v1/identity/select-company').set('Authorization', `Bearer ${token}`).send({ companyId });
 const account = async (email: string) =>
-  (await db.query<{ id: string; google_sub: string | null }>('select id, google_sub from staff.accounts where email = $1', [email]))
+  (await db.query<{ id: string; google_sub: string | null }>('select id, google_sub from core.accounts where email = $1', [email]))
     .rows[0]!;
 const linkLogs = (accountId: string) =>
   db.query(
-    "select action, after from audit.audit_logs where entity_type = 'staff.accounts' and entity_id = $1 and company_id is null",
+    "select action, after from core.audit_logs where entity_type = 'core.accounts' and entity_id = $1 and company_id is null",
     [accountId],
   );
 
@@ -66,7 +66,7 @@ describe('đăng nhập Google', () => {
     const res = await google(await googleToken({ email, sub }));
     expect(res.status).toBe(401);
     expect(res.body.type).toBe('/problems/google_account_not_found');
-    const created = await db.query('select 1 from staff.accounts where email = $1 or google_sub = $2', [email, sub]);
+    const created = await db.query('select 1 from core.accounts where email = $1 or google_sub = $2', [email, sub]);
     expect(created.rows).toHaveLength(0);
   });
 
@@ -115,10 +115,10 @@ describe('đăng nhập Google', () => {
     const b = await createCompany();
     const member = await addMember(a.companyId, 'sale');
     const memberB = await db.query<{ id: string }>(
-      'insert into staff.memberships (company_id, account_id) values ($1, $2) returning id',
+      'insert into core.memberships (company_id, account_id) values ($1, $2) returning id',
       [b.companyId, member.accountId],
     );
-    await db.query('insert into access.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
+    await db.query('insert into core.member_roles (membership_id, role_id, company_id) values ($1, $2, $3)', [
       memberB.rows[0]!.id,
       BUILTIN_ROLES.sale.id,
       b.companyId,
@@ -135,7 +135,7 @@ describe('đăng nhập Google', () => {
 
   it('AC-A6: tài khoản còn phải đổi mật khẩu thì token Google cũng mang cờ đó', async () => {
     const { email, companyId } = await registerCompany();
-    await db.query('update staff.accounts set must_change_password = true where email = $1', [email]);
+    await db.query('update core.accounts set must_change_password = true where email = $1', [email]);
     const res = await google(await googleToken({ email, sub: `g-${randomUUID()}` }));
     expect(res.status).toBe(200);
     expect(res.body.account.mustChangePassword).toBe(true);
@@ -147,7 +147,7 @@ describe('đăng nhập Google', () => {
   // Giao dịch giữ khoá đóng vai request kia đang liên kết dở: request đua đã đọc thấy `google_sub` trống, chỉ bị chặn
   // ở câu UPDATE có điều kiện, rồi đọc lại sau khi bên kia commit.
   const linkingInFlight = (email: string, sub: string) => (holder: PoolClient) =>
-    holder.query('update staff.accounts set google_sub = $2 where email = $1', [email, sub]);
+    holder.query('update core.accounts set google_sub = $2 where email = $1', [email, sub]);
 
   it('chạy đua: hai lần liên kết cùng tài khoản với hai sub khác nhau → request sau 401, giữ liên kết trước', async () => {
     const { email } = await registerCompany();

@@ -6,9 +6,9 @@ const pool = new pg.Pool({ connectionString: inject('databaseUrl') });
 afterAll(() => pool.end());
 
 describe('seed danh mục quyền và vai trò có sẵn (AC-16)', () => {
-  it('access.permissions khớp đúng danh mục, kể cả phân hệ của từng quyền', async () => {
+  it('core.permissions khớp đúng danh mục, kể cả phân hệ của từng quyền', async () => {
     const { rows } = await pool.query<{ code: string; module_code: string; description: string }>(
-      'select code, module_code, description from access.permissions order by code',
+      'select code, module_code, description from core.permissions order by code',
     );
     const expected = PERMISSIONS.map((p) => ({ code: p.code, module_code: permissionModule(p.code), description: p.description }));
     expect(rows).toEqual(expected.sort((a, b) => a.code.localeCompare(b.code)));
@@ -16,10 +16,10 @@ describe('seed danh mục quyền và vai trò có sẵn (AC-16)', () => {
 
   it('bốn vai trò có sẵn không thuộc công ty nào, quyền khớp từng cột của mục 8', async () => {
     for (const role of Object.values(BUILTIN_ROLES)) {
-      const r = await pool.query('select name, kind, company_id from access.roles where id = $1', [role.id]);
+      const r = await pool.query('select name, kind, company_id from core.roles where id = $1', [role.id]);
       expect(r.rows[0]).toEqual({ name: role.name, kind: 'builtin', company_id: null });
       const p = await pool.query<{ permission_code: string }>(
-        'select permission_code from access.role_permissions where role_id = $1',
+        'select permission_code from core.role_permissions where role_id = $1',
         [role.id],
       );
       expect(p.rows.map((x) => x.permission_code).sort()).toEqual([...role.permissions].sort());

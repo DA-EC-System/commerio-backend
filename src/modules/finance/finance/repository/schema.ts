@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
+  boolean,
   check,
   date,
   index,
@@ -14,7 +15,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { money, timestamps, version } from '../../../../shared/db/columns.ts';
+import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module `finance` khai báo trong schema này.
 export const financeSchema = pgSchema('finance');
@@ -182,14 +183,14 @@ export const paymentVouchers = financeSchema.table(
   ],
 );
 
-/** Hoá đơn nhà cung cấp (UC-PF-08); `supplier_id`, `purchase_order_id` trỏ purchasing, không khoá ngoại (19-D1). */
+/** Hoá đơn nhà cung cấp (UC-PF-08); `supplier_id`, `purchase_request_id` trỏ purchasing, không khoá ngoại (19-D1). */
 export const supplierInvoices = financeSchema.table(
   'supplier_invoices',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
     supplierId: uuid('supplier_id').notNull(),
-    purchaseOrderId: uuid('purchase_order_id'),
+    purchaseRequestId: uuid('purchase_request_id'),
     invoiceNo: text('invoice_no').notNull(),
     invoiceDate: date('invoice_date').notNull(),
     amount: money('amount').notNull(),
@@ -199,7 +200,7 @@ export const supplierInvoices = financeSchema.table(
   },
   (t) => [
     index().on(t.supplierId),
-    index().on(t.purchaseOrderId),
+    index().on(t.purchaseRequestId),
     check('supplier_invoices_amount', sql`${t.amount} > 0`),
   ],
 );
@@ -211,6 +212,7 @@ export const settlementStatements = financeSchema.table(
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
     shopId: uuid('shop_id').notNull(),
+    batchId: uuid('batch_id').references((): AnyPgColumn => settlementBatches.id),
     externalStatementId: text('external_statement_id').notNull(),
     statementTime: timestamp('statement_time', { withTimezone: true }).notNull(),
     settlementAmount: money('settlement_amount').notNull(),
@@ -256,6 +258,189 @@ export const settlementLines = financeSchema.table(
       'settlement_lines_discrepancy_reason',
       sql`(${t.matchStatus} = 'discrepancy') = (${t.discrepancyReason} is not null)`,
     ),
+  ],
+);
+
+export const settlementSource = financeSchema.enum('settlement_source', ['api', 'file']);
+export const batchStatus = financeSchema.enum('settlement_batch_status', ['running', 'done', 'failed']);
+
+/**
+ * Một lần kéo quyết toán của một gian hàng, bằng API hoặc file khi gian hàng đã ngắt. Mốc kéo của gian hàng
+ * (`channel.shops.settlement_cursor`) chỉ tiến khi lô `done`: chạy lại an toàn (D4.3).
+ */
+export const settlementBatches = financeSchema.table(
+  'settlement_batches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id').notNull(),
+    source: settlementSource('source').notNull(),
+    fileId: uuid('file_id'),
+    periodFrom: timestamp('period_from', { withTimezone: true }).notNull(),
+    periodTo: timestamp('period_to', { withTimezone: true }).notNull(),
+    status: batchStatus('status').notNull().default('running'),
+    lineCount: integer('line_count').notNull().default(0),
+    error: text('error'),
+    createdBy: uuid('created_by'),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    index().on(t.shopId),
+    check('settlement_batches_file', sql`(${t.source} = 'file') = (${t.fileId} is not null)`),
+    check('settlement_batches_period', sql`${t.periodFrom} <= ${t.periodTo}`),
+  ],
+);
+
+/** Loại khoản trong sổ tiền (25 §10.1). Ghi gộp: doanh thu và từng loại phí là dòng riêng, không ghi số thực nhận. */
+export const ledgerKind = financeSchema.enum('ledger_kind', [
+  'revenue',
+  'platform_subsidy',
+  'shipping_income',
+  'shipping_cost',
+  'fee_fixed',
+  'fee_transaction',
+  'fee_service',
+  'fee_optional',
+  'withholding_tax',
+  'customer_refund',
+  'return_fee',
+  'lost_compensation',
+  'penalty',
+  'cogs',
+  'cogs_reversal',
+  'ads',
+  'opex',
+  'supplier_payment',
+  'supplier_refund',
+  'cod_collected',
+  'adjustment',
+]);
+
+/**
+ * Sổ tiền, chỉ thêm (T1): mỗi khoản một dòng, số có dấu (vào dương, ra âm), cờ ước tính hay thực tế. Có quyết toán
+ * thì thêm dòng thực tế trỏ `replaces_entry_id` về dòng ước tính; sai thì thêm dòng `adjustment`, không sửa dòng cũ.
+ * Mỗi dòng lưu bản cấu hình phí, thuế đã dùng. Khoản không gắn đơn (quảng cáo, chi vận hành) để trống đơn và kiện.
+ */
+export const ledgerEntries = financeSchema.table(
+  'ledger_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    kind: ledgerKind('kind').notNull(),
+    amount: money('amount').notNull(),
+    isEstimate: boolean('is_estimate').notNull(),
+    occurredOn: date('occurred_on').notNull(),
+    orderId: uuid('order_id'),
+    packageId: uuid('package_id'),
+    returnRequestId: uuid('return_request_id'),
+    shopId: uuid('shop_id'),
+    sourceType: text('source_type'),
+    sourceId: uuid('source_id'),
+    replacesEntryId: uuid('replaces_entry_id').references((): AnyPgColumn => ledgerEntries.id),
+    configVersionId: uuid('config_version_id'),
+    settlementLineId: uuid('settlement_line_id').references(() => settlementLines.id),
+    reason: text('reason'),
+    createdBy: uuid('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.orderId),
+    index().on(t.shopId, t.occurredOn),
+    index().on(t.occurredOn),
+    uniqueIndex('ledger_entries_replaces_uq').on(t.replacesEntryId).where(sql`${t.replacesEntryId} is not null`),
+    check('ledger_entries_amount', sql`${t.amount} <> 0`),
+    check('ledger_entries_actual_replaces', sql`${t.replacesEntryId} is null or not ${t.isEstimate}`),
+    check('ledger_entries_adjustment_reason', sql`${t.kind} <> 'adjustment' or ${t.reason} is not null`),
+  ],
+);
+
+/** Trạng thái tiền của đơn (25 §10.3, Hình 14 báo cáo 28/10), tách khỏi trạng thái đơn (N1). */
+export const settlementState = financeSchema.enum('settlement_state', ['none', 'pending', 'settled', 'mismatch', 'resolved']);
+
+/**
+ * Một dòng mỗi đơn sàn. `diff` = thực tế − ước tính; lệch vượt ngưỡng thì `mismatch`. Chốt lệch ghi người và lý do;
+ * lệch vượt ngưỡng chốt cần CEO duyệt (`approved_by`). `resolved_diff_base` là lệch lúc chốt, để lần điều chỉnh sau
+ * tính lệch từ đó.
+ */
+export const orderSettlements = financeSchema.table(
+  'order_settlements',
+  {
+    orderId: uuid('order_id').primaryKey(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id'),
+    status: settlementState('status').notNull().default('none'),
+    estimatedTotal: money('estimated_total').notNull().default('0'),
+    settledTotal: money('settled_total'),
+    diff: money('diff'),
+    resolvedDiffBase: money('resolved_diff_base'),
+    resolvedBy: uuid('resolved_by'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolvedReason: text('resolved_reason'),
+    approvedBy: uuid('approved_by'),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    index().on(t.status),
+    check(
+      'order_settlements_resolved',
+      sql`${t.status} <> 'resolved' or (${t.resolvedBy} is not null and ${t.resolvedReason} is not null)`,
+    ),
+    check('order_settlements_settled', sql`${t.status} not in ('settled', 'resolved') or ${t.settledTotal} is not null`),
+    check('order_settlements_approver', sql`${t.approvedBy} is null or ${t.approvedBy} is distinct from ${t.resolvedBy}`),
+  ],
+);
+
+/** Loại cấu hình tiền có phiên bản (25 §10, T5): không cứng hoá mức phí, thuế suất, ngưỡng. */
+export const configKind = financeSchema.enum('config_kind', ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin']);
+/** Vòng đời phiên bản (Hình 15 báo cáo 28/10). */
+export const configStatus = financeSchema.enum('config_status', [
+  'draft',
+  'pending_approval',
+  'rejected',
+  'scheduled',
+  'active',
+  'expired',
+  'cancelled',
+]);
+
+/**
+ * Phiên bản cấu hình phí (theo gian hàng), loại hình thuế, quy tắc thuế, ngưỡng lệch, biên tối thiểu. Nội dung
+ * trong `payload`, Zod kiểm theo `kind`. Chọn phiên bản theo ngày kiện giao. Không có hai bản `active` chồng ngày
+ * cho cùng (công ty, loại, gian hàng): ràng buộc EXCLUDE viết tay trong migration RLS (drizzle không sinh được).
+ */
+export const configVersions = financeSchema.table(
+  'config_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    kind: configKind('kind').notNull(),
+    shopId: uuid('shop_id'),
+    status: configStatus('status').notNull().default('draft'),
+    payload: jsonb('payload').notNull(),
+    effectiveFrom: date('effective_from'),
+    effectiveTo: date('effective_to'),
+    supersedesId: uuid('supersedes_id').references((): AnyPgColumn => configVersions.id),
+    isCorrection: boolean('is_correction').notNull().default(false),
+    retroactiveFrom: date('retroactive_from'),
+    dryRunResult: jsonb('dry_run_result'),
+    statusReason: text('status_reason'),
+    ...approval,
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    index().on(t.kind, t.shopId, t.status),
+    approvalCheck('config_versions', t),
+    check('config_versions_fee_shop', sql`(${t.kind} = 'fee') = (${t.shopId} is not null)`),
+    check(
+      'config_versions_effective',
+      sql`${t.status} not in ('scheduled', 'active', 'expired') or ${t.effectiveFrom} is not null`,
+    ),
+    check('config_versions_range', sql`${t.effectiveTo} is null or ${t.effectiveTo} >= ${t.effectiveFrom}`),
+    check('config_versions_retroactive', sql`${t.retroactiveFrom} is null or ${t.isCorrection}`),
+    check('config_versions_approved', sql`${t.status} not in ('scheduled', 'active', 'expired') or ${t.approvedBy} is not null`),
   ],
 );
 

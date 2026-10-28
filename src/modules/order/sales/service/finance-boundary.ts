@@ -8,8 +8,9 @@ import type { OrderSource, OrderStatus, PaymentMethod } from './payment-boundary
 
 export interface OrderLineForInvoice {
   id: string;
-  variantId: string;
-  sku: string;
+  /** Trống khi dòng đơn sàn chưa ghép SKU (`unmapped_sku`). */
+  variantId: string | null;
+  sku: string | null;
   productName: string;
   quantity: number;
   unitPrice: Decimal;

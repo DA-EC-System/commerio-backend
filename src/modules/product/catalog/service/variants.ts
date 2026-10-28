@@ -43,7 +43,7 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
   }));
 }
 
-const ENTITY = 'catalog.product_variants';
+const ENTITY = 'product.product_variants';
 const badCombo = (message: string) => invalid({ attributeValueIds: message });
 const variantSnapshot = (productName: string, v: { sku: string; attributes: { value: string }[] }) => ({
   product: productName,

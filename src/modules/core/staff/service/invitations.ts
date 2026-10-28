@@ -57,7 +57,7 @@ export interface InvitationView {
   version: number;
 }
 
-const ENTITY = 'staff.invitations';
+const ENTITY = 'core.invitations';
 
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy lời mời');
 const outdated = () =>
@@ -195,7 +195,7 @@ export async function approveInvitation(
       companyId: caller.companyId,
       actorId: caller.accountId,
       action: 'create',
-      entityType: 'staff.memberships',
+      entityType: 'core.memberships',
       entityId: membershipId,
       after: { invitationId: row.id, roles: [...new Set(row.roleIds)].sort() },
     });

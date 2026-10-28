@@ -71,20 +71,20 @@ const rows = async (sql: string, params: unknown[]) => (await testPool().query(s
 /** Mọi thứ webhook có thể ghi cho một công ty, để so trước/sau. */
 export async function moneyRows(companyId: string) {
   const [txns, events, receipts, unmatched, outbox] = await Promise.all([
-    rows('select gateway, gateway_txn_id, status, source, amount, order_id, payment_link_id from payment.payment_transactions where company_id = $1 order by created_at', [companyId]),
-    rows('select gateway, event_key from payment.webhook_events where company_id = $1', [companyId]),
+    rows('select gateway, gateway_txn_id, status, source, amount, order_id, payment_link_id from finance.payment_transactions where company_id = $1 order by created_at', [companyId]),
+    rows('select gateway, event_key from finance.webhook_events where company_id = $1', [companyId]),
     rows('select number, source, amount, order_id, payment_transaction_id, status from finance.receipts where company_id = $1 order by number', [companyId]),
     rows('select reason, status, amount, transfer_content, payment_transaction_id from finance.unmatched_receipts where company_id = $1', [companyId]),
-    rows("select type, payload from platform.outbox_messages where company_id = $1 and type in ('payment.succeeded', 'finance.receipt_posted') order by id", [companyId]),
+    rows("select type, payload from core.outbox_messages where company_id = $1 and type in ('payment.succeeded', 'finance.receipt_posted') order by id", [companyId]),
   ]);
   return { txns, events, receipts, unmatched, outbox };
 }
 
 export const orderPayment = async (orderId: string) =>
-  (await rows('select status, refund_status, paid_at from payment.order_payments where order_id = $1', [orderId]))[0];
+  (await rows('select status, refund_status, paid_at from finance.order_payments where order_id = $1', [orderId]))[0];
 
 export const linkStatus = async (linkId: string) =>
-  (await rows('select status from payment.payment_links where id = $1', [linkId]))[0]?.status as string | undefined;
+  (await rows('select status from finance.payment_links where id = $1', [linkId]))[0]?.status as string | undefined;
 
 /** Gọi API finance bằng token; `body` có thì gửi JSON. */
 export function api(method: 'get' | 'post' | 'put' | 'delete', path: string, token?: string, body?: object) {
@@ -104,7 +104,7 @@ export async function paidOrder() {
 /** Đơn đã thu rồi bị huỷ: hoàn tiền `pending_refund` (đường của #25: đổi đơn rồi `markRefundPending`). */
 export async function refundPendingOrder() {
   const l = await paidOrder();
-  await testPool().query("update sales.orders set status = 'cancelled', updated_at = now() where id = $1", [l.orderId]); // của #25
+  await testPool().query("update \"order\".orders set status = 'cancelled', updated_at = now() where id = $1", [l.orderId]); // của #25
   await withCompany(l.companyId, () => markRefundPending(l.orderId));
   return l;
 }
