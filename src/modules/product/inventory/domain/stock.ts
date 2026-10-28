@@ -18,6 +18,11 @@ export function stockValue(onHand: number, avgCost: Decimal.Value): number {
   return toDong(new Decimal(avgCost).times(onHand));
 }
 
+/** Khả dụng = `max(0, tồn thực − đang giữ − tạm khoá)`, số đẩy lên sàn (Documents/21 mục 15.1). */
+export function availableQty(onHand: number, reserved: number, locked: number): number {
+  return Math.max(0, onHand - reserved - locked);
+}
+
 /** Khả dụng dưới ngưỡng; chưa đặt ngưỡng thì không bao giờ dưới (K7). */
 export function isBelowMin(available: number, minQty: number | null): boolean {
   return minQty !== null && available < minQty;

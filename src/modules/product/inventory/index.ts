@@ -10,3 +10,6 @@ export const inventoryModule: ModuleDefinition = {
   router: inventoryRouter,
   openapi: registerInventoryOpenApi,
 };
+
+export { nextDocNumber, type StockSnapshot, stockOf } from './service/port.ts';
+export type { IncomingLookup, InventoryContext } from './service/views.ts';

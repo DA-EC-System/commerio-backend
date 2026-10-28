@@ -5,9 +5,11 @@ import { testPool } from '../../helpers/db.ts';
 const db = () => testPool();
 const number = (p: string) => `${p}-${randomUUID().slice(0, 8)}`;
 
+/** Mỗi lần một NCC tên khác: tên NCC không trùng trong công ty (`suppliers_company_lower_name_uq`). */
 async function supplier(companyId: string) {
-  const r = await db().query<{ id: string }>("insert into product.suppliers (company_id, name) values ($1, 'NCC Thử') returning id", [
+  const r = await db().query<{ id: string }>('insert into product.suppliers (company_id, name) values ($1, $2) returning id', [
     companyId,
+    number('NCC'),
   ]);
   return r.rows[0]!.id;
 }
