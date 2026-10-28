@@ -306,7 +306,7 @@ async function activate(row: ConfigRow): Promise<ConfigRow> {
   await publishEvent({
     type: 'finance.fee_config_activated',
     aggregateId: row.id,
-    payload: { configId: row.id, kind: row.kind, shopId: row.shopId, effectiveFrom: row.effectiveFrom!, supersededId: superseded },
+    payload: { configVersionId: row.id, kind: row.kind, shopId: row.shopId, effectiveFrom: row.effectiveFrom!, supersededId: superseded },
   });
   return active;
 }

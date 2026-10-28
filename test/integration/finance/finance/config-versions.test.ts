@@ -137,7 +137,7 @@ describe('dòng thời gian của một gian hàng', () => {
       "select payload from core.outbox_messages where type = 'finance.fee_config_activated' and key = $1",
       [b.id],
     );
-    expect(rows[0].payload).toMatchObject({ configId: b.id, kind: 'fee', shopId, effectiveFrom: later, supersededId: a.id });
+    expect(rows[0].payload).toMatchObject({ configVersionId: b.id, kind: 'fee', shopId, effectiveFrom: later, supersededId: a.id });
 
     const pick = (day: string) => withCompany(companyId, () => getEffectiveConfig('fee', shopId, day));
     expect((await pick(addDays(later, -1)))?.id).toBe(a.id);
