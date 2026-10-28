@@ -29,6 +29,13 @@
       "when": 1793174781856,
       "tag": "0003_seed-quyen",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793192460630,
+      "tag": "0004_gian-hang-lazada",
+      "breakpoints": true
     }
   ]
 }

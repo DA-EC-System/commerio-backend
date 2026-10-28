@@ -11,3 +11,5 @@ export const channelModule: ModuleDefinition = {
 };
 
 export { getShops, type ShopRef } from './service/shops-lookup.ts';
+// Cho #102 (làm mới token thất bại), #133 (sàn báo gỡ app): gọi trong `withCompany`.
+export { markNeedsReauth } from './service/shops.ts';
