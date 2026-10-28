@@ -29,8 +29,6 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = typeof res.message === 'string' ? res.message : null;
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
-  // Lazada chưa công bố mã riêng cho seller ngoài whitelist; nhận theo câu báo (plan #103 rủi ro 1).
-  if (message && /whitelist/i.test(message)) return new MarketplaceError('not_whitelisted', code, message);
   // `ISP`, `SYSTEM`: lỗi phía sàn; `ApiCallLimit`: quá hạn mức, đều thử lại được.
   if (res.type === 'ISP' || res.type === 'SYSTEM' || code === 'ApiCallLimit') {
     return new MarketplaceError('unavailable', code, message);

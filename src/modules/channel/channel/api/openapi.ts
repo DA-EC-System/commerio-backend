@@ -23,7 +23,7 @@ const marketplace = {
   409: problemResponse(
     '`shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
   ),
-  422: problemResponse('`validation_failed`, `marketplace_unsupported`, `seller_not_whitelisted`'),
+  422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
   503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm, thử lại'),
 };
 const connected = {
@@ -75,7 +75,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...connected,
       ...auth,
       ...marketplace,
-      422: problemResponse('`validation_failed`, `oauth_state_invalid`, `marketplace_unsupported`, `seller_not_whitelisted`'),
+      422: problemResponse('`validation_failed`, `oauth_state_invalid`, `marketplace_unsupported`'),
     },
   });
   registry.registerPath({

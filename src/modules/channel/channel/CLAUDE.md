@@ -15,7 +15,7 @@ Máy trạng thái ở `domain/shop.ts` (§18.1, cùng bảng với FE `src/lib/
 
 `service/marketplaces/`: `common.ts` (interface `MarketplaceAdapter`, `TokenSet`, `SellerInfo`, `MarketplaceError`), `lazada.ts` (ký HMAC-SHA256, gọi, đổi lỗi), `index.ts` (`getAdapter`, test thay bằng `registerAdapter`/`resetAdapters`). Thêm sàn = một file + một dòng ở `index.ts`; năng lực mới (listing, đơn, kiện) thêm vào interface khi issue cần. Code ngoài adapter không rẽ nhánh theo sàn.
 
-Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (`toAppError`, Documents/21 §1.1 R8, R9): `unavailable` 503 `marketplace_unavailable`; `not_whitelisted` 422 `seller_not_whitelisted`; `unsupported` 422 `marketplace_unsupported`; còn lại 409 `marketplace_rejected` kèm `platformCode`, `platformMessage`. Base URL Lazada đọc từ `LAZADA_API_URL`, `LAZADA_AUTH_URL` để trỏ sang sàn giả lập (#115).
+Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (`toAppError`, Documents/21 §1.1 R8, R9): `unavailable` 503 `marketplace_unavailable`; `unsupported` 422 `marketplace_unsupported`; còn lại 409 `marketplace_rejected` kèm `platformCode`, `platformMessage`. Seller ngoài whitelist của app bị Lazada chặn ngay trên trang uỷ quyền (không có `code`), BE không nhận được lỗi đó; FE báo theo `error` trên URL callback. Base URL Lazada đọc từ `LAZADA_API_URL`, `LAZADA_AUTH_URL` để trỏ sang sàn giả lập (#115).
 
 ## Cho module khác
 

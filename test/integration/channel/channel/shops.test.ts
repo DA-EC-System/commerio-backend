@@ -13,12 +13,11 @@ import { testApp } from '../../helpers/http.ts';
 const DAY = 24 * 3600_000;
 
 // Adapter giả: code `c-<seller>` đổi được token `tok-<seller>`; token `tok-<seller>` đọc ra seller đó.
-// Code `down`, `nowl` giả lỗi tạm và seller ngoài whitelist.
+// Code `down` giả lỗi tạm của sàn.
 registerAdapter('lazada', {
   authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
   async exchangeCode(code) {
     if (code === 'down') throw new MarketplaceError('unavailable', 'ServiceTimeout');
-    if (code === 'nowl') throw new MarketplaceError('not_whitelisted', 'X', 'not in whitelist');
     return {
       accessToken: `tok-${code.slice(2)}`,
       refreshToken: `ref-${code.slice(2)}`,
@@ -106,9 +105,6 @@ describe('kết nối bằng OAuth', () => {
     const down = await call('down');
     expect(down.status).toBe(503);
     expect(down.body).toMatchObject({ code: 'marketplace_unavailable', platformCode: 'ServiceTimeout' });
-    const nowl = await call('nowl');
-    expect(nowl.status).toBe(422);
-    expect(nowl.body.code).toBe('seller_not_whitelisted');
     const bad = await connect(token, 'bad');
     expect(bad.status).toBe(409);
     expect(bad.body).toMatchObject({ code: 'marketplace_rejected', platformCode: 'IllegalAccessToken' });

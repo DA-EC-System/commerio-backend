@@ -102,8 +102,6 @@ function toAppError(err: MarketplaceError): AppError {
   switch (err.kind) {
     case 'unavailable':
       return new AppError(503, 'marketplace_unavailable', 'Sàn đang không phản hồi, thử lại sau', platform);
-    case 'not_whitelisted':
-      return new AppError(422, 'seller_not_whitelisted', 'Gian hàng chưa được cấp quyền thử ứng dụng', platform);
     case 'unsupported':
       return unsupported();
     default:

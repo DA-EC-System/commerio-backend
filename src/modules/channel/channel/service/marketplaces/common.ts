@@ -30,11 +30,10 @@ export interface MarketplaceAdapter {
  * Lỗi khi gọi sàn, đã phân loại (Documents/21 §1.1 R8, R9). `platformCode`, `platformMessage` là mã và câu gốc của sàn.
  * - `unavailable`: lỗi tạm (mạng, 5xx, sàn quá tải), thử lại được.
  * - `unauthorized`: token sai hoặc hết hạn: gian hàng cần nối lại.
- * - `not_whitelisted`: app đang thử, seller chưa trong danh sách.
  * - `rejected`: sàn từ chối, chưa có mã riêng.
  * - `unsupported`: sàn chưa cấu hình hoặc không có năng lực này.
  */
-export type MarketplaceErrorKind = 'unavailable' | 'unauthorized' | 'not_whitelisted' | 'rejected' | 'unsupported';
+export type MarketplaceErrorKind = 'unavailable' | 'unauthorized' | 'rejected' | 'unsupported';
 
 export class MarketplaceError extends Error {
   readonly kind: MarketplaceErrorKind;

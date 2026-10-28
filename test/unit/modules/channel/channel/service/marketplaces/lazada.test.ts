@@ -92,7 +92,6 @@ describe('adapter Lazada', () => {
       'unauthorized',
       'IllegalRefreshToken',
     ],
-    ['ngoài whitelist', json({ code: 'X', type: 'ISV', message: 'seller not in whitelist' }), 'not_whitelisted', 'X'],
     ['sàn từ chối', json({ code: 'E207', type: 'ISV', message: 'SKU not exist' }), 'rejected', 'E207'],
   ])('%s → %s', async (_name, response, kind, platformCode) => {
     const err = await createLazadaAdapter(config, fakeFetch(response))
