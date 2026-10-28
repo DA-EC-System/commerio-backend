@@ -29,6 +29,16 @@ Hoá đơn bán, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soá
 - **Nhận bảng kê** (`service/settlement-ingest.ts`, trong `withCompany`): khoá advisory theo công ty → upsert bảng kê (khác gian hàng → 422) → chèn dòng mới (trùng bỏ qua) → khớp lại mọi `order_not_found` của công ty → sinh phiếu còn thiếu. Một giao dịch.
 - **API** (`api/settlement-*.ts`): cần thêm phân hệ Kênh bán (`module_disabled`); tên gian hàng qua `ctx.shopsOf` (`channel.getShops`, tiêm ở `src/wiring.ts`). `POST /settlements/dev/import` chỉ ngoài production. Kéo từ sàn (vòng lặp, `POST /settlements/run`) chờ sàn giả lập (#17, #19).
 
+## Phiên bản cấu hình tiền (#118, D4.4)
+
+- **Bảng** `config_versions`: một dòng mỗi phiên bản của một ô (công ty, `kind`, gian hàng; chỉ `fee` có gian hàng). `payload` kiểm bằng Zod theo `kind` (`domain/config-version.ts`, lỗi trả dưới ô `payload.<trường>`). Hợp đồng: `Documents/21` §21.0, §21.4.
+- **Máy trạng thái** `configMachine`: `draft → pending_approval → scheduled → active → expired`, nhánh `rejected`, `cancelled`, trả về `draft`. Gửi duyệt cần đã chạy thử (422 `dry_run_required`); duyệt, trả về, từ chối cần người khác người soạn, chỉ duyệt có ngoại lệ tự duyệt (CEO, công ty một người, ghi `self_approved`); huỷ chỉ trước ngày hiệu lực (409 `config_already_effective`).
+- **Dòng thời gian của ô:** ràng buộc `config_versions_no_overlap` (EXCLUDE trên `scheduled`, `active`) cấm hai khoảng ngày chồng nhau, mà `effective_to` null là vô hạn. Nên lúc **duyệt** đã cắt `effective_to` của bản đứng trước về ngày trước bản mới (`placeInTimeline`); huỷ bản `scheduled` thì nới lại sau khi bản đó rời `scheduled`. Trùng ngày hiệu lực mà không phải bản sửa lỗi của chính bản đó: 409 `config_overlap`. Mọi thao tác trên một ô khoá advisory `finance.config:<công ty>:<kind>:<gian hàng>`.
+- **Áp dụng:** duyệt bản đã tới ngày (giờ Việt Nam) thì áp ngay; còn lại việc nền `startFinanceBackground` mỗi 5 phút (khoá phiên `finance.config_activation`) chuyển `scheduled → active`, bản `active` đã kết thúc trước ngày đó và bản bị sửa lỗi sang `expired`, phát `finance.fee_config_activated`.
+- **Chọn theo ngày:** `getEffectiveConfig(kind, shopId, day)` (export ở `index.ts`, gọi trong `withCompany`) cho sổ tiền #116; bản bị một bản sửa lỗi đã áp dụng thay thế thì bỏ.
+- **Chạy thử** không ghi sổ: lãi 30 ngày theo `ledger_entries` (dòng chưa bị thay) và lãi nếu áp bản này (phí, thuế đổi bao nhiêu phần trăm doanh thu). `listingsRepriced`, `belowFloor` null tới khi C2 (#104) có giá theo sàn. Điều chỉnh hồi tố cho bản sửa lỗi cần sổ tiền: làm ở #116.
+- **Quyền** (§21.0): xem có ít nhất một quyền `finance.config.*`, `finance.settlement.*`, `finance.invoice.view`; soạn, chạy thử, gửi, huỷ `finance.config.manage`; duyệt, trả về, từ chối `finance.config.approve`.
+
 ## Gọi module khác
 
 finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`, `findMarketplaceOrders`), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.
