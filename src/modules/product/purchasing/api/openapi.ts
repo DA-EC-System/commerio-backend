@@ -19,6 +19,7 @@ import {
   ReceiptListQuery,
   RequestActionInput,
   RequestListQuery,
+  ShortResolutionInput,
   Supplier,
   SupplierInput,
   SupplierList,
@@ -171,6 +172,19 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
       ...missing('phiếu nhận'),
       ...conflict(`${versionConflict}; \`not_draft\` khi phiếu không còn đang kiểm`),
       422: problemResponse('`validation_failed` theo ô (`lines.i.accepted`, `lines.i.reason`, `lines.i.lineId`, `attachments`); `over_outstanding`'),
+    },
+  });
+  path({
+    method: 'post',
+    path: '/goods-receipts/:id/short-resolution',
+    summary:
+      'Ghi kết quả giao thiếu: giao bù, NCC nhận sai, đóng thiếu (quyền `purchasing.request.manage`; đóng thiếu cần thêm `purchasing.request.approve`)',
+    request: { params: IdParams, body: body(ShortResolutionInput) },
+    responses: {
+      200: json('Phiếu đã xử lý', GoodsReceipt),
+      ...missing('phiếu nhận'),
+      ...conflict(`${versionConflict}; \`resolution_recorded\`, \`invalid_transition\` khi phiếu không ở Giao thiếu, \`receipt_counting\``),
+      422: problemResponse('`validation_failed` (`errors.note`), `follow_up_invalid` (`errors.followUpNumber`), `reason_required`'),
     },
   });
   path({

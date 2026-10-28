@@ -3,7 +3,7 @@ import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { anyOf, getAccess } from '../../../../shared/auth/authorize.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import { runReceiptAction } from '../service/receipt-actions.ts';
+import { resolveShort, runReceiptAction } from '../service/receipt-actions.ts';
 import * as receipts from '../service/receipts.ts';
 import { runRequestAction } from '../service/request-actions.ts';
 import type { Actor } from '../service/request-views.ts';
@@ -23,6 +23,7 @@ import {
   ReceiptListQuery,
   RequestActionInput,
   RequestListQuery,
+  ShortResolutionInput,
   SupplierInput,
   SupplierListQuery,
   SupplierUpdateInput,
@@ -116,6 +117,17 @@ export function purchasingRouter(ctx: ModuleContext): Router {
     const { id } = validated<typeof IdParams>(res, 'params');
     res.json(await receipts.updateReceiptCount(actor(res), id, validated<typeof GoodsReceiptUpdateInput>(res, 'body')));
   });
+
+  // Khai trước `/:id/:action`. Đóng thiếu cần thêm `purchasing.request.approve`, service kiểm.
+  router.post(
+    '/goods-receipts/:id/short-resolution',
+    manage,
+    validate({ params: IdParams, body: ShortResolutionInput }),
+    async (_req, res) => {
+      const { id } = validated<typeof IdParams>(res, 'params');
+      res.json(await resolveShort(actor(res), id, validated<typeof ShortResolutionInput>(res, 'body')));
+    },
+  );
 
   // Như đề nghị: quyền của từng bước do máy trạng thái kiểm, route chỉ cần quyền xem.
   router.post('/goods-receipts/:id/:action', view, validate({ params: ActionParams, body: ReceiptActionInput }), async (_req, res) => {

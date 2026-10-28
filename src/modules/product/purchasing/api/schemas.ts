@@ -163,6 +163,15 @@ export const GoodsReceiptUpdateInput = z
   })
   .meta({ id: 'GoodsReceiptUpdateInput' });
 
+export const ShortResolutionInput = z
+  .object({
+    kind: z.enum(['follow_up', 'close_short', 'supplier_wrong'], 'Chọn kết quả'),
+    followUpNumber: z.string('Số phiếu giao bù không hợp lệ').max(30, 'Số phiếu giao bù không hợp lệ').nullish(),
+    note: text(500),
+    version,
+  })
+  .meta({ id: 'ShortResolutionInput', description: '`close_short` cần `purchasing.request.approve`' });
+
 export const ReceiptActionInput = z
   .object({ version, reason: z.string('Lý do tối đa 500 ký tự').max(500, 'Lý do tối đa 500 ký tự').nullish() })
   .meta({ id: 'GoodsReceiptActionInput' });

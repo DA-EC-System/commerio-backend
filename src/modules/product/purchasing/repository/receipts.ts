@@ -50,6 +50,15 @@ export function shortReceiptsOf(requestId: string) {
     .orderBy(asc(goodsReceipts.createdAt), asc(goodsReceipts.id));
 }
 
+/** Phiếu theo số trong một đề nghị (số phiếu giao bù ở kết quả giao thiếu). */
+export async function findReceiptByNumber(requestId: string, number: string) {
+  const [row] = await getDb()
+    .select(receiptCols)
+    .from(goodsReceipts)
+    .where(and(eq(goodsReceipts.requestId, requestId), eq(goodsReceipts.number, number)));
+  return row;
+}
+
 export interface ReceiptFilter {
   page: number;
   pageSize: number;

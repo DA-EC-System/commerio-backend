@@ -4,13 +4,20 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { nextDocNumber, receiveGoods } from '../../inventory/index.ts';
 import { goodsReceiptMachine, RECEIPT_USER_ACTIONS } from '../domain/receipt-machine.ts';
-import { docNumber, outstanding } from '../domain/request.ts';
-import { findReceipt, type ReceiptLineRow, receiptLines, type ReceiptRow, updateReceipt } from '../repository/receipts.ts';
+import { docNumber, hasPermission, outstanding } from '../domain/request.ts';
+import {
+  findReceipt,
+  findReceiptByNumber,
+  type ReceiptLineRow,
+  receiptLines,
+  type ReceiptRow,
+  updateReceipt,
+} from '../repository/receipts.ts';
 import { type LineRow, type RequestRow, updateLine } from '../repository/requests.ts';
 import { insertDraftReturn, insertReturnLines } from '../repository/returns.ts';
 import { type GoodsReceiptView, toReceiptDetail } from './receipt-views.ts';
 import { assertReceiptVersion, lockOwnReceipt, RECEIPT_ENTITY } from './receipts.ts';
-import { applyReceiving } from './request-receiving.ts';
+import { applyReceiving, closeShortRequest } from './request-receiving.ts';
 import { type Actor, invalid, notFound } from './request-views.ts';
 import { checkTransition } from './transitions.ts';
 
@@ -117,6 +124,58 @@ export async function runReceiptAction(
       await updateReceipt(id, { status: to, statusReason: reason });
       await recordTransition({ entityType: RECEIPT_ENTITY, entityId: id, from: receipt.status, to, action, actorId: actor.accountId, reason });
     }
+    return toReceiptDetail((await findReceipt(id))!);
+  });
+}
+
+export interface ShortResolutionInput {
+  kind: 'follow_up' | 'supplier_wrong' | 'close_short';
+  followUpNumber?: string | null | undefined;
+  note: string;
+  version: number;
+}
+
+/**
+ * Ghi kết quả giao thiếu (spec #109 mục 6.6): giao bù bằng phiếu khác cùng đề nghị, NCC nhận sai, hoặc CEO đóng thiếu
+ * cả đề nghị qua `closeShortRequest` (phiếu này tự sang Đã xử lý cùng các phiếu thiếu khác).
+ */
+export async function resolveShort(actor: Actor, id: string, input: ShortResolutionInput): Promise<GoodsReceiptView> {
+  return withCompany(actor.companyId, async () => {
+    const { receipt, request } = await lockOwnReceipt(id);
+    await assertReceiptVersion(receipt, input.version);
+    if (receipt.status === 'resolved') throw new AppError(409, 'resolution_recorded', 'Phiếu đã ghi kết quả giao thiếu');
+    const record = { createdBy: request.createdBy, short: 0 };
+    const { to } = await checkTransition(goodsReceiptMachine, receipt.status, 'resolve', { actor, record }, () => toReceiptDetail(receipt));
+    const note = input.note.trim();
+
+    if (input.kind === 'close_short') {
+      if (!hasPermission(actor, 'purchasing.request.approve')) throw new AppError(403, 'forbidden', 'Chỉ CEO đóng thiếu đề nghị');
+      if (!note) throw invalid({ note: 'Nhập lý do đóng thiếu' }, 'reason_required');
+      await closeShortRequest(actor, request, note);
+      return toReceiptDetail((await findReceipt(id))!);
+    }
+
+    let followUpId: string | null = null;
+    if (input.kind === 'follow_up') {
+      const number = (input.followUpNumber ?? '').trim().toUpperCase();
+      const found = number ? await findReceiptByNumber(request.id, number) : undefined;
+      if (!found || found.id === receipt.id || found.status === 'cancelled') {
+        throw invalid({ followUpNumber: 'Không có phiếu nhận này trong cùng đề nghị' }, 'follow_up_invalid');
+      }
+      followUpId = found.id;
+    } else if (!note) {
+      throw invalid({ note: 'Ghi NCC nhận sai thế nào' });
+    }
+
+    await updateReceipt(id, {
+      status: to,
+      shortResolution: input.kind,
+      followUpReceiptId: followUpId,
+      resolutionNote: note || null,
+      resolvedBy: actor.accountId,
+      resolvedAt: new Date(),
+    });
+    await recordTransition({ entityType: RECEIPT_ENTITY, entityId: id, from: receipt.status, to, action: 'resolve', actorId: actor.accountId });
     return toReceiptDetail((await findReceipt(id))!);
   });
 }
