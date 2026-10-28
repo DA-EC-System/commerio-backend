@@ -135,11 +135,17 @@ function tokenColumns(shopId: string, tokens: TokenSet) {
   };
 }
 
-/** Gian hàng gọi được sàn (`connecting`, `active`) kèm adapter và access token đã giải mã. Gọi trong `withCompany`. */
-export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter: MarketplaceAdapter; accessToken: string }> {
-  requireCompanyId('shopSession');
+/** Gian hàng của công ty đang đặt trong `withCompany`; không có (kể cả `id` sai định dạng) thì 404. */
+export async function ownShop(id: string): Promise<ShopRow> {
+  requireCompanyId('ownShop');
   const shop = isUuid(id) ? await findShopRow(id) : undefined;
   if (!shop) throw notFound();
+  return shop;
+}
+
+/** Gian hàng gọi được sàn (`connecting`, `active`) kèm adapter và access token đã giải mã. Gọi trong `withCompany`. */
+export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter: MarketplaceAdapter; accessToken: string }> {
+  const shop = await ownShop(id);
   if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
     throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
   }

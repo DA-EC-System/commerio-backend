@@ -121,3 +121,85 @@ export const CategoryMap = z
   .meta({ id: 'CategoryMap' });
 
 export const CategoryMapList = z.object({ items: z.array(CategoryMap) }).strict().meta({ id: 'CategoryMapList' });
+
+// Listing (#104; Documents/21 §18.3, §18.4).
+export const ListingParams = z.object({ id: z.string(), variantId: z.uuid('Biến thể không hợp lệ') });
+
+const httpUrl = z.url({ protocol: /^https?$/, error: 'URL ảnh phải là http(s)' }).max(2000);
+export const PushBody = z
+  .object({
+    variantIds: z.array(z.uuid('Biến thể không hợp lệ')).min(1, 'Chọn ít nhất một biến thể').max(20, 'Tối đa 20 biến thể mỗi lần'),
+    imageUrls: z
+      .record(z.uuid(), z.array(httpUrl).min(1).max(8))
+      .default({})
+      .meta({
+        description:
+          'URL ảnh công khai theo `productId` (JPG/PNG ≥ 330×330, ≤ 1MB); BE đưa lên sàn. Bắt buộc lần đầu đẩy sản phẩm, vì catalog chưa lưu ảnh',
+      }),
+  })
+  .meta({ id: 'ListingPushInput' });
+
+export const DelistBody = z.object({ version: z.number('Thiếu version').int().positive() }).meta({ id: 'ListingDelistInput' });
+
+const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
+const syncState = z.enum(['synced', 'pending', 'error']);
+const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
+
+export const ChannelListing = z
+  .object({
+    id: z.uuid(),
+    externalProductId: z.string().nullable(),
+    externalSkuId: z.string().nullable(),
+    sellerSku: z.string().nullable(),
+    status: listingStatus,
+    rejectReason: z.string().nullable(),
+    pushError: z.string().nullable(),
+    pushAttempts: z.number().int(),
+    hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
+    stockSync: syncState,
+    priceSync: syncState,
+    platformStock: z.number().int().nullable(),
+    stockSyncError: syncError.meta({ description: 'Lỗi lần đẩy tồn gần nhất của riêng SKU này; `message` là câu của sàn' }),
+    priceSyncError: syncError,
+    qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
+    lastPushedAt: iso.nullable(),
+    lastPushedPrice: z.number().int().nullable(),
+    version: z.number().int(),
+  })
+  .strict()
+  .meta({ id: 'ChannelListing' });
+
+export const ListingRow = z
+  .object({
+    variantId: z.uuid(),
+    productId: z.uuid(),
+    productName: z.string(),
+    sku: z.string(),
+    attributesLabel: z.string(),
+    thumbnailUrl: z.null(),
+    price: z.number().int().nullable().meta({ description: 'Giá sẽ đẩy: giá chuẩn của SKU' }),
+    priceSource: z.enum(['standard']).nullable(),
+    listing: ChannelListing.nullable(),
+  })
+  .strict()
+  .meta({ id: 'ListingRow' });
+
+export const ListingList = z.object({ items: z.array(ListingRow) }).strict().meta({ id: 'ListingList' });
+
+export const PushResult = z
+  .object({
+    variantId: z.string(),
+    sku: z.string(),
+    outcome: z.enum(['created', 'updated', 'failed']),
+    status: listingStatus.optional(),
+    externalSkuId: z.string().optional(),
+    code: z.string().optional().meta({
+      description:
+        '`not_found`, `push_in_progress`, `platform_hold`, `already_listed`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`, `marketplace_rejected`, `marketplace_unavailable`',
+    }),
+    message: z.string().optional(),
+  })
+  .strict()
+  .meta({ id: 'PushResult' });
+
+export const PushResults = z.object({ results: z.array(PushResult) }).strict().meta({ id: 'PushResults' });

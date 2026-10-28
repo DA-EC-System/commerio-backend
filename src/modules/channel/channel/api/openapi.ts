@@ -4,6 +4,12 @@ import {
   AuthorizeUrl,
   CallbackBody,
   CategoryAttributeList,
+  ChannelListing,
+  DelistBody,
+  ListingList,
+  ListingParams,
+  PushBody,
+  PushResults,
   CategoryMap,
   CategoryMapBody,
   CategoryMapList,
@@ -159,6 +165,39 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Ghép danh mục', ...json(CategoryMap) },
       ...onShop,
       409: problemResponse('`shop_not_connected`, `version_conflict` kèm `current`, `marketplace_rejected`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings',
+    summary: 'Biến thể đang bán kèm giá chuẩn và listing trên gian hàng (§18.3)',
+    description: 'Cần `channel.shop.view`. `listing: null` là chưa lên sàn (`not_listed`).',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Danh sách', ...json(ListingList) }, ...auth, 404: problemResponse('`not_found`') },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/push',
+    summary: 'Đẩy biến thể lên sàn (#104)',
+    description:
+      'Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng).',
+    security: bearer,
+    request: { params: ShopParams, body: json(PushBody) },
+    responses: { 200: { description: 'Kết quả theo biến thể', ...json(PushResults) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:variantId/delist',
+    summary: 'Gỡ listing khỏi sàn (§18.3)',
+    description: 'Cần `channel.listing.manage`. Tắt sản phẩm trên sàn rồi chuyển `delisted`, giữ ghép để đẩy lại.',
+    security: bearer,
+    request: { params: ListingParams, body: json(DelistBody) },
+    responses: {
+      200: { description: 'Listing sau khi gỡ', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng hoặc biến thể chưa có listing'),
+      409: problemResponse('`shop_not_connected`, `invalid_transition` (đang đẩy, đã gỡ), `version_conflict` kèm `current`'),
     },
   });
 }

@@ -5,9 +5,14 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
+import * as listings from '../service/listings.ts';
+import { productPort } from '../service/product-port.ts';
 import * as shops from '../service/shops.ts';
 import {
   CallbackBody,
+  DelistBody,
+  ListingParams,
+  PushBody,
   CategoryMapBody,
   CategoryMapParams,
   CategoryParams,
@@ -103,6 +108,28 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, categoryId } = validated<typeof CategoryMapParams>(res, 'params');
       const body = validated<typeof CategoryMapBody>(res, 'body');
       res.json(await withCompany(actor(res).companyId, () => categories.putCategoryMap(id, categoryId, body)));
+    },
+  );
+
+  router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await withCompany(actor(res).companyId, () => listings.listListings(productPort(ctx), id)));
+  });
+
+  // Gọi sàn ngoài giao dịch: service tự mở `withCompany` từng bước (#104 A3).
+  router.post('/shops/:id/listings/push', manage, validate({ params: ShopParams, body: PushBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await listings.pushListings(productPort(ctx), actor(res), id, validated<typeof PushBody>(res, 'body')));
+  });
+
+  router.post(
+    '/shops/:id/listings/:variantId/delist',
+    manage,
+    validate({ params: ListingParams, body: DelistBody }),
+    async (_req, res) => {
+      const { id, variantId } = validated<typeof ListingParams>(res, 'params');
+      const { version } = validated<typeof DelistBody>(res, 'body');
+      res.json(await listings.delistListing(actor(res), id, variantId, version));
     },
   );
 
