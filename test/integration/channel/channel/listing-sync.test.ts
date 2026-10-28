@@ -61,7 +61,7 @@ registerAdapter(
     categoryAttributes: async () => [],
     uploadImage: async (_t, url) => url,
     async createProduct(_t, p) {
-      return { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}` };
+      return { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false };
     },
     async getSkus(_t, sellerSkus): Promise<RemoteSku[]> {
       return sellerSkus.flatMap((s) => {

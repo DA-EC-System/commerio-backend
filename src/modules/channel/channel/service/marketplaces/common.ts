@@ -51,6 +51,8 @@ export interface NewProduct {
 export interface CreatedProduct {
   externalProductId: string;
   externalSkuId: string;
+  /** Sàn cho bán ngay (Lazada `item_status: Active`, gọi thật 28/10); false là chờ duyệt. */
+  live: boolean;
 }
 
 /**

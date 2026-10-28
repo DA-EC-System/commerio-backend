@@ -35,7 +35,8 @@ const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID() });
 const rejected = variant('CMR-REJECT');
 const down = variant('CMR-DOWN');
 const archived = variant('CMR-ARCHIVED', { archived: true });
-const all = [ok, noPrice, noDims, unmapped, rejected, down, archived];
+const liveNow = variant('CMR-LIVE');
+const all = [ok, noPrice, noDims, unmapped, rejected, down, archived, liveNow];
 
 setProductPort({
   variants: async (ids) => all.filter((v) => !ids || ids.includes(v.id)),
@@ -58,7 +59,8 @@ registerAdapter(
       if (p.sellerSku === 'CMR-REJECT') throw new MarketplaceError('rejected', '4110', 'Category attribute is mandatory');
       if (p.sellerSku === 'CMR-DOWN') throw new MarketplaceError('unavailable', '901');
       created.push(p);
-      return { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}` };
+      // Lazada cho bán ngay (`item_status: Active`, gọi thật 28/10) hay chờ duyệt.
+      return { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: p.sellerSku === 'CMR-LIVE' };
     },
     deactivate,
   }),
@@ -91,7 +93,7 @@ beforeAll(async () => {
 
 describe('đẩy listing', () => {
   it('kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác', async () => {
-    const res = await push(all.map((v) => v.id));
+    const res = await push(all.filter((v) => v !== liveNow).map((v) => v.id));
     expect(res.status).toBe(200);
     const byS = new Map(PushResults.parse(res.body).results.map((r) => [r.sku, r]));
     expect(byS.get('CMR-OK')).toMatchObject({ outcome: 'created', status: 'under_review', externalSkuId: 'sku-CMR-OK' });
@@ -153,6 +155,11 @@ describe('đẩy listing', () => {
     const [first, second] = again.body.results;
     expect(first).toMatchObject({ code: 'price_missing' });
     expect(second).toMatchObject({ code: 'images_missing' });
+  });
+
+  it('sàn cho bán ngay: pushing → live (go_live), không qua chờ duyệt', async () => {
+    const res = await push([liveNow.id]);
+    expect(res.body.results[0]).toMatchObject({ outcome: 'created', status: 'live' });
   });
 
   it('GET listings: mọi biến thể đang bán kèm listing, đúng schema', async () => {

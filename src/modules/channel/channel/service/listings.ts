@@ -252,7 +252,7 @@ async function pushOne(
       heightMm,
     });
     row = await withCompany(actor.companyId, async () =>
-      moveListing(row, 'send_review', null, {
+      moveListing(row, createdOnPlatform.live ? 'go_live' : 'send_review', null, {
         externalProductId: createdOnPlatform.externalProductId,
         externalSkuId: createdOnPlatform.externalSkuId,
         externalImageUrls: imageUrls,

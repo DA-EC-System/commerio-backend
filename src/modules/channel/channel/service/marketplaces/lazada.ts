@@ -269,10 +269,10 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         },
       });
       const body = await call(config.apiUrl, '/product/create', { access_token: accessToken, payload }, 'FORM');
-      const data = body.data as { item_id?: unknown; sku_list?: { sku_id?: unknown }[] } | undefined;
+      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: { sku_id?: unknown }[] } | undefined;
       const skuId = data?.sku_list?.[0]?.sku_id;
       if (data?.item_id === undefined || skuId === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
-      return { externalProductId: String(data.item_id), externalSkuId: String(skuId) };
+      return { externalProductId: String(data.item_id), externalSkuId: String(skuId), live: data.item_status === 'Active' };
     },
     async getSkus(accessToken, sellerSkus): Promise<RemoteSku[]> {
       const wanted = new Set(sellerSkus);

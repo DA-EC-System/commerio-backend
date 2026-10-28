@@ -101,7 +101,7 @@ describe('adapter Lazada: sản phẩm', () => {
       widthMm: 200,
       heightMm: 15,
     });
-    expect(created).toEqual({ externalProductId: '2374791958', externalSkuId: '13896560193' });
+    expect(created).toEqual({ externalProductId: '2374791958', externalSkuId: '13896560193', live: true });
     expect(JSON.parse(sent(fn).body.payload ?? '')).toEqual({
       Request: {
         Product: {
