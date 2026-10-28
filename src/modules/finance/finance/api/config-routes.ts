@@ -13,6 +13,7 @@ import {
   updateDraft,
 } from '../service/config-versions.ts';
 import type { FinanceContext } from '../service/settlement-views.ts';
+import { financeView } from './access.ts';
 import { ConfigActionBody, ConfigActionParams, ConfigListQuery, CreateConfigBody, UpdateConfigBody } from './config-schemas.ts';
 import { IdParams, VersionBody } from './schemas.ts';
 
@@ -28,13 +29,7 @@ const id = (res: Response) => input<typeof IdParams>(res, 'params').id;
  * tiền (như mục 16.1); soạn: `finance.config.manage`; thao tác theo máy trạng thái tự kiểm quyền của bước.
  */
 export function mountConfigRoutes(router: Router, ctx: FinanceContext): void {
-  const view = anyOf(
-    ctx.authorize('finance.config.manage'),
-    ctx.authorize('finance.config.approve'),
-    ctx.authorize('finance.settlement.resolve'),
-    ctx.authorize('finance.settlement.approve'),
-    ctx.authorize('finance.invoice.view'),
-  );
+  const view = financeView(ctx);
   const manage = ctx.authorize('finance.config.manage');
   const act = anyOf(manage, ctx.authorize('finance.config.approve'));
 

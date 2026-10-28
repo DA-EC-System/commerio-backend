@@ -39,6 +39,14 @@ Hoá đơn bán, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soá
 - **Chạy thử** không ghi sổ: lãi 30 ngày theo `ledger_entries` (dòng chưa bị thay) và lãi nếu áp bản này (phí, thuế đổi bao nhiêu phần trăm doanh thu). `listingsRepriced`, `belowFloor` null tới khi C2 (#104) có giá theo sàn. Điều chỉnh hồi tố cho bản sửa lỗi cần sổ tiền: làm ở #116.
 - **Quyền** (§21.0): xem có ít nhất một quyền `finance.config.*`, `finance.settlement.*`, `finance.invoice.view`; soạn, chạy thử, gửi, huỷ `finance.config.manage`; duyệt, trả về, từ chối `finance.config.approve`.
 
+## Sổ tiền theo đơn (#116, D4.1)
+
+- **Bảng** `ledger_entries`, chỉ thêm (role ứng dụng không UPDATE, DELETE): mỗi khoản một dòng, số có dấu (vào dương, ra âm), `is_estimate`; số thật về thì dòng thực tế trỏ `replaces_entry_id` về dòng ước tính (unique), sai thì thêm dòng `adjustment` có `reason`. Hợp đồng: `Documents/21` §21.1, sự kiện §11.2.
+- **Luật ghi** (`domain/ledger.ts`, thuần, `25` §10.1): kiện giao xong → doanh thu theo giá bán, trợ giá sàn, ship, bốn loại phí theo cấu hình phí của gian hàng, thuế sàn khấu trừ (chỉ hộ kinh doanh, cá nhân: GTGT + TNCN của quy tắc thuế), giá vốn; kiện hoàn về → phí khi hoàn; hoàn tiền khách; kiểm hàng về → giảm giá vốn phần bán lại được. Làm tròn tới đồng, dòng 0 đồng không ghi. Chưa có cấu hình thì không ước tính khoản đó. Dòng phí, thuế lưu `config_version_id` (phiên bản theo ngày phát sinh, `getEffectiveConfig`).
+- **Ghi theo sự kiện** (`service/ledger.ts`: `recordPackageDelivered`, `recordPackageReturned`, `recordReturnRefunded`, `recordReturnInspected`, export ở `index.ts`): mỗi nguồn (`source_type`, `source_id`) ghi một lần, khoá advisory `finance.ledger:<công ty>:<loại>:<id>`, phát lại không ghi trùng. Loại sự kiện chưa có trong danh mục (#106, #107, #112 thêm): khi có thì đăng ký consumer gọi các hàm này.
+- **Đọc:** `GET /ledger` (lọc ước tính, thực tế, đã thay, loại, gian hàng, đơn, ngày; tổng `receivable` là ước tính đang ở sàn, `platformBalance` là thực tế), `GET /orders/:orderId/profit` (`25` §10.2, chỉ phần đã giao), `GET /tax-warnings` (luỹ kế năm so với mốc của quy tắc thuế, từ 90%). Không có `inventory.cost.view` thì bỏ dòng giá vốn, `cogs`, `gross` null (R4). Quyền xem dùng chung `api/access.ts` với cấu hình.
+- **Chưa làm (PR sau của #116):** xuất kiểu MISA, dự báo tiền, chia quảng cáo cho lãi đóng góp, chuyển hoá đơn, phiếu thu chi cũ sang sổ, `withdrawn` và `committedPurchase` của tổng.
+
 ## Gọi module khác
 
 finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`, `findMarketplaceOrders`), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.
