@@ -23,6 +23,17 @@ export type { EventEnvelope } from '../../../shared/events/envelope.ts';
 export { EVENT_SCHEMAS, EVENT_TYPES, type EventPayload, type EventType } from './domain/events.ts';
 export { publishEvent, registerConsumer, stopInstanceConsumers } from './service/outbox/public.ts';
 
+// Việc nền (#102): khai hàng, gửi việc trong giao dịch, nhận việc trong `startBackground`. Cách dùng ở CLAUDE.md.
+export {
+  defineQueue,
+  JobDataSchema,
+  sendJob,
+  workQueue,
+  type JobData,
+  type Queue,
+  type QueueOptions,
+} from './service/jobs/queues.ts';
+
 // Máy trạng thái và lịch sử chuyển (Documents/21 mục 14.1). Lịch sử kèm tên người: `getStatusHistory` của `staff`.
 export {
   assertTransition,
