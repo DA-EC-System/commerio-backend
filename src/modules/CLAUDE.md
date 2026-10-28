@@ -79,6 +79,15 @@ Phát bằng `publishEvent({ type, aggregateId, payload })` trong giao dịch ng
 
 Việc nền của module (consumer, tra cứu định kỳ) khai ở `startBackground` của `ModuleDefinition`; `worker` gọi lúc khởi động và dừng khi tắt.
 
+## Máy trạng thái (Documents/21 mục 14.1, #101)
+
+Thực thể vòng đời khai bảng chuyển bằng `defineMachine([...])` (export từ `core/index.ts`, cùng trường với FE `src/lib/stateMachine.ts`) trong `domain/` của module. Thao tác `POST /<thực thể>/:id/<action>`:
+
+1. `assertTransition(machine, current, action, { actor, record, reason, canSelfApprove, view })`: ném `invalid_transition` 409 (kèm `current` = `view` hoặc trạng thái), `forbidden` 403, `second_person_required` 409, mã của `guard` 409, `reason_required` 422; trả `{ to, selfApproved }`. `actor` = `{ accountId, permissions, enabledModules }` lấy nguyên từ `getAccess(res)`, khung tự bỏ quyền của phân hệ tắt; `actor` null khi hệ thống, sàn chuyển. `record.createdBy` là người mà bước cần người thứ hai phải khác, bên gọi tự nạp. Bước có `allowSelfApproval` (chỉ bảng có cột `self_approved`) thì truyền `canSelfApprove(accountId)` của `staff`.
+2. Repository `UPDATE … WHERE id AND status = from AND version`, ghi `self_approved` nếu có; không trúng dòng thì đọc lại, 409.
+3. `recordTransition({ entityType: '<tên bảng>', entityId, from, to, action, actorId, source?, reason? })` trong cùng giao dịch.
+4. Chi tiết bản ghi trả `statusHistory: await getStatusHistory('<tên bảng>', id)` (`staff`) và nút hợp lệ bằng `availableActions`.
+
 ## Thêm nghiệp vụ vào module
 
 1. Khai bảng trong `repository/schema.ts` bằng `<tên>Schema.table(...)`, rồi `npm run db:generate`.

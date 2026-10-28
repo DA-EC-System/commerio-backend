@@ -45,4 +45,5 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 ## Cho module khác (`index.ts`)
 
 - `identity`: `findAccountByEmail`, `findAccountById`, `findAccountByGoogleSub`, `linkGoogleSub`, `createAccount`, `createMembership`, `findMembership`, `membershipsOfAccount`, `updatePassword`; `staffRouter`, `registerStaffOpenApi` (identity gắn).
-- Gọi `access` (`findRolesWithPermissions`, `memberRolesOf`, `replaceMemberRoles`, `membershipIdsWithRole`) và `audit`. `access` không gọi `staff`.
+- Mọi module vòng đời: `canSelfApprove(accountId)` (CEO, hoặc khách thuê chỉ một thành viên `active`), `getStatusHistory(entityType, entityId)` (lịch sử của `platform` kèm họ tên người làm), xem `src/modules/CLAUDE.md` mục Máy trạng thái.
+- Gọi `access` (`findRolesWithPermissions`, `memberRolesOf`, `replaceMemberRoles`, `membershipIdsWithRole`), `platform` (`listTransitions`) và `audit`. `access` không gọi `staff`.

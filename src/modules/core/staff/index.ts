@@ -11,6 +11,8 @@ export const staffModule: ModuleDefinition = { name: 'staff', startBackground: s
 export { registerStaffOpenApi, staffRouter };
 
 export type { AccountRow, MembershipRow } from './repository/accounts.ts';
+// Nền vòng đời (#101): tự duyệt, `statusHistory` kèm tên người (Documents/21 mục 14.1).
+export { canSelfApprove, getStatusHistory, type StatusChange } from './service/lifecycle.ts';
 export {
   findAccountByEmail,
   findAccountByGoogleSub,

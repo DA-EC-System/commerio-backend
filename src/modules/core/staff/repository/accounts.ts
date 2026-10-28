@@ -163,6 +163,16 @@ export async function findMemberByAccount(accountId: string): Promise<MemberRow 
   return row;
 }
 
+/** Số thành viên đang hoạt động của công ty hiện tại. */
+export async function countActiveMembers(): Promise<number> {
+  const companyId = requireCompanyId('countActiveMembers');
+  const [row] = await getDb()
+    .select({ n: count() })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, companyId), eq(memberships.status, 'active')));
+  return row!.n;
+}
+
 /** Chuỗi tìm cho `ILIKE … ESCAPE '\'`: `\`, `%`, `_` của người dùng là ký tự thường, không phải ký tự đại diện. */
 const containsPattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
