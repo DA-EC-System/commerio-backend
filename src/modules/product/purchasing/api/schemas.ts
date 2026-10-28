@@ -56,6 +56,14 @@ export const SupplierInput = z
 
 export const SupplierUpdateInput = SupplierInput.extend({ version }).meta({ id: 'SupplierUpdateInput' });
 
+export const SupplierReportQuery = z
+  .object({
+    from: z.iso.date('Ngày bắt đầu dạng yyyy-mm-dd').optional(),
+    to: z.iso.date('Ngày kết thúc dạng yyyy-mm-dd').optional(),
+  })
+  .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'Ngày bắt đầu sau ngày kết thúc', path: ['from'] })
+  .meta({ description: 'Ngày theo giờ Việt Nam, tính cả hai đầu; bỏ trống là không giới hạn' });
+
 // ---------- Đề nghị nhập ----------
 
 export const RequestListQuery = z.object({
@@ -197,6 +205,21 @@ export const Supplier = z
   .meta({ id: 'Supplier' });
 
 export const SupplierList = z.array(Supplier);
+
+export const SupplierReport = z
+  .object({
+    supplierId: z.uuid(),
+    supplierName: z.string(),
+    receiptCount: z.number().int(),
+    shortReceiptCount: z.number().int(),
+    deliveredQty: z.number().int().meta({ description: 'Đạt + lỗi giữ + trả tại chỗ' }),
+    defectQty: z.number().int().meta({ description: 'Lỗi giữ + trả tại chỗ' }),
+    defectRate: z.number().nullable().meta({ description: '`defectQty / deliveredQty` (0–1), `null` khi chưa giao gì' }),
+  })
+  .strict()
+  .meta({ id: 'SupplierReport' });
+
+export const SupplierReportList = z.array(SupplierReport);
 
 /** `StatusChange` của Documents/21 mục 14.1; không đặt `id` vì channel đã đăng ký tên này. */
 const StatusChange = z

@@ -26,6 +26,7 @@ import {
   ShortResolutionInput,
   SupplierInput,
   SupplierListQuery,
+  SupplierReportQuery,
   SupplierUpdateInput,
 } from './schemas.ts';
 
@@ -52,6 +53,10 @@ export function purchasingRouter(ctx: ModuleContext): Router {
 
   router.get('/suppliers', view, validate({ query: SupplierListQuery }), async (_req, res) => {
     res.json(await suppliers.listSuppliers(actor(res).companyId, validated<typeof SupplierListQuery>(res, 'query')));
+  });
+
+  router.get('/suppliers/report', view, validate({ query: SupplierReportQuery }), async (_req, res) => {
+    res.json(await suppliers.getSupplierReport(actor(res).companyId, validated<typeof SupplierReportQuery>(res, 'query')));
   });
 
   router.post('/suppliers', manage, validate({ body: SupplierInput }), async (_req, res) => {

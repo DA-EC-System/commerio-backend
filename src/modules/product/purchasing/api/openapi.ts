@@ -24,6 +24,8 @@ import {
   SupplierInput,
   SupplierList,
   SupplierListQuery,
+  SupplierReportList,
+  SupplierReportQuery,
   SupplierUpdateInput,
 } from './schemas.ts';
 
@@ -49,6 +51,13 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Danh sách nhà cung cấp, xếp theo tên (có một quyền `purchasing.*`)',
     request: { query: SupplierListQuery },
     responses: { 200: json('Nhà cung cấp', SupplierList), ...invalid },
+  });
+  path({
+    method: 'get',
+    path: '/suppliers/report',
+    summary: 'Báo cáo theo NCC: số phiếu đã ghi sổ, số lần giao thiếu, tỉ lệ lỗi trong kỳ (có một quyền `purchasing.*`)',
+    request: { query: SupplierReportQuery },
+    responses: { 200: json('Một dòng mỗi NCC, xếp theo tên', SupplierReportList), ...invalid },
   });
   path({
     method: 'post',
