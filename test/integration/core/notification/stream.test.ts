@@ -55,7 +55,7 @@ const orderCreated = (companyId: string) =>
 const paymentSucceeded = (companyId: string) =>
   event('payment.succeeded', companyId, { orderId: randomUUID(), paymentTransactionId: randomUUID(), gateway: 'vnpay', amount: '150000.00' });
 const belowThreshold = (companyId: string) => event('inventory.below_threshold', companyId, { variantId: randomUUID(), available: 1, minQty: 5 });
-const poSubmitted = (companyId: string) => event('purchasing.order_submitted', companyId, { purchaseOrderId: randomUUID(), code: 'PO-0001' });
+const poSubmitted = (companyId: string) => event('purchasing.request_submitted', companyId, { requestId: randomUUID(), number: 'DN-000001' });
 
 async function problem(stream: Stream) {
   expect(await stream.ended()).toBe(true);
@@ -133,7 +133,7 @@ describe('stream đang mở (AC-1, AC-3, AC-4, AC-5, AC-9, A9)', () => {
     const got = (s: Stream) => [order, payment, stock, po].filter((e) => s.text().includes(`id: ${e.eventId}`)).map((e) => e.type);
     // CEO nhận cuối cùng (đơn mua) nên khi CEO đủ thì các kết nối khác cũng đã được ghi xong.
     await sale.until((t) => t.includes(payment.eventId));
-    expect(got(ceo)).toEqual(['sales.order_created', 'payment.succeeded', 'inventory.below_threshold', 'purchasing.order_submitted']);
+    expect(got(ceo)).toEqual(['sales.order_created', 'payment.succeeded', 'inventory.below_threshold', 'purchasing.request_submitted']);
     expect(got(admin)).toEqual(['sales.order_created', 'payment.succeeded', 'inventory.below_threshold']);
     expect(got(sale)).toEqual(['sales.order_created', 'payment.succeeded']);
     expect(got(warehouse)).toEqual(['inventory.below_threshold']);

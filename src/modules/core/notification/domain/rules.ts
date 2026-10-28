@@ -37,9 +37,9 @@ const RULES: { readonly [T in EventType]?: Rule<T> } = {
     permissions: ['inventory.stock.view'],
     fields: ({ receiptId, number, kind }) => ({ receiptId, number, kind }),
   },
-  'purchasing.order_submitted': {
+  'purchasing.request_submitted': {
     permissions: ['purchasing.request.approve'],
-    fields: ({ purchaseOrderId, code }) => ({ purchaseOrderId, code }),
+    fields: ({ requestId, number }) => ({ requestId, number }),
   },
 };
 
