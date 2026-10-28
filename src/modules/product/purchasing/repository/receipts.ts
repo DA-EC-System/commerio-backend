@@ -41,6 +41,15 @@ export async function lockReceipt(id: string): Promise<ReceiptRow | undefined> {
   return row;
 }
 
+/** Phiếu ở Giao thiếu của một đề nghị; bên gọi đã khoá đề nghị nên các phiếu này không đổi giữa chừng. */
+export function shortReceiptsOf(requestId: string) {
+  return getDb()
+    .select(receiptCols)
+    .from(goodsReceipts)
+    .where(and(eq(goodsReceipts.requestId, requestId), eq(goodsReceipts.status, 'short')))
+    .orderBy(asc(goodsReceipts.createdAt), asc(goodsReceipts.id));
+}
+
 export interface ReceiptFilter {
   page: number;
   pageSize: number;

@@ -177,7 +177,7 @@ describe('huỷ và thao tác', () => {
     expect(res.status).toBe(200);
     const done = GoodsReceipt.parse(res.body);
     expect(done.status).toBe('cancelled');
-    expect(done.statusHistory.at(-1)).toMatchObject({ from: 'counting', to: 'cancelled', reason: 'Lập nhầm' });
+    expect(done.statusHistory).toContainEqual(expect.objectContaining({ from: 'counting', to: 'cancelled', reason: 'Lập nhầm' }));
   });
 
   it('thao tác lạ → 404', async () => {

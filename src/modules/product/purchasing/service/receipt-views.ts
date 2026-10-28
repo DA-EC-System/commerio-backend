@@ -6,6 +6,7 @@ import { fromDbMode } from '../domain/receipt.ts';
 import { outstanding } from '../domain/request.ts';
 import { findReceipt, type ListedReceipt, type ReceiptLineRow, receiptLines, type ReceiptRow } from '../repository/receipts.ts';
 import { findLines, findRequest } from '../repository/requests.ts';
+import { returnsOfReceipts } from '../repository/returns.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { attributesLabel, namesOf } from './request-views.ts';
 
@@ -56,6 +57,7 @@ export async function toReceiptDetail(row: ReceiptRow) {
   const variants = new Map((await getVariants(lines.map((l) => l.variantId))).map((v) => [v.id, v]));
   const followUp = row.followUpReceiptId ? await findReceipt(row.followUpReceiptId) : undefined;
   const names = await namesOf([row.createdBy, row.postedBy, row.resolvedBy]);
+  const returns = await returnsOfReceipts([row.id]);
   const history = await getStatusHistory('goods_receipts', row.id);
   const refs = { request: { id: request.id, number: request.number }, supplier: { id: supplier?.id ?? '', name: supplier?.name ?? '' } };
   return {
@@ -89,8 +91,8 @@ export async function toReceiptDetail(row: ReceiptRow) {
           at: row.resolvedAt!.toISOString(),
         }
       : null,
-    // Phiếu trả NCC sinh từ hàng lỗi giữ lại: lập khi ghi sổ (spec #109 PR B).
-    followUps: [] as { type: 'supplier_return'; id: string; number: string }[],
+    // Phiếu trả NCC nháp sinh từ hàng lỗi giữ lại khi ghi sổ.
+    followUps: returns.map((r) => ({ type: 'supplier_return' as const, id: r.id, number: r.number })),
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),
   };
 }

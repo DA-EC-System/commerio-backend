@@ -19,7 +19,7 @@ import {
   updateReceiptHeader,
   updateReceiptLine,
 } from '../repository/receipts.ts';
-import { findLines, lockRequest, type RequestRow } from '../repository/requests.ts';
+import { findLines, type LineRow, lockLines, lockRequest, type RequestRow } from '../repository/requests.ts';
 import { toReceiptDetail, toReceiptSummaries, type GoodsReceiptView } from './receipt-views.ts';
 import { type Actor, invalid, notFound } from './request-views.ts';
 
@@ -27,15 +27,16 @@ export const RECEIPT_ENTITY = 'goods_receipts';
 const AUDIT_ENTITY = 'product.goods_receipts';
 
 /**
- * Phiếu của công ty cùng đề nghị của nó, đã khoá theo thứ tự đề nghị → phiếu (spec #108 Q10); không thấy thì 404.
- * Phiếu không đổi đề nghị, nên đọc `request_id` trước khi khoá vẫn đúng.
+ * Phiếu của công ty cùng đề nghị và các dòng đề nghị, đã khoá theo thứ tự đề nghị → dòng → phiếu (spec #108 Q10);
+ * không thấy thì 404. Phiếu không đổi đề nghị, nên đọc `request_id` trước khi khoá vẫn đúng.
  */
-export async function lockOwnReceipt(id: string): Promise<{ receipt: ReceiptRow; request: RequestRow }> {
+export async function lockOwnReceipt(id: string): Promise<{ receipt: ReceiptRow; request: RequestRow; requestLines: LineRow[] }> {
   const found = isUuid(id) ? await findReceipt(id) : undefined;
   if (!found) throw notFound('phiếu nhận');
   const request = (await lockRequest(found.requestId))!;
+  const requestLines = await lockLines(request.id);
   const receipt = (await lockReceipt(id))!;
-  return { receipt, request };
+  return { receipt, request, requestLines };
 }
 
 /** `version` gửi lên khác bản đang khoá: 409 kèm bản mới nhất (N7). */
@@ -127,7 +128,7 @@ const snapshot = (row: { deliveryMode: string; note: string | null }, lines: rea
 /** Lưu số kiểm đếm khi phiếu đang kiểm. `lines[].lineId` là id dòng đề nghị; dòng không gửi giữ số cũ. */
 export async function updateReceiptCount(actor: Actor, id: string, input: CountInput): Promise<GoodsReceiptView> {
   return withCompany(actor.companyId, async () => {
-    const { receipt } = await lockOwnReceipt(id);
+    const { receipt, requestLines } = await lockOwnReceipt(id);
     await assertReceiptVersion(receipt, input.version);
     if (receipt.status !== 'counting') throw new AppError(409, 'not_draft', 'Chỉ sửa được phiếu đang kiểm');
 
@@ -145,11 +146,11 @@ export async function updateReceiptCount(actor: Actor, id: string, input: CountI
     });
     if (Object.keys(errors).length) throw invalid(errors);
 
-    // Kiểm sớm theo còn chờ hiện tại; kiểm chắc chắn ở bước ghi sổ, sau khi khoá các dòng đề nghị.
-    const requestLines = new Map((await findLines([receipt.requestId])).map((l) => [l.id, l]));
+    // Kiểm sớm theo còn chờ hiện tại; kiểm chắc chắn ở bước ghi sổ (phiếu khác có thể ghi sổ trước).
+    const byId = new Map(requestLines.map((l) => [l.id, l]));
     const over: Record<string, string> = {};
     input.lines.forEach((x, i) => {
-      const left = outstanding(requestLines.get(x.lineId)!);
+      const left = outstanding(byId.get(x.lineId)!);
       if (x.accepted + x.defectKept > left) over[`lines.${i}.accepted`] = `Còn chờ ${left}, nhận đạt và lỗi giữ không được vượt`;
     });
     if (Object.keys(over).length) throw invalid(over, 'over_outstanding');
