@@ -22,6 +22,23 @@ export type { EventEnvelope } from '../../../shared/events/envelope.ts';
 export { EVENT_SCHEMAS, EVENT_TYPES, type EventPayload, type EventType } from './domain/events.ts';
 export { publishEvent, registerConsumer, stopInstanceConsumers } from './service/outbox/public.ts';
 
+// Máy trạng thái và lịch sử chuyển (Documents/21 mục 14.1). Lịch sử kèm tên người: `getStatusHistory` của `staff`.
+export {
+  assertTransition,
+  availableActions,
+  defineMachine,
+  type StateMachine,
+  type Transition,
+  type TransitionContext,
+} from './domain/state-machine.ts';
+export {
+  listTransitions,
+  recordTransition,
+  type TransitionRecord,
+  type TransitionRow,
+  type TransitionSource,
+} from './repository/transitions.ts';
+
 /**
  * Tạo công ty mới và bật mười phân hệ lõi cùng các phân hệ tuỳ chọn đã chọn (UC-PI-01 bước 6, 7).
  * Gọi trong transaction của bên gọi.
