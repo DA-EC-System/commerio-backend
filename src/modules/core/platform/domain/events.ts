@@ -79,7 +79,7 @@ export const EVENT_SCHEMAS = {
   // Phiên bản cấu hình tiền vừa có hiệu lực (#118, Documents/21 §21.4). C2 nghe `fee`, `min_margin` để tính lại giá
   // trên sàn; sổ tiền chọn phiên bản theo ngày kiện giao nên không cần nghe. `supersededId`: bản vừa hết hiệu lực.
   'finance.fee_config_activated': z.object({
-    configId: id,
+    configVersionId: id,
     kind: z.enum(['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin']),
     shopId: id.nullable(),
     effectiveFrom: z.iso.date(),
