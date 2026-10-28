@@ -5,15 +5,17 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
-import { syncListings } from '../service/listing-sync.ts';
+import { pushZeroStock, syncListings } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import { productPort } from '../service/product-port.ts';
+import * as setup from '../service/setup.ts';
 import * as shops from '../service/shops.ts';
 import {
   CallbackBody,
   DelistBody,
   ListingParams,
   PushBody,
+  SetupBody,
   CategoryMapBody,
   CategoryMapParams,
   CategoryParams,
@@ -76,9 +78,21 @@ export function channelRouter(ctx: ModuleContext): Router {
       const who = actor(res);
       const { id } = validated<typeof ShopParams>(res, 'params');
       const body = validated<typeof DisconnectBody>(res, 'body');
+      // Gọi sàn ngoài giao dịch, trước khi ngắt (xoá token).
+      if (body.zeroStock) await pushZeroStock(who, id);
       res.json(await withCompany(who.companyId, () => shops.disconnectShop(who, id, body)));
     },
   );
+
+  router.get('/shops/:id/setup', connect, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await setup.setupPreview(productPort(ctx), actor(res), id));
+  });
+
+  router.post('/shops/:id/setup', connect, validate({ params: ShopParams, body: SetupBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await setup.finishSetup(productPort(ctx), actor(res), id, validated<typeof SetupBody>(res, 'body')));
+  });
 
   router.get(
     '/shops/:id/categories',

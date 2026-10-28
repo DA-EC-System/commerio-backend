@@ -2,10 +2,11 @@
 // đẩy giá và tồn của listing chờ đồng bộ theo lô. Gọi sàn ngoài giao dịch như `listings.ts`. Bấm tay ở route `sync`;
 // #102 gọi lại `syncListings` theo lịch.
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
 import { type ListingPatch, listListingRows, markStockPendingRows, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
-import type { PriceQuantity } from './marketplaces/index.ts';
+import { MarketplaceError, type PriceQuantity } from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, shopSession } from './shops.ts';
@@ -103,6 +104,29 @@ export async function syncListings(port: ProductPort, actor: Actor, shopId: stri
     }
   });
   return summary;
+}
+
+/**
+ * Ngắt kèm `zeroStock` (§18.1): đẩy tồn 0 cho listing còn trên sàn trước khi ngắt. Không gọi được sàn (gian hàng cần
+ * nối lại, sàn lỗi) thì 422 `zero_stock_unavailable` và chưa ngắt; lỗi riêng từng SKU thì vẫn ngắt.
+ */
+export async function pushZeroStock(actor: Actor, shopId: string): Promise<void> {
+  const unavailable = () =>
+    new AppError(422, 'zero_stock_unavailable', 'Không đẩy được tồn 0 lên sàn lúc này; ngắt không kèm đẩy tồn 0, hoặc thử lại');
+  const session = await withCompany(actor.companyId, () => shopSession(shopId)).catch((err: unknown) => {
+    throw err instanceof AppError && err.code === 'shop_not_connected' ? unavailable() : err;
+  });
+  const rows = await withCompany(actor.companyId, () => listListingRows(session.shop.id));
+  const items = rows
+    .filter((r) => PUSHABLE.includes(r.status) && r.externalSkuId)
+    .map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
+  if (!items.length) return;
+  try {
+    await session.adapter.updatePriceQuantity(session.accessToken, items);
+  } catch (err) {
+    if (err instanceof MarketplaceError) throw unavailable();
+    throw err;
+  }
 }
 
 function synced(item: PriceQuantity, at: Date): ListingPatch {

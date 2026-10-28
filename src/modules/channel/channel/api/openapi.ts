@@ -11,6 +11,9 @@ import {
   ListingSyncResult,
   PushBody,
   PushResults,
+  SetupBody,
+  ShopSetupPreview,
+  ShopSetupResult,
   CategoryMap,
   CategoryMapBody,
   CategoryMapList,
@@ -108,7 +111,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/disconnect',
     summary: 'Ngắt gian hàng (§18.1)',
     description:
-      'Cần `channel.shop.disconnect`. Xoá token, listing còn trên sàn chuyển `delisted`. `zeroStock: true` chưa hỗ trợ (422).',
+      'Cần `channel.shop.disconnect`. Xoá token, listing còn trên sàn chuyển `delisted`. `zeroStock: true`: đẩy tồn 0 trước; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt.',
     security: bearer,
     request: { params: ShopParams, body: json(DisconnectBody) },
     responses: {
@@ -116,7 +119,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`'),
       409: problemResponse('`invalid_transition` (đã ngắt), `version_conflict` kèm `current`'),
-      422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
+      422: problemResponse('`validation_failed`, `zero_stock_unavailable`'),
     },
   });
 
@@ -186,6 +189,30 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
     responses: { 200: { description: 'Kết quả theo biến thể', ...json(PushResults) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/setup',
+    summary: 'Gợi ý ghép listing có sẵn khi thiết lập lần đầu (§18.2)',
+    description:
+      'Cần `channel.shop.connect`. SKU sàn có SellerSku trùng SKU Commerio; chỉ hỏi sàn theo SKU của công ty. Gian hàng không ở `connecting`: 409 `invalid_transition`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Gợi ý', ...json(ShopSetupPreview) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/setup',
+    summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
+    description:
+      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn, gian hàng `connecting → active`. Sai: 422 `errors.orderCutoffAt` (tương lai), `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`.',
+    security: bearer,
+    request: { params: ShopParams, body: json(SetupBody) },
+    responses: {
+      200: { description: 'Kết quả', ...json(ShopSetupResult) },
+      ...onShop,
+      409: problemResponse('`invalid_transition`, `shop_not_connected`, `version_conflict`'),
+    },
   });
   registry.registerPath({
     method: 'post',

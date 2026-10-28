@@ -86,7 +86,7 @@ function toShop(row: ShopRow, listingCount: number): Shop {
   };
 }
 
-async function shopView(row: ShopRow): Promise<Shop> {
+export async function shopView(row: ShopRow): Promise<Shop> {
   return toShop(row, (await countListingsOnPlatform([row.id])).get(row.id) ?? 0);
 }
 
@@ -256,17 +256,10 @@ async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller
   }
 }
 
-export async function disconnectShop(
-  actor: Actor,
-  id: string,
-  input: { version: number; zeroStock: boolean },
-): Promise<Shop> {
-  requireCompanyId('disconnectShop');
-  const row = isUuid(id) ? await findShopRow(id) : undefined;
-  if (!row) throw notFound();
+/** Đẩy tồn 0 (`zeroStock`) do route gọi trước, ngoài giao dịch (`listing-sync.ts` `pushZeroStock`). */
+export async function disconnectShop(actor: Actor, id: string, input: { version: number }): Promise<Shop> {
+  const row = await ownShop(id);
   const { to } = assertTransition(shopMachine, row.status, 'disconnect', { actor });
-  // Đẩy tồn 0 trước khi ngắt cần đẩy tồn của #104 (#103 B5).
-  if (input.zeroStock) throw unsupported();
   const updated = await updateShop(
     id,
     { version: input.version, status: row.status },

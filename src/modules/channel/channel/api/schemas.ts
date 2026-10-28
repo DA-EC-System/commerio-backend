@@ -23,7 +23,7 @@ export const TokenBody = z
 export const DisconnectBody = z
   .object({
     version: z.number('Thiếu version').int().positive(),
-    zeroStock: z.boolean().default(false).meta({ description: 'Đẩy tồn 0 trước khi ngắt; chưa hỗ trợ (#104), true trả 422' }),
+    zeroStock: z.boolean().default(false).meta({ description: 'Đẩy tồn 0 cho listing còn trên sàn trước khi ngắt' }),
   })
   .meta({ id: 'ShopDisconnectInput' });
 
@@ -213,3 +213,36 @@ export const ListingSyncResult = z
   })
   .strict()
   .meta({ id: 'ListingSyncResult' });
+
+// Thiết lập lần đầu (§18.2).
+export const SetupBody = z
+  .object({
+    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).default([]),
+    openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
+    orderCutoffAt: z.iso.datetime({ offset: true, error: 'Chọn mốc kéo đơn' }).transform((s) => new Date(s)),
+  })
+  .meta({ id: 'ShopSetupInput' });
+
+export const ShopSetupPreview = z
+  .object({
+    suggestions: z.array(
+      z
+        .object({
+          externalSkuId: z.string(),
+          title: z.string(),
+          variantId: z.uuid(),
+          sku: z.string(),
+          available: z.number().int(),
+          platformStock: z.number().int(),
+        })
+        .strict(),
+    ),
+    unmatchedRemote: z.number().int().meta({ description: 'Luôn 0: không quét cả shop (shop thử dùng chung)' }),
+  })
+  .strict()
+  .meta({ id: 'ShopSetupPreview' });
+
+export const ShopSetupResult = z
+  .object({ shop: Shop, matched: z.number().int(), stocktakeNumber: z.null() })
+  .strict()
+  .meta({ id: 'ShopSetupResult' });
