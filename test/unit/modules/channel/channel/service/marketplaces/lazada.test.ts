@@ -84,6 +84,14 @@ describe('adapter Lazada', () => {
     ['HTTP 502', json({}, 502), 'unavailable', 'http_502'],
     ['lỗi phía sàn', json({ code: 'ServiceTimeout', type: 'ISP', message: 'x' }), 'unavailable', 'ServiceTimeout'],
     ['token hết hạn', json({ code: 'IllegalAccessToken', type: 'ISV', message: 'x' }), 'unauthorized', 'IllegalAccessToken'],
+    // Payload thật Lazada trả ngày 28/10/2026: mã token mang type ISP, vẫn phải là unauthorized, không phải lỗi tạm.
+    ['code sai (thật)', json({ code: 'InvalidCode', type: 'ISP', message: 'Invalid authorization code' }), 'unauthorized', 'InvalidCode'],
+    [
+      'refresh token sai (thật)',
+      json({ code: 'IllegalRefreshToken', type: 'ISP', message: 'The specified refresh token is invalid or expired' }),
+      'unauthorized',
+      'IllegalRefreshToken',
+    ],
     ['ngoài whitelist', json({ code: 'X', type: 'ISV', message: 'seller not in whitelist' }), 'not_whitelisted', 'X'],
     ['sàn từ chối', json({ code: 'E207', type: 'ISV', message: 'SKU not exist' }), 'rejected', 'E207'],
   ])('%s → %s', async (_name, response, kind, platformCode) => {
