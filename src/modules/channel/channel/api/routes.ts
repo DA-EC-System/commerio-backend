@@ -4,8 +4,19 @@ import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import * as categories from '../service/categories.ts';
 import * as shops from '../service/shops.ts';
-import { CallbackBody, DisconnectBody, PlatformParams, ShopParams, TokenBody } from './schemas.ts';
+import {
+  CallbackBody,
+  CategoryMapBody,
+  CategoryMapParams,
+  CategoryParams,
+  CategorySearchQuery,
+  DisconnectBody,
+  PlatformParams,
+  ShopParams,
+  TokenBody,
+} from './schemas.ts';
 
 function actor(res: Response): shops.Actor {
   const { accountId, companyId } = getAuth(res);
@@ -19,6 +30,7 @@ export function channelRouter(ctx: ModuleContext): Router {
   const view = ctx.authorize('channel.shop.view');
   const connect = ctx.authorize('channel.shop.connect');
   const disconnect = ctx.authorize('channel.shop.disconnect');
+  const manage = ctx.authorize('channel.listing.manage');
 
   router.get('/shops', view, async (_req, res) => {
     res.json(await withCompany(actor(res).companyId, () => shops.listShops()));
@@ -59,6 +71,38 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id } = validated<typeof ShopParams>(res, 'params');
       const body = validated<typeof DisconnectBody>(res, 'body');
       res.json(await withCompany(who.companyId, () => shops.disconnectShop(who, id, body)));
+    },
+  );
+
+  router.get(
+    '/shops/:id/categories',
+    manage,
+    validate({ params: ShopParams, query: CategorySearchQuery }),
+    async (_req, res) => {
+      const { id } = validated<typeof ShopParams>(res, 'params');
+      const { search } = validated<typeof CategorySearchQuery>(res, 'query');
+      res.json(await withCompany(actor(res).companyId, () => categories.searchCategories(id, search)));
+    },
+  );
+
+  router.get('/shops/:id/categories/:externalId/attributes', manage, validate({ params: CategoryParams }), async (_req, res) => {
+    const { id, externalId } = validated<typeof CategoryParams>(res, 'params');
+    res.json(await withCompany(actor(res).companyId, () => categories.categoryAttributes(id, externalId)));
+  });
+
+  router.get('/shops/:id/category-maps', view, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await withCompany(actor(res).companyId, () => categories.getCategoryMaps(id)));
+  });
+
+  router.put(
+    '/shops/:id/category-maps/:categoryId',
+    manage,
+    validate({ params: CategoryMapParams, body: CategoryMapBody }),
+    async (_req, res) => {
+      const { id, categoryId } = validated<typeof CategoryMapParams>(res, 'params');
+      const body = validated<typeof CategoryMapBody>(res, 'body');
+      res.json(await withCompany(actor(res).companyId, () => categories.putCategoryMap(id, categoryId, body)));
     },
   );
 

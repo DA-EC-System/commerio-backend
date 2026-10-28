@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { assertTransition, getStatusHistory, recordTransition, type StatusChange } from '../../../core/index.ts';
 import { PurposeTokenError, signPurposeToken, verifyPurposeToken } from '../../../../shared/auth/purpose-token.ts';
 import { env } from '../../../../shared/config/env.ts';
-import { encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
+import { decryptBytes, encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -109,7 +109,7 @@ function toAppError(err: MarketplaceError): AppError {
   }
 }
 
-async function onMarketplace<T>(fn: () => Promise<T>): Promise<T> {
+export async function onMarketplace<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
@@ -133,6 +133,18 @@ function tokenColumns(shopId: string, tokens: TokenSet) {
     accessExpiresAt: tokens.accessExpiresAt,
     refreshExpiresAt: tokens.refreshExpiresAt,
   };
+}
+
+/** Gian hàng gọi được sàn (`connecting`, `active`) kèm adapter và access token đã giải mã. Gọi trong `withCompany`. */
+export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter: MarketplaceAdapter; accessToken: string }> {
+  requireCompanyId('shopSession');
+  const shop = isUuid(id) ? await findShopRow(id) : undefined;
+  if (!shop) throw notFound();
+  if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
+    throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+  }
+  const accessToken = decryptBytes(shop.accessTokenEnc, `${shop.id}:access`, tokenKey()).toString();
+  return { shop, adapter: adapterOf(shop.platform), accessToken };
 }
 
 export async function listShops(): Promise<{ items: Shop[] }> {

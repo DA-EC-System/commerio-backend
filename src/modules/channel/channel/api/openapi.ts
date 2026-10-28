@@ -3,7 +3,15 @@ import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   AuthorizeUrl,
   CallbackBody,
+  CategoryAttributeList,
+  CategoryMap,
+  CategoryMapBody,
+  CategoryMapList,
+  CategoryMapParams,
+  CategoryParams,
+  CategorySearchQuery,
   DisconnectBody,
+  PlatformCategoryList,
   PlatformParams,
   Shop,
   ShopCallbackResult,
@@ -102,6 +110,55 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`'),
       409: problemResponse('`invalid_transition` (đã ngắt), `version_conflict` kèm `current`'),
       422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
+    },
+  });
+
+  const onShop = {
+    ...auth,
+    404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
+    409: problemResponse('`shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
+    503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm, thử lại'),
+  };
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/categories',
+    summary: 'Tìm danh mục lá của sàn (#104)',
+    description: 'Cần `channel.listing.manage`. Gọi sàn bằng token của gian hàng; tối đa 50 kết quả.',
+    security: bearer,
+    request: { params: ShopParams, query: CategorySearchQuery },
+    responses: { 200: { description: 'Danh mục lá', ...json(PlatformCategoryList) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/categories/:externalId/attributes',
+    summary: 'Thuộc tính bắt buộc của một danh mục sàn',
+    description: 'Cần `channel.listing.manage`. Tên, mô tả, giá, kích thước gói BE tự điền từ catalog nên không có ở đây.',
+    security: bearer,
+    request: { params: CategoryParams },
+    responses: { 200: { description: 'Thuộc tính bắt buộc', ...json(CategoryAttributeList) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/category-maps',
+    summary: 'Danh mục Commerio đã ghép với danh mục sàn',
+    description: 'Cần `channel.shop.view`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Các ghép danh mục', ...json(CategoryMapList) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/shops/:id/category-maps/:categoryId',
+    summary: 'Ghép danh mục Commerio với danh mục lá của sàn (#104)',
+    description:
+      'Cần `channel.listing.manage`. Thuộc tính bắt buộc của danh mục sàn phải đủ, đúng lựa chọn: thiếu thì 422 `errors["attributes.<tên>"]`. `version: null` là ghép mới.',
+    security: bearer,
+    request: { params: CategoryMapParams, body: json(CategoryMapBody) },
+    responses: {
+      200: { description: 'Ghép danh mục', ...json(CategoryMap) },
+      ...onShop,
+      409: problemResponse('`shop_not_connected`, `version_conflict` kèm `current`, `marketplace_rejected`'),
     },
   });
 }
