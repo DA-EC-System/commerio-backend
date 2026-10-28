@@ -48,8 +48,8 @@ describe('token mục đích riêng', () => {
     await expect(verifyPurposeToken('invite', tampered)).rejects.toBeInstanceOf(PurposeTokenError);
   });
 
-  it('thời hạn: link 72 giờ, đăng ký 30 phút, mfa 5 phút', () => {
-    expect(PURPOSE_TTL_SECONDS).toEqual({ invite: 72 * 3600, join: 30 * 60, mfa: 5 * 60 });
+  it('thời hạn: link 72 giờ, đăng ký 30 phút, mfa 5 phút, state OAuth 10 phút', () => {
+    expect(PURPOSE_TTL_SECONDS).toEqual({ invite: 72 * 3600, join: 30 * 60, mfa: 5 * 60, oauth: 10 * 60 });
   });
 
   it('token invite còn hạn ngay trước 72 giờ, hết hạn sau đúng 72 giờ', async () => {

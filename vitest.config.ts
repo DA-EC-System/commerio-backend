@@ -11,6 +11,8 @@ const env = {
   // Gốc FE của link mời (#7 [C]).
   PUBLIC_WEB_URL: 'https://commerio.test',
   JOIN_RATE_LIMIT_SCALE: '1000',
+  // Khoá mã hoá token sàn (#103), chỉ dùng trong test.
+  CHANNEL_TOKEN_KEY: Buffer.alloc(32, 7).toString('base64'),
 };
 
 export default defineConfig({

@@ -31,6 +31,18 @@ const EnvSchema = z.object({
     .string()
     .refine((s) => Buffer.from(s, 'base64').length === 32, 'Cần 32 byte dạng base64')
     .optional(),
+  // Khoá mã hoá token sàn của gian hàng lưu trong DB (#103): 32 byte, base64.
+  CHANNEL_TOKEN_KEY: z
+    .string()
+    .refine((s) => Buffer.from(s, 'base64').length === 32, 'Cần 32 byte dạng base64')
+    .optional(),
+  // App Lazada (Documents/tich-hop-san/lazada.md §1). Thiếu thì các route kết nối Lazada trả 422 `marketplace_unsupported`.
+  LAZADA_APP_KEY: z.string().min(1).optional(),
+  LAZADA_APP_SECRET: z.string().min(1).optional(),
+  LAZADA_REDIRECT_URL: z.url().optional(),
+  // Đổi sang sàn giả lập (#115) bằng hai biến này.
+  LAZADA_API_URL: z.url().default('https://api.lazada.vn/rest'),
+  LAZADA_AUTH_URL: z.url().default('https://auth.lazada.com'),
   // URL công khai của api, dùng làm địa chỉ IPN và trang quay về cho cổng thanh toán.
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.

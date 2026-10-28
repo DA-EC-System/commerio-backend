@@ -1,7 +1,66 @@
-import { Router } from 'express';
+import { type Response, Router } from 'express';
+import { getAuth } from '../../../../shared/auth/authenticate.ts';
+import { getAccess } from '../../../../shared/auth/authorize.ts';
+import { withCompany } from '../../../../shared/db/client.ts';
+import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import * as shops from '../service/shops.ts';
+import { CallbackBody, DisconnectBody, PlatformParams, ShopParams, TokenBody } from './schemas.ts';
 
-/** Route của module `channel`, gắn tại /api/v1/channel. Kiểm quyền bằng `ctx.authorize(...)`. */
-export function channelRouter(_ctx: ModuleContext): Router {
-  return Router();
+function actor(res: Response): shops.Actor {
+  const { accountId, companyId } = getAuth(res);
+  const { permissions, enabledModules } = getAccess(res);
+  return { accountId, companyId: companyId!, permissions, enabledModules };
+}
+
+/** Route của module `channel`, gắn tại /api/v1/channel (Documents/21 §18.1, §18.4). */
+export function channelRouter(ctx: ModuleContext): Router {
+  const router = Router();
+  const view = ctx.authorize('channel.shop.view');
+  const connect = ctx.authorize('channel.shop.connect');
+  const disconnect = ctx.authorize('channel.shop.disconnect');
+
+  router.get('/shops', view, async (_req, res) => {
+    res.json(await withCompany(actor(res).companyId, () => shops.listShops()));
+  });
+
+  router.get('/shops/:platform/authorize-url', connect, validate({ params: PlatformParams }), async (_req, res) => {
+    res.json(await shops.authorizeUrl(validated<typeof PlatformParams>(res, 'params').platform, actor(res)));
+  });
+
+  router.post(
+    '/shops/:platform/callback',
+    connect,
+    validate({ params: PlatformParams, body: CallbackBody }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      const result = await shops.connectByCode(platform, actor(res), validated<typeof CallbackBody>(res, 'body'));
+      res.status(result.created ? 201 : 200).json(result);
+    },
+  );
+
+  router.post('/shops/:platform/token', connect, validate({ params: PlatformParams, body: TokenBody }), async (_req, res) => {
+    const { platform } = validated<typeof PlatformParams>(res, 'params');
+    const result = await shops.connectByToken(platform, actor(res), validated<typeof TokenBody>(res, 'body'));
+    res.status(result.created ? 201 : 200).json(result);
+  });
+
+  router.get('/shops/:id', view, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await withCompany(actor(res).companyId, () => shops.getShop(id)));
+  });
+
+  router.post(
+    '/shops/:id/disconnect',
+    disconnect,
+    validate({ params: ShopParams, body: DisconnectBody }),
+    async (_req, res) => {
+      const who = actor(res);
+      const { id } = validated<typeof ShopParams>(res, 'params');
+      const body = validated<typeof DisconnectBody>(res, 'body');
+      res.json(await withCompany(who.companyId, () => shops.disconnectShop(who, id, body)));
+    },
+  );
+
+  return router;
 }

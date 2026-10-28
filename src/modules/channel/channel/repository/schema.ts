@@ -27,6 +27,7 @@ export const shops = channelSchema.table(
     accessTokenEnc: bytea('access_token_enc'),
     refreshTokenEnc: bytea('refresh_token_enc'),
     accessExpiresAt: timestamp('access_expires_at', { withTimezone: true }),
+    refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }),
     status: shopStatus('status').notNull().default('connecting'),
     orderCutoffAt: timestamp('order_cutoff_at', { withTimezone: true }),
     lastOrderSyncAt: timestamp('last_order_sync_at', { withTimezone: true }),
@@ -38,6 +39,10 @@ export const shops = channelSchema.table(
   },
   (t) => [
     unique().on(t.companyId, t.platform, t.externalShopId),
+    // Một seller chỉ gắn một công ty tại một thời điểm (#103 B3); đã ngắt thì công ty khác nối được.
+    uniqueIndex('shops_platform_external_live_uq')
+      .on(t.platform, t.externalShopId)
+      .where(sql`${t.status} <> 'disconnected'`),
     check('shops_active_cutoff', sql`${t.status} <> 'active' or ${t.orderCutoffAt} is not null`),
   ],
 );
