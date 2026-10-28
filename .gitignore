@@ -21,3 +21,6 @@ npm-debug.log*
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Token uỷ quyền sàn của smoke test (scripts/smoke)
+.smoke-tokens.json
