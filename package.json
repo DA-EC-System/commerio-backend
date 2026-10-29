@@ -28,6 +28,7 @@
     "db:seed": "node --env-file-if-exists=.env db/seed/index.ts",
     "smoke:lazada": "node --env-file-if-exists=.env scripts/smoke/lazada.ts",
     "smoke:ebay": "node --env-file-if-exists=.env scripts/smoke/ebay.ts",
+    "mock:lazada": "node --env-file-if-exists=.env scripts/lazada-mock/index.ts",
     "infra:up": "docker compose -f deploy/compose.yaml up -d",
     "infra:down": "docker compose -f deploy/compose.yaml down"
   },
