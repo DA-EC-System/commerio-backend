@@ -17,6 +17,7 @@ export {
   findAccountByEmail,
   findAccountByGoogleSub,
   findAccountById,
+  findAccountSummaries,
   findMembership,
   insertAccount as createAccount,
   insertMembership as createMembership,

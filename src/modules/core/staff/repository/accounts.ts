@@ -61,13 +61,13 @@ export async function linkGoogleSub(accountId: string, sub: string): Promise<boo
   return rows.length === 1;
 }
 
-/** Họ tên và lúc tạo của các tài khoản (người tạo link, tài khoản của lời mời); id không có thì bỏ. */
+/** Họ tên, email và lúc tạo của các tài khoản (người tạo link, người thao tác trong nhật ký); id không có thì bỏ. */
 export async function findAccountSummaries(
   ids: readonly string[],
-): Promise<{ id: string; fullName: string; createdAt: Date }[]> {
+): Promise<{ id: string; email: string; fullName: string; createdAt: Date }[]> {
   if (ids.length === 0) return [];
   return getDb()
-    .select({ id: accounts.id, fullName: accounts.fullName, createdAt: accounts.createdAt })
+    .select({ id: accounts.id, email: accounts.email, fullName: accounts.fullName, createdAt: accounts.createdAt })
     .from(accounts)
     .where(inArray(accounts.id, [...new Set(ids)]));
 }

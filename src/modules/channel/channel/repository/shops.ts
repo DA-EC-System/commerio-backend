@@ -117,3 +117,9 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
     );
   return before;
 }
+
+/** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
+export async function hasChannelData(): Promise<boolean> {
+  const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
+  return !!row;
+}
