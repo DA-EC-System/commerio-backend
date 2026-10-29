@@ -78,6 +78,30 @@ export interface PriceQuantity {
   quantity?: number;
 }
 
+/** Một khoản tiền sàn ghi theo đơn trong kỳ quyết toán (#117; Lazada `/finance/transaction/details/get`). */
+export interface SettlementTxn {
+  /** Mã giao dịch của sàn, duy nhất: chống ghi trùng khi kéo lại cùng kỳ. */
+  txnId: string;
+  externalOrderId: string | null;
+  /** `YYYY-MM-DD`. */
+  date: string;
+  feeName: string;
+  transactionType: string;
+  /** Có dấu: sàn trả shop dương, sàn trừ âm. Chuỗi thập phân. */
+  amount: string;
+  /** Thuế sàn khấu trừ của khoản này (số dương), `"0"` khi không có. */
+  withholding: string;
+}
+
+/** Một kỳ quyết toán (#117; Lazada `/finance/payout/status/get`). */
+export interface Payout {
+  statementNumber: string;
+  createdAt: string;
+  payout: string;
+  closingBalance: string;
+  paid: boolean;
+}
+
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
 export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId: string; ok: false; code: string; message: string };
 
@@ -98,6 +122,10 @@ export interface MarketplaceAdapter {
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;
   deactivate(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
+  /** Khoản tiền theo đơn trong khoảng ngày `[from, to]` (#117). Sàn chưa hỗ trợ thì không có. */
+  getTransactions?(accessToken: string, from: string, to: string): Promise<SettlementTxn[]>;
+  /** Các kỳ quyết toán từ ngày `from` (#117). */
+  getPayouts?(accessToken: string, from: string): Promise<Payout[]>;
 }
 
 /**

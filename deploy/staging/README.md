@@ -46,6 +46,17 @@ Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữ
 
 Seed tạo thêm hai công ty cho bộ test hộp đen (#120), cùng mật khẩu seed: "Công ty QA Hộp Đen A" (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-mua@`, `qa-truong-mua@commerio.dev`; bật Mua hàng, Kênh bán, Báo cáo) và "Công ty QA Hộp Đen B" (`qa-ceo-b@commerio.dev`). Mỗi lần chạy test thêm bản ghi mới vào hai công ty này; buổi demo dùng "Công ty Demo Commerio".
 
+## Tài khoản quản trị nền tảng
+
+Seed không tạo quản trị nền tảng (quyền cao nhất, không dùng chung mật khẩu demo). Cấp bằng script, chạy từ máy với chuỗi kết nối staging như `db:migrate:staging` (#152):
+
+```bash
+PLATFORM_ADMIN_PASSWORD='<mật khẩu riêng>' node --env-file=.env.staging db/platform-admin.ts <email>   # tạo hoặc bật cờ
+node --env-file=.env.staging db/platform-admin.ts <email> --revoke                                    # gỡ cờ
+```
+
+Tài khoản chưa có thì tạo mới (mật khẩu theo luật đăng ký, họ tên lấy từ `PLATFORM_ADMIN_NAME`). Từ chối tài khoản đang thuộc một công ty: quản trị nền tảng là tài khoản riêng, đăng nhập vào thẳng `/platform`. Gỡ cờ có hiệu lực ở request kế tiếp. Trên máy: `npm run platform-admin -- <email>`.
+
 ## Chạy giống staging trên máy
 
 Dùng `deploy/k8s/overlays/local` trên Kubernetes của Docker Desktop (`deploy/k8s/README.md`, mục "Chạy trên máy").

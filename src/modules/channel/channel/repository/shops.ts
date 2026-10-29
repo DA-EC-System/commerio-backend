@@ -39,6 +39,17 @@ export async function findLiveCompanyOf(platform: Platform, externalShopId: stri
   return row?.companyId ?? null;
 }
 
+/**
+ * Gian hàng đang hoạt động **của mọi công ty**, cho việc nền kéo quyết toán (#117): gọi ngoài `withCompany` (role chủ
+ * bảng), mỗi gian hàng xử lý tiếp trong `withCompany` của nó.
+ */
+export async function findActiveShopsAnyCompany(): Promise<{ id: string; companyId: string; platform: Platform }[]> {
+  return getDb()
+    .select({ id: shops.id, companyId: shops.companyId, platform: shops.platform })
+    .from(shops)
+    .where(eq(shops.status, 'active'));
+}
+
 export async function insertShop(values: typeof shops.$inferInsert): Promise<ShopRow> {
   const [row] = await getDb().insert(shops).values(values).returning();
   return row!;
@@ -105,4 +116,10 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
       ),
     );
   return before;
+}
+
+/** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
+export async function hasChannelData(): Promise<boolean> {
+  const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
+  return !!row;
 }

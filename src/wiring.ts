@@ -1,19 +1,34 @@
 // Nối các module lớn lúc khởi động (plan chuẩn bị A1, K4): hàm một module lớn cần từ module lớn khác mà import thẳng
 // sẽ ngược lớp hoặc thành vòng thì đi qua `ModuleContext`. Chỉ import `index.ts` của module lớn. Nối giữa hai module
 // con cùng module lớn đặt trong index.ts của module lớn đó (vd `paymentContext` của finance).
-import { getShops } from './modules/channel/index.ts';
-import { loadCompanyAccess } from './modules/core/index.ts';
+import {
+  getShops,
+  hasChannelData,
+  hasInboxData,
+  settlementPayouts,
+  settlementTransactions,
+  shopsToSettle,
+} from './modules/channel/index.ts';
+import { loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import type { FinanceContext } from './modules/finance/index.ts';
+import { hasAssistantData } from './modules/insight/index.ts';
+import { hasPurchasingData } from './modules/product/index.ts';
 import { createAuthorize } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
 
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
-export type AppContext = ModuleContext & Required<Pick<FinanceContext, 'shopsOf'>>;
+export type AppContext = ModuleContext &
+  Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
+  Required<Pick<PlatformContext, 'moduleData'>>;
 
 export function createModuleContext(): AppContext {
   return {
     authorize: createAuthorize(loadCompanyAccess),
     // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát.
     shopsOf: getShops,
+    // #117: finance kéo quyết toán qua token gian hàng của channel.
+    settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
+    // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
+    moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
   };
 }

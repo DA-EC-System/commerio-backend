@@ -20,3 +20,9 @@ export const channelModule: ModuleDefinition = {
 export { getShops, type ShopRef } from './service/shops-lookup.ts';
 // Cho #102 (làm mới token thất bại), #133 (sàn báo gỡ app): gọi trong `withCompany`.
 export { markNeedsReauth } from './service/shops.ts';
+// Cho finance kéo quyết toán (#117), tiêm qua `ctx.settlementSource` ở `src/wiring.ts`.
+export { settlementPayouts, settlementTransactions, shopsToSettle } from './service/settlement-port.ts';
+export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
+
+/** Chặn tắt phân hệ Kênh bán khi đã có gian hàng (#152); `src/wiring.ts` đưa cho `platform`. */
+export { hasChannelData } from './repository/shops.ts';

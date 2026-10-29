@@ -280,6 +280,10 @@ export const settlementBatches = financeSchema.table(
     periodTo: timestamp('period_to', { withTimezone: true }).notNull(),
     status: batchStatus('status').notNull().default('running'),
     lineCount: integer('line_count').notNull().default(0),
+    /** Giao dịch sàn đã có trong sổ, lần chạy này bỏ qua (#117). */
+    duplicates: integer('duplicates').notNull().default(0),
+    /** Số dư sàn báo trừ số dư theo sổ khi lô xong; khác 0 thì cờ `wallet_mismatch` (#117). */
+    walletDiff: money('wallet_diff'),
     error: text('error'),
     createdBy: uuid('created_by'),
     ...timestamps,
@@ -315,6 +319,8 @@ export const ledgerKind = financeSchema.enum('ledger_kind', [
   'supplier_refund',
   'cod_collected',
   'adjustment',
+  // Rút từ ví sàn về ngân hàng (#117): tiền chuyển chỗ, không vào lãi.
+  'withdrawal',
 ]);
 
 /**
@@ -340,6 +346,8 @@ export const ledgerEntries = financeSchema.table(
     replacesEntryId: uuid('replaces_entry_id').references((): AnyPgColumn => ledgerEntries.id),
     configVersionId: uuid('config_version_id'),
     settlementLineId: uuid('settlement_line_id').references(() => settlementLines.id),
+    /** Mã giao dịch của sàn trên dòng thực tế; kéo lại cùng kỳ không ghi trùng (#117). */
+    externalTransactionId: text('external_transaction_id'),
     reason: text('reason'),
     createdBy: uuid('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -349,10 +357,32 @@ export const ledgerEntries = financeSchema.table(
     index().on(t.shopId, t.occurredOn),
     index().on(t.occurredOn),
     uniqueIndex('ledger_entries_replaces_uq').on(t.replacesEntryId).where(sql`${t.replacesEntryId} is not null`),
+    uniqueIndex('ledger_entries_external_txn_uq')
+      .on(t.companyId, t.externalTransactionId)
+      .where(sql`${t.externalTransactionId} is not null`),
     check('ledger_entries_amount', sql`${t.amount} <> 0`),
     check('ledger_entries_actual_replaces', sql`${t.replacesEntryId} is null or not ${t.isEstimate}`),
     check('ledger_entries_adjustment_reason', sql`${t.kind} <> 'adjustment' or ${t.reason} is not null`),
   ],
+);
+
+/**
+ * Khớp dòng sổ (rút tiền, NCC hoàn tiền, bồi thường) với sao kê ngân hàng (#117, Documents/21 §21.3). Bảng riêng vì
+ * sổ chỉ thêm, không cập nhật dòng; mỗi dòng sổ khớp tối đa một lần. RLS ở migration `--custom`.
+ */
+export const bankMatches = financeSchema.table(
+  'bank_matches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => ledgerEntries.id),
+    bankRef: text('bank_ref').notNull(),
+    matchedBy: uuid('matched_by').notNull(),
+    matchedAt: timestamp('matched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('bank_matches_entry_uq').on(t.entryId), check('bank_matches_ref', sql`length(trim(${t.bankRef})) > 0`)],
 );
 
 /** Trạng thái tiền của đơn (25 §10.3, Hình 14 báo cáo 28/10), tách khỏi trạng thái đơn (N1). */
