@@ -35,7 +35,7 @@ export const coreModules: readonly ModuleDefinition[] = [
   identityModule,
   staffModule,
   accessModule,
-  auditModule,
+  withContext(auditModule, staffContext),
   filesModule,
   notificationModule,
 ];
