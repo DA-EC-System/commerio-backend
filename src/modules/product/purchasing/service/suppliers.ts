@@ -4,6 +4,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
+import { supplierReport } from '../repository/report.ts';
 import {
   findSupplier,
   findSuppliers,
@@ -93,4 +94,15 @@ export async function updateSupplier(actor: Actor, id: string, input: SupplierIn
     });
     return toSupplier(row);
   }).catch(nameRace);
+}
+
+/**
+ * Báo cáo theo NCC (Documents/21 mục 16.2): số phiếu đã ghi sổ, số lần giao thiếu, tỉ lệ lỗi = (lỗi giữ + trả tại chỗ)
+ * / (đạt + lỗi giữ + trả tại chỗ), `null` khi chưa giao gì. Thiếu `from` hoặc `to` thì không giới hạn đầu đó.
+ */
+export async function getSupplierReport(companyId: string, q: { from?: string | undefined; to?: string | undefined }) {
+  return withCompany(companyId, async () => {
+    const rows = await supplierReport(q.from ?? '2000-01-01', q.to ?? '9999-12-30');
+    return rows.map((r) => ({ ...r, defectRate: r.deliveredQty ? r.defectQty / r.deliveredQty : null }));
+  });
 }

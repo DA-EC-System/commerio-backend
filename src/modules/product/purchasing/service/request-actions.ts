@@ -1,19 +1,15 @@
 // Thao tác theo máy trạng thái của đề nghị nhập (Documents/21 mục 16.3, spec #108 mục 6.4, 6.6).
-import { assertTransition, canSelfApprove, publishEvent, recordTransition, type TransitionContext } from '../../../core/index.ts';
+import { canSelfApprove, publishEvent, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { createPurchaseProducts } from '../../catalog/index.ts';
-import { outstanding } from '../domain/request.ts';
-import {
-  type PurchaseRequestAction,
-  purchaseRequestMachine,
-  type PurchaseRequestRecord,
-  REQUEST_USER_ACTIONS,
-} from '../domain/request-machine.ts';
+import { purchaseRequestMachine, REQUEST_USER_ACTIONS } from '../domain/request-machine.ts';
 import { findLines, findRequest, type LineRow, receiptsOf, type RequestRow, updateLine, updateRequest } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail } from './request-views.ts';
+import { closeShortRequest } from './request-receiving.ts';
 import { assertVersion, ENTITY, lockOwnRequest } from './requests.ts';
+import { checkTransition } from './transitions.ts';
 
 export interface ActionInput {
   version: number;
@@ -55,39 +51,16 @@ async function createNewProducts(actor: Actor, row: RequestRow, lines: readonly 
   for (const [k, { l }] of pending.entries()) await updateLine(l.id, { variantId: result.variantIds[k]! });
 }
 
-/**
- * Đóng thiếu: phần còn chờ của mỗi dòng chuyển sang đã đóng thiếu, đang về giảm đúng phần đó (Documents/25 §3.2).
- * Phiếu nhận ở Giao thiếu tự sang Đã xử lý ở #109.
- */
-async function closeShortLines(lines: readonly LineRow[]): Promise<void> {
-  for (const l of lines) {
-    const left = outstanding(l);
-    if (left > 0) await updateLine(l.id, { closedShortQty: l.closedShortQty + left });
-  }
-}
-
-/** `assertTransition` kèm bản chi tiết mới nhất trong `current` của `invalid_transition` (Documents/21 mục 14.1). */
-async function checkTransition(
-  row: RequestRow,
-  action: PurchaseRequestAction,
-  ctx: TransitionContext<PurchaseRequestRecord>,
-  actor: Actor,
-) {
-  try {
-    return assertTransition(purchaseRequestMachine, row.status, action, ctx);
-  } catch (err) {
-    if (err instanceof AppError && err.code === 'invalid_transition') {
-      throw new AppError(409, err.code, err.message, { current: await toDetail(row, actor) });
-    }
-    throw err;
-  }
-}
-
 export async function runRequestAction(actor: Actor, id: string, action: string, input: ActionInput): Promise<PurchaseRequestView> {
   return withCompany(actor.companyId, async () => {
     const row = await lockOwnRequest(id);
     if (!isUserAction(action)) throw notFound('thao tác');
     await assertVersion(row, input.version, actor);
+    const reason = input.reason?.trim() || null;
+    if (action === 'close_short') {
+      await closeShortRequest(actor, row, reason);
+      return toDetail((await findRequest(id))!, actor);
+    }
 
     const lines = await findLines([id]);
     const receipts = (await receiptsOf([id])).filter((r) => r.status !== 'cancelled');
@@ -98,10 +71,10 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
       receiptCount: receipts.length,
       countingReceipts: receipts.filter((r) => r.status === 'counting').length,
     };
-    const reason = input.reason?.trim() || null;
     // Hỏi `canSelfApprove` chỉ khi người làm là người lập: chỉ lúc đó bước cần người thứ hai mới xét tự duyệt.
     const canSelf = row.createdBy === actor.accountId && (await canSelfApprove(actor.accountId));
-    const { to, selfApproved } = await checkTransition(row, action, { actor, record, reason, canSelfApprove: canSelf }, actor);
+    const ctx = { actor, record, reason, canSelfApprove: canSelf };
+    const { to, selfApproved } = await checkTransition(purchaseRequestMachine, row.status, action, ctx, () => toDetail(row, actor));
 
     const now = new Date();
     const set: Parameters<typeof updateRequest>[1] = { status: to };
@@ -122,10 +95,6 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
         break;
       case 'order':
         Object.assign(set, { orderedBy: actor.accountId, orderedAt: now, expectedDeliveryDate: input.expectedDeliveryDate ?? null });
-        break;
-      case 'close_short':
-        await closeShortLines(lines);
-        Object.assign(set, { closedBy: actor.accountId, closedAt: now, statusReason: reason });
         break;
     }
 

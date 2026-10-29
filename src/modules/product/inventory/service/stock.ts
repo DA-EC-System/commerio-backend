@@ -103,9 +103,8 @@ export async function setReorderRule(
     const variant = await ownVariant(variantId);
     const incoming = (await incomingOf([variant.id])).get(variant.id) ?? 0;
     // Chưa có dòng tồn thì `reorderVersion` là 0 (FE gửi 0); dòng vừa tạo để khoá mang `version` 1.
-    const existed = (await findLevel(variant.id)) !== null;
     const level = await lockLevel(variant.id);
-    const currentVersion = existed ? level.version : 0;
+    const currentVersion = level.created ? 0 : level.version;
     if (currentVersion !== input.version) {
       throw new AppError(409, 'version_conflict', 'Ngưỡng tồn vừa được người khác sửa. Xem lại số mới rồi lưu lại', {
         current: toStockLevel(variant, level, viewer, incoming),
