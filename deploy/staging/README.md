@@ -42,6 +42,17 @@ Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữ
 
 `npm run db:seed` (`db/seed/`): công ty "Công ty Demo Commerio" và bốn tài khoản `ceo@`, `admin@`, `sale@`, `kho@commerio.dev` với vai trò có sẵn tương ứng, mật khẩu là `SEED_PASSWORD`. Chạy lại không sinh trùng, thiếu thì bù. Dừng với mã lỗi nếu một email demo đã thuộc người hay công ty khác (ví dụ ai đó tự đăng ký `ceo@commerio.dev` với mật khẩu khác). Seed nhận ra tài khoản CEO của mình bằng mật khẩu, nên **đổi `STAGING_SEED_PASSWORD` thì phải đổi mật khẩu cả bốn tài khoản demo theo** (đăng nhập, đổi mật khẩu); không thì job `migrate` đỏ và chặn deploy. Sản phẩm, kho thêm vào seed khi có #12, #16.
 
+## Tài khoản quản trị nền tảng
+
+Seed không tạo quản trị nền tảng (quyền cao nhất, không dùng chung mật khẩu demo). Cấp bằng script, chạy từ máy với chuỗi kết nối staging như `db:migrate:staging` (#152):
+
+```bash
+PLATFORM_ADMIN_PASSWORD='<mật khẩu riêng>' node --env-file=.env.staging db/platform-admin.ts <email>   # tạo hoặc bật cờ
+node --env-file=.env.staging db/platform-admin.ts <email> --revoke                                    # gỡ cờ
+```
+
+Tài khoản chưa có thì tạo mới (mật khẩu theo luật đăng ký, họ tên lấy từ `PLATFORM_ADMIN_NAME`). Từ chối tài khoản đang thuộc một công ty: quản trị nền tảng là tài khoản riêng, đăng nhập vào thẳng `/platform`. Gỡ cờ có hiệu lực ở request kế tiếp. Trên máy: `npm run platform-admin -- <email>`.
+
 ## Chạy giống staging trên máy
 
 Dùng `deploy/k8s/overlays/local` trên Kubernetes của Docker Desktop (`deploy/k8s/README.md`, mục "Chạy trên máy").

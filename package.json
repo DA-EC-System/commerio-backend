@@ -26,6 +26,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:staging": "node --env-file=.env.staging node_modules/drizzle-kit/bin.cjs migrate",
     "db:seed": "node --env-file-if-exists=.env db/seed/index.ts",
+    "platform-admin": "node --env-file-if-exists=.env db/platform-admin.ts",
     "smoke:lazada": "node --env-file-if-exists=.env scripts/smoke/lazada.ts",
     "smoke:ebay": "node --env-file-if-exists=.env scripts/smoke/ebay.ts",
     "mock:lazada": "node --env-file-if-exists=.env scripts/lazada-mock/index.ts",

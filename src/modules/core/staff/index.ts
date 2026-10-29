@@ -23,5 +23,6 @@ export {
   insertMembership as createMembership,
   linkGoogleSub,
   membershipsOfAccount,
+  setPlatformAdmin,
   updatePassword,
 } from './repository/accounts.ts';

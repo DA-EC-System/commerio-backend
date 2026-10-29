@@ -77,6 +77,14 @@ export async function insertAccount(input: { email: string; fullName: string; pa
   return row!.id;
 }
 
+/** Bật, gỡ cờ quản trị nền tảng (#152, `db/platform-admin.ts`); chạy bằng role chủ bảng. */
+export async function setPlatformAdmin(id: string, isPlatformAdmin: boolean): Promise<void> {
+  await getDb()
+    .update(accounts)
+    .set({ isPlatformAdmin, updatedAt: new Date(), version: sql`${accounts.version} + 1` })
+    .where(eq(accounts.id, id));
+}
+
 export async function updatePassword(id: string, passwordHash: string): Promise<void> {
   await getDb()
     .update(accounts)
