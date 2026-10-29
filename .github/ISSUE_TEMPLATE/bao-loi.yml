@@ -1,0 +1,93 @@
+name: Báo lỗi
+description: Lỗi tìm thấy khi test (API, dữ liệu, phân quyền). Lỗi màn hình mở ở repo FE.
+title: "[S?][Phân hệ] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Quy trình và cách chọn mức độ: `Documents/26-ke-hoach-kiem-thu.md` §2.2, §5. Tìm issue trùng (nhãn `bug`) trước khi mở.
+        Tiêu đề dạng `[S2][Kho] Ghi sổ phiếu nhận vượt tồn không báo lỗi`. Sau khi mở: thêm nhãn `mức: S…`, `module: …`, `luồng N: …` và gán chủ module.
+        **Không dán mật khẩu, token, khoá cổng.** Xoá header `Authorization` trước khi dán request.
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Mức độ
+      options:
+        - S1 Nghiêm trọng (lộ dữ liệu công ty khác, sai tiền hoặc tồn, mất dữ liệu, hệ thống không chạy)
+        - S2 Cao (chức năng chính không dùng được, không có cách vòng)
+        - S3 Trung bình (sai nhưng có cách vòng, hoặc chức năng phụ)
+        - S4 Thấp (thông báo khó hiểu, chính tả)
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      options:
+        - core (đăng nhập, phân quyền, nền chung)
+        - product (sản phẩm, kho, nhập hàng)
+        - order (đơn, kiện, trả hàng)
+        - finance (tiền, đối soát, cấu hình phí thuế)
+        - channel (gian hàng, listing, sàn)
+        - insight (báo cáo)
+    validations:
+      required: true
+  - type: input
+    id: case
+    attributes:
+      label: Ca kiểm thử
+      description: Mã ca trong `Documents/kiem-thu/ca-theo-so-do.md`, hoặc bước của issue test luồng. Bỏ trống nếu tìm thấy ngoài kế hoạch.
+      placeholder: "A1-04p, hoặc #122 bước 4"
+  - type: input
+    id: env
+    attributes:
+      label: Môi trường
+      description: Nơi chạy, nhánh, commit.
+      placeholder: "staging · develop · a85c280"
+    validations:
+      required: true
+  - type: input
+    id: account
+    attributes:
+      label: Tài khoản và vai trò
+      placeholder: "kho@ của công ty QA, vai trò Nhân viên kho"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện
+      description: Ghi request (method, đường dẫn, body) hoặc thao tác trên màn hình.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Kết quả mong đợi
+      description: Theo sơ đồ, `Documents/21` (ghi mục §) hoặc Definition of Done của issue.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Kết quả thực tế
+      description: Mã HTTP, body Problem Details, trạng thái và số liệu sai.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Bằng chứng
+      description: Response, log, ảnh chụp. Kéo thả ảnh vào đây.
+      render: shell
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Tần suất
+      options:
+        - Lần nào cũng gặp
+        - Thỉnh thoảng
+        - Gặp một lần, chưa tái hiện lại
