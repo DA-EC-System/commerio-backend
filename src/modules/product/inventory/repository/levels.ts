@@ -30,19 +30,23 @@ const levelCols = {
   version: stockLevels.version,
 };
 
-/** Khoá dòng tồn của một biến thể, tạo dòng 0 nếu chưa có (chỉ với id đã kiểm qua `getVariants`, A17). */
-export async function lockLevel(variantId: string): Promise<LevelRow> {
+/**
+ * Khoá dòng tồn của một biến thể, tạo dòng 0 nếu chưa có (chỉ với id đã kiểm qua `getVariants`, A17). `created`: dòng
+ * do chính giao dịch này tạo; biết được sau khi khoá nên không lệch khi hai giao dịch cùng tạo.
+ */
+export async function lockLevel(variantId: string): Promise<LevelRow & { created: boolean }> {
   const companyId = companyOfTransaction();
-  await getDb()
+  const inserted = await getDb()
     .insert(stockLevels)
     .values({ companyId, variantId })
-    .onConflictDoNothing({ target: [stockLevels.companyId, stockLevels.variantId] });
+    .onConflictDoNothing({ target: [stockLevels.companyId, stockLevels.variantId] })
+    .returning({ variantId: stockLevels.variantId });
   const [row] = await getDb()
     .select(levelCols)
     .from(stockLevels)
     .where(and(eq(stockLevels.companyId, companyId), eq(stockLevels.variantId, variantId)))
     .for('update');
-  return row!;
+  return { ...row!, created: inserted.length > 0 };
 }
 
 export async function findLevel(variantId: string): Promise<LevelRow | null> {
@@ -73,6 +77,37 @@ export async function setMinQty(variantId: string, minQty: number | null): Promi
     .update(stockLevels)
     .set({ minQty, updatedAt: new Date(), version: sql`${stockLevels.version} + 1` })
     .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
+}
+
+/** Ghi số mới của dòng tồn đã khoá (`lockLevel`), tăng `version`. Chỉ lõi ghi sổ gọi. */
+export async function saveLevel(
+  variantId: string,
+  next: { onHand: number; quarantine: number; avgCost: string; invariantBroken: boolean },
+): Promise<void> {
+  await getDb()
+    .update(stockLevels)
+    .set({ ...next, updatedAt: new Date(), version: sql`${stockLevels.version} + 1` })
+    .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
+}
+
+export interface NewMove {
+  variantId: string;
+  bucket: 'on_hand' | 'quarantine';
+  qtyChange: number;
+  balanceAfter: number;
+  unitCost: string | null;
+  sourceType: MoveRow['sourceType'];
+  sourceId: string;
+  sourceLineId: string | null;
+  doneBy: string | null;
+}
+
+export async function insertMoves(rows: readonly NewMove[]): Promise<void> {
+  if (!rows.length) return;
+  const companyId = companyOfTransaction();
+  await getDb()
+    .insert(stockMoves)
+    .values(rows.map((r) => ({ ...r, companyId })));
 }
 
 export type MoveRow = {

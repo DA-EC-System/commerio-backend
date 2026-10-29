@@ -113,6 +113,16 @@ export function findLines(requestIds: readonly string[]) {
     .orderBy(asc(purchaseRequestLines.createdAt), asc(purchaseRequestLines.id));
 }
 
+/** Khoá các dòng của đề nghị tới hết giao dịch (sau `lockRequest`), để cộng số nhận khi ghi sổ phiếu nhận. */
+export function lockLines(requestId: string) {
+  return getDb()
+    .select(lineCols)
+    .from(purchaseRequestLines)
+    .where(eq(purchaseRequestLines.requestId, requestId))
+    .orderBy(asc(purchaseRequestLines.createdAt), asc(purchaseRequestLines.id))
+    .for('update');
+}
+
 export interface NewLine {
   variantId: string | null;
   newProductName: string | null;

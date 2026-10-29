@@ -1,19 +1,15 @@
 // Thao tác theo máy trạng thái của đề nghị nhập (Documents/21 mục 16.3, spec #108 mục 6.4, 6.6).
-import { assertTransition, canSelfApprove, publishEvent, recordTransition, type TransitionContext } from '../../../core/index.ts';
+import { canSelfApprove, publishEvent, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { createPurchaseProducts } from '../../catalog/index.ts';
 import { outstanding } from '../domain/request.ts';
-import {
-  type PurchaseRequestAction,
-  purchaseRequestMachine,
-  type PurchaseRequestRecord,
-  REQUEST_USER_ACTIONS,
-} from '../domain/request-machine.ts';
+import { purchaseRequestMachine, REQUEST_USER_ACTIONS } from '../domain/request-machine.ts';
 import { findLines, findRequest, type LineRow, receiptsOf, type RequestRow, updateLine, updateRequest } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail } from './request-views.ts';
 import { assertVersion, ENTITY, lockOwnRequest } from './requests.ts';
+import { checkTransition } from './transitions.ts';
 
 export interface ActionInput {
   version: number;
@@ -66,23 +62,6 @@ async function closeShortLines(lines: readonly LineRow[]): Promise<void> {
   }
 }
 
-/** `assertTransition` kèm bản chi tiết mới nhất trong `current` của `invalid_transition` (Documents/21 mục 14.1). */
-async function checkTransition(
-  row: RequestRow,
-  action: PurchaseRequestAction,
-  ctx: TransitionContext<PurchaseRequestRecord>,
-  actor: Actor,
-) {
-  try {
-    return assertTransition(purchaseRequestMachine, row.status, action, ctx);
-  } catch (err) {
-    if (err instanceof AppError && err.code === 'invalid_transition') {
-      throw new AppError(409, err.code, err.message, { current: await toDetail(row, actor) });
-    }
-    throw err;
-  }
-}
-
 export async function runRequestAction(actor: Actor, id: string, action: string, input: ActionInput): Promise<PurchaseRequestView> {
   return withCompany(actor.companyId, async () => {
     const row = await lockOwnRequest(id);
@@ -101,7 +80,8 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
     const reason = input.reason?.trim() || null;
     // Hỏi `canSelfApprove` chỉ khi người làm là người lập: chỉ lúc đó bước cần người thứ hai mới xét tự duyệt.
     const canSelf = row.createdBy === actor.accountId && (await canSelfApprove(actor.accountId));
-    const { to, selfApproved } = await checkTransition(row, action, { actor, record, reason, canSelfApprove: canSelf }, actor);
+    const ctx = { actor, record, reason, canSelfApprove: canSelf };
+    const { to, selfApproved } = await checkTransition(purchaseRequestMachine, row.status, action, ctx, () => toDetail(row, actor));
 
     const now = new Date();
     const set: Parameters<typeof updateRequest>[1] = { status: to };

@@ -2,7 +2,7 @@
 
 Nhà cung cấp, đề nghị nhập (#108, sơ đồ A1), phiếu nhận (#109, A2), phiếu trả NCC (B4). Bảng nằm trong schema `product`. Hợp đồng API: `Documents/21` mục 16. Thiết kế: `docs/superpowers/specs/2026-10-28-108-de-nghi-nhap-design.md`. Phân hệ tuỳ chọn `purchasing`: tắt thì mọi quyền `purchasing.*` mất hiệu lực.
 
-Hiện có: nhà cung cấp, đề nghị nhập (lập, sửa, thêm dòng từ gợi ý nhập lại, loại dòng, chín thao tác của máy trạng thái), số "đang về". Phiếu nhận, phiếu trả NCC, đề nghị bù hàng (`sourceReturnId`) chưa làm.
+Hiện có: nhà cung cấp, đề nghị nhập (lập, sửa, thêm dòng từ gợi ý nhập lại, loại dòng, chín thao tác của máy trạng thái), số "đang về", phiếu nhận (lập, kiểm đếm, huỷ, xem; `docs/superpowers/specs/2026-10-28-109-phieu-nhan-hang-design.md`). Ghi sổ phiếu nhận, giao thiếu, báo cáo NCC, phiếu trả NCC, đề nghị bù hàng (`sourceReturnId`) chưa làm.
 
 ## Quyền
 

@@ -32,7 +32,7 @@ export async function namesOf(ids: readonly (string | null)[]): Promise<Map<stri
   return names;
 }
 
-const attributesLabel = (v: VariantSummary) => v.attributes.map((a) => a.value).join(' / ');
+export const attributesLabel = (v: VariantSummary) => v.attributes.map((a) => a.value).join(' / ');
 
 type ReceiptRef = Awaited<ReturnType<typeof receiptsOf>>[number];
 
