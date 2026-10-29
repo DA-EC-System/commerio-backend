@@ -5,12 +5,14 @@ import {
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
+  type Payout,
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
   type RemoteSku,
   type RemoteState,
   type SellerInfo,
+  type SettlementTxn,
   type TokenSet,
 } from './common.ts';
 
@@ -33,6 +35,8 @@ const TRANSIENT_NUMERIC = new Set(['6', '901', '1000', '4154']);
 const PRICE_QTY_BATCH = 20;
 // GetProducts: `limit` tối đa 50; một sản phẩm một SKU (#104 A1).
 const SKU_LIST_BATCH = 50;
+// QueryTransactionDetails: mỗi lần tối đa 500 dòng, lật trang bằng `offset` (#117).
+const TXN_PAGE = 500;
 
 /** Chuỗi ký: apiPath + các cặp key+value xếp theo key; HMAC-SHA256 bằng app secret, hex viết hoa. */
 export function signLazada(apiPath: string, params: Record<string, string>, secret: string): string {
@@ -314,6 +318,38 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
       await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+    },
+    // Tài chính (#117, lazada.md §7.6). Tên trường theo tài liệu và sàn giả lập #115, chưa đối chiếu response thật.
+    async getTransactions(accessToken, from, to): Promise<SettlementTxn[]> {
+      type Row = Record<string, unknown>;
+      const out: SettlementTxn[] = [];
+      for (let offset = 0; ; offset += TXN_PAGE) {
+        const params = { access_token: accessToken, start_time: from, end_time: to, limit: String(TXN_PAGE), offset: String(offset) };
+        const body = await call(config.apiUrl, '/finance/transaction/details/get', params, 'GET');
+        const rows = (body.data as Row[] | undefined) ?? [];
+        for (const r of rows) {
+          out.push({
+            txnId: String(r.transaction_number ?? ''),
+            externalOrderId: r.order_no ? String(r.order_no) : null,
+            date: String(r.transaction_date ?? '').slice(0, 10),
+            feeName: String(r.fee_name ?? ''),
+            transactionType: String(r.transaction_type ?? ''),
+            amount: String(r.amount ?? '0'),
+            withholding: String(r.WHT_amount ?? '0'),
+          });
+        }
+        if (rows.length < TXN_PAGE) return out.filter((t) => t.txnId);
+      }
+    },
+    async getPayouts(accessToken, from): Promise<Payout[]> {
+      const body = await call(config.apiUrl, '/finance/payout/status/get', { access_token: accessToken, created_after: from }, 'GET');
+      return ((body.data as Record<string, unknown>[] | undefined) ?? []).map((p) => ({
+        statementNumber: String(p.statement_number ?? ''),
+        createdAt: String(p.created_at ?? ''),
+        payout: String(p.payout ?? '0'),
+        closingBalance: String(p.closing_balance ?? '0'),
+        paid: String(p.paid ?? '0') === '1' || p.paid === true,
+      }));
     },
   };
 }

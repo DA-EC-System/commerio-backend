@@ -56,6 +56,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'unmatched_return_parcels',
   ],
   finance: [
+    'bank_matches',
     'config_versions',
     'doc_counters',
     'gateway_configs',
