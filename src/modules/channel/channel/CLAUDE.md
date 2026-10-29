@@ -43,6 +43,8 @@ Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `Sk
 
 Adapter `listOrders`, `getOrder`; bảng 20 trạng thái món Lazada → trạng thái kiện ở `lazada.ts` (`lazadaPackageStatus`). Hạn giao đọc từ câu `fulfillment_sla` (shop thử để trống `sla_time_stamp`). Gọi dồn thì Lazada trả `SellerCallLimit` (khoá 1 giây): `call` chờ 1,1 giây gọi lại một lần, lần hai vẫn bị chặn là lỗi tạm.
 
+**Cổng thao tác đơn cho order** (#105 PR 2, `service/order-actions.ts`, tiêm qua `ctx.marketplaceOrders`): lý do huỷ (`/order/reverse/cancel/validate`; không có lý do nào → `rejected` `not_cancellable` kèm câu của sàn), huỷ (`/order/reverse/cancel/create`; `tip_type: error` → `rejected`), trả lời khách xin huỷ (tra đơn ngược loại `CANCEL` bằng `/reverse/getreverseordersforseller` rồi `/order/reverse/cancel/seller/decide` với `reverse_order_id`). Gọi thật 29/10 chỉ thử validate (shop thử dùng chung).
+
 ## Chưa làm
 
 Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ, khoá để hai worker không kéo cùng gian hàng (#102); kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); push (#133); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.

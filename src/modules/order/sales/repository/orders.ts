@@ -88,3 +88,32 @@ export async function takeNextNumber(docType: string): Promise<number> {
     .returning({ n: sql<number>`${docCounters.nextNumber} - 1` });
   return Number(row!.n);
 }
+
+/** Sửa đơn khi còn đúng `version`, tăng `version`; không trúng dòng thì trả false để bên gọi báo 409. */
+export async function updateOrderAt(id: string, version: number, patch: Partial<typeof orders.$inferInsert>): Promise<boolean> {
+  const rows = await getDb()
+    .update(orders)
+    .set({ ...patch, version: sql`${orders.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(orders.id, id), eq(orders.version, version)))
+    .returning({ id: orders.id });
+  return rows.length > 0;
+}
+
+/**
+ * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền tự hoàn tất: gọi ngoài `withCompany`
+ * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở kiểm tiếp trong `withCompany` của từng đơn.
+ */
+export async function findCompletionCandidates(): Promise<{ id: string; companyId: string }[]> {
+  return getDb()
+    .select({ id: orders.id, companyId: orders.companyId })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.status, 'processing'),
+        eq(orders.cancelling, false),
+        sql`exists (select 1 from "order".packages p where p.order_id = ${orders.id})`,
+        sql`not exists (select 1 from "order".packages p where p.order_id = ${orders.id}
+              and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,
+      ),
+    );
+}
