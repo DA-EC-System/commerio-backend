@@ -16,6 +16,7 @@ export const platformModule: ModuleDefinition = {
 
 export { CORE_MODULES, OPTIONAL_MODULES };
 export type { CompanyRow, ModuleCode, OptionalModule };
+export type { PlatformContext } from './service/context.ts';
 
 // Sự kiện giữa module (Documents/21 D4–D7), cách dùng ở service/outbox/README.md.
 export type { EventEnvelope } from '../../../shared/events/envelope.ts';
