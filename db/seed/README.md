@@ -19,6 +19,9 @@ Tên người, NCC, địa chỉ đều gắn nhãn demo/giả lập; MST mới 
   Đề nghị thường do Mua hàng tạo, CEO duyệt; trường hợp cuối CEO tự tạo và duyệt (`self_approved`).
   Ngày giao dự kiến tính sau ngày chạy 7 ngày. Mã `DN-…` do service cấp, không ép mã FE.
 - Công ty thứ hai: 1 CEO, 3 sản phẩm/4 SKU để kiểm RLS.
+- Bộ test hộp đen (#120, `blackboxCompanies` trong `demo.ts`), chỉ khi chạy đủ (`all`): "Công ty QA Hộp Đen A"
+  (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-mua@`, `qa-truong-mua@commerio.dev`; bật Mua hàng, Kênh bán, Báo cáo)
+  và "Công ty QA Hộp Đen B" (`qa-ceo-b@commerio.dev`). Chỉ tài khoản; test tự tạo dữ liệu nghiệp vụ.
 
 `npm run db:seed -- --only purchasing` tự tạo tài khoản/module và catalog phụ thuộc.
 Các phần hợp lệ: `all`, `catalog`, `inventory`, `purchasing`, `secondary`.

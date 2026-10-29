@@ -313,7 +313,9 @@ const lockInvitation = (id: string) => (holder: PoolClient) =>
 describe('duyệt chạy đồng thời', () => {
   it('hai Admin duyệt cùng lúc: một 200, một 409 version_conflict; chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
-    const inv = await pending();
+    // Mời làm Admin: Admin cấp được đủ quyền. Mời làm Sale thì Admin thiếu `fulfillment.delivery.update`, nên khi chạy
+    // trước CEO sẽ nhận 403 `permission_not_held` thay vì 409, kết quả tuỳ thứ tự.
+    const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
     const results = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
     );
