@@ -27,6 +27,7 @@ export { publishEvent, registerConsumer, stopInstanceConsumers } from './service
 export {
   countHeld,
   defineQueue,
+  dropHeld,
   HoldJob,
   JobDataSchema,
   releaseHeld,

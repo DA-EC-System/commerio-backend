@@ -108,7 +108,7 @@ describe('kết nối bằng OAuth', () => {
     expect(down.body).toMatchObject({ code: 'marketplace_unavailable', platformCode: 'ServiceTimeout' });
     const bad = await connect(token, 'bad');
     expect(bad.status).toBe(409);
-    expect(bad.body).toMatchObject({ code: 'marketplace_rejected', platformCode: 'IllegalAccessToken' });
+    expect(bad.body).toMatchObject({ code: 'marketplace_unauthorized', platformCode: 'IllegalAccessToken' });
   });
 
   it('sàn chưa có adapter thì 422 marketplace_unsupported; sàn lạ thì 422 validation_failed', async () => {

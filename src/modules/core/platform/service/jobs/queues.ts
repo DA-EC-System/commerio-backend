@@ -163,3 +163,11 @@ export async function unscheduleForShop(queue: Queue<JobData>, shopId: string): 
   const boss = await jobBoss();
   await boss.unschedule(queue.name, shopId);
 }
+
+/** Bỏ việc đang giữ của gian hàng (ngắt kết nối, §18.1 "Hàng chờ bỏ"). */
+export async function dropHeld(shopId: string): Promise<number> {
+  const boss = await heldQueue();
+  const held = await boss.findJobs(HELD_QUEUE, { data: { shopId } });
+  if (held.length) await boss.deleteJob(HELD_QUEUE, held.map((j) => j.id));
+  return held.length;
+}

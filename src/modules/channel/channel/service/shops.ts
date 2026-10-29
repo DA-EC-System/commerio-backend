@@ -1,6 +1,14 @@
 // Gian hàng (#103; Documents/21 §18.1, §18.4). Gọi sàn trước, ngoài giao dịch; ghi DB sau trong `withCompany`.
 import { randomUUID } from 'node:crypto';
-import { assertTransition, getStatusHistory, recordTransition, type StatusChange } from '../../../core/index.ts';
+import {
+  assertTransition,
+  countHeld,
+  dropHeld,
+  getStatusHistory,
+  recordTransition,
+  releaseHeld,
+  type StatusChange,
+} from '../../../core/index.ts';
 import { PurposeTokenError, signPurposeToken, verifyPurposeToken } from '../../../../shared/auth/purpose-token.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { decryptBytes, encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
@@ -29,6 +37,7 @@ import {
   type SellerInfo,
   type TokenSet,
 } from './marketplaces/index.ts';
+import { startShopJobs, stopShopJobs } from './shop-jobs.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
 export interface Actor {
@@ -72,7 +81,7 @@ type Platform = ShopRow['platform'];
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ thao tác này');
 
-function toShop(row: ShopRow, listingCount: number): Shop {
+function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
   return {
     id: row.id,
     companyId: row.companyId,
@@ -86,7 +95,7 @@ function toShop(row: ShopRow, listingCount: number): Shop {
     tokenExpiringSoon: tokenExpiringSoon(row.status, row.refreshExpiresAt),
     lastOrderSyncAt: row.lastOrderSyncAt,
     orderCutoffAt: row.orderCutoffAt,
-    pendingJobs: 0,
+    pendingJobs,
     listingCount,
     version: row.version,
     createdAt: row.createdAt,
@@ -95,7 +104,8 @@ function toShop(row: ShopRow, listingCount: number): Shop {
 }
 
 export async function shopView(row: ShopRow): Promise<Shop> {
-  return toShop(row, (await countListingsOnPlatform([row.id])).get(row.id) ?? 0);
+  const [listings, held] = await Promise.all([countListingsOnPlatform([row.id]), countHeld([row.id])]);
+  return toShop(row, listings.get(row.id) ?? 0, held.get(row.id) ?? 0);
 }
 
 function adapterOf(platform: Platform): MarketplaceAdapter {
@@ -112,6 +122,8 @@ function toAppError(err: MarketplaceError): AppError {
       return new AppError(503, 'marketplace_unavailable', 'Sàn đang không phản hồi, thử lại sau', platform);
     case 'unsupported':
       return unsupported();
+    case 'unauthorized':
+      return new AppError(409, 'marketplace_unauthorized', 'Sàn từ chối token của gian hàng, cần kết nối lại', platform);
     default:
       return new AppError(409, 'marketplace_rejected', 'Sàn từ chối yêu cầu', platform);
   }
@@ -164,8 +176,9 @@ export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter:
 export async function listShops(): Promise<{ items: Shop[] }> {
   requireCompanyId('listShops');
   const rows = await listShopRows();
-  const counts = await countListingsOnPlatform(rows.map((r) => r.id));
-  return { items: rows.map((r) => toShop(r, counts.get(r.id) ?? 0)) };
+  const ids = rows.map((r) => r.id);
+  const [counts, held] = await Promise.all([countListingsOnPlatform(ids), countHeld(ids)]);
+  return { items: rows.map((r) => toShop(r, counts.get(r.id) ?? 0, held.get(r.id) ?? 0)) };
 }
 
 /** Sàn kết nối được và cách nối (Documents/21 §18.1). Cấu hình của máy chủ, giống nhau với mọi công ty; không lộ khoá. */
@@ -226,8 +239,9 @@ const connectedElsewhere = () => new AppError(409, 'shop_connected_elsewhere', '
 async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller: SellerInfo): Promise<ShopCallbackResult> {
   const owner = await findLiveCompanyOf(platform, seller.externalShopId);
   if (owner && owner !== actor.companyId) throw connectedElsewhere();
+  let result: ShopCallbackResult;
   try {
-    return await withCompany(actor.companyId, async () => {
+    result = await withCompany(actor.companyId, async (): Promise<ShopCallbackResult> => {
       const existing = await findShopByExternal(platform, seller.externalShopId);
       if (!existing) {
         const id = randomUUID();
@@ -256,7 +270,7 @@ async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller
       if (action) {
         await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
       }
-      // Kéo đơn từ mốc cuối (#105), chạy hàng chờ (#102), đưa lên lại listing gỡ do ngắt (#104) chưa làm: báo 0.
+      // Kéo đơn từ mốc cuối (#105), đưa lên lại listing gỡ do ngắt (#104) chưa làm: báo 0. `jobsRun` điền sau khi commit.
       const reconnect =
         action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
       return { shop: await shopView(row), created: false, reconnect };
@@ -265,6 +279,14 @@ async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller
     if (pgError(err).constraint === 'shops_platform_external_live_uq') throw connectedElsewhere();
     throw err;
   }
+  // Sau commit: gian hàng đã `active` (nối lại) thì chạy việc đang giữ và bật lại lịch (#102 A5).
+  if (result.shop.status === 'active') {
+    const jobsRun = await releaseHeld(result.shop.id);
+    await startShopJobs(result.shop.companyId, result.shop.id);
+    result.shop.pendingJobs = 0;
+    if (result.reconnect) result.reconnect.jobsRun = jobsRun;
+  }
+  return result;
 }
 
 /** Đẩy tồn 0 (`zeroStock`) do route gọi trước, ngoài giao dịch (`listing-sync.ts` `pushZeroStock`). */
@@ -300,6 +322,10 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       reason: 'Ngắt gian hàng',
     });
   }
+  // Ngắt thì bỏ lịch và việc đang giữ (§18.1). Giao dịch lỗi sau bước này thì gian hàng còn `active` mà thiếu lịch:
+  // worker khởi động lại sẽ đặt lại (`reconcileShopJobs`).
+  await stopShopJobs(id);
+  await dropHeld(id);
   return shopView(updated);
 }
 
@@ -316,4 +342,41 @@ export async function markNeedsReauth(shopId: string, reason: string): Promise<v
   if (updated) {
     await recordTransition({ entityType: ENTITY, entityId: shopId, from: row.status, to, action: 'lose_auth', actorId: null, reason });
   }
+}
+
+/** Mất uỷ quyền do việc nền phát hiện: `needs_reauth` rồi dừng lịch của gian hàng (#102 A5). Gọi ngoài giao dịch. */
+export async function loseShopAuth(companyId: string, shopId: string, reason: string): Promise<void> {
+  await withCompany(companyId, () => markNeedsReauth(shopId, reason));
+  await stopShopJobs(shopId);
+}
+
+/** Access còn dưới mức này thì làm mới (việc chạy hằng ngày, access Lazada sống 7 ngày). */
+const REFRESH_WITHIN_MS = 48 * 3_600_000;
+
+/**
+ * Làm mới token của gian hàng `active` khi access sắp hết hạn (#102 AC-5). Gọi sàn ngoài giao dịch.
+ * Sàn từ chối refresh token thì gian hàng mất uỷ quyền; lỗi tạm thì ném để việc nền thử lại.
+ * Trả `inactive` khi gian hàng không còn `active` (bên gọi bỏ lịch).
+ */
+export async function refreshShopToken(companyId: string, shopId: string): Promise<'refreshed' | 'skipped' | 'lost' | 'inactive'> {
+  const row = await withCompany(companyId, () => findShopRow(shopId));
+  if (row?.status !== 'active') return 'inactive';
+  if (!row.refreshTokenEnc) return 'skipped';
+  if (row.accessExpiresAt && row.accessExpiresAt.getTime() - Date.now() > REFRESH_WITHIN_MS) return 'skipped';
+  const refreshToken = decryptBytes(row.refreshTokenEnc, `${row.id}:refresh`, tokenKey()).toString();
+  let tokens: TokenSet;
+  try {
+    tokens = await adapterOf(row.platform).refreshToken(refreshToken);
+  } catch (err) {
+    if (err instanceof MarketplaceError && err.kind === 'unauthorized') {
+      await loseShopAuth(companyId, shopId, `Làm mới token thất bại (${err.platformCode ?? 'unauthorized'})`);
+      return 'lost';
+    }
+    throw err;
+  }
+  await withCompany(companyId, async () => {
+    const updated = await updateShop(row.id, { version: row.version, status: row.status }, tokenColumns(row.id, tokens));
+    if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, làm mới lại sau');
+  });
+  return 'refreshed';
 }

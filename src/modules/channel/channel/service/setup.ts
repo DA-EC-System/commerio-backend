@@ -7,6 +7,7 @@ import { shopMachine } from '../domain/shop.ts';
 import { insertListing, listListingRows } from '../repository/listings.ts';
 import { updateShop } from '../repository/shops.ts';
 import { syncListings } from './listing-sync.ts';
+import { startShopJobs } from './shop-jobs.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, type Shop, shopSession, shopView } from './shops.ts';
 
@@ -96,8 +97,10 @@ export async function finishSetup(
     if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
     await recordTransition({ entityType: 'shops', entityId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
   });
+  // Gian hàng đã `active`: đặt lịch việc nền trước khi gọi sàn, đồng bộ lỗi thì lịch vẫn chạy lại (#102).
+  await startShopJobs(actor.companyId, shopId);
   // `push`: listing vừa ghép đang `stock_sync = pending`, đồng bộ đẩy khả dụng và giá chuẩn.
-  await syncListings(port, actor, shopId);
+  await syncListings(port, actor.companyId, shopId);
   const shop = await withCompany(actor.companyId, async () => shopView((await shopSession(shopId)).shop));
   return { shop, matched: picked.length, stocktakeNumber: null };
 }

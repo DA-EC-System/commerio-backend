@@ -50,6 +50,11 @@ export async function findActiveShopsAnyCompany(): Promise<{ id: string; company
     .where(eq(shops.status, 'active'));
 }
 
+/** Gian hàng `active` **của mọi công ty**: worker gọi ngoài `withCompany` lúc khởi động để dựng lại lịch việc nền (#102). */
+export async function listActiveShopRefs(): Promise<{ id: string; companyId: string }[]> {
+  return getDb().select({ id: shops.id, companyId: shops.companyId }).from(shops).where(eq(shops.status, 'active'));
+}
+
 export async function insertShop(values: typeof shops.$inferInsert): Promise<ShopRow> {
   const [row] = await getDb().insert(shops).values(values).returning();
   return row!;
