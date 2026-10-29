@@ -3,12 +3,17 @@
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerFinanceOpenApi } from './api/openapi.ts';
 import { financeRouter } from './api/routes.ts';
+import { startFinanceBackground } from './service/config-versions.ts';
 
 export const financeModule: ModuleDefinition = {
   name: 'finance',
   router: financeRouter,
   openapi: registerFinanceOpenApi,
+  startBackground: startFinanceBackground,
 };
+
+// Sổ tiền (#116) chọn phiên bản cấu hình theo ngày kiện giao.
+export { getEffectiveConfig } from './service/config-versions.ts';
 
 export { issueInvoiceForOrder, recordCodCollected } from './service/boundary.ts';
 export { getDailyFinanceTotals } from './service/daily-totals.ts';
