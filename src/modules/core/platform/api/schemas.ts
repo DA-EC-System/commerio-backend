@@ -102,3 +102,33 @@ export const PlatformOverview = z
     recentActivities: z.array(PlatformAuditLog),
   })
   .meta({ id: 'PlatformOverview' });
+
+export const DeadJobListQuery = z.object({
+  queue: z.string().trim().max(100, 'Tối đa 100 ký tự').optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+// `id` sai định dạng trả 404 ở service (như việc không tồn tại), nên ở đây chỉ là chuỗi.
+export const DeadJobParams = z.object({ id: z.string() });
+
+// Schema trả về, chỉ dùng cho Swagger.
+export const DeadJobSchema = z
+  .object({
+    id: z.uuid(),
+    queue: z.string().meta({ description: 'Hàng gốc, vd `channel.listing_sync`; FE tự giữ nhãn tiếng Việt' }),
+    shopId: z.uuid().nullable(),
+    attempts: z.number().int().meta({ description: 'Số lần đã thử, kể cả lần đầu' }),
+    lastError: z.string(),
+    failedAt: z.string().meta({ description: 'Lúc rơi vào hàng việc lỗi' }),
+  })
+  .meta({ id: 'DeadJob' });
+
+export const DeadJobPage = z
+  .object({
+    items: z.array(DeadJobSchema),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+  })
+  .meta({ id: 'DeadJobPage' });

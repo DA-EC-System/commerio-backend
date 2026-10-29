@@ -5,10 +5,13 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import { listCompanies, listPlatformAuditLogs, platformOverview, setCompanyLock } from '../service/admin.ts';
 import type { PlatformContext } from '../service/context.ts';
+import { listDeadJobs, retryDeadJob } from '../service/jobs/dead.ts';
 import { listCompanyModules, setCompanyModule } from '../service/modules.ts';
 import {
   CompanyListQuery,
   CompanyParams,
+  DeadJobListQuery,
+  DeadJobParams,
   LockCompanyBody,
   ModuleParams,
   PlatformAuditQuery,
@@ -20,6 +23,7 @@ import {
 export function platformRouter(ctx: PlatformContext): Router {
   const router = Router();
   const manageModules = ctx.authorize('platform.module.manage');
+  const manageJobs = ctx.authorize('platform.job.manage');
 
   // Quản trị nền tảng: cờ `core.accounts.is_platform_admin` đọc từ DB mỗi request, gỡ cờ là chặn ngay (#152 A1).
   // Token phát trước lần đổi mật khẩu gần nhất → 401, như `authorize` (#62).
@@ -64,6 +68,16 @@ export function platformRouter(ctx: PlatformContext): Router {
 
   router.get('/audit-logs', platformAdmin, validate({ query: PlatformAuditQuery }), async (_req, res) => {
     res.json(await listPlatformAuditLogs(validated<typeof PlatformAuditQuery>(res, 'query')));
+  });
+
+  router.get('/jobs/dead', manageJobs, validate({ query: DeadJobListQuery }), async (_req, res) => {
+    res.json(await listDeadJobs(getAuth(res).companyId!, validated<typeof DeadJobListQuery>(res, 'query')));
+  });
+
+  router.post('/jobs/dead/:id/retry', manageJobs, validate({ params: DeadJobParams }), async (_req, res) => {
+    const { accountId, companyId } = getAuth(res);
+    await retryDeadJob(companyId!, accountId, validated<typeof DeadJobParams>(res, 'params').id);
+    res.status(204).end();
   });
 
   return router;
