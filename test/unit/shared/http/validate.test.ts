@@ -3,7 +3,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { errorHandler } from '#src/shared/errors/error-handler.ts';
-import { validate } from '#src/shared/http/validate.ts';
+import { validate, validated } from '#src/shared/http/validate.ts';
 
 function buildApp() {
   const app = express();
@@ -36,6 +36,17 @@ describe('validate', () => {
     expect(res.body.code).toBe('validation_failed');
     expect(Object.keys(res.body.errors).sort()).toEqual(['id', 'name']);
     expect(typeof res.body.errors.name).toBe('string');
+  });
+
+  it('validated(res, part) đọc lại phần đã kiểm, đúng kiểu đầu ra của schema', async () => {
+    const Params = z.object({ id: z.coerce.number().int() });
+    const app = express();
+    app.get('/items/:id', validate({ params: Params }), (_req, res) => {
+      const { id } = validated<typeof Params>(res, 'params');
+      res.json({ id, type: typeof id });
+    });
+    const res = await request(app).get('/items/7');
+    expect(res.body).toEqual({ id: 7, type: 'number' });
   });
 
   it('trường lồng nối bằng dấu chấm, cả thân sai kiểu thì khoá là tên phần', async () => {

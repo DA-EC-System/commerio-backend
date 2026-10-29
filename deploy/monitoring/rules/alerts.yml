@@ -1,0 +1,99 @@
+# Cảnh báo cơ bản (#36). Xem trạng thái ở trang /alerts của Prometheus; chưa gửi đi đâu (chưa có Alertmanager).
+# Test: alerts.test.yml cùng thư mục.
+groups:
+  - name: commerio
+    rules:
+      # up == 0: Prometheus thấy pod nhưng /metrics không trả lời. absent(): không còn pod nào (vd scale về 0),
+      # khi đó target biến mất chứ không có mẫu up == 0.
+      - alert: CommerioProcessDown
+        expr: |
+          up{job="commerio"} == 0
+          or absent(up{job="commerio",process="api"})
+          or absent(up{job="commerio",process="worker"})
+          or absent(up{job="commerio",process="realtime"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tiến trình {{ $labels.process }} không trả /metrics hoặc không có pod nào chạy
+
+      - alert: CommerioHighErrorRate
+        expr: |
+          sum(rate(http_request_duration_seconds_count{job="commerio",route!="/health",status=~"5.."}[5m]))
+            / sum(rate(http_request_duration_seconds_count{job="commerio",route!="/health"}[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Hơn 5% yêu cầu tới api trả 5xx trong 5 phút
+
+      # Gauge trả NaN khi worker không đọc được DB, nên luật này im lặng đúng lúc DB lỗi.
+      - alert: CommerioOutboxLagging
+        expr: outbox_oldest_pending_age_seconds{job="commerio"} > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sự kiện outbox chờ gửi lên Kafka quá 60 giây
+
+      # Counter không có sẵn nhãn: lần vào DLQ đầu tiên của một topic/consumer tạo chuỗi mới ở 1, increase() ra 0,
+      # nên thêm vế "chuỗi chưa có 10 phút trước". Ngay sau khi Prometheus khởi động lại, vế này báo nhầm một lần.
+      - alert: CommerioDeadLettered
+        expr: |
+          increase(outbox_dead_lettered_total{job="commerio"}[10m]) > 0
+          or (outbox_dead_lettered_total{job="commerio"} unless outbox_dead_lettered_total{job="commerio"} offset 10m)
+        labels:
+          severity: warning
+        annotations:
+          summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
+
+      # Thư lỗi vĩnh viễn (hết hạn mức Gmail, sai App Password, chưa cấu hình SMTP): thử lại vô ích, người được mời
+      # không nhận được mã OTP (#7). Vế "chuỗi chưa có 15 phút trước" như CommerioDeadLettered.
+      - alert: CommerioMailPermanentFailure
+        expr: |
+          increase(mail_send_total{job="commerio",result="permanent"}[15m]) > 0
+          or (mail_send_total{job="commerio",result="permanent"}
+            unless mail_send_total{job="commerio",result="permanent"} offset 15m)
+        labels:
+          severity: warning
+        annotations:
+          summary: Gửi thư mẫu {{ $labels.template }} lỗi vĩnh viễn trong 15 phút qua
+
+  # Máy VPS (job "node", dashboard "Máy VPS"). Overlay local không có node-exporter: các luật này im lặng.
+  - name: vps
+    rules:
+      - alert: VpsCpuHigh
+        expr: 1 - avg(rate(node_cpu_seconds_total{job="node",mode="idle"}[5m])) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: CPU máy VPS trên 80% suốt 15 phút
+
+      # MemAvailable: phần RAM cấp được ngay, đã tính bộ đệm đĩa trả lại được.
+      - alert: VpsMemoryLow
+        expr: node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"} < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: RAM còn trống của máy VPS dưới 15% suốt 10 phút
+
+      - alert: VpsDiskFull
+        expr: |
+          1 - node_filesystem_avail_bytes{job="node",mountpoint="/",fstype!="rootfs"}
+            / node_filesystem_size_bytes{job="node",mountpoint="/",fstype!="rootfs"} > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ổ / của máy VPS đã dùng hơn 85% (k3s bắt đầu xoá image ở mức này)
+
+      - alert: VpsNodeExporterDown
+        expr: up{job="node"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Không lấy được số liệu máy VPS (dịch vụ prometheus-node-exporter)

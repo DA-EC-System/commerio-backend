@@ -1,0 +1,2 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "refresh_expires_at" timestamp with time zone;--> statement-breakpoint
+CREATE UNIQUE INDEX "shops_platform_external_live_uq" ON "channel"."shops" USING btree ("platform","external_shop_id") WHERE "channel"."shops"."status" <> 'disconnected';

@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 import type { z } from 'zod';
 import { AppError } from '../errors/app-error.ts';
 
@@ -39,4 +39,9 @@ export function validate(schemas: Schemas): RequestHandler {
     res.locals.validated = validated;
     next();
   };
+}
+
+/** Phần đã kiểm của request, kiểu đầu ra của schema: `validated<typeof Body>(res, 'body')`. Chỉ gọi sau `validate()`. */
+export function validated<S extends z.ZodType>(res: Response, part: Part): z.output<S> {
+  return (res.locals.validated as Record<Part, unknown>)[part] as z.output<S>;
 }

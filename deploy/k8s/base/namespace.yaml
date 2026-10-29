@@ -1,0 +1,11 @@
+# Pod Security "baseline": không cho pod privileged, hostPath, hostNetwork, hostPID. Chặn cả khi ai đó có quyền
+# patch Deployment (ServiceAccount ci-deployer của overlay vps) sửa pod template để chiếm máy.
+# "restricted" mới chỉ cảnh báo: Caddy, Kafka, Grafana, Prometheus chạy root, chưa đặt seccomp và drop capabilities.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: commerio
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

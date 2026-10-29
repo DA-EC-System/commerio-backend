@@ -26,9 +26,65 @@ services:
 
   kafka:
     # Một node KRaft, đủ cho dev. Máy dev kết nối localhost:9092.
+    # Đặt bất kỳ biến KAFKA_* nào thì ảnh bỏ cấu hình mặc định, nên phải khai đủ KRaft ở đây.
     image: apache/kafka:4.1.0
     ports:
       - "127.0.0.1:9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topic mới có 3 partition (Documents/21 D6): key = aggregateId giữ thứ tự theo đơn, tồn.
+      KAFKA_NUM_PARTITIONS: 3
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  mailpit:
+    # Hộp thư giả cho máy dev (#7): app gửi SMTP tới localhost:1025 (SMTP_URL=smtp://localhost:1025),
+    # xem thư ở http://localhost:8025. Không gửi ra ngoài.
+    image: axllent/mailpit:v1.31.4
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+  # Sàn giả lập Lazada (#115), chỉ bật khi cần: docker compose -f deploy/compose.yaml --profile lazada-mock up -d
+  # App trỏ LAZADA_API_URL=http://127.0.0.1:8090/rest, LAZADA_AUTH_URL=http://127.0.0.1:8090 (scripts/lazada-mock/README.md).
+  lazada-wiremock:
+    image: wiremock/wiremock:3.13.2-3-alpine
+    profiles: [lazada-mock]
+    command: ["--disable-banner", "--max-request-journal-entries", "500"]
+    ports:
+      # Admin API cho `npm run mock:lazada` nạp kịch bản, chuyển bước.
+      - "127.0.0.1:8091:8080"
+
+  lazada-mock:
+    # Cổng kiểm chữ ký Lazada trước WireMock (WireMock không tính được HMAC), giả trang uỷ quyền OAuth.
+    image: node:24.21.0-alpine
+    profiles: [lazada-mock]
+    command: ["node", "/app/gate.ts"]
+    working_dir: /app
+    volumes:
+      - ../scripts/lazada-mock:/app:ro
+    environment:
+      WIREMOCK_URL: http://lazada-wiremock:8080
+      LAZADA_MOCK_APP_KEY: mock-app-key
+      LAZADA_MOCK_APP_SECRET: mock-app-secret
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      - lazada-wiremock
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -43,6 +99,11 @@ services:
   grafana:
     image: grafana/grafana:12.1.0
     profiles: [monitoring]
+    # Cùng datasource và dashboard "Commerio" với Kubernetes (deploy/monitoring). Máy dev đăng nhập admin/admin.
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3030:3000"
 

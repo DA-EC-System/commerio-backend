@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Kế hoạch kiểm thử và quy trình báo lỗi
+    url: https://github.com/DA-EC-System/Documents/blob/main/26-ke-hoach-kiem-thu.md
+    about: Mức độ lỗi, nhãn, ai sửa, ai đóng.

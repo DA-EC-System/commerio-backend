@@ -1,0 +1,33 @@
+# Phần chung cho mọi nơi chạy (#36, Documents/21 D13). Không dùng trực tiếp: apply một overlay
+# (overlays/local cho Kubernetes của Docker Desktop, overlays/vps cho k3s), vì Secret app-env, grafana-admin sinh ở overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: commerio
+
+resources:
+  - namespace.yaml
+  - app.yaml
+  - fe.yaml
+  # api, realtime, fe, fe-mock, test-ui: hai bản blue, green (bluegreen/workloads).
+  - bluegreen/blue
+  - bluegreen/green
+  - kafka.yaml
+  - caddy/caddy.yaml
+  - monitoring.yaml
+  # Cấu hình Prometheus, Grafana và dashboard nằm ở deploy/monitoring (Kustomize không đọc file ngoài thư mục này).
+  - ../../monitoring
+
+configMapGenerator:
+  # Biến chung của api, worker, realtime; bí mật (DATABASE_URL, JWT…) ở Secret app-env của overlay.
+  # Không đặt API_PORT, WORKER_PORT, REALTIME_PORT, REALTIME_OPS_PORT: dùng mặc định của src/shared/config/env.ts.
+  - name: app-config
+    literals:
+      # Đứng sau một tầng Caddy: req.ip là IP khách.
+      - TRUST_PROXY_HOPS=1
+      - KAFKA_BROKERS=kafka:9092
+  - name: caddyfile
+    files:
+      - caddy/Caddyfile
+  - name: caddy-site
+    literals:
+      - SITE_ADDRESS=:80

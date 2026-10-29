@@ -1,6 +1,6 @@
 # test/
 
-Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vitest chỉ quét `test/**/*.test.ts`. File đặt sai chỗ hoặc sai tên thì **bị bỏ qua mà không báo lỗi**.
+Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vitest chỉ quét `test/**/*.test.ts`. Có hai project: `unit` (`unit/`, `api/`) và `integration`; chạy riêng bằng `npx vitest run --project unit`. File đặt sai chỗ hoặc sai tên thì **bị bỏ qua mà không báo lỗi**.
 
 ## Đặt file ở đâu
 
@@ -8,9 +8,26 @@ Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vite
 |---|---|---|
 | `unit/` | Một hàm, một lớp, không I/O thật | Không DB, không mạng |
 | `api/` | Gọi HTTP vào `createApp()` bằng Supertest, không mở cổng thật | Không DB |
-| `integration/` (chưa có) | Repository, transaction, migration trên PostgreSQL thật | Testcontainers, cần Docker (máy CI của GitHub có sẵn) |
+| `integration/` | Repository, transaction, migration, RLS trên PostgreSQL thật | Docker đang chạy. `global-setup.ts` dựng một container `pgvector/pgvector:pg18` cho cả lượt, chạy mọi migration trong `db/migrations`; `setup.ts` đặt `DATABASE_URL` trước khi file test import code. Dữ liệu dùng chung giữa các file: mỗi test tự tạo công ty, email riêng (vd `randomUUID()`), không giả định bảng trống |
 
-`unit/` đi theo đúng cấu trúc của `src/`: test của `src/shared/http/validate.ts` là `test/unit/shared/http/validate.test.ts`; test của `src/modules/inventory/domain/stock.ts` là `test/unit/modules/inventory/domain/stock.test.ts`.
+Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERUSER CREATEROLE`, chủ các bảng) giống user `postgres` của Supabase, riêng extension `vector` (cần superuser) do `global-setup.ts` bật trước; `TEST_PG_IMAGE=pgvector/pgvector:pg17` để chạy trên PostgreSQL 17 như staging.
+
+### Helper dùng chung (`integration/helpers/`)
+
+| File | Hàm |
+|---|---|
+| `db.ts` | `testPool()`: pool tới DB test bằng role chủ bảng (bỏ qua RLS), `setup.ts` tự đóng |
+| `http.ts` | `testApp()`, `login(email)`, `selectCompany(token, companyId)`, `refreshCookie(res)`, `PASSWORD` |
+| `company.ts` | `createCompany({ optionalModules? })` → `{ companyId, ceo: { email, token } }` (token đã chọn công ty); `addMember(companyId, 'admin' \| 'sale' \| 'warehouse' \| roleId)`; `createCustomRole(companyId, permissions)`; `registerCompany`, `registerBody`, `uniqueEmail` |
+| `rls.ts` | `asCompany(companyId, fn)`: chạy như request trong công ty (role `commerio_app`), rồi rollback |
+| `locks.ts` | `raceBehindLock(lock, blocked, start)`: dựng chạy đua tất định. Mở giao dịch chạy `lock(holder)` (vd `select … for update`, chèn chưa commit), gửi các request đua trong `start`, chờ tới khi đúng `blocked` phiên bị chặn sau giao dịch đó (đếm cả phiên xếp hàng sau phiên bị chặn), rồi commit và trả kết quả của `start` |
+| `state.ts` | `lockCompany`, `suspendMembership`, `setModuleEnabled`, `revokePermission` (chỉ cho vai trò tuỳ biến) |
+| `catalog.ts` | `createVariant(companyId, { sku?, categoryName? })` → `{ variantId, productId, categoryId, sku }` (mỗi lần một danh mục và sản phẩm mới, ghi trong `withCompany`; không truyền `categoryName` trùng trong một công ty) |
+| `sales.ts` | `createOrder(companyId, { lines: { variantId, quantity, unitPrice }[], paymentMethod?, source? })` → `{ orderId, code, total }` (ghi bảng sales trong `withCompany`, chép SKU, tên sản phẩm từ biến thể; đơn tay mặc định `prepaid`, đơn sàn không có phương thức; không tạo `payment.order_payments`) |
+
+Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<lớn>/<con>/helpers.ts`.
+
+`unit/` đi theo đúng cấu trúc của `src/`: test của `src/shared/http/validate.ts` là `test/unit/shared/http/validate.test.ts`; test của `src/modules/product/inventory/domain/stock.ts` là `test/unit/modules/product/inventory/domain/stock.test.ts`.
 
 ## Quy tắc để CI chạy được
 

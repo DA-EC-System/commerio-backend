@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { env } from '../config/env.ts';
+import { logger } from '../logger.ts';
 
 export type Database = NodePgDatabase;
 export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
@@ -13,17 +15,31 @@ function rootDb(): Database {
   if (!database) {
     if (!env.DATABASE_URL) throw new Error('Chưa đặt DATABASE_URL');
     pool = new pg.Pool({ connectionString: env.DATABASE_URL });
+    // Kết nối bị server cắt (restart, failover), lúc rảnh hay lúc đang giữ giao dịch mà chưa chạy truy vấn:
+    // client phát `error`, thiếu listener thì EventEmitter ném và tiến trình thoát. Nghe và ghi log trên từng client;
+    // pool phát lại lỗi của client rảnh nên cũng cần listener (rỗng). Pool bỏ kết nối hỏng, truy vấn đang chờ thì lỗi.
+    // Không log cả `err`: `err.client` mang mật khẩu DB.
+    pool.on('connect', (client) => {
+      client.on('error', (err: Error & { code?: string }) => {
+        logger.error({ code: err.code, reason: err.message }, 'kết nối PostgreSQL bị đứt');
+      });
+    });
+    pool.on('error', () => undefined);
     database = drizzle({ client: pool });
   }
   return database;
 }
 
-// Transaction đang mở của yêu cầu hiện tại (docs/17 mục 2, luật 3).
-const currentTx = new AsyncLocalStorage<Transaction>();
+// Transaction đang mở của yêu cầu hiện tại (docs/17 mục 2, luật 3), kèm công ty nếu mở bằng withCompany.
+interface OpenTransaction {
+  readonly tx: Transaction;
+  readonly companyId: string | null;
+}
+const current = new AsyncLocalStorage<OpenTransaction>();
 
 /** Repository luôn lấy kết nối qua đây để tự đi chung transaction của bên gọi nếu có. */
 export function getDb(): Database | Transaction {
-  return currentTx.getStore() ?? rootDb();
+  return current.getStore()?.tx ?? rootDb();
 }
 
 /**
@@ -31,9 +47,67 @@ export function getDb(): Database | Transaction {
  * nên service của module A gọi sang module B vẫn nằm trong cùng một giao dịch.
  */
 export async function inTransaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
-  const existing = currentTx.getStore();
-  if (existing) return fn(existing);
-  return rootDb().transaction((tx) => currentTx.run(tx, () => fn(tx)));
+  const existing = current.getStore();
+  if (existing) return fn(existing.tx);
+  return rootDb().transaction((tx) => current.run({ tx, companyId: null }, () => fn(tx)));
+}
+
+/**
+ * Chạy `fn` trong transaction của một công ty: `SET LOCAL ROLE commerio_app` và `app.company_id`,
+ * nên Row-Level Security chỉ cho thấy dữ liệu của công ty đó (db/CLAUDE.md). Đang ở trong withCompany
+ * cùng công ty thì dùng lại. Lồng vào giao dịch khác (công ty khác, hoặc giao dịch của role chủ bảng như
+ * luồng đăng ký) là lỗi lập trình: SET LOCAL sẽ đổi role cho cả phần còn lại của giao dịch đó.
+ */
+export async function withCompany<T>(companyId: string, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  const existing = current.getStore();
+  if (existing) {
+    if (existing.companyId === companyId) return fn(existing.tx);
+    const where = existing.companyId ? 'của công ty khác' : 'không thuộc công ty';
+    throw new Error(`withCompany(${companyId}) không lồng được trong giao dịch ${where}`);
+  }
+  return rootDb().transaction(async (tx) => {
+    // set_config(..., true) = SET LOCAL: hết hiệu lực khi giao dịch kết thúc. Gộp một câu cho đỡ một lượt đi về.
+    await tx.execute(sql`select set_config('role', 'commerio_app', true), set_config('app.company_id', ${companyId}, true)`);
+    return current.run({ tx, companyId }, () => fn(tx));
+  });
+}
+
+/**
+ * Chạy `fn` khi giữ được khoá advisory **phiên** `hashtextextended(key, 0)` trên một kết nối riêng; phiên khác đang giữ
+ * thì trả `'busy'` ngay. Cho việc nền kéo dài qua nhiều giao dịch và lời gọi mạng, nơi khoá giao dịch không giữ được.
+ * `fn` chạy ngoài giao dịch (tự mở `withCompany`). Xong thì nhả khoá rồi huỷ kết nối, không trả về pool.
+ * Cần kết nối giữ phiên (PostgreSQL thẳng, Supabase Session pooler); PgBouncer chế độ transaction không giữ được khoá.
+ */
+export async function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T | 'busy'> {
+  rootDb();
+  const client = await pool!.connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      'select pg_try_advisory_lock(hashtextextended($1, 0)) as locked',
+      [key],
+    );
+    return rows[0]!.locked ? await fn() : 'busy';
+  } finally {
+    // Nhả ngay phía server: huỷ kết nối không chờ phiên đóng, lượt liền sau có thể còn thấy khoá. Lỗi nhả (kết nối
+    // đứt) thì thôi, phiên chết cũng nhả khoá; không che lỗi của `fn`.
+    await client.query('select pg_advisory_unlock_all()').catch(() => undefined);
+    client.release(true);
+  }
+}
+
+/** Công ty của giao dịch đang mở bằng withCompany; `null` khi ở ngoài. */
+export function currentCompanyId(): string | null {
+  return current.getStore()?.companyId ?? null;
+}
+
+/**
+ * Mã công ty của `withCompany` đang mở; ngoài đó thì ném lỗi lập trình. Hàm ranh giới cho module khác gọi dùng ở đầu:
+ * ngoài `withCompany` là role chủ bảng, RLS không có hiệu lực, đọc ghi được dữ liệu mọi công ty.
+ */
+export function requireCompanyId(fn: string): string {
+  const companyId = currentCompanyId();
+  if (!companyId) throw new Error(`${fn} phải gọi trong withCompany của bên gọi`);
+  return companyId;
 }
 
 export async function closeDb(): Promise<void> {

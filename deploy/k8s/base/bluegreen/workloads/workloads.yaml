@@ -1,0 +1,282 @@
+# Deployment chạy theo blue-green (staging): api, realtime, fe, fe-mock, test-ui. Thư mục blue/, green/ dựng hai bản
+# từ file này bằng nameSuffix và nhãn color; Service (app.yaml, fe.yaml) chọn màu đang chạy qua nhãn color,
+# do ci-deploy/commerio-deploy.sh đặt. Không ghi replicas: script đặt 1 cho màu chạy, 0 cho màu nghỉ.
+# worker không theo blue-green (không nhận yêu cầu từ ngoài, chạy hai bản cùng lúc chỉ tranh việc): rolling update ở app.yaml.
+# Ba tiến trình cùng một image, chỉ khác lệnh (docs/17). Image "commerio-backend" được overlay đổi tên và tag.
+# Cổng có tên "metrics" là chỗ Prometheus lấy số liệu (deploy/monitoring/k8s/prometheus.yml).
+# enableServiceLinks: false để Kubernetes không tiêm API_PORT=tcp://…, REALTIME_PORT=tcp://… đè biến của app.
+# runAsUser 1000 = user node của image: runAsNonRoot cần uid dạng số.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+spec:
+  # Một bản sao: rate limit đăng nhập đếm trong bộ nhớ từng bản sao.
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api
+          image: commerio-backend
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-env
+          ports:
+            - name: http
+              containerPort: 3000
+            - name: metrics
+              containerPort: 9464
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          # Chờ Endpoints gỡ pod cũ rồi mới SIGTERM, để rolling update không trả lỗi.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime
+  labels:
+    app.kubernetes.io/name: realtime
+spec:
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: realtime
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: realtime
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: realtime
+          image: commerio-backend
+          command: ["node", "src/entrypoints/realtime.ts"]
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-env
+          # Cổng stream SSE (Caddy đưa ra ngoài) tách khỏi cổng vận hành /health, /metrics (REALTIME_OPS_PORT).
+          ports:
+            - name: http
+              containerPort: 3002
+            - name: metrics
+              containerPort: 3003
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+---
+# FE: image của repo FE (Dockerfile ở gốc repo đó), dist/ do Caddy trong image phục vụ ở cổng 8080.
+# Hai bản cùng commit: fe gọi backend thật (ở /), fe-mock chạy MSW (ở /mock/).
+# Image "commerio-fe" được overlay đổi tên và tag. Caddy của cụm chuyển / sang Service fe (cùng origin với /api, V38).
+# Filesystem chỉ đọc: Caddy trong image không ghi gì ngoài /tmp.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe
+  labels:
+    app.kubernetes.io/name: fe
+spec:
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fe
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: fe
+          image: commerio-fe
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Bản FE chạy MSW (dữ liệu giả), build với BASE_PATH=/mock/. Caddy của cụm chuyển /mock/* vào đây, bỏ tiền tố.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-mock
+  labels:
+    app.kubernetes.io/name: fe-mock
+spec:
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fe-mock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fe-mock
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: fe-mock
+          image: commerio-fe-mock
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Bản mẫu giao diện (repo Test_UI: HTML tĩnh, Caddy trong image ở cổng 8080). Caddy của cụm chuyển /mock_test/*
+# vào đây, bỏ tiền tố. Image "commerio-test-ui" được overlay đổi tên và tag.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-ui
+  labels:
+    app.kubernetes.io/name: test-ui
+spec:
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: test-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: test-ui
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: test-ui
+          image: commerio-test-ui
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 48Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}

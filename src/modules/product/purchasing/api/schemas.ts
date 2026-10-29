@@ -1,0 +1,225 @@
+import { z } from 'zod';
+import { MAX_LINES, MAX_QTY, MAX_UNIT_COST } from '../domain/request.ts';
+import { PURCHASE_REQUEST_STATUSES } from '../domain/request-machine.ts';
+
+// Hợp đồng /purchasing (Documents/21 mục 16.2, FE `src/types/purchasing.ts`). Giới hạn theo mock FE.
+// Id sai định dạng trả 404 ở service (như bản ghi không tồn tại, V6), nên tham số đường dẫn chỉ là chuỗi.
+
+export const IdParams = z.object({ id: z.string() });
+export const LineParams = z.object({ id: z.string(), lineId: z.string() });
+export const ActionParams = z.object({ id: z.string(), action: z.string() });
+
+const version = z.number('Thiếu version').int('Thiếu version').min(0, 'Thiếu version');
+const page = {
+  page: z.coerce.number('Trang là số nguyên từ 1').int('Trang là số nguyên từ 1').min(1, 'Trang là số nguyên từ 1').default(1),
+  pageSize: z.coerce
+    .number('Cỡ trang từ 1 đến 100')
+    .int('Cỡ trang từ 1 đến 100')
+    .min(1, 'Cỡ trang từ 1 đến 100')
+    .max(100, 'Cỡ trang từ 1 đến 100')
+    .default(20),
+  search: z.string().trim().max(100, 'Từ khoá tối đa 100 ký tự').optional(),
+};
+const text = (max: number) => z.string(`Tối đa ${max} ký tự`).trim().max(max, `Tối đa ${max} ký tự`).default('');
+const bool = (name: string) =>
+  z
+    .enum(['true', 'false'], `${name} là true hoặc false`)
+    .transform((v) => v === 'true')
+    .optional();
+const qtyMessage = `Số lượng từ 1 đến ${MAX_QTY.toLocaleString('vi-VN')}`;
+const quantity = z.number(qtyMessage).int(qtyMessage).min(1, qtyMessage).max(MAX_QTY, qtyMessage);
+
+// ---------- Nhà cung cấp ----------
+
+export const SupplierListQuery = z.object({ search: page.search, active: bool('active') });
+
+export const SupplierInput = z
+  .object({
+    name: z.string('Nhập tên nhà cung cấp').trim().min(1, 'Nhập tên nhà cung cấp').max(150, 'Tối đa 150 ký tự'),
+    phone: z
+      .string('Số điện thoại không hợp lệ')
+      .trim()
+      .regex(/^(?:[0-9 +().-]{8,20})?$/, 'Số điện thoại không hợp lệ')
+      .default(''),
+    email: z
+      .string('Email không hợp lệ')
+      .trim()
+      .refine((v) => v === '' || z.email().safeParse(v).success, 'Email không hợp lệ')
+      .default(''),
+    address: text(300),
+    note: text(500),
+    active: z.boolean('active là true hoặc false').default(true),
+  })
+  .meta({ id: 'SupplierInput' });
+
+export const SupplierUpdateInput = SupplierInput.extend({ version }).meta({ id: 'SupplierUpdateInput' });
+
+// ---------- Đề nghị nhập ----------
+
+export const RequestListQuery = z.object({
+  ...page,
+  status: z.enum(PURCHASE_REQUEST_STATUSES, 'Trạng thái không hợp lệ').optional(),
+  supplierId: z.uuid('Nhà cung cấp không hợp lệ').optional(),
+});
+
+const costMessage = 'Giá nhập không hợp lệ';
+const RequestLineInput = z
+  .object({
+    variantId: z.uuid('Chọn sản phẩm').nullish(),
+    newProduct: z
+      .object({
+        name: z.string('Nhập tên sản phẩm mới').trim().min(1, 'Nhập tên sản phẩm mới').max(120, 'Tối đa 120 ký tự'),
+        categoryId: z.string('Chọn danh mục'),
+      })
+      .nullish(),
+    quantity,
+    unitCost: z.number(costMessage).int(costMessage).min(0, costMessage).max(MAX_UNIT_COST, costMessage),
+  })
+  .refine((l) => !l.variantId !== !l.newProduct, {
+    message: 'Chọn sản phẩm có sẵn hoặc nhập sản phẩm mới',
+    path: ['variantId'],
+  });
+
+export const PurchaseRequestInput = z
+  .object({
+    supplierId: z.string('Chọn nhà cung cấp'),
+    note: text(500),
+    lines: z
+      .array(RequestLineInput, 'Thêm ít nhất một dòng')
+      .min(1, 'Thêm ít nhất một dòng')
+      .max(MAX_LINES, `Tối đa ${MAX_LINES} dòng`),
+    sourceReturnId: z.string().nullish().meta({ description: 'Đề nghị bù hàng từ phiếu trả NCC; chưa hỗ trợ (B4), khác null trả 422' }),
+  })
+  .meta({ id: 'PurchaseRequestInput' });
+
+export const PurchaseRequestUpdateInput = PurchaseRequestInput.extend({ version }).meta({ id: 'PurchaseRequestUpdateInput' });
+
+export const AddRequestLineInput = z
+  .object({
+    requestId: z.string().nullable(),
+    supplierId: z.string().nullable(),
+    variantId: z.uuid('Sản phẩm không còn bán'),
+    quantity,
+  })
+  .refine((v) => v.requestId !== null || v.supplierId !== null, { message: 'Chọn nhà cung cấp', path: ['supplierId'] })
+  .meta({ id: 'AddRequestLineInput', description: '`requestId` là nháp có sẵn; `null` thì lập nháp mới với `supplierId`' });
+
+export const ExcludeLineInput = z
+  .object({ excluded: z.boolean('excluded là true hoặc false'), version })
+  .meta({ id: 'ExcludeLineInput' });
+
+export const RequestActionInput = z
+  .object({
+    version,
+    reason: z.string('Lý do tối đa 500 ký tự').max(500, 'Lý do tối đa 500 ký tự').nullish(),
+    expectedDeliveryDate: z.iso
+      .date('Ngày giao dự kiến không hợp lệ')
+      .nullish()
+      .meta({ description: 'Chỉ dùng khi `order`: ngày NCC hẹn giao, yyyy-mm-dd' }),
+  })
+  .meta({ id: 'PurchaseRequestActionInput' });
+
+// ---------- Response: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1) ----------
+
+const iso = z.iso.datetime();
+const money = z.number().int().nullable().meta({ description: 'Số nguyên đồng; `null` khi không có quyền xem giá' });
+
+export const Supplier = z
+  .object({
+    id: z.uuid(),
+    name: z.string(),
+    phone: z.string(),
+    email: z.string(),
+    address: z.string(),
+    note: z.string(),
+    active: z.boolean(),
+    version: z.number().int(),
+    createdAt: iso,
+  })
+  .strict()
+  .meta({ id: 'Supplier' });
+
+export const SupplierList = z.array(Supplier);
+
+/** `StatusChange` của Documents/21 mục 14.1; không đặt `id` vì channel đã đăng ký tên này. */
+const StatusChange = z
+  .object({
+    at: iso,
+    from: z.string().nullable(),
+    to: z.string(),
+    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
+    source: z.enum(['user', 'marketplace', 'system']),
+    reason: z.string().nullable(),
+  })
+  .strict();
+
+const status = z.enum(PURCHASE_REQUEST_STATUSES);
+
+export const PurchaseRequestLine = z
+  .object({
+    id: z.uuid(),
+    variantId: z.uuid().nullable(),
+    sku: z.string().nullable(),
+    productName: z.string(),
+    attributesLabel: z.string(),
+    newProduct: z.object({ name: z.string(), categoryId: z.string(), categoryName: z.string() }).strict().nullable(),
+    quantity: z.number().int(),
+    unitCost: money,
+    excluded: z.boolean(),
+    received: z.number().int(),
+    defective: z.number().int(),
+    closedShort: z.number().int(),
+    outstanding: z.number().int(),
+  })
+  .strict()
+  .meta({ id: 'PurchaseRequestLine' });
+
+const summaryShape = {
+  id: z.uuid(),
+  number: z.string(),
+  status,
+  supplier: z.object({ id: z.string(), name: z.string() }).strict(),
+  note: z.string(),
+  lineCount: z.number().int(),
+  totalQty: z.number().int(),
+  totalCost: money,
+  outstanding: z.number().int(),
+  supplierShort: z.boolean().meta({ description: 'Còn phiếu nhận ở Giao thiếu' }),
+  createdBy: z.string(),
+  createdById: z.string(),
+  createdAt: iso,
+  version: z.number().int(),
+};
+
+export const PurchaseRequestSummary = z.object(summaryShape).strict().meta({ id: 'PurchaseRequestSummary' });
+
+export const PurchaseRequest = z
+  .object({
+    ...summaryShape,
+    lines: z.array(PurchaseRequestLine),
+    receipts: z.array(
+      z
+        .object({
+          type: z.literal('goods_receipt'),
+          id: z.uuid(),
+          number: z.string(),
+          status: z.enum(['counting', 'matched', 'short', 'resolved', 'cancelled']),
+        })
+        .strict(),
+    ),
+    sourceReturn: z.object({ type: z.literal('supplier_return'), id: z.uuid(), number: z.string() }).strict().nullable(),
+    countingReceipts: z.number().int(),
+    statusHistory: z.array(StatusChange),
+  })
+  .strict()
+  .meta({ id: 'PurchaseRequest' });
+
+export const PurchaseRequestPage = z
+  .object({
+    items: z.array(PurchaseRequestSummary),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+  })
+  .strict()
+  .meta({ id: 'PurchaseRequestPage' });

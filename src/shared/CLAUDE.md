@@ -1,21 +1,36 @@
 # src/shared/
 
-Nền kỹ thuật chung cho mọi module và tiến trình. **Không chứa nghiệp vụ, không import gì từ `modules/`, `entrypoints/`, `app.ts`.** Thứ gì chỉ một module dùng thì để trong module đó.
+Nền kỹ thuật chung cho mọi module và tiến trình. **Không chứa nghiệp vụ, không import gì từ `modules/`, `entrypoints/`, `app.ts`, `wiring.ts`.** Thứ gì chỉ một module dùng thì để trong module đó.
 
 | Đường dẫn | Nội dung |
 |---|---|
+| `auth/jwt.ts` | `signAccessToken`, `verifyAccessToken` (JWT EdDSA 15 phút, `jose`). `AccessClaims` có `expiresAt` (giây epoch, từ `exp`) để kênh SSE đóng đúng lúc token hết hạn, và `passwordChangedAt` (claim `pca`, ms epoch, `null` khi chưa đổi) |
+| `auth/authenticate.ts` | `readAccessClaims(req)` đọc `Authorization: Bearer`; middleware `authenticate()` đặt `res.locals.auth`, đọc lại bằng `getAuth(res)`. `permissions` trong đó là quyền **trong token**, có thể cũ tới 15 phút: kiểm quyền thì dùng `authorize`, cần quyền phụ thì `getAccess(res)` (đọc DB). Thiếu hoặc sai token 401 `unauthorized`; còn mật khẩu thư mời 403 `password_change_required` trừ route truyền `allowPasswordChange`. `authenticate()` **không** đọc DB nên không biết token đã bị cắt vì đổi mật khẩu: route chỉ dùng nó phải tự gọi `assertTokenCurrent` với dòng tài khoản (identity làm trong `callerAccount`) |
+| `auth/authorize.ts` | `createAuthorize(loader)` dựng middleware kiểm quyền; module dùng `ctx.authorize('<mã quyền>')`, không tự gọi `createAuthorize`. Đọc DB mỗi request qua `AccessLoader` (của `identity`, tiêm ở `src/wiring.ts`). Thứ tự: 401 → 403 `password_change_required` → 403 `company_not_selected` → 404 `not_found` (không còn là thành viên, C4) → 401 `unauthorized` (token phát trước lần đổi mật khẩu, #62) → 403 `company_locked` → 403 `account_locked` → 403 `module_disabled` (phân hệ của mã quyền đang tắt) → 403 `forbidden`. Gắn trước `validate()` để thiếu quyền ra 403, không ra 422 |
+| `auth/authorize.ts` (tiếp) | `getAccess(res)`: `CompanyAccess` mà `authorize` vừa đọc (quyền thô, phân hệ bật) để route cần quyền phụ không đọc DB lần hai. `anyOf(ctx.authorize('a'), ctx.authorize('b'))`: qua khi có một trong các quyền, chỉ thử tiếp khi 403 `forbidden` |
+| `auth/company-access.ts` | Không dính HTTP: kiểu `CompanyAccess` (có `passwordChangedAt` để so dấu token), `assertTokenCurrent(claims, passwordChangedAt)` (dấu khác DB thì 401 `unauthorized`: đổi mật khẩu cắt token cũ, #62; `assertCompanyAccess(access, claims)` gọi sẵn), `AccessLoader`, `moduleOfPermission` (phân hệ của mã quyền), `assertCompanyAccess` (404 / `company_locked` / `account_locked`), dùng chung cho `authorize` và chọn công ty của `identity` |
+| `auth/purpose-token.ts` | `signPurposeToken(purpose, claims)`, `verifyPurposeToken(purpose, token)`: token link mời (`invite`, 72 giờ), đăng ký sau OTP (`join`, 30 phút), bước nhập mã 2FA (`mfa`, 5 phút), `state` OAuth sàn (`oauth`, 10 phút, claim `plt` là sàn; #103). Cùng khoá Ed25519 với access token (`signingKeys()` của `jwt.ts`), issuer riêng `commerio-<mục đích>` nên không dùng nhầm loại này làm loại khác. Sai thì ném `PurposeTokenError`, bên gọi đổi thành mã lỗi của luồng mình (#7) |
+| `auth/password-policy.ts` | `newPasswordSchema`: quy tắc mật khẩu A5 dùng chung cho identity và staff |
+| `crypto/` | `aes-gcm.ts` (`encryptBytes`, `decryptBytes`, `CipherError`; định dạng phiên bản, iv, tag, bản mã, AAD gắn với dòng), `password.ts` (argon2id: `hashPassword`, `verifyPassword` chạy bản băm giả khi không có tài khoản), `codes.ts` (`randomDigits`, `sha256Hex`, `safeEqualHex`) |
+| `mail/` | `sendMail(message, template)` qua SMTP (`SMTP_URL`, `MAIL_FROM`; nodemailer), timeout 10 giây. Ném `MailError` với `kind`: `transient` (mạng, timeout, mã 4xx, bên gọi thử lại) hoặc `permanent` (mã 5xx, sai xác thực, chưa cấu hình). Không chép phản hồi SMTP vào lỗi. Metric `mail_send_total{template,result}`, `mail_send_duration_seconds`. Test đặt transport giả bằng `setMailTransport`. Chỉ worker gửi thư |
+| `module.ts` | `ModuleDefinition` (tên, `router(ctx)`, `openapi`, `startBackground(ctx)`) và `ModuleContext` (`authorize`, cùng hàm nối giữa module lớn do `src/wiring.ts` dựng); `withContext` để index.ts của module lớn nối module con bên trong |
+| `db/columns.ts` | Cột chung `created_at`, `updated_at`, `version` cho bảng Drizzle; `money(name)` cho cột tiền `numeric(18,2)`; `bytea(name)` cho khoá, token đã mã hoá |
+| `db/client.ts` | Pool PostgreSQL + Drizzle. `getDb()` trả transaction đang mở nếu có; `inTransaction(fn)` mở hoặc dùng lại transaction của bên gọi (`AsyncLocalStorage`). `withCompany(companyId, fn)` mở transaction của một công ty (`SET LOCAL ROLE commerio_app`, `app.company_id`) để RLS có hiệu lực; lồng cùng công ty thì dùng lại, lồng vào giao dịch khác thì ném lỗi. `currentCompanyId()`; `requireCompanyId('<tên hàm>')` ở đầu hàm ranh giới phải chạy trong `withCompany`. `withSessionLock(key, fn)`: một lượt việc nền mỗi lúc trên mọi tiến trình (khoá phiên `pg_try_advisory_lock` trên kết nối riêng, bận thì `'busy'`, xong thì huỷ kết nối); cho việc kéo dài qua nhiều giao dịch và lời gọi mạng. Khoá advisory luôn băm bằng `hashtextextended(<khoá>, 0)` (64 bit, #63 B17). Kết nối bị server cắt (lúc rảnh hay lúc đang giữ giao dịch) chỉ ghi log (`code`, lý do), không làm tiến trình thoát; giao dịch đang mở thì lỗi |
+| `db/pg-error.ts` | `pgError(err)` → `{ code, constraint }` của lỗi PostgreSQL, đọc cả lỗi trần lẫn lỗi Drizzle bọc trong `cause`. Bắt trùng khoá thì so cả `constraint`, không chỉ `23505` |
+| `db/vn-time.ts` | `inVnDays(col, from, to)`, `vnDayOf(col)`: ngày theo giờ Việt Nam trong SQL |
+| `uuid.ts` | `isUuid(id)`: kiểm trước khi truy vấn, sai dạng thì coi như không có (V6), tránh lỗi 22P02 |
+| `events/envelope.ts` | Vỏ sự kiện `EventEnvelope` (D4, có `sequence` = `id` outbox, tuỳ chọn với message cũ) và `topicOf(type, prefix)`. Danh mục loại sự kiện là nghiệp vụ, nằm ở `modules/core/platform/domain/events.ts` |
 | `config/env.ts` | Đọc và kiểm biến môi trường bằng Zod một lần lúc khởi động. Thêm biến mới thì thêm vào đây và `.env.example` |
-| `db/client.ts` | Pool PostgreSQL + Drizzle. `getDb()` trả transaction đang mở nếu có; `inTransaction(fn)` mở transaction hoặc dùng lại transaction của bên gọi (`AsyncLocalStorage`) |
-| `errors/` | `AppError` và middleware lỗi tập trung, trả Problem Details (RFC 9457): `type` = `/problems/<code>`, `status`, `detail`, `instance`, `code` (mã gạch dưới, vd `version_conflict`). Hợp đồng lỗi với FE ở `Documents/21` |
-| `http/validate.ts` | Middleware Zod kiểm `body`/`query`/`params`, gom mọi lỗi vào một phản hồi 422 `validation_failed`, `errors: { "ceo.email": "…" }` |
+| `errors/` | `AppError`, `notImplemented(fn, issue)` (501 cho khung export chưa có thân) và middleware lỗi tập trung, trả Problem Details (RFC 9457): `type` = `/problems/<code>`, `status`, `detail`, `instance`, `code` (mã gạch dưới, vd `version_conflict`). Lỗi của body-parser: JSON hỏng 400 `malformed_json`, thân quá 1 MB 413 `payload_too_large`. Lỗi không lường trước log kèm `pgCode`. Hợp đồng lỗi với FE ở `Documents/21` |
+| `http/validate.ts` | Middleware Zod kiểm `body`/`query`/`params`, gom mọi lỗi vào một phản hồi 422 `validation_failed`, `errors: { "ceo.email": "…" }`. Đọc lại bằng `validated<typeof Schema>(res, part)` |
+| `http/vn-day.ts` | `vnDayParam(label, nextDay?)`: tham số `yyyy-mm-dd` → đầu ngày (hoặc đầu ngày hôm sau) giờ Việt Nam (C6) |
 | `http/openapi.ts` | Sinh tài liệu OpenAPI 3.1 từ schema Zod (`@asteasolutions/zod-to-openapi`), Swagger UI ở `/api/docs`, JSON ở `/api/openapi.json`; `problemResponse()` cho phản hồi lỗi |
-| `observability/` | prom-client (`/metrics`, histogram thời gian request), cổng vận hành (`/health`, `/metrics`) chạy riêng cho cả ba tiến trình |
-| `logger.ts` | pino, log dạng JSON; che header `Authorization`, `Cookie`, `Set-Cookie`. Không log mật khẩu, token, khoá cổng thanh toán |
+| `observability/` | prom-client (`/metrics`, histogram thời gian request, nhãn `route` là mẫu route đầy đủ `/api/v1/<module>/...` chụp lúc Express khớp route, chưa khớp thì `unmatched`), cổng vận hành (`/health`, `/metrics`) chạy riêng cho cả ba tiến trình |
+| `logger.ts` | pino, log dạng JSON. `redact` che header `Authorization`, `Cookie`, `Set-Cookie`; bỏ query string khỏi `req.url` và bỏ `req.query` (chữ ký cổng thanh toán), che khoá trong `/webhooks/sepay/<khoá>`; bỏ `params` và dòng `params:` của lỗi Drizzle, bỏ `detail` của lỗi PostgreSQL. Phủ mọi logger con, kể cả `pino-http` của api và realtime. Không log mật khẩu, token, khoá cổng thanh toán |
 | `lifecycle.ts` | Dừng êm khi nhận SIGTERM/SIGINT |
-| `module.ts` | Kiểu `ModuleDefinition` mà mỗi module export |
+
+Trong lúc các nhánh làm song song (đợt A, B), không issue nào sửa thư mục này; cần đổi thì báo trưởng nhóm, gom vào một PR nhỏ sau đợt.
 
 ## Chưa có, sẽ thêm vào đây
 
-- Ngữ cảnh công ty đi theo request và Row-Level Security (đặt `app.company_id` trong transaction), xem `docs/17` mục 3.
-- Middleware `authenticate` (JWT bằng `jose`) và `authorize`. Phần kiểm quyền gọi sang module `access`, nên `authorize` nhận hàm kiểm quyền qua tham số thay vì import module.
-- Outbox và client Kafka (`events/`), Redis (`cache/`), OpenTelemetry, `decimal.js` cho tiền.
+- Redis (`cache/`), OpenTelemetry.

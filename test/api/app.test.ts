@@ -30,6 +30,16 @@ describe('khung api', () => {
     expect(res.body.type).toBe('/problems/malformed_json');
   });
 
+  it('thân JSON quá 1 MB trả 413 payload_too_large, kể cả khi chưa đăng nhập', async () => {
+    const res = await request(app)
+      .post('/api/v1/identity/me')
+      .set('content-type', 'application/json')
+      .send(JSON.stringify({ x: 'a'.repeat(1_100_000) }));
+    expect(res.status).toBe(413);
+    expect(res.headers['content-type']).toContain('application/problem+json');
+    expect(res.body).toMatchObject({ type: '/problems/payload_too_large', code: 'payload_too_large', status: 413 });
+  });
+
   it('GET /api/openapi.json trả tài liệu OpenAPI 3.1 có /health', async () => {
     const res = await request(app).get('/api/openapi.json');
     expect(res.status).toBe(200);
@@ -43,9 +53,25 @@ describe('khung api', () => {
     expect(res.headers['content-type']).toContain('text/html');
   });
 
-  it('đủ 19 module, tên không trùng', () => {
+  it('tin proxy đúng số tầng TRUST_PROXY_HOPS, mặc định 0', () => {
+    expect(app.get('trust proxy')).toBe(0);
+  });
+
+  it('module đã gắn router rỗng vẫn trả 404 Problem Details cho đường dẫn chưa có (AC-12)', async () => {
+    const mounted = modules.filter((m) => m.router).map((m) => m.name);
+    // `access`, `staff` không tự gắn: router của hai module này nằm dưới /api/v1/identity (Documents/21 I1, #7).
+    expect(mounted).toEqual(expect.arrayContaining(['catalog', 'inventory', 'sales', 'payment', 'finance', 'platform', 'files']));
+    expect(mounted).not.toContain('staff');
+    for (const name of mounted) {
+      const res = await request(app).get(`/api/v1/${name}/khong-ton-tai`);
+      expect(res.status, name).toBe(404);
+      expect(res.body.code).toBe('not_found');
+    }
+  });
+
+  it('đủ 18 module con (bỏ pricing, Documents/19 D9), tên không trùng', () => {
     const names = modules.map((m) => m.name);
-    expect(names).toHaveLength(19);
-    expect(new Set(names).size).toBe(19);
+    expect(names).toHaveLength(18);
+    expect(new Set(names).size).toBe(18);
   });
 });

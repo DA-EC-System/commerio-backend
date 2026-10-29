@@ -1,0 +1,64 @@
+# k3s trên VPS (Documents/21 D13), cài với --disable traefik: Caddy giữ cổng 80/443 qua ServiceLB.
+# Chạy trên VPS từ 20/10/2026. Cách chạy: deploy/k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: commerio
+
+resources:
+  - ../../base
+  - caddy-data.yaml
+  - ci-deployer.yaml
+  - node-exporter.yaml
+
+# Image của CI (#37, amd64 + arm64): backend từ repo này, FE từ repo FE, test-ui từ repo Test_UI.
+# Deploy đổi tag sang sha-<7 ký tự> của commit (ci-deploy/commerio-deploy.sh).
+images:
+  - name: commerio-backend
+    newName: ghcr.io/da-ec-system/commerio-backend
+    newTag: develop
+  - name: commerio-fe
+    newName: ghcr.io/da-ec-system/commerio-fe
+    newTag: develop
+  - name: commerio-fe-mock
+    newName: ghcr.io/da-ec-system/commerio-fe-mock
+    newTag: develop
+  # Repo Test_UI chỉ có nhánh main; tag main là bản mới nhất.
+  - name: commerio-test-ui
+    newName: ghcr.io/da-ec-system/commerio-test-ui
+    newTag: main
+
+secretGenerator:
+  - name: app-env
+    envs:
+      - .env
+  - name: grafana-admin
+    envs:
+      - grafana/.env
+
+configMapGenerator:
+  - name: caddy-site
+    behavior: replace
+    envs:
+      - caddy/.env
+
+patches:
+  # GHCR private: Secret ghcr tạo tay trên VPS từ PAT read:packages (README).
+  - target:
+      kind: Deployment
+      name: ^(worker|(api|realtime|fe|fe-mock|test-ui)-(blue|green))$
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: ghcr
+  # Chứng chỉ HTTPS giữ qua các lần khởi động lại.
+  - target:
+      kind: Deployment
+      name: caddy
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/1
+        value:
+          name: data
+          persistentVolumeClaim:
+            claimName: caddy-data

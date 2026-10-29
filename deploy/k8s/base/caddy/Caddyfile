@@ -1,0 +1,35 @@
+# FE ở /, API ở /api, cùng một origin (Documents/21 V38). SITE_ADDRESS: tên miền trên VPS, :80 trên máy.
+{
+	admin off
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Kênh SSE do tiến trình realtime phục vụ (#33). Chỉ route này, /metrics của realtime không ra ngoài.
+	handle /api/v1/notification/stream* {
+		reverse_proxy realtime:3002
+	}
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	# Bản FE dữ liệu giả (MSW) để làm giao diện khi backend chưa có API: /mock/ (Deployment fe-mock, build với
+	# BASE_PATH=/mock/). handle_path bỏ tiền tố /mock trước khi chuyển vào.
+	redir /mock /mock/ 308
+	handle_path /mock/* {
+		reverse_proxy fe-mock:80
+	}
+
+	# Bản mẫu giao diện HTML tĩnh (repo Test_UI, Deployment test-ui): /mock_test/, bỏ tiền tố trước khi chuyển vào.
+	redir /mock_test /mock_test/ 308
+	handle_path /mock_test/* {
+		reverse_proxy test-ui:80
+	}
+
+	# Còn lại là FE (Deployment fe, image của repo FE, gọi backend thật); SPA và cache do Caddy trong image đó lo.
+	handle {
+		reverse_proxy fe:80
+	}
+}

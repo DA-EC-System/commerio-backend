@@ -5,8 +5,71 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1791899932861,
-      "tag": "0000_tao-schema-module",
+      "when": 1793174775638,
+      "tag": "0000_mo-rong",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793174777703,
+      "tag": "0001_tao-bang",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793174779777,
+      "tag": "0002_rls-quyen",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793174781856,
+      "tag": "0003_seed-quyen",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793192460630,
+      "tag": "0004_gian-hang-lazada",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793197348835,
+      "tag": "0005_listing-lazada",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793197351490,
+      "tag": "0006_rls-category-maps",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793207430007,
+      "tag": "0007_de-nghi-nhap",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793221954749,
+      "tag": "0008_doi-soat-lazada",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793221966009,
+      "tag": "0009_rls-bank-matches",
       "breakpoints": true
     }
   ]
