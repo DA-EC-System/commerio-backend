@@ -30,6 +30,7 @@ import {
   VoucherPage,
 } from './schemas.ts';
 import { registerConfigOpenApi } from './config-openapi.ts';
+import { registerLedgerOpenApi } from './ledger-openapi.ts';
 import { registerSettlementOpenApi } from './settlement-openapi.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
@@ -186,4 +187,5 @@ export function registerFinanceOpenApi(registry: OpenAPIRegistry): void {
 
   registerSettlementOpenApi(registry);
   registerConfigOpenApi(registry);
+  registerLedgerOpenApi(registry);
 }
