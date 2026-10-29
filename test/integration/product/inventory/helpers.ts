@@ -51,12 +51,20 @@ export async function receive(companyId: string, variantId: string, quantity: nu
   }
 }
 
-/** Đặt số đang giữ, chờ xử lý của dòng tồn (nguồn thật là kiện, phiếu kiểm hàng về: issue vòng đời). */
-export async function setBuckets(companyId: string, variantId: string, b: { reserved?: number; quarantine?: number }) {
+/**
+ * Đặt số của dòng tồn (nguồn thật là kiện, phiếu kiểm hàng về, bàn giao bắt buộc, kiểm kê CEO duyệt: issue vòng đời).
+ * Tồn âm cần bật `invariantBroken` cùng lúc (CHECK `stock_levels_invariant`).
+ */
+export async function setBuckets(
+  companyId: string,
+  variantId: string,
+  b: { onHand?: number; reserved?: number; quarantine?: number; invariantBroken?: boolean },
+) {
   await testPool().query(
-    `update product.stock_levels set reserved = coalesce($3, reserved), quarantine = coalesce($4, quarantine)
+    `update product.stock_levels set on_hand = coalesce($3, on_hand), reserved = coalesce($4, reserved),
+       quarantine = coalesce($5, quarantine), invariant_broken = coalesce($6, invariant_broken)
      where company_id = $1 and variant_id = $2`,
-    [companyId, variantId, b.reserved ?? null, b.quarantine ?? null],
+    [companyId, variantId, b.onHand ?? null, b.reserved ?? null, b.quarantine ?? null, b.invariantBroken ?? null],
   );
 }
 

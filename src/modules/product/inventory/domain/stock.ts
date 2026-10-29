@@ -28,6 +28,12 @@ export function isBelowMin(available: number, minQty: number | null): boolean {
   return minQty !== null && available < minQty;
 }
 
+/** Nhãn tồn của dòng (Documents/21 mục 15.1): hết hàng khi khả dụng ≤ 0, sắp hết khi dưới ngưỡng (K7). */
+export function stockState(available: number, minQty: number | null): 'in_stock' | 'low' | 'out' {
+  if (available <= 0) return 'out';
+  return isBelowMin(available, minQty) ? 'low' : 'in_stock';
+}
+
 /**
  * Cảnh báo dưới ngưỡng phát một lần khi vừa xuống dưới (`alertActive` false → true); lên lại ≥ ngưỡng hoặc bỏ
  * ngưỡng thì tắt để lần xuống sau phát lại (V31).

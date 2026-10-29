@@ -1,7 +1,9 @@
+import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { testApp } from '../../helpers/http.ts';
 import { revokePermission } from '../../helpers/state.ts';
 import { archiveVariant, inv, receive, setBuckets } from './helpers.ts';
 
@@ -46,7 +48,7 @@ describe('danh sách tồn', () => {
     ]);
     const byKho = (await inv(kho).get('/stock')).body;
     expect(byKho.items[0]).toMatchObject({ avgCost: null, stockValue: null });
-    expect(byKho.summary.totalValue).toBeNull();
+    expect(byKho.summary).toMatchObject({ totalValue: null, quarantineCount: 1, negativeCount: 0 });
   });
 
   it('giá vốn lưu 100000.40, API trả 100000, giá trị tồn 5 × 100000.40 = 500002', async () => {
@@ -71,6 +73,42 @@ describe('danh sách tồn', () => {
     const quarantine = (await inv(c.ceo.token).get('/stock?quarantine=true')).body;
     expect(quarantine.items.map((i: { variantId: string }) => i.variantId)).toEqual([y.variantId]);
     expect((await inv(c.ceo.token).get(`/stock?search=${x.sku}`)).body.items).toHaveLength(1);
+  });
+
+  /** X thường; Y chờ xử lý 1, dưới ngưỡng; Z tồn thực âm; W đang giữ vượt tồn thực (cờ Tồn âm, tồn thực vẫn dương). */
+  async function fourVariants() {
+    const c = await createCompany();
+    const [x, y, z, w] = [
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+    ];
+    await receive(c.companyId, x.variantId, 10, 1000);
+    await receive(c.companyId, y.variantId, 2, 1000);
+    await setBuckets(c.companyId, y.variantId, { quarantine: 1 });
+    await inv(c.ceo.token).put(`/stock/${y.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+    await receive(c.companyId, z.variantId, 2, 1000);
+    await setBuckets(c.companyId, z.variantId, { onHand: -2, invariantBroken: true });
+    await receive(c.companyId, w.variantId, 1, 1000);
+    await setBuckets(c.companyId, w.variantId, { reserved: 3, invariantBroken: true });
+    return { c, x, y, z, w };
+  }
+
+  it('summary đếm biến thể có hàng chờ xử lý và biến thể Tồn âm (cả khi tồn thực chưa âm); dòng có state', async () => {
+    const { c, x, y, z, w } = await fourVariants();
+    const body = (await inv(c.ceo.token).get('/stock')).body;
+    expect(body.summary).toMatchObject({ variantCount: 4, belowMinCount: 1, quarantineCount: 1, negativeCount: 2 });
+    const state = Object.fromEntries(body.items.map((i: { variantId: string; state: string }) => [i.variantId, i.state]));
+    expect(state).toEqual({ [x.variantId]: 'in_stock', [y.variantId]: 'low', [z.variantId]: 'out', [w.variantId]: 'out' });
+  });
+
+  it('lọc chờ xử lý, dưới ngưỡng, tìm kiếm không đổi summary', async () => {
+    const { c, x } = await fourVariants();
+    const all = (await inv(c.ceo.token).get('/stock')).body.summary;
+    for (const q of ['quarantine=true', 'belowMin=true', `search=${x.sku}`]) {
+      expect((await inv(c.ceo.token).get(`/stock?${q}`)).body.summary).toEqual(all);
+    }
   });
 
   it('biến thể lưu trữ còn hàng vẫn hiện, hết hàng thì ẩn', async () => {
@@ -185,5 +223,14 @@ describe('quyền và công ty khác', () => {
 
   it('chưa có route phiếu kho cũ (/documents) trước issue phiếu kho có duyệt', async () => {
     expect((await inv(A.ceo).get('/documents')).status).toBe(404);
+  });
+});
+
+describe('Swagger (#162)', () => {
+  it('StockPage.summary có quarantineCount, negativeCount; StockLevel có state', async () => {
+    const { components } = (await request(testApp()).get('/api/openapi.json')).body;
+    const summary = components.schemas.StockPage.properties.summary;
+    expect(summary.required).toEqual(expect.arrayContaining(['quarantineCount', 'negativeCount']));
+    expect(components.schemas.StockLevel.properties.state.enum).toEqual(['in_stock', 'low', 'out']);
   });
 });

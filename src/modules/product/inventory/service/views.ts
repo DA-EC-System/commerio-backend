@@ -3,7 +3,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import type { VariantSummary } from '../../catalog/index.ts';
 import { findAccountById } from '../../../core/index.ts';
-import { availableQty, isBelowMin, stockValue, toDong } from '../domain/stock.ts';
+import { availableQty, isBelowMin, stockState, stockValue, toDong } from '../domain/stock.ts';
 import type { LevelRow } from '../repository/levels.ts';
 
 /** Người gọi đã qua `ctx.authorize`, kèm quyền đổi dữ liệu trả về (đọc từ DB mỗi request, D1). */
@@ -68,6 +68,7 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
     negative: level?.invariantBroken ?? false,
     minQty,
     belowMin: isBelowMin(available, minQty),
+    state: stockState(available, minQty),
     reorderVersion: level?.version ?? 0,
     avgCost: viewer.canCost ? toDong(avgCost) : null,
     stockValue: viewer.canCost ? stockValue(onHand, avgCost) : null,
