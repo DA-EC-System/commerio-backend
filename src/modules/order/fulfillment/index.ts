@@ -11,3 +11,20 @@ export const fulfillmentModule: ModuleDefinition = {
 };
 
 export { getOrderCogs } from './service/cogs.ts';
+export {
+  arrowAction,
+  holdsStock,
+  isHandedOver,
+  isSealed,
+  isStopped,
+  packageMachine,
+  platformUpdate,
+  type PackageAction,
+  type PackageStatus,
+} from './domain/package.ts';
+export {
+  type PlatformLineStatus,
+  type PlatformPackageLine,
+  syncPlatformPackages,
+} from './service/platform-packages.ts';
+export { findPackagesOfOrders, type PackageViewRow } from './repository/packages.ts';

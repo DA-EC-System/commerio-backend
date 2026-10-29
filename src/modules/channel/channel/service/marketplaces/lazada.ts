@@ -9,6 +9,8 @@ import {
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
+  type RemoteLineStatus,
+  type RemoteOrder,
   type RemoteSku,
   type RemoteState,
   type SellerInfo,
@@ -51,9 +53,9 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = typeof res.message === 'string' ? res.message : null;
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
-  // `SYSTEM`, `ISP` với mã chữ: lỗi phía sàn; `ApiCallLimit`: quá hạn mức; đều thử lại được.
+  // `SYSTEM`, `ISP` với mã chữ: lỗi phía sàn; `ApiCallLimit`, `SellerCallLimit`: quá hạn mức; đều thử lại được.
   const numeric = /^\d+$/.test(code);
-  if (res.type === 'SYSTEM' || code === 'ApiCallLimit' || TRANSIENT_NUMERIC.has(code) || (res.type === 'ISP' && !numeric)) {
+  if (res.type === 'SYSTEM' || code === 'ApiCallLimit' || code === 'SellerCallLimit' || TRANSIENT_NUMERIC.has(code) || (res.type === 'ISP' && !numeric)) {
     return new MarketplaceError('unavailable', code, message);
   }
   return new MarketplaceError('rejected', code, message);
@@ -93,6 +95,50 @@ function remoteState(p: LazadaProduct): { state: RemoteState; rejectReason: stri
   return { state: 'inactive', rejectReason: null };
 }
 
+const SELLER_LIMIT_WAIT_MS = 1100;
+// GetOrders: `limit` tối đa 100.
+const ORDER_PAGE = 100;
+
+// Trạng thái món của Lazada (20 giá trị của GetOrders) → trạng thái kiện của app (#105 A3).
+const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
+  unpaid: 'pending',
+  pending: 'pending',
+  topack: 'pending',
+  packed: 'packed',
+  ready_to_ship: 'awaiting_pickup',
+  toship: 'awaiting_pickup',
+  shipped: 'in_transit',
+  shipping: 'in_transit',
+  delivered: 'delivered',
+  failed_delivery: 'delivery_failed',
+  failed: 'delivery_failed',
+  shipped_back: 'returning',
+  shipped_back_success: 'returned',
+  returned: 'returned',
+  shipped_back_failed: 'return_failed',
+  lost: 'lost',
+  lost_by_3pl: 'lost',
+  damaged_by_3pl: 'lost',
+  package_scrapped: 'lost',
+  canceled: 'cancelled',
+};
+
+export const lazadaPackageStatus = (raw: string): RemoteLineStatus | null => LINE_STATUS[raw] ?? null;
+
+/** `2026-10-29 14:41:18 +0700` → Date. */
+const lazadaTime = (value: unknown) => new Date(String(value).replace(' ', 'T').replace(/ ([+-]\d{2})(\d{2})$/, '$1:$2'));
+
+/** Date → `2026-10-29T00:00:00+07:00`, dạng Lazada nhận ở `update_after`. */
+const vnTime = (d: Date) => `${new Date(d.getTime() + 7 * 3600_000).toISOString().slice(0, 19)}+07:00`;
+
+/** Hạn giao chỉ có trong câu `fulfillment_sla` (shop thử để trống `sla_time_stamp`, #105 A10). */
+function slaDeadline(text: unknown): Date | null {
+  const m = /(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/.exec(String(text ?? ''));
+  return m ? new Date(`${m[1]}T${m[2]}+07:00`) : null;
+}
+
+const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+
 const toDate = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Date.now() + Number(seconds) * 1000) : null);
 
 export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
@@ -130,7 +176,12 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   }
 
   async function call(baseUrl: string, apiPath: string, params: Record<string, string>, method: 'GET' | 'POST' | 'FORM') {
-    const body = await request(baseUrl, apiPath, params, method);
+    let body = await request(baseUrl, apiPath, params, method);
+    // Gọi dồn thì Lazada khoá seller 1 giây (`SellerCallLimit`, gọi thật #105): chờ rồi gọi lại một lần.
+    if (body.code === 'SellerCallLimit') {
+      await new Promise((r) => setTimeout(r, SELLER_LIMIT_WAIT_MS));
+      body = await request(baseUrl, apiPath, params, method);
+    }
     if (body.code !== '0') throw lazadaError(body);
     return body;
   }
@@ -318,6 +369,61 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
       await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+    },
+    async listOrders(accessToken, updatedAfter, offset) {
+      const params = {
+        access_token: accessToken,
+        update_after: vnTime(updatedAfter),
+        sort_by: 'updated_at',
+        sort_direction: 'ASC',
+        limit: String(ORDER_PAGE),
+        offset: String(offset),
+      };
+      const body = await call(config.apiUrl, '/orders/get', params, 'GET');
+      const data = (body.data ?? {}) as { countTotal?: unknown; orders?: Record<string, unknown>[] };
+      const orders = (data.orders ?? []).map((o) => ({
+        externalOrderId: str(o.order_id),
+        placedAt: lazadaTime(o.created_at),
+        updatedAt: lazadaTime(o.updated_at),
+      }));
+      return { orders, hasMore: offset + orders.length < Number(data.countTotal ?? 0) };
+    },
+    async getOrder(accessToken, externalOrderId): Promise<RemoteOrder> {
+      type Row = Record<string, unknown>;
+      const params = { access_token: accessToken, order_id: externalOrderId };
+      const o = ((await call(config.apiUrl, '/order/get', params, 'GET')).data ?? {}) as Row;
+      const items = ((await call(config.apiUrl, '/order/items/get', params, 'GET')).data ?? []) as Row[];
+      const statuses = (o.statuses as unknown[] | undefined)?.map(str) ?? [];
+      const a = (o.address_shipping ?? null) as Row | null;
+      const deadlines = items.map((i) => slaDeadline(i.fulfillment_sla)).filter((d) => d !== null);
+      return {
+        externalOrderId: str(o.order_id),
+        rawStatus: [...new Set(statuses)].join(','),
+        paid: !statuses.includes('unpaid'),
+        isCod: o.payment_method === 'COD',
+        placedAt: lazadaTime(o.created_at),
+        updatedAt: lazadaTime(o.updated_at),
+        shipBy: deadlines.length ? new Date(Math.min(...deadlines.map((d) => d.getTime()))) : null,
+        shippingAddress: a && {
+          name: `${str(a.first_name)} ${str(a.last_name)}`.trim(),
+          phone: str(a.phone),
+          address: ['address1', 'address2', 'address3', 'address4', 'address5', 'city'].map((k) => str(a[k])).filter(Boolean).join(', '),
+        },
+        shippingFee: str(o.shipping_fee ?? 0),
+        cancelRequested: o.is_cancel_pending === true || o.need_cancel_confirm === true,
+        lines: items.map((i) => ({
+          externalLineId: str(i.order_item_id),
+          sellerSku: str(i.sku),
+          productName: str(i.name),
+          unitPrice: str(i.item_price ?? 0),
+          sellerDiscount: str(i.voucher_seller ?? 0),
+          platformDiscount: str(i.voucher_platform ?? 0),
+          packageCode: str(i.package_id) || null,
+          trackingCode: str(i.tracking_code) || null,
+          rawStatus: str(i.status),
+          status: lazadaPackageStatus(str(i.status)),
+        })),
+      };
     },
     // Tài chính (#117, lazada.md §7.6). Tên trường theo tài liệu và sàn giả lập #115, chưa đối chiếu response thật.
     async getTransactions(accessToken, from, to): Promise<SettlementTxn[]> {

@@ -106,6 +106,8 @@ export const orders = salesSchema.table(
     shippingFee: money('shipping_fee').notNull().default('0'),
     total: money('total').notNull(),
     cancelReason: text('cancel_reason'),
+    // Số hoá đơn người bán nhập để gửi sàn (Documents/21 §19.3).
+    invoiceNumber: text('invoice_number'),
     ...timestamps,
     ...version,
   },
