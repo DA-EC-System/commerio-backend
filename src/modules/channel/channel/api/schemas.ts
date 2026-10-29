@@ -214,6 +214,15 @@ export const ListingSyncResult = z
   .strict()
   .meta({ id: 'ListingSyncResult' });
 
+export const OrderPullResult = z
+  .object({
+    pulled: z.number().int().meta({ description: 'Số đơn có cập nhật mới, đã lấy chi tiết từ sàn' }),
+    created: z.number().int().meta({ description: 'Số đơn mới tạo' }),
+    updated: z.number().int().meta({ description: 'Số đơn đổi trạng thái, cờ hoặc kiện' }),
+  })
+  .strict()
+  .meta({ id: 'OrderPullResult' });
+
 // Thiết lập lần đầu (§18.2).
 export const SetupBody = z
   .object({

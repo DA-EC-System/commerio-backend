@@ -9,6 +9,7 @@ import {
   ListingList,
   ListingParams,
   ListingSyncResult,
+  OrderPullResult,
   PushBody,
   PushResults,
   SetupBody,
@@ -223,6 +224,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     security: bearer,
     request: { params: ShopParams },
     responses: { 200: { description: 'Tóm tắt', ...json(ListingSyncResult) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/orders/pull',
+    summary: 'Kéo đơn sàn ngay (#105)',
+    description:
+      'Cần `channel.shop.sync`. Kéo đơn có cập nhật từ mốc kéo đơn của gian hàng (lần đầu: mốc chọn lúc thiết lập) lùi 2 phút; đơn đặt trước mốc thiết lập bỏ qua. Việc nền tự chạy mỗi 5 phút. Sàn lỗi giữa chừng: các đơn trước đó đã lưu, lần sau làm tiếp.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Tóm tắt', ...json(OrderPullResult) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

@@ -25,3 +25,6 @@ export {
   type OrderLineForInvoice,
 } from './service/finance-boundary.ts';
 export { getOrderChannels } from './service/daily-totals.ts';
+// Nhận đơn sàn (#105): channel kéo đơn và push (#133) gọi trong `withCompany`.
+export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts';
+export type { SalesContext } from './service/orders.ts';

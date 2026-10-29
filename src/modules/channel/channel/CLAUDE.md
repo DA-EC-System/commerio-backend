@@ -37,6 +37,12 @@ Máy trạng thái ở `domain/listing.ts` (§18.3, cùng bảng FE). Mỗi lầ
 
 Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `SkuId` (SellerSku bị bỏ); lỗi nghiệp vụ sản phẩm cũng mang `type: ISP`, chỉ `6`, `901`, `1000`, `4154` là lỗi tạm; POST mang payload gửi bằng form body.
 
+## Kéo đơn (#105)
+
+`service/order-pull.ts`: mỗi 5 phút (`startBackground`) cho mọi gian hàng `active`, và route `POST /shops/:id/orders/pull` (`channel.shop.sync`). Kéo từ `last_order_sync_at` (lần đầu `order_cutoff_at`) lùi 2 phút, cũ trước, lật trang 100; bỏ đơn đặt trước `order_cutoff_at`; đơn có `updated_at` không mới hơn bản ở `raw_orders` thì không gọi chi tiết. Mỗi đơn: ghép SKU theo `listings.seller_sku` → `ingestMarketplaceOrder` của `order` → lưu `raw_orders` (đơn đã chuẩn hoá), cùng giao dịch. Sàn lỗi giữa chừng thì dừng, mốc ở đơn cuối đã xong.
+
+Adapter `listOrders`, `getOrder`; bảng 20 trạng thái món Lazada → trạng thái kiện ở `lazada.ts` (`lazadaPackageStatus`). Hạn giao đọc từ câu `fulfillment_sla` (shop thử để trống `sla_time_stamp`). Gọi dồn thì Lazada trả `SellerCallLimit` (khoá 1 giây): `call` chờ 1,1 giây gọi lại một lần, lần hai vẫn bị chặn là lỗi tạm.
+
 ## Chưa làm
 
-Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ (#102); kéo đơn khi nối lại (#105, `reconnect.pulledFrom` chỉ báo mốc); push (#133); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
+Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ, khoá để hai worker không kéo cùng gian hàng (#102); kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); push (#133); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
