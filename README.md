@@ -113,7 +113,7 @@ Mỗi người code trên **database riêng trong Docker** ở máy mình. Cả 
 
 ```
              git: db/migrations/0000, 0001, 0002, ...
-        │ pull              │ pull              │ merge vào develop
+        │ pull              │ pull              │ merge vào main
         ▼                   ▼                   ▼
   DB Docker máy A     DB Docker máy B     Staging (Supabase)
   code, test          code, test          FE, demo, GVHD xem
@@ -148,11 +148,11 @@ Xem dữ liệu bằng DataGrip (hay trình quản lý DB nào cũng được): 
 
 3. **Không tạo hay sửa bảng bằng tay trong DataGrip.** Người khác không có thay đổi đó, và migration lần sau sẽ lệch.
 
-4. **Không sửa file migration đã merge vào `develop`.** Cần đổi thì sinh migration mới.
+4. **Không sửa file migration đã merge vào `main`.** Cần đổi thì sinh migration mới.
 
 ### Staging
 
-- Chỉ nhận code **đã merge vào `develop`**. Không ai chạy `db:migrate` lên staging từ nhánh đang làm.
+- Chỉ nhận code **đã merge vào `main`**. Không ai chạy `db:migrate` lên staging từ nhánh đang làm.
 - Người được giao (hiện là trưởng nhóm) chạy migration bằng file `.env.staging` riêng trên máy mình. File `.env.*` đã nằm trong `.gitignore`. Khi có CI deploy (#37), CI tự chạy migration trước mỗi lần deploy.
   ```bash
   npm run db:migrate:staging   # đọc DATABASE_URL trong .env.staging, không đụng .env
@@ -171,7 +171,7 @@ Migration chỉ đồng bộ **cấu trúc bảng** và **dữ liệu cố đị
 
 | Tình huống | Cách xử lý |
 |---|---|
-| Hai người cùng sinh migration trên hai nhánh, trùng số | Người merge sau xoá migration của mình, rebase lên `develop`, chạy lại `db:generate` |
+| Hai người cùng sinh migration trên hai nhánh, trùng số | Người merge sau xoá migration của mình, rebase lên `main`, chạy lại `db:generate` |
 | DB trên máy rối, migrate lỗi | `docker compose -f deploy/compose.yaml down -v`, rồi `npm run infra:up` và `npm run db:migrate`. Chỉ mất dữ liệu test trên máy mình |
 | `npm test` hoặc `infra:up` báo không kết nối được Docker | Mở Docker Desktop, chờ chạy xong rồi thử lại |
 | Cổng 5432 đã bị chiếm | Máy đang có PostgreSQL khác. Tắt nó, hoặc đổi cổng trong `deploy/compose.yaml` và `DATABASE_URL` cho khớp |
@@ -212,4 +212,4 @@ Role `commerio_app` ở mức cụm, migration `0003` tạo lại an toàn. Test
 
 ## Nhánh
 
-Theo Git Flow: `main` là bản phát hành, `develop` là nhánh tích hợp, mỗi việc đi trên `feature/<tên>` rồi mở PR vào `develop`.
+Mỗi việc đi trên `feature/<tên>` rồi mở PR vào thẳng `main`; merge vào `main` là deploy staging. Không còn nhánh `develop` (bỏ từ 29/10/2026).

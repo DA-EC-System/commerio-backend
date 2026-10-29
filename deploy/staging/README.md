@@ -11,7 +11,7 @@ trình duyệt ──► Caddy ─┬─ /api/v1/notification/stream* ─► rea
 
 FE và API cùng một origin nên **không bật CORS**, và cookie refresh (`HttpOnly; Secure; SameSite=Strict; Path=/api/v1/identity`) được trình duyệt gửi kèm. Chỉ Caddy mở cổng ra ngoài (80, 443); `/metrics`, Prometheus, Grafana, Kafka chỉ ở mạng của cluster. Cổng 6443 của k3s không mở ra ngoài.
 
-## Khi merge vào `develop`
+## Khi merge vào `main`
 
 Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước đỏ thì job sau không chạy:
 
