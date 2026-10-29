@@ -69,6 +69,20 @@ export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChange) }).
 
 export const ShopList = z.object({ items: z.array(Shop) }).strict().meta({ id: 'ShopList' });
 
+export const ShopPlatform = z
+  .object({
+    platform: z.string().meta({ description: 'Mã sàn, dùng ở `/shops/:platform/...`' }),
+    name: z.string().meta({ description: 'Tên sàn hiển thị' }),
+    connectable: z.boolean(),
+    methods: z.array(z.enum(['oauth', 'token'])).meta({
+      description: '`oauth`: qua trang uỷ quyền (`authorize-url`, `callback`); `token`: dán token console (`POST /shops/:platform/token`)',
+    }),
+  })
+  .strict()
+  .meta({ id: 'ShopPlatform' });
+
+export const ShopPlatformList = z.object({ items: z.array(ShopPlatform) }).strict().meta({ id: 'ShopPlatformList' });
+
 export const ShopCallbackResult = z
   .object({
     shop: Shop,

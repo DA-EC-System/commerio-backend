@@ -29,6 +29,7 @@ import {
   ShopDetail,
   ShopList,
   ShopParams,
+  ShopPlatformList,
   TokenBody,
 } from './schemas.ts';
 
@@ -59,6 +60,15 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     description: 'Cần `channel.shop.view`. Cũ trước.',
     security: bearer,
     responses: { 200: { description: 'Danh sách gian hàng', ...json(ShopList) }, ...auth },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/platforms',
+    summary: 'Sàn kết nối được trên môi trường này (§18.1)',
+    description:
+      'Cần `channel.shop.view`. Chỉ sàn có adapter đủ cấu hình; mỗi sàn kèm cách nối dùng được. Không có sàn nào thì `items` rỗng.',
+    security: bearer,
+    responses: { 200: { description: 'Danh sách sàn', ...json(ShopPlatformList) }, ...auth },
   });
   registry.registerPath({
     method: 'get',

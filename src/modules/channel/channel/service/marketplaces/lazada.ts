@@ -142,9 +142,13 @@ const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
 const toDate = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Date.now() + Number(seconds) * 1000) : null);
 
 export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
+  // Một chỗ quyết định cấu hình đủ chưa: `connectMethods`, `credentials`, `authorizeUrl` cùng đọc (#163).
+  const hasCredentials = Boolean(config.appKey && config.appSecret);
+  const oauthReady = hasCredentials && Boolean(config.redirectUrl);
+
   function credentials() {
-    if (!config.appKey || !config.appSecret) throw new MarketplaceError('unsupported');
-    return { appKey: config.appKey, appSecret: config.appSecret };
+    if (!hasCredentials) throw new MarketplaceError('unsupported');
+    return { appKey: config.appKey!, appSecret: config.appSecret! };
   }
 
   /**
@@ -235,15 +239,18 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   }
 
   return {
-    authorizeUrl(state) {
-      const { appKey } = credentials();
+    name: 'Lazada',
+    connectMethods() {
       // Chỉ OAuth cần trang callback; nối bằng token không cần.
-      const redirectUrl = config.redirectUrl;
-      if (!redirectUrl) throw new MarketplaceError('unsupported');
+      return oauthReady ? ['oauth', 'token'] : hasCredentials ? ['token'] : [];
+    },
+    authorizeUrl(state) {
+      if (!oauthReady) throw new MarketplaceError('unsupported');
+      const { appKey } = credentials();
       const query = new URLSearchParams({
         response_type: 'code',
         force_auth: 'true',
-        redirect_uri: redirectUrl,
+        redirect_uri: config.redirectUrl!,
         client_id: appKey,
         state,
       });

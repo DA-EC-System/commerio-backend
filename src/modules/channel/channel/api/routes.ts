@@ -45,6 +45,11 @@ export function channelRouter(ctx: ModuleContext): Router {
     res.json(await withCompany(actor(res).companyId, () => shops.listShops()));
   });
 
+  // Đặt trước `/shops/:id`, không thì `platforms` bị hiểu là mã gian hàng (404).
+  router.get('/shops/platforms', view, (_req, res) => {
+    res.json(shops.shopPlatforms());
+  });
+
   router.get('/shops/:platform/authorize-url', connect, validate({ params: PlatformParams }), async (_req, res) => {
     res.json(await shops.authorizeUrl(validated<typeof PlatformParams>(res, 'params').platform, actor(res)));
   });
