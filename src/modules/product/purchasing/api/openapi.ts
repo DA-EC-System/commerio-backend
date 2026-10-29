@@ -5,12 +5,18 @@ import {
   ActionParams,
   AddRequestLineInput,
   ExcludeLineInput,
+  GoodsReceipt,
+  GoodsReceiptCreateInput,
+  GoodsReceiptPage,
+  GoodsReceiptUpdateInput,
   IdParams,
   LineParams,
   PurchaseRequest,
   PurchaseRequestInput,
   PurchaseRequestPage,
   PurchaseRequestUpdateInput,
+  ReceiptActionInput,
+  ReceiptListQuery,
   RequestActionInput,
   RequestListQuery,
   Supplier,
@@ -127,6 +133,56 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
         `${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`empty_document\`, \`all_lines_excluded\`, \`has_receipts\`, \`receipt_counting\``,
       ),
       422: problemResponse('`validation_failed` (giá nhập 0, tên sản phẩm mới đã có), `reason_required`, `supplier_inactive`'),
+    },
+  });
+
+  path({
+    method: 'get',
+    path: '/goods-receipts',
+    summary: 'Danh sách phiếu nhận, mới nhất trước; `search` khớp số phiếu, số đề nghị (có một quyền `purchasing.*`)',
+    request: { query: ReceiptListQuery },
+    responses: { 200: json('Một trang phiếu nhận', GoodsReceiptPage), ...invalid },
+  });
+  path({
+    method: 'get',
+    path: '/goods-receipts/:id',
+    summary: 'Chi tiết phiếu nhận: dòng kèm còn chờ hiện tại, kết quả giao thiếu, lịch sử trạng thái',
+    request: { params: IdParams },
+    responses: { 200: json('Phiếu nhận', GoodsReceipt), ...missing('phiếu nhận') },
+  });
+  path({
+    method: 'post',
+    path: '/goods-receipts',
+    summary: 'Lập phiếu nhận cho đề nghị đã đặt NCC; dòng là các dòng còn chờ (quyền `purchasing.receipt.manage`)',
+    request: { body: body(GoodsReceiptCreateInput) },
+    responses: {
+      201: json('Phiếu đang kiểm', GoodsReceipt),
+      ...conflict('`invalid_transition` (`current` là trạng thái đề nghị) khi đề nghị chưa đặt hoặc đã đóng; `empty_document` khi không còn dòng chờ'),
+      422: problemResponse('`validation_failed`; `errors.requestId` khi không thấy đề nghị'),
+    },
+  });
+  path({
+    method: 'put',
+    path: '/goods-receipts/:id',
+    summary: 'Lưu số kiểm đếm khi phiếu đang kiểm; `lines[].lineId` là id dòng đề nghị (quyền `purchasing.receipt.manage`)',
+    request: { params: IdParams, body: body(GoodsReceiptUpdateInput) },
+    responses: {
+      200: json('Phiếu sau khi lưu', GoodsReceipt),
+      ...missing('phiếu nhận'),
+      ...conflict(`${versionConflict}; \`not_draft\` khi phiếu không còn đang kiểm`),
+      422: problemResponse('`validation_failed` theo ô (`lines.i.accepted`, `lines.i.reason`, `lines.i.lineId`, `attachments`); `over_outstanding`'),
+    },
+  });
+  path({
+    method: 'post',
+    path: '/goods-receipts/:id/:action',
+    summary: 'Chuyển trạng thái: post, post_short, cancel. Quyền theo bước (Documents/21 mục 16.3)',
+    request: { params: ActionParams, body: body(ReceiptActionInput) },
+    responses: {
+      200: json('Phiếu sau khi chuyển', GoodsReceipt),
+      ...missing('phiếu nhận hoặc thao tác'),
+      ...conflict(`${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`has_shortage\`, \`no_shortage\`, \`empty_document\``),
+      422: problemResponse('`reason_required`; `over_outstanding` theo ô'),
     },
   });
 }
