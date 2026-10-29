@@ -76,6 +76,15 @@ export const EVENT_SCHEMAS = {
     paidOn: z.iso.date(),
     reversalOf: id.nullable(),
   }),
+  // Phiên bản cấu hình tiền vừa có hiệu lực (#118, Documents/21 §21.4). C2 nghe `fee`, `min_margin` để tính lại giá
+  // trên sàn; sổ tiền chọn phiên bản theo ngày kiện giao nên không cần nghe. `supersededId`: bản vừa hết hiệu lực.
+  'finance.fee_config_activated': z.object({
+    configVersionId: id,
+    kind: z.enum(['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin']),
+    shopId: id.nullable(),
+    effectiveFrom: z.iso.date(),
+    supersededId: id.nullable(),
+  }),
   // Đề nghị nhập gửi (hoặc gửi lại) CEO duyệt (#108).
   'purchasing.request_submitted': z.object({ requestId: id, number: z.string() }),
   // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý.
