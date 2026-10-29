@@ -71,7 +71,7 @@ export function platformRouter(ctx: PlatformContext): Router {
   });
 
   router.get('/jobs/dead', manageJobs, validate({ query: DeadJobListQuery }), async (_req, res) => {
-    res.json(await listDeadJobs(getAuth(res).companyId!, validated<typeof DeadJobListQuery>(res, 'query')));
+    res.json(await listDeadJobs(ctx, getAuth(res).companyId!, validated<typeof DeadJobListQuery>(res, 'query')));
   });
 
   router.post('/jobs/dead/:id/retry', manageJobs, validate({ params: DeadJobParams }), async (_req, res) => {
