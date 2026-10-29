@@ -3,7 +3,7 @@
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerFinanceOpenApi } from './api/openapi.ts';
 import { financeRouter } from './api/routes.ts';
-import { startFinanceBackground } from './service/config-versions.ts';
+import { startFinanceBackground } from './service/background.ts';
 
 export const financeModule: ModuleDefinition = {
   name: 'finance',

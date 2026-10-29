@@ -27,11 +27,14 @@ export const LEDGER_KINDS = [
   'supplier_refund',
   'cod_collected',
   'adjustment',
+  'withdrawal',
 ] as const;
 export type LedgerKind = (typeof LEDGER_KINDS)[number];
 
 /** Giá vốn không phải tiền mặt: không cộng vào thực nhận, chỉ vào lãi gộp. */
 export const NON_CASH: ReadonlySet<LedgerKind> = new Set(['cogs', 'cogs_reversal']);
+/** Không vào lãi: giá vốn tính riêng, rút tiền chỉ chuyển chỗ (ví sàn → ngân hàng). */
+export const NOT_PROFIT: ReadonlySet<LedgerKind> = new Set([...NON_CASH, 'withdrawal']);
 
 export interface Draft {
   kind: LedgerKind;

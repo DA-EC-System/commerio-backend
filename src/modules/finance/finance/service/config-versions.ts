@@ -224,9 +224,9 @@ export async function getEffectiveConfig<K extends ConfigKind>(
   kind: K,
   shopId: string | null,
   day: string,
-): Promise<{ id: string; payload: ConfigPayload<K> } | undefined> {
+): Promise<{ id: string; payload: ConfigPayload<K>; createdBy: string | null } | undefined> {
   const row = await effectiveIn(kind, shopId, day);
-  return row && { id: row.id, payload: row.payload as ConfigPayload<K> };
+  return row && { id: row.id, payload: row.payload as ConfigPayload<K>, createdBy: row.createdBy };
 }
 
 /** Thao tác người dùng theo máy trạng thái (§21.4). Duyệt bản đã tới ngày thì áp dụng ngay. */
@@ -333,22 +333,8 @@ export async function activateDueConfigs(now = new Date()): Promise<number> {
 }
 
 const ACTIVATION_LOCK = 'finance.config_activation';
-const INTERVAL_MS = 5 * 60_000;
 
-/** Việc nền của finance trong worker: mỗi 5 phút áp dụng phiên bản đã tới ngày; mỗi lúc một lượt trên mọi bản sao. */
-export async function startFinanceBackground(): Promise<() => Promise<void>> {
-  let running: Promise<unknown> | undefined;
-  const tick = () => {
-    running ??= withSessionLock(ACTIVATION_LOCK, () => activateDueConfigs())
-      .catch((err: unknown) => logger.error({ err }, 'việc nền áp dụng phiên bản cấu hình lỗi'))
-      .finally(() => {
-        running = undefined;
-      });
-  };
-  tick();
-  const timer = setInterval(tick, INTERVAL_MS);
-  return async () => {
-    clearInterval(timer);
-    await running;
-  };
+/** Một lượt áp dụng trên mọi bản sao worker (việc nền ở `background.ts`): lượt khác đang chạy thì `busy`. */
+export function activateDueConfigsOnce() {
+  return withSessionLock(ACTIVATION_LOCK, () => activateDueConfigs());
 }

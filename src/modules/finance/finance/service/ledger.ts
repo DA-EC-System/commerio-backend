@@ -16,8 +16,10 @@ import {
   revenueSince,
   sourcePosted,
 } from '../repository/ledger.ts';
+import { bankMatchesOf } from '../repository/ledger.ts';
 import { getEffectiveConfig } from './config-versions.ts';
-import { isUuid, notFound, type Orders, ordersOf } from './views.ts';
+import { markDelivered } from './order-settlement-state.ts';
+import { isUuid, notFound, type Orders, ordersOf, userRef } from './views.ts';
 
 export interface PackageDelivered {
   packageId: string;
@@ -94,7 +96,10 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
       rules: await getEffectiveConfig('tax_rules', null, day),
     };
     const target = { source: { type: 'package' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
-    return post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs));
+    const written = await post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs));
+    // Trạng thái tiền của đơn (#117): kiện đầu tiên giao xong thì `none → pending`, cập nhật tổng ước tính.
+    if (written) await markDelivered(e.orderId, e.shopId);
+    return written;
   });
 }
 
@@ -136,7 +141,22 @@ export function recordReturnInspected(companyId: string, e: ReturnInspected): Pr
   );
 }
 
-/** `LedgerLine` của §21.1. `txnId`, `bankMatch` có khi đối soát (#117). */
+type Names = Map<string, Promise<{ id: string; name: string } | null>>;
+
+/** `LedgerLine` của §21.1 cho một trang: kèm mã đơn, lần khớp sao kê và tên người khớp (#117). */
+export async function lineViews(rows: readonly LedgerRow[], orders?: Orders) {
+  const byOrder = orders ?? (await ordersOf(rows.map((r) => r.orderId)));
+  const matches = await bankMatchesOf(rows.map((r) => r.id));
+  const names: Names = new Map();
+  return Promise.all(
+    rows.map(async (r) => {
+      const m = matches.get(r.id);
+      const by = m && (await userRef(m.matchedBy, names));
+      return { ...lineView(r, byOrder), bankMatch: m && by ? { bankRef: m.bankRef, by, at: m.matchedAt.toISOString() } : null };
+    }),
+  );
+}
+
 function lineView(r: LedgerRow, orders: Orders) {
   return {
     id: r.id,
@@ -152,11 +172,11 @@ function lineView(r: LedgerRow, orders: Orders) {
     packageId: r.packageId,
     returnRequestId: r.returnRequestId,
     configVersionId: r.configVersionId,
-    txnId: null,
+    txnId: r.externalTransactionId,
     source: r.sourceType && r.sourceId ? { type: r.sourceType, id: r.sourceId } : null,
     reason: r.reason,
     createdAt: r.createdAt.toISOString(),
-    bankMatch: null,
+    bankMatch: null as { bankRef: string; by: { id: string; name: string }; at: string } | null,
   };
 }
 
@@ -170,15 +190,19 @@ export function listLedger(companyId: string, q: LedgerQuery, canSeeCost: boolea
   return withCompany(companyId, async () => {
     const filter = { ...q, to: q.to && addDays(q.to, 1), hideCost: !canSeeCost };
     const { rows, total } = await findEntries(filter, { limit: q.pageSize, offset: (q.page - 1) * q.pageSize });
-    const orders = await ordersOf(rows.map((r) => r.orderId));
     const sums = await ledgerTotals(q.shopId);
     return {
-      items: rows.map((r) => lineView(r, orders)),
+      items: await lineViews(rows),
       total,
       page: q.page,
       pageSize: q.pageSize,
-      // Rút tiền (#117) và tiền mua hàng đã cam kết (purchasing) chưa nối: `withdrawn` 0, `committedPurchase` null.
-      totals: { receivable: Number(sums.receivable), platformBalance: Number(sums.platformBalance), withdrawn: 0, committedPurchase: null },
+      // Tiền mua hàng đã cam kết (đề nghị nhập đã duyệt chưa trả NCC) cần cổng của purchasing: chưa nối, `null`.
+      totals: {
+        receivable: Number(sums.receivable),
+        platformBalance: Number(sums.platformBalance),
+        withdrawn: Number(sums.withdrawn),
+        committedPurchase: null,
+      },
     };
   });
 }
@@ -190,14 +214,18 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     const rows = await entriesOfOrder(orderId);
     const orders = await ordersOf([orderId]);
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
-    const p = profitOf(rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replacedBy !== null })));
+    // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng ước tính, kể cả khoản sàn không thu.
+    const settled = rows.some((r) => !r.isEstimate);
+    const p = profitOf(
+      rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replacedBy !== null || (r.isEstimate && settled) })),
+    );
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');
     return {
       net: p.net,
       cogs: canSeeCost ? p.cogs : null,
       gross: canSeeCost ? p.gross : null,
       estimated: p.estimated,
-      lines: visible.map((r) => lineView(r, orders)),
+      lines: await lineViews(visible, orders),
     };
   });
 }
