@@ -25,7 +25,7 @@ function staffContext<C extends ModuleContext>(ctx: C) {
   return {
     ...ctx,
     accountSummaries: findAccountSummaries,
-    isPlatformAdmin: async (accountId: string) => (await findAccountById(accountId))?.isPlatformAdmin ?? false,
+    platformAccount: findAccountById,
   };
 }
 

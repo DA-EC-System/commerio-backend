@@ -58,6 +58,16 @@ describe('chỉ quản trị nền tảng', () => {
     expect((await as(other.token).get('/platform/overview')).status).toBe(403);
   });
 
+  it('token phát trước lần đổi mật khẩu gần nhất nhận 401, như authorize (#62)', async () => {
+    const other = await platformAdmin();
+    const changed = await as(other.token).post('/identity/change-password', {
+      currentPassword: PASSWORD,
+      newPassword: 'MatKhauMoi456',
+    });
+    expect(changed.status).toBe(204);
+    expect((await as(other.token).get('/platform/overview')).body.type).toBe('/problems/unauthorized');
+  });
+
   it('không đọc được dữ liệu kinh doanh của công ty: token không có công ty', async () => {
     expect((await as(admin.token).get('/purchasing/suppliers')).body.type).toBe('/problems/company_not_selected');
   });

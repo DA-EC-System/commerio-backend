@@ -1,5 +1,6 @@
 import { type RequestHandler, Router } from 'express';
 import { getAuth, readAccessClaims } from '../../../../shared/auth/authenticate.ts';
+import { assertTokenCurrent } from '../../../../shared/auth/company-access.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import { listCompanies, listPlatformAuditLogs, platformOverview, setCompanyLock } from '../service/admin.ts';
@@ -21,11 +22,12 @@ export function platformRouter(ctx: PlatformContext): Router {
   const manageModules = ctx.authorize('platform.module.manage');
 
   // Quản trị nền tảng: cờ `core.accounts.is_platform_admin` đọc từ DB mỗi request, gỡ cờ là chặn ngay (#152 A1).
+  // Token phát trước lần đổi mật khẩu gần nhất → 401, như `authorize` (#62).
   const platformAdmin: RequestHandler = async (req, res, next) => {
     const claims = await readAccessClaims(req);
-    if (!(await ctx.isPlatformAdmin!(claims.accountId))) {
-      throw new AppError(403, 'forbidden', 'Chỉ quản trị nền tảng được thực hiện');
-    }
+    const account = await ctx.platformAccount!(claims.accountId);
+    if (account) assertTokenCurrent(claims, account.passwordChangedAt);
+    if (!account?.isPlatformAdmin) throw new AppError(403, 'forbidden', 'Chỉ quản trị nền tảng được thực hiện');
     res.locals.auth = claims;
     next();
   };
