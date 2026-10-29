@@ -10,7 +10,7 @@ import { completionBlocker, isDueSoon, type OrderFlag, type OrderStage, RETURN_W
 import {
   findOrder,
   findOrderLines,
-  findOrders,
+  findOrderPage,
   lineFacts,
   type OrderFilter,
   type OrderViewRow,
@@ -102,19 +102,33 @@ const shopsOf = (ctx: SalesContext, ids: (string | null)[]) => {
   return ctx.shopsOf && unique.length ? ctx.shopsOf(unique) : Promise.resolve(new Map<string, ShopRef>());
 };
 
+/** Lọc theo giai đoạn suy từ kiện hay cờ Sắp trễ hạn phải tính trong bộ nhớ: chỉ xét chừng này đơn chưa dừng mới nhất. */
+const DERIVED_SCAN = 1000;
+
 export async function listOrders(
   ctx: SalesContext,
-  q: OrderFilter & { page: number; pageSize: number; stage?: OrderStage | undefined; flag?: OrderFlag | undefined },
+  q: Omit<OrderFilter, 'flag' | 'openOnly'> & { page: number; pageSize: number; stage?: OrderStage | undefined; flag?: OrderFlag | undefined },
 ) {
-  const rows = await findOrders(q);
-  const facts = await factsOf(rows.map((r) => r.id));
   const now = Date.now();
+  const offset = (q.page - 1) * q.pageSize;
+  // Giai đoạn `completed`, `cancelled` chính là trạng thái; còn lại chỉ có ở đơn chưa dừng.
+  const stageIsStatus = q.stage === 'completed' || q.stage === 'cancelled';
+  const derived = q.flag === 'due_soon' || (q.stage !== undefined && !stageIsStatus);
+  if (stageIsStatus && q.status && q.status !== q.stage) return { items: [], total: 0, page: q.page, pageSize: q.pageSize };
+  const filter: OrderFilter = {
+    ...q,
+    status: stageIsStatus ? (q.stage as 'completed' | 'cancelled') : q.status,
+    flag: q.flag === 'due_soon' ? undefined : q.flag,
+    openOnly: derived,
+  };
+
+  const { rows, total } = derived ? await findOrderPage(filter, DERIVED_SCAN, 0) : await findOrderPage(filter, q.pageSize, offset);
+  const facts = await factsOf(rows.map((r) => r.id));
   const shops = await shopsOf(ctx, rows.map((r) => r.shopId));
-  const all = rows
-    .map((r) => summary(r, facts.get(r.id)!, shops, now))
-    .filter((s) => (!q.stage || s.display.stage === q.stage) && (!q.flag || s.flags.includes(q.flag)));
-  const start = (q.page - 1) * q.pageSize;
-  return { items: all.slice(start, start + q.pageSize), total: all.length, page: q.page, pageSize: q.pageSize };
+  const items = rows.map((r) => summary(r, facts.get(r.id)!, shops, now));
+  if (!derived) return { items, total, page: q.page, pageSize: q.pageSize };
+  const matched = items.filter((s) => (!q.stage || s.display.stage === q.stage) && (q.flag !== 'due_soon' || s.flags.includes('due_soon')));
+  return { items: matched.slice(offset, offset + q.pageSize), total: matched.length, page: q.page, pageSize: q.pageSize };
 }
 
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy đơn');

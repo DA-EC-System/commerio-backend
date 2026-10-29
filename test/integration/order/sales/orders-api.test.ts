@@ -96,11 +96,30 @@ describe('GET /sales/orders (#105)', () => {
     expect((await ofQuery('status=unpaid')).items.map((i) => i.id)).toEqual([ids.unpaid]);
     expect((await ofQuery('stage=unmapped')).items.map((i) => i.id)).toEqual([ids.unmapped]);
     expect((await ofQuery('flag=cancel_requested')).items.map((i) => i.id)).toEqual([ids.cancelRequested]);
+    expect((await ofQuery('flag=unmapped_sku')).items.map((i) => i.id)).toEqual([ids.unmapped]);
+    expect((await ofQuery('stage=awaiting_payment')).items.map((i) => i.id)).toEqual([ids.unpaid]);
+    expect((await ofQuery('stage=cancelled')).total).toBe(0);
+    expect((await ofQuery('status=unpaid&stage=completed')).total).toBe(0);
     const code = (await ofQuery('pageSize=50')).items.find((i) => i.id === ids.twoPackages)!.code;
     expect((await ofQuery(`search=${code}`)).items.map((i) => i.id)).toEqual([ids.twoPackages]);
     const second = await ofQuery('page=2&pageSize=3');
     expect(second).toMatchObject({ total: 4, page: 2, pageSize: 3 });
     expect(second.items).toHaveLength(1);
+  });
+
+  it('cờ có yêu cầu trả: lọc theo yêu cầu trả còn mở, yêu cầu đã đóng không tính', async () => {
+    const insert = (status: string, close: string | null) =>
+      testPool().query(
+        `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, status, close_result, reason)
+         values ($1, $2, $3, 'marketplace', $4, $5, $6, $7, 'Khách đổi ý')`,
+        [company.companyId, `TR-${randomUUID().slice(0, 8)}`, ids.twoPackages, shopId, randomUUID(), status, close],
+      );
+    await insert('closed', 'inspected');
+    let page = OrderSummaryPage.parse((await get('/orders?flag=return_requested')).body);
+    expect(page.total).toBe(0);
+    await insert('requested', null);
+    page = OrderSummaryPage.parse((await get('/orders?flag=return_requested')).body);
+    expect(page.items.map((i) => [i.id, i.flags.includes('return_requested')])).toEqual([[ids.twoPackages, true]]);
   });
 
   it('tham số sai 422 theo ô', async () => {

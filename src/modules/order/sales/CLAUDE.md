@@ -7,7 +7,7 @@
 Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/order.ts`: `unpaid` → `processing` (`pay` hệ thống, `confirm` đơn COD tay) → `completed` (`complete` hệ thống); huỷ từ `unpaid`, `processing` (`cancel` đơn tay, `platform_cancel` sàn, `cancel_on_platform` người bán huỷ đơn sàn). Mọi lần chuyển ghi `core.state_transitions` (`entity_type = 'orders'`).
 
 - **Cờ lưu:** `needs_attention`, `cancel_requested`, `cancelling`, `platform_cancelled`, `shop_disconnected`. **Cờ suy ra** lúc đọc (`service/orders.ts`): `unmapped_sku` (dòng `variant_id` trống), `due_soon` (còn kiện chưa rời kho, dưới 24 giờ tới `ship_by`), `return_requested` (yêu cầu trả chưa đóng, chưa từ chối). `cod_mismatch` chưa có nguồn.
-- **Giai đoạn hiển thị** `stageOf` và **lý do chưa hoàn tất** `completionBlocker` suy từ kiện. Danh sách lọc `stage`, `flag` trong bộ nhớ sau khi đọc các đơn khớp bộ lọc lưu.
+- **Giai đoạn hiển thị** `stageOf` và **lý do chưa hoàn tất** `completionBlocker` suy từ kiện. Danh sách phân trang trong SQL; cờ lưu, `unmapped_sku`, `return_requested` lọc bằng SQL; chỉ giai đoạn suy từ kiện và `due_soon` lọc trong bộ nhớ, trên 1.000 đơn chưa dừng mới nhất (`DERIVED_SCAN`).
 - Tiền lưu `numeric`, API trả số nguyên đồng.
 
 ## Nhận đơn sàn (#105)
