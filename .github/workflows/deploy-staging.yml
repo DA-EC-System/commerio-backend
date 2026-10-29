@@ -1,11 +1,11 @@
-# Staging (#37, Documents/21 D12, V36): merge vào develop → kiểm → image amd64 + arm64 lên GHCR
+# Staging (#37, Documents/21 D12, V36): merge vào main → kiểm → image amd64 + arm64 lên GHCR
 # → migration và seed từ runner lên Supabase → gắn tag develop → đổi image trên k3s của VPS (bỏ qua khi chưa có VPS).
 # Secret và biến cần tạo: deploy/staging/README.md.
 name: Deploy staging
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
 
 # Mỗi lúc một lần deploy; lần mới chờ lần đang chạy xong, không huỷ giữa chừng (đang migrate).
 concurrency:
@@ -83,7 +83,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           SEED_PASSWORD: ${{ secrets.STAGING_SEED_PASSWORD }}
 
-  # Tag develop chỉ trỏ image đã có schema tương ứng trên staging.
+  # Tag develop (giữ tên cũ để k3s không phải đổi) chỉ trỏ image đã có schema tương ứng trên staging.
   tag-develop:
     needs: [image, migrate]
     runs-on: ubuntu-latest
