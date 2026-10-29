@@ -4,7 +4,11 @@ import { registerConsumer } from '../../core/index.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
+import { logger } from '../../../shared/logger.ts';
 import { markStockPending } from './service/listing-sync.ts';
+import { pullAllShopsOrdersOnce } from './service/order-pull.ts';
+
+const ORDER_PULL_MS = 5 * 60_000;
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
@@ -13,7 +17,21 @@ export const channelModule: ModuleDefinition = {
   // Tồn đổi thì listing chờ đẩy tồn (chỉ ghi DB, đúng một lần); lần `sync` sau mới gọi sàn, không gọi sàn trong giao dịch.
   async startBackground() {
     registerConsumer('inventory.stock_changed', (e) => markStockPending(e.payload.variantId), { consumer: 'channel-stock-push' });
-    return async () => {};
+    // Kéo đơn mọi gian hàng mỗi 5 phút (#105 A7), không chồng lượt; dừng thì chờ lượt đang chạy.
+    let running: Promise<void> | undefined;
+    const tick = () => {
+      running ??= pullAllShopsOrdersOnce()
+        .catch((err: unknown) => logger.error({ err }, 'việc nền kéo đơn lỗi'))
+        .finally(() => {
+          running = undefined;
+        });
+    };
+    tick();
+    const timer = setInterval(tick, ORDER_PULL_MS);
+    return async () => {
+      clearInterval(timer);
+      await running;
+    };
   },
 };
 

@@ -7,6 +7,7 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
 import { pushZeroStock, syncListings } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
+import { pullShopOrders } from '../service/order-pull.ts';
 import { productPort } from '../service/product-port.ts';
 import * as setup from '../service/setup.ts';
 import * as shops from '../service/shops.ts';
@@ -140,6 +141,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.post('/shops/:id/listings/sync', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await syncListings(productPort(ctx), actor(res), id));
+  });
+
+  // Kéo đơn ngay, không chờ vòng 5 phút (#105).
+  router.post('/shops/:id/orders/pull', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await pullShopOrders(getAuth(res).companyId!, id));
   });
 
   router.post(

@@ -1,7 +1,8 @@
 // npm run db:seed: nạp dữ liệu demo vào DATABASE_URL. Mật khẩu chung của tài khoản demo lấy từ SEED_PASSWORD.
-// Logic nằm ở demo.ts (file này không được tsc kiểm, giữ thật ngắn).
+// Điều phối ở scenarios.ts; không in mật khẩu hay token.
 import { closeDb } from '#src/shared/db/client.ts';
 import { blackboxCompanies, defaultDemo, seedDemo } from './demo.ts';
+import { parseSection, seedScenarios } from './scenarios.ts';
 
 const password = process.env.SEED_PASSWORD;
 if (!password || password.length < 8) {
@@ -9,9 +10,16 @@ if (!password || password.length < 8) {
   process.exit(1);
 }
 try {
-  for (const input of [defaultDemo(password), ...blackboxCompanies(password)]) {
-    const { companyId } = await seedDemo(input);
-    console.log(`Đã nạp ${input.company.name}, công ty ${companyId}`);
+  const only = parseSection(process.argv.slice(2));
+  const summary = await seedScenarios(defaultDemo(password), { only });
+  console.log(JSON.stringify(summary, null, 2));
+  console.log('Giới hạn: chưa seed tồn đầu kỳ, nhận/trả NCC, gian hàng, đơn bán và sổ tiền; xem db/seed/README.md.');
+  // Hai công ty của bộ test hộp đen (#120): chỉ tài khoản, test tự tạo dữ liệu nghiệp vụ
+  if (only === 'all') {
+    for (const input of blackboxCompanies(password)) {
+      const { companyId } = await seedDemo(input);
+      console.log(`Đã nạp ${input.company.name}, công ty ${companyId}`);
+    }
   }
 } catch (err) {
   // Lỗi truy vấn của Drizzle có cả tham số (email, băm mật khẩu) trong message: chỉ in lỗi gốc của PostgreSQL.

@@ -12,6 +12,7 @@ import {
 import { loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import type { FinanceContext } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
+import type { SalesContext } from './modules/order/index.ts';
 import { hasPurchasingData } from './modules/product/index.ts';
 import { createAuthorize } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
@@ -19,12 +20,13 @@ import type { ModuleContext } from './shared/module.ts';
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
+  Required<Pick<SalesContext, 'shopsOf'>> &
   Required<Pick<PlatformContext, 'moduleData'>>;
 
 export function createModuleContext(): AppContext {
   return {
     authorize: createAuthorize(loadCompanyAccess),
-    // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát.
+    // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát; #105: sales cho danh sách đơn.
     shopsOf: getShops,
     // #117: finance kéo quyết toán qua token gian hàng của channel.
     settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
