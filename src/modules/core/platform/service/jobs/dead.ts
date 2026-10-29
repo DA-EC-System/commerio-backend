@@ -3,7 +3,6 @@
 import { withCompany } from '../../../../../shared/db/client.ts';
 import { AppError } from '../../../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../../audit/index.ts';
-import type { ModuleContext } from '../../../../../shared/module.ts';
 import { findDeadJobs } from '../../repository/dead-jobs.ts';
 import { jobBoss } from './boss.ts';
 import { DEAD_QUEUE, type JobData } from './queues.ts';
@@ -12,18 +11,9 @@ export interface DeadJob {
   id: string;
   queue: string;
   shopId: string | null;
-  shopName: string | null;
   attempts: number;
   lastError: string;
   failedAt: string;
-}
-
-/**
- * Tên gian hàng ở `channel` (lớp trên): `src/wiring.ts` tiêm `channel.getShops`, như `shopsOf` của finance.
- * Gọi trong `withCompany` để RLS lọc theo công ty.
- */
-export interface PlatformContext extends ModuleContext {
-  readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, { shopName: string }>>;
 }
 
 function errorOf(output: unknown): string {
@@ -33,7 +23,6 @@ function errorOf(output: unknown): string {
 
 /** Việc lỗi của công ty, mới nhất trước; `queue` lọc theo hàng gốc. */
 export async function listDeadJobs(
-  ctx: PlatformContext,
   companyId: string,
   query: { queue?: string; page: number; pageSize: number },
 ): Promise<{ items: DeadJob[]; total: number; page: number; pageSize: number }> {
@@ -42,13 +31,10 @@ export async function listDeadJobs(
     limit: query.pageSize,
     offset: (query.page - 1) * query.pageSize,
   });
-  const shopIds = [...new Set(rows.flatMap((r) => (r.shopId ? [r.shopId] : [])))];
-  const shops = ctx.shopsOf && shopIds.length ? await withCompany(companyId, () => ctx.shopsOf!(shopIds)) : new Map();
   const items = rows.map((r) => ({
     id: r.id,
     queue: r.queue ?? '',
     shopId: r.shopId,
-    shopName: (r.shopId && shops.get(r.shopId)?.shopName) ?? null,
     attempts: (r.retryCount ?? 0) + 1,
     lastError: errorOf(r.output),
     failedAt: r.failedAt.toISOString(),

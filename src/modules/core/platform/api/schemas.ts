@@ -118,7 +118,6 @@ export const DeadJobSchema = z
     id: z.uuid(),
     queue: z.string().meta({ description: 'Hàng gốc, vd `channel.listing_sync`; FE tự giữ nhãn tiếng Việt' }),
     shopId: z.uuid().nullable(),
-    shopName: z.string().nullable().meta({ description: 'Tên gian hàng; null khi việc không theo gian hàng' }),
     attempts: z.number().int().meta({ description: 'Số lần đã thử, kể cả lần đầu' }),
     lastError: z.string(),
     failedAt: z.string().meta({ description: 'Lúc rơi vào hàng việc lỗi' }),

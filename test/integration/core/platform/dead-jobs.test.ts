@@ -19,10 +19,6 @@ const shopId = randomUUID();
 beforeAll(async () => {
   a = await createCompany();
   b = await createCompany();
-  await testPool().query(
-    "insert into channel.shops (id, company_id, platform, external_shop_id, shop_name) values ($1, $2, 'lazada', $3, 'Gian hàng Thử')",
-    [shopId, a.companyId, randomUUID().slice(0, 12)],
-  );
   await workQueue(queue, () => Promise.reject(new Error('sàn trả lỗi 500')));
   await sendJob(queue, { companyId: a.companyId, shopId });
   await sendJob(queue, { companyId: b.companyId });
@@ -53,7 +49,6 @@ describe('API việc lỗi (#102 AC-6)', () => {
         id: expect.any(String),
         queue: queue.name,
         shopId,
-        shopName: 'Gian hàng Thử',
         attempts: 1,
         lastError: 'sàn trả lỗi 500',
         failedAt: expect.any(String),
@@ -61,8 +56,8 @@ describe('API việc lỗi (#102 AC-6)', () => {
     ]);
   });
 
-  it('việc không theo gian hàng thì shopName null; lọc hàng khác thì rỗng', async () => {
-    expect((await deadOf(b.ceo.token)).body.items[0]).toMatchObject({ shopId: null, shopName: null });
+  it('việc không theo gian hàng thì shopId null; lọc hàng khác thì rỗng', async () => {
+    expect((await deadOf(b.ceo.token)).body.items[0]).toMatchObject({ shopId: null });
     expect((await deadOf(b.ceo.token, '?queue=channel.listing_sync')).body).toMatchObject({ items: [], total: 0 });
   });
 
