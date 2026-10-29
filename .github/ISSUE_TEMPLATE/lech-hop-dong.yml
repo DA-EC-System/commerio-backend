@@ -1,0 +1,49 @@
+name: Lệch hợp đồng API
+description: Response hoặc mã lỗi của backend khác Documents/21 (hình dạng, enum, null, tiền, thứ tự kiểm).
+title: "[Hợp đồng][§] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Luật chung ở `Documents/21` §1.1 (R1–R12). Nếu chính `Documents/21` sai thì sửa `Documents/21` trước, không tự đổi một phía.
+  - type: input
+    id: route
+    attributes:
+      label: Route
+      placeholder: "POST /purchasing/requests/:id/approve"
+    validations:
+      required: true
+  - type: input
+    id: section
+    attributes:
+      label: Mục trong Documents/21
+      placeholder: "§16, R7"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Môi trường
+      placeholder: "staging · develop · a85c280"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Body hoặc mã lỗi thực tế
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Body hoặc mã lỗi đúng theo hợp đồng
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: Ghi chú
+      description: Phía FE đang dựa vào dạng nào, mock MSW có cùng lệch không.

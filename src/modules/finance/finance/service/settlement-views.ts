@@ -3,6 +3,7 @@ import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import type { PlatformPayout, PlatformTxn } from '../domain/settlement.ts';
 import { feeTotal, needsReceipt } from '../domain/settlement-match.ts';
 import {
   FEE_KEYS,
@@ -28,6 +29,15 @@ export interface ShopInfo {
  */
 export interface FinanceContext extends ModuleContext {
   readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, ShopInfo>>;
+  /** Kéo quyết toán từ sàn (#117): `src/wiring.ts` tiêm các hàm cổng của channel. Thiếu thì không kéo được (422). */
+  readonly settlementSource?: SettlementSource;
+}
+
+/** Cổng quyết toán của channel (#117). Hai hàm đầu gọi sàn: gọi ngoài giao dịch; `shops` đọc mọi công ty. */
+export interface SettlementSource {
+  transactions(companyId: string, shopId: string, from: string, to: string): Promise<PlatformTxn[]>;
+  payouts(companyId: string, shopId: string, from: string): Promise<PlatformPayout[]>;
+  shops(): Promise<{ companyId: string; shopId: string }[]>;
 }
 
 interface Paging {

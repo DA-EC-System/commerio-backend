@@ -19,6 +19,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'finance.invoice_posted': { invoiceId: id(), orderId: id(), total: '150000.00', issuedAt: at, reversalOf: null },
   'finance.receipt_posted': { receiptId: id(), orderId: null, amount: '-50000.00', source: 'gateway', postedAt: at, reversalOf: id() },
   'finance.voucher_posted': { voucherId: id(), purpose: 'customer_refund', orderId: id(), amount: '50000.00', paidOn: '2026-10-18', reversalOf: null },
+  'finance.fee_config_activated': { configVersionId: id(), kind: 'fee', shopId: id(), effectiveFrom: '2026-11-01', supersededId: null },
   'purchasing.request_submitted': { requestId: id(), number: 'DN-000001' },
   'purchasing.goods_receipt_posted': { receiptId: id(), requestId: id(), lines: [{ variantId: id(), accepted: 5, defective: 1 }] },
   'staff.invitation_otp_requested': { invitationId: id(), requestedAt: '2026-10-21T00:00:00.000Z' },

@@ -59,6 +59,33 @@ services:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
 
+  # Sàn giả lập Lazada (#115), chỉ bật khi cần: docker compose -f deploy/compose.yaml --profile lazada-mock up -d
+  # App trỏ LAZADA_API_URL=http://127.0.0.1:8090/rest, LAZADA_AUTH_URL=http://127.0.0.1:8090 (scripts/lazada-mock/README.md).
+  lazada-wiremock:
+    image: wiremock/wiremock:3.13.2-3-alpine
+    profiles: [lazada-mock]
+    command: ["--disable-banner", "--max-request-journal-entries", "500"]
+    ports:
+      # Admin API cho `npm run mock:lazada` nạp kịch bản, chuyển bước.
+      - "127.0.0.1:8091:8080"
+
+  lazada-mock:
+    # Cổng kiểm chữ ký Lazada trước WireMock (WireMock không tính được HMAC), giả trang uỷ quyền OAuth.
+    image: node:24.21.0-alpine
+    profiles: [lazada-mock]
+    command: ["node", "/app/gate.ts"]
+    working_dir: /app
+    volumes:
+      - ../scripts/lazada-mock:/app:ro
+    environment:
+      WIREMOCK_URL: http://lazada-wiremock:8080
+      LAZADA_MOCK_APP_KEY: mock-app-key
+      LAZADA_MOCK_APP_SECRET: mock-app-secret
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      - lazada-wiremock
+
   prometheus:
     image: prom/prometheus:v3.5.0
     profiles: [monitoring]
