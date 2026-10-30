@@ -9,7 +9,7 @@
 | `POST /register` | Công ty, tài khoản CEO, phân hệ, vai trò CEO, nhật ký cấp nền tảng, **một transaction** | staff, platform, access, audit |
 | `POST /login` | Access token chưa gắn công ty + cookie refresh | staff, platform, access |
 | `POST /google` | Như `/login` nhưng bằng ID token Google (`service/google.ts`, #7 [A]): tìm theo `google_sub`, không có thì theo email đã xác minh rồi liên kết (nhật ký cấp tài khoản `update`, `after: { googleLinked: true }`). Không tạo tài khoản | staff, audit |
-| `POST /select-company` | Kiểm membership, công ty, cờ khoá rồi cấp token gắn công ty; phiên refresh nhớ công ty | staff, platform, access |
+| `POST /select-company` | Kiểm membership, công ty, cờ khoá rồi cấp token gắn công ty; trả `canSelfApprove`; phiên refresh nhớ công ty | staff, platform, access |
 | `POST /refresh` | Xoay vòng refresh token, giữ công ty nếu còn dùng được | staff, platform, access |
 | `POST /logout` | Thu hồi refresh token, xoá cookie | |
 | `GET /me` | Tài khoản và các công ty | staff, platform, access |
