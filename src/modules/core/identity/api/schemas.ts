@@ -83,6 +83,7 @@ export const CompanyContext = z
     roles: z.array(z.string()),
     permissions: z.array(z.string()).meta({ description: 'Đã bỏ quyền của phân hệ chưa bật' }),
     enabledModules: z.array(z.string()),
+    canSelfApprove: z.boolean().meta({ description: 'CEO hoặc thành viên duy nhất; chỉ dùng với bước cho phép tự duyệt' }),
   })
   .meta({ id: 'CompanyContext' });
 
