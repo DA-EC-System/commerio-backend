@@ -2,7 +2,7 @@
 
 Các con số tồn, thẻ kho, phiếu kho, giá vốn bình quân, ngưỡng tồn. **Nơi duy nhất đổi số tồn.** Bảng nằm trong schema `product` (`Documents/19` mục 3.2). Hợp đồng API: `Documents/21` mục 15.
 
-Hiện có: xem tồn, thẻ kho, đặt ngưỡng. Phiếu kho có duyệt (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về) và ghi sổ theo phiếu nhận, kiện làm ở các issue vòng đời B2, B3 (`Documents/21` mục 15–19). Phiếu nhập/xuất tay và giữ hàng theo đơn của mô hình cũ đã bỏ cùng bảng của chúng (28/10/2026).
+Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ theo phiếu nhận (#111). Phiếu kho có duyệt (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về) và ghi sổ theo kiện làm ở các issue vòng đời B2, B3 (`Documents/21` mục 15–19). Phiếu nhập/xuất tay và giữ hàng theo đơn của mô hình cũ đã bỏ cùng bảng của chúng (28/10/2026).
 
 ## Con số và bất biến
 
@@ -19,11 +19,25 @@ Hiện có: xem tồn, thẻ kho, đặt ngưỡng. Phiếu kho có duyệt (ki�
 - Giá vốn bình quân gia quyền (`domain/stock.ts`); DB lưu `numeric(18,2)`, API trả số nguyên đồng; `stockValue = round(onHand × avg_cost)` (V29, V30).
 - Chỉ tạo dòng `stock_levels` cho biến thể đã qua `catalog.getVariants` của công ty. Khoá chính `(company_id, variant_id)`.
 
+## Ghi sổ (`service/posting.ts`)
+
+Mọi thay đổi `on_hand`, `quarantine` đi qua lõi `applyMoves`; lõi không export ra `index.ts`, module khác gọi hàm theo nghiệp vụ. Lõi:
+- khoá dòng tồn theo `variantId` tăng dần (`lockLevel`), chỉ nhận biến thể thuộc công ty (`getVariants`; sai thì lỗi lập trình 500);
+- ghi một dòng thẻ kho cho mỗi move, `balance_after` là số của ngăn đó sau move, `version + 1` cho dòng tồn;
+- tính lại giá vốn khi nhập `on_hand` có giá; tồn trước khi nhập ≤ 0 thì giá vốn bằng giá nhập;
+- bất biến "không làm tệ hơn" (`domain/stock.ts` `worsens`): chặn khi tồn thực giảm mà vỡ bất biến, hoặc chờ xử lý âm (`InsufficientStock`); tăng thì luôn qua và tự tắt `invariant_broken` khi bất biến đúng lại;
+- phát `inventory.stock_changed { variantId, onHand, reserved, available }` một lần cho mỗi SKU có move `on_hand`. Payload là số tuyệt đối: bên nghe đọc lại `availableOf`, không cộng dồn.
+
+Không tự chống gọi lặp: bên gọi chặn bằng chuyển trạng thái chứng từ có điều kiện trong cùng giao dịch.
+
 ## Gọi vào
 
-- `stockOf(variantIds)`: các con số và giá vốn của biến thể thuộc công ty (chưa có dòng tồn thì 0); purchasing dùng lấy giá cho `add-line`.
+Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/2026-10-28-111-cong-ton-ghi-so-design.md`).
+- `receiveGoods(receiptId, lines, actorId)`: phiếu nhận ghi sổ (#109); đạt vào tồn thực theo giá nhập, lỗi vào chờ xử lý (giá lưu trên thẻ kho, không vào giá vốn).
+- `availableOf(variantIds)`: khả dụng của biến thể thuộc công ty; id lạ không có trong Map. Channel đẩy số này lên sàn.
+- `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).
-- Cả hai chạy trong `withCompany` của bên gọi. Lõi ghi sổ, `availableOf`, cổng theo kiện làm ở phần sau của #111 (`docs/superpowers/specs/2026-10-28-111-cong-ton-ghi-so-design.md`).
+- `reserve`, `release`, `ship`, `reverseShipment`, `receiveBack` (Documents/21 mục 11.1): chữ ký đã chốt, hiện trả 501 `not_implemented` tới PR sau của #111.
 
 ## Quyền ở API (`api/routes.ts`)
 

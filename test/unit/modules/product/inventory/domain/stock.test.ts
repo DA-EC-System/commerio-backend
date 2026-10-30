@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  breaksInvariant,
   isBelowMin,
   nextAlertState,
   stockState,
   stockValue,
   toDong,
   weightedAvgCost,
+  worsens,
 } from '#src/modules/product/inventory/domain/stock.ts';
 
 // Luật thuần của kho (plan #16 lát 1): giá vốn bình quân (K2, QT-15), làm tròn (V29, V30), ngưỡng (K7, V31), số phiếu (V32).
@@ -29,6 +31,37 @@ describe('giá vốn bình quân gia quyền', () => {
 
   it('từ chối số lượng nhập không dương', () => {
     expect(() => weightedAvgCost(10, '100000', 0, 1)).toThrow();
+  });
+});
+
+describe('giá vốn khi tồn ≤ 0 (spec #111 Q5)', () => {
+  it('tồn âm hoặc bằng 0 thì giá vốn mới bằng giá nhập', () => {
+    expect(weightedAvgCost(-3, '80000', 5, '50000').toFixed(2)).toBe('50000.00');
+    expect(weightedAvgCost(0, '0', 5, '100000').toFixed(2)).toBe('100000.00');
+  });
+
+  it('tồn dương vẫn bình quân gia quyền', () => {
+    expect(weightedAvgCost(10, '80000', 5, '100000').toFixed(2)).toBe('86666.67');
+  });
+});
+
+describe('không làm tệ hơn (spec #111 Q6)', () => {
+  it('chặn khi tồn thực giảm mà kết quả vỡ bất biến', () => {
+    expect(worsens({ onHand: 2 }, { onHand: -1, reserved: 0 })).toBe(true);
+    expect(worsens({ onHand: 5 }, { onHand: 3, reserved: 4 })).toBe(true);
+  });
+
+  it('cho qua khi tồn thực tăng, kể cả khi vẫn còn âm', () => {
+    expect(worsens({ onHand: -3 }, { onHand: -1, reserved: 0 })).toBe(false);
+    expect(worsens({ onHand: -3 }, { onHand: 2, reserved: 0 })).toBe(false);
+  });
+
+  it('cho qua khi giảm mà bất biến vẫn đúng', () => {
+    expect(worsens({ onHand: 5 }, { onHand: 3, reserved: 3 })).toBe(false);
+  });
+
+  it('breaksInvariant: âm, hoặc đang giữ > tồn thực', () => {
+    expect([breaksInvariant(-1, 0), breaksInvariant(2, 3), breaksInvariant(2, 2)]).toEqual([true, true, false]);
   });
 });
 

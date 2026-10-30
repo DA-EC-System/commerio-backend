@@ -75,6 +75,37 @@ export async function setMinQty(variantId: string, minQty: number | null): Promi
     .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
 }
 
+/** Ghi số mới của dòng tồn đã khoá (`lockLevel`), tăng `version`. Chỉ lõi ghi sổ gọi. */
+export async function saveLevel(
+  variantId: string,
+  next: { onHand: number; quarantine: number; avgCost: string; invariantBroken: boolean },
+): Promise<void> {
+  await getDb()
+    .update(stockLevels)
+    .set({ ...next, updatedAt: new Date(), version: sql`${stockLevels.version} + 1` })
+    .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
+}
+
+export interface NewMove {
+  variantId: string;
+  bucket: 'on_hand' | 'quarantine';
+  qtyChange: number;
+  balanceAfter: number;
+  unitCost: string | null;
+  sourceType: MoveRow['sourceType'];
+  sourceId: string;
+  sourceLineId: string | null;
+  doneBy: string | null;
+}
+
+export async function insertMoves(rows: readonly NewMove[]): Promise<void> {
+  if (!rows.length) return;
+  const companyId = companyOfTransaction();
+  await getDb()
+    .insert(stockMoves)
+    .values(rows.map((r) => ({ ...r, companyId })));
+}
+
 export type MoveRow = {
   id: number;
   bucket: 'on_hand' | 'quarantine';
