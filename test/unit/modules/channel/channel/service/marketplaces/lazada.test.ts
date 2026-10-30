@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { createLazadaAdapter, signLazada } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
+import { type ConnectMethod, MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { createLazadaAdapter, type LazadaConfig, signLazada } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 
 const config = {
   appKey: '143465',
@@ -99,5 +99,22 @@ describe('adapter Lazada', () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MarketplaceError);
     expect(err).toMatchObject({ kind, platformCode });
+  });
+});
+
+describe('adapter Lazada khai cách nối theo cấu hình (#163)', () => {
+  it.each<[string, LazadaConfig, ConnectMethod[]]>([
+    ['đủ key, secret, redirect', config, ['oauth', 'token']],
+    ['thiếu redirect: chỉ dán token', { ...config, redirectUrl: undefined }, ['token']],
+    ['thiếu app key', { ...config, appKey: undefined }, []],
+    ['thiếu app secret', { ...config, appSecret: undefined }, []],
+    ['thiếu hết', { ...config, appKey: undefined, appSecret: undefined, redirectUrl: undefined }, []],
+  ])('%s', (_name, cfg, methods) => {
+    const adapter = createLazadaAdapter(cfg, fakeFetch());
+    expect(adapter.name).toBe('Lazada');
+    expect(adapter.connectMethods()).toEqual(methods);
+    // Danh sách nói có `oauth` thì URL uỷ quyền dựng được, không thì báo unsupported (cùng một điều kiện).
+    if (methods.includes('oauth')) expect(() => adapter.authorizeUrl('st')).not.toThrow();
+    else expect(() => adapter.authorizeUrl('st')).toThrow(expect.objectContaining({ kind: 'unsupported' }));
   });
 });

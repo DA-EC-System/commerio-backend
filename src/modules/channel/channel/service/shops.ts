@@ -20,7 +20,15 @@ import {
   type ShopRow,
   updateShop,
 } from '../repository/shops.ts';
-import { getAdapter, type MarketplaceAdapter, MarketplaceError, type SellerInfo, type TokenSet } from './marketplaces/index.ts';
+import {
+  type ConnectMethod,
+  connectablePlatforms,
+  getAdapter,
+  type MarketplaceAdapter,
+  MarketplaceError,
+  type SellerInfo,
+  type TokenSet,
+} from './marketplaces/index.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
 export interface Actor {
@@ -158,6 +166,11 @@ export async function listShops(): Promise<{ items: Shop[] }> {
   const rows = await listShopRows();
   const counts = await countListingsOnPlatform(rows.map((r) => r.id));
   return { items: rows.map((r) => toShop(r, counts.get(r.id) ?? 0)) };
+}
+
+/** Sàn kết nối được và cách nối (Documents/21 §18.1). Cấu hình của máy chủ, giống nhau với mọi công ty; không lộ khoá. */
+export function shopPlatforms(): { items: { platform: string; name: string; connectable: true; methods: readonly ConnectMethod[] }[] } {
+  return { items: connectablePlatforms().map((p) => ({ ...p, connectable: true })) };
 }
 
 export async function getShop(id: string): Promise<Shop & { statusHistory: StatusChange[] }> {

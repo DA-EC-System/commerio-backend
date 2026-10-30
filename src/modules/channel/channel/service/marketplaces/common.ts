@@ -162,7 +162,14 @@ export interface RemoteOrder {
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
 export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId: string; ok: false; code: string; message: string };
 
+/** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */
+export type ConnectMethod = 'oauth' | 'token';
+
 export interface MarketplaceAdapter {
+  /** Tên sàn hiển thị cho người dùng. */
+  readonly name: string;
+  /** Cách nối dùng được với cấu hình hiện tại; rỗng là sàn chưa nối được trên môi trường này. */
+  connectMethods(): readonly ConnectMethod[];
   /** URL trang uỷ quyền của sàn, mang `state` để kiểm ở callback. */
   authorizeUrl(state: string): string;
   /** Đổi `code` ở callback lấy token. */
