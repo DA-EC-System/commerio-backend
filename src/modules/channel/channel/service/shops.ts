@@ -305,7 +305,7 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
 
 /**
  * Gian hàng mất uỷ quyền (refresh token thất bại, sàn báo gỡ app): `active` → `needs_reauth`, nguồn hệ thống.
- * Cho #102, #133 gọi trong `withCompany`. Gian hàng không ở `active` thì bỏ qua.
+ * Cho #102 gọi trong `withCompany`. Gian hàng không ở `active` thì bỏ qua.
  */
 export async function markNeedsReauth(shopId: string, reason: string): Promise<void> {
   requireCompanyId('markNeedsReauth');

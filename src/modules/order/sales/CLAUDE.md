@@ -12,7 +12,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 ## Nhận đơn sàn (#105)
 
-`service/ingest.ts` `ingestMarketplaceOrder(order)`, gọi trong `withCompany`; channel kéo định kỳ và push (#133) dùng chung. Một đơn một giao dịch: đơn, dòng (mỗi món Lazada một dòng số lượng 1), kiện, giữ hàng, lịch sử, outbox.
+`service/ingest.ts` `ingestMarketplaceOrder(order)`, gọi trong `withCompany`; channel gọi từ lượt kéo định kỳ (không có push, #133 đóng). Một đơn một giao dịch: đơn, dòng (mỗi món Lazada một dòng số lượng 1), kiện, giữ hàng, lịch sử, outbox.
 
 - Chèn `on conflict do nothing` rồi khoá đọc lại: hai lần kéo cùng đơn chỉ tạo một đơn. Mã `DH-000001`, mã kiện `KH-000001` từ `order.doc_counters`.
 - Sàn đã trả (mọi trạng thái trừ `unpaid`) → `pay`. Cả đơn bị huỷ: chưa kiện nào đóng gói → `platform_cancel`, phát `sales.order_cancelled`; còn kiện đã đóng gói → cờ `cancelling` (mở kiện là #106); có kiện đã rời kho → cờ `platform_cancelled`.
