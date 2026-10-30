@@ -19,10 +19,21 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 - Kiện do `fulfillment/service/platform-packages.ts`: mỗi mã kiện sàn một kiện, kiện tạm nhận mã ở lần sau; trạng thái kiện là món chậm nhất; sàn nhảy cóc trên đường chính thì áp thẳng (`platform_sync`), không áp được thì cờ kiện cần xử lý. Giữ hàng qua `fulfillment/service/stock-port.ts` (bản "chưa giữ được" tới khi #111 có `reserve`).
 - Phát `sales.order_created`, `sales.order_status_changed` (kèm cờ), `fulfillment.package_status_changed`.
 
+## Thao tác đơn sàn (#105 PR 2, §19.3)
+
+`service/cancel.ts`: `cancel-reasons`, `platform-cancel`, `cancel-request` (`sales.order.cancel`), `invoice-number` (`sales.order.create`). Thứ tự: đọc đơn → kiểm `version` (409 trước khi gọi sàn) → máy trạng thái → gọi sàn ngoài giao dịch qua `ctx.marketplaceOrders` (channel, tiêm ở `src/wiring.ts`) → ghi theo `version` kèm `recordAudit` (`order.orders`) và `sales.order_status_changed`.
+
+- Người bán huỷ, hay đồng ý khách xin huỷ: đơn giữ trạng thái, cờ `cancelling`; đơn sang `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt 29/10/2026). `reasonId` phải nằm trong danh sách sàn trả lúc gửi (hỏi lại sàn), không thì 422.
+- Số hoá đơn chỉ lưu, chưa gửi `SetInvoiceNumber`.
+
+## Tự hoàn tất (#105 PR 2)
+
+`service/complete.ts`, mỗi giờ trong worker (`startBackground`): đơn `processing`, không `cancelling`, mọi kiện dừng, qua 7 ngày từ kiện giao cuối, không còn yêu cầu trả mở → `complete` (người làm trống, `source = system`), ghi `outcome`, `completed_at`, `return_window_ends_at`. Đơn COD tay chờ kế toán (`cod_unconfirmed`) chưa có nguồn.
+
 ## Cho module khác
 
 `getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder` (channel). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
 
 ## Chưa làm
 
-Huỷ đơn sàn, khách xin huỷ, số hoá đơn, tự hoàn tất (#105 PR 2); đơn tạo tay, `confirm`, `cancel` đơn tay (issue riêng); thao tác kiện của người dùng, trừ tồn khi kiện rời kho (#106).
+Đơn tạo tay, `confirm`, `cancel` đơn tay (issue riêng); thao tác kiện của người dùng, trừ tồn khi kiện rời kho (#106).
