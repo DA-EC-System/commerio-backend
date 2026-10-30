@@ -170,18 +170,3 @@ export const Order = OrderSummary.extend({
 })
   .strict()
   .meta({ id: 'Order' });
-
-export const PlatformCancelBody = z.object({ version: z.number().int(), reasonId: z.string().trim().min(1, 'Chọn lý do huỷ') });
-export const CancelRequestBody = z.object({ version: z.number().int(), decision: z.enum(['accept', 'reject']) });
-export const InvoiceNumberBody = z.object({
-  version: z.number().int(),
-  invoiceNumber: z.string().trim().min(1, 'Nhập số hoá đơn').max(50, 'Số hoá đơn tối đa 50 ký tự'),
-});
-
-export const CancelReasons = z
-  .object({ items: z.array(z.object({ id: z.string(), label: z.string() })) })
-  .meta({ id: 'CancelReasons' });
-
-export const PlatformCancelResult = z
-  .object({ order: Order, pendingOpen: z.number().int().meta({ description: 'Số kiện đã đóng gói phải mở khi sàn xác nhận huỷ' }) })
-  .meta({ id: 'PlatformCancelResult' });

@@ -5,9 +5,6 @@ import {
   getShops,
   hasChannelData,
   hasInboxData,
-  marketplaceCancelOrder,
-  marketplaceCancelReasons,
-  marketplaceDecideCancel,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
@@ -23,7 +20,7 @@ import type { ModuleContext } from './shared/module.ts';
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
-  Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders'>> &
+  Required<Pick<SalesContext, 'shopsOf'>> &
   Required<Pick<PlatformContext, 'moduleData'>>;
 
 export function createModuleContext(): AppContext {
@@ -33,8 +30,6 @@ export function createModuleContext(): AppContext {
     shopsOf: getShops,
     // #117: finance kéo quyết toán qua token gian hàng của channel.
     settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
-    // #105 PR 2: sales (lớp dưới) huỷ đơn, trả lời khách xin huỷ trên sàn qua token gian hàng của channel.
-    marketplaceOrders: { cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel },
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
   };

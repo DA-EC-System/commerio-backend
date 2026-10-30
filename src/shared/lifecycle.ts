@@ -22,24 +22,3 @@ export function onShutdown(processName: string, close: () => Promise<void>): voi
     });
   }
 }
-
-/**
- * Chạy `job` ngay rồi mỗi `ms`, không chồng lượt (lượt cũ chưa xong thì bỏ nhịp); lỗi chỉ ghi log. Trả hàm dừng: huỷ
- * hẹn giờ và chờ lượt đang chạy. Dùng trong `startBackground` của module.
- */
-export function every(ms: number, job: () => Promise<unknown>, label: string): () => Promise<void> {
-  let running: Promise<unknown> | undefined;
-  const tick = () => {
-    running ??= job()
-      .catch((err: unknown) => logger.error({ err }, label))
-      .finally(() => {
-        running = undefined;
-      });
-  };
-  tick();
-  const timer = setInterval(tick, ms);
-  return async () => {
-    clearInterval(timer);
-    await running;
-  };
-}

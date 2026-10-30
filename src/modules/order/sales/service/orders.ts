@@ -22,17 +22,9 @@ export interface ShopRef {
   platform: string;
 }
 
-/** Thao tác đơn trên sàn của channel; gọi ngoài giao dịch, lỗi sàn đã là `AppError`. */
-export interface MarketplaceOrders {
-  cancelReasons(companyId: string, shopId: string, externalOrderId: string, lineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
-  cancel(companyId: string, shopId: string, externalOrderId: string, lineIds: readonly string[], reasonId: string): Promise<void>;
-  decideCancel(companyId: string, shopId: string, externalOrderId: string, accept: boolean): Promise<void>;
-}
-
-/** Hàm module lớp trên tiêm qua `src/wiring.ts`: tên gian hàng, thao tác đơn trên sàn của channel. */
+/** Hàm module lớp trên tiêm qua `src/wiring.ts`: tên gian hàng của channel. */
 export interface SalesContext extends ModuleContext {
   readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, ShopRef>>;
-  readonly marketplaceOrders?: MarketplaceOrders;
 }
 
 const toInt = (money: string | null) => (money === null ? 0 : new Decimal(money).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber());

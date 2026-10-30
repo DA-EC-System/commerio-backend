@@ -187,12 +187,6 @@ export interface MarketplaceAdapter {
   listOrders?(accessToken: string, updatedAfter: Date, offset: number): Promise<{ orders: RemoteOrderRef[]; hasMore: boolean }>;
   /** Một đơn kèm các món (#105, #133). */
   getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
-  /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */
-  cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
-  /** Người bán huỷ các món; sàn xác nhận sau, đơn về qua lần kéo kế tiếp. */
-  cancelOrder?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[], reasonId: string): Promise<void>;
-  /** Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. */
-  decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean): Promise<void>;
 }
 
 /**
