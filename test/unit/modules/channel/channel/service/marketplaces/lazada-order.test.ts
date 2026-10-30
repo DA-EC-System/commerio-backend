@@ -152,3 +152,55 @@ describe('Lazada: kéo đơn (#105)', () => {
     await expect(createLazadaAdapter(config, fn).getOrder!('t', '1')).rejects.toMatchObject({ kind: 'unauthorized' });
   });
 });
+
+describe('Lazada: huỷ đơn (#105 PR 2)', () => {
+  it('cancelReasons gọi validate với danh sách món, trả lý do của sàn', async () => {
+    const fn = vi.fn().mockResolvedValueOnce(
+      json({ code: '0', data: { tip_content: 'stock will be set as 0', tip_type: 'warn', reason_options: [{ reason_name: 'Hết hàng', reason_id: '1000017' }] } }),
+    );
+    expect(await createLazadaAdapter(config, fn).cancelReasons!('t', '9', ['91', '92'])).toEqual([{ id: '1000017', label: 'Hết hàng' }]);
+    expect(new URL(String(fn.mock.calls[0]![0])).pathname).toBe('/rest/order/reverse/cancel/validate');
+    expect(query(fn, 0)).toMatchObject({ order_id: '9', order_item_id_list: '["91","92"]' });
+  });
+
+  it('sàn không cho huỷ (không có lý do nào) thì ném rejected kèm câu của sàn', async () => {
+    const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: { tip_content: 'Đơn đã bàn giao', tip_type: 'error', reason_options: [] } }));
+    await expect(createLazadaAdapter(config, fn).cancelReasons!('t', '9', ['91'])).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'not_cancellable',
+      platformMessage: 'Đơn đã bàn giao',
+    });
+  });
+
+  it('cancelOrder gửi lý do; tip_type error là sàn từ chối', async () => {
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: '0', data: { tip_type: 'warn', tip_content: 'stock will be set as 0' } }))
+      .mockResolvedValueOnce(json({ code: '0', data: { tip_type: 'error', tip_content: 'Không huỷ được' } }));
+    const a = createLazadaAdapter(config, fn);
+    await a.cancelOrder!('t', '9', ['91'], '1000017');
+    expect(new URL(String(fn.mock.calls[0]![0])).pathname).toBe('/rest/order/reverse/cancel/create');
+    expect(query(fn, 0)).toMatchObject({ order_id: '9', order_item_id_list: '["91"]', reason_id: '1000017' });
+    await expect(a.cancelOrder!('t', '9', ['91'], '1000017')).rejects.toMatchObject({ kind: 'rejected', platformMessage: 'Không huỷ được' });
+  });
+
+  it('decideCancelRequest tìm đơn ngược loại CANCEL theo mã đơn rồi gửi quyết định', async () => {
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: '0', result: { items: [{ reverse_order_id: '777', request_type: 'CANCEL', trade_order_id: '9' }] } }))
+      .mockResolvedValueOnce(json({ code: '0' }));
+    await createLazadaAdapter(config, fn).decideCancelRequest!('t', '9', true);
+    expect(new URL(String(fn.mock.calls[0]![0])).pathname).toBe('/rest/reverse/getreverseordersforseller');
+    expect(query(fn, 0)).toMatchObject({ trade_order_id: '9', request_type_list: '["CANCEL"]', page_no: '1' });
+    expect(new URL(String(fn.mock.calls[1]![0])).pathname).toBe('/rest/order/reverse/cancel/seller/decide');
+    expect(query(fn, 1)).toMatchObject({ reverse_order_id: '777', agree_cancel: 'true' });
+  });
+
+  it('không có yêu cầu huỷ trên sàn thì ném rejected', async () => {
+    const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', result: { items: [] } }));
+    await expect(createLazadaAdapter(config, fn).decideCancelRequest!('t', '9', false)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'cancel_request_not_found',
+    });
+  });
+});

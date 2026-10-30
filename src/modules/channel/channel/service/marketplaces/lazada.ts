@@ -425,6 +425,44 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         })),
       };
     },
+    // Huỷ đơn (#105 PR 2, tài liệu Return and Refund API đọc 29/10/2026).
+    async cancelReasons(accessToken, externalOrderId, externalLineIds) {
+      const params = { access_token: accessToken, order_id: externalOrderId, order_item_id_list: JSON.stringify(externalLineIds) };
+      const data = ((await call(config.apiUrl, '/order/reverse/cancel/validate', params, 'GET')).data ?? {}) as Record<string, unknown>;
+      const options = (data.reason_options as { reason_id?: unknown; reason_name?: unknown }[] | undefined) ?? [];
+      if (!options.length) throw new MarketplaceError('rejected', 'not_cancellable', str(data.tip_content) || null);
+      return options.map((o) => ({ id: str(o.reason_id), label: str(o.reason_name) }));
+    },
+    async cancelOrder(accessToken, externalOrderId, externalLineIds, reasonId) {
+      const params = {
+        access_token: accessToken,
+        order_id: externalOrderId,
+        order_item_id_list: JSON.stringify(externalLineIds),
+        reason_id: reasonId,
+      };
+      const data = ((await call(config.apiUrl, '/order/reverse/cancel/create', params, 'GET')).data ?? {}) as Record<string, unknown>;
+      if (data.tip_type === 'error') throw new MarketplaceError('rejected', 'cancel_refused', str(data.tip_content) || null);
+    },
+    async decideCancelRequest(accessToken, externalOrderId, accept) {
+      // Quyết định gửi theo mã đơn ngược của yêu cầu huỷ, nên tra đơn ngược loại CANCEL của đơn trước.
+      const query = {
+        access_token: accessToken,
+        trade_order_id: externalOrderId,
+        request_type_list: JSON.stringify(['CANCEL']),
+        page_no: '1',
+        page_size: '10',
+      };
+      const body = await call(config.apiUrl, '/reverse/getreverseordersforseller', query, 'GET');
+      const items = ((body.result as { items?: Record<string, unknown>[] } | undefined)?.items ?? []).filter((i) => i.request_type === 'CANCEL');
+      const reverseId = str(items[0]?.reverse_order_id);
+      if (!reverseId) throw new MarketplaceError('rejected', 'cancel_request_not_found', 'Sàn không còn yêu cầu huỷ của đơn này');
+      await call(
+        config.apiUrl,
+        '/order/reverse/cancel/seller/decide',
+        { access_token: accessToken, reverse_order_id: reverseId, agree_cancel: String(accept) },
+        'GET',
+      );
+    },
     // Tài chính (#117, lazada.md §7.6). Tên trường theo tài liệu và sàn giả lập #115, chưa đối chiếu response thật.
     async getTransactions(accessToken, from, to): Promise<SettlementTxn[]> {
       type Row = Record<string, unknown>;
