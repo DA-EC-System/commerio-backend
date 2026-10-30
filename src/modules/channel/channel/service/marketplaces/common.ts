@@ -12,7 +12,7 @@ export interface TokenSet {
 }
 
 export interface SellerInfo {
-  /** Mã shop của sàn (Lazada: `seller_id`); push chỉ mang mã này nên phải lưu đúng giá trị (#133). */
+  /** Mã shop của sàn (Lazada: `seller_id`). */
   externalShopId: string;
   shopName: string;
   region: string;
@@ -141,7 +141,7 @@ export interface RemoteOrderLine {
   status: RemoteLineStatus | null;
 }
 
-/** Đơn sàn đã chuẩn hoá (#105); kéo định kỳ và push (#133) cùng đưa vào service nhận đơn. */
+/** Đơn sàn đã chuẩn hoá (#105); kéo định kỳ đưa vào service nhận đơn. */
 export interface RemoteOrder {
   externalOrderId: string;
   /** Các trạng thái gốc của món, nối bằng dấu phẩy, chỉ để hiện. */
@@ -192,7 +192,7 @@ export interface MarketplaceAdapter {
   getPayouts?(accessToken: string, from: string): Promise<Payout[]>;
   /** Đơn có cập nhật sau `updatedAfter`, cũ trước, lật trang bằng `offset` (#105). */
   listOrders?(accessToken: string, updatedAfter: Date, offset: number): Promise<{ orders: RemoteOrderRef[]; hasMore: boolean }>;
-  /** Một đơn kèm các món (#105, #133). */
+  /** Một đơn kèm các món (#105). */
   getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
   /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */
   cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;

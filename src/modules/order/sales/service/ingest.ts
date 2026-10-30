@@ -1,4 +1,4 @@
-// Nhận đơn sàn (#105): kéo định kỳ (channel) và push (#133) cùng gọi `ingestMarketplaceOrder` trong `withCompany`.
+// Nhận đơn sàn (#105): kéo định kỳ (channel) gọi `ingestMarketplaceOrder` trong `withCompany`.
 // Một đơn một giao dịch: đơn, dòng, kiện, giữ hàng, lịch sử, outbox.
 import { Decimal } from 'decimal.js';
 import { publishEvent, recordTransition } from '../../../core/index.ts';

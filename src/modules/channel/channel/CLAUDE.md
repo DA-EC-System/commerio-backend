@@ -22,7 +22,7 @@ Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (
 ## Cho module khác
 
 - `getShops(ids)`: tên, sàn của gian hàng (report).
-- `markNeedsReauth(shopId, reason)`: gọi trong `withCompany` khi làm mới token thất bại (#102) hoặc sàn báo gỡ app (#133).
+- `markNeedsReauth(shopId, reason)`: gọi trong `withCompany` khi làm mới token thất bại hoặc gọi sàn bị từ chối vì mất uỷ quyền, kể cả seller gỡ app (#102).
 - **Cổng quyết toán cho finance** (#117, `service/settlement-port.ts`, tiêm qua `ctx.settlementSource` ở `src/wiring.ts`): `settlementTransactions(companyId, shopId, from, to)`, `settlementPayouts(companyId, shopId, from)` gọi `getTransactions`/`getPayouts` của adapter (Lazada `/finance/transaction/details/get` lật trang 500, `/finance/payout/status/get`); `shopsToSettle()` các gian hàng `active` mọi công ty cho vòng kéo 6 giờ. Adapter chưa có `getTransactions` thì 422 `marketplace_unsupported` (lần chạy `failed`), chưa có `getPayouts` thì coi như không có kỳ nào. Dấu, tên khoản giữ nguyên của sàn; finance tự đổi loại (`kindOfTransaction`). Dạng phản hồi theo tài liệu Lazada, chưa so với dữ liệu thật.
 
 ## Listing (#104)
@@ -41,6 +41,8 @@ Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `Sk
 
 ## Kéo đơn (#105)
 
+Kéo định kỳ là đường nhận đơn duy nhất. Không nhận push của sàn: Lazada chỉ đẩy tới HTTPS có chứng chỉ OV/EV, nhóm không xin được (#133, #135 đóng 31/10/2026; `Documents/tich-hop-san/lazada.md` mục 8). Đừng thêm route webhook cho sàn. Bảng `channel.webhook_events` còn trong schema nhưng không dùng; xoá ở migration sau.
+
 `service/order-pull.ts`: mỗi 5 phút (`startBackground`) cho mọi gian hàng `active`, và route `POST /shops/:id/orders/pull` (`channel.shop.sync`). Kéo từ `last_order_sync_at` (lần đầu `order_cutoff_at`) lùi 2 phút, cũ trước, lật trang 100; bỏ đơn đặt trước `order_cutoff_at`; đơn có `updated_at` không mới hơn bản ở `raw_orders` thì không gọi chi tiết. Mỗi đơn: ghép SKU theo `listings.seller_sku` → `ingestMarketplaceOrder` của `order` → lưu `raw_orders` (đơn đã chuẩn hoá), cùng giao dịch. Sàn lỗi giữa chừng thì dừng, mốc ở đơn cuối đã xong.
 
 Adapter `listOrders`, `getOrder`; bảng 20 trạng thái món Lazada → trạng thái kiện ở `lazada.ts` (`lazadaPackageStatus`). Hạn giao đọc từ câu `fulfillment_sla` (shop thử để trống `sla_time_stamp`). Gọi dồn thì Lazada trả `SellerCallLimit` (khoá 1 giây): `call` chờ 1,1 giây gọi lại một lần, lần hai vẫn bị chặn là lỗi tạm.
@@ -49,4 +51,4 @@ Adapter `listOrders`, `getOrder`; bảng 20 trạng thái món Lazada → trạn
 
 ## Chưa làm
 
-Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ, khoá để hai worker không kéo cùng gian hàng (#102); kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); push (#133); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
+Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ, khoá để hai worker không kéo cùng gian hàng (#102); kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
