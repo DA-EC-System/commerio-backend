@@ -20,8 +20,8 @@ Closes #
 - [ ] Không commit `.env`, khoá cổng, secret
 
 <!--
-PR develop → main (phát hành): thay checklist trên bằng điều kiện ở Documents/26-ke-hoach-kiem-thu.md §6
-- [ ] CI xanh trên develop ở commerio-backend và FE
+Chốt bản phát hành (gắn tag trên main): thay checklist trên bằng điều kiện ở Documents/26-ke-hoach-kiem-thu.md §6
+- [ ] CI xanh trên main ở commerio-backend và FE
 - [ ] Test chạy được trên PostgreSQL 17: TEST_PG_IMAGE=pgvector/pgvector:pg17 npm test
 - [ ] Không còn bug S1, S2 mở thuộc milestone
 - [ ] Issue test luồng của milestone có kết quả đạt trên staging

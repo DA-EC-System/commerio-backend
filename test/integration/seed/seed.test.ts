@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
-import { seedDemo, type SeedDemoInput } from '../../../db/seed/demo.ts';
+import { blackboxCompanies, seedDemo, type SeedDemoInput } from '../../../db/seed/demo.ts';
 import { registerCompany, uniqueEmail } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, PASSWORD, selectCompany } from '../helpers/http.ts';
@@ -8,7 +8,8 @@ import { login, PASSWORD, selectCompany } from '../helpers/http.ts';
 const db = testPool();
 
 // Email riêng mỗi ca: DB test dùng chung giữa các file (test/CLAUDE.md), không dùng email @commerio.dev cố định.
-function demoInput(): SeedDemoInput {
+type Account = { email: string; fullName: string };
+function demoInput(): SeedDemoInput & { accounts: Record<'ceo' | 'admin' | 'sale' | 'kho', Account> } {
   return {
     company: { name: 'Công ty Demo Thử', taxCode: '0300000037' },
     password: PASSWORD,
@@ -23,7 +24,7 @@ function demoInput(): SeedDemoInput {
 
 /** Số dòng của đúng công ty demo và bốn email seed. */
 async function counts(input: SeedDemoInput) {
-  const emails = Object.values(input.accounts).map((a) => a.email);
+  const emails = Object.values(input.accounts).flatMap((a) => (a ? [a.email] : []));
   const { rows } = await db.query<{ companies: string; accounts: string; memberships: string; member_roles: string }>(
     `select
        (select count(distinct m.company_id) from core.memberships m join core.accounts a on a.id = m.account_id
@@ -103,6 +104,27 @@ describe('seed dữ liệu demo P1 (#37 AC-4)', () => {
     await expect(seedDemo({ ...input, password: 'MatKhauKhac99' })).rejects.toThrow(/ceo-/);
     const { rows } = await db.query('select count(*)::int n from core.memberships where company_id = $1', [companyId]);
     expect(rows[0].n).toBe(1);
+  });
+
+  it('công ty của bộ test hộp đen (#120): bật phân hệ tuỳ chọn, thêm vai trò Mua hàng, công ty chỉ có CEO', async () => {
+    const [a, b] = blackboxCompanies(PASSWORD).map((input) => ({
+      ...input,
+      accounts: Object.fromEntries(Object.entries(input.accounts).map(([role, acc]) => [role, { ...acc, email: uniqueEmail(role) }])),
+      extraStaff: input.extraStaff?.map((s) => ({ ...s, account: { ...s.account, email: uniqueEmail('lead') } })),
+    })) as [SeedDemoInput, SeedDemoInput];
+
+    const { companyId } = await seedDemo(a);
+    expect(await roleOf(a.accounts.buyer!.email, companyId)).toEqual([BUILTIN_ROLES.buyer.id]);
+    expect(await roleOf(a.extraStaff![0]!.account.email, companyId)).toEqual([BUILTIN_ROLES.buyer.id]);
+    const { rows } = await db.query<{ module_code: string }>(
+      'select module_code from core.company_modules where company_id = $1 and enabled order by module_code',
+      [companyId],
+    );
+    expect(rows.map((r) => r.module_code)).toEqual(expect.arrayContaining(['channel', 'purchasing', 'report']));
+
+    const onlyCeo = await seedDemo(b);
+    expect(onlyCeo.companyId).not.toBe(companyId);
+    expect(await counts(b)).toEqual({ companies: '1', accounts: '1', memberships: '1', member_roles: '1' });
   });
 
   it('email nhân viên seed đã thuộc công ty khác thì báo lỗi', async () => {

@@ -5,7 +5,7 @@ import {
   type CompanyAccess,
 } from '../../../../shared/auth/company-access.ts';
 import { type AccessClaims, signAccessToken } from '../../../../shared/auth/jwt.ts';
-import { inTransaction } from '../../../../shared/db/client.ts';
+import { inTransaction, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { BUILTIN_ROLES, assignRole, permissionModule, rolesAndPermissions } from '../../access/index.ts';
@@ -13,6 +13,7 @@ import { recordAudit } from '../../audit/index.ts';
 import { createCompany, getCompanies, getEnabledModules, type OptionalModule } from '../../platform/index.ts';
 import {
   type AccountRow,
+  canSelfApprove,
   createAccount,
   createMembership,
   findAccountByEmail,
@@ -101,6 +102,7 @@ async function companyContext(accountId: string, companyId: string): Promise<Com
     // Quyền của phân hệ chưa bật không có hiệu lực (Documents/21 mục 8).
     permissions: access.permissions.filter((p) => enabled.has(permissionModule(p))),
     enabledModules: [...access.enabledModules],
+    canSelfApprove: await withCompany(companyId, () => canSelfApprove(accountId)),
   };
 }
 

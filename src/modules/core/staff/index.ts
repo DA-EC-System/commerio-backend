@@ -17,10 +17,12 @@ export {
   findAccountByEmail,
   findAccountByGoogleSub,
   findAccountById,
+  findAccountSummaries,
   findMembership,
   insertAccount as createAccount,
   insertMembership as createMembership,
   linkGoogleSub,
   membershipsOfAccount,
+  setPlatformAdmin,
   updatePassword,
 } from './repository/accounts.ts';

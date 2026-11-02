@@ -19,6 +19,22 @@ const fulfillmentStatus = z.enum([
   'cancelled',
 ]);
 
+const orderStatus = z.enum(['unpaid', 'processing', 'completed', 'cancelled']);
+const packageStatus = z.enum([
+  'backordered',
+  'reserved',
+  'packed',
+  'awaiting_pickup',
+  'self_delivering',
+  'in_transit',
+  'delivered',
+  'delivery_failed',
+  'returning',
+  'returned',
+  'lost',
+  'cancelled',
+]);
+
 export const EVENT_SCHEMAS = {
   'inventory.stock_changed': z.object({ variantId: id, onHand: z.int(), reserved: z.int(), available: z.int() }),
   'inventory.below_threshold': z.object({ variantId: id, available: z.int(), minQty: z.int() }),
@@ -40,6 +56,27 @@ export const EVENT_SCHEMAS = {
     code: z.string(),
     source: z.enum(['marketplace', 'inbox', 'manual']),
     total: money,
+  }),
+  // Đơn, kiện theo mô hình vòng đời (Documents/21 §13.2 "Sự kiện của mô hình mới", #105). `from` null khi mới tạo.
+  'sales.order_status_changed': z.object({
+    orderId: id,
+    code: z.string(),
+    from: orderStatus.nullable(),
+    to: orderStatus,
+    flags: z.array(z.string()),
+  }),
+  'sales.order_cancelled': z.object({
+    orderId: id,
+    code: z.string(),
+    source: z.enum(['marketplace', 'inbox', 'manual']),
+    /** `platform`: sàn huỷ; `seller`: người bán huỷ trong app. */
+    by: z.enum(['platform', 'seller']),
+  }),
+  'fulfillment.package_status_changed': z.object({
+    packageId: id,
+    orderId: id,
+    from: packageStatus.nullable(),
+    to: packageStatus,
   }),
   'fulfillment.order_status_changed': z.object({
     orderId: id,

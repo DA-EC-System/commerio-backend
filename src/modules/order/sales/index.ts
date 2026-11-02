@@ -3,11 +3,13 @@
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerSalesOpenApi } from './api/openapi.ts';
 import { salesRouter } from './api/routes.ts';
+import { startSalesBackground } from './service/complete.ts';
 
 export const salesModule: ModuleDefinition = {
   name: 'sales',
   router: salesRouter,
   openapi: registerSalesOpenApi,
+  startBackground: startSalesBackground,
 };
 
 export {
@@ -25,3 +27,7 @@ export {
   type OrderLineForInvoice,
 } from './service/finance-boundary.ts';
 export { getOrderChannels } from './service/daily-totals.ts';
+// Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
+export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts';
+export type { SalesContext } from './service/orders.ts';
+export { completeDueOrdersOnce } from './service/complete.ts';

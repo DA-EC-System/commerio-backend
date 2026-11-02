@@ -44,7 +44,7 @@ body:
     attributes:
       label: Môi trường
       description: Nơi chạy, nhánh, commit.
-      placeholder: "staging · develop · a85c280"
+      placeholder: "staging · main · a85c280"
     validations:
       required: true
   - type: input

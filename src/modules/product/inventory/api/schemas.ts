@@ -67,6 +67,7 @@ export const StockLevel = z
     negative: z.boolean(),
     minQty: z.number().int().nullable(),
     belowMin: z.boolean(),
+    state: z.enum(['in_stock', 'low', 'out']).meta({ description: 'Hết hàng khi khả dụng ≤ 0, sắp hết khi dưới ngưỡng' }),
     reorderVersion: z.number().int(),
     avgCost: money,
     stockValue: money,
@@ -79,7 +80,13 @@ export const StockPage = z
     total: z.number().int(),
     page: z.number().int(),
     pageSize: z.number().int(),
-    summary: z.object({ variantCount: z.number().int(), belowMinCount: z.number().int(), totalValue: money }),
+    summary: z.object({
+      variantCount: z.number().int(),
+      belowMinCount: z.number().int(),
+      quarantineCount: z.number().int(),
+      negativeCount: z.number().int(),
+      totalValue: money,
+    }),
   })
   .meta({ id: 'StockPage' });
 

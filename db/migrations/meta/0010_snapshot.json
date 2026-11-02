@@ -1,5 +1,5 @@
 {
-  "id": "0e584ded-e0aa-4d6b-a330-55057f890e7f",
+  "id": "0f9f08ec-9d1d-40cf-bf6d-1966d8477897",
   "prevId": "be3406b2-4145-4383-b7f7-7747a786873f",
   "version": "7",
   "dialect": "postgresql",
@@ -7543,6 +7543,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "invoice_number": {
+          "name": "invoice_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -9990,13 +9996,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "self_approved": {
-          "name": "self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "created_at": {
           "name": "created_at",

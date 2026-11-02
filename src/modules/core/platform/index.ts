@@ -5,22 +5,40 @@ import { registerPlatformOpenApi } from './api/openapi.ts';
 import { platformRouter } from './api/routes.ts';
 import { CORE_MODULES, type ModuleCode, OPTIONAL_MODULES, type OptionalModule } from './domain/modules.ts';
 import { type CompanyRow, enabledModuleCodes, findCompanies, insertCompany, insertModules } from './repository/companies.ts';
-import { startOutboxBackground } from './service/outbox/public.ts';
+import { startPlatformBackground } from './service/jobs/public.ts';
 
 export const platformModule: ModuleDefinition = {
   name: 'platform',
   router: platformRouter,
   openapi: registerPlatformOpenApi,
-  startBackground: startOutboxBackground,
+  startBackground: startPlatformBackground,
 };
 
 export { CORE_MODULES, OPTIONAL_MODULES };
 export type { CompanyRow, ModuleCode, OptionalModule };
+export type { PlatformContext } from './service/context.ts';
 
 // Sự kiện giữa module (Documents/21 D4–D7), cách dùng ở service/outbox/README.md.
 export type { EventEnvelope } from '../../../shared/events/envelope.ts';
 export { EVENT_SCHEMAS, EVENT_TYPES, type EventPayload, type EventType } from './domain/events.ts';
 export { publishEvent, registerConsumer, stopInstanceConsumers } from './service/outbox/public.ts';
+
+// Việc nền (#102): khai hàng, gửi việc trong giao dịch, nhận việc trong `startBackground`. Cách dùng ở CLAUDE.md.
+export {
+  countHeld,
+  defineQueue,
+  dropHeld,
+  HoldJob,
+  JobDataSchema,
+  releaseHeld,
+  scheduleForShop,
+  sendJob,
+  unscheduleForShop,
+  workQueue,
+  type JobData,
+  type Queue,
+  type QueueOptions,
+} from './service/jobs/queues.ts';
 
 // Máy trạng thái và lịch sử chuyển (Documents/21 mục 14.1). Lịch sử kèm tên người: `getStatusHistory` của `staff`.
 export {

@@ -9,6 +9,7 @@ Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vite
 | `unit/` | Một hàm, một lớp, không I/O thật | Không DB, không mạng |
 | `api/` | Gọi HTTP vào `createApp()` bằng Supertest, không mở cổng thật | Không DB |
 | `integration/` | Repository, transaction, migration, RLS trên PostgreSQL thật | Docker đang chạy. `global-setup.ts` dựng một container `pgvector/pgvector:pg18` cho cả lượt, chạy mọi migration trong `db/migrations`; `setup.ts` đặt `DATABASE_URL` trước khi file test import code. Dữ liệu dùng chung giữa các file: mỗi test tự tạo công ty, email riêng (vd `randomUUID()`), không giả định bảng trống |
+| `blackbox/` | Gọi HTTP vào **server đang chạy** (máy dev, CI, staging), không dựng app trong tiến trình test | Không chạy trong `npm test`. Xem mục Hộp đen |
 
 Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERUSER CREATEROLE`, chủ các bảng) giống user `postgres` của Supabase, riêng extension `vector` (cần superuser) do `global-setup.ts` bật trước; `TEST_PG_IMAGE=pgvector/pgvector:pg17` để chạy trên PostgreSQL 17 như staging.
 
@@ -26,6 +27,16 @@ Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERU
 | `sales.ts` | `createOrder(companyId, { lines: { variantId, quantity, unitPrice }[], paymentMethod?, source? })` → `{ orderId, code, total }` (ghi bảng sales trong `withCompany`, chép SKU, tên sản phẩm từ biến thể; đơn tay mặc định `prepaid`, đơn sàn không có phương thức; không tạo `payment.order_payments`) |
 
 Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<lớn>/<con>/helpers.ts`.
+
+### Hộp đen (`blackbox/`, #120)
+
+`npm run test:blackbox` (`vitest.blackbox.config.ts`) với `BLACKBOX_BASE_URL` (gốc server, vd `http://127.0.0.1:3000`, staging là tên miền) và `BLACKBOX_PASSWORD` (mật khẩu seed của server đó). Server phải đã chạy `npm run db:seed`: test dùng hai công ty QA của seed (`blackboxCompanies` ở `db/seed/demo.ts`), không dùng công ty demo. CI chạy job `blackbox` (api dựng trong runner) ở mọi PR, và chạy vào staging sau mỗi lần deploy (`deploy/staging/README.md`).
+
+- `global-setup.ts` đăng nhập mỗi tài khoản một lần cho cả lượt (server giới hạn đăng nhập theo IP) và gắn vai trò tuỳ biến "QA Lập và duyệt" cho `qa-truong-mua` (ca người thứ hai không phải CEO). File test lấy token bằng `inject('tokens')`.
+- Chỉ gọi API công khai; dữ liệu tạo mới mỗi lần chạy, tên có mã ngẫu nhiên (`lib/fixtures.ts`). Không giả định bảng trống, không xoá gì.
+- Kiểm lỗi bằng `expectProblem(res, status, code)`; kiểm hình dạng bằng `expectContract(SchemaZod, body)` (đủ trường, không thừa, luật R2, R3, R5 của `Documents/21` §1.1). Schema lấy từ code của chính commit đang test, nên chạy vào staging phải cùng commit với bản đã deploy.
+- Nhóm ca của module chưa merge bọc trong `describe.runIf(await served('GET /<route>'))`: server chưa có route thì bỏ qua, merge xong tự chạy.
+- Mã ca (`A1-04q`, `D44-03p`, `ISO-01`) theo `Documents/26` §3; module mới thêm một file theo sơ đồ của nó và một ca vào `co-lap-cong-ty.test.ts`.
 
 `unit/` đi theo đúng cấu trúc của `src/`: test của `src/shared/http/validate.ts` là `test/unit/shared/http/validate.test.ts`; test của `src/modules/product/inventory/domain/stock.ts` là `test/unit/modules/product/inventory/domain/stock.test.ts`.
 

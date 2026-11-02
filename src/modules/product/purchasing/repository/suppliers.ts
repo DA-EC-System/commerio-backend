@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { suppliers } from './schema.ts';
+import { purchaseRequests, suppliers } from './schema.ts';
 
 // Mọi hàm chạy trong `withCompany` của service: RLS chỉ cho thấy NCC của công ty đang chọn.
 
@@ -64,4 +64,12 @@ export async function updateSupplierIfVersion(id: string, version: number, value
     .where(and(eq(suppliers.id, id), eq(suppliers.version, version)))
     .returning(columns);
   return row;
+}
+
+/** Công ty đang chọn đã có NCC hoặc đề nghị nhập chưa: có thì không tắt được phân hệ Mua hàng (#152, QT-04). */
+export async function hasPurchasingData(): Promise<boolean> {
+  const [supplier] = await getDb().select({ one: sql`1` }).from(suppliers).limit(1);
+  if (supplier) return true;
+  const [request] = await getDb().select({ one: sql`1` }).from(purchaseRequests).limit(1);
+  return !!request;
 }

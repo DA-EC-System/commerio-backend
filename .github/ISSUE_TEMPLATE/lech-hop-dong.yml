@@ -25,7 +25,7 @@ body:
     id: env
     attributes:
       label: Môi trường
-      placeholder: "staging · develop · a85c280"
+      placeholder: "staging · main · a85c280"
     validations:
       required: true
   - type: textarea

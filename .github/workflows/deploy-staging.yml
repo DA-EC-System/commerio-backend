@@ -1,11 +1,11 @@
-# Staging (#37, Documents/21 D12, V36): merge vào develop → kiểm → image amd64 + arm64 lên GHCR
+# Staging (#37, Documents/21 D12, V36): merge vào main → kiểm → image amd64 + arm64 lên GHCR
 # → migration và seed từ runner lên Supabase → gắn tag develop → đổi image trên k3s của VPS (bỏ qua khi chưa có VPS).
 # Secret và biến cần tạo: deploy/staging/README.md.
 name: Deploy staging
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
 
 # Mỗi lúc một lần deploy; lần mới chờ lần đang chạy xong, không huỷ giữa chừng (đang migrate).
 concurrency:
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - id: tag
         run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -83,7 +83,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           SEED_PASSWORD: ${{ secrets.STAGING_SEED_PASSWORD }}
 
-  # Tag develop chỉ trỏ image đã có schema tương ứng trên staging.
+  # Tag develop (giữ tên cũ để k3s không phải đổi) chỉ trỏ image đã có schema tương ứng trên staging.
   tag-develop:
     needs: [image, migrate]
     runs-on: ubuntu-latest
@@ -119,3 +119,21 @@ jobs:
           KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       - name: Đổi image trên k3s
         run: ssh "$SSH_USER@$HOST" "${{ needs.image.outputs.tag }}"
+
+  # Bộ test hộp đen (#120) gọi vào staging sau khi đổi image xong. Tài khoản QA do `db:seed` ở job migrate tạo,
+  # cùng mật khẩu seed. Chưa đặt biến STAGING_API_URL (vd https://<tên miền>) thì bỏ qua.
+  blackbox:
+    needs: deploy
+    if: vars.STAGING_API_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run test:blackbox
+        env:
+          BLACKBOX_BASE_URL: ${{ vars.STAGING_API_URL }}
+          BLACKBOX_PASSWORD: ${{ secrets.STAGING_SEED_PASSWORD }}

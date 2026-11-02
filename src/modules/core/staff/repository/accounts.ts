@@ -61,13 +61,13 @@ export async function linkGoogleSub(accountId: string, sub: string): Promise<boo
   return rows.length === 1;
 }
 
-/** Họ tên và lúc tạo của các tài khoản (người tạo link, tài khoản của lời mời); id không có thì bỏ. */
+/** Họ tên, email và lúc tạo của các tài khoản (người tạo link, người thao tác trong nhật ký); id không có thì bỏ. */
 export async function findAccountSummaries(
   ids: readonly string[],
-): Promise<{ id: string; fullName: string; createdAt: Date }[]> {
+): Promise<{ id: string; email: string; fullName: string; createdAt: Date }[]> {
   if (ids.length === 0) return [];
   return getDb()
-    .select({ id: accounts.id, fullName: accounts.fullName, createdAt: accounts.createdAt })
+    .select({ id: accounts.id, email: accounts.email, fullName: accounts.fullName, createdAt: accounts.createdAt })
     .from(accounts)
     .where(inArray(accounts.id, [...new Set(ids)]));
 }
@@ -75,6 +75,14 @@ export async function findAccountSummaries(
 export async function insertAccount(input: { email: string; fullName: string; passwordHash: string }): Promise<string> {
   const [row] = await getDb().insert(accounts).values(input).returning({ id: accounts.id });
   return row!.id;
+}
+
+/** Bật, gỡ cờ quản trị nền tảng (#152, `db/platform-admin.ts`); chạy bằng role chủ bảng. */
+export async function setPlatformAdmin(id: string, isPlatformAdmin: boolean): Promise<void> {
+  await getDb()
+    .update(accounts)
+    .set({ isPlatformAdmin, updatedAt: new Date(), version: sql`${accounts.version} + 1` })
+    .where(eq(accounts.id, id));
 }
 
 export async function updatePassword(id: string, passwordHash: string): Promise<void> {

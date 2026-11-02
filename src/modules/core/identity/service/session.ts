@@ -31,6 +31,7 @@ export interface CompanyContext {
   roles: string[];
   permissions: string[];
   enabledModules: string[];
+  canSelfApprove: boolean;
 }
 
 /** Phản hồi của `/login`, `/google`; refresh token gốc chỉ đi ra cookie. */

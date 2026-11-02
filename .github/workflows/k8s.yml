@@ -7,7 +7,7 @@ on:
       - deploy/**
       - .github/workflows/k8s.yml
   push:
-    branches: [develop]
+    branches: [main]
     paths:
       - deploy/**
       - .github/workflows/k8s.yml

@@ -52,6 +52,8 @@ export async function listStock(
       summary: {
         variantCount: all.length,
         belowMinCount: all.filter((l) => l.belowMin).length,
+        quarantineCount: all.filter((l) => l.quarantine > 0).length,
+        negativeCount: all.filter((l) => l.negative).length,
         totalValue: viewer.canCost ? all.reduce((s, l) => s + l.stockValue!, 0) : null,
       },
     };

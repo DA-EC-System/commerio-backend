@@ -50,6 +50,11 @@ export async function findActiveShopsAnyCompany(): Promise<{ id: string; company
     .where(eq(shops.status, 'active'));
 }
 
+/** Gian hàng `active` **của mọi công ty**: worker gọi ngoài `withCompany` lúc khởi động để dựng lại lịch việc nền (#102). */
+export async function listActiveShopRefs(): Promise<{ id: string; companyId: string }[]> {
+  return getDb().select({ id: shops.id, companyId: shops.companyId }).from(shops).where(eq(shops.status, 'active'));
+}
+
 export async function insertShop(values: typeof shops.$inferInsert): Promise<ShopRow> {
   const [row] = await getDb().insert(shops).values(values).returning();
   return row!;
@@ -116,4 +121,10 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
       ),
     );
   return before;
+}
+
+/** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
+export async function hasChannelData(): Promise<boolean> {
+  const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
+  return !!row;
 }

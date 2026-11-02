@@ -9,6 +9,7 @@ import {
   ListingList,
   ListingParams,
   ListingSyncResult,
+  OrderPullResult,
   PushBody,
   PushResults,
   SetupBody,
@@ -28,6 +29,7 @@ import {
   ShopDetail,
   ShopList,
   ShopParams,
+  ShopPlatformList,
   TokenBody,
 } from './schemas.ts';
 
@@ -58,6 +60,15 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     description: 'Cần `channel.shop.view`. Cũ trước.',
     security: bearer,
     responses: { 200: { description: 'Danh sách gian hàng', ...json(ShopList) }, ...auth },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/platforms',
+    summary: 'Sàn kết nối được trên môi trường này (§18.1)',
+    description:
+      'Cần `channel.shop.view`. Chỉ sàn có adapter đủ cấu hình; mỗi sàn kèm cách nối dùng được. Không có sàn nào thì `items` rỗng.',
+    security: bearer,
+    responses: { 200: { description: 'Danh sách sàn', ...json(ShopPlatformList) }, ...auth },
   });
   registry.registerPath({
     method: 'get',
@@ -223,6 +234,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     security: bearer,
     request: { params: ShopParams },
     responses: { 200: { description: 'Tóm tắt', ...json(ListingSyncResult) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/orders/pull',
+    summary: 'Kéo đơn sàn ngay (#105)',
+    description:
+      'Cần `channel.shop.sync`. Kéo đơn có cập nhật từ mốc kéo đơn của gian hàng (lần đầu: mốc chọn lúc thiết lập) lùi 2 phút; đơn đặt trước mốc thiết lập bỏ qua. Việc nền tự chạy mỗi 5 phút. Sàn lỗi giữa chừng: các đơn trước đó đã lưu, lần sau làm tiếp.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Tóm tắt', ...json(OrderPullResult) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

@@ -3,6 +3,7 @@ import {
   breaksInvariant,
   isBelowMin,
   nextAlertState,
+  stockState,
   stockValue,
   toDong,
   weightedAvgCost,
@@ -94,6 +95,14 @@ describe('dưới ngưỡng (K7)', () => {
     expect(isBelowMin(4, 5)).toBe(true);
     expect(isBelowMin(5, 5)).toBe(false);
     expect(isBelowMin(0, null)).toBe(false);
+  });
+
+  it('state: hết hàng khi khả dụng ≤ 0, sắp hết khi dưới ngưỡng, còn lại còn hàng (Documents/21 §15.1)', () => {
+    expect(stockState(0, 5)).toBe('out');
+    expect(stockState(0, null)).toBe('out');
+    expect(stockState(4, 5)).toBe('low');
+    expect(stockState(5, 5)).toBe('in_stock');
+    expect(stockState(3, null)).toBe('in_stock');
   });
 });
 

@@ -12,7 +12,7 @@ export interface TokenSet {
 }
 
 export interface SellerInfo {
-  /** Mã shop của sàn (Lazada: `seller_id`); push chỉ mang mã này nên phải lưu đúng giá trị (#133). */
+  /** Mã shop của sàn (Lazada: `seller_id`). */
   externalShopId: string;
   shopName: string;
   region: string;
@@ -102,10 +102,74 @@ export interface Payout {
   paid: boolean;
 }
 
+/**
+ * Trạng thái một món trên sàn, đã chuẩn hoá theo trạng thái kiện của app (#105). `pending`: chưa đóng gói (kiện giữ
+ * hàng hoặc thiếu hàng); `return_failed`: hoàn hàng thất bại, kiện giữ `returning` và cần xử lý.
+ */
+export type RemoteLineStatus =
+  | 'pending'
+  | 'packed'
+  | 'awaiting_pickup'
+  | 'in_transit'
+  | 'delivered'
+  | 'delivery_failed'
+  | 'returning'
+  | 'returned'
+  | 'return_failed'
+  | 'lost'
+  | 'cancelled';
+
+export interface RemoteOrderRef {
+  externalOrderId: string;
+  placedAt: Date;
+  updatedAt: Date;
+}
+
+/** Một món của đơn sàn. Tiền là chuỗi thập phân; Lazada mỗi món một đơn vị. */
+export interface RemoteOrderLine {
+  externalLineId: string;
+  sellerSku: string;
+  productName: string;
+  unitPrice: string;
+  sellerDiscount: string;
+  platformDiscount: string;
+  /** Mã kiện của sàn; null khi sàn chưa chia kiện. */
+  packageCode: string | null;
+  trackingCode: string | null;
+  rawStatus: string;
+  /** null khi sàn trả giá trị app chưa biết. */
+  status: RemoteLineStatus | null;
+}
+
+/** Đơn sàn đã chuẩn hoá (#105); kéo định kỳ đưa vào service nhận đơn. */
+export interface RemoteOrder {
+  externalOrderId: string;
+  /** Các trạng thái gốc của món, nối bằng dấu phẩy, chỉ để hiện. */
+  rawStatus: string;
+  /** Khách đã trả, hoặc đơn COD sàn đã nhận. */
+  paid: boolean;
+  isCod: boolean;
+  placedAt: Date;
+  updatedAt: Date;
+  shipBy: Date | null;
+  shippingAddress: { name: string; phone: string; address: string } | null;
+  shippingFee: string;
+  /** Khách xin huỷ, chờ người bán đồng ý. */
+  cancelRequested: boolean;
+  lines: RemoteOrderLine[];
+}
+
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
 export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId: string; ok: false; code: string; message: string };
 
+/** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */
+export type ConnectMethod = 'oauth' | 'token';
+
 export interface MarketplaceAdapter {
+  /** Tên sàn hiển thị cho người dùng. */
+  readonly name: string;
+  /** Cách nối dùng được với cấu hình hiện tại; rỗng là sàn chưa nối được trên môi trường này. */
+  connectMethods(): readonly ConnectMethod[];
   /** URL trang uỷ quyền của sàn, mang `state` để kiểm ở callback. */
   authorizeUrl(state: string): string;
   /** Đổi `code` ở callback lấy token. */
@@ -126,6 +190,16 @@ export interface MarketplaceAdapter {
   getTransactions?(accessToken: string, from: string, to: string): Promise<SettlementTxn[]>;
   /** Các kỳ quyết toán từ ngày `from` (#117). */
   getPayouts?(accessToken: string, from: string): Promise<Payout[]>;
+  /** Đơn có cập nhật sau `updatedAfter`, cũ trước, lật trang bằng `offset` (#105). */
+  listOrders?(accessToken: string, updatedAfter: Date, offset: number): Promise<{ orders: RemoteOrderRef[]; hasMore: boolean }>;
+  /** Một đơn kèm các món (#105). */
+  getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
+  /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */
+  cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
+  /** Người bán huỷ các món; sàn xác nhận sau, đơn về qua lần kéo kế tiếp. */
+  cancelOrder?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[], reasonId: string): Promise<void>;
+  /** Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. */
+  decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean): Promise<void>;
 }
 
 /**

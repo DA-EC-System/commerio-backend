@@ -2,9 +2,11 @@
 // Module khác chỉ được import từ file này.
 import { getDb } from '../../../shared/db/client.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
+import { registerAuditOpenApi } from './api/openapi.ts';
+import { auditRouter } from './api/routes.ts';
 import { auditLogs } from './repository/schema.ts';
 
-export const auditModule: ModuleDefinition = { name: 'audit' };
+export const auditModule: ModuleDefinition = { name: 'audit', router: auditRouter, openapi: registerAuditOpenApi };
 
 export interface AuditEntry {
   /** Trống với thao tác cấp nền tảng hoặc cấp tài khoản (docs/19 D4, Documents/21 V12). */

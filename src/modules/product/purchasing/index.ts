@@ -12,3 +12,6 @@ export const purchasingModule: ModuleDefinition = {
 
 /** Đang về theo biến thể (Documents/25 §3.1); inventory nhận qua `ctx` (`product/index.ts`). */
 export { incomingByVariant as incomingOf } from './repository/requests.ts';
+
+/** Chặn tắt phân hệ Mua hàng khi đã có dữ liệu (#152); `src/wiring.ts` đưa cho `platform`. */
+export { hasPurchasingData } from './repository/suppliers.ts';

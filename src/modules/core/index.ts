@@ -1,9 +1,9 @@
 // API công khai của module lớn `core` (Nền tảng: công ty, đăng nhập, nhân viên, phân quyền, nhật ký, tệp, thông báo).
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
-import type { ModuleDefinition } from '../../shared/module.ts';
+import { type ModuleContext, type ModuleDefinition, withContext } from '../../shared/module.ts';
 import { platformModule } from './platform/index.ts';
 import { identityModule } from './identity/index.ts';
-import { staffModule } from './staff/index.ts';
+import { findAccountById, findAccountSummaries, staffModule } from './staff/index.ts';
 import { accessModule } from './access/index.ts';
 import { auditModule } from './audit/index.ts';
 import { filesModule } from './files/index.ts';
@@ -17,5 +17,25 @@ export * from './audit/index.ts';
 export * from './files/index.ts';
 export * from './notification/index.ts';
 
+/**
+ * `ctx` của `platform` và `audit` kèm hàm của `staff` (#152): `staff` import cả hai nên không import ngược được.
+ * Họ tên, email người thao tác; cờ quản trị nền tảng đọc từ DB mỗi request như `authorize`.
+ */
+function staffContext<C extends ModuleContext>(ctx: C) {
+  return {
+    ...ctx,
+    accountSummaries: findAccountSummaries,
+    platformAccount: findAccountById,
+  };
+}
+
 /** Mỗi module con giữ tên, schema và đường dẫn /api/v1/<tên> riêng. */
-export const coreModules: readonly ModuleDefinition[] = [platformModule, identityModule, staffModule, accessModule, auditModule, filesModule, notificationModule];
+export const coreModules: readonly ModuleDefinition[] = [
+  withContext(platformModule, staffContext),
+  identityModule,
+  staffModule,
+  accessModule,
+  withContext(auditModule, staffContext),
+  filesModule,
+  notificationModule,
+];

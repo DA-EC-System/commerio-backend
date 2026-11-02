@@ -1,0 +1,1 @@
+ALTER TABLE "order"."orders" ADD COLUMN "invoice_number" text;

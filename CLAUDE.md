@@ -59,7 +59,7 @@ Import code bằng `#src/...ts`. **Đọc `test/CLAUDE.md` trước khi viết h
 
 ## Git
 
-Git Flow: `main` (phát hành) ← `develop` (tích hợp) ← `feature/<tên>`. PR vào `develop`, CI phải xanh. Không commit `.env`, khoá cổng thanh toán, JWT secret; cấu hình mẫu đặt trong `.env.example`. Cổng thanh toán chỉ chạy sandbox, dữ liệu demo là dữ liệu giả.
+Nhánh: `feature/<tên>` → PR vào thẳng `main`, CI phải xanh; merge vào `main` là deploy staging (bỏ `develop` từ 29/10/2026). Không commit `.env`, khoá cổng thanh toán, JWT secret; cấu hình mẫu đặt trong `.env.example`. Cổng thanh toán chỉ chạy sandbox, dữ liệu demo là dữ liệu giả.
 
 ## CLAUDE.md của thư mục con
 

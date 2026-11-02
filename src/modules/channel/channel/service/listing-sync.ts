@@ -33,8 +33,8 @@ export async function markStockPending(variantId: string): Promise<void> {
   await markStockPendingRows(variantId, PUSHABLE);
 }
 
-export async function syncListings(port: ProductPort, actor: Actor, shopId: string): Promise<SyncSummary> {
-  const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
+export async function syncListings(port: ProductPort, companyId: string, shopId: string): Promise<SyncSummary> {
+  const inCompany = <T>(fn: () => Promise<T>) => withCompany(companyId, fn);
   const { shop, adapter, accessToken } = await inCompany(() => shopSession(shopId));
   const summary: SyncSummary = { checked: 0, changed: 0, pushed: 0, errors: 0 };
   let rows = await inCompany(() => listListingRows(shop.id));

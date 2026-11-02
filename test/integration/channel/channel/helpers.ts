@@ -7,6 +7,8 @@ const unsupported = async (): Promise<never> => {
 /** Adapter giả: năng lực không truyền vào thì báo `unsupported`, để test chỉ khai phần mình dùng. */
 export function fakeAdapter(overrides: Partial<MarketplaceAdapter>): MarketplaceAdapter {
   return {
+    name: 'Sàn giả',
+    connectMethods: () => [],
     authorizeUrl: () => {
       throw new MarketplaceError('unsupported');
     },
