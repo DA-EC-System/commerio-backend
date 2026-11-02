@@ -1,0 +1,1 @@
+ALTER TABLE "product"."goods_receipts" ADD COLUMN "self_approved" boolean DEFAULT false NOT NULL;

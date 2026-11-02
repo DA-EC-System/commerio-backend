@@ -30,19 +30,23 @@ const levelCols = {
   version: stockLevels.version,
 };
 
-/** Khoá dòng tồn của một biến thể, tạo dòng 0 nếu chưa có (chỉ với id đã kiểm qua `getVariants`, A17). */
-export async function lockLevel(variantId: string): Promise<LevelRow> {
+/**
+ * Khoá dòng tồn của một biến thể, tạo dòng 0 nếu chưa có (chỉ với id đã kiểm qua `getVariants`, A17). `created`: dòng
+ * do chính giao dịch này tạo; biết được sau khi khoá nên không lệch khi hai giao dịch cùng tạo.
+ */
+export async function lockLevel(variantId: string): Promise<LevelRow & { created: boolean }> {
   const companyId = companyOfTransaction();
-  await getDb()
+  const inserted = await getDb()
     .insert(stockLevels)
     .values({ companyId, variantId })
-    .onConflictDoNothing({ target: [stockLevels.companyId, stockLevels.variantId] });
+    .onConflictDoNothing({ target: [stockLevels.companyId, stockLevels.variantId] })
+    .returning({ variantId: stockLevels.variantId });
   const [row] = await getDb()
     .select(levelCols)
     .from(stockLevels)
     .where(and(eq(stockLevels.companyId, companyId), eq(stockLevels.variantId, variantId)))
     .for('update');
-  return row!;
+  return { ...row!, created: inserted.length > 0 };
 }
 
 export async function findLevel(variantId: string): Promise<LevelRow | null> {

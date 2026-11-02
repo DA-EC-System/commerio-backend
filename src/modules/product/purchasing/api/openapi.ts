@@ -5,18 +5,27 @@ import {
   ActionParams,
   AddRequestLineInput,
   ExcludeLineInput,
+  GoodsReceipt,
+  GoodsReceiptCreateInput,
+  GoodsReceiptPage,
+  GoodsReceiptUpdateInput,
   IdParams,
   LineParams,
   PurchaseRequest,
   PurchaseRequestInput,
   PurchaseRequestPage,
   PurchaseRequestUpdateInput,
+  ReceiptActionInput,
+  ReceiptListQuery,
   RequestActionInput,
   RequestListQuery,
+  ShortResolutionInput,
   Supplier,
   SupplierInput,
   SupplierList,
   SupplierListQuery,
+  SupplierReportList,
+  SupplierReportQuery,
   SupplierUpdateInput,
 } from './schemas.ts';
 
@@ -42,6 +51,13 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Danh sách nhà cung cấp, xếp theo tên (có một quyền `purchasing.*`)',
     request: { query: SupplierListQuery },
     responses: { 200: json('Nhà cung cấp', SupplierList), ...invalid },
+  });
+  path({
+    method: 'get',
+    path: '/suppliers/report',
+    summary: 'Báo cáo theo NCC: số phiếu đã ghi sổ, số lần giao thiếu, tỉ lệ lỗi trong kỳ (có một quyền `purchasing.*`)',
+    request: { query: SupplierReportQuery },
+    responses: { 200: json('Một dòng mỗi NCC, xếp theo tên', SupplierReportList), ...invalid },
   });
   path({
     method: 'post',
@@ -127,6 +143,69 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
         `${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`empty_document\`, \`all_lines_excluded\`, \`has_receipts\`, \`receipt_counting\``,
       ),
       422: problemResponse('`validation_failed` (giá nhập 0, tên sản phẩm mới đã có), `reason_required`, `supplier_inactive`'),
+    },
+  });
+
+  path({
+    method: 'get',
+    path: '/goods-receipts',
+    summary: 'Danh sách phiếu nhận, mới nhất trước; `search` khớp số phiếu, số đề nghị (có một quyền `purchasing.*`)',
+    request: { query: ReceiptListQuery },
+    responses: { 200: json('Một trang phiếu nhận', GoodsReceiptPage), ...invalid },
+  });
+  path({
+    method: 'get',
+    path: '/goods-receipts/:id',
+    summary: 'Chi tiết phiếu nhận: dòng kèm còn chờ hiện tại, kết quả giao thiếu, lịch sử trạng thái',
+    request: { params: IdParams },
+    responses: { 200: json('Phiếu nhận', GoodsReceipt), ...missing('phiếu nhận') },
+  });
+  path({
+    method: 'post',
+    path: '/goods-receipts',
+    summary: 'Lập phiếu nhận cho đề nghị đã đặt NCC; dòng là các dòng còn chờ (quyền `purchasing.receipt.manage`)',
+    request: { body: body(GoodsReceiptCreateInput) },
+    responses: {
+      201: json('Phiếu đang kiểm', GoodsReceipt),
+      ...conflict('`invalid_transition` (`current` là trạng thái đề nghị) khi đề nghị chưa đặt hoặc đã đóng; `empty_document` khi không còn dòng chờ'),
+      422: problemResponse('`validation_failed`; `errors.requestId` khi không thấy đề nghị'),
+    },
+  });
+  path({
+    method: 'put',
+    path: '/goods-receipts/:id',
+    summary: 'Lưu số kiểm đếm khi phiếu đang kiểm; `lines[].lineId` là id dòng đề nghị (quyền `purchasing.receipt.manage`)',
+    request: { params: IdParams, body: body(GoodsReceiptUpdateInput) },
+    responses: {
+      200: json('Phiếu sau khi lưu', GoodsReceipt),
+      ...missing('phiếu nhận'),
+      ...conflict(`${versionConflict}; \`not_draft\` khi phiếu không còn đang kiểm`),
+      422: problemResponse('`validation_failed` theo ô (`lines.i.accepted`, `lines.i.reason`, `lines.i.lineId`, `attachments`); `over_outstanding`'),
+    },
+  });
+  path({
+    method: 'post',
+    path: '/goods-receipts/:id/short-resolution',
+    summary:
+      'Ghi kết quả giao thiếu: giao bù, NCC nhận sai, đóng thiếu (quyền `purchasing.request.manage`; đóng thiếu cần thêm `purchasing.request.approve`)',
+    request: { params: IdParams, body: body(ShortResolutionInput) },
+    responses: {
+      200: json('Phiếu đã xử lý', GoodsReceipt),
+      ...missing('phiếu nhận'),
+      ...conflict(`${versionConflict}; \`resolution_recorded\`, \`invalid_transition\` khi phiếu không ở Giao thiếu, \`receipt_counting\``),
+      422: problemResponse('`validation_failed` (`errors.note`), `follow_up_invalid` (`errors.followUpNumber`), `reason_required`'),
+    },
+  });
+  path({
+    method: 'post',
+    path: '/goods-receipts/:id/:action',
+    summary: 'Chuyển trạng thái: post, post_short, cancel. Quyền theo bước (Documents/21 mục 16.3)',
+    request: { params: ActionParams, body: body(ReceiptActionInput) },
+    responses: {
+      200: json('Phiếu sau khi chuyển', GoodsReceipt),
+      ...missing('phiếu nhận hoặc thao tác'),
+      ...conflict(`${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`has_shortage\`, \`no_shortage\`, \`empty_document\``),
+      422: problemResponse('`reason_required`; `over_outstanding` theo ô'),
     },
   });
 }

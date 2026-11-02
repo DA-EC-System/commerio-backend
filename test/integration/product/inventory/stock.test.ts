@@ -4,6 +4,7 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { revokePermission } from '../../helpers/state.ts';
 import { archiveVariant, inv, receive, setBuckets } from './helpers.ts';
 
@@ -193,6 +194,19 @@ describe('ngưỡng tồn', () => {
       inv(A.admin).put(`/stock/${v}/reorder-rule`, { minQty: 2, version: 0 }),
     ]);
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+  });
+
+  it('người khác vừa đặt ngưỡng lần đầu trong lúc mình chờ khoá → 409, không ghi đè', async () => {
+    const { variantId: v } = await createVariant(A.companyId);
+    // Giao dịch kia đã tạo dòng tồn và đặt ngưỡng 1 nhưng chưa commit: lúc request đọc thì chưa thấy dòng nào.
+    const res = await raceBehindLock(
+      (h) =>
+        h.query("insert into product.stock_levels (company_id, variant_id, min_qty, version) values ($1, $2, 1, 2)", [A.companyId, v]),
+      1,
+      () => inv(A.admin).put(`/stock/${v}/reorder-rule`, { minQty: 2, version: 0 }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.current).toMatchObject({ minQty: 1 });
   });
 });
 

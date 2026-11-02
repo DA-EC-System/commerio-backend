@@ -154,6 +154,8 @@ export const goodsReceipts = purchasingSchema.table(
     createdBy: uuid('created_by'),
     postedBy: uuid('posted_by'),
     postedAt: timestamp('posted_at', { withTimezone: true }),
+    /** Người ghi sổ là người lập đề nghị, được tự làm vì là CEO hoặc công ty một người (Documents/25 §11). */
+    selfApproved: boolean('self_approved').notNull().default(false),
     ...timestamps,
     ...version,
   },
