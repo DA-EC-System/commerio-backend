@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { jobBoss } from '#src/modules/core/platform/service/jobs/boss.ts';
+import { listingSyncQueue, tokenRefreshQueue } from '#src/modules/channel/channel/service/shop-jobs.ts';
 import { ShopSetupPreview, ShopSetupResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { MarketplaceError, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -124,6 +126,10 @@ describe('thiết lập lần đầu', () => {
       { entity_type: 'listings', from_state: null, to_state: 'live', action: 'match' },
       { entity_type: 'shops', from_state: 'connecting', to_state: 'active', action: 'finish_setup' },
     ]);
+    // #102 A3: gian hàng vừa active thì có lịch đồng bộ listing và làm mới token.
+    const boss = await jobBoss();
+    expect(await boss.getSchedules(listingSyncQueue.name, shopId)).toHaveLength(1);
+    expect(await boss.getSchedules(tokenRefreshQueue.name, shopId)).toHaveLength(1);
   });
 
   it('đã thiết lập: 409 invalid_transition', async () => {

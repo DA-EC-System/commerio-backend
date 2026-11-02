@@ -27,7 +27,13 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'core.state_transitions': ['SELECT', 'INSERT'],
   // Sổ tiền chỉ thêm, sai thì ghi dòng điều chỉnh (T1).
   'finance.ledger_entries': ['SELECT', 'INSERT'],
+  // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.
+  'pgboss.queue': ['SELECT'],
+  'pgboss.job_common': ['INSERT'],
 };
+
+/** Quyền mặc định của bảng không có trong EXPECTED_PRIVILEGES: bảng của pg-boss thì không quyền nào. */
+const defaultPrivileges = (name: string): readonly Privilege[] => (name.startsWith('pgboss.') ? [] : ALL);
 
 interface TableInfo {
   name: string;
@@ -79,7 +85,7 @@ describe('phủ RLS và quyền commerio_app trên mọi bảng', () => {
         [name, ALL],
       );
       const actual = res.rows.filter((r) => r.ok).map((r) => r.privilege);
-      expect(actual, name).toEqual(EXPECTED_PRIVILEGES[name] ?? ALL);
+      expect(actual, name).toEqual(EXPECTED_PRIVILEGES[name] ?? defaultPrivileges(name));
     }
   });
 });

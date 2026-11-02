@@ -71,6 +71,13 @@ module.exports = {
       to: { path: 'node_modules/@confluentinc/kafka-javascript/' },
     },
     {
+      name: 'pg-boss-chi-o-jobs',
+      comment: 'pg-boss chỉ dùng trong hạ tầng việc nền của platform (#102); module khác đăng ký và gửi việc qua core/index.ts.',
+      severity: 'error',
+      from: { pathNot: '^src/modules/core/platform/service/jobs/' },
+      to: { path: 'node_modules/pg-boss/' },
+    },
+    {
       name: 'wiring-chi-qua-index',
       comment: 'src/wiring.ts nối module bằng API công khai, chỉ import modules/<lớn>/index.ts.',
       severity: 'error',

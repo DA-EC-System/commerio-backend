@@ -7,6 +7,9 @@ import {
   CompanyModule,
   CompanyPage,
   CompanyParams,
+  DeadJobListQuery,
+  DeadJobPage,
+  DeadJobParams,
   LockCompanyBody,
   ModuleParams,
   PlatformAuditPage,
@@ -109,6 +112,33 @@ export function registerPlatformOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Trang nhật ký', ...json(PlatformAuditPage) },
       ...adminAuth,
       422: problemResponse('`validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/jobs/dead',
+    summary: 'Việc nền lỗi của công ty (#102)',
+    description:
+      'Việc đã thử hết lượt mà vẫn lỗi, mới nhất trước, giữ 30 ngày. `queue` lọc theo hàng gốc. Cần `platform.job.manage`.',
+    security: bearer,
+    request: { query: DeadJobListQuery },
+    responses: {
+      200: { description: 'Một trang việc lỗi', content: { 'application/json': { schema: DeadJobPage } } },
+      ...companyAuth,
+      422: problemResponse('`validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/jobs/dead/:id/retry',
+    summary: 'Chạy lại một việc lỗi (#102)',
+    description: 'Đưa việc về hàng gốc với lượt thử mới, ghi nhật ký thao tác. Cần `platform.job.manage`.',
+    security: bearer,
+    request: { params: DeadJobParams },
+    responses: {
+      204: { description: 'Việc đã về hàng gốc' },
+      ...companyAuth,
+      404: problemResponse('`not_found`: không còn trong hàng việc lỗi hoặc của công ty khác'),
     },
   });
 }

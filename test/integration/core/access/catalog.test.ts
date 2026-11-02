@@ -26,7 +26,7 @@ describe('seed danh mục quyền và vai trò có sẵn (AC-16)', () => {
     }
   });
 
-  it('CEO có mọi quyền, gồm hai quyền chỉ vai trò có sẵn mới mang', () => {
+  it('CEO có mọi quyền, gồm các quyền chỉ vai trò có sẵn mới mang', () => {
     expect([...BUILTIN_ROLES.ceo.permissions].sort()).toEqual(PERMISSIONS.map((p) => p.code).sort());
   });
 });
