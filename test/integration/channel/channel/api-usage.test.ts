@@ -34,9 +34,15 @@ describe('channel.api_usage', () => {
     expect(await reservePlatformCall('lazada', 1, nextMorning)).toBe(true);
   });
 
-  it('chạy được trong giao dịch của công ty (role commerio_app)', async () => {
+  it('gọi trong giao dịch của công ty: lượt ghi ngay, không mất khi giao dịch đó rollback', async () => {
     const { companyId } = await createCompany();
     const at = someDay();
-    expect(await withCompany(companyId, () => reservePlatformCall('lazada', 3, at))).toBe(true);
+    const rollback = new Error('rollback');
+    const res = withCompany(companyId, async () => {
+      expect(await reservePlatformCall('lazada', 3, at)).toBe(true);
+      throw rollback;
+    });
+    await expect(res).rejects.toBe(rollback);
+    expect(await counted(at)).toBe(1);
   });
 });
