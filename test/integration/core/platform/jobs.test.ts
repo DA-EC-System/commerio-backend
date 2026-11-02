@@ -25,7 +25,7 @@ const TestData = JobDataSchema.extend({ marker: z.string() });
 const testQueue = (options = {}) => defineQueue(`test.q-${randomUUID()}`, TestData, options);
 
 describe('hàng việc nền pg-boss (#102)', () => {
-  it('AC-S3: khởi động trên schema của migration 0007, không tự migrate', async () => {
+  it('AC-S3: khởi động trên schema của migration 0011, không tự migrate', async () => {
     const boss = await jobBoss();
     expect(Array.isArray(await boss.getQueues())).toBe(true);
   });

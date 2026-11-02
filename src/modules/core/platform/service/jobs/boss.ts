@@ -1,4 +1,4 @@
-// Hàng việc nền trên PostgreSQL (#102), dùng pg-boss. Schema `pgboss` tạo bằng migration 0007, không để thư viện tự tạo.
+// Hàng việc nền trên PostgreSQL (#102), dùng pg-boss. Schema `pgboss` tạo bằng migration 0011, không để thư viện tự tạo.
 import { PgBoss } from 'pg-boss';
 import { env } from '../../../../../shared/config/env.ts';
 import { logger } from '../../../../../shared/logger.ts';

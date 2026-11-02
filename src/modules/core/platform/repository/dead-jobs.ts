@@ -1,5 +1,5 @@
 // Đọc hàng việc lỗi của pg-boss bằng SQL (#102 A6): `findJobs` không đếm, không sắp mới nhất trước, không nhảy trang.
-// Cột theo schema pg-boss 12.38.0 (bản ghim, migration 0007); nâng pg-boss thì `dead-jobs.test.ts` báo nếu cột đổi.
+// Cột theo schema pg-boss 12.38.0 (bản ghim, migration 0011); nâng pg-boss thì `dead-jobs.test.ts` báo nếu cột đổi.
 // Gọi ngoài `withCompany` (role chủ bảng): `commerio_app` chỉ được gửi việc. Lọc công ty bằng `data.companyId`.
 import { sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
