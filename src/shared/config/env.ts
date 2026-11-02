@@ -43,6 +43,8 @@ const EnvSchema = z.object({
   // Đổi sang sàn giả lập (#115) bằng hai biến này.
   LAZADA_API_URL: z.url().default('https://api.lazada.vn/rest'),
   LAZADA_AUTH_URL: z.url().default('https://auth.lazada.com'),
+  // Hạn mức gọi Lazada mỗi ngày của cả app (App Console: 10.000), chừa 10% cho thao tác tay và lệch múi giờ (#102 A7).
+  LAZADA_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(9000),
   // URL công khai của api, dùng làm địa chỉ IPN và trang quay về cho cổng thanh toán.
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.

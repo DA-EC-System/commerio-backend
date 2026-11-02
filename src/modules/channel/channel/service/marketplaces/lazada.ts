@@ -24,6 +24,8 @@ export interface LazadaConfig {
   redirectUrl: string | undefined;
   apiUrl: string;
   authUrl: string;
+  /** Xin một lượt trong hạn mức gọi của app trước mỗi request (#102 A7); `false` là hết lượt hôm nay. */
+  reserveCall?: () => Promise<boolean>;
 }
 
 type LazadaResponse = Record<string, unknown> & { code?: string; message?: string; type?: string };
@@ -157,6 +159,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    */
   async function request(baseUrl: string, apiPath: string, params: Record<string, string>, method: 'GET' | 'POST' | 'FORM') {
     const { appKey, appSecret } = credentials();
+    if (config.reserveCall && !(await config.reserveCall())) {
+      throw new MarketplaceError('unavailable', 'daily_call_limit', 'Đã dùng hết hạn mức gọi Lazada trong ngày');
+    }
     const all = { app_key: appKey, timestamp: String(Date.now()), sign_method: 'sha256', ...params };
     const signed = new URLSearchParams({ ...all, sign: signLazada(apiPath, all, appSecret) });
     const signal = AbortSignal.timeout(TIMEOUT_MS);

@@ -1,5 +1,21 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, check, index, integer, jsonb, numeric, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  boolean,
+  check,
+  date,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgSchema,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { bytea, money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
@@ -213,4 +229,18 @@ export const webhookEvents = channelSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique().on(t.companyId, t.platform, t.notificationId)],
+);
+
+/**
+ * Số lời gọi sàn trong một ngày (giờ Việt Nam) của cả app, mọi công ty cộng chung (#102 A7): hạn mức gọi do sàn đặt
+ * cho app (Lazada 10.000/ngày). Không có `company_id` nên không RLS.
+ */
+export const apiUsage = channelSchema.table(
+  'api_usage',
+  {
+    platform: marketplace('platform').notNull(),
+    day: date('day').notNull(),
+    calls: integer('calls').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.platform, t.day] })],
 );

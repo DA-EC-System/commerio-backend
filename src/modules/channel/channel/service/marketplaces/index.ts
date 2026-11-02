@@ -1,5 +1,6 @@
 // Registry adapter theo sàn (#103 B7, mẫu `GatewayFactory` của payment). Thêm sàn = thêm một file và một dòng ở đây.
 import { env } from '../../../../../shared/config/env.ts';
+import { reservePlatformCall } from '../../repository/api-usage.ts';
 import type { ConnectMethod, MarketplaceAdapter } from './common.ts';
 import { createLazadaAdapter } from './lazada.ts';
 
@@ -12,6 +13,7 @@ const lazada = createLazadaAdapter({
   redirectUrl: env.LAZADA_REDIRECT_URL,
   apiUrl: env.LAZADA_API_URL,
   authUrl: env.LAZADA_AUTH_URL,
+  reserveCall: () => reservePlatformCall('lazada', env.LAZADA_DAILY_CALL_LIMIT),
 });
 
 const defaults: Readonly<Record<string, MarketplaceAdapter>> = { lazada };
