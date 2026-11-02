@@ -4,12 +4,10 @@ import { registerConsumer, workQueue } from '../../core/index.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
-import { every } from '../../../shared/lifecycle.ts';
-import { runListingSync, runTokenRefresh } from './service/background.ts';
+import { runListingSync, runOrderPull, runTokenRefresh } from './service/background.ts';
 import { markStockPending } from './service/listing-sync.ts';
-import { pullAllShopsOrdersOnce } from './service/order-pull.ts';
 import { productPort } from './service/product-port.ts';
-import { listingSyncQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
+import { listingSyncQueue, orderPullQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
@@ -18,13 +16,14 @@ export const channelModule: ModuleDefinition = {
   async startBackground(ctx) {
     // Tồn đổi thì listing chờ đẩy tồn (chỉ ghi DB, đúng một lần); lượt đồng bộ sau mới gọi sàn, không gọi sàn trong giao dịch.
     registerConsumer('inventory.stock_changed', (e) => markStockPending(e.payload.variantId), { consumer: 'channel-stock-push' });
-    // Việc nền của gian hàng (#102): đồng bộ listing 15 phút một lần, làm mới token hằng ngày. pg-boss dừng chung ở platform.
+    // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
     const port = productPort(ctx);
     await workQueue(listingSyncQueue, (job) => runListingSync(port, job));
+    await workQueue(orderPullQueue, runOrderPull);
     await workQueue(tokenRefreshQueue, runTokenRefresh);
     await reconcileShopJobs();
-    // Kéo đơn mọi gian hàng mỗi 5 phút (#105 A7).
-    return every(5 * 60_000, () => pullAllShopsOrdersOnce(), 'việc nền kéo đơn lỗi');
+    // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).
+    return async () => {};
   },
 };
 

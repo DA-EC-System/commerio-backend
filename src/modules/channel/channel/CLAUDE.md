@@ -31,7 +31,7 @@ Máy trạng thái ở `domain/listing.ts` (§18.3, cùng bảng FE). Mỗi lầ
 
 - **Ghép danh mục** (`service/categories.ts`, bảng `category_maps`): danh mục Commerio → danh mục lá của sàn kèm thuộc tính bắt buộc cấp sản phẩm; ghép phải đủ, đúng lựa chọn của sàn (422 `errors["attributes.<tên>"]`).
 - **Đẩy** (`service/listings.ts`): một SKU Commerio là một sản phẩm trên sàn, SellerSku = SKU. Ghi `pushing` và commit trước, gọi sàn ngoài giao dịch, ghi kết quả sau: sàn cho bán ngay (`item_status: Active`) thì `go_live`, không thì `send_review`; lỗi thì `fail` kèm `pushError`. Ảnh: catalog chưa lưu ảnh nên request mang `imageUrls` theo sản phẩm, BE đưa lên sàn và lưu `external_image_urls`. Thất bại theo dòng: `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`, `already_listed` (sửa nội dung `/product/update` chưa làm).
-- **Đồng bộ** (`service/listing-sync.ts`, route `sync`; #102 sẽ chạy định kỳ): đọc trạng thái sàn **chỉ theo SellerSku của mình** (shop thử dùng chung) → `approve`/`reject`/`hold`/`release` (`syncAction`); `pushing` quá 30 phút → `fail`; đẩy giá chuẩn và khả dụng của listing `stock_sync`/`price_sync` khác `synced`, theo lô 20, lỗi ghi theo từng SKU (`stock_sync_error`, `price_sync_error`).
+- **Đồng bộ** (`service/listing-sync.ts`, route `sync`; hàng việc `channel.listing_sync` 15 phút, #102): đọc trạng thái sàn **chỉ theo SellerSku của mình** (shop thử dùng chung) → `approve`/`reject`/`hold`/`release` (`syncAction`); `pushing` quá 30 phút → `fail`; đẩy giá chuẩn và khả dụng của listing `stock_sync`/`price_sync` khác `synced`, theo lô 20, lỗi ghi theo từng SKU (`stock_sync_error`, `price_sync_error`).
 - **Consumer** `inventory.stock_changed` (`channel-stock-push`) chỉ đánh dấu `stock_sync = pending` (ghi DB, đúng một lần); lần `sync` sau mới gọi sàn, không gọi sàn trong giao dịch của consumer.
 - **Thiết lập lần đầu** (`service/setup.ts`, §18.2): gợi ý SKU sàn có SellerSku trùng SKU Commerio, tạo listing `live`, đẩy khả dụng, `finish_setup`. Chỉ chế độ `push`; `stocktake` cần phiếu kiểm kê (#112).
 - **Ngắt kèm `zeroStock`**: route gọi `pushZeroStock` trước khi ngắt; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt.
@@ -43,12 +43,18 @@ Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `Sk
 
 Kéo định kỳ là đường nhận đơn duy nhất. Không nhận push của sàn: Lazada chỉ đẩy tới HTTPS có chứng chỉ OV/EV, nhóm không xin được (#133, #135 đóng 31/10/2026; `Documents/tich-hop-san/lazada.md` mục 8). Đừng thêm route webhook cho sàn. Bảng `channel.webhook_events` còn trong schema nhưng không dùng; xoá ở migration sau.
 
-`service/order-pull.ts`: mỗi 5 phút (`startBackground`) cho mọi gian hàng `active`, và route `POST /shops/:id/orders/pull` (`channel.shop.sync`). Kéo từ `last_order_sync_at` (lần đầu `order_cutoff_at`) lùi 2 phút, cũ trước, lật trang 100; bỏ đơn đặt trước `order_cutoff_at`; đơn có `updated_at` không mới hơn bản ở `raw_orders` thì không gọi chi tiết. Mỗi đơn: ghép SKU theo `listings.seller_sku` → `ingestMarketplaceOrder` của `order` → lưu `raw_orders` (đơn đã chuẩn hoá), cùng giao dịch. Sàn lỗi giữa chừng thì dừng, mốc ở đơn cuối đã xong.
+`service/order-pull.ts`: hàng việc `channel.order_pull` mỗi 5 phút cho từng gian hàng `active` (#102), và route `POST /shops/:id/orders/pull` (`channel.shop.sync`). Kéo từ `last_order_sync_at` (lần đầu `order_cutoff_at`) lùi 2 phút, cũ trước, lật trang 100; bỏ đơn đặt trước `order_cutoff_at`; đơn có `updated_at` không mới hơn bản ở `raw_orders` thì không gọi chi tiết. Mỗi đơn: ghép SKU theo `listings.seller_sku` → `ingestMarketplaceOrder` của `order` → lưu `raw_orders` (đơn đã chuẩn hoá), cùng giao dịch. Sàn lỗi giữa chừng thì dừng, mốc ở đơn cuối đã xong.
 
 Adapter `listOrders`, `getOrder`; bảng 20 trạng thái món Lazada → trạng thái kiện ở `lazada.ts` (`lazadaPackageStatus`). Hạn giao đọc từ câu `fulfillment_sla` (shop thử để trống `sla_time_stamp`). Gọi dồn thì Lazada trả `SellerCallLimit` (khoá 1 giây): `call` chờ 1,1 giây gọi lại một lần, lần hai vẫn bị chặn là lỗi tạm.
 
 **Cổng thao tác đơn cho order** (#105 PR 2, `service/order-actions.ts`, tiêm qua `ctx.marketplaceOrders`): lý do huỷ (`/order/reverse/cancel/validate`; không có lý do nào → `rejected` `not_cancellable` kèm câu của sàn), huỷ (`/order/reverse/cancel/create`; `tip_type: error` → `rejected`), trả lời khách xin huỷ (tra đơn ngược loại `CANCEL` bằng `/reverse/getreverseordersforseller` rồi `/order/reverse/cancel/seller/decide` với `reverse_order_id`). Gọi thật 29/10 chỉ thử validate (shop thử dùng chung).
 
+## Việc nền (#102)
+
+Hàng việc pg-boss (`core/platform/service/jobs/`). Lịch theo gian hàng ở `service/shop-jobs.ts`: `channel.order_pull` 5 phút, `channel.listing_sync` 15 phút, `channel.token_refresh` 3 giờ sáng; đặt khi gian hàng `active`, bỏ khi ngắt hoặc mất token, worker khởi động thì dựng lại (`reconcileShopJobs`). Handler ở `service/background.ts`: gian hàng không còn `active` thì bỏ lịch; sàn từ chối token thì `needs_reauth` và việc được giữ (`HoldJob`), nối lại thì chạy tiếp. Mỗi gian hàng một việc chờ mỗi hàng (`stately`).
+
+Hạn mức gọi Lazada của app: mỗi request xin một lượt ở `channel.api_usage` (theo nền tảng, ngày giờ VN, `repository/api-usage.ts`, chạy ngoài giao dịch của bên gọi); đủ `LAZADA_DAILY_CALL_LIMIT` (mặc định 9000) thì `unavailable` `daily_call_limit`, không gọi mạng. Hạn mức dùng chung mọi công ty.
+
 ## Chưa làm
 
-Tự làm mới token, hàng chờ `pendingJobs`, thử lại tự động, đồng bộ định kỳ, khoá để hai worker không kéo cùng gian hàng (#102); kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
+Kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.

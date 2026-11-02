@@ -1,9 +1,49 @@
 {
-  "id": "75977acb-80f0-4bad-ba46-f9186b0e8f39",
+  "id": "e33e6f3b-1fbf-4da6-b78d-4e4b9a585412",
   "prevId": "25d7664c-0800-4be0-8f20-04d72f04240e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "channel.api_usage": {
+      "name": "api_usage",
+      "schema": "channel",
+      "columns": {
+        "platform": {
+          "name": "platform",
+          "type": "marketplace",
+          "typeSchema": "channel",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "day": {
+          "name": "day",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "calls": {
+          "name": "calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "api_usage_platform_day_pk": {
+          "name": "api_usage_platform_day_pk",
+          "columns": [
+            "platform",
+            "day"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "channel.category_maps": {
       "name": "category_maps",
       "schema": "channel",
@@ -9996,13 +10036,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "self_approved": {
-          "name": "self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "created_at": {
           "name": "created_at",

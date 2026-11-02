@@ -40,7 +40,7 @@ export async function findLiveCompanyOf(platform: Platform, externalShopId: stri
 }
 
 /**
- * Gian hàng đang hoạt động **của mọi công ty**, cho việc nền kéo quyết toán (#117): gọi ngoài `withCompany` (role chủ
+ * Gian hàng đang hoạt động **của mọi công ty**, cho việc nền (kéo quyết toán #117, dựng lại lịch #102): gọi ngoài `withCompany` (role chủ
  * bảng), mỗi gian hàng xử lý tiếp trong `withCompany` của nó.
  */
 export async function findActiveShopsAnyCompany(): Promise<{ id: string; companyId: string; platform: Platform }[]> {
@@ -48,11 +48,6 @@ export async function findActiveShopsAnyCompany(): Promise<{ id: string; company
     .select({ id: shops.id, companyId: shops.companyId, platform: shops.platform })
     .from(shops)
     .where(eq(shops.status, 'active'));
-}
-
-/** Gian hàng `active` **của mọi công ty**: worker gọi ngoài `withCompany` lúc khởi động để dựng lại lịch việc nền (#102). */
-export async function listActiveShopRefs(): Promise<{ id: string; companyId: string }[]> {
-  return getDb().select({ id: shops.id, companyId: shops.companyId }).from(shops).where(eq(shops.status, 'active'));
 }
 
 export async function insertShop(values: typeof shops.$inferInsert): Promise<ShopRow> {
