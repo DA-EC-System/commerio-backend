@@ -4,12 +4,13 @@ import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HoldJob } from '#src/modules/core/index.ts';
 import { jobBoss, stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
-import { runListingSync, runTokenRefresh } from '#src/modules/channel/channel/service/background.ts';
+import { runListingSync, runOrderPull, runTokenRefresh } from '#src/modules/channel/channel/service/background.ts';
 import { MarketplaceError, type TokenSet } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import {
   listingSyncQueue,
+  orderPullQueue,
   reconcileShopJobs,
   startShopJobs,
   tokenRefreshQueue,
@@ -30,6 +31,8 @@ setProductPort(port);
 /** Hành vi sàn giả, từng test đặt lại. */
 const sàn = {
   skusUnauthorized: false,
+  ordersUnauthorized: false,
+  listOrders: vi.fn(),
   refresh: vi.fn(async (refreshToken: string): Promise<TokenSet> => ({
     accessToken: `tok-new-${refreshToken}`,
     refreshToken,
@@ -49,6 +52,14 @@ registerAdapter(
       return [];
     },
     updatePriceQuantity: async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true })),
+    async listOrders() {
+      sàn.listOrders();
+      if (sàn.ordersUnauthorized) throw new MarketplaceError('unauthorized', 'IllegalAccessToken', 'Invalid token');
+      return { orders: [], hasMore: false };
+    },
+    getOrder: async () => {
+      throw new Error('không có đơn nào để gọi chi tiết');
+    },
   }),
 );
 afterAll(async () => {
@@ -58,7 +69,9 @@ afterAll(async () => {
 });
 beforeEach(() => {
   sàn.skusUnauthorized = false;
+  sàn.ordersUnauthorized = false;
   sàn.refresh.mockClear();
+  sàn.listOrders.mockClear();
 });
 
 const app = () => request(testApp());
@@ -88,12 +101,13 @@ const schedules = async (shopId: string) => {
   const boss = await jobBoss();
   return [
     ...(await boss.getSchedules(listingSyncQueue.name, shopId)),
+    ...(await boss.getSchedules(orderPullQueue.name, shopId)),
     ...(await boss.getSchedules(tokenRefreshQueue.name, shopId)),
   ].map((s) => s.name);
 };
 
 describe('lịch việc nền của gian hàng (#102 A3)', () => {
-  it('AC-3: worker khởi động thì mọi gian hàng active có lịch đồng bộ listing và làm mới token; gian hàng chưa active thì không', async () => {
+  it('AC-3: worker khởi động thì mọi gian hàng active có lịch đồng bộ listing, kéo đơn và làm mới token; gian hàng chưa active thì không', async () => {
     const { shopId } = await activeShop();
     const company = await createCompany({ optionalModules: ['channel'] });
     const connecting = await app()
@@ -101,7 +115,7 @@ describe('lịch việc nền của gian hàng (#102 A3)', () => {
       .set('Authorization', `Bearer ${company.ceo.token}`)
       .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
     await reconcileShopJobs();
-    expect((await schedules(shopId)).sort()).toEqual([listingSyncQueue.name, tokenRefreshQueue.name]);
+    expect((await schedules(shopId)).sort()).toEqual([listingSyncQueue.name, orderPullQueue.name, tokenRefreshQueue.name]);
     expect(await schedules(connecting.body.shop.id)).toEqual([]);
   });
 
@@ -139,7 +153,7 @@ describe('mất token: giữ việc, nối lại thì chạy tiếp (#102 A5)', 
     const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${seller}` });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ shop: { status: 'active', pendingJobs: 0 }, reconnect: { jobsRun: 1 } });
-    expect((await schedules(shopId)).sort()).toEqual([listingSyncQueue.name, tokenRefreshQueue.name]);
+    expect((await schedules(shopId)).sort()).toEqual([listingSyncQueue.name, orderPullQueue.name, tokenRefreshQueue.name]);
     expect(await boss.findJobs(listingSyncQueue.name, { data: { shopId } })).not.toHaveLength(0);
   });
 
@@ -155,6 +169,32 @@ describe('mất token: giữ việc, nối lại thì chạy tiếp (#102 A5)', 
     expect(res.status).toBe(200);
     expect(await schedules(shopId)).toEqual([]);
     expect(await boss.findJobs('platform.held', { data: { shopId } })).toHaveLength(0);
+  });
+});
+
+describe('kéo đơn qua hàng việc (#102 AC-8)', () => {
+  it('AC-8b: gian hàng active thì lượt kéo đơn gọi sàn', async () => {
+    const { data } = await activeShop();
+    await runOrderPull(data);
+    expect(sàn.listOrders).toHaveBeenCalled();
+  });
+
+  it('AC-8b: gian hàng không còn active thì bỏ lịch, không gọi sàn', async () => {
+    const { shopId, data } = await activeShop();
+    await startShopJobs(data.companyId, shopId);
+    await testPool().query(`update channel.shops set status = 'disconnected' where id = $1`, [shopId]);
+    await runOrderPull(data);
+    expect(sàn.listOrders).not.toHaveBeenCalled();
+    expect(await schedules(shopId)).toEqual([]);
+  });
+
+  it('AC-8b: sàn từ chối token khi kéo đơn thì gian hàng needs_reauth, lịch dừng, việc được giữ', async () => {
+    const { shopId, data } = await activeShop();
+    await startShopJobs(data.companyId, shopId);
+    sàn.ordersUnauthorized = true;
+    await expect(runOrderPull(data)).rejects.toBeInstanceOf(HoldJob);
+    expect(await shopStatus(shopId)).toMatchObject({ status: 'needs_reauth' });
+    expect(await schedules(shopId)).toEqual([]);
   });
 });
 

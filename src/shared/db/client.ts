@@ -42,6 +42,11 @@ export function getDb(): Database | Transaction {
   return current.getStore()?.tx ?? rootDb();
 }
 
+/** Chạy `fn` ngoài transaction đang mở (nếu có): `getDb()` trong đó là kết nối gốc, mỗi câu tự commit ngay. */
+export function outsideTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  return current.exit(fn);
+}
+
 /**
  * Chạy `fn` trong một transaction. Nếu đã có transaction mở thì dùng lại,
  * nên service của module A gọi sang module B vẫn nằm trong cùng một giao dịch.

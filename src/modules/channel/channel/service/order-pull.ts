@@ -1,12 +1,11 @@
 // Kéo đơn sàn theo gian hàng (#105 A7): từ mốc `last_order_sync_at` (lần đầu: `order_cutoff_at`) lùi 2 phút, cũ trước,
 // mỗi đơn đổi `updated_at` thì gọi chi tiết rồi giao `order` trong một giao dịch. Gọi sàn ngoài giao dịch. Lỗi giữa
-// chừng thì dừng, mốc ở đơn cuối đã xong; lần sau làm tiếp. Thử lại, khoá giữa nhiều worker là của #102.
+// chừng thì dừng, mốc ở đơn cuối đã xong; lần sau làm tiếp. Lịch, thử lại, một việc mỗi gian hàng: hàng
+// `channel.order_pull` (#102, `shop-jobs.ts`).
 import { ingestMarketplaceOrder } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { logger } from '../../../../shared/logger.ts';
 import { advanceOrderCursor, findRawOrderTimes, saveRawOrder, variantsBySellerSku } from '../repository/raw-orders.ts';
-import { findActiveShopsAnyCompany } from '../repository/shops.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const OVERLAP_MS = 2 * 60_000;
@@ -65,15 +64,4 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
     if (at) await withCompany(companyId, () => advanceOrderCursor(shopId, at));
   }
   return result;
-}
-
-/** Một vòng kéo đơn của mọi gian hàng đang hoạt động; gian hàng lỗi không chặn gian hàng khác. */
-export async function pullAllShopsOrdersOnce(): Promise<void> {
-  for (const shop of await findActiveShopsAnyCompany()) {
-    try {
-      await pullShopOrders(shop.companyId, shop.id);
-    } catch (err) {
-      logger.warn({ err, shopId: shop.id }, 'kéo đơn sàn lỗi');
-    }
-  }
 }
