@@ -1,7 +1,7 @@
 // Lịch việc nền của gian hàng (#102 A3): sinh khi gian hàng `active`, bỏ khi ngắt hoặc mất token.
 import { z } from 'zod';
 import { defineQueue, JobDataSchema, scheduleForShop, unscheduleForShop } from '../../../core/index.ts';
-import { listActiveShopRefs } from '../repository/shops.ts';
+import { findActiveShopsAnyCompany } from '../repository/shops.ts';
 
 export const ShopJobSchema = JobDataSchema.extend({ shopId: z.uuid() });
 export type ShopJob = z.infer<typeof ShopJobSchema>;
@@ -31,5 +31,5 @@ export async function stopShopJobs(shopId: string): Promise<void> {
 
 /** Worker khởi động: gian hàng `active` nào thiếu lịch thì đặt lại (đặt trùng thì thay, không sinh thêm). */
 export async function reconcileShopJobs(): Promise<void> {
-  for (const shop of await listActiveShopRefs()) await startShopJobs(shop.companyId, shop.id);
+  for (const shop of await findActiveShopsAnyCompany()) await startShopJobs(shop.companyId, shop.id);
 }
