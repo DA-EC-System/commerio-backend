@@ -24,6 +24,9 @@ describe('seed danh mục quyền và vai trò có sẵn (AC-16)', () => {
       );
       expect(p.rows.map((x) => x.permission_code).sort()).toEqual([...role.permissions].sort());
     }
+    // Migration 0015 đã xoá vai trò nhập hàng riêng (#188): DB không còn vai trò có sẵn nào ngoài danh mục.
+    const builtin = await pool.query<{ n: number }>("select count(*)::int n from core.roles where kind = 'builtin'");
+    expect(builtin.rows[0]!.n).toBe(Object.keys(BUILTIN_ROLES).length);
   });
 
   it('CEO có mọi quyền, gồm các quyền chỉ vai trò có sẵn mới mang', () => {

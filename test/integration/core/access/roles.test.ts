@@ -116,7 +116,7 @@ describe('GET /identity/permissions (AC-8)', () => {
 });
 
 describe('GET /identity/roles (AC-6, 9, S-5)', () => {
-  it('AC-9: có sẵn trước theo CEO, Admin, Sale, Nhân viên kho, Mua hàng, rồi tuỳ biến theo tên; đủ trường', async () => {
+  it('AC-9: có sẵn trước theo CEO, Admin, Sale, Nhân viên kho, rồi tuỳ biến theo tên; đủ trường', async () => {
     const a = await companyWithAdmin();
     await createRole(a.admin.token, 'Thủ quỹ', ['catalog.product.view']);
     await createRole(a.admin.token, 'Bán hàng online', ['sales.order.view']);
@@ -127,7 +127,6 @@ describe('GET /identity/roles (AC-6, 9, S-5)', () => {
       'Admin',
       'Sale',
       'Nhân viên kho',
-      'Mua hàng',
       'Bán hàng online',
       'Thủ quỹ',
     ]);
@@ -229,7 +228,7 @@ describe('POST /identity/roles', () => {
 
   it('AC-D2a: mã quyền của phân hệ đang tắt → 422 errors.permissions', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: [] });
-    const res = await call('post', '/roles', ceo.token, { name: 'Mua hàng tạm', permissions: ['purchasing.request.manage'] });
+    const res = await call('post', '/roles', ceo.token, { name: 'Nhập hàng tạm', permissions: ['purchasing.request.manage'] });
     expect(res.status).toBe(422);
     expect(res.body.errors).toHaveProperty('permissions');
     expect(await roleCount(companyId)).toBe(0);
@@ -394,17 +393,17 @@ describe('PUT /identity/roles/:id', () => {
 
   it('AC-D2a, AC-D2b: PUT gửi quyền phân hệ tắt → 422; PUT giữ quyền phân hệ tắt mà vai trò đang có', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
-    const role = await createRole(ceo.token, 'Mua hàng tạm', ['purchasing.request.manage', 'catalog.product.view']);
+    const role = await createRole(ceo.token, 'Nhập hàng tạm', ['purchasing.request.manage', 'catalog.product.view']);
     await setModuleEnabled(companyId, 'purchasing', false);
     const bad = await call('put', `/roles/${role.id}`, ceo.token, {
-      name: 'Mua hàng tạm',
+      name: 'Nhập hàng tạm',
       permissions: ['purchasing.request.approve'],
       version: 1,
     });
     expect(bad.status).toBe(422);
     expect(bad.body.errors).toHaveProperty('permissions');
     const res = await call('put', `/roles/${role.id}`, ceo.token, {
-      name: 'Mua hàng (tạm dừng)',
+      name: 'Nhập hàng (tạm dừng)',
       permissions: ['catalog.product.view'],
       version: 1,
     });
@@ -416,11 +415,11 @@ describe('PUT /identity/roles/:id', () => {
     const { companyId, ceo } = await createCompany({ optionalModules: ['purchasing'] });
     const admin = await addMember(companyId, 'admin');
     expect(ADMIN_PERMS).not.toContain('purchasing.request.manage');
-    const role = await createRole(ceo.token, 'Mua hàng tạm', ['purchasing.request.manage', 'catalog.product.view']);
+    const role = await createRole(ceo.token, 'Nhập hàng tạm', ['purchasing.request.manage', 'catalog.product.view']);
     await setModuleEnabled(companyId, 'purchasing', false);
     const before = await roleRow(role.id);
     const res = await call('put', `/roles/${role.id}`, admin.token, {
-      name: 'Mua hàng (tạm dừng)',
+      name: 'Nhập hàng (tạm dừng)',
       permissions: ['catalog.product.view'],
       version: 1,
     });

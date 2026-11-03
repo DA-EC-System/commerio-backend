@@ -46,7 +46,7 @@ describe('Row-Level Security theo công ty (AC-16)', () => {
   it('vai trò có sẵn ai cũng thấy, vai trò tuỳ biến chỉ công ty mình thấy', async () => {
     await asCompany(companyA, async (c) => {
       const r = await c.query<{ company_id: string | null; name: string }>('select company_id, name from core.roles');
-      expect(r.rows.filter((x) => x.company_id === null)).toHaveLength(5);
+      expect(r.rows.filter((x) => x.company_id === null)).toHaveLength(Object.keys(BUILTIN_ROLES).length);
       expect(r.rows.filter((x) => x.company_id !== null).map((x) => x.company_id)).toEqual([companyA]);
     });
   });

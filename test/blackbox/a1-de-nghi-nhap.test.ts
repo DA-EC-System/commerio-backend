@@ -13,36 +13,36 @@ const tokens = inject('tokens');
 const REASON = { reason: 'Kiểm thử hộp đen' };
 const ACTIONS = ['submit', 'withdraw', 'resubmit', 'approve', 'request_changes', 'reject', 'order', 'close_short', 'cancel'];
 
-/** Đường đi tới từng trạng thái, người làm đúng vai (Mua hàng lập, CEO duyệt). */
+/** Đường đi tới từng trạng thái, người làm đúng vai (Kho lập, CEO duyệt). */
 const PATHS: Record<string, Step[]> = {
   draft: [],
-  pending_approval: [['buyer', 'submit']],
-  changes_requested: [['buyer', 'submit'], ['ceo', 'request_changes', REASON]],
-  rejected: [['buyer', 'submit'], ['ceo', 'reject', REASON]],
-  approved: [['buyer', 'submit'], ['ceo', 'approve']],
-  ordered: [['buyer', 'submit'], ['ceo', 'approve'], ['buyer', 'order']],
-  closed_short: [['buyer', 'submit'], ['ceo', 'approve'], ['buyer', 'order'], ['ceo', 'close_short', REASON]],
-  cancelled: [['buyer', 'cancel']],
+  pending_approval: [['kho', 'submit']],
+  changes_requested: [['kho', 'submit'], ['ceo', 'request_changes', REASON]],
+  rejected: [['kho', 'submit'], ['ceo', 'reject', REASON]],
+  approved: [['kho', 'submit'], ['ceo', 'approve']],
+  ordered: [['kho', 'submit'], ['ceo', 'approve'], ['kho', 'order']],
+  closed_short: [['kho', 'submit'], ['ceo', 'approve'], ['kho', 'order'], ['ceo', 'close_short', REASON]],
+  cancelled: [['kho', 'cancel']],
 };
 
 /** Mũi tên đi được bằng API (chưa có phiếu nhận #109 thì chưa tới partially_received, received). */
 const ARROWS: [caseId: string, from: string, action: string, to: string, actor: Role, needsReason: boolean, perm: 'manage' | 'approve'][] = [
-  ['A1-01', 'draft', 'submit', 'pending_approval', 'buyer', false, 'manage'],
-  ['A1-02', 'pending_approval', 'withdraw', 'draft', 'buyer', false, 'manage'],
-  ['A1-03', 'changes_requested', 'resubmit', 'pending_approval', 'buyer', false, 'manage'],
+  ['A1-01', 'draft', 'submit', 'pending_approval', 'kho', false, 'manage'],
+  ['A1-02', 'pending_approval', 'withdraw', 'draft', 'kho', false, 'manage'],
+  ['A1-03', 'changes_requested', 'resubmit', 'pending_approval', 'kho', false, 'manage'],
   ['A1-04', 'pending_approval', 'approve', 'approved', 'ceo', false, 'approve'],
   ['A1-05', 'pending_approval', 'request_changes', 'changes_requested', 'ceo', true, 'approve'],
   ['A1-06', 'pending_approval', 'reject', 'rejected', 'ceo', true, 'approve'],
-  ['A1-07', 'approved', 'order', 'ordered', 'buyer', false, 'manage'],
+  ['A1-07', 'approved', 'order', 'ordered', 'kho', false, 'manage'],
   ['A1-12', 'ordered', 'close_short', 'closed_short', 'ceo', true, 'approve'],
-  ['A1-14', 'draft', 'cancel', 'cancelled', 'buyer', false, 'manage'],
-  ['A1-15', 'changes_requested', 'cancel', 'cancelled', 'buyer', false, 'manage'],
-  ['A1-16', 'pending_approval', 'cancel', 'cancelled', 'buyer', false, 'manage'],
+  ['A1-14', 'draft', 'cancel', 'cancelled', 'kho', false, 'manage'],
+  ['A1-15', 'changes_requested', 'cancel', 'cancelled', 'kho', false, 'manage'],
+  ['A1-16', 'pending_approval', 'cancel', 'cancelled', 'kho', false, 'manage'],
   ['A1-17', 'approved', 'cancel', 'cancelled', 'ceo', true, 'approve'],
   ['A1-18', 'ordered', 'cancel', 'cancelled', 'ceo', true, 'approve'],
 ];
 /** Vai trò có sẵn không có quyền của bước (Documents/kiem-thu/ma-tran-quyen.md). */
-const LACKING: Record<'manage' | 'approve', Role[]> = { manage: ['admin', 'sale', 'kho'], approve: ['admin', 'sale', 'kho', 'buyer'] };
+const LACKING: Record<'manage' | 'approve', Role[]> = { manage: ['admin', 'sale'], approve: ['admin', 'sale', 'kho'] };
 /** Thao tác có mũi tên đi ra từ mỗi trạng thái. */
 const ALLOWED: Record<string, string[]> = {
   draft: ['submit', 'cancel'],
@@ -63,8 +63,8 @@ beforeAll(async () => {
   supplierId = await newSupplier(tokens.ceo);
 });
 
-/** Một đề nghị mới do Mua hàng lập, đi tới `state`. */
-async function reach(state: string, creator: Role = 'buyer') {
+/** Một đề nghị mới do Kho lập, đi tới `state`. */
+async function reach(state: string, creator: Role = 'kho') {
   const r = await newRequest(tokens[creator], supplierId, variantId);
   let version = r.version;
   for (const [role, action, extra] of PATHS[state]!) {
@@ -116,7 +116,7 @@ describe('A1 Đề nghị nhập qua HTTP: ca bị chặn', () => {
     ['A1-04p', 'approve'],
     ['A1-05p', 'request_changes'],
     ['A1-06p', 'reject'],
-  ])('%s: trưởng mua hàng (không phải CEO) tự %s đề nghị mình lập nhận 409 second_person_required', async (_id, action) => {
+  ])('%s: trưởng kho (không phải CEO) tự %s đề nghị mình lập nhận 409 second_person_required', async (_id, action) => {
     const r = await reach('pending_approval', 'lead');
     expectProblem(await act(tokens.lead, r.id, action, { version: r.version, ...REASON }), 409, 'second_person_required');
     // Người thứ hai có quyền duyệt thì được.
@@ -158,10 +158,10 @@ describe('A1 Đề nghị nhập qua HTTP: ca bị chặn', () => {
 describe('A1 danh sách và chi tiết theo hợp đồng §16', () => {
   it('danh sách là Page<PurchaseRequestSummary>, chi tiết là PurchaseRequest', async () => {
     const r = await reach('draft');
-    const page = await api(tokens.buyer).get('/purchasing/requests?pageSize=5');
+    const page = await api(tokens.kho).get('/purchasing/requests?pageSize=5');
     expect(page.status).toBe(200);
     expectContract(PurchaseRequestPage, page.body);
-    const detail = await api(tokens.buyer).get(`/purchasing/requests/${r.id}`);
+    const detail = await api(tokens.kho).get(`/purchasing/requests/${r.id}`);
     expectContract(PurchaseRequest, detail.body);
   });
 

@@ -3,10 +3,10 @@ import { GoodsReceipt, GoodsReceiptPage } from '#src/modules/product/purchasing/
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { BUYER_ROLE, countBody, createReceipt, createRequest, createSupplier, orderedRequest, pur, runActions } from './helpers.ts';
+import { countBody, createReceipt, createRequest, createSupplier, orderedRequest, pur, runActions } from './helpers.ts';
 
 // Phiếu nhận /purchasing/goods-receipts: lập, kiểm đếm, huỷ, xem (Documents/21 mục 16.2, spec #109 AC1, AC2, AC11).
-let A: { companyId: string; ceo: string; buyer: string; kho: string; supplierId: string; v1: string; v2: string };
+let A: { companyId: string; ceo: string; requester: string; kho: string; sale: string; supplierId: string; v1: string; v2: string };
 let B: { ceo: string };
 
 beforeAll(async () => {
@@ -14,8 +14,9 @@ beforeAll(async () => {
   A = {
     companyId: a.companyId,
     ceo: a.ceo.token,
-    buyer: (await addMember(a.companyId, BUYER_ROLE)).token,
+    requester: (await addMember(a.companyId, 'warehouse')).token,
     kho: (await addMember(a.companyId, 'warehouse')).token,
+    sale: (await addMember(a.companyId, 'sale')).token,
     supplierId: '',
     v1: (await createVariant(a.companyId)).variantId,
     v2: (await createVariant(a.companyId)).variantId,
@@ -32,8 +33,8 @@ const ordered = () => orderedRequest(A, A.supplierId, lines());
 
 describe('lập phiếu nhận', () => {
   it('đề nghị mới duyệt, chưa đặt NCC → 409 invalid_transition, current = approved', async () => {
-    const draft = await createRequest(A.buyer, A.supplierId, lines());
-    const approved = await runActions([[A.buyer, 'submit'], [A.ceo, 'approve']], draft.id, draft.version);
+    const draft = await createRequest(A.requester, A.supplierId, lines());
+    const approved = await runActions([[A.requester, 'submit'], [A.ceo, 'approve']], draft.id, draft.version);
     expect(approved.status).toBe('approved');
     const res = await pur(A.kho).post('/goods-receipts', { requestId: draft.id, deliveryMode: 'waiting', note: '' });
     expect(res.status).toBe(409);
@@ -85,9 +86,9 @@ describe('lập phiếu nhận', () => {
     expect(foreign.body.errors).toEqual({ requestId: 'Chọn đề nghị nhập' });
   });
 
-  it('mua hàng không có purchasing.receipt.manage → 403', async () => {
+  it('Sale không có purchasing.receipt.manage → 403', async () => {
     const req = await ordered();
-    const res = await pur(A.buyer).post('/goods-receipts', { requestId: req.id, deliveryMode: 'waiting', note: '' });
+    const res = await pur(A.sale).post('/goods-receipts', { requestId: req.id, deliveryMode: 'waiting', note: '' });
     expect(res.status).toBe(403);
   });
 });
@@ -196,7 +197,7 @@ describe('xem', () => {
     expect((await pur(B.ceo).get(`/goods-receipts/${r1.id}`)).status).toBe(404);
     expect((await pur(A.kho).get('/goods-receipts/khong-phai-uuid')).status).toBe(404);
 
-    const byRequest = GoodsReceiptPage.parse((await pur(A.buyer).get(`/goods-receipts?requestId=${req.id}`)).body);
+    const byRequest = GoodsReceiptPage.parse((await pur(A.requester).get(`/goods-receipts?requestId=${req.id}`)).body);
     expect(byRequest.items.map((x) => x.id)).toEqual([r2.id, r1.id]);
     expect(byRequest.items[1]).toMatchObject({ request: { id: req.id, number: req.number }, supplier: { id: A.supplierId } });
 

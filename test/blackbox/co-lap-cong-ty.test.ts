@@ -13,7 +13,7 @@ let ids: { variant: string; product: string; supplier: string; request: string; 
 beforeAll(async () => {
   const variant = await newVariant(tokens.ceo);
   const supplier = await newSupplier(tokens.ceo);
-  const request = await newRequest(tokens.buyer, supplier, variant);
+  const request = await newRequest(tokens.kho, supplier, variant);
   const products = await api(tokens.ceo).get('/catalog/products?pageSize=1');
   const staff = await api(tokens.ceo).get('/identity/staff?pageSize=1');
   ids = {

@@ -6,14 +6,14 @@ import {
   purchaseRequestMachine,
 } from '#src/modules/product/purchasing/domain/request-machine.ts';
 
-const buyer = { accountId: 'buyer', permissions: ['purchasing.request.manage'], enabledModules: ['purchasing'] };
+const requester = { accountId: 'requester', permissions: ['purchasing.request.manage'], enabledModules: ['purchasing'] };
 const ceo = {
   accountId: 'ceo',
   permissions: ['purchasing.request.manage', 'purchasing.request.approve'],
   enabledModules: ['purchasing'],
 };
 const record = (r: Partial<PurchaseRequestRecord> = {}): PurchaseRequestRecord => ({
-  createdBy: 'buyer',
+  createdBy: 'requester',
   lineCount: 2,
   activeLines: 2,
   receiptCount: 0,
@@ -25,19 +25,19 @@ const to = (from: PurchaseRequestStatus, action: Parameters<typeof assertTransit
 
 describe('máy trạng thái đề nghị nhập', () => {
   it('đi trọn luồng nháp → chờ duyệt → đã duyệt → đã đặt', () => {
-    expect(to('draft', 'submit', buyer)).toBe('pending_approval');
+    expect(to('draft', 'submit', requester)).toBe('pending_approval');
     expect(to('pending_approval', 'approve')).toBe('approved');
-    expect(to('approved', 'order', buyer)).toBe('ordered');
+    expect(to('approved', 'order', requester)).toBe('ordered');
   });
 
   it('rút lại về nháp; trả về rồi gửi lại', () => {
-    expect(to('pending_approval', 'withdraw', buyer)).toBe('draft');
+    expect(to('pending_approval', 'withdraw', requester)).toBe('draft');
     expect(to('pending_approval', 'request_changes', ceo, record(), 'Giá cao')).toBe('changes_requested');
-    expect(to('changes_requested', 'resubmit', buyer)).toBe('pending_approval');
+    expect(to('changes_requested', 'resubmit', requester)).toBe('pending_approval');
   });
 
   it('gửi duyệt đề nghị không có dòng bị chặn bằng empty_document', () => {
-    expect(() => to('draft', 'submit', buyer, record({ lineCount: 0, activeLines: 0 }))).toThrow(
+    expect(() => to('draft', 'submit', requester, record({ lineCount: 0, activeLines: 0 }))).toThrow(
       expect.objectContaining({ status: 409, code: 'empty_document' }),
     );
   });
@@ -69,11 +69,11 @@ describe('máy trạng thái đề nghị nhập', () => {
     }
   });
 
-  it('mua hàng không duyệt, không đóng thiếu được (403)', () => {
-    expect(() => to('pending_approval', 'approve', buyer, record({ createdBy: 'khac' }))).toThrow(
+  it('người lập đề nghị không duyệt, không đóng thiếu được (403)', () => {
+    expect(() => to('pending_approval', 'approve', requester, record({ createdBy: 'khac' }))).toThrow(
       expect.objectContaining({ status: 403, code: 'forbidden' }),
     );
-    expect(() => to('ordered', 'close_short', buyer, record(), 'NCC hết hàng')).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    expect(() => to('ordered', 'close_short', requester, record(), 'NCC hết hàng')).toThrow(expect.objectContaining({ code: 'forbidden' }));
   });
 
   it('đóng thiếu bị chặn khi còn phiếu nhận đang kiểm', () => {
@@ -83,9 +83,9 @@ describe('máy trạng thái đề nghị nhập', () => {
     expect(to('partially_received', 'close_short', ceo, record(), 'NCC hết hàng')).toBe('closed_short');
   });
 
-  it('huỷ: mua hàng huỷ nháp không cần lý do; đã duyệt chỉ CEO, có lý do, chưa có phiếu nhận', () => {
-    expect(to('draft', 'cancel', buyer)).toBe('cancelled');
-    expect(() => to('approved', 'cancel', buyer, record(), 'Đổi NCC')).toThrow(expect.objectContaining({ code: 'forbidden' }));
+  it('huỷ: người lập huỷ nháp không cần lý do; đã duyệt chỉ CEO, có lý do, chưa có phiếu nhận', () => {
+    expect(to('draft', 'cancel', requester)).toBe('cancelled');
+    expect(() => to('approved', 'cancel', requester, record(), 'Đổi NCC')).toThrow(expect.objectContaining({ code: 'forbidden' }));
     expect(() => to('ordered', 'cancel', ceo)).toThrow(expect.objectContaining({ code: 'reason_required' }));
     expect(() => to('ordered', 'cancel', ceo, record({ receiptCount: 1 }), 'Đổi NCC')).toThrow(
       expect.objectContaining({ code: 'has_receipts' }),

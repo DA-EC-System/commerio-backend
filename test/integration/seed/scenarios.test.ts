@@ -61,7 +61,7 @@ describe('seed kịch bản qua API công khai', () => {
     expect(otherPurchases.body.total).toBe(0);
     const modules = await request(app).get('/api/v1/platform/modules').auth(token, { type: 'bearer' }).expect(200);
     expect(modules.body.every((m: { enabled: boolean }) => m.enabled)).toBe(true);
-    await selectCompany((await login(main.accounts.buyer!.email)).token, companyId);
+    await selectCompany((await login(main.accounts.kho!.email)).token, companyId);
   }, 60000);
 
   it('chạy riêng purchasing kéo theo catalog nhưng không seed công ty thứ hai hay tồn', async () => {

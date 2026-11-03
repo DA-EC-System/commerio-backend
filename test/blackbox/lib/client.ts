@@ -10,8 +10,7 @@ export const ACCOUNTS = {
   admin: 'qa-admin@commerio.dev',
   sale: 'qa-sale@commerio.dev',
   kho: 'qa-kho@commerio.dev',
-  buyer: 'qa-mua@commerio.dev',
-  lead: 'qa-truong-mua@commerio.dev',
+  lead: 'qa-truong-kho@commerio.dev',
   ceoB: 'qa-ceo-b@commerio.dev',
 } as const;
 export type Role = keyof typeof ACCOUNTS;

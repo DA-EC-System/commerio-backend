@@ -5,9 +5,6 @@ import type { z } from 'zod';
 import { GoodsReceipt } from '#src/modules/product/purchasing/api/schemas.ts';
 import { testApp } from '../../helpers/http.ts';
 
-/** Vai trò có sẵn "Mua hàng" (`purchasing.request.manage`, `purchasing.return.manage`). */
-export const BUYER_ROLE = '00000000-0000-4000-8000-000000000005';
-
 export function pur(token: string) {
   const app = testApp();
   const auth = (r: request.Test) => r.set('Authorization', `Bearer ${token}`);
@@ -57,10 +54,10 @@ export async function runActions(steps: [token: string, action: string, extra?: 
   return body as { id: string; number: string; version: number; status: string; lines: { id: string; variantId: string | null; sku: string | null }[] };
 }
 
-/** Đề nghị đã đặt NCC: mua hàng lập và gửi, CEO duyệt, mua hàng đặt. */
-export async function orderedRequest(t: { buyer: string; ceo: string }, supplierId: string, lines: LineInput[]) {
-  const draft = await createRequest(t.buyer, supplierId, lines);
-  return runActions([[t.buyer, 'submit'], [t.ceo, 'approve'], [t.buyer, 'order']], draft.id, draft.version);
+/** Đề nghị đã đặt NCC: Kho lập và gửi, CEO duyệt, Kho đặt. */
+export async function orderedRequest(t: { requester: string; ceo: string }, supplierId: string, lines: LineInput[]) {
+  const draft = await createRequest(t.requester, supplierId, lines);
+  return runActions([[t.requester, 'submit'], [t.ceo, 'approve'], [t.requester, 'order']], draft.id, draft.version);
 }
 
 export type Receipt = z.infer<typeof GoodsReceipt>;
