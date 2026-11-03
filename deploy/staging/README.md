@@ -44,7 +44,7 @@ Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữ
 
 `npm run db:seed` (`db/seed/`): công ty "Công ty Demo Commerio" và bốn tài khoản `ceo@`, `admin@`, `sale@`, `kho@commerio.dev` với vai trò có sẵn tương ứng, mật khẩu là `SEED_PASSWORD`. Chạy lại không sinh trùng, thiếu thì bù. Dừng với mã lỗi nếu một email demo đã thuộc người hay công ty khác (ví dụ ai đó tự đăng ký `ceo@commerio.dev` với mật khẩu khác). Seed nhận ra tài khoản CEO của mình bằng mật khẩu, nên **đổi `STAGING_SEED_PASSWORD` thì phải đổi mật khẩu cả bốn tài khoản demo theo** (đăng nhập, đổi mật khẩu); không thì job `migrate` đỏ và chặn deploy. Sản phẩm, kho thêm vào seed khi có #12, #16.
 
-Seed tạo thêm hai công ty cho bộ test hộp đen (#120), cùng mật khẩu seed: "Công ty QA Hộp Đen A" (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-mua@`, `qa-truong-mua@commerio.dev`; bật Mua hàng, Kênh bán, Báo cáo) và "Công ty QA Hộp Đen B" (`qa-ceo-b@commerio.dev`). Mỗi lần chạy test thêm bản ghi mới vào hai công ty này; buổi demo dùng "Công ty Demo Commerio".
+Seed tạo thêm hai công ty cho bộ test hộp đen (#120), cùng mật khẩu seed: "Công ty QA Hộp Đen A" (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-truong-kho@commerio.dev`; bật Nhập hàng, Kênh bán, Báo cáo) và "Công ty QA Hộp Đen B" (`qa-ceo-b@commerio.dev`). Mỗi lần chạy test thêm bản ghi mới vào hai công ty này; buổi demo dùng "Công ty Demo Commerio".
 
 ## Tài khoản quản trị nền tảng
 

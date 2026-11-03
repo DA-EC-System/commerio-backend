@@ -32,7 +32,7 @@ Helper đóng băng trong lúc các nhánh làm song song; helper riêng của m
 
 `npm run test:blackbox` (`vitest.blackbox.config.ts`) với `BLACKBOX_BASE_URL` (gốc server, vd `http://127.0.0.1:3000`, staging là tên miền) và `BLACKBOX_PASSWORD` (mật khẩu seed của server đó). Server phải đã chạy `npm run db:seed`: test dùng hai công ty QA của seed (`blackboxCompanies` ở `db/seed/demo.ts`), không dùng công ty demo. CI chạy job `blackbox` (api dựng trong runner) ở mọi PR, và chạy vào staging sau mỗi lần deploy (`deploy/staging/README.md`).
 
-- `global-setup.ts` đăng nhập mỗi tài khoản một lần cho cả lượt (server giới hạn đăng nhập theo IP) và gắn vai trò tuỳ biến "QA Lập và duyệt" cho `qa-truong-mua` (ca người thứ hai không phải CEO). File test lấy token bằng `inject('tokens')`.
+- `global-setup.ts` đăng nhập mỗi tài khoản một lần cho cả lượt (server giới hạn đăng nhập theo IP) và gắn vai trò tuỳ biến "QA Lập và duyệt" cho `qa-truong-kho`, Kho thứ hai (ca người thứ hai không phải CEO). File test lấy token bằng `inject('tokens')`.
 - Chỉ gọi API công khai; dữ liệu tạo mới mỗi lần chạy, tên có mã ngẫu nhiên (`lib/fixtures.ts`). Không giả định bảng trống, không xoá gì.
 - Kiểm lỗi bằng `expectProblem(res, status, code)`; kiểm hình dạng bằng `expectContract(SchemaZod, body)` (đủ trường, không thừa, luật R2, R3, R5 của `Documents/21` §1.1). Schema lấy từ code của chính commit đang test, nên chạy vào staging phải cùng commit với bản đã deploy.
 - Nhóm ca của module chưa merge bọc trong `describe.runIf(await served('GET /<route>'))`: server chưa có route thì bỏ qua, merge xong tự chạy.

@@ -6,7 +6,7 @@ Không tạo refresh token, không gọi dịch vụ sàn, không dùng SQL ghi 
 Router lấy từ module công khai qua `createApp`, nên vẫn kiểm quyền, Zod, RLS, CHECK, audit và máy trạng thái.
 
 Tài khoản công ty Demo Commerio: `ceo@commerio.dev`, `admin@commerio.dev`,
-`sale@commerio.dev`, `kho@commerio.dev`, `mua@commerio.dev`. Công ty Demo Cách Ly chỉ có
+`sale@commerio.dev`, `kho@commerio.dev`. Công ty Demo Cách Ly chỉ có
 `ceo2@commerio.dev`. Tất cả dùng `SEED_PASSWORD`; seed kiểm mật khẩu trước khi dùng tài khoản đã có.
 Tên người, NCC, địa chỉ đều gắn nhãn demo/giả lập; MST mới dùng dãy 0 giả lập, không dùng làm chứng từ thật.
 
@@ -16,11 +16,11 @@ Tên người, NCC, địa chỉ đều gắn nhãn demo/giả lập; MST mới 
 - 12 sản phẩm, 16 SKU; 4 sản phẩm nhiều biến thể, 1 sản phẩm lưu trữ ở lần tạo mới. Nội dung tham khảo mock FE, không import mock.
 - 3 ngưỡng nhập lại. Tồn thực vẫn bằng 0; có số đang về từ đề nghị đã đặt NCC.
 - 3 NCC, 7 đề nghị: nháp, chờ duyệt, đã duyệt, trả về, từ chối, đã đặt NCC, CEO tự duyệt.
-  Đề nghị thường do Mua hàng tạo, CEO duyệt; trường hợp cuối CEO tự tạo và duyệt (`self_approved`).
+  Đề nghị thường do Nhân viên kho tạo, CEO duyệt; trường hợp cuối CEO tự tạo và duyệt (`self_approved`).
   Ngày giao dự kiến tính sau ngày chạy 7 ngày. Mã `DN-…` do service cấp, không ép mã FE.
 - Công ty thứ hai: 1 CEO, 3 sản phẩm/4 SKU để kiểm RLS.
 - Bộ test hộp đen (#120, `blackboxCompanies` trong `demo.ts`), chỉ khi chạy đủ (`all`): "Công ty QA Hộp Đen A"
-  (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-mua@`, `qa-truong-mua@commerio.dev`; bật Mua hàng, Kênh bán, Báo cáo)
+  (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-truong-kho@commerio.dev`; bật Nhập hàng, Kênh bán, Báo cáo)
   và "Công ty QA Hộp Đen B" (`qa-ceo-b@commerio.dev`). Chỉ tài khoản; test tự tạo dữ liệu nghiệp vụ.
 
 `npm run db:seed -- --only purchasing` tự tạo tài khoản/module và catalog phụ thuộc.
@@ -62,7 +62,7 @@ FE cần dùng BE thật và tắt MSW theo cấu hình của FE; menu Kênh bá
 - `npm run infra:up`, `npm run db:migrate`, `npm run db:seed` hai lần: thành công trên DB local hiện có.
 - Integration seed: 11 test đạt, PostgreSQL container mới tự chạy migration từ DB trống.
   So số dòng mọi bảng có `company_id` của hai công ty trước/sau lần seed hai, gồm audit/outbox/lịch sử.
-  Kiểm hai kiểu duyệt, đăng nhập Mua hàng, module bật và truy cập chéo công ty trả 404.
+  Kiểm hai kiểu duyệt, đăng nhập Nhân viên kho, module bật và truy cập chéo công ty trả 404.
 - `npm run check`: 177 file, 1.435 test đạt, 2 TODO có sẵn; lint, typecheck, depcruise đạt.
 - Smoke đăng nhập `ceo@commerio.dev`, chọn công ty và gọi ba endpoint HTTP: đều 200, có dữ liệu.
   Không thao tác trực tiếp UI Swagger hoặc chạy FE trong lượt này. DB local có 12 sản phẩm active vì đã chạy
