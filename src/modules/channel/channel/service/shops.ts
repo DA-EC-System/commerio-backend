@@ -330,13 +330,13 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
 }
 
 /**
- * Gian hàng mất uỷ quyền (refresh token thất bại, sàn báo gỡ app): `active` → `needs_reauth`, nguồn hệ thống.
- * Cho #102 gọi trong `withCompany`. Gian hàng không ở `active` thì bỏ qua.
+ * Gian hàng mất uỷ quyền (refresh token thất bại, sàn báo gỡ app): `connecting` hoặc `active` → `needs_reauth`,
+ * nguồn hệ thống (§18.1). Cho #102 gọi trong `withCompany`. Trạng thái khác thì bỏ qua.
  */
 export async function markNeedsReauth(shopId: string, reason: string): Promise<void> {
   requireCompanyId('markNeedsReauth');
   const row = await findShopRow(shopId);
-  if (row?.status !== 'active') return;
+  if (row?.status !== 'connecting' && row?.status !== 'active') return;
   const { to } = assertTransition(shopMachine, row.status, 'lose_auth', { actor: null });
   const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason });
   if (updated) {

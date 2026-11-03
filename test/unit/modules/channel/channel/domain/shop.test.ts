@@ -20,8 +20,15 @@ describe('máy trạng thái gian hàng', () => {
     );
   });
 
-  it('mất uỷ quyền chỉ do hệ thống chuyển', () => {
-    expect(assertTransition(shopMachine, 'active', 'lose_auth', { actor: null }).to).toBe('needs_reauth');
+  it('mất uỷ quyền đi từ connecting, active (§18.1), chỉ do hệ thống chuyển', () => {
+    for (const from of ['connecting', 'active'] as const) {
+      expect(assertTransition(shopMachine, from, 'lose_auth', { actor: null }).to).toBe('needs_reauth');
+    }
+    for (const from of ['needs_reauth', 'disconnected'] as const) {
+      expect(() => assertTransition(shopMachine, from, 'lose_auth', { actor: null })).toThrow(
+        expect.objectContaining({ status: 409, code: 'invalid_transition' }),
+      );
+    }
     expect(() => assertTransition(shopMachine, 'active', 'lose_auth', { actor: admin })).toThrow(
       expect.objectContaining({ code: 'invalid_transition' }),
     );
@@ -41,8 +48,10 @@ describe('reconnectAction', () => {
     expect(reconnectAction('active', new Date(NOW))).toBeNull();
   });
 
-  it('đã ngắt khi chưa thiết lập thì về connecting, còn lại về active', () => {
+  it('chưa thiết lập (chưa có mốc lấy đơn) thì về connecting, còn lại về active', () => {
     expect(reconnectAction('disconnected', null)).toBe('resume_setup');
+    expect(reconnectAction('needs_reauth', null)).toBe('resume_setup');
+    expect(assertTransition(shopMachine, 'needs_reauth', 'resume_setup', { actor: admin }).to).toBe('connecting');
     expect(reconnectAction('disconnected', new Date(NOW))).toBe('reconnect');
     expect(reconnectAction('needs_reauth', new Date(NOW))).toBe('reconnect');
   });
