@@ -223,11 +223,23 @@ describe('ngắt và nối lại', () => {
     expect(resumed.body).toMatchObject({ created: false, reconnect: null, shop: { status: 'connecting' } });
   });
 
+  it('markNeedsReauth khi đang thiết lập: connecting sang needs_reauth; nối lại thì về connecting', async () => {
+    const shop = (await connect(token, seller())).body.shop;
+    await withCompany(company.companyId, () => markNeedsReauth(shop.id, 'seller gỡ ứng dụng'));
+    expect((await shopRow(shop.id)).status).toBe('needs_reauth');
+    // Đã needs_reauth thì gọi lại không ghi thêm lịch sử.
+    await withCompany(company.companyId, () => markNeedsReauth(shop.id, 'seller gỡ ứng dụng'));
+    const detail = await app().get(`/api/v1/channel/shops/${shop.id}`).set('Authorization', `Bearer ${token}`);
+    expect(detail.body.statusHistory.filter((h: { to: string }) => h.to === 'needs_reauth')).toHaveLength(1);
+
+    // Chưa có mốc lấy đơn nên không được về active (CHECK shops_active_cutoff): resume_setup về connecting.
+    const resumed = await connect(token, shop.externalShopId);
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toMatchObject({ created: false, reconnect: null, shop: { id: shop.id, status: 'connecting' } });
+  });
+
   it('markNeedsReauth: active sang needs_reauth, nguồn hệ thống; trạng thái khác thì bỏ qua', async () => {
     const shop = (await connect(token, seller())).body.shop;
-    await withCompany(company.companyId, () => markNeedsReauth(shop.id, 'refresh token hết hạn'));
-    expect((await shopRow(shop.id)).status).toBe('connecting');
-
     await testPool().query(
       "update channel.shops set status = 'active', order_cutoff_at = now() where id = $1",
       [shop.id],

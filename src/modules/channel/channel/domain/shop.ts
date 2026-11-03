@@ -6,10 +6,12 @@ export type ShopAction = 'finish_setup' | 'lose_auth' | 'reconnect' | 'resume_se
 
 export const shopMachine = defineMachine<ShopStatus, ShopAction>([
   { from: 'connecting', to: 'active', action: 'finish_setup', permission: 'channel.shop.connect' },
-  { from: 'active', to: 'needs_reauth', action: 'lose_auth', system: true },
+  // Từ `connecting`: seller gỡ app khi đang thiết lập (§18.1, #171).
+  { from: ['connecting', 'active'], to: 'needs_reauth', action: 'lose_auth', system: true },
   { from: ['needs_reauth', 'disconnected'], to: 'active', action: 'reconnect', permission: 'channel.shop.connect' },
-  // Chỉ ở BE: ngắt khi chưa thiết lập xong (chưa có mốc kéo đơn) thì nối lại về `connecting` để chạy thiết lập.
-  { from: 'disconnected', to: 'connecting', action: 'resume_setup', permission: 'channel.shop.connect' },
+  // Chỉ ở BE: gian hàng chưa thiết lập xong (chưa có mốc lấy đơn) mà ngắt hoặc mất uỷ quyền thì nối lại về
+  // `connecting` để chạy thiết lập, vì CHECK `shops_active_cutoff` bắt `active` phải có `order_cutoff_at`.
+  { from: ['needs_reauth', 'disconnected'], to: 'connecting', action: 'resume_setup', permission: 'channel.shop.connect' },
   {
     from: ['connecting', 'active', 'needs_reauth'],
     to: 'disconnected',
@@ -28,5 +30,5 @@ export function tokenExpiringSoon(status: ShopStatus, refreshExpiresAt: Date | n
 /** Nối lại gian hàng đã có: thao tác nào, hay chỉ thay token (đang `connecting`, `active`). */
 export function reconnectAction(status: ShopStatus, orderCutoffAt: Date | null): 'reconnect' | 'resume_setup' | null {
   if (status === 'connecting' || status === 'active') return null;
-  return status === 'disconnected' && orderCutoffAt === null ? 'resume_setup' : 'reconnect';
+  return orderCutoffAt === null ? 'resume_setup' : 'reconnect';
 }

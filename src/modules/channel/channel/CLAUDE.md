@@ -4,7 +4,7 @@ Gian hàng sàn, token, listing kiêm bảng ghép SKU, lần tính giá theo s�
 
 ## Gian hàng (#103)
 
-Máy trạng thái ở `domain/shop.ts` (§18.1, cùng bảng với FE `src/lib/machines/channel.ts`): `connecting` → `active` (`finish_setup`, #104) → `needs_reauth` (`lose_auth`, hệ thống) → `active` (`reconnect`); ngắt từ mọi trạng thái trừ `disconnected`. Riêng BE có `resume_setup` (`disconnected` → `connecting`) cho gian hàng ngắt khi chưa thiết lập, vì CHECK `shops_active_cutoff` bắt `active` phải có `order_cutoff_at`. Mọi lần chuyển ghi `core.state_transitions` (`entity_type = 'shops'`; listing gỡ do ngắt ghi `'listings'`).
+Máy trạng thái ở `domain/shop.ts` (§18.1, cùng bảng với FE `src/lib/machines/channel.ts`): `connecting` → `active` (`finish_setup`, #104); `connecting`, `active` → `needs_reauth` (`lose_auth`, hệ thống, #171) → `active` (`reconnect`); ngắt từ mọi trạng thái trừ `disconnected`. Riêng BE có `resume_setup` (`needs_reauth`, `disconnected` → `connecting`) cho gian hàng ngắt hoặc mất uỷ quyền khi chưa thiết lập, vì CHECK `shops_active_cutoff` bắt `active` phải có `order_cutoff_at`. Mọi lần chuyển ghi `core.state_transitions` (`entity_type = 'shops'`; listing gỡ do ngắt ghi `'listings'`).
 
 - Gian hàng định danh bằng `(platform, external_shop_id)`; nối lại cùng seller thì dùng lại bản ghi. Index `shops_platform_external_live_uq` chặn một seller gắn hai công ty cùng lúc (409 `shop_connected_elsewhere`); ngắt rồi thì công ty khác nối được.
 - Ba cách nối: OAuth (`authorize-url` → sàn → `callback`), hoặc dán token console (`POST /shops/:platform/token`, shop thử Lazada không đi OAuth được). `state` OAuth là token ký 10 phút (`purpose-token.ts`, loại `oauth`), gắn công ty, người bấm, sàn; không dùng Redis.
