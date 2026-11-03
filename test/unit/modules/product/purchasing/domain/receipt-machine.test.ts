@@ -8,8 +8,8 @@ import {
 } from '#src/modules/product/purchasing/domain/receipt-machine.ts';
 
 const kho = { accountId: 'kho', permissions: ['purchasing.receipt.manage'], enabledModules: ['purchasing'] };
-const buyer = { accountId: 'buyer', permissions: ['purchasing.request.manage'], enabledModules: ['purchasing'] };
-const rec = (r: Partial<GoodsReceiptRecord> = {}): GoodsReceiptRecord => ({ createdBy: 'buyer', short: 0, ...r });
+const requester = { accountId: 'requester', permissions: ['purchasing.request.manage'], enabledModules: ['purchasing'] };
+const rec = (r: Partial<GoodsReceiptRecord> = {}): GoodsReceiptRecord => ({ createdBy: 'requester', short: 0, ...r });
 const to = (from: GoodsReceiptStatus, action: GoodsReceiptAction, actor = kho, r = rec(), reason?: string) =>
   assertTransition(goodsReceiptMachine, from, action, { actor, record: r, reason: reason ?? null }).to;
 
@@ -39,14 +39,14 @@ describe('máy trạng thái phiếu nhận', () => {
     expect(to('counting', 'cancel', kho, rec(), 'NCC giao nhầm đơn')).toBe('cancelled');
   });
 
-  it('ghi kết quả giao thiếu cần purchasing.request.manage: kho bị 403, mua hàng đi short → resolved', () => {
+  it('ghi kết quả giao thiếu cần purchasing.request.manage: người chỉ có purchasing.receipt.manage bị 403, người lập đề nghị đi short → resolved', () => {
     expect(() => to('short', 'resolve')).toThrow(expect.objectContaining({ status: 403, code: 'forbidden' }));
-    expect(to('short', 'resolve', buyer)).toBe('resolved');
+    expect(to('short', 'resolve', requester)).toBe('resolved');
   });
 
   it('auto_resolve chỉ hệ thống làm', () => {
     expect(assertTransition(goodsReceiptMachine, 'short', 'auto_resolve', { actor: null }).to).toBe('resolved');
-    expect(() => to('short', 'auto_resolve', buyer)).toThrow(expect.objectContaining({ code: 'invalid_transition' }));
+    expect(() => to('short', 'auto_resolve', requester)).toThrow(expect.objectContaining({ code: 'invalid_transition' }));
   });
 
   it('phiếu đã ghi sổ không ghi sổ lại, không huỷ được', () => {

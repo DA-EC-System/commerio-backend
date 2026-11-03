@@ -6,7 +6,6 @@ import { testPool } from '../../helpers/db.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { inv } from '../inventory/helpers.ts';
 import {
-  BUYER_ROLE,
   type Count,
   countBody,
   createReceipt,
@@ -19,14 +18,14 @@ import {
 } from './helpers.ts';
 
 // Ghi sổ phiếu nhận: post, post_short (spec #109 mục 6.5, AC3–AC7).
-let A: { companyId: string; ceo: string; buyer: string; kho: string; supplierId: string };
+let A: { companyId: string; ceo: string; requester: string; kho: string; supplierId: string };
 
 beforeAll(async () => {
   const a = await createCompany();
   A = {
     companyId: a.companyId,
     ceo: a.ceo.token,
-    buyer: (await addMember(a.companyId, BUYER_ROLE)).token,
+    requester: (await addMember(a.companyId, 'warehouse')).token,
     kho: (await addMember(a.companyId, 'warehouse')).token,
     supplierId: '',
   };
@@ -86,7 +85,7 @@ describe('ghi sổ phiếu nhận', () => {
     ]);
     expect(await rows('select self_approved from product.goods_receipts where id = $1', [r.id])).toEqual([{ self_approved: false }]);
 
-    const request = (await pur(A.buyer).get(`/requests/${req.id}`)).body;
+    const request = (await pur(A.requester).get(`/requests/${req.id}`)).body;
     expect(request).toMatchObject({ status: 'partially_received', supplierShort: true });
     expect(request.lines[0]).toMatchObject({ received: 55, defective: 2, outstanding: 3 });
     // Lịch sử xếp theo giờ bắt đầu giao dịch: tìm bước chuyển, không giả định nó đứng cuối (giờ container có thể nhảy).
@@ -105,7 +104,7 @@ describe('ghi sổ phiếu nhận', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.status).toBe('matched');
 
-    const request = (await pur(A.buyer).get(`/requests/${req.id}`)).body;
+    const request = (await pur(A.requester).get(`/requests/${req.id}`)).body;
     expect(request.status).toBe('received');
     const resolved = GoodsReceipt.parse((await pur(A.kho).get(`/goods-receipts/${first.id}`)).body);
     expect(resolved.status).toBe('resolved');
@@ -127,6 +126,22 @@ describe('ghi sổ phiếu nhận', () => {
     const res = await post(both, r);
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('second_person_required');
+  });
+
+  it('AC3 (A2-01p): Kho A lập đề nghị rồi tự ghi sổ → 409 second_person_required; Kho B ghi sổ → 200', async () => {
+    const v = await newVariant();
+    // Người lập đề nghị (A.requester) và người ghi sổ (A.kho) đều là Nhân viên kho nhưng khác tài khoản.
+    const req = await orderedRequest(A, A.supplierId, [{ variantId: v, quantity: 5, unitCost: 1000 }]);
+    const r = await counted(A.requester, req.id, [{ announced: 5, accepted: 5 }]);
+
+    const self = await post(A.requester, r);
+    expect(self.status).toBe(409);
+    expect(self.body.code).toBe('second_person_required');
+
+    const other = await post(A.kho, r);
+    expect(other.status, JSON.stringify(other.body)).toBe(200);
+    expect(await rows('select self_approved from product.goods_receipts where id = $1', [r.id])).toEqual([{ self_approved: false }]);
+    expect((await stockOf(v)).onHand).toBe(5);
   });
 
   it('AC3: CEO lập đề nghị rồi tự ghi sổ → 200, phiếu đánh dấu self_approved', async () => {
@@ -159,7 +174,7 @@ describe('ghi sổ phiếu nhận', () => {
     const req = await orderedRequest(A, A.supplierId, [{ variantId: v, quantity: 10, unitCost: 1000 }]);
     const r1 = await counted(A.kho, req.id, [{ announced: 10, accepted: 10 }]);
     const r2 = await counted(A.kho, req.id, [{ announced: 10, accepted: 10 }]);
-    // Đề nghị do mua hàng lập, kho là người thứ hai.
+    // Đề nghị do Kho lập (requester), Kho khác ghi sổ là người thứ hai.
     const results = await raceBehindLock(
       (h) => h.query('select 1 from product.purchase_requests where id = $1 for update', [req.id]),
       2,
@@ -196,7 +211,7 @@ describe('ghi sổ phiếu nhận', () => {
     const r3 = await post(A.kho, short, 'post_short');
     expect(r3.status, JSON.stringify(r3.body)).toBe(200);
     expect(GoodsReceipt.parse(r3.body)).toMatchObject({ status: 'resolved', shortResolution: { kind: 'follow_up', followUp: { id: short.id } } });
-    expect((await pur(A.buyer).get(`/requests/${req.id}`)).body.status).toBe('received');
+    expect((await pur(A.requester).get(`/requests/${req.id}`)).body.status).toBe('received');
     expect((await stockOf(v)).onHand).toBe(5);
   });
 
@@ -212,6 +227,6 @@ describe('ghi sổ phiếu nhận', () => {
       { n: 0 },
     ]);
     expect(await rows('select count(*)::int as n from product.supplier_returns where source_id = $1', [r.id])).toEqual([{ n: 0 }]);
-    expect((await pur(A.buyer).get(`/requests/${req.id}`)).body).toMatchObject({ status: 'partially_received', outstanding: 5 });
+    expect((await pur(A.requester).get(`/requests/${req.id}`)).body).toMatchObject({ status: 'partially_received', outstanding: 5 });
   });
 });

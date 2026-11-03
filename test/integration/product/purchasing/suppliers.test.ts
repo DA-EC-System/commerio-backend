@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Supplier, SupplierList } from '#src/modules/product/purchasing/api/schemas.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
-import { BUYER_ROLE, createSupplier, pur } from './helpers.ts';
+import { createSupplier, pur } from './helpers.ts';
 
 // Nhà cung cấp /purchasing/suppliers (Documents/21 mục 16.2, spec #108).
-let A: { companyId: string; ceo: string; buyer: string; kho: string };
+let A: { companyId: string; ceo: string; requester: string; sale: string };
 let B: { ceo: string };
 
 beforeAll(async () => {
@@ -12,15 +12,15 @@ beforeAll(async () => {
   A = {
     companyId: a.companyId,
     ceo: a.ceo.token,
-    buyer: (await addMember(a.companyId, BUYER_ROLE)).token,
-    kho: (await addMember(a.companyId, 'warehouse')).token,
+    requester: (await addMember(a.companyId, 'warehouse')).token,
+    sale: (await addMember(a.companyId, 'sale')).token,
   };
   B = { ceo: (await createCompany()).ceo.token };
 });
 
 describe('nhà cung cấp', () => {
-  it('mua hàng thêm NCC: 201, trường trống trả chuỗi rỗng, đúng schema', async () => {
-    const res = await pur(A.buyer).post('/suppliers', { name: '  Công ty Vải Sài Gòn ', phone: '0901 234 567' });
+  it('Kho thêm NCC: 201, trường trống trả chuỗi rỗng, đúng schema', async () => {
+    const res = await pur(A.requester).post('/suppliers', { name: '  Công ty Vải Sài Gòn ', phone: '0901 234 567' });
     expect(res.status).toBe(201);
     const s = Supplier.parse(res.body);
     expect(s).toMatchObject({ name: 'Công ty Vải Sài Gòn', phone: '0901 234 567', email: '', note: '', active: true, version: 1 });
@@ -59,9 +59,9 @@ describe('nhà cung cấp', () => {
     expect(active.map((x) => x.id)).not.toContain(s.id);
   });
 
-  it('kho xem được danh sách nhưng không thêm được (403)', async () => {
-    expect((await pur(A.kho).get('/suppliers')).status).toBe(200);
-    expect((await pur(A.kho).post('/suppliers', { name: 'NCC của kho' })).status).toBe(403);
+  it('Sale không xem, không thêm được NCC (403)', async () => {
+    expect((await pur(A.sale).get('/suppliers')).status).toBe(403);
+    expect((await pur(A.sale).post('/suppliers', { name: 'NCC của sale' })).status).toBe(403);
   });
 
   it('NCC của công ty khác trả 404', async () => {

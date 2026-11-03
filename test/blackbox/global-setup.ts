@@ -19,7 +19,7 @@ const LEAD_ROLE = {
   permissions: ['purchasing.request.manage', 'purchasing.request.approve', 'finance.config.manage', 'finance.config.approve'],
 };
 
-/** Gắn vai trò tuỳ biến cho `qa-truong-mua` (giữ vai trò Mua hàng của seed). Chạy lại không đổi gì. */
+/** Gắn vai trò tuỳ biến cho `qa-truong-kho` (giữ vai trò Nhân viên kho của seed). Chạy lại không đổi gì. */
 async function prepareLead(ceo: string) {
   const roles = await api(ceo).get('/identity/roles');
   type RoleRow = { id: string; name: string; permissions: string[]; version: number };

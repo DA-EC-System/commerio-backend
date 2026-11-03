@@ -1,20 +1,21 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { GoodsReceipt } from '#src/modules/product/purchasing/api/schemas.ts';
 import { createVariant } from '../../helpers/catalog.ts';
-import { addMember, createCompany } from '../../helpers/company.ts';
+import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { inv } from '../inventory/helpers.ts';
-import { act, BUYER_ROLE, countBody, createReceipt, createSupplier, orderedRequest, pur, type Receipt } from './helpers.ts';
+import { act, countBody, createReceipt, createSupplier, orderedRequest, pur, type Receipt } from './helpers.ts';
 
 // Ghi kết quả giao thiếu POST /goods-receipts/:id/short-resolution và đóng thiếu dùng chung (spec #109 mục 6.6, AC8, AC9).
-let A: { companyId: string; ceo: string; buyer: string; kho: string; supplierId: string };
+let A: { companyId: string; ceo: string; requester: string; kho: string; receiver: string; supplierId: string };
 
 beforeAll(async () => {
   const a = await createCompany();
   A = {
     companyId: a.companyId,
     ceo: a.ceo.token,
-    buyer: (await addMember(a.companyId, BUYER_ROLE)).token,
+    requester: (await addMember(a.companyId, 'warehouse')).token,
     kho: (await addMember(a.companyId, 'warehouse')).token,
+    receiver: (await addMember(a.companyId, await createCustomRole(a.companyId, ['purchasing.receipt.manage']))).token,
     supplierId: '',
   };
   A.supplierId = (await createSupplier(A.ceo)).id;
@@ -38,14 +39,14 @@ describe('ghi kết quả giao thiếu', () => {
   it('AC8: giao bù bằng số phiếu của đề nghị khác → 422 follow_up_invalid; đúng phiếu → resolved; ghi lần hai → 409 resolution_recorded', async () => {
     const { req, receipt } = await shortReceipt();
     const other = await shortReceipt();
-    const wrong = await resolve(A.buyer, receipt, { kind: 'follow_up', followUpNumber: other.receipt.number });
+    const wrong = await resolve(A.requester, receipt, { kind: 'follow_up', followUpNumber: other.receipt.number });
     expect(wrong.status).toBe(422);
     expect(wrong.body.code).toBe('follow_up_invalid');
     expect(wrong.body.errors).toEqual({ followUpNumber: 'Không có phiếu nhận này trong cùng đề nghị' });
-    expect((await resolve(A.buyer, receipt, { kind: 'follow_up', followUpNumber: receipt.number })).body.code).toBe('follow_up_invalid');
+    expect((await resolve(A.requester, receipt, { kind: 'follow_up', followUpNumber: receipt.number })).body.code).toBe('follow_up_invalid');
 
     const second = await createReceipt(A.kho, req.id);
-    const res = await resolve(A.buyer, receipt, { kind: 'follow_up', followUpNumber: ` ${second.number.toLowerCase()} `, note: 'NCC giao bù' });
+    const res = await resolve(A.requester, receipt, { kind: 'follow_up', followUpNumber: ` ${second.number.toLowerCase()} `, note: 'NCC giao bù' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const done = GoodsReceipt.parse(res.body);
     expect(done.status).toBe('resolved');
@@ -57,26 +58,26 @@ describe('ghi kết quả giao thiếu', () => {
     });
     expect(done.statusHistory).toContainEqual(expect.objectContaining({ from: 'short', to: 'resolved', source: 'user' }));
 
-    const again = await resolve(A.buyer, done, { kind: 'supplier_wrong', note: 'x' });
+    const again = await resolve(A.requester, done, { kind: 'supplier_wrong', note: 'x' });
     expect(again.status).toBe(409);
     expect(again.body.code).toBe('resolution_recorded');
   });
 
   it('NCC nhận sai: thiếu ghi chú → 422 errors.note; có ghi chú → resolved', async () => {
     const { receipt } = await shortReceipt();
-    const missing = await resolve(A.buyer, receipt, { kind: 'supplier_wrong' });
+    const missing = await resolve(A.requester, receipt, { kind: 'supplier_wrong' });
     expect(missing.status).toBe(422);
     expect(missing.body.errors).toEqual({ note: 'Ghi NCC nhận sai thế nào' });
-    const res = await resolve(A.buyer, receipt, { kind: 'supplier_wrong', note: 'NCC đếm nhầm, xác nhận thiếu 4' });
+    const res = await resolve(A.requester, receipt, { kind: 'supplier_wrong', note: 'NCC đếm nhầm, xác nhận thiếu 4' });
     expect(res.status).toBe(200);
     expect(res.body.shortResolution).toMatchObject({ kind: 'supplier_wrong', followUp: null, note: 'NCC đếm nhầm, xác nhận thiếu 4' });
   });
 
-  it('AC9: mua hàng chọn đóng thiếu → 403; CEO khi còn phiếu đang kiểm → 409 receipt_counting', async () => {
+  it('AC9: Kho chọn đóng thiếu → 403; CEO khi còn phiếu đang kiểm → 409 receipt_counting', async () => {
     const { req, receipt } = await shortReceipt();
-    const buyer = await resolve(A.buyer, receipt, { kind: 'close_short', note: 'NCC hết hàng' });
-    expect(buyer.status).toBe(403);
-    expect(buyer.body.code).toBe('forbidden');
+    const kho = await resolve(A.requester, receipt, { kind: 'close_short', note: 'NCC hết hàng' });
+    expect(kho.status).toBe(403);
+    expect(kho.body.code).toBe('forbidden');
 
     await createReceipt(A.kho, req.id);
     const counting = await resolve(A.ceo, receipt, { kind: 'close_short', note: 'NCC hết hàng' });
@@ -93,7 +94,7 @@ describe('ghi kết quả giao thiếu', () => {
     const res = await resolve(A.ceo, receipt, { kind: 'close_short', note: 'NCC hết hàng' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({ status: 'resolved', shortResolution: { kind: 'close_short', note: 'NCC hết hàng' } });
-    const request = (await pur(A.buyer).get(`/requests/${req.id}`)).body;
+    const request = (await pur(A.requester).get(`/requests/${req.id}`)).body;
     expect(request).toMatchObject({ status: 'closed_short', outstanding: 0 });
     expect(request.lines[0]).toMatchObject({ closedShort: 4 });
     expect((await inv(A.ceo).get(`/stock/${variantId}`)).body.level.incoming).toBe(0);
@@ -108,12 +109,12 @@ describe('ghi kết quả giao thiếu', () => {
     expect(after).toMatchObject({ status: 'resolved', shortResolution: { kind: 'close_short', note: 'Đổi NCC khác' } });
   });
 
-  it('phiếu đang kiểm → 409 invalid_transition; kho không có quyền ghi kết quả → 403', async () => {
+  it('phiếu đang kiểm → 409 invalid_transition; người chỉ nhận hàng không có quyền ghi kết quả → 403', async () => {
     const { req } = await shortReceipt();
     const counting = await createReceipt(A.kho, req.id);
-    const res = await resolve(A.buyer, counting, { kind: 'supplier_wrong', note: 'x' });
+    const res = await resolve(A.requester, counting, { kind: 'supplier_wrong', note: 'x' });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('invalid_transition');
-    expect((await resolve(A.kho, counting, { kind: 'supplier_wrong', note: 'x' })).status).toBe(403);
+    expect((await resolve(A.receiver, counting, { kind: 'supplier_wrong', note: 'x' })).status).toBe(403);
   });
 });

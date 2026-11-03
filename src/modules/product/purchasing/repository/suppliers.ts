@@ -66,7 +66,7 @@ export async function updateSupplierIfVersion(id: string, version: number, value
   return row;
 }
 
-/** Công ty đang chọn đã có NCC hoặc đề nghị nhập chưa: có thì không tắt được phân hệ Mua hàng (#152, QT-04). */
+/** Công ty đang chọn đã có NCC hoặc đề nghị nhập chưa: có thì không tắt được phân hệ Nhập hàng (#152, QT-04). */
 export async function hasPurchasingData(): Promise<boolean> {
   const [supplier] = await getDb().select({ one: sql`1` }).from(suppliers).limit(1);
   if (supplier) return true;

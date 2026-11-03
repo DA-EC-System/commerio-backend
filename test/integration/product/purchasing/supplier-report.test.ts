@@ -3,17 +3,17 @@ import { SupplierReportList } from '#src/modules/product/purchasing/api/schemas.
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { BUYER_ROLE, type Count, countBody, createReceipt, createSupplier, orderedRequest, pur } from './helpers.ts';
+import { type Count, countBody, createReceipt, createSupplier, orderedRequest, pur } from './helpers.ts';
 
 // Báo cáo theo NCC GET /suppliers/report (spec #109 mục 6.7, AC10). Công ty riêng để danh sách NCC cố định.
-let A: { companyId: string; ceo: string; buyer: string; kho: string };
+let A: { companyId: string; ceo: string; requester: string; kho: string };
 
 beforeAll(async () => {
   const a = await createCompany();
   A = {
     companyId: a.companyId,
     ceo: a.ceo.token,
-    buyer: (await addMember(a.companyId, BUYER_ROLE)).token,
+    requester: (await addMember(a.companyId, 'warehouse')).token,
     kho: (await addMember(a.companyId, 'warehouse')).token,
   };
 });

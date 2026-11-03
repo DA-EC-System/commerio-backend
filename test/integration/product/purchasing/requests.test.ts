@@ -6,10 +6,10 @@ import { addMember, createCompany, createCustomRole } from '../../helpers/compan
 import { testPool } from '../../helpers/db.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { inv } from '../inventory/helpers.ts';
-import { act, BUYER_ROLE, createRequest, createSupplier, pur, runActions } from './helpers.ts';
+import { act, createRequest, createSupplier, pur, runActions } from './helpers.ts';
 
 // Đề nghị nhập /purchasing/requests (Documents/21 mục 16.2, 16.3; spec #108 mục 11).
-let A: { companyId: string; ceo: string; buyer: string; kho: string; supplierId: string; v1: string; v2: string; categoryId: string };
+let A: { companyId: string; ceo: string; requester: string; receiver: string; supplierId: string; v1: string; v2: string; categoryId: string };
 let B: { ceo: string };
 
 beforeAll(async () => {
@@ -18,8 +18,9 @@ beforeAll(async () => {
   A = {
     companyId: a.companyId,
     ceo: a.ceo.token,
-    buyer: (await addMember(a.companyId, BUYER_ROLE)).token,
-    kho: (await addMember(a.companyId, 'warehouse')).token,
+    requester: (await addMember(a.companyId, 'warehouse')).token,
+    // Chỉ nhận hàng (purchasing.receipt.manage): xem được đề nghị nhưng không thấy giá. Nhân viên kho có sẵn nay lập được đề nghị nên thấy giá.
+    receiver: (await addMember(a.companyId, await createCustomRole(a.companyId, ['purchasing.receipt.manage']))).token,
     supplierId: (await createSupplier(a.ceo.token)).id,
     v1: first.variantId,
     v2: (await createVariant(a.companyId)).variantId,
@@ -31,12 +32,12 @@ beforeAll(async () => {
 const newName = () => `Áo mới ${randomUUID().slice(0, 8)}`;
 
 describe('lập và sửa đề nghị', () => {
-  it('mua hàng lập đề nghị một SKU có sẵn và một sản phẩm mới: 201, số DN-000001, nháp, có lịch sử', async () => {
+  it('Kho lập đề nghị một SKU có sẵn và một sản phẩm mới: 201, số DN-000001, nháp, có lịch sử', async () => {
     const c = await createCompany();
-    const buyer = (await addMember(c.companyId, BUYER_ROLE)).token;
+    const kho = (await addMember(c.companyId, 'warehouse')).token;
     const { variantId, categoryId } = await createVariant(c.companyId);
     const supplier = await createSupplier(c.ceo.token);
-    const res = await pur(buyer).post('/requests', {
+    const res = await pur(kho).post('/requests', {
       supplierId: supplier.id,
       note: 'Hàng thu đông',
       lines: [
@@ -66,7 +67,7 @@ describe('lập và sửa đề nghị', () => {
     const { variantId: discontinued } = await createVariant(A.companyId);
     await testPool().query("update product.product_variants set business_status = 'discontinued' where id = $1", [discontinued]);
     const [taken] = (await testPool().query<{ name: string }>('select name from product.products where company_id = $1 limit 1', [A.companyId])).rows;
-    const res = await pur(A.buyer).post('/requests', {
+    const res = await pur(A.requester).post('/requests', {
       supplierId: stopped.id,
       lines: [
         { variantId: discontinued, quantity: 1, unitCost: 1000 },
@@ -85,7 +86,7 @@ describe('lập và sửa đề nghị', () => {
   });
 
   it('dòng vừa có SKU vừa có sản phẩm mới, hoặc không có gì: 422', async () => {
-    const res = await pur(A.buyer).post('/requests', {
+    const res = await pur(A.requester).post('/requests', {
       supplierId: A.supplierId,
       lines: [{ quantity: 1, unitCost: 1000 }],
     });
@@ -94,8 +95,8 @@ describe('lập và sửa đề nghị', () => {
   });
 
   it('sửa nháp thay toàn bộ dòng; sửa khi đang chờ duyệt: 409 not_draft; version cũ: 409 kèm current', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: A.v1, quantity: 3, unitCost: 1000 }]);
-    const ok = await pur(A.buyer).put(`/requests/${r.id}`, {
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 3, unitCost: 1000 }]);
+    const ok = await pur(A.requester).put(`/requests/${r.id}`, {
       supplierId: A.supplierId,
       note: 'Sửa',
       lines: [{ variantId: A.v2, quantity: 4, unitCost: 2000 }],
@@ -104,7 +105,7 @@ describe('lập và sửa đề nghị', () => {
     expect(ok.status).toBe(200);
     expect(ok.body.lines).toEqual([expect.objectContaining({ variantId: A.v2, quantity: 4 })]);
 
-    const stale = await pur(A.buyer).put(`/requests/${r.id}`, {
+    const stale = await pur(A.requester).put(`/requests/${r.id}`, {
       supplierId: A.supplierId,
       lines: [{ variantId: A.v2, quantity: 1, unitCost: 1 }],
       version: r.version,
@@ -113,9 +114,9 @@ describe('lập và sửa đề nghị', () => {
     expect(stale.body.code).toBe('version_conflict');
     expect(stale.body.current).toMatchObject({ id: r.id, version: ok.body.version });
 
-    const submitted = await act(A.buyer, r.id, 'submit', { version: ok.body.version });
+    const submitted = await act(A.requester, r.id, 'submit', { version: ok.body.version });
     expect(submitted.status).toBe(200);
-    const locked = await pur(A.buyer).put(`/requests/${r.id}`, {
+    const locked = await pur(A.requester).put(`/requests/${r.id}`, {
       supplierId: A.supplierId,
       lines: [{ variantId: A.v2, quantity: 1, unitCost: 1 }],
       version: submitted.body.version,
@@ -125,34 +126,36 @@ describe('lập và sửa đề nghị', () => {
   });
 
   it('danh sách phân trang, tìm theo số đề nghị, đúng schema', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
-    const res = await pur(A.kho).get(`/requests?search=${r.number}&pageSize=5`);
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
+    const res = await pur(A.receiver).get(`/requests?search=${r.number}&pageSize=5`);
     expect(res.status).toBe(200);
     const page = PurchaseRequestPage.parse(res.body);
     expect(page.items.map((i) => i.id)).toEqual([r.id]);
-    expect(page.items[0]!.totalCost).toBeNull(); // kho không thấy giá
+    expect(page.items[0]!.totalCost).toBeNull(); // chỉ nhận hàng, không thấy giá
   });
 
-  it('kho xem chi tiết không thấy giá; công ty khác nhận 404', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: A.v1, quantity: 2, unitCost: 5000 }]);
-    const byKho = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${r.id}`)).body);
-    expect(byKho.lines[0]!.unitCost).toBeNull();
-    expect(byKho.totalCost).toBeNull();
+  it('người chỉ nhận hàng xem chi tiết không thấy giá; công ty khác nhận 404', async () => {
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 2, unitCost: 5000 }]);
+    const byReceiver = PurchaseRequest.parse((await pur(A.receiver).get(`/requests/${r.id}`)).body);
+    expect(byReceiver.lines[0]!.unitCost).toBeNull();
+    expect(byReceiver.totalCost).toBeNull();
+    // Nhân viên kho lập được đề nghị nên thấy giá.
+    expect(PurchaseRequest.parse((await pur(A.requester).get(`/requests/${r.id}`)).body).totalCost).toBe(10000);
     expect((await pur(B.ceo).get(`/requests/${r.id}`)).status).toBe(404);
   });
 });
 
 describe('gửi duyệt và duyệt', () => {
   it('gửi duyệt khi còn dòng giá 0: 422 theo dòng; gửi được thì có sự kiện request_submitted', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [
+    const r = await createRequest(A.requester, A.supplierId, [
       { variantId: A.v1, quantity: 1, unitCost: 1000 },
       { variantId: A.v2, quantity: 1, unitCost: 0 },
     ]);
-    const zero = await act(A.buyer, r.id, 'submit', { version: r.version });
+    const zero = await act(A.requester, r.id, 'submit', { version: r.version });
     expect(zero.status).toBe(422);
     expect(zero.body.errors).toEqual({ 'lines.1.unitCost': 'Nhập giá nhập' });
 
-    const fixed = await pur(A.buyer).put(`/requests/${r.id}`, {
+    const fixed = await pur(A.requester).put(`/requests/${r.id}`, {
       supplierId: A.supplierId,
       lines: [
         { variantId: A.v1, quantity: 1, unitCost: 1000 },
@@ -160,7 +163,7 @@ describe('gửi duyệt và duyệt', () => {
       ],
       version: r.version,
     });
-    const ok = await act(A.buyer, r.id, 'submit', { version: fixed.body.version });
+    const ok = await act(A.requester, r.id, 'submit', { version: fixed.body.version });
     expect(ok.status).toBe(200);
     expect(ok.body.status).toBe('pending_approval');
     const events = await testPool().query(
@@ -172,9 +175,9 @@ describe('gửi duyệt và duyệt', () => {
 
   it('NCC ngừng giao dịch sau khi lập: gửi duyệt trả 422 supplier_inactive', async () => {
     const s = await createSupplier(A.ceo);
-    const r = await createRequest(A.buyer, s.id, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
+    const r = await createRequest(A.requester, s.id, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
     await pur(A.ceo).put(`/suppliers/${s.id}`, { name: s.name, active: false, version: 1 });
-    const res = await act(A.buyer, r.id, 'submit', { version: r.version });
+    const res = await act(A.requester, r.id, 'submit', { version: r.version });
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('supplier_inactive');
   });
@@ -198,11 +201,11 @@ describe('gửi duyệt và duyệt', () => {
   });
 
   it('loại dòng cuối cùng còn lại: 409 all_lines_excluded; loại một dòng thì tổng bỏ dòng đó', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [
+    const r = await createRequest(A.requester, A.supplierId, [
       { variantId: A.v1, quantity: 2, unitCost: 1000 },
       { variantId: A.v2, quantity: 3, unitCost: 1000 },
     ]);
-    const submitted = await act(A.buyer, r.id, 'submit', { version: r.version });
+    const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     const [l1, l2] = submitted.body.lines;
     const one = await pur(A.ceo).post(`/requests/${r.id}/lines/${l1.id}/exclude`, { excluded: true, version: submitted.body.version });
     expect(one.status).toBe(200);
@@ -214,8 +217,8 @@ describe('gửi duyệt và duyệt', () => {
 
   it('duyệt sinh sản phẩm và SKU theo quy tắc danh mục cho dòng sản phẩm mới', async () => {
     const name = newName();
-    const r = await createRequest(A.buyer, A.supplierId, [{ newProduct: { name, categoryId: A.categoryId }, quantity: 5, unitCost: 90000 }]);
-    const body = await runActions([[A.buyer, 'submit'], [A.ceo, 'approve']], r.id, r.version);
+    const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { name, categoryId: A.categoryId }, quantity: 5, unitCost: 90000 }]);
+    const body = await runActions([[A.requester, 'submit'], [A.ceo, 'approve']], r.id, r.version);
     const line = body.lines[0]!;
     expect(line.variantId).not.toBeNull();
     expect(line.sku).toMatch(/^TEST-\d{4}$/);
@@ -228,8 +231,8 @@ describe('gửi duyệt và duyệt', () => {
 
   it('tên sản phẩm mới bị dùng trước lúc duyệt: 422 và không đổi trạng thái', async () => {
     const name = newName();
-    const r = await createRequest(A.buyer, A.supplierId, [{ newProduct: { name, categoryId: A.categoryId }, quantity: 1, unitCost: 1000 }]);
-    const submitted = await act(A.buyer, r.id, 'submit', { version: r.version });
+    const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { name, categoryId: A.categoryId }, quantity: 1, unitCost: 1000 }]);
+    const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     await testPool().query('insert into product.products (company_id, category_id, name) values ($1, $2, $3)', [A.companyId, A.categoryId, name]);
     const res = await act(A.ceo, r.id, 'approve', { version: submitted.body.version });
     expect(res.status).toBe(422);
@@ -240,8 +243,8 @@ describe('gửi duyệt và duyệt', () => {
   it('hai người cùng duyệt một đề nghị: một người 200, người kia 409 version_conflict', async () => {
     const role = await createCustomRole(A.companyId, ['purchasing.request.approve']);
     const other = (await addMember(A.companyId, role)).token;
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
-    const submitted = await act(A.buyer, r.id, 'submit', { version: r.version });
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
+    const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     const v = submitted.body.version;
     const results = await raceBehindLock(
       (holder) => holder.query('select 1 from product.purchase_requests where id = $1 for update', [r.id]),
@@ -253,9 +256,9 @@ describe('gửi duyệt và duyệt', () => {
   });
 
   it('thao tác không có trong bảng: 404; thao tác sai trạng thái: 409 invalid_transition kèm current', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
-    expect((await act(A.buyer, r.id, 'receive_all', { version: r.version })).status).toBe(404);
-    const res = await act(A.buyer, r.id, 'order', { version: r.version });
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
+    expect((await act(A.requester, r.id, 'receive_all', { version: r.version })).status).toBe(404);
+    const res = await act(A.requester, r.id, 'order', { version: r.version });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('invalid_transition');
     expect(res.body.current).toMatchObject({ id: r.id, status: 'draft' });
@@ -264,18 +267,18 @@ describe('gửi duyệt và duyệt', () => {
 
 describe('thêm dòng từ gợi ý nhập lại', () => {
   it('không có requestId thì lập nháp mới (201); thêm lại cùng SKU thì cộng dồn (200)', async () => {
-    const created = await pur(A.buyer).post('/requests/add-line', { requestId: null, supplierId: A.supplierId, variantId: A.v1, quantity: 4 });
+    const created = await pur(A.requester).post('/requests/add-line', { requestId: null, supplierId: A.supplierId, variantId: A.v1, quantity: 4 });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ status: 'draft', note: 'Lập từ gợi ý nhập lại', totalQty: 4 });
-    const again = await pur(A.buyer).post('/requests/add-line', { requestId: created.body.id, supplierId: null, variantId: A.v1, quantity: 3 });
+    const again = await pur(A.requester).post('/requests/add-line', { requestId: created.body.id, supplierId: null, variantId: A.v1, quantity: 3 });
     expect(again.status).toBe(200);
     expect(again.body.lines).toEqual([expect.objectContaining({ variantId: A.v1, quantity: 7 })]);
   });
 
   it('đề nghị không còn là nháp: 422 errors.requestId', async () => {
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
-    await act(A.buyer, r.id, 'submit', { version: r.version });
-    const res = await pur(A.buyer).post('/requests/add-line', { requestId: r.id, supplierId: null, variantId: A.v2, quantity: 1 });
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
+    await act(A.requester, r.id, 'submit', { version: r.version });
+    const res = await pur(A.requester).post('/requests/add-line', { requestId: r.id, supplierId: null, variantId: A.v2, quantity: 1 });
     expect(res.status).toBe(422);
     expect(res.body.errors).toEqual({ requestId: 'Đề nghị không còn là nháp' });
   });
@@ -285,16 +288,16 @@ describe('đang về', () => {
   it('đặt NCC thì incoming tăng (dòng bị loại không tính); huỷ đề nghị đã đặt thì về 0', async () => {
     const { variantId: v } = await createVariant(A.companyId);
     const { variantId: dropped } = await createVariant(A.companyId);
-    const r = await createRequest(A.buyer, A.supplierId, [
+    const r = await createRequest(A.requester, A.supplierId, [
       { variantId: v, quantity: 6, unitCost: 1000 },
       { variantId: dropped, quantity: 9, unitCost: 1000 },
     ]);
-    const submitted = await act(A.buyer, r.id, 'submit', { version: r.version });
+    const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     const excluded = await pur(A.ceo).post(`/requests/${r.id}/lines/${submitted.body.lines[1].id}/exclude`, {
       excluded: true,
       version: submitted.body.version,
     });
-    const ordered = await runActions([[A.ceo, 'approve'], [A.buyer, 'order', { expectedDeliveryDate: '2026-11-05' }]], r.id, excluded.body.version);
+    const ordered = await runActions([[A.ceo, 'approve'], [A.requester, 'order', { expectedDeliveryDate: '2026-11-05' }]], r.id, excluded.body.version);
     expect(ordered.status).toBe('ordered');
     expect((await inv(A.ceo).get(`/stock/${v}`)).body.level.incoming).toBe(6);
     expect((await inv(A.ceo).get(`/stock/${dropped}`)).body.level.incoming).toBe(0);
@@ -309,8 +312,8 @@ describe('đang về', () => {
 
   it('đóng thiếu đề nghị đã đặt: phần còn chờ sang đóng thiếu, incoming về 0', async () => {
     const { variantId: v } = await createVariant(A.companyId);
-    const r = await createRequest(A.buyer, A.supplierId, [{ variantId: v, quantity: 8, unitCost: 1000 }]);
-    const ordered = await runActions([[A.buyer, 'submit'], [A.ceo, 'approve'], [A.buyer, 'order']], r.id, r.version);
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: v, quantity: 8, unitCost: 1000 }]);
+    const ordered = await runActions([[A.requester, 'submit'], [A.ceo, 'approve'], [A.requester, 'order']], r.id, r.version);
     const closed = await runActions([[A.ceo, 'close_short', { reason: 'NCC ngừng sản xuất' }]], r.id, ordered.version);
     expect(closed.status).toBe('closed_short');
     expect(closed.lines[0]).toMatchObject({ closedShort: 8, outstanding: 0 });

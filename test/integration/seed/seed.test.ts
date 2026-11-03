@@ -106,7 +106,7 @@ describe('seed dữ liệu demo P1 (#37 AC-4)', () => {
     expect(rows[0].n).toBe(1);
   });
 
-  it('công ty của bộ test hộp đen (#120): bật phân hệ tuỳ chọn, thêm vai trò Mua hàng, công ty chỉ có CEO', async () => {
+  it('công ty của bộ test hộp đen (#120): bật phân hệ tuỳ chọn, thêm Kho thứ hai, công ty chỉ có CEO', async () => {
     const [a, b] = blackboxCompanies(PASSWORD).map((input) => ({
       ...input,
       accounts: Object.fromEntries(Object.entries(input.accounts).map(([role, acc]) => [role, { ...acc, email: uniqueEmail(role) }])),
@@ -114,8 +114,8 @@ describe('seed dữ liệu demo P1 (#37 AC-4)', () => {
     })) as [SeedDemoInput, SeedDemoInput];
 
     const { companyId } = await seedDemo(a);
-    expect(await roleOf(a.accounts.buyer!.email, companyId)).toEqual([BUILTIN_ROLES.buyer.id]);
-    expect(await roleOf(a.extraStaff![0]!.account.email, companyId)).toEqual([BUILTIN_ROLES.buyer.id]);
+    expect(await roleOf(a.accounts.kho!.email, companyId)).toEqual([BUILTIN_ROLES.kho.id]);
+    expect(await roleOf(a.extraStaff![0]!.account.email, companyId)).toEqual([BUILTIN_ROLES.kho.id]);
     const { rows } = await db.query<{ module_code: string }>(
       'select module_code from core.company_modules where company_id = $1 and enabled order by module_code',
       [companyId],

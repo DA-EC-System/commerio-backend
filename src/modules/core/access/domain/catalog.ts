@@ -76,7 +76,7 @@ export interface BuiltinRoleDef {
   readonly permissions: readonly string[];
 }
 
-/** Năm vai trò có sẵn (Documents/21 V16, 25 §11 thêm Mua hàng), id cố định để code tham chiếu được. */
+/** Bốn vai trò có sẵn (Documents/21 V16; bỏ vai trò nhập hàng riêng ngày 02/11/2026, #188), id cố định để code tham chiếu được. */
 export const BUILTIN_ROLES = {
   ceo: {
     id: '00000000-0000-4000-8000-000000000001',
@@ -206,21 +206,12 @@ export const BUILTIN_ROLES = {
       'catalog.product.view',
       'inventory.stock.view',
       'inventory.receipt.create',
+      'purchasing.request.manage',
       'purchasing.receipt.manage',
+      'purchasing.return.manage',
       'sales.return.view',
       'fulfillment.order.process',
       'fulfillment.delivery.update',
-      'assistant.chat.use',
-    ],
-  },
-  buyer: {
-    id: '00000000-0000-4000-8000-000000000005',
-    name: 'Mua hàng',
-    permissions: [
-      'catalog.product.view',
-      'inventory.stock.view',
-      'purchasing.request.manage',
-      'purchasing.return.manage',
       'assistant.chat.use',
     ],
   },

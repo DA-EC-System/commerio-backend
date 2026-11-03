@@ -40,9 +40,9 @@ export async function seedScenarios(input: SeedDemoInput, options: {
         summary.catalog = { products: products.length, variants: products.reduce((n, p) => n + p.variants.length, 0) };
         if (only === 'all' || only === 'inventory') summary.inventory = await seedInventory(ceo, products);
         if (only === 'all' || only === 'purchasing') {
-          if (!input.accounts.buyer) throw new Error('Cần tài khoản buyer cho seed purchasing');
-          const buyer = await server.as(companyId, input.accounts.buyer.email, input.password);
-          summary.purchasing = await seedPurchasing(ceo, buyer, products, options.now ?? new Date());
+          if (!input.accounts.kho) throw new Error('Cần tài khoản kho cho seed purchasing');
+          const kho = await server.as(companyId, input.accounts.kho.email, input.password);
+          summary.purchasing = await seedPurchasing(ceo, kho, products, options.now ?? new Date());
         }
       }
       if (only === 'all' || only === 'secondary') {

@@ -1,5 +1,5 @@
 // Tài khoản demo: CEO qua đăng ký thật; nhân viên qua hàm công khai staff/access như seed P1. Thêm hai công ty
-// cho bộ test hộp đen (#120, `test/blackbox/`): A đủ năm vai trò có sẵn, B chỉ CEO để kiểm cô lập công ty.
+// cho bộ test hộp đen (#120, `test/blackbox/`): A đủ bốn vai trò có sẵn, B chỉ CEO để kiểm cô lập công ty.
 // Không chạy luồng mời/OTP gửi email. Mọi tài khoản có sẵn phải đúng mật khẩu seed. Chạy lại nhiều lần không sinh trùng.
 import { assignRole, BUILTIN_ROLES, rolesAndPermissions } from '#src/modules/core/access/index.ts';
 import { hashPassword, register, verifyPassword } from '#src/modules/core/identity/index.ts';
@@ -15,8 +15,8 @@ import { inTransaction } from '#src/shared/db/client.ts';
 import { AppError } from '#src/shared/errors/app-error.ts';
 import { OPTIONAL_MODULES } from '#src/modules/core/index.ts';
 
-type StaffRole = 'admin' | 'sale' | 'kho' | 'buyer';
-const STAFF_ROLES: readonly StaffRole[] = ['admin', 'sale', 'kho', 'buyer'];
+type StaffRole = 'admin' | 'sale' | 'kho';
+const STAFF_ROLES: readonly StaffRole[] = ['admin', 'sale', 'kho'];
 interface SeedAccount {
   email: string;
   fullName: string;
@@ -42,7 +42,6 @@ export function defaultDemo(password: string): SeedDemoInput {
       admin: { email: 'admin@commerio.dev', fullName: 'Admin Demo' },
       sale: { email: 'sale@commerio.dev', fullName: 'Sale Demo' },
       kho: { email: 'kho@commerio.dev', fullName: 'Kho Demo' },
-      buyer: { email: 'mua@commerio.dev', fullName: 'Mua hàng Demo' },
     },
   };
 }
@@ -60,10 +59,10 @@ export function blackboxCompanies(password: string): SeedDemoInput[] {
         admin: account('qa-admin', 'QA Quản Trị A'),
         sale: account('qa-sale', 'QA Bán Hàng A'),
         kho: account('qa-kho', 'QA Thủ Kho A'),
-        buyer: account('qa-mua', 'QA Mua Hàng A'),
       },
-      // Test gắn thêm vai trò tuỳ biến có cả quyền lập và duyệt đề nghị nhập (ca người thứ hai, không phải CEO).
-      extraStaff: [{ role: 'buyer', account: account('qa-truong-mua', 'QA Trưởng Mua Hàng A') }],
+      // Nhân viên kho thứ hai: ghi sổ phiếu nhận thay người lập đề nghị (A2-01p), và test gắn thêm vai trò tuỳ biến có cả
+      // quyền lập và duyệt đề nghị nhập (ca người thứ hai, không phải CEO).
+      extraStaff: [{ role: 'kho', account: account('qa-truong-kho', 'QA Trưởng Kho A') }],
     },
     {
       company: { name: 'Công ty QA Hộp Đen B', taxCode: '0300000121' },

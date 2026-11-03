@@ -12,7 +12,6 @@ const ROLE_OF: Record<Exclude<Role, 'lead' | 'ceoB'>, keyof typeof BUILTIN_ROLES
   admin: 'admin',
   sale: 'sale',
   kho: 'kho',
-  buyer: 'buyer',
 };
 
 /** Route đọc và quyền mở nó (`anyOf` thì liệt kê đủ). */
