@@ -51,6 +51,7 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
   const available = availableQty(onHand, reserved, locked);
   const avgCost = level?.avgCost ?? '0';
   const minQty = level?.minQty ?? null;
+  const shortage = 0;
   return {
     variantId: v.id,
     productId: v.productId,
@@ -64,10 +65,10 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
     available,
     quarantine: level?.quarantine ?? 0,
     incoming,
-    shortage: 0,
+    shortage,
     negative: level?.invariantBroken ?? false,
     minQty,
-    belowMin: isBelowMin(available, minQty),
+    belowMin: isBelowMin({ available, incoming, shortage, minQty, businessStatus: v.businessStatus }),
     state: stockState(available, minQty),
     reorderVersion: level?.version ?? 0,
     avgCost: viewer.canCost ? toDong(avgCost) : null,
