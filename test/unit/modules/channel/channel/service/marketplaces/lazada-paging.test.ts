@@ -28,15 +28,21 @@ function fakeLazada(updated: Map<string, number>, inclusive: boolean, afterCall?
 async function drain(updated: Map<string, number>, inclusive: boolean, afterCall?: (n: number) => void) {
   const adapter = createLazadaAdapter(config, fakeLazada(updated, inclusive, afterCall));
   const seen: string[] = [];
+  let last: Date | undefined;
   let cursor: string | null = null;
   let pages = 0;
+  let safeUntil: Date | null = null;
   do {
     const page = await adapter.listOrders!('t', new Date(base - 120_000), cursor);
     seen.push(...page.orders.map((o) => o.externalOrderId));
+    if (page.safeUntil && (!safeUntil || page.safeUntil < safeUntil)) safeUntil = page.safeUntil;
+    // Hợp đồng: đơn trả về không giảm theo `updatedAt` qua các trang.
+    for (const o of page.orders) if (last && o.updatedAt < last) throw new Error('đơn trả về giảm theo updatedAt');
+    last = page.orders.at(-1)?.updatedAt ?? last;
     cursor = page.nextCursor;
     if (++pages > 50) throw new Error('không dừng');
   } while (cursor);
-  return { seen, pages };
+  return { seen, pages, safeUntil };
 }
 
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `O${String(i + 1).padStart(3, '0')}`);
@@ -62,8 +68,27 @@ describe('Lazada: lật trang kéo đơn theo con trỏ (#218)', () => {
 
   it('hơn 100 đơn cùng một giây: vẫn lật hết và dừng', async () => {
     const updated = new Map(ids(250).map((id, i) => [id, i < 230 ? base : base + (i - 229) * 1000]));
-    const { seen } = await drain(updated, true);
+    const { seen, safeUntil } = await drain(updated, true);
     expect(seen).toEqual(ids(250));
+    expect(safeUntil).toBeNull();
+  });
+
+  // Review PR #257: lật offset trong nhóm cùng giây mà một đơn của nhóm đổi thì đơn sau dồn lên, sót một đơn. Adapter
+  // không tránh được trong lượt này, nhưng phải báo `safeUntil` <= giây của nhóm để bên gọi giữ mốc, lượt sau đọc lại.
+  // Lật offset gối một đơn nên một đơn đổi không sót; hai đơn đổi thì sót. Cả hai ca đều phải báo `safeUntil`.
+  it.each([
+    [true, ['O010']],
+    [false, ['O010']],
+    [true, ['O010', 'O020']],
+    [false, ['O010', 'O020']],
+  ])('nhóm hơn 100 đơn cùng giây, đơn trong nhóm đổi giữa chừng: báo mốc an toàn tại giây của nhóm (lấy cả mốc: %s, đổi %j)', async (inclusive, changed) => {
+    const updated = new Map(ids(250).map((id, i) => [id, i < 230 ? base : base + (i - 229) * 1000]));
+    const { seen, safeUntil } = await drain(updated, inclusive, (n) => {
+      if (n === 2) for (const id of changed) updated.set(id, base + 3600_000);
+    });
+    expect(safeUntil!.getTime()).toBeLessThanOrEqual(base);
+    if (changed.length === 1) expect(new Set(seen)).toEqual(new Set(ids(250)));
+    expect(seen).toContain('O250');
   });
 
   it('cửa sổ rỗng: một lần gọi, không có con trỏ', async () => {

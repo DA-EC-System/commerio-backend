@@ -134,7 +134,7 @@ describe('Lazada: kéo đơn (#105)', () => {
       const fn = vi.fn().mockResolvedValueOnce(limit()).mockResolvedValueOnce(json({ code: '0', data: { countTotal: 0, orders: [] } }));
       const ok = createLazadaAdapter(config, fn).listOrders!('t', new Date(), null);
       await vi.advanceTimersByTimeAsync(1500);
-      await expect(ok).resolves.toEqual({ orders: [], nextCursor: null });
+      await expect(ok).resolves.toEqual({ orders: [], nextCursor: null, safeUntil: null });
 
       const fn2 = vi.fn().mockImplementation(async () => limit());
       const fail = createLazadaAdapter(config, fn2).listOrders!('t', new Date(), null);
