@@ -3,6 +3,8 @@ import { canSelfApprove, publishEvent, recordTransition } from '../../../core/in
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { createPurchaseProducts } from '../../catalog/index.ts';
+import { recheckThresholds } from '../../inventory/index.ts';
+import { countsIncoming, variantIdsOf } from '../domain/request.ts';
 import { purchaseRequestMachine, REQUEST_USER_ACTIONS } from '../domain/request-machine.ts';
 import { findLines, findRequest, type LineRow, receiptsOf, type RequestRow, updateLine, updateRequest } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
@@ -100,6 +102,8 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
 
     await updateRequest(id, set);
     await recordTransition({ entityType: ENTITY, entityId: id, from: row.status, to, action, actorId: actor.accountId, reason });
+    // Vào hoặc ra Đã đặt, Nhận một phần thì đang về của các SKU đổi: xét lại ngưỡng (Documents/25 mục 7.5).
+    if (countsIncoming(row.status) || countsIncoming(to)) await recheckThresholds(variantIdsOf(lines));
     if (action === 'submit' || action === 'resubmit') {
       await publishEvent({ type: 'purchasing.request_submitted', aggregateId: id, payload: { requestId: id, number: row.number } });
     }

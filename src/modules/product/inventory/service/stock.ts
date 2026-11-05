@@ -6,6 +6,7 @@ import type { VariantSummary } from '../../catalog/index.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { toDong } from '../domain/stock.ts';
 import { allLevels, findLevel, latestMoves, lockLevel, setMinQty } from '../repository/levels.ts';
+import { recheckThresholds } from './thresholds.ts';
 import { type IncomingLookup, namesOf, notFound, toStockLevel, type Viewer } from './views.ts';
 
 const MOVES_LIMIT = 100;
@@ -123,6 +124,8 @@ export async function setReorderRule(
         before: level.minQty === null ? null : { minQty: level.minQty },
         after: input.minQty === null ? null : { minQty: input.minQty },
       });
+      // Đặt ngưỡng khi đã ở dưới thì báo ngay; bỏ ngưỡng thì tắt cờ (V31).
+      await recheckThresholds([variant.id]);
     }
     return toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming);
   });

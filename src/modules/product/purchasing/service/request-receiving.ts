@@ -1,7 +1,8 @@
 // Phiếu nhận tác động lên đề nghị (spec #109 mục 6.5 bước 9, 6.6, Q6): nhận một phần, nhận xong, đóng thiếu, tự Đã xử lý
 // phiếu thiếu. Chạy trong giao dịch của bên gọi, sau khi đã khoá bản ghi đề nghị.
 import { assertTransition, recordTransition } from '../../../core/index.ts';
-import { outstanding } from '../domain/request.ts';
+import { recheckThresholds } from '../../inventory/index.ts';
+import { outstanding, variantIdsOf } from '../domain/request.ts';
 import { purchaseRequestMachine } from '../domain/request-machine.ts';
 import { shortReceiptsOf, updateReceipt } from '../repository/receipts.ts';
 import { findLines, type LineRow, receiptsOf, type RequestRow, updateLine, updateRequest } from '../repository/requests.ts';
@@ -79,4 +80,5 @@ export async function closeShortRequest(actor: Actor, request: RequestRow, reaso
   await updateRequest(request.id, { status: to, closedBy: actor.accountId, closedAt: new Date(), statusReason: reason });
   await recordTransition({ entityType: ENTITY, entityId: request.id, from: request.status, to, action: 'close_short', actorId: actor.accountId, reason });
   await autoResolveShort(request.id, { kind: 'close_short', note: reason!, by: actor.accountId });
+  await recheckThresholds(variantIdsOf(lines));
 }

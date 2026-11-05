@@ -6,6 +6,7 @@ import { availableQty, breaksInvariant, weightedAvgCost, worsens } from '../doma
 import { companyOfTransaction, insertMoves, lockLevel, type NewMove, saveLevel } from '../repository/levels.ts';
 import type { stockSourceType } from '../repository/schema.ts';
 import { lockedOf } from './port.ts';
+import { recheckThresholds } from './thresholds.ts';
 
 export type StockSourceType = (typeof stockSourceType.enumValues)[number];
 
@@ -90,6 +91,7 @@ export async function applyMoves(source: { type: StockSourceType; id: string }, 
       payload: { variantId, onHand, reserved, available: availableQty(onHand, reserved, lockedOf(variantId)) },
     });
   }
+  await recheckThresholds([...touched]);
 }
 
 export interface ReceivedLine {
