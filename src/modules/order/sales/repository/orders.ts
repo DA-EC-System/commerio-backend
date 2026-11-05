@@ -1,4 +1,4 @@
-import { and, count, eq, notInArray, sql } from 'drizzle-orm';
+import { and, count, eq, getTableColumns, notInArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { OrderStatus } from '../domain/order.ts';
 import { docCounters, orderLines, orders } from './schema.ts';
@@ -13,6 +13,12 @@ export interface MarketplaceOrderRow {
   cancelRequested: boolean;
   cancelling: boolean;
   platformCancelled: boolean;
+  shippingAddress: unknown;
+  platformPaymentMethod: string | null;
+  buyerNote: string | null;
+  shippingFeeOriginal: string | null;
+  shippingFeeDiscountSeller: string | null;
+  shippingFeeDiscountPlatform: string | null;
 }
 
 const rowColumns = {
@@ -25,7 +31,32 @@ const rowColumns = {
   cancelRequested: orders.cancelRequested,
   cancelling: orders.cancelling,
   platformCancelled: orders.platformCancelled,
+  shippingAddress: orders.shippingAddress,
+  platformPaymentMethod: orders.platformPaymentMethod,
+  buyerNote: orders.buyerNote,
+  shippingFeeOriginal: orders.shippingFeeOriginal,
+  shippingFeeDiscountSeller: orders.shippingFeeDiscountSeller,
+  shippingFeeDiscountPlatform: orders.shippingFeeDiscountPlatform,
 };
+
+/** Cột mô tả của dòng sàn (#260): kéo lại thì ghi đè; biến thể, số lượng, tiền gốc giữ như lúc tạo. */
+export const LINE_INFO_COLUMNS = [
+  'thumbnailUrl',
+  'attributesLabel',
+  'externalSkuId',
+  'externalShopSku',
+  'externalProductId',
+  'paidPrice',
+  'taxAmount',
+  'shippingAmount',
+  'walletCredits',
+  'cancelReason',
+  'cancelReasonDetail',
+  'cancelInitiator',
+  'cancelKind',
+  'reverseOrderId',
+  'returnStatus',
+] as const;
 
 /** Đơn sàn theo mã đơn sàn, khoá dòng tới hết giao dịch. */
 export async function lockMarketplaceOrder(shopId: string, externalOrderId: string): Promise<MarketplaceOrderRow | undefined> {
@@ -56,7 +87,10 @@ export async function updateOrder(id: string, patch: Partial<typeof orders.$infe
     .where(eq(orders.id, id));
 }
 
-/** Chèn dòng đơn sàn chưa có (theo mã món sàn); trả id của mọi dòng theo mã món. */
+/**
+ * Chèn dòng đơn sàn chưa có (theo mã món sàn); dòng đã có chỉ cập nhật cột mô tả khi khác (không tăng `version` nếu
+ * không đổi). Trả id của mọi dòng theo mã món.
+ */
 export async function upsertMarketplaceLines(
   orderId: string,
   lines: readonly Omit<typeof orderLines.$inferInsert, 'companyId' | 'orderId'>[],
@@ -64,10 +98,21 @@ export async function upsertMarketplaceLines(
   const db = getDb();
   if (lines.length) {
     const companyId = requireCompanyId('upsertMarketplaceLines');
+    const cols = getTableColumns(orderLines);
+    const own = sql.join(LINE_INFO_COLUMNS.map((k) => sql`${orderLines}.${sql.identifier(cols[k].name)}`), sql`, `);
+    const incoming = sql.join(LINE_INFO_COLUMNS.map((k) => sql`excluded.${sql.identifier(cols[k].name)}`), sql`, `);
     await db
       .insert(orderLines)
       .values(lines.map((l) => ({ ...l, companyId, orderId })))
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: [orderLines.orderId, orderLines.externalLineId],
+        set: {
+          ...Object.fromEntries(LINE_INFO_COLUMNS.map((k) => [k, sql.raw(`excluded.${cols[k].name}`)])),
+          version: sql`${orderLines.version} + 1`,
+          updatedAt: sql`now()`,
+        },
+        setWhere: sql`(${own}) is distinct from (${incoming})`,
+      });
   }
   const rows = await db
     .select({ id: orderLines.id, externalLineId: orderLines.externalLineId })

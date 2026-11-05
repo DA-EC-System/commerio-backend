@@ -12,6 +12,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
 import { fakeAdapter } from '../../channel/channel/helpers.ts';
+import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 // Sàn giả: lý do huỷ, huỷ, quyết định yêu cầu huỷ. `refuse` bật thì sàn từ chối huỷ.
 let refuse = false;
@@ -72,6 +73,7 @@ function remote(status: PlatformOrder['lines'][number]['status'], o: Partial<Pla
     shippingAddress: null,
     shippingFee: '0',
     cancelRequested: false,
+    info: noOrderInfo,
     lines: [
       {
         externalLineId: `${id}-1`,
@@ -85,6 +87,8 @@ function remote(status: PlatformOrder['lines'][number]['status'], o: Partial<Pla
         trackingCode: null,
         rawStatus: String(status),
         status,
+        info: noLineInfo,
+        shipping: noShipping,
       },
     ],
     ...o,

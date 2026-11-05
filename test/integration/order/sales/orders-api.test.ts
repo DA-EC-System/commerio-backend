@@ -8,6 +8,7 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -28,6 +29,7 @@ function order(id: string, lines: { variantId: string | null; status: PlatformOr
     shippingAddress: { name: 'K***h', phone: '84****22', address: 'P**a' },
     shippingFee: '15000',
     cancelRequested: false,
+    info: noOrderInfo,
     lines: lines.map((l, i) => ({
       externalLineId: `${id}-${i}`,
       variantId: l.variantId,
@@ -40,6 +42,8 @@ function order(id: string, lines: { variantId: string | null; status: PlatformOr
       trackingCode: null,
       rawStatus: String(l.status),
       status: l.status,
+      info: noLineInfo,
+      shipping: noShipping,
     })),
     ...o,
   } satisfies PlatformOrder;
