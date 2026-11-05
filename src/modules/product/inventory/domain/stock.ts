@@ -40,25 +40,37 @@ export function worsens(before: { onHand: number }, after: { onHand: number; res
   return after.onHand < before.onHand && breaksInvariant(after.onHand, after.reserved);
 }
 
-/** Khả dụng dưới ngưỡng; chưa đặt ngưỡng thì không bao giờ dưới (K7). */
-export function isBelowMin(available: number, minQty: number | null): boolean {
-  return minQty !== null && available < minQty;
-}
-
-/** Nhãn tồn của dòng (Documents/21 mục 15.1): hết hàng khi khả dụng ≤ 0, sắp hết khi dưới ngưỡng (K7). */
-export function stockState(available: number, minQty: number | null): 'in_stock' | 'low' | 'out' {
-  if (available <= 0) return 'out';
-  return isBelowMin(available, minQty) ? 'low' : 'in_stock';
+/** Các số để xét ngưỡng của một SKU (Documents/25 mục 7.5). */
+export interface ThresholdInput {
+  available: number;
+  /** Đang về: còn chờ của đề nghị nhập đã đặt NCC. */
+  incoming: number;
+  /** Còn thiếu cho đơn: phần kiện thiếu hàng chưa có hàng. */
+  shortage: number;
+  minQty: number | null;
+  businessStatus: 'selling' | 'paused' | 'discontinued' | 'archived';
 }
 
 /**
- * Cảnh báo dưới ngưỡng phát một lần khi vừa xuống dưới (`alertActive` false → true); lên lại ≥ ngưỡng hoặc bỏ
- * ngưỡng thì tắt để lần xuống sau phát lại (V31).
+ * Dưới ngưỡng khi `có thể bán + đang về − còn thiếu cho đơn ≤ ngưỡng`; chưa đặt ngưỡng, SKU ngừng bán hoặc lưu trữ
+ * thì không (Documents/25 mục 7.5, Documents/21 mục 15.1).
  */
-export function nextAlertState(state: { available: number; minQty: number | null; alertActive: boolean }): {
-  alertActive: boolean;
-  fire: boolean;
-} {
-  const below = isBelowMin(state.available, state.minQty);
+export function isBelowMin(s: ThresholdInput): boolean {
+  if (s.minQty === null || s.businessStatus === 'discontinued' || s.businessStatus === 'archived') return false;
+  return s.available + s.incoming - s.shortage <= s.minQty;
+}
+
+/** Nhãn tồn (Documents/25 mục 7.2): hết hàng khi có thể bán ≤ 0, sắp hết khi 0 < có thể bán ≤ ngưỡng. */
+export function stockState(available: number, minQty: number | null): 'in_stock' | 'low' | 'out' {
+  if (available <= 0) return 'out';
+  return minQty !== null && available <= minQty ? 'low' : 'in_stock';
+}
+
+/**
+ * Cảnh báo dưới ngưỡng phát một lần khi vừa chạm ngưỡng (`alertActive` false → true); lên lại trên ngưỡng hoặc bỏ
+ * ngưỡng thì tắt để lần chạm sau phát lại (V31, Documents/25 mục 7.5).
+ */
+export function nextAlertState(state: ThresholdInput & { alertActive: boolean }): { alertActive: boolean; fire: boolean } {
+  const below = isBelowMin(state);
   return { alertActive: below, fire: below && !state.alertActive };
 }

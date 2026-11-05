@@ -27,6 +27,9 @@ Mọi thay đổi `on_hand`, `quarantine` đi qua lõi `applyMoves`; lõi không
 - tính lại giá vốn khi nhập `on_hand` có giá; tồn trước khi nhập ≤ 0 thì giá vốn bằng giá nhập;
 - bất biến "không làm tệ hơn" (`domain/stock.ts` `worsens`): chặn khi tồn thực giảm mà vỡ bất biến, hoặc chờ xử lý âm (`InsufficientStock`); tăng thì luôn qua và tự tắt `invariant_broken` khi bất biến đúng lại;
 - phát `inventory.stock_changed { variantId, onHand, reserved, available }` một lần cho mỗi SKU có move `on_hand`. Payload là số tuyệt đối: bên nghe đọc lại `availableOf`, không cộng dồn.
+- xét lại ngưỡng các SKU có move `on_hand` (`recheckThresholds`).
+
+**Cảnh báo dưới ngưỡng** (V31, Documents/25 mục 7.5, `service/thresholds.ts`): dưới ngưỡng khi `có thể bán + đang về − còn thiếu cho đơn ≤ ngưỡng`, trừ SKU ngừng bán, lưu trữ. Chạm ngưỡng thì bật `alert_active` và phát `inventory.below_threshold` một lần; lên trên ngưỡng mới tắt. Xét lại khi ghi sổ, khi đặt ngưỡng, và khi purchasing đổi đang về (đề nghị vào/ra Đã đặt, Nhận một phần; ghi sổ phiếu nhận; đóng thiếu). Đang về lấy qua `setIncomingSource` do `product/index.ts` nối. Chưa xét lại khi catalog đổi trạng thái kinh doanh của SKU; `reserve`, `release` khi có thân phải gọi `recheckThresholds`.
 
 Không tự chống gọi lặp: bên gọi chặn bằng chuyển trạng thái chứng từ có điều kiện trong cùng giao dịch.
 
@@ -35,6 +38,7 @@ Không tự chống gọi lặp: bên gọi chặn bằng chuyển trạng thái
 Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/2026-10-28-111-cong-ton-ghi-so-design.md`).
 - `receiveGoods(receiptId, lines, actorId)`: phiếu nhận ghi sổ (#109); đạt vào tồn thực theo giá nhập, lỗi vào chờ xử lý (giá lưu trên thẻ kho, không vào giá vốn).
 - `availableOf(variantIds)`: khả dụng của biến thể thuộc công ty; id lạ không có trong Map. Channel đẩy số này lên sàn.
+- `recheckThresholds(variantIds)`: purchasing gọi sau khi đang về đổi.
 - `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).
 - `reserve`, `release`, `ship`, `reverseShipment`, `receiveBack` (Documents/21 mục 11.1): chữ ký đã chốt, hiện trả 501 `not_implemented` tới PR sau của #111.

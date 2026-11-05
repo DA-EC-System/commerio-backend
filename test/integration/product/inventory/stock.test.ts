@@ -6,6 +6,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { revokePermission } from '../../helpers/state.ts';
+import { createSupplier, orderedRequest } from '../purchasing/helpers.ts';
 import { archiveVariant, inv, receive, setBuckets } from './helpers.ts';
 
 // API tồn và ngưỡng /inventory/stock (Documents/21 mục 15.1, 15.2; K3, V29–V33).
@@ -155,6 +156,24 @@ describe('chi tiết tồn', () => {
 });
 
 describe('ngưỡng tồn', () => {
+  it('dưới ngưỡng tính cả đang về; bằng ngưỡng là dưới và Sắp hết; SKU ngừng bán thì không (Documents/25 mục 7.2, 7.5)', async () => {
+    const c = await createCompany();
+    const kho = (await addMember(c.companyId, 'warehouse')).token;
+    const [x, y, z] = [await createVariant(c.companyId), await createVariant(c.companyId), await createVariant(c.companyId)];
+    for (const v of [x, y, z]) {
+      await receive(c.companyId, v.variantId, 5, 1000);
+      await inv(c.ceo.token).put(`/stock/${v.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+    }
+    const supplier = await createSupplier(c.ceo.token);
+    await orderedRequest({ requester: kho, ceo: c.ceo.token }, supplier.id, [{ variantId: y.variantId, quantity: 1, unitCost: 1000 }]);
+    await testPool().query("update product.product_variants set business_status = 'discontinued' where id = $1", [z.variantId]);
+    const items = (await inv(c.ceo.token).get('/stock')).body.items as { variantId: string; incoming: number; belowMin: boolean; state: string }[];
+    const by = Object.fromEntries(items.map((i) => [i.variantId, i]));
+    expect(by[x.variantId]).toMatchObject({ incoming: 0, belowMin: true, state: 'low' });
+    expect(by[y.variantId]).toMatchObject({ incoming: 1, belowMin: false, state: 'low' });
+    expect(by[z.variantId]).toMatchObject({ belowMin: false });
+  });
+
   it('đặt ngưỡng khi chưa có dòng tồn (version 0): belowMin, ghi nhật ký trước/sau', async () => {
     const { variantId: v } = await createVariant(A.companyId);
     const res = await inv(A.ceo).put(`/stock/${v}/reorder-rule`, { minQty: 5, version: 0 });

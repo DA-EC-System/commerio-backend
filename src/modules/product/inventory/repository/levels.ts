@@ -16,6 +16,7 @@ export interface LevelRow {
   avgCost: string;
   minQty: number | null;
   invariantBroken: boolean;
+  alertActive: boolean;
   version: number;
 }
 
@@ -27,6 +28,7 @@ const levelCols = {
   avgCost: stockLevels.avgCost,
   minQty: stockLevels.minQty,
   invariantBroken: stockLevels.invariantBroken,
+  alertActive: stockLevels.alertActive,
   version: stockLevels.version,
 };
 
@@ -47,6 +49,25 @@ export async function lockLevel(variantId: string): Promise<LevelRow & { created
     .where(and(eq(stockLevels.companyId, companyId), eq(stockLevels.variantId, variantId)))
     .for('update');
   return { ...row!, created: inserted.length > 0 };
+}
+
+/** Khoá các dòng tồn đã có (không tạo dòng mới), theo `variantId` tăng dần như lõi ghi sổ. */
+export async function lockExistingLevels(variantIds: readonly string[]): Promise<LevelRow[]> {
+  if (!variantIds.length) return [];
+  return getDb()
+    .select(levelCols)
+    .from(stockLevels)
+    .where(and(eq(stockLevels.companyId, companyOfTransaction()), inArray(stockLevels.variantId, [...variantIds])))
+    .orderBy(stockLevels.variantId)
+    .for('update');
+}
+
+/** Bật, tắt cờ đã báo dưới ngưỡng. Không tăng `version`: `version` là khoá lạc quan của ngưỡng (`reorderVersion`). */
+export async function setAlertActive(variantId: string, alertActive: boolean): Promise<void> {
+  await getDb()
+    .update(stockLevels)
+    .set({ alertActive })
+    .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
 }
 
 export async function findLevel(variantId: string): Promise<LevelRow | null> {

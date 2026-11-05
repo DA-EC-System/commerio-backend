@@ -1,0 +1,1 @@
+ALTER TABLE "product"."stock_levels" ADD COLUMN "alert_active" boolean DEFAULT false NOT NULL;
