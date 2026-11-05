@@ -1,8 +1,8 @@
 // Dữ liệu SKU và số khả dụng từ module `product`, đi qua cổng §11.1 (#104 Q2). Gọi trong `withCompany`.
-// Trường cân nặng, kích thước, mô tả do #110 thêm vào `getVariants`; `availableOf` do #111 export. Chưa có thì đọc
-// ra null / không có số: đẩy sản phẩm báo `dimensions_missing`, tồn đẩy lên là 0.
+// Trường cân nặng, kích thước, mô tả do #110 thêm vào `getVariants`; chưa có thì đọc ra null: đẩy sản phẩm báo
+// `dimensions_missing`. Khả dụng là cổng `availableOf` của inventory (Documents/21 mục 11.1).
 import type { Decimal } from 'decimal.js';
-import { getVariants, standardPricesOf, type VariantSummary } from '../../../product/index.ts';
+import { availableOf, getVariants, standardPricesOf, type VariantSummary } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 
 export interface ListingVariant {
@@ -25,7 +25,7 @@ export interface ProductPort {
   /** Bỏ trống `ids` = mọi biến thể của công ty. */
   variants(ids?: readonly string[]): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
-  /** Biến thể không có trong Map thì coi khả dụng là 0. */
+  /** Có mọi biến thể của công ty (chưa có tồn thì 0); id lạ không có trong Map thì không đẩy tồn (#222). */
   availableOf(ids: readonly string[]): Promise<Map<string, number>>;
 }
 
@@ -57,8 +57,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
     override ?? {
       variants: async (ids) => (await getVariants(ids)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
-      // #111 export `availableOf` thì gọi ở đây.
-      availableOf: async () => new Map(),
+      availableOf,
     }
   );
 }
