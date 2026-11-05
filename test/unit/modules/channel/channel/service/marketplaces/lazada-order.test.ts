@@ -65,8 +65,8 @@ describe('Lazada: kéo đơn (#105)', () => {
   it('listOrders gửi update_after giờ VN, xếp theo updated_at tăng dần, báo còn trang', async () => {
     const page = Array.from({ length: 100 }, (_, i) => ({ ...order, order_id: i }));
     const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: { countTotal: 150, orders: page } }));
-    const res = await createLazadaAdapter(config, fn).listOrders!('t', new Date('2026-10-28T17:00:00Z'), 0);
-    expect(res.hasMore).toBe(true);
+    const res = await createLazadaAdapter(config, fn).listOrders!('t', new Date('2026-10-28T17:00:00Z'), null);
+    expect(res.nextCursor).not.toBeNull();
     expect(res.orders[1]).toEqual({
       externalOrderId: '1',
       placedAt: new Date('2026-10-29T07:41:18Z'),
@@ -132,12 +132,12 @@ describe('Lazada: kéo đơn (#105)', () => {
     try {
       const limit = () => json({ code: 'SellerCallLimit', type: 'ISV', message: 'this ban will last 1 seconds' });
       const fn = vi.fn().mockResolvedValueOnce(limit()).mockResolvedValueOnce(json({ code: '0', data: { countTotal: 0, orders: [] } }));
-      const ok = createLazadaAdapter(config, fn).listOrders!('t', new Date(), 0);
+      const ok = createLazadaAdapter(config, fn).listOrders!('t', new Date(), null);
       await vi.advanceTimersByTimeAsync(1500);
-      await expect(ok).resolves.toEqual({ orders: [], hasMore: false });
+      await expect(ok).resolves.toEqual({ orders: [], nextCursor: null });
 
       const fn2 = vi.fn().mockImplementation(async () => limit());
-      const fail = createLazadaAdapter(config, fn2).listOrders!('t', new Date(), 0);
+      const fail = createLazadaAdapter(config, fn2).listOrders!('t', new Date(), null);
       const check = expect(fail).rejects.toMatchObject({ kind: 'unavailable', platformCode: 'SellerCallLimit' });
       await vi.advanceTimersByTimeAsync(1500);
       await check;

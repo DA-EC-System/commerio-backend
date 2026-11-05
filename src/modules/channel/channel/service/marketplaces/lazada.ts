@@ -101,6 +101,14 @@ const SELLER_LIMIT_WAIT_MS = 1100;
 // GetOrders: `limit` tối đa 100.
 const ORDER_PAGE = 100;
 
+/** Con trỏ kéo đơn (#218): mốc `update_after` (giây), offset trong mốc đó, đơn đã trả: `order_id` → giây `updated_at`. */
+interface OrderCursor {
+  after: number;
+  offset: number;
+  seen: Record<string, number>;
+}
+const epochSec = (d: Date) => Math.floor(d.getTime() / 1000);
+
 // Trạng thái món của Lazada (20 giá trị của GetOrders) → trạng thái kiện của app (#105 A3).
 const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
   unpaid: 'pending',
@@ -382,23 +390,37 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
       await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
     },
-    async listOrders(accessToken, updatedAfter, offset) {
+    // Lật theo cửa sổ `update_after` tăng dần, không theo offset (#218): đơn đổi giữa chừng có `updated_at` mới nên nằm
+    // sau con trỏ. Trang sau gọi từ giây của đơn cuối trang trừ 1 (tài liệu không nói `update_after` có lấy cả mốc) và
+    // bỏ đơn đã trả theo `order_id`. Cả trang trong một giây thì mốc không tiến: giữ mốc, lật `offset`.
+    async listOrders(accessToken, updatedAfter, cursor) {
+      const state: OrderCursor = cursor ? (JSON.parse(cursor) as OrderCursor) : { after: epochSec(updatedAfter), offset: 0, seen: {} };
       const params = {
         access_token: accessToken,
-        update_after: vnTime(updatedAfter),
+        update_after: vnTime(new Date(state.after * 1000)),
         sort_by: 'updated_at',
         sort_direction: 'ASC',
         limit: String(ORDER_PAGE),
-        offset: String(offset),
+        offset: String(state.offset),
       };
       const body = await call(config.apiUrl, '/orders/get', params, 'GET');
       const data = (body.data ?? {}) as { countTotal?: unknown; orders?: Record<string, unknown>[] };
-      const orders = (data.orders ?? []).map((o) => ({
+      const page = (data.orders ?? []).map((o) => ({
         externalOrderId: str(o.order_id),
         placedAt: lazadaTime(o.created_at),
         updatedAt: lazadaTime(o.updated_at),
       }));
-      return { orders, hasMore: offset + orders.length < Number(data.countTotal ?? 0) };
+      const orders = page.filter((o) => state.seen[o.externalOrderId] !== epochSec(o.updatedAt));
+      const last = page.at(-1);
+      if (!last || state.offset + page.length >= Number(data.countTotal ?? 0)) return { orders, nextCursor: null };
+      const seen = { ...state.seen };
+      for (const o of page) seen[o.externalOrderId] = epochSec(o.updatedAt);
+      const after = epochSec(last.updatedAt) - 1;
+      const next: OrderCursor =
+        after > state.after
+          ? { after, offset: 0, seen: Object.fromEntries(Object.entries(seen).filter(([, t]) => t >= after)) }
+          : { after: state.after, offset: state.offset + page.length, seen };
+      return { orders, nextCursor: JSON.stringify(next) };
     },
     async getOrder(accessToken, externalOrderId): Promise<RemoteOrder> {
       type Row = Record<string, unknown>;

@@ -55,7 +55,7 @@ registerAdapter(
     async listOrders() {
       sàn.listOrders();
       if (sàn.ordersUnauthorized) throw new MarketplaceError('unauthorized', 'IllegalAccessToken', 'Invalid token');
-      return { orders: [], hasMore: false };
+      return { orders: [], nextCursor: null };
     },
     getOrder: async () => {
       throw new Error('không có đơn nào để gọi chi tiết');

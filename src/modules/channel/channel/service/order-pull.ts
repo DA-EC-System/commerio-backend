@@ -1,7 +1,7 @@
 // Kéo đơn sàn theo gian hàng (#105 A7): từ mốc `last_order_sync_at` (lần đầu: `order_cutoff_at`) lùi 2 phút, cũ trước,
-// mỗi đơn đổi `updated_at` thì gọi chi tiết rồi giao `order` trong một giao dịch. Gọi sàn ngoài giao dịch. Lỗi giữa
-// chừng thì dừng, mốc ở đơn cuối đã xong; lần sau làm tiếp. Lịch, thử lại, một việc mỗi gian hàng: hàng
-// `channel.order_pull` (#102, `shop-jobs.ts`).
+// lật trang bằng con trỏ của adapter (#218); mỗi đơn đổi `updated_at` thì gọi chi tiết rồi giao `order` trong một giao
+// dịch. Gọi sàn ngoài giao dịch. Lỗi giữa chừng thì dừng, mốc ở đơn cuối đã xong; lần sau làm tiếp. Lịch, thử lại, một
+// việc mỗi gian hàng: hàng `channel.order_pull` (#102, `shop-jobs.ts`).
 import { ingestMarketplaceOrder } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -26,8 +26,9 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
 
   let done: Date | null = null;
   try {
-    for (let offset = 0; ; ) {
-      const page = await onMarketplace(() => adapter.listOrders!(accessToken, since, offset));
+    let cursor: string | null = null;
+    do {
+      const page = await onMarketplace(() => adapter.listOrders!(accessToken, since, cursor));
       const known = await withCompany(companyId, () => findRawOrderTimes(shopId, page.orders.map((o) => o.externalOrderId)));
       for (const ref of page.orders) {
         const seen = known.get(ref.externalOrderId);
@@ -54,11 +55,10 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
           if (res.created) result.created += 1;
           else if (res.changed) result.updated += 1;
         }
-        done = ref.updatedAt;
+        if (!done || ref.updatedAt > done) done = ref.updatedAt;
       }
-      offset += page.orders.length;
-      if (!page.hasMore || !page.orders.length) break;
-    }
+      cursor = page.nextCursor;
+    } while (cursor);
   } finally {
     const at = done;
     if (at) await withCompany(companyId, () => advanceOrderCursor(shopId, at));

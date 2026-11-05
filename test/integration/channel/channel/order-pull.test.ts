@@ -47,10 +47,13 @@ function remoteOrder(id: string, sku: string, status: RemoteOrder['lines'][numbe
 let refs: RemoteOrderRef[] = [];
 let details = new Map<string, RemoteOrder>();
 let failOn: string | null = null;
-const listOrders = vi.fn(async (_t: string, _after: Date, offset: number) => ({
-  orders: refs.slice(offset, offset + 2),
-  hasMore: offset + 2 < refs.length,
-}));
+// Con trỏ của sàn giả: vị trí trang tiếp; `pages` (nếu đặt) là các trang cố định, có thể có trang rỗng giữa chừng.
+let pages: RemoteOrderRef[][] | null = null;
+const listOrders = vi.fn(async (_t: string, _after: Date, cursor: string | null) => {
+  const i = Number(cursor ?? 0);
+  if (pages) return { orders: pages[i]!, nextCursor: i + 1 < pages.length ? String(i + 1) : null };
+  return { orders: refs.slice(i, i + 2), nextCursor: i + 2 < refs.length ? String(i + 2) : null };
+});
 const getOrder = vi.fn(async (_t: string, id: string) => {
   if (id === failOn) throw new MarketplaceError('unavailable', '901');
   return details.get(id)!;
@@ -91,6 +94,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   refs = [];
+  pages = null;
   details = new Map();
   failOn = null;
   listOrders.mockClear();
@@ -125,8 +129,8 @@ describe('kéo đơn theo gian hàng (#105)', () => {
     expect(res.status).toBe(200);
     expect(OrderPullResult.parse(res.body)).toEqual({ pulled: 3, created: 3, updated: 0 });
     expect(listOrders.mock.calls.map((c) => [c[1], c[2]])).toEqual([
-      [at('2026-10-19T23:58:00Z'), 0],
-      [at('2026-10-19T23:58:00Z'), 2],
+      [at('2026-10-19T23:58:00Z'), null],
+      [at('2026-10-19T23:58:00Z'), '2'],
     ]);
     expect(await ordersOfShop()).toEqual([
       { external_order_id: 'P1', status: 'processing', variant_id: variantId },
@@ -168,6 +172,16 @@ describe('kéo đơn theo gian hàng (#105)', () => {
     expect(res.body.type).toMatch(/marketplace_unavailable$/);
     expect((await ordersOfShop()).map((o) => o.external_order_id)).toContain('P4');
     expect(await cursor()).toEqual(at('2026-10-28T01:00:00Z'));
+  });
+
+  it('lật theo con trỏ của adapter, kể cả trang rỗng giữa chừng; mốc tới đơn cuối đã ghi (#218)', async () => {
+    const p6 = remoteOrder('P6', sku, 'pending', at('2026-10-29T01:00:00Z'));
+    const p7 = remoteOrder('P7', sku, 'pending', at('2026-10-29T02:00:00Z'));
+    seed(p6, p7);
+    pages = [[refs[0]!], [], [refs[1]!]];
+    expect((await pull()).body).toEqual({ pulled: 2, created: 2, updated: 0 });
+    expect(listOrders.mock.calls.map((c) => c[2])).toEqual([null, '1', '2']);
+    expect(await cursor()).toEqual(at('2026-10-29T02:00:00Z'));
   });
 
   it('quyền: Sale không có channel.shop.sync 403; tắt Kênh bán 403 module_disabled', async () => {
