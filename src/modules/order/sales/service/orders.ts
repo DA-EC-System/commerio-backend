@@ -12,7 +12,9 @@ import {
   findOrderLines,
   findOrderPage,
   lineFacts,
+  type LineFacts,
   type OrderFilter,
+  type OrderLineRow,
   type OrderViewRow,
   openReturnCounts,
 } from '../repository/order-views.ts';
@@ -37,11 +39,27 @@ export interface SalesContext extends ModuleContext {
 
 const toInt = (money: string | null) => (money === null ? 0 : new Decimal(money).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber());
 const isoOrNull = (d: Date | null) => d?.toISOString() ?? null;
+const intOrNull = (money: string | null) => (money === null ? null : toInt(money));
+
+type StoredAddress = { name: string; phone: string; address: string; ward?: string | null; postCode?: string | null } | null;
+
+/** Nhãn thuộc tính của biến thể trong app ("Đỏ / M"), theo id. */
+async function variantLabels(variantIds: (string | null)[]): Promise<Map<string, string>> {
+  const ids = [...new Set(variantIds.filter((id): id is string => id !== null))];
+  if (!ids.length) return new Map();
+  return new Map((await getVariants(ids)).map((v) => [v.id, v.attributes.map((a) => a.value).join(' / ')]));
+}
+
+/** Thuộc tính sàn trả (`variation`), không có thì của biến thể đã ghép (#260). */
+const attributesOf = (l: Pick<OrderLineRow, 'attributesLabel' | 'variantId'> | undefined, labels: Map<string, string>) =>
+  l?.attributesLabel ?? (l?.variantId ? (labels.get(l.variantId) ?? '') : '');
 
 interface Facts {
   packages: PackageViewRow[];
   lineCount: number;
+  totalQty: number;
   unmapped: boolean;
+  first: LineFacts['first'] | null;
   openReturns: number;
 }
 
@@ -53,7 +71,9 @@ async function factsOf(orderIds: string[]): Promise<Map<string, Facts>> {
       {
         packages: packages.filter((p) => p.orderId === id),
         lineCount: lines.get(id)?.lineCount ?? 0,
+        totalQty: lines.get(id)?.totalQty ?? 0,
         unmapped: lines.get(id)?.unmapped ?? false,
+        first: lines.get(id)?.first ?? null,
         openReturns: returns.get(id) ?? 0,
       },
     ]),
@@ -79,7 +99,7 @@ function stage(o: OrderViewRow, f: Facts, flags: OrderFlag[]): OrderStage {
   return stageOf({ status: o.status, source: o.source, paymentMethod: o.paymentMethod, flags, packages: f.packages.map((p) => p.status) });
 }
 
-function summary(o: OrderViewRow, f: Facts, shops: Map<string, ShopRef>, now: number) {
+function summary(o: OrderViewRow, f: Facts, shops: Map<string, ShopRef>, labels: Map<string, string>, now: number) {
   const flags = flagsOf(o, f, now);
   const live = f.packages.filter((p) => p.status !== 'cancelled');
   const shop = o.shopId ? shops.get(o.shopId) : undefined;
@@ -95,9 +115,19 @@ function summary(o: OrderViewRow, f: Facts, shops: Map<string, ShopRef>, now: nu
     outcome: o.outcome,
     rawMarketplaceStatus: o.rawMarketplaceStatus,
     paymentMethod: o.paymentMethod,
+    platformPaymentMethod: o.platformPaymentMethod,
+    externalOrderId: o.externalOrderId,
+    recipientName: o.customer ? null : (o.shippingAddress as StoredAddress)?.name || null,
     shipBy: isoOrNull(o.shipBy),
     total: toInt(o.total),
     lineCount: f.lineCount,
+    totalQty: f.totalQty,
+    itemsPreview: f.first && {
+      productName: f.first.productName,
+      attributesLabel: attributesOf(f.first, labels),
+      thumbnailUrl: f.first.thumbnailUrl,
+      quantity: f.first.quantity,
+    },
     createdAt: o.createdAt.toISOString(),
     // Đơn sàn do sàn tạo; người lập đơn tay thêm cùng issue đơn tay (#105 A6).
     createdBy: null,
@@ -132,8 +162,11 @@ export async function listOrders(
 
   const { rows, total } = derived ? await findOrderPage(filter, DERIVED_SCAN, 0) : await findOrderPage(filter, q.pageSize, offset);
   const facts = await factsOf(rows.map((r) => r.id));
-  const shops = await shopsOf(ctx, rows.map((r) => r.shopId));
-  const items = rows.map((r) => summary(r, facts.get(r.id)!, shops, now));
+  const [shops, labels] = await Promise.all([
+    shopsOf(ctx, rows.map((r) => r.shopId)),
+    variantLabels([...facts.values()].map((f) => (f.first && !f.first.attributesLabel ? f.first.variantId : null))),
+  ]);
+  const items = rows.map((r) => summary(r, facts.get(r.id)!, shops, labels, now));
   if (!derived) return { items, total, page: q.page, pageSize: q.pageSize };
   const matched = items.filter((s) => (!q.stage || s.display.stage === q.stage) && (q.flag !== 'due_soon' || s.flags.includes('due_soon')));
   return { items: matched.slice(offset, offset + q.pageSize), total: matched.length, page: q.page, pageSize: q.pageSize };
@@ -152,12 +185,9 @@ export async function getOrder(ctx: SalesContext, id: string) {
     getStatusHistory('orders', id),
   ]);
   const f = facts.get(id)!;
-  const variants = new Map(
-    (await getVariants(lines.flatMap((l) => (l.variantId ? [l.variantId] : [])))).map((v) => [v.id, v]),
-  );
-  const label = (variantId: string | null) => (variantId ? (variants.get(variantId)?.attributes.map((a) => a.value).join(' / ') ?? '') : '');
+  const labels = await variantLabels(lines.map((l) => l.variantId));
   const lineById = new Map(lines.map((l) => [l.id, l]));
-  const base = summary(o, f, shops, Date.now());
+  const base = summary(o, f, shops, labels, Date.now());
   const lastDelivered = f.packages.reduce<Date | null>((a, p) => (p.deliveredAt && (!a || p.deliveredAt > a) ? p.deliveredAt : a), null);
   const open = o.status === 'processing';
   const blocker = open
@@ -169,13 +199,23 @@ export async function getOrder(ctx: SalesContext, id: string) {
         now: Date.now(),
       })
     : null;
-  const address = o.shippingAddress as { name: string; phone: string; address: string } | null;
+  const address = o.shippingAddress as StoredAddress;
   return {
     ...base,
-    shippingAddress: address,
+    shippingAddress: address && {
+      name: address.name,
+      phone: address.phone,
+      address: address.address,
+      ward: address.ward ?? null,
+      postCode: address.postCode ?? null,
+    },
     subtotal: toInt(o.subtotal),
     shippingFee: toInt(o.shippingFee),
+    shippingFeeOriginal: intOrNull(o.shippingFeeOriginal),
+    shippingFeeDiscountSeller: intOrNull(o.shippingFeeDiscountSeller),
+    shippingFeeDiscountPlatform: intOrNull(o.shippingFeeDiscountPlatform),
     note: '',
+    buyerNote: o.buyerNote,
     cancelReason: o.cancelReason,
     invoiceNumber: o.invoiceNumber,
     lines: lines.map((l) => ({
@@ -183,11 +223,23 @@ export async function getOrder(ctx: SalesContext, id: string) {
       variantId: l.variantId,
       sku: l.sku ?? l.externalSku ?? '',
       productName: l.productName,
-      attributesLabel: label(l.variantId),
+      attributesLabel: attributesOf(l, labels),
       quantity: l.quantity,
       unitPrice: toInt(l.unitPrice),
       lineTotal: toInt(l.lineTotal),
       externalSku: l.externalSku,
+      thumbnailUrl: l.thumbnailUrl,
+      externalSkuId: l.externalSkuId,
+      externalShopSku: l.externalShopSku,
+      externalProductId: l.externalProductId,
+      paidPrice: intOrNull(l.paidPrice),
+      taxAmount: intOrNull(l.taxAmount),
+      cancelReason: l.cancelReason,
+      cancelReasonDetail: l.cancelReasonDetail,
+      cancelInitiator: l.cancelInitiator,
+      cancelKind: l.cancelKind,
+      reverseOrderId: l.reverseOrderId,
+      returnStatus: l.returnStatus,
     })),
     packages: f.packages.map((p) => {
       const pkgLines = p.lines.map((pl) => {
@@ -196,7 +248,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
           variantId: pl.variantId,
           sku: l?.sku ?? l?.externalSku ?? '',
           productName: l?.productName ?? '',
-          attributesLabel: label(pl.variantId),
+          attributesLabel: attributesOf(l ?? { attributesLabel: null, variantId: pl.variantId }, labels),
           quantity: pl.quantity,
         };
       });
@@ -221,6 +273,9 @@ export async function getOrder(ctx: SalesContext, id: string) {
         trackingCode: p.trackingCode,
         platformPackageCode: p.platformPackageCode,
         carrier: null,
+        shipmentProvider: p.shipmentProvider,
+        shippingProviderType: p.shippingProviderType,
+        promisedShippingAt: isoOrNull(p.promisedShippingAt),
         shipBy: isoOrNull(p.shipBy),
         lines: pkgLines,
         totalQty: pkgLines.reduce((a, l) => a + l.quantity, 0),

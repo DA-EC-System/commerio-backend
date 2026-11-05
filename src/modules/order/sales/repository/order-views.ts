@@ -123,23 +123,43 @@ export async function findOrderLines(orderIds: readonly string[]): Promise<Order
     .orderBy(orderLines.createdAt, orderLines.id);
 }
 
-/** Số dòng và có dòng chưa ghép SKU, theo đơn. */
-export async function lineFacts(orderIds: readonly string[]): Promise<Map<string, { lineCount: number; unmapped: boolean }>> {
+export interface LineFacts {
+  lineCount: number;
+  totalQty: number;
+  unmapped: boolean;
+  /** Dòng đầu (cũ nhất) để hiện ở danh sách (#260). */
+  first: OrderLineRow;
+}
+
+/** Số dòng, tổng số lượng, có dòng chưa ghép SKU và dòng đầu, theo đơn. */
+export async function lineFacts(orderIds: readonly string[]): Promise<Map<string, LineFacts>> {
   if (!orderIds.length) return new Map();
   const db = getDb();
-  const [counts, unmapped] = await Promise.all([
+  const ids = [...orderIds];
+  const [counts, unmapped, firsts] = await Promise.all([
     db
-      .select({ orderId: orderLines.orderId, n: count() })
+      .select({ orderId: orderLines.orderId, n: count(), qty: sql<string>`sum(${orderLines.quantity})` })
       .from(orderLines)
-      .where(inArray(orderLines.orderId, [...orderIds]))
+      .where(inArray(orderLines.orderId, ids))
       .groupBy(orderLines.orderId),
     db
       .selectDistinct({ orderId: orderLines.orderId })
       .from(orderLines)
-      .where(and(inArray(orderLines.orderId, [...orderIds]), isNull(orderLines.variantId))),
+      .where(and(inArray(orderLines.orderId, ids), isNull(orderLines.variantId))),
+    db
+      .selectDistinctOn([orderLines.orderId])
+      .from(orderLines)
+      .where(inArray(orderLines.orderId, ids))
+      .orderBy(orderLines.orderId, orderLines.createdAt, orderLines.id),
   ]);
   const unmappedIds = new Set(unmapped.map((r) => r.orderId));
-  return new Map(counts.map((r) => [r.orderId, { lineCount: Number(r.n), unmapped: unmappedIds.has(r.orderId) }]));
+  const first = new Map(firsts.map((l) => [l.orderId, l]));
+  return new Map(
+    counts.map((r) => [
+      r.orderId,
+      { lineCount: Number(r.n), totalQty: Number(r.qty), unmapped: unmappedIds.has(r.orderId), first: first.get(r.orderId)! },
+    ]),
+  );
 }
 
 /** Số yêu cầu trả còn mở theo đơn (chưa từ chối, chưa đóng). */

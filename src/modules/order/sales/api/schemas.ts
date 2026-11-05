@@ -78,10 +78,21 @@ export const OrderSummary = z
     flags: z.array(z.enum(ORDER_FLAGS)),
     outcome: z.enum(['full', 'partial', 'none']).nullable(),
     rawMarketplaceStatus: z.string().nullable().meta({ description: 'Trạng thái gốc trên sàn, chỉ để hiện (R11)' }),
-    paymentMethod: z.enum(['prepaid', 'cod']).nullable(),
+    paymentMethod: z.enum(['prepaid', 'cod']).nullable().meta({ description: 'Đơn tự bán; đơn sàn null (sàn thu hộ)' }),
+    platformPaymentMethod: z
+      .string()
+      .nullable()
+      .meta({ description: 'Phương thức khách trả trên sàn, giá trị gốc (`COD`, `MIXEDCARD`…); null với đơn tạo tay' }),
+    externalOrderId: z.string().nullable().meta({ description: 'Mã đơn trên sàn' }),
+    recipientName: z.string().nullable().meta({ description: 'Tên người nhận (sàn che một phần), chỉ khi đơn chưa gắn khách' }),
     shipBy: iso.nullable(),
     total: money,
     lineCount: z.number().int(),
+    totalQty: z.number().int().meta({ description: 'Tổng số lượng mọi dòng' }),
+    itemsPreview: z
+      .object({ productName: z.string(), attributesLabel: z.string(), thumbnailUrl: z.string().nullable(), quantity: z.number().int() })
+      .nullable()
+      .meta({ description: 'Dòng đầu của đơn; null khi đơn không có dòng' }),
     createdAt: iso,
     createdBy: z.object({ id: z.uuid(), name: z.string() }).nullable(),
     version: z.number().int(),
@@ -104,6 +115,21 @@ const OrderLine = z
     unitPrice: money,
     lineTotal: money,
     externalSku: z.string().nullable(),
+    thumbnailUrl: z.string().nullable().meta({ description: 'Ảnh SKU trên sàn' }),
+    externalSkuId: z.string().nullable().meta({ description: 'Lazada `sku_id`' }),
+    externalShopSku: z.string().nullable().meta({ description: 'Lazada `shop_sku`' }),
+    externalProductId: z.string().nullable().meta({ description: 'Lazada `product_id`' }),
+    paidPrice: money.nullable().meta({ description: 'Khách trả cho dòng sau giảm giá' }),
+    taxAmount: money.nullable(),
+    cancelReason: z.string().nullable(),
+    cancelReasonDetail: z.string().nullable(),
+    cancelInitiator: z.enum(['buyer', 'seller', 'platform']).nullable(),
+    cancelKind: z
+      .enum(['cancellation', 'return', 'refund', 'failed_delivery'])
+      .nullable()
+      .meta({ description: '`failed_delivery`: giao không thành, không ai huỷ (`cancelInitiator` null)' }),
+    reverseOrderId: z.string().nullable(),
+    returnStatus: z.string().nullable().meta({ description: 'Trạng thái trả, giá trị gốc của sàn' }),
   })
   .strict()
   .meta({ id: 'OrderLine' });
@@ -126,6 +152,9 @@ export const PackageSummary = z
     trackingCode: z.string().nullable(),
     platformPackageCode: z.string().nullable(),
     carrier: z.object({ code: z.string(), name: z.string() }).nullable().meta({ description: 'Chọn lúc đóng gói (#106)' }),
+    shipmentProvider: z.string().nullable().meta({ description: 'Đơn vị vận chuyển sàn trả' }),
+    shippingProviderType: z.string().nullable().meta({ description: 'Gói giao của sàn (`standard`, `seller_own_fleet`…)' }),
+    promisedShippingAt: iso.nullable().meta({ description: 'Hạn sàn hứa gửi; null khi sàn không trả' }),
     shipBy: iso.nullable(),
     lines: z.array(
       z.object({ variantId: z.uuid().nullable(), sku: z.string(), productName: z.string(), attributesLabel: z.string(), quantity: z.number().int() }),
@@ -153,10 +182,22 @@ const StatusChange = z
   .strict();
 
 export const Order = OrderSummary.extend({
-  shippingAddress: z.object({ name: z.string(), phone: z.string(), address: z.string() }).nullable(),
+  shippingAddress: z
+    .object({
+      name: z.string(),
+      phone: z.string(),
+      address: z.string(),
+      ward: z.string().nullable().meta({ description: 'Phường; sàn che tỉnh, đường, không còn quận' }),
+      postCode: z.string().nullable(),
+    })
+    .nullable(),
   subtotal: money,
   shippingFee: money,
+  shippingFeeOriginal: money.nullable(),
+  shippingFeeDiscountSeller: money.nullable(),
+  shippingFeeDiscountPlatform: money.nullable(),
   note: z.string(),
+  buyerNote: z.string().nullable().meta({ description: 'Ghi chú khách để lại trên sàn' }),
   cancelReason: z.string().nullable(),
   invoiceNumber: z.string().nullable(),
   lines: z.array(OrderLine),
