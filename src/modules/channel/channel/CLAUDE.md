@@ -35,7 +35,7 @@ Máy trạng thái ở `domain/listing.ts` (§18.3, cùng bảng FE). Mỗi lầ
 - **Consumer** `inventory.stock_changed` (`channel-stock-push`) chỉ đánh dấu `stock_sync = pending` (ghi DB, đúng một lần); lần `sync` sau mới gọi sàn, không gọi sàn trong giao dịch của consumer.
 - **Thiết lập lần đầu** (`service/setup.ts`, §18.2): gợi ý SKU sàn có SellerSku trùng SKU Commerio, tạo listing `live`, đẩy khả dụng, `finish_setup`. Chỉ chế độ `push`; `stocktake` cần phiếu kiểm kê (#112).
 - **Ngắt kèm `zeroStock`**: route gọi `pushZeroStock` trước khi ngắt; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt.
-- **Cổng sang `product`** (`service/product-port.ts`): `getVariants`, `standardPricesOf`. Cân nặng, kích thước, mô tả chờ #110 thêm vào `getVariants` (tới đó đẩy báo `dimensions_missing`); `availableOf` chờ #111 (tới đó tồn đẩy lên là 0). Test thay bằng `setProductPort`.
+- **Cổng sang `product`** (`service/product-port.ts`): `getVariants`, `standardPricesOf`, `availableOf` của inventory (#222). Cân nặng, kích thước, mô tả chờ #110 thêm vào `getVariants` (tới đó đẩy báo `dimensions_missing`). Biến thể không có trong Map của `availableOf` thì đồng bộ không gửi tồn, giữ `stock_sync = pending`. Test thay bằng `setProductPort`; `stock-push.test.ts` chạy cổng thật.
 
 Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `SkuId` (SellerSku bị bỏ); lỗi nghiệp vụ sản phẩm cũng mang `type: ISP`, chỉ `6`, `901`, `1000`, `4154` là lỗi tạm; POST mang payload gửi bằng form body.
 

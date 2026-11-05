@@ -72,22 +72,27 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     prices: await port.standardPrices(ids),
     available: await port.availableOf(ids),
   }));
-  const items: PriceQuantity[] = due.map((r) => {
-    const price = prices.get(r.variantId!);
-    return {
-      externalProductId: r.externalProductId!,
-      externalSkuId: r.externalSkuId!,
+  // Biến thể không có trong Map (đã xoá, công ty khác) thì không đẩy tồn, giữ `stock_sync = pending`, không coi là 0.
+  const batch = due.flatMap((row) => {
+    const price = prices.get(row.variantId!);
+    const quantity = available.get(row.variantId!);
+    if (!price && quantity === undefined) return [];
+    const item: PriceQuantity = {
+      externalProductId: row.externalProductId!,
+      externalSkuId: row.externalSkuId!,
       ...(price && { price: price.toFixed(0) }),
-      quantity: available.get(r.variantId!) ?? 0,
+      ...(quantity !== undefined && { quantity }),
     };
+    return [{ row, item }];
   });
+  if (!batch.length) return summary;
+  const items = batch.map((b) => b.item);
   const results = new Map(
     (await onMarketplace(() => adapter.updatePriceQuantity(accessToken, items))).map((x) => [x.externalSkuId, x]),
   );
   const at = new Date();
   await inCompany(async () => {
-    for (const [i, row] of due.entries()) {
-      const item = items[i]!;
+    for (const { row, item } of batch) {
       const result = results.get(row.externalSkuId!);
       summary.pushed++;
       if (result?.ok) {
@@ -131,9 +136,7 @@ export async function pushZeroStock(actor: Actor, shopId: string): Promise<void>
 
 function synced(item: PriceQuantity, at: Date): ListingPatch {
   return {
-    stockSync: 'synced',
-    stockSyncError: null,
-    platformStock: item.quantity ?? null,
+    ...(item.quantity !== undefined && { stockSync: 'synced', stockSyncError: null, platformStock: item.quantity }),
     ...(item.price === undefined
       ? { priceSync: 'error', priceSyncError: { code: 'price_missing', message: 'Chưa có giá chuẩn', at: at.toISOString() } }
       : { priceSync: 'synced', priceSyncError: null, listedPrice: item.price }),
@@ -144,8 +147,7 @@ function synced(item: PriceQuantity, at: Date): ListingPatch {
 /** Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. */
 function failed(error: SyncError, item: PriceQuantity): ListingPatch {
   return {
-    stockSync: 'error',
-    stockSyncError: error,
+    ...(item.quantity !== undefined && { stockSync: 'error', stockSyncError: error }),
     ...(item.price !== undefined && { priceSync: 'error', priceSyncError: error }),
   };
 }
