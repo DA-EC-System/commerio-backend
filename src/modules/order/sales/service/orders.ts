@@ -12,7 +12,6 @@ import {
   findOrderLines,
   findOrderPage,
   lineFacts,
-  type LineFacts,
   type OrderFilter,
   type OrderLineRow,
   type OrderViewRow,
@@ -51,15 +50,15 @@ async function variantLabels(variantIds: (string | null)[]): Promise<Map<string,
 }
 
 /** Thuộc tính sàn trả (`variation`), không có thì của biến thể đã ghép (#260). */
-const attributesOf = (l: Pick<OrderLineRow, 'attributesLabel' | 'variantId'> | undefined, labels: Map<string, string>) =>
-  l?.attributesLabel ?? (l?.variantId ? (labels.get(l.variantId) ?? '') : '');
+const attributesOf = (l: Pick<OrderLineRow, 'attributesLabel' | 'variantId'>, labels: Map<string, string>) =>
+  l.attributesLabel ?? (l.variantId ? (labels.get(l.variantId) ?? '') : '');
 
 interface Facts {
   packages: PackageViewRow[];
   lineCount: number;
   totalQty: number;
   unmapped: boolean;
-  first: LineFacts['first'] | null;
+  first: OrderLineRow | null;
   openReturns: number;
 }
 

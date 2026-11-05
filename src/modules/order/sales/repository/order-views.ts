@@ -114,13 +114,19 @@ export async function findOrder(id: string): Promise<OrderViewRow | undefined> {
 
 export type OrderLineRow = typeof orderLines.$inferSelect;
 
+/**
+ * Thứ tự dòng của đơn. Dòng sàn chèn trong một câu lệnh có cùng `created_at`, nên sắp tiếp theo mã món sàn (số,
+ * so độ dài trước) cho ổn định; dòng tạo tay không có mã thì theo `id`.
+ */
+const LINE_ORDER = [orderLines.createdAt, sql`length(${orderLines.externalLineId})`, orderLines.externalLineId, orderLines.id];
+
 export async function findOrderLines(orderIds: readonly string[]): Promise<OrderLineRow[]> {
   if (!orderIds.length) return [];
   return getDb()
     .select()
     .from(orderLines)
     .where(inArray(orderLines.orderId, [...orderIds]))
-    .orderBy(orderLines.createdAt, orderLines.id);
+    .orderBy(...LINE_ORDER);
 }
 
 export interface LineFacts {
@@ -150,7 +156,7 @@ export async function lineFacts(orderIds: readonly string[]): Promise<Map<string
       .selectDistinctOn([orderLines.orderId])
       .from(orderLines)
       .where(inArray(orderLines.orderId, ids))
-      .orderBy(orderLines.orderId, orderLines.createdAt, orderLines.id),
+      .orderBy(orderLines.orderId, ...LINE_ORDER),
   ]);
   const unmappedIds = new Set(unmapped.map((r) => r.orderId));
   const first = new Map(firsts.map((l) => [l.orderId, l]));
