@@ -3,6 +3,7 @@
 // #102 gọi lại `syncListings` theo lịch.
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
 import { type ListingPatch, listListingRows, markStockPendingRows, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
@@ -64,7 +65,11 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   }
 
   const due = rows.filter(
-    (r) => PUSHABLE.includes(r.status) && r.externalSkuId && (r.stockSync !== 'synced' || r.priceSync !== 'synced'),
+    (r) =>
+      r.mode === 'mapped' &&
+      PUSHABLE.includes(r.status) &&
+      r.externalSkuId &&
+      (r.stockSync !== 'synced' || r.priceSync !== 'synced'),
   );
   if (!due.length) return summary;
   const ids = due.map((r) => r.variantId!);
@@ -72,40 +77,56 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     prices: await port.standardPrices(ids),
     available: await port.availableOf(ids),
   }));
-  // Biến thể không có trong Map (đã xoá, công ty khác) thì không đẩy tồn, giữ `stock_sync = pending`, không coi là 0.
-  const batch = due.flatMap((row) => {
+  const at = new Date();
+  // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
+  const variantMissing: SyncError = {
+    code: 'variant_missing',
+    message: 'Không đọc được số có thể bán của SKU này',
+    at: at.toISOString(),
+  };
+  const plan = due.map((row) => {
     const price = prices.get(row.variantId!);
     const quantity = available.get(row.variantId!);
-    if (!price && quantity === undefined) return [];
-    const item: PriceQuantity = {
-      externalProductId: row.externalProductId!,
-      externalSkuId: row.externalSkuId!,
-      ...(price && { price: price.toFixed(0) }),
-      ...(quantity !== undefined && { quantity }),
-    };
-    return [{ row, item }];
+    const item: PriceQuantity | null =
+      !price && quantity === undefined
+        ? null
+        : {
+            externalProductId: row.externalProductId!,
+            externalSkuId: row.externalSkuId!,
+            ...(price && { price: price.toFixed(0) }),
+            ...(quantity !== undefined && { quantity }),
+          };
+    return { row, item };
   });
-  if (!batch.length) return summary;
-  const items = batch.map((b) => b.item);
+  const missing = plan.filter((p) => p.item?.quantity === undefined).length;
+  if (missing) logger.warn({ shopId: shop.id, missing }, 'Đồng bộ listing bỏ qua SKU không đọc được số có thể bán');
+  const items = plan.flatMap((p) => (p.item ? [p.item] : []));
   const results = new Map(
-    (await onMarketplace(() => adapter.updatePriceQuantity(accessToken, items))).map((x) => [x.externalSkuId, x]),
+    items.length
+      ? (await onMarketplace(() => adapter.updatePriceQuantity(accessToken, items))).map((x) => [x.externalSkuId, x])
+      : [],
   );
-  const at = new Date();
   await inCompany(async () => {
-    for (const { row, item } of batch) {
-      const result = results.get(row.externalSkuId!);
-      summary.pushed++;
-      if (result?.ok) {
-        await updateListing(row.id, { version: row.version }, synced(item, at));
-      } else {
-        summary.errors++;
-        const error: SyncError = {
-          code: result?.code ?? 'no_result',
-          message: result?.message ?? 'Sàn không trả kết quả cho SKU này',
-          at: at.toISOString(),
-        };
-        await updateListing(row.id, { version: row.version }, failed(error, item));
+    for (const { row, item } of plan) {
+      let patch: ListingPatch = item?.quantity === undefined ? { stockSyncError: variantMissing } : {};
+      if (item) {
+        const result = results.get(row.externalSkuId!);
+        summary.pushed++;
+        if (result?.ok) {
+          patch = { ...patch, ...synced(item, at) };
+        } else {
+          summary.errors++;
+          const error: SyncError = {
+            code: result?.code ?? 'no_result',
+            message: result?.message ?? 'Sàn không trả kết quả cho SKU này',
+            at: at.toISOString(),
+          };
+          patch = { ...patch, ...failed(error, item) };
+        }
       }
+      // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
+      // như đang có để lượt sau đẩy số mới; không tính là lỗi.
+      await updateListing(row.id, { version: row.version }, patch);
     }
   });
   return summary;
@@ -144,10 +165,13 @@ function synced(item: PriceQuantity, at: Date): ListingPatch {
   };
 }
 
-/** Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. */
+/**
+ * Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. Tồn đẩy lỗi giữ `pending` kèm `stockSyncError`
+ * (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn.
+ */
 function failed(error: SyncError, item: PriceQuantity): ListingPatch {
   return {
-    ...(item.quantity !== undefined && { stockSync: 'error', stockSyncError: error }),
+    ...(item.quantity !== undefined && { stockSync: 'pending', stockSyncError: error }),
     ...(item.price !== undefined && { priceSync: 'error', priceSyncError: error }),
   };
 }

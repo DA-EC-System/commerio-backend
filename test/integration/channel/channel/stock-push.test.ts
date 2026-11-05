@@ -4,7 +4,9 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PerSkuResult, PriceQuantity } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { markStockPending } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -82,6 +84,46 @@ describe('đẩy tồn bằng số có thể bán của inventory', () => {
     expect(res.status).toBe(200);
     const sent = updatePriceQuantity.mock.calls.flatMap(([, items]) => items);
     expect(sent.find((i) => i.externalSkuId === 'sku-GHOST-1')).toBeUndefined();
-    expect(await listing(ghost)).toMatchObject({ stock_sync: 'pending', platform_stock: null });
+    const row = await listing(ghost);
+    expect(row).toMatchObject({ stock_sync: 'pending', platform_stock: null });
+    expect(row.stock_sync_error).toMatchObject({ code: 'variant_missing' });
+  });
+
+  it('tồn đổi giữa lúc đọc số và lúc ghi kết quả → dòng vẫn pending, lượt sau đẩy số mới', async () => {
+    const { variantId, sku } = await createVariant(company.companyId);
+    await receive(company.companyId, variantId, 5, 1000);
+    await liveListing(variantId, sku);
+    updatePriceQuantity.mockImplementationOnce(async (_t, items) => {
+      // Phiếu kho giảm tồn trong lúc chờ sàn: consumer đánh dấu lại pending.
+      await setBuckets(company.companyId, variantId, { onHand: 1 });
+      await withCompany(company.companyId, () => markStockPending(variantId));
+      return items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true }));
+    });
+    await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+    expect(await listing(variantId)).toMatchObject({ stock_sync: 'pending', platform_stock: null });
+
+    updatePriceQuantity.mockClear();
+    await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+    // Listing ca trước chưa có giá chuẩn nên cũng nằm trong lượt này; chỉ xét SKU của ca này.
+    const sent = updatePriceQuantity.mock.calls.flatMap(([, items]) => items);
+    expect(sent.find((i) => i.externalSkuId === `sku-${sku}`)).toEqual({
+      externalProductId: `item-${sku}`,
+      externalSkuId: `sku-${sku}`,
+      quantity: 1,
+    });
+    expect(await listing(variantId)).toMatchObject({ stock_sync: 'synced', platform_stock: 1 });
+  });
+
+  it('listing không ghép SKU (unmanaged) → không đẩy tồn', async () => {
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, mode, external_product_id, external_sku_id, seller_sku, status, approved_by)
+       values ($1, $2, 'unmanaged', 'item-UM-1', 'sku-UM-1', 'UM-1', 'live', $3)`,
+      [company.companyId, shopId, randomUUID()],
+    );
+    updatePriceQuantity.mockClear();
+    const res = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+    expect(res.status).toBe(200);
+    const sent = updatePriceQuantity.mock.calls.flatMap(([, items]) => items);
+    expect(sent.find((i) => i.externalSkuId === 'sku-UM-1')).toBeUndefined();
   });
 });
