@@ -5,9 +5,9 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
-import { type ListingPatch, listListingRows, markStockPendingRows, updateListing } from '../repository/listings.ts';
+import { type ListingPatch, listListingRows, markStockPendingIds, markStockPendingRows, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
-import { MarketplaceError, type PriceQuantity } from './marketplaces/index.ts';
+import { MarketplaceError, type PerSkuResult, type PriceQuantity } from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, shopSession } from './shops.ts';
@@ -134,25 +134,36 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
 
 /**
  * Ngắt kèm `zeroStock` (§18.1): đẩy tồn 0 cho listing còn trên sàn trước khi ngắt. Không gọi được sàn (gian hàng cần
- * nối lại, sàn lỗi) thì 422 `zero_stock_unavailable` và chưa ngắt; lỗi riêng từng SKU thì vẫn ngắt.
+ * nối lại, sàn lỗi) thì 422 `zero_stock_unavailable` và chưa ngắt; lỗi riêng từng SKU thì vẫn ngắt. Trả id listing mà sàn
+ * nhận tồn 0, để route trả lại tồn thật nếu ngắt bị chặn sau đó (`restoreAfterZeroStock`).
  */
-export async function pushZeroStock(actor: Actor, shopId: string): Promise<void> {
+export async function pushZeroStock(actor: Actor, shopId: string): Promise<string[]> {
   const unavailable = () =>
     new AppError(422, 'zero_stock_unavailable', 'Không đẩy được tồn 0 lên sàn lúc này; ngắt không kèm đẩy tồn 0, hoặc thử lại');
   const session = await withCompany(actor.companyId, () => shopSession(shopId)).catch((err: unknown) => {
     throw err instanceof AppError && err.code === 'shop_not_connected' ? unavailable() : err;
   });
   const rows = await withCompany(actor.companyId, () => listListingRows(session.shop.id));
-  const items = rows
-    .filter((r) => PUSHABLE.includes(r.status) && r.externalSkuId)
-    .map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
-  if (!items.length) return;
+  const pushed = rows.filter((r) => PUSHABLE.includes(r.status) && r.externalSkuId);
+  if (!pushed.length) return [];
+  const items = pushed.map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
+  let results: PerSkuResult[];
   try {
-    await session.adapter.updatePriceQuantity(session.accessToken, items);
+    results = await session.adapter.updatePriceQuantity(session.accessToken, items);
   } catch (err) {
     if (err instanceof MarketplaceError) throw unavailable();
     throw err;
   }
+  const ok = new Set(results.filter((r) => r.ok).map((r) => r.externalSkuId));
+  return pushed.filter((r) => ok.has(r.externalSkuId!)).map((r) => r.id);
+}
+
+/**
+ * Ngắt bị chặn sau khi đã đẩy tồn 0 (đơn về, `version` đổi giữa hai lần kiểm; #207): listing về `stock_sync = pending`
+ * để lượt đồng bộ đẩy lại tồn thật. Chỉ gọi khi ngắt thất bại, nên không đẩy lại tồn lên gian hàng sắp ngắt.
+ */
+export async function restoreAfterZeroStock(actor: Actor, listingIds: readonly string[]): Promise<void> {
+  if (listingIds.length) await withCompany(actor.companyId, () => markStockPendingIds(listingIds));
 }
 
 function synced(item: PriceQuantity, at: Date): ListingPatch {

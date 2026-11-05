@@ -5,7 +5,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
-import { pushZeroStock, syncListings } from '../service/listing-sync.ts';
+import { pushZeroStock, restoreAfterZeroStock, syncListings } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { productPort } from '../service/product-port.ts';
@@ -84,9 +84,19 @@ export function channelRouter(ctx: ModuleContext): Router {
       const who = actor(res);
       const { id } = validated<typeof ShopParams>(res, 'params');
       const body = validated<typeof DisconnectBody>(res, 'body');
-      // Gọi sàn ngoài giao dịch, trước khi ngắt (xoá token).
-      if (body.zeroStock) await pushZeroStock(who, id);
-      res.json(await withCompany(who.companyId, () => shops.disconnectShop(who, id, body)));
+      // Gọi sàn ngoài giao dịch, trước khi ngắt (xoá token), và chỉ khi đã qua mọi kiểm của §18.6.1 (#207);
+      // giao dịch ngắt kiểm lại dưới khoá dòng gian hàng.
+      let zeroed: string[] = [];
+      if (body.zeroStock) {
+        await withCompany(who.companyId, () => shops.checkDisconnect(who, id, body.version));
+        zeroed = await pushZeroStock(who, id);
+      }
+      try {
+        res.json(await withCompany(who.companyId, () => shops.disconnectShop(who, id, body)));
+      } catch (err) {
+        await restoreAfterZeroStock(who, zeroed);
+        throw err;
+      }
     },
   );
 

@@ -16,7 +16,8 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { reconnectAction, type ShopStatus, shopMachine, tokenExpiringSoon } from '../domain/shop.ts';
+import { countOpenOrders } from '../../../order/index.ts';
+import { assertNoOpenOrders, reconnectAction, type ShopStatus, shopMachine, tokenExpiringSoon } from '../domain/shop.ts';
 import {
   countListingsOnPlatform,
   delistForDisconnect,
@@ -25,6 +26,7 @@ import {
   findShopRow,
   insertShop,
   listShopRows,
+  lockShopRow,
   type ShopRow,
   updateShop,
 } from '../repository/shops.ts';
@@ -289,11 +291,30 @@ async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller
   return result;
 }
 
+/**
+ * Kiểm ngắt được theo thứ tự Documents/21 §18.6.1: 404, `invalid_transition`, `version_conflict`, `shop_has_open_orders`.
+ * Khoá dòng gian hàng tới hết giao dịch của bên gọi, nên đơn đang về (`order-pull.ts` khoá chia sẻ) không lọt.
+ * Route gọi riêng một lần trước khi đẩy tồn 0; `disconnectShop` gọi lại trong giao dịch ngắt.
+ */
+export async function checkDisconnect(actor: Actor, id: string, version: number): Promise<{ row: ShopRow; to: ShopStatus }> {
+  requireCompanyId('checkDisconnect');
+  const row = isUuid(id) ? await lockShopRow(id) : undefined;
+  if (!row) throw notFound();
+  const { to } = assertTransition(shopMachine, row.status, 'disconnect', { actor });
+  if (row.version !== version) {
+    throw new AppError(409, 'version_conflict', `Gian hàng "${row.shopName}" vừa được người khác cập nhật`, {
+      current: await shopView(row),
+    });
+  }
+  assertNoOpenOrders(await countOpenOrders(id));
+  return { row, to };
+}
+
 /** Đẩy tồn 0 (`zeroStock`) do route gọi trước, ngoài giao dịch (`listing-sync.ts` `pushZeroStock`). */
 export async function disconnectShop(actor: Actor, id: string, input: { version: number }): Promise<Shop> {
-  const row = await ownShop(id);
-  const { to } = assertTransition(shopMachine, row.status, 'disconnect', { actor });
-  const updated = await updateShop(
+  const { row, to } = await checkDisconnect(actor, id, input.version);
+  // Dòng đã khoá và đã kiểm `version`, `status` nên cập nhật luôn trúng.
+  const updated = (await updateShop(
     id,
     { version: input.version, status: row.status },
     {
@@ -304,12 +325,7 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       refreshExpiresAt: null,
       disconnectedAt: new Date(),
     },
-  );
-  if (!updated) {
-    throw new AppError(409, 'version_conflict', `Gian hàng "${row.shopName}" vừa được người khác cập nhật`, {
-      current: await shopView((await findShopRow(id))!),
-    });
-  }
+  ))!;
   await recordTransition({ entityType: ENTITY, entityId: id, from: row.status, to, action: 'disconnect', actorId: actor.accountId });
   for (const listing of await delistForDisconnect(id)) {
     await recordTransition({

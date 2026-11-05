@@ -28,6 +28,7 @@ import {
   ShopCallbackResult,
   ShopDetail,
   ShopList,
+  ShopDisconnectConflict,
   ShopParams,
   ShopPlatformList,
   TokenBody,
@@ -120,16 +121,19 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'post',
     path: '/shops/:id/disconnect',
-    summary: 'Ngắt gian hàng (§18.1)',
+    summary: 'Ngắt gian hàng (§18.1, §18.6.1)',
     description:
-      'Cần `channel.shop.disconnect`. Xoá token, listing còn trên sàn chuyển `delisted`. `zeroStock: true`: đẩy tồn 0 trước; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt.',
+      'Cần `channel.shop.disconnect`. Kiểm theo thứ tự, dừng ở lỗi đầu: 404 `not_found` → 409 `invalid_transition` → 409 `version_conflict` → 409 `shop_has_open_orders` (còn đơn chưa `completed` hoặc `cancelled`, kèm `openOrders`; kiểm dưới khoá dòng gian hàng). Qua hết mới đẩy tồn 0 khi `zeroStock: true`; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt. Ngắt xoá token, listing còn trên sàn chuyển `delisted`.',
     security: bearer,
     request: { params: ShopParams, body: json(DisconnectBody) },
     responses: {
       200: { description: 'Gian hàng đã ngắt', ...json(Shop) },
       ...auth,
       404: problemResponse('`not_found`'),
-      409: problemResponse('`invalid_transition` (đã ngắt), `version_conflict` kèm `current`'),
+      409: {
+        description: '`invalid_transition` (đã ngắt) kèm `current` là trạng thái, `version_conflict` kèm `current` là gian hàng, `shop_has_open_orders` kèm `openOrders`',
+        content: { 'application/problem+json': { schema: ShopDisconnectConflict } },
+      },
       422: problemResponse('`validation_failed`, `zero_stock_unavailable`'),
     },
   });

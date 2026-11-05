@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, count, eq, notInArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { OrderStatus } from '../domain/order.ts';
 import { docCounters, orderLines, orders } from './schema.ts';
@@ -116,4 +116,13 @@ export async function findCompletionCandidates(): Promise<{ id: string; companyI
               and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,
       ),
     );
+}
+
+/** Số đơn của gian hàng chưa `completed` hoặc `cancelled` (#207). Gọi trong `withCompany`. */
+export async function countOpenOrdersOfShop(shopId: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ n: count() })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), notInArray(orders.status, ['completed', 'cancelled'])));
+  return row!.n;
 }
