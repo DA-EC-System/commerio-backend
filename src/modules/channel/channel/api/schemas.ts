@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 
 // Sàn có adapter OAuth kiểm ở service (422 `marketplace_unsupported`), ở đây chỉ nhận đúng enum `marketplace`.
 export const PlatformParams = z.object({ platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock'], 'Sàn không hợp lệ') });
@@ -26,6 +27,7 @@ export const DisconnectBody = z
     zeroStock: z.boolean().default(false).meta({ description: 'Đẩy tồn 0 cho listing còn trên sàn trước khi ngắt' }),
   })
   .meta({ id: 'ShopDisconnectInput' });
+
 
 // Schema trả về: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1).
 const iso = z.iso.datetime();
@@ -64,6 +66,20 @@ export const Shop = z
   })
   .strict()
   .meta({ id: 'Shop' });
+
+/** 409 của ngắt (§18.6.1, #207): `shop_has_open_orders` thêm `openOrders`; `version_conflict`, `invalid_transition` thêm `current`. */
+export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
+  openOrders: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .meta({ description: 'Số đơn chưa `completed` hoặc `cancelled`, chỉ có với `shop_has_open_orders`' }),
+  current: z
+    .union([Shop, z.enum(['connecting', 'active', 'needs_reauth', 'disconnected'])])
+    .optional()
+    .meta({ description: '`version_conflict`: gian hàng hiện tại; `invalid_transition`: trạng thái hiện tại' }),
+}).meta({ id: 'ShopDisconnectConflict' });
 
 export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChange) }).meta({ id: 'ShopDetail' });
 

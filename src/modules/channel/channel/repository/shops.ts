@@ -19,6 +19,24 @@ export async function findShopRow(id: string): Promise<ShopRow | undefined> {
   return row;
 }
 
+/**
+ * Như `findShopRow` nhưng khoá dòng tới hết giao dịch: ngắt gian hàng (#207). `NO KEY UPDATE` đủ chặn `FOR SHARE` của
+ * `lockShopForOrders`, không chặn các lệnh chèn có khoá ngoại tới gian hàng (`listings`, `raw_orders`).
+ */
+export async function lockShopRow(id: string): Promise<ShopRow | undefined> {
+  const [row] = await getDb().select().from(shops).where(eq(shops.id, id)).for('no key update');
+  return row;
+}
+
+/**
+ * Trạng thái gian hàng, khoá chia sẻ tới hết giao dịch nhận đơn (#207): đơn đang chèn thì ngắt (`lockShopRow`) chờ rồi
+ * đếm thấy; ngắt đã khoá trước thì bên nhận chờ rồi thấy `disconnected`.
+ */
+export async function lockShopForOrders(id: string): Promise<ShopStatus | undefined> {
+  const [row] = await getDb().select({ status: shops.status }).from(shops).where(eq(shops.id, id)).for('share');
+  return row?.status;
+}
+
 export async function findShopByExternal(platform: Platform, externalShopId: string): Promise<ShopRow | undefined> {
   const [row] = await getDb()
     .select()

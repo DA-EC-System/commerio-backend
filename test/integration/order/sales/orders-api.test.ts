@@ -122,6 +122,15 @@ describe('GET /sales/orders (#105)', () => {
     expect(page.items.map((i) => [i.id, i.flags.includes('return_requested')])).toEqual([[ids.twoPackages, true]]);
   });
 
+  it('lọc theo gian hàng (link từ hộp thoại ngắt, Documents/21 §18.6.1)', async () => {
+    const ofShop = async (id: string) => OrderSummaryPage.parse((await get(`/orders?shopId=${id}&pageSize=50`)).body);
+    expect((await ofShop(shopId)).total).toBe(4);
+    expect((await ofShop(randomUUID())).total).toBe(0);
+    const bad = await get('/orders?shopId=khong-phai-uuid');
+    expect(bad.status).toBe(422);
+    expect(Object.keys(bad.body.errors)).toEqual(['shopId']);
+  });
+
   it('tham số sai 422 theo ô', async () => {
     const res = await get('/orders?stage=khong_co&pageSize=500');
     expect(res.status).toBe(422);

@@ -1,5 +1,6 @@
 // Máy trạng thái gian hàng (Documents/21 §18.1, sơ đồ C1), cùng bảng với FE `src/lib/machines/channel.ts`.
 import { defineMachine } from '../../../core/index.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
 
 export type ShopStatus = 'connecting' | 'active' | 'needs_reauth' | 'disconnected';
 export type ShopAction = 'finish_setup' | 'lose_auth' | 'reconnect' | 'resume_setup' | 'disconnect';
@@ -31,4 +32,16 @@ export function tokenExpiringSoon(status: ShopStatus, refreshExpiresAt: Date | n
 export function reconnectAction(status: ShopStatus, orderCutoffAt: Date | null): 'reconnect' | 'resume_setup' | null {
   if (status === 'connecting' || status === 'active') return null;
   return orderCutoffAt === null ? 'resume_setup' : 'reconnect';
+}
+
+/**
+ * Còn đơn chưa `completed` hoặc `cancelled` thì không cho ngắt (Documents/21 §18.6.1 bước 4, #207): ngắt xong app không
+ * còn nhận cập nhật từ sàn nên đơn sẽ treo.
+ */
+export function assertNoOpenOrders(openOrders: number): void {
+  if (openOrders > 0) {
+    throw new AppError(409, 'shop_has_open_orders', `Còn ${openOrders} đơn chưa xong. Đợi các đơn hoàn tất hoặc huỷ rồi ngắt`, {
+      openOrders,
+    });
+  }
 }

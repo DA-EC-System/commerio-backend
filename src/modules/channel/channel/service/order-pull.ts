@@ -7,6 +7,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { advanceOrderCursor, findRawOrderTimes, saveRawOrder, variantsBySellerSku } from '../repository/raw-orders.ts';
 import { MarketplaceError } from './marketplaces/common.ts';
+import { lockShopForOrders } from '../repository/shops.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const OVERLAP_MS = 2 * 60_000;
@@ -46,6 +47,11 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
         if (ref.placedAt >= cutoff && !(seen && seen >= ref.updatedAt)) {
           const remote = await onMarketplace(() => adapter.getOrder!(accessToken, ref.externalOrderId));
           const res = await withCompany(companyId, async () => {
+            // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
+            const status = await lockShopForOrders(shopId);
+            if (!status || status === 'disconnected') {
+              throw new AppError(409, 'shop_not_connected', 'Gian hàng đã ngắt', { current: 'disconnected' });
+            }
             const variants = await variantsBySellerSku(shopId, remote.lines.map((l) => l.sellerSku));
             const r = await ingestMarketplaceOrder({
               ...remote,

@@ -32,7 +32,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 ## Cho module khác
 
-`getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder` (channel). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
+`getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder`, `countOpenOrders` (channel, chặn ngắt gian hàng #207). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
 
 ## Chưa làm
 
