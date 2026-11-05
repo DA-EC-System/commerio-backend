@@ -6,12 +6,12 @@ export const PASSWORD = process.env.BLACKBOX_PASSWORD ?? '';
 
 /** Tài khoản của hai công ty QA, trùng `blackboxCompanies` ở `db/seed/demo.ts`. */
 export const ACCOUNTS = {
-  ceo: 'qa-ceo@commerio.dev',
-  admin: 'qa-admin@commerio.dev',
-  sale: 'qa-sale@commerio.dev',
-  kho: 'qa-kho@commerio.dev',
-  lead: 'qa-truong-kho@commerio.dev',
-  ceoB: 'qa-ceo-b@commerio.dev',
+  ceo: 'qa-ceo@bk.demo',
+  admin: 'qa-admin@bk.demo',
+  sale: 'qa-sale@bk.demo',
+  kho: 'qa-kho@bk.demo',
+  lead: 'qa-truong-kho@bk.demo',
+  ceoB: 'qa-ceo-b@bk.demo',
 } as const;
 export type Role = keyof typeof ACCOUNTS;
 

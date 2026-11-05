@@ -5,9 +5,9 @@ rồi `npm run db:seed`. Node 24. Không cần chạy API riêng; seed mở serv
 Không tạo refresh token, không gọi dịch vụ sàn, không dùng SQL ghi bảng nghiệp vụ.
 Router lấy từ module công khai qua `createApp`, nên vẫn kiểm quyền, Zod, RLS, CHECK, audit và máy trạng thái.
 
-Tài khoản công ty Demo Commerio: `ceo@commerio.dev`, `admin@commerio.dev`,
-`sale@commerio.dev`, `kho@commerio.dev`. Công ty Demo Cách Ly chỉ có
-`ceo2@commerio.dev`. Tất cả dùng `SEED_PASSWORD`; seed kiểm mật khẩu trước khi dùng tài khoản đã có.
+Tài khoản công ty Demo Commerio: `ceo@bk.demo`, `admin@bk.demo`,
+`sale@bk.demo`, `kho@bk.demo`. Công ty Demo Cách Ly chỉ có
+`ceo2@bk.demo`. Tất cả dùng `SEED_PASSWORD`; seed kiểm mật khẩu trước khi dùng tài khoản đã có.
 Tên người, NCC, địa chỉ đều gắn nhãn demo/giả lập; MST mới dùng dãy 0 giả lập, không dùng làm chứng từ thật.
 
 ## Phần chạy được
@@ -20,8 +20,8 @@ Tên người, NCC, địa chỉ đều gắn nhãn demo/giả lập; MST mới 
   Ngày giao dự kiến tính sau ngày chạy 7 ngày. Mã `DN-…` do service cấp, không ép mã FE.
 - Công ty thứ hai: 1 CEO, 3 sản phẩm/4 SKU để kiểm RLS.
 - Bộ test hộp đen (#120, `blackboxCompanies` trong `demo.ts`), chỉ khi chạy đủ (`all`): "Công ty QA Hộp Đen A"
-  (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-truong-kho@commerio.dev`; bật Nhập hàng, Kênh bán, Báo cáo)
-  và "Công ty QA Hộp Đen B" (`qa-ceo-b@commerio.dev`). Chỉ tài khoản; test tự tạo dữ liệu nghiệp vụ.
+  (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-truong-kho@bk.demo`; bật Nhập hàng, Kênh bán, Báo cáo)
+  và "Công ty QA Hộp Đen B" (`qa-ceo-b@bk.demo`). Chỉ tài khoản; test tự tạo dữ liệu nghiệp vụ.
 
 `npm run db:seed -- --only purchasing` tự tạo tài khoản/module và catalog phụ thuộc.
 Các phần hợp lệ: `all`, `catalog`, `inventory`, `purchasing`, `secondary`.
@@ -64,6 +64,6 @@ FE cần dùng BE thật và tắt MSW theo cấu hình của FE; menu Kênh bá
   So số dòng mọi bảng có `company_id` của hai công ty trước/sau lần seed hai, gồm audit/outbox/lịch sử.
   Kiểm hai kiểu duyệt, đăng nhập Nhân viên kho, module bật và truy cập chéo công ty trả 404.
 - `npm run check`: 177 file, 1.435 test đạt, 2 TODO có sẵn; lint, typecheck, depcruise đạt.
-- Smoke đăng nhập `ceo@commerio.dev`, chọn công ty và gọi ba endpoint HTTP: đều 200, có dữ liệu.
+- Smoke đăng nhập `ceo@bk.demo`, chọn công ty và gọi ba endpoint HTTP: đều 200, có dữ liệu.
   Không thao tác trực tiếp UI Swagger hoặc chạy FE trong lượt này. DB local có 12 sản phẩm active vì đã chạy
   trước khi thêm mẫu lưu trữ; seed giữ nguyên dữ liệu cũ. DB test mới xác nhận 11 active + 1 archived.

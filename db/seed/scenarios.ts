@@ -18,7 +18,7 @@ export function parseSection(args: string[]): SeedSection {
 export function secondaryDemo(password: string): SeedDemoInput {
   const input = defaultDemo(password);
   return { ...input, company: { name: 'Công ty Demo Cách Ly', taxCode: '0000000038' },
-    accounts: { ...input.accounts, ceo: { email: 'ceo2@commerio.dev', fullName: 'CEO Demo Cách Ly' } } };
+    accounts: { ...input.accounts, ceo: { email: 'ceo2@bk.demo', fullName: 'CEO Demo Cách Ly' } } };
 }
 
 export async function seedScenarios(input: SeedDemoInput, options: {
