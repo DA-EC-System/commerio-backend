@@ -294,6 +294,34 @@ describe('thông tin đơn sàn ở danh sách và chi tiết (#260)', () => {
     expect(o.packages[0]!.lines[0]).toMatchObject({ attributesLabel: 'Màu: Đỏ' });
   });
 
+  it('thứ tự dòng theo mã món sàn: …9 trước …10 ở chi tiết và dòng đầu của danh sách', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const shopId = (await testPool().query(`select id from channel.shops where company_id = $1 limit 1`, [rich.companyId])).rows[0].id;
+    const v = await createVariant(rich.companyId);
+    const mk = (n: number) => ({
+      externalLineId: `O-${tag}-${n}`,
+      variantId: v.variantId,
+      sellerSku: v.sku,
+      productName: `Món ${n}`,
+      unitPrice: '10000',
+      sellerDiscount: '0',
+      platformDiscount: '0',
+      packageCode: null,
+      trackingCode: null,
+      rawStatus: 'pending',
+      status: 'pending' as const,
+      info: noLineInfo,
+      shipping: noShipping,
+    });
+    const { orderId } = await withCompany(rich.companyId, () =>
+      ingestMarketplaceOrder({ ...order(`O-${tag}`, []), shopId, lines: [mk(10), mk(9)] }),
+    );
+    const o = Order.parse((await getRich(`/orders/${orderId}`)).body);
+    expect(o.lines.map((l) => l.productName)).toEqual(['Món 9', 'Món 10']);
+    const page = OrderSummaryPage.parse((await getRich(`/orders?search=O-${tag}`)).body);
+    expect(page.items[0]?.itemsPreview?.productName).toBe('Món 9');
+  });
+
   it('đơn tạo tay: các trường sàn null', async () => {
     const o = Order.parse((await getRich(`/orders/${richIds.manual}`)).body);
     expect(o).toMatchObject({ buyerNote: null, shippingFeeOriginal: null, shippingAddress: null });

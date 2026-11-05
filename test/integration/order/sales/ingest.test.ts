@@ -274,6 +274,17 @@ describe('nhận đơn sàn (#105)', () => {
     expect(cancelEvent?.payload).toMatchObject({ source: 'marketplace', by: 'platform' });
   });
 
+  it('sàn huỷ kèm ghi chú mới trong cùng lần kéo: đơn huỷ và nhận ghi chú (#260)', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.rawStatus = 'canceled';
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.info = { ...noOrderInfo, buyerNote: 'Huỷ giúp em' };
+    expect((await ingest(cancelled)).changed).toBe(true);
+    expect(await one(`select status, buyer_note from "order".orders where id = $1`, [res.orderId])).toEqual({ status: 'cancelled', buyer_note: 'Huỷ giúp em' });
+  });
+
   it('sàn huỷ khi kiện đã đóng gói: kiện chờ mở, đơn mang cờ đang huỷ', async () => {
     const o = remote({}, 'packed');
     const res = await ingest(o);

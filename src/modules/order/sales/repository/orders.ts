@@ -40,7 +40,7 @@ const rowColumns = {
 };
 
 /** Cột mô tả của dòng sàn (#260): kéo lại thì ghi đè; biến thể, số lượng, tiền gốc giữ như lúc tạo. */
-export const LINE_INFO_COLUMNS = [
+const LINE_INFO_COLUMNS = [
   'thumbnailUrl',
   'attributesLabel',
   'externalSkuId',

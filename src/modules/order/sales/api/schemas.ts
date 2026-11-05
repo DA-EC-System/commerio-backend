@@ -91,6 +91,7 @@ export const OrderSummary = z
     totalQty: z.number().int().meta({ description: 'Tổng số lượng mọi dòng' }),
     itemsPreview: z
       .object({ productName: z.string(), attributesLabel: z.string(), thumbnailUrl: z.string().nullable(), quantity: z.number().int() })
+      .strict()
       .nullable()
       .meta({ description: 'Dòng đầu của đơn; null khi đơn không có dòng' }),
     createdAt: iso,
@@ -190,6 +191,7 @@ export const Order = OrderSummary.extend({
       ward: z.string().nullable().meta({ description: 'Phường; sàn che tỉnh, đường, không còn quận' }),
       postCode: z.string().nullable(),
     })
+    .strict()
     .nullable(),
   subtotal: money,
   shippingFee: money,
