@@ -9,6 +9,7 @@ import {
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
+  type RemoteLineInfo,
   type RemoteLineStatus,
   type RemoteOrder,
   type RemoteSku,
@@ -152,6 +153,33 @@ function slaDeadline(text: unknown): Date | null {
 }
 
 const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+/** Chuỗi của sàn, trống thì null. */
+const opt = (v: unknown) => str(v).trim() || null;
+
+/** `2026-11-06 23:59:02 +0700` → Date; trống hoặc sai dạng là null. */
+function optTime(v: unknown): Date | null {
+  if (!opt(v)) return null;
+  const d = lazadaTime(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const CANCEL_KIND: Readonly<Record<string, 'cancellation' | 'return' | 'refund'>> = { cancellation: 'cancellation', return: 'return', refund: 'refund' };
+const CANCEL_BY: Readonly<Record<string, 'buyer' | 'seller' | 'platform'>> = { customer: 'buyer', seller: 'seller', internal: 'platform' };
+
+/**
+ * `cancel_return_initiator` dạng `<loại>-<người>` (GetOrderItems, đọc 05/11/2026): `cancellation-customer`, `return-customer`,
+ * `refund-internal`… `cancellation-failed Delivery` là giao không thành, không ai huỷ. `null-null` và giá trị lạ → null.
+ */
+export function lazadaCancelSource(raw: string): Pick<RemoteLineInfo, 'cancelInitiator' | 'cancelKind'> {
+  const [kind = '', ...rest] = raw.split('-');
+  const who = rest.join('-');
+  if (kind === 'cancellation' && who === 'failed Delivery') return { cancelInitiator: null, cancelKind: 'failed_delivery' };
+  const k = CANCEL_KIND[kind];
+  const by = CANCEL_BY[who];
+  return k && by ? { cancelInitiator: by, cancelKind: k } : { cancelInitiator: null, cancelKind: null };
+}
+
+const ADDRESS_KEYS = ['address1', 'address2', 'address3', 'address4', 'address5', 'city', 'addressDistrict', 'post_code', 'country'] as const;
 
 const toDate = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Date.now() + Number(seconds) * 1000) : null);
 
@@ -448,13 +476,24 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         placedAt: lazadaTime(o.created_at),
         updatedAt: lazadaTime(o.updated_at),
         shipBy: deadlines.length ? new Date(Math.min(...deadlines.map((d) => d.getTime()))) : null,
+        // Lazada che đường, tỉnh; `city` là phường (địa chỉ hai cấp), không còn quận (đo 05/11/2026, #260 A5).
         shippingAddress: a && {
           name: `${str(a.first_name)} ${str(a.last_name)}`.trim(),
           phone: str(a.phone),
           address: ['address1', 'address2', 'address3', 'address4', 'address5', 'city'].map((k) => str(a[k])).filter(Boolean).join(', '),
+          ward: opt(a.city),
+          postCode: opt(a.post_code),
+          raw: Object.fromEntries(ADDRESS_KEYS.flatMap((k) => (opt(a[k]) ? [[k === 'post_code' ? 'postCode' : k, opt(a[k])!]] : []))),
         },
         shippingFee: str(o.shipping_fee ?? 0),
         cancelRequested: o.is_cancel_pending === true || o.need_cancel_confirm === true,
+        info: {
+          platformPaymentMethod: opt(o.payment_method),
+          buyerNote: opt(o.buyer_note),
+          shippingFeeOriginal: opt(o.shipping_fee_original),
+          shippingFeeDiscountSeller: opt(o.shipping_fee_discount_seller),
+          shippingFeeDiscountPlatform: opt(o.shipping_fee_discount_platform),
+        },
         lines: items.map((i) => ({
           externalLineId: str(i.order_item_id),
           sellerSku: str(i.sku),
@@ -466,6 +505,28 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
           trackingCode: str(i.tracking_code) || null,
           rawStatus: str(i.status),
           status: lazadaPackageStatus(str(i.status)),
+          info: {
+            thumbnailUrl: opt(i.product_main_image),
+            attributesLabel: opt(i.variation),
+            externalSkuId: opt(i.sku_id),
+            externalShopSku: opt(i.shop_sku),
+            externalProductId: opt(i.product_id),
+            paidPrice: opt(i.paid_price),
+            taxAmount: opt(i.tax_amount),
+            shippingAmount: opt(i.shipping_amount),
+            walletCredits: opt(i.wallet_credits),
+            cancelReason: opt(i.reason),
+            cancelReasonDetail: opt(i.reason_detail),
+            ...lazadaCancelSource(str(i.cancel_return_initiator)),
+            reverseOrderId: opt(i.reverse_order_id),
+            returnStatus: opt(i.return_status),
+          },
+          shipping: {
+            shipmentProvider: opt(i.shipment_provider),
+            shippingProviderType: opt(i.shipping_provider_type),
+            shippingType: opt(i.shipping_type),
+            promisedShippingAt: optTime(i.promised_shipping_time),
+          },
         })),
       };
     },
