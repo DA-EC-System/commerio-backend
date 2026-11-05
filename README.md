@@ -38,13 +38,13 @@ Thêm `SEED_PASSWORD=<ít nhất 8 ký tự>` vào `.env`, rồi:
 npm run db:seed       # công ty "Công ty Demo Commerio", chạy lại không sinh trùng
 ```
 
-Seed tạo bốn tài khoản `ceo@`, `admin@`, `sale@`, `kho@commerio.dev`, mật khẩu là `SEED_PASSWORD`. Trong Swagger (`/api/docs`):
+Seed tạo bốn tài khoản `ceo@`, `admin@`, `sale@`, `kho@bk.demo`, mật khẩu là `SEED_PASSWORD`. Trong Swagger (`/api/docs`):
 
 1. `POST /api/v1/identity/login` với email và mật khẩu, lấy `accessToken`.
 2. `POST /api/v1/identity/select-company` với `companyId` trong `memberships`, lấy `accessToken` mới gắn công ty.
 3. Bấm **Authorize**, dán token ở bước 2.
 
-Cần quyền đủ để thử mọi API thì dùng `ceo@commerio.dev`.
+Cần quyền đủ để thử mọi API thì dùng `ceo@bk.demo`.
 
 ### Đăng nhập Google
 
@@ -72,7 +72,7 @@ Bốn cổng `vnpay`, `momo`, `zalopay`, `vietqr`, **chỉ sandbox**. Không ghi
    ```
    Đặt `PUBLIC_API_URL=https://<tên>.trycloudflare.com` trong `.env` rồi khởi động lại `api`. URL đổi mỗi lần mở tunnel, nên đổi thì đặt lại biến này và khai lại URL với cổng cần khai tay (VNPay, SePay).
 
-3. **Khai khoá cổng** bằng `ceo@commerio.dev` (quyền `payment.gateway.manage`): `PUT /api/v1/payment/gateways/{gateway}`, body `{ "credentials": { ... }, "version": 0 }`. Gửi đủ các ô của cổng mỗi lần lưu; `version` là 0 khi tạo mới, sửa thì gửi `version` hiện tại (`GET /api/v1/payment/gateways`). Ô bí mật tối thiểu 8 ký tự; API chỉ trả lại 4 ký tự cuối.
+3. **Khai khoá cổng** bằng `ceo@bk.demo` (quyền `payment.gateway.manage`): `PUT /api/v1/payment/gateways/{gateway}`, body `{ "credentials": { ... }, "version": 0 }`. Gửi đủ các ô của cổng mỗi lần lưu; `version` là 0 khi tạo mới, sửa thì gửi `version` hiện tại (`GET /api/v1/payment/gateways`). Ô bí mật tối thiểu 8 ký tự; API chỉ trả lại 4 ký tự cuối.
 
    | Cổng | Ô trong `credentials` | Lấy ở |
    |---|---|---|
@@ -160,7 +160,7 @@ Xem dữ liệu bằng DataGrip (hay trình quản lý DB nào cũng được): 
   File `.env.staging` chỉ cần một dòng `DATABASE_URL=postgresql://postgres.<mã project>:<mật khẩu>@aws-...pooler.supabase.com:5432/postgres`.
 - Kết nối dùng chuỗi **Session pooler** (cổng 5432). Kết nối trực tiếp của Supabase chỉ có IPv6, mạng thường không vào được.
 - Gói Free của Supabase tạm dừng project sau 7 ngày không dùng. Vào dashboard bấm Restore.
-- Tài khoản test tạo trên staging thì cả team thấy chung. Đặt tên dễ nhận, ví dụ `khoa.test@commerio.dev`. Chỉ dùng dữ liệu giả.
+- Tài khoản test tạo trên staging thì cả team thấy chung. Đặt tên dễ nhận, ví dụ `khoa.test@bk.demo`. Chỉ dùng dữ liệu giả.
 - Không chạy `Documents/erd/supabase-*.sql` lên database này. Script đó chỉ để xem ERD, sẽ đụng với migration.
 
 ### Dữ liệu
