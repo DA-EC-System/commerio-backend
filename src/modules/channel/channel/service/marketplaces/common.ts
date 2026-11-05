@@ -190,8 +190,20 @@ export interface MarketplaceAdapter {
   getTransactions?(accessToken: string, from: string, to: string): Promise<SettlementTxn[]>;
   /** Các kỳ quyết toán từ ngày `from` (#117). */
   getPayouts?(accessToken: string, from: string): Promise<Payout[]>;
-  /** Đơn có cập nhật sau `updatedAfter`, cũ trước, lật trang bằng `offset` (#105). */
-  listOrders?(accessToken: string, updatedAfter: Date, offset: number): Promise<{ orders: RemoteOrderRef[]; hasMore: boolean }>;
+  /**
+   * Đơn có cập nhật từ `updatedAfter` (#105). Lật trang bằng con trỏ do adapter giữ (#218): lần đầu `cursor` null, lần
+   * sau truyền `nextCursor` của trang trước; `nextCursor` null là hết. Trang có thể rỗng mà vẫn còn con trỏ.
+   * - Đơn trả về không giảm theo `updatedAt`, trong trang và qua các trang (bên gọi lấy mốc bằng max `updatedAt`).
+   * - Adapter không lật theo offset trần và bỏ đơn trùng giữa các trang, để danh sách đổi trong lúc lật không làm sót đơn.
+   * - Chỗ adapter không bảo đảm được thì trả `safeUntil`: mọi đơn có `updatedAt` nhỏ hơn mốc này đã được trả ở trang
+   *   này hoặc trước; đơn từ mốc trở đi có thể đã sót. Bên gọi không tiến mốc kéo qua `safeUntil` nhỏ nhất của lượt.
+   *   null là không giới hạn.
+   */
+  listOrders?(
+    accessToken: string,
+    updatedAfter: Date,
+    cursor: string | null,
+  ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
   /** Một đơn kèm các món (#105). */
   getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
   /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */
