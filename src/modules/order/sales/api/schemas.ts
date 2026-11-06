@@ -146,6 +146,9 @@ export const PackageSummary = z
     status: z.enum(PACKAGE_STATUS),
     flags: z.array(z.enum(['needs_open', 'needs_attention', 'lost_reported'])),
     flagNote: z.string().nullable(),
+    notices: z
+      .array(z.object({ code: z.literal('not_implemented'), issue: z.string(), owner: z.string(), message: z.string() }).strict())
+      .meta({ description: 'Việc chạy ngầm chưa làm được vì chờ issue khác, vd giữ hàng khi `reserve` chờ commerio-backend#206 (21 §18.7.9). Rỗng khi không có' }),
     openPurpose: z.enum(['cancel', 'edit', 'resplit']).nullable(),
     selfDelivery: z.boolean(),
     paymentMethod: z.enum(['prepaid', 'cod']).nullable(),

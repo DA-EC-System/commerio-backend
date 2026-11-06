@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { OrderPullResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { MarketplaceError, type RemoteOrder, type RemoteOrderRef } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany, addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -223,6 +224,66 @@ describe('kéo đơn theo gian hàng (#105)', () => {
       expect(res.body.type).toMatch(/module_disabled$/);
     } finally {
       await setModuleEnabled(company.companyId, 'channel', true);
+    }
+  });
+});
+
+describe('đơn trước mốc đã có, giữ hàng và việc chưa làm trên kiện (#198)', () => {
+  afterAll(() => setStockPort());
+  const pkgOf = async (externalOrderId: string) =>
+    (
+      await testPool().query(
+        `select p.status, p.notices from "order".packages p join "order".orders o on o.id = p.order_id
+          where o.shop_id = $1 and o.external_order_id = $2`,
+        [shopId, externalOrderId],
+      )
+    ).rows;
+
+  it('AC-15: đơn đặt trước mốc mà đã có trong raw_orders thì vẫn nhận cập nhật', async () => {
+    // Lần đầu đơn về qua lượt khác (vd lượt kéo đơn còn mở) — dựng bằng ref có ngày đặt sau mốc.
+    const first = remoteOrder('B1', sku, 'pending', at('2026-11-01T01:00:00Z'));
+    seed(first);
+    expect((await pull()).body).toMatchObject({ created: 1 });
+    refs = [];
+    const later = remoteOrder('B1', sku, 'packed', at('2026-11-01T02:00:00Z'));
+    later.placedAt = at('2026-10-01T00:00:00Z');
+    seed(later);
+    expect((await pull()).body).toEqual({ pulled: 1, created: 0, updated: 1 });
+    expect(await pkgOf('B1')).toMatchObject([{ status: 'packed' }]);
+  });
+
+  it('AC-21: cổng tồn mặc định (reserve chờ #206): đơn, kiện vẫn lưu; kiện backordered mang notices; đọc lại qua API', async () => {
+    seed(remoteOrder('N1', sku, 'pending', at('2026-11-02T01:00:00Z')));
+    expect((await pull()).status).toBe(200);
+    const notice = { code: 'not_implemented', issue: 'commerio-backend#206', owner: 'Khang', message: 'Chưa giữ hàng được cho kiện này' };
+    expect(await pkgOf('N1')).toEqual([{ status: 'backordered', notices: [notice] }]);
+    const { rows } = await testPool().query(`select id from "order".orders where shop_id = $1 and external_order_id = 'N1'`, [shopId]);
+    const order = await auth(app().get(`/api/v1/sales/orders/${rows[0].id}`));
+    expect(order.status).toBe(200);
+    expect(order.body.packages[0].notices).toEqual([notice]);
+  });
+
+  it('AC-10: gian hàng không chờ kiểm kê gọi reserve; chờ kiểm kê thì không gọi, kiện backordered, notices rỗng', async () => {
+    const reserve = vi.fn(async () => ({ reserved: true }));
+    setStockPort({ reserve, release: async () => {} });
+    seed(remoteOrder('R1', sku, 'pending', at('2026-11-03T01:00:00Z')));
+    await pull();
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(await pkgOf('R1')).toEqual([{ status: 'reserved', notices: [] }]);
+
+    await testPool().query(
+      `update channel.shops set opening_stocktake_id = $2, opening_stocktake_number = 'KK-000009' where id = $1`,
+      [shopId, randomUUID()],
+    );
+    try {
+      reserve.mockClear();
+      refs = [];
+      seed(remoteOrder('R2', sku, 'pending', at('2026-11-03T02:00:00Z')));
+      await pull();
+      expect(reserve).not.toHaveBeenCalled();
+      expect(await pkgOf('R2')).toEqual([{ status: 'backordered', notices: [] }]);
+    } finally {
+      await testPool().query(`update channel.shops set opening_stocktake_id = null, opening_stocktake_number = null where id = $1`, [shopId]);
     }
   });
 });

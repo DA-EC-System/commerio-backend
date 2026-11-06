@@ -1,7 +1,7 @@
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { PackageStatus } from '../domain/package.ts';
-import { packageLines, packages } from './schema.ts';
+import { type PackageNotice, packageLines, packages } from './schema.ts';
 
 /** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
 export interface PackageShipping {
@@ -102,6 +102,7 @@ export async function updatePackage(
     openPurpose: 'cancel' | 'edit' | 'resplit' | null;
     needsAttention: boolean;
     flagNote: string | null;
+    notices: PackageNotice[];
     handedOverAt: Date;
     deliveredAt: Date;
   }> &

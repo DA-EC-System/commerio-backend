@@ -44,18 +44,21 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
       const known = await withCompany(companyId, () => findRawOrderTimes(shopId, page.orders.map((o) => o.externalOrderId)));
       for (const ref of page.orders) {
         const seen = known.get(ref.externalOrderId);
-        if (ref.placedAt >= cutoff && !(seen && seen >= ref.updatedAt)) {
+        // Đơn đặt trước mốc chỉ nhận khi đã có trong DB (về qua lượt kéo đơn còn mở, #198; Documents/21 §18.2).
+        if ((ref.placedAt >= cutoff || seen) && !(seen && seen >= ref.updatedAt)) {
           const remote = await onMarketplace(() => adapter.getOrder!(accessToken, ref.externalOrderId));
           const res = await withCompany(companyId, async () => {
             // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
-            const status = await lockShopForOrders(shopId);
-            if (!status || status === 'disconnected') {
+            const locked = await lockShopForOrders(shopId);
+            if (!locked || locked.status === 'disconnected') {
               throw new AppError(409, 'shop_not_connected', 'Gian hàng đã ngắt', { current: 'disconnected' });
             }
             const variants = await variantsBySellerSku(shopId, remote.lines.map((l) => l.sellerSku));
             const r = await ingestMarketplaceOrder({
               ...remote,
               shopId,
+              // Chờ kiểm kê đầu kỳ thì không giữ hàng (25 §6.1 bước 3); đọc dưới khoá chia sẻ nên không lệch lúc ghi sổ phiếu.
+              holdStock: locked.openingStocktakeId === null,
               lines: remote.lines.map((l) => ({ ...l, variantId: variants.get(l.sellerSku) ?? null })),
             });
             await saveRawOrder({
