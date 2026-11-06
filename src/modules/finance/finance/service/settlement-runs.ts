@@ -10,7 +10,7 @@ import { logger } from '../../../../shared/logger.ts';
 import { defineQueue, type JobAttempt, sendJob } from '../../../core/index.ts';
 import { findMarketplaceOrders } from '../../../order/index.ts';
 import { vnDate } from '../domain/config-version.ts';
-import { type PlatformPayout, type PlatformTxn, kindOfTransaction } from '../domain/settlement.ts';
+import type { PlatformPayout, PlatformTxn } from '../domain/settlement.ts';
 import { existingTxnIds, insertEntries, openEstimates, platformBalanceOf } from '../repository/ledger.ts';
 import type { ledgerEntries } from '../repository/schema.ts';
 import {
@@ -159,11 +159,11 @@ type EntryInsert = typeof ledgerEntries.$inferInsert;
 async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], payouts: readonly PlatformPayout[]): Promise<SettlementRunRow> {
   await lockShopRuns(run.shopId);
   const parts = txns.flatMap((t) => {
-    const main = { txnId: t.txnId, t, kind: kindOfTransaction(t.feeName, t.transactionType), amount: new Decimal(t.amount) };
+    const main = { txnId: t.txnId, t, kind: t.kind ?? ('adjustment' as const), amount: new Decimal(t.amount) };
     const wht = new Decimal(t.withholding || 0);
     return wht.isZero() ? [main] : [main, { txnId: `${t.txnId}:wht`, t, kind: 'withholding_tax' as const, amount: wht.abs().negated() }];
   });
-  const seen = await existingTxnIds(parts.map((p) => p.txnId));
+  const seen = await existingTxnIds(run.shopId, parts.map((p) => p.txnId));
   const fresh = parts.filter((p) => !seen.has(p.txnId) && !p.amount.isZero());
   const duplicates = txns.filter((t) => seen.has(t.txnId)).length;
 
@@ -193,8 +193,10 @@ async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], pay
       sourceType: 'settlement_batch',
       sourceId: run.id,
       externalTransactionId: p.txnId,
+      externalOrderId: p.t.externalOrderId,
       replacesEntryId: replaces,
-      reason: p.kind === 'adjustment' ? p.t.feeName || p.t.transactionType || 'Khoản sàn chưa phân loại' : null,
+      // Adapter chưa nhận ra loại khoản: ghi `adjustment` kèm tên phí gốc (#203)
+      reason: p.t.kind === null && p.kind === 'adjustment' ? p.t.feeName || p.t.transactionType || 'Khoản sàn chưa phân loại' : null,
     };
   });
   await insertEntries(rows);

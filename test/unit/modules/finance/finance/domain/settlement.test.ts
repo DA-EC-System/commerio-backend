@@ -3,7 +3,6 @@ import { assertTransition } from '#src/modules/core/index.ts';
 import { AppError } from '#src/shared/errors/app-error.ts';
 import {
   allowedDiff,
-  kindOfTransaction,
   needsCeoApproval,
   nextAfterSettlement,
   NO_THRESHOLD,
@@ -11,25 +10,6 @@ import {
 } from '#src/modules/finance/finance/domain/settlement.ts';
 
 const t = { abs: 5000, pct: 1, resolveLimit: 50000 };
-
-describe('loại khoản của dòng quyết toán Lazada', () => {
-  it.each([
-    ['Item Price Credit', 'Orders-Sales', 'revenue'],
-    ['Commission', 'Orders-Lazada Fees', 'fee_fixed'],
-    ['Reversal Commission', 'Refunds-Claims', 'fee_fixed'],
-    ['Payment Fee', 'Orders-Lazada Fees', 'fee_transaction'],
-    ['Shipping Fee (Paid By Customer)', 'Orders-Logistics', 'shipping_income'],
-    ['Shipping Fee Charged by Lazada', 'Orders-Logistics', 'shipping_cost'],
-    ['Free Shipping Max Fee', 'Orders-Lazada Fees', 'fee_service'],
-    ['Sponsored Discovery - Top up', 'Marketing Fees', 'ads'],
-    ['Reversal Item Price', 'Refunds-Claims', 'customer_refund'],
-    ['Lost Claim', 'Refunds-Claims', 'lost_compensation'],
-    ['Seller Payout', 'Payout', 'withdrawal'],
-    ['Phí lạ', 'Other', 'adjustment'],
-  ])('%s (%s) → %s', (fee, type, kind) => {
-    expect(kindOfTransaction(fee, type)).toBe(kind);
-  });
-});
 
 describe('ngưỡng lệch', () => {
   it('lấy lớn hơn giữa số tuyệt đối và phần trăm của số ước tính', () => {

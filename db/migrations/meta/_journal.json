@@ -190,6 +190,13 @@
       "when": 1793983020080,
       "tag": "0026_chot-lech-tu-duyet",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793983027317,
+      "tag": "0027_chong-trung-quyet-toan",
+      "breakpoints": true
     }
   ]
 }

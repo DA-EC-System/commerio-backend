@@ -173,6 +173,8 @@ function lineView(r: LedgerRow, orders: Orders) {
     returnRequestId: r.returnRequestId,
     configVersionId: r.configVersionId,
     txnId: r.externalTransactionId,
+    externalOrderId: r.externalOrderId,
+    flags: r.externalOrderId && !r.orderId ? (['unknown_order'] as const) : ([] as const),
     source: r.sourceType && r.sourceId ? { type: r.sourceType, id: r.sourceId } : null,
     reason: r.reason,
     createdAt: r.createdAt.toISOString(),

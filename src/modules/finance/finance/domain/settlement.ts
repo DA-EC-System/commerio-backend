@@ -13,6 +13,8 @@ export interface PlatformTxn {
   transactionType: string;
   amount: string;
   withholding: string;
+  /** Loại khoản adapter sàn đã nhận ra; `null` thì ghi `adjustment` kèm tên phí làm lý do (#203). */
+  kind: LedgerKind | null;
 }
 
 /** Một kỳ quyết toán của sàn (cùng hình `Payout` của channel). */
@@ -97,26 +99,3 @@ export function needsCeoApproval(diff: Decimal.Value, base: Decimal.Value | null
   return new Decimal(diff).minus(base ?? 0).abs().greaterThan(t.resolveLimit);
 }
 
-/**
- * Loại khoản trong sổ của một dòng quyết toán Lazada (lazada.md §7.6). Theo tên phí và loại giao dịch; chưa nhận ra thì
- * `adjustment` kèm tên phí làm lý do. Bảng này dựng theo tài liệu và sàn giả lập #115: đối chiếu khi có dữ liệu thật.
- */
-export function kindOfTransaction(feeName: string, transactionType: string): LedgerKind {
-  const f = feeName.toLowerCase();
-  const t = transactionType.toLowerCase();
-  if (t.includes('payout') || t.includes('withdraw')) return 'withdrawal';
-  if (f.startsWith('reversal item price') || f.includes('refund')) return 'customer_refund';
-  if (f.includes('item price credit')) return 'revenue';
-  if (f.includes('commission')) return 'fee_fixed';
-  if (f.includes('payment fee')) return 'fee_transaction';
-  if (f.includes('paid by customer')) return 'shipping_income';
-  if (f.includes('shipping fee')) return 'shipping_cost';
-  if (f.includes('handling fee') || f.includes('service fee') || f.includes('free shipping max') || f.includes('lazcoins')) {
-    return 'fee_service';
-  }
-  if (t.includes('marketing') || f.includes('sponsored')) return 'ads';
-  if (f.includes('lost') || f.includes('damaged') || f.includes('compensation') || f.includes('claim')) return 'lost_compensation';
-  if (f.includes('penalty')) return 'penalty';
-  if (f.includes('subsidy') || f.includes('platform voucher')) return 'platform_subsidy';
-  return 'adjustment';
-}
