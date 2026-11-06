@@ -190,6 +190,13 @@
       "when": 1793981125026,
       "tag": "0026_phieu-kho-co-duyet",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793974470594,
+      "tag": "0020_kiem-ke-dau-ky",
+      "breakpoints": true
     }
   ]
 }
