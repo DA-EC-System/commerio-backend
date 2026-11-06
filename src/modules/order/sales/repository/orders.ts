@@ -39,7 +39,7 @@ const rowColumns = {
   shippingFeeDiscountPlatform: orders.shippingFeeDiscountPlatform,
 };
 
-/** Cột mô tả của dòng sàn (#260): kéo lại thì ghi đè; biến thể, số lượng, tiền gốc giữ như lúc tạo. */
+/** Cột mô tả của dòng sàn (#260): kéo lại thì ghi đè, sàn trả null thì giữ giá trị đã lưu; biến thể, số lượng, tiền gốc giữ như lúc tạo. */
 const LINE_INFO_COLUMNS = [
   'thumbnailUrl',
   'attributesLabel',
@@ -88,8 +88,8 @@ export async function updateOrder(id: string, patch: Partial<typeof orders.$infe
 }
 
 /**
- * Chèn dòng đơn sàn chưa có (theo mã món sàn); dòng đã có chỉ cập nhật cột mô tả khi khác (không tăng `version` nếu
- * không đổi). Trả id của mọi dòng theo mã món.
+ * Chèn dòng đơn sàn chưa có (theo mã món sàn); dòng đã có chỉ cập nhật cột mô tả khi khác, sàn trả null thì giữ giá
+ * trị đã lưu (không tăng `version` nếu không đổi). Trả id của mọi dòng theo mã món.
  */
 export async function upsertMarketplaceLines(
   orderId: string,
@@ -99,19 +99,19 @@ export async function upsertMarketplaceLines(
   if (lines.length) {
     const companyId = requireCompanyId('upsertMarketplaceLines');
     const cols = getTableColumns(orderLines);
-    const own = sql.join(LINE_INFO_COLUMNS.map((k) => sql`${orderLines}.${sql.identifier(cols[k].name)}`), sql`, `);
-    const incoming = sql.join(LINE_INFO_COLUMNS.map((k) => sql`excluded.${sql.identifier(cols[k].name)}`), sql`, `);
+    const own = (k: (typeof LINE_INFO_COLUMNS)[number]) => sql`${orderLines}.${sql.identifier(cols[k].name)}`;
+    const next = (k: (typeof LINE_INFO_COLUMNS)[number]) => sql`coalesce(excluded.${sql.identifier(cols[k].name)}, ${own(k)})`;
     await db
       .insert(orderLines)
       .values(lines.map((l) => ({ ...l, companyId, orderId })))
       .onConflictDoUpdate({
         target: [orderLines.orderId, orderLines.externalLineId],
         set: {
-          ...Object.fromEntries(LINE_INFO_COLUMNS.map((k) => [k, sql.raw(`excluded.${cols[k].name}`)])),
+          ...Object.fromEntries(LINE_INFO_COLUMNS.map((k) => [k, next(k)])),
           version: sql`${orderLines.version} + 1`,
           updatedAt: sql`now()`,
         },
-        setWhere: sql`(${own}) is distinct from (${incoming})`,
+        setWhere: sql`(${sql.join(LINE_INFO_COLUMNS.map(own), sql`, `)}) is distinct from (${sql.join(LINE_INFO_COLUMNS.map(next), sql`, `)})`,
       });
   }
   const rows = await db
