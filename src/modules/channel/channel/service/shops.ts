@@ -4,6 +4,7 @@ import {
   assertTransition,
   countHeld,
   dropHeld,
+  getCompanies,
   getStatusHistory,
   recordTransition,
   releaseHeld,
@@ -238,11 +239,25 @@ export async function connectByCode(
         throw err;
       })
     : null;
-  if (!claims || claims.cid !== actor.companyId || claims.sub !== actor.accountId || claims.plt !== platform) {
+  if (!claims?.cid || claims.sub !== actor.accountId || claims.plt !== platform) {
     throw new AppError(422, 'oauth_state_invalid', 'Phiên kết nối đã hết hạn hoặc không hợp lệ');
   }
+  if (claims.cid !== actor.companyId) throw await companyMismatch(claims.cid, actor.companyId);
   const params = input.params ?? { code: input.code! };
   return attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params))));
+}
+
+/**
+ * Người bấm đổi công ty giữa lúc mở trang uỷ quyền và lúc sàn trả về (21 §18.7.4): `expected` là công ty trong `state`,
+ * `actual` là công ty trong token. Ném trước khi đổi `code`, nên không nhận token sàn nào, không ghi gian hàng nào.
+ */
+async function companyMismatch(expectedId: string, actualId: string): Promise<AppError> {
+  const names = await getCompanies([expectedId, actualId]);
+  const ref = (id: string) => ({ id, name: names.get(id)?.name ?? '' });
+  return new AppError(409, 'company_mismatch', 'Phiên kết nối được mở ở công ty khác công ty đang chọn', {
+    expected: ref(expectedId),
+    actual: ref(actualId),
+  });
 }
 
 /** Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần. */

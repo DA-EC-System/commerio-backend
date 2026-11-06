@@ -170,7 +170,7 @@ describe('kết nối bằng OAuth', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('state sai, của người khác hoặc của công ty khác thì 422 oauth_state_invalid', async () => {
+  it('state sai, của người khác (kể cả CEO công ty khác) thì 422 oauth_state_invalid', async () => {
     const other = await addMember(company.companyId, 'admin');
     const otherCompany = await createCompany({ optionalModules: ['channel'] });
     const call = (state: string) =>
@@ -183,6 +183,29 @@ describe('kết nối bằng OAuth', () => {
       expect(res.status).toBe(422);
       expect(res.body.type).toBe('/problems/oauth_state_invalid');
     }
+  });
+
+  it('state của chính người bấm nhưng thuộc công ty khác công ty trong token thì 409 company_mismatch, không gọi sàn (21 §18.7.4)', async () => {
+    const id = seller();
+    const otherCompany = await createCompany({ optionalModules: ['channel'] });
+    const own = await stateFor(token);
+    const claims = JSON.parse(Buffer.from(own.split('.')[1]!, 'base64url').toString()) as { sub: string };
+    const state = await signPurposeToken('oauth', { cid: otherCompany.companyId, sub: claims.sub, plt: 'lazada' });
+    const res = await app()
+      .post('/api/v1/channel/shops/lazada/callback')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ state, params: { code: `c-${id}` } });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/company_mismatch');
+    const names = await testPool().query<{ id: string; name: string }>(
+      'select id, name from core.companies where id = any($1)',
+      [[otherCompany.companyId, company.companyId]],
+    );
+    const nameOf = (cid: string) => names.rows.find((r) => r.id === cid)!.name;
+    expect(res.body.expected).toEqual({ id: otherCompany.companyId, name: nameOf(otherCompany.companyId) });
+    expect(res.body.actual).toEqual({ id: company.companyId, name: nameOf(company.companyId) });
+    const { rows } = await testPool().query('select 1 from channel.shops where external_shop_id = $1', [id]);
+    expect(rows).toHaveLength(0);
   });
 
   it('lỗi sàn đổi sang mã app', async () => {
