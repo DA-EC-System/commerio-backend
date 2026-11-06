@@ -3,6 +3,7 @@ import express from 'express';
 import { pinoHttp } from 'pino-http';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { notImplemented } from '#src/shared/errors/app-error.ts';
 import { errorHandler } from '#src/shared/errors/error-handler.ts';
 import { createLogger } from '#src/shared/logger.ts';
 
@@ -31,5 +32,17 @@ describe('errorHandler', () => {
     const record = lines.map((l) => JSON.parse(l) as { msg: string; pgCode?: string }).find((r) => r.msg === 'Lỗi không lường trước');
     expect(record?.pgCode).toBe('40001');
     expect(lines.join('\n')).not.toContain('KHOA-BIMAT');
+  });
+
+  it('AC-20: notImplemented trả 501 kèm issue, owner trong problem body (Documents/21 §18.7.9)', async () => {
+    const app = express();
+    app.get('/chua-lam', (_req, _res, next) => next(notImplemented('createOpeningStocktake', 'commerio-backend#245', 'Bình')));
+    app.use(errorHandler);
+
+    const res = await request(app).get('/chua-lam');
+
+    expect(res.status).toBe(501);
+    expect(res.body).toMatchObject({ code: 'not_implemented', issue: 'commerio-backend#245', owner: 'Bình' });
+    expect(res.body.detail).toContain('createOpeningStocktake');
   });
 });

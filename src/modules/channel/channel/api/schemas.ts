@@ -84,6 +84,41 @@ export const Shop = z
     returnWindowDays: z.number().int().nullable().meta({
       description: 'Hạn trả hàng (ngày, 1–60) nhập lúc thiết lập; null khi chưa nhập hoặc sàn `returnWindow = platform_status`',
     }),
+    openingStocktake: z
+      .object({
+        documentId: z.uuid(),
+        number: z.string(),
+        status: z.enum(['draft', 'pending', 'rejected', 'posted', 'cancelled']).meta({ description: 'Trạng thái phiếu kho (21 §15.3)' }),
+      })
+      .strict()
+      .nullable()
+      .meta({
+        description:
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2)',
+      }),
+    setup: z
+      .object({
+        steps: z.array(
+          z
+            .object({
+              key: z.enum(['match', 'opening_stock', 'open_orders', 'push_stock']),
+              status: z.enum(['pending', 'running', 'done', 'failed', 'blocked']),
+              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`) hoặc mã issue chưa làm; null khi không `blocked`' }),
+            })
+            .strict(),
+        ),
+        unmatchedCount: z.number().int().meta({ description: 'Số SKU sàn chưa ghép sau thiết lập, gồm SKU bỏ qua' }),
+        openOrdersSkipped: z.number().int().meta({
+          description:
+            'Số đơn còn mở đặt trước mốc không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX` (chỉ lấy các đơn đặt mới nhất); 0 khi không cắt. Hàng của các đơn này không được giữ',
+        }),
+      })
+      .strict()
+      .nullable()
+      .meta({
+        description:
+          'Tiến độ thiết lập (21 §18.7.7). `connecting`: chỉ bước `match` `pending`. Null khi thiết lập trước commerio-backend#198, đã ngắt, hoặc mọi bước xong quá 24 giờ. Còn bước `running` thì FE gọi lại mỗi 3 giây',
+      }),
     pendingJobs: z.number().int(),
     listingCount: z.number().int().meta({ description: 'Số listing còn trên sàn' }),
     version: z.number().int(),
@@ -292,7 +327,17 @@ export const OrderPullResult = z
 // Thiết lập lần đầu (§18.2). Mốc kéo đơn do BE đặt là lúc gọi; FE cũ còn gửi `orderCutoffAt` thì khoá lạ bị bỏ (không `.strict()`).
 export const SetupBody = z
   .object({
-    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).default([]),
+    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(10_000).optional().meta({
+      description: 'Cũ, giữ tới hết đợt 2: SKU sàn nhận biến thể gợi ý. Gửi cùng `decisions` thì 422 `errors.decisions` (21 §18.7.5)',
+    }),
+    decisions: z
+      .array(z.object({ externalSkuId: z.string().trim().min(1).max(40), variantId: z.uuid().nullable() }).strict())
+      .max(10_000)
+      .optional()
+      .meta({
+        description:
+          'Biến thể người dùng chọn cho từng SKU sàn, `null` là bỏ qua; SKU không có trong mảng cũng bỏ qua. Dòng sai: 422 `errors["decisions.<i>"]` (21 §18.7.5)',
+      }),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
@@ -308,19 +353,33 @@ export const ShopSetupPreview = z
         .object({
           externalSkuId: z.string(),
           title: z.string(),
-          variantId: z.uuid(),
-          sku: z.string(),
-          available: z.number().int(),
+          match: z.enum(['sku', 'name', 'none']).meta({ description: '`sku`: SKU trùng; `name`: tên giống từ 0.4; `none`: không tìm được (21 §18.7.5)' }),
+          score: z.number().min(0).max(1).nullable().meta({ description: 'Độ giống tên, chỉ có khi `match = name`' }),
+          variantId: z.uuid().nullable(),
+          sku: z.string().nullable(),
+          available: z.number().int().nullable(),
           platformStock: z.number().int(),
         })
         .strict(),
     ),
-    unmatchedRemote: z.number().int().meta({ description: 'Luôn 0: không quét cả shop (shop thử dùng chung)' }),
+    unmatchedRemote: z.number().int().meta({ description: 'Số dòng `match = none` (21 §18.7.5)' }),
+    nameMatchSkipped: z.boolean().meta({
+      description:
+        '`true` khi BE bỏ ghép theo tên vì gian hàng quá lớn (số cặp SKU sàn chưa ghép × biến thể còn lại vượt 1.000.000, hoặc hơn 50.000 cặp qua ngưỡng) hoặc so tên quá 10 giây: dòng không trùng SKU đều `none`, người dùng tự chọn biến thể',
+    }),
+    proposedCutoffAt: iso.meta({ description: 'Mốc kéo đơn BE sẽ đặt nếu xác nhận ngay với `push`; FE chỉ hiện (21 §18.6.2, §18.7.6)' }),
+    firstShopOfCompany: z.boolean().meta({
+      description: 'Công ty chưa có gian hàng nào xong thiết lập (có mốc, không chờ kiểm kê). `true` thì chỉ chọn được `stocktake`',
+    }),
   })
   .strict()
   .meta({ id: 'ShopSetupPreview' });
 
 export const ShopSetupResult = z
-  .object({ shop: Shop, matched: z.number().int(), stocktakeNumber: z.null() })
+  .object({
+    shop: Shop,
+    matched: z.number().int(),
+    stocktakeNumber: z.string().nullable().meta({ description: 'Số phiếu kiểm kê đầu kỳ vừa lập khi `stocktake`; null với `push`' }),
+  })
   .strict()
   .meta({ id: 'ShopSetupResult' });

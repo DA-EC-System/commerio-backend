@@ -1,6 +1,7 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
+import { pgError } from '../../../../shared/db/pg-error.ts';
 import type { ListingStatus } from '../domain/listing.ts';
 import { listings } from './schema.ts';
 
@@ -13,6 +14,41 @@ export async function listListingRows(shopId: string, variantIds?: readonly stri
     .select()
     .from(listings)
     .where(and(eq(listings.shopId, shopId), byVariant));
+}
+
+/**
+ * Cặp chuỗi giống nhau từ `min` theo `similarity()` của pg_trgm, điểm giảm dần (#198 §18.7.5). `left`, `right` là vị trí
+ * trong hai mảng. Mảng truyền dạng jsonb vì drizzle tách mảng JS thành nhiều tham số. Câu chạy trong savepoint với
+ * `statement_timeout` = `timeoutMs` (chạy xong đặt lại giá trị cũ); quá giờ hoặc hơn `maxRows` cặp qua ngưỡng thì trả
+ * null, giao dịch của bên gọi vẫn dùng tiếp được.
+ */
+export async function nameSimilarities(
+  left: readonly string[],
+  right: readonly string[],
+  min: number,
+  timeoutMs: number,
+  maxRows: number,
+): Promise<{ left: number; right: number; score: number }[] | null> {
+  try {
+    return await getDb().transaction(async (tx) => {
+      const { rows: prev } = await tx.execute<{ t: string }>(
+        sql`select current_setting('statement_timeout') as t, set_config('statement_timeout', ${String(timeoutMs)}, true)`,
+      );
+      const { rows } = await tx.execute<{ li: number; ri: number; score: number }>(sql`
+        select l.i::int - 1 as li, r.i::int - 1 as ri, similarity(l.t, r.t) as score
+          from jsonb_array_elements_text(${JSON.stringify(left)}::jsonb) with ordinality l(t, i)
+          cross join jsonb_array_elements_text(${JSON.stringify(right)}::jsonb) with ordinality r(t, i)
+         where similarity(l.t, r.t) >= ${min}
+         order by score desc, l.i, r.i
+         limit ${maxRows + 1}`);
+      await tx.execute(sql`select set_config('statement_timeout', ${prev[0]!.t}, true)`);
+      if (rows.length > maxRows) return null;
+      return rows.map((r) => ({ left: r.li, right: r.ri, score: Number(r.score) }));
+    });
+  } catch (err) {
+    if (pgError(err).code === '57014') return null;
+    throw err;
+  }
 }
 
 export async function findListingRow(shopId: string, variantId: string): Promise<ListingRow | undefined> {

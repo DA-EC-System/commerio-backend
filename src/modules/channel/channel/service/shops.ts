@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   assertTransition,
   countHeld,
+  lastDeadJobs,
   dropHeld,
   getCompanies,
   getStatusHistory,
@@ -43,7 +44,9 @@ import {
   type ShopConnection,
   type TokenSet,
 } from './marketplaces/index.ts';
-import { startShopJobs, stopShopJobs } from './shop-jobs.ts';
+import { listingSyncQueue, openOrderPullQueue, resumeOpenOrderPull, startShopJobs, stopShopJobs } from './shop-jobs.ts';
+import { setupOf, type ShopSetup } from '../domain/shop-setup.ts';
+import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
 export interface Actor {
@@ -70,6 +73,10 @@ export interface Shop {
   capabilities: ShopCapabilities;
   /** Hạn trả hàng (ngày), null khi chưa thiết lập hoặc sàn `returnWindow = 'platform_status'`. */
   returnWindowDays: number | null;
+  /** Phiếu kiểm kê đầu kỳ đang chờ ghi sổ (chế độ chờ kiểm kê lần đầu, #198). */
+  openingStocktake: { documentId: string; number: string; status: OpeningStocktakeStatus } | null;
+  /** Tiến độ thiết lập (#198, 21 §18.7.7). */
+  setup: ShopSetup | null;
   /** Hàng chờ đẩy khi chưa gọi được sàn: #102 làm, tới đó luôn 0. */
   pendingJobs: number;
   listingCount: number;
@@ -96,7 +103,33 @@ type Platform = ShopRow['platform'];
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ thao tác này');
 
-function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
+interface ShopExtras {
+  listings: Map<string, number>;
+  held: Map<string, number>;
+  stocktakeStatus: Map<string, OpeningStocktakeStatus>;
+  /** Lúc lỗi gần nhất của việc hết lượt thử, khoá `"<shopId> <hàng>"` (`lastDeadJobs`). */
+  dead: Map<string, Date>;
+}
+
+/** Gian hàng đang thiết lập dở (#198): mới cần đọc hàng lỗi cho `setup`. */
+const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'disconnected' && (!r.openOrdersPulledAt || !r.stockPushedAt);
+
+/** Số đếm và trạng thái phiếu đầu kỳ cho các gian hàng, đọc một lần cho cả danh sách. Gọi trong `withCompany`. */
+async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
+  const ids = rows.map((r) => r.id);
+  const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
+  const [listings, held, stocktakeStatus, dead] = await Promise.all([
+    countListingsOnPlatform(ids),
+    countHeld(ids),
+    docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
+    lastDeadJobs(rows.filter(settingUp).map((r) => r.id), [openOrderPullQueue.name, listingSyncQueue.name]),
+  ]);
+  return { listings, held, stocktakeStatus, dead };
+}
+
+function toShop(row: ShopRow, extras: ShopExtras): Shop {
+  const listingCount = extras.listings.get(row.id) ?? 0;
+  const pendingJobs = extras.held.get(row.id) ?? 0;
   return {
     id: row.id,
     companyId: row.companyId,
@@ -112,6 +145,22 @@ function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
     orderCutoffAt: row.orderCutoffAt,
     capabilities: capabilitiesOf(row.platform),
     returnWindowDays: row.returnWindowDays,
+    openingStocktake:
+      row.openingStocktakeId && row.openingStocktakeNumber
+        ? {
+            documentId: row.openingStocktakeId,
+            number: row.openingStocktakeNumber,
+            status: extras.stocktakeStatus.get(row.openingStocktakeId) ?? 'draft',
+          }
+        : null,
+    setup: setupOf(
+      {
+        ...row,
+        openOrderPullFailedAt: extras.dead.get(`${row.id} ${openOrderPullQueue.name}`) ?? null,
+        listingSyncFailedAt: extras.dead.get(`${row.id} ${listingSyncQueue.name}`) ?? null,
+      },
+      new Date(),
+    ),
     pendingJobs,
     listingCount,
     version: row.version,
@@ -121,8 +170,7 @@ function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
 }
 
 export async function shopView(row: ShopRow): Promise<Shop> {
-  const [listings, held] = await Promise.all([countListingsOnPlatform([row.id]), countHeld([row.id])]);
-  return toShop(row, listings.get(row.id) ?? 0, held.get(row.id) ?? 0);
+  return toShop(row, await shopExtras([row]));
 }
 
 function adapterOf(platform: string): MarketplaceAdapter {
@@ -199,9 +247,8 @@ export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter:
 export async function listShops(): Promise<{ items: Shop[] }> {
   requireCompanyId('listShops');
   const rows = await listShopRows();
-  const ids = rows.map((r) => r.id);
-  const [counts, held] = await Promise.all([countListingsOnPlatform(ids), countHeld(ids)]);
-  return { items: rows.map((r) => toShop(r, counts.get(r.id) ?? 0, held.get(r.id) ?? 0)) };
+  const extras = await shopExtras(rows);
+  return { items: rows.map((r) => toShop(r, extras)) };
 }
 
 /** Sàn kết nối được và cách nối (Documents/21 §18.1). Cấu hình của máy chủ, giống nhau với mọi công ty; không lộ khoá. */
@@ -307,6 +354,7 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     if (result.shop.status !== 'active') continue;
     const jobsRun = await releaseHeld(result.shop.id);
     await startShopJobs(result.shop.companyId, result.shop.id);
+    await resumeOpenOrderPull(result.shop.companyId, result.shop.id);
     result.shop.pendingJobs = 0;
     if (result.reconnect) result.reconnect.jobsRun = jobsRun;
   }

@@ -265,6 +265,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
           ...(p.lostReportedBy && p.status !== 'lost' ? (['lost_reported'] as const) : []),
         ],
         flagNote: p.flagNote,
+        notices: p.notices,
         openPurpose: p.openPurpose,
         selfDelivery: p.selfDelivery,
         paymentMethod: o.paymentMethod,

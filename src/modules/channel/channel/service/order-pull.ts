@@ -2,12 +2,15 @@
 // lật trang bằng con trỏ của adapter (#218); mỗi đơn đổi `updated_at` thì gọi chi tiết rồi giao `order` trong một giao
 // dịch. Gọi sàn ngoài giao dịch. Mốc tới đơn cuối đã xong nhưng không qua `safeUntil` adapter báo; lỗi giữa chừng thì
 // dừng, lần sau làm tiếp. Lịch, thử lại, một việc mỗi gian hàng: hàng `channel.order_pull` (#102, `shop-jobs.ts`).
+import { sendJob } from '../../../core/index.ts';
 import { ingestMarketplaceOrder } from '../../../order/index.ts';
+import { env } from '../../../../shared/config/env.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { advanceOrderCursor, findRawOrderTimes, saveRawOrder, variantsBySellerSku } from '../repository/raw-orders.ts';
-import { MarketplaceError } from './marketplaces/common.ts';
-import { lockShopForOrders } from '../repository/shops.ts';
+import { MarketplaceError, type MarketplaceAdapter, type RemoteOrderRef } from './marketplaces/common.ts';
+import { lockShopForOrders, markOpenOrdersPulled } from '../repository/shops.ts';
+import { listingSyncQueue } from './shop-jobs.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const OVERLAP_MS = 2 * 60_000;
@@ -20,9 +23,49 @@ export interface PullResult {
   updated: number;
 }
 
+interface Session {
+  companyId: string;
+  shopId: string;
+  adapter: MarketplaceAdapter;
+  accessToken: string;
+}
+
+/** Gọi chi tiết một đơn (ngoài giao dịch) rồi giao `order` và lưu bản gốc trong một giao dịch. */
+async function ingestRemote({ companyId, shopId, adapter, accessToken }: Session, externalOrderId: string, result: PullResult) {
+  const remote = await onMarketplace(() => adapter.getOrder!(accessToken, externalOrderId));
+  const res = await withCompany(companyId, async () => {
+    // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
+    const locked = await lockShopForOrders(shopId);
+    if (!locked || locked.status === 'disconnected') {
+      throw new AppError(409, 'shop_not_connected', 'Gian hàng đã ngắt', { current: 'disconnected' });
+    }
+    const variants = await variantsBySellerSku(shopId, remote.lines.map((l) => l.sellerSku));
+    const r = await ingestMarketplaceOrder({
+      ...remote,
+      shopId,
+      // Chờ kiểm kê đầu kỳ thì không giữ hàng (25 §6.1 bước 3); đọc dưới khoá chia sẻ nên không lệch lúc ghi sổ phiếu.
+      holdStock: locked.openingStocktakeId === null,
+      lines: remote.lines.map((l) => ({ ...l, variantId: variants.get(l.sellerSku) ?? null })),
+    });
+    await saveRawOrder({
+      shopId,
+      orderId: r.orderId,
+      externalOrderId: remote.externalOrderId,
+      externalStatus: remote.rawStatus,
+      payload: remote,
+      externalUpdateTime: remote.updatedAt,
+    });
+    return r;
+  });
+  result.pulled += 1;
+  if (res.created) result.created += 1;
+  else if (res.changed) result.updated += 1;
+}
+
 export async function pullShopOrders(companyId: string, shopId: string): Promise<PullResult> {
   const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
   if (!adapter.listOrders || !adapter.getOrder) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo đơn');
+  const session = { companyId, shopId, adapter, accessToken };
   const result: PullResult = { pulled: 0, created: 0, updated: 0 };
   const cutoff = shop.orderCutoffAt;
   if (!cutoff) return result;
@@ -44,33 +87,9 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
       const known = await withCompany(companyId, () => findRawOrderTimes(shopId, page.orders.map((o) => o.externalOrderId)));
       for (const ref of page.orders) {
         const seen = known.get(ref.externalOrderId);
-        if (ref.placedAt >= cutoff && !(seen && seen >= ref.updatedAt)) {
-          const remote = await onMarketplace(() => adapter.getOrder!(accessToken, ref.externalOrderId));
-          const res = await withCompany(companyId, async () => {
-            // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
-            const status = await lockShopForOrders(shopId);
-            if (!status || status === 'disconnected') {
-              throw new AppError(409, 'shop_not_connected', 'Gian hàng đã ngắt', { current: 'disconnected' });
-            }
-            const variants = await variantsBySellerSku(shopId, remote.lines.map((l) => l.sellerSku));
-            const r = await ingestMarketplaceOrder({
-              ...remote,
-              shopId,
-              lines: remote.lines.map((l) => ({ ...l, variantId: variants.get(l.sellerSku) ?? null })),
-            });
-            await saveRawOrder({
-              shopId,
-              orderId: r.orderId,
-              externalOrderId: remote.externalOrderId,
-              externalStatus: remote.rawStatus,
-              payload: remote,
-              externalUpdateTime: remote.updatedAt,
-            });
-            return r;
-          });
-          result.pulled += 1;
-          if (res.created) result.created += 1;
-          else if (res.changed) result.updated += 1;
+        // Đơn đặt trước mốc chỉ nhận khi đã có trong DB (về qua lượt kéo đơn còn mở, #198; Documents/21 §18.2).
+        if ((ref.placedAt >= cutoff || seen) && !(seen && seen >= ref.updatedAt)) {
+          await ingestRemote(session, ref.externalOrderId, result);
         }
         if (!done || ref.updatedAt > done) done = ref.updatedAt;
       }
@@ -81,5 +100,84 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
     const at = done && safe && safe < done ? safe : done;
     if (at) await withCompany(companyId, () => advanceOrderCursor(shopId, at));
   }
+  return result;
+}
+
+/**
+ * Lượt kéo đơn **còn mở** một lần sau thiết lập (#198; Documents/21 §18.2): mọi đơn chưa xong bất kể ngày đặt, để kiện
+ * chưa rời kho giữ hàng trước lần đẩy tồn đầu (A10). Không tiến `last_order_sync_at`. Xong trọn thì đặt
+ * `open_orders_pulled_at` và xếp việc đồng bộ listing (lúc đó mới đẩy tồn); adapter báo `safeUntil` hay hết số trang thì
+ * ném để pg-boss chạy lại cả lượt (đơn đã có bỏ qua nhờ `raw_orders`). Sàn chưa có `listOpenOrders` thì đặt cột ngay.
+ *
+ * Không đặt `OPEN_ORDER_PULL_MAX` thì nhận theo từng trang. Có đặt thì đơn đặt từ mốc vẫn nhận theo trang (vòng 5 phút
+ * vốn nhận), còn đơn đặt trước mốc chỉ lấy N đơn **đặt mới nhất**: sàn trả theo trạng thái rồi `updated_at`, không theo
+ * ngày đặt, nên phải lật hết danh sách (mỗi trang một lần gọi) rồi mới chọn; chỉ đơn được chọn mới gọi chi tiết. Chạy
+ * lại thì chọn lại đúng tập đó khi danh sách trên sàn chưa đổi.
+ */
+const incomplete = (message: string) => new AppError(503, 'open_orders_incomplete', message);
+// Số mã đơn mỗi lần tra `raw_orders`, dưới giới hạn tham số của PostgreSQL (L019).
+const KNOWN_BATCH = 1000;
+
+/** N đơn đặt mới nhất (trùng giờ thì mã đơn lớn hơn trước, để chạy lại chọn y như cũ); `max` không đặt thì giữ hết. */
+function newestOpenOrders(refs: RemoteOrderRef[], max: number | undefined): RemoteOrderRef[] {
+  if (max === undefined || refs.length <= max) return refs;
+  return refs
+    .sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime() || b.externalOrderId.localeCompare(a.externalOrderId))
+    .slice(0, max);
+}
+
+export async function pullOpenOrders(companyId: string, shopId: string): Promise<PullResult & { skipped: number }> {
+  const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
+  const result = { pulled: 0, created: 0, updated: 0, skipped: 0 };
+  if (!shop.orderCutoffAt || shop.openOrdersPulledAt) return result;
+  const cutoff = shop.orderCutoffAt;
+  if (adapter.listOpenOrders && adapter.getOrder) {
+    const max = env.OPEN_ORDER_PULL_MAX;
+    const session = { companyId, shopId, adapter, accessToken };
+    const ingestNew = async (refs: readonly RemoteOrderRef[]) => {
+      for (let i = 0; i < refs.length; i += KNOWN_BATCH) {
+        const batch = refs.slice(i, i + KNOWN_BATCH);
+        const known = await withCompany(companyId, () => findRawOrderTimes(shopId, batch.map((o) => o.externalOrderId)));
+        for (const ref of batch) {
+          const seen = known.get(ref.externalOrderId);
+          if (!(seen && seen >= ref.updatedAt)) await ingestRemote(session, ref.externalOrderId, result);
+        }
+      }
+    };
+    // Đơn trước mốc chờ chọn khi có trần; đơn trả hai lần giữ bản `updatedAt` mới hơn.
+    const held = new Map<string, RemoteOrderRef>();
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      if (++pages > MAX_PAGES) throw incomplete(`Lượt kéo đơn còn mở quá ${MAX_PAGES} trang`);
+      const prev: string | null = cursor;
+      const page = await onMarketplace(async () => {
+        const p = await adapter.listOpenOrders!(accessToken, prev);
+        if (p.nextCursor !== null && p.nextCursor === prev) throw new MarketplaceError('rejected', 'cursor_stuck', 'Adapter trả lại con trỏ cũ');
+        return p;
+      });
+      // Sàn chưa chốt dữ liệu tới hiện tại: có thể sót đơn, chạy lại cả lượt thay vì đặt cột (#198 P3).
+      if (page.safeUntil) throw incomplete(`Sàn chỉ chắc dữ liệu đơn tới ${page.safeUntil.toISOString()}, chạy lại lượt`);
+      const now: RemoteOrderRef[] = [];
+      for (const ref of page.orders) {
+        if (max === undefined || ref.placedAt >= cutoff) {
+          now.push(ref);
+          continue;
+        }
+        const had = held.get(ref.externalOrderId);
+        if (!had || ref.updatedAt > had.updatedAt) held.set(ref.externalOrderId, ref);
+      }
+      await ingestNew(now);
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    const chosen = newestOpenOrders([...held.values()], max);
+    result.skipped = held.size - chosen.length;
+    await ingestNew(chosen);
+  }
+  await withCompany(companyId, async () => {
+    await markOpenOrdersPulled(shopId, result.skipped);
+    await sendJob(listingSyncQueue, { companyId, shopId }, { key: shopId });
+  });
   return result;
 }

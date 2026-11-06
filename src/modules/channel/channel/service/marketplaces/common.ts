@@ -254,6 +254,11 @@ export interface MarketplaceAdapter {
   /** Đưa ảnh từ URL công khai lên sàn, trả URL trên sàn. */
   uploadImage(accessToken: string, url: string): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
+  /**
+   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
+   * thì ném `rejected`, không trả thiếu.
+   */
+  listSkus?(accessToken: string): Promise<RemoteSku[]>;
   /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
@@ -275,6 +280,14 @@ export interface MarketplaceAdapter {
   listOrders?(
     accessToken: string,
     updatedAfter: Date,
+    cursor: string | null,
+  ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
+  /**
+   * Đơn **chưa xong** của gian hàng bất kể ngày đặt, cho lượt kéo một lần sau thiết lập (#198, Documents/21 §18.2). Lật
+   * trang như `listOrders` (con trỏ, `safeUntil`); thứ tự giữa các trang không ràng buộc, đơn có thể trả hai lần.
+   */
+  listOpenOrders?(
+    accessToken: string,
     cursor: string | null,
   ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
   /** Một đơn kèm các món (#105). */

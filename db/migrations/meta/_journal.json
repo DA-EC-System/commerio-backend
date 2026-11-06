@@ -134,6 +134,27 @@
       "when": 1793959417327,
       "tag": "0018_shop-return-window",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793964309538,
+      "tag": "0019_phieu-dau-ky-gian-hang",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793964312796,
+      "tag": "0020_pg-trgm-backfill-thiet-lap",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793971950397,
+      "tag": "0021_tran-don-mo",
+      "breakpoints": true
     }
   ]
 }

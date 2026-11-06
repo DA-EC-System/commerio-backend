@@ -84,43 +84,46 @@ beforeAll(async () => {
 });
 
 describe('thiết lập lần đầu', () => {
-  it('gợi ý SKU sàn có SellerSku trùng SKU Commerio, chỉ hỏi sàn theo SKU của mình', async () => {
+  it('gợi ý SKU sàn có SellerSku trùng SKU Commerio, chỉ hỏi sàn theo SKU của mình khi sàn chưa có listSkus', async () => {
     const res = await auth(app().get(`/api/v1/channel/shops/${shopId}/setup`));
     expect(res.status).toBe(200);
     expect(ShopSetupPreview.parse(res.body)).toEqual({
       suggestions: [
-        { externalSkuId: 'sku-1', title: 'Áo trên sàn', variantId: onPlatform.id, sku: 'CMR-SAN-1', available: 9, platformStock: 4 },
+        { externalSkuId: 'sku-1', title: 'Áo trên sàn', match: 'sku', score: null, variantId: onPlatform.id, sku: 'CMR-SAN-1', available: 9, platformStock: 4 },
       ],
       unmatchedRemote: 0,
+      nameMatchSkipped: false,
+      proposedCutoffAt: expect.any(String),
+      firstShopOfCompany: true,
     });
     expect(getSkus).toHaveBeenCalledWith(expect.any(String), ['CMR-SAN-1', 'CMR-CHUA-LEN']);
   });
 
-  it('kiểm đầu vào: stocktake chưa hỗ trợ, SKU không có trong gợi ý; FE cũ gửi orderCutoffAt tương lai thì bỏ qua', async () => {
+  it('kiểm đầu vào: gian hàng đầu tiên gửi push, SKU không có trong gợi ý; orderCutoffAt bị bỏ qua (#198)', async () => {
     const res = await setup({
       externalSkuIds: ['sku-khong-co'],
-      openingStock: 'stocktake',
+      openingStock: 'push',
       orderCutoffAt: new Date(Date.now() + 86_400_000).toISOString(),
     });
     expect(res.status).toBe(422);
     expect(Object.keys(res.body.errors).sort()).toEqual(['externalSkuIds', 'openingStock']);
   });
 
-  // Documents/21 §18.2: BE tự đặt mốc kéo đơn là lúc gọi, FE không gửi (FE#188).
-  it('ghép, đẩy khả dụng, gian hàng connecting → active; mốc kéo đơn là lúc gọi; đọc lại listing live và lịch sử', async () => {
-    const before = Date.now();
+  it('ghép, đẩy giá, gian hàng connecting → active; đọc lại listing live và lịch sử', async () => {
+    // Công ty đã có gian hàng xong thiết lập thì gian hàng này mới được push (#198 A1).
+    await testPool().query(
+      "insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Shop cũ', 'active', now())",
+      [company.companyId, randomUUID()],
+    );
     const res = await setup({ externalSkuIds: ['sku-1'], openingStock: 'push' });
-    const after = Date.now();
     expect(res.status).toBe(200);
     expect(ShopSetupResult.parse(res.body)).toMatchObject({ matched: 1, stocktakeNumber: null, shop: { status: 'active' } });
-    const cutoff = new Date(res.body.shop.orderCutoffAt).getTime();
-    expect(cutoff).toBeGreaterThanOrEqual(before - 1000);
-    expect(cutoff).toBeLessThanOrEqual(after + 1000);
+    // Tồn đẩy sau lượt kéo đơn còn mở (#198 A10): lúc thiết lập chỉ đẩy giá.
     expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [
-      { externalProductId: 'item-1', externalSkuId: 'sku-1', price: '50000', quantity: 9 },
+      { externalProductId: 'item-1', externalSkuId: 'sku-1', price: '50000' },
     ]);
     const { rows } = await testPool().query('select status, stock_sync, platform_stock, seller_sku from channel.listings where shop_id = $1', [shopId]);
-    expect(rows).toEqual([{ status: 'live', stock_sync: 'synced', platform_stock: 9, seller_sku: 'CMR-SAN-1' }]);
+    expect(rows).toEqual([{ status: 'live', stock_sync: 'pending', platform_stock: 4, seller_sku: 'CMR-SAN-1' }]);
     const history = await testPool().query(
       `select entity_type, from_state, to_state, action from core.state_transitions
        where entity_id = $1 or entity_id = (select id from channel.listings where shop_id = $1) order by id`,
@@ -194,7 +197,12 @@ describe('returnWindowDays ở thiết lập', () => {
     return res.body.shop.id;
   }
   const finish = (id: string, extra: object) =>
-    coAuth(app().post(`/api/v1/channel/shops/${id}/setup`)).send({ externalSkuIds: [], openingStock: 'push', ...extra });
+    coAuth(app().post(`/api/v1/channel/shops/${id}/setup`)).send({
+      externalSkuIds: [],
+      openingStock: 'push',
+      orderCutoffAt: new Date(Date.now() - 3_600_000).toISOString(),
+      ...extra,
+    });
   const stored = async (id: string) =>
     (await testPool().query<{ status: string; return_window_days: number | null }>('select status, return_window_days from channel.shops where id = $1', [id])).rows[0];
 
@@ -224,16 +232,6 @@ describe('returnWindowDays ở thiết lập', () => {
       expect(res.status).toBe(200);
       expect(await stored(id)).toEqual({ status: 'active', return_window_days: null });
     }
-  });
-
-  it('FE cũ còn gửi orderCutoffAt thì BE bỏ qua, mốc vẫn là lúc gọi (21 §18.2)', async () => {
-    const id = await newShop();
-    const before = Date.now();
-    const res = await finish(id, { orderCutoffAt: '2020-01-01T00:00:00Z' });
-    expect(res.status).toBe(200);
-    const { rows } = await testPool().query<{ order_cutoff_at: Date }>('select order_cutoff_at from channel.shops where id = $1', [id]);
-    expect(rows[0]!.order_cutoff_at.getTime()).toBeGreaterThanOrEqual(before - 1000);
-    expect(new Date(res.body.shop.orderCutoffAt).getTime()).toBe(rows[0]!.order_cutoff_at.getTime());
   });
 
   it('sàn returnWindow = platform_status: bỏ qua số gửi lên, lưu null', async () => {

@@ -40,6 +40,11 @@ configMapGenerator:
     behavior: replace
     envs:
       - caddy/.env
+  # Staging: lượt kéo đơn còn mở sau thiết lập chỉ lấy 200 đơn đặt mới nhất, giữ hạn mức gọi Lazada (#198).
+  - name: app-config
+    behavior: merge
+    literals:
+      - OPEN_ORDER_PULL_MAX=200
 
 patches:
   # GHCR private: Secret ghcr tạo tay trên VPS từ PAT read:packages (README).
