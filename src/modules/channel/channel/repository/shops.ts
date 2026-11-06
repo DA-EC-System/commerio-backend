@@ -136,6 +136,29 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
   return before;
 }
 
+/**
+ * Gian hàng khác của công ty (RLS lọc công ty): đã có gian hàng xong thiết lập chưa (có mốc, không chờ kiểm kê; kể cả đã
+ * ngắt), và phiếu kiểm kê đầu kỳ đang chờ nếu có (#198 A1, A12).
+ */
+export async function setupStateOfCompany(exceptShopId: string): Promise<{ hasSetUpShop: boolean; awaitingStocktake: string | null }> {
+  const rows = await getDb()
+    .select({ cutoff: shops.orderCutoffAt, stocktake: shops.openingStocktakeNumber })
+    .from(shops)
+    .where(and(ne(shops.id, exceptShopId), sql`${shops.orderCutoffAt} is not null`));
+  return {
+    hasSetUpShop: rows.some((r) => r.stocktake === null),
+    awaitingStocktake: rows.find((r) => r.stocktake !== null)?.stocktake ?? null,
+  };
+}
+
+/** Đánh dấu lượt đẩy tồn đầu tiên sau thiết lập đã chạy (§18.7.7 `push_stock`). Không tăng `version`. */
+export async function markStockPushed(id: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ stockPushedAt: sql`now()` })
+    .where(and(eq(shops.id, id), sql`${shops.stockPushedAt} is null`));
+}
+
 /** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
 export async function hasChannelData(): Promise<boolean> {
   const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);

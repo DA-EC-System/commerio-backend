@@ -6,6 +6,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
 import { type ListingPatch, listListingRows, markStockPendingIds, markStockPendingRows, updateListing } from '../repository/listings.ts';
+import { markStockPushed } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { MarketplaceError, type PerSkuResult, type PriceQuantity } from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
@@ -48,6 +49,10 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     summary.changed++;
   }
 
+  // Giữ tồn (#198): chờ phiếu kiểm kê đầu kỳ (25 §6.1 bước 3) hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần
+  // giữ cho đơn đó). Chỉ đẩy giá; tồn giữ `stock_sync = pending`, không ghi lỗi. Gian hàng chưa thiết lập (chưa có mốc)
+  // đẩy như trước #198.
+  const holdStock = shop.openingStocktakeId !== null || (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null);
   const watched = rows.filter((r) => WATCHED.includes(r.status) && r.sellerSku && r.externalSkuId);
   summary.checked = watched.length;
   if (watched.length) {
@@ -69,13 +74,20 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
       r.mode === 'mapped' &&
       PUSHABLE.includes(r.status) &&
       r.externalSkuId &&
-      (r.stockSync !== 'synced' || r.priceSync !== 'synced'),
+      ((!holdStock && r.stockSync !== 'synced') || r.priceSync !== 'synced'),
   );
-  if (!due.length) return summary;
+  // Lượt đẩy tồn đầu tiên sau thiết lập xong khi lượt này chạy hết (sàn lỗi cả lô thì ném trước, lượt sau đánh dấu).
+  const firstStockPush = async () => {
+    if (!holdStock && !shop.stockPushedAt) await inCompany(() => markStockPushed(shop.id));
+  };
+  if (!due.length) {
+    await firstStockPush();
+    return summary;
+  }
   const ids = due.map((r) => r.variantId!);
   const { prices, available } = await inCompany(async () => ({
     prices: await port.standardPrices(ids),
-    available: await port.availableOf(ids),
+    available: holdStock ? new Map<string, number>() : await port.availableOf(ids),
   }));
   const at = new Date();
   // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
@@ -98,7 +110,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
           };
     return { row, item };
   });
-  const missing = plan.filter((p) => p.item?.quantity === undefined).length;
+  const missing = holdStock ? 0 : plan.filter((p) => p.item?.quantity === undefined).length;
   if (missing) logger.warn({ shopId: shop.id, missing }, 'Đồng bộ listing bỏ qua SKU không đọc được số có thể bán');
   const items = plan.flatMap((p) => (p.item ? [p.item] : []));
   const results = new Map(
@@ -108,7 +120,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   );
   await inCompany(async () => {
     for (const { row, item } of plan) {
-      let patch: ListingPatch = item?.quantity === undefined ? { stockSyncError: variantMissing } : {};
+      let patch: ListingPatch = !holdStock && item?.quantity === undefined ? { stockSyncError: variantMissing } : {};
       if (item) {
         const result = results.get(row.externalSkuId!);
         summary.pushed++;
@@ -129,6 +141,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
       await updateListing(row.id, { version: row.version }, patch);
     }
   });
+  await firstStockPush();
   return summary;
 }
 

@@ -84,6 +84,18 @@ export const Shop = z
     returnWindowDays: z.number().int().nullable().meta({
       description: 'Hạn trả hàng (ngày, 1–60) nhập lúc thiết lập; null khi chưa nhập hoặc sàn `returnWindow = platform_status`',
     }),
+    openingStocktake: z
+      .object({
+        documentId: z.uuid(),
+        number: z.string(),
+        status: z.enum(['draft', 'pending', 'rejected', 'posted', 'cancelled']).meta({ description: 'Trạng thái phiếu kho (21 §15.3)' }),
+      })
+      .strict()
+      .nullable()
+      .meta({
+        description:
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2)',
+      }),
     pendingJobs: z.number().int(),
     listingCount: z.number().int().meta({ description: 'Số listing còn trên sàn' }),
     version: z.number().int(),
@@ -316,11 +328,19 @@ export const ShopSetupPreview = z
         .strict(),
     ),
     unmatchedRemote: z.number().int().meta({ description: 'Luôn 0: không quét cả shop (shop thử dùng chung)' }),
+    proposedCutoffAt: iso.meta({ description: 'Mốc kéo đơn BE sẽ đặt nếu xác nhận ngay với `push`; FE chỉ hiện (21 §18.6.2, §18.7.6)' }),
+    firstShopOfCompany: z.boolean().meta({
+      description: 'Công ty chưa có gian hàng nào xong thiết lập (có mốc, không chờ kiểm kê). `true` thì chỉ chọn được `stocktake`',
+    }),
   })
   .strict()
   .meta({ id: 'ShopSetupPreview' });
 
 export const ShopSetupResult = z
-  .object({ shop: Shop, matched: z.number().int(), stocktakeNumber: z.null() })
+  .object({
+    shop: Shop,
+    matched: z.number().int(),
+    stocktakeNumber: z.string().nullable().meta({ description: 'Số phiếu kiểm kê đầu kỳ vừa lập khi `stocktake`; null với `push`' }),
+  })
   .strict()
   .meta({ id: 'ShopSetupResult' });
