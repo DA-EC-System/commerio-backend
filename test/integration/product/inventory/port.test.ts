@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   availableOf,
   nextDocNumber,
-  receiveBack,
   release,
   reserve,
   reverseShipment,
@@ -31,7 +30,6 @@ describe('hàm cổng tạm', () => {
     ['release', () => release('p', [])],
     ['ship', () => ship('p', [], { actorId: 'u' })],
     ['reverseShipment', () => reverseShipment('p', [], { actorId: 'u', reason: 'x' })],
-    ['receiveBack', () => receiveBack({ type: 'package', id: 'p' }, [])],
   ])('AC7: %s trả 501 not_implemented', async (_name, call) => {
     await expect(call()).rejects.toMatchObject({ status: 501, code: 'not_implemented', extensions: { issue: 'commerio-backend#206', owner: 'Khang' } });
   });

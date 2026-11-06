@@ -26,10 +26,11 @@ export async function recheckThresholds(variantIds: readonly string[]): Promise<
   const watched = levels.map((l) => l.variantId);
   const variants = new Map((await getVariants(watched)).map((v) => [v.id, v]));
   const incoming = await incomingSource(watched);
+  const locks = await lockedOf(watched);
   for (const level of levels) {
     const variant = variants.get(level.variantId);
     if (!variant) continue;
-    const available = availableQty(level.onHand, level.reserved, lockedOf(level.variantId));
+    const available = availableQty(level.onHand, level.reserved, locks.get(level.variantId) ?? 0);
     const next = nextAlertState({
       available,
       incoming: incoming.get(level.variantId) ?? 0,

@@ -129,6 +129,11 @@ export const stockDocuments = inventorySchema.table(
     isOpening: boolean('is_opening').notNull().default(false),
     sourceType: text('source_type'),
     sourceId: uuid('source_id'),
+    /** Kiểm hàng về: đơn và gian hàng của hàng quay về, cho `inventory.return_inspected` (#208). */
+    /** Số của chứng từ nguồn (mã kiện, mã yêu cầu trả) do bên lập phiếu đưa, để hiện mà không đọc chéo module. */
+    sourceNumber: text('source_number'),
+    orderId: uuid('order_id'),
+    shopId: uuid('shop_id'),
     claimFlag: boolean('claim_flag').notNull().default(false),
     rejectDecision: rejectDecision('reject_decision'),
     note: text('note'),

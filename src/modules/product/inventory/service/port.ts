@@ -3,6 +3,7 @@ import { notImplemented } from '../../../../shared/errors/app-error.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { availableQty } from '../domain/stock.ts';
 import { takeNextNumber } from '../repository/counters.ts';
+import { pendingLocks } from '../repository/documents.ts';
 import { levelsOf } from '../repository/levels.ts';
 
 export interface StockSnapshot {
@@ -15,8 +16,8 @@ export interface StockSnapshot {
   avgCost: string;
 }
 
-// shortcut: tạm khoá luôn 0 vì chưa có phiếu kho chờ duyệt; tính từ phiếu giảm `pending` khi làm B3 (spec #111 Q4).
-export const lockedOf = (_variantId: string) => 0;
+/** Tạm khoá theo biến thể: phần giảm tồn thực của phiếu kho đang chờ duyệt (#208, Documents/25 §7.1). Không khoá thì vắng. */
+export const lockedOf = (variantIds?: readonly string[]): Promise<Map<string, number>> => pendingLocks(variantIds);
 
 /**
  * Các con số của những biến thể thuộc công ty trong `variantIds`; biến thể chưa có dòng tồn trả số 0. Id của công ty
@@ -25,12 +26,13 @@ export const lockedOf = (_variantId: string) => 0;
 export async function stockOf(variantIds: readonly string[]): Promise<Map<string, StockSnapshot>> {
   const variants = await getVariants(variantIds);
   const levels = await levelsOf(variants.map((v) => v.id));
+  const locks = await lockedOf(variants.map((v) => v.id));
   return new Map(
     variants.map((v) => {
       const level = levels.get(v.id);
       const onHand = level?.onHand ?? 0;
       const reserved = level?.reserved ?? 0;
-      const locked = lockedOf(v.id);
+      const locked = locks.get(v.id) ?? 0;
       const snapshot: StockSnapshot = {
         onHand,
         reserved,
@@ -85,12 +87,4 @@ export function reverseShipment(
   _opts: { actorId: string; reason: string },
 ): Promise<{ documentId: string; number: string }> {
   return Promise.reject(notImplemented('reverseShipment', 'commerio-backend#206', 'Khang'));
-}
-
-/** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
-export function receiveBack(
-  _source: { type: 'package' | 'return_request'; id: string },
-  _lines: readonly StockLine[],
-): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('receiveBack', 'commerio-backend#206', 'Khang'));
 }
