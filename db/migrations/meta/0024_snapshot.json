@@ -1,6 +1,6 @@
 {
-  "id": "ea0493ce-864f-424a-a6fd-e41aadde2fa0",
-  "prevId": "e6bf64a2-b5ae-497d-a63e-0e630fffd0c8",
+  "id": "b617d187-8df9-4ac7-befa-9cfdffa821a8",
+  "prevId": "16664fca-9c58-461f-a3cb-2d9e84c95331",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3736,12 +3736,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_order_id": {
-          "name": "external_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3835,12 +3829,6 @@
           "columns": [
             {
               "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "shop_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

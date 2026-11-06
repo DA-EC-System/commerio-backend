@@ -8,7 +8,7 @@ import { env } from '../../../../shared/config/env.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { advanceOrderCursor, findRawOrderTimes, saveRawOrder, variantsBySellerSku } from '../repository/raw-orders.ts';
-import { MarketplaceError, type MarketplaceAdapter, type RemoteOrderRef } from './marketplaces/common.ts';
+import { MarketplaceError, type MarketplaceAdapter, type RemoteOrder, type RemoteOrderRef } from './marketplaces/common.ts';
 import { lockShopForOrders, markOpenOrdersPulled } from '../repository/shops.ts';
 import { listingSyncQueue } from './shop-jobs.ts';
 import { onMarketplace, shopSession } from './shops.ts';
@@ -30,9 +30,21 @@ interface Session {
   accessToken: string;
 }
 
-/** Gọi chi tiết một đơn (ngoài giao dịch) rồi giao `order` và lưu bản gốc trong một giao dịch. */
-async function ingestRemote({ companyId, shopId, adapter, accessToken }: Session, externalOrderId: string, result: PullResult) {
-  const remote = await onMarketplace(() => adapter.getOrder!(accessToken, externalOrderId));
+/** Sàn có `getOrders` thì lấy chi tiết cả lô một lần, ngoài giao dịch (#267); không có thì null, gọi từng đơn sau. */
+async function prefetch({ adapter, accessToken }: Session, refs: readonly RemoteOrderRef[]): Promise<Map<string, RemoteOrder> | null> {
+  if (!adapter.getOrders) return null;
+  if (!refs.length) return new Map();
+  const remotes = await onMarketplace(() => adapter.getOrders!(accessToken, refs));
+  return new Map(remotes.map((r, i) => [refs[i]!.externalOrderId, r]));
+}
+
+/** Chi tiết một đơn: bản đã lấy theo lô, hoặc `getOrder` (lỗi giữa chừng thì các đơn trước đã lưu). */
+async function remoteOf({ adapter, accessToken }: Session, ref: RemoteOrderRef, batch: Map<string, RemoteOrder> | null) {
+  return batch?.get(ref.externalOrderId) ?? onMarketplace(() => adapter.getOrder!(accessToken, ref.externalOrderId));
+}
+
+/** Giao `order` một đơn đã lấy chi tiết và lưu bản gốc trong một giao dịch. */
+async function ingestRemote({ companyId, shopId }: Session, remote: RemoteOrder, result: PullResult) {
   const res = await withCompany(companyId, async () => {
     // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
     const locked = await lockShopForOrders(shopId);
@@ -64,7 +76,7 @@ async function ingestRemote({ companyId, shopId, adapter, accessToken }: Session
 
 export async function pullShopOrders(companyId: string, shopId: string): Promise<PullResult> {
   const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
-  if (!adapter.listOrders || !adapter.getOrder) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo đơn');
+  if (!adapter.listOrders || !(adapter.getOrder || adapter.getOrders)) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo đơn');
   const session = { companyId, shopId, adapter, accessToken };
   const result: PullResult = { pulled: 0, created: 0, updated: 0 };
   const cutoff = shop.orderCutoffAt;
@@ -85,12 +97,14 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
       });
       if (page.safeUntil && (!safe || page.safeUntil < safe)) safe = page.safeUntil;
       const known = await withCompany(companyId, () => findRawOrderTimes(shopId, page.orders.map((o) => o.externalOrderId)));
-      for (const ref of page.orders) {
+      // Đơn đặt trước mốc chỉ nhận khi đã có trong DB (về qua lượt kéo đơn còn mở, #198; Documents/21 §18.2).
+      const wanted = page.orders.filter((ref) => {
         const seen = known.get(ref.externalOrderId);
-        // Đơn đặt trước mốc chỉ nhận khi đã có trong DB (về qua lượt kéo đơn còn mở, #198; Documents/21 §18.2).
-        if ((ref.placedAt >= cutoff || seen) && !(seen && seen >= ref.updatedAt)) {
-          await ingestRemote(session, ref.externalOrderId, result);
-        }
+        return (ref.placedAt >= cutoff || seen) && !(seen && seen >= ref.updatedAt);
+      });
+      const batch = await prefetch(session, wanted);
+      for (const ref of page.orders) {
+        if (wanted.includes(ref)) await ingestRemote(session, await remoteOf(session, ref, batch), result);
         if (!done || ref.updatedAt > done) done = ref.updatedAt;
       }
       cursor = page.nextCursor;
@@ -115,8 +129,8 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
  * lại thì chọn lại đúng tập đó khi danh sách trên sàn chưa đổi.
  */
 const incomplete = (message: string) => new AppError(503, 'open_orders_incomplete', message);
-// Số mã đơn mỗi lần tra `raw_orders`, dưới giới hạn tham số của PostgreSQL (L019).
-const KNOWN_BATCH = 1000;
+// Số đơn mỗi lần lấy chi tiết ở lượt đơn mở (bội của lô 50 của Lazada `/orders/items/get`, #267).
+const FETCH_BATCH = 100;
 
 /** N đơn đặt mới nhất (trùng giờ thì mã đơn lớn hơn trước, để chạy lại chọn y như cũ); `max` không đặt thì giữ hết. */
 function newestOpenOrders(refs: RemoteOrderRef[], max: number | undefined): RemoteOrderRef[] {
@@ -131,17 +145,20 @@ export async function pullOpenOrders(companyId: string, shopId: string): Promise
   const result = { pulled: 0, created: 0, updated: 0, skipped: 0 };
   if (!shop.orderCutoffAt || shop.openOrdersPulledAt) return result;
   const cutoff = shop.orderCutoffAt;
-  if (adapter.listOpenOrders && adapter.getOrder) {
+  if (adapter.listOpenOrders && (adapter.getOrder || adapter.getOrders)) {
     const max = env.OPEN_ORDER_PULL_MAX;
     const session = { companyId, shopId, adapter, accessToken };
     const ingestNew = async (refs: readonly RemoteOrderRef[]) => {
-      for (let i = 0; i < refs.length; i += KNOWN_BATCH) {
-        const batch = refs.slice(i, i + KNOWN_BATCH);
+      // Lô `FETCH_BATCH` đơn: lỗi giữa chừng thì các lô trước đã lưu, chạy lại bỏ qua nhờ `raw_orders`.
+      for (let i = 0; i < refs.length; i += FETCH_BATCH) {
+        const batch = refs.slice(i, i + FETCH_BATCH);
         const known = await withCompany(companyId, () => findRawOrderTimes(shopId, batch.map((o) => o.externalOrderId)));
-        for (const ref of batch) {
+        const wanted = batch.filter((ref) => {
           const seen = known.get(ref.externalOrderId);
-          if (!(seen && seen >= ref.updatedAt)) await ingestRemote(session, ref.externalOrderId, result);
-        }
+          return !(seen && seen >= ref.updatedAt);
+        });
+        const fetched = await prefetch(session, wanted);
+        for (const ref of wanted) await ingestRemote(session, await remoteOf(session, ref, fetched), result);
       }
     };
     // Đơn trước mốc chờ chọn khi có trần; đơn trả hai lần giữ bản `updatedAt` mới hơn.
