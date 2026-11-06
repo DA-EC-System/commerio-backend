@@ -1,6 +1,6 @@
 // Cổng tồn theo kiện (Documents/21 §11.1): mặc định trỏ sang `reserve`, `release` của inventory (`product/index.ts`).
-// Thân hai hàm làm ở commerio-backend#206 (Khang); tới đó `reserve` ném 501 `not_implemented`, bên gọi bắt và ghi
-// `notices` lên kiện (#198, Documents/21 §18.7.9). `release` chỉ chạy cho kiện đang giữ, nên chưa bao giờ được gọi.
+// Thân hai hàm có từ commerio-backend#206. Cổng nào ném 501 `not_implemented` thì bên gọi bắt và ghi `notices` lên kiện
+// (#198, Documents/21 §18.7.9).
 import { release, reserve } from '../../../product/index.ts';
 
 export interface StockLine {
