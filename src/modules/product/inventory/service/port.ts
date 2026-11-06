@@ -64,17 +64,7 @@ const fakeDocument = (number: string) => Promise.resolve({ documentId: randomUUI
 
 export { release, reserve } from './reservation.ts';
 
-export { type ShipOptions, ship } from './shipment.ts';
-
-/** Đảo bàn giao: cộng lại tồn thực, lập phiếu đảo. */
-export function reverseShipment(
-  _packageId: string,
-  _lines: readonly StockLine[],
-  _opts: { actorId: string; reason: string },
-): Promise<{ documentId: string; number: string }> {
-  // shortcut: bản giả, không cộng tồn, không lập phiếu; thân thật theo spec 2026-11-06-206 mục 5.5.
-  return fakeDocument('DX-000000');
-}
+export { reverseShipment, type ShipOptions, ship } from './shipment.ts';
 
 /** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
 export function receiveBack(

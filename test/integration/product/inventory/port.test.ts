@@ -4,7 +4,6 @@ import {
   availableOf,
   nextDocNumber,
   receiveBack,
-  reverseShipment,
 } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { companyWithVariants, receive, setBuckets } from './helpers.ts';
@@ -25,7 +24,6 @@ describe('availableOf', () => {
 
 describe('bản giả cổng theo kiện (spec #206 Q23)', () => {
   it.each([
-    ['reverseShipment', 'DX-000000', () => reverseShipment(randomUUID(), [], { actorId: randomUUID(), reason: 'x' })],
     ['receiveBack', 'KT-000000', () => receiveBack({ type: 'package', id: randomUUID() }, [])],
   ])('%s trả phiếu giả %s', async (_name, number, call) => {
     expect(await call()).toEqual({ documentId: expect.any(String), number });

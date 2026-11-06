@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { describe, expect, it } from 'vitest';
-import { reserve, ship, stockOf } from '#src/modules/product/index.ts';
+import { receiveGoods, reserve, reverseShipment, ship, stockOf } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testPool } from '../../helpers/db.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
@@ -232,5 +232,86 @@ describe('ship', () => {
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 3, reserved: 0 });
     expect(await docsOfPackage(k6)).toEqual(['XK-000001']);
     expect(await movesOf(r1!.documentId)).toHaveLength(1);
+  });
+});
+
+describe('reverseShipment', () => {
+  const received = (variantId: string, accepted: number, unitCost: string) => [
+    { lineId: randomUUID(), variantId, accepted, defective: 0, unitCost },
+  ];
+
+  it('AC8: đảo theo giá của lượt, giá vốn tính lại 90.000,00; gọi lại lỗi; bàn giao lại rồi đảo lần hai lấy giá 90.000', async () => {
+    const { companyId, a } = await skuWith(10, 3);
+    const k3 = randomUUID();
+    const actor = randomUUID();
+    await withCompany(companyId, () => ship(k3, [line(a, 3)], { actorId: actor }));
+    await withCompany(companyId, () => receiveGoods(randomUUID(), received(a, 10, '100000'), actor));
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 17, avg_cost: '91764.71' });
+
+    const dx1 = await withCompany(companyId, () => reverseShipment(k3, [line(a, 3)], { actorId: actor, reason: 'Quét nhầm kiện' }));
+
+    expect(dx1).toEqual({ documentId: expect.any(String), number: 'DX-000001' });
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 20, reserved: 3, avg_cost: '90000.00', invariant_broken: false });
+    expect(await docOf(dx1.documentId)).toMatchObject({
+      kind: 'shipment_reversal',
+      status: 'posted',
+      source_id: k3,
+      note: 'Quét nhầm kiện',
+      created_by: actor,
+    });
+    expect(await docLines(dx1.documentId)).toMatchObject([{ variant_id: a, quantity: 3, unit_cost: '80000.00' }]);
+    expect(await movesOf(dx1.documentId)).toMatchObject([{ qty_change: 3, balance_after: 20, unit_cost: '80000.00', done_by: actor }]);
+    expect((await stockEvents(a)).at(-1)).toEqual({ variantId: a, onHand: 20, reserved: 3, available: 17 });
+    expect(await transitionsOf(dx1.documentId)).toMatchObject([{ to_state: 'posted', action: 'create', actor_id: actor }]);
+
+    await expect(withCompany(companyId, () => reverseShipment(k3, [line(a, 3)], { actorId: actor, reason: 'Lần nữa' }))).rejects.toThrow(
+      /không có lượt bàn giao/,
+    );
+
+    const xk2 = await withCompany(companyId, () => ship(k3, [line(a, 3)], { actorId: actor }));
+    expect(xk2.number).toBe('XK-000002');
+    expect(await docLines(xk2.documentId)).toMatchObject([{ unit_cost: '90000.00' }]);
+    const dx2 = await withCompany(companyId, () => reverseShipment(k3, [line(a, 3)], { actorId: actor, reason: 'Nhầm lần hai' }));
+    expect(dx2.number).toBe('DX-000002');
+    expect(await docLines(dx2.documentId)).toMatchObject([{ unit_cost: '90000.00' }]);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 20, reserved: 3, avg_cost: '90000.00' });
+  });
+
+  it('lý do chỉ có khoảng trắng hoặc dài 501 ký tự → lỗi, không có phiếu đảo; dài đúng 500 thì được', async () => {
+    const { companyId, a } = await skuWith(5, 3);
+    const k = randomUUID();
+    await withCompany(companyId, () => ship(k, [line(a, 3)], { actorId: null }));
+
+    for (const reason of ['   ', 'x'.repeat(501)]) {
+      await expect(withCompany(companyId, () => reverseShipment(k, [line(a, 3)], { actorId: randomUUID(), reason }))).rejects.toThrow(/lý do/i);
+    }
+    expect(await docsOfPackage(k)).toEqual(['XK-000001']);
+
+    await withCompany(companyId, () => reverseShipment(k, [line(a, 3)], { actorId: randomUUID(), reason: 'x'.repeat(500) }));
+    expect(await docsOfPackage(k)).toEqual(['DX-000001', 'XK-000001']);
+  });
+
+  it('đảo SKU không có trong lượt, hoặc nhiều hơn số đã xuất → lỗi, không có phiếu đảo', async () => {
+    const { companyId, variants } = await companyWithVariants(2);
+    const [a, b] = variants as [string, string];
+    await receive(companyId, a, 5, 1000);
+    await setBuckets(companyId, a, { reserved: 2 });
+    const k = randomUUID();
+    await withCompany(companyId, () => ship(k, [line(a, 2)], { actorId: null }));
+    const reverse = (lines: { variantId: string; quantity: number }[]) =>
+      withCompany(companyId, () => reverseShipment(k, lines, { actorId: randomUUID(), reason: 'Nhầm' }));
+
+    await expect(reverse([line(a, 3)])).rejects.toThrow(/chỉ xuất 2/);
+    await expect(reverse([line(b, 1)])).rejects.toThrow(/chỉ xuất 0/);
+    expect(await docsOfPackage(k)).toEqual(['XK-000001']);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 3, reserved: 0 });
+  });
+
+  it('kiện chưa từng bàn giao → lỗi', async () => {
+    const { companyId, a } = await skuWith(5, 0);
+
+    await expect(
+      withCompany(companyId, () => reverseShipment(randomUUID(), [line(a, 1)], { actorId: randomUUID(), reason: 'Nhầm' })),
+    ).rejects.toThrow(/không có lượt bàn giao/);
   });
 });
