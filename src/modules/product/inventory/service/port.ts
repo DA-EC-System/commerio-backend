@@ -1,9 +1,9 @@
 // Hàm inventory cho module con khác cùng module lớn `product` (spec #111 mục 5.5). Chạy trong `withCompany` của bên gọi.
-import { notImplemented } from '../../../../shared/errors/app-error.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { availableQty } from '../domain/stock.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import { levelsOf } from '../repository/levels.ts';
+import { lockedOf } from './locked.ts';
 
 export interface StockSnapshot {
   onHand: number;
@@ -14,9 +14,6 @@ export interface StockSnapshot {
   /** Giá vốn bình quân, chuỗi `numeric(18,2)`. */
   avgCost: string;
 }
-
-// shortcut: tạm khoá luôn 0 vì chưa có phiếu kho chờ duyệt; tính từ phiếu giảm `pending` khi làm B3 (spec #111 Q4).
-export const lockedOf = (_variantId: string) => 0;
 
 /**
  * Các con số của những biến thể thuộc công ty trong `variantIds`; biến thể chưa có dòng tồn trả số 0. Id của công ty
@@ -56,41 +53,8 @@ export async function availableOf(variantIds: readonly string[]): Promise<Map<st
 /** Số kế tiếp của một loại chứng từ trong công ty (bắt đầu từ 1); bên gọi tự ghép tiền tố (`DN-000001`). */
 export const nextDocNumber = takeNextNumber;
 
-// Chữ ký cổng theo kiện (Documents/21 mục 11.1), đã chốt để order code theo; thân làm ở commerio-backend#206 (Khang).
-
-export interface StockLine {
-  variantId: string;
-  quantity: number;
-}
-
-/** Giữ hàng cho kiện; `reserved: false` khi không đủ khả dụng. */
-export function reserve(_packageId: string, _lines: readonly StockLine[]): Promise<{ reserved: boolean }> {
-  return Promise.reject(notImplemented('reserve', 'commerio-backend#206', 'Khang'));
-}
-
-/** Trả phần đang giữ của kiện. */
-export function release(_packageId: string, _lines: readonly StockLine[]): Promise<void> {
-  return Promise.reject(notImplemented('release', 'commerio-backend#206', 'Khang'));
-}
-
-/** Bàn giao kiện: trừ tồn thực và đang giữ, lập phiếu xuất theo kiện. */
-export function ship(_packageId: string, _lines: readonly StockLine[], _opts: { actorId: string }): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('ship', 'commerio-backend#206', 'Khang'));
-}
-
-/** Đảo bàn giao: cộng lại tồn thực, lập phiếu đảo. */
-export function reverseShipment(
-  _packageId: string,
-  _lines: readonly StockLine[],
-  _opts: { actorId: string; reason: string },
-): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('reverseShipment', 'commerio-backend#206', 'Khang'));
-}
-
-/** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
-export function receiveBack(
-  _source: { type: 'package' | 'return_request'; id: string },
-  _lines: readonly StockLine[],
-): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('receiveBack', 'commerio-backend#206', 'Khang'));
-}
+// Cổng tồn theo kiện (Documents/21 mục 11.1, spec #206 mục 5.5): fulfillment và yêu cầu trả gọi trong giao dịch của mình.
+export type { DocumentRef, ShipLine, StockLine } from '../domain/documents.ts';
+export { release, reserve } from './reservation.ts';
+export { receiveBack } from './returns.ts';
+export { reverseShipment, type ShipOptions, ship } from './shipment.ts';

@@ -1,11 +1,12 @@
-// Lõi ghi sổ kho (spec #111 mục 5.4): nơi duy nhất đổi tồn thực và chờ xử lý. Chạy trong giao dịch của bên gọi.
-// `applyMoves` không export ra `index.ts`: module khác gọi hàm theo nghiệp vụ (`receiveGoods`, sau này `ship`…).
+// Lõi ghi sổ kho (spec #111 mục 5.4, spec #206 mục 5.4): nơi duy nhất ghi `stock_levels` (tồn thực, đang giữ, chờ xử lý,
+// giá vốn). Chạy trong giao dịch của bên gọi. `applyChange` không export ra `index.ts`: module khác gọi hàm theo nghiệp vụ
+// (`receiveGoods`, cổng theo kiện).
 import { publishEvent } from '../../../core/index.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { availableQty, breaksInvariant, weightedAvgCost, worsens } from '../domain/stock.ts';
-import { companyOfTransaction, insertMoves, lockLevel, type NewMove, saveLevel } from '../repository/levels.ts';
+import { companyOfTransaction, insertMoves, type LevelRow, lockLevel, type NewMove, saveLevel } from '../repository/levels.ts';
 import type { stockSourceType } from '../repository/schema.ts';
-import { lockedOf } from './port.ts';
+import { lockedOf } from './locked.ts';
 import { recheckThresholds } from './thresholds.ts';
 
 export type StockSourceType = (typeof stockSourceType.enumValues)[number];
@@ -31,22 +32,62 @@ export class InsufficientStock extends Error {
   }
 }
 
-export async function applyMoves(source: { type: StockSourceType; id: string }, moves: readonly Move[], actorId: string | null): Promise<void> {
-  companyOfTransaction();
-  const real = moves.filter((m) => m.qty !== 0);
-  if (!real.length) return;
+/** Một lần ghi `stock_levels`: biến động tồn thực, chờ xử lý (có thẻ kho) và phần cộng trừ đang giữ (không có thẻ kho). */
+export interface StockChange {
+  /** Chứng từ gốc của các move; chỉ được trống khi không có move (giữ, nhả hàng cho kiện). */
+  source: { type: StockSourceType; id: string } | null;
+  moves: readonly Move[];
+  /** Phần cộng (dương) hoặc trừ (âm) vào đang giữ, theo `variantId`. */
+  reserved?: ReadonlyMap<string, number>;
+  /** Bàn giao bắt buộc theo sàn: bỏ bước kiểm "không làm tệ hơn", được vỡ bất biến (spec #206 Q10, Q14). */
+  forced?: boolean;
+  actorId: string | null;
+}
 
-  // Khoá theo variantId tăng dần: hai giao dịch cùng đụng nhiều SKU không khoá chéo nhau (Q8).
-  const ids = [...new Set(real.map((m) => m.variantId))].sort();
-  const owned = new Set((await getVariants(ids)).map((v) => v.id));
-  const foreign = ids.filter((id) => !owned.has(id));
+/** Mọi id là biến thể của công ty đang chạy (`getVariants`, A17); id lạ là lỗi lập trình của bên gọi (500). */
+export async function assertOwnVariants(variantIds: readonly string[]): Promise<void> {
+  const owned = new Set((await getVariants(variantIds)).map((v) => v.id));
+  const foreign = variantIds.filter((id) => !owned.has(id));
   if (foreign.length) throw new Error(`Biến thể không thuộc công ty: ${foreign.join(', ')}`);
+}
 
-  const levels = new Map<string, Awaited<ReturnType<typeof lockLevel>>>();
+/**
+ * Khoá dòng tồn của các biến thể theo `variantId` tăng dần (Q8), tạo dòng 0 khi chưa có. Chỉ nhận biến thể thuộc công ty
+ * (`getVariants`, A17); id lạ là lỗi lập trình của bên gọi. Gọi lại trong cùng giao dịch không tốn khoá thêm.
+ */
+export async function lockLevels(variantIds: readonly string[]): Promise<Map<string, LevelRow>> {
+  const ids = [...new Set(variantIds)].sort();
+  if (!ids.length) return new Map();
+  await assertOwnVariants(ids);
+  const levels = new Map<string, LevelRow>();
   for (const id of ids) levels.set(id, await lockLevel(id));
-  const next = new Map([...levels].map(([id, l]) => [id, { onHand: l.onHand, quarantine: l.quarantine, avgCost: l.avgCost }]));
+  return levels;
+}
 
-  const rows: NewMove[] = real.map((m) => {
+/**
+ * Ghi một `StockChange`. `precheck` chạy sau khi khoá, trên số trước khi ghi; trả false thì không ghi gì và `applyChange`
+ * trả false (giữ nguyên kiện). Thứ tự kiểm: đang giữ âm (lỗi lập trình) → chờ xử lý âm → "không làm tệ hơn"
+ * (`InsufficientStock`, bỏ qua khi `forced`). Phát `stock_changed` cho SKU có tồn thực đổi; xét lại ngưỡng cho SKU có
+ * tồn thực hoặc đang giữ đổi (spec #206 Q15). SKU chỉ đổi đang giữ thì không tăng `version` (Q24).
+ */
+export async function applyChange(change: StockChange, precheck?: (locked: ReadonlyMap<string, LevelRow>) => boolean): Promise<boolean> {
+  companyOfTransaction();
+  const moves = change.moves.filter((m) => m.qty !== 0);
+  const reserved = new Map([...(change.reserved ?? [])].filter(([, q]) => q !== 0));
+  if (!moves.length && !reserved.size) return true;
+  const source = change.source;
+  if (moves.length && !source) throw new Error('Có biến động tồn mà không có chứng từ gốc');
+
+  const levels = await lockLevels([...moves.map((m) => m.variantId), ...reserved.keys()]);
+  if (precheck && !precheck(levels)) return false;
+
+  const next = new Map(
+    [...levels].map(([id, l]) => [
+      id,
+      { onHand: l.onHand, reserved: l.reserved + (reserved.get(id) ?? 0), quarantine: l.quarantine, avgCost: l.avgCost },
+    ]),
+  );
+  const rows: NewMove[] = moves.map((m) => {
     const n = next.get(m.variantId)!;
     if (m.bucket === 'on_hand') {
       if (m.qty > 0 && m.unitCost !== null) n.avgCost = weightedAvgCost(n.onHand, n.avgCost, m.qty, m.unitCost).toFixed(2);
@@ -60,38 +101,46 @@ export async function applyMoves(source: { type: StockSourceType; id: string }, 
       qtyChange: m.qty,
       balanceAfter: m.bucket === 'on_hand' ? n.onHand : n.quarantine,
       unitCost: m.unitCost,
-      sourceType: source.type,
-      sourceId: source.id,
+      sourceType: source!.type,
+      sourceId: source!.id,
       sourceLineId: m.sourceLineId,
-      doneBy: actorId,
+      doneBy: change.actorId,
     };
   });
 
+  const ids = [...levels.keys()];
+  const overReleased = ids.filter((id) => next.get(id)!.reserved < 0);
+  if (overReleased.length) throw new Error(`Lõi ghi sổ nhả quá số đang giữ: ${overReleased.join(', ')}`);
   const short = ids.filter((id) => {
-    const before = levels.get(id)!;
     const after = next.get(id)!;
-    return after.quarantine < 0 || worsens(before, { onHand: after.onHand, reserved: before.reserved });
+    return after.quarantine < 0 || (!change.forced && worsens(levels.get(id)!, after));
   });
   if (short.length) throw new InsufficientStock(short);
 
+  const moved = new Set(moves.map((m) => m.variantId));
   for (const id of ids) {
     const n = next.get(id)!;
-    await saveLevel(id, { ...n, invariantBroken: breaksInvariant(n.onHand, levels.get(id)!.reserved) });
+    await saveLevel(id, { ...n, invariantBroken: breaksInvariant(n.onHand, n.reserved) }, moved.has(id));
   }
   await insertMoves(rows);
 
   // Payload là số tuyệt đối sau khi ghi: bên nghe nhận trùng hay lệch thứ tự vẫn đúng (Q7).
-  const touched = new Set(real.filter((m) => m.bucket === 'on_hand').map((m) => m.variantId));
-  for (const variantId of [...touched].sort()) {
-    const { onHand } = next.get(variantId)!;
-    const { reserved } = levels.get(variantId)!;
+  const onHandChanged = new Set(moves.filter((m) => m.bucket === 'on_hand').map((m) => m.variantId));
+  for (const variantId of [...onHandChanged].sort()) {
+    const { onHand, reserved: held } = next.get(variantId)!;
     await publishEvent({
       type: 'inventory.stock_changed',
       aggregateId: variantId,
-      payload: { variantId, onHand, reserved, available: availableQty(onHand, reserved, lockedOf(variantId)) },
+      payload: { variantId, onHand, reserved: held, available: availableQty(onHand, held, lockedOf(variantId)) },
     });
   }
-  await recheckThresholds([...touched]);
+  await recheckThresholds([...new Set([...onHandChanged, ...reserved.keys()])]);
+  return true;
+}
+
+/** Biến động tồn thực, chờ xử lý theo một chứng từ gốc (không đổi đang giữ). */
+export async function applyMoves(source: { type: StockSourceType; id: string }, moves: readonly Move[], actorId: string | null): Promise<void> {
+  await applyChange({ source, moves, actorId });
 }
 
 export interface ReceivedLine {
