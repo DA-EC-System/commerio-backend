@@ -68,7 +68,7 @@ export function allowedDiff(estimated: Decimal.Value, t: Threshold): Decimal {
 
 /**
  * Bước kế của trạng thái tiền sau một lô quyết toán (25 §10.3). `diff` = thực tế − ước tính; `base` là lệch lúc chốt
- * (`resolved_diff_base`). Trả `null` khi giữ nguyên.
+ * (`resolved_diff_base`). `orderCancelled`: đơn đã huỷ trong app. Trả `null` khi giữ nguyên.
  */
 export function nextAfterSettlement(
   state: SettlementState,
@@ -76,13 +76,16 @@ export function nextAfterSettlement(
   diff: Decimal.Value,
   base: Decimal.Value | null,
   t: Threshold,
+  orderCancelled: boolean,
 ): { to: SettlementState; action: SettlementAction } | null {
   const allowed = allowedDiff(estimated, t);
   const over = (d: Decimal.Value) => new Decimal(d).abs().greaterThan(allowed);
   switch (state) {
     case 'none':
-      // Sàn thu, trả tiền cho đơn chưa có kiện nào giao (đơn đã huỷ mà sàn vẫn thu phí).
-      return new Decimal(diff).isZero() ? null : { to: 'mismatch', action: 'cancelled_charged' };
+      // Chưa có kiện nào giao xong. Đơn đã huỷ mà sàn vẫn thu, trả tiền: lệch. Đơn còn đang giao (E139): quyết toán về
+      // trước khi app thấy kiện giao, giữ nguyên, xét lại khi kiện giao xong (`markDelivered`).
+      if (new Decimal(diff).isZero() || !orderCancelled) return null;
+      return { to: 'mismatch', action: 'cancelled_charged' };
     case 'pending':
       return over(diff) ? { to: 'mismatch', action: 'mismatch' } : { to: 'settled', action: 'settle' };
     case 'settled':
