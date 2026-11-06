@@ -66,6 +66,17 @@ export function refreshDueAt(adapter: MarketplaceAdapter, row: Pick<ShopRow, 'ac
  * hạn tần suất). Hết thì `busy`: việc nền thử lại, lớp bọc trả lỗi gốc.
  */
 const LOCK_WAIT_MS = 30_000;
+let lockWaitMs = LOCK_WAIT_MS;
+
+/** Chỉ cho test: rút thời gian chờ khoá để dựng ca `busy` nhanh. Không truyền thì về mặc định. */
+export function setTokenLockWaitForTests(ms?: number): void {
+  lockWaitMs = ms ?? LOCK_WAIT_MS;
+}
+
+/** Không lấy được khoá làm mới trong hạn: lỗi tạm (bên gọi, việc nền thử lại), không phải mất uỷ quyền. */
+function refreshBusy(): MarketplaceError {
+  return new MarketplaceError('unavailable', 'token_refresh_busy', 'Token gian hàng đang được làm mới, thử lại sau');
+}
 
 export type RefreshOutcome = 'refreshed' | 'skipped' | 'lost' | 'inactive' | 'busy';
 
@@ -108,23 +119,36 @@ export async function refreshShopTokenLocked(
         if (!due || due.getTime() > Date.now()) return 'skipped';
       }
       const refreshToken = decryptBytes(row.refreshTokenEnc, `${row.id}:refresh`, tokenKey()).toString();
+      /** Người dùng vừa nối lại gian hàng trong lúc gọi sàn (token đã lưu khác bản đọc lúc đầu) thì token đó thắng. */
+      const reconnected = async (): Promise<RefreshOutcome | null> => {
+        const now = await withCompany(companyId, () => findShopRow(shopId));
+        const stillLive = now?.status === 'active' || now?.status === 'connecting';
+        if (!now || !stillLive) return 'inactive';
+        const same = now.accessTokenEnc && row.accessTokenEnc ? now.accessTokenEnc.equals(row.accessTokenEnc) : now.accessTokenEnc === row.accessTokenEnc;
+        return same ? null : 'refreshed';
+      };
       let tokens: TokenSet;
       try {
         tokens = await adapter.refreshToken(refreshToken);
       } catch (err) {
         if (err instanceof MarketplaceError && err.kind === 'unauthorized') {
+          // Lần nối lại có thể đã thu hồi refresh token cũ: không hạ gian hàng vừa nối sang `needs_reauth`.
+          const after = await reconnected();
+          if (after) return after;
           await loseShopAuth(companyId, shopId, `Làm mới token thất bại (${err.platformCode ?? 'unauthorized'})`);
           return 'lost';
         }
         throw err;
       }
-      // Sàn không trả refresh token mới thì giữ cái cũ (refresh token dùng lại được).
+      // Sàn không trả refresh token mới thì giữ cái cũ (refresh token dùng lại được). Chỉ ghi khi token đã lưu vẫn là bản
+      // đọc lúc đầu (compare-and-set): người dùng vừa nối lại thì bỏ cặp vừa lấy.
       const saved = await withCompany(companyId, () =>
-        saveRefreshedTokens(row.id, tokenColumns(row.id, { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken })),
+        saveRefreshedTokens(row.id, row.accessTokenEnc, tokenColumns(row.id, { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken })),
       );
-      return saved ? 'refreshed' : 'inactive';
+      if (saved) return 'refreshed';
+      return (await reconnected()) ?? 'inactive';
     },
-    { waitMs: LOCK_WAIT_MS },
+    { waitMs: lockWaitMs },
   );
 }
 
@@ -134,17 +158,20 @@ export async function refreshShopTokenLocked(
  */
 export async function refreshShopToken(companyId: string, shopId: string): Promise<Exclude<RefreshOutcome, 'busy'>> {
   const outcome = await refreshShopTokenLocked(companyId, shopId, { activeOnly: true });
-  if (outcome === 'busy') throw new Error(`Gian hàng ${shopId} đang được làm mới token, thử lại sau`);
+  if (outcome === 'busy') throw refreshBusy();
   return outcome;
 }
 
 /**
- * Sàn vừa từ chối `stale`: làm mới (hoặc chờ lần làm mới đang chạy) rồi trả access token mới; không làm mới được thì null.
+ * Sàn vừa từ chối `stale`: làm mới (hoặc chờ lần làm mới đang chạy) rồi trả access token mới; không làm mới được (mất uỷ
+ * quyền, gian hàng không còn gọi được sàn) thì null. Không lấy được khoá trong hạn thì ném `unavailable`
+ * `token_refresh_busy`: token có thể vẫn tốt, bên gọi không được coi là mất uỷ quyền (`loseShopAuth`), việc nền thử lại.
  * Chạy ngoài giao dịch của bên gọi để cặp token mới commit trước khi nhả khoá.
  */
 async function renewAccessToken(companyId: string, shopId: string, stale: string): Promise<string | null> {
   return outsideTransaction(async () => {
     const outcome = await refreshShopTokenLocked(companyId, shopId, { staleAccessToken: stale });
+    if (outcome === 'busy') throw refreshBusy();
     if (outcome !== 'refreshed') return null;
     const row = await withCompany(companyId, () => findShopRow(shopId));
     const fresh = row ? decryptAccessToken(row) : null;
@@ -163,10 +190,20 @@ const NO_ACCESS_TOKEN = new Set<string | symbol>([
 ]);
 
 /**
+ * Hàm ghi nhiều bước của adapter: bước ghi lên sàn có thể đã xong khi bước sau gặp `unauthorized`, nên gọi lại cả hàm có
+ * thể ghi trùng (tạo hai sản phẩm). Với các hàm này lớp bọc chỉ làm mới token cho lần gọi sau rồi ném lỗi gốc. Hàm ghi
+ * khác gọi sàn ghi đúng một lần ở bước cuối (lỗi ở bước đó là chưa ghi) hoặc ghi giá trị tuyệt đối (tồn, giá, ẩn hiện),
+ * gọi lại an toàn.
+ */
+const NO_RETRY = new Set<string | symbol>(['createProduct']);
+
+/**
  * Lớp `TokenRefresh` của `Retry(RateLimit(TokenRefresh(adapter)))` (Documents/16 bài toán 3), dùng chung mọi sàn: hàm
  * nào của adapter được gọi với access token của phiên mà sàn báo `unauthorized` thì làm mới token một lần (qua khoá ở
  * `refreshShopTokenLocked`) rồi gọi lại với token mới; lần sau trong phiên dùng luôn token mới. Không làm mới được, hoặc
- * gọi lại vẫn `unauthorized`, thì ném lỗi của sàn như cũ để bên gọi `lose_auth`. Hàm gọi với token khác giữ nguyên.
+ * gọi lại vẫn `unauthorized`, thì ném lỗi của sàn như cũ để bên gọi `lose_auth`. Chờ khoá làm mới quá hạn thì ném
+ * `unavailable` `token_refresh_busy` (không phải mất uỷ quyền). Hàm trong `NO_RETRY` không gọi lại. Hàm gọi với token khác
+ * giữ nguyên.
  * Giới hạn tần suất và thử lại khi lỗi tạm do từng adapter lo (Lazada `SellerCallLimit`, TikTok `rateLimit`).
  */
 export function withTokenRefresh(adapter: MarketplaceAdapter, companyId: string, shopId: string, accessToken: string): MarketplaceAdapter {
@@ -182,6 +219,12 @@ export function withTokenRefresh(adapter: MarketplaceAdapter, companyId: string,
         const call = (token: string) => Promise.resolve(fn.apply(target, [token, ...args.slice(1)]));
         return call(used).catch(async (err: unknown) => {
           if (!(err instanceof MarketplaceError && err.kind === 'unauthorized')) throw err;
+          if (NO_RETRY.has(prop)) {
+            // Làm mới cho lần sau; lỗi khi làm mới (bận, sàn lỗi) không che lỗi gốc.
+            const next = await renewAccessToken(companyId, shopId, used).catch(() => null);
+            if (next) current = next;
+            throw err;
+          }
           const fresh = await renewAccessToken(companyId, shopId, used);
           if (!fresh) throw err;
           current = fresh;

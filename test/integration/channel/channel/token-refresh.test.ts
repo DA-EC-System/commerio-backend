@@ -6,7 +6,7 @@ import { runTokenRefresh } from '#src/modules/channel/channel/service/background
 import { MarketplaceError, type TokenSet } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { orderPullQueue } from '#src/modules/channel/channel/service/shop-jobs.ts';
-import { refreshShopToken } from '#src/modules/channel/channel/service/shop-tokens.ts';
+import { refreshShopToken, setTokenLockWaitForTests } from '#src/modules/channel/channel/service/shop-tokens.ts';
 import { shopSession } from '#src/modules/channel/channel/service/shops.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -32,6 +32,7 @@ const sàn = {
   /** Access token sàn còn nhận; token khác ném `unauthorized`. */
   valid: new Set<string>(),
   listSkus: vi.fn(),
+  createProduct: vi.fn(),
 };
 let seq = 0;
 registerAdapter(
@@ -61,6 +62,11 @@ registerAdapter(
       if (!sàn.valid.has(accessToken)) throw new MarketplaceError('unauthorized', 'invalid_access_token', 'hết hạn');
       return [];
     },
+    // Hàm ghi nhiều bước: POST tạo xong rồi bước đọc lại gặp `unauthorized` (review #217 mục 1).
+    async createProduct(accessToken) {
+      sàn.createProduct(accessToken);
+      throw new MarketplaceError('unauthorized', 'invalid_access_token', 'hết hạn ở bước đọc lại');
+    },
   }),
 );
 afterAll(async () => {
@@ -73,6 +79,8 @@ beforeEach(() => {
   sàn.rejectRefresh = false;
   sàn.refresh.mockClear();
   sàn.listSkus.mockClear();
+  sàn.createProduct.mockClear();
+  setTokenLockWaitForTests();
 });
 
 const app = () => request(testApp());
@@ -233,5 +241,112 @@ describe('kết nối lại gian hàng đã thiết lập (US-GH-14 dòng 1)', (
     expect(res.body).toMatchObject({ created: false, shop: { id: shopId, status: 'active' }, reconnect: { relisted: 0 } });
     const boss = await jobBoss();
     expect(await boss.findJobs(orderPullQueue.name, { data: { shopId } })).not.toHaveLength(0);
+  });
+});
+
+/** Phiên khác giữ khoá làm mới token của gian hàng tới khi gọi hàm trả về. */
+async function holdTokenLock(shopId: string): Promise<() => Promise<void>> {
+  const client = await testPool().connect();
+  await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [`channel.token:${shopId}`]);
+  return async () => {
+    await client.query('select pg_advisory_unlock_all()');
+    client.release();
+  };
+}
+
+describe('không lấy được khoá làm mới (busy) không phải mất uỷ quyền (review #217 mục 2)', () => {
+  const session = (companyId: string, shopId: string) => withCompany(companyId, () => shopSession(shopId));
+
+  it('lớp bọc: sàn từ chối access mà khoá đang bận quá hạn thì ném unavailable token_refresh_busy, gian hàng vẫn active', async () => {
+    const { shopId, companyId } = await activeShop();
+    const { adapter, accessToken } = await session(companyId, shopId);
+    sàn.valid.delete(accessToken);
+    setTokenLockWaitForTests(200);
+    const release = await holdTokenLock(shopId);
+    try {
+      await expect(adapter.listSkus!(accessToken)).rejects.toMatchObject({ kind: 'unavailable', platformCode: 'token_refresh_busy' });
+    } finally {
+      await release();
+    }
+    expect(sàn.refresh).not.toHaveBeenCalled();
+    expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
+  });
+
+  it('việc nền channel.token_refresh: khoá bận thì ném lỗi tạm để pg-boss thử lại, gian hàng vẫn active', async () => {
+    const { shopId, companyId } = await activeShop();
+    await setExpiry(shopId, `access_expires_at = now() + interval '10 minutes'`);
+    setTokenLockWaitForTests(200);
+    const release = await holdTokenLock(shopId);
+    try {
+      await expect(runTokenRefresh({ companyId, shopId })).rejects.toMatchObject({ kind: 'unavailable', platformCode: 'token_refresh_busy' });
+    } finally {
+      await release();
+    }
+    expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
+  });
+});
+
+describe('làm mới đua với nối lại gian hàng (review #217 mục 6)', () => {
+  const reconnect = (token: string, accessToken: string) =>
+    app().post('/api/v1/channel/shops/shopee/token').set('Authorization', `Bearer ${token}`).send({ accessToken });
+  const storedAccess = async (companyId: string, shopId: string) =>
+    (await withCompany(companyId, () => shopSession(shopId))).accessToken;
+
+  it('người dùng nối lại trong lúc gọi sàn làm mới: giữ token của lần nối, bỏ cặp vừa làm mới', async () => {
+    const { company, shopId, companyId, seller } = await activeShop();
+    await setExpiry(shopId, `access_expires_at = now() + interval '10 minutes'`);
+    sàn.slowMs = 600;
+    sàn.valid.add(`${seller}:acc-x`);
+    const refreshing = refreshShopToken(companyId, shopId);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(sàn.refresh).toHaveBeenCalledTimes(1);
+    expect((await reconnect(company.ceo.token, `${seller}:acc-x`)).status).toBe(200);
+    expect(await refreshing).toBe('refreshed');
+    expect(await storedAccess(companyId, shopId)).toBe(`${seller}:acc-x`);
+    expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
+  });
+
+  it('refresh bị từ chối vì người dùng vừa nối lại: không hạ gian hàng vừa nối sang needs_reauth', async () => {
+    const { company, shopId, companyId, seller } = await activeShop();
+    await setExpiry(shopId, `access_expires_at = now() + interval '10 minutes'`);
+    sàn.slowMs = 600;
+    sàn.rejectRefresh = true;
+    sàn.valid.add(`${seller}:acc-y`);
+    const refreshing = refreshShopToken(companyId, shopId);
+    await new Promise((r) => setTimeout(r, 150));
+    expect((await reconnect(company.ceo.token, `${seller}:acc-y`)).status).toBe(200);
+    expect(await refreshing).toBe('refreshed');
+    expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
+    expect(await storedAccess(companyId, shopId)).toBe(`${seller}:acc-y`);
+  });
+});
+
+describe('hàm ghi nhiều bước không được gọi lại sau unauthorized (review #217 mục 1b)', () => {
+  it('createProduct gặp unauthorized: làm mới token cho lần sau, không gọi lại, ném lỗi gốc', async () => {
+    const { shopId, companyId } = await activeShop();
+    const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
+    sàn.valid.delete(accessToken);
+    const product = {
+      externalCategoryId: 'c',
+      attributes: {},
+      name: 'n',
+      description: 'd',
+      imageUrls: [],
+      sellerSku: 'S',
+      price: '1',
+      quantity: 1,
+      weightG: 1,
+      lengthMm: 1,
+      widthMm: 1,
+      heightMm: 1,
+    };
+    await expect(adapter.createProduct(accessToken, product)).rejects.toMatchObject({ kind: 'unauthorized', platformCode: 'invalid_access_token' });
+    expect(sàn.createProduct).toHaveBeenCalledTimes(1);
+    expect(sàn.refresh).toHaveBeenCalledTimes(1);
+    expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
+    // Lần gọi sau trong phiên dùng token mới.
+    await adapter.listSkus!(accessToken);
+    expect(sàn.listSkus.mock.calls.at(-1)![0]).not.toBe(accessToken);
+    expect(sàn.refresh).toHaveBeenCalledTimes(1);
   });
 });

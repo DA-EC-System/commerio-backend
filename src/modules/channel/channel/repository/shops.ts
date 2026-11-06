@@ -1,5 +1,5 @@
 // Gian hàng (#103). Chạy trong `withCompany` của bên gọi, trừ `findLiveCompanyOf`.
-import { and, asc, count, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { ShopStatus } from '../domain/shop.ts';
 import { listings, shops } from './schema.ts';
@@ -109,19 +109,22 @@ export async function updateShop(
 }
 
 /**
- * Lưu token vừa làm mới (#201) khi gian hàng còn gọi được sàn (`connecting`, `active`). Không xét và không tăng `version`:
- * refresh token đã tiêu ở sàn nên không được bỏ cặp mới vì người dùng vừa sửa gian hàng, và việc nền đổi token không phải
- * thay đổi người dùng phải tải lại. Bên gọi giữ khoá `channel.token:<id>` nên không có hai lần làm mới đè nhau.
- * Trả `false` khi gian hàng đã ngắt hay mất uỷ quyền trong lúc gọi sàn.
+ * Lưu token vừa làm mới (#201) khi gian hàng còn gọi được sàn (`connecting`, `active`) **và** `access_token_enc` vẫn là bản
+ * bên gọi đọc lúc bắt đầu làm mới (`expectedAccessEnc`, compare-and-set). Không khớp nghĩa là người dùng vừa nối lại gian
+ * hàng (`attachAll` ghi cặp token mới ngoài khoá làm mới): bỏ cặp vừa lấy, giữ cặp của lần nối. Không xét và không tăng
+ * `version`: việc nền đổi token không phải thay đổi người dùng phải tải lại. Bên gọi giữ khoá `channel.token:<id>` nên không
+ * có hai lần làm mới đè nhau. Trả `false` khi gian hàng đã ngắt, mất uỷ quyền hay vừa được nối lại trong lúc gọi sàn.
  */
 export async function saveRefreshedTokens(
   id: string,
+  expectedAccessEnc: Buffer | null,
   tokens: Pick<typeof shops.$inferInsert, 'accessTokenEnc' | 'refreshTokenEnc' | 'accessExpiresAt' | 'refreshExpiresAt' | 'authExpiresAt'>,
 ): Promise<boolean> {
+  const sameToken = expectedAccessEnc ? eq(shops.accessTokenEnc, expectedAccessEnc) : isNull(shops.accessTokenEnc);
   const rows = await getDb()
     .update(shops)
     .set({ ...tokens, updatedAt: sql`now()` })
-    .where(and(eq(shops.id, id), inArray(shops.status, ['connecting', 'active'])))
+    .where(and(eq(shops.id, id), inArray(shops.status, ['connecting', 'active']), sameToken))
     .returning({ id: shops.id });
   return rows.length > 0;
 }
