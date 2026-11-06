@@ -20,6 +20,11 @@ async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknow
   try {
     await fn();
   } catch (err) {
+    // Gian hàng vừa ngắt giữa lượt (kéo đơn bỏ đơn của gian hàng đã ngắt, #207): bỏ lịch, không tính là lỗi.
+    if (err instanceof AppError && err.code === 'shop_not_connected') {
+      const now = await withCompany(job.companyId, () => findShopRow(job.shopId));
+      if (now?.status !== 'active') return stopShopJobs(job.shopId);
+    }
     if (err instanceof AppError && err.code === 'marketplace_unauthorized') {
       await loseShopAuth(job.companyId, job.shopId, `Sàn từ chối token khi ${what}`);
       throw new HoldJob('gian hàng mất uỷ quyền');

@@ -7,7 +7,7 @@ import { login, PASSWORD, selectCompany } from '../helpers/http.ts';
 
 const db = testPool();
 
-// Email riêng mỗi ca: DB test dùng chung giữa các file (test/CLAUDE.md), không dùng email @commerio.dev cố định.
+// Email riêng mỗi ca: DB test dùng chung giữa các file (test/CLAUDE.md), không dùng email @bk.demo cố định.
 type Account = { email: string; fullName: string };
 function demoInput(): SeedDemoInput & { accounts: Record<'ceo' | 'admin' | 'sale' | 'kho', Account> } {
   return {

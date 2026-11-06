@@ -9,6 +9,7 @@ import {
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
+  type RemoteLineInfo,
   type RemoteLineStatus,
   type RemoteOrder,
   type RemoteSku,
@@ -101,6 +102,18 @@ const SELLER_LIMIT_WAIT_MS = 1100;
 // GetOrders: `limit` tối đa 100.
 const ORDER_PAGE = 100;
 
+/**
+ * Con trỏ kéo đơn (#218): mốc `update_after` (giây), offset trong mốc đó, đơn đã trả: `order_id` → giây `updated_at`.
+ * `lastId`: đơn cuối trang trước khi đang lật offset; trang sau phải mở đầu bằng đơn này (gối một đơn).
+ */
+interface OrderCursor {
+  after: number;
+  offset: number;
+  seen: Record<string, number>;
+  lastId?: string;
+}
+const epochSec = (d: Date) => Math.floor(d.getTime() / 1000);
+
 // Trạng thái món của Lazada (20 giá trị của GetOrders) → trạng thái kiện của app (#105 A3).
 const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
   unpaid: 'pending',
@@ -140,6 +153,33 @@ function slaDeadline(text: unknown): Date | null {
 }
 
 const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+/** Chuỗi của sàn, trống thì null. */
+const opt = (v: unknown) => str(v).trim() || null;
+
+/** `2026-11-06 23:59:02 +0700` → Date; trống hoặc sai dạng là null. */
+function optTime(v: unknown): Date | null {
+  if (!opt(v)) return null;
+  const d = lazadaTime(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const CANCEL_KIND: Readonly<Record<string, 'cancellation' | 'return' | 'refund'>> = { cancellation: 'cancellation', return: 'return', refund: 'refund' };
+const CANCEL_BY: Readonly<Record<string, 'buyer' | 'seller' | 'platform'>> = { customer: 'buyer', seller: 'seller', internal: 'platform' };
+
+/**
+ * `cancel_return_initiator` dạng `<loại>-<người>` (GetOrderItems, đọc 05/11/2026): `cancellation-customer`, `return-customer`,
+ * `refund-internal`… `cancellation-failed Delivery` là giao không thành, không ai huỷ. `null-null` và giá trị lạ → null.
+ */
+export function lazadaCancelSource(raw: string): Pick<RemoteLineInfo, 'cancelInitiator' | 'cancelKind'> {
+  const [kind = '', ...rest] = raw.split('-');
+  const who = rest.join('-');
+  if (kind === 'cancellation' && who === 'failed Delivery') return { cancelInitiator: null, cancelKind: 'failed_delivery' };
+  const k = CANCEL_KIND[kind];
+  const by = CANCEL_BY[who];
+  return k && by ? { cancelInitiator: by, cancelKind: k } : { cancelInitiator: null, cancelKind: null };
+}
+
+const ADDRESS_KEYS = ['address1', 'address2', 'address3', 'address4', 'address5', 'city', 'addressDistrict', 'post_code', 'country'] as const;
 
 const toDate = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Date.now() + Number(seconds) * 1000) : null);
 
@@ -382,23 +422,43 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
       await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
     },
-    async listOrders(accessToken, updatedAfter, offset) {
+    // Lật theo cửa sổ `update_after` tăng dần, không theo offset (#218): đơn đổi giữa chừng có `updated_at` mới nên nằm
+    // sau con trỏ. Trang sau gọi từ giây của đơn cuối trang trừ 1 (tài liệu không nói `update_after` có lấy cả mốc) và
+    // bỏ đơn đã trả theo `order_id`. Cả trang trong một giây thì mốc không tiến: giữ mốc, lật `offset` gối một đơn.
+    // Trang lật offset không mở đầu bằng đơn cuối trang trước là danh sách đã xê dịch (đơn trong nhóm đổi, hoặc sàn
+    // xếp các đơn cùng giây khác đi): có thể sót đơn từ mốc, báo `safeUntil` để bên gọi không tiến mốc qua đó.
+    async listOrders(accessToken, updatedAfter, cursor) {
+      const state: OrderCursor = cursor ? (JSON.parse(cursor) as OrderCursor) : { after: epochSec(updatedAfter), offset: 0, seen: {} };
       const params = {
         access_token: accessToken,
-        update_after: vnTime(updatedAfter),
+        update_after: vnTime(new Date(state.after * 1000)),
         sort_by: 'updated_at',
         sort_direction: 'ASC',
         limit: String(ORDER_PAGE),
-        offset: String(offset),
+        offset: String(state.offset),
       };
       const body = await call(config.apiUrl, '/orders/get', params, 'GET');
       const data = (body.data ?? {}) as { countTotal?: unknown; orders?: Record<string, unknown>[] };
-      const orders = (data.orders ?? []).map((o) => ({
+      const page = (data.orders ?? []).map((o) => ({
         externalOrderId: str(o.order_id),
         placedAt: lazadaTime(o.created_at),
         updatedAt: lazadaTime(o.updated_at),
       }));
-      return { orders, hasMore: offset + orders.length < Number(data.countTotal ?? 0) };
+      const orders = page.filter((o) => state.seen[o.externalOrderId] !== epochSec(o.updatedAt));
+      const safeUntil = state.lastId !== undefined && page[0]?.externalOrderId !== state.lastId ? new Date(state.after * 1000) : null;
+      const last = page.at(-1);
+      // Trang thiếu là hết; `countTotal` vẫn kiểm vì chưa rõ sàn có trả trang đủ 100 đúng lúc hết hay không.
+      if (!last || page.length < ORDER_PAGE || state.offset + page.length >= Number(data.countTotal ?? 0)) {
+        return { orders, nextCursor: null, safeUntil };
+      }
+      const seen = { ...state.seen };
+      for (const o of page) seen[o.externalOrderId] = epochSec(o.updatedAt);
+      const after = epochSec(last.updatedAt) - 1;
+      const next: OrderCursor =
+        after > state.after
+          ? { after, offset: 0, seen: Object.fromEntries(Object.entries(seen).filter(([, t]) => t >= after)) }
+          : { after: state.after, offset: state.offset + page.length - 1, seen, lastId: last.externalOrderId };
+      return { orders, nextCursor: JSON.stringify(next), safeUntil };
     },
     async getOrder(accessToken, externalOrderId): Promise<RemoteOrder> {
       type Row = Record<string, unknown>;
@@ -416,13 +476,24 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         placedAt: lazadaTime(o.created_at),
         updatedAt: lazadaTime(o.updated_at),
         shipBy: deadlines.length ? new Date(Math.min(...deadlines.map((d) => d.getTime()))) : null,
+        // Lazada che đường, tỉnh; `city` là phường (địa chỉ hai cấp), không còn quận (đo 05/11/2026, #260 A5).
         shippingAddress: a && {
           name: `${str(a.first_name)} ${str(a.last_name)}`.trim(),
           phone: str(a.phone),
           address: ['address1', 'address2', 'address3', 'address4', 'address5', 'city'].map((k) => str(a[k])).filter(Boolean).join(', '),
+          ward: opt(a.city),
+          postCode: opt(a.post_code),
+          raw: Object.fromEntries(ADDRESS_KEYS.flatMap((k) => (opt(a[k]) ? [[k === 'post_code' ? 'postCode' : k, opt(a[k])!]] : []))),
         },
         shippingFee: str(o.shipping_fee ?? 0),
         cancelRequested: o.is_cancel_pending === true || o.need_cancel_confirm === true,
+        info: {
+          platformPaymentMethod: opt(o.payment_method),
+          buyerNote: opt(o.buyer_note),
+          shippingFeeOriginal: opt(o.shipping_fee_original),
+          shippingFeeDiscountSeller: opt(o.shipping_fee_discount_seller),
+          shippingFeeDiscountPlatform: opt(o.shipping_fee_discount_platform),
+        },
         lines: items.map((i) => ({
           externalLineId: str(i.order_item_id),
           sellerSku: str(i.sku),
@@ -434,6 +505,28 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
           trackingCode: str(i.tracking_code) || null,
           rawStatus: str(i.status),
           status: lazadaPackageStatus(str(i.status)),
+          info: {
+            thumbnailUrl: opt(i.product_main_image),
+            attributesLabel: opt(i.variation),
+            externalSkuId: opt(i.sku_id),
+            externalShopSku: opt(i.shop_sku),
+            externalProductId: opt(i.product_id),
+            paidPrice: opt(i.paid_price),
+            taxAmount: opt(i.tax_amount),
+            shippingAmount: opt(i.shipping_amount),
+            walletCredits: opt(i.wallet_credits),
+            cancelReason: opt(i.reason),
+            cancelReasonDetail: opt(i.reason_detail),
+            ...lazadaCancelSource(str(i.cancel_return_initiator)),
+            reverseOrderId: opt(i.reverse_order_id),
+            returnStatus: opt(i.return_status),
+          },
+          shipping: {
+            shipmentProvider: opt(i.shipment_provider),
+            shippingProviderType: opt(i.shipping_provider_type),
+            shippingType: opt(i.shipping_type),
+            promisedShippingAt: optTime(i.promised_shipping_time),
+          },
         })),
       };
     },

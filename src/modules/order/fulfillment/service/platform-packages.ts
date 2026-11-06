@@ -2,7 +2,15 @@
 // nhận mã ở lần kéo sau. Ảnh hưởng tồn khi kiện rời kho, quay về là của #106; ở đây chỉ giữ và nhả lúc tạo, huỷ.
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
-import { insertPackage, insertPackageLines, lockOrderPackages, type PackageRow, setReserved, updatePackage } from '../repository/packages.ts';
+import {
+  insertPackage,
+  insertPackageLines,
+  lockOrderPackages,
+  type PackageRow,
+  type PackageShipping,
+  setReserved,
+  updatePackage,
+} from '../repository/packages.ts';
 import { type StockLine, stockPort } from './stock-port.ts';
 
 /** Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter). */
@@ -27,7 +35,26 @@ export interface PlatformPackageLine {
   trackingCode: string | null;
   /** null: sàn trả giá trị app chưa biết. */
   status: PlatformLineStatus | null;
+  shipping: PackageShipping;
 }
+
+const SHIPPING_KEYS = ['shipmentProvider', 'shippingProviderType', 'shippingType', 'promisedShippingAt'] as const;
+
+/** Vận chuyển của nhóm món: món đầu có giá trị (như mã vận đơn); món không có thì giữ giá trị đã lưu. */
+function shippingOf(lines: readonly PlatformPackageLine[], saved: PackageShipping): PackageShipping {
+  const pick = <K extends (typeof SHIPPING_KEYS)[number]>(k: K) => lines.find((l) => l.shipping[k] !== null)?.shipping[k] ?? saved[k];
+  return {
+    shipmentProvider: pick('shipmentProvider'),
+    shippingProviderType: pick('shippingProviderType'),
+    shippingType: pick('shippingType'),
+    promisedShippingAt: pick('promisedShippingAt'),
+  };
+}
+
+const sameShipping = (a: PackageShipping, b: PackageShipping) =>
+  SHIPPING_KEYS.every((k) => (a[k] instanceof Date || b[k] instanceof Date ? a[k]?.valueOf() === b[k]?.valueOf() : a[k] === b[k]));
+
+const NO_SHIPPING: PackageShipping = { shipmentProvider: null, shippingProviderType: null, shippingType: null, promisedShippingAt: null };
 
 export interface PlatformPackagesResult {
   statuses: PackageStatus[];
@@ -87,7 +114,9 @@ async function createPackage(
   const wantsStock = status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
   const mapped = lines.every((l) => l.variantId);
   const initial: PackageStatus = status === 'pending' ? 'backordered' : status === 'return_failed' ? 'returning' : status;
+  const shipping = shippingOf(lines, NO_SHIPPING);
   const id = await insertPackage({
+    ...shipping,
     code,
     orderId: order.id,
     shopId: order.shopId,
@@ -114,6 +143,7 @@ async function createPackage(
     trackingCode: lines[0]!.trackingCode,
     needsOpen: false,
     needsAttention: status === 'return_failed',
+    shipping,
     lines: lines.map((l) => ({ orderLineId: l.orderLineId, variantId: l.variantId, quantity: l.quantity, reservedQty: reserved ? l.quantity : 0 })),
   };
 }
@@ -211,6 +241,12 @@ export async function syncPlatformPackages(
       await updatePackage(pkg.id, { trackingCode: tracking });
       pkg.trackingCode = tracking;
       result.changed = true;
+    }
+    // Vận chuyển chỉ là thông tin (#260): ghi khi khác, không tính là đổi (không phát sự kiện đơn, không đếm "cập nhật").
+    const shipping = shippingOf(group, pkg.shipping);
+    if (!sameShipping(shipping, pkg.shipping)) {
+      await updatePackage(pkg.id, shipping);
+      pkg.shipping = shipping;
     }
     if (status === null) result.unknown = true;
     else if (status === 'cancelled') {

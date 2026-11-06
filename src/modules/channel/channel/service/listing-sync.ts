@@ -3,10 +3,11 @@
 // #102 gọi lại `syncListings` theo lịch.
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
-import { type ListingPatch, listListingRows, markStockPendingRows, updateListing } from '../repository/listings.ts';
+import { type ListingPatch, listListingRows, markStockPendingIds, markStockPendingRows, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
-import { MarketplaceError, type PriceQuantity } from './marketplaces/index.ts';
+import { MarketplaceError, type PerSkuResult, type PriceQuantity } from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, shopSession } from './shops.ts';
@@ -64,7 +65,11 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   }
 
   const due = rows.filter(
-    (r) => PUSHABLE.includes(r.status) && r.externalSkuId && (r.stockSync !== 'synced' || r.priceSync !== 'synced'),
+    (r) =>
+      r.mode === 'mapped' &&
+      PUSHABLE.includes(r.status) &&
+      r.externalSkuId &&
+      (r.stockSync !== 'synced' || r.priceSync !== 'synced'),
   );
   if (!due.length) return summary;
   const ids = due.map((r) => r.variantId!);
@@ -72,35 +77,56 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     prices: await port.standardPrices(ids),
     available: await port.availableOf(ids),
   }));
-  const items: PriceQuantity[] = due.map((r) => {
-    const price = prices.get(r.variantId!);
-    return {
-      externalProductId: r.externalProductId!,
-      externalSkuId: r.externalSkuId!,
-      ...(price && { price: price.toFixed(0) }),
-      quantity: available.get(r.variantId!) ?? 0,
-    };
-  });
-  const results = new Map(
-    (await onMarketplace(() => adapter.updatePriceQuantity(accessToken, items))).map((x) => [x.externalSkuId, x]),
-  );
   const at = new Date();
+  // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
+  const variantMissing: SyncError = {
+    code: 'variant_missing',
+    message: 'Không đọc được số có thể bán của SKU này',
+    at: at.toISOString(),
+  };
+  const plan = due.map((row) => {
+    const price = prices.get(row.variantId!);
+    const quantity = available.get(row.variantId!);
+    const item: PriceQuantity | null =
+      !price && quantity === undefined
+        ? null
+        : {
+            externalProductId: row.externalProductId!,
+            externalSkuId: row.externalSkuId!,
+            ...(price && { price: price.toFixed(0) }),
+            ...(quantity !== undefined && { quantity }),
+          };
+    return { row, item };
+  });
+  const missing = plan.filter((p) => p.item?.quantity === undefined).length;
+  if (missing) logger.warn({ shopId: shop.id, missing }, 'Đồng bộ listing bỏ qua SKU không đọc được số có thể bán');
+  const items = plan.flatMap((p) => (p.item ? [p.item] : []));
+  const results = new Map(
+    items.length
+      ? (await onMarketplace(() => adapter.updatePriceQuantity(accessToken, items))).map((x) => [x.externalSkuId, x])
+      : [],
+  );
   await inCompany(async () => {
-    for (const [i, row] of due.entries()) {
-      const item = items[i]!;
-      const result = results.get(row.externalSkuId!);
-      summary.pushed++;
-      if (result?.ok) {
-        await updateListing(row.id, { version: row.version }, synced(item, at));
-      } else {
-        summary.errors++;
-        const error: SyncError = {
-          code: result?.code ?? 'no_result',
-          message: result?.message ?? 'Sàn không trả kết quả cho SKU này',
-          at: at.toISOString(),
-        };
-        await updateListing(row.id, { version: row.version }, failed(error, item));
+    for (const { row, item } of plan) {
+      let patch: ListingPatch = item?.quantity === undefined ? { stockSyncError: variantMissing } : {};
+      if (item) {
+        const result = results.get(row.externalSkuId!);
+        summary.pushed++;
+        if (result?.ok) {
+          patch = { ...patch, ...synced(item, at) };
+        } else {
+          summary.errors++;
+          const error: SyncError = {
+            code: result?.code ?? 'no_result',
+            message: result?.message ?? 'Sàn không trả kết quả cho SKU này',
+            at: at.toISOString(),
+          };
+          patch = { ...patch, ...failed(error, item) };
+        }
       }
+      // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
+      // như đang có để lượt sau đẩy số mới; không tính là lỗi.
+      await updateListing(row.id, { version: row.version }, patch);
     }
   });
   return summary;
@@ -108,32 +134,41 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
 
 /**
  * Ngắt kèm `zeroStock` (§18.1): đẩy tồn 0 cho listing còn trên sàn trước khi ngắt. Không gọi được sàn (gian hàng cần
- * nối lại, sàn lỗi) thì 422 `zero_stock_unavailable` và chưa ngắt; lỗi riêng từng SKU thì vẫn ngắt.
+ * nối lại, sàn lỗi) thì 422 `zero_stock_unavailable` và chưa ngắt; lỗi riêng từng SKU thì vẫn ngắt. Trả id listing mà sàn
+ * nhận tồn 0, để route trả lại tồn thật nếu ngắt bị chặn sau đó (`restoreAfterZeroStock`).
  */
-export async function pushZeroStock(actor: Actor, shopId: string): Promise<void> {
+export async function pushZeroStock(actor: Actor, shopId: string): Promise<string[]> {
   const unavailable = () =>
     new AppError(422, 'zero_stock_unavailable', 'Không đẩy được tồn 0 lên sàn lúc này; ngắt không kèm đẩy tồn 0, hoặc thử lại');
   const session = await withCompany(actor.companyId, () => shopSession(shopId)).catch((err: unknown) => {
     throw err instanceof AppError && err.code === 'shop_not_connected' ? unavailable() : err;
   });
   const rows = await withCompany(actor.companyId, () => listListingRows(session.shop.id));
-  const items = rows
-    .filter((r) => PUSHABLE.includes(r.status) && r.externalSkuId)
-    .map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
-  if (!items.length) return;
+  const pushed = rows.filter((r) => PUSHABLE.includes(r.status) && r.externalSkuId);
+  if (!pushed.length) return [];
+  const items = pushed.map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
+  let results: PerSkuResult[];
   try {
-    await session.adapter.updatePriceQuantity(session.accessToken, items);
+    results = await session.adapter.updatePriceQuantity(session.accessToken, items);
   } catch (err) {
     if (err instanceof MarketplaceError) throw unavailable();
     throw err;
   }
+  const ok = new Set(results.filter((r) => r.ok).map((r) => r.externalSkuId));
+  return pushed.filter((r) => ok.has(r.externalSkuId!)).map((r) => r.id);
+}
+
+/**
+ * Ngắt bị chặn sau khi đã đẩy tồn 0 (đơn về, `version` đổi giữa hai lần kiểm; #207): listing về `stock_sync = pending`
+ * để lượt đồng bộ đẩy lại tồn thật. Chỉ gọi khi ngắt thất bại, nên không đẩy lại tồn lên gian hàng sắp ngắt.
+ */
+export async function restoreAfterZeroStock(actor: Actor, listingIds: readonly string[]): Promise<void> {
+  if (listingIds.length) await withCompany(actor.companyId, () => markStockPendingIds(listingIds));
 }
 
 function synced(item: PriceQuantity, at: Date): ListingPatch {
   return {
-    stockSync: 'synced',
-    stockSyncError: null,
-    platformStock: item.quantity ?? null,
+    ...(item.quantity !== undefined && { stockSync: 'synced', stockSyncError: null, platformStock: item.quantity }),
     ...(item.price === undefined
       ? { priceSync: 'error', priceSyncError: { code: 'price_missing', message: 'Chưa có giá chuẩn', at: at.toISOString() } }
       : { priceSync: 'synced', priceSyncError: null, listedPrice: item.price }),
@@ -141,11 +176,13 @@ function synced(item: PriceQuantity, at: Date): ListingPatch {
   };
 }
 
-/** Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. */
+/**
+ * Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. Tồn đẩy lỗi giữ `pending` kèm `stockSyncError`
+ * (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn.
+ */
 function failed(error: SyncError, item: PriceQuantity): ListingPatch {
   return {
-    stockSync: 'error',
-    stockSyncError: error,
+    ...(item.quantity !== undefined && { stockSync: 'pending', stockSyncError: error }),
     ...(item.price !== undefined && { priceSync: 'error', priceSyncError: error }),
   };
 }

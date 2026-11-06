@@ -87,7 +87,7 @@ export function reverseShipment(
   return Promise.reject(notImplemented('reverseShipment', '#111'));
 }
 
-/** Hàng hoàn hoặc khách trả về kho: vào chờ xử lý, lập phiếu kiểm hàng về. */
+/** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
 export function receiveBack(
   _source: { type: 'package' | 'return_request'; id: string },
   _lines: readonly StockLine[],

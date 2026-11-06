@@ -38,17 +38,17 @@ export function defaultDemo(password: string): SeedDemoInput {
     company: { name: 'Công ty Demo Commerio', taxCode: '0000000037' },
     password,
     accounts: {
-      ceo: { email: 'ceo@commerio.dev', fullName: 'CEO Demo' },
-      admin: { email: 'admin@commerio.dev', fullName: 'Admin Demo' },
-      sale: { email: 'sale@commerio.dev', fullName: 'Sale Demo' },
-      kho: { email: 'kho@commerio.dev', fullName: 'Kho Demo' },
+      ceo: { email: 'ceo@bk.demo', fullName: 'CEO Demo' },
+      admin: { email: 'admin@bk.demo', fullName: 'Admin Demo' },
+      sale: { email: 'sale@bk.demo', fullName: 'Sale Demo' },
+      kho: { email: 'kho@bk.demo', fullName: 'Kho Demo' },
     },
   };
 }
 
 /** Hai công ty của bộ test hộp đen (#120). Test ghi dữ liệu mới mỗi lần chạy vào đây, không đụng công ty demo. */
 export function blackboxCompanies(password: string): SeedDemoInput[] {
-  const account = (email: string, fullName: string) => ({ email: `${email}@commerio.dev`, fullName });
+  const account = (email: string, fullName: string) => ({ email: `${email}@bk.demo`, fullName });
   return [
     {
       company: { name: 'Công ty QA Hộp Đen A', taxCode: '0300000120' },

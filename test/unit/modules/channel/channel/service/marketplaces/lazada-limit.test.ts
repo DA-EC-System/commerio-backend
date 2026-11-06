@@ -14,7 +14,7 @@ describe('hạn mức gọi Lazada', () => {
   it('hết lượt thì ném unavailable daily_call_limit và không gọi mạng', async () => {
     const fetchFn = vi.fn();
     const adapter = createLazadaAdapter({ ...base, reserveCall: async () => false }, fetchFn);
-    const err = await adapter.listOrders!('t', since, 0).catch((e: unknown) => e);
+    const err = await adapter.listOrders!('t', since, null).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MarketplaceError);
     expect(err).toMatchObject({ kind: 'unavailable', platformCode: 'daily_call_limit' });
     expect(fetchFn).not.toHaveBeenCalled();
@@ -23,7 +23,7 @@ describe('hạn mức gọi Lazada', () => {
   it('còn lượt thì mỗi request xin đúng một lượt', async () => {
     const reserveCall = vi.fn(async () => true);
     const fetchFn = vi.fn(async () => json(empty));
-    await createLazadaAdapter({ ...base, reserveCall }, fetchFn).listOrders!('t', since, 0);
+    await createLazadaAdapter({ ...base, reserveCall }, fetchFn).listOrders!('t', since, null);
     expect(reserveCall).toHaveBeenCalledTimes(1);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
@@ -32,7 +32,7 @@ describe('hạn mức gọi Lazada', () => {
     vi.useFakeTimers();
     const reserveCall = vi.fn(async () => true);
     const fetchFn = vi.fn().mockResolvedValueOnce(json({ code: 'SellerCallLimit', message: 'limit' })).mockResolvedValue(json(empty));
-    const done = createLazadaAdapter({ ...base, reserveCall }, fetchFn).listOrders!('t', since, 0);
+    const done = createLazadaAdapter({ ...base, reserveCall }, fetchFn).listOrders!('t', since, null);
     await vi.runAllTimersAsync();
     await done;
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -41,7 +41,7 @@ describe('hạn mức gọi Lazada', () => {
 
   it('không truyền reserveCall thì gọi bình thường (test adapter không cần DB)', async () => {
     const fetchFn = vi.fn(async () => json(empty));
-    await createLazadaAdapter(base, fetchFn).listOrders!('t', since, 0);
+    await createLazadaAdapter(base, fetchFn).listOrders!('t', since, null);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -50,7 +50,7 @@ describe('hạn mức gọi Lazada', () => {
     ['ApiCallLimit', () => json({ code: 'ApiCallLimit', type: 'ISV', message: 'limit' })],
     ['http_429', () => new Response('', { status: 429 })],
   ])('sàn báo vượt hạn mức (%s) thì là lỗi tạm unavailable', async (platformCode, res) => {
-    const err = await createLazadaAdapter(base, vi.fn(async () => res())).listOrders!('t', since, 0).catch((e: unknown) => e);
+    const err = await createLazadaAdapter(base, vi.fn(async () => res())).listOrders!('t', since, null).catch((e: unknown) => e);
     expect(err).toMatchObject({ kind: 'unavailable', platformCode });
   });
 });

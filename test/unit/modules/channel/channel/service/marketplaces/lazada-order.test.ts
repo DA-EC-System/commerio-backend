@@ -16,7 +16,17 @@ const order = {
   shipping_fee: 0,
   is_cancel_pending: false,
   need_cancel_confirm: false,
-  address_shipping: { first_name: 'G***l', last_name: '', phone: '84********22', address1: '6**8', address4: 'P**a', address5: 'T**a', city: 'Phường Tân Sơn Hòa' },
+  address_shipping: { first_name: 'G***l', last_name: '', phone: '84********22', address1: '6**8', address4: 'P**a', address5: 'T**a', city: 'Phường Tân Sơn Hòa', country: 'Vietnam', post_code: '', addressDistrict: '' },
+  buyer_note: '',
+  shipping_fee_original: 0,
+  shipping_fee_discount_seller: 0,
+  shipping_fee_discount_platform: 0,
+  // Dữ liệu cá nhân của người mua (#260 "Không lưu"): không được lọt vào đơn chuẩn hoá.
+  recipient_info: { identify_no: 'ID-SECRET', passport_no: 'PP-SECRET', detail_address: 'DA-SECRET' },
+  tax_code: 'TAX-SECRET',
+  national_registration_number: 'NRN-SECRET',
+  branch_number: 'BR-SECRET',
+  address_billing: { first_name: 'BILL-SECRET' },
 };
 const item = {
   order_item_id: 533732107880318,
@@ -31,6 +41,24 @@ const item = {
   package_id: 'FP070211665002474',
   tracking_code: 'SOF_FP070211665002474',
   fulfillment_sla: 'Vui lòng đảm bảo đơn hàng sẽ được giao trước 2026-11-04 23:59:19 để tuân thủ FFR_153.1 hrs_blue',
+  // Trường đo trên payload thật 05/11/2026 (#260).
+  sku_id: '117546388086',
+  shop_sku: '13502898086_VNAMZ-117546388086',
+  product_id: '13502898086',
+  variation: '',
+  product_main_image: 'https://img.lazcdn.com/a.jpg',
+  tax_amount: 909,
+  shipping_amount: 0,
+  wallet_credits: 0,
+  shipment_provider: 'Drop-off: J&T VN, Delivery: J&T VN',
+  shipping_provider_type: 'standard',
+  shipping_type: 'Dropshipping',
+  promised_shipping_time: '',
+  reason: '',
+  reason_detail: '',
+  cancel_return_initiator: 'null-null',
+  return_status: '',
+  digital_delivery_info: 'buyer-SECRET@alitest.xyz',
 };
 
 describe('Lazada: trạng thái món → trạng thái kiện (#105 A3)', () => {
@@ -65,8 +93,8 @@ describe('Lazada: kéo đơn (#105)', () => {
   it('listOrders gửi update_after giờ VN, xếp theo updated_at tăng dần, báo còn trang', async () => {
     const page = Array.from({ length: 100 }, (_, i) => ({ ...order, order_id: i }));
     const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: { countTotal: 150, orders: page } }));
-    const res = await createLazadaAdapter(config, fn).listOrders!('t', new Date('2026-10-28T17:00:00Z'), 0);
-    expect(res.hasMore).toBe(true);
+    const res = await createLazadaAdapter(config, fn).listOrders!('t', new Date('2026-10-28T17:00:00Z'), null);
+    expect(res.nextCursor).not.toBeNull();
     expect(res.orders[1]).toEqual({
       externalOrderId: '1',
       placedAt: new Date('2026-10-29T07:41:18Z'),
@@ -113,8 +141,82 @@ describe('Lazada: kéo đơn (#105)', () => {
       trackingCode: 'SOF_FP070211665002474',
       rawStatus: 'packed',
       status: 'packed',
+      info: {
+        thumbnailUrl: 'https://img.lazcdn.com/a.jpg',
+        attributesLabel: null,
+        externalSkuId: '117546388086',
+        externalShopSku: '13502898086_VNAMZ-117546388086',
+        externalProductId: '13502898086',
+        paidPrice: '20456',
+        taxAmount: '909',
+        shippingAmount: '0',
+        walletCredits: '0',
+        cancelReason: null,
+        cancelReasonDetail: null,
+        cancelInitiator: null,
+        cancelKind: null,
+        reverseOrderId: null,
+        returnStatus: null,
+      },
+      shipping: {
+        shipmentProvider: 'Drop-off: J&T VN, Delivery: J&T VN',
+        shippingProviderType: 'standard',
+        shippingType: 'Dropshipping',
+        promisedShippingAt: null,
+      },
     });
     expect(o.lines[1]).toMatchObject({ packageCode: null, status: 'cancelled' });
+    expect(o.info).toEqual({
+      platformPaymentMethod: 'COD',
+      buyerNote: null,
+      shippingFeeOriginal: '0',
+      shippingFeeDiscountSeller: '0',
+      shippingFeeDiscountPlatform: '0',
+    });
+    // Phường lấy từ `city` (Lazada che tỉnh, đường; không còn quận); khoá thô giữ nguyên, bỏ khoá rỗng.
+    expect(o.shippingAddress).toEqual({
+      name: 'G***l',
+      phone: '84********22',
+      address: '6**8, P**a, T**a, Phường Tân Sơn Hòa',
+      ward: 'Phường Tân Sơn Hòa',
+      postCode: null,
+      raw: { address1: '6**8', address4: 'P**a', address5: 'T**a', city: 'Phường Tân Sơn Hòa', country: 'Vietnam' },
+    });
+    expect(JSON.stringify(o)).not.toMatch(/SECRET/);
+  });
+
+  it('món có biến thể, ghi chú khách, món bị huỷ/trả: chuẩn hoá người huỷ và loại (#260 A3)', async () => {
+    const lines = [
+      { ...item, order_item_id: 1, variation: 'Màu:Đỏ, Size:M' },
+      { ...item, order_item_id: 2, status: 'canceled', reason: 'Đổi ý', reason_detail: 'Muốn màu khác', cancel_return_initiator: 'cancellation-customer', reverse_order_id: 777 },
+      { ...item, order_item_id: 3, status: 'canceled', cancel_return_initiator: 'cancellation-seller' },
+      { ...item, order_item_id: 4, status: 'canceled', cancel_return_initiator: 'cancellation-internal' },
+      { ...item, order_item_id: 5, status: 'shipped_back', cancel_return_initiator: 'cancellation-failed Delivery' },
+      { ...item, order_item_id: 6, status: 'returned', cancel_return_initiator: 'return-customer', return_status: 'refund_success' },
+      { ...item, order_item_id: 7, cancel_return_initiator: 'refund-internal' },
+      { ...item, order_item_id: 8, cancel_return_initiator: 'swap-robot' },
+      { ...item, order_item_id: 9, promised_shipping_time: '2026-11-06 23:59:02 +0700', paid_price: undefined },
+    ];
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: '0', data: { ...order, payment_method: 'MIXEDCARD', buyer_note: 'Giao giờ hành chính' } }))
+      .mockResolvedValueOnce(json({ code: '0', data: lines }));
+    const o = await createLazadaAdapter(config, fn).getOrder!('t', '1');
+    expect(o.info).toMatchObject({ platformPaymentMethod: 'MIXEDCARD', buyerNote: 'Giao giờ hành chính' });
+    const info = o.lines.map((l) => l.info);
+    expect(info[0]!.attributesLabel).toBe('Màu:Đỏ, Size:M');
+    expect(info[1]).toMatchObject({ cancelReason: 'Đổi ý', cancelReasonDetail: 'Muốn màu khác', cancelInitiator: 'buyer', cancelKind: 'cancellation', reverseOrderId: '777' });
+    expect(info.slice(2, 8).map((i) => [i.cancelInitiator, i.cancelKind])).toEqual([
+      ['seller', 'cancellation'],
+      ['platform', 'cancellation'],
+      [null, 'failed_delivery'],
+      ['buyer', 'return'],
+      ['platform', 'refund'],
+      [null, null],
+    ]);
+    expect(info[5]!.returnStatus).toBe('refund_success');
+    expect(o.lines[8]!.shipping.promisedShippingAt).toEqual(new Date('2026-11-06T16:59:02Z'));
+    expect(info[8]!.paidPrice).toBeNull();
   });
 
   it('đơn chưa trả: paid false; khách xin huỷ: cancelRequested', async () => {
@@ -132,12 +234,12 @@ describe('Lazada: kéo đơn (#105)', () => {
     try {
       const limit = () => json({ code: 'SellerCallLimit', type: 'ISV', message: 'this ban will last 1 seconds' });
       const fn = vi.fn().mockResolvedValueOnce(limit()).mockResolvedValueOnce(json({ code: '0', data: { countTotal: 0, orders: [] } }));
-      const ok = createLazadaAdapter(config, fn).listOrders!('t', new Date(), 0);
+      const ok = createLazadaAdapter(config, fn).listOrders!('t', new Date(), null);
       await vi.advanceTimersByTimeAsync(1500);
-      await expect(ok).resolves.toEqual({ orders: [], hasMore: false });
+      await expect(ok).resolves.toEqual({ orders: [], nextCursor: null, safeUntil: null });
 
       const fn2 = vi.fn().mockImplementation(async () => limit());
-      const fail = createLazadaAdapter(config, fn2).listOrders!('t', new Date(), 0);
+      const fail = createLazadaAdapter(config, fn2).listOrders!('t', new Date(), null);
       const check = expect(fail).rejects.toMatchObject({ kind: 'unavailable', platformCode: 'SellerCallLimit' });
       await vi.advanceTimersByTimeAsync(1500);
       await check;

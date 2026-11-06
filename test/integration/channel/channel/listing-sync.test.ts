@@ -40,7 +40,8 @@ const available = new Map([
 setProductPort({
   variants: async (ids) => [a, b, c].filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(99000)])),
-  availableOf: async (ids) => new Map(ids.map((id) => [id, available.get(id) ?? 0])),
+  // Như cổng thật: id không có trong `available` thì không có trong Map.
+  availableOf: async (ids) => new Map(ids.flatMap((id) => (available.has(id) ? [[id, available.get(id)!]] : []))),
 });
 
 /** Trạng thái trên sàn theo SellerSku; test đổi giữa các lần đồng bộ. */
@@ -183,7 +184,8 @@ describe('đồng bộ tồn và giá', () => {
     const res = await sync();
     expect(res.body).toMatchObject({ pushed: 2, errors: 1 });
     const rowA = await listing(a.id);
-    expect(rowA).toMatchObject({ stock_sync: 'error', price_sync: 'error' });
+    // Đẩy lỗi giữ pending kèm lỗi (Documents/21 mục 18.6.6); `error` dành cho Lệch tồn.
+    expect(rowA).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
     expect(rowA.stock_sync_error).toMatchObject({ code: 'E0501', message: 'Update product failed' });
     expect(await listing(b.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null });
     skuErrors.clear();
@@ -192,5 +194,32 @@ describe('đồng bộ tồn và giá', () => {
   it('lần sau đẩy lại SKU đang lỗi', async () => {
     await sync();
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null });
+  });
+
+  it('có giá nhưng không có số có thể bán: chỉ đẩy giá, giữ stock_sync pending kèm variant_missing', async () => {
+    available.delete(b.id);
+    await withCompany(company.companyId, () => markStockPending(b.id));
+    updatePriceQuantity.mockClear();
+    const res = await sync();
+    expect(res.body).toMatchObject({ pushed: 1, errors: 0 });
+    expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [
+      { externalProductId: 'item-CMR-B', externalSkuId: 'sku-CMR-B', price: '99000' },
+    ]);
+    const row = await listing(b.id);
+    expect(row).toMatchObject({ stock_sync: 'pending', price_sync: 'synced', platform_stock: 5 });
+    expect(row.stock_sync_error).toMatchObject({ code: 'variant_missing' });
+  });
+
+  it('có giá nhưng không có số có thể bán, sàn trả lỗi: chỉ ghi lỗi giá, không đụng stock_sync', async () => {
+    skuErrors.set('sku-CMR-B', { code: 'E0501', message: 'Update product failed' });
+    await sync();
+    const row = await listing(b.id);
+    expect(row).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
+    expect(row.stock_sync_error).toMatchObject({ code: 'variant_missing' });
+    expect(row.price_sync_error).toMatchObject({ code: 'E0501' });
+    skuErrors.clear();
+    available.set(b.id, 5);
+    await sync();
+    expect(await listing(b.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null, price_sync: 'synced' });
   });
 });

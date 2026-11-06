@@ -51,10 +51,28 @@ export async function updateListing(
   return row;
 }
 
-/** Listing của biến thể ở các trạng thái cho trước chuyển `stock_sync = pending`. */
+/**
+ * Tồn trên sàn vừa bị đẩy về 0 mà ngắt bị chặn (#207): như `markStockPendingRows`, thêm `platform_stock = 0`.
+ */
+export async function markStockPendingIds(ids: readonly string[]): Promise<void> {
+  await getDb()
+    .update(listings)
+    .set({ ...stockPending(), platformStock: 0 })
+    .where(inArray(listings.id, [...ids]));
+}
+
+/** `stock_sync = pending`, tăng `version` để lượt đồng bộ đang chờ sàn không ghi `synced` đè lên lần đánh dấu (#222). */
+function stockPending() {
+  return { stockSync: 'pending' as const, version: sql`${listings.version} + 1`, updatedAt: sql`now()` };
+}
+
+/**
+ * Listing của biến thể ở các trạng thái cho trước chuyển `stock_sync = pending`. Tăng `version` để lượt đồng bộ đang
+ * chờ sàn không ghi `synced` đè lên lần đánh dấu này (#222).
+ */
 export async function markStockPendingRows(variantId: string, statuses: readonly ListingStatus[]): Promise<void> {
   await getDb()
     .update(listings)
-    .set({ stockSync: 'pending' })
+    .set(stockPending())
     .where(and(eq(listings.variantId, variantId), inArray(listings.status, [...statuses])));
 }

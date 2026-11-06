@@ -45,6 +45,8 @@ export const stockLevels = inventorySchema.table(
     avgCost: money('avg_cost').notNull().default('0'),
     minQty: integer('min_qty'),
     invariantBroken: boolean('invariant_broken').notNull().default(false),
+    /** Đang ở dưới ngưỡng và đã báo (V31): chạm ngưỡng chỉ báo một lần, lên trên ngưỡng mới tắt (25 §7.5). */
+    alertActive: boolean('alert_active').notNull().default(false),
     ...timestamps,
     ...version,
   },

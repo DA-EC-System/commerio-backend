@@ -18,6 +18,13 @@ export function outstanding(line: {
   return Math.max(0, line.orderedQty - line.receivedQty - line.defectiveQty - line.closedShortQty);
 }
 
+/** Trạng thái đề nghị mà phần còn chờ được tính vào đang về (Documents/25 §3.1). */
+export const countsIncoming = (status: string) => status === 'ordered' || status === 'partially_received';
+
+/** SKU đã ghép của các dòng đề nghị (dòng sản phẩm mới chưa duyệt chưa có SKU). */
+export const variantIdsOf = (lines: readonly { variantId: string | null }[]): string[] =>
+  lines.flatMap((l) => (l.variantId ? [l.variantId] : []));
+
 /** Số chứng từ người đọc: `DN-000001`. */
 export const docNumber = (prefix: string, n: number) => `${prefix}-${String(n).padStart(6, '0')}`;
 

@@ -2,9 +2,9 @@
 import { canSelfApprove, publishEvent, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { nextDocNumber, receiveGoods } from '../../inventory/index.ts';
+import { nextDocNumber, receiveGoods, recheckThresholds } from '../../inventory/index.ts';
 import { goodsReceiptMachine, RECEIPT_USER_ACTIONS } from '../domain/receipt-machine.ts';
-import { docNumber, hasPermission, outstanding } from '../domain/request.ts';
+import { docNumber, hasPermission, outstanding, variantIdsOf } from '../domain/request.ts';
 import {
   findReceipt,
   findReceiptByNumber,
@@ -90,6 +90,8 @@ async function post(
   await updateReceipt(receipt.id, { status: to, postedBy: actor.accountId, postedAt: new Date(), selfApproved });
   await recordTransition({ entityType: RECEIPT_ENTITY, entityId: receipt.id, from: receipt.status, to, action, actorId: actor.accountId });
   await applyReceiving(request, { receiptId: receipt.id, actorId: actor.accountId });
+  // Hàng lỗi và phần nhận đều làm giảm đang về, kể cả SKU không có move tồn thực (Documents/25 mục 7.5).
+  await recheckThresholds(variantIdsOf(requestLines));
   await publishEvent({
     type: 'purchasing.goods_receipt_posted',
     aggregateId: receipt.id,

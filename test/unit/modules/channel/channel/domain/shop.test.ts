@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { reconnectAction, shopMachine, tokenExpiringSoon } from '#src/modules/channel/channel/domain/shop.ts';
+import { assertNoOpenOrders, reconnectAction, shopMachine, tokenExpiringSoon } from '#src/modules/channel/channel/domain/shop.ts';
 
 const NOW = Date.parse('2026-10-28T00:00:00Z');
 const DAY = 24 * 3600_000;
@@ -63,5 +63,17 @@ describe('tokenExpiringSoon', () => {
     expect(tokenExpiringSoon('active', new Date(NOW + 4 * DAY), NOW)).toBe(false);
     expect(tokenExpiringSoon('needs_reauth', new Date(NOW + DAY), NOW)).toBe(false);
     expect(tokenExpiringSoon('active', null, NOW)).toBe(false);
+  });
+});
+
+describe('chặn ngắt khi còn đơn chưa xong (#207)', () => {
+  it('không còn đơn mở thì qua', () => {
+    expect(() => assertNoOpenOrders(0)).not.toThrow();
+  });
+
+  it('còn đơn mở thì 409 shop_has_open_orders kèm openOrders', () => {
+    expect(() => assertNoOpenOrders(5)).toThrow(
+      expect.objectContaining({ status: 409, code: 'shop_has_open_orders', extensions: { openOrders: 5 } }),
+    );
   });
 });

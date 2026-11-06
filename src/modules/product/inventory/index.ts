@@ -24,4 +24,5 @@ export {
   stockOf,
 } from './service/port.ts';
 export { type ReceivedLine, receiveGoods } from './service/posting.ts';
+export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';

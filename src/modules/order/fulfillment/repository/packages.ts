@@ -3,6 +3,14 @@ import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { PackageStatus } from '../domain/package.ts';
 import { packageLines, packages } from './schema.ts';
 
+/** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
+export interface PackageShipping {
+  shipmentProvider: string | null;
+  shippingProviderType: string | null;
+  shippingType: string | null;
+  promisedShippingAt: Date | null;
+}
+
 export interface PackageRow {
   id: string;
   status: PackageStatus;
@@ -10,6 +18,7 @@ export interface PackageRow {
   trackingCode: string | null;
   needsOpen: boolean;
   needsAttention: boolean;
+  shipping: PackageShipping;
   lines: { orderLineId: string; variantId: string | null; quantity: number; reservedQty: number }[];
 }
 
@@ -24,6 +33,12 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
       trackingCode: packages.trackingCode,
       needsOpen: packages.needsOpen,
       needsAttention: packages.needsAttention,
+      shipping: {
+        shipmentProvider: packages.shipmentProvider,
+        shippingProviderType: packages.shippingProviderType,
+        shippingType: packages.shippingType,
+        promisedShippingAt: packages.promisedShippingAt,
+      },
     })
     .from(packages)
     .where(eq(packages.orderId, orderId))
@@ -58,7 +73,7 @@ export async function insertPackage(input: {
   shipBy: Date | null;
   handedOverAt?: Date;
   deliveredAt?: Date;
-}): Promise<string> {
+} & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
     .insert(packages)
     .values({ companyId: requireCompanyId('insertPackage'), ...input })
@@ -89,7 +104,8 @@ export async function updatePackage(
     flagNote: string | null;
     handedOverAt: Date;
     deliveredAt: Date;
-  }>,
+  }> &
+    Partial<PackageShipping>,
 ): Promise<void> {
   await getDb()
     .update(packages)

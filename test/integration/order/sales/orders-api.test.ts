@@ -8,6 +8,8 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { createOrder } from '../../helpers/sales.ts';
+import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -28,6 +30,7 @@ function order(id: string, lines: { variantId: string | null; status: PlatformOr
     shippingAddress: { name: 'K***h', phone: '84****22', address: 'P**a' },
     shippingFee: '15000',
     cancelRequested: false,
+    info: noOrderInfo,
     lines: lines.map((l, i) => ({
       externalLineId: `${id}-${i}`,
       variantId: l.variantId,
@@ -40,6 +43,8 @@ function order(id: string, lines: { variantId: string | null; status: PlatformOr
       trackingCode: null,
       rawStatus: String(l.status),
       status: l.status,
+      info: noLineInfo,
+      shipping: noShipping,
     })),
     ...o,
   } satisfies PlatformOrder;
@@ -122,6 +127,15 @@ describe('GET /sales/orders (#105)', () => {
     expect(page.items.map((i) => [i.id, i.flags.includes('return_requested')])).toEqual([[ids.twoPackages, true]]);
   });
 
+  it('lọc theo gian hàng (link từ hộp thoại ngắt, Documents/21 §18.6.1)', async () => {
+    const ofShop = async (id: string) => OrderSummaryPage.parse((await get(`/orders?shopId=${id}&pageSize=50`)).body);
+    expect((await ofShop(shopId)).total).toBe(4);
+    expect((await ofShop(randomUUID())).total).toBe(0);
+    const bad = await get('/orders?shopId=khong-phai-uuid');
+    expect(bad.status).toBe(422);
+    expect(Object.keys(bad.body.errors)).toEqual(['shopId']);
+  });
+
   it('tham số sai 422 theo ô', async () => {
     const res = await get('/orders?stage=khong_co&pageSize=500');
     expect(res.status).toBe(422);
@@ -164,5 +178,153 @@ describe('GET /sales/orders/:id (#105)', () => {
     expect((await get(`/orders/${ids.twoPackages}`, other.ceo.token)).status).toBe(404);
     expect((await get('/orders/khong-phai-uuid')).status).toBe(404);
     expect(OrderSummaryPage.parse((await get('/orders', other.ceo.token)).body).total).toBe(0);
+  });
+});
+
+describe('thông tin đơn sàn ở danh sách và chi tiết (#260)', () => {
+  let rich: Awaited<ReturnType<typeof createCompany>>;
+  const richIds: Record<string, string> = {};
+
+  beforeAll(async () => {
+    rich = await createCompany({ optionalModules: ['channel'] });
+    const v = await createVariant(rich.companyId);
+    const shop = await testPool().query(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Shop Lazada', 'active', now()) returning id`,
+      [rich.companyId, `s-${randomUUID().slice(0, 8)}`],
+    );
+    const tag = randomUUID().slice(0, 6);
+    const base = { ...order(`R-${tag}`, []), shopId: shop.rows[0].id };
+    const line = (i: number, info: Partial<typeof noLineInfo>) => ({
+      externalLineId: `R-${tag}-${i}`,
+      variantId: v.variantId,
+      sellerSku: v.sku,
+      productName: `Áo ${i}`,
+      unitPrice: '100000',
+      sellerDiscount: '10000',
+      platformDiscount: '0',
+      packageCode: `FP-R-${tag}`,
+      trackingCode: null,
+      rawStatus: 'canceled',
+      status: 'cancelled' as const,
+      info: { ...noLineInfo, ...info },
+      shipping: { ...noShipping, shipmentProvider: 'Drop-off: J&T VN, Delivery: J&T VN', shippingProviderType: 'standard' },
+    });
+    richIds.marketplace = (
+      await withCompany(rich.companyId, () =>
+        ingestMarketplaceOrder({
+          ...base,
+          shippingAddress: { name: 'N***n', phone: '84****11', address: 'P**a, Phường Bến Nghé', ward: 'Phường Bến Nghé', postCode: null, raw: { city: 'Phường Bến Nghé' } },
+          info: { platformPaymentMethod: 'MIXEDCARD', buyerNote: 'Gọi trước', shippingFeeOriginal: '30000', shippingFeeDiscountSeller: '5000', shippingFeeDiscountPlatform: '10000' },
+          lines: [
+            line(0, {
+              thumbnailUrl: 'https://img/0.jpg',
+              attributesLabel: 'Màu: Đỏ',
+              externalSkuId: '1175',
+              externalShopSku: '1175_VNAMZ',
+              externalProductId: '900',
+              paidPrice: '90000',
+              taxAmount: '0',
+              cancelReason: 'Đổi ý',
+              cancelReasonDetail: 'Khách đặt nhầm',
+              cancelInitiator: 'buyer',
+              cancelKind: 'cancellation',
+            }),
+            { ...line(1, { cancelKind: 'failed_delivery' }), unitPrice: '50000' },
+          ],
+        }),
+      )
+    ).orderId;
+    richIds.manual = (await createOrder(rich.companyId, { lines: [{ variantId: v.variantId, quantity: 3, unitPrice: 20000 }] })).orderId;
+  });
+
+  const getRich = (path: string) => get(path, rich.ceo.token);
+
+  it('danh sách: mã đơn sàn, người nhận, phương thức trên sàn, dòng đầu, tổng số lượng; đơn tay để null', async () => {
+    const page = OrderSummaryPage.parse((await getRich('/orders?pageSize=50')).body);
+    const byId = new Map(page.items.map((i) => [i.id, i]));
+    expect(byId.get(richIds.marketplace!)).toMatchObject({
+      externalOrderId: expect.stringMatching(/^R-/),
+      recipientName: 'N***n',
+      paymentMethod: null,
+      platformPaymentMethod: 'MIXEDCARD',
+      totalQty: 2,
+      itemsPreview: { productName: 'Áo 0', attributesLabel: 'Màu: Đỏ', thumbnailUrl: 'https://img/0.jpg', quantity: 1 },
+    });
+    expect(byId.get(richIds.manual!)).toMatchObject({
+      externalOrderId: null,
+      recipientName: null,
+      platformPaymentMethod: null,
+      paymentMethod: 'prepaid',
+      totalQty: 3,
+      itemsPreview: { attributesLabel: '', thumbnailUrl: null, quantity: 3 },
+    });
+  });
+
+  it('chi tiết: địa chỉ có phường, phí ship gốc và giảm, ghi chú khách, thông tin dòng, vận chuyển kiện', async () => {
+    const o = Order.parse((await getRich(`/orders/${richIds.marketplace}`)).body);
+    expect(o).toMatchObject({
+      buyerNote: 'Gọi trước',
+      shippingFeeOriginal: 30000,
+      shippingFeeDiscountSeller: 5000,
+      shippingFeeDiscountPlatform: 10000,
+      shippingAddress: { name: 'N***n', ward: 'Phường Bến Nghé', postCode: null },
+    });
+    expect(o.shippingAddress).not.toHaveProperty('raw');
+    expect(o.lines[0]).toMatchObject({
+      attributesLabel: 'Màu: Đỏ',
+      thumbnailUrl: 'https://img/0.jpg',
+      externalSkuId: '1175',
+      externalShopSku: '1175_VNAMZ',
+      externalProductId: '900',
+      paidPrice: 90000,
+      taxAmount: 0,
+      cancelReason: 'Đổi ý',
+      cancelReasonDetail: 'Khách đặt nhầm',
+      cancelInitiator: 'buyer',
+      cancelKind: 'cancellation',
+      reverseOrderId: null,
+      returnStatus: null,
+    });
+    expect(o.lines[1]).toMatchObject({ attributesLabel: '', paidPrice: null, cancelInitiator: null, cancelKind: 'failed_delivery' });
+    expect(o.packages[0]).toMatchObject({
+      shipmentProvider: 'Drop-off: J&T VN, Delivery: J&T VN',
+      shippingProviderType: 'standard',
+      promisedShippingAt: null,
+    });
+    expect(o.packages[0]!.lines[0]).toMatchObject({ attributesLabel: 'Màu: Đỏ' });
+  });
+
+  it('thứ tự dòng theo mã món sàn: …9 trước …10 ở chi tiết và dòng đầu của danh sách', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const shopId = (await testPool().query(`select id from channel.shops where company_id = $1 limit 1`, [rich.companyId])).rows[0].id;
+    const v = await createVariant(rich.companyId);
+    const mk = (n: number) => ({
+      externalLineId: `O-${tag}-${n}`,
+      variantId: v.variantId,
+      sellerSku: v.sku,
+      productName: `Món ${n}`,
+      unitPrice: '10000',
+      sellerDiscount: '0',
+      platformDiscount: '0',
+      packageCode: null,
+      trackingCode: null,
+      rawStatus: 'pending',
+      status: 'pending' as const,
+      info: noLineInfo,
+      shipping: noShipping,
+    });
+    const { orderId } = await withCompany(rich.companyId, () =>
+      ingestMarketplaceOrder({ ...order(`O-${tag}`, []), shopId, lines: [mk(10), mk(9)] }),
+    );
+    const o = Order.parse((await getRich(`/orders/${orderId}`)).body);
+    expect(o.lines.map((l) => l.productName)).toEqual(['Món 9', 'Món 10']);
+    const page = OrderSummaryPage.parse((await getRich(`/orders?search=O-${tag}`)).body);
+    expect(page.items[0]?.itemsPreview?.productName).toBe('Món 9');
+  });
+
+  it('đơn tạo tay: các trường sàn null', async () => {
+    const o = Order.parse((await getRich(`/orders/${richIds.manual}`)).body);
+    expect(o).toMatchObject({ buyerNote: null, shippingFeeOriginal: null, shippingAddress: null });
+    expect(o.lines[0]).toMatchObject({ thumbnailUrl: null, externalSkuId: null, paidPrice: null, cancelKind: null, attributesLabel: '' });
   });
 });
