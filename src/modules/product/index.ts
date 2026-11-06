@@ -3,7 +3,7 @@
 import { type ModuleDefinition, withContext } from '../../shared/module.ts';
 import { catalogModule } from './catalog/index.ts';
 import { inventoryModule, setIncomingSource } from './inventory/index.ts';
-import { incomingOf, purchasingModule } from './purchasing/index.ts';
+import { incomingOf, purchaseDocumentNumbers, purchasingModule } from './purchasing/index.ts';
 
 export * from './catalog/index.ts';
 export * from './inventory/index.ts';
@@ -11,13 +11,14 @@ export * from './purchasing/index.ts';
 
 /**
  * Mỗi module con giữ tên và đường dẫn /api/v1/<tên> riêng; bảng nằm chung schema `product`. purchasing import inventory
- * (cấp số, giá vốn, ghi sổ), nên inventory nhận số đang về của purchasing qua `ctx` thay vì import ngược (vòng).
+ * (cấp số, giá vốn, ghi sổ), nên inventory nhận số đang về và số phiếu (thẻ kho) của purchasing qua `ctx` thay vì
+ * import ngược (vòng).
  */
 // Cảnh báo dưới ngưỡng cần đang về của purchasing cả khi ghi sổ ngoài request (inventory/service/thresholds.ts).
 setIncomingSource(incomingOf);
 
 export const productModules: readonly ModuleDefinition[] = [
   catalogModule,
-  withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf })),
+  withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf, purchaseDocumentNumbers })),
   purchasingModule,
 ];

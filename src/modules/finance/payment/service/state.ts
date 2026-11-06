@@ -69,10 +69,10 @@ export async function markRefunded(orderId: string): Promise<OrderPaymentState> 
 
 /** Đảo phiếu thu: `paid` → `unpaid`, `cod_collected` → `cod_pending` (UC-PF-09, chưa có issue). */
 export async function revertPaid(_orderId: string): Promise<OrderPaymentState> {
-  throw notImplemented('revertPaid', 'UC-PF-09');
+  throw notImplemented('revertPaid', 'UC-PF-09 (chưa có issue)', 'chưa giao');
 }
 
 /** Đảo phiếu chi hoàn tiền: `refunded` → `pending_refund` (UC-PF-09, chưa có issue). */
 export async function revertRefunded(_orderId: string): Promise<OrderPaymentState> {
-  throw notImplemented('revertRefunded', 'UC-PF-09');
+  throw notImplemented('revertRefunded', 'UC-PF-09 (chưa có issue)', 'chưa giao');
 }

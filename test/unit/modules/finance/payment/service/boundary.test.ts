@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { revertPaid, revertRefunded } from '#src/modules/finance/payment/index.ts';
 
-const notImplemented = { status: 501, code: 'not_implemented' };
+const notImplemented = { status: 501, code: 'not_implemented', extensions: { issue: 'UC-PF-09 (chưa có issue)', owner: 'chưa giao' } };
 
 // Khung còn lại của payment: đảo chứng từ (UC-PF-09, chưa có issue). Các hàm khác đã có thân (#23, #27, #29).
 describe('khung payment', () => {

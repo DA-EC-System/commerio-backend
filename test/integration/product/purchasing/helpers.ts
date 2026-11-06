@@ -87,3 +87,27 @@ export function countBody(receipt: Receipt, counts: Partial<Count>[]) {
     lines: receipt.lines.map((l, i) => ({ lineId: l.lineId, announced: 0, accepted: 0, defectKept: 0, returnedOnSpot: 0, reason: '', ...counts[i] })),
   };
 }
+
+/**
+ * Phiếu nhận đã ghi sổ cho một SKU: đề nghị đã đặt `accepted + defectKept` cái (giá mặc định 100.000), Kho lập phiếu,
+ * nhập số đếm, ghi sổ. Có lỗi giữ lại thì ghi sổ sinh phiếu trả NCC nháp (`returnId`).
+ */
+export async function postedReceipt(
+  t: { ceo: string; requester: string; kho: string },
+  supplierId: string,
+  variantId: string,
+  counts: { accepted: number; defectKept?: number; unitCost?: number },
+): Promise<{ receiptId: string; number: string; returnId: string | null }> {
+  const defectKept = counts.defectKept ?? 0;
+  const quantity = counts.accepted + defectKept;
+  const req = await orderedRequest(t, supplierId, [{ variantId, quantity, unitCost: counts.unitCost ?? 100000 }]);
+  const draft = await createReceipt(t.kho, req.id);
+  const line = { announced: quantity, accepted: counts.accepted, defectKept, reason: defectKept ? 'Hàng lỗi' : '' };
+  const saved = await pur(t.kho).put(`/goods-receipts/${draft.id}`, countBody(draft, [line]));
+  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  const res = await pur(t.kho).post(`/goods-receipts/${draft.id}/post`, { version: saved.body.version });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  const posted = GoodsReceipt.parse(res.body);
+  const supplierReturn = posted.followUps.find((f) => f.type === 'supplier_return');
+  return { receiptId: posted.id, number: posted.number, returnId: supplierReturn?.id ?? null };
+}

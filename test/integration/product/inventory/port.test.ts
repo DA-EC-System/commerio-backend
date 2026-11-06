@@ -33,7 +33,7 @@ describe('hàm cổng tạm', () => {
     ['reverseShipment', () => reverseShipment('p', [], { actorId: 'u', reason: 'x' })],
     ['receiveBack', () => receiveBack({ type: 'package', id: 'p' }, [])],
   ])('AC7: %s trả 501 not_implemented', async (_name, call) => {
-    await expect(call()).rejects.toMatchObject({ status: 501, code: 'not_implemented' });
+    await expect(call()).rejects.toMatchObject({ status: 501, code: 'not_implemented', extensions: { issue: 'commerio-backend#206', owner: 'Khang' } });
   });
 });
 

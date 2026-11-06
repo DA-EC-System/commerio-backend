@@ -56,7 +56,7 @@ export async function availableOf(variantIds: readonly string[]): Promise<Map<st
 /** Số kế tiếp của một loại chứng từ trong công ty (bắt đầu từ 1); bên gọi tự ghép tiền tố (`DN-000001`). */
 export const nextDocNumber = takeNextNumber;
 
-// Chữ ký cổng theo kiện (Documents/21 mục 11.1), đã chốt để order code theo; thân làm ở PR sau của #111.
+// Chữ ký cổng theo kiện (Documents/21 mục 11.1), đã chốt để order code theo; thân làm ở commerio-backend#206 (Khang).
 
 export interface StockLine {
   variantId: string;
@@ -65,17 +65,17 @@ export interface StockLine {
 
 /** Giữ hàng cho kiện; `reserved: false` khi không đủ khả dụng. */
 export function reserve(_packageId: string, _lines: readonly StockLine[]): Promise<{ reserved: boolean }> {
-  return Promise.reject(notImplemented('reserve', '#111'));
+  return Promise.reject(notImplemented('reserve', 'commerio-backend#206', 'Khang'));
 }
 
 /** Trả phần đang giữ của kiện. */
 export function release(_packageId: string, _lines: readonly StockLine[]): Promise<void> {
-  return Promise.reject(notImplemented('release', '#111'));
+  return Promise.reject(notImplemented('release', 'commerio-backend#206', 'Khang'));
 }
 
 /** Bàn giao kiện: trừ tồn thực và đang giữ, lập phiếu xuất theo kiện. */
 export function ship(_packageId: string, _lines: readonly StockLine[], _opts: { actorId: string }): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('ship', '#111'));
+  return Promise.reject(notImplemented('ship', 'commerio-backend#206', 'Khang'));
 }
 
 /** Đảo bàn giao: cộng lại tồn thực, lập phiếu đảo. */
@@ -84,7 +84,7 @@ export function reverseShipment(
   _lines: readonly StockLine[],
   _opts: { actorId: string; reason: string },
 ): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('reverseShipment', '#111'));
+  return Promise.reject(notImplemented('reverseShipment', 'commerio-backend#206', 'Khang'));
 }
 
 /** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
@@ -92,5 +92,5 @@ export function receiveBack(
   _source: { type: 'package' | 'return_request'; id: string },
   _lines: readonly StockLine[],
 ): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('receiveBack', '#111'));
+  return Promise.reject(notImplemented('receiveBack', 'commerio-backend#206', 'Khang'));
 }

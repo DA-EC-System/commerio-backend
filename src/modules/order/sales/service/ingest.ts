@@ -17,6 +17,8 @@ import {
 /** Đơn sàn đã chuẩn hoá; `variantId` do channel tra theo listing (null: chưa ghép SKU). Mỗi món một đơn vị. */
 export interface PlatformOrder {
   shopId: string;
+  /** Giữ hàng cho kiện mới; false khi gian hàng chờ kiểm kê đầu kỳ (#198). Thiếu là true. */
+  holdStock?: boolean;
   externalOrderId: string;
   rawStatus: string;
   paid: boolean;
@@ -195,7 +197,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     })),
   );
   const packages = await syncPlatformPackages(
-    { id: orderId, shopId: o.shopId, shipBy: o.shipBy },
+    { id: orderId, shopId: o.shopId, shipBy: o.shipBy, holdStock: o.holdStock ?? true },
     o.lines.map((l) => ({
       orderLineId: lineIds.get(l.externalLineId)!,
       variantId: l.variantId,

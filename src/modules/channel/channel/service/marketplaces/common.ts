@@ -1,7 +1,15 @@
 // Kiểu chung của adapter sàn (Strategy, #103 B7). Chỉ adapter gọi HTTP sàn, ký request và biết mã lỗi của sàn;
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
 import type { RemoteState } from '../../domain/listing.ts';
+import type { ShopCapabilities } from '../../domain/shop.ts';
 
+export type { ShopCapabilities };
+
+/**
+ * Token của một gian hàng. `accessToken`, `refreshToken` là **chuỗi mờ do adapter tự định dạng**: app chỉ mã hoá, lưu,
+ * giải mã rồi trả nguyên cho adapter, không đọc. Sàn cần thêm bí mật theo gian hàng (TikTok `cipher`) thì adapter tự gói
+ * vào chuỗi này, không thêm cột hay tham số (#200).
+ */
 export interface TokenSet {
   accessToken: string;
   /** null khi sàn hoặc người dùng không đưa (token dán từ console): hết hạn access thì phải nối lại. */
@@ -15,7 +23,13 @@ export interface SellerInfo {
   /** Mã shop của sàn (Lazada: `seller_id`). */
   externalShopId: string;
   shopName: string;
-  region: string;
+  /** Mã vùng ISO 3166-1 alpha-2 do sàn trả, chỉ để hiện; null khi sàn không cho biết. */
+  region: string | null;
+}
+
+/** Một gian hàng ra từ một lần uỷ quyền hay một token, kèm token riêng của nó (một lần có thể ra nhiều gian hàng). */
+export interface ShopConnection extends SellerInfo {
+  tokens: TokenSet;
 }
 
 /** Danh mục lá của sàn; `name` là cả đường dẫn ("Quần áo nam > Áo > Áo thun có cổ nam"). */
@@ -220,17 +234,31 @@ export interface MarketplaceAdapter {
   readonly name: string;
   /** Cách nối dùng được với cấu hình hiện tại; rỗng là sàn chưa nối được trên môi trường này. */
   connectMethods(): readonly ConnectMethod[];
+  /** Năng lực tĩnh của sàn, không phụ thuộc cấu hình (Documents/21 §18.6.3). */
+  readonly capabilities: ShopCapabilities;
   /** URL trang uỷ quyền của sàn, mang `state` để kiểm ở callback. */
   authorizeUrl(state: string): string;
-  /** Đổi `code` ở callback lấy token. */
-  exchangeCode(code: string): Promise<TokenSet>;
+  /**
+   * Callback OAuth: `params` là mọi query sàn trả trên URL callback trừ `state`; adapter tự đọc tham số mình cần, thiếu thì
+   * ném `rejected` `missing_parameter`. Trả mọi gian hàng của lần uỷ quyền, mỗi gian hàng một `TokenSet`.
+   */
+  exchangeCode(params: Readonly<Record<string, string>>): Promise<ShopConnection[]>;
+  /**
+   * Token dán tay lấy trên console của sàn, đi qua cùng hợp đồng với callback. Adapter tự quyết có làm mới không (Lazada:
+   * có refresh token thì làm mới một lần để biết hạn) và một token ra mấy gian hàng.
+   */
+  connectWithToken(input: { accessToken: string; refreshToken: string | null }): Promise<ShopConnection[]>;
   refreshToken(refreshToken: string): Promise<TokenSet>;
-  getSeller(accessToken: string): Promise<SellerInfo>;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
   /** Đưa ảnh từ URL công khai lên sàn, trả URL trên sàn. */
   uploadImage(accessToken: string, url: string): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
+  /**
+   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
+   * thì ném `rejected`, không trả thiếu.
+   */
+  listSkus?(accessToken: string): Promise<RemoteSku[]>;
   /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
@@ -252,6 +280,14 @@ export interface MarketplaceAdapter {
   listOrders?(
     accessToken: string,
     updatedAfter: Date,
+    cursor: string | null,
+  ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
+  /**
+   * Đơn **chưa xong** của gian hàng bất kể ngày đặt, cho lượt kéo một lần sau thiết lập (#198, Documents/21 §18.2). Lật
+   * trang như `listOrders` (con trỏ, `safeUntil`); thứ tự giữa các trang không ràng buộc, đơn có thể trả hai lần.
+   */
+  listOpenOrders?(
+    accessToken: string,
     cursor: string | null,
   ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
   /** Một đơn kèm các món (#105). */

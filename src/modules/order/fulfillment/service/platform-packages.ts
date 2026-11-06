@@ -11,6 +11,8 @@ import {
   setReserved,
   updatePackage,
 } from '../repository/packages.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
+import type { PackageNotice } from '../repository/schema.ts';
 import { type StockLine, stockPort } from './stock-port.ts';
 
 /** Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter). */
@@ -26,6 +28,14 @@ export type PlatformLineStatus =
   | 'return_failed'
   | 'lost'
   | 'cancelled';
+
+/** Đơn của kiện; `holdStock` false thì không giữ hàng cho kiện mới (gian hàng chờ kiểm kê đầu kỳ, #198). */
+export interface PlatformPackageOrder {
+  id: string;
+  shopId: string;
+  shipBy: Date | null;
+  holdStock: boolean;
+}
 
 export interface PlatformPackageLine {
   orderLineId: string;
@@ -104,8 +114,25 @@ async function changeStatus(orderId: string, pkg: PackageRow, to: PackageStatus,
   pkg.status = to;
 }
 
+/**
+ * Giữ hàng qua cổng tồn. `reserve` còn chờ issue khác (501 `not_implemented`) thì không làm hỏng lượt kéo đơn: kiện ở
+ * `backordered`, mang `notices` (Documents/21 §18.7.9). Lỗi khác ném tiếp.
+ */
+async function tryReserve(id: string, lines: readonly PlatformPackageLine[]): Promise<{ reserved: boolean; notices: PackageNotice[] }> {
+  try {
+    return { reserved: (await stockPort().reserve(id, stockLines(lines))).reserved, notices: [] };
+  } catch (err) {
+    if (!(err instanceof AppError && err.code === 'not_implemented')) throw err;
+    const { issue, owner } = (err.extensions ?? {}) as { issue?: string; owner?: string };
+    return {
+      reserved: false,
+      notices: [{ code: 'not_implemented', issue: issue ?? '', owner: owner ?? '', message: 'Chưa giữ hàng được cho kiện này' }],
+    };
+  }
+}
+
 async function createPackage(
-  order: { id: string; shopId: string; shipBy: Date | null },
+  order: PlatformPackageOrder,
   code: string,
   status: PlatformLineStatus,
   lines: readonly PlatformPackageLine[],
@@ -126,7 +153,8 @@ async function createPackage(
     shipBy: order.shipBy,
     ...milestones(null, initial),
   });
-  const reserved = wantsStock && mapped && (await stockPort().reserve(id, stockLines(lines))).reserved;
+  const { reserved, notices } = wantsStock && mapped && order.holdStock ? await tryReserve(id, lines) : { reserved: false, notices: [] };
+  if (notices.length) await updatePackage(id, { notices });
   const to: PackageStatus = initial === 'backordered' && reserved ? 'reserved' : initial;
   await insertPackageLines(
     id,
@@ -199,7 +227,7 @@ export async function cancelPlatformPackage(orderId: string, pkg: PackageRow): P
  * đếm. Trả trạng thái các kiện sau khi áp, để đơn suy cờ và quyết định huỷ.
  */
 export async function syncPlatformPackages(
-  order: { id: string; shopId: string; shipBy: Date | null },
+  order: PlatformPackageOrder,
   lines: readonly PlatformPackageLine[],
   nextCode: () => Promise<string>,
 ): Promise<PlatformPackagesResult & { cancelled: ('cancelled' | 'needs_open' | 'handed_over')[] }> {
