@@ -125,3 +125,35 @@ export async function receiveGoods(receiptId: string, lines: readonly ReceivedLi
   ]);
   await applyMoves({ type: 'goods_receipt', id: receiptId }, moves, actorId);
 }
+
+export interface ReturnLine {
+  /** Id dòng phiếu trả NCC, thành `source_line_id` của thẻ kho. */
+  lineId: string;
+  variantId: string;
+  quantity: number;
+  /** Giá vốn của dòng gốc (phiếu nhận, dòng kiện), chuỗi `numeric(18,2)`; `null` thì lấy giá vốn bình quân. */
+  unitCost: string | null;
+}
+
+/**
+ * Tồn theo phiếu trả NCC (#210, sơ đồ B4): `send` gửi đi thì chờ xử lý giảm; `back` NCC không nhận thì hàng về lại chờ
+ * xử lý; `restock` huỷ phiếu chọn nhập lại thì chờ xử lý sang tồn thực theo giá vốn của dòng gốc. Chờ xử lý không đủ thì
+ * `InsufficientStock` (bên gọi đổi sang 422 `stock_insufficient`).
+ */
+export async function moveSupplierReturn(
+  returnId: string,
+  kind: 'send' | 'back' | 'restock',
+  lines: readonly ReturnLine[],
+  actorId: string | null,
+): Promise<void> {
+  const moves = lines.flatMap((l): Move[] => {
+    const base = { variantId: l.variantId, unitCost: l.unitCost, sourceLineId: l.lineId };
+    if (kind === 'send') return [{ ...base, bucket: 'quarantine', qty: -l.quantity }];
+    if (kind === 'back') return [{ ...base, bucket: 'quarantine', qty: l.quantity }];
+    return [
+      { ...base, bucket: 'quarantine', qty: -l.quantity },
+      { ...base, bucket: 'on_hand', qty: l.quantity },
+    ];
+  });
+  await applyMoves({ type: 'supplier_return', id: returnId }, moves, actorId);
+}

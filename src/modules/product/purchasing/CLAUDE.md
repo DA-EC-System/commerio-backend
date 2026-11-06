@@ -2,7 +2,7 @@
 
 Nhà cung cấp, đề nghị nhập (#108, sơ đồ A1), phiếu nhận (#109, A2), phiếu trả NCC (B4). Bảng nằm trong schema `product`. Hợp đồng API: `Documents/21` mục 16. Thiết kế: `docs/superpowers/specs/2026-10-28-108-de-nghi-nhap-design.md`. Phân hệ tuỳ chọn `purchasing`: tắt thì mọi quyền `purchasing.*` mất hiệu lực.
 
-Hiện có: nhà cung cấp, báo cáo theo NCC, đề nghị nhập (lập, sửa, thêm dòng từ gợi ý nhập lại, loại dòng, chín thao tác của máy trạng thái), số "đang về", phiếu nhận (lập, kiểm đếm, ghi sổ, huỷ, ghi kết quả giao thiếu; `docs/superpowers/specs/2026-10-28-109-phieu-nhan-hang-design.md`). Ghi sổ lập phiếu trả NCC nháp cho hàng lỗi; máy trạng thái phiếu trả NCC, đề nghị bù hàng (`sourceReturnId`), tệp đính kèm phiếu nhận (chờ #114) chưa làm.
+Hiện có: nhà cung cấp, báo cáo theo NCC, đề nghị nhập (lập, sửa, thêm dòng từ gợi ý nhập lại, loại dòng, chín thao tác của máy trạng thái), số "đang về", phiếu nhận (lập, kiểm đếm, ghi sổ, huỷ, ghi kết quả giao thiếu; `docs/superpowers/specs/2026-10-28-109-phieu-nhan-hang-design.md`). Ghi sổ lập phiếu trả NCC nháp cho hàng lỗi. Phiếu trả NCC đủ vòng đời (#210, `service/supplier-returns.ts`) và đề nghị bù hàng (`sourceReturnId`). Tệp đính kèm phiếu nhận (chờ #114) chưa làm.
 
 ## Quyền
 
@@ -37,6 +37,14 @@ Thao tác `POST /requests/:id/:action` và `POST /goods-receipts/:id/:action` ch
 - **Tự Đã xử lý** (`autoResolveShort`, lịch sử `auto_resolve` nguồn hệ thống): đề nghị nhận xong thì mọi phiếu `short` sang `resolved` kết quả `follow_up` trỏ phiếu vừa ghi sổ (kể cả phiếu đang kiểm còn lại, chỉ có thiếu hoặc trả tại chỗ, ghi sổ sau khi đề nghị đã nhận xong: đề nghị giữ nguyên trạng thái); đề nghị đóng thiếu thì kết quả `close_short`, ghi chú là lý do.
 - **Đóng thiếu** chỉ có một đường: `service/request-receiving.ts` `closeShortRequest`, dùng cho thao tác `close_short` của đề nghị và kết quả giao thiếu `close_short`. Còn phiếu đang kiểm thì 409 `receipt_counting`.
 - Tệp đính kèm chưa nhận tới #114: `attachmentIds` khác rỗng trả 422 `errors.attachments`.
+
+### Phiếu trả NCC (#210)
+
+- Nguồn: hàng lỗi của phiếu nhận (`receipt_defect`, #109), kiểm hàng về (`customer_return`), xuất huỷ bị từ chối (`write_off_rejected`) do inventory gọi `draftSupplierReturn` qua `product/index.ts`; kho lập tay (`manual`) cho hàng ở chờ xử lý (số lượng không vượt chờ xử lý). Phiếu hệ thống lập có `created_by` trống; người gửi duyệt thành người lập.
+- Bảng chuyển `domain/return-machine.ts`: duyệt và gửi, trả về khác người lập; ghi kết quả (hoàn tiền, bù hàng, không nhận) khác người gửi; CEO hoặc công ty một người tự làm được (`self_approved`, `result_self_approved`; CHECK `supplier_returns_result_by` cho qua khi tự duyệt).
+- Tồn đổi qua `inventory.moveSupplierReturn`: duyệt và gửi trừ chờ xử lý; NCC không nhận cộng lại; huỷ chọn nhập lại thì chờ xử lý sang tồn thực theo giá vốn dòng gốc, chọn xuất huỷ thì `createQuarantineWriteOff` nháp. Chờ xử lý không đủ: 422 `stock_insufficient` theo dòng.
+- Ghi hoàn tiền phát `purchasing.supplier_return_refunded { supplierReturnId, supplierId, refundAmount, recordedAt }` (sổ tiền nghe ở #228). Bù hàng: lập đề nghị với `sourceReturnId` (phiếu `replaced`, chưa có đề nghị bù, cùng NCC), đề nghị nguồn `replacement`, phiếu trả trỏ `replacement_request_id`.
+- Nhắc khi đã gửi quá 14 ngày chưa có kết quả chưa làm: chờ khung nhắc việc của #209.
 
 ## Gọi vào và gọi ra
 

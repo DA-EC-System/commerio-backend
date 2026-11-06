@@ -26,6 +26,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
     inspectedAt: at,
     lines: [{ variantId: id(), resellable: 1, unitCost: '60000.00' }],
   },
+  'purchasing.supplier_return_refunded': { supplierReturnId: id(), supplierId: id(), refundAmount: '120000.00', recordedAt: at },
   'inventory.issue_posted': { issueId: id(), number: 'PX-0001', kind: 'order', orderId: id(), postedAt: at },
   'sales.order_created': { orderId: id(), code: 'DH-0001', source: 'manual', total: '150000.00' },
   'sales.order_status_changed': { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] },

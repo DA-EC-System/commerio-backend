@@ -22,7 +22,9 @@ export {
   type StockSnapshot,
   stockOf,
 } from './service/port.ts';
-export { type ReceivedLine, receiveGoods } from './service/posting.ts';
+export { InsufficientStock, moveSupplierReturn, type ReceivedLine, receiveGoods, type ReturnLine } from './service/posting.ts';
+// Số phiếu kho cho chứng từ của purchasing (nguồn, phiếu sinh tiếp của phiếu trả NCC, #210).
+export { docRefsOf as stockDocumentRefs, docsFromSource as stockDocumentsFrom } from './repository/documents.ts';
 // Phiếu kho có duyệt (#208): kiểm hàng về do module khác lập, xuất huỷ chờ xử lý cho phiếu trả NCC bị huỷ (#210).
 export { createOpeningStocktake, createQuarantineWriteOff, receiveBack } from './service/documents.ts';
 // Trạng thái phiếu kiểm kê đầu kỳ cho channel (#198, #245).

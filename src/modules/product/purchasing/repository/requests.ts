@@ -70,7 +70,9 @@ export async function insertRequest(values: {
   companyId: string;
   number: string;
   supplierId: string;
-  source: 'manual' | 'reorder';
+  source: 'manual' | 'reorder' | 'replacement';
+  /** Phiếu trả NCC `replaced` mà đề nghị này bù hàng (CHECK `purchase_requests_replacement`). */
+  sourceReturnId?: string | null;
   note: string | null;
   createdBy: string;
 }): Promise<string> {

@@ -259,6 +259,8 @@ export const supplierReturns = purchasingSchema.table(
     sentAt: timestamp('sent_at', { withTimezone: true }),
     resultBy: uuid('result_by'),
     resultAt: timestamp('result_at', { withTimezone: true }),
+    /** Người ghi kết quả là người gửi, được nhờ ngoại lệ tự duyệt (25 §11, #210). */
+    resultSelfApproved: boolean('result_self_approved').notNull().default(false),
     ...timestamps,
     ...version,
   },
@@ -270,7 +272,10 @@ export const supplierReturns = purchasingSchema.table(
     check('supplier_returns_refund', sql`(${t.status} = 'refunded') = (${t.refundAmount} is not null)`),
     check('supplier_returns_refund_amount', sql`${t.refundAmount} >= 1`),
     check('supplier_returns_cancel', sql`(${t.status} = 'cancelled') = (${t.cancelDecision} is not null)`),
-    check('supplier_returns_result_by', sql`${t.resultBy} is null or ${t.resultBy} is distinct from ${t.sentBy}`),
+    check(
+      'supplier_returns_result_by',
+      sql`${t.resultBy} is null or ${t.resultBy} is distinct from ${t.sentBy} or ${t.resultSelfApproved}`,
+    ),
   ],
 );
 
