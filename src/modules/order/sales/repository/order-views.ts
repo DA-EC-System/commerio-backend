@@ -67,6 +67,12 @@ function flagCondition(flag: SqlFlag): SQL {
 
 export type OrderViewRow = typeof orders.$inferSelect & { customer: { id: string; name: string; phone: string } | null };
 
+// Đơn sàn không có `payment_method` (sàn thu hộ): COD theo `is_cod`, còn lại là trả trước.
+const paymentCondition = (m: 'prepaid' | 'cod') =>
+  m === 'cod'
+    ? or(eq(orders.paymentMethod, 'cod'), eq(orders.isCod, true))
+    : or(eq(orders.paymentMethod, 'prepaid'), and(eq(orders.source, 'marketplace'), eq(orders.isCod, false)));
+
 function where(f: OrderFilter): SQL | undefined {
   const pattern = f.search ? containsPattern(f.search) : undefined;
   return and(
@@ -74,7 +80,7 @@ function where(f: OrderFilter): SQL | undefined {
     f.status ? eq(orders.status, f.status) : undefined,
     f.source ? eq(orders.source, f.source) : undefined,
     f.shopId ? eq(orders.shopId, f.shopId) : undefined,
-    f.paymentMethod ? eq(orders.paymentMethod, f.paymentMethod) : undefined,
+    f.paymentMethod ? paymentCondition(f.paymentMethod) : undefined,
     f.customerId ? eq(orders.customerId, f.customerId) : undefined,
     f.from ? gte(orders.createdAt, f.from) : undefined,
     f.to ? lt(orders.createdAt, f.to) : undefined,

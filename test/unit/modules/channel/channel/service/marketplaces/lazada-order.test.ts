@@ -95,10 +95,12 @@ describe('Lazada: kéo đơn (#105)', () => {
     const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: { countTotal: 150, orders: page } }));
     const res = await createLazadaAdapter(config, fn).listOrders!('t', new Date('2026-10-28T17:00:00Z'), null);
     expect(res.nextCursor).not.toBeNull();
+    // `detail` là cả đơn của trang, để `getOrders` không gọi lại `/order/get` (#267).
     expect(res.orders[1]).toEqual({
       externalOrderId: '1',
       placedAt: new Date('2026-10-29T07:41:18Z'),
       updatedAt: new Date('2026-10-29T07:41:34Z'),
+      detail: page[1],
     });
     expect(query(fn, 0)).toMatchObject({
       update_after: '2026-10-29T00:00:00+07:00',
@@ -108,6 +110,20 @@ describe('Lazada: kéo đơn (#105)', () => {
       offset: '0',
       access_token: 't',
     });
+  });
+
+  // Mẫu response của GetOrders, GetMultipleOrderItems ghi hai cờ dạng chuỗi `"true"` (open.lazada.com, tra 06/11/2026; review #267).
+  it.each([
+    [{ is_cancel_pending: 'true' }, true],
+    [{ need_cancel_confirm: 'true' }, true],
+    [{ is_cancel_pending: true }, true],
+    [{ is_cancel_pending: 'false', need_cancel_confirm: 'false' }, false],
+  ])('cờ xin huỷ %o → cancelRequested %s', async (flags, expected) => {
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: '0', data: { ...order, ...flags } }))
+      .mockResolvedValueOnce(json({ code: '0', data: [item] }));
+    expect((await createLazadaAdapter(config, fn).getOrder!('t', '533732107780318')).cancelRequested).toBe(expected);
   });
 
   it('getOrder gộp đơn và món thành đơn chuẩn hoá', async () => {
@@ -128,7 +144,7 @@ describe('Lazada: kéo đơn (#105)', () => {
       shipBy: new Date('2026-11-04T16:59:19Z'),
       shippingFee: '0',
       cancelRequested: false,
-      shippingAddress: { name: 'G***l', phone: '84********22', address: '6**8, P**a, T**a, Phường Tân Sơn Hòa' },
+      shippingAddress: { name: 'G***l', phone: '84********22', address: '6**8, P**a, T**a' },
     });
     expect(o.lines[0]).toEqual({
       externalLineId: '533732107880318',
@@ -173,11 +189,11 @@ describe('Lazada: kéo đơn (#105)', () => {
       shippingFeeDiscountSeller: '0',
       shippingFeeDiscountPlatform: '0',
     });
-    // Phường lấy từ `city` (Lazada che tỉnh, đường; không còn quận); khoá thô giữ nguyên, bỏ khoá rỗng.
+    // Phường lấy từ `city` (Lazada che tỉnh, đường; không còn quận), không lặp trong `address`; khoá thô giữ nguyên, bỏ khoá rỗng.
     expect(o.shippingAddress).toEqual({
       name: 'G***l',
       phone: '84********22',
-      address: '6**8, P**a, T**a, Phường Tân Sơn Hòa',
+      address: '6**8, P**a, T**a',
       ward: 'Phường Tân Sơn Hòa',
       postCode: null,
       raw: { address1: '6**8', address4: 'P**a', address5: 'T**a', city: 'Phường Tân Sơn Hòa', country: 'Vietnam' },
