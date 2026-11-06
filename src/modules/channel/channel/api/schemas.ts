@@ -1,17 +1,27 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 
-// Sàn có adapter OAuth kiểm ở service (422 `marketplace_unsupported`), ở đây chỉ nhận đúng enum `marketplace`.
-export const PlatformParams = z.object({ platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock'], 'Sàn không hợp lệ') });
+// Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
+export const PlatformParams = z.object({ platform: z.string().max(40) });
 
 // `id` sai định dạng trả 404 ở service, nên ở đây chỉ là chuỗi.
 export const ShopParams = z.object({ id: z.string() });
 
+// Thiếu hoặc rỗng `state` là 422 `oauth_state_invalid` ở service (21 §18.6.3), nên ở đây không `min(1)`.
 export const CallbackBody = z
   .object({
-    code: z.string('Thiếu code').trim().min(1, 'Thiếu code'),
-    state: z.string('Thiếu state').trim().min(1, 'Thiếu state'),
+    state: z.string().max(4000).optional().meta({ description: '`state` trên URL callback, do `authorize-url` phát' }),
+    params: z
+      .record(z.string().max(64), z.string().max(2000))
+      .refine((p) => Object.keys(p).length <= 20, 'Tối đa 20 tham số')
+      .optional()
+      .meta({ description: 'Mọi query trên URL callback trừ `state`; adapter tự đọc (Lazada: `code`)' }),
+    code: z.string().trim().min(1).max(2000).optional().meta({
+      deprecated: true,
+      description: 'Body cũ `{ code, state }`, coi như `params = { code }`; bỏ sau khi FE gửi `params` (21 §18.6.3)',
+    }),
   })
+  .refine((b) => b.params !== undefined || b.code !== undefined, { path: ['params'], message: 'Thiếu tham số callback' })
   .meta({ id: 'ShopCallbackInput' });
 
 export const TokenBody = z
@@ -44,11 +54,23 @@ export const StatusChange = z
   .strict()
   .meta({ id: 'StatusChange' });
 
+export const ShopCapabilities = z
+  .object({
+    listingReview: z.boolean().meta({ description: 'Sàn duyệt listing trước khi bán' }),
+    hideBy: z.enum(['deactivate', 'zero_stock']).meta({ description: 'Ẩn listing bằng tắt hay bằng đẩy tồn 0' }),
+    splitLevel: z.enum(['unit', 'sku', 'none']).meta({ description: 'Mức tách kiện sàn cho phép' }),
+    returnWindow: z.enum(['days', 'platform_status']).meta({
+      description: '`days`: hạn trả tính bằng `Shop.returnWindowDays`; `platform_status`: theo trạng thái sàn',
+    }),
+  })
+  .strict()
+  .meta({ id: 'ShopCapabilities', description: 'Năng lực sàn do adapter khai (Documents/21 §18.6.3); FE rẽ nhánh theo đây, không theo mã sàn' });
+
 export const Shop = z
   .object({
     id: z.uuid(),
     companyId: z.uuid(),
-    platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock']),
+    platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalShopId: z.string().meta({ description: 'Mã shop của sàn (Lazada: `seller_id`)' }),
     shopName: z.string(),
     region: z.string().nullable(),
@@ -58,6 +80,10 @@ export const Shop = z
     tokenExpiringSoon: z.boolean().meta({ description: 'Đang active và refresh token còn dưới 3 ngày' }),
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
+    capabilities: ShopCapabilities,
+    returnWindowDays: z.number().int().nullable().meta({
+      description: 'Hạn trả hàng (ngày, 1–60) nhập lúc thiết lập; null khi chưa nhập hoặc sàn `returnWindow = platform_status`',
+    }),
     pendingJobs: z.number().int(),
     listingCount: z.number().int().meta({ description: 'Số listing còn trên sàn' }),
     version: z.number().int(),
@@ -93,20 +119,30 @@ export const ShopPlatform = z
     methods: z.array(z.enum(['oauth', 'token'])).meta({
       description: '`oauth`: qua trang uỷ quyền (`authorize-url`, `callback`); `token`: dán token console (`POST /shops/:platform/token`)',
     }),
+    capabilities: ShopCapabilities,
   })
   .strict()
   .meta({ id: 'ShopPlatform' });
 
 export const ShopPlatformList = z.object({ items: z.array(ShopPlatform) }).strict().meta({ id: 'ShopPlatformList' });
 
+const connectionResult = {
+  shop: Shop,
+  created: z.boolean(),
+  reconnect: z
+    .object({ pulledFrom: iso.nullable(), relisted: z.number().int(), jobsRun: z.number().int() })
+    .strict()
+    .nullable(),
+};
+
+export const ShopConnectionResult = z.object(connectionResult).strict().meta({ id: 'ShopConnectionResult' });
+
 export const ShopCallbackResult = z
   .object({
-    shop: Shop,
-    created: z.boolean(),
-    reconnect: z
-      .object({ pulledFrom: iso.nullable(), relisted: z.number().int(), jobsRun: z.number().int() })
-      .strict()
-      .nullable(),
+    ...connectionResult,
+    shops: z.array(ShopConnectionResult).min(1).meta({
+      description: 'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu',
+    }),
   })
   .strict()
   .meta({ id: 'ShopCallbackResult' });
@@ -141,7 +177,7 @@ export const CategoryAttributeList = z
 export const CategoryMap = z
   .object({
     categoryId: z.uuid(),
-    platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock']),
+    platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalCategoryId: z.string(),
     attributes: z.record(z.string(), z.string()),
     version: z.number().int(),
@@ -253,12 +289,15 @@ export const OrderPullResult = z
   .strict()
   .meta({ id: 'OrderPullResult' });
 
-// Thiết lập lần đầu (§18.2).
+// Thiết lập lần đầu (§18.2). Mốc kéo đơn do BE đặt là lúc gọi; FE cũ còn gửi `orderCutoffAt` thì khoá lạ bị bỏ (không `.strict()`).
 export const SetupBody = z
   .object({
     externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).default([]),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
-    orderCutoffAt: z.iso.datetime({ offset: true, error: 'Chọn mốc kéo đơn' }).transform((s) => new Date(s)),
+    returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
+      description:
+        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`; sàn `platform_status` bỏ qua và lưu null. Chưa bắt buộc tới khi FE gửi (21 §18.6.2)',
+    }),
   })
   .meta({ id: 'ShopSetupInput' });
 

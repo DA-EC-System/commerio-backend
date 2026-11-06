@@ -42,14 +42,14 @@ const auth = {
 };
 const marketplace = {
   409: problemResponse(
-    '`shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+    '`shop_connected_elsewhere` (một gian hàng của lần nối đang gắn công ty khác: không gian hàng nào được nối); `marketplace_rejected` kèm `platformCode`, `platformMessage` (`no_shop`: lần uỷ quyền không ra gian hàng nào; `missing_parameter`: thiếu tham số adapter cần); `version_conflict`',
   ),
   422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
   503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm, thử lại'),
 };
 const connected = {
-  200: { description: 'Nối lại gian hàng đã có', ...json(ShopCallbackResult) },
-  201: { description: 'Gian hàng mới, trạng thái `connecting`', ...json(ShopCallbackResult) },
+  200: { description: 'Chỉ nối lại gian hàng đã có', ...json(ShopCallbackResult) },
+  201: { description: 'Có ít nhất một gian hàng mới (trạng thái `connecting`)', ...json(ShopCallbackResult) },
 };
 
 /** Đường dẫn Swagger của module `channel`, viết tương đối với /api/v1/channel. */
@@ -96,15 +96,18 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'post',
     path: '/shops/:platform/callback',
-    summary: 'Đổi `code` của sàn lấy token, tạo hoặc nối lại gian hàng (§18.4)',
+    summary: 'Callback OAuth: adapter đổi tham số sàn trả lấy token, tạo hoặc nối lại các gian hàng (§18.4, §18.6.3)',
     description:
-      'Cần `channel.shop.connect`. `state` sai hoặc quá 10 phút: 422 `oauth_state_invalid`. Gian hàng đã có thì dùng lại bản ghi.',
+      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi.',
     security: bearer,
     request: { params: PlatformParams, body: json(CallbackBody) },
     responses: {
       ...connected,
       ...auth,
       ...marketplace,
+      409: problemResponse(
+        '`company_mismatch` kèm `expected`, `actual` (`{ id, name }`); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+      ),
       422: problemResponse('`validation_failed`, `oauth_state_invalid`, `marketplace_unsupported`'),
     },
   });
@@ -113,7 +116,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/token',
     summary: 'Nối gian hàng bằng token lấy trên console của sàn',
     description:
-      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Có `refreshToken` thì làm mới một lần để biết hạn token.',
+      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token.',
     security: bearer,
     request: { params: PlatformParams, body: json(TokenBody) },
     responses: { ...connected, ...auth, ...marketplace },
@@ -220,7 +223,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/setup',
     summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn, gian hàng `connecting → active`. Sai: 422 `errors.orderCutoffAt` (tương lai), `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`.',
+      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn là lúc gọi (FE không gửi; `orderCutoffAt` gửi lên bị bỏ qua), gian hàng `connecting → active`. Sai: 422 `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60; không gửi thì giữ giá trị đang có tới khi FE gửi trường này; sàn `platform_status` bỏ qua, lưu null).',
     security: bearer,
     request: { params: ShopParams, body: json(SetupBody) },
     responses: {
