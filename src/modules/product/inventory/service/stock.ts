@@ -25,6 +25,7 @@ export async function listStock(
     categoryId?: string | undefined;
     belowMin?: boolean | undefined;
     quarantine?: boolean | undefined;
+    negative?: boolean | undefined;
   },
 ) {
   return withCompany(viewer.companyId, async () => {
@@ -42,7 +43,8 @@ export async function listStock(
         (!search || l.productName.toLowerCase().includes(search) || l.sku.toLowerCase().includes(search)) &&
         (!q.categoryId || l.category.id === q.categoryId) &&
         (!q.belowMin || l.belowMin) &&
-        (!q.quarantine || l.quarantine > 0),
+        (!q.quarantine || l.quarantine > 0) &&
+        (!q.negative || l.negative),
     );
     const start = (q.page - 1) * q.pageSize;
     return {

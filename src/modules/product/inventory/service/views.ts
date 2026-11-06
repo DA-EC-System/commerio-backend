@@ -67,6 +67,8 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
     incoming,
     shortage,
     negative: level?.invariantBroken ?? false,
+    // shortcut: Lệch tồn thật ở #206 phần 2b (dữ liệu channel, #223).
+    drift: false,
     minQty,
     belowMin: isBelowMin({ available, incoming, shortage, minQty, businessStatus: v.businessStatus }),
     state: stockState(available, minQty),

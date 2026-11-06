@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { StockPage } from '#src/modules/product/inventory/api/schemas.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -111,6 +112,53 @@ describe('danh sách tồn', () => {
     for (const q of ['quarantine=true', 'belowMin=true', `search=${x.sku}`]) {
       expect((await inv(c.ceo.token).get(`/stock?${q}`)).body.summary).toEqual(all);
     }
+  });
+
+  const idsOf = (body: { items: { variantId: string }[] }) => body.items.map((i) => i.variantId).sort();
+
+  it('AC1: negative=true chỉ trả SKU Tồn âm; summary không theo lọc; negative=abc → 422', async () => {
+    const c = await createCompany();
+    const a = await createVariant(c.companyId);
+    const b = await createVariant(c.companyId);
+    await receive(c.companyId, a.variantId, 3, 1000);
+    await setBuckets(c.companyId, a.variantId, { reserved: 5, invariantBroken: true });
+    await receive(c.companyId, b.variantId, 2, 1000);
+
+    const res = await inv(c.ceo.token).get('/stock?negative=true');
+    expect(res.status).toBe(200);
+    expect(idsOf(res.body)).toEqual([a.variantId]);
+    expect(res.body.total).toBe(1);
+    expect(res.body.summary).toEqual((await inv(c.ceo.token).get('/stock')).body.summary);
+    expect(res.body.summary).toMatchObject({ variantCount: 2, negativeCount: 1 });
+
+    const bad = await inv(c.ceo.token).get('/stock?negative=abc');
+    expect(bad.status).toBe(422);
+    expect(bad.body.errors).toHaveProperty('negative');
+  });
+
+  it('negative và belowMin gộp AND', async () => {
+    const c = await createCompany();
+    // A Tồn âm và dưới ngưỡng; B Tồn âm, chưa đặt ngưỡng; C dưới ngưỡng, không Tồn âm.
+    const [a, b, d] = [await createVariant(c.companyId), await createVariant(c.companyId), await createVariant(c.companyId)];
+    await receive(c.companyId, a.variantId, 1, 1000);
+    await inv(c.ceo.token).put(`/stock/${a.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+    await setBuckets(c.companyId, a.variantId, { reserved: 3, invariantBroken: true });
+    await receive(c.companyId, b.variantId, 1, 1000);
+    await setBuckets(c.companyId, b.variantId, { reserved: 3, invariantBroken: true });
+    await receive(c.companyId, d.variantId, 2, 1000);
+    await inv(c.ceo.token).put(`/stock/${d.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+
+    expect(idsOf((await inv(c.ceo.token).get('/stock?negative=true')).body)).toEqual([a.variantId, b.variantId].sort());
+    expect(idsOf((await inv(c.ceo.token).get('/stock?belowMin=true')).body)).toEqual([a.variantId, d.variantId].sort());
+    expect(idsOf((await inv(c.ceo.token).get('/stock?negative=true&belowMin=true')).body)).toEqual([a.variantId]);
+  });
+
+  it('AC2: mọi dòng có drift false; body parse được bằng StockPage', async () => {
+    const { c } = await fourVariants();
+    const res = await inv(c.ceo.token).get('/stock');
+    StockPage.parse(res.body);
+    expect(res.body.items).toHaveLength(4);
+    expect(res.body.items.every((i: { drift: unknown }) => i.drift === false)).toBe(true);
   });
 
   it('biến thể lưu trữ còn hàng vẫn hiện, hết hàng thì ẩn', async () => {

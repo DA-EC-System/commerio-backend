@@ -31,6 +31,10 @@ export const StockListQuery = z.object({
     .enum(['true', 'false'], 'quarantine là true hoặc false')
     .transform((v) => v === 'true')
     .optional(),
+  negative: z
+    .enum(['true', 'false'], 'negative là true hoặc false')
+    .transform((v) => v === 'true')
+    .optional(),
 });
 
 export const ReorderRuleBody = z
@@ -65,6 +69,7 @@ export const StockLevel = z
     incoming: z.number().int(),
     shortage: z.number().int(),
     negative: z.boolean(),
+    drift: z.boolean().meta({ description: 'Lệch tồn với sàn; luôn false tới #206 phần 2b' }),
     minQty: z.number().int().nullable(),
     belowMin: z.boolean().meta({ description: 'Có thể bán + đang về − còn thiếu cho đơn ≤ ngưỡng; SKU ngừng bán, lưu trữ thì false' }),
     state: z.enum(['in_stock', 'low', 'out']).meta({ description: 'Hết hàng khi có thể bán ≤ 0, sắp hết khi 0 < có thể bán ≤ ngưỡng' }),
