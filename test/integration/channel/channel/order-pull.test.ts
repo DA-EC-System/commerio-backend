@@ -79,6 +79,18 @@ registerAdapter(
     getOrder,
   }),
 );
+// Sàn chỉ có năng lực lấy đơn theo lô (#267): bên kéo đơn không gọi `getOrder`.
+const getOrders = vi.fn(async (_t: string, batch: readonly RemoteOrderRef[]) => batch.map((r) => details.get(r.externalOrderId)!));
+registerAdapter(
+  'tiktok',
+  fakeAdapter({
+    async getSeller(accessToken) {
+      return { externalShopId: accessToken.slice(4), shopName: 'Shop thử theo lô', region: 'VN' };
+    },
+    listOrders,
+    getOrders,
+  }),
+);
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
@@ -111,6 +123,7 @@ beforeEach(() => {
   failOn = null;
   listOrders.mockClear();
   getOrder.mockClear();
+  getOrders.mockClear();
 });
 
 const ordersOfShop = async () =>
@@ -285,5 +298,36 @@ describe('đơn trước mốc đã có, giữ hàng và việc chưa làm trên
     } finally {
       await testPool().query(`update channel.shops set opening_stocktake_id = null, opening_stocktake_number = null where id = $1`, [shopId]);
     }
+  });
+});
+
+describe('kéo đơn theo lô khi sàn có getOrders (#267)', () => {
+  it('mỗi trang gọi getOrders một lần với các đơn cần lấy, không gọi getOrder; đơn lưu như gọi từng đơn', async () => {
+    const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const batchShop = res.body.shop.id as string;
+    await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = $2 where id = $1`, [batchShop, cutoff]);
+    const old = remoteOrder('B0', sku, 'pending', at('2026-11-01T00:30:00Z'));
+    old.placedAt = at('2026-10-01T00:00:00Z');
+    seed(
+      remoteOrder('B1', sku, 'pending', at('2026-11-01T01:00:00Z')),
+      old,
+      remoteOrder('B2', sku, 'packed', at('2026-11-01T02:00:00Z')),
+      remoteOrder('B3', sku, 'pending', at('2026-11-01T03:00:00Z')),
+    );
+    const pulled = await auth(app().post(`/api/v1/channel/shops/${batchShop}/orders/pull`));
+    expect(pulled.body).toEqual({ pulled: 3, created: 3, updated: 0 });
+    // Trang 2 đơn: [B1, B0] chỉ lấy B1 (B0 đặt trước mốc), [B2, B3] lấy cả hai.
+    expect(getOrders.mock.calls.map((c) => c[1].map((r) => r.externalOrderId))).toEqual([['B1'], ['B2', 'B3']]);
+    expect(getOrder).not.toHaveBeenCalled();
+    const { rows } = await testPool().query(
+      `select o.external_order_id, r.external_status from "order".orders o join channel.raw_orders r on r.order_id = o.id
+        where o.shop_id = $1 order by 1`,
+      [batchShop],
+    );
+    expect(rows).toEqual([
+      { external_order_id: 'B1', external_status: 'pending' },
+      { external_order_id: 'B2', external_status: 'packed' },
+      { external_order_id: 'B3', external_status: 'pending' },
+    ]);
   });
 });

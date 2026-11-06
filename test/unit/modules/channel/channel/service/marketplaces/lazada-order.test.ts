@@ -95,10 +95,12 @@ describe('Lazada: kéo đơn (#105)', () => {
     const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: { countTotal: 150, orders: page } }));
     const res = await createLazadaAdapter(config, fn).listOrders!('t', new Date('2026-10-28T17:00:00Z'), null);
     expect(res.nextCursor).not.toBeNull();
+    // `detail` là cả đơn của trang, để `getOrders` không gọi lại `/order/get` (#267).
     expect(res.orders[1]).toEqual({
       externalOrderId: '1',
       placedAt: new Date('2026-10-29T07:41:18Z'),
       updatedAt: new Date('2026-10-29T07:41:34Z'),
+      detail: page[1],
     });
     expect(query(fn, 0)).toMatchObject({
       update_after: '2026-10-29T00:00:00+07:00',

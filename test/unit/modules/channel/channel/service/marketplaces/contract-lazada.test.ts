@@ -59,28 +59,35 @@ function fakeLazada(state: { orders?: Map<string, number> } = {}) {
             address_shipping: null,
           },
         });
-      case '/order/items/get':
+      case '/orders/items/get':
+        // Bản lô trả theo từng đơn, món không có `product_id` (đo 06/11/2026, #267).
         return json({
           code: '0',
-          data: ['packed', 'delivered', 'trạng-thái-lạ'].map((status, i) => ({
-            order_item_id: 100 + i,
-            order_id: q.get('order_id'),
-            sku: 'AO-M',
-            name: 'Áo',
-            status,
-            item_price: 23456,
-            paid_price: 23456,
-            voucher_seller: 0,
-            voucher_platform: 0,
-            package_id: 'FP1',
-            tracking_code: '',
-            fulfillment_sla: '',
-          })),
+          data: (JSON.parse(q.get('order_ids')!) as number[]).map((id) => ({ order_id: String(id), order_items: itemsOf(String(id)) })),
         });
+      case '/order/items/get':
+        return json({ code: '0', data: itemsOf(q.get('order_id')) });
       default:
         return json({ code: 'InvalidApiPath', type: 'ISV', message: u.pathname });
     }
   };
+}
+
+function itemsOf(orderId: string | null) {
+  return ['packed', 'delivered', 'trạng-thái-lạ'].map((status, i) => ({
+    order_item_id: 100 + i,
+    order_id: orderId,
+    sku: 'AO-M',
+    name: 'Áo',
+    status,
+    item_price: 23456,
+    paid_price: 23456,
+    voucher_seller: 0,
+    voucher_platform: 0,
+    package_id: 'FP1',
+    tracking_code: '',
+    fulfillment_sla: '',
+  }));
 }
 
 describeAdapterContract('Lazada', {

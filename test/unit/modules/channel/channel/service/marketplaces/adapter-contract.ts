@@ -155,5 +155,16 @@ export function describeAdapterContract(name: string, h: AdapterHarness): void {
         expect(typeof l.rawStatus).toBe('string');
       }
     });
+
+    // Năng lực lấy đơn theo lô (#267): bên gọi dùng thay `getOrder` từng đơn, nên dữ liệu phải y hệt.
+    it.skipIf(!probe.getOrders || !probe.getOrder)('getOrders: cùng thứ tự với refs, mỗi đơn giống getOrder', async () => {
+      const adapter = h.connected();
+      const at = new Date('2026-11-01T00:00:00Z');
+      const refs = [h.orderId, h.orderId].map((id) => ({ externalOrderId: id, placedAt: at, updatedAt: at }));
+      const many = await adapter.getOrders!(h.accessToken, refs);
+      const one = await adapter.getOrder!(h.accessToken, h.orderId);
+      expect(many).toEqual([one, one]);
+      expect(await adapter.getOrders!(h.accessToken, [])).toEqual([]);
+    });
   });
 }
