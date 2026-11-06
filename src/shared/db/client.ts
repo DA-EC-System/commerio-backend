@@ -77,36 +77,51 @@ export async function withCompany<T>(companyId: string, fn: (tx: Transaction) =>
   });
 }
 
+/** Nghỉ giữa hai lần thử khoá phiên khi có `waitMs`: bắt đầu ngắn, gấp đôi tới trần. */
+const LOCK_RETRY_MIN_MS = 25;
+const LOCK_RETRY_MAX_MS = 500;
+
+/** Thử lấy khoá một lần trên một kết nối của pool; có thì trả kết nối (đang giữ khoá), không thì trả kết nối về pool. */
+async function tryLockOnce(key: string): Promise<pg.PoolClient | null> {
+  const client = await pool!.connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>('select pg_try_advisory_lock(hashtextextended($1, 0)) as locked', [key]);
+    if (rows[0]!.locked) return client;
+  } catch (err) {
+    client.release(true);
+    throw err;
+  }
+  // Chưa có khoá thì phiên này không giữ gì: trả về pool dùng tiếp.
+  client.release();
+  return null;
+}
+
 /**
  * Chạy `fn` khi giữ được khoá advisory **phiên** `hashtextextended(key, 0)` trên một kết nối riêng; phiên khác đang giữ
- * thì trả `'busy'` ngay, hoặc chờ tối đa `waitMs` rồi mới trả `'busy'`. Cho việc nền kéo dài qua nhiều giao dịch và lời
+ * thì trả `'busy'` ngay, hoặc thử lại tới `waitMs` rồi mới trả `'busy'`. Cho việc nền kéo dài qua nhiều giao dịch và lời
  * gọi mạng, nơi khoá giao dịch không giữ được. `fn` chạy ngoài giao dịch (tự mở `withCompany`). Xong thì nhả khoá rồi huỷ
  * kết nối, không trả về pool.
+ *
+ * Chờ bằng `pg_try_advisory_lock` lặp có nghỉ (25 ms gấp đôi tới 500 ms), không bằng `pg_advisory_lock` chặn: lần thử
+ * hụt trả kết nối về pool ngay, nên nhiều bên cùng chờ một khoá không giữ kết nối của pool suốt `waitMs`. Khoá phiên chỉ
+ * nhả được trên phiên đã lấy nó, nên kết nối lấy được khoá giữ tới khi `fn` xong rồi mới nhả. Không công bằng (không xếp
+ * hàng): bên chờ lâu chưa chắc được trước, đủ cho khoá làm mới token.
  * Cần kết nối giữ phiên (PostgreSQL thẳng, Supabase Session pooler); PgBouncer chế độ transaction không giữ được khoá.
  */
 export async function withSessionLock<T>(key: string, fn: () => Promise<T>, opts: { waitMs?: number } = {}): Promise<T | 'busy'> {
   rootDb();
-  const client = await pool!.connect();
+  const deadline = Date.now() + Math.max(0, opts.waitMs ?? 0);
+  let pause = LOCK_RETRY_MIN_MS;
+  let client = await tryLockOnce(key);
+  while (!client) {
+    const left = deadline - Date.now();
+    if (left <= 0) return 'busy';
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pause, left)));
+    pause = Math.min(pause * 2, LOCK_RETRY_MAX_MS);
+    client = await tryLockOnce(key);
+  }
   try {
-    let locked: boolean;
-    if (opts.waitMs) {
-      // Kết nối này chỉ giữ khoá và bị huỷ khi xong, nên đặt `statement_timeout` cho cả phiên không ảnh hưởng ai.
-      await client.query(`set statement_timeout = ${Math.max(1, Math.floor(opts.waitMs))}`);
-      locked = await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [key]).then(
-        () => true,
-        (err: { code?: string }) => {
-          if (err.code === '57014') return false; // hết `waitMs` mà chưa có khoá
-          throw err;
-        },
-      );
-    } else {
-      const { rows } = await client.query<{ locked: boolean }>(
-        'select pg_try_advisory_lock(hashtextextended($1, 0)) as locked',
-        [key],
-      );
-      locked = rows[0]!.locked;
-    }
-    return locked ? await fn() : 'busy';
+    return await fn();
   } finally {
     // Nhả ngay phía server: huỷ kết nối không chờ phiên đóng, lượt liền sau có thể còn thấy khoá. Lỗi nhả (kết nối
     // đứt) thì thôi, phiên chết cũng nhả khoá; không che lỗi của `fn`.
