@@ -118,6 +118,11 @@ export interface TiktokCallOptions {
   query?: Record<string, string | number | undefined>;
   /** Body JSON; serialize một lần, ký và gửi cùng một chuỗi. */
   body?: unknown;
+  /**
+   * Body `multipart/form-data` (tải ảnh, #219) thay cho `body`: không đưa vào chuỗi ký (docv2 sign-your-api-request bước
+   * 4), `content-type` kèm boundary do fetch tự đặt.
+   */
+  form?: FormData;
   /** Token đã gói (`TokenSet.accessToken`): client tự đặt header `x-tts-access-token` và `shop_cipher`. */
   token?: string;
   /** Mặc định true. API không theo gian hàng (vd Get Authorized Shops) đặt false: gửi `shop_cipher` thừa sàn báo 36009004. */
@@ -213,12 +218,12 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
     const query: Record<string, string> = { app_key: appKey, timestamp: String(Math.floor(Date.now() / 1000)) };
     for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) query[k] = String(v);
     if (cipher) query.shop_cipher = cipher;
-    const body = opts.body === undefined ? '' : JSON.stringify(opts.body);
+    const body = opts.form || opts.body === undefined ? '' : JSON.stringify(opts.body);
     const sign = signTiktok(path, query, body, appSecret);
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    const headers: Record<string, string> = opts.form ? {} : { 'content-type': 'application/json' };
     if (rawToken) headers['x-tts-access-token'] = rawToken;
     const url = `${config.apiUrl}${path}?${new URLSearchParams({ ...query, sign })}`;
-    const res = await send(url, { method, headers, ...(body && { body }) });
+    const res = await send(url, { method, headers, ...(opts.form ? { body: opts.form } : body && { body }) });
     return res.data as T;
   }
 
