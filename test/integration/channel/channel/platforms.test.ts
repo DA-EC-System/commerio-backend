@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ShopPlatformList } from '#src/modules/channel/channel/api/schemas.ts';
 import { createLazadaAdapter, type LazadaConfig } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { createTiktokAdapter, type TiktokConfig } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter } from './helpers.ts';
@@ -14,6 +15,15 @@ const lazada: LazadaConfig = {
   appSecret: 'super-secret',
   redirectUrl: 'https://fe.test/channel/lazada/callback',
   apiUrl: 'https://api.internal.test/rest',
+  authUrl: 'https://auth.internal.test',
+};
+
+// App TikTok Custom (#217); TIKTOK_* cũng không đặt trong môi trường test.
+const tiktok: TiktokConfig = {
+  appKey: 'tk',
+  appSecret: 'tiktok-secret',
+  serviceId: '7703485233496540935',
+  apiUrl: 'https://open.internal.test',
   authUrl: 'https://auth.internal.test',
 };
 
@@ -74,6 +84,29 @@ describe('GET /channel/shops/platforms (#163)', () => {
       ['lazada', ['oauth', 'token'], { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' }],
       ['shopee', ['token'], shopeeCaps],
     ]);
+  });
+
+  it('TikTok đủ key, secret, service id thì có tiktok với oauth và token (#217 AC-1); URL uỷ quyền mang state', async () => {
+    registerAdapter('tiktok', createTiktokAdapter(tiktok));
+    const res = await get('/shops/platforms');
+    expect(res.body).toEqual({
+      items: [{ platform: 'tiktok', name: 'TikTok Shop', connectable: true, methods: ['oauth', 'token'], capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' } }],
+    });
+    expect(JSON.stringify(res.body)).not.toMatch(/tiktok-secret|internal\.test/);
+    const auth = await get('/shops/tiktok/authorize-url');
+    expect(auth.status).toBe(200);
+    const url = new URL(auth.body.url);
+    expect(url.origin + url.pathname).toBe('https://services.tiktokshop.com/open/authorize');
+    expect(url.searchParams.get('service_id')).toBe(tiktok.serviceId);
+    expect(url.searchParams.get('state')).toMatch(/\S/);
+  });
+
+  it('TikTok thiếu env thì không có trong danh sách; authorize-url 422 marketplace_unsupported (#217 AC-6)', async () => {
+    registerAdapter('tiktok', createTiktokAdapter({ ...tiktok, appKey: undefined, appSecret: undefined, serviceId: undefined }));
+    expect(await platforms()).toEqual([]);
+    const res = await get('/shops/tiktok/authorize-url');
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('marketplace_unsupported');
   });
 
   it('route tĩnh không nuốt /shops/:id: gian hàng không có vẫn 404', async () => {
