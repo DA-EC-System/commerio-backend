@@ -10,6 +10,8 @@ type Role = 'ceo' | 'admin' | 'sale' | 'kho';
 type Step = [Role, string, Record<string, unknown>?];
 
 const REASON = { reason: 'Kiểm thử theo sơ đồ' };
+/** Đặt NCC cần ngày giao dự kiến (#243). */
+const ORDER = { expectedDeliveryDate: '2026-11-20' };
 const ACTIONS = ['submit', 'withdraw', 'resubmit', 'approve', 'request_changes', 'reject', 'order', 'close_short', 'cancel'];
 
 /** Đường đi tới từng trạng thái qua API, người làm đúng vai (Kho lập, CEO duyệt). */
@@ -19,8 +21,7 @@ const PATHS: Record<string, Step[]> = {
   changes_requested: [['kho', 'submit'], ['ceo', 'request_changes', REASON]],
   rejected: [['kho', 'submit'], ['ceo', 'reject', REASON]],
   approved: [['kho', 'submit'], ['ceo', 'approve']],
-  ordered: [['kho', 'submit'], ['ceo', 'approve'], ['kho', 'order']],
-  closed_short: [['kho', 'submit'], ['ceo', 'approve'], ['kho', 'order'], ['ceo', 'close_short', REASON]],
+  ordered: [['kho', 'submit'], ['ceo', 'approve'], ['kho', 'order', ORDER]],
   cancelled: [['kho', 'cancel']],
 };
 
@@ -33,7 +34,6 @@ const ARROWS: [caseId: string, from: string, action: string, to: string, actor: 
   ['A1-05', 'pending_approval', 'request_changes', 'changes_requested', 'ceo', true, 'approve'],
   ['A1-06', 'pending_approval', 'reject', 'rejected', 'ceo', true, 'approve'],
   ['A1-07', 'approved', 'order', 'ordered', 'kho', false, 'manage'],
-  ['A1-12', 'ordered', 'close_short', 'closed_short', 'ceo', true, 'approve'],
   ['A1-14', 'draft', 'cancel', 'cancelled', 'kho', false, 'manage'],
   ['A1-15', 'changes_requested', 'cancel', 'cancelled', 'kho', false, 'manage'],
   ['A1-16', 'pending_approval', 'cancel', 'cancelled', 'kho', false, 'manage'],
@@ -49,8 +49,8 @@ const ALLOWED: Record<string, string[]> = {
   changes_requested: ['resubmit', 'cancel'],
   rejected: [],
   approved: ['order', 'cancel'],
-  ordered: ['close_short', 'cancel'],
-  closed_short: [],
+  // Đóng thiếu chỉ từ Nhận một phần (25 §3.2, #243): đã đặt mà chưa nhận thì chỉ huỷ
+  ordered: ['cancel'],
   cancelled: [],
 };
 
@@ -86,7 +86,7 @@ async function reach(state: string) {
 describe('A1 Đề nghị nhập: mỗi mũi tên một ca đúng', () => {
   it.each(ARROWS)('%s: %s --%s--> %s', async (_id, from, action, to, actor, needsReason) => {
     const r = await reach(from);
-    const res = await act(tokens[actor], r.id, action, { version: r.version, ...(needsReason ? REASON : {}) });
+    const res = await act(tokens[actor], r.id, action, { version: r.version, ...(needsReason ? REASON : {}), ...(action === 'order' ? ORDER : {}) });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.status).toBe(to);
     expect(res.body.version).toBe(r.version + 1);

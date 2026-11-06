@@ -22,6 +22,7 @@ Thao tác `POST /requests/:id/:action` và `POST /goods-receipts/:id/:action` ch
 
 - **Còn chờ** của dòng = đặt − nhận − lỗi giữ − đóng thiếu (CHECK ≥ 0); dòng bị loại tính 0 (`domain/request.ts` `outstanding`). Dùng hàm này ở mọi chỗ, không tự trừ.
 - **Đang về** của SKU = tổng còn chờ của dòng không bị loại thuộc đề nghị `ordered`, `partially_received`; tính khi đọc (`incomingOf`), không lưu.
+- Đặt NCC (`order`) bắt buộc `expectedDeliveryDate` (422 `errors.expectedDeliveryDate`), lưu `supplierOrderCode` tuỳ chọn; loại dòng bắt buộc lý do (`excluded_reason`, 422 `reason_required`); đóng thiếu chỉ từ `partially_received`, đề nghị đã đặt chưa nhận lần nào thì huỷ (#243). Dòng sản phẩm mới theo sản phẩm cha, trục phân loại (`newProduct { parentId, parentName, optionValues }`) chờ #204.
 - Giá và dòng chỉ sửa ở `draft`, `changes_requested` (409 `not_draft`). `PUT` thay toàn bộ dòng. Nháp được để giá 0; gửi duyệt thì dòng còn hiệu lực phải > 0 (422 `errors["lines.i.unitCost"]`).
 - Một SKU một dòng trong một đề nghị (unique `(request_id, variant_id)`); tên NCC không trùng theo chữ thường (`suppliers_company_lower_name_uq`).
 - Duyệt: dòng sản phẩm mới sinh sản phẩm và một biến thể không thuộc tính qua `catalog.createPurchaseProducts` trong cùng giao dịch; tên vừa bị dùng thì 422 và rollback cả lần duyệt.

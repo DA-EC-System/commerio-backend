@@ -53,6 +53,8 @@ export const purchaseRequests = purchasingSchema.table(
     source: purchaseRequestSource('source').notNull().default('manual'),
     sourceReturnId: uuid('source_return_id'),
     expectedDeliveryDate: date('expected_delivery_date'),
+    /** Mã đơn bên NCC ghi lúc đặt (tuỳ chọn, 25 §3.2, #243). */
+    supplierOrderCode: text('supplier_order_code'),
     note: text('note'),
     statusReason: text('status_reason'),
     ...approval,
@@ -95,6 +97,8 @@ export const purchaseRequestLines = purchasingSchema.table(
     closedShortQty: integer('closed_short_qty').notNull().default(0),
     unitPrice: money('unit_price').notNull(),
     excluded: boolean('excluded').notNull().default(false),
+    /** Lý do CEO loại dòng (bắt buộc khi loại, #243). */
+    excludedReason: text('excluded_reason'),
     ...timestamps,
     ...version,
   },
@@ -104,6 +108,7 @@ export const purchaseRequestLines = purchasingSchema.table(
     index().on(t.variantId),
     check('purchase_request_lines_item', sql`${t.variantId} is not null or ${t.newProductName} is not null`),
     check('purchase_request_lines_ordered', sql`${t.orderedQty} > 0`),
+    check('purchase_request_lines_excluded_reason', sql`not ${t.excluded} or ${t.excludedReason} is not null`),
     check(
       'purchase_request_lines_counts',
       sql`${t.receivedQty} >= 0 and ${t.defectiveQty} >= 0 and ${t.closedShortQty} >= 0`,
