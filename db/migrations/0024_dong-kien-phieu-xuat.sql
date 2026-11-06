@@ -1,0 +1,1 @@
+ALTER TABLE "product"."stock_document_lines" ADD COLUMN "source_line_id" uuid;

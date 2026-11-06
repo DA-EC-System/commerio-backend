@@ -54,11 +54,13 @@ export function toAccountView(a: AccountRow): AccountView {
   };
 }
 
-export async function newRefreshToken(accountId: string, companyId: string | null): Promise<string> {
+/** Không truyền `familyId` thì mở họ token mới (đăng nhập, đổi mật khẩu); refresh truyền họ của token cũ. */
+export async function newRefreshToken(accountId: string, companyId: string | null, familyId?: string): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   await insertRefreshToken({
     accountId,
     companyId,
+    familyId,
     tokenHash: hashToken(token),
     expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 3600 * 1000),
   });

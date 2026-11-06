@@ -7,6 +7,7 @@ import { OrderPullResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { MarketplaceError, type RemoteOrder, type RemoteOrderRef } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
+import { notImplemented } from '#src/shared/errors/app-error.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany, addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -323,10 +324,21 @@ describe('đơn trước mốc đã có, giữ hàng và việc chưa làm trên
     expect(await pkgOf('B1')).toMatchObject([{ status: 'packed' }]);
   });
 
-  it('AC-21: cổng tồn mặc định (reserve chờ #206): đơn, kiện vẫn lưu; kiện backordered mang notices; đọc lại qua API', async () => {
+  it('cổng tồn mặc định là reserve thật (#206): SKU chưa có tồn thì kiện backordered, notices rỗng', async () => {
+    setStockPort();
+    seed(remoteOrder('N0', sku, 'pending', at('2026-11-02T00:30:00Z')));
+    expect((await pull()).status).toBe(200);
+    expect(await pkgOf('N0')).toEqual([{ status: 'backordered', notices: [] }]);
+  });
+
+  it('AC-21: cổng tồn ném 501 not_implemented: đơn, kiện vẫn lưu; kiện backordered mang notices; đọc lại qua API', async () => {
+    setStockPort({
+      reserve: () => Promise.reject(notImplemented('reserve', 'commerio-backend#000', 'Người làm')),
+      release: async () => {},
+    });
     seed(remoteOrder('N1', sku, 'pending', at('2026-11-02T01:00:00Z')));
     expect((await pull()).status).toBe(200);
-    const notice = { code: 'not_implemented', issue: 'commerio-backend#206', owner: 'Khang', message: 'Chưa giữ hàng được cho kiện này' };
+    const notice = { code: 'not_implemented', issue: 'commerio-backend#000', owner: 'Người làm', message: 'Chưa giữ hàng được cho kiện này' };
     expect(await pkgOf('N1')).toEqual([{ status: 'backordered', notices: [notice] }]);
     const { rows } = await testPool().query(`select id from "order".orders where shop_id = $1 and external_order_id = 'N1'`, [shopId]);
     const order = await auth(app().get(`/api/v1/sales/orders/${rows[0].id}`));

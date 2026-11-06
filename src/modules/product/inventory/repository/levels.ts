@@ -100,14 +100,18 @@ export async function setMinQty(variantId: string, minQty: number | null): Promi
     .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
 }
 
-/** Ghi số mới của dòng tồn đã khoá (`lockLevel`), tăng `version`. Chỉ lõi ghi sổ gọi. */
+/**
+ * Ghi số mới của dòng tồn đã khoá (`lockLevel`). Chỉ lõi ghi sổ gọi. `bumpVersion` false khi SKU chỉ đổi đang giữ:
+ * `version` là `reorderVersion` của ngưỡng, giữ hàng cho kiện không làm người đang sửa ngưỡng nhận 409 (spec #206 Q24).
+ */
 export async function saveLevel(
   variantId: string,
-  next: { onHand: number; quarantine: number; avgCost: string; invariantBroken: boolean },
+  next: { onHand: number; reserved: number; quarantine: number; avgCost: string; invariantBroken: boolean },
+  bumpVersion: boolean,
 ): Promise<void> {
   await getDb()
     .update(stockLevels)
-    .set({ ...next, updatedAt: new Date(), version: sql`${stockLevels.version} + 1` })
+    .set({ ...next, updatedAt: new Date(), ...(bumpVersion ? { version: sql`${stockLevels.version} + 1` } : {}) })
     .where(and(eq(stockLevels.companyId, companyOfTransaction()), eq(stockLevels.variantId, variantId)));
 }
 
