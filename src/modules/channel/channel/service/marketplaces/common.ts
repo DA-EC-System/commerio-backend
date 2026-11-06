@@ -101,6 +101,8 @@ export interface SettlementTxn {
   /** `YYYY-MM-DD`. */
   date: string;
   feeName: string;
+  /** Mã phí gốc của sàn (Lazada `fee_type`), ghi kèm tên khi khoản chưa ánh xạ được (US-TI-06 dòng 2). */
+  feeCode: string | null;
   transactionType: string;
   /** Có dấu: sàn trả shop dương, sàn trừ âm. Chuỗi thập phân. */
   amount: string;

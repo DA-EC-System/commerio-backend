@@ -151,6 +151,12 @@ export async function runSettlement(ctx: FinanceContext, companyId: string, acco
 
 type EntryInsert = typeof ledgerEntries.$inferInsert;
 
+/** Lý do của khoản adapter chưa ánh xạ: tên và mã phí gốc của sàn (US-TI-06 dòng 2, #251). */
+function unmappedReason(t: PlatformTxn): string {
+  const name = t.feeName || t.transactionType || 'Khoản sàn chưa phân loại';
+  return t.feeCode ? `${name} (mã ${t.feeCode})` : name;
+}
+
 /**
  * Ghi các khoản của lô (trong `withCompany`): mỗi khoản một dòng thực tế, thuế sàn khấu trừ thành dòng riêng; khoản đã
  * có trong sổ thì bỏ; dòng thực tế nối `replaces_entry_id` về dòng ước tính cùng đơn, cùng loại (một đối một). Rồi tính
@@ -196,7 +202,7 @@ async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], pay
       externalOrderId: p.t.externalOrderId,
       replacesEntryId: replaces,
       // Adapter chưa nhận ra loại khoản: ghi `adjustment` kèm tên phí gốc (#203)
-      reason: p.t.kind === null && p.kind === 'adjustment' ? p.t.feeName || p.t.transactionType || 'Khoản sàn chưa phân loại' : null,
+      reason: p.t.kind === null && p.kind === 'adjustment' ? unmappedReason(p.t) : null,
     };
   });
   await insertEntries(rows);

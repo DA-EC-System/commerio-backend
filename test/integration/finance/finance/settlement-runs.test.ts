@@ -41,6 +41,7 @@ const txn = (id: string, feeName: string, transactionType: string, amount: strin
   externalOrderId,
   date: '2026-11-04',
   feeName,
+  feeCode: null,
   transactionType,
   amount,
   withholding: '0',
@@ -194,6 +195,51 @@ describe('kéo quyết toán (§21.3)', () => {
     expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'none' });
     await deliver(s);
     expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'mismatch', diff: '-10320.00' });
+  });
+
+  it('D43-08 (US-TI-06 dòng 2): khoản chưa ánh xạ ghi adjustment kèm tên và mã phí gốc, tính vào lệch của đơn', async () => {
+    const s = await setup();
+    await deliver(s);
+    const lines = [...settlementOf('A', '-5160.00'), { ...txn('A9', 'Phí dịch vụ mới', 'Orders-Other', '-2000.00'), feeCode: 'FT_NEW_42' }];
+    await runSettlement(fakeSource(() => lines), s.companyId, null, s.shopId);
+    const p = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(p.body.lines.find((l: { txnId: string }) => l.txnId === 'A9')).toMatchObject({
+      kind: 'adjustment',
+      reason: 'Phí dịch vụ mới (mã FT_NEW_42)',
+      estimated: false,
+    });
+    expect(p.body.diff).toBe(-2000);
+  });
+
+  it('D43-09 (US-TI-08 dòng 1, 4): điều chỉnh muộn trong ngưỡng giữ settled; bồi thường thất lạc không tính lệch', async () => {
+    const s = await setup();
+    await deliver(s);
+    await runSettlement(fakeSource(() => settlementOf('B', '-5160.00')), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'settled' });
+    await runSettlement(fakeSource(() => [txn('B7', 'Commission', 'Orders-Lazada Fees', '-1000.00')]), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'settled', diff: '-1000.00' });
+    await runSettlement(fakeSource(() => [txn('B8', 'Lost Claim', 'Refunds-Claims', '129000.00')]), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'settled', diff: '-1000.00' });
+    const comp = await testPool().query("select count(*)::int as n from finance.ledger_entries where external_transaction_id = 'B8' and kind = 'lost_compensation'");
+    expect(comp.rows[0].n).toBe(1);
+  });
+
+  it('D43-10 (US-TI-06 dòng 7, 11): khoản phạt không gắn đơn là dòng của gian hàng; Sale, Kho không kéo được (403)', async () => {
+    const s = await setup();
+    await runSettlement(fakeSource(() => [txn('P1', 'Penalty', 'Other', '-50000.00', null)]), s.companyId, null, s.shopId);
+    const res = await get(s.ceo, `/ledger?shopId=${s.shopId}&pageSize=100`);
+    expect(res.body.items.find((l: { txnId: string }) => l.txnId === 'P1')).toMatchObject({ kind: 'penalty', orderId: null, flags: [] });
+    for (const role of ['sale', 'warehouse'] as const) {
+      const m = await addMember(s.companyId, role);
+      const post403 = await post(m.token, '/settlement-runs', { shopId: s.shopId });
+      expect([role, post403.status, post403.body.type]).toEqual([role, 403, '/problems/forbidden']);
+    }
+  });
+
+  it('nhập tệp báo cáo quyết toán chưa làm: 422 file_import_unsupported (#251)', async () => {
+    const s = await setup();
+    const res = await post(s.ceo, '/settlement-runs', { shopId: s.shopId, fileId: randomUUID() });
+    expect([res.status, res.body.type]).toEqual([422, '/problems/file_import_unsupported']);
   });
 
   it('gọi sàn lỗi: lần chạy failed kèm lý do, lần sau kéo lại từ mốc cũ; đang có lần chạy thì 409', async () => {
