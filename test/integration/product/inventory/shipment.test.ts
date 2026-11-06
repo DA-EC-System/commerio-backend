@@ -179,7 +179,7 @@ describe('ship', () => {
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 2, reserved: 0, invariant_broken: false });
   });
 
-  it('AC7c: kiện chưa giữ hàng mà không forced → lỗi; tồn, phiếu, bộ đếm không đổi', async () => {
+  it('AC7c: kiện chưa giữ hàng mà không forced → lỗi; tồn, phiếu không đổi', async () => {
     const { companyId, a } = await skuWith(5, 0);
     const k = randomUUID();
     const before = await levelOf(companyId, a);
@@ -188,7 +188,19 @@ describe('ship', () => {
 
     expect(await levelOf(companyId, a)).toEqual(before);
     expect(await docsOfPackage(k)).toEqual([]);
+  });
+
+  it('AC7c: bên gọi bắt lỗi rồi vẫn commit giao dịch → bộ đếm số phiếu không tăng, không có phiếu', async () => {
+    const { companyId, a } = await skuWith(5, 0);
+    const k = randomUUID();
+
+    await withCompany(companyId, async () => {
+      await ship(k, [line(a, 2)], { actorId: null }).catch(() => undefined);
+    });
+
     expect(await counterOf(companyId, 'shipment')).toBeUndefined();
+    expect(await docsOfPackage(k)).toEqual([]);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 5, reserved: 0 });
   });
 
   it('bàn giao bắt buộc SKU chưa có dòng tồn → tạo dòng tồn âm', async () => {

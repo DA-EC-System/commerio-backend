@@ -32,7 +32,8 @@ export async function ship(packageId: string, lines: readonly StockLine[], opts:
 
   const forced = opts.forced === true;
   if (!forced) {
-    // Kiểm trước khi lấy số phiếu: bộ đếm không bị đụng kể cả khi bên gọi bắt lỗi trong savepoint (Q21).
+    // Kiểm trước khi lấy số phiếu (Q21): bên gọi bắt lỗi mà vẫn commit thì bộ đếm không nhảy số, và đường lỗi không
+    // giữ khoá dòng đếm `doc_counters` (khoá chung của mọi `ship` trong công ty).
     const unheld = [...wanted].filter(([id, q]) => levels.get(id)!.reserved < q).map(([id]) => id);
     if (unheld.length) throw new Error(`Kiện ${packageId} chưa giữ hàng (${unheld.join(', ')}); bàn giao bắt buộc thì truyền forced`);
   }
