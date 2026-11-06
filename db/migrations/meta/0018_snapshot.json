@@ -1,5 +1,5 @@
 {
-  "id": "ef86a124-962a-4749-b4ad-0e6faf80e148",
+  "id": "b04a3e25-b5e7-4f25-93e7-0543c4fc36fe",
   "prevId": "b8d51290-6943-4d0c-a38f-703327b8a20b",
   "version": "7",
   "dialect": "postgresql",
@@ -811,6 +811,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "return_window_days": {
+          "name": "return_window_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "last_order_sync_at": {
           "name": "last_order_sync_at",
           "type": "timestamp with time zone",
@@ -899,6 +905,10 @@
         "shops_active_cutoff": {
           "name": "shops_active_cutoff",
           "value": "\"channel\".\"shops\".\"status\" <> 'active' or \"channel\".\"shops\".\"order_cutoff_at\" is not null"
+        },
+        "shops_return_window_days": {
+          "name": "shops_return_window_days",
+          "value": "\"channel\".\"shops\".\"return_window_days\" between 1 and 60"
         }
       },
       "isRLSEnabled": false
@@ -9282,12 +9292,6 @@
         },
         "actual_variant_id": {
           "name": "actual_variant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_line_id": {
-          "name": "source_line_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false

@@ -31,6 +31,10 @@ export const StockListQuery = z.object({
     .enum(['true', 'false'], 'quarantine là true hoặc false')
     .transform((v) => v === 'true')
     .optional(),
+  negative: z
+    .enum(['true', 'false'], 'negative là true hoặc false')
+    .transform((v) => v === 'true')
+    .optional(),
 });
 
 export const ReorderRuleBody = z
@@ -65,6 +69,7 @@ export const StockLevel = z
     incoming: z.number().int(),
     shortage: z.number().int(),
     negative: z.boolean(),
+    drift: z.boolean().meta({ description: 'Lệch tồn với sàn; luôn false tới #206 phần 2b' }),
     minQty: z.number().int().nullable(),
     belowMin: z.boolean().meta({ description: 'Có thể bán + đang về − còn thiếu cho đơn ≤ ngưỡng; SKU ngừng bán, lưu trữ thì false' }),
     state: z.enum(['in_stock', 'low', 'out']).meta({ description: 'Hết hàng khi có thể bán ≤ 0, sắp hết khi 0 < có thể bán ≤ ngưỡng' }),
@@ -93,13 +98,29 @@ export const StockPage = z
 export const StockMove = z
   .object({
     id: z.string(),
-    area: z.enum(['on_hand', 'quarantine']),
     qtyChange: z.number().int(),
-    balanceAfter: z.number().int(),
-    document: z.object({ id: z.string(), type: z.enum(['goods_receipt', 'stock_document', 'supplier_return']) }),
+    area: z.enum(['stock', 'quarantine']).meta({ description: 'Ngăn tồn thực (`stock`) hoặc chờ xử lý' }),
+    onHandAfter: z.number().int().meta({ description: 'Số của ngăn đó sau biến động' }),
+    document: z.object({
+      id: z.string(),
+      number: z.string().meta({ example: 'NH-000001' }),
+      type: z.enum([
+        'stocktake',
+        'write_off',
+        'to_quarantine',
+        'return_inspection',
+        'shipment',
+        'shipment_reversal',
+        'goods_receipt',
+        'supplier_return',
+      ]),
+      kind: z.enum(['manual', 'purchase', 'order', 'auto']).meta({
+        description: 'Suy ra từ loại chứng từ: người lập tay, mua hàng, đơn hàng, hệ thống tự sinh',
+      }),
+    }),
     unitCost: money,
     doneAt: z.string(),
-    doneBy: z.string().nullable(),
+    doneBy: z.string().nullable().meta({ description: 'Tên người ghi sổ; `null` khi hệ thống hoặc sàn ghi' }),
   })
   .meta({ id: 'StockMove' });
 

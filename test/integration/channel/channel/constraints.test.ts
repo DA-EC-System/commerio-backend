@@ -36,6 +36,46 @@ describe('ràng buộc gian hàng', () => {
     await insert('active', new Date());
     await expect(insert('connecting', null)).rejects.toThrow(/shops_company_id_platform_external_shop_id_unique/);
   });
+
+  it('hạn trả hàng của gian hàng từ 1 đến 60 ngày, null được (Documents/21 §18.6.2)', async () => {
+    const insert = (days: number | null) =>
+      db().query(
+        "insert into channel.shops (company_id, platform, external_shop_id, shop_name, return_window_days) values ($1, 'lazada', $2, 'Shop', $3)",
+        [randomUUID(), randomUUID(), days],
+      );
+    await expect(insert(0)).rejects.toThrow(/"shops_return_window_days"/);
+    await expect(insert(61)).rejects.toThrow(/"shops_return_window_days"/);
+    for (const ok of [null, 1, 60]) await insert(ok);
+  });
+
+  it('phiếu kiểm kê đầu kỳ: id và số đi cùng nhau, cần mốc, mỗi công ty một gian hàng chờ (#198)', async () => {
+    const c = randomUUID();
+    const insert = (cols: Record<string, unknown>, company = c) => {
+      const all = { company_id: company, platform: 'lazada', external_shop_id: randomUUID(), shop_name: 'Shop', ...cols };
+      const keys = Object.keys(all);
+      return db().query(
+        `insert into channel.shops (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`,
+        Object.values(all),
+      );
+    };
+    const now = new Date();
+    await expect(insert({ order_cutoff_at: now, opening_stocktake_id: randomUUID() })).rejects.toThrow(/"shops_opening_stocktake"/);
+    await expect(insert({ opening_stocktake_id: randomUUID(), opening_stocktake_number: 'KK-1' })).rejects.toThrow(
+      /"shops_opening_stocktake"/,
+    );
+    await expect(insert({ opening_stock_mode: 'push' })).rejects.toThrow(/"shops_setup_mode"/);
+    await expect(insert({ opening_stock_mode: 'other', unmatched_sku_count: 0 })).rejects.toThrow(/"shops_setup_mode"/);
+    const waiting = { order_cutoff_at: now, opening_stocktake_id: randomUUID(), opening_stocktake_number: 'KK-1' };
+    await insert({ ...waiting, opening_stock_mode: 'stocktake', unmatched_sku_count: 0 });
+    await expect(insert({ ...waiting, opening_stocktake_id: randomUUID() })).rejects.toThrow(/shops_one_opening_stocktake_uq/);
+    await insert({ ...waiting, opening_stocktake_id: randomUUID() }, randomUUID());
+    await insert({ order_cutoff_at: now, opening_stock_mode: 'push', unmatched_sku_count: 2 });
+  });
+
+  it('pg_trgm có sẵn cho gợi ý ghép theo tên (21 §18.7.5)', async () => {
+    const r = await db().query<{ s: number }>("select similarity('Áo thun trắng', 'Áo thun trắng size M') as s");
+    expect(r.rows[0]!.s).toBeGreaterThan(0.4);
+  });
 });
 
 describe('ràng buộc listing', () => {

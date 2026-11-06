@@ -1,5 +1,7 @@
-// Cổng tồn theo kiện (Documents/21 §11.1). `reserve`, `release` của inventory chưa có thân (#111), nên mặc định là bản
-// "chưa giữ được": kiện ở `backordered`, nhả hàng không làm gì (#105 A2). #111 xong thì trỏ sang `product/index.ts`.
+// Cổng tồn theo kiện (Documents/21 §11.1): mặc định trỏ sang `reserve`, `release` của inventory (`product/index.ts`).
+// Thân hai hàm có từ commerio-backend#206. Cổng nào ném 501 `not_implemented` thì bên gọi bắt và ghi `notices` lên kiện
+// (#198, Documents/21 §18.7.9).
+import { release, reserve } from '../../../product/index.ts';
 
 export interface StockLine {
   variantId: string;
@@ -13,10 +15,7 @@ export interface StockPort {
   release(packageId: string, lines: readonly StockLine[]): Promise<void>;
 }
 
-const pending: StockPort = {
-  reserve: async () => ({ reserved: false }),
-  release: async () => {},
-};
+const pending: StockPort = { reserve, release };
 
 let port: StockPort = pending;
 

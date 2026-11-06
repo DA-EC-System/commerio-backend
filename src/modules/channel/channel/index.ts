@@ -4,10 +4,10 @@ import { registerConsumer, workQueue } from '../../core/index.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
-import { runListingSync, runOrderPull, runTokenRefresh } from './service/background.ts';
+import { runListingSync, runOpenOrderPull, runOrderPull, runTokenRefresh } from './service/background.ts';
 import { markStockPending } from './service/listing-sync.ts';
 import { productPort } from './service/product-port.ts';
-import { listingSyncQueue, orderPullQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
+import { listingSyncQueue, openOrderPullQueue, orderPullQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
@@ -20,6 +20,7 @@ export const channelModule: ModuleDefinition = {
     const port = productPort(ctx);
     await workQueue(listingSyncQueue, (job) => runListingSync(port, job));
     await workQueue(orderPullQueue, runOrderPull);
+    await workQueue(openOrderPullQueue, runOpenOrderPull);
     await workQueue(tokenRefreshQueue, runTokenRefresh);
     await reconcileShopJobs();
     // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).

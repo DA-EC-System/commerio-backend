@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { defineQueue, JobDataSchema, sendJob, workQueue } from '#src/modules/core/index.ts';
+import { defineQueue, JobDataSchema, lastDeadJobs, sendJob, workQueue } from '#src/modules/core/index.ts';
 import { jobBoss } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { DEAD_QUEUE } from '#src/modules/core/platform/service/jobs/queues.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -78,6 +78,13 @@ describe('API việc lỗi (#102 AC-6)', () => {
   it('id không phải uuid thì 404', async () => {
     const res = await app().post('/api/v1/platform/jobs/dead/abc/retry').set('Authorization', `Bearer ${a.ceo.token}`);
     expect(res.status).toBe(404);
+  });
+
+  it('lastDeadJobs: lúc lỗi gần nhất theo gian hàng và hàng gốc, chỉ hàng được hỏi (#198 Shop.setup)', async () => {
+    const found = await lastDeadJobs([shopId, randomUUID()], [queue.name]);
+    expect([...found.keys()]).toEqual([`${shopId} ${queue.name}`]);
+    expect(found.get(`${shopId} ${queue.name}`)).toBeInstanceOf(Date);
+    expect((await lastDeadJobs([shopId], ['channel.khac'])).size).toBe(0);
   });
 
   it('chạy lại: việc về hàng gốc với lượt thử mới, rời hàng lỗi, có nhật ký thao tác', async () => {

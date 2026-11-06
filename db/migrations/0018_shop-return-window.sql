@@ -1,0 +1,2 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "return_window_days" integer;--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_return_window_days" CHECK ("channel"."shops"."return_window_days" between 1 and 60);

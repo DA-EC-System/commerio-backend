@@ -45,3 +45,26 @@ export function assertNoOpenOrders(openOrders: number): void {
     });
   }
 }
+
+/**
+ * Năng lực của sàn do adapter khai (Documents/21 §18.4, §18.6.3). Code ngoài adapter và FE rẽ nhánh theo đây, không theo mã sàn.
+ * - `listingReview`: sàn duyệt listing trước khi bán.
+ * - `hideBy`: ẩn listing bằng tắt (`deactivate`) hay bằng đẩy tồn 0 (`zero_stock`).
+ * - `splitLevel`: mức tách kiện sàn cho phép (`unit` từng đơn vị, `sku` theo nhóm dòng, `none` không tách).
+ * - `returnWindow`: hết hạn trả hàng tính bằng số ngày của gian hàng (`days`, cần `returnWindowDays`) hay theo trạng thái sàn.
+ */
+export interface ShopCapabilities {
+  listingReview: boolean;
+  hideBy: 'deactivate' | 'zero_stock';
+  splitLevel: 'unit' | 'sku' | 'none';
+  returnWindow: 'days' | 'platform_status';
+}
+
+/**
+ * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null là hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm;
+ * không gửi thì chưa bắt buộc tới khi FE gửi trường này (luật chuyển tiếp 18.6, #200 A3).
+ */
+export function returnWindowError(returnWindow: ShopCapabilities['returnWindow'], days: number | null | undefined): string | null {
+  if (returnWindow !== 'days' || days === null || days === undefined) return null;
+  return Number.isInteger(days) && days >= 1 && days <= 60 ? null : 'Hạn trả hàng từ 1 đến 60 ngày';
+}

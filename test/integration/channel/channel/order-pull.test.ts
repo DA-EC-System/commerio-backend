@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrderPullResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { MarketplaceError, type RemoteOrder, type RemoteOrderRef } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
+import { notImplemented } from '#src/shared/errors/app-error.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany, addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -78,6 +82,18 @@ registerAdapter(
     getOrder,
   }),
 );
+// Sàn chỉ có năng lực lấy đơn theo lô (#267): bên kéo đơn không gọi `getOrder`.
+const getOrders = vi.fn(async (_t: string, batch: readonly RemoteOrderRef[]) => batch.map((r) => details.get(r.externalOrderId)!));
+registerAdapter(
+  'tiktok',
+  fakeAdapter({
+    async getSeller(accessToken) {
+      return { externalShopId: accessToken.slice(4), shopName: 'Shop thử theo lô', region: 'VN' };
+    },
+    listOrders,
+    getOrders,
+  }),
+);
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
@@ -110,6 +126,7 @@ beforeEach(() => {
   failOn = null;
   listOrders.mockClear();
   getOrder.mockClear();
+  getOrders.mockClear();
 });
 
 const ordersOfShop = async () =>
@@ -224,5 +241,163 @@ describe('kéo đơn theo gian hàng (#105)', () => {
     } finally {
       await setModuleEnabled(company.companyId, 'channel', true);
     }
+  });
+});
+
+// Migration chạy một lần (review #261 điểm 1): tìm theo tên để không vỡ khi đổi số lúc rebase.
+async function runRepullMigration() {
+  const dir = join(process.cwd(), 'db', 'migrations');
+  const file = readdirSync(dir).find((f) => f.endsWith('_keo-lai-don-truoc-0017.sql'))!;
+  for (const stmt of readFileSync(join(dir, file), 'utf8').split('--> statement-breakpoint')) {
+    if (stmt.replace(/--.*$/gm, '').trim()) await testPool().query(stmt);
+  }
+}
+
+describe('kéo lại đơn lưu trước #260 (migration chạy một lần)', () => {
+  it('đơn thô thiếu `info` hay địa chỉ lặp phường: xoá mốc đơn và mốc gian hàng, lượt sau gọi lại chi tiết và ghi thông tin mới', async () => {
+    const address = (text: string) => ({ name: 'N***n', phone: '84****11', address: text, ward: 'Phường Bến Nghé', postCode: null, raw: { city: 'Phường Bến Nghé' } });
+    const m1 = remoteOrder('M1', sku, 'pending', at('2026-11-01T01:00:00Z'));
+    const m2 = { ...remoteOrder('M2', sku, 'pending', at('2026-11-01T02:00:00Z')), shippingAddress: address('P**a, Phường Bến Nghé') };
+    const m3 = { ...remoteOrder('M3', sku, 'pending', at('2026-11-01T03:00:00Z')), shippingAddress: address('P**a') };
+    seed(m1, m2, m3);
+    expect((await pull()).body).toEqual({ pulled: 3, created: 3, updated: 0 });
+    // M1 giả lập đơn lưu bởi adapter trước #260: dữ liệu gốc không có `info`.
+    await testPool().query(`update channel.raw_orders set payload = payload - 'info' where shop_id = $1 and external_order_id = 'M1'`, [shopId]);
+
+    await runRepullMigration();
+
+    expect(await cursor()).toBeNull();
+    const times = await testPool().query(
+      `select external_order_id as id, external_update_time is null as cleared from channel.raw_orders where shop_id = $1 and external_order_id like 'M%' order by 1`,
+      [shopId],
+    );
+    expect(times.rows).toEqual([
+      { id: 'M1', cleared: true },
+      { id: 'M2', cleared: true },
+      { id: 'M3', cleared: false },
+    ]);
+
+    getOrder.mockClear();
+    listOrders.mockClear();
+    details.set('M1', { ...m1, info: { ...noOrderInfo, buyerNote: 'Gọi trước' } });
+    details.set('M2', { ...m2, shippingAddress: address('P**a') });
+    expect((await pull()).body).toEqual({ pulled: 2, created: 0, updated: 0 });
+    expect(listOrders.mock.calls[0]![1]).toEqual(at('2026-10-19T23:58:00Z'));
+    expect(getOrder.mock.calls.map((c) => c[1])).toEqual(['M1', 'M2']);
+    const saved = await testPool().query(
+      `select o.external_order_id as id, o.buyer_note, o.shipping_address->>'address' as address, r.payload ? 'info' as has_info
+         from "order".orders o join channel.raw_orders r on r.order_id = o.id where o.shop_id = $1 and o.external_order_id in ('M1', 'M2') order by 1`,
+      [shopId],
+    );
+    expect(saved.rows).toEqual([
+      { id: 'M1', buyer_note: 'Gọi trước', address: null, has_info: true },
+      { id: 'M2', buyer_note: null, address: 'P**a', has_info: true },
+    ]);
+    expect(await cursor()).toEqual(at('2026-11-01T03:00:00Z'));
+    // Chạy lại (bước sau rollout): đơn đã kéo lại bằng adapter mới không bị chọn, mốc giữ nguyên.
+    await runRepullMigration();
+    expect(await cursor()).toEqual(at('2026-11-01T03:00:00Z'));
+  });
+});
+
+describe('đơn trước mốc đã có, giữ hàng và việc chưa làm trên kiện (#198)', () => {
+  afterAll(() => setStockPort());
+  const pkgOf = async (externalOrderId: string) =>
+    (
+      await testPool().query(
+        `select p.status, p.notices from "order".packages p join "order".orders o on o.id = p.order_id
+          where o.shop_id = $1 and o.external_order_id = $2`,
+        [shopId, externalOrderId],
+      )
+    ).rows;
+
+  it('AC-15: đơn đặt trước mốc mà đã có trong raw_orders thì vẫn nhận cập nhật', async () => {
+    // Lần đầu đơn về qua lượt khác (vd lượt kéo đơn còn mở) — dựng bằng ref có ngày đặt sau mốc.
+    const first = remoteOrder('B1', sku, 'pending', at('2026-11-01T01:00:00Z'));
+    seed(first);
+    expect((await pull()).body).toMatchObject({ created: 1 });
+    refs = [];
+    const later = remoteOrder('B1', sku, 'packed', at('2026-11-01T02:00:00Z'));
+    later.placedAt = at('2026-10-01T00:00:00Z');
+    seed(later);
+    expect((await pull()).body).toEqual({ pulled: 1, created: 0, updated: 1 });
+    expect(await pkgOf('B1')).toMatchObject([{ status: 'packed' }]);
+  });
+
+  it('cổng tồn mặc định là reserve thật (#206): SKU chưa có tồn thì kiện backordered, notices rỗng', async () => {
+    setStockPort();
+    seed(remoteOrder('N0', sku, 'pending', at('2026-11-02T00:30:00Z')));
+    expect((await pull()).status).toBe(200);
+    expect(await pkgOf('N0')).toEqual([{ status: 'backordered', notices: [] }]);
+  });
+
+  it('AC-21: cổng tồn ném 501 not_implemented: đơn, kiện vẫn lưu; kiện backordered mang notices; đọc lại qua API', async () => {
+    setStockPort({
+      reserve: () => Promise.reject(notImplemented('reserve', 'commerio-backend#000', 'Người làm')),
+      release: async () => {},
+    });
+    seed(remoteOrder('N1', sku, 'pending', at('2026-11-02T01:00:00Z')));
+    expect((await pull()).status).toBe(200);
+    const notice = { code: 'not_implemented', issue: 'commerio-backend#000', owner: 'Người làm', message: 'Chưa giữ hàng được cho kiện này' };
+    expect(await pkgOf('N1')).toEqual([{ status: 'backordered', notices: [notice] }]);
+    const { rows } = await testPool().query(`select id from "order".orders where shop_id = $1 and external_order_id = 'N1'`, [shopId]);
+    const order = await auth(app().get(`/api/v1/sales/orders/${rows[0].id}`));
+    expect(order.status).toBe(200);
+    expect(order.body.packages[0].notices).toEqual([notice]);
+  });
+
+  it('AC-10: gian hàng không chờ kiểm kê gọi reserve; chờ kiểm kê thì không gọi, kiện backordered, notices rỗng', async () => {
+    const reserve = vi.fn(async () => ({ reserved: true }));
+    setStockPort({ reserve, release: async () => {} });
+    seed(remoteOrder('R1', sku, 'pending', at('2026-11-03T01:00:00Z')));
+    await pull();
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(await pkgOf('R1')).toEqual([{ status: 'reserved', notices: [] }]);
+
+    await testPool().query(
+      `update channel.shops set opening_stocktake_id = $2, opening_stocktake_number = 'KK-000009' where id = $1`,
+      [shopId, randomUUID()],
+    );
+    try {
+      reserve.mockClear();
+      refs = [];
+      seed(remoteOrder('R2', sku, 'pending', at('2026-11-03T02:00:00Z')));
+      await pull();
+      expect(reserve).not.toHaveBeenCalled();
+      expect(await pkgOf('R2')).toEqual([{ status: 'backordered', notices: [] }]);
+    } finally {
+      await testPool().query(`update channel.shops set opening_stocktake_id = null, opening_stocktake_number = null where id = $1`, [shopId]);
+    }
+  });
+});
+
+describe('kéo đơn theo lô khi sàn có getOrders (#267)', () => {
+  it('mỗi trang gọi getOrders một lần với các đơn cần lấy, không gọi getOrder; đơn lưu như gọi từng đơn', async () => {
+    const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const batchShop = res.body.shop.id as string;
+    await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = $2 where id = $1`, [batchShop, cutoff]);
+    const old = remoteOrder('B0', sku, 'pending', at('2026-11-01T00:30:00Z'));
+    old.placedAt = at('2026-10-01T00:00:00Z');
+    seed(
+      remoteOrder('B1', sku, 'pending', at('2026-11-01T01:00:00Z')),
+      old,
+      remoteOrder('B2', sku, 'packed', at('2026-11-01T02:00:00Z')),
+      remoteOrder('B3', sku, 'pending', at('2026-11-01T03:00:00Z')),
+    );
+    const pulled = await auth(app().post(`/api/v1/channel/shops/${batchShop}/orders/pull`));
+    expect(pulled.body).toEqual({ pulled: 3, created: 3, updated: 0 });
+    // Trang 2 đơn: [B1, B0] chỉ lấy B1 (B0 đặt trước mốc), [B2, B3] lấy cả hai.
+    expect(getOrders.mock.calls.map((c) => c[1].map((r) => r.externalOrderId))).toEqual([['B1'], ['B2', 'B3']]);
+    expect(getOrder).not.toHaveBeenCalled();
+    const { rows } = await testPool().query(
+      `select o.external_order_id, r.external_status from "order".orders o join channel.raw_orders r on r.order_id = o.id
+        where o.shop_id = $1 order by 1`,
+      [batchShop],
+    );
+    expect(rows).toEqual([
+      { external_order_id: 'B1', external_status: 'pending' },
+      { external_order_id: 'B2', external_status: 'packed' },
+      { external_order_id: 'B3', external_status: 'pending' },
+    ]);
   });
 });

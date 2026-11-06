@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
 import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -331,5 +332,55 @@ describe('nhận đơn sàn (#105)', () => {
     expect(new Set(results.map((r) => r.orderId)).size).toBe(1);
     expect(results.filter((r) => r.created)).toHaveLength(1);
     expect(await all(`select 1 from "order".order_lines where order_id = $1`, [results[0]!.orderId])).toHaveLength(1);
+  });
+});
+
+describe('thông tin sàn trả null hoặc sai dạng (review #261 điểm 4, 7)', () => {
+  const versions = (orderId: string) =>
+    one(
+      `select (select version from "order".orders where id = $1) as o, (select version from "order".order_lines where order_id = $1) as l`,
+      [orderId],
+    );
+
+  it('kéo lại mà sàn trả null: đơn và dòng giữ giá trị đã lưu như kiện, version không tăng', async () => {
+    const o = remote();
+    const line = o.lines[0]!;
+    const full = {
+      ...o,
+      info: { ...noOrderInfo, platformPaymentMethod: 'COD', buyerNote: 'Gọi trước', shippingFeeOriginal: '20000' },
+      lines: [{ ...line, info: { ...noLineInfo, thumbnailUrl: 'https://img/a.jpg', paidPrice: '85000', cancelReason: 'Đổi ý' } }],
+    };
+    const { orderId } = await ingest(full);
+    const v1 = await versions(orderId);
+    await ingest({ ...o, shippingAddress: null, info: noOrderInfo, lines: [{ ...line, info: noLineInfo }] });
+    expect(await one(`select platform_payment_method, buyer_note, shipping_fee_original, shipping_address->>'name' as name from "order".orders where id = $1`, [orderId])).toEqual({
+      platform_payment_method: 'COD',
+      buyer_note: 'Gọi trước',
+      shipping_fee_original: '20000.00',
+      name: 'K***h',
+    });
+    expect(await one(`select thumbnail_url, paid_price, cancel_reason from "order".order_lines where order_id = $1`, [orderId])).toEqual({
+      thumbnail_url: 'https://img/a.jpg',
+      paid_price: '85000.00',
+      cancel_reason: 'Đổi ý',
+    });
+    expect(await versions(orderId)).toEqual(v1);
+  });
+
+  it('chuỗi tiền sai dạng: ghi null và log cảnh báo, không làm hỏng giao dịch nhận đơn', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    try {
+      const o = remote();
+      const { orderId } = await ingest({
+        ...o,
+        info: { ...noOrderInfo, shippingFeeOriginal: 'abc' },
+        lines: [{ ...o.lines[0]!, info: { ...noLineInfo, paidPrice: '12,5' } }],
+      });
+      expect(await one(`select shipping_fee_original from "order".orders where id = $1`, [orderId])).toEqual({ shipping_fee_original: null });
+      expect(await one(`select paid_price from "order".order_lines where order_id = $1`, [orderId])).toEqual({ paid_price: null });
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

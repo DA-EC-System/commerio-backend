@@ -27,6 +27,9 @@ import {
   TokenBody,
 } from './schemas.ts';
 
+/** 201 khi lần nối có gian hàng tạo mới, kể cả không phải phần tử đầu; 200 khi chỉ nối lại (Documents/21 §18.4). */
+const createdStatus = (result: shops.ShopCallbackResult) => (result.shops.some((s) => s.created) ? 201 : 200);
+
 function actor(res: Response): shops.Actor {
   const { accountId, companyId } = getAuth(res);
   const { permissions, enabledModules } = getAccess(res);
@@ -61,14 +64,14 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { platform } = validated<typeof PlatformParams>(res, 'params');
       const result = await shops.connectByCode(platform, actor(res), validated<typeof CallbackBody>(res, 'body'));
-      res.status(result.created ? 201 : 200).json(result);
+      res.status(createdStatus(result)).json(result);
     },
   );
 
   router.post('/shops/:platform/token', connect, validate({ params: PlatformParams, body: TokenBody }), async (_req, res) => {
     const { platform } = validated<typeof PlatformParams>(res, 'params');
     const result = await shops.connectByToken(platform, actor(res), validated<typeof TokenBody>(res, 'body'));
-    res.status(result.created ? 201 : 200).json(result);
+    res.status(createdStatus(result)).json(result);
   });
 
   router.get('/shops/:id', view, validate({ params: ShopParams }), async (_req, res) => {

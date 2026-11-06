@@ -22,6 +22,9 @@ import { bytea, money, timestamps, version } from '../../../../shared/db/columns
 export const channelSchema = pgSchema('channel');
 
 export const marketplace = channelSchema.enum('marketplace', ['lazada', 'shopee', 'tiktok', 'mock']);
+export type Marketplace = (typeof marketplace.enumValues)[number];
+/** Mã sàn có trong enum DB (thêm sàn phải thêm giá trị enum, `Documents/tich-hop-san/README.md` bước 4). */
+export const isMarketplace = (value: string): value is Marketplace => (marketplace.enumValues as readonly string[]).includes(value);
 /** Gian hàng (25 §6.1, Documents/21 mục 18.1). "Sắp hết hạn" là nhãn phụ khi `active`, không phải trạng thái. */
 export const shopStatus = channelSchema.enum('shop_status', ['connecting', 'active', 'needs_reauth', 'disconnected']);
 
@@ -46,10 +49,25 @@ export const shops = channelSchema.table(
     refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }),
     status: shopStatus('status').notNull().default('connecting'),
     orderCutoffAt: timestamp('order_cutoff_at', { withTimezone: true }),
+    /** Hạn trả hàng (ngày) Admin nhập lúc thiết lập, cho sàn `returnWindow = 'days'` (Documents/21 §18.6.2). */
+    returnWindowDays: integer('return_window_days'),
     lastOrderSyncAt: timestamp('last_order_sync_at', { withTimezone: true }),
     settlementCursor: timestamp('settlement_cursor', { withTimezone: true }),
     lastError: text('last_error'),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
+    // Thiết lập theo #198 (Documents/21 §18.6.2, §18.7.7). `opening_stock_mode` null = thiết lập trước #198.
+    /** Phiếu kiểm kê đầu kỳ đang chờ ghi sổ; khác null là gian hàng `active` ở chế độ chờ kiểm kê lần đầu. */
+    openingStocktakeId: uuid('opening_stocktake_id'),
+    openingStocktakeNumber: text('opening_stocktake_number'),
+    openingStockMode: text('opening_stock_mode').$type<'push' | 'stocktake'>(),
+    /** SKU sàn không tạo listing lúc thiết lập, kể cả SKU người dùng bỏ qua. */
+    unmatchedSkuCount: integer('unmatched_sku_count'),
+    /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
+    openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
+    /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
+    openOrdersSkipped: integer('open_orders_skipped').notNull().default(0),
+    /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
+    stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
@@ -60,6 +78,18 @@ export const shops = channelSchema.table(
       .on(t.platform, t.externalShopId)
       .where(sql`${t.status} <> 'disconnected'`),
     check('shops_active_cutoff', sql`${t.status} <> 'active' or ${t.orderCutoffAt} is not null`),
+    check('shops_return_window_days', sql`${t.returnWindowDays} between 1 and 60`),
+    check(
+      'shops_opening_stocktake',
+      sql`(${t.openingStocktakeId} is null) = (${t.openingStocktakeNumber} is null) and (${t.openingStocktakeId} is null or ${t.orderCutoffAt} is not null)`,
+    ),
+    check(
+      'shops_setup_mode',
+      sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
+    ),
+    check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
+    // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
+    uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],
 );
 

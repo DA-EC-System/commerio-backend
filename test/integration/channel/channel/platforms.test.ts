@@ -39,14 +39,19 @@ describe('GET /channel/shops/platforms (#163)', () => {
   it('Lazada đủ key, secret, redirect thì có Lazada với oauth và token, không lộ cấu hình', async () => {
     registerAdapter('lazada', createLazadaAdapter(lazada));
     const res = await get('/shops/platforms');
-    expect(res.body).toEqual({ items: [{ platform: 'lazada', name: 'Lazada', connectable: true, methods: ['oauth', 'token'] }] });
-    expect(Object.keys(res.body.items[0]).sort()).toEqual(['connectable', 'methods', 'name', 'platform']);
+    // Năng lực của Lazada theo Documents/21 §18.6.3 (AC-6).
+    expect(res.body).toEqual({
+      items: [{ platform: 'lazada', name: 'Lazada', connectable: true, methods: ['oauth', 'token'], capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' } }],
+    });
+    expect(Object.keys(res.body.items[0]).sort()).toEqual(['capabilities', 'connectable', 'methods', 'name', 'platform']);
     expect(JSON.stringify(res.body)).not.toMatch(/super-secret|internal\.test|fe\.test/);
   });
 
   it('Lazada thiếu redirect thì chỉ nối bằng token; authorize-url 422 marketplace_unsupported', async () => {
     registerAdapter('lazada', createLazadaAdapter({ ...lazada, redirectUrl: undefined }));
-    expect(await platforms()).toEqual([{ platform: 'lazada', name: 'Lazada', connectable: true, methods: ['token'] }]);
+    expect(await platforms()).toEqual([
+      { platform: 'lazada', name: 'Lazada', connectable: true, methods: ['token'], capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' } },
+    ]);
     const res = await get('/shops/lazada/authorize-url');
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('marketplace_unsupported');
@@ -62,11 +67,12 @@ describe('GET /channel/shops/platforms (#163)', () => {
 
   it('endpoint không rẽ nhánh theo sàn: adapter nào khai cách nối thì có, khai rỗng thì không', async () => {
     registerAdapter('lazada', createLazadaAdapter(lazada));
-    registerAdapter('shopee', fakeAdapter({ name: 'Shopee', connectMethods: () => ['token'] }));
+    const shopeeCaps = { listingReview: false, hideBy: 'zero_stock', splitLevel: 'none', returnWindow: 'platform_status' } as const;
+    registerAdapter('shopee', fakeAdapter({ name: 'Shopee', connectMethods: () => ['token'], capabilities: shopeeCaps }));
     registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop' }));
-    expect((await platforms()).map((p) => [p.platform, p.methods])).toEqual([
-      ['lazada', ['oauth', 'token']],
-      ['shopee', ['token']],
+    expect((await platforms()).map((p) => [p.platform, p.methods, p.capabilities])).toEqual([
+      ['lazada', ['oauth', 'token'], { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' }],
+      ['shopee', ['token'], shopeeCaps],
     ]);
   });
 
@@ -94,5 +100,14 @@ describe('GET /channel/shops/platforms (#163)', () => {
     expect(op).toBeDefined();
     expect(Object.keys(op.responses)).toEqual(expect.arrayContaining(['200', '401', '403']));
     expect(doc.components.schemas.ShopPlatformList).toBeDefined();
+    // AC-S5: trường mới của hợp đồng có trong Swagger.
+    const schemas = doc.components.schemas;
+    expect(Object.keys(schemas.ShopCapabilities.properties).sort()).toEqual(['hideBy', 'listingReview', 'returnWindow', 'splitLevel']);
+    expect(schemas.ShopPlatform.properties).toHaveProperty('capabilities');
+    expect(schemas.Shop.properties).toHaveProperty('capabilities');
+    expect(schemas.Shop.properties).toHaveProperty('returnWindowDays');
+    expect(schemas.ShopCallbackInput.properties).toHaveProperty('params');
+    expect(schemas.ShopCallbackResult.properties).toHaveProperty('shops');
+    expect(schemas.ShopSetupInput.properties).toHaveProperty('returnWindowDays');
   });
 });
