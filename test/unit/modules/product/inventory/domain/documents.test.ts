@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeRound, DOC_PREFIX, docNumber, mergeLines, sameLines } from '#src/modules/product/inventory/domain/documents.ts';
+import { activeRound, DOC_PREFIX, docNumber, matchShipment, mergeLines } from '#src/modules/product/inventory/domain/documents.ts';
 
 // Luật thuần của phiếu do hệ thống lập theo kiện (spec #206 Q12, Q17, Q18).
 
@@ -39,23 +39,23 @@ describe('gộp dòng theo SKU', () => {
   });
 });
 
-describe('so dòng đã gộp (lưới gọi lặp ship, Q12)', () => {
-  it('cùng SKU, cùng số thì bằng', () => {
-    expect(sameLines(new Map([['a', 3]]), new Map([['a', 3]]))).toBe(true);
+describe('lưới gọi lặp ship theo id dòng kiện (Q12)', () => {
+  const doc = (n: number, lineIds: string[]) => ({ n, lineIds });
+
+  it('chưa dòng nào trừ trong lượt thì là lần mới, kể cả dòng mới cùng SKU, số với lần trước', () => {
+    expect(matchShipment([], ['x'])).toEqual({ kind: 'new' });
+    expect(matchShipment([doc(1, ['x'])], ['y'])).toEqual({ kind: 'new' });
   });
 
-  it('khác số, thiếu hoặc thừa SKU thì khác', () => {
-    expect(sameLines(new Map([['a', 3]]), new Map([['a', 2]]))).toBe(false);
-    expect(
-      sameLines(
-        new Map([['a', 3]]),
-        new Map([
-          ['a', 3],
-          ['b', 1],
-        ]),
-      ),
-    ).toBe(false);
-    expect(sameLines(new Map([['a', 3]]), new Map([['b', 3]]))).toBe(false);
+  it('đúng tập dòng của một phiếu (không kể thứ tự) thì là gọi lặp, trả phiếu đó', () => {
+    expect(matchShipment([doc(1, ['x'])], ['x'])).toEqual({ kind: 'repeat', doc: doc(1, ['x']) });
+    expect(matchShipment([doc(1, ['x', 'z']), doc(2, ['y'])], ['z', 'x'])).toEqual({ kind: 'repeat', doc: doc(1, ['x', 'z']) });
+  });
+
+  it('lẫn dòng đã trừ với dòng mới, thiếu dòng của phiếu, hoặc trải nhiều phiếu thì là xung đột, kèm id dòng đã trừ', () => {
+    expect(matchShipment([doc(1, ['x'])], ['x', 'y'])).toEqual({ kind: 'conflict', lineIds: ['x'] });
+    expect(matchShipment([doc(1, ['x', 'z'])], ['x'])).toEqual({ kind: 'conflict', lineIds: ['x'] });
+    expect(matchShipment([doc(1, ['x']), doc(2, ['y'])], ['x', 'y'])).toEqual({ kind: 'conflict', lineIds: ['x', 'y'] });
   });
 });
 

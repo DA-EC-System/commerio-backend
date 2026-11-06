@@ -28,7 +28,8 @@ async function docOf(documentId: string) {
 
 async function docLines(documentId: string) {
   const { rows } = await testPool().query(
-    'select id, variant_id, quantity, unit_cost from product.stock_document_lines where document_id = $1 order by variant_id',
+    `select id, variant_id, quantity, unit_cost, source_line_id from product.stock_document_lines where document_id = $1
+     order by variant_id, quantity`,
     [documentId],
   );
   return rows;
@@ -74,6 +75,9 @@ async function counterOf(companyId: string, docType: string) {
 
 const line = (variantId: string, quantity: number) => ({ variantId, quantity });
 
+/** Dòng của `ship`: id dòng kiện mặc định ngẫu nhiên (mỗi lần gọi là dòng kiện mới). */
+const pl = (variantId: string, quantity: number, packageLineId: string = randomUUID()) => ({ variantId, quantity, packageLineId });
+
 const lockLevelRow = (companyId: string, variantId: string) => (holder: PoolClient) =>
   holder.query('select 1 from product.stock_levels where company_id = $1 and variant_id = $2 for update', [companyId, variantId]);
 
@@ -91,9 +95,10 @@ describe('ship', () => {
     const { companyId, a } = await skuWith(10, 3);
     const k3 = randomUUID();
     const actor = randomUUID();
+    const x1 = randomUUID();
 
     const { ref, snapshot } = await withCompany(companyId, async () => {
-      const ref = await ship(k3, [line(a, 3)], { actorId: actor });
+      const ref = await ship(k3, [pl(a, 3, x1)], { actorId: actor });
       return { ref, snapshot: (await stockOf([a])).get(a)! };
     });
 
@@ -111,7 +116,7 @@ describe('ship', () => {
       note: null,
     });
     const lines = await docLines(ref.documentId);
-    expect(lines).toEqual([{ id: expect.any(String), variant_id: a, quantity: 3, unit_cost: '80000.00' }]);
+    expect(lines).toEqual([{ id: expect.any(String), variant_id: a, quantity: 3, unit_cost: '80000.00', source_line_id: x1 }]);
     expect(await movesOf(ref.documentId)).toEqual([
       {
         bucket: 'on_hand',
@@ -129,12 +134,13 @@ describe('ship', () => {
     ]);
   });
 
-  it('AC5: gọi lại cùng kiện cùng dòng → trả phiếu cũ, không thêm phiếu, thẻ kho, sự kiện', async () => {
+  it('AC5: gọi lại cùng kiện cùng dòng kiện → trả phiếu cũ, không thêm phiếu, thẻ kho, sự kiện', async () => {
     const { companyId, a } = await skuWith(10, 3);
     const k3 = randomUUID();
-    const first = await withCompany(companyId, () => ship(k3, [line(a, 3)], { actorId: null }));
+    const x1 = randomUUID();
+    const first = await withCompany(companyId, () => ship(k3, [pl(a, 3, x1)], { actorId: null }));
 
-    const again = await withCompany(companyId, () => ship(k3, [line(a, 3)], { actorId: null }));
+    const again = await withCompany(companyId, () => ship(k3, [pl(a, 3, x1)], { actorId: null }));
 
     expect(again).toEqual(first);
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 7, reserved: 0 });
@@ -143,20 +149,65 @@ describe('ship', () => {
     expect(await stockEvents(a)).toHaveLength(1);
   });
 
-  it('gọi lặp với dòng tách khác: A×1 + A×2 rồi A×3 → cùng phiếu (lưới so theo dòng đã gộp)', async () => {
+  it('AC5: lẫn dòng kiện đã trừ với dòng mới → lỗi có id dòng đã trừ, không ghi gì', async () => {
+    const { companyId, a } = await skuWith(10, 4);
+    const k = randomUUID();
+    const x1 = randomUUID();
+    await withCompany(companyId, () => ship(k, [pl(a, 3, x1)], { actorId: null }));
+
+    await expect(withCompany(companyId, () => ship(k, [pl(a, 3, x1), pl(a, 1)], { actorId: null }))).rejects.toThrow(x1);
+
+    expect(await docsOfPackage(k)).toEqual(['XK-000001']);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 7, reserved: 1 });
+  });
+
+  it('AC12: dòng ghép SKU sau trùng SKU, số với lần trừ trước → phiếu mới, trừ tồn (25 §8.4 quy tắc 3)', async () => {
+    const { companyId, a } = await skuWith(5, 0);
+    const k7 = randomUUID();
+
+    const xk1 = await withCompany(companyId, () => ship(k7, [pl(a, 1)], { actorId: null, forced: true }));
+    const xk2 = await withCompany(companyId, () => ship(k7, [pl(a, 1)], { actorId: null, forced: true }));
+
+    expect([xk1.number, xk2.number]).toEqual(['XK-000001', 'XK-000002']);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 3, reserved: 0 });
+  });
+
+  it('gọi lặp không kể thứ tự dòng; hai dòng kiện cùng SKU thành hai dòng phiếu, hai dòng thẻ kho, một sự kiện', async () => {
     const { companyId, a } = await skuWith(5, 3);
     const k = randomUUID();
-    const first = await withCompany(companyId, () => ship(k, [line(a, 1), line(a, 2)], { actorId: null }));
+    const [x, y] = [randomUUID(), randomUUID()];
 
-    expect(await withCompany(companyId, () => ship(k, [line(a, 3)], { actorId: null }))).toEqual(first);
-    expect(await docLines(first.documentId)).toMatchObject([{ variant_id: a, quantity: 3 }]);
+    const first = await withCompany(companyId, () => ship(k, [pl(a, 1, x), pl(a, 2, y)], { actorId: null }));
+
+    expect(await withCompany(companyId, () => ship(k, [pl(a, 2, y), pl(a, 1, x)], { actorId: null }))).toEqual(first);
+    const lines = await docLines(first.documentId);
+    expect(lines).toMatchObject([
+      { variant_id: a, quantity: 1, source_line_id: x },
+      { variant_id: a, quantity: 2, source_line_id: y },
+    ]);
+    const moves = await movesOf(first.documentId);
+    expect(moves.map((m) => [m.qty_change, m.source_line_id])).toEqual([
+      [-1, lines[0].id],
+      [-2, lines[1].id],
+    ]);
+    expect(moves.map((m) => m.balance_after)).toEqual([4, 2]);
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 2, reserved: 0 });
+    expect(await stockEvents(a)).toEqual([{ variantId: a, onHand: 2, reserved: 0, available: 2 }]);
+  });
+
+  it('một id dòng kiện xuất hiện hai lần trong một lần gọi → lỗi, không ghi gì', async () => {
+    const { companyId, a } = await skuWith(5, 3);
+    const k = randomUUID();
+    const x = randomUUID();
+
+    await expect(withCompany(companyId, () => ship(k, [pl(a, 1, x), pl(a, 2, x)], { actorId: null }))).rejects.toThrow(x);
+    expect(await docsOfPackage(k)).toEqual([]);
   });
 
   it('AC6: đang Tồn âm (tồn 3 giữ 5) bàn giao thường 2 → tồn 1 giữ 3, vẫn invariant_broken', async () => {
     const { companyId, a } = await skuWith(3, 5);
 
-    await withCompany(companyId, () => ship(randomUUID(), [line(a, 2)], { actorId: null }));
+    await withCompany(companyId, () => ship(randomUUID(), [pl(a, 2)], { actorId: null }));
 
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 1, reserved: 3, invariant_broken: true });
   });
@@ -164,7 +215,7 @@ describe('ship', () => {
   it('AC7a: bàn giao bắt buộc khi tồn 1 giữ 0 → tồn −2, invariant_broken, phiếu có ghi chú, không người lập', async () => {
     const { companyId, a } = await skuWith(1, 0);
 
-    const ref = await withCompany(companyId, () => ship(randomUUID(), [line(a, 3)], { actorId: null, forced: true }));
+    const ref = await withCompany(companyId, () => ship(randomUUID(), [pl(a, 3)], { actorId: null, forced: true }));
 
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: -2, reserved: 0, invariant_broken: true });
     expect(await docOf(ref.documentId)).toMatchObject({ note: 'Bàn giao bắt buộc theo sàn', created_by: null, posted_by: null });
@@ -174,7 +225,7 @@ describe('ship', () => {
   it('AC7b: bàn giao bắt buộc khi đủ hàng (tồn 5, bắt buộc 3) → tồn 2, invariant_broken false', async () => {
     const { companyId, a } = await skuWith(5, 0);
 
-    await withCompany(companyId, () => ship(randomUUID(), [line(a, 3)], { actorId: null, forced: true }));
+    await withCompany(companyId, () => ship(randomUUID(), [pl(a, 3)], { actorId: null, forced: true }));
 
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 2, reserved: 0, invariant_broken: false });
   });
@@ -184,7 +235,7 @@ describe('ship', () => {
     const k = randomUUID();
     const before = await levelOf(companyId, a);
 
-    await expect(withCompany(companyId, () => ship(k, [line(a, 2)], { actorId: null }))).rejects.toThrow(/chưa giữ hàng/);
+    await expect(withCompany(companyId, () => ship(k, [pl(a, 2)], { actorId: null }))).rejects.toThrow(/chưa giữ hàng/);
 
     expect(await levelOf(companyId, a)).toEqual(before);
     expect(await docsOfPackage(k)).toEqual([]);
@@ -195,7 +246,7 @@ describe('ship', () => {
     const k = randomUUID();
 
     await withCompany(companyId, async () => {
-      await ship(k, [line(a, 2)], { actorId: null }).catch(() => undefined);
+      await ship(k, [pl(a, 2)], { actorId: null }).catch(() => undefined);
     });
 
     expect(await counterOf(companyId, 'shipment')).toBeUndefined();
@@ -207,7 +258,7 @@ describe('ship', () => {
     const { companyId, variants } = await companyWithVariants();
     const a = variants[0]!;
 
-    await withCompany(companyId, () => ship(randomUUID(), [line(a, 1)], { actorId: null, forced: true }));
+    await withCompany(companyId, () => ship(randomUUID(), [pl(a, 1)], { actorId: null, forced: true }));
 
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: -1, reserved: 0, invariant_broken: true });
   });
@@ -224,7 +275,7 @@ describe('ship', () => {
     const [held] = await raceBehindLock(lockLevelRow(companyId, a), 2, () =>
       Promise.all([
         withCompany(companyId, () => reserve(randomUUID(), [line(a, 3)])),
-        withCompany(companyId, () => ship(randomUUID(), [line(a, 2)], { actorId: null })),
+        withCompany(companyId, () => ship(randomUUID(), [pl(a, 2)], { actorId: null })),
       ]),
     );
 
@@ -235,9 +286,10 @@ describe('ship', () => {
   it('AC10c: tồn 5 giữ 2; hai lần bàn giao cùng kiện song song → cùng một phiếu, tồn 3, một dòng thẻ kho', async () => {
     const { companyId, a } = await skuWith(5, 2);
     const k6 = randomUUID();
+    const y1 = randomUUID();
 
     const [r1, r2] = await raceBehindLock(lockLevelRow(companyId, a), 2, () =>
-      Promise.all([1, 2].map(() => withCompany(companyId, () => ship(k6, [line(a, 2)], { actorId: null })))),
+      Promise.all([1, 2].map(() => withCompany(companyId, () => ship(k6, [pl(a, 2, y1)], { actorId: null })))),
     );
 
     expect(r1).toEqual(r2);
@@ -256,7 +308,8 @@ describe('reverseShipment', () => {
     const { companyId, a } = await skuWith(10, 3);
     const k3 = randomUUID();
     const actor = randomUUID();
-    await withCompany(companyId, () => ship(k3, [line(a, 3)], { actorId: actor }));
+    const x3 = randomUUID();
+    await withCompany(companyId, () => ship(k3, [pl(a, 3, x3)], { actorId: actor }));
     await withCompany(companyId, () => receiveGoods(randomUUID(), received(a, 10, '100000'), actor));
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 17, avg_cost: '91764.71' });
 
@@ -280,7 +333,7 @@ describe('reverseShipment', () => {
       /không có lượt bàn giao/,
     );
 
-    const xk2 = await withCompany(companyId, () => ship(k3, [line(a, 3)], { actorId: actor }));
+    const xk2 = await withCompany(companyId, () => ship(k3, [pl(a, 3, x3)], { actorId: actor }));
     expect(xk2.number).toBe('XK-000002');
     expect(await docLines(xk2.documentId)).toMatchObject([{ unit_cost: '90000.00' }]);
     const dx2 = await withCompany(companyId, () => reverseShipment(k3, [line(a, 3)], { actorId: actor, reason: 'Nhầm lần hai' }));
@@ -296,12 +349,12 @@ describe('reverseShipment', () => {
     await receive(companyId, b, 10, 200);
     const k = randomUUID();
     const actor = randomUUID();
-    await withCompany(companyId, () => ship(k, [line(a, 2)], { actorId: null, forced: true }));
+    await withCompany(companyId, () => ship(k, [pl(a, 2)], { actorId: null, forced: true }));
     await withCompany(companyId, () => receiveGoods(randomUUID(), received(a, 10, '300'), actor));
     await setBuckets(companyId, a, { reserved: 1 });
     await setBuckets(companyId, b, { reserved: 1 });
 
-    const xk2 = await withCompany(companyId, () => ship(k, [line(a, 1), line(b, 1)], { actorId: actor }));
+    const xk2 = await withCompany(companyId, () => ship(k, [pl(a, 1), pl(b, 1)], { actorId: actor }));
 
     expect(xk2.number).toBe('XK-000002');
     const xkLines = new Map((await docLines(xk2.documentId)).map((l) => [l.variant_id, l]));
@@ -325,7 +378,7 @@ describe('reverseShipment', () => {
   it('lý do chỉ có khoảng trắng hoặc dài 501 ký tự → lỗi, không có phiếu đảo; dài đúng 500 thì được', async () => {
     const { companyId, a } = await skuWith(5, 3);
     const k = randomUUID();
-    await withCompany(companyId, () => ship(k, [line(a, 3)], { actorId: null }));
+    await withCompany(companyId, () => ship(k, [pl(a, 3)], { actorId: null }));
 
     for (const reason of ['   ', 'x'.repeat(501)]) {
       await expect(withCompany(companyId, () => reverseShipment(k, [line(a, 3)], { actorId: randomUUID(), reason }))).rejects.toThrow(/lý do/i);
@@ -342,7 +395,7 @@ describe('reverseShipment', () => {
     await receive(companyId, a, 5, 1000);
     await setBuckets(companyId, a, { reserved: 2 });
     const k = randomUUID();
-    await withCompany(companyId, () => ship(k, [line(a, 2)], { actorId: null }));
+    await withCompany(companyId, () => ship(k, [pl(a, 2)], { actorId: null }));
     const reverse = (lines: { variantId: string; quantity: number }[]) =>
       withCompany(companyId, () => reverseShipment(k, lines, { actorId: randomUUID(), reason: 'Nhầm' }));
 

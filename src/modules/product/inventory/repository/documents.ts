@@ -46,24 +46,31 @@ export interface NewDocumentLine {
   quantity: number | null;
   expectedQty: number | null;
   unitCost: string | null;
+  /** Id dòng kiện của phiếu xuất (Q12); trống với loại khác. */
+  sourceLineId: string | null;
 }
 
-/** Chèn dòng phiếu (mỗi SKU một dòng), trả `variantId → id dòng phiếu` để thẻ kho trỏ về. */
-export async function insertDocumentLines(documentId: string, lines: readonly NewDocumentLine[]): Promise<Map<string, string>> {
-  if (!lines.length) return new Map();
+export interface InsertedDocumentLine {
+  id: string;
+  variantId: string;
+  sourceLineId: string | null;
+}
+
+/** Chèn dòng phiếu, trả id từng dòng kèm SKU và dòng nguồn để thẻ kho trỏ về. */
+export async function insertDocumentLines(documentId: string, lines: readonly NewDocumentLine[]): Promise<InsertedDocumentLine[]> {
+  if (!lines.length) return [];
   const companyId = companyOfTransaction();
-  const rows = await getDb()
+  return getDb()
     .insert(stockDocumentLines)
     .values(lines.map((l) => ({ companyId, documentId, ...l })))
-    .returning({ id: stockDocumentLines.id, variantId: stockDocumentLines.variantId });
-  return new Map(rows.map((r) => [r.variantId, r.id]));
+    .returning({ id: stockDocumentLines.id, variantId: stockDocumentLines.variantId, sourceLineId: stockDocumentLines.sourceLineId });
 }
 
 export interface ShipmentDoc {
   id: string;
   number: string;
   kind: 'shipment' | 'shipment_reversal';
-  lines: { variantId: string; quantity: number; unitCost: string }[];
+  lines: { variantId: string; quantity: number; unitCost: string; sourceLineId: string | null }[];
 }
 
 /** Mọi phiếu xuất, phiếu đảo của kiện kèm dòng, cũ trước (theo `created_at`, Q22). */
@@ -88,6 +95,7 @@ export async function packageShipments(packageId: string): Promise<ShipmentDoc[]
       variantId: stockDocumentLines.variantId,
       quantity: stockDocumentLines.quantity,
       unitCost: stockDocumentLines.unitCost,
+      sourceLineId: stockDocumentLines.sourceLineId,
     })
     .from(stockDocumentLines)
     .where(
@@ -104,7 +112,9 @@ export async function packageShipments(packageId: string): Promise<ShipmentDoc[]
     number: d.number,
     kind: d.kind as ShipmentDoc['kind'],
     // Dòng phiếu xuất, phiếu đảo luôn có `quantity` và `unit_cost` (spec #206 mục 5.3).
-    lines: lines.filter((l) => l.documentId === d.id).map((l) => ({ variantId: l.variantId, quantity: l.quantity!, unitCost: l.unitCost! })),
+    lines: lines
+      .filter((l) => l.documentId === d.id)
+      .map((l) => ({ variantId: l.variantId, quantity: l.quantity!, unitCost: l.unitCost!, sourceLineId: l.sourceLineId })),
   }));
 }
 

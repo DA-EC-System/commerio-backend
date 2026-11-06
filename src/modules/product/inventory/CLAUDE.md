@@ -39,11 +39,11 @@ Lõi không tự chống gọi lặp: bên gọi chặn bằng chuyển trạng 
 
 | Loại | Số | Lập khi | Trạng thái |
 |---|---|---|---|
-| `shipment` | `XK-000001` | `ship` | `posted`; dòng giá = giá vốn bình quân lúc khoá; `note` "Bàn giao bắt buộc theo sàn" khi `forced` |
+| `shipment` | `XK-000001` | `ship` | `posted`; mỗi dòng kiện một dòng phiếu, `source_line_id` = id dòng kiện, giá = giá vốn bình quân lúc khoá; `note` "Bàn giao bắt buộc theo sàn" khi `forced` |
 | `shipment_reversal` | `DX-000001` | `reverseShipment` | `posted`; dòng giá = bình quân giá các dòng xuất của SKU trong lượt; `note` = lý do |
 | `return_inspection` | `KT-000001` | `receiveBack` | `draft`; dòng có `expected_qty`, chưa có giá (ghi sổ ở #112) |
 
-Mỗi loại một bộ đếm `doc_counters` (`docType` = tên loại). `created_at = clock_timestamp()` (giờ lúc chèn, sau khi khoá dòng tồn) vì **lượt đang xuất** của kiện (các phiếu `shipment` sau phiếu `shipment_reversal` gần nhất) sắp theo cột này. Mỗi phiếu ghi `state_transitions` (`stock_documents`, `null → posted|draft`). Thẻ kho của `XK`, `DX` trỏ `stock_document` + id dòng phiếu.
+Mỗi loại một bộ đếm `doc_counters` (`docType` = tên loại). `created_at = clock_timestamp()` (giờ lúc chèn, sau khi khoá dòng tồn) vì **lượt đang xuất** của kiện (các phiếu `shipment` sau phiếu `shipment_reversal` gần nhất) sắp theo cột này. Mỗi phiếu ghi `state_transitions` (`stock_documents`, `null → posted|draft`). Thẻ kho của `XK`, `DX` trỏ `stock_document` + id dòng phiếu (`XK`: một dòng thẻ kho cho mỗi dòng kiện).
 
 ## Gọi vào
 
@@ -53,10 +53,10 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `recheckThresholds(variantIds)`: purchasing gọi sau khi đang về đổi.
 - `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).
-- Cổng tồn theo kiện (Documents/21 mục 11.1; `lines` là `{ variantId, quantity }[]`, gộp theo SKU; `quantity` không nguyên dương, SKU công ty khác là lỗi lập trình 500):
+- Cổng tồn theo kiện (Documents/21 mục 11.1; `lines` là `{ variantId, quantity }[]` (`ship` thêm `packageLineId`), gộp theo SKU khi kiểm và đổi đang giữ; `quantity` không nguyên dương, SKU công ty khác là lỗi lập trình 500):
   - `reserve(packageId, lines)` → `{ reserved }`: nguyên kiện, mọi SKU đủ khả dụng thì giữ hết, thiếu một SKU thì không giữ gì. `lines` rỗng trả `true`.
   - `release(packageId, lines)`: trừ đang giữ; nhả quá số đang giữ thì 500 kèm mã kiện, không ghi gì.
-  - `ship(packageId, lines, { actorId, forced? })` → `{ documentId, number }`: phiếu `XK`, trừ tồn thực và đang giữ. Kiện chưa giữ đủ mà không `forced` thì 500 trước khi lấy số phiếu. `forced`: trừ tồn thực, không trừ đang giữ, được vỡ bất biến. Gọi lại cùng dòng (đã gộp) trong lượt đang xuất trả phiếu cũ.
+  - `ship(packageId, lines: { variantId, quantity, packageLineId }[], { actorId, forced? })` → `{ documentId, number }`: phiếu `XK`, trừ tồn thực và đang giữ. Kiện chưa giữ đủ mà không `forced` thì 500 trước khi lấy số phiếu. `forced`: trừ tồn thực, không trừ đang giữ, được vỡ bất biến. Lưới gọi lặp theo `packageLineId` (Q12): trong lượt đang xuất, đúng tập dòng kiện của một phiếu thì trả phiếu đó; không dòng nào đã trừ thì lập phiếu mới (dòng ghép SKU sau trùng SKU, số với lần trước vẫn được trừ); lẫn dòng đã trừ với dòng mới, hoặc `packageLineId` lặp trong một lần gọi, thì 500.
   - `reverseShipment(packageId, lines, { actorId, reason })` → `{ documentId, number }`: đảo lượt đang xuất, cộng lại tồn thực và đang giữ; mỗi SKU không quá số của lượt; không còn lượt thì 500; `reason` sau khi trim khác rỗng, ≤ 500 ký tự.
   - `receiveBack({ type: 'package' | 'return_request', id }, lines)` → `{ documentId, number }`: phiếu `KT` nháp, không đổi tồn; nguồn đã có phiếu thì trả phiếu đó.
 
@@ -65,7 +65,7 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - Khoá kiện (`FOR UPDATE`) trước khi gọi. Thứ tự khoá: kiện → dòng tồn theo `variantId` → `doc_counters`.
 - Chống gọi lặp `reserve`, `release` (Q11): chỉ gọi `reserve` cho dòng có `reserved_qty = 0`, đặt `reserved_qty = quantity` khi nhận `true`; `release` ngược lại. Inventory cộng trừ đúng số được truyền, không có sổ giữ hàng riêng.
 - `ship` gọi đúng một lần theo `stock_deducted` (Q12); giá vốn dòng kiện đọc `stockOf(...).avgCost` ngay sau `ship` trong cùng giao dịch (Q16).
-- Không gọi `ship` hai lần trong một lượt với dòng gộp trùng hệt: lưới gọi lặp sẽ trả phiếu cũ, tồn thực thừa mà không báo lỗi. Ca dễ gặp: dòng chưa ghép lúc bàn giao, ghép sau vào cùng SKU và cùng số với lần trừ đầu (`25` §8.4 quy tắc 3). Đang chờ chốt cách sửa (spec §10).
+- Mỗi dòng của `ship` mang đúng id dòng kiện (`package_lines.id`); dòng ghép SKU sau (`25` §8.4 quy tắc 3) trừ bằng một lần `ship` riêng chỉ gồm các dòng đó.
 - Sau `reverseShipment`, đặt lại `reserved_qty = quantity`, `stock_deducted = false` cho dòng được đảo: inventory đã cộng lại đang giữ, kể cả khi lượt đó là bàn giao bắt buộc (Q17). Quên thì đang giữ kẹt mãi, khả dụng thấp hơn thật.
 - Chuyển trạng thái kiện, yêu cầu trả có điều kiện trước `receiveBack`: hàm này không khoá gì, hai lần gọi song song cùng nguồn sẽ lập hai phiếu.
 

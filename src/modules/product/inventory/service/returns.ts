@@ -29,7 +29,7 @@ export async function receiveBack(source: { type: DocumentSourceType; id: string
     sourceId: source.id,
     actorId: null,
     note: null,
-    lines: [...expected].map(([variantId, q]) => ({ variantId, quantity: null, expectedQty: q, unitCost: null })),
+    lines: [...expected].map(([variantId, q]) => ({ variantId, quantity: null, expectedQty: q, unitCost: null, sourceLineId: null })),
   });
   return ref;
 }

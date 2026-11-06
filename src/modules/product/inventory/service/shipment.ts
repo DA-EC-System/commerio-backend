@@ -1,7 +1,7 @@
 // Bàn giao và đảo bàn giao theo kiện (Documents/21 mục 11.1, spec #206 mục 5.5). Chạy trong giao dịch của bên gọi;
 // fulfillment khoá kiện trước khi gọi và chặn gọi lặp bằng `stock_deducted` (Q12). Thứ tự khoá: dòng tồn theo
 // `variantId` → `doc_counters`.
-import { activeRound, type DocumentRef, mergeLines, sameLines, type StockLine } from '../domain/documents.ts';
+import { activeRound, type DocumentRef, matchShipment, mergeLines, type ShipLine, type StockLine } from '../domain/documents.ts';
 import { averageCost } from '../domain/stock.ts';
 import { packageShipments } from '../repository/documents.ts';
 import { createSystemDocument } from './documents.ts';
@@ -18,17 +18,28 @@ const FORCED_NOTE = 'Bàn giao bắt buộc theo sàn';
 const REASON_MAX = 500;
 
 /**
- * Lập phiếu xuất `XK` đã ghi sổ theo giá vốn bình quân lúc khoá, trừ tồn thực; bàn giao thường trừ cả đang giữ. Trong
- * lượt đang xuất (Q17) đã có phiếu cùng dòng thì trả phiếu đó, không trừ tồn lần nữa.
+ * Lập phiếu xuất `XK` đã ghi sổ theo giá vốn bình quân lúc khoá, mỗi dòng kiện một dòng phiếu, trừ tồn thực; bàn giao
+ * thường trừ cả đang giữ. Trong lượt đang xuất (Q17) đã có phiếu đúng tập dòng kiện này thì trả phiếu đó, không trừ lần
+ * nữa; lẫn dòng kiện đã trừ với dòng mới là lỗi của bên gọi (Q12).
  */
-export async function ship(packageId: string, lines: readonly StockLine[], opts: ShipOptions): Promise<DocumentRef> {
+export async function ship(packageId: string, lines: readonly ShipLine[], opts: ShipOptions): Promise<DocumentRef> {
   const wanted = mergeLines(lines);
   if (!wanted.size) throw new Error(`Kiện ${packageId} bàn giao không có dòng hàng`);
+  const lineIds = lines.map((l) => l.packageLineId);
+  const repeated = [...new Set(lineIds.filter((id, i) => lineIds.indexOf(id) !== i))];
+  if (repeated.length) throw new Error(`Kiện ${packageId} có dòng kiện lặp trong một lần bàn giao: ${repeated.join(', ')}`);
   const levels = await lockLevels([...wanted.keys()]);
 
   // Lưới gọi lặp (Q12): đọc sau khi khoá dòng tồn, nên lần gọi trùng chạy song song thấy phiếu đã commit.
-  const repeat = activeRound(await packageShipments(packageId)).find((d) => sameLines(mergeLines(d.lines), wanted));
-  if (repeat) return { documentId: repeat.id, number: repeat.number };
+  const round = activeRound(await packageShipments(packageId)).map((d) => ({
+    ...d,
+    lineIds: d.lines.flatMap((l) => (l.sourceLineId ? [l.sourceLineId] : [])),
+  }));
+  const match = matchShipment(round, lineIds);
+  if (match.kind === 'repeat') return { documentId: match.doc.id, number: match.doc.number };
+  if (match.kind === 'conflict') {
+    throw new Error(`Kiện ${packageId}: dòng kiện ${match.lineIds.join(', ')} đã bàn giao trong lượt này; gọi lại phải đúng tập dòng của phiếu cũ`);
+  }
 
   const forced = opts.forced === true;
   if (!forced) {
@@ -39,19 +50,33 @@ export async function ship(packageId: string, lines: readonly StockLine[], opts:
   }
 
   const costOf = (variantId: string) => levels.get(variantId)!.avgCost;
-  const { ref, lineIdOf } = await createSystemDocument({
+  const created = await createSystemDocument({
     kind: 'shipment',
     status: 'posted',
     sourceType: 'package',
     sourceId: packageId,
     actorId: opts.actorId,
     note: forced ? FORCED_NOTE : null,
-    lines: [...wanted].map(([variantId, quantity]) => ({ variantId, quantity, expectedQty: null, unitCost: costOf(variantId) })),
+    lines: lines.map((l) => ({
+      variantId: l.variantId,
+      quantity: l.quantity,
+      expectedQty: null,
+      unitCost: costOf(l.variantId),
+      sourceLineId: l.packageLineId,
+    })),
   });
+  const ref = created.ref;
+  const docLineOf = new Map(created.lines.map((d) => [d.sourceLineId!, d.id]));
   await applyChange({
     source: { type: 'stock_document', id: ref.documentId },
-    moves: [...wanted].map(
-      ([variantId, q]): Move => ({ variantId, bucket: 'on_hand', qty: -q, unitCost: costOf(variantId), sourceLineId: lineIdOf.get(variantId)! }),
+    moves: lines.map(
+      (l): Move => ({
+        variantId: l.variantId,
+        bucket: 'on_hand',
+        qty: -l.quantity,
+        unitCost: costOf(l.variantId),
+        sourceLineId: docLineOf.get(l.packageLineId)!,
+      }),
     ),
     ...(forced ? {} : { reserved: new Map([...wanted].map(([id, q]) => [id, -q])) }),
     forced,
@@ -87,7 +112,7 @@ export async function reverseShipment(
     costOf.set(variantId, averageCost(ofSku).toFixed(2));
   }
 
-  const { ref, lineIdOf } = await createSystemDocument({
+  const { ref, lines: docLines } = await createSystemDocument({
     kind: 'shipment_reversal',
     status: 'posted',
     sourceType: 'package',
@@ -95,8 +120,15 @@ export async function reverseShipment(
     actorId: opts.actorId,
     note: reason,
     reason,
-    lines: [...wanted].map(([variantId, quantity]) => ({ variantId, quantity, expectedQty: null, unitCost: costOf.get(variantId)! })),
+    lines: [...wanted].map(([variantId, quantity]) => ({
+      variantId,
+      quantity,
+      expectedQty: null,
+      unitCost: costOf.get(variantId)!,
+      sourceLineId: null,
+    })),
   });
+  const lineIdOf = new Map(docLines.map((d) => [d.variantId, d.id]));
   await applyChange({
     source: { type: 'stock_document', id: ref.documentId },
     moves: [...wanted].map(

@@ -19,6 +19,7 @@ export {
   release,
   reserve,
   reverseShipment,
+  type ShipLine,
   type ShipOptions,
   ship,
   type StockLine,

@@ -3,7 +3,13 @@
 import { recordTransition } from '../../../core/index.ts';
 import { DOC_PREFIX, docNumber, type DocumentRef } from '../domain/documents.ts';
 import { takeNextNumber } from '../repository/counters.ts';
-import { insertDocument, insertDocumentLines, type NewDocumentLine, type NewSystemDocument } from '../repository/documents.ts';
+import {
+  type InsertedDocumentLine,
+  insertDocument,
+  insertDocumentLines,
+  type NewDocumentLine,
+  type NewSystemDocument,
+} from '../repository/documents.ts';
 
 export interface SystemDocumentInput extends Omit<NewSystemDocument, 'number'> {
   lines: readonly NewDocumentLine[];
@@ -11,12 +17,12 @@ export interface SystemDocumentInput extends Omit<NewSystemDocument, 'number'> {
   reason?: string | null;
 }
 
-/** Cấp số theo loại phiếu, chèn phiếu và dòng, ghi lịch sử `null → status`. Trả số phiếu và id dòng theo SKU. */
-export async function createSystemDocument(input: SystemDocumentInput): Promise<{ ref: DocumentRef; lineIdOf: Map<string, string> }> {
+/** Cấp số theo loại phiếu, chèn phiếu và dòng, ghi lịch sử `null → status`. Trả số phiếu và các dòng vừa chèn. */
+export async function createSystemDocument(input: SystemDocumentInput): Promise<{ ref: DocumentRef; lines: InsertedDocumentLine[] }> {
   const { lines, reason, ...doc } = input;
   const number = docNumber(DOC_PREFIX[doc.kind], await takeNextNumber(doc.kind));
   const documentId = await insertDocument({ ...doc, number });
-  const lineIdOf = await insertDocumentLines(documentId, lines);
+  const inserted = await insertDocumentLines(documentId, lines);
   await recordTransition({
     entityType: 'stock_documents',
     entityId: documentId,
@@ -26,5 +32,5 @@ export async function createSystemDocument(input: SystemDocumentInput): Promise<
     actorId: doc.actorId,
     reason: reason ?? null,
   });
-  return { ref: { documentId, number }, lineIdOf };
+  return { ref: { documentId, number }, lines: inserted };
 }

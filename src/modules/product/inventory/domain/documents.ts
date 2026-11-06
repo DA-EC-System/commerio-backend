@@ -1,5 +1,5 @@
-// Luật thuần của phiếu do hệ thống lập theo kiện (spec #206): số phiếu (Q18), gộp dòng, lưới gọi lặp `ship` (Q12),
-// lượt đang xuất (Q17).
+// Luật thuần của phiếu do hệ thống lập theo kiện (spec #206): số phiếu (Q18), gộp dòng, lưới gọi lặp `ship` theo id
+// dòng kiện (Q12), lượt đang xuất (Q17).
 
 /** Một dòng hàng của kiện truyền vào cổng tồn (Documents/21 mục 11.1). */
 export interface StockLine {
@@ -33,9 +33,27 @@ export function mergeLines(lines: readonly StockLine[]): Map<string, number> {
   return merged;
 }
 
-/** Hai tập dòng đã gộp có cùng SKU và cùng số lượng. */
-export function sameLines(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
-  return a.size === b.size && [...a].every(([id, q]) => b.get(id) === q);
+/** Dòng của `ship`: dòng kiện (`"order".package_lines`) cùng SKU và số lượng (spec #206 Q12). */
+export interface ShipLine extends StockLine {
+  packageLineId: string;
+}
+
+export type ShipmentMatch<T> = { kind: 'new' } | { kind: 'repeat'; doc: T } | { kind: 'conflict'; lineIds: string[] };
+
+/**
+ * Lưới gọi lặp `ship` (Q12): so id dòng kiện của lần gọi với các phiếu xuất trong lượt đang xuất. Không dòng nào đã trừ
+ * thì là lần mới (dòng ghép SKU sau trùng SKU, số với lần trước vẫn là lần mới); đúng tập dòng của một phiếu thì là gọi
+ * lặp; còn lại là bên gọi sai (lẫn dòng đã trừ, thiếu dòng của phiếu, trải nhiều phiếu).
+ */
+export function matchShipment<T extends { lineIds: readonly string[] }>(round: readonly T[], requested: readonly string[]): ShipmentMatch<T> {
+  const wanted = new Set(requested);
+  const touched = round.filter((d) => d.lineIds.some((id) => wanted.has(id)));
+  if (!touched.length) return { kind: 'new' };
+  const [only] = touched;
+  if (touched.length === 1 && only!.lineIds.length === wanted.size && only!.lineIds.every((id) => wanted.has(id))) {
+    return { kind: 'repeat', doc: only! };
+  }
+  return { kind: 'conflict', lineIds: touched.flatMap((d) => d.lineIds.filter((id) => wanted.has(id))) };
 }
 
 /**
