@@ -12,6 +12,7 @@ import { type ProductPort, setProductPort } from '#src/modules/channel/channel/s
 import { listingSyncQueue, openOrderPullQueue, reconcileShopJobs } from '#src/modules/channel/channel/service/shop-jobs.ts';
 import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
 import { jobBoss } from '#src/modules/core/platform/service/jobs/boss.ts';
+import { env } from '#src/shared/config/env.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -54,12 +55,13 @@ function remoteOrder(id: string, sku: string, status: RemoteOrder['lines'][numbe
 
 let open: RemoteOrder[] = [];
 let safeUntil: Date | null = null;
+let pageSize = 1;
 const listOpenOrders = vi.fn(async (_t: string, cursor: string | null) => {
-  // Hai trang để thấy lật trang; `safeUntil` báo ở trang cuối.
+  // Mặc định mỗi trang một đơn để thấy lật trang; `safeUntil` báo ở trang cuối.
   const i = Number(cursor ?? 0);
   const refs: RemoteOrderRef[] = open.map((o) => ({ externalOrderId: o.externalOrderId, placedAt: o.placedAt, updatedAt: o.updatedAt }));
-  const page = refs.slice(i, i + 1);
-  const next = i + 1 < refs.length ? String(i + 1) : null;
+  const page = refs.slice(i, i + pageSize);
+  const next = i + pageSize < refs.length ? String(i + pageSize) : null;
   return { orders: page, nextCursor: next, safeUntil: next ? null : safeUntil };
 });
 const getOrder = vi.fn(async (_t: string, id: string) => open.find((o) => o.externalOrderId === id)!);
@@ -93,6 +95,8 @@ afterEach(() => {
   setStockPort();
   open = [];
   safeUntil = null;
+  pageSize = 1;
+  env.OPEN_ORDER_PULL_MAX = undefined;
   vi.clearAllMocks();
 });
 
@@ -232,6 +236,7 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
         { key: 'push_stock', status: 'blocked', blockedBy: 'open_orders' },
       ],
       unmatchedCount: 0,
+      openOrdersSkipped: 0,
     });
     await runOpenOrderPull({ companyId: c.companyId, shopId });
     expect((await steps()).steps.slice(1).map((s) => s.status)).toEqual(['done', 'running']);
@@ -242,7 +247,11 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
       .post('/api/v1/channel/shops/lazada/token')
       .set('Authorization', `Bearer ${c.ceo.token}`)
       .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
-    expect(fresh.body.shop.setup).toEqual({ steps: [{ key: 'match', status: 'pending', blockedBy: null }], unmatchedCount: 0 });
+    expect(fresh.body.shop.setup).toEqual({
+      steps: [{ key: 'match', status: 'pending', blockedBy: null }],
+      unmatchedCount: 0,
+      openOrdersSkipped: 0,
+    });
   });
 
   it('nối lại khi lượt đơn mở đang nằm ở hàng giữ: vẫn chỉ một việc (#198 diff-review N3)', async () => {
@@ -280,5 +289,37 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     const boss = await jobBoss();
     expect(await boss.findJobs(openOrderPullQueue.name, { data: { shopId: pending.shopId } })).toHaveLength(1);
     expect(await boss.findJobs(openOrderPullQueue.name, { data: { shopId: done.shopId } })).toHaveLength(0);
+  });
+
+  // 250 đơn mở, ngày đặt khác nhau, sàn trả lẫn thứ tự (theo trạng thái rồi `updated_at`, không theo ngày đặt).
+  const manyOpen = (sku: string) =>
+    Array.from({ length: 250 }, (_, i) => {
+      const k = (i * 97) % 250;
+      return remoteOrder(`N${String(k).padStart(3, '0')}`, sku, 'pending', new Date(Date.UTC(2026, 6, 1) + k * 3600_000));
+    });
+  const pulledIds = async (shopId: string) => (await packagesOf(shopId)).map((p) => p.external_order_id as string).sort();
+  const setupOfShop = async (c: Company, shopId: string) =>
+    (await request(testApp()).get(`/api/v1/channel/shops/${shopId}`).set('Authorization', `Bearer ${c.ceo.token}`)).body.setup;
+
+  it('OPEN_ORDER_PULL_MAX=200 với 250 đơn mở: kéo đúng 200 đơn đặt mới nhất, `setup.openOrdersSkipped` = 50', async () => {
+    const { shopId, sku, c } = await setUpShop();
+    open = manyOpen(sku);
+    pageSize = 50;
+    env.OPEN_ORDER_PULL_MAX = 200;
+    await runOpenOrderPull({ companyId: c.companyId, shopId });
+    const newest = Array.from({ length: 200 }, (_, j) => `N${String(249 - j).padStart(3, '0')}`).sort();
+    expect(await pulledIds(shopId)).toEqual(newest);
+    expect(getOrder).toHaveBeenCalledTimes(200);
+    expect((await shopCols(shopId)).open_orders_pulled_at).not.toBeNull();
+    expect(await setupOfShop(c, shopId)).toMatchObject({ openOrdersSkipped: 50 });
+  });
+
+  it('không đặt OPEN_ORDER_PULL_MAX: kéo đủ 250 đơn mở, không bỏ đơn nào', async () => {
+    const { shopId, sku, c } = await setUpShop();
+    open = manyOpen(sku);
+    pageSize = 50;
+    await runOpenOrderPull({ companyId: c.companyId, shopId });
+    expect(await pulledIds(shopId)).toHaveLength(250);
+    expect(await setupOfShop(c, shopId)).toMatchObject({ openOrdersSkipped: 0 });
   });
 });

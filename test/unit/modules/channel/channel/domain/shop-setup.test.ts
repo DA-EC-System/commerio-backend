@@ -10,6 +10,7 @@ const base: SetupInput = {
   openingStocktakeId: null,
   unmatchedSkuCount: 3,
   openOrdersPulledAt: null,
+  openOrdersSkipped: 0,
   stockPushedAt: null,
   openOrderPullFailedAt: null,
   listingSyncFailedAt: null,
@@ -21,6 +22,7 @@ describe('tiến độ thiết lập gian hàng (#198 AC-24, Documents/21 §18.7
     expect(setupOf({ ...base, status: 'connecting', openingStockMode: null, unmatchedSkuCount: null }, now)).toEqual({
       steps: [step('match', 'pending')],
       unmatchedCount: 0,
+      openOrdersSkipped: 0,
     });
   });
 
@@ -28,6 +30,7 @@ describe('tiến độ thiết lập gian hàng (#198 AC-24, Documents/21 §18.7
     expect(setupOf(base, now)).toEqual({
       steps: [step('match', 'done'), step('open_orders', 'running'), step('push_stock', 'blocked', 'open_orders')],
       unmatchedCount: 3,
+      openOrdersSkipped: 0,
     });
   });
 

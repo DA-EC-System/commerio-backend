@@ -9,6 +9,8 @@ export interface ShopSetup {
   steps: { key: SetupStepKey; status: SetupStepStatus; blockedBy: string | null }[];
   /** Số SKU sàn chưa ghép sau thiết lập, gồm SKU người dùng bỏ qua. */
   unmatchedCount: number;
+  /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`; 0 khi không cắt. */
+  openOrdersSkipped: number;
 }
 
 export interface SetupInput {
@@ -17,6 +19,7 @@ export interface SetupInput {
   openingStocktakeId: string | null;
   unmatchedSkuCount: number | null;
   openOrdersPulledAt: Date | null;
+  openOrdersSkipped: number;
   stockPushedAt: Date | null;
   /** Lúc việc `channel.open_order_pull` của gian hàng rơi vào hàng lỗi gần nhất. */
   openOrderPullFailedAt: Date | null;
@@ -34,7 +37,7 @@ const step = (key: SetupStepKey, status: SetupStepStatus, blockedBy: string | nu
  * hàng `connecting` chỉ có bước ghép `pending`: chưa biết chế độ tồn đầu kỳ nên chưa biết có bước kiểm kê không.
  */
 export function setupOf(s: SetupInput, now: Date): ShopSetup | null {
-  if (s.status === 'connecting') return { steps: [step('match', 'pending')], unmatchedCount: 0 };
+  if (s.status === 'connecting') return { steps: [step('match', 'pending')], unmatchedCount: 0, openOrdersSkipped: 0 };
   if (!s.openingStockMode || s.status === 'disconnected') return null;
   const awaiting = s.openingStocktakeId !== null;
   const pulled = s.openOrdersPulledAt;
@@ -52,5 +55,5 @@ export function setupOf(s: SetupInput, now: Date): ShopSetup | null {
   );
   const allDone = steps.every((x) => x.status === 'done');
   if (allDone && s.stockPushedAt && now.getTime() - s.stockPushedAt.getTime() > SETUP_VISIBLE_MS) return null;
-  return { steps, unmatchedCount: s.unmatchedSkuCount ?? 0 };
+  return { steps, unmatchedCount: s.unmatchedSkuCount ?? 0, openOrdersSkipped: s.openOrdersSkipped };
 }

@@ -64,6 +64,8 @@ export const shops = channelSchema.table(
     unmatchedSkuCount: integer('unmatched_sku_count'),
     /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
     openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
+    /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
+    openOrdersSkipped: integer('open_orders_skipped').notNull().default(0),
     /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
     stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
     ...timestamps,
@@ -85,6 +87,7 @@ export const shops = channelSchema.table(
       'shops_setup_mode',
       sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
     ),
+    check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],

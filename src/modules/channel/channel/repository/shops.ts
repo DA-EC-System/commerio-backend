@@ -179,12 +179,13 @@ export async function markStockPushed(id: string): Promise<void> {
 /** Lỗi lượt kéo đơn còn mở ghi vào `last_error` bắt đầu bằng câu này; lượt xong thì xoá đúng lỗi đó (#198 P3). */
 export const OPEN_ORDER_PULL_ERROR = 'Lượt kéo đơn còn mở chưa xong';
 
-/** Lượt kéo đơn còn mở xong (#198 A10): từ giờ `syncListings` mới đẩy tồn. Không tăng `version`. */
-export async function markOpenOrdersPulled(id: string): Promise<void> {
+/** Lượt kéo đơn còn mở xong (#198 A10): từ giờ `syncListings` mới đẩy tồn. `skipped`: số đơn bỏ vì trần. Không tăng `version`. */
+export async function markOpenOrdersPulled(id: string, skipped: number): Promise<void> {
   await getDb()
     .update(shops)
     .set({
       openOrdersPulledAt: sql`coalesce(${shops.openOrdersPulledAt}, now())`,
+      openOrdersSkipped: skipped,
       lastError: sql`case when ${shops.lastError} like ${`${OPEN_ORDER_PULL_ERROR}%`} then null else ${shops.lastError} end`,
     })
     .where(eq(shops.id, id));

@@ -108,6 +108,10 @@ export const Shop = z
             .strict(),
         ),
         unmatchedCount: z.number().int().meta({ description: 'Số SKU sàn chưa ghép sau thiết lập, gồm SKU bỏ qua' }),
+        openOrdersSkipped: z.number().int().meta({
+          description:
+            'Số đơn còn mở đặt trước mốc không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX` (chỉ lấy các đơn đặt mới nhất); 0 khi không cắt. Hàng của các đơn này không được giữ',
+        }),
       })
       .strict()
       .nullable()
