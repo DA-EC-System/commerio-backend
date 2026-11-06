@@ -11,6 +11,7 @@ export const AuditLogQuery = z.object({
   action: AuditAction.optional(),
   from: vnDayParam('Từ ngày'),
   to: vnDayParam('Đến ngày', true),
+  selfApproved: z.stringbool().optional().meta({ description: '`true`: chỉ các lần tự duyệt' }),
 });
 
 export const AuditLogParams = z.object({ id: z.string() });
@@ -27,10 +28,13 @@ export const CompanyAuditLog = z
   .object({
     id: z.string(),
     action: AuditAction,
-    entityType: z.string().meta({ description: '`<schema>.<bảng>`, vd `core.roles`' }),
+    entityType: z
+      .string()
+      .meta({ description: '`<schema>.<bảng>`, vd `core.roles`; dòng tự duyệt dùng tên bảng như `statusHistory`, vd `purchase_requests`' }),
     entityId: z.uuid().nullable(),
     entityLabel: z.string(),
     actor: AuditActor,
+    selfApproved: z.boolean().meta({ description: 'Bước người duyệt khác đi theo ngoại lệ tự duyệt: FE hiện nhãn "Tự duyệt"' }),
     createdAt: z.iso.datetime(),
   })
   .meta({ id: 'CompanyAuditLog' });

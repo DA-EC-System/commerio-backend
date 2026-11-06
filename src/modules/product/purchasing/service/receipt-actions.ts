@@ -88,7 +88,16 @@ async function post(
   if (defects.length) await draftReturn(actor, receipt, request, defects);
 
   await updateReceipt(receipt.id, { status: to, postedBy: actor.accountId, postedAt: new Date(), selfApproved });
-  await recordTransition({ entityType: RECEIPT_ENTITY, entityId: receipt.id, from: receipt.status, to, action, actorId: actor.accountId });
+  await recordTransition({
+    entityType: RECEIPT_ENTITY,
+    entityId: receipt.id,
+    from: receipt.status,
+    to,
+    action,
+    actorId: actor.accountId,
+    selfApproved,
+    entityCode: receipt.number,
+  });
   await applyReceiving(request, { receiptId: receipt.id, actorId: actor.accountId });
   // Hàng lỗi và phần nhận đều làm giảm đang về, kể cả SKU không có move tồn thực (Documents/25 mục 7.5).
   await recheckThresholds(variantIdsOf(requestLines));

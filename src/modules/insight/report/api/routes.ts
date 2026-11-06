@@ -9,7 +9,7 @@ import { figuresCsv, sourceLabel } from '../domain/csv.ts';
 import { vnDay } from '../domain/days.ts';
 import { resolveRange } from '../domain/figures.ts';
 import * as reports from '../service/queries.ts';
-import { DailyQuery, ExportQuery, RangeQuery } from './schemas.ts';
+import { DailyQuery, ExportQuery, RangeQuery, SelfApprovalQuery } from './schemas.ts';
 
 type Query = z.output<typeof ExportQuery>;
 // Mỗi route một schema query; đọc chung qua dạng rộng nhất (ExportQuery), trường không có thì trống.
@@ -55,6 +55,12 @@ export function reportRouter(ctx: ModuleContext): Router {
     const range = rangeOf(res);
     const filter = filterOf(res);
     res.json(await reports.daily(viewerOf(res), range, filter));
+  });
+
+  router.get('/self-approvals', ...view, validate({ query: SelfApprovalQuery }), async (_req, res) => {
+    const range = rangeOf(res);
+    const { page, pageSize } = validated<typeof SelfApprovalQuery>(res, 'query');
+    res.json(await reports.selfApprovals(viewerOf(res), range, { page, pageSize }));
   });
 
   router.get('/export', ...view, ctx.authorize('report.dashboard.export'), validate({ query: ExportQuery }), async (_req, res) => {
