@@ -67,12 +67,12 @@ export async function markRefunded(orderId: string): Promise<OrderPaymentState> 
   return stateOf(order, await updateOrderPayment(orderId, { refundStatus: 'refunded' }));
 }
 
-/** Đảo phiếu thu: `paid` → `unpaid`, `cod_collected` → `cod_pending` (UC-PF-09, chưa có issue). */
+/** Đảo phiếu thu: `paid` → `unpaid`, `cod_collected` → `cod_pending` (UC-PF-09, D4.2 commerio-backend#234). */
 export async function revertPaid(_orderId: string): Promise<OrderPaymentState> {
-  throw notImplemented('revertPaid', 'UC-PF-09');
+  throw notImplemented('revertPaid', 'commerio-backend#234', 'Thành');
 }
 
-/** Đảo phiếu chi hoàn tiền: `refunded` → `pending_refund` (UC-PF-09, chưa có issue). */
+/** Đảo phiếu chi hoàn tiền: `refunded` → `pending_refund` (UC-PF-09, D4.2 commerio-backend#234). */
 export async function revertRefunded(_orderId: string): Promise<OrderPaymentState> {
-  throw notImplemented('revertRefunded', 'UC-PF-09');
+  throw notImplemented('revertRefunded', 'commerio-backend#234', 'Thành');
 }
