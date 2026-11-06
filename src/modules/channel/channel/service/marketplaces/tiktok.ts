@@ -126,7 +126,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     try {
       return rawTokens(await client.callAuth('/api/v2/token/refresh', { refresh_token: refreshToken, grant_type: 'refresh_token' }));
     } catch (err) {
-      // Docs không liệt kê mã lỗi của refresh: sàn từ chối refresh token (hết hạn, bị thu hồi) thì gian hàng phải nối lại.
+      // Docs không liệt kê mã lỗi của refresh (gọi thật 06/11/2026: refresh token sai → 36004005 "can not find related auth
+      // record"): sàn từ chối refresh token (hết hạn, bị thu hồi) thì gian hàng phải nối lại.
       if (err instanceof MarketplaceError && err.kind === 'rejected') throw new MarketplaceError('unauthorized', err.platformCode, err.platformMessage);
       throw err;
     }

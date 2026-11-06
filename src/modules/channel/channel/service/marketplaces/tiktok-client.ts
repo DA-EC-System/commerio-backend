@@ -38,11 +38,12 @@ export function signTiktok(path: string, query: Readonly<Record<string, string>>
 
 // Lỗi tạm, thử lại được: 36009002 quá tần suất (cùng HTTP 429), 36009003 lỗi nội bộ, 36009007 hết giờ (common-errors).
 const TRANSIENT_CODES = new Set(['36009002', '36009003', '36009007']);
-// Token sai hoặc hết hạn: gian hàng cần nối lại. 105002 hết hạn (common-errors); 36009005 token sai (gọi thật 02/11/2026,
-// #217, không có trong trang mã lỗi chung); 101000 token không thuộc gian hàng hoặc không khớp `shop_cipher`.
+// Token sai hoặc hết hạn: gian hàng cần nối lại. 105002 hết hạn (common-errors); 36009005 token sai (gọi thật 02/11 và
+// 06/11/2026, câu "The 'access_token' header is invalid", không có trong trang mã lỗi chung); 101000 token không thuộc gian hàng hoặc không khớp `shop_cipher`.
 const AUTH_CODES = new Set(['105002', '36009005', '101000']);
 // 36009004 dùng chung cho nhiều lỗi kiểm request, docs bảo phân biệt theo câu: chỉ câu về token là mất uỷ quyền.
-const AUTH_MESSAGE_36009004 = /access_token header is invalid|x-tts-access-token header is invalid/i;
+// Gọi thật 06/11/2026: câu có dấu nháy (`The 'access_token' header is invalid`), nên nhận cả hai dạng.
+const AUTH_MESSAGE_36009004 = /(x-tts-access-token|access_token)'? header is invalid/i;
 
 /** Mã lỗi trong body (`code` khác 0) đổi sang loại của app; mã và câu gốc giữ ở `platformCode`, `platformMessage`. */
 export function tiktokError(code: unknown, message: unknown): MarketplaceError {

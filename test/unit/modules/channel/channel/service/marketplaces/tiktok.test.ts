@@ -81,6 +81,8 @@ describe('tiktokError', () => {
     [36009005, 'invalid access token', 'unauthorized'],
     [101000, 'Invalid query or header', 'unauthorized'],
     [36009004, 'Invalid credentials. The x-tts-access-token header is invalid.', 'unauthorized'],
+    [36009004, "Invalid credentials. The 'access_token' header is invalid.", 'unauthorized'],
+    [36009004, 'Invalid shop_cipher.', 'rejected'],
     [36009004, 'Invalid timestamp. The value of the timestamp query parameter must not be earlier than 5 minutes', 'rejected'],
     [106001, 'Invalid credentials. The sign query parameter is invalid.', 'rejected'],
     [105005, 'Access denied', 'rejected'],
