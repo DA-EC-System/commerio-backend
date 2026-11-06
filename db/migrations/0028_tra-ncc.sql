@@ -1,0 +1,3 @@
+ALTER TABLE "product"."supplier_returns" DROP CONSTRAINT "supplier_returns_result_by";--> statement-breakpoint
+ALTER TABLE "product"."supplier_returns" ADD COLUMN "result_self_approved" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "product"."supplier_returns" ADD CONSTRAINT "supplier_returns_result_by" CHECK ("product"."supplier_returns"."result_by" is null or "product"."supplier_returns"."result_by" is distinct from "product"."supplier_returns"."sent_by" or "product"."supplier_returns"."result_self_approved");
