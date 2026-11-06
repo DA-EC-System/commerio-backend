@@ -25,6 +25,7 @@ describe('Lazada: quyết toán (#117)', () => {
       externalOrderId: '600000000000001',
       date: '2026-10-30',
       feeName: 'Commission',
+      feeCode: null,
       transactionType: 'Orders-Lazada Fees',
       amount: '-5160.00',
       withholding: '0.00',
@@ -73,6 +74,12 @@ describe('loại khoản của dòng quyết toán Lazada (adapter điền kind,
 });
 
 describe('mã giao dịch Lazada (#250)', () => {
+  it('giữ mã phí gốc fee_type (US-TI-06 dòng 2)', async () => {
+    const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: [{ ...row(1), fee_type: 'FT_COMMISSION' }] }));
+    const txns = await createLazadaAdapter(config, fn).getTransactions!('t', '2026-10-01', '2026-10-31');
+    expect(txns[0]!.feeCode).toBe('FT_COMMISSION');
+  });
+
   it('getTransactions chuẩn hoá mã trước khi trả', async () => {
     const fn = vi.fn().mockResolvedValueOnce(json({ code: '0', data: [{ ...row(1), transaction_number: 'VN1234ABC- 77' }] }));
     const txns = await createLazadaAdapter(config, fn).getTransactions!('t', '2026-10-01', '2026-10-31');
