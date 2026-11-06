@@ -85,7 +85,7 @@ Thực thể vòng đời khai bảng chuyển bằng `defineMachine([...])` (ex
 
 1. `assertTransition(machine, current, action, { actor, record, reason, canSelfApprove, view })`: ném `invalid_transition` 409 (kèm `current` = `view` hoặc trạng thái), `forbidden` 403, `second_person_required` 409, mã của `guard` 409, `reason_required` 422; trả `{ to, selfApproved }`. `actor` = `{ accountId, permissions, enabledModules }` lấy nguyên từ `getAccess(res)`, khung tự bỏ quyền của phân hệ tắt; `actor` null khi hệ thống, sàn chuyển. `record.createdBy` là người mà bước cần người thứ hai phải khác, bên gọi tự nạp. Bước có `allowSelfApproval` (chỉ bảng có cột `self_approved`) thì truyền `canSelfApprove(accountId)` của `staff`.
 2. Repository `UPDATE … WHERE id AND status = from AND version`, ghi `self_approved` nếu có; không trúng dòng thì đọc lại, 409.
-3. `recordTransition({ entityType: '<tên bảng>', entityId, from, to, action, actorId, source?, reason? })` trong cùng giao dịch.
+3. `recordTransition({ entityType: '<tên bảng>', entityId, from, to, action, actorId, source?, reason?, selfApproved?, entityCode? })` trong cùng giao dịch. `selfApproved` lấy nguyên từ `assertTransition`: lần tự duyệt ghi thêm một dòng nhật ký thao tác (mã chứng từ `entityCode`) và hiện ở `GET /report/self-approvals` (#246).
 4. Chi tiết bản ghi trả `statusHistory: await getStatusHistory('<tên bảng>', id)` (`staff`) và nút hợp lệ bằng `availableActions`.
 
 ## Thêm nghiệp vụ vào module
