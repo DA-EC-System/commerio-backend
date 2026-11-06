@@ -116,7 +116,7 @@ function summary(o: OrderViewRow, f: Facts, shops: Map<string, ShopRef>, labels:
     paymentMethod: o.paymentMethod,
     platformPaymentMethod: o.platformPaymentMethod,
     externalOrderId: o.externalOrderId,
-    recipientName: o.customer ? null : (o.shippingAddress as StoredAddress)?.name || null,
+    recipientName: o.source === 'marketplace' && !o.customer ? (o.shippingAddress as StoredAddress)?.name || null : null,
     shipBy: isoOrNull(o.shipBy),
     total: toInt(o.total),
     lineCount: f.lineCount,
