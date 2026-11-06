@@ -3,9 +3,8 @@ import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated as input } from '../../../../shared/http/validate.ts';
-import { logger } from '../../../../shared/logger.ts';
 import { approvePayment, type Caller, getPayment, listBankMatching, listPayments, matchBank, resolvePayment } from '../service/payments.ts';
-import { listSettlementRuns, openRun, processRun, runView } from '../service/settlement-runs.ts';
+import { listSettlementRuns, openRun, runView } from '../service/settlement-runs.ts';
 import type { FinanceContext } from '../service/settlement-views.ts';
 import { canSeeCost, financeView } from './access.ts';
 import {
@@ -49,14 +48,14 @@ export function mountPaymentRoutes(router: Router, ctx: FinanceContext): void {
   router.get('/settlement-runs', view, validate({ query: RunListQuery }), async (_req, res) => {
     res.json(await listSettlementRuns(caller(res).companyId, input<typeof RunListQuery>(res, 'query')));
   });
-  // R12: trả 202 với lần chạy `running`, phần gọi sàn và ghi sổ chạy tiếp ở nền; xem kết quả ở GET /settlement-runs.
+  // R12: trả 202 với lần chạy `running`; phần gọi sàn và ghi sổ chạy ở việc nền `finance.settlement_run` (#248),
+  // xem kết quả ở GET /settlement-runs.
   router.post('/settlement-runs', resolve, validate({ body: RunBody }), async (_req, res) => {
     const { shopId, fileId } = input<typeof RunBody>(res, 'body');
     if (fileId) throw new AppError(422, 'file_import_unsupported', 'Đối soát bằng tệp báo cáo của sàn chưa hỗ trợ');
     const { companyId, accountId } = caller(res);
     const run = await openRun(ctx, companyId, accountId, shopId);
     res.status(202).json(runView(run));
-    processRun(ctx, companyId, run.id).catch((err: unknown) => logger.error({ err, runId: run.id }, 'đối soát chạy nền lỗi'));
   });
 
   router.get('/bank-matching', view, validate({ query: BankMatchingQuery }), async (_req, res) => {

@@ -8,6 +8,7 @@ import {
   DEAD_QUEUE,
   defineQueue,
   HoldJob,
+  type JobAttempt,
   JobDataSchema,
   releaseHeld,
   scheduleForShop,
@@ -108,6 +109,23 @@ describe('hàng việc nền pg-boss (#102)', () => {
     expect(dead.data).toMatchObject({ companyId, marker });
     expect(JSON.stringify(dead.sourceOutput)).toContain('sàn trả lỗi');
     await boss.offWork(queue.name);
+  }, 30_000);
+
+  it('handler biết lượt thử: lượt cuối mang lastAttempt để tự ghi lỗi trước khi việc sang hàng việc lỗi (#248)', async () => {
+    const queue = testQueue({ attempts: 2, retryDelaySeconds: 1 });
+    const { companyId } = await createCompany();
+    const seen: JobAttempt[] = [];
+    await workQueue(queue, async (_data, attempt) => {
+      seen.push(attempt);
+      if (!attempt.lastAttempt) throw new Error('lượt đầu lỗi');
+    });
+    await sendJob(queue, { companyId, marker: randomUUID() });
+    await vi.waitFor(() => expect(seen).toHaveLength(2), { timeout: 20_000, interval: 500 });
+    expect(seen).toEqual([
+      { attempt: 1, lastAttempt: false },
+      { attempt: 2, lastAttempt: true },
+    ]);
+    await (await jobBoss()).offWork(queue.name);
   }, 30_000);
 
   it('AC-2: hai worker cùng nhận một hàng thì mỗi việc chạy đúng một lần', async () => {
