@@ -245,6 +245,33 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     expect(fresh.body.shop.setup).toEqual({ steps: [{ key: 'match', status: 'pending', blockedBy: null }], unmatchedCount: 0 });
   });
 
+  it('nối lại khi lượt đơn mở đang nằm ở hàng giữ: vẫn chỉ một việc (#198 diff-review N3)', async () => {
+    const { c, shopId } = await setUpShop();
+    const boss = await jobBoss();
+    await boss.createQueue('platform.held');
+    await boss.send('platform.held', { companyId: c.companyId, shopId, queue: openOrderPullQueue.name });
+    const { rows } = await testPool().query<{ external_shop_id: string }>(
+      `update channel.shops set status = 'needs_reauth' where id = $1 returning external_shop_id`,
+      [shopId],
+    );
+    const res = await request(testApp())
+      .post('/api/v1/channel/shops/lazada/token')
+      .set('Authorization', `Bearer ${c.ceo.token}`)
+      .send({ accessToken: `tok-${rows[0]!.external_shop_id}` });
+    expect(res.body).toMatchObject({ reconnect: { jobsRun: 1 } });
+    expect(await boss.findJobs(openOrderPullQueue.name, { data: { shopId } })).toHaveLength(1);
+  });
+
+  it('lỗi hệ thống trong lượt đơn mở không lộ ra `last_error`, chỉ câu chung (#198 diff-review N6)', async () => {
+    const { shopId, sku, c } = await setUpShop();
+    open = [remoteOrder('X1', sku, 'pending', at('2026-10-01T00:00:00Z'))];
+    getOrder.mockRejectedValueOnce(new Error('chi tiết nội bộ: password=abc'));
+    await expect(runOpenOrderPull({ companyId: c.companyId, shopId })).rejects.toThrow();
+    const { last_error } = await shopCols(shopId);
+    expect(last_error).toContain('đơn còn mở');
+    expect(last_error).not.toContain('password');
+  });
+
   it('AC-17: worker khởi động xếp lại việc cho gian hàng active chưa kéo đơn mở, không xếp cho gian hàng đã kéo', async () => {
     const pending = await setUpShop();
     const done = await setUpShop();

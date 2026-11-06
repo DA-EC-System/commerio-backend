@@ -48,7 +48,9 @@ export function runOpenOrderPull(job: ShopJob): Promise<void> {
       await pullOpenOrders(job.companyId, job.shopId);
     } catch (err) {
       const silent = err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected');
-      if (!silent) await withCompany(job.companyId, () => recordOpenOrderPullError(job.shopId, err instanceof Error ? err.message : String(err)));
+      // Người dùng đọc `last_error`: lỗi nghiệp vụ ghi câu của nó, lỗi khác chỉ ghi câu chung, chi tiết ở log việc nền.
+      const message = err instanceof AppError ? err.message : 'lỗi hệ thống, đang thử lại';
+      if (!silent) await withCompany(job.companyId, () => recordOpenOrderPullError(job.shopId, message));
       throw err;
     }
   });

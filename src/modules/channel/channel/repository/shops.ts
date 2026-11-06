@@ -163,6 +163,11 @@ export async function setupStateOfCompany(exceptShopId: string): Promise<{ hasSe
   };
 }
 
+/** Khoá thiết lập của công ty tới hết giao dịch: hai lần thiết lập gian hàng cùng công ty chạy lần lượt (#198 A12). */
+export async function lockCompanySetup(companyId: string): Promise<void> {
+  await getDb().execute(sql`select pg_advisory_xact_lock(hashtext('channel.setup'), hashtext(${companyId}))`);
+}
+
 /** Đánh dấu lượt đẩy tồn đầu tiên sau thiết lập đã chạy (§18.7.7 `push_stock`). Không tăng `version`. */
 export async function markStockPushed(id: string): Promise<void> {
   await getDb()

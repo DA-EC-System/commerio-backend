@@ -108,6 +108,8 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
  * `open_orders_pulled_at` và xếp việc đồng bộ listing (lúc đó mới đẩy tồn); adapter báo `safeUntil` hay hết số trang thì
  * ném để pg-boss chạy lại cả lượt (đơn đã có bỏ qua nhờ `raw_orders`). Sàn chưa có `listOpenOrders` thì đặt cột ngay.
  */
+const incomplete = (message: string) => new AppError(503, 'open_orders_incomplete', message);
+
 export async function pullOpenOrders(companyId: string, shopId: string): Promise<PullResult> {
   const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
   const result: PullResult = { pulled: 0, created: 0, updated: 0 };
@@ -117,7 +119,7 @@ export async function pullOpenOrders(companyId: string, shopId: string): Promise
     let cursor: string | null = null;
     let pages = 0;
     do {
-      if (++pages > MAX_PAGES) throw new Error(`Lượt kéo đơn còn mở quá ${MAX_PAGES} trang`);
+      if (++pages > MAX_PAGES) throw incomplete(`Lượt kéo đơn còn mở quá ${MAX_PAGES} trang`);
       const prev: string | null = cursor;
       const page = await onMarketplace(async () => {
         const p = await adapter.listOpenOrders!(accessToken, prev);
@@ -125,7 +127,7 @@ export async function pullOpenOrders(companyId: string, shopId: string): Promise
         return p;
       });
       // Sàn chưa chốt dữ liệu tới hiện tại: có thể sót đơn, chạy lại cả lượt thay vì đặt cột (#198 P3).
-      if (page.safeUntil) throw new Error(`Sàn chỉ chắc dữ liệu đơn tới ${page.safeUntil.toISOString()}, chạy lại lượt`);
+      if (page.safeUntil) throw incomplete(`Sàn chỉ chắc dữ liệu đơn tới ${page.safeUntil.toISOString()}, chạy lại lượt`);
       const known = await withCompany(companyId, () => findRawOrderTimes(shopId, page.orders.map((o) => o.externalOrderId)));
       for (const ref of page.orders) {
         const seen = known.get(ref.externalOrderId);

@@ -323,12 +323,12 @@ export const OrderPullResult = z
 // Thiết lập lần đầu (§18.2). Mốc kéo đơn do BE đặt là lúc gọi; FE cũ còn gửi `orderCutoffAt` thì khoá lạ bị bỏ (không `.strict()`).
 export const SetupBody = z
   .object({
-    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).optional().meta({
+    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(10_000).optional().meta({
       description: 'Cũ, giữ tới hết đợt 2: SKU sàn nhận biến thể gợi ý. Gửi cùng `decisions` thì 422 `errors.decisions` (21 §18.7.5)',
     }),
     decisions: z
       .array(z.object({ externalSkuId: z.string().trim().min(1).max(40), variantId: z.uuid().nullable() }).strict())
-      .max(500)
+      .max(10_000)
       .optional()
       .meta({
         description:

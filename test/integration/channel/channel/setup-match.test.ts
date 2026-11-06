@@ -3,12 +3,13 @@
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { ShopSetupPreview } from '#src/modules/channel/channel/api/schemas.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { createCompany } from '../../helpers/company.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter } from './helpers.ts';
@@ -186,5 +187,64 @@ describe('quyết định từng SKU khi thiết lập (AC-23)', () => {
       { external_sku_id: 'sku-1', variant_id: vSku.id, seller_sku: 'CMR-1' },
       { external_sku_id: 'sku-2', variant_id: vName.id, seller_sku: 'LZ-JEAN' },
     ]);
+  });
+});
+
+// Sửa sau review diff (#198 `diff-review.md` P1, P2, N2).
+describe('gợi ý và quyết định: ca biên sau review', () => {
+  const baseRemote = remote.length;
+  const baseVariants = variants.length;
+  afterEach(() => {
+    remote.splice(baseRemote);
+    variants.splice(baseVariants);
+  });
+
+  it('nhiều SKU sàn cùng tiêu đề (một sản phẩm nhiều SKU) không được gợi ý theo tên: tên không phân biệt được biến thể', async () => {
+    const polo = ['Đỏ / S', 'Xanh / M', 'Đen / L'].map((label, i) => variant(`CMR-P${i}`, 'Áo polo nam', label));
+    variants.push(...polo);
+    remote.push(...polo.map((_, i) => sku(`sku-p${i}`, `LZ-P${i}`, 'Áo polo nam')));
+    const res = await (await connectingShop()).preview();
+    const rows = (res.body.suggestions as { externalSkuId: string; match: string }[]).filter((r) => r.externalSkuId.startsWith('sku-p'));
+    expect(rows.map((r) => r.match)).toEqual(['none', 'none', 'none']);
+  });
+
+  it('SKU sàn không có SKU người bán: không gợi ý, chọn biến thể cho nó thì 422 theo dòng', async () => {
+    remote.push(sku('sku-e', '', 'Giày thể thao 42'));
+    const { preview, setup } = await connectingShop();
+    const row = (await preview()).body.suggestions.find((r: { externalSkuId: string }) => r.externalSkuId === 'sku-e');
+    expect(row).toMatchObject({ match: 'none', variantId: null });
+    const res = await setup({ decisions: [{ externalSkuId: 'sku-e', variantId: vOther.id }] });
+    expect(res.status).toBe(422);
+    expect(Object.keys(res.body.errors)).toEqual(['decisions.0']);
+  });
+
+  it('nhận hơn 500 dòng `decisions` (gợi ý gồm mọi SKU của gian hàng): lỗi báo theo dòng, không chặn cả body', async () => {
+    const { setup } = await connectingShop();
+    const decisions = Array.from({ length: 600 }, (_, i) => ({ externalSkuId: `khong-co-${i}`, variantId: null }));
+    const res = await setup({ decisions });
+    expect(res.status).toBe(422);
+    expect(res.body.errors).not.toHaveProperty('decisions');
+    expect(Object.keys(res.body.errors)).toHaveLength(600);
+  });
+
+  it('A12 khi đua: gian hàng khác vừa vào chế độ chờ kiểm kê trong lúc `push` đang chạy thì `push` nhận 422, không thành `active`', async () => {
+    const { c, shopId, setup } = await connectingShop();
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query(`select pg_advisory_xact_lock(hashtext('channel.setup'), hashtext($1))`, [c.companyId]);
+        await holder.query(
+          `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at,
+             opening_stocktake_id, opening_stocktake_number, opening_stock_mode, unmatched_sku_count)
+           values ($1, 'lazada', $2, 'Đang chờ', 'active', now(), $3, 'KK-000001', 'stocktake', 0)`,
+          [c.companyId, randomUUID(), randomUUID()],
+        );
+      },
+      1,
+      () => setup({ decisions: [] }),
+    );
+    expect(res.status).toBe(422);
+    expect(res.body.errors.openingStock).toContain('KK-000001');
+    const { rows } = await testPool().query('select status from channel.shops where id = $1', [shopId]);
+    expect(rows[0].status).toBe('connecting');
   });
 });

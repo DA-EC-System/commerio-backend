@@ -8,7 +8,7 @@ import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { returnWindowError, shopMachine } from '../domain/shop.ts';
 import { insertListing, listListingRows, nameSimilarities } from '../repository/listings.ts';
-import { setupStateOfCompany, updateShop } from '../repository/shops.ts';
+import { lockCompanySetup, setupStateOfCompany, updateShop } from '../repository/shops.ts';
 import { stocktakePort } from './stocktake-port.ts';
 import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
@@ -70,7 +70,14 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
     chosen.set(i, { variant: v, score: null });
     taken.add(v.id);
   });
-  const restRemote = remote.flatMap((_, i) => (chosen.has(i) ? [] : [i]));
+  // Tên chỉ phân biệt được biến thể khi tiêu đề là của riêng một SKU: Lazada trả tên sản phẩm cho mọi SKU của nó, nên
+  // nhiều SKU cùng tiêu đề sẽ hoà điểm và ghép nhầm màu, cỡ (#198 diff-review P2). SKU không có SKU người bán thì kéo đơn
+  // không tra được biến thể, không gợi ý.
+  const titleCount = new Map<string, number>();
+  for (const r of remote) titleCount.set(r.title.trim().toLowerCase(), (titleCount.get(r.title.trim().toLowerCase()) ?? 0) + 1);
+  const restRemote = remote.flatMap((r, i) =>
+    chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 ? [] : [i],
+  );
   const restVariants = open.filter((v) => !taken.has(v.id));
   if (restRemote.length && restVariants.length) {
     const pairs = await inCompany(() =>
@@ -149,7 +156,9 @@ function pickListings(
     const v = d.variantId === null ? undefined : byId.get(d.variantId);
     const error = !s
       ? 'SKU sàn không có trong gợi ý'
-      : seenSkus.has(d.externalSkuId)
+      : d.variantId !== null && !s.sellerSku
+        ? 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi ghép'
+        : seenSkus.has(d.externalSkuId)
         ? 'SKU sàn bị chọn hai lần'
         : d.variantId === null
           ? null
@@ -209,6 +218,16 @@ export async function finishSetup(
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
   const stocktake = await withCompany(actor.companyId, async () => {
+    // Kiểm lại dưới khoá của công ty: thiết lập của gian hàng khác (vd vừa vào chế độ chờ kiểm kê) chạy song song thì
+    // lần sau thấy kết quả của lần trước (A12, #198 diff-review N2). Index một phần vẫn chặn hai phiếu.
+    await lockCompanySetup(actor.companyId);
+    const now = await setupStateOfCompany(shopId);
+    const raced = now.awaitingStocktake
+      ? awaitingError(now.awaitingStocktake)
+      : !now.hasSetUpShop && input.openingStock === 'push'
+        ? 'Gian hàng đầu tiên của công ty phải kiểm kê đầu kỳ'
+        : null;
+    if (raced) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { openingStock: raced } });
     const { shop } = await shopSession(shopId);
     const { to } = assertTransition(shopMachine, shop.status, 'finish_setup', { actor });
     for (const p of picked) {
