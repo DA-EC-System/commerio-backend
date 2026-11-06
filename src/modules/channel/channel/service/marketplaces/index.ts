@@ -43,11 +43,10 @@ export function registeredPlatforms(): string[] {
 
 /**
  * Sàn chưa có adapter mà vẫn hiện cho người dùng (Documents/21 §18.7.3), kèm lý do. Sàn có adapter đăng ký thì theo
- * adapter, mục ở đây bỏ qua (vd TikTok sau commerio-backend#217).
+ * adapter, mục ở đây bỏ qua. TikTok có adapter từ commerio-backend#217 nên không còn mục khai sẵn.
  */
 const PLANNED: readonly { platform: string; name: string; reason: string }[] = [
   { platform: 'shopee', name: 'Shopee', reason: 'Shopee chưa cấp quyền API cho ứng dụng sinh viên' },
-  { platform: 'tiktok', name: 'TikTok Shop', reason: 'Đang làm, thuộc commerio-backend#217 (đợt 4)' },
 ];
 
 /** Không bao giờ hiện cho người dùng, kể cả khi có adapter đăng ký dưới mã này (§18.7.3). */
