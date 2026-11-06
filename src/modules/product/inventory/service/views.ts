@@ -29,15 +29,33 @@ const attributesLabel = (v: VariantSummary) => v.attributes.map((a) => a.value).
 /** Đang về theo biến thể, do purchasing tính (#108); inventory nhận qua `ctx` vì purchasing đã import inventory. */
 export type IncomingLookup = (variantIds?: readonly string[]) => Promise<Map<string, number>>;
 
-/** `ctx` của router inventory: `product/index.ts` tiêm `incomingOf` của purchasing. */
+/**
+ * Số phiếu nhận, phiếu trả NCC theo id, do purchasing tra (#206 phần 2a). Đầu vào và kết quả tách theo loại chứng từ:
+ * id không có, hoặc có nhưng là chứng từ loại khác, thì vắng trong Map của loại đó.
+ */
+export type PurchaseNumberLookup = (ids: {
+  readonly goodsReceipts: readonly string[];
+  readonly supplierReturns: readonly string[];
+}) => Promise<{ readonly goodsReceipts: Map<string, string>; readonly supplierReturns: Map<string, string> }>;
+
+/** `ctx` của router inventory: `product/index.ts` tiêm `incomingOf`, `purchaseDocumentNumbers` của purchasing. */
 export interface InventoryContext extends ModuleContext {
   readonly incomingOf?: IncomingLookup;
+  readonly purchaseDocumentNumbers?: PurchaseNumberLookup;
 }
 
 /** Hàm đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 rõ ràng thay vì trả đang về 0. */
 export function incomingLookupOf(ctx: InventoryContext): IncomingLookup {
   if (!ctx.incomingOf) throw new AppError(500, 'internal_error', 'Chưa nối số đang về của purchasing (src/modules/product/index.ts)');
   return ctx.incomingOf;
+}
+
+/** Hàm đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 thay vì trả thẻ kho thiếu số phiếu. */
+export function purchaseNumbersOf(ctx: InventoryContext): PurchaseNumberLookup {
+  if (!ctx.purchaseDocumentNumbers) {
+    throw new AppError(500, 'internal_error', 'Chưa nối số phiếu của purchasing (src/modules/product/index.ts)');
+  }
+  return ctx.purchaseDocumentNumbers;
 }
 
 /**
@@ -67,6 +85,8 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
     incoming,
     shortage,
     negative: level?.invariantBroken ?? false,
+    // shortcut: Lệch tồn thật ở #206 phần 2b (dữ liệu channel, #223).
+    drift: false,
     minQty,
     belowMin: isBelowMin({ available, incoming, shortage, minQty, businessStatus: v.businessStatus }),
     state: stockState(available, minQty),

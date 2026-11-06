@@ -15,3 +15,6 @@ export { incomingByVariant as incomingOf } from './repository/requests.ts';
 
 /** Chặn tắt phân hệ Nhập hàng khi đã có dữ liệu (#152); `src/wiring.ts` đưa cho `platform`. */
 export { hasPurchasingData } from './repository/suppliers.ts';
+
+/** Số phiếu nhận, phiếu trả NCC theo id cho thẻ kho; inventory nhận qua `ctx` (`product/index.ts`). */
+export { type PurchaseDocumentIds, type PurchaseDocumentNumbers, purchaseDocumentNumbers } from './repository/document-numbers.ts';
