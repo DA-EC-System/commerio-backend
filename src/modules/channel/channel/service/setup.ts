@@ -70,7 +70,6 @@ export async function finishSetup(
   input: {
     externalSkuIds: string[];
     openingStock: 'push' | 'stocktake';
-    orderCutoffAt: Date;
     returnWindowDays?: number | null | undefined;
   },
 ): Promise<{ shop: Shop; matched: number; stocktakeNumber: null }> {
@@ -78,7 +77,6 @@ export async function finishSetup(
   const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
   const picked = offered.filter((s) => input.externalSkuIds.includes(s.externalSkuId));
   const errors: Record<string, string> = {};
-  if (input.orderCutoffAt.getTime() > Date.now()) errors.orderCutoffAt = 'Mốc kéo đơn không được ở tương lai';
   // Kiểm kê đầu kỳ cần phiếu kiểm kê của #112.
   if (input.openingStock === 'stocktake') errors.openingStock = 'Chưa hỗ trợ kiểm kê đầu kỳ, chọn đẩy khả dụng';
   if (picked.length !== new Set(input.externalSkuIds).size) errors.externalSkuIds = 'Có SKU sàn không còn để ghép';
@@ -86,6 +84,8 @@ export async function finishSetup(
   if (returnWindowInvalid) errors.returnWindowDays = returnWindowInvalid;
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
+  // Mốc kéo đơn là lúc gọi (21 §18.2): FE không chọn mốc. Mốc theo kiểm kê đầu kỳ, đơn đang mở là việc của #198.
+  const orderCutoffAt = new Date();
   await withCompany(actor.companyId, async () => {
     const { shop } = await shopSession(shopId);
     const { to } = assertTransition(shopMachine, shop.status, 'finish_setup', { actor });
@@ -108,7 +108,7 @@ export async function finishSetup(
     const updated = await updateShop(
       shop.id,
       { version: shop.version, status: shop.status },
-      { status: to, orderCutoffAt: input.orderCutoffAt, ...returnWindowDays },
+      { status: to, orderCutoffAt, ...returnWindowDays },
     );
     if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
     await recordTransition({ entityType: 'shops', entityId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
