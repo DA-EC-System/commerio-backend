@@ -7,6 +7,7 @@ import {
   dropHeld,
   getCompanies,
   getStatusHistory,
+  lastTransitionsAt,
   recordTransition,
   releaseHeld,
   type StatusChange,
@@ -16,7 +17,8 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { countOpenOrders } from '../../../order/index.ts';
+import { countOpenOrders, oldestOpenOrders, orderCountsByShop } from '../../../order/index.ts';
+import { logger } from '../../../../shared/logger.ts';
 import {
   assertNoOpenOrders,
   authDeadline,
@@ -40,11 +42,11 @@ import {
 } from '../repository/shops.ts';
 import {
   capabilitiesOf,
-  type ConnectMethod,
-  connectablePlatforms,
   getAdapter,
   type MarketplaceAdapter,
   MarketplaceError,
+  type PlatformEntry,
+  platformEntries,
   type ShopCapabilities,
   type ShopConnection,
 } from './marketplaces/index.ts';
@@ -95,6 +97,14 @@ export interface Shop {
   /** Hàng chờ đẩy khi chưa gọi được sàn: #102 làm, tới đó luôn 0. */
   pendingJobs: number;
   listingCount: number;
+  /** Số đơn chưa `completed` hoặc `cancelled`, cùng cách đếm với `openOrders` của ngắt (§18.7.1). */
+  pendingOrderCount: number;
+  /** Số đơn đặt trên sàn (`placedAt`) trong 7 × 24 giờ tính lùi từ lúc gọi (§18.7.1). */
+  orders7d: number;
+  /** Lần đổi `status` gần nhất (lịch sử trạng thái), chưa đổi lần nào thì bằng `createdAt` (§18.7.1). */
+  statusChangedAt: Date;
+  /** Phiên bản cấu hình phí đang áp: `null` tới commerio-backend#230 (§18.7.1). */
+  feeConfigVersion: number | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -106,9 +116,20 @@ export interface ShopConnectionResult {
   reconnect: { pulledFrom: Date | null; relisted: number; jobsRun: number } | null;
 }
 
-/** `shop`, `created`, `reconnect` là của phần tử đầu; `shops` đủ mọi gian hàng của lần nối (Documents/21 §18.4). */
+/** Một gian hàng của lần nối (§18.7.4): thêm trạng thái ngay trước lần nối và số SKU người bán đọc được trên sàn. */
+export interface ShopConnectionItem extends ShopConnectionResult {
+  /** null khi `created: true`. */
+  previousStatus: ShopStatus | null;
+  /** null khi chưa đọc được: sàn không có `listSkus`, sàn lỗi hoặc quá `REMOTE_SKU_COUNT_MS`. */
+  remoteSkuCount: number | null;
+}
+
+/**
+ * `shop`, `created`, `reconnect` là của phần tử đầu; `shops` đủ mọi gian hàng của lần nối (Documents/21 §18.4). Gốc không
+ * có `previousStatus`, `remoteSkuCount` (§18.7.4).
+ */
 export interface ShopCallbackResult extends ShopConnectionResult {
-  shops: ShopConnectionResult[];
+  shops: ShopConnectionItem[];
 }
 
 const ENTITY = 'shops';
@@ -124,7 +145,13 @@ interface ShopExtras {
   stocktakeStatus: Map<string, OpeningStocktakeStatus>;
   /** Lúc lỗi gần nhất của việc hết lượt thử, khoá `"<shopId> <hàng>"` (`lastDeadJobs`). */
   dead: Map<string, Date>;
+  /** Số đơn theo gian hàng, đọc qua cổng của `order` (§18.7.1). */
+  orders: Map<string, { open: number; placed: number }>;
+  /** Lần đổi trạng thái gần nhất theo `core.state_transitions`. */
+  statusChanged: Map<string, Date>;
 }
+
+const ORDERS_WINDOW_MS = 7 * 24 * 3600_000;
 
 /** Gian hàng đang thiết lập dở (#198): mới cần đọc hàng lỗi cho `setup`. */
 const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'disconnected' && (!r.openOrdersPulledAt || !r.stockPushedAt);
@@ -133,13 +160,15 @@ const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'd
 async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
   const ids = rows.map((r) => r.id);
   const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
-  const [listings, held, stocktakeStatus, dead] = await Promise.all([
+  const [listings, held, stocktakeStatus, dead, orders, statusChanged] = await Promise.all([
     countListingsOnPlatform(ids),
     countHeld(ids),
     docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
     lastDeadJobs(rows.filter(settingUp).map((r) => r.id), [openOrderPullQueue.name, listingSyncQueue.name]),
+    orderCountsByShop(ids, new Date(Date.now() - ORDERS_WINDOW_MS)),
+    lastTransitionsAt(ENTITY, ids),
   ]);
-  return { listings, held, stocktakeStatus, dead };
+  return { listings, held, stocktakeStatus, dead, orders, statusChanged };
 }
 
 function toShop(row: ShopRow, extras: ShopExtras): Shop {
@@ -179,6 +208,10 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
     ),
     pendingJobs,
     listingCount,
+    pendingOrderCount: extras.orders.get(row.id)?.open ?? 0,
+    orders7d: extras.orders.get(row.id)?.placed ?? 0,
+    statusChangedAt: extras.statusChanged.get(row.id) ?? row.createdAt,
+    feeConfigVersion: null,
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -250,11 +283,12 @@ export async function listShops(): Promise<{ items: Shop[] }> {
   return { items: rows.map((r) => toShop(r, extras)) };
 }
 
-/** Sàn kết nối được và cách nối (Documents/21 §18.1). Cấu hình của máy chủ, giống nhau với mọi công ty; không lộ khoá. */
-export function shopPlatforms(): {
-  items: { platform: string; name: string; connectable: true; methods: readonly ConnectMethod[]; capabilities: ShopCapabilities }[];
-} {
-  return { items: connectablePlatforms().map((p) => ({ ...p, connectable: true })) };
+/**
+ * Sàn và cách nối (Documents/21 §18.1, §18.7.3), gồm cả sàn chưa nối được (`connectable: false` kèm `reason`). Cấu hình
+ * của máy chủ, giống nhau với mọi công ty; không lộ khoá.
+ */
+export function shopPlatforms(): { items: PlatformEntry[] } {
+  return { items: platformEntries() };
 }
 
 export async function getShop(id: string): Promise<Shop & { statusHistory: StatusChange[] }> {
@@ -337,11 +371,13 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     const owner = await findLiveCompanyOf(platform, c.externalShopId);
     if (owner && owner !== actor.companyId) throw connectedElsewhere();
   }
-  let results: ShopConnectionResult[];
+  const adapter = adapterOf(platform);
+  const skuCounts = await Promise.all(unique.map((c) => remoteSkuCount(adapter, c)));
+  let results: ShopConnectionItem[];
   try {
     results = await withCompany(actor.companyId, async () => {
-      const out: ShopConnectionResult[] = [];
-      for (const c of unique) out.push(await writeShop(platform, actor, c));
+      const out: ShopConnectionItem[] = [];
+      for (const [i, c] of unique.entries()) out.push({ ...(await writeShop(platform, actor, c)), remoteSkuCount: skuCounts[i]! });
       return out;
     });
   } catch (err) {
@@ -359,11 +395,51 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     result.shop.pendingJobs = 0;
     if (result.reconnect) result.reconnect.jobsRun = jobsRun;
   }
-  return { ...results[0]!, shops: results };
+  const { shop, created, reconnect } = results[0]!;
+  return { shop, created, reconnect, shops: results };
+}
+
+/** Hạn tổng cho việc đếm SKU trên sàn lúc nối (§18.7.4): quá hạn thì `remoteSkuCount: null`, việc nối vẫn xong. */
+const REMOTE_SKU_COUNT_MS = 10_000;
+
+/**
+ * Số SKU người bán đọc được trên sàn lúc nối (§18.7.4), không tính SKU đã xoá trên sàn, như gợi ý ghép của thiết lập.
+ * Gọi sàn ngoài giao dịch, các gian hàng của một lần nối đếm song song. Chỉ để hiện trên màn kết quả nên không chặn việc
+ * nối: sàn chưa có `listSkus`, gọi lỗi (mọi lỗi) hoặc quá `REMOTE_SKU_COUNT_MS` thì `null` (chưa đọc được), ghi log.
+ * `listSkus` không nhận `AbortSignal` nên lời gọi quá hạn vẫn chạy nốt ở nền, kết quả bị bỏ.
+ */
+async function remoteSkuCount(adapter: MarketplaceAdapter, c: ShopConnection): Promise<number | null> {
+  if (!adapter.listSkus) return null;
+  const listSkus = adapter.listSkus.bind(adapter);
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), REMOTE_SKU_COUNT_MS);
+  });
+  try {
+    const result = await Promise.race([listSkus(c.tokens.accessToken), timeout]);
+    if (result === 'timeout') {
+      logger.warn({ externalShopId: c.externalShopId, timeoutMs: REMOTE_SKU_COUNT_MS }, 'Đếm SKU trên sàn lúc nối quá hạn');
+      return null;
+    }
+    return result.filter((r) => r.state !== 'deleted').length;
+  } catch (err) {
+    if (err instanceof MarketplaceError) {
+      logger.warn({ externalShopId: c.externalShopId, kind: err.kind, platformCode: err.platformCode }, 'Không đọc được SKU trên sàn lúc nối');
+    } else {
+      logger.error({ err, externalShopId: c.externalShopId }, 'Lỗi khi đếm SKU trên sàn lúc nối');
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Tạo hoặc nối lại một gian hàng; gọi trong `withCompany`. */
-async function writeShop(platform: Platform, actor: Actor, c: ShopConnection): Promise<ShopConnectionResult> {
+async function writeShop(
+  platform: Platform,
+  actor: Actor,
+  c: ShopConnection,
+): Promise<ShopConnectionResult & { previousStatus: ShopStatus | null }> {
   const existing = await findShopByExternal(platform, c.externalShopId);
   if (!existing) {
     const id = randomUUID();
@@ -378,7 +454,7 @@ async function writeShop(platform: Platform, actor: Actor, c: ShopConnection): P
       ...tokenColumns(id, c.tokens),
     });
     await recordTransition({ entityType: ENTITY, entityId: id, from: null, to: 'connecting', action: 'connect', actorId: actor.accountId });
-    return { shop: await shopView(row), created: true, reconnect: null };
+    return { shop: await shopView(row), created: true, reconnect: null, previousStatus: null };
   }
 
   const action = reconnectAction(existing.status, existing.orderCutoffAt);
@@ -394,7 +470,7 @@ async function writeShop(platform: Platform, actor: Actor, c: ShopConnection): P
   }
   // Kéo đơn từ mốc cuối (#105), đưa lên lại listing gỡ do ngắt (#104) chưa làm: báo 0. `jobsRun` điền sau khi commit.
   const reconnect = action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
-  return { shop: await shopView(row), created: false, reconnect };
+  return { shop: await shopView(row), created: false, reconnect, previousStatus: existing.status };
 }
 
 /**
@@ -412,9 +488,13 @@ export async function checkDisconnect(actor: Actor, id: string, version: number)
       current: await shopView(row),
     });
   }
-  assertNoOpenOrders(await countOpenOrders(id));
+  const openOrders = await countOpenOrders(id);
+  if (openOrders > 0) assertNoOpenOrders(openOrders, await oldestOpenOrders(id, OPEN_ORDERS_LISTED));
   return { row, to };
 }
+
+/** Số đơn liệt kê ở 409 `shop_has_open_orders` (§18.7.8). */
+const OPEN_ORDERS_LISTED = 20;
 
 /** Đẩy tồn 0 (`zeroStock`) do route gọi trước, ngoài giao dịch (`listing-sync.ts` `pushZeroStock`). */
 export async function disconnectShop(actor: Actor, id: string, input: { version: number }): Promise<Shop> {

@@ -51,6 +51,7 @@ export {
   type TransitionContext,
 } from './domain/state-machine.ts';
 export {
+  lastTransitionsAt,
   listTransitions,
   recordTransition,
   type TransitionRecord,

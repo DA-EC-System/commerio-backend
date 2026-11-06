@@ -52,12 +52,16 @@ export function reconnectAction(status: ShopStatus, orderCutoffAt: Date | null):
 
 /**
  * Còn đơn chưa `completed` hoặc `cancelled` thì không cho ngắt (Documents/21 §18.6.1 bước 4, #207): ngắt xong app không
- * còn nhận cập nhật từ sàn nên đơn sẽ treo.
+ * còn nhận cập nhật từ sàn nên đơn sẽ treo. `orders` là tối đa 20 đơn cũ nhất để FE liệt kê (§18.7.8), `openOrders` là tổng.
  */
-export function assertNoOpenOrders(openOrders: number): void {
+export function assertNoOpenOrders(
+  openOrders: number,
+  orders: readonly { id: string; code: string; externalOrderId: string | null }[],
+): void {
   if (openOrders > 0) {
     throw new AppError(409, 'shop_has_open_orders', `Còn ${openOrders} đơn chưa xong. Đợi các đơn hoàn tất hoặc huỷ rồi ngắt`, {
       openOrders,
+      orders,
     });
   }
 }

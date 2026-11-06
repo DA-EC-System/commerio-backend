@@ -27,8 +27,8 @@ export {
   type OrderLineForInvoice,
 } from './service/finance-boundary.ts';
 export { getOrderChannels } from './service/daily-totals.ts';
-// Ngắt gian hàng (#207): channel đếm đơn chưa xong trong giao dịch ngắt.
-export { countOpenOrders } from './service/channel-boundary.ts';
+// Ngắt gian hàng (#207): channel đếm đơn chưa xong trong giao dịch ngắt; số đơn trên bảng gian hàng (#200 §18.7).
+export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop } from './service/channel-boundary.ts';
 // Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
 export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts';
 export type { SalesContext } from './service/orders.ts';
