@@ -18,8 +18,11 @@ export interface TransitionRecord {
   reason?: string | null;
   /** `selfApproved` mà `assertTransition` trả: bước người duyệt khác đi theo ngoại lệ tự duyệt. */
   selfApproved?: boolean;
-  /** Mã chứng từ (vd `DN-0001`) hiện trên dòng nhật ký của lần tự duyệt; chỉ dùng khi `selfApproved`. */
-  entityCode?: string | null;
+  /**
+   * Dòng nhật ký thao tác của lần tự duyệt: `entityType` theo mẫu nhật ký `<schema>.<bảng>` (vd
+   * `product.purchase_requests`), `label` là mã chứng từ. Không có thì ghi tên bảng của lịch sử. Chỉ dùng khi `selfApproved`.
+   */
+  audit?: { entityType: string; label?: string | null };
 }
 
 /**

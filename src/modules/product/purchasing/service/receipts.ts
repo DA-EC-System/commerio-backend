@@ -24,7 +24,7 @@ import { toReceiptDetail, toReceiptSummaries, type GoodsReceiptView } from './re
 import { type Actor, invalid, notFound } from './request-views.ts';
 
 export const RECEIPT_ENTITY = 'goods_receipts';
-const AUDIT_ENTITY = 'product.goods_receipts';
+export const RECEIPT_AUDIT_ENTITY = 'product.goods_receipts';
 
 /**
  * Phiếu của công ty cùng đề nghị và các dòng đề nghị, đã khoá theo thứ tự đề nghị → dòng → phiếu (spec #108 Q10);
@@ -95,7 +95,7 @@ export async function createReceipt(actor: Actor, input: { requestId: string; de
       companyId: actor.companyId,
       actorId: actor.accountId,
       action: 'create',
-      entityType: AUDIT_ENTITY,
+      entityType: RECEIPT_AUDIT_ENTITY,
       entityId: id,
       before: null,
       after: { requestId: request.id, deliveryMode, note, requestLineIds: lines.map((l) => l.id) },
@@ -171,7 +171,7 @@ export async function updateReceiptCount(actor: Actor, id: string, input: CountI
       companyId: actor.companyId,
       actorId: actor.accountId,
       action: 'update',
-      entityType: AUDIT_ENTITY,
+      entityType: RECEIPT_AUDIT_ENTITY,
       entityId: id,
       before: snapshot(receipt, lines),
       after: snapshot({ deliveryMode, note }, await receiptLines([id])),

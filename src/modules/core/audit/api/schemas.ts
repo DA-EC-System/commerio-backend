@@ -30,7 +30,7 @@ export const CompanyAuditLog = z
     action: AuditAction,
     entityType: z
       .string()
-      .meta({ description: '`<schema>.<bảng>`, vd `core.roles`; dòng tự duyệt dùng tên bảng như `statusHistory`, vd `purchase_requests`' }),
+      .meta({ description: '`<schema>.<bảng>`, vd `core.roles`' }),
     entityId: z.uuid().nullable(),
     entityLabel: z.string(),
     actor: AuditActor,

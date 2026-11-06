@@ -267,7 +267,17 @@ export function actOnConfig(caller: Caller, id: string, action: ConfigAction, in
       ...(action === 'request_changes' && { dryRunResult: null }),
     });
     if (!updated) throw conflict(locked);
-    await recordTransition({ entityType: ENTITY, entityId: locked.id, from: locked.status, to, action, actorId: caller.accountId, reason, selfApproved });
+    await recordTransition({
+      entityType: ENTITY,
+      entityId: locked.id,
+      from: locked.status,
+      to,
+      action,
+      actorId: caller.accountId,
+      reason,
+      selfApproved,
+      audit: { entityType: 'finance.config_versions' },
+    });
     // Sau khi bản này rời `scheduled`: nới bản trước khi bản này còn trong ràng buộc `config_versions_no_overlap` là chồng ngày.
     if (action === 'cancel' && locked.status === 'scheduled') await reopenPredecessor(locked);
 

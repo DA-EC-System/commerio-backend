@@ -10,7 +10,7 @@ import { findLines, findRequest, type LineRow, receiptsOf, type RequestRow, upda
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail } from './request-views.ts';
 import { closeShortRequest } from './request-receiving.ts';
-import { assertVersion, ENTITY, lockOwnRequest } from './requests.ts';
+import { assertVersion, AUDIT_ENTITY, ENTITY, lockOwnRequest } from './requests.ts';
 import { checkTransition } from './transitions.ts';
 
 export interface ActionInput {
@@ -110,7 +110,7 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
       actorId: actor.accountId,
       reason,
       selfApproved,
-      entityCode: row.number,
+      audit: { entityType: AUDIT_ENTITY, label: row.number },
     });
     // Vào hoặc ra Đã đặt, Nhận một phần thì đang về của các SKU đổi: xét lại ngưỡng (Documents/25 mục 7.5).
     if (countsIncoming(row.status) || countsIncoming(to)) await recheckThresholds(variantIdsOf(lines));

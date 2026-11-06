@@ -15,11 +15,11 @@ export async function recordTransition(input: TransitionRecord): Promise<void> {
     companyId: requireCompanyId('recordTransition'),
     actorId: input.actorId,
     action: 'update',
-    entityType: input.entityType,
+    entityType: input.audit?.entityType ?? input.entityType,
     entityId: input.entityId,
     before: { status: input.from },
     after: {
-      ...(input.entityCode && { code: input.entityCode }),
+      ...(input.audit?.label && { code: input.audit.label }),
       status: input.to,
       action: input.action,
       selfApproved: true,

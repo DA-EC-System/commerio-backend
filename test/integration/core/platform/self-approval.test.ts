@@ -59,7 +59,7 @@ describe('tự duyệt (#246)', () => {
     expect(page.items.every((i) => i.selfApproved)).toBe(true);
     expect(page.items.find((i) => i.entityId === body.id)).toMatchObject({
       action: 'update',
-      entityType: 'purchase_requests',
+      entityType: 'product.purchase_requests',
       entityLabel: body.number,
       selfApproved: true,
     });

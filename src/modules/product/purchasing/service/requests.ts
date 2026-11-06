@@ -39,7 +39,7 @@ export interface RequestInput {
 }
 
 export const ENTITY = 'purchase_requests';
-const AUDIT_ENTITY = 'product.purchase_requests';
+export const AUDIT_ENTITY = 'product.purchase_requests';
 
 /** Đề nghị của công ty, đã khoá; không thấy (RLS, id sai) thì 404. */
 export async function lockOwnRequest(id: string): Promise<RequestRow> {
