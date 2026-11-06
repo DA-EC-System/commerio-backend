@@ -1,12 +1,19 @@
+import { randomUUID } from 'node:crypto';
+import pg from 'pg';
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { StockDetail, StockPage } from '#src/modules/product/inventory/api/schemas.ts';
+import type { StockDocumentKind } from '#src/modules/product/inventory/domain/moves.ts';
+import { getStock } from '#src/modules/product/inventory/service/stock.ts';
+import { purchaseDocumentNumbers } from '#src/modules/product/purchasing/index.ts';
+import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { revokePermission } from '../../helpers/state.ts';
-import { createSupplier, orderedRequest } from '../purchasing/helpers.ts';
+import { createSupplier, orderedRequest, postedReceipt } from '../purchasing/helpers.ts';
 import { archiveVariant, inv, receive, setBuckets } from './helpers.ts';
 
 // API tồn và ngưỡng /inventory/stock (Documents/21 mục 15.1, 15.2; K3, V29–V33).
@@ -113,6 +120,53 @@ describe('danh sách tồn', () => {
     }
   });
 
+  const idsOf = (body: { items: { variantId: string }[] }) => body.items.map((i) => i.variantId).sort();
+
+  it('AC1: negative=true chỉ trả SKU Tồn âm; summary không theo lọc; negative=abc → 422', async () => {
+    const c = await createCompany();
+    const a = await createVariant(c.companyId);
+    const b = await createVariant(c.companyId);
+    await receive(c.companyId, a.variantId, 3, 1000);
+    await setBuckets(c.companyId, a.variantId, { reserved: 5, invariantBroken: true });
+    await receive(c.companyId, b.variantId, 2, 1000);
+
+    const res = await inv(c.ceo.token).get('/stock?negative=true');
+    expect(res.status).toBe(200);
+    expect(idsOf(res.body)).toEqual([a.variantId]);
+    expect(res.body.total).toBe(1);
+    expect(res.body.summary).toEqual((await inv(c.ceo.token).get('/stock')).body.summary);
+    expect(res.body.summary).toMatchObject({ variantCount: 2, negativeCount: 1 });
+
+    const bad = await inv(c.ceo.token).get('/stock?negative=abc');
+    expect(bad.status).toBe(422);
+    expect(bad.body.errors).toHaveProperty('negative');
+  });
+
+  it('negative và belowMin gộp AND', async () => {
+    const c = await createCompany();
+    // A Tồn âm và dưới ngưỡng; B Tồn âm, chưa đặt ngưỡng; C dưới ngưỡng, không Tồn âm.
+    const [a, b, d] = [await createVariant(c.companyId), await createVariant(c.companyId), await createVariant(c.companyId)];
+    await receive(c.companyId, a.variantId, 1, 1000);
+    await inv(c.ceo.token).put(`/stock/${a.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+    await setBuckets(c.companyId, a.variantId, { reserved: 3, invariantBroken: true });
+    await receive(c.companyId, b.variantId, 1, 1000);
+    await setBuckets(c.companyId, b.variantId, { reserved: 3, invariantBroken: true });
+    await receive(c.companyId, d.variantId, 2, 1000);
+    await inv(c.ceo.token).put(`/stock/${d.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+
+    expect(idsOf((await inv(c.ceo.token).get('/stock?negative=true')).body)).toEqual([a.variantId, b.variantId].sort());
+    expect(idsOf((await inv(c.ceo.token).get('/stock?belowMin=true')).body)).toEqual([a.variantId, d.variantId].sort());
+    expect(idsOf((await inv(c.ceo.token).get('/stock?negative=true&belowMin=true')).body)).toEqual([a.variantId]);
+  });
+
+  it('AC2: mọi dòng có drift false; body parse được bằng StockPage', async () => {
+    const { c } = await fourVariants();
+    const res = await inv(c.ceo.token).get('/stock');
+    StockPage.parse(res.body);
+    expect(res.body.items).toHaveLength(4);
+    expect(res.body.items.every((i: { drift: unknown }) => i.drift === false)).toBe(true);
+  });
+
   it('biến thể lưu trữ còn hàng vẫn hiện, hết hàng thì ẩn', async () => {
     const c = await createCompany();
     const kept = await createVariant(c.companyId);
@@ -138,20 +192,254 @@ describe('chi tiết tồn', () => {
     await receive(c.companyId, v, 2, 1000);
     const res = await inv(c.ceo.token).get(`/stock/${v}`);
     expect(res.status).toBe(200);
+    StockDetail.parse(res.body);
     expect(res.body.level).toMatchObject({ variantId: v, onHand: 5 });
     expect(res.body.moves).toHaveLength(2);
-    expect(res.body.moves[0]).toMatchObject({
-      area: 'on_hand',
+    expect(res.body.moves[0]).toEqual({
+      id: expect.any(String),
+      area: 'stock',
       qtyChange: 2,
-      balanceAfter: 5,
-      document: { id: expect.any(String), type: 'stock_document' },
+      onHandAfter: 5,
+      document: { id: expect.any(String), number: expect.stringMatching(/^KK-/), type: 'stocktake', kind: 'manual' },
       unitCost: 1000,
+      doneAt: expect.any(String),
       doneBy: null,
     });
-    expect(res.body.moves[1]).toMatchObject({ balanceAfter: 3, doneBy: expect.any(String) });
+    expect(res.body.moves[1]).toMatchObject({ onHandAfter: 3, doneBy: expect.any(String) });
     const byKho = await inv(kho).get(`/stock/${v}`);
     expect(byKho.body.moves[0].unitCost).toBeNull();
     expect(byKho.body.level.avgCost).toBeNull();
+  });
+
+  /** Thẻ kho của SKU trên một phiếu kho đã ghi sổ, chèn bằng role chủ bảng (luồng lập phiếu làm ở #266, B3). */
+  async function docMove(
+    companyId: string,
+    variantId: string,
+    d: { kind: StockDocumentKind; number: string; isOpening?: boolean; sourceType?: string | null },
+    m: { qty: number; balanceAfter: number; bucket?: 'on_hand' | 'quarantine'; doneBy?: string | null },
+  ): Promise<string> {
+    const byPackage = d.kind === 'shipment' || d.kind === 'shipment_reversal';
+    const sourceType = byPackage ? 'package' : (d.sourceType ?? null);
+    const doc = await testPool().query<{ id: string }>(
+      `insert into product.stock_documents
+         (company_id, number, kind, status, area, counted_at, is_opening, source_type, source_id, posted_at)
+       values ($1, $2, $3::product.stock_document_kind, 'posted', $4, case when $3::product.stock_document_kind = 'stocktake' then now() end, $5, $6, $7, now()) returning id`,
+      [companyId, d.number, d.kind, m.bucket ?? 'on_hand', d.isOpening ?? false, sourceType, sourceType ? randomUUID() : null],
+    );
+    const documentId = doc.rows[0]!.id;
+    await rawMove(companyId, variantId, { ...m, sourceType: 'stock_document', sourceId: documentId });
+    return documentId;
+  }
+
+  /** Một dòng thẻ kho trỏ chứng từ bất kỳ (kể cả không tồn tại). */
+  async function rawMove(
+    companyId: string,
+    variantId: string,
+    m: { qty: number; balanceAfter: number; bucket?: 'on_hand' | 'quarantine'; doneBy?: string | null; sourceType: string; sourceId: string },
+  ) {
+    await testPool().query(
+      `insert into product.stock_moves (company_id, variant_id, bucket, qty_change, balance_after, source_type, source_id, done_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [companyId, variantId, m.bucket ?? 'on_hand', m.qty, m.balanceAfter, m.sourceType, m.sourceId, m.doneBy ?? null],
+    );
+  }
+
+  /** Công ty có Kho lập đề nghị, Kho nhận hàng và một NCC, để ghi sổ phiếu nhận qua API. */
+  async function purchasingTeam() {
+    const c = await createCompany();
+    const kho = await addMember(c.companyId, 'warehouse');
+    const t = { ceo: c.ceo.token, requester: (await addMember(c.companyId, 'warehouse')).token, kho: kho.token };
+    return { c, t, khoId: kho.accountId, supplierId: (await createSupplier(c.ceo.token)).id };
+  }
+
+  async function detail(token: string, variantId: string) {
+    const res = await inv(token).get(`/stock/${variantId}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return StockDetail.parse(res.body);
+  }
+
+  const documentsOf = async (token: string, variantId: string) =>
+    (await detail(token, variantId)).moves.map((m) => ({ number: m.document.number, type: m.document.type, kind: m.document.kind }));
+
+  it('AC3: ngăn stock và quarantine, onHandAfter là số của ngăn đó', async () => {
+    const c = await createCompany();
+    const { variantId: v } = await createVariant(c.companyId);
+    await docMove(c.companyId, v, { kind: 'stocktake', number: 'KK-000001' }, { qty: 5, balanceAfter: 5 });
+    await docMove(c.companyId, v, { kind: 'to_quarantine', number: 'CX-000001' }, { qty: 2, balanceAfter: 2, bucket: 'quarantine' });
+
+    const { moves } = await detail(c.ceo.token, v);
+
+    expect(moves.map((m) => [m.area, m.qtyChange, m.onHandAfter])).toEqual([
+      ['quarantine', 2, 2],
+      ['stock', 5, 5],
+    ]);
+  });
+
+  it('AC4: phiếu nhận → { id: receiptId, number: NH-000001, type: goods_receipt, kind: purchase }, doneBy là tên người ghi sổ', async () => {
+    const { c, t, khoId, supplierId } = await purchasingTeam();
+    const { variantId: v } = await createVariant(c.companyId);
+    const receipt = await postedReceipt(t, supplierId, v, { accepted: 4 });
+    const { rows } = await testPool().query<{ full_name: string }>('select full_name from core.accounts where id = $1', [khoId]);
+
+    const { moves } = await detail(c.ceo.token, v);
+
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({
+      area: 'stock',
+      qtyChange: 4,
+      onHandAfter: 4,
+      document: { id: receipt.receiptId, number: 'NH-000001', type: 'goods_receipt', kind: 'purchase' },
+      doneBy: rows[0]!.full_name,
+    });
+  });
+
+  it('AC5: XK-000001 → shipment, order; DX-000001 → shipment_reversal, order; doneBy null', async () => {
+    const c = await createCompany();
+    const { variantId: v } = await createVariant(c.companyId);
+    await docMove(c.companyId, v, { kind: 'shipment', number: 'XK-000001' }, { qty: -2, balanceAfter: -2 });
+    await docMove(c.companyId, v, { kind: 'shipment_reversal', number: 'DX-000001' }, { qty: 2, balanceAfter: 0 });
+
+    const { moves } = await detail(c.ceo.token, v);
+
+    expect(moves.map((m) => [m.document.number, m.document.type, m.document.kind, m.doneBy])).toEqual([
+      ['DX-000001', 'shipment_reversal', 'order', null],
+      ['XK-000001', 'shipment', 'order', null],
+    ]);
+  });
+
+  it('AC6: kiểm kê tay → manual; kiểm kê đầu kỳ, xuất huỷ có source_type, return_inspection → auto', async () => {
+    const c = await createCompany();
+    const { variantId: v } = await createVariant(c.companyId);
+    await docMove(c.companyId, v, { kind: 'stocktake', number: 'KK-000001', isOpening: true }, { qty: 10, balanceAfter: 10 });
+    await docMove(c.companyId, v, { kind: 'stocktake', number: 'KK-000002' }, { qty: -1, balanceAfter: 9 });
+    await docMove(c.companyId, v, { kind: 'return_inspection', number: 'KT-000001', sourceType: 'package' }, { qty: 1, balanceAfter: 1, bucket: 'quarantine' });
+    await docMove(c.companyId, v, { kind: 'write_off', number: 'XH-000001', sourceType: 'stock_document' }, { qty: -1, balanceAfter: 0, bucket: 'quarantine' });
+
+    expect(await documentsOf(c.ceo.token, v)).toEqual([
+      { number: 'XH-000001', type: 'write_off', kind: 'auto' },
+      { number: 'KT-000001', type: 'return_inspection', kind: 'auto' },
+      { number: 'KK-000002', type: 'stocktake', kind: 'manual' },
+      { number: 'KK-000001', type: 'stocktake', kind: 'auto' },
+    ]);
+  });
+
+  it('Review Focus 1: một SKU có kiểm kê tay, phiếu nhận NH- và phiếu xuất XK- → mỗi dòng đúng số, loại, nhóm của nó', async () => {
+    const { c, t, supplierId } = await purchasingTeam();
+    const { variantId: v } = await createVariant(c.companyId);
+    await docMove(c.companyId, v, { kind: 'stocktake', number: 'KK-000001' }, { qty: 2, balanceAfter: 2 });
+    await postedReceipt(t, supplierId, v, { accepted: 3 });
+    await docMove(c.companyId, v, { kind: 'shipment', number: 'XK-000001' }, { qty: -1, balanceAfter: 4 });
+
+    expect(await documentsOf(c.ceo.token, v)).toEqual([
+      { number: 'XK-000001', type: 'shipment', kind: 'order' },
+      { number: 'NH-000001', type: 'goods_receipt', kind: 'purchase' },
+      { number: 'KK-000001', type: 'stocktake', kind: 'manual' },
+    ]);
+  });
+
+  it('Review Focus 4: dòng gắn phiếu trả NCC TN- → { number: TN-000001, type: supplier_return, kind: purchase }', async () => {
+    const { c, t, supplierId } = await purchasingTeam();
+    const { variantId: v } = await createVariant(c.companyId);
+    const { receiptId, returnId } = await postedReceipt(t, supplierId, v, { accepted: 2, defectKept: 1 });
+    await rawMove(c.companyId, v, { qty: -1, balanceAfter: 0, bucket: 'quarantine', sourceType: 'supplier_return', sourceId: returnId! });
+
+    const { moves } = await detail(c.ceo.token, v);
+
+    // Cùng một thẻ kho có dòng của cả phiếu nhận (đạt, lỗi giữ lại) và phiếu trả NCC sinh từ nó.
+    expect(moves.map((m) => [m.area, m.qtyChange, m.document])).toEqual([
+      ['quarantine', -1, { id: returnId, number: 'TN-000001', type: 'supplier_return', kind: 'purchase' }],
+      ['quarantine', 1, { id: receiptId, number: 'NH-000001', type: 'goods_receipt', kind: 'purchase' }],
+      ['stock', 2, { id: receiptId, number: 'NH-000001', type: 'goods_receipt', kind: 'purchase' }],
+    ]);
+  });
+
+  it('thẻ kho nhiều dòng tốn thêm tối đa 3 câu SQL so với thẻ kho trống; mỗi loại chứng từ chỉ tra khi có id', async () => {
+    const { c, t, supplierId } = await purchasingTeam();
+    const [empty, mixed, receiptsOnly, other] = [
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+    ];
+    const r1 = await postedReceipt(t, supplierId, other.variantId, { accepted: 1, defectKept: 1 });
+    const r2 = await postedReceipt(t, supplierId, other.variantId, { accepted: 1 });
+    for (const i of [1, 2, 3]) {
+      await docMove(c.companyId, mixed.variantId, { kind: 'stocktake', number: `KK-00000${i}` }, { qty: 1, balanceAfter: i });
+    }
+    for (const v of [mixed.variantId, receiptsOnly.variantId]) {
+      await rawMove(c.companyId, v, { qty: 1, balanceAfter: 1, sourceType: 'goods_receipt', sourceId: r1.receiptId });
+      await rawMove(c.companyId, v, { qty: 1, balanceAfter: 2, sourceType: 'goods_receipt', sourceId: r2.receiptId });
+    }
+    await rawMove(c.companyId, mixed.variantId, {
+      qty: 1,
+      balanceAfter: 1,
+      bucket: 'quarantine',
+      sourceType: 'supplier_return',
+      sourceId: r1.returnId!,
+    });
+
+    const lookups = { incomingOf: async () => new Map<string, number>(), purchaseNumbers: purchaseDocumentNumbers };
+    const viewer = { companyId: c.companyId, accountId: randomUUID(), canCost: true };
+    const queries = vi.spyOn(pg.Client.prototype, 'query');
+    const run = async (variantId: string) => {
+      queries.mockClear();
+      const { moves } = await getStock(lookups, viewer, variantId);
+      return { rows: moves.length, queries: queries.mock.calls.length };
+    };
+    try {
+      const base = await run(empty.variantId);
+      // Phiếu kho, phiếu nhận, phiếu trả NCC: mỗi loại một câu, không theo số dòng.
+      expect(await run(mixed.variantId)).toEqual({ rows: 6, queries: base.queries + 3 });
+      expect(await run(receiptsOnly.variantId)).toEqual({ rows: 2, queries: base.queries + 1 });
+    } finally {
+      queries.mockRestore();
+    }
+  });
+
+  it('Review Focus 2: SKU chưa có dòng thẻ kho → moves [], không tra số phiếu của purchasing', async () => {
+    const c = await createCompany();
+    const { variantId: v } = await createVariant(c.companyId);
+    const purchaseNumbers = vi.fn(async () => ({ goodsReceipts: new Map<string, string>(), supplierReturns: new Map<string, string>() }));
+
+    const result = await getStock(
+      { incomingOf: async () => new Map(), purchaseNumbers },
+      { companyId: c.companyId, accountId: randomUUID(), canCost: true },
+      v,
+    );
+
+    expect(result.moves).toEqual([]);
+    expect(purchaseNumbers).not.toHaveBeenCalled();
+    expect((await detail(c.ceo.token, v)).moves).toEqual([]);
+  });
+
+  it('AC7: dòng thẻ kho trỏ chứng từ không tồn tại hoặc sai loại → 500, log có id dòng và id chứng từ', async () => {
+    const { c, t, supplierId } = await purchasingTeam();
+    const [x, y, z, other] = [
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+    ];
+    const { returnId } = await postedReceipt(t, supplierId, other.variantId, { accepted: 1, defectKept: 1 });
+    const missing = randomUUID();
+    await rawMove(c.companyId, x.variantId, { qty: 1, balanceAfter: 1, sourceType: 'stock_document', sourceId: missing });
+    await rawMove(c.companyId, y.variantId, { qty: 1, balanceAfter: 1, sourceType: 'goods_receipt', sourceId: randomUUID() });
+    // Chứng từ có thật nhưng là phiếu trả NCC, dòng lại ghi phiếu nhận: không gắn nhầm số TN- cho phiếu nhận.
+    await rawMove(c.companyId, z.variantId, { qty: 1, balanceAfter: 1, sourceType: 'goods_receipt', sourceId: returnId! });
+
+    const error = vi.spyOn(logger, 'error');
+    try {
+      for (const v of [x.variantId, y.variantId, z.variantId]) {
+        const res = await inv(c.ceo.token).get(`/stock/${v}`);
+        expect(res.status).toBe(500);
+        expect(res.body.code).toBe('internal_error');
+      }
+      const logged = error.mock.calls.map(([fields]) => fields);
+      expect(logged).toContainEqual({ moveId: expect.any(Number), sourceType: 'stock_document', sourceId: missing });
+      expect(logged).toContainEqual({ moveId: expect.any(Number), sourceType: 'goods_receipt', sourceId: returnId });
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 
