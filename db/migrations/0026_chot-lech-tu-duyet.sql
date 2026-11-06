@@ -1,0 +1,1 @@
+ALTER TABLE "finance"."order_settlements" ADD COLUMN "self_approved" boolean DEFAULT false NOT NULL;

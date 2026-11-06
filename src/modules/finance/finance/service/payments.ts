@@ -2,7 +2,7 @@
 // lệch (người khác người soạn cấu hình phí; lệch vượt hạn mức tự chốt cần CEO duyệt trước), CEO duyệt, khớp ngân hàng.
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { assertTransition, getStatusHistory, recordTransition } from '../../../core/index.ts';
+import { assertTransition, canSelfApprove, getStatusHistory, recordTransition } from '../../../core/index.ts';
 import { vnDate } from '../domain/config-version.ts';
 import type { LedgerKind } from '../domain/ledger.ts';
 import { needsCeoApproval, settlementMachine, type SettlementState, type Threshold } from '../domain/settlement.ts';
@@ -53,7 +53,12 @@ async function view(row: OrderSettlementRow, orders: Orders, t: Threshold, names
     ceoApproval: row.approvedBy ? { by: await userRef(row.approvedBy, names), at: row.updatedAt.toISOString() } : null,
     resolved:
       row.status === 'resolved' && row.resolvedBy
-        ? { by: await userRef(row.resolvedBy, names), at: row.resolvedAt?.toISOString() ?? null, reason: row.resolvedReason }
+        ? {
+            by: await userRef(row.resolvedBy, names),
+            at: row.resolvedAt?.toISOString() ?? null,
+            reason: row.resolvedReason,
+            selfApproved: row.selfApproved,
+          }
         : null,
     feeConfigAuthor: await userRef(author, names),
     version: row.version,
@@ -106,10 +111,13 @@ export function resolvePayment(caller: Caller, orderId: string, input: { version
     const row = await load(orderId, 'update');
     if (row.version !== input.version) throw conflict(row);
     const reason = input.reason.trim();
-    const { to } = assertTransition(settlementMachine, row.status, 'resolve', {
+    const author = await feeAuthorOf(row.shopId, now);
+    const { to, selfApproved } = assertTransition(settlementMachine, row.status, 'resolve', {
       actor: { accountId: caller.accountId, permissions: caller.permissions, enabledModules: caller.enabledModules },
-      record: { createdBy: await feeAuthorOf(row.shopId, now) },
+      record: { createdBy: author },
       reason,
+      // Hỏi `canSelfApprove` chỉ khi người chốt là người soạn cấu hình phí
+      canSelfApprove: author === caller.accountId && (await canSelfApprove(caller.accountId)),
     });
     const isCeo = caller.permissions.includes('finance.settlement.approve');
     if (!isCeo && !row.approvedBy && needsCeoApproval(row.diff ?? 0, row.resolvedDiffBase, await currentThreshold(now))) {
@@ -121,11 +129,22 @@ export function resolvePayment(caller: Caller, orderId: string, input: { version
       resolvedAt: now,
       resolvedReason: reason,
       resolvedDiffBase: row.diff ?? '0',
+      selfApproved,
       // CEO tự chốt thì không cần (và không được, CHECK người duyệt khác người chốt) giữ lần duyệt của chính mình.
       ...(row.approvedBy === caller.accountId && { approvedBy: null }),
     });
     if (!updated) throw conflict(row);
-    await recordTransition({ entityType: SETTLEMENT_ENTITY, entityId: orderId, from: row.status, to, action: 'resolve', actorId: caller.accountId, reason });
+    await recordTransition({
+      entityType: SETTLEMENT_ENTITY,
+      entityId: orderId,
+      from: row.status,
+      to,
+      action: 'resolve',
+      actorId: caller.accountId,
+      reason,
+      selfApproved,
+      audit: { entityType: 'finance.order_settlements', label: (await ordersOf([orderId])).get(orderId)?.code ?? null },
+    });
     return detail(updated, canSeeCost, now);
   });
 }
