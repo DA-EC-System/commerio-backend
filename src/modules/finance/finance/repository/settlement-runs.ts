@@ -50,6 +50,27 @@ export async function finishRun(
   return row;
 }
 
+/** Mở lại lần `failed` để chạy tiếp (Admin chạy lại việc lỗi, #248). */
+export async function reopenRun(id: string): Promise<SettlementRunRow | undefined> {
+  const [row] = await getDb()
+    .update(settlementBatches)
+    .set({ status: 'running', error: null, version: sql`${settlementBatches.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(settlementBatches.id, id), eq(settlementBatches.status, 'failed')))
+    .returning();
+  return row;
+}
+
+/** Lần mới nhất của gian hàng. */
+export async function latestRun(shopId: string): Promise<SettlementRunRow | undefined> {
+  const [row] = await getDb()
+    .select()
+    .from(settlementBatches)
+    .where(eq(settlementBatches.shopId, shopId))
+    .orderBy(desc(settlementBatches.createdAt), desc(settlementBatches.id))
+    .limit(1);
+  return row;
+}
+
 export async function listRuns(shopId: string | undefined, page: { limit: number; offset: number }): Promise<{ rows: SettlementRunRow[]; total: number }> {
   const where = shopId ? eq(settlementBatches.shopId, shopId) : undefined;
   const rows = await getDb()

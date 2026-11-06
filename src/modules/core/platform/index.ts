@@ -29,6 +29,7 @@ export {
   defineQueue,
   dropHeld,
   HoldJob,
+  type JobAttempt,
   JobDataSchema,
   releaseHeld,
   scheduleForShop,
