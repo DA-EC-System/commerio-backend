@@ -1,8 +1,9 @@
-// Smoke test TikTok Shop bằng chính adapter của app (#217): link uỷ quyền, đổi code, đọc gian hàng, làm mới, đọc SKU.
-// Chỉ gọi API đọc và API token. Token lưu ở .smoke-tokens.json (khoá `tiktok`, đã gitignore), không in ra đầy đủ.
+// Smoke test TikTok Shop bằng chính adapter của app (#217): link uỷ quyền, đổi code, đọc gian hàng, làm mới, đọc SKU;
+// đơn và kiện (#221): liệt kê, chi tiết, thuộc tính tách. Chỉ gọi API đọc và API token, trừ `split`, `ship` (ghi, chỉ
+// dùng trên shop thử sandbox). Token lưu ở .smoke-tokens.json (khoá `tiktok`, đã gitignore), không in ra đầy đủ.
 // Cách chạy: scripts/smoke/README.md
 import { randomUUID } from 'node:crypto';
-import { MarketplaceError, type ShopConnection } from '../../src/modules/channel/channel/service/marketplaces/common.ts';
+import { MarketplaceError, type RemoteOrder, type RemoteOrderRef, type ShopConnection } from '../../src/modules/channel/channel/service/marketplaces/common.ts';
 import { packTiktokToken, unpackTiktokToken } from '../../src/modules/channel/channel/service/marketplaces/tiktok-client.ts';
 import { createTiktokAdapter } from '../../src/modules/channel/channel/service/marketplaces/tiktok.ts';
 import { loadTokens, printStep, requireEnv, saveTokens } from './token-store.ts';
@@ -121,6 +122,79 @@ async function skus(shopId: string | undefined, sellerSkus: string[]): Promise<v
   });
 }
 
+/** Đơn đã chuẩn hoá, rút gọn để đọc: món kèm kiện, trạng thái gốc và trạng thái app. */
+const brief = (o: RemoteOrder) => ({
+  id: o.externalOrderId,
+  rawStatus: o.rawStatus,
+  paid: o.paid,
+  isCod: o.isCod,
+  placedAt: o.placedAt.toISOString(),
+  updatedAt: o.updatedAt.toISOString(),
+  shipBy: o.shipBy?.toISOString() ?? null,
+  deliveredAt: o.deliveredAt?.toISOString() ?? null,
+  cancelRequested: o.cancelRequested,
+  shippingFee: o.shippingFee,
+  address: o.shippingAddress && { ...o.shippingAddress, raw: undefined },
+  lines: o.lines.map((l) => `${l.externalLineId} ${l.sellerSku} ${l.unitPrice} ${l.rawStatus}→${l.status} kiện ${l.packageCode} vận đơn ${l.trackingCode}`),
+});
+
+function session(): string {
+  const saved = loadTokens<TiktokTokens>('tiktok');
+  if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}, chạy "refresh" trước.`);
+  return packedFor(saved);
+}
+
+/** Lật hết `listOrders` (hoặc `listOpenOrders`) rồi lấy chi tiết theo lô. */
+async function orders(open: boolean, days: number): Promise<void> {
+  const packed = session();
+  const refs: RemoteOrderRef[] = [];
+  let cursor: string | null = null;
+  let pages = 0;
+  const safe: string[] = [];
+  do {
+    const prev: string | null = cursor;
+    const page: { orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null } = open ? await adapter.listOpenOrders!(packed, prev) : await adapter.listOrders!(packed, new Date(Date.now() - days * 86_400_000), prev);
+    refs.push(...page.orders);
+    if (page.safeUntil) safe.push(page.safeUntil.toISOString());
+    cursor = page.nextCursor;
+    pages += 1;
+  } while (cursor && pages < 50);
+  printStep(open ? 'listOpenOrders (order/202309/orders/search theo order_status)' : `listOrders ${days} ngày (order/202309/orders/search)`, true, {
+    pages,
+    count: refs.length,
+    safeUntil: safe,
+    refs: refs.map((r) => `${r.externalOrderId} cập nhật ${r.updatedAt.toISOString()}`),
+  });
+  if (!refs.length) return;
+  const detail = await adapter.getOrders!(packed, refs);
+  printStep('getOrders (order/202507/orders)', true, detail.map(brief));
+}
+
+async function order(id: string | undefined): Promise<void> {
+  if (!id) throw new Error('Cú pháp: order <orderId>');
+  printStep('getOrder (order/202507/orders)', true, brief(await adapter.getOrder!(session(), id)));
+}
+
+async function splitAttr(id: string | undefined): Promise<void> {
+  if (!id) throw new Error('Cú pháp: split-attr <orderId>');
+  printStep('splitAttributes (fulfillment/202309/orders/split_attributes)', true, await adapter.splitAttributes!(session(), id));
+}
+
+/** `split <orderId> <lineId,lineId> <lineId> ...`: mỗi nhóm một kiện mới. Ghi lên sàn, chỉ dùng với shop thử. */
+async function split(id: string | undefined, groups: string[]): Promise<void> {
+  if (!id || groups.length < 2) throw new Error('Cú pháp: split <orderId> <nhóm 1: lineId,lineId> <nhóm 2> ...');
+  const packages = await adapter.splitOrder!(session(), id, groups.map((g) => g.split(',')));
+  printStep('splitOrder (fulfillment/202309/orders/{order_id}/split)', true, { packages });
+}
+
+/** `ship <packageId> [pickup|drop_off]`. Ghi lên sàn, chỉ dùng với shop thử. */
+async function ship(packageId: string | undefined, handover: string | undefined): Promise<void> {
+  if (!packageId) throw new Error('Cú pháp: ship <packageId> [pickup|drop_off]');
+  const opts = handover === 'pickup' || handover === 'drop_off' ? { handover: handover as 'pickup' | 'drop_off' } : undefined;
+  await adapter.shipPackage!(session(), packageId, opts);
+  printStep('shipPackage (fulfillment/202309/packages/{package_id}/ship)', true, { packageId });
+}
+
 const [command, ...args] = process.argv.slice(2);
 const commands: Record<string, () => Promise<void> | void> = {
   link,
@@ -129,10 +203,19 @@ const commands: Record<string, () => Promise<void> | void> = {
   refresh,
   // skus [shopId] [sellerSku ...]
   skus: () => skus(args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined, args.filter((a, i) => !(i === 0 && /^\d+$/.test(a)))),
+  // orders [số ngày, mặc định 30] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [cách]
+  orders: () => orders(false, Number(args[0] ?? 30)),
+  'open-orders': () => orders(true, 0),
+  order: () => order(args[0]),
+  'split-attr': () => splitAttr(args[0]),
+  split: () => split(args[0], args.slice(1)),
+  ship: () => ship(args[0], args[1]),
 };
 const run = command ? commands[command] : undefined;
 if (!run) {
-  console.log('Lệnh: link | token <URL callback | code> | shops | refresh | skus [shopId] [sellerSku ...]');
+  console.log(
+    'Lệnh: link | token <URL callback | code> | shops | refresh | skus [shopId] [sellerSku ...] | orders [ngày] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [pickup|drop_off]',
+  );
   process.exitCode = 1;
 } else {
   try {
