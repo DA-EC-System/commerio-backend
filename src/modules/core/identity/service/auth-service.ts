@@ -5,9 +5,11 @@ import {
   type CompanyAccess,
 } from '../../../../shared/auth/company-access.ts';
 import { type AccessClaims, signAccessToken } from '../../../../shared/auth/jwt.ts';
+import { env } from '../../../../shared/config/env.ts';
 import { inTransaction, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { BUILTIN_ROLES, assignRole, permissionModule, rolesAndPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { createCompany, getCompanies, getEnabledModules, type OptionalModule } from '../../platform/index.ts';
@@ -23,8 +25,10 @@ import {
 } from '../../staff/index.ts';
 import {
   findActiveRefreshToken,
+  lockUsableRefreshToken,
+  markRefreshTokenRotated,
   revokeAllRefreshTokens,
-  revokeRefreshToken,
+  revokeRefreshFamily,
   setRefreshTokenCompany,
 } from '../repository/refresh-tokens.ts';
 import { countLogin } from './metrics.ts';
@@ -55,7 +59,18 @@ export interface Session {
 }
 
 const invalidCredentials = () => new AppError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng');
-const invalidRefresh = () => new AppError(401, 'unauthorized', 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại');
+const REFRESH_EXPIRED = 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại';
+const invalidRefresh = () => new AppError(401, 'unauthorized', REFRESH_EXPIRED);
+
+/**
+ * 401 do cookie gửi lên là token đã xoay vòng (dùng lại quá hạn). Trình duyệt có thể đang giữ cookie mới hơn,
+ * nên route không xoá cookie; cả họ token đã bị thu hồi nên cookie đó cũng không dùng được nữa.
+ */
+export class StaleRefreshTokenError extends AppError {
+  constructor() {
+    super(401, 'unauthorized', REFRESH_EXPIRED);
+  }
+}
 
 /**
  * Trạng thái tài khoản trong công ty, đọc thẳng DB; `null` khi không thuộc công ty. Không ném lỗi.
@@ -190,12 +205,43 @@ export async function selectCompany(auth: AccessClaims, companyId: string, refre
 }
 
 /**
- * Đổi refresh token cũ lấy cặp token mới (xoay vòng). Công ty của phiên không còn dùng được
+ * Đổi refresh token lấy cặp token mới (xoay vòng, RFC 9700 §4.14.2). Token vừa bị xoay vòng trong
+ * `REFRESH_REUSE_GRACE_SECONDS` vẫn đổi được, ra token mới cùng họ (F5 hai lần, nhiều tab refresh cùng lúc);
+ * quá hạn đó là dùng lại token cũ: thu hồi cả họ, ghi nhật ký, 401. Công ty của phiên không còn dùng được
  * thì token mới không gắn công ty, FE đưa người dùng về trang chọn công ty.
  */
 export async function refresh(refreshToken: string | undefined): Promise<Session> {
-  const row = refreshToken ? await findActiveRefreshToken(hashToken(refreshToken)) : undefined;
-  if (!row || !(await revokeRefreshToken(row.id))) throw invalidRefresh();
+  if (!refreshToken) throw invalidRefresh();
+  const graceMs = env.REFRESH_REUSE_GRACE_SECONDS * 1000;
+  // Khoá dòng: hai refresh cùng cookie xếp hàng, request sau thấy mốc xoay vòng của request trước.
+  const outcome = await inTransaction(async () => {
+    const row = await lockUsableRefreshToken(hashToken(refreshToken));
+    if (!row) return { kind: 'invalid' } as const;
+    if (!row.rotatedAt) {
+      await markRefreshTokenRotated(row.id);
+      return { kind: 'ok', row } as const;
+    }
+    // Không dời mốc xoay vòng: hạn dùng lại tính từ lần xoay đầu, không kéo dài mãi.
+    if (Date.now() - row.rotatedAt.getTime() <= graceMs) return { kind: 'ok', row } as const;
+    await revokeRefreshFamily(row.familyId);
+    await recordAudit({
+      companyId: null,
+      actorId: row.accountId,
+      action: 'update',
+      entityType: 'core.refresh_tokens',
+      entityId: row.id,
+      after: { reason: 'refresh_token_reuse', familyId: row.familyId },
+    });
+    return { kind: 'reuse', row } as const;
+  });
+  if (outcome.kind === 'invalid') throw invalidRefresh();
+  const { row } = outcome;
+  if (outcome.kind === 'reuse') {
+    logger.warn({ accountId: row.accountId, familyId: row.familyId }, 'dùng lại refresh token đã xoay vòng, thu hồi cả họ');
+    throw new StaleRefreshTokenError();
+  }
+  // Tạo token mới ngoài transaction (companyContext mở withCompany riêng); lỗi giữa chừng thì token cũ
+  // vẫn còn trong hạn dùng lại nên gọi lại được.
   const account = await findAccountById(row.accountId);
   if (!account) throw invalidRefresh();
   let context: CompanyContext | null = null;
@@ -204,13 +250,17 @@ export async function refresh(refreshToken: string | undefined): Promise<Session
   }
   return {
     accessToken: await signAccessToken(claimsFor(account, context)),
-    refreshToken: await newRefreshToken(account.id, context?.companyId ?? null),
+    refreshToken: await newRefreshToken(account.id, context?.companyId ?? null, row.familyId),
   };
 }
 
+/** Thu hồi cả họ token của cookie (kể cả cookie cũ còn trong hạn dùng lại): không token nào của phiên refresh được nữa. */
 export async function logout(refreshToken: string | undefined): Promise<void> {
-  const row = refreshToken ? await findActiveRefreshToken(hashToken(refreshToken)) : undefined;
-  if (row) await revokeRefreshToken(row.id);
+  if (!refreshToken) return;
+  await inTransaction(async () => {
+    const row = await lockUsableRefreshToken(hashToken(refreshToken));
+    if (row) await revokeRefreshFamily(row.familyId);
+  });
 }
 
 /**

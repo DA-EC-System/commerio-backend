@@ -20,6 +20,9 @@ const EnvSchema = z.object({
   JWT_PUBLIC_KEY: z.string().min(1).optional(),
   // Số lần gọi đăng nhập, đăng ký mỗi 15 phút cho một IP.
   AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
+  // Hạn dùng lại refresh token vừa xoay vòng, giây (F5 hai lần, nhiều tab refresh cùng lúc). Quá hạn là dùng lại:
+  // thu hồi cả họ token. 0 thì tắt hạn dùng lại.
+  REFRESH_REUSE_GRACE_SECONDS: z.coerce.number().int().min(0).max(300).default(30),
   // Số tầng proxy đứng trước api (Caddy, Ingress) để req.ip là IP thật của khách; máy dev chạy thẳng thì 0.
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
   KAFKA_BROKERS: z.string().min(1).default('localhost:9092'),
