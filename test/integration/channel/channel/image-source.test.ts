@@ -32,12 +32,14 @@ beforeAll(async () => {
     } else if (path === '/loop') {
       res.writeHead(302, { location: '/loop' }).end();
     } else if (path === '/big') {
-      // Không có content-length (chunked), gửi 12MB từng 256KB theo backpressure.
+      // Không có content-length (chunked), gửi từng 256KB theo backpressure tới khi client huỷ. Trần 64MB chỉ để test
+      // không treo nếu client không huỷ; gửi cố định 12MB thì trên loopback nhanh server có thể ghi xong vào bộ đệm
+      // socket trước khi client kịp huỷ, `bigAborted` ra false dù client đã dừng ở 10MB (CI main 06/11/2026).
       res.writeHead(200, { 'content-type': 'image/png' });
       bigAborted = (async () => {
         const chunk = Buffer.alloc(256 * 1024, 1);
         const closed = once(res, 'close').then(() => 'close' as const);
-        for (let sent = 0; sent < 12 * MB; sent += chunk.length) {
+        for (let sent = 0; sent < 64 * MB; sent += chunk.length) {
           if (res.destroyed) return true;
           if (!res.write(chunk)) {
             const drained = new Promise<'drain'>((r) => res.once('drain', () => r('drain')));
