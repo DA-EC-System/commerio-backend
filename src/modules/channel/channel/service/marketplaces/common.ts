@@ -51,7 +51,7 @@ export interface NewProduct {
   attributes: Record<string, string>;
   name: string;
   description: string;
-  /** URL ảnh đã nằm trên sàn (`uploadImage`). */
+  /** Ảnh đã nằm trên sàn, đúng chuỗi `uploadImage` trả (Lazada URL, TikTok `uri`). */
   imageUrls: string[];
   sellerSku: string;
   price: string;
@@ -253,7 +253,10 @@ export interface MarketplaceAdapter {
   refreshToken(refreshToken: string): Promise<TokenSet>;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
-  /** Đưa ảnh từ URL công khai lên sàn, trả URL trên sàn. */
+  /**
+   * Đưa ảnh từ URL công khai lên sàn, trả chuỗi định danh ảnh trên sàn để truyền lại vào `createProduct`
+   * (`NewProduct.imageUrls`): Lazada là URL, TikTok là `uri` của ảnh.
+   */
   uploadImage(accessToken: string, url: string): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
   /**
@@ -265,7 +268,13 @@ export interface MarketplaceAdapter {
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;
+  /** Tắt (ẩn) sản phẩm trên sàn. Sàn tắt theo cả sản phẩm (TikTok) thì mọi SKU của sản phẩm cùng ẩn. */
   deactivate(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
+  /**
+   * Hiện lại sản phẩm đã tắt (#224, `hideBy = 'deactivate'`). Sàn có thể đưa sản phẩm vào duyệt lại (TikTok về `PENDING`);
+   * trạng thái về qua lần đồng bộ. Sàn chưa có thì không có hàm này.
+   */
+  activate?(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
   /** Khoản tiền theo đơn trong khoảng ngày `[from, to]` (#117). Sàn chưa hỗ trợ thì không có. */
   getTransactions?(accessToken: string, from: string, to: string): Promise<SettlementTxn[]>;
   /** Các kỳ quyết toán từ ngày `from` (#117). */

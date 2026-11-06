@@ -15,6 +15,7 @@ import {
   type ShopConnection,
   type TokenSet,
 } from './common.ts';
+import { tiktokListingMethods } from './tiktok-listing.ts';
 import {
   createTiktokClient,
   packTiktokToken,
@@ -112,11 +113,6 @@ function skusOf(p: Row): RemoteSku[] {
     quantity: ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0),
   }));
 }
-
-/** Năng lực đẩy sản phẩm, tồn giá chưa làm (#219, #226): ném `unsupported` để nghiệp vụ trả 422. */
-const unsupported = async (): Promise<never> => {
-  throw new MarketplaceError('unsupported');
-};
 
 export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
   const client = createTiktokClient(config, fetchFn);
@@ -216,13 +212,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       }
       return out;
     },
-    // Agent sau làm (#219 đẩy listing, #226 tồn giá ẩn hiện): tạm báo unsupported.
-    listCategories: unsupported,
-    categoryAttributes: unsupported,
-    uploadImage: unsupported,
-    createProduct: unsupported,
-    updatePriceQuantity: unsupported,
-    deactivate: unsupported,
+    // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
+    ...tiktokListingMethods(client),
   };
 }
 

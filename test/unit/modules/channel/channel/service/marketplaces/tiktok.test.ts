@@ -302,10 +302,10 @@ describe('adapter TikTok: SKU', () => {
     expect(tiktokRemoteState(status, s)).toBe(state);
   });
 
-  it('năng lực chưa làm (đẩy sản phẩm, tồn giá, ẩn) báo unsupported', async () => {
-    const adapter = createTiktokAdapter(config, fakeFetch());
-    await expect(adapter.listCategories(packed())).rejects.toMatchObject({ kind: 'unsupported' });
-    await expect(adapter.updatePriceQuantity(packed(), [])).rejects.toMatchObject({ kind: 'unsupported' });
-    await expect(adapter.deactivate(packed(), '1', '2')).rejects.toMatchObject({ kind: 'unsupported' });
+  // Năng lực tồn giá, ẩn hiện, đăng sản phẩm (#226, #219) test ở `tiktok-listing.test.ts`.
+  it('đẩy lô rỗng không gọi sàn', async () => {
+    const fetchFn = fakeFetch();
+    expect(await createTiktokAdapter(config, fetchFn).updatePriceQuantity(packed(), [])).toEqual([]);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
