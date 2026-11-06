@@ -131,8 +131,43 @@
     {
       "idx": 18,
       "version": "7",
-      "when": 1793957249723,
-      "tag": "0018_refresh-ho-token",
+      "when": 1793959417327,
+      "tag": "0018_shop-return-window",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793964309538,
+      "tag": "0019_phieu-dau-ky-gian-hang",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793964312796,
+      "tag": "0020_pg-trgm-backfill-thiet-lap",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793971950397,
+      "tag": "0021_tran-don-mo",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793979195222,
+      "tag": "0022_keo-lai-don-truoc-0017",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793980434666,
+      "tag": "0023_refresh-ho-token",
       "breakpoints": true
     }
   ]

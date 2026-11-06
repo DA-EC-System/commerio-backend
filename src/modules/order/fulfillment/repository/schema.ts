@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, integer, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, check, index, integer, jsonb, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module con `fulfillment` khai báo trong schema của module lớn `order` (Documents/19 D1).
@@ -22,6 +22,13 @@ export const packageStatus = fulfillmentSchema.enum('package_status', [
   'cancelled',
 ]);
 export const openPurpose = fulfillmentSchema.enum('open_purpose', ['cancel', 'edit', 'resplit']);
+
+export interface PackageNotice {
+  code: 'not_implemented';
+  issue: string;
+  owner: string;
+  message: string;
+}
 
 /**
  * Một gói hàng đi chung một mã vận đơn, gồm món của một đơn. Đơn vị giữ hàng, đóng gói, bàn giao, giao, hoàn.
@@ -65,6 +72,8 @@ export const packages = fulfillmentSchema.table(
     shippingProviderType: text('shipping_provider_type'),
     shippingType: text('shipping_type'),
     promisedShippingAt: timestamp('promised_shipping_at', { withTimezone: true }),
+    /** Việc chạy ngầm chưa làm được vì chờ issue khác (Documents/21 §18.7.9), vd giữ hàng khi `reserve` còn 501. */
+    notices: jsonb('notices').$type<PackageNotice[]>().notNull().default([]),
     ...timestamps,
     ...version,
   },

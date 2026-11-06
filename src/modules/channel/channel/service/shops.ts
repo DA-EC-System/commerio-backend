@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import {
   assertTransition,
   countHeld,
+  lastDeadJobs,
   dropHeld,
+  getCompanies,
   getStatusHistory,
   recordTransition,
   releaseHeld,
@@ -18,6 +20,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { countOpenOrders } from '../../../order/index.ts';
 import { assertNoOpenOrders, reconnectAction, type ShopStatus, shopMachine, tokenExpiringSoon } from '../domain/shop.ts';
+import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
   delistForDisconnect,
@@ -31,15 +34,19 @@ import {
   updateShop,
 } from '../repository/shops.ts';
 import {
+  capabilitiesOf,
   type ConnectMethod,
   connectablePlatforms,
   getAdapter,
   type MarketplaceAdapter,
   MarketplaceError,
-  type SellerInfo,
+  type ShopCapabilities,
+  type ShopConnection,
   type TokenSet,
 } from './marketplaces/index.ts';
-import { startShopJobs, stopShopJobs } from './shop-jobs.ts';
+import { listingSyncQueue, openOrderPullQueue, resumeOpenOrderPull, startShopJobs, stopShopJobs } from './shop-jobs.ts';
+import { setupOf, type ShopSetup } from '../domain/shop-setup.ts';
+import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
 export interface Actor {
@@ -62,6 +69,14 @@ export interface Shop {
   tokenExpiringSoon: boolean;
   lastOrderSyncAt: Date | null;
   orderCutoffAt: Date | null;
+  /** Năng lực của sàn (adapter khai, không lưu DB). */
+  capabilities: ShopCapabilities;
+  /** Hạn trả hàng (ngày), null khi chưa thiết lập hoặc sàn `returnWindow = 'platform_status'`. */
+  returnWindowDays: number | null;
+  /** Phiếu kiểm kê đầu kỳ đang chờ ghi sổ (chế độ chờ kiểm kê lần đầu, #198). */
+  openingStocktake: { documentId: string; number: string; status: OpeningStocktakeStatus } | null;
+  /** Tiến độ thiết lập (#198, 21 §18.7.7). */
+  setup: ShopSetup | null;
   /** Hàng chờ đẩy khi chưa gọi được sàn: #102 làm, tới đó luôn 0. */
   pendingJobs: number;
   listingCount: number;
@@ -70,10 +85,15 @@ export interface Shop {
   updatedAt: Date;
 }
 
-export interface ShopCallbackResult {
+export interface ShopConnectionResult {
   shop: Shop;
   created: boolean;
   reconnect: { pulledFrom: Date | null; relisted: number; jobsRun: number } | null;
+}
+
+/** `shop`, `created`, `reconnect` là của phần tử đầu; `shops` đủ mọi gian hàng của lần nối (Documents/21 §18.4). */
+export interface ShopCallbackResult extends ShopConnectionResult {
+  shops: ShopConnectionResult[];
 }
 
 const ENTITY = 'shops';
@@ -83,7 +103,33 @@ type Platform = ShopRow['platform'];
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ thao tác này');
 
-function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
+interface ShopExtras {
+  listings: Map<string, number>;
+  held: Map<string, number>;
+  stocktakeStatus: Map<string, OpeningStocktakeStatus>;
+  /** Lúc lỗi gần nhất của việc hết lượt thử, khoá `"<shopId> <hàng>"` (`lastDeadJobs`). */
+  dead: Map<string, Date>;
+}
+
+/** Gian hàng đang thiết lập dở (#198): mới cần đọc hàng lỗi cho `setup`. */
+const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'disconnected' && (!r.openOrdersPulledAt || !r.stockPushedAt);
+
+/** Số đếm và trạng thái phiếu đầu kỳ cho các gian hàng, đọc một lần cho cả danh sách. Gọi trong `withCompany`. */
+async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
+  const ids = rows.map((r) => r.id);
+  const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
+  const [listings, held, stocktakeStatus, dead] = await Promise.all([
+    countListingsOnPlatform(ids),
+    countHeld(ids),
+    docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
+    lastDeadJobs(rows.filter(settingUp).map((r) => r.id), [openOrderPullQueue.name, listingSyncQueue.name]),
+  ]);
+  return { listings, held, stocktakeStatus, dead };
+}
+
+function toShop(row: ShopRow, extras: ShopExtras): Shop {
+  const listingCount = extras.listings.get(row.id) ?? 0;
+  const pendingJobs = extras.held.get(row.id) ?? 0;
   return {
     id: row.id,
     companyId: row.companyId,
@@ -97,6 +143,24 @@ function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
     tokenExpiringSoon: tokenExpiringSoon(row.status, row.refreshExpiresAt),
     lastOrderSyncAt: row.lastOrderSyncAt,
     orderCutoffAt: row.orderCutoffAt,
+    capabilities: capabilitiesOf(row.platform),
+    returnWindowDays: row.returnWindowDays,
+    openingStocktake:
+      row.openingStocktakeId && row.openingStocktakeNumber
+        ? {
+            documentId: row.openingStocktakeId,
+            number: row.openingStocktakeNumber,
+            status: extras.stocktakeStatus.get(row.openingStocktakeId) ?? 'draft',
+          }
+        : null,
+    setup: setupOf(
+      {
+        ...row,
+        openOrderPullFailedAt: extras.dead.get(`${row.id} ${openOrderPullQueue.name}`) ?? null,
+        listingSyncFailedAt: extras.dead.get(`${row.id} ${listingSyncQueue.name}`) ?? null,
+      },
+      new Date(),
+    ),
     pendingJobs,
     listingCount,
     version: row.version,
@@ -106,14 +170,19 @@ function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
 }
 
 export async function shopView(row: ShopRow): Promise<Shop> {
-  const [listings, held] = await Promise.all([countListingsOnPlatform([row.id]), countHeld([row.id])]);
-  return toShop(row, listings.get(row.id) ?? 0, held.get(row.id) ?? 0);
+  return toShop(row, await shopExtras([row]));
 }
 
-function adapterOf(platform: Platform): MarketplaceAdapter {
+function adapterOf(platform: string): MarketplaceAdapter {
   const adapter = getAdapter(platform);
   if (!adapter) throw unsupported();
   return adapter;
+}
+
+/** Mã sàn từ URL: phải có adapter và có trong enum DB, không thì 422 `marketplace_unsupported` (21 §18.4). */
+function platformOf(platform: string): { platform: Platform; adapter: MarketplaceAdapter } {
+  if (!isMarketplace(platform)) throw unsupported();
+  return { platform, adapter: adapterOf(platform) };
 }
 
 /** Lỗi sàn đổi sang mã app, giữ mã gốc (Documents/21 §1.1 R8, R9). */
@@ -178,13 +247,14 @@ export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter:
 export async function listShops(): Promise<{ items: Shop[] }> {
   requireCompanyId('listShops');
   const rows = await listShopRows();
-  const ids = rows.map((r) => r.id);
-  const [counts, held] = await Promise.all([countListingsOnPlatform(ids), countHeld(ids)]);
-  return { items: rows.map((r) => toShop(r, counts.get(r.id) ?? 0, held.get(r.id) ?? 0)) };
+  const extras = await shopExtras(rows);
+  return { items: rows.map((r) => toShop(r, extras)) };
 }
 
 /** Sàn kết nối được và cách nối (Documents/21 §18.1). Cấu hình của máy chủ, giống nhau với mọi công ty; không lộ khoá. */
-export function shopPlatforms(): { items: { platform: string; name: string; connectable: true; methods: readonly ConnectMethod[] }[] } {
+export function shopPlatforms(): {
+  items: { platform: string; name: string; connectable: true; methods: readonly ConnectMethod[]; capabilities: ShopCapabilities }[];
+} {
   return { items: connectablePlatforms().map((p) => ({ ...p, connectable: true })) };
 }
 
@@ -194,101 +264,136 @@ export async function getShop(id: string): Promise<Shop & { statusHistory: Statu
 }
 
 /** URL uỷ quyền; `state` là token ký 10 phút gắn công ty, người bấm và sàn (#103 B1). */
-export async function authorizeUrl(platform: Platform, actor: Actor): Promise<{ url: string }> {
-  const adapter = adapterOf(platform);
+export async function authorizeUrl(raw: string, actor: Actor): Promise<{ url: string }> {
+  const { platform, adapter } = platformOf(raw);
   const state = await signPurposeToken('oauth', { cid: actor.companyId, sub: actor.accountId, plt: platform });
   return { url: await onMarketplace(async () => adapter.authorizeUrl(state)) };
 }
 
-/** Callback OAuth: kiểm `state`, đổi `code` lấy token, tạo hoặc nối lại gian hàng. */
+/**
+ * Callback OAuth: kiểm `state`, adapter đổi `params` (mọi query sàn trả trừ `state`) lấy các gian hàng, tạo hoặc nối lại.
+ * Body cũ `{ code, state }` coi như `params = { code }` (21 §18.6.3).
+ */
 export async function connectByCode(
-  platform: Platform,
+  raw: string,
   actor: Actor,
-  input: { code: string; state: string },
+  input: { state?: string | undefined; params?: Record<string, string> | undefined; code?: string | undefined },
 ): Promise<ShopCallbackResult> {
-  const adapter = adapterOf(platform);
-  const claims = await verifyPurposeToken('oauth', input.state).catch((err: unknown) => {
-    if (err instanceof PurposeTokenError) return null;
-    throw err;
-  });
-  if (!claims || claims.cid !== actor.companyId || claims.sub !== actor.accountId || claims.plt !== platform) {
+  const { platform, adapter } = platformOf(raw);
+  const claims = input.state
+    ? await verifyPurposeToken('oauth', input.state).catch((err: unknown) => {
+        if (err instanceof PurposeTokenError) return null;
+        throw err;
+      })
+    : null;
+  if (!claims?.cid || claims.sub !== actor.accountId || claims.plt !== platform) {
     throw new AppError(422, 'oauth_state_invalid', 'Phiên kết nối đã hết hạn hoặc không hợp lệ');
   }
-  const tokens = await onMarketplace(() => adapter.exchangeCode(input.code));
-  const seller = await onMarketplace(() => adapter.getSeller(tokens.accessToken));
-  return attach(platform, actor, tokens, seller);
+  if (claims.cid !== actor.companyId) throw await companyMismatch(claims.cid, actor.companyId);
+  const params = input.params ?? { code: input.code! };
+  return attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params))));
 }
 
 /**
- * Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được). Có refresh token thì làm
- * mới một lần để biết hạn; không có thì hạn để trống, hết hạn thì dán token mới.
+ * Người bấm đổi công ty giữa lúc mở trang uỷ quyền và lúc sàn trả về (21 §18.7.4): `expected` là công ty trong `state`,
+ * `actual` là công ty trong token. Ném trước khi đổi `code`, nên không nhận token sàn nào, không ghi gian hàng nào.
  */
+async function companyMismatch(expectedId: string, actualId: string): Promise<AppError> {
+  const names = await getCompanies([expectedId, actualId]);
+  const ref = (id: string) => ({ id, name: names.get(id)?.name ?? '' });
+  return new AppError(409, 'company_mismatch', 'Phiên kết nối được mở ở công ty khác công ty đang chọn', {
+    expected: ref(expectedId),
+    actual: ref(actualId),
+  });
+}
+
+/** Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần. */
 export async function connectByToken(
-  platform: Platform,
+  raw: string,
   actor: Actor,
   input: { accessToken: string; refreshToken?: string | undefined },
 ): Promise<ShopCallbackResult> {
-  const adapter = adapterOf(platform);
-  const tokens: TokenSet = input.refreshToken
-    ? await onMarketplace(() => adapter.refreshToken(input.refreshToken!))
-    : { accessToken: input.accessToken, refreshToken: null, accessExpiresAt: null, refreshExpiresAt: null };
-  const seller = await onMarketplace(() => adapter.getSeller(tokens.accessToken));
-  return attach(platform, actor, tokens, seller);
+  const { platform, adapter } = platformOf(raw);
+  const connections = await onMarketplace(async () =>
+    atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
+  );
+  return attachAll(platform, actor, connections);
+}
+
+/** Uỷ quyền mà không ra gian hàng nào: ném trong `onMarketplace` để thành 409 `marketplace_rejected`, không 500. */
+function atLeastOne(connections: ShopConnection[]): ShopConnection[] {
+  if (connections.length === 0) throw new MarketplaceError('rejected', 'no_shop', 'Sàn không trả gian hàng nào cho lần uỷ quyền này');
+  return connections;
 }
 
 const connectedElsewhere = () => new AppError(409, 'shop_connected_elsewhere', 'Gian hàng này đã kết nối ở công ty khác');
 
-async function attach(platform: Platform, actor: Actor, tokens: TokenSet, seller: SellerInfo): Promise<ShopCallbackResult> {
-  const owner = await findLiveCompanyOf(platform, seller.externalShopId);
-  if (owner && owner !== actor.companyId) throw connectedElsewhere();
-  let result: ShopCallbackResult;
+/**
+ * Nối mọi gian hàng của một lần uỷ quyền, tất cả hoặc không (#200): kiểm "đã gắn công ty khác" cho từng gian hàng ngoài
+ * giao dịch (role chủ bảng, RLS không che), ghi tất cả trong một `withCompany`, rồi mới chạy việc sau commit.
+ */
+async function attachAll(platform: Platform, actor: Actor, connections: ShopConnection[]): Promise<ShopCallbackResult> {
+  const unique = [...new Map(connections.map((c) => [c.externalShopId, c])).values()];
+  for (const c of unique) {
+    const owner = await findLiveCompanyOf(platform, c.externalShopId);
+    if (owner && owner !== actor.companyId) throw connectedElsewhere();
+  }
+  let results: ShopConnectionResult[];
   try {
-    result = await withCompany(actor.companyId, async (): Promise<ShopCallbackResult> => {
-      const existing = await findShopByExternal(platform, seller.externalShopId);
-      if (!existing) {
-        const id = randomUUID();
-        const row = await insertShop({
-          id,
-          companyId: actor.companyId,
-          platform,
-          externalShopId: seller.externalShopId,
-          shopName: seller.shopName,
-          region: seller.region,
-          status: 'connecting',
-          ...tokenColumns(id, tokens),
-        });
-        await recordTransition({ entityType: ENTITY, entityId: id, from: null, to: 'connecting', action: 'connect', actorId: actor.accountId });
-        return { shop: await shopView(row), created: true, reconnect: null };
-      }
-
-      const action = reconnectAction(existing.status, existing.orderCutoffAt);
-      const to = action ? assertTransition(shopMachine, existing.status, action, { actor }).to : existing.status;
-      const row = await updateShop(
-        existing.id,
-        { version: existing.version, status: existing.status },
-        { ...tokenColumns(existing.id, tokens), shopName: seller.shopName, status: to, disconnectedAt: null, lastError: null },
-      );
-      if (!row) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
-      if (action) {
-        await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
-      }
-      // Kéo đơn từ mốc cuối (#105), đưa lên lại listing gỡ do ngắt (#104) chưa làm: báo 0. `jobsRun` điền sau khi commit.
-      const reconnect =
-        action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
-      return { shop: await shopView(row), created: false, reconnect };
+    results = await withCompany(actor.companyId, async () => {
+      const out: ShopConnectionResult[] = [];
+      for (const c of unique) out.push(await writeShop(platform, actor, c));
+      return out;
     });
   } catch (err) {
     if (pgError(err).constraint === 'shops_platform_external_live_uq') throw connectedElsewhere();
     throw err;
   }
   // Sau commit: gian hàng đã `active` (nối lại) thì chạy việc đang giữ và bật lại lịch (#102 A5).
-  if (result.shop.status === 'active') {
+  for (const result of results) {
+    if (result.shop.status !== 'active') continue;
     const jobsRun = await releaseHeld(result.shop.id);
     await startShopJobs(result.shop.companyId, result.shop.id);
+    await resumeOpenOrderPull(result.shop.companyId, result.shop.id);
     result.shop.pendingJobs = 0;
     if (result.reconnect) result.reconnect.jobsRun = jobsRun;
   }
-  return result;
+  return { ...results[0]!, shops: results };
+}
+
+/** Tạo hoặc nối lại một gian hàng; gọi trong `withCompany`. */
+async function writeShop(platform: Platform, actor: Actor, c: ShopConnection): Promise<ShopConnectionResult> {
+  const existing = await findShopByExternal(platform, c.externalShopId);
+  if (!existing) {
+    const id = randomUUID();
+    const row = await insertShop({
+      id,
+      companyId: actor.companyId,
+      platform,
+      externalShopId: c.externalShopId,
+      shopName: c.shopName,
+      region: c.region,
+      status: 'connecting',
+      ...tokenColumns(id, c.tokens),
+    });
+    await recordTransition({ entityType: ENTITY, entityId: id, from: null, to: 'connecting', action: 'connect', actorId: actor.accountId });
+    return { shop: await shopView(row), created: true, reconnect: null };
+  }
+
+  const action = reconnectAction(existing.status, existing.orderCutoffAt);
+  const to = action ? assertTransition(shopMachine, existing.status, action, { actor }).to : existing.status;
+  const row = await updateShop(
+    existing.id,
+    { version: existing.version, status: existing.status },
+    { ...tokenColumns(existing.id, c.tokens), shopName: c.shopName, status: to, disconnectedAt: null, lastError: null },
+  );
+  if (!row) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
+  if (action) {
+    await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
+  }
+  // Kéo đơn từ mốc cuối (#105), đưa lên lại listing gỡ do ngắt (#104) chưa làm: báo 0. `jobsRun` điền sau khi commit.
+  const reconnect = action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
+  return { shop: await shopView(row), created: false, reconnect };
 }
 
 /**

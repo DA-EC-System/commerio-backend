@@ -1,0 +1,2 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "open_orders_skipped" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_open_orders_skipped" CHECK ("channel"."shops"."open_orders_skipped" >= 0);

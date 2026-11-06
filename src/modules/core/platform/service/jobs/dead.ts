@@ -49,6 +49,26 @@ async function deadQueue() {
   return boss;
 }
 
+/**
+ * Lúc lỗi gần nhất của việc đã thử hết lượt, theo gian hàng và hàng gốc (`Shop.setup`, #198): khoá `"<shopId> <hàng>"`.
+ * Chỉ các hàng trong `queues`. Đọc bằng kết nối của pg-boss, gọi được trong `withCompany`.
+ */
+export async function lastDeadJobs(shopIds: readonly string[], queues: readonly string[]): Promise<Map<string, Date>> {
+  const out = new Map<string, Date>();
+  if (!shopIds.length) return out;
+  const boss = await deadQueue();
+  for (const shopId of shopIds) {
+    for (const job of await boss.findJobs(DEAD_QUEUE, { data: { shopId } })) {
+      if (!job.sourceName || !queues.includes(job.sourceName)) continue;
+      const key = `${shopId} ${job.sourceName}`;
+      const at = new Date(job.createdOn);
+      const seen = out.get(key);
+      if (!seen || at > seen) out.set(key, at);
+    }
+  }
+  return out;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

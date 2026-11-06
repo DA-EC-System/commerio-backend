@@ -1,5 +1,5 @@
 {
-  "id": "45dd9375-2d3a-4a1f-881a-013a5c399c94",
+  "id": "b04a3e25-b5e7-4f25-93e7-0543c4fc36fe",
   "prevId": "b8d51290-6943-4d0c-a38f-703327b8a20b",
   "version": "7",
   "dialect": "postgresql",
@@ -811,6 +811,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "return_window_days": {
+          "name": "return_window_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "last_order_sync_at": {
           "name": "last_order_sync_at",
           "type": "timestamp with time zone",
@@ -899,6 +905,10 @@
         "shops_active_cutoff": {
           "name": "shops_active_cutoff",
           "value": "\"channel\".\"shops\".\"status\" <> 'active' or \"channel\".\"shops\".\"order_cutoff_at\" is not null"
+        },
+        "shops_return_window_days": {
+          "name": "shops_return_window_days",
+          "value": "\"channel\".\"shops\".\"return_window_days\" between 1 and 60"
         }
       },
       "isRLSEnabled": false
@@ -2192,13 +2202,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "family_id": {
-          "name": "family_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
         "token_hash": {
           "name": "token_hash",
           "type": "text",
@@ -2210,12 +2213,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "rotated_at": {
-          "name": "rotated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         },
         "revoked_at": {
           "name": "revoked_at",
@@ -2237,21 +2234,6 @@
           "columns": [
             {
               "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "refresh_tokens_family_id_index": {
-          "name": "refresh_tokens_family_id_index",
-          "columns": [
-            {
-              "expression": "family_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

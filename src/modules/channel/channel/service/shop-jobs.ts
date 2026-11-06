@@ -1,7 +1,8 @@
 // Lịch việc nền của gian hàng (#102 A3): sinh khi gian hàng `active`, bỏ khi ngắt hoặc mất token.
 import { z } from 'zod';
-import { defineQueue, JobDataSchema, scheduleForShop, unscheduleForShop } from '../../../core/index.ts';
-import { findActiveShopsAnyCompany } from '../repository/shops.ts';
+import { defineQueue, JobDataSchema, scheduleForShop, sendJob, unscheduleForShop } from '../../../core/index.ts';
+import { withCompany } from '../../../../shared/db/client.ts';
+import { findActiveShopsAnyCompany, findShopRow } from '../repository/shops.ts';
 
 export const ShopJobSchema = JobDataSchema.extend({ shopId: z.uuid() });
 export type ShopJob = z.infer<typeof ShopJobSchema>;
@@ -10,6 +11,11 @@ export type ShopJob = z.infer<typeof ShopJobSchema>;
 export const listingSyncQueue = defineQueue('channel.listing_sync', ShopJobSchema, { policy: 'stately' });
 /** Kéo đơn từ mốc của gian hàng (`pullShopOrders`, #105). */
 export const orderPullQueue = defineQueue('channel.order_pull', ShopJobSchema, { policy: 'stately' });
+/**
+ * Lượt kéo đơn còn mở, một lần sau thiết lập (`pullOpenOrders`, #198). Không có lịch: gửi khi thiết lập, khi nối lại và
+ * khi worker khởi động nếu `open_orders_pulled_at` còn null. Lượt đi hết các trạng thái mở nên cho chạy tới 30 phút.
+ */
+export const openOrderPullQueue = defineQueue('channel.open_order_pull', ShopJobSchema, { policy: 'stately', expireInSeconds: 1800 });
 /** Làm mới token khi access còn dưới 48 giờ; access Lazada sống 7 ngày nên chạy hằng ngày là đủ. */
 export const tokenRefreshQueue = defineQueue('channel.token_refresh', ShopJobSchema, { policy: 'stately' });
 
@@ -29,7 +35,21 @@ export async function stopShopJobs(shopId: string): Promise<void> {
   await unscheduleForShop(tokenRefreshQueue, shopId);
 }
 
+/** Xếp lượt kéo đơn còn mở; đã có việc chờ cùng gian hàng thì không thêm (`stately`). Đi chung giao dịch đang mở. */
+export async function sendOpenOrderPull(companyId: string, shopId: string): Promise<void> {
+  await sendJob(openOrderPullQueue, { companyId, shopId }, { key: shopId });
+}
+
+/** Gian hàng `active` đã thiết lập mà lượt kéo đơn còn mở chưa xong (việc mất khi gian hàng ngắt, mất token) thì xếp lại. */
+export async function resumeOpenOrderPull(companyId: string, shopId: string): Promise<void> {
+  const row = await withCompany(companyId, () => findShopRow(shopId));
+  if (row?.status === 'active' && row.orderCutoffAt && !row.openOrdersPulledAt) await sendOpenOrderPull(companyId, shopId);
+}
+
 /** Worker khởi động: gian hàng `active` nào thiếu lịch thì đặt lại (đặt trùng thì thay, không sinh thêm). */
 export async function reconcileShopJobs(): Promise<void> {
-  for (const shop of await findActiveShopsAnyCompany()) await startShopJobs(shop.companyId, shop.id);
+  for (const shop of await findActiveShopsAnyCompany()) {
+    await startShopJobs(shop.companyId, shop.id);
+    if (shop.orderCutoffAt && !shop.openOrdersPulledAt) await sendOpenOrderPull(shop.companyId, shop.id);
+  }
 }

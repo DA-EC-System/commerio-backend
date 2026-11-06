@@ -48,6 +48,9 @@ const EnvSchema = z.object({
   LAZADA_AUTH_URL: z.url().default('https://auth.lazada.com'),
   // Hạn mức gọi Lazada mỗi ngày của cả app (App Console: 10.000), chừa 10% cho thao tác tay và lệch múi giờ (#102 A7).
   LAZADA_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(9000),
+  // Trần số đơn còn mở kéo về ở lượt sau thiết lập (#198): chỉ lấy N đơn đặt mới nhất, phần cũ hơn bỏ qua và báo ở
+  // `Shop.setup.openOrdersSkipped`. Không đặt hoặc để trống là không giới hạn (Documents/25 §6.1); staging đặt để giữ hạn mức gọi sàn.
+  OPEN_ORDER_PULL_MAX: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),
   // URL công khai của api, dùng làm địa chỉ IPN và trang quay về cho cổng thanh toán.
   PUBLIC_API_URL: z.url().optional(),
   // URL công khai của FE: cổng thanh toán đưa khách quay về `<PUBLIC_WEB_URL>/thanh-toan/ket-qua`.

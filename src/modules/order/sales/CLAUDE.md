@@ -16,7 +16,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 - Chèn `on conflict do nothing` rồi khoá đọc lại: hai lần kéo cùng đơn chỉ tạo một đơn. Mã `DH-000001`, mã kiện `KH-000001` từ `order.doc_counters`.
 - Sàn đã trả (mọi trạng thái trừ `unpaid`) → `pay`. Cả đơn bị huỷ: chưa kiện nào đóng gói → `platform_cancel`, phát `sales.order_cancelled`; còn kiện đã đóng gói → cờ `cancelling` (mở kiện là #106); có kiện đã rời kho → cờ `platform_cancelled`.
-- Kiện do `fulfillment/service/platform-packages.ts`: mỗi mã kiện sàn một kiện, kiện tạm nhận mã ở lần sau; trạng thái kiện là món chậm nhất; sàn nhảy cóc trên đường chính thì áp thẳng (`platform_sync`), không áp được thì cờ kiện cần xử lý. Giữ hàng qua `fulfillment/service/stock-port.ts` (bản "chưa giữ được" tới khi #111 có `reserve`).
+- Kiện do `fulfillment/service/platform-packages.ts`: mỗi mã kiện sàn một kiện, kiện tạm nhận mã ở lần sau; trạng thái kiện là món chậm nhất; sàn nhảy cóc trên đường chính thì áp thẳng (`platform_sync`), không áp được thì cờ kiện cần xử lý. Giữ hàng qua `fulfillment/service/stock-port.ts`, mặc định trỏ sang `reserve`/`release` của inventory (#198). `reserve` chưa có thân (commerio-backend#206, Khang) nên ném 501 `not_implemented`: `tryReserve` bắt lỗi đó, kiện ở `backordered`, cột `notices` (jsonb) ghi `{ code, issue, owner, message }`, trả ở `PackageSummary.notices` (Documents/21 §18.7.9); lỗi khác ném tiếp. `PlatformOrder.holdStock = false` (gian hàng chờ kiểm kê đầu kỳ) thì không gọi `reserve`.
 - Phát `sales.order_created`, `sales.order_status_changed` (kèm cờ), `fulfillment.package_status_changed`.
 
 ## Thao tác đơn sàn (#105 PR 2, §19.3)

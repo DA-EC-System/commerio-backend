@@ -50,7 +50,10 @@ export const OrderListQuery = z.object({
   status: z.enum(ORDER_STATUS).optional(),
   source: z.enum(['marketplace', 'inbox', 'manual']).optional(),
   shopId: z.uuid('Gian hàng không hợp lệ').optional(),
-  paymentMethod: z.enum(['prepaid', 'cod']).optional(),
+  paymentMethod: z
+    .enum(['prepaid', 'cod'])
+    .optional()
+    .meta({ description: 'cod gồm đơn sàn thu hộ, prepaid gồm đơn sàn không thu hộ' }),
   stage: z.enum(ORDER_STAGES).optional(),
   flag: z.enum(ORDER_FLAGS).optional(),
   customerId: z.uuid('Khách hàng không hợp lệ').optional(),
@@ -146,6 +149,9 @@ export const PackageSummary = z
     status: z.enum(PACKAGE_STATUS),
     flags: z.array(z.enum(['needs_open', 'needs_attention', 'lost_reported'])),
     flagNote: z.string().nullable(),
+    notices: z
+      .array(z.object({ code: z.literal('not_implemented'), issue: z.string(), owner: z.string(), message: z.string() }).strict())
+      .meta({ description: 'Việc chạy ngầm chưa làm được vì chờ issue khác, vd giữ hàng khi `reserve` chờ commerio-backend#206 (21 §18.7.9). Rỗng khi không có' }),
     openPurpose: z.enum(['cancel', 'edit', 'resplit']).nullable(),
     selfDelivery: z.boolean(),
     paymentMethod: z.enum(['prepaid', 'cod']).nullable(),

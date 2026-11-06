@@ -32,9 +32,13 @@ export async function lockShopRow(id: string): Promise<ShopRow | undefined> {
  * Trạng thái gian hàng, khoá chia sẻ tới hết giao dịch nhận đơn (#207): đơn đang chèn thì ngắt (`lockShopRow`) chờ rồi
  * đếm thấy; ngắt đã khoá trước thì bên nhận chờ rồi thấy `disconnected`.
  */
-export async function lockShopForOrders(id: string): Promise<ShopStatus | undefined> {
-  const [row] = await getDb().select({ status: shops.status }).from(shops).where(eq(shops.id, id)).for('share');
-  return row?.status;
+export async function lockShopForOrders(id: string): Promise<{ status: ShopStatus; openingStocktakeId: string | null } | undefined> {
+  const [row] = await getDb()
+    .select({ status: shops.status, openingStocktakeId: shops.openingStocktakeId })
+    .from(shops)
+    .where(eq(shops.id, id))
+    .for('share');
+  return row;
 }
 
 export async function findShopByExternal(platform: Platform, externalShopId: string): Promise<ShopRow | undefined> {
@@ -61,9 +65,17 @@ export async function findLiveCompanyOf(platform: Platform, externalShopId: stri
  * Gian hàng đang hoạt động **của mọi công ty**, cho việc nền (kéo quyết toán #117, dựng lại lịch #102): gọi ngoài `withCompany` (role chủ
  * bảng), mỗi gian hàng xử lý tiếp trong `withCompany` của nó.
  */
-export async function findActiveShopsAnyCompany(): Promise<{ id: string; companyId: string; platform: Platform }[]> {
+export async function findActiveShopsAnyCompany(): Promise<
+  { id: string; companyId: string; platform: Platform; orderCutoffAt: Date | null; openOrdersPulledAt: Date | null }[]
+> {
   return getDb()
-    .select({ id: shops.id, companyId: shops.companyId, platform: shops.platform })
+    .select({
+      id: shops.id,
+      companyId: shops.companyId,
+      platform: shops.platform,
+      orderCutoffAt: shops.orderCutoffAt,
+      openOrdersPulledAt: shops.openOrdersPulledAt,
+    })
     .from(shops)
     .where(eq(shops.status, 'active'));
 }
@@ -134,6 +146,57 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
       ),
     );
   return before;
+}
+
+/**
+ * Gian hàng khác của công ty (RLS lọc công ty): đã có gian hàng xong thiết lập chưa (có mốc, không chờ kiểm kê; kể cả đã
+ * ngắt), và phiếu kiểm kê đầu kỳ đang chờ nếu có (#198 A1, A12).
+ */
+export async function setupStateOfCompany(exceptShopId: string): Promise<{ hasSetUpShop: boolean; awaitingStocktake: string | null }> {
+  const rows = await getDb()
+    .select({ cutoff: shops.orderCutoffAt, stocktake: shops.openingStocktakeNumber })
+    .from(shops)
+    .where(and(ne(shops.id, exceptShopId), sql`${shops.orderCutoffAt} is not null`));
+  return {
+    hasSetUpShop: rows.some((r) => r.stocktake === null),
+    awaitingStocktake: rows.find((r) => r.stocktake !== null)?.stocktake ?? null,
+  };
+}
+
+/** Khoá thiết lập của công ty tới hết giao dịch: hai lần thiết lập gian hàng cùng công ty chạy lần lượt (#198 A12). */
+export async function lockCompanySetup(companyId: string): Promise<void> {
+  await getDb().execute(sql`select pg_advisory_xact_lock(hashtext('channel.setup'), hashtext(${companyId}))`);
+}
+
+/** Đánh dấu lượt đẩy tồn đầu tiên sau thiết lập đã chạy (§18.7.7 `push_stock`). Không tăng `version`. */
+export async function markStockPushed(id: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ stockPushedAt: sql`now()` })
+    .where(and(eq(shops.id, id), sql`${shops.stockPushedAt} is null`));
+}
+
+/** Lỗi lượt kéo đơn còn mở ghi vào `last_error` bắt đầu bằng câu này; lượt xong thì xoá đúng lỗi đó (#198 P3). */
+export const OPEN_ORDER_PULL_ERROR = 'Lượt kéo đơn còn mở chưa xong';
+
+/** Lượt kéo đơn còn mở xong (#198 A10): từ giờ `syncListings` mới đẩy tồn. `skipped`: số đơn bỏ vì trần. Không tăng `version`. */
+export async function markOpenOrdersPulled(id: string, skipped: number): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({
+      openOrdersPulledAt: sql`coalesce(${shops.openOrdersPulledAt}, now())`,
+      openOrdersSkipped: skipped,
+      lastError: sql`case when ${shops.lastError} like ${`${OPEN_ORDER_PULL_ERROR}%`} then null else ${shops.lastError} end`,
+    })
+    .where(eq(shops.id, id));
+}
+
+/** Ghi lỗi của lượt kéo đơn còn mở để người dùng thấy gian hàng chưa đẩy tồn (#198 P3). Không tăng `version`. */
+export async function recordOpenOrderPullError(id: string, message: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ lastError: `${OPEN_ORDER_PULL_ERROR}: ${message}` })
+    .where(and(eq(shops.id, id), sql`${shops.openOrdersPulledAt} is null`));
 }
 
 /** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */

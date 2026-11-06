@@ -163,6 +163,9 @@ export async function pushListings(
   input: { variantIds: string[]; imageUrls: Record<string, string[]> },
 ): Promise<{ results: PushResult[] }> {
   const { shop, adapter, accessToken } = await withCompany(actor.companyId, () => shopSession(shopId));
+  if (shop.openingStocktakeNumber) {
+    throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kê đầu kỳ ${shop.openingStocktakeNumber} ghi sổ`);
+  }
   const ids = [...new Set(input.variantIds)];
   const { variants, prices, available, maps } = await withCompany(actor.companyId, async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));

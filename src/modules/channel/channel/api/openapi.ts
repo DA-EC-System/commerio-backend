@@ -42,14 +42,14 @@ const auth = {
 };
 const marketplace = {
   409: problemResponse(
-    '`shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+    '`shop_connected_elsewhere` (một gian hàng của lần nối đang gắn công ty khác: không gian hàng nào được nối); `marketplace_rejected` kèm `platformCode`, `platformMessage` (`no_shop`: lần uỷ quyền không ra gian hàng nào; `missing_parameter`: thiếu tham số adapter cần); `version_conflict`',
   ),
   422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
   503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm, thử lại'),
 };
 const connected = {
-  200: { description: 'Nối lại gian hàng đã có', ...json(ShopCallbackResult) },
-  201: { description: 'Gian hàng mới, trạng thái `connecting`', ...json(ShopCallbackResult) },
+  200: { description: 'Chỉ nối lại gian hàng đã có', ...json(ShopCallbackResult) },
+  201: { description: 'Có ít nhất một gian hàng mới (trạng thái `connecting`)', ...json(ShopCallbackResult) },
 };
 
 /** Đường dẫn Swagger của module `channel`, viết tương đối với /api/v1/channel. */
@@ -96,15 +96,18 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'post',
     path: '/shops/:platform/callback',
-    summary: 'Đổi `code` của sàn lấy token, tạo hoặc nối lại gian hàng (§18.4)',
+    summary: 'Callback OAuth: adapter đổi tham số sàn trả lấy token, tạo hoặc nối lại các gian hàng (§18.4, §18.6.3)',
     description:
-      'Cần `channel.shop.connect`. `state` sai hoặc quá 10 phút: 422 `oauth_state_invalid`. Gian hàng đã có thì dùng lại bản ghi.',
+      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi.',
     security: bearer,
     request: { params: PlatformParams, body: json(CallbackBody) },
     responses: {
       ...connected,
       ...auth,
       ...marketplace,
+      409: problemResponse(
+        '`company_mismatch` kèm `expected`, `actual` (`{ id, name }`); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+      ),
       422: problemResponse('`validation_failed`, `oauth_state_invalid`, `marketplace_unsupported`'),
     },
   });
@@ -113,7 +116,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/token',
     summary: 'Nối gian hàng bằng token lấy trên console của sàn',
     description:
-      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Có `refreshToken` thì làm mới một lần để biết hạn token.',
+      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token.',
     security: bearer,
     request: { params: PlatformParams, body: json(TokenBody) },
     responses: { ...connected, ...auth, ...marketplace },
@@ -200,17 +203,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/push',
     summary: 'Đẩy biến thể lên sàn (#104)',
     description:
-      'Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng).',
+      'Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng). Gian hàng chờ kiểm kê đầu kỳ: 409 `shop_awaiting_stocktake` (21 §18.6.2).',
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
-    responses: { 200: { description: 'Kết quả theo biến thể', ...json(PushResults) }, ...onShop },
+    responses: {
+      200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
+      ...onShop,
+      409: problemResponse('`shop_not_connected`, `shop_awaiting_stocktake`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
   });
   registry.registerPath({
     method: 'get',
     path: '/shops/:id/setup',
     summary: 'Gợi ý ghép listing có sẵn khi thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. SKU sàn có SellerSku trùng SKU Commerio; chỉ hỏi sàn theo SKU của công ty. Gian hàng không ở `connecting`: 409 `invalid_transition`.',
+      'Cần `channel.shop.connect`. Mọi SKU người bán trên sàn (sàn chưa đọc được cả gian hàng thì chỉ SKU trùng SKU Commerio), mỗi dòng `match` `sku` / `name` (tên giống từ 0.4 theo pg_trgm, kèm `score`) / `none`; biến thể lưu trữ hay đã có listing ở gian hàng không được gợi ý; SKU sàn trùng tiêu đề với SKU khác (một sản phẩm nhiều SKU) hoặc không có SKU người bán không được gợi ý theo tên (21 §18.7.5). `proposedCutoffAt`, `firstShopOfCompany` (§18.6.2). Gian hàng không ở `connecting`: 409 `invalid_transition`. Gian hàng quá 10000 sản phẩm (Lazada): 409 `marketplace_rejected` `too_many_products`.',
     security: bearer,
     request: { params: ShopParams },
     responses: { 200: { description: 'Gợi ý', ...json(ShopSetupPreview) }, ...onShop },
@@ -220,13 +227,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/setup',
     summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn, gian hàng `connecting → active`. Sai: 422 `errors.orderCutoffAt` (tương lai), `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`.',
+      'Cần `channel.shop.connect`. Tạo listing `live` theo `decisions` (hoặc `externalSkuIds` cũ), mốc kéo đơn = lúc gọi (`orderCutoffAt` trong body bị bỏ qua, §18.7.6), gian hàng `connecting → active`, xếp lượt kéo đơn còn mở; lúc này chỉ đẩy giá, tồn đẩy sau lượt đó (`Shop.setup`). `stocktake`: lập phiếu kiểm kê đầu kỳ, gian hàng ở chế độ chờ kiểm kê (`openingStocktake`). Sai: 422 `errors.openingStock` (gian hàng đầu tiên của công ty gửi `push`; công ty đang chờ phiếu đầu kỳ khác), `errors.decisions` (gửi cả `externalSkuIds`), `errors["decisions.<i>"]` (SKU không có trong gợi ý, SKU sàn chưa có SKU người bán, lặp, biến thể không thuộc công ty, lưu trữ, đã ghép ở gian hàng; tối đa 10000 dòng). Kiểm lại dưới khoá của công ty nên hai lần thiết lập cùng công ty chạy lần lượt, `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60; không gửi thì giữ giá trị đang có tới khi FE gửi trường này; sàn `platform_status` bỏ qua, lưu null).',
     security: bearer,
     request: { params: ShopParams, body: json(SetupBody) },
     responses: {
       200: { description: 'Kết quả', ...json(ShopSetupResult) },
       ...onShop,
       409: problemResponse('`invalid_transition`, `shop_not_connected`, `version_conflict`'),
+      501: problemResponse(
+        '`not_implemented` kèm `issue`, `owner`: `stocktake` khi chưa có cổng lập phiếu kiểm kê (commerio-backend#245, Bình); không ghi gì, gian hàng vẫn `connecting` (21 §18.7.9)',
+      ),
     },
   });
   registry.registerPath({

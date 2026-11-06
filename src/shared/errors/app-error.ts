@@ -17,7 +17,10 @@ export class AppError extends Error {
   }
 }
 
-/** Khung export đã chốt chữ ký nhưng chưa có thân: 501 `not_implemented`, ghi issue sẽ viết thân. */
-export function notImplemented(fn: string, issue: string): AppError {
-  return new AppError(501, 'not_implemented', `${fn} chưa làm (${issue})`);
+/**
+ * Chức năng chờ issue khác: 501 `not_implemented`, problem body kèm `issue` (mã đầy đủ, vd `commerio-backend#245`) và
+ * `owner` (người phụ trách) để FE hiện "thuộc <issue> (<owner>)" (Documents/21 §18.7.9).
+ */
+export function notImplemented(fn: string, issue: string, owner: string): AppError {
+  return new AppError(501, 'not_implemented', `${fn} chưa làm (${issue}, ${owner})`, { issue, owner });
 }

@@ -144,7 +144,8 @@ export async function releaseHeld(shopId: string): Promise<number> {
   const held = await boss.findJobs<JobData & { queue: string }>(HELD_QUEUE, { data: { shopId } });
   for (const job of held) {
     const { queue, ...data } = job.data;
-    await boss.send(queue, data);
+    // Hàng `stately` khử trùng theo khoá: gửi lại kèm khoá gian hàng để không thành hai việc với việc bên gọi gửi tiếp.
+    await boss.send(queue, data, data.shopId ? { singletonKey: data.shopId } : {});
     await boss.deleteJob(HELD_QUEUE, job.id);
   }
   return held.length;
