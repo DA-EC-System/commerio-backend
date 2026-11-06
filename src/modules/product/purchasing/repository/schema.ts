@@ -108,6 +108,7 @@ export const purchaseRequestLines = purchasingSchema.table(
     index().on(t.variantId),
     check('purchase_request_lines_item', sql`${t.variantId} is not null or ${t.newProductName} is not null`),
     check('purchase_request_lines_ordered', sql`${t.orderedQty} > 0`),
+    check('purchase_request_lines_excluded_reason', sql`not ${t.excluded} or ${t.excludedReason} is not null`),
     check(
       'purchase_request_lines_counts',
       sql`${t.receivedQty} >= 0 and ${t.defectiveQty} >= 0 and ${t.closedShortQty} >= 0`,
