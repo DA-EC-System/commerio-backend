@@ -119,7 +119,7 @@ Thẻ kho của phiếu xuất, phiếu đảo: `source_type = 'stock_document'`
 | `reserved ≥ 0`, `quarantine ≥ 0` | CHECK đã có; lõi kiểm trước để báo lỗi rõ |
 | `on_hand ≥ 0` và `reserved ≤ on_hand`, trừ khi `invariant_broken` | CHECK `stock_levels_invariant`; lõi theo Q14 |
 | Phiếu `shipment`, `shipment_reversal` có `source_type = 'package'`; phiếu `posted` có `posted_at` | CHECK đã có |
-| Mỗi SKU: tổng đảo của một lượt ≤ tổng xuất của lượt đó; mỗi lượt đảo một lần | Service (`reverseShipment`, Q17) cộng chống lặp của fulfillment |
+| Mỗi SKU của lượt: tổng đảo = tổng xuất, không thừa SKU (đảo cả lượt, `25` §8.3; review #266); mỗi lượt đảo một lần | Service (`reverseShipment`, Q17) cộng chống lặp của fulfillment |
 | Một nguồn (kiện hoặc yêu cầu trả) có nhiều nhất một phiếu kiểm hàng hoàn | Service (`receiveBack`, Q19) cộng chuyển trạng thái có điều kiện của bên gọi |
 
 **Kiểu export:**
@@ -199,7 +199,7 @@ Thứ tự khoá trong một giao dịch: kiện (fulfillment, trước khi gọ
 | Không đủ có thể bán | `reserve` | `{ reserved: false }`, không ghi gì |
 | Nhả quá số đang giữ | `release` | `Error` (500), message có `packageId`, SKU: hai bên lệch sổ |
 | Kiện chưa giữ hàng mà `ship` không `forced` | `ship` | `Error` (500), Q21 |
-| Không có lượt đang xuất, hoặc đảo nhiều hơn số đã xuất | `reverseShipment` | `Error` (500) |
+| Không có lượt đang xuất, hoặc `lines` lệch số đã xuất của lượt (thiếu, thừa SKU hay số) | `reverseShipment` | `Error` (500) |
 | Gọi lặp | `ship`, `receiveBack` | Trả phiếu cũ, không ghi gì |
 | `packageLineId` trùng trong một lần gọi; lần gọi lẫn dòng kiện đã trừ trong lượt với dòng mới, hoặc trải nhiều phiếu | `ship` | `Error` (500), message có `packageId` và id dòng: bên gọi sai |
 | CHECK của DB chặn | tất cả | 500, là bug của lõi; giao dịch rollback |
@@ -258,7 +258,7 @@ Không có API mới, không đổi hợp đồng HTTP. Thẻ kho hiện thêm d
 - Bảng: `ship(packageId, lines, { actorId, forced? })`, `lines` là `{ variantId, quantity, packageLineId }[]` (Q12); `actorId` trống khi sàn báo bàn giao. `forced: true` là bàn giao bắt buộc (`25` §8.4 quy tắc 3): trừ đủ tồn thực, không trừ đang giữ, được vỡ bất biến, bật Tồn âm (Q10).
 - Ghi chú `reserve`, `release`: thay "(#111 chốt cách chống lặp)" bằng "chống lặp ở `fulfillment`: khoá kiện, đổi `reserved_qty` có điều kiện trong cùng giao dịch; `inventory` cộng trừ đúng số được truyền" (Q11).
 - Ghi chú `ship`: "`fulfillment` gọi đúng một lần theo `stock_deducted`; gọi lại đúng tập `packageLineId` trong lượt bàn giao chưa đảo thì `inventory` trả phiếu cũ, lẫn dòng đã trừ với dòng mới thì lỗi. Giá vốn dòng kiện: đọc `stockOf(...).avgCost` sau `ship` trong cùng giao dịch" (Q12, Q16).
-- Ghi chú `reverseShipment`: "đảo lượt bàn giao gần nhất chưa đảo; mỗi SKU không quá số đã xuất trong lượt; cộng lại tồn thực và đang giữ" (Q17).
+- Ghi chú `reverseShipment`: "đảo lượt bàn giao gần nhất chưa đảo; mỗi SKU đúng bằng số đã xuất trong lượt; cộng lại tồn thực và đang giữ" (Q17).
 - Ghi chú `receiveBack`: "gọi lại cùng nguồn trả phiếu cũ" (Q19).
 
 ## 9. Acceptance criteria
@@ -287,7 +287,6 @@ Giá trị tiền là `numeric(18,2)`.
 - Fulfillment quên khoá kiện hay quên cập nhật có điều kiện thì lệch đang giữ hoặc trừ tồn hai lần ở phiếu khác dòng. Ghi ở §11.1 và trong PR báo #199; job đối soát chỉ bắt được lệch đang giữ.
 - ~~Lưới của `ship` so theo dòng gộp SKU nhận nhầm lần trừ dòng ghép SKU sau là gọi lặp~~: sửa 06/11/2026, lưới so theo `packageLineId` (Q12, Q20, AC 12). Phiếu `XK` lập trước bản này (bản giả không lập phiếu) không có `source_line_id` nên không bao giờ khớp lưới.
 - Đảo lượt bàn giao bắt buộc vẫn cộng đang giữ (Q17), nên sau `reverseShipment` fulfillment phải đặt lại `reserved_qty = quantity`, `stock_deducted = false` cho dòng được đảo; quên thì đang giữ kẹt mãi, khả dụng thấp hơn thật.
-- `reverseShipment` đảo theo lượt; đảo một phần rồi đảo tiếp phần còn lại chưa hỗ trợ (`25` §8.3 đảo cả kiện).
 - `lockedOf` vẫn bằng 0 tới B3, nên `reserve` có thể giữ phần đang tạm khoá cho phiếu kho chờ duyệt. Hiện chưa có phiếu kho chờ duyệt nên chưa xảy ra.
 - Bộ đếm số phiếu khoá tới khi commit làm các `ship` trong một công ty xếp hàng. Nếu thành nút thắt thì cấp số bằng sequence riêng (chấp nhận nhảy số).
 - Lấy lại phần giữ (`25` §7.4) sau bàn giao bắt buộc thuộc fulfillment: tới lúc đó kiện khác vẫn giữ phần hàng không còn; cờ Tồn âm hiện trên SKU tới khi kiểm kê hoặc hàng về.
