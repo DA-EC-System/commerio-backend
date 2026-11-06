@@ -5,6 +5,7 @@ import type { StockLine } from '../domain/documents.ts';
 import { availableQty } from '../domain/stock.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import { levelsOf } from '../repository/levels.ts';
+import { lockedOf } from './locked.ts';
 
 export interface StockSnapshot {
   onHand: number;
@@ -15,9 +16,6 @@ export interface StockSnapshot {
   /** Giá vốn bình quân, chuỗi `numeric(18,2)`. */
   avgCost: string;
 }
-
-// shortcut: tạm khoá luôn 0 vì chưa có phiếu kho chờ duyệt; tính từ phiếu giảm `pending` khi làm B3 (spec #111 Q4).
-export const lockedOf = (_variantId: string) => 0;
 
 /**
  * Các con số của những biến thể thuộc công ty trong `variantIds`; biến thể chưa có dòng tồn trả số 0. Id của công ty
