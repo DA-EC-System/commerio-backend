@@ -51,12 +51,14 @@ export {
   type TransitionContext,
 } from './domain/state-machine.ts';
 export {
+  listSelfApprovals,
   listTransitions,
-  recordTransition,
+  type SelfApprovalRow,
   type TransitionRecord,
   type TransitionRow,
   type TransitionSource,
 } from './repository/transitions.ts';
+export { recordTransition } from './service/transitions.ts';
 
 /**
  * Tạo công ty mới và bật mười phân hệ lõi cùng các phân hệ tuỳ chọn đã chọn (UC-PI-01 bước 6, 7).

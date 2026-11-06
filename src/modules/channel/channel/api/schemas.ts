@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
@@ -42,17 +43,6 @@ export const DisconnectBody = z
 // Schema trả về: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1).
 const iso = z.iso.datetime();
 
-export const StatusChange = z
-  .object({
-    at: iso,
-    from: z.string().nullable(),
-    to: z.string(),
-    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    source: z.enum(['user', 'marketplace', 'system']),
-    reason: z.string().nullable(),
-  })
-  .strict()
-  .meta({ id: 'StatusChange' });
 
 export const ShopCapabilities = z
   .object({
@@ -142,7 +132,7 @@ export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
     .meta({ description: '`version_conflict`: gian hàng hiện tại; `invalid_transition`: trạng thái hiện tại' }),
 }).meta({ id: 'ShopDisconnectConflict' });
 
-export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChange) }).meta({ id: 'ShopDetail' });
+export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChangeSchema) }).meta({ id: 'ShopDetail' });
 
 export const ShopList = z.object({ items: z.array(Shop) }).strict().meta({ id: 'ShopList' });
 

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SETTLEMENT_STATES } from '../domain/settlement.ts';
 import { LedgerLine } from './ledger-schemas.ts';
 import { page, VersionBody } from './schemas.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Trạng thái tiền của đơn, đối soát, khớp sao kê (Documents/21 §21.2, §21.3; #117). Tiền là số nguyên đồng (R2).
 
@@ -57,16 +58,7 @@ export const OrderPayment = z
   })
   .meta({ id: 'OrderPayment' });
 
-const StatusChange = z.object({
-  at: z.iso.datetime(),
-  from: z.string().nullable(),
-  to: z.string(),
-  by: UserRef.nullable(),
-  source: z.enum(['user', 'marketplace', 'system']),
-  reason: z.string().nullable(),
-});
-
-export const OrderPaymentDetail = OrderPayment.extend({ statusHistory: z.array(StatusChange), lines: z.array(LedgerLine) }).meta({
+export const OrderPaymentDetail = OrderPayment.extend({ statusHistory: z.array(StatusChangeSchema), lines: z.array(LedgerLine) }).meta({
   id: 'OrderPaymentDetail',
 });
 

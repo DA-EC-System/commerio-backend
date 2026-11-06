@@ -1,6 +1,7 @@
 // Schema Zod của route đơn (Documents/21 §19.1, §19.3). Tên `.meta({ id })` trùng kiểu ở FE `src/types/sales.ts`.
 import { z } from 'zod';
 import { vnDayParam } from '../../../../shared/http/vn-day.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 const iso = z.iso.datetime();
 /** Tiền: số nguyên đồng (Documents/21 §1.1 R1). */
@@ -177,17 +178,6 @@ export const PackageSummary = z
   .strict()
   .meta({ id: 'PackageSummary' });
 
-const StatusChange = z
-  .object({
-    at: iso,
-    from: z.string().nullable(),
-    to: z.string(),
-    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    source: z.enum(['user', 'marketplace', 'system']),
-    reason: z.string().nullable(),
-  })
-  .strict();
-
 export const Order = OrderSummary.extend({
   shippingAddress: z
     .object({
@@ -215,7 +205,7 @@ export const Order = OrderSummary.extend({
     .enum(['packages_open', 'return_window', 'return_requested', 'cod_unconfirmed'])
     .nullable()
     .meta({ description: 'Lý do chưa hoàn tất; null khi đơn đã dừng hoặc hoàn tất được' }),
-  statusHistory: z.array(StatusChange),
+  statusHistory: z.array(StatusChangeSchema),
 })
   .strict()
   .meta({ id: 'Order' });
