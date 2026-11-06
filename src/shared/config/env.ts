@@ -48,6 +48,18 @@ const EnvSchema = z.object({
   LAZADA_AUTH_URL: z.url().default('https://auth.lazada.com'),
   // Hạn mức gọi Lazada mỗi ngày của cả app (App Console: 10.000), chừa 10% cho thao tác tay và lệch múi giờ (#102 A7).
   LAZADA_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(9000),
+  // App TikTok Shop loại Custom (#217, Documents/tich-hop-san/tiktok.md §1). Key + secret: nối bằng dán token; thêm
+  // TIKTOK_SERVICE_ID: nối OAuth. TIKTOK_REDIRECT_URL chỉ để ghi chú: TikTok dùng Redirect URL khai trong app, link uỷ
+  // quyền không mang redirect_uri.
+  TIKTOK_APP_KEY: z.string().min(1).optional(),
+  TIKTOK_APP_SECRET: z.string().min(1).optional(),
+  TIKTOK_SERVICE_ID: z.string().min(1).optional(),
+  TIKTOK_REDIRECT_URL: z.url().optional(),
+  TIKTOK_API_URL: z.url().default('https://open-api.tiktokglobalshop.com'),
+  TIKTOK_AUTH_URL: z.url().default('https://auth.tiktok-shops.com'),
+  // Ngân sách gọi TikTok mỗi ngày của cả app do mình đặt: TikTok không công bố hạn mức ngày, chỉ giới hạn tần suất động
+  // theo app × gian hàng (docv2 Rate limits, tra 06/11/2026). Giữ để vòng việc nền lỗi không đốt request vô hạn.
+  TIKTOK_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(20000),
   // Trần số đơn còn mở kéo về ở lượt sau thiết lập (#198): chỉ lấy N đơn đặt mới nhất, phần cũ hơn bỏ qua và báo ở
   // `Shop.setup.openOrdersSkipped`. Không đặt hoặc để trống là không giới hạn (Documents/25 §6.1); staging đặt để giữ hạn mức gọi sàn.
   OPEN_ORDER_PULL_MAX: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),

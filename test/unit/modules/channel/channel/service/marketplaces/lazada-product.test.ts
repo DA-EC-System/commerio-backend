@@ -83,7 +83,8 @@ describe('adapter Lazada: sản phẩm', () => {
   });
 
   it('tạo sản phẩm: payload theo tài liệu, đổi gam → kg, mm → cm', async () => {
-    const fn = fakeFetch({
+    // Lần gọi đầu là tra SellerSku (chưa có trên sàn), lần sau mới tạo.
+    const fn = fakeFetch({ code: '0', data: { products: [] } }, {
       code: '0',
       data: { item_id: '2374791958', sku_list: [{ seller_sku: 'CMR-1', sku_id: '13896560193' }], item_status: 'Active' },
     });
@@ -102,7 +103,8 @@ describe('adapter Lazada: sản phẩm', () => {
       heightMm: 15,
     });
     expect(created).toEqual({ externalProductId: '2374791958', externalSkuId: '13896560193', live: true });
-    expect(JSON.parse(sent(fn).body.payload ?? '')).toEqual({
+    expect(sent(fn, 0)).toMatchObject({ path: '/rest/products/get', query: { sku_seller_list: '["CMR-1"]' } });
+    expect(JSON.parse(sent(fn, 1).body.payload ?? '')).toEqual({
       Request: {
         Product: {
           PrimaryCategory: '14275',
@@ -124,6 +126,30 @@ describe('adapter Lazada: sản phẩm', () => {
         },
       },
     });
+  });
+
+  it('tạo sản phẩm idempotent: SellerSku đã có trên sàn (lần trước tạo xong mà mất kết quả) thì trả sản phẩm đó, không tạo', async () => {
+    const fn = fakeFetch({
+      code: '0',
+      data: { products: [{ item_id: '77', status: 'Pending QC', attributes: { name: 'SP' }, skus: [{ SkuId: 770, SellerSku: 'CMR-1', quantity: 7 }] }] },
+    });
+    const created = await createLazadaAdapter(config, fn).createProduct('t', {
+      externalCategoryId: '14275',
+      attributes: {},
+      name: 'Áo',
+      description: 'Áo',
+      imageUrls: [],
+      sellerSku: 'CMR-1',
+      price: '150000',
+      quantity: 7,
+      weightG: 250,
+      lengthMm: 300,
+      widthMm: 200,
+      heightMm: 15,
+    });
+    expect(created).toEqual({ externalProductId: '77', externalSkuId: '770', live: false });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(sent(fn).path).toBe('/rest/products/get');
   });
 
   it('đọc SKU theo SellerSku: chuẩn hoá trạng thái, bỏ SKU không trong danh sách', async () => {

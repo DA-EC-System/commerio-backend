@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ShopPlatformList } from '#src/modules/channel/channel/api/schemas.ts';
 import { createLazadaAdapter, type LazadaConfig } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { createTiktokAdapter, type TiktokConfig } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter } from './helpers.ts';
@@ -14,6 +15,15 @@ const lazada: LazadaConfig = {
   appSecret: 'super-secret',
   redirectUrl: 'https://fe.test/channel/lazada/callback',
   apiUrl: 'https://api.internal.test/rest',
+  authUrl: 'https://auth.internal.test',
+};
+
+// App TikTok Custom (#217); TIKTOK_* cũng không đặt trong môi trường test.
+const tiktok: TiktokConfig = {
+  appKey: 'tk',
+  appSecret: 'tiktok-secret',
+  serviceId: '7703485233496540935',
+  apiUrl: 'https://open.internal.test',
   authUrl: 'https://auth.internal.test',
 };
 
@@ -32,17 +42,20 @@ beforeAll(async () => {
 afterEach(() => resetAdapters());
 
 describe('GET /channel/shops/platforms (#163)', () => {
-  it('chưa adapter nào đủ cấu hình: Lazada connectable false vì môi trường chưa cấu hình; Shopee, TikTok kèm lý do; không có mock (§18.7.3)', async () => {
+  it('chưa adapter nào đủ cấu hình: Lazada, TikTok connectable false vì môi trường chưa cấu hình; Shopee kèm lý do; không có mock (§18.7.3)', async () => {
     const items = await platforms();
-    expect(items.map((p) => p.platform)).toEqual(['lazada', 'shopee', 'tiktok']);
+    // Adapter theo thứ tự đăng ký (lazada, tiktok), rồi sàn chưa có adapter (shopee).
+    expect(items.map((p) => p.platform)).toEqual(['lazada', 'tiktok', 'shopee']);
     for (const p of items) {
       expect(p).toMatchObject({ connectable: false, methods: [] });
       expect(p.reason).toEqual(expect.any(String));
       expect(p.capabilities).toBeDefined();
     }
     expect(items[0]!.reason).toMatch(/môi trường/i);
-    expect(items[1]).toMatchObject({ name: 'Shopee', reason: 'Shopee chưa cấp quyền API cho ứng dụng sinh viên' });
-    expect(items[2]).toMatchObject({ reason: 'Đang làm, thuộc commerio-backend#217 (đợt 4)' });
+    // TikTok có adapter từ #217: theo luật adapter thiếu cấu hình, không còn lý do "Đang làm" khai sẵn.
+    expect(items[1]).toMatchObject({ name: 'TikTok Shop' });
+    expect(items[1]!.reason).toMatch(/môi trường/i);
+    expect(items[2]).toMatchObject({ name: 'Shopee', reason: 'Shopee chưa cấp quyền API cho ứng dụng sinh viên' });
   });
 
   it('adapter đăng ký dưới mã mock cũng không trả', async () => {
@@ -50,11 +63,11 @@ describe('GET /channel/shops/platforms (#163)', () => {
     expect((await platforms()).map((p) => p.platform)).not.toContain('mock');
   });
 
-  it('sàn chưa có adapter mà đã có adapter đăng ký (vd TikTok sau #217) thì theo adapter, không còn lý do khai sẵn', async () => {
-    registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop', connectMethods: () => ['oauth'] }));
-    const tiktok = (await platforms()).filter((p) => p.platform === 'tiktok');
-    expect(tiktok).toHaveLength(1);
-    expect(tiktok[0]).toMatchObject({ connectable: true, reason: null, methods: ['oauth'] });
+  it('sàn khai sẵn lý do mà đã có adapter đăng ký (vd Shopee về sau) thì theo adapter, không còn lý do khai sẵn', async () => {
+    registerAdapter('shopee', fakeAdapter({ name: 'Shopee', connectMethods: () => ['oauth'] }));
+    const shopee = (await platforms()).filter((p) => p.platform === 'shopee');
+    expect(shopee).toHaveLength(1);
+    expect(shopee[0]).toMatchObject({ connectable: true, reason: null, methods: ['oauth'] });
   });
 
   it('Lazada đủ key, secret, redirect thì có Lazada với oauth và token, không lộ cấu hình', async () => {
@@ -96,9 +109,37 @@ describe('GET /channel/shops/platforms (#163)', () => {
     registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop' }));
     expect((await platforms()).map((p) => [p.platform, p.connectable, p.methods, p.capabilities])).toEqual([
       ['lazada', true, ['oauth', 'token'], { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' }],
-      ['shopee', true, ['token'], shopeeCaps],
       ['tiktok', false, [], { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' }],
+      ['shopee', true, ['token'], shopeeCaps],
     ]);
+  });
+
+  it('TikTok đủ key, secret, service id thì có tiktok với oauth và token (#217 AC-1); URL uỷ quyền mang state', async () => {
+    registerAdapter('tiktok', createTiktokAdapter(tiktok));
+    const res = await get('/shops/platforms');
+    expect(res.status).toBe(200);
+    expect(res.body.items.filter((p: { platform: string }) => p.platform === 'tiktok')).toEqual([
+      { platform: 'tiktok', name: 'TikTok Shop', connectable: true, reason: null, methods: ['oauth', 'token'], capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' } },
+    ]);
+    expect(JSON.stringify(res.body)).not.toMatch(/tiktok-secret|internal\.test/);
+    const auth = await get('/shops/tiktok/authorize-url');
+    expect(auth.status).toBe(200);
+    const url = new URL(auth.body.url);
+    expect(url.origin + url.pathname).toBe('https://services.tiktokshop.com/open/authorize');
+    expect(url.searchParams.get('service_id')).toBe(tiktok.serviceId);
+    expect(url.searchParams.get('state')).toMatch(/\S/);
+  });
+
+  it('TikTok thiếu env thì connectable false, methods rỗng, lý do môi trường chưa cấu hình (§18.7.3); authorize-url 422 marketplace_unsupported (#217 AC-6)', async () => {
+    registerAdapter('tiktok', createTiktokAdapter({ ...tiktok, appKey: undefined, appSecret: undefined, serviceId: undefined }));
+    const list = await get('/shops/platforms');
+    const entry = ShopPlatformList.parse(list.body).items.find((p) => p.platform === 'tiktok');
+    expect(entry).toMatchObject({ name: 'TikTok Shop', connectable: false, methods: [] });
+    expect(entry!.reason).toMatch(/môi trường/i);
+    expect(JSON.stringify(list.body)).not.toMatch(/tiktok-secret|internal\.test|TIKTOK_/);
+    const res = await get('/shops/tiktok/authorize-url');
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('marketplace_unsupported');
   });
 
   it('route tĩnh không nuốt /shops/:id: gian hàng không có vẫn 404', async () => {

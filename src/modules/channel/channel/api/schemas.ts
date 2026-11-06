@@ -77,7 +77,12 @@ export const Shop = z
     status: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']),
     accessExpiresAt: iso.nullable(),
     refreshExpiresAt: iso.nullable(),
-    tokenExpiringSoon: z.boolean().meta({ description: 'Đang active và refresh token còn dưới 3 ngày' }),
+    authExpiresAt: iso
+      .nullable()
+      .meta({ description: 'Hạn uỷ quyền seller chọn trên sàn; null khi sàn không có hạn riêng ngoài refreshExpiresAt (Lazada, TikTok)' }),
+    tokenExpiringSoon: z
+      .boolean()
+      .meta({ description: 'Đang active và hạn gần hơn trong authExpiresAt, refreshExpiresAt còn dưới 3 ngày' }),
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
     capabilities: ShopCapabilities,

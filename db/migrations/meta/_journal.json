@@ -176,6 +176,13 @@
       "when": 1793981089263,
       "tag": "0024_dong-kien-phieu-xuat",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793985106240,
+      "tag": "0025_han-uy-quyen-gian-hang",
+      "breakpoints": true
     }
   ]
 }

@@ -47,6 +47,8 @@ export const shops = channelSchema.table(
     refreshTokenEnc: bytea('refresh_token_enc'),
     accessExpiresAt: timestamp('access_expires_at', { withTimezone: true }),
     refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }),
+    /** Hạn uỷ quyền seller chọn trên sàn, null khi sàn không có hạn riêng (Documents/19, 21 §18.4, #201). */
+    authExpiresAt: timestamp('auth_expires_at', { withTimezone: true }),
     status: shopStatus('status').notNull().default('connecting'),
     orderCutoffAt: timestamp('order_cutoff_at', { withTimezone: true }),
     /** Hạn trả hàng (ngày) Admin nhập lúc thiết lập, cho sàn `returnWindow = 'days'` (Documents/21 §18.6.2). */

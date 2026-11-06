@@ -11,5 +11,6 @@ describe('registry adapter sàn', () => {
   it('khoá của Object không phải adapter', () => {
     for (const key of ['toString', '__proto__', 'constructor', 'hasOwnProperty']) expect(getAdapter(key)).toBeUndefined();
     expect(getAdapter('lazada')).toBeDefined();
+    expect(getAdapter('tiktok')).toBeDefined();
   });
 });

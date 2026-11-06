@@ -17,6 +17,23 @@ export interface TokenSet {
   /** null khi không biết hạn (token dán tay). */
   accessExpiresAt: Date | null;
   refreshExpiresAt: Date | null;
+  /**
+   * Hạn uỷ quyền seller chọn trên sàn (Documents/21 §18.4, cột `auth_expires_at`, #201): tới đó chỉ người dùng kết nối
+   * lại được. Bỏ trống hoặc null khi sàn không có hạn riêng ngoài `refreshExpiresAt` (Lazada; TikTok: hạn refresh token
+   * đã là hạn uỷ quyền, xem `tiktok.ts`).
+   */
+  authExpiresAt?: Date | null;
+}
+
+/** Hạn của token đã lưu, đủ để adapter tính lúc làm mới (`refreshDueAt`). */
+export type TokenExpiry = Pick<TokenSet, 'accessExpiresAt' | 'refreshExpiresAt'>;
+
+/** Ngưỡng mặc định: làm mới khi access còn dưới 48 giờ (ngưỡng cũ của #102), cho adapter không khai `refreshDueAt`. */
+export const DEFAULT_REFRESH_LEAD_MS = 48 * 3_600_000;
+
+/** Lúc làm mới = hạn access trừ `leadMs`; không biết hạn access thì null (không tự làm mới, chờ sàn báo `unauthorized`). */
+export function refreshBefore(tokens: TokenExpiry, leadMs: number): Date | null {
+  return tokens.accessExpiresAt ? new Date(tokens.accessExpiresAt.getTime() - leadMs) : null;
 }
 
 export interface SellerInfo {
@@ -51,7 +68,7 @@ export interface NewProduct {
   attributes: Record<string, string>;
   name: string;
   description: string;
-  /** URL ảnh đã nằm trên sàn (`uploadImage`). */
+  /** Ảnh đã nằm trên sàn, đúng chuỗi `uploadImage` trả (Lazada URL, TikTok `uri`). */
   imageUrls: string[];
   sellerSku: string;
   price: string;
@@ -221,8 +238,30 @@ export interface RemoteOrder {
   shippingFee: string;
   /** Khách xin huỷ, chờ người bán đồng ý. */
   cancelRequested: boolean;
+  /**
+   * Mốc sàn ghi đơn đã giao (TikTok `delivery_time`, #221); sàn không trả thì không có. Chỉ lưu ở `raw_orders`, hạn trả
+   * tính từ đây là việc của phía app.
+   */
+  deliveredAt?: Date | null;
   info: RemoteOrderInfo;
   lines: RemoteOrderLine[];
+}
+
+/** Lý do sàn bắt tách kiện (TikTok `must_split_reasons`, #221): vượt số món theo danh mục hay tổng số món một kiện. */
+export interface MustSplitReason {
+  /** Mã gốc của sàn (`CATEGORY_ITEM_LIMITATION`, `TOTAL_COUNT_LIMITATION`). */
+  type: string;
+  externalCategoryId: string | null;
+  maxCount: number | null;
+}
+
+/** Đơn tách kiện được không (#221; app dùng ở #205). */
+export interface SplitAttributes {
+  canSplit: boolean;
+  mustSplit: boolean;
+  /** Câu của sàn khi không tách được; null khi tách được. */
+  reason: string | null;
+  mustSplitReasons: MustSplitReason[];
 }
 
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
@@ -251,9 +290,18 @@ export interface MarketplaceAdapter {
    */
   connectWithToken(input: { accessToken: string; refreshToken: string | null }): Promise<ShopConnection[]>;
   refreshToken(refreshToken: string): Promise<TokenSet>;
+  /**
+   * Từ lúc nào việc nền `channel.token_refresh` (chạy mỗi giờ) phải làm mới token này (#201, Documents/21 §18.4 "ngưỡng
+   * adapter khai"); null là không tự làm mới. Không khai thì dùng `DEFAULT_REFRESH_LEAD_MS`. Phải để cách hạn access ít
+   * nhất hơn một vòng việc nền, và đủ xa để token vừa làm mới không tới hạn lại ngay ở vòng sau.
+   */
+  refreshDueAt?(tokens: TokenExpiry): Date | null;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
-  /** Đưa ảnh từ URL công khai lên sàn, trả URL trên sàn. */
+  /**
+   * Đưa ảnh từ URL công khai lên sàn, trả chuỗi định danh ảnh trên sàn để truyền lại vào `createProduct`
+   * (`NewProduct.imageUrls`): Lazada là URL, TikTok là `uri` của ảnh.
+   */
   uploadImage(accessToken: string, url: string): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
   /**
@@ -265,7 +313,13 @@ export interface MarketplaceAdapter {
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;
+  /** Tắt (ẩn) sản phẩm trên sàn. Sàn tắt theo cả sản phẩm (TikTok) thì mọi SKU của sản phẩm cùng ẩn. */
   deactivate(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
+  /**
+   * Hiện lại sản phẩm đã tắt (#224, `hideBy = 'deactivate'`). Sàn có thể đưa sản phẩm vào duyệt lại (TikTok về `PENDING`);
+   * trạng thái về qua lần đồng bộ. Sàn chưa có thì không có hàm này.
+   */
+  activate?(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
   /** Khoản tiền theo đơn trong khoảng ngày `[from, to]` (#117). Sàn chưa hỗ trợ thì không có. */
   getTransactions?(accessToken: string, from: string, to: string): Promise<SettlementTxn[]>;
   /** Các kỳ quyết toán từ ngày `from` (#117). */
@@ -303,8 +357,100 @@ export interface MarketplaceAdapter {
   cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
   /** Người bán huỷ các món; sàn xác nhận sau, đơn về qua lần kéo kế tiếp. */
   cancelOrder?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[], reasonId: string): Promise<void>;
-  /** Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. */
-  decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean): Promise<void>;
+  /**
+   * Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. `rejectReasonId`: lý do từ chối lấy từ `cancelRequestRejectReasons`;
+   * sàn bắt buộc lý do khi từ chối (TikTok) mà thiếu thì ném `rejected` `reject_reason_required`, sàn không cần thì bỏ qua.
+   */
+  decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean, rejectReasonId?: string): Promise<void>;
+  /** Lý do từ chối yêu cầu huỷ của khách mà sàn cho dùng lúc này (#227). Sàn không đòi lý do thì không có hàm này. */
+  cancelRequestRejectReasons?(accessToken: string, externalOrderId: string): Promise<{ id: string; label: string }[]>;
+  /**
+   * Yêu cầu trả, hoàn tiền của khách có cập nhật từ `updatedAfter` (tính cả mốc), cũ trước (#227, #202). Lật trang như
+   * `listOrders`: lần đầu `cursor` null, `nextCursor` null là hết, trang có thể rỗng mà vẫn còn con trỏ.
+   */
+  listReturns?(accessToken: string, updatedAfter: Date, cursor: string | null): Promise<{ items: RemoteReturn[]; nextCursor: string | null }>;
+  /**
+   * Lần huỷ đơn (khách xin huỷ, người bán, sàn huỷ) có cập nhật từ `updatedAfter`, lật trang như `listReturns`. Huỷ không vào
+   * bảng yêu cầu trả: khách xin huỷ là cờ `cancel_requested` của đơn (Documents/21 §20.1).
+   */
+  listCancellations?(
+    accessToken: string,
+    updatedAfter: Date,
+    cursor: string | null,
+  ): Promise<{ items: RemoteCancellation[]; nextCursor: string | null }>;
+  /**
+   * Đơn tách kiện được không (#221). Chỉ sàn tự chia kiện mới có (`splitLevel` khác `none`); TikTok chỉ trả khi đơn đã
+   * `AWAITING_SHIPMENT`, trước đó sàn từ chối (`rejected`, vd 21001008).
+   */
+  splitAttributes?(accessToken: string, externalOrderId: string): Promise<SplitAttributes>;
+  /**
+   * Tách đơn thành các kiện, mỗi nhóm là mã món (`externalLineId`) vào một kiện mới (#221; app gọi ở #205). Trả mã kiện
+   * mới cùng thứ tự với `groups`. Sàn chỉ tách theo SKU (`splitLevel: 'sku'`) thì mọi món cùng SKU phải chung nhóm.
+   * Kiện mới về app qua lần kéo đơn kế tiếp (`packageCode` của món đổi).
+   */
+  splitOrder?(accessToken: string, externalOrderId: string, groups: readonly (readonly string[])[]): Promise<string[]>;
+  /**
+   * Báo sàn kiện sẵn sàng giao (#221; app gọi ở #239): sàn xếp hãng tới lấy (`pickup`) hay người bán mang ra điểm gửi
+   * (`drop_off`); không truyền thì sàn chọn theo cấu hình gian hàng. Trạng thái mới về qua lần kéo đơn kế tiếp.
+   */
+  shipPackage?(accessToken: string, packageCode: string, opts?: { handover?: 'pickup' | 'drop_off' }): Promise<void>;
+}
+
+/** Trạng thái yêu cầu trả của app (Documents/25 §9, Documents/21 §20; enum `sales.return_status`). */
+export type RemoteReturnStatus = 'requested' | 'rejected' | 'refund_only' | 'awaiting_return' | 'received' | 'closed';
+
+/** Một món trong yêu cầu trả hay lần huỷ của sàn. Tiền là chuỗi thập phân, trống là null. */
+export interface RemoteAftersaleLine {
+  externalLineId: string;
+  externalSkuId: string | null;
+  sellerSku: string | null;
+  refundAmount: string | null;
+}
+
+/** Phần chung của yêu cầu trả và lần huỷ đã chuẩn hoá. */
+interface RemoteAftersale {
+  /** Mã yêu cầu trả hay lần huỷ của sàn (app lưu ở `external_return_id`). */
+  externalId: string;
+  externalOrderId: string;
+  /** Trạng thái gốc của sàn, chỉ để hiện (R11). */
+  rawStatus: string;
+  initiator: 'buyer' | 'seller' | 'platform' | null;
+  /** Mã lý do của sàn và câu hiển thị. */
+  reasonCode: string | null;
+  reason: string | null;
+  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả. */
+  refundAmount: string | null;
+  lines: RemoteAftersaleLine[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Yêu cầu trả, hoàn tiền của sàn (#227). `status` là trạng thái yêu cầu trả của app mà trạng thái sàn tương ứng; null khi
+ * app chưa có luồng (đổi hàng). `closed` chỉ do khách rút hay sàn tự đóng (`closeResult = 'buyer_cancelled'`); đóng sau khi
+ * kiểm hàng hoàn là việc của app. Máy trạng thái của #202 quyết định có chuyển được không.
+ */
+export interface RemoteReturn extends RemoteAftersale {
+  /** `return`: khách gửi trả hàng rồi mới hoàn tiền; `refund`: chỉ hoàn tiền; `replacement`: đổi hàng, đổi biến thể. */
+  kind: 'return' | 'refund' | 'replacement';
+  status: RemoteReturnStatus | null;
+  closeResult: 'buyer_cancelled' | null;
+  /** Sàn đang phân xử khiếu nại. */
+  disputeInProgress: boolean;
+  returnTrackingCode: string | null;
+  /** Hạn người bán phải trả lời, null khi không chờ người bán. */
+  respondBy: Date | null;
+}
+
+/**
+ * Lần huỷ của sàn (#227). `pending`: chờ duyệt (khách xin huỷ: đơn bật `cancel_requested`; người bán huỷ: `cancelling`);
+ * `cancelled`: sàn đã huỷ; `withdrawn`: khách rút hay người bán từ chối, bỏ cờ. null khi sàn trả giá trị lạ.
+ */
+export interface RemoteCancellation extends RemoteAftersale {
+  /** Khách xin huỷ, người bán phải trả lời; false là huỷ thẳng (người bán, sàn). */
+  buyerRequest: boolean;
+  status: 'pending' | 'cancelled' | 'withdrawn' | null;
+  respondBy: Date | null;
 }
 
 /**

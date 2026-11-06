@@ -1,4 +1,4 @@
-# Smoke test sàn: Lazada
+# Smoke test sàn: Lazada, TikTok Shop
 
 Script kiểm tra tài khoản developer gọi được API thật trước khi viết adapter trong module `channel`. Không phụ thuộc thư viện ngoài, không đụng DB. Token uỷ quyền lưu ở `backend/.smoke-tokens.json` (đã gitignore).
 
@@ -37,6 +37,40 @@ npm run smoke:lazada -- refresh
 ```
 
 Chạy trong Git Bash thì đặt `MSYS_NO_PATHCONV=1` trước lệnh `call`, nếu không Git Bash đổi `/orders/get` thành đường dẫn Windows và Lazada trả `InvalidApiPath`. PowerShell, cmd không bị.
+
+## TikTok Shop
+
+`scripts/smoke/tiktok.ts` chạy chính adapter của app (`service/marketplaces/tiktok.ts`), không ký riêng. Lệnh ghi (#226, #219) chỉ chạy trên shop thử SANDBOX của nhóm và đặt lại giá trị cũ sau khi thử; mỗi lời gọi Open API in path, `code`, `request_id`. Cần `TIKTOK_APP_KEY`, `TIKTOK_APP_SECRET` (app Custom, Partner Center), thêm `TIKTOK_SERVICE_ID` cho `link`. Token lưu ở `.smoke-tokens.json` khoá `tiktok`: `accessToken`, `refreshToken` (token thô của sàn), `accessExpiresAt`, `refreshExpiresAt` (mốc Unix, giây), `shops[]` (`id`, `name`, `region`, `cipher`). Màn hình chỉ in 6 ký tự đầu của token, cipher.
+
+```bash
+npm run smoke:tiktok -- link                      # link uỷ quyền, mở bằng trình duyệt đã đăng nhập test seller
+npm run smoke:tiktok -- token "<URL callback>"    # hoặc token <code>; code hạn 30 phút, dùng một lần: đổi ngay
+npm run smoke:tiktok -- shops                     # /authorization/202309/shops, cập nhật cipher
+npm run smoke:tiktok -- refresh                   # làm mới, lưu cặp token mới ngay (token cũ có thể mất hiệu lực)
+npm run smoke:tiktok -- skus [shopId] [sellerSku ...]   # listSkus, hoặc getSkus khi có sellerSku
+npm run smoke:tiktok -- returns [ngày]            # listReturns: yêu cầu trả cập nhật trong N ngày (mặc định 30), #227
+npm run smoke:tiktok -- cancellations [ngày]      # listCancellations: lần huỷ cập nhật trong N ngày
+npm run smoke:tiktok -- cancel-reasons <orderId>  # lý do người bán huỷ được đơn; chỉ đọc, không huỷ
+npm run smoke:tiktok -- warehouses                # /logistics/202309/warehouses
+npm run smoke:tiktok -- categories [từ khoá]      # danh mục lá AVAILABLE (cây v2)
+npm run smoke:tiktok -- attrs <categoryId>        # thuộc tính bắt buộc
+npm run smoke:tiktok -- push-stock <sellerSku> <qty>     # ghi: tồn, in trước/sau
+npm run smoke:tiktok -- push-price <sellerSku> <giá>     # ghi: giá VND
+npm run smoke:tiktok -- deactivate|activate <sellerSku>  # ghi: tắt, bật cả sản phẩm (bật lại vào duyệt)
+npm run smoke:tiktok -- upload-image <URL ảnh>
+npm run smoke:tiktok -- create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...]  # ghi: tạo sản phẩm CM-TEST-…
+```
+
+Đã chạy 06/11/2026 với shop thử `7495013067939481105` (VN, LOCAL): `shops`, `skus` (3 SKU), `skus CM-TEST-MUG-DEN`, `refresh` (cipher giữ nguyên, refresh hạn tới 2125) đều OK. Lệnh ghi chạy 07/11/2026, kết quả ở mục TikTok của `src/modules/channel/channel/CLAUDE.md`.
+
+| Mã TikTok | Nghĩa |
+|---|---|
+| `36009005` | Access token sai (`The 'access_token' header is invalid`) |
+| `105002` | Access token hết hạn, chạy `refresh` |
+| `106001` | Sai chữ ký (sai app secret) |
+| `36004004` | Code đã dùng hoặc hết hạn, chạy lại `link` |
+| `36004005` | Refresh token sai (`can not find related auth record`) |
+| `105005` | App hoặc token thiếu scope (app Public đang Draft gặp lỗi này với mọi API) |
 
 ## Đọc kết quả
 

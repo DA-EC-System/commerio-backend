@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
 import {
   assertNoOpenOrders,
+  authDeadline,
+  authLapsed,
   reconnectAction,
   returnWindowError,
   shopMachine,
@@ -69,6 +71,27 @@ describe('tokenExpiringSoon', () => {
     expect(tokenExpiringSoon('active', new Date(NOW + 4 * DAY), NOW)).toBe(false);
     expect(tokenExpiringSoon('needs_reauth', new Date(NOW + DAY), NOW)).toBe(false);
     expect(tokenExpiringSoon('active', null, NOW)).toBe(false);
+  });
+
+  it('tính theo hạn gần hơn trong authExpiresAt, refreshExpiresAt (21 §18.4, #201)', () => {
+    const soon = new Date(NOW + 2 * DAY);
+    const far = new Date(NOW + 40 * DAY);
+    expect(authDeadline(soon, far)).toBe(soon);
+    expect(authDeadline(far, soon)).toBe(soon);
+    expect(authDeadline(null, far)).toBe(far);
+    expect(authDeadline(soon, null)).toBe(soon);
+    expect(authDeadline(null, null)).toBeNull();
+    expect(tokenExpiringSoon('active', authDeadline(soon, far), NOW)).toBe(true);
+    expect(tokenExpiringSoon('active', authDeadline(far, new Date(NOW + 50 * DAY)), NOW)).toBe(false);
+  });
+});
+
+describe('authLapsed', () => {
+  it('đã tới hoặc qua hạn uỷ quyền thì true; chưa tới hay không biết hạn thì false', () => {
+    expect(authLapsed(new Date(NOW), NOW)).toBe(true);
+    expect(authLapsed(new Date(NOW - 1), NOW)).toBe(true);
+    expect(authLapsed(new Date(NOW + 1), NOW)).toBe(false);
+    expect(authLapsed(null, NOW)).toBe(false);
   });
 });
 

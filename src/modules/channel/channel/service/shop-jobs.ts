@@ -16,12 +16,15 @@ export const orderPullQueue = defineQueue('channel.order_pull', ShopJobSchema, {
  * khi worker khởi động nếu `open_orders_pulled_at` còn null. Lượt đi hết các trạng thái mở nên cho chạy tới 30 phút.
  */
 export const openOrderPullQueue = defineQueue('channel.open_order_pull', ShopJobSchema, { policy: 'stately', expireInSeconds: 1800 });
-/** Làm mới token khi access còn dưới 48 giờ; access Lazada sống 7 ngày nên chạy hằng ngày là đủ. */
+/**
+ * Làm mới token khi tới `refreshDueAt` của adapter (#201). Chạy mỗi giờ vì ngưỡng theo sàn: access sống 4 giờ (Shopee) cần
+ * kiểm dày; lượt chưa tới hạn chỉ đọc một dòng, không gọi sàn.
+ */
 export const tokenRefreshQueue = defineQueue('channel.token_refresh', ShopJobSchema, { policy: 'stately' });
 
 const LISTING_SYNC_CRON = '*/15 * * * *';
 const ORDER_PULL_CRON = '*/5 * * * *';
-const TOKEN_REFRESH_CRON = '0 3 * * *';
+const TOKEN_REFRESH_CRON = '7 * * * *';
 
 export async function startShopJobs(companyId: string, shopId: string): Promise<void> {
   await scheduleForShop(listingSyncQueue, LISTING_SYNC_CRON, { companyId, shopId });
@@ -38,6 +41,11 @@ export async function stopShopJobs(shopId: string): Promise<void> {
 /** Xếp lượt kéo đơn còn mở; đã có việc chờ cùng gian hàng thì không thêm (`stately`). Đi chung giao dịch đang mở. */
 export async function sendOpenOrderPull(companyId: string, shopId: string): Promise<void> {
   await sendJob(openOrderPullQueue, { companyId, shopId }, { key: shopId });
+}
+
+/** Xếp một lượt kéo đơn ngay (nối lại gian hàng, US-GH-14 dòng 1); đã có việc chờ cùng gian hàng thì không thêm. */
+export async function sendOrderPull(companyId: string, shopId: string): Promise<void> {
+  await sendJob(orderPullQueue, { companyId, shopId }, { key: shopId });
 }
 
 /** Gian hàng `active` đã thiết lập mà lượt kéo đơn còn mở chưa xong (việc mất khi gian hàng ngắt, mất token) thì xếp lại. */

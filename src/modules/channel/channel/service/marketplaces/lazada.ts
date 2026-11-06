@@ -2,6 +2,7 @@
 import { createHmac } from 'node:crypto';
 import {
   type CategoryAttribute,
+  DEFAULT_REFRESH_LEAD_MS,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -14,6 +15,7 @@ import {
   type RemoteOrder,
   type RemoteSku,
   type RemoteState,
+  refreshBefore,
   type SellerInfo,
   type ShopCapabilities,
   type ShopConnection,
@@ -443,6 +445,23 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     return { orders, next, safeUntil };
   }
 
+  async function getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> {
+    const wanted = new Set(sellerSkus);
+    const out: RemoteSku[] = [];
+    for (const batch of chunks(sellerSkus, SKU_LIST_BATCH)) {
+      const params = {
+        access_token: accessToken,
+        filter: 'all',
+        limit: String(SKU_LIST_BATCH),
+        sku_seller_list: JSON.stringify(batch),
+      };
+      const body = await call(config.apiUrl, '/products/get', params, 'GET');
+      const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
+      out.push(...products.flatMap(skusOf).filter((s) => wanted.has(s.sellerSku)));
+    }
+    return out;
+  }
+
   return {
     name: 'Lazada',
     capabilities: LAZADA_CAPABILITIES,
@@ -475,6 +494,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return connection(tokens);
     },
     refreshToken: refresh,
+    // Access Lazada sống 7 ngày, refresh 50 ngày và không gia hạn (21 §18.4). Ngưỡng 48 giờ giữ từ #102, chưa đo trên shop
+    // thử (app Testing có access ngắn hơn, Documents#64): với việc nền mỗi giờ là còn khoảng 48 lượt thử trước khi hết hạn.
+    refreshDueAt: (tokens) => refreshBefore(tokens, DEFAULT_REFRESH_LEAD_MS),
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
       const body = await call(config.apiUrl, '/category/tree/get', params, 'GET');
@@ -516,6 +538,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return image.url;
     },
     async createProduct(accessToken, p: NewProduct) {
+      // Idempotent theo SellerSku: lần đẩy trước đã tạo mà bên gọi mất kết quả thì trả sản phẩm đó, không tạo thêm.
+      const existing = (await getSkus(accessToken, [p.sellerSku])).find((s) => s.state !== 'deleted');
+      if (existing) return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live' };
       const sku = {
         SellerSku: p.sellerSku,
         quantity: String(p.quantity),
@@ -541,22 +566,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       if (data?.item_id === undefined || skuId === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
       return { externalProductId: String(data.item_id), externalSkuId: String(skuId), live: data.item_status === 'Active' };
     },
-    async getSkus(accessToken, sellerSkus): Promise<RemoteSku[]> {
-      const wanted = new Set(sellerSkus);
-      const out: RemoteSku[] = [];
-      for (const batch of chunks(sellerSkus, SKU_LIST_BATCH)) {
-        const params = {
-          access_token: accessToken,
-          filter: 'all',
-          limit: String(SKU_LIST_BATCH),
-          sku_seller_list: JSON.stringify(batch),
-        };
-        const body = await call(config.apiUrl, '/products/get', params, 'GET');
-        const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
-        out.push(...products.flatMap(skusOf).filter((s) => wanted.has(s.sellerSku)));
-      }
-      return out;
-    },
+    getSkus,
     // Lật `offset` (sàn không nói thứ tự khi lọc theo ngày nên không lật theo ngày được); bỏ sản phẩm đã xoá (#198).
     async listSkus(accessToken): Promise<RemoteSku[]> {
       const out: RemoteSku[] = [];
