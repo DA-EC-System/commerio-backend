@@ -74,7 +74,8 @@ export function identityRouter(ctx: ModuleContext): Router {
       setRefreshCookie(res, session.refreshToken);
       res.json({ accessToken: session.accessToken });
     } catch (err) {
-      res.clearCookie(REFRESH_COOKIE, cookieOptions);
+      // Cookie cũ đã xoay vòng: không xoá, kẻo đè cookie mới mà request khác vừa đặt.
+      if (!(err instanceof auth.StaleRefreshTokenError)) res.clearCookie(REFRESH_COOKIE, cookieOptions);
       throw err;
     }
   });

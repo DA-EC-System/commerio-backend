@@ -71,7 +71,9 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
     method: 'post',
     path: '/refresh',
     summary: 'Lấy access token mới bằng cookie refresh',
-    description: 'Refresh token xoay vòng: mỗi lần gọi cấp cookie mới, cookie cũ hết hiệu lực.',
+    description:
+      'Refresh token xoay vòng: mỗi lần gọi cấp cookie mới. Cookie cũ còn đổi được trong 30 giây (F5 hai lần, nhiều tab); ' +
+      'quá hạn đó thì 401 và mọi cookie của lần đăng nhập ấy hết hiệu lực.',
     responses: {
       200: { description: 'Access token mới', ...json(RefreshResponse) },
       401: problemResponse('`unauthorized`: thiếu, hết hạn hoặc đã thu hồi'),

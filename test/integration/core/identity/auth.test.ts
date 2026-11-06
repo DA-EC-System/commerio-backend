@@ -202,6 +202,10 @@ describe('refresh và đăng xuất', () => {
     expect(payload.cid).toBe(companyId);
     expect(refreshCookie(res)).not.toBe(cookie);
 
+    // Trong hạn dùng lại cookie cũ còn đổi được (refresh-rotation.test.ts); quá hạn thì hết hiệu lực.
+    await db.query(`update core.refresh_tokens set rotated_at = now() - interval '1 hour' where rotated_at is not null and account_id = $1`, [
+      await accountId(email),
+    ]);
     const reused = await request(app).post('/api/v1/identity/refresh').set('Cookie', cookie);
     expect(reused.status).toBe(401);
     const missing = await request(app).post('/api/v1/identity/refresh');
