@@ -4,8 +4,6 @@
 // get-warehouse-list-202309 (bản 202502 của `/logistics/.../warehouses` là tạo kho, khác việc), get-categories-202309,
 // get-category-attributes-202309, upload-product-image-202309, create-product-202309, sign-your-api-request.
 // Kết quả gọi thật trên shop thử: mục TikTok của `channel/CLAUDE.md`.
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import {
   type CategoryAttribute,
   type CreatedProduct,
@@ -17,7 +15,10 @@ import {
   type PriceQuantity,
   type RemoteSku,
 } from './common.ts';
+import { downloadImage, type ImageSourceOptions } from './image-source.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
+
+export { isPrivateAddress } from './image-source.ts';
 
 type Row = Record<string, unknown>;
 
@@ -27,10 +28,6 @@ const CATEGORY_VERSION = 'v2';
 const CURRENCY = 'VND';
 /** Kho của shop ít đổi: giữ trong process một giờ, đỡ một lượt gọi mỗi lần đẩy. */
 const WAREHOUSE_TTL_MS = 60 * 60_000;
-/** Ảnh tối đa 10MB (upload-product-image-202309). */
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const IMAGE_TIMEOUT_MS = 15_000;
-const MAX_REDIRECTS = 3;
 /** "product status invalid": sản phẩm không ở trạng thái thao tác được (vd đã tắt mà tắt lại). */
 const STATUS_INVALID = '12052901';
 /** Trạng thái sản phẩm coi như đã tắt, đã bật (bật lại vào duyệt `PENDING`). */
@@ -39,10 +36,8 @@ const TOGGLE_DONE = { deactivate: ['SELLER_DEACTIVATED', 'PLATFORM_DEACTIVATED']
 type SkuError = { code: string; message: string };
 
 export interface TiktokListingDeps {
-  /** Tải ảnh nguồn (mặc định `fetch`); test thay. */
-  fetchImage?: typeof fetch;
-  /** Phân giải tên miền của URL ảnh để chặn địa chỉ nội bộ; test thay. */
-  resolveHost?: (host: string) => Promise<string[]>;
+  /** Tải ảnh nguồn (`image-source.ts`): phân giải tên miền, địa chỉ được phép nối; test thay. */
+  image?: Pick<ImageSourceOptions, 'resolveHost' | 'allowAddress'>;
   /**
    * SKU đang có trên sàn theo `seller_sku` (bỏ sản phẩm đã xoá), để `createProduct` không tạo trùng khi lần trước đã tạo
    * xong mà bên gọi không nhận được kết quả. `createTiktokAdapter` truyền bản dùng Search Products; không truyền thì bỏ bước tra.
@@ -62,24 +57,6 @@ function itemError(e: Row): { code: string; message: string } {
   const src = extra ?? e;
   return { code: String(src.code ?? e.code ?? 'unknown'), message: typeof src.message === 'string' ? src.message : String(e.message ?? '') };
 }
-
-/** Địa chỉ không được tải ảnh: loopback, mạng riêng, link-local, CGNAT, ULA, không xác định. */
-export function isPrivateAddress(ip: string): boolean {
-  const v = isIP(ip);
-  if (v === 4) {
-    const [a, b] = ip.split('.').map(Number) as [number, number];
-    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
-  }
-  if (v === 6) {
-    const x = ip.toLowerCase();
-    if (x.startsWith('::ffff:')) return isPrivateAddress(x.slice(7));
-    return x === '::' || x === '::1' || /^f[cd]/.test(x) || /^fe[89ab]/.test(x) || x.startsWith('ff');
-  }
-  return true;
-}
-
-const defaultResolve = async (host: string) => (await lookup(host, { all: true })).map((a) => a.address);
 
 /** Danh mục lá dùng được (`AVAILABLE`), tên là đường dẫn từ gốc. */
 function leavesOf(categories: Row[]): PlatformCategory[] {
@@ -105,8 +82,6 @@ const cm = (mm: number) => String(Math.max(1, Math.ceil(mm / 10)));
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDeps = {}): ListingMethods {
-  const fetchImage = deps.fetchImage ?? fetch;
-  const resolveHost = deps.resolveHost ?? defaultResolve;
   const warehouses = new Map<string, { at: number; id: Promise<string> }>();
 
   /**
@@ -190,43 +165,6 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     throw new MarketplaceError('rejected', code, message);
   }
 
-  /** Tải ảnh nguồn: chỉ http(s), host phân giải ra địa chỉ công khai (kiểm lại sau mỗi lần chuyển hướng), tối đa 10MB. */
-  async function download(source: string): Promise<{ bytes: ArrayBuffer; type: string; name: string }> {
-    const bad = (why: string) => new MarketplaceError('rejected', 'image_source_invalid', why);
-    let url: URL;
-    try {
-      url = new URL(source);
-    } catch {
-      throw bad('URL ảnh không hợp lệ');
-    }
-    for (let hop = 0; ; hop++) {
-      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw bad('URL ảnh phải là http hoặc https');
-      const host = url.hostname.replace(/^\[|\]$/g, '');
-      const addrs = isIP(host) ? [host] : await resolveHost(host).catch(() => []);
-      if (!addrs.length || addrs.some(isPrivateAddress)) throw bad('Không tải được ảnh từ địa chỉ này');
-      let res: Response;
-      try {
-        res = await fetchImage(url, { redirect: 'manual', signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
-      } catch {
-        throw bad('Không tải được ảnh nguồn');
-      }
-      const location = res.headers.get('location');
-      if (res.status >= 300 && res.status < 400 && location) {
-        if (hop >= MAX_REDIRECTS) throw bad('Ảnh chuyển hướng quá nhiều lần');
-        url = new URL(location, url);
-        continue;
-      }
-      if (!res.ok) throw bad(`Tải ảnh nguồn lỗi HTTP ${res.status}`);
-      const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-      if (!type.startsWith('image/')) throw bad('URL không trỏ tới ảnh');
-      if (Number(res.headers.get('content-length') ?? 0) > MAX_IMAGE_BYTES) throw bad('Ảnh quá 10MB');
-      const bytes = await res.arrayBuffer();
-      if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) throw bad(bytes.byteLength ? 'Ảnh quá 10MB' : 'Ảnh rỗng');
-      const name = decodeURIComponent(url.pathname.split('/').pop() || 'image') || 'image';
-      return { bytes, type, name };
-    }
-  }
-
   return {
     async listCategories(token) {
       const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
@@ -253,9 +191,9 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     // Sàn chỉ nhận file (multipart), không nhận URL: tải ảnh nguồn rồi đưa lên. Không gửi `shop_cipher` (API không theo
     // gian hàng). Trả `uri`, chuỗi Create Product cần trong `main_images`.
     async uploadImage(token, url) {
-      const image = await download(url);
+      const image = await downloadImage(url, deps.image);
       const form = new FormData();
-      form.append('data', new Blob([image.bytes], { type: image.type }), image.name);
+      form.append('data', new Blob([new Uint8Array(image.bytes)], { type: image.type }), image.name);
       form.append('use_case', 'MAIN_IMAGE');
       const data = await client.call<{ uri?: unknown }>('POST', '/product/202309/images/upload', { token, form, shopCipher: false });
       if (typeof data?.uri !== 'string' || !data.uri) throw new MarketplaceError('rejected', 'unexpected_response');

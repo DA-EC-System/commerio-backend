@@ -4,7 +4,7 @@
 // upload-product-image-202309, create-product-202309; lỗi theo gọi thật trên shop thử 07/11/2026.
 import { describe, expect, it, vi } from 'vitest';
 import { MarketplaceError, type PriceQuantity } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { createTiktokClient, packTiktokToken, signTiktok } from '#src/modules/channel/channel/service/marketplaces/tiktok-client.ts';
+import { createTiktokClient, packTiktokToken } from '#src/modules/channel/channel/service/marketplaces/tiktok-client.ts';
 import { isPrivateAddress, tiktokListingMethods } from '#src/modules/channel/channel/service/marketplaces/tiktok-listing.ts';
 import { createTiktokAdapter } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
 
@@ -229,71 +229,38 @@ describe('danh mục', () => {
   });
 });
 
-describe('uploadImage', () => {
-  const PNG = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
-  const image = (type = 'image/png') => new Response(PNG, { status: 200, headers: { 'content-type': type } });
-  const publicHost = async () => ['93.184.216.34'];
-
-  it('tải ảnh nguồn rồi đưa lên bằng multipart: không ký body, không gửi shop_cipher, trả uri', async () => {
-    vi.useFakeTimers({ now: 1_700_000_000_000 });
-    try {
-      const san = fakeSan({ 'POST /product/202309/images/upload': ok({ uri: 'tos-alisg/abc', url: 'https://p16/abc' }) });
-      const fetchImage = vi.fn<typeof fetch>(async () => image());
-      const uri = await san.methods({ fetchImage, resolveHost: publicHost }).uploadImage(TOKEN, 'https://cdn.example.vn/anh/coc.png');
-      expect(uri).toBe('tos-alisg/abc');
-      const call = san.calls[0]!;
-      expect(call.body).toBeInstanceOf(FormData);
-      const form = call.body as FormData;
-      expect(form.get('use_case')).toBe('MAIN_IMAGE');
-      const file = form.get('data') as File;
-      expect(file.name).toBe('coc.png');
-      expect(new Uint8Array(await file.arrayBuffer())).toEqual(PNG);
-      // fetch tự đặt content-type kèm boundary; token ở header.
-      expect(call.headers).toEqual({ 'x-tts-access-token': 'TTP_at' });
-      expect(call.query.has('shop_cipher')).toBe(false);
-      const query = Object.fromEntries([...call.query].filter(([k]) => k !== 'sign'));
-      expect(call.query.get('sign')).toBe(signTiktok('/product/202309/images/upload', query, '', 'apps'));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
+describe('uploadImage: chặn nguồn ảnh trước khi nối (tải thật qua server cục bộ ở test/integration/channel/channel/image-source.test.ts)', () => {
   it.each([
     ['giao thức file', 'file:///etc/passwd', ['93.184.216.34']],
     ['host phân giải ra mạng riêng', 'https://noi-bo.example/a.png', ['10.0.0.5']],
+    ['host phân giải ra một địa chỉ công khai và một nội bộ', 'https://tron.example/a.png', ['93.184.216.34', '127.0.0.1']],
+    ['host phân giải ra NAT64 trỏ vào mạng riêng', 'https://nat64.example/a.png', ['64:ff9b::a00:5']],
     ['IP loopback trên URL', 'http://127.0.0.1:3000/a.png', []],
+    ['IPv4-mapped IPv6 trên URL (Node chuẩn hoá về hex)', 'http://[::ffff:127.0.0.1]/a.png', []],
     ['IPv6 link-local', 'http://[fe80::1]/a.png', []],
+    ['198.18/15 trên URL', 'http://198.18.0.1/a.png', []],
     ['không phân giải được', 'https://khong-co.example/a.png', []],
+    ['URL có tài khoản', 'https://u:p@cdn.example.vn/a.png', ['93.184.216.34']],
   ])('%s → rejected image_source_invalid, không tải', async (_name, url, addrs) => {
     const san = fakeSan({});
-    const fetchImage = vi.fn<typeof fetch>(async () => image());
     const err = await san
-      .methods({ fetchImage, resolveHost: async () => addrs })
+      .methods({ image: { resolveHost: async () => addrs } })
       .uploadImage(TOKEN, url)
       .catch((e: unknown) => e);
     expect(err).toMatchObject({ kind: 'rejected', platformCode: 'image_source_invalid' });
-    expect(fetchImage).not.toHaveBeenCalled();
     expect(san.fetchFn).not.toHaveBeenCalled();
   });
 
-  it('chuyển hướng sang địa chỉ nội bộ bị chặn; không phải ảnh bị chặn', async () => {
-    const resolveHost = async (host: string) => (host === 'cdn.example.vn' ? ['93.184.216.34'] : ['192.168.1.2']);
-    const redirect = vi.fn<typeof fetch>(async () => new Response(null, { status: 302, headers: { location: 'http://router.lan/a.png' } }));
-    await expect(fakeSan({}).methods({ fetchImage: redirect, resolveHost }).uploadImage(TOKEN, 'https://cdn.example.vn/a.png')).rejects.toMatchObject({
-      platformCode: 'image_source_invalid',
-    });
-    expect(redirect).toHaveBeenCalledTimes(1);
-    const html = vi.fn<typeof fetch>(async () => image('text/html'));
-    await expect(fakeSan({}).methods({ fetchImage: html, resolveHost }).uploadImage(TOKEN, 'https://cdn.example.vn/a.png')).rejects.toMatchObject({
-      platformCode: 'image_source_invalid',
-    });
-  });
-
   it('isPrivateAddress', () => {
-    for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.0.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', '::ffff:10.0.0.1', 'khong-phai-ip']) {
-      expect(isPrivateAddress(ip), ip).toBe(true);
+    const blocked = [
+      '127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.0.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '198.18.0.1', '198.19.255.255',
+      '::', '::1', 'fd00::1', 'fe80::1', 'fec0::1', 'ff02::1', '::ffff:10.0.0.1', '::ffff:a00:1', '::ffff:7f00:1', '::ffff:169.254.169.254',
+      '64:ff9b::a00:1', '64:ff9b::808:808', '64:ff9b:1::1', '::127.0.0.1', '2001:db8::1', 'khong-phai-ip',
+    ];
+    for (const ip of blocked) expect(isPrivateAddress(ip), ip).toBe(true);
+    for (const ip of ['93.184.216.34', '172.32.0.1', '198.20.0.1', '2001:4860::8888', '::ffff:93.184.216.34', '::ffff:5db8:d822']) {
+      expect(isPrivateAddress(ip), ip).toBe(false);
     }
-    for (const ip of ['93.184.216.34', '172.32.0.1', '2001:4860::8888']) expect(isPrivateAddress(ip), ip).toBe(false);
   });
 });
 
