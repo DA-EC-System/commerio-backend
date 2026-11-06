@@ -1,4 +1,5 @@
-// Luật thuần của kho: giá vốn bình quân (Documents/21 K2), làm tròn (V29, V30), ngưỡng tồn (K7, V31), số phiếu (V32).
+// Luật thuần của kho: giá vốn bình quân (Documents/21 K2), làm tròn (V29, V30), bất biến tồn (spec #206 Q14), ngưỡng tồn
+// (K7, V31), số phiếu (V32).
 import { Decimal } from 'decimal.js';
 
 /**
@@ -32,12 +33,30 @@ export function breaksInvariant(onHand: number, reserved: number): boolean {
   return onHand < 0 || reserved > onHand;
 }
 
+/** Phần hụt của dòng tồn: `đang giữ − tồn thực`; dương khi bất biến vỡ (đang giữ ≥ 0). */
+export function shortfall(level: { onHand: number; reserved: number }): number {
+  return level.reserved - level.onHand;
+}
+
 /**
- * "Không làm tệ hơn" (Documents/25 §7.1): chỉ chặn khi tồn thực giảm mà kết quả vỡ bất biến. Thao tác làm tăng luôn qua,
- * kể cả khi tồn vẫn còn âm.
+ * "Không làm tệ hơn" (Documents/25 §7.1, spec #206 Q14): chặn khi sau khi ghi bất biến vỡ **và** phần hụt tăng. Nhập
+ * luôn qua, kể cả khi tồn vẫn âm; bàn giao thường khi đang Tồn âm trừ tồn thực và đang giữ cùng một số nên cũng qua.
  */
-export function worsens(before: { onHand: number }, after: { onHand: number; reserved: number }): boolean {
-  return after.onHand < before.onHand && breaksInvariant(after.onHand, after.reserved);
+export function worsens(before: { onHand: number; reserved: number }, after: { onHand: number; reserved: number }): boolean {
+  return breaksInvariant(after.onHand, after.reserved) && shortfall(after) > shortfall(before);
+}
+
+/** Bình quân giá theo số lượng của các dòng, làm tròn nửa lên 2 chữ số (giá dòng phiếu đảo bàn giao, spec #206 Q17). */
+export function averageCost(lines: readonly { quantity: number; unitCost: Decimal.Value }[]): Decimal {
+  if (!lines.length) throw new Error('Không có dòng để tính bình quân giá');
+  let total = new Decimal(0);
+  let qty = 0;
+  for (const l of lines) {
+    if (!Number.isInteger(l.quantity) || l.quantity <= 0) throw new Error(`Số lượng phải là số nguyên dương: ${l.quantity}`);
+    total = total.plus(new Decimal(l.unitCost).times(l.quantity));
+    qty += l.quantity;
+  }
+  return total.div(qty).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 }
 
 /** Các số để xét ngưỡng của một SKU (Documents/25 mục 7.5). */

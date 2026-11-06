@@ -169,6 +169,13 @@
       "when": 1793980434666,
       "tag": "0023_refresh-ho-token",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793981089263,
+      "tag": "0024_dong-kien-phieu-xuat",
+      "breakpoints": true
     }
   ]
 }
