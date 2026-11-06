@@ -119,10 +119,11 @@ async function check() {
 
   const adapter = createLazadaAdapter({ appKey: APP_KEY, appSecret: APP_SECRET, redirectUrl: 'http://localhost:5173/cb', apiUrl: `${GATE}/rest`, authUrl: GATE });
   try {
-    const token = await adapter.exchangeCode('mock-code');
+    const [seller] = await adapter.exchangeCode({ code: 'mock-code' });
+    if (!seller) throw new Error('exchangeCode không trả gian hàng nào');
+    const token = seller.tokens;
     expect('adapter.exchangeCode', token.accessToken.startsWith('mock-access-token'));
-    const seller = await adapter.getSeller(token.accessToken);
-    expect('adapter.getSeller', seller.externalShopId === String(SELLER.seller_id), seller.shopName);
+    expect('adapter.exchangeCode seller', seller.externalShopId === String(SELLER.seller_id), seller.shopName);
     const cats = await adapter.listCategories(token.accessToken);
     expect('adapter.listCategories', cats.length > 0, cats.map((c) => c.name).join('; '));
     const skus = await adapter.getSkus(token.accessToken, ITEMS.map((i) => i.sku));

@@ -47,22 +47,31 @@ describe('adapter Lazada', () => {
   it('thiếu app key hoặc secret thì báo unsupported, không gọi sàn', async () => {
     const fetchFn = fakeFetch();
     const adapter = createLazadaAdapter({ ...config, appSecret: undefined }, fetchFn);
-    await expect(adapter.getSeller('t')).rejects.toMatchObject({ kind: 'unsupported' });
+    await expect(adapter.connectWithToken({ accessToken: 't', refreshToken: null })).rejects.toMatchObject({ kind: 'unsupported' });
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('đổi code lấy token, hạn tính từ expires_in và refresh_expires_in', async () => {
+  it('đổi code (đọc từ params) lấy token rồi đọc seller; hạn tính từ expires_in và refresh_expires_in', async () => {
     vi.useFakeTimers({ now: Date.parse('2026-10-28T00:00:00Z') });
     const fetchFn = fakeFetch(
       json({ code: '0', access_token: 'at', refresh_token: 'rt', expires_in: 864000, refresh_expires_in: 4320000 }),
+      json({ code: '0', data: { seller_id: 200185074242, name: 'Shop thử' } }),
     );
-    const tokens = await createLazadaAdapter(config, fetchFn).exchangeCode('c1');
-    expect(tokens).toEqual({
-      accessToken: 'at',
-      refreshToken: 'rt',
-      accessExpiresAt: new Date('2026-11-07T00:00:00Z'),
-      refreshExpiresAt: new Date('2026-12-17T00:00:00Z'),
-    });
+    const shops = await createLazadaAdapter(config, fetchFn).exchangeCode({ code: 'c1', app_key: 'bỏ qua' });
+    expect(shops).toEqual([
+      {
+        externalShopId: '200185074242',
+        shopName: 'Shop thử',
+        region: 'VN',
+        tokens: {
+          accessToken: 'at',
+          refreshToken: 'rt',
+          accessExpiresAt: new Date('2026-11-07T00:00:00Z'),
+          refreshExpiresAt: new Date('2026-12-17T00:00:00Z'),
+        },
+      },
+    ]);
+    expect(new URL(String(fetchFn.mock.calls[1]?.[0])).searchParams.get('access_token')).toBe('at');
     const called = new URL(String(fetchFn.mock.calls[0]?.[0]));
     expect(called.pathname).toBe('/rest/auth/token/create');
     expect(called.searchParams.get('code')).toBe('c1');
@@ -70,13 +79,42 @@ describe('adapter Lazada', () => {
     expect(called.searchParams.get('sign')).toBe(signLazada('/auth/token/create', params, 'secret'));
   });
 
-  it('đọc seller_id dạng số thành chuỗi', async () => {
-    const fetchFn = fakeFetch(json({ code: '0', data: { seller_id: 200185074242, name: 'Shop thử' } }));
-    expect(await createLazadaAdapter(config, fetchFn).getSeller('t')).toEqual({
-      externalShopId: '200185074242',
-      shopName: 'Shop thử',
-      region: 'VN',
+  it('params thiếu code thì rejected missing_parameter, không gọi sàn', async () => {
+    const fetchFn = fakeFetch();
+    await expect(createLazadaAdapter(config, fetchFn).exchangeCode({})).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'missing_parameter',
     });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('token dán tay không có refresh: một gian hàng, hạn để trống; seller_id dạng số thành chuỗi', async () => {
+    const fetchFn = fakeFetch(json({ code: '0', data: { seller_id: 200185074242, name: 'Shop thử' } }));
+    expect(await createLazadaAdapter(config, fetchFn).connectWithToken({ accessToken: 't', refreshToken: null })).toEqual([
+      {
+        externalShopId: '200185074242',
+        shopName: 'Shop thử',
+        region: 'VN',
+        tokens: { accessToken: 't', refreshToken: null, accessExpiresAt: null, refreshExpiresAt: null },
+      },
+    ]);
+  });
+
+  it('token dán tay có refresh: làm mới một lần để biết hạn, seller đọc bằng token mới', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-10-28T00:00:00Z') });
+    const fetchFn = fakeFetch(
+      json({ code: '0', access_token: 'at2', refresh_token: 'rt2', expires_in: 864000, refresh_expires_in: 4320000 }),
+      json({ code: '0', data: { seller_id: 1, name: 'Shop thử' } }),
+    );
+    const [shop] = await createLazadaAdapter(config, fetchFn).connectWithToken({ accessToken: 'at', refreshToken: 'rt' });
+    expect(shop?.tokens).toEqual({
+      accessToken: 'at2',
+      refreshToken: 'rt2',
+      accessExpiresAt: new Date('2026-11-07T00:00:00Z'),
+      refreshExpiresAt: new Date('2026-12-17T00:00:00Z'),
+    });
+    expect(new URL(String(fetchFn.mock.calls[0]?.[0])).pathname).toBe('/rest/auth/token/refresh');
+    expect(new URL(String(fetchFn.mock.calls[1]?.[0])).searchParams.get('access_token')).toBe('at2');
   });
 
   it.each([
@@ -95,7 +133,7 @@ describe('adapter Lazada', () => {
     ['sàn từ chối', json({ code: 'E207', type: 'ISV', message: 'SKU not exist' }), 'rejected', 'E207'],
   ])('%s → %s', async (_name, response, kind, platformCode) => {
     const err = await createLazadaAdapter(config, fakeFetch(response))
-      .getSeller('t')
+      .connectWithToken({ accessToken: 't', refreshToken: null })
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MarketplaceError);
     expect(err).toMatchObject({ kind, platformCode });

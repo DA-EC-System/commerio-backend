@@ -13,18 +13,25 @@ import { fakeAdapter } from './helpers.ts';
 
 const DAY = 24 * 3600_000;
 
-// Adapter giả: code `c-<seller>` đổi được token `tok-<seller>`; token `tok-<seller>` đọc ra seller đó.
-// Code `down` giả lỗi tạm của sàn.
+// Adapter giả: code `c-<seller>` (hoặc `c-<a>+<b>`: một lần uỷ quyền ra nhiều gian hàng) đổi được token `tok-<seller>`;
+// token `tok-<seller>` đọc ra seller đó. Code `down` giả lỗi tạm của sàn, `none` là uỷ quyền không có gian hàng nào.
+const tokensOf = (id: string) => ({
+  accessToken: `tok-${id}`,
+  refreshToken: `ref-${id}`,
+  accessExpiresAt: new Date(Date.now() + 10 * DAY),
+  refreshExpiresAt: new Date(Date.now() + 50 * DAY),
+});
 registerAdapter('lazada', fakeAdapter({
   authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
-  async exchangeCode(code) {
+  async exchangeCode(params) {
+    const code = params.code;
+    if (!code) throw new MarketplaceError('rejected', 'missing_parameter');
     if (code === 'down') throw new MarketplaceError('unavailable', 'ServiceTimeout');
-    return {
-      accessToken: `tok-${code.slice(2)}`,
-      refreshToken: `ref-${code.slice(2)}`,
-      accessExpiresAt: new Date(Date.now() + 10 * DAY),
-      refreshExpiresAt: new Date(Date.now() + 50 * DAY),
-    };
+    if (code === 'none') return [];
+    return code
+      .slice(2)
+      .split('+')
+      .map((id) => ({ externalShopId: id, shopName: `Shop ${id.slice(0, 8)}`, region: 'VN', tokens: tokensOf(id) }));
   },
   async refreshToken(refreshToken) {
     return { accessToken: `tok-${refreshToken.slice(4)}`, refreshToken, accessExpiresAt: null, refreshExpiresAt: null };
@@ -121,11 +128,77 @@ describe('kết nối bằng OAuth', () => {
   });
 });
 
+describe('một lần uỷ quyền ra nhiều gian hàng (tất cả hoặc không)', () => {
+  const callback = async (bearer: string, code: string) =>
+    app()
+      .post('/api/v1/channel/shops/lazada/callback')
+      .set('Authorization', `Bearer ${bearer}`)
+      .send({ code, state: await stateFor(bearer) });
+  const liveRows = async (ids: string[]) =>
+    (
+      await testPool().query<{ external_shop_id: string; status: string; company_id: string }>(
+        'select external_shop_id, status, company_id from channel.shops where external_shop_id = any($1) and disconnected_at is null',
+        [ids],
+      )
+    ).rows;
+
+  it('hai gian hàng mới: 201, shops có đủ hai, cả hai connecting; shop/created là của phần tử đầu', async () => {
+    const [a, b] = [seller(), seller()];
+    const res = await callback(token, `c-${a}+${b}`);
+    expect(res.status).toBe(201);
+    const body = ShopCallbackResult.parse(res.body);
+    expect(body.shops.map((s) => s.shop.externalShopId)).toEqual([a, b]);
+    expect(body.shops.every((s) => s.created && s.shop.status === 'connecting')).toBe(true);
+    expect(body.shop).toEqual(body.shops[0]!.shop);
+    expect(body.created).toBe(true);
+    // Token không lộ ra response, kể cả khi nhiều gian hàng (AC-S4).
+    expect(JSON.stringify(res.body)).not.toMatch(/tok-|ref-/);
+    const rows = await liveRows([a, b]);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === 'connecting' && r.company_id === company.companyId)).toBe(true);
+  });
+
+  it('trộn: gian hàng đầu đã có, gian hàng sau mới thì vẫn 201 (theo gian hàng tạo mới, không theo phần tử đầu)', async () => {
+    const [a, b] = [seller(), seller()];
+    expect((await connect(token, a)).status).toBe(201);
+    const res = await callback(token, `c-${a}+${b}`);
+    expect(res.status).toBe(201);
+    const body = ShopCallbackResult.parse(res.body);
+    expect(body.created).toBe(false);
+    expect(body.shops.map((s) => s.created)).toEqual([false, true]);
+  });
+
+  it('một gian hàng đang gắn công ty khác thì 409 shop_connected_elsewhere, không ghi gian hàng nào', async () => {
+    const [a, b] = [seller(), seller()];
+    const other = await createCompany({ optionalModules: ['channel'] });
+    expect((await connect(other.ceo.token, b)).status).toBe(201);
+    const res = await callback(token, `c-${a}+${b}`);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('shop_connected_elsewhere');
+    expect(await liveRows([a])).toHaveLength(0);
+  });
+
+  it('adapter trả gian hàng lặp thì gộp theo mã shop của sàn', async () => {
+    const a = seller();
+    const res = await callback(token, `c-${a}+${a}`);
+    expect(res.status).toBe(201);
+    expect(ShopCallbackResult.parse(res.body).shops).toHaveLength(1);
+  });
+
+  it('uỷ quyền không có gian hàng nào thì 409 marketplace_rejected no_shop, không 500', async () => {
+    const res = await callback(token, 'none');
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'marketplace_rejected', platformCode: 'no_shop' });
+  });
+});
+
 describe('kết nối bằng token console', () => {
   it('tạo gian hàng; gọi lại khi đang connecting chỉ thay token', async () => {
     const id = seller();
     const first = await connect(token, id);
     expect(first.status).toBe(201);
+    // Cùng dạng với callback: có `shops[]` (Documents/21 §18.4).
+    expect(ShopCallbackResult.parse(first.body).shops).toMatchObject([{ created: true, shop: { externalShopId: id } }]);
     const again = await connect(token, id);
     expect(again.status).toBe(200);
     expect(ShopCallbackResult.parse(again.body)).toMatchObject({

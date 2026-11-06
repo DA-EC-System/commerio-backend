@@ -15,6 +15,8 @@ import {
   type RemoteSku,
   type RemoteState,
   type SellerInfo,
+  type ShopCapabilities,
+  type ShopConnection,
   type SettlementTxn,
   type TokenSet,
 } from './common.ts';
@@ -32,6 +34,8 @@ export interface LazadaConfig {
 type LazadaResponse = Record<string, unknown> & { code?: string; message?: string; type?: string };
 
 const TIMEOUT_MS = 10_000;
+/** Documents/21 §18.6.3: Lazada duyệt listing, ẩn bằng tắt, tách kiện từng đơn vị, hạn trả tính theo ngày của gian hàng. */
+export const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
 const AUTH_CODES = new Set(['IllegalAccessToken', 'IllegalRefreshToken', 'InvalidCode', 'InvalidRefreshToken']);
 // Mã số là lỗi nghiệp vụ dù mang type ISP (probe-104b), trừ mã lỗi tạm: nội bộ, gọi quá nhanh (tài liệu CreateProduct).
@@ -273,6 +277,24 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     });
   }
 
+  async function getSeller(accessToken: string): Promise<SellerInfo> {
+    const body = await call(config.apiUrl, '/seller/get', { access_token: accessToken }, 'GET');
+    const data = body.data as { seller_id?: unknown; name?: unknown } | undefined;
+    if (data?.seller_id === undefined || typeof data.name !== 'string') {
+      throw new MarketplaceError('rejected', 'unexpected_response');
+    }
+    // App gọi api.lazada.vn (chỉ VN).
+    return { externalShopId: String(data.seller_id), shopName: data.name, region: 'VN' };
+  }
+
+  // Một token Lazada là một seller.
+  async function connection(tokens: TokenSet): Promise<ShopConnection[]> {
+    return [{ ...(await getSeller(tokens.accessToken)), tokens }];
+  }
+
+  const refresh = async (refreshToken: string) =>
+    tokenSet(await call(`${config.authUrl}/rest`, '/auth/token/refresh', { refresh_token: refreshToken }, 'POST'));
+
   function tokenSet(body: LazadaResponse): TokenSet {
     if (typeof body.access_token !== 'string') throw new MarketplaceError('rejected', 'no_access_token');
     return {
@@ -285,6 +307,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
 
   return {
     name: 'Lazada',
+    capabilities: LAZADA_CAPABILITIES,
     connectMethods() {
       // Chỉ OAuth cần trang callback; nối bằng token không cần.
       return oauthReady ? ['oauth', 'token'] : hasCredentials ? ['token'] : [];
@@ -301,20 +324,19 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       });
       return `${config.authUrl}/oauth/authorize?${query}`;
     },
-    async exchangeCode(code) {
-      return tokenSet(await call(`${config.authUrl}/rest`, '/auth/token/create', { code }, 'POST'));
+    async exchangeCode(params) {
+      const code = params.code;
+      if (!code) throw new MarketplaceError('rejected', 'missing_parameter', 'Thiếu code trên URL callback');
+      return connection(tokenSet(await call(`${config.authUrl}/rest`, '/auth/token/create', { code }, 'POST')));
     },
-    async refreshToken(refreshToken) {
-      return tokenSet(await call(`${config.authUrl}/rest`, '/auth/token/refresh', { refresh_token: refreshToken }, 'POST'));
+    async connectWithToken({ accessToken, refreshToken }) {
+      // Có refresh token thì làm mới một lần để biết hạn; không có thì hạn để trống, hết hạn thì dán token mới.
+      const tokens: TokenSet = refreshToken
+        ? await refresh(refreshToken)
+        : { accessToken, refreshToken: null, accessExpiresAt: null, refreshExpiresAt: null };
+      return connection(tokens);
     },
-    async getSeller(accessToken): Promise<SellerInfo> {
-      const body = await call(config.apiUrl, '/seller/get', { access_token: accessToken }, 'GET');
-      const data = body.data as { seller_id?: unknown; name?: unknown } | undefined;
-      if (data?.seller_id === undefined || typeof data.name !== 'string') {
-        throw new MarketplaceError('rejected', 'unexpected_response');
-      }
-      return { externalShopId: String(data.seller_id), shopName: data.name, region: 'VN' };
-    },
+    refreshToken: refresh,
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
       const body = await call(config.apiUrl, '/category/tree/get', params, 'GET');

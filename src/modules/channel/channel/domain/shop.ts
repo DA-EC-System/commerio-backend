@@ -45,3 +45,17 @@ export function assertNoOpenOrders(openOrders: number): void {
     });
   }
 }
+
+/**
+ * Năng lực của sàn do adapter khai (Documents/21 §18.4, §18.6.3). Code ngoài adapter và FE rẽ nhánh theo đây, không theo mã sàn.
+ * - `listingReview`: sàn duyệt listing trước khi bán.
+ * - `hideBy`: ẩn listing bằng tắt (`deactivate`) hay bằng đẩy tồn 0 (`zero_stock`).
+ * - `splitLevel`: mức tách kiện sàn cho phép (`unit` từng đơn vị, `sku` theo nhóm dòng, `none` không tách).
+ * - `returnWindow`: hết hạn trả hàng tính bằng số ngày của gian hàng (`days`, cần `returnWindowDays`) hay theo trạng thái sàn.
+ */
+export interface ShopCapabilities {
+  listingReview: boolean;
+  hideBy: 'deactivate' | 'zero_stock';
+  splitLevel: 'unit' | 'sku' | 'none';
+  returnWindow: 'days' | 'platform_status';
+}

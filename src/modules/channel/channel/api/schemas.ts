@@ -99,14 +99,23 @@ export const ShopPlatform = z
 
 export const ShopPlatformList = z.object({ items: z.array(ShopPlatform) }).strict().meta({ id: 'ShopPlatformList' });
 
+const connectionResult = {
+  shop: Shop,
+  created: z.boolean(),
+  reconnect: z
+    .object({ pulledFrom: iso.nullable(), relisted: z.number().int(), jobsRun: z.number().int() })
+    .strict()
+    .nullable(),
+};
+
+export const ShopConnectionResult = z.object(connectionResult).strict().meta({ id: 'ShopConnectionResult' });
+
 export const ShopCallbackResult = z
   .object({
-    shop: Shop,
-    created: z.boolean(),
-    reconnect: z
-      .object({ pulledFrom: iso.nullable(), relisted: z.number().int(), jobsRun: z.number().int() })
-      .strict()
-      .nullable(),
+    ...connectionResult,
+    shops: z.array(ShopConnectionResult).min(1).meta({
+      description: 'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu',
+    }),
   })
   .strict()
   .meta({ id: 'ShopCallbackResult' });
