@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrderPullResult } from '#src/modules/channel/channel/api/schemas.ts';
@@ -238,6 +240,62 @@ describe('kéo đơn theo gian hàng (#105)', () => {
     } finally {
       await setModuleEnabled(company.companyId, 'channel', true);
     }
+  });
+});
+
+// Migration chạy một lần (review #261 điểm 1): tìm theo tên để không vỡ khi đổi số lúc rebase.
+async function runRepullMigration() {
+  const dir = join(process.cwd(), 'db', 'migrations');
+  const file = readdirSync(dir).find((f) => f.endsWith('_keo-lai-don-truoc-0017.sql'))!;
+  for (const stmt of readFileSync(join(dir, file), 'utf8').split('--> statement-breakpoint')) {
+    if (stmt.replace(/--.*$/gm, '').trim()) await testPool().query(stmt);
+  }
+}
+
+describe('kéo lại đơn lưu trước #260 (migration chạy một lần)', () => {
+  it('đơn thô thiếu `info` hay địa chỉ lặp phường: xoá mốc đơn và mốc gian hàng, lượt sau gọi lại chi tiết và ghi thông tin mới', async () => {
+    const address = (text: string) => ({ name: 'N***n', phone: '84****11', address: text, ward: 'Phường Bến Nghé', postCode: null, raw: { city: 'Phường Bến Nghé' } });
+    const m1 = remoteOrder('M1', sku, 'pending', at('2026-11-01T01:00:00Z'));
+    const m2 = { ...remoteOrder('M2', sku, 'pending', at('2026-11-01T02:00:00Z')), shippingAddress: address('P**a, Phường Bến Nghé') };
+    const m3 = { ...remoteOrder('M3', sku, 'pending', at('2026-11-01T03:00:00Z')), shippingAddress: address('P**a') };
+    seed(m1, m2, m3);
+    expect((await pull()).body).toEqual({ pulled: 3, created: 3, updated: 0 });
+    // M1 giả lập đơn lưu bởi adapter trước #260: dữ liệu gốc không có `info`.
+    await testPool().query(`update channel.raw_orders set payload = payload - 'info' where shop_id = $1 and external_order_id = 'M1'`, [shopId]);
+
+    await runRepullMigration();
+
+    expect(await cursor()).toBeNull();
+    const times = await testPool().query(
+      `select external_order_id as id, external_update_time is null as cleared from channel.raw_orders where shop_id = $1 and external_order_id like 'M%' order by 1`,
+      [shopId],
+    );
+    expect(times.rows).toEqual([
+      { id: 'M1', cleared: true },
+      { id: 'M2', cleared: true },
+      { id: 'M3', cleared: false },
+    ]);
+
+    getOrder.mockClear();
+    listOrders.mockClear();
+    details.set('M1', { ...m1, info: { ...noOrderInfo, buyerNote: 'Gọi trước' } });
+    details.set('M2', { ...m2, shippingAddress: address('P**a') });
+    expect((await pull()).body).toEqual({ pulled: 2, created: 0, updated: 0 });
+    expect(listOrders.mock.calls[0]![1]).toEqual(at('2026-10-19T23:58:00Z'));
+    expect(getOrder.mock.calls.map((c) => c[1])).toEqual(['M1', 'M2']);
+    const saved = await testPool().query(
+      `select o.external_order_id as id, o.buyer_note, o.shipping_address->>'address' as address, r.payload ? 'info' as has_info
+         from "order".orders o join channel.raw_orders r on r.order_id = o.id where o.shop_id = $1 and o.external_order_id in ('M1', 'M2') order by 1`,
+      [shopId],
+    );
+    expect(saved.rows).toEqual([
+      { id: 'M1', buyer_note: 'Gọi trước', address: null, has_info: true },
+      { id: 'M2', buyer_note: null, address: 'P**a', has_info: true },
+    ]);
+    expect(await cursor()).toEqual(at('2026-11-01T03:00:00Z'));
+    // Chạy lại (bước sau rollout): đơn đã kéo lại bằng adapter mới không bị chọn, mốc giữ nguyên.
+    await runRepullMigration();
+    expect(await cursor()).toEqual(at('2026-11-01T03:00:00Z'));
   });
 });
 

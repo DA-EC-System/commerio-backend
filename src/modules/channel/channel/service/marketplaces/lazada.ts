@@ -231,11 +231,11 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
     placedAt: lazadaTime(o.created_at),
     updatedAt: lazadaTime(o.updated_at),
     shipBy: deadlines.length ? new Date(Math.min(...deadlines.map((d) => d.getTime()))) : null,
-    // Lazada che đường, tỉnh; `city` là phường (địa chỉ hai cấp), không còn quận (đo 05/11/2026, #260 A5).
+    // Lazada che đường, tỉnh; `city` là phường (địa chỉ hai cấp), không còn quận (đo 05/11/2026, #260 A5); phường để ở `ward`, không lặp trong `address`.
     shippingAddress: a && {
       name: `${str(a.first_name)} ${str(a.last_name)}`.trim(),
       phone: str(a.phone),
-      address: ['address1', 'address2', 'address3', 'address4', 'address5', 'city'].map((k) => str(a[k])).filter(Boolean).join(', '),
+      address: ['address1', 'address2', 'address3', 'address4', 'address5'].map((k) => str(a[k])).filter(Boolean).join(', '),
       ward: opt(a.city),
       postCode: opt(a.post_code),
       raw: Object.fromEntries(ADDRESS_KEYS.flatMap((k) => (opt(a[k]) ? [[k === 'post_code' ? 'postCode' : k, opt(a[k])!]] : []))),
