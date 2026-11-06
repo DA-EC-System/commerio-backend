@@ -39,6 +39,7 @@ export {
   type Queue,
   type QueueOptions,
 } from './service/jobs/queues.ts';
+export { lastDeadJobs } from './service/jobs/dead.ts';
 
 // Máy trạng thái và lịch sử chuyển (Documents/21 mục 14.1). Lịch sử kèm tên người: `getStatusHistory` của `staff`.
 export {

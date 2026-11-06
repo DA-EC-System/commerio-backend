@@ -219,6 +219,32 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     expect(await boss.findJobs(openOrderPullQueue.name, { data: { shopId } })).toHaveLength(1);
   });
 
+  it('AC-24: `Shop.setup` qua API đi theo tiến độ: chưa thiết lập → ghép; đơn mở chạy → đẩy tồn chờ; xong lượt → đẩy; đẩy xong', async () => {
+    const { c, shopId } = await setUpShop();
+    const steps = async () => {
+      const res = await request(testApp()).get(`/api/v1/channel/shops/${shopId}`).set('Authorization', `Bearer ${c.ceo.token}`);
+      return res.body.setup as { steps: { key: string; status: string; blockedBy: string | null }[]; unmatchedCount: number };
+    };
+    expect(await steps()).toEqual({
+      steps: [
+        { key: 'match', status: 'done', blockedBy: null },
+        { key: 'open_orders', status: 'running', blockedBy: null },
+        { key: 'push_stock', status: 'blocked', blockedBy: 'open_orders' },
+      ],
+      unmatchedCount: 0,
+    });
+    await runOpenOrderPull({ companyId: c.companyId, shopId });
+    expect((await steps()).steps.slice(1).map((s) => s.status)).toEqual(['done', 'running']);
+    await syncListings(port, c.companyId, shopId);
+    expect((await steps()).steps.map((s) => s.status)).toEqual(['done', 'done', 'done']);
+
+    const fresh = await request(testApp())
+      .post('/api/v1/channel/shops/lazada/token')
+      .set('Authorization', `Bearer ${c.ceo.token}`)
+      .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    expect(fresh.body.shop.setup).toEqual({ steps: [{ key: 'match', status: 'pending', blockedBy: null }], unmatchedCount: 0 });
+  });
+
   it('AC-17: worker khởi động xếp lại việc cho gian hàng active chưa kéo đơn mở, không xếp cho gian hàng đã kéo', async () => {
     const pending = await setUpShop();
     const done = await setUpShop();
