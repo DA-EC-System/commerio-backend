@@ -237,7 +237,12 @@ export async function addLine(
 }
 
 /** CEO loại hoặc bỏ loại một dòng khi đề nghị chờ duyệt; phải còn ít nhất một dòng không bị loại. */
-export async function excludeLine(actor: Actor, id: string, lineId: string, input: { excluded: boolean; version: number }) {
+export async function excludeLine(
+  actor: Actor,
+  id: string,
+  lineId: string,
+  input: { excluded: boolean; reason?: string | null | undefined; version: number },
+) {
   return withCompany(actor.companyId, async () => {
     const row = await lockOwnRequest(id);
     await assertVersion(row, input.version, actor);
@@ -252,8 +257,10 @@ export async function excludeLine(actor: Actor, id: string, lineId: string, inpu
     if (input.excluded && !lines.some((l) => !l.excluded && l.id !== lineId)) {
       throw new AppError(409, 'all_lines_excluded', 'Phải còn ít nhất một dòng');
     }
-    if (target.excluded !== input.excluded) {
-      await updateLine(lineId, { excluded: input.excluded });
+    const reason = input.reason?.trim() || null;
+    if (input.excluded && !reason) throw invalid({ reason: 'Nhập lý do loại dòng' }, 'reason_required');
+    if (target.excluded !== input.excluded || (input.excluded && target.excludedReason !== reason)) {
+      await updateLine(lineId, { excluded: input.excluded, excludedReason: input.excluded ? reason : null });
       await updateRequest(id, {});
       await recordAudit({
         companyId: actor.companyId,
@@ -261,8 +268,8 @@ export async function excludeLine(actor: Actor, id: string, lineId: string, inpu
         action: 'update',
         entityType: AUDIT_ENTITY,
         entityId: id,
-        before: { lineId, excluded: target.excluded },
-        after: { lineId, excluded: input.excluded },
+        before: { lineId, excluded: target.excluded, reason: target.excludedReason },
+        after: { lineId, excluded: input.excluded, reason: input.excluded ? reason : null },
       });
     }
     return toDetail((await findRequest(id))!, actor);

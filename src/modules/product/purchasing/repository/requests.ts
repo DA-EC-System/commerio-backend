@@ -11,6 +11,8 @@ const requestCols = {
   supplierId: purchaseRequests.supplierId,
   sourceReturnId: purchaseRequests.sourceReturnId,
   note: purchaseRequests.note,
+  expectedDeliveryDate: purchaseRequests.expectedDeliveryDate,
+  supplierOrderCode: purchaseRequests.supplierOrderCode,
   createdBy: purchaseRequests.createdBy,
   createdAt: purchaseRequests.createdAt,
   version: purchaseRequests.version,
@@ -102,6 +104,7 @@ const lineCols = {
   closedShortQty: purchaseRequestLines.closedShortQty,
   unitPrice: purchaseRequestLines.unitPrice,
   excluded: purchaseRequestLines.excluded,
+  excludedReason: purchaseRequestLines.excludedReason,
 };
 
 export type LineRow = Awaited<ReturnType<typeof findLines>>[number];

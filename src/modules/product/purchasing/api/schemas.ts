@@ -120,7 +120,11 @@ export const AddRequestLineInput = z
   .meta({ id: 'AddRequestLineInput', description: '`requestId` là nháp có sẵn; `null` thì lập nháp mới với `supplierId`' });
 
 export const ExcludeLineInput = z
-  .object({ excluded: z.boolean('excluded là true hoặc false'), version })
+  .object({
+    excluded: z.boolean('excluded là true hoặc false'),
+    reason: z.string().trim().max(500, 'Lý do tối đa 500 ký tự').nullish().meta({ description: 'Bắt buộc khi `excluded: true`' }),
+    version,
+  })
   .meta({ id: 'ExcludeLineInput' });
 
 export const RequestActionInput = z
@@ -130,7 +134,13 @@ export const RequestActionInput = z
     expectedDeliveryDate: z.iso
       .date('Ngày giao dự kiến không hợp lệ')
       .nullish()
-      .meta({ description: 'Chỉ dùng khi `order`: ngày NCC hẹn giao, yyyy-mm-dd' }),
+      .meta({ description: 'Bắt buộc khi `order`: ngày NCC hẹn giao, yyyy-mm-dd' }),
+    supplierOrderCode: z
+      .string()
+      .trim()
+      .max(100, 'Mã đơn NCC tối đa 100 ký tự')
+      .nullish()
+      .meta({ description: 'Chỉ dùng khi `order`: mã đơn bên NCC (tuỳ chọn)' }),
   })
   .meta({ id: 'PurchaseRequestActionInput' });
 
@@ -239,6 +249,7 @@ export const PurchaseRequestLine = z
     quantity: z.number().int(),
     unitCost: money,
     excluded: z.boolean(),
+    excludedReason: z.string().nullable(),
     received: z.number().int(),
     defective: z.number().int(),
     closedShort: z.number().int(),
@@ -261,6 +272,8 @@ const summaryShape = {
   createdBy: z.string(),
   createdById: z.string(),
   createdAt: iso,
+  expectedDeliveryDate: z.iso.date().nullable().meta({ description: 'Ngày NCC hẹn giao, có từ lúc đặt' }),
+  supplierOrderCode: z.string().nullable(),
   version: z.number().int(),
 };
 

@@ -53,6 +53,8 @@ export const purchaseRequests = purchasingSchema.table(
     source: purchaseRequestSource('source').notNull().default('manual'),
     sourceReturnId: uuid('source_return_id'),
     expectedDeliveryDate: date('expected_delivery_date'),
+    /** Mã đơn bên NCC ghi lúc đặt (tuỳ chọn, 25 §3.2, #243). */
+    supplierOrderCode: text('supplier_order_code'),
     note: text('note'),
     statusReason: text('status_reason'),
     ...approval,
@@ -95,6 +97,8 @@ export const purchaseRequestLines = purchasingSchema.table(
     closedShortQty: integer('closed_short_qty').notNull().default(0),
     unitPrice: money('unit_price').notNull(),
     excluded: boolean('excluded').notNull().default(false),
+    /** Lý do CEO loại dòng (bắt buộc khi loại, #243). */
+    excludedReason: text('excluded_reason'),
     ...timestamps,
     ...version,
   },
