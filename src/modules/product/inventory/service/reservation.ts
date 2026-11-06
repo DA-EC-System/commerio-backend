@@ -3,13 +3,20 @@
 // ghi thẻ kho, không phát `stock_changed` (Q15).
 import { mergeLines, type StockLine } from '../domain/documents.ts';
 import { availableQty } from '../domain/stock.ts';
+import { levelsOf } from '../repository/levels.ts';
 import { lockedOf } from './locked.ts';
-import { applyChange } from './posting.ts';
+import { applyChange, assertOwnVariants } from './posting.ts';
 
 /** Giữ nguyên kiện: mọi SKU đủ có thể bán thì giữ hết, thiếu một SKU thì không giữ gì (`reserved: false`). */
 export async function reserve(_packageId: string, lines: readonly StockLine[]): Promise<{ reserved: boolean }> {
   const wanted = mergeLines(lines);
   if (!wanted.size) return { reserved: true };
+  // SKU chưa có dòng tồn thì có thể bán 0: trả false mà không tạo dòng, để `reorderVersion` của SKU mới không đổi (Q24).
+  const ids = [...wanted.keys()];
+  if ((await levelsOf(ids)).size < ids.length) {
+    await assertOwnVariants(ids);
+    return { reserved: false };
+  }
   const reserved = await applyChange({ source: null, moves: [], reserved: wanted, actorId: null }, (locked) =>
     [...wanted].every(([id, q]) => {
       const level = locked.get(id)!;

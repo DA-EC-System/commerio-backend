@@ -44,6 +44,13 @@ export interface StockChange {
   actorId: string | null;
 }
 
+/** Mọi id là biến thể của công ty đang chạy (`getVariants`, A17); id lạ là lỗi lập trình của bên gọi (500). */
+export async function assertOwnVariants(variantIds: readonly string[]): Promise<void> {
+  const owned = new Set((await getVariants(variantIds)).map((v) => v.id));
+  const foreign = variantIds.filter((id) => !owned.has(id));
+  if (foreign.length) throw new Error(`Biến thể không thuộc công ty: ${foreign.join(', ')}`);
+}
+
 /**
  * Khoá dòng tồn của các biến thể theo `variantId` tăng dần (Q8), tạo dòng 0 khi chưa có. Chỉ nhận biến thể thuộc công ty
  * (`getVariants`, A17); id lạ là lỗi lập trình của bên gọi. Gọi lại trong cùng giao dịch không tốn khoá thêm.
@@ -51,9 +58,7 @@ export interface StockChange {
 export async function lockLevels(variantIds: readonly string[]): Promise<Map<string, LevelRow>> {
   const ids = [...new Set(variantIds)].sort();
   if (!ids.length) return new Map();
-  const owned = new Set((await getVariants(ids)).map((v) => v.id));
-  const foreign = ids.filter((id) => !owned.has(id));
-  if (foreign.length) throw new Error(`Biến thể không thuộc công ty: ${foreign.join(', ')}`);
+  await assertOwnVariants(ids);
   const levels = new Map<string, LevelRow>();
   for (const id of ids) levels.set(id, await lockLevel(id));
   return levels;

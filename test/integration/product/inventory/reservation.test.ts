@@ -75,10 +75,12 @@ describe('reserve', () => {
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 1, reserved: 1 });
   });
 
-  it('SKU chưa có dòng tồn → false', async () => {
+  it('SKU chưa có dòng tồn → false, không tạo dòng tồn (ngưỡng đang sửa không bị 409, Q24)', async () => {
     const { companyId, variants } = await companyWithVariants();
+    const a = variants[0]!;
 
-    expect(await withCompany(companyId, () => reserve(randomUUID(), [line(variants[0]!, 1)]))).toEqual({ reserved: false });
+    expect(await withCompany(companyId, () => reserve(randomUUID(), [line(a, 1)]))).toEqual({ reserved: false });
+    expect(await levelOf(companyId, a)).toBeUndefined();
   });
 
   it('quantity 0 → lỗi lập trình, không tạo dòng tồn', async () => {
