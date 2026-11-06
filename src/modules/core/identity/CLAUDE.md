@@ -10,8 +10,8 @@
 | `POST /login` | Access token chưa gắn công ty + cookie refresh | staff, platform, access |
 | `POST /google` | Như `/login` nhưng bằng ID token Google (`service/google.ts`, #7 [A]): tìm theo `google_sub`, không có thì theo email đã xác minh rồi liên kết (nhật ký cấp tài khoản `update`, `after: { googleLinked: true }`). Không tạo tài khoản | staff, audit |
 | `POST /select-company` | Kiểm membership, công ty, cờ khoá rồi cấp token gắn công ty; trả `canSelfApprove`; phiên refresh nhớ công ty | staff, platform, access |
-| `POST /refresh` | Xoay vòng refresh token, giữ công ty nếu còn dùng được | staff, platform, access |
-| `POST /logout` | Thu hồi refresh token, xoá cookie | |
+| `POST /refresh` | Xoay vòng refresh token có hạn dùng lại, giữ công ty nếu còn dùng được | staff, platform, access, audit |
+| `POST /logout` | Thu hồi cả họ refresh token của cookie, xoá cookie | |
 | `GET /me` | Tài khoản và các công ty | staff, platform, access |
 | `POST /change-password` | Băm mật khẩu mới, bỏ cờ thư mời, thu hồi mọi refresh token và cấp cookie mới, nhật ký cấp tài khoản, **một transaction** | staff, audit |
 
@@ -19,7 +19,8 @@
 
 - Mật khẩu băm argon2id (`@node-rs/argon2`). Không trả `passwordHash` ra API, không log mật khẩu, token.
 - Sai email hay sai mật khẩu: cùng lỗi 401 `invalid_credentials`, cùng thời gian (email không có vẫn chạy argon2 trên bản băm giả).
-- Refresh token: 32 byte ngẫu nhiên, DB chỉ lưu SHA-256, sống 30 ngày, cookie `commerio_refresh` (`HttpOnly; Secure; SameSite=Strict; Path=/api/v1/identity`). Mỗi lần refresh cấp token mới, token cũ thu hồi.
+- Refresh token: 32 byte ngẫu nhiên, DB chỉ lưu SHA-256, sống 30 ngày, cookie `commerio_refresh` (`HttpOnly; Secure; SameSite=Strict; Path=/api/v1/identity`). Mỗi lần refresh cấp token mới cùng họ (`family_id`, một lần đăng nhập một họ) và đánh dấu token cũ `rotated_at` (migration 0018).
+- Hạn dùng lại (RFC 9700 §4.14.2, kiểu "reuse interval" của Auth0): token đã xoay vòng trong `REFRESH_REUSE_GRACE_SECONDS` (mặc định 30 s) vẫn đổi được, ra token mới cùng họ, để F5 hai lần hay nhiều tab refresh cùng lúc không bị đăng xuất. Hai refresh cùng cookie xếp hàng bằng `SELECT … FOR UPDATE` trên dòng token. Quá hạn là dùng lại: thu hồi cả họ (`revoked_at`), nhật ký cấp tài khoản `entity_type = 'core.refresh_tokens'`, `after.reason = 'refresh_token_reuse'`, 401 nhưng không xoá cookie (trình duyệt có thể đang giữ cookie mới hơn). `rotated_at` là xoay vòng (còn hạn dùng lại); `revoked_at` là thu hồi hẳn (đăng xuất cả họ, đổi mật khẩu mọi token, dùng lại), không có hạn dùng lại.
 - Access token: JWT EdDSA 15 phút, mang `sub` (tài khoản), `cid` (công ty), `perms` (đã bỏ quyền của phân hệ chưa bật), `pwc` (còn mật khẩu thư mời). Ký và kiểm ở `src/shared/auth/`.
 - Còn mật khẩu thư mời: chỉ `me`, `change-password`, `refresh`, `logout` chạy được. Đổi xong, mọi phiên khác mất refresh token (cookie cũ hết hiệu lực); phản hồi đặt cookie mới, FE gọi `refresh` bằng cookie đó để lấy token không còn `pwc`. Mọi access token đã phát trước lần đổi (kể cả của chính phiên vừa đổi) bị 401 ở request kế tiếp: token mang dấu `password_changed_at` (claim `pca`), `authorize`, kênh SSE, `me`, `select-company`, `change-password` so với DB (#62). Token còn `pwc` vẫn ra 403 `password_change_required` trước bước này ở route không cho phép `pwc`.
 - Không thuộc công ty trả 404 `not_found`; công ty khoá 403 `company_locked`; tài khoản khoá trong công ty 403 `account_locked`.
