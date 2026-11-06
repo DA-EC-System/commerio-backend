@@ -61,6 +61,9 @@ export const OrderPayment = z
       })
       .nullable(),
     feeConfigAuthor: UserRef.nullable(),
+    flags: z
+      .array(z.enum(['tax_mismatch']))
+      .meta({ description: '`tax_mismatch`: thuế sàn trừ trong quyết toán khác thuế app ước tính (E135); số sàn trừ là số thật' }),
     version: z.int(),
   })
   .meta({ id: 'OrderPayment' });

@@ -348,6 +348,8 @@ export const ledgerEntries = financeSchema.table(
     settlementLineId: uuid('settlement_line_id').references(() => settlementLines.id),
     /** Mã giao dịch của sàn trên dòng thực tế; kéo lại cùng kỳ không ghi trùng (#117). */
     externalTransactionId: text('external_transaction_id'),
+    /** Mã đơn sàn của khoản quyết toán; có mà `order_id` trống là đơn không có trong app (cờ Không rõ đơn, E140, #250). */
+    externalOrderId: text('external_order_id'),
     reason: text('reason'),
     createdBy: uuid('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -357,8 +359,9 @@ export const ledgerEntries = financeSchema.table(
     index().on(t.shopId, t.occurredOn),
     index().on(t.occurredOn),
     uniqueIndex('ledger_entries_replaces_uq').on(t.replacesEntryId).where(sql`${t.replacesEntryId} is not null`),
+    // Khoá chống trùng (gian hàng, mã giao dịch sàn) (25 §10.3, #250): mã giao dịch chỉ duy nhất trong một gian hàng
     uniqueIndex('ledger_entries_external_txn_uq')
-      .on(t.companyId, t.externalTransactionId)
+      .on(t.companyId, t.shopId, t.externalTransactionId)
       .where(sql`${t.externalTransactionId} is not null`),
     check('ledger_entries_amount', sql`${t.amount} <> 0`),
     check('ledger_entries_actual_replaces', sql`${t.replacesEntryId} is null or not ${t.isEstimate}`),

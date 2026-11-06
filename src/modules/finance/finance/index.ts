@@ -14,6 +14,8 @@ export const financeModule: ModuleDefinition = {
 
 // Sổ tiền (#116) chọn phiên bản cấu hình theo ngày kiện giao.
 export { getEffectiveConfig } from './service/config-versions.ts';
+// Loại khoản trong sổ: adapter sàn của channel điền `kind` cho khoản quyết toán (#203).
+export { LEDGER_KINDS, type LedgerKind } from './domain/ledger.ts';
 // Ghi sổ theo sự kiện (#116, Documents/21 §11.2). Đăng ký consumer khi #106, #107, #112 thêm loại sự kiện vào danh mục.
 export {
   type PackageDelivered,
