@@ -42,5 +42,6 @@ Thao tác `POST /requests/:id/:action` và `POST /goods-receipts/:id/:action` ch
 
 - Gọi ra: `inventory` (`nextDocNumber`, `stockOf` lấy giá vốn cho `add-line`, `receiveGoods` khi ghi sổ phiếu nhận, `recheckThresholds` sau khi đang về đổi: đề nghị vào/ra Đã đặt, Nhận một phần, ghi sổ phiếu nhận, đóng thiếu), `catalog` (`getVariants`, `validateNewProducts`, `createPurchaseProducts`, `categoryNames`), `core` (máy trạng thái, lịch sử, audit, `canSelfApprove`, `publishEvent`).
 - Gọi vào: `inventory` nhận `incomingOf` qua `ctx` (`product/index.ts` bọc `withContext`), vì purchasing đã import inventory. Cảnh báo dưới ngưỡng nhận cùng hàm qua `setIncomingSource` lúc nạp `product/index.ts`.
+- Gọi vào: thẻ kho của `inventory` nhận `purchaseDocumentNumbers({ goodsReceipts, supplierReturns })` qua `ctx` cùng cách đó (#206 phần 2a): số `NH-`, `TN-` theo id, tách theo loại; mỗi loại một câu, chỉ khi có id; id sai loại hoặc của công ty khác thì vắng.
 - Phát `purchasing.request_submitted { requestId, number }` khi gửi và gửi lại; `notification` báo người có `purchasing.request.approve`.
 - Phát `purchasing.goods_receipt_posted { receiptId, requestId, lines: { variantId, accepted, defective }[] }` khi ghi sổ phiếu nhận (chỉ dòng có đạt hoặc lỗi); chưa ai nghe (báo cáo dùng sau). `inventory.stock_changed` do inventory phát trong cùng giao dịch.
