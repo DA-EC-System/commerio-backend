@@ -303,8 +303,84 @@ export interface MarketplaceAdapter {
   cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
   /** Người bán huỷ các món; sàn xác nhận sau, đơn về qua lần kéo kế tiếp. */
   cancelOrder?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[], reasonId: string): Promise<void>;
-  /** Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. */
-  decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean): Promise<void>;
+  /**
+   * Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. `rejectReasonId`: lý do từ chối lấy từ `cancelRequestRejectReasons`;
+   * sàn bắt buộc lý do khi từ chối (TikTok) mà thiếu thì ném `rejected` `reject_reason_required`, sàn không cần thì bỏ qua.
+   */
+  decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean, rejectReasonId?: string): Promise<void>;
+  /** Lý do từ chối yêu cầu huỷ của khách mà sàn cho dùng lúc này (#227). Sàn không đòi lý do thì không có hàm này. */
+  cancelRequestRejectReasons?(accessToken: string, externalOrderId: string): Promise<{ id: string; label: string }[]>;
+  /**
+   * Yêu cầu trả, hoàn tiền của khách có cập nhật từ `updatedAfter` (tính cả mốc), cũ trước (#227, #202). Lật trang như
+   * `listOrders`: lần đầu `cursor` null, `nextCursor` null là hết, trang có thể rỗng mà vẫn còn con trỏ.
+   */
+  listReturns?(accessToken: string, updatedAfter: Date, cursor: string | null): Promise<{ items: RemoteReturn[]; nextCursor: string | null }>;
+  /**
+   * Lần huỷ đơn (khách xin huỷ, người bán, sàn huỷ) có cập nhật từ `updatedAfter`, lật trang như `listReturns`. Huỷ không vào
+   * bảng yêu cầu trả: khách xin huỷ là cờ `cancel_requested` của đơn (Documents/21 §20.1).
+   */
+  listCancellations?(
+    accessToken: string,
+    updatedAfter: Date,
+    cursor: string | null,
+  ): Promise<{ items: RemoteCancellation[]; nextCursor: string | null }>;
+}
+
+/** Trạng thái yêu cầu trả của app (Documents/25 §9, Documents/21 §20; enum `sales.return_status`). */
+export type RemoteReturnStatus = 'requested' | 'rejected' | 'refund_only' | 'awaiting_return' | 'received' | 'closed';
+
+/** Một món trong yêu cầu trả hay lần huỷ của sàn. Tiền là chuỗi thập phân, trống là null. */
+export interface RemoteAftersaleLine {
+  externalLineId: string;
+  externalSkuId: string | null;
+  sellerSku: string | null;
+  refundAmount: string | null;
+}
+
+/** Phần chung của yêu cầu trả và lần huỷ đã chuẩn hoá. */
+interface RemoteAftersale {
+  /** Mã yêu cầu trả hay lần huỷ của sàn (app lưu ở `external_return_id`). */
+  externalId: string;
+  externalOrderId: string;
+  /** Trạng thái gốc của sàn, chỉ để hiện (R11). */
+  rawStatus: string;
+  initiator: 'buyer' | 'seller' | 'platform' | null;
+  /** Mã lý do của sàn và câu hiển thị. */
+  reasonCode: string | null;
+  reason: string | null;
+  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả. */
+  refundAmount: string | null;
+  lines: RemoteAftersaleLine[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Yêu cầu trả, hoàn tiền của sàn (#227). `status` là trạng thái yêu cầu trả của app mà trạng thái sàn tương ứng; null khi
+ * app chưa có luồng (đổi hàng). `closed` chỉ do khách rút hay sàn tự đóng (`closeResult = 'buyer_cancelled'`); đóng sau khi
+ * kiểm hàng hoàn là việc của app. Máy trạng thái của #202 quyết định có chuyển được không.
+ */
+export interface RemoteReturn extends RemoteAftersale {
+  /** `return`: khách gửi trả hàng rồi mới hoàn tiền; `refund`: chỉ hoàn tiền; `replacement`: đổi hàng, đổi biến thể. */
+  kind: 'return' | 'refund' | 'replacement';
+  status: RemoteReturnStatus | null;
+  closeResult: 'buyer_cancelled' | null;
+  /** Sàn đang phân xử khiếu nại. */
+  disputeInProgress: boolean;
+  returnTrackingCode: string | null;
+  /** Hạn người bán phải trả lời, null khi không chờ người bán. */
+  respondBy: Date | null;
+}
+
+/**
+ * Lần huỷ của sàn (#227). `pending`: chờ duyệt (khách xin huỷ: đơn bật `cancel_requested`; người bán huỷ: `cancelling`);
+ * `cancelled`: sàn đã huỷ; `withdrawn`: khách rút hay người bán từ chối, bỏ cờ. null khi sàn trả giá trị lạ.
+ */
+export interface RemoteCancellation extends RemoteAftersale {
+  /** Khách xin huỷ, người bán phải trả lời; false là huỷ thẳng (người bán, sàn). */
+  buyerRequest: boolean;
+  status: 'pending' | 'cancelled' | 'withdrawn' | null;
+  respondBy: Date | null;
 }
 
 /**

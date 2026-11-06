@@ -21,6 +21,7 @@ import {
   type TiktokConfig,
   unpackTiktokToken,
 } from './tiktok-client.ts';
+import { tiktokReturnMethods } from './tiktok-returns.ts';
 
 export type { TiktokClient, TiktokConfig } from './tiktok-client.ts';
 
@@ -223,6 +224,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     createProduct: unsupported,
     updatePriceQuantity: unsupported,
     deactivate: unsupported,
+    ...tiktokReturnMethods(client),
   };
 }
 
