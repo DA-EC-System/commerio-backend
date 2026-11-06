@@ -55,6 +55,17 @@ export const shops = channelSchema.table(
     settlementCursor: timestamp('settlement_cursor', { withTimezone: true }),
     lastError: text('last_error'),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
+    // Thiết lập theo #198 (Documents/21 §18.6.2, §18.7.7). `opening_stock_mode` null = thiết lập trước #198.
+    /** Phiếu kiểm kê đầu kỳ đang chờ ghi sổ; khác null là gian hàng `active` ở chế độ chờ kiểm kê lần đầu. */
+    openingStocktakeId: uuid('opening_stocktake_id'),
+    openingStocktakeNumber: text('opening_stocktake_number'),
+    openingStockMode: text('opening_stock_mode').$type<'push' | 'stocktake'>(),
+    /** SKU sàn không tạo listing lúc thiết lập, kể cả SKU người dùng bỏ qua. */
+    unmatchedSkuCount: integer('unmatched_sku_count'),
+    /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
+    openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
+    /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
+    stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
@@ -66,6 +77,16 @@ export const shops = channelSchema.table(
       .where(sql`${t.status} <> 'disconnected'`),
     check('shops_active_cutoff', sql`${t.status} <> 'active' or ${t.orderCutoffAt} is not null`),
     check('shops_return_window_days', sql`${t.returnWindowDays} between 1 and 60`),
+    check(
+      'shops_opening_stocktake',
+      sql`(${t.openingStocktakeId} is null) = (${t.openingStocktakeNumber} is null) and (${t.openingStocktakeId} is null or ${t.orderCutoffAt} is not null)`,
+    ),
+    check(
+      'shops_setup_mode',
+      sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
+    ),
+    // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
+    uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],
 );
 
