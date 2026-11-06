@@ -6,6 +6,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 let companyId: string;
 let sku: string;
@@ -39,6 +40,7 @@ function remote(overrides: Partial<PlatformOrder> = {}, lineStatus: PlatformOrde
     shippingAddress: { name: 'K***h', phone: '84****22', address: 'P**a' },
     shippingFee: '15000',
     cancelRequested: false,
+    info: noOrderInfo,
     lines: [
       {
         externalLineId: `${seq}-1`,
@@ -52,6 +54,8 @@ function remote(overrides: Partial<PlatformOrder> = {}, lineStatus: PlatformOrde
         trackingCode: null,
         rawStatus: 'pending',
         status: lineStatus,
+        info: noLineInfo,
+        shipping: noShipping,
       },
     ],
     ...overrides,
@@ -128,6 +132,63 @@ describe('nhận đơn sàn (#105)', () => {
     expect(await all(`select 1 from "order".order_lines where order_id = $1`, [first.orderId])).toHaveLength(1);
     expect(await packagesOf(first.orderId)).toHaveLength(1);
     expect(await eventsOf(first.orderId)).toHaveLength(before);
+  });
+
+  it('kéo lại: dòng, đơn, kiện nhận thông tin mới; chỉ thông tin đổi thì không phát sự kiện, không tính là đổi (#260 AC-S1)', async () => {
+    const o = remote();
+    const first = await ingest(o);
+    const before = (await eventsOf(first.orderId)).length;
+    const line = o.lines[0]!;
+    const again = await ingest({
+      ...o,
+      shippingAddress: { ...o.shippingAddress!, ward: 'Phường Tân Sơn Hòa', postCode: null, raw: { city: 'Phường Tân Sơn Hòa' } },
+      info: { ...noOrderInfo, platformPaymentMethod: 'COD', buyerNote: 'Giao giờ hành chính', shippingFeeOriginal: '20000' },
+      lines: [
+        {
+          ...line,
+          info: { ...noLineInfo, thumbnailUrl: 'https://img/a.jpg', externalSkuId: '1175', paidPrice: '85000', cancelReason: 'Đổi ý', cancelInitiator: 'buyer', cancelKind: 'cancellation' },
+          shipping: { ...noShipping, shipmentProvider: 'J&T VN', shippingProviderType: 'standard' },
+        },
+      ],
+    });
+    expect(again).toEqual({ orderId: first.orderId, created: false, changed: false });
+    expect(await eventsOf(first.orderId)).toHaveLength(before);
+    expect(await one(`select platform_payment_method, buyer_note, shipping_fee_original, shipping_address->>'ward' as ward, payment_method from "order".orders where id = $1`, [first.orderId])).toEqual({
+      platform_payment_method: 'COD',
+      buyer_note: 'Giao giờ hành chính',
+      shipping_fee_original: '20000.00',
+      ward: 'Phường Tân Sơn Hòa',
+      payment_method: null,
+    });
+    expect(
+      await one(`select thumbnail_url, external_sku_id, paid_price, cancel_reason, cancel_initiator, cancel_kind, variant_id, unit_price from "order".order_lines where order_id = $1`, [first.orderId]),
+    ).toEqual({
+      thumbnail_url: 'https://img/a.jpg',
+      external_sku_id: '1175',
+      paid_price: '85000.00',
+      cancel_reason: 'Đổi ý',
+      cancel_initiator: 'buyer',
+      cancel_kind: 'cancellation',
+      variant_id: variantId,
+      unit_price: '100000.00',
+    });
+    expect(await one(`select shipment_provider, shipping_provider_type, version from "order".packages where order_id = $1`, [first.orderId])).toMatchObject({
+      shipment_provider: 'J&T VN',
+      shipping_provider_type: 'standard',
+    });
+    // Kéo lần ba không đổi gì: không ghi, version đơn, dòng, kiện đứng yên.
+    const versions = async () =>
+      one(
+        `select (select version from "order".orders where id = $1) as o, (select version from "order".order_lines where order_id = $1) as l,
+                (select version from "order".packages where order_id = $1) as p`,
+        [first.orderId],
+      );
+    const v1 = await versions();
+    await ingest({ ...o, info: { ...noOrderInfo, platformPaymentMethod: 'COD', buyerNote: 'Giao giờ hành chính', shippingFeeOriginal: '20000' },
+      shippingAddress: { ...o.shippingAddress!, ward: 'Phường Tân Sơn Hòa', postCode: null, raw: { city: 'Phường Tân Sơn Hòa' } },
+      lines: [{ ...line, info: { ...noLineInfo, thumbnailUrl: 'https://img/a.jpg', externalSkuId: '1175', paidPrice: '85000', cancelReason: 'Đổi ý', cancelInitiator: 'buyer', cancelKind: 'cancellation' },
+        shipping: { ...noShipping, shipmentProvider: 'J&T VN', shippingProviderType: 'standard' } }] });
+    expect(await versions()).toEqual(v1);
   });
 
   it('chưa nối cổng tồn thật: kiện thiếu hàng; dòng chưa ghép SKU không gọi giữ hàng', async () => {
@@ -211,6 +272,17 @@ describe('nhận đơn sàn (#105)', () => {
     expect((await transitionsOf(res.orderId)).at(-1)).toMatchObject({ to_state: 'cancelled', action: 'platform_cancel' });
     const cancelEvent = (await eventsOf(res.orderId)).find((e) => e.type === 'sales.order_cancelled');
     expect(cancelEvent?.payload).toMatchObject({ source: 'marketplace', by: 'platform' });
+  });
+
+  it('sàn huỷ kèm ghi chú mới trong cùng lần kéo: đơn huỷ và nhận ghi chú (#260)', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.rawStatus = 'canceled';
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.info = { ...noOrderInfo, buyerNote: 'Huỷ giúp em' };
+    expect((await ingest(cancelled)).changed).toBe(true);
+    expect(await one(`select status, buyer_note from "order".orders where id = $1`, [res.orderId])).toEqual({ status: 'cancelled', buyer_note: 'Huỷ giúp em' });
   });
 
   it('sàn huỷ khi kiện đã đóng gói: kiện chờ mở, đơn mang cờ đang huỷ', async () => {

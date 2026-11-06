@@ -4,6 +4,7 @@ import { completeDueOrdersOnce, ingestMarketplaceOrder, type PlatformOrder } fro
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 let companyId: string;
 const shopId = randomUUID();
@@ -27,6 +28,7 @@ async function delivered(statuses: PlatformOrder['lines'][number]['status'][], d
     shippingAddress: null,
     shippingFee: '0',
     cancelRequested: false,
+    info: noOrderInfo,
     lines: statuses.map((status, i) => ({
       externalLineId: `${id}-${i}`,
       variantId: null,
@@ -39,6 +41,8 @@ async function delivered(statuses: PlatformOrder['lines'][number]['status'][], d
       trackingCode: null,
       rawStatus: String(status),
       status,
+      info: noLineInfo,
+      shipping: noShipping,
     })),
   };
   const { orderId } = await withCompany(companyId, () => ingestMarketplaceOrder(o));

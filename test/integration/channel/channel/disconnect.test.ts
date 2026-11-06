@@ -9,6 +9,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { fakeAdapter } from './helpers.ts';
+import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
 
 // #207: ngắt gian hàng còn đơn chưa xong thì 409 `shop_has_open_orders` (Documents/21 §18.6.1), không đẩy tồn 0.
 
@@ -196,6 +197,7 @@ describe('ngắt gian hàng còn đơn chưa xong (#207)', () => {
       shippingAddress: null,
       shippingFee: '0',
       cancelRequested: false,
+      info: noOrderInfo,
       lines: [
         {
           externalLineId: 'l-1',
@@ -208,6 +210,8 @@ describe('ngắt gian hàng còn đơn chưa xong (#207)', () => {
           trackingCode: null,
           rawStatus: 'pending',
           status: 'pending',
+          info: noLineInfo,
+          shipping: noShipping,
         },
       ],
     };

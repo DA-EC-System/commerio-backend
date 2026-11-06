@@ -32,6 +32,9 @@ export const paymentMethod = salesSchema.enum('payment_method', ['prepaid', 'cod
 export const orderStatus = salesSchema.enum('order_status', ['unpaid', 'processing', 'completed', 'cancelled']);
 /** Kết quả khi đơn hoàn tất, tính trên kiện chưa huỷ. */
 export const orderOutcome = salesSchema.enum('order_outcome', ['full', 'partial', 'none']);
+/** Ai huỷ hoặc yêu cầu trả dòng sàn, và loại (#260); adapter chuẩn hoá từ giá trị của sàn. */
+export const lineCancelInitiator = salesSchema.enum('line_cancel_initiator', ['buyer', 'seller', 'platform']);
+export const lineCancelKind = salesSchema.enum('line_cancel_kind', ['cancellation', 'return', 'refund', 'failed_delivery']);
 
 // `shop_id` (channel), `conversation_id` (inbox), `variant_id` (catalog) là uuid thường, không khoá ngoại chéo schema (19-D1).
 
@@ -108,6 +111,12 @@ export const orders = salesSchema.table(
     cancelReason: text('cancel_reason'),
     // Số hoá đơn người bán nhập để gửi sàn (Documents/21 §19.3).
     invoiceNumber: text('invoice_number'),
+    // Thông tin đơn sàn (#260): phương thức khách trả trên sàn (giá trị gốc), ghi chú khách, phí ship của sàn.
+    platformPaymentMethod: text('platform_payment_method'),
+    buyerNote: text('buyer_note'),
+    shippingFeeOriginal: money('shipping_fee_original'),
+    shippingFeeDiscountSeller: money('shipping_fee_discount_seller'),
+    shippingFeeDiscountPlatform: money('shipping_fee_discount_platform'),
     ...timestamps,
     ...version,
   },
@@ -150,6 +159,22 @@ export const orderLines = salesSchema.table(
     sellerDiscount: money('seller_discount').notNull().default('0'),
     platformDiscount: money('platform_discount').notNull().default('0'),
     lineTotal: money('line_total').notNull(),
+    // Thông tin dòng sàn (#260): kéo lại đơn thì cập nhật, không đụng biến thể và tiền gốc ở trên.
+    thumbnailUrl: text('thumbnail_url'),
+    attributesLabel: text('attributes_label'),
+    externalSkuId: text('external_sku_id'),
+    externalShopSku: text('external_shop_sku'),
+    externalProductId: text('external_product_id'),
+    paidPrice: money('paid_price'),
+    taxAmount: money('tax_amount'),
+    shippingAmount: money('shipping_amount'),
+    walletCredits: money('wallet_credits'),
+    cancelReason: text('cancel_reason'),
+    cancelReasonDetail: text('cancel_reason_detail'),
+    cancelInitiator: lineCancelInitiator('cancel_initiator'),
+    cancelKind: lineCancelKind('cancel_kind'),
+    reverseOrderId: text('reverse_order_id'),
+    returnStatus: text('return_status'),
     ...timestamps,
     ...version,
   },

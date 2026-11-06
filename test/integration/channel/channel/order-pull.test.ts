@@ -10,6 +10,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { setModuleEnabled } from '../../helpers/state.ts';
 import { fakeAdapter } from './helpers.ts';
+import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
 
 const cutoff = new Date('2026-10-20T00:00:00Z');
 const at = (iso: string) => new Date(iso);
@@ -26,6 +27,7 @@ function remoteOrder(id: string, sku: string, status: RemoteOrder['lines'][numbe
     shippingAddress: null,
     shippingFee: '0',
     cancelRequested: false,
+    info: noOrderInfo,
     lines: [
       {
         externalLineId: `${id}-1`,
@@ -38,6 +40,8 @@ function remoteOrder(id: string, sku: string, status: RemoteOrder['lines'][numbe
         trackingCode: null,
         rawStatus: status ?? 'x',
         status,
+        info: noLineInfo,
+        shipping: noShipping,
       },
     ],
   };

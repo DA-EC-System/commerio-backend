@@ -60,6 +60,11 @@ export const packages = fulfillmentSchema.table(
     lostReportedAt: timestamp('lost_reported_at', { withTimezone: true }),
     lostClaimCode: text('lost_claim_code'),
     lostConfirmedBy: uuid('lost_confirmed_by'),
+    // Vận chuyển do sàn trả (#260).
+    shipmentProvider: text('shipment_provider'),
+    shippingProviderType: text('shipping_provider_type'),
+    shippingType: text('shipping_type'),
+    promisedShippingAt: timestamp('promised_shipping_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },

@@ -139,6 +139,55 @@ export interface RemoteOrderLine {
   rawStatus: string;
   /** null khi sàn trả giá trị app chưa biết. */
   status: RemoteLineStatus | null;
+  info: RemoteLineInfo;
+  shipping: RemoteShipping;
+}
+
+/** Thông tin mô tả của món (#260); không ảnh hưởng trạng thái, kéo lại thì ghi đè. Tiền là chuỗi thập phân, trống là null. */
+export interface RemoteLineInfo {
+  thumbnailUrl: string | null;
+  attributesLabel: string | null;
+  externalSkuId: string | null;
+  externalShopSku: string | null;
+  externalProductId: string | null;
+  paidPrice: string | null;
+  taxAmount: string | null;
+  shippingAmount: string | null;
+  walletCredits: string | null;
+  cancelReason: string | null;
+  cancelReasonDetail: string | null;
+  cancelInitiator: 'buyer' | 'seller' | 'platform' | null;
+  cancelKind: 'cancellation' | 'return' | 'refund' | 'failed_delivery' | null;
+  reverseOrderId: string | null;
+  returnStatus: string | null;
+}
+
+/** Vận chuyển sàn trả theo món, app ghi lên kiện chứa món (#260). */
+export interface RemoteShipping {
+  shipmentProvider: string | null;
+  shippingProviderType: string | null;
+  shippingType: string | null;
+  promisedShippingAt: Date | null;
+}
+
+/** Địa chỉ giao: `raw` là khoá gốc của sàn (đã che), bỏ khoá rỗng. */
+export interface RemoteAddress {
+  name: string;
+  phone: string;
+  address: string;
+  ward: string | null;
+  postCode: string | null;
+  raw: Record<string, string>;
+}
+
+/** Thông tin mô tả của đơn (#260). */
+export interface RemoteOrderInfo {
+  /** Phương thức khách trả trên sàn, giá trị gốc (`COD`, `MIXEDCARD`…). */
+  platformPaymentMethod: string | null;
+  buyerNote: string | null;
+  shippingFeeOriginal: string | null;
+  shippingFeeDiscountSeller: string | null;
+  shippingFeeDiscountPlatform: string | null;
 }
 
 /** Đơn sàn đã chuẩn hoá (#105); kéo định kỳ đưa vào service nhận đơn. */
@@ -152,10 +201,11 @@ export interface RemoteOrder {
   placedAt: Date;
   updatedAt: Date;
   shipBy: Date | null;
-  shippingAddress: { name: string; phone: string; address: string } | null;
+  shippingAddress: RemoteAddress | null;
   shippingFee: string;
   /** Khách xin huỷ, chờ người bán đồng ý. */
   cancelRequested: boolean;
+  info: RemoteOrderInfo;
   lines: RemoteOrderLine[];
 }
 
