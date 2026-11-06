@@ -79,7 +79,7 @@ const base = {
 // Lazada có cả lấy đơn theo lô (#267); bản giả gọi lại `getOrder` từng đơn để các ca cũ vẫn đếm được.
 const getOrders = vi.fn(async (t: string, batch: readonly RemoteOrderRef[]) => Promise.all(batch.map((r) => getOrder(t, r.externalOrderId))));
 registerAdapter('lazada', fakeAdapter({ ...base, listOpenOrders, getOrders }));
-// Sàn chưa có `listOpenOrders` (TikTok tới #221).
+// Sàn không có `listOpenOrders`: adapter giả mượn tên `tiktok` (adapter thật có từ #221).
 registerAdapter('tiktok', fakeAdapter(base));
 
 const available = vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])));

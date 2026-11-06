@@ -23,6 +23,7 @@ import {
   type TiktokConfig,
   unpackTiktokToken,
 } from './tiktok-client.ts';
+import { tiktokOrderMethods } from './tiktok-orders.ts';
 import { tiktokReturnMethods } from './tiktok-returns.ts';
 
 export type { TiktokClient, TiktokConfig } from './tiktok-client.ts';
@@ -226,6 +227,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client),
     ...tiktokReturnMethods(client),
+    ...tiktokOrderMethods(client),
   };
 }
 
