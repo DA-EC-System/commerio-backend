@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { purchaseDocumentNumbers } from '#src/modules/product/purchasing/index.ts';
+import { type PurchaseDocumentNumbers, purchaseDocumentNumbers } from '#src/modules/product/purchasing/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -25,6 +25,11 @@ async function team(): Promise<Team> {
   return { ...t, supplierId: (await createSupplier(t.ceo)).id };
 }
 
+const plain = (n: PurchaseDocumentNumbers) => ({
+  goodsReceipts: Object.fromEntries(n.goodsReceipts),
+  supplierReturns: Object.fromEntries(n.supplierReturns),
+});
+
 let A: Team;
 let B: Team;
 
@@ -39,12 +44,28 @@ describe('purchaseDocumentNumbers', () => {
     const b = await postedReceipt(B, B.supplierId, (await createVariant(B.companyId)).variantId, { accepted: 2 });
     expect(a).toMatchObject({ number: 'NH-000001', returnId: expect.any(String) });
 
-    const map = await withCompany(A.companyId, () => purchaseDocumentNumbers([a.receiptId, a.returnId!, b.receiptId, 'abc']));
+    const numbers = await withCompany(A.companyId, () =>
+      purchaseDocumentNumbers({ goodsReceipts: [a.receiptId, b.receiptId, 'abc'], supplierReturns: [a.returnId!, 'abc'] }),
+    );
 
-    expect(Object.fromEntries(map)).toEqual({ [a.receiptId]: 'NH-000001', [a.returnId!]: 'TN-000001' });
+    expect(plain(numbers)).toEqual({
+      goodsReceipts: { [a.receiptId]: 'NH-000001' },
+      supplierReturns: { [a.returnId!]: 'TN-000001' },
+    });
+  });
+
+  it('id đặt sai nhóm (phiếu trả NCC trong nhóm phiếu nhận và ngược lại) thì không có trong Map', async () => {
+    const a = await postedReceipt(A, A.supplierId, (await createVariant(A.companyId)).variantId, { accepted: 1, defectKept: 1 });
+
+    const numbers = await withCompany(A.companyId, () =>
+      purchaseDocumentNumbers({ goodsReceipts: [a.returnId!], supplierReturns: [a.receiptId] }),
+    );
+
+    expect(plain(numbers)).toEqual({ goodsReceipts: {}, supplierReturns: {} });
   });
 
   it('không có id thì Map rỗng', async () => {
-    expect(await withCompany(A.companyId, () => purchaseDocumentNumbers([]))).toEqual(new Map());
+    const numbers = await withCompany(A.companyId, () => purchaseDocumentNumbers({ goodsReceipts: [], supplierReturns: [] }));
+    expect(plain(numbers)).toEqual({ goodsReceipts: {}, supplierReturns: {} });
   });
 });

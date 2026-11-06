@@ -1,6 +1,7 @@
 // Tồn và ngưỡng tồn (Documents/21 mục 15.1, 15.2; D10; plan #16 A2–A4, A15, A17).
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { recordAudit } from '../../../core/index.ts';
 import type { VariantSummary } from '../../catalog/index.ts';
 import { getVariants } from '../../catalog/index.ts';
@@ -116,15 +117,20 @@ export async function getStock(lookups: StockLookups, viewer: Viewer, variantId:
  * ngoại): báo 500, không bịa số phiếu trên sổ.
  */
 async function moveDocuments(moves: readonly MoveRow[], purchaseNumbers: PurchaseNumberLookup) {
-  const idsOf = (stockDocument: boolean) => [
-    ...new Set(moves.filter((m) => (m.sourceType === 'stock_document') === stockDocument).map((m) => m.sourceId)),
+  const idsOf = (type: MoveRow['sourceType']) => [
+    ...new Set(moves.filter((m) => m.sourceType === type).map((m) => m.sourceId)),
   ];
-  const stockIds = idsOf(true);
-  const purchaseIds = idsOf(false);
-  const heads = await documentHeads(stockIds); // không có id thì trả Map rỗng, không chạy câu nào
-  const numbers = purchaseIds.length ? await purchaseNumbers(purchaseIds) : new Map<string, string>();
-  const orphan = (m: MoveRow) =>
-    new AppError(500, 'internal_error', `Thẻ kho ${m.id} trỏ chứng từ ${m.sourceId} không tồn tại`);
+  const purchaseIds = { goodsReceipts: idsOf('goods_receipt'), supplierReturns: idsOf('supplier_return') };
+  const heads = await documentHeads(idsOf('stock_document')); // không có id thì trả Map rỗng, không chạy câu nào
+  const numbers =
+    purchaseIds.goodsReceipts.length || purchaseIds.supplierReturns.length
+      ? await purchaseNumbers(purchaseIds)
+      : { goodsReceipts: new Map<string, string>(), supplierReturns: new Map<string, string>() };
+  // Lỗi nghiệp vụ không được middleware ghi log: ghi ở đây để id dòng hỏng có trong log server, không chỉ ở trình duyệt.
+  const orphan = (m: MoveRow) => {
+    logger.error({ moveId: m.id, sourceType: m.sourceType, sourceId: m.sourceId }, 'thẻ kho trỏ chứng từ không tồn tại');
+    return new AppError(500, 'internal_error', `Thẻ kho ${m.id} trỏ chứng từ ${m.sourceId} không tồn tại`);
+  };
 
   return (m: MoveRow) => {
     if (m.sourceType === 'stock_document') {
@@ -133,7 +139,7 @@ async function moveDocuments(moves: readonly MoveRow[], purchaseNumbers: Purchas
       const kind = documentKind({ type: 'stock_document', kind: head.kind, isOpening: head.isOpening, sourceType: head.sourceType });
       return { id: m.sourceId, number: head.number, type: head.kind, kind };
     }
-    const number = numbers.get(m.sourceId);
+    const number = (m.sourceType === 'goods_receipt' ? numbers.goodsReceipts : numbers.supplierReturns).get(m.sourceId);
     if (number === undefined) throw orphan(m);
     return { id: m.sourceId, number, type: m.sourceType, kind: documentKind({ type: m.sourceType }) };
   };

@@ -29,8 +29,14 @@ const attributesLabel = (v: VariantSummary) => v.attributes.map((a) => a.value).
 /** Đang về theo biến thể, do purchasing tính (#108); inventory nhận qua `ctx` vì purchasing đã import inventory. */
 export type IncomingLookup = (variantIds?: readonly string[]) => Promise<Map<string, number>>;
 
-/** Số phiếu nhận, phiếu trả NCC theo id, do purchasing tra (#206 phần 2a); id không có thì vắng trong Map. */
-export type PurchaseNumberLookup = (ids: readonly string[]) => Promise<Map<string, string>>;
+/**
+ * Số phiếu nhận, phiếu trả NCC theo id, do purchasing tra (#206 phần 2a). Đầu vào và kết quả tách theo loại chứng từ:
+ * id không có, hoặc có nhưng là chứng từ loại khác, thì vắng trong Map của loại đó.
+ */
+export type PurchaseNumberLookup = (ids: {
+  readonly goodsReceipts: readonly string[];
+  readonly supplierReturns: readonly string[];
+}) => Promise<{ readonly goodsReceipts: Map<string, string>; readonly supplierReturns: Map<string, string> }>;
 
 /** `ctx` của router inventory: `product/index.ts` tiêm `incomingOf`, `purchaseDocumentNumbers` của purchasing. */
 export interface InventoryContext extends ModuleContext {

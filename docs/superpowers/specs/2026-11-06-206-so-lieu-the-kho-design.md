@@ -115,8 +115,10 @@ documentKind(source: MoveSource): 'manual' | 'purchase' | 'order' | 'auto'
 ```
 product/index.ts           tiêm purchaseDocumentNumbers vào ctx của inventory (cạnh incomingOf)
 purchasing/
-├─ repository/…            documentNumbers(ids): goods_receipts, supplier_returns theo id (mỗi bảng một câu, bỏ qua khi rỗng)
-└─ index.ts                export purchaseDocumentNumbers(ids): Promise<Map<id, number>>
+├─ repository/…            documentNumbers: goods_receipts, supplier_returns theo id (mỗi bảng một câu, bỏ qua khi rỗng)
+└─ index.ts                export purchaseDocumentNumbers({ goodsReceipts, supplierReturns }):
+                           Promise<{ goodsReceipts: Map<id, number>, supplierReturns: Map<id, number> }>
+                           (tách theo loại sau review 06/11/2026: id sai loại thì vắng, loại không có id thì không truy vấn)
 inventory/
 ├─ domain/documents.ts     documentKind
 ├─ domain/stock.ts         areaOf

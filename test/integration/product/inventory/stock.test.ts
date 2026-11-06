@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import pg from 'pg';
 import request from 'supertest';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { StockDetail, StockPage } from '#src/modules/product/inventory/api/schemas.ts';
 import type { StockDocumentKind } from '#src/modules/product/inventory/domain/moves.ts';
 import { getStock } from '#src/modules/product/inventory/service/stock.ts';
+import { purchaseDocumentNumbers } from '#src/modules/product/purchasing/index.ts';
+import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -337,21 +340,66 @@ describe('chi tiết tồn', () => {
   it('Review Focus 4: dòng gắn phiếu trả NCC TN- → { number: TN-000001, type: supplier_return, kind: purchase }', async () => {
     const { c, t, supplierId } = await purchasingTeam();
     const { variantId: v } = await createVariant(c.companyId);
-    const { returnId } = await postedReceipt(t, supplierId, v, { accepted: 2, defectKept: 1 });
+    const { receiptId, returnId } = await postedReceipt(t, supplierId, v, { accepted: 2, defectKept: 1 });
     await rawMove(c.companyId, v, { qty: -1, balanceAfter: 0, bucket: 'quarantine', sourceType: 'supplier_return', sourceId: returnId! });
 
-    const [latest] = (await detail(c.ceo.token, v)).moves;
+    const { moves } = await detail(c.ceo.token, v);
 
-    expect(latest).toMatchObject({
-      area: 'quarantine',
-      document: { id: returnId, number: 'TN-000001', type: 'supplier_return', kind: 'purchase' },
+    // Cùng một thẻ kho có dòng của cả phiếu nhận (đạt, lỗi giữ lại) và phiếu trả NCC sinh từ nó.
+    expect(moves.map((m) => [m.area, m.qtyChange, m.document])).toEqual([
+      ['quarantine', -1, { id: returnId, number: 'TN-000001', type: 'supplier_return', kind: 'purchase' }],
+      ['quarantine', 1, { id: receiptId, number: 'NH-000001', type: 'goods_receipt', kind: 'purchase' }],
+      ['stock', 2, { id: receiptId, number: 'NH-000001', type: 'goods_receipt', kind: 'purchase' }],
+    ]);
+  });
+
+  it('thẻ kho nhiều dòng tốn thêm tối đa 3 câu SQL so với thẻ kho trống; mỗi loại chứng từ chỉ tra khi có id', async () => {
+    const { c, t, supplierId } = await purchasingTeam();
+    const [empty, mixed, receiptsOnly, other] = [
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+    ];
+    const r1 = await postedReceipt(t, supplierId, other.variantId, { accepted: 1, defectKept: 1 });
+    const r2 = await postedReceipt(t, supplierId, other.variantId, { accepted: 1 });
+    for (const i of [1, 2, 3]) {
+      await docMove(c.companyId, mixed.variantId, { kind: 'stocktake', number: `KK-00000${i}` }, { qty: 1, balanceAfter: i });
+    }
+    for (const v of [mixed.variantId, receiptsOnly.variantId]) {
+      await rawMove(c.companyId, v, { qty: 1, balanceAfter: 1, sourceType: 'goods_receipt', sourceId: r1.receiptId });
+      await rawMove(c.companyId, v, { qty: 1, balanceAfter: 2, sourceType: 'goods_receipt', sourceId: r2.receiptId });
+    }
+    await rawMove(c.companyId, mixed.variantId, {
+      qty: 1,
+      balanceAfter: 1,
+      bucket: 'quarantine',
+      sourceType: 'supplier_return',
+      sourceId: r1.returnId!,
     });
+
+    const lookups = { incomingOf: async () => new Map<string, number>(), purchaseNumbers: purchaseDocumentNumbers };
+    const viewer = { companyId: c.companyId, accountId: randomUUID(), canCost: true };
+    const queries = vi.spyOn(pg.Client.prototype, 'query');
+    const run = async (variantId: string) => {
+      queries.mockClear();
+      const { moves } = await getStock(lookups, viewer, variantId);
+      return { rows: moves.length, queries: queries.mock.calls.length };
+    };
+    try {
+      const base = await run(empty.variantId);
+      // Phiếu kho, phiếu nhận, phiếu trả NCC: mỗi loại một câu, không theo số dòng.
+      expect(await run(mixed.variantId)).toEqual({ rows: 6, queries: base.queries + 3 });
+      expect(await run(receiptsOnly.variantId)).toEqual({ rows: 2, queries: base.queries + 1 });
+    } finally {
+      queries.mockRestore();
+    }
   });
 
   it('Review Focus 2: SKU chưa có dòng thẻ kho → moves [], không tra số phiếu của purchasing', async () => {
     const c = await createCompany();
     const { variantId: v } = await createVariant(c.companyId);
-    const purchaseNumbers = vi.fn(async () => new Map<string, string>());
+    const purchaseNumbers = vi.fn(async () => ({ goodsReceipts: new Map<string, string>(), supplierReturns: new Map<string, string>() }));
 
     const result = await getStock(
       { incomingOf: async () => new Map(), purchaseNumbers },
@@ -364,16 +412,33 @@ describe('chi tiết tồn', () => {
     expect((await detail(c.ceo.token, v)).moves).toEqual([]);
   });
 
-  it('AC7: dòng thẻ kho trỏ chứng từ không tồn tại → 500', async () => {
-    const c = await createCompany();
-    const [x, y] = [await createVariant(c.companyId), await createVariant(c.companyId)];
-    await rawMove(c.companyId, x.variantId, { qty: 1, balanceAfter: 1, sourceType: 'stock_document', sourceId: randomUUID() });
+  it('AC7: dòng thẻ kho trỏ chứng từ không tồn tại hoặc sai loại → 500, log có id dòng và id chứng từ', async () => {
+    const { c, t, supplierId } = await purchasingTeam();
+    const [x, y, z, other] = [
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+      await createVariant(c.companyId),
+    ];
+    const { returnId } = await postedReceipt(t, supplierId, other.variantId, { accepted: 1, defectKept: 1 });
+    const missing = randomUUID();
+    await rawMove(c.companyId, x.variantId, { qty: 1, balanceAfter: 1, sourceType: 'stock_document', sourceId: missing });
     await rawMove(c.companyId, y.variantId, { qty: 1, balanceAfter: 1, sourceType: 'goods_receipt', sourceId: randomUUID() });
+    // Chứng từ có thật nhưng là phiếu trả NCC, dòng lại ghi phiếu nhận: không gắn nhầm số TN- cho phiếu nhận.
+    await rawMove(c.companyId, z.variantId, { qty: 1, balanceAfter: 1, sourceType: 'goods_receipt', sourceId: returnId! });
 
-    for (const v of [x.variantId, y.variantId]) {
-      const res = await inv(c.ceo.token).get(`/stock/${v}`);
-      expect(res.status).toBe(500);
-      expect(res.body.code).toBe('internal_error');
+    const error = vi.spyOn(logger, 'error');
+    try {
+      for (const v of [x.variantId, y.variantId, z.variantId]) {
+        const res = await inv(c.ceo.token).get(`/stock/${v}`);
+        expect(res.status).toBe(500);
+        expect(res.body.code).toBe('internal_error');
+      }
+      const logged = error.mock.calls.map(([fields]) => fields);
+      expect(logged).toContainEqual({ moveId: expect.any(Number), sourceType: 'stock_document', sourceId: missing });
+      expect(logged).toContainEqual({ moveId: expect.any(Number), sourceType: 'goods_receipt', sourceId: returnId });
+    } finally {
+      error.mockRestore();
     }
   });
 });
