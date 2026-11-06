@@ -19,33 +19,37 @@ describe('ngưỡng lệch', () => {
   });
 
   it('không có cấu hình ngưỡng thì lệch một đồng là lệch', () => {
-    expect(nextAfterSettlement('pending', 246070, 1, null, NO_THRESHOLD)).toEqual({ to: 'mismatch', action: 'mismatch' });
+    expect(nextAfterSettlement('pending', 246070, 1, null, NO_THRESHOLD, false)).toEqual({ to: 'mismatch', action: 'mismatch' });
   });
 });
 
 describe('trạng thái tiền sau lô quyết toán (§21.2)', () => {
   it('pending: trong ngưỡng thì settled, quá thì mismatch', () => {
-    expect(nextAfterSettlement('pending', 246070, -4000, null, t)).toEqual({ to: 'settled', action: 'settle' });
-    expect(nextAfterSettlement('pending', 246070, -15320, null, t)).toEqual({ to: 'mismatch', action: 'mismatch' });
+    expect(nextAfterSettlement('pending', 246070, -4000, null, t, false)).toEqual({ to: 'settled', action: 'settle' });
+    expect(nextAfterSettlement('pending', 246070, -15320, null, t, false)).toEqual({ to: 'mismatch', action: 'mismatch' });
   });
 
   it('settled: điều chỉnh muộn quá ngưỡng thì mismatch, trong ngưỡng thì giữ', () => {
-    expect(nextAfterSettlement('settled', 246070, -9000, null, t)).toEqual({ to: 'mismatch', action: 'late_adjust' });
-    expect(nextAfterSettlement('settled', 246070, -1000, null, t)).toBeNull();
+    expect(nextAfterSettlement('settled', 246070, -9000, null, t, false)).toEqual({ to: 'mismatch', action: 'late_adjust' });
+    expect(nextAfterSettlement('settled', 246070, -1000, null, t, false)).toBeNull();
   });
 
-  it('none: sàn thu tiền đơn chưa giao thì mismatch (cancelled_charged)', () => {
-    expect(nextAfterSettlement('none', 0, -3000, null, t)).toEqual({ to: 'mismatch', action: 'cancelled_charged' });
-    expect(nextAfterSettlement('none', 0, 0, null, t)).toBeNull();
+  it('none: đơn đã huỷ mà sàn vẫn thu tiền thì mismatch (cancelled_charged)', () => {
+    expect(nextAfterSettlement('none', 0, -3000, null, t, true)).toEqual({ to: 'mismatch', action: 'cancelled_charged' });
+    expect(nextAfterSettlement('none', 0, 0, null, t, true)).toBeNull();
+  });
+
+  it('none (E139): đơn còn đang giao thì giữ nguyên tới khi kiện giao xong', () => {
+    expect(nextAfterSettlement('none', 0, 242520, null, t, false)).toBeNull();
   });
 
   it('resolved: lệch mới tính từ mốc lúc chốt', () => {
-    expect(nextAfterSettlement('resolved', 246070, -15320, -15320, t)).toBeNull();
-    expect(nextAfterSettlement('resolved', 246070, -25320, -15320, t)).toEqual({ to: 'mismatch', action: 'new_adjust' });
+    expect(nextAfterSettlement('resolved', 246070, -15320, -15320, t, false)).toBeNull();
+    expect(nextAfterSettlement('resolved', 246070, -25320, -15320, t, false)).toEqual({ to: 'mismatch', action: 'new_adjust' });
   });
 
   it('mismatch giữ nguyên tới khi người chốt', () => {
-    expect(nextAfterSettlement('mismatch', 246070, 0, null, t)).toBeNull();
+    expect(nextAfterSettlement('mismatch', 246070, 0, null, t, false)).toBeNull();
   });
 });
 

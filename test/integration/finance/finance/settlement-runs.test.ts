@@ -117,8 +117,9 @@ describe('kéo quyết toán (§21.3)', () => {
     expect((await get(s.ceo, '/settlement-runs')).body.total).toBe(2);
   });
 
-  it('sàn thu phí của đơn chưa giao kiện nào: mismatch (cancelled_charged)', async () => {
+  it('sàn thu phí của đơn đã huỷ, chưa giao kiện nào: mismatch (cancelled_charged)', async () => {
     const s = await setup();
+    await testPool().query(`update "order".orders set status = 'cancelled' where id = $1`, [s.order.orderId]);
     await runSettlement(fakeSource(() => [txn('C1', 'Commission', 'Orders-Lazada Fees', '-3000.00')]), s.companyId, null, s.shopId);
     expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'mismatch', diff: '-3000.00' });
   });
@@ -169,6 +170,30 @@ describe('kéo quyết toán (§21.3)', () => {
     expect((await get(s.ceo, '/payments')).body.items.find((i: { orderId: string }) => i.orderId === s.order.orderId).flags).toEqual([
       'tax_mismatch',
     ]);
+  });
+
+  it('D43-07 (E139): quyết toán về trước khi kiện giao xong: ghi số thật, giữ chờ; kiện giao xong thì xét khớp', async () => {
+    const s = await setup();
+    await runSettlement(fakeSource(() => settlementOf('E', '-5160.00')), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'none', settled_total: '242520.00' });
+    const early = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(early.body.lines.filter((l: { estimated: boolean }) => !l.estimated)).toHaveLength(6);
+    expect(early.body.statusHistory).toEqual([]);
+    await deliver(s);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'settled' });
+    const p = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(p.body.statusHistory.map((h: { to: string; source: string }) => [h.to, h.source])).toEqual([
+      ['pending', 'system'],
+      ['settled', 'marketplace'],
+    ]);
+  });
+
+  it('D43-07: quyết toán về trước, kiện giao xong thì lệch quá ngưỡng là mismatch', async () => {
+    const s = await setup();
+    await runSettlement(fakeSource(() => settlementOf('F', '-10320.00')), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'none' });
+    await deliver(s);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'mismatch', diff: '-10320.00' });
   });
 
   it('gọi sàn lỗi: lần chạy failed kèm lý do, lần sau kéo lại từ mốc cũ; đang có lần chạy thì 409', async () => {
