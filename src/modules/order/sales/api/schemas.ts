@@ -51,7 +51,10 @@ export const OrderListQuery = z.object({
   status: z.enum(ORDER_STATUS).optional(),
   source: z.enum(['marketplace', 'inbox', 'manual']).optional(),
   shopId: z.uuid('Gian hàng không hợp lệ').optional(),
-  paymentMethod: z.enum(['prepaid', 'cod']).optional(),
+  paymentMethod: z
+    .enum(['prepaid', 'cod'])
+    .optional()
+    .meta({ description: 'cod gồm đơn sàn thu hộ, prepaid gồm đơn sàn không thu hộ' }),
   stage: z.enum(ORDER_STAGES).optional(),
   flag: z.enum(ORDER_FLAGS).optional(),
   customerId: z.uuid('Khách hàng không hợp lệ').optional(),

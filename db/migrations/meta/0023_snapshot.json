@@ -1,6 +1,6 @@
 {
-  "id": "e6bf64a2-b5ae-497d-a63e-0e630fffd0c8",
-  "prevId": "3f2c1447-5682-416a-a1f5-0c2664c18bdf",
+  "id": "16664fca-9c58-461f-a3cb-2d9e84c95331",
+  "prevId": "ed4bb5c7-8c1b-40a1-8ad5-e4c7849eef71",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3968,13 +3968,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "self_approved": {
-          "name": "self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "approved_by": {
           "name": "approved_by",

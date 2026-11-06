@@ -76,7 +76,9 @@ const base = {
   getSkus: async (): Promise<RemoteSku[]> => [],
   updatePriceQuantity,
 };
-registerAdapter('lazada', fakeAdapter({ ...base, listOpenOrders }));
+// Lazada có cả lấy đơn theo lô (#267); bản giả gọi lại `getOrder` từng đơn để các ca cũ vẫn đếm được.
+const getOrders = vi.fn(async (t: string, batch: readonly RemoteOrderRef[]) => Promise.all(batch.map((r) => getOrder(t, r.externalOrderId))));
+registerAdapter('lazada', fakeAdapter({ ...base, listOpenOrders, getOrders }));
 // Sàn chưa có `listOpenOrders` (TikTok tới #221).
 registerAdapter('tiktok', fakeAdapter(base));
 
@@ -313,6 +315,8 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     // Đơn đặt sau mốc vẫn về, không tính vào trần (review việc 1).
     expect(await pulledIds(shopId)).toEqual([...newest, 'SAU-MOC']);
     expect(getOrder).toHaveBeenCalledTimes(201);
+    // Lấy chi tiết theo lô 100 đơn (#267): một lô đơn sau mốc ở trang của nó, rồi hai lô cho 200 đơn trước mốc.
+    expect(getOrders.mock.calls.map((c) => c[1].length)).toEqual([1, 100, 100]);
     expect((await shopCols(shopId)).open_orders_pulled_at).not.toBeNull();
     expect(await setupOfShop(c, shopId)).toMatchObject({ openOrdersSkipped: 50 });
   });
