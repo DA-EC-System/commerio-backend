@@ -121,6 +121,16 @@ export const Shop = z
       }),
     pendingJobs: z.number().int(),
     listingCount: z.number().int().meta({ description: 'Số listing còn trên sàn' }),
+    pendingOrderCount: z.number().int().meta({
+      description: 'Số đơn của gian hàng chưa `completed` hoặc `cancelled`, cùng cách đếm với `openOrders` của ngắt (21 §18.7.1)',
+    }),
+    orders7d: z.number().int().meta({
+      description: 'Số đơn khách đặt trong 7 × 24 giờ tính lùi từ lúc gọi, theo `placedAt` của đơn (lúc đặt trên sàn) (21 §18.7.1)',
+    }),
+    statusChangedAt: iso.meta({ description: 'Lần đổi `status` gần nhất; chưa đổi lần nào thì bằng `createdAt` (21 §18.7.1)' }),
+    feeConfigVersion: z.number().int().nullable().meta({
+      description: 'Số phiên bản cấu hình phí đang áp cho gian hàng (21 §21.4); `null` tới khi có commerio-backend#230',
+    }),
     version: z.number().int(),
     createdAt: iso,
     updatedAt: iso,
@@ -128,7 +138,7 @@ export const Shop = z
   .strict()
   .meta({ id: 'Shop' });
 
-/** 409 của ngắt (§18.6.1, #207): `shop_has_open_orders` thêm `openOrders`; `version_conflict`, `invalid_transition` thêm `current`. */
+/** 409 của ngắt (§18.6.1, #207): `shop_has_open_orders` thêm `openOrders`, `orders` (§18.7.8); `version_conflict`, `invalid_transition` thêm `current`. */
 export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
   openOrders: z
     .number()
@@ -136,6 +146,14 @@ export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
     .min(1)
     .optional()
     .meta({ description: 'Số đơn chưa `completed` hoặc `cancelled`, chỉ có với `shop_has_open_orders`' }),
+  orders: z
+    .array(z.object({ id: z.uuid(), code: z.string(), externalOrderId: z.string().nullable() }).strict())
+    .max(20)
+    .optional()
+    .meta({
+      description:
+        'Chỉ có với `shop_has_open_orders`: tối đa 20 đơn chưa xong, cũ nhất trước (theo lúc đặt); `openOrders` là tổng, có thể lớn hơn 20 (21 §18.7.8)',
+    }),
   current: z
     .union([Shop, z.enum(['connecting', 'active', 'needs_reauth', 'disconnected'])])
     .optional()
@@ -150,11 +168,17 @@ export const ShopPlatform = z
   .object({
     platform: z.string().meta({ description: 'Mã sàn, dùng ở `/shops/:platform/...`' }),
     name: z.string().meta({ description: 'Tên sàn hiển thị' }),
-    connectable: z.boolean(),
-    methods: z.array(z.enum(['oauth', 'token'])).meta({
-      description: '`oauth`: qua trang uỷ quyền (`authorize-url`, `callback`); `token`: dán token console (`POST /shops/:platform/token`)',
+    connectable: z.boolean().meta({ description: 'Nối được trên môi trường này (21 §18.7.3)' }),
+    reason: z.string().nullable().meta({
+      description: 'Lý do cho người đọc khi `connectable: false` (sàn chưa có adapter, môi trường chưa cấu hình); `null` khi nối được',
     }),
-    capabilities: ShopCapabilities,
+    methods: z.array(z.enum(['oauth', 'token'])).meta({
+      description:
+        '`oauth`: qua trang uỷ quyền (`authorize-url`, `callback`); `token`: dán token console (`POST /shops/:platform/token`). Rỗng khi `connectable: false`',
+    }),
+    capabilities: ShopCapabilities.meta({
+      description: 'Luôn có (R4). Sàn chưa có adapter nhận bộ thận trọng; FE không đọc khi `connectable: false`',
+    }),
   })
   .strict()
   .meta({ id: 'ShopPlatform' });
@@ -170,13 +194,25 @@ const connectionResult = {
     .nullable(),
 };
 
-export const ShopConnectionResult = z.object(connectionResult).strict().meta({ id: 'ShopConnectionResult' });
+export const ShopConnectionResult = z
+  .object({
+    ...connectionResult,
+    previousStatus: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']).nullable().meta({
+      description: 'Trạng thái gian hàng ngay trước lần nối này; `null` khi `created: true` (21 §18.7.4)',
+    }),
+    remoteSkuCount: z.number().int().meta({
+      description: 'Số SKU người bán tìm thấy trên sàn lúc nối, không tính SKU đã xoá; 0 khi sàn chưa đọc được danh sách SKU (21 §18.7.4)',
+    }),
+  })
+  .strict()
+  .meta({ id: 'ShopConnectionResult' });
 
 export const ShopCallbackResult = z
   .object({
     ...connectionResult,
     shops: z.array(ShopConnectionResult).min(1).meta({
-      description: 'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu',
+      description:
+        'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu. `previousStatus`, `remoteSkuCount` chỉ có ở đây, gốc không có',
     }),
   })
   .strict()

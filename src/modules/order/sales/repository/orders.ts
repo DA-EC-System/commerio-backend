@@ -1,4 +1,4 @@
-import { and, count, eq, getTableColumns, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { OrderStatus } from '../domain/order.ts';
 import { docCounters, orderLines, orders } from './schema.ts';
@@ -170,4 +170,34 @@ export async function countOpenOrdersOfShop(shopId: string): Promise<number> {
     .from(orders)
     .where(and(eq(orders.shopId, shopId), notInArray(orders.status, ['completed', 'cancelled'])));
   return row!.n;
+}
+
+const OPEN = sql`${orders.status} not in ('completed', 'cancelled')`;
+
+/**
+ * Số đơn chưa xong và số đơn đặt từ `placedSince` (theo `placed_at`) của nhiều gian hàng, một câu cho cả danh sách
+ * (Documents/21 §18.7.1). Gian hàng không có đơn không có trong Map. Gọi trong `withCompany`.
+ */
+export async function orderCountsOfShops(shopIds: readonly string[], placedSince: Date): Promise<Map<string, { open: number; placed: number }>> {
+  if (shopIds.length === 0) return new Map();
+  const rows = await getDb()
+    .select({
+      shopId: orders.shopId,
+      open: sql<number>`(count(*) filter (where ${OPEN}))::int`,
+      placed: sql<number>`(count(*) filter (where ${orders.placedAt} >= ${placedSince}))::int`,
+    })
+    .from(orders)
+    .where(inArray(orders.shopId, [...shopIds]))
+    .groupBy(orders.shopId);
+  return new Map(rows.map((r) => [r.shopId!, { open: r.open, placed: r.placed }]));
+}
+
+/** Tối đa `limit` đơn chưa xong của gian hàng, cũ nhất trước theo lúc đặt (chưa có thì lúc tạo) (§18.7.8). */
+export async function oldestOpenOrdersOfShop(shopId: string, limit: number): Promise<{ id: string; code: string; externalOrderId: string | null }[]> {
+  return getDb()
+    .select({ id: orders.id, code: orders.code, externalOrderId: orders.externalOrderId })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), OPEN))
+    .orderBy(sql`coalesce(${orders.placedAt}, ${orders.createdAt})`, asc(orders.code))
+    .limit(limit);
 }

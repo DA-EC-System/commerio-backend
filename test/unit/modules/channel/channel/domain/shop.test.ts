@@ -74,12 +74,13 @@ describe('tokenExpiringSoon', () => {
 
 describe('chặn ngắt khi còn đơn chưa xong (#207)', () => {
   it('không còn đơn mở thì qua', () => {
-    expect(() => assertNoOpenOrders(0)).not.toThrow();
+    expect(() => assertNoOpenOrders(0, [])).not.toThrow();
   });
 
-  it('còn đơn mở thì 409 shop_has_open_orders kèm openOrders', () => {
-    expect(() => assertNoOpenOrders(5)).toThrow(
-      expect.objectContaining({ status: 409, code: 'shop_has_open_orders', extensions: { openOrders: 5 } }),
+  it('còn đơn mở thì 409 shop_has_open_orders kèm openOrders và danh sách orders (§18.7.8)', () => {
+    const orders = [{ id: 'o1', code: 'DH-1', externalOrderId: 'SAN-1' }];
+    expect(() => assertNoOpenOrders(5, orders)).toThrow(
+      expect.objectContaining({ status: 409, code: 'shop_has_open_orders', extensions: { openOrders: 5, orders } }),
     );
   });
 });

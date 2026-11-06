@@ -29,21 +29,51 @@ export function registeredPlatforms(): string[] {
   return Object.keys(defaults);
 }
 
-/** Sàn nối được trên môi trường này, theo thứ tự đăng ký; mỗi adapter tự khai cách nối (#163) và năng lực (#200). */
-export function connectablePlatforms(): {
+/**
+ * Sàn chưa có adapter mà vẫn hiện cho người dùng (Documents/21 §18.7.3), kèm lý do. Sàn có adapter đăng ký thì theo
+ * adapter, mục ở đây bỏ qua (vd TikTok sau commerio-backend#217).
+ */
+const PLANNED: readonly { platform: string; name: string; reason: string }[] = [
+  { platform: 'shopee', name: 'Shopee', reason: 'Shopee chưa cấp quyền API cho ứng dụng sinh viên' },
+  { platform: 'tiktok', name: 'TikTok Shop', reason: 'Đang làm, thuộc commerio-backend#217 (đợt 4)' },
+];
+
+/** Không bao giờ hiện cho người dùng, kể cả khi có adapter đăng ký dưới mã này (§18.7.3). */
+const HIDDEN = new Set(['mock']);
+
+export interface PlatformEntry {
   platform: string;
   name: string;
+  connectable: boolean;
+  /** Câu cho người đọc khi `connectable: false`; null khi nối được. Không chứa khoá, URL, tên biến môi trường. */
+  reason: string | null;
   methods: readonly ConnectMethod[];
   capabilities: ShopCapabilities;
-}[] {
-  return Object.entries(adapters)
-    .map(([platform, adapter]) => ({
-      platform,
-      name: adapter.name,
-      methods: adapter.connectMethods(),
-      capabilities: adapter.capabilities,
-    }))
-    .filter((p) => p.methods.length > 0);
+}
+
+/**
+ * Mọi sàn hiện cho người dùng (#163, §18.7.3): adapter đăng ký theo thứ tự đăng ký, rồi sàn chưa có adapter. Adapter
+ * khai ít nhất một cách nối (đủ cấu hình) thì `connectable: true`; khai rỗng là môi trường chưa cấu hình sàn đó.
+ */
+export function platformEntries(): PlatformEntry[] {
+  const fromAdapters = Object.entries(adapters)
+    .filter(([platform]) => !HIDDEN.has(platform))
+    .map(([platform, adapter]): PlatformEntry => {
+      const methods = adapter.connectMethods();
+      const connectable = methods.length > 0;
+      return {
+        platform,
+        name: adapter.name,
+        connectable,
+        reason: connectable ? null : `Môi trường này chưa cấu hình kết nối ${adapter.name}`,
+        methods,
+        capabilities: adapter.capabilities,
+      };
+    });
+  const planned = PLANNED.filter((p) => !Object.hasOwn(adapters, p.platform)).map(
+    (p): PlatformEntry => ({ ...p, connectable: false, methods: [], capabilities: CAUTIOUS }),
+  );
+  return [...fromAdapters, ...planned];
 }
 
 /** Không có adapter (sàn bị gỡ): giả định thận trọng thay vì 500 (#200 A9). */

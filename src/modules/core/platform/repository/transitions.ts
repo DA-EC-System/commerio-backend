@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, max } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { stateTransitions } from './schema.ts';
 
@@ -58,4 +58,20 @@ export async function listTransitions(entityType: string, entityId: string): Pro
     .from(t)
     .where(and(eq(t.entityType, entityType), eq(t.entityId, entityId)))
     .orderBy(asc(t.at), asc(t.id));
+}
+
+/**
+ * Lúc chuyển trạng thái gần nhất của nhiều thực thể cùng loại, một câu cho cả danh sách. Bản ghi lúc tạo (`from` null)
+ * không tính: thực thể chưa đổi lần nào không có trong Map. Gọi trong `withCompany`.
+ */
+export async function lastTransitionsAt(entityType: string, entityIds: readonly string[]): Promise<Map<string, Date>> {
+  requireCompanyId('lastTransitionsAt');
+  if (entityIds.length === 0) return new Map();
+  const t = stateTransitions;
+  const rows = await getDb()
+    .select({ id: t.entityId, at: max(t.at) })
+    .from(t)
+    .where(and(eq(t.entityType, entityType), inArray(t.entityId, [...entityIds]), isNotNull(t.fromState)))
+    .groupBy(t.entityId);
+  return new Map(rows.flatMap((r) => (r.at ? [[r.id, r.at] as const] : [])));
 }

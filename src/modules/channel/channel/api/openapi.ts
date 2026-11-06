@@ -65,9 +65,9 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'get',
     path: '/shops/platforms',
-    summary: 'Sàn kết nối được trên môi trường này (§18.1)',
+    summary: 'Sàn và cách nối trên môi trường này (§18.1, §18.7.3)',
     description:
-      'Cần `channel.shop.view`. Chỉ sàn có adapter đủ cấu hình; mỗi sàn kèm cách nối dùng được. Không có sàn nào thì `items` rỗng.',
+      'Cần `channel.shop.view`. Adapter đăng ký theo thứ tự đăng ký, rồi sàn chưa có adapter (`shopee`, `tiktok` tới commerio-backend#217). Adapter đủ cấu hình cho ít nhất một cách nối: `connectable: true`, `reason: null`. Adapter thiếu cấu hình trên môi trường này hoặc sàn chưa có adapter: `connectable: false`, `methods: []`, `reason` cho người đọc. Không trả `mock`, không lộ khoá, URL nội bộ, tên biến môi trường. Danh sách có thể không có mục nào `connectable: true`.',
     security: bearer,
     responses: { 200: { description: 'Danh sách sàn', ...json(ShopPlatformList) }, ...auth },
   });
@@ -98,7 +98,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/callback',
     summary: 'Callback OAuth: adapter đổi tham số sàn trả lấy token, tạo hoặc nối lại các gian hàng (§18.4, §18.6.3)',
     description:
-      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi.',
+      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới) và `remoteSkuCount` (§18.7.4).',
     security: bearer,
     request: { params: PlatformParams, body: json(CallbackBody) },
     responses: {
@@ -126,7 +126,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/disconnect',
     summary: 'Ngắt gian hàng (§18.1, §18.6.1)',
     description:
-      'Cần `channel.shop.disconnect`. Kiểm theo thứ tự, dừng ở lỗi đầu: 404 `not_found` → 409 `invalid_transition` → 409 `version_conflict` → 409 `shop_has_open_orders` (còn đơn chưa `completed` hoặc `cancelled`, kèm `openOrders`; kiểm dưới khoá dòng gian hàng). Qua hết mới đẩy tồn 0 khi `zeroStock: true`; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt. Ngắt xoá token, listing còn trên sàn chuyển `delisted`.',
+      'Cần `channel.shop.disconnect`. Kiểm theo thứ tự, dừng ở lỗi đầu: 404 `not_found` → 409 `invalid_transition` → 409 `version_conflict` → 409 `shop_has_open_orders` (còn đơn chưa `completed` hoặc `cancelled`, kèm `openOrders` và `orders` tối đa 20 đơn cũ nhất; kiểm dưới khoá dòng gian hàng). Qua hết mới đẩy tồn 0 khi `zeroStock: true`; không gọi được sàn thì 422 `zero_stock_unavailable`, chưa ngắt. Ngắt xoá token, listing còn trên sàn chuyển `delisted`.',
     security: bearer,
     request: { params: ShopParams, body: json(DisconnectBody) },
     responses: {
@@ -134,7 +134,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`'),
       409: {
-        description: '`invalid_transition` (đã ngắt) kèm `current` là trạng thái, `version_conflict` kèm `current` là gian hàng, `shop_has_open_orders` kèm `openOrders`',
+        description: '`invalid_transition` (đã ngắt) kèm `current` là trạng thái, `version_conflict` kèm `current` là gian hàng, `shop_has_open_orders` kèm `openOrders`, `orders` (§18.7.8)',
         content: { 'application/problem+json': { schema: ShopDisconnectConflict } },
       },
       422: problemResponse('`validation_failed`, `zero_stock_unavailable`'),
