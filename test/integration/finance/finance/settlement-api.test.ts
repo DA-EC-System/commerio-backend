@@ -289,17 +289,22 @@ describe('quyền, phân hệ, công ty (AC-11, AC-13)', () => {
     }
   });
 
-  it('Admin, Sale (không có quyền finance) → 403 forbidden trước kiểm dữ liệu', async () => {
+  it('Sale (không có quyền tiền) → 403 forbidden trước kiểm dữ liệu', async () => {
     const c = await company();
-    for (const role of ['admin', 'sale'] as const) {
-      const m = await addMember(c.companyId, role);
-      for (const [method, url] of [
-        ...routes(randomUUID(), c.shopId),
-        ['get', `${API}/settlement-lines?pageSize=999`],
-      ] as const) {
-        const res = await request(app)[method](url).set('Authorization', `Bearer ${m.token}`).send({});
-        expect([res.status, res.body.type]).toEqual([403, '/problems/forbidden']);
-      }
+    const m = await addMember(c.companyId, 'sale');
+    for (const [method, url] of [...routes(randomUUID(), c.shopId), ['get', `${API}/settlement-lines?pageSize=999`]] as const) {
+      const res = await request(app)[method](url).set('Authorization', `Bearer ${m.token}`).send({});
+      expect([res.status, res.body.type]).toEqual([403, '/problems/forbidden']);
+    }
+  });
+
+  it('Admin xem được đối soát nhờ quyền chốt lệch (§21.0, #249), nhưng không nạp bảng kê', async () => {
+    const c = await company();
+    const m = await addMember(c.companyId, 'admin');
+    for (const [method, url] of routes(randomUUID(), c.shopId)) {
+      const res = await request(app)[method](url).set('Authorization', `Bearer ${m.token}`).send({});
+      if (method === 'post') expect([res.status, res.body.type]).toEqual([403, '/problems/forbidden']);
+      else expect(res.status).not.toBe(403);
     }
   });
 
