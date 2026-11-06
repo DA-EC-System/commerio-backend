@@ -12,14 +12,19 @@ import {
   type StatusChange,
 } from '../../../core/index.ts';
 import { PurposeTokenError, signPurposeToken, verifyPurposeToken } from '../../../../shared/auth/purpose-token.ts';
-import { env } from '../../../../shared/config/env.ts';
-import { decryptBytes, encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { countOpenOrders } from '../../../order/index.ts';
-import { assertNoOpenOrders, reconnectAction, type ShopStatus, shopMachine, tokenExpiringSoon } from '../domain/shop.ts';
+import {
+  assertNoOpenOrders,
+  authDeadline,
+  reconnectAction,
+  type ShopStatus,
+  shopMachine,
+  tokenExpiringSoon,
+} from '../domain/shop.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
@@ -42,9 +47,16 @@ import {
   MarketplaceError,
   type ShopCapabilities,
   type ShopConnection,
-  type TokenSet,
 } from './marketplaces/index.ts';
-import { listingSyncQueue, openOrderPullQueue, resumeOpenOrderPull, startShopJobs, stopShopJobs } from './shop-jobs.ts';
+import {
+  listingSyncQueue,
+  openOrderPullQueue,
+  resumeOpenOrderPull,
+  sendOrderPull,
+  startShopJobs,
+  stopShopJobs,
+} from './shop-jobs.ts';
+import { decryptAccessToken, tokenColumns, withTokenRefresh } from './shop-tokens.ts';
 import { setupOf, type ShopSetup } from '../domain/shop-setup.ts';
 import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
 
@@ -66,6 +78,9 @@ export interface Shop {
   status: ShopStatus;
   accessExpiresAt: Date | null;
   refreshExpiresAt: Date | null;
+  /** Hạn uỷ quyền seller chọn trên sàn, null khi sàn không có hạn riêng (21 §18.4). */
+  authExpiresAt: Date | null;
+  /** Hạn gần hơn trong `authExpiresAt`, `refreshExpiresAt` còn dưới 3 ngày (gian hàng `active`). */
   tokenExpiringSoon: boolean;
   lastOrderSyncAt: Date | null;
   orderCutoffAt: Date | null;
@@ -140,7 +155,8 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
     status: row.status,
     accessExpiresAt: row.accessExpiresAt,
     refreshExpiresAt: row.refreshExpiresAt,
-    tokenExpiringSoon: tokenExpiringSoon(row.status, row.refreshExpiresAt),
+    authExpiresAt: row.authExpiresAt,
+    tokenExpiringSoon: tokenExpiringSoon(row.status, authDeadline(row.authExpiresAt, row.refreshExpiresAt)),
     lastOrderSyncAt: row.lastOrderSyncAt,
     orderCutoffAt: row.orderCutoffAt,
     capabilities: capabilitiesOf(row.platform),
@@ -208,24 +224,6 @@ export async function onMarketplace<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-function tokenKey(): Buffer {
-  if (!env.CHANNEL_TOKEN_KEY) {
-    throw new AppError(500, 'channel_token_key_missing', 'Máy chủ chưa đặt CHANNEL_TOKEN_KEY để mã hoá token sàn');
-  }
-  return Buffer.from(env.CHANNEL_TOKEN_KEY, 'base64');
-}
-
-/** Cột token đã mã hoá; AAD = "<shopId>:<loại>" nên chép bản mã sang dòng khác không giải mã được. */
-function tokenColumns(shopId: string, tokens: TokenSet) {
-  const key = tokenKey();
-  return {
-    accessTokenEnc: encryptBytes(Buffer.from(tokens.accessToken), `${shopId}:access`, key),
-    refreshTokenEnc: tokens.refreshToken ? encryptBytes(Buffer.from(tokens.refreshToken), `${shopId}:refresh`, key) : null,
-    accessExpiresAt: tokens.accessExpiresAt,
-    refreshExpiresAt: tokens.refreshExpiresAt,
-  };
-}
-
 /** Gian hàng của công ty đang đặt trong `withCompany`; không có (kể cả `id` sai định dạng) thì 404. */
 export async function ownShop(id: string): Promise<ShopRow> {
   requireCompanyId('ownShop');
@@ -240,8 +238,9 @@ export async function shopSession(id: string): Promise<{ shop: ShopRow; adapter:
   if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
     throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
   }
-  const accessToken = decryptBytes(shop.accessTokenEnc, `${shop.id}:access`, tokenKey()).toString();
-  return { shop, adapter: adapterOf(shop.platform), accessToken };
+  const accessToken = decryptAccessToken(shop)!;
+  // Sàn báo `unauthorized` thì làm mới token một lần rồi gọi lại (#201, Documents/16 bài toán 3).
+  return { shop, adapter: withTokenRefresh(adapterOf(shop.platform), shop.companyId, shop.id, accessToken), accessToken };
 }
 
 export async function listShops(): Promise<{ items: Shop[] }> {
@@ -355,6 +354,8 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     const jobsRun = await releaseHeld(result.shop.id);
     await startShopJobs(result.shop.companyId, result.shop.id);
     await resumeOpenOrderPull(result.shop.companyId, result.shop.id);
+    // Nối lại gian hàng đã thiết lập: kéo đơn ngay từ lần kéo thành công cuối (US-GH-14 dòng 1), không chờ vòng 5 phút.
+    if (result.reconnect) await sendOrderPull(result.shop.companyId, result.shop.id);
     result.shop.pendingJobs = 0;
     if (result.reconnect) result.reconnect.jobsRun = jobsRun;
   }
@@ -428,6 +429,7 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       refreshTokenEnc: null,
       accessExpiresAt: null,
       refreshExpiresAt: null,
+      authExpiresAt: null,
       disconnectedAt: new Date(),
     },
   ))!;
@@ -450,54 +452,5 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
   return shopView(updated);
 }
 
-/**
- * Gian hàng mất uỷ quyền (refresh token thất bại, sàn báo gỡ app): `connecting` hoặc `active` → `needs_reauth`,
- * nguồn hệ thống (§18.1). Cho #102 gọi trong `withCompany`. Trạng thái khác thì bỏ qua.
- */
-export async function markNeedsReauth(shopId: string, reason: string): Promise<void> {
-  requireCompanyId('markNeedsReauth');
-  const row = await findShopRow(shopId);
-  if (row?.status !== 'connecting' && row?.status !== 'active') return;
-  const { to } = assertTransition(shopMachine, row.status, 'lose_auth', { actor: null });
-  const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason });
-  if (updated) {
-    await recordTransition({ entityType: ENTITY, entityId: shopId, from: row.status, to, action: 'lose_auth', actorId: null, reason });
-  }
-}
-
-/** Mất uỷ quyền do việc nền phát hiện: `needs_reauth` rồi dừng lịch của gian hàng (#102 A5). Gọi ngoài giao dịch. */
-export async function loseShopAuth(companyId: string, shopId: string, reason: string): Promise<void> {
-  await withCompany(companyId, () => markNeedsReauth(shopId, reason));
-  await stopShopJobs(shopId);
-}
-
-/** Access còn dưới mức này thì làm mới (việc chạy hằng ngày, access Lazada sống 7 ngày). */
-const REFRESH_WITHIN_MS = 48 * 3_600_000;
-
-/**
- * Làm mới token của gian hàng `active` khi access sắp hết hạn (#102 AC-5). Gọi sàn ngoài giao dịch.
- * Sàn từ chối refresh token thì gian hàng mất uỷ quyền; lỗi tạm thì ném để việc nền thử lại.
- * Trả `inactive` khi gian hàng không còn `active` (bên gọi bỏ lịch).
- */
-export async function refreshShopToken(companyId: string, shopId: string): Promise<'refreshed' | 'skipped' | 'lost' | 'inactive'> {
-  const row = await withCompany(companyId, () => findShopRow(shopId));
-  if (row?.status !== 'active') return 'inactive';
-  if (!row.refreshTokenEnc) return 'skipped';
-  if (row.accessExpiresAt && row.accessExpiresAt.getTime() - Date.now() > REFRESH_WITHIN_MS) return 'skipped';
-  const refreshToken = decryptBytes(row.refreshTokenEnc, `${row.id}:refresh`, tokenKey()).toString();
-  let tokens: TokenSet;
-  try {
-    tokens = await adapterOf(row.platform).refreshToken(refreshToken);
-  } catch (err) {
-    if (err instanceof MarketplaceError && err.kind === 'unauthorized') {
-      await loseShopAuth(companyId, shopId, `Làm mới token thất bại (${err.platformCode ?? 'unauthorized'})`);
-      return 'lost';
-    }
-    throw err;
-  }
-  await withCompany(companyId, async () => {
-    const updated = await updateShop(row.id, { version: row.version, status: row.status }, tokenColumns(row.id, tokens));
-    if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, làm mới lại sau');
-  });
-  return 'refreshed';
-}
+// Mất uỷ quyền và làm mới token ở `shop-tokens.ts` (#201); giữ đường import cũ cho `index.ts`, `background.ts`.
+export { loseShopAuth, markNeedsReauth, refreshShopToken } from './shop-tokens.ts';

@@ -9,6 +9,7 @@
 import {
   type MarketplaceAdapter,
   MarketplaceError,
+  refreshBefore,
   type RemoteSku,
   type RemoteState,
   type ShopCapabilities,
@@ -51,6 +52,13 @@ interface RawTokens {
 }
 
 /** `access_token_expire_in`, `refresh_token_expire_in` là **mốc Unix tuyệt đối** (giây), không phải số giây còn lại. */
+/**
+ * Làm mới khi access còn dưới 48 giờ (#201). Access TikTok sống 7 ngày (authorization-overview-202407): ngưỡng 48 giờ cho
+ * việc nền mỗi giờ khoảng 48 lượt thử nếu sàn lỗi tạm, mà mỗi gian hàng chỉ làm mới khoảng 5 ngày một lần. 24 giờ cũng đủ
+ * nhưng hở ít hơn khi sàn bảo trì dài.
+ */
+const REFRESH_LEAD_MS = 48 * 3_600_000;
+
 const unixDate = (v: unknown) => (Number(v) > 0 ? new Date(Number(v) * 1000) : null);
 
 function rawTokens(data: unknown): RawTokens {
@@ -198,6 +206,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         : { accessToken, refreshToken: null, accessExpiresAt: null, refreshExpiresAt: null };
       return connections(raw);
     },
+    // `authExpiresAt` để trống: TikTok không trả hạn uỷ quyền riêng, `refresh_token_expire_in` đã là hạn đó.
+    refreshDueAt: (tokens) => refreshBefore(tokens, REFRESH_LEAD_MS),
     async refreshToken(refreshToken) {
       // Làm mới không trả cipher: giữ cipher, mã shop trong chuỗi refresh đã gói.
       const parts = unpackTiktokToken(refreshToken);

@@ -21,11 +21,27 @@ export const shopMachine = defineMachine<ShopStatus, ShopAction>([
   },
 ]);
 
-/** Nhãn "Sắp hết hạn" (§18.4): refresh token còn dưới 3 ngày. Access token do #102 tự làm mới nên không tính. */
+/** Nhãn "Sắp hết hạn" (§18.4): hạn uỷ quyền còn dưới 3 ngày. Access token do việc nền tự làm mới nên không tính. */
 export const EXPIRING_MS = 3 * 24 * 3600_000;
 
-export function tokenExpiringSoon(status: ShopStatus, refreshExpiresAt: Date | null, now = Date.now()): boolean {
-  return status === 'active' && refreshExpiresAt !== null && refreshExpiresAt.getTime() - now < EXPIRING_MS;
+/**
+ * Hạn phải kết nối lại (21 §18.4, #201): hạn gần hơn trong `authExpiresAt` (hạn uỷ quyền seller chọn) và
+ * `refreshExpiresAt` (Lazada: refresh token không gia hạn được). null khi không biết cả hai.
+ */
+export function authDeadline(authExpiresAt: Date | null, refreshExpiresAt: Date | null): Date | null {
+  if (!authExpiresAt) return refreshExpiresAt;
+  if (!refreshExpiresAt) return authExpiresAt;
+  return authExpiresAt < refreshExpiresAt ? authExpiresAt : refreshExpiresAt;
+}
+
+/** `deadline` là `authDeadline(...)`. Gian hàng `active` còn dưới 3 ngày tới hạn đó thì bật nhãn (US-GH-12 dòng 1). */
+export function tokenExpiringSoon(status: ShopStatus, deadline: Date | null, now = Date.now()): boolean {
+  return status === 'active' && deadline !== null && deadline.getTime() - now < EXPIRING_MS;
+}
+
+/** Đã qua hạn uỷ quyền: làm mới không cứu được, gian hàng phải `lose_auth` (US-GH-12 dòng 2). */
+export function authLapsed(deadline: Date | null, now = Date.now()): boolean {
+  return deadline !== null && deadline.getTime() <= now;
 }
 
 /** Nối lại gian hàng đã có: thao tác nào, hay chỉ thay token (đang `connecting`, `active`). */

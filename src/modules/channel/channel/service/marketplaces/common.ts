@@ -17,6 +17,23 @@ export interface TokenSet {
   /** null khi không biết hạn (token dán tay). */
   accessExpiresAt: Date | null;
   refreshExpiresAt: Date | null;
+  /**
+   * Hạn uỷ quyền seller chọn trên sàn (Documents/21 §18.4, cột `auth_expires_at`, #201): tới đó chỉ người dùng kết nối
+   * lại được. Bỏ trống hoặc null khi sàn không có hạn riêng ngoài `refreshExpiresAt` (Lazada; TikTok: hạn refresh token
+   * đã là hạn uỷ quyền, xem `tiktok.ts`).
+   */
+  authExpiresAt?: Date | null;
+}
+
+/** Hạn của token đã lưu, đủ để adapter tính lúc làm mới (`refreshDueAt`). */
+export type TokenExpiry = Pick<TokenSet, 'accessExpiresAt' | 'refreshExpiresAt'>;
+
+/** Ngưỡng mặc định: làm mới khi access còn dưới 48 giờ (ngưỡng cũ của #102), cho adapter không khai `refreshDueAt`. */
+export const DEFAULT_REFRESH_LEAD_MS = 48 * 3_600_000;
+
+/** Lúc làm mới = hạn access trừ `leadMs`; không biết hạn access thì null (không tự làm mới, chờ sàn báo `unauthorized`). */
+export function refreshBefore(tokens: TokenExpiry, leadMs: number): Date | null {
+  return tokens.accessExpiresAt ? new Date(tokens.accessExpiresAt.getTime() - leadMs) : null;
 }
 
 export interface SellerInfo {
@@ -251,6 +268,12 @@ export interface MarketplaceAdapter {
    */
   connectWithToken(input: { accessToken: string; refreshToken: string | null }): Promise<ShopConnection[]>;
   refreshToken(refreshToken: string): Promise<TokenSet>;
+  /**
+   * Từ lúc nào việc nền `channel.token_refresh` (chạy mỗi giờ) phải làm mới token này (#201, Documents/21 §18.4 "ngưỡng
+   * adapter khai"); null là không tự làm mới. Không khai thì dùng `DEFAULT_REFRESH_LEAD_MS`. Phải để cách hạn access ít
+   * nhất hơn một vòng việc nền, và đủ xa để token vừa làm mới không tới hạn lại ngay ở vòng sau.
+   */
+  refreshDueAt?(tokens: TokenExpiry): Date | null;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
   /** Đưa ảnh từ URL công khai lên sàn, trả URL trên sàn. */

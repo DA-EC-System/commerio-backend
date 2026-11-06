@@ -2,6 +2,7 @@
 import { createHmac } from 'node:crypto';
 import {
   type CategoryAttribute,
+  DEFAULT_REFRESH_LEAD_MS,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -14,6 +15,7 @@ import {
   type RemoteOrder,
   type RemoteSku,
   type RemoteState,
+  refreshBefore,
   type SellerInfo,
   type ShopCapabilities,
   type ShopConnection,
@@ -475,6 +477,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return connection(tokens);
     },
     refreshToken: refresh,
+    // Access Lazada sống 7 ngày, refresh 50 ngày và không gia hạn (21 §18.4). Ngưỡng 48 giờ giữ từ #102, chưa đo trên shop
+    // thử (app Testing có access ngắn hơn, Documents#64): với việc nền mỗi giờ là còn khoảng 48 lượt thử trước khi hết hạn.
+    refreshDueAt: (tokens) => refreshBefore(tokens, DEFAULT_REFRESH_LEAD_MS),
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
       const body = await call(config.apiUrl, '/category/tree/get', params, 'GET');
