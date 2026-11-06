@@ -349,6 +349,43 @@ describe('createProduct', () => {
     expect(body.skus[0]!.inventory).toEqual([{ warehouse_id: 'W1' }]);
   });
 
+  it('đã tạo xong mà bước đọc lại gặp unauthorized: vẫn trả sản phẩm (live false), không ném để bên gọi không tạo lại', async () => {
+    const san = fakeSan(routes(fail(105002, 'Expired credentials. The `x-tts-access-token` header has expired.')));
+    expect(await san.methods().createProduct(TOKEN, product)).toEqual({ externalProductId: 'P9', externalSkuId: 'S9', live: false });
+    expect(san.calls.filter((c) => c.method === 'POST' && c.path === '/product/202309/products')).toHaveLength(1);
+  });
+
+  it('idempotent theo seller_sku: findSku thấy SKU còn trên sàn thì trả sản phẩm đó, không gọi tạo', async () => {
+    const san = fakeSan(routes(ok({ status: 'ACTIVATE' })));
+    const findSku = vi.fn(async () => ({
+      externalProductId: 'P1',
+      externalSkuId: 'S1',
+      sellerSku: product.sellerSku,
+      title: 't',
+      state: 'review' as const,
+      rejectReason: null,
+      quantity: 5,
+    }));
+    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false });
+    expect(findSku).toHaveBeenCalledWith(TOKEN, 'CM-TEST-COC');
+    expect(san.calls).toHaveLength(0);
+  });
+
+  it('adapter TikTok tra Search Products theo seller_sku trước khi tạo: đã có thì không tạo, chỉ có bản đã xoá thì tạo', async () => {
+    const search = (status: string) =>
+      ok({ total_count: 1, products: [{ id: 'P1', title: 't', status, skus: [{ id: 'S1', seller_sku: 'CM-TEST-COC', inventory: [] }] }] });
+    const make = (status: string) => {
+      const san = fakeSan({ ...routes(ok({ status: 'ACTIVATE' })), 'POST /product/202502/products/search': search(status) });
+      return { san, adapter: createTiktokAdapter(config, san.fetchFn) };
+    };
+    const live = make('ACTIVATE');
+    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true });
+    expect(live.san.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /product/202502/products/search']);
+    expect(live.san.calls[0]!.body).toEqual({ status: 'ALL', seller_skus: ['CM-TEST-COC'] });
+    const deleted = make('DELETED');
+    expect(await deleted.adapter.createProduct(TOKEN, product)).toMatchObject({ externalProductId: 'P9', externalSkuId: 'S9' });
+  });
+
   it('sàn từ chối thì ném rejected giữ mã; phản hồi thiếu mã thì unexpected_response', async () => {
     const bad = fakeSan({ ...routes(ok({})), 'POST /product/202309/products': fail(12052217, 'All region shops must use V2 categories.') });
     await expect(bad.methods().createProduct(TOKEN, product)).rejects.toMatchObject({ kind: 'rejected', platformCode: '12052217' });

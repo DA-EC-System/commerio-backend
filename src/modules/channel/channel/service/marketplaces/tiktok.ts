@@ -194,6 +194,20 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     throw new MarketplaceError('rejected', 'too_many_pages', 'Sàn trả quá nhiều trang sản phẩm');
   }
 
+  async function getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> {
+    const wanted = new Set(sellerSkus);
+    const out: RemoteSku[] = [];
+    for (let i = 0; i < sellerSkus.length; i += SELLER_SKU_BATCH) {
+      const batch = sellerSkus.slice(i, i + SELLER_SKU_BATCH);
+      out.push(...(await searchSkus(accessToken, { status: 'ALL', seller_skus: batch })).filter((s) => wanted.has(s.sellerSku)));
+    }
+    return out;
+  }
+
+  /** SKU còn trên sàn (bỏ `deleted`) theo `seller_sku`, cho `createProduct` không tạo trùng. */
+  const findSku = async (accessToken: string, sellerSku: string) =>
+    (await getSkus(accessToken, [sellerSku])).find((s) => s.state !== 'deleted') ?? null;
+
   return {
     name: 'TikTok Shop',
     capabilities: TIKTOK_CAPABILITIES,
@@ -225,17 +239,9 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     async listSkus(accessToken) {
       return (await searchSkus(accessToken, { status: 'ALL' })).filter((s) => s.state !== 'deleted');
     },
-    async getSkus(accessToken, sellerSkus) {
-      const wanted = new Set(sellerSkus);
-      const out: RemoteSku[] = [];
-      for (let i = 0; i < sellerSkus.length; i += SELLER_SKU_BATCH) {
-        const batch = sellerSkus.slice(i, i + SELLER_SKU_BATCH);
-        out.push(...(await searchSkus(accessToken, { status: 'ALL', seller_skus: batch })).filter((s) => wanted.has(s.sellerSku)));
-      }
-      return out;
-    },
+    getSkus,
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
-    ...tiktokListingMethods(client),
+    ...tiktokListingMethods(client, { findSku }),
     ...tiktokReturnMethods(client),
     ...tiktokOrderMethods(client),
   };

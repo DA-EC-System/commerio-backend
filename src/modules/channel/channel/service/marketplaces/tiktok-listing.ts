@@ -15,6 +15,7 @@ import {
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
+  type RemoteSku,
 } from './common.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
 
@@ -42,6 +43,11 @@ export interface TiktokListingDeps {
   fetchImage?: typeof fetch;
   /** Phân giải tên miền của URL ảnh để chặn địa chỉ nội bộ; test thay. */
   resolveHost?: (host: string) => Promise<string[]>;
+  /**
+   * SKU đang có trên sàn theo `seller_sku` (bỏ sản phẩm đã xoá), để `createProduct` không tạo trùng khi lần trước đã tạo
+   * xong mà bên gọi không nhận được kết quả. `createTiktokAdapter` truyền bản dùng Search Products; không truyền thì bỏ bước tra.
+   */
+  findSku?: (token: string, sellerSku: string) => Promise<RemoteSku | null>;
 }
 
 type ListingMethods = Pick<
@@ -259,6 +265,11 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     // Một sản phẩm một SKU, gán kho mặc định. Sản phẩm mới qua duyệt của TikTok (create-product-202309: "After creation,
     // it will be sent for audit review"); `live` theo trạng thái đọc lại ngay sau khi tạo, còn lại về qua đồng bộ.
     async createProduct(token, p: NewProduct): Promise<CreatedProduct> {
+      // Idempotent theo `seller_sku`: lần đẩy trước đã tạo (mất kết quả vì lỗi mạng, tiến trình chết, token hỏng ở bước
+      // đọc lại) thì trả sản phẩm đó, không tạo thêm. Search Products có thể trễ vài giây sau khi tạo (gọi thật 07/11/2026),
+      // nên lớp bọc token vẫn không gọi lại hàm này (`NO_RETRY` ở `shop-tokens.ts`).
+      const existing = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
+      if (existing) return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live' };
       const [warehouseId, attrs] = await Promise.all([defaultWarehouse(token), rawAttributes(token, p.externalCategoryId)]);
       const byId = new Map(attrs.map((a) => [String(a.id), a]));
       const productAttributes = Object.entries(p.attributes).map(([id, value]) => {
@@ -287,12 +298,10 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       const data = await client.call<{ product_id?: unknown; skus?: Row[] }>('POST', '/product/202309/products', { token, body });
       const skuId = data?.skus?.[0]?.id;
       if (typeof data?.product_id !== 'string' || typeof skuId !== 'string') throw new MarketplaceError('rejected', 'unexpected_response');
-      // Phản hồi không có trạng thái: đọc lại (shop thử SANDBOX duyệt ngay, `ACTIVATE`, gọi thật 07/11/2026). Đọc lỗi thì
-      // coi như chờ duyệt, sản phẩm đã tạo nên không ném; mất uỷ quyền vẫn ném.
-      const status = await productStatus(token, data.product_id).catch((err: unknown) => {
-        if (err instanceof MarketplaceError && err.kind !== 'unauthorized') return null;
-        throw err;
-      });
+      // Phản hồi không có trạng thái: đọc lại (shop thử SANDBOX duyệt ngay, `ACTIVATE`, gọi thật 07/11/2026). Sản phẩm đã
+      // tạo: mọi lỗi của bước đọc lại (kể cả `unauthorized`) coi như chờ duyệt và vẫn trả kết quả, trạng thái thật về qua
+      // đồng bộ. Ném ở đây thì bên gọi tưởng chưa tạo, đẩy lại thành sản phẩm trùng.
+      const status = await productStatus(token, data.product_id).catch(() => null);
       return { externalProductId: data.product_id, externalSkuId: skuId, live: status === 'ACTIVATE' };
     },
 
