@@ -108,5 +108,6 @@ describe('GET /channel/shops/platforms (#163)', () => {
     expect(schemas.Shop.properties).toHaveProperty('returnWindowDays');
     expect(schemas.ShopCallbackInput.properties).toHaveProperty('params');
     expect(schemas.ShopCallbackResult.properties).toHaveProperty('shops');
+    expect(schemas.ShopSetupInput.properties).toHaveProperty('returnWindowDays');
   });
 });
