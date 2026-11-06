@@ -220,7 +220,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/setup',
     summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn, gian hàng `connecting → active`. Sai: 422 `errors.orderCutoffAt` (tương lai), `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`.',
+      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn, gian hàng `connecting → active`. Sai: 422 `errors.orderCutoffAt` (tương lai), `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60; không gửi thì giữ giá trị đang có tới khi FE gửi trường này; sàn `platform_status` bỏ qua, lưu null).',
     security: bearer,
     request: { params: ShopParams, body: json(SetupBody) },
     responses: {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { assertNoOpenOrders, reconnectAction, shopMachine, tokenExpiringSoon } from '#src/modules/channel/channel/domain/shop.ts';
+import {
+  assertNoOpenOrders,
+  reconnectAction,
+  returnWindowError,
+  shopMachine,
+  tokenExpiringSoon,
+} from '#src/modules/channel/channel/domain/shop.ts';
 
 const NOW = Date.parse('2026-10-28T00:00:00Z');
 const DAY = 24 * 3600_000;
@@ -75,5 +81,22 @@ describe('chặn ngắt khi còn đơn chưa xong (#207)', () => {
     expect(() => assertNoOpenOrders(5)).toThrow(
       expect.objectContaining({ status: 409, code: 'shop_has_open_orders', extensions: { openOrders: 5 } }),
     );
+  });
+});
+
+describe('hạn trả hàng nhập lúc thiết lập (Documents/21 §18.6.2)', () => {
+  it('sàn tính hạn theo ngày: số nguyên 1–60 hợp lệ, ngoài khoảng hoặc lẻ thì báo lỗi', () => {
+    for (const ok of [1, 14, 60]) expect(returnWindowError('days', ok)).toBeNull();
+    for (const bad of [0, 61, -1, 1.5, 1e10]) expect(returnWindowError('days', bad)).toBe('Hạn trả hàng từ 1 đến 60 ngày');
+  });
+
+  it('chuyển tiếp đợt 2: không gửi (undefined, null) thì không lỗi', () => {
+    expect(returnWindowError('days', undefined)).toBeNull();
+    expect(returnWindowError('days', null)).toBeNull();
+  });
+
+  it('sàn tính hạn theo trạng thái sàn: bỏ qua trường này', () => {
+    expect(returnWindowError('platform_status', 0)).toBeNull();
+    expect(returnWindowError('platform_status', 999)).toBeNull();
   });
 });

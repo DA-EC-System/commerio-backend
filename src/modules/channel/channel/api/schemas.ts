@@ -295,6 +295,10 @@ export const SetupBody = z
     externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).default([]),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     orderCutoffAt: z.iso.datetime({ offset: true, error: 'Chọn mốc kéo đơn' }).transform((s) => new Date(s)),
+    returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
+      description:
+        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`; sàn `platform_status` bỏ qua và lưu null. Chưa bắt buộc tới khi FE gửi (21 §18.6.2)',
+    }),
   })
   .meta({ id: 'ShopSetupInput' });
 

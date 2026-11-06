@@ -3,13 +3,14 @@
 import { assertTransition, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { shopMachine } from '../domain/shop.ts';
+import { returnWindowError, shopMachine } from '../domain/shop.ts';
 import { insertListing, listListingRows } from '../repository/listings.ts';
 import { updateShop } from '../repository/shops.ts';
 import { syncListings } from './listing-sync.ts';
+import { capabilitiesOf } from './marketplaces/index.ts';
 import { startShopJobs } from './shop-jobs.ts';
 import type { ProductPort } from './product-port.ts';
-import { type Actor, onMarketplace, type Shop, shopSession, shopView } from './shops.ts';
+import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
 
 export interface SetupSuggestion {
   externalSkuId: string;
@@ -66,15 +67,23 @@ export async function finishSetup(
   port: ProductPort,
   actor: Actor,
   shopId: string,
-  input: { externalSkuIds: string[]; openingStock: 'push' | 'stocktake'; orderCutoffAt: Date },
+  input: {
+    externalSkuIds: string[];
+    openingStock: 'push' | 'stocktake';
+    orderCutoffAt: Date;
+    returnWindowDays?: number | null | undefined;
+  },
 ): Promise<{ shop: Shop; matched: number; stocktakeNumber: null }> {
   const offered = await suggestions(port, actor, shopId);
+  const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
   const picked = offered.filter((s) => input.externalSkuIds.includes(s.externalSkuId));
   const errors: Record<string, string> = {};
   if (input.orderCutoffAt.getTime() > Date.now()) errors.orderCutoffAt = 'Mốc kéo đơn không được ở tương lai';
   // Kiểm kê đầu kỳ cần phiếu kiểm kê của #112.
   if (input.openingStock === 'stocktake') errors.openingStock = 'Chưa hỗ trợ kiểm kê đầu kỳ, chọn đẩy khả dụng';
   if (picked.length !== new Set(input.externalSkuIds).size) errors.externalSkuIds = 'Có SKU sàn không còn để ghép';
+  const returnWindowInvalid = returnWindowError(returnWindow, input.returnWindowDays);
+  if (returnWindowInvalid) errors.returnWindowDays = returnWindowInvalid;
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
   await withCompany(actor.companyId, async () => {
@@ -93,7 +102,14 @@ export async function finishSetup(
       });
       await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
     }
-    const updated = await updateShop(shop.id, { version: shop.version, status: shop.status }, { status: to, orderCutoffAt: input.orderCutoffAt });
+    // Sàn `platform_status` luôn null; sàn `days` chỉ ghi khi có gửi số, không gửi thì giữ giá trị đang có (A3).
+    const returnWindowDays =
+      returnWindow !== 'days' ? { returnWindowDays: null } : typeof input.returnWindowDays === 'number' ? { returnWindowDays: input.returnWindowDays } : {};
+    const updated = await updateShop(
+      shop.id,
+      { version: shop.version, status: shop.status },
+      { status: to, orderCutoffAt: input.orderCutoffAt, ...returnWindowDays },
+    );
     if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
     await recordTransition({ entityType: 'shops', entityId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
   });

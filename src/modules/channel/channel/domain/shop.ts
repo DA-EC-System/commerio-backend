@@ -59,3 +59,12 @@ export interface ShopCapabilities {
   splitLevel: 'unit' | 'sku' | 'none';
   returnWindow: 'days' | 'platform_status';
 }
+
+/**
+ * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null là hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm;
+ * không gửi thì chưa bắt buộc tới khi FE gửi trường này (luật chuyển tiếp 18.6, #200 A3).
+ */
+export function returnWindowError(returnWindow: ShopCapabilities['returnWindow'], days: number | null | undefined): string | null {
+  if (returnWindow !== 'days' || days === null || days === undefined) return null;
+  return Number.isInteger(days) && days >= 1 && days <= 60 ? null : 'Hạn trả hàng từ 1 đến 60 ngày';
+}

@@ -161,3 +161,81 @@ describe('ngắt kèm đẩy tồn 0', () => {
     ]);
   });
 });
+
+// Hạn trả hàng nhập lúc thiết lập (H7, Documents/21 §18.6.2; #200 A3 luật chuyển tiếp). Mỗi ca một gian hàng mới của công
+// ty đã có một gian hàng thiết lập xong, để ca `push` vẫn đúng khi gian hàng đầu tiên phải kiểm kê (#198).
+describe('returnWindowDays ở thiết lập', () => {
+  let co: Awaited<ReturnType<typeof createCompany>>;
+  const tiktokSkus = vi.fn(async (): Promise<RemoteSku[]> => []);
+  beforeAll(async () => {
+    co = await createCompany({ optionalModules: ['channel'] });
+    const first = await newShop();
+    await testPool().query("update channel.shops set status = 'active', order_cutoff_at = now() - interval '1 day' where id = $1", [first]);
+    registerAdapter(
+      'tiktok',
+      fakeAdapter({
+        capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' },
+        async getSeller(accessToken) {
+          return { externalShopId: accessToken.slice(4), shopName: 'Shop TikTok thử', region: 'VN' };
+        },
+        getSkus: tiktokSkus,
+        updatePriceQuantity,
+      }),
+    );
+  });
+  const coAuth = (r: request.Test) => r.set('Authorization', `Bearer ${co.ceo.token}`);
+  async function newShop(platform = 'lazada'): Promise<string> {
+    const res = await coAuth(app().post(`/api/v1/channel/shops/${platform}/token`)).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    expect(res.status).toBe(201);
+    return res.body.shop.id;
+  }
+  const finish = (id: string, extra: object) =>
+    coAuth(app().post(`/api/v1/channel/shops/${id}/setup`)).send({
+      externalSkuIds: [],
+      openingStock: 'push',
+      orderCutoffAt: new Date(Date.now() - 3_600_000).toISOString(),
+      ...extra,
+    });
+  const stored = async (id: string) =>
+    (await testPool().query<{ status: string; return_window_days: number | null }>('select status, return_window_days from channel.shops where id = $1', [id])).rows[0];
+
+  it('C1-01: Lazada (returnWindow = days) gửi 14 thì lưu 14, gian hàng active', async () => {
+    const id = await newShop();
+    const res = await finish(id, { returnWindowDays: 14 });
+    expect(res.status).toBe(200);
+    expect(ShopSetupResult.parse(res.body).shop).toMatchObject({ status: 'active', returnWindowDays: 14 });
+    expect(await stored(id)).toEqual({ status: 'active', return_window_days: 14 });
+  });
+
+  it('ngoài 1–60, số lẻ, chuỗi thì 422 errors.returnWindowDays, gian hàng vẫn connecting', async () => {
+    const id = await newShop();
+    for (const bad of [0, 61, 1.5, '7']) {
+      const res = await finish(id, { returnWindowDays: bad });
+      expect(res.status, String(bad)).toBe(422);
+      expect(res.body.code).toBe('validation_failed');
+      expect(res.body.errors, String(bad)).toHaveProperty('returnWindowDays');
+    }
+    expect(await stored(id)).toEqual({ status: 'connecting', return_window_days: null });
+  });
+
+  it('chuyển tiếp đợt 2: không gửi hoặc gửi null thì vẫn thiết lập được, hạn để trống', async () => {
+    for (const extra of [{}, { returnWindowDays: null }]) {
+      const id = await newShop();
+      const res = await finish(id, extra);
+      expect(res.status).toBe(200);
+      expect(await stored(id)).toEqual({ status: 'active', return_window_days: null });
+    }
+  });
+
+  it('sàn returnWindow = platform_status: bỏ qua số gửi lên, lưu null', async () => {
+    const id = await newShop('tiktok');
+    const res = await finish(id, { returnWindowDays: 30 });
+    expect(res.status).toBe(200);
+    expect(ShopSetupResult.parse(res.body).shop).toMatchObject({
+      status: 'active',
+      returnWindowDays: null,
+      capabilities: { returnWindow: 'platform_status' },
+    });
+    expect(await stored(id)).toEqual({ status: 'active', return_window_days: null });
+  });
+});
