@@ -13,9 +13,11 @@ Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ t
 | Tạm khoá, đang thiếu | Tính khi đọc | Từ phiếu kho chờ duyệt, kiện thiếu hàng; tới khi có các nguồn đó thì bằng 0 (`service/views.ts`, `service/port.ts`) |
 | Khả dụng | Tính | `max(0, tồn thực − đang giữ − tạm khoá)`, là số đẩy lên sàn |
 | Ngưỡng `min_qty` | `stock_levels` | `null` = chưa đặt; `reorderVersion` là `version` của dòng tồn |
+| Lệch tồn `drift` | Chưa có | Luôn `false` tới #206 phần 2b (cần dữ liệu đẩy tồn của `channel`) |
 
 - CHECK `stock_levels_invariant`: tồn thực ≥ 0 và đang giữ ≤ tồn thực, trừ khi bật `invariant_broken` (cờ Tồn âm: bàn giao bắt buộc theo sàn, kiểm kê CEO đã duyệt; `25` §7.1). Chờ xử lý, đang giữ không bao giờ âm.
 - Thẻ kho `stock_moves` chỉ thêm (role ứng dụng không UPDATE/DELETE). Mỗi dòng có ngăn (`on_hand`/`quarantine`), số dư sau biến động và chứng từ gốc (`source_type`, `source_id`, `source_line_id`).
+- API thẻ kho (`getStock`) đổi tên theo FE: ngăn `on_hand` ra `area: 'stock'`, `balance_after` ra `onHandAfter`. `document.type` là loại phiếu kho hoặc `goods_receipt`/`supplier_return`; `document.kind` suy ra, không lưu (`domain/moves.ts`). Số phiếu tra theo lô: phiếu kho đọc `stock_documents` (`repository/move-sources.ts`), phiếu nhận và phiếu trả NCC qua `purchaseDocumentNumbers` của purchasing, tiêm vào `ctx` cạnh `incomingOf`. Dòng trỏ chứng từ không tồn tại thì 500.
 - Giá vốn bình quân gia quyền (`domain/stock.ts`); DB lưu `numeric(18,2)`, API trả số nguyên đồng; `stockValue = round(onHand × avg_cost)` (V29, V30).
 - Chỉ tạo dòng `stock_levels` cho biến thể đã qua `catalog.getVariants` của công ty. Khoá chính `(company_id, variant_id)`.
 
@@ -45,7 +47,7 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 
 ## Quyền ở API (`api/routes.ts`)
 
-`inventory.stock.view` xem tồn; `inventory.reorder.manage` đặt ngưỡng. `inventory.cost.view` thấy giá vốn, giá trị tồn, giá trên thẻ kho (đọc từ DB mỗi request, `getAccess(res)`). `inventory.receipt.create`, `inventory.document.approve` dành cho phiếu kho (mục 15.3).
+`inventory.stock.view` xem tồn (lọc `belowMin`, `quarantine`, `negative` gộp AND; `summary` không theo lọc) và thẻ kho; `inventory.reorder.manage` đặt ngưỡng. `inventory.cost.view` thấy giá vốn, giá trị tồn, giá trên thẻ kho (đọc từ DB mỗi request, `getAccess(res)`). `inventory.receipt.create`, `inventory.document.approve` dành cho phiếu kho (mục 15.3).
 
 ## Giới hạn đã biết
 
