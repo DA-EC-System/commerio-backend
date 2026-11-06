@@ -166,6 +166,8 @@ async function cancelReasons(orderId: string | undefined): Promise<void> {
   if (!orderId) throw new Error('Cú pháp: cancel-reasons <orderId>');
   const saved = loadTokens<TiktokTokens>('tiktok');
   printStep('cancelReasons (return_refund/202602/orders/{id}/aftersale_eligibility)', true, await adapter.cancelReasons!(packedFor(saved), orderId, []));
+}
+
 function session(): string {
   const saved = loadTokens<TiktokTokens>('tiktok');
   if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}.`);
