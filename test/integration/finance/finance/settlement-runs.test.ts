@@ -9,6 +9,7 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { setModuleEnabled } from '../../helpers/state.ts';
 import { createOrder } from '../../helpers/sales.ts';
 
 // Đối soát quyết toán (#117, Documents/21 §21.2, §21.3). Sàn thay bằng cổng giả trong `ctx`: dữ liệu như sàn giả lập
@@ -200,6 +201,50 @@ describe('trạng thái tiền của đơn và chốt lệch (§21.2)', () => {
     expect(noReason.status).toBe(422);
     const ok = await post(s.admin.token, `/payments/${s.order.orderId}/resolve`, { version: p.body.version, reason: 'Đã đối chiếu Seller Center' });
     expect(ok.body.status).toBe('resolved');
+  });
+
+  it('D42-06s: CEO soạn cấu hình phí rồi tự chốt lệch vượt hạn mức được, đánh dấu tự duyệt trong lịch sử và nhật ký (#249)', async () => {
+    const s = await setup();
+    const { rows } = await testPool().query(
+      `select m.account_id from core.memberships m join core.member_roles r on r.membership_id = m.id
+        where m.company_id = $1 and r.role_id = '00000000-0000-4000-8000-000000000001'`,
+      [s.companyId],
+    );
+    const ceoId: string = rows[0].account_id;
+    await testPool().query(`update finance.config_versions set created_by = $1 where company_id = $2 and kind = 'fee'`, [ceoId, s.companyId]);
+    await deliver(s);
+    // Lệch vượt hạn mức tự chốt: CEO chốt luôn, không cần bước duyệt (US-TI-07 dòng 6)
+    await runSettlement(fakeSource(() => settlementOf('C', '-10320.00')), s.companyId, null, s.shopId);
+    const p = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(p.body).toMatchObject({ needsCeoApproval: true, feeConfigAuthor: { id: ceoId } });
+    const res = await post(s.ceo, `/payments/${s.order.orderId}/resolve`, { version: p.body.version, reason: 'CEO tự đối chiếu' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.resolved).toMatchObject({ by: { id: ceoId }, selfApproved: true });
+    expect(res.body.statusHistory.at(-1)).toMatchObject({ to: 'resolved', selfApproved: true });
+    const audit = await request(app).get('/api/v1/audit/logs?selfApproved=true').set('Authorization', `Bearer ${s.ceo}`);
+    expect(audit.body.items).toContainEqual(
+      expect.objectContaining({ entityType: 'finance.order_settlements', entityId: s.order.orderId, selfApproved: true }),
+    );
+  });
+
+  it('D42-06: Admin khác người soạn phí chốt thì không phải tự duyệt', async () => {
+    const s = await setup();
+    await deliver(s);
+    await runSettlement(fakeSource(() => settlementOf('N', '-9000.00')), s.companyId, null, s.shopId);
+    const p = await get(s.admin.token, `/payments/${s.order.orderId}`);
+    const res = await post(s.admin.token, `/payments/${s.order.orderId}/resolve`, { version: p.body.version, reason: 'Đã đối chiếu' });
+    expect(res.body.resolved).toMatchObject({ selfApproved: false });
+    expect(res.body.statusHistory.at(-1)).toMatchObject({ to: 'resolved', selfApproved: false });
+  });
+
+  it('D43-Q: Admin chỉ có quyền chốt lệch (không có finance.invoice.view) vẫn xem được đối soát (§21.0)', async () => {
+    const s = await setup();
+    await setModuleEnabled(s.companyId, 'channel', true);
+    const res = await get(s.admin.token, '/settlements');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect((await get(s.admin.token, '/settlement-lines?shopId=' + s.shopId)).status).not.toBe(403);
+    const sale = await addMember(s.companyId, 'sale');
+    expect((await get(sale.token, '/settlements')).status).toBe(403);
   });
 
   it('kéo quyết toán qua API: gian hàng không thuộc công ty thì 404; Sale không xem được trạng thái tiền', async () => {

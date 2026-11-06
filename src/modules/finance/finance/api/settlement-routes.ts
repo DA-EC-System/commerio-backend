@@ -11,6 +11,7 @@ import {
   listSettlementLines,
   listSettlements,
 } from '../service/settlement-views.ts';
+import { financeView } from './access.ts';
 import { IdParams } from './schemas.ts';
 import { SettlementImportBody, SettlementLineListQuery, SettlementListQuery } from './settlement-schemas.ts';
 
@@ -28,7 +29,8 @@ const channelEnabled: RequestHandler = (_req, res, next) => {
 
 /** Route đối soát tiền sàn (Documents/21 §12.6; plan #30), gắn vào router của finance. */
 export function mountSettlementRoutes(router: Router, ctx: FinanceContext): void {
-  const view = [ctx.authorize('finance.invoice.view'), channelEnabled];
+  // Xem đối soát: có ít nhất một quyền tiền (§21.0, #249), như sổ tiền và trạng thái tiền
+  const view = [financeView(ctx), channelEnabled];
   const write = [ctx.authorize('finance.voucher.create'), channelEnabled];
 
   router.get('/settlements', ...view, validate({ query: SettlementListQuery }), async (_req, res) => {
