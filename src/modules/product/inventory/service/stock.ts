@@ -121,7 +121,7 @@ async function moveDocuments(moves: readonly MoveRow[], purchaseNumbers: Purchas
   ];
   const stockIds = idsOf(true);
   const purchaseIds = idsOf(false);
-  const heads = stockIds.length ? await documentHeads(stockIds) : new Map();
+  const heads = await documentHeads(stockIds); // không có id thì trả Map rỗng, không chạy câu nào
   const numbers = purchaseIds.length ? await purchaseNumbers(purchaseIds) : new Map<string, string>();
   const orphan = (m: MoveRow) =>
     new AppError(500, 'internal_error', `Thẻ kho ${m.id} trỏ chứng từ ${m.sourceId} không tồn tại`);
