@@ -56,6 +56,7 @@ Phần còn lại của #206 viết spec riêng: (2) số liệu và API §15 (�
 | Q21 | `ship` không `forced` không trả 422 | Bàn giao thường trừ tồn thực và đang giữ cùng một số nên phần hụt không tăng, `worsens` không bao giờ đúng. Trừ đang giữ xuống âm nghĩa là kiện chưa giữ hàng: lỗi lập trình của bên gọi (500) |
 | Q22 | Phiếu do hệ thống lập ghi `created_at = clock_timestamp()` | `now()` là giờ đầu giao dịch. Giao dịch bắt đầu trước mà chờ khoá rồi chèn sau sẽ có `created_at` nhỏ hơn phiếu đã chèn trước nó, làm sai thứ tự lượt (Q17). `clock_timestamp()` lấy giờ lúc chèn, sau khi đã khoá dòng tồn |
 | Q23 | Bản giả làm trước, PR riêng, không chờ Documents | #206 mục "Làm trước"; #199 và #202 ghi "dùng bản giả trả thành công" |
+| Q24 | SKU chỉ đổi đang giữ (`reserve`, `release`) thì không tăng `version` của dòng tồn. SKU có tồn thực, chờ xử lý hoặc giá vốn đổi thì tăng như cũ | `version` là `reorderVersion` khi đặt ngưỡng (`service/stock.ts`). Giữ hàng chạy mỗi lần kéo đơn; nếu tăng `version` thì người đang sửa ngưỡng nhận 409 "người khác sửa" dù không ai sửa ngưỡng. Cùng lý do `setAlertActive` không tăng `version`. Khang chốt 06/11/2026 |
 
 ## 4. Phạm vi
 
@@ -154,7 +155,7 @@ applyChange(change: StockChange, precheck?: (locked: ReadonlyMap<string, LevelRo
    - `reserved < 0`: `Error` "nhả quá số đang giữ" kèm SKU (500);
    - `quarantine < 0`: `InsufficientStock`;
    - không `forced` và `worsens(trước, sau)`: `InsufficientStock`.
-6. `saveLevel` (`on_hand`, `reserved`, `quarantine`, `avg_cost`, `invariant_broken = breaksInvariant(sau)`, `version + 1`), `insertMoves`.
+6. `saveLevel` (`on_hand`, `reserved`, `quarantine`, `avg_cost`, `invariant_broken = breaksInvariant(sau)`; `version + 1` trừ SKU chỉ đổi đang giữ, Q24), `insertMoves`.
 7. Với mỗi SKU có `on_hand` đổi, theo thứ tự `variantId`: `publishEvent('inventory.stock_changed', { variantId, onHand, reserved, available })`, số sau khi ghi (Q15).
 8. `recheckThresholds(SKU có on_hand hoặc reserved đổi)` (Q15).
 9. Trả `true`.

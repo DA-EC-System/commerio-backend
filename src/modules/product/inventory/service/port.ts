@@ -1,5 +1,5 @@
 // Hàm inventory cho module con khác cùng module lớn `product` (spec #111 mục 5.5). Chạy trong `withCompany` của bên gọi.
-import { notImplemented } from '../../../../shared/errors/app-error.ts';
+import { randomUUID } from 'node:crypto';
 import { getVariants } from '../../catalog/index.ts';
 import { availableQty } from '../domain/stock.ts';
 import { takeNextNumber } from '../repository/counters.ts';
@@ -56,26 +56,32 @@ export async function availableOf(variantIds: readonly string[]): Promise<Map<st
 /** Số kế tiếp của một loại chứng từ trong công ty (bắt đầu từ 1); bên gọi tự ghép tiền tố (`DN-000001`). */
 export const nextDocNumber = takeNextNumber;
 
-// Chữ ký cổng theo kiện (Documents/21 mục 11.1), đã chốt để order code theo; thân làm ở PR sau của #111.
+// Chữ ký cổng theo kiện (Documents/21 mục 11.1, bản 29/10/2026). Hiện là bản giả trả thành công để fulfillment và yêu
+// cầu trả code theo (spec 2026-11-06-206 Q23); thân thật làm ở PR sau của #206.
 
 export interface StockLine {
   variantId: string;
   quantity: number;
 }
 
+const fakeDocument = (number: string) => Promise.resolve({ documentId: randomUUID(), number });
+
 /** Giữ hàng cho kiện; `reserved: false` khi không đủ khả dụng. */
 export function reserve(_packageId: string, _lines: readonly StockLine[]): Promise<{ reserved: boolean }> {
-  return Promise.reject(notImplemented('reserve', '#111'));
+  // shortcut: bản giả, không cộng đang giữ; thân thật theo spec 2026-11-06-206 mục 5.5.
+  return Promise.resolve({ reserved: true });
 }
 
 /** Trả phần đang giữ của kiện. */
 export function release(_packageId: string, _lines: readonly StockLine[]): Promise<void> {
-  return Promise.reject(notImplemented('release', '#111'));
+  // shortcut: bản giả, không trừ đang giữ; thân thật theo spec 2026-11-06-206 mục 5.5.
+  return Promise.resolve();
 }
 
 /** Bàn giao kiện: trừ tồn thực và đang giữ, lập phiếu xuất theo kiện. */
 export function ship(_packageId: string, _lines: readonly StockLine[], _opts: { actorId: string }): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('ship', '#111'));
+  // shortcut: bản giả, không trừ tồn, không lập phiếu; thân thật theo spec 2026-11-06-206 mục 5.5.
+  return fakeDocument('XK-000000');
 }
 
 /** Đảo bàn giao: cộng lại tồn thực, lập phiếu đảo. */
@@ -84,7 +90,8 @@ export function reverseShipment(
   _lines: readonly StockLine[],
   _opts: { actorId: string; reason: string },
 ): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('reverseShipment', '#111'));
+  // shortcut: bản giả, không cộng tồn, không lập phiếu; thân thật theo spec 2026-11-06-206 mục 5.5.
+  return fakeDocument('DX-000000');
 }
 
 /** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
@@ -92,5 +99,6 @@ export function receiveBack(
   _source: { type: 'package' | 'return_request'; id: string },
   _lines: readonly StockLine[],
 ): Promise<{ documentId: string; number: string }> {
-  return Promise.reject(notImplemented('receiveBack', '#111'));
+  // shortcut: bản giả, không lập phiếu; thân thật theo spec 2026-11-06-206 mục 5.5.
+  return fakeDocument('KT-000000');
 }

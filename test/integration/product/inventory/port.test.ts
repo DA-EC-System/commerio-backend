@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   availableOf,
@@ -25,15 +26,18 @@ describe('availableOf', () => {
   });
 });
 
-describe('hàm cổng tạm', () => {
+describe('bản giả cổng theo kiện (spec #206 Q23)', () => {
+  it('reserve trả reserved: true; release không ném', async () => {
+    await expect(reserve(randomUUID(), [])).resolves.toEqual({ reserved: true });
+    await expect(release(randomUUID(), [])).resolves.toBeUndefined();
+  });
+
   it.each([
-    ['reserve', () => reserve('p', [])],
-    ['release', () => release('p', [])],
-    ['ship', () => ship('p', [], { actorId: 'u' })],
-    ['reverseShipment', () => reverseShipment('p', [], { actorId: 'u', reason: 'x' })],
-    ['receiveBack', () => receiveBack({ type: 'package', id: 'p' }, [])],
-  ])('AC7: %s trả 501 not_implemented', async (_name, call) => {
-    await expect(call()).rejects.toMatchObject({ status: 501, code: 'not_implemented' });
+    ['ship', 'XK-000000', () => ship(randomUUID(), [], { actorId: randomUUID() })],
+    ['reverseShipment', 'DX-000000', () => reverseShipment(randomUUID(), [], { actorId: randomUUID(), reason: 'x' })],
+    ['receiveBack', 'KT-000000', () => receiveBack({ type: 'package', id: randomUUID() }, [])],
+  ])('%s trả phiếu giả %s', async (_name, number, call) => {
+    expect(await call()).toEqual({ documentId: expect.any(String), number });
   });
 });
 

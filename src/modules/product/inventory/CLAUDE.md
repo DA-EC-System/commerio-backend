@@ -41,7 +41,7 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `recheckThresholds(variantIds)`: purchasing gọi sau khi đang về đổi.
 - `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).
-- `reserve`, `release`, `ship`, `reverseShipment`, `receiveBack` (Documents/21 mục 11.1): chữ ký đã chốt, hiện trả 501 `not_implemented` tới PR sau của #111.
+- `reserve`, `release`, `ship`, `reverseShipment`, `receiveBack` (Documents/21 mục 11.1): bản giả trả thành công (#206, không ghi gì: `reserve` trả `true`, phiếu số `XK-000000`, `DX-000000`, `KT-000000`); thân thật làm ở PR sau, spec `docs/superpowers/specs/2026-11-06-206-cong-ton-theo-kien-design.md`.
 
 ## Quyền ở API (`api/routes.ts`)
 
