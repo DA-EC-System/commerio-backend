@@ -37,7 +37,8 @@ Thao tác `POST /requests/:id/:action` và `POST /goods-receipts/:id/:action` ch
 - **Ghi sổ** (`post`, `post_short`, một giao dịch): kiểm lại `đạt + lỗi ≤ còn chờ` sau khi khoá các dòng đề nghị (422 `over_outstanding`, hai phiếu đua nhau thì phiếu sau trượt), cộng số nhận vào dòng đề nghị, `inventory.receiveGoods` (đạt vào tồn thực theo giá đề nghị, lỗi vào chờ xử lý), lập phiếu trả NCC nháp cho hàng lỗi (`created_by` trống, nguồn `receipt_defect`), rồi `applyReceiving` chuyển đề nghị sang nhận một phần hoặc nhận xong.
 - **Tự Đã xử lý** (`autoResolveShort`, lịch sử `auto_resolve` nguồn hệ thống): đề nghị nhận xong thì mọi phiếu `short` sang `resolved` kết quả `follow_up` trỏ phiếu vừa ghi sổ (kể cả phiếu đang kiểm còn lại, chỉ có thiếu hoặc trả tại chỗ, ghi sổ sau khi đề nghị đã nhận xong: đề nghị giữ nguyên trạng thái); đề nghị đóng thiếu thì kết quả `close_short`, ghi chú là lý do.
 - **Đóng thiếu** chỉ có một đường: `service/request-receiving.ts` `closeShortRequest`, dùng cho thao tác `close_short` của đề nghị và kết quả giao thiếu `close_short`. Còn phiếu đang kiểm thì 409 `receipt_counting`.
-- Tệp đính kèm chưa nhận tới #114: `attachmentIds` khác rỗng trả 422 `errors.attachments`.
+- Phiếu giao bù (#244): lập phiếu với `followsUpReceiptId` là phiếu `short` của cùng đề nghị (sai thì 422 `errors.followsUpReceiptId`), chỉ để tham chiếu; chi tiết trả `followsUp`.
+- Tệp đính kèm chưa nhận tới #114 (kho tệp #212): `attachmentIds` khác rỗng trả 422 `errors.attachments`; luật `evidence_required` (người giao đã đi, có lỗi hoặc thiếu mà chưa có ảnh) bật cùng lúc có tệp.
 
 ### Phiếu trả NCC (#210)
 

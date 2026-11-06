@@ -155,7 +155,15 @@ export const ReceiptListQuery = z.object({
 const deliveryMode = z.enum(['waiting', 'left'], 'Chọn cách giao');
 
 export const GoodsReceiptCreateInput = z
-  .object({ requestId: z.string('Chọn đề nghị nhập'), deliveryMode, note: text(500) })
+  .object({
+    requestId: z.string('Chọn đề nghị nhập'),
+    deliveryMode,
+    note: text(500),
+    followsUpReceiptId: z
+      .string()
+      .nullish()
+      .meta({ description: 'Phiếu `short` cùng đề nghị mà đợt này giao bù (25 §4.1), chỉ để tham chiếu' }),
+  })
   .meta({ id: 'GoodsReceiptCreateInput' });
 
 const countMessage = 'Nhập số nguyên từ 0';
@@ -354,6 +362,11 @@ export const GoodsReceipt = z
     lines: z.array(GoodsReceiptLine),
     attachments: z.array(z.object({ fileId: z.string(), name: z.string(), url: z.string(), contentType: z.string() }).strict()),
     requestCreatedById: z.string().meta({ description: 'Người lập đề nghị: người ghi sổ phải khác' }),
+    followsUp: z
+      .object({ type: z.literal('goods_receipt'), id: z.uuid(), number: z.string() })
+      .strict()
+      .nullable()
+      .meta({ description: 'Phiếu giao thiếu mà phiếu này giao bù (`followsUpReceiptId` lúc lập)' }),
     shortResolution: z
       .object({
         kind: z.enum(['follow_up', 'close_short', 'supplier_wrong']),
