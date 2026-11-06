@@ -13,11 +13,13 @@ export const inventoryModule: ModuleDefinition = {
 
 export {
   availableOf,
+  type DocumentRef,
   nextDocNumber,
   receiveBack,
   release,
   reserve,
   reverseShipment,
+  type ShipOptions,
   ship,
   type StockLine,
   type StockSnapshot,

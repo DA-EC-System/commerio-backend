@@ -58,17 +58,13 @@ export const nextDocNumber = takeNextNumber;
 // Chữ ký cổng theo kiện (Documents/21 mục 11.1, bản 29/10/2026). Hiện là bản giả trả thành công để fulfillment và yêu
 // cầu trả code theo (spec 2026-11-06-206 Q23); thân thật làm ở PR sau của #206.
 
-export type { StockLine } from '../domain/documents.ts';
+export type { DocumentRef, StockLine } from '../domain/documents.ts';
 
 const fakeDocument = (number: string) => Promise.resolve({ documentId: randomUUID(), number });
 
 export { release, reserve } from './reservation.ts';
 
-/** Bàn giao kiện: trừ tồn thực và đang giữ, lập phiếu xuất theo kiện. */
-export function ship(_packageId: string, _lines: readonly StockLine[], _opts: { actorId: string }): Promise<{ documentId: string; number: string }> {
-  // shortcut: bản giả, không trừ tồn, không lập phiếu; thân thật theo spec 2026-11-06-206 mục 5.5.
-  return fakeDocument('XK-000000');
-}
+export { type ShipOptions, ship } from './shipment.ts';
 
 /** Đảo bàn giao: cộng lại tồn thực, lập phiếu đảo. */
 export function reverseShipment(
