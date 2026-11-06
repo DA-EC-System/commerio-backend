@@ -29,7 +29,7 @@ Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (
 ## Số liệu trên `Shop` và kết quả nối (#200 §18.7.1, §18.7.4)
 
 - `pendingOrderCount`, `orders7d`: một câu đếm gộp cho cả danh sách qua `orderCountsByShop` của `order` (không N+1, không join chéo schema). `statusChangedAt`: `lastTransitionsAt` của core trên `core.state_transitions` (bỏ bản ghi lúc tạo), không có thì `createdAt`; không thêm cột. `feeConfigVersion` luôn null tới #230.
-- Mỗi phần tử `shops[]` của callback/token có `previousStatus` (trạng thái trước lần nối, null khi tạo mới) và `remoteSkuCount` (`listSkus` của adapter, bỏ SKU `deleted`, gọi ngoài giao dịch trước khi ghi). Sàn chưa có `listSkus` hoặc đọc lỗi (`MarketplaceError`) thì 0, ghi log, không chặn việc nối. Gốc response không có hai trường này.
+- Mỗi phần tử `shops[]` của callback/token có `previousStatus` (trạng thái trước lần nối, null khi tạo mới) và `remoteSkuCount` (`listSkus` của adapter, bỏ SKU `deleted`, gọi ngoài giao dịch trước khi ghi, các gian hàng song song, hạn tổng 10 giây). Sàn chưa có `listSkus`, gọi lỗi (mọi lỗi) hoặc quá hạn thì `null`, ghi log, không chặn việc nối. Gốc response không có hai trường này.
 
 ## Cho module khác
 

@@ -105,7 +105,8 @@ export interface ShopConnectionResult {
 export interface ShopConnectionItem extends ShopConnectionResult {
   /** null khi `created: true`. */
   previousStatus: ShopStatus | null;
-  remoteSkuCount: number;
+  /** null khi chưa đọc được: sàn không có `listSkus`, sàn lỗi hoặc quá `REMOTE_SKU_COUNT_MS`. */
+  remoteSkuCount: number | null;
 }
 
 /**
@@ -372,8 +373,7 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     if (owner && owner !== actor.companyId) throw connectedElsewhere();
   }
   const adapter = adapterOf(platform);
-  const skuCounts: number[] = [];
-  for (const c of unique) skuCounts.push(await remoteSkuCount(adapter, c));
+  const skuCounts = await Promise.all(unique.map((c) => remoteSkuCount(adapter, c)));
   let results: ShopConnectionItem[];
   try {
     results = await withCompany(actor.companyId, async () => {
@@ -398,18 +398,38 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
   return { shop, created, reconnect, shops: results };
 }
 
+/** Hạn tổng cho việc đếm SKU trên sàn lúc nối (§18.7.4): quá hạn thì `remoteSkuCount: null`, việc nối vẫn xong. */
+const REMOTE_SKU_COUNT_MS = 10_000;
+
 /**
  * Số SKU người bán đọc được trên sàn lúc nối (§18.7.4), không tính SKU đã xoá trên sàn, như gợi ý ghép của thiết lập.
- * Gọi sàn ngoài giao dịch. Chỉ để hiện trên màn kết quả nên không chặn việc nối: sàn chưa có `listSkus` hoặc đọc lỗi thì 0.
+ * Gọi sàn ngoài giao dịch, các gian hàng của một lần nối đếm song song. Chỉ để hiện trên màn kết quả nên không chặn việc
+ * nối: sàn chưa có `listSkus`, gọi lỗi (mọi lỗi) hoặc quá `REMOTE_SKU_COUNT_MS` thì `null` (chưa đọc được), ghi log.
+ * `listSkus` không nhận `AbortSignal` nên lời gọi quá hạn vẫn chạy nốt ở nền, kết quả bị bỏ.
  */
-async function remoteSkuCount(adapter: MarketplaceAdapter, c: ShopConnection): Promise<number> {
-  if (!adapter.listSkus) return 0;
+async function remoteSkuCount(adapter: MarketplaceAdapter, c: ShopConnection): Promise<number | null> {
+  if (!adapter.listSkus) return null;
+  const listSkus = adapter.listSkus.bind(adapter);
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), REMOTE_SKU_COUNT_MS);
+  });
   try {
-    return (await adapter.listSkus(c.tokens.accessToken)).filter((r) => r.state !== 'deleted').length;
+    const result = await Promise.race([listSkus(c.tokens.accessToken), timeout]);
+    if (result === 'timeout') {
+      logger.warn({ externalShopId: c.externalShopId, timeoutMs: REMOTE_SKU_COUNT_MS }, 'Đếm SKU trên sàn lúc nối quá hạn');
+      return null;
+    }
+    return result.filter((r) => r.state !== 'deleted').length;
   } catch (err) {
-    if (!(err instanceof MarketplaceError)) throw err;
-    logger.warn({ externalShopId: c.externalShopId, kind: err.kind, platformCode: err.platformCode }, 'Không đọc được SKU trên sàn lúc nối');
-    return 0;
+    if (err instanceof MarketplaceError) {
+      logger.warn({ externalShopId: c.externalShopId, kind: err.kind, platformCode: err.platformCode }, 'Không đọc được SKU trên sàn lúc nối');
+    } else {
+      logger.error({ err, externalShopId: c.externalShopId }, 'Lỗi khi đếm SKU trên sàn lúc nối');
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

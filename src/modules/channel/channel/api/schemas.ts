@@ -200,8 +200,9 @@ export const ShopConnectionResult = z
     previousStatus: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']).nullable().meta({
       description: 'Trạng thái gian hàng ngay trước lần nối này; `null` khi `created: true` (21 §18.7.4)',
     }),
-    remoteSkuCount: z.number().int().meta({
-      description: 'Số SKU người bán tìm thấy trên sàn lúc nối, không tính SKU đã xoá; 0 khi sàn chưa đọc được danh sách SKU (21 §18.7.4)',
+    remoteSkuCount: z.number().int().nullable().meta({
+      description:
+        'Số SKU người bán tìm thấy trên sàn lúc nối, không tính SKU đã xoá. `null` khi chưa đọc được: sàn chưa hỗ trợ đọc danh sách SKU, sàn lỗi (kể cả hết hạn mức gọi) hoặc quá 10 giây; việc nối vẫn xong (21 §18.7.4)',
     }),
   })
   .strict()

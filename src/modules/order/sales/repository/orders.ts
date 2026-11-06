@@ -163,22 +163,25 @@ export async function findCompletionCandidates(): Promise<{ id: string; companyI
     );
 }
 
+/** Đơn chưa xong: một vị từ cho `openOrders` của ngắt, `orders` của 409 và `pendingOrderCount` (§18.7.1), để không lệch. */
+const OPEN = notInArray(orders.status, ['completed', 'cancelled']);
+
 /** Số đơn của gian hàng chưa `completed` hoặc `cancelled` (#207). Gọi trong `withCompany`. */
 export async function countOpenOrdersOfShop(shopId: string): Promise<number> {
+  requireCompanyId('countOpenOrdersOfShop');
   const [row] = await getDb()
     .select({ n: count() })
     .from(orders)
-    .where(and(eq(orders.shopId, shopId), notInArray(orders.status, ['completed', 'cancelled'])));
+    .where(and(eq(orders.shopId, shopId), OPEN));
   return row!.n;
 }
-
-const OPEN = sql`${orders.status} not in ('completed', 'cancelled')`;
 
 /**
  * Số đơn chưa xong và số đơn đặt từ `placedSince` (theo `placed_at`) của nhiều gian hàng, một câu cho cả danh sách
  * (Documents/21 §18.7.1). Gian hàng không có đơn không có trong Map. Gọi trong `withCompany`.
  */
 export async function orderCountsOfShops(shopIds: readonly string[], placedSince: Date): Promise<Map<string, { open: number; placed: number }>> {
+  requireCompanyId('orderCountsOfShops');
   if (shopIds.length === 0) return new Map();
   const rows = await getDb()
     .select({
@@ -194,6 +197,7 @@ export async function orderCountsOfShops(shopIds: readonly string[], placedSince
 
 /** Tối đa `limit` đơn chưa xong của gian hàng, cũ nhất trước theo lúc đặt (chưa có thì lúc tạo) (§18.7.8). */
 export async function oldestOpenOrdersOfShop(shopId: string, limit: number): Promise<{ id: string; code: string; externalOrderId: string | null }[]> {
+  requireCompanyId('oldestOpenOrdersOfShop');
   return getDb()
     .select({ id: orders.id, code: orders.code, externalOrderId: orders.externalOrderId })
     .from(orders)
