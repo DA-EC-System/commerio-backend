@@ -112,6 +112,20 @@ describe('Lazada: kéo đơn (#105)', () => {
     });
   });
 
+  // Mẫu response của GetOrders, GetMultipleOrderItems ghi hai cờ dạng chuỗi `"true"` (open.lazada.com, tra 06/11/2026; review #267).
+  it.each([
+    [{ is_cancel_pending: 'true' }, true],
+    [{ need_cancel_confirm: 'true' }, true],
+    [{ is_cancel_pending: true }, true],
+    [{ is_cancel_pending: 'false', need_cancel_confirm: 'false' }, false],
+  ])('cờ xin huỷ %o → cancelRequested %s', async (flags, expected) => {
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: '0', data: { ...order, ...flags } }))
+      .mockResolvedValueOnce(json({ code: '0', data: [item] }));
+    expect((await createLazadaAdapter(config, fn).getOrder!('t', '533732107780318')).cancelRequested).toBe(expected);
+  });
+
   it('getOrder gộp đơn và món thành đơn chuẩn hoá', async () => {
     const fn = vi
       .fn()

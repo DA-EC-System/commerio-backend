@@ -241,7 +241,8 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
       raw: Object.fromEntries(ADDRESS_KEYS.flatMap((k) => (opt(a[k]) ? [[k === 'post_code' ? 'postCode' : k, opt(a[k])!]] : []))),
     },
     shippingFee: str(o.shipping_fee ?? 0),
-    cancelRequested: o.is_cancel_pending === true || o.need_cancel_confirm === true,
+    // Mẫu response của GetOrders ghi hai cờ dạng chuỗi `"true"`; nhận cả boolean (review #267).
+    cancelRequested: [o.is_cancel_pending, o.need_cancel_confirm].some((v) => v === true || v === 'true'),
     info: {
       platformPaymentMethod: opt(o.payment_method),
       buyerNote: opt(o.buyer_note),
