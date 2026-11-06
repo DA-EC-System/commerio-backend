@@ -31,7 +31,16 @@ export class InsufficientStock extends Error {
   }
 }
 
-export async function applyMoves(source: { type: StockSourceType; id: string }, moves: readonly Move[], actorId: string | null): Promise<void> {
+/**
+ * `allowBreak`: được làm vỡ bất biến tồn thực (bật cờ Tồn âm) — chỉ kiểm kê đã duyệt và bàn giao bắt buộc theo sàn
+ * (Documents/25 §7.1). Chờ xử lý vẫn không được âm.
+ */
+export async function applyMoves(
+  source: { type: StockSourceType; id: string },
+  moves: readonly Move[],
+  actorId: string | null,
+  options: { allowBreak?: boolean } = {},
+): Promise<void> {
   companyOfTransaction();
   const real = moves.filter((m) => m.qty !== 0);
   if (!real.length) return;
@@ -70,7 +79,7 @@ export async function applyMoves(source: { type: StockSourceType; id: string }, 
   const short = ids.filter((id) => {
     const before = levels.get(id)!;
     const after = next.get(id)!;
-    return after.quarantine < 0 || worsens(before, { onHand: after.onHand, reserved: before.reserved });
+    return after.quarantine < 0 || (!options.allowBreak && worsens(before, { onHand: after.onHand, reserved: before.reserved }));
   });
   if (short.length) throw new InsufficientStock(short);
 
@@ -82,13 +91,14 @@ export async function applyMoves(source: { type: StockSourceType; id: string }, 
 
   // Payload là số tuyệt đối sau khi ghi: bên nghe nhận trùng hay lệch thứ tự vẫn đúng (Q7).
   const touched = new Set(real.filter((m) => m.bucket === 'on_hand').map((m) => m.variantId));
+  const locks = await lockedOf([...touched]);
   for (const variantId of [...touched].sort()) {
     const { onHand } = next.get(variantId)!;
     const { reserved } = levels.get(variantId)!;
     await publishEvent({
       type: 'inventory.stock_changed',
       aggregateId: variantId,
-      payload: { variantId, onHand, reserved, available: availableQty(onHand, reserved, lockedOf(variantId)) },
+      payload: { variantId, onHand, reserved, available: availableQty(onHand, reserved, locks.get(variantId) ?? 0) },
     });
   }
   await recheckThresholds([...touched]);

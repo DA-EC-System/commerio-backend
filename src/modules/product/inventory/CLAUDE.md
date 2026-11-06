@@ -2,7 +2,7 @@
 
 Các con số tồn, thẻ kho, phiếu kho, giá vốn bình quân, ngưỡng tồn. **Nơi duy nhất đổi số tồn.** Bảng nằm trong schema `product` (`Documents/19` mục 3.2). Hợp đồng API: `Documents/21` mục 15.
 
-Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ theo phiếu nhận (#111). Phiếu kho có duyệt (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về) và ghi sổ theo kiện làm ở các issue vòng đời B2, B3 (`Documents/21` mục 15–19). Phiếu nhập/xuất tay và giữ hàng theo đơn của mô hình cũ đã bỏ cùng bảng của chúng (28/10/2026).
+Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ theo phiếu nhận (#111), phiếu kho có duyệt (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về; #208). Ghi sổ theo kiện làm ở issue vòng đời B2 (`Documents/21` mục 15–19). Phiếu nhập/xuất tay và giữ hàng theo đơn của mô hình cũ đã bỏ cùng bảng của chúng (28/10/2026).
 
 ## Con số và bất biến
 
@@ -10,7 +10,8 @@ Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ t
 |---|---|---|
 | Tồn thực `on_hand`, đang giữ `reserved`, chờ xử lý `quarantine` | `stock_levels` | Đang giữ có nguồn là dòng kiện (`order.package_lines.reserved_qty`) |
 | Đang về | Tính khi đọc | Còn chờ của đề nghị nhập đã đặt NCC; `incomingOf` của purchasing tiêm qua `ctx` (`product/index.ts`), vì purchasing import inventory |
-| Tạm khoá, đang thiếu | Tính khi đọc | Từ phiếu kho chờ duyệt, kiện thiếu hàng; tới khi có các nguồn đó thì bằng 0 (`service/views.ts`, `service/port.ts`) |
+| Tạm khoá | Tính khi đọc | Phần giảm tồn thực của phiếu kho `pending` (`repository/documents.ts` `pendingLocks`, `lockedOf`): xuất huỷ từ tồn thực, chuyển chờ xử lý lấy số lượng, kiểm kê lấy phần đếm thiếu; phiếu lấy từ chờ xử lý không khoá (#208) |
+| Đang thiếu | Tính khi đọc | Từ kiện thiếu hàng; tới khi có nguồn đó thì bằng 0 |
 | Khả dụng | Tính | `max(0, tồn thực − đang giữ − tạm khoá)`, là số đẩy lên sàn |
 | Ngưỡng `min_qty` | `stock_levels` | `null` = chưa đặt; `reorderVersion` là `version` của dòng tồn |
 | Lệch tồn `drift` | Chưa có | Luôn `false` tới #206 phần 2b (cần dữ liệu đẩy tồn của `channel`) |
@@ -43,7 +44,16 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `recheckThresholds(variantIds)`: purchasing gọi sau khi đang về đổi.
 - `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).
-- `reserve`, `release`, `ship`, `reverseShipment`, `receiveBack` (Documents/21 mục 11.1): chữ ký đã chốt, hiện trả 501 `not_implemented` tới PR sau của #111.
+- `receiveBack(source, lines, meta?)` (Documents/21 mục 11.1, #208): lập phiếu kiểm hàng về nháp, gọi lại cùng nguồn trả phiếu cũ; `meta` mang mã chứng từ nguồn, đơn, gian hàng, giá vốn dòng kiện gốc cho `inventory.return_inspected`. `createQuarantineWriteOff(source, lines, note, actorId)`: xuất huỷ nháp từ chờ xử lý (phiếu trả NCC bị huỷ, #210).
+- `reserve`, `release`, `ship`, `reverseShipment` (Documents/21 mục 11.1): chữ ký đã chốt, hiện trả 501 `not_implemented` tới PR sau của #111.
+
+## Phiếu kho có duyệt (`service/documents.ts`, #208)
+
+- Bảng chuyển ở `domain/stock-document.ts` (chép FE `src/lib/machines/stockDocument.ts`): duyệt, từ chối cần người khác người lập (kiểm hàng về: khác người gửi duyệt phần thiếu, cột `created_by` đổi sang người gửi), CEO hoặc công ty một người tự duyệt được (`self_approved`, nhãn trong lịch sử, nhật ký, báo cáo CEO).
+- Kiểm kê chụp tồn sổ của ngăn (`book_qty`) mỗi lần lưu; Δ = đếm − sổ. Duyệt kiểm kê được làm tồn âm (`applyMoves` `allowBreak`, 25 §7.1) và phát `inventory.stocktake_posted`.
+- Gửi duyệt xuất huỷ, chuyển chờ xử lý: thiếu khả dụng (hoặc chờ xử lý) thì 422 `stock_insufficient` theo dòng. Xuất huỷ chờ xử lý bị từ chối thì `needsDecision` tới khi `/decide` (nhập lại tồn, hoặc lập phiếu trả NCC nháp).
+- Kiểm hàng về ghi sổ: bán lại vào tồn thực (giá vốn bình quân không đổi), hỏng và trả NCC vào chờ xử lý; hỏng sinh xuất huỷ nháp (nguồn là phiếu này), trả NCC sinh phiếu trả NCC nháp qua `setSupplierReturnPort` (purchasing import inventory nên nối ở `product/index.ts`); nguồn `return_request` thì phát `inventory.return_inspected`.
+- Dòng phiếu chèn với `created_at` lệch từng mili giây để đọc đúng thứ tự nhập.
 
 ## Quyền ở API (`api/routes.ts`)
 

@@ -183,6 +183,13 @@
       "when": 1793981111975,
       "tag": "0025_chong-trung-quyet-toan",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793981125026,
+      "tag": "0026_phieu-kho-co-duyet",
+      "breakpoints": true
     }
   ]
 }
