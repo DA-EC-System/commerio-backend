@@ -221,8 +221,30 @@ export interface RemoteOrder {
   shippingFee: string;
   /** Khách xin huỷ, chờ người bán đồng ý. */
   cancelRequested: boolean;
+  /**
+   * Mốc sàn ghi đơn đã giao (TikTok `delivery_time`, #221); sàn không trả thì không có. Chỉ lưu ở `raw_orders`, hạn trả
+   * tính từ đây là việc của phía app.
+   */
+  deliveredAt?: Date | null;
   info: RemoteOrderInfo;
   lines: RemoteOrderLine[];
+}
+
+/** Lý do sàn bắt tách kiện (TikTok `must_split_reasons`, #221): vượt số món theo danh mục hay tổng số món một kiện. */
+export interface MustSplitReason {
+  /** Mã gốc của sàn (`CATEGORY_ITEM_LIMITATION`, `TOTAL_COUNT_LIMITATION`). */
+  type: string;
+  externalCategoryId: string | null;
+  maxCount: number | null;
+}
+
+/** Đơn tách kiện được không (#221; app dùng ở #205). */
+export interface SplitAttributes {
+  canSplit: boolean;
+  mustSplit: boolean;
+  /** Câu của sàn khi không tách được; null khi tách được. */
+  reason: string | null;
+  mustSplitReasons: MustSplitReason[];
 }
 
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
@@ -305,6 +327,22 @@ export interface MarketplaceAdapter {
   cancelOrder?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[], reasonId: string): Promise<void>;
   /** Đồng ý hay từ chối yêu cầu huỷ của khách trên đơn. */
   decideCancelRequest?(accessToken: string, externalOrderId: string, accept: boolean): Promise<void>;
+  /**
+   * Đơn tách kiện được không (#221). Chỉ sàn tự chia kiện mới có (`splitLevel` khác `none`); TikTok chỉ trả khi đơn đã
+   * `AWAITING_SHIPMENT`, trước đó sàn từ chối (`rejected`, vd 21001008).
+   */
+  splitAttributes?(accessToken: string, externalOrderId: string): Promise<SplitAttributes>;
+  /**
+   * Tách đơn thành các kiện, mỗi nhóm là mã món (`externalLineId`) vào một kiện mới (#221; app gọi ở #205). Trả mã kiện
+   * mới cùng thứ tự với `groups`. Sàn chỉ tách theo SKU (`splitLevel: 'sku'`) thì mọi món cùng SKU phải chung nhóm.
+   * Kiện mới về app qua lần kéo đơn kế tiếp (`packageCode` của món đổi).
+   */
+  splitOrder?(accessToken: string, externalOrderId: string, groups: readonly (readonly string[])[]): Promise<string[]>;
+  /**
+   * Báo sàn kiện sẵn sàng giao (#221; app gọi ở #239): sàn xếp hãng tới lấy (`pickup`) hay người bán mang ra điểm gửi
+   * (`drop_off`); không truyền thì sàn chọn theo cấu hình gian hàng. Trạng thái mới về qua lần kéo đơn kế tiếp.
+   */
+  shipPackage?(accessToken: string, packageCode: string, opts?: { handover?: 'pickup' | 'drop_off' }): Promise<void>;
 }
 
 /**
