@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  averageCost,
   breaksInvariant,
   isBelowMin,
   nextAlertState,
+  shortfall,
   stockState,
   stockValue,
   toDong,
@@ -45,23 +47,60 @@ describe('giá vốn khi tồn ≤ 0 (spec #111 Q5)', () => {
   });
 });
 
-describe('không làm tệ hơn (spec #111 Q6)', () => {
+describe('không làm tệ hơn theo phần hụt (spec #206 Q14)', () => {
   it('chặn khi tồn thực giảm mà kết quả vỡ bất biến', () => {
-    expect(worsens({ onHand: 2 }, { onHand: -1, reserved: 0 })).toBe(true);
-    expect(worsens({ onHand: 5 }, { onHand: 3, reserved: 4 })).toBe(true);
+    expect(worsens({ onHand: 2, reserved: 0 }, { onHand: -1, reserved: 0 })).toBe(true);
+    expect(worsens({ onHand: 5, reserved: 4 }, { onHand: 3, reserved: 4 })).toBe(true);
   });
 
   it('cho qua khi tồn thực tăng, kể cả khi vẫn còn âm', () => {
-    expect(worsens({ onHand: -3 }, { onHand: -1, reserved: 0 })).toBe(false);
-    expect(worsens({ onHand: -3 }, { onHand: 2, reserved: 0 })).toBe(false);
+    expect(worsens({ onHand: -3, reserved: 0 }, { onHand: -1, reserved: 0 })).toBe(false);
+    expect(worsens({ onHand: -3, reserved: 0 }, { onHand: 2, reserved: 0 })).toBe(false);
+    expect(worsens({ onHand: -5, reserved: 0 }, { onHand: -2, reserved: 0 })).toBe(false);
   });
 
   it('cho qua khi giảm mà bất biến vẫn đúng', () => {
-    expect(worsens({ onHand: 5 }, { onHand: 3, reserved: 3 })).toBe(false);
+    expect(worsens({ onHand: 5, reserved: 3 }, { onHand: 3, reserved: 3 })).toBe(false);
+  });
+
+  it('bàn giao thường khi đang Tồn âm thì qua: tồn 3 giữ 5 → tồn 1 giữ 3', () => {
+    expect(worsens({ onHand: 3, reserved: 5 }, { onHand: 1, reserved: 3 })).toBe(false);
+  });
+
+  it('giảm tồn làm phần hụt tăng thì chặn: tồn 5 giữ 2 → tồn 1 giữ 2', () => {
+    expect(worsens({ onHand: 5, reserved: 2 }, { onHand: 1, reserved: 2 })).toBe(true);
+  });
+
+  it('giữ quá tồn thực thì chặn', () => {
+    expect(worsens({ onHand: 5, reserved: 0 }, { onHand: 5, reserved: 6 })).toBe(true);
+  });
+
+  it('shortfall = đang giữ − tồn thực', () => {
+    expect([shortfall({ onHand: 3, reserved: 5 }), shortfall({ onHand: 5, reserved: 2 })]).toEqual([2, -3]);
   });
 
   it('breaksInvariant: âm, hoặc đang giữ > tồn thực', () => {
     expect([breaksInvariant(-1, 0), breaksInvariant(2, 3), breaksInvariant(2, 2)]).toEqual([true, true, false]);
+  });
+});
+
+describe('bình quân giá các dòng (giá đảo bàn giao, spec #206 Q17)', () => {
+  it('một dòng giữ nguyên giá', () => {
+    expect(averageCost([{ quantity: 3, unitCost: '80000' }]).toFixed(2)).toBe('80000.00');
+  });
+
+  it('nhiều dòng bình quân theo số lượng', () => {
+    expect(averageCost([{ quantity: 3, unitCost: '80000' }, { quantity: 2, unitCost: '90000' }]).toFixed(2)).toBe('84000.00');
+  });
+
+  it('làm tròn nửa lên 2 chữ số', () => {
+    expect(averageCost([{ quantity: 1, unitCost: '0.01' }, { quantity: 1, unitCost: '0' }]).toFixed(2)).toBe('0.01');
+    expect(averageCost([{ quantity: 1, unitCost: '0.01' }, { quantity: 2, unitCost: '0' }]).toFixed(2)).toBe('0.00');
+  });
+
+  it('từ chối mảng rỗng và số lượng không nguyên dương', () => {
+    expect(() => averageCost([])).toThrow();
+    expect(() => averageCost([{ quantity: 0, unitCost: '1' }])).toThrow();
   });
 });
 

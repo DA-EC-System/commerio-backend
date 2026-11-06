@@ -1,6 +1,7 @@
 // Hàm inventory cho module con khác cùng module lớn `product` (spec #111 mục 5.5). Chạy trong `withCompany` của bên gọi.
 import { randomUUID } from 'node:crypto';
 import { getVariants } from '../../catalog/index.ts';
+import type { StockLine } from '../domain/documents.ts';
 import { availableQty } from '../domain/stock.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import { levelsOf } from '../repository/levels.ts';
@@ -59,10 +60,7 @@ export const nextDocNumber = takeNextNumber;
 // Chữ ký cổng theo kiện (Documents/21 mục 11.1, bản 29/10/2026). Hiện là bản giả trả thành công để fulfillment và yêu
 // cầu trả code theo (spec 2026-11-06-206 Q23); thân thật làm ở PR sau của #206.
 
-export interface StockLine {
-  variantId: string;
-  quantity: number;
-}
+export type { StockLine } from '../domain/documents.ts';
 
 const fakeDocument = (number: string) => Promise.resolve({ documentId: randomUUID(), number });
 
