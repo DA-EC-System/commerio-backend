@@ -128,7 +128,7 @@ describe('Lazada: kéo đơn (#105)', () => {
       shipBy: new Date('2026-11-04T16:59:19Z'),
       shippingFee: '0',
       cancelRequested: false,
-      shippingAddress: { name: 'G***l', phone: '84********22', address: '6**8, P**a, T**a, Phường Tân Sơn Hòa' },
+      shippingAddress: { name: 'G***l', phone: '84********22', address: '6**8, P**a, T**a' },
     });
     expect(o.lines[0]).toEqual({
       externalLineId: '533732107880318',
@@ -173,11 +173,11 @@ describe('Lazada: kéo đơn (#105)', () => {
       shippingFeeDiscountSeller: '0',
       shippingFeeDiscountPlatform: '0',
     });
-    // Phường lấy từ `city` (Lazada che tỉnh, đường; không còn quận); khoá thô giữ nguyên, bỏ khoá rỗng.
+    // Phường lấy từ `city` (Lazada che tỉnh, đường; không còn quận), không lặp trong `address`; khoá thô giữ nguyên, bỏ khoá rỗng.
     expect(o.shippingAddress).toEqual({
       name: 'G***l',
       phone: '84********22',
-      address: '6**8, P**a, T**a, Phường Tân Sơn Hòa',
+      address: '6**8, P**a, T**a',
       ward: 'Phường Tân Sơn Hòa',
       postCode: null,
       raw: { address1: '6**8', address4: 'P**a', address5: 'T**a', city: 'Phường Tân Sơn Hòa', country: 'Vietnam' },

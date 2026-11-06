@@ -2,6 +2,7 @@
 // Một đơn một giao dịch: đơn, dòng, kiện, giữ hàng, lịch sử, outbox.
 import { Decimal } from 'decimal.js';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
 import type { OrderFlag, OrderStatus } from '../domain/order.ts';
 import {
@@ -26,7 +27,7 @@ export interface PlatformOrder {
   shippingAddress: { name: string; phone: string; address: string; ward?: string | null; postCode?: string | null; raw?: Record<string, string> } | null;
   shippingFee: string;
   cancelRequested: boolean;
-  /** Thông tin mô tả (#260): kéo lại thì ghi đè, không tính là đơn đổi. Tiền là chuỗi thập phân. */
+  /** Thông tin mô tả (#260): kéo lại thì ghi đè, sàn trả null thì giữ giá trị đã lưu; không tính là đơn đổi. Tiền là chuỗi thập phân. */
   info: {
     platformPaymentMethod: string | null;
     buyerNote: string | null;
@@ -70,19 +71,35 @@ export interface LineInfo {
   returnStatus: string | null;
 }
 
-const money2 = (v: string | null) => (v === null ? null : new Decimal(v).toFixed(2));
+/** Tiền mô tả của sàn, 2 chữ số như DB trả về để so được; chuỗi sai dạng thì null kèm cảnh báo, không làm hỏng cả đơn. */
+function money2(v: string | null, field: string): string | null {
+  if (v === null) return null;
+  try {
+    const d = new Decimal(v);
+    if (d.isFinite()) return d.toFixed(2);
+  } catch {
+    // rơi xuống cảnh báo
+  }
+  logger.warn({ field, value: v }, 'Sàn trả chuỗi tiền sai dạng, ghi null');
+  return null;
+}
 
-/** Cột mô tả của đơn theo bản sàn, tiền 2 chữ số như DB trả về để so được. */
+/** Cột mô tả của đơn theo bản sàn. */
 function orderInfo(o: PlatformOrder) {
   return {
-    shippingAddress: o.shippingAddress,
+    shippingAddress: o.shippingAddress as unknown,
     platformPaymentMethod: o.info.platformPaymentMethod,
     buyerNote: o.info.buyerNote,
-    shippingFeeOriginal: money2(o.info.shippingFeeOriginal),
-    shippingFeeDiscountSeller: money2(o.info.shippingFeeDiscountSeller),
-    shippingFeeDiscountPlatform: money2(o.info.shippingFeeDiscountPlatform),
+    shippingFeeOriginal: money2(o.info.shippingFeeOriginal, 'shippingFeeOriginal'),
+    shippingFeeDiscountSeller: money2(o.info.shippingFeeDiscountSeller, 'shippingFeeDiscountSeller'),
+    shippingFeeDiscountPlatform: money2(o.info.shippingFeeDiscountPlatform, 'shippingFeeDiscountPlatform'),
   };
 }
+type OrderInfo = ReturnType<typeof orderInfo>;
+
+/** Sàn trả null thì giữ giá trị đã lưu (như vận chuyển của kiện, review #261). */
+const keepSaved = (info: OrderInfo, saved: OrderInfo): OrderInfo =>
+  Object.fromEntries((Object.keys(info) as (keyof OrderInfo)[]).map((k) => [k, info[k] ?? saved[k]])) as OrderInfo;
 
 /** JSON có khoá xếp thứ tự: jsonb trả khoá theo thứ tự khác lúc ghi. */
 const canonical = (v: unknown): string =>
@@ -93,8 +110,8 @@ const canonical = (v: unknown): string =>
         .join(',')}}`
     : JSON.stringify(v ?? null);
 
-const sameInfo = (a: ReturnType<typeof orderInfo>, b: Record<keyof ReturnType<typeof orderInfo>, unknown>) =>
-  (Object.keys(a) as (keyof typeof a)[]).every((k) => canonical(a[k]) === canonical(b[k]));
+const sameInfo = (a: OrderInfo, b: OrderInfo) =>
+  (Object.keys(a) as (keyof OrderInfo)[]).every((k) => canonical(a[k]) === canonical(b[k]));
 
 const code = async (prefix: string, docType: string) => `${prefix}-${String(await takeNextNumber(docType)).padStart(6, '0')}`;
 
@@ -117,7 +134,7 @@ function totals(o: PlatformOrder) {
   return { subtotal, sellerDiscount, platformDiscount, total };
 }
 
-async function createOrder(o: PlatformOrder): Promise<MarketplaceOrderRow | undefined> {
+async function createOrder(o: PlatformOrder, info: OrderInfo): Promise<MarketplaceOrderRow | undefined> {
   const { subtotal, sellerDiscount, platformDiscount, total } = totals(o);
   return insertMarketplaceOrder({
     code: await code('DH', 'order'),
@@ -128,7 +145,7 @@ async function createOrder(o: PlatformOrder): Promise<MarketplaceOrderRow | unde
     rawMarketplaceStatus: o.rawStatus,
     placedAt: o.placedAt,
     shipBy: o.shipBy,
-    ...orderInfo(o),
+    ...info,
     subtotal: subtotal.toFixed(2),
     sellerDiscount: sellerDiscount.toFixed(2),
     platformDiscount: platformDiscount.toFixed(2),
@@ -142,10 +159,11 @@ async function transition(orderId: string, from: OrderStatus | null, to: OrderSt
 }
 
 export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderId: string; created: boolean; changed: boolean }> {
+  const remoteInfo = orderInfo(o);
   let row = await lockMarketplaceOrder(o.shopId, o.externalOrderId);
   let created = false;
   if (!row) {
-    row = await createOrder(o);
+    row = await createOrder(o, remoteInfo);
     if (row) created = true;
     // Lần kéo khác vừa tạo cùng đơn: chờ nó commit rồi đi như cập nhật.
     else row = (await lockMarketplaceOrder(o.shopId, o.externalOrderId))!;
@@ -170,10 +188,10 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       platformDiscount: new Decimal(l.platformDiscount).toFixed(2),
       lineTotal: Decimal.max(0, new Decimal(l.unitPrice).minus(l.sellerDiscount).minus(l.platformDiscount)).toFixed(2),
       ...l.info,
-      paidPrice: money2(l.info.paidPrice),
-      taxAmount: money2(l.info.taxAmount),
-      shippingAmount: money2(l.info.shippingAmount),
-      walletCredits: money2(l.info.walletCredits),
+      paidPrice: money2(l.info.paidPrice, 'paidPrice'),
+      taxAmount: money2(l.info.taxAmount, 'taxAmount'),
+      shippingAmount: money2(l.info.shippingAmount, 'shippingAmount'),
+      walletCredits: money2(l.info.walletCredits, 'walletCredits'),
     })),
   );
   const packages = await syncPlatformPackages(
@@ -218,7 +236,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     next.rawMarketplaceStatus !== row.rawMarketplaceStatus ||
     next.shipBy?.getTime() !== row.shipBy?.getTime();
   // Thông tin mô tả đổi thì ghi kèm, nhưng không phát sự kiện, không tính là đơn đổi (#260 AC-S1).
-  const info = orderInfo(o);
+  const info = keepSaved(remoteInfo, row);
   const infoDirty = !sameInfo(info, row);
   if (infoDirty && !dirty) await updateOrder(orderId, info);
   if (dirty) {

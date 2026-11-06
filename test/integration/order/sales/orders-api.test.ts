@@ -328,3 +328,49 @@ describe('thông tin đơn sàn ở danh sách và chi tiết (#260)', () => {
     expect(o.lines[0]).toMatchObject({ thumbnailUrl: null, externalSkuId: null, paidPrice: null, cancelKind: null, attributesLabel: '' });
   });
 });
+
+describe('lọc phương thức thanh toán và người nhận (review #261 điểm 2, 6)', () => {
+  let c: Awaited<ReturnType<typeof createCompany>>;
+  const o: Record<string, string> = {};
+
+  beforeAll(async () => {
+    c = await createCompany({ optionalModules: ['channel'] });
+    const v = await createVariant(c.companyId);
+    const shop = await testPool().query(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Shop Lazada', 'active', now()) returning id`,
+      [c.companyId, `s-${randomUUID().slice(0, 8)}`],
+    );
+    const tag = randomUUID().slice(0, 6);
+    const platform = async (id: string, isCod: boolean) =>
+      (
+        await withCompany(c.companyId, () =>
+          ingestMarketplaceOrder({ ...order(id, [{ variantId: v.variantId, status: 'pending', pkg: `FP-${id}` }]), shopId: shop.rows[0].id, isCod }),
+        )
+      ).orderId;
+    o.platformCod = await platform(`PC-${tag}`, true);
+    o.platformPrepaid = await platform(`PP-${tag}`, false);
+    const line = [{ variantId: v.variantId, quantity: 1, unitPrice: 10000 }];
+    o.manualCod = (await createOrder(c.companyId, { lines: line, paymentMethod: 'cod' })).orderId;
+    o.manualPrepaid = (await createOrder(c.companyId, { lines: line, paymentMethod: 'prepaid' })).orderId;
+    o.inbox = (await createOrder(c.companyId, { lines: line, source: 'inbox' })).orderId;
+    // Đơn hộp thư chưa gắn khách nhưng có địa chỉ giao: không phải đơn sàn nên không có `recipientName`.
+    await testPool().query(`update "order".orders set shipping_address = $2 where id = $1`, [o.inbox, { name: 'Lan', phone: '0900000000', address: '1 Lê Lợi' }]);
+  });
+
+  const ids = async (query: string) =>
+    OrderSummaryPage.parse((await get(`/orders?pageSize=50${query}`, c.ceo.token)).body)
+      .items.map((i) => i.id)
+      .sort();
+
+  it('cod gồm đơn sàn thu hộ (is_cod) và đơn tự bán cod; prepaid gồm đơn sàn trả trước và đơn tự bán trả trước', async () => {
+    expect(await ids('&paymentMethod=cod')).toEqual([o.platformCod, o.manualCod].sort());
+    expect(await ids('&paymentMethod=prepaid')).toEqual([o.platformPrepaid, o.manualPrepaid, o.inbox].sort());
+  });
+
+  it('recipientName chỉ có ở đơn sàn chưa gắn khách', async () => {
+    const page = OrderSummaryPage.parse((await get('/orders?pageSize=50', c.ceo.token)).body);
+    const byId = new Map(page.items.map((i) => [i.id, i.recipientName]));
+    expect(byId.get(o.platformCod!)).toBe('K***h');
+    expect(byId.get(o.inbox!)).toBeNull();
+  });
+});
