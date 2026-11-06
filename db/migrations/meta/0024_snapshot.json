@@ -1,6 +1,6 @@
 {
-  "id": "b617d187-8df9-4ac7-befa-9cfdffa821a8",
-  "prevId": "16664fca-9c58-461f-a3cb-2d9e84c95331",
+  "id": "80aa8239-eb4d-4044-b72f-008ac4dce0a6",
+  "prevId": "287079f8-9ed6-4ad2-baec-91887bb5375b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2273,6 +2273,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "family_id": {
+          "name": "family_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
         "token_hash": {
           "name": "token_hash",
           "type": "text",
@@ -2284,6 +2291,12 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "rotated_at": {
+          "name": "rotated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "revoked_at": {
           "name": "revoked_at",
@@ -2305,6 +2318,21 @@
           "columns": [
             {
               "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "refresh_tokens_family_id_index": {
+          "name": "refresh_tokens_family_id_index",
+          "columns": [
+            {
+              "expression": "family_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2703,13 +2731,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "self_approved": {
-          "name": "self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "at": {
           "name": "at",
@@ -3968,13 +3989,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "self_approved": {
-          "name": "self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "approved_by": {
           "name": "approved_by",
@@ -9384,6 +9398,12 @@
         },
         "actual_variant_id": {
           "name": "actual_variant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_line_id": {
+          "name": "source_line_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false

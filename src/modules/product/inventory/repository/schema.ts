@@ -156,7 +156,8 @@ export const stockDocuments = inventorySchema.table(
 
 /**
  * Dòng phiếu kho. Kiểm kê: `book_qty`, `counted_qty` (chênh lệch = đếm − sổ). Kiểm hàng về: `expected_qty`,
- * `scanned_qty` chia thành bán lại, hỏng, trả NCC; `actual_variant_id` khi sai mẫu. Loại khác dùng `quantity`.
+ * `scanned_qty` chia thành bán lại, hỏng, trả NCC; `actual_variant_id` khi sai mẫu. Loại khác dùng `quantity`. Phiếu xuất
+ * theo kiện: mỗi dòng kiện một dòng phiếu, `source_line_id` là id dòng kiện (uuid thường, không khoá ngoại sang `order`).
  */
 export const stockDocumentLines = inventorySchema.table(
   'stock_document_lines',
@@ -176,6 +177,8 @@ export const stockDocumentLines = inventorySchema.table(
     damagedQty: integer('damaged_qty'),
     toSupplierQty: integer('to_supplier_qty'),
     actualVariantId: uuid('actual_variant_id'),
+    /** Dòng của chứng từ nguồn: phiếu xuất theo kiện ghi id dòng kiện (lưới gọi lặp `ship`, spec #206 Q12). */
+    sourceLineId: uuid('source_line_id'),
     unitCost: money('unit_cost'),
     reason: text('reason'),
     ...timestamps,

@@ -4,7 +4,7 @@ import { publishEvent } from '../../../core/index.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { availableQty, nextAlertState } from '../domain/stock.ts';
 import { lockExistingLevels, setAlertActive } from '../repository/levels.ts';
-import { lockedOf } from './port.ts';
+import { lockedOf } from './locked.ts';
 import type { IncomingLookup } from './views.ts';
 
 let incomingSource: IncomingLookup | null = null;
