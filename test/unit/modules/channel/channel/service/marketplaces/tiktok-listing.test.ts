@@ -235,6 +235,9 @@ describe('uploadImage: chặn nguồn ảnh trước khi nối (tải thật qua
     ['host phân giải ra mạng riêng', 'https://noi-bo.example/a.png', ['10.0.0.5']],
     ['host phân giải ra một địa chỉ công khai và một nội bộ', 'https://tron.example/a.png', ['93.184.216.34', '127.0.0.1']],
     ['host phân giải ra NAT64 trỏ vào mạng riêng', 'https://nat64.example/a.png', ['64:ff9b::a00:5']],
+    ['host phân giải ra 6to4 nhúng loopback', 'https://6to4.example/a.png', ['2002:7f00:1::1']],
+    ['host phân giải ra Teredo', 'https://teredo.example/a.png', ['2001:0:4136:e378:8000:63bf:3fff:fdd2']],
+    ['6to4 trên URL', 'http://[2002:a00:1::1]/a.png', []],
     ['IP loopback trên URL', 'http://127.0.0.1:3000/a.png', []],
     ['IPv4-mapped IPv6 trên URL (Node chuẩn hoá về hex)', 'http://[::ffff:127.0.0.1]/a.png', []],
     ['IPv6 link-local', 'http://[fe80::1]/a.png', []],
@@ -251,16 +254,58 @@ describe('uploadImage: chặn nguồn ảnh trước khi nối (tải thật qua
     expect(san.fetchFn).not.toHaveBeenCalled();
   });
 
-  it('isPrivateAddress', () => {
-    const blocked = [
-      '127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.0.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '198.18.0.1', '198.19.255.255',
-      '::', '::1', 'fd00::1', 'fe80::1', 'fec0::1', 'ff02::1', '::ffff:10.0.0.1', '::ffff:a00:1', '::ffff:7f00:1', '::ffff:169.254.169.254',
-      '64:ff9b::a00:1', '64:ff9b::808:808', '64:ff9b:1::1', '::127.0.0.1', '2001:db8::1', 'khong-phai-ip',
-    ];
-    for (const ip of blocked) expect(isPrivateAddress(ip), ip).toBe(true);
-    for (const ip of ['93.184.216.34', '172.32.0.1', '198.20.0.1', '2001:4860::8888', '::ffff:93.184.216.34', '::ffff:5db8:d822']) {
-      expect(isPrivateAddress(ip), ip).toBe(false);
-    }
+  it.each([
+    ['IPv4 loopback', '127.0.0.1'],
+    ['IPv4 10/8', '10.1.2.3'],
+    ['IPv4 172.16/12', '172.16.0.1'],
+    ['IPv4 192.168/16', '192.168.0.1'],
+    ['IPv4 link-local, metadata đám mây', '169.254.169.254'],
+    ['IPv4 CGNAT', '100.64.0.1'],
+    ['IPv4 0/8', '0.0.0.0'],
+    ['IPv4 198.18/15 đầu dải', '198.18.0.1'],
+    ['IPv4 198.18/15 cuối dải', '198.19.255.255'],
+    ['IPv4 multicast', '224.0.0.1'],
+    ['IPv6 không xác định ::', '::'],
+    ['IPv6 loopback ::1', '::1'],
+    ['IPv4-compatible trỏ loopback', '::127.0.0.1'],
+    ['IPv4-compatible trỏ mạng riêng (hex)', '::a00:1'],
+    ['IPv4-mapped mạng riêng', '::ffff:10.0.0.1'],
+    ['IPv4-mapped mạng riêng dạng hex', '::ffff:a00:1'],
+    ['IPv4-mapped loopback dạng hex', '::ffff:7f00:1'],
+    ['IPv4-mapped metadata', '::ffff:169.254.169.254'],
+    ['NAT64 64:ff9b::/96 trỏ mạng riêng', '64:ff9b::a00:1'],
+    ['NAT64 64:ff9b::/96 trỏ địa chỉ công khai', '64:ff9b::808:808'],
+    ['NAT64 cục bộ 64:ff9b:1::/48', '64:ff9b:1::1'],
+    ['discard 100::/64', '100::1'],
+    ['ULA fc00::/7', 'fd00::1'],
+    ['link-local fe80::/10', 'fe80::1'],
+    ['site-local fec0::/10', 'fec0::1'],
+    ['multicast ff00::/8', 'ff02::1'],
+    ['6to4 2002::/16 nhúng 127.0.0.1', '2002:7f00:1::1'],
+    ['6to4 2002::/16 nhúng địa chỉ công khai', '2002:808:808::1'],
+    ['Teredo 2001::/32', '2001:0:4136:e378:8000:63bf:3fff:fdd2'],
+    ['khối IETF 2001::/23 (benchmark 2001:2::/48)', '2001:2::1'],
+    ['khối IETF 2001::/23 (ORCHIDv2 2001:20::/28)', '2001:20::1'],
+    ['tài liệu 2001:db8::/32', '2001:db8::1'],
+    ['tài liệu 3fff::/20', '3fff::1'],
+    ['ngoài 2000::/3 (4000::/3)', '4000::1'],
+    ['không phải IP', 'khong-phai-ip'],
+  ])('isPrivateAddress chặn %s (%s)', (_name, ip) => {
+    expect(isPrivateAddress(ip)).toBe(true);
+  });
+
+  it.each([
+    ['IPv4 công khai', '93.184.216.34'],
+    ['IPv4 sát dải 172.16/12', '172.32.0.1'],
+    ['IPv4 sát dải 198.18/15', '198.20.0.1'],
+    ['IPv6 unicast toàn cầu', '2001:4860::8888'],
+    ['IPv6 unicast toàn cầu 2400::/12', '2404:6800:4003::200e'],
+    ['IPv6 sát khối IETF 2001::/23', '2001:200::1'],
+    ['IPv6 sát tài liệu 3fff::/20', '3fff:1000::1'],
+    ['IPv4-mapped địa chỉ công khai', '::ffff:93.184.216.34'],
+    ['IPv4-mapped công khai dạng hex', '::ffff:5db8:d822'],
+  ])('isPrivateAddress cho phép %s (%s)', (_name, ip) => {
+    expect(isPrivateAddress(ip)).toBe(false);
   });
 });
 

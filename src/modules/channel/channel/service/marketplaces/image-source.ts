@@ -62,10 +62,12 @@ function privateV4(ip: string): boolean {
 }
 
 /**
- * Địa chỉ không được tải ảnh: loopback, mạng riêng, link-local, CGNAT, 198.18/15, tài liệu, multicast; IPv6 `::/96`
- * (gồm `::`, `::1`, IPv4-compatible), IPv4-mapped (`::ffff:a.b.c.d`, cả dạng hex) theo luật IPv4, NAT64 `64:ff9b::/96`
- * và `64:ff9b:1::/48`, ULA `fc00::/7`, link-local `fe80::/10`, site-local `fec0::/10`, multicast `ff00::/8`, tài liệu
- * `2001:db8::/32`, discard `100::/64`. Chuỗi không phải IP cũng chặn.
+ * Địa chỉ không được tải ảnh. IPv4: loopback, mạng riêng, link-local, CGNAT, 198.18/15, tài liệu, multicast, dành riêng.
+ * IPv6 theo danh sách cho phép: IPv4-mapped (`::ffff:0:0/96`, cả dạng hex) và IPv4-compatible (`::/96`, gồm `::`, `::1`)
+ * tách IPv4 ra xét theo luật IPv4; ngoài ra chỉ nhận unicast toàn cầu `2000::/3`, trong đó vẫn chặn các dải nhúng IPv4
+ * hay dành riêng: 6to4 `2002::/16`, khối giao thức IETF `2001::/23` (gồm Teredo `2001::/32`, benchmark, ORCHID), tài
+ * liệu `2001:db8::/32` và `3fff::/20`. Nên NAT64 `64:ff9b::/96`, `64:ff9b:1::/48`, discard `100::/64`, ULA, link-local,
+ * site-local, multicast đều bị chặn vì nằm ngoài `2000::/3`. Chuỗi không phải IP cũng chặn.
  */
 export function isPrivateAddress(ip: string): boolean {
   const v = isIP(ip);
@@ -74,13 +76,15 @@ export function isPrivateAddress(ip: string): boolean {
   const h = hextets(ip);
   if (h.length !== 8 || h.some((x) => Number.isNaN(x))) return true;
   const zeros = (from: number, to: number) => h.slice(from, to).every((x) => x === 0);
-  if (zeros(0, 5) && h[5] === 0xffff) return privateV4(`${h[6]! >> 8}.${h[6]! & 255}.${h[7]! >> 8}.${h[7]! & 255}`);
-  if (zeros(0, 6)) return true;
-  if (h[0] === 0x64 && h[1] === 0xff9b && (zeros(2, 6) || h[2] === 1)) return true;
-  if (h[0] === 0x100 && zeros(1, 4)) return true;
-  if (h[0] === 0x2001 && h[1] === 0xdb8) return true;
-  const top = h[0]!;
-  return (top & 0xfe00) === 0xfc00 || (top & 0xffc0) === 0xfe80 || (top & 0xffc0) === 0xfec0 || (top & 0xff00) === 0xff00;
+  const embeddedV4 = () => `${h[6]! >> 8}.${h[6]! & 255}.${h[7]! >> 8}.${h[7]! & 255}`;
+  if (zeros(0, 5) && (h[5] === 0xffff || h[5] === 0)) return privateV4(embeddedV4());
+  const [a, b] = h as [number, number];
+  if ((a & 0xe000) !== 0x2000) return true; // ngoài 2000::/3
+  if (a === 0x2002) return true; // 6to4
+  if (a === 0x2001 && b < 0x200) return true; // 2001::/23: Teredo, benchmark, ORCHID…
+  if (a === 0x2001 && b === 0xdb8) return true; // tài liệu
+  if (a === 0x3fff && b < 0x1000) return true; // tài liệu 3fff::/20 (RFC 9637)
+  return false;
 }
 
 const defaultResolve = async (host: string) => (await dnsLookup(host, { all: true })).map((a) => a.address);
