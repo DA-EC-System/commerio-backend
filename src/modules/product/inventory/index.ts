@@ -24,7 +24,9 @@ export {
 } from './service/port.ts';
 export { type ReceivedLine, receiveGoods } from './service/posting.ts';
 // Phiếu kho có duyệt (#208): kiểm hàng về do module khác lập, xuất huỷ chờ xử lý cho phiếu trả NCC bị huỷ (#210).
-export { createQuarantineWriteOff, receiveBack } from './service/documents.ts';
+export { createOpeningStocktake, createQuarantineWriteOff, receiveBack } from './service/documents.ts';
+// Trạng thái phiếu kiểm kê đầu kỳ cho channel (#198, #245).
+export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.ts';
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';

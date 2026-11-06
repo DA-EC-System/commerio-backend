@@ -45,6 +45,7 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).
 - `receiveBack(source, lines, meta?)` (Documents/21 mục 11.1, #208): lập phiếu kiểm hàng về nháp, gọi lại cùng nguồn trả phiếu cũ; `meta` mang mã chứng từ nguồn, đơn, gian hàng, giá vốn dòng kiện gốc cho `inventory.return_inspected`. `createQuarantineWriteOff(source, lines, note, actorId)`: xuất huỷ nháp từ chờ xử lý (phiếu trả NCC bị huỷ, #210).
+- `createOpeningStocktake(shopId, { actorId })` (Documents/21 mục 11.3, #245): kiểm kê đầu kỳ nháp nguồn `shop_setup` cho channel (#198); gọi lại hoặc gọi đua trả phiếu đang mở (`created: false`, unique `stock_documents_opening_uq`).
 - `reserve`, `release`, `ship`, `reverseShipment` (Documents/21 mục 11.1): chữ ký đã chốt, hiện trả 501 `not_implemented` tới PR sau của #111.
 
 ## Phiếu kho có duyệt (`service/documents.ts`, #208)

@@ -26,6 +26,8 @@ import {
   linesOfDocs,
   listDocs,
   type NewDocLine,
+  insertOpeningDoc,
+  openingDocOf,
   replaceDocLines,
   setLineCosts,
   updateDoc,
@@ -500,3 +502,46 @@ export async function receiveBack(
   return { documentId: row.id, number: row.number };
 }
 
+
+/**
+ * Phiếu kiểm kê đầu kỳ cho gian hàng đầu tiên của công ty (Documents/21 mục 11.3, 25 §6.1; #245), channel gọi khi thiết
+ * lập (#198). Lập nháp nguồn `shop_setup`, mỗi SKU đang bán một dòng, số đếm điền sẵn bằng tồn thực. Gọi lại khi gian
+ * hàng đã có phiếu đang mở thì trả phiếu cũ (`created: false`); hai lần gọi đua nhau chặn bằng unique
+ * `stock_documents_opening_uq`. Ghi sổ phát `inventory.stocktake_posted` kèm `source`.
+ */
+export async function createOpeningStocktake(
+  shopId: string,
+  opts: { actorId: string | null },
+): Promise<{ documentId: string; number: string; created: boolean }> {
+  const existing = await openingDocOf(shopId);
+  if (existing) return { documentId: existing.id, number: existing.number, created: false };
+  const companyId = currentCompanyId()!;
+  const variants = (await getVariants()).filter((v) => !v.archived);
+  const stock = await stockOf(variants.map((v) => v.id));
+  const row = await insertOpeningDoc({
+    companyId,
+    number: await number('stocktake'),
+    kind: 'stocktake',
+    area: 'on_hand',
+    countedAt: new Date(),
+    isOpening: true,
+    sourceType: 'shop_setup',
+    sourceId: shopId,
+    note: 'Kiểm kê đầu kỳ khi kết nối gian hàng đầu tiên',
+    createdBy: opts.actorId,
+  });
+  if (!row) {
+    const other = (await openingDocOf(shopId))!;
+    return { documentId: other.id, number: other.number, created: false };
+  }
+  await insertDocLines(
+    companyId,
+    row.id,
+    variants.map((v) => {
+      const onHand = stock.get(v.id)?.onHand ?? 0;
+      return { variantId: v.id, bookQty: onHand, countedQty: Math.max(0, onHand) };
+    }),
+  );
+  await recordTransition({ entityType: DOC_ENTITY, entityId: row.id, from: null, to: 'draft', action: 'create', actorId: opts.actorId });
+  return { documentId: row.id, number: row.number, created: true };
+}

@@ -1,6 +1,6 @@
-// Cổng kiểm kê đầu kỳ của inventory (Documents/21 §11.3), thân làm ở commerio-backend#245 (Bình). Tách khỏi `ProductPort`
-// để các bản giả `ProductPort` trong test không phải thêm hàm. Gọi trong `withCompany` của bên gọi.
-import { notImplemented } from '../../../../shared/errors/app-error.ts';
+// Cổng kiểm kê đầu kỳ của inventory (Documents/21 §11.3), thân ở commerio-backend#245. Tách khỏi `ProductPort` để các bản
+// giả `ProductPort` trong test không phải thêm hàm. Gọi trong `withCompany` của bên gọi.
+import { createOpeningStocktake, stockDocumentStatusOf } from '../../../product/index.ts';
 
 export type OpeningStocktakeStatus = 'draft' | 'pending' | 'rejected' | 'posted' | 'cancelled';
 
@@ -11,17 +11,16 @@ export interface StocktakePort {
   openingStocktakeStatusOf(documentIds: readonly string[]): Promise<Map<string, OpeningStocktakeStatus>>;
 }
 
-const pending: StocktakePort = {
-  createOpeningStocktake: () => Promise.reject(notImplemented('createOpeningStocktake', 'commerio-backend#245', 'Bình')),
-  // Chưa có #245 thì không gian hàng nào có phiếu (lập phiếu ném 501), nên hàm này chỉ chạy với phiếu do bản giả tạo.
-  openingStocktakeStatusOf: async (ids) => new Map(ids.map((id) => [id, 'draft'])),
+const real: StocktakePort = {
+  createOpeningStocktake,
+  openingStocktakeStatusOf: stockDocumentStatusOf,
 };
 
-let port: StocktakePort = pending;
+let port: StocktakePort = real;
 
 export const stocktakePort = (): StocktakePort => port;
 
 /** Test thay cổng; gọi không tham số để trả lại bản mặc định. */
-export function setStocktakePort(next: StocktakePort = pending): void {
+export function setStocktakePort(next: StocktakePort = real): void {
   port = next;
 }
