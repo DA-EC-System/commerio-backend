@@ -6,10 +6,12 @@ import { testPool } from '../helpers/db.ts';
 // `withSessionLock` (#201, review #217 mục 5): chờ khoá bằng `pg_try_advisory_lock` lặp có nghỉ, không chặn giữ kết nối;
 // kết nối lấy được khoá giữ tới khi `fn` xong rồi mới nhả.
 
-/** Số phiên đang bị chặn chờ một khoá advisory (`pg_advisory_lock` chặn sẽ hiện ở đây). */
-async function blockedOnAdvisory(): Promise<number> {
+/** Số phiên đang bị chặn chờ khoá `key` (`pg_advisory_lock` chặn sẽ hiện ở đây). Chỉ đếm khoá của test: file khác chạy song song. */
+async function blockedOn(key: string): Promise<number> {
   const { rows } = await testPool().query<{ n: number }>(
-    `select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`,
+    `select count(*)::int as n from pg_locks
+      where locktype = 'advisory' and not granted and ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+    [key],
   );
   return rows[0]!.n;
 }
@@ -67,12 +69,15 @@ describe('withSessionLock', () => {
       return 'ok';
     }, { waitMs: 5_000 });
     // Trong lúc chờ: không có phiên nào chặn trên `pg_advisory_lock` (kết nối trả về pool giữa các lần thử).
-    for (let i = 0; i < 5; i++) {
-      await new Promise((r) => setTimeout(r, 60));
-      expect(await blockedOnAdvisory()).toBe(0);
-      expect(await holders(key)).toBe(1);
+    try {
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 60));
+        expect(await blockedOn(key)).toBe(0);
+        expect(await holders(key)).toBe(1);
+      }
+    } finally {
+      gate.resolve();
     }
-    gate.resolve();
     expect(await second).toBe('ok');
     await first;
     expect(order).toEqual(['first', 'second']);
