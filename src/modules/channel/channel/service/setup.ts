@@ -37,13 +37,15 @@ const NAME_MATCH_MIN = 0.4;
 // giữ CPU của DB: đo 06/11/2026 trên PG 17 cục bộ, 1e6 cặp ≈ 3,2 giây, 9e6 cặp ≈ 30 giây (#198 worklog).
 const NAME_PAIRS_MAX = 1_000_000;
 const NAME_MATCH_TIMEOUT_MS = 10_000;
+// Trần số cặp qua ngưỡng trả về Node: tên gần giống hàng loạt thì 1e6 cặp đều qua, giữ hết sẽ tốn hàng trăm MB (review).
+const NAME_ROWS_MAX = 50_000;
 
 const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].filter(Boolean).join(' ');
 
 /**
  * Gợi ý ghép (#198, Documents/21 §18.7.5): mọi SKU người bán trên sàn (bỏ sản phẩm đã xoá), mỗi SKU một dòng. Ghép theo
  * SKU trước, phần còn lại theo tên sản phẩm kèm nhãn biến thể bằng `similarity()` của pg_trgm, nhận từ 0.4, tham lam theo
- * điểm giảm dần; mỗi biến thể gợi ý một lần. Số cặp vượt `NAME_PAIRS_MAX` hay câu quá giờ thì bỏ ghép theo tên
+ * điểm giảm dần; mỗi biến thể gợi ý một lần. Số cặp vượt `NAME_PAIRS_MAX`, cặp qua ngưỡng vượt `NAME_ROWS_MAX` hay câu quá giờ thì bỏ ghép theo tên
  * (`nameMatchSkipped`). Biến thể lưu trữ hay đã có listing ở gian hàng này không được gợi ý. Sàn
  * chưa có `listSkus` thì chỉ đọc được SKU trùng SKU Commerio (`getSkus`).
  */
@@ -93,6 +95,7 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
             restVariants.map(variantName),
             NAME_MATCH_MIN,
             NAME_MATCH_TIMEOUT_MS,
+            NAME_ROWS_MAX,
           ),
         )
       : [];

@@ -109,9 +109,10 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
  * `open_orders_pulled_at` và xếp việc đồng bộ listing (lúc đó mới đẩy tồn); adapter báo `safeUntil` hay hết số trang thì
  * ném để pg-boss chạy lại cả lượt (đơn đã có bỏ qua nhờ `raw_orders`). Sàn chưa có `listOpenOrders` thì đặt cột ngay.
  *
- * Có `OPEN_ORDER_PULL_MAX` thì chỉ lấy N đơn **đặt mới nhất**: sàn trả theo trạng thái rồi `updated_at`, không theo ngày
- * đặt, nên phải lật hết danh sách (mỗi trang một lần gọi) rồi mới chọn; chỉ đơn được chọn mới gọi chi tiết. Chạy lại
- * thì chọn lại đúng tập đó khi danh sách trên sàn chưa đổi.
+ * Không đặt `OPEN_ORDER_PULL_MAX` thì nhận theo từng trang. Có đặt thì đơn đặt từ mốc vẫn nhận theo trang (vòng 5 phút
+ * vốn nhận), còn đơn đặt trước mốc chỉ lấy N đơn **đặt mới nhất**: sàn trả theo trạng thái rồi `updated_at`, không theo
+ * ngày đặt, nên phải lật hết danh sách (mỗi trang một lần gọi) rồi mới chọn; chỉ đơn được chọn mới gọi chi tiết. Chạy
+ * lại thì chọn lại đúng tập đó khi danh sách trên sàn chưa đổi.
  */
 const incomplete = (message: string) => new AppError(503, 'open_orders_incomplete', message);
 // Số mã đơn mỗi lần tra `raw_orders`, dưới giới hạn tham số của PostgreSQL (L019).
@@ -129,9 +130,22 @@ export async function pullOpenOrders(companyId: string, shopId: string): Promise
   const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
   const result = { pulled: 0, created: 0, updated: 0, skipped: 0 };
   if (!shop.orderCutoffAt || shop.openOrdersPulledAt) return result;
+  const cutoff = shop.orderCutoffAt;
   if (adapter.listOpenOrders && adapter.getOrder) {
-    // Lật hết danh sách trước; đơn trả hai lần giữ bản `updatedAt` mới hơn.
-    const all = new Map<string, RemoteOrderRef>();
+    const max = env.OPEN_ORDER_PULL_MAX;
+    const session = { companyId, shopId, adapter, accessToken };
+    const ingestNew = async (refs: readonly RemoteOrderRef[]) => {
+      for (let i = 0; i < refs.length; i += KNOWN_BATCH) {
+        const batch = refs.slice(i, i + KNOWN_BATCH);
+        const known = await withCompany(companyId, () => findRawOrderTimes(shopId, batch.map((o) => o.externalOrderId)));
+        for (const ref of batch) {
+          const seen = known.get(ref.externalOrderId);
+          if (!(seen && seen >= ref.updatedAt)) await ingestRemote(session, ref.externalOrderId, result);
+        }
+      }
+    };
+    // Đơn trước mốc chờ chọn khi có trần; đơn trả hai lần giữ bản `updatedAt` mới hơn.
+    const held = new Map<string, RemoteOrderRef>();
     let cursor: string | null = null;
     let pages = 0;
     do {
@@ -144,24 +158,22 @@ export async function pullOpenOrders(companyId: string, shopId: string): Promise
       });
       // Sàn chưa chốt dữ liệu tới hiện tại: có thể sót đơn, chạy lại cả lượt thay vì đặt cột (#198 P3).
       if (page.safeUntil) throw incomplete(`Sàn chỉ chắc dữ liệu đơn tới ${page.safeUntil.toISOString()}, chạy lại lượt`);
+      const now: RemoteOrderRef[] = [];
       for (const ref of page.orders) {
-        const had = all.get(ref.externalOrderId);
-        if (!had || ref.updatedAt > had.updatedAt) all.set(ref.externalOrderId, ref);
+        if (max === undefined || ref.placedAt >= cutoff) {
+          now.push(ref);
+          continue;
+        }
+        const had = held.get(ref.externalOrderId);
+        if (!had || ref.updatedAt > had.updatedAt) held.set(ref.externalOrderId, ref);
       }
+      await ingestNew(now);
       cursor = page.nextCursor;
     } while (cursor);
 
-    const chosen = newestOpenOrders([...all.values()], env.OPEN_ORDER_PULL_MAX);
-    result.skipped = all.size - chosen.length;
-    const session = { companyId, shopId, adapter, accessToken };
-    for (let i = 0; i < chosen.length; i += KNOWN_BATCH) {
-      const batch = chosen.slice(i, i + KNOWN_BATCH);
-      const known = await withCompany(companyId, () => findRawOrderTimes(shopId, batch.map((o) => o.externalOrderId)));
-      for (const ref of batch) {
-        const seen = known.get(ref.externalOrderId);
-        if (!(seen && seen >= ref.updatedAt)) await ingestRemote(session, ref.externalOrderId, result);
-      }
-    }
+    const chosen = newestOpenOrders([...held.values()], max);
+    result.skipped = held.size - chosen.length;
+    await ingestNew(chosen);
   }
   await withCompany(companyId, async () => {
     await markOpenOrdersPulled(shopId, result.skipped);

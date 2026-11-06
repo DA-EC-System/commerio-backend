@@ -195,6 +195,8 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     open = [remoteOrder('S1', sku, 'pending', at('2026-10-01T00:00:00Z')), remoteOrder('S2', sku, 'pending', at('2026-10-02T00:00:00Z'))];
     safeUntil = at('2026-11-05T00:00:00Z');
     await expect(runOpenOrderPull({ companyId: c.companyId, shopId })).rejects.toThrow();
+    // Không đặt trần thì nhận theo từng trang: trang trước trang lỗi đã lưu (review việc 1).
+    expect((await packagesOf(shopId)).map((p) => p.external_order_id)).toEqual(['S1']);
     expect(await shopCols(shopId)).toMatchObject({ open_orders_pulled_at: null, last_error: expect.stringContaining('đơn còn mở') });
     safeUntil = null;
     await runOpenOrderPull({ companyId: c.companyId, shopId });
@@ -303,13 +305,14 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
 
   it('OPEN_ORDER_PULL_MAX=200 với 250 đơn mở: kéo đúng 200 đơn đặt mới nhất, `setup.openOrdersSkipped` = 50', async () => {
     const { shopId, sku, c } = await setUpShop();
-    open = manyOpen(sku);
+    open = [...manyOpen(sku), remoteOrder('SAU-MOC', sku, 'pending', at('2026-11-04T05:00:00Z'))];
     pageSize = 50;
     env.OPEN_ORDER_PULL_MAX = 200;
     await runOpenOrderPull({ companyId: c.companyId, shopId });
     const newest = Array.from({ length: 200 }, (_, j) => `N${String(249 - j).padStart(3, '0')}`).sort();
-    expect(await pulledIds(shopId)).toEqual(newest);
-    expect(getOrder).toHaveBeenCalledTimes(200);
+    // Đơn đặt sau mốc vẫn về, không tính vào trần (review việc 1).
+    expect(await pulledIds(shopId)).toEqual([...newest, 'SAU-MOC']);
+    expect(getOrder).toHaveBeenCalledTimes(201);
     expect((await shopCols(shopId)).open_orders_pulled_at).not.toBeNull();
     expect(await setupOfShop(c, shopId)).toMatchObject({ openOrdersSkipped: 50 });
   });

@@ -365,7 +365,7 @@ export const ShopSetupPreview = z
     unmatchedRemote: z.number().int().meta({ description: 'Số dòng `match = none` (21 §18.7.5)' }),
     nameMatchSkipped: z.boolean().meta({
       description:
-        '`true` khi BE bỏ ghép theo tên vì gian hàng quá lớn (số cặp SKU sàn chưa ghép × biến thể còn lại vượt 1.000.000) hoặc so tên quá 10 giây: dòng không trùng SKU đều `none`, người dùng tự chọn biến thể',
+        '`true` khi BE bỏ ghép theo tên vì gian hàng quá lớn (số cặp SKU sàn chưa ghép × biến thể còn lại vượt 1.000.000, hoặc hơn 50.000 cặp qua ngưỡng) hoặc so tên quá 10 giây: dòng không trùng SKU đều `none`, người dùng tự chọn biến thể',
     }),
     proposedCutoffAt: iso.meta({ description: 'Mốc kéo đơn BE sẽ đặt nếu xác nhận ngay với `push`; FE chỉ hiện (21 §18.6.2, §18.7.6)' }),
     firstShopOfCompany: z.boolean().meta({

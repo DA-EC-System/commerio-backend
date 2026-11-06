@@ -219,13 +219,25 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
   it('câu similarity quá `statement_timeout` thì trả null (bên gọi bỏ ghép theo tên), giao dịch vẫn dùng tiếp được', async () => {
     const names = Array.from({ length: 2000 }, (_, i) => `Sản phẩm thử nghiệm số ${i} màu ${i % 7}`);
     const after = await inTransaction(async () => {
-      expect(await nameSimilarities(names, names, 0.4, 1)).toBeNull();
+      expect(await nameSimilarities(names, names, 0.4, 1, 100_000)).toBeNull();
       return (await getDb().execute<{ ok: number }>(sql`select 1 as ok`)).rows[0]?.ok;
     });
     expect(after).toBe(1);
-    expect(await inTransaction(() => nameSimilarities(['Áo thun'], ['Áo thun trắng'], 0.4, 5000))).toEqual([
+    expect(await inTransaction(() => nameSimilarities(['Áo thun'], ['Áo thun trắng'], 0.4, 5000, 10))).toEqual([
       { left: 0, right: 0, score: expect.any(Number) },
     ]);
+  });
+
+  it('số cặp qua ngưỡng vượt trần dòng thì trả null; chạy xong thì statement_timeout của giao dịch trở lại như trước (review việc 1)', async () => {
+    const same = ['Áo thun nam cổ tròn', 'Áo thun nam cổ tròn', 'Áo thun nam cổ tim'];
+    const timeouts = await inTransaction(async () => {
+      const read = async () => (await getDb().execute<{ t: string }>(sql`select current_setting('statement_timeout') as t`)).rows[0]?.t;
+      const before = await read();
+      expect(await nameSimilarities(same, same, 0.4, 5000, 8)).toBeNull();
+      expect(await nameSimilarities(same, same, 0.4, 5000, 9)).toHaveLength(9);
+      return { before, after: await read() };
+    });
+    expect(timeouts.after).toBe(timeouts.before);
   });
 
   it('nhiều SKU sàn cùng tiêu đề (một sản phẩm nhiều SKU) không được gợi ý theo tên: tên không phân biệt được biến thể', async () => {
