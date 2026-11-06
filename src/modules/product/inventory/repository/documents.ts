@@ -179,3 +179,13 @@ export async function insertOpeningDoc(values: typeof stockDocuments.$inferInser
     .returning();
   return row;
 }
+
+/** Trạng thái các phiếu theo id (channel đọc phiếu kiểm kê đầu kỳ của gian hàng, #198, #245); id lạ thì vắng. */
+export async function docStatusesOf(ids: readonly string[]): Promise<Map<string, DocRow['status']>> {
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: stockDocuments.id, status: stockDocuments.status })
+    .from(stockDocuments)
+    .where(inArray(stockDocuments.id, [...ids]));
+  return new Map(rows.map((r) => [r.id, r.status]));
+}
