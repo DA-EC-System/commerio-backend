@@ -7,28 +7,42 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { returnWindowError, shopMachine } from '../domain/shop.ts';
-import { insertListing, listListingRows } from '../repository/listings.ts';
+import { insertListing, listListingRows, nameSimilarities } from '../repository/listings.ts';
 import { setupStateOfCompany, updateShop } from '../repository/shops.ts';
 import { stocktakePort } from './stocktake-port.ts';
 import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
 import { sendOpenOrderPull, startShopJobs } from './shop-jobs.ts';
-import type { ProductPort } from './product-port.ts';
+import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
 
 export interface SetupSuggestion {
   externalSkuId: string;
   title: string;
-  variantId: string;
-  sku: string;
-  available: number;
+  /** `sku`: SKU người bán trùng SKU Commerio; `name`: tên giống từ `NAME_MATCH_MIN`; `none`: không tìm được (§18.7.5). */
+  match: 'sku' | 'name' | 'none';
+  /** Độ giống tên 0..1, chỉ có khi `match = 'name'`. */
+  score: number | null;
+  variantId: string | null;
+  sku: string | null;
+  available: number | null;
   platformStock: number;
 }
 
-type Suggestion = SetupSuggestion & { externalProductId: string };
+type Suggestion = SetupSuggestion & { externalProductId: string; sellerSku: string };
 
-/** Gợi ý ghép: SKU sàn có SellerSku trùng SKU Commerio, biến thể chưa có listing trên gian hàng này. */
-async function suggestions(port: ProductPort, actor: Actor, shopId: string): Promise<Suggestion[]> {
+/** Ngưỡng `similarity()` của pg_trgm để nhận gợi ý theo tên (Documents/21 §18.7.5). */
+const NAME_MATCH_MIN = 0.4;
+
+const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].filter(Boolean).join(' ');
+
+/**
+ * Gợi ý ghép (#198, Documents/21 §18.7.5): mọi SKU người bán trên sàn (bỏ sản phẩm đã xoá), mỗi SKU một dòng. Ghép theo
+ * SKU trước, phần còn lại theo tên sản phẩm kèm nhãn biến thể bằng `similarity()` của pg_trgm, nhận từ 0.4, tham lam theo
+ * điểm giảm dần; mỗi biến thể gợi ý một lần. Biến thể lưu trữ hay đã có listing ở gian hàng này không được gợi ý. Sàn
+ * chưa có `listSkus` thì chỉ đọc được SKU trùng SKU Commerio (`getSkus`).
+ */
+async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   const { shop, adapter, accessToken } = await inCompany(async () => {
     const session = await shopSession(shopId);
@@ -36,29 +50,126 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string): Pro
     return session;
   });
   const { variants, listed } = await inCompany(async () => ({
-    variants: (await port.variants()).filter((v) => !v.archived),
+    variants: await port.variants(),
     listed: new Set((await listListingRows(shop.id)).map((l) => l.variantId)),
   }));
-  const open = variants.filter((v) => !listed.has(v.id));
-  if (!open.length) return [];
-  const remote = await onMarketplace(() => adapter.getSkus(accessToken, open.map((v) => v.sku)));
-  const available = await inCompany(() => port.availableOf(open.map((v) => v.id)));
+  const open = variants.filter((v) => !v.archived && !listed.has(v.id));
+  const fetched = adapter.listSkus
+    ? await onMarketplace(() => adapter.listSkus!(accessToken))
+    : open.length
+      ? await onMarketplace(() => adapter.getSkus(accessToken, open.map((v) => v.sku)))
+      : [];
+  const remote = fetched.filter((r) => r.state !== 'deleted');
+
+  const chosen = new Map<number, { variant: ListingVariant; score: number | null }>();
+  const taken = new Set<string>();
   const bySku = new Map(open.map((v) => [v.sku, v]));
-  return remote.flatMap((r) => {
+  remote.forEach((r, i) => {
     const v = bySku.get(r.sellerSku);
-    if (!v) return [];
-    return [
-      {
-        externalProductId: r.externalProductId,
-        externalSkuId: r.externalSkuId,
-        title: r.title,
-        variantId: v.id,
-        sku: v.sku,
-        available: available.get(v.id) ?? 0,
-        platformStock: r.quantity,
-      },
-    ];
+    if (!v || taken.has(v.id)) return;
+    chosen.set(i, { variant: v, score: null });
+    taken.add(v.id);
   });
+  const restRemote = remote.flatMap((_, i) => (chosen.has(i) ? [] : [i]));
+  const restVariants = open.filter((v) => !taken.has(v.id));
+  if (restRemote.length && restVariants.length) {
+    const pairs = await inCompany(() =>
+      nameSimilarities(
+        restRemote.map((i) => remote[i]!.title),
+        restVariants.map(variantName),
+        NAME_MATCH_MIN,
+      ),
+    );
+    for (const p of pairs) {
+      const i = restRemote[p.left]!;
+      const v = restVariants[p.right]!;
+      if (chosen.has(i) || taken.has(v.id)) continue;
+      chosen.set(i, { variant: v, score: p.score });
+      taken.add(v.id);
+    }
+  }
+  const available = taken.size ? await inCompany(() => port.availableOf([...taken])) : new Map<string, number>();
+  const offered: Suggestion[] = remote.map((r, i) => {
+    const c = chosen.get(i);
+    return {
+      externalProductId: r.externalProductId,
+      externalSkuId: r.externalSkuId,
+      sellerSku: r.sellerSku,
+      title: r.title,
+      match: !c ? 'none' : c.score === null ? 'sku' : 'name',
+      score: c?.score ?? null,
+      variantId: c?.variant.id ?? null,
+      sku: c?.variant.sku ?? null,
+      available: c ? (available.get(c.variant.id) ?? 0) : null,
+      platformStock: r.quantity,
+    };
+  });
+  return { offered, variants, listed };
+}
+
+interface Picked {
+  externalSkuId: string;
+  externalProductId: string;
+  sellerSku: string;
+  variantId: string;
+  platformStock: number;
+}
+
+interface SetupChoice {
+  externalSkuIds?: string[] | undefined;
+  decisions?: { externalSkuId: string; variantId: string | null }[] | undefined;
+}
+
+/**
+ * SKU sàn sẽ thành listing. `decisions` (§18.7.5): biến thể người dùng chọn, `null` bỏ qua; lỗi theo dòng ghi vào
+ * `errors["decisions.<i>"]`. `externalSkuIds` (cũ, giữ tới hết đợt 2): nhận biến thể gợi ý. Gửi cả hai là lỗi.
+ */
+function pickListings(
+  { offered, variants, listed }: Awaited<ReturnType<typeof suggestions>>,
+  input: SetupChoice,
+  errors: Record<string, string>,
+): Picked[] {
+  if (input.decisions && input.externalSkuIds) {
+    errors.decisions = 'Chỉ gửi một trong `decisions` hoặc `externalSkuIds`';
+    return [];
+  }
+  if (!input.decisions) {
+    const ids = new Set(input.externalSkuIds ?? []);
+    const picked = offered.flatMap((s) => (s.variantId && ids.has(s.externalSkuId) ? [{ ...s, variantId: s.variantId }] : []));
+    if (picked.length !== ids.size) errors.externalSkuIds = 'Có SKU sàn không còn để ghép';
+    return picked;
+  }
+  const byExternal = new Map(offered.map((s) => [s.externalSkuId, s]));
+  const byId = new Map(variants.map((v) => [v.id, v]));
+  const seenSkus = new Set<string>();
+  const seenVariants = new Set<string>();
+  const picked: Picked[] = [];
+  input.decisions.forEach((d, i) => {
+    const s = byExternal.get(d.externalSkuId);
+    const v = d.variantId === null ? undefined : byId.get(d.variantId);
+    const error = !s
+      ? 'SKU sàn không có trong gợi ý'
+      : seenSkus.has(d.externalSkuId)
+        ? 'SKU sàn bị chọn hai lần'
+        : d.variantId === null
+          ? null
+          : !v
+            ? 'Biến thể không thuộc công ty'
+            : v.archived
+              ? 'Biến thể đã lưu trữ'
+              : listed.has(v.id)
+                ? 'Biến thể đã ghép listing khác của gian hàng này'
+                : seenVariants.has(v.id)
+                  ? 'Biến thể đã chọn cho SKU sàn khác'
+                  : null;
+    seenSkus.add(d.externalSkuId);
+    if (error) errors[`decisions.${i}`] = error;
+    else if (s && v) {
+      seenVariants.add(v.id);
+      picked.push({ ...s, variantId: v.id });
+    }
+  });
+  return picked;
 }
 
 /** Công ty chưa có gian hàng nào xong thiết lập (có mốc, không chờ kiểm kê) thì gian hàng này là đầu tiên (#198 A1). */
@@ -70,30 +181,29 @@ async function companySetupState(actor: Actor, shopId: string) {
 const awaitingError = (number: string) => `Công ty đang chờ phiếu kiểm kê đầu kỳ ${number} ghi sổ`;
 
 export async function setupPreview(port: ProductPort, actor: Actor, shopId: string) {
-  // Muốn đếm SKU sàn không ghép được phải quét cả shop; shop thử dùng chung nên trả 0 (#104 A6).
-  const items = (await suggestions(port, actor, shopId)).map(({ externalProductId: _, ...s }) => s);
+  const items = (await suggestions(port, actor, shopId)).offered.map(({ externalProductId: _p, sellerSku: _s, ...s }) => s);
   const { firstShopOfCompany } = await companySetupState(actor, shopId);
-  return { suggestions: items, unmatchedRemote: 0, proposedCutoffAt: new Date(), firstShopOfCompany };
+  const unmatchedRemote = items.filter((s) => s.match === 'none').length;
+  return { suggestions: items, unmatchedRemote, proposedCutoffAt: new Date(), firstShopOfCompany };
 }
 
 export async function finishSetup(
   port: ProductPort,
   actor: Actor,
   shopId: string,
-  input: {
-    externalSkuIds: string[];
+  input: SetupChoice & {
     openingStock: 'push' | 'stocktake';
     returnWindowDays?: number | null | undefined;
   },
 ): Promise<{ shop: Shop; matched: number; stocktakeNumber: string | null }> {
-  const offered = await suggestions(port, actor, shopId);
+  const candidates = await suggestions(port, actor, shopId);
+  const offered = candidates.offered;
   const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
-  const picked = offered.filter((s) => input.externalSkuIds.includes(s.externalSkuId));
   const { firstShopOfCompany, awaitingStocktake } = await companySetupState(actor, shopId);
   const errors: Record<string, string> = {};
   if (awaitingStocktake) errors.openingStock = awaitingError(awaitingStocktake);
   else if (firstShopOfCompany && input.openingStock === 'push') errors.openingStock = 'Gian hàng đầu tiên của công ty phải kiểm kê đầu kỳ';
-  if (picked.length !== new Set(input.externalSkuIds).size) errors.externalSkuIds = 'Có SKU sàn không còn để ghép';
+  const picked = pickListings(candidates, input, errors);
   const returnWindowInvalid = returnWindowError(returnWindow, input.returnWindowDays);
   if (returnWindowInvalid) errors.returnWindowDays = returnWindowInvalid;
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
@@ -108,7 +218,7 @@ export async function finishSetup(
         variantId: p.variantId,
         externalSkuId: p.externalSkuId,
         externalProductId: p.externalProductId,
-        sellerSku: p.sku,
+        sellerSku: p.sellerSku,
         status: 'live',
         platformStock: p.platformStock,
       });

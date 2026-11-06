@@ -42,8 +42,9 @@ const AUTH_CODES = new Set(['IllegalAccessToken', 'IllegalRefreshToken', 'Invali
 const TRANSIENT_NUMERIC = new Set(['6', '901', '1000', '4154']);
 // UpdatePriceQuantity: tối đa 50 SKU một lần, Lazada khuyên 20.
 const PRICE_QTY_BATCH = 20;
-// GetProducts: `limit` tối đa 50; một sản phẩm một SKU (#104 A1).
+// GetProducts: `limit` tối đa 50; một sản phẩm một SKU (#104 A1). `offset` tối đa 10000 (open.lazada.com, tra 06/11/2026).
 const SKU_LIST_BATCH = 50;
+const MAX_PRODUCT_OFFSET = 10_000;
 // QueryTransactionDetails: mỗi lần tối đa 500 dòng, lật trang bằng `offset` (#117).
 const TXN_PAGE = 500;
 
@@ -100,6 +101,19 @@ function remoteState(p: LazadaProduct): { state: RemoteState; rejectReason: stri
   if (status === 'Pending QC') return { state: 'review', rejectReason: null };
   if (status === 'Active') return { state: 'live', rejectReason: null };
   return { state: 'inactive', rejectReason: null };
+}
+
+function skusOf(p: LazadaProduct): RemoteSku[] {
+  const { state, rejectReason } = remoteState(p);
+  return (p.skus ?? []).map((s) => ({
+    externalProductId: String(p.item_id),
+    externalSkuId: String(s.SkuId),
+    sellerSku: String(s.SellerSku ?? ''),
+    title: String(p.attributes?.name ?? ''),
+    state,
+    rejectReason,
+    quantity: Number(s.quantity ?? 0),
+  }));
 }
 
 const SELLER_LIMIT_WAIT_MS = 1100;
@@ -460,24 +474,24 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
           sku_seller_list: JSON.stringify(batch),
         };
         const body = await call(config.apiUrl, '/products/get', params, 'GET');
-        for (const p of (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? []) {
-          const { state, rejectReason } = remoteState(p);
-          for (const s of p.skus ?? []) {
-            const sellerSku = String(s.SellerSku ?? '');
-            if (!wanted.has(sellerSku)) continue;
-            out.push({
-              externalProductId: String(p.item_id),
-              externalSkuId: String(s.SkuId),
-              sellerSku,
-              title: String(p.attributes?.name ?? ''),
-              state,
-              rejectReason,
-              quantity: Number(s.quantity ?? 0),
-            });
-          }
-        }
+        const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
+        out.push(...products.flatMap(skusOf).filter((s) => wanted.has(s.sellerSku)));
       }
       return out;
+    },
+    // Lật `offset` (sàn không nói thứ tự khi lọc theo ngày nên không lật theo ngày được); bỏ sản phẩm đã xoá (#198).
+    async listSkus(accessToken): Promise<RemoteSku[]> {
+      const out: RemoteSku[] = [];
+      for (let offset = 0; ; offset += SKU_LIST_BATCH) {
+        if (offset > MAX_PRODUCT_OFFSET) {
+          throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} sản phẩm, sàn không cho đọc hết`);
+        }
+        const params = { access_token: accessToken, filter: 'all', limit: String(SKU_LIST_BATCH), offset: String(offset) };
+        const body = await call(config.apiUrl, '/products/get', params, 'GET');
+        const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
+        out.push(...products.flatMap(skusOf).filter((s) => s.state !== 'deleted'));
+        if (products.length < SKU_LIST_BATCH) return out;
+      }
     },
     async updatePriceQuantity(accessToken, items) {
       const results: PerSkuResult[] = [];

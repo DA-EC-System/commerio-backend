@@ -304,7 +304,17 @@ export const OrderPullResult = z
 // Thiết lập lần đầu (§18.2). Mốc kéo đơn do BE đặt là lúc gọi; FE cũ còn gửi `orderCutoffAt` thì khoá lạ bị bỏ (không `.strict()`).
 export const SetupBody = z
   .object({
-    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).default([]),
+    externalSkuIds: z.array(z.string().trim().min(1).max(40)).max(500).optional().meta({
+      description: 'Cũ, giữ tới hết đợt 2: SKU sàn nhận biến thể gợi ý. Gửi cùng `decisions` thì 422 `errors.decisions` (21 §18.7.5)',
+    }),
+    decisions: z
+      .array(z.object({ externalSkuId: z.string().trim().min(1).max(40), variantId: z.uuid().nullable() }).strict())
+      .max(500)
+      .optional()
+      .meta({
+        description:
+          'Biến thể người dùng chọn cho từng SKU sàn, `null` là bỏ qua; SKU không có trong mảng cũng bỏ qua. Dòng sai: 422 `errors["decisions.<i>"]` (21 §18.7.5)',
+      }),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
@@ -320,14 +330,16 @@ export const ShopSetupPreview = z
         .object({
           externalSkuId: z.string(),
           title: z.string(),
-          variantId: z.uuid(),
-          sku: z.string(),
-          available: z.number().int(),
+          match: z.enum(['sku', 'name', 'none']).meta({ description: '`sku`: SKU trùng; `name`: tên giống từ 0.4; `none`: không tìm được (21 §18.7.5)' }),
+          score: z.number().min(0).max(1).nullable().meta({ description: 'Độ giống tên, chỉ có khi `match = name`' }),
+          variantId: z.uuid().nullable(),
+          sku: z.string().nullable(),
+          available: z.number().int().nullable(),
           platformStock: z.number().int(),
         })
         .strict(),
     ),
-    unmatchedRemote: z.number().int().meta({ description: 'Luôn 0: không quét cả shop (shop thử dùng chung)' }),
+    unmatchedRemote: z.number().int().meta({ description: 'Số dòng `match = none` (21 §18.7.5)' }),
     proposedCutoffAt: iso.meta({ description: 'Mốc kéo đơn BE sẽ đặt nếu xác nhận ngay với `push`; FE chỉ hiện (21 §18.6.2, §18.7.6)' }),
     firstShopOfCompany: z.boolean().meta({
       description: 'Công ty chưa có gian hàng nào xong thiết lập (có mốc, không chờ kiểm kê). `true` thì chỉ chọn được `stocktake`',

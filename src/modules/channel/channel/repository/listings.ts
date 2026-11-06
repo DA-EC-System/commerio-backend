@@ -15,6 +15,24 @@ export async function listListingRows(shopId: string, variantIds?: readonly stri
     .where(and(eq(listings.shopId, shopId), byVariant));
 }
 
+/**
+ * Cặp chuỗi giống nhau từ `min` theo `similarity()` của pg_trgm, điểm giảm dần (#198 §18.7.5). `left`, `right` là vị trí
+ * trong hai mảng. Mảng truyền dạng jsonb vì drizzle tách mảng JS thành nhiều tham số.
+ */
+export async function nameSimilarities(
+  left: readonly string[],
+  right: readonly string[],
+  min: number,
+): Promise<{ left: number; right: number; score: number }[]> {
+  const { rows } = await getDb().execute<{ li: number; ri: number; score: number }>(sql`
+    select l.i::int - 1 as li, r.i::int - 1 as ri, similarity(l.t, r.t) as score
+      from jsonb_array_elements_text(${JSON.stringify(left)}::jsonb) with ordinality l(t, i)
+      cross join jsonb_array_elements_text(${JSON.stringify(right)}::jsonb) with ordinality r(t, i)
+     where similarity(l.t, r.t) >= ${min}
+     order by score desc, l.i, r.i`);
+  return rows.map((r) => ({ left: r.li, right: r.ri, score: Number(r.score) }));
+}
+
 export async function findListingRow(shopId: string, variantId: string): Promise<ListingRow | undefined> {
   const [row] = await getDb()
     .select()
