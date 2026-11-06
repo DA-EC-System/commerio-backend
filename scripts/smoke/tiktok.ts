@@ -1,4 +1,5 @@
-// Smoke test TikTok Shop bằng chính adapter của app (#217): link uỷ quyền, đổi code, đọc gian hàng, làm mới, đọc SKU.
+// Smoke test TikTok Shop bằng chính adapter của app (#217): link uỷ quyền, đổi code, đọc gian hàng, làm mới, đọc SKU;
+// yêu cầu trả, lần huỷ, lý do huỷ (#227).
 // Chỉ gọi API đọc và API token. Token lưu ở .smoke-tokens.json (khoá `tiktok`, đã gitignore), không in ra đầy đủ.
 // Cách chạy: scripts/smoke/README.md
 import { randomUUID } from 'node:crypto';
@@ -121,6 +122,30 @@ async function skus(shopId: string | undefined, sellerSkus: string[]): Promise<v
   });
 }
 
+/** Yêu cầu trả hay lần huỷ cập nhật trong `days` ngày qua (#227), lật hết trang. Chỉ đọc. */
+async function aftersales(kind: 'returns' | 'cancellations', days: string | undefined): Promise<void> {
+  const saved = loadTokens<TiktokTokens>('tiktok');
+  const packed = packedFor(saved);
+  const since = new Date(Date.now() - (Number(days) || 30) * 86_400_000);
+  const list = kind === 'returns' ? adapter.listReturns! : adapter.listCancellations!;
+  const items: unknown[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const res: { items: unknown[]; nextCursor: string | null } = await list(packed, since, cursor);
+    items.push(...res.items);
+    cursor = res.nextCursor;
+    if (!cursor) break;
+  }
+  printStep(`${kind === 'returns' ? 'listReturns (return_refund/202602/returns/search)' : 'listCancellations (return_refund/202602/cancellations/search)'} từ ${since.toISOString()}`, true, { count: items.length, items });
+}
+
+/** Lý do người bán huỷ được đơn (#227, Get Aftersale Eligibility 202602). Chỉ đọc, không huỷ. */
+async function cancelReasons(orderId: string | undefined): Promise<void> {
+  if (!orderId) throw new Error('Cú pháp: cancel-reasons <orderId>');
+  const saved = loadTokens<TiktokTokens>('tiktok');
+  printStep('cancelReasons (return_refund/202602/orders/{id}/aftersale_eligibility)', true, await adapter.cancelReasons!(packedFor(saved), orderId, []));
+}
+
 const [command, ...args] = process.argv.slice(2);
 const commands: Record<string, () => Promise<void> | void> = {
   link,
@@ -129,10 +154,14 @@ const commands: Record<string, () => Promise<void> | void> = {
   refresh,
   // skus [shopId] [sellerSku ...]
   skus: () => skus(args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined, args.filter((a, i) => !(i === 0 && /^\d+$/.test(a)))),
+  // returns [số ngày], cancellations [số ngày], cancel-reasons <orderId> (#227, chỉ đọc)
+  returns: () => aftersales('returns', args[0]),
+  cancellations: () => aftersales('cancellations', args[0]),
+  'cancel-reasons': () => cancelReasons(args[0]),
 };
 const run = command ? commands[command] : undefined;
 if (!run) {
-  console.log('Lệnh: link | token <URL callback | code> | shops | refresh | skus [shopId] [sellerSku ...]');
+  console.log('Lệnh: link | token <URL callback | code> | shops | refresh | skus [shopId] [sellerSku ...] | returns [ngày] | cancellations [ngày] | cancel-reasons <orderId>');
   process.exitCode = 1;
 } else {
   try {

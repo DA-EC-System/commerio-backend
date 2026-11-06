@@ -48,6 +48,9 @@ npm run smoke:tiktok -- token "<URL callback>"    # hoặc token <code>; code h�
 npm run smoke:tiktok -- shops                     # /authorization/202309/shops, cập nhật cipher
 npm run smoke:tiktok -- refresh                   # làm mới, lưu cặp token mới ngay (token cũ có thể mất hiệu lực)
 npm run smoke:tiktok -- skus [shopId] [sellerSku ...]   # listSkus, hoặc getSkus khi có sellerSku
+npm run smoke:tiktok -- returns [ngày]            # listReturns: yêu cầu trả cập nhật trong N ngày (mặc định 30), #227
+npm run smoke:tiktok -- cancellations [ngày]      # listCancellations: lần huỷ cập nhật trong N ngày
+npm run smoke:tiktok -- cancel-reasons <orderId>  # lý do người bán huỷ được đơn; chỉ đọc, không huỷ
 ```
 
 Đã chạy 06/11/2026 với shop thử `7495013067939481105` (VN, LOCAL): `shops`, `skus` (3 SKU), `skus CM-TEST-MUG-DEN`, `refresh` (cipher giữ nguyên, refresh hạn tới 2125) đều OK.
