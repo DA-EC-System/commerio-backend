@@ -1,7 +1,5 @@
 // Hàm inventory cho module con khác cùng module lớn `product` (spec #111 mục 5.5). Chạy trong `withCompany` của bên gọi.
-import { randomUUID } from 'node:crypto';
 import { getVariants } from '../../catalog/index.ts';
-import type { StockLine } from '../domain/documents.ts';
 import { availableQty } from '../domain/stock.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import { levelsOf } from '../repository/levels.ts';
@@ -55,22 +53,8 @@ export async function availableOf(variantIds: readonly string[]): Promise<Map<st
 /** Số kế tiếp của một loại chứng từ trong công ty (bắt đầu từ 1); bên gọi tự ghép tiền tố (`DN-000001`). */
 export const nextDocNumber = takeNextNumber;
 
-// Chữ ký cổng theo kiện (Documents/21 mục 11.1, bản 29/10/2026). Hiện là bản giả trả thành công để fulfillment và yêu
-// cầu trả code theo (spec 2026-11-06-206 Q23); thân thật làm ở PR sau của #206.
-
+// Cổng tồn theo kiện (Documents/21 mục 11.1, spec #206 mục 5.5): fulfillment và yêu cầu trả gọi trong giao dịch của mình.
 export type { DocumentRef, StockLine } from '../domain/documents.ts';
-
-const fakeDocument = (number: string) => Promise.resolve({ documentId: randomUUID(), number });
-
 export { release, reserve } from './reservation.ts';
-
+export { receiveBack } from './returns.ts';
 export { reverseShipment, type ShipOptions, ship } from './shipment.ts';
-
-/** Hàng hoàn hoặc khách trả về kho: lập phiếu kiểm hàng hoàn; tồn chưa đổi tới khi phiếu đó ghi sổ (Documents/21 mục 11.1, 15.3). */
-export function receiveBack(
-  _source: { type: 'package' | 'return_request'; id: string },
-  _lines: readonly StockLine[],
-): Promise<{ documentId: string; number: string }> {
-  // shortcut: bản giả, không lập phiếu; thân thật theo spec 2026-11-06-206 mục 5.5.
-  return fakeDocument('KT-000000');
-}

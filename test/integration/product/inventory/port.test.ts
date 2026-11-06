@@ -1,10 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import {
-  availableOf,
-  nextDocNumber,
-  receiveBack,
-} from '#src/modules/product/index.ts';
+import { availableOf, nextDocNumber } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { companyWithVariants, receive, setBuckets } from './helpers.ts';
 
@@ -19,14 +14,6 @@ describe('availableOf', () => {
 
     const map = await withCompany(A.companyId, () => availableOf([a, b, B.variants[0]!, 'abc']));
     expect(Object.fromEntries(map)).toEqual({ [a]: 0, [b]: 5 });
-  });
-});
-
-describe('bản giả cổng theo kiện (spec #206 Q23)', () => {
-  it.each([
-    ['receiveBack', 'KT-000000', () => receiveBack({ type: 'package', id: randomUUID() }, [])],
-  ])('%s trả phiếu giả %s', async (_name, number, call) => {
-    expect(await call()).toEqual({ documentId: expect.any(String), number });
   });
 });
 
