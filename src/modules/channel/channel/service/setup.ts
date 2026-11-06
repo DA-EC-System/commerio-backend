@@ -33,13 +33,18 @@ type Suggestion = SetupSuggestion & { externalProductId: string; sellerSku: stri
 
 /** Ngưỡng `similarity()` của pg_trgm để nhận gợi ý theo tên (Documents/21 §18.7.5). */
 const NAME_MATCH_MIN = 0.4;
+// Ghép tên so mọi cặp (SKU sàn × biến thể), không dùng được index. Trần số cặp và thời gian để một gian hàng lớn không
+// giữ CPU của DB: đo 06/11/2026 trên PG 17 cục bộ, 1e6 cặp ≈ 3,2 giây, 9e6 cặp ≈ 30 giây (#198 worklog).
+const NAME_PAIRS_MAX = 1_000_000;
+const NAME_MATCH_TIMEOUT_MS = 10_000;
 
 const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].filter(Boolean).join(' ');
 
 /**
  * Gợi ý ghép (#198, Documents/21 §18.7.5): mọi SKU người bán trên sàn (bỏ sản phẩm đã xoá), mỗi SKU một dòng. Ghép theo
  * SKU trước, phần còn lại theo tên sản phẩm kèm nhãn biến thể bằng `similarity()` của pg_trgm, nhận từ 0.4, tham lam theo
- * điểm giảm dần; mỗi biến thể gợi ý một lần. Biến thể lưu trữ hay đã có listing ở gian hàng này không được gợi ý. Sàn
+ * điểm giảm dần; mỗi biến thể gợi ý một lần. Số cặp vượt `NAME_PAIRS_MAX` hay câu quá giờ thì bỏ ghép theo tên
+ * (`nameMatchSkipped`). Biến thể lưu trữ hay đã có listing ở gian hàng này không được gợi ý. Sàn
  * chưa có `listSkus` thì chỉ đọc được SKU trùng SKU Commerio (`getSkus`).
  */
 async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
@@ -79,14 +84,20 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
     chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 ? [] : [i],
   );
   const restVariants = open.filter((v) => !taken.has(v.id));
-  if (restRemote.length && restVariants.length) {
-    const pairs = await inCompany(() =>
-      nameSimilarities(
-        restRemote.map((i) => remote[i]!.title),
-        restVariants.map(variantName),
-        NAME_MATCH_MIN,
-      ),
-    );
+  let nameMatchSkipped = restRemote.length * restVariants.length > NAME_PAIRS_MAX;
+  const pairs =
+    restRemote.length && restVariants.length && !nameMatchSkipped
+      ? await inCompany(() =>
+          nameSimilarities(
+            restRemote.map((i) => remote[i]!.title),
+            restVariants.map(variantName),
+            NAME_MATCH_MIN,
+            NAME_MATCH_TIMEOUT_MS,
+          ),
+        )
+      : [];
+  if (pairs === null) nameMatchSkipped = true;
+  else {
     // Ngược chiều: sản phẩm của biến thể giống nhất có từ hai biến thể qua ngưỡng thì tên sàn không chỉ ra được màu, cỡ
     // nào; không gợi ý, để người dùng chọn (#198 diff-review vòng 2). `pairs` xếp điểm giảm dần nên cặp đầu của mỗi SKU là
     // cặp giống nhất.
@@ -122,7 +133,7 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
       platformStock: r.quantity,
     };
   });
-  return { offered, variants, listed };
+  return { offered, variants, listed, nameMatchSkipped };
 }
 
 interface Picked {
@@ -201,10 +212,11 @@ async function companySetupState(actor: Actor, shopId: string) {
 const awaitingError = (number: string) => `Công ty đang chờ phiếu kiểm kê đầu kỳ ${number} ghi sổ`;
 
 export async function setupPreview(port: ProductPort, actor: Actor, shopId: string) {
-  const items = (await suggestions(port, actor, shopId)).offered.map(({ externalProductId: _p, sellerSku: _s, ...s }) => s);
+  const { offered, nameMatchSkipped } = await suggestions(port, actor, shopId);
+  const items = offered.map(({ externalProductId: _p, sellerSku: _s, ...s }) => s);
   const { firstShopOfCompany } = await companySetupState(actor, shopId);
   const unmatchedRemote = items.filter((s) => s.match === 'none').length;
-  return { suggestions: items, unmatchedRemote, proposedCutoffAt: new Date(), firstShopOfCompany };
+  return { suggestions: items, unmatchedRemote, nameMatchSkipped, proposedCutoffAt: new Date(), firstShopOfCompany };
 }
 
 export async function finishSetup(

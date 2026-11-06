@@ -2,9 +2,12 @@
 // SKU rồi theo tên (`similarity` của pg_trgm, ngưỡng 0.4); `POST /setup` nhận `decisions`. Mỗi ca một công ty riêng.
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
+import { sql } from 'drizzle-orm';
 import request from 'supertest';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { ShopSetupPreview } from '#src/modules/channel/channel/api/schemas.ts';
+import { nameSimilarities } from '#src/modules/channel/channel/repository/listings.ts';
+import { getDb, inTransaction } from '#src/shared/db/client.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
@@ -130,6 +133,7 @@ describe('gợi ý ghép theo SKU và theo tên (AC-22)', () => {
     // `vListed` đã có listing ở gian hàng, `vArchived` lưu trữ: không được gợi ý dù tên trùng.
     for (const r of rows.slice(2)) expect(r).toMatchObject({ match: 'none', score: null, variantId: null, sku: null, available: null, platformStock: 4 });
     expect(res.body.unmatchedRemote).toBe(2);
+    expect(res.body.nameMatchSkipped).toBe(false);
   });
 });
 
@@ -197,6 +201,31 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
   afterEach(() => {
     remote.splice(baseRemote);
     variants.splice(baseVariants);
+  });
+
+  it('số cặp tên phải so vượt 1.000.000: bỏ ghép theo tên, dòng chưa trùng SKU là `none`, `nameMatchSkipped` true (DoS)', async () => {
+    // 1004 SKU sàn chưa ghép x 1002 biến thể còn lại > 1e6; tên giống hệt để thấy không ghép tên nào.
+    variants.push(...Array.from({ length: 1000 }, (_, i) => variant(`CMR-X${i}`, `Sản phẩm số ${i}`)));
+    remote.push(...Array.from({ length: 1001 }, (_, i) => sku(`sku-x${i}`, `LZ-X${i}`, `Sản phẩm số ${i}`)));
+    const res = await (await connectingShop()).preview();
+    expect(res.status).toBe(200);
+    expect(() => ShopSetupPreview.parse(res.body)).not.toThrow();
+    const rows = res.body.suggestions as { externalSkuId: string; match: string }[];
+    expect(rows.find((r) => r.externalSkuId === 'sku-1')?.match).toBe('sku');
+    expect(rows.filter((r) => r.match === 'name')).toEqual([]);
+    expect(res.body).toMatchObject({ nameMatchSkipped: true, unmatchedRemote: rows.length - 1 });
+  });
+
+  it('câu similarity quá `statement_timeout` thì trả null (bên gọi bỏ ghép theo tên), giao dịch vẫn dùng tiếp được', async () => {
+    const names = Array.from({ length: 2000 }, (_, i) => `Sản phẩm thử nghiệm số ${i} màu ${i % 7}`);
+    const after = await inTransaction(async () => {
+      expect(await nameSimilarities(names, names, 0.4, 1)).toBeNull();
+      return (await getDb().execute<{ ok: number }>(sql`select 1 as ok`)).rows[0]?.ok;
+    });
+    expect(after).toBe(1);
+    expect(await inTransaction(() => nameSimilarities(['Áo thun'], ['Áo thun trắng'], 0.4, 5000))).toEqual([
+      { left: 0, right: 0, score: expect.any(Number) },
+    ]);
   });
 
   it('nhiều SKU sàn cùng tiêu đề (một sản phẩm nhiều SKU) không được gợi ý theo tên: tên không phân biệt được biến thể', async () => {
