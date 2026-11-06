@@ -22,6 +22,9 @@ import { bytea, money, timestamps, version } from '../../../../shared/db/columns
 export const channelSchema = pgSchema('channel');
 
 export const marketplace = channelSchema.enum('marketplace', ['lazada', 'shopee', 'tiktok', 'mock']);
+export type Marketplace = (typeof marketplace.enumValues)[number];
+/** Mã sàn có trong enum DB (thêm sàn phải thêm giá trị enum, `Documents/tich-hop-san/README.md` bước 4). */
+export const isMarketplace = (value: string): value is Marketplace => (marketplace.enumValues as readonly string[]).includes(value);
 /** Gian hàng (25 §6.1, Documents/21 mục 18.1). "Sắp hết hạn" là nhãn phụ khi `active`, không phải trạng thái. */
 export const shopStatus = channelSchema.enum('shop_status', ['connecting', 'active', 'needs_reauth', 'disconnected']);
 

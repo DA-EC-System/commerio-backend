@@ -18,6 +18,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { countOpenOrders } from '../../../order/index.ts';
 import { assertNoOpenOrders, reconnectAction, type ShopStatus, shopMachine, tokenExpiringSoon } from '../domain/shop.ts';
+import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
   delistForDisconnect,
@@ -115,10 +116,16 @@ export async function shopView(row: ShopRow): Promise<Shop> {
   return toShop(row, listings.get(row.id) ?? 0, held.get(row.id) ?? 0);
 }
 
-function adapterOf(platform: Platform): MarketplaceAdapter {
+function adapterOf(platform: string): MarketplaceAdapter {
   const adapter = getAdapter(platform);
   if (!adapter) throw unsupported();
   return adapter;
+}
+
+/** Mã sàn từ URL: phải có adapter và có trong enum DB, không thì 422 `marketplace_unsupported` (21 §18.4). */
+function platformOf(platform: string): { platform: Platform; adapter: MarketplaceAdapter } {
+  if (!isMarketplace(platform)) throw unsupported();
+  return { platform, adapter: adapterOf(platform) };
 }
 
 /** Lỗi sàn đổi sang mã app, giữ mã gốc (Documents/21 §1.1 R8, R9). */
@@ -199,36 +206,42 @@ export async function getShop(id: string): Promise<Shop & { statusHistory: Statu
 }
 
 /** URL uỷ quyền; `state` là token ký 10 phút gắn công ty, người bấm và sàn (#103 B1). */
-export async function authorizeUrl(platform: Platform, actor: Actor): Promise<{ url: string }> {
-  const adapter = adapterOf(platform);
+export async function authorizeUrl(raw: string, actor: Actor): Promise<{ url: string }> {
+  const { platform, adapter } = platformOf(raw);
   const state = await signPurposeToken('oauth', { cid: actor.companyId, sub: actor.accountId, plt: platform });
   return { url: await onMarketplace(async () => adapter.authorizeUrl(state)) };
 }
 
-/** Callback OAuth: kiểm `state`, đổi `code` lấy token, tạo hoặc nối lại gian hàng. */
+/**
+ * Callback OAuth: kiểm `state`, adapter đổi `params` (mọi query sàn trả trừ `state`) lấy các gian hàng, tạo hoặc nối lại.
+ * Body cũ `{ code, state }` coi như `params = { code }` (21 §18.6.3).
+ */
 export async function connectByCode(
-  platform: Platform,
+  raw: string,
   actor: Actor,
-  input: { code: string; state: string },
+  input: { state?: string | undefined; params?: Record<string, string> | undefined; code?: string | undefined },
 ): Promise<ShopCallbackResult> {
-  const adapter = adapterOf(platform);
-  const claims = await verifyPurposeToken('oauth', input.state).catch((err: unknown) => {
-    if (err instanceof PurposeTokenError) return null;
-    throw err;
-  });
+  const { platform, adapter } = platformOf(raw);
+  const claims = input.state
+    ? await verifyPurposeToken('oauth', input.state).catch((err: unknown) => {
+        if (err instanceof PurposeTokenError) return null;
+        throw err;
+      })
+    : null;
   if (!claims || claims.cid !== actor.companyId || claims.sub !== actor.accountId || claims.plt !== platform) {
     throw new AppError(422, 'oauth_state_invalid', 'Phiên kết nối đã hết hạn hoặc không hợp lệ');
   }
-  return attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode({ code: input.code }))));
+  const params = input.params ?? { code: input.code! };
+  return attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params))));
 }
 
 /** Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần. */
 export async function connectByToken(
-  platform: Platform,
+  raw: string,
   actor: Actor,
   input: { accessToken: string; refreshToken?: string | undefined },
 ): Promise<ShopCallbackResult> {
-  const adapter = adapterOf(platform);
+  const { platform, adapter } = platformOf(raw);
   const connections = await onMarketplace(async () =>
     atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
   );

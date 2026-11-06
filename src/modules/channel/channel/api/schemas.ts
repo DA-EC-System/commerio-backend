@@ -1,17 +1,27 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 
-// Sàn có adapter OAuth kiểm ở service (422 `marketplace_unsupported`), ở đây chỉ nhận đúng enum `marketplace`.
-export const PlatformParams = z.object({ platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock'], 'Sàn không hợp lệ') });
+// Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
+export const PlatformParams = z.object({ platform: z.string().max(40) });
 
 // `id` sai định dạng trả 404 ở service, nên ở đây chỉ là chuỗi.
 export const ShopParams = z.object({ id: z.string() });
 
+// Thiếu hoặc rỗng `state` là 422 `oauth_state_invalid` ở service (21 §18.6.3), nên ở đây không `min(1)`.
 export const CallbackBody = z
   .object({
-    code: z.string('Thiếu code').trim().min(1, 'Thiếu code'),
-    state: z.string('Thiếu state').trim().min(1, 'Thiếu state'),
+    state: z.string().max(4000).optional().meta({ description: '`state` trên URL callback, do `authorize-url` phát' }),
+    params: z
+      .record(z.string().max(64), z.string().max(2000))
+      .refine((p) => Object.keys(p).length <= 20, 'Tối đa 20 tham số')
+      .optional()
+      .meta({ description: 'Mọi query trên URL callback trừ `state`; adapter tự đọc (Lazada: `code`)' }),
+    code: z.string().trim().min(1).max(2000).optional().meta({
+      deprecated: true,
+      description: 'Body cũ `{ code, state }`, coi như `params = { code }`; bỏ sau khi FE gửi `params` (21 §18.6.3)',
+    }),
   })
+  .refine((b) => b.params !== undefined || b.code !== undefined, { path: ['params'], message: 'Thiếu tham số callback' })
   .meta({ id: 'ShopCallbackInput' });
 
 export const TokenBody = z
@@ -48,7 +58,7 @@ export const Shop = z
   .object({
     id: z.uuid(),
     companyId: z.uuid(),
-    platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock']),
+    platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalShopId: z.string().meta({ description: 'Mã shop của sàn (Lazada: `seller_id`)' }),
     shopName: z.string(),
     region: z.string().nullable(),
@@ -150,7 +160,7 @@ export const CategoryAttributeList = z
 export const CategoryMap = z
   .object({
     categoryId: z.uuid(),
-    platform: z.enum(['lazada', 'shopee', 'tiktok', 'mock']),
+    platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalCategoryId: z.string(),
     attributes: z.record(z.string(), z.string()),
     version: z.number().int(),

@@ -19,9 +19,14 @@ const lazada = createLazadaAdapter({
 const defaults: Readonly<Record<string, MarketplaceAdapter>> = { lazada };
 let adapters: Record<string, MarketplaceAdapter> = { ...defaults };
 
-/** Adapter của sàn, `undefined` khi chưa có (bên gọi trả 422 `marketplace_unsupported`). */
+/** Adapter của sàn, `undefined` khi chưa có (bên gọi trả 422 `marketplace_unsupported`). Khoá của Object (`toString`) không tính. */
 export function getAdapter(platform: string): MarketplaceAdapter | undefined {
-  return adapters[platform];
+  return Object.hasOwn(adapters, platform) ? adapters[platform] : undefined;
+}
+
+/** Sàn đăng ký mặc định (không tính adapter test thay); test kiểm mọi sàn có trong enum DB. */
+export function registeredPlatforms(): string[] {
+  return Object.keys(defaults);
 }
 
 /** Sàn nối được trên môi trường này, theo thứ tự đăng ký; mỗi adapter tự khai cách nối (#163). */
