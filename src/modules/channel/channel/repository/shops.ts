@@ -108,6 +108,24 @@ export async function updateShop(
   return row;
 }
 
+/**
+ * Lưu token vừa làm mới (#201) khi gian hàng còn gọi được sàn (`connecting`, `active`). Không xét và không tăng `version`:
+ * refresh token đã tiêu ở sàn nên không được bỏ cặp mới vì người dùng vừa sửa gian hàng, và việc nền đổi token không phải
+ * thay đổi người dùng phải tải lại. Bên gọi giữ khoá `channel.token:<id>` nên không có hai lần làm mới đè nhau.
+ * Trả `false` khi gian hàng đã ngắt hay mất uỷ quyền trong lúc gọi sàn.
+ */
+export async function saveRefreshedTokens(
+  id: string,
+  tokens: Pick<typeof shops.$inferInsert, 'accessTokenEnc' | 'refreshTokenEnc' | 'accessExpiresAt' | 'refreshExpiresAt' | 'authExpiresAt'>,
+): Promise<boolean> {
+  const rows = await getDb()
+    .update(shops)
+    .set({ ...tokens, updatedAt: sql`now()` })
+    .where(and(eq(shops.id, id), inArray(shops.status, ['connecting', 'active'])))
+    .returning({ id: shops.id });
+  return rows.length > 0;
+}
+
 /** Số listing còn trên sàn theo gian hàng. */
 export async function countListingsOnPlatform(shopIds: readonly string[]): Promise<Map<string, number>> {
   if (shopIds.length === 0) return new Map();

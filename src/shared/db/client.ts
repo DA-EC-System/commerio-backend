@@ -79,19 +79,34 @@ export async function withCompany<T>(companyId: string, fn: (tx: Transaction) =>
 
 /**
  * Chạy `fn` khi giữ được khoá advisory **phiên** `hashtextextended(key, 0)` trên một kết nối riêng; phiên khác đang giữ
- * thì trả `'busy'` ngay. Cho việc nền kéo dài qua nhiều giao dịch và lời gọi mạng, nơi khoá giao dịch không giữ được.
- * `fn` chạy ngoài giao dịch (tự mở `withCompany`). Xong thì nhả khoá rồi huỷ kết nối, không trả về pool.
+ * thì trả `'busy'` ngay, hoặc chờ tối đa `waitMs` rồi mới trả `'busy'`. Cho việc nền kéo dài qua nhiều giao dịch và lời
+ * gọi mạng, nơi khoá giao dịch không giữ được. `fn` chạy ngoài giao dịch (tự mở `withCompany`). Xong thì nhả khoá rồi huỷ
+ * kết nối, không trả về pool.
  * Cần kết nối giữ phiên (PostgreSQL thẳng, Supabase Session pooler); PgBouncer chế độ transaction không giữ được khoá.
  */
-export async function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T | 'busy'> {
+export async function withSessionLock<T>(key: string, fn: () => Promise<T>, opts: { waitMs?: number } = {}): Promise<T | 'busy'> {
   rootDb();
   const client = await pool!.connect();
   try {
-    const { rows } = await client.query<{ locked: boolean }>(
-      'select pg_try_advisory_lock(hashtextextended($1, 0)) as locked',
-      [key],
-    );
-    return rows[0]!.locked ? await fn() : 'busy';
+    let locked: boolean;
+    if (opts.waitMs) {
+      // Kết nối này chỉ giữ khoá và bị huỷ khi xong, nên đặt `statement_timeout` cho cả phiên không ảnh hưởng ai.
+      await client.query(`set statement_timeout = ${Math.max(1, Math.floor(opts.waitMs))}`);
+      locked = await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [key]).then(
+        () => true,
+        (err: { code?: string }) => {
+          if (err.code === '57014') return false; // hết `waitMs` mà chưa có khoá
+          throw err;
+        },
+      );
+    } else {
+      const { rows } = await client.query<{ locked: boolean }>(
+        'select pg_try_advisory_lock(hashtextextended($1, 0)) as locked',
+        [key],
+      );
+      locked = rows[0]!.locked;
+    }
+    return locked ? await fn() : 'busy';
   } finally {
     // Nhả ngay phía server: huỷ kết nối không chờ phiên đóng, lượt liền sau có thể còn thấy khoá. Lỗi nhả (kết nối
     // đứt) thì thôi, phiên chết cũng nhả khoá; không che lỗi của `fn`.

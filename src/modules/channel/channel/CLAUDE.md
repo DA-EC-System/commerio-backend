@@ -11,6 +11,15 @@ Máy trạng thái ở `domain/shop.ts` (§18.1, cùng bảng với FE `src/lib/
 - Gọi sàn trước, ngoài giao dịch; ghi DB sau trong `withCompany`. Kiểm "seller đã gắn công ty khác" đọc ngoài `withCompany` (role chủ bảng), như tra mã thanh toán.
 - Token lưu mã hoá AES-GCM bằng `CHANNEL_TOKEN_KEY`, AAD `<shopId>:access|refresh`. Ngắt thì xoá token. Token không bao giờ có trong response, log, lỗi.
 
+### Token và uỷ quyền (#201, 21 §18.4, Documents/16 bài toán 3)
+
+`service/shop-tokens.ts`. Hạn phải kết nối lại = hạn gần hơn trong `auth_expires_at` (hạn uỷ quyền seller chọn, `TokenSet.authExpiresAt`; Lazada, TikTok để null vì `refreshExpiresAt` đã là hạn đó) và `refresh_expires_at` (`authDeadline` ở `domain/shop.ts`). `Shop.tokenExpiringSoon`: `active` và còn dưới 3 ngày tới hạn đó; `Shop.authExpiresAt` trả nguyên cột.
+- Việc nền `channel.token_refresh` **mỗi giờ** (phút 7) cho mọi gian hàng `active`: tới hạn uỷ quyền thì `lose_auth` (hệ thống) sang `needs_reauth`; không thì làm mới khi tới `refreshDueAt(tokens)` adapter khai (không khai: 48 giờ trước hạn access). Lazada 48 giờ (giữ từ #102, chưa đo trên app Testing), TikTok 48 giờ (access 7 ngày). Lượt chưa tới hạn chỉ đọc một dòng.
+- Làm mới trong khoá advisory **phiên** `channel.token:<shopId>` (`withSessionLock` chờ tối đa 30 giây): đọc lại dòng sau khi có khoá, gọi sàn, lưu cặp mới trong giao dịch ngắn (`saveRefreshedTokens`, không xét và không tăng `version`, chỉ khi còn `connecting`/`active`) rồi mới nhả khoá. Không dùng `FOR UPDATE` vì sẽ giữ giao dịch và khoá dòng `shops` suốt lời gọi sàn, chặn kéo đơn, ngắt, thiết lập. Hai lần làm mới đua nhau: lần sau đọc thấy token mới và bỏ qua, refresh token dùng một lần (Shopee) không bị tiêu hai lần.
+- `shopSession` trả adapter bọc `withTokenRefresh`: hàm gọi với access token của phiên mà sàn báo `unauthorized` thì làm mới một lần (cùng khoá; người khác vừa làm mới thì lấy luôn token mới) rồi gọi lại; vẫn `unauthorized` hoặc không làm mới được thì ném lỗi gốc, bên gọi `lose_auth` như cũ. Lớp RateLimit, Retry nằm trong từng adapter.
+- Nối lại gian hàng đã thiết lập (`reconnect`) xếp ngay một lượt `channel.order_pull` từ `last_order_sync_at`.
+- Chưa có `PushCapable` (MVP không nhận webhook, #133 đóng) nên chưa khai loại tin "huỷ uỷ quyền", "sắp hết uỷ quyền".
+
 ## Adapter sàn
 
 `service/marketplaces/`: `common.ts` (interface `MarketplaceAdapter`, `TokenSet`, `SellerInfo`, `ShopConnection`, `MarketplaceError`), `lazada.ts` (ký HMAC-SHA256, gọi, đổi lỗi), `tiktok.ts` + `tiktok-client.ts` (mục TikTok Shop), `index.ts` (`getAdapter`, `capabilitiesOf`, test thay bằng `registerAdapter`/`resetAdapters`). Thêm sàn = một file + một dòng ở `index.ts` + giá trị enum `channel.marketplace` (checklist `Documents/tich-hop-san/README.md`); năng lực mới (listing, đơn, kiện) thêm vào interface khi issue cần. Code ngoài adapter không rẽ nhánh theo sàn.
@@ -36,7 +45,7 @@ Lỗi sàn: `MarketplaceError.kind` đổi sang mã app ở `service/shops.ts` (
 - Hạn token là mốc Unix tuyệt đối (`access_token_expire_in`, `refresh_token_expire_in`). Access 7 ngày; refresh app Custom tới năm 2125.
 - Mã lỗi (common-errors, gọi thật 02/11, 06/11/2026): 36009002 (cùng HTTP 429), 36009003, 36009007, HTTP 5xx → `unavailable`; 105002, 36009005, 101000, 36009004 kèm câu về `access_token` header → `unauthorized`; refresh bị từ chối (vd 36004005) → `unauthorized`; còn lại `rejected` giữ mã (106001 sai chữ ký, 105005 thiếu scope, 36004004 code hết hạn, 36009004 `Invalid shop_cipher`).
 - SKU: `POST /product/202502/products/search` (bản mới nhất trên docv2 ngày 06/11/2026), `page_size` 100, lật `page_token` tới khi `next_page_token` rỗng; `seller_skus` tối đa 10 mỗi lần; tổng quá 10000 → `rejected` `too_many_products`. Trạng thái: `ACTIVATE` → `live` (SKU `DEACTIVATED` bởi seller → `inactive`, bởi sàn → `hold`), `PENDING` → `review`, `FAILED` → `rejected`, `FREEZE`, `PLATFORM_DEACTIVATED` → `hold`, `DELETED` → `deleted`, còn lại `inactive`. Tồn = tổng `inventory[].quantity`. Search không trả lý do từ chối.
-- Giới hạn gọi (docv2 Rate limits, tra 06/11/2026): QPS động theo app × gian hàng, không công bố hạn mức ngày; gợi ý khởi điểm đọc thường 3–10 req/s, ghi 1–3 req/s mỗi gian hàng; 429/36009002 thì lùi. `TIKTOK_DAILY_CALL_LIMIT` (mặc định 20000) là ngân sách tự đặt ở `channel.api_usage`, như Lazada.
+- Giới hạn gọi (docv2 Rate limits, tra 06/11/2026): QPS động theo app × gian hàng, không công bố hạn mức ngày; gợi ý khởi điểm đọc thường 3–10 req/s, ghi 1–3 req/s mỗi gian hàng; 429/36009002 thì lùi. Client giãn theo `<mã shop>:<đọc|ghi>` (`rate-limit.ts`, `TIKTOK_RATE_LIMIT`: đọc 5 req/s, ghi 2 req/s; đọc = GET hoặc POST `…/search`), bị 429/36009002 thì lùi 1 giây cả khoá rồi gọi lại một lần (#215 phần TikTok). Giãn trong một tiến trình, api và worker không chia nhau; chia hạn mức theo công ty (21 §18.6.8) chưa làm. `TIKTOK_DAILY_CALL_LIMIT` (mặc định 20000) là ngân sách tự đặt ở `channel.api_usage`, như Lazada.
 - H11: link uỷ quyền của app mở được với test seller và TikTok trả nguyên `state` của app (kèm `app_key`, `code`, `locale`, `shop_region`), nên callback giữ kiểm `state` ký. Uỷ quyền từ nút Authorize app ở Development Shops không mang `state` của app thì callback 422; dự phòng là dán token (`POST /shops/tiktok/token`, refresh token lấy bằng `npm run smoke:tiktok -- token <URL>`).
 - **Huỷ, trả hàng** (#227, `tiktok-returns.ts`; docv2 tra 07/11/2026, bản mới hơn OAS cục bộ):
   - Lý do huỷ: `GET /return_refund/202602/orders/{id}/aftersale_eligibility` (`SELLER`, `CANCEL`), giao `available_reason_names` của các món (sàn trả trùng tên), tên tiếng Việt theo `tiktokCancelReasonLabel`; món bị chặn → `rejected` giữ `ineligible_code`, `ineligible_reason` (vd 25011050 đơn đã giao).
@@ -95,10 +104,10 @@ Adapter `listOrders`, `getOrder`; bảng 20 trạng thái món Lazada → trạn
 
 ## Việc nền (#102)
 
-Hàng việc pg-boss (`core/platform/service/jobs/`). Lịch theo gian hàng ở `service/shop-jobs.ts`: `channel.order_pull` 5 phút, `channel.listing_sync` 15 phút, `channel.token_refresh` 3 giờ sáng; đặt khi gian hàng `active`, bỏ khi ngắt hoặc mất token, worker khởi động thì dựng lại (`reconcileShopJobs`). Handler ở `service/background.ts`: gian hàng không còn `active` thì bỏ lịch; sàn từ chối token thì `needs_reauth` và việc được giữ (`HoldJob`), nối lại thì chạy tiếp. Mỗi gian hàng một việc chờ mỗi hàng (`stately`).
+Hàng việc pg-boss (`core/platform/service/jobs/`). Lịch theo gian hàng ở `service/shop-jobs.ts`: `channel.order_pull` 5 phút, `channel.listing_sync` 15 phút, `channel.token_refresh` mỗi giờ (#201); đặt khi gian hàng `active`, bỏ khi ngắt hoặc mất token, worker khởi động thì dựng lại (`reconcileShopJobs`). Handler ở `service/background.ts`: gian hàng không còn `active` thì bỏ lịch; sàn từ chối token thì `needs_reauth` và việc được giữ (`HoldJob`), nối lại thì chạy tiếp. Mỗi gian hàng một việc chờ mỗi hàng (`stately`).
 
 Hạn mức gọi Lazada của app: mỗi request xin một lượt ở `channel.api_usage` (theo nền tảng, ngày giờ VN, `repository/api-usage.ts`, chạy ngoài giao dịch của bên gọi); đủ `LAZADA_DAILY_CALL_LIMIT` (mặc định 9000) thì `unavailable` `daily_call_limit`, không gọi mạng. Hạn mức dùng chung mọi công ty.
 
 ## Chưa làm
 
-Kéo đơn khi nối lại (`reconnect.pulledFrom` chỉ báo mốc; vòng 5 phút tự kéo từ mốc cũ); ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
+Ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.

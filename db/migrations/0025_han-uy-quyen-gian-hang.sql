@@ -1,0 +1,1 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "auth_expires_at" timestamp with time zone;
