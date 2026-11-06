@@ -289,6 +289,39 @@ describe('reverseShipment', () => {
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 20, reserved: 3, avg_cost: '90000.00' });
   });
 
+  it('hai SKU, lượt có phiếu bắt buộc và phiếu thường giá khác nhau: thẻ kho trỏ đúng dòng phiếu, giá đảo bình quân cả lượt', async () => {
+    const { companyId, variants } = await companyWithVariants(2);
+    const [a, b] = variants as [string, string];
+    await receive(companyId, a, 10, 100);
+    await receive(companyId, b, 10, 200);
+    const k = randomUUID();
+    const actor = randomUUID();
+    await withCompany(companyId, () => ship(k, [line(a, 2)], { actorId: null, forced: true }));
+    await withCompany(companyId, () => receiveGoods(randomUUID(), received(a, 10, '300'), actor));
+    await setBuckets(companyId, a, { reserved: 1 });
+    await setBuckets(companyId, b, { reserved: 1 });
+
+    const xk2 = await withCompany(companyId, () => ship(k, [line(a, 1), line(b, 1)], { actorId: actor }));
+
+    expect(xk2.number).toBe('XK-000002');
+    const xkLines = new Map((await docLines(xk2.documentId)).map((l) => [l.variant_id, l]));
+    expect(xkLines.get(a)).toMatchObject({ quantity: 1, unit_cost: '211.11' });
+    expect(xkLines.get(b)).toMatchObject({ quantity: 1, unit_cost: '200.00' });
+    const { rows: moves } = await testPool().query('select variant_id, source_line_id, balance_after from product.stock_moves where source_id = $1', [
+      xk2.documentId,
+    ]);
+    expect(new Map(moves.map((m) => [m.variant_id, m.source_line_id]))).toEqual(new Map([[a, xkLines.get(a).id], [b, xkLines.get(b).id]]));
+    expect((await stockEvents(b)).at(-1)).toEqual({ variantId: b, onHand: 9, reserved: 0, available: 9 });
+
+    const dx = await withCompany(companyId, () => reverseShipment(k, [line(a, 3), line(b, 1)], { actorId: actor, reason: 'Quét nhầm kiện' }));
+
+    const dxLines = new Map((await docLines(dx.documentId)).map((l) => [l.variant_id, l]));
+    expect(dxLines.get(a)).toMatchObject({ quantity: 3, unit_cost: '137.04' });
+    expect(dxLines.get(b)).toMatchObject({ quantity: 1, unit_cost: '200.00' });
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 20, reserved: 3, avg_cost: '200.00' });
+    expect(await levelOf(companyId, b)).toMatchObject({ on_hand: 10, reserved: 1, avg_cost: '200.00' });
+  });
+
   it('lý do chỉ có khoảng trắng hoặc dài 501 ký tự → lỗi, không có phiếu đảo; dài đúng 500 thì được', async () => {
     const { companyId, a } = await skuWith(5, 3);
     const k = randomUUID();

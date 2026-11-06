@@ -65,6 +65,8 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - Khoá kiện (`FOR UPDATE`) trước khi gọi. Thứ tự khoá: kiện → dòng tồn theo `variantId` → `doc_counters`.
 - Chống gọi lặp `reserve`, `release` (Q11): chỉ gọi `reserve` cho dòng có `reserved_qty = 0`, đặt `reserved_qty = quantity` khi nhận `true`; `release` ngược lại. Inventory cộng trừ đúng số được truyền, không có sổ giữ hàng riêng.
 - `ship` gọi đúng một lần theo `stock_deducted` (Q12); giá vốn dòng kiện đọc `stockOf(...).avgCost` ngay sau `ship` trong cùng giao dịch (Q16).
+- Không gọi `ship` hai lần trong một lượt với dòng gộp trùng hệt: lưới gọi lặp sẽ trả phiếu cũ, tồn thực thừa mà không báo lỗi. Ca dễ gặp: dòng chưa ghép lúc bàn giao, ghép sau vào cùng SKU và cùng số với lần trừ đầu (`25` §8.4 quy tắc 3). Đang chờ chốt cách sửa (spec §10).
+- Sau `reverseShipment`, đặt lại `reserved_qty = quantity`, `stock_deducted = false` cho dòng được đảo: inventory đã cộng lại đang giữ, kể cả khi lượt đó là bàn giao bắt buộc (Q17). Quên thì đang giữ kẹt mãi, khả dụng thấp hơn thật.
 - Chuyển trạng thái kiện, yêu cầu trả có điều kiện trước `receiveBack`: hàm này không khoá gì, hai lần gọi song song cùng nguồn sẽ lập hai phiếu.
 
 ## Quyền ở API (`api/routes.ts`)
