@@ -203,17 +203,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/push',
     summary: 'Đẩy biến thể lên sàn (#104)',
     description:
-      'Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng).',
+      'Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng). Gian hàng chờ kiểm kê đầu kỳ: 409 `shop_awaiting_stocktake` (21 §18.6.2).',
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
-    responses: { 200: { description: 'Kết quả theo biến thể', ...json(PushResults) }, ...onShop },
+    responses: {
+      200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
+      ...onShop,
+      409: problemResponse('`shop_not_connected`, `shop_awaiting_stocktake`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
   });
   registry.registerPath({
     method: 'get',
     path: '/shops/:id/setup',
     summary: 'Gợi ý ghép listing có sẵn khi thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. SKU sàn có SellerSku trùng SKU Commerio; chỉ hỏi sàn theo SKU của công ty. Gian hàng không ở `connecting`: 409 `invalid_transition`.',
+      'Cần `channel.shop.connect`. Mọi SKU người bán trên sàn (sàn chưa đọc được cả gian hàng thì chỉ SKU trùng SKU Commerio), mỗi dòng `match` `sku` / `name` (tên giống từ 0.4 theo pg_trgm, kèm `score`) / `none`; biến thể lưu trữ hay đã có listing ở gian hàng không được gợi ý (21 §18.7.5). `proposedCutoffAt`, `firstShopOfCompany` (§18.6.2). Gian hàng không ở `connecting`: 409 `invalid_transition`. Gian hàng quá 10000 sản phẩm (Lazada): 409 `marketplace_rejected` `too_many_products`.',
     security: bearer,
     request: { params: ShopParams },
     responses: { 200: { description: 'Gợi ý', ...json(ShopSetupPreview) }, ...onShop },
@@ -223,13 +227,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/setup',
     summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Tạo listing `live` cho SKU đã chọn, đẩy khả dụng, đặt mốc kéo đơn là lúc gọi (FE không gửi; `orderCutoffAt` gửi lên bị bỏ qua), gian hàng `connecting → active`. Sai: 422 `errors.openingStock` (`stocktake` chưa hỗ trợ), `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60; không gửi thì giữ giá trị đang có tới khi FE gửi trường này; sàn `platform_status` bỏ qua, lưu null).',
+      'Cần `channel.shop.connect`. Tạo listing `live` theo `decisions` (hoặc `externalSkuIds` cũ), mốc kéo đơn = lúc gọi (`orderCutoffAt` trong body bị bỏ qua, §18.7.6), gian hàng `connecting → active`, xếp lượt kéo đơn còn mở; lúc này chỉ đẩy giá, tồn đẩy sau lượt đó (`Shop.setup`). `stocktake`: lập phiếu kiểm kê đầu kỳ, gian hàng ở chế độ chờ kiểm kê (`openingStocktake`). Sai: 422 `errors.openingStock` (gian hàng đầu tiên của công ty gửi `push`; công ty đang chờ phiếu đầu kỳ khác), `errors.decisions` (gửi cả `externalSkuIds`), `errors["decisions.<i>"]` (SKU không có trong gợi ý, lặp, biến thể không thuộc công ty, lưu trữ, đã ghép ở gian hàng), `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60; không gửi thì giữ giá trị đang có tới khi FE gửi trường này; sàn `platform_status` bỏ qua, lưu null).',
     security: bearer,
     request: { params: ShopParams, body: json(SetupBody) },
     responses: {
       200: { description: 'Kết quả', ...json(ShopSetupResult) },
       ...onShop,
       409: problemResponse('`invalid_transition`, `shop_not_connected`, `version_conflict`'),
+      501: problemResponse(
+        '`not_implemented` kèm `issue`, `owner`: `stocktake` khi chưa có cổng lập phiếu kiểm kê (commerio-backend#245, Bình); không ghi gì, gian hàng vẫn `connecting` (21 §18.7.9)',
+      ),
     },
   });
   registry.registerPath({
