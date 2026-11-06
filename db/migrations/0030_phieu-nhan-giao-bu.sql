@@ -1,0 +1,1 @@
+ALTER TABLE "product"."goods_receipts" ADD COLUMN "follows_up_receipt_id" uuid;
