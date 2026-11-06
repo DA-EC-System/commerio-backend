@@ -3,7 +3,7 @@ import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as stock from '../service/stock.ts';
-import { type InventoryContext, incomingLookupOf, type Viewer } from '../service/views.ts';
+import { type InventoryContext, incomingLookupOf, purchaseNumbersOf, type Viewer } from '../service/views.ts';
 import { ReorderRuleBody, StockListQuery, VariantParams } from './schemas.ts';
 
 /**
@@ -31,7 +31,8 @@ export function inventoryRouter(ctx: InventoryContext): Router {
   });
 
   router.get('/stock/:variantId', view, validate({ params: VariantParams }), async (_req, res) => {
-    res.json(await stock.getStock(incomingLookupOf(ctx), viewer(res), validated<typeof VariantParams>(res, 'params').variantId));
+    const lookups = { incomingOf: incomingLookupOf(ctx), purchaseNumbers: purchaseNumbersOf(ctx) };
+    res.json(await stock.getStock(lookups, viewer(res), validated<typeof VariantParams>(res, 'params').variantId));
   });
 
   router.put(

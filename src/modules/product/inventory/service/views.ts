@@ -29,15 +29,27 @@ const attributesLabel = (v: VariantSummary) => v.attributes.map((a) => a.value).
 /** Đang về theo biến thể, do purchasing tính (#108); inventory nhận qua `ctx` vì purchasing đã import inventory. */
 export type IncomingLookup = (variantIds?: readonly string[]) => Promise<Map<string, number>>;
 
-/** `ctx` của router inventory: `product/index.ts` tiêm `incomingOf` của purchasing. */
+/** Số phiếu nhận, phiếu trả NCC theo id, do purchasing tra (#206 phần 2a); id không có thì vắng trong Map. */
+export type PurchaseNumberLookup = (ids: readonly string[]) => Promise<Map<string, string>>;
+
+/** `ctx` của router inventory: `product/index.ts` tiêm `incomingOf`, `purchaseDocumentNumbers` của purchasing. */
 export interface InventoryContext extends ModuleContext {
   readonly incomingOf?: IncomingLookup;
+  readonly purchaseDocumentNumbers?: PurchaseNumberLookup;
 }
 
 /** Hàm đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 rõ ràng thay vì trả đang về 0. */
 export function incomingLookupOf(ctx: InventoryContext): IncomingLookup {
   if (!ctx.incomingOf) throw new AppError(500, 'internal_error', 'Chưa nối số đang về của purchasing (src/modules/product/index.ts)');
   return ctx.incomingOf;
+}
+
+/** Hàm đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 thay vì trả thẻ kho thiếu số phiếu. */
+export function purchaseNumbersOf(ctx: InventoryContext): PurchaseNumberLookup {
+  if (!ctx.purchaseDocumentNumbers) {
+    throw new AppError(500, 'internal_error', 'Chưa nối số phiếu của purchasing (src/modules/product/index.ts)');
+  }
+  return ctx.purchaseDocumentNumbers;
 }
 
 /**

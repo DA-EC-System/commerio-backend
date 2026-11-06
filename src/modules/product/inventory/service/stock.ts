@@ -4,10 +4,19 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../../core/index.ts';
 import type { VariantSummary } from '../../catalog/index.ts';
 import { getVariants } from '../../catalog/index.ts';
+import { areaOf, documentKind } from '../domain/moves.ts';
 import { toDong } from '../domain/stock.ts';
-import { allLevels, findLevel, latestMoves, lockLevel, setMinQty } from '../repository/levels.ts';
+import { allLevels, findLevel, latestMoves, lockLevel, type MoveRow, setMinQty } from '../repository/levels.ts';
+import { documentHeads } from '../repository/move-sources.ts';
 import { recheckThresholds } from './thresholds.ts';
-import { type IncomingLookup, namesOf, notFound, toStockLevel, type Viewer } from './views.ts';
+import {
+  type IncomingLookup,
+  namesOf,
+  notFound,
+  type PurchaseNumberLookup,
+  toStockLevel,
+  type Viewer,
+} from './views.ts';
 
 const MOVES_LIMIT = 100;
 
@@ -70,28 +79,64 @@ async function ownVariant(variantId: string): Promise<VariantSummary> {
   return variant;
 }
 
-/** Tồn một biến thể và 100 dòng thẻ kho mới nhất. */
-export async function getStock(incomingOf: IncomingLookup, viewer: Viewer, variantId: string) {
+/** Hàm tra cứu của purchasing mà chi tiết tồn cần; route lấy từ `ctx` (`incomingLookupOf`, `purchaseNumbersOf`). */
+export interface StockLookups {
+  readonly incomingOf: IncomingLookup;
+  readonly purchaseNumbers: PurchaseNumberLookup;
+}
+
+/** Tồn một biến thể và 100 dòng thẻ kho mới nhất, mỗi dòng kèm số phiếu, loại và nhóm chứng từ gốc. */
+export async function getStock(lookups: StockLookups, viewer: Viewer, variantId: string) {
   return withCompany(viewer.companyId, async () => {
     const variant = await ownVariant(variantId);
-    const incoming = (await incomingOf([variant.id])).get(variant.id) ?? 0;
+    const incoming = (await lookups.incomingOf([variant.id])).get(variant.id) ?? 0;
     const level = toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming);
     const moves = await latestMoves(variant.id, MOVES_LIMIT);
     const names = await namesOf(moves.map((m) => m.doneBy));
+    const documentOf = await moveDocuments(moves, lookups.purchaseNumbers);
     return {
       level,
       moves: moves.map((m) => ({
         id: String(m.id),
-        area: m.bucket,
         qtyChange: m.qtyChange,
-        balanceAfter: m.balanceAfter,
-        document: { id: m.sourceId, type: m.sourceType },
+        area: areaOf(m.bucket),
+        onHandAfter: m.balanceAfter,
+        document: documentOf(m),
         unitCost: viewer.canCost && m.unitCost !== null ? toDong(m.unitCost) : null,
         doneAt: m.doneAt.toISOString(),
         doneBy: m.doneBy ? (names.get(m.doneBy) ?? null) : null,
       })),
     };
   });
+}
+
+/**
+ * Chứng từ gốc của các dòng thẻ kho, tra theo lô: một câu cho phiếu kho, một lần tra purchasing cho phiếu nhận và
+ * phiếu trả NCC, mỗi loại chỉ khi có id. Dòng trỏ chứng từ không tồn tại là dữ liệu hỏng (`source_id` không có khoá
+ * ngoại): báo 500, không bịa số phiếu trên sổ.
+ */
+async function moveDocuments(moves: readonly MoveRow[], purchaseNumbers: PurchaseNumberLookup) {
+  const idsOf = (stockDocument: boolean) => [
+    ...new Set(moves.filter((m) => (m.sourceType === 'stock_document') === stockDocument).map((m) => m.sourceId)),
+  ];
+  const stockIds = idsOf(true);
+  const purchaseIds = idsOf(false);
+  const heads = stockIds.length ? await documentHeads(stockIds) : new Map();
+  const numbers = purchaseIds.length ? await purchaseNumbers(purchaseIds) : new Map<string, string>();
+  const orphan = (m: MoveRow) =>
+    new AppError(500, 'internal_error', `Thẻ kho ${m.id} trỏ chứng từ ${m.sourceId} không tồn tại`);
+
+  return (m: MoveRow) => {
+    if (m.sourceType === 'stock_document') {
+      const head = heads.get(m.sourceId);
+      if (!head) throw orphan(m);
+      const kind = documentKind({ type: 'stock_document', kind: head.kind, isOpening: head.isOpening, sourceType: head.sourceType });
+      return { id: m.sourceId, number: head.number, type: head.kind, kind };
+    }
+    const number = numbers.get(m.sourceId);
+    if (number === undefined) throw orphan(m);
+    return { id: m.sourceId, number, type: m.sourceType, kind: documentKind({ type: m.sourceType }) };
+  };
 }
 
 /**
