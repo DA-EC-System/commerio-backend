@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  availableOf,
-  nextDocNumber,
-  receiveBack,
-  release,
-  reserve,
-  reverseShipment,
-  ship,
-} from '#src/modules/product/index.ts';
+import { availableOf, nextDocNumber } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { companyWithVariants, receive, setBuckets } from './helpers.ts';
 
@@ -22,18 +14,6 @@ describe('availableOf', () => {
 
     const map = await withCompany(A.companyId, () => availableOf([a, b, B.variants[0]!, 'abc']));
     expect(Object.fromEntries(map)).toEqual({ [a]: 0, [b]: 5 });
-  });
-});
-
-describe('hàm cổng tạm', () => {
-  it.each([
-    ['reserve', () => reserve('p', [])],
-    ['release', () => release('p', [])],
-    ['ship', () => ship('p', [], { actorId: 'u' })],
-    ['reverseShipment', () => reverseShipment('p', [], { actorId: 'u', reason: 'x' })],
-    ['receiveBack', () => receiveBack({ type: 'package', id: 'p' }, [])],
-  ])('AC7: %s trả 501 not_implemented', async (_name, call) => {
-    await expect(call()).rejects.toMatchObject({ status: 501, code: 'not_implemented', extensions: { issue: 'commerio-backend#206', owner: 'Khang' } });
   });
 });
 
