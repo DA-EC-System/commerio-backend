@@ -6,6 +6,7 @@
 // - Token: https://partner.tiktokshop.com/docv2/page/authorization-overview-202407
 import { createHmac } from 'node:crypto';
 import { MarketplaceError } from './common.ts';
+import { createRateLimiter } from './rate-limit.ts';
 
 export interface TiktokConfig {
   appKey: string | undefined;
@@ -18,7 +19,30 @@ export interface TiktokConfig {
   authUrl: string;
   /** Xin một lượt trong hạn mức gọi của app trước mỗi request; `false` là hết lượt hôm nay. */
   reserveCall?: () => Promise<boolean>;
+  /**
+   * Giãn lời gọi theo gian hàng (#215 phần TikTok). TikTok giới hạn QPS động theo app × gian hàng, không có hạn mức ngày
+   * (docv2 Rate limits, tra 06/11/2026: gợi ý đọc 3–10 req/s, ghi 1–3 req/s mỗi gian hàng). Không đặt thì không giãn,
+   * không gọi lại (test). Có đặt: bị 429/36009002 thì lùi `backoffMs` rồi gọi lại một lần.
+   */
+  rateLimit?: TiktokRateLimit;
 }
+
+export interface TiktokRateLimit {
+  readPerSecond: number;
+  writePerSecond: number;
+  backoffMs: number;
+}
+
+/** Mặc định chạy thật: giữa khoảng gợi ý của TikTok, chừa chỗ cho tiến trình khác cùng gọi. */
+export const TIKTOK_RATE_LIMIT: TiktokRateLimit = { readPerSecond: 5, writePerSecond: 2, backoffMs: 1000 };
+
+/** Lời gọi chỉ đọc: GET, và POST tìm kiếm (Search Products, Get Order List dùng POST có body lọc). */
+function isRead(method: TiktokMethod, path: string): boolean {
+  return method === 'GET' || /\/search$/.test(path);
+}
+
+const isRateLimited = (err: unknown) =>
+  err instanceof MarketplaceError && (err.platformCode === '36009002' || err.platformCode === 'http_429');
 
 const TIMEOUT_MS = 10_000;
 
@@ -120,6 +144,7 @@ export interface TiktokClient {
 
 export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch = fetch): TiktokClient {
   const hasCredentials = Boolean(config.appKey && config.appSecret);
+  const limiter = config.rateLimit ? createRateLimiter() : null;
 
   function credentials() {
     if (!hasCredentials) throw new MarketplaceError('unsupported');
@@ -151,7 +176,38 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
     return body;
   }
 
-  async function signedCall<T>(method: TiktokMethod, path: string, rawToken: string | null, cipher: string | null, opts: TiktokCallOptions) {
+  /**
+   * Giãn theo `<mã shop>:<đọc|ghi>` rồi gửi; bị giới hạn tần suất thì lùi cả khoá, gọi lại một lần (request bị từ chối nên
+   * gửi lại ghi không trùng). Chữ ký có `timestamp` nên mỗi lần gửi ký lại (`build`).
+   */
+  async function limited<T>(scope: string, method: TiktokMethod, path: string, send: () => Promise<T>): Promise<T> {
+    const rl = config.rateLimit;
+    if (!rl || !limiter) return send();
+    const key = `${scope}:${isRead(method, path) ? 'read' : 'write'}`;
+    const interval = 1000 / (isRead(method, path) ? rl.readPerSecond : rl.writePerSecond);
+    await limiter.acquire(key, interval);
+    try {
+      return await send();
+    } catch (err) {
+      if (!isRateLimited(err)) throw err;
+      limiter.backoff(key, rl.backoffMs);
+      await limiter.acquire(key, interval);
+      return send();
+    }
+  }
+
+  async function signedCall<T>(
+    method: TiktokMethod,
+    path: string,
+    rawToken: string | null,
+    cipher: string | null,
+    opts: TiktokCallOptions,
+    scope = 'app',
+  ) {
+    return limited(scope, method, path, () => signedOnce<T>(method, path, rawToken, cipher, opts));
+  }
+
+  async function signedOnce<T>(method: TiktokMethod, path: string, rawToken: string | null, cipher: string | null, opts: TiktokCallOptions) {
     const { appKey, appSecret } = credentials();
     await reserve();
     const query: Record<string, string> = { app_key: appKey, timestamp: String(Math.floor(Date.now() / 1000)) };
@@ -172,7 +228,7 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
     async call<T>(method: TiktokMethod, path: string, opts: TiktokCallOptions = {}) {
       const parts = opts.token === undefined ? null : unpackTiktokToken(opts.token);
       const cipher = opts.shopCipher === false ? null : (parts?.cipher ?? null);
-      return signedCall<T>(method, path, parts?.token ?? null, cipher, opts);
+      return signedCall<T>(method, path, parts?.token ?? null, cipher, opts, parts?.shopId ?? 'app');
     },
     async callRaw<T>(method: TiktokMethod, path: string, rawToken: string, opts: Omit<TiktokCallOptions, 'token' | 'shopCipher'> = {}) {
       return signedCall<T>(method, path, rawToken, null, opts);

@@ -3,6 +3,7 @@ import { env } from '../../../../../shared/config/env.ts';
 import { reservePlatformCall } from '../../repository/api-usage.ts';
 import type { ConnectMethod, MarketplaceAdapter, ShopCapabilities } from './common.ts';
 import { createLazadaAdapter } from './lazada.ts';
+import { TIKTOK_RATE_LIMIT } from './tiktok-client.ts';
 import { createTiktokAdapter } from './tiktok.ts';
 
 export type * from './common.ts';
@@ -24,6 +25,7 @@ const tiktok = createTiktokAdapter({
   apiUrl: env.TIKTOK_API_URL,
   authUrl: env.TIKTOK_AUTH_URL,
   reserveCall: () => reservePlatformCall('tiktok', env.TIKTOK_DAILY_CALL_LIMIT),
+  rateLimit: TIKTOK_RATE_LIMIT,
 });
 
 const defaults: Readonly<Record<string, MarketplaceAdapter>> = { lazada, tiktok };
