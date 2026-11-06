@@ -4,8 +4,6 @@ import {
   availableOf,
   nextDocNumber,
   receiveBack,
-  release,
-  reserve,
   reverseShipment,
   ship,
 } from '#src/modules/product/index.ts';
@@ -27,11 +25,6 @@ describe('availableOf', () => {
 });
 
 describe('bản giả cổng theo kiện (spec #206 Q23)', () => {
-  it('reserve trả reserved: true; release không ném', async () => {
-    await expect(reserve(randomUUID(), [])).resolves.toEqual({ reserved: true });
-    await expect(release(randomUUID(), [])).resolves.toBeUndefined();
-  });
-
   it.each([
     ['ship', 'XK-000000', () => ship(randomUUID(), [], { actorId: randomUUID() })],
     ['reverseShipment', 'DX-000000', () => reverseShipment(randomUUID(), [], { actorId: randomUUID(), reason: 'x' })],

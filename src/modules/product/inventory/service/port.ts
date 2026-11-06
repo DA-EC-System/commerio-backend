@@ -62,17 +62,7 @@ export type { StockLine } from '../domain/documents.ts';
 
 const fakeDocument = (number: string) => Promise.resolve({ documentId: randomUUID(), number });
 
-/** Giữ hàng cho kiện; `reserved: false` khi không đủ khả dụng. */
-export function reserve(_packageId: string, _lines: readonly StockLine[]): Promise<{ reserved: boolean }> {
-  // shortcut: bản giả, không cộng đang giữ; thân thật theo spec 2026-11-06-206 mục 5.5.
-  return Promise.resolve({ reserved: true });
-}
-
-/** Trả phần đang giữ của kiện. */
-export function release(_packageId: string, _lines: readonly StockLine[]): Promise<void> {
-  // shortcut: bản giả, không trừ đang giữ; thân thật theo spec 2026-11-06-206 mục 5.5.
-  return Promise.resolve();
-}
+export { release, reserve } from './reservation.ts';
 
 /** Bàn giao kiện: trừ tồn thực và đang giữ, lập phiếu xuất theo kiện. */
 export function ship(_packageId: string, _lines: readonly StockLine[], _opts: { actorId: string }): Promise<{ documentId: string; number: string }> {
