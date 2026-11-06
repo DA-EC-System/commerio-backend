@@ -20,6 +20,7 @@ import {
   type DocLineRow,
   type DocRow,
   findDoc,
+  findDocBySource,
   insertDoc,
   insertDocLines,
   linesOfDocs,
@@ -466,6 +467,9 @@ export async function receiveBack(
   meta: { number?: string; orderId?: string; shopId?: string | null; unitCosts?: Readonly<Record<string, string | null>>; note?: string } = {},
 ): Promise<{ documentId: string; number: string }> {
   const companyId = currentCompanyId()!;
+  // Gọi lại cùng nguồn trả phiếu cũ (Documents/21 §11.1); bên gọi khoá kiện hoặc yêu cầu trả nên không gọi đua
+  const existing = await findDocBySource('return_inspection', source.type, source.id);
+  if (existing) return { documentId: existing.id, number: existing.number };
   const row = await insertDoc({
     companyId,
     number: await number('return_inspection'),

@@ -13,6 +13,21 @@ export async function insertDoc(values: typeof stockDocuments.$inferInsert): Pro
   return row!;
 }
 
+/** Phiếu loại `kind` lập sớm nhất từ một chứng từ nguồn (`receiveBack` gọi lại cùng nguồn trả phiếu cũ). */
+export async function findDocBySource(
+  kind: DocRow['kind'],
+  sourceType: string,
+  sourceId: string,
+): Promise<Pick<DocRow, 'id' | 'number'> | undefined> {
+  const [row] = await getDb()
+    .select({ id: stockDocuments.id, number: stockDocuments.number })
+    .from(stockDocuments)
+    .where(and(eq(stockDocuments.kind, kind), eq(stockDocuments.sourceType, sourceType), eq(stockDocuments.sourceId, sourceId)))
+    .orderBy(asc(stockDocuments.createdAt))
+    .limit(1);
+  return row;
+}
+
 export async function insertDocLines(companyId: string, documentId: string, lines: readonly NewDocLine[]): Promise<void> {
   if (!lines.length) return;
   // Cùng giao dịch thì `now()` như nhau: lệch từng mili giây để đọc ra đúng thứ tự người dùng nhập

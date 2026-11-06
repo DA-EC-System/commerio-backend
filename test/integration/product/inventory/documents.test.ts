@@ -249,4 +249,13 @@ describe('B3b kiểm hàng về', () => {
       [v2, 0, 1],
     ]);
   });
+
+  it('gọi lại cùng nguồn trả phiếu cũ, không lập phiếu thứ hai (Documents/21 §11.1)', async () => {
+    const source = { type: 'package' as const, id: crypto.randomUUID() };
+    const first = await withCompany(companyId, () => receiveBack(source, [{ variantId: v1, quantity: 1 }]));
+    const again = await withCompany(companyId, () => receiveBack(source, [{ variantId: v1, quantity: 1 }]));
+    expect(again).toEqual(first);
+    const other = await withCompany(companyId, () => receiveBack({ ...source, type: 'return_request' }, [{ variantId: v1, quantity: 1 }]));
+    expect(other.documentId).not.toBe(first.documentId);
+  });
 });
