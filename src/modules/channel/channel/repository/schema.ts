@@ -49,6 +49,8 @@ export const shops = channelSchema.table(
     refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }),
     status: shopStatus('status').notNull().default('connecting'),
     orderCutoffAt: timestamp('order_cutoff_at', { withTimezone: true }),
+    /** Hạn trả hàng (ngày) Admin nhập lúc thiết lập, cho sàn `returnWindow = 'days'` (Documents/21 §18.6.2). */
+    returnWindowDays: integer('return_window_days'),
     lastOrderSyncAt: timestamp('last_order_sync_at', { withTimezone: true }),
     settlementCursor: timestamp('settlement_cursor', { withTimezone: true }),
     lastError: text('last_error'),
@@ -63,6 +65,7 @@ export const shops = channelSchema.table(
       .on(t.platform, t.externalShopId)
       .where(sql`${t.status} <> 'disconnected'`),
     check('shops_active_cutoff', sql`${t.status} <> 'active' or ${t.orderCutoffAt} is not null`),
+    check('shops_return_window_days', sql`${t.returnWindowDays} between 1 and 60`),
   ],
 );
 

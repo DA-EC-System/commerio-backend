@@ -127,6 +127,13 @@
       "when": 1793889479102,
       "tag": "0017_thong-tin-don-san",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793959417327,
+      "tag": "0018_shop-return-window",
+      "breakpoints": true
     }
   ]
 }

@@ -85,6 +85,8 @@ describe('kết nối bằng OAuth', () => {
     const body = ShopCallbackResult.parse(res.body);
     expect(body).toMatchObject({ created: true, reconnect: null, shop: { status: 'connecting', externalShopId: id } });
     expect(body.shops).toMatchObject([{ created: true, shop: { id: body.shop.id } }]);
+    // AC-7: năng lực của sàn đi kèm gian hàng; hạn trả chưa nhập trước thiết lập.
+    expect(body.shop).toMatchObject({ capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' }, returnWindowDays: null });
     expect(JSON.stringify(res.body)).not.toContain(`tok-${id}`);
 
     const row = await shopRow(body.shop.id);

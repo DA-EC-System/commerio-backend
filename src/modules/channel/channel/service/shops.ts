@@ -32,11 +32,13 @@ import {
   updateShop,
 } from '../repository/shops.ts';
 import {
+  capabilitiesOf,
   type ConnectMethod,
   connectablePlatforms,
   getAdapter,
   type MarketplaceAdapter,
   MarketplaceError,
+  type ShopCapabilities,
   type ShopConnection,
   type TokenSet,
 } from './marketplaces/index.ts';
@@ -63,6 +65,10 @@ export interface Shop {
   tokenExpiringSoon: boolean;
   lastOrderSyncAt: Date | null;
   orderCutoffAt: Date | null;
+  /** Năng lực của sàn (adapter khai, không lưu DB). */
+  capabilities: ShopCapabilities;
+  /** Hạn trả hàng (ngày), null khi chưa thiết lập hoặc sàn `returnWindow = 'platform_status'`. */
+  returnWindowDays: number | null;
   /** Hàng chờ đẩy khi chưa gọi được sàn: #102 làm, tới đó luôn 0. */
   pendingJobs: number;
   listingCount: number;
@@ -103,6 +109,8 @@ function toShop(row: ShopRow, listingCount: number, pendingJobs: number): Shop {
     tokenExpiringSoon: tokenExpiringSoon(row.status, row.refreshExpiresAt),
     lastOrderSyncAt: row.lastOrderSyncAt,
     orderCutoffAt: row.orderCutoffAt,
+    capabilities: capabilitiesOf(row.platform),
+    returnWindowDays: row.returnWindowDays,
     pendingJobs,
     listingCount,
     version: row.version,
@@ -196,7 +204,9 @@ export async function listShops(): Promise<{ items: Shop[] }> {
 }
 
 /** Sàn kết nối được và cách nối (Documents/21 §18.1). Cấu hình của máy chủ, giống nhau với mọi công ty; không lộ khoá. */
-export function shopPlatforms(): { items: { platform: string; name: string; connectable: true; methods: readonly ConnectMethod[] }[] } {
+export function shopPlatforms(): {
+  items: { platform: string; name: string; connectable: true; methods: readonly ConnectMethod[]; capabilities: ShopCapabilities }[];
+} {
   return { items: connectablePlatforms().map((p) => ({ ...p, connectable: true })) };
 }
 

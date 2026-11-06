@@ -54,6 +54,18 @@ export const StatusChange = z
   .strict()
   .meta({ id: 'StatusChange' });
 
+export const ShopCapabilities = z
+  .object({
+    listingReview: z.boolean().meta({ description: 'Sàn duyệt listing trước khi bán' }),
+    hideBy: z.enum(['deactivate', 'zero_stock']).meta({ description: 'Ẩn listing bằng tắt hay bằng đẩy tồn 0' }),
+    splitLevel: z.enum(['unit', 'sku', 'none']).meta({ description: 'Mức tách kiện sàn cho phép' }),
+    returnWindow: z.enum(['days', 'platform_status']).meta({
+      description: '`days`: hạn trả tính bằng `Shop.returnWindowDays`; `platform_status`: theo trạng thái sàn',
+    }),
+  })
+  .strict()
+  .meta({ id: 'ShopCapabilities', description: 'Năng lực sàn do adapter khai (Documents/21 §18.6.3); FE rẽ nhánh theo đây, không theo mã sàn' });
+
 export const Shop = z
   .object({
     id: z.uuid(),
@@ -68,6 +80,10 @@ export const Shop = z
     tokenExpiringSoon: z.boolean().meta({ description: 'Đang active và refresh token còn dưới 3 ngày' }),
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
+    capabilities: ShopCapabilities,
+    returnWindowDays: z.number().int().nullable().meta({
+      description: 'Hạn trả hàng (ngày, 1–60) nhập lúc thiết lập; null khi chưa nhập hoặc sàn `returnWindow = platform_status`',
+    }),
     pendingJobs: z.number().int(),
     listingCount: z.number().int().meta({ description: 'Số listing còn trên sàn' }),
     version: z.number().int(),
@@ -103,6 +119,7 @@ export const ShopPlatform = z
     methods: z.array(z.enum(['oauth', 'token'])).meta({
       description: '`oauth`: qua trang uỷ quyền (`authorize-url`, `callback`); `token`: dán token console (`POST /shops/:platform/token`)',
     }),
+    capabilities: ShopCapabilities,
   })
   .strict()
   .meta({ id: 'ShopPlatform' });

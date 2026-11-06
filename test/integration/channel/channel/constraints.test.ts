@@ -36,6 +36,17 @@ describe('ràng buộc gian hàng', () => {
     await insert('active', new Date());
     await expect(insert('connecting', null)).rejects.toThrow(/shops_company_id_platform_external_shop_id_unique/);
   });
+
+  it('hạn trả hàng của gian hàng từ 1 đến 60 ngày, null được (Documents/21 §18.6.2)', async () => {
+    const insert = (days: number | null) =>
+      db().query(
+        "insert into channel.shops (company_id, platform, external_shop_id, shop_name, return_window_days) values ($1, 'lazada', $2, 'Shop', $3)",
+        [randomUUID(), randomUUID(), days],
+      );
+    await expect(insert(0)).rejects.toThrow(/"shops_return_window_days"/);
+    await expect(insert(61)).rejects.toThrow(/"shops_return_window_days"/);
+    for (const ok of [null, 1, 60]) await insert(ok);
+  });
 });
 
 describe('ràng buộc listing', () => {
