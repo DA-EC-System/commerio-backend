@@ -145,6 +145,8 @@ export interface RemoteOrderRef {
   externalOrderId: string;
   placedAt: Date;
   updatedAt: Date;
+  /** Dữ liệu đơn adapter đã đọc ở trang liệt kê, chỉ adapter đó hiểu; bên gọi chuyển nguyên cho `getOrders` (#267). */
+  detail?: unknown;
 }
 
 /** Một món của đơn sàn. Tiền là chuỗi thập phân; Lazada mỗi món một đơn vị. */
@@ -300,6 +302,11 @@ export interface MarketplaceAdapter {
   ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
   /** Một đơn kèm các món (#105). */
   getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
+  /**
+   * Nhiều đơn kèm món theo lô (#267): kết quả cùng thứ tự với `refs`, dữ liệu như gọi `getOrder` từng đơn. Adapter tự chia
+   * lô theo giới hạn của sàn và dùng `detail` của ref nếu có. Sàn không có thì bên gọi gọi `getOrder` từng đơn.
+   */
+  getOrders?(accessToken: string, refs: readonly RemoteOrderRef[]): Promise<RemoteOrder[]>;
   /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */
   cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
   /** Người bán huỷ các món; sàn xác nhận sau, đơn về qua lần kéo kế tiếp. */
