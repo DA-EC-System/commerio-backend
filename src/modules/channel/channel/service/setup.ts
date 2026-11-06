@@ -87,10 +87,21 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
         NAME_MATCH_MIN,
       ),
     );
+    // Ngược chiều: sản phẩm của biến thể giống nhất có từ hai biến thể qua ngưỡng thì tên sàn không chỉ ra được màu, cỡ
+    // nào; không gợi ý, để người dùng chọn (#198 diff-review vòng 2). `pairs` xếp điểm giảm dần nên cặp đầu của mỗi SKU là
+    // cặp giống nhất.
+    const bestProduct = new Map<number, string>();
+    const perProduct = new Map<string, number>();
+    for (const p of pairs) {
+      const product = restVariants[p.right]!.productId;
+      if (!bestProduct.has(p.left)) bestProduct.set(p.left, product);
+      perProduct.set(`${p.left} ${product}`, (perProduct.get(`${p.left} ${product}`) ?? 0) + 1);
+    }
+    const ambiguous = (left: number) => perProduct.get(`${left} ${bestProduct.get(left)}`)! > 1;
     for (const p of pairs) {
       const i = restRemote[p.left]!;
       const v = restVariants[p.right]!;
-      if (chosen.has(i) || taken.has(v.id)) continue;
+      if (chosen.has(i) || taken.has(v.id) || ambiguous(p.left)) continue;
       chosen.set(i, { variant: v, score: p.score });
       taken.add(v.id);
     }

@@ -208,6 +208,15 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
     expect(rows.map((r) => r.match)).toEqual(['none', 'none', 'none']);
   });
 
+  it('một SKU sàn mà nhiều biến thể của cùng sản phẩm Commerio cùng qua ngưỡng: không gợi ý theo tên (vòng 2 review P2)', async () => {
+    const productId = randomUUID();
+    variants.push(...['Đỏ / S', 'Xanh / M', 'Đen / L'].map((label, i) => ({ ...variant(`CMR-Q${i}`, 'Áo polo nam', label), productId })));
+    remote.push(sku('sku-q', 'LZ-Q', 'Áo polo nam'));
+    const res = await (await connectingShop()).preview();
+    const row = (res.body.suggestions as { externalSkuId: string }[]).find((r) => r.externalSkuId === 'sku-q');
+    expect(row).toMatchObject({ match: 'none', variantId: null });
+  });
+
   it('SKU sàn không có SKU người bán: không gợi ý, chọn biến thể cho nó thì 422 theo dòng', async () => {
     remote.push(sku('sku-e', '', 'Giày thể thao 42'));
     const { preview, setup } = await connectingShop();
