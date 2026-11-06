@@ -12,7 +12,7 @@ import { setupStateOfCompany, updateShop } from '../repository/shops.ts';
 import { stocktakePort } from './stocktake-port.ts';
 import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
-import { startShopJobs } from './shop-jobs.ts';
+import { sendOpenOrderPull, startShopJobs } from './shop-jobs.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
 
@@ -137,6 +137,8 @@ export async function finishSetup(
     );
     if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
     await recordTransition({ entityType: 'shops', entityId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
+    // Lượt kéo đơn còn mở đi chung giao dịch: thiết lập rollback thì không có việc (#198 AC-12).
+    await sendOpenOrderPull(actor.companyId, shop.id);
     return doc;
   }).catch((err: unknown) => {
     // Hai gian hàng cùng lập phiếu đầu kỳ một lúc: index một phần chặn phiếu thứ hai (#198 A12).

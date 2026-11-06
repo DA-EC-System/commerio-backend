@@ -43,7 +43,7 @@ import {
   type ShopConnection,
   type TokenSet,
 } from './marketplaces/index.ts';
-import { startShopJobs, stopShopJobs } from './shop-jobs.ts';
+import { resumeOpenOrderPull, startShopJobs, stopShopJobs } from './shop-jobs.ts';
 import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
@@ -336,6 +336,7 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     if (result.shop.status !== 'active') continue;
     const jobsRun = await releaseHeld(result.shop.id);
     await startShopJobs(result.shop.companyId, result.shop.id);
+    await resumeOpenOrderPull(result.shop.companyId, result.shop.id);
     result.shop.pendingJobs = 0;
     if (result.reconnect) result.reconnect.jobsRun = jobsRun;
   }

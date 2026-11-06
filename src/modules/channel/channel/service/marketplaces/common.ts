@@ -277,6 +277,14 @@ export interface MarketplaceAdapter {
     updatedAfter: Date,
     cursor: string | null,
   ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
+  /**
+   * Đơn **chưa xong** của gian hàng bất kể ngày đặt, cho lượt kéo một lần sau thiết lập (#198, Documents/21 §18.2). Lật
+   * trang như `listOrders` (con trỏ, `safeUntil`); thứ tự giữa các trang không ràng buộc, đơn có thể trả hai lần.
+   */
+  listOpenOrders?(
+    accessToken: string,
+    cursor: string | null,
+  ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
   /** Một đơn kèm các món (#105). */
   getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
   /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */

@@ -65,9 +65,17 @@ export async function findLiveCompanyOf(platform: Platform, externalShopId: stri
  * Gian hàng đang hoạt động **của mọi công ty**, cho việc nền (kéo quyết toán #117, dựng lại lịch #102): gọi ngoài `withCompany` (role chủ
  * bảng), mỗi gian hàng xử lý tiếp trong `withCompany` của nó.
  */
-export async function findActiveShopsAnyCompany(): Promise<{ id: string; companyId: string; platform: Platform }[]> {
+export async function findActiveShopsAnyCompany(): Promise<
+  { id: string; companyId: string; platform: Platform; orderCutoffAt: Date | null; openOrdersPulledAt: Date | null }[]
+> {
   return getDb()
-    .select({ id: shops.id, companyId: shops.companyId, platform: shops.platform })
+    .select({
+      id: shops.id,
+      companyId: shops.companyId,
+      platform: shops.platform,
+      orderCutoffAt: shops.orderCutoffAt,
+      openOrdersPulledAt: shops.openOrdersPulledAt,
+    })
     .from(shops)
     .where(eq(shops.status, 'active'));
 }
@@ -161,6 +169,28 @@ export async function markStockPushed(id: string): Promise<void> {
     .update(shops)
     .set({ stockPushedAt: sql`now()` })
     .where(and(eq(shops.id, id), sql`${shops.stockPushedAt} is null`));
+}
+
+/** Lỗi lượt kéo đơn còn mở ghi vào `last_error` bắt đầu bằng câu này; lượt xong thì xoá đúng lỗi đó (#198 P3). */
+export const OPEN_ORDER_PULL_ERROR = 'Lượt kéo đơn còn mở chưa xong';
+
+/** Lượt kéo đơn còn mở xong (#198 A10): từ giờ `syncListings` mới đẩy tồn. Không tăng `version`. */
+export async function markOpenOrdersPulled(id: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({
+      openOrdersPulledAt: sql`coalesce(${shops.openOrdersPulledAt}, now())`,
+      lastError: sql`case when ${shops.lastError} like ${`${OPEN_ORDER_PULL_ERROR}%`} then null else ${shops.lastError} end`,
+    })
+    .where(eq(shops.id, id));
+}
+
+/** Ghi lỗi của lượt kéo đơn còn mở để người dùng thấy gian hàng chưa đẩy tồn (#198 P3). Không tăng `version`. */
+export async function recordOpenOrderPullError(id: string, message: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ lastError: `${OPEN_ORDER_PULL_ERROR}: ${message}` })
+    .where(and(eq(shops.id, id), sql`${shops.openOrdersPulledAt} is null`));
 }
 
 /** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
