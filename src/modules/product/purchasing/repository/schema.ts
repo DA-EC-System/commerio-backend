@@ -151,6 +151,8 @@ export const goodsReceipts = purchasingSchema.table(
     checkDeadline: timestamp('check_deadline', { withTimezone: true }),
     shortResolution: shortResolution('short_resolution'),
     followUpReceiptId: uuid('follow_up_receipt_id'),
+    /** Phiếu `short` cùng đề nghị mà đợt này giao bù, chỉ để tham chiếu (25 §4.1, #244). */
+    followsUpReceiptId: uuid('follows_up_receipt_id'),
     resolutionNote: text('resolution_note'),
     resolvedBy: uuid('resolved_by'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),

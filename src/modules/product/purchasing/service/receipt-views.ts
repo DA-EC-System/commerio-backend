@@ -56,6 +56,7 @@ export async function toReceiptDetail(row: ReceiptRow) {
   const requestLines = new Map((await findLines([row.requestId])).map((l) => [l.id, l]));
   const variants = new Map((await getVariants(lines.map((l) => l.variantId))).map((v) => [v.id, v]));
   const followUp = row.followUpReceiptId ? await findReceipt(row.followUpReceiptId) : undefined;
+  const followsUp = row.followsUpReceiptId ? await findReceipt(row.followsUpReceiptId) : undefined;
   const names = await namesOf([row.createdBy, row.postedBy, row.resolvedBy]);
   const returns = await returnsOfReceipts([row.id]);
   const history = await getStatusHistory('goods_receipts', row.id);
@@ -82,6 +83,7 @@ export async function toReceiptDetail(row: ReceiptRow) {
     // Tệp đính kèm làm sau #114 (spec #109 PR D).
     attachments: [] as { fileId: string; name: string; url: string; contentType: string }[],
     requestCreatedById: request.createdBy ?? '',
+    followsUp: followsUp ? { type: 'goods_receipt' as const, id: followsUp.id, number: followsUp.number } : null,
     shortResolution: row.shortResolution
       ? {
           kind: row.shortResolution,
