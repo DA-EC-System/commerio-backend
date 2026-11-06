@@ -62,6 +62,14 @@ interface RawTokens {
  */
 const REFRESH_LEAD_MS = 48 * 3_600_000;
 
+/**
+ * Mã lỗi của `/api/v2/token/refresh` nghĩa là refresh token, uỷ quyền không còn (gian hàng phải nối lại). docv2
+ * common-errors (tra 07/11/2026) chỉ có nhóm 36004xxx cho `auth_code` (36004004), không liệt kê mã của refresh; danh sách
+ * này theo quan sát: 36004005 "can not find related auth record" (gọi thật 06/11/2026, refresh token sai hoặc bị thu hồi),
+ * 36004001 "rt has expired" (FAQ docv2 "The API /api/token/refreshtoken reports an error 36004001").
+ */
+const REFRESH_AUTH_CODES = new Set(['36004001', '36004005']);
+
 const unixDate = (v: unknown) => (Number(v) > 0 ? new Date(Number(v) * 1000) : null);
 
 function rawTokens(data: unknown): RawTokens {
@@ -132,10 +140,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     try {
       return rawTokens(await client.callAuth('/api/v2/token/refresh', { refresh_token: refreshToken, grant_type: 'refresh_token' }));
     } catch (err) {
-      // Docs không liệt kê mã lỗi của refresh (gọi thật 06/11/2026: refresh token sai → 36004005 "can not find related auth
-      // record"): sàn từ chối refresh token (hết hạn, bị thu hồi) thì gian hàng phải nối lại.
-      if (err instanceof MarketplaceError && err.kind === 'rejected') throw new MarketplaceError('unauthorized', err.platformCode, err.platformMessage);
-      throw err;
+      if (!(err instanceof MarketplaceError) || err.kind === 'unavailable' || err.kind === 'unsupported') throw err;
+      // Chỉ mã đã biết là refresh token, uỷ quyền hỏng mới là mất uỷ quyền (gian hàng nối lại). Lỗi khác (sai app key,
+      // secret, chữ ký, mã lạ) là lỗi cấu hình của app: giữ `rejected`, không đẩy mọi gian hàng sang `needs_reauth`.
+      const code = err.platformCode ?? '';
+      if (REFRESH_AUTH_CODES.has(code)) throw new MarketplaceError('unauthorized', code, err.platformMessage);
+      throw new MarketplaceError('rejected', err.platformCode, err.platformMessage);
     }
   };
 

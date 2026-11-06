@@ -240,7 +240,23 @@ describe('adapter TikTok: nối gian hàng', () => {
       kind: 'unauthorized',
       platformCode: '36004005',
     });
+    await expect(createTiktokAdapter(config, fakeFetch(json({ code: 36004001, message: 'rt has expired' }))).refreshToken(packed('TTP_r1'))).rejects.toMatchObject({
+      kind: 'unauthorized',
+      platformCode: '36004001',
+    });
     await expect(createTiktokAdapter(config, fakeFetch(json({}, 502))).refreshToken(packed('TTP_r1'))).rejects.toMatchObject({ kind: 'unavailable' });
+  });
+
+  it.each([
+    ['sai app key', 36009004, 'Invalid credentials. Invalid `app_key` query parameter.'],
+    ['sai chữ ký, secret', 106001, 'Invalid credentials. The `sign` query parameter is invalid.'],
+    ['mã lạ', 99999999, 'something odd'],
+    ['token hết hạn kiểu Open API (không phải lỗi refresh)', 105002, 'Expired credentials.'],
+  ])('refresh lỗi %s → rejected giữ mã, không phải unauthorized (không đẩy gian hàng sang needs_reauth)', async (_n, code, message) => {
+    await expect(createTiktokAdapter(config, fakeFetch(json({ code, message }))).refreshToken(packed('TTP_r1'))).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: String(code),
+    });
   });
 });
 
