@@ -1,9 +1,10 @@
 // Đọc dữ kiện để dựng `fulfillment.package_delivered` (spec 199c §5.3). Chạy trong giao dịch của bên gọi, kiện đã
 // khoá `FOR UPDATE`; fulfillment không import sales nên dòng đơn, ship đơn đọc bằng SQL thô (cùng cách
 // `repository/package-list.ts`).
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { type DeliveredLine, type OrderShipping } from '../domain/delivery.ts';
+import type { PackageStatus } from '../domain/package.ts';
 import { packageLines, packages } from './schema.ts';
 
 export interface DeliveryState {
@@ -85,4 +86,18 @@ export async function anotherDeliveryPosted(orderId: string, packageId: string):
     .from(packages)
     .where(sql`${packages.orderId} = ${orderId} and ${packages.id} <> ${packageId} and ${packages.deliveryPostedAt} is not null`);
   return row !== undefined;
+}
+
+/**
+ * Trạng thái kiện theo lô cho finance (spec 199c §5.6): một câu theo khoá chính, lọc thêm `company_id` (ngoài RLS).
+ * Bên gọi chặn mảng rỗng (Drizzle `inArray` với mảng rỗng).
+ */
+export async function packageStatuses(
+  companyId: string,
+  ids: readonly string[],
+): Promise<{ id: string; orderId: string; status: PackageStatus; deliveredAt: Date | null }[]> {
+  return getDb()
+    .select({ id: packages.id, orderId: packages.orderId, status: packages.status, deliveredAt: packages.deliveredAt })
+    .from(packages)
+    .where(and(eq(packages.companyId, companyId), inArray(packages.id, [...ids])));
 }

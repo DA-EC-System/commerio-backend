@@ -8,12 +8,13 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { deliveredAmounts, type DeliveredLine, DEFAULT_FAIL_REASON } from '../domain/delivery.ts';
-import { packageMachine } from '../domain/package.ts';
+import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import {
   anotherDeliveryPosted,
   deliveryLinesOf,
   deliveryStateOf,
   orderShippingOf,
+  packageStatuses,
 } from '../repository/delivery.ts';
 import { lockPackage, updatePackage } from '../repository/packages.ts';
 // Người quét: cùng hình `Actor` của `service/handover.ts` (import file đó sẽ thành vòng qua `handover-stock.ts`).
@@ -113,6 +114,29 @@ export async function receiveReturn(ctx: FulfillmentContext, actor: Actor, id: s
     }
     return getPackage(ctx, id);
   });
+}
+
+/** Trạng thái một kiện cho finance (E139, spec 199c §5.6). */
+export interface PackageStatusInfo {
+  orderId: string;
+  status: PackageStatus;
+  /** ISO của `delivered_at`; null khi kiện chưa giao. */
+  deliveredAt: string | null;
+}
+
+/**
+ * Trạng thái kiện theo id cho finance (E139, spec 199c §5.6). Chạy trong `withCompany` của bên gọi. Id không phải uuid
+ * bị bỏ; không còn id nào thì trả `Map` rỗng, không truy vấn. Id của công ty khác hoặc không có thì vắng trong `Map`.
+ */
+export async function packageStatusOf(packageIds: readonly string[]): Promise<Map<string, PackageStatusInfo>> {
+  const companyId = requireCompanyId('packageStatusOf');
+  const ids = [...new Set(packageIds.filter(isUuid))];
+  const out = new Map<string, PackageStatusInfo>();
+  if (!ids.length) return out;
+  for (const r of await packageStatuses(companyId, ids)) {
+    out.set(r.id, { orderId: r.orderId, status: r.status, deliveredAt: r.deliveredAt?.toISOString() ?? null });
+  }
+  return out;
 }
 
 export type { DeliveredLine };

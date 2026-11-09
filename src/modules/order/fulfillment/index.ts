@@ -50,3 +50,5 @@ export { settleDeferredHandovers, shipLateMappedLines } from './service/handover
 export { requestAllocation } from './service/allocation.ts';
 // Cho channel (#198 phần 2): gọi trong giao dịch thoát chờ kiểm kê, sau khi đặt `openingStocktake = null` (spec 199b §5.5).
 export { settleOpeningStocktake } from './service/allocation.ts';
+// Cho finance (E139, spec 199c §5.6): trạng thái kiện theo id, chạy trong `withCompany` của bên gọi.
+export { packageStatusOf, type PackageStatusInfo } from './service/delivery.ts';
