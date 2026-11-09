@@ -161,6 +161,10 @@ export const stockDocuments = inventorySchema.table(
     check('stock_documents_counted_at', sql`${t.kind} <> 'stocktake' or ${t.countedAt} is not null`),
     check('stock_documents_opening', sql`not ${t.isOpening} or ${t.kind} = 'stocktake'`),
     check('stock_documents_posted', sql`(${t.status} = 'posted') = (${t.postedAt} is not null)`),
+    // Một phiếu kiểm kê đầu kỳ đang mở cho mỗi gian hàng (`createOpeningStocktake`, #245)
+    uniqueIndex('stock_documents_opening_uq')
+      .on(t.companyId, t.sourceId)
+      .where(sql`${t.sourceType} = 'shop_setup' and ${t.status} in ('draft', 'pending')`),
   ],
 );
 

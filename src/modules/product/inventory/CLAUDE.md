@@ -63,6 +63,7 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
   - `reverseShipment(packageId, lines, { actorId, reason })` → `{ documentId, number }`: đảo cả lượt đang xuất, cộng lại tồn thực và đang giữ; `lines` phải gồm đúng mọi SKU của lượt với đúng tổng đã xuất (`25` §8.3 không đảo một phần), lệch hay không còn lượt thì 500; `reason` sau khi trim khác rỗng, ≤ 500 ký tự.
   - `receiveBack({ type: 'package' | 'return_request', id }, lines, meta?)` → `{ documentId, number }`: phiếu `KT` nháp, không đổi tồn; `meta` (#208) mang mã chứng từ nguồn, đơn, gian hàng, giá vốn dòng kiện gốc cho `inventory.return_inspected`; nguồn đã có phiếu thì trả phiếu đó. Mỗi nguồn tối đa một phiếu (unique một phần `stock_documents_return_inspection_source_uq`): lần gọi song song đụng unique thì lùi savepoint (không nhảy số), trả phiếu của bên commit trước; giao dịch bên gọi vẫn dùng tiếp được.
 - `createQuarantineWriteOff(source, lines, note, actorId)`: xuất huỷ nháp từ chờ xử lý (phiếu trả NCC bị huỷ, #210).
+- `createOpeningStocktake(shopId, { actorId })` (Documents/21 mục 11.3, #245): kiểm kê đầu kỳ nháp nguồn `shop_setup` cho channel (#198); gọi lại hoặc gọi đua trả phiếu đang mở (`created: false`, unique `stock_documents_opening_uq`).
 
 ## Bên gọi cổng theo kiện phải làm
 

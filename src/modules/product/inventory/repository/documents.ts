@@ -290,3 +290,44 @@ export async function pendingLocks(variantIds?: readonly string[]): Promise<Map<
     .groupBy(l.variantId);
   return new Map(rows.filter((r) => r.qty > 0).map((r) => [r.variantId, r.qty]));
 }
+
+/** Phiếu kiểm kê đầu kỳ đang mở (nháp, chờ duyệt) của gian hàng, nguồn `shop_setup` (#245). */
+export async function openingDocOf(shopId: string): Promise<DocRow | undefined> {
+  const [row] = await getDb()
+    .select()
+    .from(stockDocuments)
+    .where(
+      and(
+        eq(stockDocuments.sourceType, 'shop_setup'),
+        eq(stockDocuments.sourceId, shopId),
+        inArray(stockDocuments.status, ['draft', 'pending']),
+      ),
+    );
+  return row;
+}
+
+/**
+ * Chèn phiếu kiểm kê đầu kỳ; gian hàng đã có phiếu đang mở thì không chèn (`stock_documents_opening_uq`) và trả
+ * `undefined`. Lần gọi đua chờ giao dịch kia xong rồi mới quyết, nên đọc lại là thấy phiếu cũ.
+ */
+export async function insertOpeningDoc(values: typeof stockDocuments.$inferInsert): Promise<DocRow | undefined> {
+  const [row] = await getDb()
+    .insert(stockDocuments)
+    .values(values)
+    .onConflictDoNothing({
+      target: [stockDocuments.companyId, stockDocuments.sourceId],
+      where: sql`${stockDocuments.sourceType} = 'shop_setup' and ${stockDocuments.status} in ('draft', 'pending')`,
+    })
+    .returning();
+  return row;
+}
+
+/** Trạng thái các phiếu theo id (channel đọc phiếu kiểm kê đầu kỳ của gian hàng, #198, #245); id lạ thì vắng. */
+export async function docStatusesOf(ids: readonly string[]): Promise<Map<string, DocRow['status']>> {
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: stockDocuments.id, status: stockDocuments.status })
+    .from(stockDocuments)
+    .where(inArray(stockDocuments.id, [...ids]));
+  return new Map(rows.map((r) => [r.id, r.status]));
+}
