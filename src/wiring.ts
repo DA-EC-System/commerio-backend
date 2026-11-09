@@ -2,6 +2,7 @@
 // sẽ ngược lớp hoặc thành vòng thì đi qua `ModuleContext`. Chỉ import `index.ts` của module lớn. Nối giữa hai module
 // con cùng module lớn đặt trong index.ts của module lớn đó (vd `paymentContext` của finance).
 import {
+  awaitingStocktakeShops,
   getShops,
   hasChannelData,
   hasInboxData,
@@ -24,7 +25,7 @@ import type { ModuleContext } from './shared/module.ts';
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders'>> &
-  Required<Pick<FulfillmentContext, 'shopsOf'>> &
+  Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf'>> &
   Required<Pick<PlatformContext, 'moduleData'>>;
 
 export function createModuleContext(): AppContext {
@@ -36,6 +37,8 @@ export function createModuleContext(): AppContext {
     settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
     // #105 PR 2: sales (lớp dưới) huỷ đơn, trả lời khách xin huỷ trên sàn qua token gian hàng của channel.
     marketplaceOrders: { cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel },
+    // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
+    stockHoldOf: awaitingStocktakeShops,
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
   };
