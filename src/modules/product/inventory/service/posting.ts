@@ -126,21 +126,31 @@ export async function applyChange(change: StockChange, precheck?: (locked: Reado
 
   // Payload là số tuyệt đối sau khi ghi: bên nghe nhận trùng hay lệch thứ tự vẫn đúng (Q7).
   const onHandChanged = new Set(moves.filter((m) => m.bucket === 'on_hand').map((m) => m.variantId));
+  const locks = await lockedOf([...onHandChanged]);
   for (const variantId of [...onHandChanged].sort()) {
     const { onHand, reserved: held } = next.get(variantId)!;
     await publishEvent({
       type: 'inventory.stock_changed',
       aggregateId: variantId,
-      payload: { variantId, onHand, reserved: held, available: availableQty(onHand, held, lockedOf(variantId)) },
+      payload: { variantId, onHand, reserved: held, available: availableQty(onHand, held, locks.get(variantId) ?? 0) },
     });
   }
   await recheckThresholds([...new Set([...onHandChanged, ...reserved.keys()])]);
   return true;
 }
 
-/** Biến động tồn thực, chờ xử lý theo một chứng từ gốc (không đổi đang giữ). */
-export async function applyMoves(source: { type: StockSourceType; id: string }, moves: readonly Move[], actorId: string | null): Promise<void> {
-  await applyChange({ source, moves, actorId });
+/**
+ * Biến động tồn thực, chờ xử lý theo một chứng từ gốc (không đổi đang giữ). `allowBreak`: được làm vỡ bất biến tồn thực
+ * (bật cờ Tồn âm), chỉ kiểm kê đã duyệt (Documents/25 §7.1, #208); chạy như `forced` của bàn giao bắt buộc. Chờ xử lý vẫn
+ * không được âm.
+ */
+export async function applyMoves(
+  source: { type: StockSourceType; id: string },
+  moves: readonly Move[],
+  actorId: string | null,
+  options: { allowBreak?: boolean } = {},
+): Promise<void> {
+  await applyChange({ source, moves, actorId, forced: options.allowBreak === true });
 }
 
 export interface ReceivedLine {

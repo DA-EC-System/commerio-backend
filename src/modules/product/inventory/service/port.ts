@@ -15,6 +15,8 @@ export interface StockSnapshot {
   avgCost: string;
 }
 
+export { lockedOf } from './locked.ts';
+
 /**
  * Các con số của những biến thể thuộc công ty trong `variantIds`; biến thể chưa có dòng tồn trả số 0. Id của công ty
  * khác, không tồn tại hay không phải uuid thì không có trong Map (spec #111 Q3).
@@ -22,12 +24,13 @@ export interface StockSnapshot {
 export async function stockOf(variantIds: readonly string[]): Promise<Map<string, StockSnapshot>> {
   const variants = await getVariants(variantIds);
   const levels = await levelsOf(variants.map((v) => v.id));
+  const locks = await lockedOf(variants.map((v) => v.id));
   return new Map(
     variants.map((v) => {
       const level = levels.get(v.id);
       const onHand = level?.onHand ?? 0;
       const reserved = level?.reserved ?? 0;
-      const locked = lockedOf(v.id);
+      const locked = locks.get(v.id) ?? 0;
       const snapshot: StockSnapshot = {
         onHand,
         reserved,

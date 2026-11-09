@@ -44,6 +44,22 @@ export const EVENT_SCHEMAS = {
     kind: z.enum(['purchase', 'manual', 'delivery_return']),
     lines: z.array(z.object({ variantId: id, quantity: z.int().positive() })),
   }),
+  // Phiếu kiểm kê ghi sổ (#208, Documents/21 mục 11.2); nguồn `shop_setup` là kiểm kê đầu kỳ của gian hàng (#245).
+  'inventory.stocktake_posted': z.object({
+    documentId: id,
+    number: z.string(),
+    source: z.object({ type: z.literal('shop_setup'), shopId: id }).nullable(),
+    postedAt: timestamp,
+    lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
+  }),
+  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, mục 11.2); kiện hoàn không phát.
+  'inventory.return_inspected': z.object({
+    inspectionId: id,
+    orderId: id,
+    shopId: id.nullable(),
+    inspectedAt: timestamp,
+    lines: z.array(z.object({ variantId: id, resellable: z.int().nonnegative(), unitCost: money.nullable() })),
+  }),
   'inventory.issue_posted': z.object({
     issueId: id,
     number: z.string(),
