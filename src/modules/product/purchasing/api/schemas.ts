@@ -3,6 +3,7 @@ import { MAX_REASON } from '../domain/receipt.ts';
 import { GOODS_RECEIPT_STATUSES } from '../domain/receipt-machine.ts';
 import { MAX_LINES, MAX_QTY, MAX_UNIT_COST } from '../domain/request.ts';
 import { PURCHASE_REQUEST_STATUSES } from '../domain/request-machine.ts';
+import { SUPPLIER_RETURN_ACTIONS, SUPPLIER_RETURN_STATUSES } from '../domain/return-machine.ts';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Hợp đồng /purchasing (Documents/21 mục 16.2, FE `src/types/purchasing.ts`). Giới hạn theo mock FE.
@@ -99,7 +100,10 @@ export const PurchaseRequestInput = z
       .array(RequestLineInput, 'Thêm ít nhất một dòng')
       .min(1, 'Thêm ít nhất một dòng')
       .max(MAX_LINES, `Tối đa ${MAX_LINES} dòng`),
-    sourceReturnId: z.string().nullish().meta({ description: 'Đề nghị bù hàng từ phiếu trả NCC; chưa hỗ trợ (B4), khác null trả 422' }),
+    sourceReturnId: z
+      .string()
+      .nullish()
+      .meta({ description: 'Đề nghị bù hàng từ phiếu trả NCC đã `replaced`, chưa có đề nghị bù, cùng NCC (B4); chỉ dùng khi lập, sửa thì bỏ qua' }),
   })
   .meta({ id: 'PurchaseRequestInput' });
 
@@ -362,3 +366,88 @@ export const GoodsReceiptPage = z
   })
   .strict()
   .meta({ id: 'GoodsReceiptPage' });
+
+// ---------- Phiếu trả NCC (§16.2, §16.3; #210) ----------
+
+const returnStatus = z.enum(SUPPLIER_RETURN_STATUSES);
+export const ReturnActionParams = z.object({ id: z.string(), action: z.enum(SUPPLIER_RETURN_ACTIONS, 'Thao tác không có') });
+
+export const SupplierReturnListQuery = z.object({
+  ...page,
+  status: returnStatus.optional(),
+  supplierId: z.uuid('Nhà cung cấp không hợp lệ').optional(),
+});
+
+export const SupplierReturnInput = z
+  .object({
+    supplierId: z.uuid('Nhà cung cấp không hợp lệ').nullable(),
+    note: text(500),
+    lines: z
+      .array(
+        z.object({
+          variantId: z.uuid('Chọn sản phẩm'),
+          quantity: z.number('Số lượng là số nguyên từ 1').int('Số lượng là số nguyên từ 1').max(MAX_QTY, 'Số lượng quá lớn'),
+        }),
+      )
+      .max(MAX_LINES, `Tối đa ${MAX_LINES} dòng`),
+  })
+  .meta({ id: 'SupplierReturnInput' });
+export const SupplierReturnUpdateInput = SupplierReturnInput.extend({ version }).meta({ id: 'SupplierReturnUpdateInput' });
+
+export const SupplierReturnActionInput = z
+  .object({
+    version,
+    reason: z.string().trim().max(MAX_REASON, `Lý do tối đa ${MAX_REASON} ký tự`).nullish(),
+    refundAmount: z.number('Số tiền là số nguyên đồng').int('Số tiền là số nguyên đồng').optional(),
+    cancelDecision: z.enum(['restock', 'write_off'], 'Chọn nhập lại tồn hoặc xuất huỷ').optional(),
+  })
+  .meta({ id: 'SupplierReturnActionInput' });
+
+const ReturnDocRef = z.object({ type: z.string(), id: z.uuid(), number: z.string() });
+
+export const SupplierReturnSummary = z
+  .object({
+    id: z.uuid(),
+    number: z.string(),
+    status: returnStatus,
+    supplier: z.object({ id: z.uuid(), name: z.string() }).nullable(),
+    source: ReturnDocRef.nullable(),
+    note: z.string(),
+    totalQty: z.int(),
+    createdBy: z.string(),
+    createdById: z.string(),
+    createdAt: iso,
+    sentAt: iso.nullable(),
+    version: z.int(),
+  })
+  .strict()
+  .meta({ id: 'SupplierReturnSummary' });
+
+export const SupplierReturn = SupplierReturnSummary.extend({
+  lines: z.array(
+    z
+      .object({
+        variantId: z.uuid(),
+        sku: z.string(),
+        productName: z.string(),
+        attributesLabel: z.string(),
+        quantity: z.int(),
+        quarantine: z.int().meta({ description: 'Chờ xử lý hiện có của biến thể' }),
+        unitCost: z.int().nullable(),
+      })
+      .strict(),
+  ),
+  sentBy: z.string().nullable(),
+  sentById: z.uuid().nullable(),
+  refundAmount: z.int().nullable(),
+  replacementRequest: ReturnDocRef.nullable(),
+  cancelDecision: z.enum(['restock', 'write_off']).nullable(),
+  followUps: z.array(ReturnDocRef),
+  statusHistory: z.array(StatusChangeSchema),
+})
+  .strict()
+  .meta({ id: 'SupplierReturn' });
+
+export const SupplierReturnPage = z
+  .object({ items: z.array(SupplierReturnSummary), total: z.int(), page: z.int(), pageSize: z.int() })
+  .meta({ id: 'SupplierReturnPage' });

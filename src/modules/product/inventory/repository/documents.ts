@@ -331,3 +331,12 @@ export async function docStatusesOf(ids: readonly string[]): Promise<Map<string,
     .where(inArray(stockDocuments.id, [...ids]));
   return new Map(rows.map((r) => [r.id, r.status]));
 }
+
+/** Phiếu kho sinh từ một chứng từ của module khác (xuất huỷ khi huỷ phiếu trả NCC, #210). */
+export function docsFromSource(sourceType: string, sourceIds: readonly string[]) {
+  if (!sourceIds.length) return Promise.resolve([] as Pick<DocRow, 'id' | 'number' | 'sourceId'>[]);
+  return getDb()
+    .select({ id: stockDocuments.id, number: stockDocuments.number, sourceId: stockDocuments.sourceId })
+    .from(stockDocuments)
+    .where(and(eq(stockDocuments.sourceType, sourceType), inArray(stockDocuments.sourceId, [...sourceIds])));
+}

@@ -22,6 +22,7 @@ import {
 } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail, toSummaries } from './request-views.ts';
+import { checkReplacementSource, linkReplacement } from './supplier-returns.ts';
 
 export interface RequestLineInput {
   variantId?: string | null | undefined;
@@ -82,8 +83,11 @@ async function checkSupplier(supplierId: string, errors: Record<string, string>)
 async function buildLines(input: RequestInput): Promise<NewLine[]> {
   const errors: Record<string, string> = {};
   await checkSupplier(input.supplierId, errors);
-  // Đề nghị bù hàng cần phiếu trả NCC `replaced` (B4).
-  if (input.sourceReturnId) errors.sourceReturnId = 'Chưa hỗ trợ lập đề nghị bù hàng từ phiếu trả NCC';
+  // Đề nghị bù hàng cần phiếu trả NCC `replaced` chưa có đề nghị bù, cùng NCC (B4, #210).
+  if (input.sourceReturnId) {
+    const problem = await checkReplacementSource(input.sourceReturnId, input.supplierId);
+    if (problem) errors.sourceReturnId = problem;
+  }
 
   const variantIds = input.lines.flatMap((l) => (l.variantId ? [l.variantId] : []));
   const variants = new Map((await getVariants(variantIds)).map((v) => [v.id, v]));
@@ -125,11 +129,13 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
       companyId: actor.companyId,
       number: docNumber('DN', await nextDocNumber('purchase_request')),
       supplierId: input.supplierId,
-      source: 'manual',
+      source: input.sourceReturnId ? 'replacement' : 'manual',
+      sourceReturnId: input.sourceReturnId ?? null,
       note,
       createdBy: actor.accountId,
     });
     await insertLines(actor.companyId, id, lines);
+    if (input.sourceReturnId) await linkReplacement(input.sourceReturnId, id);
     await recordTransition({ entityType: ENTITY, entityId: id, from: null, to: 'draft', action: 'create', actorId: actor.accountId });
     await recordAudit({
       companyId: actor.companyId,
@@ -152,7 +158,7 @@ export async function updateRequestDraft(actor: Actor, id: string, input: Reques
     if (row.status !== 'draft' && row.status !== 'changes_requested') {
       throw new AppError(409, 'not_draft', 'Chỉ sửa được đề nghị nháp hoặc bị trả về');
     }
-    const lines = await buildLines(input);
+    const lines = await buildLines({ ...input, sourceReturnId: null });
     const old = await findLines([id]);
     const note = input.note || null;
     await deleteLines(id);
