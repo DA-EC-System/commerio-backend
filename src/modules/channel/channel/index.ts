@@ -6,6 +6,7 @@ import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runTokenRefresh } from './service/background.ts';
 import { markStockPending } from './service/listing-sync.ts';
+import { onOpeningStocktakePosted } from './service/opening-stocktake.ts';
 import { productPort } from './service/product-port.ts';
 import { listingSyncQueue, openOrderPullQueue, orderPullQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
 
@@ -16,6 +17,8 @@ export const channelModule: ModuleDefinition = {
   async startBackground(ctx) {
     // Tồn đổi thì listing chờ đẩy tồn (chỉ ghi DB, đúng một lần); lượt đồng bộ sau mới gọi sàn, không gọi sàn trong giao dịch.
     registerConsumer('inventory.stock_changed', (e) => markStockPending(e.payload.variantId), { consumer: 'channel-stock-push' });
+    // Phiếu kiểm kê đầu kỳ ghi sổ: gian hàng thoát chờ kiểm kê, mốc kéo đơn = thời điểm đếm, bật đẩy tồn (#198 phần 2).
+    registerConsumer('inventory.stocktake_posted', (e) => onOpeningStocktakePosted(e.payload), { consumer: 'channel-opening-stocktake' });
     // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
     const port = productPort(ctx);
     await workQueue(listingSyncQueue, (job) => runListingSync(port, job));

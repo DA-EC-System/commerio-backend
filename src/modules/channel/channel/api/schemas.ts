@@ -99,7 +99,7 @@ export const Shop = z
       .nullable()
       .meta({
         description:
-          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2)',
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). Phiếu ghi sổ (`inventory.stocktake_posted`) thì BE đặt lại null, đổi `orderCutoffAt` thành thời điểm đếm và bật đẩy tồn',
       }),
     setup: z
       .object({

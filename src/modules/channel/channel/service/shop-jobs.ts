@@ -43,6 +43,11 @@ export async function sendOpenOrderPull(companyId: string, shopId: string): Prom
   await sendJob(openOrderPullQueue, { companyId, shopId }, { key: shopId });
 }
 
+/** Xếp một lượt đồng bộ listing ngay (đẩy tồn sau khi thoát chờ kiểm kê, #198); đi chung giao dịch đang mở. */
+export async function sendListingSync(companyId: string, shopId: string): Promise<void> {
+  await sendJob(listingSyncQueue, { companyId, shopId }, { key: shopId });
+}
+
 /** Xếp một lượt kéo đơn ngay (nối lại gian hàng, US-GH-14 dòng 1); đã có việc chờ cùng gian hàng thì không thêm. */
 export async function sendOrderPull(companyId: string, shopId: string): Promise<void> {
   await sendJob(orderPullQueue, { companyId, shopId }, { key: shopId });
