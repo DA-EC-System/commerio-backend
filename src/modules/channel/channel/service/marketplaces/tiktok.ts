@@ -45,8 +45,8 @@ const SELLER_SKU_BATCH = 10;
 const MAX_PRODUCTS = 10_000;
 // Một lần lật quá số trang này là sàn trả con trỏ lặp: dừng, không lặp vô hạn.
 const MAX_PAGES = MAX_PRODUCTS / PRODUCT_PAGE + 5;
-// Trần sản phẩm nhiều SKU đọc nhãn biến thể mỗi lần mở thiết lập: đọc 5 req/s mỗi gian hàng nên 50 lần ≈ 10 giây.
-const LABEL_PRODUCT_MAX = 50;
+// Trần sản phẩm đọc chi tiết (nhãn biến thể, ảnh) mỗi lần mở thiết lập: đọc 5 req/s mỗi gian hàng nên 50 lần ≈ 10 giây.
+const DETAIL_PRODUCT_MAX = 50;
 // Mã `rejected` không gắn với một sản phẩm (common-errors): 105005 thiếu scope, 106001 sai chữ ký, 36009004 sai
 // `shop_cipher`. Gặp là mọi Get Product đều hỏng như nhau: dừng đọc nhãn ngay.
 const LABEL_STOP_CODES = new Set(['105005', '106001', '36009004']);
@@ -124,23 +124,32 @@ export function tiktokRemoteState(productStatus: string, sku: Row): RemoteState 
   }
 }
 
+/** Chi tiết đọc bằng Get Product: `labels` mã SKU → nhãn biến thể, `images` mã sản phẩm → URL ảnh đầu tiên. */
+interface ProductDetails {
+  labels: Map<string, string>;
+  images: Map<string, string>;
+}
+
 /**
- * `labels`: mã SKU → nhãn biến thể (giá trị thuộc tính bán hàng). Sản phẩm nhiều SKU thì tiêu đề mỗi SKU là
- * "tên sản phẩm - nhãn" để bảng ghép phân biệt được (#282); thiếu nhãn thì dùng SKU người bán, rồi mã SKU sàn.
+ * Sản phẩm nhiều SKU thì tiêu đề mỗi SKU là "tên sản phẩm - nhãn" để bảng ghép phân biệt được (#282); thiếu nhãn thì dùng
+ * SKU người bán, rồi mã SKU sàn. `imageUrl`: ảnh đầu tiên của sản phẩm (`main_images[0].urls[0]` của Get Product), null
+ * khi không đọc chi tiết.
  */
-function skusOf(p: Row, labels?: ReadonlyMap<string, string>): RemoteSku[] {
+function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
   const status = String(p.status ?? '');
   const skus = (p.skus ?? []) as Row[];
   const title = typeof p.title === 'string' ? p.title : '';
+  const imageUrl = details?.images.get(String(p.id)) ?? null;
   return skus.map((s) => {
     const sellerSku = typeof s.seller_sku === 'string' ? s.seller_sku : '';
-    const variantLabel = labels?.get(String(s.id)) ?? null;
+    const variantLabel = details?.labels.get(String(s.id)) ?? null;
     return {
       externalProductId: String(p.id),
       externalSkuId: String(s.id),
       sellerSku,
       title: skus.length > 1 ? `${title} - ${variantLabel || sellerSku || String(s.id)}` : title,
       variantLabel,
+      imageUrl,
       state: tiktokRemoteState(status, s),
       rejectReason: null,
       // Tổng tồn ở các kho của SKU (`inventory[].quantity`).
@@ -195,24 +204,27 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
   }
 
   /**
-   * Nhãn biến thể của SKU các sản phẩm nhiều SKU: Search Products không trả `sales_attributes`, phải gọi Get Product 202309
-   * từng sản phẩm (docv2 get-product-202309, tra 09/11/2026; chưa có bản mới hơn). Tối đa `LABEL_PRODUCT_MAX` sản phẩm
-   * mỗi lần; sản phẩm còn lại, hoặc sàn từ chối đọc (vd vừa xoá), dùng SKU người bán làm nhãn. Nhãn chỉ để hiển thị và
-   * ghép theo tên nên lỗi không làm hỏng bước ghép: lỗi của từng sản phẩm thì bỏ qua sản phẩm đó; lỗi chung (mã trong
-   * `LABEL_STOP_CODES`, cùng một mã hai lần liền, sàn lỗi tạm) thì dừng đọc nhãn; có lỗi thì ghi một dòng log tổng. Mất uỷ
-   * quyền thì ném. Get Product không trả sản phẩm `FREEZE`, `DELETED` (OAS get-product-202309): không gọi.
+   * Chi tiết sản phẩm cho bước ghép: Search Products không trả `sales_attributes` và ảnh, phải gọi Get Product 202309 từng
+   * sản phẩm (docv2 get-product-202309, tra 09/11/2026; chưa có bản mới hơn). Nhãn biến thể lấy từ
+   * `skus[].sales_attributes[].value_name`, ảnh là `main_images[0].urls[0]`. Tối đa `DETAIL_PRODUCT_MAX` sản phẩm mỗi lần,
+   * sản phẩm nhiều SKU trước (nhãn đổi được gợi ý ghép, ảnh chỉ để nhìn), rồi sản phẩm một SKU theo thứ tự sàn trả; sản
+   * phẩm còn lại, hoặc sàn từ chối đọc (vd vừa xoá), dùng SKU người bán làm nhãn và không có ảnh. Chi tiết chỉ để hiển thị
+   * và ghép theo tên nên lỗi không làm hỏng bước ghép: lỗi của từng sản phẩm thì bỏ qua sản phẩm đó; lỗi chung (mã trong
+   * `LABEL_STOP_CODES`, cùng một mã hai lần liền, sàn lỗi tạm) thì dừng đọc; có lỗi thì ghi một dòng log tổng. Mất uỷ quyền
+   * thì ném. Get Product không trả sản phẩm `FREEZE`, `DELETED` (OAS get-product-202309): không gọi.
    */
-  async function variantLabels(accessToken: string, products: readonly Row[]): Promise<Map<string, string>> {
+  async function productDetails(accessToken: string, products: readonly Row[]): Promise<ProductDetails> {
     const labels = new Map<string, string>();
-    const multi = products
-      .filter((p) => ((p.skus ?? []) as Row[]).length > 1 && p.status !== 'FREEZE' && p.status !== 'DELETED')
-      .slice(0, LABEL_PRODUCT_MAX);
+    const images = new Map<string, string>();
+    const readable = products.filter((p) => p.status !== 'FREEZE' && p.status !== 'DELETED');
+    const isMulti = (p: Row) => ((p.skus ?? []) as Row[]).length > 1;
+    const picked = [...readable.filter(isMulti), ...readable.filter((p) => !isMulti(p))].slice(0, DETAIL_PRODUCT_MAX);
     const codes: Record<string, number> = {};
     let failed = 0;
     let lastCode: string | null = null;
     let stoppedBy: string | null = null;
-    for (const p of multi) {
-      let detail: { skus?: Row[] } | undefined;
+    for (const p of picked) {
+      let detail: { skus?: Row[]; main_images?: Row[] } | undefined;
       try {
         detail = await client.call('GET', `/product/202309/products/${encodeURIComponent(String(p.id))}`, { token: accessToken });
         lastCode = null;
@@ -228,6 +240,9 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         lastCode = code;
         continue;
       }
+      const first = (detail?.main_images ?? [])[0]?.urls;
+      const url = Array.isArray(first) ? first[0] : undefined;
+      if (typeof url === 'string' && url) images.set(String(p.id), url);
       for (const s of detail?.skus ?? []) {
         const label = ((s.sales_attributes ?? []) as Row[])
           .map((a) => (typeof a.value_name === 'string' ? a.value_name.trim() : ''))
@@ -238,11 +253,11 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     }
     if (failed) {
       logger.warn(
-        { externalShopId: unpackTiktokToken(accessToken).shopId, products: multi.length, failed, codes, stoppedBy },
-        'Không đọc được nhãn biến thể TikTok, dùng SKU người bán làm nhãn',
+        { externalShopId: unpackTiktokToken(accessToken).shopId, products: picked.length, failed, codes, stoppedBy },
+        'Không đọc được chi tiết sản phẩm TikTok, dùng SKU người bán làm nhãn, không có ảnh',
       );
     }
-    return labels;
+    return { labels, images };
   }
 
   async function searchProducts(accessToken: string, filter: Row): Promise<Row[]> {
@@ -308,11 +323,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       return packFor(await refreshRaw(parts.token), parts.cipher, parts.shopId);
     },
     // Mọi SKU của gian hàng cho gợi ý ghép lúc thiết lập (#198, #282): mã sản phẩm, mã SKU sàn, SKU người bán, tiêu đề kèm
-    // nhãn biến thể; bỏ sản phẩm đã xoá. `labels: false` (đếm SKU lúc nối) không gọi Get Product.
+    // nhãn biến thể, ảnh đầu tiên; bỏ sản phẩm đã xoá. `labels: false` (đếm SKU lúc nối, hoàn tất bằng `decisions`) không
+    // gọi Get Product: không nhãn, không ảnh.
     async listSkus(accessToken, opts) {
       const products = (await searchProducts(accessToken, { status: 'ALL' })).filter((p) => p.status !== 'DELETED');
-      const labels = opts?.labels === false ? undefined : await variantLabels(accessToken, products);
-      return products.flatMap((p) => skusOf(p, labels)).filter((s) => s.state !== 'deleted');
+      const details = opts?.labels === false ? undefined : await productDetails(accessToken, products);
+      return products.flatMap((p) => skusOf(p, details)).filter((s) => s.state !== 'deleted');
     },
     getSkus,
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.

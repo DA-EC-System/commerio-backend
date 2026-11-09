@@ -54,7 +54,7 @@ const sku = (externalSkuId: string, sellerSku: string, title: string, state: Rem
   quantity: 4,
 });
 const remote: RemoteSku[] = [
-  sku('sku-1', 'CMR-1', 'Áo thun trắng'),
+  { ...sku('sku-1', 'CMR-1', 'Áo thun trắng'), imageUrl: 'https://img.test/ao.jpg' },
   sku('sku-2', 'LZ-JEAN', 'Quần jean nam xanh 32'),
   sku('sku-3', 'LZ-MU', 'Mũ lưỡi trai'),
   sku('sku-4', 'LZ-BINH', 'Bình giữ nhiệt'),
@@ -126,12 +126,15 @@ describe('gợi ý ghép theo SKU và theo tên (AC-22)', () => {
       sku: 'CMR-1',
       available: 9,
       platformStock: 4,
+      // Ảnh đầu tiên và trạng thái sàn đi thẳng từ adapter (#282); adapter không trả ảnh thì null.
+      imageUrl: 'https://img.test/ao.jpg',
+      status: 'live',
     });
     expect(rows[1]).toMatchObject({ match: 'name', variantId: vName.id, sku: 'CMR-2', available: 9 });
     expect(rows[1]!.score).toBeGreaterThanOrEqual(0.4);
     expect(rows[1]!.score).toBeLessThanOrEqual(1);
     // `vListed` đã có listing ở gian hàng, `vArchived` lưu trữ: không được gợi ý dù tên trùng.
-    for (const r of rows.slice(2)) expect(r).toMatchObject({ match: 'none', score: null, variantId: null, sku: null, available: null, platformStock: 4 });
+    for (const r of rows.slice(2)) expect(r).toMatchObject({ match: 'none', score: null, variantId: null, sku: null, available: null, platformStock: 4, imageUrl: null });
     expect(res.body.unmatchedRemote).toBe(2);
     expect(res.body.nameMatchSkipped).toBe(false);
   });

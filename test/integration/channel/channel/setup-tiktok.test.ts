@@ -51,10 +51,11 @@ const fetchFn = vi.fn<typeof fetch>(async (url) => {
   const u = new URL(String(url));
   if (u.pathname === '/authorization/202309/shops') return ok({ shops: [{ id: shopId, name: 'Commerio_Testing_Acc', region: 'VN', cipher, seller_type: 'LOCAL' }] });
   if (u.pathname === '/product/202502/products/search') return ok(pages[u.searchParams.get('page_token') ?? '']);
-  // Get Product 202309: chỉ sản phẩm nhiều SKU (cốc) được đọc nhãn biến thể.
+  // Get Product 202309: nhãn biến thể của sản phẩm nhiều SKU (cốc), ảnh đầu tiên của mọi sản phẩm đọc được.
   if (u.pathname === '/product/202309/products/1738338487553328657') {
     return ok({
       id: '1738338487553328657',
+      main_images: [{ uri: 'tos-maliva-i-o3syd03w52-us/mug', urls: ['https://p16-oec-va.ibyteimg.com/mug.jpeg'], width: 800, height: 800 }],
       skus: [
         { id: '1738338453674427921', sales_attributes: [{ id: '100000', name: 'Màu', value_id: '1', value_name: 'Trắng' }] },
         { id: '1738338453674493457', sales_attributes: [{ id: '100000', name: 'Màu', value_id: '2', value_name: 'Đen' }] },
@@ -127,9 +128,21 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
     const searches = fetchFn.mock.calls.map(([u]) => new URL(String(u))).filter((u) => u.pathname === '/product/202502/products/search');
     expect(searches.map((u) => u.searchParams.get('page_token'))).toEqual([null, 'p2']);
     expect(searches.every((u) => u.searchParams.get('shop_cipher') === cipher)).toBe(true);
-    // Nhãn biến thể: một lần Get Product cho sản phẩm nhiều SKU, không gọi cho sản phẩm một SKU.
-    const details = fetchFn.mock.calls.map(([u]) => new URL(String(u)).pathname).filter((p) => p.startsWith('/product/202309/products/'));
-    expect(details).toEqual(['/product/202309/products/1738338487553328657']);
+    // Get Product: sản phẩm nhiều SKU trước (nhãn biến thể), rồi sản phẩm một SKU (ảnh); không gọi sản phẩm đã xoá.
+    expect(detailCalls()).toEqual([
+      '/product/202309/products/1738338487553328657',
+      '/product/202309/products/1738350612753122833',
+      '/product/202309/products/1738417412913137169',
+      '/product/202309/products/1738417412913137171',
+    ]);
+    // Ảnh đầu tiên (`main_images[0].urls[0]`), sản phẩm không có ảnh thì null; trạng thái sàn đã chuẩn hoá.
+    expect(body.suggestions.map((s) => [s.imageUrl, s.status])).toEqual([
+      ['https://p16-oec-va.ibyteimg.com/mug.jpeg', 'live'],
+      ['https://p16-oec-va.ibyteimg.com/mug.jpeg', 'live'],
+      [null, 'live'],
+      [null, 'review'],
+      [null, 'live'],
+    ]);
     // AC-1: mọi SKU còn trên shop (bỏ sản phẩm đã xoá), `externalSkuId` là `skus[].id`; SKU của sản phẩm nhiều SKU có tiêu đề riêng.
     expect(body.suggestions.map((s) => [s.externalSkuId, s.title, s.platformStock])).toEqual([
       ['1738338453674427921', 'Cốc sứ có quai 350ml - Trắng', 14],
@@ -159,6 +172,6 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
     expect(detailCalls()).toEqual([]);
     fetchFn.mockClear();
     await finish({ externalSkuIds: ['1738338453674427921'] });
-    expect(detailCalls()).toEqual(['/product/202309/products/1738338487553328657']);
+    expect(detailCalls()[0]).toBe('/product/202309/products/1738338487553328657');
   });
 });

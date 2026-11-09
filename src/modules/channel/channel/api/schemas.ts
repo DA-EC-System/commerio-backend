@@ -401,6 +401,13 @@ export const ShopSetupPreview = z
           sku: z.string().nullable(),
           available: z.number().int().nullable(),
           platformStock: z.number().int(),
+          imageUrl: z.string().nullable().meta({
+            description:
+              'URL ảnh đầu tiên của sản phẩm trên sàn, chỉ để hiện; null khi sàn không trả hoặc BE không đọc được (TikTok: quá 50 sản phẩm đọc chi tiết, Get Product lỗi). URL ảnh TikTok có thể hết hạn: không lưu (21 §18.7.5)',
+          }),
+          status: z.enum(['live', 'review', 'rejected', 'hold', 'inactive']).meta({
+            description: 'Trạng thái sản phẩm trên sàn đã chuẩn hoá: `live` đang bán, `review` chờ sàn duyệt, `rejected` sàn từ chối, `hold` sàn khoá, `inactive` người bán tắt hoặc nháp (21 §18.7.5)',
+          }),
         })
         .strict(),
     ),

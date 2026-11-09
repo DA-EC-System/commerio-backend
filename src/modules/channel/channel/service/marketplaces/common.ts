@@ -105,6 +105,11 @@ export interface RemoteSku {
    * phòng là SKU người bán) thì thiếu hoặc null: SKU của sản phẩm nhiều SKU khi đó không được ghép theo tên (#282).
    */
   variantLabel?: string | null;
+  /**
+   * URL ảnh đầu tiên của sản phẩm trên sàn, cho bảng ghép lúc thiết lập (#282, Documents/21 §18.7.5). Thiếu hoặc null khi
+   * sàn không trả ảnh hay adapter không đọc (TikTok: `labels: false`, quá trần đọc chi tiết, Get Product lỗi).
+   */
+  imageUrl?: string | null;
 }
 
 export interface PriceQuantity {
@@ -312,7 +317,8 @@ export interface MarketplaceAdapter {
   /**
    * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
    * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
-   * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282). `labels: false` khi chỉ cần đếm: bỏ các lời gọi đọc nhãn.
+   * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282), kèm `imageUrl` khi có. `labels: false` khi chỉ cần
+   * đếm hay không hiển thị: bỏ các lời gọi đọc nhãn, ảnh.
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean }): Promise<RemoteSku[]>;
   /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */

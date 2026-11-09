@@ -148,10 +148,18 @@ async function products(shopId: string | undefined): Promise<void> {
   const saved = loadTokens<TiktokTokens>('tiktok');
   if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}, chạy "refresh" trước.`);
   const list = await adapter.listSkus!(packedFor(saved, shopId));
-  printStep('listSkus (product/202502/products/search + product/202309/products/{id} cho sản phẩm nhiều SKU)', true, {
+  printStep('listSkus (product/202502/products/search + product/202309/products/{id}, tối đa 50 sản phẩm, nhiều SKU trước)', true, {
     products: new Set(list.map((s) => s.externalProductId)).size,
     skus: list.length,
-    items: list.map(({ externalProductId, externalSkuId, sellerSku, title, state, quantity }) => ({ externalProductId, externalSkuId, sellerSku, title, state, quantity })),
+    items: list.map(({ externalProductId, externalSkuId, sellerSku, title, state, quantity, imageUrl }) => ({
+      externalProductId,
+      externalSkuId,
+      sellerSku,
+      title,
+      state,
+      quantity,
+      imageUrl,
+    })),
   });
 }
 

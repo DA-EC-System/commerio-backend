@@ -12,6 +12,7 @@ import { lockCompanySetup, setupStateOfCompany, updateShop } from '../repository
 import { stocktakePort } from './stocktake-port.ts';
 import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
+import type { RemoteState } from './marketplaces/common.ts';
 import { sendOpenOrderPull, startShopJobs } from './shop-jobs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
@@ -27,6 +28,10 @@ export interface SetupSuggestion {
   sku: string | null;
   available: number | null;
   platformStock: number;
+  /** URL ảnh đầu tiên của sản phẩm trên sàn; null khi sàn không trả hay adapter không đọc được (§18.7.5, #282). */
+  imageUrl: string | null;
+  /** Trạng thái sản phẩm trên sàn đã chuẩn hoá (`RemoteSku.state`); SKU đã xoá không có trong gợi ý (§18.7.5, #282). */
+  status: Exclude<RemoteState, 'deleted'>;
 }
 
 type Suggestion = SetupSuggestion & { externalProductId: string; sellerSku: string };
@@ -151,6 +156,8 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string, labe
       sku: c?.variant.sku ?? null,
       available: c ? (available.get(c.variant.id) ?? 0) : null,
       platformStock: r.quantity,
+      imageUrl: r.imageUrl ?? null,
+      status: r.state as Exclude<RemoteState, 'deleted'>,
     };
   });
   return { offered, variants, listed, nameMatchSkipped };

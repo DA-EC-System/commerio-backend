@@ -274,11 +274,13 @@ describe('adapter TikTok: SKU', () => {
     const fetchFn = fakeFetch(
       ok({ total_count: 3, next_page_token: 'p2', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M', [2, 5])]), product('2', 'DELETED', [sku('21', 'CU')])] }),
       ok({ total_count: 3, next_page_token: '', products: [product('3', 'PENDING', [sku('31', 'QUAN-L', [0])])] }),
+      ok({ id: '1', main_images: [{ uri: 'tos-1', urls: ['https://img.test/1.jpg', 'https://img.test/1b.jpg'] }], skus: [{ id: '11' }] }),
+      ok({ id: '3', main_images: [], skus: [{ id: '31' }] }),
     );
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
     expect(skus).toEqual([
-      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, state: 'live', rejectReason: null, quantity: 7 },
-      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, state: 'review', rejectReason: null, quantity: 0 },
+      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, imageUrl: 'https://img.test/1.jpg', state: 'live', rejectReason: null, quantity: 7 },
+      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, imageUrl: null, state: 'review', rejectReason: null, quantity: 0 },
     ]);
     expect(urlOf(fetchFn, 0).searchParams.has('page_token')).toBe(false);
     expect(urlOf(fetchFn, 1).searchParams.get('page_token')).toBe('p2');
@@ -304,6 +306,7 @@ describe('adapter TikTok: SKU', () => {
           { id: '12', sales_attributes: [] },
         ],
       }),
+      ok({ id: '2', skus: [{ id: '21' }] }),
     );
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
     expect(skus.map((s) => [s.externalSkuId, s.title, s.variantLabel])).toEqual([
@@ -312,7 +315,7 @@ describe('adapter TikTok: SKU', () => {
       ['12', 'SP 1 - AO-DEN-L', null],
       ['21', 'SP 2', null],
     ]);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
     expect(urlOf(fetchFn, 1).pathname).toBe('/product/202309/products/1');
     expect(urlOf(fetchFn, 1).searchParams.get('shop_cipher')).toBe(SHOP.cipher);
   });
@@ -321,6 +324,7 @@ describe('adapter TikTok: SKU', () => {
     const fetchFn = fakeFetch(ok({ next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M'), sku('12', '')])] }));
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false });
     expect(skus.map((s) => s.title)).toEqual(['SP 1 - AO-M', 'SP 1 - 12']);
+    expect(skus.map((s) => s.imageUrl)).toEqual([null, null]);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -330,6 +334,7 @@ describe('adapter TikTok: SKU', () => {
     const skus = await createTiktokAdapter(config, fakeFetch(page(), rejected)).listSkus!(packed());
     expect(skus.map((s) => s.title)).toEqual(['SP 1 - A', 'SP 1 - B']);
     expect(skus.map((s) => s.variantLabel)).toEqual([null, null]);
+    expect(skus.map((s) => s.imageUrl)).toEqual([null, null]);
     const temp = await createTiktokAdapter(config, fakeFetch(page(), json({}, 503))).listSkus!(packed());
     expect(temp.map((s) => s.title)).toEqual(['SP 1 - A', 'SP 1 - B']);
     const unauthorized = json({ code: 105002, message: 'Expired credentials', request_id: 'r' });
@@ -377,6 +382,43 @@ describe('adapter TikTok: SKU', () => {
       expect(fetchFn).toHaveBeenCalledTimes(1);
       expect(skus.map((s) => s.title)).toEqual(['SP 9 - F1', 'SP 9 - F2']);
     });
+  });
+
+  it('listSkus (#282): imageUrl là main_images[0].urls[0] của Get Product, cả sản phẩm một SKU; đọc sản phẩm nhiều SKU trước', async () => {
+    const fetchFn = fakeFetch(
+      ok({
+        next_page_token: '',
+        products: [product('1', 'ACTIVATE', [sku('11', 'A')]), product('2', 'SELLER_DEACTIVATED', [sku('21', 'B1'), sku('22', 'B2')]), product('3', 'FREEZE', [sku('31', 'C')])],
+      }),
+      ok({ id: '2', main_images: [{ uri: 'u2', urls: ['https://img.test/2.jpg'] }], skus: [{ id: '21', sales_attributes: [{ value_name: 'Đỏ' }] }] }),
+      ok({ id: '1', main_images: [{ uri: 'u1', urls: [] }, { uri: 'u1b', urls: ['https://img.test/1b.jpg'] }], skus: [{ id: '11' }] }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+    expect(fetchFn.mock.calls.slice(1).map(([u]) => new URL(String(u)).pathname.split('/').pop())).toEqual(['2', '1']);
+    expect(skus.map((s) => [s.externalSkuId, s.imageUrl, s.state])).toEqual([
+      // Ảnh đầu không có URL: không lấy ảnh sau (FE hiện ô trống).
+      ['11', null, 'live'],
+      ['21', 'https://img.test/2.jpg', 'inactive'],
+      ['22', 'https://img.test/2.jpg', 'inactive'],
+      // FREEZE: Get Product không trả, không gọi, không ảnh.
+      ['31', null, 'hold'],
+    ]);
+  });
+
+  it('listSkus: đọc chi tiết tối đa 50 sản phẩm, nhiều SKU trước rồi một SKU; phần còn lại không ảnh', async () => {
+    const single = Array.from({ length: 30 }, (_, i) => product(`s${i}`, 'ACTIVATE', [sku(`s${i}a`, `SS${i}`)]));
+    const multi = Array.from({ length: 30 }, (_, i) => product(`m${i}`, 'ACTIVATE', [sku(`m${i}a`, `M${i}A`), sku(`m${i}b`, `M${i}B`)]));
+    const fetchFn = vi.fn<typeof fetch>(async (url) => {
+      const u = new URL(String(url));
+      if (u.pathname.endsWith('/search')) return ok({ next_page_token: '', products: [...single, ...multi] });
+      const id = u.pathname.split('/').pop()!;
+      return ok({ main_images: [{ urls: [`https://img.test/${id}.jpg`] }], skus: [] });
+    });
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+    expect(fetchFn).toHaveBeenCalledTimes(51);
+    expect(skus.find((s) => s.externalSkuId === 'm29a')!.imageUrl).toBe('https://img.test/m29.jpg');
+    expect(skus.find((s) => s.externalSkuId === 's19a')!.imageUrl).toBe('https://img.test/s19.jpg');
+    expect(skus.find((s) => s.externalSkuId === 's20a')!.imageUrl).toBeNull();
   });
 
   it('listSkus: đọc nhãn tối đa 50 sản phẩm nhiều SKU, phần còn lại nhãn là SKU người bán', async () => {

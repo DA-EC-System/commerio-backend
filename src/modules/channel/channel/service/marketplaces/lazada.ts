@@ -88,8 +88,25 @@ type LazadaProduct = {
   subStatus?: unknown;
   rejectReason?: { violationDetail?: unknown }[];
   attributes?: { name?: unknown };
-  skus?: { SkuId?: unknown; SellerSku?: unknown; quantity?: unknown }[];
+  /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
+  images?: unknown;
+  skus?: { SkuId?: unknown; SellerSku?: unknown; quantity?: unknown; Images?: unknown }[];
 };
+
+/** URL đầu tiên khác rỗng của `images` (GetProducts): mảng chuỗi hoặc chuỗi JSON của mảng; không có thì null. */
+function firstImage(images: unknown): string | null {
+  let list = images;
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(list)) return null;
+  const url = list.find((u): u is string => typeof u === 'string' && u.trim() !== '');
+  return url ? url.trim() : null;
+}
 
 /** Trạng thái sản phẩm Lazada (`status`, `subStatus`, `rejectReason` của GetProducts) → trạng thái chuẩn. */
 function remoteState(p: LazadaProduct): { state: RemoteState; rejectReason: string | null } {
@@ -107,13 +124,16 @@ function remoteState(p: LazadaProduct): { state: RemoteState; rejectReason: stri
   return { state: 'inactive', rejectReason: null };
 }
 
+/** `imageUrl` (#282): ảnh đầu tiên của sản phẩm (`images`), sản phẩm không có ảnh thì ảnh đầu của SKU (`skus[].Images`). */
 function skusOf(p: LazadaProduct): RemoteSku[] {
   const { state, rejectReason } = remoteState(p);
+  const productImage = firstImage(p.images);
   return (p.skus ?? []).map((s) => ({
     externalProductId: String(p.item_id),
     externalSkuId: String(s.SkuId),
     sellerSku: String(s.SellerSku ?? ''),
     title: String(p.attributes?.name ?? ''),
+    imageUrl: productImage ?? firstImage(s.Images),
     state,
     rejectReason,
     quantity: Number(s.quantity ?? 0),
