@@ -2,7 +2,7 @@
 import { Decimal } from 'decimal.js';
 import { getStatusHistory } from '../../../core/index.ts';
 import { getVariants } from '../../../product/index.ts';
-import { findPackagesOfOrders, isHandedOver, type PackageStatus, type PackageViewRow } from '../../fulfillment/index.ts';
+import { findPackagesOfOrders, type PackageOrderRef, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
@@ -134,6 +134,26 @@ function summary(o: OrderViewRow, f: Facts, shops: Map<string, ShopRef>, labels:
   };
 }
 
+/** Thông tin đơn cho `PackageSummary` của fulfillment (khách, SKU, tên sản phẩm, nhãn biến thể theo dòng đơn). */
+export function packageOrderRef(o: OrderViewRow, lines: readonly OrderLineRow[], labels: Map<string, string>): PackageOrderRef {
+  return {
+    id: o.id,
+    code: o.code,
+    status: o.status,
+    source: o.source,
+    shopId: o.shopId,
+    customerName: (o.shippingAddress as StoredAddress)?.name ?? o.customer?.name ?? null,
+    paymentMethod: o.paymentMethod,
+    cancelling: o.cancelling,
+    platformCancelled: o.platformCancelled,
+    lines: new Map(
+      lines
+        .filter((l) => l.orderId === o.id)
+        .map((l) => [l.id, { sku: l.sku ?? l.externalSku ?? '', productName: l.productName, attributesLabel: attributesOf(l, labels) }]),
+    ),
+  };
+}
+
 const shopsOf = (ctx: SalesContext, ids: (string | null)[]) => {
   const unique = [...new Set(ids.filter((id): id is string => id !== null))];
   return ctx.shopsOf && unique.length ? ctx.shopsOf(unique) : Promise.resolve(new Map<string, ShopRef>());
@@ -185,8 +205,8 @@ export async function getOrder(ctx: SalesContext, id: string) {
   ]);
   const f = facts.get(id)!;
   const labels = await variantLabels(lines.map((l) => l.variantId));
-  const lineById = new Map(lines.map((l) => [l.id, l]));
-  const base = summary(o, f, shops, labels, Date.now());
+  const now = Date.now();
+  const base = summary(o, f, shops, labels, now);
   const lastDelivered = f.packages.reduce<Date | null>((a, p) => (p.deliveredAt && (!a || p.deliveredAt > a) ? p.deliveredAt : a), null);
   const open = o.status === 'processing';
   const blocker = open
@@ -240,53 +260,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
       reverseOrderId: l.reverseOrderId,
       returnStatus: l.returnStatus,
     })),
-    packages: f.packages.map((p) => {
-      const pkgLines = p.lines.map((pl) => {
-        const l = lineById.get(pl.orderLineId);
-        return {
-          variantId: pl.variantId,
-          sku: l?.sku ?? l?.externalSku ?? '',
-          productName: l?.productName ?? '',
-          attributesLabel: attributesOf(l ?? { attributesLabel: null, variantId: pl.variantId }, labels),
-          quantity: pl.quantity,
-        };
-      });
-      return {
-        id: p.id,
-        code: p.code,
-        order: { id: o.id, code: o.code, status: o.status },
-        source: o.source,
-        shop: base.shop,
-        customerName: address?.name ?? o.customer?.name ?? null,
-        status: p.status as PackageStatus,
-        flags: [
-          ...(p.needsOpen ? (['needs_open'] as const) : []),
-          ...(p.needsAttention ? (['needs_attention'] as const) : []),
-          ...(p.lostReportedBy && p.status !== 'lost' ? (['lost_reported'] as const) : []),
-        ],
-        flagNote: p.flagNote,
-        notices: p.notices,
-        openPurpose: p.openPurpose,
-        selfDelivery: p.selfDelivery,
-        paymentMethod: o.paymentMethod,
-        paymentStatus: null,
-        trackingCode: p.trackingCode,
-        platformPackageCode: p.platformPackageCode,
-        carrier: null,
-        shipmentProvider: p.shipmentProvider,
-        shippingProviderType: p.shippingProviderType,
-        promisedShippingAt: isoOrNull(p.promisedShippingAt),
-        shipBy: isoOrNull(p.shipBy),
-        lines: pkgLines,
-        totalQty: pkgLines.reduce((a, l) => a + l.quantity, 0),
-        handedOverAt: isHandedOver(p.status) ? isoOrNull(p.handedOverAt) : null,
-        deliveredAt: isoOrNull(p.deliveredAt),
-        deliveredBy: null,
-        lostReport: null,
-        createdAt: p.createdAt.toISOString(),
-        version: p.version,
-      };
-    }),
+    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now)),
     returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000).toISOString() : null,
     completionBlocker: blocker as 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed' | null,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),

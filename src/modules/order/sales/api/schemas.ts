@@ -1,6 +1,7 @@
 // Schema Zod của route đơn (Documents/21 §19.1, §19.3). Tên `.meta({ id })` trùng kiểu ở FE `src/types/sales.ts`.
 import { z } from 'zod';
 import { vnDayParam } from '../../../../shared/http/vn-day.ts';
+import { PackageSummary, ShopRef, StatusChange } from '../../fulfillment/index.ts';
 
 const iso = z.iso.datetime();
 /** Tiền: số nguyên đồng (Documents/21 §1.1 R1). */
@@ -62,8 +63,6 @@ export const OrderListQuery = z.object({
 });
 
 export const OrderParams = z.object({ id: z.string() });
-
-const ShopRef = z.object({ id: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'OrderShopRef' });
 
 export const OrderSummary = z
   .object({
@@ -137,56 +136,6 @@ const OrderLine = z
   })
   .strict()
   .meta({ id: 'OrderLine' });
-
-export const PackageSummary = z
-  .object({
-    id: z.uuid(),
-    code: z.string(),
-    order: z.object({ id: z.uuid(), code: z.string(), status: z.enum(ORDER_STATUS) }),
-    source: z.enum(['marketplace', 'inbox', 'manual']),
-    shop: ShopRef.nullable(),
-    customerName: z.string().nullable(),
-    status: z.enum(PACKAGE_STATUS),
-    flags: z.array(z.enum(['needs_open', 'needs_attention', 'lost_reported'])),
-    flagNote: z.string().nullable(),
-    notices: z
-      .array(z.object({ code: z.literal('not_implemented'), issue: z.string(), owner: z.string(), message: z.string() }).strict())
-      .meta({ description: 'Việc chạy ngầm chưa làm được vì chờ issue khác, vd giữ hàng khi `reserve` chờ commerio-backend#206 (21 §18.7.9). Rỗng khi không có' }),
-    openPurpose: z.enum(['cancel', 'edit', 'resplit']).nullable(),
-    selfDelivery: z.boolean(),
-    paymentMethod: z.enum(['prepaid', 'cod']).nullable(),
-    paymentStatus: z.string().nullable().meta({ description: 'Chưa có: luôn null tới khi có trạng thái tiền theo đơn tay' }),
-    trackingCode: z.string().nullable(),
-    platformPackageCode: z.string().nullable(),
-    carrier: z.object({ code: z.string(), name: z.string() }).nullable().meta({ description: 'Chọn lúc đóng gói (#106)' }),
-    shipmentProvider: z.string().nullable().meta({ description: 'Đơn vị vận chuyển sàn trả' }),
-    shippingProviderType: z.string().nullable().meta({ description: 'Gói giao của sàn (`standard`, `seller_own_fleet`…)' }),
-    promisedShippingAt: iso.nullable().meta({ description: 'Hạn sàn hứa gửi; null khi sàn không trả' }),
-    shipBy: iso.nullable(),
-    lines: z.array(
-      z.object({ variantId: z.uuid().nullable(), sku: z.string(), productName: z.string(), attributesLabel: z.string(), quantity: z.number().int() }),
-    ),
-    totalQty: z.number().int(),
-    handedOverAt: iso.nullable(),
-    deliveredAt: iso.nullable(),
-    deliveredBy: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    lostReport: z.object({ by: z.object({ id: z.uuid(), name: z.string() }), at: iso, claimCode: z.string() }).nullable(),
-    createdAt: iso,
-    version: z.number().int(),
-  })
-  .strict()
-  .meta({ id: 'PackageSummary' });
-
-const StatusChange = z
-  .object({
-    at: iso,
-    from: z.string().nullable(),
-    to: z.string(),
-    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    source: z.enum(['user', 'marketplace', 'system']),
-    reason: z.string().nullable(),
-  })
-  .strict();
 
 export const Order = OrderSummary.extend({
   shippingAddress: z

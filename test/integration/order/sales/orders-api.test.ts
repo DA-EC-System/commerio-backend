@@ -9,6 +9,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
+import { seedPackage } from '../fulfillment/helpers.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 const app = () => request(testApp());
@@ -372,5 +373,25 @@ describe('lọc phương thức thanh toán và người nhận (review #261 đi
     const byId = new Map(page.items.map((i) => [i.id, i.recipientName]));
     expect(byId.get(o.platformCod!)).toBe('K***h');
     expect(byId.get(o.inbox!)).toBeNull();
+  });
+});
+
+describe('cờ pickup_unconfirmed của kiện (#199 phần a, 21 §19.2)', () => {
+  it('AC13: GET /orders/:id có cờ khi kho quét quá 24 giờ mà sàn chưa xác nhận; tắt khi sàn đã xác nhận', async () => {
+    const { orderId, packageId } = await seedPackage(company.companyId, {
+      status: 'in_transit',
+      handoverSource: 'scan',
+      handedOverAt: new Date(Date.now() - 25 * 3_600_000),
+      lines: [{ variantId, quantity: 1 }],
+    });
+    const flags = async () => {
+      const res = await get(`/orders/${orderId}`);
+      expect(res.status).toBe(200);
+      return Order.parse(res.body).packages.find((p) => p.id === packageId)!.flags;
+    };
+    expect(await flags()).toContain('pickup_unconfirmed');
+
+    await testPool().query('update "order".packages set pickup_confirmed_at = now() where id = $1', [packageId]);
+    expect(await flags()).not.toContain('pickup_unconfirmed');
   });
 });
