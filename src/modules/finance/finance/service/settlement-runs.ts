@@ -202,7 +202,8 @@ async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], pay
   await insertEntries(rows);
 
   const touched = [...new Set(rows.map((r) => r.orderId).filter((id): id is string => !!id))];
-  await recomputeAfterSettlement(touched, run.shopId, await currentThreshold(run.periodTo));
+  const cancelled = new Set([...orders.values()].filter((o) => o.status === 'cancelled').map((o) => o.id));
+  await recomputeAfterSettlement(touched, run.shopId, await currentThreshold(run.periodTo), cancelled);
 
   const latest = [...payouts].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
   const walletDiff = latest ? new Decimal(latest.closingBalance).minus(await platformBalanceOf(run.shopId)).toFixed(2) : null;
