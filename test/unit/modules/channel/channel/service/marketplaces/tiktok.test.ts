@@ -362,17 +362,34 @@ describe('adapter TikTok: SKU', () => {
       expect(logged).toEqual([expect.objectContaining({ externalShopId: SHOP.id, failed: 1, codes: { '12052048': 1 }, stoppedBy: null })]);
     });
 
-    it('thiếu scope (105005) hay sàn lỗi tạm: dừng ngay, không gọi sản phẩm sau', async () => {
-      expect((await run(err(105005))).called).toEqual(['1']);
-      const temp = await run(json({}, 503));
-      expect(temp.called).toEqual(['1']);
-      expect(temp.logged).toEqual([expect.objectContaining({ failed: 1, stoppedBy: 'http_503' })]);
+    // Năm lời gọi chạy cùng lúc: lỗi chung chặn các lời gọi chưa bắt đầu, lời gọi đang chạy vẫn chạy nốt.
+    const eight = Array.from({ length: 8 }, (_, i) => product(`${i + 1}`, 'ACTIVATE', [sku(`${i + 1}1`, `S${i + 1}A`), sku(`${i + 1}2`, `S${i + 1}B`)]));
+    const runEight = async (detail: (id: string) => Response) => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const fetchFn = vi.fn<typeof fetch>(async (url) => {
+        const u = new URL(String(url));
+        return u.pathname.endsWith('/search') ? ok({ next_page_token: '', products: eight }) : detail(u.pathname.split('/').pop()!);
+      });
+      await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+      const logged = warn.mock.calls.map((c) => c[0]);
+      warn.mockRestore();
+      return { called: fetchFn.mock.calls.length - 1, logged };
+    };
+
+    it('thiếu scope (105005) hay sàn lỗi tạm: không gọi thêm sản phẩm nào sau lời gọi đang chạy', async () => {
+      const scope = await runEight((id) => (id === '1' ? err(105005) : detail(id)));
+      expect(scope.called).toBe(5);
+      expect(scope.logged).toEqual([expect.objectContaining({ failed: 1, stoppedBy: '105005' })]);
+      const temp = await runEight(() => json({}, 503));
+      expect(temp.called).toBe(5);
+      expect(temp.logged).toEqual([expect.objectContaining({ stoppedBy: 'http_503' })]);
     });
 
     it('cùng một mã hai lần liền: dừng; log không chứa token, cipher', async () => {
-      const { called, logged } = await run(err(12000001), err(12000001));
-      expect(called).toEqual(['1', '2']);
-      expect(logged).toEqual([expect.objectContaining({ failed: 2, stoppedBy: '12000001' })]);
+      const { called, logged } = await runEight(() => err(12000001));
+      // Lỗi đầu chưa dừng nên một lời gọi kịp bắt sản phẩm thứ 6; lỗi thứ hai về thì không gọi thêm.
+      expect(called).toBe(6);
+      expect(logged).toEqual([expect.objectContaining({ stoppedBy: '12000001' })]);
       expect(JSON.stringify(logged)).not.toMatch(new RegExp(`${SHOP.cipher}|TTP_at|tts1\\.`));
     });
 
@@ -433,6 +450,52 @@ describe('adapter TikTok: SKU', () => {
     expect(fetchFn).toHaveBeenCalledTimes(51);
     expect(skus.find((s) => s.externalSkuId === '49a')!.title).toBe('SP p49 - X');
     expect(skus.find((s) => s.externalSkuId === '50a')!.title).toBe('SP p50 - S50A');
+  });
+
+  it('listSkus: sản phẩm mà mọi SKU nằm trong skipSellerSkus không đọc chi tiết và không tiêu trần 50', async () => {
+    const matched = Array.from({ length: 60 }, (_, i) => product(`k${i}`, 'ACTIVATE', [sku(`k${i}a`, `K${i}A`), sku(`k${i}b`, `K${i}B`)]));
+    // Một SKU ghép được, một SKU không: vẫn phải đọc nhãn.
+    const half = product('h', 'ACTIVATE', [sku('ha', 'K0A'), sku('hb', 'LA')]);
+    const fetchFn = vi.fn<typeof fetch>(async (url) => {
+      const u = new URL(String(url));
+      if (u.pathname.endsWith('/search')) return ok({ next_page_token: '', products: [...matched, half] });
+      return ok({ skus: [{ id: 'hb', sales_attributes: [{ value_name: 'Lạ' }] }] });
+    });
+    const skip = new Set(Array.from({ length: 60 }, (_, i) => [`K${i}A`, `K${i}B`]).flat());
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed(), { skipSellerSkus: skip });
+    expect(fetchFn.mock.calls.slice(1).map(([u]) => new URL(String(u)).pathname.split('/').pop())).toEqual(['h']);
+    expect(skus.find((s) => s.externalSkuId === 'hb')!.variantLabel).toBe('Lạ');
+    expect(skus.find((s) => s.externalSkuId === 'k0a')!.imageUrl).toBeNull();
+  });
+
+  it('listSkus: mở lại không gọi Get Product cho sản phẩm cùng update_time; update_time đổi thì đọc lại', async () => {
+    let updateTime = 100;
+    const fetchFn = vi.fn<typeof fetch>(async (url) => {
+      const u = new URL(String(url));
+      if (u.pathname.endsWith('/search')) {
+        return ok({ next_page_token: '', products: [{ ...product('1', 'ACTIVATE', [sku('11', 'A'), sku('12', 'B')]), update_time: updateTime }] });
+      }
+      return ok({ main_images: [{ urls: ['https://img.test/1.jpg'] }], skus: [{ id: '11', sales_attributes: [{ value_name: 'Đỏ' }] }] });
+    });
+    const adapter = createTiktokAdapter(config, fetchFn);
+    await adapter.listSkus!(packed());
+    const again = await adapter.listSkus!(packed());
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(again.find((s) => s.externalSkuId === '11')).toMatchObject({ variantLabel: 'Đỏ', imageUrl: 'https://img.test/1.jpg' });
+    updateTime = 200;
+    await adapter.listSkus!(packed());
+    expect(fetchFn).toHaveBeenCalledTimes(5);
+  });
+
+  it('listSkus: sàn trả lại con trỏ trang vừa gửi thì rejected page_token_repeated, không trả thiếu', async () => {
+    const fetchFn = fakeFetch(
+      ok({ next_page_token: 'p2', products: [product('1', 'ACTIVATE', [sku('11', 'A')])] }),
+      ok({ next_page_token: 'p2', products: [product('2', 'ACTIVATE', [sku('21', 'B')])] }),
+    );
+    await expect(createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false })).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'page_token_repeated',
+    });
   });
 
   it('getSkus chia lô 10 SellerSku (giới hạn seller_skus) và chỉ trả SKU được hỏi', async () => {

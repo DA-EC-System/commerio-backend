@@ -71,7 +71,8 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string, labe
   }));
   const open = variants.filter((v) => !v.archived && !listed.has(v.id));
   const fetched = adapter.listSkus
-    ? await onMarketplace(() => adapter.listSkus!(accessToken, { labels }))
+    ? // Nhãn biến thể chỉ cần cho SKU ghép theo tên: sản phẩm mà mọi SKU trùng SKU Commerio còn mở thì adapter không đọc nhãn.
+      await onMarketplace(() => adapter.listSkus!(accessToken, { labels, skipSellerSkus: new Set(open.map((v) => v.sku)) }))
     : open.length
       ? await onMarketplace(() => adapter.getSkus(accessToken, open.map((v) => v.sku)))
       : [];

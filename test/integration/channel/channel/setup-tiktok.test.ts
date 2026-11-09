@@ -128,12 +128,12 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
     const searches = fetchFn.mock.calls.map(([u]) => new URL(String(u))).filter((u) => u.pathname === '/product/202502/products/search');
     expect(searches.map((u) => u.searchParams.get('page_token'))).toEqual([null, 'p2']);
     expect(searches.every((u) => u.searchParams.get('shop_cipher') === cipher)).toBe(true);
-    // Get Product: sản phẩm nhiều SKU trước (nhãn biến thể), rồi sản phẩm một SKU (ảnh); không gọi sản phẩm đã xoá.
+    // Get Product: sản phẩm nhiều SKU trước (nhãn biến thể), rồi sản phẩm một SKU (ảnh); không gọi sản phẩm đã xoá, sản
+    // phẩm mà mọi SKU trùng SKU Commerio ("Cốc trắng bản cũ": ghép theo SKU, không cần nhãn).
     expect(detailCalls()).toEqual([
       '/product/202309/products/1738338487553328657',
       '/product/202309/products/1738350612753122833',
       '/product/202309/products/1738417412913137169',
-      '/product/202309/products/1738417412913137171',
     ]);
     // Ảnh đầu tiên (`main_images[0].urls[0]`), sản phẩm không có ảnh thì null; trạng thái sàn đã chuẩn hoá.
     expect(body.suggestions.map((s) => [s.imageUrl, s.status])).toEqual([
@@ -170,6 +170,8 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
     await finish({ decisions: [{ externalSkuId: '1738338453674427921', variantId: mugWhite.id }] });
     expect(fetchFn.mock.calls.some(([u]) => new URL(String(u)).pathname === '/product/202502/products/search')).toBe(true);
     expect(detailCalls()).toEqual([]);
+    // Adapter mới (bộ nhớ đệm trống) để thấy lời gọi đọc nhãn.
+    registerAdapter('tiktok', createTiktokAdapter(config, fetchFn));
     fetchFn.mockClear();
     await finish({ externalSkuIds: ['1738338453674427921'] });
     expect(detailCalls()[0]).toBe('/product/202309/products/1738338487553328657');

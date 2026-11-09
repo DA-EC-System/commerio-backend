@@ -46,7 +46,15 @@ const MAX_PRODUCTS = 10_000;
 // Một lần lật quá số trang này là sàn trả con trỏ lặp: dừng, không lặp vô hạn.
 const MAX_PAGES = MAX_PRODUCTS / PRODUCT_PAGE + 5;
 // Trần sản phẩm đọc chi tiết (nhãn biến thể, ảnh) mỗi lần mở thiết lập: đọc 5 req/s mỗi gian hàng nên 50 lần ≈ 10 giây.
+// Chỉ tính sản phẩm phải gọi sàn: sản phẩm ghép được theo SKU và sản phẩm đã có trong bộ nhớ đệm không tiêu trần.
 const DETAIL_PRODUCT_MAX = 50;
+// Số lời gọi Get Product chạy cùng lúc. Bộ giãn `TIKTOK_RATE_LIMIT` vẫn giữ 5 req/s mỗi gian hàng; chạy song song chỉ để
+// thời gian chờ mạng của các lời gọi chồng lên nhau (gọi lần lượt thì mỗi lần mất trọn một vòng mạng).
+const DETAIL_CONCURRENCY = 5;
+// Bộ nhớ đệm chi tiết theo (gian hàng, sản phẩm), đúng khi `update_time` của Search Products không đổi: mở lại bước thiết
+// lập không gọi lại sàn. Giữ trong tiến trình, tối đa 30 phút và 5000 sản phẩm (bỏ mục cũ nhất).
+const DETAIL_CACHE_MS = 30 * 60_000;
+const DETAIL_CACHE_MAX = 5000;
 // Mã `rejected` không gắn với một sản phẩm (common-errors): 105005 thiếu scope, 106001 sai chữ ký, 36009004 sai
 // `shop_cipher`. Gặp là mọi Get Product đều hỏng như nhau: dừng đọc nhãn ngay.
 const LABEL_STOP_CODES = new Set(['105005', '106001', '36009004']);
@@ -203,57 +211,115 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return (await searchProducts(accessToken, filter)).flatMap((p) => skusOf(p));
   }
 
+  /** Chi tiết đã đọc của một sản phẩm: nhãn theo mã SKU, ảnh đầu tiên. */
+  interface ProductDetail {
+    labels: [string, string][];
+    image: string | null;
+  }
+  const detailCache = new Map<string, { updateTime: string; at: number; detail: ProductDetail }>();
+  const cacheKey = (shopId: string, p: Row) => `${shopId}:${String(p.id)}`;
+  const updateTimeOf = (p: Row) => String(p.update_time ?? '');
+  function cached(shopId: string, p: Row): ProductDetail | undefined {
+    const hit = detailCache.get(cacheKey(shopId, p));
+    if (!hit || hit.updateTime !== updateTimeOf(p) || Date.now() - hit.at > DETAIL_CACHE_MS) return undefined;
+    return hit.detail;
+  }
+  function remember(shopId: string, p: Row, detail: ProductDetail) {
+    const key = cacheKey(shopId, p);
+    detailCache.delete(key);
+    detailCache.set(key, { updateTime: updateTimeOf(p), at: Date.now(), detail });
+    while (detailCache.size > DETAIL_CACHE_MAX) detailCache.delete(detailCache.keys().next().value!);
+  }
+
+  /** Nhãn biến thể, ảnh đầu tiên trong phản hồi Get Product. */
+  function parseDetail(detail: { skus?: Row[]; main_images?: Row[] } | undefined): ProductDetail {
+    const first = (detail?.main_images ?? [])[0]?.urls;
+    const url = Array.isArray(first) ? first[0] : undefined;
+    const labels: [string, string][] = [];
+    for (const s of detail?.skus ?? []) {
+      const label = ((s.sales_attributes ?? []) as Row[])
+        .map((a) => (typeof a.value_name === 'string' ? a.value_name.trim() : ''))
+        .filter(Boolean)
+        .join(', ');
+      if (label) labels.push([String(s.id), label]);
+    }
+    return { labels, image: typeof url === 'string' && url ? url : null };
+  }
+
   /**
    * Chi tiết sản phẩm cho bước ghép: Search Products không trả `sales_attributes` và ảnh, phải gọi Get Product 202309 từng
    * sản phẩm (docv2 get-product-202309, tra 09/11/2026; chưa có bản mới hơn). Nhãn biến thể lấy từ
-   * `skus[].sales_attributes[].value_name`, ảnh là `main_images[0].urls[0]`. Tối đa `DETAIL_PRODUCT_MAX` sản phẩm mỗi lần,
-   * sản phẩm nhiều SKU trước (nhãn đổi được gợi ý ghép, ảnh chỉ để nhìn), rồi sản phẩm một SKU theo thứ tự sàn trả; sản
-   * phẩm còn lại, hoặc sàn từ chối đọc (vd vừa xoá), dùng SKU người bán làm nhãn và không có ảnh. Chi tiết chỉ để hiển thị
-   * và ghép theo tên nên lỗi không làm hỏng bước ghép: lỗi của từng sản phẩm thì bỏ qua sản phẩm đó; lỗi chung (mã trong
-   * `LABEL_STOP_CODES`, cùng một mã hai lần liền, sàn lỗi tạm) thì dừng đọc; có lỗi thì ghi một dòng log tổng. Mất uỷ quyền
-   * thì ném. Get Product không trả sản phẩm `FREEZE`, `DELETED` (OAS get-product-202309): không gọi.
+   * `skus[].sales_attributes[].value_name`, ảnh là `main_images[0].urls[0]`.
+   *
+   * Không gọi cho sản phẩm mà mọi SKU có SKU người bán trong `skipSellerSkus` (bên gọi ghép theo SKU được, nhãn không đổi
+   * gợi ý), và cho sản phẩm đã có trong bộ nhớ đệm cùng `update_time`. Phần còn lại gọi tối đa `DETAIL_PRODUCT_MAX` sản
+   * phẩm, `DETAIL_CONCURRENCY` lời gọi cùng lúc, sản phẩm nhiều SKU trước (nhãn đổi được gợi ý ghép, ảnh chỉ để nhìn), rồi
+   * sản phẩm một SKU theo thứ tự sàn trả; sản phẩm còn lại, hoặc sàn từ chối đọc (vd vừa xoá), dùng SKU người bán làm nhãn
+   * và không có ảnh. Chi tiết chỉ để hiển thị và ghép theo tên nên lỗi không làm hỏng bước ghép: lỗi của từng sản phẩm thì
+   * bỏ qua sản phẩm đó; lỗi chung (mã trong `LABEL_STOP_CODES`, cùng một mã hai lần liền, sàn lỗi tạm) thì không gọi thêm
+   * (lời gọi đang chạy vẫn chạy nốt); có lỗi thì ghi một dòng log tổng. Mất uỷ quyền thì ném. Get Product không trả sản
+   * phẩm `FREEZE`, `DELETED` (OAS get-product-202309): không gọi.
    */
-  async function productDetails(accessToken: string, products: readonly Row[]): Promise<ProductDetails> {
+  async function productDetails(
+    accessToken: string,
+    products: readonly Row[],
+    skipSellerSkus?: ReadonlySet<string>,
+  ): Promise<ProductDetails> {
+    const shopId = unpackTiktokToken(accessToken).shopId;
     const labels = new Map<string, string>();
     const images = new Map<string, string>();
-    const readable = products.filter((p) => p.status !== 'FREEZE' && p.status !== 'DELETED');
+    const apply = (p: Row, d: ProductDetail) => {
+      if (d.image) images.set(String(p.id), d.image);
+      for (const [skuId, label] of d.labels) labels.set(skuId, label);
+    };
     const isMulti = (p: Row) => ((p.skus ?? []) as Row[]).length > 1;
-    const picked = [...readable.filter(isMulti), ...readable.filter((p) => !isMulti(p))].slice(0, DETAIL_PRODUCT_MAX);
+    const matchedBySku = (p: Row) => {
+      if (!skipSellerSkus) return false;
+      const skus = (p.skus ?? []) as Row[];
+      return skus.length > 0 && skus.every((s) => typeof s.seller_sku === 'string' && skipSellerSkus.has(s.seller_sku));
+    };
+    const toRead: Row[] = [];
+    for (const p of products) {
+      if (p.status === 'FREEZE' || p.status === 'DELETED' || matchedBySku(p)) continue;
+      const hit = cached(shopId, p);
+      if (hit) apply(p, hit);
+      else toRead.push(p);
+    }
+    const picked = [...toRead.filter(isMulti), ...toRead.filter((p) => !isMulti(p))].slice(0, DETAIL_PRODUCT_MAX);
     const codes: Record<string, number> = {};
     let failed = 0;
     let lastCode: string | null = null;
     let stoppedBy: string | null = null;
-    for (const p of picked) {
-      let detail: { skus?: Row[]; main_images?: Row[] } | undefined;
-      try {
-        detail = await client.call('GET', `/product/202309/products/${encodeURIComponent(String(p.id))}`, { token: accessToken });
-        lastCode = null;
-      } catch (err) {
-        if (!(err instanceof MarketplaceError) || (err.kind !== 'rejected' && err.kind !== 'unavailable')) throw err;
-        const code = err.platformCode ?? err.kind;
-        failed += 1;
-        codes[code] = (codes[code] ?? 0) + 1;
-        if (err.kind === 'unavailable' || LABEL_STOP_CODES.has(code) || code === lastCode) {
-          stoppedBy = code;
-          break;
+    let fatal: { err: unknown } | null = null;
+    let next = 0;
+    const worker = async () => {
+      while (next < picked.length && stoppedBy === null && fatal === null) {
+        const p = picked[next++]!;
+        try {
+          const detail = parseDetail(
+            await client.call('GET', `/product/202309/products/${encodeURIComponent(String(p.id))}`, { token: accessToken }),
+          );
+          lastCode = null;
+          apply(p, detail);
+          remember(shopId, p, detail);
+        } catch (err) {
+          if (!(err instanceof MarketplaceError) || (err.kind !== 'rejected' && err.kind !== 'unavailable')) {
+            fatal ??= { err };
+            return;
+          }
+          const code = err.platformCode ?? err.kind;
+          failed += 1;
+          codes[code] = (codes[code] ?? 0) + 1;
+          if (err.kind === 'unavailable' || LABEL_STOP_CODES.has(code) || code === lastCode) stoppedBy ??= code;
+          lastCode = code;
         }
-        lastCode = code;
-        continue;
       }
-      const first = (detail?.main_images ?? [])[0]?.urls;
-      const url = Array.isArray(first) ? first[0] : undefined;
-      if (typeof url === 'string' && url) images.set(String(p.id), url);
-      for (const s of detail?.skus ?? []) {
-        const label = ((s.sales_attributes ?? []) as Row[])
-          .map((a) => (typeof a.value_name === 'string' ? a.value_name.trim() : ''))
-          .filter(Boolean)
-          .join(', ');
-        if (label) labels.set(String(s.id), label);
-      }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(DETAIL_CONCURRENCY, picked.length) }, worker));
+    if (fatal) throw (fatal as { err: unknown }).err;
     if (failed) {
       logger.warn(
-        { externalShopId: unpackTiktokToken(accessToken).shopId, products: picked.length, failed, codes, stoppedBy },
+        { externalShopId: shopId, products: picked.length, failed, codes, stoppedBy },
         'Không đọc được chi tiết sản phẩm TikTok, dùng SKU người bán làm nhãn, không có ảnh',
       );
     }
@@ -275,7 +341,10 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       const products = data?.products ?? [];
       out.push(...products);
       const next = typeof data?.next_page_token === 'string' ? data.next_page_token : '';
-      if (!next || products.length === 0 || next === pageToken) return out;
+      if (!next || products.length === 0) return out;
+      // Sàn trả lại con trỏ vừa gửi: đọc tiếp sẽ lặp, dừng thì trả thiếu. Báo lỗi như gian hàng quá giới hạn (hợp đồng
+      // `listSkus`: không trả thiếu).
+      if (next === pageToken) throw new MarketplaceError('rejected', 'page_token_repeated', 'Sàn trả lại trang sản phẩm vừa đọc');
       pageToken = next;
     }
     throw new MarketplaceError('rejected', 'too_many_pages', 'Sàn trả quá nhiều trang sản phẩm');
@@ -324,10 +393,10 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     },
     // Mọi SKU của gian hàng cho gợi ý ghép lúc thiết lập (#198, #282): mã sản phẩm, mã SKU sàn, SKU người bán, tiêu đề kèm
     // nhãn biến thể, ảnh đầu tiên; bỏ sản phẩm đã xoá. `labels: false` (đếm SKU lúc nối, hoàn tất bằng `decisions`) không
-    // gọi Get Product: không nhãn, không ảnh.
+    // gọi Get Product: không nhãn, không ảnh. `skipSellerSkus`: sản phẩm ghép được theo SKU không đọc chi tiết.
     async listSkus(accessToken, opts) {
       const products = (await searchProducts(accessToken, { status: 'ALL' })).filter((p) => p.status !== 'DELETED');
-      const details = opts?.labels === false ? undefined : await productDetails(accessToken, products);
+      const details = opts?.labels === false ? undefined : await productDetails(accessToken, products, opts?.skipSellerSkus);
       return products.flatMap((p) => skusOf(p, details)).filter((s) => s.state !== 'deleted');
     },
     getSkus,
