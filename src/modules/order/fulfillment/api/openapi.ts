@@ -1,6 +1,15 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
-import { HandOverBody, HandOverResult, Package, PackageListQuery, PackagePage, PackageParams, UndoHandoverBody } from './schemas.ts';
+import {
+  HandOverBody,
+  HandOverResult,
+  Package,
+  PackageListQuery,
+  PackagePage,
+  PackageParams,
+  ReceiveReturnBody,
+  UndoHandoverBody,
+} from './schemas.ts';
 
 const bearer = [{ bearerAuth: [] }];
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
@@ -44,6 +53,22 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: không có hoặc của công ty khác'),
       409: problemResponse('`version_conflict` kèm `current`, `invalid_transition`, `handover_confirmed_by_platform`'),
       422: problemResponse('`reason_required`, `validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/receive-return',
+    summary: 'Kho quét nhận hàng hoàn (§19.2)',
+    description:
+      'Cần `fulfillment.order.process`. Kiện `returning` → `returned`. `code` là mã kiện hoặc mã vận đơn, không phân biệt hoa thường. Dòng đã ghép SKU vào một phiếu kiểm hàng hoàn `KT` nháp (tồn đổi khi phiếu ghi sổ); không dòng nào ghép thì không lập phiếu. Phát `fulfillment.package_returned`.',
+    security: bearer,
+    request: { params: PackageParams, body: { content: { 'application/json': { schema: ReceiveReturnBody } } } },
+    responses: {
+      200: { description: 'Kiện sau khi nhận hàng hoàn', ...json(Package) },
+      ...auth,
+      404: problemResponse('`not_found`: không có hoặc của công ty khác'),
+      409: problemResponse('`version_conflict` kèm `current`, `invalid_transition` (kiện không ở `returning`, kể cả quét lần hai)'),
+      422: problemResponse('`package_mismatch`: mã quét không phải của kiện này (`errors.code`); `validation_failed`'),
     },
   });
   registry.registerPath({

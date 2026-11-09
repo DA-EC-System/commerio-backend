@@ -144,6 +144,12 @@ export const HandOverResult = z
   .strict()
   .meta({ id: 'HandOverResult' });
 
+/** Quét nhận hàng hoàn (spec 199c §5.5): `code` là mã kiện hoặc mã vận đơn, không phân biệt hoa thường. */
+export const ReceiveReturnBody = z.object({
+  version: z.int().min(0),
+  code: z.string().trim().min(1, 'Nhập hoặc quét mã kiện').max(100, 'Mã tối đa 100 ký tự'),
+});
+
 export const UndoHandoverBody = z.object({
   version: z.number().int().min(0),
   // Bắt buộc lý do do máy trạng thái kiểm (422 `reason_required`), nên ở đây cho phép rỗng.

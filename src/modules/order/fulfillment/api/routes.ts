@@ -5,7 +5,8 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import { type Actor, handOverPackages, undoHandover } from '../service/handover.ts';
 import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
-import { HandOverBody, PackageListQuery, PackageParams, UndoHandoverBody } from './schemas.ts';
+import { receiveReturn } from '../service/delivery.ts';
+import { HandOverBody, PackageListQuery, PackageParams, ReceiveReturnBody, UndoHandoverBody } from './schemas.ts';
 
 function actor(res: Response): Actor {
   const { accountId, companyId } = getAuth(res);
@@ -37,6 +38,12 @@ export function fulfillmentRouter(ctx: FulfillmentContext): Router {
       res.json(await undoHandover(ctx, actor(res), id, validated<typeof UndoHandoverBody>(res, 'body')));
     },
   );
+
+  // Kho quét nhận hàng hoàn (spec 199c §5.5): kiện `returning` → `returned`, phiếu `KT` nháp, `package_returned`.
+  router.post('/packages/:id/receive-return', process, validate({ params: PackageParams, body: ReceiveReturnBody }), async (_req, res) => {
+    const { id } = validated<typeof PackageParams>(res, 'params');
+    res.json(await receiveReturn(ctx, actor(res), id, validated<typeof ReceiveReturnBody>(res, 'body')));
+  });
 
   router.get('/packages/:id', process, validate({ params: PackageParams }), async (_req, res) => {
     const { id } = validated<typeof PackageParams>(res, 'params');

@@ -3,6 +3,7 @@
 // lên kiện (#198, Documents/21 §18.7.9).
 import {
   type DocumentRef,
+  receiveBack,
   release,
   reserve,
   reverseShipment,
@@ -27,9 +28,11 @@ export interface StockPort {
   reverseShipment(packageId: string, lines: readonly StockLine[], opts: { actorId: string; reason: string }): Promise<DocumentRef>;
   /** Các con số và giá vốn bình quân. */
   stockOf(variantIds: readonly string[]): Promise<Map<string, StockSnapshot>>;
+  /** Phiếu `KT` nháp cho hàng hoàn về (số dự kiến theo SKU, tồn chưa đổi tới khi phiếu ghi sổ); gọi lại cùng nguồn trả phiếu cũ. */
+  receiveBack(source: { type: 'package'; id: string }, lines: readonly StockLine[]): Promise<DocumentRef>;
 }
 
-const real: StockPort = { reserve, release, ship, reverseShipment, stockOf };
+const real: StockPort = { reserve, release, ship, reverseShipment, stockOf, receiveBack };
 
 let port: StockPort = real;
 
