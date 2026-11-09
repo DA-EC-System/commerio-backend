@@ -24,6 +24,9 @@ async function delivered(statuses: PlatformOrder['lines'][number]['status'][], d
     paid: true,
     isCod: true,
     placedAt: new Date(now.getTime() - 20 * DAY),
+    // Đơn đặt trước mốc kéo đơn: kiện lần đầu thấy sàn báo đã hoàn về vào thẳng `returned` (spec 199c D9); sau mốc thì
+    // kiện ở `returning` chờ kho quét (D1), chưa dừng.
+    orderCutoffAt: new Date(now.getTime() - 10 * DAY),
     shipBy: null,
     shippingAddress: null,
     shippingFee: '0',

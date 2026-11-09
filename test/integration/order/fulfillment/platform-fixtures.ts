@@ -1,7 +1,7 @@
 // Đơn sàn giả cho test đồng bộ kiện (199a, 199b, 199c): dựng `PlatformOrder`, nhận đơn trong công ty.
 import { randomUUID } from 'node:crypto';
 import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
-import type { PackageEvent } from '#src/modules/order/fulfillment/index.ts';
+import type { CancelKind, PackageEvent } from '#src/modules/order/fulfillment/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -90,3 +90,10 @@ export async function ingest(companyId: string, o: PlatformOrder) {
 }
 
 
+
+/** Sàn huỷ mọi món với loại huỷ cho trước (`cancellation_reason`; `failed_delivery`: giao không thành, spec 199c D2). */
+export const withCancel = (o: PlatformOrder, cancelKind: CancelKind): PlatformOrder => ({
+  ...o,
+  rawStatus: 'cancelled',
+  lines: o.lines.map((l) => ({ ...l, status: 'cancelled', rawStatus: 'cancelled', info: { ...l.info, cancelKind } })),
+});

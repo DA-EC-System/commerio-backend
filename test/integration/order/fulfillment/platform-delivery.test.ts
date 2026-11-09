@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { EVENT_SCHEMAS } from '#src/modules/core/platform/domain/events.ts';
 import type { PackageEvent } from '#src/modules/order/fulfillment/index.ts';
 import { testPool } from '../../helpers/db.ts';
-import { outboxOf, transitionReasonsOf, transitionsOf } from './helpers.ts';
-import { ingest, remote, setup, withEvents, withShipping, withStatus } from './platform-fixtures.ts';
+import { receive } from '../../product/inventory/helpers.ts';
+import { outboxOf, packageDocuments, packageRow, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
+import { ingest, remote, setup, withCancel, withEvents, withShipping, withStatus } from './platform-fixtures.ts';
 
 const DELIVERED = EVENT_SCHEMAS['fulfillment.package_delivered'];
 const FAILED = EVENT_SCHEMAS['fulfillment.package_delivery_failed'];
@@ -172,5 +173,155 @@ describe('đồng bộ sàn: giao xong, giao thất bại (spec 199c §5.4)', ()
     const times = await pkgTimes(packageId);
     expect(times.status).toBe('delivered');
     expect((await outboxOf(orderId, 'fulfillment.package_delivered')).length).toBe(1);
+  });
+});
+
+const orderFlags = async (orderId: string) =>
+  (
+    await testPool().query<{ status: string; platform_cancelled: boolean; cancelling: boolean }>(
+      'select status, platform_cancelled, cancelling from "order".orders where id = $1',
+      [orderId],
+    )
+  ).rows[0]!;
+
+describe('đồng bộ sàn: hoàn về, huỷ vì giao không thành, nhảy từ trước bàn giao (spec 199c §5.4)', () => {
+  it('AC7 US-DH-10.1: sàn báo shipped_back → returning; shipped_back_success → vẫn returning, không phiếu KT, không package_returned', async () => {
+    const s = await setup(10);
+    const o = remote(s);
+    const { orderId, packageId } = await ingest(s.companyId, o);
+    await ingest(s.companyId, withStatus(o, 'in_transit'));
+    await ingest(s.companyId, withStatus(o, 'returning'));
+    expect((await packageRow(packageId)).status).toBe('returning');
+
+    await ingest(s.companyId, withStatus(o, 'returned'));
+    expect(await packageRow(packageId)).toMatchObject({ status: 'returning', needs_attention: false });
+    expect((await packageDocuments(packageId)).map((d) => d.kind)).toEqual(['shipment']);
+    expect(await outboxOf(orderId, 'fulfillment.package_returned')).toEqual([]);
+  });
+
+  it('AC7: mọi món huỷ cancellation-failed Delivery trên kiện in_transit → returning; đơn vẫn processing, cờ platform_cancelled, không sales.order_cancelled', async () => {
+    const s = await setup(10);
+    const o = remote(s, { lines: 2 });
+    const { orderId, packageId } = await ingest(s.companyId, o);
+    await ingest(s.companyId, withStatus(o, 'in_transit'));
+    await ingest(s.companyId, withCancel(o, 'failed_delivery'));
+
+    expect((await packageRow(packageId)).status).toBe('returning');
+    expect(await orderFlags(orderId)).toMatchObject({ status: 'processing', platform_cancelled: true, cancelling: false });
+    expect(await outboxOf(orderId, 'sales.order_cancelled')).toEqual([]);
+    expect((await transitionsOf(packageId)).filter((t) => t.to_state === 'returning')).toMatchObject([{ action: 'return', source: 'marketplace' }]);
+  });
+
+  it('AC8 US-DH-10.2: kiện reserved, sàn báo failed_delivery → một phiếu XK, delivery_failed, có package_shipped, package_delivery_failed; kéo lại không trừ thêm', async () => {
+    const s = await setup(10);
+    const o = remote(s);
+    const { orderId, packageId } = await ingest(s.companyId, o);
+    expect((await packageRow(packageId)).status).toBe('reserved');
+
+    await ingest(s.companyId, withStatus(o, 'delivery_failed'));
+    await ingest(s.companyId, withStatus(o, 'delivery_failed'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'delivery_failed', handover_source: 'marketplace', needs_attention: false });
+    expect((await packageDocuments(packageId)).map((d) => d.kind)).toEqual(['shipment']);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9, reserved: 0 });
+    expect(await outboxOf(orderId, 'fulfillment.package_shipped')).toHaveLength(1);
+    const failed = await outboxOf(orderId, 'fulfillment.package_delivery_failed');
+    expect(failed).toHaveLength(1);
+    expect(FAILED.parse(failed[0]!).reason).toBe('Sàn báo giao không thành công');
+  });
+
+  it('AC8: kiện backordered thiếu hàng, sàn báo shipped_back → bàn giao bắt buộc rồi returning', async () => {
+    const s = await setup(null);
+    const o = remote(s, { lines: 2 });
+    const { packageId } = await ingest(s.companyId, o);
+    expect((await packageRow(packageId)).status).toBe('backordered');
+    await receive(s.companyId, s.variantId, 1, 100000);
+
+    await ingest(s.companyId, withStatus(o, 'returning'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'returning', handover_source: 'forced', needs_attention: true });
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: -1 });
+  });
+
+  it('AC8: kiện reserved, sàn báo lost → cờ Cần xử lý như cũ', async () => {
+    const s = await setup(10);
+    const o = remote(s);
+    const { packageId } = await ingest(s.companyId, o);
+    await ingest(s.companyId, withStatus(o, 'lost'));
+    expect(await packageRow(packageId)).toMatchObject({ status: 'reserved', needs_attention: true, flag_note: 'Sàn báo lost khi kiện đang reserved' });
+    expect(await packageDocuments(packageId)).toEqual([]);
+  });
+
+  it('AC9: kiện lần đầu thấy đã hoàn về, đơn đặt trước mốc → returned, before_cutoff, không phiếu KT, không package_returned', async () => {
+    const s = await setup(10);
+    const cutoff = new Date('2026-11-05T00:00:00Z');
+    const { orderId, packageId } = await ingest(
+      s.companyId,
+      remote(s, { status: 'returned', placedAt: new Date(cutoff.getTime() - 60_000), orderCutoffAt: cutoff }),
+    );
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'returned', handover_source: 'before_cutoff' });
+    expect(await packageDocuments(packageId)).toEqual([]);
+    expect(await outboxOf(orderId, 'fulfillment.package_returned')).toEqual([]);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 10 });
+  });
+
+  it('AC9: kiện lần đầu thấy đã hoàn về, đơn đặt sau mốc → returning, có phiếu XK', async () => {
+    const s = await setup(10);
+    const cutoff = new Date('2026-11-05T00:00:00Z');
+    const { packageId } = await ingest(
+      s.companyId,
+      remote(s, { status: 'returned', placedAt: new Date(cutoff.getTime() + 60_000), orderCutoffAt: cutoff }),
+    );
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'returning', handover_source: 'marketplace' });
+    expect((await packageDocuments(packageId)).map((d) => d.kind)).toEqual(['shipment']);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9 });
+  });
+
+  it('AC10: kiện lần đầu thấy đã giao, đơn đặt trước mốc → package_delivered với unitCost null', async () => {
+    const s = await setup(10);
+    const cutoff = new Date('2026-11-05T00:00:00Z');
+    const { orderId, packageId } = await ingest(
+      s.companyId,
+      remote(s, { status: 'delivered', placedAt: new Date(cutoff.getTime() - 60_000), orderCutoffAt: cutoff }),
+    );
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'delivered', handover_source: 'before_cutoff' });
+    const payloads = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => DELIVERED.parse(p));
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]!.lines).toMatchObject([{ variantId: s.variantId, quantity: 1, unitPrice: '100000.00', unitCost: null }]);
+  });
+
+  it('AC10: kiện có dòng chưa ghép giao xong → dòng đó variantId null, unitCost null', async () => {
+    const s = await setup(10);
+    const { orderId } = await ingest(s.companyId, remote(s, { status: 'delivered', unmapped: 1 }));
+
+    const payloads = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => DELIVERED.parse(p));
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]!.lines).toEqual(
+      expect.arrayContaining([
+        { variantId: s.variantId, quantity: 1, unitPrice: '100000.00', unitCost: '100000.00' },
+        { variantId: null, quantity: 1, unitPrice: '100000.00', unitCost: null },
+      ]),
+    );
+  });
+
+  it('AC14: kiện returned (kho quét trước), sàn báo shipped_back hay shipped_back_success → không đổi, không cờ', async () => {
+    const s = await setup(10);
+    const o = remote(s);
+    const { packageId } = await ingest(s.companyId, o);
+    await ingest(s.companyId, withStatus(o, 'in_transit'));
+    await ingest(s.companyId, withStatus(o, 'returning'));
+    // Kho quét nhận trước (route ở test receive-return): đưa kiện về `returned` bằng SQL.
+    await testPool().query(`update "order".packages set status = 'returned' where id = $1`, [packageId]);
+    const before = (await transitionsOf(packageId)).length;
+
+    await ingest(s.companyId, withStatus(o, 'returning'));
+    await ingest(s.companyId, withStatus(o, 'returned'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'returned', needs_attention: false });
+    expect(await transitionsOf(packageId)).toHaveLength(before);
   });
 });

@@ -8,8 +8,10 @@ import {
   type PackageEvent,
   type PlatformLineStatus,
   DEFAULT_FAIL_REASON,
+  deliveryTarget,
   eventsOf,
   journeyTimes,
+  lineStatus,
 } from '../domain/delivery.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
 import { reportDeliveryFailed, reportDelivered } from './delivery.ts';
@@ -103,12 +105,17 @@ const RANK: Record<Exclude<PlatformLineStatus, 'cancelled'>, number> = {
   lost: 5,
 };
 
+// Trạng thái món đã tính loại huỷ (`lineStatus`): món huỷ vì giao không thành kể là `returning` (spec 199c D2).
 function groupStatus(lines: readonly PlatformPackageLine[]): PlatformLineStatus | null {
-  if (lines.some((l) => l.status === null)) return null;
-  const live = lines.filter((l) => l.status !== 'cancelled') as (PlatformPackageLine & { status: keyof typeof RANK })[];
+  const statuses = lines.map(lineStatus);
+  if (statuses.some((s) => s === null)) return null;
+  const live = statuses.filter((s) => s !== 'cancelled') as (keyof typeof RANK)[];
   if (!live.length) return 'cancelled';
-  return live.reduce((a, b) => (RANK[b.status] < RANK[a.status] ? b : a)).status;
+  return live.reduce((a, b) => (RANK[b] < RANK[a] ? b : a));
 }
+
+/** Sàn báo huỷ mọi món của nhóm (trạng thái thô, chưa tính loại huỷ). */
+const allCancelled = (lines: readonly PlatformPackageLine[]) => lines.every((l) => l.status === 'cancelled');
 
 const stockLines = (lines: PackageRow['lines'] | readonly PlatformPackageLine[]): StockLine[] =>
   lines.filter((l) => l.variantId).map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
@@ -194,7 +201,10 @@ async function createPackage(
   // Món chưa đóng gói, hoặc đã đóng gói nhưng chưa rời kho, thì giữ hàng; đủ ghép SKU mới gọi cổng tồn.
   const wantsStock = status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
   const mapped = lines.every((l) => l.variantId);
-  const initial: PackageStatus = status === 'pending' ? 'backordered' : status === 'return_failed' ? 'returning' : status;
+  // Cách xử lý tồn tính trước khi chèn: kiện lần đầu thấy đã hoàn về của đơn đặt trước mốc vào thẳng `returned` (D9).
+  const mode = handoverStockMode({ firstSeen: true, placedAt: order.placedAt, orderCutoffAt: order.orderCutoffAt, awaitingStocktake: !order.holdStock });
+  const initial: PackageStatus =
+    status === 'pending' ? 'backordered' : status === 'cancelled' ? 'cancelled' : deliveryTarget(status, { firstSeen: true, storeOnly: mode === 'store_only' });
   const shipping = shippingOf(lines, NO_SHIPPING);
   const id = await insertPackage({
     ...shipping,
@@ -249,12 +259,8 @@ async function createPackage(
     lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false })),
   };
   // Kiện lần đầu thấy đã rời kho: đơn đặt trước mốc kéo đơn thì chỉ lưu (kiểm kê đã tính), còn lại trừ (25 §8.1).
-  if (stockEffectOf(null, to) === 'ship') {
-    await settleHandover(pkg, {
-      actorId: null,
-      mode: handoverStockMode({ firstSeen: true, placedAt: order.placedAt, orderCutoffAt: order.orderCutoffAt, awaitingStocktake: !order.holdStock }),
-    });
-  }
+  // Kiện vào thẳng `returned` (D9) cũng chỉ lưu: không phiếu `KT`, không `package_returned`.
+  if (stockEffectOf(null, to) === 'ship') await settleHandover(pkg, { actorId: null, mode });
   // Kiện lần đầu thấy đã giao / giao thất bại (spec 199c §5.4 "Kiện mới"): báo cho finance sau khi trừ tồn.
   if (to === 'delivered') await reportDelivered(pkg.id);
   else if (to === 'delivery_failed') await reportDeliveryFailed({ id: pkg.id, orderId: pkg.orderId }, journey.failReason ?? DEFAULT_FAIL_REASON);
@@ -269,7 +275,9 @@ async function applyStatus(
   journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
 ): Promise<boolean> {
   if (remote === 'pending') return false;
-  const to: PackageStatus = remote === 'return_failed' ? 'returning' : remote;
+  const to = deliveryTarget(remote, { firstSeen: false, storeOnly: false });
+  // Kho đã quét nhận hàng hoàn trước, sàn báo hoàn chậm hơn: bỏ qua, không cờ (spec 199c §5.4, AC14).
+  if (pkg.status === 'returned' && to === 'returning') return false;
   let changed = false;
   // Kho đã quét mà sàn báo rời kho: sàn xác nhận lấy, không trừ thêm (spec 199a §5.4). Mốc theo hành trình (spec 199c).
   if (pkg.handoverSource === 'scan' && pkg.pickupConfirmedAt === null && isHandedOver(pkg.status) && isHandedOver(to)) {
@@ -365,6 +373,7 @@ export async function syncPlatformPackages(
       touched.add(pkg.id);
       result.changed = true;
       if (status === 'cancelled') result.cancelled.push('cancelled');
+      else if (allCancelled(group)) result.cancelled.push('handed_over');
       continue;
     }
     if (group.some((l) => owner.get(l.orderLineId) && owner.get(l.orderLineId) !== pkg)) result.resplit = true;
@@ -386,7 +395,12 @@ export async function syncPlatformPackages(
       const before = [pkg.status, pkg.needsOpen].join();
       result.cancelled.push(await cancelPlatformPackage(order, pkg));
       if ([pkg.status, pkg.needsOpen].join() !== before) result.changed = true;
-    } else if (await applyStatus(order, pkg, status, journey)) result.changed = true;
+    } else {
+      if (await applyStatus(order, pkg, status, journey)) result.changed = true;
+      // Sàn huỷ món vì giao không thành (D2): kiện đi tiếp sang `returning`; báo `handed_over` như kiện đã rời kho bị
+      // sàn huỷ để sales bật cờ `platform_cancelled`, không huỷ đơn (spec 199c §5.4, 25 §8.2).
+      if (allCancelled(group)) result.cancelled.push('handed_over');
+    }
   }
   return { ...result, statuses: existing.map((p) => p.status) };
 }
