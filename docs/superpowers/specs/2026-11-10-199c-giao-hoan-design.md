@@ -164,6 +164,7 @@ Repository: `deliveryLinesOf(packageId)`, `orderShippingOf(orderId)`, `anotherDe
   - Vào `delivery_failed`: lịch sử ghi `reason`; `reportDeliveryFailed(pkg, failReason ?? 'Sàn báo giao không thành công')`.
 - **Kiện mới** (`createPackage`): tính `mode = handoverStockMode(...)` trước khi chèn; `initial = deliveryTarget(remote, { firstSeen: true, storeOnly: mode === 'store_only' })` (`pending` → `backordered` như cũ). Mốc như trên. Sau `settleHandover`: kiện `delivered` → `reportDelivered`; `delivery_failed` → `reportDeliveryFailed`. Kiện vào thẳng `returned` (D9): không `receiveBack`, không `package_returned`.
 - Kiện vào `returning` (kể cả do D2, D5): chỉ `package_status_changed` như mọi lần chuyển.
+- **Đơn mà mọi món huỷ vì giao không thành** (bổ sung lúc viết plan, 10/11/2026): sales huỷ đơn khi mọi món sàn báo `cancelled` và không kiện nào báo `handed_over`/`needs_open` (`sales/service/ingest.ts:229`). Nhóm món sàn báo `cancelled` nhưng `lineStatus` đổi thành `returning` (D2) thì sau khi áp, kết quả đồng bộ vẫn ghi `handed_over` vào `cancelled`, như kiện đã rời kho bị sàn huỷ. Sales vì vậy bật cờ `platform_cancelled`, không huỷ đơn (`25` §8.2: sàn huỷ khi đã có kiện bàn giao). Sales không phải sửa luật huỷ.
 
 **`settleDeferredHandovers`**: sau `settleHandover` của mỗi kiện, kiện đang `delivered` thì `reportDelivered` (kiện hoãn trừ đã giao trước khi phiếu đầu kỳ ghi sổ nay có giá vốn, hoặc là `before_cutoff` với `unitCost: null`).
 
@@ -297,7 +298,7 @@ getPackageEvents?(accessToken: string, externalOrderId: string): Promise<RemoteP
 4. **Không trace:** adapter không có `getPackageEvents` hoặc trace lỗi → `delivered_at` là giờ đồng bộ; lượt kéo không lỗi.
 5. **Giao thất bại (US-DH-10.1):** kiện `in_transit`, sàn báo `failed_delivery`, trace có mô tả → kiện `delivery_failed`, lịch sử có lý do, `package_delivery_failed.reason` = mô tả; không trace → "Sàn báo giao không thành công".
 6. **Giao lại:** `delivery_failed → in_transit → delivered` → một `package_delivered`.
-7. **Hoàn (US-DH-10.1):** sàn báo `shipped_back` → `returning`; món huỷ `cancellation-failed Delivery` trên kiện `in_transit` → `returning`; sàn báo `shipped_back_success` → kiện vẫn `returning`, không phiếu `KT`, không `package_returned`.
+7. **Hoàn (US-DH-10.1):** sàn báo `shipped_back` → `returning`; món huỷ `cancellation-failed Delivery` trên kiện `in_transit` → `returning`, đơn (mọi món như vậy) vẫn `processing` và bật cờ `platform_cancelled`, không có `sales.order_cancelled`; sàn báo `shipped_back_success` → kiện vẫn `returning`, không phiếu `KT`, không `package_returned`.
 8. **Nhảy ngoài đường chính (US-DH-10.2, D5):** kiện `reserved`, sàn báo `failed_delivery` → một phiếu `XK`, kiện `delivery_failed`, có `package_shipped`, `package_delivery_failed`; kéo lại không trừ thêm. Kiện `backordered` thiếu hàng, sàn báo `shipped_back` → bàn giao bắt buộc rồi `returning`. Sàn báo `lost` từ `reserved` → cờ Cần xử lý như cũ.
 9. **Kiện mới đã hoàn (D9):** đơn đặt trước mốc, kiện lần đầu thấy `shipped_back_success` → `returned`, `before_cutoff`, không phiếu `KT`, không `package_returned`. Đơn đặt sau mốc → `returning`, có phiếu `XK`.
 10. **Dòng null:** kiện `before_cutoff` giao xong → `unitCost: null`; kiện có dòng chưa ghép → dòng đó `variantId: null`, `unitCost: null`, `unitPrice` đủ.
