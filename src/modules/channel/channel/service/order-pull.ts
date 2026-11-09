@@ -57,6 +57,8 @@ async function ingestRemote({ companyId, shopId }: Session, remote: RemoteOrder,
       shopId,
       // Chờ kiểm kê đầu kỳ thì không giữ hàng (25 §6.1 bước 3); đọc dưới khoá chia sẻ nên không lệch lúc ghi sổ phiếu.
       holdStock: locked.openingStocktakeId === null,
+      // Kiện lần đầu thấy đã rời kho của đơn đặt trước mốc thì không trừ tồn (#199, 25 §8.1).
+      orderCutoffAt: locked.orderCutoffAt,
       lines: remote.lines.map((l) => ({ ...l, variantId: variants.get(l.sellerSku) ?? null })),
     });
     await saveRawOrder({

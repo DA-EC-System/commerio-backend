@@ -12,58 +12,6 @@ export interface PackageShipping {
   promisedShippingAt: Date | null;
 }
 
-export interface PackageRow {
-  id: string;
-  status: PackageStatus;
-  platformPackageCode: string | null;
-  trackingCode: string | null;
-  needsOpen: boolean;
-  needsAttention: boolean;
-  shipping: PackageShipping;
-  lines: { orderLineId: string; variantId: string | null; quantity: number; reservedQty: number }[];
-}
-
-/** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
-export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> {
-  const db = getDb();
-  const rows = await db
-    .select({
-      id: packages.id,
-      status: packages.status,
-      platformPackageCode: packages.platformPackageCode,
-      trackingCode: packages.trackingCode,
-      needsOpen: packages.needsOpen,
-      needsAttention: packages.needsAttention,
-      shipping: {
-        shipmentProvider: packages.shipmentProvider,
-        shippingProviderType: packages.shippingProviderType,
-        shippingType: packages.shippingType,
-        promisedShippingAt: packages.promisedShippingAt,
-      },
-    })
-    .from(packages)
-    .where(eq(packages.orderId, orderId))
-    .orderBy(asc(packages.code))
-    .for('update');
-  if (!rows.length) return [];
-  const lines = await db
-    .select({
-      packageId: packageLines.packageId,
-      orderLineId: packageLines.orderLineId,
-      variantId: packageLines.variantId,
-      quantity: packageLines.quantity,
-      reservedQty: packageLines.reservedQty,
-    })
-    .from(packageLines)
-    .where(
-      inArray(
-        packageLines.packageId,
-        rows.map((r) => r.id),
-      ),
-    );
-  return rows.map((r) => ({ ...r, lines: lines.filter((l) => l.packageId === r.id).map(({ packageId: _, ...l }) => l) }));
-}
-
 export async function insertPackage(input: {
   code: string;
   orderId: string;
@@ -74,6 +22,7 @@ export async function insertPackage(input: {
   shipBy: Date | null;
   handedOverAt?: Date;
   handoverSource?: HandoverSource;
+  pickupConfirmedAt?: Date;
   deliveredAt?: Date;
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
@@ -83,15 +32,18 @@ export async function insertPackage(input: {
   return row!.id;
 }
 
+/** Chèn dòng kiện, trả id theo đúng thứ tự `lines`. */
 export async function insertPackageLines(
   packageId: string,
   lines: readonly { orderLineId: string; variantId: string | null; quantity: number; reservedQty: number }[],
-): Promise<void> {
-  if (!lines.length) return;
+): Promise<string[]> {
+  if (!lines.length) return [];
   const companyId = requireCompanyId('insertPackageLines');
-  await getDb()
+  const rows = await getDb()
     .insert(packageLines)
-    .values(lines.map((l) => ({ companyId, packageId, ...l })));
+    .values(lines.map((l) => ({ companyId, packageId, ...l })))
+    .returning({ id: packageLines.id });
+  return rows.map((r) => r.id);
 }
 
 export async function updatePackage(
@@ -149,13 +101,14 @@ const handoverColumns = {
 };
 
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
-async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, PlanLine[]>> {
-  const byPackage = new Map<string, PlanLine[]>(packageIds.map((id) => [id, []]));
+async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
+  const byPackage = new Map<string, (PlanLine & { orderLineId: string })[]>(packageIds.map((id) => [id, []]));
   if (!packageIds.length) return byPackage;
   const rows = await getDb()
     .select({
       packageId: packageLines.packageId,
       id: packageLines.id,
+      orderLineId: packageLines.orderLineId,
       variantId: packageLines.variantId,
       quantity: packageLines.quantity,
       reservedQty: packageLines.reservedQty,
@@ -194,6 +147,40 @@ export async function lockDeferredPackages(shopId: string): Promise<HandoverPack
     )
     .orderBy(asc(packages.code))
     .for('update');
+  const lines = await planLinesOf(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
+}
+
+/** Kiện của đơn sàn kèm dòng, đủ trường cho lõi bàn giao (`HandoverPackage`). */
+export interface PackageRow extends HandoverPackage {
+  platformPackageCode: string | null;
+  trackingCode: string | null;
+  needsOpen: boolean;
+  shipping: PackageShipping;
+  lines: (PlanLine & { orderLineId: string })[];
+}
+
+/** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
+export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      ...handoverColumns,
+      platformPackageCode: packages.platformPackageCode,
+      trackingCode: packages.trackingCode,
+      needsOpen: packages.needsOpen,
+      shipping: {
+        shipmentProvider: packages.shipmentProvider,
+        shippingProviderType: packages.shippingProviderType,
+        shippingType: packages.shippingType,
+        promisedShippingAt: packages.promisedShippingAt,
+      },
+    })
+    .from(packages)
+    .where(eq(packages.orderId, orderId))
+    .orderBy(asc(packages.code))
+    .for('update');
+  if (!rows.length) return [];
   const lines = await planLinesOf(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
 }
