@@ -1,8 +1,9 @@
 // Một lượt phân hàng cho kiện (Documents/25 §7.4, 21 §11.1, spec 199b §5.3): lấy lại phần giữ khi tồn thực xuống dưới
 // đang giữ, rồi giữ kiện chưa giữ theo thứ tự, rồi phát `fulfillment.allocation_done`. Chạy trong giao dịch của bên gọi,
 // dưới khoá advisory theo công ty nên hai lượt không chen nhau. Gọi lại đọc lại trạng thái từ đầu, không giữ hay lấy thêm.
-import { assertTransition, publishEvent, recordTransition } from '../../../core/index.ts';
-import { requireCompanyId } from '../../../../shared/db/client.ts';
+import { z } from 'zod';
+import { assertTransition, defineQueue, JobDataSchema, publishEvent, recordTransition, sendJob } from '../../../core/index.ts';
+import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { allocationQueue, planAllocation, planReclaim } from '../domain/allocation.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import { lockAllocationCandidates, lockReclaimCandidates, takeAllocationLock, variantsInPlay } from '../repository/allocation.ts';
@@ -95,4 +96,31 @@ export async function runAllocation(
     payload: { variantIds, ...(opts.cause && { cause: opts.cause }) },
   });
   return { held, reclaimed, variantIds };
+}
+
+/**
+ * Việc nền chạy một lượt cho đúng các SKU (kiện huỷ nhả hàng, #237 ghép xong SKU, #239 dỡ kiện về kệ). Hàng `standard`,
+ * không gộp trùng: `allocation_done` của lượt phải mang SKU vừa nhả (spec 199b D8).
+ */
+export const allocationJobs = defineQueue('fulfillment.allocation', JobDataSchema.extend({ variantIds: z.array(z.uuid()).min(1) }));
+
+/** Xếp một lượt phân hàng cho các SKU, cùng giao dịch của bên gọi (trong `withCompany`). Rỗng thì không làm gì. */
+export async function requestAllocation(variantIds: readonly string[]): Promise<void> {
+  const ids = unique(variantIds).sort();
+  if (!ids.length) return;
+  await sendJob(allocationJobs, { companyId: requireCompanyId('requestAllocation'), variantIds: ids });
+}
+
+/** Handler của consumer `inventory.stock_changed`: không dùng số trong payload, lượt tự đọc lại tồn. */
+export function onStockChanged(ctx: AllocationContext): (event: { payload: { variantId: string } }) => Promise<void> {
+  return async (event) => {
+    await runAllocation(ctx, { variantIds: [event.payload.variantId] });
+  };
+}
+
+/** Handler của việc `fulfillment.allocation`. */
+export function onAllocationJob(ctx: AllocationContext): (data: { companyId: string; variantIds: string[] }) => Promise<void> {
+  return async (data) => {
+    await withCompany(data.companyId, () => runAllocation(ctx, { variantIds: data.variantIds }));
+  };
 }
