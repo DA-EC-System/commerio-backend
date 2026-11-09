@@ -101,7 +101,7 @@ describe('POST /fulfillment/packages/:id/receive-return (spec 199c §5.5, 21 §1
     expect((await packageRow(p.packageId)).status).toBe('returning');
   });
 
-  it('version cũ → 409 version_conflict', async () => {
+  it('kiện returning, version cũ → 409 version_conflict', async () => {
     const p = await returning();
     await testPool().query('update "order".packages set version = version + 1 where id = $1', [p.packageId]);
     const res = await scan(p.packageId, { version: 0, code: p.packageCode });
@@ -118,10 +118,12 @@ describe('POST /fulfillment/packages/:id/receive-return (spec 199c §5.5, 21 §1
     expect(await inspections(p.packageId)).toEqual([]);
   });
 
-  it('quét lần hai → 409 invalid_transition, vẫn một phiếu KT', async () => {
+  it('quét lần hai với version máy quét đã tải → 409 invalid_transition, vẫn một phiếu KT, một package_returned', async () => {
     const p = await returning();
-    expect((await scan(p.packageId, { code: p.packageCode })).status).toBe(200);
-    const res = await scan(p.packageId, { code: p.packageCode });
+    const loaded = await versionOf(p.packageId);
+    expect((await scan(p.packageId, { version: loaded, code: p.packageCode })).status).toBe(200);
+    // Lần hai gửi lại đúng version máy quét đã tải (lần một đã tăng version).
+    const res = await scan(p.packageId, { version: loaded, code: p.packageCode });
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('/problems/invalid_transition');
     expect(await inspections(p.packageId)).toHaveLength(1);

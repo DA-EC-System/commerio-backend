@@ -89,8 +89,6 @@ export async function ingest(companyId: string, o: PlatformOrder) {
   return { orderId, packageId: rows[0]!.id };
 }
 
-
-
 /** Sàn huỷ mọi món với loại huỷ cho trước (`cancellation_reason`; `failed_delivery`: giao không thành, spec 199c D2). */
 export const withCancel = (o: PlatformOrder, cancelKind: CancelKind): PlatformOrder => ({
   ...o,

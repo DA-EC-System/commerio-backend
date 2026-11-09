@@ -27,9 +27,7 @@ export async function deliveryStateOf(packageId: string): Promise<DeliveryState 
       deferred: sql<boolean>`exists (
         select 1 from ${packageLines} where ${packageLines.packageId} = ${packageId}
           and ${packageLines.variantId} is not null and not ${packageLines.stockDeducted}
-      ) and not exists (
-        select 1 from ${packages} where id = ${packageId} and ${packages.handoverSource} = 'before_cutoff'
-      )`,
+      ) and ${packages.handoverSource} is distinct from 'before_cutoff'`,
     })
     .from(packages)
     .where(eq(packages.id, packageId));

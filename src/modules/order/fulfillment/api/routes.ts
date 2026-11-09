@@ -3,9 +3,10 @@ import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
-import { type Actor, handOverPackages, undoHandover } from '../service/handover.ts';
-import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
+import type { Actor } from '../service/actor.ts';
 import { receiveReturn } from '../service/delivery.ts';
+import { handOverPackages, undoHandover } from '../service/handover.ts';
+import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
 import { HandOverBody, PackageListQuery, PackageParams, ReceiveReturnBody, UndoHandoverBody } from './schemas.ts';
 
 function actor(res: Response): Actor {

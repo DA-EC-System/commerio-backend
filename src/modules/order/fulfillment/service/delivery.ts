@@ -7,7 +7,7 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { deliveredAmounts, type DeliveredLine, DEFAULT_FAIL_REASON } from '../domain/delivery.ts';
+import { deliveredAmounts, DEFAULT_FAIL_REASON } from '../domain/delivery.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import {
   anotherDeliveryPosted,
@@ -17,8 +17,7 @@ import {
   packageStatuses,
 } from '../repository/delivery.ts';
 import { lockPackage, updatePackage } from '../repository/packages.ts';
-// Người quét: cùng hình `Actor` của `service/handover.ts` (import file đó sẽ thành vòng qua `handover-stock.ts`).
-type Actor = { companyId: string; accountId: string; permissions: readonly string[]; enabledModules: readonly string[] };
+import type { Actor } from './actor.ts';
 import { type FulfillmentContext, getPackage } from './packages.ts';
 import { stockPort } from './stock-port.ts';
 
@@ -78,7 +77,7 @@ const MISMATCH = 'Mã quét không phải của kiện này';
 
 /**
  * Kho quét nhận hàng hoàn (spec 199c §5.5, 25 §8.3, D2-24): kiện `returning` → `returned`. Thứ tự kiểm: kiện có (404,
- * kể cả công ty khác, id sai dạng) → `version` (409 kèm `current`) → máy trạng thái (409 `invalid_transition`) → mã
+ * kể cả công ty khác, id sai dạng) → máy trạng thái (409 `invalid_transition`) → `version` (409 kèm `current`) → mã
  * quét khớp mã kiện hoặc mã vận đơn, không phân biệt hoa thường (422 `package_mismatch`). Dòng đã ghép SKU vào một
  * phiếu `KT` nháp (tồn chưa đổi tới khi phiếu ghi sổ); không dòng nào ghép thì không lập phiếu. Phát
  * `package_status_changed`, `package_returned`. Không cần khoá idempotency: khoá dòng kiện, `version`, trạng thái chặn
@@ -89,10 +88,12 @@ export async function receiveReturn(ctx: FulfillmentContext, actor: Actor, id: s
   return withCompany(actor.companyId, async () => {
     const pkg = await lockPackage(id);
     if (!pkg) throw notFound();
+    // Trạng thái trước `version`: quét lần hai (gửi lại version máy quét đã tải) báo `invalid_transition`, không báo
+    // xung đột (21 §19.2), cùng thứ tự với bàn giao (`handover.ts`).
+    const { to } = assertTransition(packageMachine, pkg.status, 'receive_return', { actor });
     if (pkg.version !== input.version) {
       throw new AppError(409, 'version_conflict', 'Kiện vừa được cập nhật, tải lại rồi thử lại', { current: await getPackage(ctx, id) });
     }
-    const { to } = assertTransition(packageMachine, pkg.status, 'receive_return', { actor });
     const code = input.code.trim().toLowerCase();
     if (code !== pkg.code.toLowerCase() && code !== pkg.trackingCode?.toLowerCase()) {
       throw new AppError(422, 'package_mismatch', MISMATCH, { errors: { code: MISMATCH } });
@@ -138,5 +139,3 @@ export async function packageStatusOf(packageIds: readonly string[]): Promise<Ma
   }
   return out;
 }
-
-export type { DeliveredLine };
