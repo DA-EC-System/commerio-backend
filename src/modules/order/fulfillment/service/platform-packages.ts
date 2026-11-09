@@ -3,8 +3,16 @@
 import { sql } from 'drizzle-orm';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { handoverStockMode, stockEffectOf } from '../domain/handover.ts';
-import { type PlatformLineStatus } from '../domain/delivery.ts';
+import {
+  type CancelKind,
+  type PackageEvent,
+  type PlatformLineStatus,
+  DEFAULT_FAIL_REASON,
+  eventsOf,
+  journeyTimes,
+} from '../domain/delivery.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
+import { reportDeliveryFailed, reportDelivered } from './delivery.ts';
 import {
   insertPackage,
   insertPackageLines,
@@ -37,6 +45,8 @@ export interface PlatformPackageOrder {
   holdStock: boolean;
   placedAt: Date;
   orderCutoffAt: Date | null;
+  /** Hành trình kiện của sàn (spec 199c §5.7), đọc ngoài giao dịch; thiếu là `[]` (mốc lấy giờ đồng bộ). */
+  packageEvents?: readonly PackageEvent[];
 }
 
 export interface PlatformPackageLine {
@@ -47,6 +57,8 @@ export interface PlatformPackageLine {
   trackingCode: string | null;
   /** null: sàn trả giá trị app chưa biết. */
   status: PlatformLineStatus | null;
+  /** Loại huỷ của sàn (`cancellation_reason`); món huỷ vì giao không thành là `failed_delivery` (spec 199c D2). */
+  cancelKind?: CancelKind | null;
   shipping: PackageShipping;
 }
 
@@ -103,27 +115,56 @@ const stockLines = (lines: PackageRow['lines'] | readonly PlatformPackageLine[])
 
 /**
  * Mốc rời kho, đã giao khi sàn báo (CHECK `packages_handed_over`, `packages_handover_source`); người làm để trống vì
- * sàn làm.
+ * sàn làm. Mốc theo hành trình kiện (`times`), sự kiện nào vắng hoặc sau giờ đồng bộ thì lấy giờ đồng bộ (spec 199c §5.4).
  */
-function milestones(from: PackageStatus | null, to: PackageStatus, at = new Date()) {
+function milestones(
+  from: PackageStatus | null,
+  to: PackageStatus,
+  times: { leftAt: Date | null; deliveredAt: Date | null } = { leftAt: null, deliveredAt: null },
+  now = new Date(),
+) {
+  const leftAt = times.leftAt ?? now;
   return {
     // Sàn báo rời kho thì cũng là sàn xác nhận lấy (`pickup_confirmed_at`, 21 §19.2).
     ...(isHandedOver(to) && !(from && isHandedOver(from))
-      ? { handedOverAt: at, handoverSource: 'marketplace' as const, pickupConfirmedAt: at }
+      ? { handedOverAt: leftAt, handoverSource: 'marketplace' as const, pickupConfirmedAt: leftAt }
       : {}),
-    ...(to === 'delivered' ? { deliveredAt: at } : {}),
+    ...(to === 'delivered' ? { deliveredAt: times.deliveredAt ?? now } : {}),
   };
 }
 
-async function changeStatus(order: PlatformPackageOrder, pkg: PackageRow, to: PackageStatus, action: string) {
+/**
+ * Đổi trạng thái kiện; `times`, `failReason` theo hành trình của nhóm món (spec 199c §5.4). Khi vào `delivery_failed`
+ * thì lịch sử ghi lý do (từ trace khi có, không thì câu mặc định), và báo thất bại cho finance. Khi vào `delivered`
+ * thì báo giao xong sau khi trừ tồn (một lần, `delivery_posted_at` chặn).
+ */
+async function changeStatus(
+  order: PlatformPackageOrder,
+  pkg: PackageRow,
+  to: PackageStatus,
+  action: string,
+  times?: { leftAt: Date | null; deliveredAt: Date | null },
+  failReason?: string | null,
+) {
   const from = pkg.status;
-  const marks = milestones(from, to);
+  const marks = milestones(from, to, times);
   await updatePackage(pkg.id, { status: to, ...marks });
-  await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action, actorId: null, source: 'marketplace' });
+  await recordTransition({
+    entityType: 'packages',
+    entityId: pkg.id,
+    from,
+    to,
+    action,
+    actorId: null,
+    source: 'marketplace',
+    ...(to === 'delivery_failed' ? { reason: failReason ?? DEFAULT_FAIL_REASON } : {}),
+  });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: pkg.id, orderId: order.id, from, to } });
   Object.assign(pkg, { status: to }, marks);
   // Sàn báo kiện rời kho (kể cả nhảy cóc từ thiếu hàng): trừ tồn một lần; chờ kiểm kê thì hoãn.
   if (stockEffectOf(from, to) === 'ship') await settleHandover(pkg, { actorId: null, mode: order.holdStock ? 'deduct' : 'defer' });
+  if (to === 'delivered') await reportDelivered(pkg.id);
+  else if (to === 'delivery_failed') await reportDeliveryFailed({ id: pkg.id, orderId: pkg.orderId }, failReason ?? DEFAULT_FAIL_REASON);
 }
 
 /**
@@ -148,6 +189,7 @@ async function createPackage(
   code: string,
   status: PlatformLineStatus,
   lines: readonly PlatformPackageLine[],
+  journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
 ): Promise<PackageRow> {
   // Món chưa đóng gói, hoặc đã đóng gói nhưng chưa rời kho, thì giữ hàng; đủ ghép SKU mới gọi cổng tồn.
   const wantsStock = status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
@@ -163,7 +205,7 @@ async function createPackage(
     trackingCode: lines[0]!.trackingCode,
     status: initial,
     shipBy: order.shipBy,
-    ...milestones(null, initial),
+    ...milestones(null, initial, { leftAt: journey.leftAt, deliveredAt: journey.deliveredAt }),
   });
   const { reserved, notices } = wantsStock && mapped && order.holdStock ? await tryReserve(id, lines) : { reserved: false, notices: [] };
   if (notices.length) await updatePackage(id, { notices });
@@ -177,9 +219,18 @@ async function createPackage(
     await publishEvent({ type: 'fulfillment.allocation_done', aggregateId: requireCompanyId('createPackage'), payload: { variantIds } });
   }
   if (status === 'return_failed') await updatePackage(id, { needsAttention: true, flagNote: 'Sàn báo hoàn hàng thất bại' });
-  await recordTransition({ entityType: 'packages', entityId: id, from: null, to, action: 'create', actorId: null, source: 'marketplace' });
+  await recordTransition({
+    entityType: 'packages',
+    entityId: id,
+    from: null,
+    to,
+    action: 'create',
+    actorId: null,
+    source: 'marketplace',
+    ...(to === 'delivery_failed' ? { reason: journey.failReason ?? DEFAULT_FAIL_REASON } : {}),
+  });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: id, orderId: order.id, from: null, to } });
-  const marks = milestones(null, initial);
+  const marks = milestones(null, initial, { leftAt: journey.leftAt, deliveredAt: journey.deliveredAt });
   const pkg: PackageRow = {
     id,
     code,
@@ -204,17 +255,25 @@ async function createPackage(
       mode: handoverStockMode({ firstSeen: true, placedAt: order.placedAt, orderCutoffAt: order.orderCutoffAt, awaitingStocktake: !order.holdStock }),
     });
   }
+  // Kiện lần đầu thấy đã giao / giao thất bại (spec 199c §5.4 "Kiện mới"): báo cho finance sau khi trừ tồn.
+  if (to === 'delivered') await reportDelivered(pkg.id);
+  else if (to === 'delivery_failed') await reportDeliveryFailed({ id: pkg.id, orderId: pkg.orderId }, journey.failReason ?? DEFAULT_FAIL_REASON);
   return pkg;
 }
 
 /** Áp trạng thái sàn lên một kiện đã có; trả true khi có đổi. Món huỷ cả kiện xử lý ở `cancelPlatformPackage`. */
-async function applyStatus(order: PlatformPackageOrder, pkg: PackageRow, remote: Exclude<PlatformLineStatus, 'cancelled'>): Promise<boolean> {
+async function applyStatus(
+  order: PlatformPackageOrder,
+  pkg: PackageRow,
+  remote: Exclude<PlatformLineStatus, 'cancelled'>,
+  journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
+): Promise<boolean> {
   if (remote === 'pending') return false;
   const to: PackageStatus = remote === 'return_failed' ? 'returning' : remote;
   let changed = false;
-  // Kho đã quét mà sàn báo rời kho: sàn xác nhận lấy, không trừ thêm (spec 199a §5.4). Chỉ là thông tin, không tính đổi.
+  // Kho đã quét mà sàn báo rời kho: sàn xác nhận lấy, không trừ thêm (spec 199a §5.4). Mốc theo hành trình (spec 199c).
   if (pkg.handoverSource === 'scan' && pkg.pickupConfirmedAt === null && isHandedOver(pkg.status) && isHandedOver(to)) {
-    const at = new Date();
+    const at = journey.leftAt ?? new Date();
     await updatePackage(pkg.id, { pickupConfirmedAt: at });
     pkg.pickupConfirmedAt = at;
   }
@@ -230,7 +289,7 @@ async function applyStatus(order: PlatformPackageOrder, pkg: PackageRow, remote:
       pkg.needsAttention = true;
       return true;
     }
-    await changeStatus(order, pkg, to, (kind === 'direct' && arrowAction(pkg.status, to)) || 'platform_sync');
+    await changeStatus(order, pkg, to, (kind === 'direct' && arrowAction(pkg.status, to)) || 'platform_sync', journey, journey.failReason);
     changed = true;
   }
   if (remote === 'return_failed' && !pkg.needsAttention) {
@@ -280,9 +339,12 @@ export async function syncPlatformPackages(
   for (const l of lines) groups.set(l.packageCode ?? '', [...(groups.get(l.packageCode ?? '') ?? []), l]);
 
   const result = { changed: false, resplit: false, unknown: false, cancelled: [] as ('cancelled' | 'needs_open' | 'handed_over')[] };
+  const events = order.packageEvents ?? [];
   const touched = new Set<string>();
   for (const [code, group] of groups) {
     const status = groupStatus(group);
+    // Hành trình kiện của nhóm (spec 199c §5.4): khớp mã kiện sàn rồi mã vận đơn, một lần mỗi nhóm; mốc thiếu/lai `now`.
+    const journey = journeyTimes(eventsOf(events, { platformPackageCode: code || null, trackingCode: group.find((l) => l.trackingCode)?.trackingCode ?? null }), new Date());
     let pkg = (code && existing.find((p) => p.platformPackageCode === code)) || owner.get(group[0]!.orderLineId);
     if (pkg && code && pkg.platformPackageCode === null) {
       await updatePackage(pkg.id, { platformPackageCode: code });
@@ -298,7 +360,7 @@ export async function syncPlatformPackages(
         result.unknown = true;
         continue;
       }
-      pkg = await createPackage(order, await nextCode(), status, group);
+      pkg = await createPackage(order, await nextCode(), status, group, journey);
       existing.push(pkg);
       touched.add(pkg.id);
       result.changed = true;
@@ -324,7 +386,7 @@ export async function syncPlatformPackages(
       const before = [pkg.status, pkg.needsOpen].join();
       result.cancelled.push(await cancelPlatformPackage(order, pkg));
       if ([pkg.status, pkg.needsOpen].join() !== before) result.changed = true;
-    } else if (await applyStatus(order, pkg, status)) result.changed = true;
+    } else if (await applyStatus(order, pkg, status, journey)) result.changed = true;
   }
   return { ...result, statuses: existing.map((p) => p.status) };
 }

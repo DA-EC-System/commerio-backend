@@ -202,3 +202,12 @@ export async function transitionsOf(packageId: string) {
   );
   return rows;
 }
+
+/** Lý do của các mũi tên vào `to` của kiện, cũ trước (lịch sử giao thất bại có lý do, spec 199c §5.4). */
+export async function transitionReasonsOf(packageId: string, to: string) {
+  const { rows } = await testPool().query<{ reason: string | null }>(
+    `select reason from core.state_transitions where entity_type = 'packages' and entity_id = $1 and to_state = $2 order by id`,
+    [packageId, to],
+  );
+  return rows.map((r) => r.reason);
+}

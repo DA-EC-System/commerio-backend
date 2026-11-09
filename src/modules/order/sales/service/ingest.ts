@@ -3,7 +3,7 @@
 import { Decimal } from 'decimal.js';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
+import { type PackageEvent, type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
 import type { OrderFlag, OrderStatus } from '../domain/order.ts';
 import {
   insertMarketplaceOrder,
@@ -27,6 +27,8 @@ export interface PlatformOrder {
   isCod: boolean;
   placedAt: Date;
   shipBy: Date | null;
+  /** Hành trình kiện của sàn (spec 199c §5.7), đọc ngoài giao dịch ở channel; mốc và lý do giao theo trace. */
+  packageEvents?: PackageEvent[];
   /** `ward`, `postCode`, `raw` (khoá gốc của sàn) có ở đơn kéo từ #260. */
   shippingAddress: { name: string; phone: string; address: string; ward?: string | null; postCode?: string | null; raw?: Record<string, string> } | null;
   shippingFee: string;
@@ -206,6 +208,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       holdStock: o.holdStock ?? true,
       placedAt: o.placedAt,
       orderCutoffAt: o.orderCutoffAt ?? null,
+      packageEvents: o.packageEvents ?? [],
     },
     o.lines.map((l) => ({
       orderLineId: lineIds.get(l.externalLineId)!,
@@ -214,6 +217,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       packageCode: l.packageCode,
       trackingCode: l.trackingCode,
       status: l.status,
+      cancelKind: l.info.cancelKind,
       shipping: l.shipping,
     })),
     () => code('KH', 'package'),

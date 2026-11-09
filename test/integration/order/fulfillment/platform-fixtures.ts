@@ -1,6 +1,7 @@
-// Đơn sàn giả cho test đồng bộ kiện (199a, 199b): dựng `PlatformOrder`, nhận đơn trong công ty.
+// Đơn sàn giả cho test đồng bộ kiện (199a, 199b, 199c): dựng `PlatformOrder`, nhận đơn trong công ty.
 import { randomUUID } from 'node:crypto';
 import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
+import type { PackageEvent } from '#src/modules/order/fulfillment/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -17,13 +18,14 @@ export async function setup(stock: number | null) {
   return { companyId, variantId, sku };
 }
 
-/** Đơn sàn một kiện; `lines` món, mỗi món một đơn vị (Lazada mỗi món một dòng). */
+/** Đơn sàn; `lines` món, mỗi món một đơn vị. `packages > 1` chia món lần lượt vào `FP-${tag}-${n}` (spec 199c AC2). */
 export function remote(
   v: { variantId: string; sku: string },
-  o: { status?: LineStatus; lines?: number; unmapped?: number; placedAt?: Date; orderCutoffAt?: Date | null; holdStock?: boolean } = {},
+  o: { status?: LineStatus; lines?: number; unmapped?: number; packages?: number; placedAt?: Date; orderCutoffAt?: Date | null; holdStock?: boolean } = {},
 ): PlatformOrder {
   const tag = randomUUID().slice(0, 8);
   const status = o.status ?? 'pending';
+  const packages = o.packages ?? 1;
   const line = (i: number, mapped: boolean) => ({
     externalLineId: `${tag}-${i}`,
     variantId: mapped ? v.variantId : null,
@@ -32,7 +34,7 @@ export function remote(
     unitPrice: '100000',
     sellerDiscount: '0',
     platformDiscount: '0',
-    packageCode: `FP-${tag}`,
+    packageCode: packages > 1 ? `FP-${tag}-${i % packages}` : `FP-${tag}`,
     trackingCode: null,
     rawStatus: status,
     status,
@@ -61,10 +63,24 @@ export function remote(
   };
 }
 
-export const withStatus = (o: PlatformOrder, status: LineStatus): PlatformOrder => ({
+/** Đổi trạng thái mọi món; `packageCode` thì chỉ đổi món của kiện đó (spec 199c Review Focus 1). */
+export const withStatus = (o: PlatformOrder, status: LineStatus, packageCode?: string): PlatformOrder => ({
   ...o,
   rawStatus: status,
-  lines: o.lines.map((l) => ({ ...l, status, rawStatus: status })),
+  lines: o.lines.map((l) => (packageCode === undefined || l.packageCode === packageCode ? { ...l, status, rawStatus: status } : l)),
+});
+
+/** Hành trình kiện của sàn (spec 199c §5.7); `packageEvents` theo kiện, khớp mã kiện rồi mã vận đơn. */
+export const withEvents = (o: PlatformOrder, events: PackageEvent[]): PlatformOrder => ({ ...o, packageEvents: events });
+
+/** Ship cấp đơn của sàn (#260, spec 199c D10) để `reportDelivered` tính tiền. */
+export const withShipping = (
+  o: PlatformOrder,
+  s: { shippingFee: string; shippingFeeOriginal?: string | null; shippingFeeDiscountPlatform?: string | null },
+): PlatformOrder => ({
+  ...o,
+  shippingFee: s.shippingFee,
+  info: { ...o.info, shippingFeeOriginal: s.shippingFeeOriginal ?? null, shippingFeeDiscountPlatform: s.shippingFeeDiscountPlatform ?? null },
 });
 
 export async function ingest(companyId: string, o: PlatformOrder) {
@@ -72,4 +88,5 @@ export async function ingest(companyId: string, o: PlatformOrder) {
   const { rows } = await testPool().query<{ id: string }>('select id from "order".packages where order_id = $1', [orderId]);
   return { orderId, packageId: rows[0]!.id };
 }
+
 

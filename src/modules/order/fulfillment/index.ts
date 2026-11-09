@@ -34,6 +34,8 @@ export {
   type PackageStatus,
 } from './domain/package.ts';
 export {
+  type CancelKind,
+  type PackageEvent,
   type PlatformLineStatus,
   type PlatformPackageLine,
   syncPlatformPackages,
