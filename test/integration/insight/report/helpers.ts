@@ -39,8 +39,8 @@ export async function issuedOrder(
     ...(options.source ? { source: options.source } : {}),
   });
   const pkg = await testPool().query<{ id: string }>(
-    `insert into "order".packages (company_id, code, order_id, status, handed_over_at)
-     values ($1, $2, $3, 'in_transit', now()) returning id`,
+    `insert into "order".packages (company_id, code, order_id, status, handed_over_at, handover_source)
+     values ($1, $2, $3, 'in_transit', now(), 'scan') returning id`,
     [companyId, `KH-T${randomUUID().slice(0, 8)}`, order.orderId],
   );
   await testPool().query(

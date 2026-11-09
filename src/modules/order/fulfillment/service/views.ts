@@ -42,7 +42,10 @@ export function toPackageSummary(
   shop: PackageShopRef | null,
   now: number,
 ) {
-  const lines = p.lines.map((pl) => {
+  // Dòng kiện theo thứ tự dòng đơn (sales sắp theo mã món sàn), như chi tiết đơn; dòng kiện chèn một câu không có thứ tự riêng.
+  const position = new Map([...order.lines.keys()].map((id, i) => [id, i]));
+  const ordered = [...p.lines].sort((a, b) => (position.get(a.orderLineId) ?? Infinity) - (position.get(b.orderLineId) ?? Infinity));
+  const lines = ordered.map((pl) => {
     const l = order.lines.get(pl.orderLineId);
     return {
       variantId: pl.variantId,
