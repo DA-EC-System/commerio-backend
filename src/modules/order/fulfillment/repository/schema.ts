@@ -22,6 +22,11 @@ export const packageStatus = fulfillmentSchema.enum('package_status', [
   'cancelled',
 ]);
 export const openPurpose = fulfillmentSchema.enum('open_purpose', ['cancel', 'edit', 'resplit']);
+/**
+ * Ai đưa kiện vào nhóm rời kho (spec 199a §5.1): `scan` kho quét, `marketplace` sàn báo (kể cả nhảy cóc), `forced`
+ * bàn giao bắt buộc khi thiếu tồn, `before_cutoff` rời kho trước mốc kéo đơn (chỉ lưu, không trừ tồn).
+ */
+export const handoverSource = fulfillmentSchema.enum('handover_source', ['scan', 'marketplace', 'forced', 'before_cutoff']);
 
 export interface PackageNotice {
   code: 'not_implemented';
@@ -57,6 +62,11 @@ export const packages = fulfillmentSchema.table(
     packedAt: timestamp('packed_at', { withTimezone: true }),
     handedOverBy: uuid('handed_over_by'),
     handedOverAt: timestamp('handed_over_at', { withTimezone: true }),
+    handoverSource: handoverSource('handover_source'),
+    /** Người huỷ bàn giao nhầm gần nhất (Documents/19). */
+    handoverRevertedBy: uuid('handover_reverted_by'),
+    /** Lần đầu sàn báo kiện rời kho sau khi kho quét; kiện do sàn báo bàn giao thì bằng `handed_over_at`. */
+    pickupConfirmedAt: timestamp('pickup_confirmed_at', { withTimezone: true }),
     deliveredBy: uuid('delivered_by'),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
     codExpected: money('cod_expected'),
@@ -93,6 +103,10 @@ export const packages = fulfillmentSchema.table(
     ),
     check('packages_lost_report', sql`(${t.lostReportedBy} is null) = (${t.lostClaimCode} is null)`),
     check('packages_handed_over', sql`${t.status} in ('backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled') or ${t.handedOverAt} is not null`),
+    check(
+      'packages_handover_source',
+      sql`${t.status} in ('backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled') or ${t.handoverSource} is not null`,
+    ),
     check('packages_cod', sql`${t.codExpected} >= 0 and ${t.codCollected} >= 0`),
   ],
 );

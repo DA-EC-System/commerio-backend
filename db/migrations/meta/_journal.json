@@ -190,6 +190,13 @@
       "when": 1794206655669,
       "tag": "0026_mot-phieu-kiem-hang-hoan-moi-nguon",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794211528441,
+      "tag": "0027_ban-giao-tru-ton",
+      "breakpoints": true
     }
   ]
 }

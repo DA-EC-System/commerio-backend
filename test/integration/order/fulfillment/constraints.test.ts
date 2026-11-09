@@ -27,7 +27,7 @@ describe('ràng buộc kiện', () => {
   it('kiện đã rời kho phải có thời điểm bàn giao', async () => {
     const c = randomUUID();
     await expect(insertPackage(c, { status: 'in_transit' })).rejects.toThrow(/"packages_handed_over"/);
-    await expect(insertPackage(c, { status: 'in_transit', handed_over_at: new Date() })).resolves.toBeDefined();
+    await expect(insertPackage(c, { status: 'in_transit', handed_over_at: new Date(), handover_source: 'scan' })).resolves.toBeDefined();
   });
 
   it('người xác nhận COD trùng người giao, người xác nhận thất lạc trùng người báo bị từ chối', async () => {

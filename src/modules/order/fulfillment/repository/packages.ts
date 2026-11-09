@@ -1,6 +1,7 @@
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { PackageStatus } from '../domain/package.ts';
+import type { HandoverSource } from '../domain/handover.ts';
 import { type PackageNotice, packageLines, packages } from './schema.ts';
 
 /** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
@@ -72,6 +73,7 @@ export async function insertPackage(input: {
   status: PackageStatus;
   shipBy: Date | null;
   handedOverAt?: Date;
+  handoverSource?: HandoverSource;
   deliveredAt?: Date;
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
@@ -104,6 +106,7 @@ export async function updatePackage(
     flagNote: string | null;
     notices: PackageNotice[];
     handedOverAt: Date;
+    handoverSource: HandoverSource;
     deliveredAt: Date;
   }> &
     Partial<PackageShipping>,

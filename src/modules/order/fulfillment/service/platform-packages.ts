@@ -99,10 +99,13 @@ function groupStatus(lines: readonly PlatformPackageLine[]): PlatformLineStatus 
 const stockLines = (lines: PackageRow['lines'] | readonly PlatformPackageLine[]): StockLine[] =>
   lines.filter((l) => l.variantId).map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
 
-/** Mốc rời kho, đã giao khi sàn báo (CHECK `packages_handed_over`); người làm để trống vì sàn làm. */
+/**
+ * Mốc rời kho, đã giao khi sàn báo (CHECK `packages_handed_over`, `packages_handover_source`); người làm để trống vì
+ * sàn làm.
+ */
 function milestones(from: PackageStatus | null, to: PackageStatus, at = new Date()) {
   return {
-    ...(isHandedOver(to) && !(from && isHandedOver(from)) ? { handedOverAt: at } : {}),
+    ...(isHandedOver(to) && !(from && isHandedOver(from)) ? { handedOverAt: at, handoverSource: 'marketplace' as const } : {}),
     ...(to === 'delivered' ? { deliveredAt: at } : {}),
   };
 }
