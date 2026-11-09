@@ -21,7 +21,7 @@ import { type OpeningStocktakeStatus, setStocktakePort } from '#src/modules/chan
 import type { RemoteOrder, RemoteOrderRef, RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
-import { createCompany } from '../../helpers/company.ts';
+import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
@@ -592,5 +592,104 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
 
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: 'shop_awaiting_allocation', waitingFor: 'open_orders' });
+  });
+});
+
+describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm kê đầu kỳ (§18.6.11)', () => {
+  const recreate = (c: Company, shopId: string, token = c.ceo.token) =>
+    app().post(`/api/v1/channel/shops/${shopId}/opening-stocktake`).set({ Authorization: `Bearer ${token}` });
+
+  it.each(['draft', 'pending'] as const)('phiếu hiện tại %s: 409 opening_stocktake_open kèm number, status', async (status) => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId, number } = await waitingShop(c);
+    docStatus.set(documentId, status);
+
+    const res = await recreate(c, shopId);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'opening_stocktake_open', number, status });
+  });
+
+  it('phiếu bị từ chối: lập phiếu mới draft, giữ mốc tạm, ghi nhật ký; gọi lại thì 409 opening_stocktake_open; phiếu mới ghi sổ thì thoát chờ', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId, number } = await waitingShop(c);
+    docStatus.set(documentId, 'rejected');
+    const before = await shopRow(shopId);
+    const view = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(view.body.openingStocktake).toEqual({ documentId, number, status: 'rejected' });
+
+    const res = await recreate(c, shopId);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const next = res.body.shop.openingStocktake;
+    expect(next).toEqual({ documentId: expect.any(String), number: res.body.stocktakeNumber, status: 'draft' });
+    expect(next.documentId).not.toBe(documentId);
+    const after = await shopRow(shopId);
+    expect(after).toMatchObject({ opening_stocktake_id: next.documentId, version: before.version + 1 });
+    expect(after.order_cutoff_at.getTime()).toBe(before.order_cutoff_at.getTime());
+    const { rows: audit } = await testPool().query(
+      "select actor_id, before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1",
+      [shopId],
+    );
+    expect(audit).toEqual([
+      {
+        actor_id: expect.any(String),
+        before: { openingStocktakeId: documentId, openingStocktakeNumber: number, openingStocktakeStatus: 'rejected' },
+        after: { openingStocktakeId: next.documentId, openingStocktakeNumber: next.number },
+      },
+    ]);
+
+    const again = await recreate(c, shopId);
+    expect(again.status).toBe(409);
+    expect(again.body).toMatchObject({ code: 'opening_stocktake_open', number: next.number, status: 'draft' });
+
+    // Phiếu cũ không còn làm thoát chờ; phiếu mới thì có.
+    await stocktakePosted(c, posted(shopId, documentId));
+    expect((await shopRow(shopId)).opening_stocktake_id).toBe(next.documentId);
+    await stocktakePosted(c, posted(shopId, next.documentId));
+    expect(await shopRow(shopId)).toMatchObject({ opening_stocktake_id: null, allocation_stocktake_id: next.documentId });
+  });
+
+  it.each([
+    ['cancelled', 'cancelled' as const],
+    ['không còn', null],
+  ])('phiếu %s: lập được phiếu mới', async (_name, status) => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    if (status) docStatus.set(documentId, status);
+    else docStatus.delete(documentId);
+
+    const res = await recreate(c, shopId);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.shop.openingStocktake.status).toBe('draft');
+  });
+
+  it('phiếu đã ghi sổ (sự kiện chưa xử lý) hoặc openingStocktake null: 409 shop_not_awaiting_stocktake', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    docStatus.set(documentId, 'posted');
+    expect((await recreate(c, shopId)).body.code).toBe('shop_not_awaiting_stocktake');
+
+    await stocktakePosted(c, posted(shopId, documentId));
+    const res = await recreate(c, shopId);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('shop_not_awaiting_stocktake');
+  });
+
+  it('gian hàng không active: 409 shop_not_active; thiếu quyền channel.shop.connect: 403; gian hàng công ty khác: 404', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    docStatus.set(documentId, 'rejected');
+
+    const viewer = await addMember(c.companyId, await createCustomRole(c.companyId, ['channel.shop.view']));
+    expect((await recreate(c, shopId, viewer.token)).status).toBe(403);
+    const other = await createCompany({ optionalModules: ['channel'] });
+    expect((await recreate(other, shopId)).status).toBe(404);
+
+    await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);
+    const res = await recreate(c, shopId);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('shop_not_active');
   });
 });

@@ -1,12 +1,16 @@
 // Kiểm kê đầu kỳ của gian hàng sau thiết lập (#198 phần 2; Documents/21 §11.2 `inventory.stocktake_posted`,
 // `fulfillment.allocation_done`, §18.6.2, §18.6.11; Thành chốt 09/11/2026). Phiếu ghi sổ thì gian hàng thoát chờ kiểm kê
 // và sang chờ phân hàng; thoát chờ phân hàng khi nhận `allocation_done` có `cause.documentId` trùng phiếu. Đẩy tồn lần đầu
-// cần cả hai: lượt kéo đơn còn mở theo mốc mới đã xong và đã thoát chờ phân hàng. Consumer chỉ ghi DB (đúng một lần nhờ `processed_events`), không gọi sàn.
+// cần cả hai: lượt kéo đơn còn mở theo mốc mới đã xong và đã thoát chờ phân hàng. Phiếu bị từ chối hoặc huỷ thì lập lại
+// qua `POST /channel/shops/:id/opening-stocktake`. Consumer chỉ ghi DB (đúng một lần nhờ `processed_events`), không gọi sàn.
 import { type EventEnvelope, type EventPayload, recordAudit } from '../../../core/index.ts';
-import { requireCompanyId } from '../../../../shared/db/client.ts';
+import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { lockShopRow, settleStocktakeAllocation, updateShop } from '../repository/shops.ts';
 import { sendListingSync, sendOpenOrderPull } from './shop-jobs.ts';
+import { type Actor, ownShop, type Shop, shopView } from './shops.ts';
+import { stocktakePort } from './stocktake-port.ts';
 
 /** Lệch giờ cho phép giữa máy phát (inventory) và worker khi so `countedAt` với giờ hiện tại. */
 const CLOCK_SKEW_MS = 60_000;
@@ -93,3 +97,44 @@ export const handleStocktakePosted = (e: EventEnvelope<'inventory.stocktake_post
 /** Handler đăng ký cho `fulfillment.allocation_done` (consumer `channel-allocation-done`). */
 export const handleAllocationDone = (e: EventEnvelope<'fulfillment.allocation_done', EventPayload<'fulfillment.allocation_done'>>) =>
   onAllocationDone(e.payload);
+
+/**
+ * `POST /channel/shops/:id/opening-stocktake` (§18.6.11): lập lại phiếu kiểm kê đầu kỳ khi phiếu hiện tại bị từ chối, bị
+ * huỷ hoặc không còn. Dưới khoá dòng gian hàng: đọc trạng thái phiếu, gọi `createOpeningStocktake`, thay `openingStocktake`
+ * bằng phiếu mới, ghi nhật ký. `orderCutoffAt` giữ mốc tạm. Hai lần gọi đua thì lần sau thấy phiếu mới ở `draft` (409).
+ *
+ * Phiếu hiện tại đã `posted` mà channel chưa xử lý sự kiện: coi như không còn chờ kiểm kê (`shop_not_awaiting_stocktake`,
+ * "phiếu đã ghi sổ" ở §18.6.11), không lập phiếu mới.
+ */
+export async function recreateOpeningStocktake(actor: Actor, shopId: string): Promise<{ shop: Shop; stocktakeNumber: string }> {
+  return withCompany(actor.companyId, async () => {
+    await ownShop(shopId);
+    const shop = (await lockShopRow(shopId))!;
+    if (shop.status !== 'active') throw new AppError(409, 'shop_not_active', 'Gian hàng chưa hoạt động', { current: shop.status });
+    const current = shop.openingStocktakeId;
+    if (!current || !shop.openingStocktakeNumber) throw notAwaiting();
+    const status = (await stocktakePort().openingStocktakeStatusOf([current])).get(current);
+    if (status === 'posted') throw notAwaiting();
+    if (status === 'draft' || status === 'pending') {
+      throw new AppError(409, 'opening_stocktake_open', `Phiếu ${shop.openingStocktakeNumber} vẫn đang mở. Sửa hoặc duyệt phiếu này`, {
+        number: shop.openingStocktakeNumber,
+        status,
+      });
+    }
+    const doc = await stocktakePort().createOpeningStocktake(shop.id, { actorId: actor.accountId });
+    const updated = await updateShop(shop.id, { version: shop.version }, { openingStocktakeId: doc.documentId, openingStocktakeNumber: doc.number });
+    if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
+    await recordAudit({
+      companyId: actor.companyId,
+      actorId: actor.accountId,
+      action: 'update',
+      entityType: 'channel.shops',
+      entityId: shop.id,
+      before: { openingStocktakeId: current, openingStocktakeNumber: shop.openingStocktakeNumber, openingStocktakeStatus: status ?? null },
+      after: { openingStocktakeId: doc.documentId, openingStocktakeNumber: doc.number },
+    });
+    return { shop: await shopView(updated), stocktakeNumber: doc.number };
+  });
+}
+
+const notAwaiting = () => new AppError(409, 'shop_not_awaiting_stocktake', 'Gian hàng không còn chờ phiếu kiểm kê đầu kỳ');

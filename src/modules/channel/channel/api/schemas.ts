@@ -432,3 +432,12 @@ export const ShopSetupResult = z
   })
   .strict()
   .meta({ id: 'ShopSetupResult' });
+
+/** `POST /channel/shops/:id/opening-stocktake` (Documents/21 §18.6.11). */
+export const OpeningStocktakeResult = z
+  .object({
+    shop: Shop,
+    stocktakeNumber: z.string(),
+  })
+  .strict()
+  .meta({ id: 'OpeningStocktakeResult' });

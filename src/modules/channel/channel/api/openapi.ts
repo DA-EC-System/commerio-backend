@@ -15,6 +15,7 @@ import {
   SetupBody,
   ShopSetupPreview,
   ShopSetupResult,
+  OpeningStocktakeResult,
   CategoryMap,
   CategoryMapBody,
   CategoryMapList,
@@ -236,6 +237,22 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`invalid_transition`, `shop_not_connected`, `version_conflict`'),
       501: problemResponse(
         '`not_implemented` kèm `issue`, `owner`: `stocktake` khi chưa có cổng lập phiếu kiểm kê (commerio-backend#245, Bình); không ghi gì, gian hàng vẫn `connecting` (21 §18.7.9)',
+      ),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/opening-stocktake',
+    summary: 'Lập lại phiếu kiểm kê đầu kỳ',
+    description:
+      "Chỉ hợp lệ khi gian hàng `active`, `openingStocktake` khác null, và phiếu hiện tại ở `rejected`, `cancelled` hoặc không còn (`openingStocktakeStatusOf` không trả id này). BE làm dưới khoá dòng gian hàng: đọc trạng thái phiếu, gọi `createOpeningStocktake(shopId, { actorId })`, thay `openingStocktake` bằng phiếu mới (`status = 'draft'`), ghi một dòng nhật ký. `orderCutoffAt` giữ mốc tạm; phiếu mới ghi sổ thì đặt lại theo thời điểm đếm của phiếu mới (18.6.2). Phiếu mới cũng mỗi SKU đang bán một dòng, không giới hạn số dòng (mục 11.3).",
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      200: { description: '`{ shop, stocktakeNumber }`', ...json(OpeningStocktakeResult) },
+      ...onShop,
+      409: problemResponse(
+        'Gian hàng không `active`: 409 `shop_not_active`. `openingStocktake = null` (chưa từng chờ kiểm kê, hoặc phiếu đã ghi sổ): 409 `shop_not_awaiting_stocktake`. Phiếu hiện tại còn `draft` hoặc `pending`: 409 `opening_stocktake_open`, problem body thêm `number`, `status`. Hai lần gọi đua: lần sau thấy phiếu mới ở `draft` nên nhận 409 `opening_stocktake_open`.',
       ),
     },
   });
