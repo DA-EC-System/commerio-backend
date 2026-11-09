@@ -32,9 +32,11 @@ export async function lockShopRow(id: string): Promise<ShopRow | undefined> {
  * Trạng thái gian hàng, khoá chia sẻ tới hết giao dịch nhận đơn (#207): đơn đang chèn thì ngắt (`lockShopRow`) chờ rồi
  * đếm thấy; ngắt đã khoá trước thì bên nhận chờ rồi thấy `disconnected`.
  */
-export async function lockShopForOrders(id: string): Promise<{ status: ShopStatus; openingStocktakeId: string | null } | undefined> {
+export async function lockShopForOrders(
+  id: string,
+): Promise<{ status: ShopStatus; openingStocktakeId: string | null; orderCutoffAt: Date | null } | undefined> {
   const [row] = await getDb()
-    .select({ status: shops.status, openingStocktakeId: shops.openingStocktakeId })
+    .select({ status: shops.status, openingStocktakeId: shops.openingStocktakeId, orderCutoffAt: shops.orderCutoffAt })
     .from(shops)
     .where(eq(shops.id, id))
     .for('share');

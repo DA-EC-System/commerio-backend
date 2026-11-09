@@ -118,6 +118,11 @@ export async function findOrder(id: string): Promise<OrderViewRow | undefined> {
   return (await select(eq(orders.id, id)))[0];
 }
 
+/** Các đơn theo id (một câu); id không thấy (công ty khác, RLS) vắng mặt. */
+export async function findOrders(ids: readonly string[]): Promise<OrderViewRow[]> {
+  return ids.length ? select(inArray(orders.id, [...ids]), ids.length) : [];
+}
+
 export type OrderLineRow = typeof orderLines.$inferSelect;
 
 /**

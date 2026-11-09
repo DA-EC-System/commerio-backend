@@ -15,7 +15,7 @@ import {
 import { loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import type { FinanceContext } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
-import type { SalesContext } from './modules/order/index.ts';
+import type { FulfillmentContext, SalesContext } from './modules/order/index.ts';
 import { hasPurchasingData } from './modules/product/index.ts';
 import { createAuthorize } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
@@ -24,6 +24,7 @@ import type { ModuleContext } from './shared/module.ts';
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders'>> &
+  Required<Pick<FulfillmentContext, 'shopsOf'>> &
   Required<Pick<PlatformContext, 'moduleData'>>;
 
 export function createModuleContext(): AppContext {

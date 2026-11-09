@@ -213,7 +213,13 @@ describe('nhận đơn sàn (#105)', () => {
   });
 
   it('sàn nhảy cóc: kiện đi thẳng tới trạng thái sàn báo, ghi một dòng lịch sử, cập nhật mã vận đơn', async () => {
-    setStockPort({ reserve, release });
+    // Giữ hàng giả thì trừ tồn cũng giả (trừ tồn thật có ở test/integration/order/fulfillment/platform-handover.test.ts).
+    setStockPort({
+      reserve,
+      release,
+      ship: async () => ({ documentId: randomUUID(), number: 'XK-GIA' }),
+      stockOf: async (ids) => new Map(ids.map((id) => [id, { onHand: 0, reserved: 0, locked: 0, available: 0, quarantine: 0, avgCost: '0.00' }])),
+    });
     const o = remote();
     const res = await ingest(o);
     const shipped = structuredClone(o);

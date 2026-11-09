@@ -19,6 +19,8 @@ export interface PlatformOrder {
   shopId: string;
   /** Giữ hàng cho kiện mới; false khi gian hàng chờ kiểm kê đầu kỳ (#198). Thiếu là true. */
   holdStock?: boolean;
+  /** Mốc kéo đơn của gian hàng: kiện lần đầu thấy đã rời kho của đơn đặt trước mốc thì không trừ tồn (#199). */
+  orderCutoffAt?: Date | null;
   externalOrderId: string;
   rawStatus: string;
   paid: boolean;
@@ -197,7 +199,14 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     })),
   );
   const packages = await syncPlatformPackages(
-    { id: orderId, shopId: o.shopId, shipBy: o.shipBy, holdStock: o.holdStock ?? true },
+    {
+      id: orderId,
+      shopId: o.shopId,
+      shipBy: o.shipBy,
+      holdStock: o.holdStock ?? true,
+      placedAt: o.placedAt,
+      orderCutoffAt: o.orderCutoffAt ?? null,
+    },
     o.lines.map((l) => ({
       orderLineId: lineIds.get(l.externalLineId)!,
       variantId: l.variantId,
