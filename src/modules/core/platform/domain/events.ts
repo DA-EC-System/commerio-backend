@@ -78,6 +78,55 @@ export const EVENT_SCHEMAS = {
     from: packageStatus.nullable(),
     to: packageStatus,
   }),
+  // Sáu sự kiện kiện của Documents/21 §11.2 (#199, #238). Tiền là chuỗi thập phân, số lượng nguyên dương.
+  'fulfillment.package_shipped': z.object({
+    packageId: id,
+    orderId: id,
+    lines: z.array(z.object({ variantId: id, quantity: z.int().positive(), unitCost: money })),
+  }),
+  /** Các biến thể vừa được phân bổ lại tồn (#223 nghe để đẩy tồn lên sàn). */
+  'fulfillment.allocation_done': z.object({
+    variantIds: z.array(id),
+    /**
+     * Chỉ có ở lượt phân hàng do phiếu kiểm kê đầu kỳ ghi sổ (Documents#95, quyết định 1). Lượt đó luôn phát, kể cả
+     * `variantIds` rỗng; channel thoát chờ phân hàng khi `cause.documentId` trùng phiếu. Lượt khác không có trường này.
+     */
+    cause: z.object({ type: z.literal('stocktake'), documentId: id }).optional(),
+  }),
+  'fulfillment.package_delivered': z.object({
+    packageId: id,
+    orderId: id,
+    shopId: id,
+    deliveredAt: timestamp,
+    lines: z.array(
+      z.object({
+        variantId: id,
+        quantity: z.int().positive(),
+        unitPrice: money,
+        /** Null khi dòng kiện không có giá vốn (kiện bàn giao trước thời điểm bắt đầu lấy đơn, không qua `ship`; 21 §11.2). Không thay bằng giá vốn bình quân lúc giao. */
+        unitCost: money.nullable(),
+      }),
+    ),
+    platformSubsidy: money,
+    shippingIncome: money,
+    shippingCost: money,
+  }),
+  'fulfillment.package_delivery_failed': z.object({
+    packageId: id,
+    orderId: id,
+    reason: z.string(),
+  }),
+  'fulfillment.package_returned': z.object({
+    packageId: id,
+    orderId: id,
+    shopId: id,
+    returnedAt: timestamp,
+  }),
+  'fulfillment.package_lost': z.object({
+    packageId: id,
+    orderId: id,
+    claimCode: z.string().nullable(),
+  }),
   'fulfillment.order_status_changed': z.object({
     orderId: id,
     from: fulfillmentStatus.nullable(),

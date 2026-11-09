@@ -17,6 +17,24 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'sales.order_status_changed': { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] },
   'sales.order_cancelled': { orderId: id(), code: 'DH-000001', source: 'marketplace', by: 'platform' },
   'fulfillment.package_status_changed': { packageId: id(), orderId: id(), from: 'reserved', to: 'packed' },
+  'fulfillment.package_shipped': { packageId: id(), orderId: id(), lines: [{ variantId: id(), quantity: 2, unitCost: '100000.00' }] },
+  'fulfillment.allocation_done': { variantIds: [id(), id()] },
+  'fulfillment.package_delivered': {
+    packageId: id(),
+    orderId: id(),
+    shopId: id(),
+    deliveredAt: at,
+    lines: [
+      { variantId: id(), quantity: 2, unitPrice: '150000.00', unitCost: '100000.00' },
+      { variantId: id(), quantity: 1, unitPrice: '90000.00', unitCost: null },
+    ],
+    platformSubsidy: '10000.00',
+    shippingIncome: '30000.00',
+    shippingCost: '25000.00',
+  },
+  'fulfillment.package_delivery_failed': { packageId: id(), orderId: id(), reason: 'Khách không nghe máy' },
+  'fulfillment.package_returned': { packageId: id(), orderId: id(), shopId: id(), returnedAt: at },
+  'fulfillment.package_lost': { packageId: id(), orderId: id(), claimCode: null },
   'fulfillment.order_status_changed': { orderId: id(), from: 'confirmed', to: 'picking', isShortStock: false },
   'payment.succeeded': { orderId: id(), paymentTransactionId: id(), gateway: 'vnpay', amount: '150000.00' },
   'finance.invoice_posted': { invoiceId: id(), orderId: id(), total: '150000.00', issuedAt: at, reversalOf: null },
@@ -57,5 +75,48 @@ describe('danh mục sự kiện (AC-11)', () => {
     const schema = EVENT_SCHEMAS['staff.invitation_otp_requested'];
     expect(schema.safeParse({ invitationId: id() }).success).toBe(false);
     expect(schema.safeParse({ invitationId: id(), requestedAt: 'hom qua' }).success).toBe(false);
+  });
+
+  describe('fulfillment.package_shipped (21 §11.2)', () => {
+    const schema = EVENT_SCHEMAS['fulfillment.package_shipped'];
+    const shipped = SAMPLES['fulfillment.package_shipped'];
+    const withLine = (patch: Record<string, unknown>) => ({ ...shipped, lines: [{ ...shipped.lines[0]!, ...patch }] });
+
+    it('từ chối unitCost là number', () => {
+      expect(schema.safeParse(withLine({ unitCost: 100000 })).success).toBe(false);
+    });
+
+    it('từ chối unitCost null', () => {
+      expect(schema.safeParse(withLine({ unitCost: null })).success).toBe(false);
+    });
+
+    it('từ chối quantity bằng 0', () => {
+      expect(schema.safeParse(withLine({ quantity: 0 })).success).toBe(false);
+    });
+  });
+
+  describe('fulfillment.allocation_done (21 §11.2, Documents#95)', () => {
+    const schema = EVENT_SCHEMAS['fulfillment.allocation_done'];
+    const documentId = id();
+
+    it('nhận lượt phân hàng thường, không có cause', () => {
+      const parsed = schema.safeParse({ variantIds: [id()] });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data).not.toHaveProperty('cause');
+    });
+
+    it('nhận lượt do phiếu kiểm kê đầu kỳ, có cause, kể cả variantIds rỗng', () => {
+      const payload = { variantIds: [], cause: { type: 'stocktake', documentId } };
+      expect(schema.safeParse(payload).data).toEqual(payload);
+    });
+
+    it('từ chối cause có type khác stocktake', () => {
+      expect(schema.safeParse({ variantIds: [], cause: { type: 'receipt', documentId } }).success).toBe(false);
+    });
+
+    it('từ chối cause thiếu documentId hay documentId không phải uuid', () => {
+      expect(schema.safeParse({ variantIds: [], cause: { type: 'stocktake' } }).success).toBe(false);
+      expect(schema.safeParse({ variantIds: [], cause: { type: 'stocktake', documentId: 'PK-0001' } }).success).toBe(false);
+    });
   });
 });
