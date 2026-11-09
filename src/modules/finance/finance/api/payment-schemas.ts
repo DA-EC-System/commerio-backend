@@ -52,7 +52,14 @@ export const OrderPayment = z
     threshold: z.object({ abs: z.number(), pct: z.number(), resolveLimit: z.number() }),
     needsCeoApproval: z.boolean(),
     ceoApproval: z.object({ by: UserRef.nullable(), at: z.iso.datetime() }).nullable(),
-    resolved: z.object({ by: UserRef.nullable(), at: z.iso.datetime().nullable(), reason: z.string().nullable() }).nullable(),
+    resolved: z
+      .object({
+        by: UserRef.nullable(),
+        at: z.iso.datetime().nullable(),
+        reason: z.string().nullable(),
+        selfApproved: z.boolean().meta({ description: 'Người chốt là người soạn cấu hình phí, chốt nhờ ngoại lệ tự duyệt' }),
+      })
+      .nullable(),
     feeConfigAuthor: UserRef.nullable(),
     version: z.int(),
   })
