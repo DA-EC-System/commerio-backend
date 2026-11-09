@@ -1,7 +1,7 @@
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
-import type { PackageStatus } from '../domain/package.ts';
-import type { HandoverSource } from '../domain/handover.ts';
+import { HANDED_OVER, type PackageStatus } from '../domain/package.ts';
+import type { HandoverSource, PlanLine } from '../domain/handover.ts';
 import { type PackageNotice, packageLines, packages } from './schema.ts';
 
 /** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
@@ -105,8 +105,11 @@ export async function updatePackage(
     needsAttention: boolean;
     flagNote: string | null;
     notices: PackageNotice[];
-    handedOverAt: Date;
-    handoverSource: HandoverSource;
+    handedOverAt: Date | null;
+    handedOverBy: string | null;
+    handoverSource: HandoverSource | null;
+    handoverRevertedBy: string;
+    pickupConfirmedAt: Date | null;
     deliveredAt: Date;
   }> &
     Partial<PackageShipping>,
@@ -115,6 +118,122 @@ export async function updatePackage(
     .update(packages)
     .set({ ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
     .where(eq(packages.id, id));
+}
+
+/** Kiện kèm dòng cho lõi bàn giao trừ tồn (`service/handover-stock.ts`). */
+export interface HandoverPackage {
+  id: string;
+  code: string;
+  orderId: string;
+  shopId: string | null;
+  status: PackageStatus;
+  version: number;
+  handoverSource: HandoverSource | null;
+  pickupConfirmedAt: Date | null;
+  handedOverAt: Date | null;
+  needsAttention: boolean;
+  lines: PlanLine[];
+}
+
+const handoverColumns = {
+  id: packages.id,
+  code: packages.code,
+  orderId: packages.orderId,
+  shopId: packages.shopId,
+  status: packages.status,
+  version: packages.version,
+  handoverSource: packages.handoverSource,
+  pickupConfirmedAt: packages.pickupConfirmedAt,
+  handedOverAt: packages.handedOverAt,
+  needsAttention: packages.needsAttention,
+};
+
+/** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
+async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, PlanLine[]>> {
+  const byPackage = new Map<string, PlanLine[]>(packageIds.map((id) => [id, []]));
+  if (!packageIds.length) return byPackage;
+  const rows = await getDb()
+    .select({
+      packageId: packageLines.packageId,
+      id: packageLines.id,
+      variantId: packageLines.variantId,
+      quantity: packageLines.quantity,
+      reservedQty: packageLines.reservedQty,
+      stockDeducted: packageLines.stockDeducted,
+    })
+    .from(packageLines)
+    .where(inArray(packageLines.packageId, [...packageIds]))
+    .orderBy(asc(packageLines.createdAt), asc(packageLines.id));
+  for (const { packageId, ...l } of rows) byPackage.get(packageId)!.push(l);
+  return byPackage;
+}
+
+/** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
+export async function lockPackage(id: string): Promise<HandoverPackage | undefined> {
+  const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
+  if (!row) return undefined;
+  return { ...row, lines: (await planLinesOf([row.id])).get(row.id)! };
+}
+
+/**
+ * Kiện của gian hàng đã rời kho mà còn dòng đã ghép SKU chưa trừ, trừ kiện `before_cutoff` (hàm bù cho #198). Khoá
+ * theo mã kiện tăng dần.
+ */
+export async function lockDeferredPackages(shopId: string): Promise<HandoverPackage[]> {
+  const rows = await getDb()
+    .select(handoverColumns)
+    .from(packages)
+    .where(
+      and(
+        eq(packages.shopId, shopId),
+        inArray(packages.status, [...HANDED_OVER]),
+        sql`${packages.handoverSource} is distinct from 'before_cutoff'`,
+        sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
+                    and ${packageLines.variantId} is not null and not ${packageLines.stockDeducted})`,
+      ),
+    )
+    .orderBy(asc(packages.code))
+    .for('update');
+  const lines = await planLinesOf(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
+}
+
+/** Dòng vừa giữ được hàng: `reserved_qty = quantity`. */
+export async function markLinesReserved(lineIds: readonly string[]): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({ reservedQty: sql`${packageLines.quantity}`, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
+    .where(inArray(packageLines.id, [...lineIds]));
+}
+
+/** Dòng vừa trừ tồn: chốt giá vốn, `stock_deducted`, hết giữ. Một câu cho mọi dòng. */
+export async function markLinesShipped(rows: readonly { id: string; unitCost: string }[]): Promise<void> {
+  if (!rows.length) return;
+  const values = sql.join(
+    rows.map((r) => sql`(${r.id}::uuid, ${r.unitCost}::numeric)`),
+    sql`, `,
+  );
+  await getDb().execute(sql`
+    update ${packageLines} set unit_cost = v.cost, stock_deducted = true, reserved_qty = 0,
+      version = ${packageLines.version} + 1, updated_at = now()
+    from (values ${values}) as v(id, cost)
+    where ${packageLines.id} = v.id`);
+}
+
+/** Dòng vừa đảo bàn giao: giữ hàng lại (inventory đã cộng lại đang giữ), bỏ cờ đã trừ, bỏ giá vốn. */
+export async function markLinesReverted(lineIds: readonly string[]): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({
+      reservedQty: sql`${packageLines.quantity}`,
+      stockDeducted: false,
+      unitCost: null,
+      version: sql`${packageLines.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(inArray(packageLines.id, [...lineIds]));
 }
 
 /** Đặt số đang giữ của mọi dòng kiện: 0 hoặc đủ (Documents/25 §7.4). */
