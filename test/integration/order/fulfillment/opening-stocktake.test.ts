@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
+import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { settleOpeningStocktake } from '#src/modules/order/index.ts';
 import { DISMANTLE_NOTE } from '#src/modules/order/fulfillment/service/allocation.ts';
 import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
-import { createCompany } from '../../helpers/company.ts';
+import { addMember, createCompany } from '../../helpers/company.ts';
+import { testPool } from '../../helpers/db.ts';
+import { testApp } from '../../helpers/http.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import { channelShop, invariantBroken, outboxOf, packageDocuments, packageLineRows, packageRow, seedPackage } from './helpers.ts';
 
@@ -71,5 +75,49 @@ describe('settleOpeningStocktake: phiếu kiểm kê đầu kỳ ghi sổ (spec 
       { variantIds: [], cause },
       { variantIds: [], cause },
     ]);
+  });
+
+  describe('kho quét lúc chờ kiểm kê (spec 199b D7)', () => {
+    const scan = async (token: string, id: string) =>
+      request(testApp())
+        .post('/api/v1/fulfillment/packages/hand-over')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ packages: [{ id, version: (await packageRow(id)).version }] });
+
+    it('AC14: kiện quét sau countedAt được trừ đúng một lần khi phiếu đầu kỳ ghi sổ; quét trước countedAt thành before_cutoff', async () => {
+      const s = await setup(5);
+      const kho = await addMember(s.companyId, 'warehouse');
+      const after = await seedPackage(s.companyId, { status: 'awaiting_pickup', shopId: s.shopId, lines: [{ variantId: s.A, quantity: 1 }] });
+      const before = await seedPackage(s.companyId, { status: 'awaiting_pickup', shopId: s.shopId, lines: [{ variantId: s.A, quantity: 1 }] });
+      expect((await scan(kho.token, after.packageId)).status).toBe(200);
+      expect((await scan(kho.token, before.packageId)).status).toBe(200);
+      await testPool().query('update "order".packages set handed_over_at = $2 where id = $1', [before.packageId, new Date(s.countedAt.valueOf() - HOUR)]);
+
+      expect(await exitAwaiting(s)).toMatchObject({ deducted: 1, storedOnly: 1 });
+
+      expect(await packageDocuments(after.packageId)).toHaveLength(1);
+      expect(await packageRow(before.packageId)).toMatchObject({ handover_source: 'before_cutoff' });
+      expect(await packageDocuments(before.packageId)).toEqual([]);
+      expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 0 });
+      expect(await packageDocuments(after.packageId)).toHaveLength(1);
+    });
+
+    it('AC16: lần quét đua thoát chờ: thoát chờ giữ khoá gian hàng, lần quét đợi, commit xong thì kiện trừ ngay một lần, không còn kiện hoãn chưa bù', async () => {
+      const s = await setup(5);
+      const kho = await addMember(s.companyId, 'warehouse');
+      const p = await seedPackage(s.companyId, { status: 'awaiting_pickup', shopId: s.shopId, lines: [{ variantId: s.A, quantity: 1 }] });
+
+      const res = await raceBehindLock(
+        (holder) =>
+          holder.query('update channel.shops set opening_stocktake_id = null, opening_stocktake_number = null where id = $1', [s.shopId]),
+        1,
+        () => scan(kho.token, p.packageId),
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.handedOver[0].issue.number).toMatch(/^XK-/);
+      expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 0 });
+      expect(await packageDocuments(p.packageId)).toHaveLength(1);
+    });
   });
 });

@@ -123,6 +123,12 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
 }
 
 /** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
+/** Gian hàng của kiện, đọc không khoá (route kho quét khoá gian hàng trước khi khoá kiện, spec 199b §5.7). */
+export async function packageShopOf(id: string): Promise<{ shopId: string | null } | undefined> {
+  const [row] = await getDb().select({ shopId: packages.shopId }).from(packages).where(eq(packages.id, id));
+  return row;
+}
+
 export async function lockPackage(id: string): Promise<HandoverPackage | undefined> {
   const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
   if (!row) return undefined;

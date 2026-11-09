@@ -6,9 +6,9 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { isHandedOver, packageMachine } from '../domain/package.ts';
-import { lockPackage, updatePackage } from '../repository/packages.ts';
+import { lockPackage, packageShopOf, updatePackage } from '../repository/packages.ts';
 import { revertHandover, settleHandover } from './handover-stock.ts';
-import { type FulfillmentContext, getPackage } from './packages.ts';
+import { type FulfillmentContext, getPackage, stockHoldLookupOf } from './packages.ts';
 
 export interface Actor {
   companyId: string;
@@ -26,9 +26,16 @@ const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy kiện
 const versionConflict = (current: number) =>
   new AppError(409, 'version_conflict', 'Kiện vừa được cập nhật, tải lại rồi thử lại', { current: { version: current } });
 
-/** Một kiện trong một giao dịch: khoá, kiểm, chuyển `in_transit`, trừ tồn, lịch sử, sự kiện. */
-async function handOverOne(actor: Actor, item: { id: string; version: number }) {
+/**
+ * Một kiện trong một giao dịch: khoá gian hàng (`FOR SHARE`) rồi khoá kiện, kiểm, chuyển `in_transit`, trừ tồn, lịch sử,
+ * sự kiện. Gian hàng đang chờ kiểm kê đầu kỳ thì hoãn trừ tới phiếu đầu kỳ (spec 199b D7); khoá gian hàng trước kiện,
+ * cùng thứ tự với kéo đơn, để channel không thoát chờ giữa lần quét.
+ */
+async function handOverOne(ctx: Pick<FulfillmentContext, 'stockHoldOf'>, actor: Actor, item: { id: string; version: number }) {
   return withCompany(actor.companyId, async () => {
+    const shop = await packageShopOf(item.id);
+    if (!shop) throw notFound();
+    const awaiting = shop.shopId !== null && (await stockHoldLookupOf(ctx)([shop.shopId], { lock: true })).has(shop.shopId);
     const pkg = await lockPackage(item.id);
     if (!pkg) throw notFound();
     // Trước `version`: quét lại hay hai người quét đua nhau thì báo đã bàn giao, không báo xung đột (21 §19.2).
@@ -40,7 +47,7 @@ async function handOverOne(actor: Actor, item: { id: string; version: number }) 
     await updatePackage(pkg.id, { status: to, handoverSource: 'scan', handedOverBy: actor.accountId, handedOverAt: at });
     Object.assign(pkg, { status: to, handoverSource: 'scan', handedOverAt: at });
     await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action: 'hand_over', actorId: actor.accountId });
-    const { documents } = await settleHandover(pkg, { actorId: actor.accountId, mode: 'deduct' });
+    const { documents } = await settleHandover(pkg, { actorId: actor.accountId, mode: awaiting ? 'defer' : 'deduct' });
     // Kiện sàn có thể tới chờ lấy hàng khi chưa ghép SKU: không có dòng nào để trừ thì không có phiếu, dòng chờ ghép
     // muộn (`shipLateMappedLines`, #237). Thường đúng một phiếu; hai phiếu (dòng giữ + dòng bắt buộc) trả phiếu đầu.
     const issue = documents[0] ? { id: documents[0].documentId, number: documents[0].number } : null;
@@ -53,11 +60,15 @@ async function handOverOne(actor: Actor, item: { id: string; version: number }) 
  * Kho quét bàn giao theo lô: mỗi kiện một giao dịch, kiện lỗi không chặn kiện khác. Lỗi của người gọi (`AppError`) vào
  * `failed` với mã, câu của lỗi; lỗi khác log `error` và trả câu chung, không lộ chi tiết.
  */
-export async function handOverPackages(actor: Actor, items: readonly { id: string; version: number }[]): Promise<HandOverResult> {
+export async function handOverPackages(
+  ctx: Pick<FulfillmentContext, 'stockHoldOf'>,
+  actor: Actor,
+  items: readonly { id: string; version: number }[],
+): Promise<HandOverResult> {
   const result: HandOverResult = { handedOver: [], failed: [] };
   for (const item of items) {
     try {
-      result.handedOver.push(await handOverOne(actor, item));
+      result.handedOver.push(await handOverOne(ctx, actor, item));
     } catch (err) {
       if (err instanceof AppError) {
         result.failed.push({ packageId: item.id, code: err.code, detail: err.message });
