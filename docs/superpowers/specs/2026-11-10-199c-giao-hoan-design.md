@@ -174,8 +174,8 @@ Repository: `deliveryLinesOf(packageId)`, `orderShippingOf(orderId)`, `anotherDe
 
 Trong `withCompany`:
 1. `lockPackage(id)`; không có (kể cả công ty khác, id không phải uuid) → 404.
-2. `version` khác → 409 `version_conflict` kèm `current`.
-3. `assertTransition(packageMachine, status, 'receive_return', { actor, record })`; sai trạng thái → 409 `invalid_transition`.
+2. `assertTransition(packageMachine, status, 'receive_return', { actor, record })`; sai trạng thái → 409 `invalid_transition` (kiểm trước `version` như bàn giao, để quét lần hai báo `invalid_transition`; sửa theo review 10/11/2026).
+3. `version` khác → 409 `version_conflict` kèm `current`.
 4. `code` khớp `packages.code` hoặc `tracking_code`, không phân biệt hoa thường → tiếp; không khớp → 422 `package_mismatch` (`errors.code`).
 5. Dòng có `variant_id` gộp theo SKU; có ít nhất một dòng thì `receiveBack({ type: 'package', id }, lines)` (phiếu `KT` nháp, tồn chưa đổi tới khi phiếu ghi sổ). Không dòng nào đã ghép thì không lập phiếu, log `info`.
 6. Kiện sang `returned` (`UPDATE … WHERE status AND version`), `recordTransition` với người quét, phát `package_status_changed`, `package_returned { packageId, orderId, shopId, returnedAt: now }` (kiện có `shopId`).
