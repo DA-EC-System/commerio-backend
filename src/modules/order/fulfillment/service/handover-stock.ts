@@ -134,6 +134,8 @@ export async function revertHandover(pkg: HandoverPackage, actorId: string, reas
     handedOverBy: null,
     pickupConfirmedAt: null,
     handoverRevertedBy: actorId,
+    // Dòng vừa giữ hàng lại thì ghi lúc giữ (spec 199b §5.1); kiện đang hoãn trừ không có dòng nào được đảo.
+    ...(deducted.length && { reservedAt: new Date() }),
   });
   pkg.status = 'awaiting_pickup';
   pkg.handoverSource = null;

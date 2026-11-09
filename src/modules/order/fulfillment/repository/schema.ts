@@ -58,6 +58,8 @@ export const packages = fulfillmentSchema.table(
     needsAttention: boolean('needs_attention').notNull().default(false),
     flagNote: text('flag_note'),
     shipBy: timestamp('ship_by', { withTimezone: true }),
+    /** Lần gần nhất kiện giữ hàng; lấy lại phần giữ xét kiện giữ sau cùng trước (spec 199b §5.1, 25 §7.4). */
+    reservedAt: timestamp('reserved_at', { withTimezone: true }),
     packedBy: uuid('packed_by'),
     packedAt: timestamp('packed_at', { withTimezone: true }),
     handedOverBy: uuid('handed_over_by'),

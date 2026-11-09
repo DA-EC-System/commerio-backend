@@ -32,6 +32,8 @@ export async function seedPackage(
     shipBy?: Date | null;
     trackingCode?: string | null;
     needsOpen?: boolean;
+    /** Mặc định: lúc seed nếu có dòng `reserved`, null nếu không. */
+    reservedAt?: Date | null;
   },
 ): Promise<{ packageId: string; orderId: string; orderCode: string; packageCode: string; lineIds: string[] }> {
   const firstVariant = p.lines.find((l) => l.variantId)?.variantId;
@@ -54,8 +56,8 @@ export async function seedPackage(
   const shop = await db.query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [order.orderId]);
   const pkg = await db.query<{ id: string }>(
     `insert into "order".packages (company_id, code, order_id, shop_id, status, handed_over_at, handover_source,
-       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
     [
       companyId,
       packageCode,
@@ -69,6 +71,7 @@ export async function seedPackage(
       p.trackingCode ?? null,
       p.needsOpen ?? false,
       p.needsOpen ? 'cancel' : null,
+      p.reservedAt !== undefined ? p.reservedAt : p.lines.some((l) => l.reserved) ? new Date() : null,
     ],
   );
   const packageId = pkg.rows[0]!.id;

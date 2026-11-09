@@ -63,6 +63,7 @@ export async function updatePackage(
     handoverRevertedBy: string;
     pickupConfirmedAt: Date | null;
     deliveredAt: Date;
+    reservedAt: Date | null;
   }> &
     Partial<PackageShipping>,
 ): Promise<void> {
@@ -223,12 +224,20 @@ export async function markLinesReverted(lineIds: readonly string[]): Promise<voi
     .where(inArray(packageLines.id, [...lineIds]));
 }
 
-/** Đặt số đang giữ của mọi dòng kiện: 0 hoặc đủ (Documents/25 §7.4). */
+/**
+ * Đặt số đang giữ của mọi dòng kiện: 0 hoặc đủ (Documents/25 §7.4), và lúc giữ của kiện (`reserved_at`, spec 199b §5.1).
+ * Không tăng `version` của kiện: bên gọi đổi trạng thái thì `updatePackage` tăng.
+ */
 export async function setReserved(packageId: string, reserved: boolean): Promise<void> {
-  await getDb()
+  const db = getDb();
+  await db
     .update(packageLines)
     .set({ reservedQty: reserved ? sql`${packageLines.quantity}` : 0, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
     .where(eq(packageLines.packageId, packageId));
+  await db
+    .update(packages)
+    .set({ reservedAt: reserved ? sql`now()` : null, updatedAt: sql`now()` })
+    .where(eq(packages.id, packageId));
 }
 
 export type PackageViewRow = typeof packages.$inferSelect & {
