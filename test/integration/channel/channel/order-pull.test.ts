@@ -4,10 +4,16 @@ import { join } from 'node:path';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrderPullResult } from '#src/modules/channel/channel/api/schemas.ts';
-import { MarketplaceError, type RemoteOrder, type RemoteOrderRef } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import {
+  MarketplaceError,
+  type RemoteOrder,
+  type RemoteOrderRef,
+  type RemotePackageEvent,
+} from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
 import { notImplemented } from '#src/shared/errors/app-error.ts';
+import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany, addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -71,6 +77,9 @@ const getOrder = vi.fn(async (_t: string, id: string) => {
   if (id === failOn) throw new MarketplaceError('unavailable', '901');
   return details.get(id)!;
 });
+// Hành trình kiện của sàn giả (spec 199c §5.7): theo mã đơn, mặc định rỗng.
+let traces = new Map<string, RemotePackageEvent[]>();
+const getPackageEvents = vi.fn(async (_t: string, id: string) => traces.get(id) ?? []);
 
 registerAdapter(
   'lazada',
@@ -80,6 +89,7 @@ registerAdapter(
     },
     listOrders,
     getOrder,
+    getPackageEvents,
   }),
 );
 // Sàn chỉ có năng lực lấy đơn theo lô (#267): bên kéo đơn không gọi `getOrder`.
@@ -124,6 +134,8 @@ beforeEach(() => {
   stuckCursor = false;
   details = new Map();
   failOn = null;
+  traces = new Map();
+  getPackageEvents.mockClear();
   listOrders.mockClear();
   getOrder.mockClear();
   getOrders.mockClear();
@@ -399,5 +411,67 @@ describe('kéo đơn theo lô khi sàn có getOrders (#267)', () => {
       { external_order_id: 'B2', external_status: 'packed' },
       { external_order_id: 'B3', external_status: 'pending' },
     ]);
+  });
+});
+
+describe('hành trình kiện (#199 phần c)', () => {
+  const id = (p: string) => `${p}-${randomUUID().slice(0, 8)}`;
+  const packageOf = async (externalOrderId: string) =>
+    (
+      await testPool().query<{ status: string; delivered_at: Date | null }>(
+        `select p.status, p.delivered_at from "order".packages p join "order".orders o on o.id = p.order_id
+          where o.shop_id = $1 and o.external_order_id = $2`,
+        [shopId, externalOrderId],
+      )
+    ).rows[0]!;
+
+  it('AC16: chỉ gọi hành trình cho đơn có món sau bàn giao; đơn pending không gọi', async () => {
+    const pending = remoteOrder(id('H1'), sku, 'pending', at('2026-11-02T01:00:00Z'));
+    const moving = remoteOrder(id('H2'), sku, 'in_transit', at('2026-11-02T02:00:00Z'));
+    const failedDelivery = remoteOrder(id('H3'), sku, 'cancelled', at('2026-11-02T03:00:00Z'));
+    failedDelivery.lines[0]!.info = { ...noLineInfo, cancelKind: 'failed_delivery' };
+    const cancelled = remoteOrder(id('H4'), sku, 'cancelled', at('2026-11-02T04:00:00Z'));
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelKind: 'cancellation' };
+    seed(pending, moving, failedDelivery, cancelled);
+
+    expect((await pull()).status).toBe(200);
+
+    expect(getPackageEvents.mock.calls.map((c) => c[1]).sort()).toEqual([moving.externalOrderId, failedDelivery.externalOrderId].sort());
+  });
+
+  it('AC16: hành trình lỗi thì đơn vẫn ingest, kiện dùng giờ đồng bộ', async () => {
+    const o = remoteOrder(id('H5'), sku, 'delivered', at('2026-11-02T05:00:00Z'));
+    seed(o);
+    getPackageEvents.mockRejectedValueOnce(new MarketplaceError('unavailable', '901'));
+    const warn = vi.spyOn(logger, 'warn');
+    try {
+      const before = Date.now();
+      const res = await pull();
+      expect(res.status).toBe(200);
+      expect(res.body.created).toBe(1);
+      const pkg = await packageOf(o.externalOrderId);
+      expect(pkg.status).toBe('delivered');
+      expect(pkg.delivered_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId, externalOrderId: o.externalOrderId, err: expect.any(Error) }),
+        'đọc hành trình kiện lỗi',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('AC16: mốc giao của kiện lấy từ hành trình', async () => {
+    const o = remoteOrder(id('H6'), sku, 'delivered', at('2026-11-02T06:00:00Z'));
+    seed(o);
+    const T = at('2026-10-26T09:00:00Z');
+    traces.set(o.externalOrderId, [
+      { packageCode: `FP-${o.externalOrderId}`, trackingCode: null, status: 'in_transit', at: at('2026-10-26T01:00:00Z'), description: null },
+      { packageCode: `FP-${o.externalOrderId}`, trackingCode: null, status: 'delivered', at: T, description: 'Giao thành công' },
+    ]);
+
+    expect((await pull()).status).toBe(200);
+
+    expect(await packageOf(o.externalOrderId)).toMatchObject({ status: 'delivered', delivered_at: T });
   });
 });
