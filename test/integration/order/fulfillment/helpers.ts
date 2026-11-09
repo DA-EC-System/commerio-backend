@@ -165,6 +165,35 @@ export async function channelShop(companyId: string, awaiting: boolean): Promise
   return rows[0]!.id;
 }
 
+/** Ship cấp đơn của một đơn (#260; spec 199c D10) để `reportDelivered` tính tiền. */
+export async function setOrderShipping(
+  orderId: string,
+  s: Partial<{ shippingFee: string; shippingFeeOriginal: string | null; shippingFeeDiscountPlatform: string | null }>,
+) {
+  await testPool().query(
+    `update "order".orders set shipping_fee = coalesce($2, shipping_fee),
+       shipping_fee_original = $3, shipping_fee_discount_platform = $4 where id = $1`,
+    [orderId, s.shippingFee ?? null, s.shippingFeeOriginal ?? null, s.shippingFeeDiscountPlatform ?? null],
+  );
+}
+
+/** Sửa tiền của dòng đơn mà dòng kiện trỏ tới (spec 199c D10, Review Focus 4). */
+export async function setOrderLineMoney(
+  packageLineId: string,
+  m: Partial<{ quantity: number; unitPrice: string; sellerDiscount: string; platformDiscount: string }>,
+) {
+  const { rows } = await testPool().query<{ order_line_id: string }>(
+    'select order_line_id from "order".package_lines where id = $1',
+    [packageLineId],
+  );
+  const orderLineId = rows[0]!.order_line_id;
+  await testPool().query(
+    `update "order".order_lines set quantity = coalesce($2, quantity), unit_price = coalesce($3, unit_price),
+       seller_discount = coalesce($4, seller_discount), platform_discount = coalesce($5, platform_discount) where id = $1`,
+    [orderLineId, m.quantity ?? null, m.unitPrice ?? null, m.sellerDiscount ?? null, m.platformDiscount ?? null],
+  );
+}
+
 /** Các mũi tên đã ghi cho kiện, cũ trước. */
 export async function transitionsOf(packageId: string) {
   const { rows } = await testPool().query<{ action: string; from_state: string | null; to_state: string; source: string }>(
