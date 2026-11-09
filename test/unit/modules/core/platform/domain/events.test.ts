@@ -94,4 +94,29 @@ describe('danh mục sự kiện (AC-11)', () => {
       expect(schema.safeParse(withLine({ quantity: 0 })).success).toBe(false);
     });
   });
+
+  describe('fulfillment.allocation_done (21 §11.2, Documents#95)', () => {
+    const schema = EVENT_SCHEMAS['fulfillment.allocation_done'];
+    const documentId = id();
+
+    it('nhận lượt phân hàng thường, không có cause', () => {
+      const parsed = schema.safeParse({ variantIds: [id()] });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data).not.toHaveProperty('cause');
+    });
+
+    it('nhận lượt do phiếu kiểm kê đầu kỳ, có cause, kể cả variantIds rỗng', () => {
+      const payload = { variantIds: [], cause: { type: 'stocktake', documentId } };
+      expect(schema.safeParse(payload).data).toEqual(payload);
+    });
+
+    it('từ chối cause có type khác stocktake', () => {
+      expect(schema.safeParse({ variantIds: [], cause: { type: 'receipt', documentId } }).success).toBe(false);
+    });
+
+    it('từ chối cause thiếu documentId hay documentId không phải uuid', () => {
+      expect(schema.safeParse({ variantIds: [], cause: { type: 'stocktake' } }).success).toBe(false);
+      expect(schema.safeParse({ variantIds: [], cause: { type: 'stocktake', documentId: 'PK-0001' } }).success).toBe(false);
+    });
+  });
 });

@@ -87,6 +87,11 @@ export const EVENT_SCHEMAS = {
   /** Các biến thể vừa được phân bổ lại tồn (#223 nghe để đẩy tồn lên sàn). */
   'fulfillment.allocation_done': z.object({
     variantIds: z.array(id),
+    /**
+     * Chỉ có ở lượt phân hàng do phiếu kiểm kê đầu kỳ ghi sổ (Documents#95, quyết định 1). Lượt đó luôn phát, kể cả
+     * `variantIds` rỗng; channel thoát chờ phân hàng khi `cause.documentId` trùng phiếu. Lượt khác không có trường này.
+     */
+    cause: z.object({ type: z.literal('stocktake'), documentId: id }).optional(),
   }),
   'fulfillment.package_delivered': z.object({
     packageId: id,
