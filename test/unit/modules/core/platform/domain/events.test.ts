@@ -106,6 +106,11 @@ describe('danh mục sự kiện (AC-11)', () => {
       ];
       expect(schema.safeParse({ ...sample, lines }).success).toBe(true);
     });
+
+    it('vẫn từ chối variantId không phải uuid', () => {
+      const lines = [{ variantId: 'abc', quantity: 1, unitPrice: '90000.00', unitCost: null }];
+      expect(schema.safeParse({ ...sample, lines }).success).toBe(false);
+    });
   });
 
   describe('fulfillment.allocation_done (21 §11.2, Documents#95)', () => {
