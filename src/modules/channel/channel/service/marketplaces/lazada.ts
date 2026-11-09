@@ -587,6 +587,22 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return { externalProductId: String(data.item_id), externalSkuId: String(skuId), live: data.item_status === 'Active' };
     },
     getSkus,
+    // Một lời gọi `limit=1`, đọc `total_products` (#198/#284: đọc từng trang quá hạn 10 giây với gian hàng vài trăm sản
+    // phẩm). Tài liệu GetProducts chỉ có `total_products` ở response mẫu (chuỗi). Gọi thật 10/11/2026 trên shop thử: số,
+    // đổi theo `filter`, và `all` (305) = live 7 + inactive 236 + rejected 59 + sold-out 3, không gồm deleted (96), nên
+    // `filter=all` đã bỏ hàng đã xoá. Không có hàng nào thì sàn bỏ hẳn trường (gọi thật `filter=pending`): coi là 0.
+    async countSkus(accessToken): Promise<number> {
+      const body = await call(config.apiUrl, '/products/get', { access_token: accessToken, filter: 'all', limit: '1', offset: '0' }, 'GET');
+      const data = body.data as { total_products?: unknown; products?: unknown[] } | undefined;
+      const raw = data?.total_products;
+      if (raw === undefined || raw === null) {
+        if ((data?.products ?? []).length === 0) return 0;
+        throw new MarketplaceError('rejected', 'unexpected_response');
+      }
+      const total = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+      if (!Number.isSafeInteger(total) || total < 0) throw new MarketplaceError('rejected', 'unexpected_response');
+      return total;
+    },
     // Lật `offset` (sàn không nói thứ tự khi lọc theo ngày nên không lật theo ngày được); bỏ sản phẩm đã xoá (#198).
     async listSkus(accessToken): Promise<RemoteSku[]> {
       const out: RemoteSku[] = [];

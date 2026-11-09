@@ -322,6 +322,12 @@ export interface MarketplaceAdapter {
    * mà mọi SKU nằm trong đó không cần nhãn nên adapter không đọc nhãn, ảnh cho nó (`variantLabel`, `imageUrl` null).
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
+  /**
+   * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, một lời gọi, không đọc từng trang; bỏ hàng đã xoá trên sàn.
+   * Dùng cho `remoteSkuCount` lúc nối (§18.7.4). Sàn đếm theo sản phẩm (Lazada `total_products`) thì là số sản phẩm, không
+   * phải số SKU. Sàn không có tổng rẻ thì không có hàm này, bên gọi đếm bằng `listSkus`.
+   */
+  countSkus?(accessToken: string): Promise<number>;
   /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */

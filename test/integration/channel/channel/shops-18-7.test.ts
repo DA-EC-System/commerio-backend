@@ -243,6 +243,31 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
     const body = await connect(seller(), 'shopee');
     expect(body.shops[0]).toMatchObject({ created: true, previousStatus: null, remoteSkuCount: null });
   });
+
+  // #198/#284: Lazada đọc từng trang quá hạn 10 giây với gian hàng vài trăm sản phẩm; adapter có tổng rẻ thì dùng tổng.
+  it('adapter có countSkus thì dùng tổng đó, không đọc listSkus; countSkus lỗi thì null', async () => {
+    let listed = 0;
+    registerAdapter(
+      'tiktok',
+      fakeAdapter({
+        async getSeller(accessToken) {
+          return { externalShopId: accessToken.slice(4), shopName: 'Shop đếm bằng tổng', region: 'VN' };
+        },
+        async countSkus(accessToken) {
+          if (accessToken.startsWith('tok-down')) throw new MarketplaceError('unavailable', 'ServiceTimeout');
+          return 305;
+        },
+        async listSkus() {
+          listed++;
+          return [sku(1)];
+        },
+      }),
+    );
+    expect((await connect(seller(), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteSkuCount: 305 });
+    expect((await connect(seller('down'), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteSkuCount: null });
+    expect(listed).toBe(0);
+  });
+
 });
 
 describe('§18.7.8 409 shop_has_open_orders kèm danh sách đơn', () => {

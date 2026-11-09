@@ -120,7 +120,7 @@ export interface ShopConnectionResult {
 export interface ShopConnectionItem extends ShopConnectionResult {
   /** null khi `created: true`. */
   previousStatus: ShopStatus | null;
-  /** null khi chưa đọc được: sàn không có `listSkus`, sàn lỗi hoặc quá `REMOTE_SKU_COUNT_MS`. */
+  /** null khi chưa đọc được: sàn không có `countSkus` lẫn `listSkus`, sàn lỗi hoặc quá `REMOTE_SKU_COUNT_MS`. */
   remoteSkuCount: number | null;
 }
 
@@ -399,30 +399,38 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
   return { shop, created, reconnect, shops: results };
 }
 
+/** Cách đếm cho `remoteSkuCount`: tổng rẻ của sàn nếu có, không thì đọc hết SKU (bỏ nhãn biến thể: thêm lời gọi, không đổi số). */
+function countRemote(adapter: MarketplaceAdapter): ((accessToken: string) => Promise<number>) | null {
+  if (adapter.countSkus) return adapter.countSkus.bind(adapter);
+  const { listSkus } = adapter;
+  if (!listSkus) return null;
+  return async (accessToken) => (await listSkus.call(adapter, accessToken, { labels: false })).filter((r) => r.state !== 'deleted').length;
+}
+
 /** Hạn tổng cho việc đếm SKU trên sàn lúc nối (§18.7.4): quá hạn thì `remoteSkuCount: null`, việc nối vẫn xong. */
 const REMOTE_SKU_COUNT_MS = 10_000;
 
 /**
- * Số SKU người bán đọc được trên sàn lúc nối (§18.7.4), không tính SKU đã xoá trên sàn, như gợi ý ghép của thiết lập.
+ * Số hàng người bán có trên sàn lúc nối (§18.7.4), không tính hàng đã xoá trên sàn. Adapter có `countSkus` (tổng sàn
+ * trả, một lời gọi; Lazada đếm theo sản phẩm) thì dùng, không thì đếm SKU bằng `listSkus` như gợi ý ghép của thiết lập.
  * Gọi sàn ngoài giao dịch, các gian hàng của một lần nối đếm song song. Chỉ để hiện trên màn kết quả nên không chặn việc
- * nối: sàn chưa có `listSkus`, gọi lỗi (mọi lỗi) hoặc quá `REMOTE_SKU_COUNT_MS` thì `null` (chưa đọc được), ghi log.
- * `listSkus` không nhận `AbortSignal` nên lời gọi quá hạn vẫn chạy nốt ở nền, kết quả bị bỏ.
+ * nối: sàn không có cả hai hàm, gọi lỗi (mọi lỗi) hoặc quá `REMOTE_SKU_COUNT_MS` thì `null` (chưa đọc được), ghi log.
+ * Lời gọi không nhận `AbortSignal` nên lời gọi quá hạn vẫn chạy nốt ở nền, kết quả bị bỏ.
  */
 async function remoteSkuCount(adapter: MarketplaceAdapter, c: ShopConnection): Promise<number | null> {
-  if (!adapter.listSkus) return null;
-  const listSkus = adapter.listSkus.bind(adapter);
+  const count = countRemote(adapter);
+  if (!count) return null;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => resolve('timeout'), REMOTE_SKU_COUNT_MS);
   });
   try {
-    // Cùng nguồn với gợi ý ghép của thiết lập; chỉ đếm nên không đọc nhãn biến thể (thêm lời gọi sàn, không đổi số).
-    const result = await Promise.race([listSkus(c.tokens.accessToken, { labels: false }), timeout]);
+    const result = await Promise.race([count(c.tokens.accessToken), timeout]);
     if (result === 'timeout') {
       logger.warn({ externalShopId: c.externalShopId, timeoutMs: REMOTE_SKU_COUNT_MS }, 'Đếm SKU trên sàn lúc nối quá hạn');
       return null;
     }
-    return result.filter((r) => r.state !== 'deleted').length;
+    return result;
   } catch (err) {
     if (err instanceof MarketplaceError) {
       logger.warn({ externalShopId: c.externalShopId, kind: err.kind, platformCode: err.platformCode }, 'Không đọc được SKU trên sàn lúc nối');
