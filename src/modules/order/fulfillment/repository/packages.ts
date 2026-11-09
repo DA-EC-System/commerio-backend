@@ -102,7 +102,7 @@ const handoverColumns = {
 };
 
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
-async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
+export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
   const byPackage = new Map<string, (PlanLine & { orderLineId: string })[]>(packageIds.map((id) => [id, []]));
   if (!packageIds.length) return byPackage;
   const rows = await getDb()

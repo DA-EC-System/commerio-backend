@@ -36,7 +36,7 @@ const time = (d: Date | null) => (d === null ? Infinity : d.valueOf());
  * Thứ tự xét: kiện đã đóng mà chưa giữ trước (hàng đã trong hộp, spec 199b D5), rồi hạn chuẩn bị sớm (null cuối), rồi
  * đơn kéo về trước, rồi mã kiện.
  */
-export function allocationQueue(candidates: readonly AllocationCandidate[]): AllocationCandidate[] {
+export function allocationQueue<T extends AllocationCandidate>(candidates: readonly T[]): T[] {
   const sealed = (c: AllocationCandidate) => (c.status === 'backordered' ? 1 : 0);
   return [...candidates].sort(
     (a, b) =>
@@ -48,9 +48,9 @@ export function allocationQueue(candidates: readonly AllocationCandidate[]): All
 }
 
 /** Đi lần lượt theo hàng đợi: kiện nào mọi SKU đủ thì chọn và trừ vào bản đếm tạm; thiếu thì bỏ qua, xét kiện sau. */
-export function planAllocation(queue: readonly AllocationCandidate[], available: ReadonlyMap<string, number>): AllocationCandidate[] {
+export function planAllocation<T extends AllocationCandidate>(queue: readonly T[], available: ReadonlyMap<string, number>): T[] {
   const left = new Map(available);
-  const chosen: AllocationCandidate[] = [];
+  const chosen: T[] = [];
   for (const c of queue) {
     const need = needOf(c.lines);
     if (![...need].every(([v, q]) => (left.get(v) ?? 0) >= q)) continue;
@@ -64,14 +64,14 @@ export function planAllocation(queue: readonly AllocationCandidate[], available:
  * `deficits`: SKU → đang giữ − tồn thực (> 0). Đơn `unpaid` trước `processing`; trong nhóm kiện giữ sau cùng trước
  * (`reservedAt` null cuối), rồi `id`. Lấy cả kiện có SKU còn thiếu, dừng khi hết thiếu.
  */
-export function planReclaim(deficits: ReadonlyMap<string, number>, candidates: readonly ReclaimCandidate[]): ReclaimCandidate[] {
+export function planReclaim<T extends ReclaimCandidate>(deficits: ReadonlyMap<string, number>, candidates: readonly T[]): T[] {
   const left = new Map([...deficits].filter(([, q]) => q > 0));
   const group = (c: ReclaimCandidate) => (c.orderStatus === 'unpaid' ? 0 : 1);
   const recent = (d: Date | null) => (d === null ? -Infinity : d.valueOf());
   const ordered = [...candidates].sort(
     (a, b) => group(a) - group(b) || recent(b.reservedAt) - recent(a.reservedAt) || a.id.localeCompare(b.id),
   );
-  const chosen: ReclaimCandidate[] = [];
+  const chosen: T[] = [];
   for (const c of ordered) {
     if (!left.size) break;
     const need = needOf(c.lines);
