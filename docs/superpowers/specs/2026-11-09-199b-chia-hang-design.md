@@ -50,7 +50,7 @@
 | D5 | Kiện đã đóng (`packed`, `awaiting_pickup`) mà chưa giữ hàng cũng được phân hàng, xếp trước kiện Thiếu hàng. Sau phiếu đầu kỳ mà vẫn không giữ được thì bật Cần xử lý "dỡ kiện về kệ" | Hàng đã nằm trong hộp mà vẫn tính vào số có thể bán thì channel đẩy tồn cao hơn thực tế. `25` §6.1 ghi "phân hàng cho mọi kiện chưa bàn giao". Chưa có khung việc #209 nên thay việc "Dỡ kiện về kệ" bằng cờ, như D11 của 199a. Khang chọn 09/11/2026 |
 | D6 | Thêm `packages.reserved_at` | Lấy lại phần giữ theo "kiện giữ sau cùng trước" (`25` §7.4) cần biết lúc giữ. `core.state_transitions` là bảng module khác, không join được |
 | D7 | Kho quét lúc gian hàng chờ kiểm kê thì hoãn trừ; route khoá dòng gian hàng `FOR SHARE` qua `ctx.stockHoldOf` trước khi khoá kiện | Trừ ngay thì gian hàng mới (chưa có tồn) thành bàn giao bắt buộc: bật Tồn âm, Cần xử lý, chốt giá vốn khi chưa có phiếu đầu kỳ. Khoá gian hàng trước thì channel không thoát chờ được giữa lúc một lần quét đang chạy, kiện hoãn không bị sót. Khang chọn 09/11/2026 |
-| D8 | Việc pg-boss `fulfillment.allocation` chạy một lượt cho **cả công ty**, chỉ mang `companyId`, chính sách `stately` theo công ty | Gộp trùng thì dữ liệu của việc sau bị bỏ, nên việc không mang danh sách SKU; `stately` giữ một việc chờ và một việc đang chạy, nên kích hoạt tới trong lúc lượt đang chạy không bị mất |
+| D8 | Việc pg-boss `fulfillment.allocation` mang `{ companyId, variantIds }` (SKU của kiện vừa nhả), hàng `standard`, không gộp trùng. Mỗi việc chạy một lượt cho đúng các SKU đó | `allocation_done` của lượt phải mang SKU vừa nhả để channel đẩy phần tồn tăng, kể cả khi lượt không giữ được kiện nào (D4); gộp trùng theo công ty thì việc sau bị bỏ, mất SKU. Việc trùng chạy lại vô hại vì lượt đọc lại trạng thái. Hàng `stately` còn ép việc thứ hai sang `failed` khi đã có việc ở `retry` (tài liệu pg-boss). Sửa lúc viết plan, 09/11/2026 |
 | D9 | "Dỡ kiện về kệ" sau kiểm kê thường (không phải phiếu đầu kỳ) để sau | Cần biết `stock_changed` do kiểm kê, tức nghe `stocktake_posted` (chưa có trên `main`), và cần khung việc #209. Trong lúc chờ, SKU vẫn mang cờ Tồn âm do inventory bật |
 
 ## 4. Phạm vi
@@ -90,7 +90,7 @@ UPDATE "order"."packages" p SET "reserved_at" = p."created_at"
 ```
 
 - Cột null được, chỉ đổi metadata; bản app cũ bỏ qua. Lùi: `DROP COLUMN "reserved_at"`.
-- Nghĩa: lần gần nhất các dòng của kiện được giữ. Đặt `now()` cùng câu với mọi lần đặt `reserved_qty = quantity` (lập kiện có giữ, phân hàng, `settleHandover` thử giữ, huỷ bàn giao); đặt null cùng câu với mọi lần nhả (huỷ kiện, lấy lại phần giữ). Kiện đã rời kho giữ nguyên giá trị cũ, không ai đọc.
+- Nghĩa: lần gần nhất các dòng của kiện được giữ. Đặt `now()` cùng giao dịch với mọi lần kiện chưa rời kho được giữ (lập kiện có giữ, phân hàng, huỷ bàn giao); đặt null cùng giao dịch với mọi lần nhả (huỷ kiện, lấy lại phần giữ). `settleHandover` thử giữ rồi trừ ngay nên không ghi. Kiện đã rời kho giữ nguyên giá trị cũ, không ai đọc.
 - `package_lines` không đổi.
 
 ### 5.2 Luật thuần (`domain/allocation.ts`)
@@ -154,13 +154,13 @@ Trạng thái và ngày lập của đơn (lọc đơn `cancelled`, nhóm `unpai
 | Kích hoạt | Ở đâu | Làm gì |
 |---|---|---|
 | `inventory.stock_changed` | consumer `fulfillment-allocation`, đăng ký ở `startBackground` | `runAllocation(ctx, { variantIds: [payload.variantId] })` trong `withCompany` của khung consumer. Không dùng số trong payload. Hàng về, kiểm kê, xuất huỷ, bàn giao (cả bắt buộc, `25` §8.4 quy tắc 3 "chạy ngay bước lấy lại phần giữ"), huỷ bàn giao đều đi đường này |
-| Kiện huỷ có nhả hàng | `cancelPlatformPackage` (giao dịch kéo đơn) | `sendJob(allocationQueue, { companyId }, { key: companyId })` cùng giao dịch |
-| Việc `fulfillment.allocation` | `workQueue` ở `startBackground` | `withCompany(companyId, () => runAllocation(ctx, { all: true }))` |
+| Kiện huỷ có nhả hàng | `cancelPlatformPackage` (giao dịch kéo đơn) | `requestAllocation(SKU của kiện)`, tức `sendJob(allocationQueue, { companyId, variantIds })` cùng giao dịch |
+| Việc `fulfillment.allocation` | `workQueue` ở `startBackground` | `withCompany(companyId, () => runAllocation(ctx, { variantIds }))` |
 | Kiện mới giữ được hàng | `createPackage` | Phát `allocation_done { variantIds: SKU của kiện }` cùng giao dịch; không chạy lượt |
-| Ghép xong SKU (#237), dỡ kiện về kệ (#239) | sau này | Gọi `requestAllocation()` (export ở `fulfillment/index.ts`), tức `sendJob` như dòng trên |
+| Ghép xong SKU (#237), dỡ kiện về kệ (#239) | sau này | Gọi `requestAllocation(variantIds)` (export ở `fulfillment/index.ts`) |
 | Phiếu đầu kỳ ghi sổ | channel, giao dịch thoát chờ (#289) | `settleOpeningStocktake(...)` (5.5) |
 
-Hàng việc: `defineQueue('fulfillment.allocation', JobDataSchema.pick({ companyId: true }), { policy: 'stately' })`.
+Hàng việc: `defineQueue('fulfillment.allocation', JobDataSchema.extend({ variantIds: z.array(z.uuid()).min(1) }))`, chính sách mặc định `standard` (D8).
 
 ### 5.5 `settleOpeningStocktake`
 
