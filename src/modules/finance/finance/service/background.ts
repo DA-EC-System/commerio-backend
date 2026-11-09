@@ -1,8 +1,10 @@
-// Việc nền của finance trong worker: áp dụng phiên bản cấu hình đã tới ngày (#118) mỗi 5 phút, kéo quyết toán của mọi
-// gian hàng đang hoạt động (#117) mỗi 6 giờ. Mỗi việc không chồng lượt; dừng thì chờ lượt đang chạy.
+// Việc nền của finance trong worker: áp dụng phiên bản cấu hình đã tới ngày (#118) mỗi 5 phút, mở lần kéo quyết toán
+// cho mọi gian hàng đang hoạt động (#117) mỗi 6 giờ, chạy các lần kéo ở hàng `finance.settlement_run` (#248). Mỗi việc
+// định kỳ không chồng lượt; dừng thì chờ lượt đang chạy.
 import { logger } from '../../../../shared/logger.ts';
+import { workQueue } from '../../../core/index.ts';
 import { activateDueConfigsOnce } from './config-versions.ts';
-import { pullAllShopsOnce } from './settlement-runs.ts';
+import { pullAllShopsOnce, runSettlementJob, settlementRunQueue } from './settlement-runs.ts';
 import type { FinanceContext } from './settlement-views.ts';
 
 function every(ms: number, job: () => Promise<unknown>, label: string) {
@@ -23,6 +25,7 @@ function every(ms: number, job: () => Promise<unknown>, label: string) {
 }
 
 export async function startFinanceBackground(ctx: FinanceContext): Promise<() => Promise<void>> {
+  await workQueue(settlementRunQueue, (job, attempt) => runSettlementJob(ctx, job, attempt));
   const stops = [
     every(5 * 60_000, () => activateDueConfigsOnce(), 'việc nền áp dụng phiên bản cấu hình lỗi'),
     every(6 * 3_600_000, () => pullAllShopsOnce(ctx), 'việc nền kéo quyết toán lỗi'),

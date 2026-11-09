@@ -3,7 +3,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PlatformPayout, PlatformTxn } from '#src/modules/finance/finance/domain/settlement.ts';
 import { recordPackageDelivered } from '#src/modules/finance/finance/service/ledger.ts';
-import { openRun, processRun, runSettlement } from '#src/modules/finance/finance/service/settlement-runs.ts';
+import { openRun, processRun, runSettlement, runSettlementJob } from '#src/modules/finance/finance/service/settlement-runs.ts';
 import type { FinanceContext } from '#src/modules/finance/finance/service/settlement-views.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -133,6 +133,56 @@ describe('kéo quyết toán (§21.3)', () => {
     expect(open.periodFrom.toISOString()).toBe(failed.periodFrom.toISOString());
     await expect(openRun(ctx, s.companyId, null, s.shopId)).rejects.toMatchObject({ code: 'settlement_running' });
     expect((await processRun(ctx, s.companyId, open.id)).status).toBe('done');
+  });
+
+  it('D43-04 (E142): lượt chưa cuối lỗi thì giữ running, không ghi gì, mốc không tiến; lượt sau ghi đủ, không trùng', async () => {
+    const s = await setup();
+    await deliver(s);
+    const run = await openRun(fakeSource(() => []), s.companyId, null, s.shopId);
+    let calls = 0;
+    const flaky = fakeSource(() => {
+      calls++;
+      if (calls === 1) throw new Error('tiến trình chết giữa lô');
+      return settlementOf('K', '-5160.00');
+    });
+    await expect(processRun(flaky, s.companyId, run.id, { lastAttempt: false })).rejects.toThrow('tiến trình chết giữa lô');
+    const mid = await testPool().query('select status from finance.settlement_batches where id = $1', [run.id]);
+    expect(mid.rows[0].status).toBe('running');
+    const before = await testPool().query("select count(*)::int as n from finance.ledger_entries where source_id = $1", [run.id]);
+    expect(before.rows[0].n).toBe(0);
+    const done = await processRun(flaky, s.companyId, run.id, { lastAttempt: false });
+    expect(done).toMatchObject({ status: 'done', lineCount: 6, duplicates: 0 });
+    // Việc bị nhận lại thêm lần nữa sau khi xong: không ghi thêm
+    expect((await processRun(flaky, s.companyId, run.id)).status).toBe('done');
+    const after = await testPool().query("select count(*)::int as n from finance.ledger_entries where source_id = $1", [run.id]);
+    expect(after.rows[0].n).toBe(6);
+  });
+
+  it('D43-05 (E142): lần running đứng quá 1 giờ thì lần mở sau đánh failed thay vì 409', async () => {
+    const s = await setup();
+    const ctx = fakeSource(() => []);
+    const stuck = await openRun(ctx, s.companyId, null, s.shopId);
+    await expect(openRun(ctx, s.companyId, null, s.shopId)).rejects.toMatchObject({ code: 'settlement_running' });
+    await testPool().query("update finance.settlement_batches set updated_at = '2026-11-05T01:30:00Z' where id = $1", [stuck.id]);
+    const next = await openRun(ctx, s.companyId, null, s.shopId);
+    expect(next.periodFrom.toISOString()).toBe(stuck.periodFrom.toISOString());
+    const old = await testPool().query('select status, error from finance.settlement_batches where id = $1', [stuck.id]);
+    expect(old.rows[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('dừng giữa chừng') });
+  });
+
+  it('D43-06: mở lần chạy gửi việc finance.settlement_run; lượt cuối lỗi thì việc lỗi, Admin chạy lại thì lần đó chạy tiếp', async () => {
+    const s = await setup();
+    const run = await openRun(fakeSource(() => []), s.companyId, null, s.shopId);
+    const jobs = await testPool().query("select data from pgboss.job where name = 'finance.settlement_run' and data->>'runId' = $1", [run.id]);
+    expect(jobs.rows).toEqual([{ data: { companyId: s.companyId, shopId: s.shopId, runId: run.id } }]);
+    const broken = fakeSource(() => {
+      throw new Error('sàn bảo trì');
+    });
+    const job = { companyId: s.companyId, runId: run.id };
+    await expect(runSettlementJob(broken, job, { attempt: 3, lastAttempt: true })).rejects.toThrow('sàn bảo trì');
+    await runSettlementJob(fakeSource(() => []), job, { attempt: 1, lastAttempt: false });
+    const row = await testPool().query('select status, error from finance.settlement_batches where id = $1', [run.id]);
+    expect(row.rows[0]).toEqual({ status: 'done', error: null });
   });
 
   it('rút tiền: dòng withdrawal không gắn đơn, tổng withdrawn; số dư ví lệch; khớp sao kê một lần', async () => {

@@ -90,21 +90,29 @@ export async function sendJob<T extends JobData>(
   });
 }
 
+/** Lượt đang chạy của một việc: `lastAttempt` thì ném lỗi là việc vào hàng việc lỗi, không thử lại nữa. */
+export interface JobAttempt {
+  /** Từ 1. */
+  attempt: number;
+  lastAttempt: boolean;
+}
+
 /**
  * Nhận việc của một hàng (chỉ worker). Handler chạy ngoài giao dịch, tự mở `withCompany(data.companyId)`
  * cho phần ghi DB, để không giữ giao dịch trong lúc gọi sàn. Ném lỗi thì pg-boss thử lại theo hàng.
  */
 export async function workQueue<T extends JobData>(
   queue: Queue<T>,
-  handler: (data: T) => Promise<void>,
+  handler: (data: T, attempt: JobAttempt) => Promise<void>,
   options: { concurrency?: number } = {},
 ): Promise<void> {
   await ensureQueue(queue);
   const boss = await jobBoss();
+  const attempts = queue.options.attempts ?? 5;
   await boss.work<T>(queue.name, { localConcurrency: options.concurrency ?? 1 }, async ([job]) => {
     const data = queue.schema.parse(job!.data);
     try {
-      await handler(data);
+      await handler(data, { attempt: job!.retryCount + 1, lastAttempt: job!.retryCount + 1 >= attempts });
     } catch (err) {
       if (err instanceof HoldJob) {
         await boss.send(HELD_QUEUE, { ...data, queue: queue.name }, { id: job!.id });
