@@ -218,6 +218,13 @@
       "when": 1794246716484,
       "tag": "0030_chong-trung-quyet-toan",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794248653737,
+      "tag": "0031_phieu-kho-co-duyet",
+      "breakpoints": true
     }
   ]
 }
