@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { lazadaLedgerKind } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import type { PlatformPayout, PlatformTxn } from '#src/modules/finance/finance/domain/settlement.ts';
 import { recordPackageDelivered } from '#src/modules/finance/finance/service/ledger.ts';
 import { openRun, processRun, runSettlement, runSettlementJob } from '#src/modules/finance/finance/service/settlement-runs.ts';
@@ -43,6 +44,7 @@ const txn = (id: string, feeName: string, transactionType: string, amount: strin
   transactionType,
   amount,
   withholding: '0',
+  kind: lazadaLedgerKind(feeName, transactionType),
 });
 /** Quyết toán của đơn 2 áo; `commission` là phí cố định mỗi áo. */
 const settlementOf = (prefix: string, commission: string) => [
@@ -119,6 +121,54 @@ describe('kéo quyết toán (§21.3)', () => {
     const s = await setup();
     await runSettlement(fakeSource(() => [txn('C1', 'Commission', 'Orders-Lazada Fees', '-3000.00')]), s.companyId, null, s.shopId);
     expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'mismatch', diff: '-3000.00' });
+  });
+
+  it('D43-03 (E140): khoản của đơn sàn không có trong app thành dòng của gian hàng, cờ Không rõ đơn; nạp lại không trùng', async () => {
+    const s = await setup();
+    const ghost = [txn('G1', 'Item Price Credit', 'Orders-Sales', '99000.00', '700000000000009')];
+    const first = await runSettlement(fakeSource(() => ghost), s.companyId, null, s.shopId);
+    expect(first).toMatchObject({ status: 'done', lineCount: 1, duplicates: 0 });
+    const res = await get(s.ceo, `/ledger?shopId=${s.shopId}&pageSize=100`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const line = res.body.items.find((l: { txnId: string }) => l.txnId === 'G1');
+    expect(line).toMatchObject({ orderId: null, externalOrderId: '700000000000009', flags: ['unknown_order'], shopId: s.shopId });
+    const { rows } = await testPool().query('select count(*)::int as n from "order".orders where company_id = $1', [s.companyId]);
+    expect(rows[0].n).toBe(1);
+    const again = await runSettlement(fakeSource(() => ghost), s.companyId, null, s.shopId);
+    expect(again).toMatchObject({ status: 'done', lineCount: 0, duplicates: 1 });
+  });
+
+  it('khoá chống trùng là (gian hàng, mã giao dịch): cùng mã ở gian hàng khác vẫn ghi (#250)', async () => {
+    const s = await setup();
+    const other = randomUUID();
+    const same = () => [txn('SAME-1', 'Payment Fee', 'Orders-Lazada Fees', '-1000.00', null)];
+    expect(await runSettlement(fakeSource(same), s.companyId, null, s.shopId)).toMatchObject({ lineCount: 1 });
+    expect(await runSettlement(fakeSource(same), s.companyId, null, other)).toMatchObject({ lineCount: 1, duplicates: 0 });
+    expect(await runSettlement(fakeSource(same), s.companyId, null, other)).toMatchObject({ lineCount: 0, duplicates: 1 });
+  });
+
+  it('khoản adapter không nhận ra ghi adjustment kèm tên phí gốc (#203)', async () => {
+    const s = await setup();
+    await runSettlement(fakeSource(() => [txn('U1', 'Phí lạ', 'Other', '-700.00', null)]), s.companyId, null, s.shopId);
+    const res = await get(s.ceo, `/ledger?shopId=${s.shopId}&pageSize=100`);
+    expect(res.body.items.find((l: { txnId: string }) => l.txnId === 'U1')).toMatchObject({ kind: 'adjustment', reason: 'Phí lạ' });
+  });
+
+  it('E135: thuế sàn trừ khác thuế app ước tính thì trạng thái tiền có cờ Lệch thuế, số sàn trừ là số thật', async () => {
+    const s = await setup();
+    await config(s.companyId, 'tax_regime', null, { regime: 'household' });
+    await config(s.companyId, 'tax_rules', null, { vatPct: 1, pitPct: 0.5, milestones: [500_000_000, 3_000_000_000] });
+    await deliver(s);
+    // App ước tính 1,5% của 258.000 = 3.870; sàn trừ 2.580 (1%)
+    const lines = settlementOf('T', '-5160.00').map((t, i) => (i === 0 ? { ...t, withholding: '2580.00' } : t));
+    await runSettlement(fakeSource(() => lines), s.companyId, null, s.shopId);
+    const p = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(p.body.flags).toEqual(['tax_mismatch']);
+    const wht = p.body.lines.filter((l: { kind: string; estimated: boolean }) => l.kind === 'withholding_tax' && !l.estimated);
+    expect(wht.map((l: { amount: number }) => l.amount)).toEqual([-2580]);
+    expect((await get(s.ceo, '/payments')).body.items.find((i: { orderId: string }) => i.orderId === s.order.orderId).flags).toEqual([
+      'tax_mismatch',
+    ]);
   });
 
   it('gọi sàn lỗi: lần chạy failed kèm lý do, lần sau kéo lại từ mốc cũ; đang có lần chạy thì 409', async () => {

@@ -133,12 +133,13 @@ export async function ledgerTotals(shopId?: string): Promise<{ receivable: strin
 // ── Đối soát (#117) ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Mã giao dịch sàn đã có trong sổ (chạy lại cùng kỳ thì bỏ qua). */
-export async function existingTxnIds(ids: readonly string[]): Promise<Set<string>> {
+/** Mã giao dịch sàn đã có trong sổ của gian hàng: khoá chống trùng là (gian hàng, mã giao dịch) (25 §10.3, #250). */
+export async function existingTxnIds(shopId: string, ids: readonly string[]): Promise<Set<string>> {
   if (!ids.length) return new Set();
   const rows = await getDb()
     .select({ id: ledgerEntries.externalTransactionId })
     .from(ledgerEntries)
-    .where(inArray(ledgerEntries.externalTransactionId, [...ids]));
+    .where(and(eq(ledgerEntries.shopId, shopId), inArray(ledgerEntries.externalTransactionId, [...ids])));
   return new Set(rows.map((r) => r.id!));
 }
 
@@ -235,4 +236,29 @@ export async function revenueSince(from: string): Promise<string> {
     .from(ledgerEntries)
     .where(and(inArray(ledgerEntries.kind, ['revenue']), gte(ledgerEntries.occurredOn, from), not(isReplaced())));
   return row!.total;
+}
+
+/**
+ * Tổng thuế khấu trừ (`withholding_tax`) của từng đơn, tách ước tính và thực tế (số sàn trừ trong quyết toán), để
+ * bật cờ Lệch thuế (E135, #250). Đơn chưa có dòng thuế thực tế thì `actual` là null.
+ */
+export async function withholdingOf(orderIds: readonly string[]): Promise<Map<string, { estimated: string; actual: string | null }>> {
+  const out = new Map<string, { estimated: string; actual: string | null }>();
+  if (!orderIds.length) return out;
+  const rows = await getDb()
+    .select({
+      orderId: ledgerEntries.orderId,
+      estimate: ledgerEntries.isEstimate,
+      total: sql<string>`sum(${ledgerEntries.amount})`,
+    })
+    .from(ledgerEntries)
+    .where(and(inArray(ledgerEntries.orderId, [...orderIds]), eq(ledgerEntries.kind, 'withholding_tax')))
+    .groupBy(ledgerEntries.orderId, ledgerEntries.isEstimate);
+  for (const r of rows) {
+    const cur = out.get(r.orderId!) ?? { estimated: '0', actual: null };
+    if (r.estimate) cur.estimated = r.total;
+    else cur.actual = r.total;
+    out.set(r.orderId!, cur);
+  }
+  return out;
 }
