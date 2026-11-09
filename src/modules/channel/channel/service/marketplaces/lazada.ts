@@ -743,6 +743,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             externalOrderId: r.order_no ? String(r.order_no) : null,
             date: String(r.transaction_date ?? '').slice(0, 10),
             feeName: String(r.fee_name ?? ''),
+            feeCode: r.fee_type === undefined || r.fee_type === null || r.fee_type === '' ? null : String(r.fee_type),
             transactionType: String(r.transaction_type ?? ''),
             amount: String(r.amount ?? '0'),
             withholding: String(r.WHT_amount ?? '0'),

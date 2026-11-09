@@ -1,7 +1,7 @@
 import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not, notInArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
-import type { LedgerKind } from '../domain/ledger.ts';
+import { type LedgerKind, NOT_SETTLEMENT_DIFF } from '../domain/ledger.ts';
 import { bankMatches, ledgerEntries } from './schema.ts';
 
 export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string | null };
@@ -165,7 +165,7 @@ export async function orderSums(orderIds: readonly string[]): Promise<Map<string
       actual: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where not ${ledgerEntries.isEstimate}), 0)::text`,
     })
     .from(ledgerEntries)
-    .where(and(inArray(ledgerEntries.orderId, [...orderIds]), notInArray(ledgerEntries.kind, [...NON_CASH, 'withdrawal'])))
+    .where(and(inArray(ledgerEntries.orderId, [...orderIds]), notInArray(ledgerEntries.kind, [...NOT_SETTLEMENT_DIFF])))
     .groupBy(ledgerEntries.orderId);
   return new Map(rows.map((r) => [r.orderId!, { estimated: r.estimated, actual: r.actual }]));
 }

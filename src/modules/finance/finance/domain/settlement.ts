@@ -10,6 +10,7 @@ export interface PlatformTxn {
   externalOrderId: string | null;
   date: string;
   feeName: string;
+  feeCode: string | null;
   transactionType: string;
   amount: string;
   withholding: string;
