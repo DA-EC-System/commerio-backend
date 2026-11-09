@@ -32,4 +32,5 @@ export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop
 // Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
 export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts';
 export type { SalesContext } from './service/orders.ts';
+export { orderRefsOf } from './service/package-orders.ts';
 export { completeDueOrdersOnce } from './service/complete.ts';

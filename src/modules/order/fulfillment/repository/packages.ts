@@ -235,17 +235,10 @@ export type PackageViewRow = typeof packages.$inferSelect & {
   lines: { variantId: string | null; orderLineId: string; quantity: number }[];
 };
 
-/** Kiện của các đơn kèm dòng, cũ trước; để đọc, không khoá. */
-export async function findPackagesOfOrders(orderIds: readonly string[]): Promise<PackageViewRow[]> {
-  if (!orderIds.length) return [];
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(packages)
-    .where(inArray(packages.orderId, [...orderIds]))
-    .orderBy(asc(packages.code));
+/** Gắn dòng cho các kiện đã đọc (một câu), giữ thứ tự kiện. */
+export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): Promise<PackageViewRow[]> {
   if (!rows.length) return [];
-  const lines = await db
+  const lines = await getDb()
     .select({ packageId: packageLines.packageId, variantId: packageLines.variantId, orderLineId: packageLines.orderLineId, quantity: packageLines.quantity })
     .from(packageLines)
     .where(
@@ -253,6 +246,19 @@ export async function findPackagesOfOrders(orderIds: readonly string[]): Promise
         packageLines.packageId,
         rows.map((r) => r.id),
       ),
-    );
+    )
+    .orderBy(asc(packageLines.createdAt), asc(packageLines.id));
   return rows.map((r) => ({ ...r, lines: lines.filter((l) => l.packageId === r.id) }));
+}
+
+/** Kiện của các đơn kèm dòng, cũ trước; để đọc, không khoá. */
+export async function findPackagesOfOrders(orderIds: readonly string[]): Promise<PackageViewRow[]> {
+  if (!orderIds.length) return [];
+  return attachViewLines(
+    await getDb()
+      .select()
+      .from(packages)
+      .where(inArray(packages.orderId, [...orderIds]))
+      .orderBy(asc(packages.code)),
+  );
 }

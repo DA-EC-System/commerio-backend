@@ -53,6 +53,19 @@ export const STOPPED: readonly PackageStatus[] = ['delivered', 'returned', 'lost
 /** Kiện đã đóng gói: huỷ phải mở kiện trước. */
 export const SEALED: readonly PackageStatus[] = ['packed', 'awaiting_pickup'];
 
+/** Tab của màn kiện (21 §19.2). `shipping` gồm `in_transit`, `self_delivering`; `needs_open` theo cờ. */
+export const PACKAGE_TABS = [
+  'backordered',
+  'reserved',
+  'packed',
+  'awaiting_pickup',
+  'shipping',
+  'delivery_failed',
+  'returning',
+  'needs_open',
+] as const;
+export type PackageTab = (typeof PACKAGE_TABS)[number];
+
 export const holdsStock = (s: PackageStatus) => HOLDING.includes(s);
 export const isHandedOver = (s: PackageStatus) => HANDED_OVER.includes(s);
 export const isStopped = (s: PackageStatus) => STOPPED.includes(s);

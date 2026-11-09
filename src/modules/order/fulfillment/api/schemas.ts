@@ -1,6 +1,7 @@
 // Schema Zod của kiện (Documents/21 §19.2). Một nơi dựng `PackageSummary` cho cả route kiện và chi tiết đơn của sales
 // (spec 199a D8). Tên `.meta({ id })` trùng kiểu ở FE.
 import { z } from 'zod';
+import { PACKAGE_TABS } from '../domain/package.ts';
 
 const iso = z.iso.datetime();
 
@@ -75,3 +76,34 @@ export const PackageSummary = z
   })
   .strict()
   .meta({ id: 'PackageSummary' });
+
+export const PackageListQuery = z.object({
+  tab: z.enum(PACKAGE_TABS).default('reserved').meta({
+    description: '`reserved` chỉ kiện của đơn đang xử lý; `shipping` gồm `in_transit`, `self_delivering`; `needs_open` theo cờ',
+  }),
+  search: z.string().trim().max(100).optional().meta({ description: 'Mã kiện, mã đơn hoặc mã vận đơn, không phân biệt hoa thường' }),
+  source: z.enum(['marketplace', 'inbox', 'manual']).optional(),
+  shopId: z.uuid('Gian hàng không hợp lệ').optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export const PackageParams = z.object({ id: z.string() });
+
+export const PackagePage = z
+  .object({
+    items: z.array(PackageSummary),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    counts: z
+      .object(Object.fromEntries(PACKAGE_TABS.map((t) => [t, z.number().int()])) as Record<(typeof PACKAGE_TABS)[number], z.ZodNumber>)
+      .strict()
+      .meta({ description: 'Số kiện mỗi tab theo `search`, `source`, `shopId`, không theo `tab`' }),
+  })
+  .strict()
+  .meta({ id: 'PackagePage' });
+
+export const Package = PackageSummary.extend({ statusHistory: z.array(StatusChange) })
+  .strict()
+  .meta({ id: 'Package' });

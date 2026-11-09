@@ -43,7 +43,7 @@ const intOrNull = (money: string | null) => (money === null ? null : toInt(money
 type StoredAddress = { name: string; phone: string; address: string; ward?: string | null; postCode?: string | null } | null;
 
 /** Nhãn thuộc tính của biến thể trong app ("Đỏ / M"), theo id. */
-async function variantLabels(variantIds: (string | null)[]): Promise<Map<string, string>> {
+export async function variantLabels(variantIds: (string | null)[]): Promise<Map<string, string>> {
   const ids = [...new Set(variantIds.filter((id): id is string => id !== null))];
   if (!ids.length) return new Map();
   return new Map((await getVariants(ids)).map((v) => [v.id, v.attributes.map((a) => a.value).join(' / ')]));

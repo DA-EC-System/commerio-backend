@@ -1,0 +1,60 @@
+// Xem kiện cho kho (Documents/21 §19.2, spec 199a §5.5): danh sách theo tab có `counts`, chi tiết kèm lịch sử.
+// Dựng trang theo lô: dòng kiện một câu, đơn một lần qua `ctx.orderRefsOf`, gian hàng một lần qua `ctx.shopsOf`.
+import { getStatusHistory } from '../../../core/index.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
+import type { ModuleContext } from '../../../../shared/module.ts';
+import { isUuid } from '../../../../shared/uuid.ts';
+import type { PackageTab } from '../domain/package.ts';
+import { countPackageTabs, findPackagePage, findPackagesByIds, type PackageFilter } from '../repository/package-list.ts';
+import type { PackageViewRow } from '../repository/packages.ts';
+import { type PackageOrderRef, toPackageSummary } from './views.ts';
+
+/**
+ * Hàm module khác tiêm vào: tên gian hàng của channel (`src/wiring.ts`), thông tin đơn của sales (`order/index.ts`
+ * bằng `withContext`, vì sales đã import fulfillment).
+ */
+export interface FulfillmentContext extends ModuleContext {
+  readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, { shopName: string; platform: string }>>;
+  readonly orderRefsOf?: (orderIds: readonly string[]) => Promise<Map<string, PackageOrderRef>>;
+}
+
+function orderRefsLookupOf(ctx: FulfillmentContext) {
+  if (!ctx.orderRefsOf) throw new AppError(500, 'internal_error', 'Chưa nối dữ liệu đơn của sales (src/modules/order/index.ts)');
+  return ctx.orderRefsOf;
+}
+
+const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];
+
+async function summaries(ctx: FulfillmentContext, rows: readonly PackageViewRow[], now: number) {
+  const shopIds = unique(rows.map((r) => r.shopId));
+  const [orders, shops] = await Promise.all([
+    orderRefsLookupOf(ctx)(unique(rows.map((r) => r.orderId))),
+    ctx.shopsOf && shopIds.length ? ctx.shopsOf(shopIds) : Promise.resolve(new Map<string, { shopName: string; platform: string }>()),
+  ]);
+  return rows.map((p) => {
+    const order = orders.get(p.orderId);
+    // Kiện luôn có đơn cùng công ty; thiếu là dữ liệu hỏng.
+    if (!order) throw new Error(`Kiện ${p.id} không có đơn ${p.orderId}`);
+    const shop = p.shopId ? shops.get(p.shopId) : undefined;
+    return toPackageSummary(p, order, shop && p.shopId ? { id: p.shopId, shopName: shop.shopName, platform: shop.platform } : null, now);
+  });
+}
+
+export async function listPackages(ctx: FulfillmentContext, q: PackageFilter & { tab: PackageTab; page: number; pageSize: number }) {
+  const filter: PackageFilter = { search: q.search, source: q.source, shopId: q.shopId };
+  const [{ rows, total }, counts] = await Promise.all([
+    findPackagePage({ ...filter, tab: q.tab, limit: q.pageSize, offset: (q.page - 1) * q.pageSize }),
+    countPackageTabs(filter),
+  ]);
+  return { items: await summaries(ctx, rows, Date.now()), total, page: q.page, pageSize: q.pageSize, counts };
+}
+
+const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy kiện');
+
+export async function getPackage(ctx: FulfillmentContext, id: string) {
+  if (!isUuid(id)) throw notFound();
+  const [row] = await findPackagesByIds([id]);
+  if (!row) throw notFound();
+  const [[summary], history] = await Promise.all([summaries(ctx, [row], Date.now()), getStatusHistory('packages', id)]);
+  return { ...summary!, statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })) };
+}
