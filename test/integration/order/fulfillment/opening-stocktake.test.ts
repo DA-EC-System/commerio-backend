@@ -150,6 +150,32 @@ describe('settleOpeningStocktake: phiếu kiểm kê đầu kỳ ghi sổ (spec 
     expect(await packageDocuments(packageId)).toHaveLength(1);
   });
 
+  it('kiện hoãn trừ đã giao, rời kho trước lúc đếm → store_only: before_cutoff, không phiếu XK, package_delivered với unitCost null; gọi lại không phát thêm', async () => {
+    const s = await setup(3);
+    const o = { ...remote({ variantId: s.A, sku: s.sku }, { status: 'delivered', holdStock: false }), shopId: s.shopId };
+    const code = o.lines[0]!.packageCode!;
+    // Rời kho trước lúc đếm (kiểm kê đã tính hàng này), giao sau lúc đếm.
+    const events: PackageEvent[] = [
+      { packageCode: code, trackingCode: null, status: 'in_transit', at: new Date(s.countedAt.valueOf() - HOUR / 2), description: null },
+      { packageCode: code, trackingCode: null, status: 'delivered', at: new Date(s.countedAt.valueOf() + HOUR), description: null },
+    ];
+    const { orderId, packageId } = await ingest(s.companyId, withEvents(o, events));
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toEqual([]);
+
+    expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 1 });
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'delivered', handover_source: 'before_cutoff' });
+    expect(await packageDocuments(packageId)).toEqual([]);
+    expect(await outboxOf(orderId, 'fulfillment.package_shipped')).toEqual([]);
+    const delivered = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => EVENT_SCHEMAS['fulfillment.package_delivered'].parse(p));
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.lines).toMatchObject([{ variantId: s.A, quantity: 1, unitCost: null }]);
+    expect(delivered[0]!.deliveredAt).toBe(events[1]!.at.toISOString());
+
+    expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 0 });
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toHaveLength(1);
+  });
+
   it('review I1: lấy khoá phân hàng trước khi bù kiện hoãn (thứ tự khoá §5.10): đang chờ khoá thì chưa khoá kiện nào', async () => {
     const s = await setup(5);
     const k = await seedPackage(s.companyId, {

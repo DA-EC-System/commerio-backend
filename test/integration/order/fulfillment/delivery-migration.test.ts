@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { updatePackage } from '#src/modules/order/fulfillment/repository/packages.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -51,13 +53,16 @@ describe('cột delivery_posted_at của kiện (spec 199c §5.1)', () => {
     }
   });
 
-  it('cột delivery_posted_at có trong schema (drizzle) và updatePackage nhận patch', async () => {
+  it('updatePackage ghi delivery_posted_at của kiện (trong withCompany), kiện mới tạo là null', async () => {
     const { companyId } = await createCompany();
     const { variantId } = await createVariant(companyId);
     await receive(companyId, variantId, 5, 100000);
     const { packageId } = await seedPackage(companyId, { status: 'delivered', lines: [{ variantId, quantity: 1, reserved: true }] });
-
-    // Cột tồn tại trong DB (mã kiểm tra cơ bản: SELECT được, ban đầu null).
     expect(await deliveryPostedAtOf(packageId)).toBeNull();
+
+    const at = new Date('2026-11-10T09:30:00Z');
+    await withCompany(companyId, () => updatePackage(packageId, { deliveryPostedAt: at }));
+
+    expect(await deliveryPostedAtOf(packageId)).toEqual(at);
   });
 });

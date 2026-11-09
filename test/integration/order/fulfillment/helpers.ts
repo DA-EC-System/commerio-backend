@@ -165,16 +165,23 @@ export async function channelShop(companyId: string, awaiting: boolean): Promise
   return rows[0]!.id;
 }
 
-/** Ship cấp đơn của một đơn (#260; spec 199c D10) để `reportDelivered` tính tiền. */
+/**
+ * Ship cấp đơn của một đơn (#260; spec 199c D10) để `reportDelivered` tính tiền. Chỉ ghi trường có khoá trong `s`
+ * (giá trị `null` thì ghi null); trường bỏ trống giữ nguyên.
+ */
 export async function setOrderShipping(
   orderId: string,
   s: Partial<{ shippingFee: string; shippingFeeOriginal: string | null; shippingFeeDiscountPlatform: string | null }>,
 ) {
-  await testPool().query(
-    `update "order".orders set shipping_fee = coalesce($2, shipping_fee),
-       shipping_fee_original = $3, shipping_fee_discount_platform = $4 where id = $1`,
-    [orderId, s.shippingFee ?? null, s.shippingFeeOriginal ?? null, s.shippingFeeDiscountPlatform ?? null],
-  );
+  const columns = {
+    shippingFee: 'shipping_fee',
+    shippingFeeOriginal: 'shipping_fee_original',
+    shippingFeeDiscountPlatform: 'shipping_fee_discount_platform',
+  } as const;
+  const keys = (Object.keys(columns) as (keyof typeof columns)[]).filter((k) => k in s);
+  if (!keys.length) return;
+  const set = keys.map((k, i) => `${columns[k]} = $${i + 2}`).join(', ');
+  await testPool().query(`update "order".orders set ${set} where id = $1`, [orderId, ...keys.map((k) => s[k] ?? null)]);
 }
 
 /** Sửa tiền của dòng đơn mà dòng kiện trỏ tới (spec 199c D10, Review Focus 4). */
