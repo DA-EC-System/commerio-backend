@@ -100,6 +100,11 @@ export interface RemoteSku {
   state: RemoteState;
   rejectReason: string | null;
   quantity: number;
+  /**
+   * Nhãn biến thể đọc được từ sàn (giá trị thuộc tính bán hàng), đã có trong `title`. Không có (sàn không trả, nhãn dự
+   * phòng là SKU người bán) thì thiếu hoặc null: SKU của sản phẩm nhiều SKU khi đó không được ghép theo tên (#282).
+   */
+  variantLabel?: string | null;
 }
 
 export interface PriceQuantity {
@@ -306,9 +311,10 @@ export interface MarketplaceAdapter {
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
   /**
    * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
-   * thì ném `rejected`, không trả thiếu.
+   * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
+   * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282). `labels: false` khi chỉ cần đếm: bỏ các lời gọi đọc nhãn.
    */
-  listSkus?(accessToken: string): Promise<RemoteSku[]>;
+  listSkus?(accessToken: string, opts?: { labels?: boolean }): Promise<RemoteSku[]>;
   /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */

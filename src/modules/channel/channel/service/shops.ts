@@ -416,7 +416,8 @@ async function remoteSkuCount(adapter: MarketplaceAdapter, c: ShopConnection): P
     timer = setTimeout(() => resolve('timeout'), REMOTE_SKU_COUNT_MS);
   });
   try {
-    const result = await Promise.race([listSkus(c.tokens.accessToken), timeout]);
+    // Cùng nguồn với gợi ý ghép của thiết lập; chỉ đếm nên không đọc nhãn biến thể (thêm lời gọi sàn, không đổi số).
+    const result = await Promise.race([listSkus(c.tokens.accessToken, { labels: false }), timeout]);
     if (result === 'timeout') {
       logger.warn({ externalShopId: c.externalShopId, timeoutMs: REMOTE_SKU_COUNT_MS }, 'Đếm SKU trên sàn lúc nối quá hạn');
       return null;

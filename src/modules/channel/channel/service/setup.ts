@@ -79,11 +79,17 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
   });
   // Tên chỉ phân biệt được biến thể khi tiêu đề là của riêng một SKU: Lazada trả tên sản phẩm cho mọi SKU của nó, nên
   // nhiều SKU cùng tiêu đề sẽ hoà điểm và ghép nhầm màu, cỡ (#198 diff-review P2). SKU không có SKU người bán thì kéo đơn
-  // không tra được biến thể, không gợi ý.
+  // không tra được biến thể, không gợi ý. SKU của sản phẩm nhiều SKU mà sàn không cho nhãn biến thể (`variantLabel`) thì
+  // tiêu đề chỉ khác nhau ở SKU người bán, không nói màu, cỡ nào: cũng không ghép theo tên (#282 diff-review).
   const titleCount = new Map<string, number>();
-  for (const r of remote) titleCount.set(r.title.trim().toLowerCase(), (titleCount.get(r.title.trim().toLowerCase()) ?? 0) + 1);
+  const productSkuCount = new Map<string, number>();
+  for (const r of remote) {
+    titleCount.set(r.title.trim().toLowerCase(), (titleCount.get(r.title.trim().toLowerCase()) ?? 0) + 1);
+    productSkuCount.set(r.externalProductId, (productSkuCount.get(r.externalProductId) ?? 0) + 1);
+  }
+  const unlabeledVariant = (r: (typeof remote)[number]) => productSkuCount.get(r.externalProductId)! > 1 && !r.variantLabel;
   const restRemote = remote.flatMap((r, i) =>
-    chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 ? [] : [i],
+    chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 || unlabeledVariant(r) ? [] : [i],
   );
   const restVariants = open.filter((v) => !taken.has(v.id));
   let nameMatchSkipped = restRemote.length * restVariants.length > NAME_PAIRS_MAX;

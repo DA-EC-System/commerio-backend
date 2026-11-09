@@ -249,6 +249,25 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
     expect(rows.map((r) => r.match)).toEqual(['none', 'none', 'none']);
   });
 
+  it('sản phẩm nhiều SKU, tiêu đề khác nhau chỉ ở SKU người bán (sàn không cho nhãn biến thể): không ghép theo tên; có nhãn thì ghép (#282)', async () => {
+    variants.push(variant('CMR-T1', 'Áo thun cổ tim', 'Đen'), variant('CMR-T2', 'Áo len', 'Xám'));
+    const item = (externalSkuId: string, sellerSku: string, title: string, variantLabel: string | null): RemoteSku => ({
+      ...sku(externalSkuId, sellerSku, title),
+      externalProductId: `item-${variantLabel === null ? 'tim' : 'len'}`,
+      variantLabel,
+    });
+    remote.push(
+      item('sku-t1', 'TT-TRANG', 'Áo thun cổ tim - TT-TRANG', null),
+      item('sku-t2', 'TT-DEN', 'Áo thun cổ tim - TT-DEN', null),
+      item('sku-l1', 'LEN-XAM', 'Áo len - Xám', 'Xám'),
+      item('sku-l2', 'LEN-NAU', 'Áo len - Nâu', 'Nâu'),
+    );
+    const res = await (await connectingShop()).preview();
+    const byId = new Map((res.body.suggestions as { externalSkuId: string; match: string }[]).map((r) => [r.externalSkuId, r.match]));
+    expect([byId.get('sku-t1'), byId.get('sku-t2')]).toEqual(['none', 'none']);
+    expect(byId.get('sku-l1')).toBe('name');
+  });
+
   it('một SKU sàn mà nhiều biến thể của cùng sản phẩm Commerio cùng qua ngưỡng: không gợi ý theo tên (vòng 2 review P2)', async () => {
     const productId = randomUUID();
     variants.push(...['Đỏ / S', 'Xanh / M', 'Đen / L'].map((label, i) => ({ ...variant(`CMR-Q${i}`, 'Áo polo nam', label), productId })));

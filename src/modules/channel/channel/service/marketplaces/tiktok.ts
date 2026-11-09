@@ -44,6 +44,8 @@ const SELLER_SKU_BATCH = 10;
 const MAX_PRODUCTS = 10_000;
 // Một lần lật quá số trang này là sàn trả con trỏ lặp: dừng, không lặp vô hạn.
 const MAX_PAGES = MAX_PRODUCTS / PRODUCT_PAGE + 5;
+// Trần sản phẩm nhiều SKU đọc nhãn biến thể mỗi lần mở thiết lập: đọc 5 req/s mỗi gian hàng nên 50 lần ≈ 10 giây.
+const LABEL_PRODUCT_MAX = 50;
 
 type Row = Record<string, unknown>;
 
@@ -118,18 +120,29 @@ export function tiktokRemoteState(productStatus: string, sku: Row): RemoteState 
   }
 }
 
-function skusOf(p: Row): RemoteSku[] {
+/**
+ * `labels`: mã SKU → nhãn biến thể (giá trị thuộc tính bán hàng). Sản phẩm nhiều SKU thì tiêu đề mỗi SKU là
+ * "tên sản phẩm - nhãn" để bảng ghép phân biệt được (#282); thiếu nhãn thì dùng SKU người bán, rồi mã SKU sàn.
+ */
+function skusOf(p: Row, labels?: ReadonlyMap<string, string>): RemoteSku[] {
   const status = String(p.status ?? '');
-  return ((p.skus ?? []) as Row[]).map((s) => ({
-    externalProductId: String(p.id),
-    externalSkuId: String(s.id),
-    sellerSku: typeof s.seller_sku === 'string' ? s.seller_sku : '',
-    title: typeof p.title === 'string' ? p.title : '',
-    state: tiktokRemoteState(status, s),
-    rejectReason: null,
-    // Tổng tồn ở các kho của SKU (`inventory[].quantity`).
-    quantity: ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0),
-  }));
+  const skus = (p.skus ?? []) as Row[];
+  const title = typeof p.title === 'string' ? p.title : '';
+  return skus.map((s) => {
+    const sellerSku = typeof s.seller_sku === 'string' ? s.seller_sku : '';
+    const variantLabel = labels?.get(String(s.id)) ?? null;
+    return {
+      externalProductId: String(p.id),
+      externalSkuId: String(s.id),
+      sellerSku,
+      title: skus.length > 1 ? `${title} - ${variantLabel || sellerSku || String(s.id)}` : title,
+      variantLabel,
+      state: tiktokRemoteState(status, s),
+      rejectReason: null,
+      // Tổng tồn ở các kho của SKU (`inventory[].quantity`).
+      quantity: ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0),
+    };
+  });
 }
 
 export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
@@ -174,7 +187,40 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
 
   /** Lật Search Products tới hết; `filter` là body lọc (luôn khác rỗng để chuỗi ký và body gửi đi giống nhau). */
   async function searchSkus(accessToken: string, filter: Row): Promise<RemoteSku[]> {
-    const out: RemoteSku[] = [];
+    return (await searchProducts(accessToken, filter)).flatMap((p) => skusOf(p));
+  }
+
+  /**
+   * Nhãn biến thể của SKU các sản phẩm nhiều SKU: Search Products không trả `sales_attributes`, phải gọi Get Product 202309
+   * từng sản phẩm (docv2 get-product-202309, tra 09/11/2026; chưa có bản mới hơn). Tối đa `LABEL_PRODUCT_MAX` sản phẩm
+   * mỗi lần; sản phẩm còn lại, hoặc sàn từ chối đọc (vd vừa xoá), dùng SKU người bán làm nhãn. Nhãn chỉ để hiển thị và
+   * ghép theo tên: sàn lỗi tạm thì dừng đọc nhãn, không làm hỏng cả bước ghép; mất uỷ quyền thì ném.
+   */
+  async function variantLabels(accessToken: string, products: readonly Row[]): Promise<Map<string, string>> {
+    const labels = new Map<string, string>();
+    const multi = products.filter((p) => ((p.skus ?? []) as Row[]).length > 1).slice(0, LABEL_PRODUCT_MAX);
+    for (const p of multi) {
+      let detail: { skus?: Row[] } | undefined;
+      try {
+        detail = await client.call('GET', `/product/202309/products/${encodeURIComponent(String(p.id))}`, { token: accessToken });
+      } catch (err) {
+        if (err instanceof MarketplaceError && err.kind === 'rejected') continue;
+        if (err instanceof MarketplaceError && err.kind === 'unavailable') break;
+        throw err;
+      }
+      for (const s of detail?.skus ?? []) {
+        const label = ((s.sales_attributes ?? []) as Row[])
+          .map((a) => (typeof a.value_name === 'string' ? a.value_name.trim() : ''))
+          .filter(Boolean)
+          .join(', ');
+        if (label) labels.set(String(s.id), label);
+      }
+    }
+    return labels;
+  }
+
+  async function searchProducts(accessToken: string, filter: Row): Promise<Row[]> {
+    const out: Row[] = [];
     let pageToken: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
       const data = await client.call<{ products?: Row[]; next_page_token?: unknown; total_count?: unknown }>(
@@ -186,7 +232,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCTS} sản phẩm, sàn không cho đọc hết`);
       }
       const products = data?.products ?? [];
-      out.push(...products.flatMap(skusOf));
+      out.push(...products);
       const next = typeof data?.next_page_token === 'string' ? data.next_page_token : '';
       if (!next || products.length === 0 || next === pageToken) return out;
       pageToken = next;
@@ -235,9 +281,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       const parts = unpackTiktokToken(refreshToken);
       return packFor(await refreshRaw(parts.token), parts.cipher, parts.shopId);
     },
-    // Mọi SKU của gian hàng cho gợi ý ghép lúc thiết lập (#198): mã sản phẩm, mã SKU sàn, SKU người bán; bỏ sản phẩm đã xoá.
-    async listSkus(accessToken) {
-      return (await searchSkus(accessToken, { status: 'ALL' })).filter((s) => s.state !== 'deleted');
+    // Mọi SKU của gian hàng cho gợi ý ghép lúc thiết lập (#198, #282): mã sản phẩm, mã SKU sàn, SKU người bán, tiêu đề kèm
+    // nhãn biến thể; bỏ sản phẩm đã xoá. `labels: false` (đếm SKU lúc nối) không gọi Get Product.
+    async listSkus(accessToken, opts) {
+      const products = (await searchProducts(accessToken, { status: 'ALL' })).filter((p) => p.status !== 'DELETED');
+      const labels = opts?.labels === false ? undefined : await variantLabels(accessToken, products);
+      return products.flatMap((p) => skusOf(p, labels)).filter((s) => s.state !== 'deleted');
     },
     getSkus,
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.

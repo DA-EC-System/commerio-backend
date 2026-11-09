@@ -276,8 +276,8 @@ describe('adapter TikTok: SKU', () => {
     );
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
     expect(skus).toEqual([
-      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', state: 'live', rejectReason: null, quantity: 7 },
-      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', state: 'review', rejectReason: null, quantity: 0 },
+      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, state: 'live', rejectReason: null, quantity: 7 },
+      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, state: 'review', rejectReason: null, quantity: 0 },
     ]);
     expect(urlOf(fetchFn, 0).searchParams.has('page_token')).toBe(false);
     expect(urlOf(fetchFn, 1).searchParams.get('page_token')).toBe('p2');
@@ -288,6 +288,65 @@ describe('adapter TikTok: SKU', () => {
   it('listSkus: gian hàng hơn 10000 sản phẩm thì rejected too_many_products, không trả thiếu', async () => {
     const fetchFn = fakeFetch(ok({ total_count: 10001, next_page_token: 'p2', products: [] }));
     await expect(createTiktokAdapter(config, fetchFn).listSkus!(packed())).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_products' });
+  });
+
+  it('listSkus (#282): sản phẩm nhiều SKU đọc Get Product, tiêu đề "tên - giá trị thuộc tính"; sản phẩm một SKU giữ tên', async () => {
+    const fetchFn = fakeFetch(
+      ok({
+        next_page_token: '',
+        products: [product('1', 'ACTIVATE', [sku('11', 'AO-TRANG-M'), sku('12', 'AO-DEN-L')]), product('2', 'ACTIVATE', [sku('21', 'CU')])],
+      }),
+      ok({
+        id: '1',
+        skus: [
+          { id: '11', sales_attributes: [{ name: 'Màu', value_name: 'Trắng' }, { name: 'Cỡ', value_name: 'M' }] },
+          { id: '12', sales_attributes: [] },
+        ],
+      }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+    expect(skus.map((s) => [s.externalSkuId, s.title, s.variantLabel])).toEqual([
+      ['11', 'SP 1 - Trắng, M', 'Trắng, M'],
+      // Không có thuộc tính bán hàng: dùng SKU người bán làm nhãn.
+      ['12', 'SP 1 - AO-DEN-L', null],
+      ['21', 'SP 2', null],
+    ]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(urlOf(fetchFn, 1).pathname).toBe('/product/202309/products/1');
+    expect(urlOf(fetchFn, 1).searchParams.get('shop_cipher')).toBe(SHOP.cipher);
+  });
+
+  it('listSkus: labels false không gọi Get Product (đếm SKU lúc nối), nhãn là SKU người bán rồi mã SKU sàn', async () => {
+    const fetchFn = fakeFetch(ok({ next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M'), sku('12', '')])] }));
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false });
+    expect(skus.map((s) => s.title)).toEqual(['SP 1 - AO-M', 'SP 1 - 12']);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('listSkus: Get Product bị sàn từ chối hay lỗi tạm thì dùng SKU người bán làm nhãn (variantLabel null); mất uỷ quyền thì ném', async () => {
+    const page = () => ok({ next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'A'), sku('12', 'B')])] });
+    const rejected = json({ code: 12052048, message: 'product not exist', request_id: 'r' });
+    const skus = await createTiktokAdapter(config, fakeFetch(page(), rejected)).listSkus!(packed());
+    expect(skus.map((s) => s.title)).toEqual(['SP 1 - A', 'SP 1 - B']);
+    expect(skus.map((s) => s.variantLabel)).toEqual([null, null]);
+    const temp = await createTiktokAdapter(config, fakeFetch(page(), json({}, 503))).listSkus!(packed());
+    expect(temp.map((s) => s.title)).toEqual(['SP 1 - A', 'SP 1 - B']);
+    const unauthorized = json({ code: 105002, message: 'Expired credentials', request_id: 'r' });
+    await expect(createTiktokAdapter(config, fakeFetch(page(), unauthorized)).listSkus!(packed())).rejects.toMatchObject({ kind: 'unauthorized' });
+  });
+
+  it('listSkus: đọc nhãn tối đa 50 sản phẩm nhiều SKU, phần còn lại nhãn là SKU người bán', async () => {
+    const products = Array.from({ length: 52 }, (_, i) => product(`p${i}`, 'ACTIVATE', [sku(`${i}a`, `S${i}A`), sku(`${i}b`, `S${i}B`)]));
+    const fetchFn = vi.fn<typeof fetch>(async (url) => {
+      const u = new URL(String(url));
+      if (u.pathname.endsWith('/search')) return ok({ next_page_token: '', products });
+      const id = u.pathname.split('/').pop()!.slice(1);
+      return ok({ skus: [{ id: `${id}a`, sales_attributes: [{ value_name: 'X' }] }] });
+    });
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+    expect(fetchFn).toHaveBeenCalledTimes(51);
+    expect(skus.find((s) => s.externalSkuId === '49a')!.title).toBe('SP p49 - X');
+    expect(skus.find((s) => s.externalSkuId === '50a')!.title).toBe('SP p50 - S50A');
   });
 
   it('getSkus chia lô 10 SellerSku (giới hạn seller_skus) và chỉ trả SKU được hỏi', async () => {
