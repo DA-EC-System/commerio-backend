@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { HANDED_OVER, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
@@ -63,7 +63,7 @@ export async function updatePackage(
     handoverRevertedBy: string;
     pickupConfirmedAt: Date | null;
     deliveredAt: Date;
-    reservedAt: Date | null;
+    reservedAt: Date | SQL | null;
   }> &
     Partial<PackageShipping>,
 ): Promise<void> {
@@ -122,13 +122,13 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
   return byPackage;
 }
 
-/** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
 /** Gian hàng của kiện, đọc không khoá (route kho quét khoá gian hàng trước khi khoá kiện, spec 199b §5.7). */
 export async function packageShopOf(id: string): Promise<{ shopId: string | null } | undefined> {
   const [row] = await getDb().select({ shopId: packages.shopId }).from(packages).where(eq(packages.id, id));
   return row;
 }
 
+/** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
 export async function lockPackage(id: string): Promise<HandoverPackage | undefined> {
   const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
   if (!row) return undefined;

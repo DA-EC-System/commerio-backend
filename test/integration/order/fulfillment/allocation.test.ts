@@ -4,6 +4,7 @@ import { runAllocation } from '#src/modules/order/fulfillment/service/allocation
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
+import { testPool } from '../../helpers/db.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import { channelShop, outboxOf, packageLineRows, packageRow, seedPackage, stockOfVariant, transitionsOf } from './helpers.ts';
@@ -123,5 +124,41 @@ describe('lượt phân hàng: giữ kiện theo thứ tự (25 §7.4, spec 199b
     const r = await run(companyId, [A]);
     expect(r).toEqual({ held: [], reclaimed: [], variantIds: [A] });
     expect(await outboxOf(companyId, 'fulfillment.allocation_done')).toEqual([{ variantIds: [A] }]);
+  });
+
+  it('minor 4, 5: reserved_at lấy giờ DB cùng lịch sử hold; có package_status_changed backordered → reserved', async () => {
+    const { companyId, A } = await setup(1);
+    const p = await seedPackage(companyId, { status: 'backordered', lines: [{ variantId: A, quantity: 1 }] });
+    await run(companyId, [A]);
+    const { rows } = await testPool().query<{ at: Date }>(
+      `select at from core.state_transitions where entity_id = $1 and action = 'hold'`,
+      [p.packageId],
+    );
+    expect((await packageRow(p.packageId)).reserved_at).toEqual(rows[0]!.at);
+    expect(await outboxOf(p.orderId, 'fulfillment.package_status_changed')).toContainEqual({
+      packageId: p.packageId,
+      orderId: p.orderId,
+      from: 'backordered',
+      to: 'reserved',
+    });
+  });
+
+  it('minor 7: lượt thường không khoá kiện của gian hàng chờ kiểm kê', async () => {
+    const { companyId, A } = await setup(5);
+    const shopId = await channelShop(companyId, true);
+    const waiting = await seedPackage(companyId, { status: 'backordered', shopId, lines: [{ variantId: A, quantity: 1 }] });
+    const holder = await testPool().connect();
+    try {
+      await holder.query('begin');
+      await holder.query('select id from "order".packages where id = $1 for update', [waiting.packageId]);
+      const outcome = await Promise.race([
+        run(companyId, [A]).then(() => 'done'),
+        new Promise((r) => setTimeout(() => r('blocked'), 3000)),
+      ]);
+      expect(outcome).toBe('done');
+    } finally {
+      await holder.query('rollback');
+      holder.release();
+    }
   });
 });

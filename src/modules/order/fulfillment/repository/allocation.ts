@@ -1,6 +1,6 @@
 // Truy vấn của lượt phân hàng (spec 199b §5.3). Trạng thái, ngày lập của đơn đọc bằng SQL thô `"order".orders`: cùng
 // schema `order` nhưng fulfillment không import sales. Khoá kiện theo `code` tăng dần (cùng `lockDeferredPackages`).
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, or, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { AllocationCandidate, ReclaimCandidate } from '../domain/allocation.ts';
 import { planLinesOf } from './packages.ts';
@@ -38,6 +38,9 @@ export async function variantsInPlay(): Promise<string[]> {
 }
 
 const linesOf = (lines: { variantId: string | null; quantity: number }[]) => lines.map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
+/** Phần đang giữ thật của kiện: chỉ dòng có `reserved_qty`, đúng số đó (không nhả phần giữ của kiện khác). */
+const heldOf = (lines: { variantId: string | null; reservedQty: number }[]) =>
+  lines.filter((l) => l.variantId && l.reservedQty > 0).map((l) => ({ variantId: l.variantId!, quantity: l.reservedQty }));
 
 export type LockedReclaimCandidate = ReclaimCandidate & { orderId: string };
 
@@ -51,13 +54,32 @@ export async function lockReclaimCandidates(variantIds: readonly string[]): Prom
     .orderBy(asc(packages.code))
     .for('update');
   const lines = await planLinesOf(rows.map((r) => r.id));
-  return rows.map((r) => ({ ...r, orderStatus: r.orderStatus as 'unpaid' | 'processing', lines: linesOf(lines.get(r.id)!) }));
+  return rows.map((r) => ({ ...r, orderStatus: r.orderStatus as 'unpaid' | 'processing', lines: heldOf(lines.get(r.id)!) }));
 }
 
-export type LockedAllocationCandidate = AllocationCandidate & { orderId: string; shopId: string | null; needsAttention: boolean; lineIds: string[] };
+export type LockedAllocationCandidate = AllocationCandidate & {
+  orderId: string;
+  shopId: string | null;
+  needsAttention: boolean;
+  flagNote: string | null;
+  lineIds: string[];
+};
 
-/** Ứng viên giữ hàng có dòng thuộc `variantIds`; khoá `FOR UPDATE`. */
-export async function lockAllocationCandidates(variantIds: readonly string[]): Promise<LockedAllocationCandidate[]> {
+/** Gian hàng của các ứng viên giữ hàng, đọc không khoá: lọc gian hàng chờ kiểm kê trước khi khoá kiện. */
+export async function allocationShops(variantIds: readonly string[]): Promise<string[]> {
+  if (!variantIds.length) return [];
+  const rows = await getDb()
+    .selectDistinct({ shopId: packages.shopId })
+    .from(packages)
+    .where(and(candidateWhere, hasVariant(variantIds), sql`${packages.shopId} is not null`));
+  return rows.map((r) => r.shopId!);
+}
+
+/** Ứng viên giữ hàng có dòng thuộc `variantIds`, trừ kiện của `excludeShopIds`; khoá `FOR UPDATE`. */
+export async function lockAllocationCandidates(
+  variantIds: readonly string[],
+  excludeShopIds: readonly string[] = [],
+): Promise<LockedAllocationCandidate[]> {
   if (!variantIds.length) return [];
   const rows = await getDb()
     .select({
@@ -68,10 +90,17 @@ export async function lockAllocationCandidates(variantIds: readonly string[]): P
       orderId: packages.orderId,
       shopId: packages.shopId,
       needsAttention: packages.needsAttention,
+      flagNote: packages.flagNote,
       orderCreatedAt,
     })
     .from(packages)
-    .where(and(candidateWhere, hasVariant(variantIds)))
+    .where(
+      and(
+        candidateWhere,
+        hasVariant(variantIds),
+        excludeShopIds.length ? or(isNull(packages.shopId), notInArray(packages.shopId, [...excludeShopIds])) : undefined,
+      ),
+    )
     .orderBy(asc(packages.code))
     .for('update');
   const lines = await planLinesOf(rows.map((r) => r.id));

@@ -1,6 +1,7 @@
 // Một chỗ thi hành tác động tồn của bàn giao (spec 199a §5.3, Documents/21 §11.1). Mọi đường vào (kho quét, sàn báo,
 // hàm bù cho #198, dòng ghép SKU muộn cho #237) đi qua đây. Chạy trong giao dịch của bên gọi; kiện đã khoá `FOR UPDATE`.
 // Chốt "trừ đúng một lần": `stock_deducted` của dòng (đổi trong cùng giao dịch) và lưới `packageLineId` của `ship`.
+import { sql } from 'drizzle-orm';
 import { publishEvent } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type HandoverStockMode, type PlanLine, shipPlan } from '../domain/handover.ts';
@@ -135,7 +136,7 @@ export async function revertHandover(pkg: HandoverPackage, actorId: string, reas
     pickupConfirmedAt: null,
     handoverRevertedBy: actorId,
     // Dòng vừa giữ hàng lại thì ghi lúc giữ (spec 199b §5.1); kiện đang hoãn trừ không có dòng nào được đảo.
-    ...(deducted.length && { reservedAt: new Date() }),
+    ...(deducted.length && { reservedAt: sql`now()` }),
   });
   pkg.status = 'awaiting_pickup';
   pkg.handoverSource = null;

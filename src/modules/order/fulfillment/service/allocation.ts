@@ -3,10 +3,11 @@
 // dưới khoá advisory theo công ty nên hai lượt không chen nhau. Gọi lại đọc lại trạng thái từ đầu, không giữ hay lấy thêm.
 import { z } from 'zod';
 import { assertTransition, defineQueue, JobDataSchema, publishEvent, recordTransition, sendJob } from '../../../core/index.ts';
+import { sql } from 'drizzle-orm';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { allocationQueue, planAllocation, planReclaim } from '../domain/allocation.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
-import { lockAllocationCandidates, lockReclaimCandidates, takeAllocationLock, variantsInPlay } from '../repository/allocation.ts';
+import { allocationShops, lockAllocationCandidates, lockReclaimCandidates, takeAllocationLock, variantsInPlay } from '../repository/allocation.ts';
 import { markLinesReserved, setReserved, updatePackage } from '../repository/packages.ts';
 import { settleDeferredHandovers } from './handover-stock.ts';
 import { type FulfillmentContext, stockHoldLookupOf } from './packages.ts';
@@ -24,7 +25,7 @@ export const DISMANTLE_NOTE = 'Dỡ kiện về kệ: số đếm thấp hơn h�
 
 const unique = <T>(xs: Iterable<T>) => [...new Set(xs)];
 
-async function move(p: { id: string; orderId: string }, from: PackageStatus, action: 'hold' | 'reclaim', extra: { reservedAt?: Date }) {
+async function move(p: { id: string; orderId: string }, from: PackageStatus, action: 'hold' | 'reclaim', extra: Parameters<typeof updatePackage>[1]) {
   const { to } = assertTransition(packageMachine, from, action, { actor: null });
   await updatePackage(p.id, { status: to, ...extra });
   await recordTransition({ entityType: 'packages', entityId: p.id, from, to, action, actorId: null });
@@ -50,9 +51,13 @@ export async function runAllocation(
   // Lấy lại phần giữ: SKU có đang giữ lớn hơn tồn thực.
   const reclaimed: string[] = [];
   if (skus.length) {
-    const stock = await port.stockOf(skus);
-    const deficits = new Map([...stock].filter(([, s]) => s.reserved > s.onHand).map(([v, s]) => [v, s.reserved - s.onHand]));
-    for (const c of deficits.size ? planReclaim(deficits, await lockReclaimCandidates([...deficits.keys()])) : []) {
+    const deficitsOf = (stock: Map<string, { onHand: number; reserved: number }>) =>
+      new Map([...stock].filter(([, s]) => s.reserved > s.onHand).map(([v, s]) => [v, s.reserved - s.onHand]));
+    const suspected = deficitsOf(await port.stockOf(skus));
+    const locked = suspected.size ? await lockReclaimCandidates([...suspected.keys()]) : [];
+    // Đọc lại sau khi khoá: hàng về hay kiện huỷ trong lúc chờ khoá làm phần thiếu nhỏ đi.
+    const deficits = locked.length ? deficitsOf(await port.stockOf([...suspected.keys()])) : new Map<string, number>();
+    for (const c of deficits.size ? planReclaim(deficits, locked) : []) {
       await port.release(c.id, c.lines);
       await setReserved(c.id, false);
       await move(c, 'reserved', 'reclaim', {});
@@ -64,12 +69,13 @@ export async function runAllocation(
 
   // Giữ hàng cho kiện chưa giữ, theo thứ tự.
   const held: string[] = [];
-  let candidates = (await lockAllocationCandidates(skus)).filter((c) => !reclaimed.includes(c.id));
+  // Lượt thường bỏ gian hàng chờ kiểm kê trước khi khoá, để không giữ khoá kiện mà lần quét của gian hàng đó cần.
+  let waiting: string[] = [];
   if (!opts.opening) {
-    const shopIds = unique(candidates.flatMap((c) => (c.shopId ? [c.shopId] : [])));
-    const waiting = shopIds.length ? await stockHoldLookupOf(ctx)(shopIds) : new Set<string>();
-    candidates = candidates.filter((c) => !c.shopId || !waiting.has(c.shopId));
+    const shopIds = await allocationShops(skus);
+    waiting = shopIds.length ? [...(await stockHoldLookupOf(ctx)(shopIds))] : [];
   }
+  const candidates = (await lockAllocationCandidates(skus, waiting)).filter((c) => !reclaimed.includes(c.id));
   if (candidates.length) {
     const stock = await port.stockOf(unique(candidates.flatMap((c) => c.lines.map((l) => l.variantId))));
     const available = new Map([...stock].map(([v, s]) => [v, s.available]));
@@ -77,8 +83,11 @@ export async function runAllocation(
       // Giao dịch khác có thể vừa lấy mất hàng: `reserve` là kết quả cuối, không đủ thì bỏ qua kiện này.
       if (!(await port.reserve(c.id, c.lines)).reserved) continue;
       await markLinesReserved(c.lineIds);
-      if (c.status === 'backordered') await move(c, 'backordered', 'hold', { reservedAt: new Date() });
-      else await updatePackage(c.id, { reservedAt: new Date() });
+      // Giữ được thì cờ "Dỡ kiện về kệ" của phiếu đầu kỳ hết đúng; giờ DB cho `reserved_at` (một đồng hồ).
+      const clear = c.needsAttention && c.flagNote === DISMANTLE_NOTE ? { needsAttention: false, flagNote: null } : {};
+      const reservedAt = sql`now()`;
+      if (c.status === 'backordered') await move(c, 'backordered', 'hold', { reservedAt, ...clear });
+      else await updatePackage(c.id, { reservedAt, ...clear });
       held.push(c.id);
       for (const l of c.lines) touched.add(l.variantId);
     }

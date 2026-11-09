@@ -1,5 +1,6 @@
 // Kiện của đơn sàn theo trạng thái sàn đẩy về (#105). Mỗi mã kiện sàn một kiện; sàn chưa chia kiện thì một kiện tạm,
 // nhận mã ở lần kéo sau. Giữ, nhả lúc tạo, huỷ; kiện vào nhóm rời kho thì trừ tồn qua lõi `handover-stock.ts` (#199).
+import { sql } from 'drizzle-orm';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { handoverStockMode, stockEffectOf } from '../domain/handover.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
@@ -178,7 +179,7 @@ async function createPackage(
   const to: PackageStatus = initial === 'backordered' && reserved ? 'reserved' : initial;
   const rows = lines.map((l) => ({ orderLineId: l.orderLineId, variantId: l.variantId, quantity: l.quantity, reservedQty: reserved ? l.quantity : 0 }));
   const lineIds = await insertPackageLines(id, rows);
-  if (to !== initial || reserved) await updatePackage(id, { ...(to !== initial && { status: to }), ...(reserved && { reservedAt: new Date() }) });
+  if (to !== initial || reserved) await updatePackage(id, { ...(to !== initial && { status: to }), ...(reserved && { reservedAt: sql`now()` }) });
   // Kiện mới giữ hàng làm số có thể bán giảm: báo channel đẩy tồn (spec 199b D4), không chạy lượt phân hàng.
   if (reserved) {
     const variantIds = [...new Set(stockLines(lines).map((l) => l.variantId))].sort();

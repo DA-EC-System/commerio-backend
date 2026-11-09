@@ -4,6 +4,7 @@ import { DISMANTLE_NOTE, runAllocation } from '#src/modules/order/fulfillment/se
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
+import { testPool } from '../../helpers/db.ts';
 import { receive, setBuckets } from '../../product/inventory/helpers.ts';
 import { outboxOf, packageRow, seedPackage, stockOfVariant, transitionsOf } from './helpers.ts';
 
@@ -76,5 +77,84 @@ describe('lượt phân hàng: lấy lại phần giữ (25 §7.4, spec 199b §5
 
     await withCompany(companyId, () => runAllocation({}, { all: true }, { opening: true, cause: { type: 'stocktake', documentId: normal.orderId } }));
     expect(await packageRow(normal.packageId)).toMatchObject({ status: 'packed', needs_attention: true, flag_note: DISMANTLE_NOTE });
+  });
+
+  it('minor 1: đọc lại thiếu hụt sau khi khoá kiện: hàng về trong lúc chờ khoá thì không lấy lại kiện nào', async () => {
+    const { companyId } = await createCompany();
+    const { variantId: A } = await createVariant(companyId);
+    await receive(companyId, A, 2, 100000);
+    const p = await seedPackage(companyId, { status: 'reserved', lines: [{ variantId: A, quantity: 2, reserved: true }] });
+    await setBuckets(companyId, A, { onHand: 1, invariantBroken: true });
+    const holder = await testPool().connect();
+    try {
+      await holder.query('begin');
+      await holder.query('select id from "order".packages where id = $1 for update', [p.packageId]);
+      const pending = run(companyId, [A]);
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await testPool().query<{ n: number }>(
+          `select count(*)::int n from pg_stat_activity where wait_event_type = 'Lock' and wait_event = 'tuple' or (wait_event_type = 'Lock' and wait_event = 'transactionid')`,
+        );
+        if (rows[0]!.n > 0) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      await setBuckets(companyId, A, { onHand: 2, invariantBroken: false });
+      await holder.query('commit');
+      expect((await pending).reclaimed).toEqual([]);
+      expect((await packageRow(p.packageId)).status).toBe('reserved');
+    } finally {
+      await holder.query('rollback').catch(() => {});
+      holder.release();
+    }
+  });
+
+  it('minor 2: kiện reserved mà dòng chưa giữ thì lấy lại không nhả phần giữ của kiện khác', async () => {
+    const { companyId } = await createCompany();
+    const { variantId: A } = await createVariant(companyId);
+    await receive(companyId, A, 2, 100000);
+    const other = await seedPackage(companyId, { status: 'reserved', lines: [{ variantId: A, quantity: 2, reserved: true }] });
+    const unheld = await seedPackage(companyId, { status: 'reserved', orderStatus: 'unpaid', lines: [{ variantId: A, quantity: 2 }] });
+    await setBuckets(companyId, A, { onHand: 1, invariantBroken: true });
+    const r = await run(companyId, [A]);
+    expect(r.reclaimed).toEqual([other.packageId]);
+    expect((await packageRow(unheld.packageId)).status).toBe('reserved');
+    expect((await stockOfVariant(companyId, A)).reserved).toBe(0);
+  });
+
+  it('minor 5: lấy lại phát package_status_changed reserved → backordered', async () => {
+    const { companyId } = await createCompany();
+    const { variantId: A } = await createVariant(companyId);
+    await receive(companyId, A, 1, 100000);
+    const p = await seedPackage(companyId, { status: 'reserved', lines: [{ variantId: A, quantity: 1, reserved: true }] });
+    await setBuckets(companyId, A, { onHand: 0, invariantBroken: true });
+    await run(companyId, [A]);
+    expect(await outboxOf(p.orderId, 'fulfillment.package_status_changed')).toContainEqual({
+      packageId: p.packageId,
+      orderId: p.orderId,
+      from: 'reserved',
+      to: 'backordered',
+    });
+  });
+
+  it('minor 6: lượt sau giữ được kiện đã đóng thì gỡ cờ Dỡ kiện về kệ của phiếu đầu kỳ', async () => {
+    const { companyId } = await createCompany();
+    const { variantId: A } = await createVariant(companyId);
+    await receive(companyId, A, 1, 100000);
+    const p = await seedPackage(companyId, { status: 'packed', lines: [{ variantId: A, quantity: 2 }] });
+    await withCompany(companyId, () => runAllocation({}, { all: true }, { opening: true }));
+    expect((await packageRow(p.packageId)).flag_note).toBe(DISMANTLE_NOTE);
+    await receive(companyId, A, 1, 100000);
+    await run(companyId, [A]);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_attention: false, flag_note: null });
+  });
+
+  it('AC6: cùng nhóm đơn processing thì kiện giữ sau cùng bị lấy trước', async () => {
+    const { companyId } = await createCompany();
+    const { variantId: A } = await createVariant(companyId);
+    await receive(companyId, A, 2, 100000);
+    const early = await seedPackage(companyId, { status: 'reserved', reservedAt: at(10), lines: [{ variantId: A, quantity: 1, reserved: true }] });
+    const late = await seedPackage(companyId, { status: 'reserved', reservedAt: at(11), lines: [{ variantId: A, quantity: 1, reserved: true }] });
+    await setBuckets(companyId, A, { onHand: 1, invariantBroken: true });
+    expect((await run(companyId, [A])).reclaimed).toEqual([late.packageId]);
+    expect((await packageRow(early.packageId)).status).toBe('reserved');
   });
 });
