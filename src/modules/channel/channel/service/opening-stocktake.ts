@@ -3,7 +3,7 @@
 // thì phân hàng cho mọi kiện chưa bàn giao, rồi mới đẩy tồn. Lần đẩy tồn đầu chờ đủ hai điều kiện: lượt kéo đơn còn mở chạy
 // lại theo mốc mới đã xong (`open_orders_pulled_at`) và fulfillment đã phân hàng từ lúc ghi sổ cho mọi biến thể đã ghép
 // của gian hàng (`allocation_pending_since` về null). Consumer chỉ ghi DB (đúng một lần nhờ `processed_events`), không gọi sàn.
-import { type EventPayload, recordAudit } from '../../../core/index.ts';
+import { type EventEnvelope, type EventPayload, recordAudit } from '../../../core/index.ts';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { lockCompanyAllocation, lockShopRow, recordAllocations, settleAllocationPending, updateShop } from '../repository/shops.ts';
@@ -27,7 +27,11 @@ function assertCountedAt(event: EventPayload<'inventory.stocktake_posted'>, now:
 
 /**
  * Phiếu nguồn `shop_setup` của gian hàng vừa ghi sổ: `openingStocktake = null`, `orderCutoffAt = countedAt`, ghi nhật ký
- * hệ thống, vào chờ phân hàng (`allocation_pending_since = postedAt`).
+ * hệ thống, vào chờ phân hàng (`allocation_pending_since = occurredAt` của sự kiện).
+ *
+ * Mốc chờ phân hàng lấy `occurredAt` của vỏ sự kiện (giờ Postgres lúc ghi outbox), không lấy `postedAt` (giờ máy Node
+ * của inventory): `allocation_done` so bằng `occurredAt` của nó, cùng một đồng hồ. Lượt phân hàng do ghi sổ gây ra luôn
+ * bắt đầu sau khi giao dịch ghi sổ commit, nên `occurredAt` của nó lớn hơn mốc này (#198 review I2).
  *
  * Lượt kéo đơn còn mở chạy lại (`open_orders_pulled_at = null`, gian hàng `active` thì xếp việc ngay; gian hàng mất uỷ
  * quyền thì nối lại sẽ xếp, `resumeOpenOrderPull`): mốc dời lên `countedAt` thì đơn đặt giữa lúc thiết lập và lúc đếm mà
@@ -41,7 +45,7 @@ function assertCountedAt(event: EventPayload<'inventory.stocktake_posted'>, now:
  * (`FOR NO KEY UPDATE`): giao dịch nhận đơn đọc `opening_stocktake_id` dưới `FOR SHARE` (`lockShopForOrders`) nên không
  * nhận đơn với chế độ cũ sau khi thoát.
  */
-export async function onOpeningStocktakePosted(event: EventPayload<'inventory.stocktake_posted'>): Promise<void> {
+export async function onOpeningStocktakePosted(event: EventPayload<'inventory.stocktake_posted'>, occurredAt: Date): Promise<void> {
   const orderCutoffAt = assertCountedAt(event, Date.now());
   const companyId = requireCompanyId('onOpeningStocktakePosted');
   if (event.source?.type !== 'shop_setup') return;
@@ -65,7 +69,7 @@ export async function onOpeningStocktakePosted(event: EventPayload<'inventory.st
       openingStocktakeNumber: null,
       orderCutoffAt,
       openOrdersPulledAt: null,
-      allocationPendingSince: new Date(event.postedAt),
+      allocationPendingSince: occurredAt,
     },
   );
   // Đã khoá dòng nên `version` không đổi giữa chừng; không trúng là lỗi thật, ném để consumer thử lại.
@@ -97,3 +101,11 @@ export async function onAllocationDone(variantIds: readonly string[], occurredAt
     if (shop.status === 'active' && shop.openOrdersPulledAt) await sendListingSync(companyId, shop.id);
   }
 }
+
+/** Handler đăng ký cho `inventory.stocktake_posted` (consumer `channel-opening-stocktake`). */
+export const handleStocktakePosted = (e: EventEnvelope<'inventory.stocktake_posted', EventPayload<'inventory.stocktake_posted'>>) =>
+  onOpeningStocktakePosted(e.payload, new Date(e.occurredAt));
+
+/** Handler đăng ký cho `fulfillment.allocation_done` (consumer `channel-allocation-done`). */
+export const handleAllocationDone = (e: EventEnvelope<'fulfillment.allocation_done', EventPayload<'fulfillment.allocation_done'>>) =>
+  onAllocationDone(e.payload.variantIds, new Date(e.occurredAt));

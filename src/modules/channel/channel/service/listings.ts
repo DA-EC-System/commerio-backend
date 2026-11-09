@@ -5,6 +5,7 @@ import { assertTransition, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type ListingAction, type ListingStatus, listingMachine } from '../domain/listing.ts';
+import { holdsStock } from '../domain/shop.ts';
 import { type CategoryMapRow, listCategoryMaps } from '../repository/category-maps.ts';
 import {
   findListingRow,
@@ -150,6 +151,8 @@ interface PushContext {
   adapter: MarketplaceAdapter;
   accessToken: string;
   imageUrls: Record<string, string[]>;
+  /** Gian hàng đang giữ tồn (`holdsStock`): gửi tồn 0, đánh `stock_sync = pending`. */
+  holdStock: boolean;
 }
 
 /**
@@ -167,12 +170,14 @@ export async function pushListings(
     throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kê đầu kỳ ${shop.openingStocktakeNumber} ghi sổ`);
   }
   const ids = [...new Set(input.variantIds)];
+  const hold = holdsStock(shop);
   const { variants, prices, available, maps } = await withCompany(actor.companyId, async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
     return {
       variants,
       prices: await port.standardPrices(ids),
-      available: await port.availableOf(ids),
+      // Giữ tồn thì tạo sản phẩm với tồn 0, để `stock_sync = pending`; lượt đồng bộ đầu tiên hết giữ mới đẩy số thật.
+      available: hold ? new Map<string, number>() : await port.availableOf(ids),
       maps: new Map(
         (await listCategoryMaps(shop.platform, [...new Set([...variants.values()].map((v) => v.categoryId))])).map((m) => [
           m.categoryId,
@@ -181,7 +186,7 @@ export async function pushListings(
       ),
     };
   });
-  const ctx: PushContext = { actor, shopId: shop.id, adapter, accessToken, imageUrls: input.imageUrls };
+  const ctx: PushContext = { actor, shopId: shop.id, adapter, accessToken, imageUrls: input.imageUrls, holdStock: hold };
   const results: PushResult[] = [];
   for (const variantId of ids) {
     const v = variants.get(variantId);
@@ -261,7 +266,7 @@ async function pushOne(
         listedPrice: priceText,
         lastPushedAt: new Date(),
         platformStock: quantity,
-        stockSync: 'synced',
+        stockSync: ctx.holdStock ? 'pending' : 'synced',
         priceSync: 'synced',
         stockSyncError: null,
         priceSyncError: null,

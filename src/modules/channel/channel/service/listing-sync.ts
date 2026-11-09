@@ -5,6 +5,7 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
+import { holdsStock } from '../domain/shop.ts';
 import { type ListingPatch, listListingRows, markStockPendingIds, markStockPendingRows, updateListing } from '../repository/listings.ts';
 import { markStockPushed } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
@@ -49,12 +50,8 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     summary.changed++;
   }
 
-  // Giữ tồn (#198): chờ phiếu kiểm kê đầu kỳ (25 §6.1 bước 3) hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần
-  // giữ cho đơn đó). Chỉ đẩy giá; tồn giữ `stock_sync = pending`, không ghi lỗi. Gian hàng chưa thiết lập (chưa có mốc)
-  // đẩy như trước #198.
-  // Sau kiểm kê đầu kỳ còn chờ fulfillment phân hàng (`allocation_pending_since`): phân hàng trước, đẩy tồn sau (25 §6.1 bước 3).
-  const holdStock =
-    shop.openingStocktakeId !== null || shop.allocationPendingSince !== null || (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null);
+  // Giữ tồn (#198, `holdsStock`): chỉ đẩy giá; tồn giữ `stock_sync = pending`, không ghi lỗi.
+  const holdStock = holdsStock(shop);
   const watched = rows.filter((r) => WATCHED.includes(r.status) && r.sellerSku && r.externalSkuId);
   summary.checked = watched.length;
   if (watched.length) {

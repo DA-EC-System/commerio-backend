@@ -22,6 +22,24 @@ export const shopMachine = defineMachine<ShopStatus, ShopAction>([
 ]);
 
 /** Nhãn "Sắp hết hạn" (§18.4): hạn uỷ quyền còn dưới 3 ngày. Access token do việc nền tự làm mới nên không tính. */
+/**
+ * Gian hàng đang giữ tồn (#198): chỉ đẩy giá, không gửi số tồn lên sàn. Giữ khi chờ phiếu kiểm kê đầu kỳ, chờ fulfillment
+ * phân hàng sau khi phiếu ghi sổ (25 §6.1 bước 3), hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần giữ cho đơn
+ * đó). Gian hàng chưa thiết lập (chưa có mốc) không giữ. Dùng chung cho đồng bộ listing và đẩy listing mới.
+ */
+export function holdsStock(shop: {
+  openingStocktakeId: string | null;
+  allocationPendingSince: Date | null;
+  orderCutoffAt: Date | null;
+  openOrdersPulledAt: Date | null;
+}): boolean {
+  return (
+    shop.openingStocktakeId !== null ||
+    shop.allocationPendingSince !== null ||
+    (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null)
+  );
+}
+
 export const EXPIRING_MS = 3 * 24 * 3600_000;
 
 /**

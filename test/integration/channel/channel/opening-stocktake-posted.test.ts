@@ -8,7 +8,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { EventPayload } from '#src/modules/core/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { runOpenOrderPull } from '#src/modules/channel/channel/service/background.ts';
-import { onAllocationDone, onOpeningStocktakePosted } from '#src/modules/channel/channel/service/opening-stocktake.ts';
+import {
+  handleAllocationDone,
+  handleStocktakePosted,
+  onAllocationDone,
+  onOpeningStocktakePosted,
+} from '#src/modules/channel/channel/service/opening-stocktake.ts';
+import { HandlerFailure, type IncomingMessage, processMessage, type ProcessDeps } from '#src/modules/core/platform/service/outbox/consumer.ts';
+import type { NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { setStocktakePort } from '#src/modules/channel/channel/service/stocktake-port.ts';
 import type { RemoteOrder, RemoteOrderRef, RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -50,9 +57,14 @@ const variant: ListingVariant = {
   widthMm: 100,
   heightMm: 10,
 };
+/** Biến thể thứ hai trên sàn (ca độ phủ một phần) và biến thể chưa có trên sàn (ca đẩy listing mới). */
+const variant2: ListingVariant = { ...variant, id: randomUUID(), sku: 'CMR-OS-2', attributesLabel: 'Đen' };
+const fresh: ListingVariant = { ...variant, id: randomUUID(), sku: 'CMR-OS-MOI', attributesLabel: 'Xanh' };
 const remote: RemoteSku[] = [
   { externalProductId: 'item-os', externalSkuId: 'sku-os', sellerSku: 'CMR-OS-1', title: 'Áo thun trắng', state: 'live', rejectReason: null, quantity: 4 },
+  { externalProductId: 'item-os2', externalSkuId: 'sku-os2', sellerSku: 'CMR-OS-2', title: 'Áo thun đen', state: 'live', rejectReason: null, quantity: 4 },
 ];
+const created: NewProduct[] = [];
 const updatePriceQuantity = vi.fn(async (_t: string, items: readonly { externalSkuId: string }[]) =>
   items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true as const })),
 );
@@ -93,7 +105,7 @@ function remoteOrder(id: string, placedAt: Date): RemoteOrder {
 
 beforeAll(() => {
   setProductPort({
-    variants: async (ids) => [variant].filter((v) => !ids || ids.includes(v.id)),
+    variants: async (ids) => [variant, variant2, fresh].filter((v) => !ids || ids.includes(v.id)),
     standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
     availableOf: async (ids) => new Map(ids.map((id) => [id, 7])),
   });
@@ -112,6 +124,12 @@ beforeAll(() => {
         safeUntil: null,
       }),
       getOrder,
+      categoryAttributes: async () => [],
+      uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,
+      async createProduct(_t, product) {
+        created.push(product);
+        return { externalProductId: `item-${product.sellerSku}`, externalSkuId: `sku-${product.sellerSku}`, live: false };
+      },
     }),
   );
   setStocktakePort({
@@ -126,6 +144,7 @@ afterAll(() => {
 });
 afterEach(() => {
   updatePriceQuantity.mockClear();
+  created.length = 0;
   open = [];
   jobs.failNext = false;
 });
@@ -138,14 +157,14 @@ const auth = (c: Company) => ({ Authorization: `Bearer ${c.ceo.token}` });
  * Gian hàng đầu tiên của công ty thiết lập `stocktake`: active, chờ phiếu đầu kỳ. Lượt kéo đơn còn mở lúc thiết lập coi
  * như đã xong và việc của nó đã chạy (xoá khỏi hàng), để ca sau đếm đúng việc do handler xếp.
  */
-async function waitingShop(c: Company): Promise<{ shopId: string; documentId: string; number: string }> {
+async function waitingShop(c: Company, externalSkuIds = ['sku-os']): Promise<{ shopId: string; documentId: string; number: string }> {
   const token = await app()
     .post('/api/v1/channel/shops/lazada/token')
     .set(auth(c))
     .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   expect(token.status).toBe(201);
   const shopId = token.body.shop.id as string;
-  const res = await app().post(`/api/v1/channel/shops/${shopId}/setup`).set(auth(c)).send({ externalSkuIds: ['sku-os'], openingStock: 'stocktake' });
+  const res = await app().post(`/api/v1/channel/shops/${shopId}/setup`).set(auth(c)).send({ externalSkuIds, openingStock: 'stocktake' });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   await testPool().query('update channel.shops set open_orders_pulled_at = now() where id = $1', [shopId]);
   await testPool().query("delete from pgboss.job where name = 'channel.open_order_pull' and data->>'shopId' = $1", [shopId]);
@@ -165,6 +184,39 @@ function posted(shopId: string, documentId: string, over: Partial<EventPayload<'
     lines: [{ variantId: variant.id, countedQty: 5, delta: 1 }],
     ...over,
   };
+}
+
+/** Phát `stocktake_posted` như consumer: `occurredAt` của vỏ sự kiện mặc định là lúc gọi. */
+const stocktakePosted = (c: Company, event: EventPayload<'inventory.stocktake_posted'>, occurredAt = new Date()) =>
+  withCompany(c.companyId, () => onOpeningStocktakePosted(event, occurredAt));
+
+/** Chạy một sự kiện qua `processMessage` thật, handler đăng ký như `channel/index.ts`, trong `withCompany` như `runShared`. */
+async function viaConsumer(c: Company, type: 'inventory.stocktake_posted' | 'fulfillment.allocation_done', payload: unknown, occurredAt: Date) {
+  const envelope = { eventId: randomUUID(), type, companyId: c.companyId, aggregateId: randomUUID(), occurredAt: occurredAt.toISOString(), payload };
+  const message: IncomingMessage = {
+    topic: `commerio.${type.split('.')[0]}`,
+    partition: 0,
+    offset: '1',
+    key: null,
+    headers: { type },
+    value: Buffer.from(JSON.stringify(envelope)),
+  };
+  const handler = type === 'inventory.stocktake_posted' ? handleStocktakePosted : handleAllocationDone;
+  const deps: ProcessDeps = {
+    spec: { consumer: 'test', scope: 'shared', handlers: new Map([[type, handler as never]]) },
+    retryDelaysMs: [],
+    runHandler: async (e, h) => {
+      try {
+        await withCompany(c.companyId, () => h(e));
+      } catch (err) {
+        throw new HandlerFailure(err);
+      }
+    },
+    sendToDlq: async (_m, reason) => {
+      throw new Error(`DLQ: ${reason}`);
+    },
+  };
+  expect(await processMessage(message, 0, deps)).toEqual({ kind: 'done' });
 }
 
 async function shopRow(id: string) {
@@ -205,8 +257,9 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const before = await shopRow(shopId);
     expect(await openPullJobs(shopId)).toBe(0);
     const event = posted(shopId, documentId, { number });
+    const occurredAt = new Date(Date.now() - 2_000);
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(event));
+    await stocktakePosted(c, event, occurredAt);
 
     const after = await shopRow(shopId);
     expect(after).toMatchObject({
@@ -217,8 +270,8 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
       version: before.version + 1,
     });
     expect(after.order_cutoff_at.toISOString()).toBe(event.countedAt);
-    // Có listing ghép mà chưa có lần phân hàng nào từ lúc ghi sổ: chờ phân hàng, mốc = postedAt.
-    expect(after.allocation_pending_since.toISOString()).toBe(event.postedAt);
+    // Có listing ghép mà chưa có lần phân hàng nào từ lúc ghi sổ: chờ phân hàng, mốc = occurredAt của sự kiện (I2).
+    expect(after.allocation_pending_since.getTime()).toBe(occurredAt.getTime());
     const one = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
     expect(one.body).toMatchObject({ openingStocktake: null, orderCutoffAt: event.countedAt });
 
@@ -250,7 +303,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const countedAt = new Date().toISOString();
     open = [remoteOrder(`GIUA-${randomUUID().slice(0, 8)}`, placedAt)];
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { countedAt, postedAt: countedAt })));
+    await stocktakePosted(c, posted(shopId, documentId, { countedAt, postedAt: countedAt }));
     expect(placedAt.getTime()).toBeLessThan((await shopRow(shopId)).order_cutoff_at.getTime());
 
     await runOpenOrderPull({ companyId: c.companyId, shopId });
@@ -263,8 +316,8 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   it('I2 (B): đơn mở xong mà chưa có allocation_done thì không đẩy tồn; có thì xếp đồng bộ và đẩy đúng một lần; phát lại không đổi gì', async () => {
     const c = await createCompany({ optionalModules: ['channel'] });
     const { shopId, documentId } = await waitingShop(c);
-    const event = posted(shopId, documentId);
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(event));
+    const since = new Date(Date.now() - 1000);
+    await stocktakePosted(c, posted(shopId, documentId), since);
     await runOpenOrderPull({ companyId: c.companyId, shopId });
     expect((await shopRow(shopId)).open_orders_pulled_at).not.toBeNull();
 
@@ -278,7 +331,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     ]);
 
     // Phân hàng trước lúc ghi sổ, hoặc của biến thể khác, không tính.
-    await allocated(c, [variant.id], new Date(new Date(event.postedAt).getTime() - 1000));
+    await allocated(c, [variant.id], new Date(since.getTime() - 1));
     await allocated(c, [randomUUID()], new Date());
     expect((await shopRow(shopId)).allocation_pending_since).not.toBeNull();
 
@@ -302,15 +355,15 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const c = await createCompany({ optionalModules: ['channel'] });
     const other = await createCompany({ optionalModules: ['channel'] });
     const { shopId, documentId } = await waitingShop(c);
-    const postedAt = new Date(Date.now() - 1000).toISOString();
+    const since = new Date(Date.now() - 1000);
     await allocated(other, [variant.id], new Date());
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { postedAt, countedAt: postedAt })));
+    await stocktakePosted(c, posted(shopId, documentId), since);
     expect((await shopRow(shopId)).allocation_pending_since).not.toBeNull();
 
     const c2 = await createCompany({ optionalModules: ['channel'] });
     const w2 = await waitingShop(c2);
     await allocated(c2, [variant.id], new Date());
-    await withCompany(c2.companyId, () => onOpeningStocktakePosted(posted(w2.shopId, w2.documentId, { postedAt, countedAt: postedAt })));
+    await stocktakePosted(c2, posted(w2.shopId, w2.documentId), since);
     expect((await shopRow(w2.shopId)).allocation_pending_since).toBeNull();
   });
 
@@ -320,7 +373,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);
     const event = posted(shopId, documentId);
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(event));
+    await stocktakePosted(c, event);
 
     const after = await shopRow(shopId);
     expect(after).toMatchObject({ status: 'needs_reauth', opening_stocktake_id: null, open_orders_pulled_at: null });
@@ -334,7 +387,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const before = await shopRow(shopId);
     jobs.failNext = true;
 
-    await expect(withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId)))).rejects.toThrow('pg-boss lỗi giả');
+    await expect(stocktakePosted(c, posted(shopId, documentId))).rejects.toThrow('pg-boss lỗi giả');
 
     expect(await shopRow(shopId)).toEqual(before);
     expect(await auditCount(shopId)).toBe(0);
@@ -352,7 +405,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const blocked = await app().post(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push' });
     expect(blocked.status).toBe(422);
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId)));
+    await stocktakePosted(c, posted(shopId, documentId));
 
     const preview = await app().get(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c));
     expect(preview.body.firstShopOfCompany).toBe(false);
@@ -366,15 +419,15 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, randomUUID())));
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { source: null })));
+    await stocktakePosted(c, posted(shopId, randomUUID()));
+    await stocktakePosted(c, posted(shopId, documentId, { source: null }));
     // RLS: công ty khác không thấy gian hàng này
-    await withCompany(other.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId)));
+    await stocktakePosted(other, posted(shopId, documentId));
     expect(await shopRow(shopId)).toEqual(before);
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId)));
+    await stocktakePosted(c, posted(shopId, documentId));
     const once = await shopRow(shopId);
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId)));
+    await stocktakePosted(c, posted(shopId, documentId));
     expect(await shopRow(shopId)).toEqual(once);
     expect(await auditCount(shopId)).toBe(1);
   });
@@ -387,11 +440,11 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const iso = (ms: number) => new Date(ms).toISOString();
 
     await expect(
-      withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { countedAt: iso(now), postedAt: iso(now - 60_000) }))),
+      stocktakePosted(c, posted(shopId, documentId, { countedAt: iso(now), postedAt: iso(now - 60_000) })),
     ).rejects.toThrow(/sau postedAt/);
     const future = iso(now + 3_600_000);
     await expect(
-      withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { countedAt: future, postedAt: future }))),
+      stocktakePosted(c, posted(shopId, documentId, { countedAt: future, postedAt: future })),
     ).rejects.toThrow(/tương lai/);
     expect(await shopRow(shopId)).toEqual(before);
   });
@@ -401,8 +454,103 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     const { shopId, documentId } = await waitingShop(c);
     const early = new Date((await shopRow(shopId)).order_cutoff_at.getTime() - 3_600_000).toISOString();
 
-    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { countedAt: early })));
+    await stocktakePosted(c, posted(shopId, documentId, { countedAt: early }));
 
     expect((await shopRow(shopId)).order_cutoff_at.toISOString()).toBe(early);
+  });
+});
+
+describe('chờ phân hàng sau khi thoát chờ kiểm kê (#198 review B: I1, I2, I3)', () => {
+  it('I2: qua consumer thật, mốc chờ = occurredAt của stocktake_posted; allocation_done đúng bằng mốc (>=) thì hết chờ, sớm 1 ms thì không', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    // `postedAt` (giờ máy inventory) lệch hẳn khỏi `occurredAt` (giờ outbox): mốc phải theo `occurredAt`.
+    const occurredAt = new Date(Date.now() - 5_000);
+    const postedAt = new Date(occurredAt.getTime() + 2_000).toISOString();
+    await viaConsumer(c, 'inventory.stocktake_posted', posted(shopId, documentId, { postedAt, countedAt: postedAt }), occurredAt);
+    expect((await shopRow(shopId)).allocation_pending_since.getTime()).toBe(occurredAt.getTime());
+
+    await viaConsumer(c, 'fulfillment.allocation_done', { variantIds: [variant.id] }, new Date(occurredAt.getTime() - 1));
+    expect((await shopRow(shopId)).allocation_pending_since).not.toBeNull();
+    // Trước khi sửa I2, lần phân hàng này (sau occurredAt nhưng trước postedAt) bị coi là cũ.
+    await viaConsumer(c, 'fulfillment.allocation_done', { variantIds: [variant.id] }, occurredAt);
+    expect((await shopRow(shopId)).allocation_pending_since).toBeNull();
+  });
+
+  it('allocation_done tới trước khi lượt đơn mở xong: hết chờ nhưng chưa xếp đồng bộ; lượt đơn mở xong mới xếp và đẩy tồn', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    await stocktakePosted(c, posted(shopId, documentId));
+    await clearListingSyncJobs(shopId);
+
+    await allocated(c, [variant.id], new Date());
+    expect(await shopRow(shopId)).toMatchObject({ allocation_pending_since: null, open_orders_pulled_at: null });
+    expect(await listingSyncJobs(shopId)).toBe(0);
+    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    expect(quantityPushes()).toBe(0);
+
+    await runOpenOrderPull({ companyId: c.companyId, shopId });
+    expect(await listingSyncJobs(shopId)).toBe(1);
+    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    expect(quantityPushes()).toBe(1);
+  });
+
+  it('gian hàng không active nhận allocation_done: hết chờ, không xếp đồng bộ', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    await stocktakePosted(c, posted(shopId, documentId));
+    await testPool().query("update channel.shops set status = 'needs_reauth', open_orders_pulled_at = now() where id = $1", [shopId]);
+    await clearListingSyncJobs(shopId);
+
+    await allocated(c, [variant.id], new Date());
+
+    expect((await shopRow(shopId)).allocation_pending_since).toBeNull();
+    expect(await listingSyncJobs(shopId)).toBe(0);
+  });
+
+  it('allocation_done chỉ phủ một phần biến thể đã ghép: vẫn chờ tới khi đủ', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c, ['sku-os', 'sku-os2']);
+    await stocktakePosted(c, posted(shopId, documentId));
+
+    await allocated(c, [variant.id], new Date());
+    expect((await shopRow(shopId)).allocation_pending_since).not.toBeNull();
+    await allocated(c, [variant2.id], new Date());
+    expect((await shopRow(shopId)).allocation_pending_since).toBeNull();
+  });
+
+  it('gian hàng không có listing nào: hết chờ phân hàng ngay khi thoát chờ kiểm kê', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c, []);
+
+    await stocktakePosted(c, posted(shopId, documentId));
+
+    expect(await shopRow(shopId)).toMatchObject({ opening_stocktake_id: null, allocation_pending_since: null });
+  });
+
+  it('I1: đẩy listing mới trong lúc chờ phân hàng thì tạo sản phẩm với tồn 0, tồn để chờ đồng bộ', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    await stocktakePosted(c, posted(shopId, documentId));
+    await testPool().query('update channel.shops set open_orders_pulled_at = now() where id = $1', [shopId]);
+    const map = await app()
+      .put(`/api/v1/channel/shops/${shopId}/category-maps/${fresh.categoryId}`)
+      .set(auth(c))
+      .send({ externalCategoryId: '14275', attributes: { brand: 'No Brand' }, version: null });
+    expect(map.status).toBe(200);
+
+    const res = await app()
+      .post(`/api/v1/channel/shops/${shopId}/listings/push`)
+      .set(auth(c))
+      .send({ variantIds: [fresh.id], imageUrls: { [fresh.productId]: ['https://img.test/a.png'] } });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.results).toEqual([expect.objectContaining({ outcome: 'created' })]);
+    expect(created).toEqual([expect.objectContaining({ sellerSku: fresh.sku, quantity: 0 })]);
+    const { rows } = await testPool().query('select stock_sync, platform_stock from channel.listings where shop_id = $1 and variant_id = $2', [
+      shopId,
+      fresh.id,
+    ]);
+    expect(rows).toEqual([{ stock_sync: 'pending', platform_stock: 0 }]);
   });
 });

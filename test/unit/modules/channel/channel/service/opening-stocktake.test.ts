@@ -2,7 +2,7 @@
 // sai (review S1). Chạy `processMessage` thật, không Kafka, không DB: handler ném trước khi chạm DB.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { onOpeningStocktakePosted } from '#src/modules/channel/channel/service/opening-stocktake.ts';
+import { handleStocktakePosted } from '#src/modules/channel/channel/service/opening-stocktake.ts';
 import {
   type Handler,
   HandlerFailure,
@@ -40,7 +40,7 @@ function payload(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 function deps() {
-  const handler: Handler = (e) => onOpeningStocktakePosted(e.payload as Parameters<typeof onOpeningStocktakePosted>[0]);
+  const handler = handleStocktakePosted as unknown as Handler;
   return {
     spec: { consumer: 'channel-opening-stocktake', scope: 'shared' as const, handlers: new Map([[TYPE, handler]]) },
     retryDelaysMs: RETRIES,
