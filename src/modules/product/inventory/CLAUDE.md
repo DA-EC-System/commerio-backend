@@ -63,7 +63,7 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
   - `reverseShipment(packageId, lines, { actorId, reason })` → `{ documentId, number }`: đảo cả lượt đang xuất, cộng lại tồn thực và đang giữ; `lines` phải gồm đúng mọi SKU của lượt với đúng tổng đã xuất (`25` §8.3 không đảo một phần), lệch hay không còn lượt thì 500; `reason` sau khi trim khác rỗng, ≤ 500 ký tự.
   - `receiveBack({ type: 'package' | 'return_request', id }, lines, meta?)` → `{ documentId, number }`: phiếu `KT` nháp, không đổi tồn; `meta` (#208) mang mã chứng từ nguồn, đơn, gian hàng, giá vốn dòng kiện gốc cho `inventory.return_inspected`; nguồn đã có phiếu thì trả phiếu đó. Mỗi nguồn tối đa một phiếu (unique một phần `stock_documents_return_inspection_source_uq`): lần gọi song song đụng unique thì lùi savepoint (không nhảy số), trả phiếu của bên commit trước; giao dịch bên gọi vẫn dùng tiếp được.
 - `createQuarantineWriteOff(source, lines, note, actorId)`: xuất huỷ nháp từ chờ xử lý (phiếu trả NCC bị huỷ, #210).
-- `createOpeningStocktake(shopId, { actorId })` (Documents/21 mục 11.3, #245): kiểm kê đầu kỳ nháp nguồn `shop_setup` cho channel (#198); gọi lại hoặc gọi đua trả phiếu đang mở (`created: false`, unique `stock_documents_opening_uq`).
+- `createOpeningStocktake(shopId, { actorId })` (Documents/21 mục 11.3, #245): kiểm kê đầu kỳ nháp nguồn `shop_setup` cho channel (#198); gọi lại hoặc gọi đua trả phiếu đang mở (`created: false`, unique `stock_documents_opening_uq`). Phiếu do hệ thống lập (`created_by` null, `actorId` ghi ở lịch sử); người gửi duyệt thành người lập. Không giới hạn số dòng khi sửa.
 
 ## Bên gọi cổng theo kiện phải làm
 
@@ -75,8 +75,8 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 
 ## Phiếu kho có duyệt (`service/documents.ts`, #208)
 
-- Bảng chuyển ở `domain/stock-document.ts` (chép FE `src/lib/machines/stockDocument.ts`): duyệt, từ chối cần người khác người lập (kiểm hàng về: khác người gửi duyệt phần thiếu, cột `created_by` đổi sang người gửi), CEO hoặc công ty một người tự duyệt được (`self_approved`, nhãn trong lịch sử, nhật ký, báo cáo CEO).
-- Kiểm kê chụp tồn sổ của ngăn (`book_qty`) mỗi lần lưu; Δ = đếm − sổ. Duyệt kiểm kê được làm tồn âm (`applyMoves` `allowBreak`, 25 §7.1) và phát `inventory.stocktake_posted`.
+- Bảng chuyển ở `domain/stock-document.ts` (chép FE `src/lib/machines/stockDocument.ts`): duyệt, từ chối cần người khác người lập (kiểm hàng về và kiểm kê đầu kỳ: cột `created_by` đổi sang người gửi duyệt), CEO hoặc công ty một người tự duyệt được (`self_approved`, nhãn trong lịch sử, nhật ký, báo cáo CEO).
+- Kiểm kê chụp tồn sổ của ngăn (`book_qty`) mỗi lần lưu; Δ = đếm − sổ. Duyệt kiểm kê được làm tồn âm (`applyMoves` `allowBreak`, 25 §7.1) và phát `inventory.stocktake_posted` (có `countedAt` là lúc lưu số đếm, `postedAt` trùng `posted_at`).
 - Gửi duyệt xuất huỷ, chuyển chờ xử lý: thiếu khả dụng (hoặc chờ xử lý) thì 422 `stock_insufficient` theo dòng. Xuất huỷ chờ xử lý bị từ chối thì `needsDecision` tới khi `/decide` (nhập lại tồn, hoặc lập phiếu trả NCC nháp).
 - Kiểm hàng về ghi sổ: bán lại vào tồn thực (giá vốn bình quân không đổi), hỏng và trả NCC vào chờ xử lý; hỏng sinh xuất huỷ nháp (nguồn là phiếu này), trả NCC sinh phiếu trả NCC nháp qua `setSupplierReturnPort` (purchasing import inventory nên nối ở `product/index.ts`); nguồn `return_request` thì phát `inventory.return_inspected`.
 - Dòng phiếu chèn với `created_at` lệch từng mili giây để đọc đúng thứ tự nhập.
