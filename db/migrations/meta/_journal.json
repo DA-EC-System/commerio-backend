@@ -232,6 +232,13 @@
       "when": 1794248957402,
       "tag": "0032_kiem-ke-dau-ky",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794249529278,
+      "tag": "0033_tra-ncc",
+      "breakpoints": true
     }
   ]
 }
