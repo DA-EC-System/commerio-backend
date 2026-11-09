@@ -38,6 +38,19 @@
 2. **`setStockPort` nhận `Partial<StockPort>`** gộp với bản thật, để test cũ chỉ giả `reserve`/`release` vẫn chạy khi cổng có thêm `ship`, `reverseShipment`, `stockOf`.
 3. **`pickupUnconfirmed`** là hàm thuần trong `domain/handover.ts` (S 5.5), dùng ở hàm dựng `PackageSummary`.
 4. **Thử lại câu `UPDATE` điền dữ liệu của migration** (AC 14): test đọc câu `UPDATE` trong file migration và chạy nó trong một giao dịch rollback (DB test trống nên không có dòng cũ).
+5. **Đối chiếu skill `idempotency-and-side-effects`:**
+   - `hand-over` không cần khoá idempotency: chuyển trạng thái có kiểm `version` và khoá dòng, nên gọi lại không trừ thêm, chỉ báo `already_handed_over`.
+   - Mọi hàm ghi tồn khác (hàm bù, dòng ghép muộn, huỷ bàn giao) có ca "gọi lần hai không đổi gì" (Task 6, 11).
+   - Không gọi sàn trong giao dịch; sự kiện qua outbox.
+6. **Đối chiếu skill `query-discipline`:**
+   - Route danh sách giữ phân trang `page`/`pageSize` theo hợp đồng `21`.
+   - `counts` chỉ quét kiện ở các trạng thái của tab và cờ `needs_open` (dùng index `status`), không quét lịch sử kiện đã giao, đã huỷ.
+   - Số câu SQL của danh sách không tăng theo số kiện: có test đếm câu như 2a (Task 9).
+   - `ilike` không có index: ghi vào giới hạn đã biết.
+7. **Đối chiếu skill `error-handling-as-design`:** lỗi của người gọi trong `hand-over` không ghi log `error`. Lỗi hệ thống trả `detail` chung chung, không chép `err.message` ra ngoài; chi tiết nằm trong log.
+8. **Đối chiếu context7:**
+   - Drizzle 0.45 chỉ có `.nullsLast()` ở khai báo index. Câu `SELECT` sắp `ship_by` bằng ``sql`${packages.shipBy} asc nulls last` ``.
+   - Zod 4 bỏ `superRefine` (dùng `.check`/`.refine`). Kiểm id trùng bằng `.refine` gắn vào mảng `packages`, nên lỗi rơi đúng ô `errors.packages`.
 
 ## Review Focus
 
@@ -240,6 +253,7 @@ Trước Task 3: `git rebase feature/199-su-kien-kien` (nhánh của Task 2).
     - kiện `in_transit` có một dòng đã trừ và một dòng `variant_id` null;
     - test gán `variant_id` cho dòng đó bằng `testPool()`;
     - gọi `shipLateMappedLines` → thêm một phiếu `XK` chỉ cho dòng đó; dòng cũ không đổi.
+  - `it('AC11: gọi shipLateMappedLines lần hai → không phiếu mới, tồn không đổi')`.
   - `it('AC11: kiện before_cutoff hoặc chưa rời kho → không làm gì')`.
 - [ ] **Step 2:** Chạy file test. Expected: FAIL, hàm chưa có.
 - [ ] **Step 3:** Viết theo Interfaces và S 5.3.
@@ -326,7 +340,9 @@ Trước Task 3: `git rebase feature/199-su-kien-kien` (nhánh của Task 2).
   - `type PackageTab = 'backordered' | 'reserved' | 'packed' | 'awaiting_pickup' | 'shipping' | 'delivery_failed' | 'returning' | 'needs_open'`.
   - `findPackagePage(f: PackageFilter & { tab: PackageTab; limit: number; offset: number }): Promise<{ rows: PackageViewRow[]; total: number }>`, `countPackageTabs(f: PackageFilter): Promise<Record<PackageTab, number>>`, với `PackageFilter = { search?: string; source?: 'marketplace' | 'inbox' | 'manual'; shopId?: string }`.
     - `search` khớp mã kiện, mã đơn (SQL thô `"order".orders`), mã vận đơn, `ilike`, thoát `\`, `%`, `_`.
-    - Sắp `ship_by asc nulls last, code asc`.
+    - Sắp ``sql`${packages.shipBy} asc nulls last` ``, rồi `asc(packages.code)`.
+    - `countPackageTabs` là một câu `count(*) filter (where …)` cho 8 tab, với `where status in (<các trạng thái của tab>) or needs_open`.
+  - Dựng trang theo lô, không truy vấn theo từng kiện: dòng kiện một câu (như `findPackagesOfOrders`), `orderRefsOf(ids)` một lần, `shopsOf(ids)` một lần.
   - Service `listPackages(ctx: FulfillmentContext, q)`, `getPackage(ctx: FulfillmentContext, id: string)`.
   - Schema `PackageListQuery` (`tab` mặc định `reserved`, `page` ≥ 1, `pageSize` 1..100 mặc định 20, `search` ≤ 100), `PackagePage` (`.meta({ id: 'PackagePage' })`), `Package = PackageSummary.extend({ statusHistory: z.array(StatusChange) }).meta({ id: 'Package' })`.
 
@@ -340,6 +356,7 @@ Trước Task 3: `git rebase feature/199-su-kien-kien` (nhánh của Task 2).
   - `it('Review Focus 5: search "%" hoặc "_" không khớp kiện không chứa ký tự đó')`.
   - `it('AC12: GET /:id trả Package có statusHistory; công ty khác và id không phải uuid → 404')`.
   - `it('Kho xem được; Sale → 403')`.
+  - `it('số câu SQL của trang 2 kiện và trang 10 kiện bằng nhau')`: gọi `listPackages` trực tiếp, đếm bằng `vi.spyOn(pg.Client.prototype, 'query')` như `test/integration/product/inventory/stock.test.ts`.
   - Mọi body 200: `PackagePage.parse` / `Package.parse`.
 - [ ] **Step 2:** Chạy file test. Expected: FAIL, route 404.
 - [ ] **Step 3:** Viết theo Interfaces, khai OpenAPI hai route.
@@ -357,8 +374,11 @@ Trước Task 3: `git rebase feature/199-su-kien-kien` (nhánh của Task 2).
 - Consumes: Task 5 (`lockPackage`, `settleHandover`), `packageMachine`, `assertTransition`, `recordTransition`, `publishEvent`.
 - Produces:
   - `interface Actor { companyId: string; accountId: string; permissions: readonly string[]; enabledModules: readonly string[] }`.
-  - `handOverPackages(actor: Actor, items: readonly { id: string; version: number }[]): Promise<{ handedOver: { id: string; code: string; issue: { id: string; number: string } }[]; failed: { packageId: string; code: string; detail: string }[] }>`. Mỗi kiện một `withCompany`. `AppError` vào `failed` (`code`, `detail = message`). Lỗi khác thành `internal_error`, kèm `logger.error({ err, packageId })`.
-  - Schema `HandOverBody` (`packages` 1..50, `id` uuid, `version` int ≥ 0; id trùng → lỗi `errors.packages`), `HandOverResult` (`.meta({ id: 'HandOverResult' })`).
+  - `handOverPackages(actor: Actor, items: readonly { id: string; version: number }[]): Promise<{ handedOver: { id: string; code: string; issue: { id: string; number: string } }[]; failed: { packageId: string; code: string; detail: string }[] }>`. Mỗi kiện một `withCompany`.
+    - `AppError` vào `failed` (`code`, `detail = message`), không ghi log `error`.
+    - Lỗi khác: `code = 'internal_error'`, `detail = 'Lỗi hệ thống khi bàn giao kiện này, thử lại sau'`, kèm `logger.error({ err, packageId })`.
+  - Schema `HandOverBody`: `packages` 1..50, `id` uuid, `version` int ≥ 0; id trùng chặn bằng `.refine` trên mảng `packages`, message "Mỗi kiện chỉ quét một lần", lỗi ở `errors.packages`.
+  - Schema `HandOverResult` (`.meta({ id: 'HandOverResult' })`).
   - Route `POST /packages/hand-over`, `ctx.authorize('fulfillment.order.process')`.
 
 - [ ] **Step 1: Test đỏ (AC 1–4; Review Focus 3)**
@@ -406,6 +426,7 @@ Trước Task 3: `git rebase feature/199-su-kien-kien` (nhánh của Task 2).
   - `it('D2-06g: kiện vào in_transit do sàn báo → 409 handover_confirmed_by_platform')`.
   - `it('D2-06q: Kho, Admin, Sale → 403')`.
   - `it('version cũ → 409 version_conflict kèm current')`.
+  - `it('gọi huỷ lần hai với version mới → 409 invalid_transition, tồn không đổi, chỉ một phiếu DX')`.
   - `it('Review Focus 4: đơn đang huỷ → kiện về awaiting_pickup, cờ Cần xử lý "Đơn đang huỷ: dỡ kiện về kệ"')`.
 - [ ] **Step 2:** Chạy file test. Expected: FAIL, route 404.
 - [ ] **Step 3:** Viết theo Interfaces.
