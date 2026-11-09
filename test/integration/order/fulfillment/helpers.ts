@@ -12,6 +12,8 @@ export interface SeedLine {
   quantity: number;
   /** Dòng đã giữ hàng: gọi `reserve` thật để `stock_levels.reserved` khớp. */
   reserved?: boolean;
+  /** Dòng đã trừ (spec 199c §5.3): chèn `unit_cost` và `stock_deducted = true`. */
+  unitCost?: string;
 }
 
 /**
@@ -26,6 +28,7 @@ export async function seedPackage(
     handoverSource?: HandoverSource | null;
     handedOverAt?: Date | null;
     pickupConfirmedAt?: Date | null;
+    deliveredAt?: Date | null;
     shopId?: string;
     orderStatus?: 'unpaid' | 'processing' | 'cancelled';
     /** Lúc đơn về app (`orders.created_at`), cho thứ tự "đơn kéo về trước" của phân hàng. */
@@ -58,8 +61,8 @@ export async function seedPackage(
   const shop = await db.query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [order.orderId]);
   const pkg = await db.query<{ id: string }>(
     `insert into "order".packages (company_id, code, order_id, shop_id, status, handed_over_at, handover_source,
-       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
+       pickup_confirmed_at, delivered_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id`,
     [
       companyId,
       packageCode,
@@ -69,6 +72,7 @@ export async function seedPackage(
       p.handedOverAt !== undefined ? p.handedOverAt : out ? new Date() : null,
       p.handoverSource !== undefined ? p.handoverSource : out ? 'scan' : null,
       p.pickupConfirmedAt ?? null,
+      p.deliveredAt ?? null,
       p.shipBy ?? null,
       p.trackingCode ?? null,
       p.needsOpen ?? false,
@@ -80,9 +84,9 @@ export async function seedPackage(
   const lineIds: string[] = [];
   for (const [i, l] of p.lines.entries()) {
     const { rows } = await db.query<{ id: string }>(
-      `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty)
-       values ($1, $2, $3, $4, $5, $6) returning id`,
-      [companyId, packageId, orderLines[i]!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0],
+      `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty, unit_cost, stock_deducted)
+       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      [companyId, packageId, orderLines[i]!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0, l.unitCost ?? null, l.unitCost != null],
     );
     lineIds.push(rows[0]!.id);
   }

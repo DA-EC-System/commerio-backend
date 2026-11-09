@@ -79,6 +79,8 @@ export const packages = fulfillmentSchema.table(
     lostReportedAt: timestamp('lost_reported_at', { withTimezone: true }),
     lostClaimCode: text('lost_claim_code'),
     lostConfirmedBy: uuid('lost_confirmed_by'),
+    /** Lúc `fulfillment.package_delivered` của kiện được ghi outbox; kiện giao đầu tiên của đơn mang ship cấp đơn (spec 199c §5.1, D4). Không bao giờ đặt lại null. */
+    deliveryPostedAt: timestamp('delivery_posted_at', { withTimezone: true }),
     // Vận chuyển do sàn trả (#260).
     shipmentProvider: text('shipment_provider'),
     shippingProviderType: text('shipping_provider_type'),

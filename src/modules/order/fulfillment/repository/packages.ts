@@ -64,6 +64,7 @@ export async function updatePackage(
     pickupConfirmedAt: Date | null;
     deliveredAt: Date;
     reservedAt: Date | SQL | null;
+    deliveryPostedAt: Date | SQL | null;
   }> &
     Partial<PackageShipping>,
 ): Promise<void> {
