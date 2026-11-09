@@ -84,7 +84,7 @@ export async function settleHandover(
 }
 
 /**
- * Hàm bù khi phiếu kiểm kê đầu kỳ của gian hàng ghi sổ (#198 gọi trong giao dịch ghi sổ hoặc ngay sau): kiện đã rời
+ * Hàm bù khi phiếu kiểm kê đầu kỳ của gian hàng ghi sổ (#198 gọi trong `withCompany` riêng, sau khi giao dịch ghi sổ commit, để giữ thứ tự khoá kiện → dòng tồn): kiện đã rời
  * kho lúc chờ kiểm kê (`defer`) thì rời kho từ `countedAt` trở đi trừ tồn, trước đó ghi `before_cutoff` (kiểm kê đã
  * tính). Gọi lần hai không trừ thêm: kiện đã trừ hết dòng hoặc đã `before_cutoff` không còn được chọn.
  */

@@ -18,7 +18,7 @@ export interface Actor {
 }
 
 export interface HandOverResult {
-  handedOver: { id: string; code: string; issue: { id: string; number: string } }[];
+  handedOver: { id: string; code: string; issue: { id: string; number: string } | null }[];
   failed: { packageId: string; code: string; detail: string }[];
 }
 
@@ -41,11 +41,11 @@ async function handOverOne(actor: Actor, item: { id: string; version: number }) 
     Object.assign(pkg, { status: to, handoverSource: 'scan', handedOverAt: at });
     await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action: 'hand_over', actorId: actor.accountId });
     const { documents } = await settleHandover(pkg, { actorId: actor.accountId, mode: 'deduct' });
-    // Kiện chờ lấy hàng đã đủ SKU và đã giữ hàng: luôn đúng một phiếu.
-    const issue = documents[0];
-    if (!issue) throw new Error(`Kiện ${pkg.id} bàn giao mà không có phiếu xuất`);
+    // Kiện sàn có thể tới chờ lấy hàng khi chưa ghép SKU: không có dòng nào để trừ thì không có phiếu, dòng chờ ghép
+    // muộn (`shipLateMappedLines`, #237). Thường đúng một phiếu; hai phiếu (dòng giữ + dòng bắt buộc) trả phiếu đầu.
+    const issue = documents[0] ? { id: documents[0].documentId, number: documents[0].number } : null;
     await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: pkg.orderId, payload: { packageId: pkg.id, orderId: pkg.orderId, from, to } });
-    return { id: pkg.id, code: pkg.code, issue: { id: issue.documentId, number: issue.number } };
+    return { id: pkg.id, code: pkg.code, issue };
   });
 }
 

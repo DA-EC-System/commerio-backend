@@ -120,7 +120,16 @@ export const HandOverBody = z.object({
 export const HandOverResult = z
   .object({
     handedOver: z.array(
-      z.object({ id: z.uuid(), code: z.string(), issue: z.object({ id: z.uuid(), number: z.string() }).meta({ description: 'Phiếu xuất `XK`' }) }).strict(),
+      z
+        .object({
+          id: z.uuid(),
+          code: z.string(),
+          issue: z
+            .object({ id: z.uuid(), number: z.string() })
+            .nullable()
+            .meta({ description: 'Phiếu xuất `XK`; null khi kiện chưa có dòng nào ghép SKU (trừ khi ghép muộn)' }),
+        })
+        .strict(),
     ),
     failed: z.array(
       z

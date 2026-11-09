@@ -219,8 +219,12 @@ async function applyStatus(order: PlatformPackageOrder, pkg: PackageRow, remote:
     await updatePackage(pkg.id, { pickupConfirmedAt: at });
     pkg.pickupConfirmedAt = at;
   }
+  // Sàn không bao giờ kéo kiện ra khỏi nhóm rời kho (mũi tên `undo_handover` chỉ dành cho CEO, đi kèm đảo tồn). Kho vừa
+  // quét mà sàn chưa cập nhật thì bỏ qua (sàn chậm hơn kho là bình thường); còn lại là bất thường, gắn cờ Cần xử lý.
+  const backFromOut = stockEffectOf(pkg.status, to) === 'reverse';
+  if (backFromOut && pkg.handoverSource === 'scan' && pkg.pickupConfirmedAt === null) return false;
   if (to !== pkg.status) {
-    const kind = platformUpdate(pkg.status, to);
+    const kind = backFromOut ? 'invalid' : platformUpdate(pkg.status, to);
     if (kind === 'invalid') {
       if (pkg.needsAttention) return false;
       await updatePackage(pkg.id, { needsAttention: true, flagNote: `Sàn báo ${remote} khi kiện đang ${pkg.status}` });

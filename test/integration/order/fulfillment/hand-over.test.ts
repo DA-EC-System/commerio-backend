@@ -39,7 +39,7 @@ describe('POST /fulfillment/packages/hand-over (21 §19.2)', () => {
     const body = HandOverResult.parse(res.body);
     expect(body.failed).toEqual([]);
     expect(body.handedOver.map((h) => h.id)).toEqual(pkgs.map((p) => p.packageId));
-    for (const h of body.handedOver) expect(h.issue.number).toMatch(/^XK-/);
+    for (const h of body.handedOver) expect(h.issue?.number).toMatch(/^XK-/);
     expect(await stockOfVariant(company.companyId, variantId)).toMatchObject({ onHand: before.onHand - 6, reserved: before.reserved - 6 });
     for (const p of pkgs) {
       expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', handover_source: 'scan', handed_over_by: warehouse.accountId });
@@ -121,6 +121,19 @@ describe('POST /fulfillment/packages/hand-over (21 §19.2)', () => {
     const body = HandOverResult.parse((await handOver([{ id: p.packageId, version: await versionOf(p.packageId) }])).body);
     expect(body.failed).toMatchObject([{ packageId: p.packageId, code: 'already_handed_over' }]);
     expect(await packageDocuments(p.packageId)).toEqual([]);
+  });
+
+  it('review cuối #2: kiện sàn chờ lấy chưa ghép SKU → vẫn bàn giao, issue null, không phiếu, dòng chờ ghép muộn', async () => {
+    const p = await seedPackage(company.companyId, { status: 'awaiting_pickup', lines: [{ variantId, quantity: 1 }] });
+    await testPool().query('update "order".package_lines set variant_id = null where package_id = $1', [p.packageId]);
+
+    const body = HandOverResult.parse((await handOver([{ id: p.packageId, version: await versionOf(p.packageId) }])).body);
+
+    expect(body.failed).toEqual([]);
+    expect(body.handedOver).toEqual([{ id: p.packageId, code: p.packageCode, issue: null }]);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', handover_source: 'scan' });
+    expect(await packageDocuments(p.packageId)).toEqual([]);
+    expect(await packageLineRows(p.packageId)).toMatchObject([{ stock_deducted: false }]);
   });
 
   it('D2-05q: Admin, Sale → 403', async () => {

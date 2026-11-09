@@ -183,6 +183,45 @@ describe('đồng bộ sàn trừ tồn qua lõi bàn giao (spec 199a §5.4)', (
     expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9, reserved: 0 });
   });
 
+  it('review cuối #1: kho đã quét mà sàn còn báo awaiting_pickup → kiện giữ in_transit, không cờ, không lịch sử mới; sàn báo in_transit sau đó chỉ ghi pickup_confirmed_at', async () => {
+    const s = await setup(10);
+    const o = remote(s, { status: 'awaiting_pickup' });
+    const { packageId } = await ingest(s.companyId, o);
+    await withCompany(s.companyId, async () => {
+      const pkg = (await lockPackage(packageId))!;
+      await updatePackage(packageId, { status: 'in_transit', handoverSource: 'scan', handedOverAt: new Date() });
+      await settleHandover(pkg, { actorId: randomUUID(), mode: 'deduct' });
+    });
+    const transitions = async () =>
+      (await testPool().query('select count(*)::int as n from core.state_transitions where entity_id = $1', [packageId])).rows[0].n;
+    const before = await transitions();
+
+    await ingest(s.companyId, o);
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'in_transit', handover_source: 'scan', needs_attention: false, pickup_confirmed_at: null });
+    expect(await transitions()).toBe(before);
+
+    await ingest(s.companyId, withStatus(o, 'in_transit'));
+    const row = await packageRow(packageId);
+    expect(row).toMatchObject({ status: 'in_transit', handover_source: 'scan' });
+    expect(row.pickup_confirmed_at).not.toBeNull();
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9, reserved: 0 });
+  });
+
+  it('review cuối #1: kiện sàn đã báo rời kho, sàn lại báo awaiting_pickup → cờ Cần xử lý, trạng thái và tồn giữ nguyên', async () => {
+    const s = await setup(10);
+    const o = remote(s);
+    const { packageId } = await ingest(s.companyId, o);
+    await ingest(s.companyId, withStatus(o, 'in_transit'));
+
+    await ingest(s.companyId, withStatus(o, 'awaiting_pickup'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace', needs_attention: true });
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9 });
+  });
+
   it('AC10: gian hàng chờ kiểm kê (holdStock false), sàn báo in_transit → chưa trừ, handover_source marketplace', async () => {
     const s = await setup(10);
     const o = remote(s, { holdStock: false });
