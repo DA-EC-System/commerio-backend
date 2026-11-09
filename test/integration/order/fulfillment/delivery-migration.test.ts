@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -23,10 +22,6 @@ const deliveryUpdateSql = (): string => {
 const deliveryPostedAtOf = async (packageId: string) =>
   (await testPool().query<{ delivery_posted_at: Date | null }>('select delivery_posted_at from "order".packages where id = $1', [packageId])).rows[0]!
     .delivery_posted_at;
-
-const deliveredAtOf = async (packageId: string) =>
-  (await testPool().query<{ delivered_at: Date | null }>('select delivered_at from "order".packages where id = $1', [packageId])).rows[0]!
-    .delivered_at;
 
 describe('cột delivery_posted_at của kiện (spec 199c §5.1)', () => {
   it('AC17: câu UPDATE của migration điền delivery_posted_at = delivered_at cho kiện đã giao, kiện khác vẫn null', async () => {
