@@ -246,6 +246,13 @@
       "when": 1794249577446,
       "tag": "0034_de-nghi-nhap-dat-ncc",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794249618894,
+      "tag": "0035_phieu-nhan-giao-bu",
+      "breakpoints": true
     }
   ]
 }
