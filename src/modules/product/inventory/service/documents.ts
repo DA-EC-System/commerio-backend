@@ -260,7 +260,7 @@ function movesOf(row: DocRow, lines: readonly DocLineRow[]): Move[] {
  * Ghi sổ: đổi tồn qua lõi, chốt giá vốn trên dòng. Kiểm kê đã duyệt được làm tồn âm (25 §7.1); phiếu khác thiếu hàng
  * thì 422 `stock_insufficient` theo dòng.
  */
-async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string) {
+async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string, now: Date) {
   const before = await stockOf(lines.map((l) => l.variantId));
   try {
     await applyMoves({ type: 'stock_document', id: row.id }, movesOf(row, lines), actorId, { allowBreak: row.kind === 'stocktake' });
@@ -282,7 +282,9 @@ async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string) 
         documentId: row.id,
         number: row.number,
         source: row.sourceType === 'shop_setup' && row.sourceId ? { type: 'shop_setup', shopId: row.sourceId } : null,
-        postedAt: new Date().toISOString(),
+        postedAt: now.toISOString(),
+        // CHECK `stock_documents_counted_at` ép phiếu kiểm kê luôn có thời điểm đếm
+        countedAt: row.countedAt!.toISOString(),
         lines: lines.map((l) => ({ variantId: l.variantId, countedQty: l.countedQty ?? 0, delta: (l.countedQty ?? 0) - (l.bookQty ?? 0) })),
       },
     });
@@ -356,7 +358,7 @@ export function actOnDocument(actor: DocActor, id: string, action: DocAction, in
     if (action === 'reject') set.statusReason = reason;
     if (type === 'return_inspection' && action === 'submit') Object.assign(set, { claimFlag: true, createdBy: actor.accountId });
     if (to === 'posted') {
-      await post(row, lines, actor.accountId);
+      await post(row, lines, actor.accountId, now);
       Object.assign(set, { postedBy: actor.accountId, postedAt: now });
       if (action === 'approve') Object.assign(set, { approvedBy: actor.accountId, approvedAt: now, selfApproved });
     }

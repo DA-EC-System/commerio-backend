@@ -17,6 +17,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
     number: 'KK-000001',
     source: { type: 'shop_setup', shopId: id() },
     postedAt: at,
+    countedAt: '2026-10-18T08:30:00.000+07:00',
     lines: [{ variantId: id(), countedQty: 8, delta: -2 }],
   },
   'inventory.return_inspected': {

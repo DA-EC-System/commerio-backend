@@ -50,6 +50,7 @@ export const EVENT_SCHEMAS = {
     number: z.string(),
     source: z.object({ type: z.literal('shop_setup'), shopId: id }).nullable(),
     postedAt: timestamp,
+    countedAt: timestamp,
     lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
   }),
   // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, mục 11.2); kiện hoàn không phát.

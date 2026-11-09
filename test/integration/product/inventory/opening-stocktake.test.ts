@@ -76,6 +76,16 @@ describe('createOpeningStocktake (#245)', () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].payload).toMatchObject({ source: { type: 'shop_setup', shopId: s.shopId } });
+    // `countedAt` là lúc lưu số đếm (21 mục 11.2), khác `postedAt` là lúc ghi sổ; `postedAt` trùng `posted_at` đã lưu
+    const saved = (
+      await testPool().query<{ counted_at: Date; posted_at: Date }>(
+        'select counted_at, posted_at from product.stock_documents where id = $1',
+        [documentId],
+      )
+    ).rows[0]!;
+    expect(rows[0].payload.countedAt).toBe(saved.counted_at.toISOString());
+    expect(rows[0].payload.postedAt).toBe(saved.posted_at.toISOString());
+    expect(rows[0].payload.countedAt).not.toBe(rows[0].payload.postedAt);
     // Sau khi ghi sổ, gian hàng lập được phiếu đầu kỳ mới (phiếu cũ không còn mở)
     const next = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: null }));
     expect(next.created).toBe(true);
