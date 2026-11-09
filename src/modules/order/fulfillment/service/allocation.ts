@@ -8,6 +8,7 @@ import { allocationQueue, planAllocation, planReclaim } from '../domain/allocati
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import { lockAllocationCandidates, lockReclaimCandidates, takeAllocationLock, variantsInPlay } from '../repository/allocation.ts';
 import { markLinesReserved, setReserved, updatePackage } from '../repository/packages.ts';
+import { settleDeferredHandovers } from './handover-stock.ts';
 import { type FulfillmentContext, stockHoldLookupOf } from './packages.ts';
 import { stockPort } from './stock-port.ts';
 
@@ -123,4 +124,20 @@ export function onAllocationJob(ctx: AllocationContext): (data: { companyId: str
   return async (data) => {
     await withCompany(data.companyId, () => runAllocation(ctx, { variantIds: data.variantIds }));
   };
+}
+
+/**
+ * Phiếu kiểm kê đầu kỳ của gian hàng vừa ghi sổ (spec 199b §5.5, D1, D2). Channel gọi trong giao dịch thoát chờ kiểm kê,
+ * sau khi đặt `openingStocktake = null`: bù kiện rời kho lúc chờ (từ `countedAt` trừ tồn, trước đó chỉ lưu), rồi phân
+ * hàng cho mọi kiện chưa bàn giao, rồi phát `allocation_done` có `cause`. Gọi lại không trừ, không giữ thêm.
+ */
+export async function settleOpeningStocktake(p: {
+  shopId: string;
+  documentId: string;
+  countedAt: Date;
+}): Promise<{ deducted: number; storedOnly: number; held: number }> {
+  requireCompanyId('settleOpeningStocktake');
+  const settled = await settleDeferredHandovers(p.shopId, p.countedAt);
+  const { held } = await runAllocation({}, { all: true }, { opening: true, cause: { type: 'stocktake', documentId: p.documentId } });
+  return { ...settled, held: held.length };
 }

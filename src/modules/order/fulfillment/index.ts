@@ -46,3 +46,5 @@ export type { FulfillmentContext } from './service/packages.ts';
 export { settleDeferredHandovers, shipLateMappedLines } from './service/handover-stock.ts';
 // Xếp lượt phân hàng cho #237 (ghép xong SKU), #239 (dỡ kiện về kệ); chạy trong `withCompany` của bên gọi.
 export { requestAllocation } from './service/allocation.ts';
+// Cho channel (#198 phần 2): gọi trong giao dịch thoát chờ kiểm kê, sau khi đặt `openingStocktake = null` (spec 199b §5.5).
+export { settleOpeningStocktake } from './service/allocation.ts';
