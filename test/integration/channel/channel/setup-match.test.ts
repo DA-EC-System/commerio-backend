@@ -268,6 +268,21 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
     expect(byId.get('sku-l1')).toBe('name');
   });
 
+  it('nhãn biến thể sàn khác thuộc tính của biến thể Commerio (cỡ M với cỡ L): không ghép theo tên dù điểm cao; cùng giá trị thì ghép (review chéo I-1)', async () => {
+    variants.push(variant('CMR-B1', 'Áo thun basic', 'Trắng / L'), variant('CMR-B2', 'Áo hoodie', 'Đen / XL'));
+    remote.push(
+      { ...sku('sku-b1', 'TT-B-M', 'Áo thun basic - Trắng, M'), externalProductId: 'item-basic', variantLabel: 'Trắng, M' },
+      { ...sku('sku-b2', 'TT-B-L', 'Áo thun basic - Đen, L'), externalProductId: 'item-basic', variantLabel: 'Đen, L' },
+      { ...sku('sku-h1', 'TT-H-XL', 'Áo hoodie - đen, xl'), externalProductId: 'item-hoodie', variantLabel: 'đen, xl' },
+      { ...sku('sku-h2', 'TT-H-L', 'Áo hoodie - đen, l'), externalProductId: 'item-hoodie', variantLabel: 'đen, l' },
+    );
+    const res = await (await connectingShop()).preview();
+    const byId = new Map((res.body.suggestions as { externalSkuId: string; match: string; sku: string | null }[]).map((r) => [r.externalSkuId, r]));
+    expect([byId.get('sku-b1')?.match, byId.get('sku-b2')?.match]).toEqual(['none', 'none']);
+    expect(byId.get('sku-h1')).toMatchObject({ match: 'name', sku: 'CMR-B2' });
+    expect(byId.get('sku-h2')?.match).toBe('none');
+  });
+
   it('một SKU sàn mà nhiều biến thể của cùng sản phẩm Commerio cùng qua ngưỡng: không gợi ý theo tên (vòng 2 review P2)', async () => {
     const productId = randomUUID();
     variants.push(...['Đỏ / S', 'Xanh / M', 'Đen / L'].map((label, i) => ({ ...variant(`CMR-Q${i}`, 'Áo polo nam', label), productId })));

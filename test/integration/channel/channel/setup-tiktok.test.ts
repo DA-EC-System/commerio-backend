@@ -97,13 +97,21 @@ afterAll(() => {
   setProductPort(null);
 });
 
+const detailCalls = () => fetchFn.mock.calls.map(([u]) => new URL(String(u)).pathname).filter((p) => p.startsWith('/product/202309/products/'));
+const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
+let appShopId = '';
+
 describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () => {
   it('AC-1..AC-4: đọc hết các trang, mỗi SKU một dòng đúng mã SKU TikTok, tiêu đề kèm nhãn biến thể, ghép theo seller_sku; token, cipher không lộ', async () => {
-    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
+    fetchFn.mockClear();
     const connected = await auth(request(testApp()).post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: ACCESS });
     expect(connected.status).toBe(201);
     const shop = connected.body.shop as { id: string; status: string };
+    appShopId = shop.id;
     expect(shop.status).toBe('connecting');
+    // `remoteSkuCount` cùng nguồn `listSkus` nhưng không đọc nhãn biến thể (review chéo S-3).
+    expect(connected.body.shops[0].remoteSkuCount).toBe(5);
+    expect(detailCalls()).toEqual([]);
 
     const logged: unknown[] = [];
     const spies = (['debug', 'info', 'warn', 'error'] as const).map((level) =>
@@ -140,5 +148,17 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
     const leak = new RegExp(`${ACCESS}|${cipher}|tts1\\.`);
     expect(JSON.stringify(res.body)).not.toMatch(leak);
     expect(inspect(logged, { depth: 6 })).not.toMatch(leak);
+  });
+
+  it('hoàn tất thiết lập: `decisions` không đọc nhãn biến thể; `externalSkuIds` cũ vẫn đọc (review chéo I-2)', async () => {
+    const finish = (body: object) =>
+      auth(request(testApp()).post(`/api/v1/channel/shops/${appShopId}/setup`)).send({ openingStock: 'stocktake', ...body });
+    fetchFn.mockClear();
+    await finish({ decisions: [{ externalSkuId: '1738338453674427921', variantId: mugWhite.id }] });
+    expect(fetchFn.mock.calls.some(([u]) => new URL(String(u)).pathname === '/product/202502/products/search')).toBe(true);
+    expect(detailCalls()).toEqual([]);
+    fetchFn.mockClear();
+    await finish({ externalSkuIds: ['1738338453674427921'] });
+    expect(detailCalls()).toEqual(['/product/202309/products/1738338487553328657']);
   });
 });

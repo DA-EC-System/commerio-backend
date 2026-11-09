@@ -42,6 +42,10 @@ const NAME_ROWS_MAX = 50_000;
 
 const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].filter(Boolean).join(' ');
 
+/** Các giá trị của một nhãn biến thể: thường hoá, bỏ dấu câu, tách theo chữ và số ("Trắng, M" và "trắng / m" như nhau). */
+const labelTokens = (label: string | null | undefined) =>
+  [...new Set((label ?? '').normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean))].sort().join(' ');
+
 /**
  * Gợi ý ghép (#198, Documents/21 §18.7.5): mọi SKU người bán trên sàn (bỏ sản phẩm đã xoá), mỗi SKU một dòng. Ghép theo
  * SKU trước, phần còn lại theo tên sản phẩm kèm nhãn biến thể bằng `similarity()` của pg_trgm, nhận từ 0.4, tham lam theo
@@ -49,7 +53,7 @@ const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].fi
  * (`nameMatchSkipped`). Biến thể lưu trữ hay đã có listing ở gian hàng này không được gợi ý. Sàn
  * chưa có `listSkus` thì chỉ đọc được SKU trùng SKU Commerio (`getSkus`).
  */
-async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
+async function suggestions(port: ProductPort, actor: Actor, shopId: string, labels = true) {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   const { shop, adapter, accessToken } = await inCompany(async () => {
     const session = await shopSession(shopId);
@@ -62,7 +66,7 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
   }));
   const open = variants.filter((v) => !v.archived && !listed.has(v.id));
   const fetched = adapter.listSkus
-    ? await onMarketplace(() => adapter.listSkus!(accessToken))
+    ? await onMarketplace(() => adapter.listSkus!(accessToken, { labels }))
     : open.length
       ? await onMarketplace(() => adapter.getSkus(accessToken, open.map((v) => v.sku)))
       : [];
@@ -107,18 +111,25 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
       : [];
   if (pairs === null) nameMatchSkipped = true;
   else {
+    // SKU sàn có nhãn biến thể thật (`variantLabel`) chỉ ghép theo tên với biến thể có cùng các giá trị thuộc tính: nhãn cỡ
+    // một ký tự gần như không đổi điểm trigram, "Áo thun basic - Trắng, M" với "Áo thun basic Trắng / L" vẫn 0.83 (#282
+    // review chéo I-1).
+    const fitting = pairs.filter((p) => {
+      const label = remote[restRemote[p.left]!]!.variantLabel;
+      return !label || labelTokens(label) === labelTokens(restVariants[p.right]!.attributesLabel);
+    });
     // Ngược chiều: sản phẩm của biến thể giống nhất có từ hai biến thể qua ngưỡng thì tên sàn không chỉ ra được màu, cỡ
     // nào; không gợi ý, để người dùng chọn (#198 diff-review vòng 2). `pairs` xếp điểm giảm dần nên cặp đầu của mỗi SKU là
     // cặp giống nhất.
     const bestProduct = new Map<number, string>();
     const perProduct = new Map<string, number>();
-    for (const p of pairs) {
+    for (const p of fitting) {
       const product = restVariants[p.right]!.productId;
       if (!bestProduct.has(p.left)) bestProduct.set(p.left, product);
       perProduct.set(`${p.left} ${product}`, (perProduct.get(`${p.left} ${product}`) ?? 0) + 1);
     }
     const ambiguous = (left: number) => perProduct.get(`${left} ${bestProduct.get(left)}`)! > 1;
-    for (const p of pairs) {
+    for (const p of fitting) {
       const i = restRemote[p.left]!;
       const v = restVariants[p.right]!;
       if (chosen.has(i) || taken.has(v.id) || ambiguous(p.left)) continue;
@@ -237,7 +248,8 @@ export async function finishSetup(
     returnWindowDays?: number | null | undefined;
   },
 ): Promise<{ shop: Shop; matched: number; stocktakeNumber: string | null }> {
-  const candidates = await suggestions(port, actor, shopId);
+  // `decisions` không dùng tiêu đề hay gợi ý theo tên: không đọc nhãn biến thể (đỡ tới 50 lời gọi sàn, #282 review chéo I-2).
+  const candidates = await suggestions(port, actor, shopId, !input.decisions);
   const offered = candidates.offered;
   const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
   const { firstShopOfCompany, awaitingStocktake } = await companySetupState(actor, shopId);

@@ -16,6 +16,7 @@ import {
   type ShopConnection,
   type TokenSet,
 } from './common.ts';
+import { logger } from '../../../../../shared/logger.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
 import {
   createTiktokClient,
@@ -46,6 +47,9 @@ const MAX_PRODUCTS = 10_000;
 const MAX_PAGES = MAX_PRODUCTS / PRODUCT_PAGE + 5;
 // Trần sản phẩm nhiều SKU đọc nhãn biến thể mỗi lần mở thiết lập: đọc 5 req/s mỗi gian hàng nên 50 lần ≈ 10 giây.
 const LABEL_PRODUCT_MAX = 50;
+// Mã `rejected` không gắn với một sản phẩm (common-errors): 105005 thiếu scope, 106001 sai chữ ký, 36009004 sai
+// `shop_cipher`. Gặp là mọi Get Product đều hỏng như nhau: dừng đọc nhãn ngay.
+const LABEL_STOP_CODES = new Set(['105005', '106001', '36009004']);
 
 type Row = Record<string, unknown>;
 
@@ -194,19 +198,35 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
    * Nhãn biến thể của SKU các sản phẩm nhiều SKU: Search Products không trả `sales_attributes`, phải gọi Get Product 202309
    * từng sản phẩm (docv2 get-product-202309, tra 09/11/2026; chưa có bản mới hơn). Tối đa `LABEL_PRODUCT_MAX` sản phẩm
    * mỗi lần; sản phẩm còn lại, hoặc sàn từ chối đọc (vd vừa xoá), dùng SKU người bán làm nhãn. Nhãn chỉ để hiển thị và
-   * ghép theo tên: sàn lỗi tạm thì dừng đọc nhãn, không làm hỏng cả bước ghép; mất uỷ quyền thì ném.
+   * ghép theo tên nên lỗi không làm hỏng bước ghép: lỗi của từng sản phẩm thì bỏ qua sản phẩm đó; lỗi chung (mã trong
+   * `LABEL_STOP_CODES`, cùng một mã hai lần liền, sàn lỗi tạm) thì dừng đọc nhãn; có lỗi thì ghi một dòng log tổng. Mất uỷ
+   * quyền thì ném. Get Product không trả sản phẩm `FREEZE`, `DELETED` (OAS get-product-202309): không gọi.
    */
   async function variantLabels(accessToken: string, products: readonly Row[]): Promise<Map<string, string>> {
     const labels = new Map<string, string>();
-    const multi = products.filter((p) => ((p.skus ?? []) as Row[]).length > 1).slice(0, LABEL_PRODUCT_MAX);
+    const multi = products
+      .filter((p) => ((p.skus ?? []) as Row[]).length > 1 && p.status !== 'FREEZE' && p.status !== 'DELETED')
+      .slice(0, LABEL_PRODUCT_MAX);
+    const codes: Record<string, number> = {};
+    let failed = 0;
+    let lastCode: string | null = null;
+    let stoppedBy: string | null = null;
     for (const p of multi) {
       let detail: { skus?: Row[] } | undefined;
       try {
         detail = await client.call('GET', `/product/202309/products/${encodeURIComponent(String(p.id))}`, { token: accessToken });
+        lastCode = null;
       } catch (err) {
-        if (err instanceof MarketplaceError && err.kind === 'rejected') continue;
-        if (err instanceof MarketplaceError && err.kind === 'unavailable') break;
-        throw err;
+        if (!(err instanceof MarketplaceError) || (err.kind !== 'rejected' && err.kind !== 'unavailable')) throw err;
+        const code = err.platformCode ?? err.kind;
+        failed += 1;
+        codes[code] = (codes[code] ?? 0) + 1;
+        if (err.kind === 'unavailable' || LABEL_STOP_CODES.has(code) || code === lastCode) {
+          stoppedBy = code;
+          break;
+        }
+        lastCode = code;
+        continue;
       }
       for (const s of detail?.skus ?? []) {
         const label = ((s.sales_attributes ?? []) as Row[])
@@ -215,6 +235,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
           .join(', ');
         if (label) labels.set(String(s.id), label);
       }
+    }
+    if (failed) {
+      logger.warn(
+        { externalShopId: unpackTiktokToken(accessToken).shopId, products: multi.length, failed, codes, stoppedBy },
+        'Không đọc được nhãn biến thể TikTok, dùng SKU người bán làm nhãn',
+      );
     }
     return labels;
   }

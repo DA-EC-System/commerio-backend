@@ -9,6 +9,7 @@ import {
   unpackTiktokToken,
 } from '#src/modules/channel/channel/service/marketplaces/tiktok-client.ts';
 import { createTiktokAdapter, tiktokRemoteState } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
+import { logger } from '#src/shared/logger.ts';
 
 const config = {
   appKey: 'appk',
@@ -333,6 +334,49 @@ describe('adapter TikTok: SKU', () => {
     expect(temp.map((s) => s.title)).toEqual(['SP 1 - A', 'SP 1 - B']);
     const unauthorized = json({ code: 105002, message: 'Expired credentials', request_id: 'r' });
     await expect(createTiktokAdapter(config, fakeFetch(page(), unauthorized)).listSkus!(packed())).rejects.toMatchObject({ kind: 'unauthorized' });
+  });
+
+  describe('listSkus: lỗi khi đọc nhãn (review chéo I-3)', () => {
+    const three = ['1', '2', '3'].map((id) => product(id, 'ACTIVATE', [sku(`${id}1`, `S${id}A`), sku(`${id}2`, `S${id}B`)]));
+    const err = (code: number) => json({ code, message: 'lỗi', request_id: 'r' });
+    const detail = (id: string) => ok({ skus: [{ id: `${id}1`, sales_attributes: [{ value_name: 'Đỏ' }] }] });
+    const run = async (...details: Response[]) => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const fetchFn = fakeFetch(ok({ next_page_token: '', products: three }), ...details);
+      const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+      const logged = warn.mock.calls.map((c) => c[0]);
+      warn.mockRestore();
+      const called = fetchFn.mock.calls.slice(1).map(([u]) => new URL(String(u)).pathname.split('/').pop());
+      return { skus, called, logged };
+    };
+
+    it('lỗi của một sản phẩm: bỏ qua, đọc tiếp sản phẩm sau, ghi một dòng log tổng', async () => {
+      const { skus, called, logged } = await run(err(12052048), detail('2'), detail('3'));
+      expect(called).toEqual(['1', '2', '3']);
+      expect(skus.find((s) => s.externalSkuId === '21')?.variantLabel).toBe('Đỏ');
+      expect(logged).toEqual([expect.objectContaining({ externalShopId: SHOP.id, failed: 1, codes: { '12052048': 1 }, stoppedBy: null })]);
+    });
+
+    it('thiếu scope (105005) hay sàn lỗi tạm: dừng ngay, không gọi sản phẩm sau', async () => {
+      expect((await run(err(105005))).called).toEqual(['1']);
+      const temp = await run(json({}, 503));
+      expect(temp.called).toEqual(['1']);
+      expect(temp.logged).toEqual([expect.objectContaining({ failed: 1, stoppedBy: 'http_503' })]);
+    });
+
+    it('cùng một mã hai lần liền: dừng; log không chứa token, cipher', async () => {
+      const { called, logged } = await run(err(12000001), err(12000001));
+      expect(called).toEqual(['1', '2']);
+      expect(logged).toEqual([expect.objectContaining({ failed: 2, stoppedBy: '12000001' })]);
+      expect(JSON.stringify(logged)).not.toMatch(new RegExp(`${SHOP.cipher}|TTP_at|tts1\\.`));
+    });
+
+    it('không gọi Get Product cho sản phẩm FREEZE (Get Product không trả)', async () => {
+      const fetchFn = fakeFetch(ok({ next_page_token: '', products: [product('9', 'FREEZE', [sku('91', 'F1'), sku('92', 'F2')])] }));
+      const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(skus.map((s) => s.title)).toEqual(['SP 9 - F1', 'SP 9 - F2']);
+    });
   });
 
   it('listSkus: đọc nhãn tối đa 50 sản phẩm nhiều SKU, phần còn lại nhãn là SKU người bán', async () => {
