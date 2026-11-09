@@ -25,13 +25,13 @@
 
 ## 2. Bối cảnh và ràng buộc
 
-**Hiện trạng `main` (8d34836):**
+**Hiện trạng `main` (73535b5):**
 - Kiện lập từ đơn sàn ở `fulfillment/service/platform-packages.ts` (#105), gọi trong giao dịch kéo đơn của channel: `order-pull.ts` (mỗi 5 phút) → sales `ingestMarketplaceOrder` → `syncPlatformPackages`. Kiện mới giữ hàng ngay qua `reserve` thật (#266). Gian hàng chờ kiểm kê đầu kỳ thì `holdStock = false`.
 - Trạng thái sàn áp lên kiện qua `platformUpdate` (`domain/package.ts`): `direct`, `jump` (nhảy tới trên đường chính, `backordered` tính như `reserved`), `invalid` (cờ Cần xử lý). Đổi trạng thái chỉ đổi cột, **chưa gọi `ship`**. `handed_over_at` là lúc đồng bộ thấy.
 - Cổng tồn (`product/index.ts`, #266) đã có thân thật:
   - `reserve`, `release`;
   - `ship(packageId, lines: { variantId, quantity, packageLineId }[], { actorId, forced? })` → `{ documentId, number }`, có lưới chống gọi lặp theo `packageLineId`;
-  - `reverseShipment(packageId, lines, { actorId, reason })`, đảo **đủ cả lượt**: theo bản sửa review của #266, đang được đưa lên `main` ở PR riêng;
+  - `reverseShipment(packageId, lines, { actorId, reason })`, đảo **đủ cả lượt**: thiếu SKU hay lệch số thì lỗi (sửa theo review của #266, lên `main` ở #287);
   - `stockOf`.
 - `package_lines` có `reserved_qty` (0 hoặc đủ), `unit_cost`, `stock_deducted`. `packages` chưa có `handover_source`.
 - Route của fulfillment rỗng. Kiện chỉ ra FE qua `GET /orders`, `GET /orders/:id` của sales (`PackageSummary` ở `sales/api/schemas.ts`, dựng ở `sales/service/orders.ts`).
@@ -89,7 +89,7 @@
 
 ### 5.1 Dữ liệu và migration
 
-Một migration (số kế tiếp, hiện là `0026`; nhánh khác merge trước thì sinh lại):
+Một migration (số kế tiếp, hiện là `0027`; nhánh khác merge trước thì sinh lại):
 
 ```sql
 CREATE TYPE "order"."handover_source" AS ENUM ('scan', 'marketplace', 'forced', 'before_cutoff');
@@ -272,7 +272,7 @@ Kiện ở `awaiting_pickup` trong test chèn thẳng bằng role chủ bảng (
 
 1. **PR Documents** (mục 8). Merge trước.
 2. **PR danh mục sự kiện** (D9), nhánh riêng từ `main`.
-3. **PR backend 199a**, nhánh `feature/199a-ban-giao` từ `main`, sau PR đưa hai commit sửa review #266 lên `main` (đảo đủ lượt).
+3. **PR backend 199a**, nhánh `feature/199a-ban-giao` từ `main` (đã có #287: `reverseShipment` đảo đủ lượt).
 
 ## 7. Ảnh hưởng tới FE
 
@@ -307,7 +307,6 @@ Phần d làm. Hợp đồng FE dùng: hai route đọc, `hand-over`, `undo-hand
 
 ## 10. Rủi ro và điểm còn mở
 
-- **Phụ thuộc PR đưa hai commit sửa review #266 lên `main`.** Phần a cần `reverseShipment` đảo đủ cả lượt. PR đó chưa merge thì phần a vẫn viết được (luôn truyền đủ dòng của lượt) nhưng merge sau nó.
 - **`handed_over_at` là lúc đồng bộ thấy, không phải lúc sàn lấy thật.** Lệch tối đa một chu kỳ kéo đơn (5 phút) và thời gian sàn chưa đổi `updated_at`. Ảnh hưởng: so với `countedAt` ở hàm bù có thể xếp nhầm kiện rời kho sát mốc. Chấp nhận; sàn có mốc thật (trace, 199c) thì dùng mốc đó.
 - **Sửa module của người khác:** channel `order-pull.ts`, `shops.ts` (Thành) truyền `orderCutoffAt`. Báo trong PR.
 - **Chuyển `PackageSummary` sang fulfillment** đụng `sales/service/orders.ts`, `sales/api/schemas.ts`. Hình response giữ nguyên; test `GET /orders` hiện có là lưới an toàn.
