@@ -1,5 +1,7 @@
 // Hàng quay về kho theo kiện hoàn hoặc yêu cầu trả (Documents/21 mục 11.1, 15.3; spec #206 mục 5.5, Q19). Chạy trong
 // giao dịch của bên gọi. Chỉ lập phiếu kiểm hàng hoàn nháp: tồn, giá vốn hàng trả, sự kiện làm lúc phiếu ghi sổ (#112).
+import { inTransaction } from '../../../../shared/db/client.ts';
+import { pgError } from '../../../../shared/db/pg-error.ts';
 import { type DocumentRef, mergeLines, type StockLine } from '../domain/documents.ts';
 import { type DocumentSourceType, returnInspectionOf } from '../repository/documents.ts';
 import { companyOfTransaction } from '../repository/levels.ts';
@@ -10,7 +12,7 @@ const SOURCE_TYPES: readonly string[] = ['package', 'return_request'] satisfies 
 
 /**
  * Lập phiếu `KT` nháp với số dự kiến theo SKU, không đổi tồn, không phát sự kiện. Nguồn đã có phiếu kiểm hàng hoàn thì
- * trả phiếu đó; bên gọi chuyển trạng thái kiện, yêu cầu trả có điều kiện nên hai lần gọi không chạy song song.
+ * trả phiếu đó, kể cả khi hai lần gọi chạy song song (unique một phần `stock_documents_return_inspection_source_uq`).
  */
 export async function receiveBack(source: { type: DocumentSourceType; id: string }, lines: readonly StockLine[]): Promise<DocumentRef> {
   companyOfTransaction();
@@ -22,14 +24,29 @@ export async function receiveBack(source: { type: DocumentSourceType; id: string
 
   const existing = await returnInspectionOf(source.type, source.id);
   if (existing) return existing;
-  const { ref } = await createSystemDocument({
-    kind: 'return_inspection',
-    status: 'draft',
-    sourceType: source.type,
-    sourceId: source.id,
-    actorId: null,
-    note: null,
-    lines: [...expected].map(([variantId, q]) => ({ variantId, quantity: null, expectedQty: q, unitCost: null, sourceLineId: null })),
-  });
-  return ref;
+  try {
+    // Savepoint: bên thua đụng unique thì chỉ lùi phần lập phiếu (cả số `KT` vừa cấp, không nhảy số), giao dịch của bên
+    // gọi vẫn chạy tiếp được.
+    return await inTransaction((tx) =>
+      tx.transaction(async () => {
+        const { ref } = await createSystemDocument({
+          kind: 'return_inspection',
+          status: 'draft',
+          sourceType: source.type,
+          sourceId: source.id,
+          actorId: null,
+          note: null,
+          lines: [...expected].map(([variantId, q]) => ({ variantId, quantity: null, expectedQty: q, unitCost: null, sourceLineId: null })),
+        });
+        return ref;
+      }),
+    );
+  } catch (err) {
+    // Lần gọi song song cùng nguồn đã lập phiếu và commit trước: trả phiếu đó.
+    const { code, constraint } = pgError(err);
+    if (code !== '23505' || constraint !== 'stock_documents_return_inspection_source_uq') throw err;
+    const winner = await returnInspectionOf(source.type, source.id);
+    if (!winner) throw err;
+    return winner;
+  }
 }
