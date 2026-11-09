@@ -4,9 +4,11 @@ import { assertTransition, publishEvent, recordTransition } from '../../../core/
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
+import { isUuid } from '../../../../shared/uuid.ts';
 import { isHandedOver, packageMachine } from '../domain/package.ts';
 import { lockPackage, updatePackage } from '../repository/packages.ts';
-import { settleHandover } from './handover-stock.ts';
+import { revertHandover, settleHandover } from './handover-stock.ts';
+import { type FulfillmentContext, getPackage } from './packages.ts';
 
 export interface Actor {
   companyId: string;
@@ -66,4 +68,35 @@ export async function handOverPackages(actor: Actor, items: readonly { id: strin
     }
   }
   return result;
+}
+
+export const CANCELLING_ORDER_NOTE = 'Đơn đang huỷ: dỡ kiện về kệ';
+
+/**
+ * CEO huỷ bàn giao nhầm do kho quét khi sàn chưa xác nhận lấy (21 §19.2, D2-06): đảo đủ cả lượt, kiện về chờ lấy hàng
+ * và giữ hàng lại. Đơn đang huỷ thì bật Cần xử lý để kho dỡ kiện về kệ (chưa có khung việc #209, spec 199a D11).
+ */
+export async function undoHandover(ctx: FulfillmentContext, actor: Actor, id: string, input: { version: number; reason: string }) {
+  if (!isUuid(id)) throw notFound();
+  return withCompany(actor.companyId, async () => {
+    const pkg = await lockPackage(id);
+    if (!pkg) throw notFound();
+    if (pkg.version !== input.version) {
+      throw new AppError(409, 'version_conflict', 'Kiện vừa được cập nhật, tải lại rồi thử lại', { current: await getPackage(ctx, id) });
+    }
+    const { to } = assertTransition(packageMachine, pkg.status, 'undo_handover', { actor, reason: input.reason });
+    if (pkg.handoverSource !== 'scan' || pkg.pickupConfirmedAt !== null) {
+      throw new AppError(409, 'handover_confirmed_by_platform', 'Sàn đã xác nhận lấy kiện này, không huỷ bàn giao được');
+    }
+    const from = pkg.status;
+    const reason = input.reason.trim();
+    await revertHandover(pkg, actor.accountId, reason);
+    await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action: 'undo_handover', actorId: actor.accountId, reason });
+    await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: pkg.orderId, payload: { packageId: pkg.id, orderId: pkg.orderId, from, to } });
+    const order = (await ctx.orderRefsOf?.([pkg.orderId]))?.get(pkg.orderId);
+    if (order?.cancelling || order?.platformCancelled) {
+      await updatePackage(pkg.id, { needsAttention: true, flagNote: CANCELLING_ORDER_NOTE });
+    }
+    return getPackage(ctx, id);
+  });
 }

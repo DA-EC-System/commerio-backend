@@ -134,3 +134,9 @@ export const HandOverResult = z
   })
   .strict()
   .meta({ id: 'HandOverResult' });
+
+export const UndoHandoverBody = z.object({
+  version: z.number().int().min(0),
+  // Bắt buộc lý do do máy trạng thái kiểm (422 `reason_required`), nên ở đây cho phép rỗng.
+  reason: z.string().trim().max(500, 'Lý do tối đa 500 ký tự').default(''),
+});
