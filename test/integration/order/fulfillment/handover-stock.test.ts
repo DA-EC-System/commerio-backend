@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { HandoverStockMode } from '#src/modules/order/fulfillment/domain/handover.ts';
 import { lockPackage } from '#src/modules/order/fulfillment/repository/packages.ts';
+import { settleDeferredHandovers, shipLateMappedLines } from '#src/modules/order/fulfillment/index.ts';
 import { revertHandover, settleHandover } from '#src/modules/order/fulfillment/service/handover-stock.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { testPool } from '../../helpers/db.ts';
 import { companyWithVariants, receive } from '../../product/inventory/helpers.ts';
 import {
   invariantBroken,
@@ -146,5 +148,83 @@ describe('revertHandover: huỷ bàn giao nhầm', () => {
       pickup_confirmed_at: null,
       handover_reverted_by: ceo,
     });
+  });
+});
+
+describe('settleDeferredHandovers: hàm bù khi phiếu kiểm kê đầu kỳ ghi sổ (#198)', () => {
+  it('AC10: chờ kiểm kê, hai kiện rời kho trước và sau countedAt; gọi lần hai không đổi gì', async () => {
+    const { companyId, variants: [v] } = await companyWithVariants();
+    await receive(companyId, v!, 10, 100000);
+    const shopId = randomUUID();
+    const countedAt = new Date('2026-11-05T00:00:00Z');
+    const hour = 3_600_000;
+    const seed = (at: Date) =>
+      seedPackage(companyId, { status: 'in_transit', handoverSource: 'marketplace', handedOverAt: at, shopId, lines: [{ variantId: v!, quantity: 2 }] });
+    const before = await seed(new Date(countedAt.getTime() - hour));
+    const after = await seed(new Date(countedAt.getTime() + hour));
+
+    expect(await withCompany(companyId, () => settleDeferredHandovers(shopId, countedAt))).toEqual({ deducted: 1, storedOnly: 1 });
+
+    expect((await packageRow(before.packageId)).handover_source).toBe('before_cutoff');
+    expect(await packageDocuments(before.packageId)).toEqual([]);
+    expect(await packageDocuments(after.packageId)).toHaveLength(1);
+    expect(await stockOfVariant(companyId, v!)).toMatchObject({ onHand: 8 });
+
+    expect(await withCompany(companyId, () => settleDeferredHandovers(shopId, countedAt))).toEqual({ deducted: 0, storedOnly: 0 });
+    expect(await stockOfVariant(companyId, v!)).toMatchObject({ onHand: 8 });
+  });
+});
+
+describe('shipLateMappedLines: dòng ghép SKU muộn (#237)', () => {
+  async function shippedWithUnmapped() {
+    const { companyId, variants: [a, b] } = await companyWithVariants(2);
+    await receive(companyId, a!, 10, 100000);
+    await receive(companyId, b!, 10, 30000);
+    const seeded = await seedPackage(companyId, {
+      status: 'in_transit',
+      lines: [
+        { variantId: a!, quantity: 1, reserved: true },
+        { variantId: null, quantity: 2 },
+      ],
+    });
+    await settle(companyId, seeded.packageId);
+    await testPool().query('update "order".package_lines set variant_id = $2 where id = $1', [seeded.lineIds[1], b]);
+    return { companyId, a: a!, b: b!, ...seeded };
+  }
+
+  it('AC11: kiện đã rời kho, gán SKU cho dòng chưa ghép → thêm một phiếu XK chỉ cho dòng đó', async () => {
+    const { companyId, a, b, packageId } = await shippedWithUnmapped();
+
+    const docs = await withCompany(companyId, () => shipLateMappedLines(packageId));
+
+    expect(docs).toHaveLength(1);
+    expect(await packageDocuments(packageId)).toHaveLength(2);
+    expect(await stockOfVariant(companyId, a)).toMatchObject({ onHand: 9 });
+    expect(await stockOfVariant(companyId, b)).toMatchObject({ onHand: 8 });
+    expect(await packageLineRows(packageId)).toMatchObject([
+      { stock_deducted: true, unit_cost: '100000.00' },
+      { stock_deducted: true, unit_cost: '30000.00' },
+    ]);
+  });
+
+  it('AC11: gọi shipLateMappedLines lần hai → không phiếu mới, tồn không đổi', async () => {
+    const { companyId, b, packageId } = await shippedWithUnmapped();
+    await withCompany(companyId, () => shipLateMappedLines(packageId));
+
+    expect(await withCompany(companyId, () => shipLateMappedLines(packageId))).toEqual([]);
+    expect(await packageDocuments(packageId)).toHaveLength(2);
+    expect(await stockOfVariant(companyId, b)).toMatchObject({ onHand: 8 });
+  });
+
+  it('AC11: kiện before_cutoff hoặc chưa rời kho → không làm gì', async () => {
+    const { companyId, variants: [v] } = await companyWithVariants();
+    await receive(companyId, v!, 10, 100000);
+    const old = await seedPackage(companyId, { status: 'delivered', handoverSource: 'before_cutoff', lines: [{ variantId: v!, quantity: 1 }] });
+    const waiting = await seedPackage(companyId, { status: 'reserved', lines: [{ variantId: v!, quantity: 1 }] });
+
+    expect(await withCompany(companyId, () => shipLateMappedLines(old.packageId))).toEqual([]);
+    expect(await withCompany(companyId, () => shipLateMappedLines(waiting.packageId))).toEqual([]);
+    expect(await packageDocuments(old.packageId)).toEqual([]);
+    expect(await stockOfVariant(companyId, v!)).toMatchObject({ onHand: 10 });
   });
 });

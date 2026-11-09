@@ -4,7 +4,16 @@
 import { publishEvent } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type HandoverStockMode, type PlanLine, shipPlan } from '../domain/handover.ts';
-import { type HandoverPackage, markLinesReserved, markLinesReverted, markLinesShipped, updatePackage } from '../repository/packages.ts';
+import { isHandedOver } from '../domain/package.ts';
+import {
+  type HandoverPackage,
+  lockDeferredPackages,
+  lockPackage,
+  markLinesReserved,
+  markLinesReverted,
+  markLinesShipped,
+  updatePackage,
+} from '../repository/packages.ts';
 import { type DocumentRef, type ShipLine, stockPort } from './stock-port.ts';
 
 export const FORCED_HANDOVER_NOTE = 'Bàn giao bắt buộc: thiếu tồn, cần kiểm kê lại';
@@ -72,6 +81,31 @@ export async function settleHandover(
     },
   });
   return { documents };
+}
+
+/**
+ * Hàm bù khi phiếu kiểm kê đầu kỳ của gian hàng ghi sổ (#198 gọi trong giao dịch ghi sổ hoặc ngay sau): kiện đã rời
+ * kho lúc chờ kiểm kê (`defer`) thì rời kho từ `countedAt` trở đi trừ tồn, trước đó ghi `before_cutoff` (kiểm kê đã
+ * tính). Gọi lần hai không trừ thêm: kiện đã trừ hết dòng hoặc đã `before_cutoff` không còn được chọn.
+ */
+export async function settleDeferredHandovers(shopId: string, countedAt: Date): Promise<{ deducted: number; storedOnly: number }> {
+  const result = { deducted: 0, storedOnly: 0 };
+  for (const pkg of await lockDeferredPackages(shopId)) {
+    const deduct = pkg.handedOverAt !== null && pkg.handedOverAt >= countedAt;
+    await settleHandover(pkg, { actorId: null, mode: deduct ? 'deduct' : 'store_only' });
+    result[deduct ? 'deducted' : 'storedOnly']++;
+  }
+  return result;
+}
+
+/**
+ * Trừ tồn cho dòng vừa ghép SKU muộn của kiện đã rời kho (#237 gọi sau khi gán `variant_id`). Kiện chưa rời kho (chia
+ * hàng lo) hoặc `before_cutoff` thì không làm gì. Trả các phiếu `XK` vừa lập.
+ */
+export async function shipLateMappedLines(packageId: string): Promise<DocumentRef[]> {
+  const pkg = await lockPackage(packageId);
+  if (!pkg || !isHandedOver(pkg.status) || pkg.handoverSource === 'before_cutoff') return [];
+  return (await settleHandover(pkg, { actorId: null, mode: 'deduct' })).documents;
 }
 
 /**
