@@ -5,6 +5,7 @@ import { assertTransition, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type ListingAction, type ListingStatus, listingMachine } from '../domain/listing.ts';
+import { awaitingAllocation } from '../domain/shop.ts';
 import { type CategoryMapRow, listCategoryMaps } from '../repository/category-maps.ts';
 import {
   findListingRow,
@@ -15,6 +16,7 @@ import {
   updateListing,
 } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
+import type { ShopRow } from '../repository/shops.ts';
 import { type MarketplaceAdapter, MarketplaceError } from './marketplaces/index.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
@@ -162,10 +164,11 @@ export async function pushListings(
   shopId: string,
   input: { variantIds: string[]; imageUrls: Record<string, string[]> },
 ): Promise<{ results: PushResult[] }> {
-  const { shop, adapter, accessToken } = await withCompany(actor.companyId, () => shopSession(shopId));
-  if (shop.openingStocktakeNumber) {
-    throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kê đầu kỳ ${shop.openingStocktakeNumber} ghi sổ`);
-  }
+  // Thứ tự kiểm theo §18.6.11: chờ kiểm kê, chờ phân hàng (hoặc lượt đơn mở chưa xong), rồi mới tới token.
+  const { shop, adapter, accessToken } = await withCompany(actor.companyId, async () => {
+    assertNotHoldingStock(await ownShop(shopId));
+    return shopSession(shopId);
+  });
   const ids = [...new Set(input.variantIds)];
   const { variants, prices, available, maps } = await withCompany(actor.companyId, async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
@@ -192,6 +195,24 @@ export async function pushListings(
     results.push(await pushOne(ctx, v, prices.get(v.id) ?? null, available.get(v.id) ?? 0, maps.get(v.categoryId)));
   }
   return { results };
+}
+
+const WAITING_MESSAGE = {
+  open_orders: 'Đang kéo đơn còn mở về. Đẩy sản phẩm sau khi lượt này xong',
+  allocation: 'Đang chia hàng cho các kiện sau kiểm kê. Đẩy sản phẩm sau khi chia xong',
+} as const;
+
+/**
+ * Gian hàng đang giữ tồn sau thiết lập thì không đẩy listing (không tạo sản phẩm với tồn 0, không xếp việc): chờ phiếu
+ * kiểm kê đầu kỳ 409 `shop_awaiting_stocktake` (§18.6.2); lượt kéo đơn còn mở chưa xong hoặc chờ phân hàng 409
+ * `shop_awaiting_allocation` kèm `waitingFor` (§18.6.11).
+ */
+function assertNotHoldingStock(shop: ShopRow): void {
+  if (shop.openingStocktakeNumber) {
+    throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kê đầu kỳ ${shop.openingStocktakeNumber} ghi sổ`);
+  }
+  const waitingFor = awaitingAllocation(shop);
+  if (waitingFor) throw new AppError(409, 'shop_awaiting_allocation', WAITING_MESSAGE[waitingFor], { waitingFor });
 }
 
 async function pushOne(

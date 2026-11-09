@@ -21,7 +21,7 @@ import { type OpeningStocktakeStatus, setStocktakePort } from '#src/modules/chan
 import type { RemoteOrder, RemoteOrderRef, RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
-import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
+import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
@@ -524,5 +524,73 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
 
     expect((await shopRow(shopId)).allocation_stocktake_id).toBeNull();
     expect(await listingSyncJobs(shopId)).toBe(0);
+  });
+});
+
+describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
+  async function mapCategory(c: Company, shopId: string) {
+    const map = await app()
+      .put(`/api/v1/channel/shops/${shopId}/category-maps/${fresh.categoryId}`)
+      .set(auth(c))
+      .send({ externalCategoryId: '14275', attributes: { brand: 'No Brand' }, version: null });
+    expect(map.status).toBe(200);
+  }
+  const push = (c: Company, shopId: string) =>
+    app()
+      .post(`/api/v1/channel/shops/${shopId}/listings/push`)
+      .set(auth(c))
+      .send({ variantIds: [fresh.id], imageUrls: { [fresh.productId]: ['https://img.test/a.png'] } });
+  async function listingRows(shopId: string) {
+    const { rows } = await testPool().query('select stock_sync from channel.listings where shop_id = $1 and variant_id = $2', [shopId, fresh.id]);
+    return rows;
+  }
+
+  it('chờ kiểm kê → shop_awaiting_stocktake; lượt đơn mở chưa xong → open_orders (dù đang chờ phân hàng); chờ phân hàng → allocation; thoát chờ → đẩy được', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    await mapCategory(c, shopId);
+
+    expect((await push(c, shopId)).body.code).toBe('shop_awaiting_stocktake');
+
+    await stocktakePosted(c, posted(shopId, documentId));
+    const openOrders = await push(c, shopId);
+    expect(openOrders.status).toBe(409);
+    expect(openOrders.body).toMatchObject({ code: 'shop_awaiting_allocation', waitingFor: 'open_orders' });
+
+    await testPool().query('update channel.shops set open_orders_pulled_at = now() where id = $1', [shopId]);
+    const allocation = await push(c, shopId);
+    expect(allocation.status).toBe(409);
+    expect(allocation.body).toMatchObject({ code: 'shop_awaiting_allocation', waitingFor: 'allocation' });
+    // Không đẩy sản phẩm với tồn 0, không có listing.
+    expect(created).toEqual([]);
+    expect(await listingRows(shopId)).toEqual([]);
+
+    await allocated(c, documentId);
+    const ok = await push(c, shopId);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.results).toEqual([expect.objectContaining({ outcome: 'created' })]);
+    expect(created).toEqual([expect.objectContaining({ sellerSku: fresh.sku, quantity: 7 })]);
+    expect(await listingRows(shopId)).toEqual([{ stock_sync: 'synced' }]);
+  });
+
+  it('gian hàng chế độ push, lượt đơn mở chưa xong: 409 shop_awaiting_allocation, waitingFor open_orders', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    await stocktakePosted(c, posted(shopId, documentId));
+    await allocated(c, documentId);
+    await testPool().query('update channel.shops set open_orders_pulled_at = now() where id = $1', [shopId]);
+    const token = await app()
+      .post('/api/v1/channel/shops/lazada/token')
+      .set(auth(c))
+      .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const second = token.body.shop.id as string;
+    const setup = await app().post(`/api/v1/channel/shops/${second}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push' });
+    expect(setup.status, JSON.stringify(setup.body)).toBe(200);
+    await mapCategory(c, second);
+
+    const res = await push(c, second);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'shop_awaiting_allocation', waitingFor: 'open_orders' });
   });
 });
