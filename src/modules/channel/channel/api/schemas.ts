@@ -207,7 +207,7 @@ export const ShopConnectionResult = z
     }),
     remoteSkuCount: z.number().int().nullable().meta({
       description:
-        'Số SKU người bán tìm thấy trên sàn lúc nối, không tính SKU đã xoá. `null` khi chưa đọc được: sàn chưa hỗ trợ đọc danh sách SKU, sàn lỗi (kể cả hết hạn mức gọi) hoặc quá 10 giây; việc nối vẫn xong (21 §18.7.4)',
+        'Số hàng người bán có trên sàn lúc nối, không tính hàng đã xoá; sàn có tổng thì đếm theo đơn vị của sàn (Lazada: số sản phẩm, không phải số SKU), không thì số SKU. `null` khi chưa đọc được: sàn chưa hỗ trợ đọc danh sách hay tổng, sàn lỗi (kể cả hết hạn mức gọi) hoặc quá 10 giây; việc nối vẫn xong (21 §18.7.4)',
     }),
   })
   .strict()
