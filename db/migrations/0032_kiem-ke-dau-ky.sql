@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "stock_documents_opening_uq" ON "product"."stock_documents" USING btree ("company_id","source_id") WHERE "product"."stock_documents"."source_type" = 'shop_setup' and "product"."stock_documents"."status" in ('draft', 'pending');
