@@ -95,6 +95,19 @@ describe('danh mục sự kiện (AC-11)', () => {
     });
   });
 
+  describe('fulfillment.package_delivered (21 §11.2, #199c)', () => {
+    const schema = EVENT_SCHEMAS['fulfillment.package_delivered'];
+    const sample = SAMPLES['fulfillment.package_delivered'];
+
+    it('chấp nhận dòng kiện chưa ghép SKU (variantId null)', () => {
+      const lines = [
+        { variantId: null, quantity: 1, unitPrice: '150000.00', unitCost: null },
+        { variantId: id(), quantity: 2, unitPrice: '90000.00', unitCost: '50000.00' },
+      ];
+      expect(schema.safeParse({ ...sample, lines }).success).toBe(true);
+    });
+  });
+
   describe('fulfillment.allocation_done (21 §11.2, Documents#95)', () => {
     const schema = EVENT_SCHEMAS['fulfillment.allocation_done'];
     const documentId = id();
