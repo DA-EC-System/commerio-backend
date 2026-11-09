@@ -204,6 +204,13 @@
       "when": 1794246621868,
       "tag": "0028_nhan-tu-duyet",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794246664929,
+      "tag": "0029_chot-lech-tu-duyet",
+      "breakpoints": true
     }
   ]
 }
