@@ -3,6 +3,7 @@
 import { sql } from 'drizzle-orm';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { handoverStockMode, stockEffectOf } from '../domain/handover.ts';
+import { type PlatformLineStatus } from '../domain/delivery.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
 import {
   insertPackage,
@@ -20,19 +21,9 @@ import { requestAllocation } from './allocation.ts';
 import { settleHandover } from './handover-stock.ts';
 import { type StockLine, stockPort } from './stock-port.ts';
 
-/** Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter). */
-export type PlatformLineStatus =
-  | 'pending'
-  | 'packed'
-  | 'awaiting_pickup'
-  | 'in_transit'
-  | 'delivered'
-  | 'delivery_failed'
-  | 'returning'
-  | 'returned'
-  | 'return_failed'
-  | 'lost'
-  | 'cancelled';
+// Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter) khai trong `domain/delivery.ts`
+// (domain không được import service); re-export để sales, test giữ import cũ.
+export type { PlatformLineStatus, CancelKind, PackageEvent } from '../domain/delivery.ts';
 
 /**
  * Đơn của kiện. `holdStock` false: gian hàng chờ kiểm kê đầu kỳ (#198), không giữ hàng cho kiện mới, kiện rời kho thì
