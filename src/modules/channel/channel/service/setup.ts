@@ -12,6 +12,7 @@ import { lockCompanySetup, setupStateOfCompany, updateShop } from '../repository
 import { stocktakePort } from './stocktake-port.ts';
 import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
+import type { RemoteState } from './marketplaces/common.ts';
 import { sendOpenOrderPull, startShopJobs } from './shop-jobs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
@@ -27,6 +28,10 @@ export interface SetupSuggestion {
   sku: string | null;
   available: number | null;
   platformStock: number;
+  /** URL ảnh đầu tiên của sản phẩm trên sàn; null khi sàn không trả hay adapter không đọc được (§18.7.5, #282). */
+  imageUrl: string | null;
+  /** Trạng thái sản phẩm trên sàn đã chuẩn hoá (`RemoteSku.state`); SKU đã xoá không có trong gợi ý (§18.7.5, #282). */
+  status: Exclude<RemoteState, 'deleted'>;
 }
 
 type Suggestion = SetupSuggestion & { externalProductId: string; sellerSku: string };
@@ -42,6 +47,10 @@ const NAME_ROWS_MAX = 50_000;
 
 const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].filter(Boolean).join(' ');
 
+/** Các giá trị của một nhãn biến thể: thường hoá, bỏ dấu câu, tách theo chữ và số ("Trắng, M" và "trắng / m" như nhau). */
+const labelTokens = (label: string | null | undefined) =>
+  [...new Set((label ?? '').normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean))].sort().join(' ');
+
 /**
  * Gợi ý ghép (#198, Documents/21 §18.7.5): mọi SKU người bán trên sàn (bỏ sản phẩm đã xoá), mỗi SKU một dòng. Ghép theo
  * SKU trước, phần còn lại theo tên sản phẩm kèm nhãn biến thể bằng `similarity()` của pg_trgm, nhận từ 0.4, tham lam theo
@@ -49,7 +58,7 @@ const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].fi
  * (`nameMatchSkipped`). Biến thể lưu trữ hay đã có listing ở gian hàng này không được gợi ý. Sàn
  * chưa có `listSkus` thì chỉ đọc được SKU trùng SKU Commerio (`getSkus`).
  */
-async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
+async function suggestions(port: ProductPort, actor: Actor, shopId: string, labels = true) {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   const { shop, adapter, accessToken } = await inCompany(async () => {
     const session = await shopSession(shopId);
@@ -62,7 +71,8 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
   }));
   const open = variants.filter((v) => !v.archived && !listed.has(v.id));
   const fetched = adapter.listSkus
-    ? await onMarketplace(() => adapter.listSkus!(accessToken))
+    ? // Nhãn biến thể chỉ cần cho SKU ghép theo tên: sản phẩm mà mọi SKU trùng SKU Commerio còn mở thì adapter không đọc nhãn.
+      await onMarketplace(() => adapter.listSkus!(accessToken, { labels, skipSellerSkus: new Set(open.map((v) => v.sku)) }))
     : open.length
       ? await onMarketplace(() => adapter.getSkus(accessToken, open.map((v) => v.sku)))
       : [];
@@ -79,11 +89,17 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
   });
   // Tên chỉ phân biệt được biến thể khi tiêu đề là của riêng một SKU: Lazada trả tên sản phẩm cho mọi SKU của nó, nên
   // nhiều SKU cùng tiêu đề sẽ hoà điểm và ghép nhầm màu, cỡ (#198 diff-review P2). SKU không có SKU người bán thì kéo đơn
-  // không tra được biến thể, không gợi ý.
+  // không tra được biến thể, không gợi ý. SKU của sản phẩm nhiều SKU mà sàn không cho nhãn biến thể (`variantLabel`) thì
+  // tiêu đề chỉ khác nhau ở SKU người bán, không nói màu, cỡ nào: cũng không ghép theo tên (#282 diff-review).
   const titleCount = new Map<string, number>();
-  for (const r of remote) titleCount.set(r.title.trim().toLowerCase(), (titleCount.get(r.title.trim().toLowerCase()) ?? 0) + 1);
+  const productSkuCount = new Map<string, number>();
+  for (const r of remote) {
+    titleCount.set(r.title.trim().toLowerCase(), (titleCount.get(r.title.trim().toLowerCase()) ?? 0) + 1);
+    productSkuCount.set(r.externalProductId, (productSkuCount.get(r.externalProductId) ?? 0) + 1);
+  }
+  const unlabeledVariant = (r: (typeof remote)[number]) => productSkuCount.get(r.externalProductId)! > 1 && !r.variantLabel;
   const restRemote = remote.flatMap((r, i) =>
-    chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 ? [] : [i],
+    chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 || unlabeledVariant(r) ? [] : [i],
   );
   const restVariants = open.filter((v) => !taken.has(v.id));
   let nameMatchSkipped = restRemote.length * restVariants.length > NAME_PAIRS_MAX;
@@ -101,18 +117,25 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
       : [];
   if (pairs === null) nameMatchSkipped = true;
   else {
+    // SKU sàn có nhãn biến thể thật (`variantLabel`) chỉ ghép theo tên với biến thể có cùng các giá trị thuộc tính: nhãn cỡ
+    // một ký tự gần như không đổi điểm trigram, "Áo thun basic - Trắng, M" với "Áo thun basic Trắng / L" vẫn 0.83 (#282
+    // review chéo I-1).
+    const fitting = pairs.filter((p) => {
+      const label = remote[restRemote[p.left]!]!.variantLabel;
+      return !label || labelTokens(label) === labelTokens(restVariants[p.right]!.attributesLabel);
+    });
     // Ngược chiều: sản phẩm của biến thể giống nhất có từ hai biến thể qua ngưỡng thì tên sàn không chỉ ra được màu, cỡ
     // nào; không gợi ý, để người dùng chọn (#198 diff-review vòng 2). `pairs` xếp điểm giảm dần nên cặp đầu của mỗi SKU là
     // cặp giống nhất.
     const bestProduct = new Map<number, string>();
     const perProduct = new Map<string, number>();
-    for (const p of pairs) {
+    for (const p of fitting) {
       const product = restVariants[p.right]!.productId;
       if (!bestProduct.has(p.left)) bestProduct.set(p.left, product);
       perProduct.set(`${p.left} ${product}`, (perProduct.get(`${p.left} ${product}`) ?? 0) + 1);
     }
     const ambiguous = (left: number) => perProduct.get(`${left} ${bestProduct.get(left)}`)! > 1;
-    for (const p of pairs) {
+    for (const p of fitting) {
       const i = restRemote[p.left]!;
       const v = restVariants[p.right]!;
       if (chosen.has(i) || taken.has(v.id) || ambiguous(p.left)) continue;
@@ -134,6 +157,8 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string) {
       sku: c?.variant.sku ?? null,
       available: c ? (available.get(c.variant.id) ?? 0) : null,
       platformStock: r.quantity,
+      imageUrl: r.imageUrl ?? null,
+      status: r.state as Exclude<RemoteState, 'deleted'>,
     };
   });
   return { offered, variants, listed, nameMatchSkipped };
@@ -231,7 +256,8 @@ export async function finishSetup(
     returnWindowDays?: number | null | undefined;
   },
 ): Promise<{ shop: Shop; matched: number; stocktakeNumber: string | null }> {
-  const candidates = await suggestions(port, actor, shopId);
+  // `decisions` không dùng tiêu đề hay gợi ý theo tên: không đọc nhãn biến thể (đỡ tới 50 lời gọi sàn, #282 review chéo I-2).
+  const candidates = await suggestions(port, actor, shopId, !input.decisions);
   const offered = candidates.offered;
   const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
   const { firstShopOfCompany, awaitingStocktake } = await companySetupState(actor, shopId);

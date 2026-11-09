@@ -54,7 +54,7 @@ const sku = (externalSkuId: string, sellerSku: string, title: string, state: Rem
   quantity: 4,
 });
 const remote: RemoteSku[] = [
-  sku('sku-1', 'CMR-1', 'Áo thun trắng'),
+  { ...sku('sku-1', 'CMR-1', 'Áo thun trắng'), imageUrl: 'https://img.test/ao.jpg' },
   sku('sku-2', 'LZ-JEAN', 'Quần jean nam xanh 32'),
   sku('sku-3', 'LZ-MU', 'Mũ lưỡi trai'),
   sku('sku-4', 'LZ-BINH', 'Bình giữ nhiệt'),
@@ -126,12 +126,15 @@ describe('gợi ý ghép theo SKU và theo tên (AC-22)', () => {
       sku: 'CMR-1',
       available: 9,
       platformStock: 4,
+      // Ảnh đầu tiên và trạng thái sàn đi thẳng từ adapter (#282); adapter không trả ảnh thì null.
+      imageUrl: 'https://img.test/ao.jpg',
+      status: 'live',
     });
     expect(rows[1]).toMatchObject({ match: 'name', variantId: vName.id, sku: 'CMR-2', available: 9 });
     expect(rows[1]!.score).toBeGreaterThanOrEqual(0.4);
     expect(rows[1]!.score).toBeLessThanOrEqual(1);
     // `vListed` đã có listing ở gian hàng, `vArchived` lưu trữ: không được gợi ý dù tên trùng.
-    for (const r of rows.slice(2)) expect(r).toMatchObject({ match: 'none', score: null, variantId: null, sku: null, available: null, platformStock: 4 });
+    for (const r of rows.slice(2)) expect(r).toMatchObject({ match: 'none', score: null, variantId: null, sku: null, available: null, platformStock: 4, imageUrl: null });
     expect(res.body.unmatchedRemote).toBe(2);
     expect(res.body.nameMatchSkipped).toBe(false);
   });
@@ -247,6 +250,40 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
     const res = await (await connectingShop()).preview();
     const rows = (res.body.suggestions as { externalSkuId: string; match: string }[]).filter((r) => r.externalSkuId.startsWith('sku-p'));
     expect(rows.map((r) => r.match)).toEqual(['none', 'none', 'none']);
+  });
+
+  it('sản phẩm nhiều SKU, tiêu đề khác nhau chỉ ở SKU người bán (sàn không cho nhãn biến thể): không ghép theo tên; có nhãn thì ghép (#282)', async () => {
+    variants.push(variant('CMR-T1', 'Áo thun cổ tim', 'Đen'), variant('CMR-T2', 'Áo len', 'Xám'));
+    const item = (externalSkuId: string, sellerSku: string, title: string, variantLabel: string | null): RemoteSku => ({
+      ...sku(externalSkuId, sellerSku, title),
+      externalProductId: `item-${variantLabel === null ? 'tim' : 'len'}`,
+      variantLabel,
+    });
+    remote.push(
+      item('sku-t1', 'TT-TRANG', 'Áo thun cổ tim - TT-TRANG', null),
+      item('sku-t2', 'TT-DEN', 'Áo thun cổ tim - TT-DEN', null),
+      item('sku-l1', 'LEN-XAM', 'Áo len - Xám', 'Xám'),
+      item('sku-l2', 'LEN-NAU', 'Áo len - Nâu', 'Nâu'),
+    );
+    const res = await (await connectingShop()).preview();
+    const byId = new Map((res.body.suggestions as { externalSkuId: string; match: string }[]).map((r) => [r.externalSkuId, r.match]));
+    expect([byId.get('sku-t1'), byId.get('sku-t2')]).toEqual(['none', 'none']);
+    expect(byId.get('sku-l1')).toBe('name');
+  });
+
+  it('nhãn biến thể sàn khác thuộc tính của biến thể Commerio (cỡ M với cỡ L): không ghép theo tên dù điểm cao; cùng giá trị thì ghép (review chéo I-1)', async () => {
+    variants.push(variant('CMR-B1', 'Áo thun basic', 'Trắng / L'), variant('CMR-B2', 'Áo hoodie', 'Đen / XL'));
+    remote.push(
+      { ...sku('sku-b1', 'TT-B-M', 'Áo thun basic - Trắng, M'), externalProductId: 'item-basic', variantLabel: 'Trắng, M' },
+      { ...sku('sku-b2', 'TT-B-L', 'Áo thun basic - Đen, L'), externalProductId: 'item-basic', variantLabel: 'Đen, L' },
+      { ...sku('sku-h1', 'TT-H-XL', 'Áo hoodie - đen, xl'), externalProductId: 'item-hoodie', variantLabel: 'đen, xl' },
+      { ...sku('sku-h2', 'TT-H-L', 'Áo hoodie - đen, l'), externalProductId: 'item-hoodie', variantLabel: 'đen, l' },
+    );
+    const res = await (await connectingShop()).preview();
+    const byId = new Map((res.body.suggestions as { externalSkuId: string; match: string; sku: string | null }[]).map((r) => [r.externalSkuId, r]));
+    expect([byId.get('sku-b1')?.match, byId.get('sku-b2')?.match]).toEqual(['none', 'none']);
+    expect(byId.get('sku-h1')).toMatchObject({ match: 'name', sku: 'CMR-B2' });
+    expect(byId.get('sku-h2')?.match).toBe('none');
   });
 
   it('một SKU sàn mà nhiều biến thể của cùng sản phẩm Commerio cùng qua ngưỡng: không gợi ý theo tên (vòng 2 review P2)', async () => {

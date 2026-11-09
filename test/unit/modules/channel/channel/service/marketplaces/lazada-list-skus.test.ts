@@ -38,6 +38,23 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     expect(skus.some((s) => s.sellerSku === 'S-0')).toBe(false);
   });
 
+  it('imageUrl (#282): ảnh đầu của `images` (mảng như gọi thật 09/11/2026, hoặc chuỗi JSON như ví dụ tài liệu), không có thì ảnh SKU, rồi null', async () => {
+    const products = [
+      { item_id: 1, status: 'Active', attributes: { name: 'A' }, images: ['', 'https://vn-live.slatic.net/p/a.png'], skus: [{ SkuId: 11, SellerSku: 'A', Images: [] }] },
+      { item_id: 2, status: 'Active', attributes: { name: 'B' }, images: '["https://vn-live.slatic.net/p/b.png"]', skus: [{ SkuId: 21, SellerSku: 'B' }] },
+      { item_id: 3, status: 'Pending QC', attributes: { name: 'C' }, images: [], skus: [{ SkuId: 31, SellerSku: 'C', Images: ['https://vn-live.slatic.net/p/c.jpg', ''] }] },
+      { item_id: 4, status: 'InActive', attributes: { name: 'D' }, skus: [{ SkuId: 41, SellerSku: 'D', Images: ['', ''] }] },
+    ];
+    const fetchFn = async () => new Response(JSON.stringify({ code: '0', data: { total_products: 4, products } }), { status: 200 });
+    const skus = await createLazadaAdapter(config, fetchFn).listSkus!('t');
+    expect(skus.map((s) => [s.externalSkuId, s.imageUrl, s.state])).toEqual([
+      ['11', 'https://vn-live.slatic.net/p/a.png', 'live'],
+      ['21', 'https://vn-live.slatic.net/p/b.png', 'live'],
+      ['31', 'https://vn-live.slatic.net/p/c.jpg', 'review'],
+      ['41', null, 'inactive'],
+    ]);
+  });
+
   it('gian hàng quá 10000 sản phẩm thì báo lỗi thay vì trả thiếu', async () => {
     const adapter = createLazadaAdapter(config, fakeLazada(10_100, []));
     await expect(adapter.listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_products' });

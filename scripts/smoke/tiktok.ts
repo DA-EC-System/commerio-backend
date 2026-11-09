@@ -143,6 +143,26 @@ async function skus(shopId: string | undefined, sellerSkus: string[]): Promise<v
   });
 }
 
+/** Mọi SKU của shop như bước ghép ở thiết lập thấy (#282): số sản phẩm, số SKU, toàn bộ danh sách. Chỉ đọc. */
+async function products(shopId: string | undefined): Promise<void> {
+  const saved = loadTokens<TiktokTokens>('tiktok');
+  if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}, chạy "refresh" trước.`);
+  const list = await adapter.listSkus!(packedFor(saved, shopId));
+  printStep('listSkus (product/202502/products/search + product/202309/products/{id}, tối đa 50 sản phẩm, nhiều SKU trước)', true, {
+    products: new Set(list.map((s) => s.externalProductId)).size,
+    skus: list.length,
+    items: list.map(({ externalProductId, externalSkuId, sellerSku, title, state, quantity, imageUrl }) => ({
+      externalProductId,
+      externalSkuId,
+      sellerSku,
+      title,
+      state,
+      quantity,
+      imageUrl,
+    })),
+  });
+}
+
 /** Yêu cầu trả hay lần huỷ cập nhật trong `days` ngày qua (#227), lật hết trang. Chỉ đọc. */
 async function aftersales(kind: 'returns' | 'cancellations', days: string | undefined): Promise<void> {
   const saved = loadTokens<TiktokTokens>('tiktok');
@@ -329,6 +349,11 @@ const commands: Record<string, () => Promise<void> | void> = {
   refresh,
   // skus [shopId] [sellerSku ...]
   skus: () => skus(args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined, args.filter((a, i) => !(i === 0 && /^\d+$/.test(a)))),
+  // products [shopId]: mọi SKU như bước ghép ở thiết lập (#282, chỉ đọc)
+  products: () => {
+    if (args[0] !== undefined && !/^\d+$/.test(args[0])) throw new Error('shopId là mã shop TikTok, chỉ gồm chữ số');
+    return products(args[0]);
+  },
   // returns [số ngày], cancellations [số ngày], cancel-reasons <orderId> (#227, chỉ đọc)
   returns: () => aftersales('returns', args[0]),
   cancellations: () => aftersales('cancellations', args[0]),
@@ -353,7 +378,7 @@ const commands: Record<string, () => Promise<void> | void> = {
 const run = command ? commands[command] : undefined;
 if (!run) {
   console.log(
-    'Lệnh: link | token <URL callback | code> | shops | refresh | skus [shopId] [sellerSku ...] | warehouses | categories [từ khoá] |\n' +
+    'Lệnh: link | token <URL callback | code> | shops | refresh | products [shopId] | skus [shopId] [sellerSku ...] | warehouses | categories [từ khoá] |\n' +
       '  attrs <categoryId> | push-stock <sellerSku> <qty> | push-price <sellerSku> <giá> | deactivate <sellerSku> | activate <sellerSku> |\n' +
       '  upload-image <URL ảnh> | create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...] |\n' +
       '  returns [ngày] | cancellations [ngày] | cancel-reasons <orderId> |\n' +
