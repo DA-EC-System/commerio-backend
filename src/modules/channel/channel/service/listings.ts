@@ -164,9 +164,9 @@ export async function pushListings(
   shopId: string,
   input: { variantIds: string[]; imageUrls: Record<string, string[]> },
 ): Promise<{ results: PushResult[] }> {
-  // Thứ tự kiểm theo §18.6.11: chờ kiểm kê, chờ phân hàng (hoặc lượt đơn mở chưa xong), rồi mới tới token.
+  // Thứ tự kiểm theo §18.6.11: chưa `active`, chờ kiểm kê, chờ phân hàng (hoặc lượt đơn mở chưa xong), rồi mới tới token.
   const { shop, adapter, accessToken } = await withCompany(actor.companyId, async () => {
-    assertNotHoldingStock(await ownShop(shopId));
+    assertPushable(await ownShop(shopId));
     return shopSession(shopId);
   });
   const ids = [...new Set(input.variantIds)];
@@ -203,11 +203,15 @@ const WAITING_MESSAGE = {
 } as const;
 
 /**
- * Gian hàng đang giữ tồn sau thiết lập thì không đẩy listing (không tạo sản phẩm với tồn 0, không xếp việc): chờ phiếu
- * kiểm kê đầu kỳ 409 `shop_awaiting_stocktake` (§18.6.2); lượt kéo đơn còn mở chưa xong hoặc chờ phân hàng 409
- * `shop_awaiting_allocation` kèm `waitingFor` (§18.6.11).
+ * Chỉ đẩy khi gian hàng `active` (409 `shop_not_active` kèm `current`; §18.6.4, 25 §6.3). Gian hàng đang giữ tồn sau
+ * thiết lập thì không đẩy listing (không tạo sản phẩm với tồn 0, không xếp việc): chờ phiếu kiểm kê đầu kỳ 409
+ * `shop_awaiting_stocktake` (§18.6.2); lượt kéo đơn còn mở chưa xong hoặc chờ phân hàng 409 `shop_awaiting_allocation`
+ * kèm `waitingFor` (§18.6.11). `shopSession` chung không đổi (ghép danh mục vẫn gọi được khi `connecting`).
  */
-function assertNotHoldingStock(shop: ShopRow): void {
+function assertPushable(shop: ShopRow): void {
+  if (shop.status !== 'active') {
+    throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi đẩy', { current: shop.status });
+  }
   if (shop.openingStocktakeNumber) {
     throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kê đầu kỳ ${shop.openingStocktakeNumber} ghi sổ`);
   }

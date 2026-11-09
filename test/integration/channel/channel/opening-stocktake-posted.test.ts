@@ -573,6 +573,17 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
     expect(await listingRows(shopId)).toEqual([{ stock_sync: 'synced' }]);
   });
 
+  it('thứ tự kiểm: gian hàng không active thì shop_not_active trước shop_awaiting_stocktake', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId } = await waitingShop(c);
+    await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);
+
+    const res = await push(c, shopId);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'shop_not_active', current: 'needs_reauth' });
+  });
+
   it('gian hàng chế độ push, lượt đơn mở chưa xong: 409 shop_awaiting_allocation, waitingFor open_orders', async () => {
     const c = await createCompany({ optionalModules: ['channel'] });
     const { shopId, documentId } = await waitingShop(c);

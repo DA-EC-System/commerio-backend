@@ -204,13 +204,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/push',
     summary: 'Đẩy biến thể lên sàn (#104)',
     description:
-      "Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng). Gian hàng chờ kiểm kê đầu kỳ: 409 `shop_awaiting_stocktake` (21 §18.6.2). Lượt kéo đơn còn mở chưa xong hoặc phiếu đầu kỳ đã ghi sổ mà chưa phân hàng xong: 409 `shop_awaiting_allocation`, problem body thêm `waitingFor: 'open_orders' | 'allocation'`; BE không đẩy sản phẩm với tồn 0, không xếp việc. Thứ tự kiểm: `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected` (21 §18.6.11).",
+      "Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng). Gian hàng chờ kiểm kê đầu kỳ: 409 `shop_awaiting_stocktake` (21 §18.6.2). Lượt kéo đơn còn mở chưa xong hoặc phiếu đầu kỳ đã ghi sổ mà chưa phân hàng xong: 409 `shop_awaiting_allocation`, problem body thêm `waitingFor: 'open_orders' | 'allocation'`; BE không đẩy sản phẩm với tồn 0, không xếp việc. Thứ tự kiểm: `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected` (21 §18.6.11).",
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
     responses: {
       200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
       ...onShop,
-      409: problemResponse('`shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+      409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
     },
   });
   registry.registerPath({
