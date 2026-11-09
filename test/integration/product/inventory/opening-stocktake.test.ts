@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createOpeningStocktake } from '#src/modules/product/inventory/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
-import { createCompany } from '../../helpers/company.ts';
+import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { inv, receive } from './helpers.ts';
 
@@ -109,5 +109,50 @@ describe('createOpeningStocktake (#245)', () => {
     const grown = await inv(s.ceo.token).put(`/documents/${small.id}`, { note: '', lines, version: small.version });
     expect([grown.status, grown.body.code]).toEqual([422, 'validation_failed']);
     expect(grown.body.errors.lines).toBeDefined();
+  });
+
+  describe('người lập là người gửi duyệt, không phải người bấm thiết lập gian hàng (#278 review I1)', () => {
+    async function ceoId(email: string) {
+      return (await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [email])).rows[0]!.id;
+    }
+    async function submitAndApprove(submitter: string, approver: string, documentId: string) {
+      const doc = (await inv(submitter).get(`/documents/${documentId}`)).body;
+      const sent = await inv(submitter).post(`/documents/${documentId}/submit`, { version: doc.version });
+      expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+      return inv(approver).post(`/documents/${documentId}/approve`, { version: sent.body.version });
+    }
+
+    it('CEO kết nối, kho gửi duyệt, CEO duyệt: không tự duyệt; lịch sử ghi CEO ở bước lập', async () => {
+      const s = await setup();
+      const ceo = await ceoId(s.ceo.email);
+      const kho = await addMember(s.companyId, 'warehouse');
+      const { documentId } = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: ceo }));
+      const draft = (await inv(s.ceo.token).get(`/documents/${documentId}`)).body;
+      expect(draft.createdById).toBe('');
+      expect(draft.statusHistory[0]).toMatchObject({ to: 'draft', by: { id: ceo } });
+      const ok = await submitAndApprove(kho.token, s.ceo.token, documentId);
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      expect(ok.body.createdById).toBe(kho.accountId);
+      expect(ok.body.statusHistory.at(-1)).toMatchObject({ to: 'posted', selfApproved: false });
+    });
+
+    it('CEO kết nối rồi tự gửi, tự duyệt: tự duyệt có nhãn', async () => {
+      const s = await setup();
+      const ceo = await ceoId(s.ceo.email);
+      const { documentId } = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: ceo }));
+      const ok = await submitAndApprove(s.ceo.token, s.ceo.token, documentId);
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      expect(ok.body.statusHistory.at(-1)).toMatchObject({ to: 'posted', selfApproved: true });
+    });
+
+    it('người có quyền lập và duyệt (không phải CEO) tự gửi rồi tự duyệt: 409 second_person_required', async () => {
+      const s = await setup();
+      const ceo = await ceoId(s.ceo.email);
+      const role = await createCustomRole(s.companyId, ['inventory.stock.view', 'inventory.receipt.create', 'inventory.document.approve']);
+      const lapDuyet = await addMember(s.companyId, role);
+      const { documentId } = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: ceo }));
+      const self = await submitAndApprove(lapDuyet.token, lapDuyet.token, documentId);
+      expect([self.status, self.body.code]).toEqual([409, 'second_person_required']);
+    });
   });
 });

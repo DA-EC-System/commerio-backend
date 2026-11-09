@@ -366,6 +366,8 @@ export function actOnDocument(actor: DocActor, id: string, action: DocAction, in
     if (type !== 'return_inspection' && action === 'submit') await checkDecrease(row, lines);
     if (action === 'reject') set.statusReason = reason;
     if (type === 'return_inspection' && action === 'submit') Object.assign(set, { claimFlag: true, createdBy: actor.accountId });
+    // Kiểm kê đầu kỳ do hệ thống lập: người gửi duyệt (người đếm) thành người lập để xét người thứ hai (25 §11, N9)
+    if (row.isOpening && action === 'submit') set.createdBy = actor.accountId;
     if (to === 'posted') {
       await post(row, lines, actor.accountId, now);
       Object.assign(set, { postedBy: actor.accountId, postedAt: now });
@@ -493,7 +495,8 @@ export async function createOpeningStocktake(
     sourceType: 'shop_setup',
     sourceId: shopId,
     note: 'Kiểm kê đầu kỳ khi kết nối gian hàng đầu tiên',
-    createdBy: opts.actorId,
+    // Hệ thống lập; người bấm thiết lập chỉ ghi ở lịch sử, người gửi duyệt mới thành người lập (`actOnDocument`)
+    createdBy: null,
   });
   if (!row) {
     const other = (await openingDocOf(shopId))!;
