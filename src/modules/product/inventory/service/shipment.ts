@@ -88,7 +88,8 @@ export async function ship(packageId: string, lines: readonly ShipLine[], opts: 
 /**
  * Đảo lượt bàn giao gần nhất chưa đảo (Q17, Documents/25 §8.3): lập phiếu `DX` đã ghi sổ, cộng lại tồn thực và đang giữ
  * (hàng còn ở kho, nằm trong kiện). Giá mỗi SKU là bình quân giá các dòng xuất của SKU đó trong lượt; giá vốn bình quân
- * tính lại. Mỗi SKU đảo không quá số đã xuất trong lượt; đảo xong thì lượt hết, gọi lại là lỗi.
+ * tính lại. Huỷ bàn giao nhầm là cả kiện quay về chờ lấy hàng, không đảo một phần: `lines` phải gồm đúng mọi SKU của
+ * lượt với đúng tổng đã xuất, lệch là lỗi lập trình. Đảo xong thì lượt hết, gọi lại là lỗi.
  */
 export async function reverseShipment(
   packageId: string,
@@ -104,13 +105,16 @@ export async function reverseShipment(
   const round = activeRound(await packageShipments(packageId));
   if (!round.length) throw new Error(`Kiện ${packageId} không có lượt bàn giao nào để đảo`);
   const shipped = round.flatMap((d) => d.lines);
-  const costOf = new Map<string, string>();
-  for (const [variantId, q] of wanted) {
-    const ofSku = shipped.filter((l) => l.variantId === variantId);
-    const total = ofSku.reduce((n, l) => n + l.quantity, 0);
-    if (q > total) throw new Error(`Kiện ${packageId} đảo ${q} cái ${variantId} nhưng lượt bàn giao chỉ xuất ${total}`);
-    costOf.set(variantId, averageCost(ofSku).toFixed(2));
-  }
+  // Đảo xong thì lượt hết (`activeRound`), nên đảo thiếu để lại phần đã trừ tồn mà không còn cách đảo: mỗi SKU của lượt
+  // phải đảo đúng tổng đã xuất, không thừa SKU nào.
+  const totals = mergeLines(shipped);
+  const mismatched = [...new Set([...totals.keys(), ...wanted.keys()])]
+    .filter((v) => (totals.get(v) ?? 0) !== (wanted.get(v) ?? 0))
+    .map((v) => `${v} đã xuất ${totals.get(v) ?? 0}, đảo ${wanted.get(v) ?? 0}`);
+  if (mismatched.length) throw new Error(`Kiện ${packageId} phải đảo đủ cả lượt bàn giao: ${mismatched.join('; ')}`);
+  const costOf = new Map(
+    [...wanted.keys()].map((v) => [v, averageCost(shipped.filter((l) => l.variantId === v)).toFixed(2)] as const),
+  );
 
   const { ref, lines: docLines } = await createSystemDocument({
     kind: 'shipment_reversal',

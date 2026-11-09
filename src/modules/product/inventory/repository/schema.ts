@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
@@ -143,6 +144,10 @@ export const stockDocuments = inventorySchema.table(
     unique().on(t.companyId, t.number),
     index().on(t.kind, t.status),
     index().on(t.sourceType, t.sourceId),
+    // Mỗi nguồn (kiện hoàn, yêu cầu trả) một phiếu kiểm hàng hoàn: hai lần `receiveBack` song song không lập hai phiếu.
+    uniqueIndex('stock_documents_return_inspection_source_uq')
+      .on(t.companyId, t.sourceType, t.sourceId)
+      .where(sql`${t.kind} = 'return_inspection'`),
     approvalCheck('stock_documents', t),
     check(
       'stock_documents_shipment_source',

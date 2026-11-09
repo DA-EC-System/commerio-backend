@@ -399,10 +399,36 @@ describe('reverseShipment', () => {
     const reverse = (lines: { variantId: string; quantity: number }[]) =>
       withCompany(companyId, () => reverseShipment(k, lines, { actorId: randomUUID(), reason: 'Nhầm' }));
 
-    await expect(reverse([line(a, 3)])).rejects.toThrow(/chỉ xuất 2/);
-    await expect(reverse([line(b, 1)])).rejects.toThrow(/chỉ xuất 0/);
+    await expect(reverse([line(a, 3)])).rejects.toThrow(new RegExp(`${a} đã xuất 2, đảo 3`));
+    await expect(reverse([line(b, 1)])).rejects.toThrow(new RegExp(`${b} đã xuất 0, đảo 1`));
     expect(await docsOfPackage(k)).toEqual(['XK-000001']);
     expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 3, reserved: 0 });
+  });
+
+  it('đảo thiếu số hoặc thiếu SKU của lượt → lỗi, không có phiếu đảo, tồn không đổi; đảo đủ cả lượt thì được (25 §8.3)', async () => {
+    const { companyId, variants } = await companyWithVariants(2);
+    const [a, b] = variants as [string, string];
+    await receive(companyId, a, 5, 1000);
+    await receive(companyId, b, 5, 1000);
+    await setBuckets(companyId, a, { reserved: 3 });
+    await setBuckets(companyId, b, { reserved: 1 });
+    const k = randomUUID();
+    await withCompany(companyId, () => ship(k, [pl(a, 2), pl(b, 1)], { actorId: null }));
+    await withCompany(companyId, () => ship(k, [pl(a, 1)], { actorId: null }));
+    const reverse = (lines: { variantId: string; quantity: number }[]) =>
+      withCompany(companyId, () => reverseShipment(k, lines, { actorId: randomUUID(), reason: 'Nhầm' }));
+
+    await expect(reverse([line(a, 2), line(b, 1)])).rejects.toThrow(new RegExp(`${a} đã xuất 3, đảo 2`));
+    await expect(reverse([line(a, 3)])).rejects.toThrow(new RegExp(`${b} đã xuất 1, đảo 0`));
+    expect(await docsOfPackage(k)).toEqual(['XK-000001', 'XK-000002']);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 2, reserved: 0 });
+    expect(await levelOf(companyId, b)).toMatchObject({ on_hand: 4, reserved: 0 });
+
+    await reverse([line(a, 1), line(b, 1), line(a, 2)]);
+
+    expect(await docsOfPackage(k)).toEqual(['DX-000001', 'XK-000001', 'XK-000002']);
+    expect(await levelOf(companyId, a)).toMatchObject({ on_hand: 5, reserved: 3 });
+    expect(await levelOf(companyId, b)).toMatchObject({ on_hand: 5, reserved: 1 });
   });
 
   it('kiện chưa từng bàn giao → lỗi', async () => {

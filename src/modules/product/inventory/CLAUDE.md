@@ -59,8 +59,8 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
   - `reserve(packageId, lines)` → `{ reserved }`: nguyên kiện, mọi SKU đủ khả dụng thì giữ hết, thiếu một SKU thì không giữ gì. `lines` rỗng trả `true`.
   - `release(packageId, lines)`: trừ đang giữ; nhả quá số đang giữ thì 500 kèm mã kiện, không ghi gì.
   - `ship(packageId, lines: { variantId, quantity, packageLineId }[], { actorId, forced? })` → `{ documentId, number }`: phiếu `XK`, trừ tồn thực và đang giữ. Kiện chưa giữ đủ mà không `forced` thì 500 trước khi lấy số phiếu. `forced`: trừ tồn thực, không trừ đang giữ, được vỡ bất biến. Lưới gọi lặp theo `packageLineId` (Q12): trong lượt đang xuất, đúng tập dòng kiện của một phiếu thì trả phiếu đó; không dòng nào đã trừ thì lập phiếu mới (dòng ghép SKU sau trùng SKU, số với lần trước vẫn được trừ); lẫn dòng đã trừ với dòng mới, hoặc `packageLineId` lặp trong một lần gọi, thì 500.
-  - `reverseShipment(packageId, lines, { actorId, reason })` → `{ documentId, number }`: đảo lượt đang xuất, cộng lại tồn thực và đang giữ; mỗi SKU không quá số của lượt; không còn lượt thì 500; `reason` sau khi trim khác rỗng, ≤ 500 ký tự.
-  - `receiveBack({ type: 'package' | 'return_request', id }, lines)` → `{ documentId, number }`: phiếu `KT` nháp, không đổi tồn; nguồn đã có phiếu thì trả phiếu đó.
+  - `reverseShipment(packageId, lines, { actorId, reason })` → `{ documentId, number }`: đảo cả lượt đang xuất, cộng lại tồn thực và đang giữ; `lines` phải gồm đúng mọi SKU của lượt với đúng tổng đã xuất (`25` §8.3 không đảo một phần), lệch hay không còn lượt thì 500; `reason` sau khi trim khác rỗng, ≤ 500 ký tự.
+  - `receiveBack({ type: 'package' | 'return_request', id }, lines)` → `{ documentId, number }`: phiếu `KT` nháp, không đổi tồn; nguồn đã có phiếu thì trả phiếu đó. Mỗi nguồn tối đa một phiếu (unique một phần `stock_documents_return_inspection_source_uq`): lần gọi song song đụng unique thì lùi savepoint (không nhảy số), trả phiếu của bên commit trước; giao dịch bên gọi vẫn dùng tiếp được.
 
 ## Bên gọi cổng theo kiện phải làm
 
@@ -69,7 +69,6 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `ship` gọi đúng một lần theo `stock_deducted` (Q12); giá vốn dòng kiện đọc `stockOf(...).avgCost` ngay sau `ship` trong cùng giao dịch (Q16).
 - Mỗi dòng của `ship` mang đúng id dòng kiện (`package_lines.id`); dòng ghép SKU sau (`25` §8.4 quy tắc 3) trừ bằng một lần `ship` riêng chỉ gồm các dòng đó.
 - Sau `reverseShipment`, đặt lại `reserved_qty = quantity`, `stock_deducted = false` cho dòng được đảo: inventory đã cộng lại đang giữ, kể cả khi lượt đó là bàn giao bắt buộc (Q17). Quên thì đang giữ kẹt mãi, khả dụng thấp hơn thật.
-- Chuyển trạng thái kiện, yêu cầu trả có điều kiện trước `receiveBack`: hàm này không khoá gì, hai lần gọi song song cùng nguồn sẽ lập hai phiếu.
 
 ## Quyền ở API (`api/routes.ts`)
 
@@ -82,4 +81,3 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - Thứ tự khoá chỉ đúng **trong một lần gọi** cổng. Bên gọi gọi cổng nhiều lần trong một giao dịch (một đơn nhiều kiện) có thể deadlock với giao dịch khác: đã giữ `doc_counters` sau `ship` kiện 1 rồi mới khoá SKU của kiện 2. PostgreSQL huỷ một bên (`40P01`, 500), việc nền chạy lại; nếu hay gặp thì bên gọi khoá đủ SKU của mọi kiện trước.
 - Dòng `doc_counters` loại `shipment` khoá tới khi giao dịch commit: mọi `ship` trong một công ty xếp hàng ở đó (chấp nhận ở tải vài trăm kiện mỗi ngày). Nếu thành nút thắt thì cấp số bằng sequence riêng (chấp nhận nhảy số). Xem phiên đang chờ khoá: `select pid, wait_event_type, wait_event, now() - xact_start as age, left(query, 80) from pg_stat_activity where wait_event_type = 'Lock';` (chỉ đọc).
 - `lockedOf` vẫn bằng 0 tới B3, nên `reserve` có thể giữ cả phần lẽ ra đang tạm khoá cho phiếu kho chờ duyệt.
-- `reverseShipment` đảo theo lượt; đảo một phần rồi đảo tiếp phần còn lại chưa hỗ trợ (`25` §8.3 đảo cả kiện).

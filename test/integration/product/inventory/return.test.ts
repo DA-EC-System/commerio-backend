@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { receiveBack } from '#src/modules/product/index.ts';
+import { receiveBack, stockOf } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testPool } from '../../helpers/db.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { companyWithVariants, receive } from './helpers.ts';
 
 // Hàng quay về kho (spec #206 mục 5.5, Q19, AC 9): lập phiếu kiểm hàng hoàn nháp, tồn chưa đổi.
@@ -74,6 +75,37 @@ describe('receiveBack', () => {
 
     expect(await withCompany(companyId, () => receiveBack({ type: 'package', id: k5 }, [line(a, 3)]))).toEqual(kt1);
     expect(await docsOfSource(k5)).toHaveLength(1);
+  });
+
+  it('hai lần gọi song song cùng nguồn → cùng một phiếu, không nhảy số KT, giao dịch bên gọi vẫn dùng được', async () => {
+    const { companyId, variants } = await companyWithVariants();
+    const a = variants[0]!;
+    // Phiếu của nguồn khác để có sẵn dòng đếm KT cho giao dịch giữ khoá.
+    await withCompany(companyId, () => receiveBack({ type: 'package', id: randomUUID() }, [line(a, 1)]));
+    const k = randomUUID();
+    // Đọc thêm sau `receiveBack` trong cùng giao dịch: bên thua đụng unique thì giao dịch của bên gọi vẫn phải chạy tiếp.
+    const call = () =>
+      withCompany(companyId, async () => {
+        const ref = await receiveBack({ type: 'package', id: k }, [line(a, 2)]);
+        await stockOf([a]);
+        return ref;
+      });
+
+    const [first, second] = await raceBehindLock(
+      (holder) =>
+        holder.query("select 1 from product.doc_counters where company_id = $1 and doc_type = 'return_inspection' for update", [companyId]),
+      2,
+      () => Promise.all([call(), call()]),
+    );
+
+    expect(second).toEqual(first);
+    expect(first.number).toBe('KT-000002');
+    expect(await docsOfSource(k)).toHaveLength(1);
+    const { rows } = await testPool().query(
+      "select next_number from product.doc_counters where company_id = $1 and doc_type = 'return_inspection'",
+      [companyId],
+    );
+    expect(rows).toEqual([{ next_number: 3 }]);
   });
 
   it('AC9: nguồn là yêu cầu trả khác → phiếu mới KT-000002', async () => {

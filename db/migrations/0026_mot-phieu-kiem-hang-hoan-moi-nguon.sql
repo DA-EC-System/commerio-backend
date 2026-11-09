@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "stock_documents_return_inspection_source_uq" ON "product"."stock_documents" USING btree ("company_id","source_type","source_id") WHERE "product"."stock_documents"."kind" = 'return_inspection';
