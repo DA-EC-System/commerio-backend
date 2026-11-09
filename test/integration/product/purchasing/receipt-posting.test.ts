@@ -121,7 +121,7 @@ describe('ghi sổ phiếu nhận', () => {
     const both = (await addMember(A.companyId, role)).token;
     const v = await newVariant();
     const draft = await createRequest(both, A.supplierId, [{ variantId: v, quantity: 5, unitCost: 1000 }]);
-    await runActions([[both, 'submit'], [A.ceo, 'approve'], [both, 'order']], draft.id, draft.version);
+    await runActions([[both, 'submit'], [A.ceo, 'approve'], [both, 'order', { expectedDeliveryDate: '2026-11-20' }]], draft.id, draft.version);
     const r = await counted(both, draft.id, [{ announced: 5, accepted: 5 }]);
     const res = await post(both, r);
     expect(res.status).toBe(409);
@@ -147,7 +147,7 @@ describe('ghi sổ phiếu nhận', () => {
   it('AC3: CEO lập đề nghị rồi tự ghi sổ → 200, phiếu đánh dấu self_approved', async () => {
     const v = await newVariant();
     const draft = await createRequest(A.ceo, A.supplierId, [{ variantId: v, quantity: 5, unitCost: 1000 }]);
-    await runActions([[A.ceo, 'submit'], [A.ceo, 'approve'], [A.ceo, 'order']], draft.id, draft.version);
+    await runActions([[A.ceo, 'submit'], [A.ceo, 'approve'], [A.ceo, 'order', { expectedDeliveryDate: '2026-11-20' }]], draft.id, draft.version);
     const r = await counted(A.ceo, draft.id, [{ announced: 5, accepted: 5 }]);
     expect((await post(A.ceo, r)).status).toBe(200);
     expect(await rows('select self_approved from product.goods_receipts where id = $1', [r.id])).toEqual([{ self_approved: true }]);

@@ -207,10 +207,10 @@ describe('gửi duyệt và duyệt', () => {
     ]);
     const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     const [l1, l2] = submitted.body.lines;
-    const one = await pur(A.ceo).post(`/requests/${r.id}/lines/${l1.id}/exclude`, { excluded: true, version: submitted.body.version });
+    const one = await pur(A.ceo).post(`/requests/${r.id}/lines/${l1.id}/exclude`, { excluded: true, reason: 'NCC hết mẫu', version: submitted.body.version });
     expect(one.status).toBe(200);
     expect(one.body).toMatchObject({ lineCount: 1, totalQty: 3 });
-    const last = await pur(A.ceo).post(`/requests/${r.id}/lines/${l2.id}/exclude`, { excluded: true, version: one.body.version });
+    const last = await pur(A.ceo).post(`/requests/${r.id}/lines/${l2.id}/exclude`, { excluded: true, reason: 'NCC hết mẫu', version: one.body.version });
     expect(last.status).toBe(409);
     expect(last.body.code).toBe('all_lines_excluded');
   });
@@ -295,6 +295,7 @@ describe('đang về', () => {
     const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     const excluded = await pur(A.ceo).post(`/requests/${r.id}/lines/${submitted.body.lines[1].id}/exclude`, {
       excluded: true,
+      reason: 'Không cần nhập',
       version: submitted.body.version,
     });
     const ordered = await runActions([[A.ceo, 'approve'], [A.requester, 'order', { expectedDeliveryDate: '2026-11-05' }]], r.id, excluded.body.version);
@@ -310,13 +311,59 @@ describe('đang về', () => {
     expect((await inv(A.ceo).get(`/stock/${v}`)).body.level.incoming).toBe(0);
   });
 
-  it('đóng thiếu đề nghị đã đặt: phần còn chờ sang đóng thiếu, incoming về 0', async () => {
+  it('đề nghị đã đặt chưa nhận lần nào không đóng thiếu được (409), phải huỷ (25 §3.2, #243)', async () => {
     const { variantId: v } = await createVariant(A.companyId);
     const r = await createRequest(A.requester, A.supplierId, [{ variantId: v, quantity: 8, unitCost: 1000 }]);
-    const ordered = await runActions([[A.requester, 'submit'], [A.ceo, 'approve'], [A.requester, 'order']], r.id, r.version);
+    const ordered = await runActions(
+      [[A.requester, 'submit'], [A.ceo, 'approve'], [A.requester, 'order', { expectedDeliveryDate: '2026-11-20' }]],
+      r.id,
+      r.version,
+    );
+    const res = await act(A.ceo, r.id, 'close_short', { version: ordered.version, reason: 'NCC ngừng sản xuất' });
+    expect([res.status, res.body.code]).toEqual([409, 'invalid_transition']);
+  });
+
+  it('đóng thiếu đề nghị nhận một phần: phần còn chờ sang đóng thiếu, incoming về 0', async () => {
+    const { variantId: v } = await createVariant(A.companyId);
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: v, quantity: 8, unitCost: 1000 }]);
+    const ordered = await runActions(
+      [[A.requester, 'submit'], [A.ceo, 'approve'], [A.requester, 'order', { expectedDeliveryDate: '2026-11-20' }]],
+      r.id,
+      r.version,
+    );
+    await testPool().query("update product.purchase_requests set status = 'partially_received' where id = $1", [r.id]);
     const closed = await runActions([[A.ceo, 'close_short', { reason: 'NCC ngừng sản xuất' }]], r.id, ordered.version);
     expect(closed.status).toBe('closed_short');
     expect(closed.lines[0]).toMatchObject({ closedShort: 8, outstanding: 0 });
     expect((await inv(A.ceo).get(`/stock/${v}`)).body.level.incoming).toBe(0);
+  });
+});
+
+describe('đặt NCC, loại dòng có lý do (#243)', () => {
+  it('đặt NCC thiếu ngày giao dự kiến 422 errors.expectedDeliveryDate; có thì lưu cùng mã đơn NCC', async () => {
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 2, unitCost: 1000 }]);
+    const approved = await runActions([[A.requester, 'submit'], [A.ceo, 'approve']], r.id, r.version);
+    const missing = await act(A.requester, r.id, 'order', { version: approved.version });
+    expect([missing.status, missing.body.errors]).toEqual([422, { expectedDeliveryDate: expect.any(String) }]);
+    const tooLong = await act(A.requester, r.id, 'order', { version: approved.version, expectedDeliveryDate: '2026-11-20', supplierOrderCode: 'x'.repeat(101) });
+    expect(tooLong.status).toBe(422);
+    const ok = await act(A.requester, r.id, 'order', { version: approved.version, expectedDeliveryDate: '2026-11-20', supplierOrderCode: ' PO-778 ' });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(PurchaseRequest.parse(ok.body)).toMatchObject({ status: 'ordered', expectedDeliveryDate: '2026-11-20', supplierOrderCode: 'PO-778' });
+  });
+
+  it('loại dòng bắt buộc lý do (422 reason_required), lưu và trả excludedReason; bỏ loại thì xoá lý do', async () => {
+    const r = await createRequest(A.requester, A.supplierId, [
+      { variantId: A.v1, quantity: 1, unitCost: 1000 },
+      { variantId: A.v2, quantity: 1, unitCost: 1000 },
+    ]);
+    const sent = await act(A.requester, r.id, 'submit', { version: r.version });
+    const line = sent.body.lines[1].id;
+    const noReason = await pur(A.ceo).post(`/requests/${r.id}/lines/${line}/exclude`, { excluded: true, version: sent.body.version });
+    expect([noReason.status, noReason.body.code]).toEqual([422, 'reason_required']);
+    const excluded = await pur(A.ceo).post(`/requests/${r.id}/lines/${line}/exclude`, { excluded: true, reason: 'Giá cao', version: sent.body.version });
+    expect(excluded.body.lines[1]).toMatchObject({ excluded: true, excludedReason: 'Giá cao' });
+    const back = await pur(A.ceo).post(`/requests/${r.id}/lines/${line}/exclude`, { excluded: false, version: excluded.body.version });
+    expect(back.body.lines[1]).toMatchObject({ excluded: false, excludedReason: null });
   });
 });

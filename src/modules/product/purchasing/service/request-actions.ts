@@ -18,6 +18,7 @@ export interface ActionInput {
   reason?: string | null | undefined;
   /** Chỉ dùng khi `order`: ngày NCC hẹn giao, `yyyy-mm-dd`. */
   expectedDeliveryDate?: string | null | undefined;
+  supplierOrderCode?: string | null | undefined;
 }
 
 type UserAction = (typeof REQUEST_USER_ACTIONS)[number];
@@ -96,7 +97,14 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
         set.statusReason = reason;
         break;
       case 'order':
-        Object.assign(set, { orderedBy: actor.accountId, orderedAt: now, expectedDeliveryDate: input.expectedDeliveryDate ?? null });
+        // Ngày giao dự kiến bắt buộc, mã đơn NCC tuỳ chọn (25 §3.2, #243)
+        if (!input.expectedDeliveryDate) throw invalid({ expectedDeliveryDate: 'Nhập ngày NCC hẹn giao' });
+        Object.assign(set, {
+          orderedBy: actor.accountId,
+          orderedAt: now,
+          expectedDeliveryDate: input.expectedDeliveryDate,
+          supplierOrderCode: input.supplierOrderCode?.trim() || null,
+        });
         break;
     }
 
