@@ -120,4 +120,39 @@ describe('settleOpeningStocktake: phiếu kiểm kê đầu kỳ ghi sổ (spec 
       expect(await packageDocuments(p.packageId)).toHaveLength(1);
     });
   });
+
+  it('review I1: lấy khoá phân hàng trước khi bù kiện hoãn (thứ tự khoá §5.10): đang chờ khoá thì chưa khoá kiện nào', async () => {
+    const s = await setup(5);
+    const k = await seedPackage(s.companyId, {
+      status: 'in_transit',
+      shopId: s.shopId,
+      handoverSource: 'marketplace',
+      handedOverAt: new Date(s.countedAt.valueOf() + HOUR),
+      lines: [{ variantId: s.A, quantity: 1 }],
+    });
+    const holder = await testPool().connect();
+    const probe = await testPool().connect();
+    try {
+      await holder.query('begin');
+      await holder.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`fulfillment.allocation:${s.companyId}`]);
+      const pending = exitAwaiting(s);
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await probe.query<{ n: number }>(
+          `select count(*)::int n from pg_stat_activity where wait_event_type = 'Lock' and wait_event = 'advisory' and pid <> pg_backend_pid()`,
+        );
+        if (rows[0]!.n > 0) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      await probe.query('begin');
+      await expect(probe.query('select id from "order".packages where id = $1 for update nowait', [k.packageId])).resolves.toBeDefined();
+      await probe.query('rollback');
+      await holder.query('commit');
+      expect(await pending).toMatchObject({ deducted: 1 });
+    } finally {
+      await probe.query('rollback').catch(() => {});
+      await holder.query('rollback').catch(() => {});
+      holder.release();
+      probe.release();
+    }
+  });
 });

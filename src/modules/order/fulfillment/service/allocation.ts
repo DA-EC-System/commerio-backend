@@ -136,7 +136,9 @@ export async function settleOpeningStocktake(p: {
   documentId: string;
   countedAt: Date;
 }): Promise<{ deducted: number; storedOnly: number; held: number }> {
-  requireCompanyId('settleOpeningStocktake');
+  // Khoá phân hàng trước khi bù (thứ tự §5.10: gian hàng → advisory → kiện → dòng tồn → doc_counters); khoá giao dịch
+  // lấy lại trong `runAllocation` không chặn.
+  await takeAllocationLock(requireCompanyId('settleOpeningStocktake'));
   const settled = await settleDeferredHandovers(p.shopId, p.countedAt);
   const { held } = await runAllocation({}, { all: true }, { opening: true, cause: { type: 'stocktake', documentId: p.documentId } });
   return { ...settled, held: held.length };

@@ -54,15 +54,16 @@ describe('lượt phân hàng: lấy lại phần giữ (25 §7.4, spec 199b §5
     expect((await outboxOf(companyId, 'fulfillment.allocation_done')).at(-1)).toEqual({ variantIds: [A, B].sort() });
   });
 
-  it('Review Focus 2: kiện vừa bị lấy lại không được giữ lại trong cùng lượt', async () => {
+  it('Review Focus 2: kiện vừa bị lấy lại không được giữ lại trong cùng lượt, kể cả khi lấy dư còn đủ hàng', async () => {
     const { companyId } = await createCompany();
     const { variantId: A } = await createVariant(companyId);
-    await receive(companyId, A, 3, 100000);
-    const p = await seedPackage(companyId, { status: 'reserved', lines: [{ variantId: A, quantity: 3, reserved: true }] });
-    await setBuckets(companyId, A, { onHand: 2, invariantBroken: true });
+    await receive(companyId, A, 6, 100000);
+    const p1 = await seedPackage(companyId, { status: 'reserved', orderStatus: 'unpaid', lines: [{ variantId: A, quantity: 1, reserved: true }] });
+    const p2 = await seedPackage(companyId, { status: 'reserved', lines: [{ variantId: A, quantity: 5, reserved: true }] });
+    await setBuckets(companyId, A, { onHand: 3, invariantBroken: true });
     const r = await run(companyId, [A]);
-    expect(r).toMatchObject({ reclaimed: [p.packageId], held: [] });
-    expect((await packageRow(p.packageId)).status).toBe('backordered');
+    expect(r).toMatchObject({ reclaimed: [p1.packageId, p2.packageId], held: [] });
+    expect((await packageRow(p1.packageId)).status).toBe('backordered');
   });
 
   it('opening: kiện packed không giữ được thì bật Cần xử lý với DISMANTLE_NOTE; lượt thường thì không', async () => {
