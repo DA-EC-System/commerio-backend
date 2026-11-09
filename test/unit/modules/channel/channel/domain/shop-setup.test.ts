@@ -8,7 +8,7 @@ const base: SetupInput = {
   status: 'active',
   openingStockMode: 'push',
   openingStocktakeId: null,
-  allocationPendingSince: null,
+  allocationStocktakeId: null,
   unmatchedSkuCount: 3,
   openOrdersPulledAt: null,
   openOrdersSkipped: 0,
@@ -48,7 +48,7 @@ describe('tiến độ thiết lập gian hàng (#198 AC-24, Documents/21 §18.7
 
   it('`stocktake` phiếu đã ghi sổ: phân hàng `running` chặn đẩy tồn dù đơn mở xong; phân hàng xong thì đẩy tồn chạy (#198)', () => {
     const posted = { ...base, openingStockMode: 'stocktake' as const, openOrdersPulledAt: ago(HOUR) };
-    expect(setupOf({ ...posted, allocationPendingSince: ago(2 * HOUR) }, now)?.steps).toEqual([
+    expect(setupOf({ ...posted, allocationStocktakeId: 'doc-1' }, now)?.steps).toEqual([
       step('match', 'done'),
       step('opening_stock', 'done'),
       step('open_orders', 'done'),
@@ -57,7 +57,7 @@ describe('tiến độ thiết lập gian hàng (#198 AC-24, Documents/21 §18.7
     ]);
     expect(setupOf(posted, now)?.steps.slice(-2)).toEqual([step('allocate', 'done'), step('push_stock', 'running')]);
     // Đơn mở chưa xong thì đẩy tồn chặn bởi đơn mở trước.
-    expect(setupOf({ ...posted, openOrdersPulledAt: null, allocationPendingSince: ago(HOUR) }, now)?.steps.at(-1)).toEqual(
+    expect(setupOf({ ...posted, openOrdersPulledAt: null, allocationStocktakeId: 'doc-1' }, now)?.steps.at(-1)).toEqual(
       step('push_stock', 'blocked', 'open_orders'),
     );
   });

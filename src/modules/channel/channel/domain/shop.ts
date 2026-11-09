@@ -21,25 +21,32 @@ export const shopMachine = defineMachine<ShopStatus, ShopAction>([
   },
 ]);
 
-/** Nhãn "Sắp hết hạn" (§18.4): hạn uỷ quyền còn dưới 3 ngày. Access token do việc nền tự làm mới nên không tính. */
-/**
- * Gian hàng đang giữ tồn (#198): chỉ đẩy giá, không gửi số tồn lên sàn. Giữ khi chờ phiếu kiểm kê đầu kỳ, chờ fulfillment
- * phân hàng sau khi phiếu ghi sổ (25 §6.1 bước 3), hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần giữ cho đơn
- * đó). Gian hàng chưa thiết lập (chưa có mốc) không giữ. Dùng chung cho đồng bộ listing và đẩy listing mới.
- */
-export function holdsStock(shop: {
+interface StockHoldState {
   openingStocktakeId: string | null;
-  allocationPendingSince: Date | null;
+  allocationStocktakeId: string | null;
   orderCutoffAt: Date | null;
   openOrdersPulledAt: Date | null;
-}): boolean {
-  return (
-    shop.openingStocktakeId !== null ||
-    shop.allocationPendingSince !== null ||
-    (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null)
-  );
 }
 
+/**
+ * Đẩy listing tay lúc gian hàng đang giữ tồn sau thiết lập (Documents/21 §18.6.11): `open_orders` khi lượt kéo đơn còn mở
+ * chưa xong (kể cả đang chờ phân hàng), `allocation` khi phiếu đầu kỳ đã ghi sổ mà chưa nhận `allocation_done` của phiếu;
+ * null khi không chờ. Gian hàng chưa thiết lập (chưa có mốc) không chờ. Chờ kiểm kê xét riêng trước (`shop_awaiting_stocktake`).
+ */
+export function awaitingAllocation(shop: StockHoldState): 'open_orders' | 'allocation' | null {
+  if (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null) return 'open_orders';
+  return shop.allocationStocktakeId !== null ? 'allocation' : null;
+}
+
+/**
+ * Gian hàng đang giữ tồn (#198): chỉ đẩy giá, không gửi số tồn lên sàn. Giữ khi chờ phiếu kiểm kê đầu kỳ, chờ phân hàng
+ * sau khi phiếu ghi sổ (§18.6.11), hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần giữ cho đơn đó).
+ */
+export function holdsStock(shop: StockHoldState): boolean {
+  return shop.openingStocktakeId !== null || awaitingAllocation(shop) !== null;
+}
+
+/** Nhãn "Sắp hết hạn" (§18.4): hạn uỷ quyền còn dưới 3 ngày. Access token do việc nền tự làm mới nên không tính. */
 export const EXPIRING_MS = 3 * 24 * 3600_000;
 
 /**

@@ -1,12 +1,11 @@
-// Thoát chế độ chờ kiểm kê lần đầu khi phiếu đầu kỳ ghi sổ (#198 phần 2; Documents/21 §11.2 `inventory.stocktake_posted`,
-// `fulfillment.allocation_done`, §18.6.2; 25 §6.1 bước 3–4). Thứ tự theo Documents (Thành chốt 09/11/2026): ghi sổ xong
-// thì phân hàng cho mọi kiện chưa bàn giao, rồi mới đẩy tồn. Lần đẩy tồn đầu chờ đủ hai điều kiện: lượt kéo đơn còn mở chạy
-// lại theo mốc mới đã xong (`open_orders_pulled_at`) và fulfillment đã phân hàng từ lúc ghi sổ cho mọi biến thể đã ghép
-// của gian hàng (`allocation_pending_since` về null). Consumer chỉ ghi DB (đúng một lần nhờ `processed_events`), không gọi sàn.
+// Kiểm kê đầu kỳ của gian hàng sau thiết lập (#198 phần 2; Documents/21 §11.2 `inventory.stocktake_posted`,
+// `fulfillment.allocation_done`, §18.6.2, §18.6.11; Thành chốt 09/11/2026). Phiếu ghi sổ thì gian hàng thoát chờ kiểm kê
+// và sang chờ phân hàng; thoát chờ phân hàng khi nhận `allocation_done` có `cause.documentId` trùng phiếu. Đẩy tồn lần đầu
+// cần cả hai: lượt kéo đơn còn mở theo mốc mới đã xong và đã thoát chờ phân hàng. Consumer chỉ ghi DB (đúng một lần nhờ `processed_events`), không gọi sàn.
 import { type EventEnvelope, type EventPayload, recordAudit } from '../../../core/index.ts';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { lockCompanyAllocation, lockShopRow, recordAllocations, settleAllocationPending, updateShop } from '../repository/shops.ts';
+import { lockShopRow, settleStocktakeAllocation, updateShop } from '../repository/shops.ts';
 import { sendListingSync, sendOpenOrderPull } from './shop-jobs.ts';
 
 /** Lệch giờ cho phép giữa máy phát (inventory) và worker khi so `countedAt` với giờ hiện tại. */
@@ -26,30 +25,19 @@ function assertCountedAt(event: EventPayload<'inventory.stocktake_posted'>, now:
 }
 
 /**
- * Phiếu nguồn `shop_setup` của gian hàng vừa ghi sổ: `openingStocktake = null`, `orderCutoffAt = countedAt`, ghi nhật ký
- * hệ thống, vào chờ phân hàng (`allocation_pending_since = occurredAt` của sự kiện).
+ * Phiếu nguồn `shop_setup` của gian hàng vừa ghi sổ (§18.6.2, §18.6.11): `openingStocktake = null`, `orderCutoffAt =
+ * countedAt`, `open_orders_pulled_at = null`, chờ phân hàng (`allocation_stocktake_id = documentId`), ghi nhật ký hệ thống,
+ * gian hàng `active` thì xếp lại lượt kéo đơn còn mở (không `active` thì nối lại sẽ xếp, `resumeOpenOrderPull`).
  *
- * Mốc chờ phân hàng lấy `occurredAt` của vỏ sự kiện (giờ Postgres lúc ghi outbox), không lấy `postedAt` (giờ máy Node
- * của inventory): `allocation_done` so bằng `occurredAt` của nó, cùng một đồng hồ. Lượt phân hàng do ghi sổ gây ra luôn
- * bắt đầu sau khi giao dịch ghi sổ commit, nên `occurredAt` của nó lớn hơn mốc này (#198 review I2).
- *
- * Lượt kéo đơn còn mở chạy lại (`open_orders_pulled_at = null`, gian hàng `active` thì xếp việc ngay; gian hàng mất uỷ
- * quyền thì nối lại sẽ xếp, `resumeOpenOrderPull`): mốc dời lên `countedAt` thì đơn đặt giữa lúc thiết lập và lúc đếm mà
- * chưa kéo về sẽ bị vòng 5 phút bỏ (đơn trước mốc chỉ nhận khi đã có trong DB), lượt đơn mở lấy lại đơn còn mở đó.
- *
- * Chờ phân hàng xoá ngay trong giao dịch này nếu fulfillment đã phân hàng xong trước (sự kiện tới trước, hai topic khác
- * nhau) hoặc gian hàng không có listing nào để đẩy tồn.
- *
- * Chỉ đổi khi phiếu đúng là phiếu gian hàng đang chờ; phiếu khác, nguồn khác, gian hàng công ty khác (RLS ẩn) hay đã xử
- * lý thì bỏ qua. Gọi trong `withCompany` của sự kiện. Khoá phân hàng của công ty trước, rồi khoá dòng gian hàng
- * (`FOR NO KEY UPDATE`): giao dịch nhận đơn đọc `opening_stocktake_id` dưới `FOR SHARE` (`lockShopForOrders`) nên không
- * nhận đơn với chế độ cũ sau khi thoát.
+ * `allocation_done` của phiếu này đã tới trước (`allocated_stocktake_id` trùng, hai topic khác nhau) thì không vào chờ
+ * phân hàng. Phiếu khác, nguồn khác, gian hàng công ty khác (RLS ẩn) hay đã xử lý thì bỏ qua. Gọi trong `withCompany`
+ * của sự kiện. Khoá dòng gian hàng (`FOR NO KEY UPDATE`): giao dịch nhận đơn đọc `opening_stocktake_id` dưới `FOR SHARE`
+ * (`lockShopForOrders`) nên không nhận đơn với chế độ cũ sau khi thoát.
  */
-export async function onOpeningStocktakePosted(event: EventPayload<'inventory.stocktake_posted'>, occurredAt: Date): Promise<void> {
+export async function onOpeningStocktakePosted(event: EventPayload<'inventory.stocktake_posted'>): Promise<void> {
   const orderCutoffAt = assertCountedAt(event, Date.now());
   const companyId = requireCompanyId('onOpeningStocktakePosted');
   if (event.source?.type !== 'shop_setup') return;
-  await lockCompanyAllocation(companyId);
   const shop = await lockShopRow(event.source.shopId);
   if (!shop || shop.openingStocktakeId !== event.documentId) {
     logger.debug({ shopId: event.source.shopId, documentId: event.documentId }, 'Phiếu đầu kỳ ghi sổ không khớp gian hàng đang chờ, bỏ qua');
@@ -61,16 +49,11 @@ export async function onOpeningStocktakePosted(event: EventPayload<'inventory.st
       'Thời điểm đếm của phiếu đầu kỳ trước lúc thiết lập gian hàng',
     );
   }
+  const allocationStocktakeId = shop.allocatedStocktakeId === event.documentId ? null : event.documentId;
   const updated = await updateShop(
     shop.id,
     { version: shop.version },
-    {
-      openingStocktakeId: null,
-      openingStocktakeNumber: null,
-      orderCutoffAt,
-      openOrdersPulledAt: null,
-      allocationPendingSince: occurredAt,
-    },
+    { openingStocktakeId: null, openingStocktakeNumber: null, orderCutoffAt, openOrdersPulledAt: null, allocationStocktakeId },
   );
   // Đã khoá dòng nên `version` không đổi giữa chừng; không trúng là lỗi thật, ném để consumer thử lại.
   if (!updated) throw new Error(`Không cập nhật được gian hàng ${shop.id} khi thoát chờ kiểm kê`);
@@ -81,31 +64,32 @@ export async function onOpeningStocktakePosted(event: EventPayload<'inventory.st
     entityType: 'channel.shops',
     entityId: shop.id,
     before: { orderCutoffAt: shop.orderCutoffAt, openingStocktakeId: shop.openingStocktakeId, openingStocktakeNumber: shop.openingStocktakeNumber },
-    after: { orderCutoffAt, openingStocktakeId: null, openingStocktakeNumber: null, stocktakeNumber: event.number },
+    after: { orderCutoffAt, openingStocktakeId: null, openingStocktakeNumber: null, stocktakeNumber: event.number, allocationStocktakeId },
   });
-  await settleAllocationPending(shop.id);
-  // Lượt đơn mở xong tự xếp đồng bộ listing; lượt đó chỉ đẩy tồn khi đã hết chờ phân hàng.
+  // Lượt đơn mở xong tự xếp đồng bộ listing; lượt đó chỉ đẩy tồn khi đã thoát chờ phân hàng.
   if (shop.status === 'active') await sendOpenOrderPull(companyId, shop.id);
 }
 
 /**
- * `fulfillment.allocation_done`: ghi lần phân hàng của các biến thể (lúc phát sự kiện), rồi bỏ cờ chờ phân hàng của gian
- * hàng nào đã đủ. Gian hàng vừa hết chờ, đang `active` và lượt đơn mở đã xong thì xếp đồng bộ listing để đẩy tồn lần đầu;
- * lượt đơn mở chưa xong thì chính lượt đó sẽ xếp. Gọi trong `withCompany` của sự kiện.
+ * `fulfillment.allocation_done` (§11.2, §18.6.11). Chỉ sự kiện có `cause` làm thoát chờ phân hàng, và chỉ ở gian hàng có
+ * phiếu đầu kỳ trùng `cause.documentId`; không có `cause` thì bỏ qua (đẩy tồn theo `variantIds` là của #223). Gian hàng vừa
+ * thoát chờ, `active` và lượt đơn mở đã xong thì xếp đồng bộ listing để đẩy tồn lần đầu; lượt đơn mở chưa xong thì chính
+ * lượt đó sẽ xếp. Gọi trong `withCompany` của sự kiện.
  */
-export async function onAllocationDone(variantIds: readonly string[], occurredAt: Date): Promise<void> {
+export async function onAllocationDone(event: EventPayload<'fulfillment.allocation_done'>): Promise<void> {
   const companyId = requireCompanyId('onAllocationDone');
-  await lockCompanyAllocation(companyId);
-  await recordAllocations(companyId, variantIds, occurredAt);
-  for (const shop of await settleAllocationPending()) {
-    if (shop.status === 'active' && shop.openOrdersPulledAt) await sendListingSync(companyId, shop.id);
+  if (!event.cause) return;
+  const shops = await settleStocktakeAllocation(event.cause.documentId);
+  if (!shops.length) logger.debug({ documentId: event.cause.documentId }, 'allocation_done không trùng phiếu đầu kỳ của gian hàng nào, bỏ qua');
+  for (const shop of shops) {
+    if (shop.settled && shop.status === 'active' && shop.openOrdersPulledAt) await sendListingSync(companyId, shop.id);
   }
 }
 
 /** Handler đăng ký cho `inventory.stocktake_posted` (consumer `channel-opening-stocktake`). */
 export const handleStocktakePosted = (e: EventEnvelope<'inventory.stocktake_posted', EventPayload<'inventory.stocktake_posted'>>) =>
-  onOpeningStocktakePosted(e.payload, new Date(e.occurredAt));
+  onOpeningStocktakePosted(e.payload);
 
 /** Handler đăng ký cho `fulfillment.allocation_done` (consumer `channel-allocation-done`). */
 export const handleAllocationDone = (e: EventEnvelope<'fulfillment.allocation_done', EventPayload<'fulfillment.allocation_done'>>) =>
-  onAllocationDone(e.payload.variantIds, new Date(e.occurredAt));
+  onAllocationDone(e.payload);

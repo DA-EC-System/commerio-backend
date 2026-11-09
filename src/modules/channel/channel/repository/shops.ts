@@ -2,7 +2,7 @@
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { ShopStatus } from '../domain/shop.ts';
-import { listings, shops, variantAllocations } from './schema.ts';
+import { listings, shops } from './schema.ts';
 
 export type ShopRow = typeof shops.$inferSelect;
 type Platform = ShopRow['platform'];
@@ -192,49 +192,35 @@ export async function lockCompanySetup(companyId: string): Promise<void> {
 }
 
 /**
- * Khoá việc phân hàng của công ty tới hết giao dịch (#198): thoát chờ kiểm kê và nhận `fulfillment.allocation_done` chạy
- * lần lượt, nên bên sau luôn thấy dữ liệu bên trước đã commit (không lỡ nhau khi hai sự kiện tới cùng lúc).
+ * Nhận `fulfillment.allocation_done` có `cause.documentId` (Documents/21 §11.2, §18.6.11): ghi `allocated_stocktake_id`
+ * cho gian hàng có phiếu đầu kỳ này, đang chờ kiểm kê (sự kiện tới trước `inventory.stocktake_posted`) hoặc đang chờ phân
+ * hàng; gian hàng đang chờ phân hàng theo đúng phiếu này thì thoát chờ (`allocation_stocktake_id = null`). Một câu
+ * `UPDATE` nên khoá dòng và xét lại điều kiện trên bản mới nhất khi đua với thoát chờ kiểm kê (`lockShopRow`). Trả các
+ * gian hàng vừa thoát chờ phân hàng. Không tăng `version` (việc nền, như `markStockPushed`). Gọi trong `withCompany`.
  */
-export async function lockCompanyAllocation(companyId: string): Promise<void> {
-  await getDb().execute(sql`select pg_advisory_xact_lock(hashtext('channel.allocation'), hashtext(${companyId}))`);
-}
-
-/** Ghi lần phân hàng gần nhất của các biến thể (giữ mốc muộn hơn nếu đã có). */
-export async function recordAllocations(companyId: string, variantIds: readonly string[], at: Date): Promise<void> {
-  if (!variantIds.length) return;
-  await getDb()
-    .insert(variantAllocations)
-    .values([...new Set(variantIds)].map((variantId) => ({ companyId, variantId, allocatedAt: at })))
-    .onConflictDoUpdate({
-      target: [variantAllocations.companyId, variantAllocations.variantId],
-      set: { allocatedAt: sql`greatest(${variantAllocations.allocatedAt}, excluded.allocated_at)` },
-    });
-}
-
-/**
- * Bỏ cờ chờ phân hàng của các gian hàng (một gian hàng nếu có `shopId`) mà mọi listing còn đẩy tồn được (`mode = mapped`,
- * có biến thể) đều đã được phân hàng từ `allocation_pending_since`. Gian hàng không có listing nào thì bỏ ngay. Trả các
- * gian hàng vừa bỏ cờ. Không tăng `version` (việc nền, như `markStockPushed`).
- */
-export async function settleAllocationPending(shopId?: string): Promise<{ id: string; status: ShopStatus; openOrdersPulledAt: Date | null }[]> {
-  return getDb()
+export async function settleStocktakeAllocation(
+  documentId: string,
+): Promise<{ id: string; status: ShopStatus; openOrdersPulledAt: Date | null; settled: boolean }[]> {
+  const rows = await getDb()
     .update(shops)
-    .set({ allocationPendingSince: null, updatedAt: sql`now()` })
+    .set({
+      allocatedStocktakeId: documentId,
+      allocationStocktakeId: sql`case when ${shops.allocationStocktakeId} = ${documentId} then null else ${shops.allocationStocktakeId} end`,
+      updatedAt: sql`now()`,
+    })
     .where(
       and(
-        sql`${shops.allocationPendingSince} is not null`,
-        shopId ? eq(shops.id, shopId) : undefined,
-        sql`not exists (
-          select 1 from ${listings} l
-           where l.shop_id = ${shops.id} and l.mode = 'mapped' and l.variant_id is not null
-             and l.status in ('live', 'hidden', 'under_review', 'platform_hold', 'rejected')
-             and not exists (
-               select 1 from ${variantAllocations} a
-                where a.company_id = ${shops.companyId} and a.variant_id = l.variant_id
-                  and a.allocated_at >= ${shops.allocationPendingSince}))`,
+        sql`(${shops.openingStocktakeId} = ${documentId} or ${shops.allocationStocktakeId} = ${documentId})`,
+        sql`${shops.allocatedStocktakeId} is distinct from ${documentId}`,
       ),
     )
-    .returning({ id: shops.id, status: shops.status, openOrdersPulledAt: shops.openOrdersPulledAt });
+    .returning({
+      id: shops.id,
+      status: shops.status,
+      openOrdersPulledAt: shops.openOrdersPulledAt,
+      openingStocktakeId: shops.openingStocktakeId,
+    });
+  return rows.map(({ openingStocktakeId, ...r }) => ({ ...r, settled: openingStocktakeId === null }));
 }
 
 /** Đánh dấu lượt đẩy tồn đầu tiên sau thiết lập đã chạy (§18.7.7 `push_stock`). Không tăng `version`. */

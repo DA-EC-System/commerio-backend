@@ -18,8 +18,8 @@ export interface SetupInput {
   status: ShopStatus;
   openingStockMode: 'push' | 'stocktake' | null;
   openingStocktakeId: string | null;
-  /** Phiếu đầu kỳ đã ghi sổ, đang chờ fulfillment phân hàng (#198). */
-  allocationPendingSince: Date | null;
+  /** Phiếu đầu kỳ đã ghi sổ, đang chờ `allocation_done` có `cause` trùng phiếu (§18.6.11). */
+  allocationStocktakeId: string | null;
   unmatchedSkuCount: number | null;
   openOrdersPulledAt: Date | null;
   openOrdersSkipped: number;
@@ -47,8 +47,8 @@ export function setupOf(s: SetupInput, now: Date): ShopSetup | null {
   const steps: ShopSetup['steps'] = [step('match', 'done')];
   if (s.openingStockMode === 'stocktake') steps.push(step('opening_stock', awaiting ? 'pending' : 'done'));
   steps.push(step('open_orders', pulled ? 'done' : s.openOrderPullFailedAt ? 'failed' : 'running'));
-  // Phân hàng sau kiểm kê đầu kỳ (25 §6.1 bước 3, #198): chỉ chế độ `stocktake`; chờ phiếu thì chưa chạy.
-  const allocating = s.allocationPendingSince !== null;
+  // Phân hàng sau kiểm kê đầu kỳ (§18.6.11, §18.7.7): chỉ chế độ `stocktake`; chờ phiếu thì chưa chạy.
+  const allocating = s.allocationStocktakeId !== null;
   if (s.openingStockMode === 'stocktake') {
     steps.push(awaiting ? step('allocate', 'blocked', 'opening_stock') : step('allocate', allocating ? 'running' : 'done'));
   }

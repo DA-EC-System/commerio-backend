@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../helpers/db.ts';
 
-/** Bảng của từng schema module lớn (Documents/19 mục 3, 83 bảng). Thêm bảng thì thêm vào đây. */
+/** Bảng của từng schema module lớn (Documents/19 mục 3, 79 bảng). Thêm bảng thì thêm vào đây. */
 const EXPECTED_TABLES: Record<string, readonly string[]> = {
   core: [
     'accounts',
@@ -89,7 +89,6 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'raw_orders',
     'shops',
     'tags',
-    'variant_allocations',
     'webhook_events',
   ],
   insight: [

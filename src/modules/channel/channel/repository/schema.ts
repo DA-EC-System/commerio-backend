@@ -71,10 +71,16 @@ export const shops = channelSchema.table(
     /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
     stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
     /**
-     * Phiếu đầu kỳ đã ghi sổ (giá trị = `postedAt` của phiếu), đang chờ fulfillment phân hàng xong cho mọi biến thể đã ghép
-     * của gian hàng (`variant_allocations.allocated_at` từ mốc này) rồi mới đẩy tồn (25 §6.1 bước 3, #198).
+     * Phiếu đầu kỳ đã ghi sổ, gian hàng đang chờ phân hàng: thoát chờ khi nhận `fulfillment.allocation_done` có
+     * `cause.documentId` trùng id này (Documents/21 §18.6.11). Giữ id vì `opening_stocktake_id` đã về null.
      */
-    allocationPendingSince: timestamp('allocation_pending_since', { withTimezone: true }),
+    allocationStocktakeId: uuid('allocation_stocktake_id'),
+    /**
+     * `cause.documentId` của `fulfillment.allocation_done` gần nhất trùng phiếu đầu kỳ của gian hàng. Sự kiện phân hàng
+     * (topic `fulfillment`) có thể tới trước khi channel xử lý `inventory.stocktake_posted` (topic khác); thoát chờ kiểm
+     * kê thấy id này trùng phiếu thì không vào chờ phân hàng.
+     */
+    allocatedStocktakeId: uuid('allocated_stocktake_id'),
     ...timestamps,
     ...version,
   },
@@ -98,7 +104,7 @@ export const shops = channelSchema.table(
     // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
     check(
       'shops_allocation_pending',
-      sql`${t.allocationPendingSince} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
+      sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
     ),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
@@ -196,21 +202,6 @@ export const categoryMaps = channelSchema.table(
     ...version,
   },
   (t) => [unique().on(t.companyId, t.platform, t.categoryId)],
-);
-
-/**
- * Lần gần nhất fulfillment phân hàng xong cho một biến thể (`fulfillment.allocation_done`, Documents/21 §11.2; #198).
- * Gian hàng chờ phân hàng sau kiểm kê đầu kỳ đối chiếu với bảng này; ghi cả khi chưa gian hàng nào chờ, vì sự kiện phân
- * hàng có thể tới trước sự kiện ghi sổ phiếu (hai topic khác nhau).
- */
-export const variantAllocations = channelSchema.table(
-  'variant_allocations',
-  {
-    companyId: uuid('company_id').notNull(),
-    variantId: uuid('variant_id').notNull(),
-    allocatedAt: timestamp('allocated_at', { withTimezone: true }).notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.companyId, t.variantId] })],
 );
 
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);

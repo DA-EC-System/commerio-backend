@@ -99,18 +99,16 @@ export const Shop = z
       .nullable()
       .meta({
         description:
-          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). Phiếu ghi sổ (`inventory.stocktake_posted`) thì BE đặt lại null, đổi `orderCutoffAt` thành thời điểm đếm, chạy lại lượt kéo đơn còn mở rồi mới đẩy tồn',
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2)',
       }),
     setup: z
       .object({
         steps: z.array(
           z
             .object({
-              key: z.enum(['match', 'opening_stock', 'open_orders', 'allocate', 'push_stock']).meta({
-                description: '`allocate` (chỉ chế độ `stocktake`, đề xuất thêm vào 21 §18.7.7, #198): chờ fulfillment phân hàng sau khi phiếu đầu kỳ ghi sổ',
-              }),
+              key: z.enum(['match', 'opening_stock', 'open_orders', 'allocate', 'push_stock']),
               status: z.enum(['pending', 'running', 'done', 'failed', 'blocked']),
-              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`, `allocate`) hoặc mã issue chưa làm; null khi không `blocked`' }),
+              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`) hoặc mã issue chưa làm; null khi không `blocked`' }),
             })
             .strict(),
         ),
