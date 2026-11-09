@@ -1,9 +1,17 @@
-import { Router } from 'express';
+import { type Response, Router } from 'express';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
+import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
+import { type Actor, handOverPackages } from '../service/handover.ts';
 import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
-import { PackageListQuery, PackageParams } from './schemas.ts';
+import { HandOverBody, PackageListQuery, PackageParams } from './schemas.ts';
+
+function actor(res: Response): Actor {
+  const { accountId, companyId } = getAuth(res);
+  const { permissions, enabledModules } = getAccess(res);
+  return { accountId, companyId: companyId!, permissions, enabledModules };
+}
 
 /** Route của module `fulfillment`, gắn tại /api/v1/fulfillment (Documents/21 §19.2). */
 export function fulfillmentRouter(ctx: FulfillmentContext): Router {
@@ -13,6 +21,11 @@ export function fulfillmentRouter(ctx: FulfillmentContext): Router {
   router.get('/packages', process, validate({ query: PackageListQuery }), async (_req, res) => {
     const query = validated<typeof PackageListQuery>(res, 'query');
     res.json(await withCompany(getAuth(res).companyId!, () => listPackages(ctx, query)));
+  });
+
+  // Mỗi kiện một giao dịch (service tự mở `withCompany`): kiện lỗi không chặn kiện khác.
+  router.post('/packages/hand-over', process, validate({ body: HandOverBody }), async (_req, res) => {
+    res.json(await handOverPackages(actor(res), validated<typeof HandOverBody>(res, 'body').packages));
   });
 
   router.get('/packages/:id', process, validate({ params: PackageParams }), async (_req, res) => {

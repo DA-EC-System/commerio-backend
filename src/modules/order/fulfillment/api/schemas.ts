@@ -107,3 +107,30 @@ export const PackagePage = z
 export const Package = PackageSummary.extend({ statusHistory: z.array(StatusChange) })
   .strict()
   .meta({ id: 'Package' });
+
+export const HandOverBody = z.object({
+  packages: z
+    .array(z.object({ id: z.uuid('Mã kiện không hợp lệ'), version: z.number().int().min(0) }))
+    .min(1, 'Quét ít nhất một kiện')
+    .max(50, 'Mỗi lần bàn giao tối đa 50 kiện')
+    // Zod 4: `.refine` trên mảng, lỗi nằm ở `errors.packages`.
+    .refine((items) => new Set(items.map((i) => i.id)).size === items.length, 'Mỗi kiện chỉ quét một lần'),
+});
+
+export const HandOverResult = z
+  .object({
+    handedOver: z.array(
+      z.object({ id: z.uuid(), code: z.string(), issue: z.object({ id: z.uuid(), number: z.string() }).meta({ description: 'Phiếu xuất `XK`' }) }).strict(),
+    ),
+    failed: z.array(
+      z
+        .object({
+          packageId: z.string(),
+          code: z.enum(['not_found', 'version_conflict', 'already_handed_over', 'invalid_transition', 'internal_error']),
+          detail: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'HandOverResult' });
