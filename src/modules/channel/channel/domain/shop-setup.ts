@@ -1,8 +1,9 @@
 // Tiến độ thiết lập gian hàng (#198, Documents/21 §18.7.7): hàm thuần trên cột của `channel.shops` và lúc lỗi của việc
-// nền đã hết lượt thử. Bước kiểm kê chỉ có ở chế độ `stocktake`; đẩy tồn chờ kiểm kê, rồi chờ lượt kéo đơn còn mở.
+// nền đã hết lượt thử. Bước kiểm kê và phân hàng chỉ có ở chế độ `stocktake`; đẩy tồn chờ kiểm kê, lượt kéo đơn còn mở,
+// rồi chờ phân hàng.
 import type { ShopStatus } from './shop.ts';
 
-export type SetupStepKey = 'match' | 'opening_stock' | 'open_orders' | 'push_stock';
+export type SetupStepKey = 'match' | 'opening_stock' | 'open_orders' | 'allocate' | 'push_stock';
 export type SetupStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'blocked';
 
 export interface ShopSetup {
@@ -17,6 +18,8 @@ export interface SetupInput {
   status: ShopStatus;
   openingStockMode: 'push' | 'stocktake' | null;
   openingStocktakeId: string | null;
+  /** Phiếu đầu kỳ đã ghi sổ, đang chờ fulfillment phân hàng (#198). */
+  allocationPendingSince: Date | null;
   unmatchedSkuCount: number | null;
   openOrdersPulledAt: Date | null;
   openOrdersSkipped: number;
@@ -44,6 +47,11 @@ export function setupOf(s: SetupInput, now: Date): ShopSetup | null {
   const steps: ShopSetup['steps'] = [step('match', 'done')];
   if (s.openingStockMode === 'stocktake') steps.push(step('opening_stock', awaiting ? 'pending' : 'done'));
   steps.push(step('open_orders', pulled ? 'done' : s.openOrderPullFailedAt ? 'failed' : 'running'));
+  // Phân hàng sau kiểm kê đầu kỳ (25 §6.1 bước 3, #198): chỉ chế độ `stocktake`; chờ phiếu thì chưa chạy.
+  const allocating = s.allocationPendingSince !== null;
+  if (s.openingStockMode === 'stocktake') {
+    steps.push(awaiting ? step('allocate', 'blocked', 'opening_stock') : step('allocate', allocating ? 'running' : 'done'));
+  }
   steps.push(
     s.stockPushedAt
       ? step('push_stock', 'done')
@@ -51,7 +59,9 @@ export function setupOf(s: SetupInput, now: Date): ShopSetup | null {
         ? step('push_stock', 'blocked', 'opening_stock')
         : !pulled
           ? step('push_stock', 'blocked', 'open_orders')
-          : step('push_stock', s.listingSyncFailedAt && s.listingSyncFailedAt > pulled ? 'failed' : 'running'),
+          : allocating
+            ? step('push_stock', 'blocked', 'allocate')
+            : step('push_stock', s.listingSyncFailedAt && s.listingSyncFailedAt > pulled ? 'failed' : 'running'),
   );
   const allDone = steps.every((x) => x.status === 'done');
   if (allDone && s.stockPushedAt && now.getTime() - s.stockPushedAt.getTime() > SETUP_VISIBLE_MS) return null;

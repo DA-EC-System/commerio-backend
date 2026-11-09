@@ -52,7 +52,9 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   // Giữ tồn (#198): chờ phiếu kiểm kê đầu kỳ (25 §6.1 bước 3) hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần
   // giữ cho đơn đó). Chỉ đẩy giá; tồn giữ `stock_sync = pending`, không ghi lỗi. Gian hàng chưa thiết lập (chưa có mốc)
   // đẩy như trước #198.
-  const holdStock = shop.openingStocktakeId !== null || (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null);
+  // Sau kiểm kê đầu kỳ còn chờ fulfillment phân hàng (`allocation_pending_since`): phân hàng trước, đẩy tồn sau (25 §6.1 bước 3).
+  const holdStock =
+    shop.openingStocktakeId !== null || shop.allocationPendingSince !== null || (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null);
   const watched = rows.filter((r) => WATCHED.includes(r.status) && r.sellerSku && r.externalSkuId);
   summary.checked = watched.length;
   if (watched.length) {

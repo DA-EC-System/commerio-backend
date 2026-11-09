@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { EventPayload } from '#src/modules/core/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { runOpenOrderPull } from '#src/modules/channel/channel/service/background.ts';
-import { onOpeningStocktakePosted } from '#src/modules/channel/channel/service/opening-stocktake.ts';
+import { onAllocationDone, onOpeningStocktakePosted } from '#src/modules/channel/channel/service/opening-stocktake.ts';
 import { setStocktakePort } from '#src/modules/channel/channel/service/stocktake-port.ts';
 import type { RemoteOrder, RemoteOrderRef, RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -169,7 +169,7 @@ function posted(shopId: string, documentId: string, over: Partial<EventPayload<'
 
 async function shopRow(id: string) {
   const { rows } = await testPool().query(
-    'select status, order_cutoff_at, opening_stocktake_id, opening_stocktake_number, open_orders_pulled_at, version from channel.shops where id = $1',
+    'select status, order_cutoff_at, opening_stocktake_id, opening_stocktake_number, open_orders_pulled_at, allocation_pending_since, version from channel.shops where id = $1',
     [id],
   );
   return rows[0];
@@ -181,6 +181,18 @@ async function openPullJobs(shopId: string): Promise<number> {
   );
   return rows[0].n;
 }
+async function listingSyncJobs(shopId: string): Promise<number> {
+  const { rows } = await testPool().query(
+    "select count(*)::int as n from pgboss.job where name = 'channel.listing_sync' and data->>'shopId' = $1 and state = 'created'",
+    [shopId],
+  );
+  return rows[0].n;
+}
+const clearListingSyncJobs = (shopId: string) =>
+  testPool().query("delete from pgboss.job where name = 'channel.listing_sync' and data->>'shopId' = $1", [shopId]);
+const quantityPushes = () => updatePriceQuantity.mock.calls.flatMap((call) => call[1]).filter((i) => 'quantity' in i).length;
+const allocated = (c: Company, variantIds: readonly string[], at: Date) => withCompany(c.companyId, () => onAllocationDone(variantIds, at));
+
 async function auditCount(shopId: string): Promise<number> {
   const { rows } = await testPool().query("select count(*)::int as n from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1", [shopId]);
   return rows[0].n;
@@ -205,6 +217,8 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
       version: before.version + 1,
     });
     expect(after.order_cutoff_at.toISOString()).toBe(event.countedAt);
+    // Có listing ghép mà chưa có lần phân hàng nào từ lúc ghi sổ: chờ phân hàng, mốc = postedAt.
+    expect(after.allocation_pending_since.toISOString()).toBe(event.postedAt);
     const one = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
     expect(one.body).toMatchObject({ openingStocktake: null, orderCutoffAt: event.countedAt });
 
@@ -244,10 +258,60 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     expect(rows.map((r) => r.external_order_id)).toEqual([open[0]!.externalOrderId]);
     expect((await shopRow(shopId)).open_orders_pulled_at).not.toBeNull();
 
-    // Lượt đơn mở xong thì đồng bộ đẩy cả tồn.
-    const sync = await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
-    expect(sync.status).toBe(200);
+  });
+
+  it('I2 (B): đơn mở xong mà chưa có allocation_done thì không đẩy tồn; có thì xếp đồng bộ và đẩy đúng một lần; phát lại không đổi gì', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    const event = posted(shopId, documentId);
+    await withCompany(c.companyId, () => onOpeningStocktakePosted(event));
+    await runOpenOrderPull({ companyId: c.companyId, shopId });
+    expect((await shopRow(shopId)).open_orders_pulled_at).not.toBeNull();
+
+    // Lượt đồng bộ sau lượt đơn mở: còn chờ phân hàng nên chỉ đẩy giá.
+    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    expect(quantityPushes()).toBe(0);
+    const pending = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(pending.body.setup.steps.slice(-2)).toEqual([
+      { key: 'allocate', status: 'running', blockedBy: null },
+      { key: 'push_stock', status: 'blocked', blockedBy: 'allocate' },
+    ]);
+
+    // Phân hàng trước lúc ghi sổ, hoặc của biến thể khác, không tính.
+    await allocated(c, [variant.id], new Date(new Date(event.postedAt).getTime() - 1000));
+    await allocated(c, [randomUUID()], new Date());
+    expect((await shopRow(shopId)).allocation_pending_since).not.toBeNull();
+
+    await clearListingSyncJobs(shopId);
+    await allocated(c, [variant.id], new Date());
+    expect((await shopRow(shopId)).allocation_pending_since).toBeNull();
+    expect(await listingSyncJobs(shopId)).toBe(1);
+    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
     expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [expect.objectContaining({ externalSkuId: 'sku-os', quantity: 7 })]);
+    expect(quantityPushes()).toBe(1);
+
+    // Phát lại: không xếp thêm việc, lượt đồng bộ sau không đẩy tồn lần nữa (đã synced).
+    await clearListingSyncJobs(shopId);
+    await allocated(c, [variant.id], new Date());
+    expect(await listingSyncJobs(shopId)).toBe(0);
+    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    expect(quantityPushes()).toBe(1);
+  });
+
+  it('I2 (B): allocation_done tới trước sự kiện ghi sổ (topic khác) vẫn được tính; công ty khác không tính', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    const postedAt = new Date(Date.now() - 1000).toISOString();
+    await allocated(other, [variant.id], new Date());
+    await withCompany(c.companyId, () => onOpeningStocktakePosted(posted(shopId, documentId, { postedAt, countedAt: postedAt })));
+    expect((await shopRow(shopId)).allocation_pending_since).not.toBeNull();
+
+    const c2 = await createCompany({ optionalModules: ['channel'] });
+    const w2 = await waitingShop(c2);
+    await allocated(c2, [variant.id], new Date());
+    await withCompany(c2.companyId, () => onOpeningStocktakePosted(posted(w2.shopId, w2.documentId, { postedAt, countedAt: postedAt })));
+    expect((await shopRow(w2.shopId)).allocation_pending_since).toBeNull();
   });
 
   it('gian hàng không active (mất uỷ quyền): vẫn thoát chờ và đổi mốc, không xếp việc (nối lại sẽ xếp)', async () => {

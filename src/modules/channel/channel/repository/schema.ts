@@ -70,6 +70,11 @@ export const shops = channelSchema.table(
     openOrdersSkipped: integer('open_orders_skipped').notNull().default(0),
     /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
     stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
+    /**
+     * Phiếu đầu kỳ đã ghi sổ (giá trị = `postedAt` của phiếu), đang chờ fulfillment phân hàng xong cho mọi biến thể đã ghép
+     * của gian hàng (`variant_allocations.allocated_at` từ mốc này) rồi mới đẩy tồn (25 §6.1 bước 3, #198).
+     */
+    allocationPendingSince: timestamp('allocation_pending_since', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
@@ -90,6 +95,11 @@ export const shops = channelSchema.table(
       sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
     ),
     check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
+    // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
+    check(
+      'shops_allocation_pending',
+      sql`${t.allocationPendingSince} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
+    ),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],
@@ -186,6 +196,21 @@ export const categoryMaps = channelSchema.table(
     ...version,
   },
   (t) => [unique().on(t.companyId, t.platform, t.categoryId)],
+);
+
+/**
+ * Lần gần nhất fulfillment phân hàng xong cho một biến thể (`fulfillment.allocation_done`, Documents/21 §11.2; #198).
+ * Gian hàng chờ phân hàng sau kiểm kê đầu kỳ đối chiếu với bảng này; ghi cả khi chưa gian hàng nào chờ, vì sự kiện phân
+ * hàng có thể tới trước sự kiện ghi sổ phiếu (hai topic khác nhau).
+ */
+export const variantAllocations = channelSchema.table(
+  'variant_allocations',
+  {
+    companyId: uuid('company_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    allocatedAt: timestamp('allocated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.variantId] })],
 );
 
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);

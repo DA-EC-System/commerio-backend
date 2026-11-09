@@ -106,9 +106,11 @@ export const Shop = z
         steps: z.array(
           z
             .object({
-              key: z.enum(['match', 'opening_stock', 'open_orders', 'push_stock']),
+              key: z.enum(['match', 'opening_stock', 'open_orders', 'allocate', 'push_stock']).meta({
+                description: '`allocate` (chỉ chế độ `stocktake`, đề xuất thêm vào 21 §18.7.7, #198): chờ fulfillment phân hàng sau khi phiếu đầu kỳ ghi sổ',
+              }),
               status: z.enum(['pending', 'running', 'done', 'failed', 'blocked']),
-              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`) hoặc mã issue chưa làm; null khi không `blocked`' }),
+              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`, `allocate`) hoặc mã issue chưa làm; null khi không `blocked`' }),
             })
             .strict(),
         ),
