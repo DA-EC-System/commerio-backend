@@ -106,13 +106,22 @@ async function checkVariants(input: readonly DocLineInput[], errors: Errors, ski
   });
 }
 
-/** Dòng của phiếu lập tay. Kiểm kê chụp tồn sổ của ngăn lúc lưu để Δ không lẫn biến động sau lúc đếm. */
-async function manualLines(type: ManualDocType, bucket: 'on_hand' | 'quarantine', note: string, input: readonly DocLineInput[]) {
+/**
+ * Dòng của phiếu lập tay. Kiểm kê chụp tồn sổ của ngăn lúc lưu để Δ không lẫn biến động sau lúc đếm. `unlimited`: kiểm kê
+ * đầu kỳ (nguồn `shop_setup`) có mỗi SKU đang bán một dòng nên không giới hạn số dòng (Documents/21 mục 11.3, #278).
+ */
+async function manualLines(
+  type: ManualDocType,
+  bucket: 'on_hand' | 'quarantine',
+  note: string,
+  input: readonly DocLineInput[],
+  { unlimited = false }: { unlimited?: boolean } = {},
+) {
   const errors: Errors = {};
   if (note.length > 500) errors.note = 'Ghi chú tối đa 500 ký tự';
   else if (type !== 'stocktake' && !note) errors.note = 'Nhập lý do';
   if (!input.length) errors.lines = 'Thêm ít nhất một dòng';
-  if (input.length > MAX_LINES) errors.lines = `Tối đa ${MAX_LINES} dòng một phiếu`;
+  if (!unlimited && input.length > MAX_LINES) errors.lines = `Tối đa ${MAX_LINES} dòng một phiếu`;
   await checkVariants(input, errors);
   const book = type === 'stocktake' ? await stockOf(input.map((l) => l.variantId)) : new Map();
   const lines: NewDocLine[] = input.map((l, i) => {
@@ -207,7 +216,7 @@ export function updateDocument(
     } else {
       // Kiểm kê đầu kỳ (nguồn `shop_setup`) và chuyển chờ xử lý luôn đếm tồn thực
       if (row.kind === 'write_off' || (row.kind === 'stocktake' && !row.isOpening)) area = bucketOf(input.area ?? (row.area === 'on_hand' ? 'stock' : 'quarantine'));
-      lines = await manualLines(row.kind as ManualDocType, area, note, input.lines);
+      lines = await manualLines(row.kind as ManualDocType, area, note, input.lines, { unlimited: row.isOpening });
     }
     const updated = await updateDoc(row.id, row.version, { area, note, ...(row.kind === 'stocktake' && { countedAt: new Date() }) });
     if (!updated) throw await conflict(row, actor);

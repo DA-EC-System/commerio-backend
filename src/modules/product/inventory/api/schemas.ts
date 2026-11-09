@@ -163,10 +163,11 @@ export const DocCreateBody = z.object({
   note: z.string().max(500, 'Ghi chú tối đa 500 ký tự').default(''),
   lines: z.array(DocLineInput).max(200, 'Tối đa 200 dòng một phiếu'),
 });
+// Giới hạn 200 dòng khi sửa kiểm ở service: kiểm kê đầu kỳ (nguồn `shop_setup`) không giới hạn số dòng (#278)
 export const DocUpdateBody = z.object({
   area: area.optional(),
   note: z.string().max(500, 'Ghi chú tối đa 500 ký tự').default(''),
-  lines: z.array(DocLineInput).max(200, 'Tối đa 200 dòng một phiếu'),
+  lines: z.array(DocLineInput),
   version,
 });
 export const DocActionBody = z.object({ version, reason: z.string().trim().max(500, 'Lý do tối đa 500 ký tự').optional() });

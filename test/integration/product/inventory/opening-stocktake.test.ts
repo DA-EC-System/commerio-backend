@@ -90,4 +90,24 @@ describe('createOpeningStocktake (#245)', () => {
     const next = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: null }));
     expect(next.created).toBe(true);
   });
+
+  it('phiếu đầu kỳ hơn 200 dòng vẫn sửa được số đếm; phiếu kiểm kê lập tay hơn 200 dòng vẫn 422 (#278)', async () => {
+    const s = await setup();
+    const many = [s.v1, s.v2];
+    while (many.length < 205) many.push((await createVariant(s.companyId)).variantId);
+    const { documentId } = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: null }));
+    const doc = (await inv(s.ceo.token).get(`/documents/${documentId}`)).body;
+    expect(doc.lines).toHaveLength(205);
+    const lines = many.map((variantId) => ({ variantId, counted: 1 }));
+    const saved = await inv(s.ceo.token).put(`/documents/${documentId}`, { note: doc.note, lines, version: doc.version });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.lines).toHaveLength(205);
+    const manual = await inv(s.ceo.token).post('/documents', { type: 'stocktake', area: 'stock', note: '', lines });
+    expect([manual.status, manual.body.code]).toEqual([422, 'validation_failed']);
+    expect(manual.body.errors.lines).toBeDefined();
+    const small = (await inv(s.ceo.token).post('/documents', { type: 'stocktake', area: 'stock', note: '', lines: lines.slice(0, 1) })).body;
+    const grown = await inv(s.ceo.token).put(`/documents/${small.id}`, { note: '', lines, version: small.version });
+    expect([grown.status, grown.body.code]).toEqual([422, 'validation_failed']);
+    expect(grown.body.errors.lines).toBeDefined();
+  });
 });
