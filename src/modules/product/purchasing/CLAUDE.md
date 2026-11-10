@@ -2,7 +2,7 @@
 
 Nhà cung cấp, đề nghị nhập (#108, sơ đồ A1), phiếu nhận (#109, A2), phiếu trả NCC (B4). Bảng nằm trong schema `product`. Hợp đồng API: `Documents/21` mục 16. Thiết kế: `docs/superpowers/specs/2026-10-28-108-de-nghi-nhap-design.md`. Phân hệ tuỳ chọn `purchasing`: tắt thì mọi quyền `purchasing.*` mất hiệu lực.
 
-Hiện có: nhà cung cấp, báo cáo theo NCC, đề nghị nhập (lập, sửa, thêm dòng từ gợi ý nhập lại, loại dòng, chín thao tác của máy trạng thái), số "đang về", phiếu nhận (lập, kiểm đếm, ghi sổ, huỷ, ghi kết quả giao thiếu; `docs/superpowers/specs/2026-10-28-109-phieu-nhan-hang-design.md`). Ghi sổ lập phiếu trả NCC nháp cho hàng lỗi; máy trạng thái phiếu trả NCC, đề nghị bù hàng (`sourceReturnId`), tệp đính kèm phiếu nhận (chờ #114) chưa làm.
+Hiện có: nhà cung cấp, báo cáo theo NCC, đề nghị nhập (lập, sửa, thêm dòng từ gợi ý nhập lại, loại dòng, chín thao tác của máy trạng thái), số "đang về", phiếu nhận (lập, kiểm đếm, ghi sổ, huỷ, ghi kết quả giao thiếu; `docs/superpowers/specs/2026-10-28-109-phieu-nhan-hang-design.md`). Ghi sổ lập phiếu trả NCC nháp cho hàng lỗi. Tệp đính kèm phiếu nhận (#212) qua module `files`. Máy trạng thái phiếu trả NCC, đề nghị bù hàng (`sourceReturnId`) chưa làm.
 
 ## Quyền
 
@@ -36,11 +36,12 @@ Thao tác `POST /requests/:id/:action` và `POST /goods-receipts/:id/:action` ch
 - **Ghi sổ** (`post`, `post_short`, một giao dịch): kiểm lại `đạt + lỗi ≤ còn chờ` sau khi khoá các dòng đề nghị (422 `over_outstanding`, hai phiếu đua nhau thì phiếu sau trượt), cộng số nhận vào dòng đề nghị, `inventory.receiveGoods` (đạt vào tồn thực theo giá đề nghị, lỗi vào chờ xử lý), lập phiếu trả NCC nháp cho hàng lỗi (`created_by` trống, nguồn `receipt_defect`), rồi `applyReceiving` chuyển đề nghị sang nhận một phần hoặc nhận xong.
 - **Tự Đã xử lý** (`autoResolveShort`, lịch sử `auto_resolve` nguồn hệ thống): đề nghị nhận xong thì mọi phiếu `short` sang `resolved` kết quả `follow_up` trỏ phiếu vừa ghi sổ (kể cả phiếu đang kiểm còn lại, chỉ có thiếu hoặc trả tại chỗ, ghi sổ sau khi đề nghị đã nhận xong: đề nghị giữ nguyên trạng thái); đề nghị đóng thiếu thì kết quả `close_short`, ghi chú là lý do.
 - **Đóng thiếu** chỉ có một đường: `service/request-receiving.ts` `closeShortRequest`, dùng cho thao tác `close_short` của đề nghị và kết quả giao thiếu `close_short`. Còn phiếu đang kiểm thì 409 `receipt_counting`.
-- Tệp đính kèm chưa nhận tới #114: `attachmentIds` khác rỗng trả 422 `errors.attachments`.
+- **Tệp đính kèm** (#212): `PUT` nhận `attachmentIds` thay toàn bộ, không gửi thì giữ nguyên. `confirmUploads` của `files` chạy **trước** `withCompany` (hỏi kho qua mạng), `attachmentProblem` trong giao dịch, lỗi vào `errors.attachments`; nhật ký `update` ghi `attachmentIds` trước và sau. Chi tiết phiếu trả `attachments` (link ký sẵn 15 phút).
+- **Bằng chứng** (`domain/receipt.ts` `needsEvidence`): ghi sổ (`post`, `post_short`) phiếu `driver_left` có lỗi giữ hoặc thiếu mà chưa đính tệp nào thì 422 `evidence_required`, kiểm sau `empty_document`.
 
 ## Gọi vào và gọi ra
 
-- Gọi ra: `inventory` (`nextDocNumber`, `stockOf` lấy giá vốn cho `add-line`, `receiveGoods` khi ghi sổ phiếu nhận, `recheckThresholds` sau khi đang về đổi: đề nghị vào/ra Đã đặt, Nhận một phần, ghi sổ phiếu nhận, đóng thiếu), `catalog` (`getVariants`, `validateNewProducts`, `createPurchaseProducts`, `categoryNames`), `core` (máy trạng thái, lịch sử, audit, `canSelfApprove`, `publishEvent`).
+- Gọi ra: `inventory` (`nextDocNumber`, `stockOf` lấy giá vốn cho `add-line`, `receiveGoods` khi ghi sổ phiếu nhận, `recheckThresholds` sau khi đang về đổi: đề nghị vào/ra Đã đặt, Nhận một phần, ghi sổ phiếu nhận, đóng thiếu), `catalog` (`getVariants`, `validateNewProducts`, `createPurchaseProducts`, `categoryNames`), `core` (máy trạng thái, lịch sử, audit, `canSelfApprove`, `publishEvent`, tệp đính kèm của `files`).
 - Gọi vào: `inventory` nhận `incomingOf` qua `ctx` (`product/index.ts` bọc `withContext`), vì purchasing đã import inventory. Cảnh báo dưới ngưỡng nhận cùng hàm qua `setIncomingSource` lúc nạp `product/index.ts`.
 - Gọi vào: thẻ kho của `inventory` nhận `purchaseDocumentNumbers({ goodsReceipts, supplierReturns })` qua `ctx` cùng cách đó (#206 phần 2a): số `NH-`, `TN-` theo id, tách theo loại; mỗi loại một câu, chỉ khi có id; id sai loại hoặc của công ty khác thì vắng.
 - Phát `purchasing.request_submitted { requestId, number }` khi gửi và gửi lại; `notification` báo người có `purchasing.request.approve`.

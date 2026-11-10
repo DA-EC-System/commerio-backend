@@ -164,8 +164,12 @@ export const GoodsReceiptUpdateInput = z
     attachmentIds: z
       .array(z.string(), 'Danh sách tệp không hợp lệ')
       .max(10, 'Tối đa 10 tệp')
-      .default([])
-      .meta({ description: 'Chưa hỗ trợ tới #114: khác rỗng trả 422 `errors.attachments`' }),
+      .optional()
+      .meta({
+        description:
+          'Thay toàn bộ tệp đính kèm (Documents/21 §14.3): tệp `purpose: attachment` của công ty, đã PUT xong; sai thì ' +
+          '422 `errors.attachments`. Không gửi thì giữ nguyên',
+      }),
     lines: z.array(GoodsReceiptLineInput, 'Danh sách dòng không hợp lệ').max(MAX_LINES, `Tối đa ${MAX_LINES} dòng`).default([]),
     version,
   })

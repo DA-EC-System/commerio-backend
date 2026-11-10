@@ -1,0 +1,1 @@
+ALTER TABLE "core"."files" ADD COLUMN "uploaded_at" timestamp with time zone;
