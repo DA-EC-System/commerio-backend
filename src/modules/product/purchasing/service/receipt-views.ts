@@ -1,6 +1,6 @@
 // Dựng phiếu nhận trả FE (Documents/21 mục 16.2, FE `src/types/purchasing.ts` `GoodsReceipt`). Phiếu nhận không có giá,
 // nên kho không thấy giá vốn qua đây.
-import { getStatusHistory } from '../../../core/index.ts';
+import { attachmentsOf, getStatusHistory } from '../../../core/index.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { fromDbMode } from '../domain/receipt.ts';
 import { outstanding } from '../domain/request.ts';
@@ -79,8 +79,8 @@ export async function toReceiptDetail(row: ReceiptRow) {
         reason: l.reason ?? '',
       };
     }),
-    // Tệp đính kèm làm sau #114 (spec #109 PR D).
-    attachments: [] as { fileId: string; name: string; url: string; contentType: string }[],
+    // Ảnh phiếu giao, ảnh mở thùng, biên bản (#212, Documents/21 §14.3): link ký sẵn 15 phút.
+    attachments: await attachmentsOf({ type: 'goods_receipts', id: row.id }),
     requestCreatedById: request.createdBy ?? '',
     shortResolution: row.shortResolution
       ? {

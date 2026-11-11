@@ -31,13 +31,29 @@ R2 không có trần chi phí cứng (budget alert chỉ gửi email, trễ kho�
 
 Quyền phụ thuộc `purpose` trong body nên kiểm sau `validate()`.
 
+## Gắn tệp vào chứng từ (`service/attachments.ts`, export từ `core/index.ts`)
+
+Chứng từ là `{ type: '<tên bảng>', id }` (vd `goods_receipts`). Bên gọi làm theo thứ tự:
+
+1. `confirmUploads(companyId, fileIds)` **trước** khi mở giao dịch: tệp chưa có `uploaded_at` thì `HeadObject` lên kho (song song), có và đúng cỡ đã khai thì ghi `uploaded_at`, lần sau khỏi hỏi lại. Lời gọi mạng nằm ngoài giao dịch để không giữ khoá dòng. Kho không trả lời thì 503 `storage_unavailable`.
+2. Trong `withCompany`: `attachmentProblem(fileIds)` trả câu lỗi cho ô tệp của chứng từ (`null` là được). Tệp phải thuộc công ty (RLS), xin vé với `purpose: 'attachment'`, đã PUT xong, không lặp, tối đa 10. Bên gọi đặt câu đó vào ô của mình (`errors.attachments` ở phiếu nhận, `errors.attachmentIds` ở yêu cầu trả).
+3. `replaceAttachments(entity, fileIds, actorId)` thay toàn bộ theo thứ tự gửi. Gỡ tệp không xoá tệp.
+
+Đọc: `attachmentsOf(entity)` trả `{ fileId, name, url, contentType }[]`; `url` là link GET ký sẵn 15 phút, ép `Content-Type` theo kiểu đã lưu, `Content-Disposition` ảnh `inline`, PDF `attachment` (tên tệp UTF-8). `hasAttachments(entity)`, `attachmentIdsOf(entity)` cho bằng chứng và nhật ký.
+
+**`X-Content-Type-Options: nosniff`**: R2 không trả header này và link ký sẵn không thêm được. Tệp nằm ở tên miền của R2, khác origin của app (cookie refresh `HttpOnly` gắn với tên miền app), kiểu tệp đã ký lúc tải lên và ép lại lúc tải xuống. Ảnh công khai ở `S3_PUBLIC_URL` thêm được bằng Transform Rule của Cloudflare nếu cần.
+
+Test thay kho bằng `setHeadObject(fake)` (`service/storage.ts`), trả về kho thật bằng `setHeadObject(null)`.
+
 ## Bất biến
 
-- Dòng `core.files` ghi lúc cấp vé, **trước** khi FE PUT: có dòng mà chưa có tệp trên kho là bình thường. Gắn tệp vào chứng từ phải kiểm tệp đã PUT xong (việc tiếp theo của #212).
+- Dòng `core.files` ghi lúc cấp vé, **trước** khi FE PUT: có dòng mà chưa có tệp trên kho là bình thường. `uploaded_at` ghi lần đầu thấy tệp trên kho, chỉ tệp có `uploaded_at` mới gắn được.
 - `size_bytes > 0` (CHECK `files_size_positive`); `purpose` là enum `core.file_purpose`; `storage_key` unique.
 - RLS theo `company_id` (bật chung ở migration `0002`).
 - Không log URL ký sẵn (chữ ký dùng được tới khi hết hạn).
 
-## Chưa làm (#212)
+## Chưa làm
 
-Gắn và đọc đính kèm (`attachments`, link xem ký sẵn 15 phút, PDF tải về dạng tệp), nối vào phiếu nhận, chặn ghi sổ khi thiếu bằng chứng. Dọn tệp xin vé mà không gắn vào đâu nằm ngoài #212.
+- Dọn tệp xin vé mà không gắn vào đâu (ngoài #212).
+- Bật ảnh sản phẩm ở catalog (`imageFileIds`, `noImages` ở `product/catalog/api/schemas.ts`): chưa có issue.
+- Gắn tệp cho yêu cầu trả (#202) dùng các hàm trên.
