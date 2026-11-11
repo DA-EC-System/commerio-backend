@@ -1,6 +1,6 @@
 {
-  "id": "297fba3f-c674-4e19-8b1f-b4a0023ae8f1",
-  "prevId": "cef61043-34c4-4bb7-8ce9-865eac86af8e",
+  "id": "21651c91-7215-4213-b1cb-770da0ade83b",
+  "prevId": "b43f92a8-7edb-4177-9626-43ba032edb9f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2212,6 +2212,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "file_purpose",
+          "typeSchema": "core",
+          "primaryKey": false,
+          "notNull": true
+        },
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
@@ -2253,7 +2260,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "files_size_positive": {
+          "name": "files_size_positive",
+          "value": "\"core\".\"files\".\"size_bytes\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.refresh_tokens": {
@@ -10387,12 +10399,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "follows_up_receipt_id": {
-          "name": "follows_up_receipt_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "resolution_note": {
           "name": "resolution_note",
           "type": "text",
@@ -11525,6 +11531,14 @@
         "create",
         "update",
         "delete"
+      ]
+    },
+    "core.file_purpose": {
+      "name": "file_purpose",
+      "schema": "core",
+      "values": [
+        "product_image",
+        "attachment"
       ]
     },
     "core.company_status": {

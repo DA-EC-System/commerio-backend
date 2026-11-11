@@ -1,6 +1,6 @@
 {
-  "id": "1f149b10-3aaa-4b1d-b553-ea6066ef88a8",
-  "prevId": "90202eec-dee2-4780-987f-53e5ccd87f17",
+  "id": "d68ff7f7-80f3-4bcc-bc81-c2fdfb4d17ed",
+  "prevId": "21651c91-7215-4213-b1cb-770da0ade83b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2212,6 +2212,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "file_purpose",
+          "typeSchema": "core",
+          "primaryKey": false,
+          "notNull": true
+        },
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
@@ -2253,7 +2260,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "files_size_positive": {
+          "name": "files_size_positive",
+          "value": "\"core\".\"files\".\"size_bytes\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.refresh_tokens": {
@@ -10387,6 +10399,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "follows_up_receipt_id": {
+          "name": "follows_up_receipt_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "resolution_note": {
           "name": "resolution_note",
           "type": "text",
@@ -10616,6 +10634,12 @@
           "notNull": true,
           "default": false
         },
+        "excluded_reason": {
+          "name": "excluded_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -10692,6 +10716,10 @@
           "name": "purchase_request_lines_ordered",
           "value": "\"product\".\"purchase_request_lines\".\"ordered_qty\" > 0"
         },
+        "purchase_request_lines_excluded_reason": {
+          "name": "purchase_request_lines_excluded_reason",
+          "value": "not \"product\".\"purchase_request_lines\".\"excluded\" or \"product\".\"purchase_request_lines\".\"excluded_reason\" is not null"
+        },
         "purchase_request_lines_counts": {
           "name": "purchase_request_lines_counts",
           "value": "\"product\".\"purchase_request_lines\".\"received_qty\" >= 0 and \"product\".\"purchase_request_lines\".\"defective_qty\" >= 0 and \"product\".\"purchase_request_lines\".\"closed_short_qty\" >= 0"
@@ -10761,6 +10789,12 @@
         "expected_delivery_date": {
           "name": "expected_delivery_date",
           "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "supplier_order_code": {
+          "name": "supplier_order_code",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -11503,6 +11537,14 @@
         "create",
         "update",
         "delete"
+      ]
+    },
+    "core.file_purpose": {
+      "name": "file_purpose",
+      "schema": "core",
+      "values": [
+        "product_image",
+        "attachment"
       ]
     },
     "core.company_status": {
