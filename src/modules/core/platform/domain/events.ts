@@ -44,6 +44,16 @@ export const EVENT_SCHEMAS = {
     kind: z.enum(['purchase', 'manual', 'delivery_return']),
     lines: z.array(z.object({ variantId: id, quantity: z.int().positive() })),
   }),
+  // Phiếu kiểm kê ghi sổ (#208, Documents/21 mục 11.2); nguồn `shop_setup` là kiểm kê đầu kỳ của gian hàng (#245).
+  // `countedAt` là thời điểm đếm, khác `postedAt` là lúc ghi sổ (thêm 06/11/2026); channel đặt lại mốc kéo đơn theo nó (#198).
+  'inventory.stocktake_posted': z.object({
+    documentId: id,
+    number: z.string(),
+    source: z.object({ type: z.literal('shop_setup'), shopId: id }).nullable(),
+    postedAt: timestamp,
+    countedAt: timestamp,
+    lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
+  }),
   'inventory.issue_posted': z.object({
     issueId: id,
     number: z.string(),

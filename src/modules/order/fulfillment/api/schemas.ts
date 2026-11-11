@@ -1,6 +1,7 @@
 // Schema Zod của kiện (Documents/21 §19.2). Một nơi dựng `PackageSummary` cho cả route kiện và chi tiết đơn của sales
 // (spec 199a D8). Tên `.meta({ id })` trùng kiểu ở FE.
 import { z } from 'zod';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 import { PACKAGE_TABS } from '../domain/package.ts';
 
 const iso = z.iso.datetime();
@@ -24,17 +25,8 @@ export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'lost_reported', 
 
 export const ShopRef = z.object({ id: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'OrderShopRef' });
 
-/** `StatusChange` của Documents/21 §14.1; không đặt `id` vì channel đã đăng ký tên này. */
-export const StatusChange = z
-  .object({
-    at: iso,
-    from: z.string().nullable(),
-    to: z.string(),
-    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    source: z.enum(['user', 'marketplace', 'system']),
-    reason: z.string().nullable(),
-  })
-  .strict();
+/** `StatusChange` của Documents/21 §14.1: schema dùng chung ở `shared/http/status-change.ts` (#246). */
+export const StatusChange = StatusChangeSchema;
 
 export const PackageSummary = z
   .object({

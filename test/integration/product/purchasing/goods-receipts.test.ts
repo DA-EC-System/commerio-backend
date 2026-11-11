@@ -145,11 +145,11 @@ describe('kiểm đếm', () => {
     expect(after.lines.map((l) => l.announced)).toEqual([0, 0]);
   });
 
-  it('gửi tệp đính kèm trước #114 → 422 errors.attachments', async () => {
+  it('tệp đính kèm không có → 422 errors.attachments (#212; đủ ca ở receipt-attachments.test.ts)', async () => {
     const r = await createReceipt(A.kho, (await ordered()).id);
     const res = await pur(A.kho).put(`/goods-receipts/${r.id}`, { ...countBody(r, []), attachmentIds: ['00000000-0000-4000-8000-000000000001'] });
     expect(res.status).toBe(422);
-    expect(res.body.errors).toEqual({ attachments: 'Chưa nhận tệp đính kèm (chờ #114)' });
+    expect(res.body.errors).toEqual({ attachments: 'Có tệp chưa tải xong hoặc không thuộc công ty' });
   });
 
   it('version cũ → 409 version_conflict kèm current; phiếu đã huỷ → 409 not_draft', async () => {

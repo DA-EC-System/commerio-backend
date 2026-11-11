@@ -27,10 +27,13 @@ import {
   shopMachine,
   tokenExpiringSoon,
 } from '../domain/shop.ts';
+import type { ListingStatus, RemoteState } from '../domain/listing.ts';
+import { currentListingRows, insertListing } from '../repository/listings.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
   delistForDisconnect,
+  failPushingForDisconnect,
   findLiveCompanyOf,
   findShopByExternal,
   findShopRow,
@@ -47,6 +50,8 @@ import {
   MarketplaceError,
   type PlatformEntry,
   platformEntries,
+  type RemoteCounts,
+  type RemoteSku,
   type ShopCapabilities,
   type ShopConnection,
 } from './marketplaces/index.ts';
@@ -116,17 +121,26 @@ export interface ShopConnectionResult {
   reconnect: { pulledFrom: Date | null; relisted: number; jobsRun: number } | null;
 }
 
-/** Một gian hàng của lần nối (§18.7.4): thêm trạng thái ngay trước lần nối và số SKU người bán đọc được trên sàn. */
+/** Một gian hàng của lần nối (§18.7.4): thêm trạng thái ngay trước lần nối, số sản phẩm và số phân loại người bán có trên sàn. */
 export interface ShopConnectionItem extends ShopConnectionResult {
   /** null khi `created: true`. */
   previousStatus: ShopStatus | null;
-  /** null khi chưa đọc được: sàn không có `listSkus`, sàn lỗi hoặc quá `REMOTE_SKU_COUNT_MS`. */
+  /**
+   * Số sản phẩm trên sàn, không tính sản phẩm đã xoá; nghĩa cố định cho mọi sàn. null khi chưa đọc được: adapter không có
+   * `countRemote` lẫn `listSkus`, sàn lỗi hoặc quá `REMOTE_COUNT_MS`.
+   */
+  remoteProductCount: number | null;
+  /**
+   * Số phân loại (SKU của sàn) trên sàn, không tính phân loại của sản phẩm đã xoá; nghĩa cố định cho mọi sàn. null khi sàn
+   * không trả tổng và BE chưa đọc hết danh sách (Lazada lúc nối; TikTok khi tổng sản phẩm của gian hàng, kể cả sản phẩm
+   * đã xoá, vượt một trang (100)), hoặc khi `remoteProductCount` null.
+   */
   remoteSkuCount: number | null;
 }
 
 /**
  * `shop`, `created`, `reconnect` là của phần tử đầu; `shops` đủ mọi gian hàng của lần nối (Documents/21 §18.4). Gốc không
- * có `previousStatus`, `remoteSkuCount` (§18.7.4).
+ * có `previousStatus`, `remoteProductCount`, `remoteSkuCount` (§18.7.4).
  */
 export interface ShopCallbackResult extends ShopConnectionResult {
   shops: ShopConnectionItem[];
@@ -372,12 +386,15 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     if (owner && owner !== actor.companyId) throw connectedElsewhere();
   }
   const adapter = adapterOf(platform);
-  const skuCounts = await Promise.all(unique.map((c) => remoteSkuCount(adapter, c)));
+  const counts = await Promise.all(unique.map((c) => remoteCounts(adapter, c)));
   let results: ShopConnectionItem[];
   try {
     results = await withCompany(actor.companyId, async () => {
       const out: ShopConnectionItem[] = [];
-      for (const [i, c] of unique.entries()) out.push({ ...(await writeShop(platform, actor, c)), remoteSkuCount: skuCounts[i]! });
+      for (const [i, c] of unique.entries()) {
+        const { productCount, skuCount } = counts[i]!;
+        out.push({ ...(await writeShop(platform, actor, c)), remoteProductCount: productCount, remoteSkuCount: skuCount });
+      }
       return out;
     });
   } catch (err) {
@@ -393,43 +410,69 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     // Nối lại gian hàng đã thiết lập: kéo đơn ngay từ lần kéo thành công cuối (US-GH-14 dòng 1), không chờ vòng 5 phút.
     if (result.reconnect) await sendOrderPull(result.shop.companyId, result.shop.id);
     result.shop.pendingJobs = 0;
-    if (result.reconnect) result.reconnect.jobsRun = jobsRun;
+    if (result.reconnect) {
+      result.reconnect.jobsRun = jobsRun;
+      // Gian hàng ngắt rồi nối lại: đưa lên lại listing gỡ do ngắt theo trạng thái sàn (#219 A6).
+      result.reconnect.relisted = await relistAfterReconnect(result.shop.companyId, result.shop.id);
+    }
   }
   const { shop, created, reconnect } = results[0]!;
   return { shop, created, reconnect, shops: results };
 }
 
-/** Hạn tổng cho việc đếm SKU trên sàn lúc nối (§18.7.4): quá hạn thì `remoteSkuCount: null`, việc nối vẫn xong. */
-const REMOTE_SKU_COUNT_MS = 10_000;
+/**
+ * Cách đếm cho `remoteProductCount`, `remoteSkuCount`: `countRemote` của adapter (tổng sàn trả) nếu có; không thì đọc hết
+ * SKU bằng `listSkus` (bỏ nhãn biến thể: thêm lời gọi, không đổi số), bỏ SKU `deleted`, đếm SKU và số `externalProductId`
+ * khác nhau. Đã đọc hết danh sách nên có cả hai số.
+ */
+function countRemote(adapter: MarketplaceAdapter): ((accessToken: string) => Promise<RemoteCounts>) | null {
+  if (adapter.countRemote) return adapter.countRemote.bind(adapter);
+  const { listSkus } = adapter;
+  if (!listSkus) return null;
+  return async (accessToken) => {
+    const skus = (await listSkus.call(adapter, accessToken, { labels: false })).filter((r) => r.state !== 'deleted');
+    return { productCount: new Set(skus.map((r) => r.externalProductId)).size, skuCount: skus.length };
+  };
+}
+
+/** Hạn tổng cho việc đếm hàng trên sàn lúc nối (§18.7.4): quá hạn thì cả hai số `null`, việc nối vẫn xong. */
+const REMOTE_COUNT_MS = 10_000;
+
+/** Chưa đọc được: cả hai số `null` (không trả 0 thay cho lỗi, 0 trông như gian hàng rỗng thật). */
+const NO_COUNTS = { productCount: null, skuCount: null } as const;
 
 /**
- * Số SKU người bán đọc được trên sàn lúc nối (§18.7.4), không tính SKU đã xoá trên sàn, như gợi ý ghép của thiết lập.
+ * Số sản phẩm và số phân loại (SKU của sàn) người bán có trên sàn lúc nối (§18.7.4), không tính hàng đã xoá trên sàn. Hai
+ * số có nghĩa cố định cho mọi sàn; `skuCount` null khi sàn không trả tổng số SKU và adapter không đọc hết danh sách.
+ * Adapter có `countRemote` thì dùng, không thì đếm bằng `listSkus` như gợi ý ghép của thiết lập.
  * Gọi sàn ngoài giao dịch, các gian hàng của một lần nối đếm song song. Chỉ để hiện trên màn kết quả nên không chặn việc
- * nối: sàn chưa có `listSkus`, gọi lỗi (mọi lỗi) hoặc quá `REMOTE_SKU_COUNT_MS` thì `null` (chưa đọc được), ghi log.
- * `listSkus` không nhận `AbortSignal` nên lời gọi quá hạn vẫn chạy nốt ở nền, kết quả bị bỏ.
+ * nối: adapter không có cả hai hàm, gọi lỗi (mọi lỗi) hoặc quá `REMOTE_COUNT_MS` thì cả hai `null` (chưa đọc được), ghi log.
+ * Lời gọi không nhận `AbortSignal` nên lời gọi quá hạn vẫn chạy nốt ở nền, kết quả bị bỏ.
  */
-async function remoteSkuCount(adapter: MarketplaceAdapter, c: ShopConnection): Promise<number | null> {
-  if (!adapter.listSkus) return null;
-  const listSkus = adapter.listSkus.bind(adapter);
+async function remoteCounts(
+  adapter: MarketplaceAdapter,
+  c: ShopConnection,
+): Promise<{ productCount: number | null; skuCount: number | null }> {
+  const count = countRemote(adapter);
+  if (!count) return NO_COUNTS;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), REMOTE_SKU_COUNT_MS);
+    timer = setTimeout(() => resolve('timeout'), REMOTE_COUNT_MS);
   });
   try {
-    // Cùng nguồn với gợi ý ghép của thiết lập; chỉ đếm nên không đọc nhãn biến thể (thêm lời gọi sàn, không đổi số).
-    const result = await Promise.race([listSkus(c.tokens.accessToken, { labels: false }), timeout]);
+    const result = await Promise.race([count(c.tokens.accessToken), timeout]);
     if (result === 'timeout') {
-      logger.warn({ externalShopId: c.externalShopId, timeoutMs: REMOTE_SKU_COUNT_MS }, 'Đếm SKU trên sàn lúc nối quá hạn');
-      return null;
+      logger.warn({ externalShopId: c.externalShopId, timeoutMs: REMOTE_COUNT_MS }, 'Đếm sản phẩm, phân loại trên sàn lúc nối quá hạn');
+      return NO_COUNTS;
     }
-    return result.filter((r) => r.state !== 'deleted').length;
+    return result;
   } catch (err) {
     if (err instanceof MarketplaceError) {
-      logger.warn({ externalShopId: c.externalShopId, kind: err.kind, platformCode: err.platformCode }, 'Không đọc được SKU trên sàn lúc nối');
+      logger.warn({ externalShopId: c.externalShopId, kind: err.kind, platformCode: err.platformCode }, 'Không đếm được sản phẩm, phân loại trên sàn lúc nối');
     } else {
-      logger.error({ err, externalShopId: c.externalShopId }, 'Lỗi khi đếm SKU trên sàn lúc nối');
+      logger.error({ err, externalShopId: c.externalShopId }, 'Lỗi khi đếm sản phẩm, phân loại trên sàn lúc nối');
     }
-    return null;
+    return NO_COUNTS;
   } finally {
     clearTimeout(timer);
   }
@@ -469,7 +512,7 @@ async function writeShop(
   if (action) {
     await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
   }
-  // Kéo đơn từ mốc cuối (#105), đưa lên lại listing gỡ do ngắt (#104) chưa làm: báo 0. `jobsRun` điền sau khi commit.
+  // `relisted`, `jobsRun` điền sau khi commit (`attachAll`).
   const reconnect = action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
   return { shop: await shopView(row), created: false, reconnect, previousStatus: existing.status };
 }
@@ -526,11 +569,95 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       reason: 'Ngắt gian hàng',
     });
   }
+  for (const listing of await failPushingForDisconnect(id)) {
+    await recordTransition({
+      entityType: 'listings',
+      entityId: listing.id,
+      from: 'pushing',
+      to: 'push_failed',
+      action: 'fail',
+      actorId: null,
+      reason: 'Gian hàng đã ngắt',
+    });
+  }
   // Ngắt thì bỏ lịch và việc đang giữ (§18.1). Giao dịch lỗi sau bước này thì gian hàng còn `active` mà thiếu lịch:
   // worker khởi động lại sẽ đặt lại (`reconcileShopJobs`).
   await stopShopJobs(id);
   await dropHeld(id);
   return shopView(updated);
+}
+
+/** Trạng thái của listing mới khi nối lại, theo trạng thái sàn (#219 A6); `deleted` thì không tạo. */
+const RELIST_STATUS: Record<RemoteState, ListingStatus | null> = {
+  live: 'live',
+  review: 'under_review',
+  hold: 'platform_hold',
+  // Seller tắt sản phẩm trên sàn trong lúc gian hàng ngắt.
+  inactive: 'hidden',
+  rejected: 'rejected',
+  deleted: null,
+};
+
+/**
+ * Nối lại gian hàng đã ngắt (25 §6.1, #219 A6): listing gỡ do ngắt (`delisted_by_disconnect`, còn là dòng hiện hành của
+ * biến thể) mà sàn còn sản phẩm thì tạo dòng mới theo trạng thái sàn, trỏ dòng cũ (`replaces_listing_id`), chép SellerSku,
+ * ảnh, mã sàn, chờ đẩy giá và tồn. Gọi sau commit của lần nối, ngoài giao dịch; mỗi dòng một giao dịch. Trả số dòng đã
+ * tạo. Lỗi (sàn, token) chỉ ghi log và trả 0: không chặn việc nối, người dùng đẩy lại tay được.
+ */
+async function relistAfterReconnect(companyId: string, shopId: string): Promise<number> {
+  const inCompany = <T>(fn: () => Promise<T>) => withCompany(companyId, fn);
+  try {
+    const rows = (await inCompany(() => currentListingRows(shopId))).filter(
+      (r) => r.status === 'delisted' && r.delistedByDisconnect && r.sellerSku,
+    );
+    if (!rows.length) return 0;
+    const { adapter, accessToken } = await inCompany(() => shopSession(shopId));
+    const remote = await onMarketplace(() => adapter.getSkus(accessToken, rows.map((r) => r.sellerSku!)));
+    let relisted = 0;
+    for (const row of rows) {
+      const r = remoteOf(remote, row.externalSkuId, row.sellerSku!);
+      const status = r ? RELIST_STATUS[r.state] : null;
+      if (!r || !status) continue;
+      try {
+        await inCompany(async () => {
+          const created = await insertListing({
+            companyId,
+            shopId,
+            variantId: row.variantId,
+            sellerSku: row.sellerSku,
+            status,
+            externalProductId: r.externalProductId,
+            externalSkuId: r.externalSkuId,
+            externalImageUrls: row.externalImageUrls,
+            hiddenBy: status === 'hidden' ? 'platform' : null,
+            rejectReason: status === 'rejected' ? (r.rejectReason ?? 'Sàn từ chối, không ghi lý do') : null,
+            platformStock: r.quantity,
+            replacesListingId: row.id,
+          });
+          await recordTransition({ entityType: 'listings', entityId: created.id, from: null, to: status, action: 'relist', actorId: null, reason: 'Kết nối lại gian hàng' });
+        });
+        relisted++;
+      } catch (err) {
+        // Người dùng vừa đẩy biến thể này (đã có dòng chưa gỡ): giữ dòng đó.
+        const constraint = pgError(err).constraint;
+        if (constraint !== 'listings_shop_variant_uq' && constraint !== 'listings_shop_external_sku_uq') throw err;
+      }
+    }
+    return relisted;
+  } catch (err) {
+    if (err instanceof MarketplaceError || err instanceof AppError) {
+      logger.warn({ shopId, code: err instanceof AppError ? err.code : err.kind }, 'Không đưa lên lại listing gỡ do ngắt khi nối lại');
+    } else {
+      logger.error({ err, shopId }, 'Lỗi khi đưa lên lại listing gỡ do ngắt');
+    }
+    return 0;
+  }
+}
+
+/** SKU trên sàn của listing cũ: đúng mã SKU sàn nếu có, không thì theo SellerSku; ưu tiên bản chưa xoá. */
+function remoteOf(remote: readonly RemoteSku[], externalSkuId: string | null, sellerSku: string): RemoteSku | undefined {
+  const same = remote.filter((s) => (externalSkuId ? s.externalSkuId === externalSkuId : s.sellerSku === sellerSku));
+  return same.find((s) => s.state !== 'deleted') ?? same[0];
 }
 
 // Mất uỷ quyền và làm mới token ở `shop-tokens.ts` (#201); giữ đường import cũ cho `index.ts`, `background.ts`.

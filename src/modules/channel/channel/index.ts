@@ -5,9 +5,18 @@ import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runTokenRefresh } from './service/background.ts';
+import { runListingPush } from './service/listing-push.ts';
 import { markStockPending } from './service/listing-sync.ts';
+import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
 import { productPort } from './service/product-port.ts';
-import { listingSyncQueue, openOrderPullQueue, orderPullQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
+import {
+  listingPushQueue,
+  listingSyncQueue,
+  openOrderPullQueue,
+  orderPullQueue,
+  reconcileShopJobs,
+  tokenRefreshQueue,
+} from './service/shop-jobs.ts';
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
@@ -16,12 +25,18 @@ export const channelModule: ModuleDefinition = {
   async startBackground(ctx) {
     // Tồn đổi thì listing chờ đẩy tồn (chỉ ghi DB, đúng một lần); lượt đồng bộ sau mới gọi sàn, không gọi sàn trong giao dịch.
     registerConsumer('inventory.stock_changed', (e) => markStockPending(e.payload.variantId), { consumer: 'channel-stock-push' });
+    // Phiếu kiểm kê đầu kỳ ghi sổ: gian hàng thoát chờ kiểm kê, mốc kéo đơn = thời điểm đếm, bật đẩy tồn (#198 phần 2).
+    registerConsumer('inventory.stocktake_posted', handleStocktakePosted, { consumer: 'channel-opening-stocktake' });
+    // Fulfillment phân hàng xong: gian hàng vừa thoát chờ kiểm kê hết chờ phân hàng thì mới đẩy tồn lần đầu (#198, 25 §6.1 bước 3).
+    registerConsumer('fulfillment.allocation_done', handleAllocationDone, { consumer: 'channel-allocation-done' });
     // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
     const port = productPort(ctx);
     await workQueue(listingSyncQueue, (job) => runListingSync(port, job));
     await workQueue(orderPullQueue, runOrderPull);
     await workQueue(openOrderPullQueue, runOpenOrderPull);
     await workQueue(tokenRefreshQueue, runTokenRefresh);
+    // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
+    await workQueue(listingPushQueue, (job) => runListingPush(port, job));
     await reconcileShopJobs();
     // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).
     return async () => {};

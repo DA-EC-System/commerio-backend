@@ -407,6 +407,8 @@ export const orderSettlements = financeSchema.table(
     resolvedBy: uuid('resolved_by'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolvedReason: text('resolved_reason'),
+    /** Người chốt là người soạn cấu hình phí, được chốt nhờ ngoại lệ tự duyệt (25 §11, #249). */
+    selfApproved: boolean('self_approved').notNull().default(false),
     approvedBy: uuid('approved_by'),
     ...timestamps,
     ...version,

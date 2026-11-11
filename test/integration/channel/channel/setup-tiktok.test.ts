@@ -29,7 +29,7 @@ const tkSku = (id: string, sellerSku: string | undefined, quantity: number) => (
 // Hai trang như shop thử VN (gọi thật 09/11/2026): cốc hai SKU cùng tiêu đề, sản phẩm thiếu SKU người bán, sản phẩm đã xoá.
 const pages: Record<string, unknown> = {
   '': {
-    total_count: 4,
+    total_count: 5,
     next_page_token: 'p2',
     products: [
       { id: '1738338487553328657', title: 'Cốc sứ có quai 350ml', status: 'ACTIVATE', skus: [tkSku('1738338453674427921', 'CM-TEST-MUG-TRANG', 14), tkSku('1738338453674493457', 'CM-TEST-MUG-DEN', 0)] },
@@ -47,9 +47,13 @@ const pages: Record<string, unknown> = {
     ],
   },
 };
-const fetchFn = vi.fn<typeof fetch>(async (url) => {
+const fetchFn = vi.fn<typeof fetch>(async (url, init) => {
   const u = new URL(String(url));
   if (u.pathname === '/authorization/202309/shops') return ok({ shops: [{ id: shopId, name: 'Commerio_Testing_Acc', region: 'VN', cipher, seller_type: 'LOCAL' }] });
+  // Đếm lúc nối (`countRemote`): `status: DELETED`, `page_size` 1 để trừ sản phẩm đã xoá khỏi `total_count` của `ALL`.
+  if (u.pathname === '/product/202502/products/search' && init?.body === '{"status":"DELETED"}') {
+    return ok({ total_count: 1, next_page_token: 'd2', products: [{ id: '1738417412913137170', title: 'Sản phẩm đã xoá', status: 'DELETED', skus: [] }] });
+  }
   if (u.pathname === '/product/202502/products/search') return ok(pages[u.searchParams.get('page_token') ?? '']);
   // Get Product 202309: nhãn biến thể của sản phẩm nhiều SKU (cốc), ảnh đầu tiên của mọi sản phẩm đọc được.
   if (u.pathname === '/product/202309/products/1738338487553328657') {
@@ -73,6 +77,7 @@ const mugWhite: ListingVariant = {
   categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   archived: false,
+  businessStatus: 'selling',
   description: null,
   weightG: 300,
   lengthMm: 100,
@@ -110,8 +115,14 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
     const shop = connected.body.shop as { id: string; status: string };
     appShopId = shop.id;
     expect(shop.status).toBe('connecting');
-    // `remoteSkuCount` cùng nguồn `listSkus` nhưng không đọc nhãn biến thể (review chéo S-3).
-    expect(connected.body.shops[0].remoteSkuCount).toBe(5);
+    // Đếm lúc nối không lật trang, không đọc nhãn biến thể (review chéo S-3): trang đầu chưa chứa hết gian hàng
+    // (`total_count` 5, trang 2 sản phẩm) nên số phân loại null; số sản phẩm = 5 trừ 1 đã xoá. Hai lời gọi Search.
+    expect(connected.body.shops[0]).toMatchObject({ remoteProductCount: 4, remoteSkuCount: null });
+    const countCalls = fetchFn.mock.calls.filter(([u]) => new URL(String(u)).pathname === '/product/202502/products/search');
+    expect(countCalls.map(([u, i]) => [new URL(String(u)).searchParams.get('page_size'), new URL(String(u)).searchParams.get('page_token'), i?.body])).toEqual([
+      ['100', null, '{"status":"ALL"}'],
+      ['1', null, '{"status":"DELETED"}'],
+    ]);
     expect(detailCalls()).toEqual([]);
 
     const logged: unknown[] = [];

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -70,6 +71,13 @@ export const shops = channelSchema.table(
     openOrdersSkipped: integer('open_orders_skipped').notNull().default(0),
     /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
     stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
+    /**
+     * Phiếu đầu kỳ đã ghi sổ, gian hàng đang chờ phân hàng: thoát chờ khi nhận `fulfillment.allocation_done` có
+     * `cause.documentId` trùng id này (Documents/21 §11.3, §18.6.11; Documents/19 `shops`). Giữ id vì
+     * `opening_stocktake_id` đã về null. Sự kiện do `settleOpeningStocktake` phát trong chính giao dịch thoát chờ kiểm kê
+     * nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
+     */
+    allocationStocktakeId: uuid('allocation_stocktake_id'),
     ...timestamps,
     ...version,
   },
@@ -90,6 +98,11 @@ export const shops = channelSchema.table(
       sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
     ),
     check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
+    // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
+    check(
+      'shops_allocation_pending',
+      sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
+    ),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],
@@ -135,7 +148,8 @@ export const listings = channelSchema.table(
     sellerSku: text('seller_sku'),
     status: listingStatus('status').notNull().default('pushing'),
     rejectReason: text('reject_reason'),
-    pushError: text('push_error'),
+    /** Lỗi của lượt đẩy (§18.6.4): `{ code, message, at }`; `code` là mã lỗi sàn hoặc mã chặn khi việc chạy (mô tả ở `ChannelListing.pushError`). */
+    pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
@@ -153,12 +167,19 @@ export const listings = channelSchema.table(
     priceCalcId: uuid('price_calc_id'),
     delistedByDisconnect: boolean('delisted_by_disconnect').notNull().default(false),
     approvedBy: uuid('approved_by'),
+    /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
+    replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,
     ...version,
   },
   (t) => [
-    uniqueIndex('listings_shop_variant_uq').on(t.shopId, t.variantId).where(sql`${t.variantId} is not null`),
-    uniqueIndex('listings_shop_external_sku_uq').on(t.shopId, t.externalSkuId).where(sql`${t.externalSkuId} is not null`),
+    // `delisted` là trạng thái cuối: đẩy lại tạo dòng mới, nên hai ràng buộc chỉ áp cho dòng chưa gỡ (25 §6.4, #219).
+    uniqueIndex('listings_shop_variant_uq')
+      .on(t.shopId, t.variantId)
+      .where(sql`${t.variantId} is not null and ${t.status} <> 'delisted'`),
+    uniqueIndex('listings_shop_external_sku_uq')
+      .on(t.shopId, t.externalSkuId)
+      .where(sql`${t.externalSkuId} is not null and ${t.status} <> 'delisted'`),
     index().on(t.variantId),
     check('listings_mode', sql`(${t.mode} = 'mapped') = (${t.variantId} is not null)`),
     check('listings_unmanaged_approved', sql`${t.mode} = 'mapped' or ${t.approvedBy} is not null`),

@@ -107,6 +107,8 @@ export const stateTransitions = platformSchema.table(
     actorId: uuid('actor_id'),
     source: transitionSource('source').notNull(),
     reason: text('reason'),
+    /** Bước người duyệt khác đi theo ngoại lệ tự duyệt (Documents/21 mục 14.1, #246). */
+    selfApproved: boolean('self_approved').notNull().default(false),
     at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index().on(t.entityType, t.entityId, t.at)],

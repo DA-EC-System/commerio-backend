@@ -4,6 +4,7 @@ import {
   allocationQueue,
   needOf,
   planAllocation,
+  planDismantle,
   planReclaim,
   type ReclaimCandidate,
 } from '#src/modules/order/fulfillment/domain/allocation.ts';
@@ -112,5 +113,27 @@ describe('needOf', () => {
     expect(needOf([{ variantId: A, quantity: 1 }, { variantId: B, quantity: 2 }, { variantId: A, quantity: 3 }])).toEqual(
       new Map([[A, 4], [B, 2]]),
     );
+  });
+});
+
+describe('planDismantle: kiện đã đóng cần kho kiểm lại sau phiếu kiểm kê (25 §7.4)', () => {
+  const sealed = (id: string, lines: { variantId: string; quantity: number }[], needsAttention = false) => ({ id, needsAttention, lines });
+
+  it('kiện đang giữ SKU còn thiếu sau khi lấy lại thì được chọn, kiện chỉ giữ SKU khác thì không', () => {
+    const r = planDismantle(
+      [sealed('KA', [{ variantId: A, quantity: 1 }]), sealed('KB', [{ variantId: B, quantity: 1 }]), sealed('KAB', [{ variantId: B, quantity: 1 }, { variantId: A, quantity: 2 }])],
+      new Map([[A, 1]]),
+    );
+    expect(ids(r)).toEqual(['KA', 'KAB']);
+  });
+
+  it('kiện đã bật Cần xử lý thì giữ nguyên, không đè ghi chú', () => {
+    expect(planDismantle([sealed('KA', [{ variantId: A, quantity: 1 }], true)], new Map([[A, 1]]))).toEqual([]);
+  });
+
+  it('hết thiếu (hoặc số thiếu không dương) thì không chọn kiện nào', () => {
+    const k = [sealed('KA', [{ variantId: A, quantity: 1 }])];
+    expect(planDismantle(k, new Map())).toEqual([]);
+    expect(planDismantle(k, new Map([[A, 0]]))).toEqual([]);
   });
 });

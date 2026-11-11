@@ -1,7 +1,16 @@
 import type { OpenAPIRegistry, RouteConfig } from '@asteasolutions/zod-to-openapi';
 import { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
-import { DailyQuery, DailyResponse, ExportQuery, OverviewResponse, RangeQuery, ShopsResponse } from './schemas.ts';
+import {
+  DailyQuery,
+  DailyResponse,
+  ExportQuery,
+  OverviewResponse,
+  RangeQuery,
+  SelfApprovalQuery,
+  SelfApprovalsResponse,
+  ShopsResponse,
+} from './schemas.ts';
 
 const json = (description: string, schema: z.ZodType) => ({ description, content: { 'application/json': { schema } } });
 
@@ -40,6 +49,13 @@ export function registerReportOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Chuỗi theo ngày, đủ mọi ngày trong khoảng (ngày không có số trả 0)',
     request: { query: DailyQuery },
     responses: { 200: json('Số theo ngày', DailyResponse) },
+  });
+  path({
+    method: 'get',
+    path: '/self-approvals',
+    summary: 'Các lần tự duyệt (CEO hoặc công ty một người làm bước cần người duyệt khác), mới trước',
+    request: { query: SelfApprovalQuery },
+    responses: { 200: json('Trang các lần tự duyệt trong khoảng', SelfApprovalsResponse) },
   });
   path({
     method: 'get',

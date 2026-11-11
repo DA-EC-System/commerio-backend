@@ -122,7 +122,7 @@ describe('lượt phân hàng: giữ kiện theo thứ tự (25 §7.4, spec 199b
   it('AC7: lượt không có gì để làm vẫn phát allocation_done với SKU kích hoạt', async () => {
     const { companyId, A } = await setup(0);
     const r = await run(companyId, [A]);
-    expect(r).toEqual({ held: [], reclaimed: [], variantIds: [A] });
+    expect(r).toEqual({ held: [], reclaimed: [], flagged: [], variantIds: [A] });
     expect(await outboxOf(companyId, 'fulfillment.allocation_done')).toEqual([{ variantIds: [A] }]);
   });
 

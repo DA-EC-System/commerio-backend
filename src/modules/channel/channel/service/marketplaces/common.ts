@@ -77,6 +77,11 @@ export interface NewProduct {
   lengthMm: number;
   widthMm: number;
   heightMm: number;
+  /**
+   * Khoá chống tạo trùng của một lượt đẩy (#219): giữ nguyên qua mọi lần việc nền thử lại, đổi khi người dùng bấm đẩy lại.
+   * TikTok gửi làm `idempotency_key`; sàn không có khoá (Lazada tra theo SellerSku) thì bỏ qua.
+   */
+  idempotencyKey?: string;
 }
 
 export interface CreatedProduct {
@@ -295,6 +300,12 @@ export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId
 /** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */
 export type ConnectMethod = 'oauth' | 'token';
 
+/** Kết quả `MarketplaceAdapter.countRemote`: số sản phẩm và số SKU (phân loại) của gian hàng trên sàn, không tính đã xoá. */
+export interface RemoteCounts {
+  productCount: number;
+  skuCount: number | null;
+}
+
 export interface MarketplaceAdapter {
   /** Tên sàn hiển thị cho người dùng. */
   readonly name: string;
@@ -330,6 +341,14 @@ export interface MarketplaceAdapter {
   uploadImage(accessToken: string, url: string): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
   /**
+   * Đẩy lại sản phẩm đã có trên sàn (#219: listing `push_failed`, `rejected`, `platform_hold`, hay dòng mới sau gỡ còn
+   * giữ mã sàn của dòng cũ): ghi nội dung `product` lên sản phẩm `externalProductId` (SKU `externalSkuId`), rồi bật lại nếu
+   * sản phẩm đang tắt. `live`: sàn cho bán ngay; false là chờ duyệt (kể cả sàn vừa từ chối lại, trạng thái về qua đồng
+   * bộ). Sản phẩm vẫn tắt hay bị khoá sau khi ghi thì ném `rejected` `still_inactive`. Không đổi SellerSku. Sửa nội dung
+   * listing đang bán (`update_content`) là việc của #293, không dùng hàm này. Sàn chưa có thì không có hàm này.
+   */
+  updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
+  /**
    * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
    * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
    * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282), kèm `imageUrl` khi có. `labels: false` khi chỉ cần
@@ -337,7 +356,19 @@ export interface MarketplaceAdapter {
    * mà mọi SKU nằm trong đó không cần nhãn nên adapter không đọc nhãn, ảnh cho nó (`variantLabel`, `imageUrl` null).
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
-  /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
+  /**
+   * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
+   * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của
+   * sàn (phân loại; sản phẩm không chia phân loại tính là 1), không tính SKU của sản phẩm đã xoá; `null` khi sàn không trả
+   * tổng số SKU và adapter không đọc hết danh sách, không suy từ số sản phẩm. Một hàm trả cả hai số để sàn lấy được cả hai
+   * từ cùng một lời gọi (TikTok) không phải gọi hai lần. Adapter không có hàm này thì bên gọi đếm bằng `listSkus`.
+   */
+  countRemote?(accessToken: string): Promise<RemoteCounts>;
+  /**
+   * Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4), **kể cả sản phẩm sàn đã xoá** (`state:
+   * 'deleted'`) để đồng bộ đưa listing về `delisted` (#219). SellerSku không thấy trên sàn thì không có trong kết quả;
+   * bên gọi không coi "vắng" là đã xoá. Sàn trả lý do từ chối thì `rejectReason` có câu đó.
+   */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;
