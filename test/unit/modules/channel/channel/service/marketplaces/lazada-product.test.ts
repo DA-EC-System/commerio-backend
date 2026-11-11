@@ -330,3 +330,20 @@ describe('adapter Lazada: đẩy lại, sản phẩm đã xoá (#219)', () => {
     });
   });
 });
+
+describe('adapter Lazada: E506 khi đọc sản phẩm (#219)', () => {
+  // Gọi thật 11/11/2026: đọc ngay sau /product/remove trả E506 "Get product failed", đọc lại vài giây sau thì `Deleted`.
+  const e506 = { code: '506', type: 'ISP', message: 'E506: Get product failed', request_id: 'r' };
+
+  it('getSkus gặp E506 thì là lỗi tạm (unavailable), không phải sàn từ chối', async () => {
+    await expect(createLazadaAdapter(config, fakeFetch(e506)).getSkus('t', ['CMR-1'])).rejects.toMatchObject({
+      kind: 'unavailable',
+      platformCode: '506',
+    });
+  });
+
+  it('E506 ở bước tra filter=deleted cũng là lỗi tạm', async () => {
+    const fn = fakeFetch({ code: '0', data: { products: [] } }, e506);
+    await expect(createLazadaAdapter(config, fn).getSkus('t', ['CMR-1'])).rejects.toMatchObject({ kind: 'unavailable', platformCode: '506' });
+  });
+});

@@ -144,7 +144,7 @@ Máy trạng thái ở `domain/listing.ts` (§18.3, cùng bảng FE). Mỗi lầ
 
 Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `SkuId` (SellerSku bị bỏ); lỗi nghiệp vụ sản phẩm cũng mang `type: ISP`, chỉ `6`, `901`, `1000`, `4154` là lỗi tạm; POST mang payload gửi bằng form body.
 
-Lazada (#219, gọi thật 11/11/2026): `/products/get` `filter=all` không trả sản phẩm đã xoá; `getSkus` tra thêm `filter=deleted` cho SellerSku không thấy ở `all` (vắng không coi là xoá). `updateProduct`: đọc `/product/item/get` để giữ các thuộc tính `delivery_option_*` đang có, gửi `/product/update` kèm `ItemId`, `SkuId`, `Status: active`, rồi đọc lại: `Active` → `live`, chờ duyệt hay từ chối → chờ duyệt, khác → `rejected` `still_inactive`. Sản phẩm bị khoá sửa trả 4155/4218 (`rejected`). Gọi thật: sửa sản phẩm đang bán và sản phẩm đã tắt đều về `live`.
+Lazada (#219, gọi thật 11/11/2026): `/products/get` `filter=all` không trả sản phẩm đã xoá; E506 "Get product failed" của API này (gặp ngay sau khi xoá) là lỗi tạm; `getSkus` tra thêm `filter=deleted` cho SellerSku không thấy ở `all` (vắng không coi là xoá). `updateProduct`: đọc `/product/item/get` để giữ các thuộc tính `delivery_option_*` đang có, gửi `/product/update` kèm `ItemId`, `SkuId`, `Status: active`, rồi đọc lại: `Active` → `live`, chờ duyệt hay từ chối → chờ duyệt, khác → `rejected` `still_inactive`. Sản phẩm bị khoá sửa trả 4155/4218 (`rejected`). Gọi thật: sửa sản phẩm đang bán và sản phẩm đã tắt đều về `live`.
 
 ## Kéo đơn (#105)
 

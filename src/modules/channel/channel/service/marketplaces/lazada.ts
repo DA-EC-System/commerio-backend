@@ -477,7 +477,15 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         limit: String(SKU_LIST_BATCH),
         sku_seller_list: JSON.stringify(batch),
       };
-      const body = await call(config.apiUrl, '/products/get', params, 'GET');
+      const body = await call(config.apiUrl, '/products/get', params, 'GET').catch((err: unknown) => {
+        // E506 "Get product failed" (bảng mã của GetProducts): gọi thật 11/11/2026 gặp ngay sau /product/remove
+        // (đọc lại vài giây sau thì `Deleted`). Lỗi tạm để đồng bộ thử lại lượt sau, không
+        // coi là sàn từ chối. Chỉ đổi ở API đọc này: mã 506 ở API khác chưa rõ nghĩa.
+        if (err instanceof MarketplaceError && err.kind === 'rejected' && err.platformCode === '506') {
+          throw new MarketplaceError('unavailable', '506', err.platformMessage);
+        }
+        throw err;
+      });
       const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
       out.push(...products.flatMap(skusOf).filter((s) => wanted.has(s.sellerSku)));
     }
