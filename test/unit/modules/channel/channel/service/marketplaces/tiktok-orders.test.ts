@@ -417,9 +417,14 @@ describe('tách kiện, giao kiện (#221)', () => {
     ]);
   });
 
-  it('shipPackage: kiện đã giao (11006021) là rejected giữ mã', async () => {
+  it('shipPackage: kiện đã giao (11006021) thì coi là xong, gọi lại an toàn', async () => {
     const { methods } = fakeSan(() => json({ code: 11006021, message: 'Package has been shipped.' }));
-    await expect(methods.shipPackage!(TOKEN, 'P')).rejects.toMatchObject({ kind: 'rejected', platformCode: '11006021' });
+    await expect(methods.shipPackage!(TOKEN, 'P')).resolves.toBeUndefined();
+  });
+
+  it('shipPackage: sàn từ chối mã khác là rejected giữ mã', async () => {
+    const { methods } = fakeSan(() => json({ code: 11006000, message: 'Package status not allowed.' }));
+    await expect(methods.shipPackage!(TOKEN, 'P')).rejects.toMatchObject({ kind: 'rejected', platformCode: '11006000' });
   });
 });
 

@@ -43,6 +43,8 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 
 **`ctx.stockHoldOf`** (channel `awaitingStocktakeShops`, tiêm ở `src/wiring.ts`): gian hàng đang chờ kiểm kê; `lock` khoá `FOR SHARE`.
 
+**`ctx.marketplacePackages`** (channel, #221, tiêm ở `src/wiring.ts`; kiểu `MarketplacePackages` ở `service/packages.ts`): `splitAttributes`, `split` (gọi sàn tách trước khi tách trong app, #205), `ship` (báo sàn sẵn sàng giao, #239). Gọi ngoài giao dịch; lỗi sàn đã là `AppError` (từ chối tách: 422 `split_not_supported`). Chưa có chỗ gọi.
+
 ## Route (`/api/v1/fulfillment`)
 
 | Route | Quyền | Việc |
