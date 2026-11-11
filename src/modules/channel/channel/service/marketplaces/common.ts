@@ -413,6 +413,27 @@ export interface MarketplaceAdapter {
    * `listOrders`: lần đầu `cursor` null, `nextCursor` null là hết, trang có thể rỗng mà vẫn còn con trỏ.
    */
   listReturns?(accessToken: string, updatedAfter: Date, cursor: string | null): Promise<{ items: RemoteReturn[]; nextCursor: string | null }>;
+  /** Lý do người bán dùng được khi từ chối trả hàng hay từ chối hoàn tiền (#202, Documents/21 §20.1). */
+  returnReasons?(accessToken: string, externalReturnId: string, action: 'reject' | 'refuse-refund'): Promise<{ id: string; label: string; requiresImage: boolean }[]>;
+  /**
+   * Người bán quyết yêu cầu trả (#202): `accept` đồng ý trả hàng, `reject` từ chối (cần `reasonId`), `refund` hoàn tiền
+   * cho khách giữ hàng. Kết quả về app qua lượt kéo yêu cầu trả kế tiếp.
+   */
+  decideReturn?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+    decision: 'accept' | 'reject' | 'refund',
+    opts: { reasonId?: string; comment?: string },
+  ): Promise<void>;
+  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
+  returnHistory?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+  ): Promise<{ at: Date; reverseStatus: string; ofcStatus: string | null; note: string | null }[]>;
   /**
    * Lần huỷ đơn (khách xin huỷ, người bán, sàn huỷ) có cập nhật từ `updatedAfter`, lật trang như `listReturns`. Huỷ không vào
    * bảng yêu cầu trả: khách xin huỷ là cờ `cancel_requested` của đơn (Documents/21 §20.1).

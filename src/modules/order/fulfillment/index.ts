@@ -50,3 +50,18 @@ export { settleDeferredHandovers, shipLateMappedLines } from './service/handover
 export { requestAllocation } from './service/allocation.ts';
 // Cho channel (#198 phần 2): gọi trong giao dịch thoát chờ kiểm kê, sau khi đặt `openingStocktake = null` (spec 199b §5.5).
 export { settleOpeningStocktake } from './service/allocation.ts';
+// Yêu cầu trả (#202): kiện của dòng trả khi sàn mở yêu cầu, kiện trả không khớp; chạy trong giao dịch của sales.
+export {
+  countOpenUnmatchedParcels,
+  deliverForReturn,
+  findUnmatchedParcel,
+  findUnmatchedParcels,
+  insertUnmatchedParcel,
+  packageLinesOfOrderLines,
+  resolveUnmatchedParcel,
+  type ReturnPackageOutcome,
+  setParcelInspection,
+  unmatchedParcelLines,
+  type UnmatchedParcelRow,
+  type UnmatchedParcelStatus,
+} from './service/returns.ts';
