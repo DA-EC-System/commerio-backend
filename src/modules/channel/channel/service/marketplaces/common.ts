@@ -115,6 +115,13 @@ export interface RemoteSku {
    * sàn không trả ảnh hay adapter không đọc (TikTok: `labels: false`, quá trần đọc chi tiết, Get Product lỗi).
    */
   imageUrl?: string | null;
+  /**
+   * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
+   * (`promotion_locked`). Thiếu là không khoá; Lazada, TikTok chưa điền (chưa có trường đã kiểm trên tài liệu sàn), sàn
+   * từ chối giá khi khuyến mãi thì vẫn về `priceSyncError` theo SKU.
+   */
+  stockLocked?: boolean;
+  priceLocked?: boolean;
 }
 
 export interface PriceQuantity {

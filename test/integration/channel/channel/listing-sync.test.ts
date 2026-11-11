@@ -175,7 +175,7 @@ describe('đồng bộ trạng thái từ sàn', () => {
 describe('đồng bộ tồn và giá', () => {
   it('tồn đổi: listing chuyển stockSync pending; lần đồng bộ sau đẩy số khả dụng và đọc lại synced', async () => {
     available.set(a.id, 12);
-    await withCompany(company.companyId, () => markStockPending(a.id));
+    await withCompany(company.companyId, () => markStockPending([a.id]));
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'pending' });
     updatePriceQuantity.mockClear();
     const res = await sync();
@@ -189,8 +189,8 @@ describe('đồng bộ tồn và giá', () => {
   it('lỗi riêng một SKU: ghi stockSyncError, priceSyncError của SKU đó, không đánh lỗi SKU khác', async () => {
     remote.set('CMR-B', { state: 'rejected', rejectReason: 'Wrong Image' });
     await withCompany(company.companyId, async () => {
-      await markStockPending(a.id);
-      await markStockPending(b.id);
+      await markStockPending([a.id]);
+      await markStockPending([b.id]);
     });
     skuErrors.set('sku-CMR-A', { code: 'E0501', message: 'Update product failed' });
     const res = await sync();
@@ -210,7 +210,7 @@ describe('đồng bộ tồn và giá', () => {
 
   it('có giá nhưng không có số có thể bán: chỉ đẩy giá, giữ stock_sync pending kèm variant_missing', async () => {
     available.delete(b.id);
-    await withCompany(company.companyId, () => markStockPending(b.id));
+    await withCompany(company.companyId, () => markStockPending([b.id]));
     updatePriceQuantity.mockClear();
     const res = await sync();
     expect(res.body).toMatchObject({ pushed: 1, errors: 0 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { type ListingAction, type ListingStatus, listingMachine, syncAction } from '#src/modules/channel/channel/domain/listing.ts';
+import { type ListingAction, type ListingStatus, listingMachine, stockDecision, syncAction } from '#src/modules/channel/channel/domain/listing.ts';
 
 describe('syncAction: trạng thái trên sàn → thao tác', () => {
   it.each([
@@ -116,5 +116,22 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
     expect(() => assertTransition(listingMachine, 'pushing', 'delist', { actor: staff })).toThrow(
       expect.objectContaining({ code: 'invalid_transition' }),
     );
+  });
+});
+
+describe('stockDecision: đối chiếu tồn sàn với số có thể bán (25 §6.5, #223)', () => {
+  it.each([
+    // [stockSync, platformStock, sàn, app, kết quả]
+    ['synced', 5, 5, 5, 'match'],
+    ['error', 3, 5, 5, 'match'],
+    ['synced', 5, 8, 5, 'push'],
+    ['error', 5, 8, 5, 'push'],
+    ['synced', 5, 3, 5, 'wait'],
+    ['synced', null, 3, 5, 'wait'],
+    ['synced', 3, 3, 5, 'drift'],
+    ['synced', 2, 3, 5, 'drift'],
+    ['error', 5, 3, 5, 'drift'],
+  ] as const)('%s, platform_stock %s, sàn %i, app %i → %s', (stockSync, platformStock, remote, available, expected) => {
+    expect(stockDecision({ stockSync, platformStock }, remote, available)).toBe(expected);
   });
 });

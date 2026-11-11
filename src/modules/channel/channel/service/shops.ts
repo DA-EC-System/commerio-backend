@@ -59,6 +59,7 @@ import {
   listingSyncQueue,
   openOrderPullQueue,
   resumeOpenOrderPull,
+  sendListingSync,
   sendOrderPull,
   startShopJobs,
   stopShopJobs,
@@ -409,6 +410,8 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
     await resumeOpenOrderPull(result.shop.companyId, result.shop.id);
     // Nối lại gian hàng đã thiết lập: kéo đơn ngay từ lần kéo thành công cuối (US-GH-14 dòng 1), không chờ vòng 5 phút.
     if (result.reconnect) await sendOrderPull(result.shop.companyId, result.shop.id);
+    // Tồn chờ đẩy lúc mất uỷ quyền: lượt đồng bộ lấy đơn, đối chiếu rồi mới đẩy (25 E28, #223).
+    if (result.reconnect) await sendListingSync(result.shop.companyId, result.shop.id);
     result.shop.pendingJobs = 0;
     if (result.reconnect) {
       result.reconnect.jobsRun = jobsRun;
