@@ -9,7 +9,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter } from './helpers.ts';
 
 const categoryId = randomUUID();
 const productId = randomUUID();
@@ -83,6 +83,7 @@ beforeAll(async () => {
     accessToken: `tok-${randomUUID().slice(0, 12)}`,
   });
   shopId = res.body.shop.id;
+  await activateShop(shopId);
   const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
     externalCategoryId: '14275',
     attributes: { brand: 'No Brand' },
@@ -198,11 +199,41 @@ describe('gỡ listing', () => {
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${noPrice.id}/delist`)).send({ version: 1 })).status).toBe(404);
   });
 
-  it('gian hàng đã ngắt: 409 shop_not_connected', async () => {
+  /** Gian hàng mới nối của công ty (`connecting`), chưa ghép danh mục. */
+  async function newShop(): Promise<string> {
+    const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    return res.body.shop.id as string;
+  }
+  const pushTo = (id: string) =>
+    auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id], imageUrls: { [productId]: ['https://img.test/a.png'] } });
+
+  it.each(['connecting', 'needs_reauth'] as const)('gian hàng %s: 409 shop_not_active kèm current, không ghi listing (21 §18.6.4)', async (status) => {
+    const id = await newShop();
+    if (status !== 'connecting') {
+      await activateShop(id);
+      await testPool().query('update channel.shops set status = $2 where id = $1', [id, status]);
+    }
+    const res = await pushTo(id);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'shop_not_active', current: status });
+    const { rows } = await testPool().query('select 1 from channel.listings where shop_id = $1', [id]);
+    expect(rows).toEqual([]);
+  });
+
+  it('gian hàng active mà hết token: 409 shop_not_connected', async () => {
+    const id = await newShop();
+    await activateShop(id);
+    await testPool().query('update channel.shops set access_token_enc = null where id = $1', [id]);
+    const res = await pushTo(id);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('shop_not_connected');
+  });
+
+  it('gian hàng đã ngắt: 409 shop_not_active', async () => {
     const shop = await auth(app().get(`/api/v1/channel/shops/${shopId}`));
     await auth(app().post(`/api/v1/channel/shops/${shopId}/disconnect`)).send({ version: shop.body.version });
     const res = await push([down.id]);
     expect(res.status).toBe(409);
-    expect(res.body.code).toBe('shop_not_connected');
+    expect(res.body).toMatchObject({ code: 'shop_not_active', current: 'disconnected' });
   });
 });

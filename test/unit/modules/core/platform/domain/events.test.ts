@@ -12,6 +12,14 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'inventory.stock_changed': { variantId: id(), onHand: 10, reserved: 2, available: 8 },
   'inventory.below_threshold': { variantId: id(), available: 1, minQty: 5 },
   'inventory.receipt_posted': { receiptId: id(), number: 'PN-0001', kind: 'purchase', lines: [{ variantId: id(), quantity: 3 }] },
+  'inventory.stocktake_posted': {
+    documentId: id(),
+    number: 'KK-000001',
+    source: { type: 'shop_setup', shopId: id() },
+    postedAt: at,
+    countedAt: at,
+    lines: [{ variantId: id(), countedQty: 4, delta: -1 }],
+  },
   'inventory.issue_posted': { issueId: id(), number: 'PX-0001', kind: 'order', orderId: id(), postedAt: at },
   'sales.order_created': { orderId: id(), code: 'DH-0001', source: 'manual', total: '150000.00' },
   'sales.order_status_changed': { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] },
@@ -47,6 +55,12 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
 };
 
 describe('danh mục sự kiện (AC-11)', () => {
+  it('inventory.stocktake_posted thiếu countedAt thì bị từ chối, không lấy postedAt thay (#198, Documents/21 §11.2)', () => {
+    const noCountedAt: Record<string, unknown> = { ...SAMPLES['inventory.stocktake_posted'] };
+    delete noCountedAt.countedAt;
+    expect(EVENT_SCHEMAS['inventory.stocktake_posted'].safeParse(noCountedAt).success).toBe(false);
+  });
+
   it('mỗi loại có mẫu, mẫu parse được bằng schema của loại đó', () => {
     expect([...EVENT_TYPES].sort()).toEqual(Object.keys(SAMPLES).sort());
     for (const type of EVENT_TYPES) expect(EVENT_SCHEMAS[type].safeParse(SAMPLES[type]).success, type).toBe(true);

@@ -1,8 +1,9 @@
 // Thao tác theo máy trạng thái của phiếu nhận (Documents/21 mục 16.3, spec #109 mục 6.4–6.6).
-import { canSelfApprove, publishEvent, recordTransition } from '../../../core/index.ts';
+import { canSelfApprove, hasAttachments, publishEvent, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { nextDocNumber, receiveGoods, recheckThresholds } from '../../inventory/index.ts';
+import { needsEvidence } from '../domain/receipt.ts';
 import { goodsReceiptMachine, RECEIPT_USER_ACTIONS } from '../domain/receipt-machine.ts';
 import { docNumber, hasPermission, outstanding, variantIdsOf } from '../domain/request.ts';
 import {
@@ -16,7 +17,7 @@ import {
 import { type LineRow, type RequestRow, updateLine } from '../repository/requests.ts';
 import { insertDraftReturn, insertReturnLines } from '../repository/returns.ts';
 import { type GoodsReceiptView, toReceiptDetail } from './receipt-views.ts';
-import { assertReceiptVersion, lockOwnReceipt, RECEIPT_ENTITY } from './receipts.ts';
+import { assertReceiptVersion, lockOwnReceipt, RECEIPT_AUDIT_ENTITY, RECEIPT_ENTITY } from './receipts.ts';
 import { applyReceiving, closeShortRequest } from './request-receiving.ts';
 import { type Actor, invalid, notFound } from './request-views.ts';
 import { checkTransition } from './transitions.ts';
@@ -60,6 +61,9 @@ async function post(
     toReceiptDetail(receipt),
   );
   if (!lines.some((l) => l.declaredQty > 0)) throw new AppError(409, 'empty_document', 'Phiếu chưa có số báo giao');
+  if (needsEvidence(receipt.deliveryMode, lines) && !(await hasAttachments({ type: RECEIPT_ENTITY, id: receipt.id }))) {
+    throw new AppError(422, 'evidence_required', 'Người giao đã đi mà phiếu có hàng lỗi hoặc thiếu: đính ảnh mở thùng trước khi ghi sổ');
+  }
 
   const byId = new Map(requestLines.map((l) => [l.id, l]));
   const over: Record<string, string> = {};
@@ -88,7 +92,16 @@ async function post(
   if (defects.length) await draftReturn(actor, receipt, request, defects);
 
   await updateReceipt(receipt.id, { status: to, postedBy: actor.accountId, postedAt: new Date(), selfApproved });
-  await recordTransition({ entityType: RECEIPT_ENTITY, entityId: receipt.id, from: receipt.status, to, action, actorId: actor.accountId });
+  await recordTransition({
+    entityType: RECEIPT_ENTITY,
+    entityId: receipt.id,
+    from: receipt.status,
+    to,
+    action,
+    actorId: actor.accountId,
+    selfApproved,
+    audit: { entityType: RECEIPT_AUDIT_ENTITY, label: receipt.number },
+  });
   await applyReceiving(request, { receiptId: receipt.id, actorId: actor.accountId });
   // Hàng lỗi và phần nhận đều làm giảm đang về, kể cả SKU không có move tồn thực (Documents/25 mục 7.5).
   await recheckThresholds(variantIdsOf(requestLines));

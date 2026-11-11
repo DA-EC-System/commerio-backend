@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client, S3ServiceException } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '../../../../shared/config/env.ts';
 
@@ -67,4 +67,49 @@ export async function signUpload(
     signableHeaders: new Set(['content-type', 'content-length']),
   });
   return { url, headers: { 'Content-Type': target.contentType, 'Content-Length': String(target.sizeBytes) } };
+}
+
+/**
+ * URL GET ký sẵn để xem hoặc tải tệp ở bucket riêng. Ép `Content-Type` theo kiểu đã lưu và `Content-Disposition`
+ * (ảnh `inline`, còn lại `attachment`: PDF tải về dạng tệp). R2 không cho thêm `X-Content-Type-Options` qua URL ký
+ * sẵn; tệp nằm ở tên miền của kho, khác origin của app, kiểu tệp đã khoá lúc tải lên.
+ */
+export async function signDownload(
+  config: StorageConfig,
+  target: { bucket: string; key: string; contentType: string; fileName: string },
+  expiresInSeconds: number,
+): Promise<string> {
+  const disposition = target.contentType.startsWith('image/') ? 'inline' : 'attachment';
+  const command = new GetObjectCommand({
+    Bucket: target.bucket,
+    Key: target.key,
+    ResponseContentType: target.contentType,
+    ResponseContentDisposition: `${disposition}; filename*=UTF-8''${encodeURIComponent(target.fileName)}`,
+  });
+  return getSignedUrl(s3(config), command, { expiresIn: expiresInSeconds });
+}
+
+/** Cỡ tệp đang có trên kho, `null` khi chưa có. Lỗi khác 404 (kho không trả lời, sai khoá) thì ném lên. */
+export type HeadObject = (config: StorageConfig, target: { bucket: string; key: string }) => Promise<{ sizeBytes: number } | null>;
+
+const headFromStore: HeadObject = async (config, target) => {
+  try {
+    const head = await s3(config).send(new HeadObjectCommand({ Bucket: target.bucket, Key: target.key }));
+    return { sizeBytes: head.ContentLength ?? 0 };
+  } catch (err) {
+    if (err instanceof S3ServiceException && err.$metadata.httpStatusCode === 404) return null;
+    throw err;
+  }
+};
+
+let head: HeadObject = headFromStore;
+
+/** Hỏi kho xem tệp đã có chưa (một thao tác Class B của R2). */
+export function headObject(config: StorageConfig, target: { bucket: string; key: string }): ReturnType<HeadObject> {
+  return head(config, target);
+}
+
+/** Test thay kho bằng bản giả (không gọi mạng); `null` trả về kho thật. */
+export function setHeadObject(fake: HeadObject | null): void {
+  head = fake ?? headFromStore;
 }

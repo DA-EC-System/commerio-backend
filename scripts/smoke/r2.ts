@@ -3,7 +3,7 @@
 // Tốn vài thao tác Class A/B của R2, xoá tệp miễn phí.
 import { randomUUID } from 'node:crypto';
 import { DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { signUpload, storageConfig } from '../../src/modules/core/files/service/storage.ts';
+import { headObject, signDownload, signUpload, storageConfig } from '../../src/modules/core/files/service/storage.ts';
 
 const config = storageConfig();
 if (!config) {
@@ -80,6 +80,20 @@ try {
   );
   const pdfStatus = await put(file.url, file.headers, pdf);
   check('PUT PDF vào bucket riêng', pdfStatus === 200, `HTTP ${pdfStatus}`);
+
+  // 5. Đường đọc của tệp đính kèm: hỏi kho (xác nhận đã PUT xong) rồi mở link tải ký sẵn.
+  const target = { bucket: config.buckets.private, key: privateKey };
+  const found = await headObject(config, target);
+  check('HeadObject thấy PDF đúng cỡ', found?.sizeBytes === pdf.length, `cỡ ${found?.sizeBytes ?? 'không có'}`);
+  check('HeadObject tệp chưa có trả null', (await headObject(config, { ...target, key: `${privateKey}.khong-co` })) === null);
+  const download = await signDownload(config, { ...target, contentType: 'application/pdf', fileName: 'biên bản.pdf' }, 60);
+  const got = await fetch(download);
+  await got.arrayBuffer();
+  check(
+    'Link tải PDF: tải về dạng tệp',
+    got.ok && (got.headers.get('content-disposition') ?? '').startsWith('attachment;'),
+    `HTTP ${got.status}, ${got.headers.get('content-disposition')}`,
+  );
 } finally {
   await s3.send(new DeleteObjectCommand({ Bucket: config.buckets.public, Key: publicKey })).catch(() => {});
   await s3.send(new DeleteObjectCommand({ Bucket: config.buckets.private, Key: privateKey })).catch(() => {});

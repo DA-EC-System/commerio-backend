@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countErrors, fromDbMode, shortOf, toDbMode } from '#src/modules/product/purchasing/domain/receipt.ts';
+import { countErrors, fromDbMode, needsEvidence, shortOf, toDbMode } from '#src/modules/product/purchasing/domain/receipt.ts';
 
 const count = { announced: 10, accepted: 10, defectKept: 0, returnedOnSpot: 0, reason: '' };
 
@@ -34,5 +34,22 @@ describe('cách giao', () => {
   it('API waiting/left ↔ DB driver_waiting/driver_left', () => {
     expect([toDbMode('waiting'), toDbMode('left')]).toEqual(['driver_waiting', 'driver_left']);
     expect([fromDbMode('driver_waiting'), fromDbMode('driver_left')]).toEqual(['waiting', 'left']);
+  });
+});
+
+describe('cần bằng chứng trước khi ghi sổ (Documents/21 §16.3, evidence_required)', () => {
+  const ok = { defectiveQty: 0, shortageQty: 0 };
+
+  it('người giao đã đi, có lỗi giữ hoặc thiếu → cần', () => {
+    expect(needsEvidence('driver_left', [ok, { defectiveQty: 1, shortageQty: 0 }])).toBe(true);
+    expect(needsEvidence('driver_left', [{ defectiveQty: 0, shortageQty: 2 }])).toBe(true);
+  });
+
+  it('người giao đã đi, đủ và không lỗi → không cần', () => {
+    expect(needsEvidence('driver_left', [ok, ok])).toBe(false);
+  });
+
+  it('người giao còn chờ → không cần, kể cả có lỗi và thiếu', () => {
+    expect(needsEvidence('driver_waiting', [{ defectiveQty: 3, shortageQty: 2 }])).toBe(false);
   });
 });

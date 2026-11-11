@@ -7,6 +7,7 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
 import { pushZeroStock, restoreAfterZeroStock, syncListings } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
+import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { productPort } from '../service/product-port.ts';
 import * as setup from '../service/setup.ts';
@@ -111,6 +112,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.post('/shops/:id/setup', connect, validate({ params: ShopParams, body: SetupBody }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await setup.finishSetup(productPort(ctx), actor(res), id, validated<typeof SetupBody>(res, 'body')));
+  });
+
+  // Lập lại phiếu kiểm kê đầu kỳ khi phiếu cũ bị từ chối hoặc huỷ (21 §18.6.11). Không có body.
+  router.post('/shops/:id/opening-stocktake', connect, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await recreateOpeningStocktake(actor(res), id));
   });
 
   router.get(

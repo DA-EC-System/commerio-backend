@@ -62,7 +62,7 @@ describe('getStatusHistory (AC-8)', () => {
     const { rows } = await testPool().query('select full_name from core.accounts where id = $1', [ceo.accountId]);
     const history = await withCompany(companyId, () => getStatusHistory('packages', entityId));
     expect(history).toEqual([
-      { at: expect.any(Date), from: null, to: 'reserved', by: null, source: 'system', reason: null },
+      { at: expect.any(Date), from: null, to: 'reserved', by: null, source: 'system', reason: null, selfApproved: false },
       {
         at: expect.any(Date),
         from: 'reserved',
@@ -70,7 +70,27 @@ describe('getStatusHistory (AC-8)', () => {
         by: { id: ceo.accountId, name: rows[0].full_name },
         source: 'user',
         reason: 'đủ món',
+        selfApproved: false,
       },
     ]);
+  });
+
+  it('lần tự duyệt trả selfApproved: true', async () => {
+    const { companyId } = await createCompany();
+    const ceo = await ceoOf(companyId);
+    const entityId = randomUUID();
+    await withCompany(companyId, () =>
+      recordTransition({
+        entityType: 'packages',
+        entityId,
+        from: 'returning',
+        to: 'lost',
+        action: 'lose',
+        actorId: ceo.accountId,
+        selfApproved: true,
+      }),
+    );
+    const history = await withCompany(companyId, () => getStatusHistory('packages', entityId));
+    expect(history).toMatchObject([{ to: 'lost', selfApproved: true }]);
   });
 });

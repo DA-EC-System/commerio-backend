@@ -1,7 +1,8 @@
 // Đọc báo cáo cho API (Documents/21 §12.7). Mọi hàm chạy trong `withCompany` của công ty người xem.
 import { getShops } from '../../../channel/index.ts';
+import { getSelfApprovals } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
-import { eachDay } from '../domain/days.ts';
+import { addDays, eachDay } from '../domain/days.ts';
 import { type ReportFigures, sumFigures } from '../domain/figures.ts';
 import type { OrderSource } from '../domain/summary.ts';
 import { readDays } from '../repository/summary.ts';
@@ -65,5 +66,18 @@ export async function daily(viewer: Viewer, range: Range, filter: { source?: Ord
     const byDay = Map.groupBy(rows, (r) => r.day);
     const items = eachDay(range.from, range.to).map((day) => ({ day, ...sumFigures(byDay.get(day) ?? [], viewer.canCost) }));
     return { ...range, asOf, items };
+  });
+}
+
+const vnStart = (day: string) => new Date(`${day}T00:00:00+07:00`);
+
+/** Các lần tự duyệt trong khoảng ngày giờ VN, mới trước (Documents/25 mục 11: "hiện trên báo cáo CEO", #246). */
+export async function selfApprovals(viewer: Viewer, range: Range, page: { page: number; pageSize: number }) {
+  return withCompany(viewer.companyId, async () => {
+    const { items, total } = await getSelfApprovals(
+      { from: vnStart(range.from), to: vnStart(addDays(range.to, 1)) },
+      { limit: page.pageSize, offset: (page.page - 1) * page.pageSize },
+    );
+    return { ...range, items: items.map((i) => ({ ...i, at: i.at.toISOString() })), total, ...page };
   });
 }

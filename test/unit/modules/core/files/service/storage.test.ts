@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { signUpload, type StorageConfig } from '#src/modules/core/files/service/storage.ts';
+import { signDownload, signUpload, type StorageConfig } from '#src/modules/core/files/service/storage.ts';
 
 // Ký URL chỉ tính trong máy: không gọi mạng.
 const config: StorageConfig = {
@@ -48,5 +48,25 @@ describe('signUpload: URL PUT ký sẵn (Documents/21 §14.3)', () => {
     const { parsed } = await sign();
     expect(`${parsed.host}${parsed.pathname}`).toContain('commerio-test-private');
     expect(parsed.pathname.endsWith('/test/abc.pdf')).toBe(true);
+  });
+});
+
+describe('signDownload: link xem hoặc tải ký sẵn', () => {
+  const target = { bucket: 'commerio-test-private', key: 'test/abc.pdf', contentType: 'application/pdf', fileName: 'biên bản.pdf' };
+
+  it('PDF tải về dạng tệp, tên tệp mã hoá UTF-8', async () => {
+    const url = new URL(await signDownload(config, target, 900));
+    expect(url.searchParams.get('response-content-disposition')).toBe("attachment; filename*=UTF-8''bi%C3%AAn%20b%E1%BA%A3n.pdf");
+  });
+
+  it('ảnh mở thẳng', async () => {
+    const url = new URL(await signDownload(config, { ...target, key: 'test/a.png', contentType: 'image/png', fileName: 'a.png' }, 900));
+    expect(url.searchParams.get('response-content-disposition')).toBe("inline; filename*=UTF-8''a.png");
+  });
+
+  it('ép Content-Type theo kiểu đã lưu, hết hạn sau số giây truyền vào', async () => {
+    const url = new URL(await signDownload(config, target, 900));
+    expect(url.searchParams.get('response-content-type')).toBe('application/pdf');
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
   });
 });

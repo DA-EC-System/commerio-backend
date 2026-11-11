@@ -70,6 +70,13 @@ export const shops = channelSchema.table(
     openOrdersSkipped: integer('open_orders_skipped').notNull().default(0),
     /** Lượt đẩy tồn đầu tiên sau thiết lập đã chạy. */
     stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
+    /**
+     * Phiếu đầu kỳ đã ghi sổ, gian hàng đang chờ phân hàng: thoát chờ khi nhận `fulfillment.allocation_done` có
+     * `cause.documentId` trùng id này (Documents/21 §11.3, §18.6.11; Documents/19 `shops`). Giữ id vì
+     * `opening_stocktake_id` đã về null. Sự kiện do `settleOpeningStocktake` phát trong chính giao dịch thoát chờ kiểm kê
+     * nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
+     */
+    allocationStocktakeId: uuid('allocation_stocktake_id'),
     ...timestamps,
     ...version,
   },
@@ -90,6 +97,11 @@ export const shops = channelSchema.table(
       sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
     ),
     check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
+    // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
+    check(
+      'shops_allocation_pending',
+      sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
+    ),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],
