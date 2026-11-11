@@ -112,7 +112,7 @@ Thông tin test (thẻ, tài khoản ví) lấy trong tài liệu của từng c
 Mỗi người code trên **database riêng trong Docker** ở máy mình. Cả team giống nhau nhờ chạy cùng một bộ **file migration** trong git (`db/migrations/`), không phải nhờ dùng chung một database.
 
 ```
-             git: db/migrations/0000, 0001, 0002, ...
+             git: db/migrations/0000 … 0028, rồi <thời điểm sinh>_<tên>
         │ pull              │ pull              │ merge vào main
         ▼                   ▼                   ▼
   DB Docker máy A     DB Docker máy B     Staging (Supabase)
@@ -141,9 +141,10 @@ Xem dữ liệu bằng DataGrip (hay trình quản lý DB nào cũng được): 
 2. **Đổi bảng (thêm bảng, thêm cột):**
    ```bash
    # sửa src/modules/<module>/repository/schema.ts
-   npm run db:generate -- --name <mo-ta-ngan>   # sinh db/migrations/NNNN_<mo-ta-ngan>.sql
+   npm run db:generate -- --name <mo-ta-ngan>   # sinh db/migrations/<năm tháng ngày giờ phút giây>_<mo-ta-ngan>.sql
    npm run db:migrate                            # áp lên DB máy mình
    ```
+   Tên file do `drizzle-kit` đặt theo giờ UTC lúc sinh, ví dụ `20261111030018_muc-dich-tep.sql` (từ 11/11/2026; 29 file đầu `0000`–`0028` giữ tên cũ). Không đặt tên tay, không đổi tên file đã sinh.
    Commit cả file migration lẫn `db/migrations/meta/` vào PR. Thứ Drizzle không sinh được (RLS, trigger, extension) thì viết tay, xem `db/CLAUDE.md`.
 
 3. **Không tạo hay sửa bảng bằng tay trong DataGrip.** Người khác không có thay đổi đó, và migration lần sau sẽ lệch.
@@ -171,7 +172,7 @@ Migration chỉ đồng bộ **cấu trúc bảng** và **dữ liệu cố đị
 
 | Tình huống | Cách xử lý |
 |---|---|
-| Hai người cùng sinh migration trên hai nhánh, trùng số | Người merge sau xoá migration của mình, rebase lên `main`, chạy lại `db:generate` |
+| Hai người cùng sinh migration trên hai nhánh | Tên file không còn trùng, nhưng `meta/_journal.json` sẽ xung đột khi rebase. Người merge sau vẫn phải xoá migration của mình (file `.sql`, snapshot, dòng journal), rebase lên `main`, chạy lại `db:generate` (lý do ở `db/CLAUDE.md`) |
 | DB trên máy rối, migrate lỗi | `docker compose -f deploy/compose.yaml down -v`, rồi `npm run infra:up` và `npm run db:migrate`. Chỉ mất dữ liệu test trên máy mình |
 | `npm test` hoặc `infra:up` báo không kết nối được Docker | Mở Docker Desktop, chờ chạy xong rồi thử lại |
 | Cổng 5432 đã bị chiếm | Máy đang có PostgreSQL khác. Tắt nó, hoặc đổi cổng trong `deploy/compose.yaml` và `DATABASE_URL` cho khớp |

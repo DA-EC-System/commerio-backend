@@ -570,6 +570,48 @@
         "mode": "markdown",
         "content": "Metric đơn hàng (#24, #25) và thanh toán (#27) do chính các issue đó thêm: counter trong module, panel trong `deploy/monitoring/dashboards/commerio.json` ở hàng này."
       }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Vé tải tệp (từ lúc api chạy)",
+      "description": "files_upload_tickets_total theo mục đích và kết quả (#212). quota_exceeded tăng là kho chạm trần STORAGE_QUOTA_BYTES, sắp hết gói miễn phí của R2; unavailable là api chưa cấu hình S3_*. Số tích luỹ, về 0 khi api khởi động lại",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (purpose, result) (files_upload_tickets_total{job=\"commerio\"})",
+          "legendFormat": "{{purpose}} / {{result}}"
+        }
+      ]
     }
   ]
 }
