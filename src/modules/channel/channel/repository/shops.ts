@@ -257,3 +257,18 @@ export async function hasChannelData(): Promise<boolean> {
   const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
   return !!row;
 }
+
+/**
+ * Gian hàng trong `ids` đang chờ kiểm kê đầu kỳ (có phiếu đầu kỳ chưa ghi sổ), cho fulfillment (spec 199b §5.6).
+ * `lock`: khoá `FOR SHARE` tới hết giao dịch, cùng loại với `lockShopForOrders`, để gian hàng không thoát chờ giữa chừng.
+ */
+export async function awaitingStocktakeShops(ids: readonly string[], opts: { lock?: boolean } = {}): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const query = getDb()
+    .select({ id: shops.id })
+    .from(shops)
+    .where(and(inArray(shops.id, [...new Set(ids)]), sql`${shops.openingStocktakeId} is not null`))
+    .orderBy(asc(shops.id));
+  const rows = opts.lock ? await query.for('share') : await query;
+  return new Set(rows.map((r) => r.id));
+}

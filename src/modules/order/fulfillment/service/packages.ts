@@ -16,6 +16,13 @@ import { type PackageOrderRef, toPackageSummary } from './views.ts';
 export interface FulfillmentContext extends ModuleContext {
   readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, { shopName: string; platform: string }>>;
   readonly orderRefsOf?: (orderIds: readonly string[]) => Promise<Map<string, PackageOrderRef>>;
+  /** Gian hàng đang chờ kiểm kê đầu kỳ (channel); `lock` khoá dòng gian hàng `FOR SHARE` (spec 199b §5.6). */
+  readonly stockHoldOf?: (shopIds: readonly string[], opts?: { lock?: boolean }) => Promise<Set<string>>;
+}
+
+export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) {
+  if (!ctx.stockHoldOf) throw new AppError(500, 'internal_error', 'Chưa nối trạng thái gian hàng của channel (src/wiring.ts)');
+  return ctx.stockHoldOf;
 }
 
 function orderRefsLookupOf(ctx: FulfillmentContext) {

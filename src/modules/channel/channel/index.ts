@@ -52,5 +52,7 @@ export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
 
 /** Chặn tắt phân hệ Kênh bán khi đã có gian hàng (#152); `src/wiring.ts` đưa cho `platform`. */
 export { hasChannelData } from './repository/shops.ts';
+// Trạng thái chờ kiểm kê đầu kỳ của gian hàng cho fulfillment (#199 phần b), tiêm qua `ctx.stockHoldOf` ở `src/wiring.ts`.
+export { awaitingStocktakeShops } from './repository/shops.ts';
 // Thao tác đơn trên sàn cho `order` (#105 PR 2), tiêm qua `ctx.marketplaceOrders` ở `src/wiring.ts`.
 export { marketplaceCancelOrder, marketplaceCancelReasons, marketplaceDecideCancel } from './service/order-actions.ts';

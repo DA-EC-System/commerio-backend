@@ -1,6 +1,6 @@
 # src/modules/order/fulfillment/
 
-Kiện (giữ hàng, đóng gói, bàn giao, giao, hoàn), hàng trả không khớp, giá vốn theo đơn. Bảng trong schema `order`. Hợp đồng API: `Documents/21` §19.2; sự kiện §11.2; cổng tồn §11.1. Spec phần a của #199: `docs/superpowers/specs/2026-11-09-199a-ban-giao-tru-ton-design.md`.
+Kiện (giữ hàng, đóng gói, bàn giao, giao, hoàn), hàng trả không khớp, giá vốn theo đơn. Bảng trong schema `order`. Hợp đồng API: `Documents/21` §19.2; sự kiện §11.2; cổng tồn §11.1. Spec phần a của #199: `docs/superpowers/specs/2026-11-09-199a-ban-giao-tru-ton-design.md`; phần b: `docs/superpowers/specs/2026-11-09-199b-chia-hang-design.md`.
 
 ## Kiện và máy trạng thái
 
@@ -23,11 +23,25 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 
 **Sàn không kéo kiện ra khỏi nhóm rời kho**: `undo_handover` chỉ CEO làm (kèm đảo tồn). Kho quét mà sàn còn báo chờ lấy thì đồng bộ bỏ qua; kiện khác bị sàn báo lùi thì gắn cờ Cần xử lý.
 
-**`shipLateMappedLines`, `settleDeferredHandovers`**: #237 chỉ gọi `shipLateMappedLines` cho kiện không còn chờ kiểm kê (kiện hoãn để hàm bù xử lý); #198 gọi `settleDeferredHandovers` sau khi giao dịch ghi sổ phiếu đầu kỳ commit, để giữ thứ tự khoá kiện → dòng tồn → `doc_counters`.
+**`shipLateMappedLines`, `settleDeferredHandovers`**: #237 chỉ gọi `shipLateMappedLines` cho kiện không còn chờ kiểm kê (kiện hoãn để hàm bù xử lý). `settleDeferredHandovers` không ai gọi thẳng: `settleOpeningStocktake` (phần b) gọi nó trước khi phân hàng.
 
 **`handover_source`** (`scan`, `marketplace`, `forced`, `before_cutoff`; CHECK `packages_handover_source`: kiện rời kho phải có): bên gọi ghi `scan`/`marketplace` lúc chuyển kiện vào nhóm rời kho, lõi chỉ đổi sang `forced`/`before_cutoff`. **`pickup_confirmed_at`**: sàn báo bàn giao thì bằng `handed_over_at`; kiện kho quét thì là lần đầu sàn báo kiện rời kho (không trừ thêm). Cờ `pickup_unconfirmed` suy ra (kho quét, sàn chưa xác nhận quá 24 giờ), không lưu.
 
-**Mốc và chờ kiểm kê** (`25` §6.1, §8.1): kiện lần đầu thấy đã rời kho của đơn đặt trước `order_cutoff_at` thì chỉ lưu (`before_cutoff`); đơn về muộn đặt sau mốc vẫn trừ. Gian hàng chờ kiểm kê đầu kỳ (`holdStock = false`) thì hoãn (`defer`). `orderCutoffAt` đi từ channel (`lockShopForOrders`) qua `ingestMarketplaceOrder` xuống `PlatformPackageOrder`.
+**Mốc và chờ kiểm kê** (`25` §6.1, §8.1): kiện lần đầu thấy đã rời kho của đơn đặt trước `order_cutoff_at` thì chỉ lưu (`before_cutoff`); đơn về muộn đặt sau mốc vẫn trừ. Gian hàng chờ kiểm kê đầu kỳ (`holdStock = false`) thì hoãn (`defer`). Kho quét cũng hoãn (phần b, D7): route `hand-over` khoá dòng gian hàng `FOR SHARE` qua `ctx.stockHoldOf` trước khi khoá kiện, kiện hoãn trả `issue: null`. `orderCutoffAt` đi từ channel (`lockShopForOrders`) qua `ingestMarketplaceOrder` xuống `PlatformPackageOrder`.
+
+## Phân hàng (#199 phần b)
+
+**Một lượt**: `runAllocation(ctx, { variantIds } | { all: true }, { opening?, stocktake?, cause? })` ở `service/allocation.ts`, trong giao dịch của bên gọi, dưới khoá advisory `fulfillment.allocation:<công ty>` (hai lượt nối nhau). Luật thuần ở `domain/allocation.ts`.
+1. **Lấy lại phần giữ** (`planReclaim`): SKU có đang giữ > tồn thực (đọc lại sau khi khoá kiện) thì nhả phần đang giữ thật (`reserved_qty`) của kiện `reserved` (đơn `unpaid` trước, `reserved_at` mới nhất trước) tới khi hết thiếu; kiện về `backordered` (mũi tên `reclaim`). Kiện từ `packed` trở đi không bị lấy.
+   - **Lượt do phiếu kiểm kê** (`stocktake`, `opening` cũng là; `25` §7.4 gạch cuối, review #298): khoá luôn kiện đã đóng đang giữ SKU thiếu (`lockSealedHolders`, cùng lúc khoá kiện `reserved`); lấy lại hết mà tồn thực vẫn nhỏ hơn đang giữ thì các kiện đó bật Cần xử lý với `DISMANTLE_NOTE` (`planDismantle`; kiện đã có Cần xử lý giữ nguyên ghi chú; chưa có khung việc #209 nên dùng cờ thay việc "Dỡ kiện về kệ"). Trả `flagged`.
+2. **Giữ hàng** (`allocationQueue`, `planAllocation`): ứng viên là kiện `backordered` và kiện đã đóng (`packed`, `awaiting_pickup`) chưa giữ hàng, mọi dòng đã ghép, không `needs_open`, đơn chưa huỷ, gian hàng không chờ kiểm kê. Thứ tự: kiện đã đóng trước, `ship_by` sớm (null cuối), đơn kéo về trước, mã kiện. Nguyên kiện; thiếu thì bỏ qua xét kiện sau. `reserve` trả `false` thì bỏ qua. Kiện `backordered` → `reserved` (mũi tên `hold`); kiện đã đóng giữ nguyên trạng thái, cờ "Dỡ kiện về kệ" của phiếu đầu kỳ (nếu có) được gỡ. Ghi `reserved_at` bằng giờ DB. Kiện của gian hàng chờ kiểm kê bị loại trước khi khoá.
+3. Phát `fulfillment.allocation_done { variantIds, cause? }` (key là công ty), **luôn phát** kể cả khi không đổi gì: channel (#223) đẩy tồn theo sự kiện này.
+
+**Đường vào**: consumer `inventory.stock_changed` (`fulfillment-allocation`, `onStockChanged`); consumer `inventory.stocktake_posted` (`fulfillment-stocktake`, `onStocktakePosted`): phiếu không nguồn (kiểm kê thường, #208) chạy lượt `stocktake` cho SKU của phiếu, phiếu nguồn `shop_setup` bỏ qua (channel gọi `settleOpeningStocktake`); việc pg-boss `fulfillment.allocation` mang `{ companyId, variantIds }` (`requestAllocation`, hàng `standard`): kiện huỷ nhả hàng, #237 ghép xong SKU, #239 dỡ kiện về kệ; kiện mới giữ được hàng chỉ phát `allocation_done` cho SKU của kiện; `settleOpeningStocktake` (dưới).
+
+**Phiếu đầu kỳ**: `settleOpeningStocktake({ shopId, documentId, countedAt })` do channel (#289) gọi trong giao dịch thoát chờ kiểm kê, sau khi đặt `openingStocktake = null`: `settleDeferredHandovers` trước (kiện rời kho sau lúc đếm đã lấy hàng thật), rồi lượt `{ all: true, opening: true }` (không lọc gian hàng chờ; kiện đã đóng không giữ được thì Cần xử lý "Dỡ kiện về kệ…"), phát `allocation_done` có `cause`. Gọi lại không trừ, không giữ thêm.
+
+**`ctx.stockHoldOf`** (channel `awaitingStocktakeShops`, tiêm ở `src/wiring.ts`): gian hàng đang chờ kiểm kê; `lock` khoá `FOR SHARE`.
 
 ## Route (`/api/v1/fulfillment`)
 
@@ -44,9 +58,10 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 
 - `syncPlatformPackages` (sales, lúc nhận đơn sàn).
 - `findPackagesOfOrders`, `PackageSummary`, `ShopRef`, `StatusChange`, `toPackageSummary`, `PackageOrderRef` (sales dựng chi tiết đơn).
-- `settleDeferredHandovers(shopId, countedAt)` → `{ deducted, storedOnly }`: **#198** gọi sau khi phiếu kiểm kê đầu kỳ ghi sổ xong (giao dịch `withCompany` riêng). Kiện rời kho từ `countedAt` trở đi thì trừ, trước đó thành `before_cutoff`; gọi lại không trừ thêm.
-- `settleOpeningStocktake({ shopId, documentId, countedAt })` → `{ deducted, storedOnly, held }` (Documents/21 §11.3): channel (#198 phần 2) gọi trong giao dịch thoát chờ kiểm kê. **Bản tạm** ở `service/settle-opening-stocktake.ts` (bù kiện hoãn trừ, phát `allocation_done` có `cause` với `variantIds` rỗng, `held` 0); #298 (199b) thay bằng bản thật ở `service/allocation.ts`.
-- `shipLateMappedLines(packageId)` → phiếu `XK` mới: **#237** gọi sau khi gán `variant_id` cho dòng kiện. Kiện chưa rời kho hoặc `before_cutoff` thì không làm gì.
+- `settleDeferredHandovers(shopId, countedAt)` → `{ deducted, storedOnly }`: kiện rời kho từ `countedAt` trở đi thì trừ, trước đó thành `before_cutoff`; gọi lại không trừ thêm. Dùng bên trong `settleOpeningStocktake`.
+- `shipLateMappedLines(packageId)` → phiếu `XK` mới: **#237** gọi sau khi gán `variant_id` cho dòng kiện. Kiện chưa rời kho hoặc `before_cutoff` thì không làm gì. Kiện chưa rời kho thì gọi `requestAllocation(variantIds)`.
+- `settleOpeningStocktake({ shopId, documentId, countedAt })` → `{ deducted, storedOnly, held }`: **channel #289** gọi trong giao dịch thoát chờ kiểm kê.
+- `requestAllocation(variantIds)`: xếp lượt phân hàng cùng giao dịch của bên gọi (#237, #239).
 - `getOrderCogs` (finance).
 - Test thay cổng tồn bằng `setStockPort({ ... })` (`service/stock-port.ts`): phần không truyền là bản thật.
 
@@ -56,4 +71,8 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `handed_over_at` của kiện sàn báo là lúc đồng bộ thấy, lệch tối đa một chu kỳ kéo đơn (5 phút): hàm bù có thể xếp nhầm kiện rời kho sát `countedAt`.
 - Kiện vừa có dòng giữ vừa có dòng bắt buộc (chỉ với dòng ghép SKU muộn) thành hai phiếu `XK`.
 - Tìm kiếm `ilike` trên mã kiện, mã đơn chưa có index trigram (số kiện của đồ án nhỏ).
-- Chưa làm: chia hàng `allocation_done` (199b); giao, thất bại, hoàn và sự kiện cho finance (199c); FE (199d); đóng gói, RTS (#239); sàn chia lại kiện, thất lạc (#238); route `self-deliver`.
+- Một lượt phân hàng gọi `reserve`/`release` nhiều lần, mỗi lần khoá dòng tồn của kiện đó: có thể `40P01` với lượt kéo đơn; consumer, pg-boss thử lại.
+- Câu ứng viên phân hàng không `LIMIT` (lượt phải xét mọi kiện chờ của SKU); số kiện chờ của đồ án nhỏ.
+- Kiện mới về có thể giữ hàng trước kiện `backordered` đang chờ lượt của cùng SKU.
+- "Dỡ kiện về kệ" sau phiếu kiểm kê là cờ Cần xử lý, chưa phải việc trong khung #209 (spec 199b D9). Ghép SKU, tồn đổi vì lý do khác (xuất huỷ, nhặt thiếu) không bật cờ này: `25` §7.4 chỉ đòi khi do kiểm kê.
+- Chưa làm: giao, thất bại, hoàn và sự kiện cho finance (199c); FE (199d); đóng gói, RTS (#239); sàn chia lại kiện, thất lạc (#238); route `self-deliver`.

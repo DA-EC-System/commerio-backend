@@ -6,7 +6,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { packageDocuments, packageLineRows, packageRow, seedPackage, stockOfVariant } from './helpers.ts';
+import { channelShop, packageDocuments, packageLineRows, packageRow, seedPackage, stockOfVariant } from './helpers.ts';
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -149,5 +149,30 @@ describe('POST /fulfillment/packages/:id/undo-handover (21 §19.2)', () => {
     const pkg = Package.parse(res.body);
     expect(pkg).toMatchObject({ status: 'awaiting_pickup', flagNote: 'Đơn đang huỷ: dỡ kiện về kệ' });
     expect(pkg.flags).toContain('needs_attention');
+  });
+});
+
+describe('huỷ bàn giao kiện đang hoãn trừ (spec 199b §5.7)', () => {
+  it('AC15: huỷ bàn giao kiện đang hoãn → awaiting_pickup, không phiếu DX, tồn không đổi, lịch sử có lý do', async () => {
+    const own = await createCompany();
+    const kho = await addMember(own.companyId, 'warehouse');
+    const { variantId: v } = await createVariant(own.companyId);
+    await receive(own.companyId, v, 5, 100000);
+    const shopId = await channelShop(own.companyId, true);
+    const p = await seedPackage(own.companyId, { status: 'awaiting_pickup', shopId, lines: [{ variantId: v, quantity: 1 }] });
+    const scan = await app()
+      .post('/api/v1/fulfillment/packages/hand-over')
+      .set('Authorization', `Bearer ${kho.token}`)
+      .send({ packages: [{ id: p.packageId, version: await versionOf(p.packageId) }] });
+    expect(HandOverResult.parse(scan.body).handedOver).toHaveLength(1);
+    const before = await stockOfVariant(own.companyId, v);
+
+    const res = await undo(p.packageId, { version: await versionOf(p.packageId), reason: 'Quét nhầm' }, own.ceo.token);
+
+    expect(res.status).toBe(200);
+    expect(Package.parse(res.body).statusHistory.at(-1)).toMatchObject({ to: 'awaiting_pickup', reason: 'Quét nhầm' });
+    expect(await packageDocuments(p.packageId)).toEqual([]);
+    expect(await stockOfVariant(own.companyId, v)).toMatchObject({ onHand: before.onHand, reserved: before.reserved });
+    expect((await packageLineRows(p.packageId))[0]).toMatchObject({ reserved_qty: 0, stock_deducted: false });
   });
 });
