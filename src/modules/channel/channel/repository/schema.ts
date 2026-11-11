@@ -178,6 +178,11 @@ export const listings = channelSchema.table(
     pendingRequestedAt: timestamp('pending_requested_at', { withTimezone: true }),
     /** Ghép hiện hành do CEO (hoặc công ty một người) tự làm ở bước cần CEO duyệt (25 §11 ngoại lệ tự duyệt). */
     mappingSelfApproved: boolean('mapping_self_approved').notNull().default(false),
+    /**
+     * Người xin ghép hiện hành, giữ lại sau khi duyệt (`pending_requested_by` bị xoá lúc duyệt) để CSDL ép người duyệt khác
+     * người xin (Documents/19 mục 2 "Người duyệt khác", #220). Null với dòng có trước #220 hay chưa từng qua bước duyệt.
+     */
+    mappingRequestedBy: uuid('mapping_requested_by'),
     /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
     replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,
@@ -202,6 +207,11 @@ export const listings = channelSchema.table(
       'listings_pending_mapping',
       sql`(${t.pendingMode} is null and ${t.pendingVariantId} is null and ${t.pendingRequestedBy} is null and ${t.pendingRequestedAt} is null)
         or (${t.pendingRequestedBy} is not null and ${t.pendingRequestedAt} is not null and ${t.pendingMode} is not null and (${t.pendingMode} = 'mapped') = (${t.pendingVariantId} is not null))`,
+    ),
+    // Người duyệt khác người xin ghép, trừ tự duyệt (CEO, công ty một người): cùng mẫu với `self_approved` của bảng khác.
+    check(
+      'listings_mapping_second_person',
+      sql`${t.approvedBy} is null or ${t.mappingRequestedBy} is null or ${t.approvedBy} <> ${t.mappingRequestedBy} or ${t.mappingSelfApproved}`,
     ),
     check('listings_hidden_by', sql`${t.hiddenBy} is null or ${t.status} in ('hidden', 'live')`),
     check('listings_reject_reason', sql`${t.status} <> 'rejected' or ${t.rejectReason} is not null`),

@@ -141,6 +141,20 @@ describe('remote-skus', () => {
     expect(ids).toContain(free.externalSkuId);
     expect(ids).not.toContain(r.externalSkuId);
   });
+
+  it('Review #309 B1: Sale xin "không quản tồn" cho SKU chưa ghép → CEO thấy yêu cầu qua `remote-skus` và duyệt được', async () => {
+    const r = newRemote();
+    expect((await match(sale.token, { externalSkuId: r.externalSkuId, variantId: null })).status).toBe(202);
+    const res = await as(app().get(`/api/v1/channel/shops/${shopId}/remote-skus?unmatched=true`), company.ceo.token);
+    const item = RemoteSkuList.parse(res.body).items.find((i) => i.externalSkuId === r.externalSkuId)!;
+    expect(item).toMatchObject({ mode: null, pendingMapping: { variantId: null, requestedBy: { id: sale.accountId } } });
+    expect(item.listingId).not.toBeNull();
+    const ok = await decide(company.ceo.token, item.listingId!, 'approve', { version: item.listingVersion });
+    expect(ok.status).toBe(200);
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ mode: 'unmanaged', pending_mode: null });
+    const after = await as(app().get(`/api/v1/channel/shops/${shopId}/remote-skus`), company.ceo.token);
+    expect(RemoteSkuList.parse(after.body).items.find((i) => i.externalSkuId === r.externalSkuId)).toMatchObject({ mode: 'unmanaged', pendingMapping: null });
+  });
 });
 
 describe('listings/match', () => {
@@ -320,6 +334,27 @@ describe('mapping/:action', () => {
     ]);
     expect(results.map((x) => x.status).sort()).toEqual([200, 422]);
     expect(results.find((x) => x.status === 422)!.body.errors).toHaveProperty('variantId');
+  });
+
+  it('Review #309 B3: người xin tự duyệt chỉ khi được tự duyệt (CEO) → ghi `mapping_self_approved`; CSDL chặn người duyệt trùng người xin', async () => {
+    const { r, listing } = await pendingRemap();
+    const ceoId = await accountIdOf(company.ceo.email);
+    // Người xin về sau được nâng lên CEO: dựng bằng cách đổi người xin của yêu cầu chờ.
+    await testPool().query('update channel.listings set pending_requested_by = $2 where id = $1', [listing.id, ceoId]);
+    const res = await decide(company.ceo.token, listing.id, 'approve', { version: listing.version });
+    expect(res.status).toBe(200);
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ approved_by: ceoId, mapping_self_approved: true });
+    expect((await transitionsOf(listing.id)).at(-1)).toMatchObject({ action: 'approve_mapping', self_approved: true });
+    await expect(
+      testPool().query('update channel.listings set mapping_self_approved = false where id = $1', [listing.id]),
+    ).rejects.toMatchObject({ constraint: 'listings_mapping_second_person' });
+  });
+
+  it('Duyệt bình thường giữ người xin ở `mapping_requested_by`, khác người duyệt', async () => {
+    const { listing } = await pendingRemap();
+    expect((await decide(company.ceo.token, listing.id, 'approve', { version: listing.version })).status).toBe(200);
+    const row = (await testPool().query('select mapping_requested_by, approved_by from channel.listings where id = $1', [listing.id])).rows[0];
+    expect(row).toEqual({ mapping_requested_by: admin.accountId, approved_by: await accountIdOf(company.ceo.email) });
   });
 
   it('404 khi listing không có hoặc mã sai định dạng', async () => {

@@ -1,5 +1,5 @@
 // Dữ liệu gốc đơn sàn và mốc kéo đơn (#105). Chạy trong `withCompany` của bên gọi.
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { listings, rawOrders, shops } from './schema.ts';
 
@@ -33,17 +33,19 @@ export async function saveRawOrder(input: {
 
 /**
  * Biến thể đã ghép theo SellerSku của gian hàng (listing, #104). Cùng SellerSku có cả dòng đã gỡ và dòng hiện hành (đẩy
- * lại sau khi gỡ, #219) thì dòng hiện hành thắng, rồi tới dòng mới hơn.
+ * lại sau khi gỡ, #219) thì dòng hiện hành thắng, rồi tới dòng mới hơn. Chọn dòng thắng trước rồi mới đọc biến thể: dòng
+ * thắng "không quản tồn" (đã duyệt hay đang chờ, `variant_id` null) thì SKU đó không có biến thể, không rơi về biến thể của
+ * dòng đã gỡ (#220).
  */
-export async function variantsBySellerSku(shopId: string, sellerSkus: readonly string[]): Promise<Map<string, string>> {
+export async function variantsBySellerSku(shopId: string, sellerSkus: readonly string[]): Promise<Map<string, string | null>> {
   if (!sellerSkus.length) return new Map();
   const rows = await getDb()
     .select({ sku: listings.sellerSku, variantId: listings.variantId })
     .from(listings)
-    .where(and(eq(listings.shopId, shopId), inArray(listings.sellerSku, [...sellerSkus]), isNotNull(listings.variantId)))
+    .where(and(eq(listings.shopId, shopId), inArray(listings.sellerSku, [...sellerSkus])))
     // Dòng thắng đứng cuối để `new Map` giữ nó.
     .orderBy(sql`${listings.status} <> 'delisted'`, listings.createdAt);
-  return new Map(rows.map((r) => [r.sku!, r.variantId!]));
+  return new Map(rows.map((r) => [r.sku!, r.variantId]));
 }
 
 /** Đẩy mốc kéo đơn, không lùi (lần kéo tay và việc nền có thể chạy cùng lúc). */

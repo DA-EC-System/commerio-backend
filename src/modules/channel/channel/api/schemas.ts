@@ -282,6 +282,16 @@ const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejecte
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
 
+const pendingMapping = z
+  .object({
+    variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
+    requestedBy: z.object({ id: z.uuid(), name: z.string() }).strict(),
+    requestedAt: iso,
+  })
+  .strict()
+  .nullable()
+  .meta({ description: 'Ghép chờ CEO duyệt (21 §18.6.5); null khi không có' });
+
 export const ChannelListing = z
   .object({
     id: z.uuid(),
@@ -304,15 +314,7 @@ export const ChannelListing = z
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
-    pendingMapping: z
-      .object({
-        variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
-        requestedBy: z.object({ id: z.uuid(), name: z.string() }).strict(),
-        requestedAt: iso,
-      })
-      .strict()
-      .nullable()
-      .meta({ description: 'Ghép chờ CEO duyệt (21 §18.6.5); null khi không có' }),
+    pendingMapping,
     version: z.number().int(),
   })
   .strict()
@@ -333,6 +335,9 @@ export const RemoteSkuList = z
           title: z.string(),
           matchedVariantId: z.uuid().nullable(),
           mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
+          listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt "không quản tồn"); null khi chưa có. CEO dùng để gọi `mapping/approve|reject`' }),
+          listingVersion: z.number().int().nullable().meta({ description: '`version` của listing đó, gửi kèm khi duyệt; null khi chưa có listing' }),
+          pendingMapping,
         })
         .strict(),
     ),

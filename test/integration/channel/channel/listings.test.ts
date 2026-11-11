@@ -254,6 +254,21 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(map.get(sellerSku)).toBe(live.id);
   });
 
+  it('#220: dòng hiện hành "không quản tồn" thắng dòng đã gỡ cùng SellerSku → đơn mới không trừ biến thể cũ', async () => {
+    const gone = fresh('CMR-GHEP-C');
+    const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;
+    const ceo = (await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [company.ceo.email])).rows[0]!.id;
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, created_at, mode, approved_by)
+       values ($1, $2, $3, $4, 'delisted', now() - interval '1 day', 'mapped', null),
+              ($1, $2, null, $4, 'live', now(), 'unmanaged', $5)`,
+      [company.companyId, shopId, gone.id, sellerSku, ceo],
+    );
+    const map = await withCompany(company.companyId, () => variantsBySellerSku(shopId, [sellerSku]));
+    expect(map.has(sellerSku)).toBe(true);
+    expect(map.get(sellerSku)).toBeNull();
+  });
+
   it('GET listings: mọi biến thể đang bán kèm listing hiện hành, đúng schema; pushError là object', async () => {
     const res = await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`));
     expect(res.status).toBe(200);

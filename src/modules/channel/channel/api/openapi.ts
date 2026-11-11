@@ -223,7 +223,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/remote-skus',
     summary: 'SKU đang có trên sàn kèm ghép hiện hành (#220)',
     description:
-      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc thẳng danh sách SKU của gian hàng từ sàn (chưa lưu bản sao), bỏ SKU đã xoá. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`.',
+      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc thẳng danh sách SKU của gian hàng từ sàn (chưa lưu bản sao), bỏ SKU đã xoá. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). `listingId`, `listingVersion`, `pendingMapping`: listing chưa gỡ của SKU sàn và ghép chờ duyệt của nó; CEO tìm yêu cầu chờ duyệt ở đây (yêu cầu "không quản tồn" của SKU chưa ghép không có trong `GET /listings`). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`.',
     security: bearer,
     request: { params: ShopParams, query: RemoteSkusQuery },
     responses: { 200: { description: 'SKU trên sàn', ...json(RemoteSkuList) }, ...onShop },
@@ -255,7 +255,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Listing sau khi duyệt hoặc từ chối', ...json(ChannelListing) },
       ...auth,
       404: problemResponse('`not_found`: gian hàng hoặc listing'),
-      409: problemResponse('`invalid_transition`, `version_conflict` kèm `current`'),
+      409: problemResponse('`invalid_transition`, `second_person_required` (người xin tự duyệt mà không được tự duyệt), `version_conflict` kèm `current`'),
       422: problemResponse('`validation_failed` (`errors.reason`, `errors.variantId`)'),
     },
   });

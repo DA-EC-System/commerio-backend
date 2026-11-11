@@ -1,0 +1,2 @@
+ALTER TABLE "channel"."listings" ADD COLUMN "mapping_requested_by" uuid;--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD CONSTRAINT "listings_mapping_second_person" CHECK ("channel"."listings"."approved_by" is null or "channel"."listings"."mapping_requested_by" is null or "channel"."listings"."approved_by" <> "channel"."listings"."mapping_requested_by" or "channel"."listings"."mapping_self_approved");

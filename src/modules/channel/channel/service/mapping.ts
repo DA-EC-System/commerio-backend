@@ -34,6 +34,9 @@ export interface RemoteSkuItem {
   title: string;
   matchedVariantId: string | null;
   mode: 'mapped' | 'unmanaged' | null;
+  listingId: string | null;
+  listingVersion: number | null;
+  pendingMapping: ChannelListing['pendingMapping'];
 }
 
 /** Ghép đang có hiệu lực: dòng tạo ra chỉ để chờ duyệt "không quản tồn" (chưa ai duyệt) là chưa ghép. */
@@ -55,8 +58,9 @@ async function listRemote(companyId: string, shopId: string, labels: boolean): P
 export async function remoteSkus(actor: Actor, shopId: string, unmatched: boolean): Promise<{ items: RemoteSkuItem[] }> {
   const remote = await listRemote(actor.companyId, shopId, true);
   const rows = await withCompany(actor.companyId, () => liveListingRows(shopId));
+  const names = await withCompany(actor.companyId, () => requesterNames(rows));
   const byExternal = new Map(rows.flatMap((r) => (r.externalSkuId ? [[r.externalSkuId, r] as const] : [])));
-  const items = remote.map((r) => {
+  const items = remote.map((r): RemoteSkuItem => {
     const listing = byExternal.get(r.externalSkuId);
     const mode = listing ? effectiveMode(listing) : null;
     return {
@@ -66,6 +70,11 @@ export async function remoteSkus(actor: Actor, shopId: string, unmatched: boolea
       title: r.title,
       matchedVariantId: mode === 'mapped' ? listing!.variantId : null,
       mode,
+      // CEO tìm yêu cầu ghép chờ duyệt ở đây, kể cả "không quản tồn" của SKU chưa ghép (dòng `variant_id` null không có
+      // trong `GET /listings`) (review #309).
+      listingId: listing?.id ?? null,
+      listingVersion: listing?.version ?? null,
+      pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
     };
   });
   return { items: unmatched ? items.filter((i) => i.mode === null) : items };
@@ -92,9 +101,10 @@ async function assertVariantFree(port: ProductPort, shopId: string, variantId: s
 }
 
 /** Ghép mới chép vào cột hiện hành; tồn, giá của SKU sàn đẩy lại theo biến thể mới ở lượt đồng bộ sau. */
-const applyPatch = (variantId: string | null, approvedBy: string | null, selfApproved: boolean): ListingPatch => ({
+const applyPatch = (variantId: string | null, requestedBy: string, approvedBy: string | null, selfApproved: boolean): ListingPatch => ({
   mode: variantId ? 'mapped' : 'unmanaged',
   variantId,
+  mappingRequestedBy: requestedBy,
   approvedBy,
   mappingSelfApproved: selfApproved,
   pendingVariantId: null,
@@ -175,7 +185,7 @@ export async function matchListing(
         await recordTransition({ entityType: ENTITY, entityId: saved.id, from: row?.status ?? null, to: saved.status, action: 'request_mapping', actorId: actor.accountId });
         return { row: saved, pending: true };
       }
-      const patch = applyPatch(variantId, needsCeo ? actor.accountId : null, needsCeo);
+      const patch = applyPatch(variantId, actor.accountId, needsCeo ? actor.accountId : null, needsCeo);
       const saved = row
         ? await updateListing(row.id, { version: row.version, status: row.status }, patch)
         : await insertListing({
@@ -258,10 +268,20 @@ async function decide(
     }
     const transition = { entityType: ENTITY, entityId: row.id, from: row.status, to: row.status, actorId: actor.accountId };
     if (action === 'approve') {
+      // Người duyệt khác người xin (25 §11); người xin tự duyệt chỉ khi được tự duyệt (CEO, công ty một người), ghi nhãn.
+      // CSDL ép lại bằng CHECK `listings_mapping_second_person`.
+      const selfApproved = actor.accountId === row.pendingRequestedBy;
+      if (selfApproved && !(await canSelfApprove(actor.accountId))) {
+        throw new AppError(409, 'second_person_required', 'Bước này cần người khác người lập thực hiện');
+      }
       if (row.pendingVariantId) await assertVariantFree(port, shop.id, row.pendingVariantId, row.id);
-      const saved = await updateListing(row.id, { version: row.version, status: row.status }, applyPatch(row.pendingVariantId, actor.accountId, false));
+      const saved = await updateListing(
+        row.id,
+        { version: row.version, status: row.status },
+        applyPatch(row.pendingVariantId, row.pendingRequestedBy, actor.accountId, selfApproved),
+      );
       if (!saved) throw conflict();
-      await recordTransition({ ...transition, action: 'approve_mapping' });
+      await recordTransition({ ...transition, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: row.sellerSku } });
       return toListing(saved);
     }
     const reason = input.reason ?? null;
