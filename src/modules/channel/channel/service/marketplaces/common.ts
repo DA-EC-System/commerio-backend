@@ -122,6 +122,14 @@ export interface RemoteSku {
    */
   stockLocked?: boolean;
   priceLocked?: boolean;
+  /**
+   * Số còn bán được trên sàn, cùng nghĩa với số app đẩy lên (số có thể bán), để đối chiếu tồn (#223, 25 §6.5). Thiếu thì
+   * không đối chiếu SKU đó. TikTok: tổng `inventory[].quantity` ("quantity available in the warehouse", cũng là số app
+   * đẩy). Lazada chưa điền: `/products/get` trả cả `quantity` lẫn `Available` và sàn có API riêng cho số bán được
+   * (`/product/stock/sellable/update`), nên số đọc về sau mỗi đơn có thể lệch nghĩa với số app đẩy bằng
+   * `/product/price_quantity/update`; cần thử trên shop thử trước khi bật, kẻo đơn nào cũng bật Lệch tồn giả.
+   */
+  sellableQuantity?: number;
 }
 
 export interface PriceQuantity {

@@ -130,7 +130,8 @@ describe('stockDecision: đối chiếu tồn sàn với số có thể bán (25
     ['synced', null, 3, 5, 'wait'],
     ['synced', 3, 3, 5, 'drift'],
     ['synced', 2, 3, 5, 'drift'],
-    ['error', 5, 3, 5, 'drift'],
+    ['error', 5, 3, 5, 'wait'],
+    ['error', 3, 3, 5, 'drift'],
   ] as const)('%s, platform_stock %s, sàn %i, app %i → %s', (stockSync, platformStock, remote, available, expected) => {
     expect(stockDecision({ stockSync, platformStock }, remote, available)).toBe(expected);
   });

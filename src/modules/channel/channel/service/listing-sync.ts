@@ -129,8 +129,11 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     rows = await inCompany(() => listListingRows(shop.id));
   }
 
-  if (reconcile && (await reconcileStock(port, inCompany, rows, bySku))) rows = await inCompany(() => listListingRows(shop.id));
-  await pushDue(port, inCompany, session, rows, holdStock, bySku, summary);
+  const { changed, waiting } = reconcile
+    ? await reconcileStock(port, inCompany, rows, bySku)
+    : { changed: false, waiting: new Set<string>() };
+  if (changed) rows = await inCompany(() => listListingRows(shop.id));
+  await pushDue(port, inCompany, session, rows, holdStock, bySku, summary, waiting);
   // Lượt đẩy tồn đầu tiên sau thiết lập xong khi lượt này chạy hết (sàn lỗi cả lô thì ném trước, lượt sau đánh dấu).
   if (!holdStock && !shop.stockPushedAt) await inCompany(() => markStockPushed(shop.id));
   return summary;
@@ -155,22 +158,37 @@ async function pullOrdersFirst(companyId: string, shop: ShopRow, adapter: Market
 
 /**
  * Đối chiếu tồn (25 §6.5 bước 2) cho listing còn trên sàn không chờ đẩy (`synced`, hoặc `error` đang Lệch tồn), dùng số
- * sàn của lần đọc trạng thái vừa rồi. Listing sàn đang khoá tồn do khuyến mãi bỏ qua (bước 3). Trả true khi có dòng đổi.
+ * sàn của lần đọc trạng thái vừa rồi (`sellableQuantity`; sàn không trả thì không đối chiếu). Listing sàn đang khoá tồn
+ * do khuyến mãi bỏ qua (bước 3). Trả có dòng đổi không, và listing phải chờ lượt sau (`wait`): lượt này không đẩy tồn
+ * cho chúng, kể cả listing đang Lệch tồn.
  */
-async function reconcileStock(port: ProductPort, inCompany: InCompany, rows: ListingRow[], bySku: Map<string, RemoteSku>): Promise<boolean> {
+async function reconcileStock(
+  port: ProductPort,
+  inCompany: InCompany,
+  rows: ListingRow[],
+  bySku: Map<string, RemoteSku>,
+): Promise<{ changed: boolean; waiting: Set<string> }> {
   const candidates = rows.filter((r) => {
     const remote = r.externalSkuId ? bySku.get(r.externalSkuId) : undefined;
-    return r.mode === 'mapped' && STOCK_RECONCILED.includes(r.status) && r.stockSync !== 'pending' && remote && !remote.stockLocked;
+    return (
+      r.mode === 'mapped' &&
+      STOCK_RECONCILED.includes(r.status) &&
+      r.stockSync !== 'pending' &&
+      remote?.sellableQuantity !== undefined &&
+      !remote.stockLocked
+    );
   });
-  if (!candidates.length) return false;
+  const waiting = new Set<string>();
+  if (!candidates.length) return { changed: false, waiting };
   let changed = false;
   await inCompany(async () => {
     const available = await port.availableOf(candidates.map((r) => r.variantId!));
     for (const row of candidates) {
       const app = available.get(row.variantId!);
       if (app === undefined) continue;
-      const remote = bySku.get(row.externalSkuId!)!.quantity;
+      const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
       const decision = stockDecision(row, remote, app);
+      if (decision === 'wait') waiting.add(row.id);
       const patch = reconcilePatch(row, decision, remote);
       if (!patch) continue;
       if (decision === 'drift') logger.warn({ listingId: row.id, remote, available: app }, 'Lệch tồn: sàn thấp hơn số có thể bán hai lượt liền');
@@ -178,7 +196,7 @@ async function reconcileStock(port: ProductPort, inCompany: InCompany, rows: Lis
       if (await updateListing(row.id, { version: row.version }, patch)) changed = true;
     }
   });
-  return changed;
+  return { changed, waiting };
 }
 
 /** `platform_stock` giữ số sàn vừa đọc, để lượt sau biết sàn đã thấp hơn chưa. */
@@ -208,6 +226,7 @@ async function pushDue(
   holdStock: boolean,
   remote: Map<string, RemoteSku>,
   summary: SyncSummary,
+  waiting: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const due = rows.filter(
     (r) =>
@@ -232,7 +251,9 @@ async function pushDue(
   const plan = due.map((row) => {
     const r = remote.get(row.externalSkuId!);
     const price = r?.priceLocked ? undefined : prices.get(row.variantId!);
-    const quantity = r?.stockLocked ? undefined : available.get(row.variantId!);
+    // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
+    const stockDue = !holdStock && row.stockSync !== 'synced' && !waiting.has(row.id);
+    const quantity = !stockDue || r?.stockLocked ? undefined : available.get(row.variantId!);
     const item: PriceQuantity | null =
       !price && quantity === undefined
         ? null
@@ -242,9 +263,10 @@ async function pushDue(
             ...(price && { price: price.toFixed(0) }),
             ...(quantity !== undefined && { quantity }),
           };
-    return { row, item, locked: lockPatch(r, at) };
+    return { row, item, stockDue, locked: lockPatch(r, at) };
   });
-  const missing = holdStock ? 0 : plan.filter((p) => p.item?.quantity === undefined && !p.locked.stockSyncError).length;
+  const isMissing = (p: (typeof plan)[number]) => p.stockDue && !p.locked.stockSyncError && p.item?.quantity === undefined;
+  const missing = plan.filter(isMissing).length;
   if (missing) logger.warn({ shopId: shop.id, missing }, 'Đồng bộ listing bỏ qua SKU không đọc được số có thể bán');
   const items = plan.flatMap((p) => (p.item ? [p.item] : []));
   const results = new Map(
@@ -253,8 +275,9 @@ async function pushDue(
       : [],
   );
   await inCompany(async () => {
-    for (const { row, item, locked } of plan) {
-      let patch: ListingPatch = !holdStock && item?.quantity === undefined ? { stockSyncError: variantMissing } : {};
+    for (const p of plan) {
+      const { row, item, locked } = p;
+      let patch: ListingPatch = isMissing(p) ? { stockSyncError: variantMissing } : {};
       if (item) {
         const result = results.get(row.externalSkuId!);
         summary.pushed++;

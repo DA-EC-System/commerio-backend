@@ -72,8 +72,8 @@ export const STOCK_RECONCILED: readonly ListingStatus[] = ['under_review', 'live
 /**
  * Kết quả đối chiếu tồn một listing (25 §6.5 bước 2, #223), gọi sau khi đã lấy đơn mới. `platformStock` là số trên sàn
  * biết gần nhất (lần đẩy, hoặc lần đối chiếu trước). `match`: khớp. `push`: sàn cao hơn, đẩy giảm ngay. `wait`: sàn thấp
- * hơn lần đầu, chờ lượt sau. `drift`: sàn vẫn thấp hơn ở lượt liền sau (số sàn biết trước đó đã thấp hơn số có thể bán),
- * hoặc listing đang Lệch tồn: đẩy tăng và bật cờ Lệch tồn (`stock_sync = error`, 21 §18.6.6).
+ * hơn lần đầu, chờ lượt sau (kể cả listing đang Lệch tồn). `drift`: sàn vẫn thấp hơn ở lượt liền sau (số sàn biết trước
+ * đó đã thấp hơn số có thể bán): đẩy tăng và bật cờ Lệch tồn (`stock_sync = error`, 21 §18.6.6).
  */
 export type StockDecision = 'match' | 'push' | 'wait' | 'drift';
 
@@ -84,7 +84,7 @@ export function stockDecision(
 ): StockDecision {
   if (remote === available) return 'match';
   if (remote > available) return 'push';
-  if (row.stockSync === 'error' || (row.platformStock !== null && row.platformStock < available)) return 'drift';
+  if (row.platformStock !== null && row.platformStock < available) return 'drift';
   return 'wait';
 }
 
