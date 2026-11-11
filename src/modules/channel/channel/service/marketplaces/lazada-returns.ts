@@ -7,6 +7,7 @@
 // Gọi thật 12/11/2026 trên shop thử (chỉ đọc): lọc `ReverseOrderLineModifiedTimeRangeStart` (ms) chạy, 26 yêu cầu sửa trong
 // 60 ngày; lịch sử chỉ có `time` (ms), `operator`, `picture`; lý do có `reason_id`, `muti_language_text`, `text`.
 // Chưa gọi thao tác ghi trên sàn thật (không chắc đơn nào của shop thử dùng chung là của nhóm).
+import { logger } from '../../../../../shared/logger.ts';
 import { type MarketplaceAdapter, MarketplaceError, type RemoteAftersaleLine, type RemoteReturn, type RemoteReturnStatus } from './common.ts';
 
 type Row = Record<string, unknown>;
@@ -153,8 +154,11 @@ export function lazadaReturnMethods(
         ReverseOrderLineModifiedTimeRangeStart: String(updatedAfter.getTime()),
       });
       const items = (body.result as { items?: Row[] } | undefined)?.items ?? [];
+      // Đơn ngược không có dòng (không thấy ở shop thử, phòng sàn trả thiếu): không có món, không có mốc thời gian, bỏ qua.
+      const empty = items.filter((i) => !Array.isArray(i.reverse_order_lines) || !i.reverse_order_lines.length);
+      if (empty.length) logger.warn({ reverseOrderIds: empty.map((i) => str(i.reverse_order_id)) }, 'Lazada trả đơn ngược không có dòng, bỏ qua');
       return {
-        items: items.filter((i) => str(i.request_type) !== 'CANCEL').map(toLazadaReturn),
+        items: items.filter((i) => str(i.request_type) !== 'CANCEL' && !empty.includes(i)).map(toLazadaReturn),
         nextCursor: items.length < PAGE_SIZE ? null : String(page + 1),
       };
     },

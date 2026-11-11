@@ -109,6 +109,15 @@ describe('lazadaReturnMethods', () => {
     expect(calls[0]![1]).toMatchObject({ page_no: '1', page_size: '100', ReverseOrderLineModifiedTimeRangeStart: String(since.getTime()) });
   });
 
+  it('đơn ngược không có dòng thì bỏ qua (không tạo mốc thời gian sai)', async () => {
+    const { methods } = fakeCall({
+      '/reverse/getreverseordersforseller': { result: { items: [item([], { reverse_order_id: 1 }), item([line(1)])] } },
+    });
+    const page = await methods.listReturns('tok', new Date(), null);
+    expect(page.items.map((i) => i.externalId)).toEqual(['7000']);
+    expect(page.items.every((i) => !Number.isNaN(i.updatedAt.getTime()))).toBe(true);
+  });
+
   it('từ chối gửi từng dòng kèm lý do và comment; đồng ý gửi cả danh sách dòng', async () => {
     const { calls, methods } = fakeCall({});
     await methods.decideReturn('tok', '7000', ['7001', '7002'], 'reject', { reasonId: '100000046' });
