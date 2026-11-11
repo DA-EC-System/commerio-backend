@@ -195,7 +195,7 @@ const NO_ACCESS_TOKEN = new Set<string | symbol>([
  * khác gọi sàn ghi đúng một lần ở bước cuối (lỗi ở bước đó là chưa ghi) hoặc ghi giá trị tuyệt đối (tồn, giá, ẩn hiện),
  * gọi lại an toàn.
  */
-const NO_RETRY = new Set<string | symbol>(['createProduct']);
+const NO_RETRY = new Set<string | symbol>(['createProduct', 'updateProduct']);
 
 /**
  * Lớp `TokenRefresh` của `Retry(RateLimit(TokenRefresh(adapter)))` (Documents/16 bài toán 3), dùng chung mọi sàn: hàm

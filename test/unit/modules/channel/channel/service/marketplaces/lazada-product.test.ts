@@ -242,3 +242,91 @@ describe('adapter Lazada: sản phẩm', () => {
     );
   });
 });
+
+describe('adapter Lazada: đẩy lại, sản phẩm đã xoá (#219)', () => {
+  const p = {
+    externalCategoryId: '14275',
+    attributes: { brand: 'No Brand' },
+    name: 'Áo sửa lại',
+    description: 'Áo cotton',
+    imageUrls: ['https://sg-test-11.slatic.net/p/a.png'],
+    sellerSku: 'CMR-1',
+    price: '160000',
+    quantity: 7,
+    weightG: 250,
+    lengthMm: 300,
+    widthMm: 200,
+    heightMm: 15,
+  };
+  const listed = (status: string) => ({
+    code: '0',
+    data: { products: [{ item_id: 77, status, attributes: { name: 'Áo' }, skus: [{ SkuId: 770, SellerSku: 'CMR-1', quantity: 7 }] }] },
+  });
+
+  it('AC-15: SellerSku không thấy ở filter=all thì tra filter=deleted; thấy ở all thì không tra thêm', async () => {
+    const fn = fakeFetch(listed('Active'), {
+      code: '0',
+      data: { total_products: 1, products: [{ item_id: 88, status: 'Deleted', attributes: { name: 'X' }, skus: [{ SkuId: 880, SellerSku: 'CMR-2' }] }] },
+    });
+    const skus = await createLazadaAdapter(config, fn).getSkus('t', ['CMR-1', 'CMR-2', 'CMR-3']);
+    expect(skus.map((s) => [s.sellerSku, s.state])).toEqual([
+      ['CMR-1', 'live'],
+      ['CMR-2', 'deleted'],
+    ]);
+    expect(sent(fn, 0).query).toMatchObject({ filter: 'all' });
+    expect(sent(fn, 1).query).toMatchObject({ filter: 'deleted', sku_seller_list: '["CMR-2","CMR-3"]' });
+    const once = fakeFetch(listed('Active'));
+    await createLazadaAdapter(config, once).getSkus('t', ['CMR-1']);
+    expect(once).toHaveBeenCalledTimes(1);
+  });
+
+  it('C2-02…04: /product/update gửi SkuId, Status active, thuộc tính giao hàng đang có; đọc lại trạng thái', async () => {
+    const fn = fakeFetch(
+      { code: '0', data: { attributes: { name: 'Áo', delivery_option_standard: 'No', Delivery_Option_Instant: 'Yes', brand: 'Khác' } } },
+      { code: '0', data: {} },
+      listed('Pending QC'),
+    );
+    expect(await createLazadaAdapter(config, fn).updateProduct!('t', '77', '770', p)).toEqual({ live: false });
+    expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/item/get', query: { item_id: '77' } });
+    expect(sent(fn, 1)).toMatchObject({ path: '/rest/product/update', method: 'POST' });
+    expect(JSON.parse(sent(fn, 1).body.payload ?? '')).toEqual({
+      Request: {
+        Product: {
+          ItemId: '77',
+          PrimaryCategory: '14275',
+          Images: { Image: ['https://sg-test-11.slatic.net/p/a.png'] },
+          Attributes: { brand: 'No Brand', delivery_option_standard: 'No', Delivery_Option_Instant: 'Yes', name: 'Áo sửa lại', description: 'Áo cotton' },
+          Skus: {
+            Sku: [
+              {
+                SkuId: '770',
+                quantity: '7',
+                price: '160000',
+                package_weight: '0.25',
+                package_length: '30',
+                package_width: '20',
+                package_height: '1.5',
+                Status: 'active',
+              },
+            ],
+          },
+        },
+      },
+    });
+    const live = fakeFetch({ code: '0', data: { attributes: {} } }, { code: '0', data: {} }, listed('Active'));
+    expect(await createLazadaAdapter(config, live).updateProduct!('t', '77', '770', p)).toEqual({ live: true });
+  });
+
+  it('vẫn tắt hay bị khoá sau khi ghi thì rejected still_inactive; sàn từ chối ghi thì ném lỗi của sàn', async () => {
+    const off = fakeFetch({ code: '0', data: { attributes: {} } }, { code: '0', data: {} }, listed('InActive'));
+    await expect(createLazadaAdapter(config, off).updateProduct!('t', '77', '770', p)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'still_inactive',
+    });
+    const locked = fakeFetch({ code: '0', data: { attributes: {} } }, { code: '4155', type: 'ISP', message: 'Update product failed' });
+    await expect(createLazadaAdapter(config, locked).updateProduct!('t', '77', '770', p)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: '4155',
+    });
+  });
+});

@@ -466,13 +466,14 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     return { orders, next, safeUntil };
   }
 
-  async function getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> {
+  /** SKU theo SellerSku trong một bộ lọc của GetProducts (`all` không gồm sản phẩm đã xoá, gọi thật 10/11/2026). */
+  async function skusIn(accessToken: string, sellerSkus: readonly string[], filter: 'all' | 'deleted'): Promise<RemoteSku[]> {
     const wanted = new Set(sellerSkus);
     const out: RemoteSku[] = [];
     for (const batch of chunks(sellerSkus, SKU_LIST_BATCH)) {
       const params = {
         access_token: accessToken,
-        filter: 'all',
+        filter,
         limit: String(SKU_LIST_BATCH),
         sku_seller_list: JSON.stringify(batch),
       };
@@ -481,6 +482,39 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       out.push(...products.flatMap(skusOf).filter((s) => wanted.has(s.sellerSku)));
     }
     return out;
+  }
+
+  // SellerSku không thấy ở `all` thì tra thêm `filter=deleted` (#219 A7): gọi thật 11/11/2026 trên shop thử, SellerSku
+  // của sản phẩm đã xoá không có ở `all` (request_id 2101559517943940732651586), có ở `deleted` với `status: Deleted`
+  // (21012d9d17943940737183996). Không thấy ở cả hai thì không trả.
+  async function getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> {
+    const found = await skusIn(accessToken, sellerSkus, 'all');
+    const seen = new Set(found.map((s) => s.sellerSku));
+    const missing = sellerSkus.filter((sku) => !seen.has(sku));
+    return missing.length ? [...found, ...(await skusIn(accessToken, missing, 'deleted'))] : found;
+  }
+
+  /** SKU của `/product/create`, `/product/update`: tiền chuỗi, gam → kg, mm → cm. */
+  const skuPayload = (p: NewProduct) => ({
+    quantity: String(p.quantity),
+    price: p.price,
+    package_weight: String(p.weightG / 1000),
+    package_length: String(p.lengthMm / 10),
+    package_width: String(p.widthMm / 10),
+    package_height: String(p.heightMm / 10),
+  });
+
+  /**
+   * Thuộc tính giao hàng đang có của sản phẩm (`delivery_option_*`, GetProductItem): `/product/update` tự thêm
+   * `delivery_option_standard`, `Delivery_Option_Instant` = "Yes" khi không gửi (Documents/tich-hop-san/lazada.md §11.4),
+   * nên gửi kèm giá trị cũ để không đổi cách giao người bán đã chọn.
+   */
+  async function deliveryOptions(accessToken: string, itemId: string): Promise<Record<string, string>> {
+    const body = await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET');
+    const attrs = ((body.data as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {}) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(attrs).flatMap(([k, v]) => (/^delivery_option_/i.test(k) && typeof v === 'string' ? [[k, v]] : [])),
+    );
   }
 
   return {
@@ -560,24 +594,15 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     async createProduct(accessToken, p: NewProduct) {
       // Idempotent theo SellerSku: lần đẩy trước đã tạo mà bên gọi mất kết quả thì trả sản phẩm đó, không tạo thêm.
-      const existing = (await getSkus(accessToken, [p.sellerSku])).find((s) => s.state !== 'deleted');
+      const existing = (await skusIn(accessToken, [p.sellerSku], 'all')).find((s) => s.state !== 'deleted');
       if (existing) return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live' };
-      const sku = {
-        SellerSku: p.sellerSku,
-        quantity: String(p.quantity),
-        price: p.price,
-        package_weight: String(p.weightG / 1000),
-        package_length: String(p.lengthMm / 10),
-        package_width: String(p.widthMm / 10),
-        package_height: String(p.heightMm / 10),
-      };
       const payload = JSON.stringify({
         Request: {
           Product: {
             PrimaryCategory: p.externalCategoryId,
             Images: { Image: p.imageUrls },
             Attributes: { ...p.attributes, name: p.name, description: p.description },
-            Skus: { Sku: [sku] },
+            Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
           },
         },
       });
@@ -586,6 +611,27 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       const skuId = data?.sku_list?.[0]?.sku_id;
       if (data?.item_id === undefined || skuId === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
       return { externalProductId: String(data.item_id), externalSkuId: String(skuId), live: data.item_status === 'Active' };
+    },
+    // UpdateProduct (open.lazada.com "Update a product", tra 11/11/2026): payload như `/product/create`, `SkuId` bắt buộc
+    // (mã 4216), không đổi được SellerSku; `Status: active` bật lại SKU đã tắt (lazada.md §11.4). Trạng thái sau khi ghi
+    // đọc lại bằng GetProducts theo SellerSku; chưa thấy (sàn trễ) thì coi là chờ duyệt, đồng bộ sửa sau.
+    async updateProduct(accessToken, externalProductId, externalSkuId, p: NewProduct) {
+      const payload = JSON.stringify({
+        Request: {
+          Product: {
+            ItemId: externalProductId,
+            PrimaryCategory: p.externalCategoryId,
+            Images: { Image: p.imageUrls },
+            Attributes: { ...p.attributes, ...(await deliveryOptions(accessToken, externalProductId)), name: p.name, description: p.description },
+            Skus: { Sku: [{ SkuId: externalSkuId, ...skuPayload(p), Status: 'active' }] },
+          },
+        },
+      });
+      await call(config.apiUrl, '/product/update', { access_token: accessToken, payload }, 'FORM');
+      const after = (await skusIn(accessToken, [p.sellerSku], 'all')).find((s) => s.externalSkuId === externalSkuId);
+      if (!after || after.state === 'review' || after.state === 'rejected') return { live: false };
+      if (after.state === 'live') return { live: true };
+      throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${after.state})`);
     },
     getSkus,
     // Số sản phẩm: một lời gọi `limit=1`, đọc `total_products` (#198/#284: đọc từng trang quá hạn 10 giây với gian hàng
