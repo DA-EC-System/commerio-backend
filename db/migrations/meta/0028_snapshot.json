@@ -1,5 +1,5 @@
 {
-  "id": "54cdb072-f314-4d84-89be-30c27f97d8f3",
+  "id": "38b547f6-2b50-4b64-80dc-3bc306701d7c",
   "prevId": "66f7b8d0-abdc-45a8-9f08-e83cad1fb0a5",
   "version": "7",
   "dialect": "postgresql",
@@ -2212,6 +2212,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "file_purpose",
+          "typeSchema": "core",
+          "primaryKey": false,
+          "notNull": true
+        },
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
@@ -2253,7 +2260,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "files_size_positive": {
+          "name": "files_size_positive",
+          "value": "\"core\".\"files\".\"size_bytes\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.refresh_tokens": {
@@ -6721,12 +6733,6 @@
         },
         "ship_by": {
           "name": "ship_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reserved_at": {
-          "name": "reserved_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -11436,6 +11442,14 @@
         "create",
         "update",
         "delete"
+      ]
+    },
+    "core.file_purpose": {
+      "name": "file_purpose",
+      "schema": "core",
+      "values": [
+        "product_image",
+        "attachment"
       ]
     },
     "core.company_status": {

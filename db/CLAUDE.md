@@ -5,6 +5,7 @@ Migration của PostgreSQL. Một database, **mỗi module lớn một schema c�
 **`order` là từ khoá SQL**: SQL viết tay phải ghi `"order".orders`, không ghi `order.orders` (Drizzle tự thêm ngoặc kép).
 
 - `migrations/`: do `drizzle-kit` sinh ra, **không sửa tay** file đã merge vào `main`. Muốn đổi thì sửa `schema.ts` rồi chạy `npm run db:generate -- --name <mo-ta>` để có migration mới.
+- **Tên file từ 11/11/2026:** `<năm tháng ngày giờ phút giây>_<mo-ta>.sql` theo giờ UTC lúc sinh, vd `20261111030018_muc-dich-tep.sql` (`migrations.prefix: 'timestamp'` trong `drizzle.config.ts`), để hai nhánh cùng sinh migration không trùng tên. 29 file đầu `0000`–`0028` giữ tên theo số thứ tự: code, test và tài liệu đang gọi chúng theo số. Không đặt tên tay.
 - Bộ migration dựng lại từ đầu ngày 28/10/2026 khi gom 6 module lớn (chưa có dữ liệu thật; staging xoá DB rồi chạy lại):
   - `0000_mo-rong.sql` extension `vector` (pgvector, không "trusted": test bật sẵn trong `global-setup.ts`, Supabase bật bằng danh sách cho phép) và `btree_gist` (ràng buộc EXCLUDE).
   - `0001_tao-bang.sql` 6 schema, 79 bảng, enum, CHECK, index (drizzle sinh).
@@ -35,6 +36,6 @@ Bảng thuộc công ty có `company_id` và chính sách `company_isolation`: c
 
 ## Hai nhánh cùng sinh migration: người merge sau **bắt buộc** sinh lại
 
-`drizzle-kit migrate` chạy mọi migration đang chờ trong **một** giao dịch, và chỉ chạy migration có `when` (trong `meta/_journal.json`) **lớn hơn** migration cuối đã chạy trên DB đó. Migration sinh trên nhánh khác trước nhưng merge sau sẽ bị **bỏ qua im lặng** trên DB đã có dữ liệu (staging), trong khi test (DB trống) vẫn xanh. Vì vậy người merge sau xoá migration của mình (file `.sql`, snapshot, dòng journal), rebase lên `main` rồi sinh lại. `test/unit/db/journal.test.ts` đỏ nếu `when` không tăng theo `idx`.
+`drizzle-kit migrate` chạy mọi migration đang chờ trong **một** giao dịch, và chỉ chạy migration có `when` (trong `meta/_journal.json`) **lớn hơn** migration cuối đã chạy trên DB đó. Migration sinh trên nhánh khác trước nhưng merge sau sẽ bị **bỏ qua im lặng** trên DB đã có dữ liệu (staging), trong khi test (DB trống) vẫn xanh. Vì vậy người merge sau xoá migration của mình (file `.sql`, snapshot, dòng journal), rebase lên `main` rồi sinh lại. Tên file theo thời điểm sinh **không** bỏ được bước này: nó chỉ hết trùng tên file, còn thứ tự chạy vẫn theo `when`, và snapshot của hai nhánh vẫn cùng nối vào một snapshot cha. `test/unit/db/journal.test.ts` đỏ nếu `when` không tăng theo `idx`, hoặc tên file không khớp `when`.
 
 Seed dữ liệu demo (dữ liệu giả, không dùng thông tin khách hàng thật) đặt ở `db/seed/`, chạy bằng `npm run db:seed` (`db/seed/index.ts`, #37).
