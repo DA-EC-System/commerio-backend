@@ -290,8 +290,11 @@ export const ChannelListing = z
     sellerSku: z.string().nullable(),
     status: listingStatus,
     rejectReason: z.string().nullable(),
-    pushError: z.string().nullable(),
-    pushAttempts: z.number().int(),
+    pushError: syncError.meta({
+      description:
+        'Lỗi lần gọi sàn cuối của lượt đẩy (21 §18.6.4): `code` là `marketplace_rejected` hoặc `marketplace_unavailable`, `message` là câu của sàn',
+    }),
+    pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
     stockSync: syncState,
     priceSync: syncState,

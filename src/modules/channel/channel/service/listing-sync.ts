@@ -46,7 +46,8 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   const staleBefore = Date.now() - STALE_PUSH_MS;
   for (const row of rows.filter((r) => r.status === 'pushing' && (r.pushStartedAt?.getTime() ?? 0) < staleBefore)) {
     const message = 'Quá 30 phút chưa có kết quả từ sàn, đẩy lại';
-    await inCompany(() => moveListing(row, 'fail', null, { pushError: message }, message));
+    const pushError: SyncError = { code: 'marketplace_unavailable', message, at: new Date().toISOString() };
+    await inCompany(() => moveListing(row, 'fail', null, { pushError }, message));
     summary.changed++;
   }
 

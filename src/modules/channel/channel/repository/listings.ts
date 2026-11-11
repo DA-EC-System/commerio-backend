@@ -1,5 +1,5 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import type { ListingStatus } from '../domain/listing.ts';
@@ -51,12 +51,30 @@ export async function nameSimilarities(
   }
 }
 
+/** Thứ tự chọn listing hiện hành của một SKU: dòng chưa gỡ trước, rồi dòng mới hơn (Documents/21 §18.6.4, #219). */
+const CURRENT_FIRST = [sql`${listings.status} = 'delisted'`, desc(listings.createdAt)] as const;
+
+/**
+ * Listing hiện hành của biến thể trên gian hàng: dòng chưa `delisted` (unique, nhiều nhất một), không có thì dòng
+ * `delisted` mới nhất, chưa từng có thì `undefined`.
+ */
 export async function findListingRow(shopId: string, variantId: string): Promise<ListingRow | undefined> {
   const [row] = await getDb()
     .select()
     .from(listings)
-    .where(and(eq(listings.shopId, shopId), eq(listings.variantId, variantId)));
+    .where(and(eq(listings.shopId, shopId), eq(listings.variantId, variantId)))
+    .orderBy(...CURRENT_FIRST)
+    .limit(1);
   return row;
+}
+
+/** Như `findListingRow` cho mọi biến thể của gian hàng: mỗi biến thể một dòng. */
+export async function currentListingRows(shopId: string): Promise<ListingRow[]> {
+  return getDb()
+    .selectDistinctOn([listings.variantId])
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), isNotNull(listings.variantId)))
+    .orderBy(listings.variantId, ...CURRENT_FIRST);
 }
 
 export async function insertListing(values: typeof listings.$inferInsert): Promise<ListingRow> {

@@ -8,11 +8,11 @@ import { type ListingAction, type ListingStatus, listingMachine } from '../domai
 import { awaitingAllocation } from '../domain/shop.ts';
 import { type CategoryMapRow, listCategoryMaps } from '../repository/category-maps.ts';
 import {
+  currentListingRows,
   findListingRow,
   insertListing,
   type ListingPatch,
   type ListingRow,
-  listListingRows,
   updateListing,
 } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
@@ -32,7 +32,7 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: string | null;
+  pushError: SyncError | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
@@ -98,7 +98,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const shop = await ownShop(shopId);
   const variants = (await port.variants()).filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
-  const byVariant = new Map((await listListingRows(shop.id)).map((l) => [l.variantId, l]));
+  const byVariant = new Map((await currentListingRows(shop.id)).map((l) => [l.variantId, l]));
   return {
     items: variants.map((v) => {
       const price = prices.get(v.id) ?? null;
@@ -297,10 +297,11 @@ async function pushOne(
     if (!(err instanceof MarketplaceError)) throw err;
     const transient = err.kind === 'unavailable';
     const message = transient ? 'Sàn lỗi tạm, đẩy lại sau' : (err.platformMessage ?? 'Sàn từ chối sản phẩm');
-    row = await withCompany(actor.companyId, async () =>
-      moveListing(row, 'fail', null, { pushError: message, pushAttempts: row.pushAttempts + 1 }, err.platformCode),
-    );
     const code = transient ? 'marketplace_unavailable' : 'marketplace_rejected';
+    const pushError = { code, message, at: new Date().toISOString() };
+    row = await withCompany(actor.companyId, async () =>
+      moveListing(row, 'fail', null, { pushError, pushAttempts: row.pushAttempts + 1 }, err.platformCode),
+    );
     return fail(v.id, v.sku, code, message, row.status);
   }
 }

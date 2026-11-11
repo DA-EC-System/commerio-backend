@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -147,7 +148,8 @@ export const listings = channelSchema.table(
     sellerSku: text('seller_sku'),
     status: listingStatus('status').notNull().default('pushing'),
     rejectReason: text('reject_reason'),
-    pushError: text('push_error'),
+    /** Lỗi lần gọi sàn cuối của lượt đẩy (§18.6.4): `{ code, message, at }`, `code` là `marketplace_rejected` hoặc `marketplace_unavailable`. */
+    pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
@@ -165,12 +167,19 @@ export const listings = channelSchema.table(
     priceCalcId: uuid('price_calc_id'),
     delistedByDisconnect: boolean('delisted_by_disconnect').notNull().default(false),
     approvedBy: uuid('approved_by'),
+    /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
+    replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,
     ...version,
   },
   (t) => [
-    uniqueIndex('listings_shop_variant_uq').on(t.shopId, t.variantId).where(sql`${t.variantId} is not null`),
-    uniqueIndex('listings_shop_external_sku_uq').on(t.shopId, t.externalSkuId).where(sql`${t.externalSkuId} is not null`),
+    // `delisted` là trạng thái cuối: đẩy lại tạo dòng mới, nên hai ràng buộc chỉ áp cho dòng chưa gỡ (25 §6.4, #219).
+    uniqueIndex('listings_shop_variant_uq')
+      .on(t.shopId, t.variantId)
+      .where(sql`${t.variantId} is not null and ${t.status} <> 'delisted'`),
+    uniqueIndex('listings_shop_external_sku_uq')
+      .on(t.shopId, t.externalSkuId)
+      .where(sql`${t.externalSkuId} is not null and ${t.status} <> 'delisted'`),
     index().on(t.variantId),
     check('listings_mode', sql`(${t.mode} = 'mapped') = (${t.variantId} is not null)`),
     check('listings_unmanaged_approved', sql`${t.mode} = 'mapped' or ${t.approvedBy} is not null`),

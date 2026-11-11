@@ -132,7 +132,9 @@ describe('đẩy listing', () => {
     const byVariant = new Map(rows.map((r) => [r.variant_id, r]));
     expect(byVariant.get(ok.id)).toMatchObject({ status: 'under_review', external_sku_id: 'sku-CMR-OK', platform_stock: 7 });
     expect(byVariant.get(rejected.id)).toMatchObject({ status: 'push_failed', push_attempts: 1 });
-    expect(byVariant.get(down.id)).toMatchObject({ push_error: 'Sàn lỗi tạm, đẩy lại sau' });
+    expect(byVariant.get(down.id)).toMatchObject({
+      push_error: { code: 'marketplace_unavailable', message: 'Sàn lỗi tạm, đẩy lại sau', at: expect.any(String) },
+    });
     expect(byVariant.has(noPrice.id)).toBe(false);
 
     const okRow = rows.find((r) => r.variant_id === ok.id);
