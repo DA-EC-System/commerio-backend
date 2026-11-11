@@ -1,6 +1,6 @@
 {
-  "id": "492b928e-020c-4d1a-b933-ec7a8ead4757",
-  "prevId": "e084e889-3de3-4f38-9622-37a3e731c8e0",
+  "id": "a86b3654-6835-4dfd-a6f7-4c52d80fbdde",
+  "prevId": "df0e6b88-010b-4cc2-8db2-16d95db61caf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2212,6 +2212,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "file_purpose",
+          "typeSchema": "core",
+          "primaryKey": false,
+          "notNull": true
+        },
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
@@ -2253,7 +2260,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "files_size_positive": {
+          "name": "files_size_positive",
+          "value": "\"core\".\"files\".\"size_bytes\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.refresh_tokens": {
@@ -11456,6 +11468,14 @@
         "create",
         "update",
         "delete"
+      ]
+    },
+    "core.file_purpose": {
+      "name": "file_purpose",
+      "schema": "core",
+      "values": [
+        "product_image",
+        "attachment"
       ]
     },
     "core.company_status": {
