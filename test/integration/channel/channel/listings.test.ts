@@ -21,6 +21,7 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
   categoryId,
   attributesLabel: 'Đen / M',
   archived: false,
+  businessStatus: 'selling',
   description: 'Áo cotton',
   weightG: 250,
   lengthMm: 300,

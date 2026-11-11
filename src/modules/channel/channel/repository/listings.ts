@@ -68,6 +68,12 @@ export async function findListingRow(shopId: string, variantId: string): Promise
   return row;
 }
 
+/** Một listing theo id (việc đẩy nền, #219); RLS của `withCompany` lọc công ty. */
+export async function findListingById(id: string): Promise<ListingRow | undefined> {
+  const [row] = await getDb().select().from(listings).where(eq(listings.id, id)).limit(1);
+  return row;
+}
+
 /** Như `findListingRow` cho mọi biến thể của gian hàng: mỗi biến thể một dòng. */
 export async function currentListingRows(shopId: string): Promise<ListingRow[]> {
   return getDb()

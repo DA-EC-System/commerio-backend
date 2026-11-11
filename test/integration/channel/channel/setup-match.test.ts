@@ -25,6 +25,7 @@ const variant = (sku: string, productName: string, attributesLabel = ''): Listin
   categoryId: randomUUID(),
   attributesLabel,
   archived: false,
+  businessStatus: 'selling',
   description: null,
   weightG: 200,
   lengthMm: 100,

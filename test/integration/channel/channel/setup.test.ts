@@ -21,6 +21,7 @@ const variant = (sku: string): ListingVariant => ({
   categoryId: randomUUID(),
   attributesLabel: '',
   archived: false,
+  businessStatus: 'selling',
   description: null,
   weightG: 200,
   lengthMm: 100,
