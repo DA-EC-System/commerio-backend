@@ -214,6 +214,21 @@ describe('kéo yêu cầu trả từ sàn', () => {
   });
 });
 
+describe('kiện đang hoàn hoặc thất lạc khi sàn mở yêu cầu (25 §9, review #202 mục 5)', () => {
+  it.each(['returning', 'lost'])('kiện %s giữ nguyên; yêu cầu và đơn bật Cần xử lý', async (status) => {
+    const { externalOrderId, orderId } = await marketplaceOrder();
+    await db().query(`update "order".packages set status = $2 where order_id = $1`, [orderId, status]);
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await db().query(`select status from "order".packages where order_id = $1`, [orderId])).rows).toEqual([{ status }]);
+    expect((await requestOf(r.externalId)).needs_attention).toBe(true);
+    const order = await db().query(`select needs_attention, attention_note from "order".orders where id = $1`, [orderId]);
+    expect(order.rows[0].needs_attention).toBe(true);
+    expect(order.rows[0].attention_note).toContain((await requestOf(r.externalId)).code);
+  });
+});
+
 describe('kiện đã hoàn về kho khi sàn mở yêu cầu (E109, 25 §9)', () => {
   it('giữ kiện `returned`, yêu cầu bật cờ; quét mã yêu cầu đi như kiện không khớp, không gọi kho nguồn yêu cầu', async () => {
     const { externalOrderId, orderId } = await marketplaceOrder();

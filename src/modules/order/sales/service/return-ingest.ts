@@ -4,7 +4,7 @@
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { deliverForReturn, packageLinesOfOrderLines } from '../../fulfillment/index.ts';
 import { distributeResell, refundAmountOf, type ReturnStatus, syncAction, syncTarget, weightedUnitCost } from '../domain/return.ts';
-import { lockMarketplaceOrder, takeNextNumber } from '../repository/orders.ts';
+import { lockMarketplaceOrder, takeNextNumber, updateOrder } from '../repository/orders.ts';
 import {
   findMarketplaceReturn,
   findReturnByInspection,
@@ -98,10 +98,12 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
   // Khách trả hàng thì kiện phải đã giao: mọi kiện chứa dòng trả còn trên đường nhảy tới `delivered` (25 §9); khác thì
   // người dùng đối chiếu. Làm trước khi tính giá vốn để kiện vừa nhảy cóc được tính là đã giao.
   const jumped = new Set<string>();
+  let held = false;
   if (r.kind === 'return') {
     for (const packageId of new Set(pkgLines.map((p) => p.packageId))) {
       const outcome = await deliverForReturn(packageId, 'Sàn mở yêu cầu trả khi kiện chưa giao xong');
       if (outcome === 'jumped') jumped.add(packageId);
+      if (outcome === 'held') held = true;
       if (outcome !== 'delivered') notes.push(`Kiện của dòng trả ở trạng thái ${outcome === 'jumped' ? 'chưa giao, đã chuyển sang Đã giao' : outcome}`);
     }
   }
@@ -143,6 +145,8 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
   });
   if (!created) return undefined;
   await insertReturnLines(rows.map((l) => ({ ...l, companyId: created.companyId, requestId: created.id })));
+  // Kiện đang hoàn, thất lạc (hoặc chưa rời kho): cả đơn bật Cần xử lý để đối chiếu với sàn (25 §9). Đơn đã khoá ở trên.
+  if (held) await updateOrder(orderId, { needsAttention: true, attentionNote: `Yêu cầu trả ${created.code}: kiện chưa ở trạng thái đã giao, đối chiếu với sàn` });
   return created;
 }
 
