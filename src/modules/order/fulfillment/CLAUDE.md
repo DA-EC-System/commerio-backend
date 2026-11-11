@@ -45,6 +45,7 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `syncPlatformPackages` (sales, lúc nhận đơn sàn).
 - `findPackagesOfOrders`, `PackageSummary`, `ShopRef`, `StatusChange`, `toPackageSummary`, `PackageOrderRef` (sales dựng chi tiết đơn).
 - `settleDeferredHandovers(shopId, countedAt)` → `{ deducted, storedOnly }`: **#198** gọi sau khi phiếu kiểm kê đầu kỳ ghi sổ xong (giao dịch `withCompany` riêng). Kiện rời kho từ `countedAt` trở đi thì trừ, trước đó thành `before_cutoff`; gọi lại không trừ thêm.
+- `settleOpeningStocktake({ shopId, documentId, countedAt })` → `{ deducted, storedOnly, held }` (Documents/21 §11.3): channel (#198 phần 2) gọi trong giao dịch thoát chờ kiểm kê. **Bản tạm** ở `service/settle-opening-stocktake.ts` (bù kiện hoãn trừ, phát `allocation_done` có `cause` với `variantIds` rỗng, `held` 0); #298 (199b) thay bằng bản thật ở `service/allocation.ts`.
 - `shipLateMappedLines(packageId)` → phiếu `XK` mới: **#237** gọi sau khi gán `variant_id` cho dòng kiện. Kiện chưa rời kho hoặc `before_cutoff` thì không làm gì.
 - `getOrderCogs` (finance).
 - Test thay cổng tồn bằng `setStockPort({ ... })` (`service/stock-port.ts`): phần không truyền là bản thật.

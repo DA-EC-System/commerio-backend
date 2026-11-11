@@ -33,3 +33,6 @@ export { type PackageOrderLineRef, type PackageOrderRef, toPackageSummary } from
 export type { FulfillmentContext } from './service/packages.ts';
 // Hàm bù cho #198 (phiếu kiểm kê đầu kỳ ghi sổ) và dòng ghép SKU muộn cho #237; chạy trong `withCompany` của bên gọi.
 export { settleDeferredHandovers, shipLateMappedLines } from './service/handover-stock.ts';
+// BẢN TẠM, #298 thay: cho channel (#198 phần 2) gọi trong giao dịch thoát chờ kiểm kê (Documents/21 §11.3). #298 merge
+// trước thì xoá dòng này và `service/settle-opening-stocktake.ts`, dùng export `settleOpeningStocktake` của #298.
+export { settleOpeningStocktake } from './service/settle-opening-stocktake.ts';

@@ -1,13 +1,16 @@
 // #198 phần 2: phiếu kiểm kê đầu kỳ ghi sổ (`inventory.stocktake_posted`, Documents/21 §11.2) thì gian hàng thoát chế độ
 // chờ kiểm kê, mốc kéo đơn = thời điểm đếm, lượt kéo đơn còn mở chạy lại, rồi chờ phân hàng tới khi nhận
-// `fulfillment.allocation_done` có `cause.documentId` trùng phiếu (§18.6.2, §18.6.11). Lập lại phiếu bị từ chối, huỷ
-// (`POST /shops/:id/opening-stocktake`). Sự kiện tự phát theo payload của Documents, chưa cần #278, #199 phần b.
+// `fulfillment.allocation_done` có `cause.documentId` trùng phiếu (§18.6.2, §18.6.11). Trong giao dịch thoát chờ, channel gọi
+// `settleOpeningStocktake` của fulfillment (§11.3, Documents#97); test giả lập cổng này (ghi tham số, đọc dòng gian hàng
+// trong giao dịch, cho ném). Lập lại phiếu bị từ chối, huỷ (`POST /shops/:id/opening-stocktake`). Sự kiện tự phát theo
+// payload của Documents, chưa cần #278, #199 phần b.
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
+import { sql } from 'drizzle-orm';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EventPayload } from '#src/modules/core/index.ts';
-import { withCompany } from '#src/shared/db/client.ts';
+import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { runOpenOrderPull } from '#src/modules/channel/channel/service/background.ts';
 import {
   handleAllocationDone,
@@ -27,9 +30,34 @@ import { testApp } from '../../helpers/http.ts';
 import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
 import { fakeAdapter } from './helpers.ts';
 import type * as ShopJobs from '#src/modules/channel/channel/service/shop-jobs.ts';
+import type * as Order from '#src/modules/order/index.ts';
 
 // Ca rollback: cho `sendOpenOrderPull` ném một lần, các ca khác chạy bản thật.
 const jobs = vi.hoisted(() => ({ failNext: false }));
+// Cổng `settleOpeningStocktake` của fulfillment (§11.3): ghi tham số và `opening_stocktake_id` đọc trong chính giao dịch
+// của bên gọi (null nghĩa là gọi sau khi đặt `openingStocktake = null`, cùng giao dịch, vì giao dịch chưa commit); `failNext`
+// cho ném một lần. Không ném thì chạy hàm thật của `order`.
+const settle = vi.hoisted(() => ({
+  failNext: false,
+  calls: [] as { shopId: string; documentId: string; countedAt: Date; openingStocktakeIdInTx: string | null }[],
+}));
+vi.mock('#src/modules/order/index.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof Order>();
+  return {
+    ...real,
+    settleOpeningStocktake: async (p: { shopId: string; documentId: string; countedAt: Date }) => {
+      const { rows } = await getDb().execute<{ opening_stocktake_id: string | null }>(
+        sql`select opening_stocktake_id from channel.shops where id = ${p.shopId}`,
+      );
+      settle.calls.push({ ...p, openingStocktakeIdInTx: rows[0]!.opening_stocktake_id });
+      if (settle.failNext) {
+        settle.failNext = false;
+        throw new Error('settleOpeningStocktake lỗi giả');
+      }
+      return real.settleOpeningStocktake(p);
+    },
+  };
+});
 vi.mock('#src/modules/channel/channel/service/shop-jobs.ts', async (importOriginal) => {
   const real = await importOriginal<typeof ShopJobs>();
   return {
@@ -154,6 +182,8 @@ afterEach(() => {
   created.length = 0;
   open = [];
   jobs.failNext = false;
+  settle.failNext = false;
+  settle.calls.length = 0;
   docStatus.clear();
 });
 
@@ -199,7 +229,12 @@ const stocktakePosted = (c: Company, event: EventPayload<'inventory.stocktake_po
   withCompany(c.companyId, () => onOpeningStocktakePosted(event));
 
 /** Chạy một sự kiện qua `processMessage` thật, handler đăng ký như `channel/index.ts`, trong `withCompany` như `runShared`. */
-async function viaConsumer(c: Company, type: 'inventory.stocktake_posted' | 'fulfillment.allocation_done', payload: unknown) {
+async function viaConsumer(
+  c: Company,
+  type: 'inventory.stocktake_posted' | 'fulfillment.allocation_done',
+  payload: unknown,
+  opts: { attempt?: number; retryDelaysMs?: number[]; dlq?: string[] } = {},
+) {
   const envelope = { eventId: randomUUID(), type, companyId: c.companyId, aggregateId: randomUUID(), occurredAt: new Date().toISOString(), payload };
   const message: IncomingMessage = {
     topic: `commerio.${type.split('.')[0]}`,
@@ -212,7 +247,7 @@ async function viaConsumer(c: Company, type: 'inventory.stocktake_posted' | 'ful
   const handler = type === 'inventory.stocktake_posted' ? handleStocktakePosted : handleAllocationDone;
   const deps: ProcessDeps = {
     spec: { consumer: 'test', scope: 'shared', handlers: new Map([[type, handler as never]]) },
-    retryDelaysMs: [],
+    retryDelaysMs: opts.retryDelaysMs ?? [],
     runHandler: async (e, h) => {
       try {
         await withCompany(c.companyId, () => h(e));
@@ -221,15 +256,16 @@ async function viaConsumer(c: Company, type: 'inventory.stocktake_posted' | 'ful
       }
     },
     sendToDlq: async (_m, reason) => {
-      throw new Error(`DLQ: ${reason}`);
+      if (!opts.dlq) throw new Error(`DLQ: ${reason}`);
+      opts.dlq.push(reason);
     },
   };
-  expect(await processMessage(message, 0, deps)).toEqual({ kind: 'done' });
+  return processMessage(message, opts.attempt ?? 0, deps);
 }
 
 async function shopRow(id: string) {
   const { rows } = await testPool().query(
-    'select status, order_cutoff_at, opening_stocktake_id, opening_stocktake_number, open_orders_pulled_at, allocation_stocktake_id, allocated_stocktake_id, version from channel.shops where id = $1',
+    'select status, order_cutoff_at, opening_stocktake_id, opening_stocktake_number, open_orders_pulled_at, allocation_stocktake_id, version from channel.shops where id = $1',
     [id],
   );
   return rows[0];
@@ -302,6 +338,68 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     // Lượt đơn mở chưa chạy lại thì vẫn giữ tồn: đồng bộ chỉ đẩy giá.
     await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
     expect(updatePriceQuantity.mock.calls.flatMap((call) => call[1]).some((i) => 'quantity' in i)).toBe(false);
+  });
+
+  it('gọi settleOpeningStocktake đúng một lần, trong giao dịch thoát chờ, sau khi đặt openingStocktake = null, đúng tham số', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    const event = posted(shopId, documentId);
+
+    await stocktakePosted(c, event);
+
+    expect(settle.calls).toEqual([{ shopId, documentId, countedAt: new Date(event.countedAt), openingStocktakeIdInTx: null }]);
+    // Phát lại, phiếu khác, nguồn khác: không gọi thêm.
+    await stocktakePosted(c, event);
+    await stocktakePosted(c, posted(shopId, randomUUID()));
+    await stocktakePosted(c, posted(shopId, documentId, { source: null }));
+    expect(settle.calls).toHaveLength(1);
+  });
+
+  it('settleOpeningStocktake lỗi: cả giao dịch rollback (vẫn chờ kiểm kê, không nhật ký, không xếp việc); consumer thử lại thì thoát chờ', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    const before = await shopRow(shopId);
+    const event = posted(shopId, documentId);
+    settle.failNext = true;
+
+    expect(await viaConsumer(c, 'inventory.stocktake_posted', event, { retryDelaysMs: [1_000] })).toEqual({ kind: 'retry', delayMs: 1_000 });
+
+    expect(await shopRow(shopId)).toEqual(before);
+    expect(await auditCount(shopId)).toBe(0);
+    expect(await openPullJobs(shopId)).toBe(0);
+    const view = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(view.body.openingStocktake).toMatchObject({ documentId });
+
+    expect(await viaConsumer(c, 'inventory.stocktake_posted', event, { attempt: 1, retryDelaysMs: [1_000] })).toEqual({ kind: 'done' });
+    expect(await shopRow(shopId)).toMatchObject({ opening_stocktake_id: null, allocation_stocktake_id: documentId });
+    expect(await openPullJobs(shopId)).toBe(1);
+    expect(settle.calls.map((call) => call.openingStocktakeIdInTx)).toEqual([null, null]);
+  });
+
+  it('settleOpeningStocktake lỗi tới hết số lần thử: vào DLQ, gian hàng vẫn chờ, phiếu posted; lập lại phiếu trả 409 shop_not_awaiting_stocktake', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const { shopId, documentId } = await waitingShop(c);
+    const before = await shopRow(shopId);
+    settle.failNext = true;
+    const dlq: string[] = [];
+
+    expect(await viaConsumer(c, 'inventory.stocktake_posted', posted(shopId, documentId), { dlq })).toEqual({ kind: 'done' });
+
+    expect(dlq).toEqual([expect.stringMatching(/settleOpeningStocktake lỗi giả/)]);
+    expect(await shopRow(shopId)).toEqual(before);
+    docStatus.set(documentId, 'posted');
+    const view = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(view.body.openingStocktake).toEqual({ documentId, number: expect.any(String), status: 'posted' });
+    const res = await app().post(`/api/v1/channel/shops/${shopId}/opening-stocktake`).set(auth(c));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('shop_not_awaiting_stocktake');
+  });
+
+  it('channel.shops không có cột allocated_stocktake_id (bỏ khỏi thiết kế, Documents/19 `shops`)', async () => {
+    const { rows } = await testPool().query(
+      "select column_name from information_schema.columns where table_schema = 'channel' and table_name = 'shops' and column_name like 'allocat%'",
+    );
+    expect(rows.map((r) => r.column_name)).toEqual(['allocation_stocktake_id']);
   });
 
   it('I1: đơn đặt giữa lúc thiết lập và countedAt, chưa có trong DB, vẫn về qua lượt đơn còn mở chạy lại; xong mới đẩy tồn', async () => {
@@ -439,7 +537,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
     expect(await listingSyncJobs(shopId)).toBe(0);
 
     await allocated(c, documentId);
-    expect(await shopRow(shopId)).toMatchObject({ allocation_stocktake_id: null, allocated_stocktake_id: documentId });
+    expect((await shopRow(shopId)).allocation_stocktake_id).toBeNull();
     expect(await listingSyncJobs(shopId)).toBe(1);
     const done = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
     expect(done.body.setup.steps.find((s: { key: string }) => s.key === 'allocate')).toEqual({ key: 'allocate', status: 'done', blockedBy: null });
@@ -458,30 +556,27 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
   it('qua consumer thật: allocation_done có cause, variantIds rỗng (đếm khớp sổ) vẫn thoát chờ; không có cause thì không', async () => {
     const c = await createCompany({ optionalModules: ['channel'] });
     const { shopId, documentId } = await waitingShop(c);
-    await viaConsumer(c, 'inventory.stocktake_posted', posted(shopId, documentId));
+    expect(await viaConsumer(c, 'inventory.stocktake_posted', posted(shopId, documentId))).toEqual({ kind: 'done' });
     expect((await shopRow(shopId)).allocation_stocktake_id).toBe(documentId);
 
-    await viaConsumer(c, 'fulfillment.allocation_done', { variantIds: [variant.id] });
+    expect(await viaConsumer(c, 'fulfillment.allocation_done', { variantIds: [variant.id] })).toEqual({ kind: 'done' });
     expect((await shopRow(shopId)).allocation_stocktake_id).toBe(documentId);
-    await viaConsumer(c, 'fulfillment.allocation_done', { variantIds: [], cause: { type: 'stocktake', documentId } });
+    const cause = { variantIds: [], cause: { type: 'stocktake', documentId } };
+    expect(await viaConsumer(c, 'fulfillment.allocation_done', cause)).toEqual({ kind: 'done' });
+    expect((await shopRow(shopId)).allocation_stocktake_id).toBeNull();
+    // Nhận trùng: `allocation_stocktake_id` đã null nên tự bị bỏ qua (Documents/19 `shops`).
+    expect(await viaConsumer(c, 'fulfillment.allocation_done', cause)).toEqual({ kind: 'done' });
     expect((await shopRow(shopId)).allocation_stocktake_id).toBeNull();
   });
 
-  it('allocation_done của phiếu tới trước stocktake_posted (hai topic): ghi lại, thoát chờ kiểm kê thì không vào chờ phân hàng', async () => {
+  it('allocation_done có cause khi gian hàng còn chờ kiểm kê: không đổi gì (sự kiện thật chỉ phát trong giao dịch thoát chờ)', async () => {
     const c = await createCompany({ optionalModules: ['channel'] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
 
     await allocated(c, documentId, []);
-    // Vẫn chờ kiểm kê, không tăng version (việc nền).
-    expect(await shopRow(shopId)).toMatchObject({ opening_stocktake_id: documentId, allocated_stocktake_id: documentId, version: before.version });
 
-    await stocktakePosted(c, posted(shopId, documentId));
-    expect(await shopRow(shopId)).toMatchObject({ opening_stocktake_id: null, allocation_stocktake_id: null });
-    // Chỉ còn chờ lượt đơn mở chạy lại; xong thì lượt đó xếp đồng bộ và đẩy tồn.
-    await runOpenOrderPull({ companyId: c.companyId, shopId });
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
-    expect(quantityPushes()).toBe(1);
+    expect(await shopRow(shopId)).toEqual(before);
   });
 
   it('công ty khác (RLS) gửi cause trùng phiếu: không thoát chờ', async () => {
@@ -492,7 +587,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
 
     await allocated(other, documentId);
 
-    expect(await shopRow(shopId)).toMatchObject({ allocation_stocktake_id: documentId, allocated_stocktake_id: null });
+    expect((await shopRow(shopId)).allocation_stocktake_id).toBe(documentId);
   });
 
   it('allocation_done tới trước khi lượt đơn mở xong: thoát chờ nhưng chưa xếp đồng bộ; lượt đơn mở xong mới xếp và đẩy tồn', async () => {

@@ -192,35 +192,20 @@ export async function lockCompanySetup(companyId: string): Promise<void> {
 }
 
 /**
- * Nhận `fulfillment.allocation_done` có `cause.documentId` (Documents/21 §11.2, §18.6.11): ghi `allocated_stocktake_id`
- * cho gian hàng có phiếu đầu kỳ này, đang chờ kiểm kê (sự kiện tới trước `inventory.stocktake_posted`) hoặc đang chờ phân
- * hàng; gian hàng đang chờ phân hàng theo đúng phiếu này thì thoát chờ (`allocation_stocktake_id = null`). Một câu
- * `UPDATE` nên khoá dòng và xét lại điều kiện trên bản mới nhất khi đua với thoát chờ kiểm kê (`lockShopRow`). Trả các
- * gian hàng vừa thoát chờ phân hàng. Không tăng `version` (việc nền, như `markStockPushed`). Gọi trong `withCompany`.
+ * Nhận `fulfillment.allocation_done` có `cause.documentId` (Documents/21 §11.2, §18.6.11): gian hàng đang chờ phân hàng
+ * theo đúng phiếu này thì thoát chờ (`allocation_stocktake_id = null`). Sự kiện do `settleOpeningStocktake` phát trong
+ * giao dịch thoát chờ kiểm kê nên chỉ tới sau khi giao dịch đó commit; nhận trùng thì cột đã null, không trúng dòng nào
+ * (Documents/19 `shops`). Trả các gian hàng vừa thoát chờ. Không tăng `version` (việc nền, như `markStockPushed`). Gọi
+ * trong `withCompany`.
  */
 export async function settleStocktakeAllocation(
   documentId: string,
-): Promise<{ id: string; status: ShopStatus; openOrdersPulledAt: Date | null; settled: boolean }[]> {
-  const rows = await getDb()
+): Promise<{ id: string; status: ShopStatus; openOrdersPulledAt: Date | null }[]> {
+  return getDb()
     .update(shops)
-    .set({
-      allocatedStocktakeId: documentId,
-      allocationStocktakeId: sql`case when ${shops.allocationStocktakeId} = ${documentId} then null else ${shops.allocationStocktakeId} end`,
-      updatedAt: sql`now()`,
-    })
-    .where(
-      and(
-        sql`(${shops.openingStocktakeId} = ${documentId} or ${shops.allocationStocktakeId} = ${documentId})`,
-        sql`${shops.allocatedStocktakeId} is distinct from ${documentId}`,
-      ),
-    )
-    .returning({
-      id: shops.id,
-      status: shops.status,
-      openOrdersPulledAt: shops.openOrdersPulledAt,
-      openingStocktakeId: shops.openingStocktakeId,
-    });
-  return rows.map(({ openingStocktakeId, ...r }) => ({ ...r, settled: openingStocktakeId === null }));
+    .set({ allocationStocktakeId: null, updatedAt: sql`now()` })
+    .where(eq(shops.allocationStocktakeId, documentId))
+    .returning({ id: shops.id, status: shops.status, openOrdersPulledAt: shops.openOrdersPulledAt });
 }
 
 /** Đánh dấu lượt đẩy tồn đầu tiên sau thiết lập đã chạy (§18.7.7 `push_stock`). Không tăng `version`. */

@@ -1,12 +1,15 @@
 // Kiểm kê đầu kỳ của gian hàng sau thiết lập (#198 phần 2; Documents/21 §11.2 `inventory.stocktake_posted`,
-// `fulfillment.allocation_done`, §18.6.2, §18.6.11; Thành chốt 09/11/2026). Phiếu ghi sổ thì gian hàng thoát chờ kiểm kê
-// và sang chờ phân hàng; thoát chờ phân hàng khi nhận `allocation_done` có `cause.documentId` trùng phiếu. Đẩy tồn lần đầu
+// `fulfillment.allocation_done`, §11.3 `settleOpeningStocktake`, §18.6.2, §18.6.11; Thành chốt 09/11, 11/11/2026). Phiếu
+// ghi sổ thì gian hàng thoát chờ kiểm kê và, trong cùng giao dịch, gọi `settleOpeningStocktake` của fulfillment (bù kiện
+// hoãn trừ, phân hàng, phát `allocation_done` có `cause`); gian hàng sang chờ phân hàng, thoát khi nhận `allocation_done`
+// có `cause.documentId` trùng phiếu. Đẩy tồn lần đầu
 // cần cả hai: lượt kéo đơn còn mở theo mốc mới đã xong và đã thoát chờ phân hàng. Phiếu bị từ chối hoặc huỷ thì lập lại
 // qua `POST /channel/shops/:id/opening-stocktake`. Consumer chỉ ghi DB (đúng một lần nhờ `processed_events`), không gọi sàn.
 import { type EventEnvelope, type EventPayload, recordAudit } from '../../../core/index.ts';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
+import { settleOpeningStocktake } from '../../../order/index.ts';
 import { lockShopRow, settleStocktakeAllocation, updateShop } from '../repository/shops.ts';
 import { sendListingSync, sendOpenOrderPull } from './shop-jobs.ts';
 import { type Actor, ownShop, type Shop, shopView } from './shops.ts';
@@ -29,13 +32,16 @@ function assertCountedAt(event: EventPayload<'inventory.stocktake_posted'>, now:
 }
 
 /**
- * Phiếu nguồn `shop_setup` của gian hàng vừa ghi sổ (§18.6.2, §18.6.11): `openingStocktake = null`, `orderCutoffAt =
- * countedAt`, `open_orders_pulled_at = null`, chờ phân hàng (`allocation_stocktake_id = documentId`), ghi nhật ký hệ thống,
- * gian hàng `active` thì xếp lại lượt kéo đơn còn mở (không `active` thì nối lại sẽ xếp, `resumeOpenOrderPull`).
+ * Phiếu nguồn `shop_setup` của gian hàng vừa ghi sổ (§18.6.2, §18.6.11), trong một giao dịch: `openingStocktake = null`,
+ * `orderCutoffAt = countedAt`, `open_orders_pulled_at = null`, chờ phân hàng (`allocation_stocktake_id = documentId`), rồi
+ * gọi `settleOpeningStocktake` của fulfillment (§11.3, sau khi đặt `openingStocktake = null`), ghi nhật ký hệ thống, gian
+ * hàng `active` thì xếp lại lượt kéo đơn còn mở (việc pg-boss đi chung giao dịch nên chỉ chạy nền sau commit, không gọi
+ * sàn ở đây; không `active` thì nối lại sẽ xếp, `resumeOpenOrderPull`).
  *
- * `allocation_done` của phiếu này đã tới trước (`allocated_stocktake_id` trùng, hai topic khác nhau) thì không vào chờ
- * phân hàng. Phiếu khác, nguồn khác, gian hàng công ty khác (RLS ẩn) hay đã xử lý thì bỏ qua. Gọi trong `withCompany`
- * của sự kiện. Khoá dòng gian hàng (`FOR NO KEY UPDATE`): giao dịch nhận đơn đọc `opening_stocktake_id` dưới `FOR SHARE`
+ * Bước nào lỗi thì cả giao dịch rollback, gian hàng vẫn chờ kiểm kê, consumer thử lại; hết lần thử thì DLQ (phiếu ở
+ * `posted` mà gian hàng vẫn chờ, §18.6.11). Phiếu khác, nguồn khác, gian hàng công ty khác (RLS ẩn) hay đã xử lý thì bỏ
+ * qua, không gọi fulfillment. Gọi trong `withCompany` của sự kiện. Khoá dòng gian hàng (`FOR NO KEY UPDATE`) trước khoá
+ * của fulfillment (thứ tự "gian hàng → kiện" như kéo đơn): giao dịch nhận đơn đọc `opening_stocktake_id` dưới `FOR SHARE`
  * (`lockShopForOrders`) nên không nhận đơn với chế độ cũ sau khi thoát.
  */
 export async function onOpeningStocktakePosted(event: EventPayload<'inventory.stocktake_posted'>): Promise<void> {
@@ -53,7 +59,7 @@ export async function onOpeningStocktakePosted(event: EventPayload<'inventory.st
       'Thời điểm đếm của phiếu đầu kỳ trước lúc thiết lập gian hàng',
     );
   }
-  const allocationStocktakeId = shop.allocatedStocktakeId === event.documentId ? null : event.documentId;
+  const allocationStocktakeId = event.documentId;
   const updated = await updateShop(
     shop.id,
     { version: shop.version },
@@ -61,6 +67,8 @@ export async function onOpeningStocktakePosted(event: EventPayload<'inventory.st
   );
   // Đã khoá dòng nên `version` không đổi giữa chừng; không trúng là lỗi thật, ném để consumer thử lại.
   if (!updated) throw new Error(`Không cập nhật được gian hàng ${shop.id} khi thoát chờ kiểm kê`);
+  const settled = await settleOpeningStocktake({ shopId: shop.id, documentId: event.documentId, countedAt: orderCutoffAt });
+  logger.info({ shopId: shop.id, documentId: event.documentId, ...settled }, 'Thoát chờ kiểm kê, fulfillment đã chốt phiếu đầu kỳ');
   await recordAudit({
     companyId,
     actorId: null,
@@ -86,7 +94,7 @@ export async function onAllocationDone(event: EventPayload<'fulfillment.allocati
   const shops = await settleStocktakeAllocation(event.cause.documentId);
   if (!shops.length) logger.debug({ documentId: event.cause.documentId }, 'allocation_done không trùng phiếu đầu kỳ của gian hàng nào, bỏ qua');
   for (const shop of shops) {
-    if (shop.settled && shop.status === 'active' && shop.openOrdersPulledAt) await sendListingSync(companyId, shop.id);
+    if (shop.status === 'active' && shop.openOrdersPulledAt) await sendListingSync(companyId, shop.id);
   }
 }
 
