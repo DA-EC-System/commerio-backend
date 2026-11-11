@@ -5,6 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { findShopRow, recordOpenOrderPullError } from '../repository/shops.ts';
 import { syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
+import { pullShopReturns } from './return-pull.ts';
 import type { ProductPort } from './product-port.ts';
 import type { ShopJob } from './shop-jobs.ts';
 import { stopShopJobs } from './shop-jobs.ts';
@@ -38,7 +39,11 @@ export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
 }
 
 export function runOrderPull(job: ShopJob): Promise<void> {
-  return onActiveShop(job, 'kéo đơn', () => pullShopOrders(job.companyId, job.shopId));
+  // Yêu cầu trả kéo sau đơn (#202): đơn mới về trước thì yêu cầu của nó gắn được ngay trong lượt.
+  return onActiveShop(job, 'kéo đơn', async () => {
+    await pullShopOrders(job.companyId, job.shopId);
+    await pullShopReturns(job.companyId, job.shopId);
+  });
 }
 
 /** Lỗi khác mất token, ngắt gian hàng thì ghi `last_error` rồi ném tiếp để pg-boss thử lại (#198 P3). */

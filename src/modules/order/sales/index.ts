@@ -46,3 +46,5 @@ export { completeDueOrdersOnce } from './service/complete.ts';
 // Yêu cầu trả (#202, Documents/21 §11.3).
 export { hasOpenReturns } from './service/return-boundary.ts';
 export type { MarketplaceReturns } from './service/marketplace-returns.ts';
+// Yêu cầu trả từ sàn (#202): channel kéo về gọi trong `withCompany`.
+export { ingestMarketplaceReturn, type PlatformReturn, type ReturnIngestOutcome } from './service/return-ingest.ts';

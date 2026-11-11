@@ -466,7 +466,12 @@ export type RemoteReturnStatus = 'requested' | 'rejected' | 'refund_only' | 'awa
 
 /** Một món trong yêu cầu trả hay lần huỷ của sàn. Tiền là chuỗi thập phân, trống là null. */
 export interface RemoteAftersaleLine {
+  /** Mã món của đơn (khớp `order_lines.external_line_id`). */
   externalLineId: string;
+  /** Mã dòng đơn ngược của sàn khi khác mã món (Lazada `reverse_order_line_id`, dùng khi quyết trên sàn, #202). */
+  externalReturnLineId?: string | null;
+  /** Số món của dòng; không có là 1 (mỗi món một dòng). */
+  quantity?: number;
   externalSkuId: string | null;
   sellerSku: string | null;
   refundAmount: string | null;
@@ -505,6 +510,10 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
+  ofcStatus?: string | null;
+  /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
+  returnTo?: 'warehouse' | 'merchant' | null;
 }
 
 /**

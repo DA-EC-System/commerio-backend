@@ -169,3 +169,12 @@ export async function findReturnByInspection(inspectionId: string): Promise<Retu
   const [row] = await getDb().select().from(returnRequests).where(eq(returnRequests.inspectionId, inspectionId)).for('update');
   return row;
 }
+
+/** Dòng đơn theo mã món của sàn (gắn dòng yêu cầu trả từ sàn vào dòng đơn). */
+export async function orderLinesByExternal(orderId: string, externalLineIds: readonly string[]) {
+  if (!externalLineIds.length) return [];
+  return getDb()
+    .select({ id: orderLines.id, externalLineId: orderLines.externalLineId, variantId: orderLines.variantId, unitPrice: orderLines.unitPrice })
+    .from(orderLines)
+    .where(and(eq(orderLines.orderId, orderId), inArray(orderLines.externalLineId, [...externalLineIds])));
+}
