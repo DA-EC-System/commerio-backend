@@ -143,6 +143,17 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(seenSince[0]!.getTime()).toBe(shop.rows[0].last_return_sync_at.getTime() - 2 * 60_000);
   });
 
+  it('kéo lại yêu cầu không đổi gì thì không ghi, không tăng version (review #202 mục 9)', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const before = await requestOf(r.externalId);
+    expect(await pullShopReturns(company.companyId, shopId)).toMatchObject({ unchanged: 1 });
+    const after = await requestOf(r.externalId);
+    expect([after.version, after.updated_at]).toEqual([before.version, before.updated_at]);
+  });
+
   it('sàn đồng ý trả: requested → awaiting_return qua `accept` nguồn sàn; bản cũ hơn bị bỏ', async () => {
     const { externalOrderId } = await marketplaceOrder();
     const r = remoteReturn(externalOrderId);

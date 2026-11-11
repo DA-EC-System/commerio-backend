@@ -1,6 +1,7 @@
 // Yêu cầu trả từ sàn (#202, Documents/25 §9, Documents/21 §20.1): channel kéo về rồi gọi `ingestMarketplaceReturn` trong
 // `withCompany`; kiểm hàng hoàn xong (`inventory.return_inspected`) thì đóng yêu cầu. Sàn là nguồn của trạng thái yêu cầu
 // trước khi hàng về; app là nguồn của nhận hàng (quét) và kiểm hàng.
+import { Decimal } from 'decimal.js';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { deliverForReturn, packageLinesOfOrderLines } from '../../fulfillment/index.ts';
 import { distributeResell, refundAmountOf, type ReturnStatus, syncAction, syncTarget, weightedUnitCost } from '../domain/return.ts';
@@ -150,6 +151,16 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
   return created;
 }
 
+/** Trường khác giá trị đang lưu (tiền so theo số, thời điểm theo mốc): kéo lại không đổi gì thì không ghi, không tăng `version`. */
+function changedFields(row: ReturnRow, patch: ReturnPatch): ReturnPatch {
+  const same = (a: unknown, b: unknown) => {
+    if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+    if (typeof a === 'string' && typeof b === 'string' && /^-?\d+(\.\d+)?$/.test(a) && /^-?\d+(\.\d+)?$/.test(b)) return new Decimal(a).equals(b);
+    return a === b;
+  };
+  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => !same(row[k as keyof ReturnRow], v))) as ReturnPatch;
+}
+
 /** Đưa yêu cầu tới trạng thái sàn báo nếu máy trạng thái cho phép; không cho thì bật Cần xử lý, giữ trạng thái app. */
 async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIngestOutcome> {
   const stale = row.externalUpdatedAt !== null && r.updatedAt.getTime() < row.externalUpdatedAt.getTime();
@@ -169,9 +180,11 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
     );
     return 'updated';
   }
-  const changed = row.rawMarketplaceStatus !== r.rawStatus || row.ofcStatus !== r.ofcStatus || row.disputeInProgress !== r.disputeInProgress;
-  await updateReturnAt(row.id, row.version, row.status, fields);
-  return changed ? 'updated' : 'unchanged';
+  const diff = changedFields(row, fields);
+  if (!Object.keys(diff).length) return 'unchanged';
+  await updateReturnAt(row.id, row.version, row.status, diff);
+  const shown = ['rawMarketplaceStatus', 'ofcStatus', 'disputeInProgress', 'returnTo', 'returnTrackingCode', 'refundAmount'] as const;
+  return shown.some((k) => k in diff) ? 'updated' : 'unchanged';
 }
 
 /**
