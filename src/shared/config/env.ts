@@ -77,6 +77,25 @@ const EnvSchema = z.object({
   SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),
   // Người gửi, vd `Commerio <ten@gmail.com>`; Gmail đòi trùng tài khoản đăng nhập SMTP.
   MAIL_FROM: z.string().min(3).optional(),
+  // Kho tệp qua API S3 (#212): Cloudflare R2, `https://<account id>.r2.cloudflarestorage.com`. Thiếu một trong
+  // endpoint, cặp khoá, hai bucket thì `POST /files/uploads` trả 503 `storage_unavailable`.
+  S3_ENDPOINT: z.url().optional(),
+  // R2 không dùng region nhưng SDK bắt buộc có.
+  S3_REGION: z.string().min(1).default('auto'),
+  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  // Bucket công khai (ảnh sản phẩm, gắn tên miền riêng) và bucket riêng (đính kèm chứng từ, chỉ xem qua link ký sẵn).
+  S3_PUBLIC_BUCKET: z.string().min(1).optional(),
+  S3_PRIVATE_BUCKET: z.string().min(1).optional(),
+  // Gốc URL công khai của bucket công khai, vd `https://files.letsrides.app`; link ảnh là `<gốc>/<storage_key>`.
+  S3_PUBLIC_URL: z.url().optional(),
+  // Tiền tố tên tệp theo môi trường (`dev`, `staging`) để máy dev và staging dùng chung bucket không lẫn tệp.
+  S3_KEY_PREFIX: z
+    .string()
+    .regex(/^[a-z0-9-]+$/, 'Chỉ gồm chữ thường, số, gạch ngang')
+    .default('dev'),
+  // Trần tổng dung lượng tệp của mọi công ty, byte. Mặc định 8 GiB: gói miễn phí của R2 là 10 GB, chừa 20%.
+  STORAGE_QUOTA_BYTES: z.coerce.number().int().positive().default(8 * 1024 ** 3),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

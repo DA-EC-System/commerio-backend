@@ -30,12 +30,15 @@
     "platform-admin": "node --env-file-if-exists=.env db/platform-admin.ts",
     "smoke:lazada": "node --env-file-if-exists=.env scripts/smoke/lazada.ts",
     "smoke:tiktok": "node --env-file-if-exists=.env scripts/smoke/tiktok.ts",
+    "smoke:r2": "node --env-file-if-exists=.env scripts/smoke/r2.ts",
     "mock:lazada": "node --env-file-if-exists=.env scripts/lazada-mock/index.ts",
     "infra:up": "docker compose -f deploy/compose.yaml up -d",
     "infra:down": "docker compose -f deploy/compose.yaml down"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@aws-sdk/client-s3": "3.1165.0",
+    "@aws-sdk/s3-request-presigner": "3.1165.0",
     "@confluentinc/kafka-javascript": "^1.11.0",
     "@node-rs/argon2": "^2.2.2",
     "cookie-parser": "^1.4.7",
