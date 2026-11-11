@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ShopCallbackResult, ShopDetail, ShopDisconnectConflict, ShopList } from '#src/modules/channel/channel/api/schemas.ts';
 import { MarketplaceError, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -291,6 +291,43 @@ describe('§18.7.4 previousStatus, remoteProductCount và remoteSkuCount ở k�
     expect((await connect(seller('full'), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteProductCount: 305, remoteSkuCount: 812 });
     expect((await connect(seller('down'), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteProductCount: null, remoteSkuCount: null });
     expect(listed).toBe(0);
+  });
+
+  // Nhánh quá hạn của `remoteCounts` (`REMOTE_COUNT_MS` 10 giây). Không chờ 10 giây thật và không giả mọi timer (pg,
+  // supertest cũng dùng `setTimeout`): ghi lại hàm hẹn 10 giây gần nhất; `remoteCounts` hẹn giờ rồi gọi `countRemote`
+  // ngay trong cùng một lượt đồng bộ, nên lúc `countRemote` chạy thì hàm vừa ghi chính là hạn của lần đếm này.
+  it('countRemote không trả lời trong hạn 10 giây: vẫn nối được, cả hai số null', async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    let lastTenSeconds: (() => void) | undefined;
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number, ...args: unknown[]) => {
+      if (ms === 10_000) lastTenSeconds = fn;
+      return realSetTimeout(fn, ms, ...args);
+    }) as typeof setTimeout);
+    let hung = 0;
+    registerAdapter(
+      'tiktok',
+      fakeAdapter({
+        async getSeller(accessToken) {
+          return { externalShopId: accessToken.slice(4), shopName: 'Shop sàn không trả lời', region: 'VN' };
+        },
+        countRemote() {
+          hung++;
+          const expire = lastTenSeconds;
+          if (expire) setImmediate(expire);
+          return new Promise(() => {});
+        },
+      }),
+    );
+    try {
+      const started = Date.now();
+      const body = await connect(seller(), 'tiktok');
+      expect(hung).toBe(1);
+      expect(Date.now() - started).toBeLessThan(9_000);
+      expect(body.shops[0]).toMatchObject({ created: true, previousStatus: null, remoteProductCount: null, remoteSkuCount: null });
+      expect(body.shop.status).toBe('connecting');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
 });

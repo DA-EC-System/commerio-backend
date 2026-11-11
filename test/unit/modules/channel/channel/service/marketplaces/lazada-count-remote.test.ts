@@ -33,6 +33,19 @@ describe('Lazada: đếm sản phẩm lúc nối bằng `total_products`, số p
     expect(await createLazadaAdapter(config, fakeLazada({})).countRemote!('t')).toEqual({ productCount: 0, skuCount: null });
   });
 
+  // Hợp đồng §18.7.4: BE không trả 0 thay cho lỗi. Sàn bỏ `total_products` khi không có sản phẩm thì `data` vẫn là object.
+  it.each([
+    ['vắng', undefined],
+    ['null', null],
+    ['chuỗi', 'oops'],
+    ['mảng', []],
+  ])('phản hồi thành công mà `data` %s thì `unexpected_response`, không coi là 0', async (_name, data) => {
+    await expect(createLazadaAdapter(config, fakeLazada(data)).countRemote!('t')).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'unexpected_response',
+    });
+  });
+
   it.each([
     ['thiếu tổng mà có sản phẩm', { products: [product] }],
     ['tổng âm', { total_products: -1, products: [] }],

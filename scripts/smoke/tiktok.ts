@@ -366,7 +366,10 @@ const commands: Record<string, () => Promise<void> | void> = {
   // skus [shopId] [sellerSku ...]
   skus: () => skus(args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined, args.filter((a, i) => !(i === 0 && /^\d+$/.test(a)))),
   // products [shopId]: mọi SKU như bước ghép ở thiết lập (#282, chỉ đọc)
-  counts: () => counts(args[0]),
+  counts: () => {
+    if (args[0] !== undefined && !/^\d+$/.test(args[0])) throw new Error('shopId là mã shop TikTok, chỉ gồm chữ số');
+    return counts(args[0]);
+  },
   products: () => {
     if (args[0] !== undefined && !/^\d+$/.test(args[0])) throw new Error('shopId là mã shop TikTok, chỉ gồm chữ số');
     return products(args[0]);

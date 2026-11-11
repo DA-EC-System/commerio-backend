@@ -54,7 +54,66 @@ describe('TikTok: đếm sản phẩm và phân loại lúc nối (`countRemote`
 
   it('gian hàng không có sản phẩm: cả hai số là 0', async () => {
     expect(await createTiktokAdapter(config, fakeFetch(ok({ total_count: 0, products: [] }))).countRemote!(token)).toEqual({ productCount: 0, skuCount: 0 });
-    expect(await createTiktokAdapter(config, fakeFetch(ok({}))).countRemote!(token)).toEqual({ productCount: 0, skuCount: 0 });
+  });
+
+  // Hợp đồng §18.7.4: BE không trả 0 thay cho lỗi. Chỉ coi là gian hàng rỗng khi sàn có trả `total_count` hoặc danh sách
+  // `products` (rỗng); `data` vắng, không phải object, hoặc không có cả hai thì không có gì để đếm.
+  it.each([
+    ['vắng', undefined],
+    ['null', null],
+    ['chuỗi', 'oops'],
+    ['mảng', []],
+    ['object không có `total_count` lẫn `products`', {}],
+    ['`products` không phải mảng, không có `total_count`', { products: {} }],
+  ])('phản hồi thành công mà `data` %s thì `unexpected_response`, không coi là 0', async (_name, data) => {
+    const fetchFn = fakeFetch(ok(data));
+    await expect(createTiktokAdapter(config, fetchFn).countRemote!(token)).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('lời gọi `DELETED` thành công mà `data` vắng thì `unexpected_response`, không coi là 0 sản phẩm đã xoá', async () => {
+    const fetchFn = fakeFetch(ok({ total_count: 305, products: fullPage() }), ok(undefined));
+    await expect(createTiktokAdapter(config, fetchFn).countRemote!(token)).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });
+  });
+
+  it('`data` có mà `products` rỗng, không có `total_count`: cả hai số là 0', async () => {
+    expect(await createTiktokAdapter(config, fakeFetch(ok({ products: [] }))).countRemote!(token)).toEqual({ productCount: 0, skuCount: 0 });
+  });
+
+  it('`skus` của sản phẩm không phải mảng thì sản phẩm đó tính 0 phân loại, `skuCount` không thành NaN', async () => {
+    const products = [product('1', 'ACTIVATE', [sku('11'), sku('12')]), { ...product('2', 'ACTIVATE', []), skus: { id: '21' } }, { id: '3', title: 'SP 3', status: 'ACTIVATE' }];
+    expect(await createTiktokAdapter(config, fakeFetch(ok({ total_count: 3, products }))).countRemote!(token)).toEqual({ productCount: 3, skuCount: 2 });
+  });
+
+  it('đúng 100 sản phẩm, `total_count` 100: trang đầu chứa hết, một lời gọi, có cả hai số', async () => {
+    const fetchFn = fakeFetch(ok({ total_count: 100, next_page_token: 'p2', products: fullPage() }));
+    expect(await createTiktokAdapter(config, fetchFn).countRemote!(token)).toEqual({ productCount: 100, skuCount: 100 });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('trang đầy 100 sản phẩm, `total_count` 100, có lẫn `DELETED`: một lời gọi, bỏ sản phẩm đã xoá và SKU của nó', async () => {
+    const products = fullPage().map((p, i) => (i % 10 === 0 ? { ...p, status: 'DELETED' } : p));
+    const fetchFn = fakeFetch(ok({ total_count: 100, next_page_token: 'p2', products }));
+    expect(await createTiktokAdapter(config, fetchFn).countRemote!(token)).toEqual({ productCount: 90, skuCount: 90 });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('`total_count` lớn hơn 0 mà `products` rỗng: không đếm trên trang, số sản phẩm = tổng trừ đã xoá, `skuCount` null', async () => {
+    const fetchFn = fakeFetch(ok({ total_count: 7, products: [] }), ok({ total_count: 2, products: [product('900', 'DELETED', [])] }));
+    expect(await createTiktokAdapter(config, fetchFn).countRemote!(token)).toEqual({ productCount: 5, skuCount: null });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(bodyOf(fetchFn, 1)).toBe('{"status":"DELETED"}');
+  });
+
+  it.each([1, 99])('sàn không trả `total_count` mà trang đầu chưa đầy (%i sản phẩm): coi trang là hết, đếm trên trang, một lời gọi', async (n) => {
+    const products = [...fullPage().slice(0, n - 1), product('d', 'DELETED', [sku('d1')]), product('x', 'ACTIVATE', [sku('x1'), sku('x2')])].slice(-n);
+    const live = products.filter((p) => p.status !== 'DELETED');
+    const fetchFn = fakeFetch(ok({ next_page_token: 'p2', products }));
+    expect(await createTiktokAdapter(config, fetchFn).countRemote!(token)).toEqual({
+      productCount: live.length,
+      skuCount: live.reduce((sum, p) => sum + p.skus.length, 0),
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
   it('hơn một trang: `skuCount` null, số sản phẩm trừ số đã xoá bằng lời gọi `DELETED` `page_size` 1; không lật trang', async () => {

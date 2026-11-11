@@ -593,13 +593,16 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // shop thử: số, đổi theo `filter`, và `all` (305) = live 7 + inactive 236 + rejected 59 + sold-out 3, không gồm
     // deleted (96), nên `filter=all` đã bỏ sản phẩm đã xoá. Không có sản phẩm nào thì sàn bỏ hẳn trường (gọi thật
     // `filter=pending`): coi là 0. Lazada không trả tổng số SKU (SKU chỉ có trong `products[].skus[]`, phải đọc hết các
-    // trang), nên `skuCount` luôn null ở đây.
+    // trang), nên `skuCount` luôn null ở đây. Phản hồi thành công mà `data` vắng hoặc không phải object thì `rejected`
+    // `unexpected_response`, không coi là 0 (§18.7.4: không trả 0 thay cho lỗi); `data` có mà thiếu `total_products` và
+    // không có sản phẩm nào mới là 0.
     async countRemote(accessToken): Promise<RemoteCounts> {
       const body = await call(config.apiUrl, '/products/get', { access_token: accessToken, filter: 'all', limit: '1', offset: '0' }, 'GET');
-      const data = body.data as { total_products?: unknown; products?: unknown[] } | undefined;
-      const raw = data?.total_products;
+      if (typeof body.data !== 'object' || body.data === null || Array.isArray(body.data)) throw new MarketplaceError('rejected', 'unexpected_response');
+      const data = body.data as { total_products?: unknown; products?: unknown };
+      const raw = data.total_products;
       if (raw === undefined || raw === null) {
-        if ((data?.products ?? []).length === 0) return { productCount: 0, skuCount: null };
+        if (!Array.isArray(data.products) || data.products.length === 0) return { productCount: 0, skuCount: null };
         throw new MarketplaceError('rejected', 'unexpected_response');
       }
       const total = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;

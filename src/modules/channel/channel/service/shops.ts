@@ -128,8 +128,8 @@ export interface ShopConnectionItem extends ShopConnectionResult {
   remoteProductCount: number | null;
   /**
    * Số phân loại (SKU của sàn) trên sàn, không tính phân loại của sản phẩm đã xoá; nghĩa cố định cho mọi sàn. null khi sàn
-   * không trả tổng và BE chưa đọc hết danh sách (Lazada lúc nối; TikTok khi gian hàng hơn 100 sản phẩm), hoặc khi
-   * `remoteProductCount` null.
+   * không trả tổng và BE chưa đọc hết danh sách (Lazada lúc nối; TikTok khi tổng sản phẩm của gian hàng, kể cả sản phẩm
+   * đã xoá, vượt một trang (100)), hoặc khi `remoteProductCount` null.
    */
   remoteSkuCount: number | null;
 }

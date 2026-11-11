@@ -327,24 +327,34 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return { labels, images };
   }
 
-  /** Một trang Search Products 202502. `totalCount` là số **sản phẩm** khớp `filter` (không phải số SKU), null khi sàn không trả số. */
+  /**
+   * Một trang Search Products 202502. `totalCount` là số **sản phẩm** khớp `filter` (không phải số SKU), null khi sàn không
+   * trả số. `listed`: `data` là object và có `products` dạng mảng (kể cả rỗng); false thì `products` trả ra là `[]` thay thế.
+   */
   async function searchPage(
     accessToken: string,
     filter: Row,
     pageSize: number,
     pageToken?: string,
-  ): Promise<{ products: Row[]; next: string; totalCount: number | null }> {
-    const data = await client.call<{ products?: Row[]; next_page_token?: unknown; total_count?: unknown }>(
-      'POST',
-      '/product/202502/products/search',
-      { token: accessToken, query: { page_size: pageSize, page_token: pageToken }, body: filter },
-    );
-    const raw = data?.total_count;
+  ): Promise<{ products: Row[]; next: string; totalCount: number | null; listed: boolean }> {
+    const res = await client.call<unknown>('POST', '/product/202502/products/search', {
+      token: accessToken,
+      query: { page_size: pageSize, page_token: pageToken },
+      body: filter,
+    });
+    const data = (typeof res === 'object' && res !== null && !Array.isArray(res) ? res : {}) as {
+      products?: unknown;
+      next_page_token?: unknown;
+      total_count?: unknown;
+    };
+    const listed = Array.isArray(data.products);
+    const raw = data.total_count;
     const total = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
     return {
-      products: data?.products ?? [],
-      next: typeof data?.next_page_token === 'string' ? data.next_page_token : '',
+      products: listed ? (data.products as Row[]) : [],
+      next: typeof data.next_page_token === 'string' ? data.next_page_token : '',
       totalCount: Number.isSafeInteger(total) && total >= 0 ? total : null,
+      listed,
     };
   }
 
@@ -378,16 +388,24 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
    *
    * Không ném `too_many_products`: gian hàng hơn 10000 sản phẩm vẫn có `total_count`. Sàn không trả `total_count` dạng số
    * mà trang đầu chưa đầy thì coi trang là hết; trang đầy thì `rejected` `unexpected_response`, không đoán số.
+   *
+   * Phản hồi thành công mà không có gì để đếm (`data` vắng hoặc không phải object, hoặc không có cả `total_count` dạng số
+   * lẫn `products` dạng mảng), ở lời gọi nào cũng `rejected` `unexpected_response`: 0 chỉ khi sàn trả tổng 0 hoặc danh
+   * sách rỗng (§18.7.4, không trả 0 thay cho lỗi). `skus` của một sản phẩm không phải mảng thì sản phẩm đó tính 0 SKU.
    */
   async function countRemote(accessToken: string): Promise<RemoteCounts> {
     const first = await searchPage(accessToken, { status: 'ALL' }, PRODUCT_PAGE);
-    if (first.totalCount === null && first.products.length >= PRODUCT_PAGE) throw new MarketplaceError('rejected', 'unexpected_response');
+    if (first.totalCount === null && (!first.listed || first.products.length >= PRODUCT_PAGE)) {
+      throw new MarketplaceError('rejected', 'unexpected_response');
+    }
     if (first.totalCount === null || first.totalCount <= first.products.length) {
       const live = first.products.filter((p) => p.status !== 'DELETED');
-      return { productCount: live.length, skuCount: live.reduce((sum, p) => sum + ((p.skus ?? []) as Row[]).length, 0) };
+      return { productCount: live.length, skuCount: live.reduce((sum, p) => sum + (Array.isArray(p.skus) ? p.skus.length : 0), 0) };
     }
     const deleted = await searchPage(accessToken, { status: 'DELETED' }, 1);
-    if (deleted.totalCount === null && deleted.products.length > 0) throw new MarketplaceError('rejected', 'unexpected_response');
+    if (deleted.totalCount === null && (!deleted.listed || deleted.products.length > 0)) {
+      throw new MarketplaceError('rejected', 'unexpected_response');
+    }
     return { productCount: Math.max(0, first.totalCount - (deleted.totalCount ?? 0)), skuCount: null };
   }
 
