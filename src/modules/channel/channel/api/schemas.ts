@@ -304,10 +304,57 @@ export const ChannelListing = z
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
+    pendingMapping: z
+      .object({
+        variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
+        requestedBy: z.object({ id: z.uuid(), name: z.string() }).strict(),
+        requestedAt: iso,
+      })
+      .strict()
+      .nullable()
+      .meta({ description: 'Ghép chờ CEO duyệt (21 §18.6.5); null khi không có' }),
     version: z.number().int(),
   })
   .strict()
   .meta({ id: 'ChannelListing' });
+
+export const RemoteSkusQuery = z.object({
+  unmatched: z.stringbool().optional().meta({ description: '`true`: chỉ SKU sàn chưa ghép' }),
+});
+
+export const RemoteSkuList = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          externalProductId: z.string(),
+          externalSkuId: z.string(),
+          sellerSku: z.string(),
+          title: z.string(),
+          matchedVariantId: z.uuid().nullable(),
+          mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'RemoteSkuList' });
+
+export const MatchBody = z
+  .object({
+    externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+    variantId: z.uuid('Biến thể không hợp lệ').nullable().meta({ description: 'null là "không quản tồn" (cần CEO duyệt)' }),
+  })
+  .meta({ id: 'ListingMatchInput' });
+
+export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
+
+export const MappingBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .meta({ id: 'ListingMappingDecisionInput' });
 
 export const ListingRow = z
   .object({

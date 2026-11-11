@@ -136,3 +136,30 @@ export async function markStockPendingRows(variantId: string, statuses: readonly
     .set(stockPending())
     .where(and(eq(listings.variantId, variantId), inArray(listings.status, [...statuses])));
 }
+
+/** Listing chưa gỡ của SKU sàn trên gian hàng (unique `listings_shop_external_sku_uq`, nhiều nhất một). */
+export async function findListingByExternalSku(shopId: string, externalSkuId: string): Promise<ListingRow | undefined> {
+  const [row] = await getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), eq(listings.externalSkuId, externalSkuId), sql`${listings.status} <> 'delisted'`))
+    .limit(1);
+  return row;
+}
+
+/** Listing chưa gỡ của gian hàng, mọi chế độ ghép (kể cả "không quản tồn", `variant_id` trống). */
+export async function liveListingRows(shopId: string): Promise<ListingRow[]> {
+  return getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), sql`${listings.status} <> 'delisted'`));
+}
+
+/** Xoá dòng khi còn đúng `version`; trả số dòng xoá (#220: từ chối ghép của dòng tạo ra chỉ để chờ duyệt). */
+export async function deleteListing(id: string, version: number): Promise<number> {
+  const rows = await getDb()
+    .delete(listings)
+    .where(and(eq(listings.id, id), eq(listings.version, version)))
+    .returning({ id: listings.id });
+  return rows.length;
+}

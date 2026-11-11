@@ -1,12 +1,14 @@
-import { type Response, Router } from 'express';
+import { type NextFunction, type Request, type Response, Router } from 'express';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../../shared/auth/authorize.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
 import { pushZeroStock, restoreAfterZeroStock, syncListings } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
+import * as mapping from '../service/mapping.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { productPort } from '../service/product-port.ts';
@@ -16,7 +18,11 @@ import {
   CallbackBody,
   DelistBody,
   ListingParams,
+  MappingBody,
+  MappingParams,
+  MatchBody,
   PushBody,
+  RemoteSkusQuery,
   SetupBody,
   CategoryMapBody,
   CategoryMapParams,
@@ -44,6 +50,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   const connect = ctx.authorize('channel.shop.connect');
   const disconnect = ctx.authorize('channel.shop.disconnect');
   const manage = ctx.authorize('channel.listing.manage');
+  const match = ctx.authorize('channel.listing.match');
+  // Duyệt ghép: `listing.manage` + vai trò CEO (21 §18.3), kiểm trước `validate()` như quyền.
+  const ceoOnly = async (_req: Request, res: Response, next: NextFunction) => {
+    if (!(await mapping.isCeo(actor(res)))) throw new AppError(403, 'forbidden', 'Chỉ CEO duyệt ghép SKU');
+    next();
+  };
 
   router.get('/shops', view, async (_req, res) => {
     res.json(await withCompany(actor(res).companyId, () => shops.listShops()));
@@ -173,6 +185,30 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await pullShopOrders(getAuth(res).companyId!, id));
   });
+
+  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus`, `match` gọi sàn ngoài giao dịch: service tự mở `withCompany`.
+  router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
+    res.json(await mapping.remoteSkus(actor(res), id, unmatched ?? false));
+  });
+
+  router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const { listing, pending } = await mapping.matchListing(productPort(ctx), actor(res), id, validated<typeof MatchBody>(res, 'body'));
+    res.status(pending ? 202 : 200).json(listing);
+  });
+
+  router.post(
+    '/shops/:id/listings/:listingId/mapping/:action',
+    manage,
+    ceoOnly,
+    validate({ params: MappingParams, body: MappingBody }),
+    async (_req, res) => {
+      const { id, listingId, action } = validated<typeof MappingParams>(res, 'params');
+      res.json(await mapping.decideMapping(productPort(ctx), actor(res), id, listingId, action, validated<typeof MappingBody>(res, 'body')));
+    },
+  );
 
   router.post(
     '/shops/:id/listings/:variantId/delist',

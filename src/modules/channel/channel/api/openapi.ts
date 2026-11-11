@@ -9,6 +9,11 @@ import {
   ListingList,
   ListingParams,
   ListingSyncResult,
+  MappingBody,
+  MappingParams,
+  MatchBody,
+  RemoteSkuList,
+  RemoteSkusQuery,
   OrderPullResult,
   PushBody,
   PushResults,
@@ -211,6 +216,47 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/remote-skus',
+    summary: 'SKU đang có trên sàn kèm ghép hiện hành (#220)',
+    description:
+      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc thẳng danh sách SKU của gian hàng từ sàn (chưa lưu bản sao), bỏ SKU đã xoá. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`.',
+    security: bearer,
+    request: { params: ShopParams, query: RemoteSkusQuery },
+    responses: { 200: { description: 'SKU trên sàn', ...json(RemoteSkuList) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/match',
+    summary: 'Ghép SKU sàn với biến thể (#220, 21 §18.6.5)',
+    description:
+      'Cần `channel.listing.match` (CEO, Admin, Sale). SKU sàn chưa ghép: tạo listing `live`, không đẩy lại (200). `variantId: null` là "không quản tồn". Ghép sang "không quản tồn", hoặc đổi ghép đã có đơn (gian hàng đã nhận đơn có món mang SKU người bán này): người không được tự duyệt (không phải CEO, công ty nhiều người) thì lưu `pendingMapping`, trả 202; CEO làm thì áp luôn, lịch sử ghi `selfApproved`. Đổi ghép áp cho đơn kéo về sau; đơn đã nhận giữ ghép cũ. Lỗi theo thứ tự: 404 → 409 `shop_not_active` (kèm `current`) → 409 `mapping_pending` (kèm `current`) → 409 `invalid_transition` (listing đang đẩy) → 422 `errors.variantId` (không thuộc công ty, lưu trữ, đã ghép SKU sàn khác của gian hàng) → 422 `errors.externalSkuId` (không còn trên sàn, chưa có SKU người bán; chỉ đọc sàn khi SKU chưa có listing) → 409 `version_conflict` (request khác vừa ghép SKU này).',
+    security: bearer,
+    request: { params: ShopParams, body: json(MatchBody) },
+    responses: {
+      200: { description: 'Đã áp ghép', ...json(ChannelListing) },
+      202: { description: 'Chờ CEO duyệt: listing có `pendingMapping`', ...json(ChannelListing) },
+      ...onShop,
+      409: problemResponse('`shop_not_active`, `mapping_pending`, `invalid_transition`, `version_conflict`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/mapping/:action',
+    summary: 'CEO duyệt hoặc từ chối ghép chờ (#220, 21 §18.6.5)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `approve`: áp ghép mới (kiểm lại biến thể, 422 `errors.variantId`); đơn mở đã giữ hàng theo ghép cũ giữ nguyên, chỉ đơn về sau theo ghép mới. `reject`: bắt buộc `reason` (422 `errors.reason`), bỏ ghép chờ; listing tạo ra chỉ để chờ duyệt "không quản tồn" thì xoá, body là listing lúc xoá. Thứ tự: 404 → 409 `invalid_transition` (không có `pendingMapping`) → 409 `version_conflict` (kèm `current`).',
+    security: bearer,
+    request: { params: MappingParams, body: json(MappingBody) },
+    responses: {
+      200: { description: 'Listing sau khi duyệt hoặc từ chối', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition`, `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed` (`errors.reason`, `errors.variantId`)'),
     },
   });
   registry.registerPath({

@@ -53,3 +53,16 @@ export async function advanceOrderCursor(shopId: string, at: Date): Promise<void
     .set({ lastOrderSyncAt: sql`greatest(coalesce(${shops.lastOrderSyncAt}, ${at}), ${at})` })
     .where(eq(shops.id, shopId));
 }
+
+/**
+ * Gian hàng đã nhận đơn có món mang SellerSku này (`raw_orders.payload.lines[].sellerSku`): ghép của SKU sàn đó "đã có
+ * đơn dùng", đổi ghép cần CEO duyệt (#220, 25 §8.1, §11).
+ */
+export async function hasOrdersWithSellerSku(shopId: string, sellerSku: string): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ id: rawOrders.id })
+    .from(rawOrders)
+    .where(and(eq(rawOrders.shopId, shopId), sql`${rawOrders.payload} -> 'lines' @> ${JSON.stringify([{ sellerSku }])}::jsonb`))
+    .limit(1);
+  return Boolean(row);
+}

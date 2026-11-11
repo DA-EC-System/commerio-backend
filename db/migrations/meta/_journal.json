@@ -253,6 +253,20 @@
       "when": 1794410651303,
       "tag": "20261111152411_chia-hang",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794415767138,
+      "tag": "20261111164927_ghep-sku-cho-duyet",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794415795201,
+      "tag": "20261111164955_quyen-ghep-sku",
+      "breakpoints": true
     }
   ]
 }

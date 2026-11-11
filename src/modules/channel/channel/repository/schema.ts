@@ -167,6 +167,17 @@ export const listings = channelSchema.table(
     priceCalcId: uuid('price_calc_id'),
     delistedByDisconnect: boolean('delisted_by_disconnect').notNull().default(false),
     approvedBy: uuid('approved_by'),
+    /**
+     * Ghép chờ CEO duyệt (#220, Documents/19, 21 §18.6.5): ghép sang "không quản tồn" hoặc đổi ghép đã có đơn do người
+     * không phải CEO làm. `pending_mode = 'unmanaged'` thì `pending_variant_id` trống. Duyệt thì chép sang `mode`,
+     * `variant_id`; từ chối thì xoá bốn cột này.
+     */
+    pendingVariantId: uuid('pending_variant_id'),
+    pendingMode: listingMode('pending_mode'),
+    pendingRequestedBy: uuid('pending_requested_by'),
+    pendingRequestedAt: timestamp('pending_requested_at', { withTimezone: true }),
+    /** Ghép hiện hành do CEO (hoặc công ty một người) tự làm ở bước cần CEO duyệt (25 §11 ngoại lệ tự duyệt). */
+    mappingSelfApproved: boolean('mapping_self_approved').notNull().default(false),
     /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
     replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,
@@ -182,7 +193,16 @@ export const listings = channelSchema.table(
       .where(sql`${t.externalSkuId} is not null and ${t.status} <> 'delisted'`),
     index().on(t.variantId),
     check('listings_mode', sql`(${t.mode} = 'mapped') = (${t.variantId} is not null)`),
-    check('listings_unmanaged_approved', sql`${t.mode} = 'mapped' or ${t.approvedBy} is not null`),
+    // "Không quản tồn" có hiệu lực phải có CEO duyệt; dòng mới tạo chờ duyệt ghép sang "không quản tồn" (#220) chưa có.
+    check(
+      'listings_unmanaged_approved',
+      sql`${t.mode} = 'mapped' or ${t.approvedBy} is not null or ${t.pendingRequestedBy} is not null`,
+    ),
+    check(
+      'listings_pending_mapping',
+      sql`(${t.pendingMode} is null and ${t.pendingVariantId} is null and ${t.pendingRequestedBy} is null and ${t.pendingRequestedAt} is null)
+        or (${t.pendingRequestedBy} is not null and ${t.pendingRequestedAt} is not null and ${t.pendingMode} is not null and (${t.pendingMode} = 'mapped') = (${t.pendingVariantId} is not null))`,
+    ),
     check('listings_hidden_by', sql`${t.hiddenBy} is null or ${t.status} in ('hidden', 'live')`),
     check('listings_reject_reason', sql`${t.status} <> 'rejected' or ${t.rejectReason} is not null`),
     check('listings_push_attempts', sql`${t.pushAttempts} >= 0`),

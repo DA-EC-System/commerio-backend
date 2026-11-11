@@ -1,6 +1,6 @@
 // Listing: danh sách, đẩy lên sàn, gỡ (#104; Documents/21 §18.3, §18.4, §18.6.4). Đẩy chạy nền (#219): request chỉ
 // kiểm, chuyển `pushing` và xếp việc `channel.listing_push` (`listing-push.ts`) trong cùng giao dịch, trả ngay.
-import { assertTransition, recordTransition } from '../../../core/index.ts';
+import { assertTransition, findAccountSummaries, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -47,6 +47,8 @@ export interface ChannelListing {
   qcAlert: null;
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
+  /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
+  pendingMapping: { variantId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   version: number;
 }
 
@@ -75,7 +77,14 @@ export interface PushResult {
   message: string | null;
 }
 
-export function toListing(r: ListingRow): ChannelListing {
+/** Họ tên người xin ghép của các dòng đang chờ CEO duyệt, cho `pendingMapping.requestedBy`. Gọi trong `withCompany`. */
+export async function requesterNames(rows: readonly ListingRow[]): Promise<Map<string, string>> {
+  const ids = rows.flatMap((r) => (r.pendingRequestedBy ? [r.pendingRequestedBy] : []));
+  return new Map((await findAccountSummaries(ids)).map((a) => [a.id, a.fullName]));
+}
+
+/** `names`: kết quả `requesterNames`; thiếu (bản ghi trong lỗi 409) thì tên trống. */
+export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = new Map()): ChannelListing {
   return {
     id: r.id,
     externalProductId: r.externalProductId,
@@ -94,6 +103,14 @@ export function toListing(r: ListingRow): ChannelListing {
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
+    pendingMapping:
+      r.pendingRequestedBy && r.pendingRequestedAt
+        ? {
+            variantId: r.pendingVariantId,
+            requestedBy: { id: r.pendingRequestedBy, name: names.get(r.pendingRequestedBy) ?? '' },
+            requestedAt: r.pendingRequestedAt,
+          }
+        : null,
     version: r.version,
   };
 }
@@ -103,7 +120,9 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const shop = await ownShop(shopId);
   const variants = (await port.variants()).filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
-  const byVariant = new Map((await currentListingRows(shop.id)).map((l) => [l.variantId, l]));
+  const rows = await currentListingRows(shop.id);
+  const names = await requesterNames(rows);
+  const byVariant = new Map(rows.map((l) => [l.variantId, l]));
   return {
     items: variants.map((v) => {
       const price = prices.get(v.id) ?? null;
@@ -117,7 +136,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         thumbnailUrl: null,
         price: price === null ? null : price.toNumber(),
         priceSource: price === null ? null : 'standard',
-        listing: listing ? toListing(listing) : null,
+        listing: listing ? toListing(listing, names) : null,
       };
     }),
   };
@@ -302,5 +321,5 @@ export async function delistListing(actor: Actor, shopId: string, variantId: str
   const updated = await withCompany(actor.companyId, () =>
     moveListing(row, 'delist', actor, { hiddenBy: null, platformStock: 0 }),
   );
-  return toListing(updated);
+  return toListing(updated, await withCompany(actor.companyId, () => requesterNames([updated])));
 }
