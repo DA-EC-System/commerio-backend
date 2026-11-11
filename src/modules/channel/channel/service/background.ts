@@ -2,6 +2,7 @@
 import { HoldJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { findShopRow, recordOpenOrderPullError } from '../repository/shops.ts';
 import { syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
@@ -42,7 +43,14 @@ export function runOrderPull(job: ShopJob): Promise<void> {
   // Yêu cầu trả kéo sau đơn (#202): đơn mới về trước thì yêu cầu của nó gắn được ngay trong lượt.
   return onActiveShop(job, 'kéo đơn', async () => {
     await pullShopOrders(job.companyId, job.shopId);
-    await pullShopReturns(job.companyId, job.shopId);
+    try {
+      await pullShopReturns(job.companyId, job.shopId);
+    } catch (err) {
+      // Lỗi kéo yêu cầu trả không làm hỏng lượt kéo đơn (lượt sau kéo lại từ mốc cũ); mất token, gian hàng ngắt thì
+      // `onActiveShop` xử lý như kéo đơn.
+      if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+      logger.warn({ err, shopId: job.shopId }, 'kéo yêu cầu trả lỗi');
+    }
   });
 }
 
