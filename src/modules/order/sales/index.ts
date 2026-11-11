@@ -34,3 +34,5 @@ export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts'
 export type { SalesContext } from './service/orders.ts';
 export { orderRefsOf } from './service/package-orders.ts';
 export { completeDueOrdersOnce } from './service/complete.ts';
+// Yêu cầu trả (#202, Documents/21 §11.3).
+export { hasOpenReturns } from './service/return-boundary.ts';
