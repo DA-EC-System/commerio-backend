@@ -3,6 +3,8 @@
 // API dưới đây): update-inventory-202309, update-price-202309, deactivate-products-202309, activate-products-202309,
 // get-warehouse-list-202309 (bản 202502 của `/logistics/.../warehouses` là tạo kho, khác việc), get-categories-202309,
 // get-category-attributes-202309, upload-product-image-202309, create-product-202309, sign-your-api-request.
+// Đẩy lại (#219): edit-product-202509 (bản mới nhất của Edit Product trong OAS của skill `tts-openapi-guide`, tra
+// 11/11/2026), get-product-202309.
 // Kết quả gọi thật trên shop thử: mục TikTok của `channel/CLAUDE.md`.
 import {
   type CategoryAttribute,
@@ -33,6 +35,12 @@ const STATUS_INVALID = '12052901';
 /** Trạng thái sản phẩm coi như đã tắt, đã bật (bật lại vào duyệt `PENDING`). */
 const TOGGLE_DONE = { deactivate: ['SELLER_DEACTIVATED', 'PLATFORM_DEACTIVATED'], activate: ['ACTIVATE', 'PENDING'] } as const;
 
+/**
+ * Create Product nhận lại một `idempotency_key` đã dùng: sàn không tạo thêm (issue #219, gọi thật #283 ngày 09/11/2026).
+ * Mã này không có trong OAS của skill; nghĩa theo lần gọi thật đó.
+ */
+const DUPLICATE_REQUEST = '12052996';
+
 type SkuError = { code: string; message: string };
 
 export interface TiktokListingDeps {
@@ -47,7 +55,14 @@ export interface TiktokListingDeps {
 
 type ListingMethods = Pick<
   MarketplaceAdapter,
-  'listCategories' | 'categoryAttributes' | 'uploadImage' | 'createProduct' | 'updatePriceQuantity' | 'deactivate' | 'activate'
+  | 'listCategories'
+  | 'categoryAttributes'
+  | 'uploadImage'
+  | 'createProduct'
+  | 'updateProduct'
+  | 'updatePriceQuantity'
+  | 'deactivate'
+  | 'activate'
 >;
 
 /** Lỗi theo từng mục của API lô (`data.errors[]`): mã, câu của lỗi phụ đầu tiên nếu có (cụ thể hơn 12052990 "check failed"). */
@@ -165,6 +180,26 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     throw new MarketplaceError('rejected', code, message);
   }
 
+  /** Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính. */
+  async function productContent(token: string, p: NewProduct) {
+    const attrs = await rawAttributes(token, p.externalCategoryId);
+    const byId = new Map(attrs.map((a) => [String(a.id), a]));
+    const productAttributes = Object.entries(p.attributes).map(([id, value]) => {
+      const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
+      return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
+    });
+    return {
+      title: p.name,
+      description: `<p>${escapeHtml(p.description)}</p>`,
+      category_id: p.externalCategoryId,
+      category_version: CATEGORY_VERSION,
+      main_images: p.imageUrls.map((uri) => ({ uri })),
+      package_weight: { value: kg(p.weightG), unit: 'KILOGRAM' },
+      package_dimensions: { length: cm(p.lengthMm), width: cm(p.widthMm), height: cm(p.heightMm), unit: 'CENTIMETER' },
+      ...(productAttributes.length && { product_attributes: productAttributes }),
+    };
+  }
+
   return {
     async listCategories(token) {
       const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
@@ -205,25 +240,14 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     async createProduct(token, p: NewProduct): Promise<CreatedProduct> {
       // Idempotent theo `seller_sku`: lần đẩy trước đã tạo (mất kết quả vì lỗi mạng, tiến trình chết, token hỏng ở bước
       // đọc lại) thì trả sản phẩm đó, không tạo thêm. Search Products có thể trễ vài giây sau khi tạo (gọi thật 07/11/2026),
-      // nên lớp bọc token vẫn không gọi lại hàm này (`NO_RETRY` ở `shop-tokens.ts`).
+      // nên còn gửi `idempotency_key` của lượt đẩy (#219): sàn nhận lại khoá đã dùng thì trả `12052996`, không tạo trùng.
       const existing = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
       if (existing) return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live' };
-      const [warehouseId, attrs] = await Promise.all([defaultWarehouse(token), rawAttributes(token, p.externalCategoryId)]);
-      const byId = new Map(attrs.map((a) => [String(a.id), a]));
-      const productAttributes = Object.entries(p.attributes).map(([id, value]) => {
-        const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
-        return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
-      });
+      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p)]);
       const body = {
         save_mode: 'LISTING',
-        title: p.name,
-        description: `<p>${escapeHtml(p.description)}</p>`,
-        category_id: p.externalCategoryId,
-        category_version: CATEGORY_VERSION,
-        main_images: p.imageUrls.map((uri) => ({ uri })),
-        package_weight: { value: kg(p.weightG), unit: 'KILOGRAM' },
-        package_dimensions: { length: cm(p.lengthMm), width: cm(p.widthMm), height: cm(p.heightMm), unit: 'CENTIMETER' },
-        ...(productAttributes.length && { product_attributes: productAttributes }),
+        ...(p.idempotencyKey && { idempotency_key: p.idempotencyKey }),
+        ...content,
         skus: [
           {
             seller_sku: p.sellerSku,
@@ -233,7 +257,17 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
           },
         ],
       };
-      const data = await client.call<{ product_id?: unknown; skus?: Row[] }>('POST', '/product/202309/products', { token, body });
+      let data: { product_id?: unknown; skus?: Row[] } | undefined;
+      try {
+        data = await client.call<{ product_id?: unknown; skus?: Row[] }>('POST', '/product/202309/products', { token, body });
+      } catch (err) {
+        if (!(err instanceof MarketplaceError) || err.platformCode !== DUPLICATE_REQUEST) throw err;
+        // Lượt này đã tạo sản phẩm: tìm theo `seller_sku`. Search chưa thấy (trễ) thì là lỗi tạm, việc nền thử lại sau;
+        // quá 30 phút thì đồng bộ đưa listing về `push_failed` (Documents/21 §18.3).
+        const found = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
+        if (found) return { externalProductId: found.externalProductId, externalSkuId: found.externalSkuId, live: found.state === 'live' };
+        throw new MarketplaceError('unavailable', DUPLICATE_REQUEST, 'Sàn đã nhận lượt tạo sản phẩm này nhưng chưa tìm thấy sản phẩm, thử lại sau');
+      }
       const skuId = data?.skus?.[0]?.id;
       if (typeof data?.product_id !== 'string' || typeof skuId !== 'string') throw new MarketplaceError('rejected', 'unexpected_response');
       // Phản hồi không có trạng thái: đọc lại (shop thử SANDBOX duyệt ngay, `ACTIVATE`, gọi thật 07/11/2026). Sản phẩm đã
@@ -241,6 +275,56 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       // đồng bộ. Ném ở đây thì bên gọi tưởng chưa tạo, đẩy lại thành sản phẩm trùng.
       const status = await productStatus(token, data.product_id).catch(() => null);
       return { externalProductId: data.product_id, externalSkuId: skuId, live: status === 'ACTIVATE' };
+    },
+
+    // Edit Product 202509 ghi đè mọi trường gửi lên, kể cả trường để trống, trừ `price`, `inventory` (bỏ thì giữ); SKU
+    // không có trong `skus` bị xoá; sửa xong sản phẩm vào duyệt lại (edit-product-202509). Vì vậy đọc Get Product trước
+    // và gửi lại những gì app không quản: `brand_id`, `delivery_option_ids` (đang dùng được), `is_cod_allowed`, mọi SKU
+    // kèm `id`, `seller_sku`, thuộc tính bán hàng. Không gửi `inventory`: tồn do đồng bộ đẩy. Sản phẩm người bán đã tắt
+    // (`SELLER_DEACTIVATED`, vd dòng mới sau gỡ) thì bật lại (`activate`, sàn đưa vào duyệt).
+    async updateProduct(token, externalProductId, externalSkuId, p: NewProduct) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const [current, content] = await Promise.all([client.call<Row>('GET', path, { token }), productContent(token, p)]);
+      const skus = ((current?.skus ?? []) as Row[]).map((s) => {
+        const sales = ((s.sales_attributes ?? []) as Row[]).map((a) => {
+          const img = a.sku_img as Row | undefined;
+          return {
+            id: a.id,
+            ...(a.value_id !== undefined && { value_id: a.value_id }),
+            ...(a.value_name !== undefined && { value_name: a.value_name }),
+            ...(typeof img?.uri === 'string' && { sku_img: { uri: img.uri } }),
+          };
+        });
+        const mine = String(s.id) === externalSkuId;
+        return {
+          id: String(s.id),
+          seller_sku: mine ? p.sellerSku : s.seller_sku,
+          ...(sales.length && { sales_attributes: sales }),
+          ...(mine && { price: { amount: p.price, currency: CURRENCY } }),
+        };
+      });
+      if (!skus.some((s) => s.id === externalSkuId)) {
+        throw new MarketplaceError('rejected', 'sku_not_found', 'Sản phẩm trên sàn không còn SKU của listing này');
+      }
+      const brandId = (current?.brand as Row | undefined)?.id;
+      const deliveryIds = ((current?.delivery_options ?? []) as Row[]).filter((d) => d.is_available === true).map((d) => String(d.id));
+      const body = {
+        save_mode: 'LISTING',
+        ...content,
+        ...(typeof brandId === 'string' && brandId && { brand_id: brandId }),
+        ...(deliveryIds.length && { delivery_option_ids: deliveryIds }),
+        ...(typeof current?.is_cod_allowed === 'boolean' && { is_cod_allowed: current.is_cod_allowed }),
+        skus,
+      };
+      await client.call('PUT', `/product/202509/products/${encodeURIComponent(externalProductId)}`, { token, body });
+      let status = await productStatus(token, externalProductId);
+      if (status === 'SELLER_DEACTIVATED') {
+        await toggle(token, 'activate', externalProductId);
+        status = await productStatus(token, externalProductId);
+      }
+      if (status === 'ACTIVATE') return { live: true };
+      if (status === 'PENDING' || status === 'FAILED') return { live: false };
+      throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${status ?? 'không rõ'})`);
     },
 
     // Hai API theo sản phẩm: tồn (`inventory/update`, kho mặc định) và giá (`prices/update`, chỉ nhận sản phẩm `ACTIVATE`).

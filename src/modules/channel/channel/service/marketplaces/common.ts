@@ -77,6 +77,11 @@ export interface NewProduct {
   lengthMm: number;
   widthMm: number;
   heightMm: number;
+  /**
+   * Khoá chống tạo trùng của một lượt đẩy (#219): giữ nguyên qua mọi lần việc nền thử lại, đổi khi người dùng bấm đẩy lại.
+   * TikTok gửi làm `idempotency_key`; sàn không có khoá (Lazada tra theo SellerSku) thì bỏ qua.
+   */
+  idempotencyKey?: string;
 }
 
 export interface CreatedProduct {
@@ -321,6 +326,14 @@ export interface MarketplaceAdapter {
   uploadImage(accessToken: string, url: string): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
   /**
+   * Đẩy lại sản phẩm đã có trên sàn (#219: listing `push_failed`, `rejected`, `platform_hold`, hay dòng mới sau gỡ còn
+   * giữ mã sàn của dòng cũ): ghi nội dung `product` lên sản phẩm `externalProductId` (SKU `externalSkuId`), rồi bật lại nếu
+   * sản phẩm đang tắt. `live`: sàn cho bán ngay; false là chờ duyệt (kể cả sàn vừa từ chối lại, trạng thái về qua đồng
+   * bộ). Sản phẩm vẫn tắt hay bị khoá sau khi ghi thì ném `rejected` `still_inactive`. Không đổi SellerSku. Sửa nội dung
+   * listing đang bán (`update_content`) là việc của #293, không dùng hàm này. Sàn chưa có thì không có hàm này.
+   */
+  updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
+  /**
    * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
    * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
    * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282), kèm `imageUrl` khi có. `labels: false` khi chỉ cần
@@ -336,7 +349,11 @@ export interface MarketplaceAdapter {
    * từ cùng một lời gọi (TikTok) không phải gọi hai lần. Adapter không có hàm này thì bên gọi đếm bằng `listSkus`.
    */
   countRemote?(accessToken: string): Promise<RemoteCounts>;
-  /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
+  /**
+   * Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4), **kể cả sản phẩm sàn đã xoá** (`state:
+   * 'deleted'`) để đồng bộ đưa listing về `delisted` (#219). SellerSku không thấy trên sàn thì không có trong kết quả;
+   * bên gọi không coi "vắng" là đã xoá. Sàn trả lý do từ chối thì `rejectReason` có câu đó.
+   */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;

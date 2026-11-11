@@ -77,6 +77,7 @@ const mugWhite: ListingVariant = {
   categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   archived: false,
+  businessStatus: 'selling',
   description: null,
   weightG: 300,
   lengthMm: 100,

@@ -323,7 +323,7 @@ describe('làm mới đua với nối lại gian hàng (review #217 mục 6)', (
 });
 
 describe('hàm ghi nhiều bước không được gọi lại sau unauthorized (review #217 mục 1b)', () => {
-  it('createProduct gặp unauthorized: làm mới token cho lần sau, không gọi lại, ném lỗi gốc', async () => {
+  it('createProduct gặp unauthorized: làm mới token cho lần sau, không gọi lại, ném lỗi tạm token_refreshed (#219)', async () => {
     const { shopId, companyId } = await activeShop();
     const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
     sàn.valid.delete(accessToken);
@@ -341,7 +341,7 @@ describe('hàm ghi nhiều bước không được gọi lại sau unauthorized 
       widthMm: 1,
       heightMm: 1,
     };
-    await expect(adapter.createProduct(accessToken, product)).rejects.toMatchObject({ kind: 'unauthorized', platformCode: 'invalid_access_token' });
+    await expect(adapter.createProduct(accessToken, product)).rejects.toMatchObject({ kind: 'unavailable', platformCode: 'token_refreshed' });
     expect(sàn.createProduct).toHaveBeenCalledTimes(1);
     expect(sàn.refresh).toHaveBeenCalledTimes(1);
     expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
@@ -349,5 +349,15 @@ describe('hàm ghi nhiều bước không được gọi lại sau unauthorized 
     await adapter.listSkus!(accessToken);
     expect(sàn.listSkus.mock.calls.at(-1)![0]).not.toBe(accessToken);
     expect(sàn.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('không làm mới được thì ném lỗi gốc unauthorized', async () => {
+    const { shopId, companyId } = await activeShop();
+    const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
+    sàn.valid.delete(accessToken);
+    sàn.rejectRefresh = true;
+    const product = { externalCategoryId: 'c', attributes: {}, name: 'n', description: 'd', imageUrls: [], sellerSku: 'S', price: '1', quantity: 1, weightG: 1, lengthMm: 1, widthMm: 1, heightMm: 1 };
+    await expect(adapter.createProduct(accessToken, product)).rejects.toMatchObject({ kind: 'unauthorized', platformCode: 'invalid_access_token' });
+    expect(sàn.createProduct).toHaveBeenCalledTimes(1);
   });
 });

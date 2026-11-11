@@ -290,8 +290,11 @@ export const ChannelListing = z
     sellerSku: z.string().nullable(),
     status: listingStatus,
     rejectReason: z.string().nullable(),
-    pushError: z.string().nullable(),
-    pushAttempts: z.number().int(),
+    pushError: syncError.meta({
+      description:
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+    }),
+    pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
     stockSync: syncState,
     priceSync: syncState,
@@ -326,15 +329,13 @@ export const ListingList = z.object({ items: z.array(ListingRow) }).strict().met
 export const PushResult = z
   .object({
     variantId: z.string(),
-    sku: z.string(),
-    outcome: z.enum(['created', 'updated', 'failed']),
-    status: listingStatus.optional(),
-    externalSkuId: z.string().optional(),
-    code: z.string().optional().meta({
+    listingId: z.uuid().nullable().meta({ description: 'Listing được xếp việc hoặc listing hiện có của dòng bị chặn; null khi chưa có' }),
+    status: listingStatus.nullable().meta({ description: '`pushing` khi đã xếp việc; dòng bị chặn: trạng thái listing hiện có' }),
+    code: z.string().nullable().meta({
       description:
-        '`not_found`, `push_in_progress`, `platform_hold`, `already_listed`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`, `marketplace_rejected`, `marketplace_unavailable`',
+        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
     }),
-    message: z.string().optional(),
+    message: z.string().nullable(),
   })
   .strict()
   .meta({ id: 'PushResult' });

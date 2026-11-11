@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MarketplaceError, type PriceQuantity } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { createTiktokClient, packTiktokToken } from '#src/modules/channel/channel/service/marketplaces/tiktok-client.ts';
 import { isPrivateAddress, tiktokListingMethods } from '#src/modules/channel/channel/service/marketplaces/tiktok-listing.ts';
-import { createTiktokAdapter } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
+import { createTiktokAdapter, tiktokAuditReason } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
 
 const config = { appKey: 'appk', appSecret: 'apps', serviceId: undefined, apiUrl: 'https://open.test', authUrl: 'https://auth.test' };
 const TOKEN = packTiktokToken({ token: 'TTP_at', cipher: 'ROW_c', shopId: '749' });
@@ -411,9 +411,183 @@ describe('createProduct', () => {
   });
 });
 
+describe('createProduct: khoá của lượt đẩy (#219)', () => {
+  const base = {
+    externalCategoryId: '600042',
+    attributes: {},
+    name: 'CM-TEST Cốc sứ có quai 350ml thử API',
+    description: 'Cốc thử',
+    imageUrls: ['tos-alisg/abc'],
+    sellerSku: 'CM-TEST-COC',
+    price: '99000',
+    quantity: 5,
+    weightG: 300,
+    lengthMm: 95,
+    widthMm: 100,
+    heightMm: 120,
+    idempotencyKey: 'cm-l1-1794394649000',
+  };
+  const routes = (create: Response) => ({
+    'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+    'GET /product/202309/categories/600042/attributes': ok({ attributes: [] }),
+    'POST /product/202309/products': create,
+    'GET /product/202309/products/P9': ok({ status: 'ACTIVATE' }),
+  });
+  const remote = { externalProductId: 'P1', externalSkuId: 'S1', sellerSku: 'CM-TEST-COC', title: 't', state: 'live' as const, rejectReason: null, quantity: 5 };
+
+  it('AC-18: gửi idempotency_key của lượt; không có khoá thì không gửi trường', async () => {
+    const san = fakeSan(routes(ok({ product_id: 'P9', skus: [{ id: 'S9' }] })));
+    await san.methods().createProduct(TOKEN, base);
+    await san.methods().createProduct(TOKEN, { ...base, idempotencyKey: undefined });
+    const bodies = san.calls.filter((c) => c.method === 'POST' && c.path === '/product/202309/products').map((c) => c.body as Record<string, unknown>);
+    expect(bodies[0]!.idempotency_key).toBe('cm-l1-1794394649000');
+    expect(bodies[1]).not.toHaveProperty('idempotency_key');
+  });
+
+  it('AC-18: sàn trả 12052996 (khoá đã dùng) thì tra seller_sku: thấy thì nhận sản phẩm đó, chưa thấy thì lỗi tạm để thử lại', async () => {
+    const dup = () => fail(12052996, 'Precondition Required. This operation requires a unique `external_id`.');
+    let seen: typeof remote | null = null;
+    const findSku = vi.fn(async () => seen);
+    // Lần tra trước khi tạo chưa thấy; lần tra sau 12052996 thấy (Search trễ).
+    findSku.mockResolvedValueOnce(null);
+    seen = remote;
+    expect(await fakeSan(routes(dup())).methods({ findSku }).createProduct(TOKEN, base)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true });
+    const miss = vi.fn(async () => null);
+    await expect(fakeSan(routes(dup())).methods({ findSku: miss }).createProduct(TOKEN, base)).rejects.toMatchObject({
+      kind: 'unavailable',
+      platformCode: '12052996',
+    });
+    expect(miss).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('updateProduct: đẩy lại sản phẩm đã có (#219)', () => {
+  const p = {
+    externalCategoryId: '600042',
+    attributes: { '100149': 'Việt Nam' },
+    name: 'CM-TEST Cốc sứ có quai 350ml sửa lại',
+    description: 'Cốc thử',
+    imageUrls: ['tos-alisg/new'],
+    sellerSku: 'CM-TEST-COC',
+    price: '120000',
+    quantity: 5,
+    weightG: 300,
+    lengthMm: 95,
+    widthMm: 100,
+    heightMm: 120,
+  };
+  const current = {
+    id: 'P1',
+    status: 'FAILED',
+    brand: { id: 'B7', name: 'Hãng' },
+    delivery_options: [
+      { id: 'D1', name: 'STANDARD', is_available: true },
+      { id: 'D2', name: 'EXPRESS', is_available: false },
+    ],
+    is_cod_allowed: false,
+    skus: [
+      { id: 'S1', seller_sku: 'CM-TEST-COC', sales_attributes: [] },
+      { id: 'S2', seller_sku: 'KHAC', sales_attributes: [{ id: '100000', name: 'Màu', value_id: 'V2', value_name: 'Đen', sku_img: { uri: 'tos/x', urls: ['u'] } }] },
+    ],
+  };
+  const make = (statuses: string[], extra: Record<string, Response> = {}) => {
+    const reads = [current, ...statuses.map((status) => ({ ...current, status }))];
+    return fakeSan({
+      'GET /product/202309/categories/600042/attributes': ok({
+        attributes: [{ id: '100149', type: 'PRODUCT_PROPERTY', values: [{ id: '1000854', name: 'Việt Nam' }] }],
+      }),
+      'GET /product/202309/products/P1': (() => {
+        let i = 0;
+        return () => ok(reads[Math.min(i++, reads.length - 1)]);
+      })(),
+      'PUT /product/202509/products/P1': ok({ product_id: 'P1' }),
+      'POST /product/202309/products/activate': ok({}),
+      ...extra,
+    });
+  };
+
+  it('C2-03: Edit Product 202509 gửi nội dung mới, giữ thương hiệu, cách giao, COD, mọi SKU; không gửi tồn', async () => {
+    const san = make(['PENDING']);
+    expect(await san.methods().updateProduct!(TOKEN, 'P1', 'S1', p)).toEqual({ live: false });
+    const put = san.calls.find((c) => c.method === 'PUT')!;
+    expect(put.path).toBe('/product/202509/products/P1');
+    expect(put.body).toEqual({
+      save_mode: 'LISTING',
+      title: p.name,
+      description: '<p>Cốc thử</p>',
+      category_id: '600042',
+      category_version: 'v2',
+      main_images: [{ uri: 'tos-alisg/new' }],
+      package_weight: { value: '0.3', unit: 'KILOGRAM' },
+      package_dimensions: { length: '10', width: '10', height: '12', unit: 'CENTIMETER' },
+      product_attributes: [{ id: '100149', values: [{ id: '1000854' }] }],
+      brand_id: 'B7',
+      delivery_option_ids: ['D1'],
+      is_cod_allowed: false,
+      skus: [
+        { id: 'S1', seller_sku: 'CM-TEST-COC', price: { amount: '120000', currency: 'VND' } },
+        { id: 'S2', seller_sku: 'KHAC', sales_attributes: [{ id: '100000', value_id: 'V2', value_name: 'Đen', sku_img: { uri: 'tos/x' } }] },
+      ],
+    });
+    expect(san.calls.some((c) => c.path.endsWith('/activate'))).toBe(false);
+  });
+
+  it('sản phẩm người bán đã tắt (dòng mới sau gỡ) thì bật lại; sàn cho bán ngay thì live', async () => {
+    const san = make(['SELLER_DEACTIVATED', 'ACTIVATE']);
+    expect(await san.methods().updateProduct!(TOKEN, 'P1', 'S1', p)).toEqual({ live: true });
+    expect(san.calls.find((c) => c.path === '/product/202309/products/activate')!.body).toEqual({ product_ids: ['P1'] });
+  });
+
+  it('vẫn tắt hay bị khoá sau khi ghi thì rejected still_inactive; SKU không còn trên sản phẩm thì sku_not_found, không gọi Edit', async () => {
+    await expect(make(['PLATFORM_DEACTIVATED']).methods().updateProduct!(TOKEN, 'P1', 'S1', p)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'still_inactive',
+    });
+    const san = make(['PENDING']);
+    await expect(san.methods().updateProduct!(TOKEN, 'P1', 'S404', p)).rejects.toMatchObject({ platformCode: 'sku_not_found' });
+    expect(san.calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+});
+
+describe('getSkus: lý do sàn từ chối (#219 AC-19)', () => {
+  it('tiktokAuditReason nối reasons, suggestions từng mục; không có thì null', () => {
+    expect(
+      tiktokAuditReason({
+        audit_failed_reasons: [
+          { position: 'product', reasons: ['violate listing rules'], suggestions: ['Sửa ảnh rồi gửi lại.'] },
+          { position: 'title', reasons: ['Tiêu đề sai'], suggestions: [] },
+        ],
+      }),
+    ).toBe('violate listing rules: Sửa ảnh rồi gửi lại.; Tiêu đề sai');
+    expect(tiktokAuditReason({ audit_failed_reasons: [] })).toBeNull();
+    expect(tiktokAuditReason(undefined)).toBeNull();
+  });
+
+  it('sản phẩm FAILED: đọc Get Product lấy lý do; sàn từ chối đọc thì để null; sản phẩm khác không đọc', async () => {
+    const search = ok({
+      total_count: 2,
+      products: [
+        { id: 'P1', title: 'a', status: 'FAILED', skus: [{ id: 'S1', seller_sku: 'A', inventory: [] }] },
+        { id: 'P2', title: 'b', status: 'ACTIVATE', skus: [{ id: 'S2', seller_sku: 'B', inventory: [] }] },
+      ],
+    });
+    const make = (detail: Response) =>
+      fakeSan({ 'POST /product/202502/products/search': search, 'GET /product/202309/products/P1': detail });
+    const san = make(ok({ audit_failed_reasons: [{ reasons: ['Ảnh mờ'], suggestions: ['Thay ảnh rõ hơn'] }] }));
+    const skus = await createTiktokAdapter(config, san.fetchFn).getSkus(TOKEN, ['A', 'B']);
+    expect(skus.map((s) => [s.sellerSku, s.state, s.rejectReason])).toEqual([
+      ['A', 'rejected', 'Ảnh mờ: Thay ảnh rõ hơn'],
+      ['B', 'live', null],
+    ]);
+    expect(san.calls.filter((c) => c.method === 'GET').map((c) => c.path)).toEqual(['/product/202309/products/P1']);
+    const denied = make(fail(12052900, 'product not found'));
+    expect((await createTiktokAdapter(config, denied.fetchFn).getSkus(TOKEN, ['A']))[0]!.rejectReason).toBeNull();
+  });
+});
+
 it('adapter TikTok có đủ năng lực listing (không còn unsupported), kể cả activate', () => {
   const adapter = createTiktokAdapter(config, vi.fn<typeof fetch>());
-  for (const k of ['listCategories', 'categoryAttributes', 'uploadImage', 'createProduct', 'updatePriceQuantity', 'deactivate', 'activate'] as const) {
+  for (const k of ['listCategories', 'categoryAttributes', 'uploadImage', 'createProduct', 'updateProduct', 'updatePriceQuantity', 'deactivate', 'activate'] as const) {
     expect(typeof adapter[k]).toBe('function');
   }
   expect(adapter.capabilities.hideBy).toBe('deactivate');

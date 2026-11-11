@@ -109,8 +109,19 @@ function packFor(raw: RawTokens, cipher: string, shopId: string): TokenSet {
 }
 
 /**
+ * Lý do sàn từ chối sản phẩm trong phản hồi Get Product 202309 (`audit_failed_reasons[]`, OAS của skill
+ * `tts-openapi-guide`): mỗi mục nối `reasons` rồi `suggestions`, các mục cách nhau "; ". Không có câu nào thì null (#219).
+ */
+export function tiktokAuditReason(detail: unknown): string | null {
+  const items = ((detail as Row | undefined)?.audit_failed_reasons ?? []) as Row[];
+  const texts = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : []);
+  const parts = (Array.isArray(items) ? items : []).map((i) => [...texts(i.reasons), ...texts(i.suggestions)].join(': ')).filter(Boolean);
+  return parts.length ? parts.join('; ') : null;
+}
+
+/**
  * Trạng thái sản phẩm (`status` của Search Products) và SKU (`status_info`) → trạng thái chuẩn. Search Products không trả
- * lý do từ chối nên `rejectReason` null.
+ * lý do từ chối: `getSkus` đọc thêm Get Product cho sản phẩm bị từ chối (`tiktokAuditReason`).
  */
 export function tiktokRemoteState(productStatus: string, sku: Row): RemoteState {
   const info = (sku.status_info ?? {}) as Row;
@@ -409,6 +420,9 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return { productCount: Math.max(0, first.totalCount - (deleted.totalCount ?? 0)), skuCount: null };
   }
 
+  // `status: ALL` gồm cả sản phẩm đã xoá (gọi thật 11/11/2026, mục `countRemote`), nên SKU đã xoá trả `deleted`.
+  // Sản phẩm bị từ chối: đọc Get Product từng sản phẩm để lấy lý do (#219); sàn từ chối đọc hay lỗi tạm thì để null (bên
+  // gọi ghi câu mặc định), mất uỷ quyền thì ném.
   async function getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> {
     const wanted = new Set(sellerSkus);
     const out: RemoteSku[] = [];
@@ -416,7 +430,15 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       const batch = sellerSkus.slice(i, i + SELLER_SKU_BATCH);
       out.push(...(await searchSkus(accessToken, { status: 'ALL', seller_skus: batch })).filter((s) => wanted.has(s.sellerSku)));
     }
-    return out;
+    const reasons = new Map<string, string | null>();
+    for (const productId of new Set(out.filter((s) => s.state === 'rejected').map((s) => s.externalProductId))) {
+      try {
+        reasons.set(productId, tiktokAuditReason(await client.call('GET', `/product/202309/products/${encodeURIComponent(productId)}`, { token: accessToken })));
+      } catch (err) {
+        if (!(err instanceof MarketplaceError) || (err.kind !== 'rejected' && err.kind !== 'unavailable')) throw err;
+      }
+    }
+    return out.map((s) => (reasons.get(s.externalProductId) ? { ...s, rejectReason: reasons.get(s.externalProductId)! } : s));
   }
 
   /** SKU còn trên sàn (bỏ `deleted`) theo `seller_sku`, cho `createProduct` không tạo trùng. */

@@ -98,6 +98,29 @@ describe('ràng buộc listing', () => {
     await expect(insertListing(c, await shop(c), { variant_id: randomUUID(), external_sku_id: 'SKU-1' })).resolves.toBeDefined();
   });
 
+  it('dòng đã gỡ không giữ chỗ: đẩy lại SKU, mã SKU sàn tạo dòng mới trỏ dòng cũ (#219, 25 §6.4)', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const v = randomUUID();
+    const old = await db().query<{ id: string }>(
+      `insert into channel.listings (company_id, shop_id, variant_id, external_sku_id, status, push_error)
+       values ($1, $2, $3, 'SKU-9', 'delisted', $4) returning id`,
+      [c, s, v, JSON.stringify({ code: 'marketplace_rejected', message: 'Sai danh mục', at: new Date().toISOString() })],
+    );
+    const oldId = old.rows[0]!.id;
+    await insertListing(c, s, { variant_id: v, external_sku_id: 'SKU-9', replaces_listing_id: oldId });
+    // Hai dòng chưa gỡ cùng SKU, cùng mã sàn thì vẫn bị chặn.
+    await expect(insertListing(c, s, { variant_id: v })).rejects.toThrow(/listings_shop_variant_uq/);
+    await expect(insertListing(c, s, { variant_id: randomUUID(), external_sku_id: 'SKU-9' })).rejects.toThrow(
+      /listings_shop_external_sku_uq/,
+    );
+    await expect(insertListing(c, s, { variant_id: randomUUID(), replaces_listing_id: randomUUID() })).rejects.toThrow(
+      /listings_replaces_listing_id_listings_id_fk/,
+    );
+    const { rows } = await db().query<{ code: string }>("select push_error->>'code' as code from channel.listings where id = $1", [oldId]);
+    expect(rows[0]!.code).toBe('marketplace_rejected');
+  });
+
   it('ghép "không quản tồn" không có SKU app và phải có người duyệt; ghép thường phải có SKU app', async () => {
     const c = randomUUID();
     const s = await shop(c);

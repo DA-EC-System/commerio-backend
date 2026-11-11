@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { ListingSyncResult } from '#src/modules/channel/channel/api/schemas.ts';
+import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { markStockPending } from '#src/modules/channel/channel/service/listing-sync.ts';
 import type { PerSkuResult, RemoteSku, RemoteState } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -22,6 +24,7 @@ const variant = (sku: string): ListingVariant => ({
   categoryId,
   attributesLabel: '',
   archived: false,
+  businessStatus: 'selling',
   description: null,
   weightG: 200,
   lengthMm: 100,
@@ -37,12 +40,14 @@ const available = new Map([
   [c.id, 5],
 ]);
 
-setProductPort({
-  variants: async (ids) => [a, b, c].filter((v) => !ids || ids.includes(v.id)),
-  standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(99000)])),
+const port = {
+  variants: async (ids?: readonly string[]) => [a, b, c].filter((v) => !ids || ids.includes(v.id)),
+  standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, new Decimal(99000)])),
   // Như cổng thật: id không có trong `available` thì không có trong Map.
-  availableOf: async (ids) => new Map(ids.flatMap((id) => (available.has(id) ? [[id, available.get(id)!]] : []))),
-});
+  availableOf: async (ids: readonly string[]) =>
+    new Map(ids.flatMap((id): [string, number][] => (available.has(id) ? [[id, available.get(id)!]] : []))),
+};
+setProductPort(port);
 
 /** Trạng thái trên sàn theo SellerSku; test đổi giữa các lần đồng bộ. */
 const remote = new Map<string, { state: RemoteState; rejectReason?: string }>();
@@ -85,9 +90,10 @@ registerAdapter(
     updatePriceQuantity,
   }),
 );
-afterAll(() => {
+afterAll(async () => {
   resetAdapters();
   setProductPort(null);
+  await stopJobs();
 });
 
 const app = () => request(testApp());
@@ -120,7 +126,12 @@ beforeAll(async () => {
     variantIds: [a.id, b.id, c.id],
     imageUrls,
   });
-  expect(pushed.body.results.map((r: { status: string }) => r.status)).toEqual(['under_review', 'under_review', 'under_review']);
+  // Đẩy chạy nền (#219): chạy việc như worker để có listing `under_review`.
+  for (const r of pushed.body.results as { listingId: string }[]) {
+    await runListingPush(port, { companyId: company.companyId, shopId, listingId: r.listingId, imageUrls: ['https://img.test/x.png'] });
+  }
+  const { rows } = await testPool().query<{ status: string }>('select status from channel.listings where shop_id = $1', [shopId]);
+  expect(rows.map((r) => r.status)).toEqual(['under_review', 'under_review', 'under_review']);
 });
 
 describe('đồng bộ trạng thái từ sàn', () => {
@@ -222,5 +233,37 @@ describe('đồng bộ tồn và giá', () => {
     available.set(b.id, 5);
     await sync();
     expect(await listing(b.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null, price_sync: 'synced' });
+  });
+});
+
+describe('sàn xoá sản phẩm (#219, 25 §6.4)', () => {
+  it('AC-15, AC-16: live, rejected, push_failed còn mã sàn mà sàn báo deleted → delisted do hệ thống; bỏ mã sàn, giữ SellerSku', async () => {
+    await testPool().query(
+      `update channel.listings set status = 'push_failed', push_error = $2 where shop_id = $1 and variant_id = $3`,
+      [shopId, JSON.stringify({ code: 'marketplace_rejected', message: 'Sai', at: new Date().toISOString() }), c.id],
+    );
+    expect((await listing(b.id)).status).toBe('rejected');
+    for (const s of ['CMR-A', 'CMR-B', 'CMR-C']) remote.set(s, { state: 'deleted' });
+    const res = await sync();
+    expect(ListingSyncResult.parse(res.body)).toMatchObject({ checked: 3, changed: 3 });
+    for (const v of [a, b, c]) {
+      expect(await listing(v.id)).toMatchObject({
+        status: 'delisted',
+        seller_sku: v.sku,
+        external_product_id: null,
+        external_sku_id: null,
+        external_image_urls: null,
+      });
+    }
+    const { rows } = await testPool().query(
+      `select action, actor_id, reason from core.state_transitions where entity_type = 'listings' and entity_id = $1 order by id desc limit 1`,
+      [(await listing(b.id)).id],
+    );
+    expect(rows[0]).toEqual({ action: 'delist', actor_id: null, reason: 'Sàn báo đã xoá sản phẩm' });
+  });
+
+  it('listing đã gỡ không đọc lại trạng thái sàn', async () => {
+    const res = await sync();
+    expect(res.body).toMatchObject({ checked: 0, changed: 0 });
   });
 });
