@@ -161,13 +161,39 @@ export const unmatchedReturnParcels = fulfillmentSchema.table(
     note: text('note'),
     statusReason: text('status_reason'),
     receivedBy: uuid('received_by'),
+    /** Phiếu kiểm hàng hoàn sinh lúc nhận (`receiveBack` nguồn `unmatched_parcel`, Documents/21 §20). */
+    inspectionId: uuid('inspection_id'),
+    inspectionNumber: text('inspection_number'),
+    resolvedBy: uuid('resolved_by'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
   (t) => [
     unique().on(t.companyId, t.code),
     index().on(t.status),
+    check('unmatched_return_parcels_resolved', sql`(${t.status} = 'open') = (${t.resolvedAt} is null)`),
     check('unmatched_return_parcels_attached', sql`(${t.status} = 'attached') = (${t.returnRequestId} is not null)`),
     check('unmatched_return_parcels_dismissed', sql`${t.status} <> 'dismissed' or ${t.statusReason} is not null`),
+  ],
+);
+
+/** Dòng hàng của kiện trả không khớp: số kho quét lúc nhận, chỉ món đã rõ SKU (Documents/19, Documents/21 §20). */
+export const unmatchedReturnParcelLines = fulfillmentSchema.table(
+  'unmatched_return_parcel_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    parcelId: uuid('parcel_id')
+      .notNull()
+      .references(() => unmatchedReturnParcels.id),
+    variantId: uuid('variant_id').notNull(),
+    quantity: integer('quantity').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index().on(t.parcelId),
+    unique().on(t.parcelId, t.variantId),
+    check('unmatched_return_parcel_lines_quantity', sql`${t.quantity} > 0`),
   ],
 );
