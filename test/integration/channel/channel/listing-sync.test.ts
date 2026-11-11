@@ -235,3 +235,35 @@ describe('đồng bộ tồn và giá', () => {
     expect(await listing(b.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null, price_sync: 'synced' });
   });
 });
+
+describe('sàn xoá sản phẩm (#219, 25 §6.4)', () => {
+  it('AC-15, AC-16: live, rejected, push_failed còn mã sàn mà sàn báo deleted → delisted do hệ thống; bỏ mã sàn, giữ SellerSku', async () => {
+    await testPool().query(
+      `update channel.listings set status = 'push_failed', push_error = $2 where shop_id = $1 and variant_id = $3`,
+      [shopId, JSON.stringify({ code: 'marketplace_rejected', message: 'Sai', at: new Date().toISOString() }), c.id],
+    );
+    expect((await listing(b.id)).status).toBe('rejected');
+    for (const s of ['CMR-A', 'CMR-B', 'CMR-C']) remote.set(s, { state: 'deleted' });
+    const res = await sync();
+    expect(ListingSyncResult.parse(res.body)).toMatchObject({ checked: 3, changed: 3 });
+    for (const v of [a, b, c]) {
+      expect(await listing(v.id)).toMatchObject({
+        status: 'delisted',
+        seller_sku: v.sku,
+        external_product_id: null,
+        external_sku_id: null,
+        external_image_urls: null,
+      });
+    }
+    const { rows } = await testPool().query(
+      `select action, actor_id, reason from core.state_transitions where entity_type = 'listings' and entity_id = $1 order by id desc limit 1`,
+      [(await listing(b.id)).id],
+    );
+    expect(rows[0]).toEqual({ action: 'delist', actor_id: null, reason: 'Sàn báo đã xoá sản phẩm' });
+  });
+
+  it('listing đã gỡ không đọc lại trạng thái sàn', async () => {
+    const res = await sync();
+    expect(res.body).toMatchObject({ checked: 0, changed: 0 });
+  });
+});
