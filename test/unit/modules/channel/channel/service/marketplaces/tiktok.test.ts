@@ -320,7 +320,7 @@ describe('adapter TikTok: SKU', () => {
     expect(urlOf(fetchFn, 1).searchParams.get('shop_cipher')).toBe(SHOP.cipher);
   });
 
-  it('listSkus: labels false không gọi Get Product (đếm SKU lúc nối), nhãn là SKU người bán rồi mã SKU sàn', async () => {
+  it('listSkus: labels false không gọi Get Product (hoàn tất bằng decisions), nhãn là SKU người bán rồi mã SKU sàn', async () => {
     const fetchFn = fakeFetch(ok({ next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M'), sku('12', '')])] }));
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false });
     expect(skus.map((s) => s.title)).toEqual(['SP 1 - AO-M', 'SP 1 - 12']);
