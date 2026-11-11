@@ -1,0 +1,1 @@
+ALTER TABLE "core"."state_transitions" ADD COLUMN "self_approved" boolean DEFAULT false NOT NULL;

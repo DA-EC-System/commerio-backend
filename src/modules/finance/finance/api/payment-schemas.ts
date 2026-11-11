@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SETTLEMENT_STATES } from '../domain/settlement.ts';
 import { LedgerLine } from './ledger-schemas.ts';
 import { page, VersionBody } from './schemas.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Trạng thái tiền của đơn, đối soát, khớp sao kê (Documents/21 §21.2, §21.3; #117). Tiền là số nguyên đồng (R2).
 
@@ -51,22 +52,20 @@ export const OrderPayment = z
     threshold: z.object({ abs: z.number(), pct: z.number(), resolveLimit: z.number() }),
     needsCeoApproval: z.boolean(),
     ceoApproval: z.object({ by: UserRef.nullable(), at: z.iso.datetime() }).nullable(),
-    resolved: z.object({ by: UserRef.nullable(), at: z.iso.datetime().nullable(), reason: z.string().nullable() }).nullable(),
+    resolved: z
+      .object({
+        by: UserRef.nullable(),
+        at: z.iso.datetime().nullable(),
+        reason: z.string().nullable(),
+        selfApproved: z.boolean().meta({ description: 'Người chốt là người soạn cấu hình phí, chốt nhờ ngoại lệ tự duyệt' }),
+      })
+      .nullable(),
     feeConfigAuthor: UserRef.nullable(),
     version: z.int(),
   })
   .meta({ id: 'OrderPayment' });
 
-const StatusChange = z.object({
-  at: z.iso.datetime(),
-  from: z.string().nullable(),
-  to: z.string(),
-  by: UserRef.nullable(),
-  source: z.enum(['user', 'marketplace', 'system']),
-  reason: z.string().nullable(),
-});
-
-export const OrderPaymentDetail = OrderPayment.extend({ statusHistory: z.array(StatusChange), lines: z.array(LedgerLine) }).meta({
+export const OrderPaymentDetail = OrderPayment.extend({ statusHistory: z.array(StatusChangeSchema), lines: z.array(LedgerLine) }).meta({
   id: 'OrderPaymentDetail',
 });
 

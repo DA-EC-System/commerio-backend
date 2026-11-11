@@ -1,6 +1,8 @@
-import { sql } from 'drizzle-orm';
+import { and, inArray, isNull, sql } from 'drizzle-orm';
 import { getDb, outsideTransaction } from '../../../../shared/db/client.ts';
-import { files } from './schema.ts';
+import { type FileRow, files } from './schema.ts';
+
+export type { FileRow };
 
 export type NewFile = typeof files.$inferInsert;
 
@@ -21,4 +23,23 @@ export async function totalStoredBytes(): Promise<number> {
       .from(files);
     return Number(row?.total ?? 0);
   });
+}
+
+
+/** Tệp theo id, trong công ty của giao dịch đang mở (RLS: tệp công ty khác coi như không có). */
+export async function findFiles(ids: readonly string[]): Promise<FileRow[]> {
+  if (ids.length === 0) return [];
+  return getDb()
+    .select()
+    .from(files)
+    .where(inArray(files.id, [...ids]));
+}
+
+/** Ghi nhận đã thấy tệp trên kho; tệp đã ghi từ trước thì giữ mốc cũ. */
+export async function markUploaded(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await getDb()
+    .update(files)
+    .set({ uploadedAt: sql`now()`, updatedAt: sql`now()` })
+    .where(and(inArray(files.id, [...ids]), isNull(files.uploadedAt)));
 }

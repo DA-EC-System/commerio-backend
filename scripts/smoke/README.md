@@ -48,6 +48,7 @@ npm run smoke:tiktok -- token "<URL callback>"    # hoặc token <code>; code h�
 npm run smoke:tiktok -- shops                     # /authorization/202309/shops, cập nhật cipher
 npm run smoke:tiktok -- refresh                   # làm mới, lưu cặp token mới ngay (token cũ có thể mất hiệu lực)
 npm run smoke:tiktok -- products [shopId]          # mọi SKU như bước ghép ở thiết lập: số sản phẩm, số SKU, tiêu đề kèm nhãn biến thể (#282)
+npm run smoke:tiktok -- counts [shopId]            # countRemote lúc nối (số sản phẩm, số phân loại) và total_count của ALL, DELETED
 npm run smoke:tiktok -- skus [shopId] [sellerSku ...]   # listSkus, hoặc getSkus khi có sellerSku
 npm run smoke:tiktok -- returns [ngày]            # listReturns: yêu cầu trả cập nhật trong N ngày (mặc định 30), #227
 npm run smoke:tiktok -- cancellations [ngày]      # listCancellations: lần huỷ cập nhật trong N ngày
@@ -86,7 +87,7 @@ Mỗi bước in `OK` hoặc `LỖI` kèm phản hồi của sàn. Lỗi hay g�
 
 ## Kho tệp Cloudflare R2 (#212)
 
-`npm run smoke:r2 [origin FE ...]` chạy đúng hàm ký URL của module `files` vào bucket thật: kiểm CORS cho từng origin (mặc định `http://localhost:5173`), PUT sai cỡ hoặc sai kiểu đã khai phải bị từ chối, PUT ảnh vào bucket công khai rồi xem lại qua `S3_PUBLIC_URL`, PUT PDF vào bucket riêng. Xong thì xoá tệp thử (xoá không tốn phí). Cần các biến `S3_*` trong `backend/.env` (mẫu ở `.env.example`).
+`npm run smoke:r2 [origin FE ...]` chạy đúng hàm ký URL của module `files` vào bucket thật: kiểm CORS cho từng origin (mặc định `http://localhost:5173`), PUT sai cỡ hoặc sai kiểu đã khai phải bị từ chối, PUT ảnh vào bucket công khai rồi xem lại qua `S3_PUBLIC_URL`, PUT PDF vào bucket riêng, hỏi kho bằng `HeadObject` (cách gắn tệp xác nhận đã PUT xong) và mở link tải ký sẵn (PDF tải về dạng tệp). Xong thì xoá tệp thử (xoá không tốn phí). Cần các biến `S3_*` trong `backend/.env` (mẫu ở `.env.example`).
 
 ```bash
 npm run smoke:r2 -- http://localhost:5173 https://<tên miền staging>

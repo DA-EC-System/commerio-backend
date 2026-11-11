@@ -72,15 +72,11 @@ export const shops = channelSchema.table(
     stockPushedAt: timestamp('stock_pushed_at', { withTimezone: true }),
     /**
      * Phiếu đầu kỳ đã ghi sổ, gian hàng đang chờ phân hàng: thoát chờ khi nhận `fulfillment.allocation_done` có
-     * `cause.documentId` trùng id này (Documents/21 §18.6.11). Giữ id vì `opening_stocktake_id` đã về null.
+     * `cause.documentId` trùng id này (Documents/21 §11.3, §18.6.11; Documents/19 `shops`). Giữ id vì
+     * `opening_stocktake_id` đã về null. Sự kiện do `settleOpeningStocktake` phát trong chính giao dịch thoát chờ kiểm kê
+     * nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
      */
     allocationStocktakeId: uuid('allocation_stocktake_id'),
-    /**
-     * `cause.documentId` của `fulfillment.allocation_done` gần nhất trùng phiếu đầu kỳ của gian hàng. Sự kiện phân hàng
-     * (topic `fulfillment`) có thể tới trước khi channel xử lý `inventory.stocktake_posted` (topic khác); thoát chờ kiểm
-     * kê thấy id này trùng phiếu thì không vào chờ phân hàng.
-     */
-    allocatedStocktakeId: uuid('allocated_stocktake_id'),
     ...timestamps,
     ...version,
   },

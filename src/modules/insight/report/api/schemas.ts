@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 import { orderSource } from '../repository/schema.ts';
 
 // Hợp đồng /report (Documents/21 §12.7, §12.8). Khoảng ngày mặc định, giới hạn 366 ngày kiểm ở routes.ts
@@ -11,6 +12,10 @@ export const RangeQuery = z.object({ from: day('Từ ngày'), to: day('Đến ng
 export const DailyQuery = RangeQuery.extend({
   source: source.optional(),
   shopId: z.uuid('Gian hàng không hợp lệ').optional().meta({ description: 'Chỉ đi với nguồn `marketplace` (bỏ trống nguồn cũng được)' }),
+});
+export const SelfApprovalQuery = RangeQuery.extend({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 export const ExportQuery = DailyQuery.extend({
   report: z.enum(['overview', 'shops', 'daily'], 'Báo cáo là overview, shops hoặc daily'),
@@ -45,3 +50,19 @@ export const ShopsResponse = z.object({ ...head, items: z.array(ShopFigures), to
 export const DailyResponse = z
   .object({ ...head, items: z.array(ReportFigures.extend({ day: z.iso.date() })) })
   .meta({ id: 'ReportDaily' });
+
+export const SelfApproval = StatusChangeSchema.extend({
+  entityType: z.string().meta({ description: 'Tên bảng của bản ghi như `statusHistory`, vd `purchase_requests`' }),
+  entityId: z.uuid(),
+  action: z.string().meta({ description: 'Thao tác của máy trạng thái, vd `approve`' }),
+}).meta({ id: 'SelfApproval' });
+export const SelfApprovalsResponse = z
+  .object({
+    from: z.iso.date(),
+    to: z.iso.date(),
+    items: z.array(SelfApproval),
+    total: z.number().int(),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+  })
+  .meta({ id: 'ReportSelfApprovals' });

@@ -1,5 +1,5 @@
 {
-  "id": "5f5a3d6c-52d0-449e-8a7a-f996051e1521",
+  "id": "24ece9cf-8a87-4e6e-82e4-ee292e8238da",
   "prevId": "38b547f6-2b50-4b64-80dc-3bc306701d7c",
   "version": "7",
   "dialect": "postgresql",
@@ -890,18 +890,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "allocation_stocktake_id": {
-          "name": "allocation_stocktake_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "allocated_stocktake_id": {
-          "name": "allocated_stocktake_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -998,10 +986,6 @@
         "shops_open_orders_skipped": {
           "name": "shops_open_orders_skipped",
           "value": "\"channel\".\"shops\".\"open_orders_skipped\" >= 0"
-        },
-        "shops_allocation_pending": {
-          "name": "shops_allocation_pending",
-          "value": "\"channel\".\"shops\".\"allocation_stocktake_id\" is null or (\"channel\".\"shops\".\"opening_stocktake_id\" is null and \"channel\".\"shops\".\"order_cutoff_at\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -2765,6 +2749,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "self_approved": {
+          "name": "self_approved",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "at": {
           "name": "at",

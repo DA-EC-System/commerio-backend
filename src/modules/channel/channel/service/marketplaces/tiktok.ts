@@ -10,6 +10,7 @@ import {
   type MarketplaceAdapter,
   MarketplaceError,
   refreshBefore,
+  type RemoteCounts,
   type RemoteSku,
   type RemoteState,
   type ShopCapabilities,
@@ -326,21 +327,46 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return { labels, images };
   }
 
+  /**
+   * Một trang Search Products 202502. `totalCount` là số **sản phẩm** khớp `filter` (không phải số SKU), null khi sàn không
+   * trả số. `listed`: `data` là object và có `products` dạng mảng (kể cả rỗng); false thì `products` trả ra là `[]` thay thế.
+   */
+  async function searchPage(
+    accessToken: string,
+    filter: Row,
+    pageSize: number,
+    pageToken?: string,
+  ): Promise<{ products: Row[]; next: string; totalCount: number | null; listed: boolean }> {
+    const res = await client.call<unknown>('POST', '/product/202502/products/search', {
+      token: accessToken,
+      query: { page_size: pageSize, page_token: pageToken },
+      body: filter,
+    });
+    const data = (typeof res === 'object' && res !== null && !Array.isArray(res) ? res : {}) as {
+      products?: unknown;
+      next_page_token?: unknown;
+      total_count?: unknown;
+    };
+    const listed = Array.isArray(data.products);
+    const raw = data.total_count;
+    const total = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+    return {
+      products: listed ? (data.products as Row[]) : [],
+      next: typeof data.next_page_token === 'string' ? data.next_page_token : '',
+      totalCount: Number.isSafeInteger(total) && total >= 0 ? total : null,
+      listed,
+    };
+  }
+
   async function searchProducts(accessToken: string, filter: Row): Promise<Row[]> {
     const out: Row[] = [];
     let pageToken: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const data = await client.call<{ products?: Row[]; next_page_token?: unknown; total_count?: unknown }>(
-        'POST',
-        '/product/202502/products/search',
-        { token: accessToken, query: { page_size: PRODUCT_PAGE, page_token: pageToken }, body: filter },
-      );
-      if (page === 0 && Number(data?.total_count ?? 0) > MAX_PRODUCTS) {
+      const { products, next, totalCount } = await searchPage(accessToken, filter, PRODUCT_PAGE, pageToken);
+      if (page === 0 && (totalCount ?? 0) > MAX_PRODUCTS) {
         throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCTS} sản phẩm, sàn không cho đọc hết`);
       }
-      const products = data?.products ?? [];
       out.push(...products);
-      const next = typeof data?.next_page_token === 'string' ? data.next_page_token : '';
       if (!next || products.length === 0) return out;
       // Sàn trả lại con trỏ vừa gửi: đọc tiếp sẽ lặp, dừng thì trả thiếu. Báo lỗi như gian hàng quá giới hạn (hợp đồng
       // `listSkus`: không trả thiếu).
@@ -348,6 +374,39 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       pageToken = next;
     }
     throw new MarketplaceError('rejected', 'too_many_pages', 'Sàn trả quá nhiều trang sản phẩm');
+  }
+
+  /**
+   * Số sản phẩm và số SKU trên sàn lúc nối (§18.7.4), không lật hết trang. Search Products chỉ trả `total_count` (số sản
+   * phẩm khớp điều kiện lọc), không có tổng số SKU (docv2 search-products-202502 và OAS, tra 11/11/2026).
+   *
+   * Gọi trang đầu (`status: ALL`, 100 sản phẩm). `total_count` không quá số sản phẩm của trang thì trang đã chứa hết gian
+   * hàng: đếm sản phẩm và SKU khác `DELETED` ngay trên trang, một lời gọi. Không xét `next_page_token`: sàn trả token
+   * khác rỗng cả khi đã hết (gọi thật 09/11/2026). Nhiều hơn một trang thì `skuCount` null (không đọc tiếp), và số sản
+   * phẩm = `total_count` của `ALL` trừ `total_count` của `DELETED` (lời gọi thứ hai, `page_size` 1), vì `ALL` có tính sản
+   * phẩm đã xoá: gọi thật 11/11/2026 trên shop thử VN, `ALL` 5 = `ACTIVATE` 2 + `DELETED` 3, `DELETED` 3.
+   *
+   * Không ném `too_many_products`: gian hàng hơn 10000 sản phẩm vẫn có `total_count`. Sàn không trả `total_count` dạng số
+   * mà trang đầu chưa đầy thì coi trang là hết; trang đầy thì `rejected` `unexpected_response`, không đoán số.
+   *
+   * Phản hồi thành công mà không có gì để đếm (`data` vắng hoặc không phải object, hoặc không có cả `total_count` dạng số
+   * lẫn `products` dạng mảng), ở lời gọi nào cũng `rejected` `unexpected_response`: 0 chỉ khi sàn trả tổng 0 hoặc danh
+   * sách rỗng (§18.7.4, không trả 0 thay cho lỗi). `skus` của một sản phẩm không phải mảng thì sản phẩm đó tính 0 SKU.
+   */
+  async function countRemote(accessToken: string): Promise<RemoteCounts> {
+    const first = await searchPage(accessToken, { status: 'ALL' }, PRODUCT_PAGE);
+    if (first.totalCount === null && (!first.listed || first.products.length >= PRODUCT_PAGE)) {
+      throw new MarketplaceError('rejected', 'unexpected_response');
+    }
+    if (first.totalCount === null || first.totalCount <= first.products.length) {
+      const live = first.products.filter((p) => p.status !== 'DELETED');
+      return { productCount: live.length, skuCount: live.reduce((sum, p) => sum + (Array.isArray(p.skus) ? p.skus.length : 0), 0) };
+    }
+    const deleted = await searchPage(accessToken, { status: 'DELETED' }, 1);
+    if (deleted.totalCount === null && (!deleted.listed || deleted.products.length > 0)) {
+      throw new MarketplaceError('rejected', 'unexpected_response');
+    }
+    return { productCount: Math.max(0, first.totalCount - (deleted.totalCount ?? 0)), skuCount: null };
   }
 
   async function getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> {
@@ -392,13 +451,14 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       return packFor(await refreshRaw(parts.token), parts.cipher, parts.shopId);
     },
     // Mọi SKU của gian hàng cho gợi ý ghép lúc thiết lập (#198, #282): mã sản phẩm, mã SKU sàn, SKU người bán, tiêu đề kèm
-    // nhãn biến thể, ảnh đầu tiên; bỏ sản phẩm đã xoá. `labels: false` (đếm SKU lúc nối, hoàn tất bằng `decisions`) không
+    // nhãn biến thể, ảnh đầu tiên; bỏ sản phẩm đã xoá. `labels: false` (hoàn tất bằng `decisions`) không
     // gọi Get Product: không nhãn, không ảnh. `skipSellerSkus`: sản phẩm ghép được theo SKU không đọc chi tiết.
     async listSkus(accessToken, opts) {
       const products = (await searchProducts(accessToken, { status: 'ALL' })).filter((p) => p.status !== 'DELETED');
       const details = opts?.labels === false ? undefined : await productDetails(accessToken, products, opts?.skipSellerSkus);
       return products.flatMap((p) => skusOf(p, details)).filter((s) => s.state !== 'deleted');
     },
+    countRemote,
     getSkus,
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client, { findSku }),
