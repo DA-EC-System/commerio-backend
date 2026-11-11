@@ -8,6 +8,7 @@ import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/ser
 import { pullShopReturns } from '#src/modules/channel/channel/service/return-pull.ts';
 import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
 import { onReturnInspected } from '#src/modules/order/sales/service/return-ingest.ts';
+import { type ReturnStockPort, setReturnStockPort } from '#src/modules/order/sales/service/return-stock-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -202,6 +203,41 @@ describe('kéo yêu cầu trả từ sàn', () => {
     const row = await requestOf(r.externalId);
     expect(row.needs_attention).toBe(true);
     expect(row.attention_note).toContain('Đã giao');
+  });
+});
+
+describe('kiện đã hoàn về kho khi sàn mở yêu cầu (E109, 25 §9)', () => {
+  it('giữ kiện `returned`, yêu cầu bật cờ; quét mã yêu cầu đi như kiện không khớp, không gọi kho nguồn yêu cầu', async () => {
+    const { externalOrderId, orderId } = await marketplaceOrder();
+    await db().query(`update "order".packages set status = 'returned' where order_id = $1`, [orderId]);
+    const r = remoteReturn(externalOrderId, { rawStatus: 'REFUND_PENDING', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(row).toMatchObject({ status: 'awaiting_return', needs_attention: true });
+    const pkg = await db().query(`select status from "order".packages where order_id = $1`, [orderId]);
+    expect(pkg.rows).toEqual([{ status: 'returned' }]);
+
+    const calls: Parameters<ReturnStockPort['receiveBack']>[0][] = [];
+    setReturnStockPort({
+      async receiveBack(source) {
+        calls.push(source);
+        return { documentId: randomUUID(), number: 'KT-X' };
+      },
+    });
+    try {
+      const res = await request(testApp())
+        .post('/api/v1/returns/receive')
+        .set('Authorization', `Bearer ${company.ceo.token}`)
+        .send({ code: row.code });
+      expect(res.status).toBe(200);
+      expect(res.body.kind).toBe('unmatched');
+      expect(res.body.parcel.scannedCode).toBe(row.code);
+      expect(calls.filter((c) => c.type === 'return_request')).toEqual([]);
+      expect((await requestOf(r.externalId)).status).toBe('awaiting_return');
+    } finally {
+      setReturnStockPort();
+    }
   });
 });
 

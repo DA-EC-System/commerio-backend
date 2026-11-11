@@ -56,7 +56,8 @@ async function receiveRequest(row: ReturnRow, actor: Actor, scanned: readonly Sc
   if (row.status !== 'awaiting_return') throw notAwaiting(view);
   const { to } = assertTransition(returnMachine, row.status, 'receive', { actor, record: { source: row.source }, view });
   const lines = await findReturnLines([row.id]);
-  const merged = mergeReceiveLines(lines, scanned);
+  // Dòng có kiện đã hoàn về kho (E109) không tính dự kiến: hàng của dòng đó đã kiểm một lần.
+  const merged = mergeReceiveLines(lines.filter((l) => !l.packageReturned), scanned);
   const doc = await returnStockPort().receiveBack({ type: 'return_request', id: row.id }, merged, {
     actorId: actor.accountId,
     number: row.code,
@@ -90,6 +91,11 @@ async function confirmOnMarketplace(ctx: SalesContext, actor: Actor, row: Return
   }
 }
 
+async function allPackagesReturned(requestId: string): Promise<boolean> {
+  const lines = await findReturnLines([requestId]);
+  return lines.length > 0 && lines.every((l) => l.packageReturned);
+}
+
 export async function receiveReturn(ctx: SalesContext, actor: Actor, input: ReceiveInput) {
   const code = input.code.trim();
   const note = input.note?.trim() || undefined;
@@ -100,14 +106,17 @@ export async function receiveReturn(ctx: SalesContext, actor: Actor, input: Rece
     if (matches.length) {
       const row = matches.find((r) => r.status === 'awaiting_return');
       if (!row) throw notAwaiting(await returnView(ctx, matches[0]!, opts));
-      const externalLineIds = await receiveRequest(row, actor, input.lines, { ...(note && { note }) });
-      return { kind: 'matched' as const, row, externalLineIds };
+      if (!(await allPackagesReturned(row.id))) {
+        const externalLineIds = await receiveRequest(row, actor, input.lines, { ...(note && { note }) });
+        return { kind: 'matched' as const, row, externalLineIds };
+      }
+      // Mọi dòng có kiện đã hoàn về kho (E109, 25 §9): không sinh phiếu kiểm hàng hoàn lần nữa, hàng về đi như kiện không khớp.
     }
     // Không khớp yêu cầu nào: vẫn nhận, cờ Cần xử lý là trạng thái `open` của kiện (§20, 25 §9).
     const parcel = await insertUnmatchedParcel({
       code: `KTL-${String(await takeNextNumber('unmatched_parcel')).padStart(6, '0')}`,
       scannedCode: code,
-      note: note ?? null,
+      note: matches.length ? [`Hàng về theo ${matches[0]!.code}, kiện của yêu cầu đã hoàn về kho trước đó`, note].filter(Boolean).join('. ') : (note ?? null),
       receivedBy: actor.accountId,
       lines: input.lines ?? [],
     });

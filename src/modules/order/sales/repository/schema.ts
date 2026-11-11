@@ -279,6 +279,8 @@ export const returnRequestLines = salesSchema.table(
     resellQty: integer('resell_qty'),
     /** Mã dòng đơn ngược của sàn (Lazada `reverse_order_line_id`). */
     externalLineId: text('external_line_id'),
+    /** Kiện của dòng đã hoàn về kho trước khi sàn mở yêu cầu (E109): hàng về theo yêu cầu đi như kiện không khớp. */
+    packageReturned: boolean('package_returned').notNull().default(false),
     ...timestamps,
     ...version,
   },

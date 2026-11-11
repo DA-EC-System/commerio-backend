@@ -1,0 +1,1 @@
+ALTER TABLE "order"."return_request_lines" ADD COLUMN "package_returned" boolean DEFAULT false NOT NULL;

@@ -105,6 +105,7 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
       unitPrice: l.orderLine.unitPrice,
       unitCost: weightedUnitCost(own),
       externalLineId: l.externalReturnLineId,
+      packageReturned: pkg?.status === 'returned',
     };
   });
 
