@@ -5,9 +5,16 @@ import { z } from 'zod';
 import { assertTransition, defineQueue, JobDataSchema, publishEvent, recordTransition, sendJob } from '../../../core/index.ts';
 import { sql } from 'drizzle-orm';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
-import { allocationQueue, planAllocation, planReclaim } from '../domain/allocation.ts';
+import { allocationQueue, planAllocation, planDismantle, planReclaim } from '../domain/allocation.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
-import { allocationShops, lockAllocationCandidates, lockReclaimCandidates, takeAllocationLock, variantsInPlay } from '../repository/allocation.ts';
+import {
+  allocationShops,
+  lockAllocationCandidates,
+  lockReclaimCandidates,
+  lockSealedHolders,
+  takeAllocationLock,
+  variantsInPlay,
+} from '../repository/allocation.ts';
 import { markLinesReserved, setReserved, updatePackage } from '../repository/packages.ts';
 import { settleDeferredHandovers } from './handover-stock.ts';
 import { type FulfillmentContext, stockHoldLookupOf } from './packages.ts';
@@ -20,7 +27,10 @@ export interface AllocationCause {
 }
 export type AllocationContext = Pick<FulfillmentContext, 'stockHoldOf'>;
 
-/** Kiện đã đóng không giữ được sau phiếu kiểm kê đầu kỳ (spec 199b D5; chưa có khung việc #209). */
+/**
+ * Kiện đã đóng không giữ được sau phiếu kiểm kê đầu kỳ (spec 199b D5), hoặc đang giữ SKU mà phiếu kiểm kê đếm thấp hơn
+ * đang giữ (25 §7.4). Chưa có khung việc #209 nên bật cờ Cần xử lý thay cho việc "Dỡ kiện về kệ".
+ */
 export const DISMANTLE_NOTE = 'Dỡ kiện về kệ: số đếm thấp hơn hàng trong kiện';
 
 const unique = <T>(xs: Iterable<T>) => [...new Set(xs)];
@@ -34,35 +44,49 @@ async function move(p: { id: string; orderId: string }, from: PackageStatus, act
 
 /**
  * `opening`: lượt sau phiếu kiểm kê đầu kỳ (spec 199b §5.5): không lọc gian hàng chờ kiểm kê, kiện đã đóng không giữ
- * được thì bật Cần xử lý. `cause` gắn vào `allocation_done`.
+ * được thì bật Cần xử lý. `stocktake`: lượt do phiếu kiểm kê (`opening` cũng là): lấy lại hết kiện `reserved` mà tồn thực
+ * vẫn nhỏ hơn đang giữ thì kiện đã đóng đang giữ SKU đó bật Cần xử lý (25 §7.4). `cause` gắn vào `allocation_done`.
  */
 export async function runAllocation(
   ctx: AllocationContext,
   scope: AllocationScope,
-  opts: { opening?: boolean; cause?: AllocationCause } = {},
-): Promise<{ held: string[]; reclaimed: string[]; variantIds: string[] }> {
+  opts: { opening?: boolean; stocktake?: boolean; cause?: AllocationCause } = {},
+): Promise<{ held: string[]; reclaimed: string[]; flagged: string[]; variantIds: string[] }> {
   const companyId = requireCompanyId('runAllocation');
   await takeAllocationLock(companyId);
   const port = stockPort();
+  const stocktake = Boolean(opts.opening || opts.stocktake);
   const trigger = 'all' in scope ? [] : unique(scope.variantIds);
   let skus = 'all' in scope ? await variantsInPlay() : trigger;
   const touched = new Set<string>();
 
   // Lấy lại phần giữ: SKU có đang giữ lớn hơn tồn thực.
   const reclaimed: string[] = [];
+  const flagged: string[] = [];
   if (skus.length) {
     const deficitsOf = (stock: Map<string, { onHand: number; reserved: number }>) =>
       new Map([...stock].filter(([, s]) => s.reserved > s.onHand).map(([v, s]) => [v, s.reserved - s.onHand]));
     const suspected = deficitsOf(await port.stockOf(skus));
-    const locked = suspected.size ? await lockReclaimCandidates([...suspected.keys()]) : [];
+    const suspects = [...suspected.keys()];
+    const locked = suspected.size ? await lockReclaimCandidates(suspects) : [];
+    // Lượt do phiếu kiểm kê khoá luôn kiện đã đóng đang giữ SKU thiếu, trước khi đổi tồn.
+    const sealed = stocktake && suspected.size ? await lockSealedHolders(suspects) : [];
     // Đọc lại sau khi khoá: hàng về hay kiện huỷ trong lúc chờ khoá làm phần thiếu nhỏ đi.
-    const deficits = locked.length ? deficitsOf(await port.stockOf([...suspected.keys()])) : new Map<string, number>();
+    const deficits = locked.length || sealed.length ? deficitsOf(await port.stockOf(suspects)) : new Map<string, number>();
     for (const c of deficits.size ? planReclaim(deficits, locked) : []) {
       await port.release(c.id, c.lines);
       await setReserved(c.id, false);
       await move(c, 'reserved', 'reclaim', {});
       reclaimed.push(c.id);
       for (const l of c.lines) touched.add(l.variantId);
+    }
+    // Lấy lại hết mà vẫn thiếu: hàng thiếu nằm trong kiện đã đóng, kho kiểm lại (25 §7.4).
+    if (sealed.length) {
+      const left = reclaimed.length ? deficitsOf(await port.stockOf(suspects)) : deficits;
+      for (const p of planDismantle(sealed, left)) {
+        await updatePackage(p.id, { needsAttention: true, flagNote: DISMANTLE_NOTE });
+        flagged.push(p.id);
+      }
     }
     skus = unique([...skus, ...touched]);
   }
@@ -105,7 +129,7 @@ export async function runAllocation(
     aggregateId: companyId,
     payload: { variantIds, ...(opts.cause && { cause: opts.cause }) },
   });
-  return { held, reclaimed, variantIds };
+  return { held, reclaimed, flagged, variantIds };
 }
 
 /**
@@ -125,6 +149,20 @@ export async function requestAllocation(variantIds: readonly string[]): Promise<
 export function onStockChanged(ctx: AllocationContext): (event: { payload: { variantId: string } }) => Promise<void> {
   return async (event) => {
     await runAllocation(ctx, { variantIds: [event.payload.variantId] });
+  };
+}
+
+/**
+ * Handler của consumer `inventory.stocktake_posted`: phiếu kiểm kê thường (không nguồn, #208) chạy một lượt do kiểm kê cho
+ * SKU của phiếu (25 §7.4). Phiếu đầu kỳ (nguồn `shop_setup`) bỏ qua: channel gọi `settleOpeningStocktake`.
+ */
+export function onStocktakePosted(
+  ctx: AllocationContext,
+): (event: { payload: { source: { type: string } | null; lines: readonly { variantId: string }[] } }) => Promise<void> {
+  return async (event) => {
+    if (event.payload.source !== null) return;
+    const variantIds = unique(event.payload.lines.map((l) => l.variantId));
+    if (variantIds.length) await runAllocation(ctx, { variantIds }, { stocktake: true });
   };
 }
 

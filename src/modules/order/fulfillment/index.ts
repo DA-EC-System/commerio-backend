@@ -4,7 +4,7 @@ import { registerConsumer, workQueue } from '../../core/index.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerFulfillmentOpenApi } from './api/openapi.ts';
 import { fulfillmentRouter } from './api/routes.ts';
-import { allocationJobs, onAllocationJob, onStockChanged } from './service/allocation.ts';
+import { allocationJobs, onAllocationJob, onStockChanged, onStocktakePosted } from './service/allocation.ts';
 import type { FulfillmentContext } from './service/packages.ts';
 
 export const fulfillmentModule: ModuleDefinition = {
@@ -15,6 +15,8 @@ export const fulfillmentModule: ModuleDefinition = {
     // Phân hàng cho kiện (#199 phần b): tồn đổi thì chạy một lượt cho SKU đó; kiện huỷ, ghép SKU, dỡ kiện xếp việc nền.
     const allocation = ctx as FulfillmentContext;
     registerConsumer('inventory.stock_changed', onStockChanged(allocation), { consumer: 'fulfillment-allocation' });
+    // Phiếu kiểm kê thường ghi sổ (#208): lượt do kiểm kê, kiện đã đóng giữ SKU đếm thiếu bật Cần xử lý (25 §7.4).
+    registerConsumer('inventory.stocktake_posted', onStocktakePosted(allocation), { consumer: 'fulfillment-stocktake' });
     await workQueue(allocationJobs, onAllocationJob(allocation));
     // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).
     return async () => {};

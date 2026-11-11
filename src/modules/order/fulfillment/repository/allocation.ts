@@ -2,7 +2,7 @@
 // schema `order` nhưng fulfillment không import sales. Khoá kiện theo `code` tăng dần (cùng `lockDeferredPackages`).
 import { and, asc, eq, inArray, notInArray, or, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import type { AllocationCandidate, ReclaimCandidate } from '../domain/allocation.ts';
+import type { AllocationCandidate, ReclaimCandidate, SealedHolder } from '../domain/allocation.ts';
 import { planLinesOf } from './packages.ts';
 import { packageLines, packages } from './schema.ts';
 
@@ -27,13 +27,21 @@ const candidateWhere = and(
   sql`${orderStatus} <> 'cancelled'`,
 );
 
-/** SKU còn liên quan tới phân hàng: của kiện `reserved` và của ứng viên giữ hàng (lượt `{ all: true }`). */
+/**
+ * SKU còn liên quan tới phân hàng (lượt `{ all: true }`): của kiện đang giữ (`reserved`, và kiện đã đóng để lượt do phiếu
+ * kiểm kê thấy SKU chỉ còn kiện đóng giữ) và của ứng viên giữ hàng.
+ */
 export async function variantsInPlay(): Promise<string[]> {
   const rows = await getDb()
     .selectDistinct({ variantId: packageLines.variantId })
     .from(packageLines)
     .innerJoin(packages, eq(packages.id, packageLines.packageId))
-    .where(and(sql`${packageLines.variantId} is not null`, sql`(${packages.status} = 'reserved' or (${candidateWhere}))`));
+    .where(
+      and(
+        sql`${packageLines.variantId} is not null`,
+        sql`(${packages.status} in ('reserved', 'packed', 'awaiting_pickup') or (${candidateWhere}))`,
+      ),
+    );
   return rows.map((r) => r.variantId!).sort();
 }
 
@@ -55,6 +63,28 @@ export async function lockReclaimCandidates(variantIds: readonly string[]): Prom
     .for('update');
   const lines = await planLinesOf(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, orderStatus: r.orderStatus as 'unpaid' | 'processing', lines: heldOf(lines.get(r.id)!) }));
+}
+
+/**
+ * Kiện đã đóng (`packed`, `awaiting_pickup`) đang giữ một SKU thuộc `variantIds`; khoá `FOR UPDATE` cùng lúc khoá ứng viên
+ * lấy lại, trước khi đổi tồn (thứ tự khoá spec 199b §5.10). Đơn huỷ vẫn lấy: hàng vẫn nằm trong kiện.
+ */
+export async function lockSealedHolders(variantIds: readonly string[]): Promise<SealedHolder[]> {
+  if (!variantIds.length) return [];
+  const rows = await getDb()
+    .select({ id: packages.id, needsAttention: packages.needsAttention })
+    .from(packages)
+    .where(
+      and(
+        inArray(packages.status, ['packed', 'awaiting_pickup']),
+        sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
+             and ${packageLines.reservedQty} > 0 and ${inArray(packageLines.variantId, [...variantIds])})`,
+      ),
+    )
+    .orderBy(asc(packages.code))
+    .for('update');
+  const lines = await planLinesOf(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, lines: heldOf(lines.get(r.id)!) }));
 }
 
 export type LockedAllocationCandidate = AllocationCandidate & {
