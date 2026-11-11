@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
@@ -42,17 +43,6 @@ export const DisconnectBody = z
 // Schema trả về: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1).
 const iso = z.iso.datetime();
 
-export const StatusChange = z
-  .object({
-    at: iso,
-    from: z.string().nullable(),
-    to: z.string(),
-    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    source: z.enum(['user', 'marketplace', 'system']),
-    reason: z.string().nullable(),
-  })
-  .strict()
-  .meta({ id: 'StatusChange' });
 
 export const ShopCapabilities = z
   .object({
@@ -165,7 +155,7 @@ export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
     .meta({ description: '`version_conflict`: gian hàng hiện tại; `invalid_transition`: trạng thái hiện tại' }),
 }).meta({ id: 'ShopDisconnectConflict' });
 
-export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChange) }).meta({ id: 'ShopDetail' });
+export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChangeSchema) }).meta({ id: 'ShopDetail' });
 
 export const ShopList = z.object({ items: z.array(Shop) }).strict().meta({ id: 'ShopList' });
 
@@ -205,9 +195,13 @@ export const ShopConnectionResult = z
     previousStatus: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']).nullable().meta({
       description: 'Trạng thái gian hàng ngay trước lần nối này; `null` khi `created: true` (21 §18.7.4)',
     }),
+    remoteProductCount: z.number().int().nullable().meta({
+      description:
+        'Số sản phẩm người bán có trên sàn lúc nối, không tính sản phẩm đã xoá trên sàn. Nghĩa cố định cho mọi sàn, sàn nào cũng trả; BE lấy bằng tổng sàn trả sẵn, không đọc hết danh sách (Lazada: `total_products` của GetProducts, `filter=all`; TikTok: `total_count` của Search Products). `null` chỉ khi BE chưa đọc được: adapter của sàn chưa có cách đếm, sàn lỗi (kể cả hết hạn mức gọi, sàn không trả lời) hoặc quá 10 giây. BE không trả 0 thay cho lỗi; việc nối vẫn xong (21 §18.7.4)',
+    }),
     remoteSkuCount: z.number().int().nullable().meta({
       description:
-        'Số SKU người bán tìm thấy trên sàn lúc nối, không tính SKU đã xoá. `null` khi chưa đọc được: sàn chưa hỗ trợ đọc danh sách SKU, sàn lỗi (kể cả hết hạn mức gọi) hoặc quá 10 giây; việc nối vẫn xong (21 §18.7.4)',
+        'Số phân loại người bán có trên sàn lúc nối. Phân loại là SKU của sàn; sản phẩm không chia phân loại tính là 1. Không tính phân loại của sản phẩm đã xoá. Nghĩa cố định cho mọi sàn. `null` khi BE chưa biết: sàn không trả tổng số phân loại và BE chưa đọc hết danh sách (Lazada lúc nối luôn `null`; TikTok `null` khi tổng sản phẩm của gian hàng, kể cả sản phẩm đã xoá, vượt một trang (100)), hoặc khi `remoteProductCount` là `null`. BE không suy số phân loại từ số sản phẩm (21 §18.7.4)',
     }),
   })
   .strict()
@@ -218,7 +212,7 @@ export const ShopCallbackResult = z
     ...connectionResult,
     shops: z.array(ShopConnectionResult).min(1).meta({
       description:
-        'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu. `previousStatus`, `remoteSkuCount` chỉ có ở đây, gốc không có',
+        'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu. `previousStatus`, `remoteProductCount`, `remoteSkuCount` chỉ có ở đây, gốc không có',
     }),
   })
   .strict()

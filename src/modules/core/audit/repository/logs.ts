@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, lt, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, lt, type SQL, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { auditLogs } from './schema.ts';
 
@@ -11,7 +11,13 @@ export interface AuditLogFilter {
   from?: Date | undefined;
   /** Cận trên không lấy (đầu ngày hôm sau). */
   to?: Date | undefined;
+  /** Chỉ dòng tự duyệt (`after.selfApproved`, do `recordTransition` ghi). */
+  selfApproved?: boolean | undefined;
 }
+
+/** Dòng tự duyệt mang `after.selfApproved = true` (#246); dòng thường không có khoá này. */
+export const isSelfApproved = (row: Pick<AuditLogRow, 'after'>): boolean =>
+  (row.after as { selfApproved?: unknown } | null)?.selfApproved === true;
 
 const where = (f: AuditLogFilter): SQL | undefined =>
   and(
@@ -20,6 +26,7 @@ const where = (f: AuditLogFilter): SQL | undefined =>
     f.action ? eq(auditLogs.action, f.action) : undefined,
     f.from ? gte(auditLogs.createdAt, f.from) : undefined,
     f.to ? lt(auditLogs.createdAt, f.to) : undefined,
+    f.selfApproved ? sql`${auditLogs.after} @> '{"selfApproved": true}'::jsonb` : undefined,
   );
 
 /** Trang nhật ký, mới nhất trước. Chạy trong `withCompany`: RLS chỉ cho thấy dòng của công ty đang chọn. */

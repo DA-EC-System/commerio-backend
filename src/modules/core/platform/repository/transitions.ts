@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, max } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, lt, max } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { stateTransitions } from './schema.ts';
 
@@ -16,13 +16,20 @@ export interface TransitionRecord {
   actorId: string | null;
   source?: TransitionSource;
   reason?: string | null;
+  /** `selfApproved` mà `assertTransition` trả: bước người duyệt khác đi theo ngoại lệ tự duyệt. */
+  selfApproved?: boolean;
+  /**
+   * Dòng nhật ký thao tác của lần tự duyệt: `entityType` theo mẫu nhật ký `<schema>.<bảng>` (vd
+   * `product.purchase_requests`), `label` là mã chứng từ. Không có thì ghi tên bảng của lịch sử. Chỉ dùng khi `selfApproved`.
+   */
+  audit?: { entityType: string; label?: string | null };
 }
 
 /**
- * Ghi một lần chuyển trạng thái trong giao dịch của bên gọi, ngay sau câu UPDATE trạng thái (N4). Bảng chỉ thêm.
- * `source` mặc định `user` khi có `actorId`, `system` khi không.
+ * Chèn một dòng lịch sử trong giao dịch của bên gọi. Bảng chỉ thêm. `source` mặc định `user` khi có `actorId`,
+ * `system` khi không. Module khác gọi `recordTransition` của service (ghi thêm nhật ký khi tự duyệt).
  */
-export async function recordTransition(input: TransitionRecord): Promise<void> {
+export async function insertTransition(input: TransitionRecord): Promise<void> {
   const companyId = requireCompanyId('recordTransition');
   await getDb()
     .insert(stateTransitions)
@@ -36,6 +43,7 @@ export async function recordTransition(input: TransitionRecord): Promise<void> {
       actorId: input.actorId,
       source: input.source ?? (input.actorId ? 'user' : 'system'),
       reason: input.reason ?? null,
+      selfApproved: input.selfApproved ?? false,
     });
 }
 
@@ -47,6 +55,7 @@ export interface TransitionRow {
   actorId: string | null;
   source: TransitionSource;
   reason: string | null;
+  selfApproved: boolean;
 }
 
 /** Lịch sử của một thực thể trong công ty hiện tại, cũ trước. Cùng `at` (một giao dịch) thì theo thứ tự ghi. */
@@ -54,7 +63,16 @@ export async function listTransitions(entityType: string, entityId: string): Pro
   requireCompanyId('listTransitions');
   const t = stateTransitions;
   return getDb()
-    .select({ at: t.at, from: t.fromState, to: t.toState, action: t.action, actorId: t.actorId, source: t.source, reason: t.reason })
+    .select({
+      at: t.at,
+      from: t.fromState,
+      to: t.toState,
+      action: t.action,
+      actorId: t.actorId,
+      source: t.source,
+      reason: t.reason,
+      selfApproved: t.selfApproved,
+    })
     .from(t)
     .where(and(eq(t.entityType, entityType), eq(t.entityId, entityId)))
     .orderBy(asc(t.at), asc(t.id));
@@ -74,4 +92,41 @@ export async function lastTransitionsAt(entityType: string, entityIds: readonly 
     .where(and(eq(t.entityType, entityType), inArray(t.entityId, [...entityIds]), isNotNull(t.fromState)))
     .groupBy(t.entityId);
   return new Map(rows.flatMap((r) => (r.at ? [[r.id, r.at] as const] : [])));
+}
+
+export interface SelfApprovalRow extends TransitionRow {
+  entityType: string;
+  entityId: string;
+}
+
+/** Các lần tự duyệt của công ty hiện tại trong `[from, to)`, mới trước, cho báo cáo CEO (#246). */
+export async function listSelfApprovals(
+  range: { from: Date; to: Date },
+  page: { limit: number; offset: number },
+): Promise<{ rows: SelfApprovalRow[]; total: number }> {
+  requireCompanyId('listSelfApprovals');
+  const t = stateTransitions;
+  const where = and(eq(t.selfApproved, true), gte(t.at, range.from), lt(t.at, range.to));
+  const [rows, [counted]] = await Promise.all([
+    getDb()
+      .select({
+        entityType: t.entityType,
+        entityId: t.entityId,
+        at: t.at,
+        from: t.fromState,
+        to: t.toState,
+        action: t.action,
+        actorId: t.actorId,
+        source: t.source,
+        reason: t.reason,
+        selfApproved: t.selfApproved,
+      })
+      .from(t)
+      .where(where)
+      .orderBy(desc(t.at), desc(t.id))
+      .limit(page.limit)
+      .offset(page.offset),
+    getDb().select({ total: count() }).from(t).where(where),
+  ]);
+  return { rows, total: counted?.total ?? 0 };
 }

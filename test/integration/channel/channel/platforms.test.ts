@@ -173,8 +173,11 @@ describe('GET /channel/shops/platforms (#163)', () => {
     expect(schemas.ShopPlatform.properties).toHaveProperty('reason');
     for (const f of ['pendingOrderCount', 'orders7d', 'statusChangedAt', 'feeConfigVersion']) expect(schemas.Shop.properties).toHaveProperty(f);
     expect(schemas.ShopConnectionResult.properties).toHaveProperty('previousStatus');
+    expect(schemas.ShopConnectionResult.properties).toHaveProperty('remoteProductCount');
     expect(schemas.ShopConnectionResult.properties).toHaveProperty('remoteSkuCount');
     expect(schemas.ShopCallbackResult.properties).not.toHaveProperty('previousStatus');
+    expect(schemas.ShopCallbackResult.properties).not.toHaveProperty('remoteProductCount');
+    expect(schemas.ShopCallbackResult.properties).not.toHaveProperty('remoteSkuCount');
     expect(schemas.ShopDisconnectConflict.properties).toHaveProperty('orders');
     expect(schemas.Shop.properties).toHaveProperty('capabilities');
     expect(schemas.Shop.properties).toHaveProperty('returnWindowDays');

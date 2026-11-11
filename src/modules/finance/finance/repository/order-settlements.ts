@@ -24,7 +24,17 @@ export async function updateOrderSettlement(
   values: Partial<
     Pick<
       OrderSettlementRow,
-      'status' | 'estimatedTotal' | 'settledTotal' | 'diff' | 'resolvedDiffBase' | 'resolvedBy' | 'resolvedAt' | 'resolvedReason' | 'approvedBy' | 'shopId'
+      | 'status'
+      | 'estimatedTotal'
+      | 'settledTotal'
+      | 'diff'
+      | 'resolvedDiffBase'
+      | 'resolvedBy'
+      | 'resolvedAt'
+      | 'resolvedReason'
+      | 'selfApproved'
+      | 'approvedBy'
+      | 'shopId'
     >
   >,
 ): Promise<OrderSettlementRow | undefined> {

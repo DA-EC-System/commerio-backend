@@ -98,7 +98,8 @@ async function activeShop() {
   const shopId: string = res.body.shop.id;
   await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = now() where id = $1`, [shopId]);
   sàn.refresh.mockClear();
-  // Lúc nối BE gọi listSkus một lần để đếm remoteSkuCount (Documents/21 §18.7.4); ca dưới chỉ đếm lời gọi của chính nó.
+  // Adapter giả không có countRemote nên lúc nối BE gọi listSkus một lần để đếm remoteProductCount, remoteSkuCount
+  // (Documents/21 §18.7.4); ca dưới chỉ đếm lời gọi của chính nó.
   sàn.listSkus.mockClear();
   return { company, shopId, seller, companyId: company.companyId };
 }

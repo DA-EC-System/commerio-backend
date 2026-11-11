@@ -3,6 +3,7 @@ import { MAX_REASON } from '../domain/receipt.ts';
 import { GOODS_RECEIPT_STATUSES } from '../domain/receipt-machine.ts';
 import { MAX_LINES, MAX_QTY, MAX_UNIT_COST } from '../domain/request.ts';
 import { PURCHASE_REQUEST_STATUSES } from '../domain/request-machine.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Hợp đồng /purchasing (Documents/21 mục 16.2, FE `src/types/purchasing.ts`). Giới hạn theo mock FE.
 // Id sai định dạng trả 404 ở service (như bản ghi không tồn tại, V6), nên tham số đường dẫn chỉ là chuỗi.
@@ -225,18 +226,6 @@ export const SupplierReport = z
 
 export const SupplierReportList = z.array(SupplierReport);
 
-/** `StatusChange` của Documents/21 mục 14.1; không đặt `id` vì channel đã đăng ký tên này. */
-const StatusChange = z
-  .object({
-    at: iso,
-    from: z.string().nullable(),
-    to: z.string(),
-    by: z.object({ id: z.uuid(), name: z.string() }).nullable(),
-    source: z.enum(['user', 'marketplace', 'system']),
-    reason: z.string().nullable(),
-  })
-  .strict();
-
 const status = z.enum(PURCHASE_REQUEST_STATUSES);
 
 export const PurchaseRequestLine = z
@@ -293,7 +282,7 @@ export const PurchaseRequest = z
     ),
     sourceReturn: z.object({ type: z.literal('supplier_return'), id: z.uuid(), number: z.string() }).strict().nullable(),
     countingReceipts: z.number().int(),
-    statusHistory: z.array(StatusChange),
+    statusHistory: z.array(StatusChangeSchema),
   })
   .strict()
   .meta({ id: 'PurchaseRequest' });
@@ -363,7 +352,7 @@ export const GoodsReceipt = z
       .strict()
       .nullable(),
     followUps: z.array(z.object({ type: z.literal('supplier_return'), id: z.uuid(), number: z.string() }).strict()),
-    statusHistory: z.array(StatusChange),
+    statusHistory: z.array(StatusChangeSchema),
   })
   .strict()
   .meta({ id: 'GoodsReceipt' });

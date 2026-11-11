@@ -1,5 +1,5 @@
 {
-  "id": "ec7f7465-4540-4eb7-9a61-88dafc539f38",
+  "id": "24ece9cf-8a87-4e6e-82e4-ee292e8238da",
   "prevId": "38b547f6-2b50-4b64-80dc-3bc306701d7c",
   "version": "7",
   "dialect": "postgresql",
@@ -2225,12 +2225,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "uploaded_at": {
-          "name": "uploaded_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2755,6 +2749,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "self_approved": {
+          "name": "self_approved",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "at": {
           "name": "at",
