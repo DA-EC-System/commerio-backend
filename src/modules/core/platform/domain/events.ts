@@ -110,7 +110,8 @@ export const EVENT_SCHEMAS = {
     deliveredAt: timestamp,
     lines: z.array(
       z.object({
-        variantId: id,
+        /** Null khi dòng kiện chưa ghép SKU lúc bàn giao (ghép sau, #199c); `unitCost` kèm theo là null. */
+        variantId: id.nullable(),
         quantity: z.int().positive(),
         unitPrice: money,
         /** Null khi dòng kiện không có giá vốn (kiện bàn giao trước thời điểm bắt đầu lấy đơn, không qua `ship`; 21 §11.2). Không thay bằng giá vốn bình quân lúc giao. */
