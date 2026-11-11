@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { jobBoss, stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { MarketplaceError, type RemoteSku, type RemoteState } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { listingPushQueue } from '#src/modules/channel/channel/service/shop-jobs.ts';
+import { listingPushQueue, sendListingPush } from '#src/modules/channel/channel/service/shop-jobs.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -140,7 +140,10 @@ describe('việc đẩy đang giữ khi mất uỷ quyền (#219 AC-23)', () => 
     await testPool().query(`update channel.shops set status = 'needs_reauth', order_cutoff_at = now() where id = $1`, [shopId]);
     const boss = await jobBoss();
     await boss.createQueue('platform.held');
-    await boss.createQueue(listingPushQueue.name);
+    // Hàng do app tạo (một việc của gian hàng khác), để test giữ đúng quyết định A3: hàng `standard`, không khử trùng theo
+    // khoá gian hàng nên hai việc giữ cùng gian hàng không rơi việc nào.
+    await sendListingPush({ companyId: company.companyId, shopId: randomUUID(), listingId: randomUUID(), imageUrls: [] });
+    expect((await boss.getQueue(listingPushQueue.name))?.policy).toBe('standard');
     const listingIds = [randomUUID(), randomUUID()];
     for (const listingId of listingIds) {
       await boss.send('platform.held', { companyId: company.companyId, shopId, listingId, imageUrls: [], queue: listingPushQueue.name });

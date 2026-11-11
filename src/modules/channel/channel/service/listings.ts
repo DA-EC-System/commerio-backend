@@ -276,7 +276,12 @@ async function enqueue(
   } catch (err) {
     // Request khác vừa chuyển hay tạo listing của SKU này.
     if (err instanceof AppError && err.code === 'version_conflict') return inProgress(variantId, existing);
-    if (pgError(err).constraint === 'listings_shop_variant_uq') return inProgress(variantId, existing);
+    const constraint = pgError(err).constraint;
+    if (constraint === 'listings_shop_variant_uq') return inProgress(variantId, existing);
+    // Đẩy lại listing đã gỡ mà sản phẩm trên sàn của nó đang gắn với listing khác chưa gỡ của gian hàng (ghép tay).
+    if (constraint === 'listings_shop_external_sku_uq') {
+      return blocked(variantId, existing, 'already_listed', 'Sản phẩm trên sàn của listing đã gỡ đang gắn với SKU khác của gian hàng');
+    }
     throw err;
   }
 }

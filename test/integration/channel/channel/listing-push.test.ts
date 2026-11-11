@@ -123,7 +123,7 @@ async function history(id: string) {
 }
 
 describe('việc nền channel.listing_push', () => {
-  it('AC-7, C2-05/06: tạo mới trên sàn, ghi mã sàn, ảnh, giá, tồn; lịch sử pushing → under_review do hệ thống', async () => {
+  it('AC-10, AC-21, C2-05/06: tạo mới trên sàn, ghi mã sàn, ảnh, giá, tồn; lịch sử pushing → under_review do hệ thống', async () => {
     const { id, v } = await pushing({ seller_sku: 'SKU-TREN-SAN' });
     await runListingPush(port, job(id));
     expect(createProduct).toHaveBeenCalledTimes(1);
@@ -151,7 +151,7 @@ describe('việc nền channel.listing_push', () => {
     expect(v.sku).not.toBe('SKU-TREN-SAN');
   });
 
-  it('C2-02…04: listing đã có mã sàn (đẩy lại) gọi updateProduct, không tạo; dùng ảnh đã có, tồn để đồng bộ đẩy', async () => {
+  it('AC-17, AC-20, C2-02…04: listing đã có mã sàn (đẩy lại) gọi updateProduct, không tạo; dùng ảnh đã có, tồn để đồng bộ đẩy', async () => {
     const { id } = await pushing({ external_product_id: 'P1', external_sku_id: 'S1', external_image_urls: ['https://slatic.test/cu.png'] });
     await runListingPush(port, job(id, []));
     expect(createProduct).not.toHaveBeenCalled();
@@ -161,7 +161,7 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({ status: 'live', external_product_id: 'P1', stock_sync: 'pending', price_sync: 'synced' });
   });
 
-  it('AC-8: lỗi tạm thì ghi pushError, tăng pushAttempts, giữ pushing và ném để thử lại; lần thứ 5 thì push_failed, không ném', async () => {
+  it('AC-7: lỗi tạm thì ghi pushError, tăng pushAttempts, giữ pushing và ném để thử lại; lần thứ 5 thì push_failed, không ném', async () => {
     onCreate = async () => {
       throw new MarketplaceError('unavailable', '901', 'Hệ thống bận');
     };
@@ -177,7 +177,7 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({ status: 'push_failed', push_attempts: PUSH_ATTEMPTS });
   });
 
-  it('AC-9, C2-07: sàn từ chối thì push_failed ngay kèm câu của sàn, không ném', async () => {
+  it('AC-8, C2-07: sàn từ chối thì push_failed ngay kèm câu của sàn, không ném', async () => {
     onCreate = async () => {
       throw new MarketplaceError('rejected', '4110', 'Category attribute is mandatory');
     };
@@ -198,7 +198,7 @@ describe('việc nền channel.listing_push', () => {
     expect(updateProduct).not.toHaveBeenCalled();
   });
 
-  it('AC-10: quá 30 phút vẫn pushing thì push_failed, không gọi sàn', async () => {
+  it('AC-9: quá 30 phút vẫn pushing thì push_failed, không gọi sàn', async () => {
     const { id } = await pushing({ push_started_at: new Date(Date.now() - 31 * 60_000) });
     await runListingPush(port, job(id));
     expect(createProduct).not.toHaveBeenCalled();
@@ -212,7 +212,7 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'price_missing' } });
   });
 
-  it('AC-17: listing đổi trong lúc gọi sàn (đồng bộ vừa fail) thì không ném, chỉ ghi mã sàn vừa tạo', async () => {
+  it('AC-22: listing đổi trong lúc gọi sàn (đồng bộ vừa fail) thì không ném, chỉ ghi mã sàn vừa tạo', async () => {
     const { id } = await pushing();
     onCreate = async (p) => {
       await testPool().query("update channel.listings set status = 'push_failed', version = version + 1 where id = $1", [id]);

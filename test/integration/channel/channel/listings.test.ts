@@ -6,10 +6,12 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { ChannelListing, ListingList, PushResults } from '#src/modules/channel/channel/api/schemas.ts';
+import { variantsBySellerSku } from '#src/modules/channel/channel/repository/raw-orders.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import type { NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -226,6 +228,32 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(list.items.find((i) => i.variantId === v.id)!.listing).toMatchObject({ id: res.listingId, status: 'pushing' });
   });
 
+  it('listing đã gỡ mà sản phẩm sàn đang gắn listing khác chưa gỡ: already_listed, không 500, không thêm dòng', async () => {
+    const v = fresh('CMR-TRUNGSAN');
+    const other = fresh('CMR-GIUSAN');
+    const ext = `S-${randomUUID().slice(0, 8)}`;
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id)
+       values ($1, $2, $3, $4, 'delisted', 'P', $6), ($1, $2, $5, $7, 'live', 'P', $6)`,
+      [company.companyId, shopId, v.id, v.sku, other.id, ext, other.sku],
+    );
+    expect((await results([v.id]))[0]).toMatchObject({ status: 'delisted', code: 'already_listed' });
+    expect(await rowsOf(v.id)).toHaveLength(1);
+  });
+
+  it('AC-S2: kéo đơn ghép SellerSku theo listing chưa gỡ khi cùng SellerSku có dòng đã gỡ mới hơn', async () => {
+    const live = fresh('CMR-GHEP-A');
+    const gone = fresh('CMR-GHEP-B');
+    const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, created_at)
+       values ($1, $2, $3, $5, 'live', now() - interval '1 day'), ($1, $2, $4, $5, 'delisted', now())`,
+      [company.companyId, shopId, live.id, gone.id, sellerSku],
+    );
+    const map = await withCompany(company.companyId, () => variantsBySellerSku(shopId, [sellerSku]));
+    expect(map.get(sellerSku)).toBe(live.id);
+  });
+
   it('GET listings: mọi biến thể đang bán kèm listing hiện hành, đúng schema; pushError là object', async () => {
     const res = await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`));
     expect(res.status).toBe(200);
@@ -272,9 +300,13 @@ describe('gỡ listing', () => {
     expect(res.body.code).toBe('invalid_transition');
   });
 
-  it('gian hàng đã ngắt: đẩy 409 shop_not_active kèm current', async () => {
+  it('ngắt gian hàng: listing đang pushing chuyển push_failed shop_not_connected; đẩy sau đó 409 shop_not_active', async () => {
+    const v = fresh('CMR-DANGDAY');
+    await results([v.id]);
     const shop = await auth(app().get(`/api/v1/channel/shops/${shopId}`));
-    await auth(app().post(`/api/v1/channel/shops/${shopId}/disconnect`)).send({ version: shop.body.version });
+    expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/disconnect`)).send({ version: shop.body.version })).status).toBe(200);
+    const [row] = await rowsOf(v.id);
+    expect(row).toMatchObject({ status: 'push_failed', push_error: expect.objectContaining({ code: 'shop_not_connected' }) });
     const res = await push([fresh('CMR-OFF').id]);
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: 'shop_not_active', current: 'disconnected' });

@@ -202,7 +202,8 @@ const NO_RETRY = new Set<string | symbol>(['createProduct', 'updateProduct']);
  * nào của adapter được gọi với access token của phiên mà sàn báo `unauthorized` thì làm mới token một lần (qua khoá ở
  * `refreshShopTokenLocked`) rồi gọi lại với token mới; lần sau trong phiên dùng luôn token mới. Không làm mới được, hoặc
  * gọi lại vẫn `unauthorized`, thì ném lỗi của sàn như cũ để bên gọi `lose_auth`. Chờ khoá làm mới quá hạn thì ném
- * `unavailable` `token_refresh_busy` (không phải mất uỷ quyền). Hàm trong `NO_RETRY` không gọi lại. Hàm gọi với token khác
+ * `unavailable` `token_refresh_busy` (không phải mất uỷ quyền). Hàm trong `NO_RETRY` không gọi lại: làm mới được thì ném
+ * `unavailable` `token_refreshed` (bên gọi tự thử lại), không làm mới được thì ném lỗi gốc. Hàm gọi với token khác
  * giữ nguyên.
  * Giới hạn tần suất và thử lại khi lỗi tạm do từng adapter lo (Lazada `SellerCallLimit`, TikTok `rateLimit`).
  */
@@ -220,10 +221,12 @@ export function withTokenRefresh(adapter: MarketplaceAdapter, companyId: string,
         return call(used).catch(async (err: unknown) => {
           if (!(err instanceof MarketplaceError && err.kind === 'unauthorized')) throw err;
           if (NO_RETRY.has(prop)) {
-            // Làm mới cho lần sau; lỗi khi làm mới (bận, sàn lỗi) không che lỗi gốc.
+            // Làm mới cho lần sau; lỗi khi làm mới (bận, sàn lỗi) không che lỗi gốc. Làm mới được thì token vẫn còn uỷ
+            // quyền: báo lỗi tạm để bên gọi (việc đẩy listing nền, #219) thử lại với token mới, không `lose_auth`.
             const next = await renewAccessToken(companyId, shopId, used).catch(() => null);
-            if (next) current = next;
-            throw err;
+            if (!next) throw err;
+            current = next;
+            throw new MarketplaceError('unavailable', 'token_refreshed', 'Token vừa được làm mới, thử lại');
           }
           const fresh = await renewAccessToken(companyId, shopId, used);
           if (!fresh) throw err;

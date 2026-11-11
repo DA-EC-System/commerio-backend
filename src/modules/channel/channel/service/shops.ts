@@ -33,6 +33,7 @@ import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
   delistForDisconnect,
+  failPushingForDisconnect,
   findLiveCompanyOf,
   findShopByExternal,
   findShopRow,
@@ -566,6 +567,17 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       action: 'delist',
       actorId: actor.accountId,
       reason: 'Ngắt gian hàng',
+    });
+  }
+  for (const listing of await failPushingForDisconnect(id)) {
+    await recordTransition({
+      entityType: 'listings',
+      entityId: listing.id,
+      from: 'pushing',
+      to: 'push_failed',
+      action: 'fail',
+      actorId: null,
+      reason: 'Gian hàng đã ngắt',
     });
   }
   // Ngắt thì bỏ lịch và việc đang giữ (§18.1). Giao dịch lỗi sau bước này thì gian hàng còn `active` mà thiếu lịch:
