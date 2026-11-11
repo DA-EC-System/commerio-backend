@@ -14,6 +14,11 @@ export interface ListingVariant {
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
   archived: boolean;
+  /**
+   * Trạng thái kinh doanh của SKU. Tới khi #204 trả `readiness`, `paused` là SKU chưa sẵn sàng đẩy (`sku_not_ready`, #219
+   * A2; Documents/25 §6.3).
+   */
+  businessStatus: 'selling' | 'paused' | 'discontinued' | 'archived';
   description: string | null;
   weightG: number | null;
   lengthMm: number | null;
@@ -42,6 +47,7 @@ function toListingVariant(v: Extended): ListingVariant {
     categoryId: v.categoryId,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
     archived: v.archived,
+    businessStatus: v.businessStatus,
     description: v.description ?? null,
     weightG: v.weightG ?? null,
     lengthMm: v.lengthMm ?? null,

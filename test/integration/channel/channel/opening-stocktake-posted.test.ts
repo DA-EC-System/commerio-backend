@@ -12,6 +12,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { EventPayload } from '#src/modules/core/index.ts';
 import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { runOpenOrderPull } from '#src/modules/channel/channel/service/background.ts';
+import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
+import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import {
   handleAllocationDone,
   handleStocktakePosted,
@@ -80,6 +82,7 @@ const variant: ListingVariant = {
   categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   archived: false,
+  businessStatus: 'selling',
   description: null,
   weightG: 200,
   lengthMm: 100,
@@ -133,12 +136,14 @@ function remoteOrder(id: string, placedAt: Date): RemoteOrder {
   };
 }
 
+const port = {
+  variants: async (ids?: readonly string[]) => [variant, variant2, fresh].filter((v) => !ids || ids.includes(v.id)),
+  standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+  availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
+};
+
 beforeAll(() => {
-  setProductPort({
-    variants: async (ids) => [variant, variant2, fresh].filter((v) => !ids || ids.includes(v.id)),
-    standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
-    availableOf: async (ids) => new Map(ids.map((id) => [id, 7])),
-  });
+  setProductPort(port);
   const getOrder = async (_t: string, id: string) => open.find((o) => o.externalOrderId === id)!;
   registerAdapter(
     'lazada',
@@ -172,10 +177,11 @@ beforeAll(() => {
     openingStocktakeStatusOf: async (ids) => new Map(ids.flatMap((id) => (docStatus.has(id) ? [[id, docStatus.get(id)!] as const] : []))),
   });
 });
-afterAll(() => {
+afterAll(async () => {
   resetAdapters();
   setProductPort(null);
   setStocktakePort();
+  await stopJobs();
 });
 afterEach(() => {
   updatePriceQuantity.mockClear();
@@ -663,7 +669,10 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
     await allocated(c, documentId);
     const ok = await push(c, shopId);
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    expect(ok.body.results).toEqual([expect.objectContaining({ outcome: 'created' })]);
+    // Đẩy chạy nền (#219): request xếp việc, chạy việc như worker rồi mới thấy sản phẩm tạo trên sàn.
+    expect(ok.body.results).toEqual([expect.objectContaining({ status: 'pushing', code: null })]);
+    expect(created).toEqual([]);
+    await runListingPush(port, { companyId: c.companyId, shopId, listingId: ok.body.results[0].listingId, imageUrls: ['https://img.test/a.png'] });
     expect(created).toEqual([expect.objectContaining({ sellerSku: fresh.sku, quantity: 7 })]);
     expect(await listingRows(shopId)).toEqual([{ stock_sync: 'synced' }]);
   });

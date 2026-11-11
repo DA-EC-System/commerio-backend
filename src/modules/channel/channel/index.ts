@@ -5,10 +5,18 @@ import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runTokenRefresh } from './service/background.ts';
+import { runListingPush } from './service/listing-push.ts';
 import { markStockPending } from './service/listing-sync.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
 import { productPort } from './service/product-port.ts';
-import { listingSyncQueue, openOrderPullQueue, orderPullQueue, reconcileShopJobs, tokenRefreshQueue } from './service/shop-jobs.ts';
+import {
+  listingPushQueue,
+  listingSyncQueue,
+  openOrderPullQueue,
+  orderPullQueue,
+  reconcileShopJobs,
+  tokenRefreshQueue,
+} from './service/shop-jobs.ts';
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
@@ -27,6 +35,8 @@ export const channelModule: ModuleDefinition = {
     await workQueue(orderPullQueue, runOrderPull);
     await workQueue(openOrderPullQueue, runOpenOrderPull);
     await workQueue(tokenRefreshQueue, runTokenRefresh);
+    // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
+    await workQueue(listingPushQueue, (job) => runListingPush(port, job));
     await reconcileShopJobs();
     // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).
     return async () => {};

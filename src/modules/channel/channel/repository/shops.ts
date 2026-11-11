@@ -172,6 +172,19 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
 }
 
 /**
+ * Listing đang `pushing` của gian hàng vừa ngắt: việc đẩy đã bị bỏ (`dropHeld`) hoặc sẽ tự `fail` khi chạy, nên chuyển
+ * `push_failed` ngay kèm `shop_not_connected` để bảng không hiện "Đang đẩy" mãi (#219). Gọi trong giao dịch ngắt.
+ */
+export async function failPushingForDisconnect(shopId: string): Promise<{ id: string }[]> {
+  const error = { code: 'shop_not_connected', message: 'Gian hàng đã ngắt', at: new Date().toISOString() };
+  return getDb()
+    .update(listings)
+    .set({ status: 'push_failed', pushError: error, version: sql`${listings.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(listings.shopId, shopId), eq(listings.status, 'pushing')))
+    .returning({ id: listings.id });
+}
+
+/**
  * Gian hàng khác của công ty (RLS lọc công ty): đã có gian hàng xong thiết lập chưa (có mốc, không chờ kiểm kê; kể cả đã
  * ngắt), và phiếu kiểm kê đầu kỳ đang chờ nếu có (#198 A1, A12).
  */

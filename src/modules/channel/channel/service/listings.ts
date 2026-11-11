@@ -1,29 +1,32 @@
-// Listing: danh sách, đẩy lên sàn, gỡ (#104; Documents/21 §18.3, §18.4). Gọi sàn ngoài giao dịch (#104 A3):
-// ghi `pushing` rồi commit, gọi sàn, ghi kết quả trong giao dịch mới.
-import type { Decimal } from 'decimal.js';
+// Listing: danh sách, đẩy lên sàn, gỡ (#104; Documents/21 §18.3, §18.4, §18.6.4). Đẩy chạy nền (#219): request chỉ
+// kiểm, chuyển `pushing` và xếp việc `channel.listing_push` (`listing-push.ts`) trong cùng giao dịch, trả ngay.
 import { assertTransition, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
+import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type ListingAction, type ListingStatus, listingMachine } from '../domain/listing.ts';
 import { awaitingAllocation } from '../domain/shop.ts';
-import { type CategoryMapRow, listCategoryMaps } from '../repository/category-maps.ts';
+import { listCategoryMaps } from '../repository/category-maps.ts';
 import {
+  currentListingRows,
   findListingRow,
   insertListing,
   type ListingPatch,
   type ListingRow,
-  listListingRows,
   updateListing,
 } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
-import { type MarketplaceAdapter, MarketplaceError } from './marketplaces/index.ts';
-import type { ListingVariant, ProductPort } from './product-port.ts';
+import type { ProductPort } from './product-port.ts';
+import { pushBlock } from './push-block.ts';
+import { sendListingPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 
 const ENTITY = 'listings';
-/** Mỗi lần đẩy tối đa 20 biến thể: gọi sàn lần lượt trong một request (#104 A3). */
+/** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
+/** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
+const LISTED: readonly ListingStatus[] = ['under_review', 'live', 'hidden'];
 
 export interface ChannelListing {
   id: string;
@@ -32,7 +35,7 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: string | null;
+  pushError: SyncError | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
@@ -60,14 +63,16 @@ export interface ListingRowView {
   listing: ChannelListing | null;
 }
 
+/**
+ * Kết quả một dòng của `push` (Documents/21 §18.6.4): dòng được xếp việc có `status = 'pushing'`, `code` null; dòng bị
+ * chặn có `code`, `status` là trạng thái listing hiện có (null khi chưa có bản ghi).
+ */
 export interface PushResult {
   variantId: string;
-  sku: string;
-  outcome: 'created' | 'updated' | 'failed';
-  status?: ListingStatus;
-  externalSkuId?: string;
-  code?: string;
-  message?: string;
+  listingId: string | null;
+  status: ListingStatus | null;
+  code: string | null;
+  message: string | null;
 }
 
 export function toListing(r: ListingRow): ChannelListing {
@@ -98,7 +103,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const shop = await ownShop(shopId);
   const variants = (await port.variants()).filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
-  const byVariant = new Map((await listListingRows(shop.id)).map((l) => [l.variantId, l]));
+  const byVariant = new Map((await currentListingRows(shop.id)).map((l) => [l.variantId, l]));
   return {
     items: variants.map((v) => {
       const price = prices.get(v.id) ?? null;
@@ -137,26 +142,24 @@ export async function moveListing(
   return updated;
 }
 
-const fail = (variantId: string, sku: string, code: string, message: string, status?: ListingStatus): PushResult => ({
+const blocked = (variantId: string, existing: ListingRow | undefined, code: string, message: string): PushResult => ({
   variantId,
-  sku,
-  outcome: 'failed',
+  listingId: existing?.id ?? null,
+  status: existing?.status ?? null,
   code,
   message,
-  ...(status && { status }),
 });
 
-interface PushContext {
-  actor: Actor;
-  shopId: string;
-  adapter: MarketplaceAdapter;
-  accessToken: string;
-  imageUrls: Record<string, string[]>;
-}
+const inProgress = (variantId: string, existing: ListingRow | undefined) =>
+  blocked(variantId, existing, 'push_in_progress', 'Đang đẩy, chờ sàn trả kết quả');
 
 /**
- * Đẩy biến thể lên sàn: tạo sản phẩm mới (một SKU một sản phẩm, #104 A1). Thất bại theo dòng, không hỏng cả lô.
- * Listing đã có mã trên sàn thì giá và tồn đồng bộ bằng `sync`; sửa nội dung (`/product/update`) chưa làm.
+ * Xếp việc đẩy các biến thể lên gian hàng (Documents/21 §18.6.4). Kiểm cả request trước (gian hàng gọi được sàn, không
+ * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `already_listed`, `sku_not_ready`, `price_missing`,
+ * `category_unmapped`, `dimensions_missing`, `images_missing`. Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
+ * ghi lịch sử, xếp việc; hai request đua cùng SKU thì dòng thua ra `push_in_progress` (unique của bảng, `version`).
+ * Listing đã gỡ thì tạo bản ghi mới trỏ bản cũ (`replaces_listing_id`), chép mã sàn, SellerSku, ảnh của bản cũ: gỡ chỉ
+ * tắt sản phẩm trên sàn nên đẩy lại là bật lại đúng sản phẩm đó.
  */
 export async function pushListings(
   port: ProductPort,
@@ -164,35 +167,48 @@ export async function pushListings(
   shopId: string,
   input: { variantIds: string[]; imageUrls: Record<string, string[]> },
 ): Promise<{ results: PushResult[] }> {
+  const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   // Thứ tự kiểm theo §18.6.11: chưa `active`, chờ kiểm kê, chờ phân hàng (hoặc lượt đơn mở chưa xong), rồi mới tới token.
-  const { shop, adapter, accessToken } = await withCompany(actor.companyId, async () => {
-    assertPushable(await ownShop(shopId));
-    return shopSession(shopId);
-  });
+  // Không giải mã token, không gọi sàn: chỉ kiểm gian hàng còn token.
+  const shop = await inCompany(() => ownShop(shopId));
+  assertPushable(shop);
+  if (!shop.accessTokenEnc) {
+    throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+  }
   const ids = [...new Set(input.variantIds)];
-  const { variants, prices, available, maps } = await withCompany(actor.companyId, async () => {
+  const { variants, prices, maps, current } = await inCompany(async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
+    const categoryIds = [...new Set([...variants.values()].map((v) => v.categoryId))];
     return {
       variants,
       prices: await port.standardPrices(ids),
-      available: await port.availableOf(ids),
-      maps: new Map(
-        (await listCategoryMaps(shop.platform, [...new Set([...variants.values()].map((v) => v.categoryId))])).map((m) => [
-          m.categoryId,
-          m,
-        ]),
-      ),
+      maps: new Map((await listCategoryMaps(shop.platform, categoryIds)).map((m) => [m.categoryId, m])),
+      current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
     };
   });
-  const ctx: PushContext = { actor, shopId: shop.id, adapter, accessToken, imageUrls: input.imageUrls };
   const results: PushResult[] = [];
   for (const variantId of ids) {
     const v = variants.get(variantId);
+    const existing = current.get(variantId);
     if (!v || v.archived) {
-      results.push(fail(variantId, v?.sku ?? variantId, 'not_found', 'Biến thể không còn bán'));
+      results.push(blocked(variantId, existing, 'not_found', 'Biến thể không còn bán'));
       continue;
     }
-    results.push(await pushOne(ctx, v, prices.get(v.id) ?? null, available.get(v.id) ?? 0, maps.get(v.categoryId)));
+    if (existing?.status === 'pushing') {
+      results.push(inProgress(variantId, existing));
+      continue;
+    }
+    if (existing && LISTED.includes(existing.status)) {
+      results.push(blocked(variantId, existing, 'already_listed', 'Đã có trên sàn: giá và tồn cập nhật bằng Đồng bộ'));
+      continue;
+    }
+    const imageUrls = input.imageUrls[v.productId] ?? [];
+    const block = pushBlock(v, prices.get(v.id) ?? null, maps.get(v.categoryId), Boolean(existing?.externalImageUrls?.length || imageUrls.length));
+    if (block) {
+      results.push(blocked(variantId, existing, block.code, block.message));
+      continue;
+    }
+    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls));
   }
   return { results };
 }
@@ -219,96 +235,55 @@ function assertPushable(shop: ShopRow): void {
   if (waitingFor) throw new AppError(409, 'shop_awaiting_allocation', WAITING_MESSAGE[waitingFor], { waitingFor });
 }
 
-async function pushOne(
-  ctx: PushContext,
-  v: ListingVariant,
-  price: Decimal | null,
-  quantity: number,
-  map: CategoryMapRow | undefined,
+/**
+ * Một dòng hợp lệ: chuyển `pushing` (dòng có sẵn) hoặc tạo bản ghi `pushing` (chưa có, hoặc chỉ còn bản đã gỡ), ghi lịch
+ * sử và xếp việc trong một giao dịch. Bắt lỗi ngoài giao dịch: 23505 làm hỏng cả giao dịch đang mở.
+ */
+async function enqueue(
+  actor: Actor,
+  shopId: string,
+  variantId: string,
+  sku: string,
+  existing: ListingRow | undefined,
+  imageUrls: string[],
 ): Promise<PushResult> {
-  const { actor, shopId } = ctx;
-  const existing = await withCompany(actor.companyId, () => findListingRow(shopId, v.id));
-  if (existing?.status === 'pushing') return fail(v.id, v.sku, 'push_in_progress', 'Đang đẩy, chờ sàn trả kết quả', 'pushing');
-  if (existing?.status === 'platform_hold') return fail(v.id, v.sku, 'platform_hold', 'Sàn đang khoá listing này', 'platform_hold');
-  if (existing?.externalSkuId) {
-    return fail(v.id, v.sku, 'already_listed', 'Đã có trên sàn: giá và tồn cập nhật bằng Đồng bộ', existing.status);
-  }
-  if (price === null) return fail(v.id, v.sku, 'price_missing', 'Chưa có giá chuẩn', existing?.status);
-  if (!map) return fail(v.id, v.sku, 'category_unmapped', 'Danh mục chưa ghép với danh mục của sàn', existing?.status);
-  const { weightG, lengthMm, widthMm, heightMm } = v;
-  if (!weightG || !lengthMm || !widthMm || !heightMm) {
-    return fail(v.id, v.sku, 'dimensions_missing', 'Thiếu cân nặng hoặc kích thước gói của SKU', existing?.status);
-  }
-  const sourceImages = existing?.externalImageUrls?.length ? null : (ctx.imageUrls[v.productId] ?? []);
-  if (sourceImages && !sourceImages.length) {
-    return fail(v.id, v.sku, 'images_missing', 'Sàn bắt buộc ảnh: gửi kèm URL ảnh của sản phẩm', existing?.status);
-  }
-
-  // Ghi `pushing` và commit trước khi gọi sàn.
-  let row = await withCompany(actor.companyId, async () => {
-    if (existing) return moveListing(existing, 'push', actor, { pushStartedAt: new Date() });
-    const created = await insertListing({
-      companyId: actor.companyId,
-      shopId,
-      variantId: v.id,
-      sellerSku: v.sku,
-      status: 'pushing',
-      pushStartedAt: new Date(),
-    });
-    await recordTransition({ entityType: ENTITY, entityId: created.id, from: null, to: 'pushing', action: 'push', actorId: actor.accountId });
-    return created;
-  });
-
-  const priceText = price.toFixed(0);
+  const pushStartedAt = new Date();
   try {
-    const imageUrls =
-      row.externalImageUrls?.length ? row.externalImageUrls : await uploadAll(ctx, sourceImages ?? []);
-    const createdOnPlatform = await ctx.adapter.createProduct(ctx.accessToken, {
-      externalCategoryId: map.externalCategoryId,
-      attributes: map.attributes,
-      name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
-      description: v.description ?? v.productName,
-      imageUrls,
-      sellerSku: v.sku,
-      price: priceText,
-      quantity,
-      weightG,
-      lengthMm,
-      widthMm,
-      heightMm,
+    const row = await withCompany(actor.companyId, async () => {
+      let row: ListingRow;
+      if (existing && existing.status !== 'delisted') {
+        // Lượt mới: đếm lại số lần thử, xoá lỗi và lý do từ chối của lượt trước.
+        row = await moveListing(existing, 'push', actor, { pushStartedAt, pushAttempts: 0, pushError: null, rejectReason: null });
+      } else {
+        row = await insertListing({
+          companyId: actor.companyId,
+          shopId,
+          variantId,
+          sellerSku: existing?.sellerSku ?? sku,
+          status: 'pushing',
+          pushStartedAt,
+          externalProductId: existing?.externalProductId ?? null,
+          externalSkuId: existing?.externalSkuId ?? null,
+          externalImageUrls: existing?.externalImageUrls ?? null,
+          replacesListingId: existing?.id ?? null,
+        });
+        await recordTransition({ entityType: ENTITY, entityId: row.id, from: null, to: 'pushing', action: 'push', actorId: actor.accountId });
+      }
+      await sendListingPush({ companyId: actor.companyId, shopId, listingId: row.id, imageUrls });
+      return row;
     });
-    row = await withCompany(actor.companyId, async () =>
-      moveListing(row, createdOnPlatform.live ? 'go_live' : 'send_review', null, {
-        externalProductId: createdOnPlatform.externalProductId,
-        externalSkuId: createdOnPlatform.externalSkuId,
-        externalImageUrls: imageUrls,
-        pushError: null,
-        listedPrice: priceText,
-        lastPushedAt: new Date(),
-        platformStock: quantity,
-        stockSync: 'synced',
-        priceSync: 'synced',
-        stockSyncError: null,
-        priceSyncError: null,
-      }),
-    );
-    return { variantId: v.id, sku: v.sku, outcome: 'created', status: row.status, externalSkuId: createdOnPlatform.externalSkuId };
+    return { variantId, listingId: row.id, status: row.status, code: null, message: null };
   } catch (err) {
-    if (!(err instanceof MarketplaceError)) throw err;
-    const transient = err.kind === 'unavailable';
-    const message = transient ? 'Sàn lỗi tạm, đẩy lại sau' : (err.platformMessage ?? 'Sàn từ chối sản phẩm');
-    row = await withCompany(actor.companyId, async () =>
-      moveListing(row, 'fail', null, { pushError: message, pushAttempts: row.pushAttempts + 1 }, err.platformCode),
-    );
-    const code = transient ? 'marketplace_unavailable' : 'marketplace_rejected';
-    return fail(v.id, v.sku, code, message, row.status);
+    // Request khác vừa chuyển hay tạo listing của SKU này.
+    if (err instanceof AppError && err.code === 'version_conflict') return inProgress(variantId, existing);
+    const constraint = pgError(err).constraint;
+    if (constraint === 'listings_shop_variant_uq') return inProgress(variantId, existing);
+    // Đẩy lại listing đã gỡ mà sản phẩm trên sàn của nó đang gắn với listing khác chưa gỡ của gian hàng (ghép tay).
+    if (constraint === 'listings_shop_external_sku_uq') {
+      return blocked(variantId, existing, 'already_listed', 'Sản phẩm trên sàn của listing đã gỡ đang gắn với SKU khác của gian hàng');
+    }
+    throw err;
   }
-}
-
-async function uploadAll(ctx: PushContext, urls: string[]) {
-  const out: string[] = [];
-  for (const url of urls) out.push(await ctx.adapter.uploadImage(ctx.accessToken, url));
-  return out;
 }
 
 /** Gỡ khỏi sàn (§18.3): tắt sản phẩm trên sàn rồi chuyển `delisted`, giữ ghép để đẩy lại. */
