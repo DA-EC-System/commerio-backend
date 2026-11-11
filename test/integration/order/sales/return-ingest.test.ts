@@ -249,6 +249,25 @@ describe('kiện đã hoàn về kho khi sàn mở yêu cầu (E109, 25 §9)', (
   });
 });
 
+describe('giá vốn dòng trả (25 §9, review #202 mục 4)', () => {
+  const costsOf = async (requestId: string) =>
+    (await db().query(`select unit_cost from "order".return_request_lines where request_id = $1`, [requestId])).rows.map((l) => (l.unit_cost === null ? null : Number(l.unit_cost)));
+
+  it('chỉ tính dòng kiện đã giao (kể cả kiện vừa nhảy cóc), không tính kiện thất lạc', async () => {
+    const lost = await marketplaceOrder();
+    await db().query(`update "order".packages set status = 'lost' where order_id = $1`, [lost.orderId]);
+    await db().query(`update "order".package_lines set unit_cost = 15000 where package_id in (select id from "order".packages where order_id = $1)`, [lost.orderId]);
+    const r1 = remoteReturn(lost.externalOrderId);
+    const moving = await marketplaceOrder('in_transit');
+    await db().query(`update "order".package_lines set unit_cost = 18000 where package_id in (select id from "order".packages where order_id = $1)`, [moving.orderId]);
+    const r2 = remoteReturn(moving.externalOrderId);
+    remote = [r1, r2];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await costsOf((await requestOf(r1.externalId)).id)).toEqual([null, null]);
+    expect(await costsOf((await requestOf(r2.externalId)).id)).toEqual([18000, 18000]);
+  });
+});
+
 describe('kiểm hàng hoàn xong (`inventory.return_inspected`)', () => {
   it('đóng yêu cầu `inspected`, chia số bán lại về dòng, tính giá vốn bán lại, hoàn tiền', async () => {
     const { externalOrderId } = await marketplaceOrder();

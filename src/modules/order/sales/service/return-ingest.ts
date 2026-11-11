@@ -93,31 +93,38 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
     lines.set(orderLine.id, line);
   }
   const pkgLines = await packageLinesOfOrderLines([...lines.keys()]);
+  const notes: string[] = [];
+  if (missing.length) notes.push(`Sàn có món không khớp dòng đơn: ${missing.join(', ')}`);
+  // Khách trả hàng thì kiện phải đã giao: mọi kiện chứa dòng trả còn trên đường nhảy tới `delivered` (25 §9); khác thì
+  // người dùng đối chiếu. Làm trước khi tính giá vốn để kiện vừa nhảy cóc được tính là đã giao.
+  const jumped = new Set<string>();
+  if (r.kind === 'return') {
+    for (const packageId of new Set(pkgLines.map((p) => p.packageId))) {
+      const outcome = await deliverForReturn(packageId, 'Sàn mở yêu cầu trả khi kiện chưa giao xong');
+      if (outcome === 'jumped') jumped.add(packageId);
+      if (outcome !== 'delivered') notes.push(`Kiện của dòng trả ở trạng thái ${outcome === 'jumped' ? 'chưa giao, đã chuyển sang Đã giao' : outcome}`);
+    }
+  }
   const rows = [...lines.values()].map((l) => {
-    const own = pkgLines.filter((p) => p.orderLineId === l.orderLine.id);
-    // Kiện đã giao chứa dòng; chưa có kiện giao thì lấy kiện đầu (sàn mở yêu cầu khi kiện còn trên đường, 25 §9).
-    const pkg = own.find((p) => p.status === 'delivered') ?? own[0];
+    const own = pkgLines
+      .filter((p) => p.orderLineId === l.orderLine.id)
+      .map((p) => ({ ...p, status: jumped.has(p.packageId) ? ('delivered' as const) : p.status }));
+    // Giá vốn bình quân chỉ trên dòng kiện đã giao (25 §9); kiện hoàn, thất lạc, chưa giao không tính.
+    const delivered = own.filter((p) => p.status === 'delivered');
+    // Một dòng trả gắn một kiện: kiện đã giao đầu tiên, không có thì kiện đầu (để đối chiếu).
+    const pkg = delivered[0] ?? own[0];
     return {
       orderLineId: l.orderLine.id,
       packageId: pkg?.packageId ?? null,
       variantId: l.orderLine.variantId,
       quantity: l.quantity,
       unitPrice: l.orderLine.unitPrice,
-      unitCost: weightedUnitCost(own),
+      unitCost: weightedUnitCost(delivered),
       externalLineId: l.externalReturnLineId,
-      packageReturned: pkg?.status === 'returned',
+      // Mọi kiện của dòng đã hoàn về kho (E109).
+      packageReturned: own.length > 0 && own.every((p) => p.status === 'returned'),
     };
   });
-
-  const notes: string[] = [];
-  if (missing.length) notes.push(`Sàn có món không khớp dòng đơn: ${missing.join(', ')}`);
-  // Khách trả hàng thì kiện phải đã giao: kiện còn trên đường nhảy tới `delivered` (25 §9); khác thì người dùng đối chiếu.
-  if (r.kind === 'return') {
-    for (const packageId of new Set(rows.flatMap((l) => (l.packageId ? [l.packageId] : [])))) {
-      const outcome = await deliverForReturn(packageId, 'Sàn mở yêu cầu trả khi kiện chưa giao xong');
-      if (outcome !== 'delivered') notes.push(`Kiện của dòng trả ở trạng thái ${outcome === 'jumped' ? 'chưa giao, đã chuyển sang Đã giao' : outcome}`);
-    }
-  }
 
   const created = await insertReturn({
     companyId: requireCompanyId('ingestMarketplaceReturn'),
