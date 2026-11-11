@@ -74,6 +74,10 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     ['requested', 'closed', 'buyer_cancel'],
     ['awaiting_return', 'closed', 'buyer_cancel'],
     ['awaiting_return', 'received', null],
+    // Lần kéo đầu đã thấy hàng về: đồng ý thay người bán rồi chờ kho quét (review #202 mục 1).
+    ['requested', 'received', 'accept'],
+    ['rejected', 'received', 'platform_reopen'],
+    ['refund_only', 'received', 'conflict'],
     ['received', 'refund_only', null],
     ['requested', 'requested', null],
     ['closed', 'awaiting_return', 'conflict'],

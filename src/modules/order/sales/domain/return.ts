@@ -54,8 +54,13 @@ export const REFUNDING_ACTIONS: readonly ReturnAction[] = ['refund_only', 'platf
  */
 export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnAction | null | 'conflict' {
   if (current === target) return null;
-  // Sàn báo hàng đã về người bán: app vẫn chờ kho quét (`receive` chỉ qua quét nhận, §20).
-  if (target === 'received') return current === 'awaiting_return' || current === 'closed' ? null : 'conflict';
+  // Sàn báo hàng đã về người bán: app chờ kho quét (`receive` chỉ qua quét nhận, §20). Chưa đồng ý thì sàn đã đồng ý
+  // thay người bán: đi tới `awaiting_return` (`syncTarget`) bằng bước hệ thống, không gọi lại sàn.
+  if (target === 'received') {
+    if (current === 'requested') return 'accept';
+    if (current === 'rejected') return 'platform_reopen';
+    return current === 'awaiting_return' || current === 'closed' ? null : 'conflict';
+  }
   const byPair: Partial<Record<`${ReturnStatus}>${ReturnStatus}`, ReturnAction>> = {
     'requested>awaiting_return': 'accept',
     'requested>rejected': 'reject',
@@ -71,6 +76,9 @@ export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnA
   if (target === 'refund_only' && (current === 'received' || current === 'closed')) return null;
   return 'conflict';
 }
+
+/** Trạng thái app đi tới khi sàn báo `target`: `received` chỉ tới được bằng quét nên dừng ở `awaiting_return`. */
+export const syncTarget = (target: ReturnStatus): ReturnStatus => (target === 'received' ? 'awaiting_return' : target);
 
 export interface ScanLine {
   variantId: string;

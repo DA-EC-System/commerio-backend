@@ -3,7 +3,7 @@
 // trước khi hàng về; app là nguồn của nhận hàng (quét) và kiểm hàng.
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { deliverForReturn, packageLinesOfOrderLines } from '../../fulfillment/index.ts';
-import { distributeResell, refundAmountOf, type ReturnStatus, syncAction, weightedUnitCost } from '../domain/return.ts';
+import { distributeResell, refundAmountOf, type ReturnStatus, syncAction, syncTarget, weightedUnitCost } from '../domain/return.ts';
 import { lockMarketplaceOrder, takeNextNumber } from '../repository/orders.ts';
 import {
   findMarketplaceReturn,
@@ -151,7 +151,7 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   if (action) {
     await applyReturnStep(
       row,
-      { action, to: r.status!, actorId: null, source: 'marketplace', reason: action === 'reject' ? (r.reason ?? r.rawStatus) : null },
+      { action, to: syncTarget(r.status!), actorId: null, source: 'marketplace', reason: action === 'reject' ? (r.reason ?? r.rawStatus) : null },
       fields,
     );
     return 'updated';
