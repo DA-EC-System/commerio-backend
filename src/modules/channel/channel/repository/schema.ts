@@ -148,7 +148,7 @@ export const listings = channelSchema.table(
     sellerSku: text('seller_sku'),
     status: listingStatus('status').notNull().default('pushing'),
     rejectReason: text('reject_reason'),
-    /** Lỗi lần gọi sàn cuối của lượt đẩy (§18.6.4): `{ code, message, at }`, `code` là `marketplace_rejected` hoặc `marketplace_unavailable`. */
+    /** Lỗi của lượt đẩy (§18.6.4): `{ code, message, at }`; `code` là mã lỗi sàn hoặc mã chặn khi việc chạy (mô tả ở `ChannelListing.pushError`). */
     pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
