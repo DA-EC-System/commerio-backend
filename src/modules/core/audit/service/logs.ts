@@ -2,7 +2,7 @@
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import { type AuditLogFilter, type AuditLogRow, findAuditLog, listAuditLogs } from '../repository/logs.ts';
+import { type AuditLogFilter, type AuditLogRow, findAuditLog, isSelfApproved, listAuditLogs } from '../repository/logs.ts';
 
 /** `staff` import `audit` nên không import ngược được: `core/index.ts` tiêm hàm đọc họ tên, email. */
 export interface AuditContext extends ModuleContext {
@@ -12,7 +12,7 @@ export interface AuditContext extends ModuleContext {
 /** Tên dễ đọc của đối tượng lúc ghi: trường đầu tiên có trong `after` (hoặc `before` khi xoá). */
 function entityLabel(row: AuditLogRow): string {
   const data = (row.after ?? row.before) as Record<string, unknown> | null;
-  const label = ['name', 'fullName', 'email', 'module'].map((k) => data?.[k]).find((v) => typeof v === 'string');
+  const label = ['name', 'fullName', 'email', 'module', 'code'].map((k) => data?.[k]).find((v) => typeof v === 'string');
   return (label as string | undefined) ?? row.entityType;
 }
 
@@ -33,6 +33,7 @@ async function toViews(ctx: AuditContext, rows: readonly AuditLogRow[]) {
         email: a?.email ?? '',
         fullName: a?.fullName ?? (r.actorId ? 'Tài khoản đã xoá' : 'Hệ thống'),
       },
+      selfApproved: isSelfApproved(r),
       createdAt: r.createdAt.toISOString(),
     };
   });

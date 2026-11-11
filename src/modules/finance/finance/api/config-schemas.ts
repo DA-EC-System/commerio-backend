@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CONFIG_KINDS, CONFIG_STATUSES, USER_ACTIONS } from '../domain/config-version.ts';
 import { page, VersionBody } from './schemas.ts';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 
 // Hợp đồng /finance/configs (Documents/21 §21.4; #118). Ngày là `yyyy-mm-dd` theo giờ Việt Nam. `payload` kiểm theo
 // `kind` ở service (domain/config-version.ts), lỗi trả dưới ô `payload.<trường>`.
@@ -81,16 +82,7 @@ export const FinanceConfigSummary = z
   })
   .meta({ id: 'FinanceConfigSummary' });
 
-const StatusChange = z.object({
-  at: z.iso.datetime(),
-  from: z.string().nullable(),
-  to: z.string(),
-  by: UserRef.nullable(),
-  source: z.enum(['user', 'marketplace', 'system']),
-  reason: z.string().nullable(),
-});
-
-export const FinanceConfig = FinanceConfigSummary.extend({ statusHistory: z.array(StatusChange) }).meta({ id: 'FinanceConfig' });
+export const FinanceConfig = FinanceConfigSummary.extend({ statusHistory: z.array(StatusChangeSchema) }).meta({ id: 'FinanceConfig' });
 
 export const FinanceConfigPage = z
   .object({ items: z.array(FinanceConfigSummary), total: z.int(), page: z.int(), pageSize: z.int() })

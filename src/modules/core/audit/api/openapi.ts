@@ -15,7 +15,8 @@ export function registerAuditOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/logs',
     summary: 'Nhật ký thao tác của công ty đang chọn (UC-PI-07)',
-    description: 'Cần `platform.audit.view` (CEO, Admin). Mới nhất trước. `from`, `to` trọn ngày theo giờ Việt Nam.',
+    description:
+      'Cần `platform.audit.view` (CEO, Admin). Mới nhất trước. `from`, `to` trọn ngày theo giờ Việt Nam. Lần tự duyệt có `selfApproved: true`; lọc riêng bằng `selfApproved=true`.',
     security: bearer,
     request: { query: AuditLogQuery },
     responses: {
