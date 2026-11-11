@@ -1,6 +1,6 @@
 {
-  "id": "3e0e20ab-4592-4a36-bd83-3984fd4cb143",
-  "prevId": "492b928e-020c-4d1a-b933-ec7a8ead4757",
+  "id": "df0e6b88-010b-4cc2-8db2-16d95db61caf",
+  "prevId": "24ece9cf-8a87-4e6e-82e4-ee292e8238da",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2212,6 +2212,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "file_purpose",
+          "typeSchema": "core",
+          "primaryKey": false,
+          "notNull": true
+        },
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
@@ -2253,7 +2260,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "files_size_positive": {
+          "name": "files_size_positive",
+          "value": "\"core\".\"files\".\"size_bytes\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.refresh_tokens": {
@@ -3770,12 +3782,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_order_id": {
-          "name": "external_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3869,12 +3875,6 @@
           "columns": [
             {
               "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "shop_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9639,24 +9639,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_number": {
-          "name": "source_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "claim_flag": {
           "name": "claim_flag",
           "type": "boolean",
@@ -11474,6 +11456,14 @@
         "create",
         "update",
         "delete"
+      ]
+    },
+    "core.file_purpose": {
+      "name": "file_purpose",
+      "schema": "core",
+      "values": [
+        "product_image",
+        "attachment"
       ]
     },
     "core.company_status": {

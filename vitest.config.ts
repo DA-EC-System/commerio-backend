@@ -13,6 +13,14 @@ const env = {
   JOIN_RATE_LIMIT_SCALE: '1000',
   // Khoá mã hoá token sàn (#103), chỉ dùng trong test.
   CHANNEL_TOKEN_KEY: Buffer.alloc(32, 7).toString('base64'),
+  // Kho tệp giả (#212): ký URL chỉ tính trong máy, test không gọi tới kho.
+  S3_ENDPOINT: 'https://test-account.r2.cloudflarestorage.com',
+  S3_ACCESS_KEY_ID: 'test-access-key',
+  S3_SECRET_ACCESS_KEY: 'test-secret-key',
+  S3_PUBLIC_BUCKET: 'commerio-test-public',
+  S3_PRIVATE_BUCKET: 'commerio-test-private',
+  S3_PUBLIC_URL: 'https://files.commerio.test',
+  S3_KEY_PREFIX: 'test',
 };
 
 export default defineConfig({
