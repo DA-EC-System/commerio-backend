@@ -2,6 +2,8 @@
 // `last_return_sync_at` (lần đầu: `order_cutoff_at`) lùi 2 phút. Gọi sàn ngoài giao dịch; mỗi yêu cầu một giao dịch qua
 // `ingestMarketplaceReturn` của `order`. Lazada trả mới tạo trước, không theo thời điểm sửa, nên mốc chỉ tiến tới lúc
 // bắt đầu lượt khi đi hết các trang; lỗi giữa chừng thì lượt sau kéo lại từ mốc cũ (ghi lặp không sao, theo mã sàn).
+// Yêu cầu của đơn chưa có trong app (`unknown_order`) không giữ mốc: chỉ về lại khi sàn sửa yêu cầu đó lần nữa. Kéo đơn
+// chạy ngay trước trong cùng việc nên đơn mới thường đã có.
 import { ingestMarketplaceReturn, type PlatformReturn, type ReturnIngestOutcome } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';

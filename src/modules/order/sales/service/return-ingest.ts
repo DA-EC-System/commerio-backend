@@ -58,8 +58,9 @@ function platformFields(r: PlatformReturn): ReturnPatch {
 }
 
 /**
- * Tạo hoặc cập nhật yêu cầu trả theo (gian hàng, mã yêu cầu sàn). Đơn chưa có trong app thì bỏ (`unknown_order`):
- * lượt kéo đơn sau mang đơn về, lượt kéo yêu cầu sau mới gắn. Gọi trong `withCompany` (một giao dịch).
+ * Tạo hoặc cập nhật yêu cầu trả theo (gian hàng, mã yêu cầu sàn). Đơn chưa có trong app thì bỏ (`unknown_order`): mốc kéo
+ * vẫn tiến nên yêu cầu đó chỉ về lại khi sàn sửa nó lần nữa (đơn đặt trước mốc kéo đơn thì không bao giờ có trong app).
+ * Gọi trong `withCompany` (một giao dịch).
  */
 export async function ingestMarketplaceReturn(r: PlatformReturn): Promise<ReturnIngestOutcome> {
   if (r.kind === 'replacement') return 'skipped';

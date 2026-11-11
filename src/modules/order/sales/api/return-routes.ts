@@ -75,7 +75,7 @@ export function returnsRouter(ctx: SalesContext): Router {
     res.json(await platformHistory(ctx, actor(res), validated<typeof ReturnParams>(res, 'params').id));
   });
 
-  // Quyền từng bước do máy trạng thái kiểm (`sales.return.process`); route chỉ chặn người không xem được yêu cầu trả.
+  // Route chặn người thiếu `sales.return.process`; máy trạng thái kiểm lại quyền, guard và lý do của từng bước.
   router.post('/:id/:action', process, validate({ params: ReturnActionParams, body: ReturnActionBody }), async (_req, res) => {
     const { id, action } = validated<typeof ReturnActionParams>(res, 'params');
     res.json(await actOnReturn(ctx, actor(res), id, ACTION[action], validated<typeof ReturnActionBody>(res, 'body')));
