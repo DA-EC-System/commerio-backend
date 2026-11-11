@@ -1,6 +1,6 @@
 {
-  "id": "1f149b10-3aaa-4b1d-b553-ea6066ef88a8",
-  "prevId": "90202eec-dee2-4780-987f-53e5ccd87f17",
+  "id": "df0e6b88-010b-4cc2-8db2-16d95db61caf",
+  "prevId": "24ece9cf-8a87-4e6e-82e4-ee292e8238da",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2212,6 +2212,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "file_purpose",
+          "typeSchema": "core",
+          "primaryKey": false,
+          "notNull": true
+        },
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
@@ -2253,7 +2260,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "files_size_positive": {
+          "name": "files_size_positive",
+          "value": "\"core\".\"files\".\"size_bytes\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.refresh_tokens": {
@@ -3770,12 +3782,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_order_id": {
-          "name": "external_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3869,12 +3875,6 @@
           "columns": [
             {
               "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "shop_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9639,24 +9639,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_number": {
-          "name": "source_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "claim_flag": {
           "name": "claim_flag",
           "type": "boolean",
@@ -9809,28 +9791,6 @@
           ],
           "isUnique": true,
           "where": "\"product\".\"stock_documents\".\"kind\" = 'return_inspection'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "stock_documents_opening_uq": {
-          "name": "stock_documents_opening_uq",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"product\".\"stock_documents\".\"source_type\" = 'shop_setup' and \"product\".\"stock_documents\".\"status\" in ('draft', 'pending')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -11181,13 +11141,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "result_self_approved": {
-          "name": "result_self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11278,7 +11231,7 @@
         },
         "supplier_returns_result_by": {
           "name": "supplier_returns_result_by",
-          "value": "\"product\".\"supplier_returns\".\"result_by\" is null or \"product\".\"supplier_returns\".\"result_by\" is distinct from \"product\".\"supplier_returns\".\"sent_by\" or \"product\".\"supplier_returns\".\"result_self_approved\""
+          "value": "\"product\".\"supplier_returns\".\"result_by\" is null or \"product\".\"supplier_returns\".\"result_by\" is distinct from \"product\".\"supplier_returns\".\"sent_by\""
         }
       },
       "isRLSEnabled": false
@@ -11503,6 +11456,14 @@
         "create",
         "update",
         "delete"
+      ]
+    },
+    "core.file_purpose": {
+      "name": "file_purpose",
+      "schema": "core",
+      "values": [
+        "product_image",
+        "attachment"
       ]
     },
     "core.company_status": {

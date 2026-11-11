@@ -83,3 +83,17 @@ Mỗi bước in `OK` hoặc `LỖI` kèm phản hồi của sàn. Lỗi hay g�
 | Lazada | `InvalidCode` | Code đã dùng hoặc hết hạn, chạy lại `auth-url` |
 | Lazada | `AppWhiteIpLimit` / `InsufficientPermission` | App chưa được duyệt hoặc thiếu quyền API |
 | Lazada | `InvalidApiPath` | Gõ sai path, hoặc Git Bash đổi path (xem trên) |
+
+## Kho tệp Cloudflare R2 (#212)
+
+`npm run smoke:r2 [origin FE ...]` chạy đúng hàm ký URL của module `files` vào bucket thật: kiểm CORS cho từng origin (mặc định `http://localhost:5173`), PUT sai cỡ hoặc sai kiểu đã khai phải bị từ chối, PUT ảnh vào bucket công khai rồi xem lại qua `S3_PUBLIC_URL`, PUT PDF vào bucket riêng. Xong thì xoá tệp thử (xoá không tốn phí). Cần các biến `S3_*` trong `backend/.env` (mẫu ở `.env.example`).
+
+```bash
+npm run smoke:r2 -- http://localhost:5173 https://<tên miền staging>
+```
+
+| Bước hỏng | Thường do |
+|---|---|
+| CORS | Bucket chưa có CORS Policy cho origin đó (`AllowedMethods` có `PUT`, `AllowedHeaders` có `content-type`) |
+| PUT ảnh trả 403 | Sai khoá, hoặc token không có quyền Object Read & Write trên bucket |
+| Xem ảnh công khai trả 404 | Tên miền riêng chưa gắn vào bucket công khai, hoặc `S3_PUBLIC_URL` sai |
