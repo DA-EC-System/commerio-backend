@@ -186,6 +186,8 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
     await sync();
     expect(sentFor(a.sku)).not.toHaveProperty('quantity');
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'error', platform_stock: 3 });
+    // Lượt 1 đã gửi giá (dòng `error` luôn nằm trong lượt đẩy); chỉ xét lời gọi của lượt 2.
+    updatePriceQuantity.mockClear();
     await sync();
     expect(sentFor(a.sku)).toMatchObject({ quantity: 5 });
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'error', platform_stock: 5 });
