@@ -39,6 +39,14 @@ describe('máy trạng thái yêu cầu trả (D3-*, Documents/21 §20)', () => 
     );
   });
 
+  it('yêu cầu chỉ hoàn tiền không có bước đồng ý trả hàng (review #202 mục 3)', () => {
+    const refundOnly = { source: 'marketplace' as const, kind: 'refund' as const };
+    expect(() => assertTransition(returnMachine, 'requested', 'accept', { actor: sale, record: refundOnly })).toThrow(
+      expect.objectContaining({ code: 'refund_only_request' }),
+    );
+    expect(assertTransition(returnMachine, 'requested', 'refund_only', { actor: sale, record: refundOnly }).to).toBe('refund_only');
+  });
+
   it('sàn phân xử chỉ cho yêu cầu từ sàn', () => {
     expect(() => assertTransition(returnMachine, 'rejected', 'platform_reopen', { actor: sale, record: manual })).toThrow(
       expect.objectContaining({ code: 'not_marketplace' }),

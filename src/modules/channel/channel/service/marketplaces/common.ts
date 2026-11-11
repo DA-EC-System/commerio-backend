@@ -424,7 +424,8 @@ export interface MarketplaceAdapter {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    opts: { reasonId?: string; comment?: string },
+    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
   ): Promise<void>;
   /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;

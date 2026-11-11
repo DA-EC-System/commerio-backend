@@ -127,6 +127,7 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
     shopId: r.shopId,
     externalReturnId: r.externalReturnId,
     status: 'requested',
+    kind: r.kind === 'refund' ? 'refund' : 'return',
     reason: r.reason ?? '',
     refundAmount: r.refundAmount ?? refundAmountOf(rows),
     needsAttention: notes.length > 0,

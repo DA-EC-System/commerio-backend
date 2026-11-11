@@ -2,7 +2,8 @@
 // Nguồn (open.lazada.com, mục Return and Refund API, đọc 12/11/2026): GetReverseOrdersForSeller
 // (`/reverse/getreverseordersforseller`), GetReverseOrderReasonList (`/order/reverse/reason/list`), ReverseOrderReturnUpdate
 // (`/order/reverse/return/update`, `action` ∈ instantRefund, agreeReturn, refuseReturn, agreeRefund, refuseRefund,
-// confirmDelivery), GetReverseOrderHistoryList (`/order/reverse/return/history/list`).
+// confirmDelivery), GetReverseOrderHistoryList (`/order/reverse/return/history/list`), ReverseOrderOnlyRefundDecide
+// (`/order/reverse/onlyrefund/seller/decide`, `action` agreeRefund, startDispute).
 // Gọi thật 12/11/2026 trên shop thử (chỉ đọc): lọc `ReverseOrderLineModifiedTimeRangeStart` (ms) chạy, 26 yêu cầu sửa trong
 // 60 ngày; lịch sử chỉ có `time` (ms), `operator`, `picture`; lý do có `reason_id`, `muti_language_text`, `text`.
 // Chưa gọi thao tác ghi trên sàn thật (không chắc đơn nào của shop thử dùng chung là của nhóm).
@@ -122,6 +123,26 @@ export function lazadaReturnMethods(
     });
   }
 
+  /**
+   * Yêu cầu chỉ hoàn tiền (ReverseOrderOnlyRefundDecide, `/order/reverse/onlyrefund/seller/decide`, đọc 12/11/2026):
+   * `action` agreeRefund hoặc startDispute; `reverse_order_item_ids` mỗi lần một dòng; startDispute bắt buộc `comment` và
+   * `image_info_list` (E0109, E0110). App chưa lưu ảnh (#212) nên chưa gửi ảnh: sàn sẽ từ chối tới khi có.
+   */
+  async function decideOnlyRefund(accessToken: string, reverseOrderId: string, lineIds: readonly string[], decision: 'accept' | 'reject' | 'refund', comment?: string) {
+    if (decision === 'accept') throw new MarketplaceError('rejected', 'refund_only_request', 'Yêu cầu chỉ hoàn tiền không có bước đồng ý trả hàng');
+    if (!lineIds.length) throw new MarketplaceError('rejected', 'return_lines_missing', 'Yêu cầu trả chưa có mã dòng của sàn');
+    const action = decision === 'refund' ? 'agreeRefund' : 'startDispute';
+    for (const lineId of lineIds) {
+      await call('/order/reverse/onlyrefund/seller/decide', {
+        access_token: accessToken,
+        action,
+        reverse_order_id: reverseOrderId,
+        reverse_order_item_ids: idList([lineId]),
+        ...(action === 'startDispute' && { comment: comment || 'Người bán không đồng ý hoàn tiền' }),
+      });
+    }
+  }
+
   return {
     async listReturns(accessToken, updatedAfter, cursor) {
       const page = Number(cursor ?? '1');
@@ -148,6 +169,7 @@ export function lazadaReturnMethods(
       }));
     },
     async decideReturn(accessToken, externalReturnId, externalLineIds, decision, opts) {
+      if (opts.kind === 'refund') return decideOnlyRefund(accessToken, externalReturnId, externalLineIds, decision, opts.comment);
       if (decision === 'accept') return update(accessToken, 'agreeReturn', externalReturnId, externalLineIds);
       if (decision === 'refund') return update(accessToken, 'instantRefund', externalReturnId, externalLineIds);
       if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'Từ chối cần lý do của sàn');

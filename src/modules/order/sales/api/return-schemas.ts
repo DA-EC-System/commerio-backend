@@ -24,6 +24,7 @@ export const ReturnRequestSummary = z
     code: z.string(),
     order: z.object({ id: z.uuid(), code: z.string() }),
     source: z.enum(['marketplace', 'inbox', 'manual']),
+    kind: z.enum(['return', 'refund']).meta({ description: '`refund`: chỉ hoàn tiền, khách giữ hàng; không có bước `accept`' }),
     shopId: z.uuid().nullable(),
     shopName: z.string().nullable(),
     customerName: z.string().nullable(),

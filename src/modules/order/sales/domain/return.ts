@@ -21,13 +21,17 @@ export const OPEN_RETURN_STATUSES = ['requested', 'awaiting_return', 'received']
 
 export interface ReturnRecord {
   source: 'marketplace' | 'inbox' | 'manual';
+  /** Thiếu là `return`. */
+  kind?: 'return' | 'refund';
 }
 
 const marketplaceOnly = (r: ReturnRecord) => (r.source === 'marketplace' ? null : 'not_marketplace');
+/** Yêu cầu chỉ hoàn tiền không có hàng gửi trả nên không có bước đồng ý trả hàng. */
+const returnsGoods = (r: ReturnRecord) => (r.kind === 'refund' ? 'refund_only_request' : null);
 
 /** Bảng §20. Actor null là sàn hay hệ thống: làm được mọi bước, kể cả bước người làm (sàn chấp nhận thay người bán). */
 export const returnMachine = defineMachine<ReturnStatus, ReturnAction, ReturnRecord>([
-  { from: 'requested', to: 'awaiting_return', action: 'accept', permission: 'sales.return.process' },
+  { from: 'requested', to: 'awaiting_return', action: 'accept', permission: 'sales.return.process', guard: returnsGoods },
   { from: 'requested', to: 'rejected', action: 'reject', permission: 'sales.return.process', needsReason: true },
   { from: 'requested', to: 'refund_only', action: 'refund_only', permission: 'sales.return.process' },
   { from: 'rejected', to: 'awaiting_return', action: 'platform_reopen', permission: 'sales.return.process', guard: marketplaceOnly },

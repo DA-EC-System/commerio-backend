@@ -60,7 +60,7 @@ beforeAll(async () => {
 });
 
 /** Đơn sàn đã giao một kiện hai món, kèm yêu cầu trả từ sàn seed thẳng vào DB (issue: "kiện seed thẳng vào DB"). */
-async function seedReturn(status: 'requested' | 'awaiting_return' | 'rejected' = 'requested') {
+async function seedReturn(status: 'requested' | 'awaiting_return' | 'rejected' = 'requested', kind: 'return' | 'refund' = 'return') {
   const id = `LZ-${randomUUID().slice(0, 8)}`;
   const order: PlatformOrder = {
     shopId,
@@ -95,9 +95,9 @@ async function seedReturn(status: 'requested' | 'awaiting_return' | 'rejected' =
   const code = `YCT-${randomUUID().slice(0, 6)}`;
   const tracking = `JNT-${randomUUID().slice(0, 8)}`;
   const req = await db.query<{ id: string }>(
-    `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, status, reason, refund_amount, return_tracking_code, raw_marketplace_status)
-     values ($1, $2, $3, 'marketplace', $4, $5, $6, 'Khách đổi ý', 64000, $7, 'REFUND_PENDING') returning id`,
-    [company.companyId, code, orderId, shopId, randomUUID().slice(0, 12), status, tracking],
+    `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, status, reason, refund_amount, return_tracking_code, raw_marketplace_status, kind)
+     values ($1, $2, $3, 'marketplace', $4, $5, $6, 'Khách đổi ý', 64000, $7, 'REFUND_PENDING', $8) returning id`,
+    [company.companyId, code, orderId, shopId, randomUUID().slice(0, 12), status, tracking, kind],
   );
   const lines = await db.query<{ id: string; package_id: string }>(
     `select ol.id, pl.package_id from "order".order_lines ol join "order".package_lines pl on pl.order_line_id = ol.id where ol.order_id = $1 order by ol.external_line_id`,
@@ -161,7 +161,7 @@ describe('thao tác (§20, §20.1)', () => {
     const res = await act(r.id, 'accept', { version: 1 }, sale.token);
     expect(res.status).toBe(200);
     expect(ReturnRequest.parse(res.body)).toMatchObject({ status: 'awaiting_return', version: 2 });
-    expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), ['RL-0', 'RL-1'], 'accept', {});
+    expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), ['RL-0', 'RL-1'], 'accept', { kind: 'return' });
     const again = await act(r.id, 'accept', { version: 2 });
     expect([again.status, again.body.code]).toEqual([409, 'invalid_transition']);
     const history = (await detail(r.id)).statusHistory;
@@ -179,6 +179,7 @@ describe('thao tác (§20, §20.1)', () => {
     expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), ['RL-0', 'RL-1'], 'reject', {
       reasonId: '1001',
       comment: 'Ảnh cho thấy đã dùng',
+      kind: 'return',
     });
   });
 
@@ -186,11 +187,23 @@ describe('thao tác (§20, §20.1)', () => {
     const r = await seedReturn('requested');
     const res = ReturnRequest.parse((await act(r.id, 'refund-only', { version: 1 })).body);
     expect(res).toMatchObject({ status: 'refund_only', money: { refunded: true, refundAmount: 64000 } });
-    expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(Array), 'refund', {});
+    expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(Array), 'refund', { kind: 'return' });
     const event = await testPool().query(`select payload from core.outbox_messages where type = 'sales.return_refunded' and payload->>'returnRequestId' = $1`, [r.id]);
     expect(event.rows.map((e) => e.payload)).toEqual([expect.objectContaining({ orderId: r.orderId, shopId, refundAmount: '64000.00' })]);
     const order = await auth(app().get(`/api/v1/sales/orders/${r.orderId}`));
     expect(order.body.flags).not.toContain('return_requested');
+  });
+
+  it('yêu cầu chỉ hoàn tiền: không đồng ý trả hàng được; từ chối theo lý do từ chối hoàn tiền; báo sàn kèm loại', async () => {
+    const r = await seedReturn('requested', 'refund');
+    expect(ReturnRequest.parse((await detail(r.id))).kind).toBe('refund');
+    const accept = await act(r.id, 'accept', { version: 1 });
+    expect([accept.status, accept.body.code]).toEqual([409, 'refund_only_request']);
+    returnReasons.mockClear();
+    const res = ReturnRequest.parse((await act(r.id, 'reject', { version: 1, reasonId: '1001' })).body);
+    expect(res.status).toBe('rejected');
+    expect(returnReasons).toHaveBeenCalledWith(expect.any(String), expect.any(String), 'refuse-refund');
+    expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(Array), 'reject', { reasonId: '1001', kind: 'refund' });
   });
 
   it('khách không gửi hàng: bắt buộc lý do, đóng no_show, không báo sàn', async () => {

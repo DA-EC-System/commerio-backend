@@ -198,6 +198,8 @@ export const returnStatus = salesSchema.enum('return_status', [
   'closed',
 ]);
 export const returnCloseResult = salesSchema.enum('return_close_result', ['inspected', 'no_show', 'buyer_cancelled']);
+/** `return`: khách gửi trả hàng rồi mới hoàn tiền; `refund`: chỉ hoàn tiền, khách giữ hàng (Lazada `ONLY_REFUND`). */
+export const returnKind = salesSchema.enum('return_kind', ['return', 'refund']);
 
 /**
  * Khách trả sau khi đã nhận. Đơn sàn: do sàn đẩy về, khoá (gian hàng, mã yêu cầu sàn); đơn tạo tay: Sale lập.
@@ -216,6 +218,7 @@ export const returnRequests = salesSchema.table(
     shopId: uuid('shop_id'),
     externalReturnId: text('external_return_id'),
     status: returnStatus('status').notNull().default('requested'),
+    kind: returnKind('kind').notNull().default('return'),
     closeResult: returnCloseResult('close_result'),
     reason: text('reason').notNull(),
     statusReason: text('status_reason'),

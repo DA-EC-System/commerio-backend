@@ -13,7 +13,7 @@ export interface MarketplaceReturns {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    opts: { reasonId?: string; comment?: string },
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
   ): Promise<void>;
   confirmReceived(companyId: string, shopId: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   history(

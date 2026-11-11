@@ -181,6 +181,14 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(await historyOf(row.id)).toEqual([{ action: 'accept', source: 'marketplace', to_status: 'awaiting_return' }]);
   });
 
+  it('yêu cầu chỉ hoàn tiền của sàn lưu loại `refund`', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { kind: 'refund', rawStatus: 'REFUND_PENDING' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ kind: 'refund', status: 'requested' });
+  });
+
   it('sàn báo trạng thái app không tới được: giữ trạng thái, bật Cần xử lý', async () => {
     const { externalOrderId } = await marketplaceOrder();
     const r = remoteReturn(externalOrderId, { rawStatus: 'REQUEST_REJECT', status: 'rejected' });

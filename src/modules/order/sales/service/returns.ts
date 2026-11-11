@@ -52,6 +52,7 @@ export async function returnView(ctx: SalesContext, row: ReturnRow, opts: ViewOp
     code: row.code,
     order: { id: row.orderId, code: order!.code },
     source: row.source,
+    kind: row.kind,
     shopId: row.shopId,
     shopName: shop?.shopName ?? null,
     customerName: order!.customerName,
@@ -124,6 +125,7 @@ export async function listReturns(ctx: SalesContext, companyId: string, q: Retur
         code: r.code,
         order: { id: r.orderId, code: r.orderCode },
         source: r.source,
+        kind: r.kind,
         shopId: r.shopId,
         shopName: r.shopId ? (shops.get(r.shopId)?.shopName ?? null) : null,
         customerName: r.customerName,
@@ -239,18 +241,21 @@ export async function actOnReturn(ctx: SalesContext, actor: Actor, id: string, a
   const send = marketplace ? SENDS[action] : undefined;
   if (marketplace && action === 'reject') {
     if (!input.reasonId) throw invalidField('reasonId', 'Chọn lý do từ chối của sàn');
-    const found = (await marketplaceOf(ctx).reasons(actor.companyId, row.shopId!, row.externalReturnId!, 'reject')).find((r) => r.id === input.reasonId);
+    // Yêu cầu chỉ hoàn tiền: từ chối là từ chối hoàn tiền, theo danh sách lý do của bước đó (§20.1 `refuse-refund`).
+    const reasonAction = row.kind === 'refund' ? 'refuse-refund' : 'reject';
+    const found = (await marketplaceOf(ctx).reasons(actor.companyId, row.shopId!, row.externalReturnId!, reasonAction)).find((r) => r.id === input.reasonId);
     if (!found) throw invalidField('reasonId', 'Lý do không có trong danh sách sàn cho phép');
     if (found.requiresImage && !input.attachmentIds?.length) throw invalidField('attachmentIds', 'Lý do này cần ảnh minh chứng');
     rejectReason = { id: found.id, label: found.label };
     reason = reason ?? found.label;
   }
-  const { to } = assertTransition(returnMachine, row.status, action, { actor, record: { source: row.source }, reason, view });
+  const { to } = assertTransition(returnMachine, row.status, action, { actor, record: { source: row.source, kind: row.kind }, reason, view });
   if (send) {
     const externalLineIds = loaded.lines.flatMap((l) => (l.externalLineId ? [l.externalLineId] : []));
     await marketplaceOf(ctx).decide(actor.companyId, row.shopId!, row.externalReturnId!, externalLineIds, send, {
       ...(rejectReason && { reasonId: rejectReason.id }),
       ...(input.comment && { comment: input.comment }),
+      kind: row.kind,
     });
   }
   return withCompany(actor.companyId, async () => {

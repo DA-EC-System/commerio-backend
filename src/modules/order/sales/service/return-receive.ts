@@ -54,7 +54,7 @@ function unitCostsOf(lines: Awaited<ReturnType<typeof findReturnLines>>): Record
 async function receiveRequest(row: ReturnRow, actor: Actor, scanned: readonly ScanLine[] | undefined, meta: { note?: string; fromUnmatchedParcelId?: string }) {
   const view = { status: row.status, code: row.code };
   if (row.status !== 'awaiting_return') throw notAwaiting(view);
-  const { to } = assertTransition(returnMachine, row.status, 'receive', { actor, record: { source: row.source }, view });
+  const { to } = assertTransition(returnMachine, row.status, 'receive', { actor, record: { source: row.source, kind: row.kind }, view });
   const lines = await findReturnLines([row.id]);
   // Dòng có kiện đã hoàn về kho (E109) không tính dự kiến: hàng của dòng đó đã kiểm một lần.
   const merged = mergeReceiveLines(lines.filter((l) => !l.packageReturned), scanned);

@@ -121,6 +121,18 @@ describe('lazadaReturnMethods', () => {
     await expect(methods.decideReturn('tok', '7000', ['7001'], 'reject', {})).rejects.toMatchObject({ kind: 'rejected', platformCode: 'reject_reason_required' });
   });
 
+  it('chỉ hoàn tiền (ONLY_REFUND) đi ReverseOrderOnlyRefundDecide từng dòng: hoàn là agreeRefund, từ chối là startDispute kèm comment', async () => {
+    const { calls, methods } = fakeCall({});
+    await methods.decideReturn('tok', '7000', ['7001', '7002'], 'refund', { kind: 'refund' });
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { kind: 'refund', reasonId: '100000046', comment: 'Hàng còn nguyên' });
+    expect(calls.map(([p, q]) => [p, q.action, q.reverse_order_item_ids, q.comment ?? null])).toEqual([
+      ['/order/reverse/onlyrefund/seller/decide', 'agreeRefund', '[7001]', null],
+      ['/order/reverse/onlyrefund/seller/decide', 'agreeRefund', '[7002]', null],
+      ['/order/reverse/onlyrefund/seller/decide', 'startDispute', '[7001]', 'Hàng còn nguyên'],
+    ]);
+    await expect(methods.decideReturn('tok', '7000', ['7001'], 'accept', { kind: 'refund' })).rejects.toMatchObject({ platformCode: 'refund_only_request' });
+  });
+
   it('hoàn tiền là instantRefund, báo đã nhận là confirmDelivery', async () => {
     const { calls, methods } = fakeCall({});
     await methods.decideReturn('tok', '7000', ['7001'], 'refund', {});
