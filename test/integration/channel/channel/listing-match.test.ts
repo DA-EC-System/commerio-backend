@@ -296,6 +296,32 @@ describe('mapping/:action', () => {
     expect(await rowOf(r.externalSkuId)).toMatchObject({ mode: 'unmanaged', approved_by: await accountIdOf(company.ceo.email), pending_mode: null });
   });
 
+  it('Duyệt listing đang đẩy lên sàn → 409 `invalid_transition`, ghép chờ giữ nguyên', async () => {
+    const { r, v, listing } = await pendingRemap();
+    await testPool().query(`update channel.listings set status = 'pushing' where id = $1`, [listing.id]);
+    const res = await decide(company.ceo.token, listing.id, 'approve', { version: listing.version });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/invalid_transition$/);
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: v.id, pending_mode: 'mapped' });
+  });
+
+  it('Hai ghép chờ cùng một biến thể, CEO duyệt cùng lúc → một lần 200, lần kia 422 `errors.variantId` (không 500)', async () => {
+    const a = await mapped();
+    const b = await mapped();
+    await orderWith(a.r.sellerSku);
+    await orderWith(b.r.sellerSku);
+    const v2 = newVariant();
+    const pa = await match(admin.token, { externalSkuId: a.r.externalSkuId, variantId: v2.id });
+    const pb = await match(admin.token, { externalSkuId: b.r.externalSkuId, variantId: v2.id });
+    expect([pa.status, pb.status]).toEqual([202, 202]);
+    const results = await Promise.all([
+      decide(company.ceo.token, pa.body.id, 'approve', { version: pa.body.version }),
+      decide(company.ceo.token, pb.body.id, 'approve', { version: pb.body.version }),
+    ]);
+    expect(results.map((x) => x.status).sort()).toEqual([200, 422]);
+    expect(results.find((x) => x.status === 422)!.body.errors).toHaveProperty('variantId');
+  });
+
   it('404 khi listing không có hoặc mã sai định dạng', async () => {
     expect((await decide(company.ceo.token, randomUUID(), 'approve', { version: 1 })).status).toBe(404);
     expect((await decide(company.ceo.token, 'abc', 'approve', { version: 1 })).status).toBe(404);

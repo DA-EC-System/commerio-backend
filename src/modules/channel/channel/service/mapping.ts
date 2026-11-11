@@ -213,11 +213,26 @@ export async function matchListing(
 
 /**
  * `POST /shops/:id/listings/:listingId/mapping/:action` (§18.3, §18.6.5): CEO duyệt hoặc từ chối ghép chờ. Route đã kiểm
- * quyền và vai trò CEO. Thứ tự: 404 → 409 `invalid_transition` (không có ghép chờ, listing đã gỡ) → 409 `version_conflict`.
+ * quyền và vai trò CEO. Thứ tự: 404 → 409 `invalid_transition` (không có ghép chờ, listing đã gỡ hoặc đang đẩy) → 409 `version_conflict`; hai lần duyệt đua về cùng biến thể → 422 `errors.variantId`.
  * Duyệt: áp ghép mới (kiểm lại biến thể); đơn đã nhận giữ ghép cũ. Từ chối: bỏ ghép chờ; dòng tạo ra chỉ để chờ duyệt
  * "không quản tồn" thì xoá (CHECK `listings_unmanaged_approved`), body là listing lúc xoá.
  */
-export async function decideMapping(
+export function decideMapping(
+  port: ProductPort,
+  actor: Actor,
+  shopId: string,
+  listingId: string,
+  action: 'approve' | 'reject',
+  input: { version: number; reason?: string | undefined },
+): Promise<ChannelListing> {
+  // Hai lần duyệt đua về cùng biến thể: unique chặn lần sau (23505 làm hỏng giao dịch nên bắt ngoài).
+  return decide(port, actor, shopId, listingId, action, input).catch((err: unknown) => {
+    if (pgError(err).constraint === 'listings_shop_variant_uq') throw invalid('variantId', 'Biến thể đã ghép SKU sàn khác của gian hàng này');
+    throw err;
+  });
+}
+
+async function decide(
   port: ProductPort,
   actor: Actor,
   shopId: string,
@@ -233,6 +248,10 @@ export async function decideMapping(
     const names = await requesterNames([row]);
     if (!row.pendingRequestedBy || row.status === 'delisted') {
       throw new AppError(409, 'invalid_transition', 'Listing không có ghép chờ duyệt', { current: toListing(row, names) });
+    }
+    // Đổi biến thể giữa lúc việc đẩy đang chạy thì việc đẩy nội dung biến thể mới lên sản phẩm cũ (review #220).
+    if (row.status === 'pushing') {
+      throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, duyệt sau khi có kết quả', { current: toListing(row, names) });
     }
     if (row.version !== input.version) {
       throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', { current: toListing(row, names) });

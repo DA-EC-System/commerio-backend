@@ -248,7 +248,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/:listingId/mapping/:action',
     summary: 'CEO duyệt hoặc từ chối ghép chờ (#220, 21 §18.6.5)',
     description:
-      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `approve`: áp ghép mới (kiểm lại biến thể, 422 `errors.variantId`); đơn mở đã giữ hàng theo ghép cũ giữ nguyên, chỉ đơn về sau theo ghép mới. `reject`: bắt buộc `reason` (422 `errors.reason`), bỏ ghép chờ; listing tạo ra chỉ để chờ duyệt "không quản tồn" thì xoá, body là listing lúc xoá. Thứ tự: 404 → 409 `invalid_transition` (không có `pendingMapping`) → 409 `version_conflict` (kèm `current`).',
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `approve`: áp ghép mới (kiểm lại biến thể, 422 `errors.variantId`); đơn mở đã giữ hàng theo ghép cũ giữ nguyên, chỉ đơn về sau theo ghép mới. `reject`: bắt buộc `reason` (422 `errors.reason`), bỏ ghép chờ; listing tạo ra chỉ để chờ duyệt "không quản tồn" thì xoá, body là listing lúc xoá. Thứ tự: 404 → 409 `invalid_transition` (không có `pendingMapping`, listing đã gỡ hoặc đang đẩy) → 409 `version_conflict` (kèm `current`); hai lần duyệt đua về cùng biến thể: lần sau 422 `errors.variantId`.',
     security: bearer,
     request: { params: MappingParams, body: json(MappingBody) },
     responses: {
