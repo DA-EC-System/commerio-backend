@@ -338,7 +338,8 @@ export function tiktokOrderMethods(
           body: handover ? { handover_method: handover } : {},
         });
       } catch (err) {
-        // 11006021: kiện đã giao (gọi thật 07/11/2026). Gọi lại sau lần trước đã tới sàn thì coi là xong.
+        // 11006021: "Package has been shipped. Please not ship the package again." (docv2 ship-package-202309, mục mã lỗi,
+        // tra 12/11/2026; gọi thật 07/11/2026). Gọi lại sau lần trước đã tới sàn thì coi là xong.
         if (!(err instanceof MarketplaceError && err.platformCode === '11006021')) throw err;
       }
     },

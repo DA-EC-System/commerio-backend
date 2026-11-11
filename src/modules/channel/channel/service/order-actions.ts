@@ -51,6 +51,11 @@ function onSplit<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (err) {
+      // `invalid_split`: bên gọi truyền dưới hai nhóm hoặc nhóm rỗng, lỗi đầu vào (422 `validation_failed`).
+      if (err instanceof MarketplaceError && err.platformCode === 'invalid_split') {
+        const message = err.platformMessage ?? 'Nhóm tách kiện không hợp lệ';
+        throw new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', { errors: { groups: message } });
+      }
       // `unexpected_response`: sàn nhận lệnh mà trả thiếu kiện, có thể đã tách; giữ 409 `marketplace_rejected`.
       if (err instanceof MarketplaceError && err.kind === 'rejected' && err.platformCode !== 'unexpected_response') {
         throw splitRefused(err.platformMessage ?? 'Sàn từ chối tách kiện', { platformCode: err.platformCode, platformMessage: err.platformMessage });

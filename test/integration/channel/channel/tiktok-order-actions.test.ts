@@ -140,6 +140,14 @@ describe('tách kiện trên sàn TikTok (#221)', () => {
     expect(err.extensions).toMatchObject({ platformCode: '21001008', platformMessage: 'cannot find fulfill_order' });
   });
 
+  it('chỉ một nhóm (lỗi đầu vào của bên gọi): 422 validation_failed, không gọi tách', async () => {
+    attributes.O7 = { can_split: true, must_split: false, must_split_reasons: [] };
+    const err = await caught(() => marketplaceSplitOrder(company.companyId, shopId, 'O7', [['O7-1', 'O7-2']]));
+    expect(err).toMatchObject({ status: 422, code: 'validation_failed' });
+    expect(err.extensions).toMatchObject({ errors: { groups: expect.any(String) } });
+    expect(splitCalls()).toEqual([]);
+  });
+
   it('sàn không có API tách: 422 split_not_supported', async () => {
     registerAdapter('tiktok', fakeAdapter({}));
     try {
@@ -166,6 +174,13 @@ describe('giao kiện trên sàn TikTok (#221)', () => {
   it('kiện đã giao (11006021): gọi lại coi là xong', async () => {
     shipResponse = () => fail(11006021, 'package has been shipped');
     await expect(marketplaceShipPackage(company.companyId, shopId, 'PK-9')).resolves.toBeUndefined();
+  });
+
+  it('gian hàng của công ty khác: 404, không gọi sàn', async () => {
+    const other = await createCompany({ optionalModules: ['channel'] });
+    const err = await caught(() => marketplaceShipPackage(other.companyId, shopId, 'PK-9'));
+    expect(err.status).toBe(404);
+    expect(calls).toEqual([]);
   });
 
   it('sàn từ chối lý do khác: 409 marketplace_rejected', async () => {
