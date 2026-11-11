@@ -76,6 +76,8 @@ export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnA
   };
   const action = byPair[`${current}>${target}`];
   if (action) return action;
+  // Đã từ chối rồi sàn báo khách huỷ (người bán thắng): giữ `rejected`, như ánh xạ TikTok (#227); không phải mâu thuẫn.
+  if (current === 'rejected' && target === 'closed') return null;
   // Đã nhận hàng hay đã đóng, sàn báo hoàn tiền xong: tiền đi theo kiểm hàng hoàn của app, không đổi trạng thái.
   if (target === 'refund_only' && (current === 'received' || current === 'closed')) return null;
   return 'conflict';

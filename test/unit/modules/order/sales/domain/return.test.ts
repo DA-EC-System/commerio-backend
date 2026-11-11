@@ -86,6 +86,8 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     ['requested', 'received', 'accept'],
     ['rejected', 'received', 'platform_reopen'],
     ['refund_only', 'received', 'conflict'],
+    // Đã từ chối rồi khách huỷ trên sàn (người bán thắng): giữ `rejected`, như TikTok (channel CLAUDE.md).
+    ['rejected', 'closed', null],
     ['received', 'refund_only', null],
     ['requested', 'requested', null],
     ['closed', 'awaiting_return', 'conflict'],

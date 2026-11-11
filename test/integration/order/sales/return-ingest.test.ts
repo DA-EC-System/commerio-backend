@@ -2,7 +2,9 @@
 // hàng hoàn xong thì đóng.
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { markProcessed } from '#src/modules/core/platform/repository/outbox.ts';
+import { HandlerFailure, type IncomingMessage, processMessage } from '#src/modules/core/platform/service/outbox/consumer.ts';
 import type { RemoteReturn } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { pullShopReturns } from '#src/modules/channel/channel/service/return-pull.ts';
@@ -275,6 +277,41 @@ describe('kiện đã hoàn về kho khi sàn mở yêu cầu (E109, 25 §9)', (
   });
 });
 
+describe('ca theo Documents (review #202 mục 12)', () => {
+  it('E65: đơn đã hoàn tất vẫn nhận yêu cầu tới muộn; đơn giữ completed, mang cờ return_requested', async () => {
+    const { externalOrderId, orderId } = await marketplaceOrder();
+    await db().query(`update "order".orders set status = 'completed', outcome = 'full', completed_at = now() where id = $1`, [orderId]);
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    expect(await pullShopReturns(company.companyId, shopId)).toMatchObject({ created: 1 });
+    const order = await request(testApp()).get(`/api/v1/sales/orders/${orderId}`).set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(order.body.status).toBe('completed');
+    expect(order.body.flags).toContain('return_requested');
+  });
+
+  it.each(['requested', 'awaiting_return'] as const)('khách rút yêu cầu trên sàn từ %s: đóng buyer_cancelled', async (status) => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { status, rawStatus: status === 'requested' ? 'REQUEST_INITIATE' : 'REFUND_PENDING' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, rawStatus: 'REQUEST_CANCEL', status: 'closed', closeResult: 'buyer_cancelled', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(row).toMatchObject({ status: 'closed', close_result: 'buyer_cancelled', needs_attention: false, refunded: false });
+    expect((await historyOf(row.id)).at(-1)).toEqual({ action: 'buyer_cancel', source: 'marketplace', to_status: 'closed' });
+  });
+
+  it('đã từ chối rồi sàn báo khách huỷ (người bán thắng, như TikTok): giữ rejected, không bật cờ', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'REFUND_REJECT', status: 'rejected' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, rawStatus: 'REQUEST_CANCEL', status: 'closed', closeResult: 'buyer_cancelled', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'rejected', needs_attention: false, raw_marketplace_status: 'REQUEST_CANCEL' });
+  });
+});
+
 describe('giá vốn dòng trả (25 §9, review #202 mục 4)', () => {
   const costsOf = async (requestId: string) =>
     (await db().query(`select unit_cost from "order".return_request_lines where request_id = $1`, [requestId])).rows.map((l) => (l.unit_cost === null ? null : Number(l.unit_cost)));
@@ -314,7 +351,31 @@ describe('kiểm hàng hoàn xong (`inventory.return_inspected`)', () => {
     expect(Number(closed.resell_cost)).toBe(15000);
     const lines = await db().query(`select resell_qty from "order".return_request_lines where request_id = $1 order by external_line_id`, [row.id]);
     expect(lines.rows.map((l) => l.resell_qty).sort()).toEqual([0, 1]);
-    // Nhận trùng sự kiện: yêu cầu đã đóng, bỏ qua.
+    // Nhận trùng sự kiện qua consumer thật: `processed_events` chặn lần hai, handler không chạy lại.
+    const handler = vi.fn(onReturnInspected);
+    const envelope = { eventId: randomUUID(), type: 'inventory.return_inspected', companyId: company.companyId, aggregateId: randomUUID(), occurredAt: new Date().toISOString(), payload: { inspectionId, orderId: closed.order_id, shopId, inspectedAt: new Date().toISOString(), lines: [{ variantId, resellable: 2, unitCost: null }] } };
+    const message: IncomingMessage = { topic: 'commerio.inventory', partition: 0, offset: '1', key: null, headers: { type: 'inventory.return_inspected' }, value: Buffer.from(JSON.stringify(envelope)) };
+    const deps = {
+      spec: { consumer: `sales-return-inspected-${randomUUID().slice(0, 6)}`, scope: 'shared' as const, handlers: new Map([['inventory.return_inspected', handler as never]]) },
+      retryDelaysMs: [],
+      runHandler: async (e: { eventId: string; companyId: string | null }, h: (e: never) => Promise<void>) => {
+        await withCompany(company.companyId, async () => {
+          if (!(await markProcessed(deps.spec.consumer, e.eventId))) return;
+          try {
+            await h(e as never);
+          } catch (err) {
+            throw new HandlerFailure(err);
+          }
+        });
+      },
+      sendToDlq: async (_m: unknown, reason: string) => {
+        throw new Error(`DLQ: ${reason}`);
+      },
+    };
+    expect(await processMessage(message, 0, deps as never)).toEqual({ kind: 'done' });
+    expect(await processMessage(message, 0, deps as never)).toEqual({ kind: 'done' });
+    expect(handler).toHaveBeenCalledTimes(1);
+    // Sự kiện khác (eventId mới) tới sau khi đã đóng: handler bỏ qua theo trạng thái.
     await withCompany(company.companyId, () => onReturnInspected({ payload: { inspectionId, lines: [{ variantId, resellable: 2 }] } }));
     expect((await requestOf(r.externalId)).version).toBe(closed.version);
   });
