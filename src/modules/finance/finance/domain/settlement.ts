@@ -47,6 +47,8 @@ export const settlementMachine = defineMachine<SettlementState, SettlementAction
     label: 'Chốt lệch',
     permission: 'finance.settlement.resolve',
     needsSecondPerson: true,
+    // CEO hoặc công ty một người chốt được lệch của gian hàng mình soạn cấu hình phí (25 §11, #249)
+    allowSelfApproval: true,
     needsReason: true,
   },
   { from: 'resolved', to: 'mismatch', action: 'new_adjust', label: 'Lệch mới sau khi chốt', system: true },
