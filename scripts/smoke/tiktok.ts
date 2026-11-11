@@ -163,6 +163,22 @@ async function products(shopId: string | undefined): Promise<void> {
   });
 }
 
+/**
+ * Hai con số lúc nối (`countRemote`, §18.7.4) và `total_count` của Search Products theo `status`, để thấy `ALL` có tính
+ * sản phẩm `DELETED`. Chỉ đọc.
+ */
+async function counts(shopId: string | undefined): Promise<void> {
+  const saved = loadTokens<TiktokTokens>('tiktok');
+  if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}, chạy "refresh" trước.`);
+  const packed = packedFor(saved, shopId);
+  const totals: Record<string, unknown> = {};
+  for (const status of ['ALL', 'DELETED']) {
+    const data = await client.call<{ total_count?: unknown }>('POST', '/product/202502/products/search', { token: packed, query: { page_size: 1 }, body: { status } });
+    totals[status] = data?.total_count;
+  }
+  printStep('countRemote (product/202502/products/search)', true, { total_count: totals, countRemote: await adapter.countRemote!(packed) });
+}
+
 /** Yêu cầu trả hay lần huỷ cập nhật trong `days` ngày qua (#227), lật hết trang. Chỉ đọc. */
 async function aftersales(kind: 'returns' | 'cancellations', days: string | undefined): Promise<void> {
   const saved = loadTokens<TiktokTokens>('tiktok');
@@ -350,6 +366,7 @@ const commands: Record<string, () => Promise<void> | void> = {
   // skus [shopId] [sellerSku ...]
   skus: () => skus(args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined, args.filter((a, i) => !(i === 0 && /^\d+$/.test(a)))),
   // products [shopId]: mọi SKU như bước ghép ở thiết lập (#282, chỉ đọc)
+  counts: () => counts(args[0]),
   products: () => {
     if (args[0] !== undefined && !/^\d+$/.test(args[0])) throw new Error('shopId là mã shop TikTok, chỉ gồm chữ số');
     return products(args[0]);

@@ -280,6 +280,12 @@ export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId
 /** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */
 export type ConnectMethod = 'oauth' | 'token';
 
+/** Kết quả `MarketplaceAdapter.countRemote`: số sản phẩm và số SKU (phân loại) của gian hàng trên sàn, không tính đã xoá. */
+export interface RemoteCounts {
+  productCount: number;
+  skuCount: number | null;
+}
+
 export interface MarketplaceAdapter {
   /** Tên sàn hiển thị cho người dùng. */
   readonly name: string;
@@ -323,11 +329,13 @@ export interface MarketplaceAdapter {
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
   /**
-   * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, một lời gọi, không đọc từng trang; bỏ hàng đã xoá trên sàn.
-   * Dùng cho `remoteSkuCount` lúc nối (§18.7.4). Sàn đếm theo sản phẩm (Lazada `total_products`) thì là số sản phẩm, không
-   * phải số SKU. Sàn không có tổng rẻ thì không có hàm này, bên gọi đếm bằng `listSkus`.
+   * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
+   * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của
+   * sàn (phân loại; sản phẩm không chia phân loại tính là 1), không tính SKU của sản phẩm đã xoá; `null` khi sàn không trả
+   * tổng số SKU và adapter không đọc hết danh sách, không suy từ số sản phẩm. Một hàm trả cả hai số để sàn lấy được cả hai
+   * từ cùng một lời gọi (TikTok) không phải gọi hai lần. Adapter không có hàm này thì bên gọi đếm bằng `listSkus`.
    */
-  countSkus?(accessToken: string): Promise<number>;
+  countRemote?(accessToken: string): Promise<RemoteCounts>;
   /** Chỉ SKU có SellerSku trong danh sách (shop thử dùng chung, #104 A4). */
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */

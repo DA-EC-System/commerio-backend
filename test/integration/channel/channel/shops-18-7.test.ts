@@ -9,7 +9,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter } from './helpers.ts';
 
-// Phần 18.7 của #200 (Documents/21 §18.7.1, §18.7.4, §18.7.8): số liệu trên `Shop`, `previousStatus` và `remoteSkuCount`
+// Phần 18.7 của #200 (Documents/21 §18.7.1, §18.7.4, §18.7.8): số liệu trên `Shop`, `previousStatus`, `remoteProductCount` và `remoteSkuCount`
 // ở kết quả nối, danh sách đơn ở 409 `shop_has_open_orders`. §18.7.3 ở `platforms.test.ts`.
 
 const DAY = 24 * 3600_000;
@@ -151,26 +151,27 @@ describe('§18.7.1 số liệu trên Shop', () => {
   });
 });
 
-describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () => {
-  it('nối lần đầu: previousStatus null, remoteSkuCount không tính SKU đã xoá; gốc response không có hai trường', async () => {
+describe('§18.7.4 previousStatus, remoteProductCount và remoteSkuCount ở kết quả nối', () => {
+  it('nối lần đầu: previousStatus null, hai số không tính hàng đã xoá; gốc response không có ba trường', async () => {
     const body = await connect(seller());
     expect(body.shops).toHaveLength(1);
-    expect(body.shops[0]).toMatchObject({ created: true, previousStatus: null, remoteSkuCount: 2 });
+    expect(body.shops[0]).toMatchObject({ created: true, previousStatus: null, remoteProductCount: 2, remoteSkuCount: 2 });
     expect(body).not.toHaveProperty('previousStatus');
+    expect(body).not.toHaveProperty('remoteProductCount');
     expect(body).not.toHaveProperty('remoteSkuCount');
   });
 
   it('nối lại: previousStatus là trạng thái ngay trước lần nối (connecting, rồi disconnected)', async () => {
     const id = seller();
     const first = (await connect(id)).shop;
-    expect((await connect(id)).shops[0]).toMatchObject({ created: false, previousStatus: 'connecting', remoteSkuCount: 2 });
+    expect((await connect(id)).shops[0]).toMatchObject({ created: false, previousStatus: 'connecting', remoteProductCount: 2, remoteSkuCount: 2 });
     expect((await disconnect(first.id, (await shopDetail(first.id)).version)).status).toBe(200);
     const again = await connect(id);
     expect(again.shops[0]).toMatchObject({ created: false, previousStatus: 'disconnected' });
     expect(again.shop.status).toBe('connecting');
   });
 
-  it('callback nhiều gian hàng: mỗi phần tử có previousStatus, remoteSkuCount của gian hàng đó', async () => {
+  it('callback nhiều gian hàng: mỗi phần tử có previousStatus và hai số của gian hàng đó', async () => {
     const old = seller('empty');
     await connect(old);
     const fresh = seller();
@@ -181,8 +182,8 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
     expect(res.status).toBe(201);
     const body = ShopCallbackResult.parse(res.body);
     const byShop = new Map(body.shops.map((s) => [s.shop.externalShopId, s]));
-    expect(byShop.get(old)).toMatchObject({ created: false, previousStatus: 'connecting', remoteSkuCount: 0 });
-    expect(byShop.get(fresh)).toMatchObject({ created: true, previousStatus: null, remoteSkuCount: 2 });
+    expect(byShop.get(old)).toMatchObject({ created: false, previousStatus: 'connecting', remoteProductCount: 0, remoteSkuCount: 0 });
+    expect(byShop.get(fresh)).toMatchObject({ created: true, previousStatus: null, remoteProductCount: 2, remoteSkuCount: 2 });
   });
 
   it('nối lại gian hàng needs_reauth chưa thiết lập: previousStatus needs_reauth, về connecting, reconnect null', async () => {
@@ -190,16 +191,16 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
     const { shop } = await connect(id);
     await setStatus(shop.id, 'needs_reauth');
     const body = await connect(id);
-    expect(body.shops[0]).toMatchObject({ created: false, previousStatus: 'needs_reauth', reconnect: null, remoteSkuCount: 2 });
+    expect(body.shops[0]).toMatchObject({ created: false, previousStatus: 'needs_reauth', reconnect: null, remoteProductCount: 2, remoteSkuCount: 2 });
     expect(body.shop.status).toBe('connecting');
   });
 
-  it('chỉ thay token cho gian hàng active: previousStatus active, vẫn đếm SKU', async () => {
+  it('chỉ thay token cho gian hàng active: previousStatus active, vẫn đếm hàng trên sàn', async () => {
     const id = seller();
     const { shop } = await connect(id);
     await setStatus(shop.id, 'active', new Date(Date.now() - DAY));
     const body = await connect(id);
-    expect(body.shops[0]).toMatchObject({ created: false, previousStatus: 'active', reconnect: null, remoteSkuCount: 2 });
+    expect(body.shops[0]).toMatchObject({ created: false, previousStatus: 'active', reconnect: null, remoteProductCount: 2, remoteSkuCount: 2 });
     expect(body.shop.status).toBe('active');
   });
 
@@ -215,23 +216,23 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
         await setStatus(shop.id, 'needs_reauth');
       }
       const body = await connect(id);
-      expect(body.shops[0]).toMatchObject({ created: false, previousStatus: from, remoteSkuCount: 2 });
+      expect(body.shops[0]).toMatchObject({ created: false, previousStatus: from, remoteProductCount: 2, remoteSkuCount: 2 });
       expect(body.shops[0]!.reconnect).not.toBeNull();
       expect(body.shop.status).toBe('active');
     },
   );
 
-  it('sàn lỗi khi đọc SKU thì vẫn nối được, remoteSkuCount null', async () => {
+  it('sàn lỗi khi đọc SKU thì vẫn nối được, cả hai số null', async () => {
     const body = await connect(seller('down'));
-    expect(body.shops[0]).toMatchObject({ created: true, remoteSkuCount: null });
+    expect(body.shops[0]).toMatchObject({ created: true, remoteProductCount: null, remoteSkuCount: null });
   });
 
-  it('lỗi không phải của sàn khi đọc SKU cũng không chặn việc nối, remoteSkuCount null', async () => {
+  it('lỗi không phải của sàn khi đọc SKU cũng không chặn việc nối, cả hai số null', async () => {
     const body = await connect(seller('boom'));
-    expect(body.shops[0]).toMatchObject({ created: true, remoteSkuCount: null });
+    expect(body.shops[0]).toMatchObject({ created: true, remoteProductCount: null, remoteSkuCount: null });
   });
 
-  it('adapter không có listSkus thì remoteSkuCount null', async () => {
+  it('adapter không có countRemote lẫn listSkus thì cả hai số null', async () => {
     registerAdapter(
       'shopee',
       fakeAdapter({
@@ -241,11 +242,34 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
       }),
     );
     const body = await connect(seller(), 'shopee');
-    expect(body.shops[0]).toMatchObject({ created: true, previousStatus: null, remoteSkuCount: null });
+    expect(body.shops[0]).toMatchObject({ created: true, previousStatus: null, remoteProductCount: null, remoteSkuCount: null });
+  });
+
+  it('adapter chỉ có listSkus: đọc hết, đếm sản phẩm theo externalProductId khác nhau và đếm SKU, bỏ SKU đã xoá', async () => {
+    registerAdapter(
+      'shopee',
+      fakeAdapter({
+        async getSeller(accessToken) {
+          return { externalShopId: accessToken.slice(4), shopName: 'Shop nhiều phân loại', region: 'VN' };
+        },
+        // Sản phẩm item-1 ba phân loại (một đã xoá), item-2 một phân loại, item-3 đã xoá.
+        async listSkus() {
+          return [
+            sku(1),
+            { ...sku(11), externalProductId: 'item-1' },
+            { ...sku(12, 'deleted'), externalProductId: 'item-1' },
+            sku(2, 'inactive'),
+            sku(3, 'deleted'),
+          ];
+        },
+      }),
+    );
+    const body = await connect(seller(), 'shopee');
+    expect(body.shops[0]).toMatchObject({ created: true, remoteProductCount: 2, remoteSkuCount: 3 });
   });
 
   // #198/#284: Lazada đọc từng trang quá hạn 10 giây với gian hàng vài trăm sản phẩm; adapter có tổng rẻ thì dùng tổng.
-  it('adapter có countSkus thì dùng tổng đó, không đọc listSkus; countSkus lỗi thì null', async () => {
+  it('adapter có countRemote thì dùng, không đọc listSkus; skuCount null giữ null; countRemote lỗi thì cả hai null', async () => {
     let listed = 0;
     registerAdapter(
       'tiktok',
@@ -253,9 +277,9 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
         async getSeller(accessToken) {
           return { externalShopId: accessToken.slice(4), shopName: 'Shop đếm bằng tổng', region: 'VN' };
         },
-        async countSkus(accessToken) {
+        async countRemote(accessToken) {
           if (accessToken.startsWith('tok-down')) throw new MarketplaceError('unavailable', 'ServiceTimeout');
-          return 305;
+          return { productCount: 305, skuCount: accessToken.startsWith('tok-full') ? 812 : null };
         },
         async listSkus() {
           listed++;
@@ -263,8 +287,9 @@ describe('§18.7.4 previousStatus và remoteSkuCount ở kết quả nối', () 
         },
       }),
     );
-    expect((await connect(seller(), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteSkuCount: 305 });
-    expect((await connect(seller('down'), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteSkuCount: null });
+    expect((await connect(seller(), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteProductCount: 305, remoteSkuCount: null });
+    expect((await connect(seller('full'), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteProductCount: 305, remoteSkuCount: 812 });
+    expect((await connect(seller('down'), 'tiktok')).shops[0]).toMatchObject({ created: true, remoteProductCount: null, remoteSkuCount: null });
     expect(listed).toBe(0);
   });
 

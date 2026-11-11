@@ -48,6 +48,7 @@ npm run smoke:tiktok -- token "<URL callback>"    # hoặc token <code>; code h�
 npm run smoke:tiktok -- shops                     # /authorization/202309/shops, cập nhật cipher
 npm run smoke:tiktok -- refresh                   # làm mới, lưu cặp token mới ngay (token cũ có thể mất hiệu lực)
 npm run smoke:tiktok -- products [shopId]          # mọi SKU như bước ghép ở thiết lập: số sản phẩm, số SKU, tiêu đề kèm nhãn biến thể (#282)
+npm run smoke:tiktok -- counts [shopId]            # countRemote lúc nối (số sản phẩm, số phân loại) và total_count của ALL, DELETED
 npm run smoke:tiktok -- skus [shopId] [sellerSku ...]   # listSkus, hoặc getSkus khi có sellerSku
 npm run smoke:tiktok -- returns [ngày]            # listReturns: yêu cầu trả cập nhật trong N ngày (mặc định 30), #227
 npm run smoke:tiktok -- cancellations [ngày]      # listCancellations: lần huỷ cập nhật trong N ngày
