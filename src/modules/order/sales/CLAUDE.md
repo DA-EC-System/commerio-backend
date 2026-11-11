@@ -6,7 +6,7 @@
 
 Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/order.ts`: `unpaid` → `processing` (`pay` hệ thống, `confirm` đơn COD tay) → `completed` (`complete` hệ thống); huỷ từ `unpaid`, `processing` (`cancel` đơn tay, `platform_cancel` sàn, `cancel_on_platform` người bán huỷ đơn sàn). Mọi lần chuyển ghi `core.state_transitions` (`entity_type = 'orders'`).
 
-- **Cờ lưu:** `needs_attention`, `cancel_requested`, `cancelling`, `platform_cancelled`, `shop_disconnected`. **Cờ suy ra** lúc đọc (`service/orders.ts`): `unmapped_sku` (dòng `variant_id` trống), `due_soon` (còn kiện chưa rời kho, dưới 24 giờ tới `ship_by`), `return_requested` (yêu cầu trả chưa đóng, chưa từ chối). `cod_mismatch` chưa có nguồn.
+- **Cờ lưu:** `needs_attention`, `cancel_requested`, `cancelling`, `platform_cancelled`, `shop_disconnected`. **Cờ suy ra** lúc đọc (`service/orders.ts`): `unmapped_sku` (dòng `variant_id` trống), `due_soon` (còn kiện chưa rời kho, dưới 24 giờ tới `ship_by`), `return_requested` (yêu cầu trả còn mở: `requested`, `awaiting_return`, `received`). `cod_mismatch` chưa có nguồn.
 - **Giai đoạn hiển thị** `stageOf` và **lý do chưa hoàn tất** `completionBlocker` suy từ kiện. Danh sách phân trang trong SQL; cờ lưu, `unmapped_sku`, `return_requested` lọc bằng SQL; chỉ giai đoạn suy từ kiện và `due_soon` lọc trong bộ nhớ, trên 1.000 đơn chưa dừng mới nhất (`DERIVED_SCAN`).
 - Tiền lưu `numeric`, API trả số nguyên đồng.
 
@@ -30,10 +30,20 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 `service/complete.ts`, mỗi giờ trong worker (`startBackground`): đơn `processing`, không `cancelling`, mọi kiện dừng, qua 7 ngày từ kiện giao cuối, không còn yêu cầu trả mở → `complete` (người làm trống, `source = system`), ghi `outcome`, `completed_at`, `return_window_ends_at`. Đơn COD tay chờ kế toán (`cod_unconfirmed`) chưa có nguồn.
 
+## Yêu cầu trả (#202, §20, §20.1, 25 §9)
+
+Máy trạng thái ở `domain/return.ts` (bảng §20): `requested` → `awaiting_return` (`accept`), `rejected` (`reject`), `refund_only`; `rejected` → `awaiting_return` (`platform_reopen`), `refund_only` (`platform_refund`), chỉ yêu cầu từ sàn; `awaiting_return` → `received` (`receive`, chỉ qua quét), `closed` (`no_show`); `received` → `closed` (`close`, hệ thống khi kiểm hàng hoàn xong); khách rút → `closed` (`buyer_cancel`). Mọi lần chuyển ghi `core.state_transitions` (`entity_type = 'return_requests'`). Còn mở = `requested`, `awaiting_return`, `received` (cờ `return_requested`, chặn tự hoàn tất; `hasOpenReturns` cho module khác).
+
+- Route ở router riêng `returnsModule` (tên `returns`, gắn `/api/v1/returns`), cùng module con: `api/return-*.ts`, `service/returns.ts` (xem, thao tác), `service/return-receive.ts` (quét nhận, kiện không khớp mã `KTL-`), `service/return-ingest.ts` (từ sàn).
+- Thao tác trên yêu cầu từ sàn: kiểm `version` → máy trạng thái → gọi sàn ngoài giao dịch (`ctx.marketplaceReturns`, channel tiêm ở `src/wiring.ts`) → ghi. `reject` cần `reasonId` trong danh sách sàn trả lúc gửi.
+- Kho: `service/return-stock-port.ts` (`ReturnStockPort`, chữ ký 11/11/2026 `{ variantId, expected, scanned }`). Bản thật đổi sang `receiveBack` cũ của inventory (chỉ `expected`); nguồn `unmatched_parcel`, `fromUnmatchedParcelId` ném 501 chờ #208.
+- Từ sàn: channel gọi `ingestMarketplaceReturn` sau mỗi lượt kéo đơn. Tạo ở `requested` (mã `YCT-`, dòng theo dòng đơn, kiện, giá vốn bình quân) rồi đi tới trạng thái sàn bằng `syncAction`; sàn tới trạng thái không có mũi tên thì giữ, bật Cần xử lý; sàn báo `received` thì chờ kho quét. Kiện còn đang giao nhảy tới `delivered` (`deliverForReturn` của fulfillment).
+- Tiền: `refund_only`, `platform_refund`, `close` đặt `refunded` và phát `sales.return_refunded`. Consumer `sales-return-inspected` nghe `inventory.return_inspected`: chia số bán lại về dòng (`resell_qty`), `resell_cost`, đóng `inspected`.
+
 ## Cho module khác
 
-`orderRefsOf` (fulfillment, qua `ctx` do `order/index.ts` tiêm: thông tin đơn cho route kiện), `getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder`, `countOpenOrders` (channel, chặn ngắt gian hàng #207). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
+`orderRefsOf` (fulfillment, qua `ctx` do `order/index.ts` tiêm: thông tin đơn cho route kiện), `getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder`, `ingestMarketplaceReturn`, `countOpenOrders` (channel, chặn ngắt gian hàng #207). `hasOpenReturns` (§11.3). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
 
 ## Chưa làm
 
-Đơn tạo tay, `confirm`, `cancel` đơn tay (issue riêng).
+Đơn tạo tay, `confirm`, `cancel` đơn tay (issue riêng). Yêu cầu trả tạo tay (`POST /returns`, `/returns/returnable`, ngoài MVP), nhắc việc `return.*` (chờ #209), tệp đính kèm (#212).
