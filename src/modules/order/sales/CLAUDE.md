@@ -38,6 +38,9 @@ Máy trạng thái ở `domain/return.ts` (bảng §20): `requested` → `awaiti
 - Thao tác trên yêu cầu từ sàn: kiểm `version` → máy trạng thái → gọi sàn ngoài giao dịch (`ctx.marketplaceReturns`, channel tiêm ở `src/wiring.ts`) → ghi. `reject` cần `reasonId` trong danh sách sàn trả lúc gửi.
 - Kho: `service/return-stock-port.ts` (`ReturnStockPort`, chữ ký 11/11/2026 `{ variantId, expected, scanned }`). Bản thật đổi sang `receiveBack` cũ của inventory (chỉ `expected`); nguồn `unmatched_parcel`, `fromUnmatchedParcelId` ném 501 chờ #208.
 - Từ sàn: channel gọi `ingestMarketplaceReturn` sau mỗi lượt kéo đơn. Tạo ở `requested` (mã `YCT-`, dòng theo dòng đơn, kiện, giá vốn bình quân) rồi đi tới trạng thái sàn bằng `syncAction`; sàn tới trạng thái không có mũi tên thì giữ, bật Cần xử lý; sàn báo `received` thì chờ kho quét. Kiện còn đang giao nhảy tới `delivered` (`deliverForReturn` của fulfillment).
+- Loại (`kind`): `return` hoặc `refund` (chỉ hoàn tiền, Lazada `ONLY_REFUND`): `refund` không có `accept` (guard `refund_only_request`), từ chối theo lý do `refuse-refund`.
+- Sàn báo hàng đã về (`received`) khi app còn `requested`/`rejected`: đi `accept`/`platform_reopen` của sàn tới `awaiting_return`, chờ quét. `rejected` rồi sàn báo khách huỷ: giữ `rejected` (như TikTok). Kéo lại không đổi gì thì không ghi.
+- Kiện của dòng: luồng chính nhảy tới `delivered`; `returning`, `lost` (hoặc chưa rời kho) giữ nguyên, yêu cầu và đơn bật cờ; mọi kiện của dòng `returned` thì dòng mang `package_returned` (E109): quét yêu cầu mà mọi dòng đã hoàn đi như kiện không khớp. Giá vốn chỉ tính dòng kiện đã giao.
 - Tiền: `refund_only`, `platform_refund`, `close` đặt `refunded` và phát `sales.return_refunded`. Consumer `sales-return-inspected` nghe `inventory.return_inspected`: chia số bán lại về dòng (`resell_qty`), `resell_cost`, đóng `inspected`.
 
 ## Cho module khác
