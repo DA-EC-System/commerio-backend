@@ -11,7 +11,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter } from './helpers.ts';
 
 const categoryId = randomUUID();
 const variant = (sku: string): ListingVariant => ({
@@ -109,6 +109,7 @@ beforeAll(async () => {
     accessToken: `tok-${randomUUID().slice(0, 12)}`,
   });
   shopId = res.body.shop.id;
+  await activateShop(shopId);
   await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
     externalCategoryId: '1',
     attributes: {},

@@ -4,6 +4,7 @@ import {
   type SellerInfo,
   type ShopCapabilities,
 } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { testPool } from '../../helpers/db.ts';
 
 const unsupported = async (): Promise<never> => {
   throw new MarketplaceError('unsupported');
@@ -53,4 +54,15 @@ export function fakeAdapter(
     ...rest,
   };
   return adapter;
+}
+
+/**
+ * Đưa gian hàng vừa nối (`connecting`) sang `active` như đã thiết lập trước #198 (có mốc, lượt đơn mở coi như xong, không
+ * giữ tồn), không qua `POST /setup`. Đẩy listing chỉ khi gian hàng `active` (Documents/21 §18.6.4, 409 `shop_not_active`).
+ */
+export async function activateShop(shopId: string): Promise<void> {
+  await testPool().query(
+    "update channel.shops set status = 'active', order_cutoff_at = now(), open_orders_pulled_at = now() where id = $1",
+    [shopId],
+  );
 }

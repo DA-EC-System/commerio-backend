@@ -1,0 +1,2 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "allocation_stocktake_id" uuid;--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_allocation_pending" CHECK ("channel"."shops"."allocation_stocktake_id" is null or ("channel"."shops"."opening_stocktake_id" is null and "channel"."shops"."order_cutoff_at" is not null));
