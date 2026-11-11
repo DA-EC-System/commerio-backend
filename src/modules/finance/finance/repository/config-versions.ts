@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lte, notExists, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import type { ConfigKind, ConfigStatus } from '../domain/config-version.ts';
@@ -102,7 +102,7 @@ export async function findDueScheduledAnyCompany(today: string, limit: number) {
 /**
  * Tổng sổ tiền từ `from` (gồm cả ngày đó), chỉ dòng còn hiệu lực (dòng ước tính đã có dòng thực tế thay thì bỏ).
  * `revenue` là tổng dòng doanh thu. Dùng cho chạy thử phiên bản cấu hình. #117 thêm loại `withdrawal` (rút về ngân
- * hàng, không vào lãi) thì loại ra ở đây.
+ * hàng, không vào lãi) thì loại ra ở đây. Dòng không gắn gian hàng (NCC hoàn tiền, #228) không phải lãi bán hàng: bỏ.
  */
 export async function sumLedgerSince(from: string, shopId?: string): Promise<{ total: string; revenue: string }> {
   const replacing = alias(ledgerEntries, 'replacing');
@@ -115,6 +115,7 @@ export async function sumLedgerSince(from: string, shopId?: string): Promise<{ t
     .where(
       and(
         gte(ledgerEntries.occurredOn, from),
+        isNotNull(ledgerEntries.shopId),
         shopId ? eq(ledgerEntries.shopId, shopId) : undefined,
         notExists(getDb().select({ one: sql`1` }).from(replacing).where(eq(replacing.replacesEntryId, ledgerEntries.id))),
       ),

@@ -410,6 +410,8 @@ export const orderSettlements = financeSchema.table(
     /** Người chốt là người soạn cấu hình phí, được chốt nhờ ngoại lệ tự duyệt (25 §11, #249). */
     selfApproved: boolean('self_approved').notNull().default(false),
     approvedBy: uuid('approved_by'),
+    /** Có dòng kiện đã giao không có giá vốn (`unitCost` null, #229): lãi của đơn thiếu phần đó (Documents/21 §21.1). */
+    costMissing: boolean('cost_missing').notNull().default(false),
     ...timestamps,
     ...version,
   },

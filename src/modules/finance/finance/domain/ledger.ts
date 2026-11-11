@@ -49,13 +49,21 @@ export interface Version<P> {
 }
 
 export interface DeliveredLine {
-  variantId: string;
+  /** Null khi dòng kiện chưa ghép SKU lúc bàn giao. */
+  variantId: string | null;
   quantity: number;
   /** Giá bán sau voucher shop. */
   unitPrice: string;
-  /** Giá vốn lưu trên dòng kiện lúc bàn giao (25 §7.1). */
-  unitCost: string;
+  /** Giá vốn lưu trên dòng kiện lúc bàn giao (25 §7.1); null khi dòng kiện không có giá vốn (21 §11.2, #229). */
+  unitCost: string | null;
 }
+
+/** Có dòng không có giá vốn: lãi của đơn thiếu phần giá vốn đó (`costMissing`, 21 §21.1). */
+export const costMissingOf = (lines: readonly { unitCost: string | null }[]) => lines.some((l) => l.unitCost === null);
+
+/** Tổng giá vốn của các dòng có giá vốn; dòng null không tính (không thay bằng giá vốn bình quân, 21 §11.2). */
+const costOf = <L extends { unitCost: string | null }>(lines: readonly L[], qty: (l: L) => number) =>
+  lines.reduce((s, l) => (l.unitCost === null ? s : s.plus(new Decimal(l.unitCost).times(qty(l)))), new Decimal(0));
 
 export interface DeliveredPackage {
   lines: readonly DeliveredLine[];
@@ -83,7 +91,7 @@ function push(out: Draft[], kind: LedgerKind, amount: Decimal, configVersionId: 
  */
 export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs): Draft[] {
   const revenue = pkg.lines.reduce((s, l) => s.plus(new Decimal(l.unitPrice).times(l.quantity)), new Decimal(0));
-  const cost = pkg.lines.reduce((s, l) => s.plus(new Decimal(l.unitCost).times(l.quantity)), new Decimal(0));
+  const cost = costOf(pkg.lines, (l) => l.quantity);
   const out: Draft[] = [];
   push(out, 'revenue', revenue);
   push(out, 'platform_subsidy', new Decimal(pkg.platformSubsidy));
@@ -119,10 +127,20 @@ export function postRefund(refundAmount: string): Draft[] {
   return out;
 }
 
-/** Phiếu kiểm hàng về: phần bán lại được ghi giảm giá vốn của đơn; hỏng, xuất huỷ thì giá vốn vẫn tính (25 §10.1). */
-export function postInspected(lines: readonly { resellable: number; unitCost: string }[]): Draft[] {
+/**
+ * Phiếu kiểm hàng về: phần bán lại được ghi giảm giá vốn của đơn; hỏng, xuất huỷ thì giá vốn vẫn tính (25 §10.1).
+ * Dòng `unitCost` null (dòng kiện gốc không có giá vốn, chưa từng ghi `cogs`) không ghi giảm (21 §11.2, #229).
+ */
+export function postInspected(lines: readonly { resellable: number; unitCost: string | null }[]): Draft[] {
   const out: Draft[] = [];
-  push(out, 'cogs_reversal', lines.reduce((s, l) => s.plus(new Decimal(l.unitCost).times(l.resellable)), new Decimal(0)));
+  push(out, 'cogs_reversal', costOf(lines, (l) => l.resellable));
+  return out;
+}
+
+/** NCC hoàn tiền phiếu trả: tiền vào, chờ khớp sao kê ngân hàng (25 §10.1, US-NH-14). */
+export function postSupplierRefund(refundAmount: string): Draft[] {
+  const out: Draft[] = [];
+  push(out, 'supplier_refund', new Decimal(refundAmount).abs());
   return out;
 }
 

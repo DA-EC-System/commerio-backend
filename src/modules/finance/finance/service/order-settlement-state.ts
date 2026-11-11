@@ -16,12 +16,19 @@ export async function currentThreshold(now = new Date()): Promise<Threshold> {
   return (await getEffectiveConfig('mismatch_threshold', null, vnDate(now)))?.payload ?? NO_THRESHOLD;
 }
 
-/** Kiện của đơn vừa ghi số ước tính: `none → pending` lần đầu, cập nhật tổng ước tính. */
-export async function markDelivered(orderId: string, shopId: string): Promise<void> {
+/**
+ * Kiện của đơn vừa ghi số ước tính: `none → pending` lần đầu, cập nhật tổng ước tính. Kiện có dòng không có giá vốn
+ * thì đánh dấu đơn thiếu giá vốn, không bỏ dấu khi kiện sau đủ giá vốn (#229).
+ */
+export async function markDelivered(orderId: string, shopId: string, costMissing = false): Promise<void> {
   const row = await lockOrderSettlement(orderId, currentCompanyId()!, shopId);
   const sums = (await orderSums([orderId])).get(orderId);
   const first = row.status === 'none';
-  await updateOrderSettlement(orderId, row, { estimatedTotal: sums?.estimated ?? '0', ...(first && { status: 'pending' }) });
+  await updateOrderSettlement(orderId, row, {
+    estimatedTotal: sums?.estimated ?? '0',
+    ...(first && { status: 'pending' }),
+    ...(costMissing && { costMissing: true }),
+  });
   if (first) {
     await recordTransition({ entityType: SETTLEMENT_ENTITY, entityId: orderId, from: 'none', to: 'pending', action: 'first_delivered', actorId: null, source: 'system' });
   }

@@ -7,7 +7,7 @@ import { bankMatches, ledgerEntries } from './schema.ts';
 export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string | null };
 
 /** Nguồn của dòng sổ: chứng từ hay sự kiện sinh ra nó (cột `source_type`). */
-export type LedgerSource = 'package' | 'package_return' | 'return_refund' | 'return_inspection' | 'settlement_batch' | 'manual';
+export type LedgerSource = 'package' | 'package_return' | 'return_refund' | 'return_inspection' | 'supplier_return' | 'settlement_batch' | 'manual';
 
 const NON_CASH: LedgerKind[] = ['cogs', 'cogs_reversal'];
 

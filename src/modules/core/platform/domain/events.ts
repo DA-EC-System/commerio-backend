@@ -54,6 +54,15 @@ export const EVENT_SCHEMAS = {
     countedAt: timestamp,
     lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
   }),
+  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, Documents/21 mục 11.2); kiện hoàn không phát. Sổ tiền nghe (#228):
+  // `unitCost` null khi dòng kiện gốc không có giá vốn, không ghi `cogs_reversal` (#229).
+  'inventory.return_inspected': z.object({
+    inspectionId: id,
+    orderId: id,
+    shopId: id,
+    inspectedAt: timestamp,
+    lines: z.array(z.object({ variantId: id, resellable: z.int().nonnegative(), unitCost: money.nullable() })),
+  }),
   'inventory.issue_posted': z.object({
     issueId: id,
     number: z.string(),
@@ -81,6 +90,14 @@ export const EVENT_SCHEMAS = {
     source: z.enum(['marketplace', 'inbox', 'manual']),
     /** `platform`: sàn huỷ; `seller`: người bán huỷ trong app. */
     by: z.enum(['platform', 'seller']),
+  }),
+  // Tiền hoàn cho khách (`refund_only` duyệt, hoặc đã nhận hàng trả; #202, Documents/21 mục 11.2). Sổ tiền nghe (#228).
+  'sales.return_refunded': z.object({
+    returnRequestId: id,
+    orderId: id,
+    shopId: id,
+    refundAmount: money,
+    refundedAt: timestamp,
   }),
   'fulfillment.package_status_changed': z.object({
     packageId: id,
@@ -184,6 +201,8 @@ export const EVENT_SCHEMAS = {
   }),
   // Đề nghị nhập gửi (hoặc gửi lại) CEO duyệt (#108).
   'purchasing.request_submitted': z.object({ requestId: id, number: z.string() }),
+  // NCC hoàn tiền phiếu trả (#210, Documents/21 mục 11.2); sổ tiền ghi dòng `supplier_refund` chờ khớp ngân hàng (#228).
+  'purchasing.supplier_return_refunded': z.object({ supplierReturnId: id, supplierId: id, refundAmount: money, recordedAt: timestamp }),
   // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý.
   'purchasing.goods_receipt_posted': z.object({
     receiptId: id,
