@@ -38,7 +38,7 @@ Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữ
 | `STAGING_SSH_KEY`, `STAGING_SSH_KNOWN_HOSTS` | secret | Khoá riêng `ci-deploy-backend` do `ci-deploy/setup.sh` sinh, dòng `ssh-keyscan -t ed25519 <host>` |
 | `STAGING_API_URL` | biến | Gốc của staging, vd `https://<tên miền>` (không có `/api`). Có thì job `blackbox` chạy bộ test hộp đen (#120) sau `deploy` |
 
-`DATABASE_URL` và cặp khoá JWT mà ứng dụng dùng **không** đi qua CI: chúng nằm trong `deploy/k8s/overlays/vps/.env` trên VPS (Secret `app-env`). Đổi giá trị thì sửa file đó rồi `kubectl apply -k deploy/k8s/overlays/vps` và `kubectl -n commerio rollout restart deploy/api deploy/worker deploy/realtime`.
+`DATABASE_URL`, cặp khoá JWT và khoá kho tệp mà ứng dụng dùng **không** đi qua CI: chúng nằm trong `deploy/k8s/overlays/vps/.env` trên VPS (Secret `app-env`). Kho tệp (#212) là Cloudflare R2: điền các biến `S3_*` theo `.env.example`, với `S3_KEY_PREFIX=staging` để tệp staging không lẫn với tệp máy dev trên cùng bucket. Thiếu thì api vẫn chạy, chỉ `POST /files/uploads` trả 503 `storage_unavailable`. Đổi giá trị thì sửa file đó rồi `kubectl apply -k deploy/k8s/overlays/vps` và `kubectl -n commerio rollout restart deploy/api deploy/worker deploy/realtime`.
 
 ## Dữ liệu demo
 
