@@ -28,6 +28,9 @@ export type ReturnPackageOutcome = 'delivered' | 'jumped' | 'held' | 'returned' 
  * `held`: kiện ở `returning`, `lost` (hoặc chưa rời kho) giữ nguyên; `returned`: hàng đã về kho, không sinh phiếu kiểm
  * hàng hoàn lần nữa. Bên gọi bật cờ trên yêu cầu với mọi kết quả khác `delivered`.
  */
+// TODO(#199 phần c): bước đổi trạng thái kiện chép từ `changeStatus` của `platform-packages.ts` (cập nhật, lịch sử, sự
+// kiện). Dùng chung cần `PlatformPackageOrder` (giữ hàng, mốc kéo đơn) mà bên gọi ở đây không có; nhảy từ luồng chính tới
+// `delivered` không đổi tồn nên chưa gộp.
 export async function deliverForReturn(packageId: string, note: string): Promise<ReturnPackageOutcome> {
   const pkg = await lockPackageStatus(packageId);
   if (!pkg) return 'missing';
