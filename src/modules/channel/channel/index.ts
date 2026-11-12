@@ -63,5 +63,7 @@ export { hasChannelData } from './repository/shops.ts';
 export { awaitingStocktakeShops } from './repository/shops.ts';
 // Thao tác đơn trên sàn cho `order` (#105 PR 2), tiêm qua `ctx.marketplaceOrders` ở `src/wiring.ts`.
 export { marketplaceCancelOrder, marketplaceCancelReasons, marketplaceDecideCancel } from './service/order-actions.ts';
+// Thao tác yêu cầu trả trên sàn cho `order` (#202), tiêm qua `ctx.marketplaceReturns`.
+export { marketplaceReturns } from './service/return-actions.ts';
 // Tách kiện, giao kiện trên sàn cho fulfillment (#221; #205, #239 gọi), tiêm qua `ctx.marketplacePackages` ở `src/wiring.ts`.
 export { marketplaceShipPackage, marketplaceSplitAttributes, marketplaceSplitOrder } from './service/order-actions.ts';

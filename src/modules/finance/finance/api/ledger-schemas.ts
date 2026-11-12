@@ -58,7 +58,7 @@ export const LedgerPage = z
   .meta({ id: 'LedgerPage' });
 
 export const OrderProfit = z
-  .object({ net: z.number(), cogs: z.number().nullable(), gross: z.number().nullable(), estimated: z.boolean(), lines: z.array(LedgerLine) })
+  .object({ net: z.number(), cogs: z.number().nullable(), gross: z.number().nullable(), estimated: z.boolean(), costMissing: z.boolean(), lines: z.array(LedgerLine) })
   .meta({ id: 'OrderProfit' });
 
 export const TaxWarnings = z

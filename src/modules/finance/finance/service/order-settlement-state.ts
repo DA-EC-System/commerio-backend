@@ -18,13 +18,18 @@ export async function currentThreshold(now = new Date()): Promise<Threshold> {
 
 /**
  * Kiện của đơn vừa ghi số ước tính: `none → pending` lần đầu, cập nhật tổng ước tính. Quyết toán đã về trước khi kiện
- * giao (E139, #247) thì xét luôn `settled`/`mismatch` như sau một lô quyết toán.
+ * giao (E139, #247) thì xét luôn `settled`/`mismatch` như sau một lô quyết toán. Kiện có dòng không có giá vốn thì
+ * đánh dấu đơn thiếu giá vốn, không bỏ dấu khi kiện sau đủ giá vốn (#229).
  */
-export async function markDelivered(orderId: string, shopId: string): Promise<void> {
+export async function markDelivered(orderId: string, shopId: string, costMissing = false): Promise<void> {
   const row = await lockOrderSettlement(orderId, currentCompanyId()!, shopId);
   const sums = (await orderSums([orderId])).get(orderId);
   const first = row.status === 'none';
-  const updated = await updateOrderSettlement(orderId, row, { estimatedTotal: sums?.estimated ?? '0', ...(first && { status: 'pending' }) });
+  const updated = await updateOrderSettlement(orderId, row, {
+    estimatedTotal: sums?.estimated ?? '0',
+    ...(first && { status: 'pending' }),
+    ...(costMissing && { costMissing: true }),
+  });
   if (first) {
     await recordTransition({ entityType: SETTLEMENT_ENTITY, entityId: orderId, from: 'none', to: 'pending', action: 'first_delivered', actorId: null, source: 'system' });
   }

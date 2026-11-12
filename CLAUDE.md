@@ -23,10 +23,21 @@ npm run dev            # api, có watch. dev:worker, dev:realtime cho hai tiến
 npm run check          # lint + typecheck + depcruise + test, chạy trước khi mở PR
 npm run infra:up       # PostgreSQL, Redis, Kafka (deploy/compose.yaml)
 npm run db:generate    # sinh migration từ schema Drizzle
-npm run db:migrate
+npm run db:regen       # sinh lại migration của nhánh sau khi gộp main
+npm run db:migrate     # chạy migration, dừng nếu có migration lệch thứ tự
+npm run db:migrate:check  # chỉ đọc: đã chạy, chưa chạy, lệch thứ tự
 ```
 
 Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn định).
+
+## Migration
+
+Chi tiết và cách sửa: `db/CLAUDE.md` mục "Hai nhánh cùng sinh migration".
+
+- Mỗi PR chỉ sinh migration ở **bước cuối**, sau khi `schema.ts` đã chốt (`npm run db:generate -- --name <mo-ta>`, viết tay thì thêm `--custom`). Không sinh rồi sửa đi sửa lại giữa chừng.
+- PR khác có migration merge trước: gộp main vào nhánh (`git fetch origin && git merge origin/main`) rồi chạy `npm run db:regen`, commit lại `db/migrations`. Không tự ghép tay `_journal.json`.
+- CI (`npm run db:ci-check`) đỏ khi migration của PR không đứng sau mọi migration của main, journal hay snapshot đứt, hoặc `schema.ts` lệch migration.
+- Deploy (`npm run db:migrate`) **dừng, không chạy gì** nếu có migration chưa chạy mà sinh trước migration mới nhất đã chạy trên DB (drizzle sẽ bỏ qua nó im lặng). Xem trước bằng `npm run db:migrate:check:staging`.
 
 ## Luật ranh giới (dependency-cruiser kiểm trong CI)
 

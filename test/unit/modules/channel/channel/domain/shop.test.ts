@@ -5,6 +5,8 @@ import {
   authDeadline,
   awaitingAllocation,
   holdsStock,
+  ORDERS_STALE_MS,
+  ordersStale,
   authLapsed,
   reconnectAction,
   returnWindowError,
@@ -152,5 +154,32 @@ describe('giữ tồn sau thiết lập (#198, Documents/21 §18.6.11)', () => {
     expect(holdsStock({ ...base, allocationStocktakeId: 'doc' })).toBe(true);
     expect(holdsStock({ ...base, openOrdersPulledAt: null })).toBe(true);
     expect(holdsStock(base)).toBe(false);
+  });
+});
+
+describe('đơn chưa cập nhật (#223, Documents/21 §18.6.6)', () => {
+  const now = new Date(NOW);
+  const ago = (ms: number) => new Date(NOW - ms);
+  const base = { status: 'active' as const, orderCutoffAt: ago(DAY), ordersPulledOkAt: ago(60_000) };
+
+  it('mất uỷ quyền thì chưa cập nhật ngay, không chờ ngưỡng', () => {
+    expect(ordersStale({ ...base, status: 'needs_reauth' }, true, now)).toBe(true);
+  });
+
+  it('chưa có lượt lấy đơn nào xong trọn thì chưa cập nhật', () => {
+    expect(ordersStale({ ...base, ordersPulledOkAt: null }, true, now)).toBe(true);
+  });
+
+  it('ngưỡng 15 phút: 14 phút vẫn tin được, 16 phút thì không', () => {
+    expect(ORDERS_STALE_MS).toBe(15 * 60_000);
+    expect(ordersStale({ ...base, ordersPulledOkAt: ago(14 * 60_000) }, true, now)).toBe(false);
+    expect(ordersStale({ ...base, ordersPulledOkAt: ago(16 * 60_000) }, true, now)).toBe(true);
+  });
+
+  it('sàn không kéo đơn được, gian hàng chưa có mốc, đang kết nối hoặc đã ngắt thì không tính', () => {
+    expect(ordersStale({ ...base, ordersPulledOkAt: null }, false, now)).toBe(false);
+    expect(ordersStale({ ...base, orderCutoffAt: null, ordersPulledOkAt: null }, true, now)).toBe(false);
+    expect(ordersStale({ ...base, status: 'connecting', ordersPulledOkAt: null }, true, now)).toBe(false);
+    expect(ordersStale({ ...base, status: 'disconnected', ordersPulledOkAt: null }, true, now)).toBe(false);
   });
 });

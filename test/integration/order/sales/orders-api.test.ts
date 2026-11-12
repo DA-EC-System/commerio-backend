@@ -121,6 +121,8 @@ describe('GET /sales/orders (#105)', () => {
         [company.companyId, `TR-${randomUUID().slice(0, 8)}`, ids.twoPackages, shopId, randomUUID(), status, close],
       );
     await insert('closed', 'inspected');
+    // `refund_only` không tính là mở (Documents/21 §19.1, #202).
+    await insert('refund_only', null);
     let page = OrderSummaryPage.parse((await get('/orders?flag=return_requested')).body);
     expect(page.total).toBe(0);
     await insert('requested', null);

@@ -58,7 +58,8 @@ describe('khung api', () => {
   });
 
   it('module đã gắn router rỗng vẫn trả 404 Problem Details cho đường dẫn chưa có (AC-12)', async () => {
-    const mounted = modules.filter((m) => m.router).map((m) => m.name);
+    // `returns` (Documents/21 §20) có `GET /:id` cần đăng nhập nên đường dẫn một đoạn bất kỳ trả 401.
+    const mounted = modules.filter((m) => m.router && m.name !== 'returns').map((m) => m.name);
     // `access`, `staff` không tự gắn: router của hai module này nằm dưới /api/v1/identity (Documents/21 I1, #7).
     expect(mounted).toEqual(expect.arrayContaining(['catalog', 'inventory', 'sales', 'payment', 'finance', 'platform', 'files']));
     expect(mounted).not.toContain('staff');
@@ -70,7 +71,8 @@ describe('khung api', () => {
   });
 
   it('đủ 18 module con (bỏ pricing, Documents/19 D9), tên không trùng', () => {
-    const names = modules.map((m) => m.name);
+    // `returns` là router thứ hai của `sales`, gắn tại /api/v1/returns (Documents/21 §20), không phải module con.
+    const names = modules.map((m) => m.name).filter((n) => n !== 'returns');
     expect(names).toHaveLength(18);
     expect(new Set(names).size).toBe(18);
   });

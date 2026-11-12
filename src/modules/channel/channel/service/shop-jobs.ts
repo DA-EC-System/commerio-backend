@@ -69,8 +69,8 @@ export async function sendOpenOrderPull(companyId: string, shopId: string): Prom
 }
 
 /** Xếp một lượt đồng bộ listing ngay (đẩy tồn lần đầu sau khi fulfillment phân hàng xong, #198); đi chung giao dịch đang mở. */
-export async function sendListingSync(companyId: string, shopId: string): Promise<void> {
-  await sendJob(listingSyncQueue, { companyId, shopId }, { key: shopId });
+export async function sendListingSync(companyId: string, shopId: string): Promise<boolean> {
+  return (await sendJob(listingSyncQueue, { companyId, shopId }, { key: shopId })) !== null;
 }
 
 /** Xếp một lượt đẩy tồn, giá đang chờ của gian hàng; đã có việc chờ cùng gian hàng thì không thêm. Đi chung giao dịch đang mở. */
