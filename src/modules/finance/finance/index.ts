@@ -14,6 +14,8 @@ export const financeModule: ModuleDefinition = {
 
 // Sổ tiền (#116) chọn phiên bản cấu hình theo ngày kiện giao.
 export { getEffectiveConfig } from './service/config-versions.ts';
+// Loại khoản trong sổ: adapter sàn của channel điền `kind` cho khoản quyết toán (#203).
+export { LEDGER_KINDS, type LedgerKind } from './domain/ledger.ts';
 // Ghi sổ theo sự kiện (#116, Documents/21 §11.2); consumer `finance-ledger` đăng ký ở startFinanceBackground (#228).
 export {
   type PackageDelivered,
@@ -36,3 +38,5 @@ export { handleVerifiedPayment } from './service/verified-payment.ts';
 export { getTransactionRefs } from './service/transaction-refs.ts';
 // Tên gian hàng cho đối soát (#30 A7): src/wiring.ts tiêm channel.getShops qua ctx.shopsOf.
 export type { FinanceContext, ShopInfo } from './service/settlement-views.ts';
+// Lệch ví của lần đối soát gần nhất có số, cho `Shop.walletMismatch` của channel (#251, Documents/21 §11.3).
+export { walletDiffOf } from './service/settlement-runs.ts';

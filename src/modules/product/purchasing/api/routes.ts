@@ -9,6 +9,7 @@ import { runRequestAction } from '../service/request-actions.ts';
 import type { Actor } from '../service/request-views.ts';
 import * as requests from '../service/requests.ts';
 import * as suppliers from '../service/suppliers.ts';
+import * as returns from '../service/supplier-returns.ts';
 import {
   ActionParams,
   AddRequestLineInput,
@@ -28,6 +29,11 @@ import {
   SupplierListQuery,
   SupplierReportQuery,
   SupplierUpdateInput,
+  ReturnActionParams,
+  SupplierReturnActionInput,
+  SupplierReturnInput,
+  SupplierReturnListQuery,
+  SupplierReturnUpdateInput,
 } from './schemas.ts';
 
 /** Người gọi kèm quyền lấy từ lần đọc DB của `authorize` trong chính request này (D1). */
@@ -139,6 +145,36 @@ export function purchasingRouter(ctx: ModuleContext): Router {
     const { id, action } = validated<typeof ActionParams>(res, 'params');
     res.json(await runReceiptAction(actor(res), id, action, validated<typeof ReceiptActionInput>(res, 'body')));
   });
+
+  // Phiếu trả NCC (§16.2, #210): quyền từng bước kiểm ở máy trạng thái
+  const returnManage = ctx.authorize('purchasing.return.manage');
+
+  router.get('/supplier-returns', view, validate({ query: SupplierReturnListQuery }), async (_req, res) => {
+    res.json(await returns.listSupplierReturns(actor(res), validated<typeof SupplierReturnListQuery>(res, 'query')));
+  });
+
+  router.get('/supplier-returns/:id', view, validate({ params: IdParams }), async (_req, res) => {
+    res.json(await returns.getSupplierReturn(actor(res), validated<typeof IdParams>(res, 'params').id));
+  });
+
+  router.post('/supplier-returns', returnManage, validate({ body: SupplierReturnInput }), async (_req, res) => {
+    res.status(201).json(await returns.createSupplierReturn(actor(res), validated<typeof SupplierReturnInput>(res, 'body')));
+  });
+
+  router.put('/supplier-returns/:id', returnManage, validate({ params: IdParams, body: SupplierReturnUpdateInput }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await returns.updateSupplierReturn(actor(res), id, validated<typeof SupplierReturnUpdateInput>(res, 'body')));
+  });
+
+  router.post(
+    '/supplier-returns/:id/:action',
+    view,
+    validate({ params: ReturnActionParams, body: SupplierReturnActionInput }),
+    async (_req, res) => {
+      const { id, action } = validated<typeof ReturnActionParams>(res, 'params');
+      res.json(await returns.actOnSupplierReturn(actor(res), id, action, validated<typeof SupplierReturnActionInput>(res, 'body')));
+    },
+  );
 
   return router;
 }

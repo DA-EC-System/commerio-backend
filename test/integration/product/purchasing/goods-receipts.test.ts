@@ -75,6 +75,8 @@ describe('lập phiếu nhận', () => {
 
   it('đề nghị đã đóng thiếu → 409 invalid_transition; đề nghị của công ty khác → 422 errors.requestId', async () => {
     const req = await ordered();
+    // Đóng thiếu chỉ từ Nhận một phần (#243)
+    await testPool().query("update product.purchase_requests set status = 'partially_received' where id = $1", [req.id]);
     await runActions([[A.ceo, 'close_short', { reason: 'NCC hết hàng' }]], req.id, req.version);
     const closed = await pur(A.kho).post('/goods-receipts', { requestId: req.id, deliveryMode: 'waiting', note: '' });
     expect(closed.status).toBe(409);

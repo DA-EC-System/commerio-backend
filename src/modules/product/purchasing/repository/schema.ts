@@ -53,6 +53,8 @@ export const purchaseRequests = purchasingSchema.table(
     source: purchaseRequestSource('source').notNull().default('manual'),
     sourceReturnId: uuid('source_return_id'),
     expectedDeliveryDate: date('expected_delivery_date'),
+    /** Mã đơn bên NCC ghi lúc đặt (tuỳ chọn, 25 §3.2, #243). */
+    supplierOrderCode: text('supplier_order_code'),
     note: text('note'),
     statusReason: text('status_reason'),
     ...approval,
@@ -95,6 +97,8 @@ export const purchaseRequestLines = purchasingSchema.table(
     closedShortQty: integer('closed_short_qty').notNull().default(0),
     unitPrice: money('unit_price').notNull(),
     excluded: boolean('excluded').notNull().default(false),
+    /** Lý do CEO loại dòng (bắt buộc khi loại, #243). */
+    excludedReason: text('excluded_reason'),
     ...timestamps,
     ...version,
   },
@@ -104,6 +108,7 @@ export const purchaseRequestLines = purchasingSchema.table(
     index().on(t.variantId),
     check('purchase_request_lines_item', sql`${t.variantId} is not null or ${t.newProductName} is not null`),
     check('purchase_request_lines_ordered', sql`${t.orderedQty} > 0`),
+    check('purchase_request_lines_excluded_reason', sql`not ${t.excluded} or ${t.excludedReason} is not null`),
     check(
       'purchase_request_lines_counts',
       sql`${t.receivedQty} >= 0 and ${t.defectiveQty} >= 0 and ${t.closedShortQty} >= 0`,
@@ -146,6 +151,8 @@ export const goodsReceipts = purchasingSchema.table(
     checkDeadline: timestamp('check_deadline', { withTimezone: true }),
     shortResolution: shortResolution('short_resolution'),
     followUpReceiptId: uuid('follow_up_receipt_id'),
+    /** Phiếu `short` cùng đề nghị mà đợt này giao bù, chỉ để tham chiếu (25 §4.1, #244). */
+    followsUpReceiptId: uuid('follows_up_receipt_id'),
     resolutionNote: text('resolution_note'),
     resolvedBy: uuid('resolved_by'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
@@ -259,6 +266,8 @@ export const supplierReturns = purchasingSchema.table(
     sentAt: timestamp('sent_at', { withTimezone: true }),
     resultBy: uuid('result_by'),
     resultAt: timestamp('result_at', { withTimezone: true }),
+    /** Người ghi kết quả là người gửi, được nhờ ngoại lệ tự duyệt (25 §11, #210). */
+    resultSelfApproved: boolean('result_self_approved').notNull().default(false),
     ...timestamps,
     ...version,
   },
@@ -270,7 +279,10 @@ export const supplierReturns = purchasingSchema.table(
     check('supplier_returns_refund', sql`(${t.status} = 'refunded') = (${t.refundAmount} is not null)`),
     check('supplier_returns_refund_amount', sql`${t.refundAmount} >= 1`),
     check('supplier_returns_cancel', sql`(${t.status} = 'cancelled') = (${t.cancelDecision} is not null)`),
-    check('supplier_returns_result_by', sql`${t.resultBy} is null or ${t.resultBy} is distinct from ${t.sentBy}`),
+    check(
+      'supplier_returns_result_by',
+      sql`${t.resultBy} is null or ${t.resultBy} is distinct from ${t.sentBy} or ${t.resultSelfApproved}`,
+    ),
   ],
 );
 

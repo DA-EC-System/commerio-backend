@@ -257,8 +257,15 @@
     {
       "idx": 36,
       "version": "7",
-      "when": 1794415727227,
-      "tag": "20261111164847_cost-missing",
+      "when": 1794448373563,
+      "tag": "20261112015253_chuoi-phieu-kho-quyet-toan",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794472560985,
+      "tag": "20261112083600_cost-missing",
       "breakpoints": true
     }
   ]

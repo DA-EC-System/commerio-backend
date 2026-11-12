@@ -13,6 +13,7 @@ const receiptCols = {
   checkDeadline: goodsReceipts.checkDeadline,
   shortResolution: goodsReceipts.shortResolution,
   followUpReceiptId: goodsReceipts.followUpReceiptId,
+  followsUpReceiptId: goodsReceipts.followsUpReceiptId,
   resolutionNote: goodsReceipts.resolutionNote,
   resolvedBy: goodsReceipts.resolvedBy,
   resolvedAt: goodsReceipts.resolvedAt,
@@ -107,6 +108,7 @@ export async function insertReceipt(values: {
   deliveryMode: DbDeliveryMode;
   note: string | null;
   createdBy: string;
+  followsUpReceiptId?: string | null;
 }): Promise<string> {
   const [row] = await getDb()
     .insert(goodsReceipts)

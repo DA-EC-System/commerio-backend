@@ -111,6 +111,40 @@ describe('§18.7.1 số liệu trên Shop', () => {
     expect(fields(await shopDetail(shop.id))).toEqual([0, 0, shop.createdAt, null]);
   });
 
+  it('D43-11: walletMismatch, walletDiff theo lần đối soát done gần nhất có số; lần failed, lần không có số, lần chạy lại kỳ cũ không đổi cờ (§21.3, #251)', async () => {
+    const { shop } = await connect(seller());
+    const other = await createCompany({ optionalModules: ['channel'] });
+    const run = (status: 'done' | 'failed' | 'running', walletDiff: string | null, to: string, companyId = company.companyId) =>
+      testPool().query(
+        `insert into finance.settlement_batches (company_id, shop_id, source, period_from, period_to, status, wallet_diff)
+         values ($1, $2, 'api', '2026-10-01T00:00:00Z', $3, $4, $5)`,
+        [companyId, shop.id, to, status, walletDiff],
+      );
+    const flag = async () => {
+      const [a, b] = [await listed(shop.id), await shopDetail(shop.id)];
+      expect([b.walletMismatch, b.walletDiff]).toEqual([a.walletMismatch, a.walletDiff]);
+      return [a.walletMismatch, a.walletDiff];
+    };
+    expect(await flag()).toEqual([false, null]);
+    // Lần của công ty khác trùng id gian hàng không lọt sang
+    await run('done', '-999.00', '2026-11-09T00:00:00Z', other.companyId);
+    expect(await flag()).toEqual([false, null]);
+    await run('done', '-2520.00', '2026-11-02T00:00:00Z');
+    expect(await flag()).toEqual([true, '-2520.00']);
+    // Lần lỗi, lần đang chạy, lần xong mà sàn không trả kỳ quyết toán: giữ cờ của lần có số
+    await run('failed', null, '2026-11-03T00:00:00Z');
+    await run('done', null, '2026-11-04T00:00:00Z');
+    await run('running', null, '2026-11-05T00:00:00Z');
+    expect(await flag()).toEqual([true, '-2520.00']);
+    await run('done', '0.00', '2026-11-06T00:00:00Z');
+    expect(await flag()).toEqual([false, '0.00']);
+    // Chạy lại một kỳ cũ sau kỳ mới: cờ vẫn theo kỳ mới hơn
+    await run('done', '500.00', '2026-11-01T00:00:00Z');
+    expect(await flag()).toEqual([false, '0.00']);
+    await run('done', '120.00', '2026-11-07T00:00:00Z');
+    expect(await flag()).toEqual([true, '120.00']);
+  });
+
   it('pendingOrderCount đếm đơn chưa completed, cancelled; orders7d theo placedAt trong 7 × 24 giờ; mỗi gian hàng đếm riêng', async () => {
     const a = (await connect(seller())).shop;
     const b = (await connect(seller())).shop;

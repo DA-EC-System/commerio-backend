@@ -1,5 +1,6 @@
-// Tạm khoá của SKU (Documents/21 mục 15.1): phần giảm của phiếu kho đang chờ duyệt. File riêng để `port.ts`, lõi ghi sổ
-// và ngưỡng cùng import mà không thành vòng (spec #206 mục 5.2).
+// Tạm khoá của SKU (Documents/21 mục 15.1): phần giảm của phiếu kho đang chờ duyệt (#208, Documents/25 §7.1). File
+// riêng để `port.ts`, lõi ghi sổ và ngưỡng cùng import mà không thành vòng (spec #206 mục 5.2).
+import { pendingLocks } from '../repository/documents.ts';
 
-// shortcut: tạm khoá luôn 0 vì chưa có phiếu kho chờ duyệt; tính từ phiếu giảm `pending` khi làm B3 (spec #111 Q4).
-export const lockedOf = (_variantId: string) => 0;
+/** Tạm khoá theo biến thể; không truyền `variantIds` là mọi SKU đang bị khoá. SKU không bị khoá thì vắng trong Map. */
+export const lockedOf = (variantIds?: readonly string[]): Promise<Map<string, number>> => pendingLocks(variantIds);

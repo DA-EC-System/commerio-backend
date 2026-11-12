@@ -1,5 +1,6 @@
 // Adapter Lazada Open Platform (Documents/tich-hop-san/lazada.md §2, §3, §7.1). Cách ký chép từ scripts/smoke/lazada.ts.
 import { createHmac } from 'node:crypto';
+import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CategoryAttribute,
   DEFAULT_REFRESH_LEAD_MS,
@@ -62,6 +63,37 @@ export function signLazada(apiPath: string, params: Record<string, string>, secr
 }
 
 /** Lỗi trong body (`code` khác "0") đổi sang loại của app. */
+/**
+ * Loại khoản trong sổ của một dòng quyết toán Lazada (lazada.md §7.6; chuyển từ finance ở #203). Theo tên phí và loại
+ * giao dịch; chưa nhận ra thì `null` (finance ghi `adjustment` kèm tên phí). Bảng dựng theo tài liệu và sàn giả lập
+ * #115: đối chiếu khi có dữ liệu thật.
+ */
+export function lazadaLedgerKind(feeName: string, transactionType: string): LedgerKind | null {
+  const f = feeName.toLowerCase();
+  const t = transactionType.toLowerCase();
+  if (t.includes('payout') || t.includes('withdraw')) return 'withdrawal';
+  if (f.startsWith('reversal item price') || f.includes('refund')) return 'customer_refund';
+  if (f.includes('item price credit')) return 'revenue';
+  if (f.includes('commission')) return 'fee_fixed';
+  if (f.includes('payment fee')) return 'fee_transaction';
+  if (f.includes('paid by customer')) return 'shipping_income';
+  if (f.includes('shipping fee')) return 'shipping_cost';
+  if (f.includes('handling fee') || f.includes('service fee') || f.includes('free shipping max') || f.includes('lazcoins')) {
+    return 'fee_service';
+  }
+  if (t.includes('marketing') || f.includes('sponsored')) return 'ads';
+  if (f.includes('lost') || f.includes('damaged') || f.includes('compensation') || f.includes('claim')) return 'lost_compensation';
+  if (f.includes('penalty')) return 'penalty';
+  if (f.includes('subsidy') || f.includes('platform voucher')) return 'platform_subsidy';
+  return null;
+}
+
+/**
+ * Mã giao dịch Lazada dạng "Seller code- xxxxxxx", khoảng trắng không cố định giữa các lần trả: bỏ khoảng trắng để
+ * khoá chống trùng (gian hàng, mã giao dịch) so được (#250).
+ */
+export const normalizeLazadaTxnId = (raw: unknown): string => String(raw ?? '').replace(/\s+/g, '');
+
 export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = typeof res.message === 'string' ? res.message : null;
@@ -783,13 +815,15 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         const rows = (body.data as Row[] | undefined) ?? [];
         for (const r of rows) {
           out.push({
-            txnId: String(r.transaction_number ?? ''),
+            txnId: normalizeLazadaTxnId(r.transaction_number),
             externalOrderId: r.order_no ? String(r.order_no) : null,
             date: String(r.transaction_date ?? '').slice(0, 10),
             feeName: String(r.fee_name ?? ''),
+            feeCode: r.fee_type === undefined || r.fee_type === null || r.fee_type === '' ? null : String(r.fee_type),
             transactionType: String(r.transaction_type ?? ''),
             amount: String(r.amount ?? '0'),
             withholding: String(r.WHT_amount ?? '0'),
+            kind: lazadaLedgerKind(String(r.fee_name ?? ''), String(r.transaction_type ?? '')),
           });
         }
         if (rows.length < TXN_PAGE) return out.filter((t) => t.txnId);

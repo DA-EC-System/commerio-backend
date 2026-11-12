@@ -18,6 +18,7 @@ import {
   ReceiptActionInput,
   ReceiptListQuery,
   RequestActionInput,
+  ReturnActionParams,
   RequestListQuery,
   ShortResolutionInput,
   Supplier,
@@ -26,6 +27,12 @@ import {
   SupplierListQuery,
   SupplierReportList,
   SupplierReportQuery,
+  SupplierReturn,
+  SupplierReturnActionInput,
+  SupplierReturnInput,
+  SupplierReturnListQuery,
+  SupplierReturnPage,
+  SupplierReturnUpdateInput,
   SupplierUpdateInput,
 } from './schemas.ts';
 
@@ -206,6 +213,55 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
       ...missing('phiếu nhận hoặc thao tác'),
       ...conflict(`${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`has_shortage\`, \`no_shortage\`, \`empty_document\``),
       422: problemResponse('`reason_required`; `over_outstanding` theo ô'),
+    },
+  });
+
+  // Phiếu trả NCC (§16.2–16.4, #210)
+  path({
+    method: 'get',
+    path: '/supplier-returns',
+    summary: 'Danh sách phiếu trả NCC, mới trước',
+    request: { query: SupplierReturnListQuery },
+    responses: { 200: json('Một trang phiếu trả', SupplierReturnPage), ...invalid },
+  });
+  path({
+    method: 'get',
+    path: '/supplier-returns/:id',
+    summary: 'Chi tiết phiếu trả NCC kèm dòng, chờ xử lý hiện có, lịch sử',
+    request: { params: IdParams },
+    responses: { 200: json('Phiếu trả', SupplierReturn), ...missing('phiếu trả NCC') },
+  });
+  path({
+    method: 'post',
+    path: '/supplier-returns',
+    summary: 'Lập phiếu trả NCC nháp cho hàng ở chờ xử lý (quyền `purchasing.return.manage`)',
+    request: { body: body(SupplierReturnInput) },
+    responses: { 201: json('Phiếu nháp', SupplierReturn), ...invalid },
+  });
+  path({
+    method: 'put',
+    path: '/supplier-returns/:id',
+    summary: 'Sửa phiếu nháp (thay toàn bộ dòng; số lượng không vượt chờ xử lý)',
+    request: { params: IdParams, body: body(SupplierReturnUpdateInput) },
+    responses: {
+      200: json('Phiếu', SupplierReturn),
+      ...invalid,
+      ...missing('phiếu trả NCC'),
+      ...conflict(`${versionConflict}; \`not_draft\``),
+    },
+  });
+  path({
+    method: 'post',
+    path: '/supplier-returns/:id/:action',
+    summary: 'Chuyển trạng thái: submit, send_back, approve_send, record_refund, record_replaced, record_rejected, cancel',
+    description:
+      'Duyệt và gửi, trả về: khác người lập; ghi kết quả: khác người gửi; CEO hoặc công ty một người tự làm được (`selfApproved`). Duyệt và gửi trừ chờ xử lý; NCC không nhận cộng lại chờ xử lý; huỷ chọn nhập lại tồn hoặc xuất huỷ.',
+    request: { params: ReturnActionParams, body: body(SupplierReturnActionInput) },
+    responses: {
+      200: json('Phiếu sau khi chuyển', SupplierReturn),
+      ...missing('phiếu trả NCC'),
+      ...conflict(`${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`empty_document\`, \`supplier_required\``),
+      422: problemResponse('`reason_required`, `refund_required`, `cancel_decision_required`, `stock_insufficient` theo dòng, `supplier_inactive`'),
     },
   });
 }

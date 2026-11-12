@@ -126,21 +126,31 @@ export async function applyChange(change: StockChange, precheck?: (locked: Reado
 
   // Payload là số tuyệt đối sau khi ghi: bên nghe nhận trùng hay lệch thứ tự vẫn đúng (Q7).
   const onHandChanged = new Set(moves.filter((m) => m.bucket === 'on_hand').map((m) => m.variantId));
+  const locks = await lockedOf([...onHandChanged]);
   for (const variantId of [...onHandChanged].sort()) {
     const { onHand, reserved: held } = next.get(variantId)!;
     await publishEvent({
       type: 'inventory.stock_changed',
       aggregateId: variantId,
-      payload: { variantId, onHand, reserved: held, available: availableQty(onHand, held, lockedOf(variantId)) },
+      payload: { variantId, onHand, reserved: held, available: availableQty(onHand, held, locks.get(variantId) ?? 0) },
     });
   }
   await recheckThresholds([...new Set([...onHandChanged, ...reserved.keys()])]);
   return true;
 }
 
-/** Biến động tồn thực, chờ xử lý theo một chứng từ gốc (không đổi đang giữ). */
-export async function applyMoves(source: { type: StockSourceType; id: string }, moves: readonly Move[], actorId: string | null): Promise<void> {
-  await applyChange({ source, moves, actorId });
+/**
+ * Biến động tồn thực, chờ xử lý theo một chứng từ gốc (không đổi đang giữ). `allowBreak`: được làm vỡ bất biến tồn thực
+ * (bật cờ Tồn âm), chỉ kiểm kê đã duyệt (Documents/25 §7.1, #208); chạy như `forced` của bàn giao bắt buộc. Chờ xử lý vẫn
+ * không được âm.
+ */
+export async function applyMoves(
+  source: { type: StockSourceType; id: string },
+  moves: readonly Move[],
+  actorId: string | null,
+  options: { allowBreak?: boolean } = {},
+): Promise<void> {
+  await applyChange({ source, moves, actorId, forced: options.allowBreak === true });
 }
 
 export interface ReceivedLine {
@@ -163,4 +173,36 @@ export async function receiveGoods(receiptId: string, lines: readonly ReceivedLi
     { variantId: l.variantId, bucket: 'quarantine', qty: l.defective, unitCost: l.unitCost, sourceLineId: l.lineId },
   ]);
   await applyMoves({ type: 'goods_receipt', id: receiptId }, moves, actorId);
+}
+
+export interface ReturnLine {
+  /** Id dòng phiếu trả NCC, thành `source_line_id` của thẻ kho. */
+  lineId: string;
+  variantId: string;
+  quantity: number;
+  /** Giá vốn của dòng gốc (phiếu nhận, dòng kiện), chuỗi `numeric(18,2)`; `null` thì lấy giá vốn bình quân. */
+  unitCost: string | null;
+}
+
+/**
+ * Tồn theo phiếu trả NCC (#210, sơ đồ B4): `send` gửi đi thì chờ xử lý giảm; `back` NCC không nhận thì hàng về lại chờ
+ * xử lý; `restock` huỷ phiếu chọn nhập lại thì chờ xử lý sang tồn thực theo giá vốn của dòng gốc. Chờ xử lý không đủ thì
+ * `InsufficientStock` (bên gọi đổi sang 422 `stock_insufficient`).
+ */
+export async function moveSupplierReturn(
+  returnId: string,
+  kind: 'send' | 'back' | 'restock',
+  lines: readonly ReturnLine[],
+  actorId: string | null,
+): Promise<void> {
+  const moves = lines.flatMap((l): Move[] => {
+    const base = { variantId: l.variantId, unitCost: l.unitCost, sourceLineId: l.lineId };
+    if (kind === 'send') return [{ ...base, bucket: 'quarantine', qty: -l.quantity }];
+    if (kind === 'back') return [{ ...base, bucket: 'quarantine', qty: l.quantity }];
+    return [
+      { ...base, bucket: 'quarantine', qty: -l.quantity },
+      { ...base, bucket: 'on_hand', qty: l.quantity },
+    ];
+  });
+  await applyMoves({ type: 'supplier_return', id: returnId }, moves, actorId);
 }

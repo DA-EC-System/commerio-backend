@@ -8,7 +8,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ShopSetupPreview } from '#src/modules/channel/channel/api/schemas.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { createTiktokAdapter } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
+import { setStocktakePort } from '#src/modules/channel/channel/service/stocktake-port.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { AppError } from '#src/shared/errors/app-error.ts';
 import { logger } from '#src/shared/logger.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -101,6 +103,7 @@ beforeAll(async () => {
 afterAll(() => {
   resetAdapters();
   setProductPort(null);
+  setStocktakePort();
 });
 
 const detailCalls = () => fetchFn.mock.calls.map(([u]) => new URL(String(u)).pathname).filter((p) => p.startsWith('/product/202309/products/'));
@@ -175,6 +178,12 @@ describe('thiết lập gian hàng TikTok: SKU có sẵn trên shop (#282)', () 
   });
 
   it('hoàn tất thiết lập: `decisions` không đọc nhãn biến thể; `externalSkuIds` cũ vẫn đọc (review chéo I-2)', async () => {
+    // Cổng kiểm kê ném 503 sau bước đọc gợi ý: thiết lập lùi lại, gian hàng vẫn `connecting` nên gọi lần hai được (#245
+    // làm cổng thật; trước đó cổng tạm trả 501 nên test này không đi tới bước đẩy giá).
+    setStocktakePort({
+      createOpeningStocktake: () => Promise.reject(new AppError(503, 'service_unavailable', 'Kho đang bận')),
+      openingStocktakeStatusOf: async () => new Map(),
+    });
     const finish = (body: object) =>
       auth(request(testApp()).post(`/api/v1/channel/shops/${appShopId}/setup`)).send({ openingStock: 'stocktake', ...body });
     fetchFn.mockClear();

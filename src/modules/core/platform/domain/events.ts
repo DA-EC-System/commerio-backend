@@ -54,12 +54,11 @@ export const EVENT_SCHEMAS = {
     countedAt: timestamp,
     lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
   }),
-  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, Documents/21 mục 11.2); kiện hoàn không phát. Sổ tiền nghe (#228):
-  // `unitCost` null khi dòng kiện gốc không có giá vốn, không ghi `cogs_reversal` (#229).
+  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, mục 11.2); kiện hoàn không phát.
   'inventory.return_inspected': z.object({
     inspectionId: id,
     orderId: id,
-    shopId: id,
+    shopId: id.nullable(),
     inspectedAt: timestamp,
     lines: z.array(z.object({ variantId: id, resellable: z.int().nonnegative(), unitCost: money.nullable() })),
   }),
