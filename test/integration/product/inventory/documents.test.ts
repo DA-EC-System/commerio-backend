@@ -274,6 +274,17 @@ describe('B3b kiểm hàng về', () => {
     expect(event.rowCount).toBe(0);
   });
 
+  it('yêu cầu trả của đơn không gắn gian hàng: ghi sổ tồn bình thường, không phát return_inspected (21 §11.2, #308)', async () => {
+    const doc = await inspection('return_request', [{ variantId: v1, quantity: 1 }], { number: 'TR-0002', orderId: crypto.randomUUID(), shopId: null });
+    const scanned = (
+      await inv(kho).put(`/documents/${doc.id}`, { note: '', lines: [{ variantId: v1, scanned: 1, resell: 1 }], version: doc.version })
+    ).body;
+    const posted = await act(kho, doc.id, 'post', { version: scanned.version });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+    const event = await testPool().query("select 1 from core.outbox_messages where type = 'inventory.return_inspected' and key = $1", [doc.id]);
+    expect(event.rowCount).toBe(0);
+  });
+
   it('sai mẫu: nhận SKU khác ghi theo SKU thực nhận (dòng dự kiến 0)', async () => {
     const doc = await inspection('package', [{ variantId: v1, quantity: 1 }]);
     const res = await inv(kho).put(`/documents/${doc.id}`, {

@@ -23,7 +23,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'inventory.return_inspected': {
     inspectionId: id(),
     orderId: id(),
-    shopId: null,
+    shopId: id(),
     inspectedAt: at,
     lines: [{ variantId: id(), resellable: 1, unitCost: '60000.00' }],
   },
@@ -68,6 +68,11 @@ describe('danh mục sự kiện (AC-11)', () => {
     const noCountedAt: Record<string, unknown> = { ...SAMPLES['inventory.stocktake_posted'] };
     delete noCountedAt.countedAt;
     expect(EVENT_SCHEMAS['inventory.stocktake_posted'].safeParse(noCountedAt).success).toBe(false);
+  });
+
+  it('inventory.return_inspected thiếu gian hàng thì bị từ chối: yêu cầu trả chỉ có ở đơn sàn (Documents/21 §11.2, #308)', () => {
+    const schema = EVENT_SCHEMAS['inventory.return_inspected'];
+    expect(schema.safeParse({ ...SAMPLES['inventory.return_inspected'], shopId: null }).success).toBe(false);
   });
 
   it('mỗi loại có mẫu, mẫu parse được bằng schema của loại đó', () => {
