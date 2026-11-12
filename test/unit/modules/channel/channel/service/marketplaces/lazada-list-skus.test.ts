@@ -160,14 +160,17 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
 
   it('review vòng 4 B2: số lời gọi một lần đọc trọn có trần ⌈tổng / 50⌉ × 10 + 64; chạm trần thì rejected `too_many_calls`', async () => {
     let calls = 0;
-    // Sàn trả tổng lạ: khoảng nào cũng 51–55 sản phẩm (đọc đủ được bằng `offset`), không khoảng nào vừa một trang, hai nửa
-    // thường khác khoảng cha: cây chia nở theo cấp số nhân.
+    // Sàn trả tổng lạ: khoảng nào cũng 51–55 sản phẩm (đọc đủ được bằng `offset`), không khoảng nào vừa một trang, và hai
+    // nửa không bao giờ cùng báo đúng tổng khoảng cha: cây chia nở theo cấp số nhân.
+    // Tổng tính theo độ rộng khoảng, không theo mốc giờ: sản phẩm giả không có `created_time` nên adapter chia giữa, nửa nào
+    // cũng hẹp đi một bậc lũy thừa 2 so với cha, tổng luôn khác cha. Bản cũ tính theo `(a + b) % 5`, phụ thuộc `Date.now()`
+    // làm mốc cuối, có lúc hai nửa trùng tổng cha nên adapter thôi chia và đọc xong, test hỏng theo giờ chạy.
     const odd = async (url: string | URL | Request) => {
       calls++;
       const q = new URL(String(url)).searchParams;
       const a = Date.parse(q.get('create_after') ?? '0') / 1000;
       const b = Date.parse(q.get('create_before') ?? '0') / 1000;
-      const total = 51 + ((a + b) % 5);
+      const total = 51 + (Math.floor(Math.log2(Math.max(1, b - a))) % 5);
       const offset = Number(q.get('offset'));
       const products = Array.from({ length: offset === 0 ? 50 : Math.max(0, total - offset) }, (_, i) => {
         const id = `${a}-${b}-${offset + i}`;
