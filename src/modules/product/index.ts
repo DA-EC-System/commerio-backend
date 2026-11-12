@@ -2,8 +2,8 @@
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
 import { type ModuleDefinition, withContext } from '../../shared/module.ts';
 import { catalogModule } from './catalog/index.ts';
-import { inventoryModule, setIncomingSource } from './inventory/index.ts';
-import { incomingOf, purchaseDocumentNumbers, purchasingModule } from './purchasing/index.ts';
+import { inventoryModule, setIncomingSource, setSupplierReturnPort } from './inventory/index.ts';
+import { draftSupplierReturn, incomingOf, purchaseDocumentNumbers, purchasingModule, returnsFromStockDocuments } from './purchasing/index.ts';
 
 export * from './catalog/index.ts';
 export * from './inventory/index.ts';
@@ -16,6 +16,8 @@ export * from './purchasing/index.ts';
  */
 // Cảnh báo dưới ngưỡng cần đang về của purchasing cả khi ghi sổ ngoài request (inventory/service/thresholds.ts).
 setIncomingSource(incomingOf);
+// Phiếu kho sinh phiếu trả NCC nháp (kiểm hàng về, xuất huỷ bị từ chối) và hiện chúng ở `followUps` (#208).
+setSupplierReturnPort({ draft: draftSupplierReturn, fromDocuments: returnsFromStockDocuments });
 
 export const productModules: readonly ModuleDefinition[] = [
   catalogModule,

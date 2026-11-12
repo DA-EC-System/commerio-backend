@@ -72,7 +72,10 @@ export async function getReceipt(actor: Actor, id: string): Promise<GoodsReceipt
  * Lập phiếu khi hàng tới: đề nghị phải đã đặt NCC hoặc đang nhận một phần; mỗi dòng còn chờ thành một dòng phiếu với
  * mọi số bằng 0 (spec #109 Q4). Khoá đề nghị trước để không chạy đua với huỷ, đóng thiếu.
  */
-export async function createReceipt(actor: Actor, input: { requestId: string; deliveryMode: DeliveryMode; note: string }) {
+export async function createReceipt(
+  actor: Actor,
+  input: { requestId: string; deliveryMode: DeliveryMode; note: string; followsUpReceiptId?: string | null | undefined },
+) {
   return withCompany(actor.companyId, async () => {
     const request = isUuid(input.requestId) ? await lockRequest(input.requestId) : undefined;
     if (!request) throw invalid({ requestId: 'Chọn đề nghị nhập' });
@@ -82,6 +85,13 @@ export async function createReceipt(actor: Actor, input: { requestId: string; de
     const lines = (await findLines([request.id])).filter((l) => l.variantId && outstanding(l) > 0);
     if (!lines.length) throw new AppError(409, 'empty_document', 'Đề nghị không còn hàng chờ');
 
+    // Giao bù: phải là phiếu Giao thiếu của chính đề nghị này (25 §4.1, #244)
+    if (input.followsUpReceiptId) {
+      const short = isUuid(input.followsUpReceiptId) ? await findReceipt(input.followsUpReceiptId) : undefined;
+      if (!short || short.requestId !== request.id || short.status !== 'short') {
+        throw invalid({ followsUpReceiptId: 'Chọn phiếu giao thiếu của cùng đề nghị' });
+      }
+    }
     const note = input.note.trim() || null;
     const deliveryMode = toDbMode(input.deliveryMode);
     const id = await insertReceipt({
@@ -91,6 +101,7 @@ export async function createReceipt(actor: Actor, input: { requestId: string; de
       deliveryMode,
       note,
       createdBy: actor.accountId,
+      followsUpReceiptId: input.followsUpReceiptId ?? null,
     });
     await insertReceiptLines(
       actor.companyId,

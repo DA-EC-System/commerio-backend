@@ -17,10 +17,12 @@ export async function reserve(_packageId: string, lines: readonly StockLine[]): 
     await assertOwnVariants(ids);
     return { reserved: false };
   }
+  // Tạm khoá đọc trước khi khoá dòng tồn: `precheck` chạy đồng bộ sau khi khoá (#208, phiếu kho chờ duyệt)
+  const locks = await lockedOf(ids);
   const reserved = await applyChange({ source: null, moves: [], reserved: wanted, actorId: null }, (locked) =>
     [...wanted].every(([id, q]) => {
       const level = locked.get(id)!;
-      return availableQty(level.onHand, level.reserved, lockedOf(id)) >= q;
+      return availableQty(level.onHand, level.reserved, locks.get(id) ?? 0) >= q;
     }),
   );
   return { reserved };

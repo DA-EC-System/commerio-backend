@@ -37,7 +37,8 @@ export async function orderedRequest(kho: string, ceo: string, supplierId: strin
   const request = await newRequest(kho, supplierId, variantId);
   let version = request.version;
   for (const [token, action] of [[kho, 'submit'], [ceo, 'approve'], [kho, 'order']] as const) {
-    const res = await act(token, request.id, action, { version });
+    // Đặt NCC cần ngày giao dự kiến (#243)
+    const res = await act(token, request.id, action, { version, ...(action === 'order' && { expectedDeliveryDate: '2026-11-20' }) });
     expect(res.status, `${action}: ${JSON.stringify(res.body)}`).toBe(200);
     version = res.body.version;
   }

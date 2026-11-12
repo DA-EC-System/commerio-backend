@@ -11,6 +11,8 @@ const requestCols = {
   supplierId: purchaseRequests.supplierId,
   sourceReturnId: purchaseRequests.sourceReturnId,
   note: purchaseRequests.note,
+  expectedDeliveryDate: purchaseRequests.expectedDeliveryDate,
+  supplierOrderCode: purchaseRequests.supplierOrderCode,
   createdBy: purchaseRequests.createdBy,
   createdAt: purchaseRequests.createdAt,
   version: purchaseRequests.version,
@@ -70,7 +72,9 @@ export async function insertRequest(values: {
   companyId: string;
   number: string;
   supplierId: string;
-  source: 'manual' | 'reorder';
+  source: 'manual' | 'reorder' | 'replacement';
+  /** Phiếu trả NCC `replaced` mà đề nghị này bù hàng (CHECK `purchase_requests_replacement`). */
+  sourceReturnId?: string | null;
   note: string | null;
   createdBy: string;
 }): Promise<string> {
@@ -100,6 +104,7 @@ const lineCols = {
   closedShortQty: purchaseRequestLines.closedShortQty,
   unitPrice: purchaseRequestLines.unitPrice,
   excluded: purchaseRequestLines.excluded,
+  excludedReason: purchaseRequestLines.excludedReason,
 };
 
 export type LineRow = Awaited<ReturnType<typeof findLines>>[number];

@@ -4,7 +4,7 @@
 import { activeRound, type DocumentRef, matchShipment, mergeLines, type ShipLine, type StockLine } from '../domain/documents.ts';
 import { averageCost } from '../domain/stock.ts';
 import { packageShipments } from '../repository/documents.ts';
-import { createSystemDocument } from './documents.ts';
+import { createSystemDocument } from './system-documents.ts';
 import { applyChange, lockLevels, type Move } from './posting.ts';
 
 export interface ShipOptions {

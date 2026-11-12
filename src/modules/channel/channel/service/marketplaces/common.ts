@@ -1,5 +1,6 @@
 // Kiểu chung của adapter sàn (Strategy, #103 B7). Chỉ adapter gọi HTTP sàn, ký request và biết mã lỗi của sàn;
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
+import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
 
@@ -132,11 +133,18 @@ export interface SettlementTxn {
   /** `YYYY-MM-DD`. */
   date: string;
   feeName: string;
+  /** Mã phí gốc của sàn (Lazada `fee_type`), ghi kèm tên khi khoản chưa ánh xạ được (US-TI-06 dòng 2). */
+  feeCode: string | null;
   transactionType: string;
   /** Có dấu: sàn trả shop dương, sàn trừ âm. Chuỗi thập phân. */
   amount: string;
   /** Thuế sàn khấu trừ của khoản này (số dương), `"0"` khi không có. */
   withholding: string;
+  /**
+   * Loại khoản trong sổ tiền, adapter đổi từ tên phí của sàn mình (Documents/tich-hop-san/README.md mục 2, #203);
+   * `null` là chưa nhận ra: finance ghi `adjustment` kèm tên phí.
+   */
+  kind: LedgerKind | null;
 }
 
 /** Một kỳ quyết toán (#117; Lazada `/finance/payout/status/get`). */
