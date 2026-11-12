@@ -141,7 +141,16 @@ export function applyRegen(dir: string, plan: RegenPlan, deps: RegenDeps): Regen
     }
     const oldTags = step.from.map((m) => m.tag);
     if (!created) {
-      warnings.push(`drizzle-kit không sinh gì cho ${oldTags.join(', ')}: thay đổi schema của nhánh đã có trên main?`);
+      // File cũ đã xoá: in đủ câu lệnh sẽ mất và lệnh lấy lại, để người chạy tự quyết còn cần câu nào.
+      warnings.push(
+        [
+          `drizzle-kit không sinh gì cho ${oldTags.join(', ')}: thay đổi schema của nhánh đã có trên main? Các câu sau không còn trong migration nào:`,
+          ...step.from.flatMap((old) => [
+            `    ${old.tag} (lấy lại: git show HEAD:db/migrations/${old.tag}.sql)`,
+            ...statements(old.sql).map((s) => `      ${s}`),
+          ]),
+        ].join('\n'),
+      );
       continue;
     }
     renamed.push({ from: oldTags, to: created, kind: 'generated' });

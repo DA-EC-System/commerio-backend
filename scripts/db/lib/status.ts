@@ -30,13 +30,18 @@ export interface MigrationStatus {
   unknownRows: AppliedRow[];
   /** Khớp theo `when` nhưng hash khác: file .sql bị sửa sau khi đã chạy. */
   hashChanged: LocalMigration[];
+  /** Chưa chạy theo `when` nhưng trùng hash một dòng đã có: có vẻ đã chạy dưới tên khác (vd sau db:regen), drizzle sẽ chạy lại. */
+  sameHashOtherWhen: LocalMigration[];
+  /** Dòng có `created_at` NULL: drizzle xếp NULL lên đầu khi `order by created_at desc`, coi là 0 và chạy lại mọi migration. */
+  nullRows: AppliedRow[];
   /** `created_at` lớn nhất trên DB, null nếu chưa chạy gì. */
   lastAppliedAt: number | null;
 }
 
 /**
- * Migration coi là đã chạy khi có dòng cùng `created_at` với `when` (drizzle ghi đúng `when` vào cột này), hoặc cùng hash.
- * Khớp theo `when` trước để file đổi xuống dòng (CRLF) hay sửa sau khi chạy vẫn được nhận ra, rồi báo riêng ở `hashChanged`.
+ * Migration coi là đã chạy khi và chỉ khi có dòng cùng `created_at` với `when` (drizzle ghi đúng `when` vào cột này và
+ * cũng chỉ xét cột này, không nhìn hash). Hash chỉ để báo: khớp `when` mà khác hash vào `hashChanged`, khớp hash mà khác
+ * `when` vào `sameHashOtherWhen`.
  */
 export function compareWithDb(local: LocalMigration[], rows: AppliedRow[]): MigrationStatus {
   const byWhen = new Map<number, AppliedRow>();
@@ -45,6 +50,7 @@ export function compareWithDb(local: LocalMigration[], rows: AppliedRow[]): Migr
     if (row.created_at !== null) byWhen.set(Number(row.created_at), row);
     byHash.set(row.hash, row);
   }
+  const nullRows = rows.filter((row) => row.created_at === null);
   const lastAppliedAt = rows.reduce<number | null>((max, row) => {
     if (row.created_at === null) return max;
     const at = Number(row.created_at);
@@ -52,9 +58,10 @@ export function compareWithDb(local: LocalMigration[], rows: AppliedRow[]): Migr
   }, null);
 
   const matched = new Set<AppliedRow>();
-  const status: MigrationStatus = { applied: [], pending: [], outOfOrder: [], unknownRows: [], hashChanged: [], lastAppliedAt };
+  const status: MigrationStatus = { applied: [], pending: [], outOfOrder: [], unknownRows: [], hashChanged: [], sameHashOtherWhen: [], nullRows, lastAppliedAt };
   for (const migration of local) {
-    const row = byWhen.get(migration.when) ?? byHash.get(migration.hash);
+    const row = byWhen.get(migration.when);
+    if (!row && byHash.has(migration.hash)) status.sameHashOtherWhen.push(migration);
     if (row) {
       matched.add(row);
       status.applied.push(migration);
@@ -85,6 +92,14 @@ export function formatStatus(status: MigrationStatus, full: boolean): string {
     lines.push(`Cảnh báo: file .sql khác bản đã chạy (sửa sau khi chạy?): ${status.hashChanged.length}`);
     lines.push(...status.hashChanged.map(item));
   }
+  if (status.sameHashOtherWhen.length > 0) {
+    lines.push(`Cảnh báo: trùng nội dung một migration đã chạy dưới tên khác (sau db:regen?), drizzle sẽ chạy lại: ${status.sameHashOtherWhen.length}`);
+    lines.push(...status.sameHashOtherWhen.map(item));
+    lines.push('  DB local thì xoá DB rồi db:migrate lại; DB dùng chung thì xem db/CLAUDE.md.');
+  }
+  if (status.nullRows.length > 0) {
+    lines.push(`LỖI: dòng thiếu created_at (drizzle sẽ chạy lại mọi migration): ${status.nullRows.map((r) => `id ${r.id}`).join(', ')}`);
+  }
   if (status.unknownRows.length > 0) {
     lines.push(`Cảnh báo: dòng trên DB không khớp migration nào trong journal: ${status.unknownRows.length}`);
     lines.push(
@@ -95,6 +110,22 @@ export function formatStatus(status: MigrationStatus, full: boolean): string {
     );
   }
   return lines.join('\n');
+}
+
+/** Lý do phải dừng (lệch thứ tự, dòng thiếu created_at), null nếu chạy được. */
+export function blockingMessage(status: MigrationStatus): string | null {
+  const parts: string[] = [];
+  if (status.nullRows.length > 0) {
+    parts.push(
+      [
+        ...status.nullRows.map((r) => `DỪNG: dòng id ${r.id} thiếu created_at trong drizzle.__drizzle_migrations.`),
+        'drizzle xếp dòng NULL là mới nhất (order by created_at desc), coi là 0 và sẽ chạy lại mọi migration.',
+        'Không có gì được chạy. Cách sửa: update dòng đó đặt created_at = when của migration tương ứng (db/CLAUDE.md).',
+      ].join('\n'),
+    );
+  }
+  if (status.outOfOrder.length > 0) parts.push(outOfOrderMessage(status));
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 export function outOfOrderMessage(status: MigrationStatus): string {

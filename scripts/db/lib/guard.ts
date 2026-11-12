@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type pg from 'pg';
 import { hashSql, readJournal } from './journal.ts';
-import { compareWithDb, formatStatus, outOfOrderMessage, type AppliedRow, type LocalMigration, type MigrationStatus } from './status.ts';
+import { blockingMessage, compareWithDb, formatStatus, type AppliedRow, type LocalMigration, type MigrationStatus } from './status.ts';
 
 export interface GuardOptions {
   migrationsFolder: string;
@@ -21,7 +21,7 @@ const MIGRATE_LOCK_KEY = 'commerio:db-migrate';
 export class MigrationOrderError extends Error {
   readonly status: MigrationStatus;
   constructor(status: MigrationStatus) {
-    super(outOfOrderMessage(status));
+    super(blockingMessage(status) ?? 'Không có migration lệch thứ tự.');
     this.name = 'MigrationOrderError';
     this.status = status;
   }
@@ -73,7 +73,7 @@ export async function migrateGuarded(client: pg.Client, opts: GuardOptions): Pro
   try {
     const before = await inspect(client, opts);
     log(formatStatus(before, false));
-    if (before.outOfOrder.length > 0) throw new MigrationOrderError(before);
+    if (blockingMessage(before) !== null) throw new MigrationOrderError(before);
     if (before.pending.length === 0) {
       log('Không có migration mới.');
       return before;
@@ -81,7 +81,8 @@ export async function migrateGuarded(client: pg.Client, opts: GuardOptions): Pro
     const { schema, table } = target(opts);
     await migrate(drizzle({ client }), { migrationsFolder: opts.migrationsFolder, migrationsSchema: schema, migrationsTable: table });
     const after = await inspect(client, opts);
-    const missed = [...after.pending, ...after.outOfOrder];
+    if (blockingMessage(after) !== null) throw new MigrationOrderError(after);
+    const missed = after.pending;
     if (missed.length > 0) {
       throw new Error(`Sau khi migrate vẫn còn migration chưa chạy: ${missed.map((m) => m.tag).join(', ')}`);
     }

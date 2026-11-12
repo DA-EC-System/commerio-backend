@@ -43,7 +43,7 @@ Ba lớp chặn (`scripts/db/`):
 | Lệnh | Chạy ở | Chặn gì |
 |---|---|---|
 | `npm run db:ci-check` | Job `check` của CI ở mọi PR (`-- --base origin/main`), không cần DB | Migration của nhánh không đứng sau migration mới nhất của main (`when` và tên); nhánh sửa file `.sql` đã có trên main; journal đứt `idx`, `when` không tăng; file `.sql` hay snapshot không có trong journal; snapshot trỏ sai cha (`prevId` khác `id` của snapshot liền trước); `drizzle-kit generate` (chạy trên bản sao trong thư mục tạm) còn sinh ra file, tức `schema.ts` và migration lệch nhau |
-| `npm run db:migrate` (`:staging`) | Job `migrate` của deploy staging, job `blackbox` của CI, máy dev | Thay `drizzle-kit migrate`. So journal với `drizzle.__drizzle_migrations` (khớp theo `created_at` = `when`, hoặc hash); có migration chưa chạy mà `when` ≤ dòng mới nhất thì **dừng, mã lỗi 1, in tên file, không chạy gì**; không thì chạy migrator của drizzle-orm như cũ, xong kiểm lại không còn sót. Giữ khoá advisory `commerio:db-migrate` trong lúc chạy |
+| `npm run db:migrate` (`:staging`) | Job `migrate` của deploy staging, job `blackbox` của CI, máy dev | Thay `drizzle-kit migrate`. So journal với `drizzle.__drizzle_migrations` (đã chạy khi và chỉ khi có dòng `created_at` = `when`, như drizzle; hash chỉ để cảnh báo); có migration chưa chạy mà `when` ≤ dòng mới nhất, hoặc có dòng `created_at` NULL, thì **dừng, mã lỗi 1, in tên file, không chạy gì**; không thì chạy migrator của drizzle-orm như cũ, xong kiểm lại không còn sót. Giữ khoá advisory `commerio:db-migrate` trong lúc chạy |
 | `npm run db:migrate:check` (`:staging`) | Tay | Chỉ đọc (giao dịch `READ ONLY`, không tạo bảng): liệt kê đã chạy, chưa chạy, lệch thứ tự, dòng trên DB không khớp journal, file `.sql` khác bản đã chạy. Mã lỗi 1 nếu có lệch thứ tự |
 
 **Sinh lại bằng `npm run db:regen`** (sau khi `git merge origin/main` và giải xung đột `schema.ts`; xung đột `_journal.json` để nguyên): lấy `_journal.json` của `origin/main` (`--base <ref>` để đổi), xoá migration của nhánh (file `.sql` và snapshot không có trên main), chạy `drizzle-kit generate --name <slug cũ>` một lần cho mọi migration sinh từ schema, rồi chép nguyên nội dung từng migration viết tay (snapshot giống hệt snapshot cha: RLS, quyền, dữ liệu) vào migration `--custom` mới cùng slug. `--dry-run` chỉ in kế hoạch. Giới hạn:
@@ -53,7 +53,9 @@ Ba lớp chặn (`scripts/db/`):
 
 ### Migration bị bỏ sót trên DB đã có dữ liệu
 
-`db:migrate` dừng và `db:migrate:check` liệt kê ở mục "Lệch thứ tự". Không có lệnh tự sửa. Với migration đã ở main: chạy tay nội dung file trên DB đó, rồi ghi dòng `insert into drizzle.__drizzle_migrations (hash, created_at) values ('<sha256 của file .sql>', <when>)` (hash: `node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('db/migrations/<tag>.sql')).digest('hex'))"`), chạy lại `db:migrate:check` thấy hết lệch.
+`db:migrate` dừng và `db:migrate:check` liệt kê ở mục "Lệch thứ tự". Không có lệnh tự sửa. Với migration đã ở main: chạy tay nội dung file trên DB đó, rồi ghi dòng `insert into drizzle.__drizzle_migrations (hash, created_at) values ('<sha256 của file .sql>', <when>)` (hash: `node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('db/migrations/<tag>.sql')).digest('hex'))"`), chạy lại `db:migrate:check` thấy hết lệch. **`created_at` là cột bắt buộc** khi chèn tay: dòng thiếu nó bị drizzle coi là mới nhất (`order by created_at desc` xếp NULL lên đầu), đổi thành 0 và chạy lại mọi migration; `db:migrate` dừng khi gặp dòng như vậy.
+
+DB local (máy dev) bị chặn vì từng chạy migration của nhánh khác, hoặc cảnh báo "trùng nội dung một migration đã chạy dưới tên khác" sau `db:regen`: xoá DB rồi `npm run db:migrate` lại.
 
 `test/unit/db/journal.test.ts` đỏ nếu `when` không tăng theo `idx`, hoặc tên file không khớp `when`.
 

@@ -3,6 +3,7 @@
 // Chuỗi kết nối: DATABASE_URL (.env, hoặc .env.staging với các lệnh :staging). Xem db/CLAUDE.md.
 import pg from 'pg';
 import { formatStatus, inspect, MigrationOrderError, migrateGuarded } from './lib/guard.ts';
+import { blockingMessage } from './lib/status.ts';
 import { MIGRATIONS_DIR } from './lib/journal.ts';
 
 const checkOnly = process.argv.includes('--check');
@@ -19,7 +20,9 @@ try {
   if (checkOnly) {
     const status = await inspect(client, opts);
     console.log(formatStatus(status, true));
-    process.exitCode = status.outOfOrder.length > 0 ? 1 : 0;
+    const blocking = blockingMessage(status);
+    if (blocking) console.error(`\n${blocking}`);
+    process.exitCode = blocking ? 1 : 0;
   } else {
     await migrateGuarded(client, opts);
   }

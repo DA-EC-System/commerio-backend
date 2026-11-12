@@ -140,4 +140,14 @@ describe('db:regen: sinh lại trên thư mục giả', () => {
     expect(result.warnings.join('\n')).toContain('drizzle-kit không sinh gì');
     expect(readJournal(dir).entries.map((e) => e.tag)).toEqual([A.tag, M.tag, '20261112100002_rls-bang-moi']);
   });
+
+  it('không sinh ra file thì in các câu của migration cũ sẽ mất, kèm lệnh lấy lại bằng git show', () => {
+    const dir = mergedFolder();
+    writeFileSync(join(dir, `${G1.tag}.sql`), `${G1.sql}--> statement-breakpoint\nUPDATE x.moi SET a = 1;`);
+    const result = applyRegen(dir, planRegen(dir, baseFiles), fakeDeps(dir, M.tables!, G1.sql));
+    const text = result.warnings.join('\n');
+    expect(text).toContain('UPDATE x.moi SET a = 1;');
+    expect(text).toContain('CREATE TABLE "x"."moi" ();');
+    expect(text).toContain(`git show HEAD:db/migrations/${G1.tag}.sql`);
+  });
 });

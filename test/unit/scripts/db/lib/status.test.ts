@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareWithDb, formatStatus, type LocalMigration } from '../../../../../scripts/db/lib/status.ts';
+import { blockingMessage, compareWithDb, formatStatus, type LocalMigration } from '../../../../../scripts/db/lib/status.ts';
 
 const local = (tag: string, when: number): LocalMigration => ({ idx: 0, version: '7', when, tag, breakpoints: true, hash: `h-${tag}` });
 const row = (id: number, m: LocalMigration, hash = m.hash) => ({ id, hash, created_at: String(m.when) });
@@ -43,6 +43,33 @@ describe('so journal với drizzle.__drizzle_migrations', () => {
     const s = compareWithDb([a, b], [row(1, a), row(2, b, 'hash-cu')]);
     expect(s.applied.map((m) => m.tag)).toEqual([a.tag, b.tag]);
     expect(s.hashChanged.map((m) => m.tag)).toEqual([b.tag]);
+  });
+
+  it('chỉ phân loại theo created_at như drizzle: cùng hash mà khác when vẫn là chưa chạy, kèm cảnh báo chạy dưới tên khác', () => {
+    // Dev chạy R (RLS viết tay) của nhánh lên DB local, rồi db:regen chép nguyên R sang tên mới, when mới: hash giữ nguyên.
+    const r = local('20261102000000_rls', 2000);
+    const regenerated = { ...local('20261105000000_rls', 5000), hash: r.hash };
+    const s = compareWithDb([a, regenerated], [row(1, a), row(2, r)]);
+    expect(s.applied.map((m) => m.tag)).toEqual([a.tag]);
+    expect(s.pending.map((m) => m.tag)).toEqual([regenerated.tag]);
+    expect(s.sameHashOtherWhen.map((m) => m.tag)).toEqual([regenerated.tag]);
+    expect(formatStatus(s, false)).toContain('drizzle sẽ chạy lại');
+  });
+
+  it('cùng hash không che được migration lệch thứ tự', () => {
+    const late = { ...local('20261102000000_b-muon', 2000), hash: c.hash };
+    const s = compareWithDb([a, late, c], [row(1, a), row(2, c)]);
+    expect(s.outOfOrder.map((m) => m.tag)).toEqual([late.tag]);
+  });
+
+  it('dòng có created_at NULL là lỗi chặn: drizzle sẽ coi nó là mới nhất và chạy lại mọi migration', () => {
+    const s = compareWithDb([a, b], [row(1, a), { id: 7, hash: 'tay', created_at: null }]);
+    expect(s.nullRows.map((r) => r.id)).toEqual([7]);
+    expect(blockingMessage(s)).toContain('dòng id 7 thiếu created_at');
+  });
+
+  it('không có lệch thứ tự, không có dòng NULL thì không chặn', () => {
+    expect(blockingMessage(compareWithDb([a, b], [row(1, a)]))).toBeNull();
   });
 
   it('dòng trên DB không khớp migration nào được liệt kê riêng', () => {

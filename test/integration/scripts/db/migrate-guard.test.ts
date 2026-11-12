@@ -97,6 +97,35 @@ describe('db:migrate có chặn migration lệch thứ tự', () => {
     await expect(migrateGuarded(client, { ...opts, migrationsFolder: dir })).rejects.toBeInstanceOf(MigrationOrderError);
   });
 
+  it('dev chạy migration của nhánh lên DB local rồi db:regen: bản chép lại là chưa chạy (drizzle sẽ chạy lại), có cảnh báo', async () => {
+    const { A, C, opts } = scenario();
+    const dir = fakeMigrations([A, C]);
+    await migrateGuarded(client, { ...opts, migrationsFolder: dir });
+    // db:regen chép nguyên C sang tên mới, when mới: cùng hash, khác when.
+    const C2 = { tag: '20261109000000_c', when: 9000, sql: C.sql };
+    writeFileSync(join(dir, `${C2.tag}.sql`), C2.sql);
+    writeSnapshot(dir, C2.tag, { id: 'id-c2', prevId: `id-${A.tag}`, tables: {} });
+    writeJournal(dir, [A, C2]);
+    const status = await inspect(client, { ...opts, migrationsFolder: dir });
+    expect(status.pending.map((m) => m.tag)).toEqual([C2.tag]);
+    expect(status.sameHashOtherWhen.map((m) => m.tag)).toEqual([C2.tag]);
+    expect(status.unknownRows).toHaveLength(1);
+  });
+
+  it('dòng chèn tay thiếu created_at thì migrate dừng, không chạy gì', async () => {
+    const { A, B, opts, tables } = scenario();
+    const dir = fakeMigrations([A]);
+    await migrateGuarded(client, { ...opts, migrationsFolder: dir });
+    await client.query(`insert into "${opts.migrationsSchema}"."__drizzle_migrations" (hash) values ('chen-tay')`);
+    writeFileSync(join(dir, `${B.tag}.sql`), B.sql);
+    writeSnapshot(dir, B.tag, { id: 'id-b', prevId: `id-${A.tag}`, tables: {} });
+    writeJournal(dir, [A, B]);
+    const error = await migrateGuarded(client, { ...opts, migrationsFolder: dir }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MigrationOrderError);
+    expect((error as Error).message).toContain('thiếu created_at');
+    expect(await tables()).toEqual(['a']);
+  });
+
   it('kiểm chỉ đọc không tạo bảng migration trên DB chưa migrate', async () => {
     const { A, opts } = scenario();
     const dir = fakeMigrations([A]);
