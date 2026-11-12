@@ -58,6 +58,12 @@ async function receiveRequest(row: ReturnRow, actor: Actor, scanned: readonly Sc
   const lines = await findReturnLines([row.id]);
   // Dòng có kiện đã hoàn về kho (E109) không tính dự kiến: hàng của dòng đó đã kiểm một lần.
   const merged = mergeReceiveLines(lines.filter((l) => !l.packageReturned), scanned);
+  if (!merged.length) {
+    // Dòng yêu cầu chưa ghép SKU và kho chưa quét món nào: phiếu kiểm hàng hoàn không có dòng để lập.
+    throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
+      errors: { lines: 'Yêu cầu chưa ghép SKU, quét món thực nhận vào lines' },
+    });
+  }
   const doc = await returnStockPort().receiveBack({ type: 'return_request', id: row.id }, merged, {
     actorId: actor.accountId,
     number: row.code,
@@ -120,16 +126,15 @@ export async function receiveReturn(ctx: SalesContext, actor: Actor, input: Rece
       receivedBy: actor.accountId,
       lines: input.lines ?? [],
     });
+    // Luôn lập phiếu kiểm hàng hoàn cho kiện (§20): món chưa rõ SKU thì phiếu không dòng, kho ghi SKU thực nhận trên phiếu
+    // sau. Kiện lạ không có số dự kiến để so: inventory đặt dự kiến bằng số quét (Documents#103).
     const known = (input.lines ?? []).filter((l) => l.quantity > 0);
-    if (known.length) {
-      // Kiện lạ không có số dự kiến để so: dự kiến bằng số quét (đổi 11/11/2026, Documents#103).
-      const doc = await returnStockPort().receiveBack(
-        { type: 'unmatched_parcel', id: parcel.id },
-        mergeReceiveLines([], known).map((l) => ({ ...l, expected: l.scanned })),
-        { actorId: actor.accountId, number: parcel.code, ...(note && { note }) },
-      );
-      await setParcelInspection(parcel.id, doc);
-    }
+    const doc = await returnStockPort().receiveBack({ type: 'unmatched_parcel', id: parcel.id }, mergeReceiveLines([], known), {
+      actorId: actor.accountId,
+      number: parcel.code,
+      ...(note && { note }),
+    });
+    await setParcelInspection(parcel.id, doc);
     return { kind: 'unmatched' as const, parcelId: parcel.id };
   });
   if (result.kind === 'matched') {

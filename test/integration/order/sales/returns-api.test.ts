@@ -117,13 +117,13 @@ const detail = async (id: string, token?: string) => ReturnRequest.parse((await 
 const act = (id: string, action: string, body: object, token?: string) => auth(app().post(`/api/v1/returns/${id}/${action}`), token).send(body);
 const receive = (body: object, token = warehouse.token) => auth(app().post('/api/v1/returns/receive'), token).send(body);
 
-/** Cổng kho giả: ghi lại lời gọi, trả phiếu mới (chữ ký 11/11/2026 chưa có bản thật, #208). */
 /** Số chờ xử lý của SKU (0 khi chưa có dòng tồn). */
 async function quarantineOf(id: string): Promise<number> {
   const r = await testPool().query(`select quarantine from product.stock_levels where variant_id = $1`, [id]);
   return r.rows[0]?.quarantine ?? 0;
 }
 
+/** Cổng kho giả: ghi lại lời gọi, trả phiếu mới (test không cần kho thật). */
 function fakePort() {
   const calls: Parameters<ReturnStockPort['receiveBack']>[] = [];
   setReturnStockPort({
@@ -256,6 +256,14 @@ describe('quét nhận hàng trả (§20, §15.3)', () => {
     expect(confirmReturnReceived).toHaveBeenCalledWith(expect.any(String), expect.any(String), ['RL-0', 'RL-1']);
   });
 
+  it('dòng yêu cầu chưa ghép SKU, không quét món nào: 422 validation_failed errors.lines, yêu cầu giữ awaiting_return', async () => {
+    const r = await seedReturn('awaiting_return');
+    await testPool().query(`update "order".return_request_lines set variant_id = null where request_id = $1`, [r.id]);
+    const res = await receive({ code: r.code });
+    expect([res.status, res.body.code, Object.keys(res.body.errors ?? {})]).toEqual([422, 'validation_failed', ['lines']]);
+    expect((await detail(r.id)).status).toBe('awaiting_return');
+  });
+
   it('không gửi lines thì coi như quét đủ; yêu cầu chưa chờ hàng về thì 409 return_not_awaiting', async () => {
     const calls = fakePort();
     const r = await seedReturn('awaiting_return');
@@ -280,10 +288,13 @@ describe('quét nhận hàng trả (§20, §15.3)', () => {
 });
 
 describe('kiện trả không khớp (§20)', () => {
-  it('không gửi lines: lưu kiện mở, chưa có phiếu; cổng thật (#208): có lines thì phiếu nguồn kiện, gắn vào yêu cầu thì phiếu chuyển sang yêu cầu, chờ xử lý không cộng lần hai', async () => {
+  it('không gửi lines: lưu kiện mở, phiếu không dòng; cổng thật (#208): có lines thì phiếu nguồn kiện, gắn vào yêu cầu thì phiếu chuyển sang yêu cầu, chờ xử lý không cộng lần hai', async () => {
     const scanned = `UNK-${randomUUID().slice(0, 8)}`;
     const res = ReceiveResult.parse((await receive({ code: scanned, note: 'Hộp móp' })).body);
-    expect(res).toMatchObject({ kind: 'unmatched', parcel: { scannedCode: scanned, status: 'open', lines: [], inspection: null } });
+    // §20: kiện không khớp luôn có phiếu kiểm hàng hoàn, chưa rõ SKU thì phiếu không dòng
+    expect(res).toMatchObject({ kind: 'unmatched', parcel: { scannedCode: scanned, status: 'open', lines: [] } });
+    if (res.kind !== 'unmatched') throw new Error('phải là kiện không khớp');
+    expect(res.parcel.inspection).not.toBeNull();
 
     const before = await quarantineOf(variantId);
     const withLines = ReceiveResult.parse((await receive({ code: `UNK-${randomUUID().slice(0, 8)}`, lines: [{ variantId, quantity: 2 }] })).body);
@@ -308,12 +319,31 @@ describe('kiện trả không khớp (§20)', () => {
     expect(await detail(r.id)).toMatchObject({ status: 'received', inspection: { id: withLines.parcel.inspection!.documentId } });
   });
 
-  it('có lines: lưu dòng, receiveBack nguồn unmatched_parcel với expected = scanned; gắn vào yêu cầu mở sau thì yêu cầu received', async () => {
+  it('phiếu của kiện đã ghi sổ trước khi gắn: gắn vào yêu cầu thì phát inventory.return_inspected theo đơn của yêu cầu', async () => {
+    const res = ReceiveResult.parse((await receive({ code: `UNK-${randomUUID().slice(0, 8)}`, lines: [{ variantId, quantity: 2 }] })).body);
+    if (res.kind !== 'unmatched') throw new Error('phải là kiện không khớp');
+    const docId = res.parcel.inspection!.documentId;
+    // Kho chia và ghi sổ phiếu ngay (Documents/21 §20); dựng thẳng trạng thái đã ghi sổ, luồng ghi sổ có test riêng ở inventory.
+    await testPool().query(`update product.stock_document_lines set resell_qty = 2, damaged_qty = 0, to_supplier_qty = 0 where document_id = $1`, [docId]);
+    await testPool().query(`update product.stock_documents set status = 'posted', posted_at = now() where id = $1`, [docId]);
+
+    const r = await seedReturn('awaiting_return');
+    const attached = await auth(app().post(`/api/v1/returns/unmatched/${res.parcel.id}/attach`), warehouse.token).send({ version: 1, returnRequestId: r.id });
+    expect(attached.status).toBe(200);
+    const ev = await testPool().query(
+      `select payload from core.outbox_messages where type = 'inventory.return_inspected' and payload->>'inspectionId' = $1`,
+      [docId],
+    );
+    expect(ev.rows).toHaveLength(1);
+    expect(ev.rows[0].payload).toMatchObject({ orderId: r.orderId, shopId, lines: [{ variantId, resellable: 2 }] });
+  });
+
+  it('có lines: lưu dòng, receiveBack nguồn unmatched_parcel với số quét (inventory đặt dự kiến = quét); gắn vào yêu cầu mở sau thì yêu cầu received', async () => {
     const calls = fakePort();
     const res = ReceiveResult.parse((await receive({ code: `UNK-${randomUUID().slice(0, 8)}`, lines: [{ variantId, quantity: 2 }] })).body);
     if (res.kind !== 'unmatched') throw new Error('phải là kiện không khớp');
     expect(calls[0]![0]).toEqual({ type: 'unmatched_parcel', id: res.parcel.id });
-    expect(calls[0]![1]).toEqual([{ variantId, expected: 2, scanned: 2 }]);
+    expect(calls[0]![1]).toEqual([{ variantId, expected: 0, scanned: 2 }]);
     expect(res.parcel).toMatchObject({ lines: [{ variantId, quantity: 2 }], inspection: { number: 'KT-1' } });
     const rows = await testPool().query(`select variant_id, quantity from "order".unmatched_return_parcel_lines where parcel_id = $1`, [res.parcel.id]);
     expect(rows.rows).toEqual([{ variant_id: variantId, quantity: 2 }]);

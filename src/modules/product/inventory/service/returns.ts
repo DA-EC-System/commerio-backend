@@ -3,7 +3,7 @@
 // hoàn nháp và cộng chờ xử lý ngay theo số quét từng món; tồn thực, giá vốn, sự kiện làm lúc phiếu ghi sổ.
 import { inTransaction } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
-import { recordTransition } from '../../../core/index.ts';
+import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { DOC_PREFIX, docNumber, type DocumentRef } from '../domain/documents.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import {
@@ -194,6 +194,21 @@ async function adoptParcelDocument(
         })),
     ];
     await replaceDocLines(companyId, row.id, lines);
+  } else if (row.status === 'posted' && (meta.orderId ?? row.orderId)) {
+    // Phiếu của kiện đã ghi sổ trước khi gắn (kho ghi sổ được ngay, Documents/21 mục 20): lúc ghi sổ nguồn còn là kiện nên
+    // chưa phát `inventory.return_inspected`. Phát bây giờ để yêu cầu trả đóng được (#202), cùng payload với lúc ghi sổ.
+    const posted = (await linesOfDocs([row.id])).get(row.id) ?? [];
+    await publishEvent({
+      type: 'inventory.return_inspected',
+      aggregateId: row.id,
+      payload: {
+        inspectionId: row.id,
+        orderId: (meta.orderId ?? row.orderId)!,
+        shopId: meta.shopId !== undefined ? meta.shopId : row.shopId,
+        inspectedAt: (row.postedAt ?? new Date()).toISOString(),
+        lines: posted.map((l) => ({ variantId: l.variantId, resellable: l.resellQty ?? 0, unitCost: l.unitCost })),
+      },
+    });
   }
   return { documentId: row.id, number: row.number };
 }
