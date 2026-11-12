@@ -118,6 +118,12 @@ const act = (id: string, action: string, body: object, token?: string) => auth(a
 const receive = (body: object, token = warehouse.token) => auth(app().post('/api/v1/returns/receive'), token).send(body);
 
 /** Cổng kho giả: ghi lại lời gọi, trả phiếu mới (chữ ký 11/11/2026 chưa có bản thật, #208). */
+/** Số chờ xử lý của SKU (0 khi chưa có dòng tồn). */
+async function quarantineOf(id: string): Promise<number> {
+  const r = await testPool().query(`select quarantine from product.stock_levels where variant_id = $1`, [id]);
+  return r.rows[0]?.quarantine ?? 0;
+}
+
 function fakePort() {
   const calls: Parameters<ReturnStockPort['receiveBack']>[] = [];
   setReturnStockPort({
@@ -259,25 +265,47 @@ describe('quét nhận hàng trả (§20, §15.3)', () => {
     expect([again.status, again.body.code]).toEqual([409, 'return_not_awaiting']);
   });
 
-  it('bản nối với receiveBack hiện có lập phiếu kiểm hàng hoàn nháp theo số dự kiến', async () => {
+  it('cổng thật (#208): lập phiếu kiểm hàng hoàn nháp có số dự kiến, số quét; chờ xử lý tăng theo số quét', async () => {
     const r = await seedReturn('awaiting_return');
-    expect((await receive({ code: r.code })).status).toBe(200);
+    const before = await quarantineOf(variantId);
+    expect((await receive({ code: r.code, lines: [{ variantId, quantity: 1 }] })).status).toBe(200);
     const doc = await testPool().query(
-      `select d.kind, d.status, l.expected_qty from product.stock_documents d join product.stock_document_lines l on l.document_id = d.id
+      `select d.kind, d.status, l.expected_qty, l.scanned_qty from product.stock_documents d join product.stock_document_lines l on l.document_id = d.id
        where d.source_type = 'return_request' and d.source_id = $1`,
       [r.id],
     );
-    expect(doc.rows).toEqual([{ kind: 'return_inspection', status: 'draft', expected_qty: 2 }]);
+    expect(doc.rows).toEqual([{ kind: 'return_inspection', status: 'draft', expected_qty: 2, scanned_qty: 1 }]);
+    expect(await quarantineOf(variantId)).toBe(before + 1);
   });
 });
 
 describe('kiện trả không khớp (§20)', () => {
-  it('không gửi lines: lưu kiện mở, chưa có phiếu; gửi lines mà kho chưa có chữ ký mới thì 501 #208, không ghi gì', async () => {
+  it('không gửi lines: lưu kiện mở, chưa có phiếu; cổng thật (#208): có lines thì phiếu nguồn kiện, gắn vào yêu cầu thì phiếu chuyển sang yêu cầu, chờ xử lý không cộng lần hai', async () => {
     const scanned = `UNK-${randomUUID().slice(0, 8)}`;
     const res = ReceiveResult.parse((await receive({ code: scanned, note: 'Hộp móp' })).body);
     expect(res).toMatchObject({ kind: 'unmatched', parcel: { scannedCode: scanned, status: 'open', lines: [], inspection: null } });
-    const blocked = await receive({ code: `UNK-${randomUUID().slice(0, 8)}`, lines: [{ variantId, quantity: 1 }] });
-    expect([blocked.status, blocked.body.code, blocked.body.issue]).toEqual([501, 'not_implemented', 'commerio-backend#208']);
+
+    const before = await quarantineOf(variantId);
+    const withLines = ReceiveResult.parse((await receive({ code: `UNK-${randomUUID().slice(0, 8)}`, lines: [{ variantId, quantity: 2 }] })).body);
+    if (withLines.kind !== 'unmatched') throw new Error('phải là kiện không khớp');
+    expect(withLines.parcel.inspection).not.toBeNull();
+    const docOf = async () =>
+      (
+        await testPool().query(
+          `select d.source_type, d.source_id, l.expected_qty, l.scanned_qty from product.stock_documents d
+           join product.stock_document_lines l on l.document_id = d.id where d.id = $1`,
+          [withLines.parcel.inspection!.documentId],
+        )
+      ).rows;
+    expect(await docOf()).toEqual([{ source_type: 'unmatched_parcel', source_id: withLines.parcel.id, expected_qty: 2, scanned_qty: 2 }]);
+    expect(await quarantineOf(variantId)).toBe(before + 2);
+
+    const r = await seedReturn('awaiting_return');
+    const attached = await auth(app().post(`/api/v1/returns/unmatched/${withLines.parcel.id}/attach`), warehouse.token).send({ version: 1, returnRequestId: r.id });
+    expect(attached.status).toBe(200);
+    expect(await docOf()).toEqual([{ source_type: 'return_request', source_id: r.id, expected_qty: 2, scanned_qty: 2 }]);
+    expect(await quarantineOf(variantId)).toBe(before + 2);
+    expect(await detail(r.id)).toMatchObject({ status: 'received', inspection: { id: withLines.parcel.inspection!.documentId } });
   });
 
   it('có lines: lưu dòng, receiveBack nguồn unmatched_parcel với expected = scanned; gắn vào yêu cầu mở sau thì yêu cầu received', async () => {

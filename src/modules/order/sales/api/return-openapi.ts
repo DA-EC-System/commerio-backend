@@ -77,7 +77,7 @@ export function registerReturnsOpenApi(registry: OpenAPIRegistry): void {
     path: '/receive',
     summary: 'Quét nhận hàng trả (§20, §15.3)',
     description:
-      'Cần `fulfillment.order.process`. `code`: mã yêu cầu, mã vận đơn chiều về, mã đơn hoặc mã đơn sàn. Khớp yêu cầu `awaiting_return`: gộp `lines` với dòng yêu cầu (vắng: quét 0; ngoài yêu cầu: dự kiến 0; không gửi `lines`: quét đủ) rồi gọi `receiveBack`, yêu cầu sang `received`; yêu cầu từ sàn thì báo sàn đã nhận (sàn lỗi: yêu cầu bật Cần xử lý). Không khớp: lưu kiện và dòng, có `lines` thì gọi `receiveBack` nguồn `unmatched_parcel`. 501 `not_implemented` (`commerio-backend#208`) cho phần kho chưa có của chữ ký 11/11/2026.',
+      'Cần `fulfillment.order.process`. `code`: mã yêu cầu, mã vận đơn chiều về, mã đơn hoặc mã đơn sàn. Khớp yêu cầu `awaiting_return`: gộp `lines` với dòng yêu cầu (vắng: quét 0; ngoài yêu cầu: dự kiến 0; không gửi `lines`: quét đủ) rồi gọi `receiveBack`, yêu cầu sang `received`; yêu cầu từ sàn thì báo sàn đã nhận (sàn lỗi: yêu cầu bật Cần xử lý). Không khớp: lưu kiện và dòng, có `lines` thì gọi `receiveBack` nguồn `unmatched_parcel`.',
     security: bearer,
     request: { body: json(ReceiveReturnBody) },
     responses: {
@@ -85,7 +85,6 @@ export function registerReturnsOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       409: problemResponse('`return_not_awaiting` kèm `current`'),
       422: problemResponse(`\`validation_failed\`. ${LINES}`),
-      501: problemResponse('`not_implemented` kèm `issue`, `owner`'),
     },
   });
   registry.registerPath({
@@ -110,7 +109,7 @@ export function registerReturnsOpenApi(registry: OpenAPIRegistry): void {
     description: 'Cần `fulfillment.order.process`. Yêu cầu sang `received` không quét lại; phiếu của kiện chuyển sang nguồn yêu cầu, không cộng chờ xử lý lần hai.',
     security: bearer,
     request: { params: ReturnParams, body: json(AttachBody) },
-    responses: { 200: { description: 'Kiện', ...json(UnmatchedParcel) }, ...parcelErrors, 501: problemResponse('`not_implemented` kèm `issue`, `owner`') },
+    responses: { 200: { description: 'Kiện', ...json(UnmatchedParcel) }, ...parcelErrors },
   });
   registry.registerPath({
     method: 'post',
