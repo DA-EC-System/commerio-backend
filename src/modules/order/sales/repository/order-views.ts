@@ -1,6 +1,7 @@
 // Đọc đơn cho danh sách, chi tiết (Documents/21 §19.1). Chạy trong `withCompany` của bên gọi.
-import { and, count, desc, eq, exists, gte, ilike, inArray, isNull, lt, notInArray, or, type SQL, sql } from 'drizzle-orm';
+import { and, count, desc, eq, exists, gte, ilike, inArray, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
+import { OPEN_RETURN_STATUSES } from '../domain/return.ts';
 import { customers, orderLines, orders, returnRequests } from './schema.ts';
 
 const containsPattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -30,7 +31,8 @@ export type SqlFlag =
   | 'return_requested'
   | 'cod_mismatch';
 
-const OPEN_RETURN = ['rejected', 'closed'] as const;
+// Yêu cầu còn mở: `requested`, `awaiting_return`, `received`; `refund_only` không tính (Documents/21 §19.1, §20).
+const openReturn = () => inArray(returnRequests.status, [...OPEN_RETURN_STATUSES]);
 
 function flagCondition(flag: SqlFlag): SQL {
   const db = getDb();
@@ -57,7 +59,7 @@ function flagCondition(flag: SqlFlag): SQL {
         db
           .select({ one: sql`1` })
           .from(returnRequests)
-          .where(and(eq(returnRequests.orderId, orders.id), notInArray(returnRequests.status, [...OPEN_RETURN]))),
+          .where(and(eq(returnRequests.orderId, orders.id), openReturn())),
       );
     case 'cod_mismatch':
       // Chưa có nguồn (đối soát COD đơn tay): không đơn nào mang cờ này.
@@ -179,13 +181,13 @@ export async function lineFacts(orderIds: readonly string[]): Promise<Map<string
   );
 }
 
-/** Số yêu cầu trả còn mở theo đơn (chưa từ chối, chưa đóng). */
+/** Số yêu cầu trả còn mở theo đơn (`requested`, `awaiting_return`, `received`). */
 export async function openReturnCounts(orderIds: readonly string[]): Promise<Map<string, number>> {
   if (!orderIds.length) return new Map();
   const rows = await getDb()
     .select({ orderId: returnRequests.orderId, n: count() })
     .from(returnRequests)
-    .where(and(inArray(returnRequests.orderId, [...orderIds]), notInArray(returnRequests.status, [...OPEN_RETURN])))
+    .where(and(inArray(returnRequests.orderId, [...orderIds]), openReturn()))
     .groupBy(returnRequests.orderId);
   return new Map(rows.map((r) => [r.orderId, Number(r.n)]));
 }

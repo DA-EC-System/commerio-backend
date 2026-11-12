@@ -55,6 +55,8 @@ export const shops = channelSchema.table(
     /** Hạn trả hàng (ngày) Admin nhập lúc thiết lập, cho sàn `returnWindow = 'days'` (Documents/21 §18.6.2). */
     returnWindowDays: integer('return_window_days'),
     lastOrderSyncAt: timestamp('last_order_sync_at', { withTimezone: true }),
+    // Mốc kéo yêu cầu trả (#202): lúc bắt đầu lượt kéo xong trọn gần nhất.
+    lastReturnSyncAt: timestamp('last_return_sync_at', { withTimezone: true }),
     settlementCursor: timestamp('settlement_cursor', { withTimezone: true }),
     lastError: text('last_error'),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),

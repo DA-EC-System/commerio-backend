@@ -32,7 +32,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'sales.order_created': { orderId: id(), code: 'DH-0001', source: 'manual', total: '150000.00' },
   'sales.order_status_changed': { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] },
   'sales.order_cancelled': { orderId: id(), code: 'DH-000001', source: 'marketplace', by: 'platform' },
-  'sales.return_refunded': { returnRequestId: id(), orderId: id(), shopId: id(), refundAmount: '129000.00', refundedAt: at },
+  'sales.return_refunded': { returnRequestId: id(), orderId: id(), shopId: id(), refundAmount: '32000.00', refundedAt: at },
   'fulfillment.package_status_changed': { packageId: id(), orderId: id(), from: 'reserved', to: 'packed' },
   'fulfillment.package_shipped': { packageId: id(), orderId: id(), lines: [{ variantId: id(), quantity: 2, unitCost: '100000.00' }] },
   'fulfillment.allocation_done': { variantIds: [id(), id()] },

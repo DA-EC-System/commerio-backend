@@ -1,6 +1,6 @@
 // Tự hoàn tất đơn (Documents/21 §19.1, #105 PR 2): mọi kiện dừng, qua 7 ngày từ kiện giao cuối, không còn yêu cầu trả
 // mở → `completed` với kết quả theo kiện chưa huỷ. Đơn đang huỷ chờ mở kiện (#106) thì bỏ qua.
-import { publishEvent, recordTransition } from '../../../core/index.ts';
+import { publishEvent, recordTransition, registerConsumer } from '../../../core/index.ts';
 import { findPackagesOfOrders } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { every } from '../../../../shared/lifecycle.ts';
@@ -8,6 +8,7 @@ import { logger } from '../../../../shared/logger.ts';
 import { completionBlocker, outcomeOf, RETURN_WINDOW_DAYS } from '../domain/order.ts';
 import { findOrder, openReturnCounts } from '../repository/order-views.ts';
 import { findCompletionCandidates, updateOrderAt } from '../repository/orders.ts';
+import { onReturnInspected } from './return-ingest.ts';
 
 async function completeOne(orderId: string, now: Date): Promise<boolean> {
   const order = await findOrder(orderId);
@@ -56,5 +57,7 @@ export async function completeDueOrdersOnce(now = new Date()): Promise<number> {
 
 /** Việc nền của `sales` trong worker: tự hoàn tất mỗi giờ. */
 export async function startSalesBackground(): Promise<() => Promise<void>> {
+  // Kiểm hàng hoàn của yêu cầu trả ghi sổ thì đóng yêu cầu, hoàn tiền (#202, §11.2).
+  registerConsumer('inventory.return_inspected', onReturnInspected, { consumer: 'sales-return-inspected' });
   return every(3_600_000, () => completeDueOrdersOnce(), 'việc nền tự hoàn tất đơn lỗi');
 }
