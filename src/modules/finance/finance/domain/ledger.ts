@@ -41,6 +41,51 @@ export const NOT_PROFIT: ReadonlySet<LedgerKind> = new Set([...NON_CASH, 'withdr
  */
 export const NOT_SETTLEMENT_DIFF: ReadonlySet<LedgerKind> = new Set([...NOT_PROFIT, 'lost_compensation']);
 
+/**
+ * Mỗi loại dòng là khoản của sàn (`shop`, gắn gian hàng) hay khoản ngoài sàn (`company`). Documents/25 §10.1, "Khoản
+ * không gắn đơn": "Theo gian hàng: quảng cáo (nạp ví ads hoặc trừ vào số dư), phí dịch vụ theo tháng, phạt không gắn
+ * đơn. Ngoài sàn: Tiền trả NCC theo phiếu nhận (4.2); NCC hoàn tiền theo phiếu trả NCC (4.3). COD tự giao đã xác nhận
+ * (8.3). Chi vận hành: lương, kho, bao bì." Thêm loại vào enum thì TypeScript buộc xếp loại ở đây. CHECK
+ * `ledger_entries_shop_by_kind` (schema.ts) dựng từ bảng này.
+ */
+export const LEDGER_KIND_SCOPE: Readonly<Record<LedgerKind, 'shop' | 'company'>> = {
+  revenue: 'shop',
+  platform_subsidy: 'shop',
+  shipping_income: 'shop',
+  shipping_cost: 'shop',
+  fee_fixed: 'shop',
+  fee_transaction: 'shop',
+  fee_service: 'shop',
+  fee_optional: 'shop',
+  withholding_tax: 'shop',
+  customer_refund: 'shop',
+  return_fee: 'shop',
+  lost_compensation: 'shop',
+  penalty: 'shop',
+  cogs: 'shop',
+  cogs_reversal: 'shop',
+  ads: 'shop',
+  opex: 'company',
+  supplier_payment: 'company',
+  supplier_refund: 'company',
+  cod_collected: 'company',
+  adjustment: 'shop',
+  withdrawal: 'shop',
+};
+/** Khoản ngoài sàn: không vào tiền đang ở sàn hay số dư ví sàn (25 §10.3), không vào lãi bán hàng. */
+export const OFF_PLATFORM: ReadonlySet<LedgerKind> = new Set(LEDGER_KINDS.filter((k) => LEDGER_KIND_SCOPE[k] === 'company'));
+/**
+ * Khoản ngoài sàn không bao giờ gắn gian hàng. COD tự giao thì có thể gắn: kiện tự giao của đơn sàn có gian hàng
+ * (Documents/19, `packages.shop_id`).
+ */
+export const NEVER_SHOP: ReadonlySet<LedgerKind> = new Set(['supplier_payment', 'supplier_refund', 'opex']);
+/**
+ * Không vào lãi bán hàng (lãi gộp, chạy thử cấu hình): khoản ngoài sàn và rút tiền ("`withdrawal` là chuyển từ ví sàn
+ * về ngân hàng, không vào lãi", Documents/21 §21.1). Giá vốn vẫn vào lãi gộp. 25 §10.2: "Không cộng hoa hồng affiliate,
+ * bồi thường hay tiền NCC hoàn vào doanh thu bán hàng".
+ */
+export const NOT_SALES_PROFIT: ReadonlySet<LedgerKind> = new Set([...OFF_PLATFORM, 'withdrawal']);
+
 export interface Draft {
   kind: LedgerKind;
   /** Chuỗi thập phân hai chữ số, có dấu. */

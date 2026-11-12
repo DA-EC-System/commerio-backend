@@ -2,7 +2,7 @@ import { Decimal } from 'decimal.js';
 import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not, notInArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
-import { type LedgerKind, NOT_SETTLEMENT_DIFF } from '../domain/ledger.ts';
+import { type LedgerKind, NON_CASH as NON_CASH_KINDS, NOT_SETTLEMENT_DIFF, OFF_PLATFORM } from '../domain/ledger.ts';
 import { bankMatches, ledgerEntries } from './schema.ts';
 
 export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string | null };
@@ -10,7 +10,7 @@ export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string
 /** Nguồn của dòng sổ: chứng từ hay sự kiện sinh ra nó (cột `source_type`). */
 export type LedgerSource = 'package' | 'package_return' | 'return_refund' | 'return_inspection' | 'supplier_return' | 'settlement_batch' | 'manual';
 
-const NON_CASH: LedgerKind[] = ['cogs', 'cogs_reversal'];
+const NON_CASH = [...NON_CASH_KINDS];
 
 /** Ghi lần lượt mọi dòng của một nguồn: khoá tới hết giao dịch để hai lần nhận cùng sự kiện không ghi trùng. */
 export async function lockSource(type: LedgerSource, id: string): Promise<void> {
@@ -40,7 +40,7 @@ const replacer = alias(ledgerEntries, 'replacer');
  * thật từ quyết toán (số thật của cả đơn thay số ước tính, kể cả khoản sàn không thu). Dựng lúc gọi: `getDb()` theo
  * giao dịch của bên gọi.
  */
-const isReplaced = () =>
+export const isReplaced = () =>
   or(
     exists(getDb().select({ one: sql`1` }).from(replacing).where(eq(replacing.replacesEntryId, ledgerEntries.id))),
     and(
@@ -110,7 +110,9 @@ export async function entriesOfOrder(orderId: string): Promise<LedgerRow[]> {
 
 /**
  * Tổng tiền theo chỗ (25 §10.2, T3) trên dòng tiền mặt còn hiệu lực trong phạm vi lọc gian hàng: `receivable` là số
- * ước tính đang ở sàn chưa quyết toán, `platformBalance` là số sàn đã quyết toán (thực tế).
+ * ước tính đang ở sàn chưa quyết toán, `platformBalance` là số sàn đã quyết toán (thực tế). Bỏ khoản ngoài sàn
+ * (`OFF_PLATFORM`: trả NCC, NCC hoàn tiền, COD tự giao, chi vận hành) theo loại dòng, không theo gian hàng; rút tiền giữ
+ * lại vì "Số dư ví sàn trong app = tổng đã quyết toán − tổng đã rút − khoản trừ của gian hàng" (25 §10.3).
  */
 export async function ledgerTotals(shopId?: string): Promise<{ receivable: string; platformBalance: string; withdrawn: string }> {
   const [row] = await getDb()
@@ -122,8 +124,7 @@ export async function ledgerTotals(shopId?: string): Promise<{ receivable: strin
     .from(ledgerEntries)
     .where(
       and(
-        notInArray(ledgerEntries.kind, NON_CASH),
-        isNotNull(ledgerEntries.shopId),
+        notInArray(ledgerEntries.kind, [...NON_CASH, ...OFF_PLATFORM]),
         shopId ? eq(ledgerEntries.shopId, shopId) : undefined,
         not(isReplaced()),
       ),

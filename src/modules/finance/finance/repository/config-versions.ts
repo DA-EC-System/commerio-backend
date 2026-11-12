@@ -1,7 +1,8 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, notExists, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
+import { and, desc, eq, gte, inArray, isNull, lte, not, notInArray, sql } from 'drizzle-orm';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import type { ConfigKind, ConfigStatus } from '../domain/config-version.ts';
+import { NOT_SALES_PROFIT } from '../domain/ledger.ts';
+import { isReplaced } from './ledger.ts';
 import { configVersions, ledgerEntries } from './schema.ts';
 
 export type ConfigRow = typeof configVersions.$inferSelect;
@@ -100,12 +101,12 @@ export async function findDueScheduledAnyCompany(today: string, limit: number) {
 }
 
 /**
- * Tổng sổ tiền từ `from` (gồm cả ngày đó), chỉ dòng còn hiệu lực (dòng ước tính đã có dòng thực tế thay thì bỏ).
- * `revenue` là tổng dòng doanh thu. Dùng cho chạy thử phiên bản cấu hình. #117 thêm loại `withdrawal` (rút về ngân
- * hàng, không vào lãi) thì loại ra ở đây. Dòng không gắn gian hàng (NCC hoàn tiền, #228) không phải lãi bán hàng: bỏ.
+ * Lãi bán hàng từ `from` (gồm cả ngày đó) cho chạy thử phiên bản cấu hình: chỉ dòng còn hiệu lực, hiểu "đã thay" như
+ * tổng tiền ở sàn (`isReplaced`: có dòng thực tế thay, hoặc dòng ước tính của đơn đã có số quyết toán). Bỏ loại không
+ * vào lãi bán hàng (`NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền) theo loại dòng, không theo gian hàng. `revenue` là
+ * tổng dòng doanh thu.
  */
 export async function sumLedgerSince(from: string, shopId?: string): Promise<{ total: string; revenue: string }> {
-  const replacing = alias(ledgerEntries, 'replacing');
   const [row] = await getDb()
     .select({
       total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text`,
@@ -115,9 +116,9 @@ export async function sumLedgerSince(from: string, shopId?: string): Promise<{ t
     .where(
       and(
         gte(ledgerEntries.occurredOn, from),
-        isNotNull(ledgerEntries.shopId),
+        notInArray(ledgerEntries.kind, [...NOT_SALES_PROFIT]),
         shopId ? eq(ledgerEntries.shopId, shopId) : undefined,
-        notExists(getDb().select({ one: sql`1` }).from(replacing).where(eq(replacing.replacesEntryId, ledgerEntries.id))),
+        not(isReplaced()),
       ),
     );
   return row!;
