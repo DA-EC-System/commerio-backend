@@ -288,6 +288,16 @@ const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejecte
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
 
+const pendingMapping = z
+  .object({
+    variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
+    requestedBy: z.object({ id: z.uuid(), name: z.string() }).strict(),
+    requestedAt: iso,
+  })
+  .strict()
+  .nullable()
+  .meta({ description: 'Ghép chờ CEO duyệt (21 §18.6.5); null khi không có' });
+
 export const ChannelListing = z
   .object({
     id: z.uuid(),
@@ -310,10 +320,56 @@ export const ChannelListing = z
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
+    pendingMapping,
     version: z.number().int(),
   })
   .strict()
   .meta({ id: 'ChannelListing' });
+
+export const RemoteSkusQuery = z.object({
+  unmatched: z.stringbool().optional().meta({ description: '`true`: chỉ SKU sàn chưa ghép' }),
+});
+
+export const RemoteSkuList = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          externalProductId: z.string(),
+          externalSkuId: z.string(),
+          sellerSku: z.string(),
+          title: z.string(),
+          matchedVariantId: z.uuid().nullable(),
+          mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
+          listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt "không quản tồn"); null khi chưa có. CEO dùng để gọi `mapping/approve|reject`' }),
+          listingVersion: z.number().int().nullable().meta({ description: '`version` của listing đó, gửi kèm khi duyệt; null khi chưa có listing' }),
+          pendingMapping,
+        })
+        .strict(),
+    ),
+    syncedAt: z.iso
+      .datetime({ offset: true })
+      .nullable()
+      .meta({ description: 'Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao BE lưu); null khi sàn chưa đọc được lần nào' }),
+  })
+  .strict()
+  .meta({ id: 'RemoteSkuList' });
+
+export const MatchBody = z
+  .object({
+    externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+    variantId: z.uuid('Biến thể không hợp lệ').nullable().meta({ description: 'null là "không quản tồn" (cần CEO duyệt)' }),
+  })
+  .meta({ id: 'ListingMatchInput' });
+
+export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
+
+export const MappingBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .meta({ id: 'ListingMappingDecisionInput' });
 
 export const ListingRow = z
   .object({

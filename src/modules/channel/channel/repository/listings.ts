@@ -83,6 +83,19 @@ export async function currentListingRows(shopId: string): Promise<ListingRow[]> 
     .orderBy(listings.variantId, ...CURRENT_FIRST);
 }
 
+/**
+ * Dòng "không quản tồn" hiện hành theo mã SKU sàn (không có biến thể nên `currentListingRows` không gồm): dòng chưa gỡ,
+ * không có thì dòng gỡ mới nhất. Cho nối lại gian hàng (#220 đợt 2).
+ */
+export async function currentUnmanagedRows(shopId: string): Promise<ListingRow[]> {
+  const rows = await getDb()
+    .selectDistinctOn([listings.externalSkuId])
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), isNotNull(listings.externalSkuId)))
+    .orderBy(listings.externalSkuId, ...CURRENT_FIRST);
+  return rows.filter((r) => r.mode === 'unmanaged');
+}
+
 export async function insertListing(values: typeof listings.$inferInsert): Promise<ListingRow> {
   const [row] = await getDb().insert(listings).values(values).returning();
   return row!;
@@ -145,4 +158,31 @@ export async function markStockPendingRows(variantIds: readonly string[], status
     .where(and(inArray(listings.variantId, [...variantIds]), inArray(listings.status, [...statuses])))
     .returning({ shopId: listings.shopId });
   return [...new Set(rows.map((r) => r.shopId))];
+}
+
+/** Listing chưa gỡ của SKU sàn trên gian hàng (unique `listings_shop_external_sku_uq`, nhiều nhất một). */
+export async function findListingByExternalSku(shopId: string, externalSkuId: string): Promise<ListingRow | undefined> {
+  const [row] = await getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), eq(listings.externalSkuId, externalSkuId), sql`${listings.status} <> 'delisted'`))
+    .limit(1);
+  return row;
+}
+
+/** Listing chưa gỡ của gian hàng, mọi chế độ ghép (kể cả "không quản tồn", `variant_id` trống). */
+export async function liveListingRows(shopId: string): Promise<ListingRow[]> {
+  return getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), sql`${listings.status} <> 'delisted'`));
+}
+
+/** Xoá dòng khi còn đúng `version`; trả số dòng xoá (#220: từ chối ghép của dòng tạo ra chỉ để chờ duyệt). */
+export async function deleteListing(id: string, version: number): Promise<number> {
+  const rows = await getDb()
+    .delete(listings)
+    .where(and(eq(listings.id, id), eq(listings.version, version)))
+    .returning({ id: listings.id });
+  return rows.length;
 }

@@ -9,7 +9,7 @@ const base: SetupInput = {
   openingStockMode: 'push',
   openingStocktakeId: null,
   allocationStocktakeId: null,
-  unmatchedSkuCount: 3,
+  unmatchedCount: 3,
   openOrdersPulledAt: null,
   openOrdersSkipped: 0,
   stockPushedAt: null,
@@ -20,7 +20,7 @@ const step = (key: string, status: string, blockedBy: string | null = null) => (
 
 describe('tiến độ thiết lập gian hàng (#198 AC-24, Documents/21 §18.7.7)', () => {
   it('gian hàng chưa thiết lập: chỉ bước ghép `pending`', () => {
-    expect(setupOf({ ...base, status: 'connecting', openingStockMode: null, unmatchedSkuCount: null }, now)).toEqual({
+    expect(setupOf({ ...base, status: 'connecting', openingStockMode: null }, now)).toEqual({
       steps: [step('match', 'pending')],
       unmatchedCount: 0,
       openOrdersSkipped: 0,
@@ -79,7 +79,7 @@ describe('tiến độ thiết lập gian hàng (#198 AC-24, Documents/21 §18.7
   });
 
   it('null khi thiết lập trước #198, khi đã ngắt, khi mọi bước xong quá 24 giờ', () => {
-    expect(setupOf({ ...base, openingStockMode: null, unmatchedSkuCount: null }, now)).toBeNull();
+    expect(setupOf({ ...base, openingStockMode: null }, now)).toBeNull();
     expect(setupOf({ ...base, status: 'disconnected' }, now)).toBeNull();
     const done = { ...base, openOrdersPulledAt: ago(30 * HOUR), stockPushedAt: ago(25 * HOUR) };
     expect(setupOf(done, now)).toBeNull();

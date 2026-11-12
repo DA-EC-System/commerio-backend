@@ -28,8 +28,9 @@ import {
   shopMachine,
   tokenExpiringSoon,
 } from '../domain/shop.ts';
-import type { ListingStatus, RemoteState } from '../domain/listing.ts';
-import { currentListingRows, insertListing } from '../repository/listings.ts';
+import { DELISTED_REASON, type ListingStatus, type RemoteState } from '../domain/listing.ts';
+import { currentListingRows, currentUnmanagedRows, insertListing } from '../repository/listings.ts';
+import { unmatchedRemoteCounts } from '../repository/remote-skus.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
@@ -169,6 +170,8 @@ interface ShopExtras {
   statusChanged: Map<string, Date>;
   /** Lệch ví của lần đối soát `done` gần nhất có số, đọc qua cổng của `finance` (§21.3, #251). */
   walletDiff: Map<string, string>;
+  /** Số SKU sàn chưa ghép, đếm từ bản sao `remote_skus` (#220 đợt 2). */
+  unmatched: Map<string, number>;
 }
 
 const ORDERS_WINDOW_MS = 7 * 24 * 3600_000;
@@ -180,7 +183,7 @@ const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'd
 async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
   const ids = rows.map((r) => r.id);
   const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
-  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff] = await Promise.all([
+  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched] = await Promise.all([
     countListingsOnPlatform(ids),
     countHeld(ids),
     docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
@@ -188,8 +191,9 @@ async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
     orderCountsByShop(ids, new Date(Date.now() - ORDERS_WINDOW_MS)),
     lastTransitionsAt(ENTITY, ids),
     walletDiffOf(ids),
+    unmatchedRemoteCounts(ids),
   ]);
-  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff };
+  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched };
 }
 
 function toShop(row: ShopRow, extras: ShopExtras): Shop {
@@ -225,6 +229,7 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
         ...row,
         openOrderPullFailedAt: extras.dead.get(`${row.id} ${openOrderPullQueue.name}`) ?? null,
         listingSyncFailedAt: extras.dead.get(`${row.id} ${listingSyncQueue.name}`) ?? null,
+        unmatchedCount: extras.unmatched.get(row.id) ?? 0,
       },
       new Date(),
     ),
@@ -571,15 +576,13 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
   ))!;
   await recordTransition({ entityType: ENTITY, entityId: id, from: row.status, to, action: 'disconnect', actorId: actor.accountId });
   for (const listing of await delistForDisconnect(id)) {
-    await recordTransition({
-      entityType: 'listings',
-      entityId: listing.id,
-      from: listing.from,
-      to: 'delisted',
-      action: 'delist',
-      actorId: actor.accountId,
-      reason: 'Ngắt gian hàng',
-    });
+    const to = listing.pending === 'deleted' ? listing.from : 'delisted';
+    if (listing.pending !== 'deleted') {
+      await recordTransition({ entityType: 'listings', entityId: listing.id, from: listing.from, to, action: 'delist', actorId: actor.accountId, reason: 'Ngắt gian hàng' });
+    }
+    if (listing.pending) {
+      await recordTransition({ entityType: 'listings', entityId: listing.id, from: to, to, action: 'reject_mapping', actorId: actor.accountId, reason: DELISTED_REASON });
+    }
   }
   for (const listing of await failPushingForDisconnect(id)) {
     await recordTransition({
@@ -619,7 +622,9 @@ const RELIST_STATUS: Record<RemoteState, ListingStatus | null> = {
 async function relistAfterReconnect(companyId: string, shopId: string): Promise<number> {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(companyId, fn);
   try {
-    const rows = (await inCompany(() => currentListingRows(shopId))).filter(
+    // Dòng "không quản tồn" (không có biến thể) lấy theo mã SKU sàn; giữ quyết định duyệt cũ vì cùng SKU sàn, CEO đã
+    // duyệt, ngắt không phải người dùng đổi ý (#220 đợt 2, Thành chốt 12/11/2026).
+    const rows = (await inCompany(async () => [...(await currentListingRows(shopId)), ...(await currentUnmanagedRows(shopId))])).filter(
       (r) => r.status === 'delisted' && r.delistedByDisconnect && r.sellerSku,
     );
     if (!rows.length) return 0;
@@ -635,7 +640,11 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
           const created = await insertListing({
             companyId,
             shopId,
+            mode: row.mode,
             variantId: row.variantId,
+            approvedBy: row.approvedBy,
+            mappingRequestedBy: row.mappingRequestedBy,
+            mappingSelfApproved: row.mappingSelfApproved,
             sellerSku: row.sellerSku,
             status,
             externalProductId: r.externalProductId,
