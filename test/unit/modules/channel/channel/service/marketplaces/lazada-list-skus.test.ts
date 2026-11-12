@@ -3,38 +3,51 @@ import { createLazadaAdapter } from '#src/modules/channel/channel/service/market
 
 const config = { appKey: 'k', appSecret: 's', redirectUrl: 'https://app/cb', apiUrl: 'https://api.test/rest', authUrl: 'https://auth.test' };
 
-// Sàn giả theo GetProducts (open.lazada.com, tra 06/11/2026): `filter`, `limit` tối đa 50, `offset` tối đa 10000.
-function fakeLazada(total: number, calls: URLSearchParams[]) {
+const BASE = Date.parse('2025-01-01T00:00:00Z');
+// Sàn giả theo GetProducts (open.lazada.com, tra 06/11 và 12/11/2026): `filter`, `limit` tối đa 50, `offset` tối đa 10000,
+// `create_after`, `create_before` lấy cả mốc, `total_products` theo bộ lọc. Sản phẩm i tạo lúc BASE + i × `gapMs`.
+// `shuffle`: mỗi lời gọi trả thứ tự khác (tài liệu không có tham số sắp xếp; review #309 vòng 3 R1).
+function fakeLazada(total: number, calls: URLSearchParams[], opts: { gapMs?: number; shuffle?: boolean } = {}) {
+  const gap = opts.gapMs ?? 3600_000;
+  let n = 0;
   return async (url: string | URL | Request) => {
     const q = new URL(String(url)).searchParams;
     calls.push(q);
+    const after = q.get('create_after') ? Date.parse(q.get('create_after')!) : -Infinity;
+    const before = q.get('create_before') ? Date.parse(q.get('create_before')!) : Infinity;
     const offset = Number(q.get('offset'));
     const limit = Number(q.get('limit'));
-    const products = Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, k) => {
-      const i = offset + k;
-      return {
-        item_id: 1000 + i,
-        status: i === 0 ? 'Deleted' : 'Active',
-        attributes: { name: `Sản phẩm ${i}` },
-        skus: [{ SkuId: 5000 + i, SellerSku: `S-${i}`, quantity: i, Status: i === 0 ? 'deleted' : 'active' }],
-      };
-    });
-    return new Response(JSON.stringify({ code: '0', data: { total_products: total, products } }), { status: 200 });
+    let ids = Array.from({ length: total }, (_, i) => i).filter((i) => BASE + i * gap >= after && BASE + i * gap <= before);
+    if (opts.shuffle) {
+      n += 1;
+      ids = ids.map((i) => [i, (i * 7919 + n * 104729) % 1000003] as const).sort((a, b) => a[1] - b[1]).map(([i]) => i);
+    }
+    const products = ids.slice(offset, offset + limit).map((i) => ({
+      item_id: 1000 + i,
+      status: i === 0 ? 'Deleted' : 'Active',
+      attributes: { name: `Sản phẩm ${i}` },
+      skus: [{ SkuId: 5000 + i, SellerSku: `S-${i}`, quantity: i, Status: i === 0 ? 'deleted' : 'active' }],
+    }));
+    return new Response(JSON.stringify({ code: '0', data: { total_products: ids.length, products } }), { status: 200 });
   };
 }
 
 describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
-  it('lật `offset` 50 một trang với `filter=all` tới khi trang thiếu, bỏ sản phẩm đã xoá', async () => {
+  it('gian hàng không quá 50 sản phẩm: một lời gọi `filter=all`, bỏ sản phẩm đã xoá', async () => {
     const calls: URLSearchParams[] = [];
-    const adapter = createLazadaAdapter(config, fakeLazada(120, calls));
+    const skus = await createLazadaAdapter(config, fakeLazada(40, calls)).listSkus!('t');
+    expect(calls.map((q) => [q.get('filter'), q.get('limit'), q.get('offset')])).toEqual([['all', '50', '0']]);
+    expect(skus).toHaveLength(39);
+  });
+
+  it('review vòng 3 R1: chia theo khoảng ngày tạo tới khi mỗi khoảng không quá 50, không lật `offset`; sàn đổi thứ tự mỗi lần vẫn đủ', async () => {
+    const calls: URLSearchParams[] = [];
+    const adapter = createLazadaAdapter(config, fakeLazada(120, calls, { shuffle: true }));
     const skus = await adapter.listSkus!('t');
-    expect(calls.map((q) => [q.get('filter'), q.get('limit'), q.get('offset')])).toEqual([
-      ['all', '50', '0'],
-      ['all', '50', '50'],
-      ['all', '50', '100'],
-    ]);
-    expect(skus).toHaveLength(119);
-    expect(skus[0]).toMatchObject({ externalProductId: '1001', externalSkuId: '5001', sellerSku: 'S-1', title: 'Sản phẩm 1', quantity: 1 });
+    expect(calls.every((q) => q.get('offset') === '0' && q.get('create_after') && q.get('create_before'))).toBe(true);
+    expect(new Set(skus.map((s) => s.externalSkuId)).size).toBe(119);
+    expect(calls.length).toBeLessThan(40);
+    expect(skus.find((s) => s.externalSkuId === '5001')).toMatchObject({ externalProductId: '1001', externalSkuId: '5001', sellerSku: 'S-1', title: 'Sản phẩm 1', quantity: 1 });
     expect(skus.some((s) => s.sellerSku === 'S-0')).toBe(false);
   });
 
@@ -60,13 +73,20 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });
   });
 
-  it('review vòng 2 N1: trang thiếu trước khi đủ `total_products` thì rejected `incomplete_list`, không trả thiếu', async () => {
-    const real = fakeLazada(120, []);
+  it('review vòng 3 R1: hơn 50 sản phẩm tạo cùng một giây thì lật `offset` trong khoảng đó', async () => {
+    const calls: URLSearchParams[] = [];
+    const skus = await createLazadaAdapter(config, fakeLazada(60, calls, { gapMs: 0 })).listSkus!('t');
+    expect(new Set(skus.map((s) => s.externalSkuId)).size).toBe(59);
+    expect(calls.some((q) => q.get('offset') === '50')).toBe(true);
+  });
+
+  it('review vòng 2 N1: sàn trả ít sản phẩm hơn `total_products` của khoảng thì rejected `incomplete_list`, không trả thiếu', async () => {
+    const real = fakeLazada(40, []);
     const fetchFn = async (url: string | URL | Request) => {
       const res = await real(url);
       const body = (await res.json()) as { code: string; data: { total_products: number; products: unknown[] } };
-      // Trang 2 sàn chỉ trả 10 sản phẩm (đáng ra 50), vẫn báo tổng 120.
-      if (new URL(String(url)).searchParams.get('offset') === '50') body.data.products = body.data.products.slice(0, 10);
+      // Sàn báo 40 nhưng chỉ trả 10.
+      body.data.products = body.data.products.slice(0, 10);
       return new Response(JSON.stringify(body), { status: 200 });
     };
     await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'incomplete_list' });

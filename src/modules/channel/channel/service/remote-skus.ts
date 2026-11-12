@@ -4,14 +4,17 @@
 // - đọc sản phẩm sửa từ lần trước (`listSkusChanged`): sau lượt `channel.listing_sync` (15 phút), tối đa mỗi giờ một lần
 //   (review #309 vòng 2 N2, `CHANGED_EVERY_MS`).
 // Số lời gọi Lazada mỗi gian hàng mỗi ngày: 24 lượt theo giờ sửa × 1 trang (≤ 50 sản phẩm sửa trong một giờ) + 1 lần đọc
-// trọn × ⌈số sản phẩm / 50⌉ (shop thử 305 sản phẩm: 7) ≈ 31, thay vì 96 lượt × 2 (`all`, `deleted`) = 192. 45 gian hàng
-// ≈ 1 400 trên hạn mức chung 9 000. Bấm Tải lại thêm ⌈số sản phẩm / 50⌉ mỗi lần, cách nhau ít nhất 60 giây.
+// trọn chia theo ngày tạo (đo bằng sàn giả: 305 sản phẩm tạo cách nhau 48 giờ 21 lời gọi, cách 1 giờ 41; 1000 sản phẩm
+// 47; ≤ 50 sản phẩm 1) ≈ 45–65, thay vì 96 lượt × 2 (`all`, `deleted`) = 192. 45 gian hàng ≈ 2 000–2 900 trên hạn mức
+// chung 9 000. Đọc trọn lỗi thì thử lại sau 1, 2, 4, 8, 16 giờ (tối đa 24): thêm tối đa 5 lần đọc trọn mỗi ngày (≈ 205
+// lời gọi với 41 lời gọi một lần), thay vì đọc trọn mỗi 15 phút (≈ 96 × 7 = 670; review vòng 3 R1). Bấm Tải lại thêm một
+// lần đọc trọn, cách nhau ít nhất 60 giây.
 // Mọi lời gọi đi qua `call` của adapter nên tính vào hạn mức gọi sàn trong ngày (Lazada `channel.api_usage`, TikTok
 // `reserveCall`); hết hạn mức thì `daily_call_limit` như mọi lời gọi khác.
 import { withCompany, withSessionLock } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findShopRow } from '../repository/shops.ts';
-import { countRemoteSkusSeenSince, dropRemoteSkusNotSeen, markRemoteSkus, upsertRemoteSkus } from '../repository/remote-skus.ts';
+import { countRemoteSkusSeenSince, dropRemoteSkusNotSeen, markRemoteSkus, recordFullReadFailure, upsertRemoteSkus } from '../repository/remote-skus.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { onMarketplace, shopSession } from './shops.ts';
@@ -70,7 +73,9 @@ export async function refreshRemoteSkusNow(companyId: string, shopId: string, op
 
 /**
  * Lượt định kỳ sau `channel.listing_sync`: chưa có bản sao hoặc lần đọc trọn quá `FULL_REFRESH_EVERY_MS` thì đọc trọn,
- * lần đọc trước (trọn hay theo giờ sửa) chưa quá `CHANGED_EVERY_MS` thì thôi, không thì đọc sản phẩm sửa từ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
+ * lần đọc trước (trọn hay theo giờ sửa) chưa quá `CHANGED_EVERY_MS` thì thôi, không thì đọc sản phẩm sửa từ mốc.
+ * Đọc trọn lỗi thì ghi mốc thử lại vào `shops` (1 giờ, 2 giờ, … tối đa 24 giờ; review vòng 3 R1): tới mốc mới đọc trọn
+ * lại, giữa chừng vẫn đọc theo giờ sửa. Tải lại (`refreshRemoteSkusNow`) không chờ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
  */
 export async function refreshRemoteSkusQuietly(companyId: string, shopId: string): Promise<void> {
   try {
@@ -79,7 +84,18 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
       if (!shop) return;
       const synced = shop.remoteSkusSyncedAt?.getTime();
       const since = shop.remoteSkusChangedSince;
-      if (synced === undefined || !since || Date.now() - synced > FULL_REFRESH_EVERY_MS) return readFull(companyId, shopId);
+      const fullDue = synced === undefined || !since || Date.now() - synced > FULL_REFRESH_EVERY_MS;
+      const waiting = shop.remoteSkusFullRetryAt !== null && shop.remoteSkusFullRetryAt.getTime() > Date.now();
+      if (fullDue && !waiting) {
+        try {
+          return await readFull(companyId, shopId);
+        } catch (err) {
+          await withCompany(companyId, () => recordFullReadFailure(shopId));
+          throw err;
+        }
+      }
+      // Đọc trọn đang chờ mốc thử lại: vẫn đọc theo giờ sửa nếu đã có bản sao.
+      if (synced === undefined || !since) return;
       if (Date.now() - since.getTime() < CHANGED_EVERY_MS) return;
       const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
       if (!adapter.listSkusChanged) return readFull(companyId, shopId);

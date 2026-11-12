@@ -53,6 +53,8 @@ let changedResult: RemoteSku[] = [];
 let changedFails = false;
 /** Sàn trả danh sách rỗng ở lần đọc trọn (review vòng 2 N1). */
 let listSkusEmpty = false;
+/** Lần đọc trọn lỗi (sàn trả thiếu; review vòng 3 R1). */
+let listSkusFails = false;
 /** SKU mới trên sàn chưa vào bản sao: `match` tải lại bản sao trước (bản sao chỉ làm mới khi đồng bộ, Tải lại). */
 let dirty = false;
 /** SKU mới trên sàn, SKU người bán khác SKU Commerio (lý do phải ghép tay). */
@@ -80,6 +82,7 @@ registerAdapter(
     },
     listSkus: async () => {
       listSkusCalls++;
+      if (listSkusFails) throw new MarketplaceError('rejected', 'incomplete_list', 'Sàn trả thiếu');
       return listSkusEmpty ? [] : remote;
     },
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
@@ -641,6 +644,71 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
     await runListingSync(port, { companyId: company.companyId, shopId: id });
     const { rows } = await testPool().query('select title, quantity, state from channel.remote_skus where shop_id = $1 and external_sku_id = $2', [id, r.externalSkuId]);
     expect(rows[0]).toEqual({ title: 'Áo - Trắng, M', quantity: 9, state: 'inactive' });
+  });
+
+  it('Review vòng 3 R1: đọc trọn định kỳ lỗi thì giãn lần thử (1 giờ, 2 giờ, …), mốc ở CSDL; Tải lại vẫn đọc ngay, đọc được thì xoá mốc', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    const state = async () =>
+      (
+        await testPool().query<{ failures: number; retry: Date | null }>(
+          'select remote_skus_full_failures as failures, remote_skus_full_retry_at as retry from channel.shops where id = $1',
+          [id],
+        )
+      ).rows[0]!;
+    const minutesAhead = (d: Date | null) => (d ? Math.round((d.getTime() - Date.now()) / 60_000) : null);
+    await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '25 hours' where id = $1", [id]);
+    listSkusFails = true;
+    try {
+      let before = listSkusCalls;
+      await runListingSync(port, { companyId: company.companyId, shopId: id });
+      expect(listSkusCalls).toBe(before + 1);
+      let s1 = await state();
+      expect(s1.failures).toBe(1);
+      expect(minutesAhead(s1.retry)).toBeGreaterThanOrEqual(59);
+      expect(minutesAhead(s1.retry)).toBeLessThanOrEqual(60);
+
+      // Chưa tới mốc: lượt sau không đọc trọn.
+      before = listSkusCalls;
+      await runListingSync(port, { companyId: company.companyId, shopId: id });
+      expect(listSkusCalls).toBe(before);
+
+      // Tới mốc mà vẫn lỗi: lần sau cách 2 giờ.
+      await testPool().query("update channel.shops set remote_skus_full_retry_at = now() - interval '1 minute' where id = $1", [id]);
+      await runListingSync(port, { companyId: company.companyId, shopId: id });
+      expect(listSkusCalls).toBe(before + 1);
+      s1 = await state();
+      expect(s1.failures).toBe(2);
+      expect(minutesAhead(s1.retry)).toBeGreaterThanOrEqual(119);
+      expect(minutesAhead(s1.retry)).toBeLessThanOrEqual(120);
+
+      // Tải lại không chờ mốc.
+      before = listSkusCalls;
+      expect((await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token)).status).toBe(409);
+      expect(listSkusCalls).toBe(before + 1);
+    } finally {
+      listSkusFails = false;
+    }
+    expect((await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token)).status).toBe(200);
+    expect(await state()).toEqual({ failures: 0, retry: null });
+  });
+
+  it('Review vòng 3 R1: giãn lần thử tối đa 24 giờ', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    await testPool().query(
+      "update channel.shops set remote_skus_synced_at = now() - interval '25 hours', remote_skus_full_failures = 9, remote_skus_full_retry_at = now() - interval '1 minute' where id = $1",
+      [id],
+    );
+    listSkusFails = true;
+    try {
+      await runListingSync(port, { companyId: company.companyId, shopId: id });
+    } finally {
+      listSkusFails = false;
+    }
+    const { rows } = await testPool().query('select remote_skus_full_failures as f, remote_skus_full_retry_at as r from channel.shops where id = $1', [id]);
+    expect(rows[0].f).toBe(10);
+    expect(Math.round((rows[0].r.getTime() - Date.now()) / 3600_000)).toBe(24);
   });
 
   it('Lần đọc trọn đã quá 24 giờ thì lượt định kỳ đọc trọn thay vì đọc theo giờ sửa', async () => {

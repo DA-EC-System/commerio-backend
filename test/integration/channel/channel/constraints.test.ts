@@ -73,6 +73,22 @@ describe('ràng buộc gian hàng', () => {
     await insert({ order_cutoff_at: now, opening_stock_mode: 'push' });
   });
 
+  it('mốc thử lại đọc trọn bản sao SKU sàn đi cùng số lần lỗi (review #309 vòng 3 R1)', async () => {
+    const insert = (cols: Record<string, unknown>) => {
+      const all = { company_id: randomUUID(), platform: 'lazada', external_shop_id: randomUUID(), shop_name: 'Shop', ...cols };
+      const keys = Object.keys(all);
+      return db().query(
+        `insert into channel.shops (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`,
+        Object.values(all),
+      );
+    };
+    await expect(insert({ remote_skus_full_failures: 1 })).rejects.toThrow(/"shops_remote_skus_retry"/);
+    await expect(insert({ remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_retry"/);
+    await expect(insert({ remote_skus_full_failures: -1, remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_retry"/);
+    await insert({ remote_skus_full_failures: 2, remote_skus_full_retry_at: new Date() });
+    await insert({});
+  });
+
   it('pg_trgm có sẵn cho gợi ý ghép theo tên (21 §18.7.5)', async () => {
     const r = await db().query<{ s: number }>("select similarity('Áo thun trắng', 'Áo thun trắng size M') as s");
     expect(r.rows[0]!.s).toBeGreaterThan(0.4);

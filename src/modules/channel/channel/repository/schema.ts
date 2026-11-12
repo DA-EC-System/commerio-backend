@@ -70,6 +70,12 @@ export const shops = channelSchema.table(
     remoteSkusSyncedAt: timestamp('remote_skus_synced_at', { withTimezone: true }),
     /** Mốc cho lần đọc "sản phẩm sửa từ lần trước" tiếp theo: giờ bắt đầu của lần làm mới bản sao gần nhất. */
     remoteSkusChangedSince: timestamp('remote_skus_changed_since', { withTimezone: true }),
+    /**
+     * Lượt đọc trọn định kỳ lỗi liên tiếp, và mốc sớm nhất được thử lại (1 giờ, 2 giờ, … tối đa 24 giờ; review #309 vòng 3
+     * R1). Đọc trọn được (kể cả Tải lại) thì về 0 / null. Tải lại không chờ mốc.
+     */
+    remoteSkusFullFailures: integer('remote_skus_full_failures').notNull().default(0),
+    remoteSkusFullRetryAt: timestamp('remote_skus_full_retry_at', { withTimezone: true }),
     /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
     openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
     /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
@@ -103,6 +109,10 @@ export const shops = channelSchema.table(
       sql`${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake')`,
     ),
     check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
+    check(
+      'shops_remote_skus_retry',
+      sql`${t.remoteSkusFullFailures} >= 0 and (${t.remoteSkusFullFailures} = 0) = (${t.remoteSkusFullRetryAt} is null)`,
+    ),
     // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
     check(
       'shops_allocation_pending',

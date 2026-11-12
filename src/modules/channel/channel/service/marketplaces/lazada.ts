@@ -51,6 +51,12 @@ const SKU_LIST_BATCH = 50;
 // GetMultipleOrderItems: "No more than 50 at a time" (open.lazada.com, tra 06/11/2026, #267).
 const ORDER_ITEMS_BATCH = 50;
 const MAX_PRODUCT_OFFSET = 10_000;
+/** Sản phẩm Lazada sớm nhất có thể có (sàn mở năm 2012): đầu khoảng ngày tạo của lần đọc trọn. */
+const LAZADA_EPOCH_MS = Date.UTC(2012, 0, 1);
+/** Trần số lời gọi của một lần đọc trọn chia theo ngày tạo (10000 sản phẩm ≈ 400 lá cộng các lần chia). */
+const MAX_WINDOW_CALLS = 2_000;
+const incomplete = (total: number, got: number) =>
+  new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${got}, thử lại sau`);
 // QueryTransactionDetails: mỗi lần tối đa 500 dòng, lật trang bằng `offset` (#117).
 const TXN_PAGE = 500;
 
@@ -549,39 +555,82 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    * `delivery_option_standard`, `Delivery_Option_Instant` = "Yes" khi không gửi (Documents/tich-hop-san/lazada.md §11.4),
    * nên gửi kèm giá trị cũ để không đổi cách giao người bán đã chọn.
    */
+  /** Một trang `/products/get` `filter=all`. `data` không phải object, `products` không phải mảng: `unexpected_response`. */
+  async function productPage(accessToken: string, extra: Record<string, string>, offset: number) {
+    const params = { access_token: accessToken, filter: 'all', limit: String(SKU_LIST_BATCH), offset: String(offset), ...extra };
+    const body = await call(config.apiUrl, '/products/get', params, 'GET');
+    if (typeof body.data !== 'object' || body.data === null || Array.isArray(body.data)) throw new MarketplaceError('rejected', 'unexpected_response');
+    const data = body.data as { products?: unknown; total_products?: unknown };
+    if (data.products !== undefined && !Array.isArray(data.products)) throw new MarketplaceError('rejected', 'unexpected_response');
+    const raw = data.total_products;
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+    return { products: (data.products ?? []) as LazadaProduct[], total: Number.isSafeInteger(n) && n >= 0 ? n : null };
+  }
+
   /**
-   * Mọi sản phẩm `filter=all` (sửa từ `since` khi có), lật `offset` 50 một trang tới trang thiếu. Phản hồi thành công mà
-   * `data` không phải object thì `rejected` `unexpected_response` (như `countRemote`), không coi là hết. Đọc trọn
-   * (`since` null): số sản phẩm khác nhau đọc được ít hơn `total_products` của trang đầu thì `rejected` `incomplete_list`,
-   * vì bản sao SKU sàn xoá SKU không thấy (review #309 vòng 2 N1). Đọc theo giờ sửa không kiểm tổng: tài liệu không nói
-   * `total_products` có theo `update_after` không, và đọc thiếu ở đây chỉ làm chậm cập nhật, không xoá gì.
+   * Sản phẩm sửa từ `since` (`update_after`), lật `offset`. Không kiểm tổng: tài liệu không nói `total_products` có theo
+   * `update_after` không, và đọc thiếu ở đây chỉ làm chậm cập nhật bản sao, không xoá gì.
    */
-  async function productsSince(accessToken: string, since: Date | null): Promise<LazadaProduct[]> {
+  async function productsChanged(accessToken: string, since: Date): Promise<LazadaProduct[]> {
     const out = new Map<string, LazadaProduct>();
-    let total: number | null = null;
     for (let offset = 0; ; offset += SKU_LIST_BATCH) {
       if (offset > MAX_PRODUCT_OFFSET) {
-        const what = since ? 'sản phẩm sửa từ mốc' : 'sản phẩm';
-        throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} ${what}, sàn không cho đọc hết`);
+        throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} sản phẩm sửa từ mốc, sàn không cho đọc hết`);
       }
-      const params: Record<string, string> = { access_token: accessToken, filter: 'all', limit: String(SKU_LIST_BATCH), offset: String(offset) };
-      if (since) params.update_after = vnTime(since);
-      const body = await call(config.apiUrl, '/products/get', params, 'GET');
-      if (typeof body.data !== 'object' || body.data === null || Array.isArray(body.data)) throw new MarketplaceError('rejected', 'unexpected_response');
-      const data = body.data as { products?: unknown; total_products?: unknown };
-      if (data.products !== undefined && !Array.isArray(data.products)) throw new MarketplaceError('rejected', 'unexpected_response');
-      const products = (data.products ?? []) as LazadaProduct[];
-      if (offset === 0) {
-        const raw = data.total_products;
-        const n = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
-        total = Number.isSafeInteger(n) && n >= 0 ? n : null;
-      }
+      const { products } = await productPage(accessToken, { update_after: vnTime(since) }, offset);
       for (const p of products) out.set(String(p.item_id), p);
-      if (products.length < SKU_LIST_BATCH) break;
+      if (products.length < SKU_LIST_BATCH) return [...out.values()];
     }
-    if (!since && total !== null && out.size < total) {
-      throw new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${out.size}, thử lại sau`);
-    }
+  }
+
+  /**
+   * Mọi sản phẩm `filter=all` cho lần đọc trọn (bản sao SKU sàn xoá SKU không thấy, nên không được trả thiếu).
+   *
+   * GetProducts (open.lazada.com, tra bằng trình duyệt 12/11/2026) không có tham số sắp xếp; về `offset` tài liệu ghi:
+   * "Deprecated(The number of Items you want to skip before you start counting),It is recommended to use date for scrolling
+   * query.The maximum offset is 10000", và `create_after` / `create_before`: "Limits the returned products to those
+   * created after or on the specified date" / "created before or on the specified date, given in ISO 8601 date format".
+   * Lật `offset` mà sàn đổi thứ tự giữa chừng (sản phẩm vừa sửa) thì sót hoặc trùng (review #309 vòng 3 R1). Vì vậy chia
+   * theo khoảng ngày tạo (không đổi theo thời gian): khoảng nào sàn báo quá 50 sản phẩm thì chia đôi, tới khi mỗi khoảng
+   * vừa một trang `offset` 0, nên không phụ thuộc thứ tự. Hai nửa dùng chung giây ở giữa (hai đầu đều lấy cả mốc, mốc tính
+   * theo giây còn giờ tạo có phần mili giây), sản phẩm trùng gộp theo `item_id`. Khoảng chỉ còn một giây mà vẫn quá 50
+   * (nhập hàng loạt) thì lật `offset` trong khoảng đó. Khoảng nào trả ít hơn `total_products` của nó thì `incomplete_list`.
+   * Gian hàng quá `MAX_PRODUCT_OFFSET` sản phẩm thì `too_many_products` như trước (giới hạn số lời gọi).
+   */
+  async function productsAll(accessToken: string): Promise<LazadaProduct[]> {
+    const out = new Map<string, LazadaProduct>();
+    let calls = 0;
+    const page = async (from: number, to: number, offset: number) => {
+      if (++calls > MAX_WINDOW_CALLS) throw new MarketplaceError('rejected', 'too_many_pages', 'Sàn trả quá nhiều trang sản phẩm');
+      return productPage(accessToken, { create_after: vnTime(new Date(from * 1000)), create_before: vnTime(new Date(to * 1000)) }, offset);
+    };
+    const walk = async (from: number, to: number, root: boolean): Promise<void> => {
+      const first = await page(from, to, 0);
+      const count = first.total ?? (first.products.length < SKU_LIST_BATCH ? first.products.length : null);
+      if (root && (count ?? 0) > MAX_PRODUCT_OFFSET) {
+        throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} sản phẩm, sàn không cho đọc hết`);
+      }
+      if (count !== null && count <= SKU_LIST_BATCH) {
+        if (new Set(first.products.map((p) => String(p.item_id))).size < count) throw incomplete(count, first.products.length);
+        for (const p of first.products) out.set(String(p.item_id), p);
+        return;
+      }
+      if (to - from >= 2) {
+        const mid = Math.floor((from + to) / 2);
+        await walk(from, mid, false);
+        await walk(mid, to, false);
+        return;
+      }
+      const seen = new Map(first.products.map((p) => [String(p.item_id), p]));
+      for (let offset = SKU_LIST_BATCH; ; offset += SKU_LIST_BATCH) {
+        const { products } = await page(from, to, offset);
+        for (const p of products) seen.set(String(p.item_id), p);
+        if (products.length < SKU_LIST_BATCH) break;
+      }
+      if (count !== null && seen.size < count) throw incomplete(count, seen.size);
+      for (const [id, p] of seen) out.set(id, p);
+    };
+    await walk(Math.floor(LAZADA_EPOCH_MS / 1000), Math.ceil(Date.now() / 1000), true);
     return [...out.values()];
   }
 
@@ -733,14 +782,14 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     // Lật `offset` (sàn không nói thứ tự khi lọc theo ngày nên không lật theo ngày được); bỏ sản phẩm đã xoá (#198).
     async listSkus(accessToken): Promise<RemoteSku[]> {
-      return (await productsSince(accessToken, null)).flatMap(skusOf).filter((s) => s.state !== 'deleted');
+      return (await productsAll(accessToken)).flatMap(skusOf).filter((s) => s.state !== 'deleted');
     },
     // GetProducts (open.lazada.com, tra 12/11/2026): "update_after String No Limits the returned products to those updated
     // after or on the specified date, given in ISO 8601 date format." Chỉ `filter=all` (không gồm sản phẩm đã xoá, gọi thật
     // 10/11/2026): không gọi thêm `filter=deleted` để giữ hạn mức gọi chung của app (review #309 vòng 2 N2); SKU đã xoá
     // trên sàn rời bản sao ở lần đọc trọn mỗi ngày hoặc khi bấm Tải lại.
     async listSkusChanged(accessToken, since): Promise<RemoteSku[]> {
-      return (await productsSince(accessToken, since)).flatMap(skusOf);
+      return (await productsChanged(accessToken, since)).flatMap(skusOf);
     },
     async updatePriceQuantity(accessToken, items) {
       const results: PerSkuResult[] = [];

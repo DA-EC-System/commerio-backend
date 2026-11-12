@@ -82,7 +82,25 @@ export async function dropRemoteSkusNotSeen(shopId: string, seenAt: Date): Promi
 export async function markRemoteSkus(shopId: string, marks: { syncedAt?: Date; changedSince: Date }): Promise<void> {
   await getDb()
     .update(shops)
-    .set({ ...(marks.syncedAt && { remoteSkusSyncedAt: marks.syncedAt }), remoteSkusChangedSince: marks.changedSince })
+    .set({
+      // Đọc trọn được thì xoá mốc giãn lần thử.
+      ...(marks.syncedAt && { remoteSkusSyncedAt: marks.syncedAt, remoteSkusFullFailures: 0, remoteSkusFullRetryAt: null }),
+      remoteSkusChangedSince: marks.changedSince,
+    })
+    .where(eq(shops.id, shopId));
+}
+
+/**
+ * Lượt đọc trọn định kỳ lỗi: tăng số lần lỗi, mốc thử lại = bây giờ + 1 giờ × 2^(số lần lỗi trước), tối đa 24 giờ
+ * (review #309 vòng 3 R1). Một câu UPDATE nên hai lượt không ghi đè nhau.
+ */
+export async function recordFullReadFailure(shopId: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({
+      remoteSkusFullFailures: sql`${shops.remoteSkusFullFailures} + 1`,
+      remoteSkusFullRetryAt: sql`now() + least(interval '1 hour' * power(2, least(${shops.remoteSkusFullFailures}, 10)), interval '24 hours')`,
+    })
     .where(eq(shops.id, shopId));
 }
 
