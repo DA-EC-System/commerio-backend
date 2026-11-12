@@ -159,7 +159,8 @@ async function adoptParcelDocument(
 ): Promise<DocumentRef | null> {
   const found = await findDocBySource('return_inspection', 'unmatched_parcel', parcelId);
   const row = found ? await findDoc(found.id, 'update') : undefined;
-  if (!row) return null;
+  // Phiếu của kiện đã huỷ hay bị từ chối thì không dùng lại: bên gọi lập phiếu mới cho yêu cầu (#202).
+  if (!row || (row.status !== 'draft' && row.status !== 'posted')) return null;
   const updated = await updateDoc(row.id, row.version, {
     sourceType: 'return_request',
     sourceId: requestId,

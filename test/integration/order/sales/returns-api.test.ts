@@ -7,6 +7,7 @@ import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/i
 import { ReceiveResult, ReturnListResponse, ReturnRequest, UnmatchedList, UnmatchedParcel } from '#src/modules/order/sales/api/return-schemas.ts';
 import { type ReturnStockPort, setReturnStockPort } from '#src/modules/order/sales/service/return-stock-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { onReturnInspected } from '#src/modules/order/sales/service/return-ingest.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -336,6 +337,9 @@ describe('kiện trả không khớp (§20)', () => {
     );
     expect(ev.rows).toHaveLength(1);
     expect(ev.rows[0].payload).toMatchObject({ orderId: r.orderId, shopId, lines: [{ variantId, resellable: 2 }] });
+    // Khép vòng: consumer của sales đóng yêu cầu khi nhận sự kiện
+    await withCompany(company.companyId, () => onReturnInspected({ payload: ev.rows[0].payload }));
+    expect((await detail(r.id)).status).toBe('closed');
   });
 
   it('có lines: lưu dòng, receiveBack nguồn unmatched_parcel với số quét (inventory đặt dự kiến = quét); gắn vào yêu cầu mở sau thì yêu cầu received', async () => {

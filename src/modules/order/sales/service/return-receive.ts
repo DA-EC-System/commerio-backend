@@ -58,7 +58,7 @@ async function receiveRequest(row: ReturnRow, actor: Actor, scanned: readonly Sc
   const lines = await findReturnLines([row.id]);
   // Dòng có kiện đã hoàn về kho (E109) không tính dự kiến: hàng của dòng đó đã kiểm một lần.
   const merged = mergeReceiveLines(lines.filter((l) => !l.packageReturned), scanned);
-  if (!merged.length) {
+  if (!merged.some((l) => l.expected > 0 || l.scanned > 0)) {
     // Dòng yêu cầu chưa ghép SKU và kho chưa quét món nào: phiếu kiểm hàng hoàn không có dòng để lập.
     throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
       errors: { lines: 'Yêu cầu chưa ghép SKU, quét món thực nhận vào lines' },
