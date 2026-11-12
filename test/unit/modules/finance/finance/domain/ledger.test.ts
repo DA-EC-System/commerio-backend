@@ -125,8 +125,8 @@ describe('khoản ngoài sàn, không vào lãi bán hàng (25 §10.1, §10.2; 2
     expect([...OFF_PLATFORM].sort()).toEqual(['cod_collected', 'opex', 'supplier_payment', 'supplier_refund']);
   });
 
-  it('không vào lãi bán hàng: khoản ngoài sàn và rút tiền; giá vốn vẫn vào lãi gộp', () => {
-    expect([...NOT_SALES_PROFIT].sort()).toEqual(['cod_collected', 'opex', 'supplier_payment', 'supplier_refund', 'withdrawal']);
+  it('không vào lãi gộp: khoản ngoài sàn, rút tiền, quảng cáo (lãi đóng góp = lãi gộp − quảng cáo); giá vốn vẫn vào', () => {
+    expect([...NOT_SALES_PROFIT].sort()).toEqual(['ads', 'cod_collected', 'opex', 'supplier_payment', 'supplier_refund', 'withdrawal']);
     expect(NOT_SALES_PROFIT.has('cogs')).toBe(false);
   });
 

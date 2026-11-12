@@ -55,6 +55,15 @@ describe('chạy thử cấu hình: lãi 30 ngày chỉ gồm lãi bán hàng', 
     expect(await profit30(c.ceo.token)).toBe(100000);
   });
 
+  it('quảng cáo không vào lãi gộp 30 ngày (25 §10.2 "Lãi đóng góp = lãi gộp − quảng cáo", §10.4); vẫn trừ vào số dư ví', async () => {
+    const c = await createCompany();
+    const shopId = randomUUID();
+    await entry(c.companyId, { kind: 'revenue', amount: '100000', shop_id: shopId });
+    await entry(c.companyId, { kind: 'ads', amount: '-20000', shop_id: shopId });
+    expect(await profit30(c.ceo.token)).toBe(100000);
+    expect(await totals(c.ceo.token)).toMatchObject({ platformBalance: 80000 });
+  });
+
   it('COD tự giao đã thu là khoản ngoài sàn (25 §10.1), kể cả khi gắn gian hàng: không vào lãi', async () => {
     const c = await createCompany();
     const shopId = randomUUID();
