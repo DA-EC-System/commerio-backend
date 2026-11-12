@@ -1,3 +1,0 @@
-ALTER TABLE "channel"."shops" ADD COLUMN "remote_skus_full_failures" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
-ALTER TABLE "channel"."shops" ADD COLUMN "remote_skus_full_retry_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_remote_skus_retry" CHECK ("channel"."shops"."remote_skus_full_failures" >= 0 and ("channel"."shops"."remote_skus_full_failures" = 0) = ("channel"."shops"."remote_skus_full_retry_at" is null));

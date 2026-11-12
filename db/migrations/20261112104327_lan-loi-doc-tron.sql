@@ -1,2 +1,0 @@
-ALTER TABLE "channel"."shops" ADD COLUMN "remote_skus_full_failed_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_remote_skus_failed_at" CHECK ("channel"."shops"."remote_skus_full_failures" = 0 or "channel"."shops"."remote_skus_full_failed_at" is not null);

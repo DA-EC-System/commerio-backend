@@ -68,3 +68,11 @@ export async function hasOrdersWithSellerSku(shopId: string, sellerSku: string):
     .limit(1);
   return Boolean(row);
 }
+
+/** Mốc kéo yêu cầu trả (#202): chỉ tiến, không lùi. */
+export async function advanceReturnCursor(shopId: string, at: Date): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ lastReturnSyncAt: sql`greatest(coalesce(${shops.lastReturnSyncAt}, ${at}), ${at})` })
+    .where(eq(shops.id, shopId));
+}

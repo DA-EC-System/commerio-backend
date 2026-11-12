@@ -1,6 +1,6 @@
 {
-  "id": "3dc75b3d-8a60-4702-b98d-127e4c18af83",
-  "prevId": "c1d1a0f9-e6cf-45ca-8ee6-84a26c7a3d9c",
+  "id": "ddb15b0d-8340-406a-bc22-73ba99432b97",
+  "prevId": "f84cf89a-52d1-42e1-bfc9-db580c55ed1f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1039,6 +1039,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_return_sync_at": {
+          "name": "last_return_sync_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "settlement_cursor": {
           "name": "settlement_cursor",
           "type": "timestamp with time zone",
@@ -1072,6 +1078,12 @@
         "opening_stock_mode": {
           "name": "opening_stock_mode",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unmatched_sku_count": {
+          "name": "unmatched_sku_count",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
@@ -7304,6 +7316,109 @@
       },
       "isRLSEnabled": false
     },
+    "order.unmatched_return_parcel_lines": {
+      "name": "unmatched_return_parcel_lines",
+      "schema": "order",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parcel_id": {
+          "name": "parcel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "variant_id": {
+          "name": "variant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "unmatched_return_parcel_lines_parcel_id_index": {
+          "name": "unmatched_return_parcel_lines_parcel_id_index",
+          "columns": [
+            {
+              "expression": "parcel_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "unmatched_return_parcel_lines_parcel_id_unmatched_return_parcels_id_fk": {
+          "name": "unmatched_return_parcel_lines_parcel_id_unmatched_return_parcels_id_fk",
+          "tableFrom": "unmatched_return_parcel_lines",
+          "tableTo": "unmatched_return_parcels",
+          "schemaTo": "order",
+          "columnsFrom": [
+            "parcel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "unmatched_return_parcel_lines_parcel_id_variant_id_unique": {
+          "name": "unmatched_return_parcel_lines_parcel_id_variant_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "parcel_id",
+            "variant_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "unmatched_return_parcel_lines_quantity": {
+          "name": "unmatched_return_parcel_lines_quantity",
+          "value": "\"order\".\"unmatched_return_parcel_lines\".\"quantity\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "order.unmatched_return_parcels": {
       "name": "unmatched_return_parcels",
       "schema": "order",
@@ -7365,6 +7480,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "inspection_id": {
+          "name": "inspection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inspection_number": {
+          "name": "inspection_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -7418,6 +7557,10 @@
       },
       "policies": {},
       "checkConstraints": {
+        "unmatched_return_parcels_resolved": {
+          "name": "unmatched_return_parcels_resolved",
+          "value": "(\"order\".\"unmatched_return_parcels\".\"status\" = 'open') = (\"order\".\"unmatched_return_parcels\".\"resolved_at\" is null)"
+        },
         "unmatched_return_parcels_attached": {
           "name": "unmatched_return_parcels_attached",
           "value": "(\"order\".\"unmatched_return_parcels\".\"status\" = 'attached') = (\"order\".\"unmatched_return_parcels\".\"return_request_id\" is not null)"
@@ -8378,6 +8521,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "external_line_id": {
+          "name": "external_line_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "package_returned": {
+          "name": "package_returned",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -8463,7 +8619,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "return_request_lines_request_id_order_line_id_unique": {
+          "name": "return_request_lines_request_id_order_line_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "request_id",
+            "order_line_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "return_request_lines_quantity": {
@@ -8533,6 +8698,14 @@
           "notNull": true,
           "default": "'requested'"
         },
+        "kind": {
+          "name": "kind",
+          "type": "return_kind",
+          "typeSchema": "order",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'return'"
+        },
         "close_result": {
           "name": "close_result",
           "type": "return_close_result",
@@ -8584,12 +8757,85 @@
           "primaryKey": false,
           "notNull": false
         },
+        "inspection_number": {
+          "name": "inspection_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "needs_attention": {
           "name": "needs_attention",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "attention_note": {
+          "name": "attention_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw_marketplace_status": {
+          "name": "raw_marketplace_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ofc_status": {
+          "name": "ofc_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dispute_in_progress": {
+          "name": "dispute_in_progress",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "return_to": {
+          "name": "return_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_updated_at": {
+          "name": "external_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reject_reason_id": {
+          "name": "reject_reason_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reject_reason_label": {
+          "name": "reject_reason_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "received_by": {
+          "name": "received_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refunded_at": {
+          "name": "refunded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_by": {
           "name": "created_by",
@@ -8688,6 +8934,18 @@
       },
       "policies": {},
       "checkConstraints": {
+        "return_requests_return_to": {
+          "name": "return_requests_return_to",
+          "value": "\"order\".\"return_requests\".\"return_to\" is null or \"order\".\"return_requests\".\"return_to\" in ('warehouse', 'merchant')"
+        },
+        "return_requests_received": {
+          "name": "return_requests_received",
+          "value": "\"order\".\"return_requests\".\"status\" not in ('received') or \"order\".\"return_requests\".\"received_at\" is not null"
+        },
+        "return_requests_refunded": {
+          "name": "return_requests_refunded",
+          "value": "\"order\".\"return_requests\".\"refunded\" = (\"order\".\"return_requests\".\"refunded_at\" is not null)"
+        },
         "return_requests_closed": {
           "name": "return_requests_closed",
           "value": "(\"order\".\"return_requests\".\"status\" = 'closed') = (\"order\".\"return_requests\".\"close_result\" is not null)"
@@ -12228,6 +12486,14 @@
         "inspected",
         "no_show",
         "buyer_cancelled"
+      ]
+    },
+    "order.return_kind": {
+      "name": "return_kind",
+      "schema": "order",
+      "values": [
+        "return",
+        "refund"
       ]
     },
     "order.return_status": {

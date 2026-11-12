@@ -451,6 +451,28 @@ export interface MarketplaceAdapter {
    * `listOrders`: lần đầu `cursor` null, `nextCursor` null là hết, trang có thể rỗng mà vẫn còn con trỏ.
    */
   listReturns?(accessToken: string, updatedAfter: Date, cursor: string | null): Promise<{ items: RemoteReturn[]; nextCursor: string | null }>;
+  /** Lý do người bán dùng được khi từ chối trả hàng hay từ chối hoàn tiền (#202, Documents/21 §20.1). */
+  returnReasons?(accessToken: string, externalReturnId: string, action: 'reject' | 'refuse-refund'): Promise<{ id: string; label: string; requiresImage: boolean }[]>;
+  /**
+   * Người bán quyết yêu cầu trả (#202): `accept` đồng ý trả hàng, `reject` từ chối (cần `reasonId`), `refund` hoàn tiền
+   * cho khách giữ hàng. Kết quả về app qua lượt kéo yêu cầu trả kế tiếp.
+   */
+  decideReturn?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+    decision: 'accept' | 'reject' | 'refund',
+    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+  ): Promise<void>;
+  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
+  returnHistory?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+  ): Promise<{ at: Date; reverseStatus: string; ofcStatus: string | null; note: string | null }[]>;
   /**
    * Lần huỷ đơn (khách xin huỷ, người bán, sàn huỷ) có cập nhật từ `updatedAfter`, lật trang như `listReturns`. Huỷ không vào
    * bảng yêu cầu trả: khách xin huỷ là cờ `cancel_requested` của đơn (Documents/21 §20.1).
@@ -483,7 +505,12 @@ export type RemoteReturnStatus = 'requested' | 'rejected' | 'refund_only' | 'awa
 
 /** Một món trong yêu cầu trả hay lần huỷ của sàn. Tiền là chuỗi thập phân, trống là null. */
 export interface RemoteAftersaleLine {
+  /** Mã món của đơn (khớp `order_lines.external_line_id`). */
   externalLineId: string;
+  /** Mã dòng đơn ngược của sàn khi khác mã món (Lazada `reverse_order_line_id`, dùng khi quyết trên sàn, #202). */
+  externalReturnLineId?: string | null;
+  /** Số món của dòng; không có là 1 (mỗi món một dòng). */
+  quantity?: number;
   externalSkuId: string | null;
   sellerSku: string | null;
   refundAmount: string | null;
@@ -522,6 +549,10 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
+  ofcStatus?: string | null;
+  /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
+  returnTo?: 'warehouse' | 'merchant' | null;
 }
 
 /**

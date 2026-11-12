@@ -54,7 +54,7 @@ export const EVENT_SCHEMAS = {
     countedAt: timestamp,
     lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
   }),
-  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, mục 11.2); kiện hoàn không phát.
+  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (Documents/21 §11.2; #208 phát, #202 nghe để đóng yêu cầu); kiện hoàn không phát.
   'inventory.return_inspected': z.object({
     inspectionId: id,
     orderId: id,
@@ -89,6 +89,14 @@ export const EVENT_SCHEMAS = {
     source: z.enum(['marketplace', 'inbox', 'manual']),
     /** `platform`: sàn huỷ; `seller`: người bán huỷ trong app. */
     by: z.enum(['platform', 'seller']),
+  }),
+  // Tiền hoàn cho khách theo yêu cầu trả (§11.2, #202): `refund_only` duyệt, hoặc đóng sau kiểm hàng hoàn.
+  'sales.return_refunded': z.object({
+    returnRequestId: id,
+    orderId: id,
+    shopId: id.nullable(),
+    refundAmount: money,
+    refundedAt: timestamp,
   }),
   'fulfillment.package_status_changed': z.object({
     packageId: id,

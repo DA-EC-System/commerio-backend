@@ -4,6 +4,7 @@ import { getStatusHistory } from '../../../core/index.ts';
 import { getVariants } from '../../../product/index.ts';
 import { findPackagesOfOrders, type PackageOrderRef, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import type { MarketplaceReturns } from './marketplace-returns.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { completionBlocker, isDueSoon, type OrderFlag, type OrderStage, RETURN_WINDOW_DAYS, stageOf } from '../domain/order.ts';
@@ -34,6 +35,8 @@ export interface MarketplaceOrders {
 export interface SalesContext extends ModuleContext {
   readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, ShopRef>>;
   readonly marketplaceOrders?: MarketplaceOrders;
+  /** Thao tác yêu cầu trả trên sàn (#202). */
+  readonly marketplaceReturns?: MarketplaceReturns;
 }
 
 const toInt = (money: string | null) => (money === null ? 0 : new Decimal(money).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber());
