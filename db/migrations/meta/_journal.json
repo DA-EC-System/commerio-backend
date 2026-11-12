@@ -260,6 +260,20 @@
       "when": 1794448373563,
       "tag": "20261112015253_chuoi-phieu-kho-quyet-toan",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794474517410,
+      "tag": "20261112090837_yeu-cau-tra",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794474528308,
+      "tag": "20261112090848_rls-dong-kien-tra-la",
+      "breakpoints": true
     }
   ]
 }

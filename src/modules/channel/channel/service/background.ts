@@ -2,9 +2,11 @@
 import { HoldJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { findShopRow, recordOpenOrderPullError } from '../repository/shops.ts';
 import { pushPending, syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
+import { pullShopReturns } from './return-pull.ts';
 import type { ProductPort } from './product-port.ts';
 import type { ShopJob } from './shop-jobs.ts';
 import { stopShopJobs } from './shop-jobs.ts';
@@ -50,7 +52,18 @@ export async function runStockPush(port: ProductPort, job: ShopJob): Promise<voi
 }
 
 export function runOrderPull(job: ShopJob): Promise<void> {
-  return onActiveShop(job, 'kéo đơn', () => pullShopOrders(job.companyId, job.shopId));
+  // Yêu cầu trả kéo sau đơn (#202): đơn mới về trước thì yêu cầu của nó gắn được ngay trong lượt.
+  return onActiveShop(job, 'kéo đơn', async () => {
+    await pullShopOrders(job.companyId, job.shopId);
+    try {
+      await pullShopReturns(job.companyId, job.shopId);
+    } catch (err) {
+      // Lỗi kéo yêu cầu trả không làm hỏng lượt kéo đơn (lượt sau kéo lại từ mốc cũ); mất token, gian hàng ngắt thì
+      // `onActiveShop` xử lý như kéo đơn.
+      if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+      logger.warn({ err, shopId: job.shopId }, 'kéo yêu cầu trả lỗi');
+    }
+  });
 }
 
 /** Lỗi khác mất token, ngắt gian hàng thì ghi `last_error` rồi ném tiếp để pg-boss thử lại (#198 P3). */

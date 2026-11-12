@@ -24,6 +24,7 @@ import {
   type SettlementTxn,
   type TokenSet,
 } from './common.ts';
+import { lazadaReturnMethods } from './lazada-returns.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -558,6 +559,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   }
 
   return {
+    // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
+    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
     name: 'Lazada',
     capabilities: LAZADA_CAPABILITIES,
     connectMethods() {

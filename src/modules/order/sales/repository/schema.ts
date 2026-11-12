@@ -198,6 +198,8 @@ export const returnStatus = salesSchema.enum('return_status', [
   'closed',
 ]);
 export const returnCloseResult = salesSchema.enum('return_close_result', ['inspected', 'no_show', 'buyer_cancelled']);
+/** `return`: khách gửi trả hàng rồi mới hoàn tiền; `refund`: chỉ hoàn tiền, khách giữ hàng (Lazada `ONLY_REFUND`). */
+export const returnKind = salesSchema.enum('return_kind', ['return', 'refund']);
 
 /**
  * Khách trả sau khi đã nhận. Đơn sàn: do sàn đẩy về, khoá (gian hàng, mã yêu cầu sàn); đơn tạo tay: Sale lập.
@@ -216,6 +218,7 @@ export const returnRequests = salesSchema.table(
     shopId: uuid('shop_id'),
     externalReturnId: text('external_return_id'),
     status: returnStatus('status').notNull().default('requested'),
+    kind: returnKind('kind').notNull().default('return'),
     closeResult: returnCloseResult('close_result'),
     reason: text('reason').notNull(),
     statusReason: text('status_reason'),
@@ -224,7 +227,20 @@ export const returnRequests = salesSchema.table(
     refunded: boolean('refunded').notNull().default(false),
     resellCost: money('resell_cost'),
     inspectionId: uuid('inspection_id'),
+    inspectionNumber: text('inspection_number'),
     needsAttention: boolean('needs_attention').notNull().default(false),
+    attentionNote: text('attention_note'),
+    // Thông tin sàn, chỉ để hiện (Documents/21 §20.1, R11); null với yêu cầu tạo tay (#202).
+    rawMarketplaceStatus: text('raw_marketplace_status'),
+    ofcStatus: text('ofc_status'),
+    disputeInProgress: boolean('dispute_in_progress').notNull().default(false),
+    returnTo: text('return_to'),
+    externalUpdatedAt: timestamp('external_updated_at', { withTimezone: true }),
+    rejectReasonId: text('reject_reason_id'),
+    rejectReasonLabel: text('reject_reason_label'),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+    receivedBy: uuid('received_by'),
+    refundedAt: timestamp('refunded_at', { withTimezone: true }),
     createdBy: uuid('created_by'),
     ...timestamps,
     ...version,
@@ -232,6 +248,9 @@ export const returnRequests = salesSchema.table(
   (t) => [
     unique().on(t.companyId, t.code),
     unique().on(t.shopId, t.externalReturnId),
+    check('return_requests_return_to', sql`${t.returnTo} is null or ${t.returnTo} in ('warehouse', 'merchant')`),
+    check('return_requests_received', sql`${t.status} not in ('received') or ${t.receivedAt} is not null`),
+    check('return_requests_refunded', sql`${t.refunded} = (${t.refundedAt} is not null)`),
     index().on(t.orderId),
     index().on(t.status),
     check('return_requests_closed', sql`(${t.status} = 'closed') = (${t.closeResult} is not null)`),
@@ -261,11 +280,16 @@ export const returnRequestLines = salesSchema.table(
     unitPrice: money('unit_price').notNull(),
     unitCost: money('unit_cost'),
     resellQty: integer('resell_qty'),
+    /** Mã dòng đơn ngược của sàn (Lazada `reverse_order_line_id`). */
+    externalLineId: text('external_line_id'),
+    /** Kiện của dòng đã hoàn về kho trước khi sàn mở yêu cầu (E109): hàng về theo yêu cầu đi như kiện không khớp. */
+    packageReturned: boolean('package_returned').notNull().default(false),
     ...timestamps,
     ...version,
   },
   (t) => [
     index().on(t.requestId),
+    unique().on(t.requestId, t.orderLineId),
     index().on(t.orderLineId),
     check('return_request_lines_quantity', sql`${t.quantity} > 0`),
     check('return_request_lines_resell', sql`${t.resellQty} >= 0 and ${t.resellQty} <= ${t.quantity}`),

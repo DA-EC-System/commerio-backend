@@ -32,7 +32,9 @@ setProductPort(port);
 const sàn = {
   skusUnauthorized: false,
   ordersUnauthorized: false,
+  returnsError: null as MarketplaceError | null,
   listOrders: vi.fn(),
+  listReturns: vi.fn(),
   refresh: vi.fn(async (refreshToken: string): Promise<TokenSet> => ({
     accessToken: `tok-new-${refreshToken}`,
     refreshToken,
@@ -60,6 +62,11 @@ registerAdapter(
     getOrder: async () => {
       throw new Error('không có đơn nào để gọi chi tiết');
     },
+    async listReturns() {
+      sàn.listReturns();
+      if (sàn.returnsError) throw sàn.returnsError;
+      return { items: [], nextCursor: null };
+    },
   }),
 );
 afterAll(async () => {
@@ -70,6 +77,8 @@ afterAll(async () => {
 beforeEach(() => {
   sàn.skusUnauthorized = false;
   sàn.ordersUnauthorized = false;
+  sàn.returnsError = null;
+  sàn.listReturns.mockClear();
   sàn.refresh.mockClear();
   sàn.listOrders.mockClear();
 });
@@ -195,6 +204,22 @@ describe('kéo đơn qua hàng việc (#102 AC-8)', () => {
     await expect(runOrderPull(data)).rejects.toBeInstanceOf(HoldJob);
     expect(await shopStatus(shopId)).toMatchObject({ status: 'needs_reauth' });
     expect(await schedules(shopId)).toEqual([]);
+  });
+
+  it('#202: kéo yêu cầu trả lỗi tạm thì không làm hỏng lượt kéo đơn', async () => {
+    const { data } = await activeShop();
+    sàn.returnsError = new MarketplaceError('unavailable', 'SYSTEM', 'Sàn bận');
+    await expect(runOrderPull(data)).resolves.toBeUndefined();
+    expect(sàn.listOrders).toHaveBeenCalled();
+    expect(sàn.listReturns).toHaveBeenCalled();
+  });
+
+  it('#202: kéo yêu cầu trả bị từ chối token thì vẫn needs_reauth như kéo đơn', async () => {
+    const { shopId, data } = await activeShop();
+    await startShopJobs(data.companyId, shopId);
+    sàn.returnsError = new MarketplaceError('unauthorized', 'IllegalAccessToken', 'Invalid token');
+    await expect(runOrderPull(data)).rejects.toBeInstanceOf(HoldJob);
+    expect(await shopStatus(shopId)).toMatchObject({ status: 'needs_reauth' });
   });
 });
 

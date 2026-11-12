@@ -53,3 +53,11 @@ export async function advanceOrderCursor(shopId: string, at: Date): Promise<void
     .set({ lastOrderSyncAt: sql`greatest(coalesce(${shops.lastOrderSyncAt}, ${at}), ${at})` })
     .where(eq(shops.id, shopId));
 }
+
+/** Mốc kéo yêu cầu trả (#202): chỉ tiến, không lùi. */
+export async function advanceReturnCursor(shopId: string, at: Date): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ lastReturnSyncAt: sql`greatest(coalesce(${shops.lastReturnSyncAt}, ${at}), ${at})` })
+    .where(eq(shops.id, shopId));
+}
