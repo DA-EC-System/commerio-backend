@@ -354,7 +354,9 @@ async function afterInspection(row: DocRow, lines: readonly DocLineRow[], actorI
       note: `Hàng trả NCC từ ${row.number}`,
     });
   }
-  if (row.sourceType === 'return_request' && row.orderId) {
+  // Chỉ đơn sàn có gian hàng: `return_inspected.shopId` không null (Documents/21 §11.2). Đơn ngoài sàn không có dòng giá
+  // vốn trong sổ tiền (`package_delivered` cũng buộc gian hàng; MVP chỉ bán trên sàn, Documents/25 §0) nên không phát.
+  if (row.sourceType === 'return_request' && row.orderId && row.shopId) {
     await publishEvent({
       type: 'inventory.return_inspected',
       aggregateId: row.id,
