@@ -10,6 +10,7 @@ import { toDong } from '../domain/stock.ts';
 import { allLevels, findLevel, latestMoves, lockLevel, type MoveRow, setMinQty } from '../repository/levels.ts';
 import { documentHeads } from '../repository/move-sources.ts';
 import { recheckThresholds } from './thresholds.ts';
+import { lockedOf } from './port.ts';
 import {
   type IncomingLookup,
   namesOf,
@@ -43,9 +44,10 @@ export async function listStock(
     const variants = await getVariants();
     const levels = await allLevels();
     const incoming = await incomingOf();
+    const locks = await lockedOf();
     const all = variants
       .filter((v) => !v.archived || (levels.get(v.id)?.onHand ?? 0) !== 0 || (levels.get(v.id)?.quarantine ?? 0) !== 0)
-      .map((v) => toStockLevel(v, levels.get(v.id), viewer, incoming.get(v.id) ?? 0))
+      .map((v) => toStockLevel(v, levels.get(v.id), viewer, incoming.get(v.id) ?? 0, locks.get(v.id) ?? 0))
       .sort((a, b) => a.productName.localeCompare(b.productName, 'vi') || a.sku.localeCompare(b.sku, 'vi'));
     const search = q.search?.toLowerCase();
     const items = all.filter(
@@ -91,7 +93,8 @@ export async function getStock(lookups: StockLookups, viewer: Viewer, variantId:
   return withCompany(viewer.companyId, async () => {
     const variant = await ownVariant(variantId);
     const incoming = (await lookups.incomingOf([variant.id])).get(variant.id) ?? 0;
-    const level = toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming);
+    const locked = (await lockedOf([variant.id])).get(variant.id) ?? 0;
+    const level = toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming, locked);
     const moves = await latestMoves(variant.id, MOVES_LIMIT);
     const names = await namesOf(moves.map((m) => m.doneBy));
     const documentOf = await moveDocuments(moves, lookups.purchaseNumbers);
@@ -158,12 +161,13 @@ export async function setReorderRule(
   return withCompany(viewer.companyId, async () => {
     const variant = await ownVariant(variantId);
     const incoming = (await incomingOf([variant.id])).get(variant.id) ?? 0;
+    const locked = (await lockedOf([variant.id])).get(variant.id) ?? 0;
     // Chưa có dòng tồn thì `reorderVersion` là 0 (FE gửi 0); dòng vừa tạo để khoá mang `version` 1.
     const level = await lockLevel(variant.id);
     const currentVersion = level.created ? 0 : level.version;
     if (currentVersion !== input.version) {
       throw new AppError(409, 'version_conflict', 'Ngưỡng tồn vừa được người khác sửa. Xem lại số mới rồi lưu lại', {
-        current: toStockLevel(variant, level, viewer, incoming),
+        current: toStockLevel(variant, level, viewer, incoming, locked),
       });
     }
     if (level.minQty !== input.minQty) {
@@ -180,6 +184,6 @@ export async function setReorderRule(
       // Đặt ngưỡng khi đã ở dưới thì báo ngay; bỏ ngưỡng thì tắt cờ (V31).
       await recheckThresholds([variant.id]);
     }
-    return toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming);
+    return toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming, locked);
   });
 }

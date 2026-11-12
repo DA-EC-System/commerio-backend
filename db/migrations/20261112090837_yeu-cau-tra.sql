@@ -1,3 +1,4 @@
+CREATE TYPE "order"."return_kind" AS ENUM('return', 'refund');--> statement-breakpoint
 CREATE TABLE "order"."unmatched_return_parcel_lines" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
@@ -16,6 +17,8 @@ ALTER TABLE "order"."unmatched_return_parcels" ADD COLUMN "inspection_number" te
 ALTER TABLE "order"."unmatched_return_parcels" ADD COLUMN "resolved_by" uuid;--> statement-breakpoint
 ALTER TABLE "order"."unmatched_return_parcels" ADD COLUMN "resolved_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "order"."return_request_lines" ADD COLUMN "external_line_id" text;--> statement-breakpoint
+ALTER TABLE "order"."return_request_lines" ADD COLUMN "package_returned" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."return_requests" ADD COLUMN "kind" "order"."return_kind" DEFAULT 'return' NOT NULL;--> statement-breakpoint
 ALTER TABLE "order"."return_requests" ADD COLUMN "inspection_number" text;--> statement-breakpoint
 ALTER TABLE "order"."return_requests" ADD COLUMN "attention_note" text;--> statement-breakpoint
 ALTER TABLE "order"."return_requests" ADD COLUMN "raw_marketplace_status" text;--> statement-breakpoint

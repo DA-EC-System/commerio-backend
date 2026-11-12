@@ -10,6 +10,9 @@ import {
   marketplaceCancelReasons,
   marketplaceDecideCancel,
   marketplaceReturns,
+  marketplaceShipPackage,
+  marketplaceSplitAttributes,
+  marketplaceSplitOrder,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
@@ -26,7 +29,7 @@ import type { ModuleContext } from './shared/module.ts';
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns'>> &
-  Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf'>> &
+  Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData'>>;
 
 export function createModuleContext(): AppContext {
@@ -42,6 +45,8 @@ export function createModuleContext(): AppContext {
     marketplaceReturns,
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
+    // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.
+    marketplacePackages: { splitAttributes: marketplaceSplitAttributes, split: marketplaceSplitOrder, ship: marketplaceShipPackage },
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
   };

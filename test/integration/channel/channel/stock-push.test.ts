@@ -96,7 +96,7 @@ describe('đẩy tồn bằng số có thể bán của inventory', () => {
     updatePriceQuantity.mockImplementationOnce(async (_t, items) => {
       // Phiếu kho giảm tồn trong lúc chờ sàn: consumer đánh dấu lại pending.
       await setBuckets(company.companyId, variantId, { onHand: 1 });
-      await withCompany(company.companyId, () => markStockPending(variantId));
+      await withCompany(company.companyId, () => markStockPending([variantId]));
       return items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true }));
     });
     await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));

@@ -4,7 +4,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findShopRow, recordOpenOrderPullError } from '../repository/shops.ts';
-import { syncListings } from './listing-sync.ts';
+import { pushPending, syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
 import { pullShopReturns } from './return-pull.ts';
 import type { ProductPort } from './product-port.ts';
@@ -37,6 +37,18 @@ async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknow
 
 export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
   return onActiveShop(job, 'đồng bộ listing', () => syncListings(port, job.companyId, job.shopId));
+}
+
+/**
+ * Đẩy tồn, giá đang chờ (#223). Mất uỷ quyền thì không giữ việc: listing vẫn `stock_sync = pending`, nối lại thì lượt
+ * `channel.listing_sync` lấy đơn, đối chiếu rồi mới đẩy (25 E28); việc giữ chạy lại lúc nối sẽ đẩy trước khi lấy đơn.
+ */
+export async function runStockPush(port: ProductPort, job: ShopJob): Promise<void> {
+  try {
+    await onActiveShop(job, 'đẩy tồn', () => pushPending(port, job.companyId, job.shopId));
+  } catch (err) {
+    if (!(err instanceof HoldJob)) throw err;
+  }
 }
 
 export function runOrderPull(job: ShopJob): Promise<void> {

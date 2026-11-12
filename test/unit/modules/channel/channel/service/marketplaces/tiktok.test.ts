@@ -279,8 +279,8 @@ describe('adapter TikTok: SKU', () => {
     );
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
     expect(skus).toEqual([
-      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, imageUrl: 'https://img.test/1.jpg', state: 'live', rejectReason: null, quantity: 7 },
-      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, imageUrl: null, state: 'review', rejectReason: null, quantity: 0 },
+      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, imageUrl: 'https://img.test/1.jpg', state: 'live', rejectReason: null, quantity: 7, sellableQuantity: 7 },
+      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, imageUrl: null, state: 'review', rejectReason: null, quantity: 0, sellableQuantity: 0 },
     ]);
     expect(urlOf(fetchFn, 0).searchParams.has('page_token')).toBe(false);
     expect(urlOf(fetchFn, 1).searchParams.get('page_token')).toBe('p2');

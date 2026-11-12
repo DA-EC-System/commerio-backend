@@ -1,12 +1,13 @@
 // Trạng thái tiền của đơn và khớp sao kê cho người dùng (#117; Documents/21 §21.2, §21.3): danh sách, chi tiết, chốt
 // lệch (người khác người soạn cấu hình phí; lệch vượt hạn mức tự chốt cần CEO duyệt trước), CEO duyệt, khớp ngân hàng.
+import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { assertTransition, canSelfApprove, getStatusHistory, recordTransition } from '../../../core/index.ts';
 import { vnDate } from '../domain/config-version.ts';
 import type { LedgerKind } from '../domain/ledger.ts';
 import { needsCeoApproval, settlementMachine, type SettlementState, type Threshold } from '../domain/settlement.ts';
-import { entriesOfOrder, entriesToMatch, findEntry, insertBankMatch } from '../repository/ledger.ts';
+import { entriesOfOrder, entriesToMatch, findEntry, insertBankMatch, withholdingOf } from '../repository/ledger.ts';
 import {
   countByStatus,
   findOrderSettlement,
@@ -37,7 +38,16 @@ async function feeAuthorOf(shopId: string | null, now: Date) {
 type Names = Map<string, Promise<{ id: string; name: string } | null>>;
 
 /** `OrderPayment` của §21.2. */
-async function view(row: OrderSettlementRow, orders: Orders, t: Threshold, names: Names, now: Date) {
+type Withholding = Awaited<ReturnType<typeof withholdingOf>>;
+
+/** Cờ của trạng thái tiền: `tax_mismatch` khi thuế sàn trừ thực tế khác thuế app ước tính từ 1 đồng (E135, #250). */
+function flagsOf(orderId: string, wht: Withholding): 'tax_mismatch'[] {
+  const w = wht.get(orderId);
+  if (!w || w.actual === null) return [];
+  return new Decimal(w.actual).minus(w.estimated).abs().greaterThanOrEqualTo(1) ? ['tax_mismatch'] : [];
+}
+
+async function view(row: OrderSettlementRow, orders: Orders, t: Threshold, names: Names, now: Date, wht: Withholding) {
   const author = await feeAuthorOf(row.shopId, now);
   const pendingCeo = row.status === 'mismatch' && row.diff !== null && needsCeoApproval(row.diff, row.resolvedDiffBase, t) && !row.approvedBy;
   return {
@@ -61,6 +71,7 @@ async function view(row: OrderSettlementRow, orders: Orders, t: Threshold, names
           }
         : null,
     feeConfigAuthor: await userRef(author, names),
+    flags: flagsOf(row.orderId, wht),
     version: row.version,
   };
 }
@@ -71,8 +82,9 @@ export function listPayments(companyId: string, q: { status?: SettlementState; s
     const orders = await ordersOf(rows.map((r) => r.orderId));
     const t = await currentThreshold(now);
     const names: Names = new Map();
+    const wht = await withholdingOf(rows.map((r) => r.orderId));
     return {
-      items: await Promise.all(rows.map((r) => view(r, orders, t, names, now))),
+      items: await Promise.all(rows.map((r) => view(r, orders, t, names, now, wht))),
       total,
       page: q.page,
       pageSize: q.pageSize,
@@ -85,7 +97,7 @@ async function detail(row: OrderSettlementRow, canSeeCost: boolean, now: Date) {
   const orders = await ordersOf([row.orderId]);
   const lines = (await entriesOfOrder(row.orderId)).filter((l) => canSeeCost || (l.kind !== 'cogs' && l.kind !== 'cogs_reversal'));
   return {
-    ...(await view(row, orders, await currentThreshold(now), new Map(), now)),
+    ...(await view(row, orders, await currentThreshold(now), new Map(), now, await withholdingOf([row.orderId]))),
     statusHistory: await getStatusHistory(SETTLEMENT_ENTITY, row.orderId),
     lines: await lineViews(lines, orders),
   };

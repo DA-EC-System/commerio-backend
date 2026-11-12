@@ -54,7 +54,7 @@ export const EVENT_SCHEMAS = {
     countedAt: timestamp,
     lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
   }),
-  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (Documents/21 §11.2; #208 phát, #202 nghe để đóng yêu cầu).
+  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (Documents/21 §11.2; #208 phát, #202 nghe để đóng yêu cầu); kiện hoàn không phát.
   'inventory.return_inspected': z.object({
     inspectionId: id,
     orderId: id,
@@ -200,6 +200,8 @@ export const EVENT_SCHEMAS = {
   }),
   // Đề nghị nhập gửi (hoặc gửi lại) CEO duyệt (#108).
   'purchasing.request_submitted': z.object({ requestId: id, number: z.string() }),
+  // NCC hoàn tiền phiếu trả (#210, Documents/21 mục 11.2); sổ tiền nghe ở #228.
+  'purchasing.supplier_return_refunded': z.object({ supplierReturnId: id, supplierId: id, refundAmount: money, recordedAt: timestamp }),
   // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý.
   'purchasing.goods_receipt_posted': z.object({
     receiptId: id,

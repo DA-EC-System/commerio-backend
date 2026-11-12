@@ -163,6 +163,7 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
   return skus.map((s) => {
     const sellerSku = typeof s.seller_sku === 'string' ? s.seller_sku : '';
     const variantLabel = details?.labels.get(String(s.id)) ?? null;
+    const quantity = ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
     return {
       externalProductId: String(p.id),
       externalSkuId: String(s.id),
@@ -173,7 +174,9 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
       state: tiktokRemoteState(status, s),
       rejectReason: null,
       // Tổng tồn ở các kho của SKU (`inventory[].quantity`).
-      quantity: ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0),
+      quantity,
+      // "The SKU quantity available in the warehouse": cùng nghĩa với số app đẩy, dùng để đối chiếu (#223).
+      sellableQuantity: quantity,
     };
   });
 }
