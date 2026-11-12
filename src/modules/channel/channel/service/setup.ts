@@ -320,6 +320,8 @@ export async function finishSetup(
         openingStockMode: input.openingStock,
         openOrdersPulledAt: null,
         stockPushedAt: null,
+        // Mốc lấy đơn mới: lượt lấy đơn đầu tiên đặt lại (#223).
+        ordersPulledOkAt: null,
         ...returnWindowDays,
       },
     );

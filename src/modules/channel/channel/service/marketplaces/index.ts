@@ -7,7 +7,7 @@ import { TIKTOK_RATE_LIMIT } from './tiktok-client.ts';
 import { createTiktokAdapter } from './tiktok.ts';
 
 export type * from './common.ts';
-export { MarketplaceError } from './common.ts';
+export { MarketplaceError, PROMOTION_LOCKED } from './common.ts';
 
 const lazada = createLazadaAdapter({
   appKey: env.LAZADA_APP_KEY,

@@ -93,6 +93,12 @@ export const shops = channelSchema.table(
      * nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
      */
     allocationStocktakeId: uuid('allocation_stocktake_id'),
+    /**
+     * Giờ bắt đầu của lượt lấy đơn gần nhất chạy xong trọn (không lỗi, không còn trang), không lùi (#223). Mất uỷ quyền,
+     * chưa có mốc này hoặc mốc cũ hơn `ORDERS_STALE_MS` là "đơn chưa cập nhật": SKU có listing trên gian hàng này không
+     * được cập nhật tồn lên mọi gian hàng của công ty (`domain/shop.ts` `ordersStale`; Documents/19 `shops`, 21 §18.6.6).
+     */
+    ordersPulledOkAt: timestamp('orders_pulled_ok_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
@@ -123,6 +129,9 @@ export const shops = channelSchema.table(
       'shops_allocation_pending',
       sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
     ),
+    check('shops_orders_pulled_ok_at', sql`${t.ordersPulledOkAt} is null or ${t.orderCutoffAt} is not null`),
+    // Mất uỷ quyền thì xoá mốc: nối lại là "đơn chưa cập nhật" tới khi lấy đơn xong trọn (25 E28, #223).
+    check('shops_reauth_orders_pulled', sql`${t.status} <> 'needs_reauth' or ${t.ordersPulledOkAt} is null`),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],
@@ -385,4 +394,49 @@ export const apiUsage = channelSchema.table(
     calls: integer('calls').notNull(),
   },
   (t) => [primaryKey({ columns: [t.platform, t.day] })],
+);
+
+/**
+ * Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền đã xếp (#312, Documents/19). Mỗi dòng là một thư cho CEO, Admin.
+ * `deadline` là hạn đang tính: `expiring_3d`, `expiring_1d` lấy hạn gần hơn trong `auth_expires_at`, `refresh_expires_at`;
+ * `lost` lấy lúc chuyển sang `needs_reauth` (`core.state_transitions`), `seq` là nhịp 6 giờ thứ mấy kể từ lúc đó.
+ * Chống trùng ép ở CSDL, dù việc nền chạy lại hay chạy trùng:
+ * - unique `(shop_id, deadline, stage, seq)`;
+ * - EXCLUDE `shop_reauth_mails_deadline_drift` (migration viết tay, Drizzle không sinh được): hai thư trước hạn cùng gian
+ *   hàng, cùng mốc mà hạn cách nhau dưới 1 giờ là một mốc. Hạn tính lại từ "số giây còn lại" sau mỗi lần làm mới token
+ *   lệch vài mili giây tới vài giây; hạn gia hạn thật hay nối lại thì cách xa, tính lại từ đầu.
+ * Kết quả gửi: `outcome` null là chưa xong (`sent` đã gửi, `stale` bỏ vì gian hàng đã đổi hoặc mốc sau đã thay, `failed`
+ * lỗi vĩnh viễn, không có người nhận, hoặc hết lượt xếp lại). `attempts` là số lần đã phát sự kiện, `queued_at` lần
+ * phát gần nhất: việc nền phát lại thư chưa xong khi outbox đã bỏ cuộc (SMTP hỏng lâu). `commerio_app` chỉ UPDATE được
+ * bốn cột kết quả, không DELETE (migration viết tay).
+ */
+export const shopReauthMails = channelSchema.table(
+  'shop_reauth_mails',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id),
+    stage: text('stage').$type<'expiring_3d' | 'expiring_1d' | 'lost'>().notNull(),
+    deadline: timestamp('deadline', { withTimezone: true }).notNull(),
+    seq: integer('seq').notNull().default(0),
+    outcome: text('outcome').$type<'sent' | 'stale' | 'failed'>(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(1),
+    queuedAt: timestamp('queued_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('shop_reauth_mails_milestone_uq').on(t.shopId, t.deadline, t.stage, t.seq),
+    check('shop_reauth_mails_stage', sql`${t.stage} in ('expiring_3d', 'expiring_1d', 'lost')`),
+    // Thư trước hạn chỉ một thư mỗi mốc; chỉ thư sau khi mất quyền mới lặp theo nhịp.
+    check('shop_reauth_mails_seq', sql`${t.seq} >= 0 and (${t.stage} = 'lost' or ${t.seq} = 0)`),
+    check('shop_reauth_mails_outcome', sql`${t.outcome} in ('sent', 'stale', 'failed')`),
+    check('shop_reauth_mails_finished', sql`(${t.outcome} is null) = (${t.finishedAt} is null)`),
+    // Trần `REAUTH_MAIL_MAX_ATTEMPTS` (8) ở `service/reauth-mail.ts`.
+    check('shop_reauth_mails_attempts', sql`${t.attempts} between 1 and 8`),
+    // Việc nền tìm thư chưa xong.
+    index('shop_reauth_mails_pending_idx').on(t.queuedAt).where(sql`${t.outcome} is null`),
+  ],
 );

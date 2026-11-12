@@ -9,7 +9,9 @@ import { setStocktakePort } from '#src/modules/channel/channel/service/stocktake
 import { AppError } from '#src/shared/errors/app-error.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { type ListingVariant, productPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { setModuleEnabled } from '../../helpers/state.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -223,8 +225,8 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
 
     // Lượt đồng bộ sau (giá đã synced, tồn còn pending) không gọi sàn khi còn chờ.
     updatePriceQuantity.mockClear();
-    const sync = await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set('Authorization', `Bearer ${c.ceo.token}`);
-    expect(sync.status).toBe(200);
+    const sync = await syncListings(productPort(createModuleContext()), c.companyId, shopId);
+    expect(sync.errors).toBe(0);
     expect(updatePriceQuantity).not.toHaveBeenCalled();
 
     // AC-8: chờ kiểm kê thì đẩy listing 409, không ghi listing.

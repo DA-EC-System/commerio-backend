@@ -190,14 +190,20 @@ describe('adapter Lazada: sản phẩm', () => {
       price: '1000',
       quantity: i,
     }));
-    const fn = fakeFetch({ code: '0', data: {} }, { code: '0', data: {} });
+    const ok = { code: '0', data: {} };
+    const fn = fakeFetch(ok, ok, ok, ok);
     const results = await createLazadaAdapter(config, fn).updatePriceQuantity('t', items);
-    expect(fn).toHaveBeenCalledTimes(2);
+    // Tồn đi UpdateSellableQuantity, giá đi UpdatePriceQuantity (#223), mỗi loại hai lô.
+    expect(fn).toHaveBeenCalledTimes(4);
     expect(results).toHaveLength(21);
     expect(results.every((r) => r.ok)).toBe(true);
-    const xml = sent(fn, 1).body.payload;
-    expect(xml).toBe(
-      '<Request><Product><Skus><Sku><ItemId>I20</ItemId><SkuId>S20</SkuId><Price>1000</Price><Quantity>20</Quantity></Sku></Skus></Product></Request>',
+    expect(sent(fn, 1).path).toBe('/rest/product/stock/sellable/update');
+    expect(sent(fn, 1).body.payload).toBe(
+      '<Request><Product><Skus><Sku><ItemId>I20</ItemId><SkuId>S20</SkuId><SellableQuantity>20</SellableQuantity></Sku></Skus></Product></Request>',
+    );
+    expect(sent(fn, 3).path).toBe('/rest/product/price_quantity/update');
+    expect(sent(fn, 3).body.payload).toBe(
+      '<Request><Product><Skus><Sku><ItemId>I20</ItemId><SkuId>S20</SkuId><Price>1000</Price></Sku></Skus></Product></Request>',
     );
   });
 
@@ -216,11 +222,11 @@ describe('adapter Lazada: sản phẩm', () => {
       { code: '501', type: 'ISP', message: 'E501: Update product failed', detail: [{ code: 'E0501', message: 'x' }] },
     );
     const adapter = createLazadaAdapter(config, fn);
-    expect(await adapter.updatePriceQuantity('t', items)).toEqual([
+    expect(await adapter.updatePriceQuantity('t', items)).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: 'E0501', message: 'lỗi S1' },
       { externalSkuId: 'S2', ok: true },
     ]);
-    expect(await adapter.updatePriceQuantity('t', items)).toEqual([
+    expect(await adapter.updatePriceQuantity('t', items)).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: '501', message: 'E501: Update product failed' },
       { externalSkuId: 'S2', ok: false, code: '501', message: 'E501: Update product failed' },
     ]);

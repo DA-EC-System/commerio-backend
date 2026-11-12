@@ -27,12 +27,21 @@ import {
 } from '../repository/listings.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
-import { type MarketplaceAdapter, MarketplaceError, type PerSkuResult, type PriceQuantity, type RemoteSku } from './marketplaces/index.ts';
+import {
+  type MarketplaceAdapter,
+  MarketplaceError,
+  type PartResult,
+  type PerSkuResult,
+  PROMOTION_LOCKED,
+  type PriceQuantity,
+  type RemoteSku,
+} from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
-import { sendStockPush } from './shop-jobs.ts';
-import { type Actor, onMarketplace, shopSession } from './shops.ts';
+import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
+import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
+import { ordersStaleError, raisesStock, shopOrdersStale, untrustedVariants } from './stock-trust.ts';
 
 /**
  * Listing đọc trạng thái từ sàn (có mã sàn): duyệt, từ chối, khoá, gỡ khoá; `rejected`, `push_failed` còn sản phẩm trên
@@ -79,7 +88,9 @@ export async function onAvailableChanged(event: EventPayload<'fulfillment.alloca
 }
 
 /**
- * Đẩy tồn, giá đang chờ của gian hàng, không đọc sàn (việc `channel.stock_push`). Gian hàng giữ tồn (#198) thì chỉ đẩy giá.
+ * Đẩy tồn, giá đang chờ của gian hàng, không đọc sàn (việc `channel.stock_push`). Gian hàng giữ tồn (#198) thì chỉ đẩy giá;
+ * SKU chưa tin được (`untrustedVariants`, #223) không gửi tồn. Đơn của chính gian hàng chưa cập nhật thì xếp thêm một lượt
+ * lấy đơn để mở lại sớm (lấy đơn xong trọn tự xếp lại việc này).
  */
 export async function pushPending(port: ProductPort, companyId: string, shopId: string): Promise<SyncSummary> {
   const inCompany: InCompany = (fn) => withCompany(companyId, fn);
@@ -87,7 +98,22 @@ export async function pushPending(port: ProductPort, companyId: string, shopId: 
   const summary: SyncSummary = { checked: 0, changed: 0, pushed: 0, errors: 0 };
   const rows = await inCompany(() => listListingRows(session.shop.id));
   await pushDue(port, inCompany, session, rows, holdsStock(session.shop), new Map(), summary);
+  if (shopOrdersStale(session.shop)) await inCompany(() => sendOrderPull(companyId, shopId));
   return summary;
+}
+
+/**
+ * Nút "Đồng bộ" (Documents/21 §18.5): chỉ xếp một lượt `channel.listing_sync` cho gian hàng, không gọi sàn trong request.
+ * Gian hàng không `active` hoặc mất token: 409 `shop_not_connected`. `queued = false` khi đã có lượt chờ (bấm hai lần).
+ */
+export async function requestListingSync(companyId: string, shopId: string): Promise<{ queued: boolean }> {
+  return withCompany(companyId, async () => {
+    const shop = await ownShop(shopId);
+    if (shop.status !== 'active' || !shop.accessTokenEnc) {
+      throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+    }
+    return { queued: await sendListingSync(companyId, shop.id) };
+  });
 }
 
 export async function syncListings(port: ProductPort, companyId: string, shopId: string): Promise<SyncSummary> {
@@ -183,11 +209,15 @@ async function reconcileStock(
   let changed = false;
   await inCompany(async () => {
     const available = await port.availableOf(candidates.map((r) => r.variantId!));
+    // SKU chưa tin được (#223): số app có thể chưa trừ đơn bán ở gian hàng khác, nên chỉ cao hơn số thật. Khớp, hoặc sàn
+    // cao hơn (đẩy giảm) vẫn làm; sàn thấp hơn (sẽ đẩy tăng, bật Lệch tồn) thì bỏ lượt này.
+    const untrusted = await untrustedVariants();
     for (const row of candidates) {
       const app = available.get(row.variantId!);
       if (app === undefined) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
       const decision = stockDecision(row, remote, app);
+      if (untrusted.has(row.variantId!) && (decision === 'wait' || decision === 'drift')) continue;
       if (decision === 'wait') waiting.add(row.id);
       const patch = reconcilePatch(row, decision, remote);
       if (!patch) continue;
@@ -237,9 +267,10 @@ async function pushDue(
   );
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
-  const { prices, available } = await inCompany(async () => ({
+  const { prices, available, untrusted } = await inCompany(async () => ({
     prices: await port.standardPrices(ids),
     available: holdStock ? new Map<string, number>() : await port.availableOf(ids),
+    untrusted: holdStock ? new Map<string, ShopRow[]>() : await untrustedVariants(),
   }));
   const at = new Date();
   // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
@@ -250,10 +281,20 @@ async function pushDue(
   };
   const plan = due.map((row) => {
     const r = remote.get(row.externalSkuId!);
-    const price = r?.priceLocked ? undefined : prices.get(row.variantId!);
+    const standard = prices.get(row.variantId!) ?? undefined;
+    // Giá chỉ gửi khi cần (#223 review 3): chờ đẩy giá, hoặc giá chuẩn khác giá đang trên sàn. Không gửi kèm mỗi lần đẩy tồn.
+    const priceDue = row.priceSync !== 'synced' || (standard !== undefined && (row.listedPrice === null || !standard.eq(row.listedPrice)));
+    const price = priceDue && !r?.priceLocked ? standard : undefined;
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
     const stockDue = !holdStock && row.stockSync !== 'synced' && !waiting.has(row.id);
-    const quantity = !stockDue || r?.stockLocked ? undefined : available.get(row.variantId!);
+    const wanted = !stockDue || r?.stockLocked ? undefined : available.get(row.variantId!);
+    // SKU chưa tin được (#223, 21 §18.6.6): số app chỉ có thể cao hơn thật, nên chỉ đẩy khi không làm tồn trên sàn tăng,
+    // so với số sàn ĐỌC THẬT trong lượt này (`sellableQuantity`). Không so với `platform_stock`: đó là số app gửi lần trước,
+    // sàn có thể đã bán bớt mà app chưa biết (review R2-1). Đường không đọc sàn (`pushPending`) vì thế không đẩy tồn SKU
+    // này. Bị giữ thì `pending` kèm `orders_stale`; lượt đồng bộ 15 phút hoặc lấy đơn xong trọn thì đẩy lại.
+    const staleShops = untrusted.get(row.variantId!);
+    const blocked = staleShops !== undefined && wanted !== undefined && raisesStock(wanted, r?.sellableQuantity);
+    const quantity = blocked ? undefined : wanted;
     const item: PriceQuantity | null =
       !price && quantity === undefined
         ? null
@@ -263,7 +304,8 @@ async function pushDue(
             ...(price && { price: price.toFixed(0) }),
             ...(quantity !== undefined && { quantity }),
           };
-    return { row, item, stockDue, locked: lockPatch(r, at) };
+    const held: ListingPatch = blocked ? { stockSyncError: ordersStaleError(staleShops, at) } : {};
+    return { row, item, stockDue: stockDue && !blocked, priceDue, locked: { ...lockPatch(r, at), ...held } };
   });
   const isMissing = (p: (typeof plan)[number]) => p.stockDue && !p.locked.stockSyncError && p.item?.quantity === undefined;
   const missing = plan.filter(isMissing).length;
@@ -276,22 +318,23 @@ async function pushDue(
   );
   await inCompany(async () => {
     for (const p of plan) {
-      const { row, item, locked } = p;
+      const { row, item, locked, priceDue } = p;
       let patch: ListingPatch = isMissing(p) ? { stockSyncError: variantMissing } : {};
+      // Chờ đẩy giá mà không có giá chuẩn (giá bị khoá thì `locked` báo).
+      if (priceDue && item?.price === undefined && !locked.priceSyncError) {
+        patch = { ...patch, priceSync: 'error', priceSyncError: { code: 'price_missing', message: 'Chưa có giá chuẩn', at: at.toISOString() } };
+      }
       if (item) {
-        const result = results.get(row.externalSkuId!);
         summary.pushed++;
-        if (result?.ok) {
-          patch = { ...patch, ...synced(row, item, at) };
-        } else {
-          summary.errors++;
-          const error: SyncError = {
-            code: result?.code ?? 'no_result',
-            message: result?.message ?? 'Sàn không trả kết quả cho SKU này',
-            at: at.toISOString(),
-          };
-          patch = { ...patch, ...failed(row, error, item) };
-        }
+        // Sàn trả kết quả riêng cho tồn và giá (`stock`, `price`) thì áp riêng; không thì một kết quả chung cho cả hai.
+        const result = results.get(row.externalSkuId!);
+        const whole: PartResult = result ?? { ok: false, code: 'no_result', message: 'Sàn không trả kết quả cho SKU này' };
+        const stock = item.quantity === undefined ? undefined : (result?.stock ?? whole);
+        const price = item.price === undefined ? undefined : (result?.price ?? whole);
+        if ((stock && !stock.ok) || (price && !price.ok)) summary.errors++;
+        if (stock) patch = { ...patch, ...(stock.ok ? stockSynced(row, item.quantity!) : stockFailed(row, syncError(stock, at))) };
+        if (price) patch = { ...patch, ...(price.ok ? { priceSync: 'synced', priceSyncError: null, listedPrice: item.price! } : { priceSync: 'error', priceSyncError: syncError(price, at) }) };
+        if (stock?.ok || price?.ok) patch = { ...patch, lastPushedAt: at };
       }
       patch = { ...patch, ...locked };
       // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
@@ -304,7 +347,7 @@ async function pushDue(
 /** Sàn khoá tồn hoặc giá do khuyến mãi (`RemoteSku.stockLocked`, `priceLocked`): giữ số cũ trên sàn, ghi lỗi để báo. */
 function lockPatch(remote: RemoteSku | undefined, at: Date): ListingPatch {
   const error = (what: string): SyncError => ({
-    code: 'promotion_locked',
+    code: PROMOTION_LOCKED,
     message: `Sàn đang khoá ${what} do khuyến mãi, không ghi đè`,
     at: at.toISOString(),
   });
@@ -363,28 +406,27 @@ function remoteChange(action: ListingAction, rejectReason: string | null | undef
   return { patch: {}, reason: null };
 }
 
-/** Đẩy được: listing đang Lệch tồn giữ `error` tới khi lượt đối chiếu sau thấy khớp (#223). */
-function synced(row: ListingRow, item: PriceQuantity, at: Date): ListingPatch {
-  return {
-    ...(item.quantity !== undefined && {
-      stockSync: row.stockSync === 'error' ? 'error' : 'synced',
-      stockSyncError: null,
-      platformStock: item.quantity,
-    }),
-    ...(item.price === undefined
-      ? { priceSync: 'error', priceSyncError: { code: 'price_missing', message: 'Chưa có giá chuẩn', at: at.toISOString() } }
-      : { priceSync: 'synced', priceSyncError: null, listedPrice: item.price }),
-    lastPushedAt: at,
-  };
+/** Tồn lên sàn: listing đang Lệch tồn giữ `error` tới khi lượt đối chiếu sau thấy khớp (#223). */
+function stockSynced(row: ListingRow, quantity: number): ListingPatch {
+  return { stockSync: row.stockSync === 'error' ? 'error' : 'synced', stockSyncError: null, platformStock: quantity };
 }
 
 /**
- * Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. Tồn đẩy lỗi giữ `pending` kèm `stockSyncError`
- * (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn (giữ nguyên nếu đang Lệch tồn).
+ * Tồn đẩy lỗi giữ `pending` kèm `stockSyncError` (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn (giữ
+ * nguyên nếu đang Lệch tồn). Sàn từ chối giảm tồn vì khuyến mãi (`promotion_locked`): sàn đang cao hơn số có thể bán, app
+ * không ép được, nên ghi câu rõ cho người dùng xử lý trên trang sàn, vẫn `pending` để lượt sau gửi lại, không bật Lệch tồn.
  */
-function failed(row: ListingRow, error: SyncError, item: PriceQuantity): ListingPatch {
-  return {
-    ...(item.quantity !== undefined && { stockSync: row.stockSync === 'error' ? 'error' : 'pending', stockSyncError: error }),
-    ...(item.price !== undefined && { priceSync: 'error', priceSyncError: error }),
-  };
+function stockFailed(row: ListingRow, error: SyncError): ListingPatch {
+  const stockError: SyncError =
+    error.code === PROMOTION_LOCKED
+      ? {
+          ...error,
+          message: `Sàn đang khoá giảm tồn do khuyến mãi; sàn đang cao hơn số có thể bán, cần xử lý trên trang sàn. Sàn báo: ${error.message}`,
+        }
+      : error;
+  return { stockSync: row.stockSync === 'error' ? 'error' : 'pending', stockSyncError: stockError };
+}
+
+function syncError(part: PartResult & { ok: false }, at: Date): SyncError {
+  return { code: part.code, message: part.message, at: at.toISOString() };
 }

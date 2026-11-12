@@ -242,3 +242,26 @@ export async function updateMembershipStatus(
     .returning({ id: memberships.id });
   return rows.length === 1;
 }
+
+/**
+ * Email của thành viên đang hoạt động trong công ty hiện tại thuộc `membershipIds`, trừ quản trị nền tảng (#312: thư báo
+ * gian hàng mất uỷ quyền). Rỗng thì không ai.
+ */
+export async function activeMemberEmails(membershipIds: readonly string[]): Promise<string[]> {
+  const companyId = requireCompanyId('activeMemberEmails');
+  if (membershipIds.length === 0) return [];
+  const rows = await getDb()
+    .selectDistinct({ email: accounts.email })
+    .from(memberships)
+    .innerJoin(accounts, eq(accounts.id, memberships.accountId))
+    .where(
+      and(
+        eq(memberships.companyId, companyId),
+        eq(memberships.status, 'active'),
+        eq(accounts.isPlatformAdmin, false),
+        inArray(memberships.id, [...new Set(membershipIds)]),
+      ),
+    )
+    .orderBy(accounts.email);
+  return rows.map((r) => r.email);
+}

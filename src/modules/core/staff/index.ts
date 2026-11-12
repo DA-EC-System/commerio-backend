@@ -19,6 +19,8 @@ export {
   type SelfApproval,
   type StatusChange,
 } from './service/lifecycle.ts';
+// Người nhận thư theo vai trò (#312: thư báo gian hàng mất uỷ quyền cho CEO, Admin).
+export { activeMemberEmailsWithRoles } from './service/recipients.ts';
 export {
   findAccountByEmail,
   findAccountByGoogleSub,

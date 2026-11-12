@@ -9,6 +9,7 @@ import { authDeadline, authLapsed, shopMachine } from '../domain/shop.ts';
 import { findShopRow, saveRefreshedTokens, type ShopRow, updateShop } from '../repository/shops.ts';
 import { DEFAULT_REFRESH_LEAD_MS, refreshBefore } from './marketplaces/common.ts';
 import { getAdapter, type MarketplaceAdapter, MarketplaceError, type TokenSet } from './marketplaces/index.ts';
+import { queueDueReauthMail } from './reauth-mail.ts';
 import { stopShopJobs } from './shop-jobs.ts';
 
 export function tokenKey(): Buffer {
@@ -36,16 +37,19 @@ export function decryptAccessToken(row: ShopRow): string | null {
 
 /**
  * Gian hàng mất uỷ quyền (refresh token thất bại, sàn báo gỡ app, tới hạn uỷ quyền): `connecting` hoặc `active` →
- * `needs_reauth`, nguồn hệ thống (§18.1). Cho #102 gọi trong `withCompany`. Trạng thái khác thì bỏ qua.
+ * `needs_reauth`, nguồn hệ thống (§18.1). Xoá mốc lấy đơn xong (CHECK `shops_reauth_orders_pulled`): nối lại là "đơn chưa
+ * cập nhật" tới khi lấy đơn xong trọn (#223, 25 E28). Cho #102 gọi trong `withCompany`. Trạng thái khác thì bỏ qua.
  */
 export async function markNeedsReauth(shopId: string, reason: string): Promise<void> {
   requireCompanyId('markNeedsReauth');
   const row = await findShopRow(shopId);
   if (row?.status !== 'connecting' && row?.status !== 'active') return;
   const { to } = assertTransition(shopMachine, row.status, 'lose_auth', { actor: null });
-  const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason });
+  const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason, ordersPulledOkAt: null });
   if (updated) {
     await recordTransition({ entityType: 'shops', entityId: shopId, from: row.status, to, action: 'lose_auth', actorId: null, reason });
+    // Thư đầu tiên báo CEO, Admin xếp ngay trong giao dịch này, không chờ việc nền 15 phút (#312).
+    await queueDueReauthMail(shopId, new Date());
   }
 }
 
@@ -141,9 +145,15 @@ export async function refreshShopTokenLocked(
         throw err;
       }
       // Sàn không trả refresh token mới thì giữ cái cũ (refresh token dùng lại được). Chỉ ghi khi token đã lưu vẫn là bản
-      // đọc lúc đầu (compare-and-set): người dùng vừa nối lại thì bỏ cặp vừa lấy.
+      // đọc lúc đầu (compare-and-set): người dùng vừa nối lại thì bỏ cặp vừa lấy. Sàn có hạn refresh cố định (Lazada) thì
+      // giữ hạn đã lưu: hạn adapter tính lại từ số giây còn lại lệch vài giây mỗi lần (#312).
+      const refreshExpiresAt = adapter.refreshKeepsAuthDeadline && row.refreshExpiresAt ? row.refreshExpiresAt : tokens.refreshExpiresAt;
       const saved = await withCompany(companyId, () =>
-        saveRefreshedTokens(row.id, row.accessTokenEnc, tokenColumns(row.id, { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken })),
+        saveRefreshedTokens(
+          row.id,
+          row.accessTokenEnc,
+          tokenColumns(row.id, { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken, refreshExpiresAt }),
+        ),
       );
       if (saved) return 'refreshed';
       return (await reconnected()) ?? 'inactive';

@@ -59,6 +59,19 @@ registerAdapter(
     updateProduct,
   }),
 );
+// Gian hàng TikTok kéo đơn được: mất uỷ quyền thì SKU bán trên đó chưa tin được (#223).
+registerAdapter(
+  'tiktok',
+  fakeAdapter({
+    async getSeller(accessToken) {
+      return { externalShopId: accessToken.slice(4), shopName: 'Shop TikTok', region: 'VN' };
+    },
+    listOrders: async () => ({ orders: [], nextCursor: null, safeUntil: null }),
+    getOrder: async () => {
+      throw new Error('không có đơn');
+    },
+  }),
+);
 afterAll(async () => {
   resetAdapters();
   setProductPort(null);
@@ -252,6 +265,39 @@ describe('việc nền channel.listing_push', () => {
       await runListingPush(port, job(id));
       expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { message: 'Gian hàng đã ngắt' } });
       await setShop('connecting', ', disconnected_at = null');
+    });
+  });
+
+  describe('SKU chưa tin được (#223, Documents/21 §18.6.6)', () => {
+    /** Biến thể `v` có listing ở một gian hàng TikTok đang mất uỷ quyền (đơn chưa cập nhật). */
+    async function staleElsewhere(v: ListingVariant) {
+      const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+      const other = res.body.shop.id as string;
+      await testPool().query(
+        "update channel.shops set status = 'needs_reauth', order_cutoff_at = now() - interval '1 day', open_orders_pulled_at = now() where id = $1",
+        [other],
+      );
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, external_product_id, external_sku_id, seller_sku, status)
+         values ($1, $2, $3, 'tt-p', $4, $5, 'live')`,
+        [company.companyId, other, v.id, `tt-${v.sku}`, v.sku],
+      );
+    }
+
+    it('tạo mới trên sàn gửi tồn 0, listing chờ đẩy tồn', async () => {
+      const { id, v } = await pushing();
+      await staleElsewhere(v);
+      await runListingPush(port, job(id));
+      expect(createProduct.mock.calls[0]![1].quantity).toBe(0);
+      expect(await listing(id)).toMatchObject({ platform_stock: 0, stock_sync: 'pending' });
+    });
+
+    it('đẩy lại sản phẩm đã có trên sàn cũng gửi tồn 0', async () => {
+      const { id, v } = await pushing({ external_product_id: 'P9', external_sku_id: 'S9', external_image_urls: ['https://slatic.test/cu.png'] });
+      await staleElsewhere(v);
+      await runListingPush(port, job(id, []));
+      expect(updateProduct.mock.calls[0]![3].quantity).toBe(0);
+      expect(await listing(id)).toMatchObject({ stock_sync: 'pending' });
     });
   });
 });
