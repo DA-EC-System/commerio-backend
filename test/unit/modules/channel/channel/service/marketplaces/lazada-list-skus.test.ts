@@ -36,7 +36,7 @@ function fakeLazada(total: number, calls: URLSearchParams[], opts: { gapMs?: num
  * Sàn giả có giờ tạo cho trước (ms), trả `created_time` như gọi thật 12/11/2026, lọc `create_after`/`create_before` theo
  * giây (lấy cả mốc), thứ tự mỗi lần một khác. Đếm lời gọi.
  */
-function fakeByCreated(created: readonly number[]) {
+function fakeByCreated(created: readonly number[], order: 'shuffle' | 'asc' | 'desc' = 'shuffle') {
   const state = { calls: 0 };
   let n = 0;
   const fn = async (url: string | URL | Request) => {
@@ -46,12 +46,12 @@ function fakeByCreated(created: readonly number[]) {
     const after = q.get('create_after') ? Date.parse(q.get('create_after')!) : -Infinity;
     const before = q.get('create_before') ? Date.parse(q.get('create_before')!) + 999 : Infinity;
     const offset = Number(q.get('offset'));
-    const ids = created
+    let ids = created
       .map((t, i) => [i, t] as const)
       .filter(([, t]) => t >= after && t <= before)
-      .map(([i]) => [i, (i * 7919 + n * 104729) % 1000003] as const)
-      .sort((a, b) => a[1] - b[1])
       .map(([i]) => i);
+    if (order === 'desc') ids.reverse();
+    if (order === 'shuffle') ids = ids.map((i) => [i, (i * 7919 + n * 104729) % 1000003] as const).sort((a, b) => a[1] - b[1]).map(([i]) => i);
     const products = ids.slice(offset, offset + 50).map((i) => ({
       item_id: 1000 + i,
       status: 'Active',
@@ -81,6 +81,21 @@ describe('Lazada: đọc trọn khi sản phẩm đăng theo đợt (review #309
       const skus = await createLazadaAdapter(config, fn).listSkus!('t');
       expect(new Set(skus.map((s) => s.externalSkuId)).size).toBe(created.length);
       expect(state.calls).toBeLessThanOrEqual(Math.ceil(created.length / 50) * 5);
+    });
+  }
+});
+
+describe('Lazada: đăng một lần 10 000 sản phẩm, 14 sản phẩm mỗi giây (review #309 vòng 6 C3)', () => {
+  // Mô phỏng của review (scratchpad/v6/rate.mjs): sàn trả tăng hoặc giảm theo giờ tạo thì 1 423 lời gọi, trên trần cũ
+  // ⌈10 000 / 50⌉ × 6 + 64 = 1 264; trần ⌈tổng / 50⌉ × 10 + 64 = 2 000 (kẹp) đủ.
+  const created = Array.from({ length: 10_000 }, (_, i) => BASE + Math.floor((i * 1000) / 14) + 123);
+  for (const order of ['asc', 'desc'] as const) {
+    it(`sàn trả ${order === 'asc' ? 'tăng' : 'giảm'} theo giờ tạo: đọc đủ, không chạm trần`, async () => {
+      const { fn, state } = fakeByCreated(created, order);
+      const skus = await createLazadaAdapter(config, fn).listSkus!('t');
+      expect(new Set(skus.map((s) => s.externalSkuId)).size).toBe(10_000);
+      expect(state.calls).toBeGreaterThan(Math.ceil(10_000 / 50) * 6 + 64);
+      expect(state.calls).toBeLessThanOrEqual(Math.min(2000, Math.ceil(10_000 / 50) * 10 + 64));
     });
   }
 });
@@ -143,7 +158,7 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     expect(calls.length).toBeLessThanOrEqual(6);
   });
 
-  it('review vòng 4 B2: số lời gọi một lần đọc trọn có trần ⌈tổng / 50⌉ × 6 + 64; chạm trần thì rejected `too_many_calls`', async () => {
+  it('review vòng 4 B2: số lời gọi một lần đọc trọn có trần ⌈tổng / 50⌉ × 10 + 64; chạm trần thì rejected `too_many_calls`', async () => {
     let calls = 0;
     // Sàn trả tổng lạ: khoảng nào cũng 51–55 sản phẩm (đọc đủ được bằng `offset`), không khoảng nào vừa một trang, hai nửa
     // thường khác khoảng cha: cây chia nở theo cấp số nhân.
@@ -161,7 +176,7 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
       return new Response(JSON.stringify({ code: '0', data: { total_products: total, products } }), { status: 200 });
     };
     await expect(createLazadaAdapter(config, odd).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_calls' });
-    expect(calls).toBeLessThanOrEqual(Math.ceil(55 / 50) * 6 + 64);
+    expect(calls).toBeLessThanOrEqual(Math.ceil(55 / 50) * 10 + 64);
   });
 
   it('review vòng 3 R1: hơn 50 sản phẩm tạo cùng một giây thì lật `offset` trong khoảng đó', async () => {

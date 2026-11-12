@@ -54,7 +54,7 @@ const ORDER_ITEMS_BATCH = 50;
 const MAX_PRODUCT_OFFSET = 10_000;
 /** Sản phẩm Lazada sớm nhất có thể có (sàn mở năm 2012): đầu khoảng ngày tạo của lần đọc trọn. */
 const LAZADA_EPOCH_MS = Date.UTC(2012, 0, 1);
-/** Trần tuyệt đối số lời gọi một lần đọc trọn khi sàn không báo tổng; có tổng thì trần là ⌈tổng / 50⌉ × 6 + 64. */
+/** Trần tuyệt đối số lời gọi một lần đọc trọn khi sàn không báo tổng; có tổng thì trần là ⌈tổng / 50⌉ × 10 + 64. */
 const MAX_WINDOW_CALLS = 2_000;
 const incomplete = (total: number, got: number) =>
   new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${got}, thử lại sau`);
@@ -603,7 +603,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    * (nhập hàng loạt) thì lật `offset` trong khoảng đó. Khoảng nào trả ít hơn `total_products` của nó thì `incomplete_list`.
    * Gian hàng quá `MAX_PRODUCT_OFFSET` sản phẩm thì `too_many_products` như trước. Chốt chặn (vòng 4 B2): hai nửa cùng
    * báo đúng tổng khoảng cha thì coi là sàn không lọc, lật `offset` khoảng cha; mỗi lần đọc trọn tối đa
-   * ⌈tổng / 50⌉ × 6 + 64 lời gọi, chạm trần thì `too_many_calls`.
+   * ⌈tổng / 50⌉ × 10 + 64 lời gọi, chạm trần thì `too_many_calls`.
    */
   async function productsAll(accessToken: string): Promise<LazadaProduct[]> {
     const out = new Map<string, LazadaProduct>();
@@ -663,10 +663,13 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     if ((total ?? 0) > MAX_PRODUCT_OFFSET) {
       throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} sản phẩm, sàn không cho đọc hết`);
     }
-    // Trần cứng theo số sản phẩm. Mô phỏng chia theo trung vị (2, 6, 10, 20 đợt đăng hàng loạt, rải đều, cùng một giây;
-    // sàn trả xáo, tăng, giảm theo giờ tạo) tốn tối đa 4,16 lời gọi mỗi trang 50 sản phẩm: lấy 6, cộng 64 cho khoảng
-    // không có `created_time` phải chia giữa (2012 tới nay chia đôi tới một giây cần 29 lần, mỗi lần 2 lời gọi).
-    if (total !== null) budget = Math.min(MAX_WINDOW_CALLS, Math.ceil(total / SKU_LIST_BATCH) * 6 + 64);
+    // Trần cứng theo số sản phẩm. Trung vị lấy từ trang vừa nhận, không phải từ cả khoảng: sàn trả theo giờ tạo tăng hoặc
+    // giảm (tài liệu không nói thứ tự, gọi thật chỉ thấy trang đầu không xếp tăng) thì trang là 50 sản phẩm ở một đầu,
+    // trung vị lệch về đầu đó và mỗi lần chia chỉ bớt được khoảng nửa trang. Mô phỏng (review #309 vòng 6): đăng theo đợt,
+    // rải đều tốn tối đa 4,16 lời gọi mỗi trang 50 sản phẩm, nhưng đăng một lần 10 000 sản phẩm 14 sản phẩm mỗi giây tốn
+    // 1 423 (7,1 mỗi trang). Lấy 10, cộng 64 cho khoảng không có `created_time` phải chia giữa (2012 tới nay chia đôi tới
+    // một giây cần 29 lần, mỗi lần 2 lời gọi); kẹp `MAX_WINDOW_CALLS`.
+    if (total !== null) budget = Math.min(MAX_WINDOW_CALLS, Math.ceil(total / SKU_LIST_BATCH) * 10 + 64);
     await walk(from, to, first);
     return [...out.values()];
   }
