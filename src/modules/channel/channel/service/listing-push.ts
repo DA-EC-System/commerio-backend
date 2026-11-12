@@ -13,8 +13,9 @@ import { moveListing } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { pushBlock } from './push-block.ts';
-import type { ListingPushJob } from './shop-jobs.ts';
+import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
+import { untrustedVariants } from './stock-trust.ts';
 
 /** Số lần gọi sàn tối đa của một lượt đẩy (Documents/21 §18.6.4), bằng `attempts` của hàng `channel.listing_push`. */
 export const PUSH_ATTEMPTS = 5;
@@ -51,10 +52,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       map,
       price: (await port.standardPrices([variantId])).get(variantId) ?? null,
       quantity: (await port.availableOf([variantId])).get(variantId) ?? 0,
+      // SKU chưa tin được (#223, 21 §18.6.6): sàn bắt buộc có số lượng nên gửi 0, listing chờ đẩy tồn tới khi lấy đơn xong.
+      untrusted: (await untrustedVariants()).has(variantId),
     };
   });
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
-  const { v, map, price, quantity } = data;
+  const { v, map, price, untrusted } = data;
+  const quantity = untrusted ? 0 : data.quantity;
   const block = pushBlock(v, price, map, Boolean(row.externalImageUrls?.length || job.imageUrls.length));
   if (block) return finish(job, row, 'fail', { pushError: errorOf(block.code, block.message) });
 
@@ -94,7 +98,10 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       priceSyncError: null,
       lastPushedAt: at,
       // Tạo mới gửi kèm tồn; đẩy lại thì TikTok không gửi tồn (Edit Product giữ tồn cũ): để đồng bộ đẩy.
-      ...(reshelve ? { stockSync: 'pending' as const } : { platformStock: quantity, stockSync: 'synced' as const, stockSyncError: null }),
+      // SKU chưa tin được: sàn nhận 0, chờ đẩy tồn thật (lấy đơn xong trọn thì `channel.stock_push` chạy lại).
+      ...(reshelve
+        ? { stockSync: 'pending' as const }
+        : { platformStock: quantity, stockSync: untrusted ? ('pending' as const) : ('synced' as const), stockSyncError: null }),
     });
   } catch (err) {
     if (!(err instanceof MarketplaceError)) throw err;
@@ -124,6 +131,8 @@ async function finish(job: ListingPushJob, row: ListingRow, action: ListingActio
   await withCompany(job.companyId, async () => {
     try {
       await moveListing(row, action, null, patch, reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null));
+      // Đẩy lại không gửi tồn: listing lên sàn thì đẩy tồn ngay (25 §6.5, #223), cùng giao dịch.
+      if (patch.stockSync === 'pending') await sendStockPush(job.companyId, job.shopId);
       return;
     } catch (err) {
       if (!(err instanceof AppError) || (err.code !== 'version_conflict' && err.code !== 'invalid_transition')) throw err;

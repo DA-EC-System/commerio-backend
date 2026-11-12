@@ -542,9 +542,6 @@ describe('quyền và công ty khác', () => {
     expect((await inv(user).get('/stock')).body.summary.totalValue).toBeNull();
   });
 
-  it('chưa có route phiếu kho cũ (/documents) trước issue phiếu kho có duyệt', async () => {
-    expect((await inv(A.ceo).get('/documents')).status).toBe(404);
-  });
 });
 
 describe('Swagger (#162)', () => {

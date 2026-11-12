@@ -46,6 +46,31 @@ export function holdsStock(shop: StockHoldState): boolean {
   return shop.openingStocktakeId !== null || awaitingAllocation(shop) !== null;
 }
 
+/**
+ * Ngưỡng "đơn chưa cập nhật" (#223): khoảng 3 vòng lấy đơn 5 phút liền không có lượt nào xong trọn. Bằng chu kỳ đối chiếu
+ * tồn (25 §6.5), nên lỗi lẻ một vòng không làm đứng tồn của mọi gian hàng.
+ */
+export const ORDERS_STALE_MS = 15 * 60_000;
+
+interface OrdersFreshness {
+  status: ShopStatus;
+  orderCutoffAt: Date | null;
+  ordersPulledOkAt: Date | null;
+}
+
+/**
+ * Gian hàng "đơn chưa cập nhật" (#223; Documents/21 §18.6.6, 25 E28): đơn bán trên sàn có thể chưa về app, nên số có thể
+ * bán của SKU bán ở đây chưa trừ đơn đó, không được cập nhật tồn lên **mọi** gian hàng của công ty. Mất uỷ quyền thì chặn
+ * ngay; còn lại khi chưa có lượt lấy đơn xong trọn, hoặc lượt gần nhất đã bắt đầu quá `ORDERS_STALE_MS`. Chỉ xét gian hàng
+ * đã có mốc lấy đơn, chưa ngắt, ở sàn kéo đơn được (`pullsOrders`); đang kết nối thì chưa bán theo app.
+ */
+export function ordersStale(shop: OrdersFreshness, pullsOrders: boolean, now: Date = new Date()): boolean {
+  if (!pullsOrders || shop.orderCutoffAt === null) return false;
+  if (shop.status === 'needs_reauth') return true;
+  if (shop.status !== 'active') return false;
+  return shop.ordersPulledOkAt === null || now.getTime() - shop.ordersPulledOkAt.getTime() > ORDERS_STALE_MS;
+}
+
 /** Nhãn "Sắp hết hạn" (§18.4): hạn uỷ quyền còn dưới 3 ngày. Access token do việc nền tự làm mới nên không tính. */
 export const EXPIRING_MS = 3 * 24 * 3600_000;
 

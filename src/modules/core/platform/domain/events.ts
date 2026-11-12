@@ -54,6 +54,15 @@ export const EVENT_SCHEMAS = {
     countedAt: timestamp,
     lines: z.array(z.object({ variantId: id, countedQty: z.int().nonnegative(), delta: z.int() })),
   }),
+  // Phiếu kiểm hàng hoàn nguồn yêu cầu trả ghi sổ (#208, mục 11.2); kiện hoàn không phát. `shopId` không null theo
+  // Documents/21 §11.2 (yêu cầu trả chỉ có ở đơn sàn); sổ tiền ghi `cogs_reversal` theo gian hàng (#228, #308).
+  'inventory.return_inspected': z.object({
+    inspectionId: id,
+    orderId: id,
+    shopId: id,
+    inspectedAt: timestamp,
+    lines: z.array(z.object({ variantId: id, resellable: z.int().nonnegative(), unitCost: money.nullable() })),
+  }),
   'inventory.issue_posted': z.object({
     issueId: id,
     number: z.string(),
@@ -81,6 +90,14 @@ export const EVENT_SCHEMAS = {
     source: z.enum(['marketplace', 'inbox', 'manual']),
     /** `platform`: sàn huỷ; `seller`: người bán huỷ trong app. */
     by: z.enum(['platform', 'seller']),
+  }),
+  // Tiền hoàn cho khách (`refund_only` duyệt, hoặc đã nhận hàng trả; #202, Documents/21 mục 11.2). Sổ tiền nghe (#228).
+  'sales.return_refunded': z.object({
+    returnRequestId: id,
+    orderId: id,
+    shopId: id,
+    refundAmount: money,
+    refundedAt: timestamp,
   }),
   'fulfillment.package_status_changed': z.object({
     packageId: id,
@@ -184,6 +201,8 @@ export const EVENT_SCHEMAS = {
   }),
   // Đề nghị nhập gửi (hoặc gửi lại) CEO duyệt (#108).
   'purchasing.request_submitted': z.object({ requestId: id, number: z.string() }),
+  // NCC hoàn tiền phiếu trả (#210, Documents/21 mục 11.2); sổ tiền ghi dòng `supplier_refund` chờ khớp ngân hàng (#228).
+  'purchasing.supplier_return_refunded': z.object({ supplierReturnId: id, supplierId: id, refundAmount: money, recordedAt: timestamp }),
   // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý.
   'purchasing.goods_receipt_posted': z.object({
     receiptId: id,
@@ -193,6 +212,9 @@ export const EVENT_SCHEMAS = {
   // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
   // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
   'staff.invitation_otp_requested': z.object({ invitationId: id, requestedAt: timestamp }),
+  // Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền vừa xếp (#312). Không mang email, token: consumer đọc dòng
+  // `channel.shop_reauth_mails` và danh sách CEO, Admin lúc gửi.
+  'channel.shop_reauth_mail': z.object({ mailId: id, shopId: id }),
 } as const;
 
 export type EventType = keyof typeof EVENT_SCHEMAS;

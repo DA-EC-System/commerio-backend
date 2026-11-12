@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { postDelivered, postInspected, postRefund, postReturned, profitOf, taxWarnings } from '#src/modules/finance/finance/domain/ledger.ts';
+import {
+  LEDGER_KINDS,
+  NOT_SALES_PROFIT,
+  OFF_PLATFORM,
+  postDelivered,
+  postInspected,
+  postRefund,
+  postReturned,
+  profitOf,
+  taxWarnings,
+} from '#src/modules/finance/finance/domain/ledger.ts';
 
 const pkg = {
   lines: [
@@ -107,5 +117,22 @@ describe('cảnh báo mốc thuế (25 §10.4)', () => {
       { milestone: 500_000_000, ytdRevenue: 2_800_000_000, over: true },
       { milestone: 3_000_000_000, ytdRevenue: 2_800_000_000, over: false },
     ]);
+  });
+});
+
+describe('khoản ngoài sàn, không vào lãi bán hàng (25 §10.1, §10.2; 21 §21.1)', () => {
+  it('khoản ngoài sàn đúng bốn loại của 25 §10.1: trả NCC, NCC hoàn tiền, COD tự giao, chi vận hành', () => {
+    expect([...OFF_PLATFORM].sort()).toEqual(['cod_collected', 'opex', 'supplier_payment', 'supplier_refund']);
+  });
+
+  it('không vào lãi gộp: khoản ngoài sàn, rút tiền, quảng cáo (lãi đóng góp = lãi gộp − quảng cáo); giá vốn vẫn vào', () => {
+    expect([...NOT_SALES_PROFIT].sort()).toEqual(['ads', 'cod_collected', 'opex', 'supplier_payment', 'supplier_refund', 'withdrawal']);
+    expect(NOT_SALES_PROFIT.has('cogs')).toBe(false);
+  });
+
+  it('mọi loại khác trong enum là khoản của sàn', () => {
+    const platform = LEDGER_KINDS.filter((k) => !OFF_PLATFORM.has(k));
+    expect(platform).toEqual(expect.arrayContaining(['revenue', 'ads', 'penalty', 'withdrawal', 'adjustment', 'cogs']));
+    expect(platform.length + OFF_PLATFORM.size).toBe(LEDGER_KINDS.length);
   });
 });

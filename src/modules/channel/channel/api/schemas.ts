@@ -75,6 +75,12 @@ export const Shop = z
       .meta({ description: 'Đang active và hạn gần hơn trong authExpiresAt, refreshExpiresAt còn dưới 3 ngày' }),
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
+    ordersPulledOkAt: iso.nullable().meta({ description: 'Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223)' }),
+    ordersStale: z.boolean().meta({
+      description:
+        'Đơn chưa cập nhật (21 §18.6.6): mất uỷ quyền, hoặc 15 phút chưa có lượt lấy đơn chạy trọn. SKU bán ở gian hàng này tạm không đẩy tăng tồn trên mọi gian hàng; listing bị giữ có `stockSyncError.code = orders_stale`',
+    }),
+    orderPullError: z.string().nullable().meta({ description: 'Lỗi của lượt kéo đơn định kỳ gần nhất (`Kéo đơn lỗi: …`); null khi lượt sau chạy trọn' }),
     capabilities: ShopCapabilities,
     returnWindowDays: z.number().int().nullable().meta({
       description: 'Hạn trả hàng (ngày, 1–60) nhập lúc thiết lập; null khi chưa nhập hoặc sàn `returnWindow = platform_status`',
@@ -125,6 +131,12 @@ export const Shop = z
     statusChangedAt: iso.meta({ description: 'Lần đổi `status` gần nhất; chưa đổi lần nào thì bằng `createdAt` (21 §18.7.1)' }),
     feeConfigVersion: z.number().int().nullable().meta({
       description: 'Số phiên bản cấu hình phí đang áp cho gian hàng (21 §21.4); `null` tới khi có commerio-backend#230',
+    }),
+    walletMismatch: z.boolean().meta({
+      description: 'Lần đối soát `done` gần nhất có số của gian hàng ra lệch ví (`walletDiff` khác 0); gian hàng chưa có lần nào như vậy thì `false` (21 §21.3, commerio-backend#251)',
+    }),
+    walletDiff: z.string().nullable().meta({
+      description: 'Số dư sàn báo trừ số dư theo sổ của lần đối soát đó, chuỗi thập phân; `null` khi chưa có lần `done` nào có số',
     }),
     version: z.number().int(),
     createdAt: iso,
@@ -282,6 +294,16 @@ const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejecte
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
 
+const pendingMapping = z
+  .object({
+    variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
+    requestedBy: z.object({ id: z.uuid(), name: z.string() }).strict(),
+    requestedAt: iso,
+  })
+  .strict()
+  .nullable()
+  .meta({ description: 'Ghép chờ CEO duyệt (21 §18.6.5); null khi không có' });
+
 export const ChannelListing = z
   .object({
     id: z.uuid(),
@@ -304,10 +326,56 @@ export const ChannelListing = z
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
+    pendingMapping,
     version: z.number().int(),
   })
   .strict()
   .meta({ id: 'ChannelListing' });
+
+export const RemoteSkusQuery = z.object({
+  unmatched: z.stringbool().optional().meta({ description: '`true`: chỉ SKU sàn chưa ghép' }),
+});
+
+export const RemoteSkuList = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          externalProductId: z.string(),
+          externalSkuId: z.string(),
+          sellerSku: z.string(),
+          title: z.string(),
+          matchedVariantId: z.uuid().nullable(),
+          mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
+          listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt "không quản tồn"); null khi chưa có. CEO dùng để gọi `mapping/approve|reject`' }),
+          listingVersion: z.number().int().nullable().meta({ description: '`version` của listing đó, gửi kèm khi duyệt; null khi chưa có listing' }),
+          pendingMapping,
+        })
+        .strict(),
+    ),
+    syncedAt: z.iso
+      .datetime({ offset: true })
+      .nullable()
+      .meta({ description: 'Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao BE lưu); null khi sàn chưa đọc được lần nào' }),
+  })
+  .strict()
+  .meta({ id: 'RemoteSkuList' });
+
+export const MatchBody = z
+  .object({
+    externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+    variantId: z.uuid('Biến thể không hợp lệ').nullable().meta({ description: 'null là "không quản tồn" (cần CEO duyệt)' }),
+  })
+  .meta({ id: 'ListingMatchInput' });
+
+export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
+
+export const MappingBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .meta({ id: 'ListingMappingDecisionInput' });
 
 export const ListingRow = z
   .object({
@@ -344,10 +412,7 @@ export const PushResults = z.object({ results: z.array(PushResult) }).strict().m
 
 export const ListingSyncResult = z
   .object({
-    checked: z.number().int().meta({ description: 'Số listing đã đọc trạng thái từ sàn' }),
-    changed: z.number().int().meta({ description: 'Số listing đổi trạng thái' }),
-    pushed: z.number().int().meta({ description: 'Số SKU đã đẩy giá, tồn' }),
-    errors: z.number().int().meta({ description: 'Số SKU đẩy lỗi (xem `stockSyncError`, `priceSyncError`)' }),
+    queued: z.boolean().meta({ description: '`true`: vừa xếp một lượt đồng bộ; `false`: gian hàng đã có lượt chờ, không xếp thêm' }),
   })
   .strict()
   .meta({ id: 'ListingSyncResult' });

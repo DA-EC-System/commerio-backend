@@ -40,15 +40,15 @@ const inspections = async (packageId: string) => (await packageDocuments(package
 
 const inspectionLines = async (documentId: string) =>
   (
-    await testPool().query<{ variant_id: string; expected_qty: number; status: string }>(
-      `select l.variant_id, l.expected_qty, d.status from product.stock_document_lines l
+    await testPool().query<{ variant_id: string; expected_qty: number; scanned_qty: number; status: string; created_by: string | null }>(
+      `select l.variant_id, l.expected_qty, l.scanned_qty, d.status, d.created_by from product.stock_document_lines l
        join product.stock_documents d on d.id = l.document_id where l.document_id = $1`,
       [documentId],
     )
   ).rows;
 
 describe('POST /fulfillment/packages/:id/receive-return (spec 199c §5.5, 21 §19.2)', () => {
-  it('D2-24 US-DH-11.1: Kho quét đúng mã kiện → returned, một phiếu KT nháp số dự kiến 2, tồn thực không đổi, có package_status_changed và package_returned', async () => {
+  it('D2-24 US-DH-11.1: Kho quét đúng mã kiện → returned, một phiếu KT nháp dự kiến 2 = số quét (chưa gửi lines: coi như quét đủ), người lập là người quét, chờ xử lý +2, tồn thực không đổi, có package_status_changed và package_returned', async () => {
     const p = await returning();
     const before = await stockOfVariant(company.companyId, variantId);
 
@@ -61,8 +61,11 @@ describe('POST /fulfillment/packages/:id/receive-return (spec 199c §5.5, 21 §1
     const kt = await inspections(p.packageId);
     expect(kt).toHaveLength(1);
     expect(kt[0]!.number).toMatch(/^KT-/);
-    expect(await inspectionLines(kt[0]!.id)).toEqual([{ variant_id: variantId, expected_qty: 2, status: 'draft' }]);
-    expect(await stockOfVariant(company.companyId, variantId)).toEqual(before);
+    expect(await inspectionLines(kt[0]!.id)).toEqual([
+      { variant_id: variantId, expected_qty: 2, scanned_qty: 2, status: 'draft', created_by: warehouse.accountId },
+    ]);
+    // Kho cộng chờ xử lý ngay theo số quét (21 §11.1, #208); tồn thực chưa đổi tới khi phiếu ghi sổ.
+    expect(await stockOfVariant(company.companyId, variantId)).toEqual({ ...before, quarantine: before.quarantine + 2 });
     expect(await outboxOf(p.orderId, 'fulfillment.package_status_changed')).toEqual([
       { packageId: p.packageId, orderId: p.orderId, from: 'returning', to: 'returned' },
     ]);

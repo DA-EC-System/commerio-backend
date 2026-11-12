@@ -79,7 +79,8 @@ const MISMATCH = 'Mã quét không phải của kiện này';
  * Kho quét nhận hàng hoàn (spec 199c §5.5, 25 §8.3, D2-24): kiện `returning` → `returned`. Thứ tự kiểm: kiện có (404,
  * kể cả công ty khác, id sai dạng) → máy trạng thái (409 `invalid_transition`) → `version` (409 kèm `current`) → mã
  * quét khớp mã kiện hoặc mã vận đơn, không phân biệt hoa thường (422 `package_mismatch`). Dòng đã ghép SKU vào một
- * phiếu `KT` nháp (tồn chưa đổi tới khi phiếu ghi sổ); không dòng nào ghép thì không lập phiếu. Phát
+ * phiếu `KT` nháp (chờ xử lý cộng ngay theo số quét, tồn thực chưa đổi tới khi phiếu ghi sổ); không dòng nào ghép thì
+ * không lập phiếu. Phát
  * `package_status_changed`, `package_returned`. Không cần khoá idempotency: khoá dòng kiện, `version`, trạng thái chặn
  * quét lần hai; `receiveBack` gọi lại cùng nguồn trả phiếu cũ.
  */
@@ -98,9 +99,13 @@ export async function receiveReturn(ctx: FulfillmentContext, actor: Actor, id: s
     if (code !== pkg.code.toLowerCase() && code !== pkg.trackingCode?.toLowerCase()) {
       throw new AppError(422, 'package_mismatch', MISMATCH, { errors: { code: MISMATCH } });
     }
-    const lines = pkg.lines.filter((l) => l.variantId !== null).map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
+    // Route chưa nhận `lines` (số quét, 21 §19.2; PR riêng sau #300): coi như kho quét đủ số dự kiến của mọi dòng, đúng
+    // luật giai đoạn chuyển tiếp khi không gửi `lines`.
+    const lines = pkg.lines
+      .filter((l) => l.variantId !== null)
+      .map((l) => ({ variantId: l.variantId!, expected: l.quantity, scanned: l.quantity }));
     // Dòng chưa ghép SKU không vào phiếu (kho lập phiếu tay, giới hạn đã biết của spec 199c §10).
-    if (lines.length) await stockPort().receiveBack({ type: 'package', id: pkg.id }, lines);
+    if (lines.length) await stockPort().receiveBack({ type: 'package', id: pkg.id }, lines, { actorId: actor.accountId, number: pkg.code });
     else logger.info({ packageId: pkg.id }, 'kiện hoàn về không có dòng nào đã ghép SKU, không lập phiếu kiểm hàng hoàn');
     const from = pkg.status;
     await updatePackage(pkg.id, { status: to });

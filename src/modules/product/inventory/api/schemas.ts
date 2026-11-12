@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
+import { DOC_ACTIONS, DOC_STATUSES, DOC_TYPES, MANUAL_DOC_TYPES } from '../domain/stock-document.ts';
 
-// Hợp đồng /inventory (Documents/21 mục 15.1, 15.2). Phiếu kho có duyệt (mục 15.3) làm ở issue vòng đời B3.
+// Hợp đồng /inventory (Documents/21 mục 15.1, 15.2). Phiếu kho có duyệt (mục 15.3, #208): kiểu theo FE `src/types/inventory.ts`.
 // Giới hạn theo mock FE (V24): ngưỡng 0…1.000.000; trang 1…, cỡ trang 1…100 (A3).
 
 const MAX_QTY = 1_000_000;
@@ -125,3 +127,109 @@ export const StockMove = z
   .meta({ id: 'StockMove' });
 
 export const StockDetail = z.object({ level: StockLevel, moves: z.array(StockMove) }).meta({ id: 'StockDetail' });
+
+// ---------- Phiếu kho có duyệt (#208) ----------
+
+const area = z.enum(['stock', 'quarantine'], 'Khu vực là stock hoặc quarantine');
+const docType = z.enum(DOC_TYPES);
+const docStatus = z.enum(DOC_STATUSES);
+
+export const DocParams = z.object({ id: z.string() });
+export const DocActionParams = z.object({ id: z.string(), action: z.enum(DOC_ACTIONS, 'Thao tác không có') });
+
+export const DocListQuery = z.object({
+  page: page.page,
+  pageSize: page.pageSize,
+  search: page.search,
+  type: docType.optional(),
+  status: docStatus.optional(),
+});
+
+/** Số trên dòng: số nguyên, kiểm khoảng ở service để lỗi theo dòng như mock FE. */
+const qty = z.number('Số lượng là số nguyên').int('Số lượng là số nguyên').max(MAX_QTY, 'Số lượng tối đa 1.000.000').optional();
+const DocLineInput = z.object({
+  variantId: z.uuid('Biến thể không hợp lệ'),
+  quantity: qty,
+  counted: qty,
+  scanned: qty,
+  resell: qty,
+  damaged: qty,
+  toSupplier: qty,
+});
+
+export const DocCreateBody = z.object({
+  type: z.enum(MANUAL_DOC_TYPES, 'Loại phiếu là stocktake, write_off hoặc to_quarantine'),
+  area: area.optional(),
+  note: z.string().max(500, 'Ghi chú tối đa 500 ký tự').default(''),
+  lines: z.array(DocLineInput).max(200, 'Tối đa 200 dòng một phiếu'),
+});
+// Giới hạn 200 dòng khi sửa kiểm ở service: kiểm kê đầu kỳ (nguồn `shop_setup`) không giới hạn số dòng (#278)
+export const DocUpdateBody = z.object({
+  area: area.optional(),
+  note: z.string().max(500, 'Ghi chú tối đa 500 ký tự').default(''),
+  lines: z.array(DocLineInput),
+  version,
+});
+export const DocActionBody = z.object({ version, reason: z.string().trim().max(500, 'Lý do tối đa 500 ký tự').optional() });
+export const DocDecideBody = z.object({
+  decision: z.enum(['restock', 'supplier_return'], 'Chọn nhập lại tồn hoặc trả NCC'),
+  version,
+});
+
+const DocRef = z
+  .object({
+    type: z.enum(['order', 'package', 'return_request', 'stock_document', 'goods_receipt', 'supplier_return', 'purchase_request']),
+    id: z.uuid(),
+    number: z.string(),
+  })
+  .meta({ id: 'DocRef' });
+
+export const StockDocSummary = z
+  .object({
+    id: z.uuid(),
+    number: z.string(),
+    type: docType,
+    kind: z.enum(['manual', 'purchase', 'order', 'auto']),
+    status: docStatus,
+    area: area.nullable(),
+    note: z.string(),
+    source: DocRef.nullable(),
+    claimFlag: z.boolean(),
+    lineCount: z.int(),
+    totalQty: z.int(),
+    createdBy: z.string(),
+    createdById: z.string(),
+    createdAt: z.iso.datetime(),
+    postedBy: z.string().nullable(),
+    postedAt: z.iso.datetime().nullable(),
+    version: z.int(),
+  })
+  .meta({ id: 'StockDocSummary' });
+
+const StockDocLine = z.object({
+  variantId: z.uuid(),
+  sku: z.string(),
+  productName: z.string(),
+  attributesLabel: z.string(),
+  quantity: z.int().meta({ description: 'Kiểm kê: Δ = đếm − sổ; kiểm hàng về: số quét; phiếu khác: số lượng' }),
+  bookQty: z.int().optional(),
+  counted: z.int().optional(),
+  expected: z.int().optional(),
+  resell: z.int().optional(),
+  damaged: z.int().optional(),
+  toSupplier: z.int().optional(),
+  locked: z.int().optional().meta({ description: 'Phiếu giảm đang chờ duyệt: số đang tạm khoá' }),
+  unitCost: z.int().nullable().meta({ description: 'Giá vốn chốt lúc ghi sổ; `null` khi chưa ghi sổ hoặc thiếu `inventory.cost.view`' }),
+});
+
+export const StockDoc = StockDocSummary.extend({
+  lines: z.array(StockDocLine),
+  statusHistory: z.array(StatusChangeSchema),
+  followUps: z.array(DocRef),
+  rejectDecision: z.enum(['restock', 'supplier_return']).nullable(),
+  needsDecision: z.boolean(),
+}).meta({ id: 'StockDoc' });
+
+export const StockDocPage = z
+  .object({ items: z.array(StockDocSummary), total: z.int(), page: z.int(), pageSize: z.int() })
+  .meta({ id: 'StockDocPage' });

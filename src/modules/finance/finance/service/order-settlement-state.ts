@@ -6,7 +6,7 @@ import { recordTransition } from '../../../core/index.ts';
 import { vnDate } from '../domain/config-version.ts';
 import { NO_THRESHOLD, nextAfterSettlement, type Threshold } from '../domain/settlement.ts';
 import { orderSums } from '../repository/ledger.ts';
-import { lockOrderSettlement, updateOrderSettlement } from '../repository/order-settlements.ts';
+import { findOrderSettlement, lockOrderSettlement, updateOrderSettlement } from '../repository/order-settlements.ts';
 import { getEffectiveConfig } from './config-versions.ts';
 
 export const SETTLEMENT_ENTITY = 'order_settlements';
@@ -16,29 +16,57 @@ export async function currentThreshold(now = new Date()): Promise<Threshold> {
   return (await getEffectiveConfig('mismatch_threshold', null, vnDate(now)))?.payload ?? NO_THRESHOLD;
 }
 
-/** Kiện của đơn vừa ghi số ước tính: `none → pending` lần đầu, cập nhật tổng ước tính. */
-export async function markDelivered(orderId: string, shopId: string): Promise<void> {
+/**
+ * Kiện của đơn vừa ghi số ước tính: `none → pending` lần đầu, cập nhật tổng ước tính. Quyết toán đã về trước khi kiện
+ * giao (E139, #247) thì xét luôn `settled`/`mismatch` như sau một lô quyết toán. Kiện có dòng không có giá vốn thì
+ * đánh dấu đơn thiếu giá vốn, không bỏ dấu khi kiện sau đủ giá vốn (#229).
+ */
+export async function markDelivered(orderId: string, shopId: string, costMissing = false): Promise<void> {
   const row = await lockOrderSettlement(orderId, currentCompanyId()!, shopId);
   const sums = (await orderSums([orderId])).get(orderId);
   const first = row.status === 'none';
-  await updateOrderSettlement(orderId, row, { estimatedTotal: sums?.estimated ?? '0', ...(first && { status: 'pending' }) });
+  const updated = await updateOrderSettlement(orderId, row, {
+    estimatedTotal: sums?.estimated ?? '0',
+    ...(first && { status: 'pending' }),
+    ...(costMissing && { costMissing: true }),
+  });
   if (first) {
     await recordTransition({ entityType: SETTLEMENT_ENTITY, entityId: orderId, from: 'none', to: 'pending', action: 'first_delivered', actorId: null, source: 'system' });
+  }
+  if (first && updated?.settledTotal !== null && updated?.settledTotal !== undefined) {
+    await recomputeAfterSettlement([orderId], shopId, await currentThreshold());
   }
 }
 
 /**
- * Sau một lô quyết toán: tính lại tổng ước tính, thực tế, lệch của từng đơn, chuyển trạng thái theo ngưỡng
- * (`nextAfterSettlement`). Trả số đơn đổi trạng thái.
+ * Đơn bị huỷ (`sales.order_cancelled`). Đơn đang giữ `none` vì quyết toán về trước khi kiện giao (E139) mà đã có dòng
+ * thực tế khác 0 thì sang `mismatch` (`cancelled_charged`) như E138, không treo mãi ở `none` (#247). Đơn chưa có số
+ * quyết toán, hoặc đã qua `none`, thì không đổi.
  */
-export async function recomputeAfterSettlement(orderIds: readonly string[], shopId: string, t: Threshold): Promise<number> {
+export async function markOrderCancelled(orderId: string): Promise<void> {
+  const row = await findOrderSettlement(orderId, 'update');
+  if (!row || row.status !== 'none') return;
+  await recomputeAfterSettlement([orderId], row.shopId, await currentThreshold(), new Set([orderId]));
+}
+
+/**
+ * Sau một lô quyết toán: tính lại tổng ước tính, thực tế, lệch của từng đơn, chuyển trạng thái theo ngưỡng
+ * (`nextAfterSettlement`). `cancelled`: đơn đã huỷ trong app; đơn khác chưa có kiện giao xong thì giữ nguyên (E139).
+ * Trả số đơn đổi trạng thái.
+ */
+export async function recomputeAfterSettlement(
+  orderIds: readonly string[],
+  shopId: string | null,
+  t: Threshold,
+  cancelled: ReadonlySet<string> = new Set(),
+): Promise<number> {
   const sums = await orderSums(orderIds);
   let changed = 0;
   for (const orderId of [...orderIds].sort()) {
     const row = await lockOrderSettlement(orderId, currentCompanyId()!, shopId);
     const s = sums.get(orderId) ?? { estimated: '0', actual: '0' };
     const diff = new Decimal(s.actual).minus(s.estimated);
-    const next = nextAfterSettlement(row.status, s.estimated, diff, row.resolvedDiffBase, t);
+    const next = nextAfterSettlement(row.status, s.estimated, diff, row.resolvedDiffBase, t, cancelled.has(orderId));
     await updateOrderSettlement(orderId, row, {
       estimatedTotal: s.estimated,
       settledTotal: s.actual,

@@ -46,14 +46,15 @@ export async function getOrdersForFinance(ids: readonly string[]): Promise<Map<s
 
 /**
  * Đơn sàn theo mã đơn của sàn trong một gian hàng (đối soát #30, A6), khoá theo unique (công ty, gian hàng, mã đơn
- * sàn). Mã không thấy (không có, gian hàng khác, công ty khác) không có trong kết quả.
+ * sàn). Mã không thấy (không có, gian hàng khác, công ty khác) không có trong kết quả. `status` để finance biết đơn đã
+ * huỷ hay còn đang giao khi quyết toán về trước kiện giao xong (E139, #247).
  */
 export async function findMarketplaceOrders(
   shopId: string,
   externalOrderIds: readonly string[],
-): Promise<Map<string, { id: string; total: Decimal }>> {
+): Promise<Map<string, { id: string; total: Decimal; status: OrderStatus }>> {
   const codes = [...new Set(externalOrderIds)];
   if (!isUuid(shopId) || codes.length === 0) return new Map();
   const rows = await findOrdersByExternalId(shopId, codes);
-  return new Map(rows.map((r) => [r.externalOrderId!, { id: r.id, total: new Decimal(r.total) }]));
+  return new Map(rows.map((r) => [r.externalOrderId!, { id: r.id, total: new Decimal(r.total), status: r.status }]));
 }

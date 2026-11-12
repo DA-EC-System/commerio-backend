@@ -279,13 +279,59 @@ describe('adapter TikTok: SKU', () => {
     );
     const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed());
     expect(skus).toEqual([
-      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, imageUrl: 'https://img.test/1.jpg', state: 'live', rejectReason: null, quantity: 7 },
-      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, imageUrl: null, state: 'review', rejectReason: null, quantity: 0 },
+      { externalProductId: '1', externalSkuId: '11', sellerSku: 'AO-M', title: 'SP 1', variantLabel: null, imageUrl: 'https://img.test/1.jpg', state: 'live', rejectReason: null, quantity: 7, sellableQuantity: 7 },
+      { externalProductId: '3', externalSkuId: '31', sellerSku: 'QUAN-L', title: 'SP 3', variantLabel: null, imageUrl: null, state: 'review', rejectReason: null, quantity: 0, sellableQuantity: 0 },
     ]);
     expect(urlOf(fetchFn, 0).searchParams.has('page_token')).toBe(false);
     expect(urlOf(fetchFn, 1).searchParams.get('page_token')).toBe('p2');
     expect(urlOf(fetchFn, 1).searchParams.get('page_size')).toBe('100');
     expect(initOf(fetchFn, 0).body).toBe('{"status":"ALL"}');
+  });
+
+  // Search Products 202502 (OAS của tts-openapi-guide): "Filter products to show only those that are updated on or after the
+  // specified date and time. Unix timestamp." `status: ALL` gồm sản phẩm đã xoá.
+  it('listSkusChanged (#220 đợt 2): gửi `update_time_ge` (giây) với `status: ALL`, trả cả SKU của sản phẩm đã xoá', async () => {
+    const fetchFn = fakeFetch(
+      ok({ total_count: 2, next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M', [2])]), product('2', 'DELETED', [sku('21', 'CU')])] }),
+      ok({ id: '1', main_images: [], skus: [{ id: '11' }] }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkusChanged!(packed(), new Date('2026-11-12T01:00:00Z'));
+    expect(JSON.parse(String(initOf(fetchFn, 0).body))).toEqual({ status: 'ALL', update_time_ge: 1794445200 });
+    expect(skus.map((s) => [s.externalSkuId, s.state])).toEqual([
+      ['11', 'live'],
+      ['21', 'deleted'],
+    ]);
+  });
+
+  it('review vòng 2 N1: trang rỗng giữa chừng (token vẫn khác rỗng) mà chưa đủ `total_count` thì rejected `incomplete_list`', async () => {
+    const fetchFn = fakeFetch(
+      ok({ total_count: 3, next_page_token: 'p2', products: [product('1', 'ACTIVATE', [sku('11', 'A')])] }),
+      ok({ total_count: 3, next_page_token: 'p3', products: [] }),
+    );
+    await expect(createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false })).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'incomplete_list',
+    });
+  });
+
+  it('review vòng 2 N1: sàn trả thành công mà không có mảng `products` thì rejected `unexpected_response`', async () => {
+    const fetchFn = fakeFetch(ok({ next_page_token: '' }));
+    await expect(createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false })).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'unexpected_response',
+    });
+  });
+
+  it('review vòng 2 N3: SKU của sản phẩm nhiều SKU không đọc được nhãn thì `labelMissing`; một SKU hoặc có nhãn thì không', async () => {
+    const fetchFn = fakeFetch(
+      ok({ next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M'), sku('12', 'AO-L')]), product('2', 'ACTIVATE', [sku('21', 'CU')])] }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkus!(packed(), { labels: false });
+    expect(skus.map((s) => [s.externalSkuId, s.labelMissing ?? false])).toEqual([
+      ['11', true],
+      ['12', true],
+      ['21', false],
+    ]);
   });
 
   it('listSkus: gian hàng hơn 10000 sản phẩm thì rejected too_many_products, không trả thiếu', async () => {

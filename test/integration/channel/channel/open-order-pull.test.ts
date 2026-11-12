@@ -19,6 +19,8 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
 import { fakeAdapter } from './helpers.ts';
+import { setStocktakePort } from '#src/modules/channel/channel/service/stocktake-port.ts';
+import { AppError } from '#src/shared/errors/app-error.ts';
 
 const at = (iso: string) => new Date(iso);
 function remoteOrder(id: string, sku: string, status: RemoteOrder['lines'][number]['status'], placedAt: Date): RemoteOrder {
@@ -114,7 +116,7 @@ async function setUpShop(platform = 'lazada'): Promise<{ c: Company; shopId: str
     .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   const shopId = res.body.shop.id as string;
   await testPool().query(
-    `update channel.shops set status = 'active', order_cutoff_at = $2, opening_stock_mode = 'push', unmatched_sku_count = 0 where id = $1`,
+    `update channel.shops set status = 'active', order_cutoff_at = $2, opening_stock_mode = 'push' where id = $1`,
     [shopId, cutoff],
   );
   const { sku, variantId } = await createVariant(c.companyId);
@@ -156,7 +158,16 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     const setup = (id: string, body: object) =>
       request(testApp()).post(`/api/v1/channel/shops/${id}/setup`).set('Authorization', `Bearer ${c.ceo.token}`).send(body);
     expect((await setup(ok, { openingStock: 'push' })).status).toBe(200);
-    expect((await setup(failed, { openingStock: 'stocktake' })).status).toBe(501);
+    // Thiết lập lỗi: cổng kiểm kê ném lỗi thì rollback, không xếp việc
+    setStocktakePort({
+      createOpeningStocktake: () => Promise.reject(new AppError(503, 'service_unavailable', 'Kho đang bận')),
+      openingStocktakeStatusOf: async () => new Map(),
+    });
+    try {
+      expect((await setup(failed, { openingStock: 'stocktake' })).status).toBe(503);
+    } finally {
+      setStocktakePort();
+    }
     const boss = await jobBoss();
     expect(await boss.findJobs(openOrderPullQueue.name, { data: { shopId: ok } })).toHaveLength(1);
     expect(await boss.findJobs(openOrderPullQueue.name, { data: { shopId: failed } })).toHaveLength(0);

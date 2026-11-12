@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { ListingSyncResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
-import { markStockPending } from '#src/modules/channel/channel/service/listing-sync.ts';
+import { markStockPending, syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import type { PerSkuResult, RemoteSku, RemoteState } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
@@ -58,6 +58,7 @@ const updatePriceQuantity = vi.fn(async (_t: string, items: readonly { externalS
     return e ? { externalSkuId: i.externalSkuId, ok: false, ...e } : { externalSkuId: i.externalSkuId, ok: true };
   }),
 );
+let getSkusCalls = 0;
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -70,6 +71,7 @@ registerAdapter(
       return { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false };
     },
     async getSkus(_t, sellerSkus): Promise<RemoteSku[]> {
+      getSkusCalls++;
       return sellerSkus.flatMap((s) => {
         const r = remote.get(s);
         return r
@@ -100,7 +102,7 @@ const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
-const sync = () => auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+const sync = () => syncListings(port, company.companyId, shopId);
 async function listing(variantId: string) {
   const { rows } = await testPool().query('select * from channel.listings where shop_id = $1 and variant_id = $2', [
     shopId,
@@ -140,8 +142,7 @@ describe('đồng bộ trạng thái từ sàn', () => {
     remote.set('CMR-B', { state: 'rejected', rejectReason: 'Wrong Image' });
     remote.set('CMR-C', { state: 'review' });
     const res = await sync();
-    expect(res.status).toBe(200);
-    expect(ListingSyncResult.parse(res.body)).toMatchObject({ checked: 3, changed: 2 });
+    expect(res).toMatchObject({ checked: 3, changed: 2 });
     expect(await listing(a.id)).toMatchObject({ status: 'live' });
     expect(await listing(b.id)).toMatchObject({ status: 'rejected', reject_reason: 'Wrong Image' });
     expect(await listing(c.id)).toMatchObject({ status: 'under_review' });
@@ -175,13 +176,14 @@ describe('đồng bộ trạng thái từ sàn', () => {
 describe('đồng bộ tồn và giá', () => {
   it('tồn đổi: listing chuyển stockSync pending; lần đồng bộ sau đẩy số khả dụng và đọc lại synced', async () => {
     available.set(a.id, 12);
-    await withCompany(company.companyId, () => markStockPending(a.id));
+    await withCompany(company.companyId, () => markStockPending([a.id]));
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'pending' });
     updatePriceQuantity.mockClear();
     const res = await sync();
-    expect(res.body.pushed).toBe(1);
+    expect(res.pushed).toBe(1);
+    // Giá đã synced, bằng giá chuẩn: chỉ gửi tồn (#223 review 3).
     expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [
-      { externalProductId: 'item-CMR-A', externalSkuId: 'sku-CMR-A', price: '99000', quantity: 12 },
+      { externalProductId: 'item-CMR-A', externalSkuId: 'sku-CMR-A', quantity: 12 },
     ]);
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', price_sync: 'synced', platform_stock: 12 });
   });
@@ -189,12 +191,14 @@ describe('đồng bộ tồn và giá', () => {
   it('lỗi riêng một SKU: ghi stockSyncError, priceSyncError của SKU đó, không đánh lỗi SKU khác', async () => {
     remote.set('CMR-B', { state: 'rejected', rejectReason: 'Wrong Image' });
     await withCompany(company.companyId, async () => {
-      await markStockPending(a.id);
-      await markStockPending(b.id);
+      await markStockPending([a.id]);
+      await markStockPending([b.id]);
     });
+    // Cả hai chờ đẩy giá để lời gọi mang cả giá và tồn; sàn giả trả một kết quả chung cho SKU.
+    await testPool().query(`update channel.listings set price_sync = 'pending' where shop_id = $1 and variant_id = any($2)`, [shopId, [a.id, b.id]]);
     skuErrors.set('sku-CMR-A', { code: 'E0501', message: 'Update product failed' });
     const res = await sync();
-    expect(res.body).toMatchObject({ pushed: 2, errors: 1 });
+    expect(res).toMatchObject({ pushed: 2, errors: 1 });
     const rowA = await listing(a.id);
     // Đẩy lỗi giữ pending kèm lỗi (Documents/21 mục 18.6.6); `error` dành cho Lệch tồn.
     expect(rowA).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
@@ -210,10 +214,11 @@ describe('đồng bộ tồn và giá', () => {
 
   it('có giá nhưng không có số có thể bán: chỉ đẩy giá, giữ stock_sync pending kèm variant_missing', async () => {
     available.delete(b.id);
-    await withCompany(company.companyId, () => markStockPending(b.id));
+    await withCompany(company.companyId, () => markStockPending([b.id]));
+    await testPool().query(`update channel.listings set price_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, b.id]);
     updatePriceQuantity.mockClear();
     const res = await sync();
-    expect(res.body).toMatchObject({ pushed: 1, errors: 0 });
+    expect(res).toMatchObject({ pushed: 1, errors: 0 });
     expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [
       { externalProductId: 'item-CMR-B', externalSkuId: 'sku-CMR-B', price: '99000' },
     ]);
@@ -223,6 +228,7 @@ describe('đồng bộ tồn và giá', () => {
   });
 
   it('có giá nhưng không có số có thể bán, sàn trả lỗi: chỉ ghi lỗi giá, không đụng stock_sync', async () => {
+    await testPool().query(`update channel.listings set price_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, b.id]);
     skuErrors.set('sku-CMR-B', { code: 'E0501', message: 'Update product failed' });
     await sync();
     const row = await listing(b.id);
@@ -245,7 +251,7 @@ describe('sàn xoá sản phẩm (#219, 25 §6.4)', () => {
     expect((await listing(b.id)).status).toBe('rejected');
     for (const s of ['CMR-A', 'CMR-B', 'CMR-C']) remote.set(s, { state: 'deleted' });
     const res = await sync();
-    expect(ListingSyncResult.parse(res.body)).toMatchObject({ checked: 3, changed: 3 });
+    expect(res).toMatchObject({ checked: 3, changed: 3 });
     for (const v of [a, b, c]) {
       expect(await listing(v.id)).toMatchObject({
         status: 'delisted',
@@ -264,6 +270,50 @@ describe('sàn xoá sản phẩm (#219, 25 §6.4)', () => {
 
   it('listing đã gỡ không đọc lại trạng thái sàn', async () => {
     const res = await sync();
-    expect(res.body).toMatchObject({ checked: 0, changed: 0 });
+    expect(res).toMatchObject({ checked: 0, changed: 0 });
+  });
+});
+
+describe('nút Đồng bộ chỉ xếp việc (POST /listings/sync, 202, #223)', () => {
+  const jobs = async () =>
+    (
+      await testPool().query(
+        "select count(*)::int as n from pgboss.job where name = 'channel.listing_sync' and data->>'shopId' = $1 and state = 'created'",
+        [shopId],
+      )
+    ).rows[0].n;
+  const press = () => auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+
+  it('bấm hai lần: 202 cả hai, lần sau queued=false, chỉ một việc chờ; không gọi sàn trong request', async () => {
+    await testPool().query("delete from pgboss.job where name = 'channel.listing_sync' and data->>'shopId' = $1", [shopId]);
+    getSkusCalls = 0;
+    updatePriceQuantity.mockClear();
+    const first = await press();
+    const second = await press();
+    expect(first.status).toBe(202);
+    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true });
+    expect(second.status).toBe(202);
+    expect(second.body).toEqual({ queued: false });
+    expect(await jobs()).toBe(1);
+    expect(getSkusCalls).toBe(0);
+    expect(updatePriceQuantity).not.toHaveBeenCalled();
+  });
+
+  it('gian hàng cần kết nối lại → 409 shop_not_connected, không xếp việc', async () => {
+    await testPool().query("delete from pgboss.job where name = 'channel.listing_sync' and data->>'shopId' = $1", [shopId]);
+    await testPool().query(`update channel.shops set status = 'needs_reauth', orders_pulled_ok_at = null where id = $1`, [shopId]);
+    try {
+      const res = await press();
+      expect(res.status).toBe(409);
+      expect(res.body.type).toContain('shop_not_connected');
+      expect(await jobs()).toBe(0);
+    } finally {
+      await testPool().query(`update channel.shops set status = 'active' where id = $1`, [shopId]);
+    }
+  });
+
+  it('gian hàng của công ty khác → 404', async () => {
+    const res = await auth(app().post(`/api/v1/channel/shops/${randomUUID()}/listings/sync`));
+    expect(res.status).toBe(404);
   });
 });

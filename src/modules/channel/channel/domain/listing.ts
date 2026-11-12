@@ -66,5 +66,34 @@ export function syncAction(status: ListingStatus, remote: RemoteState): ListingA
   return null;
 }
 
+/** Listing có sản phẩm trên sàn mà đối chiếu tồn xét (25 §6.5). */
+export const STOCK_RECONCILED: readonly ListingStatus[] = ['under_review', 'live', 'hidden', 'platform_hold'];
+
+/**
+ * Kết quả đối chiếu tồn một listing (25 §6.5 bước 2, #223), gọi sau khi đã lấy đơn mới. `platformStock` là số trên sàn
+ * biết gần nhất (lần đẩy, hoặc lần đối chiếu trước). `match`: khớp. `push`: sàn cao hơn, đẩy giảm ngay. `wait`: sàn thấp
+ * hơn lần đầu, chờ lượt sau (kể cả listing đang Lệch tồn). `drift`: sàn vẫn thấp hơn ở lượt liền sau (số sàn biết trước
+ * đó đã thấp hơn số có thể bán): đẩy tăng và bật cờ Lệch tồn (`stock_sync = error`, 21 §18.6.6).
+ */
+export type StockDecision = 'match' | 'push' | 'wait' | 'drift';
+
+export function stockDecision(
+  row: { stockSync: 'synced' | 'pending' | 'error'; platformStock: number | null },
+  remote: number,
+  available: number,
+): StockDecision {
+  if (remote === available) return 'match';
+  if (remote > available) return 'push';
+  if (row.platformStock !== null && row.platformStock < available) return 'drift';
+  return 'wait';
+}
+
 /** Listing kẹt `pushing` quá lâu (server chết giữa lúc gọi sàn): lần đồng bộ sau chuyển `push_failed` (§18.3). */
 export const STALE_PUSH_MS = 30 * 60_000;
+
+/** Bỏ ghép chờ duyệt (#220; CHECK `listings_pending_mapping`: bốn cột cùng rỗng). */
+export const NO_PENDING = { pendingVariantId: null, pendingMode: null, pendingRequestedBy: null, pendingRequestedAt: null } as const;
+/** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
+export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
+/** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */
+export const pendingOnly = (r: { mode: 'mapped' | 'unmanaged'; approvedBy: string | null }): boolean => r.mode === 'unmanaged' && !r.approvedBy;

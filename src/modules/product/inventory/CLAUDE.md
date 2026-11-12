@@ -2,7 +2,7 @@
 
 Các con số tồn, thẻ kho, phiếu kho, giá vốn bình quân, ngưỡng tồn. **Nơi duy nhất đổi số tồn.** Bảng nằm trong schema `product` (`Documents/19` mục 3.2). Hợp đồng API: `Documents/21` mục 15.
 
-Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ theo phiếu nhận (#111), cổng tồn theo kiện: giữ, nhả, bàn giao, đảo bàn giao, hàng quay về (#206, spec `docs/superpowers/specs/2026-11-06-206-cong-ton-theo-kien-design.md`). Phiếu kho có duyệt (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về) làm ở các issue vòng đời B2, B3 (`Documents/21` mục 15–19). Phiếu nhập/xuất tay và giữ hàng theo đơn của mô hình cũ đã bỏ cùng bảng của chúng (28/10/2026).
+Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ theo phiếu nhận (#111), cổng tồn theo kiện: giữ, nhả, bàn giao, đảo bàn giao, hàng quay về (#206, spec `docs/superpowers/specs/2026-11-06-206-cong-ton-theo-kien-design.md`). Phiếu kho có duyệt (kiểm kê, xuất huỷ, chuyển chờ xử lý, kiểm hàng về; #208). Phiếu nhập/xuất tay và giữ hàng theo đơn của mô hình cũ đã bỏ cùng bảng của chúng (28/10/2026).
 
 ## Con số và bất biến
 
@@ -10,7 +10,8 @@ Hiện có: xem tồn, thẻ kho, đặt ngưỡng, lõi ghi sổ và ghi sổ t
 |---|---|---|
 | Tồn thực `on_hand`, đang giữ `reserved`, chờ xử lý `quarantine` | `stock_levels` | Đang giữ có nguồn là dòng kiện (`order.package_lines.reserved_qty`) |
 | Đang về | Tính khi đọc | Còn chờ của đề nghị nhập đã đặt NCC; `incomingOf` của purchasing tiêm qua `ctx` (`product/index.ts`), vì purchasing import inventory |
-| Tạm khoá, đang thiếu | Tính khi đọc | Từ phiếu kho chờ duyệt, kiện thiếu hàng; tới khi có các nguồn đó thì bằng 0 (`service/views.ts`, `service/locked.ts`) |
+| Tạm khoá | Tính khi đọc | Phần giảm tồn thực của phiếu kho `pending` (`repository/documents.ts` `pendingLocks`, `lockedOf`): xuất huỷ từ tồn thực, chuyển chờ xử lý lấy số lượng, kiểm kê lấy phần đếm thiếu; phiếu lấy từ chờ xử lý không khoá (#208) |
+| Đang thiếu | Tính khi đọc | Từ kiện thiếu hàng; tới khi có nguồn đó thì bằng 0 |
 | Khả dụng | Tính | `max(0, tồn thực − đang giữ − tạm khoá)`, là số đẩy lên sàn |
 | Ngưỡng `min_qty` | `stock_levels` | `null` = chưa đặt; `reorderVersion` là `version` của dòng tồn |
 | Lệch tồn `drift` | Chưa có | Luôn `false` tới #206 phần 2b (cần dữ liệu đẩy tồn của `channel`) |
@@ -30,20 +31,20 @@ Mọi thay đổi `stock_levels` (tồn thực, đang giữ, chờ xử lý, gi�
 - `version + 1` cho dòng tồn có move; SKU chỉ đổi đang giữ thì không tăng, vì `version` là `reorderVersion` của ngưỡng (Q24);
 - tính lại giá vốn khi nhập `on_hand` có giá; tồn trước khi nhập ≤ 0 thì giá vốn bằng giá nhập;
 - kiểm theo thứ tự: đang giữ âm (lỗi lập trình 500) → chờ xử lý âm → "không làm tệ hơn" (`domain/stock.ts` `worsens`: chặn khi sau khi ghi bất biến vỡ **và** phần hụt `đang giữ − tồn thực` tăng; Q14). Hai lỗi sau là `InsufficientStock`. `forced` (bàn giao bắt buộc) bỏ bước cuối. `invariant_broken` luôn bằng "bất biến đang vỡ sau khi ghi";
-- phát `inventory.stock_changed { variantId, onHand, reserved, available }` một lần cho mỗi SKU có move `on_hand` (giữ, nhả không phát). Payload là số tuyệt đối sau khi ghi: bên nghe đọc lại `availableOf`, không cộng dồn;
+- phát `inventory.stock_changed { variantId, onHand, reserved, available }` một lần cho mỗi SKU có move `on_hand` (giữ, nhả hàng cho kiện không phát; tạm khoá của phiếu kho đổi thì `service/documents.ts` phát). Payload là số tuyệt đối sau khi ghi: bên nghe đọc lại `availableOf`, không cộng dồn;
 - xét lại ngưỡng các SKU có tồn thực hoặc đang giữ đổi (`recheckThresholds`, Q15).
 
 **Cảnh báo dưới ngưỡng** (V31, Documents/25 mục 7.5, `service/thresholds.ts`): dưới ngưỡng khi `có thể bán + đang về − còn thiếu cho đơn ≤ ngưỡng`, trừ SKU ngừng bán, lưu trữ. Chạm ngưỡng thì bật `alert_active` và phát `inventory.below_threshold` một lần; lên trên ngưỡng mới tắt. Xét lại khi ghi sổ, khi đặt ngưỡng, và khi purchasing đổi đang về (đề nghị vào/ra Đã đặt, Nhận một phần; ghi sổ phiếu nhận; đóng thiếu). Đang về lấy qua `setIncomingSource` do `product/index.ts` nối. Giữ, nhả hàng cho kiện cũng xét lại (qua lõi). Chưa xét lại khi catalog đổi trạng thái kinh doanh của SKU.
 
 Lõi không tự chống gọi lặp: bên gọi chặn bằng chuyển trạng thái chứng từ có điều kiện trong cùng giao dịch. Cổng theo kiện có thêm lưới riêng (mục dưới).
 
-## Phiếu do hệ thống lập (`service/documents.ts`, `service/shipment.ts`, `service/returns.ts`)
+## Phiếu do hệ thống lập (`service/system-documents.ts`, `service/shipment.ts`, `service/returns.ts`)
 
 | Loại | Số | Lập khi | Trạng thái |
 |---|---|---|---|
 | `shipment` | `XK-000001` | `ship` | `posted`; mỗi dòng kiện một dòng phiếu, `source_line_id` = id dòng kiện, giá = giá vốn bình quân lúc khoá; `note` "Bàn giao bắt buộc theo sàn" khi `forced` |
 | `shipment_reversal` | `DX-000001` | `reverseShipment` | `posted`; dòng giá = bình quân giá các dòng xuất của SKU trong lượt; `note` = lý do |
-| `return_inspection` | `KT-000001` | `receiveBack` | `draft`; dòng có `expected_qty`, chưa có giá (ghi sổ ở #112) |
+| `return_inspection` | `KT-000001` | `receiveBack` | `draft`; dòng có `expected_qty`, `scanned_qty` (chưa chia bán lại/hỏng/trả NCC), giá vốn dòng kiện gốc nếu bên gọi đưa; chờ xử lý đã cộng theo số quét |
 
 Mỗi loại một bộ đếm `doc_counters` (`docType` = tên loại). `created_at = clock_timestamp()` (giờ lúc chèn, sau khi khoá dòng tồn) vì **lượt đang xuất** của kiện (các phiếu `shipment` sau phiếu `shipment_reversal` gần nhất) sắp theo cột này. Mỗi phiếu ghi `state_transitions` (`stock_documents`, `null → posted|draft`). Thẻ kho của `XK`, `DX` trỏ `stock_document` + id dòng phiếu (`XK`: một dòng thẻ kho cho mỗi dòng kiện).
 
@@ -60,7 +61,9 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
   - `release(packageId, lines)`: trừ đang giữ; nhả quá số đang giữ thì 500 kèm mã kiện, không ghi gì.
   - `ship(packageId, lines: { variantId, quantity, packageLineId }[], { actorId, forced? })` → `{ documentId, number }`: phiếu `XK`, trừ tồn thực và đang giữ. Kiện chưa giữ đủ mà không `forced` thì 500 trước khi lấy số phiếu. `forced`: trừ tồn thực, không trừ đang giữ, được vỡ bất biến. Lưới gọi lặp theo `packageLineId` (Q12): trong lượt đang xuất, đúng tập dòng kiện của một phiếu thì trả phiếu đó; không dòng nào đã trừ thì lập phiếu mới (dòng ghép SKU sau trùng SKU, số với lần trước vẫn được trừ); lẫn dòng đã trừ với dòng mới, hoặc `packageLineId` lặp trong một lần gọi, thì 500.
   - `reverseShipment(packageId, lines, { actorId, reason })` → `{ documentId, number }`: đảo cả lượt đang xuất, cộng lại tồn thực và đang giữ; `lines` phải gồm đúng mọi SKU của lượt với đúng tổng đã xuất (`25` §8.3 không đảo một phần), lệch hay không còn lượt thì 500; `reason` sau khi trim khác rỗng, ≤ 500 ký tự.
-  - `receiveBack({ type: 'package' | 'return_request', id }, lines)` → `{ documentId, number }`: phiếu `KT` nháp, không đổi tồn; nguồn đã có phiếu thì trả phiếu đó. Mỗi nguồn tối đa một phiếu (unique một phần `stock_documents_return_inspection_source_uq`): lần gọi song song đụng unique thì lùi savepoint (không nhảy số), trả phiếu của bên commit trước; giao dịch bên gọi vẫn dùng tiếp được.
+  - `receiveBack({ type: 'package' | 'return_request' | 'unmatched_parcel', id }, lines: { variantId, expected, scanned }[], meta?)` → `{ documentId, number }` (đổi 11/11/2026, Documents#102, #103): phiếu `KT` nháp có sẵn số dự kiến, số quét từng dòng và **cộng chờ xử lý ngay theo số quét** (thẻ kho ngăn `quarantine`, nguồn là phiếu), tồn thực chưa đổi. Bên gọi gộp dòng nguồn với số quét trước khi gọi (món vắng `scanned = 0`, món ngoài nguồn `expected = 0`); kho không tự suy. `meta`: `actorId` (người quét, thành `created_by` của phiếu và `done_by` của thẻ kho), mã chứng từ nguồn, đơn, gian hàng, giá vốn dòng kiện gốc, `fromUnmatchedParcelId` (gắn kiện không khớp vào yêu cầu: chuyển phiếu của kiện sang nguồn yêu cầu, đặt lại dự kiến, không cộng lần hai). `unmatched_parcel`: dự kiến bằng số quét, nhận cả khi chưa món nào rõ SKU. Nguồn đã có phiếu thì trả phiếu đó, không cộng lần nữa. Mỗi nguồn tối đa một phiếu (unique một phần `stock_documents_return_inspection_source_uq`): lần gọi song song đụng unique thì lùi savepoint (không nhảy số, không cộng), trả phiếu của bên commit trước; giao dịch bên gọi vẫn dùng tiếp được.
+- `createQuarantineWriteOff(source, lines, note, actorId)`: xuất huỷ nháp từ chờ xử lý (phiếu trả NCC bị huỷ, #210).
+- `createOpeningStocktake(shopId, { actorId })` (Documents/21 mục 11.3, #245): kiểm kê đầu kỳ nháp nguồn `shop_setup` cho channel (#198); gọi lại hoặc gọi đua trả phiếu đang mở (`created: false`, unique `stock_documents_opening_uq`). Phiếu do hệ thống lập (`created_by` null, `actorId` ghi ở lịch sử); người gửi duyệt thành người lập. Không giới hạn số dòng khi sửa.
 
 ## Bên gọi cổng theo kiện phải làm
 
@@ -69,6 +72,15 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `ship` gọi đúng một lần theo `stock_deducted` (Q12); giá vốn dòng kiện đọc `stockOf(...).avgCost` ngay sau `ship` trong cùng giao dịch (Q16).
 - Mỗi dòng của `ship` mang đúng id dòng kiện (`package_lines.id`); dòng ghép SKU sau (`25` §8.4 quy tắc 3) trừ bằng một lần `ship` riêng chỉ gồm các dòng đó.
 - Sau `reverseShipment`, đặt lại `reserved_qty = quantity`, `stock_deducted = false` cho dòng được đảo: inventory đã cộng lại đang giữ, kể cả khi lượt đó là bàn giao bắt buộc (Q17). Quên thì đang giữ kẹt mãi, khả dụng thấp hơn thật.
+
+## Phiếu kho có duyệt (`service/documents.ts`, #208)
+
+- Bảng chuyển ở `domain/stock-document.ts` (chép FE `src/lib/machines/stockDocument.ts`): duyệt, từ chối cần người khác người lập (kiểm hàng về: người quét do `receiveBack` ghi qua `meta.actorId`, chưa có thì người gửi duyệt; kiểm kê đầu kỳ: người gửi duyệt), CEO hoặc công ty một người tự duyệt được (`self_approved`, nhãn trong lịch sử, nhật ký, báo cáo CEO).
+- Kiểm kê chụp tồn sổ của ngăn (`book_qty`) mỗi lần lưu; Δ = đếm − sổ. Duyệt kiểm kê được làm tồn âm (`applyMoves` `allowBreak`, 25 §7.1) và phát `inventory.stocktake_posted` (có `countedAt` là lúc lưu số đếm, `postedAt` trùng `posted_at`).
+- Gửi duyệt xuất huỷ, chuyển chờ xử lý: thiếu khả dụng (hoặc chờ xử lý) thì 422 `stock_insufficient` theo dòng. Xuất huỷ chờ xử lý bị từ chối thì `needsDecision` tới khi `/decide` (nhập lại tồn, hoặc lập phiếu trả NCC nháp).
+- Tạm khoá đổi (gửi duyệt giữ lại, từ chối nhả) thì phát `inventory.stock_changed` cho SKU của phiếu như khi tồn thực đổi (Documents/21 §11.1; `publishLockChanges`). Trạng thái phiếu đổi trước khi ghi sổ để số khả dụng lõi phát ra không còn trừ tạm khoá của chính phiếu.
+- Kiểm hàng về: cả số quét đã ở chờ xử lý từ lúc nhận; sửa số quét trên phiếu nháp (`PUT`) đổi chờ xử lý đúng phần chênh; ghi sổ chuyển phần bán lại từ chờ xử lý sang tồn thực **theo giá vốn dòng kiện** (tính lại bình quân; dòng không có giá thì giữ bình quân), hỏng và trả NCC ở lại chờ xử lý, không cộng lần hai; chưa chia đủ số quét thì 422; hỏng sinh xuất huỷ nháp (nguồn là phiếu này), trả NCC sinh phiếu trả NCC nháp qua `setSupplierReturnPort` (purchasing import inventory nên nối ở `product/index.ts`); nguồn `return_request` thì phát `inventory.return_inspected`.
+- Dòng phiếu chèn với `created_at` lệch từng mili giây để đọc đúng thứ tự nhập.
 
 ## Quyền ở API (`api/routes.ts`)
 
@@ -80,4 +92,3 @@ Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/
 - `stockValue` ra JSON là `number`: trên ~9×10^15 đồng thì mất chính xác.
 - Thứ tự khoá chỉ đúng **trong một lần gọi** cổng. Bên gọi gọi cổng nhiều lần trong một giao dịch (một đơn nhiều kiện) có thể deadlock với giao dịch khác: đã giữ `doc_counters` sau `ship` kiện 1 rồi mới khoá SKU của kiện 2. PostgreSQL huỷ một bên (`40P01`, 500), việc nền chạy lại; nếu hay gặp thì bên gọi khoá đủ SKU của mọi kiện trước.
 - Dòng `doc_counters` loại `shipment` khoá tới khi giao dịch commit: mọi `ship` trong một công ty xếp hàng ở đó (chấp nhận ở tải vài trăm kiện mỗi ngày). Nếu thành nút thắt thì cấp số bằng sequence riêng (chấp nhận nhảy số). Xem phiên đang chờ khoá: `select pid, wait_event_type, wait_event, now() - xact_start as age, left(query, 80) from pg_stat_activity where wait_event_type = 'Lock';` (chỉ đọc).
-- `lockedOf` vẫn bằng 0 tới B3, nên `reserve` có thể giữ cả phần lẽ ra đang tạm khoá cho phiếu kho chờ duyệt.

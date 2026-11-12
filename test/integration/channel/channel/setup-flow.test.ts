@@ -6,9 +6,12 @@ import request from 'supertest';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { ShopSetupPreview, ShopSetupResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { setStocktakePort } from '#src/modules/channel/channel/service/stocktake-port.ts';
+import { AppError } from '#src/shared/errors/app-error.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { type ListingVariant, productPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { setModuleEnabled } from '../../helpers/state.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -176,12 +179,25 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
     return create;
   }
 
-  it('AC-7: cổng mặc định (chưa có #245) → 501 kèm issue, owner; đọc lại vẫn connecting, không listing', async () => {
+  it('AC-7: cổng mặc định lập phiếu kiểm kê đầu kỳ thật của inventory (#245), gian hàng chờ kiểm kê phiếu nháp', async () => {
     const c = await createCompany({ optionalModules: ['channel'] });
     const shopId = await connectingShop(c);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
-    expect(res.status).toBe(501);
-    expect(res.body).toMatchObject({ code: 'not_implemented', issue: 'commerio-backend#245', owner: 'Bình' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const result = ShopSetupResult.parse(res.body);
+    expect(result.stocktakeNumber).toMatch(/^KK-/);
+    expect(result.shop).toMatchObject({ status: 'active', openingStocktake: { number: result.stocktakeNumber, status: 'draft' } });
+  });
+
+  it('AC-7: lập phiếu lỗi thì rollback, đọc lại vẫn connecting, không listing', async () => {
+    setStocktakePort({
+      createOpeningStocktake: () => Promise.reject(new AppError(503, 'service_unavailable', 'Kho đang bận')),
+      openingStocktakeStatusOf: async () => new Map(),
+    });
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const shopId = await connectingShop(c);
+    const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
+    expect(res.status).toBe(503);
     expect(await shopRow(shopId)).toMatchObject({ status: 'connecting', order_cutoff_at: null, listings: 0 });
   });
 
@@ -209,8 +225,8 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
 
     // Lượt đồng bộ sau (giá đã synced, tồn còn pending) không gọi sàn khi còn chờ.
     updatePriceQuantity.mockClear();
-    const sync = await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set('Authorization', `Bearer ${c.ceo.token}`);
-    expect(sync.status).toBe(200);
+    const sync = await syncListings(productPort(createModuleContext()), c.companyId, shopId);
+    expect(sync.errors).toBe(0);
     expect(updatePriceQuantity).not.toHaveBeenCalled();
 
     // AC-8: chờ kiểm kê thì đẩy listing 409, không ghi listing.

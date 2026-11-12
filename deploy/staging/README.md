@@ -19,7 +19,7 @@ Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước
 |---|---|
 | `check` | `npm run check` |
 | `image` | Build `linux/amd64` + `linux/arm64`, đẩy `ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (nhãn `org.opencontainers.image.revision` = commit) |
-| `migrate` | Từ runner: `npm run db:migrate` rồi `npm run db:seed` lên Supabase (image không có `drizzle-kit`, V36) |
+| `migrate` | Từ runner: `npm run db:migrate` rồi `npm run db:seed` lên Supabase (image không có `drizzle-kit`, V36). `db:migrate` dừng, không chạy gì, nếu có migration lệch thứ tự (`db/CLAUDE.md`) |
 | `tag-develop` | Gắn tag `develop` cho image vừa build, chỉ sau khi migration xanh |
 | `deploy` | SSH vào `ci-deploy@<VPS>` gửi tag; VPS chạy `commerio-deploy backend`: blue-green cho `api`, `realtime` (bật màu nghỉ với image mới, chờ sẵn sàng, chuyển Service, tắt màu cũ), rolling update cho `worker` (`deploy/k8s/README.md`). **Bỏ qua khi chưa đặt biến `STAGING_SSH_HOST`** |
 | `blackbox` | `npm run test:blackbox` gọi vào `STAGING_API_URL` bằng tài khoản QA. **Bỏ qua khi chưa đặt biến `STAGING_API_URL`** (hoặc khi `deploy` bị bỏ qua) |

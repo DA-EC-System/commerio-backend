@@ -1,5 +1,6 @@
 // Kiểu chung của adapter sàn (Strategy, #103 B7). Chỉ adapter gọi HTTP sàn, ký request và biết mã lỗi của sàn;
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
+import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
 
@@ -111,10 +112,31 @@ export interface RemoteSku {
    */
   variantLabel?: string | null;
   /**
+   * `true` khi SKU thuộc sản phẩm nhiều SKU mà lần đọc này không lấy được nhãn biến thể (vượt trần đọc chi tiết, sàn lỗi,
+   * `labels: false`): `title` chỉ là "tên - SKU người bán". Bản sao SKU sàn khi đó giữ tiêu đề cũ đã có nhãn (review #309
+   * vòng 2 N3). Sàn có nhãn sẵn trong danh sách (Lazada) hoặc sản phẩm một SKU thì thiếu.
+   */
+  labelMissing?: boolean;
+  /**
    * URL ảnh đầu tiên của sản phẩm trên sàn, cho bảng ghép lúc thiết lập (#282, Documents/21 §18.7.5). Thiếu hoặc null khi
    * sàn không trả ảnh hay adapter không đọc (TikTok: `labels: false`, quá trần đọc chi tiết, Get Product lỗi).
    */
   imageUrl?: string | null;
+  /**
+   * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
+   * (`promotion_locked`). Thiếu là không khoá. Lazada, TikTok không điền: không có API đọc trước được SKU nào đang bị khoá
+   * (TikTok Promotion API `activities/search` không lọc theo sản phẩm, không gồm chiến dịch của sàn; chốt 12/11/2026 không
+   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, adapter đổi thành `PROMOTION_LOCKED`.
+   */
+  stockLocked?: boolean;
+  priceLocked?: boolean;
+  /**
+   * Số còn bán được trên sàn, cùng nghĩa với số app đẩy lên (số có thể bán), để đối chiếu tồn (#223, 25 §6.5). Thiếu thì
+   * không đối chiếu SKU đó. TikTok: tổng `inventory[].quantity` ("quantity available in the warehouse", cũng là số app
+   * đẩy). Lazada: `sellableStock` của `/products/get` `options=1` (đo trên shop thử, xem `lazada.ts`); app đẩy bằng
+   * UpdateSellableQuantity nên cùng nghĩa.
+   */
+  sellableQuantity?: number;
 }
 
 export interface PriceQuantity {
@@ -132,11 +154,18 @@ export interface SettlementTxn {
   /** `YYYY-MM-DD`. */
   date: string;
   feeName: string;
+  /** Mã phí gốc của sàn (Lazada `fee_type`), ghi kèm tên khi khoản chưa ánh xạ được (US-TI-06 dòng 2). */
+  feeCode: string | null;
   transactionType: string;
   /** Có dấu: sàn trả shop dương, sàn trừ âm. Chuỗi thập phân. */
   amount: string;
   /** Thuế sàn khấu trừ của khoản này (số dương), `"0"` khi không có. */
   withholding: string;
+  /**
+   * Loại khoản trong sổ tiền, adapter đổi từ tên phí của sàn mình (Documents/tich-hop-san/README.md mục 2, #203);
+   * `null` là chưa nhận ra: finance ghi `adjustment` kèm tên phí.
+   */
+  kind: LedgerKind | null;
 }
 
 /** Một kỳ quyết toán (#117; Lazada `/finance/payout/status/get`). */
@@ -295,7 +324,35 @@ export interface SplitAttributes {
 }
 
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
-export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId: string; ok: false; code: string; message: string };
+/**
+ * Mã lỗi theo SKU khi sàn từ chối cập nhật tồn hoặc giá vì SKU đang trong khuyến mãi, chiến dịch (#223, 25 §6.5 bước 3,
+ * E32). Adapter đổi mã riêng của sàn thành mã này, giữ câu của sàn trong `message`.
+ */
+export const PROMOTION_LOCKED = 'promotion_locked';
+
+export type PartResult = { ok: true } | { ok: false; code: string; message: string };
+
+/**
+ * Kết quả đẩy một SKU. `ok`/`code`/`message` gộp cả lời gọi (lỗi đầu tiên). Sàn đổi tồn và giá bằng hai lời gọi riêng
+ * (Lazada, TikTok) thì trả thêm `stock`, `price` (chỉ phần có gửi), để tồn bị khoá không làm giá thành lỗi và ngược lại
+ * (#223); bên gọi áp từng phần, không có thì dùng kết quả chung.
+ */
+export type PerSkuResult = PartResult & { externalSkuId: string; stock?: PartResult; price?: PartResult };
+
+/** Dựng `PerSkuResult` từ lỗi theo SKU của phần tồn và phần giá (adapter gọi hai lời gọi riêng). */
+export function partResults(
+  items: readonly PriceQuantity[],
+  stockErrors: ReadonlyMap<string, { code: string; message: string }>,
+  priceErrors: ReadonlyMap<string, { code: string; message: string }>,
+): PerSkuResult[] {
+  const part = (e: { code: string; message: string } | undefined): PartResult => (e ? { ok: false, code: e.code, message: e.message } : { ok: true });
+  return items.map((i) => {
+    const stock = i.quantity === undefined ? undefined : part(stockErrors.get(i.externalSkuId));
+    const price = i.price === undefined ? undefined : part(priceErrors.get(i.externalSkuId));
+    const first = [stock, price].find((p) => p && !p.ok) ?? { ok: true as const };
+    return { externalSkuId: i.externalSkuId, ...first, ...(stock && { stock }), ...(price && { price }) };
+  });
+}
 
 /** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */
 export type ConnectMethod = 'oauth' | 'token';
@@ -332,6 +389,12 @@ export interface MarketplaceAdapter {
    * nhất hơn một vòng việc nền, và đủ xa để token vừa làm mới không tới hạn lại ngay ở vòng sau.
    */
   refreshDueAt?(tokens: TokenExpiry): Date | null;
+  /**
+   * Hạn refresh token cố định từ lúc seller uỷ quyền, làm mới không gia hạn (Lazada). Khai `true` thì lần làm mới giữ
+   * `refresh_expires_at` đã lưu, không lấy hạn adapter vừa tính lại từ "số giây còn lại" (lệch theo độ trễ mạng, làm
+   * nhãn "Sắp hết hạn" và thư báo mất uỷ quyền #312 tưởng là hạn mới).
+   */
+  readonly refreshKeepsAuthDeadline?: boolean;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
   /**
@@ -349,13 +412,22 @@ export interface MarketplaceAdapter {
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
   /**
-   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
-   * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
+   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5) và lần đọc trọn của bản sao SKU sàn
+   * (#220). Gian hàng quá giới hạn đọc của sàn thì ném `rejected`, không trả thiếu: số sản phẩm đọc được ít hơn tổng sàn
+   * báo (trang thiếu, trang rỗng giữa chừng) thì `incomplete_list`, phản hồi thành công mà không có danh sách thì
+   * `unexpected_response` (review #309 vòng 2 N1; bản sao xoá SKU không thấy nên không được nhận danh sách thiếu). `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
    * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282), kèm `imageUrl` khi có. `labels: false` khi chỉ cần
    * đếm hay không hiển thị: bỏ các lời gọi đọc nhãn, ảnh. `skipSellerSkus`: SKU Commerio bên gọi sẽ ghép theo SKU; sản phẩm
    * mà mọi SKU nằm trong đó không cần nhãn nên adapter không đọc nhãn, ảnh cho nó (`variantLabel`, `imageUrl` null).
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
+  /**
+   * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), có nhãn biến thể như `listSkus`. Sản phẩm đã
+   * xoá (`state: 'deleted'`) trả khi sàn trả trong cùng lời gọi (TikTok); Lazada không gọi thêm `filter=deleted` để giữ hạn
+   * mức (review vòng 2 N2), lần đọc trọn mỗi ngày dọn. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
+   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn).
+   */
+  listSkusChanged?(accessToken: string, since: Date): Promise<RemoteSku[]>;
   /**
    * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
    * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của
@@ -433,6 +505,28 @@ export interface MarketplaceAdapter {
    * `listOrders`: lần đầu `cursor` null, `nextCursor` null là hết, trang có thể rỗng mà vẫn còn con trỏ.
    */
   listReturns?(accessToken: string, updatedAfter: Date, cursor: string | null): Promise<{ items: RemoteReturn[]; nextCursor: string | null }>;
+  /** Lý do người bán dùng được khi từ chối trả hàng hay từ chối hoàn tiền (#202, Documents/21 §20.1). */
+  returnReasons?(accessToken: string, externalReturnId: string, action: 'reject' | 'refuse-refund'): Promise<{ id: string; label: string; requiresImage: boolean }[]>;
+  /**
+   * Người bán quyết yêu cầu trả (#202): `accept` đồng ý trả hàng, `reject` từ chối (cần `reasonId`), `refund` hoàn tiền
+   * cho khách giữ hàng. Kết quả về app qua lượt kéo yêu cầu trả kế tiếp.
+   */
+  decideReturn?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+    decision: 'accept' | 'reject' | 'refund',
+    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+  ): Promise<void>;
+  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
+  returnHistory?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+  ): Promise<{ at: Date; reverseStatus: string; ofcStatus: string | null; note: string | null }[]>;
   /**
    * Lần huỷ đơn (khách xin huỷ, người bán, sàn huỷ) có cập nhật từ `updatedAfter`, lật trang như `listReturns`. Huỷ không vào
    * bảng yêu cầu trả: khách xin huỷ là cờ `cancel_requested` của đơn (Documents/21 §20.1).
@@ -465,7 +559,12 @@ export type RemoteReturnStatus = 'requested' | 'rejected' | 'refund_only' | 'awa
 
 /** Một món trong yêu cầu trả hay lần huỷ của sàn. Tiền là chuỗi thập phân, trống là null. */
 export interface RemoteAftersaleLine {
+  /** Mã món của đơn (khớp `order_lines.external_line_id`). */
   externalLineId: string;
+  /** Mã dòng đơn ngược của sàn khi khác mã món (Lazada `reverse_order_line_id`, dùng khi quyết trên sàn, #202). */
+  externalReturnLineId?: string | null;
+  /** Số món của dòng; không có là 1 (mỗi món một dòng). */
+  quantity?: number;
   externalSkuId: string | null;
   sellerSku: string | null;
   refundAmount: string | null;
@@ -504,6 +603,10 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
+  ofcStatus?: string | null;
+  /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
+  returnTo?: 'warehouse' | 'merchant' | null;
 }
 
 /**

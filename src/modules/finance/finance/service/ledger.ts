@@ -1,9 +1,20 @@
 // Sổ tiền theo đơn (#116; Documents/21 §21.1, §11.2; 25 §10.1, §10.2, §10.4). Module tiền chỉ nghe sự kiện: các hàm
-// `record…` nhận payload của sự kiện (fulfillment, sales, inventory) và ghi dòng ước tính, mỗi nguồn một lần. Loại sự
-// kiện chưa có trong danh mục (#106, #107, #112 thêm), nên chưa đăng ký consumer: test gọi thẳng hàm.
+// `record…` nhận payload của sự kiện (fulfillment, sales, inventory, purchasing) và ghi dòng, mỗi nguồn một lần.
+// Consumer `finance-ledger` (`registerLedgerConsumers`, #228) gọi chúng trong giao dịch của khung sự kiện.
+import { type EventEnvelope, type EventPayload, type EventType, registerConsumer } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { addDays, vnDate } from '../domain/config-version.ts';
-import { type Draft, postDelivered, postInspected, postRefund, postReturned, profitOf, taxWarnings } from '../domain/ledger.ts';
+import {
+  costMissingOf,
+  type Draft,
+  postDelivered,
+  postInspected,
+  postRefund,
+  postReturned,
+  postSupplierRefund,
+  profitOf,
+  taxWarnings,
+} from '../domain/ledger.ts';
 import {
   entriesOfOrder,
   findEntries,
@@ -17,51 +28,30 @@ import {
   sourcePosted,
 } from '../repository/ledger.ts';
 import { bankMatchesOf } from '../repository/ledger.ts';
+import { findOrderSettlement } from '../repository/order-settlements.ts';
 import { getEffectiveConfig } from './config-versions.ts';
 import { markDelivered } from './order-settlement-state.ts';
 import { isUuid, notFound, type Orders, ordersOf, userRef } from './views.ts';
 
-export interface PackageDelivered {
-  packageId: string;
-  orderId: string;
-  shopId: string;
-  deliveredAt: string;
-  lines: { variantId: string; quantity: number; unitPrice: string; unitCost: string }[];
-  platformSubsidy: string;
-  shippingIncome: string;
-  shippingCost: string;
-}
-export interface PackageReturned {
-  packageId: string;
-  orderId: string;
-  shopId: string;
-  returnedAt: string;
-}
-export interface ReturnRefunded {
-  returnRequestId: string;
-  orderId: string;
-  shopId: string;
-  refundAmount: string;
-  refundedAt: string;
-}
-export interface ReturnInspected {
-  inspectionId: string;
-  orderId: string;
-  shopId: string;
-  inspectedAt: string;
-  lines: { variantId: string; resellable: number; unitCost: string }[];
-}
+// Payload theo danh mục sự kiện (Documents/21 §11.2).
+export type PackageDelivered = EventPayload<'fulfillment.package_delivered'>;
+export type PackageReturned = EventPayload<'fulfillment.package_returned'>;
+export type ReturnRefunded = EventPayload<'sales.return_refunded'>;
+export type ReturnInspected = EventPayload<'inventory.return_inspected'>;
+export type SupplierReturnRefunded = EventPayload<'purchasing.supplier_return_refunded'>;
 
 interface Target {
   source: { type: LedgerSource; id: string };
-  orderId: string;
-  shopId: string;
+  orderId: string | null;
+  shopId: string | null;
   packageId?: string;
   returnRequestId?: string;
   occurredOn: string;
+  /** Mặc định ước tính; tiền NCC hoàn là số thực tế (chờ khớp sao kê). */
+  isEstimate?: boolean;
 }
 
-/** Ghi các dòng ước tính của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. */
+/** Ghi các dòng của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. */
 async function post(companyId: string, t: Target, drafts: Draft[]): Promise<number> {
   await lockSource(t.source.type, t.source.id);
   if (await sourcePosted(t.source.type, t.source.id)) return 0;
@@ -70,7 +60,7 @@ async function post(companyId: string, t: Target, drafts: Draft[]): Promise<numb
       companyId,
       kind: d.kind,
       amount: d.amount,
-      isEstimate: true,
+      isEstimate: t.isEstimate ?? true,
       occurredOn: t.occurredOn,
       orderId: t.orderId,
       packageId: t.packageId ?? null,
@@ -97,8 +87,9 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
     };
     const target = { source: { type: 'package' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
     const written = await post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs));
-    // Trạng thái tiền của đơn (#117): kiện đầu tiên giao xong thì `none → pending`, cập nhật tổng ước tính.
-    if (written) await markDelivered(e.orderId, e.shopId);
+    // Trạng thái tiền của đơn (#117): kiện đầu tiên giao xong thì `none → pending`, cập nhật tổng ước tính; dòng không
+    // có giá vốn thì đánh dấu đơn thiếu giá vốn (#229).
+    if (written) await markDelivered(e.orderId, e.shopId, costMissingOf(e.lines));
     return written;
   });
 }
@@ -141,6 +132,49 @@ export function recordReturnInspected(companyId: string, e: ReturnInspected): Pr
   );
 }
 
+/** `purchasing.supplier_return_refunded`: dòng thực tế `supplier_refund`, không gắn đơn, gian hàng, chờ khớp sao kê. */
+export function recordSupplierReturnRefunded(companyId: string, e: SupplierReturnRefunded): Promise<number> {
+  return withCompany(companyId, () =>
+    post(
+      companyId,
+      { source: { type: 'supplier_return', id: e.supplierReturnId }, orderId: null, shopId: null, occurredOn: dayOf(e.recordedAt), isEstimate: false },
+      postSupplierRefund(e.refundAmount),
+    ),
+  );
+}
+
+export const LEDGER_CONSUMER = 'finance-ledger';
+
+type Recorder<T extends EventType> = (companyId: string, payload: EventPayload<T>) => Promise<number>;
+const on =
+  <T extends EventType>(record: Recorder<T>) =>
+  async (e: EventEnvelope<T, EventPayload<T>>) => {
+    await record(e.companyId!, e.payload);
+  };
+
+/**
+ * Handler của consumer `finance-ledger` theo loại sự kiện (21 §11.2). Khung chạy handler trong `withCompany` của sự
+ * kiện và ghi `processed_events` (consumer, eventId) cùng giao dịch; khoá nguồn chặn thêm trường hợp cùng nguồn khác
+ * `eventId`. `sales.order_cancelled` không nghe: đơn huỷ không phát sinh khoản nào (25 §10.1), phạt chỉ có từ quyết toán.
+ */
+export const ledgerHandlers = {
+  'fulfillment.package_delivered': on<'fulfillment.package_delivered'>(recordPackageDelivered),
+  'fulfillment.package_returned': on<'fulfillment.package_returned'>(recordPackageReturned),
+  'sales.return_refunded': on<'sales.return_refunded'>(recordReturnRefunded),
+  'inventory.return_inspected': on<'inventory.return_inspected'>(recordReturnInspected),
+  'purchasing.supplier_return_refunded': on<'purchasing.supplier_return_refunded'>(recordSupplierReturnRefunded),
+};
+
+/** Đăng ký mọi loại của consumer `finance-ledger` trong một khối đồng bộ (worker, `startFinanceBackground`). */
+export function registerLedgerConsumers(): void {
+  const options = { consumer: LEDGER_CONSUMER };
+  registerConsumer('fulfillment.package_delivered', ledgerHandlers['fulfillment.package_delivered'], options);
+  registerConsumer('fulfillment.package_returned', ledgerHandlers['fulfillment.package_returned'], options);
+  registerConsumer('sales.return_refunded', ledgerHandlers['sales.return_refunded'], options);
+  registerConsumer('inventory.return_inspected', ledgerHandlers['inventory.return_inspected'], options);
+  registerConsumer('purchasing.supplier_return_refunded', ledgerHandlers['purchasing.supplier_return_refunded'], options);
+}
+
 type Names = Map<string, Promise<{ id: string; name: string } | null>>;
 
 /** `LedgerLine` của §21.1 cho một trang: kèm mã đơn, lần khớp sao kê và tên người khớp (#117). */
@@ -173,6 +207,8 @@ function lineView(r: LedgerRow, orders: Orders) {
     returnRequestId: r.returnRequestId,
     configVersionId: r.configVersionId,
     txnId: r.externalTransactionId,
+    externalOrderId: r.externalOrderId,
+    flags: r.externalOrderId && !r.orderId ? (['unknown_order'] as const) : ([] as const),
     source: r.sourceType && r.sourceId ? { type: r.sourceType, id: r.sourceId } : null,
     reason: r.reason,
     createdAt: r.createdAt.toISOString(),
@@ -225,6 +261,7 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
       cogs: canSeeCost ? p.cogs : null,
       gross: canSeeCost ? p.gross : null,
       estimated: p.estimated,
+      costMissing: (await findOrderSettlement(orderId))?.costMissing ?? false,
       lines: await lineViews(visible, orders),
     };
   });

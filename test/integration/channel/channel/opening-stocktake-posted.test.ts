@@ -26,6 +26,7 @@ import { type OpeningStocktakeStatus, setStocktakePort } from '#src/modules/chan
 import type { RemoteOrder, RemoteOrderRef, RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -342,7 +343,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
     expect(await openPullJobs(shopId)).toBe(1);
 
     // Lượt đơn mở chưa chạy lại thì vẫn giữ tồn: đồng bộ chỉ đẩy giá.
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    await syncListings(port, c.companyId, shopId);
     expect(updatePriceQuantity.mock.calls.flatMap((call) => call[1]).some((i) => 'quantity' in i)).toBe(false);
   });
 
@@ -528,7 +529,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
     expect((await shopRow(shopId)).open_orders_pulled_at).not.toBeNull();
 
     // Lượt đồng bộ sau lượt đơn mở: còn chờ phân hàng nên chỉ đẩy giá.
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    await syncListings(port, c.companyId, shopId);
     expect(quantityPushes()).toBe(0);
     const pending = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
     expect(pending.body.setup.steps.slice(-2)).toEqual([
@@ -547,7 +548,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
     expect(await listingSyncJobs(shopId)).toBe(1);
     const done = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
     expect(done.body.setup.steps.find((s: { key: string }) => s.key === 'allocate')).toEqual({ key: 'allocate', status: 'done', blockedBy: null });
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    await syncListings(port, c.companyId, shopId);
     expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [expect.objectContaining({ externalSkuId: 'sku-os', quantity: 7 })]);
     expect(quantityPushes()).toBe(1);
 
@@ -555,7 +556,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
     await clearListingSyncJobs(shopId);
     await allocated(c, documentId);
     expect(await listingSyncJobs(shopId)).toBe(0);
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    await syncListings(port, c.companyId, shopId);
     expect(quantityPushes()).toBe(1);
   });
 
@@ -605,12 +606,12 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
     await allocated(c, documentId);
     expect(await shopRow(shopId)).toMatchObject({ allocation_stocktake_id: null, open_orders_pulled_at: null });
     expect(await listingSyncJobs(shopId)).toBe(0);
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    await syncListings(port, c.companyId, shopId);
     expect(quantityPushes()).toBe(0);
 
     await runOpenOrderPull({ companyId: c.companyId, shopId });
     expect(await listingSyncJobs(shopId)).toBe(1);
-    await app().post(`/api/v1/channel/shops/${shopId}/listings/sync`).set(auth(c));
+    await syncListings(port, c.companyId, shopId);
     expect(quantityPushes()).toBe(1);
   });
 

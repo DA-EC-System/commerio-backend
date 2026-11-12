@@ -57,7 +57,7 @@ export async function runActions(steps: [token: string, action: string, extra?: 
 /** Đề nghị đã đặt NCC: Kho lập và gửi, CEO duyệt, Kho đặt. */
 export async function orderedRequest(t: { requester: string; ceo: string }, supplierId: string, lines: LineInput[]) {
   const draft = await createRequest(t.requester, supplierId, lines);
-  return runActions([[t.requester, 'submit'], [t.ceo, 'approve'], [t.requester, 'order']], draft.id, draft.version);
+  return runActions([[t.requester, 'submit'], [t.ceo, 'approve'], [t.requester, 'order', { expectedDeliveryDate: '2026-11-20' }]], draft.id, draft.version);
 }
 
 export type Receipt = z.infer<typeof GoodsReceipt>;

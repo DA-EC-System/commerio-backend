@@ -63,7 +63,7 @@ describe('máy trạng thái đề nghị nhập', () => {
     for (const [from, action] of [
       ['pending_approval', 'request_changes'],
       ['pending_approval', 'reject'],
-      ['ordered', 'close_short'],
+      ['partially_received', 'close_short'],
     ] as const) {
       expect(() => to(from, action)).toThrow(expect.objectContaining({ status: 422, code: 'reason_required' }));
     }
@@ -73,7 +73,7 @@ describe('máy trạng thái đề nghị nhập', () => {
     expect(() => to('pending_approval', 'approve', requester, record({ createdBy: 'khac' }))).toThrow(
       expect.objectContaining({ status: 403, code: 'forbidden' }),
     );
-    expect(() => to('ordered', 'close_short', requester, record(), 'NCC hết hàng')).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    expect(() => to('partially_received', 'close_short', requester, record(), 'NCC hết hàng')).toThrow(expect.objectContaining({ code: 'forbidden' }));
   });
 
   it('đóng thiếu bị chặn khi còn phiếu nhận đang kiểm', () => {
@@ -81,6 +81,8 @@ describe('máy trạng thái đề nghị nhập', () => {
       expect.objectContaining({ code: 'receipt_counting' }),
     );
     expect(to('partially_received', 'close_short', ceo, record(), 'NCC hết hàng')).toBe('closed_short');
+    // Đã đặt chưa nhận lần nào thì huỷ, không đóng thiếu (25 §3.2, #243)
+    expect(() => to('ordered', 'close_short', ceo, record(), 'NCC hết hàng')).toThrow(expect.objectContaining({ code: 'invalid_transition' }));
   });
 
   it('huỷ: người lập huỷ nháp không cần lý do; đã duyệt chỉ CEO, có lý do, chưa có phiếu nhận', () => {

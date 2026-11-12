@@ -1,5 +1,5 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import type { ListingStatus } from '../domain/listing.ts';
@@ -83,6 +83,19 @@ export async function currentListingRows(shopId: string): Promise<ListingRow[]> 
     .orderBy(listings.variantId, ...CURRENT_FIRST);
 }
 
+/**
+ * Dòng "không quản tồn" hiện hành theo mã SKU sàn (không có biến thể nên `currentListingRows` không gồm): dòng chưa gỡ,
+ * không có thì dòng gỡ mới nhất. Cho nối lại gian hàng (#220 đợt 2).
+ */
+export async function currentUnmanagedRows(shopId: string): Promise<ListingRow[]> {
+  const rows = await getDb()
+    .selectDistinctOn([listings.externalSkuId])
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), isNotNull(listings.externalSkuId)))
+    .orderBy(listings.externalSkuId, ...CURRENT_FIRST);
+  return rows.filter((r) => r.mode === 'unmanaged');
+}
+
 export async function insertListing(values: typeof listings.$inferInsert): Promise<ListingRow> {
   const [row] = await getDb().insert(listings).values(values).returning();
   return row!;
@@ -121,18 +134,75 @@ export async function markStockPendingIds(ids: readonly string[]): Promise<void>
     .where(inArray(listings.id, [...ids]));
 }
 
-/** `stock_sync = pending`, tăng `version` để lượt đồng bộ đang chờ sàn không ghi `synced` đè lên lần đánh dấu (#222). */
+/**
+ * `stock_sync = pending` (listing đang Lệch tồn giữ `error`, vẫn được đẩy; #223), tăng `version` để lượt đồng bộ đang chờ
+ * sàn không ghi `synced` đè lên lần đánh dấu (#222).
+ */
 function stockPending() {
-  return { stockSync: 'pending' as const, version: sql`${listings.version} + 1`, updatedAt: sql`now()` };
+  return {
+    stockSync: sql`case when ${listings.stockSync} = 'error' then 'error' else 'pending' end::channel.sync_state`,
+    version: sql`${listings.version} + 1`,
+    updatedAt: sql`now()`,
+  };
 }
 
 /**
- * Listing của biến thể ở các trạng thái cho trước chuyển `stock_sync = pending`. Tăng `version` để lượt đồng bộ đang
- * chờ sàn không ghi `synced` đè lên lần đánh dấu này (#222).
+ * Listing của các biến thể ở các trạng thái cho trước chờ đẩy tồn (như `stockPending`). Trả id các gian hàng có dòng đổi,
+ * để bên gọi xếp việc đẩy.
  */
-export async function markStockPendingRows(variantId: string, statuses: readonly ListingStatus[]): Promise<void> {
-  await getDb()
+export async function markStockPendingRows(variantIds: readonly string[], statuses: readonly ListingStatus[]): Promise<string[]> {
+  if (!variantIds.length) return [];
+  const rows = await getDb()
     .update(listings)
     .set(stockPending())
-    .where(and(eq(listings.variantId, variantId), inArray(listings.status, [...statuses])));
+    .where(and(inArray(listings.variantId, [...variantIds]), inArray(listings.status, [...statuses])))
+    .returning({ shopId: listings.shopId });
+  return [...new Set(rows.map((r) => r.shopId))];
+}
+
+/**
+ * Biến thể có listing còn sản phẩm trên sàn (có mã SKU sàn, chưa `delisted`) ở các gian hàng cho trước (#223: gian hàng
+ * "đơn chưa cập nhật"). Gọi trong `withCompany`.
+ */
+export async function variantsListedOn(shopIds: readonly string[]): Promise<{ variantId: string; shopId: string }[]> {
+  if (!shopIds.length) return [];
+  const rows = await getDb()
+    .selectDistinct({ variantId: listings.variantId, shopId: listings.shopId })
+    .from(listings)
+    .where(
+      and(
+        inArray(listings.shopId, [...shopIds]),
+        isNotNull(listings.variantId),
+        isNotNull(listings.externalSkuId),
+        ne(listings.status, 'delisted'),
+      ),
+    );
+  return rows.map((r) => ({ variantId: r.variantId!, shopId: r.shopId }));
+}
+
+/** Listing chưa gỡ của SKU sàn trên gian hàng (unique `listings_shop_external_sku_uq`, nhiều nhất một). */
+export async function findListingByExternalSku(shopId: string, externalSkuId: string): Promise<ListingRow | undefined> {
+  const [row] = await getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), eq(listings.externalSkuId, externalSkuId), sql`${listings.status} <> 'delisted'`))
+    .limit(1);
+  return row;
+}
+
+/** Listing chưa gỡ của gian hàng, mọi chế độ ghép (kể cả "không quản tồn", `variant_id` trống). */
+export async function liveListingRows(shopId: string): Promise<ListingRow[]> {
+  return getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), sql`${listings.status} <> 'delisted'`));
+}
+
+/** Xoá dòng khi còn đúng `version`; trả số dòng xoá (#220: từ chối ghép của dòng tạo ra chỉ để chờ duyệt). */
+export async function deleteListing(id: string, version: number): Promise<number> {
+  const rows = await getDb()
+    .delete(listings)
+    .where(and(eq(listings.id, id), eq(listings.version, version)))
+    .returning({ id: listings.id });
+  return rows.length;
 }

@@ -18,6 +18,28 @@ export interface FulfillmentContext extends ModuleContext {
   readonly orderRefsOf?: (orderIds: readonly string[]) => Promise<Map<string, PackageOrderRef>>;
   /** Gian hàng đang chờ kiểm kê đầu kỳ (channel); `lock` khoá dòng gian hàng `FOR SHARE` (spec 199b §5.6). */
   readonly stockHoldOf?: (shopIds: readonly string[], opts?: { lock?: boolean }) => Promise<Set<string>>;
+  /** Tách, giao kiện trên sàn (channel, #221) cho tách kiện #205, RTS #239. */
+  readonly marketplacePackages?: MarketplacePackages;
+}
+
+/**
+ * Thao tác kiện trên sàn của channel; gọi ngoài giao dịch, lỗi sàn đã là `AppError`. Sàn từ chối tách, hoặc nhóm vượt
+ * giới hạn sàn bắt tách (`mustSplitReasons`), thì 422 `split_not_supported` kèm câu của sàn.
+ */
+export interface MarketplacePackages {
+  splitAttributes(
+    companyId: string,
+    shopId: string,
+    externalOrderId: string,
+  ): Promise<{
+    canSplit: boolean;
+    mustSplit: boolean;
+    reason: string | null;
+    mustSplitReasons: { type: string; externalCategoryId: string | null; maxCount: number | null }[];
+  }>;
+  /** Mỗi nhóm là mã món sàn của một kiện mới; trả mã kiện sàn theo thứ tự nhóm. */
+  split(companyId: string, shopId: string, externalOrderId: string, groups: readonly (readonly string[])[]): Promise<string[]>;
+  ship(companyId: string, shopId: string, packageCode: string, opts?: { handover?: 'pickup' | 'drop_off' }): Promise<void>;
 }
 
 export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) {

@@ -36,6 +36,10 @@ export const LedgerLine = z
     returnRequestId: z.uuid().nullable(),
     configVersionId: z.uuid().nullable(),
     txnId: z.string().nullable(),
+    externalOrderId: z.string().nullable().meta({ description: 'Mã đơn sàn của khoản quyết toán' }),
+    flags: z
+      .array(z.enum(['unknown_order']))
+      .meta({ description: '`unknown_order`: khoản của đơn sàn không có trong app (đơn trước khi kết nối, E140)' }),
     source: z.object({ type: z.string(), id: z.uuid() }).nullable(),
     reason: z.string().nullable(),
     createdAt: z.iso.datetime(),
@@ -54,7 +58,7 @@ export const LedgerPage = z
   .meta({ id: 'LedgerPage' });
 
 export const OrderProfit = z
-  .object({ net: z.number(), cogs: z.number().nullable(), gross: z.number().nullable(), estimated: z.boolean(), lines: z.array(LedgerLine) })
+  .object({ net: z.number(), cogs: z.number().nullable(), gross: z.number().nullable(), estimated: z.boolean(), costMissing: z.boolean(), lines: z.array(LedgerLine) })
   .meta({ id: 'OrderProfit' });
 
 export const TaxWarnings = z

@@ -17,13 +17,22 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
     number: 'KK-000001',
     source: { type: 'shop_setup', shopId: id() },
     postedAt: at,
-    countedAt: at,
-    lines: [{ variantId: id(), countedQty: 4, delta: -1 }],
+    countedAt: '2026-10-18T08:30:00.000+07:00',
+    lines: [{ variantId: id(), countedQty: 8, delta: -2 }],
   },
+  'inventory.return_inspected': {
+    inspectionId: id(),
+    orderId: id(),
+    shopId: id(),
+    inspectedAt: at,
+    lines: [{ variantId: id(), resellable: 1, unitCost: '60000.00' }],
+  },
+  'purchasing.supplier_return_refunded': { supplierReturnId: id(), supplierId: id(), refundAmount: '120000.00', recordedAt: at },
   'inventory.issue_posted': { issueId: id(), number: 'PX-0001', kind: 'order', orderId: id(), postedAt: at },
   'sales.order_created': { orderId: id(), code: 'DH-0001', source: 'manual', total: '150000.00' },
   'sales.order_status_changed': { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] },
   'sales.order_cancelled': { orderId: id(), code: 'DH-000001', source: 'marketplace', by: 'platform' },
+  'sales.return_refunded': { returnRequestId: id(), orderId: id(), shopId: id(), refundAmount: '32000.00', refundedAt: at },
   'fulfillment.package_status_changed': { packageId: id(), orderId: id(), from: 'reserved', to: 'packed' },
   'fulfillment.package_shipped': { packageId: id(), orderId: id(), lines: [{ variantId: id(), quantity: 2, unitCost: '100000.00' }] },
   'fulfillment.allocation_done': { variantIds: [id(), id()] },
@@ -52,6 +61,7 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'purchasing.request_submitted': { requestId: id(), number: 'DN-000001' },
   'purchasing.goods_receipt_posted': { receiptId: id(), requestId: id(), lines: [{ variantId: id(), accepted: 5, defective: 1 }] },
   'staff.invitation_otp_requested': { invitationId: id(), requestedAt: '2026-10-21T00:00:00.000Z' },
+  'channel.shop_reauth_mail': { mailId: id(), shopId: id() },
 };
 
 describe('danh mục sự kiện (AC-11)', () => {
@@ -59,6 +69,11 @@ describe('danh mục sự kiện (AC-11)', () => {
     const noCountedAt: Record<string, unknown> = { ...SAMPLES['inventory.stocktake_posted'] };
     delete noCountedAt.countedAt;
     expect(EVENT_SCHEMAS['inventory.stocktake_posted'].safeParse(noCountedAt).success).toBe(false);
+  });
+
+  it('inventory.return_inspected thiếu gian hàng thì bị từ chối: yêu cầu trả chỉ có ở đơn sàn (Documents/21 §11.2, #308)', () => {
+    const schema = EVENT_SCHEMAS['inventory.return_inspected'];
+    expect(schema.safeParse({ ...SAMPLES['inventory.return_inspected'], shopId: null }).success).toBe(false);
   });
 
   it('mỗi loại có mẫu, mẫu parse được bằng schema của loại đó', () => {

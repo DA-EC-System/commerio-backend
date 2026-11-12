@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { completeDueOrdersOnce, ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
+import { completeDueOrdersOnce, hasOpenReturns, ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -66,6 +66,12 @@ describe('tự hoàn tất đơn (#105 PR 2)', () => {
     const tooSoon = await delivered(['delivered'], 2);
     const stillMoving = await delivered(['delivered', 'in_transit'], 8);
     const withReturn = await delivered(['delivered'], 8);
+    const refundOnly = await delivered(['delivered'], 8);
+    await testPool().query(
+      `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, status, reason)
+       values ($1, $2, $3, 'marketplace', $4, $5, 'refund_only', 'Khách giữ hàng')`,
+      [companyId, `TR-${randomUUID().slice(0, 8)}`, refundOnly, shopId, randomUUID()],
+    );
     await testPool().query(
       `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, reason)
        values ($1, $2, $3, 'marketplace', $4, $5, 'Khách đổi ý')`,
@@ -77,6 +83,10 @@ describe('tự hoàn tất đơn (#105 PR 2)', () => {
     expect(await orderOf(full)).toMatchObject({ status: 'completed', outcome: 'full', completed_at: now });
     expect((await orderOf(full)).return_window_ends_at).toEqual(new Date(now.getTime() - DAY));
     expect(await orderOf(partial)).toMatchObject({ status: 'completed', outcome: 'partial' });
+    // Đơn có `refund_only` vẫn hoàn tất được (DoD #202).
+    expect(await orderOf(refundOnly)).toMatchObject({ status: 'completed', outcome: 'full' });
+    const open = (id: string) => withCompany(companyId, () => hasOpenReturns(id));
+    expect([await open(withReturn), await open(refundOnly)]).toEqual([true, false]);
     for (const id of [tooSoon, stillMoving, withReturn]) expect((await orderOf(id)).status).toBe('processing');
 
     const history = await testPool().query(

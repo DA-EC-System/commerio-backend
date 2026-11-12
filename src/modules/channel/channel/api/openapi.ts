@@ -9,6 +9,11 @@ import {
   ListingList,
   ListingParams,
   ListingSyncResult,
+  MappingBody,
+  MappingParams,
+  MatchBody,
+  RemoteSkuList,
+  RemoteSkusQuery,
   OrderPullResult,
   PushBody,
   PushResults,
@@ -215,6 +220,66 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   });
   registry.registerPath({
     method: 'get',
+    path: '/shops/:id/remote-skus',
+    summary: 'SKU đang có trên sàn kèm ghép hiện hành (#220)',
+    description:
+      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc bản sao danh sách SKU của gian hàng BE lưu ở lần đồng bộ gần nhất (`syncedAt`: lần đọc trọn); SKU đã xoá trên sàn không có. Chưa có bản sao thì đọc trọn sàn một lần rồi lưu. Bản sao làm mới sau mỗi lượt đồng bộ listing (sản phẩm sửa từ lần trước), mỗi ngày đọc trọn một lần, và khi bấm Tải lại. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). `listingId`, `listingVersion`, `pendingMapping`: listing chưa gỡ của SKU sàn và ghép chờ duyệt của nó; CEO tìm yêu cầu chờ duyệt ở đây (yêu cầu "không quản tồn" của SKU chưa ghép không có trong `GET /listings`). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`. Chưa có bản sao mà lần đọc trọn trước lỗi chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây), không gọi sàn. Lần đọc trọn này lỗi vì sàn trả thiếu danh sách: 409 `marketplace_rejected` (`platformCode` `incomplete_list`, `too_many_calls`).',
+    security: bearer,
+    request: { params: ShopParams, query: RemoteSkusQuery },
+    responses: {
+      200: { description: 'SKU trên sàn', ...json(RemoteSkuList) },
+      ...onShop,
+      429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/remote-skus/refresh',
+    summary: 'Tải lại danh sách SKU trên sàn (#220)',
+    description:
+      'Cần `channel.listing.match`. Đọc trọn danh sách SKU của gian hàng từ sàn ngay trong request, lưu bản sao, trả như `GET remote-skus`. Lần đọc trọn trước còn trong 60 giây thì trả bản sao, không gọi sàn. Lượt tải khác của gian hàng đang chạy quá 30 giây: 503 `remote_skus_busy`. Lần đọc trọn lỗi gần nhất (Tải lại hay lượt định kỳ) chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây), không gọi sàn. Sàn trả thiếu danh sách: 409 `marketplace_rejected` (`platformCode` `incomplete_list`, `too_many_calls`). Lời gọi tính vào hạn mức gọi sàn trong ngày (hết: 503 `marketplace_unavailable`).',
+    security: bearer,
+    request: { params: ShopParams, query: RemoteSkusQuery },
+    responses: {
+      200: { description: 'SKU trên sàn', ...json(RemoteSkuList) },
+      ...onShop,
+      429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
+      503: problemResponse('`marketplace_unavailable`, `remote_skus_busy`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/match',
+    summary: 'Ghép SKU sàn với biến thể (#220, 21 §18.6.5)',
+    description:
+      'Cần `channel.listing.match` (CEO, Admin, Sale). SKU sàn chưa ghép: tạo listing `live`, không đẩy lại (200). `variantId: null` là "không quản tồn". Ghép sang "không quản tồn", hoặc đổi ghép đã có đơn (gian hàng đã nhận đơn có món mang SKU người bán này): người không được tự duyệt (không phải CEO, công ty nhiều người) thì lưu `pendingMapping`, trả 202; CEO làm thì áp luôn, lịch sử ghi `selfApproved`. Đổi ghép áp cho đơn kéo về sau; đơn đã nhận giữ ghép cũ. Lỗi theo thứ tự: 404 → 409 `shop_not_active` (kèm `current`) → 409 `mapping_pending` (kèm `current`) → 409 `invalid_transition` (listing đang đẩy) → 422 `errors.variantId` (không thuộc công ty, lưu trữ, đã ghép SKU sàn khác của gian hàng) → 422 `errors.externalSkuId` (SKU chưa có listing mà không có trong bản sao SKU sàn của lần đồng bộ gần nhất, hoặc chưa có SKU người bán; không gọi sàn) → 409 `version_conflict` kèm `current` (listing mới nhất, null khi không còn; request khác vừa ghép, đổi hay gỡ SKU này). Kiểm "đã có đơn" dưới khoá dòng gian hàng, nên đơn về cùng lúc không lọt bước CEO duyệt.',
+    security: bearer,
+    request: { params: ShopParams, body: json(MatchBody) },
+    responses: {
+      200: { description: 'Đã áp ghép', ...json(ChannelListing) },
+      202: { description: 'Chờ CEO duyệt: listing có `pendingMapping`', ...json(ChannelListing) },
+      ...onShop,
+      409: problemResponse('`shop_not_active`, `mapping_pending`, `invalid_transition`, `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/mapping/:action',
+    summary: 'CEO duyệt hoặc từ chối ghép chờ (#220, 21 §18.6.5)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `approve`: áp ghép mới (kiểm lại biến thể, 422 `errors.variantId`); đơn mở đã giữ hàng theo ghép cũ giữ nguyên, chỉ đơn về sau theo ghép mới. `reject`: bắt buộc `reason` (422 `errors.reason`), bỏ ghép chờ; listing tạo ra chỉ để chờ duyệt "không quản tồn" thì xoá, body là listing lúc xoá. Thứ tự: 404 → 409 `invalid_transition` (không có `pendingMapping`, listing đã gỡ hoặc đang đẩy) → 409 `version_conflict` (kèm `current`); hai lần duyệt đua về cùng biến thể: lần sau 422 `errors.variantId`.',
+    security: bearer,
+    request: { params: MappingParams, body: json(MappingBody) },
+    responses: {
+      200: { description: 'Listing sau khi duyệt hoặc từ chối', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition`, `second_person_required` (người xin tự duyệt mà không được tự duyệt), `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed` (`errors.reason`, `errors.variantId`)'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
     path: '/shops/:id/setup',
     summary: 'Gợi ý ghép listing có sẵn khi thiết lập lần đầu (§18.2)',
     description:
@@ -259,12 +324,12 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'post',
     path: '/shops/:id/listings/sync',
-    summary: 'Đồng bộ listing với sàn (#104)',
+    summary: 'Xếp một lượt đồng bộ listing với sàn (#104, #223)',
     description:
-      'Cần `channel.shop.sync`. Đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá); listing kẹt `pushing` quá 30 phút chuyển `push_failed`; đẩy giá chuẩn và số khả dụng của listing `stockSync`/`priceSync` khác `synced`, theo lô 20, lỗi ghi theo từng SKU. #102 sẽ chạy định kỳ.',
+      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`.',
     security: bearer,
     request: { params: ShopParams },
-    responses: { 200: { description: 'Tóm tắt', ...json(ListingSyncResult) }, ...onShop },
+    responses: { 202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

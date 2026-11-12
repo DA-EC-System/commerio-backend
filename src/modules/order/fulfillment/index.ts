@@ -54,3 +54,18 @@ export { requestAllocation } from './service/allocation.ts';
 export { settleOpeningStocktake } from './service/allocation.ts';
 // Cho finance (E139, spec 199c §5.6): trạng thái kiện theo id, chạy trong `withCompany` của bên gọi.
 export { packageStatusOf, type PackageStatusInfo } from './service/delivery.ts';
+// Yêu cầu trả (#202): kiện của dòng trả khi sàn mở yêu cầu, kiện trả không khớp; chạy trong giao dịch của sales.
+export {
+  countOpenUnmatchedParcels,
+  deliverForReturn,
+  findUnmatchedParcel,
+  findUnmatchedParcels,
+  insertUnmatchedParcel,
+  packageLinesOfOrderLines,
+  resolveUnmatchedParcel,
+  type ReturnPackageOutcome,
+  setParcelInspection,
+  unmatchedParcelLines,
+  type UnmatchedParcelRow,
+  type UnmatchedParcelStatus,
+} from './service/returns.ts';

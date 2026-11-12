@@ -10,9 +10,12 @@ export interface PlatformTxn {
   externalOrderId: string | null;
   date: string;
   feeName: string;
+  feeCode: string | null;
   transactionType: string;
   amount: string;
   withholding: string;
+  /** Loại khoản adapter sàn đã nhận ra; `null` thì ghi `adjustment` kèm tên phí làm lý do (#203). */
+  kind: LedgerKind | null;
 }
 
 /** Một kỳ quyết toán của sàn (cùng hình `Payout` của channel). */
@@ -66,7 +69,7 @@ export function allowedDiff(estimated: Decimal.Value, t: Threshold): Decimal {
 
 /**
  * Bước kế của trạng thái tiền sau một lô quyết toán (25 §10.3). `diff` = thực tế − ước tính; `base` là lệch lúc chốt
- * (`resolved_diff_base`). Trả `null` khi giữ nguyên.
+ * (`resolved_diff_base`). `orderCancelled`: đơn đã huỷ trong app. Trả `null` khi giữ nguyên.
  */
 export function nextAfterSettlement(
   state: SettlementState,
@@ -74,13 +77,16 @@ export function nextAfterSettlement(
   diff: Decimal.Value,
   base: Decimal.Value | null,
   t: Threshold,
+  orderCancelled: boolean,
 ): { to: SettlementState; action: SettlementAction } | null {
   const allowed = allowedDiff(estimated, t);
   const over = (d: Decimal.Value) => new Decimal(d).abs().greaterThan(allowed);
   switch (state) {
     case 'none':
-      // Sàn thu, trả tiền cho đơn chưa có kiện nào giao (đơn đã huỷ mà sàn vẫn thu phí).
-      return new Decimal(diff).isZero() ? null : { to: 'mismatch', action: 'cancelled_charged' };
+      // Chưa có kiện nào giao xong. Đơn đã huỷ mà sàn vẫn thu, trả tiền: lệch. Đơn còn đang giao (E139): quyết toán về
+      // trước khi app thấy kiện giao, giữ nguyên, xét lại khi kiện giao xong (`markDelivered`).
+      if (new Decimal(diff).isZero() || !orderCancelled) return null;
+      return { to: 'mismatch', action: 'cancelled_charged' };
     case 'pending':
       return over(diff) ? { to: 'mismatch', action: 'mismatch' } : { to: 'settled', action: 'settle' };
     case 'settled':
@@ -97,26 +103,3 @@ export function needsCeoApproval(diff: Decimal.Value, base: Decimal.Value | null
   return new Decimal(diff).minus(base ?? 0).abs().greaterThan(t.resolveLimit);
 }
 
-/**
- * Loại khoản trong sổ của một dòng quyết toán Lazada (lazada.md §7.6). Theo tên phí và loại giao dịch; chưa nhận ra thì
- * `adjustment` kèm tên phí làm lý do. Bảng này dựng theo tài liệu và sàn giả lập #115: đối chiếu khi có dữ liệu thật.
- */
-export function kindOfTransaction(feeName: string, transactionType: string): LedgerKind {
-  const f = feeName.toLowerCase();
-  const t = transactionType.toLowerCase();
-  if (t.includes('payout') || t.includes('withdraw')) return 'withdrawal';
-  if (f.startsWith('reversal item price') || f.includes('refund')) return 'customer_refund';
-  if (f.includes('item price credit')) return 'revenue';
-  if (f.includes('commission')) return 'fee_fixed';
-  if (f.includes('payment fee')) return 'fee_transaction';
-  if (f.includes('paid by customer')) return 'shipping_income';
-  if (f.includes('shipping fee')) return 'shipping_cost';
-  if (f.includes('handling fee') || f.includes('service fee') || f.includes('free shipping max') || f.includes('lazcoins')) {
-    return 'fee_service';
-  }
-  if (t.includes('marketing') || f.includes('sponsored')) return 'ads';
-  if (f.includes('lost') || f.includes('damaged') || f.includes('compensation') || f.includes('claim')) return 'lost_compensation';
-  if (f.includes('penalty')) return 'penalty';
-  if (f.includes('subsidy') || f.includes('platform voucher')) return 'platform_subsidy';
-  return 'adjustment';
-}

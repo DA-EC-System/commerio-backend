@@ -163,17 +163,22 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
   return skus.map((s) => {
     const sellerSku = typeof s.seller_sku === 'string' ? s.seller_sku : '';
     const variantLabel = details?.labels.get(String(s.id)) ?? null;
+    const quantity = ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
     return {
       externalProductId: String(p.id),
       externalSkuId: String(s.id),
       sellerSku,
       title: skus.length > 1 ? `${title} - ${variantLabel || sellerSku || String(s.id)}` : title,
       variantLabel,
+      // Bản sao SKU sàn giữ tiêu đề có nhãn đã lưu thay vì ghi đè bằng "tên - SKU người bán" (review #309 vòng 2 N3).
+      ...(skus.length > 1 && !variantLabel && { labelMissing: true }),
       imageUrl,
       state: tiktokRemoteState(status, s),
       rejectReason: null,
       // Tổng tồn ở các kho của SKU (`inventory[].quantity`).
-      quantity: ((s.inventory ?? []) as Row[]).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0),
+      quantity,
+      // "The SKU quantity available in the warehouse": cùng nghĩa với số app đẩy, dùng để đối chiếu (#223).
+      sellableQuantity: quantity,
     };
   });
 }
@@ -369,16 +374,31 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     };
   }
 
-  async function searchProducts(accessToken: string, filter: Row): Promise<Row[]> {
+  /**
+   * Lật hết Search Products theo `filter`. `complete` (đọc trọn cho bản sao SKU sàn, bản sao xoá SKU không thấy; review
+   * #309 vòng 2 N1): trang không có mảng `products` thì `rejected` `unexpected_response`; đọc xong mà số sản phẩm khác
+   * nhau ít hơn `total_count` của trang đầu (sàn trả trang rỗng giữa chừng dù `next_page_token` khác rỗng) thì
+   * `rejected` `incomplete_list`.
+   */
+  async function searchProducts(accessToken: string, filter: Row, opts?: { complete?: boolean }): Promise<Row[]> {
     const out: Row[] = [];
     let pageToken: string | undefined;
+    let total: number | null = null;
+    const done = () => {
+      if (opts?.complete && total !== null && new Set(out.map((p) => String(p.id))).size < total) {
+        throw new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${out.length}, thử lại sau`);
+      }
+      return out;
+    };
     for (let page = 0; page < MAX_PAGES; page++) {
-      const { products, next, totalCount } = await searchPage(accessToken, filter, PRODUCT_PAGE, pageToken);
+      const { products, next, totalCount, listed } = await searchPage(accessToken, filter, PRODUCT_PAGE, pageToken);
+      if (opts?.complete && !listed) throw new MarketplaceError('rejected', 'unexpected_response');
+      if (page === 0) total = totalCount;
       if (page === 0 && (totalCount ?? 0) > MAX_PRODUCTS) {
         throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCTS} sản phẩm, sàn không cho đọc hết`);
       }
       out.push(...products);
-      if (!next || products.length === 0) return out;
+      if (!next || products.length === 0) return done();
       // Sàn trả lại con trỏ vừa gửi: đọc tiếp sẽ lặp, dừng thì trả thiếu. Báo lỗi như gian hàng quá giới hạn (hợp đồng
       // `listSkus`: không trả thiếu).
       if (next === pageToken) throw new MarketplaceError('rejected', 'page_token_repeated', 'Sàn trả lại trang sản phẩm vừa đọc');
@@ -476,9 +496,19 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // nhãn biến thể, ảnh đầu tiên; bỏ sản phẩm đã xoá. `labels: false` (hoàn tất bằng `decisions`) không
     // gọi Get Product: không nhãn, không ảnh. `skipSellerSkus`: sản phẩm ghép được theo SKU không đọc chi tiết.
     async listSkus(accessToken, opts) {
-      const products = (await searchProducts(accessToken, { status: 'ALL' })).filter((p) => p.status !== 'DELETED');
+      const products = (await searchProducts(accessToken, { status: 'ALL' }, { complete: true })).filter((p) => p.status !== 'DELETED');
       const details = opts?.labels === false ? undefined : await productDetails(accessToken, products, opts?.skipSellerSkus);
       return products.flatMap((p) => skusOf(p, details)).filter((s) => s.state !== 'deleted');
+    },
+    // Search Products 202502 (OAS của skill tts-openapi-guide, tra 12/11/2026): "Filter products to show only those that
+    // are updated on or after the specified date and time. Unix timestamp." `status: ALL` gồm sản phẩm đã xoá (gọi thật
+    // 11/11/2026), trả với `state: 'deleted'` để bản sao bỏ SKU đó (#220 đợt 2). Nhãn đọc như `listSkus` (bộ nhớ đệm theo
+    // `update_time`), không đọc chi tiết sản phẩm đã xoá.
+    async listSkusChanged(accessToken, since) {
+      const products = await searchProducts(accessToken, { status: 'ALL', update_time_ge: Math.floor(since.getTime() / 1000) });
+      const live = products.filter((p) => p.status !== 'DELETED');
+      const details = await productDetails(accessToken, live, undefined);
+      return products.flatMap((p) => skusOf(p, p.status === 'DELETED' ? undefined : details));
     },
     countRemote,
     getSkus,

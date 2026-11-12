@@ -16,6 +16,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
+import { NEVER_SHOP, OFF_PLATFORM } from '../domain/ledger.ts';
 
 // Mọi bảng của module `finance` khai báo trong schema này.
 export const financeSchema = pgSchema('finance');
@@ -297,6 +298,9 @@ export const settlementBatches = financeSchema.table(
 );
 
 /** Loại khoản trong sổ tiền (25 §10.1). Ghi gộp: doanh thu và từng loại phí là dòng riêng, không ghi số thực nhận. */
+/** Danh sách loại dòng cho CHECK: hằng của domain, không phải đầu vào người dùng. */
+const kindList = (kinds: ReadonlySet<string>) => [...kinds].map((k) => `'${k}'`).join(', ');
+
 export const ledgerKind = financeSchema.enum('ledger_kind', [
   'revenue',
   'platform_subsidy',
@@ -348,6 +352,8 @@ export const ledgerEntries = financeSchema.table(
     settlementLineId: uuid('settlement_line_id').references(() => settlementLines.id),
     /** Mã giao dịch của sàn trên dòng thực tế; kéo lại cùng kỳ không ghi trùng (#117). */
     externalTransactionId: text('external_transaction_id'),
+    /** Mã đơn sàn của khoản quyết toán; có mà `order_id` trống là đơn không có trong app (cờ Không rõ đơn, E140, #250). */
+    externalOrderId: text('external_order_id'),
     reason: text('reason'),
     createdBy: uuid('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -357,12 +363,18 @@ export const ledgerEntries = financeSchema.table(
     index().on(t.shopId, t.occurredOn),
     index().on(t.occurredOn),
     uniqueIndex('ledger_entries_replaces_uq').on(t.replacesEntryId).where(sql`${t.replacesEntryId} is not null`),
+    // Khoá chống trùng (gian hàng, mã giao dịch sàn) (25 §10.3, #250): mã giao dịch chỉ duy nhất trong một gian hàng
     uniqueIndex('ledger_entries_external_txn_uq')
-      .on(t.companyId, t.externalTransactionId)
+      .on(t.companyId, t.shopId, t.externalTransactionId)
       .where(sql`${t.externalTransactionId} is not null`),
     check('ledger_entries_amount', sql`${t.amount} <> 0`),
     check('ledger_entries_actual_replaces', sql`${t.replacesEntryId} is null or not ${t.isEstimate}`),
     check('ledger_entries_adjustment_reason', sql`${t.kind} <> 'adjustment' or ${t.reason} is not null`),
+    // Khoản của sàn gắn gian hàng; trả NCC, NCC hoàn tiền, chi vận hành không gắn (Documents/25 §10.1, `LEDGER_KIND_SCOPE`).
+    check(
+      'ledger_entries_shop_by_kind',
+      sql`(${t.shopId} is not null or ${t.kind} in (${sql.raw(kindList(OFF_PLATFORM))})) and (${t.shopId} is null or ${t.kind} not in (${sql.raw(kindList(NEVER_SHOP))}))`,
+    ),
   ],
 );
 
@@ -410,6 +422,8 @@ export const orderSettlements = financeSchema.table(
     /** Người chốt là người soạn cấu hình phí, được chốt nhờ ngoại lệ tự duyệt (25 §11, #249). */
     selfApproved: boolean('self_approved').notNull().default(false),
     approvedBy: uuid('approved_by'),
+    /** Có dòng kiện đã giao không có giá vốn (`unitCost` null, #229): lãi của đơn thiếu phần đó (Documents/21 §21.1). */
+    costMissing: boolean('cost_missing').notNull().default(false),
     ...timestamps,
     ...version,
   },
