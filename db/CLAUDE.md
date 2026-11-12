@@ -36,6 +36,25 @@ Bảng thuộc công ty có `company_id` và chính sách `company_isolation`: c
 
 ## Hai nhánh cùng sinh migration: người merge sau **bắt buộc** sinh lại
 
-`drizzle-kit migrate` chạy mọi migration đang chờ trong **một** giao dịch, và chỉ chạy migration có `when` (trong `meta/_journal.json`) **lớn hơn** migration cuối đã chạy trên DB đó. Migration sinh trên nhánh khác trước nhưng merge sau sẽ bị **bỏ qua im lặng** trên DB đã có dữ liệu (staging), trong khi test (DB trống) vẫn xanh. Vì vậy người merge sau xoá migration của mình (file `.sql`, snapshot, dòng journal), rebase lên `main` rồi sinh lại. Tên file theo thời điểm sinh **không** bỏ được bước này: nó chỉ hết trùng tên file, còn thứ tự chạy vẫn theo `when`, và snapshot của hai nhánh vẫn cùng nối vào một snapshot cha. `test/unit/db/journal.test.ts` đỏ nếu `when` không tăng theo `idx`, hoặc tên file không khớp `when`.
+Migrator của drizzle-orm (`drizzle-orm/pg-core/dialect.js`, hàm `migrate`; `drizzle-kit migrate` dùng chung) đọc dòng mới nhất của `drizzle.__drizzle_migrations` (`order by created_at desc limit 1`) rồi chỉ chạy migration có `when` (trong `meta/_journal.json`) **lớn hơn** `created_at` của dòng đó, mọi migration đang chờ trong **một** giao dịch. Migration sinh trên nhánh khác trước nhưng merge sau sẽ bị **bỏ qua im lặng** trên DB đã có dữ liệu (staging), trong khi test (DB trống) vẫn xanh. Tên file theo thời điểm sinh **không** chữa được: nó chỉ hết trùng tên file, còn thứ tự chạy vẫn theo `when`, và snapshot của hai nhánh vẫn cùng nối vào một snapshot cha.
+
+Ba lớp chặn (`scripts/db/`):
+
+| Lệnh | Chạy ở | Chặn gì |
+|---|---|---|
+| `npm run db:ci-check` | Job `check` của CI ở mọi PR (`-- --base origin/main`), không cần DB | Migration của nhánh không đứng sau migration mới nhất của main (`when` và tên); nhánh sửa file `.sql` đã có trên main; journal đứt `idx`, `when` không tăng; file `.sql` hay snapshot không có trong journal; snapshot trỏ sai cha (`prevId` khác `id` của snapshot liền trước); `drizzle-kit generate` (chạy trên bản sao trong thư mục tạm) còn sinh ra file, tức `schema.ts` và migration lệch nhau |
+| `npm run db:migrate` (`:staging`) | Job `migrate` của deploy staging, job `blackbox` của CI, máy dev | Thay `drizzle-kit migrate`. So journal với `drizzle.__drizzle_migrations` (khớp theo `created_at` = `when`, hoặc hash); có migration chưa chạy mà `when` ≤ dòng mới nhất thì **dừng, mã lỗi 1, in tên file, không chạy gì**; không thì chạy migrator của drizzle-orm như cũ, xong kiểm lại không còn sót. Giữ khoá advisory `commerio:db-migrate` trong lúc chạy |
+| `npm run db:migrate:check` (`:staging`) | Tay | Chỉ đọc (giao dịch `READ ONLY`, không tạo bảng): liệt kê đã chạy, chưa chạy, lệch thứ tự, dòng trên DB không khớp journal, file `.sql` khác bản đã chạy. Mã lỗi 1 nếu có lệch thứ tự |
+
+**Sinh lại bằng `npm run db:regen`** (sau khi `git merge origin/main` và giải xung đột `schema.ts`; xung đột `_journal.json` để nguyên): lấy `_journal.json` của `origin/main` (`--base <ref>` để đổi), xoá migration của nhánh (file `.sql` và snapshot không có trên main), chạy `drizzle-kit generate --name <slug cũ>` một lần cho mọi migration sinh từ schema, rồi chép nguyên nội dung từng migration viết tay (snapshot giống hệt snapshot cha: RLS, quyền, dữ liệu) vào migration `--custom` mới cùng slug. `--dry-run` chỉ in kế hoạch. Giới hạn:
+- Nhiều migration sinh từ schema gộp thành một (tên ghép các slug): không có `schema.ts` của từng bước để sinh riêng. Viết tay đứng trước migration sinh đầu tiên vẫn đứng trước; viết tay đứng giữa hai migration sinh bị dời ra sau migration gộp, lệnh cảnh báo để kiểm lại.
+- Câu lệnh viết tay thêm vào migration sinh bị mất khi sinh lại: lệnh so câu lệnh cũ với bản mới, in câu thiếu và trả mã 1 để chép tay.
+- drizzle-kit hỏi đổi tên cột/bảng thì trả lời như khi `db:generate`.
+
+### Migration bị bỏ sót trên DB đã có dữ liệu
+
+`db:migrate` dừng và `db:migrate:check` liệt kê ở mục "Lệch thứ tự". Không có lệnh tự sửa. Với migration đã ở main: chạy tay nội dung file trên DB đó, rồi ghi dòng `insert into drizzle.__drizzle_migrations (hash, created_at) values ('<sha256 của file .sql>', <when>)` (hash: `node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('db/migrations/<tag>.sql')).digest('hex'))"`), chạy lại `db:migrate:check` thấy hết lệch.
+
+`test/unit/db/journal.test.ts` đỏ nếu `when` không tăng theo `idx`, hoặc tên file không khớp `when`.
 
 Seed dữ liệu demo (dữ liệu giả, không dùng thông tin khách hàng thật) đặt ở `db/seed/`, chạy bằng `npm run db:seed` (`db/seed/index.ts`, #37).

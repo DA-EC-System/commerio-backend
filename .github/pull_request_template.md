@@ -16,7 +16,7 @@ Closes #
 - [ ] Test mới nằm trong `test/`, đúng thư mục theo `test/CLAUDE.md`
 - [ ] Route mới: `authorize` trước `validate`, schema response Zod đăng ký trong `api/openapi.ts`, khớp `Documents/21`
 - [ ] Chuyển trạng thái đi qua khung máy trạng thái chung, bảng chuyển trùng bảng FE (`src/lib/machines`)
-- [ ] Có migration thì đã chạy `npm run db:generate` và thử trên DB trống
+- [ ] Có migration thì đã chạy `npm run db:generate` ở bước cuối và thử trên DB trống; main có migration mới thì đã gộp main rồi `npm run db:regen`
 - [ ] Không commit `.env`, khoá cổng, secret
 
 <!--
