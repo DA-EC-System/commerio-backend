@@ -6,7 +6,7 @@ import { asCompany } from '../../helpers/rls.ts';
 const db = () => testPool();
 
 const insertEntry = (q: (s: string, v: unknown[]) => Promise<unknown>, c: string, cols: Record<string, unknown>) => {
-  const all = { company_id: c, kind: 'revenue', amount: '100000', is_estimate: true, occurred_on: '2026-10-28', ...cols };
+  const all = { company_id: c, kind: 'revenue', amount: '100000', is_estimate: true, occurred_on: '2026-10-28', shop_id: randomUUID(), ...cols };
   const keys = Object.keys(all);
   return q(
     `insert into finance.ledger_entries (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
@@ -48,6 +48,21 @@ describe('sổ tiền', () => {
     const c = randomUUID();
     await expect(insertEntry(asOwner, c, { amount: '0' })).rejects.toThrow(/"ledger_entries_amount"/);
     await expect(insertEntry(asOwner, c, { kind: 'adjustment' })).rejects.toThrow(/"ledger_entries_adjustment_reason"/);
+  });
+
+  it('khoản của sàn phải gắn gian hàng; trả NCC, NCC hoàn tiền, chi vận hành không gắn; COD tự giao tuỳ (25 §10.1)', async () => {
+    const c = randomUUID();
+    const shop = randomUUID();
+    const err = /"ledger_entries_shop_by_kind"/;
+    for (const kind of ['revenue', 'ads', 'penalty', 'withdrawal', 'cogs_reversal']) {
+      await expect(insertEntry(asOwner, c, { kind, shop_id: null }), kind).rejects.toThrow(err);
+    }
+    for (const kind of ['supplier_refund', 'supplier_payment', 'opex']) {
+      await expect(insertEntry(asOwner, c, { kind, shop_id: shop }), kind).rejects.toThrow(err);
+      await expect(insertEntry(asOwner, c, { kind, shop_id: null }), kind).resolves.toBeDefined();
+    }
+    await expect(insertEntry(asOwner, c, { kind: 'cod_collected', shop_id: shop })).resolves.toBeDefined();
+    await expect(insertEntry(asOwner, c, { kind: 'cod_collected', shop_id: null })).resolves.toBeDefined();
   });
 });
 

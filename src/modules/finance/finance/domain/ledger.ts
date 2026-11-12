@@ -41,6 +41,52 @@ export const NOT_PROFIT: ReadonlySet<LedgerKind> = new Set([...NON_CASH, 'withdr
  */
 export const NOT_SETTLEMENT_DIFF: ReadonlySet<LedgerKind> = new Set([...NOT_PROFIT, 'lost_compensation']);
 
+/**
+ * Mỗi loại dòng là khoản của sàn (`shop`, gắn gian hàng) hay khoản ngoài sàn (`company`). Documents/25 §10.1, "Khoản
+ * không gắn đơn": "Theo gian hàng: quảng cáo (nạp ví ads hoặc trừ vào số dư), phí dịch vụ theo tháng, phạt không gắn
+ * đơn. Ngoài sàn: Tiền trả NCC theo phiếu nhận (4.2); NCC hoàn tiền theo phiếu trả NCC (4.3). COD tự giao đã xác nhận
+ * (8.3). Chi vận hành: lương, kho, bao bì." Thêm loại vào enum thì TypeScript buộc xếp loại ở đây. CHECK
+ * `ledger_entries_shop_by_kind` (schema.ts) dựng từ bảng này.
+ */
+export const LEDGER_KIND_SCOPE: Readonly<Record<LedgerKind, 'shop' | 'company'>> = {
+  revenue: 'shop',
+  platform_subsidy: 'shop',
+  shipping_income: 'shop',
+  shipping_cost: 'shop',
+  fee_fixed: 'shop',
+  fee_transaction: 'shop',
+  fee_service: 'shop',
+  fee_optional: 'shop',
+  withholding_tax: 'shop',
+  customer_refund: 'shop',
+  return_fee: 'shop',
+  lost_compensation: 'shop',
+  penalty: 'shop',
+  cogs: 'shop',
+  cogs_reversal: 'shop',
+  ads: 'shop',
+  opex: 'company',
+  supplier_payment: 'company',
+  supplier_refund: 'company',
+  cod_collected: 'company',
+  adjustment: 'shop',
+  withdrawal: 'shop',
+};
+/** Khoản ngoài sàn: không vào tiền đang ở sàn hay số dư ví sàn (25 §10.3), không vào lãi bán hàng. */
+export const OFF_PLATFORM: ReadonlySet<LedgerKind> = new Set(LEDGER_KINDS.filter((k) => LEDGER_KIND_SCOPE[k] === 'company'));
+/**
+ * Khoản ngoài sàn không bao giờ gắn gian hàng. COD tự giao thì có thể gắn: kiện tự giao của đơn sàn có gian hàng
+ * (Documents/19, `packages.shop_id`).
+ */
+export const NEVER_SHOP: ReadonlySet<LedgerKind> = new Set(['supplier_payment', 'supplier_refund', 'opex']);
+/**
+ * Không vào lãi gộp (chạy thử cấu hình: "Lãi gộp ước tính của 30 ngày gần nhất nếu áp luật mới", Documents/25 §10.4):
+ * khoản ngoài sàn; rút tiền ("`withdrawal` là chuyển từ ví sàn về ngân hàng, không vào lãi", 21 §21.1); quảng cáo
+ * ("Lãi đóng góp = lãi gộp − quảng cáo", 25 §10.2). Giá vốn vẫn vào lãi gộp. Quảng cáo vẫn trừ vào số dư ví sàn
+ * (`ledgerTotals` chỉ bỏ `OFF_PLATFORM`).
+ */
+export const NOT_SALES_PROFIT: ReadonlySet<LedgerKind> = new Set([...OFF_PLATFORM, 'withdrawal', 'ads']);
+
 export interface Draft {
   kind: LedgerKind;
   /** Chuỗi thập phân hai chữ số, có dấu. */
@@ -54,13 +100,21 @@ export interface Version<P> {
 }
 
 export interface DeliveredLine {
-  variantId: string;
+  /** Null khi dòng kiện chưa ghép SKU lúc bàn giao. */
+  variantId: string | null;
   quantity: number;
   /** Giá bán sau voucher shop. */
   unitPrice: string;
-  /** Giá vốn lưu trên dòng kiện lúc bàn giao (25 §7.1). */
-  unitCost: string;
+  /** Giá vốn lưu trên dòng kiện lúc bàn giao (25 §7.1); null khi dòng kiện không có giá vốn (21 §11.2, #229). */
+  unitCost: string | null;
 }
+
+/** Có dòng không có giá vốn: lãi của đơn thiếu phần giá vốn đó (`costMissing`, 21 §21.1). */
+export const costMissingOf = (lines: readonly { unitCost: string | null }[]) => lines.some((l) => l.unitCost === null);
+
+/** Tổng giá vốn của các dòng có giá vốn; dòng null không tính (không thay bằng giá vốn bình quân, 21 §11.2). */
+const costOf = <L extends { unitCost: string | null }>(lines: readonly L[], qty: (l: L) => number) =>
+  lines.reduce((s, l) => (l.unitCost === null ? s : s.plus(new Decimal(l.unitCost).times(qty(l)))), new Decimal(0));
 
 export interface DeliveredPackage {
   lines: readonly DeliveredLine[];
@@ -88,7 +142,7 @@ function push(out: Draft[], kind: LedgerKind, amount: Decimal, configVersionId: 
  */
 export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs): Draft[] {
   const revenue = pkg.lines.reduce((s, l) => s.plus(new Decimal(l.unitPrice).times(l.quantity)), new Decimal(0));
-  const cost = pkg.lines.reduce((s, l) => s.plus(new Decimal(l.unitCost).times(l.quantity)), new Decimal(0));
+  const cost = costOf(pkg.lines, (l) => l.quantity);
   const out: Draft[] = [];
   push(out, 'revenue', revenue);
   push(out, 'platform_subsidy', new Decimal(pkg.platformSubsidy));
@@ -124,10 +178,20 @@ export function postRefund(refundAmount: string): Draft[] {
   return out;
 }
 
-/** Phiếu kiểm hàng về: phần bán lại được ghi giảm giá vốn của đơn; hỏng, xuất huỷ thì giá vốn vẫn tính (25 §10.1). */
-export function postInspected(lines: readonly { resellable: number; unitCost: string }[]): Draft[] {
+/**
+ * Phiếu kiểm hàng về: phần bán lại được ghi giảm giá vốn của đơn; hỏng, xuất huỷ thì giá vốn vẫn tính (25 §10.1).
+ * Dòng `unitCost` null (dòng kiện gốc không có giá vốn, chưa từng ghi `cogs`) không ghi giảm (21 §11.2, #229).
+ */
+export function postInspected(lines: readonly { resellable: number; unitCost: string | null }[]): Draft[] {
   const out: Draft[] = [];
-  push(out, 'cogs_reversal', lines.reduce((s, l) => s.plus(new Decimal(l.unitCost).times(l.resellable)), new Decimal(0)));
+  push(out, 'cogs_reversal', costOf(lines, (l) => l.resellable));
+  return out;
+}
+
+/** NCC hoàn tiền phiếu trả: tiền vào, chờ khớp sao kê ngân hàng (25 §10.1, US-NH-14). */
+export function postSupplierRefund(refundAmount: string): Draft[] {
+  const out: Draft[] = [];
+  push(out, 'supplier_refund', new Decimal(refundAmount).abs());
   return out;
 }
 
