@@ -203,6 +203,9 @@ export const EVENT_SCHEMAS = {
   // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
   // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
   'staff.invitation_otp_requested': z.object({ invitationId: id, requestedAt: timestamp }),
+  // Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền vừa xếp (#312). Không mang email, token: consumer đọc dòng
+  // `channel.shop_reauth_mails` và danh sách CEO, Admin lúc gửi.
+  'channel.shop_reauth_mail': z.object({ mailId: id, shopId: id }),
 } as const;
 
 export type EventType = keyof typeof EVENT_SCHEMAS;

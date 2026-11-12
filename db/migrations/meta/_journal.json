@@ -260,6 +260,20 @@
       "when": 1794448373563,
       "tag": "20261112015253_chuoi-phieu-kho-quyet-toan",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794474985653,
+      "tag": "20261112091625_thu-bao-mat-uy-quyen",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794474990914,
+      "tag": "20261112091630_rls-thu-bao-mat-uy-quyen",
+      "breakpoints": true
     }
   ]
 }

@@ -297,3 +297,31 @@ export const apiUsage = channelSchema.table(
   },
   (t) => [primaryKey({ columns: [t.platform, t.day] })],
 );
+
+/**
+ * Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền đã xếp (#312, Documents/19). Mỗi dòng là một thư cho CEO, Admin.
+ * `deadline` là hạn đang tính: `expiring_3d`, `expiring_1d` lấy hạn gần hơn trong `auth_expires_at`, `refresh_expires_at`;
+ * `lost` lấy lúc chuyển sang `needs_reauth` (`core.state_transitions`), `seq` là nhịp 6 giờ thứ mấy kể từ lúc đó.
+ * Unique `(shop_id, deadline, stage, seq)` ép mỗi mốc chỉ một thư dù việc nền chạy lại hay chạy trùng; nối lại thì hạn
+ * đổi nên tính lại từ đầu. Chỉ thêm: `commerio_app` không UPDATE, DELETE (migration RLS viết tay).
+ */
+export const shopReauthMails = channelSchema.table(
+  'shop_reauth_mails',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id),
+    stage: text('stage').$type<'expiring_3d' | 'expiring_1d' | 'lost'>().notNull(),
+    deadline: timestamp('deadline', { withTimezone: true }).notNull(),
+    seq: integer('seq').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('shop_reauth_mails_milestone_uq').on(t.shopId, t.deadline, t.stage, t.seq),
+    check('shop_reauth_mails_stage', sql`${t.stage} in ('expiring_3d', 'expiring_1d', 'lost')`),
+    // Thư trước hạn chỉ một thư mỗi mốc; chỉ thư sau khi mất quyền mới lặp theo nhịp.
+    check('shop_reauth_mails_seq', sql`${t.seq} >= 0 and (${t.stage} = 'lost' or ${t.seq} = 0)`),
+  ],
+);

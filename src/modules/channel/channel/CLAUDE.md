@@ -20,6 +20,14 @@ Máy trạng thái ở `domain/shop.ts` (§18.1, cùng bảng với FE `src/lib/
 - Nối lại gian hàng đã thiết lập (`reconnect`) xếp ngay một lượt `channel.order_pull` từ `last_order_sync_at`, và đưa lên lại listing gỡ do ngắt (mục Listing, `reconnect.relisted`).
 - Chưa có `PushCapable` (MVP không nhận webhook, #133 đóng) nên chưa khai loại tin "huỷ uỷ quyền", "sắp hết uỷ quyền".
 
+### Thư báo mất uỷ quyền (#312, 21 §14.2 `shop.reauth`)
+
+Mail cho CEO, Admin để nối lại sớm, vì chuông việc chỉ có tác dụng khi có người mở app. Luật mốc thuần ở `domain/reauth-mail.ts` (`dueReauthMail`, `now` truyền vào); xếp và gửi ở `service/reauth-mail.ts`; chữ thư ở `service/reauth-mail-text.ts`.
+- Mốc: `active` còn dưới 3 ngày tới `authDeadline` (đúng `tokenExpiringSoon`, thư bật cùng nhãn "Sắp hết hạn") là `expiring_3d`; dưới 1 ngày là `expiring_1d`; `needs_reauth` là `lost`, nhịp `seq = floor((now - lúc chuyển) / 6 giờ)`. Lúc chuyển lấy từ `lastTransitionsAt('shops')` (chỉ `lose_auth` dẫn tới `needs_reauth`). Chỉ gửi mốc mới nhất, không gửi bù nhịp đã lỡ. Token dán tay không có hạn thì chỉ có thư `lost`; sàn thu hồi trước hạn thì vào thẳng nhịp 6 giờ; `connecting`, `disconnected` thì dừng.
+- Chống trùng ở CSDL: `channel.shop_reauth_mails` unique `(shop_id, deadline, stage, seq)`, `deadline` là hạn đang tính (hạn uỷ quyền, hoặc lúc mất quyền với `lost`), nên nối lại rồi sắp hết lần nữa thì tính lại. CHECK chỉ `lost` có `seq > 0`. Chỉ thêm (`commerio_app` không UPDATE, DELETE), RLS `company_isolation`.
+- Xếp thư: `queueDueReauthMail(shopId, now)` trong `withCompany` ghi dòng (`ON CONFLICT DO NOTHING`) rồi phát `channel.shop_reauth_mail` `{ mailId, shopId }` cùng giao dịch. Gọi từ `markNeedsReauth` ngay sau `recordTransition` (thư đầu không chờ việc nền) và từ vòng `startReauthMailLoop` mỗi 15 phút trong worker (`setInterval` như việc định kỳ của finance; nhiều worker chạy trùng thì unique bỏ qua).
+- Gửi: consumer `channel-shop-reauth-mail`. Bỏ thư đã cũ (gian hàng đổi trạng thái hoặc hạn đã đổi). Người nhận qua cổng `activeMemberEmailsWithRoles([CEO, Admin])` của `core/staff`: thành viên `active`, không gồm quản trị nền tảng. Một thư chung mọi người nhận (thử lại không gửi trùng cho người đã nhận). `transient` ném để outbox thử lại, `permanent` log `error`, không ném. Thư không có token, mã uỷ quyền, số tiền; link `<PUBLIC_WEB_URL>/channel/shops/:id`.
+
 ## Adapter sàn
 
 `service/marketplaces/`: `common.ts` (interface `MarketplaceAdapter`, `TokenSet`, `SellerInfo`, `ShopConnection`, `MarketplaceError`), `lazada.ts` (ký HMAC-SHA256, gọi, đổi lỗi), `tiktok.ts` + `tiktok-client.ts` (mục TikTok Shop), `index.ts` (`getAdapter`, `capabilitiesOf`, test thay bằng `registerAdapter`/`resetAdapters`). Thêm sàn = một file + một dòng ở `index.ts` + giá trị enum `channel.marketplace` (checklist `Documents/tich-hop-san/README.md`); năng lực mới (listing, đơn, kiện) thêm vào interface khi issue cần. Code ngoài adapter không rẽ nhánh theo sàn.
