@@ -188,6 +188,9 @@ export async function applyReturnStep(
     });
   }
   if (refunds) {
+    // `return_refunded.shopId` không null (Documents/21 §11.2, #308): yêu cầu trả chỉ tạo từ sàn (`ingestMarketplaceReturn`,
+    // CHECK `return_requests_marketplace_ref`), sổ tiền ghi hoàn tiền khách theo gian hàng.
+    if (!row.shopId) throw new Error(`Yêu cầu trả ${row.code} thiếu gian hàng`);
     await publishEvent({
       type: 'sales.return_refunded',
       aggregateId: row.orderId,

@@ -199,13 +199,16 @@ async function adoptParcelDocument(
     // Phiếu của kiện đã ghi sổ trước khi gắn (kho ghi sổ được ngay, Documents/21 mục 20): lúc ghi sổ nguồn còn là kiện nên
     // chưa phát `inventory.return_inspected`. Phát bây giờ để yêu cầu trả đóng được (#202), cùng payload với lúc ghi sổ.
     const posted = (await linesOfDocs([row.id])).get(row.id) ?? [];
+    // `return_inspected.shopId` không null (Documents/21 §11.2, #308): yêu cầu trả chỉ đến từ sàn nên luôn có gian hàng.
+    const shopId = meta.shopId !== undefined ? meta.shopId : row.shopId;
+    if (!shopId) throw new Error(`Phiếu kiểm hàng hoàn ${row.number} nguồn yêu cầu trả thiếu gian hàng`);
     await publishEvent({
       type: 'inventory.return_inspected',
       aggregateId: row.id,
       payload: {
         inspectionId: row.id,
         orderId: (meta.orderId ?? row.orderId)!,
-        shopId: meta.shopId !== undefined ? meta.shopId : row.shopId,
+        shopId,
         inspectedAt: (row.postedAt ?? new Date()).toISOString(),
         lines: posted.map((l) => ({ variantId: l.variantId, resellable: l.resellQty ?? 0, unitCost: l.unitCost })),
       },

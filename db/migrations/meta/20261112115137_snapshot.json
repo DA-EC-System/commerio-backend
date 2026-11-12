@@ -1,6 +1,6 @@
 {
-  "id": "ddb15b0d-8340-406a-bc22-73ba99432b97",
-  "prevId": "f84cf89a-52d1-42e1-bfc9-db580c55ed1f",
+  "id": "3b059cc4-321a-4a0d-95ed-fdd66faac9af",
+  "prevId": "82c531b2-89fc-4875-9079-678ab0baca11",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4221,6 +4221,10 @@
         "ledger_entries_adjustment_reason": {
           "name": "ledger_entries_adjustment_reason",
           "value": "\"finance\".\"ledger_entries\".\"kind\" <> 'adjustment' or \"finance\".\"ledger_entries\".\"reason\" is not null"
+        },
+        "ledger_entries_shop_by_kind": {
+          "name": "ledger_entries_shop_by_kind",
+          "value": "(\"finance\".\"ledger_entries\".\"shop_id\" is not null or \"finance\".\"ledger_entries\".\"kind\" in ('opex', 'supplier_payment', 'supplier_refund', 'cod_collected')) and (\"finance\".\"ledger_entries\".\"shop_id\" is null or \"finance\".\"ledger_entries\".\"kind\" not in ('supplier_payment', 'supplier_refund', 'opex'))"
         }
       },
       "isRLSEnabled": false
@@ -4310,6 +4314,13 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "cost_missing": {
+          "name": "cost_missing",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "created_at": {
           "name": "created_at",

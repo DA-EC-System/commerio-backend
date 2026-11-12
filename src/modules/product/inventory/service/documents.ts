@@ -355,6 +355,9 @@ async function afterInspection(row: DocRow, lines: readonly DocLineRow[], actorI
     });
   }
   if (row.sourceType === 'return_request' && row.orderId) {
+    // `return_inspected.shopId` không null (Documents/21 §11.2, #308): yêu cầu trả chỉ đến từ sàn nên luôn có gian hàng.
+    // Thiếu là lỗi của bên gọi `receiveBack`: báo lỗi, không bỏ sự kiện (bỏ thì yêu cầu trả kẹt, sổ thiếu `cogs_reversal`).
+    if (!row.shopId) throw new Error(`Phiếu kiểm hàng hoàn ${row.number} nguồn yêu cầu trả thiếu gian hàng`);
     await publishEvent({
       type: 'inventory.return_inspected',
       aggregateId: row.id,

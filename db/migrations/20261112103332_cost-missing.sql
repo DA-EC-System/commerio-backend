@@ -1,0 +1,1 @@
+ALTER TABLE "finance"."order_settlements" ADD COLUMN "cost_missing" boolean DEFAULT false NOT NULL;
