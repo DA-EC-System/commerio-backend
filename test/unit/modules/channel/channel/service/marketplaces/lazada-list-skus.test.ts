@@ -73,6 +73,44 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });
   });
 
+  it('review vòng 4 B2: sàn không lọc `total_products` theo ngày tạo (hai nửa báo bằng khoảng cha) thì thôi chia, lật `offset` một lần', async () => {
+    const calls: URLSearchParams[] = [];
+    const real = fakeLazada(120, []);
+    // Sàn bỏ qua `create_after`/`create_before`: mọi khoảng trả như cả gian hàng.
+    const ignoring = async (url: string | URL | Request) => {
+      const u = new URL(String(url));
+      calls.push(new URLSearchParams(u.searchParams));
+      u.searchParams.delete('create_after');
+      u.searchParams.delete('create_before');
+      return real(u.toString());
+    };
+    const skus = await createLazadaAdapter(config, ignoring).listSkus!('t');
+    expect(new Set(skus.map((s) => s.externalSkuId)).size).toBe(119);
+    // Gốc, hai nửa, rồi trang 2, 3 của gốc.
+    expect(calls.length).toBeLessThanOrEqual(6);
+  });
+
+  it('review vòng 4 B2: số lời gọi một lần đọc trọn có trần ⌈tổng / 50⌉ × 3 + 64; chạm trần thì rejected `too_many_calls`', async () => {
+    let calls = 0;
+    // Sàn trả tổng lạ: khoảng nào cũng 51–55 sản phẩm (đọc đủ được bằng `offset`), không khoảng nào vừa một trang, hai nửa
+    // thường khác khoảng cha: cây chia nở theo cấp số nhân.
+    const odd = async (url: string | URL | Request) => {
+      calls++;
+      const q = new URL(String(url)).searchParams;
+      const a = Date.parse(q.get('create_after') ?? '0') / 1000;
+      const b = Date.parse(q.get('create_before') ?? '0') / 1000;
+      const total = 51 + ((a + b) % 5);
+      const offset = Number(q.get('offset'));
+      const products = Array.from({ length: offset === 0 ? 50 : Math.max(0, total - offset) }, (_, i) => {
+        const id = `${a}-${b}-${offset + i}`;
+        return { item_id: id, status: 'Active', attributes: { name: 'x' }, skus: [{ SkuId: id, SellerSku: `S${id}` }] };
+      });
+      return new Response(JSON.stringify({ code: '0', data: { total_products: total, products } }), { status: 200 });
+    };
+    await expect(createLazadaAdapter(config, odd).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_calls' });
+    expect(calls).toBeLessThanOrEqual(Math.ceil(55 / 50) * 3 + 64);
+  });
+
   it('review vòng 3 R1: hơn 50 sản phẩm tạo cùng một giây thì lật `offset` trong khoảng đó', async () => {
     const calls: URLSearchParams[] = [];
     const skus = await createLazadaAdapter(config, fakeLazada(60, calls, { gapMs: 0 })).listSkus!('t');

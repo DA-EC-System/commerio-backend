@@ -82,10 +82,16 @@ describe('ràng buộc gian hàng', () => {
         Object.values(all),
       );
     };
-    await expect(insert({ remote_skus_full_failures: 1 })).rejects.toThrow(/"shops_remote_skus_retry"/);
+    const failed = { remote_skus_full_failed_at: new Date() };
+    await expect(insert({ remote_skus_full_failures: 1, ...failed })).rejects.toThrow(/"shops_remote_skus_retry"/);
     await expect(insert({ remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_retry"/);
-    await expect(insert({ remote_skus_full_failures: -1, remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_retry"/);
-    await insert({ remote_skus_full_failures: 2, remote_skus_full_retry_at: new Date() });
+    await expect(insert({ remote_skus_full_failures: -1, remote_skus_full_retry_at: new Date(), ...failed })).rejects.toThrow(
+      /"shops_remote_skus_retry"/,
+    );
+    await expect(insert({ remote_skus_full_failures: 2, remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_failed_at"/);
+    await insert({ remote_skus_full_failures: 2, remote_skus_full_retry_at: new Date(), remote_skus_full_failed_at: new Date() });
+    // Tải lại lỗi chỉ ghi lần lỗi, không tính vào giãn lần thử của lượt định kỳ.
+    await insert({ remote_skus_full_failed_at: new Date() });
     await insert({});
   });
 

@@ -682,22 +682,54 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
       expect(minutesAhead(s1.retry)).toBeGreaterThanOrEqual(119);
       expect(minutesAhead(s1.retry)).toBeLessThanOrEqual(120);
 
-      // Tải lại không chờ mốc.
+      // Tải lại không chờ mốc giãn của lượt định kỳ, chỉ chờ 10 phút sau lần lỗi gần nhất (vòng 4 B2).
+      await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
       before = listSkusCalls;
       expect((await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token)).status).toBe(409);
       expect(listSkusCalls).toBe(before + 1);
     } finally {
       listSkusFails = false;
     }
+    await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
     expect((await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token)).status).toBe(200);
     expect(await state()).toEqual({ failures: 0, retry: null });
+  });
+
+  it('Review vòng 4 B2: Tải lại trong 10 phút sau lần đọc trọn lỗi → 429 `remote_skus_retry_later` kèm `Retry-After`, không gọi sàn', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '2 minutes' where id = $1", [id]);
+    const refresh = () => as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+    listSkusFails = true;
+    try {
+      let before = listSkusCalls;
+      expect((await refresh()).status).toBe(409);
+      expect(listSkusCalls).toBe(before + 1);
+      before = listSkusCalls;
+      const res = await refresh();
+      expect(res.status).toBe(429);
+      expect(res.body.type).toMatch(/remote_skus_retry_later$/);
+      const wait = Number(res.headers['retry-after']);
+      expect(wait).toBeGreaterThan(540);
+      expect(wait).toBeLessThanOrEqual(600);
+      expect(listSkusCalls).toBe(before);
+      await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
+      expect((await refresh()).status).toBe(409);
+      expect(listSkusCalls).toBe(before + 1);
+    } finally {
+      listSkusFails = false;
+    }
+    await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
+    expect((await refresh()).status).toBe(200);
+    const { rows } = await testPool().query('select remote_skus_full_failed_at as f from channel.shops where id = $1', [id]);
+    expect(rows[0].f).toBeNull();
   });
 
   it('Review vòng 3 R1: giãn lần thử tối đa 24 giờ', async () => {
     const id = await freshShop();
     await remoteSkusOf(id);
     await testPool().query(
-      "update channel.shops set remote_skus_synced_at = now() - interval '25 hours', remote_skus_full_failures = 9, remote_skus_full_retry_at = now() - interval '1 minute' where id = $1",
+      "update channel.shops set remote_skus_synced_at = now() - interval '25 hours', remote_skus_full_failures = 9, remote_skus_full_retry_at = now() - interval '1 minute', remote_skus_full_failed_at = now() - interval '1 hour' where id = $1",
       [id],
     );
     listSkusFails = true;

@@ -76,6 +76,8 @@ export const shops = channelSchema.table(
      */
     remoteSkusFullFailures: integer('remote_skus_full_failures').notNull().default(0),
     remoteSkusFullRetryAt: timestamp('remote_skus_full_retry_at', { withTimezone: true }),
+    /** Lần đọc trọn lỗi gần nhất (định kỳ hay Tải lại): Tải lại trong 10 phút sau đó trả 429 (review #309 vòng 4 B2). */
+    remoteSkusFullFailedAt: timestamp('remote_skus_full_failed_at', { withTimezone: true }),
     /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
     openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
     /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
@@ -113,6 +115,7 @@ export const shops = channelSchema.table(
       'shops_remote_skus_retry',
       sql`${t.remoteSkusFullFailures} >= 0 and (${t.remoteSkusFullFailures} = 0) = (${t.remoteSkusFullRetryAt} is null)`,
     ),
+    check('shops_remote_skus_failed_at', sql`${t.remoteSkusFullFailures} = 0 or ${t.remoteSkusFullFailedAt} is not null`),
     // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
     check(
       'shops_allocation_pending',

@@ -11,6 +11,7 @@ import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
+import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
 import { productPort } from '../service/product-port.ts';
 import * as setup from '../service/setup.ts';
 import * as shops from '../service/shops.ts';
@@ -186,18 +187,28 @@ export function channelRouter(ctx: ModuleContext): Router {
     res.json(await pullShopOrders(getAuth(res).companyId!, id));
   });
 
+  // 429 `remote_skus_retry_later` mang số giây chờ: đặt header `Retry-After` (review #309 vòng 4 B2).
+  const withRetryAfter = async <T>(res: Response, fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof RemoteSkusRetryLater) res.setHeader('Retry-After', String(err.retryAfterSeconds));
+      throw err;
+    }
+  };
+
   // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại gọi sàn ngoài giao dịch:
   // service tự mở `withCompany`.
   router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await mapping.remoteSkus(actor(res), id, unmatched ?? false));
+    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false)));
   });
 
   router.post('/shops/:id/remote-skus/refresh', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
+    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true)));
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {

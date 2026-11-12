@@ -14,7 +14,14 @@
 import { withCompany, withSessionLock } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findShopRow } from '../repository/shops.ts';
-import { countRemoteSkusSeenSince, dropRemoteSkusNotSeen, markRemoteSkus, recordFullReadFailure, upsertRemoteSkus } from '../repository/remote-skus.ts';
+import {
+  countRemoteSkusSeenSince,
+  dropRemoteSkusNotSeen,
+  markRemoteSkus,
+  recordFullReadFailure,
+  recordManualReadFailure,
+  upsertRemoteSkus,
+} from '../repository/remote-skus.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { onMarketplace, shopSession } from './shops.ts';
@@ -27,6 +34,19 @@ export const FULL_REFRESH_EVERY_MS = 24 * 3600_000;
 export const CHANGED_EVERY_MS = 3600_000;
 /** Lùi mốc đọc theo giờ sửa, như kéo đơn: giờ của sàn và của app lệch nhau, sàn ghi giờ sửa trễ. */
 const CHANGED_LAG_MS = 2 * 60_000;
+/** Tải lại trong khoảng này sau lần đọc trọn lỗi gần nhất thì 429 kèm `Retry-After` (review #309 vòng 4 B2). */
+export const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
+
+/** 429 `remote_skus_retry_later`; route đặt header `Retry-After` theo `retryAfterSeconds`. */
+export class RemoteSkusRetryLater extends AppError {
+  readonly retryAfterSeconds: number;
+  constructor(retryAfterSeconds: number) {
+    super(429, 'remote_skus_retry_later', `Lần tải danh sách SKU trước bị lỗi, thử lại sau ${Math.ceil(retryAfterSeconds / 60)} phút`, {
+      retryAfterSeconds,
+    });
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
 /** Chờ lượt làm mới khác của cùng gian hàng (Tải lại trong request). */
 const LOCK_WAIT_MS = 30_000;
 
@@ -55,6 +75,8 @@ export async function saveFullSnapshot(shopId: string, skus: readonly RemoteSku[
 
 /**
  * Đọc trọn ngay (Tải lại, lần mở trang đầu). `cooldown`: lần đọc trọn trước còn trong `REFRESH_COOLDOWN_MS` thì thôi.
+ * Lần đọc trọn lỗi gần nhất (định kỳ hay Tải lại) còn trong `RETRY_AFTER_FAILURE_MS` thì 429 `remote_skus_retry_later`
+ * kèm số giây chờ, không gọi sàn; không chờ mốc giãn của lượt định kỳ.
  * Lượt khác đang làm mới thì chờ nó xong rồi dùng kết quả. Lỗi sàn ném như mọi lời gọi sàn trong request.
  */
 export async function refreshRemoteSkusNow(companyId: string, shopId: string, opts: { cooldown: boolean }): Promise<void> {
@@ -64,7 +86,16 @@ export async function refreshRemoteSkusNow(companyId: string, shopId: string, op
       const shop = await withCompany(companyId, () => findShopRow(shopId));
       const last = shop?.remoteSkusSyncedAt?.getTime();
       if (last !== undefined && (opts.cooldown ? Date.now() - last < REFRESH_COOLDOWN_MS : true)) return;
-      await readFull(companyId, shopId);
+      const failedAt = shop?.remoteSkusFullFailedAt?.getTime();
+      if (failedAt !== undefined && Date.now() - failedAt < RETRY_AFTER_FAILURE_MS) {
+        throw new RemoteSkusRetryLater(Math.ceil((failedAt + RETRY_AFTER_FAILURE_MS - Date.now()) / 1000));
+      }
+      try {
+        await readFull(companyId, shopId);
+      } catch (err) {
+        await withCompany(companyId, () => recordManualReadFailure(shopId));
+        throw err;
+      }
     },
     { waitMs: LOCK_WAIT_MS },
   );

@@ -223,22 +223,27 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/remote-skus',
     summary: 'SKU đang có trên sàn kèm ghép hiện hành (#220)',
     description:
-      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc bản sao danh sách SKU của gian hàng BE lưu ở lần đồng bộ gần nhất (`syncedAt`: lần đọc trọn); SKU đã xoá trên sàn không có. Chưa có bản sao thì đọc trọn sàn một lần rồi lưu. Bản sao làm mới sau mỗi lượt đồng bộ listing (sản phẩm sửa từ lần trước), mỗi ngày đọc trọn một lần, và khi bấm Tải lại. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). `listingId`, `listingVersion`, `pendingMapping`: listing chưa gỡ của SKU sàn và ghép chờ duyệt của nó; CEO tìm yêu cầu chờ duyệt ở đây (yêu cầu "không quản tồn" của SKU chưa ghép không có trong `GET /listings`). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`.',
+      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc bản sao danh sách SKU của gian hàng BE lưu ở lần đồng bộ gần nhất (`syncedAt`: lần đọc trọn); SKU đã xoá trên sàn không có. Chưa có bản sao thì đọc trọn sàn một lần rồi lưu. Bản sao làm mới sau mỗi lượt đồng bộ listing (sản phẩm sửa từ lần trước), mỗi ngày đọc trọn một lần, và khi bấm Tải lại. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). `listingId`, `listingVersion`, `pendingMapping`: listing chưa gỡ của SKU sàn và ghép chờ duyệt của nó; CEO tìm yêu cầu chờ duyệt ở đây (yêu cầu "không quản tồn" của SKU chưa ghép không có trong `GET /listings`). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`. Chưa có bản sao mà lần đọc trọn trước lỗi chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây).',
     security: bearer,
     request: { params: ShopParams, query: RemoteSkusQuery },
-    responses: { 200: { description: 'SKU trên sàn', ...json(RemoteSkuList) }, ...onShop },
+    responses: {
+      200: { description: 'SKU trên sàn', ...json(RemoteSkuList) },
+      ...onShop,
+      429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
+    },
   });
   registry.registerPath({
     method: 'post',
     path: '/shops/:id/remote-skus/refresh',
     summary: 'Tải lại danh sách SKU trên sàn (#220)',
     description:
-      'Cần `channel.listing.match`. Đọc trọn danh sách SKU của gian hàng từ sàn ngay trong request, lưu bản sao, trả như `GET remote-skus`. Lần đọc trọn trước còn trong 60 giây thì trả bản sao, không gọi sàn. Lượt tải khác của gian hàng đang chạy quá 30 giây: 503 `remote_skus_busy`. Lời gọi tính vào hạn mức gọi sàn trong ngày (hết: 503 `marketplace_unavailable`).',
+      'Cần `channel.listing.match`. Đọc trọn danh sách SKU của gian hàng từ sàn ngay trong request, lưu bản sao, trả như `GET remote-skus`. Lần đọc trọn trước còn trong 60 giây thì trả bản sao, không gọi sàn. Lượt tải khác của gian hàng đang chạy quá 30 giây: 503 `remote_skus_busy`. Lần đọc trọn lỗi gần nhất (Tải lại hay lượt định kỳ) chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây), không gọi sàn. Sàn trả thiếu danh sách: 409 `marketplace_rejected` (`platformCode` `incomplete_list`, `too_many_calls`). Lời gọi tính vào hạn mức gọi sàn trong ngày (hết: 503 `marketplace_unavailable`).',
     security: bearer,
     request: { params: ShopParams, query: RemoteSkusQuery },
     responses: {
       200: { description: 'SKU trên sàn', ...json(RemoteSkuList) },
       ...onShop,
+      429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
       503: problemResponse('`marketplace_unavailable`, `remote_skus_busy`'),
     },
   });

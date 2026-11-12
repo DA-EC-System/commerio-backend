@@ -84,7 +84,7 @@ export async function markRemoteSkus(shopId: string, marks: { syncedAt?: Date; c
     .update(shops)
     .set({
       // Đọc trọn được thì xoá mốc giãn lần thử.
-      ...(marks.syncedAt && { remoteSkusSyncedAt: marks.syncedAt, remoteSkusFullFailures: 0, remoteSkusFullRetryAt: null }),
+      ...(marks.syncedAt && { remoteSkusSyncedAt: marks.syncedAt, remoteSkusFullFailures: 0, remoteSkusFullRetryAt: null, remoteSkusFullFailedAt: null }),
       remoteSkusChangedSince: marks.changedSince,
     })
     .where(eq(shops.id, shopId));
@@ -100,8 +100,14 @@ export async function recordFullReadFailure(shopId: string): Promise<void> {
     .set({
       remoteSkusFullFailures: sql`${shops.remoteSkusFullFailures} + 1`,
       remoteSkusFullRetryAt: sql`now() + least(interval '1 hour' * power(2, least(${shops.remoteSkusFullFailures}, 10)), interval '24 hours')`,
+      remoteSkusFullFailedAt: sql`now()`,
     })
     .where(eq(shops.id, shopId));
+}
+
+/** Tải lại (hoặc lần mở đầu) đọc trọn lỗi: chỉ ghi giờ lỗi cho cooldown của Tải lại, không tính vào giãn của lượt định kỳ. */
+export async function recordManualReadFailure(shopId: string): Promise<void> {
+  await getDb().update(shops).set({ remoteSkusFullFailedAt: sql`now()` }).where(eq(shops.id, shopId));
 }
 
 export async function listRemoteSkuRows(shopId: string): Promise<RemoteSkuRow[]> {
