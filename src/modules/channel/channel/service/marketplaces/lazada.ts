@@ -709,6 +709,26 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         if (products.length < SKU_LIST_BATCH) return out;
       }
     },
+    // GetProducts (open.lazada.com, tra 12/11/2026): "update_after String No Limits the returned products to those updated
+    // after or on the specified date, given in ISO 8601 date format." `filter=all` không gồm sản phẩm đã xoá (gọi thật
+    // 10/11/2026) nên đọc thêm `filter=deleted` cùng mốc. Tài liệu không nói thứ tự khi lọc theo ngày nên lật `offset` trong
+    // tập đã lọc ("The maximum offset is 10000"; tập sửa trong một lượt nhỏ).
+    async listSkusChanged(accessToken, since): Promise<RemoteSku[]> {
+      const out: RemoteSku[] = [];
+      for (const filter of ['all', 'deleted'] as const) {
+        for (let offset = 0; ; offset += SKU_LIST_BATCH) {
+          if (offset > MAX_PRODUCT_OFFSET) {
+            throw new MarketplaceError('rejected', 'too_many_products', `Hơn ${MAX_PRODUCT_OFFSET} sản phẩm sửa từ mốc, sàn không cho đọc hết`);
+          }
+          const params = { access_token: accessToken, filter, update_after: vnTime(since), limit: String(SKU_LIST_BATCH), offset: String(offset) };
+          const body = await call(config.apiUrl, '/products/get', params, 'GET');
+          const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
+          out.push(...products.flatMap(skusOf).map((s) => (filter === 'deleted' ? { ...s, state: 'deleted' as const } : s)));
+          if (products.length < SKU_LIST_BATCH) break;
+        }
+      }
+      return out;
+    },
     async updatePriceQuantity(accessToken, items) {
       const results: PerSkuResult[] = [];
       for (const batch of chunks(items, PRICE_QTY_BATCH)) results.push(...(await priceQuantityBatch(accessToken, batch)));

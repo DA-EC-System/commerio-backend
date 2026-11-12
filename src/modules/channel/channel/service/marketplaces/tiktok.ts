@@ -483,6 +483,16 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       const details = opts?.labels === false ? undefined : await productDetails(accessToken, products, opts?.skipSellerSkus);
       return products.flatMap((p) => skusOf(p, details)).filter((s) => s.state !== 'deleted');
     },
+    // Search Products 202502 (OAS của skill tts-openapi-guide, tra 12/11/2026): "Filter products to show only those that
+    // are updated on or after the specified date and time. Unix timestamp." `status: ALL` gồm sản phẩm đã xoá (gọi thật
+    // 11/11/2026), trả với `state: 'deleted'` để bản sao bỏ SKU đó (#220 đợt 2). Nhãn đọc như `listSkus` (bộ nhớ đệm theo
+    // `update_time`), không đọc chi tiết sản phẩm đã xoá.
+    async listSkusChanged(accessToken, since) {
+      const products = await searchProducts(accessToken, { status: 'ALL', update_time_ge: Math.floor(since.getTime() / 1000) });
+      const live = products.filter((p) => p.status !== 'DELETED');
+      const details = await productDetails(accessToken, live, undefined);
+      return products.flatMap((p) => skusOf(p, p.status === 'DELETED' ? undefined : details));
+    },
     countRemote,
     getSkus,
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.

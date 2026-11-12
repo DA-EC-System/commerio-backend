@@ -365,6 +365,12 @@ export interface MarketplaceAdapter {
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
   /**
+   * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), kể cả sản phẩm đã xoá (`state: 'deleted'`), có
+   * nhãn biến thể như `listSkus`. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
+   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn).
+   */
+  listSkusChanged?(accessToken: string, since: Date): Promise<RemoteSku[]>;
+  /**
    * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
    * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của
    * sàn (phân loại; sản phẩm không chia phân loại tính là 1), không tính SKU của sản phẩm đã xoá; `null` khi sàn không trả

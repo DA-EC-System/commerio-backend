@@ -347,6 +347,10 @@ export const RemoteSkuList = z
         })
         .strict(),
     ),
+    syncedAt: z.iso
+      .datetime({ offset: true })
+      .nullable()
+      .meta({ description: 'Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao BE lưu); null khi sàn chưa đọc được lần nào' }),
   })
   .strict()
   .meta({ id: 'RemoteSkuList' });

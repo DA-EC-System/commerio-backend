@@ -60,3 +60,34 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     await expect(adapter.listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_products' });
   });
 });
+
+// GetProducts (open.lazada.com, tra 12/11/2026): "update_after … Limits the returned products to those updated after or on
+// the specified date, given in ISO 8601 date format."; `filter=all` không gồm sản phẩm đã xoá nên gọi thêm `filter=deleted`.
+describe('Lazada: SKU của sản phẩm sửa từ một mốc (#220 đợt 2, bản sao SKU sàn)', () => {
+  it('gửi `update_after` ISO 8601 giờ VN cho cả `filter=all` và `filter=deleted`, trả kèm SKU đã xoá với state deleted', async () => {
+    const calls: URLSearchParams[] = [];
+    const fetchFn = async (url: string | URL | Request) => {
+      const q = new URL(String(url)).searchParams;
+      calls.push(q);
+      const deleted = q.get('filter') === 'deleted';
+      const products = Number(q.get('offset')) > 0 ? [] : [
+        {
+          item_id: deleted ? 2 : 1,
+          status: deleted ? 'Deleted' : 'Active',
+          attributes: { name: deleted ? 'Đã xoá' : 'Còn' },
+          skus: [{ SkuId: deleted ? 21 : 11, SellerSku: deleted ? 'X' : 'A', quantity: 2, Status: deleted ? 'deleted' : 'active' }],
+        },
+      ];
+      return new Response(JSON.stringify({ code: '0', data: { total_products: products.length, products } }), { status: 200 });
+    };
+    const skus = await createLazadaAdapter(config, fetchFn).listSkusChanged!('t', new Date('2026-11-12T01:00:00Z'));
+    expect(calls.map((q) => [q.get('filter'), q.get('update_after'), q.get('offset')])).toEqual([
+      ['all', '2026-11-12T08:00:00+07:00', '0'],
+      ['deleted', '2026-11-12T08:00:00+07:00', '0'],
+    ]);
+    expect(skus.map((s) => [s.externalSkuId, s.state])).toEqual([
+      ['11', 'live'],
+      ['21', 'deleted'],
+    ]);
+  });
+});

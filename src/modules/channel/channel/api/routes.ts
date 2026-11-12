@@ -186,11 +186,18 @@ export function channelRouter(ctx: ModuleContext): Router {
     res.json(await pullShopOrders(getAuth(res).companyId!, id));
   });
 
-  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus`, `match` gọi sàn ngoài giao dịch: service tự mở `withCompany`.
+  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại gọi sàn ngoài giao dịch:
+  // service tự mở `withCompany`.
   router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
     res.json(await mapping.remoteSkus(actor(res), id, unmatched ?? false));
+  });
+
+  router.post('/shops/:id/remote-skus/refresh', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
+    res.json(await mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {

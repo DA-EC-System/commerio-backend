@@ -5,7 +5,10 @@ import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ChannelListing, RemoteSkuList } from '#src/modules/channel/channel/api/schemas.ts';
-import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { MarketplaceError, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { unmatchedRemoteCounts } from '#src/modules/channel/channel/repository/remote-skus.ts';
+import { runListingSync } from '#src/modules/channel/channel/service/background.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { type ListingVariant, type ProductPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
@@ -44,6 +47,12 @@ const port: ProductPort = {
 setProductPort(port);
 
 const remote: RemoteSku[] = [];
+let listSkusCalls = 0;
+const changedSince: Date[] = [];
+let changedResult: RemoteSku[] = [];
+let changedFails = false;
+/** SKU mới trên sàn chưa vào bản sao: `match` tải lại bản sao trước (bản sao chỉ làm mới khi đồng bộ, Tải lại). */
+let dirty = false;
 /** SKU mới trên sàn, SKU người bán khác SKU Commerio (lý do phải ghép tay). */
 const newRemote = (extra: Partial<RemoteSku> = {}) => {
   const id = randomUUID().slice(0, 8);
@@ -58,6 +67,7 @@ const newRemote = (extra: Partial<RemoteSku> = {}) => {
     ...extra,
   };
   remote.push(r);
+  dirty = true;
   return r;
 };
 registerAdapter(
@@ -66,8 +76,16 @@ registerAdapter(
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
-    listSkus: async () => remote,
+    listSkus: async () => {
+      listSkusCalls++;
+      return remote;
+    },
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
+    listSkusChanged: async (_t, since) => {
+      if (changedFails) throw new MarketplaceError('unavailable', 'daily_call_limit', 'Hết hạn mức');
+      changedSince.push(since);
+      return changedResult;
+    },
     deactivate: async () => {},
     updatePriceQuantity: async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true })),
   }),
@@ -83,8 +101,20 @@ let admin: Awaited<ReturnType<typeof addMember>>;
 let sale: Awaited<ReturnType<typeof addMember>>;
 let shopId: string;
 const as = (r: request.Test, token: string) => r.set('Authorization', `Bearer ${token}`);
-const match = (token: string, body: { externalSkuId: string; variantId: string | null }) =>
-  as(app().post(`/api/v1/channel/shops/${shopId}/listings/match`), token).send(body);
+/** Đọc trọn lại bản sao SKU sàn của gian hàng (bỏ khoảng chờ giữa hai lần Tải lại). */
+const reload = async (id = shopId) => {
+  await testPool().query('update channel.shops set remote_skus_synced_at = null where id = $1', [id]);
+  const res = await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), company.ceo.token);
+  expect(res.status).toBe(200);
+  return res;
+};
+const match = async (token: string, body: { externalSkuId: string; variantId: string | null }) => {
+  if (dirty) {
+    dirty = false;
+    await reload();
+  }
+  return as(app().post(`/api/v1/channel/shops/${shopId}/listings/match`), token).send(body);
+};
 const decide = (token: string, listingId: string, action: string, body: object) =>
   as(app().post(`/api/v1/channel/shops/${shopId}/listings/${listingId}/mapping/${action}`), token).send(body);
 
@@ -135,6 +165,8 @@ describe('remote-skus', () => {
     const { r } = await mapped();
     const free = newRemote();
     const gone = newRemote({ state: 'deleted' });
+    await reload();
+    dirty = false;
     const all = await as(app().get(`/api/v1/channel/shops/${shopId}/remote-skus`), sale.token);
     expect(all.status).toBe(200);
     const items = RemoteSkuList.parse(all.body).items;
@@ -409,6 +441,8 @@ describe('đợt 2: gỡ listing thì bỏ ghép chờ duyệt (review #309 N2)'
     await activateShop(other);
     const on = (path: string, token: string) => as(app().post(`/api/v1/channel/shops/${other}${path}`), token);
     const a = newRemote();
+    const b = newRemote();
+    await reload(other);
     expect((await on('/listings/match', sale.token).send({ externalSkuId: a.externalSkuId, variantId: newVariant().id })).status).toBe(200);
     await testPool().query(
       `insert into channel.raw_orders (company_id, shop_id, external_order_id, payload) values ($1, $2, $3, $4)`,
@@ -416,7 +450,6 @@ describe('đợt 2: gỡ listing thì bỏ ghép chờ duyệt (review #309 N2)'
     );
     const remap = await on('/listings/match', admin.token).send({ externalSkuId: a.externalSkuId, variantId: newVariant().id });
     expect(remap.status).toBe(202);
-    const b = newRemote();
     const onlyPending = await on('/listings/match', sale.token).send({ externalSkuId: b.externalSkuId, variantId: null });
     expect(onlyPending.status).toBe(202);
     const shop = await as(app().get(`/api/v1/channel/shops/${other}`), company.ceo.token);
@@ -461,5 +494,113 @@ describe('đợt 2: 409 `version_conflict` kèm `current`', () => {
     expect(res.status).toBe(409);
     expect(res.body.type).toMatch(/version_conflict$/);
     expect(ChannelListing.parse(res.body.current)).toMatchObject({ id: listing.id, version: listing.version + 1 });
+  });
+});
+
+describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần đồng bộ gần nhất")', () => {
+  /** Gian hàng mới của công ty, chưa có bản sao. */
+  async function freshShop() {
+    const res = await as(app().post('/api/v1/channel/shops/lazada/token'), company.ceo.token).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const id = res.body.shop.id as string;
+    await activateShop(id);
+    return id;
+  }
+  const remoteSkusOf = (id: string, q = '') => as(app().get(`/api/v1/channel/shops/${id}/remote-skus${q}`), sale.token);
+
+  it('Lần mở đầu gọi sàn một lần rồi lưu; lần sau đọc bản sao, không gọi sàn; trả `syncedAt`', async () => {
+    const id = await freshShop();
+    const before = listSkusCalls;
+    const first = await remoteSkusOf(id);
+    expect(first.status).toBe(200);
+    expect(listSkusCalls).toBe(before + 1);
+    const second = await remoteSkusOf(id);
+    expect(listSkusCalls).toBe(before + 1);
+    const body = RemoteSkuList.parse(second.body);
+    expect(body.syncedAt).toEqual(first.body.syncedAt);
+    expect(body.syncedAt).not.toBeNull();
+    expect(body.items.length).toBe(first.body.items.length);
+  });
+
+  it('Tải lại: đọc trọn, SKU đã mất trên sàn bị bỏ khỏi bản sao; bấm lại trong 60 giây thì không gọi sàn', async () => {
+    const id = await freshShop();
+    const r = newRemote();
+    dirty = false;
+    await remoteSkusOf(id);
+    r.state = 'deleted';
+    await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '2 minutes' where id = $1", [id]);
+    const before = listSkusCalls;
+    const res = await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+    expect(res.status).toBe(200);
+    expect(listSkusCalls).toBe(before + 1);
+    expect(RemoteSkuList.parse(res.body).items.some((i) => i.externalSkuId === r.externalSkuId)).toBe(false);
+    await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+    expect(listSkusCalls).toBe(before + 1);
+  });
+
+  it('Ghép SKU chưa có listing tra bản sao, không gọi sàn; SKU chưa có trong bản sao → 422 `errors.externalSkuId`', async () => {
+    const r = newRemote();
+    await reload();
+    dirty = false;
+    const before = listSkusCalls;
+    expect((await match(sale.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id })).status).toBe(200);
+    const late = newRemote();
+    dirty = false;
+    const res = await match(sale.token, { externalSkuId: late.externalSkuId, variantId: newVariant().id });
+    expect(res.status).toBe(422);
+    expect(res.body.errors).toHaveProperty('externalSkuId');
+    expect(listSkusCalls).toBe(before);
+  });
+
+  it('Số SKU chưa ghép đếm từ bản sao: giảm ngay khi ghép; chờ duyệt "không quản tồn" vẫn tính là chưa ghép', async () => {
+    const id = await freshShop();
+    const count = async () => (await withCompany(company.companyId, () => unmatchedRemoteCounts([id]))).get(id) ?? 0;
+    await remoteSkusOf(id);
+    const start = await count();
+    expect(start).toBe(remote.filter((r) => r.state !== 'deleted').length);
+    const r = remote.find((x) => x.state !== 'deleted' && x.sellerSku)!;
+    const ok = await as(app().post(`/api/v1/channel/shops/${id}/listings/match`), sale.token).send({ externalSkuId: r.externalSkuId, variantId: newVariant().id });
+    expect(ok.status).toBe(200);
+    expect(await count()).toBe(start - 1);
+    const other = remote.find((x) => x.state !== 'deleted' && x.sellerSku && x !== r)!;
+    const asked = await as(app().post(`/api/v1/channel/shops/${id}/listings/match`), sale.token).send({ externalSkuId: other.externalSkuId, variantId: null });
+    expect(asked.status).toBe(202);
+    expect(await count()).toBe(start - 1);
+  });
+
+  it('Lượt đồng bộ listing định kỳ đọc sản phẩm sửa từ mốc trừ 2 phút: SKU mới vào, SKU đã xoá ra; sàn lỗi thì lượt đồng bộ vẫn xong', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    const mark = new Date(Date.now() - 10 * 60_000);
+    await testPool().query('update channel.shops set remote_skus_changed_since = $2 where id = $1', [id, mark]);
+    const added = newRemote();
+    dirty = false;
+    const gone = remote.find((x) => x.state !== 'deleted' && x !== added)!;
+    changedSince.length = 0;
+    changedResult = [added, { ...gone, state: 'deleted' }];
+    await runListingSync(port, { companyId: company.companyId, shopId: id });
+    expect(changedSince).toEqual([new Date(mark.getTime() - 2 * 60_000)]);
+    const ids = RemoteSkuList.parse((await remoteSkusOf(id)).body).items.map((i) => i.externalSkuId);
+    expect(ids).toContain(added.externalSkuId);
+    expect(ids).not.toContain(gone.externalSkuId);
+    const { rows } = await testPool().query('select remote_skus_changed_since from channel.shops where id = $1', [id]);
+    expect(rows[0].remote_skus_changed_since.getTime()).toBeGreaterThan(mark.getTime());
+
+    changedFails = true;
+    try {
+      await expect(runListingSync(port, { companyId: company.companyId, shopId: id })).resolves.toBeUndefined();
+    } finally {
+      changedFails = false;
+    }
+  });
+
+  it('Lần đọc trọn đã quá 24 giờ thì lượt định kỳ đọc trọn thay vì đọc theo giờ sửa', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '25 hours' where id = $1", [id]);
+    const before = listSkusCalls;
+    changedSince.length = 0;
+    await runListingSync(port, { companyId: company.companyId, shopId: id });
+    expect(listSkusCalls).toBe(before + 1);
+    expect(changedSince).toEqual([]);
   });
 });

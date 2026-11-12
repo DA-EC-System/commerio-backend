@@ -6,6 +6,7 @@ import { findShopRow, recordOpenOrderPullError } from '../repository/shops.ts';
 import { pushPending, syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
+import { refreshRemoteSkusQuietly } from './remote-skus.ts';
 import type { ShopJob } from './shop-jobs.ts';
 import { stopShopJobs } from './shop-jobs.ts';
 import { loseShopAuth, refreshShopToken } from './shops.ts';
@@ -33,8 +34,15 @@ async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknow
   }
 }
 
+/**
+ * Đồng bộ listing rồi làm mới bản sao SKU sàn (#220 đợt 2: sản phẩm sửa từ lần trước, mỗi ngày đọc trọn). Bước sau chỉ
+ * đọc sàn và ghi `remote_skus`, không đẩy tồn; lỗi của nó chỉ ghi log, không làm hỏng lượt đồng bộ.
+ */
 export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
-  return onActiveShop(job, 'đồng bộ listing', () => syncListings(port, job.companyId, job.shopId));
+  return onActiveShop(job, 'đồng bộ listing', async () => {
+    await syncListings(port, job.companyId, job.shopId);
+    await refreshRemoteSkusQuietly(job.companyId, job.shopId);
+  });
 }
 
 /**

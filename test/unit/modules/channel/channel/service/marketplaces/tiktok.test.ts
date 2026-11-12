@@ -288,6 +288,21 @@ describe('adapter TikTok: SKU', () => {
     expect(initOf(fetchFn, 0).body).toBe('{"status":"ALL"}');
   });
 
+  // Search Products 202502 (OAS của tts-openapi-guide): "Filter products to show only those that are updated on or after the
+  // specified date and time. Unix timestamp." `status: ALL` gồm sản phẩm đã xoá.
+  it('listSkusChanged (#220 đợt 2): gửi `update_time_ge` (giây) với `status: ALL`, trả cả SKU của sản phẩm đã xoá', async () => {
+    const fetchFn = fakeFetch(
+      ok({ total_count: 2, next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M', [2])]), product('2', 'DELETED', [sku('21', 'CU')])] }),
+      ok({ id: '1', main_images: [], skus: [{ id: '11' }] }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkusChanged!(packed(), new Date('2026-11-12T01:00:00Z'));
+    expect(JSON.parse(String(initOf(fetchFn, 0).body))).toEqual({ status: 'ALL', update_time_ge: 1794445200 });
+    expect(skus.map((s) => [s.externalSkuId, s.state])).toEqual([
+      ['11', 'live'],
+      ['21', 'deleted'],
+    ]);
+  });
+
   it('listSkus: gian hàng hơn 10000 sản phẩm thì rejected too_many_products, không trả thiếu', async () => {
     const fetchFn = fakeFetch(ok({ total_count: 10001, next_page_token: 'p2', products: [] }));
     await expect(createTiktokAdapter(config, fetchFn).listSkus!(packed())).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_products' });

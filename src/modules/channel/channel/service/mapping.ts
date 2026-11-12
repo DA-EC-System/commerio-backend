@@ -19,11 +19,12 @@ import {
   updateListing,
 } from '../repository/listings.ts';
 import { hasOrdersWithSellerSku } from '../repository/raw-orders.ts';
-import { lockShopRow } from '../repository/shops.ts';
-import type { RemoteSku } from './marketplaces/common.ts';
+import { findRemoteSkuRow, listRemoteSkuRows, type RemoteSkuRow } from '../repository/remote-skus.ts';
+import { findShopRow, lockShopRow } from '../repository/shops.ts';
+import { refreshRemoteSkusNow } from './remote-skus.ts';
 import { type ChannelListing, requesterNames, toListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
-import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
+import { type Actor, ownShop } from './shops.ts';
 
 const ENTITY = 'listings';
 const AUDIT = { entityType: 'channel.listings' };
@@ -46,39 +47,46 @@ const effectiveMode = (r: ListingRow): RemoteSkuItem['mode'] => (r.mode === 'unm
 const invalid = (field: string, message: string) =>
   new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { [field]: message } });
 
-async function listRemote(companyId: string, shopId: string, labels: boolean): Promise<RemoteSku[]> {
-  const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
-  if (!adapter.listSkus) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa đọc được danh sách SKU của gian hàng');
-  return (await onMarketplace(() => adapter.listSkus!(accessToken, { labels }))).filter((r) => r.state !== 'deleted');
-}
-
 /**
- * SKU đang có trên sàn kèm ghép hiện hành (§18.3 `remote-skus`). Chưa lưu bản sao danh sách SKU sàn nên đọc thẳng từ sàn
- * (`listSkus`, như gợi ý ghép lúc thiết lập), bỏ SKU đã xoá. `unmatched`: chỉ SKU chưa có ghép hiệu lực.
+ * SKU đang có trên sàn kèm ghép hiện hành (§18.3 `remote-skus`), đọc từ bản sao `remote_skus` (lần đồng bộ gần nhất,
+ * `syncedAt` là lần đọc trọn). Chưa có bản sao thì đọc trọn sàn một lần rồi lưu; `refresh` (nút Tải lại) đọc trọn lại,
+ * trừ khi lần trước còn trong `REFRESH_COOLDOWN_MS`. Ghép theo `external_sku_id` của listing chưa gỡ. `unmatched`: chỉ
+ * SKU chưa có ghép hiệu lực.
  */
-export async function remoteSkus(actor: Actor, shopId: string, unmatched: boolean): Promise<{ items: RemoteSkuItem[] }> {
-  const remote = await listRemote(actor.companyId, shopId, true);
-  const rows = await withCompany(actor.companyId, () => liveListingRows(shopId));
-  const names = await withCompany(actor.companyId, () => requesterNames(rows));
-  const byExternal = new Map(rows.flatMap((r) => (r.externalSkuId ? [[r.externalSkuId, r] as const] : [])));
-  const items = remote.map((r): RemoteSkuItem => {
-    const listing = byExternal.get(r.externalSkuId);
-    const mode = listing ? effectiveMode(listing) : null;
-    return {
-      externalProductId: r.externalProductId,
-      externalSkuId: r.externalSkuId,
-      sellerSku: r.sellerSku,
-      title: r.title,
-      matchedVariantId: mode === 'mapped' ? listing!.variantId : null,
-      mode,
-      // CEO tìm yêu cầu ghép chờ duyệt ở đây, kể cả "không quản tồn" của SKU chưa ghép (dòng `variant_id` null không có
-      // trong `GET /listings`) (review #309).
-      listingId: listing?.id ?? null,
-      listingVersion: listing?.version ?? null,
-      pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
-    };
+export async function remoteSkus(
+  actor: Actor,
+  shopId: string,
+  unmatched: boolean,
+  refresh = false,
+): Promise<{ items: RemoteSkuItem[]; syncedAt: Date | null }> {
+  const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
+  const shop = await inCompany(() => ownShop(shopId));
+  if (refresh || !shop.remoteSkusSyncedAt) await refreshRemoteSkusNow(actor.companyId, shop.id, { cooldown: refresh });
+  return inCompany(async () => {
+    const remote = await listRemoteSkuRows(shop.id);
+    const rows = await liveListingRows(shop.id);
+    const names = await requesterNames(rows);
+    const byExternal = new Map(rows.flatMap((r) => (r.externalSkuId ? [[r.externalSkuId, r] as const] : [])));
+    const items = remote.map((r): RemoteSkuItem => {
+      const listing = byExternal.get(r.externalSkuId);
+      const mode = listing ? effectiveMode(listing) : null;
+      return {
+        externalProductId: r.externalProductId,
+        externalSkuId: r.externalSkuId,
+        sellerSku: r.sellerSku,
+        title: r.title,
+        matchedVariantId: mode === 'mapped' ? listing!.variantId : null,
+        mode,
+        // CEO tìm yêu cầu ghép chờ duyệt ở đây, kể cả "không quản tồn" của SKU chưa ghép (dòng `variant_id` null không có
+        // trong `GET /listings`) (review #309).
+        listingId: listing?.id ?? null,
+        listingVersion: listing?.version ?? null,
+        pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
+      };
+    });
+    const syncedAt = (await findShopRow(shop.id))?.remoteSkusSyncedAt ?? null;
+    return { items: unmatched ? items.filter((i) => i.mode === null) : items, syncedAt };
   });
-  return { items: unmatched ? items.filter((i) => i.mode === null) : items };
 }
 
 /** Người làm có vai trò CEO (route duyệt ghép, §18.3 "`listing.manage` + vai trò CEO"). */
@@ -158,11 +166,11 @@ export async function matchListing(
     throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, ghép sau khi có kết quả', { current: toListing(before) });
   }
   if (variantId) await inCompany(() => assertVariantFree(port, shop.id, variantId, before?.id ?? null));
-  let remote: RemoteSku | undefined;
+  let remote: RemoteSkuRow | undefined;
   if (!before) {
-    // Gọi sàn ngoài giao dịch: cần SKU người bán (vòng kéo đơn tra biến thể theo đây) và mã sản phẩm của SKU sàn.
-    remote = (await listRemote(actor.companyId, shop.id, false)).find((r) => r.externalSkuId === externalSkuId);
-    if (!remote) throw invalid('externalSkuId', 'SKU sàn không còn trên gian hàng');
+    // SKU người bán (vòng kéo đơn tra biến thể theo đây) và mã sản phẩm lấy từ bản sao SKU sàn, không gọi sàn (#220 đợt 2).
+    remote = await inCompany(() => findRemoteSkuRow(shop.id, externalSkuId));
+    if (!remote) throw invalid('externalSkuId', 'SKU sàn chưa có trong lần đồng bộ gần nhất, bấm Tải lại rồi ghép');
     if (!remote.sellerSku) throw invalid('externalSkuId', 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi ghép');
   }
   const selfOk = await inCompany(() => canSelfApprove(actor.accountId));
