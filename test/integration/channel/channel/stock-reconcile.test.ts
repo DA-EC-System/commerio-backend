@@ -6,7 +6,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { runStockPush } from '#src/modules/channel/channel/service/background.ts';
-import { onAvailableChanged } from '#src/modules/channel/channel/service/listing-sync.ts';
+import { onAvailableChanged, syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { MarketplaceError, type PerSkuResult, type PriceQuantity, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
@@ -92,7 +92,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 let token: string;
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
-const sync = () => auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+const sync = () => syncListings(port, company.companyId, shopId);
 const sentFor = (sku: string) => updatePriceQuantity.mock.calls.flatMap(([, items]) => items).find((i) => i.externalSkuId === `sku-${sku}`);
 async function listing(variantId: string) {
   const { rows } = await testPool().query('select * from channel.listings where shop_id = $1 and variant_id = $2', [shopId, variantId]);
@@ -139,8 +139,7 @@ beforeEach(async () => {
 
 describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
   it('lấy đơn trước khi đọc tồn sàn; khớp thì không đẩy gì', async () => {
-    const res = await sync();
-    expect(res.status).toBe(200);
+    await sync();
     expect(calls).toEqual(['listOrders', 'getSkus']);
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 5 });
   });
@@ -214,7 +213,7 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
     ordersFail = new MarketplaceError('unavailable', '901', 'Sàn bận');
     remote.set(a.sku, { quantity: 9 });
     const res = await sync();
-    expect(res.status).toBe(200);
+    expect(res.errors).toBe(0);
     expect(sentFor(a.sku)).toBeUndefined();
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 5 });
   });
@@ -239,6 +238,35 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
     expect(row).toMatchObject({ price_sync: 'error', listed_price: '99000.00' });
     expect(row.price_sync_error).toMatchObject({ code: 'promotion_locked' });
   });
+});
+
+describe('gian hàng đang giữ tồn (holdsStock, #198): không lấy đơn để đối chiếu, không gửi tồn', () => {
+  for (const [label, patch] of [
+    ['chưa xong lượt đơn mở', 'open_orders_pulled_at = null'],
+    ['chờ phân hàng sau phiếu đầu kỳ', `allocation_stocktake_id = '${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}'`],
+  ] as const) {
+    it(`${label}: đồng bộ không gọi listOrders, việc đẩy tồn không gửi quantity`, async () => {
+      const before = (await testPool().query('select open_orders_pulled_at, allocation_stocktake_id from channel.shops where id = $1', [shopId])).rows[0];
+      await testPool().query(`update channel.shops set ${patch} where id = $1`, [shopId]);
+      try {
+        remote.set(a.sku, { quantity: 9 });
+        await testPool().query(`update channel.listings set stock_sync = 'pending', price_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
+        await sync();
+        expect(calls).not.toContain('listOrders');
+        expect(sentFor(a.sku)?.quantity).toBeUndefined();
+        updatePriceQuantity.mockClear();
+        await runStockPush(port, { companyId: company.companyId, shopId });
+        expect(sentFor(a.sku)?.quantity).toBeUndefined();
+        expect(await listing(a.id)).toMatchObject({ stock_sync: 'pending' });
+      } finally {
+        await testPool().query('update channel.shops set open_orders_pulled_at = $2, allocation_stocktake_id = $3 where id = $1', [
+          shopId,
+          before.open_orders_pulled_at,
+          before.allocation_stocktake_id,
+        ]);
+      }
+    });
+  }
 });
 
 describe('sàn từ chối vì khuyến mãi khi đẩy (promotion_locked, #223)', () => {

@@ -350,10 +350,7 @@ export const PushResults = z.object({ results: z.array(PushResult) }).strict().m
 
 export const ListingSyncResult = z
   .object({
-    checked: z.number().int().meta({ description: 'Số listing đã đọc trạng thái từ sàn' }),
-    changed: z.number().int().meta({ description: 'Số listing đổi trạng thái' }),
-    pushed: z.number().int().meta({ description: 'Số SKU đã đẩy giá, tồn' }),
-    errors: z.number().int().meta({ description: 'Số SKU đẩy lỗi (xem `stockSyncError`, `priceSyncError`)' }),
+    queued: z.boolean().meta({ description: '`true`: vừa xếp một lượt đồng bộ; `false`: gian hàng đã có lượt chờ, không xếp thêm' }),
   })
   .strict()
   .meta({ id: 'ListingSyncResult' });

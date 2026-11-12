@@ -5,7 +5,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
-import { pushZeroStock, restoreAfterZeroStock, syncListings } from '../service/listing-sync.ts';
+import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
@@ -165,7 +165,7 @@ export function channelRouter(ctx: ModuleContext): Router {
 
   router.post('/shops/:id/listings/sync', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
-    res.json(await syncListings(productPort(ctx), actor(res).companyId, id));
+    res.status(202).json(await requestListingSync(actor(res).companyId, id));
   });
 
   // Kéo đơn ngay, không chờ vòng 5 phút (#105).

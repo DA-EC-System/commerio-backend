@@ -38,8 +38,8 @@ import {
 import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
-import { sendOrderPull, sendStockPush } from './shop-jobs.ts';
-import { type Actor, onMarketplace, shopSession } from './shops.ts';
+import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
+import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 import { shopOrdersStale, untrustedVariants } from './stock-trust.ts';
 
 /**
@@ -99,6 +99,20 @@ export async function pushPending(port: ProductPort, companyId: string, shopId: 
   await pushDue(port, inCompany, session, rows, holdsStock(session.shop), new Map(), summary);
   if (shopOrdersStale(session.shop)) await inCompany(() => sendOrderPull(companyId, shopId));
   return summary;
+}
+
+/**
+ * Nút "Đồng bộ" (Documents/21 §18.5): chỉ xếp một lượt `channel.listing_sync` cho gian hàng, không gọi sàn trong request.
+ * Gian hàng không `active` hoặc mất token: 409 `shop_not_connected`. `queued = false` khi đã có lượt chờ (bấm hai lần).
+ */
+export async function requestListingSync(companyId: string, shopId: string): Promise<{ queued: boolean }> {
+  return withCompany(companyId, async () => {
+    const shop = await ownShop(shopId);
+    if (shop.status !== 'active' || !shop.accessTokenEnc) {
+      throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+    }
+    return { queued: await sendListingSync(companyId, shop.id) };
+  });
 }
 
 export async function syncListings(port: ProductPort, companyId: string, shopId: string): Promise<SyncSummary> {
