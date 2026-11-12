@@ -374,6 +374,12 @@ export interface MarketplaceAdapter {
    * nhất hơn một vòng việc nền, và đủ xa để token vừa làm mới không tới hạn lại ngay ở vòng sau.
    */
   refreshDueAt?(tokens: TokenExpiry): Date | null;
+  /**
+   * Hạn refresh token cố định từ lúc seller uỷ quyền, làm mới không gia hạn (Lazada). Khai `true` thì lần làm mới giữ
+   * `refresh_expires_at` đã lưu, không lấy hạn adapter vừa tính lại từ "số giây còn lại" (lệch theo độ trễ mạng, làm
+   * nhãn "Sắp hết hạn" và thư báo mất uỷ quyền #312 tưởng là hạn mới).
+   */
+  readonly refreshKeepsAuthDeadline?: boolean;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
   /**

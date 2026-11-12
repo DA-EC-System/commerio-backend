@@ -9,6 +9,7 @@ import { runListingPush } from './service/listing-push.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
 import { productPort } from './service/product-port.ts';
+import { handleReauthMail, REAUTH_MAIL_CONSUMER, startReauthMailLoop } from './service/reauth-mail.ts';
 import {
   listingPushQueue,
   listingSyncQueue,
@@ -41,8 +42,11 @@ export const channelModule: ModuleDefinition = {
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
     await workQueue(listingPushQueue, (job) => runListingPush(port, job));
     await reconcileShopJobs();
+    // Thư báo CEO, Admin khi gian hàng sắp hết hoặc đã mất uỷ quyền (#312): xếp mốc mỗi 15 phút, consumer gửi thư.
+    registerConsumer('channel.shop_reauth_mail', handleReauthMail, { consumer: REAUTH_MAIL_CONSUMER });
+    const stopReauthMail = startReauthMailLoop();
     // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).
-    return async () => {};
+    return stopReauthMail;
   },
 };
 
