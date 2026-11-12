@@ -16,6 +16,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
+import { NEVER_SHOP, OFF_PLATFORM } from '../domain/ledger.ts';
 
 // Mọi bảng của module `finance` khai báo trong schema này.
 export const financeSchema = pgSchema('finance');
@@ -297,6 +298,9 @@ export const settlementBatches = financeSchema.table(
 );
 
 /** Loại khoản trong sổ tiền (25 §10.1). Ghi gộp: doanh thu và từng loại phí là dòng riêng, không ghi số thực nhận. */
+/** Danh sách loại dòng cho CHECK: hằng của domain, không phải đầu vào người dùng. */
+const kindList = (kinds: ReadonlySet<string>) => [...kinds].map((k) => `'${k}'`).join(', ');
+
 export const ledgerKind = financeSchema.enum('ledger_kind', [
   'revenue',
   'platform_subsidy',
@@ -366,6 +370,11 @@ export const ledgerEntries = financeSchema.table(
     check('ledger_entries_amount', sql`${t.amount} <> 0`),
     check('ledger_entries_actual_replaces', sql`${t.replacesEntryId} is null or not ${t.isEstimate}`),
     check('ledger_entries_adjustment_reason', sql`${t.kind} <> 'adjustment' or ${t.reason} is not null`),
+    // Khoản của sàn gắn gian hàng; trả NCC, NCC hoàn tiền, chi vận hành không gắn (Documents/25 §10.1, `LEDGER_KIND_SCOPE`).
+    check(
+      'ledger_entries_shop_by_kind',
+      sql`(${t.shopId} is not null or ${t.kind} in (${sql.raw(kindList(OFF_PLATFORM))})) and (${t.shopId} is null or ${t.kind} not in (${sql.raw(kindList(NEVER_SHOP))}))`,
+    ),
   ],
 );
 
