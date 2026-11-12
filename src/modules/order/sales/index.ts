@@ -4,12 +4,21 @@ import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerSalesOpenApi } from './api/openapi.ts';
 import { salesRouter } from './api/routes.ts';
 import { startSalesBackground } from './service/complete.ts';
+import { registerReturnsOpenApi } from './api/return-openapi.ts';
+import { returnsRouter } from './api/return-routes.ts';
 
 export const salesModule: ModuleDefinition = {
   name: 'sales',
   router: salesRouter,
   openapi: registerSalesOpenApi,
   startBackground: startSalesBackground,
+};
+
+/** Yêu cầu trả (#202): cùng module con `sales`, gắn riêng tại /api/v1/returns theo Documents/21 §20. */
+export const returnsModule: ModuleDefinition = {
+  name: 'returns',
+  router: returnsRouter,
+  openapi: registerReturnsOpenApi,
 };
 
 export {
@@ -34,3 +43,8 @@ export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts'
 export type { SalesContext } from './service/orders.ts';
 export { orderRefsOf } from './service/package-orders.ts';
 export { completeDueOrdersOnce } from './service/complete.ts';
+// Yêu cầu trả (#202, Documents/21 §11.3).
+export { hasOpenReturns } from './service/return-boundary.ts';
+export type { MarketplaceReturns } from './service/marketplace-returns.ts';
+// Yêu cầu trả từ sàn (#202): channel kéo về gọi trong `withCompany`.
+export { ingestMarketplaceReturn, type PlatformReturn, type ReturnIngestOutcome } from './service/return-ingest.ts';

@@ -112,6 +112,12 @@ export interface RemoteSku {
    */
   variantLabel?: string | null;
   /**
+   * `true` khi SKU thuộc sản phẩm nhiều SKU mà lần đọc này không lấy được nhãn biến thể (vượt trần đọc chi tiết, sàn lỗi,
+   * `labels: false`): `title` chỉ là "tên - SKU người bán". Bản sao SKU sàn khi đó giữ tiêu đề cũ đã có nhãn (review #309
+   * vòng 2 N3). Sàn có nhãn sẵn trong danh sách (Lazada) hoặc sản phẩm một SKU thì thiếu.
+   */
+  labelMissing?: boolean;
+  /**
    * URL ảnh đầu tiên của sản phẩm trên sàn, cho bảng ghép lúc thiết lập (#282, Documents/21 §18.7.5). Thiếu hoặc null khi
    * sàn không trả ảnh hay adapter không đọc (TikTok: `labels: false`, quá trần đọc chi tiết, Get Product lỗi).
    */
@@ -385,13 +391,22 @@ export interface MarketplaceAdapter {
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
   /**
-   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
-   * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
+   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5) và lần đọc trọn của bản sao SKU sàn
+   * (#220). Gian hàng quá giới hạn đọc của sàn thì ném `rejected`, không trả thiếu: số sản phẩm đọc được ít hơn tổng sàn
+   * báo (trang thiếu, trang rỗng giữa chừng) thì `incomplete_list`, phản hồi thành công mà không có danh sách thì
+   * `unexpected_response` (review #309 vòng 2 N1; bản sao xoá SKU không thấy nên không được nhận danh sách thiếu). `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
    * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282), kèm `imageUrl` khi có. `labels: false` khi chỉ cần
    * đếm hay không hiển thị: bỏ các lời gọi đọc nhãn, ảnh. `skipSellerSkus`: SKU Commerio bên gọi sẽ ghép theo SKU; sản phẩm
    * mà mọi SKU nằm trong đó không cần nhãn nên adapter không đọc nhãn, ảnh cho nó (`variantLabel`, `imageUrl` null).
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
+  /**
+   * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), có nhãn biến thể như `listSkus`. Sản phẩm đã
+   * xoá (`state: 'deleted'`) trả khi sàn trả trong cùng lời gọi (TikTok); Lazada không gọi thêm `filter=deleted` để giữ hạn
+   * mức (review vòng 2 N2), lần đọc trọn mỗi ngày dọn. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
+   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn).
+   */
+  listSkusChanged?(accessToken: string, since: Date): Promise<RemoteSku[]>;
   /**
    * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
    * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của
@@ -464,6 +479,28 @@ export interface MarketplaceAdapter {
    * `listOrders`: lần đầu `cursor` null, `nextCursor` null là hết, trang có thể rỗng mà vẫn còn con trỏ.
    */
   listReturns?(accessToken: string, updatedAfter: Date, cursor: string | null): Promise<{ items: RemoteReturn[]; nextCursor: string | null }>;
+  /** Lý do người bán dùng được khi từ chối trả hàng hay từ chối hoàn tiền (#202, Documents/21 §20.1). */
+  returnReasons?(accessToken: string, externalReturnId: string, action: 'reject' | 'refuse-refund'): Promise<{ id: string; label: string; requiresImage: boolean }[]>;
+  /**
+   * Người bán quyết yêu cầu trả (#202): `accept` đồng ý trả hàng, `reject` từ chối (cần `reasonId`), `refund` hoàn tiền
+   * cho khách giữ hàng. Kết quả về app qua lượt kéo yêu cầu trả kế tiếp.
+   */
+  decideReturn?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+    decision: 'accept' | 'reject' | 'refund',
+    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+  ): Promise<void>;
+  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
+  returnHistory?(
+    accessToken: string,
+    externalReturnId: string,
+    externalLineIds: readonly string[],
+  ): Promise<{ at: Date; reverseStatus: string; ofcStatus: string | null; note: string | null }[]>;
   /**
    * Lần huỷ đơn (khách xin huỷ, người bán, sàn huỷ) có cập nhật từ `updatedAfter`, lật trang như `listReturns`. Huỷ không vào
    * bảng yêu cầu trả: khách xin huỷ là cờ `cancel_requested` của đơn (Documents/21 §20.1).
@@ -496,7 +533,12 @@ export type RemoteReturnStatus = 'requested' | 'rejected' | 'refund_only' | 'awa
 
 /** Một món trong yêu cầu trả hay lần huỷ của sàn. Tiền là chuỗi thập phân, trống là null. */
 export interface RemoteAftersaleLine {
+  /** Mã món của đơn (khớp `order_lines.external_line_id`). */
   externalLineId: string;
+  /** Mã dòng đơn ngược của sàn khi khác mã món (Lazada `reverse_order_line_id`, dùng khi quyết trên sàn, #202). */
+  externalReturnLineId?: string | null;
+  /** Số món của dòng; không có là 1 (mỗi món một dòng). */
+  quantity?: number;
   externalSkuId: string | null;
   sellerSku: string | null;
   refundAmount: string | null;
@@ -535,6 +577,10 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
+  ofcStatus?: string | null;
+  /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
+  returnTo?: 'warehouse' | 'merchant' | null;
 }
 
 /**

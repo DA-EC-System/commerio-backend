@@ -116,7 +116,7 @@ async function setUpShop(platform = 'lazada'): Promise<{ c: Company; shopId: str
     .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   const shopId = res.body.shop.id as string;
   await testPool().query(
-    `update channel.shops set status = 'active', order_cutoff_at = $2, opening_stock_mode = 'push', unmatched_sku_count = 0 where id = $1`,
+    `update channel.shops set status = 'active', order_cutoff_at = $2, opening_stock_mode = 'push' where id = $1`,
     [shopId, cutoff],
   );
   const { sku, variantId } = await createVariant(c.companyId);

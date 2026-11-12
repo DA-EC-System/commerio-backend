@@ -143,7 +143,7 @@ describe('gợi ý ghép theo SKU và theo tên (AC-22)', () => {
 
 describe('quyết định từng SKU khi thiết lập (AC-23)', () => {
   it('tạo listing theo biến thể người chọn (khác gợi ý được), `null` bỏ qua; SKU người bán của listing là SKU trên sàn', async () => {
-    const { shopId, setup } = await connectingShop();
+    const { c, shopId, setup } = await connectingShop();
     const res = await setup({
       decisions: [
         { externalSkuId: 'sku-1', variantId: vSku.id },
@@ -157,8 +157,11 @@ describe('quyết định từng SKU khi thiết lập (AC-23)', () => {
       { external_sku_id: 'sku-1', variant_id: vSku.id, seller_sku: 'CMR-1' },
       { external_sku_id: 'sku-2', variant_id: vOther.id, seller_sku: 'LZ-JEAN' },
     ]);
-    const { rows } = await testPool().query('select unmatched_sku_count from channel.shops where id = $1', [shopId]);
-    expect(rows[0].unmatched_sku_count).toBe(2);
+    // Số SKU chưa ghép đếm từ bản sao SKU sàn lưu lúc thiết lập (#220 đợt 2), gồm SKU bỏ qua.
+    const { rows } = await testPool().query('select count(*)::int as n from channel.remote_skus where shop_id = $1', [shopId]);
+    expect(rows[0].n).toBe(4);
+    const shop = await request(testApp()).get(`/api/v1/channel/shops/${shopId}`).set('Authorization', `Bearer ${c.ceo.token}`);
+    expect(shop.body.setup.unmatchedCount).toBe(2);
   });
 
   it('gửi cả `externalSkuIds` và `decisions` thì 422 `errors.decisions`', async () => {
@@ -322,8 +325,8 @@ describe('gợi ý và quyết định: ca biên sau review', () => {
         await holder.query(`select pg_advisory_xact_lock(hashtext('channel.setup'), hashtext($1))`, [c.companyId]);
         await holder.query(
           `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at,
-             opening_stocktake_id, opening_stocktake_number, opening_stock_mode, unmatched_sku_count)
-           values ($1, 'lazada', $2, 'Đang chờ', 'active', now(), $3, 'KK-000001', 'stocktake', 0)`,
+             opening_stocktake_id, opening_stocktake_number, opening_stock_mode)
+           values ($1, 'lazada', $2, 'Đang chờ', 'active', now(), $3, 'KK-000001', 'stocktake')`,
           [c.companyId, randomUUID(), randomUUID()],
         );
       },

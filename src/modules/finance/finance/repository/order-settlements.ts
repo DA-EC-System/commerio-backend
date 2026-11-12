@@ -35,6 +35,7 @@ export async function updateOrderSettlement(
       | 'selfApproved'
       | 'approvedBy'
       | 'shopId'
+      | 'costMissing'
     >
   >,
 ): Promise<OrderSettlementRow | undefined> {

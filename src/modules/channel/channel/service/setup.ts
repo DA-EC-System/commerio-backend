@@ -8,7 +8,9 @@ import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { returnWindowError, shopMachine } from '../domain/shop.ts';
 import { insertListing, listListingRows, nameSimilarities } from '../repository/listings.ts';
+import { upsertRemoteSkus } from '../repository/remote-skus.ts';
 import { lockCompanySetup, setupStateOfCompany, updateShop } from '../repository/shops.ts';
+import { saveFullSnapshot } from './remote-skus.ts';
 import { stocktakePort } from './stocktake-port.ts';
 import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
@@ -70,6 +72,7 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string, labe
     listed: new Set((await listListingRows(shop.id)).map((l) => l.variantId)),
   }));
   const open = variants.filter((v) => !v.archived && !listed.has(v.id));
+  const startedAt = new Date();
   const fetched = adapter.listSkus
     ? // Nhãn biến thể chỉ cần cho SKU ghép theo tên: sản phẩm mà mọi SKU trùng SKU Commerio còn mở thì adapter không đọc nhãn.
       await onMarketplace(() => adapter.listSkus!(accessToken, { labels, skipSellerSkus: new Set(open.map((v) => v.sku)) }))
@@ -77,6 +80,12 @@ async function suggestions(port: ProductPort, actor: Actor, shopId: string, labe
       ? await onMarketplace(() => adapter.getSkus(accessToken, open.map((v) => v.sku)))
       : [];
   const remote = fetched.filter((r) => r.state !== 'deleted');
+  // Bản sao SKU sàn cho trang ghép và số SKU chưa ghép (#220 đợt 2): lưu trọn danh sách vừa đọc, không gọi sàn lần hai.
+  // Bước xem gợi ý (có nhãn) luôn lưu; hoàn tất bằng `decisions` (không nhãn) chỉ lưu khi chưa có bản sao, để không ghi
+  // đè tiêu đề có nhãn biến thể. Sàn chưa có `listSkus` thì chỉ có phần trùng SKU Commerio, lưu phần đó.
+  if (labels || !shop.remoteSkusSyncedAt) {
+    await inCompany(() => (adapter.listSkus ? saveFullSnapshot(shop.id, fetched, startedAt) : upsertRemoteSkus(shop.id, fetched, startedAt)));
+  }
 
   const chosen = new Map<number, { variant: ListingVariant; score: number | null }>();
   const taken = new Set<string>();
@@ -258,7 +267,6 @@ export async function finishSetup(
 ): Promise<{ shop: Shop; matched: number; stocktakeNumber: string | null }> {
   // `decisions` không dùng tiêu đề hay gợi ý theo tên: không đọc nhãn biến thể (đỡ tới 50 lời gọi sàn, #282 review chéo I-2).
   const candidates = await suggestions(port, actor, shopId, !input.decisions);
-  const offered = candidates.offered;
   const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
   const { firstShopOfCompany, awaitingStocktake } = await companySetupState(actor, shopId);
   const errors: Record<string, string> = {};
@@ -310,7 +318,6 @@ export async function finishSetup(
         openingStocktakeId: doc?.documentId ?? null,
         openingStocktakeNumber: doc?.number ?? null,
         openingStockMode: input.openingStock,
-        unmatchedSkuCount: offered.length - picked.length,
         openOrdersPulledAt: null,
         stockPushedAt: null,
         // Mốc lấy đơn mới: lượt lấy đơn đầu tiên đặt lại (#223).

@@ -39,7 +39,7 @@ afterAll(async () => {
 const app = () => request(testApp());
 
 /** Gian hàng `active` đã thiết lập có listing `live` theo các SellerSku, rồi ngắt (listing gỡ do ngắt). */
-async function disconnectedShop(skus: string[]) {
+async function disconnectedShop(skus: string[], unmanaged: { sellerSku: string; approvedBy: string; requestedBy: string }[] = []) {
   const company = await createCompany({ optionalModules: ['channel'] });
   const token = `tok-${randomUUID().slice(0, 12)}`;
   const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
@@ -54,6 +54,14 @@ async function disconnectedShop(skus: string[]) {
       `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, external_image_urls, stock_sync)
        values ($1, $2, $3, $4, 'live', $5, $6, $7, 'synced')`,
       [company.companyId, shopId, randomUUID(), s, `item-${s}`, `sku-${s}`, ['https://slatic.test/a.png']],
+    );
+  }
+  for (const u of unmanaged) {
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, mode, seller_sku, status, external_product_id, external_sku_id, approved_by,
+                                     mapping_requested_by, mapping_self_approved)
+       values ($1, $2, 'unmanaged', $3, 'live', $4, $5, $6, $7, false)`,
+      [company.companyId, shopId, u.sellerSku, `item-${u.sellerSku}`, `sku-${u.sellerSku}`, u.approvedBy, u.requestedBy],
     );
   }
   const off = await auth(app().post(`/api/v1/channel/shops/${shopId}/disconnect`)).send({ version: rows[0]!.version });
@@ -113,6 +121,33 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
       [bySku('A')[1].id],
     );
     expect(history.rows).toEqual([{ from_state: null, to_state: 'live', action: 'relist', actor_id: null }]);
+  });
+
+  it('Đợt 2 #220: dòng "không quản tồn" gỡ do ngắt cũng được đưa lên lại, giữ quyết định duyệt cũ', async () => {
+    const s = `R-${randomUUID().slice(0, 6)}-U`;
+    const approvedBy = randomUUID();
+    const requestedBy = randomUUID();
+    const { shopId, reconnect } = await disconnectedShop([], [{ sellerSku: s, approvedBy, requestedBy }]);
+    remote.set(s, { state: 'live' });
+    const res = await reconnect();
+    expect(res.body.reconnect).toMatchObject({ relisted: 1 });
+    const rows = (
+      await testPool().query(
+        `select id, mode, variant_id, status, approved_by, mapping_requested_by, mapping_self_approved, replaces_listing_id
+           from channel.listings where shop_id = $1 order by created_at`,
+        [shopId],
+      )
+    ).rows;
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      mode: 'unmanaged',
+      variant_id: null,
+      status: 'live',
+      approved_by: approvedBy,
+      mapping_requested_by: requestedBy,
+      mapping_self_approved: false,
+      replaces_listing_id: rows[0].id,
+    });
   });
 
   it('sàn lỗi khi đọc trạng thái: nối lại vẫn 200, relisted 0, listing cũ giữ delisted', async () => {

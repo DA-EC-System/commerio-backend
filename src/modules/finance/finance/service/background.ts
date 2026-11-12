@@ -4,6 +4,7 @@
 import { logger } from '../../../../shared/logger.ts';
 import { registerConsumer, workQueue } from '../../../core/index.ts';
 import { activateDueConfigsOnce } from './config-versions.ts';
+import { registerLedgerConsumers } from './ledger.ts';
 import { markOrderCancelled } from './order-settlement-state.ts';
 import { pullAllShopsOnce, runSettlementJob, settlementRunQueue } from './settlement-runs.ts';
 import type { FinanceContext } from './settlement-views.ts';
@@ -26,6 +27,8 @@ function every(ms: number, job: () => Promise<unknown>, label: string) {
 }
 
 export async function startFinanceBackground(ctx: FinanceContext): Promise<() => Promise<void>> {
+  // Sổ tiền nghe sự kiện kiện, trả hàng, trả NCC (#228).
+  registerLedgerConsumers();
   // Đơn huỷ sau khi quyết toán đã về (E139 rồi huỷ): trạng thái tiền `none` sang `mismatch` (#247).
   registerConsumer('sales.order_cancelled', (e) => markOrderCancelled(e.payload.orderId), { consumer: 'finance-order-cancelled' });
   await workQueue(settlementRunQueue, (job, attempt) => runSettlementJob(ctx, job, attempt));

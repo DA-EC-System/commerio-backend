@@ -2,10 +2,13 @@
 import { HoldJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { findShopRow, recordOpenOrderPullError, recordOrderPullError } from '../repository/shops.ts';
 import { pushPending, syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
+import { pullShopReturns } from './return-pull.ts';
 import type { ProductPort } from './product-port.ts';
+import { refreshRemoteSkusQuietly } from './remote-skus.ts';
 import type { ShopJob } from './shop-jobs.ts';
 import { stopShopJobs } from './shop-jobs.ts';
 import { loseShopAuth, refreshShopToken } from './shops.ts';
@@ -33,8 +36,15 @@ async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknow
   }
 }
 
+/**
+ * Đồng bộ listing rồi làm mới bản sao SKU sàn (#220 đợt 2: sản phẩm sửa từ lần trước, mỗi ngày đọc trọn). Bước sau chỉ
+ * đọc sàn và ghi `remote_skus`, không đẩy tồn; lỗi của nó chỉ ghi log, không làm hỏng lượt đồng bộ.
+ */
 export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
-  return onActiveShop(job, 'đồng bộ listing', () => syncListings(port, job.companyId, job.shopId));
+  return onActiveShop(job, 'đồng bộ listing', async () => {
+    await syncListings(port, job.companyId, job.shopId);
+    await refreshRemoteSkusQuietly(job.companyId, job.shopId);
+  });
 }
 
 /**
@@ -50,12 +60,21 @@ export function runStockPush(port: ProductPort, job: ShopJob): Promise<void> {
  * rồi ném để pg-boss thử lại; lượt chạy trọn thì xoá (#223: đơn chưa cập nhật giữ tồn của mọi gian hàng, phải có lý do).
  */
 export function runOrderPull(job: ShopJob): Promise<void> {
+  // Yêu cầu trả kéo sau đơn (#202): đơn mới về trước thì yêu cầu của nó gắn được ngay trong lượt.
   return onActiveShop(job, 'kéo đơn', async () => {
     try {
       await pullShopOrders(job.companyId, job.shopId);
     } catch (err) {
       if (!silentPullError(err)) await withCompany(job.companyId, () => recordOrderPullError(job.shopId, pullErrorMessage(err)));
       throw err;
+    }
+    try {
+      await pullShopReturns(job.companyId, job.shopId);
+    } catch (err) {
+      // Lỗi kéo yêu cầu trả không làm hỏng lượt kéo đơn (lượt sau kéo lại từ mốc cũ); mất token, gian hàng ngắt thì
+      // `onActiveShop` xử lý như kéo đơn.
+      if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+      logger.warn({ err, shopId: job.shopId }, 'kéo yêu cầu trả lỗi');
     }
   });
 }

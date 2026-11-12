@@ -8,7 +8,7 @@ export type SetupStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'block
 
 export interface ShopSetup {
   steps: { key: SetupStepKey; status: SetupStepStatus; blockedBy: string | null }[];
-  /** Số SKU sàn chưa ghép sau thiết lập, gồm SKU người dùng bỏ qua. */
+  /** Số SKU sàn trong bản sao chưa có ghép hiệu lực (gồm SKU bỏ qua lúc thiết lập); giảm ngay khi ghép (#220 đợt 2). */
   unmatchedCount: number;
   /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`; 0 khi không cắt. */
   openOrdersSkipped: number;
@@ -20,7 +20,8 @@ export interface SetupInput {
   openingStocktakeId: string | null;
   /** Phiếu đầu kỳ đã ghi sổ, đang chờ `allocation_done` có `cause` trùng phiếu (§18.6.11). */
   allocationStocktakeId: string | null;
-  unmatchedSkuCount: number | null;
+  /** Số SKU chưa ghép đếm từ bản sao SKU sàn (`unmatchedRemoteCounts`), không còn cột lưu. */
+  unmatchedCount: number;
   openOrdersPulledAt: Date | null;
   openOrdersSkipped: number;
   stockPushedAt: Date | null;
@@ -65,5 +66,5 @@ export function setupOf(s: SetupInput, now: Date): ShopSetup | null {
   );
   const allDone = steps.every((x) => x.status === 'done');
   if (allDone && s.stockPushedAt && now.getTime() - s.stockPushedAt.getTime() > SETUP_VISIBLE_MS) return null;
-  return { steps, unmatchedCount: s.unmatchedSkuCount ?? 0, openOrdersSkipped: s.openOrdersSkipped };
+  return { steps, unmatchedCount: s.unmatchedCount, openOrdersSkipped: s.openOrdersSkipped };
 }
