@@ -1,8 +1,8 @@
 // Số có thể bán chưa tin được (#223; Documents/21 §18.6.6, 25 E28). Số có thể bán là một con số chung của công ty (một
 // kho): gian hàng "đơn chưa cập nhật" (`ordersStale`) có thể đã bán mà app chưa trừ, nên số app của SKU có listing trên
 // gian hàng đó chỉ có thể CAO HƠN số thật. Vì vậy không được đẩy TĂNG tồn của SKU đó lên bất kỳ gian hàng nào của công ty;
-// đẩy giảm hoặc bằng số sàn đang có thì vẫn an toàn và vẫn đi (`raisesStock`). Mọi đường đẩy tồn hỏi `untrustedVariants`
-// ngay trước khi gọi sàn: `pushDue`, đối chiếu tồn, đẩy sản phẩm mới.
+// đẩy giảm hoặc bằng số sàn vừa đọc thật thì vẫn an toàn và vẫn đi (`raisesStock`, chỉ ở lượt có đọc sàn). Mọi đường đẩy
+// tồn hỏi `untrustedVariants` ngay trước khi gọi sàn: `pushDue` (đồng bộ 15 phút và `pushPending`), đối chiếu, đẩy sản phẩm.
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { ordersStale } from '../domain/shop.ts';
 import { variantsListedOn } from '../repository/listings.ts';
@@ -37,8 +37,8 @@ export async function untrustedVariants(): Promise<Map<string, ShopRow[]>> {
 }
 
 /**
- * Lần đẩy `quantity` có làm tồn trên sàn tăng không, so với số sàn biết gần nhất (`level`: số vừa đọc của lượt, không có
- * thì `platform_stock`). Không biết số sàn thì coi là tăng (không chứng minh được là giảm).
+ * Lần đẩy `quantity` có làm tồn trên sàn tăng không, so với số sàn ĐỌC THẬT trong lượt (`level`, `RemoteSku.sellableQuantity`).
+ * Không có số đọc thật thì coi là tăng: `platform_stock` là số app gửi lần trước, sàn có thể đã bán bớt mà app chưa biết.
  */
 export function raisesStock(quantity: number, level: number | null | undefined): boolean {
   return level === null || level === undefined || quantity > level;

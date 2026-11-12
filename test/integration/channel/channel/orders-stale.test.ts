@@ -228,17 +228,37 @@ describe('đơn chưa cập nhật chặn đẩy tồn trên mọi gian hàng (#
     expect((await testPool().query('select status from channel.shops where id = $1', [shopIds.tiktok])).rows[0].status).toBe('needs_reauth');
   });
 
-  it('đẩy GIẢM vẫn đi khi đơn chưa cập nhật (số app chỉ có thể cao hơn thật): sàn 6, app 4 → gửi 4; bằng nhau cũng gửi', async () => {
-    await setShop('lazada', "status = 'needs_reauth', orders_pulled_ok_at = null");
-    await testPool().query(`update channel.listings set platform_stock = 6 where shop_id = $1 and variant_id = $2`, [shopIds.tiktok, shared.id]);
+  it('R2-1: đẩy theo sự kiện không đọc sàn → không gửi tồn SKU chưa tin được, dù số mới nhỏ hơn platform_stock', async () => {
+    // Lazada đang active nhưng kéo đơn lỗi: app từng đẩy 10, sàn đã bán 4 (còn 6, app chưa biết). TikTok bán 1, app còn 9.
+    // So với platform_stock 10 thì 9 là "giảm", nhưng trên sàn là tăng 6 → 9 trong khi hàng thật còn 5.
+    await setShop('lazada', "orders_pulled_ok_at = now() - interval '20 minutes'");
+    await testPool().query(`update channel.listings set platform_stock = 10 where shop_id = $1 and variant_id = $2`, [shopIds.lazada, shared.id]);
+    available.set(shared.id, 9);
+    await push('lazada');
+    expect(sent('lazada', shared)?.quantity).toBeUndefined();
+    const row = await listing('lazada', shared);
+    expect(row).toMatchObject({ stock_sync: 'pending', platform_stock: 10 });
+    expect(row.stock_sync_error).toMatchObject({ code: 'orders_stale' });
+    // Gian không trễ cũng vậy: không có số đọc thật trong lượt thì không đẩy SKU chưa tin được.
     await push('tiktok');
-    expect(sent('tiktok', shared)).toMatchObject({ quantity: 4 });
-    expect(await listing('tiktok', shared)).toMatchObject({ stock_sync: 'synced', platform_stock: 4, stock_sync_error: null });
+    expect(sent('tiktok', shared)?.quantity).toBeUndefined();
+  });
 
-    await testPool().query(`update channel.listings set stock_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopIds.tiktok, shared.id]);
-    pushes.tiktok.mockClear();
-    await push('tiktok');
-    expect(sent('tiktok', shared)).toMatchObject({ quantity: 4 });
+  it('R2-1: lượt đồng bộ có đọc số thật của sàn → đẩy khi số mới nhỏ hơn số sàn vừa đọc, chặn khi lớn hơn', async () => {
+    await setShop('lazada', "orders_pulled_ok_at = now() - interval '20 minutes'");
+    // Kéo đơn vẫn lỗi trong lượt đồng bộ, nên gian hàng còn trễ.
+    fail.lazada = new MarketplaceError('unavailable', '901', 'Sàn bận');
+    remote.set(`lazada:${shared.sku}`, 6);
+    available.set(shared.id, 9);
+    await syncListings(port, company.companyId, shopIds.lazada);
+    expect(sent('lazada', shared)?.quantity).toBeUndefined();
+    expect((await listing('lazada', shared)).stock_sync_error).toMatchObject({ code: 'orders_stale' });
+
+    available.set(shared.id, 4);
+    pushes.lazada.mockClear();
+    await syncListings(port, company.companyId, shopIds.lazada);
+    expect(sent('lazada', shared)).toMatchObject({ quantity: 4 });
+    expect(await listing('lazada', shared)).toMatchObject({ stock_sync: 'synced', platform_stock: 4, stock_sync_error: null });
   });
 
   it('không biết số trên sàn (platform_stock null, chưa đọc sàn) → coi như đẩy tăng, chặn', async () => {

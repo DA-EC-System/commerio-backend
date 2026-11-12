@@ -288,10 +288,12 @@ async function pushDue(
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
     const stockDue = !holdStock && row.stockSync !== 'synced' && !waiting.has(row.id);
     const wanted = !stockDue || r?.stockLocked ? undefined : available.get(row.variantId!);
-    // SKU chưa tin được (#223, 21 §18.6.6): không đẩy TĂNG so với số sàn biết gần nhất (số app chỉ có thể cao hơn thật);
-    // đẩy giảm, bằng vẫn đi. Bị giữ thì `pending` kèm lý do `orders_stale`; lấy đơn xong trọn thì việc đẩy chạy lại.
+    // SKU chưa tin được (#223, 21 §18.6.6): số app chỉ có thể cao hơn thật, nên chỉ đẩy khi không làm tồn trên sàn tăng,
+    // so với số sàn ĐỌC THẬT trong lượt này (`sellableQuantity`). Không so với `platform_stock`: đó là số app gửi lần trước,
+    // sàn có thể đã bán bớt mà app chưa biết (review R2-1). Đường không đọc sàn (`pushPending`) vì thế không đẩy tồn SKU
+    // này. Bị giữ thì `pending` kèm `orders_stale`; lượt đồng bộ 15 phút hoặc lấy đơn xong trọn thì đẩy lại.
     const staleShops = untrusted.get(row.variantId!);
-    const blocked = staleShops !== undefined && wanted !== undefined && raisesStock(wanted, r?.sellableQuantity ?? row.platformStock);
+    const blocked = staleShops !== undefined && wanted !== undefined && raisesStock(wanted, r?.sellableQuantity);
     const quantity = blocked ? undefined : wanted;
     const item: PriceQuantity | null =
       !price && quantity === undefined
