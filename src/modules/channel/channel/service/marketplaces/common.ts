@@ -118,17 +118,17 @@ export interface RemoteSku {
   imageUrl?: string | null;
   /**
    * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
-   * (`promotion_locked`). Thiếu là không khoá; Lazada, TikTok chưa điền (chưa có trường đã kiểm trên tài liệu sàn), sàn
-   * từ chối giá khi khuyến mãi thì vẫn về `priceSyncError` theo SKU.
+   * (`promotion_locked`). Thiếu là không khoá. Lazada, TikTok không điền: không có API đọc trước được SKU nào đang bị khoá
+   * (TikTok Promotion API `activities/search` không lọc theo sản phẩm, không gồm chiến dịch của sàn; chốt 12/11/2026 không
+   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, adapter đổi thành `PROMOTION_LOCKED`.
    */
   stockLocked?: boolean;
   priceLocked?: boolean;
   /**
    * Số còn bán được trên sàn, cùng nghĩa với số app đẩy lên (số có thể bán), để đối chiếu tồn (#223, 25 §6.5). Thiếu thì
    * không đối chiếu SKU đó. TikTok: tổng `inventory[].quantity` ("quantity available in the warehouse", cũng là số app
-   * đẩy). Lazada chưa điền: `/products/get` trả cả `quantity` lẫn `Available` và sàn có API riêng cho số bán được
-   * (`/product/stock/sellable/update`), nên số đọc về sau mỗi đơn có thể lệch nghĩa với số app đẩy bằng
-   * `/product/price_quantity/update`; cần thử trên shop thử trước khi bật, kẻo đơn nào cũng bật Lệch tồn giả.
+   * đẩy). Lazada: `sellableStock` của `/products/get` `options=1` (đo trên shop thử, xem `lazada.ts`); app đẩy bằng
+   * UpdateSellableQuantity nên cùng nghĩa.
    */
   sellableQuantity?: number;
 }
@@ -303,6 +303,12 @@ export interface SplitAttributes {
 }
 
 /** Kết quả theo từng SKU khi đẩy theo lô (§18.4): SKU lỗi không đánh lỗi cả lô. */
+/**
+ * Mã lỗi theo SKU khi sàn từ chối cập nhật tồn hoặc giá vì SKU đang trong khuyến mãi, chiến dịch (#223, 25 §6.5 bước 3,
+ * E32). Adapter đổi mã riêng của sàn thành mã này, giữ câu của sàn trong `message`.
+ */
+export const PROMOTION_LOCKED = 'promotion_locked';
+
 export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId: string; ok: false; code: string; message: string };
 
 /** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */

@@ -11,6 +11,7 @@ import {
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
+  PROMOTION_LOCKED,
   type RemoteCounts,
   type RemoteLineInfo,
   type RemoteLineStatus,
@@ -44,8 +45,16 @@ const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'de
 const AUTH_CODES = new Set(['IllegalAccessToken', 'IllegalRefreshToken', 'InvalidCode', 'InvalidRefreshToken']);
 // Mã số là lỗi nghiệp vụ dù mang type ISP (probe-104b), trừ mã lỗi tạm: nội bộ, gọi quá nhanh (tài liệu CreateProduct).
 const TRANSIENT_NUMERIC = new Set(['6', '901', '1000', '4154']);
-// UpdatePriceQuantity: tối đa 50 SKU một lần, Lazada khuyên 20.
+// UpdatePriceQuantity, UpdateSellableQuantity: tối đa 50 SKU một lần, Lazada khuyên 20.
 const PRICE_QTY_BATCH = 20;
+/**
+ * Mã Lazada khi SKU đang trong chiến dịch (#223, 25 §6.5 bước 3): 4170 "During the Bday Mega campaign, there are
+ * restrictions for stock adjustments in effect between YYYY-MM-DD HH:MM:SS - YYYY-MM-DD HH:MM:SS. Sellers can increase
+ * stocks, but may not decrease stocks." Hướng xử lý của tài liệu: "This SKU is participating in a special Campaign, so this
+ * SKU can't be updated to set stock less than current stock." (bảng mã UpdatePriceQuantity, UpdateSellableQuantity,
+ * open.lazada.com, tra 12/11/2026). Bảng mã không có mã nào cho giá bị khoá do khuyến mãi.
+ */
+const LAZADA_PROMOTION_CODES = new Set(['4170']);
 // GetProducts: `limit` tối đa 50; một sản phẩm một SKU (#104 A1). `offset` tối đa 10000 (open.lazada.com, tra 06/11/2026).
 const SKU_LIST_BATCH = 50;
 // GetMultipleOrderItems: "No more than 50 at a time" (open.lazada.com, tra 06/11/2026, #267).
@@ -123,7 +132,7 @@ type LazadaProduct = {
   attributes?: { name?: unknown };
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
   images?: unknown;
-  skus?: { SkuId?: unknown; SellerSku?: unknown; quantity?: unknown; Images?: unknown }[];
+  skus?: { SkuId?: unknown; SellerSku?: unknown; quantity?: unknown; sellableStock?: unknown; Images?: unknown }[];
 };
 
 /** URL đầu tiên khác rỗng của `images` (GetProducts): mảng chuỗi hoặc chuỗi JSON của mảng; không có thì null. */
@@ -170,6 +179,14 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     state,
     rejectReason,
     quantity: Number(s.quantity ?? 0),
+    // Số bán được để đối chiếu tồn (#223). Tài liệu GetProducts không định nghĩa trường nào trong `skus`, chỉ ghi tham số
+    // `options`: "This value can be used to get more stock information. e.g., Options=1 means contain ReservedStock,
+    // RtsStock, PendingStock, RealTimeStock, FulfillmentBySellable." (open.lazada.com, tra 12/11/2026). Gọi thật
+    // `options=1` ngày 12/11/2026 trên shop thử (request_id d742e42a17944720668581466), 20 SKU: `quantity` = `Available`
+    // = `sellableStock` = tổng `multiWarehouseInventories[].sellableQuantity` = tổng (`totalQuantity` − `occupyQuantity` −
+    // `withholdQuantity`); 6 SKU có hàng bị đơn chiếm, vd tồn tổng 99, chiếm 2, `sellableStock` 97. App đẩy bằng
+    // UpdateSellableQuantity nên so với `sellableStock`; thiếu trường thì không đối chiếu.
+    ...(s.sellableStock !== undefined && s.sellableStock !== null && { sellableQuantity: Number(s.sellableStock) }),
   }));
 }
 
@@ -395,21 +412,28 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     return body;
   }
 
-  /** Một lô UpdatePriceQuantity: lỗi gán theo vị trí trong `detail` khi khớp số SKU (probe-104b R6), không thì cả lô. */
-  async function priceQuantityBatch(accessToken: string, batch: PriceQuantity[]): Promise<PerSkuResult[]> {
+  /**
+   * Một lô cập nhật giá (`/product/price_quantity/update`, chỉ gửi `<Price>`) hoặc tồn (`/product/stock/sellable/update`,
+   * `<SellableQuantity>`). Tồn đi UpdateSellableQuantity (#223, chốt 12/11/2026): tài liệu ghi rõ "Use this API to update
+   * sellable quantity of one or more existing products", khớp số app đẩy (số có thể bán); UpdatePriceQuantity chỉ ghi
+   * "Use this API to update the price and quantity of one or more existing products", không nói `<Quantity>` là tồn tổng
+   * hay số bán được. Chưa thử ghi trên shop thử. Lỗi gán theo vị trí trong `detail` khi khớp số SKU (probe-104b R6), không
+   * thì cả lô; hai API cùng cách báo lỗi ("please check the detail field in the API response").
+   */
+  async function priceQuantityBatch(accessToken: string, batch: PriceQuantity[], kind: 'price' | 'stock'): Promise<PerSkuResult[]> {
     const skus = batch
       .map(
         (i) =>
           `<Sku><ItemId>${xml(i.externalProductId)}</ItemId><SkuId>${xml(i.externalSkuId)}</SkuId>` +
-          (i.price === undefined ? '' : `<Price>${xml(i.price)}</Price>`) +
-          (i.quantity === undefined ? '' : `<Quantity>${i.quantity}</Quantity>`) +
+          (kind === 'price' ? `<Price>${xml(i.price!)}</Price>` : `<SellableQuantity>${i.quantity}</SellableQuantity>`) +
           '</Sku>',
       )
       .join('');
     const payload = `<Request><Product><Skus>${skus}</Skus></Product></Request>`;
+    const path = kind === 'price' ? '/product/price_quantity/update' : '/product/stock/sellable/update';
     let body: LazadaResponse;
     try {
-      body = await request(config.apiUrl, '/product/price_quantity/update', { access_token: accessToken, payload }, 'FORM');
+      body = await request(config.apiUrl, path, { access_token: accessToken, payload }, 'FORM');
     } catch (err) {
       if (!(err instanceof MarketplaceError)) throw err;
       const code = err.platformCode ?? 'marketplace_unavailable';
@@ -424,10 +448,11 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     return batch.map((i, idx): PerSkuResult => {
       const d = aligned ? detail[idx] : undefined;
       if (aligned && !d?.code && !d?.message) return { externalSkuId: i.externalSkuId, ok: true };
+      const code = String(d?.code ?? body.code);
       return {
         externalSkuId: i.externalSkuId,
         ok: false,
-        code: String(d?.code ?? body.code),
+        code: LAZADA_PROMOTION_CODES.has(code) ? PROMOTION_LOCKED : code,
         message: String(d?.message ?? body.message ?? ''),
       };
     });
@@ -508,6 +533,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         filter,
         limit: String(SKU_LIST_BATCH),
         sku_seller_list: JSON.stringify(batch),
+        // Kèm số bán được (`sellableStock`) cho đối chiếu tồn (#223).
+        options: '1',
       };
       const body = await call(config.apiUrl, '/products/get', params, 'GET').catch((err: unknown) => {
         // E506 "Get product failed" (bảng mã của GetProducts): gọi thật 11/11/2026 gặp ngay sau /product/remove
@@ -709,10 +736,18 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         if (products.length < SKU_LIST_BATCH) return out;
       }
     },
+    // Tồn trước, giá sau, mỗi loại theo lô 20; SKU có cả hai thì lỗi ở một trong hai là lỗi của SKU (giữ lỗi đầu tiên).
     async updatePriceQuantity(accessToken, items) {
-      const results: PerSkuResult[] = [];
-      for (const batch of chunks(items, PRICE_QTY_BATCH)) results.push(...(await priceQuantityBatch(accessToken, batch)));
-      return results;
+      const failed = new Map<string, PerSkuResult>();
+      for (const kind of ['stock', 'price'] as const) {
+        const subset = items.filter((i) => (kind === 'stock' ? i.quantity !== undefined : i.price !== undefined));
+        for (const batch of chunks(subset, PRICE_QTY_BATCH)) {
+          for (const r of await priceQuantityBatch(accessToken, batch, kind)) {
+            if (!r.ok && !failed.has(r.externalSkuId)) failed.set(r.externalSkuId, r);
+          }
+        }
+      }
+      return items.map((i): PerSkuResult => failed.get(i.externalSkuId) ?? { externalSkuId: i.externalSkuId, ok: true });
     },
     async deactivate(accessToken, externalProductId, externalSkuId) {
       const apiRequestBody =

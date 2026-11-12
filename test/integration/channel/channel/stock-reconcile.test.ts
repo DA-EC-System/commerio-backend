@@ -48,9 +48,14 @@ const calls: string[] = [];
 let ordersFail: MarketplaceError | null = null;
 /** Sàn không trả số bán được (như Lazada hiện nay): không đối chiếu. */
 let noSellable = false;
+/** Lỗi sàn trả cho SKU (theo SellerSku) khi đẩy. */
+const pushErrors = new Map<string, { code: string; message: string }>();
 const updatePriceQuantity = vi.fn(async (_t: string, items: readonly PriceQuantity[]) => {
   calls.push('updatePriceQuantity');
-  return items.map((i): PerSkuResult => ({ externalSkuId: i.externalSkuId, ok: true }));
+  return items.map((i): PerSkuResult => {
+    const e = pushErrors.get(i.externalSkuId.slice(4));
+    return e ? { externalSkuId: i.externalSkuId, ok: false, ...e } : { externalSkuId: i.externalSkuId, ok: true };
+  });
 });
 registerAdapter(
   'lazada',
@@ -127,6 +132,7 @@ beforeEach(async () => {
   }
   ordersFail = null;
   noSellable = false;
+  pushErrors.clear();
   calls.length = 0;
   updatePriceQuantity.mockClear();
 });
@@ -231,6 +237,34 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
     expect(sentFor(a.sku)).toBeUndefined();
     const row = await listing(a.id);
     expect(row).toMatchObject({ price_sync: 'error', listed_price: '99000.00' });
+    expect(row.price_sync_error).toMatchObject({ code: 'promotion_locked' });
+  });
+});
+
+describe('sàn từ chối vì khuyến mãi khi đẩy (promotion_locked, #223)', () => {
+  it('tồn bị khoá: listing vẫn chờ, có lỗi báo sàn đang cao hơn, không bật Lệch tồn; lượt sau gửi lại', async () => {
+    await testPool().query(`update channel.listings set stock_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
+    pushErrors.set(a.sku, { code: 'promotion_locked', message: "Product locked for Promotion and stock can't be updated below current stock" });
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    const row = await listing(a.id);
+    expect(row).toMatchObject({ stock_sync: 'pending', platform_stock: 5 });
+    expect(row.stock_sync_error).toMatchObject({ code: 'promotion_locked' });
+    expect(row.stock_sync_error.message).toContain('khoá giảm tồn');
+    expect(row.stock_sync_error.message).toContain('Product locked for Promotion');
+
+    pushErrors.clear();
+    updatePriceQuantity.mockClear();
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    expect(sentFor(a.sku)).toMatchObject({ quantity: 5 });
+    expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null });
+  });
+
+  it('giá bị khoá: giữ giá cũ, priceSync error kèm promotion_locked', async () => {
+    await testPool().query(`update channel.listings set price_sync = 'pending', listed_price = 88000 where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
+    pushErrors.set(a.sku, { code: 'promotion_locked', message: 'Product price locked due to ongoing promotion.' });
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    const row = await listing(a.id);
+    expect(row).toMatchObject({ price_sync: 'error', listed_price: '88000.00' });
     expect(row.price_sync_error).toMatchObject({ code: 'promotion_locked' });
   });
 });

@@ -27,7 +27,14 @@ import {
 } from '../repository/listings.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
-import { type MarketplaceAdapter, MarketplaceError, type PerSkuResult, type PriceQuantity, type RemoteSku } from './marketplaces/index.ts';
+import {
+  type MarketplaceAdapter,
+  MarketplaceError,
+  type PerSkuResult,
+  PROMOTION_LOCKED,
+  type PriceQuantity,
+  type RemoteSku,
+} from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
@@ -312,7 +319,7 @@ async function pushDue(
 /** Sàn khoá tồn hoặc giá do khuyến mãi (`RemoteSku.stockLocked`, `priceLocked`): giữ số cũ trên sàn, ghi lỗi để báo. */
 function lockPatch(remote: RemoteSku | undefined, at: Date): ListingPatch {
   const error = (what: string): SyncError => ({
-    code: 'promotion_locked',
+    code: PROMOTION_LOCKED,
     message: `Sàn đang khoá ${what} do khuyến mãi, không ghi đè`,
     at: at.toISOString(),
   });
@@ -387,12 +394,21 @@ function synced(row: ListingRow, item: PriceQuantity, at: Date): ListingPatch {
 }
 
 /**
- * Giá và tồn đi chung một lời gọi sàn: lỗi của SKU là lỗi của cả hai. Tồn đẩy lỗi giữ `pending` kèm `stockSyncError`
- * (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn (giữ nguyên nếu đang Lệch tồn).
+ * Kết quả theo SKU gộp giá và tồn (adapter giữ lỗi đầu tiên): lỗi của SKU là lỗi của cả hai. Tồn đẩy lỗi giữ `pending`
+ * kèm `stockSyncError` (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn (giữ nguyên nếu đang Lệch tồn).
+ * Sàn từ chối giảm tồn vì khuyến mãi (`promotion_locked`): sàn đang cao hơn số có thể bán, app không ép được, nên ghi câu
+ * rõ cho người dùng xử lý trên trang sàn, vẫn `pending` để lượt sau gửi lại, không bật Lệch tồn. Giá bị khoá giữ giá cũ.
  */
 function failed(row: ListingRow, error: SyncError, item: PriceQuantity): ListingPatch {
+  const stockError: SyncError =
+    error.code === PROMOTION_LOCKED
+      ? {
+          ...error,
+          message: `Sàn đang khoá giảm tồn do khuyến mãi; sàn đang cao hơn số có thể bán, cần xử lý trên trang sàn. Sàn báo: ${error.message}`,
+        }
+      : error;
   return {
-    ...(item.quantity !== undefined && { stockSync: row.stockSync === 'error' ? 'error' : 'pending', stockSyncError: error }),
+    ...(item.quantity !== undefined && { stockSync: row.stockSync === 'error' ? 'error' : 'pending', stockSyncError: stockError }),
     ...(item.price !== undefined && { priceSync: 'error', priceSyncError: error }),
   };
 }

@@ -124,9 +124,37 @@ describe('updatePriceQuantity', () => {
       'POST /product/202309/products/P2/inventory/update': ok({}),
     });
     const result = await san.methods().updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1, price: '1000' }), item('P2', 'S2', { quantity: 3 })]);
+    // 12052038 là khuyến mãi khoá giá (docv2 update-price-202309): đổi thành `promotion_locked`, giữ câu của sàn (#223).
     expect(result).toEqual([
-      { externalSkuId: 'S1', ok: false, code: '12052038', message: 'Product price locked due to ongoing promotion.' },
+      { externalSkuId: 'S1', ok: false, code: 'promotion_locked', message: 'Product price locked due to ongoing promotion.' },
       { externalSkuId: 'S2', ok: true },
+    ]);
+  });
+
+  it('mã khoá do khuyến mãi của tồn (12052393, 12052165) và giá (12019045) → promotion_locked; mã khác giữ nguyên', async () => {
+    const lockedStock = 'Product locked for Promotion and stock can\'t be updated below current stock';
+    const san = fakeSan({
+      'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+      'POST /product/202309/products/P1/inventory/update': ok({
+        errors: [
+          { code: 12052393, message: lockedStock, detail: { sku_id: 'S1' } },
+          { code: 12052165, message: 'insufficient inventory to cover campaign reservations', detail: { sku_id: 'S2' } },
+          { code: 12052097, message: 'The warehouse does not exist', detail: { sku_id: 'S3' } },
+        ],
+      }),
+      'POST /product/202309/products/P2/prices/update': fail(12019045, 'price is locked'),
+    });
+    const result = await san.methods().updatePriceQuantity(TOKEN, [
+      item('P1', 'S1', { quantity: 1 }),
+      item('P1', 'S2', { quantity: 1 }),
+      item('P1', 'S3', { quantity: 1 }),
+      item('P2', 'S4', { price: '1000' }),
+    ]);
+    expect(result).toEqual([
+      { externalSkuId: 'S1', ok: false, code: 'promotion_locked', message: lockedStock },
+      { externalSkuId: 'S2', ok: false, code: 'promotion_locked', message: 'insufficient inventory to cover campaign reservations' },
+      { externalSkuId: 'S3', ok: false, code: '12052097', message: 'The warehouse does not exist' },
+      { externalSkuId: 'S4', ok: false, code: 'promotion_locked', message: 'price is locked' },
     ]);
   });
 
