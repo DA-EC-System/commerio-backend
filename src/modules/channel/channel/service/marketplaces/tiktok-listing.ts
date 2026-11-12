@@ -12,6 +12,7 @@ import {
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
+  partResults,
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
@@ -343,8 +344,10 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     async updatePriceQuantity(token, items): Promise<PerSkuResult[]> {
       const groups = new Map<string, PriceQuantity[]>();
       for (const i of items) groups.set(i.externalProductId, [...(groups.get(i.externalProductId) ?? []), i]);
-      const failed = new Map<string, SkuError>();
-      const keepFirst = (m: Map<string, SkuError>) => {
+      // Tồn và giá là hai API riêng: lỗi giữ riêng từng phần (#223), trả `stock`, `price` trong kết quả.
+      const stockFailed = new Map<string, SkuError>();
+      const priceFailed = new Map<string, SkuError>();
+      const keepFirst = (failed: Map<string, SkuError>, m: Map<string, SkuError>) => {
         for (const [k, v] of m) if (!failed.has(k)) failed.set(k, TIKTOK_PROMOTION_CODES.has(v.code) ? { ...v, code: PROMOTION_LOCKED } : v);
       };
       for (const [productId, group] of groups) {
@@ -357,13 +360,13 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
           });
           if (warehouseId instanceof MarketplaceError) {
             const e = { code: warehouseId.platformCode ?? `marketplace_${warehouseId.kind}`, message: warehouseId.platformMessage ?? 'Không đọc được kho' };
-            for (const i of stock) if (!failed.has(i.externalSkuId)) failed.set(i.externalSkuId, e);
+            for (const i of stock) if (!stockFailed.has(i.externalSkuId)) stockFailed.set(i.externalSkuId, e);
           } else {
             // Gọi thật 07/11/2026: `quantity: 0` được nhận dù docv2 ghi khoảng [1, 99999].
             const stockBody = (subset: PriceQuantity[]) => ({
               skus: subset.map((i) => ({ id: i.externalSkuId, inventory: [{ warehouse_id: warehouseId, quantity: i.quantity }] })),
             });
-            keepFirst(await perProduct(stock, (s) => client.call<Row>('POST', `${path}/inventory/update`, { token, body: stockBody(s) })));
+            keepFirst(stockFailed, await perProduct(stock, (s) => client.call<Row>('POST', `${path}/inventory/update`, { token, body: stockBody(s) })));
           }
         }
         const price = group.filter((i) => i.price !== undefined);
@@ -371,13 +374,10 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
           const priceBody = (subset: PriceQuantity[]) => ({
             skus: subset.map((i) => ({ id: i.externalSkuId, price: { amount: i.price, currency: CURRENCY } })),
           });
-          keepFirst(await perProduct(price, (s) => client.call<Row>('POST', `${path}/prices/update`, { token, body: priceBody(s) })));
+          keepFirst(priceFailed, await perProduct(price, (s) => client.call<Row>('POST', `${path}/prices/update`, { token, body: priceBody(s) })));
         }
       }
-      return items.map((i): PerSkuResult => {
-        const e = failed.get(i.externalSkuId);
-        return e ? { externalSkuId: i.externalSkuId, ok: false, ...e } : { externalSkuId: i.externalSkuId, ok: true };
-      });
+      return partResults(items, stockFailed, priceFailed);
     },
 
     // TikTok tắt, bật theo cả sản phẩm (không theo SKU): sản phẩm nhiều SKU thì mọi SKU cùng ẩn, hiện. Bật lại đưa sản

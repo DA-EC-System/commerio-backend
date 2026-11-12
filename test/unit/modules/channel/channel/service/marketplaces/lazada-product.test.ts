@@ -222,11 +222,11 @@ describe('adapter Lazada: sản phẩm', () => {
       { code: '501', type: 'ISP', message: 'E501: Update product failed', detail: [{ code: 'E0501', message: 'x' }] },
     );
     const adapter = createLazadaAdapter(config, fn);
-    expect(await adapter.updatePriceQuantity('t', items)).toEqual([
+    expect(await adapter.updatePriceQuantity('t', items)).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: 'E0501', message: 'lỗi S1' },
       { externalSkuId: 'S2', ok: true },
     ]);
-    expect(await adapter.updatePriceQuantity('t', items)).toEqual([
+    expect(await adapter.updatePriceQuantity('t', items)).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: '501', message: 'E501: Update product failed' },
       { externalSkuId: 'S2', ok: false, code: '501', message: 'E501: Update product failed' },
     ]);

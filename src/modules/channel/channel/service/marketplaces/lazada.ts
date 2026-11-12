@@ -8,6 +8,7 @@ import {
   MarketplaceError,
   type NewProduct,
   type Payout,
+  partResults,
   type PerSkuResult,
   type PlatformCategory,
   type PriceQuantity,
@@ -738,16 +739,17 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     // Tồn trước, giá sau, mỗi loại theo lô 20; SKU có cả hai thì lỗi ở một trong hai là lỗi của SKU (giữ lỗi đầu tiên).
     async updatePriceQuantity(accessToken, items) {
-      const failed = new Map<string, PerSkuResult>();
+      // Tồn và giá là hai API riêng: kết quả trả riêng từng phần (#223), tồn bị khoá (4170) không làm giá thành lỗi.
+      const errors = { stock: new Map<string, { code: string; message: string }>(), price: new Map<string, { code: string; message: string }>() };
       for (const kind of ['stock', 'price'] as const) {
         const subset = items.filter((i) => (kind === 'stock' ? i.quantity !== undefined : i.price !== undefined));
         for (const batch of chunks(subset, PRICE_QTY_BATCH)) {
           for (const r of await priceQuantityBatch(accessToken, batch, kind)) {
-            if (!r.ok && !failed.has(r.externalSkuId)) failed.set(r.externalSkuId, r);
+            if (!r.ok && !errors[kind].has(r.externalSkuId)) errors[kind].set(r.externalSkuId, { code: r.code, message: r.message });
           }
         }
       }
-      return items.map((i): PerSkuResult => failed.get(i.externalSkuId) ?? { externalSkuId: i.externalSkuId, ok: true });
+      return partResults(items, errors.stock, errors.price);
     },
     async deactivate(accessToken, externalProductId, externalSkuId) {
       const apiRequestBody =

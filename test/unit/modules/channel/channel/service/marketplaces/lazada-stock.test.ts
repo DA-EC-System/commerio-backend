@@ -57,8 +57,8 @@ describe('Lazada: đẩy tồn bằng UpdateSellableQuantity, giá bằng Update
       { externalProductId: 'I2', externalSkuId: 'S2', price: '2000' },
     ]);
     expect(results).toEqual([
-      { externalSkuId: 'S1', ok: true },
-      { externalSkuId: 'S2', ok: true },
+      { externalSkuId: 'S1', ok: true, stock: { ok: true }, price: { ok: true } },
+      { externalSkuId: 'S2', ok: true, price: { ok: true } },
     ]);
     expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/stock/sellable/update' });
     expect(sent(fn, 0).body.payload).toBe(
@@ -70,13 +70,29 @@ describe('Lazada: đẩy tồn bằng UpdateSellableQuantity, giá bằng Update
     );
   });
 
-  it('SKU có cả giá và tồn: lỗi ở lời gọi tồn là lỗi của SKU, giữ mã của lời gọi đó', async () => {
+  it('SKU có cả giá và tồn: tồn lỗi, giá lên sàn → kết quả riêng từng phần (giá không thành lỗi)', async () => {
     const fn = fakeFetch(
       { code: '501', type: 'ISP', message: 'E501: Update product failed', detail: [{ code: 'E0501', message: 'lỗi tồn' }] },
       { code: '0', data: {} },
     );
     const [r] = await createLazadaAdapter(config, fn).updatePriceQuantity('t', [{ externalProductId: 'I1', externalSkuId: 'S1', price: '1000', quantity: 4 }]);
-    expect(r).toEqual({ externalSkuId: 'S1', ok: false, code: 'E0501', message: 'lỗi tồn' });
+    expect(r).toEqual({
+      externalSkuId: 'S1',
+      ok: false,
+      code: 'E0501',
+      message: 'lỗi tồn',
+      stock: { ok: false, code: 'E0501', message: 'lỗi tồn' },
+      price: { ok: true },
+    });
+  });
+
+  it('giá lỗi, tồn lên sàn → `stock` ok, `price` mang lỗi của giá', async () => {
+    const fn = fakeFetch(
+      { code: '0', data: {} },
+      { code: '501', type: 'ISP', message: 'E501: Update product failed', detail: [{ code: 'E0502', message: 'giá sai' }] },
+    );
+    const [r] = await createLazadaAdapter(config, fn).updatePriceQuantity('t', [{ externalProductId: 'I1', externalSkuId: 'S1', price: '1000', quantity: 4 }]);
+    expect(r).toMatchObject({ stock: { ok: true }, price: { ok: false, code: 'E0502', message: 'giá sai' } });
   });
 
   it('chỉ có tồn thì không gọi UpdatePriceQuantity', async () => {
@@ -93,6 +109,6 @@ describe('Lazada: tồn bị khoá do chiến dịch (#223, 25 §6.5 bước 3)'
       'During the Bday Mega campaign, there are restrictions for stock adjustments in effect between 2026-11-10 00:00:00 - 2026-11-12 23:59:59. Sellers can increase stocks, but may not decrease stocks.';
     const fn = fakeFetch({ code: '501', type: 'ISP', message: 'E501: Update product failed', detail: [{ code: '4170', message }] });
     const [r] = await createLazadaAdapter(config, fn).updatePriceQuantity('t', [{ externalProductId: 'I1', externalSkuId: 'S1', quantity: 1 }]);
-    expect(r).toEqual({ externalSkuId: 'S1', ok: false, code: 'promotion_locked', message });
+    expect(r).toEqual({ externalSkuId: 'S1', ok: false, code: 'promotion_locked', message, stock: { ok: false, code: 'promotion_locked', message } });
   });
 });

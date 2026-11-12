@@ -181,8 +181,9 @@ describe('đồng bộ tồn và giá', () => {
     updatePriceQuantity.mockClear();
     const res = await sync();
     expect(res.pushed).toBe(1);
+    // Giá đã synced, bằng giá chuẩn: chỉ gửi tồn (#223 review 3).
     expect(updatePriceQuantity).toHaveBeenCalledWith(expect.any(String), [
-      { externalProductId: 'item-CMR-A', externalSkuId: 'sku-CMR-A', price: '99000', quantity: 12 },
+      { externalProductId: 'item-CMR-A', externalSkuId: 'sku-CMR-A', quantity: 12 },
     ]);
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', price_sync: 'synced', platform_stock: 12 });
   });
@@ -193,6 +194,8 @@ describe('đồng bộ tồn và giá', () => {
       await markStockPending([a.id]);
       await markStockPending([b.id]);
     });
+    // Cả hai chờ đẩy giá để lời gọi mang cả giá và tồn; sàn giả trả một kết quả chung cho SKU.
+    await testPool().query(`update channel.listings set price_sync = 'pending' where shop_id = $1 and variant_id = any($2)`, [shopId, [a.id, b.id]]);
     skuErrors.set('sku-CMR-A', { code: 'E0501', message: 'Update product failed' });
     const res = await sync();
     expect(res).toMatchObject({ pushed: 2, errors: 1 });
@@ -212,6 +215,7 @@ describe('đồng bộ tồn và giá', () => {
   it('có giá nhưng không có số có thể bán: chỉ đẩy giá, giữ stock_sync pending kèm variant_missing', async () => {
     available.delete(b.id);
     await withCompany(company.companyId, () => markStockPending([b.id]));
+    await testPool().query(`update channel.listings set price_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, b.id]);
     updatePriceQuantity.mockClear();
     const res = await sync();
     expect(res).toMatchObject({ pushed: 1, errors: 0 });
@@ -224,6 +228,7 @@ describe('đồng bộ tồn và giá', () => {
   });
 
   it('có giá nhưng không có số có thể bán, sàn trả lỗi: chỉ ghi lỗi giá, không đụng stock_sync', async () => {
+    await testPool().query(`update channel.listings set price_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, b.id]);
     skuErrors.set('sku-CMR-B', { code: 'E0501', message: 'Update product failed' });
     await sync();
     const row = await listing(b.id);

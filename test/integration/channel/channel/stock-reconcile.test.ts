@@ -50,11 +50,22 @@ let ordersFail: MarketplaceError | null = null;
 let noSellable = false;
 /** Lỗi sàn trả cho SKU (theo SellerSku) khi đẩy. */
 const pushErrors = new Map<string, { code: string; message: string }>();
+/** Lỗi theo từng phần (sàn đổi tồn, giá bằng hai lời gọi như Lazada, TikTok): `stock` hay `price` hỏng, phần kia vẫn xong. */
+const partErrors = new Map<string, { part: 'stock' | 'price'; code: string; message: string }>();
 const updatePriceQuantity = vi.fn(async (_t: string, items: readonly PriceQuantity[]) => {
   calls.push('updatePriceQuantity');
   return items.map((i): PerSkuResult => {
     const e = pushErrors.get(i.externalSkuId.slice(4));
-    return e ? { externalSkuId: i.externalSkuId, ok: false, ...e } : { externalSkuId: i.externalSkuId, ok: true };
+    if (e) return { externalSkuId: i.externalSkuId, ok: false, ...e };
+    const pe = partErrors.get(i.externalSkuId.slice(4));
+    if (!pe) return { externalSkuId: i.externalSkuId, ok: true };
+    const bad = { ok: false as const, code: pe.code, message: pe.message };
+    return {
+      externalSkuId: i.externalSkuId,
+      ...bad,
+      ...(i.quantity !== undefined && { stock: pe.part === 'stock' ? bad : { ok: true as const } }),
+      ...(i.price !== undefined && { price: pe.part === 'price' ? bad : { ok: true as const } }),
+    };
   });
 });
 registerAdapter(
@@ -133,6 +144,7 @@ beforeEach(async () => {
   ordersFail = null;
   noSellable = false;
   pushErrors.clear();
+  partErrors.clear();
   calls.length = 0;
   updatePriceQuantity.mockClear();
 });
@@ -147,7 +159,8 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
   it('US-GH-08 dòng 3: sàn cao hơn số có thể bán → đẩy giảm ngay trong lượt', async () => {
     remote.set(a.sku, { quantity: 9 });
     await sync();
-    expect(sentFor(a.sku)).toEqual({ externalProductId: `item-${a.sku}`, externalSkuId: `sku-${a.sku}`, price: '99000', quantity: 5 });
+    // Giá đã synced và bằng giá chuẩn: không gửi kèm giá (#223 review 3).
+    expect(sentFor(a.sku)).toEqual({ externalProductId: `item-${a.sku}`, externalSkuId: `sku-${a.sku}`, quantity: 5 });
     expect(sentFor(b.sku)).toBeUndefined();
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 5 });
   });
@@ -191,9 +204,8 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
     await testPool().query(`update channel.listings set stock_sync = 'error' where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
     remote.set(a.sku, { quantity: 3 });
     await sync();
-    expect(sentFor(a.sku)).not.toHaveProperty('quantity');
+    expect(sentFor(a.sku)?.quantity).toBeUndefined();
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'error', platform_stock: 3 });
-    // Lượt 1 đã gửi giá (dòng `error` luôn nằm trong lượt đẩy); chỉ xét lời gọi của lượt 2.
     updatePriceQuantity.mockClear();
     await sync();
     expect(sentFor(a.sku)).toMatchObject({ quantity: 5 });
@@ -297,6 +309,51 @@ describe('sàn từ chối vì khuyến mãi khi đẩy (promotion_locked, #223)
   });
 });
 
+describe('kết quả tồn và giá tách riêng (#223 review 3)', () => {
+  it('tồn bị khoá (4170) nhưng giá lên sàn: giá synced với giá mới, tồn vẫn chờ kèm câu khuyến mãi', async () => {
+    await testPool().query(
+      `update channel.listings set stock_sync = 'pending', price_sync = 'pending', listed_price = 88000 where shop_id = $1 and variant_id = $2`,
+      [shopId, a.id],
+    );
+    partErrors.set(a.sku, { part: 'stock', code: 'promotion_locked', message: 'Campaign forbids decreasing stock' });
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    const row = await listing(a.id);
+    expect(row).toMatchObject({ stock_sync: 'pending', price_sync: 'synced', price_sync_error: null, listed_price: '99000.00' });
+    expect(row.stock_sync_error).toMatchObject({ code: 'promotion_locked' });
+  });
+
+  it('giá bị từ chối nhưng tồn lên sàn: tồn synced, giá error kèm lỗi của giá', async () => {
+    await testPool().query(
+      `update channel.listings set stock_sync = 'pending', price_sync = 'pending', listed_price = 88000, platform_stock = 1 where shop_id = $1 and variant_id = $2`,
+      [shopId, a.id],
+    );
+    partErrors.set(a.sku, { part: 'price', code: 'E_PRICE', message: 'Giá dưới mức sàn cho phép' });
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    const row = await listing(a.id);
+    expect(row).toMatchObject({ stock_sync: 'synced', stock_sync_error: null, platform_stock: 5, price_sync: 'error', listed_price: '88000.00' });
+    expect(row.price_sync_error).toMatchObject({ code: 'E_PRICE' });
+  });
+
+  it('giá đã synced và bằng giá chuẩn: đẩy tồn không gửi kèm giá', async () => {
+    await testPool().query(
+      `update channel.listings set stock_sync = 'pending', price_sync = 'synced', listed_price = 99000 where shop_id = $1 and variant_id = $2`,
+      [shopId, a.id],
+    );
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    expect(sentFor(a.sku)).toEqual({ externalProductId: `item-${a.sku}`, externalSkuId: `sku-${a.sku}`, quantity: 5 });
+  });
+
+  it('giá synced nhưng giá chuẩn đã khác giá trên sàn: gửi giá mới', async () => {
+    await testPool().query(
+      `update channel.listings set stock_sync = 'pending', price_sync = 'synced', listed_price = 77000 where shop_id = $1 and variant_id = $2`,
+      [shopId, a.id],
+    );
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    expect(sentFor(a.sku)).toMatchObject({ price: '99000', quantity: 5 });
+    expect(await listing(a.id)).toMatchObject({ price_sync: 'synced', listed_price: '99000.00' });
+  });
+});
+
 describe('đẩy tồn khi chia hàng xong (fulfillment.allocation_done)', () => {
   it('đánh dấu pending, xếp channel.stock_push; việc đẩy số mới nhất lúc chạy, không đọc sàn', async () => {
     await testPool().query("delete from pgboss.job where name = 'channel.stock_push' and data->>'shopId' = $1", [shopId]);
@@ -310,7 +367,7 @@ describe('đẩy tồn khi chia hàng xong (fulfillment.allocation_done)', () =>
     available.set(a.id, 2);
     await runStockPush(port, { companyId: company.companyId, shopId });
     expect(calls).toEqual(['updatePriceQuantity']);
-    expect(sentFor(a.sku)).toEqual({ externalProductId: `item-${a.sku}`, externalSkuId: `sku-${a.sku}`, price: '99000', quantity: 2 });
+    expect(sentFor(a.sku)).toEqual({ externalProductId: `item-${a.sku}`, externalSkuId: `sku-${a.sku}`, quantity: 2 });
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 2 });
   });
 
@@ -324,7 +381,8 @@ describe('đẩy tồn khi chia hàng xong (fulfillment.allocation_done)', () =>
 
   it('US-GH-08 dòng 5, E28: gian hàng cần kết nối lại → việc không đẩy, listing chờ; nối lại thì lấy đơn xong mới đẩy', async () => {
     await testPool().query(`update channel.shops set status = 'needs_reauth', orders_pulled_ok_at = null where id = $1`, [shopId]);
-    available.set(a.id, 1);
+    // Số mới cao hơn sàn (7 > 5): đẩy tăng mới bị giữ; đẩy giảm thì vẫn đi (#223 review 1, ca ở orders-stale.test.ts).
+    available.set(a.id, 7);
     await withCompany(company.companyId, () => onAvailableChanged({ variantIds: [a.id] }));
     await runStockPush(port, { companyId: company.companyId, shopId });
     expect(updatePriceQuantity).not.toHaveBeenCalled();
@@ -340,14 +398,15 @@ describe('đẩy tồn khi chia hàng xong (fulfillment.allocation_done)', () =>
     expect(jobs.rowCount).toBe(1);
     // Việc đẩy tồn chạy trước lượt lấy đơn (vd một `allocation_done` khác): chỉ đẩy giá, không gửi tồn (#223, E28).
     await runStockPush(port, { companyId: company.companyId, shopId });
-    expect(sentFor(a.sku)).not.toHaveProperty('quantity');
+    expect(sentFor(a.sku)?.quantity).toBeUndefined();
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'pending' });
+    expect((await listing(a.id)).stock_sync_error).toMatchObject({ code: 'orders_stale' });
     updatePriceQuantity.mockClear();
     calls.length = 0;
     // Lượt đồng bộ mà việc đó chạy:
     await sync();
     expect(calls.indexOf('listOrders')).toBeLessThan(calls.indexOf('updatePriceQuantity'));
-    expect(sentFor(a.sku)).toMatchObject({ quantity: 1 });
-    expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 1 });
+    expect(sentFor(a.sku)).toMatchObject({ quantity: 7 });
+    expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 7, stock_sync_error: null });
   });
 });

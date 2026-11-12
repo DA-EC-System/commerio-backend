@@ -41,6 +41,7 @@ import {
   insertShop,
   listShopRows,
   lockShopRow,
+  ORDER_PULL_ERROR,
   type ShopRow,
   updateShop,
 } from '../repository/shops.ts';
@@ -68,6 +69,7 @@ import {
 import { decryptAccessToken, tokenColumns, withTokenRefresh } from './shop-tokens.ts';
 import { setupOf, type ShopSetup } from '../domain/shop-setup.ts';
 import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
+import { shopOrdersStale } from './stock-trust.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
 export interface Actor {
@@ -93,6 +95,12 @@ export interface Shop {
   tokenExpiringSoon: boolean;
   lastOrderSyncAt: Date | null;
   orderCutoffAt: Date | null;
+  /** Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223, 19 `orders_pulled_ok_at`). */
+  ordersPulledOkAt: Date | null;
+  /** Đơn chưa cập nhật (21 §18.6.6): tồn của SKU bán ở đây tạm không đẩy tăng trên mọi gian hàng của công ty. */
+  ordersStale: boolean;
+  /** Lỗi của lượt kéo đơn định kỳ gần nhất (`Kéo đơn lỗi: …`), null khi lượt sau chạy trọn. */
+  orderPullError: string | null;
   /** Năng lực của sàn (adapter khai, không lưu DB). */
   capabilities: ShopCapabilities;
   /** Hạn trả hàng (ngày), null khi chưa thiết lập hoặc sàn `returnWindow = 'platform_status'`. */
@@ -210,6 +218,9 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
     tokenExpiringSoon: tokenExpiringSoon(row.status, authDeadline(row.authExpiresAt, row.refreshExpiresAt)),
     lastOrderSyncAt: row.lastOrderSyncAt,
     orderCutoffAt: row.orderCutoffAt,
+    ordersPulledOkAt: row.ordersPulledOkAt,
+    ordersStale: shopOrdersStale(row),
+    orderPullError: row.lastError?.startsWith(ORDER_PULL_ERROR) ? row.lastError : null,
     capabilities: capabilitiesOf(row.platform),
     returnWindowDays: row.returnWindowDays,
     openingStocktake:

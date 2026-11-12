@@ -229,7 +229,9 @@ export async function markStockPushed(id: string): Promise<void> {
     .where(and(eq(shops.id, id), sql`${shops.stockPushedAt} is null`));
 }
 
-/** Lỗi lượt kéo đơn còn mở ghi vào `last_error` bắt đầu bằng câu này; lượt xong thì xoá đúng lỗi đó (#198 P3). */
+/** Lỗi của lượt kéo đơn định kỳ ghi vào `last_error` bắt đầu bằng câu này; lượt chạy trọn thì xoá đúng lỗi đó (#223). */
+export const ORDER_PULL_ERROR = 'Kéo đơn lỗi';
+
 /**
  * Lượt lấy đơn bắt đầu lúc `startedAt` đã chạy xong trọn (#223): đặt `orders_pulled_ok_at`, không lùi. Chỉ khi gian hàng
  * còn `active` và còn đúng `version` đọc lúc bắt đầu lượt: mất uỷ quyền hay nối lại giữa lượt (đều tăng `version`) thì lượt
@@ -238,12 +240,27 @@ export async function markStockPushed(id: string): Promise<void> {
 export async function markOrdersPulled(id: string, version: number, startedAt: Date): Promise<boolean> {
   const rows = await getDb()
     .update(shops)
-    .set({ ordersPulledOkAt: sql`greatest(coalesce(${shops.ordersPulledOkAt}, ${startedAt}), ${startedAt})` })
+    .set({
+      ordersPulledOkAt: sql`greatest(coalesce(${shops.ordersPulledOkAt}, ${startedAt}), ${startedAt})`,
+      lastError: sql`case when ${shops.lastError} like ${`${ORDER_PULL_ERROR}%`} then null else ${shops.lastError} end`,
+    })
     .where(and(eq(shops.id, id), eq(shops.version, version), eq(shops.status, 'active')))
     .returning({ id: shops.id });
   return rows.length > 0;
 }
 
+/**
+ * Ghi lỗi của lượt kéo đơn định kỳ (#223): kéo đơn lỗi mãi thì "đơn chưa cập nhật" chặn đẩy tăng tồn trên mọi gian hàng,
+ * người dùng phải thấy lý do. Không đè lỗi khác đang có (lượt kéo đơn còn mở). Không tăng `version`.
+ */
+export async function recordOrderPullError(id: string, message: string): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ lastError: `${ORDER_PULL_ERROR}: ${message}` })
+    .where(and(eq(shops.id, id), sql`(${shops.lastError} is null or ${shops.lastError} like ${`${ORDER_PULL_ERROR}%`})`));
+}
+
+/** Lỗi lượt kéo đơn còn mở ghi vào `last_error` bắt đầu bằng câu này; lượt xong thì xoá đúng lỗi đó (#198 P3). */
 export const OPEN_ORDER_PULL_ERROR = 'Lượt kéo đơn còn mở chưa xong';
 
 /** Lượt kéo đơn còn mở xong (#198 A10): từ giờ `syncListings` mới đẩy tồn. `skipped`: số đơn bỏ vì trần. Không tăng `version`. */

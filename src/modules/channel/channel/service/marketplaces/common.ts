@@ -309,7 +309,29 @@ export interface SplitAttributes {
  */
 export const PROMOTION_LOCKED = 'promotion_locked';
 
-export type PerSkuResult = { externalSkuId: string; ok: true } | { externalSkuId: string; ok: false; code: string; message: string };
+export type PartResult = { ok: true } | { ok: false; code: string; message: string };
+
+/**
+ * Kết quả đẩy một SKU. `ok`/`code`/`message` gộp cả lời gọi (lỗi đầu tiên). Sàn đổi tồn và giá bằng hai lời gọi riêng
+ * (Lazada, TikTok) thì trả thêm `stock`, `price` (chỉ phần có gửi), để tồn bị khoá không làm giá thành lỗi và ngược lại
+ * (#223); bên gọi áp từng phần, không có thì dùng kết quả chung.
+ */
+export type PerSkuResult = PartResult & { externalSkuId: string; stock?: PartResult; price?: PartResult };
+
+/** Dựng `PerSkuResult` từ lỗi theo SKU của phần tồn và phần giá (adapter gọi hai lời gọi riêng). */
+export function partResults(
+  items: readonly PriceQuantity[],
+  stockErrors: ReadonlyMap<string, { code: string; message: string }>,
+  priceErrors: ReadonlyMap<string, { code: string; message: string }>,
+): PerSkuResult[] {
+  const part = (e: { code: string; message: string } | undefined): PartResult => (e ? { ok: false, code: e.code, message: e.message } : { ok: true });
+  return items.map((i) => {
+    const stock = i.quantity === undefined ? undefined : part(stockErrors.get(i.externalSkuId));
+    const price = i.price === undefined ? undefined : part(priceErrors.get(i.externalSkuId));
+    const first = [stock, price].find((p) => p && !p.ok) ?? { ok: true as const };
+    return { externalSkuId: i.externalSkuId, ...first, ...(stock && { stock }), ...(price && { price }) };
+  });
+}
 
 /** Cách nối gian hàng (#163): `oauth` qua trang uỷ quyền của sàn, `token` dán token lấy trên console của sàn. */
 export type ConnectMethod = 'oauth' | 'token';

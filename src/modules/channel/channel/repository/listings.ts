@@ -151,10 +151,10 @@ export async function markStockPendingRows(variantIds: readonly string[], status
  * Biến thể có listing còn sản phẩm trên sàn (có mã SKU sàn, chưa `delisted`) ở các gian hàng cho trước (#223: gian hàng
  * "đơn chưa cập nhật"). Gọi trong `withCompany`.
  */
-export async function variantIdsListedOn(shopIds: readonly string[]): Promise<string[]> {
+export async function variantsListedOn(shopIds: readonly string[]): Promise<{ variantId: string; shopId: string }[]> {
   if (!shopIds.length) return [];
   const rows = await getDb()
-    .selectDistinct({ variantId: listings.variantId })
+    .selectDistinct({ variantId: listings.variantId, shopId: listings.shopId })
     .from(listings)
     .where(
       and(
@@ -164,5 +164,5 @@ export async function variantIdsListedOn(shopIds: readonly string[]): Promise<st
         ne(listings.status, 'delisted'),
       ),
     );
-  return rows.map((r) => r.variantId!);
+  return rows.map((r) => ({ variantId: r.variantId!, shopId: r.shopId }));
 }

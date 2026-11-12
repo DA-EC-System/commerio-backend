@@ -75,6 +75,12 @@ export const Shop = z
       .meta({ description: 'Đang active và hạn gần hơn trong authExpiresAt, refreshExpiresAt còn dưới 3 ngày' }),
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
+    ordersPulledOkAt: iso.nullable().meta({ description: 'Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223)' }),
+    ordersStale: z.boolean().meta({
+      description:
+        'Đơn chưa cập nhật (21 §18.6.6): mất uỷ quyền, hoặc 15 phút chưa có lượt lấy đơn chạy trọn. SKU bán ở gian hàng này tạm không đẩy tăng tồn trên mọi gian hàng; listing bị giữ có `stockSyncError.code = orders_stale`',
+    }),
+    orderPullError: z.string().nullable().meta({ description: 'Lỗi của lượt kéo đơn định kỳ gần nhất (`Kéo đơn lỗi: …`); null khi lượt sau chạy trọn' }),
     capabilities: ShopCapabilities,
     returnWindowDays: z.number().int().nullable().meta({
       description: 'Hạn trả hàng (ngày, 1–60) nhập lúc thiết lập; null khi chưa nhập hoặc sàn `returnWindow = platform_status`',

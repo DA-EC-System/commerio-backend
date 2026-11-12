@@ -60,7 +60,7 @@ describe('updatePriceQuantity', () => {
       item('P2', 'S3', { quantity: 7 }),
       item('P1', 'S2', { quantity: 4 }),
     ]);
-    expect(result).toEqual([
+    expect(result).toMatchObject([
       { externalSkuId: 'S1', ok: true },
       { externalSkuId: 'S3', ok: true },
       { externalSkuId: 'S2', ok: true },
@@ -94,7 +94,7 @@ describe('updatePriceQuantity', () => {
       }),
     });
     const result = await san.methods().updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1 }), item('P1', 'S2', { quantity: 2 })]);
-    expect(result).toEqual([
+    expect(result).toMatchObject([
       { externalSkuId: 'S1', ok: true },
       { externalSkuId: 'S2', ok: false, code: '12052097', message: 'The warehouse does not exist' },
     ]);
@@ -109,7 +109,7 @@ describe('updatePriceQuantity', () => {
       },
     });
     const result = await san.methods().updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1 }), item('P1', 'BAD', { quantity: 2 })]);
-    expect(result).toEqual([
+    expect(result).toMatchObject([
       { externalSkuId: 'S1', ok: true },
       { externalSkuId: 'BAD', ok: false, code: '12052556', message: 'Resource Not Found. No `sku` matches `BAD`.' },
     ]);
@@ -125,10 +125,13 @@ describe('updatePriceQuantity', () => {
     });
     const result = await san.methods().updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1, price: '1000' }), item('P2', 'S2', { quantity: 3 })]);
     // 12052038 là khuyến mãi khoá giá (docv2 update-price-202309): đổi thành `promotion_locked`, giữ câu của sàn (#223).
-    expect(result).toEqual([
+    expect(result).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: 'promotion_locked', message: 'Product price locked due to ongoing promotion.' },
       { externalSkuId: 'S2', ok: true },
     ]);
+    // Kết quả riêng từng phần (#223 review 3): tồn của S1 đã lên sàn, chỉ giá lỗi.
+    expect(result[0]).toMatchObject({ stock: { ok: true }, price: { ok: false, code: 'promotion_locked' } });
+    expect(result[1]).toEqual({ externalSkuId: 'S2', ok: true, stock: { ok: true } });
   });
 
   it('mã khoá do khuyến mãi của tồn (12052393, 12052165) và giá (12019045) → promotion_locked; mã khác giữ nguyên', async () => {
@@ -150,7 +153,7 @@ describe('updatePriceQuantity', () => {
       item('P1', 'S3', { quantity: 1 }),
       item('P2', 'S4', { price: '1000' }),
     ]);
-    expect(result).toEqual([
+    expect(result).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: 'promotion_locked', message: lockedStock },
       { externalSkuId: 'S2', ok: false, code: 'promotion_locked', message: 'insufficient inventory to cover campaign reservations' },
       { externalSkuId: 'S3', ok: false, code: '12052097', message: 'The warehouse does not exist' },
@@ -161,7 +164,7 @@ describe('updatePriceQuantity', () => {
   it('sàn lỗi tạm: SKU của sản phẩm đó lỗi, không ném', async () => {
     const san = fakeSan({ 'GET /logistics/202309/warehouses': ok(WAREHOUSES), 'POST /product/202309/products/P1/inventory/update': json({}, 503) });
     const [r] = await san.methods().updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1 }), item('P1', 'S2', { quantity: 2 })]);
-    expect(r).toEqual({ externalSkuId: 'S1', ok: false, code: 'http_503', message: 'Sàn lỗi tạm' });
+    expect(r).toMatchObject({ externalSkuId: 'S1', ok: false, code: 'http_503', message: 'Sàn lỗi tạm' });
     // Lỗi tạm không gọi lại từng SKU.
     expect(san.calls.filter((c) => c.path.endsWith('/inventory/update'))).toHaveLength(1);
   });
@@ -179,7 +182,7 @@ describe('updatePriceQuantity', () => {
       'POST /product/202309/products/P1/prices/update': ok({}),
     });
     const m = san.methods();
-    expect(await m.updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1, price: '5' }), item('P1', 'S2', { price: '6' })])).toEqual([
+    expect(await m.updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1, price: '5' }), item('P1', 'S2', { price: '6' })])).toMatchObject([
       { externalSkuId: 'S1', ok: false, code: 'no_warehouse', message: 'Gian hàng TikTok chưa có kho bán hàng' },
       { externalSkuId: 'S2', ok: true },
     ]);
