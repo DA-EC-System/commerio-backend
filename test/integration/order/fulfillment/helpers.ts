@@ -27,11 +27,15 @@ export async function seedPackage(
     handedOverAt?: Date | null;
     pickupConfirmedAt?: Date | null;
     shopId?: string;
-    orderStatus?: 'unpaid' | 'processing';
+    orderStatus?: 'unpaid' | 'processing' | 'cancelled';
+    /** Lúc đơn về app (`orders.created_at`), cho thứ tự "đơn kéo về trước" của phân hàng. */
+    orderCreatedAt?: Date;
     cancelling?: boolean;
     shipBy?: Date | null;
     trackingCode?: string | null;
     needsOpen?: boolean;
+    /** Mặc định: lúc seed nếu có dòng `reserved`, null nếu không. */
+    reservedAt?: Date | null;
   },
 ): Promise<{ packageId: string; orderId: string; orderCode: string; packageCode: string; lineIds: string[] }> {
   const firstVariant = p.lines.find((l) => l.variantId)?.variantId;
@@ -42,8 +46,8 @@ export async function seedPackage(
   });
   const db = testPool();
   await db.query(
-    `update "order".orders set status = $2, cancelling = $3, shop_id = coalesce($4, shop_id) where id = $1`,
-    [order.orderId, p.orderStatus ?? 'processing', p.cancelling ?? false, p.shopId ?? null],
+    `update "order".orders set status = $2, cancelling = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at) where id = $1`,
+    [order.orderId, p.orderStatus ?? 'processing', p.cancelling ?? false, p.shopId ?? null, p.orderCreatedAt ?? null],
   );
   const { rows: orderLines } = await db.query<{ id: string }>(
     'select id from "order".order_lines where order_id = $1 order by created_at, id',
@@ -54,8 +58,8 @@ export async function seedPackage(
   const shop = await db.query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [order.orderId]);
   const pkg = await db.query<{ id: string }>(
     `insert into "order".packages (company_id, code, order_id, shop_id, status, handed_over_at, handover_source,
-       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
     [
       companyId,
       packageCode,
@@ -69,6 +73,7 @@ export async function seedPackage(
       p.trackingCode ?? null,
       p.needsOpen ?? false,
       p.needsOpen ? 'cancel' : null,
+      p.reservedAt !== undefined ? p.reservedAt : p.lines.some((l) => l.reserved) ? new Date() : null,
     ],
   );
   const packageId = pkg.rows[0]!.id;
@@ -106,6 +111,7 @@ export async function packageRow(packageId: string) {
     handover_reverted_by: string | null;
     needs_attention: boolean;
     flag_note: string | null;
+    reserved_at: Date | null;
     version: number;
   }>('select * from "order".packages where id = $1', [packageId]);
   return rows[0]!;
@@ -143,4 +149,23 @@ export async function invariantBroken(companyId: string, variantId: string) {
     [companyId, variantId],
   );
   return rows[0]!.invariant_broken;
+}
+
+/** Gian hàng của channel; `awaiting` thì đang chờ kiểm kê đầu kỳ (mỗi công ty tối đa một gian hàng như vậy). */
+export async function channelShop(companyId: string, awaiting: boolean): Promise<string> {
+  const { rows } = await testPool().query<{ id: string }>(
+    `insert into channel.shops (company_id, platform, external_shop_id, shop_name, opening_stocktake_id, opening_stocktake_number, order_cutoff_at)
+     values ($1, 'lazada', $2, 'Shop Thử', $3, $4, $5) returning id`,
+    [companyId, randomUUID(), awaiting ? randomUUID() : null, awaiting ? 'KK-000001' : null, awaiting ? new Date() : null],
+  );
+  return rows[0]!.id;
+}
+
+/** Các mũi tên đã ghi cho kiện, cũ trước. */
+export async function transitionsOf(packageId: string) {
+  const { rows } = await testPool().query<{ action: string; from_state: string | null; to_state: string; source: string }>(
+    `select action, from_state, to_state, source from core.state_transitions where entity_type = 'packages' and entity_id = $1 order by id`,
+    [packageId],
+  );
+  return rows;
 }

@@ -1,6 +1,6 @@
 {
-  "id": "d68ff7f7-80f3-4bcc-bc81-c2fdfb4d17ed",
-  "prevId": "21651c91-7215-4213-b1cb-770da0ade83b",
+  "id": "1c6bb7b3-b1c9-4fc3-860b-7d6077f452b6",
+  "prevId": "9caa1e80-13c9-4ffe-bc2f-cd087855bd7f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -198,7 +198,7 @@
         },
         "push_error": {
           "name": "push_error",
-          "type": "text",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
@@ -299,6 +299,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "replaces_listing_id": {
+          "name": "replaces_listing_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -339,7 +345,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"channel\".\"listings\".\"variant_id\" is not null",
+          "where": "\"channel\".\"listings\".\"variant_id\" is not null and \"channel\".\"listings\".\"status\" <> 'delisted'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -361,7 +367,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"channel\".\"listings\".\"external_sku_id\" is not null",
+          "where": "\"channel\".\"listings\".\"external_sku_id\" is not null and \"channel\".\"listings\".\"status\" <> 'delisted'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -390,6 +396,20 @@
           "schemaTo": "channel",
           "columnsFrom": [
             "shop_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "listings_replaces_listing_id_listings_id_fk": {
+          "name": "listings_replaces_listing_id_listings_id_fk",
+          "tableFrom": "listings",
+          "tableTo": "listings",
+          "schemaTo": "channel",
+          "columnsFrom": [
+            "replaces_listing_id"
           ],
           "columnsTo": [
             "id"
@@ -890,6 +910,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "allocation_stocktake_id": {
+          "name": "allocation_stocktake_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -986,6 +1012,10 @@
         "shops_open_orders_skipped": {
           "name": "shops_open_orders_skipped",
           "value": "\"channel\".\"shops\".\"open_orders_skipped\" >= 0"
+        },
+        "shops_allocation_pending": {
+          "name": "shops_allocation_pending",
+          "value": "\"channel\".\"shops\".\"allocation_stocktake_id\" is null or (\"channel\".\"shops\".\"opening_stocktake_id\" is null and \"channel\".\"shops\".\"order_cutoff_at\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -2222,6 +2252,12 @@
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "uploaded_at": {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -3782,12 +3818,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_order_id": {
-          "name": "external_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3881,12 +3911,6 @@
           "columns": [
             {
               "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "shop_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9651,24 +9675,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_number": {
-          "name": "source_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "claim_flag": {
           "name": "claim_flag",
           "type": "boolean",
@@ -9821,28 +9827,6 @@
           ],
           "isUnique": true,
           "where": "\"product\".\"stock_documents\".\"kind\" = 'return_inspection'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "stock_documents_opening_uq": {
-          "name": "stock_documents_opening_uq",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"product\".\"stock_documents\".\"source_type\" = 'shop_setup' and \"product\".\"stock_documents\".\"status\" in ('draft', 'pending')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -10399,12 +10383,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "follows_up_receipt_id": {
-          "name": "follows_up_receipt_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "resolution_note": {
           "name": "resolution_note",
           "type": "text",
@@ -10634,12 +10612,6 @@
           "notNull": true,
           "default": false
         },
-        "excluded_reason": {
-          "name": "excluded_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -10716,10 +10688,6 @@
           "name": "purchase_request_lines_ordered",
           "value": "\"product\".\"purchase_request_lines\".\"ordered_qty\" > 0"
         },
-        "purchase_request_lines_excluded_reason": {
-          "name": "purchase_request_lines_excluded_reason",
-          "value": "not \"product\".\"purchase_request_lines\".\"excluded\" or \"product\".\"purchase_request_lines\".\"excluded_reason\" is not null"
-        },
         "purchase_request_lines_counts": {
           "name": "purchase_request_lines_counts",
           "value": "\"product\".\"purchase_request_lines\".\"received_qty\" >= 0 and \"product\".\"purchase_request_lines\".\"defective_qty\" >= 0 and \"product\".\"purchase_request_lines\".\"closed_short_qty\" >= 0"
@@ -10789,12 +10757,6 @@
         "expected_delivery_date": {
           "name": "expected_delivery_date",
           "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "supplier_order_code": {
-          "name": "supplier_order_code",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -11215,13 +11177,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "result_self_approved": {
-          "name": "result_self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11312,7 +11267,7 @@
         },
         "supplier_returns_result_by": {
           "name": "supplier_returns_result_by",
-          "value": "\"product\".\"supplier_returns\".\"result_by\" is null or \"product\".\"supplier_returns\".\"result_by\" is distinct from \"product\".\"supplier_returns\".\"sent_by\" or \"product\".\"supplier_returns\".\"result_self_approved\""
+          "value": "\"product\".\"supplier_returns\".\"result_by\" is null or \"product\".\"supplier_returns\".\"result_by\" is distinct from \"product\".\"supplier_returns\".\"sent_by\""
         }
       },
       "isRLSEnabled": false

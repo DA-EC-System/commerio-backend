@@ -34,3 +34,14 @@ export type DbDeliveryMode = (typeof DB_MODE)[DeliveryMode];
 
 export const toDbMode = (m: DeliveryMode): DbDeliveryMode => DB_MODE[m];
 export const fromDbMode = (m: DbDeliveryMode): DeliveryMode => (m === 'driver_left' ? 'left' : 'waiting');
+
+/**
+ * Ghi sổ cần bằng chứng (ảnh mở thùng, Documents/21 §16.3, `25` §4.1): người giao đã đi mà phiếu có lỗi giữ hoặc
+ * thiếu thì phải đính ít nhất một tệp trước khi ghi sổ, không thì 422 `evidence_required`.
+ */
+export function needsEvidence(
+  mode: DbDeliveryMode,
+  lines: readonly { defectiveQty: number; shortageQty: number }[],
+): boolean {
+  return mode === 'driver_left' && lines.some((l) => l.defectiveQty > 0 || l.shortageQty > 0);
+}

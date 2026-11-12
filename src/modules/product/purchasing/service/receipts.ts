@@ -1,5 +1,12 @@
 // Phiếu nhận: lập, kiểm đếm, xem (Documents/21 mục 16.2, spec #109 mục 6.4, 6.7). Ghi sổ ở `receipt-actions.ts`.
-import { recordAudit, recordTransition } from '../../../core/index.ts';
+import {
+  attachmentIdsOf,
+  attachmentProblem,
+  confirmUploads,
+  recordAudit,
+  recordTransition,
+  replaceAttachments,
+} from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
@@ -118,14 +125,20 @@ export async function createReceipt(
 export interface CountInput {
   deliveryMode: DeliveryMode;
   note: string;
-  attachmentIds: readonly string[];
+  /** Thay toàn bộ tệp đính kèm (Documents/21 §14.3); không gửi thì giữ nguyên. */
+  attachmentIds?: readonly string[] | undefined;
   lines: readonly (CountLine & { lineId: string })[];
   version: number;
 }
 
-const snapshot = (row: { deliveryMode: string; note: string | null }, lines: readonly ReceiptLineRow[]) => ({
+const snapshot = (
+  row: { deliveryMode: string; note: string | null },
+  lines: readonly ReceiptLineRow[],
+  attachmentIds: readonly string[],
+) => ({
   deliveryMode: row.deliveryMode,
   note: row.note,
+  attachmentIds,
   lines: lines.map((l) => ({
     lineId: l.requestLineId,
     announced: l.declaredQty,
@@ -136,8 +149,13 @@ const snapshot = (row: { deliveryMode: string; note: string | null }, lines: rea
   })),
 });
 
-/** Lưu số kiểm đếm khi phiếu đang kiểm. `lines[].lineId` là id dòng đề nghị; dòng không gửi giữ số cũ. */
+/**
+ * Lưu số kiểm đếm khi phiếu đang kiểm. `lines[].lineId` là id dòng đề nghị; dòng không gửi giữ số cũ. `attachmentIds`
+ * thay toàn bộ tệp đính kèm (ảnh phiếu giao, ảnh mở thùng, biên bản; #212).
+ */
 export async function updateReceiptCount(actor: Actor, id: string, input: CountInput): Promise<GoodsReceiptView> {
+  // Hỏi kho trước khi mở giao dịch: lời gọi mạng không giữ khoá đề nghị, dòng, phiếu.
+  if (input.attachmentIds?.length) await confirmUploads(actor.companyId, input.attachmentIds);
   return withCompany(actor.companyId, async () => {
     const { receipt, requestLines } = await lockOwnReceipt(id);
     await assertReceiptVersion(receipt, input.version);
@@ -146,8 +164,8 @@ export async function updateReceiptCount(actor: Actor, id: string, input: CountI
     const lines = await receiptLines([id]);
     const byRequestLine = new Map(lines.map((l) => [l.requestLineId, l]));
     const errors: Record<string, string> = {};
-    // Tệp đính kèm cần upload của #114: không nhận rồi bỏ đi trong im lặng (spec #109 Q10).
-    if (input.attachmentIds.length) errors.attachments = 'Chưa nhận tệp đính kèm (chờ #114)';
+    const attachmentError = input.attachmentIds ? await attachmentProblem(input.attachmentIds) : null;
+    if (attachmentError) errors.attachments = attachmentError;
     const seen = new Set<string>();
     input.lines.forEach((x, i) => {
       if (!byRequestLine.has(x.lineId)) errors[`lines.${i}.lineId`] = 'Dòng không thuộc phiếu';
@@ -178,14 +196,17 @@ export async function updateReceiptCount(actor: Actor, id: string, input: CountI
     const note = input.note.trim() || null;
     const deliveryMode = toDbMode(input.deliveryMode);
     await updateReceiptHeader(id, { deliveryMode, note });
+    const entity = { type: RECEIPT_ENTITY, id };
+    const attachedBefore = await attachmentIdsOf(entity);
+    if (input.attachmentIds) await replaceAttachments(entity, input.attachmentIds, actor.accountId);
     await recordAudit({
       companyId: actor.companyId,
       actorId: actor.accountId,
       action: 'update',
       entityType: RECEIPT_AUDIT_ENTITY,
       entityId: id,
-      before: snapshot(receipt, lines),
-      after: snapshot({ deliveryMode, note }, await receiptLines([id])),
+      before: snapshot(receipt, lines, attachedBefore),
+      after: snapshot({ deliveryMode, note }, await receiptLines([id]), input.attachmentIds ?? attachedBefore),
     });
     return toReceiptDetail((await findReceipt(id))!);
   });

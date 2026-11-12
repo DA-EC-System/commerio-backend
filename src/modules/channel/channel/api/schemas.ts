@@ -89,16 +89,16 @@ export const Shop = z
       .nullable()
       .meta({
         description:
-          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2)',
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). `rejected`, `cancelled` giữ nguyên tới khi lập lại phiếu (18.6.11). Phiếu ghi sổ thì BE đặt `openingStocktake = null`, đổi `orderCutoffAt`, chạy lại lượt kéo đơn còn mở, rồi chờ phân hàng; nhận `fulfillment.allocation_done` có `cause` trùng phiếu mới bật cập nhật tồn (18.6.11)',
       }),
     setup: z
       .object({
         steps: z.array(
           z
             .object({
-              key: z.enum(['match', 'opening_stock', 'open_orders', 'push_stock']),
+              key: z.enum(['match', 'opening_stock', 'open_orders', 'allocate', 'push_stock']),
               status: z.enum(['pending', 'running', 'done', 'failed', 'blocked']),
-              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`) hoặc mã issue chưa làm; null khi không `blocked`' }),
+              blockedBy: z.string().nullable().meta({ description: 'Bước đang chặn (`opening_stock`, `open_orders`, `allocate`), xét theo thứ tự đó, hoặc mã issue chưa làm; null khi không `blocked`' }),
             })
             .strict(),
         ),
@@ -195,9 +195,13 @@ export const ShopConnectionResult = z
     previousStatus: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']).nullable().meta({
       description: 'Trạng thái gian hàng ngay trước lần nối này; `null` khi `created: true` (21 §18.7.4)',
     }),
+    remoteProductCount: z.number().int().nullable().meta({
+      description:
+        'Số sản phẩm người bán có trên sàn lúc nối, không tính sản phẩm đã xoá trên sàn. Nghĩa cố định cho mọi sàn, sàn nào cũng trả; BE lấy bằng tổng sàn trả sẵn, không đọc hết danh sách (Lazada: `total_products` của GetProducts, `filter=all`; TikTok: `total_count` của Search Products). `null` chỉ khi BE chưa đọc được: adapter của sàn chưa có cách đếm, sàn lỗi (kể cả hết hạn mức gọi, sàn không trả lời) hoặc quá 10 giây. BE không trả 0 thay cho lỗi; việc nối vẫn xong (21 §18.7.4)',
+    }),
     remoteSkuCount: z.number().int().nullable().meta({
       description:
-        'Số SKU người bán tìm thấy trên sàn lúc nối, không tính SKU đã xoá. `null` khi chưa đọc được: sàn chưa hỗ trợ đọc danh sách SKU, sàn lỗi (kể cả hết hạn mức gọi) hoặc quá 10 giây; việc nối vẫn xong (21 §18.7.4)',
+        'Số phân loại người bán có trên sàn lúc nối. Phân loại là SKU của sàn; sản phẩm không chia phân loại tính là 1. Không tính phân loại của sản phẩm đã xoá. Nghĩa cố định cho mọi sàn. `null` khi BE chưa biết: sàn không trả tổng số phân loại và BE chưa đọc hết danh sách (Lazada lúc nối luôn `null`; TikTok `null` khi tổng sản phẩm của gian hàng, kể cả sản phẩm đã xoá, vượt một trang (100)), hoặc khi `remoteProductCount` là `null`. BE không suy số phân loại từ số sản phẩm (21 §18.7.4)',
     }),
   })
   .strict()
@@ -208,7 +212,7 @@ export const ShopCallbackResult = z
     ...connectionResult,
     shops: z.array(ShopConnectionResult).min(1).meta({
       description:
-        'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu. `previousStatus`, `remoteSkuCount` chỉ có ở đây, gốc không có',
+        'Mọi gian hàng của lần nối (một lần uỷ quyền có thể ra nhiều gian hàng); `shop`, `created`, `reconnect` là của phần tử đầu. `previousStatus`, `remoteProductCount`, `remoteSkuCount` chỉ có ở đây, gốc không có',
     }),
   })
   .strict()
@@ -286,8 +290,11 @@ export const ChannelListing = z
     sellerSku: z.string().nullable(),
     status: listingStatus,
     rejectReason: z.string().nullable(),
-    pushError: z.string().nullable(),
-    pushAttempts: z.number().int(),
+    pushError: syncError.meta({
+      description:
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+    }),
+    pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
     stockSync: syncState,
     priceSync: syncState,
@@ -322,15 +329,13 @@ export const ListingList = z.object({ items: z.array(ListingRow) }).strict().met
 export const PushResult = z
   .object({
     variantId: z.string(),
-    sku: z.string(),
-    outcome: z.enum(['created', 'updated', 'failed']),
-    status: listingStatus.optional(),
-    externalSkuId: z.string().optional(),
-    code: z.string().optional().meta({
+    listingId: z.uuid().nullable().meta({ description: 'Listing được xếp việc hoặc listing hiện có của dòng bị chặn; null khi chưa có' }),
+    status: listingStatus.nullable().meta({ description: '`pushing` khi đã xếp việc; dòng bị chặn: trạng thái listing hiện có' }),
+    code: z.string().nullable().meta({
       description:
-        '`not_found`, `push_in_progress`, `platform_hold`, `already_listed`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`, `marketplace_rejected`, `marketplace_unavailable`',
+        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
     }),
-    message: z.string().optional(),
+    message: z.string().nullable(),
   })
   .strict()
   .meta({ id: 'PushResult' });
@@ -422,3 +427,12 @@ export const ShopSetupResult = z
   })
   .strict()
   .meta({ id: 'ShopSetupResult' });
+
+/** `POST /channel/shops/:id/opening-stocktake` (Documents/21 §18.6.11). */
+export const OpeningStocktakeResult = z
+  .object({
+    shop: Shop,
+    stocktakeNumber: z.string(),
+  })
+  .strict()
+  .meta({ id: 'OpeningStocktakeResult' });

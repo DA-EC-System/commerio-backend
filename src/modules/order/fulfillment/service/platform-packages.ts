@@ -1,5 +1,6 @@
 // Kiện của đơn sàn theo trạng thái sàn đẩy về (#105). Mỗi mã kiện sàn một kiện; sàn chưa chia kiện thì một kiện tạm,
 // nhận mã ở lần kéo sau. Giữ, nhả lúc tạo, huỷ; kiện vào nhóm rời kho thì trừ tồn qua lõi `handover-stock.ts` (#199).
+import { sql } from 'drizzle-orm';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { handoverStockMode, stockEffectOf } from '../domain/handover.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
@@ -12,8 +13,10 @@ import {
   setReserved,
   updatePackage,
 } from '../repository/packages.ts';
+import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { PackageNotice } from '../repository/schema.ts';
+import { requestAllocation } from './allocation.ts';
 import { settleHandover } from './handover-stock.ts';
 import { type StockLine, stockPort } from './stock-port.ts';
 
@@ -176,7 +179,12 @@ async function createPackage(
   const to: PackageStatus = initial === 'backordered' && reserved ? 'reserved' : initial;
   const rows = lines.map((l) => ({ orderLineId: l.orderLineId, variantId: l.variantId, quantity: l.quantity, reservedQty: reserved ? l.quantity : 0 }));
   const lineIds = await insertPackageLines(id, rows);
-  if (to !== initial) await updatePackage(id, { status: to });
+  if (to !== initial || reserved) await updatePackage(id, { ...(to !== initial && { status: to }), ...(reserved && { reservedAt: sql`now()` }) });
+  // Kiện mới giữ hàng làm số có thể bán giảm: báo channel đẩy tồn (spec 199b D4), không chạy lượt phân hàng.
+  if (reserved) {
+    const variantIds = [...new Set(stockLines(lines).map((l) => l.variantId))].sort();
+    await publishEvent({ type: 'fulfillment.allocation_done', aggregateId: requireCompanyId('createPackage'), payload: { variantIds } });
+  }
   if (status === 'return_failed') await updatePackage(id, { needsAttention: true, flagNote: 'Sàn báo hoàn hàng thất bại' });
   await recordTransition({ entityType: 'packages', entityId: id, from: null, to, action: 'create', actorId: null, source: 'marketplace' });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: id, orderId: order.id, from: null, to } });
@@ -259,6 +267,8 @@ export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: Pa
   if (holdsStock(pkg.status)) {
     await stockPort().release(pkg.id, stockLines(pkg.lines));
     await setReserved(pkg.id, false);
+    // Số có thể bán tăng: phân hàng cho kiện khác sau khi giao dịch commit (spec 199b §5.4).
+    await requestAllocation(stockLines(pkg.lines).map((l) => l.variantId));
   }
   await changeStatus(order, pkg, 'cancelled', 'cancel');
   return 'cancelled';

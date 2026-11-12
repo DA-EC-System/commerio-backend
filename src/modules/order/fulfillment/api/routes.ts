@@ -25,7 +25,7 @@ export function fulfillmentRouter(ctx: FulfillmentContext): Router {
 
   // Mỗi kiện một giao dịch (service tự mở `withCompany`): kiện lỗi không chặn kiện khác.
   router.post('/packages/hand-over', process, validate({ body: HandOverBody }), async (_req, res) => {
-    res.json(await handOverPackages(actor(res), validated<typeof HandOverBody>(res, 'body').packages));
+    res.json(await handOverPackages(ctx, actor(res), validated<typeof HandOverBody>(res, 'body').packages));
   });
 
   router.post(

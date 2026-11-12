@@ -4,7 +4,8 @@
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
+import { DELETABLE, type ListingAction, type ListingStatus, STALE_PUSH_MS, syncAction } from '../domain/listing.ts';
+import { holdsStock } from '../domain/shop.ts';
 import { type ListingPatch, listListingRows, markStockPendingIds, markStockPendingRows, updateListing } from '../repository/listings.ts';
 import { markStockPushed } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
@@ -13,10 +14,13 @@ import { moveListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, shopSession } from './shops.ts';
 
-/** Listing đọc trạng thái từ sàn. */
-const WATCHED: readonly ListingStatus[] = ['under_review', 'live', 'hidden', 'platform_hold'];
+/**
+ * Listing đọc trạng thái từ sàn (có mã sàn): duyệt, từ chối, khoá, gỡ khoá; `rejected`, `push_failed` còn sản phẩm trên
+ * sàn thì chỉ để bắt sàn xoá (#219, 25 §6.4).
+ */
+const WATCHED = DELETABLE;
 /** Listing có sản phẩm trên sàn để đẩy giá, tồn. */
-const PUSHABLE: readonly ListingStatus[] = [...WATCHED, 'rejected'];
+const PUSHABLE: readonly ListingStatus[] = ['under_review', 'live', 'hidden', 'platform_hold', 'rejected'];
 
 export interface SyncSummary {
   /** Số listing đã đọc trạng thái từ sàn. */
@@ -45,14 +49,13 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   const staleBefore = Date.now() - STALE_PUSH_MS;
   for (const row of rows.filter((r) => r.status === 'pushing' && (r.pushStartedAt?.getTime() ?? 0) < staleBefore)) {
     const message = 'Quá 30 phút chưa có kết quả từ sàn, đẩy lại';
-    await inCompany(() => moveListing(row, 'fail', null, { pushError: message }, message));
+    const pushError: SyncError = { code: 'marketplace_unavailable', message, at: new Date().toISOString() };
+    await inCompany(() => moveListing(row, 'fail', null, { pushError }, message));
     summary.changed++;
   }
 
-  // Giữ tồn (#198): chờ phiếu kiểm kê đầu kỳ (25 §6.1 bước 3) hoặc chưa kéo xong đơn còn mở (A10, số đẩy phải trừ phần
-  // giữ cho đơn đó). Chỉ đẩy giá; tồn giữ `stock_sync = pending`, không ghi lỗi. Gian hàng chưa thiết lập (chưa có mốc)
-  // đẩy như trước #198.
-  const holdStock = shop.openingStocktakeId !== null || (shop.orderCutoffAt !== null && shop.openOrdersPulledAt === null);
+  // Giữ tồn (#198, `holdsStock`): chỉ đẩy giá; tồn giữ `stock_sync = pending`, không ghi lỗi.
+  const holdStock = holdsStock(shop);
   const watched = rows.filter((r) => WATCHED.includes(r.status) && r.sellerSku && r.externalSkuId);
   summary.checked = watched.length;
   if (watched.length) {
@@ -62,8 +65,8 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
       const r = bySku.get(row.externalSkuId!);
       const action = r && syncAction(row.status, r.state);
       if (!action) continue;
-      const patch = action === 'reject' ? { rejectReason: r.rejectReason ?? 'Sàn từ chối, không ghi lý do' } : {};
-      await inCompany(() => moveListing(row, action, null, patch, patch.rejectReason ?? null));
+      const { patch, reason } = remoteChange(action, r.rejectReason);
+      await inCompany(() => moveListing(row, action, null, patch, reason));
       summary.changed++;
     }
     rows = await inCompany(() => listListingRows(shop.id));
@@ -177,6 +180,21 @@ export async function pushZeroStock(actor: Actor, shopId: string): Promise<strin
  */
 export async function restoreAfterZeroStock(actor: Actor, listingIds: readonly string[]): Promise<void> {
   if (listingIds.length) await withCompany(actor.companyId, () => markStockPendingIds(listingIds));
+}
+
+/**
+ * Dữ liệu ghi kèm khi áp thao tác của sàn. Sàn xoá sản phẩm (`delist`, hệ thống): bỏ mã sản phẩm, mã SKU, ảnh trên sàn
+ * vì sản phẩm không còn, giữ SellerSku; đẩy lại sẽ tạo sản phẩm mới (#219).
+ */
+function remoteChange(action: ListingAction, rejectReason: string | null | undefined): { patch: ListingPatch; reason: string | null } {
+  if (action === 'reject') {
+    const reason = rejectReason ?? 'Sàn từ chối, không ghi lý do';
+    return { patch: { rejectReason: reason }, reason };
+  }
+  if (action === 'delist') {
+    return { patch: { externalProductId: null, externalSkuId: null, externalImageUrls: null }, reason: 'Sàn báo đã xoá sản phẩm' };
+  }
+  return { patch: {}, reason: null };
 }
 
 function synced(item: PriceQuantity, at: Date): ListingPatch {

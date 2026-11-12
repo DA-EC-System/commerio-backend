@@ -63,6 +63,12 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
 };
 
 describe('danh mục sự kiện (AC-11)', () => {
+  it('inventory.stocktake_posted thiếu countedAt thì bị từ chối, không lấy postedAt thay (#198, Documents/21 §11.2)', () => {
+    const noCountedAt: Record<string, unknown> = { ...SAMPLES['inventory.stocktake_posted'] };
+    delete noCountedAt.countedAt;
+    expect(EVENT_SCHEMAS['inventory.stocktake_posted'].safeParse(noCountedAt).success).toBe(false);
+  });
+
   it('mỗi loại có mẫu, mẫu parse được bằng schema của loại đó', () => {
     expect([...EVENT_TYPES].sort()).toEqual(Object.keys(SAMPLES).sort());
     for (const type of EVENT_TYPES) expect(EVENT_SCHEMAS[type].safeParse(SAMPLES[type]).success, type).toBe(true);
@@ -108,6 +114,24 @@ describe('danh mục sự kiện (AC-11)', () => {
 
     it('từ chối quantity bằng 0', () => {
       expect(schema.safeParse(withLine({ quantity: 0 })).success).toBe(false);
+    });
+  });
+
+  describe('fulfillment.package_delivered (21 §11.2, #199c)', () => {
+    const schema = EVENT_SCHEMAS['fulfillment.package_delivered'];
+    const sample = SAMPLES['fulfillment.package_delivered'];
+
+    it('chấp nhận dòng kiện chưa ghép SKU (variantId null)', () => {
+      const lines = [
+        { variantId: null, quantity: 1, unitPrice: '150000.00', unitCost: null },
+        { variantId: id(), quantity: 2, unitPrice: '90000.00', unitCost: '50000.00' },
+      ];
+      expect(schema.safeParse({ ...sample, lines }).success).toBe(true);
+    });
+
+    it('vẫn từ chối variantId không phải uuid', () => {
+      const lines = [{ variantId: 'abc', quantity: 1, unitPrice: '90000.00', unitCost: null }];
+      expect(schema.safeParse({ ...sample, lines }).success).toBe(false);
     });
   });
 

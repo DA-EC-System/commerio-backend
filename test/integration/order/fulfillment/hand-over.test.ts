@@ -7,7 +7,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { outboxOf, packageDocuments, packageLineRows, packageRow, seedPackage, stockOfVariant } from './helpers.ts';
+import { channelShop, outboxOf, packageDocuments, packageLineRows, packageRow, seedPackage, stockOfVariant } from './helpers.ts';
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -172,5 +172,25 @@ describe('dữ liệu test', () => {
   it('tồn của công ty test đủ cho các ca (bảo đảm test không chạy vào bàn giao bắt buộc)', async () => {
     const { rows } = await testPool().query('select invariant_broken from product.stock_levels where variant_id = $1', [variantId]);
     expect(rows[0]).toEqual({ invariant_broken: false });
+  });
+});
+
+describe('kho quét lúc gian hàng chờ kiểm kê đầu kỳ (spec 199b D7)', () => {
+  it('D7 AC14: quét kiện của gian hàng chờ kiểm kê → in_transit, scan, không phiếu XK, issue null, tồn không đổi', async () => {
+    const own = await createCompany();
+    const kho = await addMember(own.companyId, 'warehouse');
+    const { variantId: v } = await createVariant(own.companyId);
+    await receive(own.companyId, v, 5, 100000);
+    const shopId = await channelShop(own.companyId, true);
+    const p = await seedPackage(own.companyId, { status: 'awaiting_pickup', shopId, lines: [{ variantId: v, quantity: 1 }] });
+    const before = await stockOfVariant(own.companyId, v);
+
+    const res = await handOver([{ id: p.packageId, version: await versionOf(p.packageId) }], kho.token);
+
+    expect(res.status).toBe(200);
+    expect(HandOverResult.parse(res.body).handedOver).toEqual([{ id: p.packageId, code: p.packageCode, issue: null }]);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', handover_source: 'scan' });
+    expect(await packageDocuments(p.packageId)).toEqual([]);
+    expect(await stockOfVariant(own.companyId, v)).toMatchObject({ onHand: before.onHand, reserved: before.reserved });
   });
 });

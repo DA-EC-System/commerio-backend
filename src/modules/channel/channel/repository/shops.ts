@@ -172,6 +172,19 @@ export async function delistForDisconnect(shopId: string): Promise<{ id: string;
 }
 
 /**
+ * Listing đang `pushing` của gian hàng vừa ngắt: việc đẩy đã bị bỏ (`dropHeld`) hoặc sẽ tự `fail` khi chạy, nên chuyển
+ * `push_failed` ngay kèm `shop_not_connected` để bảng không hiện "Đang đẩy" mãi (#219). Gọi trong giao dịch ngắt.
+ */
+export async function failPushingForDisconnect(shopId: string): Promise<{ id: string }[]> {
+  const error = { code: 'shop_not_connected', message: 'Gian hàng đã ngắt', at: new Date().toISOString() };
+  return getDb()
+    .update(listings)
+    .set({ status: 'push_failed', pushError: error, version: sql`${listings.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(listings.shopId, shopId), eq(listings.status, 'pushing')))
+    .returning({ id: listings.id });
+}
+
+/**
  * Gian hàng khác của công ty (RLS lọc công ty): đã có gian hàng xong thiết lập chưa (có mốc, không chờ kiểm kê; kể cả đã
  * ngắt), và phiếu kiểm kê đầu kỳ đang chờ nếu có (#198 A1, A12).
  */
@@ -189,6 +202,23 @@ export async function setupStateOfCompany(exceptShopId: string): Promise<{ hasSe
 /** Khoá thiết lập của công ty tới hết giao dịch: hai lần thiết lập gian hàng cùng công ty chạy lần lượt (#198 A12). */
 export async function lockCompanySetup(companyId: string): Promise<void> {
   await getDb().execute(sql`select pg_advisory_xact_lock(hashtext('channel.setup'), hashtext(${companyId}))`);
+}
+
+/**
+ * Nhận `fulfillment.allocation_done` có `cause.documentId` (Documents/21 §11.2, §18.6.11): gian hàng đang chờ phân hàng
+ * theo đúng phiếu này thì thoát chờ (`allocation_stocktake_id = null`). Sự kiện do `settleOpeningStocktake` phát trong
+ * giao dịch thoát chờ kiểm kê nên chỉ tới sau khi giao dịch đó commit; nhận trùng thì cột đã null, không trúng dòng nào
+ * (Documents/19 `shops`). Trả các gian hàng vừa thoát chờ. Không tăng `version` (việc nền, như `markStockPushed`). Gọi
+ * trong `withCompany`.
+ */
+export async function settleStocktakeAllocation(
+  documentId: string,
+): Promise<{ id: string; status: ShopStatus; openOrdersPulledAt: Date | null }[]> {
+  return getDb()
+    .update(shops)
+    .set({ allocationStocktakeId: null, updatedAt: sql`now()` })
+    .where(eq(shops.allocationStocktakeId, documentId))
+    .returning({ id: shops.id, status: shops.status, openOrdersPulledAt: shops.openOrdersPulledAt });
 }
 
 /** Đánh dấu lượt đẩy tồn đầu tiên sau thiết lập đã chạy (§18.7.7 `push_stock`). Không tăng `version`. */
@@ -226,4 +256,19 @@ export async function recordOpenOrderPullError(id: string, message: string): Pro
 export async function hasChannelData(): Promise<boolean> {
   const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
   return !!row;
+}
+
+/**
+ * Gian hàng trong `ids` đang chờ kiểm kê đầu kỳ (có phiếu đầu kỳ chưa ghi sổ), cho fulfillment (spec 199b §5.6).
+ * `lock`: khoá `FOR SHARE` tới hết giao dịch, cùng loại với `lockShopForOrders`, để gian hàng không thoát chờ giữa chừng.
+ */
+export async function awaitingStocktakeShops(ids: readonly string[], opts: { lock?: boolean } = {}): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const query = getDb()
+    .select({ id: shops.id })
+    .from(shops)
+    .where(and(inArray(shops.id, [...new Set(ids)]), sql`${shops.openingStocktakeId} is not null`))
+    .orderBy(asc(shops.id));
+  const rows = opts.lock ? await query.for('share') : await query;
+  return new Set(rows.map((r) => r.id));
 }

@@ -15,6 +15,7 @@ import {
   SetupBody,
   ShopSetupPreview,
   ShopSetupResult,
+  OpeningStocktakeResult,
   CategoryMap,
   CategoryMapBody,
   CategoryMapList,
@@ -98,7 +99,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/callback',
     summary: 'Callback OAuth: adapter đổi tham số sàn trả lấy token, tạo hoặc nối lại các gian hàng (§18.4, §18.6.3)',
     description:
-      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới) và `remoteSkuCount` (§18.7.4; `null` khi sàn không đọc được danh sách SKU, lỗi hoặc quá 10 giây, việc nối vẫn xong).',
+      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới), `remoteProductCount` (số sản phẩm trên sàn) và `remoteSkuCount` (số phân loại, tức SKU của sàn; `null` khi sàn không trả tổng) (§18.7.4); cả hai `null` khi sàn lỗi hoặc quá 10 giây, việc nối vẫn xong.',
     security: bearer,
     request: { params: PlatformParams, body: json(CallbackBody) },
     responses: {
@@ -203,13 +204,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/push',
     summary: 'Đẩy biến thể lên sàn (#104)',
     description:
-      'Cần `channel.listing.manage`. Mỗi biến thể một sản phẩm trên sàn; kết quả theo từng biến thể, dòng lỗi không làm hỏng dòng khác. Thành công: `pushing → under_review`. Lỗi sàn: `push_failed` kèm `pushError`. Biến thể đã có trên sàn: `already_listed` (giá, tồn đồng bộ riêng). Gian hàng chờ kiểm kê đầu kỳ: 409 `shop_awaiting_stocktake` (21 §18.6.2).',
+      "Cần `channel.listing.manage`. Chỉ kiểm và xếp việc nền `channel.listing_push`, không gọi sàn, trả ngay (21 §18.6.4). Kết quả theo từng biến thể: dòng hợp lệ chuyển `pushing` (listing mới, hoặc đẩy lại từ `push_failed`, `rejected`, `platform_hold`; listing đã gỡ thì tạo bản ghi mới trỏ bản cũ); dòng bị chặn có `code`. Việc nền gọi sàn tối đa 5 lần: `under_review`/`live`, hoặc `push_failed` kèm `pushError`. Lỗi cả request theo thứ tự (21 §18.6.11): 409 `shop_not_active` (kèm `current`), `shop_awaiting_stocktake` (§18.6.2), `shop_awaiting_allocation` (lượt kéo đơn còn mở chưa xong hoặc phiếu đầu kỳ đã ghi sổ mà chưa phân hàng xong; problem body thêm `waitingFor: 'open_orders' | 'allocation'`), `shop_not_connected`; không dòng nào đổi, không xếp việc.",
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
     responses: {
       200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
       ...onShop,
-      409: problemResponse('`shop_not_connected`, `shop_awaiting_stocktake`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+      409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
     },
   });
   registry.registerPath({
@@ -236,6 +237,22 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`invalid_transition`, `shop_not_connected`, `version_conflict`'),
       501: problemResponse(
         '`not_implemented` kèm `issue`, `owner`: `stocktake` khi chưa có cổng lập phiếu kiểm kê (commerio-backend#245, Bình); không ghi gì, gian hàng vẫn `connecting` (21 §18.7.9)',
+      ),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/opening-stocktake',
+    summary: 'Lập lại phiếu kiểm kê đầu kỳ',
+    description:
+      "Chỉ hợp lệ khi gian hàng `active`, `openingStocktake` khác null, và phiếu hiện tại ở `rejected`, `cancelled` hoặc không còn (`openingStocktakeStatusOf` không trả id này). BE làm dưới khoá dòng gian hàng: đọc trạng thái phiếu, gọi `createOpeningStocktake(shopId, { actorId })`, thay `openingStocktake` bằng phiếu mới (`status = 'draft'`), ghi một dòng nhật ký. `orderCutoffAt` giữ mốc tạm; phiếu mới ghi sổ thì đặt lại theo thời điểm đếm của phiếu mới (18.6.2). Phiếu mới cũng mỗi SKU đang bán một dòng, không giới hạn số dòng (mục 11.3).",
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      200: { description: '`{ shop, stocktakeNumber }`', ...json(OpeningStocktakeResult) },
+      ...onShop,
+      409: problemResponse(
+        'Gian hàng không `active`: 409 `shop_not_active`. `openingStocktake = null` (chưa từng chờ kiểm kê, hoặc phiếu đã ghi sổ): 409 `shop_not_awaiting_stocktake`. Phiếu hiện tại còn `draft` hoặc `pending`: 409 `opening_stocktake_open`, problem body thêm `number`, `status`. Hai lần gọi đua: lần sau thấy phiếu mới ở `draft` nên nhận 409 `opening_stocktake_open`.',
       ),
     },
   });

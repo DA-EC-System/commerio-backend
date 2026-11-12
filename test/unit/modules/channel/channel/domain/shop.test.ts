@@ -3,6 +3,8 @@ import { assertTransition } from '#src/modules/core/index.ts';
 import {
   assertNoOpenOrders,
   authDeadline,
+  awaitingAllocation,
+  holdsStock,
   authLapsed,
   reconnectAction,
   returnWindowError,
@@ -122,5 +124,33 @@ describe('hạn trả hàng nhập lúc thiết lập (Documents/21 §18.6.2)', 
   it('sàn tính hạn theo trạng thái sàn: bỏ qua trường này', () => {
     expect(returnWindowError('platform_status', 0)).toBeNull();
     expect(returnWindowError('platform_status', 999)).toBeNull();
+  });
+});
+
+describe('giữ tồn sau thiết lập (#198, Documents/21 §18.6.11)', () => {
+  const at = new Date('2026-11-09T00:00:00Z');
+  const base = { openingStocktakeId: null, allocationStocktakeId: null, orderCutoffAt: at, openOrdersPulledAt: at };
+
+  it('lượt đơn mở chưa xong thì `open_orders`, kể cả đang chờ phân hàng', () => {
+    expect(awaitingAllocation({ ...base, openOrdersPulledAt: null })).toBe('open_orders');
+    expect(awaitingAllocation({ ...base, openOrdersPulledAt: null, allocationStocktakeId: 'doc' })).toBe('open_orders');
+  });
+
+  it('đơn mở xong, còn chờ `allocation_done` của phiếu thì `allocation`; hết chờ thì null', () => {
+    expect(awaitingAllocation({ ...base, allocationStocktakeId: 'doc' })).toBe('allocation');
+    expect(awaitingAllocation(base)).toBeNull();
+  });
+
+  it('gian hàng chưa thiết lập (chưa có mốc) không chờ, không giữ tồn', () => {
+    const fresh = { ...base, orderCutoffAt: null, openOrdersPulledAt: null };
+    expect(awaitingAllocation(fresh)).toBeNull();
+    expect(holdsStock(fresh)).toBe(false);
+  });
+
+  it('giữ tồn khi chờ kiểm kê, chờ phân hàng hoặc lượt đơn mở chưa xong', () => {
+    expect(holdsStock({ ...base, openingStocktakeId: 'doc' })).toBe(true);
+    expect(holdsStock({ ...base, allocationStocktakeId: 'doc' })).toBe(true);
+    expect(holdsStock({ ...base, openOrdersPulledAt: null })).toBe(true);
+    expect(holdsStock(base)).toBe(false);
   });
 });

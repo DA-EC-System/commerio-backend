@@ -1,6 +1,6 @@
 {
-  "id": "a86b3654-6835-4dfd-a6f7-4c52d80fbdde",
-  "prevId": "df0e6b88-010b-4cc2-8db2-16d95db61caf",
+  "id": "4a7649c6-4533-430a-89e1-368b46cfa1d2",
+  "prevId": "80a4c86c-05c0-413a-b6ac-f93f3723efd9",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -890,6 +890,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "allocation_stocktake_id": {
+          "name": "allocation_stocktake_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -986,6 +992,10 @@
         "shops_open_orders_skipped": {
           "name": "shops_open_orders_skipped",
           "value": "\"channel\".\"shops\".\"open_orders_skipped\" >= 0"
+        },
+        "shops_allocation_pending": {
+          "name": "shops_allocation_pending",
+          "value": "\"channel\".\"shops\".\"allocation_stocktake_id\" is null or (\"channel\".\"shops\".\"opening_stocktake_id\" is null and \"channel\".\"shops\".\"order_cutoff_at\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -2222,6 +2232,12 @@
         "uploaded_by": {
           "name": "uploaded_by",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "uploaded_at": {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -3782,12 +3798,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_order_id": {
-          "name": "external_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3881,12 +3891,6 @@
           "columns": [
             {
               "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "shop_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

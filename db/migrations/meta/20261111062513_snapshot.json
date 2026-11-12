@@ -1,6 +1,6 @@
 {
-  "id": "b43f92a8-7edb-4177-9626-43ba032edb9f",
-  "prevId": "e588084e-61c6-476c-b5f0-6e8be7adad73",
+  "id": "80a4c86c-05c0-413a-b6ac-f93f3723efd9",
+  "prevId": "df0e6b88-010b-4cc2-8db2-16d95db61caf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2225,6 +2225,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "uploaded_at": {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -3782,12 +3788,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "external_order_id": {
-          "name": "external_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3881,12 +3881,6 @@
           "columns": [
             {
               "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "shop_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9651,24 +9645,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_number": {
-          "name": "source_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "claim_flag": {
           "name": "claim_flag",
           "type": "boolean",
@@ -9821,28 +9797,6 @@
           ],
           "isUnique": true,
           "where": "\"product\".\"stock_documents\".\"kind\" = 'return_inspection'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "stock_documents_opening_uq": {
-          "name": "stock_documents_opening_uq",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"product\".\"stock_documents\".\"source_type\" = 'shop_setup' and \"product\".\"stock_documents\".\"status\" in ('draft', 'pending')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -11193,13 +11147,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "result_self_approved": {
-          "name": "result_self_approved",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11290,7 +11237,7 @@
         },
         "supplier_returns_result_by": {
           "name": "supplier_returns_result_by",
-          "value": "\"product\".\"supplier_returns\".\"result_by\" is null or \"product\".\"supplier_returns\".\"result_by\" is distinct from \"product\".\"supplier_returns\".\"sent_by\" or \"product\".\"supplier_returns\".\"result_self_approved\""
+          "value": "\"product\".\"supplier_returns\".\"result_by\" is null or \"product\".\"supplier_returns\".\"result_by\" is distinct from \"product\".\"supplier_returns\".\"sent_by\""
         }
       },
       "isRLSEnabled": false

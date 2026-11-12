@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { HANDED_OVER, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
@@ -63,6 +63,7 @@ export async function updatePackage(
     handoverRevertedBy: string;
     pickupConfirmedAt: Date | null;
     deliveredAt: Date;
+    reservedAt: Date | SQL | null;
   }> &
     Partial<PackageShipping>,
 ): Promise<void> {
@@ -101,7 +102,7 @@ const handoverColumns = {
 };
 
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
-async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
+export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
   const byPackage = new Map<string, (PlanLine & { orderLineId: string })[]>(packageIds.map((id) => [id, []]));
   if (!packageIds.length) return byPackage;
   const rows = await getDb()
@@ -119,6 +120,12 @@ async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (
     .orderBy(asc(packageLines.createdAt), asc(packageLines.id));
   for (const { packageId, ...l } of rows) byPackage.get(packageId)!.push(l);
   return byPackage;
+}
+
+/** Gian hàng của kiện, đọc không khoá (route kho quét khoá gian hàng trước khi khoá kiện, spec 199b §5.7). */
+export async function packageShopOf(id: string): Promise<{ shopId: string | null } | undefined> {
+  const [row] = await getDb().select({ shopId: packages.shopId }).from(packages).where(eq(packages.id, id));
+  return row;
 }
 
 /** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
@@ -223,12 +230,20 @@ export async function markLinesReverted(lineIds: readonly string[]): Promise<voi
     .where(inArray(packageLines.id, [...lineIds]));
 }
 
-/** Đặt số đang giữ của mọi dòng kiện: 0 hoặc đủ (Documents/25 §7.4). */
+/**
+ * Đặt số đang giữ của mọi dòng kiện: 0 hoặc đủ (Documents/25 §7.4), và lúc giữ của kiện (`reserved_at`, spec 199b §5.1).
+ * Không tăng `version` của kiện: bên gọi đổi trạng thái thì `updatePackage` tăng.
+ */
 export async function setReserved(packageId: string, reserved: boolean): Promise<void> {
-  await getDb()
+  const db = getDb();
+  await db
     .update(packageLines)
     .set({ reservedQty: reserved ? sql`${packageLines.quantity}` : 0, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
     .where(eq(packageLines.packageId, packageId));
+  await db
+    .update(packages)
+    .set({ reservedAt: reserved ? sql`now()` : null, updatedAt: sql`now()` })
+    .where(eq(packages.id, packageId));
 }
 
 export type PackageViewRow = typeof packages.$inferSelect & {

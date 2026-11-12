@@ -45,6 +45,7 @@ export const EVENT_SCHEMAS = {
     lines: z.array(z.object({ variantId: id, quantity: z.int().positive() })),
   }),
   // Phiếu kiểm kê ghi sổ (#208, Documents/21 mục 11.2); nguồn `shop_setup` là kiểm kê đầu kỳ của gian hàng (#245).
+  // `countedAt` là thời điểm đếm, khác `postedAt` là lúc ghi sổ (thêm 06/11/2026); channel đặt lại mốc kéo đơn theo nó (#198).
   'inventory.stocktake_posted': z.object({
     documentId: id,
     number: z.string(),
@@ -117,7 +118,8 @@ export const EVENT_SCHEMAS = {
     deliveredAt: timestamp,
     lines: z.array(
       z.object({
-        variantId: id,
+        /** Null khi dòng kiện chưa ghép SKU lúc bàn giao (ghép sau, #199c); `unitCost` kèm theo là null. */
+        variantId: id.nullable(),
         quantity: z.int().positive(),
         unitPrice: money,
         /** Null khi dòng kiện không có giá vốn (kiện bàn giao trước thời điểm bắt đầu lấy đơn, không qua `ship`; 21 §11.2). Không thay bằng giá vốn bình quân lúc giao. */
