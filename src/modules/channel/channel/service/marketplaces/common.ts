@@ -116,6 +116,21 @@ export interface RemoteSku {
    * sàn không trả ảnh hay adapter không đọc (TikTok: `labels: false`, quá trần đọc chi tiết, Get Product lỗi).
    */
   imageUrl?: string | null;
+  /**
+   * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
+   * (`promotion_locked`). Thiếu là không khoá; Lazada, TikTok chưa điền (chưa có trường đã kiểm trên tài liệu sàn), sàn
+   * từ chối giá khi khuyến mãi thì vẫn về `priceSyncError` theo SKU.
+   */
+  stockLocked?: boolean;
+  priceLocked?: boolean;
+  /**
+   * Số còn bán được trên sàn, cùng nghĩa với số app đẩy lên (số có thể bán), để đối chiếu tồn (#223, 25 §6.5). Thiếu thì
+   * không đối chiếu SKU đó. TikTok: tổng `inventory[].quantity` ("quantity available in the warehouse", cũng là số app
+   * đẩy). Lazada chưa điền: `/products/get` trả cả `quantity` lẫn `Available` và sàn có API riêng cho số bán được
+   * (`/product/stock/sellable/update`), nên số đọc về sau mỗi đơn có thể lệch nghĩa với số app đẩy bằng
+   * `/product/price_quantity/update`; cần thử trên shop thử trước khi bật, kẻo đơn nào cũng bật Lệch tồn giả.
+   */
+  sellableQuantity?: number;
 }
 
 export interface PriceQuantity {

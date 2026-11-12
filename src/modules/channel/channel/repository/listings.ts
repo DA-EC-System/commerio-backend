@@ -121,18 +121,28 @@ export async function markStockPendingIds(ids: readonly string[]): Promise<void>
     .where(inArray(listings.id, [...ids]));
 }
 
-/** `stock_sync = pending`, tăng `version` để lượt đồng bộ đang chờ sàn không ghi `synced` đè lên lần đánh dấu (#222). */
+/**
+ * `stock_sync = pending` (listing đang Lệch tồn giữ `error`, vẫn được đẩy; #223), tăng `version` để lượt đồng bộ đang chờ
+ * sàn không ghi `synced` đè lên lần đánh dấu (#222).
+ */
 function stockPending() {
-  return { stockSync: 'pending' as const, version: sql`${listings.version} + 1`, updatedAt: sql`now()` };
+  return {
+    stockSync: sql`case when ${listings.stockSync} = 'error' then 'error' else 'pending' end::channel.sync_state`,
+    version: sql`${listings.version} + 1`,
+    updatedAt: sql`now()`,
+  };
 }
 
 /**
- * Listing của biến thể ở các trạng thái cho trước chuyển `stock_sync = pending`. Tăng `version` để lượt đồng bộ đang
- * chờ sàn không ghi `synced` đè lên lần đánh dấu này (#222).
+ * Listing của các biến thể ở các trạng thái cho trước chờ đẩy tồn (như `stockPending`). Trả id các gian hàng có dòng đổi,
+ * để bên gọi xếp việc đẩy.
  */
-export async function markStockPendingRows(variantId: string, statuses: readonly ListingStatus[]): Promise<void> {
-  await getDb()
+export async function markStockPendingRows(variantIds: readonly string[], statuses: readonly ListingStatus[]): Promise<string[]> {
+  if (!variantIds.length) return [];
+  const rows = await getDb()
     .update(listings)
     .set(stockPending())
-    .where(and(eq(listings.variantId, variantId), inArray(listings.status, [...statuses])));
+    .where(and(inArray(listings.variantId, [...variantIds]), inArray(listings.status, [...statuses])))
+    .returning({ shopId: listings.shopId });
+  return [...new Set(rows.map((r) => r.shopId))];
 }
