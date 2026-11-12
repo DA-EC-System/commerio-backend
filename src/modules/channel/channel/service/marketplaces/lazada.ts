@@ -592,6 +592,12 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // Access Lazada sống 7 ngày, refresh 50 ngày và không gia hạn (21 §18.4). Ngưỡng 48 giờ giữ từ #102, chưa đo trên shop
     // thử (app Testing có access ngắn hơn, Documents#64): với việc nền mỗi giờ là còn khoảng 48 lượt thử trước khi hết hạn.
     refreshDueAt: (tokens) => refreshBefore(tokens, DEFAULT_REFRESH_LEAD_MS),
+    // "refresh_expires_in: The remaining seconds until the current refresh token expires. For example, 4320000 seconds
+    // equates to 50 days. After 50 days, the refresh token will expire, and a new refresh token can only be obtained by
+    // completing the authorization process again. Note: The refresh token cannot be refreshed using the
+    // RefreshAccessToken API." (open.lazada.com, Seller authorization introduction, mục 5, cập nhật 05/03/2026, đọc
+    // 12/11/2026). Hạn cố định theo lần uỷ quyền: làm mới giữ hạn đã lưu (#312).
+    refreshKeepsAuthDeadline: true,
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
       const body = await call(config.apiUrl, '/category/tree/get', params, 'GET');

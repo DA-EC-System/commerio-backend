@@ -144,9 +144,15 @@ export async function refreshShopTokenLocked(
         throw err;
       }
       // Sàn không trả refresh token mới thì giữ cái cũ (refresh token dùng lại được). Chỉ ghi khi token đã lưu vẫn là bản
-      // đọc lúc đầu (compare-and-set): người dùng vừa nối lại thì bỏ cặp vừa lấy.
+      // đọc lúc đầu (compare-and-set): người dùng vừa nối lại thì bỏ cặp vừa lấy. Sàn có hạn refresh cố định (Lazada) thì
+      // giữ hạn đã lưu: hạn adapter tính lại từ số giây còn lại lệch vài giây mỗi lần (#312).
+      const refreshExpiresAt = adapter.refreshKeepsAuthDeadline && row.refreshExpiresAt ? row.refreshExpiresAt : tokens.refreshExpiresAt;
       const saved = await withCompany(companyId, () =>
-        saveRefreshedTokens(row.id, row.accessTokenEnc, tokenColumns(row.id, { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken })),
+        saveRefreshedTokens(
+          row.id,
+          row.accessTokenEnc,
+          tokenColumns(row.id, { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken, refreshExpiresAt }),
+        ),
       );
       if (saved) return 'refreshed';
       return (await reconnected()) ?? 'inactive';

@@ -49,3 +49,21 @@ export function dueReauthMail(shop: ReauthMailShop, now: Date): ReauthMailMilest
   }
   return null;
 }
+
+/**
+ * Hạn của thư trước hạn lệch dưới ngưỡng này vẫn là cùng một mốc. Cùng ngưỡng với EXCLUDE `shop_reauth_mails_deadline_drift`
+ * (±30 phút quanh hạn, migration RLS của #312). Hạn tính lại từ "số giây còn lại" (Lazada `refresh_expires_in`) sau mỗi
+ * lần làm mới token chỉ lệch vài giây; hạn gia hạn thật hay lần nối lại mới thì cách xa hơn nhiều.
+ */
+export const DEADLINE_DRIFT_MS = 60 * 60_000;
+
+/**
+ * Thư đã xếp còn đúng mốc đang tới (`due = dueReauthMail(...)` lúc gửi hay lúc xếp lại): cùng mốc, cùng nhịp, hạn khớp
+ * (thư trước hạn trong ngưỡng lệch, thư `lost` đúng lúc chuyển trạng thái). Sai thì thư đã cũ: gian hàng đã nối lại, đã
+ * ngắt, hạn đã đổi hẳn, hoặc mốc sau đã thay (thư 3 ngày khi đã vào ngày cuối, nhịp 6 giờ trước khi đã sang nhịp mới).
+ */
+export function isCurrentMail(mail: ReauthMailMilestone, due: ReauthMailMilestone | null): boolean {
+  if (!due || due.stage !== mail.stage || due.seq !== mail.seq) return false;
+  const diff = Math.abs(due.deadline.getTime() - mail.deadline.getTime());
+  return mail.stage === 'lost' ? diff === 0 : diff < DEADLINE_DRIFT_MS;
+}

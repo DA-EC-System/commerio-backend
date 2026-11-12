@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dueReauthMail, type ReauthMailShop } from '#src/modules/channel/channel/domain/reauth-mail.ts';
+import { dueReauthMail, isCurrentMail, type ReauthMailShop } from '#src/modules/channel/channel/domain/reauth-mail.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -76,5 +76,31 @@ describe('dueReauthMail', () => {
   it('token dán tay không có hạn: không có thư trước hạn, chỉ có thư sau khi mất quyền', () => {
     expect(dueReauthMail(active(null), now)).toBeNull();
     expect(dueReauthMail(lost(0, null), now)).toEqual({ stage: 'lost', deadline: now, seq: 0 });
+  });
+});
+
+// Thư đã xếp còn đúng mốc lúc gửi, lúc xếp lại (#312, review lỗi 1 và 2).
+describe('isCurrentMail', () => {
+  const mail = { stage: 'expiring_3d' as const, deadline: inMs(2 * DAY), seq: 0 };
+
+  it('hạn lệch vài giây sau khi làm mới token: vẫn là thư đó', () => {
+    expect(isCurrentMail(mail, { ...mail, deadline: inMs(2 * DAY + 1_500) })).toBe(true);
+    expect(isCurrentMail(mail, { ...mail, deadline: inMs(2 * DAY - 59 * MIN) })).toBe(true);
+  });
+
+  it('hạn gia hạn thật (cách từ 1 giờ): thư cũ', () => {
+    expect(isCurrentMail(mail, { ...mail, deadline: inMs(2 * DAY + HOUR) })).toBe(false);
+  });
+
+  it('mốc sau đã thay, hoặc không còn mốc nào: thư cũ', () => {
+    expect(isCurrentMail(mail, { ...mail, stage: 'expiring_1d' })).toBe(false);
+    expect(isCurrentMail(mail, null)).toBe(false);
+  });
+
+  it('thư lost: phải đúng lúc chuyển trạng thái và đúng nhịp', () => {
+    const lostMail = { stage: 'lost' as const, deadline: now, seq: 0 };
+    expect(isCurrentMail(lostMail, { ...lostMail })).toBe(true);
+    expect(isCurrentMail(lostMail, { ...lostMail, seq: 1 })).toBe(false);
+    expect(isCurrentMail(lostMail, { ...lostMail, deadline: inMs(1) })).toBe(false);
   });
 });

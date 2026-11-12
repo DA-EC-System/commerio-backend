@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import type { EventEnvelope, EventPayload } from '#src/modules/core/platform/index.ts';
 import { handleReauthMail, queueReauthMailsOnce } from '#src/modules/channel/channel/service/reauth-mail.ts';
-import { markNeedsReauth, tokenColumns } from '#src/modules/channel/channel/service/shop-tokens.ts';
+import type { TokenSet } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { markNeedsReauth, refreshShopTokenLocked, tokenColumns } from '#src/modules/channel/channel/service/shop-tokens.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { type MailTransport, setMailTransport } from '#src/shared/mail/index.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { asCompany } from '../../helpers/rls.ts';
 import { suspendMembership } from '../../helpers/state.ts';
+import { fakeAdapter } from './helpers.ts';
 
 type ReauthEvent = EventEnvelope<'channel.shop_reauth_mail', EventPayload<'channel.shop_reauth_mail'>>;
 type SentMail = Parameters<MailTransport['sendMail']>[0];
@@ -19,6 +23,7 @@ const ACCESS = 'ACCESS-BI-MAT-312';
 const REFRESH = 'REFRESH-BI-MAT-312';
 
 afterEach(() => setMailTransport(null));
+afterAll(() => resetAdapters());
 
 /** Transport giả ghi lại thư; `fail` thì ném lỗi như nodemailer. */
 function captureMail(fail?: object): SentMail[] {
@@ -34,11 +39,11 @@ function captureMail(fail?: object): SentMail[] {
 }
 
 /** Gian hàng Lazada `active` đã thiết lập, token thật đã mã hoá, hạn refresh sau `left` mili giây (null: token dán tay). */
-async function activeShop(companyId: string, left: number | null): Promise<string> {
+async function activeShop(companyId: string, left: number | null, platform = 'lazada'): Promise<string> {
   const { rows } = await db.query<{ id: string }>(
     `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at)
-     values ($1, 'lazada', $2, 'Shop Áo Thun', 'active', now()) returning id`,
-    [companyId, `seller-${randomUUID()}`],
+     values ($1, $3, $2, 'Shop Áo Thun', 'active', now()) returning id`,
+    [companyId, `seller-${randomUUID()}`, platform],
   );
   const id = rows[0]!.id;
   const cols = tokenColumns(id, {
@@ -119,6 +124,16 @@ describe('thư báo mất uỷ quyền gian hàng', () => {
         [companyId, shopId],
       ),
     ).rejects.toMatchObject({ code: '23514' });
+    // Thư trước hạn cùng mốc, hạn lệch dưới 1 giờ: EXCLUDE chặn (23P01); cách từ 1 giờ thì là mốc mới.
+    const early = (deadline: string) =>
+      db.query(
+        "insert into channel.shop_reauth_mails (company_id, shop_id, stage, deadline) values ($1, $2, 'expiring_1d', $3::timestamptz)",
+        [companyId, shopId, deadline],
+      );
+    await early('2026-11-20T00:00:00.000Z');
+    await expect(early('2026-11-20T00:00:00.500Z')).rejects.toMatchObject({ code: '23P01' });
+    await expect(early('2026-11-19T23:00:30Z')).rejects.toMatchObject({ code: '23P01' });
+    await early('2026-11-20T01:00:00Z');
   });
 
   it('token dán tay không có hạn: không có thư trước hạn', async () => {
@@ -193,8 +208,16 @@ describe('thư báo mất uỷ quyền gian hàng', () => {
     const sent = captureMail();
     await consume(shopId, mailId);
     expect(sent).toHaveLength(1);
+    // Lỗi vĩnh viễn (thư khác): không ném, ghi `failed`, việc nền không xếp lại.
+    const other = await activeShop(companyId, 10 * DAY);
+    await lose(companyId, other);
+    const otherMail = (await mails(other))[0]!;
     captureMail({ responseCode: 550 });
-    await expect(consume(shopId, mailId)).resolves.toBeUndefined();
+    await expect(consume(other, otherMail.id)).resolves.toBeUndefined();
+    const { rows } = await db.query<{ outcome: string }>('select outcome from channel.shop_reauth_mails where id = $1', [otherMail.id]);
+    expect(rows[0]!.outcome).toBe('failed');
+    await queueReauthMailsOnce(new Date(otherMail.deadline.getTime() + 30 * 60_000));
+    expect(await events(other)).toHaveLength(1);
   });
 
   it('gian hàng đã nối lại trước khi thư tới lượt: bỏ thư', async () => {
@@ -205,5 +228,159 @@ describe('thư báo mất uỷ quyền gian hàng', () => {
     const sent = captureMail();
     await consume(shopId, (await mails(shopId))[0]!.id);
     expect(sent).toEqual([]);
+  });
+  it('hạn tính lại lệch vài trăm mili giây sau mỗi lần làm mới token: mỗi mốc vẫn chỉ một thư (CSDL chặn mốc trùng)', async () => {
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY);
+    const now = new Date();
+    const drift = (ms: number) =>
+      db.query('update channel.shops set refresh_expires_at = refresh_expires_at + make_interval(secs => $2::float / 1000) where id = $1', [
+        shopId,
+        ms,
+      ]);
+    await queueReauthMailsOnce(now);
+    for (const ms of [500, -300, 2_000, 40]) {
+      await drift(ms);
+      await queueReauthMailsOnce(now);
+    }
+    expect((await mails(shopId)).map((m) => m.stage)).toEqual(['expiring_3d']);
+    const late = new Date(now.getTime() + DAY + HOUR);
+    await queueReauthMailsOnce(late);
+    for (const ms of [700, -1_200]) {
+      await drift(ms);
+      await queueReauthMailsOnce(late);
+    }
+    expect((await mails(shopId)).map((m) => m.stage)).toEqual(['expiring_3d', 'expiring_1d']);
+    expect(await events(shopId)).toHaveLength(2);
+  });
+
+  it('hạn được gia hạn thật (xa hơn ngưỡng lệch): tính lại từ đầu theo hạn mới', async () => {
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY);
+    await queueReauthMailsOnce(new Date());
+    await db.query("update channel.shops set refresh_expires_at = refresh_expires_at + interval '20 hours' where id = $1", [shopId]);
+    await queueReauthMailsOnce(new Date());
+    expect((await mails(shopId)).map((m) => m.stage)).toEqual(['expiring_3d', 'expiring_3d']);
+  });
+
+  it('thư đã xếp, rồi token làm mới làm hạn lệch nhỏ trước khi gửi: vẫn gửi, không bỏ nhầm là thư cũ', async () => {
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY);
+    await queueReauthMailsOnce(new Date());
+    await db.query("update channel.shops set refresh_expires_at = refresh_expires_at + interval '1.5 seconds' where id = $1", [shopId]);
+    const sent = captureMail();
+    await consume(shopId, (await mails(shopId))[0]!.id);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('sàn giữ hạn refresh cố định (Lazada): làm mới token nhiều lần không đổi hạn đã lưu, mỗi mốc một thư', async () => {
+    let n = 0;
+    registerAdapter(
+      'mock',
+      fakeAdapter({
+        refreshKeepsAuthDeadline: true,
+        async refreshToken(): Promise<TokenSet> {
+          n++;
+          // Như Lazada: `refresh_expires_in` là số giây còn lại, `Date.now() + giây` lệch theo độ trễ mỗi lần.
+          return {
+            accessToken: `acc-${n}`,
+            refreshToken: REFRESH,
+            accessExpiresAt: new Date(Date.now() + 7 * DAY),
+            refreshExpiresAt: new Date(Date.now() + 2 * DAY + n * 137),
+          };
+        },
+      }),
+    );
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY, 'mock');
+    const stored = async () =>
+      (await db.query<{ r: Date }>('select refresh_expires_at as r from channel.shops where id = $1', [shopId])).rows[0]!.r.getTime();
+    const before = await stored();
+    await queueReauthMailsOnce(new Date());
+    for (let i = 0; i < 3; i++) {
+      await db.query('update channel.shops set access_expires_at = now() where id = $1', [shopId]);
+      expect(await refreshShopTokenLocked(companyId, shopId)).toBe('refreshed');
+      await queueReauthMailsOnce(new Date());
+    }
+    expect(await stored()).toBe(before);
+    expect(n).toBe(3);
+    expect((await mails(shopId)).map((m) => m.stage)).toEqual(['expiring_3d']);
+  });
+
+  it('SMTP lỗi tạm kéo dài quá các lần thử của outbox: sau khi SMTP hồi, việc nền xếp lại và thư tới đúng một lần', async () => {
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY);
+    const now = new Date();
+    await queueReauthMailsOnce(now);
+    const mailId = (await mails(shopId))[0]!.id;
+    // Outbox thử 1 s, 5 s, 30 s rồi bỏ vào DLQ: sự kiện gốc không còn ai giao.
+    captureMail({ code: 'ECONNECTION' });
+    for (let i = 0; i < 3; i++) await expect(consume(shopId, mailId)).rejects.toMatchObject({ kind: 'transient' });
+    // Chưa quá ngưỡng chờ: chưa xếp lại.
+    await queueReauthMailsOnce(new Date(now.getTime() + 5 * 60_000));
+    expect(await events(shopId)).toHaveLength(1);
+    // Xếp lại lần thứ nhất mà SMTP vẫn hỏng.
+    await queueReauthMailsOnce(new Date(now.getTime() + 11 * 60_000));
+    expect(await events(shopId)).toHaveLength(2);
+    await expect(consume(shopId, mailId)).rejects.toMatchObject({ kind: 'transient' });
+    // SMTP hồi: lần xếp lại sau gửi được.
+    await queueReauthMailsOnce(new Date(now.getTime() + 30 * 60_000));
+    expect(await events(shopId)).toHaveLength(3);
+    const sent = captureMail();
+    await consume(shopId, mailId);
+    expect(sent).toHaveLength(1);
+    // Đã gửi: không xếp lại nữa, sự kiện cũ giao muộn cũng không gửi lần hai.
+    await queueReauthMailsOnce(new Date(now.getTime() + 60 * 60_000));
+    expect(await events(shopId)).toHaveLength(3);
+    await consume(shopId, mailId);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('xếp lại có giới hạn số lần; thư đã bị mốc sau thay thì không xếp lại', async () => {
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY);
+    const now = new Date();
+    await queueReauthMailsOnce(now);
+    for (let i = 1; i <= 20; i++) await queueReauthMailsOnce(new Date(now.getTime() + i * 15 * 60_000));
+    const [row] = (
+      await db.query<{ attempts: number; outcome: string | null }>(
+        "select attempts, outcome from channel.shop_reauth_mails where shop_id = $1 and stage = 'expiring_3d'",
+        [shopId],
+      )
+    ).rows;
+    expect(row).toMatchObject({ attempts: 8, outcome: 'failed' });
+    expect(await events(shopId)).toHaveLength(8);
+    // Thư `lost` nhịp 0 chưa gửi mà đã sang nhịp 1: nhịp 0 thành cũ, không xếp lại.
+    const lostShop = await activeShop(companyId, 10 * DAY);
+    await lose(companyId, lostShop);
+    const lostAt = (await mails(lostShop))[0]!.deadline.getTime();
+    await queueReauthMailsOnce(new Date(lostAt + 6 * HOUR + 60_000));
+    const rows = (
+      await db.query<{ seq: number; outcome: string | null; attempts: number }>(
+        'select seq, outcome, attempts from channel.shop_reauth_mails where shop_id = $1 order by seq',
+        [lostShop],
+      )
+    ).rows;
+    expect(rows).toEqual([
+      { seq: 0, outcome: 'stale', attempts: 1 },
+      { seq: 1, outcome: null, attempts: 1 },
+    ]);
+  });
+
+  it('commerio_app chỉ được cập nhật cột kết quả gửi, không sửa mốc, không xoá dòng', async () => {
+    const { companyId } = await createCompany();
+    const shopId = await activeShop(companyId, 2 * DAY);
+    await queueReauthMailsOnce(new Date());
+    const mailId = (await mails(shopId))[0]!.id;
+    await asCompany(companyId, async (c) => {
+      await c.query("update channel.shop_reauth_mails set outcome = 'sent', finished_at = now() where id = $1", [mailId]);
+    });
+    for (const sql of [
+      "update channel.shop_reauth_mails set stage = 'expiring_1d' where id = $1",
+      'update channel.shop_reauth_mails set deadline = now() where id = $1',
+      'delete from channel.shop_reauth_mails where id = $1',
+    ]) {
+      await expect(asCompany(companyId, (c) => c.query(sql, [mailId]))).rejects.toMatchObject({ code: '42501' });
+    }
   });
 });
