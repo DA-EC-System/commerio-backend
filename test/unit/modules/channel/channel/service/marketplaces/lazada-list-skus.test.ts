@@ -55,6 +55,28 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     ]);
   });
 
+  it('review vòng 2 N1: sàn trả thành công mà `data` vắng thì rejected `unexpected_response`, không coi là gian hàng rỗng', async () => {
+    const fetchFn = async () => new Response(JSON.stringify({ code: '0' }), { status: 200 });
+    await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });
+  });
+
+  it('review vòng 2 N1: trang thiếu trước khi đủ `total_products` thì rejected `incomplete_list`, không trả thiếu', async () => {
+    const real = fakeLazada(120, []);
+    const fetchFn = async (url: string | URL | Request) => {
+      const res = await real(url);
+      const body = (await res.json()) as { code: string; data: { total_products: number; products: unknown[] } };
+      // Trang 2 sàn chỉ trả 10 sản phẩm (đáng ra 50), vẫn báo tổng 120.
+      if (new URL(String(url)).searchParams.get('offset') === '50') body.data.products = body.data.products.slice(0, 10);
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'incomplete_list' });
+  });
+
+  it('gian hàng không có sản phẩm nào (sàn bỏ trường `products`, `total_products`) thì trả rỗng', async () => {
+    const fetchFn = async () => new Response(JSON.stringify({ code: '0', data: {} }), { status: 200 });
+    await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).resolves.toEqual([]);
+  });
+
   it('gian hàng quá 10000 sản phẩm thì báo lỗi thay vì trả thiếu', async () => {
     const adapter = createLazadaAdapter(config, fakeLazada(10_100, []));
     await expect(adapter.listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_products' });
@@ -63,8 +85,9 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
 
 // GetProducts (open.lazada.com, tra 12/11/2026): "update_after … Limits the returned products to those updated after or on
 // the specified date, given in ISO 8601 date format."; `filter=all` không gồm sản phẩm đã xoá nên gọi thêm `filter=deleted`.
+// Review vòng 2 N2: chỉ gọi `filter=all`; sản phẩm đã xoá do lần đọc trọn mỗi ngày dọn (tiết kiệm hạn mức chung của app).
 describe('Lazada: SKU của sản phẩm sửa từ một mốc (#220 đợt 2, bản sao SKU sàn)', () => {
-  it('gửi `update_after` ISO 8601 giờ VN cho cả `filter=all` và `filter=deleted`, trả kèm SKU đã xoá với state deleted', async () => {
+  it('gửi `update_after` ISO 8601 giờ VN, chỉ `filter=all` (một lời gọi khi ít sản phẩm sửa)', async () => {
     const calls: URLSearchParams[] = [];
     const fetchFn = async (url: string | URL | Request) => {
       const q = new URL(String(url)).searchParams;
@@ -83,11 +106,7 @@ describe('Lazada: SKU của sản phẩm sửa từ một mốc (#220 đợt 2, 
     const skus = await createLazadaAdapter(config, fetchFn).listSkusChanged!('t', new Date('2026-11-12T01:00:00Z'));
     expect(calls.map((q) => [q.get('filter'), q.get('update_after'), q.get('offset')])).toEqual([
       ['all', '2026-11-12T08:00:00+07:00', '0'],
-      ['deleted', '2026-11-12T08:00:00+07:00', '0'],
     ]);
-    expect(skus.map((s) => [s.externalSkuId, s.state])).toEqual([
-      ['11', 'live'],
-      ['21', 'deleted'],
-    ]);
+    expect(skus.map((s) => [s.externalSkuId, s.state])).toEqual([['11', 'live']]);
   });
 });

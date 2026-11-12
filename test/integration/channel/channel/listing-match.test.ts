@@ -51,6 +51,8 @@ let listSkusCalls = 0;
 const changedSince: Date[] = [];
 let changedResult: RemoteSku[] = [];
 let changedFails = false;
+/** Sàn trả danh sách rỗng ở lần đọc trọn (review vòng 2 N1). */
+let listSkusEmpty = false;
 /** SKU mới trên sàn chưa vào bản sao: `match` tải lại bản sao trước (bản sao chỉ làm mới khi đồng bộ, Tải lại). */
 let dirty = false;
 /** SKU mới trên sàn, SKU người bán khác SKU Commerio (lý do phải ghép tay). */
@@ -78,7 +80,7 @@ registerAdapter(
     },
     listSkus: async () => {
       listSkusCalls++;
-      return remote;
+      return listSkusEmpty ? [] : remote;
     },
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
     listSkusChanged: async (_t, since) => {
@@ -570,7 +572,8 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
   it('Lượt đồng bộ listing định kỳ đọc sản phẩm sửa từ mốc trừ 2 phút: SKU mới vào, SKU đã xoá ra; sàn lỗi thì lượt đồng bộ vẫn xong', async () => {
     const id = await freshShop();
     await remoteSkusOf(id);
-    const mark = new Date(Date.now() - 10 * 60_000);
+    // Đọc theo giờ sửa mỗi giờ một lần (review vòng 2 N2): mốc phải cũ hơn 1 giờ.
+    const mark = new Date(Date.now() - 70 * 60_000);
     await testPool().query('update channel.shops set remote_skus_changed_since = $2 where id = $1', [id, mark]);
     const added = newRemote();
     dirty = false;
@@ -585,12 +588,59 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
     const { rows } = await testPool().query('select remote_skus_changed_since from channel.shops where id = $1', [id]);
     expect(rows[0].remote_skus_changed_since.getTime()).toBeGreaterThan(mark.getTime());
 
+    await testPool().query('update channel.shops set remote_skus_changed_since = $2 where id = $1', [id, mark]);
     changedFails = true;
     try {
       await expect(runListingSync(port, { companyId: company.companyId, shopId: id })).resolves.toBeUndefined();
     } finally {
       changedFails = false;
     }
+  });
+
+  it('Review vòng 2 N2: lần đọc trước chưa quá 1 giờ thì lượt đồng bộ listing không gọi sàn để làm mới bản sao', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    await testPool().query("update channel.shops set remote_skus_changed_since = now() - interval '30 minutes' where id = $1", [id]);
+    const before = listSkusCalls;
+    changedSince.length = 0;
+    await runListingSync(port, { companyId: company.companyId, shopId: id });
+    expect(changedSince).toEqual([]);
+    expect(listSkusCalls).toBe(before);
+  });
+
+  it('Review vòng 2 N1: lần đọc trọn ra rỗng trong khi lần trước có SKU thì không xoá bản sao; rỗng lần thứ hai liền mới xoá', async () => {
+    const id = await freshShop();
+    await remoteSkusOf(id);
+    const count = async () => Number((await testPool().query('select count(*) from channel.remote_skus where shop_id = $1', [id])).rows[0].count);
+    const had = await count();
+    expect(had).toBeGreaterThan(0);
+    const refresh = async () => {
+      // Lùi cả đồng hồ của bản sao 2 phút, như thể lần đọc trước đã qua khoảng chờ 60 giây.
+      await testPool().query("update channel.shops set remote_skus_synced_at = remote_skus_synced_at - interval '2 minutes' where id = $1", [id]);
+      await testPool().query("update channel.remote_skus set seen_at = seen_at - interval '2 minutes' where shop_id = $1", [id]);
+      return as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+    };
+    listSkusEmpty = true;
+    try {
+      expect((await refresh()).status).toBe(200);
+      expect(await count()).toBe(had);
+      expect((await refresh()).status).toBe(200);
+      expect(await count()).toBe(0);
+    } finally {
+      listSkusEmpty = false;
+    }
+  });
+
+  it('Review vòng 2 N3: SKU về thiếu nhãn biến thể thì giữ tiêu đề cũ trong bản sao, vẫn cập nhật tồn, trạng thái', async () => {
+    const id = await freshShop();
+    const r = newRemote({ title: 'Áo - Trắng, M' });
+    dirty = false;
+    await remoteSkusOf(id);
+    await testPool().query("update channel.shops set remote_skus_changed_since = now() - interval '70 minutes' where id = $1", [id]);
+    changedResult = [{ ...r, title: `Áo - ${r.sellerSku}`, labelMissing: true, quantity: 9, state: 'inactive' }];
+    await runListingSync(port, { companyId: company.companyId, shopId: id });
+    const { rows } = await testPool().query('select title, quantity, state from channel.remote_skus where shop_id = $1 and external_sku_id = $2', [id, r.externalSkuId]);
+    expect(rows[0]).toEqual({ title: 'Áo - Trắng, M', quantity: 9, state: 'inactive' });
   });
 
   it('Lần đọc trọn đã quá 24 giờ thì lượt định kỳ đọc trọn thay vì đọc theo giờ sửa', async () => {

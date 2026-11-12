@@ -112,6 +112,12 @@ export interface RemoteSku {
    */
   variantLabel?: string | null;
   /**
+   * `true` khi SKU thuộc sản phẩm nhiều SKU mà lần đọc này không lấy được nhãn biến thể (vượt trần đọc chi tiết, sàn lỗi,
+   * `labels: false`): `title` chỉ là "tên - SKU người bán". Bản sao SKU sàn khi đó giữ tiêu đề cũ đã có nhãn (review #309
+   * vòng 2 N3). Sàn có nhãn sẵn trong danh sách (Lazada) hoặc sản phẩm một SKU thì thiếu.
+   */
+  labelMissing?: boolean;
+  /**
    * URL ảnh đầu tiên của sản phẩm trên sàn, cho bảng ghép lúc thiết lập (#282, Documents/21 §18.7.5). Thiếu hoặc null khi
    * sàn không trả ảnh hay adapter không đọc (TikTok: `labels: false`, quá trần đọc chi tiết, Get Product lỗi).
    */
@@ -357,16 +363,19 @@ export interface MarketplaceAdapter {
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
   /**
-   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5). Gian hàng quá giới hạn đọc của sàn
-   * thì ném `rejected`, không trả thiếu. `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
+   * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5) và lần đọc trọn của bản sao SKU sàn
+   * (#220). Gian hàng quá giới hạn đọc của sàn thì ném `rejected`, không trả thiếu: số sản phẩm đọc được ít hơn tổng sàn
+   * báo (trang thiếu, trang rỗng giữa chừng) thì `incomplete_list`, phản hồi thành công mà không có danh sách thì
+   * `unexpected_response` (review #309 vòng 2 N1; bản sao xoá SKU không thấy nên không được nhận danh sách thiếu). `title` phân biệt được các SKU của cùng một sản phẩm khi sàn cho đọc nhãn biến thể
    * (TikTok: "tên sản phẩm - giá trị thuộc tính bán hàng", #282), kèm `imageUrl` khi có. `labels: false` khi chỉ cần
    * đếm hay không hiển thị: bỏ các lời gọi đọc nhãn, ảnh. `skipSellerSkus`: SKU Commerio bên gọi sẽ ghép theo SKU; sản phẩm
    * mà mọi SKU nằm trong đó không cần nhãn nên adapter không đọc nhãn, ảnh cho nó (`variantLabel`, `imageUrl` null).
    */
   listSkus?(accessToken: string, opts?: { labels?: boolean; skipSellerSkus?: ReadonlySet<string> }): Promise<RemoteSku[]>;
   /**
-   * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), kể cả sản phẩm đã xoá (`state: 'deleted'`), có
-   * nhãn biến thể như `listSkus`. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
+   * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), có nhãn biến thể như `listSkus`. Sản phẩm đã
+   * xoá (`state: 'deleted'`) trả khi sàn trả trong cùng lời gọi (TikTok); Lazada không gọi thêm `filter=deleted` để giữ hạn
+   * mức (review vòng 2 N2), lần đọc trọn mỗi ngày dọn. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
    * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn).
    */
   listSkusChanged?(accessToken: string, since: Date): Promise<RemoteSku[]>;

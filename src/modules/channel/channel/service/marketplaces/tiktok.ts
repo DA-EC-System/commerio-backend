@@ -170,6 +170,8 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
       sellerSku,
       title: skus.length > 1 ? `${title} - ${variantLabel || sellerSku || String(s.id)}` : title,
       variantLabel,
+      // Bản sao SKU sàn giữ tiêu đề có nhãn đã lưu thay vì ghi đè bằng "tên - SKU người bán" (review #309 vòng 2 N3).
+      ...(skus.length > 1 && !variantLabel && { labelMissing: true }),
       imageUrl,
       state: tiktokRemoteState(status, s),
       rejectReason: null,
@@ -372,16 +374,31 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     };
   }
 
-  async function searchProducts(accessToken: string, filter: Row): Promise<Row[]> {
+  /**
+   * Lật hết Search Products theo `filter`. `complete` (đọc trọn cho bản sao SKU sàn, bản sao xoá SKU không thấy; review
+   * #309 vòng 2 N1): trang không có mảng `products` thì `rejected` `unexpected_response`; đọc xong mà số sản phẩm khác
+   * nhau ít hơn `total_count` của trang đầu (sàn trả trang rỗng giữa chừng dù `next_page_token` khác rỗng) thì
+   * `rejected` `incomplete_list`.
+   */
+  async function searchProducts(accessToken: string, filter: Row, opts?: { complete?: boolean }): Promise<Row[]> {
     const out: Row[] = [];
     let pageToken: string | undefined;
+    let total: number | null = null;
+    const done = () => {
+      if (opts?.complete && total !== null && new Set(out.map((p) => String(p.id))).size < total) {
+        throw new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${out.length}, thử lại sau`);
+      }
+      return out;
+    };
     for (let page = 0; page < MAX_PAGES; page++) {
-      const { products, next, totalCount } = await searchPage(accessToken, filter, PRODUCT_PAGE, pageToken);
+      const { products, next, totalCount, listed } = await searchPage(accessToken, filter, PRODUCT_PAGE, pageToken);
+      if (opts?.complete && !listed) throw new MarketplaceError('rejected', 'unexpected_response');
+      if (page === 0) total = totalCount;
       if (page === 0 && (totalCount ?? 0) > MAX_PRODUCTS) {
         throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCTS} sản phẩm, sàn không cho đọc hết`);
       }
       out.push(...products);
-      if (!next || products.length === 0) return out;
+      if (!next || products.length === 0) return done();
       // Sàn trả lại con trỏ vừa gửi: đọc tiếp sẽ lặp, dừng thì trả thiếu. Báo lỗi như gian hàng quá giới hạn (hợp đồng
       // `listSkus`: không trả thiếu).
       if (next === pageToken) throw new MarketplaceError('rejected', 'page_token_repeated', 'Sàn trả lại trang sản phẩm vừa đọc');
@@ -479,7 +496,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // nhãn biến thể, ảnh đầu tiên; bỏ sản phẩm đã xoá. `labels: false` (hoàn tất bằng `decisions`) không
     // gọi Get Product: không nhãn, không ảnh. `skipSellerSkus`: sản phẩm ghép được theo SKU không đọc chi tiết.
     async listSkus(accessToken, opts) {
-      const products = (await searchProducts(accessToken, { status: 'ALL' })).filter((p) => p.status !== 'DELETED');
+      const products = (await searchProducts(accessToken, { status: 'ALL' }, { complete: true })).filter((p) => p.status !== 'DELETED');
       const details = opts?.labels === false ? undefined : await productDetails(accessToken, products, opts?.skipSellerSkus);
       return products.flatMap((p) => skusOf(p, details)).filter((s) => s.state !== 'deleted');
     },

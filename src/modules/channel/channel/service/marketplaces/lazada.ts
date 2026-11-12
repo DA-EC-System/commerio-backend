@@ -549,6 +549,42 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    * `delivery_option_standard`, `Delivery_Option_Instant` = "Yes" khi không gửi (Documents/tich-hop-san/lazada.md §11.4),
    * nên gửi kèm giá trị cũ để không đổi cách giao người bán đã chọn.
    */
+  /**
+   * Mọi sản phẩm `filter=all` (sửa từ `since` khi có), lật `offset` 50 một trang tới trang thiếu. Phản hồi thành công mà
+   * `data` không phải object thì `rejected` `unexpected_response` (như `countRemote`), không coi là hết. Đọc trọn
+   * (`since` null): số sản phẩm khác nhau đọc được ít hơn `total_products` của trang đầu thì `rejected` `incomplete_list`,
+   * vì bản sao SKU sàn xoá SKU không thấy (review #309 vòng 2 N1). Đọc theo giờ sửa không kiểm tổng: tài liệu không nói
+   * `total_products` có theo `update_after` không, và đọc thiếu ở đây chỉ làm chậm cập nhật, không xoá gì.
+   */
+  async function productsSince(accessToken: string, since: Date | null): Promise<LazadaProduct[]> {
+    const out = new Map<string, LazadaProduct>();
+    let total: number | null = null;
+    for (let offset = 0; ; offset += SKU_LIST_BATCH) {
+      if (offset > MAX_PRODUCT_OFFSET) {
+        const what = since ? 'sản phẩm sửa từ mốc' : 'sản phẩm';
+        throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} ${what}, sàn không cho đọc hết`);
+      }
+      const params: Record<string, string> = { access_token: accessToken, filter: 'all', limit: String(SKU_LIST_BATCH), offset: String(offset) };
+      if (since) params.update_after = vnTime(since);
+      const body = await call(config.apiUrl, '/products/get', params, 'GET');
+      if (typeof body.data !== 'object' || body.data === null || Array.isArray(body.data)) throw new MarketplaceError('rejected', 'unexpected_response');
+      const data = body.data as { products?: unknown; total_products?: unknown };
+      if (data.products !== undefined && !Array.isArray(data.products)) throw new MarketplaceError('rejected', 'unexpected_response');
+      const products = (data.products ?? []) as LazadaProduct[];
+      if (offset === 0) {
+        const raw = data.total_products;
+        const n = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+        total = Number.isSafeInteger(n) && n >= 0 ? n : null;
+      }
+      for (const p of products) out.set(String(p.item_id), p);
+      if (products.length < SKU_LIST_BATCH) break;
+    }
+    if (!since && total !== null && out.size < total) {
+      throw new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${out.size}, thử lại sau`);
+    }
+    return [...out.values()];
+  }
+
   async function deliveryOptions(accessToken: string, itemId: string): Promise<Record<string, string>> {
     const body = await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET');
     const attrs = ((body.data as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {}) as Record<string, unknown>;
@@ -697,37 +733,14 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     // Lật `offset` (sàn không nói thứ tự khi lọc theo ngày nên không lật theo ngày được); bỏ sản phẩm đã xoá (#198).
     async listSkus(accessToken): Promise<RemoteSku[]> {
-      const out: RemoteSku[] = [];
-      for (let offset = 0; ; offset += SKU_LIST_BATCH) {
-        if (offset > MAX_PRODUCT_OFFSET) {
-          throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} sản phẩm, sàn không cho đọc hết`);
-        }
-        const params = { access_token: accessToken, filter: 'all', limit: String(SKU_LIST_BATCH), offset: String(offset) };
-        const body = await call(config.apiUrl, '/products/get', params, 'GET');
-        const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
-        out.push(...products.flatMap(skusOf).filter((s) => s.state !== 'deleted'));
-        if (products.length < SKU_LIST_BATCH) return out;
-      }
+      return (await productsSince(accessToken, null)).flatMap(skusOf).filter((s) => s.state !== 'deleted');
     },
     // GetProducts (open.lazada.com, tra 12/11/2026): "update_after String No Limits the returned products to those updated
-    // after or on the specified date, given in ISO 8601 date format." `filter=all` không gồm sản phẩm đã xoá (gọi thật
-    // 10/11/2026) nên đọc thêm `filter=deleted` cùng mốc. Tài liệu không nói thứ tự khi lọc theo ngày nên lật `offset` trong
-    // tập đã lọc ("The maximum offset is 10000"; tập sửa trong một lượt nhỏ).
+    // after or on the specified date, given in ISO 8601 date format." Chỉ `filter=all` (không gồm sản phẩm đã xoá, gọi thật
+    // 10/11/2026): không gọi thêm `filter=deleted` để giữ hạn mức gọi chung của app (review #309 vòng 2 N2); SKU đã xoá
+    // trên sàn rời bản sao ở lần đọc trọn mỗi ngày hoặc khi bấm Tải lại.
     async listSkusChanged(accessToken, since): Promise<RemoteSku[]> {
-      const out: RemoteSku[] = [];
-      for (const filter of ['all', 'deleted'] as const) {
-        for (let offset = 0; ; offset += SKU_LIST_BATCH) {
-          if (offset > MAX_PRODUCT_OFFSET) {
-            throw new MarketplaceError('rejected', 'too_many_products', `Hơn ${MAX_PRODUCT_OFFSET} sản phẩm sửa từ mốc, sàn không cho đọc hết`);
-          }
-          const params = { access_token: accessToken, filter, update_after: vnTime(since), limit: String(SKU_LIST_BATCH), offset: String(offset) };
-          const body = await call(config.apiUrl, '/products/get', params, 'GET');
-          const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
-          out.push(...products.flatMap(skusOf).map((s) => (filter === 'deleted' ? { ...s, state: 'deleted' as const } : s)));
-          if (products.length < SKU_LIST_BATCH) break;
-        }
-      }
-      return out;
+      return (await productsSince(accessToken, since)).flatMap(skusOf);
     },
     async updatePriceQuantity(accessToken, items) {
       const results: PerSkuResult[] = [];
