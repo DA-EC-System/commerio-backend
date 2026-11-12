@@ -29,7 +29,7 @@ import {
   tokenExpiringSoon,
 } from '../domain/shop.ts';
 import { DELISTED_REASON, type ListingStatus, type RemoteState } from '../domain/listing.ts';
-import { currentListingRows, insertListing } from '../repository/listings.ts';
+import { currentListingRows, currentUnmanagedRows, insertListing } from '../repository/listings.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
@@ -617,7 +617,9 @@ const RELIST_STATUS: Record<RemoteState, ListingStatus | null> = {
 async function relistAfterReconnect(companyId: string, shopId: string): Promise<number> {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(companyId, fn);
   try {
-    const rows = (await inCompany(() => currentListingRows(shopId))).filter(
+    // Dòng "không quản tồn" (không có biến thể) lấy theo mã SKU sàn; giữ quyết định duyệt cũ vì cùng SKU sàn, CEO đã
+    // duyệt, ngắt không phải người dùng đổi ý (#220 đợt 2, Thành chốt 12/11/2026).
+    const rows = (await inCompany(async () => [...(await currentListingRows(shopId)), ...(await currentUnmanagedRows(shopId))])).filter(
       (r) => r.status === 'delisted' && r.delistedByDisconnect && r.sellerSku,
     );
     if (!rows.length) return 0;
@@ -633,7 +635,11 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
           const created = await insertListing({
             companyId,
             shopId,
+            mode: row.mode,
             variantId: row.variantId,
+            approvedBy: row.approvedBy,
+            mappingRequestedBy: row.mappingRequestedBy,
+            mappingSelfApproved: row.mappingSelfApproved,
             sellerSku: row.sellerSku,
             status,
             externalProductId: r.externalProductId,

@@ -118,7 +118,19 @@ const applyPatch = (variantId: string | null, requestedBy: string, approvedBy: s
   priceSyncError: null,
 });
 
-const conflict = () => new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
+/** 409 `version_conflict` kèm `current` là listing mới nhất (null khi không còn), như mọi route sửa có `version`. */
+const conflict = (current: ListingRow | undefined, names?: Map<string, string>) =>
+  new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại', { current: current ? toListing(current, names) : null });
+/** Đọc lại listing chưa gỡ của SKU sàn rồi báo 409. Gọi trong `withCompany`. */
+const conflictAt = async (shopId: string, externalSkuId: string) => {
+  const row = await findListingByExternalSku(shopId, externalSkuId);
+  return conflict(row, row ? await requesterNames([row]) : undefined);
+};
+/** Đọc lại listing theo id rồi báo 409. Gọi trong `withCompany`. */
+const conflictById = async (id: string) => {
+  const row = await findListingById(id);
+  return conflict(row, row ? await requesterNames([row]) : undefined);
+};
 
 /**
  * `POST /shops/:id/listings/match` (§18.3, §18.6.5). `pending: true` (202) khi ghép chờ CEO duyệt. Thứ tự kiểm: gian hàng
@@ -162,7 +174,7 @@ export async function matchListing(
       await lockShopRow(shop.id);
       const row = await findListingByExternalSku(shop.id, externalSkuId);
       // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
-      if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict();
+      if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict(row, row ? await requesterNames([row]) : undefined);
       if (variantId) await assertVariantFree(port, shop.id, variantId, row?.id ?? null);
       if (row && effectiveMode(row) === (variantId ? 'mapped' : 'unmanaged') && row.variantId === variantId) {
         return { row, pending: false };
@@ -185,7 +197,7 @@ export async function matchListing(
               platformStock: remote!.quantity,
               ...pending,
             });
-        if (!saved) throw conflict();
+        if (!saved) throw await conflictAt(shop.id, externalSkuId);
         await recordTransition({ entityType: ENTITY, entityId: saved.id, from: row?.status ?? null, to: saved.status, action: 'request_mapping', actorId: actor.accountId });
         return { row: saved, pending: true };
       }
@@ -202,7 +214,7 @@ export async function matchListing(
             status: 'live',
             platformStock: remote!.quantity,
           });
-      if (!saved) throw conflict();
+      if (!saved) throw await conflictAt(shop.id, externalSkuId);
       await recordTransition({
         entityType: ENTITY,
         entityId: saved.id,
@@ -220,7 +232,7 @@ export async function matchListing(
     // Hai request ghép cùng lúc: unique của bảng chặn dòng thứ hai (lỗi 23505 làm hỏng giao dịch nên bắt ngoài).
     const constraint = pgError(err).constraint;
     if (constraint === 'listings_shop_variant_uq') throw invalid('variantId', 'Biến thể đã ghép SKU sàn khác của gian hàng này');
-    if (constraint === 'listings_shop_external_sku_uq') throw conflict();
+    if (constraint === 'listings_shop_external_sku_uq') throw await inCompany(() => conflictAt(shop.id, externalSkuId));
     throw err;
   }
 }
@@ -284,13 +296,13 @@ async function decide(
         { version: row.version, status: row.status },
         applyPatch(row.pendingVariantId, row.pendingRequestedBy, actor.accountId, selfApproved),
       );
-      if (!saved) throw conflict();
+      if (!saved) throw await conflictById(row.id);
       await recordTransition({ ...transition, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: row.sellerSku } });
       return toListing(saved);
     }
     const reason = input.reason ?? null;
     if (effectiveMode(row) === null) {
-      if (!(await deleteListing(row.id, row.version))) throw conflict();
+      if (!(await deleteListing(row.id, row.version))) throw await conflictById(row.id);
       await recordTransition({ ...transition, action: 'reject_mapping', reason });
       return { ...toListing(row), pendingMapping: null };
     }
@@ -299,7 +311,7 @@ async function decide(
       { version: row.version, status: row.status },
       { pendingVariantId: null, pendingMode: null, pendingRequestedBy: null, pendingRequestedAt: null },
     );
-    if (!saved) throw conflict();
+    if (!saved) throw await conflictById(row.id);
     await recordTransition({ ...transition, action: 'reject_mapping', reason });
     return toListing(saved);
   });

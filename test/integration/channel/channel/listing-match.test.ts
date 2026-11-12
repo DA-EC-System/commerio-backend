@@ -446,3 +446,20 @@ describe('đợt 2: đơn về giữa lúc đổi ghép (review #309 N1)', () =>
     expect(res.status).toBe(202);
   });
 });
+
+describe('đợt 2: 409 `version_conflict` kèm `current`', () => {
+  it('Listing đổi giữa lúc ghép đọc và lúc ghi → 409 `version_conflict` có `current` là listing mới nhất', async () => {
+    const { r, listing } = await mapped();
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
+        await holder.query('update channel.listings set version = version + 1 where id = $1', [listing.id]);
+      },
+      1,
+      () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id }).then((x) => x),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/version_conflict$/);
+    expect(ChannelListing.parse(res.body.current)).toMatchObject({ id: listing.id, version: listing.version + 1 });
+  });
+});

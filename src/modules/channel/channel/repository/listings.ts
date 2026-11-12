@@ -83,6 +83,19 @@ export async function currentListingRows(shopId: string): Promise<ListingRow[]> 
     .orderBy(listings.variantId, ...CURRENT_FIRST);
 }
 
+/**
+ * Dòng "không quản tồn" hiện hành theo mã SKU sàn (không có biến thể nên `currentListingRows` không gồm): dòng chưa gỡ,
+ * không có thì dòng gỡ mới nhất. Cho nối lại gian hàng (#220 đợt 2).
+ */
+export async function currentUnmanagedRows(shopId: string): Promise<ListingRow[]> {
+  const rows = await getDb()
+    .selectDistinctOn([listings.externalSkuId])
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), isNotNull(listings.externalSkuId)))
+    .orderBy(listings.externalSkuId, ...CURRENT_FIRST);
+  return rows.filter((r) => r.mode === 'unmanaged');
+}
+
 export async function insertListing(values: typeof listings.$inferInsert): Promise<ListingRow> {
   const [row] = await getDb().insert(listings).values(values).returning();
   return row!;
