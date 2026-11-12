@@ -230,6 +230,20 @@ export async function markStockPushed(id: string): Promise<void> {
 }
 
 /** Lỗi lượt kéo đơn còn mở ghi vào `last_error` bắt đầu bằng câu này; lượt xong thì xoá đúng lỗi đó (#198 P3). */
+/**
+ * Lượt lấy đơn bắt đầu lúc `startedAt` đã chạy xong trọn (#223): đặt `orders_pulled_ok_at`, không lùi. Chỉ khi gian hàng
+ * còn `active` và còn đúng `version` đọc lúc bắt đầu lượt: mất uỷ quyền hay nối lại giữa lượt (đều tăng `version`) thì lượt
+ * này không chứng minh được đơn lúc đứt đã về, bỏ mốc. Không tăng `version` (việc nền, như `markStockPushed`).
+ */
+export async function markOrdersPulled(id: string, version: number, startedAt: Date): Promise<boolean> {
+  const rows = await getDb()
+    .update(shops)
+    .set({ ordersPulledOkAt: sql`greatest(coalesce(${shops.ordersPulledOkAt}, ${startedAt}), ${startedAt})` })
+    .where(and(eq(shops.id, id), eq(shops.version, version), eq(shops.status, 'active')))
+    .returning({ id: shops.id });
+  return rows.length > 0;
+}
+
 export const OPEN_ORDER_PULL_ERROR = 'Lượt kéo đơn còn mở chưa xong';
 
 /** Lượt kéo đơn còn mở xong (#198 A10): từ giờ `syncListings` mới đẩy tồn. `skipped`: số đơn bỏ vì trần. Không tăng `version`. */

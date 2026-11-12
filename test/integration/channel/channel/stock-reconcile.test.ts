@@ -118,6 +118,8 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  // Lượt lấy đơn gần nhất vừa xong trọn: số app tin được (#223).
+  await testPool().query("update channel.shops set status = 'active', orders_pulled_ok_at = now() where id = $1", [shopId]);
   for (const v of [a, b]) {
     available.set(v.id, 5);
     remote.set(v.sku, { quantity: 5 });
@@ -259,7 +261,7 @@ describe('đẩy tồn khi chia hàng xong (fulfillment.allocation_done)', () =>
   });
 
   it('US-GH-08 dòng 5, E28: gian hàng cần kết nối lại → việc không đẩy, listing chờ; nối lại thì lấy đơn xong mới đẩy', async () => {
-    await testPool().query(`update channel.shops set status = 'needs_reauth' where id = $1`, [shopId]);
+    await testPool().query(`update channel.shops set status = 'needs_reauth', orders_pulled_ok_at = null where id = $1`, [shopId]);
     available.set(a.id, 1);
     await withCompany(company.companyId, () => onAvailableChanged({ variantIds: [a.id] }));
     await runStockPush(port, { companyId: company.companyId, shopId });
@@ -274,6 +276,12 @@ describe('đẩy tồn khi chia hàng xong (fulfillment.allocation_done)', () =>
       [shopId],
     );
     expect(jobs.rowCount).toBe(1);
+    // Việc đẩy tồn chạy trước lượt lấy đơn (vd một `allocation_done` khác): chỉ đẩy giá, không gửi tồn (#223, E28).
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    expect(sentFor(a.sku)).not.toHaveProperty('quantity');
+    expect(await listing(a.id)).toMatchObject({ stock_sync: 'pending' });
+    updatePriceQuantity.mockClear();
+    calls.length = 0;
     // Lượt đồng bộ mà việc đó chạy:
     await sync();
     expect(calls.indexOf('listOrders')).toBeLessThan(calls.indexOf('updatePriceQuantity'));

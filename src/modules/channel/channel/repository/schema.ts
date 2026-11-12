@@ -78,6 +78,12 @@ export const shops = channelSchema.table(
      * nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
      */
     allocationStocktakeId: uuid('allocation_stocktake_id'),
+    /**
+     * Giờ bắt đầu của lượt lấy đơn gần nhất chạy xong trọn (không lỗi, không còn trang), không lùi (#223). Mất uỷ quyền,
+     * chưa có mốc này hoặc mốc cũ hơn `ORDERS_STALE_MS` là "đơn chưa cập nhật": SKU có listing trên gian hàng này không
+     * được cập nhật tồn lên mọi gian hàng của công ty (`domain/shop.ts` `ordersStale`; Documents/19 `shops`, 21 §18.6.6).
+     */
+    ordersPulledOkAt: timestamp('orders_pulled_ok_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
@@ -103,6 +109,9 @@ export const shops = channelSchema.table(
       'shops_allocation_pending',
       sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
     ),
+    check('shops_orders_pulled_ok_at', sql`${t.ordersPulledOkAt} is null or ${t.orderCutoffAt} is not null`),
+    // Mất uỷ quyền thì xoá mốc: nối lại là "đơn chưa cập nhật" tới khi lấy đơn xong trọn (25 E28, #223).
+    check('shops_reauth_orders_pulled', sql`${t.status} <> 'needs_reauth' or ${t.ordersPulledOkAt} is null`),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
   ],

@@ -38,15 +38,11 @@ export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
 }
 
 /**
- * Đẩy tồn, giá đang chờ (#223). Mất uỷ quyền thì không giữ việc: listing vẫn `stock_sync = pending`, nối lại thì lượt
- * `channel.listing_sync` lấy đơn, đối chiếu rồi mới đẩy (25 E28); việc giữ chạy lại lúc nối sẽ đẩy trước khi lấy đơn.
+ * Đẩy tồn, giá đang chờ (#223). Sàn từ chối token thì việc được giữ (`HoldJob`, đếm vào `Shop.pendingJobs`, 21 §18.6.6):
+ * nối lại chạy tiếp nhưng chỉ đẩy giá, vì gian hàng mất mốc lấy đơn (`untrustedVariants`) tới khi lấy đơn xong trọn (25 E28).
  */
-export async function runStockPush(port: ProductPort, job: ShopJob): Promise<void> {
-  try {
-    await onActiveShop(job, 'đẩy tồn', () => pushPending(port, job.companyId, job.shopId));
-  } catch (err) {
-    if (!(err instanceof HoldJob)) throw err;
-  }
+export function runStockPush(port: ProductPort, job: ShopJob): Promise<void> {
+  return onActiveShop(job, 'đẩy tồn', () => pushPending(port, job.companyId, job.shopId));
 }
 
 export function runOrderPull(job: ShopJob): Promise<void> {

@@ -313,6 +313,8 @@ export async function finishSetup(
         unmatchedSkuCount: offered.length - picked.length,
         openOrdersPulledAt: null,
         stockPushedAt: null,
+        // Mốc lấy đơn mới: lượt lấy đơn đầu tiên đặt lại (#223).
+        ordersPulledOkAt: null,
         ...returnWindowDays,
       },
     );

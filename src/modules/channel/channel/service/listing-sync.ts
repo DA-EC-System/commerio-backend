@@ -31,8 +31,9 @@ import { type MarketplaceAdapter, MarketplaceError, type PerSkuResult, type Pric
 import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
-import { sendStockPush } from './shop-jobs.ts';
+import { sendOrderPull, sendStockPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, shopSession } from './shops.ts';
+import { shopOrdersStale, untrustedVariants } from './stock-trust.ts';
 
 /**
  * Listing đọc trạng thái từ sàn (có mã sàn): duyệt, từ chối, khoá, gỡ khoá; `rejected`, `push_failed` còn sản phẩm trên
@@ -79,7 +80,9 @@ export async function onAvailableChanged(event: EventPayload<'fulfillment.alloca
 }
 
 /**
- * Đẩy tồn, giá đang chờ của gian hàng, không đọc sàn (việc `channel.stock_push`). Gian hàng giữ tồn (#198) thì chỉ đẩy giá.
+ * Đẩy tồn, giá đang chờ của gian hàng, không đọc sàn (việc `channel.stock_push`). Gian hàng giữ tồn (#198) thì chỉ đẩy giá;
+ * SKU chưa tin được (`untrustedVariants`, #223) không gửi tồn. Đơn của chính gian hàng chưa cập nhật thì xếp thêm một lượt
+ * lấy đơn để mở lại sớm (lấy đơn xong trọn tự xếp lại việc này).
  */
 export async function pushPending(port: ProductPort, companyId: string, shopId: string): Promise<SyncSummary> {
   const inCompany: InCompany = (fn) => withCompany(companyId, fn);
@@ -87,6 +90,7 @@ export async function pushPending(port: ProductPort, companyId: string, shopId: 
   const summary: SyncSummary = { checked: 0, changed: 0, pushed: 0, errors: 0 };
   const rows = await inCompany(() => listListingRows(session.shop.id));
   await pushDue(port, inCompany, session, rows, holdsStock(session.shop), new Map(), summary);
+  if (shopOrdersStale(session.shop)) await inCompany(() => sendOrderPull(companyId, shopId));
   return summary;
 }
 
@@ -183,9 +187,11 @@ async function reconcileStock(
   let changed = false;
   await inCompany(async () => {
     const available = await port.availableOf(candidates.map((r) => r.variantId!));
+    // SKU chưa tin được (#223): số app chưa trừ đơn bán ở gian hàng khác, so với sàn sẽ ra "sàn thấp hơn" rồi đẩy tăng.
+    const untrusted = await untrustedVariants();
     for (const row of candidates) {
       const app = available.get(row.variantId!);
-      if (app === undefined) continue;
+      if (app === undefined || untrusted.has(row.variantId!)) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
       const decision = stockDecision(row, remote, app);
       if (decision === 'wait') waiting.add(row.id);
@@ -237,9 +243,10 @@ async function pushDue(
   );
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
-  const { prices, available } = await inCompany(async () => ({
+  const { prices, available, untrusted } = await inCompany(async () => ({
     prices: await port.standardPrices(ids),
     available: holdStock ? new Map<string, number>() : await port.availableOf(ids),
+    untrusted: holdStock ? new Set<string>() : await untrustedVariants(),
   }));
   const at = new Date();
   // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
@@ -252,7 +259,8 @@ async function pushDue(
     const r = remote.get(row.externalSkuId!);
     const price = r?.priceLocked ? undefined : prices.get(row.variantId!);
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
-    const stockDue = !holdStock && row.stockSync !== 'synced' && !waiting.has(row.id);
+    // SKU chưa tin được (#223, 21 §18.6.6): không gửi tồn, giữ chờ, không ghi lỗi; lấy đơn xong trọn thì việc đẩy chạy lại.
+    const stockDue = !holdStock && row.stockSync !== 'synced' && !waiting.has(row.id) && !untrusted.has(row.variantId!);
     const quantity = !stockDue || r?.stockLocked ? undefined : available.get(row.variantId!);
     const item: PriceQuantity | null =
       !price && quantity === undefined
