@@ -319,6 +319,7 @@ describe('B3b kiểm hàng về', () => {
     const doc = await inspection('return_request', [{ variantId: v, quantity: 5, scanned: 5 }], {
       number: 'TR-0100',
       orderId: crypto.randomUUID(),
+      shopId: crypto.randomUUID(),
       unitCosts: { [v]: '30000.00' },
     });
     expect(doc.lines[0]).toMatchObject({ expected: 5, quantity: 5 });
