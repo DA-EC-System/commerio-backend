@@ -126,6 +126,12 @@ export const Shop = z
     feeConfigVersion: z.number().int().nullable().meta({
       description: 'Số phiên bản cấu hình phí đang áp cho gian hàng (21 §21.4); `null` tới khi có commerio-backend#230',
     }),
+    walletMismatch: z.boolean().meta({
+      description: 'Lần đối soát `done` gần nhất có số của gian hàng ra lệch ví (`walletDiff` khác 0); gian hàng chưa có lần nào như vậy thì `false` (21 §21.3, commerio-backend#251)',
+    }),
+    walletDiff: z.string().nullable().meta({
+      description: 'Số dư sàn báo trừ số dư theo sổ của lần đối soát đó, chuỗi thập phân; `null` khi chưa có lần `done` nào có số',
+    }),
     version: z.number().int(),
     createdAt: iso,
     updatedAt: iso,

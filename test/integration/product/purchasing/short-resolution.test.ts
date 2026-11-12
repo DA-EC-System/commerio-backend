@@ -118,3 +118,27 @@ describe('ghi kết quả giao thiếu', () => {
     expect((await resolve(A.receiver, counting, { kind: 'supplier_wrong', note: 'x' })).status).toBe(403);
   });
 });
+
+describe('phiếu giao bù (followsUpReceiptId, #244)', () => {
+  it('lập phiếu giao bù trỏ phiếu Giao thiếu cùng đề nghị; trả followsUp trong chi tiết', async () => {
+    const { req, receipt } = await shortReceipt();
+    const res = await pur(A.kho).post('/goods-receipts', { requestId: req.id, deliveryMode: 'waiting', note: 'Đợt bù', followsUpReceiptId: receipt.id });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(GoodsReceipt.parse(res.body).followsUp).toEqual({ type: 'goods_receipt', id: receipt.id, number: receipt.number });
+  });
+
+  it('phiếu không phải Giao thiếu, hoặc của đề nghị khác: 422 errors.followsUpReceiptId', async () => {
+    const a = await shortReceipt();
+    const b = await shortReceipt();
+    const wrongRequest = await pur(A.kho).post('/goods-receipts', { requestId: a.req.id, deliveryMode: 'waiting', note: '', followsUpReceiptId: b.receipt.id });
+    expect([wrongRequest.status, wrongRequest.body.errors]).toEqual([422, { followsUpReceiptId: expect.any(String) }]);
+    const counting = await pur(A.kho).post('/goods-receipts', { requestId: a.req.id, deliveryMode: 'waiting', note: '' });
+    const notShort = await pur(A.kho).post('/goods-receipts', {
+      requestId: a.req.id,
+      deliveryMode: 'waiting',
+      note: '',
+      followsUpReceiptId: counting.body.id,
+    });
+    expect(notShort.status).toBe(422);
+  });
+});

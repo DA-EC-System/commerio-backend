@@ -25,6 +25,13 @@ export const openOrderPullQueue = defineQueue('channel.open_order_pull', ShopJob
  */
 export const tokenRefreshQueue = defineQueue('channel.token_refresh', ShopJobSchema, { policy: 'stately' });
 
+/**
+ * Đẩy tồn, giá đang chờ của gian hàng (`pushPending`, #223, Documents/21 §14.5): xếp khi `fulfillment.allocation_done` đổi
+ * số có thể bán, hoặc listing vừa đẩy lại. Không đọc sàn, không đối chiếu; đọc số mới nhất lúc chạy nên `stately` theo
+ * gian hàng là đủ (việc đang chờ sẽ đọc cả lần đổi sau).
+ */
+export const stockPushQueue = defineQueue('channel.stock_push', ShopJobSchema, { policy: 'stately' });
+
 /** Việc đẩy một listing (#219, Documents/21 §18.6.4): `imageUrls` là URL ảnh nguồn của sản phẩm người dùng gửi lúc bấm. */
 export const ListingPushJobSchema = JobDataSchema.extend({
   shopId: z.uuid(),
@@ -64,6 +71,11 @@ export async function sendOpenOrderPull(companyId: string, shopId: string): Prom
 /** Xếp một lượt đồng bộ listing ngay (đẩy tồn lần đầu sau khi fulfillment phân hàng xong, #198); đi chung giao dịch đang mở. */
 export async function sendListingSync(companyId: string, shopId: string): Promise<void> {
   await sendJob(listingSyncQueue, { companyId, shopId }, { key: shopId });
+}
+
+/** Xếp một lượt đẩy tồn, giá đang chờ của gian hàng; đã có việc chờ cùng gian hàng thì không thêm. Đi chung giao dịch đang mở. */
+export async function sendStockPush(companyId: string, shopId: string): Promise<void> {
+  await sendJob(stockPushQueue, { companyId, shopId }, { key: shopId });
 }
 
 /** Xếp việc đẩy một listing, đi chung giao dịch vừa chuyển listing sang `pushing` (rollback thì không còn việc). */

@@ -13,7 +13,7 @@ import { moveListing } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { pushBlock } from './push-block.ts';
-import type { ListingPushJob } from './shop-jobs.ts';
+import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 
 /** Số lần gọi sàn tối đa của một lượt đẩy (Documents/21 §18.6.4), bằng `attempts` của hàng `channel.listing_push`. */
@@ -124,6 +124,8 @@ async function finish(job: ListingPushJob, row: ListingRow, action: ListingActio
   await withCompany(job.companyId, async () => {
     try {
       await moveListing(row, action, null, patch, reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null));
+      // Đẩy lại không gửi tồn: listing lên sàn thì đẩy tồn ngay (25 §6.5, #223), cùng giao dịch.
+      if (patch.stockSync === 'pending') await sendStockPush(job.companyId, job.shopId);
       return;
     } catch (err) {
       if (!(err instanceof AppError) || (err.code !== 'version_conflict' && err.code !== 'invalid_transition')) throw err;

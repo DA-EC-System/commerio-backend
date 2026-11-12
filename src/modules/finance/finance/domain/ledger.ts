@@ -35,6 +35,11 @@ export type LedgerKind = (typeof LEDGER_KINDS)[number];
 export const NON_CASH: ReadonlySet<LedgerKind> = new Set(['cogs', 'cogs_reversal']);
 /** Không vào lãi: giá vốn tính riêng, rút tiền chỉ chuyển chỗ (ví sàn → ngân hàng). */
 export const NOT_PROFIT: ReadonlySet<LedgerKind> = new Set([...NON_CASH, 'withdrawal']);
+/**
+ * Không vào lệch quyết toán của đơn: ngoài giá vốn, rút tiền, còn bồi thường kiện thất lạc (khoản sàn trả thêm khi
+ * kiện mất, không có dòng ước tính để so; US-TI-08 dòng 4, #251).
+ */
+export const NOT_SETTLEMENT_DIFF: ReadonlySet<LedgerKind> = new Set([...NOT_PROFIT, 'lost_compensation']);
 
 export interface Draft {
   kind: LedgerKind;

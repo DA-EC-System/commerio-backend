@@ -59,13 +59,12 @@ export function purchaseNumbersOf(ctx: InventoryContext): PurchaseNumberLookup {
 }
 
 /**
- * Các con số của một SKU. `incoming` là đang về của đề nghị nhập (#108). Tạm khoá, đang thiếu tính từ phiếu chờ duyệt,
- * kiện thiếu hàng: các nguồn đó có ở issue vòng đời (Documents/21 mục 15–19), tới lúc đó bằng 0.
+ * Các con số của một SKU. `incoming` là đang về của đề nghị nhập (#108); `locked` là tạm khoá của phiếu kho chờ duyệt
+ * (#208). Đang thiếu tính từ kiện thiếu hàng: nguồn đó có ở issue vòng đời D2, tới lúc đó bằng 0.
  */
-export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, viewer: Viewer, incoming: number) {
+export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, viewer: Viewer, incoming: number, locked = 0) {
   const onHand = level?.onHand ?? 0;
   const reserved = level?.reserved ?? 0;
-  const locked = 0;
   const available = availableQty(onHand, reserved, locked);
   const avgCost = level?.avgCost ?? '0';
   const minQty = level?.minQty ?? null;

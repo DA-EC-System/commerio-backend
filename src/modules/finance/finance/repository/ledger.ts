@@ -1,7 +1,8 @@
+import { Decimal } from 'decimal.js';
 import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not, notInArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
-import type { LedgerKind } from '../domain/ledger.ts';
+import { type LedgerKind, NOT_SETTLEMENT_DIFF } from '../domain/ledger.ts';
 import { bankMatches, ledgerEntries } from './schema.ts';
 
 export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string | null };
@@ -133,12 +134,13 @@ export async function ledgerTotals(shopId?: string): Promise<{ receivable: strin
 // ── Đối soát (#117) ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Mã giao dịch sàn đã có trong sổ (chạy lại cùng kỳ thì bỏ qua). */
-export async function existingTxnIds(ids: readonly string[]): Promise<Set<string>> {
+/** Mã giao dịch sàn đã có trong sổ của gian hàng: khoá chống trùng là (gian hàng, mã giao dịch) (25 §10.3, #250). */
+export async function existingTxnIds(shopId: string, ids: readonly string[]): Promise<Set<string>> {
   if (!ids.length) return new Set();
   const rows = await getDb()
     .select({ id: ledgerEntries.externalTransactionId })
     .from(ledgerEntries)
-    .where(inArray(ledgerEntries.externalTransactionId, [...ids]));
+    .where(and(eq(ledgerEntries.shopId, shopId), inArray(ledgerEntries.externalTransactionId, [...ids])));
   return new Set(rows.map((r) => r.id!));
 }
 
@@ -164,7 +166,7 @@ export async function orderSums(orderIds: readonly string[]): Promise<Map<string
       actual: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where not ${ledgerEntries.isEstimate}), 0)::text`,
     })
     .from(ledgerEntries)
-    .where(and(inArray(ledgerEntries.orderId, [...orderIds]), notInArray(ledgerEntries.kind, [...NON_CASH, 'withdrawal'])))
+    .where(and(inArray(ledgerEntries.orderId, [...orderIds]), notInArray(ledgerEntries.kind, [...NOT_SETTLEMENT_DIFF])))
     .groupBy(ledgerEntries.orderId);
   return new Map(rows.map((r) => [r.orderId!, { estimated: r.estimated, actual: r.actual }]));
 }
@@ -235,4 +237,30 @@ export async function revenueSince(from: string): Promise<string> {
     .from(ledgerEntries)
     .where(and(inArray(ledgerEntries.kind, ['revenue']), gte(ledgerEntries.occurredOn, from), not(isReplaced())));
   return row!.total;
+}
+
+/**
+ * Tổng thuế khấu trừ (`withholding_tax`) của từng đơn, tách ước tính và thực tế (số sàn trừ trong quyết toán), để
+ * bật cờ Lệch thuế (E135, #250). Đơn đã có dòng quyết toán mà sàn không trừ thuế thì `actual` là 0 (mức 0 cũng là một
+ * mức khác app); đơn chưa có dòng quyết toán nào thì `actual` null.
+ */
+export async function withholdingOf(orderIds: readonly string[]): Promise<Map<string, { estimated: string; actual: string | null }>> {
+  const out = new Map<string, { estimated: string; actual: string | null }>();
+  if (!orderIds.length) return out;
+  const wht = sql`${ledgerEntries.kind} = 'withholding_tax'`;
+  const rows = await getDb()
+    .select({
+      orderId: ledgerEntries.orderId,
+      estimated: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where ${wht} and ${ledgerEntries.isEstimate}), 0)`,
+      actual: sql<string | null>`sum(${ledgerEntries.amount}) filter (where ${wht} and not ${ledgerEntries.isEstimate})`,
+      settled: sql<boolean>`bool_or(${ledgerEntries.sourceType} = 'settlement_batch' and not ${ledgerEntries.isEstimate})`,
+    })
+    .from(ledgerEntries)
+    .where(inArray(ledgerEntries.orderId, [...orderIds]))
+    .groupBy(ledgerEntries.orderId);
+  for (const r of rows) {
+    const actual = r.actual ?? (r.settled ? '0' : null);
+    if (actual !== null || !new Decimal(r.estimated).isZero()) out.set(r.orderId!, { estimated: r.estimated, actual });
+  }
+  return out;
 }

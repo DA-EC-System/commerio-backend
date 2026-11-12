@@ -332,10 +332,16 @@ export function tiktokOrderMethods(
     // TikTok giao (`shipping_type: TIKTOK`); tự giao (`self_shipment`) chưa dùng.
     async shipPackage(accessToken, packageCode, opts) {
       const handover = opts?.handover === 'pickup' ? 'PICKUP' : opts?.handover === 'drop_off' ? 'DROP_OFF' : undefined;
-      await client.call('POST', `/fulfillment/202309/packages/${encodeURIComponent(packageCode)}/ship`, {
-        token: accessToken,
-        body: handover ? { handover_method: handover } : {},
-      });
+      try {
+        await client.call('POST', `/fulfillment/202309/packages/${encodeURIComponent(packageCode)}/ship`, {
+          token: accessToken,
+          body: handover ? { handover_method: handover } : {},
+        });
+      } catch (err) {
+        // 11006021: "Package has been shipped. Please not ship the package again." (docv2 ship-package-202309, mục mã lỗi,
+        // tra 12/11/2026; gọi thật 07/11/2026). Gọi lại sau lần trước đã tới sàn thì coi là xong.
+        if (!(err instanceof MarketplaceError && err.platformCode === '11006021')) throw err;
+      }
     },
   };
 }

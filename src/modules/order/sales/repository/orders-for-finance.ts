@@ -38,7 +38,7 @@ export async function findOrdersForFinance(ids: readonly string[]) {
 
 export async function findOrdersByExternalId(shopId: string, externalOrderIds: readonly string[]) {
   return getDb()
-    .select({ id: orders.id, externalOrderId: orders.externalOrderId, total: orders.total })
+    .select({ id: orders.id, externalOrderId: orders.externalOrderId, total: orders.total, status: orders.status })
     .from(orders)
     .where(and(eq(orders.shopId, shopId), inArray(orders.externalOrderId, [...externalOrderIds])));
 }

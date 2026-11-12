@@ -5,6 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { categoryNames, getVariants, type VariantSummary } from '../../catalog/index.ts';
 import { canSeeCost, outstanding, toDong } from '../domain/request.ts';
 import { findLines, type LineRow, receiptsOf, type RequestRow } from '../repository/requests.ts';
+import { findReturn } from '../repository/returns.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 
 /** Người gọi đã qua `ctx.authorize`: công ty, tài khoản và quyền lấy nguyên từ `getAccess(res)`. */
@@ -73,8 +74,16 @@ function summaryOf(row: RequestRow, supplier: { id: string; name: string }, look
     createdBy: row.createdBy ? (look.names.get(row.createdBy) ?? '') : '',
     createdById: row.createdBy ?? '',
     createdAt: row.createdAt.toISOString(),
+    expectedDeliveryDate: row.expectedDeliveryDate ?? null,
+    supplierOrderCode: row.supplierOrderCode ?? null,
     version: row.version,
   };
+}
+
+/** Phiếu trả NCC mà đề nghị bù hàng (B4, #210). */
+async function sourceReturnRef(id: string) {
+  const ret = await findReturn(id);
+  return ret ? { type: 'supplier_return' as const, id: ret.id, number: ret.number } : null;
 }
 
 /** Bản tóm tắt cho danh sách; `rows` đã kèm tên NCC. */
@@ -110,6 +119,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
         quantity: l.orderedQty,
         unitCost: look.showCost ? toDong(l.unitPrice) : null,
         excluded: l.excluded,
+        excludedReason: l.excludedReason ?? null,
         received: l.receivedQty,
         defective: l.defectiveQty,
         closedShort: l.closedShortQty,
@@ -117,8 +127,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
       };
     }),
     receipts: receipts.map((r) => ({ type: 'goods_receipt' as const, id: r.id, number: r.number, status: r.status })),
-    // Đề nghị bù hàng từ phiếu trả NCC làm ở B4.
-    sourceReturn: null,
+    sourceReturn: row.sourceReturnId ? await sourceReturnRef(row.sourceReturnId) : null,
     countingReceipts: receipts.filter((r) => r.status === 'counting').length,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),
   };
