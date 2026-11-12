@@ -15,6 +15,18 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # Migration của PR phải đứng sau mọi migration của nhánh đích, journal và snapshot liền mạch, schema.ts khớp
+      # migration (db/CLAUDE.md). Không cần DB.
+      - name: Kiểm migration
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            npm run db:ci-check -- --base "origin/$BASE_REF"
+          else
+            npm run db:ci-check
+          fi
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run depcruise
