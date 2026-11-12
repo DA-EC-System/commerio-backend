@@ -88,6 +88,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'messages',
     'price_calculations',
     'raw_orders',
+    'remote_skus',
     'shops',
     'tags',
     'webhook_events',

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../../helpers/db.ts';
+import { asCompany } from '../../helpers/rls.ts';
 
 const db = () => testPool();
 
@@ -63,13 +64,35 @@ describe('ràng buộc gian hàng', () => {
     await expect(insert({ opening_stocktake_id: randomUUID(), opening_stocktake_number: 'KK-1' })).rejects.toThrow(
       /"shops_opening_stocktake"/,
     );
-    await expect(insert({ opening_stock_mode: 'push' })).rejects.toThrow(/"shops_setup_mode"/);
-    await expect(insert({ opening_stock_mode: 'other', unmatched_sku_count: 0 })).rejects.toThrow(/"shops_setup_mode"/);
+    // Số SKU chưa ghép tính khi đọc từ bản sao SKU sàn (#220 đợt 2), không còn cột `unmatched_sku_count`.
+    await expect(insert({ opening_stock_mode: 'other' })).rejects.toThrow(/"shops_setup_mode"/);
     const waiting = { order_cutoff_at: now, opening_stocktake_id: randomUUID(), opening_stocktake_number: 'KK-1' };
-    await insert({ ...waiting, opening_stock_mode: 'stocktake', unmatched_sku_count: 0 });
+    await insert({ ...waiting, opening_stock_mode: 'stocktake' });
     await expect(insert({ ...waiting, opening_stocktake_id: randomUUID() })).rejects.toThrow(/shops_one_opening_stocktake_uq/);
     await insert({ ...waiting, opening_stocktake_id: randomUUID() }, randomUUID());
-    await insert({ order_cutoff_at: now, opening_stock_mode: 'push', unmatched_sku_count: 2 });
+    await insert({ order_cutoff_at: now, opening_stock_mode: 'push' });
+  });
+
+  it('mốc thử lại đọc trọn bản sao SKU sàn đi cùng số lần lỗi (review #309 vòng 3 R1)', async () => {
+    const insert = (cols: Record<string, unknown>) => {
+      const all = { company_id: randomUUID(), platform: 'lazada', external_shop_id: randomUUID(), shop_name: 'Shop', ...cols };
+      const keys = Object.keys(all);
+      return db().query(
+        `insert into channel.shops (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`,
+        Object.values(all),
+      );
+    };
+    const failed = { remote_skus_full_failed_at: new Date() };
+    await expect(insert({ remote_skus_full_failures: 1, ...failed })).rejects.toThrow(/"shops_remote_skus_retry"/);
+    await expect(insert({ remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_retry"/);
+    await expect(insert({ remote_skus_full_failures: -1, remote_skus_full_retry_at: new Date(), ...failed })).rejects.toThrow(
+      /"shops_remote_skus_retry"/,
+    );
+    await expect(insert({ remote_skus_full_failures: 2, remote_skus_full_retry_at: new Date() })).rejects.toThrow(/"shops_remote_skus_failed_at"/);
+    await insert({ remote_skus_full_failures: 2, remote_skus_full_retry_at: new Date(), remote_skus_full_failed_at: new Date() });
+    // Tải lại lỗi chỉ ghi lần lỗi, không tính vào giãn lần thử của lượt định kỳ.
+    await insert({ remote_skus_full_failed_at: new Date() });
+    await insert({});
   });
 
   it('pg_trgm có sẵn cho gợi ý ghép theo tên (21 §18.7.5)', async () => {
@@ -131,6 +154,61 @@ describe('ràng buộc listing', () => {
       insertListing(c, s, { mode: 'unmanaged', external_sku_id: 'COMBO-1', approved_by: randomUUID() }),
     ).resolves.toBeDefined();
     await expect(insertListing(c, s, { mode: 'mapped' })).rejects.toThrow(/"listings_mode"/);
+  });
+
+  it('dòng đã gỡ không giữ ghép chờ duyệt; tự duyệt ghép phải có người duyệt (#220 đợt 2)', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const pending = { pending_variant_id: randomUUID(), pending_mode: 'mapped', pending_requested_by: randomUUID(), pending_requested_at: new Date() };
+    await expect(insertListing(c, s, { variant_id: randomUUID(), status: 'delisted', ...pending })).rejects.toThrow(
+      /"listings_delisted_no_pending"/,
+    );
+    await insertListing(c, s, { variant_id: randomUUID(), status: 'live', ...pending });
+    await expect(insertListing(c, s, { variant_id: randomUUID(), mapping_self_approved: true })).rejects.toThrow(
+      /"listings_self_approved_has_approver"/,
+    );
+    await insertListing(c, s, { variant_id: randomUUID(), mapping_self_approved: true, approved_by: randomUUID() });
+  });
+
+  it('bản sao SKU sàn: một dòng mỗi mã SKU sàn của gian hàng, không giữ SKU đã xoá, tồn không âm (#220 đợt 2)', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const insert = (cols: Record<string, unknown>) => {
+      const all = { company_id: c, shop_id: s, external_product_id: 'p1', external_sku_id: 'k1', seller_sku: 'A', title: 'Cốc', state: 'live', quantity: 1, ...cols };
+      const keys = Object.keys(all);
+      return db().query(
+        `insert into channel.remote_skus (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`,
+        Object.values(all),
+      );
+    };
+    await expect(insert({ state: 'deleted' })).rejects.toThrow(/"remote_skus_state"/);
+    await expect(insert({ quantity: -1 })).rejects.toThrow(/"remote_skus_quantity"/);
+    await insert({});
+    await expect(insert({})).rejects.toThrow(/remote_skus_shop_external_sku_uq/);
+  });
+
+  it('bản sao SKU sàn cô lập theo công ty: công ty khác không đọc được, không ghi vào được (RLS, #220 đợt 2)', async () => {
+    const a = randomUUID();
+    const s = await shop(a);
+    await db().query(
+      `insert into channel.remote_skus (company_id, shop_id, external_product_id, external_sku_id, seller_sku, title, state, quantity)
+       values ($1, $2, 'p1', 'k1', 'A', 'Cốc', 'live', 1)`,
+      [a, s],
+    );
+    const count = (c: Parameters<Parameters<typeof asCompany>[1]>[0]) =>
+      c.query<{ n: number }>('select count(*)::int as n from channel.remote_skus where shop_id = $1', [s]);
+    expect((await asCompany(a, count)).rows[0]!.n).toBe(1);
+    const b = randomUUID();
+    expect((await asCompany(b, count)).rows[0]!.n).toBe(0);
+    await expect(
+      asCompany(b, (c) =>
+        c.query(
+          `insert into channel.remote_skus (company_id, shop_id, external_product_id, external_sku_id, seller_sku, title, state, quantity)
+           values ($1, $2, 'p2', 'k2', 'B', 'Cốc', 'live', 1)`,
+          [a, s],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/);
   });
 
   it('sàn từ chối phải kèm lý do', async () => {

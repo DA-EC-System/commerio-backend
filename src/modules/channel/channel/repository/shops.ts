@@ -146,29 +146,41 @@ export async function countListingsOnPlatform(shopIds: readonly string[]): Promi
  * Ngắt gian hàng: listing còn trên sàn chuyển `delisted`, đánh dấu gỡ do ngắt để kết nối lại thì đưa lên (§18.1).
  * Trả trạng thái trước khi gỡ để bên gọi ghi lịch sử. Bên gọi đã khoá dòng gian hàng nên không đua với lần đẩy listing.
  */
-export async function delistForDisconnect(shopId: string): Promise<{ id: string; from: string }[]> {
+export async function delistForDisconnect(
+  shopId: string,
+): Promise<{ id: string; from: string; pending: 'dropped' | 'deleted' | null }[]> {
   const before = await getDb()
-    .select({ id: listings.id, from: listings.status })
+    .select({ id: listings.id, from: listings.status, mode: listings.mode, approvedBy: listings.approvedBy, pendingBy: listings.pendingRequestedBy })
     .from(listings)
     .where(and(eq(listings.shopId, shopId), inArray(listings.status, [...ON_PLATFORM])))
     .for('update');
   if (before.length === 0) return [];
-  await getDb()
-    .update(listings)
-    .set({
-      status: 'delisted',
-      hiddenBy: null,
-      delistedByDisconnect: true,
-      version: sql`${listings.version} + 1`,
-      updatedAt: sql`now()`,
-    })
-    .where(
-      inArray(
-        listings.id,
-        before.map((r) => r.id),
-      ),
-    );
-  return before;
+  // Gỡ là trạng thái cuối nên bỏ ghép chờ duyệt (CHECK `listings_delisted_no_pending`, #220 đợt 2); dòng chỉ để chờ
+  // duyệt "không quản tồn" của SKU chưa ghép thì xoá, như khi CEO từ chối.
+  const onlyPending = before.filter((r) => r.pendingBy && r.mode === 'unmanaged' && !r.approvedBy).map((r) => r.id);
+  if (onlyPending.length) await getDb().delete(listings).where(inArray(listings.id, onlyPending));
+  const rest = before.filter((r) => !onlyPending.includes(r.id));
+  if (rest.length) {
+    await getDb()
+      .update(listings)
+      .set({
+        status: 'delisted',
+        hiddenBy: null,
+        delistedByDisconnect: true,
+        pendingVariantId: null,
+        pendingMode: null,
+        pendingRequestedBy: null,
+        pendingRequestedAt: null,
+        version: sql`${listings.version} + 1`,
+        updatedAt: sql`now()`,
+      })
+      .where(inArray(listings.id, rest.map((r) => r.id)));
+  }
+  return before.map((r) => ({
+    id: r.id,
+    from: r.from,
+    pending: onlyPending.includes(r.id) ? 'deleted' : r.pendingBy ? 'dropped' : null,
+  }));
 }
 
 /**
