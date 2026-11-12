@@ -3,7 +3,7 @@ import { HoldJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { findShopRow, recordOpenOrderPullError } from '../repository/shops.ts';
+import { findShopRow, recordOpenOrderPullError, recordOrderPullError } from '../repository/shops.ts';
 import { pushPending, syncListings } from './listing-sync.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
 import { pullShopReturns } from './return-pull.ts';
@@ -48,21 +48,26 @@ export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
 }
 
 /**
- * Đẩy tồn, giá đang chờ (#223). Mất uỷ quyền thì không giữ việc: listing vẫn `stock_sync = pending`, nối lại thì lượt
- * `channel.listing_sync` lấy đơn, đối chiếu rồi mới đẩy (25 E28); việc giữ chạy lại lúc nối sẽ đẩy trước khi lấy đơn.
+ * Đẩy tồn, giá đang chờ (#223). Sàn từ chối token thì việc được giữ (`HoldJob`, đếm vào `Shop.pendingJobs`, 21 §18.6.6):
+ * nối lại chạy tiếp nhưng chỉ đẩy giá, vì gian hàng mất mốc lấy đơn (`untrustedVariants`) tới khi lấy đơn xong trọn (25 E28).
  */
-export async function runStockPush(port: ProductPort, job: ShopJob): Promise<void> {
-  try {
-    await onActiveShop(job, 'đẩy tồn', () => pushPending(port, job.companyId, job.shopId));
-  } catch (err) {
-    if (!(err instanceof HoldJob)) throw err;
-  }
+export function runStockPush(port: ProductPort, job: ShopJob): Promise<void> {
+  return onActiveShop(job, 'đẩy tồn', () => pushPending(port, job.companyId, job.shopId));
 }
 
+/**
+ * Kéo đơn định kỳ. Lỗi khác mất token, ngắt gian hàng thì ghi `last_error` (`Kéo đơn lỗi: …`, hiện ở `Shop.orderPullError`)
+ * rồi ném để pg-boss thử lại; lượt chạy trọn thì xoá (#223: đơn chưa cập nhật giữ tồn của mọi gian hàng, phải có lý do).
+ */
 export function runOrderPull(job: ShopJob): Promise<void> {
   // Yêu cầu trả kéo sau đơn (#202): đơn mới về trước thì yêu cầu của nó gắn được ngay trong lượt.
   return onActiveShop(job, 'kéo đơn', async () => {
-    await pullShopOrders(job.companyId, job.shopId);
+    try {
+      await pullShopOrders(job.companyId, job.shopId);
+    } catch (err) {
+      if (!silentPullError(err)) await withCompany(job.companyId, () => recordOrderPullError(job.shopId, pullErrorMessage(err)));
+      throw err;
+    }
     try {
       await pullShopReturns(job.companyId, job.shopId);
     } catch (err) {
@@ -74,16 +79,19 @@ export function runOrderPull(job: ShopJob): Promise<void> {
   });
 }
 
+/** Mất token, ngắt gian hàng: đã có trạng thái riêng báo người dùng, không ghi `last_error`. */
+const silentPullError = (err: unknown) =>
+  err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected');
+/** Người dùng đọc `last_error`: lỗi nghiệp vụ ghi câu của nó, lỗi khác chỉ ghi câu chung, chi tiết ở log việc nền. */
+const pullErrorMessage = (err: unknown) => (err instanceof AppError ? err.message : 'lỗi hệ thống, đang thử lại');
+
 /** Lỗi khác mất token, ngắt gian hàng thì ghi `last_error` rồi ném tiếp để pg-boss thử lại (#198 P3). */
 export function runOpenOrderPull(job: ShopJob): Promise<void> {
   return onActiveShop(job, 'kéo đơn còn mở', async () => {
     try {
       await pullOpenOrders(job.companyId, job.shopId);
     } catch (err) {
-      const silent = err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected');
-      // Người dùng đọc `last_error`: lỗi nghiệp vụ ghi câu của nó, lỗi khác chỉ ghi câu chung, chi tiết ở log việc nền.
-      const message = err instanceof AppError ? err.message : 'lỗi hệ thống, đang thử lại';
-      if (!silent) await withCompany(job.companyId, () => recordOpenOrderPullError(job.shopId, message));
+      if (!silentPullError(err)) await withCompany(job.companyId, () => recordOpenOrderPullError(job.shopId, pullErrorMessage(err)));
       throw err;
     }
   });

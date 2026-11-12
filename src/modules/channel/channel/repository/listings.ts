@@ -1,5 +1,5 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import type { ListingStatus } from '../domain/listing.ts';
@@ -158,6 +158,26 @@ export async function markStockPendingRows(variantIds: readonly string[], status
     .where(and(inArray(listings.variantId, [...variantIds]), inArray(listings.status, [...statuses])))
     .returning({ shopId: listings.shopId });
   return [...new Set(rows.map((r) => r.shopId))];
+}
+
+/**
+ * Biến thể có listing còn sản phẩm trên sàn (có mã SKU sàn, chưa `delisted`) ở các gian hàng cho trước (#223: gian hàng
+ * "đơn chưa cập nhật"). Gọi trong `withCompany`.
+ */
+export async function variantsListedOn(shopIds: readonly string[]): Promise<{ variantId: string; shopId: string }[]> {
+  if (!shopIds.length) return [];
+  const rows = await getDb()
+    .selectDistinct({ variantId: listings.variantId, shopId: listings.shopId })
+    .from(listings)
+    .where(
+      and(
+        inArray(listings.shopId, [...shopIds]),
+        isNotNull(listings.variantId),
+        isNotNull(listings.externalSkuId),
+        ne(listings.status, 'delisted'),
+      ),
+    );
+  return rows.map((r) => ({ variantId: r.variantId!, shopId: r.shopId }));
 }
 
 /** Listing chưa gỡ của SKU sàn trên gian hàng (unique `listings_shop_external_sku_uq`, nhiều nhất một). */

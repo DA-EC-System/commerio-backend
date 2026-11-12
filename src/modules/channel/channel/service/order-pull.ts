@@ -9,8 +9,9 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { advanceOrderCursor, findRawOrderTimes, saveRawOrder, variantsBySellerSku } from '../repository/raw-orders.ts';
 import { MarketplaceError, type MarketplaceAdapter, type RemoteOrder, type RemoteOrderRef } from './marketplaces/common.ts';
-import { lockShopForOrders, markOpenOrdersPulled } from '../repository/shops.ts';
-import { listingSyncQueue } from './shop-jobs.ts';
+import { listShopRows, lockShopForOrders, markOpenOrdersPulled, markOrdersPulled, type ShopRow } from '../repository/shops.ts';
+import { listingSyncQueue, sendStockPush } from './shop-jobs.ts';
+import { shopOrdersStale } from './stock-trust.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const OVERLAP_MS = 2 * 60_000;
@@ -76,6 +77,18 @@ async function ingestRemote({ companyId, shopId }: Session, remote: RemoteOrder,
   else if (res.changed) result.updated += 1;
 }
 
+/**
+ * Lượt lấy đơn chạy xong trọn (không lỗi, không còn trang; #223): đặt `orders_pulled_ok_at`. Gian hàng vừa hết "đơn chưa
+ * cập nhật" thì xếp `channel.stock_push` cho mọi gian hàng `active` của công ty: tồn của SKU bán chung đã bị chặn ở mọi
+ * gian hàng (Documents/21 §18.6.6), việc chỉ đẩy phần đang chờ.
+ */
+async function markPulled(companyId: string, shop: ShopRow, startedAt: Date, wasStale: boolean): Promise<void> {
+  await withCompany(companyId, async () => {
+    if (!(await markOrdersPulled(shop.id, shop.version, startedAt)) || !wasStale) return;
+    for (const s of await listShopRows()) if (s.status === 'active') await sendStockPush(companyId, s.id);
+  });
+}
+
 export async function pullShopOrders(companyId: string, shopId: string): Promise<PullResult> {
   const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
   if (!adapter.listOrders || !(adapter.getOrder || adapter.getOrders)) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo đơn');
@@ -84,6 +97,10 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
   const cutoff = shop.orderCutoffAt;
   if (!cutoff) return result;
   const since = new Date((shop.lastOrderSyncAt ?? cutoff).getTime() - OVERLAP_MS);
+  // Mốc "lấy đơn xong" là giờ bắt đầu lượt (#223): đơn đặt sau lúc này có thể chưa về.
+  const startedAt = new Date();
+  const wasStale = shopOrdersStale(shop, startedAt);
+  let complete = false;
 
   // `done`: `updatedAt` lớn nhất đã xử lý (adapter trả không giảm theo `updatedAt`); `safe`: `safeUntil` nhỏ nhất của lượt.
   let done: Date | null = null;
@@ -110,12 +127,16 @@ export async function pullShopOrders(companyId: string, shopId: string): Promise
         if (!done || ref.updatedAt > done) done = ref.updatedAt;
       }
       cursor = page.nextCursor;
-      if (!cursor) break;
+      if (!cursor) {
+        complete = true;
+        break;
+      }
     }
   } finally {
     const at = done && safe && safe < done ? safe : done;
     if (at) await withCompany(companyId, () => advanceOrderCursor(shopId, at));
   }
+  if (complete) await markPulled(companyId, shop, startedAt, wasStale);
   return result;
 }
 

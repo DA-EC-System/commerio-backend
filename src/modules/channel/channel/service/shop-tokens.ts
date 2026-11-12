@@ -36,14 +36,15 @@ export function decryptAccessToken(row: ShopRow): string | null {
 
 /**
  * Gian hàng mất uỷ quyền (refresh token thất bại, sàn báo gỡ app, tới hạn uỷ quyền): `connecting` hoặc `active` →
- * `needs_reauth`, nguồn hệ thống (§18.1). Cho #102 gọi trong `withCompany`. Trạng thái khác thì bỏ qua.
+ * `needs_reauth`, nguồn hệ thống (§18.1). Xoá mốc lấy đơn xong (CHECK `shops_reauth_orders_pulled`): nối lại là "đơn chưa
+ * cập nhật" tới khi lấy đơn xong trọn (#223, 25 E28). Cho #102 gọi trong `withCompany`. Trạng thái khác thì bỏ qua.
  */
 export async function markNeedsReauth(shopId: string, reason: string): Promise<void> {
   requireCompanyId('markNeedsReauth');
   const row = await findShopRow(shopId);
   if (row?.status !== 'connecting' && row?.status !== 'active') return;
   const { to } = assertTransition(shopMachine, row.status, 'lose_auth', { actor: null });
-  const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason });
+  const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason, ordersPulledOkAt: null });
   if (updated) {
     await recordTransition({ entityType: 'shops', entityId: shopId, from: row.status, to, action: 'lose_auth', actorId: null, reason });
   }

@@ -1,0 +1,3 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "orders_pulled_ok_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_orders_pulled_ok_at" CHECK ("channel"."shops"."orders_pulled_ok_at" is null or "channel"."shops"."order_cutoff_at" is not null);--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_reauth_orders_pulled" CHECK ("channel"."shops"."status" <> 'needs_reauth' or "channel"."shops"."orders_pulled_ok_at" is null);

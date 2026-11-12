@@ -324,12 +324,12 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'post',
     path: '/shops/:id/listings/sync',
-    summary: 'Đồng bộ listing với sàn (#104)',
+    summary: 'Xếp một lượt đồng bộ listing với sàn (#104, #223)',
     description:
-      'Cần `channel.shop.sync`. Đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá); listing kẹt `pushing` quá 30 phút chuyển `push_failed`; đẩy giá chuẩn và số khả dụng của listing `stockSync`/`priceSync` khác `synced`, theo lô 20, lỗi ghi theo từng SKU. #102 sẽ chạy định kỳ.',
+      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`.',
     security: bearer,
     request: { params: ShopParams },
-    responses: { 200: { description: 'Tóm tắt', ...json(ListingSyncResult) }, ...onShop },
+    responses: { 202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',
