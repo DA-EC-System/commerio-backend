@@ -101,9 +101,9 @@ export async function findDueScheduledAnyCompany(today: string, limit: number) {
 }
 
 /**
- * Lãi bán hàng từ `from` (gồm cả ngày đó) cho chạy thử phiên bản cấu hình: chỉ dòng còn hiệu lực, hiểu "đã thay" như
+ * Lãi gộp từ `from` (gồm cả ngày đó) cho chạy thử phiên bản cấu hình: chỉ dòng còn hiệu lực, hiểu "đã thay" như
  * tổng tiền ở sàn (`isReplaced`: có dòng thực tế thay, hoặc dòng ước tính của đơn đã có số quyết toán). Bỏ loại không
- * vào lãi bán hàng (`NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền) theo loại dòng, không theo gian hàng. `revenue` là
+ * vào lãi gộp (`NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền, quảng cáo) theo loại dòng, không theo gian hàng. `revenue` là
  * tổng dòng doanh thu.
  */
 export async function sumLedgerSince(from: string, shopId?: string): Promise<{ total: string; revenue: string }> {

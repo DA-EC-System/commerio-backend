@@ -80,11 +80,12 @@ export const OFF_PLATFORM: ReadonlySet<LedgerKind> = new Set(LEDGER_KINDS.filter
  */
 export const NEVER_SHOP: ReadonlySet<LedgerKind> = new Set(['supplier_payment', 'supplier_refund', 'opex']);
 /**
- * Không vào lãi bán hàng (lãi gộp, chạy thử cấu hình): khoản ngoài sàn và rút tiền ("`withdrawal` là chuyển từ ví sàn
- * về ngân hàng, không vào lãi", Documents/21 §21.1). Giá vốn vẫn vào lãi gộp. 25 §10.2: "Không cộng hoa hồng affiliate,
- * bồi thường hay tiền NCC hoàn vào doanh thu bán hàng".
+ * Không vào lãi gộp (chạy thử cấu hình: "Lãi gộp ước tính của 30 ngày gần nhất nếu áp luật mới", Documents/25 §10.4):
+ * khoản ngoài sàn; rút tiền ("`withdrawal` là chuyển từ ví sàn về ngân hàng, không vào lãi", 21 §21.1); quảng cáo
+ * ("Lãi đóng góp = lãi gộp − quảng cáo", 25 §10.2). Giá vốn vẫn vào lãi gộp. Quảng cáo vẫn trừ vào số dư ví sàn
+ * (`ledgerTotals` chỉ bỏ `OFF_PLATFORM`).
  */
-export const NOT_SALES_PROFIT: ReadonlySet<LedgerKind> = new Set([...OFF_PLATFORM, 'withdrawal']);
+export const NOT_SALES_PROFIT: ReadonlySet<LedgerKind> = new Set([...OFF_PLATFORM, 'withdrawal', 'ads']);
 
 export interface Draft {
   kind: LedgerKind;
