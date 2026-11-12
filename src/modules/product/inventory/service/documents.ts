@@ -354,9 +354,10 @@ async function afterInspection(row: DocRow, lines: readonly DocLineRow[], actorI
       note: `Hàng trả NCC từ ${row.number}`,
     });
   }
-  // Chỉ đơn sàn có gian hàng: `return_inspected.shopId` không null (Documents/21 §11.2). Đơn ngoài sàn không có dòng giá
-  // vốn trong sổ tiền (`package_delivered` cũng buộc gian hàng; MVP chỉ bán trên sàn, Documents/25 §0) nên không phát.
-  if (row.sourceType === 'return_request' && row.orderId && row.shopId) {
+  if (row.sourceType === 'return_request' && row.orderId) {
+    // `return_inspected.shopId` không null (Documents/21 §11.2, #308): yêu cầu trả chỉ đến từ sàn nên luôn có gian hàng.
+    // Thiếu là lỗi của bên gọi `receiveBack`: báo lỗi, không bỏ sự kiện (bỏ thì yêu cầu trả kẹt, sổ thiếu `cogs_reversal`).
+    if (!row.shopId) throw new Error(`Phiếu kiểm hàng hoàn ${row.number} nguồn yêu cầu trả thiếu gian hàng`);
     await publishEvent({
       type: 'inventory.return_inspected',
       aggregateId: row.id,
