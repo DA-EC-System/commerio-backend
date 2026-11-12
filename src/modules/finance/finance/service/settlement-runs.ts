@@ -20,6 +20,7 @@ import {
   insertRun,
   lastDoneTo,
   latestRun,
+  latestWalletDiffs,
   listRuns,
   lockShopRuns,
   reopenRun,
@@ -164,14 +165,22 @@ function unmappedReason(t: PlatformTxn): string {
  */
 async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], payouts: readonly PlatformPayout[]): Promise<SettlementRunRow> {
   await lockShopRuns(run.shopId);
-  const parts = txns.flatMap((t) => {
+  // Việc chờ trong hàng quá `STALE_RUN_MS` thì lần mở sau đã đánh lần này `failed`: đọc lại sau khoá, không còn
+  // `running` thì không ghi dòng nào dưới lần đã đóng (review #273).
+  const current = await findRun(run.id);
+  if (!current || current.status !== 'running') return current ?? run;
+  // Mã lặp ngay trong lô (lật trang lệch, hai mã chỉ khác khoảng trắng trước khi chuẩn hoá): giữ khoản đầu, đếm phần
+  // còn lại vào `duplicates` như khoản đã có trong sổ (review #274).
+  const inBatch = new Set<string>();
+  const unique = txns.filter((t) => !inBatch.has(t.txnId) && inBatch.add(t.txnId));
+  const parts = unique.flatMap((t) => {
     const main = { txnId: t.txnId, t, kind: t.kind ?? ('adjustment' as const), amount: new Decimal(t.amount) };
     const wht = new Decimal(t.withholding || 0);
     return wht.isZero() ? [main] : [main, { txnId: `${t.txnId}:wht`, t, kind: 'withholding_tax' as const, amount: wht.abs().negated() }];
   });
   const seen = await existingTxnIds(run.shopId, parts.map((p) => p.txnId));
   const fresh = parts.filter((p) => !seen.has(p.txnId) && !p.amount.isZero());
-  const duplicates = txns.filter((t) => seen.has(t.txnId)).length;
+  const duplicates = txns.length - unique.length + unique.filter((t) => seen.has(t.txnId)).length;
 
   const orders = await findMarketplaceOrders(
     run.shopId,
@@ -216,6 +225,12 @@ async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], pay
   const done = await finishRun(run.id, { status: 'done', lineCount: rows.length, duplicates, walletDiff });
   return done ?? run;
 }
+
+/**
+ * Cổng cho channel (Documents/21 §11.3, #251): lệch ví của lần đối soát `done` gần nhất có số, theo gian hàng. Gian
+ * hàng chưa có lần nào như vậy, hoặc id không thuộc công ty (RLS), thì không có trong Map. Gọi trong `withCompany`.
+ */
+export const walletDiffOf = (shopIds: readonly string[]): Promise<Map<string, string>> => latestWalletDiffs(shopIds);
 
 const PULL_LOCK = 'finance.settlement_pull';
 

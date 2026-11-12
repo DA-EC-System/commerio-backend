@@ -33,7 +33,7 @@ import {
 } from '../repository/documents.ts';
 import { DOC_AUDIT_ENTITY, DOC_ENTITY, detail, summaries, supplierReturnPort } from './document-views.ts';
 import { InsufficientStock, applyMoves, type Move } from './posting.ts';
-import { stockOf } from './port.ts';
+import { lockedOf, stockOf } from './port.ts';
 import { notFound, type Viewer } from './views.ts';
 
 export interface DocActor extends Viewer {
@@ -199,6 +199,14 @@ async function inspectionLines(existing: readonly DocLineRow[], input: readonly 
   return lines;
 }
 
+/** Phần chênh số quét theo SKU giữa dòng cũ và dòng mới của phiếu kiểm hàng về, thành move ngăn chờ xử lý. */
+function scanDelta(old: readonly DocLineRow[], next: readonly NewDocLine[]): Move[] {
+  const delta = new Map<string, number>();
+  for (const l of old) delta.set(l.variantId, (delta.get(l.variantId) ?? 0) - (l.scannedQty ?? 0));
+  for (const l of next) delta.set(l.variantId, (delta.get(l.variantId) ?? 0) + (l.scannedQty ?? 0));
+  return [...delta].map(([variantId, qty]) => ({ variantId, bucket: 'quarantine', qty, unitCost: null, sourceLineId: null }));
+}
+
 export function updateDocument(
   actor: DocActor,
   id: string,
@@ -211,8 +219,11 @@ export function updateDocument(
     const note = input.note.trim();
     let lines: NewDocLine[];
     let area = row.area;
+    let scanMoves: Move[] = [];
     if (row.kind === 'return_inspection') {
-      lines = await inspectionLines((await linesOfDocs([row.id])).get(row.id) ?? [], input.lines);
+      const old = (await linesOfDocs([row.id])).get(row.id) ?? [];
+      lines = await inspectionLines(old, input.lines);
+      scanMoves = scanDelta(old, lines);
     } else {
       // Kiểm kê đầu kỳ (nguồn `shop_setup`) và chuyển chờ xử lý luôn đếm tồn thực
       if (row.kind === 'write_off' || (row.kind === 'stocktake' && !row.isOpening)) area = bucketOf(input.area ?? (row.area === 'on_hand' ? 'stock' : 'quarantine'));
@@ -221,6 +232,17 @@ export function updateDocument(
     const updated = await updateDoc(row.id, row.version, { area, note, ...(row.kind === 'stocktake' && { countedAt: new Date() }) });
     if (!updated) throw await conflict(row, actor);
     await replaceDocLines(actor.companyId, row.id, lines);
+    // Hàng về đã cộng chờ xử lý lúc quét nhận: sửa số quét thì chờ xử lý đổi đúng phần chênh (§15.3, 25 §7.3)
+    try {
+      await applyMoves({ type: 'stock_document', id: row.id }, scanMoves, actor.accountId);
+    } catch (err) {
+      if (!(err instanceof InsufficientStock)) throw err;
+      const errors: Errors = {};
+      lines.forEach((l, i) => {
+        if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.scanned`] = 'Chờ xử lý không còn đủ hàng để giảm số quét';
+      });
+      throw invalid(Object.keys(errors).length ? errors : { lines: 'Chờ xử lý không còn đủ hàng để giảm số quét' }, 'stock_insufficient');
+    }
     return detail(updated, actor);
   });
 }
@@ -255,9 +277,11 @@ function movesOf(row: DocRow, lines: readonly DocLineRow[]): Move[] {
           { ...base, bucket: 'quarantine', qty: l.quantity ?? 0 },
         ];
       case 'return_inspection':
+        // Cả số quét đã ở chờ xử lý từ lúc nhận (`receiveBack`): phần bán lại chuyển sang tồn thực theo giá vốn dòng
+        // kiện (tính lại bình quân; dòng không có giá thì giữ bình quân hiện tại), hỏng và trả NCC ở lại (25 §7.1, §7.3)
         return [
-          { ...base, bucket: 'on_hand', qty: l.resellQty ?? 0 },
-          { ...base, bucket: 'quarantine', qty: (l.damagedQty ?? 0) + (l.toSupplierQty ?? 0) },
+          { ...base, bucket: 'quarantine', qty: -(l.resellQty ?? 0) },
+          { ...base, bucket: 'on_hand', qty: l.resellQty ?? 0, unitCost: l.unitCost },
         ];
       default:
         return [];
@@ -270,6 +294,15 @@ function movesOf(row: DocRow, lines: readonly DocLineRow[]): Move[] {
  * thì 422 `stock_insufficient` theo dòng.
  */
 async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string, now: Date) {
+  if (row.kind === 'return_inspection') {
+    const errors: Errors = {};
+    lines.forEach((l, i) => {
+      if ((l.resellQty ?? 0) + (l.damagedQty ?? 0) + (l.toSupplierQty ?? 0) !== (l.scannedQty ?? 0)) {
+        errors[`lines.${i}.resell`] = 'Bán lại + hỏng + trả NCC phải bằng số quét';
+      }
+    });
+    if (Object.keys(errors).length) throw invalid(errors);
+  }
   const before = await stockOf(lines.map((l) => l.variantId));
   try {
     await applyMoves({ type: 'stock_document', id: row.id }, movesOf(row, lines), actorId, { allowBreak: row.kind === 'stocktake' });
@@ -336,6 +369,27 @@ async function afterInspection(row: DocRow, lines: readonly DocLineRow[], actorI
   }
 }
 
+/**
+ * Tạm khoá của SKU đổi (gửi duyệt giữ lại, từ chối nhả ra) thì phát `inventory.stock_changed` như khi tồn thực đổi
+ * (Documents/21 §11.1; US-TK-06, US-TK-09): sàn được đẩy số khả dụng mới, kiện Thiếu hàng được chia lại. SKU đã có move
+ * tồn thực trong lần ghi sổ này thì lõi đã phát, không phát lần hai.
+ */
+async function publishLockChanges(variantIds: readonly string[], before: ReadonlyMap<string, number>, posted: readonly Move[]) {
+  const after = await lockedOf(variantIds);
+  const byCore = new Set(posted.filter((m) => m.bucket === 'on_hand' && m.qty !== 0).map((m) => m.variantId));
+  const changed = variantIds.filter((id) => (before.get(id) ?? 0) !== (after.get(id) ?? 0) && !byCore.has(id)).sort();
+  const stock = await stockOf(changed);
+  for (const variantId of changed) {
+    const s = stock.get(variantId);
+    if (!s) continue;
+    await publishEvent({
+      type: 'inventory.stock_changed',
+      aggregateId: variantId,
+      payload: { variantId, onHand: s.onHand, reserved: s.reserved, available: s.available },
+    });
+  }
+}
+
 export function actOnDocument(actor: DocActor, id: string, action: DocAction, input: { version: number; reason?: string | undefined }) {
   return withCompany(actor.companyId, async () => {
     const row = await load(id, 'update');
@@ -365,17 +419,21 @@ export function actOnDocument(actor: DocActor, id: string, action: DocAction, in
 
     if (type !== 'return_inspection' && action === 'submit') await checkDecrease(row, lines);
     if (action === 'reject') set.statusReason = reason;
-    if (type === 'return_inspection' && action === 'submit') Object.assign(set, { claimFlag: true, createdBy: actor.accountId });
+    if (type === 'return_inspection' && action === 'submit') Object.assign(set, { claimFlag: true, createdBy: row.createdBy ?? actor.accountId });
     // Kiểm kê đầu kỳ do hệ thống lập: người gửi duyệt (người đếm) thành người lập để xét người thứ hai (25 §11, N9)
     if (row.isOpening && action === 'submit') set.createdBy = actor.accountId;
     if (to === 'posted') {
-      await post(row, lines, actor.accountId, now);
       Object.assign(set, { postedBy: actor.accountId, postedAt: now });
       if (action === 'approve') Object.assign(set, { approvedBy: actor.accountId, approvedAt: now, selfApproved });
     }
+    const variantIds = [...new Set(lines.map((l) => l.variantId))];
+    const locksBefore = type === 'return_inspection' ? new Map<string, number>() : await lockedOf(variantIds);
 
+    // Đổi trạng thái trước khi ghi sổ: phiếu hết `pending` thì hết tạm khoá, số khả dụng lõi phát ra mới đúng
     const updated = await updateDoc(row.id, row.version, set);
     if (!updated) throw await conflict(row, actor);
+    if (to === 'posted') await post(row, lines, actor.accountId, now);
+    if (type !== 'return_inspection') await publishLockChanges(variantIds, locksBefore, to === 'posted' ? movesOf(row, lines) : []);
     await recordTransition({
       entityType: DOC_ENTITY,
       entityId: row.id,

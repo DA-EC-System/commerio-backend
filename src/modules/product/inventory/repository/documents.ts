@@ -7,7 +7,7 @@ import type { DocumentRef, SystemDocKind } from '../domain/documents.ts';
 import { companyOfTransaction } from './levels.ts';
 import { stockDocumentLines, stockDocuments } from './schema.ts';
 
-export type DocumentSourceType = 'package' | 'return_request';
+export type DocumentSourceType = 'package' | 'return_request' | 'unmatched_parcel';
 
 export interface NewSystemDocument {
   number: string;

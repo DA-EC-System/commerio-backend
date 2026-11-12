@@ -2,8 +2,9 @@
 // cho mọi gian hàng đang hoạt động (#117) mỗi 6 giờ, chạy các lần kéo ở hàng `finance.settlement_run` (#248). Mỗi việc
 // định kỳ không chồng lượt; dừng thì chờ lượt đang chạy.
 import { logger } from '../../../../shared/logger.ts';
-import { workQueue } from '../../../core/index.ts';
+import { registerConsumer, workQueue } from '../../../core/index.ts';
 import { activateDueConfigsOnce } from './config-versions.ts';
+import { markOrderCancelled } from './order-settlement-state.ts';
 import { pullAllShopsOnce, runSettlementJob, settlementRunQueue } from './settlement-runs.ts';
 import type { FinanceContext } from './settlement-views.ts';
 
@@ -25,6 +26,8 @@ function every(ms: number, job: () => Promise<unknown>, label: string) {
 }
 
 export async function startFinanceBackground(ctx: FinanceContext): Promise<() => Promise<void>> {
+  // Đơn huỷ sau khi quyết toán đã về (E139 rồi huỷ): trạng thái tiền `none` sang `mismatch` (#247).
+  registerConsumer('sales.order_cancelled', (e) => markOrderCancelled(e.payload.orderId), { consumer: 'finance-order-cancelled' });
   await workQueue(settlementRunQueue, (job, attempt) => runSettlementJob(ctx, job, attempt));
   const stops = [
     every(5 * 60_000, () => activateDueConfigsOnce(), 'việc nền áp dụng phiên bản cấu hình lỗi'),

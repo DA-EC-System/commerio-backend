@@ -17,6 +17,7 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
+import { walletDiffOf } from '../../../finance/index.ts';
 import { countOpenOrders, oldestOpenOrders, orderCountsByShop } from '../../../order/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import {
@@ -110,6 +111,8 @@ export interface Shop {
   statusChangedAt: Date;
   /** Phiên bản cấu hình phí đang áp: `null` tới commerio-backend#230 (§18.7.1). */
   feeConfigVersion: number | null;
+  walletMismatch: boolean;
+  walletDiff: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -163,6 +166,8 @@ interface ShopExtras {
   orders: Map<string, { open: number; placed: number }>;
   /** Lần đổi trạng thái gần nhất theo `core.state_transitions`. */
   statusChanged: Map<string, Date>;
+  /** Lệch ví của lần đối soát `done` gần nhất có số, đọc qua cổng của `finance` (§21.3, #251). */
+  walletDiff: Map<string, string>;
 }
 
 const ORDERS_WINDOW_MS = 7 * 24 * 3600_000;
@@ -174,20 +179,22 @@ const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'd
 async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
   const ids = rows.map((r) => r.id);
   const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
-  const [listings, held, stocktakeStatus, dead, orders, statusChanged] = await Promise.all([
+  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff] = await Promise.all([
     countListingsOnPlatform(ids),
     countHeld(ids),
     docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
     lastDeadJobs(rows.filter(settingUp).map((r) => r.id), [openOrderPullQueue.name, listingSyncQueue.name]),
     orderCountsByShop(ids, new Date(Date.now() - ORDERS_WINDOW_MS)),
     lastTransitionsAt(ENTITY, ids),
+    walletDiffOf(ids),
   ]);
-  return { listings, held, stocktakeStatus, dead, orders, statusChanged };
+  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff };
 }
 
 function toShop(row: ShopRow, extras: ShopExtras): Shop {
   const listingCount = extras.listings.get(row.id) ?? 0;
   const pendingJobs = extras.held.get(row.id) ?? 0;
+  const walletDiff = extras.walletDiff.get(row.id) ?? null;
   return {
     id: row.id,
     companyId: row.companyId,
@@ -226,6 +233,8 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
     orders7d: extras.orders.get(row.id)?.placed ?? 0,
     statusChangedAt: extras.statusChanged.get(row.id) ?? row.createdAt,
     feeConfigVersion: null,
+    walletMismatch: walletDiff !== null && Number(walletDiff) !== 0,
+    walletDiff,
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

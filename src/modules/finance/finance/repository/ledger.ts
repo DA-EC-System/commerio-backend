@@ -1,3 +1,4 @@
+import { Decimal } from 'decimal.js';
 import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not, notInArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
@@ -240,25 +241,26 @@ export async function revenueSince(from: string): Promise<string> {
 
 /**
  * Tổng thuế khấu trừ (`withholding_tax`) của từng đơn, tách ước tính và thực tế (số sàn trừ trong quyết toán), để
- * bật cờ Lệch thuế (E135, #250). Đơn chưa có dòng thuế thực tế thì `actual` là null.
+ * bật cờ Lệch thuế (E135, #250). Đơn đã có dòng quyết toán mà sàn không trừ thuế thì `actual` là 0 (mức 0 cũng là một
+ * mức khác app); đơn chưa có dòng quyết toán nào thì `actual` null.
  */
 export async function withholdingOf(orderIds: readonly string[]): Promise<Map<string, { estimated: string; actual: string | null }>> {
   const out = new Map<string, { estimated: string; actual: string | null }>();
   if (!orderIds.length) return out;
+  const wht = sql`${ledgerEntries.kind} = 'withholding_tax'`;
   const rows = await getDb()
     .select({
       orderId: ledgerEntries.orderId,
-      estimate: ledgerEntries.isEstimate,
-      total: sql<string>`sum(${ledgerEntries.amount})`,
+      estimated: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where ${wht} and ${ledgerEntries.isEstimate}), 0)`,
+      actual: sql<string | null>`sum(${ledgerEntries.amount}) filter (where ${wht} and not ${ledgerEntries.isEstimate})`,
+      settled: sql<boolean>`bool_or(${ledgerEntries.sourceType} = 'settlement_batch' and not ${ledgerEntries.isEstimate})`,
     })
     .from(ledgerEntries)
-    .where(and(inArray(ledgerEntries.orderId, [...orderIds]), eq(ledgerEntries.kind, 'withholding_tax')))
-    .groupBy(ledgerEntries.orderId, ledgerEntries.isEstimate);
+    .where(inArray(ledgerEntries.orderId, [...orderIds]))
+    .groupBy(ledgerEntries.orderId);
   for (const r of rows) {
-    const cur = out.get(r.orderId!) ?? { estimated: '0', actual: null };
-    if (r.estimate) cur.estimated = r.total;
-    else cur.actual = r.total;
-    out.set(r.orderId!, cur);
+    const actual = r.actual ?? (r.settled ? '0' : null);
+    if (actual !== null || !new Decimal(r.estimated).isZero()) out.set(r.orderId!, { estimated: r.estimated, actual });
   }
   return out;
 }

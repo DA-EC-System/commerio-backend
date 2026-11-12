@@ -1,4 +1,4 @@
-import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import { settlementBatches } from './schema.ts';
 
@@ -82,4 +82,18 @@ export async function listRuns(shopId: string | undefined, page: { limit: number
     .offset(page.offset);
   const [total] = await getDb().select({ n: count() }).from(settlementBatches).where(where);
   return { rows, total: total?.n ?? 0 };
+}
+
+/**
+ * `wallet_diff` của lần `done` gần nhất có số của từng gian hàng (#251, Documents/21 §21.3): gần nhất theo cuối kỳ
+ * (`period_to`) giảm dần, bằng nhau thì theo `created_at`; lần `done` sàn không trả kỳ quyết toán (null) bỏ qua.
+ */
+export async function latestWalletDiffs(shopIds: readonly string[]): Promise<Map<string, string>> {
+  if (!shopIds.length) return new Map();
+  const rows = await getDb()
+    .selectDistinctOn([settlementBatches.shopId], { shopId: settlementBatches.shopId, walletDiff: settlementBatches.walletDiff })
+    .from(settlementBatches)
+    .where(and(inArray(settlementBatches.shopId, [...shopIds]), eq(settlementBatches.status, 'done'), isNotNull(settlementBatches.walletDiff)))
+    .orderBy(settlementBatches.shopId, desc(settlementBatches.periodTo), desc(settlementBatches.createdAt));
+  return new Map(rows.map((r) => [r.shopId, r.walletDiff!]));
 }

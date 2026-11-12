@@ -254,12 +254,22 @@ export function updateSupplierReturn(actor: Actor, id: string, input: SupplierRe
 
 // ---------- Thao tác ----------
 
-const toReturnLines = (lines: readonly ReturnLineRow[]) =>
-  lines.map((l) => ({ lineId: l.id, variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost }));
+/**
+ * Dòng cho lõi tồn. Huỷ chọn nhập lại tồn (`restock`): chỉ hàng nguồn khách trả vào tồn thực theo giá vốn trên dòng kiện;
+ * nguồn khác (hàng lỗi phiếu nhận mang giá đề nghị, lập tay mang giá bình quân lúc lập) truyền `null` để giữ giá vốn
+ * bình quân hiện tại (US-NH-15 dòng 1, review #279).
+ */
+const toReturnLines = (row: ReturnRow, kind: 'send' | 'back' | 'restock', lines: readonly ReturnLineRow[]) =>
+  lines.map((l) => ({
+    lineId: l.id,
+    variantId: l.variantId,
+    quantity: l.quantity,
+    unitCost: kind === 'restock' && row.source !== 'customer_return' ? null : l.unitCost,
+  }));
 
 async function moveStock(row: ReturnRow, kind: 'send' | 'back' | 'restock', lines: readonly ReturnLineRow[], actorId: string) {
   try {
-    await moveSupplierReturn(row.id, kind, toReturnLines(lines), actorId);
+    await moveSupplierReturn(row.id, kind, toReturnLines(row, kind, lines), actorId);
   } catch (err) {
     if (!(err instanceof InsufficientStock)) throw err;
     const errors: Record<string, string> = {};

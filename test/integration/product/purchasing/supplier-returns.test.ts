@@ -147,6 +147,33 @@ describe('B4 phiếu trả NCC', () => {
     expect(doc).toMatchObject({ type: 'write_off', area: 'quarantine', status: 'draft', source: { type: 'supplier_return' } });
   });
 
+  it('US-NH-15: huỷ chọn nhập lại tồn giữ giá vốn bình quân hiện tại với phiếu lập tay và phiếu từ hàng lỗi phiếu nhận; nguồn khách trả theo giá dòng kiện (review #279)', async () => {
+    const v = (await createVariant(companyId)).variantId;
+    await receive(companyId, v, 10, 40000);
+    await setBuckets(companyId, v, { quarantine: 20 });
+    const cost = async () => (await inv(ceo).get(`/stock/${v}`)).body.level.avgCost as number;
+    const make = async (source: string, unitCost: string) => {
+      const res = await pur(kho).post('/supplier-returns', { supplierId, note: 'Hàng lỗi', lines: [{ variantId: v, quantity: 2 }] });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      await testPool().query('update product.supplier_returns set source = $2 where id = $1', [res.body.id, source]);
+      await testPool().query('update product.supplier_return_lines set unit_cost = $2 where return_id = $1', [res.body.id, unitCost]);
+      return res.body as { id: string; version: number };
+    };
+    const cancel = async (d: { id: string; version: number }) => {
+      const res = await act(ceo, d.id, 'cancel', { version: d.version, reason: 'Còn bán được', cancelDecision: 'restock' });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+    };
+    expect(await cost()).toBe(40000);
+    // Lập tay: giá trên dòng là bình quân lúc lập (ở đây đã cũ, 10.000); hàng lỗi phiếu nhận: giá đề nghị 90.000
+    await cancel(await make('manual', '10000.00'));
+    expect(await cost()).toBe(40000);
+    await cancel(await make('receipt_defect', '90000.00'));
+    expect(await cost()).toBe(40000);
+    // Khách trả: theo giá vốn dòng kiện 12.000 → (14 × 40.000 + 2 × 12.000) / 16 = 36.500
+    await cancel(await make('customer_return', '12000.00'));
+    expect(await cost()).toBe(36500);
+  });
+
   it('B4-01q, B4-03q: Admin, Sale không lập, không gửi; Kho không duyệt gửi', async () => {
     for (const token of [admin, sale]) {
       expect((await pur(token).post('/supplier-returns', { supplierId, note: '', lines: [{ variantId, quantity: 1 }] })).status).toBe(403);

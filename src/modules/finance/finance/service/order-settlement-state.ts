@@ -6,7 +6,7 @@ import { recordTransition } from '../../../core/index.ts';
 import { vnDate } from '../domain/config-version.ts';
 import { NO_THRESHOLD, nextAfterSettlement, type Threshold } from '../domain/settlement.ts';
 import { orderSums } from '../repository/ledger.ts';
-import { lockOrderSettlement, updateOrderSettlement } from '../repository/order-settlements.ts';
+import { findOrderSettlement, lockOrderSettlement, updateOrderSettlement } from '../repository/order-settlements.ts';
 import { getEffectiveConfig } from './config-versions.ts';
 
 export const SETTLEMENT_ENTITY = 'order_settlements';
@@ -34,13 +34,24 @@ export async function markDelivered(orderId: string, shopId: string): Promise<vo
 }
 
 /**
+ * Đơn bị huỷ (`sales.order_cancelled`). Đơn đang giữ `none` vì quyết toán về trước khi kiện giao (E139) mà đã có dòng
+ * thực tế khác 0 thì sang `mismatch` (`cancelled_charged`) như E138, không treo mãi ở `none` (#247). Đơn chưa có số
+ * quyết toán, hoặc đã qua `none`, thì không đổi.
+ */
+export async function markOrderCancelled(orderId: string): Promise<void> {
+  const row = await findOrderSettlement(orderId, 'update');
+  if (!row || row.status !== 'none') return;
+  await recomputeAfterSettlement([orderId], row.shopId, await currentThreshold(), new Set([orderId]));
+}
+
+/**
  * Sau một lô quyết toán: tính lại tổng ước tính, thực tế, lệch của từng đơn, chuyển trạng thái theo ngưỡng
  * (`nextAfterSettlement`). `cancelled`: đơn đã huỷ trong app; đơn khác chưa có kiện giao xong thì giữ nguyên (E139).
  * Trả số đơn đổi trạng thái.
  */
 export async function recomputeAfterSettlement(
   orderIds: readonly string[],
-  shopId: string,
+  shopId: string | null,
   t: Threshold,
   cancelled: ReadonlySet<string> = new Set(),
 ): Promise<number> {

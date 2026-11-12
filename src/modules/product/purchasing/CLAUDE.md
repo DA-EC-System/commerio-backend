@@ -45,7 +45,7 @@ Thao tác `POST /requests/:id/:action` và `POST /goods-receipts/:id/:action` ch
 
 - Nguồn: hàng lỗi của phiếu nhận (`receipt_defect`, #109), kiểm hàng về (`customer_return`), xuất huỷ bị từ chối (`write_off_rejected`) do inventory gọi `draftSupplierReturn` qua `product/index.ts`; kho lập tay (`manual`) cho hàng ở chờ xử lý (số lượng không vượt chờ xử lý). Phiếu hệ thống lập có `created_by` trống; người gửi duyệt thành người lập.
 - Bảng chuyển `domain/return-machine.ts`: duyệt và gửi, trả về khác người lập; ghi kết quả (hoàn tiền, bù hàng, không nhận) khác người gửi; CEO hoặc công ty một người tự làm được (`self_approved`, `result_self_approved`; CHECK `supplier_returns_result_by` cho qua khi tự duyệt).
-- Tồn đổi qua `inventory.moveSupplierReturn`: duyệt và gửi trừ chờ xử lý; NCC không nhận cộng lại; huỷ chọn nhập lại thì chờ xử lý sang tồn thực theo giá vốn dòng gốc, chọn xuất huỷ thì `createQuarantineWriteOff` nháp. Chờ xử lý không đủ: 422 `stock_insufficient` theo dòng.
+- Tồn đổi qua `inventory.moveSupplierReturn`: duyệt và gửi trừ chờ xử lý; NCC không nhận cộng lại; huỷ chọn nhập lại thì chờ xử lý sang tồn thực theo giá vốn bình quân hiện tại (riêng hàng nguồn khách trả theo giá vốn trên dòng kiện, US-NH-15), chọn xuất huỷ thì `createQuarantineWriteOff` nháp. Chờ xử lý không đủ: 422 `stock_insufficient` theo dòng.
 - Ghi hoàn tiền phát `purchasing.supplier_return_refunded { supplierReturnId, supplierId, refundAmount, recordedAt }` (sổ tiền nghe ở #228). Bù hàng: lập đề nghị với `sourceReturnId` (phiếu `replaced`, chưa có đề nghị bù, cùng NCC), đề nghị nguồn `replacement`, phiếu trả trỏ `replacement_request_id`.
 - Nhắc khi đã gửi quá 14 ngày chưa có kết quả chưa làm: chờ khung nhắc việc của #209.
 

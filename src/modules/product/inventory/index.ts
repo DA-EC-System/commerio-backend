@@ -15,6 +15,8 @@ export {
   availableOf,
   type DocumentRef,
   nextDocNumber,
+  type ReceiveBackMeta,
+  type ReturnedLine,
   receiveBack,
   release,
   reserve,

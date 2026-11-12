@@ -4,8 +4,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { lazadaLedgerKind } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import type { PlatformPayout, PlatformTxn } from '#src/modules/finance/finance/domain/settlement.ts';
 import { recordPackageDelivered } from '#src/modules/finance/finance/service/ledger.ts';
+import { markOrderCancelled } from '#src/modules/finance/finance/service/order-settlement-state.ts';
 import { openRun, processRun, runSettlement, runSettlementJob } from '#src/modules/finance/finance/service/settlement-runs.ts';
 import type { FinanceContext } from '#src/modules/finance/finance/service/settlement-views.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -326,6 +328,61 @@ describe('kéo quyết toán (§21.3)', () => {
     const twice = await post(s.ceo, `/ledger/${id}/bank-match`, { bankRef: 'VCB-0002' });
     expect([twice.status, twice.body.type]).toEqual([409, '/problems/already_matched']);
     expect((await get(s.ceo, '/bank-matching?matched=true')).body.total).toBe(1);
+  });
+
+  it('D43-05: việc của lần đã bị đánh failed chạy muộn thì không ghi dòng nào dưới lần đó (review #273)', async () => {
+    const s = await setup();
+    await deliver(s);
+    const run = await openRun(fakeSource(() => []), s.companyId, null, s.shopId);
+    // Lần mở sau đánh lần này failed đúng lúc việc cũ đang gọi sàn (giữa bước gọi sàn và bước ghi)
+    const late = fakeSource(() => settlementOf('L', '-5160.00'));
+    late.settlementSource!.payouts = async () => {
+      await testPool().query("update finance.settlement_batches set status = 'failed', error = 'quá thời gian chờ' where id = $1", [run.id]);
+      return [];
+    };
+    const result = await processRun(late, s.companyId, run.id);
+    expect(result.status).toBe('failed');
+    const rows = await testPool().query('select count(*)::int as n from finance.ledger_entries where source_id = $1', [run.id]);
+    expect(rows.rows[0].n).toBe(0);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'pending' });
+  });
+
+  it('mã giao dịch lặp ngay trong một lô: ghi một dòng, đếm phần lặp vào duplicates, lần chạy vẫn done (review #274)', async () => {
+    const s = await setup();
+    const twice = () => [
+      txn('D-1', 'Payment Fee', 'Orders-Lazada Fees', '-1000.00', null),
+      txn('D-1', 'Payment Fee', 'Orders-Lazada Fees', '-1000.00', null),
+    ];
+    const run = await runSettlement(fakeSource(twice), s.companyId, null, s.shopId);
+    expect(run).toMatchObject({ status: 'done', lineCount: 1, duplicates: 1 });
+    expect(await runSettlement(fakeSource(twice), s.companyId, null, s.shopId)).toMatchObject({ status: 'done', lineCount: 0, duplicates: 2 });
+  });
+
+  it('E135: sàn không trừ thuế trong khi app ước tính có thuế thì vẫn có cờ Lệch thuế; chưa quyết toán thì chưa có cờ (review #274)', async () => {
+    const s = await setup();
+    await config(s.companyId, 'tax_regime', null, { regime: 'household' });
+    await config(s.companyId, 'tax_rules', null, { vatPct: 1, pitPct: 0.5, milestones: [500_000_000, 3_000_000_000] });
+    await deliver(s);
+    expect((await get(s.ceo, `/payments/${s.order.orderId}`)).body.flags).toEqual([]);
+    await runSettlement(fakeSource(() => settlementOf('Z', '-5160.00')), s.companyId, null, s.shopId);
+    const p = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(p.body.lines.filter((l: { kind: string; estimated: boolean }) => l.kind === 'withholding_tax' && !l.estimated)).toEqual([]);
+    expect(p.body.flags).toEqual(['tax_mismatch']);
+  });
+
+  it('D43-12 (E139 rồi huỷ): đơn giữ none vì quyết toán về trước, sau đó bị huỷ thì sang mismatch (cancelled_charged)', async () => {
+    const s = await setup();
+    await runSettlement(fakeSource(() => settlementOf('H', '-5160.00')), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'none', settled_total: '242520.00' });
+    await testPool().query(`update "order".orders set status = 'cancelled' where id = $1`, [s.order.orderId]);
+    await withCompany(s.companyId, () => markOrderCancelled(s.order.orderId));
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'mismatch', diff: '242520.00' });
+    const p = await get(s.ceo, `/payments/${s.order.orderId}`);
+    expect(p.body.statusHistory.map((h: { to: string; action?: string }) => h.to)).toEqual(['mismatch']);
+    // Sự kiện huỷ giao lại, hoặc đơn chưa có số quyết toán: không đổi gì
+    await withCompany(s.companyId, () => markOrderCancelled(s.order.orderId));
+    await withCompany(s.companyId, () => markOrderCancelled(randomUUID()));
+    expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'mismatch' });
   });
 });
 

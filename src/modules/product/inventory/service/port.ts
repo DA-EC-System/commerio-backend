@@ -59,5 +59,5 @@ export const nextDocNumber = takeNextNumber;
 // Cổng tồn theo kiện (Documents/21 mục 11.1, spec #206 mục 5.5): fulfillment và yêu cầu trả gọi trong giao dịch của mình.
 export type { DocumentRef, ShipLine, StockLine } from '../domain/documents.ts';
 export { release, reserve } from './reservation.ts';
-export { receiveBack } from './returns.ts';
+export { type ReceiveBackMeta, type ReturnedLine, receiveBack } from './returns.ts';
 export { reverseShipment, type ShipOptions, ship } from './shipment.ts';

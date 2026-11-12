@@ -12,6 +12,7 @@ import { inv, receive, setBuckets } from './helpers.ts';
 let companyId: string;
 let ceo: string;
 let kho: string;
+let khoId: string;
 let admin: string;
 let sale: string;
 let lapDuyet: string;
@@ -22,7 +23,9 @@ beforeAll(async () => {
   const c = await createCompany();
   companyId = c.companyId;
   ceo = c.ceo.token;
-  kho = (await addMember(companyId, 'warehouse')).token;
+  const khoMember = await addMember(companyId, 'warehouse');
+  kho = khoMember.token;
+  khoId = khoMember.accountId;
   admin = (await addMember(companyId, 'admin')).token;
   sale = (await addMember(companyId, 'sale')).token;
   // Vai trò tuỳ biến vừa lập vừa duyệt phiếu kho: ca người thứ hai không phải CEO
@@ -66,13 +69,24 @@ describe('B3a kiểm kê, xuất huỷ, chuyển chờ xử lý', () => {
   it('B3a-03: CEO từ chối (bắt buộc lý do) thì hết tạm khoá, tồn không đổi', async () => {
     const before = await level(v1);
     const doc = await draft(kho, { type: 'write_off', area: 'stock', note: 'Rách', lines: [{ variantId: v1, quantity: 3 }] });
+    const events = async () =>
+      (await testPool().query("select payload from core.outbox_messages where type = 'inventory.stock_changed' and key = $1 order by id", [v1])).rows;
+    const n = (await events()).length;
     const sent = (await act(kho, doc.id, 'submit', { version: doc.version })).body;
     expect((await level(v1)).locked).toBe(3);
+    // Gửi duyệt giữ lại 3: phát stock_changed với số có thể bán đã giảm (US-TK-06, 21 §11.1)
+    const held = await events();
+    expect(held).toHaveLength(n + 1);
+    expect(held.at(-1).payload).toEqual({ variantId: v1, onHand: before.onHand, reserved: before.reserved, available: before.available - 3 });
     const noReason = await act(ceo, doc.id, 'reject', { version: sent.version });
     expect([noReason.status, noReason.body.code]).toEqual([422, 'reason_required']);
     const rejected = await act(ceo, doc.id, 'reject', { version: sent.version, reason: 'Hàng còn dùng được' });
     expect(rejected.body).toMatchObject({ status: 'rejected', needsDecision: false });
     expect(await level(v1)).toMatchObject({ onHand: before.onHand, locked: 0 });
+    // Từ chối nhả phần giữ: phát stock_changed với số có thể bán tăng lại (US-TK-09)
+    const freed = await events();
+    expect(freed).toHaveLength(n + 2);
+    expect(freed.at(-1).payload).toEqual({ variantId: v1, onHand: before.onHand, reserved: before.reserved, available: before.available });
   });
 
   it('B3a-01g, B3a-04: gửi duyệt phiếu không dòng 409 empty_document; huỷ nháp', async () => {
@@ -176,8 +190,10 @@ describe('B3a kiểm kê, xuất huỷ, chuyển chờ xử lý', () => {
 });
 
 describe('B3b kiểm hàng về', () => {
-  async function inspection(source: 'package' | 'return_request', lines: { variantId: string; quantity: number }[], meta = {}) {
-    const { documentId } = await withCompany(companyId, () => receiveBack({ type: source, id: crypto.randomUUID() }, lines, meta));
+  /** Hàng về với số dự kiến `quantity`; `scanned` mặc định 0 (kho quét sau trên phiếu nháp bằng PUT). */
+  async function inspection(source: 'package' | 'return_request', lines: { variantId: string; quantity: number; scanned?: number }[], meta = {}) {
+    const merged = lines.map((l) => ({ variantId: l.variantId, expected: l.quantity, scanned: l.scanned ?? 0 }));
+    const { documentId } = await withCompany(companyId, () => receiveBack({ type: source, id: crypto.randomUUID() }, merged, meta));
     return StockDoc.parse((await inv(kho).get(`/documents/${documentId}`)).body);
   }
 
@@ -243,8 +259,8 @@ describe('B3b kiểm hàng về', () => {
     });
   });
 
-  it('kiện hoàn gọi receiveBack không meta (chữ ký cũ của fulfillment): phiếu như trước, ghi sổ không phát return_inspected', async () => {
-    const { documentId } = await withCompany(companyId, () => receiveBack({ type: 'package', id: crypto.randomUUID() }, [{ variantId: v1, quantity: 1 }]));
+  it('kiện hoàn gọi receiveBack không meta: phiếu không có đơn, gian hàng; ghi sổ không phát return_inspected', async () => {
+    const { documentId } = await withCompany(companyId, () => receiveBack({ type: 'package', id: crypto.randomUUID() }, [{ variantId: v1, expected: 1, scanned: 1 }]));
     const doc = StockDoc.parse((await inv(kho).get(`/documents/${documentId}`)).body);
     expect(doc).toMatchObject({ type: 'return_inspection', status: 'draft', number: expect.stringMatching(/^KT-/) });
     const scanned = (
@@ -277,10 +293,63 @@ describe('B3b kiểm hàng về', () => {
 
   it('gọi lại cùng nguồn trả phiếu cũ, không lập phiếu thứ hai (Documents/21 §11.1)', async () => {
     const source = { type: 'package' as const, id: crypto.randomUUID() };
-    const first = await withCompany(companyId, () => receiveBack(source, [{ variantId: v1, quantity: 1 }]));
-    const again = await withCompany(companyId, () => receiveBack(source, [{ variantId: v1, quantity: 1 }]));
+    const first = await withCompany(companyId, () => receiveBack(source, [{ variantId: v1, expected: 1, scanned: 1 }]));
+    const again = await withCompany(companyId, () => receiveBack(source, [{ variantId: v1, expected: 1, scanned: 1 }]));
     expect(again).toEqual(first);
-    const other = await withCompany(companyId, () => receiveBack({ ...source, type: 'return_request' }, [{ variantId: v1, quantity: 1 }]));
+    const other = await withCompany(companyId, () => receiveBack({ ...source, type: 'return_request' }, [{ variantId: v1, expected: 1, scanned: 1 }]));
     expect(other.documentId).not.toBe(first.documentId);
+  });
+
+  it('US-TK-10: nhận thì chờ xử lý tăng đúng số quét; sửa số quét trên phiếu nháp đổi đúng phần chênh; ghi sổ chuyển phần bán lại sang tồn thực theo giá vốn dòng kiện, hỏng và trả NCC ở lại', async () => {
+    const v = (await createVariant(companyId)).variantId;
+    await receive(companyId, v, 10, 60000);
+    const start = await level(v);
+    // Dòng kiện có giá vốn 30.000 khác bình quân hiện tại 60.000
+    const doc = await inspection('return_request', [{ variantId: v, quantity: 5, scanned: 5 }], {
+      number: 'TR-0100',
+      orderId: crypto.randomUUID(),
+      unitCosts: { [v]: '30000.00' },
+    });
+    expect(doc.lines[0]).toMatchObject({ expected: 5, quantity: 5 });
+    expect(await level(v)).toMatchObject({ onHand: start.onHand, quarantine: start.quarantine + 5 });
+
+    // Đếm lại chỉ có 4: chờ xử lý giảm đúng 1
+    const fixed = await inv(kho).put(`/documents/${doc.id}`, {
+      note: '',
+      lines: [{ variantId: v, scanned: 4, resell: 2, damaged: 1, toSupplier: 1 }],
+      version: doc.version,
+    });
+    expect(fixed.status, JSON.stringify(fixed.body)).toBe(200);
+    expect(await level(v)).toMatchObject({ onHand: start.onHand, quarantine: start.quarantine + 4 });
+    const sent = await act(kho, doc.id, 'submit', { version: fixed.body.version });
+    const ok = await act(lapDuyet, doc.id, 'approve', { version: sent.body.version });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    // Bán lại 2 rời chờ xử lý sang tồn thực; hỏng 1, trả NCC 1 ở lại, không cộng lần hai
+    const after = await level(v);
+    expect(after).toMatchObject({ onHand: start.onHand + 2, quarantine: start.quarantine + 2 });
+    // Bình quân gia quyền: (10 × 60.000 + 2 × 30.000) / 12 = 55.000
+    expect(after.avgCost).toBe(55000);
+  });
+
+  it('người quét (meta.actorId) là người mà bước duyệt phần thiếu phải khác: người quét tự duyệt thì 409 second_person_required, kể cả khi người khác gửi duyệt', async () => {
+    const { documentId } = await withCompany(companyId, () =>
+      receiveBack({ type: 'package', id: crypto.randomUUID() }, [{ variantId: v2, expected: 2, scanned: 1 }], { actorId: khoId }),
+    );
+    const doc = StockDoc.parse((await inv(kho).get(`/documents/${documentId}`)).body);
+    const split = await inv(lapDuyet).put(`/documents/${doc.id}`, { note: '', lines: [{ variantId: v2, scanned: 1, resell: 1 }], version: doc.version });
+    const sent = await act(lapDuyet, doc.id, 'submit', { version: split.body.version });
+    expect(sent.body.status).toBe('pending');
+    const self = await act(kho, doc.id, 'approve', { version: sent.body.version });
+    expect([self.status, self.body.code]).toEqual([409, 'second_person_required']);
+    const ok = await act(lapDuyet, doc.id, 'approve', { version: sent.body.version });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const moves = await testPool().query('select done_by from product.stock_moves where source_id = $1 order by id limit 1', [doc.id]);
+    expect(moves.rows[0].done_by).toBe(khoId);
+  });
+
+  it('chưa chia đủ số quét (bán lại + hỏng + trả NCC khác số quét) thì không ghi sổ được: 422 theo dòng', async () => {
+    const doc = await inspection('package', [{ variantId: v1, quantity: 2, scanned: 2 }]);
+    const res = await act(kho, doc.id, 'post', { version: doc.version });
+    expect([res.status, res.body.code, Object.keys(res.body.errors)]).toEqual([422, 'validation_failed', ['lines.0.resell']]);
   });
 });
