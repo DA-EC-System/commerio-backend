@@ -274,6 +274,27 @@
       "when": 1794472523626,
       "tag": "20261112083523_quyen-ghep-sku",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794472868456,
+      "tag": "20261112084108_ban-sao-sku-san",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794472872331,
+      "tag": "20261112084112_bo-dem-sku-chua-ghep",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794472899673,
+      "tag": "20261112084139_rls-ban-sao-sku-san",
+      "breakpoints": true
     }
   ]
 }

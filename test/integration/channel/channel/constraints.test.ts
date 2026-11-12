@@ -63,13 +63,13 @@ describe('ràng buộc gian hàng', () => {
     await expect(insert({ opening_stocktake_id: randomUUID(), opening_stocktake_number: 'KK-1' })).rejects.toThrow(
       /"shops_opening_stocktake"/,
     );
-    await expect(insert({ opening_stock_mode: 'push' })).rejects.toThrow(/"shops_setup_mode"/);
-    await expect(insert({ opening_stock_mode: 'other', unmatched_sku_count: 0 })).rejects.toThrow(/"shops_setup_mode"/);
+    // Số SKU chưa ghép tính khi đọc từ bản sao SKU sàn (#220 đợt 2), không còn cột `unmatched_sku_count`.
+    await expect(insert({ opening_stock_mode: 'other' })).rejects.toThrow(/"shops_setup_mode"/);
     const waiting = { order_cutoff_at: now, opening_stocktake_id: randomUUID(), opening_stocktake_number: 'KK-1' };
-    await insert({ ...waiting, opening_stock_mode: 'stocktake', unmatched_sku_count: 0 });
+    await insert({ ...waiting, opening_stock_mode: 'stocktake' });
     await expect(insert({ ...waiting, opening_stocktake_id: randomUUID() })).rejects.toThrow(/shops_one_opening_stocktake_uq/);
     await insert({ ...waiting, opening_stocktake_id: randomUUID() }, randomUUID());
-    await insert({ order_cutoff_at: now, opening_stock_mode: 'push', unmatched_sku_count: 2 });
+    await insert({ order_cutoff_at: now, opening_stock_mode: 'push' });
   });
 
   it('pg_trgm có sẵn cho gợi ý ghép theo tên (21 §18.7.5)', async () => {
@@ -131,6 +131,37 @@ describe('ràng buộc listing', () => {
       insertListing(c, s, { mode: 'unmanaged', external_sku_id: 'COMBO-1', approved_by: randomUUID() }),
     ).resolves.toBeDefined();
     await expect(insertListing(c, s, { mode: 'mapped' })).rejects.toThrow(/"listings_mode"/);
+  });
+
+  it('dòng đã gỡ không giữ ghép chờ duyệt; tự duyệt ghép phải có người duyệt (#220 đợt 2)', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const pending = { pending_variant_id: randomUUID(), pending_mode: 'mapped', pending_requested_by: randomUUID(), pending_requested_at: new Date() };
+    await expect(insertListing(c, s, { variant_id: randomUUID(), status: 'delisted', ...pending })).rejects.toThrow(
+      /"listings_delisted_no_pending"/,
+    );
+    await insertListing(c, s, { variant_id: randomUUID(), status: 'live', ...pending });
+    await expect(insertListing(c, s, { variant_id: randomUUID(), mapping_self_approved: true })).rejects.toThrow(
+      /"listings_self_approved_has_approver"/,
+    );
+    await insertListing(c, s, { variant_id: randomUUID(), mapping_self_approved: true, approved_by: randomUUID() });
+  });
+
+  it('bản sao SKU sàn: một dòng mỗi mã SKU sàn của gian hàng, không giữ SKU đã xoá, tồn không âm (#220 đợt 2)', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const insert = (cols: Record<string, unknown>) => {
+      const all = { company_id: c, shop_id: s, external_product_id: 'p1', external_sku_id: 'k1', seller_sku: 'A', title: 'Cốc', state: 'live', quantity: 1, ...cols };
+      const keys = Object.keys(all);
+      return db().query(
+        `insert into channel.remote_skus (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`,
+        Object.values(all),
+      );
+    };
+    await expect(insert({ state: 'deleted' })).rejects.toThrow(/"remote_skus_state"/);
+    await expect(insert({ quantity: -1 })).rejects.toThrow(/"remote_skus_quantity"/);
+    await insert({});
+    await expect(insert({})).rejects.toThrow(/remote_skus_shop_external_sku_uq/);
   });
 
   it('sàn từ chối phải kèm lý do', async () => {

@@ -19,6 +19,7 @@ import {
   updateListing,
 } from '../repository/listings.ts';
 import { hasOrdersWithSellerSku } from '../repository/raw-orders.ts';
+import { lockShopRow } from '../repository/shops.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
 import { type ChannelListing, requesterNames, toListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
@@ -156,6 +157,9 @@ export async function matchListing(
 
   try {
     const result = await inCompany(async () => {
+      // Khoá dòng gian hàng chặn khoá chia sẻ của lượt nhận đơn (`lockShopForOrders`): đơn mang SellerSku này về giữa
+      // lúc kiểm "đã có đơn" và lúc ghi thì không lọt bước CEO duyệt; lượt nhận đơn sau đó tra ra ghép mới (review #309 N1).
+      await lockShopRow(shop.id);
       const row = await findListingByExternalSku(shop.id, externalSkuId);
       // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
       if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict();

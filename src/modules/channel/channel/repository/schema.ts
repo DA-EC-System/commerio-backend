@@ -63,8 +63,13 @@ export const shops = channelSchema.table(
     openingStocktakeId: uuid('opening_stocktake_id'),
     openingStocktakeNumber: text('opening_stocktake_number'),
     openingStockMode: text('opening_stock_mode').$type<'push' | 'stocktake'>(),
-    /** SKU sàn không tạo listing lúc thiết lập, kể cả SKU người dùng bỏ qua. */
-    unmatchedSkuCount: integer('unmatched_sku_count'),
+    /**
+     * Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao `remote_skus`, #220 đợt 2); null là chưa có bản sao.
+     * Số SKU chưa ghép đếm từ bản sao lúc đọc, không lưu cột (bỏ `unmatched_sku_count`).
+     */
+    remoteSkusSyncedAt: timestamp('remote_skus_synced_at', { withTimezone: true }),
+    /** Mốc cho lần đọc "sản phẩm sửa từ lần trước" tiếp theo: giờ bắt đầu của lần làm mới bản sao gần nhất. */
+    remoteSkusChangedSince: timestamp('remote_skus_changed_since', { withTimezone: true }),
     /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
     openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
     /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
@@ -95,7 +100,7 @@ export const shops = channelSchema.table(
     ),
     check(
       'shops_setup_mode',
-      sql`(${t.openingStockMode} is null) = (${t.unmatchedSkuCount} is null) and (${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake'))`,
+      sql`${t.openingStockMode} is null or ${t.openingStockMode} in ('push', 'stocktake')`,
     ),
     check('shops_open_orders_skipped', sql`${t.openOrdersSkipped} >= 0`),
     // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
@@ -209,6 +214,9 @@ export const listings = channelSchema.table(
         or (${t.pendingRequestedBy} is not null and ${t.pendingRequestedAt} is not null and ${t.pendingMode} is not null and (${t.pendingMode} = 'mapped') = (${t.pendingVariantId} is not null))`,
     ),
     // Người duyệt khác người xin ghép, trừ tự duyệt (CEO, công ty một người): cùng mẫu với `self_approved` của bảng khác.
+    // Gỡ là trạng thái cuối: mọi đường gỡ (tay, sàn xoá, ngắt) phải bỏ ghép chờ duyệt cùng lúc (#220 đợt 2).
+    check('listings_delisted_no_pending', sql`${t.status} <> 'delisted' or ${t.pendingRequestedBy} is null`),
+    check('listings_self_approved_has_approver', sql`not ${t.mappingSelfApproved} or ${t.approvedBy} is not null`),
     check(
       'listings_mapping_second_person',
       sql`${t.approvedBy} is null or ${t.mappingRequestedBy} is null or ${t.approvedBy} <> ${t.mappingRequestedBy} or ${t.mappingSelfApproved}`,
@@ -294,7 +302,43 @@ export const rawOrders = channelSchema.table(
     ...timestamps,
     ...version,
   },
-  (t) => [unique().on(t.shopId, t.externalOrderId), index().on(t.orderId)],
+  (t) => [
+    unique().on(t.shopId, t.externalOrderId),
+    index().on(t.orderId),
+    // "Gian hàng đã nhận đơn có món mang SellerSku này" (`hasOrdersWithSellerSku`, #220): `payload -> 'lines' @> …`.
+    index('raw_orders_lines_gin').using('gin', sql`(${t.payload} -> 'lines') jsonb_path_ops`),
+  ],
+);
+
+/**
+ * Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, Documents/21 §18.3 "đọc từ lần đồng bộ gần nhất"): trang
+ * ghép, kiểm SKU khi ghép và số SKU chưa ghép đọc từ đây, không gọi sàn mỗi lần. Ghi bằng `service/remote-skus.ts`: đọc
+ * trọn (thiết lập, Tải lại, mỗi ngày) hoặc đọc sản phẩm sửa từ lần trước (sau lượt đồng bộ listing). SKU sàn đã xoá thì
+ * xoá dòng.
+ */
+export const remoteSkus = channelSchema.table(
+  'remote_skus',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id),
+    externalProductId: text('external_product_id').notNull(),
+    externalSkuId: text('external_sku_id').notNull(),
+    /** SKU người bán trên sàn; rỗng khi sàn không có (không ghép được tới khi đặt trên sàn). */
+    sellerSku: text('seller_sku').notNull(),
+    title: text('title').notNull(),
+    state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
+    quantity: integer('quantity').notNull(),
+    /** Lần gần nhất đọc thấy SKU này trên sàn. */
+    seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('remote_skus_shop_external_sku_uq').on(t.shopId, t.externalSkuId),
+    check('remote_skus_state', sql`${t.state} in ('review', 'live', 'rejected', 'hold', 'inactive')`),
+    check('remote_skus_quantity', sql`${t.quantity} >= 0`),
+  ],
 );
 
 /** Webhook sàn đã nhận, chống xử lý lặp theo `notification_id`. */

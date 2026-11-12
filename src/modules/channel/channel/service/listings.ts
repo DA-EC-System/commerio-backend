@@ -4,11 +4,12 @@ import { assertTransition, findAccountSummaries, recordTransition } from '../../
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { type ListingAction, type ListingStatus, listingMachine } from '../domain/listing.ts';
+import { DELISTED_REASON, type ListingAction, type ListingStatus, listingMachine, NO_PENDING, pendingOnly } from '../domain/listing.ts';
 import { awaitingAllocation } from '../domain/shop.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import {
   currentListingRows,
+  deleteListing,
   findListingRow,
   insertListing,
   type ListingPatch,
@@ -154,12 +155,29 @@ export async function moveListing(
   reason: string | null = null,
 ): Promise<ListingRow> {
   const { to } = assertTransition(listingMachine, row.status, action, { actor: by, view: toListing(row) });
-  const updated = await updateListing(row.id, { version: row.version, status: row.status }, { ...patch, status: to });
-  if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   const actorId = by?.accountId ?? null;
+  const dropPending = to === 'delisted' && row.pendingRequestedBy !== null;
+  // Dòng chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép: bỏ ghép chờ thì dòng không còn nghĩa (CHECK
+  // `listings_unmanaged_approved`), xoá như khi CEO từ chối.
+  if (dropPending && pendingOnly(row)) {
+    if (!(await deleteListing(row.id, row.version))) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
+    await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to: row.status, action: 'reject_mapping', actorId, reason: DELISTED_REASON });
+    return { ...row, ...NO_PENDING, status: to };
+  }
+  const updated = await updateListing(
+    row.id,
+    { version: row.version, status: row.status },
+    { ...patch, ...(dropPending && NO_PENDING), status: to },
+  );
+  if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });
+  // Gỡ là trạng thái cuối: ghép chờ duyệt không còn đối tượng (CHECK `listings_delisted_no_pending`, #220 đợt 2).
+  if (dropPending) {
+    await recordTransition({ entityType: ENTITY, entityId: row.id, from: to, to, action: 'reject_mapping', actorId, reason: DELISTED_REASON });
+  }
   return updated;
 }
+
 
 const blocked = (variantId: string, existing: ListingRow | undefined, code: string, message: string): PushResult => ({
   variantId,

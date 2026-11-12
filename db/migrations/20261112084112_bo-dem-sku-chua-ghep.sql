@@ -1,0 +1,1 @@
+ALTER TABLE "channel"."shops" DROP COLUMN "unmatched_sku_count";

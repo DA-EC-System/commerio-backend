@@ -7,10 +7,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ChannelListing, RemoteSkuList } from '#src/modules/channel/channel/api/schemas.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
+import { type ListingVariant, type ProductPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { activateShop, fakeAdapter } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
@@ -34,11 +36,12 @@ const newVariant = (extra: Partial<ListingVariant> = {}) => {
   variants.push(v);
   return v;
 };
-setProductPort({
+const port: ProductPort = {
   variants: async (ids) => variants.filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
   availableOf: async (ids) => new Map(ids.map((id) => [id, 5])),
-});
+};
+setProductPort(port);
 
 const remote: RemoteSku[] = [];
 /** SKU mới trên sàn, SKU người bán khác SKU Commerio (lý do phải ghép tay). */
@@ -65,6 +68,8 @@ registerAdapter(
     },
     listSkus: async () => remote,
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
+    deactivate: async () => {},
+    updatePriceQuantity: async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true })),
   }),
 );
 afterAll(() => {
@@ -360,5 +365,84 @@ describe('mapping/:action', () => {
   it('404 khi listing không có hoặc mã sai định dạng', async () => {
     expect((await decide(company.ceo.token, randomUUID(), 'approve', { version: 1 })).status).toBe(404);
     expect((await decide(company.ceo.token, 'abc', 'approve', { version: 1 })).status).toBe(404);
+  });
+});
+
+describe('đợt 2: gỡ listing thì bỏ ghép chờ duyệt (review #309 N2)', () => {
+  async function pendingRemap() {
+    const { r, v } = await mapped();
+    await orderWith(r.sellerSku);
+    const res = await match(admin.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id });
+    expect(res.status).toBe(202);
+    return { r, v, listing: ChannelListing.parse(res.body) };
+  }
+  const pendingOf = async (id: string) =>
+    (await testPool().query('select status, pending_requested_by, pending_mode from channel.listings where id = $1', [id])).rows[0];
+
+  it('Gỡ tay listing đang chờ duyệt đổi ghép → ghép chờ bị bỏ, lịch sử ghi `reject_mapping`', async () => {
+    const { v, listing } = await pendingRemap();
+    const res = await as(app().post(`/api/v1/channel/shops/${shopId}/listings/${v.id}/delist`), admin.token).send({ version: listing.version });
+    expect(res.status).toBe(200);
+    expect(res.body.pendingMapping).toBeNull();
+    expect(await pendingOf(listing.id)).toEqual({ status: 'delisted', pending_requested_by: null, pending_mode: null });
+    expect((await transitionsOf(listing.id)).map((t) => t.action).slice(-2)).toEqual(['delist', 'reject_mapping']);
+  });
+
+  it('Sàn xoá sản phẩm của listing đang chờ duyệt → lượt đồng bộ gỡ và bỏ ghép chờ; dòng chỉ chờ "không quản tồn" bị xoá', async () => {
+    const { r, listing } = await pendingRemap();
+    const only = newRemote();
+    const asked = await match(sale.token, { externalSkuId: only.externalSkuId, variantId: null });
+    expect(asked.status).toBe(202);
+    r.state = 'deleted';
+    only.state = 'deleted';
+    await syncListings(port, company.companyId, shopId);
+    expect(await pendingOf(listing.id)).toEqual({ status: 'delisted', pending_requested_by: null, pending_mode: null });
+    const last = (await transitionsOf(listing.id)).at(-1);
+    expect(last).toMatchObject({ action: 'reject_mapping', actor_id: null });
+    expect(await pendingOf(asked.body.id)).toBeUndefined();
+    expect((await transitionsOf(asked.body.id)).at(-1)).toMatchObject({ action: 'reject_mapping', actor_id: null });
+  });
+
+  it('Ngắt gian hàng có listing chờ duyệt → listing gỡ do ngắt không còn ghép chờ; dòng chỉ chờ "không quản tồn" bị xoá', async () => {
+    const res = await as(app().post('/api/v1/channel/shops/lazada/token'), company.ceo.token).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const other = res.body.shop.id as string;
+    await activateShop(other);
+    const on = (path: string, token: string) => as(app().post(`/api/v1/channel/shops/${other}${path}`), token);
+    const a = newRemote();
+    expect((await on('/listings/match', sale.token).send({ externalSkuId: a.externalSkuId, variantId: newVariant().id })).status).toBe(200);
+    await testPool().query(
+      `insert into channel.raw_orders (company_id, shop_id, external_order_id, payload) values ($1, $2, $3, $4)`,
+      [company.companyId, other, randomUUID(), JSON.stringify({ lines: [{ externalLineId: '1', sellerSku: a.sellerSku }] })],
+    );
+    const remap = await on('/listings/match', admin.token).send({ externalSkuId: a.externalSkuId, variantId: newVariant().id });
+    expect(remap.status).toBe(202);
+    const b = newRemote();
+    const onlyPending = await on('/listings/match', sale.token).send({ externalSkuId: b.externalSkuId, variantId: null });
+    expect(onlyPending.status).toBe(202);
+    const shop = await as(app().get(`/api/v1/channel/shops/${other}`), company.ceo.token);
+    const off = await on('/disconnect', company.ceo.token).send({ version: shop.body.version });
+    expect(off.status).toBe(200);
+    expect(await pendingOf(remap.body.id)).toEqual({ status: 'delisted', pending_requested_by: null, pending_mode: null });
+    expect((await transitionsOf(remap.body.id)).at(-1)).toMatchObject({ action: 'reject_mapping' });
+    expect(await pendingOf(onlyPending.body.id)).toBeUndefined();
+  });
+});
+
+describe('đợt 2: đơn về giữa lúc đổi ghép (review #309 N1)', () => {
+  it('Lượt nhận đơn đang giữ khoá gian hàng và chèn đơn mang SKU đó → lượt đổi ghép chờ, rồi thấy đơn và đòi CEO (202)', async () => {
+    const { r } = await mapped();
+    const v2 = newVariant();
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
+        await holder.query(
+          'insert into channel.raw_orders (company_id, shop_id, external_order_id, payload) values ($1, $2, $3, $4)',
+          [company.companyId, shopId, randomUUID(), JSON.stringify({ lines: [{ externalLineId: '1', sellerSku: r.sellerSku }] })],
+        );
+      },
+      1,
+      () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: v2.id }).then((x) => x),
+    );
+    expect(res.status).toBe(202);
   });
 });

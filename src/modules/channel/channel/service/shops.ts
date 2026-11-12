@@ -28,7 +28,7 @@ import {
   shopMachine,
   tokenExpiringSoon,
 } from '../domain/shop.ts';
-import type { ListingStatus, RemoteState } from '../domain/listing.ts';
+import { DELISTED_REASON, type ListingStatus, type RemoteState } from '../domain/listing.ts';
 import { currentListingRows, insertListing } from '../repository/listings.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
@@ -571,15 +571,13 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
   ))!;
   await recordTransition({ entityType: ENTITY, entityId: id, from: row.status, to, action: 'disconnect', actorId: actor.accountId });
   for (const listing of await delistForDisconnect(id)) {
-    await recordTransition({
-      entityType: 'listings',
-      entityId: listing.id,
-      from: listing.from,
-      to: 'delisted',
-      action: 'delist',
-      actorId: actor.accountId,
-      reason: 'Ngắt gian hàng',
-    });
+    const to = listing.pending === 'deleted' ? listing.from : 'delisted';
+    if (listing.pending !== 'deleted') {
+      await recordTransition({ entityType: 'listings', entityId: listing.id, from: listing.from, to, action: 'delist', actorId: actor.accountId, reason: 'Ngắt gian hàng' });
+    }
+    if (listing.pending) {
+      await recordTransition({ entityType: 'listings', entityId: listing.id, from: to, to, action: 'reject_mapping', actorId: actor.accountId, reason: DELISTED_REASON });
+    }
   }
   for (const listing of await failPushingForDisconnect(id)) {
     await recordTransition({
