@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../../helpers/db.ts';
+import { asCompany } from '../../helpers/rls.ts';
 
 const db = () => testPool();
 
@@ -162,6 +163,30 @@ describe('ràng buộc listing', () => {
     await expect(insert({ quantity: -1 })).rejects.toThrow(/"remote_skus_quantity"/);
     await insert({});
     await expect(insert({})).rejects.toThrow(/remote_skus_shop_external_sku_uq/);
+  });
+
+  it('bản sao SKU sàn cô lập theo công ty: công ty khác không đọc được, không ghi vào được (RLS, #220 đợt 2)', async () => {
+    const a = randomUUID();
+    const s = await shop(a);
+    await db().query(
+      `insert into channel.remote_skus (company_id, shop_id, external_product_id, external_sku_id, seller_sku, title, state, quantity)
+       values ($1, $2, 'p1', 'k1', 'A', 'Cốc', 'live', 1)`,
+      [a, s],
+    );
+    const count = (c: Parameters<Parameters<typeof asCompany>[1]>[0]) =>
+      c.query<{ n: number }>('select count(*)::int as n from channel.remote_skus where shop_id = $1', [s]);
+    expect((await asCompany(a, count)).rows[0]!.n).toBe(1);
+    const b = randomUUID();
+    expect((await asCompany(b, count)).rows[0]!.n).toBe(0);
+    await expect(
+      asCompany(b, (c) =>
+        c.query(
+          `insert into channel.remote_skus (company_id, shop_id, external_product_id, external_sku_id, seller_sku, title, state, quantity)
+           values ($1, $2, 'p2', 'k2', 'B', 'Cốc', 'live', 1)`,
+          [a, s],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/);
   });
 
   it('sàn từ chối phải kèm lý do', async () => {
