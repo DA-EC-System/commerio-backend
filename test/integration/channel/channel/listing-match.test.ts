@@ -725,6 +725,22 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
     expect(rows[0].f).toBeNull();
   });
 
+  it('Review vòng 5 C2: lần mở trang đầu (chưa có bản sao) lỗi thì `GET remote-skus` lần sau trong 10 phút → 429 kèm `Retry-After`', async () => {
+    const id = await freshShop();
+    listSkusFails = true;
+    try {
+      const before = listSkusCalls;
+      expect((await remoteSkusOf(id)).status).toBe(409);
+      const res = await remoteSkusOf(id);
+      expect(res.status).toBe(429);
+      expect(res.body.type).toMatch(/remote_skus_retry_later$/);
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+      expect(listSkusCalls).toBe(before + 1);
+    } finally {
+      listSkusFails = false;
+    }
+  });
+
   it('Review vòng 3 R1: giãn lần thử tối đa 24 giờ', async () => {
     const id = await freshShop();
     await remoteSkusOf(id);

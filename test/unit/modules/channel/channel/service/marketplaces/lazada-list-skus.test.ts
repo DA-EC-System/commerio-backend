@@ -32,6 +32,59 @@ function fakeLazada(total: number, calls: URLSearchParams[], opts: { gapMs?: num
   };
 }
 
+/**
+ * Sàn giả có giờ tạo cho trước (ms), trả `created_time` như gọi thật 12/11/2026, lọc `create_after`/`create_before` theo
+ * giây (lấy cả mốc), thứ tự mỗi lần một khác. Đếm lời gọi.
+ */
+function fakeByCreated(created: readonly number[]) {
+  const state = { calls: 0 };
+  let n = 0;
+  const fn = async (url: string | URL | Request) => {
+    state.calls++;
+    n++;
+    const q = new URL(String(url)).searchParams;
+    const after = q.get('create_after') ? Date.parse(q.get('create_after')!) : -Infinity;
+    const before = q.get('create_before') ? Date.parse(q.get('create_before')!) + 999 : Infinity;
+    const offset = Number(q.get('offset'));
+    const ids = created
+      .map((t, i) => [i, t] as const)
+      .filter(([, t]) => t >= after && t <= before)
+      .map(([i]) => [i, (i * 7919 + n * 104729) % 1000003] as const)
+      .sort((a, b) => a[1] - b[1])
+      .map(([i]) => i);
+    const products = ids.slice(offset, offset + 50).map((i) => ({
+      item_id: 1000 + i,
+      status: 'Active',
+      created_time: String(created[i]),
+      attributes: { name: `Sản phẩm ${i}` },
+      skus: [{ SkuId: 5000 + i, SellerSku: `S-${i}`, quantity: 1 }],
+    }));
+    return new Response(JSON.stringify({ code: '0', data: { total_products: ids.length, products } }), { status: 200 });
+  };
+  return { fn, state };
+}
+const DAY = 86_400_000;
+/** k đợt đăng hàng loạt, mỗi đợt n sản phẩm rải trong `spreadS` giây, các đợt cách nhau `gapDays` ngày. */
+const batches = (k: number, n: number, spreadS: number, gapDays: number) =>
+  Array.from({ length: k * n }, (_, x) => BASE + Math.floor(x / n) * gapDays * DAY + Math.floor(((x % n) * spreadS * 1000) / n) + 123);
+
+describe('Lazada: đọc trọn khi sản phẩm đăng theo đợt (review #309 vòng 5 C1)', () => {
+  // Số lời gọi đo bằng mô phỏng (scratchpad/sim-walk-median.mjs): tối đa 4,16 lời gọi mỗi trang 50 sản phẩm.
+  for (const [name, created] of [
+    ['2 đợt × 60', batches(2, 60, 60, 30)],
+    ['6 đợt × 51', batches(6, 51, 60, 7)],
+    ['10 đợt × 100', batches(10, 100, 300, 14)],
+    ['305 rải đều mỗi giờ', batches(1, 305, 305 * 3600, 0)],
+  ] as const) {
+    it(`${name}: chia theo trung vị giờ tạo, đọc đủ, không quá ⌈tổng / 50⌉ × 5 lời gọi`, async () => {
+      const { fn, state } = fakeByCreated(created);
+      const skus = await createLazadaAdapter(config, fn).listSkus!('t');
+      expect(new Set(skus.map((s) => s.externalSkuId)).size).toBe(created.length);
+      expect(state.calls).toBeLessThanOrEqual(Math.ceil(created.length / 50) * 5);
+    });
+  }
+});
+
 describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
   it('gian hàng không quá 50 sản phẩm: một lời gọi `filter=all`, bỏ sản phẩm đã xoá', async () => {
     const calls: URLSearchParams[] = [];
@@ -90,7 +143,7 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     expect(calls.length).toBeLessThanOrEqual(6);
   });
 
-  it('review vòng 4 B2: số lời gọi một lần đọc trọn có trần ⌈tổng / 50⌉ × 3 + 64; chạm trần thì rejected `too_many_calls`', async () => {
+  it('review vòng 4 B2: số lời gọi một lần đọc trọn có trần ⌈tổng / 50⌉ × 6 + 64; chạm trần thì rejected `too_many_calls`', async () => {
     let calls = 0;
     // Sàn trả tổng lạ: khoảng nào cũng 51–55 sản phẩm (đọc đủ được bằng `offset`), không khoảng nào vừa một trang, hai nửa
     // thường khác khoảng cha: cây chia nở theo cấp số nhân.
@@ -108,7 +161,7 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
       return new Response(JSON.stringify({ code: '0', data: { total_products: total, products } }), { status: 200 });
     };
     await expect(createLazadaAdapter(config, odd).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'too_many_calls' });
-    expect(calls).toBeLessThanOrEqual(Math.ceil(55 / 50) * 3 + 64);
+    expect(calls).toBeLessThanOrEqual(Math.ceil(55 / 50) * 6 + 64);
   });
 
   it('review vòng 3 R1: hơn 50 sản phẩm tạo cùng một giây thì lật `offset` trong khoảng đó', async () => {

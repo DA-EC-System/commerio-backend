@@ -54,7 +54,7 @@ const ORDER_ITEMS_BATCH = 50;
 const MAX_PRODUCT_OFFSET = 10_000;
 /** Sản phẩm Lazada sớm nhất có thể có (sàn mở năm 2012): đầu khoảng ngày tạo của lần đọc trọn. */
 const LAZADA_EPOCH_MS = Date.UTC(2012, 0, 1);
-/** Trần tuyệt đối số lời gọi một lần đọc trọn khi sàn không báo tổng; có tổng thì trần là ⌈tổng / 50⌉ × 3 + 64. */
+/** Trần tuyệt đối số lời gọi một lần đọc trọn khi sàn không báo tổng; có tổng thì trần là ⌈tổng / 50⌉ × 6 + 64. */
 const MAX_WINDOW_CALLS = 2_000;
 const incomplete = (total: number, got: number) =>
   new MarketplaceError('rejected', 'incomplete_list', `Sàn báo ${total} sản phẩm nhưng chỉ trả ${got}, thử lại sau`);
@@ -128,6 +128,8 @@ type LazadaProduct = {
   subStatus?: unknown;
   rejectReason?: { violationDetail?: unknown }[];
   attributes?: { name?: unknown };
+  /** Giờ tạo, mili giây dạng chuỗi (gọi thật 12/11/2026): điểm chia của lần đọc trọn (review #309 vòng 5 C1). */
+  created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
   images?: unknown;
   skus?: { SkuId?: unknown; SellerSku?: unknown; quantity?: unknown; Images?: unknown }[];
@@ -595,13 +597,13 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    * 20:48:05–20:48:10 ngày 22/10/2026 trả `total_products` 4 đúng 4 sản phẩm; 01/10–20/10 trả 15 đúng 15: tổng có lọc theo
    * ngày tạo. Trang không xếp theo ngày tạo (trang đầu của cả gian hàng không chứa sản phẩm cũ nhất).
    * Lật `offset` mà sàn đổi thứ tự giữa chừng (sản phẩm vừa sửa) thì sót hoặc trùng (review #309 vòng 3 R1). Vì vậy chia
-   * theo khoảng ngày tạo (không đổi theo thời gian): khoảng nào sàn báo quá 50 sản phẩm thì chia đôi, tới khi mỗi khoảng
+   * theo khoảng ngày tạo (không đổi theo thời gian): khoảng nào sàn báo quá 50 sản phẩm thì chia ở trung vị giờ tạo của trang vừa nhận, tới khi mỗi khoảng
    * vừa một trang `offset` 0, nên không phụ thuộc thứ tự. Hai nửa dùng chung giây ở giữa (hai đầu đều lấy cả mốc, mốc tính
    * theo giây còn giờ tạo có phần mili giây), sản phẩm trùng gộp theo `item_id`. Khoảng chỉ còn một giây mà vẫn quá 50
    * (nhập hàng loạt) thì lật `offset` trong khoảng đó. Khoảng nào trả ít hơn `total_products` của nó thì `incomplete_list`.
    * Gian hàng quá `MAX_PRODUCT_OFFSET` sản phẩm thì `too_many_products` như trước. Chốt chặn (vòng 4 B2): hai nửa cùng
    * báo đúng tổng khoảng cha thì coi là sàn không lọc, lật `offset` khoảng cha; mỗi lần đọc trọn tối đa
-   * ⌈tổng / 50⌉ × 3 + 64 lời gọi, chạm trần thì `too_many_calls`.
+   * ⌈tổng / 50⌉ × 6 + 64 lời gọi, chạm trần thì `too_many_calls`.
    */
   async function productsAll(accessToken: string): Promise<LazadaProduct[]> {
     const out = new Map<string, LazadaProduct>();
@@ -614,6 +616,17 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return productPage(accessToken, { create_after: vnTime(new Date(from * 1000)), create_before: vnTime(new Date(to * 1000)) }, offset);
     };
     type Page = Awaited<ReturnType<typeof page>>;
+    // Điểm chia theo dữ liệu (review #309 vòng 5 C1): trung vị giây tạo của trang vừa nhận, nên mỗi nửa ít hơn khoảng cha
+    // và số lời gọi theo số sản phẩm chứ không theo số đợt đăng hàng loạt. Kẹp trong (from, to) để khoảng luôn hẹp lại.
+    // Trang không có `created_time` đọc được thì lấy giữa khoảng.
+    const splitPoint = (from: number, to: number, products: readonly LazadaProduct[]) => {
+      const secs = products
+        .map((p) => Math.floor(Number(p.created_time) / 1000))
+        .filter(Number.isSafeInteger)
+        .sort((a, b) => a - b);
+      const mid = secs.length ? secs[Math.floor((secs.length - 1) / 2)]! : Math.floor((from + to) / 2);
+      return Math.min(to - 1, Math.max(from + 1, mid));
+    };
     const countOf = (p: Page) => p.total ?? (p.products.length < SKU_LIST_BATCH ? p.products.length : null);
     // Lật `offset` trong khoảng (dự phòng): khoảng một giây quá 50 sản phẩm, hoặc sàn không lọc tổng theo ngày tạo.
     const byOffset = async (from: number, to: number, first: Page, count: number | null) => {
@@ -634,7 +647,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         return;
       }
       if (to - from < 2) return byOffset(from, to, first, count);
-      const mid = Math.floor((from + to) / 2);
+      const mid = splitPoint(from, to, first.products);
       const left = await page(from, mid, 0);
       const right = await page(mid, to, 0);
       // Hai nửa đều báo đúng tổng của khoảng cha: sàn không lọc `total_products` theo ngày tạo (gọi thật 12/11/2026 thì có
@@ -650,9 +663,10 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     if ((total ?? 0) > MAX_PRODUCT_OFFSET) {
       throw new MarketplaceError('rejected', 'too_many_products', `Gian hàng có hơn ${MAX_PRODUCT_OFFSET} sản phẩm, sàn không cho đọc hết`);
     }
-    // Trần cứng theo số sản phẩm: mỗi trang 50 tốn tối đa 3 lời gọi (lá và hai nửa của lần chia), cộng 64 cho các lần chia
-    // đi qua khoảng rỗng (2012 tới nay chia đôi tới một giây cần 29 lần, mỗi lần 2 lời gọi).
-    if (total !== null) budget = Math.min(MAX_WINDOW_CALLS, Math.ceil(total / SKU_LIST_BATCH) * 3 + 64);
+    // Trần cứng theo số sản phẩm. Mô phỏng chia theo trung vị (2, 6, 10, 20 đợt đăng hàng loạt, rải đều, cùng một giây;
+    // sàn trả xáo, tăng, giảm theo giờ tạo) tốn tối đa 4,16 lời gọi mỗi trang 50 sản phẩm: lấy 6, cộng 64 cho khoảng
+    // không có `created_time` phải chia giữa (2012 tới nay chia đôi tới một giây cần 29 lần, mỗi lần 2 lời gọi).
+    if (total !== null) budget = Math.min(MAX_WINDOW_CALLS, Math.ceil(total / SKU_LIST_BATCH) * 6 + 64);
     await walk(from, to, first);
     return [...out.values()];
   }
