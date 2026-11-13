@@ -1,11 +1,15 @@
 import { Decimal } from 'decimal.js';
-import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, lte, not, notInArray, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not, notInArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import { type LedgerKind, NON_CASH as NON_CASH_KINDS, NOT_SETTLEMENT_DIFF, OFF_PLATFORM } from '../domain/ledger.ts';
-import { bankMatches, ledgerEntries } from './schema.ts';
+import { bankMatches, ledgerEntries, ledgerPackageLines, ledgerReplacements } from './schema.ts';
 
-export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string | null };
+/**
+ * Dòng sổ kèm quan hệ thay đọc từ `ledger_replacements` (#231): `replacesId` là dòng ước tính mà dòng thực tế này
+ * thay, `replacedBy` là dòng thực tế đã thay dòng ước tính này.
+ */
+export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacesId: string | null; replacedBy: string | null };
 
 /** Nguồn của dòng sổ: chứng từ hay sự kiện sinh ra nó (cột `source_type`). */
 export type LedgerSource = 'package' | 'package_return' | 'return_refund' | 'return_inspection' | 'supplier_return' | 'settlement_batch' | 'manual';
@@ -27,64 +31,67 @@ export async function sourcePosted(type: LedgerSource, id: string): Promise<bool
   return (row?.n ?? 0) > 0;
 }
 
-export async function insertEntries(rows: (typeof ledgerEntries.$inferInsert)[]): Promise<void> {
-  if (rows.length) await getDb().insert(ledgerEntries).values(rows);
+export async function insertEntries(rows: (typeof ledgerEntries.$inferInsert)[]): Promise<{ id: string; kind: LedgerKind; externalTransactionId: string | null }[]> {
+  if (!rows.length) return [];
+  return getDb()
+    .insert(ledgerEntries)
+    .values(rows)
+    .returning({ id: ledgerEntries.id, kind: ledgerEntries.kind, externalTransactionId: ledgerEntries.externalTransactionId });
 }
 
-const replacing = alias(ledgerEntries, 'replacing');
-const actualOfOrder = alias(ledgerEntries, 'actual_of_order');
-const packageOfOrder = alias(ledgerEntries, 'package_of_order');
-/** Dòng thực tế thay dòng đang đọc, nối trái; unique `replaces_entry_id` nên mỗi dòng tối đa một dòng thay. */
-const replacer = alias(ledgerEntries, 'replacer');
+/** Ghi quan hệ thay; dòng thực tế hoặc ước tính đã có cặp (giao dịch khác vừa nối) thì bỏ qua. */
+export async function insertReplacements(rows: { companyId: string; actualId: string; estimateId: string }[]): Promise<void> {
+  if (rows.length) await getDb().insert(ledgerReplacements).values(rows).onConflictDoNothing();
+}
+
+/** Dòng hàng của kiện đã giao (lãi theo SKU); phát lại sự kiện không ghi trùng (unique kiện, số thứ tự dòng). */
+export async function insertPackageLines(rows: (typeof ledgerPackageLines.$inferInsert)[]): Promise<void> {
+  if (rows.length) await getDb().insert(ledgerPackageLines).values(rows).onConflictDoNothing();
+}
+
+/** Cặp thay của dòng đang đọc theo phía ước tính (`replacedBy`) và phía thực tế (`replacesId`), nối trái. */
+const asEstimate = alias(ledgerReplacements, 'as_estimate');
+const asActual = alias(ledgerReplacements, 'as_actual');
+const pairOf = alias(ledgerReplacements, 'pair_of');
+const groupMate = alias(ledgerEntries, 'group_mate');
+const sameBatch = alias(ledgerEntries, 'same_batch');
+const batchPair = alias(ledgerReplacements, 'batch_pair');
+
 /**
- * Dòng không còn tính (#117, #231). Một trong:
- * - có dòng thực tế trỏ `replaces_entry_id` về nó;
- * - là dòng tiền ước tính của đơn, ghi **trước** một dòng thực tế của đơn: lần quyết toán đó là số thật của mọi khoản
- *   đã có lúc ấy, kể cả khoản sàn không thu (25 §10.1, T4). Dòng ước tính ghi sau (khách trả hàng, kiện sau giao xong
- *   sau lần quyết toán đầu) vẫn tính tới khi lần quyết toán sau nối dòng thực tế về nó (`openEstimates`);
- * - là dòng tiền ước tính của đơn mà sàn quyết toán trước khi app thấy kiện nào giao (E139: có dòng thực tế ghi trước
- *   mọi dòng nguồn `package` của đơn): số đã quyết toán là số thật của cả đơn (21 §21.2).
- * Giá vốn (`NON_CASH`) lấy từ thẻ kho, sàn không quyết toán, nên không bị số quyết toán thay (25 §10.2).
+ * Dòng không còn tính (#117, #231), đọc từ `ledger_replacements`, không so thời điểm ghi:
+ * - dòng ước tính đã có cặp với một dòng thực tế;
+ * - dòng tiền ước tính cùng nguồn (`source_type`, `source_id`: một kiện giao, một lần hoàn tiền…) với một dòng đã có
+ *   cặp: lần quyết toán là số thật của cả khoản của nguồn đó, kể cả khoản sàn không thu (25 §10.1, T4: "Có quyết toán
+ *   thì số thật thay số ước tính").
+ * Giá vốn (`NON_CASH`) lấy từ thẻ kho, sàn không quyết toán, nên không bao giờ bị thay (25 §10.2).
  * Dựng lúc gọi: `getDb()` theo giao dịch của bên gọi. Tổng tiền ở sàn, `openEstimates`, lãi theo đơn, lãi theo danh
- * sách đơn và chạy thử cấu hình dùng chung luật này.
+ * sách đơn, lãi theo SKU và chạy thử cấu hình dùng chung luật này.
  */
 export const isReplaced = () =>
-  or(
-    exists(getDb().select({ one: sql`1` }).from(replacing).where(eq(replacing.replacesEntryId, ledgerEntries.id))),
-    and(
-      eq(ledgerEntries.isEstimate, true),
-      isNotNull(ledgerEntries.orderId),
-      notInArray(ledgerEntries.kind, NON_CASH),
-      exists(
-        getDb()
-          .select({ one: sql`1` })
-          .from(actualOfOrder)
-          .where(
-            and(
-              eq(actualOfOrder.orderId, ledgerEntries.orderId),
-              eq(actualOfOrder.isEstimate, false),
-              or(
-                lt(ledgerEntries.createdAt, actualOfOrder.createdAt),
-                not(
-                  exists(
-                    getDb()
-                      .select({ one: sql`1` })
-                      .from(packageOfOrder)
-                      .where(
-                        and(
-                          eq(packageOfOrder.orderId, ledgerEntries.orderId),
-                          eq(packageOfOrder.sourceType, 'package'),
-                          lte(packageOfOrder.createdAt, actualOfOrder.createdAt),
-                        ),
-                      ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+  and(
+    notInArray(ledgerEntries.kind, NON_CASH),
+    or(
+      exists(getDb().select({ one: sql`1` }).from(pairOf).where(eq(pairOf.estimateId, ledgerEntries.id))),
+      and(
+        eq(ledgerEntries.isEstimate, true),
+        isNotNull(ledgerEntries.sourceId),
+        exists(
+          getDb()
+            .select({ one: sql`1` })
+            .from(groupMate)
+            .innerJoin(pairOf, eq(pairOf.estimateId, groupMate.id))
+            .where(and(eq(groupMate.sourceType, ledgerEntries.sourceType), eq(groupMate.sourceId, ledgerEntries.sourceId))),
+        ),
       ),
     ),
   )!;
+
+const withPairs = { entry: ledgerEntries, replacesId: asActual.estimateId, replacedBy: asEstimate.actualId };
+const toRow = (r: { entry: typeof ledgerEntries.$inferSelect; replacesId: string | null; replacedBy: string | null }): LedgerRow => ({
+  ...r.entry,
+  replacesId: r.replacesId,
+  replacedBy: r.replacedBy,
+});
 
 export interface LedgerFilter {
   filter?: 'all' | 'estimated' | 'actual' | 'replaced';
@@ -118,26 +125,28 @@ function where(f: LedgerFilter) {
 /** Một trang sổ, mới trước; kèm tổng số dòng khớp lọc. */
 export async function findEntries(f: LedgerFilter, page: { limit: number; offset: number }): Promise<{ rows: LedgerRow[]; total: number }> {
   const rows = await getDb()
-    .select({ entry: ledgerEntries, replacedBy: replacer.id })
+    .select(withPairs)
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
+    .leftJoin(asEstimate, eq(asEstimate.estimateId, ledgerEntries.id))
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(where(f))
     .orderBy(desc(ledgerEntries.occurredOn), desc(ledgerEntries.createdAt), desc(ledgerEntries.id))
     .limit(page.limit)
     .offset(page.offset);
   const [total] = await getDb().select({ n: count() }).from(ledgerEntries).where(where(f));
-  return { rows: rows.map((r) => ({ ...r.entry, replacedBy: r.replacedBy })), total: total?.n ?? 0 };
+  return { rows: rows.map(toRow), total: total?.n ?? 0 };
 }
 
 /** Mọi dòng của một đơn, cũ trước; `replaced` theo `isReplaced` (một luật cho SQL và lãi của đơn). */
 export async function entriesOfOrder(orderId: string): Promise<(LedgerRow & { replaced: boolean })[]> {
   const rows = await getDb()
-    .select({ entry: ledgerEntries, replacedBy: replacer.id, replaced: sql<boolean>`(${isReplaced()})` })
+    .select({ ...withPairs, replaced: sql<boolean>`(${isReplaced()})` })
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
+    .leftJoin(asEstimate, eq(asEstimate.estimateId, ledgerEntries.id))
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(eq(ledgerEntries.orderId, orderId))
     .orderBy(ledgerEntries.occurredOn, ledgerEntries.createdAt, ledgerEntries.id);
-  return rows.map((r) => ({ ...r.entry, replacedBy: r.replacedBy, replaced: r.replaced }));
+  return rows.map((r) => ({ ...toRow(r), replaced: r.replaced }));
 }
 
 /**
@@ -178,18 +187,58 @@ export async function existingTxnIds(shopId: string, ids: readonly string[]): Pr
 }
 
 /**
- * Dòng ước tính còn hiệu lực (chưa `isReplaced`) của các đơn: để nối dòng thực tế cùng loại về đúng dòng ước tính. Bỏ
- * dòng lần quyết toán trước đã thay ngầm, để dòng thực tế của kiện giao sau nối về dòng ước tính của chính kiện đó.
+ * Dòng tiền ước tính còn hiệu lực (chưa `isReplaced`) của các đơn, cũ trước: lần quyết toán nối dòng thực tế cùng đơn,
+ * cùng loại về đây. Dòng cùng nguồn với dòng đã nối coi như đã thay nên không nhận thêm dòng thực tế, để dòng thực tế
+ * của kiện giao sau nối về dòng ước tính của chính kiện đó.
  */
 export async function openEstimates(orderIds: readonly string[]): Promise<{ id: string; orderId: string; kind: LedgerKind }[]> {
   if (!orderIds.length) return [];
   const rows = await getDb()
     .select({ id: ledgerEntries.id, orderId: ledgerEntries.orderId, kind: ledgerEntries.kind })
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
-    .where(and(eq(ledgerEntries.isEstimate, true), inArray(ledgerEntries.orderId, [...orderIds]), isNull(replacer.id), not(isReplaced())))
+    .where(and(eq(ledgerEntries.isEstimate, true), inArray(ledgerEntries.orderId, [...orderIds]), not(isReplaced())))
     .orderBy(ledgerEntries.createdAt, ledgerEntries.id);
   return rows.map((r) => ({ id: r.id, orderId: r.orderId!, kind: r.kind }));
+}
+
+/**
+ * Dòng thực tế của đơn, cùng loại, chưa nối, để nối với dòng ước tính vừa ghi (sàn quyết toán trước khi app nhận sự
+ * kiện: kiện giao sau, hoàn tiền, E139). Chỉ nhận dòng của lô quyết toán chưa nối dòng nào cùng đơn, cùng loại: sàn
+ * trả nhiều dòng cùng loại cho phần đã có ước tính (mỗi món một dòng doanh thu) thì các dòng dư thuộc phần đó, không
+ * nối nhầm sang kiện sau. Cũ trước.
+ */
+export async function unpairedActual(orderId: string, kind: LedgerKind): Promise<string | undefined> {
+  const [row] = await getDb()
+    .select({ id: ledgerEntries.id })
+    .from(ledgerEntries)
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
+    .where(
+      and(
+        eq(ledgerEntries.orderId, orderId),
+        eq(ledgerEntries.kind, kind),
+        eq(ledgerEntries.isEstimate, false),
+        isNull(asActual.id),
+        not(
+          exists(
+            getDb()
+              .select({ one: sql`1` })
+              .from(sameBatch)
+              .innerJoin(batchPair, eq(batchPair.actualId, sameBatch.id))
+              .where(
+                and(
+                  eq(sameBatch.sourceType, ledgerEntries.sourceType),
+                  eq(sameBatch.sourceId, ledgerEntries.sourceId),
+                  eq(sameBatch.orderId, ledgerEntries.orderId),
+                  eq(sameBatch.kind, ledgerEntries.kind),
+                ),
+              ),
+          ),
+        ),
+      ),
+    )
+    .orderBy(ledgerEntries.createdAt, ledgerEntries.id)
+    .limit(1);
+  return row?.id;
 }
 
 /** Tổng tiền mặt ước tính và thực tế theo đơn (không tính giá vốn, rút tiền), để so lệch quyết toán. */
@@ -218,11 +267,12 @@ export async function platformBalanceOf(shopId: string): Promise<string> {
 
 export async function findEntry(id: string): Promise<LedgerRow | undefined> {
   const [row] = await getDb()
-    .select({ entry: ledgerEntries, replacedBy: replacer.id })
+    .select(withPairs)
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
+    .leftJoin(asEstimate, eq(asEstimate.estimateId, ledgerEntries.id))
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(eq(ledgerEntries.id, id));
-  return row && { ...row.entry, replacedBy: row.replacedBy };
+  return row && toRow(row);
 }
 
 /** Dòng các loại cần khớp sao kê (rút tiền, NCC hoàn, bồi thường), mới trước; `matched` lọc đã khớp hay chưa. */
@@ -249,7 +299,7 @@ export async function entriesToMatch(
     .from(ledgerEntries)
     .leftJoin(bankMatches, eq(bankMatches.entryId, ledgerEntries.id))
     .where(filter);
-  return { rows: rows.map((r) => ({ ...r.entry, replacedBy: null })), total: total?.n ?? 0 };
+  return { rows: rows.map((r) => ({ ...r.entry, replacesId: null, replacedBy: null })), total: total?.n ?? 0 };
 }
 
 export type BankMatchRow = typeof bankMatches.$inferSelect;

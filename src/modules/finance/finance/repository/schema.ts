@@ -329,7 +329,7 @@ export const ledgerKind = financeSchema.enum('ledger_kind', [
 
 /**
  * Sổ tiền, chỉ thêm (T1): mỗi khoản một dòng, số có dấu (vào dương, ra âm), cờ ước tính hay thực tế. Có quyết toán
- * thì thêm dòng thực tế trỏ `replaces_entry_id` về dòng ước tính; sai thì thêm dòng `adjustment`, không sửa dòng cũ.
+ * thì thêm dòng thực tế, cặp thực tế–ước tính ghi ở `ledger_replacements` (#231; cột `replaces_entry_id` cũ không ghi nữa); sai thì thêm dòng `adjustment`, không sửa dòng cũ.
  * Mỗi dòng lưu bản cấu hình phí, thuế đã dùng. Khoản không gắn đơn (quảng cáo, chi vận hành) để trống đơn và kiện.
  */
 export const ledgerEntries = financeSchema.table(
@@ -375,6 +375,66 @@ export const ledgerEntries = financeSchema.table(
       'ledger_entries_shop_by_kind',
       sql`(${t.shopId} is not null or ${t.kind} in (${sql.raw(kindList(OFF_PLATFORM))})) and (${t.shopId} is null or ${t.kind} not in (${sql.raw(kindList(NEVER_SHOP))}))`,
     ),
+  ],
+);
+
+/**
+ * Quan hệ thay giữa dòng thực tế và dòng ước tính (#231): một dòng thực tế thay tối đa một dòng ước tính và ngược lại.
+ * Ghi ở hai lúc: lần quyết toán nối dòng thực tế về dòng ước tính còn hiệu lực cùng đơn, cùng loại; ghi dòng ước tính
+ * mà đơn đã có dòng thực tế cùng loại chưa nối (sàn quyết toán trước khi app nhận sự kiện) thì nối luôn. Chỉ thêm (RLS,
+ * REVOKE UPDATE, DELETE ở migration `--custom`), thay cho cột `ledger_entries.replaces_entry_id` (cột cũ giữ làm lịch
+ * sử, không ghi nữa; dữ liệu cũ đã chép sang bảng này). Dòng thực tế, ước tính đúng chiều do service kiểm.
+ */
+export const ledgerReplacements = financeSchema.table(
+  'ledger_replacements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    actualId: uuid('actual_id')
+      .notNull()
+      .references(() => ledgerEntries.id),
+    estimateId: uuid('estimate_id')
+      .notNull()
+      .references(() => ledgerEntries.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('ledger_replacements_actual_uq').on(t.actualId),
+    unique('ledger_replacements_estimate_uq').on(t.estimateId),
+    check('ledger_replacements_distinct', sql`${t.actualId} <> ${t.estimateId}`),
+  ],
+);
+
+/**
+ * Dòng hàng của kiện đã giao (#231), chép từ payload `fulfillment.package_delivered` lúc ghi sổ: lãi theo SKU (25
+ * §10.2) gộp trong schema finance, không đọc chéo bảng kiện. Chỉ thêm (RLS, REVOKE UPDATE, DELETE ở migration
+ * `--custom`); mỗi kiện ghi một lần (unique kiện, số thứ tự dòng).
+ */
+export const ledgerPackageLines = financeSchema.table(
+  'ledger_package_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    packageId: uuid('package_id').notNull(),
+    lineNo: integer('line_no').notNull(),
+    orderId: uuid('order_id').notNull(),
+    shopId: uuid('shop_id').notNull(),
+    /** Null khi dòng kiện chưa ghép SKU lúc bàn giao. */
+    variantId: uuid('variant_id'),
+    quantity: integer('quantity').notNull(),
+    /** Giá bán sau voucher shop. */
+    unitPrice: money('unit_price').notNull(),
+    /** Giá vốn chốt lúc bàn giao; null khi dòng kiện không có giá vốn (#229). */
+    unitCost: money('unit_cost'),
+    /** Ngày giao (giờ Việt Nam), như `occurred_on` của dòng sổ nguồn `package`. */
+    occurredOn: date('occurred_on').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('ledger_package_lines_line_uq').on(t.packageId, t.lineNo),
+    index().on(t.occurredOn),
+    index().on(t.orderId),
+    check('ledger_package_lines_quantity', sql`${t.quantity} > 0`),
   ],
 );
 

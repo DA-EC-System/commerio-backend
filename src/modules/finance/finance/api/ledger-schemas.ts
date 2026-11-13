@@ -39,6 +39,39 @@ export const OrderProfitsQuery = z
   })
   .refine((q) => q.from <= q.to, { path: ['to'], message: 'Đến ngày không được trước Từ ngày' });
 
+/** `GET /skus/profits` (#231): kỳ theo ngày giao của dòng hàng (giờ Việt Nam), gồm cả hai ngày. */
+export const SkuProfitsQuery = z
+  .object({
+    page: page.page,
+    pageSize: page.pageSize,
+    from: day('Từ ngày'),
+    to: day('Đến ngày'),
+    shopId: z.uuid('Gian hàng không hợp lệ').optional(),
+  })
+  .refine((q) => q.from <= q.to, { path: ['to'], message: 'Đến ngày không được trước Từ ngày' });
+
+const ProfitTotals = z
+  .object({ net: z.number(), cogs: z.number().nullable(), gross: z.number().nullable() })
+  .meta({ description: 'Tổng trên toàn bộ kết quả lọc, không chỉ trang' });
+
+export const SkuProfitItem = z
+  .object({
+    variantId: z.uuid().nullable().meta({ description: '`null`: dòng hàng chưa ghép SKU lúc bàn giao, gộp một dòng' }),
+    sku: z.string().nullable(),
+    productName: z.string().nullable(),
+    soldQty: z.int(),
+    net: z.number().meta({ description: 'Thực nhận chia cho SKU: khoản cấp đơn chia theo tỷ lệ doanh thu của dòng hàng' }),
+    cogs: z.number().nullable().meta({ description: 'Giá vốn theo dòng hàng (âm); `null` khi thiếu `inventory.cost.view`' }),
+    gross: z.number().nullable(),
+    marginPct: z.number().nullable(),
+    costMissing: z.boolean(),
+  })
+  .meta({ id: 'SkuProfitSummary' });
+
+export const SkuProfitPage = z
+  .object({ items: z.array(SkuProfitItem), totals: ProfitTotals, total: z.int(), page: z.int(), pageSize: z.int() })
+  .meta({ id: 'SkuProfitPage' });
+
 export const OrderProfitItem = z
   .object({
     orderId: z.uuid(),

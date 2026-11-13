@@ -11,7 +11,7 @@ import { defineQueue, type JobAttempt, sendJob } from '../../../core/index.ts';
 import { findMarketplaceOrders } from '../../../order/index.ts';
 import { vnDate } from '../domain/config-version.ts';
 import type { PlatformPayout, PlatformTxn } from '../domain/settlement.ts';
-import { existingTxnIds, insertEntries, openEstimates, platformBalanceOf } from '../repository/ledger.ts';
+import { existingTxnIds, insertEntries, insertReplacements, openEstimates, platformBalanceOf } from '../repository/ledger.ts';
 import type { ledgerEntries } from '../repository/schema.ts';
 import {
   findRun,
@@ -160,7 +160,8 @@ function unmappedReason(t: PlatformTxn): string {
 
 /**
  * Ghi các khoản của lô (trong `withCompany`): mỗi khoản một dòng thực tế, thuế sàn khấu trừ thành dòng riêng; khoản đã
- * có trong sổ thì bỏ; dòng thực tế nối `replaces_entry_id` về dòng ước tính cùng đơn, cùng loại (một đối một). Rồi tính
+ * có trong sổ thì bỏ; dòng thực tế nối về dòng ước tính còn hiệu lực cùng đơn, cùng loại (một đối một, bảng
+ * `ledger_replacements`, #231). Rồi tính
  * lại trạng thái tiền của các đơn có khoản mới, so số dư ví với kỳ quyết toán mới nhất.
  */
 async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], payouts: readonly PlatformPayout[]): Promise<SettlementRunRow> {
@@ -194,9 +195,12 @@ async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], pay
   }
 
   const today = vnDate(run.periodTo);
+  // Mã giao dịch → dòng ước tính được thay (mã giao dịch duy nhất trong lô sau khi bỏ trùng).
+  const replaces = new Map<string, string>();
   const rows: EntryInsert[] = fresh.map((p) => {
     const orderId = orderOf(p);
-    const replaces = orderId ? (queue.get(`${orderId}:${p.kind}`)?.shift() ?? null) : null;
+    const estimateId = orderId ? queue.get(`${orderId}:${p.kind}`)?.shift() : undefined;
+    if (estimateId) replaces.set(p.txnId, estimateId);
     return {
       companyId: run.companyId,
       kind: p.kind,
@@ -209,12 +213,17 @@ async function applyRun(run: SettlementRunRow, txns: readonly PlatformTxn[], pay
       sourceId: run.id,
       externalTransactionId: p.txnId,
       externalOrderId: p.t.externalOrderId,
-      replacesEntryId: replaces,
       // Adapter chưa nhận ra loại khoản: ghi `adjustment` kèm tên phí gốc (#203)
       reason: p.t.kind === null && p.kind === 'adjustment' ? unmappedReason(p.t) : null,
     };
   });
-  await insertEntries(rows);
+  const inserted = await insertEntries(rows);
+  await insertReplacements(
+    inserted.flatMap((r) => {
+      const estimateId = r.externalTransactionId ? replaces.get(r.externalTransactionId) : undefined;
+      return estimateId ? [{ companyId: run.companyId, actualId: r.id, estimateId }] : [];
+    }),
+  );
 
   const touched = [...new Set(rows.map((r) => r.orderId).filter((id): id is string => !!id))];
   const cancelled = new Set([...orders.values()].filter((o) => o.status === 'cancelled').map((o) => o.id));

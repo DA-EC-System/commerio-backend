@@ -1,6 +1,6 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
-import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, OrderProfitPage, OrderProfitsQuery, TaxWarnings } from './ledger-schemas.ts';
+import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, OrderProfitPage, OrderProfitsQuery, SkuProfitPage, SkuProfitsQuery, TaxWarnings } from './ledger-schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
 const bearer = [{ bearerAuth: [] }];
@@ -34,6 +34,19 @@ export function registerLedgerOpenApi(registry: OpenAPIRegistry): void {
     request: { query: OrderProfitsQuery },
     responses: {
       200: { description: 'Trang lãi theo đơn', ...json(OrderProfitPage) },
+      ...auth,
+      422: problemResponse('`validation_failed` kèm `errors` theo ô'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/skus/profits',
+    summary: 'Lãi theo SKU: số bán, thực nhận, giá vốn, lãi gộp của dòng hàng đã giao trong kỳ',
+    description: `${VIEW} \`from\`, \`to\` lọc theo ngày giao của dòng hàng (giờ Việt Nam, gồm cả hai ngày). Thực nhận của đơn (gồm phí, ship, hoàn tiền) chia cho dòng hàng theo tỷ lệ doanh thu; giá vốn theo dòng. \`totals\` tính trên toàn bộ kết quả lọc.`,
+    security: bearer,
+    request: { query: SkuProfitsQuery },
+    responses: {
+      200: { description: 'Trang lãi theo SKU', ...json(SkuProfitPage) },
       ...auth,
       422: problemResponse('`validation_failed` kèm `errors` theo ô'),
     },

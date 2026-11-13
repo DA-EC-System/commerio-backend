@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { OrderProfitPage } from '#src/modules/finance/finance/api/ledger-schemas.ts';
+import { insertEntries, insertReplacements, openEstimates } from '#src/modules/finance/finance/repository/ledger.ts';
 import { recordPackageDelivered, recordReturnInspected, recordReturnRefunded } from '#src/modules/finance/finance/service/ledger.ts';
+import type { LedgerKind } from '#src/modules/finance/finance/domain/ledger.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -74,19 +77,44 @@ async function deliveredOrder(s: Setup, opts: { deliveredAt?: string; shopId?: s
   return order;
 }
 
-/** Quyết toán của sàn về cho đơn: dòng thực tế doanh thu và phí (đơn đã có số thật thì mọi dòng ước tính coi như đã thay). */
-async function settle(s: Setup, orderId: string, revenue: number, fee: number) {
-  for (const [kind, amount] of [
+/**
+ * Một lô quyết toán của sàn cho đơn, như `applyRun`: mỗi khoản một dòng thực tế, nối về dòng ước tính còn hiệu lực
+ * cùng loại (`openEstimates`, bảng `ledger_replacements`).
+ */
+async function settleLines(s: Setup, orderId: string, lines: readonly (readonly [LedgerKind, number])[]) {
+  await withCompany(s.companyId, async () => {
+    const open = await openEstimates([orderId]);
+    const batchId = randomUUID();
+    const rows = await insertEntries(
+      lines.map(([kind, amount]) => ({
+        companyId: s.companyId,
+        kind,
+        amount: amount.toFixed(2),
+        isEstimate: false,
+        occurredOn: '2026-11-08',
+        orderId,
+        shopId: s.shopId,
+        sourceType: 'settlement_batch',
+        sourceId: batchId,
+        externalTransactionId: randomUUID(),
+      })),
+    );
+    const pairs = rows.flatMap((r) => {
+      const i = open.findIndex((e) => e.kind === r.kind);
+      if (i < 0) return [];
+      const [e] = open.splice(i, 1);
+      return [{ companyId: s.companyId, actualId: r.id, estimateId: e!.id }];
+    });
+    await insertReplacements(pairs);
+  });
+}
+
+/** Quyết toán doanh thu và phí của đơn. */
+const settle = (s: Setup, orderId: string, revenue: number, fee: number) =>
+  settleLines(s, orderId, [
     ['revenue', revenue],
     ['fee_fixed', -fee],
-  ] as const) {
-    await testPool().query(
-      `insert into finance.ledger_entries (company_id, kind, amount, is_estimate, occurred_on, order_id, shop_id, source_type, external_transaction_id)
-       values ($1, $2, $3, false, '2026-11-08', $4, $5, 'settlement_batch', $6)`,
-      [s.companyId, kind, amount, orderId, s.shopId, randomUUID()],
-    );
-  }
-}
+  ]);
 
 describe('GET /finance/orders/profits (§21.1)', () => {
   it('US-TI-04 dòng 1: đơn 2 kiện mới giao 1 kiện chỉ tính phần đã giao, nhãn Ước tính; khớp lãi của đơn', async () => {
@@ -301,6 +329,45 @@ describe('dòng ghi sau lần quyết toán đầu (#231)', () => {
       shippingCost: '0',
     });
     expect((await get(s.ceo, PERIOD)).body.items[0]).toMatchObject({ net: 185000, cogs: -120000, gross: 65000, estimated: false });
+  });
+});
+
+describe('khoản thực tế về trước sự kiện của app, khoản không liên quan (#231)', () => {
+  it('hoàn tiền thực tế về trước sự kiện hoàn tiền: dòng ước tính nối với dòng thực tế, không trừ hai lần', async () => {
+    const s = await setup();
+    const order = await deliveredOrder(s);
+    await settle(s, order.orderId, 200000, 15000);
+    await settleLines(s, order.orderId, [['customer_refund', -100000]]);
+    await recordReturnRefunded(s.companyId, {
+      returnRequestId: randomUUID(),
+      orderId: order.orderId,
+      shopId: s.shopId,
+      refundAmount: '100000',
+      refundedAt: '2026-11-09T02:00:00Z',
+    });
+    const expected = { net: 85000, cogs: -120000, gross: -35000, estimated: false };
+    expect((await get(s.ceo, PERIOD)).body.items[0]).toMatchObject(expected);
+    const single = (await get(s.ceo, `/orders/${order.orderId}/profit`)).body;
+    expect(single).toMatchObject(expected);
+    const refunds = (single.lines as { kind: string; id: string; estimated: boolean; replacedBy: string | null }[]).filter((l) => l.kind === 'customer_refund');
+    const actual = refunds.find((l) => !l.estimated)!;
+    expect(refunds.find((l) => l.estimated)?.replacedBy).toBe(actual.id);
+  });
+
+  it('khoản phạt không liên quan về sau không làm mất dòng hoàn tiền ước tính', async () => {
+    const s = await setup();
+    const order = await deliveredOrder(s);
+    await settle(s, order.orderId, 200000, 15000);
+    await recordReturnRefunded(s.companyId, {
+      returnRequestId: randomUUID(),
+      orderId: order.orderId,
+      shopId: s.shopId,
+      refundAmount: '100000',
+      refundedAt: '2026-11-09T02:00:00Z',
+    });
+    await settleLines(s, order.orderId, [['penalty', -5000]]);
+    expect((await get(s.ceo, PERIOD)).body.items[0]).toMatchObject({ net: 80000, estimated: true });
+    expect((await get(s.ceo, `/orders/${order.orderId}/profit`)).body).toMatchObject({ net: 80000, estimated: true });
   });
 });
 

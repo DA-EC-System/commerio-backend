@@ -4,8 +4,9 @@ import { validate, validated as input } from '../../../../shared/http/validate.t
 import { getTaxWarnings, listLedger, orderProfit } from '../service/ledger.ts';
 import type { FinanceContext } from '../service/settlement-views.ts';
 import { listOrderProfits } from '../service/order-profits.ts';
+import { listSkuProfits } from '../service/sku-profits.ts';
 import { canSeeCost, financeView } from './access.ts';
-import { LedgerListQuery, OrderIdParams, OrderProfitsQuery } from './ledger-schemas.ts';
+import { LedgerListQuery, OrderIdParams, OrderProfitsQuery, SkuProfitsQuery } from './ledger-schemas.ts';
 
 const companyOf = (res: Response) => getAuth(res).companyId!;
 
@@ -19,6 +20,9 @@ export function mountLedgerRoutes(router: Router, ctx: FinanceContext): void {
   // Đặt trước `/orders/:orderId/profit` cho dễ đọc; hai đường không trùng (`profits` khác `:orderId/profit`).
   router.get('/orders/profits', view, validate({ query: OrderProfitsQuery }), async (_req, res) => {
     res.json(await listOrderProfits(companyOf(res), input<typeof OrderProfitsQuery>(res, 'query'), canSeeCost(res)));
+  });
+  router.get('/skus/profits', view, validate({ query: SkuProfitsQuery }), async (_req, res) => {
+    res.json(await listSkuProfits(companyOf(res), input<typeof SkuProfitsQuery>(res, 'query'), canSeeCost(res)));
   });
   router.get('/orders/:orderId/profit', view, validate({ params: OrderIdParams }), async (_req, res) => {
     res.json(await orderProfit(companyOf(res), input<typeof OrderIdParams>(res, 'params').orderId, canSeeCost(res)));

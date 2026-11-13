@@ -27,6 +27,10 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'core.state_transitions': ['SELECT', 'INSERT'],
   // Sổ tiền chỉ thêm, sai thì ghi dòng điều chỉnh (T1).
   'finance.ledger_entries': ['SELECT', 'INSERT'],
+  // Cặp dòng thực tế thay dòng ước tính chỉ thêm: sửa, xoá một cặp thì dòng ước tính đã thay sống lại (#231).
+  'finance.ledger_replacements': ['SELECT', 'INSERT'],
+  // Dòng hàng của kiện đã giao chỉ thêm như sổ tiền: lãi theo SKU của kỳ đã chốt không đổi (#231).
+  'finance.ledger_package_lines': ['SELECT', 'INSERT'],
   // Thư báo mất uỷ quyền đã xếp chỉ thêm: sửa hay xoá dòng thì cùng một mốc gửi lại được (#312).
   'channel.shop_reauth_mails': ['SELECT', 'INSERT'],
   // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.

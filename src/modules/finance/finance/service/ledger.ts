@@ -7,6 +7,7 @@ import { addDays, vnDate } from '../domain/config-version.ts';
 import {
   costMissingOf,
   isEstimateLine,
+  NON_CASH,
   type Draft,
   postDelivered,
   postInspected,
@@ -20,6 +21,8 @@ import {
   entriesOfOrder,
   findEntries,
   insertEntries,
+  insertPackageLines,
+  insertReplacements,
   type LedgerFilter,
   type LedgerRow,
   type LedgerSource,
@@ -27,6 +30,7 @@ import {
   lockSource,
   revenueSince,
   sourcePosted,
+  unpairedActual,
 } from '../repository/ledger.ts';
 import { bankMatchesOf } from '../repository/ledger.ts';
 import { findOrderSettlement } from '../repository/order-settlements.ts';
@@ -52,11 +56,14 @@ interface Target {
   isEstimate?: boolean;
 }
 
-/** Ghi các dòng của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. */
+/**
+ * Ghi các dòng của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. Dòng tiền
+ * ước tính của đơn mà sàn đã quyết toán trước (dòng thực tế cùng loại chưa nối, `unpairedActual`) thì nối luôn (#231).
+ */
 async function post(companyId: string, t: Target, drafts: Draft[]): Promise<number> {
   await lockSource(t.source.type, t.source.id);
   if (await sourcePosted(t.source.type, t.source.id)) return 0;
-  await insertEntries(
+  const inserted = await insertEntries(
     drafts.map((d) => ({
       companyId,
       kind: d.kind,
@@ -72,6 +79,12 @@ async function post(companyId: string, t: Target, drafts: Draft[]): Promise<numb
       configVersionId: d.configVersionId,
     })),
   );
+  if ((t.isEstimate ?? true) && t.orderId) {
+    for (const e of inserted.filter((x) => !NON_CASH.has(x.kind))) {
+      const actualId = await unpairedActual(t.orderId, e.kind);
+      if (actualId) await insertReplacements([{ companyId, actualId, estimateId: e.id }]);
+    }
+  }
   return drafts.length;
 }
 
@@ -88,6 +101,21 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
     };
     const target = { source: { type: 'package' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
     const written = await post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs));
+    // Dòng hàng của kiện cho lãi theo SKU (#231); phát lại không ghi trùng.
+    await insertPackageLines(
+      e.lines.map((l, i) => ({
+        companyId,
+        packageId: e.packageId,
+        lineNo: i + 1,
+        orderId: e.orderId,
+        shopId: e.shopId,
+        variantId: l.variantId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        unitCost: l.unitCost,
+        occurredOn: day,
+      })),
+    );
     // Trạng thái tiền của đơn (#117): kiện đầu tiên giao xong thì `none → pending`, cập nhật tổng ước tính; dòng không
     // có giá vốn thì đánh dấu đơn thiếu giá vốn (#229).
     if (written) await markDelivered(e.orderId, e.shopId, costMissingOf(e.lines));
@@ -198,7 +226,7 @@ function lineView(r: LedgerRow, orders: Orders) {
     kind: r.kind,
     amount: Number(r.amount),
     estimated: isEstimateLine(r.kind, r.isEstimate),
-    replacesId: r.replacesEntryId,
+    replacesId: r.replacesId,
     replacedBy: r.replacedBy,
     occurredOn: r.occurredOn,
     shopId: r.shopId,
