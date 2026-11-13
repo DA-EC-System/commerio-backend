@@ -24,16 +24,25 @@ function resultData(body: Row) {
   return asRow(result.data);
 }
 
+/**
+ * Mã khác "0" ở món, kiện là sàn từ chối. Thiếu `item_err_code` không coi là lỗi: phản hồi thật của pack, RTS, repack
+ * chưa gọi thử từ code (#239), chỉ chắc phần mã lỗi theo tài liệu và sàn giả lập.
+ */
 function checkItems(items: Row[], key: string, requested: readonly string[]) {
   for (const item of items) {
     const code = str(item.item_err_code);
     if (code && code !== '0') throw new MarketplaceError('rejected', code, str(item.msg) || undefined);
   }
   const received = new Set(items.map((item) => str(item[key])));
-  if (items.length !== requested.length || received.size !== requested.length ||
-      items.some((item) => str(item.item_err_code) !== '0') || !requested.every((id) => received.has(id))) {
+  if (items.length !== requested.length || received.size !== requested.length || !requested.every((id) => received.has(id))) {
     throw unexpected();
   }
+}
+
+/** RTS, repack: `success: true` mà không kèm danh sách kiện thì coi là xong; có danh sách thì kiểm từng kiện. */
+function checkPackages(data: Row, requested: readonly string[]) {
+  const list = rows(data.packages);
+  if (list.length) checkItems(list, 'package_id', requested);
 }
 
 const packages = (codes: readonly string[]) => codes.map((package_id) => ({ package_id }));
@@ -92,7 +101,7 @@ export function lazadaPackingMethods(call: LazadaCall, deps: Required<LazadaPack
           access_token: accessToken,
           readyToShipReq: JSON.stringify({ packages: packages(batch) }),
         }, 'POST'));
-        checkItems(rows(data.packages), 'package_id', batch);
+        checkPackages(data, batch);
       }
     },
     async repackPackage(accessToken, code) {
@@ -100,7 +109,7 @@ export function lazadaPackingMethods(call: LazadaCall, deps: Required<LazadaPack
         access_token: accessToken,
         rePackReq: JSON.stringify({ packages: packages([code]) }),
       }, 'POST'));
-      checkItems(rows(data.packages), 'package_id', [code]);
+      checkPackages(data, [code]);
     },
     async shippingDocuments(accessToken, codes) {
       const files: Uint8Array[] = [];

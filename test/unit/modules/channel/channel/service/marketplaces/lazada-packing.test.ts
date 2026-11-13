@@ -98,6 +98,21 @@ describe('RTS, repack và vận đơn Lazada', () => {
     await expect(adapter.repackPackage!('token', 'FP1')).rejects.toMatchObject({ platformCode: '700000' });
   });
 
+  // Phản hồi thật của pack, RTS, repack chưa gọi thử từ code (#239 Task 8): món, kiện không kèm `item_err_code` hay sàn
+  // không trả danh sách kiện khi `success: true` thì không coi là lỗi; chỉ mã khác "0" mới là sàn từ chối.
+  it('đóng gói và RTS: món, kiện không kèm item_err_code coi là thành công', async () => {
+    const bare = items.map(({ item_err_code: _, ...item }) => item);
+    const { adapter } = fake(ok(provider('TFS')), ok(pack(bare as typeof items)), ok({ packages: [{ package_id: 'FP1' }] }));
+    await expect(adapter.packItems!('token', ref)).resolves.toMatchObject({ packageCode: 'FP1' });
+    await expect(adapter.readyToShip!('token', ['FP1'])).resolves.toBeUndefined();
+  });
+
+  it('repack: sàn trả success không kèm danh sách kiện thì coi là xong', async () => {
+    const { adapter } = fake(ok(undefined), ok({}));
+    await expect(adapter.repackPackage!('token', 'FP1')).resolves.toBeUndefined();
+    await expect(adapter.repackPackage!('token', 'FP1')).resolves.toBeUndefined();
+  });
+
   it('vận đơn yêu cầu PDF theo lô 20 và tải pdf_url của mỗi lô', async () => {
     const url = 'https://files.test/test.pdf';
     const { adapter, calls, download } = fake(ok({ pdf_url: url }), ok({ pdf_url: url }));
