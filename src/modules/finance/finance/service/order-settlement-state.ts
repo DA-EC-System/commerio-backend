@@ -4,9 +4,9 @@ import { Decimal } from 'decimal.js';
 import { currentCompanyId } from '../../../../shared/db/client.ts';
 import { recordTransition } from '../../../core/index.ts';
 import { vnDate } from '../domain/config-version.ts';
-import { NO_THRESHOLD, nextAfterSettlement, type Threshold } from '../domain/settlement.ts';
+import { NO_THRESHOLD, nextAfterSettlement, type SettlementState, type Threshold } from '../domain/settlement.ts';
 import { orderSums } from '../repository/ledger.ts';
-import { findOrderSettlement, lockOrderSettlement, updateOrderSettlement } from '../repository/order-settlements.ts';
+import { findOrderSettlement, findSettlementStatuses, lockOrderSettlement, updateOrderSettlement } from '../repository/order-settlements.ts';
 import { getEffectiveConfig } from './config-versions.ts';
 
 export const SETTLEMENT_ENTITY = 'order_settlements';
@@ -14,6 +14,16 @@ export const SETTLEMENT_ENTITY = 'order_settlements';
 /** Ngưỡng lệch đang áp hôm nay (cấu hình `mismatch_threshold` của #118), không có thì mọi lệch là lệch. */
 export async function currentThreshold(now = new Date()): Promise<Threshold> {
   return (await getEffectiveConfig('mismatch_threshold', null, vnDate(now)))?.payload ?? NO_THRESHOLD;
+}
+
+/**
+ * Cổng đọc cho sales (#234, Documents/21 §21.2): `paymentStatus` của từng đơn theo id. Đơn chưa có dòng (chưa kiện nào
+ * giao, chưa có quyết toán) là `none`. Gọi trong `withCompany` của bên gọi; chỉ đọc, không khoá.
+ */
+export async function paymentStatusesOf(orderIds: readonly string[]): Promise<Map<string, SettlementState>> {
+  const out = new Map<string, SettlementState>(orderIds.map((id) => [id, 'none']));
+  for (const r of await findSettlementStatuses(orderIds)) out.set(r.orderId, r.status);
+  return out;
 }
 
 /**

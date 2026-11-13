@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { vnDayParam } from '../../../../shared/http/vn-day.ts';
 import { PackageSummary, ShopRef, StatusChange } from '../../fulfillment/index.ts';
+import { PAYMENT_STATUSES } from '../domain/order.ts';
 
 const iso = z.iso.datetime();
 /** Tiền: số nguyên đồng (Documents/21 §1.1 R1). */
@@ -32,6 +33,7 @@ export const ORDER_FLAGS = [
   'return_requested',
   'cod_mismatch',
   'shop_disconnected',
+  'payment_mismatch',
 ] as const;
 const ORDER_STAGES = [
   'awaiting_payment',
@@ -56,7 +58,8 @@ export const OrderListQuery = z.object({
     .optional()
     .meta({ description: 'cod gồm đơn sàn thu hộ, prepaid gồm đơn sàn không thu hộ' }),
   stage: z.enum(ORDER_STAGES).optional(),
-  flag: z.enum(ORDER_FLAGS).optional(),
+  // `payment_mismatch` suy từ sổ tiền của finance, không lọc được bằng SQL của sales: lọc ở `/finance/payments?status=mismatch`.
+  flag: z.enum(ORDER_FLAGS).exclude(['payment_mismatch']).optional(),
   customerId: z.uuid('Khách hàng không hợp lệ').optional(),
   from: vnDayParam('Từ ngày'),
   to: vnDayParam('Đến ngày', true),
@@ -77,10 +80,14 @@ export const OrderSummary = z
       delivered: z.number().int().meta({ description: 'Kiện đã giao' }),
       packages: z.number().int().meta({ description: 'Kiện chưa huỷ' }),
     }),
-    flags: z.array(z.enum(ORDER_FLAGS)),
+    flags: z.array(z.enum(ORDER_FLAGS)).meta({ description: '`payment_mismatch`: trạng thái thanh toán đang `mismatch`' }),
     outcome: z.enum(['full', 'partial', 'none']).nullable(),
     rawMarketplaceStatus: z.string().nullable().meta({ description: 'Trạng thái gốc trên sàn, chỉ để hiện (R11)' }),
     paymentMethod: z.enum(['prepaid', 'cod']).nullable().meta({ description: 'Đơn tự bán; đơn sàn null (sàn thu hộ)' }),
+    paymentStatus: z.enum(PAYMENT_STATUSES).meta({
+      description:
+        'Trạng thái thanh toán theo sổ tiền (Documents/21 §21.2): none chưa kiện nào giao, pending chờ sàn quyết toán, settled khớp, mismatch lệch, resolved đã chốt lệch. Không chặn trạng thái đơn',
+    }),
     platformPaymentMethod: z
       .string()
       .nullable()
