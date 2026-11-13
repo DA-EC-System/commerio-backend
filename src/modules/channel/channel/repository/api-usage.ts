@@ -18,7 +18,8 @@ export interface ReserveOptions {
   at?: Date;
 }
 
-class CompanyLimitReached extends Error {}
+/** Hết trần chung sau khi đã cộng dòng công ty: ném để rollback cả dòng công ty. */
+class DailyLimitReached extends Error {}
 
 /** Cộng một lượt vào dòng (sàn, ngày, công ty) nếu dòng đang dưới `cap`; trả `false` khi đã đủ. */
 async function bump(platform: Platform, day: ReturnType<typeof sql>, companyId: string | null, cap: number): Promise<boolean> {
@@ -47,31 +48,40 @@ async function activeShops(platform: Platform, companyId: string): Promise<{ min
 }
 
 /**
- * Xin một lượt gọi sàn trong ngày (giờ Việt Nam) của `at` (#102, #215). Trong một giao dịch: cộng dòng tổng của app (dưới
- * `limit`), rồi cộng dòng của công ty (dưới phần của công ty, bấm tay 90%); dòng công ty đã đủ thì giao dịch rollback nên
- * dòng tổng không bị tính. Mọi lượt khoá dòng tổng trước rồi mới tới dòng công ty, nên đúng cho mọi tiến trình và không
- * khoá chéo. Chạy ngoài giao dịch của bên gọi: lượt ghi ngay, không giữ khoá dòng tổng tới khi giao dịch kia xong,
- * không mất khi giao dịch kia rollback.
+ * Xin một lượt gọi sàn trong ngày (giờ Việt Nam) của `at` (#102, #215).
+ *
+ * Đếm gian hàng active (tính phần của công ty) trước, ngoài giao dịch: câu đọc không cần khoá. Rồi trong một giao dịch
+ * ngắn chỉ có hai câu upsert: cộng dòng công ty (dưới phần, bấm tay 90%) trước, dòng tổng của app (dưới `limit`) sau.
+ * Hết phần công ty thì chưa đụng dòng tổng (không khoá dòng chung của cả app); hết trần chung thì rollback cả dòng công
+ * ty. Khoá dòng tổng chỉ giữ từ câu upsert thứ hai tới commit. Mọi lượt khoá theo cùng thứ tự (một dòng công ty, rồi dòng
+ * tổng) nên không khoá chéo, đúng cho mọi tiến trình. Chạy ngoài giao dịch của bên gọi: lượt ghi ngay, không giữ khoá tới
+ * khi giao dịch kia xong, không mất khi giao dịch kia rollback.
+ *
+ * Phần của công ty tính trên số gian hàng đọc ngay trước giao dịch; gian hàng đổi trạng thái giữa hai bước chỉ làm phần
+ * lệch ở một lượt.
  */
 export async function reservePlatformCall(platform: Platform, limit: number, opts: ReserveOptions = {}): Promise<CallReservation> {
   const at = opts.at ?? new Date();
   const day = sql`(${at.toISOString()}::timestamptz at time zone 'Asia/Ho_Chi_Minh')::date`;
   const companyId = opts.companyId ?? null;
-  try {
-    return await outsideTransaction(() =>
-      inTransaction(async (): Promise<CallReservation> => {
-        if (!(await bump(platform, day, null, limit))) return 'daily_call_limit';
-        if (!companyId) return 'ok';
-        const { mine, total } = await activeShops(platform, companyId);
-        const cap = companyCap(companyShare(limit, opts.companyMin ?? 0, mine, total), opts.background ?? false);
-        if (cap <= 0 || !(await bump(platform, day, companyId, cap))) throw new CompanyLimitReached();
+  return outsideTransaction(async () => {
+    let cap = 0;
+    if (companyId) {
+      const { mine, total } = await activeShops(platform, companyId);
+      cap = companyCap(companyShare(limit, opts.companyMin ?? 0, mine, total), opts.background ?? false);
+      if (cap <= 0) return 'company_call_limit';
+    }
+    try {
+      return await inTransaction(async (): Promise<CallReservation> => {
+        if (companyId && !(await bump(platform, day, companyId, cap))) return 'company_call_limit';
+        if (!(await bump(platform, day, null, limit))) throw new DailyLimitReached();
         return 'ok';
-      }),
-    );
-  } catch (err) {
-    if (err instanceof CompanyLimitReached) return 'company_call_limit';
-    throw err;
-  }
+      });
+    } catch (err) {
+      if (err instanceof DailyLimitReached) return 'daily_call_limit';
+      throw err;
+    }
+  });
 }
 
 /** Số lượt đã dùng trong ngày của `at`: của cả app (`companyId` trống) hoặc của một công ty. Cho test và giám sát. */

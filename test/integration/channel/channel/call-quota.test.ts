@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { reservePlatformCall, usedCalls } from '#src/modules/channel/channel/repository/api-usage.ts';
 import { runOrderPull } from '#src/modules/channel/channel/service/background.ts';
+import { refreshShopToken } from '#src/modules/channel/channel/service/shop-tokens.ts';
 import { callScope } from '#src/modules/channel/channel/service/marketplaces/call-scope.ts';
 import { reserveOrThrow } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { inBackground, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -35,6 +36,13 @@ registerAdapter(
     async getOrder() {
       throw new Error('không có đơn nào để đọc chi tiết');
     },
+    // Làm mới token cũng xin lượt như adapter thật; luôn tới hạn để `refreshShopToken` gọi sàn.
+    async refreshToken() {
+      await reserveOrThrow(reserve, 'Lazada');
+      const later = new Date(Date.now() + 86_400_000);
+      return { accessToken: `tok-${randomUUID().slice(0, 12)}`, refreshToken: `ref-${randomUUID().slice(0, 8)}`, accessExpiresAt: later, refreshExpiresAt: later };
+    },
+    refreshDueAt: () => new Date(0),
   }),
 );
 afterAll(() => resetAdapters());
@@ -63,7 +71,7 @@ beforeAll(async () => {
   const res = await app()
     .post('/api/v1/channel/shops/lazada/token')
     .set('Authorization', `Bearer ${company.ceo.token}`)
-    .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    .send({ accessToken: `tok-${randomUUID().slice(0, 12)}`, refreshToken: `ref-${randomUUID().slice(0, 8)}` });
   shopId = res.body.shop.id;
   await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = now() where id = $1`, [shopId]);
 });
@@ -94,5 +102,14 @@ describe('hạn mức gọi sàn theo công ty qua lớp gọi adapter (#215)', 
       code: 'marketplace_unavailable',
       extensions: { platformCode: 'company_call_limit' },
     });
+  });
+
+  it('làm mới token chỉ tính vào trần chung: công ty đã dùng hết phần vẫn giữ được token', async () => {
+    await setUsed(company.companyId, LIMIT);
+    await expect(inBackground(() => refreshShopToken(company.companyId, shopId))).resolves.toBe('refreshed');
+    expect(await usedCalls('lazada', company.companyId, day)).toBe(LIMIT);
+    expect(await usedCalls('lazada', null, day)).toBe(1);
+    const { rows } = await testPool().query(`select status from channel.shops where id = $1`, [shopId]);
+    expect(rows[0].status).toBe('active');
   });
 });

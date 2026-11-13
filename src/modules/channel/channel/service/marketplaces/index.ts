@@ -9,7 +9,7 @@ import { createTiktokAdapter } from './tiktok.ts';
 
 export type * from './common.ts';
 export { MarketplaceError, PROMOTION_LOCKED } from './common.ts';
-export { forCompany, inBackground } from './call-scope.ts';
+export { appOnly, forCompany, inBackground } from './call-scope.ts';
 
 /**
  * Xin một lượt gọi sàn: trần chung `limit` của app, rồi phần của công ty theo ngữ cảnh lời gọi (`call-scope.ts`,

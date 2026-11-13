@@ -1,12 +1,11 @@
 // API công khai của module `channel`: gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn. Không đổi tồn.
 // Module khác chỉ được import từ file này.
-import { registerConsumer, workQueue } from '../../core/index.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runStockPush, runTokenRefresh } from './service/background.ts';
+import { registerChannelConsumer, workChannelQueue } from './service/background-jobs.ts';
 import { runListingPush } from './service/listing-push.ts';
-import { inBackground } from './service/marketplaces/index.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
 import { productPort } from './service/product-port.ts';
@@ -26,28 +25,27 @@ export const channelModule: ModuleDefinition = {
   router: channelRouter,
   openapi: registerChannelOpenApi,
   async startBackground(ctx) {
-    // Mọi handler ở đây là việc nền: lời gọi sàn trong đó dùng tới hết phần hạn mức của công ty; thao tác bấm tay (request
-    // HTTP) dừng ở 90% (#215, Documents/21 §18.6.8). Handler mới phải bọc `bg`.
-    const bg = <A extends unknown[]>(fn: (...args: A) => Promise<void>) => (...args: A) => inBackground(() => fn(...args));
+    // Đăng ký qua `workChannelQueue`, `registerChannelConsumer` (`service/background-jobs.ts`): handler chạy như việc nền,
+    // lời gọi sàn dùng tới hết phần hạn mức của công ty (#215, Documents/21 §18.6.8).
     // Phiếu kiểm kê đầu kỳ ghi sổ: gian hàng thoát chờ kiểm kê, mốc kéo đơn = thời điểm đếm, bật đẩy tồn (#198 phần 2).
-    registerConsumer('inventory.stocktake_posted', bg(handleStocktakePosted), { consumer: 'channel-opening-stocktake' });
+    registerChannelConsumer('inventory.stocktake_posted', handleStocktakePosted, { consumer: 'channel-opening-stocktake' });
     // Fulfillment phân hàng xong: gian hàng vừa thoát chờ kiểm kê hết chờ phân hàng thì mới đẩy tồn lần đầu (#198, 25 §6.1 bước 3).
-    registerConsumer('fulfillment.allocation_done', bg(handleAllocationDone), { consumer: 'channel-allocation-done' });
+    registerChannelConsumer('fulfillment.allocation_done', handleAllocationDone, { consumer: 'channel-allocation-done' });
     // Chia hàng xong (số có thể bán đổi) mới đẩy tồn (#223, 21 §11.2): đánh dấu chờ đẩy và xếp `channel.stock_push`, không
     // gọi sàn trong giao dịch của consumer. Thay consumer `inventory.stock_changed` cũ.
-    registerConsumer('fulfillment.allocation_done', bg((e) => onAvailableChanged(e.payload)), { consumer: 'channel-stock-push' });
+    registerChannelConsumer('fulfillment.allocation_done', (e) => onAvailableChanged(e.payload), { consumer: 'channel-stock-push' });
     // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
     const port = productPort(ctx);
-    await workQueue(listingSyncQueue, bg((job) => runListingSync(port, job)));
-    await workQueue(orderPullQueue, bg(runOrderPull));
-    await workQueue(openOrderPullQueue, bg(runOpenOrderPull));
-    await workQueue(tokenRefreshQueue, bg(runTokenRefresh));
-    await workQueue(stockPushQueue, bg((job) => runStockPush(port, job)));
+    await workChannelQueue(listingSyncQueue, (job) => runListingSync(port, job));
+    await workChannelQueue(orderPullQueue, runOrderPull);
+    await workChannelQueue(openOrderPullQueue, runOpenOrderPull);
+    await workChannelQueue(tokenRefreshQueue, runTokenRefresh);
+    await workChannelQueue(stockPushQueue, (job) => runStockPush(port, job));
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
-    await workQueue(listingPushQueue, bg((job) => runListingPush(port, job)));
+    await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
     await reconcileShopJobs();
     // Thư báo CEO, Admin khi gian hàng sắp hết hoặc đã mất uỷ quyền (#312): xếp mốc mỗi 15 phút, consumer gửi thư.
-    registerConsumer('channel.shop_reauth_mail', bg(handleReauthMail), { consumer: REAUTH_MAIL_CONSUMER });
+    registerChannelConsumer('channel.shop_reauth_mail', handleReauthMail, { consumer: REAUTH_MAIL_CONSUMER });
     const stopReauthMail = startReauthMailLoop();
     // pg-boss dừng chung ở platform (dừng nhận việc, chờ việc đang chạy).
     return stopReauthMail;
