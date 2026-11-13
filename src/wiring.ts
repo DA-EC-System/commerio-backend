@@ -8,9 +8,14 @@ import {
   hasInboxData,
   marketplaceCancelOrder,
   marketplaceCancelReasons,
+  marketplaceCarriers,
   marketplaceDecideCancel,
+  marketplacePack,
+  marketplaceReadyToShip,
+  marketplaceRepack,
   marketplaceReturns,
   marketplaceShipPackage,
+  marketplaceShippingDocuments,
   marketplaceSplitAttributes,
   marketplaceSplitOrder,
   settlementPayouts,
@@ -46,7 +51,11 @@ export function createModuleContext(): AppContext {
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
     // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.
-    marketplacePackages: { splitAttributes: marketplaceSplitAttributes, split: marketplaceSplitOrder, ship: marketplaceShipPackage },
+    marketplacePackages: {
+      splitAttributes: marketplaceSplitAttributes, split: marketplaceSplitOrder, ship: marketplaceShipPackage,
+      carriers: marketplaceCarriers, pack: marketplacePack, readyToShip: marketplaceReadyToShip,
+      repack: marketplaceRepack, shippingDocuments: marketplaceShippingDocuments,
+    },
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
   };

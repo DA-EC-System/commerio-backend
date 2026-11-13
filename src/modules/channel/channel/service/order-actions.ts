@@ -2,7 +2,7 @@
 // ở `src/wiring.ts`, không import channel. Gọi sàn ngoài giao dịch nghiệp vụ; lỗi sàn đổi sang mã app (§1.1 R8, R9).
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { MarketplaceError, type SplitAttributes } from './marketplaces/common.ts';
+import { CARRIER_REQUIRED, MarketplaceError, type PackageItemsRef, type SplitAttributes } from './marketplaces/common.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ huỷ đơn từ app');
@@ -112,4 +112,72 @@ export async function marketplaceShipPackage(
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.shipPackage) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ báo sẵn sàng giao từ app');
   await onMarketplace(() => adapter.shipPackage!(accessToken, packageCode, opts));
+}
+
+const packageStatusError = ['package_status_not_allowed', 'Sàn không cho thao tác ở trạng thái hiện tại của kiện'] as const;
+const documentNotReady = ['document_not_ready', 'Vận đơn chưa sẵn sàng, thử lại sau ít phút'] as const;
+const packageErrors = new Map<string, readonly [string, string]>([
+  ['700000', packageStatusError],
+  ['700026', ['item_not_packable', 'Có món sàn không cho đóng gói']],
+  ['30012', ['rts_package_not_found', 'Sàn không tìm thấy kiện để báo sẵn sàng giao']],
+  ['21042104', documentNotReady],
+  ['21023035', documentNotReady],
+  ['11034037', documentNotReady],
+  ['21023059', packageStatusError],
+  ['21042102', packageStatusError],
+]);
+
+export function onPackageAction<T>(fn: () => Promise<T>): Promise<T> {
+  return onMarketplace(async () => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!(err instanceof MarketplaceError)) throw err;
+      const { platformCode, platformMessage } = err;
+      const platform = { platformCode, platformMessage };
+      if (err.kind === 'unavailable' && platformCode === 'document_download_failed') {
+        throw new AppError(503, 'marketplace_unavailable', 'Sàn trả tệp vận đơn hỏng, thử lại sau', platform);
+      }
+      if (err.kind !== 'rejected' || !platformCode) throw err;
+      if (platformCode === CARRIER_REQUIRED) {
+        throw new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', {
+          ...platform, errors: { carrierCode: platformMessage ?? 'Chọn nhà vận chuyển trong danh sách' },
+        });
+      }
+      const mapped = packageErrors.get(platformCode);
+      if (mapped) throw new AppError(409, mapped[0], mapped[1], platform);
+      throw err;
+    }
+  });
+}
+
+export async function marketplaceCarriers(companyId: string, shopId: string, ref: PackageItemsRef) {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  if (!adapter.shipmentProviders) return [];
+  const result = await onPackageAction(() => adapter.shipmentProviders!(accessToken, ref));
+  return result.platformChooses ? [] : result.items;
+}
+
+export async function marketplacePack(companyId: string, shopId: string, ref: PackageItemsRef & { carrierCode?: string }) {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  return adapter.packItems ? onPackageAction(() => adapter.packItems!(accessToken, ref)) : null;
+}
+
+export async function marketplaceReadyToShip(companyId: string, shopId: string, packageCode: string): Promise<void> {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  if (!adapter.readyToShip) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ báo sẵn sàng giao từ app');
+  await onPackageAction(() => adapter.readyToShip!(accessToken, [packageCode]));
+}
+
+export async function marketplaceRepack(companyId: string, shopId: string, packageCode: string): Promise<'repacked' | 'not_supported'> {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  if (!adapter.repackPackage) return 'not_supported';
+  await onPackageAction(() => adapter.repackPackage!(accessToken, packageCode));
+  return 'repacked';
+}
+
+export async function marketplaceShippingDocuments(companyId: string, shopId: string, packageCodes: readonly string[]): Promise<Uint8Array[]> {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  if (!adapter.shippingDocuments) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ in vận đơn từ app');
+  return onPackageAction(() => adapter.shippingDocuments!(accessToken, packageCodes));
 }

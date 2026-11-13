@@ -10,7 +10,8 @@ import { MarketplaceError } from './common.ts';
 
 /** Ảnh tối đa 10MB (upload-product-image-202309). */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const IMAGE_TIMEOUT_MS = 15_000;
+export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
 
 export interface ImageSourceOptions {
@@ -20,6 +21,11 @@ export interface ImageSourceOptions {
   allowAddress?: (ip: string) => boolean;
   maxBytes?: number;
   timeoutMs?: number;
+}
+
+export interface DocumentSourceOptions extends ImageSourceOptions {
+  /** Origin từ cấu hình của sàn, cho phép tải từ sàn giả lập cục bộ. */
+  trustedOrigin?: string;
 }
 
 export interface DownloadedImage {
@@ -103,7 +109,7 @@ function pinnedLookup(addresses: readonly string[]): LookupFunction {
   };
 }
 
-function get(url: URL, addresses: readonly string[] | null, signal: AbortSignal): Promise<IncomingMessage> {
+function get(url: URL, addresses: readonly string[] | null, signal: AbortSignal, accept: string): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
     const mod = url.protocol === 'https:' ? https : http;
     // `agent: false`: không dùng lại socket đã nối tới địa chỉ khác của cùng host.
@@ -111,7 +117,7 @@ function get(url: URL, addresses: readonly string[] | null, signal: AbortSignal)
       method: 'GET',
       agent: false,
       signal,
-      headers: { accept: 'image/*' },
+      headers: { accept },
       ...(addresses && { lookup: pinnedLookup(addresses) }),
     });
     req.once('response', resolve);
@@ -140,27 +146,70 @@ async function readCapped(res: IncomingMessage, max: number): Promise<Buffer | n
  * phân giải hay lỗi mạng chi tiết.
  */
 export async function downloadImage(source: string, opts: ImageSourceOptions = {}): Promise<DownloadedImage> {
+  const { bytes, type, url } = await download(source, opts, {
+    accept: 'image/*',
+    isType: (type) => type.startsWith('image/'),
+    maxBytes: MAX_IMAGE_BYTES,
+    error: (why) => new MarketplaceError('rejected', 'image_source_invalid', why),
+  });
+  let name: string;
+  try {
+    name = decodeURIComponent(url.pathname.split('/').pop() || 'image') || 'image';
+  } catch {
+    name = 'image';
+  }
+  return { bytes, type, name };
+}
+
+function documentError() {
+  return new MarketplaceError('unavailable', 'document_download_failed', 'Sàn trả tệp vận đơn hỏng, thử lại sau');
+}
+
+export async function downloadDocument(source: string, opts: DocumentSourceOptions = {}): Promise<Uint8Array> {
+  const { bytes } = await download(source, opts, {
+    accept: 'application/pdf',
+    isType: (type) => type === 'application/pdf',
+    maxBytes: MAX_DOCUMENT_BYTES,
+    httpsOnly: true,
+    error: documentError,
+  });
+  if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') throw documentError();
+  return bytes;
+}
+
+interface DownloadPolicy {
+  accept: string;
+  isType: (type: string) => boolean;
+  maxBytes: number;
+  httpsOnly?: boolean;
+  error: (why: string) => MarketplaceError;
+}
+
+async function download(source: string, opts: DocumentSourceOptions, policy: DownloadPolicy) {
   const resolveHost = opts.resolveHost ?? defaultResolve;
   const allow = opts.allowAddress ?? ((ip: string) => !isPrivateAddress(ip));
-  const max = opts.maxBytes ?? MAX_IMAGE_BYTES;
-  const bad = (why: string) => new MarketplaceError('rejected', 'image_source_invalid', why);
+  const max = opts.maxBytes ?? policy.maxBytes;
+  const bad = policy.error;
   let url: URL;
   try {
     url = new URL(source);
   } catch {
     throw bad('URL ảnh không hợp lệ');
   }
-  const signal = AbortSignal.timeout(opts.timeoutMs ?? IMAGE_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(opts.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
   for (let hop = 0; ; hop++) {
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw bad('URL ảnh phải là http hoặc https');
+    const trusted = url.origin === opts.trustedOrigin;
+    if (url.protocol !== 'https:' && (url.protocol !== 'http:' || (policy.httpsOnly && !trusted))) {
+      throw bad('URL ảnh phải là http hoặc https');
+    }
     if (url.username || url.password) throw bad('URL ảnh không được chứa tài khoản');
     const host = url.hostname.replace(/^\[|\]$/g, '');
     const literal = isIP(host) !== 0;
     const addrs = literal ? [host] : await resolveHost(host).catch(() => []);
-    if (!addrs.length || !addrs.every(allow)) throw bad('Không tải được ảnh từ địa chỉ này');
+    if (!addrs.length || (!trusted && !addrs.every(allow))) throw bad('Không tải được ảnh từ địa chỉ này');
     let res: IncomingMessage;
     try {
-      res = await get(url, literal ? null : addrs, signal);
+      res = await get(url, literal ? null : addrs, signal, policy.accept);
     } catch {
       throw bad('Không tải được ảnh nguồn');
     }
@@ -181,7 +230,7 @@ export async function downloadImage(source: string, opts: ImageSourceOptions = {
       throw bad(`Tải ảnh nguồn lỗi HTTP ${status}`);
     }
     const type = String(res.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
-    if (!type.startsWith('image/')) {
+    if (!policy.isType(type)) {
       res.destroy();
       throw bad('URL không trỏ tới ảnh');
     }
@@ -197,12 +246,6 @@ export async function downloadImage(source: string, opts: ImageSourceOptions = {
     }
     if (!bytes) throw bad('Ảnh quá 10MB');
     if (!bytes.length) throw bad('Ảnh rỗng');
-    let name: string;
-    try {
-      name = decodeURIComponent(url.pathname.split('/').pop() || 'image') || 'image';
-    } catch {
-      name = 'image';
-    }
-    return { bytes, type, name };
+    return { bytes, type, url };
   }
 }

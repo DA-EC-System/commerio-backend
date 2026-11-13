@@ -1,5 +1,5 @@
 {
-  "id": "cf4b01af-b88f-4d74-8dd5-c6c4cba31860",
+  "id": "94540133-9a5c-43a9-a38a-289511af9145",
   "prevId": "29e20945-64e9-4ce5-9661-11cf8ccd14c3",
   "version": "7",
   "dialect": "postgresql",
@@ -4042,7 +4042,7 @@
         },
         "config_versions_effective": {
           "name": "config_versions_effective",
-          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'superseded') or \"finance\".\"config_versions\".\"effective_from\" is not null"
+          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'expired') or \"finance\".\"config_versions\".\"effective_from\" is not null"
         },
         "config_versions_range": {
           "name": "config_versions_range",
@@ -4054,7 +4054,7 @@
         },
         "config_versions_approved": {
           "name": "config_versions_approved",
-          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'superseded') or \"finance\".\"config_versions\".\"approved_by\" is not null"
+          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'expired') or \"finance\".\"config_versions\".\"approved_by\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -7154,6 +7154,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "carrier_code": {
+          "name": "carrier_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "carrier_name": {
+          "name": "carrier_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "label_error": {
+          "name": "label_error",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "self_delivery": {
           "name": "self_delivery",
           "type": "boolean",
@@ -7455,6 +7474,10 @@
         "packages_open": {
           "name": "packages_open",
           "value": "\"order\".\"packages\".\"needs_open\" = (\"order\".\"packages\".\"open_purpose\" is not null)"
+        },
+        "packages_carrier": {
+          "name": "packages_carrier",
+          "value": "(\"order\".\"packages\".\"carrier_code\" is null) = (\"order\".\"packages\".\"carrier_name\" is null)"
         },
         "packages_cod_second_person": {
           "name": "packages_cod_second_person",
@@ -12323,7 +12346,7 @@
         "rejected",
         "scheduled",
         "active",
-        "superseded",
+        "expired",
         "cancelled"
       ]
     },
