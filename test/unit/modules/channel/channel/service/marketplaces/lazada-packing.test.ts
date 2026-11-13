@@ -10,7 +10,7 @@ const provider = (type: 'TFS' | 'NTFS') => ({
   shipment_providers: type === 'NTFS' ? [{ name: 'Flash Express', provider_code: 'FM50' }] : [],
 });
 const items = ref.externalLineIds.map((id) => ({ order_item_id: id, item_err_code: '0', package_id: 'FP1', tracking_number: 'LZ1' }));
-const pack = (rows = items) => ({ pack_order_list: [{ order_id: 'O1', order_item_list: rows }] });
+const pack = (rows: (typeof items[number] & { msg?: string })[] = items) => ({ pack_order_list: [{ order_id: 'O1', order_item_list: rows }] });
 const ok = (data: unknown) => ({ code: '0', result: { success: true, data } });
 const pdf = Buffer.from('%PDF-1.4');
 function fake(...bodies: unknown[]) {
