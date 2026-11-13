@@ -232,7 +232,29 @@ export interface Entry {
 }
 
 /** Khoản thuộc doanh thu thuần (25 §10.2: "Σ doanh thu hàng của phần đã giao − hoàn tiền khách"). */
-const NET_REVENUE: ReadonlySet<LedgerKind> = new Set(['revenue', 'customer_refund']);
+export const NET_REVENUE: ReadonlySet<LedgerKind> = new Set(['revenue', 'customer_refund']);
+
+/**
+ * Ngày chọn thuế suất GTGT đầu ra cho các dòng doanh thu thuần của một đơn (US-TI-13 dòng 3: "dùng phiên bản theo ngày
+ * giao"): dòng ước tính lấy ngày của nó; dòng thực tế sau quyết toán lấy ngày của dòng ước tính nó thay, không có thì
+ * ngày dòng doanh thu ước tính sớm nhất của đơn, không có nữa thì ngày của chính dòng.
+ */
+export function vatDaysOf(
+  rows: readonly { id: string; kind: LedgerKind; occurredOn: string; isEstimate: boolean; replacesEntryId: string | null }[],
+): Map<string, string> {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const firstDelivery = rows
+    .filter((r) => r.isEstimate && r.kind === 'revenue')
+    .map((r) => r.occurredOn)
+    .sort()[0];
+  const out = new Map<string, string>();
+  for (const r of rows) {
+    if (!NET_REVENUE.has(r.kind)) continue;
+    const replaced = r.replacesEntryId ? byId.get(r.replacesEntryId) : undefined;
+    out.set(r.id, r.isEstimate ? r.occurredOn : (replaced?.occurredOn ?? firstDelivery ?? r.occurredOn));
+  }
+  return out;
+}
 
 /**
  * Phần GTGT đầu ra nằm trong một dòng doanh thu thuần: số − số / (1 + v/100), làm tròn tới đồng (25 §10.2, E131).

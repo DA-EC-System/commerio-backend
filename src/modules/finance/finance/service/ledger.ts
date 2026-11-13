@@ -14,6 +14,7 @@ import {
   postSupplierRefund,
   profitOf,
   taxWarnings,
+  vatDaysOf,
 } from '../domain/ledger.ts';
 import {
   entriesOfOrder,
@@ -28,6 +29,7 @@ import {
   sourcePosted,
 } from '../repository/ledger.ts';
 import { bankMatchesOf } from '../repository/ledger.ts';
+import { lockCellsShared } from '../repository/config-versions.ts';
 import { findOrderSettlement } from '../repository/order-settlements.ts';
 import { getEffectiveConfig } from './config-versions.ts';
 import { markDelivered } from './order-settlement-state.ts';
@@ -80,6 +82,9 @@ const dayOf = (iso: string) => vnDate(new Date(iso));
 export function recordPackageDelivered(companyId: string, e: PackageDelivered): Promise<number> {
   return withCompany(companyId, async () => {
     const day = dayOf(e.deliveredAt);
+    // Khoá chia sẻ các ô cấu hình đọc dưới đây: phiên bản đang sang `active` (khoá riêng) chờ kiện này ghi xong rồi mới
+    // quét hồi tố, kiện tới sau đọc bản mới (#230).
+    await lockCellsShared([['fee', e.shopId], ['tax_regime', null], ['tax_rules', null]]);
     const configs = {
       fee: await getEffectiveConfig('fee', e.shopId, day),
       regime: await getEffectiveConfig('tax_regime', null, day),
@@ -252,14 +257,15 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
     // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng ước tính, kể cả khoản sàn không thu.
     const settled = rows.some((r) => !r.isEstimate);
-    const vat = await outputVatByDay(rows.filter((r) => r.kind === 'revenue' || r.kind === 'customer_refund').map((r) => r.occurredOn));
+    const vatDay = vatDaysOf(rows);
+    const vat = await outputVatByDay([...vatDay.values()]);
     const p = profitOf(
       rows.map((r) => ({
         kind: r.kind,
         amount: r.amount,
         isEstimate: r.isEstimate,
         replaced: r.replacedBy !== null || (r.isEstimate && settled),
-        outputVatPct: vat.get(r.occurredOn) ?? 0,
+        outputVatPct: vat.get(vatDay.get(r.id) ?? '') ?? 0,
       })),
     );
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');

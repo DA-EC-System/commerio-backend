@@ -51,6 +51,15 @@ export async function lockCell(kind: ConfigKind, shopId: string | null): Promise
   await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
+/**
+ * Khoá chia sẻ các ô (cùng khoá với `lockCell`) tới hết giao dịch, theo thứ tự cố định: ghi sổ theo cấu hình đọc song
+ * song được, chỉ chờ khi một phiên bản của ô đang chuyển trạng thái.
+ */
+export async function lockCellsShared(cells: readonly (readonly [ConfigKind, string | null])[]): Promise<void> {
+  const keys = cells.map(([kind, shopId]) => `finance.config:${currentCompanyId()}:${kind}:${shopId ?? '-'}`).sort();
+  for (const key of keys) await getDb().execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`);
+}
+
 /** Mọi phiên bản của một ô có trạng thái trong `statuses`. */
 export function findCell(kind: ConfigKind, shopId: string | null, statuses: readonly ConfigStatus[]): Promise<ConfigRow[]> {
   return getDb()
@@ -165,5 +174,28 @@ export async function retroSources(
       ${shopId ? sql`and e.shop_id = ${shopId}` : sql``}
     group by e.source_id, e.order_id, e.shop_id, e.package_id, e.occurred_on
     order by e.occurred_on, e.source_id`);
+  return rows;
+}
+
+/**
+ * Doanh thu, hoàn tiền khách còn hiệu lực từ `from`, gộp theo ngày giao và loại (chạy thử: GTGT đầu ra, thuế khấu trừ
+ * theo phiên bản của ngày giao, US-TI-13 dòng 3). Ngày giao của dòng thực tế là ngày của dòng ước tính nó thay, không
+ * có thì ngày dòng doanh thu ước tính sớm nhất của đơn, không có nữa thì ngày của chính dòng.
+ */
+export async function netRevenueByDay(from: string, shopId?: string): Promise<{ day: string; kind: 'revenue' | 'customer_refund'; amount: string }[]> {
+  const { rows } = await getDb().execute<{ day: string; kind: 'revenue' | 'customer_refund'; amount: string }>(sql`
+    select v.day, v.kind, sum(v.amount)::text as amount from (
+      select coalesce(
+          est.occurred_on,
+          (select min(f.occurred_on) from ${ledgerEntries} f
+           where f.order_id = ${ledgerEntries.orderId} and f.is_estimate and f.kind = 'revenue'),
+          ${ledgerEntries.occurredOn}
+        )::text as day,
+        ${ledgerEntries.kind}::text as kind, ${ledgerEntries.amount} as amount
+      from ${ledgerEntries} left join ${ledgerEntries} est on est.id = ${ledgerEntries.replacesEntryId}
+      where ${ledgerEntries.occurredOn} >= ${from} and ${ledgerEntries.kind} in ('revenue', 'customer_refund')
+        ${shopId ? sql`and ${ledgerEntries.shopId} = ${shopId}` : sql``}
+        and not (${isReplaced()})
+    ) v group by v.day, v.kind order by v.day, v.kind`);
   return rows;
 }

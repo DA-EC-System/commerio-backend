@@ -11,6 +11,7 @@ import {
   postReturned,
   profitOf,
   taxWarnings,
+  vatDaysOf,
 } from '#src/modules/finance/finance/domain/ledger.ts';
 
 const pkg = {
@@ -158,5 +159,29 @@ describe('khoản ngoài sàn, không vào lãi bán hàng (25 §10.1, §10.2; 2
     const platform = LEDGER_KINDS.filter((k) => !OFF_PLATFORM.has(k));
     expect(platform).toEqual(expect.arrayContaining(['revenue', 'ads', 'penalty', 'withdrawal', 'adjustment', 'cogs']));
     expect(platform.length + OFF_PLATFORM.size).toBe(LEDGER_KINDS.length);
+  });
+});
+
+describe('ngày chọn thuế suất GTGT đầu ra (US-TI-13 dòng 3)', () => {
+  const row = (id: string, kind: 'revenue' | 'customer_refund' | 'fee_fixed', occurredOn: string, isEstimate: boolean, replacesEntryId: string | null = null) => ({
+    id,
+    kind,
+    occurredOn,
+    isEstimate,
+    replacesEntryId,
+  });
+
+  it('dòng thực tế lấy ngày dòng ước tính nó thay, không thay dòng nào thì ngày giao sớm nhất của đơn; dòng khác bỏ qua', () => {
+    const days = vatDaysOf([
+      row('e1', 'revenue', '2026-10-28', true),
+      row('a1', 'revenue', '2026-11-03', false, 'e1'),
+      row('a2', 'customer_refund', '2026-11-04', false),
+      row('f1', 'fee_fixed', '2026-10-28', true),
+    ]);
+    expect(Object.fromEntries(days)).toEqual({ e1: '2026-10-28', a1: '2026-10-28', a2: '2026-10-28' });
+  });
+
+  it('đơn chỉ có dòng thực tế thì dùng ngày của chính dòng', () => {
+    expect(vatDaysOf([row('a', 'revenue', '2026-11-03', false)]).get('a')).toBe('2026-11-03');
   });
 });
