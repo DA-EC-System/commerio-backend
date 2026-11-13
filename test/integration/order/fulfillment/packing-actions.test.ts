@@ -12,12 +12,14 @@ import { channelShop, outboxOf, packageRow, packingApp, seedPackage, stockOfVari
 let companyId: string;
 let warehouse: string;
 let sale: string;
+let admin: string;
 let variantId: string;
 let shopId: string;
 beforeAll(async () => {
   ({ companyId } = await createCompany());
   warehouse = (await addMember(companyId, 'warehouse')).token;
   sale = (await addMember(companyId, 'sale')).token;
+  admin = (await addMember(companyId, 'admin')).token;
   variantId = (await createVariant(companyId)).variantId;
   await receive(companyId, variantId, 100, 100_000);
   shopId = await channelShop(companyId, false);
@@ -61,6 +63,14 @@ describe('đóng gói kiện', () => {
     const res = await post(packageId, 'pack', packBody());
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'packed', carrier: null });
+  });
+
+  it.each(['admin', 'sale'] as const)('D2-03q US-DH-06 AC6: %s không được đóng gói, không gọi sàn', async (role) => {
+    const { packageId } = await seed('reserved');
+    const pack = vi.fn(async () => packed);
+    expectProblem(await post(packageId, 'pack', packBody(), { pack }, role === 'admin' ? admin : sale), 403, 'forbidden');
+    expect(pack).not.toHaveBeenCalled();
+    expect(await packageRow(packageId)).toMatchObject({ status: 'reserved', version: 1 });
   });
 
   it('D2-03g: đơn chưa xử lý bị chặn trước khi gọi sàn', async () => {
@@ -153,9 +163,9 @@ describe('báo sẵn sàng giao', () => {
     expectProblem(await post(packageId, 'ready', { version: 1 }), 409, 'self_delivery');
   });
 
-  it('D2-04q: Sale không được báo sẵn sàng giao', async () => {
+  it.each(['admin', 'sale'] as const)('D2-04q: %s không được báo sẵn sàng giao', async (role) => {
     const { packageId } = await seed('packed');
-    expectProblem(await post(packageId, 'ready', { version: 1 }, {}, sale), 403, 'forbidden');
+    expectProblem(await post(packageId, 'ready', { version: 1 }, {}, role === 'admin' ? admin : sale), 403, 'forbidden');
   });
 
   it.each([[503, 'marketplace_unavailable'], [409, 'marketplace_unauthorized'], [409, 'shop_not_connected']] as const)('sàn trả %s %s, bật cờ tới khi lần sau thành công', async (status, code) => {
@@ -180,6 +190,7 @@ describe('báo sẵn sàng giao', () => {
 
   it('lượt kéo đơn đã áp awaiting_pickup trong lúc gọi sàn', async () => {
     const { packageId } = await seed('packed', { platformPackageCode: 'RTS-PULL' });
+    const other = await seed('packed', { platformPackageCode: 'RTS-PULL' });
     const readyToShip = async () => {
       await testPool().query(`update "order".packages set status = 'awaiting_pickup', version = version + 1 where id = $1`, [packageId]);
     };
@@ -187,6 +198,8 @@ describe('báo sẵn sàng giao', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('awaiting_pickup');
     expect(await transitionsOf(packageId)).toEqual([]);
+    expect(await packageRow(other.packageId)).toMatchObject({ status: 'awaiting_pickup' });
+    expect(await transitionsOf(other.packageId)).toEqual([expect.objectContaining({ action: 'mark_ready' })]);
   });
 
   it('nhóm phải đóng đủ, gọi sàn một lần rồi chuyển cả nhóm', async () => {

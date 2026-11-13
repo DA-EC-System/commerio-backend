@@ -187,11 +187,10 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
         const members = await lockReadyPackages(target.ids);
         const pkg = members.find((member) => member.id === id.toLowerCase());
         if (!pkg) throw notFound();
-        if (pkg.version !== input.version && pkg.status === 'awaiting_pickup' && pkg.platformPackageCode === target.code) {
-          return getPackage(ctx, id);
-        }
-        await checkVersion(ctx, pkg, input.version);
+        const alreadyReady = pkg.status === 'awaiting_pickup' && pkg.platformPackageCode === target.code && pkg.shopId === target.shopId;
+        if (!alreadyReady) await checkVersion(ctx, pkg, input.version);
         for (const member of members) {
+          if (member.status === 'awaiting_pickup' && member.platformPackageCode === target.code && member.shopId === target.shopId) continue;
           if (member.status !== 'packed' || member.platformPackageCode !== target.code || member.shopId !== target.shopId) {
             logger.warn({ packageId: member.id, platformPackageCode: target.code }, 'kiện trong nhóm đã đổi khi báo sẵn sàng giao');
             continue;
@@ -238,17 +237,23 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
     const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = target.shopId && target.code
       ? await marketplacePackagesOf(ctx).repack(companyId, target.shopId, target.code)
       : null;
-    return withCompany(companyId, async () => {
-      const pkg = await readPackage(id, true);
-      await checkVersion(ctx, pkg, target.version);
-      const { to } = await transition(ctx, actor, pkg, 'open');
-      await updatePackage(id, {
-        status: to, packedBy: null, packedAt: null, labelError: false,
-        ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
+    try {
+      return await withCompany(companyId, async () => {
+        const pkg = await readPackage(id, true);
+        await checkVersion(ctx, pkg, target.version);
+        const { to } = await transition(ctx, actor, pkg, 'open');
+        await updatePackage(id, {
+          status: to, packedBy: null, packedAt: null, labelError: false,
+          ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
+        });
+        await setLinesPacked(id, false);
+        await recordPacking(pkg, to, 'open', actor.accountId);
+        return getPackage(ctx, id);
       });
-      await setLinesPacked(id, false);
-      await recordPacking(pkg, to, 'open', actor.accountId);
-      return getPackage(ctx, id);
-    });
+    } catch (err) {
+      // Sàn đã huỷ gói cũ mà app còn giữ mã đó: lượt kéo đơn không tự sửa (món về chờ đóng gói, kiện app vẫn `packed`).
+      if (outcome === 'repacked') logger.error({ err, packageId: id, platformPackageCode: target.code }, 'sàn đã đóng gói lại, app chưa ghi; cần mở lại kiện');
+      throw err;
+    }
   });
 }

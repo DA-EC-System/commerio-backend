@@ -57,11 +57,11 @@ export async function seedPackage(
     `update "order".orders set status = $2, cancelling = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at) where id = $1`,
     [order.orderId, p.orderStatus ?? 'processing', p.cancelling ?? false, p.shopId ?? null, p.orderCreatedAt ?? null],
   );
-  const { rows: orderLines } = await db.query<{ id: string }>(
+  const { rows: orderLines } = await db.query<{ id: string; variant_id: string; quantity: number }>(
     `with updated as (
        update "order".order_lines set external_line_id = coalesce(external_line_id, 'L-' || id::text)
-       where order_id = $1 returning id, created_at
-     ) select id from updated order by created_at, id`,
+       where order_id = $1 returning id, variant_id, quantity
+     ) select id, variant_id, quantity from updated order by id`,
     [order.orderId],
   );
   const out = !['backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled'].includes(p.status);
@@ -91,11 +91,14 @@ export async function seedPackage(
   );
   const packageId = pkg.rows[0]!.id;
   const lineIds: string[] = [];
-  for (const [i, l] of p.lines.entries()) {
+  for (const l of p.lines) {
+    const index = orderLines.findIndex((line) => line.variant_id === (l.variantId ?? firstVariant) && line.quantity === l.quantity);
+    if (index === -1) throw new Error('seedPackage: không thấy dòng đơn của món trong kiện');
+    const [orderLine] = orderLines.splice(index, 1);
     const { rows } = await db.query<{ id: string }>(
       `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty)
        values ($1, $2, $3, $4, $5, $6) returning id`,
-      [companyId, packageId, orderLines[i]!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0],
+      [companyId, packageId, orderLine!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0],
     );
     lineIds.push(rows[0]!.id);
   }
