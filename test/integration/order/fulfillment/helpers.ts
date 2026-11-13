@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import request from 'supertest';
+import { createApp } from '#src/app.ts';
 import type { HandoverSource } from '#src/modules/order/fulfillment/domain/handover.ts';
 import type { PackageStatus } from '#src/modules/order/fulfillment/domain/package.ts';
+import type { MarketplacePackages } from '#src/modules/order/fulfillment/service/packages.ts';
 import { stockOf } from '#src/modules/product/index.ts';
 import { reserve } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { createModuleContext, type AppContext } from '#src/wiring.ts';
 import { testPool } from '../../helpers/db.ts';
 import { createOrder } from '../../helpers/sales.ts';
 
@@ -33,15 +37,19 @@ export async function seedPackage(
     cancelling?: boolean;
     shipBy?: Date | null;
     trackingCode?: string | null;
+    platformPackageCode?: string | null;
+    selfDelivery?: boolean;
+    manual?: boolean;
+    fallbackVariantId?: string;
     needsOpen?: boolean;
     /** Mặc định: lúc seed nếu có dòng `reserved`, null nếu không. */
     reservedAt?: Date | null;
   },
 ): Promise<{ packageId: string; orderId: string; orderCode: string; packageCode: string; lineIds: string[] }> {
-  const firstVariant = p.lines.find((l) => l.variantId)?.variantId;
+  const firstVariant = p.lines.find((l) => l.variantId)?.variantId ?? p.fallbackVariantId;
   if (!firstVariant) throw new Error('seedPackage: cần ít nhất một dòng có variantId');
   const order = await createOrder(companyId, {
-    source: 'marketplace',
+    source: p.manual ? 'manual' : 'marketplace',
     lines: p.lines.map((l) => ({ variantId: l.variantId ?? firstVariant, quantity: l.quantity, unitPrice: 100000 })),
   });
   const db = testPool();
@@ -49,8 +57,11 @@ export async function seedPackage(
     `update "order".orders set status = $2, cancelling = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at) where id = $1`,
     [order.orderId, p.orderStatus ?? 'processing', p.cancelling ?? false, p.shopId ?? null, p.orderCreatedAt ?? null],
   );
-  const { rows: orderLines } = await db.query<{ id: string }>(
-    'select id from "order".order_lines where order_id = $1 order by created_at, id',
+  const { rows: orderLines } = await db.query<{ id: string; variant_id: string; quantity: number }>(
+    `with updated as (
+       update "order".order_lines set external_line_id = coalesce(external_line_id, 'L-' || id::text)
+       where order_id = $1 returning id, variant_id, quantity
+     ) select id, variant_id, quantity from updated order by id`,
     [order.orderId],
   );
   const out = !['backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled'].includes(p.status);
@@ -58,8 +69,8 @@ export async function seedPackage(
   const shop = await db.query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [order.orderId]);
   const pkg = await db.query<{ id: string }>(
     `insert into "order".packages (company_id, code, order_id, shop_id, status, handed_over_at, handover_source,
-       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
+       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at, platform_package_code, self_delivery)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) returning id`,
     [
       companyId,
       packageCode,
@@ -74,15 +85,20 @@ export async function seedPackage(
       p.needsOpen ?? false,
       p.needsOpen ? 'cancel' : null,
       p.reservedAt !== undefined ? p.reservedAt : p.lines.some((l) => l.reserved) ? new Date() : null,
+      p.platformPackageCode ?? null,
+      p.selfDelivery ?? false,
     ],
   );
   const packageId = pkg.rows[0]!.id;
   const lineIds: string[] = [];
-  for (const [i, l] of p.lines.entries()) {
+  for (const l of p.lines) {
+    const index = orderLines.findIndex((line) => line.variant_id === (l.variantId ?? firstVariant) && line.quantity === l.quantity);
+    if (index === -1) throw new Error('seedPackage: không thấy dòng đơn của món trong kiện');
+    const [orderLine] = orderLines.splice(index, 1);
     const { rows } = await db.query<{ id: string }>(
       `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty)
        values ($1, $2, $3, $4, $5, $6) returning id`,
-      [companyId, packageId, orderLines[i]!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0],
+      [companyId, packageId, orderLine!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0],
     );
     lineIds.push(rows[0]!.id);
   }
@@ -168,4 +184,19 @@ export async function transitionsOf(packageId: string) {
     [packageId],
   );
   return rows;
+}
+
+const unexpectedMarketplace = async (): Promise<never> => { throw new Error('Cổng sàn không được gọi trong test này'); };
+
+export function packingApp(fake: Partial<MarketplacePackages> = {}) {
+  const ctx = createModuleContext();
+  const appContext: AppContext = {
+    ...ctx,
+    marketplacePackages: {
+      splitAttributes: unexpectedMarketplace, split: unexpectedMarketplace, ship: unexpectedMarketplace,
+      carriers: unexpectedMarketplace, pack: unexpectedMarketplace, readyToShip: unexpectedMarketplace,
+      repack: unexpectedMarketplace, shippingDocuments: unexpectedMarketplace, ...fake,
+    },
+  };
+  return request(createApp(appContext));
 }

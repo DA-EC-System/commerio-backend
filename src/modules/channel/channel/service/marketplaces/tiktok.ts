@@ -25,7 +25,7 @@ import {
   type TiktokConfig,
   unpackTiktokToken,
 } from './tiktok-client.ts';
-import { tiktokOrderMethods } from './tiktok-orders.ts';
+import { tiktokOrderMethods, type TiktokOrderDeps } from './tiktok-orders.ts';
 import { tiktokReturnMethods } from './tiktok-returns.ts';
 
 export type { TiktokClient, TiktokConfig } from './tiktok-client.ts';
@@ -183,7 +183,7 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
   });
 }
 
-export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
+export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch = fetch, deps: TiktokOrderDeps = {}): MarketplaceAdapter {
   const client = createTiktokClient(config, fetchFn);
   const oauthReady = client.hasCredentials && Boolean(config.serviceId);
 
@@ -515,7 +515,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client, { findSku }),
     ...tiktokReturnMethods(client),
-    ...tiktokOrderMethods(client),
+    ...tiktokOrderMethods(client, deps),
   };
 }
 

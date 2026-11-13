@@ -51,6 +51,18 @@ beforeAll(async () => {
 
 const codes = (items: { code: string }[]) => items.map((i) => i.code);
 
+it('chi tiết kiện trả nhà vận chuyển đã chọn và cờ Lỗi lấy vận đơn', async () => {
+  const { companyId, ceo } = await createCompany();
+  const variant = await createVariant(companyId);
+  const { packageId } = await seedPackage(companyId, { status: 'packed', lines: [{ variantId: variant.variantId, quantity: 1 }] });
+  await testPool().query(`update "order".packages set carrier_code = 'GHN', carrier_name = 'Giao Hàng Nhanh', label_error = true where id = $1`, [packageId]);
+  const res = await get(`/packages/${packageId}`, ceo.token);
+  expect(res.status).toBe(200);
+  const pkg = Package.parse(res.body);
+  expect(pkg.carrier).toEqual({ code: 'GHN', name: 'Giao Hàng Nhanh' });
+  expect(pkg.flags).toContain('label_error');
+});
+
 describe('GET /fulfillment/packages (21 §19.2)', () => {
   it('AC12: mỗi tab đúng kiện; counts đủ 8 tab, không đổi theo tab', async () => {
     const pages = await Promise.all(TABS.map(async (tab) => [tab, PackagePage.parse((await get(`/packages?tab=${tab}`)).body)] as const));
