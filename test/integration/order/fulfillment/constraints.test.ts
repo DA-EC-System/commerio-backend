@@ -24,6 +24,12 @@ const insertLine = (c: string, packageId: string, cols: Record<string, unknown>)
 
 // Kiện (Documents/19 mục 3.4; 25 §7.4, §8.3, §11).
 describe('ràng buộc kiện', () => {
+  it('có mã nhà vận chuyển mà thiếu tên thì bị chặn', async () => {
+    await expect(insertPackage(randomUUID(), { carrier_code: 'GHN' })).rejects.toMatchObject({
+      code: '23514', constraint: 'packages_carrier',
+    });
+  });
+
   it('kiện đã rời kho phải có thời điểm bàn giao', async () => {
     const c = randomUUID();
     await expect(insertPackage(c, { status: 'in_transit' })).rejects.toThrow(/"packages_handed_over"/);

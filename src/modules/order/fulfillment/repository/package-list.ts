@@ -28,7 +28,7 @@ const orderWhere = (condition: SQL) => sql`exists (select 1 from "order".orders 
 /** `%`, `_`, `\` trong từ khoá khớp đúng chữ. */
 const containsPattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-function tabCondition(tab: PackageTab): SQL {
+export function packageTabCondition(tab: PackageTab): SQL {
   if (tab === 'needs_open') return eq(packages.needsOpen, true);
   const status = inArray(packages.status, [...STATUSES_OF[tab]]);
   // Kiện đã giữ hàng của đơn chưa trả thì chưa đóng gói được: tab "Đã giữ hàng" chỉ gồm đơn đang xử lý.
@@ -50,7 +50,7 @@ function filterCondition(f: PackageFilter): SQL | undefined {
 export async function findPackagePage(
   f: PackageFilter & { tab: PackageTab; limit: number; offset: number },
 ): Promise<{ rows: PackageViewRow[]; total: number }> {
-  const where = and(tabCondition(f.tab), filterCondition(f));
+  const where = and(packageTabCondition(f.tab), filterCondition(f));
   const db = getDb();
   const [rows, [total]] = await Promise.all([
     db
@@ -72,7 +72,7 @@ export async function countPackageTabs(f: PackageFilter): Promise<Record<Package
   const [row] = await getDb()
     .select(
       Object.fromEntries(
-        PACKAGE_TABS.map((tab) => [tab, sql<number>`(count(*) filter (where ${tabCondition(tab)}))::int`.mapWith(Number)]),
+        PACKAGE_TABS.map((tab) => [tab, sql<number>`(count(*) filter (where ${packageTabCondition(tab)}))::int`.mapWith(Number)]),
       ) as Record<PackageTab, SQL<number>>,
     )
     .from(packages)

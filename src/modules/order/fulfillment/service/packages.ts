@@ -61,9 +61,14 @@ export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) 
   return ctx.stockHoldOf;
 }
 
-function orderRefsLookupOf(ctx: FulfillmentContext) {
+export function orderRefsLookupOf(ctx: FulfillmentContext) {
   if (!ctx.orderRefsOf) throw new AppError(500, 'internal_error', 'Chưa nối dữ liệu đơn của sales (src/modules/order/index.ts)');
   return ctx.orderRefsOf;
+}
+
+export function marketplacePackagesOf(ctx: FulfillmentContext): MarketplacePackages {
+  if (!ctx.marketplacePackages) throw new AppError(500, 'internal_error', 'Chưa nối cổng thao tác kiện của channel (src/wiring.ts)');
+  return ctx.marketplacePackages;
 }
 
 const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];
