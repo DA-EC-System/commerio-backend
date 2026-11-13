@@ -1,9 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLazadaAdapter } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 
 const config = { appKey: 'k', appSecret: 's', redirectUrl: 'https://app/cb', apiUrl: 'https://api.test/rest', authUrl: 'https://auth.test' };
 
 const BASE = Date.parse('2025-01-01T00:00:00Z');
+// Đọc trọn chia khoảng từ mốc gốc tới `Date.now()`: khoảng gốc dài thêm mỗi ngày nên cây chia và số lời gọi đổi theo ngày
+// chạy (13/11/2026 ca "sàn đổi thứ tự" tốn 43 lời gọi, quá trần 40 của test). Cố định giờ cho cả file, chỉ giả `Date`, không
+// giả timer (test/CLAUDE.md luật 5).
+const NOW = Date.parse('2026-11-12T12:00:00Z');
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 // Sàn giả theo GetProducts (open.lazada.com, tra 06/11 và 12/11/2026): `filter`, `limit` tối đa 50, `offset` tối đa 10000,
 // `create_after`, `create_before` lấy cả mốc, `total_products` theo bộ lọc. Sản phẩm i tạo lúc BASE + i × `gapMs`.
 // `shuffle`: mỗi lời gọi trả thứ tự khác (tài liệu không có tham số sắp xếp; review #309 vòng 3 R1).
