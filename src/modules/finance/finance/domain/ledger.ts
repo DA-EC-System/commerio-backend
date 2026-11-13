@@ -33,6 +33,8 @@ export type LedgerKind = (typeof LEDGER_KINDS)[number];
 
 /** Giá vốn không phải tiền mặt: không cộng vào thực nhận, chỉ vào lãi gộp. */
 export const NON_CASH: ReadonlySet<LedgerKind> = new Set(['cogs', 'cogs_reversal']);
+/** Dòng còn mang nhãn Ước tính: giá vốn lấy từ thẻ kho, không chờ sàn quyết toán (US-TI-04 dòng 2, #231). */
+export const isEstimateLine = (kind: LedgerKind, isEstimate: boolean) => isEstimate && !NON_CASH.has(kind);
 /** Không vào lãi: giá vốn tính riêng, rút tiền chỉ chuyển chỗ (ví sàn → ngân hàng). */
 export const NOT_PROFIT: ReadonlySet<LedgerKind> = new Set([...NON_CASH, 'withdrawal']);
 /**
@@ -213,7 +215,7 @@ export function profitOf(entries: readonly Entry[]): { net: number; cogs: number
   const sum = (pred: (e: Entry) => boolean) => live.filter(pred).reduce((s, e) => s.plus(e.amount), new Decimal(0));
   const net = sum((e) => !NON_CASH.has(e.kind));
   const cogs = sum((e) => NON_CASH.has(e.kind));
-  return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate && !NON_CASH.has(e.kind)) };
+  return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => isEstimateLine(e.kind, e.isEstimate)) };
 }
 
 /** Cảnh báo luỹ kế doanh thu năm theo mốc của quy tắc thuế (25 §10.4): từ 90% mốc. */

@@ -1,7 +1,8 @@
 // Lãi theo danh sách đơn (#231; Documents/21 §21.1, 25 §10.2): gộp sổ theo đơn bằng SQL, lọc, phân trang và cộng tổng
-// trên toàn bộ kết quả lọc, không kéo sổ lên bộ nhớ. Cùng cách tính với `profitOf` (một đơn): dòng còn hiệu lực là
-// dòng chưa bị thay (`isReplaced`), thực nhận = dòng tiền mặt, giá vốn = `cogs` + `cogs_reversal`.
-import { inArray, not, type SQL, sql } from 'drizzle-orm';
+// trên toàn bộ kết quả lọc, không kéo sổ lên bộ nhớ. Cùng luật với lãi của một đơn (`orderProfit`, `profitOf`): dòng
+// còn hiệu lực là dòng chưa `isReplaced`, thực nhận = dòng tiền mặt, giá vốn = `cogs` + `cogs_reversal`, nhãn Ước tính
+// chỉ xét dòng tiền (`isEstimateLine`).
+import { not, type SQL, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { NON_CASH } from '../domain/ledger.ts';
 import { isReplaced } from './ledger.ts';
@@ -36,6 +37,12 @@ export interface OrderProfitRow {
   belowFloor: boolean;
 }
 
+export interface OrderProfitTotals {
+  total: number;
+  net: string;
+  cogs: string;
+}
+
 function marginCase(margins: readonly MarginSegment[]): SQL {
   if (!margins.length) return sql`null::numeric`;
   const whens = margins.map(
@@ -45,31 +52,46 @@ function marginCase(margins: readonly MarginSegment[]): SQL {
   return sql`case ${sql.join(whens, sql` `)} else null end`;
 }
 
+const nonCash = sql`r.kind::text in (${sql.join(
+  [...NON_CASH].map((k) => sql`${k}`),
+  sql`, `,
+)})`;
+
 /**
- * Bảng tạm `g`: mỗi đơn có kiện đã giao (có dòng nguồn `package`) một dòng. Ngày giao là ngày kiện đầu tiên giao xong
- * (dòng nguồn `package` không bao giờ mất: kể cả khi đã bị dòng thực tế thay vẫn còn ngày). Cờ Dưới giá thấp nhất cùng
- * điều kiện `isBelowFloor` (domain/order-profit.ts).
+ * Bảng tạm `g`, mỗi đơn có kiện đã giao trong kỳ một dòng:
+ * - `o`: đơn có dòng nguồn `package`, ngày giao = ngày kiện đầu tiên giao xong (dòng nguồn `package` không mất khi bị
+ *   dòng thực tế thay), lọc kỳ và gian hàng ngay đây để chỉ gộp sổ của đơn trong kỳ;
+ * - `r`: dòng sổ của các đơn đó, `live` tính một lần mỗi dòng;
+ * - `p`, `f`: tổng theo đơn, cờ thiếu giá vốn (#229), lãi tối thiểu áp tại ngày giao;
+ * - `g`: cờ Dưới giá thấp nhất thực tế (25 §10.2, E132): đơn đã quyết toán, có giá vốn, thực nhận < giá vốn × (1 +
+ *   lãi tối thiểu/100) ("Giá thấp nhất = giá vốn × (1 + lãi tối thiểu)", 25 §6.2 bước 5). Đơn còn ước tính không bật:
+ *   số ước tính lấy từ chính cấu hình phí mà cờ này báo lỗi thời. Chưa có giá vốn hoặc cấu hình thì không bật.
  */
 function filtered(f: OrderProfitFilter): SQL {
-  const live = not(isReplaced());
-  const nonCash = inArray(ledgerEntries.kind, [...NON_CASH]);
   const pkg = sql`${ledgerEntries.sourceType} = 'package'`;
-  return sql`with p as (
-      select ${ledgerEntries.orderId} as order_id,
-        min(${ledgerEntries.occurredOn}) filter (where ${pkg}) as delivered_on,
-        (array_agg(${ledgerEntries.shopId}) filter (where ${pkg}))[1] as shop_id,
-        coalesce(sum(${ledgerEntries.amount}) filter (where ${live} and not ${nonCash}), 0) as net,
-        coalesce(sum(${ledgerEntries.amount}) filter (where ${live} and ${nonCash}), 0) as cogs,
-        coalesce(bool_or(${ledgerEntries.isEstimate}) filter (where ${live} and not ${nonCash}), false) as estimated
+  return sql`with o as (
+      select ${ledgerEntries.orderId} as order_id, min(${ledgerEntries.occurredOn}) as delivered_on,
+        (array_agg(${ledgerEntries.shopId} order by ${ledgerEntries.occurredOn}, ${ledgerEntries.createdAt}))[1] as shop_id
       from ${ledgerEntries}
-      where ${ledgerEntries.orderId} is not null
+      where ${pkg} and ${ledgerEntries.orderId} is not null
       group by ${ledgerEntries.orderId}
-      having bool_or(${pkg})
+      having min(${ledgerEntries.occurredOn}) >= ${f.from}::date and min(${ledgerEntries.occurredOn}) <= ${f.to}::date
+        ${f.shopId ? sql`and (array_agg(${ledgerEntries.shopId} order by ${ledgerEntries.occurredOn}, ${ledgerEntries.createdAt}))[1] = ${f.shopId}::uuid` : sql``}
+    ), r as (
+      select ${ledgerEntries.orderId} as order_id, ${ledgerEntries.kind} as kind, ${ledgerEntries.amount} as amount,
+        ${ledgerEntries.isEstimate} as is_estimate, ${not(isReplaced())} as live
+      from ${ledgerEntries}
+      where ${ledgerEntries.orderId} in (select order_id from o)
+    ), p as (
+      select o.order_id, o.delivered_on, o.shop_id,
+        coalesce(sum(r.amount) filter (where r.live and not ${nonCash}), 0) as net,
+        coalesce(sum(r.amount) filter (where r.live and ${nonCash}), 0) as cogs,
+        coalesce(bool_or(r.is_estimate) filter (where r.live and not ${nonCash}), false) as estimated
+      from o join r on r.order_id = o.order_id
+      group by o.order_id, o.delivered_on, o.shop_id
     ), f as (
       select p.*, coalesce(${orderSettlements.costMissing}, false) as cost_missing, ${marginCase(f.margins)} as min_margin_pct
       from p left join ${orderSettlements} on ${orderSettlements.orderId} = p.order_id
-      where p.delivered_on >= ${f.from}::date and p.delivered_on <= ${f.to}::date
-        ${f.shopId ? sql`and p.shop_id = ${f.shopId}::uuid` : sql``}
     ), g as (
       select f.*, coalesce(not f.estimated and f.cogs < 0 and f.net < -f.cogs * (1 + f.min_margin_pct / 100), false) as below_floor
       from f
@@ -82,8 +104,21 @@ function where(f: OrderProfitFilter): SQL {
     ${f.belowFloor === undefined ? sql`` : sql`and g.below_floor = ${f.belowFloor}`}`;
 }
 
-/** Một trang đơn, giao mới trước. */
-export async function findOrderProfits(f: OrderProfitFilter, page: { limit: number; offset: number }): Promise<OrderProfitRow[]> {
+async function totalsOnly(f: OrderProfitFilter): Promise<OrderProfitTotals> {
+  const { rows } = await getDb().execute<{ total: number; net: string; cogs: string }>(sql`${filtered(f)}
+    select count(*)::int as total, coalesce(sum(g.net), 0)::text as net, coalesce(sum(g.cogs), 0)::text as cogs
+    from g ${where(f)}`);
+  return rows[0]!;
+}
+
+/**
+ * Một trang đơn (giao mới trước) kèm số đơn và tổng thực nhận, giá vốn trên toàn bộ kết quả lọc, trong một câu (hàm
+ * cửa sổ tính trước `limit`). Trang rỗng (vượt số trang) thì đọc tổng riêng.
+ */
+export async function findOrderProfits(
+  f: OrderProfitFilter,
+  page: { limit: number; offset: number },
+): Promise<{ rows: OrderProfitRow[]; totals: OrderProfitTotals }> {
   const { rows } = await getDb().execute<{
     order_id: string;
     shop_id: string | null;
@@ -93,28 +128,29 @@ export async function findOrderProfits(f: OrderProfitFilter, page: { limit: numb
     estimated: boolean;
     cost_missing: boolean;
     below_floor: boolean;
+    total_count: number;
+    total_net: string;
+    total_cogs: string;
   }>(sql`${filtered(f)}
     select g.order_id, g.shop_id, g.delivered_on::text as delivered_on, g.net::text as net, g.cogs::text as cogs, g.estimated,
-      g.cost_missing, g.below_floor
+      g.cost_missing, g.below_floor, (count(*) over ())::int as total_count, (sum(g.net) over ())::text as total_net,
+      (sum(g.cogs) over ())::text as total_cogs
     from g ${where(f)}
     order by g.delivered_on desc, g.order_id desc
     limit ${page.limit} offset ${page.offset}`);
-  return rows.map((r) => ({
-    orderId: r.order_id,
-    shopId: r.shop_id,
-    deliveredOn: r.delivered_on,
-    net: r.net,
-    cogs: r.cogs,
-    estimated: r.estimated,
-    costMissing: r.cost_missing,
-    belowFloor: r.below_floor,
-  }));
-}
-
-/** Số đơn và tổng thực nhận, giá vốn trên toàn bộ kết quả lọc (không chỉ trang). */
-export async function orderProfitTotals(f: OrderProfitFilter): Promise<{ total: number; net: string; cogs: string }> {
-  const { rows } = await getDb().execute<{ total: number; net: string; cogs: string }>(sql`${filtered(f)}
-    select count(*)::int as total, coalesce(sum(g.net), 0)::text as net, coalesce(sum(g.cogs), 0)::text as cogs
-    from g ${where(f)}`);
-  return rows[0]!;
+  const first = rows[0];
+  const totals = first ? { total: first.total_count, net: first.total_net, cogs: first.total_cogs } : await totalsOnly(f);
+  return {
+    rows: rows.map((r) => ({
+      orderId: r.order_id,
+      shopId: r.shop_id,
+      deliveredOn: r.delivered_on,
+      net: r.net,
+      cogs: r.cogs,
+      estimated: r.estimated,
+      costMissing: r.cost_missing,
+      belowFloor: r.below_floor,
+    })),
+    totals,
+  };
 }

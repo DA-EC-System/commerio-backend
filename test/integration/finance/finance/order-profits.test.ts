@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { OrderProfitPage } from '#src/modules/finance/finance/api/ledger-schemas.ts';
-import { recordPackageDelivered, recordReturnRefunded } from '#src/modules/finance/finance/service/ledger.ts';
+import { recordPackageDelivered, recordReturnInspected, recordReturnRefunded } from '#src/modules/finance/finance/service/ledger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -244,5 +244,77 @@ describe('GET /finance/orders/profits (§21.1)', () => {
     expect((await get(sale.token, PERIOD)).status).toBe(403);
     const other = await setup();
     expect((await get(other.ceo, PERIOD)).body.total).toBe(0);
+  });
+});
+
+describe('dòng ghi sau lần quyết toán đầu (#231)', () => {
+  it('khách trả hàng sau quyết toán: hoàn tiền ước tính và giảm giá vốn đều tính', async () => {
+    const s = await setup();
+    const order = await deliveredOrder(s);
+    await settle(s, order.orderId, 200000, 15000);
+    const base = { orderId: order.orderId, shopId: s.shopId };
+    await recordReturnRefunded(s.companyId, { ...base, returnRequestId: randomUUID(), refundAmount: '100000', refundedAt: '2026-11-09T02:00:00Z' });
+    await recordReturnInspected(s.companyId, {
+      ...base,
+      inspectionId: randomUUID(),
+      inspectedAt: '2026-11-09T03:00:00Z',
+      lines: [{ variantId: s.variantId, resellable: 1, unitCost: '60000' }],
+    });
+    const expected = { net: 85000, cogs: -60000, gross: 25000, estimated: true };
+    expect((await get(s.ceo, PERIOD)).body.items[0]).toMatchObject(expected);
+    expect((await get(s.ceo, `/orders/${order.orderId}/profit`)).body).toMatchObject(expected);
+  });
+
+  it('kiện 2 giao sau quyết toán: doanh thu, phí của kiện 2 vẫn tính, không bật Dưới giá thấp nhất oan', async () => {
+    const s = await setup();
+    await activeConfig(s.companyId, 'min_margin', null, { pct: 10 });
+    const order = await deliveredOrder(s);
+    await settle(s, order.orderId, 200000, 15000);
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-09T08:00:00Z',
+      lines: [{ variantId: s.variantId, quantity: 1, unitPrice: '100000', unitCost: '60000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    // 185.000 thực tế + 93.000 ước tính của kiện 2; giá vốn 180.000, giá thấp nhất 198.000.
+    const expected = { net: 278000, cogs: -180000, gross: 98000, estimated: true };
+    expect((await get(s.ceo, PERIOD)).body.items[0]).toMatchObject({ ...expected, belowFloor: false });
+    expect((await get(s.ceo, `/orders/${order.orderId}/profit`)).body).toMatchObject(expected);
+  });
+
+  it('sàn quyết toán trước khi app thấy kiện giao (E139): số quyết toán là số thật của cả đơn', async () => {
+    const s = await setup();
+    const order = await createOrder(s.companyId, { lines: [{ variantId: s.variantId, quantity: 2, unitPrice: 100000 }], source: 'marketplace' });
+    await settle(s, order.orderId, 200000, 15000);
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-09T08:00:00Z',
+      lines: [{ variantId: s.variantId, quantity: 2, unitPrice: '100000', unitCost: '60000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    expect((await get(s.ceo, PERIOD)).body.items[0]).toMatchObject({ net: 185000, cogs: -120000, gross: 65000, estimated: false });
+  });
+});
+
+describe('nhãn Ước tính của dòng giá vốn (US-TI-04 dòng 2)', () => {
+  it('dòng giá vốn không mang nhãn Ước tính: thuộc lọc thực tế, không thuộc lọc ước tính', async () => {
+    const s = await setup();
+    const order = await deliveredOrder(s);
+    const kinds = async (filter: string) =>
+      ((await get(s.ceo, `/ledger?orderId=${order.orderId}&filter=${filter}`)).body.items as { kind: string; estimated: boolean }[]).map((l) => [l.kind, l.estimated]);
+    expect(await kinds('estimated')).not.toContainEqual(['cogs', true]);
+    expect((await kinds('estimated')).map(([k]) => k)).not.toContain('cogs');
+    expect(await kinds('actual')).toEqual([['cogs', false]]);
+    await settle(s, order.orderId, 200000, 15000);
+    expect(await kinds('estimated')).toEqual([]);
+    expect((await kinds('actual')).map(([k]) => k).sort()).toEqual(['cogs', 'fee_fixed', 'revenue']);
   });
 });

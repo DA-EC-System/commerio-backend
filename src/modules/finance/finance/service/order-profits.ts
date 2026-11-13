@@ -5,7 +5,7 @@ import { findPackagesOfOrders } from '../../../order/index.ts';
 import { appliedTimeline, type ConfigPayload } from '../domain/config-version.ts';
 import { marginPct } from '../domain/order-profit.ts';
 import { findCell } from '../repository/config-versions.ts';
-import { findOrderProfits, type MarginSegment, orderProfitTotals } from '../repository/order-profits.ts';
+import { findOrderProfits, type MarginSegment } from '../repository/order-profits.ts';
 import { ordersOf } from './views.ts';
 
 export interface OrderProfitsQuery {
@@ -44,8 +44,7 @@ const money = (v: Decimal.Value) => new Decimal(v).toNumber();
 export function listOrderProfits(companyId: string, q: OrderProfitsQuery, canSeeCost: boolean) {
   return withCompany(companyId, async () => {
     const filter = { from: q.from, to: q.to, shopId: q.shopId, costMissing: q.costMissing, belowFloor: q.belowFloor, margins: await marginSegments() };
-    const rows = await findOrderProfits(filter, { limit: q.pageSize, offset: (q.page - 1) * q.pageSize });
-    const sums = await orderProfitTotals(filter);
+    const { rows, totals: sums } = await findOrderProfits(filter, { limit: q.pageSize, offset: (q.page - 1) * q.pageSize });
     const ids = rows.map((r) => r.orderId);
     const orders = await ordersOf(ids);
     const deliveredAt = await deliveredAtOf(ids);

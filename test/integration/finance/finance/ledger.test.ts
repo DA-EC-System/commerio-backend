@@ -96,12 +96,15 @@ describe('GET /finance/ledger, /orders/:orderId/profit (§21.1)', () => {
     const ceo = await get(s.ceo, '/ledger');
     expect(ceo.status).toBe(200);
     expect(ceo.body.total).toBe(9);
-    expect(ceo.body.items[0]).toMatchObject({ orderCode: s.order.code, estimated: true, replacedBy: null, source: { type: 'package' } });
+    const revenue = ceo.body.items.find((l: { kind: string }) => l.kind === 'revenue');
+    expect(revenue).toMatchObject({ orderCode: s.order.code, estimated: true, replacedBy: null, source: { type: 'package' } });
+    // Giá vốn lấy từ thẻ kho, không mang nhãn Ước tính (#231).
+    expect(ceo.body.items.find((l: { kind: string }) => l.kind === 'cogs')).toMatchObject({ estimated: false });
     expect(ceo.body.totals).toEqual({ receivable: 246070, platformBalance: 0, withdrawn: 0, committedPurchase: null });
     const admin = await get(s.admin, '/ledger');
     expect(admin.body.total).toBe(8);
     expect(admin.body.items.some((l: { kind: string }) => l.kind === 'cogs')).toBe(false);
-    expect((await get(s.ceo, '/ledger?filter=actual')).body.total).toBe(0);
+    expect((await get(s.ceo, '/ledger?filter=actual')).body.items.map((l: { kind: string }) => l.kind)).toEqual(['cogs']);
     expect((await get(s.ceo, '/ledger?from=2026-11-05')).body.total).toBe(0);
     expect((await get(s.ceo, '/ledger?from=2026-11-04&to=2026-11-04')).body.total).toBe(9);
   });

@@ -483,3 +483,35 @@ describe('trạng thái tiền của đơn và chốt lệch (§21.2)', () => {
     expect((await get(sale.token, '/payments')).status).toBe(403);
   });
 });
+
+describe('kiện giao sau lần quyết toán đầu (#231)', () => {
+  it('dòng ước tính của kiện 2 vẫn tính tới khi lần quyết toán sau nối dòng thực tế về đúng dòng đó', async () => {
+    const s = await setup();
+    await deliver(s);
+    await runSettlement(fakeSource(() => settlementOf('A', '-5160.00')), s.companyId, null, s.shopId);
+    // Kiện 2: thêm 1 áo giao sau quyết toán; doanh thu 129.000, phí 4% + 2%, giá vốn 60.000.
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: s.order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-04T08:00:00Z',
+      lines: [{ variantId: s.variantId, quantity: 1, unitPrice: '129000', unitCost: '60000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    const mid = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    expect(mid).toMatchObject({ net: 363780, cogs: -180000, gross: 183780, estimated: true });
+
+    const second = [
+      txn('B1', 'Item Price Credit', 'Orders-Sales', '129000.00'),
+      txn('B2', 'Commission', 'Orders-Lazada Fees', '-5160.00'),
+      txn('B3', 'Payment Fee', 'Orders-Lazada Fees', '-2580.00'),
+    ];
+    await runSettlement(fakeSource(() => second), s.companyId, null, s.shopId);
+    const after = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    expect(after).toMatchObject({ net: 363780, cogs: -180000, gross: 183780, estimated: false });
+    const list = (await get(s.ceo, '/orders/profits?from=2026-11-01&to=2026-11-30')).body;
+    expect(list.items).toMatchObject([{ orderId: s.order.orderId, net: 363780, cogs: -180000, estimated: false }]);
+  });
+});
