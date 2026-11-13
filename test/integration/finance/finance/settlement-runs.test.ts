@@ -14,6 +14,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { setModuleEnabled } from '../../helpers/state.ts';
 import { createOrder } from '../../helpers/sales.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 
 // Đối soát quyết toán (#117, Documents/21 §21.2, §21.3). Sàn thay bằng cổng giả trong `ctx`: dữ liệu như sàn giả lập
 // #115 (2 áo × 129.000 đ). Giờ cố định 10:00 ngày 05/11/2026 giờ Việt Nam: chỉ giả `Date`.
@@ -108,7 +109,7 @@ describe('kéo quyết toán (§21.3)', () => {
     expect(await settlement(s.companyId, s.order.orderId)).toMatchObject({ status: 'settled', settled_total: '242520.00', diff: '0.00' });
 
     const linked = await testPool().query(
-      `select a.kind from finance.ledger_entries a join finance.ledger_entries e on e.id = a.replaces_entry_id where a.order_id = $1 order by a.kind`,
+      `select a.kind from finance.ledger_entries a join finance.ledger_replacements r on r.actual_id = a.id where a.order_id = $1 order by a.kind`,
       [s.order.orderId],
     );
     expect(linked.rows.map((r) => r.kind).sort()).toEqual(['fee_fixed', 'fee_transaction', 'revenue']);
@@ -481,5 +482,194 @@ describe('trạng thái tiền của đơn và chốt lệch (§21.2)', () => {
     expect([res.status, res.body.type]).toEqual([404, '/problems/not_found']);
     const sale = await addMember(s.companyId, 'sale');
     expect((await get(sale.token, '/payments')).status).toBe(403);
+  });
+});
+
+describe('kiện giao sau lần quyết toán đầu (#231)', () => {
+  it('dòng ước tính của kiện 2 vẫn tính tới khi lần quyết toán sau nối dòng thực tế về đúng dòng đó', async () => {
+    const s = await setup();
+    await deliver(s);
+    await runSettlement(fakeSource(() => settlementOf('A', '-5160.00')), s.companyId, null, s.shopId);
+    // Kiện 2: thêm 1 áo giao sau quyết toán; doanh thu 129.000, phí 4% + 2%, giá vốn 60.000.
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: s.order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-04T08:00:00Z',
+      lines: [{ variantId: s.variantId, quantity: 1, unitPrice: '129000', unitCost: '60000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    const mid = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    expect(mid).toMatchObject({ net: 363780, cogs: -180000, gross: 183780, estimated: true });
+
+    const second = [
+      txn('B1', 'Item Price Credit', 'Orders-Sales', '129000.00'),
+      txn('B2', 'Commission', 'Orders-Lazada Fees', '-5160.00'),
+      txn('B3', 'Payment Fee', 'Orders-Lazada Fees', '-2580.00'),
+    ];
+    await runSettlement(fakeSource(() => second), s.companyId, null, s.shopId);
+    const after = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    expect(after).toMatchObject({ net: 363780, cogs: -180000, gross: 183780, estimated: false });
+    // Quyết toán hai đợt: mỗi dòng ước tính đã nối trỏ `replacedBy` về đúng dòng thực tế của đợt mình.
+    type Line = { id: string; kind: string; estimated: boolean; amount: number; txnId: string | null; replacedBy: string | null; replacesId: string | null };
+    const lines = after.lines as Line[];
+    const byTxn = new Map(lines.filter((l) => l.txnId).map((l) => [l.txnId, l]));
+    const revenueEst = lines.filter((l) => l.kind === 'revenue' && l.estimated);
+    expect(revenueEst.map((l) => [l.amount, l.replacedBy])).toEqual([
+      [258000, byTxn.get('A1')!.id],
+      [129000, byTxn.get('B1')!.id],
+    ]);
+    expect(byTxn.get('B1')!.replacesId).toBe(revenueEst[1]!.id);
+    const list = (await get(s.ceo, '/orders/profits?from=2026-11-01&to=2026-11-30')).body;
+    expect(list.items).toMatchObject([{ orderId: s.order.orderId, net: 363780, cogs: -180000, estimated: false }]);
+  });
+});
+
+describe('sàn quyết toán trước khi app nhận sự kiện (#231)', () => {
+  it('kiện 2 quyết toán trước rồi mới nhận kiện giao: dòng ước tính nối với dòng thực tế đã về, không cộng trùng', async () => {
+    const s = await setup();
+    await deliver(s);
+    await runSettlement(fakeSource(() => settlementOf('A', '-5160.00')), s.companyId, null, s.shopId);
+    const second = [
+      txn('B1', 'Item Price Credit', 'Orders-Sales', '129000.00'),
+      txn('B2', 'Commission', 'Orders-Lazada Fees', '-5160.00'),
+      txn('B3', 'Payment Fee', 'Orders-Lazada Fees', '-2580.00'),
+    ];
+    await runSettlement(fakeSource(() => second), s.companyId, null, s.shopId);
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: s.order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-04T08:00:00Z',
+      lines: [{ variantId: s.variantId, quantity: 1, unitPrice: '129000', unitCost: '60000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    const profit = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    expect(profit).toMatchObject({ net: 363780, cogs: -180000, gross: 183780, estimated: false });
+    const lines = profit.lines as { id: string; kind: string; estimated: boolean; amount: number; txnId: string | null; replacedBy: string | null }[];
+    const b1 = lines.find((l) => l.txnId === 'B1')!;
+    expect(lines.find((l) => l.kind === 'revenue' && l.estimated && l.amount === 129000)?.replacedBy).toBe(b1.id);
+    // Dòng doanh thu thứ hai của lô A (mỗi áo một dòng) thuộc kiện 1, không nối nhầm sang kiện 2.
+    expect(lines.find((l) => l.txnId === 'A2')).toBeDefined();
+  });
+});
+
+type S = Awaited<ReturnType<typeof setup>>;
+/** Khoá đơn như `lockOrders` (repository/ledger.ts). */
+const orderLock = (s: S) => `finance.ledger_order:${s.companyId}:${s.order.orderId}`;
+
+/** Dòng ước tính chèn thẳng (role chủ bảng) cho một kiện, để dựng kiện có hoặc không có một loại phí. */
+async function estimate(s: S, packageId: string, kind: string, amount: string, createdAt: string) {
+  await testPool().query(
+    `insert into finance.ledger_entries (company_id, kind, amount, is_estimate, occurred_on, order_id, package_id, shop_id, source_type, source_id, created_at)
+     values ($1, $2, $3, true, '2026-11-01', $4, $5, $6, 'package', $5, $7)`,
+    [s.companyId, kind, amount, s.order.orderId, packageId, s.shopId, createdAt],
+  );
+}
+
+describe('ghi dòng ước tính và lô quyết toán cùng lúc (#231)', () => {
+  it('lô quyết toán chạy khi dòng ước tính của đơn chưa commit: chờ khoá đơn rồi nối, không cộng trùng', async () => {
+    const s = await setup();
+    const pkg = randomUUID();
+    await raceBehindLock(
+      async (h) => {
+        await h.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [orderLock(s)]);
+        await h.query(
+          `insert into finance.ledger_entries (company_id, kind, amount, is_estimate, occurred_on, order_id, package_id, shop_id, source_type, source_id)
+           values ($1, 'revenue', 258000, true, '2026-11-01', $2, $3, $4, 'package', $3)`,
+          [s.companyId, s.order.orderId, pkg, s.shopId],
+        );
+      },
+      1,
+      () => runSettlement(fakeSource(() => [txn('C1', 'Item Price Credit', 'Orders-Sales', '258000.00')]), s.companyId, null, s.shopId),
+    );
+    const pairs = await testPool().query(
+      `select e.kind from finance.ledger_replacements r join finance.ledger_entries e on e.id = r.estimate_id where e.order_id = $1`,
+      [s.order.orderId],
+    );
+    expect(pairs.rows).toEqual([{ kind: 'revenue' }]);
+  });
+
+  it('dòng ước tính ghi khi dòng thực tế của đơn chưa commit: chờ khoá đơn rồi nối', async () => {
+    const s = await setup();
+    await raceBehindLock(
+      async (h) => {
+        await h.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [orderLock(s)]);
+        await h.query(
+          `insert into finance.ledger_entries (company_id, kind, amount, is_estimate, occurred_on, order_id, shop_id, source_type, source_id, external_transaction_id)
+           values ($1, 'revenue', 258000, false, '2026-11-04', $2, $3, 'settlement_batch', $4, 'R1')`,
+          [s.companyId, s.order.orderId, s.shopId, randomUUID()],
+        );
+      },
+      1,
+      () => deliver(s),
+    );
+    const profit = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    expect(profit).toMatchObject({ net: 258000, estimated: false });
+  });
+
+  it('CSDL chặn cặp sai chiều (dòng ước tính ở vế thực tế)', async () => {
+    const s = await setup();
+    await deliver(s);
+    const rev = await testPool().query(`select id from finance.ledger_entries where order_id = $1 and kind = 'revenue'`, [s.order.orderId]);
+    const fee = await testPool().query(`select id from finance.ledger_entries where order_id = $1 and kind = 'fee_fixed'`, [s.order.orderId]);
+    await expect(
+      testPool().query('insert into finance.ledger_replacements (company_id, actual_id, estimate_id) values ($1, $2, $3)', [
+        s.companyId,
+        rev.rows[0].id,
+        fee.rows[0].id,
+      ]),
+    ).rejects.toThrow(/ledger_replacements_actual_fk/);
+  });
+});
+
+describe('nối theo kiện mà lô thay (#231)', () => {
+  it('lô của kiện 1 có phí cố định mà kiện 1 không ước tính phí đó: không nối sang kiện 2, kiện 2 vẫn tính', async () => {
+    const s = await setup();
+    const k1 = randomUUID();
+    const k2 = randomUUID();
+    await estimate(s, k1, 'revenue', '129000', '2026-11-01T01:00:00Z');
+    await estimate(s, k2, 'revenue', '129000', '2026-11-02T01:00:00Z');
+    await estimate(s, k2, 'fee_fixed', '-5000', '2026-11-02T01:00:00Z');
+    await runSettlement(
+      fakeSource(() => [txn('S1', 'Item Price Credit', 'Orders-Sales', '129000.00'), txn('S2', 'Commission', 'Orders-Lazada Fees', '-3000.00')]),
+      s.companyId,
+      null,
+      s.shopId,
+    );
+    const profit = (await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body;
+    // 129.000 - 3.000 (lô của kiện 1) + 129.000 - 5.000 (kiện 2 còn ước tính)
+    expect(profit).toMatchObject({ net: 250000, estimated: true });
+    const lines = profit.lines as { kind: string; estimated: boolean; replacedBy: string | null; amount: number }[];
+    expect(lines.filter((l) => l.estimated && l.kind === 'revenue' && !l.replacedBy).map((l) => l.amount)).toEqual([129000]);
+  });
+
+  it('giới hạn đã biết (mục 4 review #323): sàn quyết toán hai kiện trong một lô trước khi app nhận sự kiện thì kiện 2 cộng trùng', async () => {
+    const s = await setup();
+    await runSettlement(
+      fakeSource(() => [txn('B1', 'Item Price Credit', 'Orders-Sales', '129000.00'), txn('B2', 'Item Price Credit', 'Orders-Sales', '129000.00')]),
+      s.companyId,
+      null,
+      s.shopId,
+    );
+    for (const day of ['2026-11-01T08:00:00Z', '2026-11-02T08:00:00Z']) {
+      await recordPackageDelivered(s.companyId, {
+        packageId: randomUUID(),
+        orderId: s.order.orderId,
+        shopId: s.shopId,
+        deliveredAt: day,
+        lines: [{ variantId: s.variantId, quantity: 1, unitPrice: '129000', unitCost: '60000' }],
+        platformSubsidy: '0',
+        shippingIncome: '0',
+        shippingCost: '0',
+      });
+    }
+    // Đúng ra 258.000. Dòng quyết toán không mang mã dòng hàng nên không biết B2 thuộc kiện 2 (bỏ qua để khỏi nối nhầm
+    // dòng thứ hai của cùng một kiện). Kiện 2 còn ước tính: 258.000 + 129.000 - 5.160 - 2.580.
+    expect((await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body).toMatchObject({ net: 379260 });
   });
 });

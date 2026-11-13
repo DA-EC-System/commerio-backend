@@ -6,7 +6,10 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { addDays, vnDate } from '../domain/config-version.ts';
 import {
   costMissingOf,
+  isEstimateLine,
+  NON_CASH,
   type Draft,
+  type LedgerKind,
   postDelivered,
   postInspected,
   postRefund,
@@ -19,13 +22,17 @@ import {
   entriesOfOrder,
   findEntries,
   insertEntries,
+  insertPackageLines,
+  insertReplacements,
   type LedgerFilter,
   type LedgerRow,
   type LedgerSource,
   ledgerTotals,
+  lockOrders,
   lockSource,
   revenueSince,
   sourcePosted,
+  unpairedActual,
 } from '../repository/ledger.ts';
 import { bankMatchesOf } from '../repository/ledger.ts';
 import { findOrderSettlement } from '../repository/order-settlements.ts';
@@ -51,11 +58,16 @@ interface Target {
   isEstimate?: boolean;
 }
 
-/** Ghi các dòng của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. */
+/**
+ * Ghi các dòng của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. Dòng tiền
+ * ước tính của đơn mà sàn đã quyết toán trước thì nối luôn (#231, `pairWithSettled`). Khoá đơn chung với lần ghi lô
+ * quyết toán (`lockOrders`) để hai bên không cùng bỏ lỡ nhau.
+ */
 async function post(companyId: string, t: Target, drafts: Draft[]): Promise<number> {
   await lockSource(t.source.type, t.source.id);
+  if (t.orderId) await lockOrders([t.orderId]);
   if (await sourcePosted(t.source.type, t.source.id)) return 0;
-  await insertEntries(
+  const inserted = await insertEntries(
     drafts.map((d) => ({
       companyId,
       kind: d.kind,
@@ -71,7 +83,34 @@ async function post(companyId: string, t: Target, drafts: Draft[]): Promise<numb
       configVersionId: d.configVersionId,
     })),
   );
+  if ((t.isEstimate ?? true) && t.orderId) await pairWithSettled(companyId, t, t.orderId, inserted);
   return drafts.length;
+}
+
+/**
+ * Nối dòng tiền ước tính vừa ghi với dòng thực tế đã về trước (#231). Kiện giao: doanh thu nối trước
+ * (`unpairedActual` theo đơn); chỉ khi doanh thu đã nối thì các loại khác mới nối, và chỉ với dòng thực tế của chính
+ * lô đó, để khoản của lô kiện khác không nối nhầm vào kiện này. Nguồn khác (hoàn tiền, phí hoàn) một loại một nguồn:
+ * nối theo đơn, loại.
+ */
+async function pairWithSettled(companyId: string, t: Target, orderId: string, inserted: { id: string; kind: LedgerKind }[]) {
+  const cash = inserted.filter((x) => !NON_CASH.has(x.kind));
+  const pair = (actualId: string, estimateId: string) => insertReplacements([{ companyId, actualId, estimateId }]);
+  if (t.source.type !== 'package') {
+    for (const e of cash) {
+      const a = await unpairedActual(orderId, e.kind);
+      if (a) await pair(a.id, e.id);
+    }
+    return;
+  }
+  const revenue = cash.find((x) => x.kind === 'revenue');
+  const anchor = revenue && (await unpairedActual(orderId, 'revenue'));
+  if (!revenue || !anchor) return;
+  await pair(anchor.id, revenue.id);
+  for (const e of cash.filter((x) => x !== revenue)) {
+    const a = await unpairedActual(orderId, e.kind, anchor);
+    if (a) await pair(a.id, e.id);
+  }
 }
 
 const dayOf = (iso: string) => vnDate(new Date(iso));
@@ -87,6 +126,21 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
     };
     const target = { source: { type: 'package' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
     const written = await post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs));
+    // Dòng hàng của kiện cho lãi theo SKU (#231); phát lại không ghi trùng.
+    await insertPackageLines(
+      e.lines.map((l, i) => ({
+        companyId,
+        packageId: e.packageId,
+        lineNo: i + 1,
+        orderId: e.orderId,
+        shopId: e.shopId,
+        variantId: l.variantId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        unitCost: l.unitCost,
+        occurredOn: day,
+      })),
+    );
     // Trạng thái tiền của đơn (#117): kiện đầu tiên giao xong thì `none → pending`, cập nhật tổng ước tính; dòng không
     // có giá vốn thì đánh dấu đơn thiếu giá vốn (#229).
     if (written) await markDelivered(e.orderId, e.shopId, costMissingOf(e.lines));
@@ -196,8 +250,8 @@ function lineView(r: LedgerRow, orders: Orders) {
     id: r.id,
     kind: r.kind,
     amount: Number(r.amount),
-    estimated: r.isEstimate,
-    replacesId: r.replacesEntryId,
+    estimated: isEstimateLine(r.kind, r.isEstimate),
+    replacesId: r.replacesId,
     replacedBy: r.replacedBy,
     occurredOn: r.occurredOn,
     shopId: r.shopId,
@@ -250,11 +304,8 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     const rows = await entriesOfOrder(orderId);
     const orders = await ordersOf([orderId]);
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
-    // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng ước tính, kể cả khoản sàn không thu.
-    const settled = rows.some((r) => !r.isEstimate);
-    const p = profitOf(
-      rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replacedBy !== null || (r.isEstimate && settled) })),
-    );
+    // Dòng đã thay theo `isReplaced` (repository): cùng luật với lãi theo danh sách đơn, tổng tiền ở sàn.
+    const p = profitOf(rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replaced })));
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');
     return {
       net: p.net,

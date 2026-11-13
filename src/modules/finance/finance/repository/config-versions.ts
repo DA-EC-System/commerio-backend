@@ -102,7 +102,8 @@ export async function findDueScheduledAnyCompany(today: string, limit: number) {
 
 /**
  * Lãi gộp từ `from` (gồm cả ngày đó) cho chạy thử phiên bản cấu hình: chỉ dòng còn hiệu lực, hiểu "đã thay" như
- * tổng tiền ở sàn (`isReplaced`: có dòng thực tế thay, hoặc dòng ước tính của đơn đã có số quyết toán). Bỏ loại không
+ * tổng tiền ở sàn (`isReplaced`: có dòng thực tế thay, hoặc dòng tiền ước tính ghi trước lần quyết toán của đơn; giá
+ * vốn không bị thay nên lãi gộp vẫn trừ giá vốn). Bỏ loại không
  * vào lãi gộp (`NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền, quảng cáo) theo loại dòng, không theo gian hàng. `revenue` là
  * tổng dòng doanh thu.
  */

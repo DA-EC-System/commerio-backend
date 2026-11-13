@@ -33,6 +33,8 @@ export type LedgerKind = (typeof LEDGER_KINDS)[number];
 
 /** Giá vốn không phải tiền mặt: không cộng vào thực nhận, chỉ vào lãi gộp. */
 export const NON_CASH: ReadonlySet<LedgerKind> = new Set(['cogs', 'cogs_reversal']);
+/** Dòng còn mang nhãn Ước tính: giá vốn lấy từ thẻ kho, không chờ sàn quyết toán (US-TI-04 dòng 2, #231). */
+export const isEstimateLine = (kind: LedgerKind, isEstimate: boolean) => isEstimate && !NON_CASH.has(kind);
 /** Không vào lãi: giá vốn tính riêng, rút tiền chỉ chuyển chỗ (ví sàn → ngân hàng). */
 export const NOT_PROFIT: ReadonlySet<LedgerKind> = new Set([...NON_CASH, 'withdrawal']);
 /**
@@ -205,14 +207,15 @@ export interface Entry {
 
 /**
  * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt; giá vốn = giá vốn trừ phần trả
- * bán lại được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
+ * bán lại được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng tiền ước tính chưa có số thật
+ * thay; dòng giá vốn lấy từ thẻ kho, sàn không quyết toán, nên không giữ nhãn Ước tính (US-TI-04 dòng 2, #231).
  */
 export function profitOf(entries: readonly Entry[]): { net: number; cogs: number; gross: number; estimated: boolean } {
   const live = entries.filter((e) => !e.replaced);
   const sum = (pred: (e: Entry) => boolean) => live.filter(pred).reduce((s, e) => s.plus(e.amount), new Decimal(0));
   const net = sum((e) => !NON_CASH.has(e.kind));
   const cogs = sum((e) => NON_CASH.has(e.kind));
-  return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate) };
+  return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => isEstimateLine(e.kind, e.isEstimate)) };
 }
 
 /** Cảnh báo luỹ kế doanh thu năm theo mốc của quy tắc thuế (25 §10.4): từ 90% mốc. */
@@ -220,4 +223,45 @@ export function taxWarnings(ytdRevenue: number, milestones: readonly number[]) {
   return milestones
     .filter((m) => ytdRevenue >= m * 0.9)
     .map((milestone) => ({ milestone, ytdRevenue, over: ytdRevenue >= milestone }));
+}
+
+/** Dòng ước tính còn hiệu lực đem nối, cũ trước (`openEstimates`). */
+export interface MatchEstimate {
+  id: string;
+  orderId: string;
+  kind: LedgerKind;
+  sourceType: string | null;
+  sourceId: string | null;
+}
+
+/**
+ * Nối khoản của một lô quyết toán với dòng ước tính còn hiệu lực (#231), trả mã giao dịch → dòng ước tính. Theo từng
+ * đơn: doanh thu nối trước, theo thứ tự cũ trước, và đánh dấu kiện (nguồn `package`) mà lô thay; loại khác chỉ nối với
+ * dòng ước tính của kiện đã đánh dấu, hoặc của nguồn không phải kiện (hoàn tiền, phí hoàn: một loại một nguồn). Loại
+ * mà kiện đó không có ước tính thì để không nối: nối sang kiện khác sẽ ẩn cả kiện chưa quyết toán (cùng nguồn coi như
+ * đã thay, `isReplaced`).
+ */
+export function matchSettlement(
+  parts: readonly { txnId: string; orderId: string | null; kind: LedgerKind }[],
+  open: readonly MatchEstimate[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Set<string>();
+  const anchored = new Set<string>();
+  const sourceKey = (e: MatchEstimate) => `${e.orderId}:${e.sourceType}:${e.sourceId}`;
+  const take = (p: (typeof parts)[number], ok: (e: MatchEstimate) => boolean) => {
+    const e = open.find((x) => !used.has(x.id) && x.orderId === p.orderId && x.kind === p.kind && ok(x));
+    if (!e) return undefined;
+    used.add(e.id);
+    out.set(p.txnId, e.id);
+    return e;
+  };
+  for (const p of parts.filter((x) => x.orderId && x.kind === 'revenue')) {
+    const e = take(p, () => true);
+    if (e) anchored.add(sourceKey(e));
+  }
+  for (const p of parts.filter((x) => x.orderId && x.kind !== 'revenue')) {
+    take(p, (e) => e.sourceType !== 'package' || anchored.has(sourceKey(e)));
+  }
+  return out;
 }
