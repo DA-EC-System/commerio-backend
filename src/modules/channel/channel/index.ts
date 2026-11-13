@@ -66,4 +66,7 @@ export { marketplaceCancelOrder, marketplaceCancelReasons, marketplaceDecideCanc
 // Thao tác yêu cầu trả trên sàn cho `order` (#202), tiêm qua `ctx.marketplaceReturns`.
 export { marketplaceReturns } from './service/return-actions.ts';
 // Tách kiện, giao kiện trên sàn cho fulfillment (#221; #205, #239 gọi), tiêm qua `ctx.marketplacePackages` ở `src/wiring.ts`.
-export { marketplaceShipPackage, marketplaceSplitAttributes, marketplaceSplitOrder } from './service/order-actions.ts';
+export {
+  marketplaceCarriers, marketplacePack, marketplaceReadyToShip, marketplaceRepack, marketplaceShipPackage,
+  marketplaceShippingDocuments, marketplaceSplitAttributes, marketplaceSplitOrder,
+} from './service/order-actions.ts';

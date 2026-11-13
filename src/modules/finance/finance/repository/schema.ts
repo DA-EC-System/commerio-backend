@@ -362,6 +362,10 @@ export const ledgerEntries = financeSchema.table(
     index().on(t.orderId),
     index().on(t.shopId, t.occurredOn),
     index().on(t.occurredOn),
+    // Nhánh "cùng nguồn" của `isReplaced`, `sourcePosted`, phần thiếu dòng hàng của lãi theo SKU (#231).
+    index().on(t.sourceType, t.sourceId),
+    // Đích của khoá ngoại ghép ở `ledger_replacements`: ép chiều cặp (thực tế, ước tính) ở CSDL (#231).
+    unique('ledger_entries_id_estimate_uq').on(t.id, t.isEstimate),
     uniqueIndex('ledger_entries_replaces_uq').on(t.replacesEntryId).where(sql`${t.replacesEntryId} is not null`),
     // Khoá chống trùng (gian hàng, mã giao dịch sàn) (25 §10.3, #250): mã giao dịch chỉ duy nhất trong một gian hàng
     uniqueIndex('ledger_entries_external_txn_uq')
@@ -383,25 +387,30 @@ export const ledgerEntries = financeSchema.table(
  * Ghi ở hai lúc: lần quyết toán nối dòng thực tế về dòng ước tính còn hiệu lực cùng đơn, cùng loại; ghi dòng ước tính
  * mà đơn đã có dòng thực tế cùng loại chưa nối (sàn quyết toán trước khi app nhận sự kiện) thì nối luôn. Chỉ thêm (RLS,
  * REVOKE UPDATE, DELETE ở migration `--custom`), thay cho cột `ledger_entries.replaces_entry_id` (cột cũ giữ làm lịch
- * sử, không ghi nữa; dữ liệu cũ đã chép sang bảng này). Dòng thực tế, ước tính đúng chiều do service kiểm.
+ * sử, không ghi nữa; dữ liệu cũ đã chép sang bảng này). Chiều cặp ép ở CSDL: khoá ngoại ghép (`actual_id`, `false`)
+ * và (`estimate_id`, `true`) tới (`id`, `is_estimate`) của sổ; hai cột cờ là hằng (CHECK), chỉ để làm vế khoá ngoại.
+ * Hai khoá ngoại ghép viết ở migration `--custom` `rls-lai-theo-sku-bang-noi`, không khai ở đây: drizzle-kit sinh khoá
+ * ngoại trước unique (`id`, `is_estimate`) mà nó trỏ tới nên migration sinh ra chạy lỗi.
  */
 export const ledgerReplacements = financeSchema.table(
   'ledger_replacements',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
-    actualId: uuid('actual_id')
-      .notNull()
-      .references(() => ledgerEntries.id),
-    estimateId: uuid('estimate_id')
-      .notNull()
-      .references(() => ledgerEntries.id),
+    actualId: uuid('actual_id').notNull(),
+    /** Luôn `false`: vế cờ của khoá ngoại ghép tới dòng thực tế. */
+    actualIsEstimate: boolean('actual_is_estimate').notNull().default(false),
+    estimateId: uuid('estimate_id').notNull(),
+    /** Luôn `true`: vế cờ của khoá ngoại ghép tới dòng ước tính. */
+    estimateIsEstimate: boolean('estimate_is_estimate').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('ledger_replacements_actual_uq').on(t.actualId),
     unique('ledger_replacements_estimate_uq').on(t.estimateId),
     check('ledger_replacements_distinct', sql`${t.actualId} <> ${t.estimateId}`),
+    check('ledger_replacements_actual_flag', sql`not ${t.actualIsEstimate}`),
+    check('ledger_replacements_estimate_flag', sql`${t.estimateIsEstimate}`),
   ],
 );
 

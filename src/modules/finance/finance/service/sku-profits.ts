@@ -49,6 +49,7 @@ export function listSkuProfits(companyId: string, q: SkuProfitsQuery, canSeeCost
         gross: canSeeCost ? new Decimal(totals.net).plus(totals.cogs).toNumber() : null,
       },
       total: totals.total,
+      excludedOrders: totals.excludedOrders,
       page: q.page,
       pageSize: q.pageSize,
     };

@@ -1,5 +1,5 @@
 {
-  "id": "2cc7d04a-a527-4bca-ad3d-235304b7a11d",
+  "id": "94540133-9a5c-43a9-a38a-289511af9145",
   "prevId": "29e20945-64e9-4ce5-9661-11cf8ccd14c3",
   "version": "7",
   "dialect": "postgresql",
@@ -4385,232 +4385,6 @@
       },
       "isRLSEnabled": false
     },
-    "finance.ledger_package_lines": {
-      "name": "ledger_package_lines",
-      "schema": "finance",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "package_id": {
-          "name": "package_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "line_no": {
-          "name": "line_no",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variant_id": {
-          "name": "variant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "unit_price": {
-          "name": "unit_price",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "unit_cost": {
-          "name": "unit_cost",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "occurred_on": {
-          "name": "occurred_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "ledger_package_lines_occurred_on_index": {
-          "name": "ledger_package_lines_occurred_on_index",
-          "columns": [
-            {
-              "expression": "occurred_on",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ledger_package_lines_order_id_index": {
-          "name": "ledger_package_lines_order_id_index",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "ledger_package_lines_line_uq": {
-          "name": "ledger_package_lines_line_uq",
-          "nullsNotDistinct": false,
-          "columns": [
-            "package_id",
-            "line_no"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "ledger_package_lines_quantity": {
-          "name": "ledger_package_lines_quantity",
-          "value": "\"finance\".\"ledger_package_lines\".\"quantity\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "finance.ledger_replacements": {
-      "name": "ledger_replacements",
-      "schema": "finance",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "actual_id": {
-          "name": "actual_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "estimate_id": {
-          "name": "estimate_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "ledger_replacements_actual_id_ledger_entries_id_fk": {
-          "name": "ledger_replacements_actual_id_ledger_entries_id_fk",
-          "tableFrom": "ledger_replacements",
-          "tableTo": "ledger_entries",
-          "schemaTo": "finance",
-          "columnsFrom": [
-            "actual_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "ledger_replacements_estimate_id_ledger_entries_id_fk": {
-          "name": "ledger_replacements_estimate_id_ledger_entries_id_fk",
-          "tableFrom": "ledger_replacements",
-          "tableTo": "ledger_entries",
-          "schemaTo": "finance",
-          "columnsFrom": [
-            "estimate_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "ledger_replacements_actual_uq": {
-          "name": "ledger_replacements_actual_uq",
-          "nullsNotDistinct": false,
-          "columns": [
-            "actual_id"
-          ]
-        },
-        "ledger_replacements_estimate_uq": {
-          "name": "ledger_replacements_estimate_uq",
-          "nullsNotDistinct": false,
-          "columns": [
-            "estimate_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "ledger_replacements_distinct": {
-          "name": "ledger_replacements_distinct",
-          "value": "\"finance\".\"ledger_replacements\".\"actual_id\" <> \"finance\".\"ledger_replacements\".\"estimate_id\""
-        }
-      },
-      "isRLSEnabled": false
-    },
     "finance.order_settlements": {
       "name": "order_settlements",
       "schema": "finance",
@@ -7380,6 +7154,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "carrier_code": {
+          "name": "carrier_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "carrier_name": {
+          "name": "carrier_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "label_error": {
+          "name": "label_error",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "self_delivery": {
           "name": "self_delivery",
           "type": "boolean",
@@ -7681,6 +7474,10 @@
         "packages_open": {
           "name": "packages_open",
           "value": "\"order\".\"packages\".\"needs_open\" = (\"order\".\"packages\".\"open_purpose\" is not null)"
+        },
+        "packages_carrier": {
+          "name": "packages_carrier",
+          "value": "(\"order\".\"packages\".\"carrier_code\" is null) = (\"order\".\"packages\".\"carrier_name\" is null)"
         },
         "packages_cod_second_person": {
           "name": "packages_cod_second_person",

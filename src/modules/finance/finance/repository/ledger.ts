@@ -22,6 +22,18 @@ export async function lockSource(type: LedgerSource, id: string): Promise<void> 
   await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
+/**
+ * Khoá các đơn tới hết giao dịch (#231): ghi dòng ước tính (`post`) và ghi lô quyết toán (`applyRun`) của cùng đơn chạy
+ * lần lượt, để bên sau đọc được dòng bên trước đã commit và nối cặp (READ COMMITTED không thấy dòng chưa commit). Khoá
+ * theo thứ tự id để hai lô nhiều đơn không khoá chéo nhau.
+ */
+export async function lockOrders(orderIds: readonly string[]): Promise<void> {
+  for (const id of [...new Set(orderIds)].sort()) {
+    const key = `finance.ledger_order:${currentCompanyId()}:${id}`;
+    await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+  }
+}
+
 /** Nguồn đã có dòng ước tính chưa (sự kiện phát lại, giao ít nhất một lần). */
 export async function sourcePosted(type: LedgerSource, id: string): Promise<boolean> {
   const [row] = await getDb()
@@ -39,9 +51,12 @@ export async function insertEntries(rows: (typeof ledgerEntries.$inferInsert)[])
     .returning({ id: ledgerEntries.id, kind: ledgerEntries.kind, externalTransactionId: ledgerEntries.externalTransactionId });
 }
 
-/** Ghi quan hệ thay; dòng thực tế hoặc ước tính đã có cặp (giao dịch khác vừa nối) thì bỏ qua. */
+/**
+ * Ghi quan hệ thay. Bên ghi giữ khoá đơn (`lockOrders`) nên không có giao dịch khác nối cùng dòng: trùng cặp là lỗi
+ * logic, để lỗi unique nổi lên thay vì nuốt im.
+ */
 export async function insertReplacements(rows: { companyId: string; actualId: string; estimateId: string }[]): Promise<void> {
-  if (rows.length) await getDb().insert(ledgerReplacements).values(rows).onConflictDoNothing();
+  if (rows.length) await getDb().insert(ledgerReplacements).values(rows);
 }
 
 /** Dòng hàng của kiện đã giao (lãi theo SKU); phát lại sự kiện không ghi trùng (unique kiện, số thứ tự dòng). */
@@ -191,25 +206,45 @@ export async function existingTxnIds(shopId: string, ids: readonly string[]): Pr
  * cùng loại về đây. Dòng cùng nguồn với dòng đã nối coi như đã thay nên không nhận thêm dòng thực tế, để dòng thực tế
  * của kiện giao sau nối về dòng ước tính của chính kiện đó.
  */
-export async function openEstimates(orderIds: readonly string[]): Promise<{ id: string; orderId: string; kind: LedgerKind }[]> {
+export interface OpenEstimate {
+  id: string;
+  orderId: string;
+  kind: LedgerKind;
+  sourceType: string | null;
+  sourceId: string | null;
+}
+
+export async function openEstimates(orderIds: readonly string[]): Promise<OpenEstimate[]> {
   if (!orderIds.length) return [];
   const rows = await getDb()
-    .select({ id: ledgerEntries.id, orderId: ledgerEntries.orderId, kind: ledgerEntries.kind })
+    .select({
+      id: ledgerEntries.id,
+      orderId: ledgerEntries.orderId,
+      kind: ledgerEntries.kind,
+      sourceType: ledgerEntries.sourceType,
+      sourceId: ledgerEntries.sourceId,
+    })
     .from(ledgerEntries)
     .where(and(eq(ledgerEntries.isEstimate, true), inArray(ledgerEntries.orderId, [...orderIds]), not(isReplaced())))
     .orderBy(ledgerEntries.createdAt, ledgerEntries.id);
-  return rows.map((r) => ({ id: r.id, orderId: r.orderId!, kind: r.kind }));
+  return rows.map((r) => ({ ...r, orderId: r.orderId! }));
 }
 
 /**
  * Dòng thực tế của đơn, cùng loại, chưa nối, để nối với dòng ước tính vừa ghi (sàn quyết toán trước khi app nhận sự
- * kiện: kiện giao sau, hoàn tiền, E139). Chỉ nhận dòng của lô quyết toán chưa nối dòng nào cùng đơn, cùng loại: sàn
- * trả nhiều dòng cùng loại cho phần đã có ước tính (mỗi món một dòng doanh thu) thì các dòng dư thuộc phần đó, không
- * nối nhầm sang kiện sau. Cũ trước.
+ * kiện: kiện giao sau, hoàn tiền, E139). Cũ trước.
+ * - Không truyền `batch`: chỉ nhận dòng của lô chưa nối dòng nào cùng đơn, cùng loại. Sàn trả nhiều dòng cùng loại cho
+ *   phần đã có ước tính (mỗi món một dòng doanh thu) thì các dòng dư thuộc phần đó, không nối nhầm sang kiện sau.
+ * - Truyền `batch` (lô của dòng doanh thu vừa nối với kiện này): chỉ nhận dòng của lô đó (#231, loại khác doanh thu
+ *   chỉ nối khi doanh thu cùng lô đã nối vào đúng kiện).
  */
-export async function unpairedActual(orderId: string, kind: LedgerKind): Promise<string | undefined> {
+export async function unpairedActual(
+  orderId: string,
+  kind: LedgerKind,
+  batch?: { sourceType: string | null; sourceId: string | null },
+): Promise<{ id: string; sourceType: string | null; sourceId: string | null } | undefined> {
   const [row] = await getDb()
-    .select({ id: ledgerEntries.id })
+    .select({ id: ledgerEntries.id, sourceType: ledgerEntries.sourceType, sourceId: ledgerEntries.sourceId })
     .from(ledgerEntries)
     .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(
@@ -218,27 +253,32 @@ export async function unpairedActual(orderId: string, kind: LedgerKind): Promise
         eq(ledgerEntries.kind, kind),
         eq(ledgerEntries.isEstimate, false),
         isNull(asActual.id),
-        not(
-          exists(
-            getDb()
-              .select({ one: sql`1` })
-              .from(sameBatch)
-              .innerJoin(batchPair, eq(batchPair.actualId, sameBatch.id))
-              .where(
-                and(
-                  eq(sameBatch.sourceType, ledgerEntries.sourceType),
-                  eq(sameBatch.sourceId, ledgerEntries.sourceId),
-                  eq(sameBatch.orderId, ledgerEntries.orderId),
-                  eq(sameBatch.kind, ledgerEntries.kind),
-                ),
+        batch
+          ? and(
+              batch.sourceType ? eq(ledgerEntries.sourceType, batch.sourceType) : isNull(ledgerEntries.sourceType),
+              batch.sourceId ? eq(ledgerEntries.sourceId, batch.sourceId) : isNull(ledgerEntries.sourceId),
+            )
+          : not(
+              exists(
+                getDb()
+                  .select({ one: sql`1` })
+                  .from(sameBatch)
+                  .innerJoin(batchPair, eq(batchPair.actualId, sameBatch.id))
+                  .where(
+                    and(
+                      eq(sameBatch.sourceType, ledgerEntries.sourceType),
+                      eq(sameBatch.sourceId, ledgerEntries.sourceId),
+                      eq(sameBatch.orderId, ledgerEntries.orderId),
+                      eq(sameBatch.kind, ledgerEntries.kind),
+                    ),
+                  ),
               ),
-          ),
-        ),
+            ),
       ),
     )
     .orderBy(ledgerEntries.createdAt, ledgerEntries.id)
     .limit(1);
-  return row?.id;
+  return row;
 }
 
 /** Tổng tiền mặt ước tính và thực tế theo đơn (không tính giá vốn, rút tiền), để so lệch quyết toán. */

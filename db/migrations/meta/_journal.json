@@ -341,15 +341,22 @@
     {
       "idx": 48,
       "version": "7",
-      "when": 1794583371781,
-      "tag": "20261113152251_lai-theo-sku-bang-noi",
+      "when": 1794535179275,
+      "tag": "20261113015939_dong-goi-rts",
       "breakpoints": true
     },
     {
       "idx": 49,
       "version": "7",
-      "when": 1794583387657,
-      "tag": "20261113152307_rls-lai-theo-sku-bang-noi",
+      "when": 1794588424726,
+      "tag": "20261113164704_lai-theo-sku-bang-noi",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1794588426832,
+      "tag": "20261113164706_rls-lai-theo-sku-bang-noi",
       "breakpoints": true
     }
   ]

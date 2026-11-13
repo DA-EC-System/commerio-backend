@@ -69,7 +69,16 @@ export const SkuProfitItem = z
   .meta({ id: 'SkuProfitSummary' });
 
 export const SkuProfitPage = z
-  .object({ items: z.array(SkuProfitItem), totals: ProfitTotals, total: z.int(), page: z.int(), pageSize: z.int() })
+  .object({
+    items: z.array(SkuProfitItem),
+    totals: ProfitTotals,
+    total: z.int(),
+    excludedOrders: z.int().meta({
+      description: 'Số đơn bị loại khỏi báo cáo vì có kiện đã ghi sổ mà không có dòng hàng (kiện giao trước khi lưu dòng hàng)',
+    }),
+    page: z.int(),
+    pageSize: z.int(),
+  })
   .meta({ id: 'SkuProfitPage' });
 
 export const OrderProfitItem = z

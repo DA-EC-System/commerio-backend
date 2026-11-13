@@ -162,3 +162,71 @@ describe('GET /finance/skus/profits (§21.1)', () => {
     expect(body.items.find((i) => i.variantId === s.a.variantId)).toMatchObject({ cogs: -60000 });
   });
 });
+
+describe('lãi theo SKU: khớp đơn, đơn thiếu dòng hàng, doanh thu 0 (#231)', () => {
+  const actual = (s: Setup, orderId: string, kind: string, amount: string) =>
+    testPool().query(
+      `insert into finance.ledger_entries (company_id, kind, amount, is_estimate, occurred_on, order_id, shop_id, source_type, source_id, external_transaction_id)
+       values ($1, $2, $3, false, '2026-11-08', $4, $5, 'settlement_batch', $6, $7)`,
+      [s.companyId, kind, amount, orderId, s.shopId, randomUUID(), randomUUID()],
+    );
+
+  it('làm tròn theo phần dư lớn nhất trong đơn: tổng các SKU đúng bằng thực nhận của đơn', async () => {
+    const s = await setup();
+    const c = await createVariant(s.companyId);
+    const order = await createOrder(s.companyId, {
+      lines: [s.a, s.b, c].map((v) => ({ variantId: v.variantId, quantity: 1, unitPrice: 100000 })),
+      source: 'marketplace',
+    });
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-04T08:00:00Z',
+      lines: [s.a, s.b, c].map((v) => ({ variantId: v.variantId, quantity: 1, unitPrice: '100000', unitCost: '33333.33' })),
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    await actual(s, order.orderId, 'penalty', '-100');
+    const single = (await get(s.ceo, `/orders/${order.orderId}/profit`)).body;
+    const body = SkuProfitPage.parse((await get(s.ceo, PERIOD)).body);
+    expect(body.items.map((i) => i.net).sort()).toEqual([92966, 92967, 92967]);
+    expect(body.totals.net).toBe(single.net);
+    expect(body.totals.cogs).toBe(single.cogs);
+  });
+
+  it('đơn có kiện đã ghi sổ mà không có dòng hàng bị loại, đếm ở excludedOrders', async () => {
+    const s = await setup();
+    const order = await deliveredOrder(s);
+    await testPool().query(
+      `insert into finance.ledger_entries (company_id, kind, amount, is_estimate, occurred_on, order_id, shop_id, source_type, source_id)
+       values ($1, 'revenue', 50000, true, '2026-11-03', $2, $3, 'package', $4)`,
+      [s.companyId, order.orderId, s.shopId, randomUUID()],
+    );
+    const body = SkuProfitPage.parse((await get(s.ceo, PERIOD)).body);
+    expect(body).toMatchObject({ items: [], total: 0, excludedOrders: 1 });
+  });
+
+  it('đơn có doanh thu dòng hàng bằng 0: thực nhận gom vào dòng variantId null', async () => {
+    const s = await setup();
+    const order = await createOrder(s.companyId, { lines: [{ variantId: s.a.variantId, quantity: 1, unitPrice: 0 }], source: 'marketplace' });
+    await recordPackageDelivered(s.companyId, {
+      packageId: randomUUID(),
+      orderId: order.orderId,
+      shopId: s.shopId,
+      deliveredAt: '2026-11-04T08:00:00Z',
+      lines: [{ variantId: s.a.variantId, quantity: 1, unitPrice: '0', unitCost: '10000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    await actual(s, order.orderId, 'platform_subsidy', '50000');
+    const body = SkuProfitPage.parse((await get(s.ceo, PERIOD)).body);
+    expect(body.items).toEqual([
+      expect.objectContaining({ variantId: null, soldQty: 0, net: 50000, cogs: 0 }),
+      expect.objectContaining({ variantId: s.a.variantId, soldQty: 1, net: 0, cogs: -10000 }),
+    ]);
+    expect(body.totals).toEqual({ net: 50000, cogs: -10000, gross: 40000 });
+  });
+});

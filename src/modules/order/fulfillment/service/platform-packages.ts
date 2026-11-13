@@ -127,10 +127,11 @@ function milestones(from: PackageStatus | null, to: PackageStatus, at = new Date
 async function changeStatus(order: PlatformPackageOrder, pkg: PackageRow, to: PackageStatus, action: string) {
   const from = pkg.status;
   const marks = milestones(from, to);
-  await updatePackage(pkg.id, { status: to, ...marks });
+  const flags = from === 'packed' && pkg.labelError ? { labelError: false } : {};
+  await updatePackage(pkg.id, { status: to, ...marks, ...flags });
   await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action, actorId: null, source: 'marketplace' });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: pkg.id, orderId: order.id, from, to } });
-  Object.assign(pkg, { status: to }, marks);
+  Object.assign(pkg, { status: to }, marks, flags);
   // Sàn báo kiện rời kho (kể cả nhảy cóc từ thiếu hàng): trừ tồn một lần; chờ kiểm kê thì hoãn.
   if (stockEffectOf(from, to) === 'ship') await settleHandover(pkg, { actorId: null, mode: order.holdStock ? 'deduct' : 'defer' });
 }
@@ -202,6 +203,7 @@ async function createPackage(
     platformPackageCode: lines[0]!.packageCode,
     trackingCode: lines[0]!.trackingCode,
     needsOpen: false,
+    labelError: false,
     needsAttention: status === 'return_failed',
     shipping,
     lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false })),

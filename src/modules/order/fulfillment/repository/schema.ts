@@ -51,6 +51,9 @@ export const packages = fulfillmentSchema.table(
     shopId: uuid('shop_id'),
     platformPackageCode: text('platform_package_code'),
     trackingCode: text('tracking_code'),
+    carrierCode: text('carrier_code'),
+    carrierName: text('carrier_name'),
+    labelError: boolean('label_error').notNull().default(false),
     selfDelivery: boolean('self_delivery').notNull().default(false),
     status: packageStatus('status').notNull(),
     needsOpen: boolean('needs_open').notNull().default(false),
@@ -98,6 +101,7 @@ export const packages = fulfillmentSchema.table(
     index().on(t.status),
     index().on(t.trackingCode),
     check('packages_open', sql`${t.needsOpen} = (${t.openPurpose} is not null)`),
+    check('packages_carrier', sql`(${t.carrierCode} is null) = (${t.carrierName} is null)`),
     check('packages_cod_second_person', sql`${t.codConfirmedBy} is null or ${t.codConfirmedBy} is distinct from ${t.deliveredBy}`),
     check(
       'packages_lost_second_person',

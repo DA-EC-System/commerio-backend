@@ -9,6 +9,7 @@ import {
   isEstimateLine,
   NON_CASH,
   type Draft,
+  type LedgerKind,
   postDelivered,
   postInspected,
   postRefund,
@@ -27,6 +28,7 @@ import {
   type LedgerRow,
   type LedgerSource,
   ledgerTotals,
+  lockOrders,
   lockSource,
   revenueSince,
   sourcePosted,
@@ -58,10 +60,12 @@ interface Target {
 
 /**
  * Ghi các dòng của một nguồn; nguồn đã ghi thì bỏ qua (sự kiện giao ít nhất một lần). Trả số dòng đã ghi. Dòng tiền
- * ước tính của đơn mà sàn đã quyết toán trước (dòng thực tế cùng loại chưa nối, `unpairedActual`) thì nối luôn (#231).
+ * ước tính của đơn mà sàn đã quyết toán trước thì nối luôn (#231, `pairWithSettled`). Khoá đơn chung với lần ghi lô
+ * quyết toán (`lockOrders`) để hai bên không cùng bỏ lỡ nhau.
  */
 async function post(companyId: string, t: Target, drafts: Draft[]): Promise<number> {
   await lockSource(t.source.type, t.source.id);
+  if (t.orderId) await lockOrders([t.orderId]);
   if (await sourcePosted(t.source.type, t.source.id)) return 0;
   const inserted = await insertEntries(
     drafts.map((d) => ({
@@ -79,13 +83,34 @@ async function post(companyId: string, t: Target, drafts: Draft[]): Promise<numb
       configVersionId: d.configVersionId,
     })),
   );
-  if ((t.isEstimate ?? true) && t.orderId) {
-    for (const e of inserted.filter((x) => !NON_CASH.has(x.kind))) {
-      const actualId = await unpairedActual(t.orderId, e.kind);
-      if (actualId) await insertReplacements([{ companyId, actualId, estimateId: e.id }]);
-    }
-  }
+  if ((t.isEstimate ?? true) && t.orderId) await pairWithSettled(companyId, t, t.orderId, inserted);
   return drafts.length;
+}
+
+/**
+ * Nối dòng tiền ước tính vừa ghi với dòng thực tế đã về trước (#231). Kiện giao: doanh thu nối trước
+ * (`unpairedActual` theo đơn); chỉ khi doanh thu đã nối thì các loại khác mới nối, và chỉ với dòng thực tế của chính
+ * lô đó, để khoản của lô kiện khác không nối nhầm vào kiện này. Nguồn khác (hoàn tiền, phí hoàn) một loại một nguồn:
+ * nối theo đơn, loại.
+ */
+async function pairWithSettled(companyId: string, t: Target, orderId: string, inserted: { id: string; kind: LedgerKind }[]) {
+  const cash = inserted.filter((x) => !NON_CASH.has(x.kind));
+  const pair = (actualId: string, estimateId: string) => insertReplacements([{ companyId, actualId, estimateId }]);
+  if (t.source.type !== 'package') {
+    for (const e of cash) {
+      const a = await unpairedActual(orderId, e.kind);
+      if (a) await pair(a.id, e.id);
+    }
+    return;
+  }
+  const revenue = cash.find((x) => x.kind === 'revenue');
+  const anchor = revenue && (await unpairedActual(orderId, 'revenue'));
+  if (!revenue || !anchor) return;
+  await pair(anchor.id, revenue.id);
+  for (const e of cash.filter((x) => x !== revenue)) {
+    const a = await unpairedActual(orderId, e.kind, anchor);
+    if (a) await pair(a.id, e.id);
+  }
 }
 
 const dayOf = (iso: string) => vnDate(new Date(iso));

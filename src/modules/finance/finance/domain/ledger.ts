@@ -224,3 +224,44 @@ export function taxWarnings(ytdRevenue: number, milestones: readonly number[]) {
     .filter((m) => ytdRevenue >= m * 0.9)
     .map((milestone) => ({ milestone, ytdRevenue, over: ytdRevenue >= milestone }));
 }
+
+/** Dòng ước tính còn hiệu lực đem nối, cũ trước (`openEstimates`). */
+export interface MatchEstimate {
+  id: string;
+  orderId: string;
+  kind: LedgerKind;
+  sourceType: string | null;
+  sourceId: string | null;
+}
+
+/**
+ * Nối khoản của một lô quyết toán với dòng ước tính còn hiệu lực (#231), trả mã giao dịch → dòng ước tính. Theo từng
+ * đơn: doanh thu nối trước, theo thứ tự cũ trước, và đánh dấu kiện (nguồn `package`) mà lô thay; loại khác chỉ nối với
+ * dòng ước tính của kiện đã đánh dấu, hoặc của nguồn không phải kiện (hoàn tiền, phí hoàn: một loại một nguồn). Loại
+ * mà kiện đó không có ước tính thì để không nối: nối sang kiện khác sẽ ẩn cả kiện chưa quyết toán (cùng nguồn coi như
+ * đã thay, `isReplaced`).
+ */
+export function matchSettlement(
+  parts: readonly { txnId: string; orderId: string | null; kind: LedgerKind }[],
+  open: readonly MatchEstimate[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Set<string>();
+  const anchored = new Set<string>();
+  const sourceKey = (e: MatchEstimate) => `${e.orderId}:${e.sourceType}:${e.sourceId}`;
+  const take = (p: (typeof parts)[number], ok: (e: MatchEstimate) => boolean) => {
+    const e = open.find((x) => !used.has(x.id) && x.orderId === p.orderId && x.kind === p.kind && ok(x));
+    if (!e) return undefined;
+    used.add(e.id);
+    out.set(p.txnId, e.id);
+    return e;
+  };
+  for (const p of parts.filter((x) => x.orderId && x.kind === 'revenue')) {
+    const e = take(p, () => true);
+    if (e) anchored.add(sourceKey(e));
+  }
+  for (const p of parts.filter((x) => x.orderId && x.kind !== 'revenue')) {
+    take(p, (e) => e.sourceType !== 'package' || anchored.has(sourceKey(e)));
+  }
+  return out;
+}

@@ -42,7 +42,7 @@ export function registerLedgerOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/skus/profits',
     summary: 'Lãi theo SKU: số bán, thực nhận, giá vốn, lãi gộp của dòng hàng đã giao trong kỳ',
-    description: `${VIEW} \`from\`, \`to\` lọc theo ngày giao của dòng hàng (giờ Việt Nam, gồm cả hai ngày). Thực nhận của đơn (gồm phí, ship, hoàn tiền) chia cho dòng hàng theo tỷ lệ doanh thu; giá vốn theo dòng. \`totals\` tính trên toàn bộ kết quả lọc.`,
+    description: `${VIEW} \`from\`, \`to\` lọc theo ngày giao của dòng hàng (giờ Việt Nam, gồm cả hai ngày). Thực nhận của đơn (gồm phí, ship, hoàn tiền) chia cho mọi dòng hàng đã giao của đơn theo tỷ lệ doanh thu, giá vốn của đơn (gồm giảm giá vốn khi khách trả) theo tỷ lệ giá vốn dòng; làm tròn tới đồng theo phần dư lớn nhất trong từng đơn nên tổng các dòng của một đơn bằng số của đơn ở lãi theo đơn. Đơn có doanh thu dòng hàng bằng 0 thì thực nhận gom vào dòng \`variantId\` null. \`totals\` tính trên toàn bộ kết quả lọc. Giới hạn: hoàn tiền và giảm giá vốn khi khách trả chia theo tỷ lệ cho mọi SKU của đơn, chưa theo đúng dòng hàng bị trả (chưa có dữ liệu D3 theo dòng hàng). Đơn có kiện giao trước khi lưu dòng hàng bị loại, đếm ở \`excludedOrders\`.`,
     security: bearer,
     request: { query: SkuProfitsQuery },
     responses: {
