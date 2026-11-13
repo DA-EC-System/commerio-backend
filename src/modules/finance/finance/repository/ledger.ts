@@ -36,9 +36,10 @@ const actualOfOrder = alias(ledgerEntries, 'actual_of_order');
 /** Dòng thực tế thay dòng đang đọc, nối trái; unique `replaces_entry_id` nên mỗi dòng tối đa một dòng thay. */
 const replacer = alias(ledgerEntries, 'replacer');
 /**
- * Dòng không còn tính (#117): có dòng thực tế trỏ `replaces_entry_id` về nó, hoặc là dòng ước tính của đơn đã có số
- * thật từ quyết toán (số thật của cả đơn thay số ước tính, kể cả khoản sàn không thu). Dựng lúc gọi: `getDb()` theo
- * giao dịch của bên gọi.
+ * Dòng không còn tính (#117): có dòng thực tế trỏ `replaces_entry_id` về nó, hoặc là dòng tiền ước tính của đơn đã có
+ * số thật từ quyết toán (số thật của cả đơn thay số ước tính, kể cả khoản sàn không thu). Giá vốn (`NON_CASH`) không
+ * do sàn quyết toán nên không bị số quyết toán thay: lãi gộp của đơn đã quyết toán vẫn trừ giá vốn (25 §10.2, #231).
+ * Dựng lúc gọi: `getDb()` theo giao dịch của bên gọi.
  */
 export const isReplaced = () =>
   or(
@@ -46,6 +47,7 @@ export const isReplaced = () =>
     and(
       eq(ledgerEntries.isEstimate, true),
       isNotNull(ledgerEntries.orderId),
+      notInArray(ledgerEntries.kind, NON_CASH),
       exists(
         getDb()
           .select({ one: sql`1` })

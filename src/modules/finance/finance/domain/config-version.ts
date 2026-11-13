@@ -125,11 +125,20 @@ export interface DatedVersion {
  * ngày đó. Bản đã bị một bản sửa lỗi đang dùng thay thế thì bỏ (bản sửa lỗi có thể cùng ngày hiệu lực).
  */
 export function pickEffective<V extends DatedVersion>(versions: readonly V[], day: string): V | undefined {
+  return appliedTimeline(versions).find((v) => v.effectiveFrom <= day && (v.effectiveTo === null || v.effectiveTo >= day));
+}
+
+/**
+ * Các bản đã áp dụng của một ô (`active`, `expired`, bỏ bản bị bản sửa lỗi thay), ngày hiệu lực mới trước: bản đầu
+ * tiên chứa một ngày là bản áp cho ngày đó (`pickEffective`). Lãi theo đơn (#231) dựng mốc lãi tối thiểu theo ngày
+ * giao từ danh sách này trong SQL.
+ */
+export function appliedTimeline<V extends DatedVersion>(versions: readonly V[]): (V & { effectiveFrom: string })[] {
   const applied = versions.filter((v) => v.status === 'active' || v.status === 'expired');
   const replaced = new Set(applied.map((v) => v.supersedesId).filter((id): id is string => !!id));
   return applied
-    .filter((v) => !replaced.has(v.id) && v.effectiveFrom !== null && v.effectiveFrom <= day && (v.effectiveTo === null || v.effectiveTo >= day))
-    .sort((a, b) => (a.effectiveFrom! < b.effectiveFrom! ? 1 : -1))[0];
+    .filter((v): v is V & { effectiveFrom: string } => !replaced.has(v.id) && v.effectiveFrom !== null)
+    .sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1));
 }
 
 /**

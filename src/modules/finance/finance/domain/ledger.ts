@@ -205,14 +205,15 @@ export interface Entry {
 
 /**
  * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt; giá vốn = giá vốn trừ phần trả
- * bán lại được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
+ * bán lại được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng tiền ước tính chưa có số thật
+ * thay; dòng giá vốn lấy từ thẻ kho, sàn không quyết toán, nên không giữ nhãn Ước tính (US-TI-04 dòng 2, #231).
  */
 export function profitOf(entries: readonly Entry[]): { net: number; cogs: number; gross: number; estimated: boolean } {
   const live = entries.filter((e) => !e.replaced);
   const sum = (pred: (e: Entry) => boolean) => live.filter(pred).reduce((s, e) => s.plus(e.amount), new Decimal(0));
   const net = sum((e) => !NON_CASH.has(e.kind));
   const cogs = sum((e) => NON_CASH.has(e.kind));
-  return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate) };
+  return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate && !NON_CASH.has(e.kind)) };
 }
 
 /** Cảnh báo luỹ kế doanh thu năm theo mốc của quy tắc thuế (25 §10.4): từ 90% mốc. */

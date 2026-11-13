@@ -6,6 +6,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { addDays, vnDate } from '../domain/config-version.ts';
 import {
   costMissingOf,
+  NON_CASH,
   type Draft,
   postDelivered,
   postInspected,
@@ -250,10 +251,16 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     const rows = await entriesOfOrder(orderId);
     const orders = await ordersOf([orderId]);
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
-    // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng ước tính, kể cả khoản sàn không thu.
+    // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng tiền ước tính, kể cả khoản sàn không thu; giá vốn
+    // không do sàn quyết toán nên giữ (cùng luật `isReplaced`, #231).
     const settled = rows.some((r) => !r.isEstimate);
     const p = profitOf(
-      rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replacedBy !== null || (r.isEstimate && settled) })),
+      rows.map((r) => ({
+        kind: r.kind,
+        amount: r.amount,
+        isEstimate: r.isEstimate,
+        replaced: r.replacedBy !== null || (r.isEstimate && settled && !NON_CASH.has(r.kind)),
+      })),
     );
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');
     return {

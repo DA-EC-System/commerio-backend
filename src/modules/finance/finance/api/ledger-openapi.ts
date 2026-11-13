@@ -1,6 +1,6 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
-import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, TaxWarnings } from './ledger-schemas.ts';
+import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, OrderProfitPage, OrderProfitsQuery, TaxWarnings } from './ledger-schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
 const bearer = [{ bearerAuth: [] }];
@@ -21,6 +21,19 @@ export function registerLedgerOpenApi(registry: OpenAPIRegistry): void {
     request: { query: LedgerListQuery },
     responses: {
       200: { description: 'Trang sổ', ...json(LedgerPage) },
+      ...auth,
+      422: problemResponse('`validation_failed` kèm `errors` theo ô'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/orders/profits',
+    summary: 'Lãi theo danh sách đơn: thực nhận, giá vốn, lãi gộp của phần đã giao trong kỳ giao',
+    description: `${VIEW} \`from\`, \`to\` lọc theo ngày kiện đầu tiên của đơn giao xong (giờ Việt Nam, gồm cả hai ngày). \`totals\` tính trên toàn bộ kết quả lọc. \`estimated\` tới khi đơn có số quyết toán.`,
+    security: bearer,
+    request: { query: OrderProfitsQuery },
+    responses: {
+      200: { description: 'Trang lãi theo đơn', ...json(OrderProfitPage) },
       ...auth,
       422: problemResponse('`validation_failed` kèm `errors` theo ô'),
     },

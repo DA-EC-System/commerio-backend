@@ -20,6 +20,53 @@ export const LedgerListQuery = z.object({
 
 export const OrderIdParams = z.object({ orderId: z.string() });
 
+const flag = (name: string) =>
+  z
+    .enum(['true', 'false'], `${name} là true hoặc false`)
+    .transform((v) => v === 'true')
+    .optional();
+
+/** `GET /orders/profits` (#231): kỳ theo ngày giao (kiện đầu tiên giao xong, giờ Việt Nam), gồm cả hai ngày. */
+export const OrderProfitsQuery = z
+  .object({
+    page: page.page,
+    pageSize: page.pageSize,
+    from: day('Từ ngày'),
+    to: day('Đến ngày'),
+    shopId: z.uuid('Gian hàng không hợp lệ').optional(),
+    costMissing: flag('costMissing').meta({ description: '`true`: chỉ đơn thiếu giá vốn' }),
+    belowFloor: flag('belowFloor').meta({ description: '`true`: chỉ đơn Dưới giá thấp nhất thực tế' }),
+  })
+  .refine((q) => q.from <= q.to, { path: ['to'], message: 'Đến ngày không được trước Từ ngày' });
+
+export const OrderProfitItem = z
+  .object({
+    orderId: z.uuid(),
+    code: z.string().nullable(),
+    shopId: z.uuid().nullable(),
+    deliveredAt: z.iso.datetime().nullable().meta({ description: 'Thời điểm kiện đầu tiên giao xong' }),
+    net: z.number().meta({ description: 'Thực nhận của phần đã giao' }),
+    cogs: z.number().nullable().meta({ description: 'Giá vốn (âm); `null` khi thiếu `inventory.cost.view`' }),
+    gross: z.number().nullable().meta({ description: 'Lãi gộp = thực nhận + giá vốn; `null` khi thiếu `inventory.cost.view`' }),
+    marginPct: z.number().nullable().meta({ description: 'Lãi gộp / thực nhận (%), một chữ số thập phân; `null` khi thực nhận ≤ 0 hoặc thiếu quyền xem giá vốn' }),
+    estimated: z.boolean(),
+    costMissing: z.boolean(),
+    belowFloor: z.boolean().meta({ description: 'Dưới giá thấp nhất thực tế: đơn đã quyết toán có thực nhận < giá vốn × (1 + lãi tối thiểu)' }),
+  })
+  .meta({ id: 'OrderProfitSummary' });
+
+export const OrderProfitPage = z
+  .object({
+    items: z.array(OrderProfitItem),
+    totals: z
+      .object({ net: z.number(), cogs: z.number().nullable(), gross: z.number().nullable() })
+      .meta({ description: 'Tổng trên toàn bộ kết quả lọc, không chỉ trang' }),
+    total: z.int(),
+    page: z.int(),
+    pageSize: z.int(),
+  })
+  .meta({ id: 'OrderProfitPage' });
+
 export const LedgerLine = z
   .object({
     id: z.uuid(),
