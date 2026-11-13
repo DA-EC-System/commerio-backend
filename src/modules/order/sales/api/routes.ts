@@ -3,7 +3,7 @@ import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
-import { type Actor, cancelOnPlatform, cancelReasons, decideCancelRequest, setInvoiceNumber } from '../service/cancel.ts';
+import { type Actor, cancelOnPlatform, cancelReasons, cancelRejectReasons, decideCancelRequest, setInvoiceNumber } from '../service/cancel.ts';
 import { getOrder, listOrders, type SalesContext } from '../service/orders.ts';
 import { CancelRequestBody, InvoiceNumberBody, OrderListQuery, OrderParams, PlatformCancelBody } from './schemas.ts';
 
@@ -42,6 +42,11 @@ export function salesRouter(ctx: SalesContext): Router {
 
   router.post('/orders/:id/cancel-request', cancel, validate({ params: OrderParams, body: CancelRequestBody }), async (_req, res) => {
     res.json(await decideCancelRequest(ctx, actor(res), params(res), validated<typeof CancelRequestBody>(res, 'body')));
+  });
+
+  // Lý do từ chối yêu cầu huỷ (#227): cùng quyền với `cancel-request`, vì chỉ người trả lời yêu cầu huỷ mới cần.
+  router.get('/orders/:id/cancel-reject-reasons', cancel, validate({ params: OrderParams }), async (_req, res) => {
+    res.json(await cancelRejectReasons(ctx, actor(res), params(res)));
   });
 
   router.put(

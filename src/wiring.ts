@@ -8,6 +8,7 @@ import {
   hasInboxData,
   marketplaceCancelOrder,
   marketplaceCancelReasons,
+  marketplaceCancelRejectReasons,
   marketplaceCarriers,
   marketplaceDecideCancel,
   marketplacePack,
@@ -45,7 +46,10 @@ export function createModuleContext(): AppContext {
     // #117: finance kéo quyết toán qua token gian hàng của channel.
     settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
     // #105 PR 2: sales (lớp dưới) huỷ đơn, trả lời khách xin huỷ trên sàn qua token gian hàng của channel.
-    marketplaceOrders: { cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel },
+    marketplaceOrders: {
+      cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel,
+      cancelRejectReasons: marketplaceCancelRejectReasons,
+    },
     // #202: sales xử lý yêu cầu trả trên sàn (chấp nhận, từ chối, hoàn tiền, báo đã nhận) qua token của channel.
     marketplaceReturns,
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.

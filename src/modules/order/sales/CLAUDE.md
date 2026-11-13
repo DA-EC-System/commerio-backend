@@ -21,9 +21,10 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 ## Thao tác đơn sàn (#105 PR 2, §19.3)
 
-`service/cancel.ts`: `cancel-reasons`, `platform-cancel`, `cancel-request` (`sales.order.cancel`), `invoice-number` (`sales.order.create`). Thứ tự: đọc đơn → kiểm `version` (409 trước khi gọi sàn) → máy trạng thái → gọi sàn ngoài giao dịch qua `ctx.marketplaceOrders` (channel, tiêm ở `src/wiring.ts`) → ghi theo `version` kèm `recordAudit` (`order.orders`) và `sales.order_status_changed`.
+`service/cancel.ts`: `cancel-reasons`, `platform-cancel`, `cancel-request`, `cancel-reject-reasons` (`sales.order.cancel`), `invoice-number` (`sales.order.create`). Thứ tự: đọc đơn → kiểm `version` (409 trước khi gọi sàn) → máy trạng thái → gọi sàn ngoài giao dịch qua `ctx.marketplaceOrders` (channel, tiêm ở `src/wiring.ts`) → ghi theo `version` kèm `recordAudit` (`order.orders`) và `sales.order_status_changed`.
 
 - Người bán huỷ, hay đồng ý khách xin huỷ: đơn giữ trạng thái, cờ `cancelling`; đơn sang `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt 29/10/2026). `reasonId` phải nằm trong danh sách sàn trả lúc gửi (hỏi lại sàn), không thì 422.
+- Từ chối khách xin huỷ (#227): `rejectReasonId` lấy từ `cancel-reject-reasons` (sàn không có danh sách thì rỗng). Sales không biết sàn nào bắt buộc: channel đổi `reject_reason_required` của adapter (TikTok) sang 422 `errors.rejectReasonId`; Lazada bỏ qua trường này.
 - Số hoá đơn chỉ lưu, chưa gửi `SetInvoiceNumber`.
 
 ## Tự hoàn tất (#105 PR 2)

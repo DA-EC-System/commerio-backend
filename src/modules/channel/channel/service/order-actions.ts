@@ -34,10 +34,42 @@ export async function marketplaceCancelOrder(
   await onMarketplace(() => adapter.cancelOrder!(accessToken, externalOrderId, externalLineIds, reasonId));
 }
 
-export async function marketplaceDecideCancel(companyId: string, shopId: string, externalOrderId: string, accept: boolean): Promise<void> {
+/**
+ * Trả lời khách xin huỷ. `rejectReasonId` chỉ dùng khi từ chối; sàn bắt buộc lý do (TikTok) mà thiếu thì 422 tại trường
+ * `rejectReasonId` (Documents/21 §19.3, #227); sàn không cần (Lazada) thì adapter bỏ qua.
+ */
+export async function marketplaceDecideCancel(
+  companyId: string,
+  shopId: string,
+  externalOrderId: string,
+  accept: boolean,
+  rejectReasonId?: string,
+): Promise<void> {
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.decideCancelRequest) throw unsupported();
-  await onMarketplace(() => adapter.decideCancelRequest!(accessToken, externalOrderId, accept));
+  await onMarketplace(async () => {
+    try {
+      await adapter.decideCancelRequest!(accessToken, externalOrderId, accept, accept ? undefined : rejectReasonId);
+    } catch (err) {
+      if (err instanceof MarketplaceError && err.platformCode === 'reject_reason_required') {
+        throw new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', {
+          errors: { rejectReasonId: err.platformMessage ?? 'Chọn lý do từ chối' },
+        });
+      }
+      throw err;
+    }
+  });
+}
+
+/** Lý do từ chối yêu cầu huỷ do sàn quy định (#227). Sàn không có danh sách này (Lazada) thì rỗng. */
+export async function marketplaceCancelRejectReasons(
+  companyId: string,
+  shopId: string,
+  externalOrderId: string,
+): Promise<{ id: string; label: string }[]> {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  if (!adapter.cancelRequestRejectReasons) return [];
+  return onMarketplace(() => adapter.cancelRequestRejectReasons!(accessToken, externalOrderId));
 }
 
 // Tách kiện, giao kiện trên sàn cho fulfillment (#221; tách kiện #205, RTS #239 gọi), tiêm qua `ctx.marketplacePackages`.

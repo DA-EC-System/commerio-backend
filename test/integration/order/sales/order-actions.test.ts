@@ -36,11 +36,27 @@ registerAdapter(
     decideCancelRequest,
   }),
 );
+// Sàn giả kiểu TikTok (#227): từ chối yêu cầu huỷ bắt buộc lý do, như `tiktok-returns.ts`.
+const tiktokDecide = vi.fn(async (_token: string, _orderId: string, accept: boolean, rejectReasonId?: string) => {
+  if (!accept && !rejectReasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do khi từ chối yêu cầu huỷ');
+});
+const tiktokRejectReasons = vi.fn(async () => [{ id: 'seller_reject_apply_product_has_been_packed', label: 'Hàng đã đóng gói' }]);
+registerAdapter(
+  'tiktok',
+  fakeAdapter({
+    async getSeller(accessToken) {
+      return { externalShopId: accessToken.slice(4), shopName: 'Shop thử TikTok', region: 'VN' };
+    },
+    decideCancelRequest: tiktokDecide,
+    cancelRequestRejectReasons: tiktokRejectReasons,
+  }),
+);
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
+let tiktokShopId: string;
 let variantId: string;
 let sku: string;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
@@ -51,6 +67,9 @@ beforeAll(async () => {
   shopId = res.body.shop.id;
   await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = now() where id = $1`, [shopId]);
   ({ variantId, sku } = await createVariant(company.companyId));
+  const tt = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `TTP_${randomUUID().slice(0, 12)}` });
+  tiktokShopId = tt.body.shop.id;
+  await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = now() where id = $1`, [tiktokShopId]);
 });
 
 beforeEach(() => {
@@ -58,6 +77,8 @@ beforeEach(() => {
   cancelReasons.mockClear();
   cancelOrder.mockClear();
   decideCancelRequest.mockClear();
+  tiktokDecide.mockClear();
+  tiktokRejectReasons.mockClear();
 });
 
 function remote(status: PlatformOrder['lines'][number]['status'], o: Partial<PlatformOrder> = {}): PlatformOrder {
@@ -210,7 +231,7 @@ describe('khách xin huỷ (§19.3)', () => {
     const order = Order.parse(res.body);
     expect(order.flags).toEqual(expect.arrayContaining(['cancelling']));
     expect(order.flags).not.toContain('cancel_requested');
-    expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, true);
+    expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, true, undefined);
   });
 
   it('từ chối: báo sàn, bỏ cờ, đơn chạy tiếp', async () => {
@@ -218,7 +239,56 @@ describe('khách xin huỷ (§19.3)', () => {
     const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'reject' });
     expect(res.status).toBe(200);
     expect(Order.parse(res.body).flags).toEqual([]);
-    expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), expect.any(String), false);
+    expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), expect.any(String), false, undefined);
+  });
+
+  it('đơn Lazada (#227): từ chối không cần lý do, gửi kèm thì bỏ qua; danh sách lý do từ chối rỗng', async () => {
+    const { orderId } = await ingest(remote('pending', { cancelRequested: true }));
+    const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reject-reasons`));
+    expect(reasons.status).toBe(200);
+    expect(reasons.body).toEqual({ items: [] });
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'reject', rejectReasonId: 'bat-ky' });
+    expect(res.status).toBe(200);
+    expect(Order.parse(res.body).flags).not.toContain('cancel_requested');
+  });
+
+  it('đơn TikTok (#227): từ chối thiếu lý do 422 errors.rejectReasonId, đơn giữ nguyên', async () => {
+    const { orderId } = await ingest(remote('pending', { shopId: tiktokShopId, cancelRequested: true }));
+    const before = await detail(orderId);
+    const res = await post(`${orderId}/cancel-request`, { version: before.version, decision: 'reject' });
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('validation_failed');
+    expect(Object.keys(res.body.errors)).toEqual(['rejectReasonId']);
+    const after = await detail(orderId);
+    expect(after.version).toBe(before.version);
+    expect(after.flags).toContain('cancel_requested');
+  });
+
+  it('đơn TikTok (#227): lấy lý do từ chối của sàn rồi từ chối kèm lý do, lý do xuống adapter', async () => {
+    const o = remote('pending', { shopId: tiktokShopId, cancelRequested: true });
+    const { orderId } = await ingest(o);
+    const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reject-reasons`));
+    expect(reasons.status).toBe(200);
+    expect(reasons.body).toEqual({ items: [{ id: 'seller_reject_apply_product_has_been_packed', name: 'Hàng đã đóng gói' }] });
+    expect(tiktokRejectReasons).toHaveBeenCalledWith(expect.any(String), o.externalOrderId);
+    const res = await post(`${orderId}/cancel-request`, {
+      version: (await detail(orderId)).version,
+      decision: 'reject',
+      rejectReasonId: reasons.body.items[0].id,
+    });
+    expect(res.status).toBe(200);
+    expect(Order.parse(res.body).flags).toEqual([]);
+    expect(tiktokDecide).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, false, 'seller_reject_apply_product_has_been_packed');
+  });
+
+  it('lý do từ chối (#227): không có cờ khách xin huỷ 409 invalid_transition; Nhân viên kho 403', async () => {
+    const { orderId } = await ingest(remote('pending', { shopId: tiktokShopId }));
+    const res = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reject-reasons`));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('invalid_transition');
+    expect(tiktokRejectReasons).not.toHaveBeenCalled();
+    const warehouse = await addMember(company.companyId, 'warehouse');
+    expect((await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reject-reasons`), warehouse.token)).status).toBe(403);
   });
 });
 

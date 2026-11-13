@@ -114,17 +114,40 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
   return { order: saved, pendingOpen: packages.filter(isSealed).length };
 }
 
-export async function decideCancelRequest(ctx: SalesContext, actor: Actor, id: string, input: { version: number; decision: 'accept' | 'reject' }) {
+/** Lý do từ chối yêu cầu huỷ do sàn quy định (#227): chỉ khi đơn có cờ `cancel_requested`; sàn không có danh sách thì rỗng. */
+export async function cancelRejectReasons(ctx: SalesContext, actor: Actor, id: string) {
+  const loaded = await load(ctx, actor, id);
+  const { shopId, externalOrderId } = marketplaceRef(loaded);
+  if (!loaded.order.flags.includes('cancel_requested')) throw invalid(loaded.order);
+  const reasons = await marketplace(ctx).cancelRejectReasons(actor.companyId, shopId, externalOrderId);
+  return { items: reasons.map((r) => ({ id: r.id, name: r.label })) };
+}
+
+export async function decideCancelRequest(
+  ctx: SalesContext,
+  actor: Actor,
+  id: string,
+  input: { version: number; decision: 'accept' | 'reject'; rejectReasonId?: string },
+) {
   const loaded = await load(ctx, actor, id);
   const { order } = loaded;
   checkVersion(order, input.version);
   if (!order.flags.includes('cancel_requested')) throw invalid(order);
   const { shopId, externalOrderId } = marketplaceRef(loaded);
   const accept = input.decision === 'accept';
-  await marketplace(ctx).decideCancel(actor.companyId, shopId, externalOrderId, accept);
+  // Sàn bắt buộc lý do từ chối (TikTok) mà thiếu thì channel trả 422 `errors.rejectReasonId`; sàn không cần thì bỏ qua (#227).
+  const rejectReasonId = accept ? undefined : input.rejectReasonId;
+  await marketplace(ctx).decideCancel(actor.companyId, shopId, externalOrderId, accept, rejectReasonId);
   const flags = order.flags.filter((f) => f !== 'cancel_requested');
   if (accept) flags.push('cancelling');
-  return save(ctx, actor, order, { cancelRequested: false, ...(accept ? { cancelling: true, cancelReason: 'Khách xin huỷ' } : {}) }, { decision: input.decision, flags }, flags);
+  return save(
+    ctx,
+    actor,
+    order,
+    { cancelRequested: false, ...(accept ? { cancelling: true, cancelReason: 'Khách xin huỷ' } : {}) },
+    { decision: input.decision, ...(rejectReasonId ? { rejectReasonId } : {}), flags },
+    flags,
+  );
 }
 
 export async function setInvoiceNumber(ctx: SalesContext, actor: Actor, id: string, input: { version: number; invoiceNumber: string }) {

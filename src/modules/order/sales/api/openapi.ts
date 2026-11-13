@@ -2,6 +2,7 @@ import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   CancelReasons,
+  CancelRejectReasons,
   CancelRequestBody,
   InvoiceNumberBody,
   Order,
@@ -72,10 +73,21 @@ export function registerSalesOpenApi(registry: OpenAPIRegistry): void {
     method: 'post',
     path: '/orders/:id/cancel-request',
     summary: 'Trả lời khách xin huỷ (§19.3)',
-    description: 'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. `accept`: đơn sang cờ `cancelling` chờ sàn xác nhận; `reject`: bỏ cờ.',
+    description:
+      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. `accept`: đơn sang cờ `cancelling` chờ sàn xác nhận; `reject`: bỏ cờ. Đơn TikTok bắt buộc `rejectReasonId` khi `reject` (thiếu: 422 `validation_failed` tại `errors.rejectReasonId`); đơn Lazada bỏ qua trường này.',
     security: bearer,
     request: { params: OrderParams, body: json(CancelRequestBody) },
     responses: { 200: { description: 'Đơn', ...json(Order) }, ...onMarketplace },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/orders/:id/cancel-reject-reasons',
+    summary: 'Lý do từ chối yêu cầu huỷ của sàn (§19.3)',
+    description:
+      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. Hỏi sàn lý do được dùng cho `rejectReasonId`; sàn không có danh sách này (Lazada) trả `{ items: [] }`; sàn không cho từ chối thì 409 `marketplace_rejected` kèm câu của sàn.',
+    security: bearer,
+    request: { params: OrderParams },
+    responses: { 200: { description: 'Lý do', ...json(CancelRejectReasons) }, ...onMarketplace },
   });
   registry.registerPath({
     method: 'put',

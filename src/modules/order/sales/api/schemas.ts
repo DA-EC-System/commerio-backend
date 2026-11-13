@@ -170,7 +170,17 @@ export const Order = OrderSummary.extend({
   .meta({ id: 'Order' });
 
 export const PlatformCancelBody = z.object({ version: z.number().int(), reasonId: z.string().trim().min(1, 'Chọn lý do huỷ') });
-export const CancelRequestBody = z.object({ version: z.number().int(), decision: z.enum(['accept', 'reject']) });
+export const CancelRequestBody = z.object({
+  version: z.number().int(),
+  decision: z.enum(['accept', 'reject']),
+  rejectReasonId: z
+    .string()
+    .trim()
+    .min(1, 'Chọn lý do từ chối')
+    .max(200)
+    .optional()
+    .meta({ description: 'Lý do từ chối, lấy từ `cancel-reject-reasons`. Đơn TikTok bắt buộc khi `reject`; đơn Lazada bỏ qua' }),
+});
 export const InvoiceNumberBody = z.object({
   version: z.number().int(),
   invoiceNumber: z.string().trim().min(1, 'Nhập số hoá đơn').max(50, 'Số hoá đơn tối đa 50 ký tự'),
@@ -179,6 +189,10 @@ export const InvoiceNumberBody = z.object({
 export const CancelReasons = z
   .object({ items: z.array(z.object({ id: z.string(), label: z.string() })) })
   .meta({ id: 'CancelReasons' });
+
+export const CancelRejectReasons = z
+  .object({ items: z.array(z.object({ id: z.string(), name: z.string() })) })
+  .meta({ id: 'CancelRejectReasons' });
 
 export const PlatformCancelResult = z
   .object({ order: Order, pendingOpen: z.number().int().meta({ description: 'Số kiện đã đóng gói phải mở khi sàn xác nhận huỷ' }) })

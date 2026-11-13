@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { marketplaceCarriers, marketplacePack, marketplaceReadyToShip, marketplaceRepack, onPackageAction } from '#src/modules/channel/channel/service/order-actions.ts';
+import {
+  marketplaceCancelRejectReasons, marketplaceCarriers, marketplaceDecideCancel, marketplacePack, marketplaceReadyToShip, marketplaceRepack, onPackageAction,
+} from '#src/modules/channel/channel/service/order-actions.ts';
 import { shopSession } from '#src/modules/channel/channel/service/shops.ts';
 
 vi.mock('#src/shared/db/client.ts', () => ({ withCompany: (_id: string, fn: () => unknown) => fn() }));
@@ -46,5 +48,34 @@ describe('cổng thao tác kiện trên sàn', () => {
     await expect(marketplaceCarriers('c', 's', ref)).resolves.toEqual([]);
     await expect(marketplaceRepack('c', 's', 'FP1')).resolves.toBe('repacked');
     expect(repackPackage).toHaveBeenCalledWith('token', 'FP1');
+  });
+});
+
+describe('cổng trả lời khách xin huỷ (#227, Documents/21 §19.3)', () => {
+  it('truyền lý do từ chối xuống adapter; đồng ý thì không gửi lý do', async () => {
+    const decideCancelRequest = vi.fn(async () => {});
+    session({ decideCancelRequest });
+    await marketplaceDecideCancel('c', 's', 'O1', false, 'seller_reject_apply_product_has_been_packed');
+    expect(decideCancelRequest).toHaveBeenLastCalledWith('token', 'O1', false, 'seller_reject_apply_product_has_been_packed');
+    await marketplaceDecideCancel('c', 's', 'O1', true, 'bo-qua');
+    expect(decideCancelRequest).toHaveBeenLastCalledWith('token', 'O1', true, undefined);
+  });
+
+  it('sàn bắt buộc lý do mà thiếu: 422 validation_failed tại rejectReasonId', async () => {
+    session({ decideCancelRequest: async () => { throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do'); } });
+    await expect(marketplaceDecideCancel('c', 's', 'O1', false)).rejects.toMatchObject({
+      status: 422, code: 'validation_failed', extensions: { errors: { rejectReasonId: 'TikTok bắt buộc chọn lý do' } },
+    });
+  });
+
+  it('lý do từ chối: sàn không có danh sách thì rỗng; có thì trả của sàn; sàn từ chối thì 409', async () => {
+    session({});
+    await expect(marketplaceCancelRejectReasons('c', 's', 'O1')).resolves.toEqual([]);
+    const cancelRequestRejectReasons = vi.fn(async () => [{ id: 'r1', label: 'Đã đóng gói' }]);
+    session({ cancelRequestRejectReasons });
+    await expect(marketplaceCancelRejectReasons('c', 's', 'O1')).resolves.toEqual([{ id: 'r1', label: 'Đã đóng gói' }]);
+    expect(cancelRequestRejectReasons).toHaveBeenCalledWith('token', 'O1');
+    session({ cancelRequestRejectReasons: async () => { throw new MarketplaceError('rejected', 'not_rejectable', 'Không từ chối được'); } });
+    await expect(marketplaceCancelRejectReasons('c', 's', 'O1')).rejects.toMatchObject({ status: 409, code: 'marketplace_rejected' });
   });
 });
