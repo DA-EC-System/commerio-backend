@@ -3,6 +3,8 @@ import {
   LEDGER_KINDS,
   NOT_SALES_PROFIT,
   OFF_PLATFORM,
+  configDraftsOfDelivered,
+  outputVatOf,
   postDelivered,
   postInspected,
   postRefund,
@@ -22,7 +24,7 @@ const pkg = {
 };
 const fee = { id: 'fee-v1', payload: { fixedPct: 4, transactionPct: 2, servicePct: 1, optionalPct: 0, returnFee: 15000 } };
 const household = { id: 'regime-v1', payload: { regime: 'household' as const } };
-const rules = { id: 'rules-v1', payload: { vatPct: 1, pitPct: 0.5, milestones: [500_000_000, 3_000_000_000] } };
+const rules = { id: 'rules-v1', payload: { vatPct: 1, pitPct: 0.5, outputVatPct: 10, milestones: [500_000_000, 3_000_000_000] } };
 const amounts = (drafts: { kind: string; amount: string }[]) => Object.fromEntries(drafts.map((d) => [d.kind, d.amount]));
 
 describe('ghi sổ khi kiện giao xong (25 §10.1)', () => {
@@ -44,6 +46,11 @@ describe('ghi sổ khi kiện giao xong (25 §10.1)', () => {
   it('mỗi dòng phí, thuế lưu mã phiên bản cấu hình đã dùng; dòng khác không có', () => {
     const byKind = Object.fromEntries(postDelivered(pkg, { fee, regime: household, rules }).map((d) => [d.kind, d.configVersionId]));
     expect(byKind).toMatchObject({ fee_fixed: 'fee-v1', fee_service: 'fee-v1', withholding_tax: 'rules-v1', revenue: null, cogs: null });
+  });
+
+  it('khoản theo cấu hình tính lại trên doanh thu của kiện (dùng cho điều chỉnh hồi tố): khớp các dòng của postDelivered', () => {
+    const fromPkg = postDelivered(pkg, { fee, regime: household, rules }).filter((d) => d.configVersionId);
+    expect(configDraftsOfDelivered('258000.00', { fee, regime: household, rules })).toEqual(fromPkg);
   });
 
   it('khoản 0 đồng không ghi: phí tuỳ chọn 0%, không trợ giá, không ship', () => {
@@ -99,6 +106,23 @@ describe('lãi theo đơn (25 §10.2)', () => {
       ...postInspected([{ resellable: 1, unitCost: '60000' }]),
     ];
     expect(profitOf(entries(all))).toMatchObject({ net: 117070, cogs: -60000, gross: 57070 });
+  });
+
+  it('US-TI-14 dòng 2: doanh nghiệp không có dòng thuế khấu trừ; thực nhận bỏ GTGT đầu ra khỏi doanh thu thuần (chia 1 + v)', () => {
+    const company = { id: 'regime-v2', payload: { regime: 'company' as const } };
+    const drafts = postDelivered(pkg, { fee, regime: company, rules });
+    expect(drafts.some((d) => d.kind === 'withholding_tax')).toBe(false);
+    expect(amounts(drafts).revenue).toBe('258000.00'); // sổ ghi đủ tiền sàn trả, để so với quyết toán
+    const withVat = drafts.map((d) => ({ kind: d.kind, amount: d.amount, isEstimate: true, replaced: false, outputVatPct: 10 }));
+    // 258000 / 1,1 = 234545,45 → 234545; phần GTGT 23455. Thực nhận hộ kinh doanh 246070 + thuế khấu trừ 3870 − 23455.
+    expect(profitOf(withVat)).toEqual({ net: 226485, cogs: -120000, gross: 106485, estimated: true });
+  });
+
+  it('phần GTGT đầu ra chỉ tính trên doanh thu, hoàn tiền khách; thuế suất 0 thì không bỏ gì', () => {
+    expect(outputVatOf({ kind: 'revenue', amount: '110000.00', outputVatPct: 10 }).toNumber()).toBe(10000);
+    expect(outputVatOf({ kind: 'customer_refund', amount: '-110000.00', outputVatPct: 10 }).toNumber()).toBe(-10000);
+    expect(outputVatOf({ kind: 'fee_fixed', amount: '-4400.00', outputVatPct: 10 }).toNumber()).toBe(0);
+    expect(outputVatOf({ kind: 'revenue', amount: '110000.00', outputVatPct: 0 }).toNumber()).toBe(0);
   });
 
   it('dòng đã có số thật thay thì bỏ; chỉ còn dòng thực tế thì hết estimated', () => {

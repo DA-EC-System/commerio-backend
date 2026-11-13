@@ -148,9 +148,23 @@ export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs):
   push(out, 'platform_subsidy', new Decimal(pkg.platformSubsidy));
   push(out, 'shipping_income', new Decimal(pkg.shippingIncome));
   push(out, 'shipping_cost', new Decimal(pkg.shippingCost).negated());
+  out.push(...configDraftsOfDelivered(revenue, configs));
+  push(out, 'cogs', cost.negated());
+  return out;
+}
+
+/**
+ * Khoản theo cấu hình của kiện giao xong, tính trên doanh thu của kiện: bốn loại phí theo cấu hình phí của gian hàng,
+ * thuế sàn khấu trừ (chỉ hộ kinh doanh, cá nhân: GTGT + TNCN của quy tắc thuế). Doanh nghiệp không bị sàn khấu trừ;
+ * GTGT đầu ra chỉ bỏ khỏi doanh thu khi tính lãi (`profitOf`), không ghi dòng: sàn trả đủ giá bán, dòng doanh thu là
+ * tiền sàn sẽ trả để so với quyết toán. Dùng cả khi ghi điều chỉnh hồi tố (25 §10.4).
+ */
+export function configDraftsOfDelivered(revenue: Decimal.Value, configs: DeliveredConfigs): Draft[] {
+  const base = new Decimal(revenue);
+  const out: Draft[] = [];
   const fee = configs.fee;
   if (fee) {
-    const pct = (p: number) => revenue.times(p).div(100).negated();
+    const pct = (p: number) => base.times(p).div(100).negated();
     push(out, 'fee_fixed', pct(fee.payload.fixedPct), fee.id);
     push(out, 'fee_transaction', pct(fee.payload.transactionPct), fee.id);
     push(out, 'fee_service', pct(fee.payload.servicePct), fee.id);
@@ -158,11 +172,23 @@ export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs):
   }
   const { regime, rules } = configs;
   if (regime && regime.payload.regime !== 'company' && rules) {
-    push(out, 'withholding_tax', revenue.times(rules.payload.vatPct + rules.payload.pitPct).div(100).negated(), rules.id);
+    push(out, 'withholding_tax', base.times(rules.payload.vatPct + rules.payload.pitPct).div(100).negated(), rules.id);
   }
-  push(out, 'cogs', cost.negated());
   return out;
 }
+
+/**
+ * Loại dòng mỗi nhóm cấu hình sinh ra, theo nguồn dòng (điều chỉnh hồi tố, 25 §10.4): cấu hình phí sinh bốn loại phí
+ * khi kiện giao và phí khi hoàn khi kiện hoàn về; loại hình thuế, quy tắc thuế sinh thuế sàn khấu trừ khi kiện giao.
+ * Ngưỡng lệch, biên tối thiểu không sinh dòng sổ.
+ */
+export const RETRO_KINDS = {
+  fee: { package: ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional'], package_return: ['return_fee'] },
+  tax: { package: ['withholding_tax'], package_return: [] },
+} as const satisfies Record<string, Record<'package' | 'package_return', readonly LedgerKind[]>>;
+
+/** Tổng các dòng nháp (chuỗi hai chữ số), để so với số đã ghi khi tính điều chỉnh hồi tố. */
+export const sumDrafts = (drafts: readonly Draft[]) => drafts.reduce((s, d) => s.plus(d.amount), new Decimal(0));
 
 /** Kiện hoàn về kho (không giao được): phí khi hoàn theo cấu hình phí của gian hàng. Không có doanh thu cho kiện này. */
 export function postReturned(fee: Version<ConfigPayload<'fee'>> | undefined): Draft[] {
@@ -201,16 +227,33 @@ export interface Entry {
   isEstimate: boolean;
   /** Đã có dòng thực tế thay: không còn tính. */
   replaced: boolean;
+  /** Thuế suất GTGT đầu ra áp ở ngày của dòng (doanh nghiệp, `outputVatPctOf`); thiếu hoặc 0 thì không bỏ. */
+  outputVatPct?: number;
+}
+
+/** Khoản thuộc doanh thu thuần (25 §10.2: "Σ doanh thu hàng của phần đã giao − hoàn tiền khách"). */
+const NET_REVENUE: ReadonlySet<LedgerKind> = new Set(['revenue', 'customer_refund']);
+
+/**
+ * Phần GTGT đầu ra nằm trong một dòng doanh thu thuần: số − số / (1 + v/100), làm tròn tới đồng (25 §10.2, E131).
+ * Dòng khác, hay v = 0, là 0.
+ */
+export function outputVatOf(e: Pick<Entry, 'kind' | 'amount' | 'outputVatPct'>): Decimal {
+  if (!NET_REVENUE.has(e.kind) || !e.outputVatPct) return new Decimal(0);
+  const amount = new Decimal(e.amount);
+  return amount.minus(round(amount.times(100).div(new Decimal(100).plus(e.outputVatPct))));
 }
 
 /**
- * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt; giá vốn = giá vốn trừ phần trả
- * bán lại được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
+ * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt, doanh nghiệp bỏ phần GTGT đầu ra
+ * khỏi doanh thu thuần (`outputVatOf`); giá vốn = giá vốn trừ phần trả bán lại được; lãi gộp = thực nhận + giá vốn (giá
+ * vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
  */
 export function profitOf(entries: readonly Entry[]): { net: number; cogs: number; gross: number; estimated: boolean } {
   const live = entries.filter((e) => !e.replaced);
   const sum = (pred: (e: Entry) => boolean) => live.filter(pred).reduce((s, e) => s.plus(e.amount), new Decimal(0));
-  const net = sum((e) => !NON_CASH.has(e.kind));
+  const vat = live.reduce((s, e) => s.plus(outputVatOf(e)), new Decimal(0));
+  const net = sum((e) => !NON_CASH.has(e.kind)).minus(vat);
   const cogs = sum((e) => NON_CASH.has(e.kind));
   return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate) };
 }

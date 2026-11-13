@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, lte, not, notInArray, sql } from 'drizzle-orm';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import type { ConfigKind, ConfigStatus } from '../domain/config-version.ts';
-import { NOT_SALES_PROFIT } from '../domain/ledger.ts';
+import { type LedgerKind, NOT_SALES_PROFIT } from '../domain/ledger.ts';
 import { isReplaced } from './ledger.ts';
 import { configVersions, ledgerEntries } from './schema.ts';
 
@@ -122,4 +122,48 @@ export async function sumLedgerSince(from: string, shopId?: string): Promise<{ t
       ),
     );
   return row!;
+}
+
+/** Một nguồn dòng sổ (kiện giao, kiện hoàn) trong khoảng hồi tố, kèm số đã ghi theo nhóm cấu hình (25 §10.4). */
+export interface RetroSource {
+  sourceId: string;
+  orderId: string | null;
+  shopId: string | null;
+  packageId: string | null;
+  /** Ngày phát sinh của nguồn (`occurred_on` của các dòng gốc). */
+  day: string;
+  /** Doanh thu của kiện (dòng `revenue`), cơ sở tính phí, thuế. */
+  revenue: string;
+  /** Đã ghi: dòng ước tính thuộc `kinds` cộng điều chỉnh hồi tố trước đó của nguồn do phiên bản thuộc `configKinds`. */
+  charged: string;
+}
+
+const list = (values: readonly string[]) => sql.join(values.map((v) => sql`${v}`), sql`, `);
+
+/**
+ * Nguồn `type` có dòng gốc ngày `from`..`to` (gồm hai đầu), lọc gian hàng nếu có. Bỏ dòng `adjustment` khỏi dòng gốc
+ * (điều chỉnh mang ngày ghi, không phải ngày phát sinh). Trong `withCompany` của bên gọi (RLS).
+ */
+export async function retroSources(
+  type: 'package' | 'package_return',
+  range: { from: string; to: string },
+  kinds: readonly LedgerKind[],
+  configKinds: readonly ConfigKind[],
+  shopId?: string,
+): Promise<RetroSource[]> {
+  const { rows } = await getDb().execute<RetroSource & Record<string, unknown>>(sql`
+    select e.source_id as "sourceId", e.order_id as "orderId", e.shop_id as "shopId", e.package_id as "packageId",
+      e.occurred_on::text as "day",
+      coalesce(sum(e.amount) filter (where e.kind = 'revenue'), 0)::text as "revenue",
+      (coalesce(sum(e.amount) filter (where e.kind in (${list(kinds)})), 0) + coalesce((
+        select sum(a.amount) from ${ledgerEntries} a join ${configVersions} c on c.id = a.config_version_id
+        where a.kind = 'adjustment' and a.source_type = ${type} and a.source_id = e.source_id and c.kind in (${list(configKinds)})
+      ), 0))::text as "charged"
+    from ${ledgerEntries} e
+    where e.source_type = ${type} and e.kind <> 'adjustment' and e.is_estimate
+      and e.occurred_on between ${range.from} and ${range.to}
+      ${shopId ? sql`and e.shop_id = ${shopId}` : sql``}
+    group by e.source_id, e.order_id, e.shop_id, e.package_id, e.occurred_on
+    order by e.occurred_on, e.source_id`);
+  return rows;
 }

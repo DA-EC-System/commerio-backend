@@ -86,7 +86,10 @@ export function registerConfigOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Gửi duyệt, trả về, duyệt, từ chối, huỷ',
     description:
       'Quyền theo bước: `submit`, `cancel` cần `finance.config.manage`; `approve`, `request-changes`, `reject` cần ' +
-      '`finance.config.approve`, người làm khác người soạn (CEO tự duyệt được). Duyệt bản đã tới ngày hiệu lực thì áp dụng ngay.',
+      '`finance.config.approve`, người làm khác người soạn (CEO tự duyệt được). `cancel` từ `draft`, `pending_approval`, ' +
+      '`scheduled`, chỉ trước ngày hiệu lực. Duyệt bản đã tới ngày hiệu lực thì sang thẳng `active`; bản phí, loại hình ' +
+      'thuế, quy tắc thuế có ngày hiệu lực đã qua thì ghi dòng sổ `adjustment` (có `reason`) cho các kiện trong khoảng ' +
+      'hồi tố. Bản trước cùng ô sang `superseded`.',
     security: bearer,
     request: { params: ConfigActionParams, body: json(ConfigActionBody) },
     responses: {

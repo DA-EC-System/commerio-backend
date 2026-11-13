@@ -3,7 +3,7 @@
 // Consumer `finance-ledger` (`registerLedgerConsumers`, #228) gọi chúng trong giao dịch của khung sự kiện.
 import { type EventEnvelope, type EventPayload, type EventType, registerConsumer } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
-import { addDays, vnDate } from '../domain/config-version.ts';
+import { addDays, outputVatPctOf, vnDate } from '../domain/config-version.ts';
 import {
   costMissingOf,
   type Draft,
@@ -252,8 +252,15 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
     // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng ước tính, kể cả khoản sàn không thu.
     const settled = rows.some((r) => !r.isEstimate);
+    const vat = await outputVatByDay(rows.filter((r) => r.kind === 'revenue' || r.kind === 'customer_refund').map((r) => r.occurredOn));
     const p = profitOf(
-      rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replacedBy !== null || (r.isEstimate && settled) })),
+      rows.map((r) => ({
+        kind: r.kind,
+        amount: r.amount,
+        isEstimate: r.isEstimate,
+        replaced: r.replacedBy !== null || (r.isEstimate && settled),
+        outputVatPct: vat.get(r.occurredOn) ?? 0,
+      })),
     );
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');
     return {
@@ -265,6 +272,20 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
       lines: await lineViews(visible, orders),
     };
   });
+}
+
+/**
+ * Thuế suất GTGT đầu ra áp ở từng ngày (25 §10.2, §10.4: chọn phiên bản loại hình, quy tắc thuế theo ngày phát sinh).
+ * Gọi trong `withCompany` của bên gọi. Phiên bản hồi tố đã áp dụng thì lãi đọc lại theo bản mới, không cần dòng sổ.
+ */
+async function outputVatByDay(days: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (const day of new Set(days)) {
+    const regime = await getEffectiveConfig('tax_regime', null, day);
+    const rules = await getEffectiveConfig('tax_rules', null, day);
+    out.set(day, outputVatPctOf(regime?.payload, rules?.payload));
+  }
+  return out;
 }
 
 /** `GET /finance/tax-warnings` (25 §10.4): luỹ kế doanh thu năm so với mốc của quy tắc thuế đang áp, cảnh báo từ 90%. */
