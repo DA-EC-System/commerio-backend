@@ -28,7 +28,10 @@ export interface ShopRef {
 export interface MarketplaceOrders {
   cancelReasons(companyId: string, shopId: string, externalOrderId: string, lineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
   cancel(companyId: string, shopId: string, externalOrderId: string, lineIds: readonly string[], reasonId: string): Promise<void>;
-  decideCancel(companyId: string, shopId: string, externalOrderId: string, accept: boolean): Promise<void>;
+  /** `rejectReasonId`: lý do từ chối của sàn (#227); sàn bắt buộc mà thiếu thì 422 `errors.rejectReasonId`. */
+  decideCancel(companyId: string, shopId: string, externalOrderId: string, accept: boolean, rejectReasonId?: string): Promise<void>;
+  /** Lý do từ chối yêu cầu huỷ sàn cho phép (#227); sàn không có thì rỗng. */
+  cancelRejectReasons(companyId: string, shopId: string, externalOrderId: string): Promise<{ id: string; label: string }[]>;
 }
 
 /** Hàm module lớp trên tiêm qua `src/wiring.ts`: tên gian hàng, thao tác đơn trên sàn của channel. */
