@@ -63,6 +63,57 @@ describe('Lazada: hành trình kiện /logistic/order/trace (spec 199c §5.7)', 
     expect(events).toEqual([{ packageCode: 'FP1', trackingCode: null, status: 'delivery_failed', at: new Date(1761621300000), description: null }]);
   });
 
+  // Mẫu gọi thật 13/11/2026 trên shop thử (đơn 530326804480318, SOF; request_id 2140eb3617945288367065696; Documents
+  // tich-hop-san/lazada.md §11.7): `ofc_package_id` trùng `package_id` của món ở `/order/items/get`.
+  it('mẫu shop thử: ready_to (1200) bị bỏ, delivered (1400) đọc ra mốc giao, mã kiện là FP… của món', () => {
+    const real = {
+      not_success: false,
+      success: true,
+      module: [
+        {
+          package_detail_info_list: [
+            {
+              ofc_package_id: 'FP070211659297364',
+              tracking_number: 'SOF_FP070211659297364',
+              logistic_detail_info_list: [
+                {
+                  status_code: '1200',
+                  proof_images: [],
+                  detail_type: 'ready_to',
+                  receive_time: 0,
+                  description: 'Kiện hàng của bạn đã hoàn tất đóng gói và sẵn sàng bàn giao cho đơn vị vận chuyển ',
+                  title: 'Hoàn tất đóng gói',
+                  event_time: 1793695244316,
+                },
+                {
+                  status_code: '1400',
+                  proof_images: [],
+                  detail_type: 'delivered',
+                  receive_time: 0,
+                  description: 'Kiện hàng của bạn đã được giao thành công',
+                  title: 'Giao hàng thành công',
+                  event_time: 1793695248534,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      error_code: {},
+      repeated: false,
+      retry: false,
+    };
+    expect(lazadaPackageEvents(real)).toEqual([
+      {
+        packageCode: 'FP070211659297364',
+        trackingCode: 'SOF_FP070211659297364',
+        status: 'delivered',
+        at: new Date(1793695248534),
+        description: 'Kiện hàng của bạn đã được giao thành công',
+      },
+    ]);
+  });
+
   it('module rỗng (đơn chưa sẵn sàng giao) trả []', async () => {
     expect(lazadaPackageEvents({ success: true, module: [{ package_detail_info_list: [] }] })).toEqual([]);
     expect(lazadaPackageEvents({ success: true, module: [] })).toEqual([]);

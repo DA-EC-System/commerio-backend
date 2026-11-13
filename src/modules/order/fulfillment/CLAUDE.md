@@ -94,7 +94,7 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - Kiện mới về có thể giữ hàng trước kiện `backordered` đang chờ lượt của cùng SKU.
 - Hàng hoàn về khi sàn còn báo `delivery_failed`: kho chưa quét được (máy trạng thái chỉ cho `returning → returned`), chờ đồng bộ báo hoàn. `25` §8.3 cho chuyển tay sau 3 ngày nhưng `21` §19.2 chặn `return` với đơn sàn (`not_allowed_for_source`): lệch tài liệu, ngoài phạm vi 199c.
 - Dòng chưa ghép SKU không vào phiếu `KT` (kho lập phiếu tay). Ghép muộn sau khi đã phát `package_delivered`: dòng đó đã báo `unitCost: null`, không phát bù.
-- Trace Lazada chưa thử khớp `ofc_package_id` với `package_id` của món trên shop thử: không khớp thì khớp theo mã vận đơn, không được nữa thì kiện dùng giờ đồng bộ.
+- Trace Lazada (thử 13/11/2026 trên shop thử, `Documents/tich-hop-san/lazada.md` §11.7): `ofc_package_id` trùng `package_id` của món; chỉ gặp `ready_to` (bỏ) và `delivered`. Mốc rời kho, giao không thành công qua đơn vị vận chuyển chưa gặp thật (shop thử chỉ đi tới delivered, đơn SOF), kiểm bằng fixture.
 - "Dỡ kiện về kệ" sau phiếu kiểm kê là cờ Cần xử lý, chưa phải việc trong khung #209 (spec 199b D9). Ghép SKU, tồn đổi vì lý do khác (xuất huỷ, nhặt thiếu) không bật cờ này: `25` §7.4 chỉ đòi khi do kiểm kê.
 - `receive-return` chưa nhận `lines` (số quét, `21` §19.2 đổi 11/11/2026): PR riêng sau #300 (issue #199; cổng `receiveBack` đã nhận `expected`/`scanned` và người quét từ #208). Route `found` cùng `lines` làm ở #238.
 - Chưa làm: FE (199d); đóng gói, RTS (#239); sàn chia lại kiện, thất lạc (#238); route `self-deliver`.
