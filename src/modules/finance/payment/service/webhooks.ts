@@ -2,9 +2,7 @@
 // `receiverKey`; (2) tìm mã/công ty **toàn hệ thống** bằng role chủ bảng; (3) trong `withCompany` của công ty đó: lấy khoá,
 // kiểm chữ ký — sai thì dừng, không ghi gì; (4) giao cho finance (`ctx.onVerifiedPayment`) trong cùng giao dịch.
 // Phản hồi theo định dạng của từng cổng, không dùng Problem Details.
-import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
-import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import type { Gateway } from '../domain/gateways.ts';
 import { findCompanyByReceiverKey } from '../repository/gateway-configs.ts';
@@ -94,33 +92,6 @@ export function receiveSepay(ctx: PaymentContext, receiverKey: string, input: Ca
       const found = result.paymentCode ? await findLinkByCode(result.paymentCode) : undefined;
       const { outcome } = await verifiedPaymentHandlerOf(ctx)(toPayment(companyId, 'vietqr', 'sepay', result, found));
       return outcome;
-    });
-  });
-}
-
-/**
- * Mô phỏng khách trả đủ tiền cho mã của công ty (demo, E2E; §12.11, plan #27 A12): đi đúng bước 4 của webhook, bỏ
- * bước chữ ký. Chỉ gắn route khi `NODE_ENV ≠ production`. Mã không có hoặc của công ty khác → 404.
- */
-export function simulatePayment(ctx: PaymentContext, companyId: string, paymentCode: string) {
-  return withCompany(companyId, async () => {
-    const link = await findLinkByCode(paymentCode);
-    if (!link) throw new AppError(404, 'not_found', 'Không tìm thấy mã thanh toán');
-    const key = `sim:${paymentCode}`;
-    return verifiedPaymentHandlerOf(ctx)({
-      companyId,
-      gateway: link.gateway,
-      source: 'webhook',
-      eventKey: key,
-      gatewayTxnId: key,
-      paymentCode,
-      paymentLinkId: link.id,
-      orderId: link.orderId,
-      amount: new Decimal(link.amount),
-      succeeded: true,
-      fee: null,
-      occurredAt: new Date(),
-      rawPayload: { simulated: true },
     });
   });
 }

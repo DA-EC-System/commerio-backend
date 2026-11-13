@@ -14,6 +14,8 @@ const ROLE_OF: Record<Exclude<Role, 'lead' | 'ceoB'>, keyof typeof BUILTIN_ROLES
   kho: 'kho',
 };
 
+const FINANCE_VIEW = ['finance.config.manage', 'finance.config.approve', 'finance.settlement.resolve', 'finance.settlement.approve', 'finance.invoice.view'];
+
 /** Route đọc và quyền mở nó (`anyOf` thì liệt kê đủ). */
 const ROUTES: [route: string, permissions: string[]][] = [
   ['GET /catalog/products', ['catalog.product.view']],
@@ -21,8 +23,9 @@ const ROUTES: [route: string, permissions: string[]][] = [
   ['GET /inventory/stock', ['inventory.stock.view']],
   ['GET /purchasing/requests', ['purchasing.request.manage', 'purchasing.request.approve', 'purchasing.receipt.manage', 'purchasing.return.manage']],
   ['GET /purchasing/suppliers', ['purchasing.request.manage', 'purchasing.request.approve', 'purchasing.receipt.manage', 'purchasing.return.manage']],
-  ['GET /finance/invoices', ['finance.invoice.view']],
-  ['GET /finance/payment-vouchers', ['finance.invoice.view']],
+  // Route tiền cũ (`/finance/invoices`, `/finance/payment-vouchers`) gỡ ở #235; xem tiền mục 21.0 có một trong 5 quyền.
+  ['GET /finance/ledger', FINANCE_VIEW],
+  ['GET /finance/payments', FINANCE_VIEW],
   ['GET /identity/staff', ['identity.account.view']],
   ['GET /identity/roles', ['identity.role.view', 'identity.account.view']],
   ['GET /channel/shops', ['channel.shop.view']],

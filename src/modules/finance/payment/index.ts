@@ -18,8 +18,6 @@ export {
   type Gateway,
   getOrderPayments,
   initOrderPayment,
-  type ListedOrderPayment,
-  listOrderPayments,
   markCodNotCollected,
   markDelivered,
   markRefundPending,
@@ -27,16 +25,11 @@ export {
   type PaymentStatus,
   type RefundStatus,
 } from './service/boundary.ts';
-export { getDailyPaymentFees } from './service/daily-totals.ts';
-// Đọc cho finance (#27 A3): `current: OrderPayment` của 409, cổng của phiếu thu, khoản thu chưa khớp.
-export { getOrderPaymentView, type OrderPaymentView } from './service/payment-links.ts';
-export { getPaymentTransactions } from './service/transactions.ts';
-export { markCodCollected, markPaid, markRefunded, revertPaid, revertRefunded } from './service/state.ts';
+export { markPaid, revertPaid, revertRefunded } from './service/state.ts';
 // Webhook giao cho finance qua ctx (A11): payment không import finance, src/modules/finance/index.ts tiêm `onVerifiedPayment`.
 export {
   type PaymentContext,
   recordGatewayTransaction,
-  type TransactionRefsLookup,
   type VerifiedGatewayPayment,
   type VerifiedPaymentHandler,
   verifiedPaymentHandlerOf,
