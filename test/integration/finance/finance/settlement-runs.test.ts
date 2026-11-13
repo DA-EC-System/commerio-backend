@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { lazadaLedgerKind } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import type { PlatformPayout, PlatformTxn } from '#src/modules/finance/finance/domain/settlement.ts';
 import { recordPackageDelivered } from '#src/modules/finance/finance/service/ledger.ts';
-import { markOrderCancelled } from '#src/modules/finance/finance/service/order-settlement-state.ts';
+import { markOrderCancelled, paymentStatusesOf } from '#src/modules/finance/finance/service/order-settlement-state.ts';
 import { openRun, processRun, runSettlement, runSettlementJob } from '#src/modules/finance/finance/service/settlement-runs.ts';
 import type { FinanceContext } from '#src/modules/finance/finance/service/settlement-views.ts';
 import { Order, OrderSummaryPage } from '#src/modules/order/sales/api/schemas.ts';
@@ -525,6 +525,72 @@ describe('paymentStatus của đơn (#234)', () => {
     expect(body).toMatchObject({ status: rows[0].status, paymentStatus: 'mismatch' });
     expect(body.flags).toContain('payment_mismatch');
     expect(await listed(s.ceo, s.order.orderId)).toMatchObject({ paymentStatus: 'mismatch', flags: expect.arrayContaining(['payment_mismatch']) });
+  });
+
+  /** Số của AC US-TI-05 dòng 3, 4: không phí (ước tính = giá bán 180.000 đ), ngưỡng lệch 1.000 đ hoặc 1%. */
+  async function acSetup() {
+    const c = await createCompany();
+    const shopId = randomUUID();
+    await config(c.companyId, 'fee', shopId, { fixedPct: 0, transactionPct: 0, servicePct: 0, optionalPct: 0, returnFee: 0 });
+    await config(c.companyId, 'mismatch_threshold', null, { abs: 1000, pct: 1, resolveLimit: 10000 });
+    const v = await createVariant(c.companyId);
+    const o = await createOrder(c.companyId, { lines: [{ variantId: v.variantId, quantity: 1, unitPrice: 180000 }], source: 'marketplace' });
+    await testPool().query(`update "order".orders set shop_id = $1, external_order_id = $2 where id = $3`, [shopId, EXT, o.orderId]);
+    await recordPackageDelivered(c.companyId, {
+      packageId: randomUUID(),
+      orderId: o.orderId,
+      shopId,
+      deliveredAt: '2026-11-01T08:00:00Z',
+      lines: [{ variantId: v.variantId, quantity: 1, unitPrice: '180000', unitCost: '90000' }],
+      platformSubsidy: '0',
+      shippingIncome: '0',
+      shippingCost: '0',
+    });
+    expect(await settlement(c.companyId, o.orderId)).toMatchObject({ status: 'pending', estimated_total: '180000.00' });
+    return { companyId: c.companyId, ceo: c.ceo.token, shopId, orderId: o.orderId };
+  }
+  /** Sàn trả `paid` cho đơn 180.000 đ: phần thiếu là phí sàn trừ. */
+  const paidOf = (prefix: string, paid: number) => [
+    txn(`${prefix}1`, 'Item Price Credit', 'Orders-Sales', '180000.00'),
+    txn(`${prefix}2`, 'Commission', 'Orders-Lazada Fees', (paid - 180000).toFixed(2)),
+  ];
+
+  it('US-TI-05 dòng 3, D42-02: ngưỡng 1.000 đ hoặc 1%, ước tính 180.000 đ, sàn trả 179.500 đ thì settled, số thật thay số ước tính', async () => {
+    const s = await acSetup();
+    await runSettlement(fakeSource(() => paidOf('R', 179500)), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.orderId)).toMatchObject({ status: 'settled', settled_total: '179500.00', diff: '-500.00' });
+    const body = Order.parse((await order(s.ceo, s.orderId)).body);
+    expect(body.paymentStatus).toBe('settled');
+    expect(body.flags).not.toContain('payment_mismatch');
+  });
+
+  it('US-TI-05 dòng 4, D42-03: cùng ngưỡng và ước tính, sàn trả 175.000 đ thì mismatch, đơn mang cờ payment_mismatch', async () => {
+    const s = await acSetup();
+    await runSettlement(fakeSource(() => paidOf('U', 175000)), s.companyId, null, s.shopId);
+    expect(await settlement(s.companyId, s.orderId)).toMatchObject({ status: 'mismatch', settled_total: '175000.00', diff: '-5000.00' });
+    const body = Order.parse((await order(s.ceo, s.orderId)).body);
+    expect(body.paymentStatus).toBe('mismatch');
+    expect(body.flags).toContain('payment_mismatch');
+  });
+
+  it('cô lập công ty: đơn mismatch của công ty B không hiện ở danh sách, chi tiết đơn của công ty A, cổng đọc trong A trả none', async () => {
+    const b = await setup();
+    await deliver(b);
+    await runSettlement(fakeSource(() => settlementOf('I', '-10320.00')), b.companyId, null, b.shopId);
+    expect(await settlement(b.companyId, b.order.orderId)).toMatchObject({ status: 'mismatch' });
+    const a = await setup();
+
+    const res = await request(app).get('/api/v1/sales/orders?pageSize=100').set('Authorization', `Bearer ${a.ceo}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = OrderSummaryPage.parse(res.body).items;
+    expect(items.map((o) => o.id)).not.toContain(b.order.orderId);
+    expect(items.flatMap((o) => o.flags)).not.toContain('payment_mismatch');
+    expect(items.map((o) => o.paymentStatus)).not.toContain('mismatch');
+
+    const detail = await order(a.ceo, b.order.orderId);
+    expect([detail.status, detail.body.type]).toEqual([404, '/problems/not_found']);
+    const statuses = await withCompany(a.companyId, () => paymentStatusesOf([b.order.orderId]));
+    expect(statuses.get(b.order.orderId)).toBe('none');
   });
 
   it('GET /sales/orders?flag=payment_mismatch: 422, cờ suy từ finance không lọc ở danh sách đơn', async () => {

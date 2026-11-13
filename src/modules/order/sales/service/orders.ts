@@ -81,6 +81,7 @@ async function factsOf(ctx: SalesContext, orderIds: string[]): Promise<Map<strin
     findPackagesOfOrders(orderIds),
     lineFacts(orderIds),
     openReturnCounts(orderIds),
+    // Thiếu `paymentStatusOf` (ctx dựng tay trong test) thì mọi đơn là `none`; `AppContext` khai Required nên app thật luôn có.
     ctx.paymentStatusOf && orderIds.length ? ctx.paymentStatusOf(orderIds) : new Map<string, PaymentStatus>(),
   ]);
   return new Map(
