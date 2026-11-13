@@ -6,10 +6,11 @@ import { defineMachine } from '../../../core/index.ts';
 export const CONFIG_KINDS = ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin'] as const;
 export type ConfigKind = (typeof CONFIG_KINDS)[number];
 
-export const CONFIG_STATUSES = ['draft', 'pending_approval', 'rejected', 'scheduled', 'active', 'expired', 'cancelled'] as const;
+/** Tên theo Documents/25 §10.4, 21 §21.4 (đổi `expired` → `superseded` ngày 02/11/2026, #230). */
+export const CONFIG_STATUSES = ['draft', 'pending_approval', 'rejected', 'scheduled', 'active', 'superseded', 'cancelled'] as const;
 export type ConfigStatus = (typeof CONFIG_STATUSES)[number];
 
-export type ConfigAction = 'submit' | 'request_changes' | 'approve' | 'reject' | 'cancel' | 'activate' | 'expire';
+export type ConfigAction = 'submit' | 'request_changes' | 'approve' | 'reject' | 'cancel' | 'activate' | 'supersede';
 /** Thao tác người dùng gọi qua `POST /configs/:id/:action` (đường dẫn viết gạch ngang như mục 20). */
 export const USER_ACTIONS = { submit: 'submit', 'request-changes': 'request_changes', approve: 'approve', reject: 'reject', cancel: 'cancel' } as const;
 
@@ -21,7 +22,11 @@ const pct = (label: string) =>
     .multipleOf(0.01, `${label} tối đa hai chữ số thập phân`);
 const vnd = (label: string) => z.number(`${label} là số đồng`).int(`${label} là số nguyên đồng`).min(0, `${label} không âm`);
 
-/** Nội dung `payload` theo `kind` (§21.4). `tax_rules` chờ GVHD trả lời câu hỏi thuế (Documents/19 §7). */
+/**
+ * Nội dung `payload` theo `kind` (§21.4). `tax_rules`: `vatPct`, `pitPct` là thuế sàn khấu trừ của hộ kinh doanh, cá nhân
+ * trên doanh thu; `outputVatPct` là thuế suất GTGT đầu ra của doanh nghiệp (giá bán đã gồm, 25 §10.2, E131). Số cụ thể
+ * chờ GVHD trả lời câu hỏi thuế (Documents/19 §7).
+ */
 export const PAYLOAD_SCHEMAS = {
   fee: z.strictObject({
     fixedPct: pct('Phí cố định'),
@@ -34,6 +39,7 @@ export const PAYLOAD_SCHEMAS = {
   tax_rules: z.strictObject({
     vatPct: pct('Thuế GTGT'),
     pitPct: pct('Thuế TNCN'),
+    outputVatPct: pct('Thuế GTGT đầu ra'),
     milestones: z.array(vnd('Mốc doanh thu')).max(5, 'Tối đa 5 mốc doanh thu'),
   }),
   mismatch_threshold: z.strictObject({ abs: vnd('Ngưỡng lệch'), pct: pct('Ngưỡng lệch theo phần trăm'), resolveLimit: vnd('Hạn mức tự chốt') }),
@@ -51,6 +57,13 @@ export function parsePayload(kind: ConfigKind, payload: unknown) {
 export const feePctOf = (p: ConfigPayload<'fee'>) => p.fixedPct + p.transactionPct + p.servicePct + p.optionalPct;
 /** Phần trăm thuế sàn khấu trừ (hộ kinh doanh, cá nhân). */
 export const taxPctOf = (p: ConfigPayload<'tax_rules'>) => p.vatPct + p.pitPct;
+
+/**
+ * Thuế suất GTGT đầu ra phải bỏ khỏi doanh thu khi tính lãi (25 §10.2: "doanh nghiệp: chia cho 1 + v để bỏ GTGT đầu
+ * ra"): chỉ doanh nghiệp có quy tắc thuế; hộ kinh doanh, cá nhân, hay chưa có cấu hình thì 0.
+ */
+export const outputVatPctOf = (regime: ConfigPayload<'tax_regime'> | undefined, rules: ConfigPayload<'tax_rules'> | undefined) =>
+  regime?.regime === 'company' && rules ? rules.outputVatPct : 0;
 
 export interface ConfigRecord {
   createdBy: string | null;
@@ -101,7 +114,7 @@ export const configMachine = defineMachine<ConfigStatus, ConfigAction, ConfigRec
     guard: beforeEffective,
   },
   { from: 'scheduled', to: 'active', action: 'activate', label: 'Áp dụng', system: true },
-  { from: 'active', to: 'expired', action: 'expire', label: 'Hết hiệu lực', system: true },
+  { from: 'active', to: 'superseded', action: 'supersede', label: 'Hết hiệu lực', system: true },
 ]);
 
 const DAY_MS = 86_400_000;
@@ -121,11 +134,11 @@ export interface DatedVersion {
 }
 
 /**
- * Phiên bản áp cho một ngày trong một ô (công ty, loại, gian hàng): bản `active` hoặc `expired` có khoảng ngày chứa
+ * Phiên bản áp cho một ngày trong một ô (công ty, loại, gian hàng): bản `active` hoặc `superseded` có khoảng ngày chứa
  * ngày đó. Bản đã bị một bản sửa lỗi đang dùng thay thế thì bỏ (bản sửa lỗi có thể cùng ngày hiệu lực).
  */
 export function pickEffective<V extends DatedVersion>(versions: readonly V[], day: string): V | undefined {
-  const applied = versions.filter((v) => v.status === 'active' || v.status === 'expired');
+  const applied = versions.filter((v) => v.status === 'active' || v.status === 'superseded');
   const replaced = new Set(applied.map((v) => v.supersedesId).filter((id): id is string => !!id));
   return applied
     .filter((v) => !replaced.has(v.id) && v.effectiveFrom !== null && v.effectiveFrom <= day && (v.effectiveTo === null || v.effectiveTo >= day))

@@ -1,6 +1,7 @@
-// Phiên bản cấu hình tiền (#118, Documents/21 §21.4): soạn, chạy thử, gửi duyệt, duyệt (người thứ hai), tự áp dụng
-// đúng ngày bằng việc nền, hết hiệu lực khi bản sau cùng ô có hiệu lực. Sổ tiền (#116) chọn phiên bản theo ngày kiện
-// giao bằng `getEffectiveConfig`. Ghi điều chỉnh hồi tố cho bản sửa lỗi cần sổ tiền: làm ở #116.
+// Phiên bản cấu hình tiền (#118, #230, Documents/21 §21.4): soạn, chạy thử, gửi duyệt, duyệt (người thứ hai), tự áp
+// dụng đúng ngày bằng việc nền, hết hiệu lực (`superseded`) khi bản sau cùng ô có hiệu lực. Sổ tiền (#116) chọn phiên
+// bản theo ngày kiện giao bằng `getEffectiveConfig`. Bản có ngày hiệu lực đã qua (hồi tố, bản sửa lỗi) khi sang
+// `active` thì ghi dòng `adjustment` cho các kiện trong khoảng hồi tố (25 §10.4, `postRetroactive`).
 import { Decimal } from 'decimal.js';
 import { withCompany, withSessionLock } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -14,12 +15,23 @@ import {
   configMachine,
   type ConfigStatus,
   feePctOf,
+  outputVatPctOf,
   parsePayload,
   pickEffective,
   placeInTimeline,
   taxPctOf,
   vnDate,
 } from '../domain/config-version.ts';
+import {
+  configDraftsOfDelivered,
+  type Draft,
+  type LedgerKind,
+  netRevenuePortions,
+  outputVatOf,
+  postReturned,
+  RETRO_KINDS,
+  sumDrafts,
+} from '../domain/ledger.ts';
 import {
   type ConfigFilter,
   type ConfigRow,
@@ -28,11 +40,15 @@ import {
   findConfigs,
   findDueScheduledAnyCompany,
   insertConfig,
-  lockCell,
+  lockCells,
+  netRevenueLinesSince,
+  retroSources,
+  type RetroSource,
   setEffectiveTo,
   sumLedgerSince,
   updateConfig,
 } from '../repository/config-versions.ts';
+import { insertEntries } from '../repository/ledger.ts';
 import type { FinanceContext } from './settlement-views.ts';
 import { isUuid, notFound, type Page, paginate, userRef } from './views.ts';
 
@@ -119,12 +135,14 @@ export function createConfig(caller: Caller, input: ConfigInput) {
     if ((input.kind === 'fee') !== !!input.shopId) errors.shopId = input.kind === 'fee' ? 'Phí sàn cần gian hàng' : 'Chỉ phí sàn mới gắn gian hàng';
     if (input.retroactiveFrom && !input.isCorrection) errors.retroactiveFrom = 'Chỉ bản sửa lỗi mới ghi hồi tố';
     if (input.isCorrection && !input.supersedesId) errors.supersedesId = 'Bản sửa lỗi cần bản bị sửa';
+    if (input.supersedesId && !input.isCorrection) errors.supersedesId = 'Chỉ bản sửa lỗi mới ghi bản bị sửa';
     if (Object.keys(errors).length) throw invalid(errors);
     const payload = checkPayload(input.kind, input.payload);
     if (input.supersedesId) {
       const target = isUuid(input.supersedesId) ? await findConfig(input.supersedesId) : undefined;
       if (!target || target.kind !== input.kind || target.shopId !== (input.shopId ?? null))
         throw invalid({ supersedesId: 'Bản bị sửa không có hoặc khác loại, khác gian hàng' });
+      await checkCorrection(target, input.effectiveFrom);
     }
     const row = await insertConfig({
       companyId: caller.companyId,
@@ -149,10 +167,39 @@ export function updateDraft(caller: Caller, id: string, input: { version: number
     if (row.version !== input.version) throw conflict(row);
     if (row.status !== 'draft') throw new AppError(409, 'invalid_transition', 'Chỉ sửa được phiên bản nháp', { current: row.status });
     const payload = checkPayload(row.kind, input.payload);
+    if (row.supersedesId) await checkCorrectionOf(row, input.effectiveFrom);
     const updated = await updateConfig(row.id, row, { payload, effectiveFrom: input.effectiveFrom, dryRunResult: null });
     if (!updated) throw conflict(row);
     return detail(updated);
   });
+}
+
+/**
+ * Bản sửa lỗi (25 §10.4 "phiên bản sửa lỗi, ghi rõ thay cho bản nào"; E148 "Tạo phiên bản sửa lỗi cùng ngày hiệu lực"):
+ * chỉ thay bản đã áp dụng (`active`, `superseded`) chưa có bản sửa lỗi nào khác đã áp, và cùng ngày hiệu lực với bản
+ * đó. Bản đã duyệt mà chưa tới ngày (`scheduled`) thì huỷ rồi soạn bản mới (§10.4 "Phiên bản đã duyệt không sửa được;
+ * muốn đổi thì tạo phiên bản mới", huỷ được trước ngày hiệu lực). Kiểm lúc tạo, sửa nháp, gửi duyệt, duyệt.
+ */
+async function checkCorrection(target: ConfigRow, effectiveFrom: string, selfId?: string): Promise<void> {
+  if (target.status !== 'active' && target.status !== 'superseded')
+    throw new AppError(422, 'invalid_correction_target', 'Chỉ sửa lỗi được bản đã áp dụng; bản chưa tới ngày hiệu lực thì huỷ rồi soạn bản mới', {
+      errors: { supersedesId: 'Bản bị sửa chưa áp dụng' },
+    });
+  const applied = await findCell(target.kind, target.shopId, ['active', 'superseded']);
+  if (applied.some((v) => v.supersedesId === target.id && v.id !== selfId))
+    throw new AppError(422, 'invalid_correction_target', 'Bản này đã có bản sửa lỗi áp dụng; hãy sửa lỗi bản đó', {
+      errors: { supersedesId: 'Bản bị sửa đã có bản sửa lỗi' },
+    });
+  if (target.effectiveFrom !== effectiveFrom)
+    throw new AppError(422, 'correction_date_mismatch', 'Bản sửa lỗi phải cùng ngày hiệu lực với bản bị sửa', {
+      errors: { effectiveFrom: `Bản sửa lỗi phải có hiệu lực từ ${target.effectiveFrom}` },
+    });
+}
+
+async function checkCorrectionOf(row: ConfigRow, effectiveFrom = row.effectiveFrom!): Promise<void> {
+  const target = await findConfig(row.supersedesId!);
+  if (!target) throw invalid({ supersedesId: 'Bản bị sửa không có' });
+  await checkCorrection(target, effectiveFrom, row.id);
 }
 
 export interface DryRun {
@@ -170,35 +217,62 @@ export interface DryRun {
 }
 
 /**
- * Chạy thử, không ghi sổ: lãi 30 ngày gần nhất theo sổ tiền (`now`) và lãi nếu áp phiên bản này (`next`). Phí sàn,
- * thuế đổi bao nhiêu phần trăm thì lãi đổi bấy nhiêu phần trăm doanh thu. Loại khác không đổi lãi trực tiếp.
+ * Chạy thử, không ghi sổ: lãi 30 ngày gần nhất theo sổ tiền (`now`) và lãi nếu áp phiên bản này cho cả 30 ngày
+ * (`next`). Phí sàn đổi bao nhiêu phần trăm thì lãi đổi bấy nhiêu phần trăm doanh thu. Thuế đi cùng một hàm với lãi
+ * theo đơn: thuế sàn khấu trừ như `configDraftsOfDelivered` (hộ kinh doanh, cá nhân), GTGT đầu ra bỏ khỏi doanh thu
+ * thuần như `outputVatOf` (doanh nghiệp), theo phiên bản áp ở ngày giao của từng phần dòng (`netRevenuePortions`).
  */
 async function computeDryRun(ctx: FinanceContext, row: ConfigRow, now: Date): Promise<DryRun> {
   const today = vnDate(now);
-  const { total, revenue } = await sumLedgerSince(addDays(today, -30), row.kind === 'fee' ? row.shopId! : undefined);
-  const base = new Decimal(total);
-  let next = base;
+  const shopFilter = row.kind === 'fee' ? row.shopId! : undefined;
+  const from = addDays(today, -30);
+  const { total, revenue } = await sumLedgerSince(from, shopFilter);
+  const { live, estimates } = await netRevenueLinesSince(from, shopFilter);
+  const groups = netRevenuePortions(live, estimates);
+  const configAt = memoConfig();
+  const taxAt = async (day: string, proposed: boolean) => {
+    const regime = (await configAt('tax_regime', null, day))?.payload;
+    const rules = (await configAt('tax_rules', null, day))?.payload;
+    if (!proposed) return { regime, rules };
+    if (row.kind === 'tax_regime') return { regime: row.payload as ConfigPayload<'tax_regime'>, rules };
+    if (row.kind === 'tax_rules') return { regime, rules: row.payload as ConfigPayload<'tax_rules'> };
+    return { regime, rules };
+  };
+  /** GTGT đầu ra trong một nhóm dòng (doanh nghiệp) và thuế sàn khấu trừ trên doanh thu (hộ, cá nhân). */
+  const taxOf = (g: { kind: LedgerKind; amount: string }, t: { regime?: ConfigPayload<'tax_regime'>; rules?: ConfigPayload<'tax_rules'> }) => ({
+    vat: outputVatOf({ kind: g.kind, amount: g.amount, outputVatPct: outputVatPctOf(t.regime, t.rules) }),
+    withheld: g.kind === 'revenue' ? sumDrafts(configDraftsOfDelivered(g.amount, { regime: version(t.regime), rules: version(t.rules) })).negated() : new Decimal(0),
+  });
+  // `now` giữ số của sổ (thuế khấu trừ đã là dòng, kể cả số thật sau quyết toán), chỉ bỏ GTGT đầu ra. `next` thêm phần
+  // thuế khấu trừ đổi đi nếu áp bản này.
+  let current = new Decimal(total);
+  let next = new Decimal(total);
+  for (const g of groups) {
+    const was = taxOf(g, await taxAt(g.day, false));
+    const will = taxOf(g, await taxAt(g.day, true));
+    current = current.minus(was.vat);
+    next = next.minus(will.vat).minus(will.withheld.minus(was.withheld));
+  }
   let feePct: number | null = null;
   let taxPct: number | null = null;
-  if (row.kind === 'fee' || row.kind === 'tax_rules') {
-    const current = await effectiveIn(row.kind, row.shopId, today);
-    if (row.kind === 'fee') {
-      feePct = feePctOf(row.payload as ConfigPayload<'fee'>);
-      const was = current ? feePctOf(current.payload as ConfigPayload<'fee'>) : 0;
-      next = base.minus(new Decimal(revenue).times(feePct - was).div(100));
-    } else {
-      taxPct = taxPctOf(row.payload as ConfigPayload<'tax_rules'>);
-      const was = current ? taxPctOf(current.payload as ConfigPayload<'tax_rules'>) : 0;
-      next = base.minus(new Decimal(revenue).times(taxPct - was).div(100));
-    }
+  if (row.kind === 'fee') {
+    const cur = await effectiveIn('fee', row.shopId, today);
+    feePct = feePctOf(row.payload as ConfigPayload<'fee'>);
+    const was = cur ? feePctOf(cur.payload as ConfigPayload<'fee'>) : 0;
+    next = next.minus(new Decimal(revenue).times(feePct - was).div(100));
+  } else if (row.kind === 'tax_rules') {
+    taxPct = taxPctOf(row.payload as ConfigPayload<'tax_rules'>);
   }
   const rows: DryRun['rows'] = [];
   if (row.shopId) {
     const shop = ctx.shopsOf ? (await ctx.shopsOf([row.shopId])).get(row.shopId) : undefined;
     rows.push({ shopId: row.shopId, shopName: shop?.shopName ?? null, feePct, taxPct, listingsRepriced: null, belowFloor: null });
   }
-  return { at: now.toISOString(), rows, profit30: { now: base.round().toNumber(), next: next.round().toNumber() } };
+  return { at: now.toISOString(), rows, profit30: { now: current.round().toNumber(), next: next.round().toNumber() } };
 }
+
+/** Bọc payload thành `Version` cho hàm ghi sổ (id không dùng khi chỉ tính tổng). */
+const version = <P>(payload: P | undefined) => (payload ? { id: '', payload } : undefined);
 
 export function dryRunConfig(ctx: FinanceContext, caller: Caller, id: string, version: number, now = new Date()) {
   return withCompany(caller.companyId, async () => {
@@ -213,7 +287,7 @@ export function dryRunConfig(ctx: FinanceContext, caller: Caller, id: string, ve
 
 /** Bản đang áp cho một ngày trong ô (trong `withCompany` của bên gọi). */
 async function effectiveIn(kind: ConfigKind, shopId: string | null, day: string): Promise<ConfigRow | undefined> {
-  return pickEffective(await findCell(kind, shopId, ['active', 'expired']), day);
+  return pickEffective(await findCell(kind, shopId, ['active', 'superseded']), day);
 }
 
 /**
@@ -229,11 +303,39 @@ export async function getEffectiveConfig<K extends ConfigKind>(
   return row && { id: row.id, payload: row.payload as ConfigPayload<K>, createdBy: row.createdBy };
 }
 
+/**
+ * Ô phải khoá riêng khi đổi trạng thái một bản: ô của nó; bản nhóm thuế khoá cả hai ô thuế vì thuế khấu trừ, GTGT đầu
+ * ra tính từ cả loại hình và quy tắc (áp hai bản thuế song song thì bản sau quét hồi tố thấy bản trước).
+ */
+const cellsOf = (row: ConfigRow): (readonly [ConfigKind, string | null])[] =>
+  row.kind === 'tax_regime' || row.kind === 'tax_rules'
+    ? [
+        ['tax_regime', null],
+        ['tax_rules', null],
+      ]
+    : [[row.kind, row.shopId]];
+
 /** Thao tác người dùng theo máy trạng thái (§21.4). Duyệt bản đã tới ngày thì áp dụng ngay. */
 export function actOnConfig(caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now = new Date()) {
+  return overlapAsConflict(actOnConfigTx(caller, id, action, input, now));
+}
+
+/** Lỗi `config_versions_no_overlap` (23P01) còn lọt qua kiểm tra của service thì trả 409 `config_overlap`, không 500. */
+async function overlapAsConflict<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (err) {
+    const pg = (e: unknown) => e as { code?: string; constraint?: string; cause?: unknown } | undefined;
+    const cause = pg(err)?.code ? pg(err) : pg(pg(err)?.cause);
+    if (cause?.code === '23P01' && cause.constraint === 'config_versions_no_overlap') throw overlap();
+    throw err;
+  }
+}
+
+function actOnConfigTx(caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now: Date) {
   return withCompany(caller.companyId, async () => {
     const row = await load(id);
-    await lockCell(row.kind, row.shopId);
+    await lockCells(cellsOf(row));
     const locked = await load(id, 'update');
     if (locked.version !== input.version) throw conflict(locked);
     const today = vnDate(now);
@@ -246,6 +348,7 @@ export function actOnConfig(caller: Caller, id: string, action: ConfigAction, in
     });
     if (action === 'submit' && !locked.dryRunResult)
       throw new AppError(422, 'dry_run_required', 'Cần chạy thử trước khi gửi duyệt');
+    if ((action === 'submit' || action === 'approve') && locked.supersedesId) await checkCorrectionOf(locked);
 
     let effectiveTo: string | null = null;
     if (action === 'submit' || action === 'approve') {
@@ -260,6 +363,10 @@ export function actOnConfig(caller: Caller, id: string, action: ConfigAction, in
       }
     }
     const reason = input.reason?.trim() || null;
+    // Duyệt bản đã tới ngày thì áp ngay. Bản bị sửa lỗi (E148) phải rời dòng thời gian trước khi bản này vào
+    // `scheduled`, không thì hai khoảng ngày chồng nhau vi phạm `config_versions_no_overlap`.
+    const activateNow = action === 'approve' && locked.effectiveFrom! <= today;
+    const superseded = activateNow ? await supersedeOld(locked) : null;
     const updated = await updateConfig(locked.id, locked, {
       status: to,
       statusReason: reason ?? locked.statusReason,
@@ -281,7 +388,7 @@ export function actOnConfig(caller: Caller, id: string, action: ConfigAction, in
     // Sau khi bản này rời `scheduled`: nới bản trước khi bản này còn trong ràng buộc `config_versions_no_overlap` là chồng ngày.
     if (action === 'cancel' && locked.status === 'scheduled') await reopenPredecessor(locked);
 
-    const result = action === 'approve' && locked.effectiveFrom! <= today ? await activate(updated) : updated;
+    const result = activateNow ? await activate(updated, today, superseded) : updated;
     return detail(result);
   });
 }
@@ -295,30 +402,154 @@ async function reopenPredecessor(cancelled: ConfigRow): Promise<void> {
 
 /**
  * `scheduled` → `active` (hệ thống), trong giao dịch và khoá ô của bên gọi. Bản `active` cùng ô đã kết thúc trước ngày
- * này, và bản bị sửa lỗi, sang `expired`. Phát `finance.fee_config_activated`.
+ * này, và bản bị sửa lỗi, sang `superseded`. Ngày hiệu lực đã qua thì ghi điều chỉnh hồi tố (`postRetroactive`). Phát
+ * `finance.fee_config_activated`.
  */
-async function activate(row: ConfigRow): Promise<ConfigRow> {
+async function activate(row: ConfigRow, today: string, retired: string | null = null): Promise<ConfigRow> {
+  const superseded = (await supersedeOld(row)) ?? retired;
+  const active = await updateConfig(row.id, row, { status: 'active' });
+  if (!active) throw conflict(row);
+  await recordTransition({ entityType: ENTITY, entityId: row.id, from: 'scheduled', to: 'active', action: 'activate', actorId: null });
+  await supersedeEnded(row, today);
+  await postRetroactive(active, today);
+  await publishEvent({
+    type: 'finance.fee_config_activated',
+    aggregateId: row.id,
+    payload: { configVersionId: row.id, kind: row.kind, shopId: row.shopId, effectiveFrom: row.effectiveFrom!, supersededId: superseded },
+  });
+  // Bản vừa áp có thể đã sang `superseded` ngay (`supersedeEnded`): trả trạng thái mới nhất.
+  return (await findConfig(row.id)) ?? active;
+}
+
+/**
+ * Bản `active` cùng ô đã kết thúc trước ngày hiệu lực của `row`, và bản `row` sửa lỗi, sang `superseded` (hệ thống).
+ * Trả id bản cuối cùng đã chuyển, không có thì null.
+ */
+async function supersedeOld(row: ConfigRow): Promise<string | null> {
   let superseded: string | null = null;
   for (const old of await findCell(row.kind, row.shopId, ['active'])) {
     const ended = old.effectiveTo !== null && old.effectiveTo < row.effectiveFrom!;
     if (!ended && old.id !== row.supersedesId) continue;
     // Bản sửa lỗi cùng ngày hiệu lực: bản cũ không còn ngày nào, giữ khoảng một ngày cho CHECK `config_versions_range`.
     const effectiveTo = old.effectiveTo ?? (old.effectiveFrom! < row.effectiveFrom! ? addDays(row.effectiveFrom!, -1) : old.effectiveFrom);
-    const expired = await updateConfig(old.id, old, { status: 'expired', effectiveTo });
-    if (expired) {
-      await recordTransition({ entityType: ENTITY, entityId: old.id, from: 'active', to: 'expired', action: 'expire', actorId: null });
+    const done = await updateConfig(old.id, old, { status: 'superseded', effectiveTo });
+    if (done) {
+      await recordTransition({ entityType: ENTITY, entityId: old.id, from: 'active', to: 'superseded', action: 'supersede', actorId: null });
       superseded = old.id;
     }
   }
-  const active = await updateConfig(row.id, row, { status: 'active' });
-  if (!active) throw conflict(row);
-  await recordTransition({ entityType: ENTITY, entityId: row.id, from: 'scheduled', to: 'active', action: 'activate', actorId: null });
-  await publishEvent({
-    type: 'finance.fee_config_activated',
-    aggregateId: row.id,
-    payload: { configVersionId: row.id, kind: row.kind, shopId: row.shopId, effectiveFrom: row.effectiveFrom!, supersededId: superseded },
-  });
-  return active;
+  return superseded;
+}
+
+/**
+ * Sau khi một bản sang `active`: bản `active` nào của ô đã kết thúc trước hôm nay (bản sau đã áp, vd bản hồi tố xếp
+ * trước một bản đang áp) thì sang `superseded`, ghi nhật ký `supersede` (25 §10.4 "Phiên bản sau đã có hiệu lực").
+ */
+async function supersedeEnded(row: ConfigRow, today: string): Promise<void> {
+  const active = await findCell(row.kind, row.shopId, ['active']);
+  for (const old of active) {
+    if (old.effectiveTo === null || old.effectiveTo >= today) continue;
+    if (!active.some((v) => v.id !== old.id && v.effectiveFrom! > old.effectiveTo! && v.effectiveFrom! <= today)) continue;
+    if (await updateConfig(old.id, old, { status: 'superseded' }))
+      await recordTransition({ entityType: ENTITY, entityId: old.id, from: 'active', to: 'superseded', action: 'supersede', actorId: null });
+  }
+}
+
+/** Nhóm dòng sổ mỗi loại cấu hình sinh ra (`RETRO_KINDS`); ngưỡng lệch, biên tối thiểu không sinh dòng nên không hồi tố. */
+const RETRO_GROUP: Partial<Record<ConfigKind, { group: keyof typeof RETRO_KINDS; configKinds: readonly ConfigKind[] }>> = {
+  fee: { group: 'fee', configKinds: ['fee'] },
+  tax_regime: { group: 'tax', configKinds: ['tax_regime', 'tax_rules'] },
+  tax_rules: { group: 'tax', configKinds: ['tax_regime', 'tax_rules'] },
+};
+const KIND_LABEL: Record<ConfigKind, string> = {
+  fee: 'phí sàn',
+  tax_regime: 'loại hình thuế',
+  tax_rules: 'quy tắc thuế',
+  mismatch_threshold: 'ngưỡng lệch',
+  min_margin: 'biên tối thiểu',
+};
+const SOURCE_LABEL = { fee: { package: 'phí sàn', package_return: 'phí khi hoàn' }, tax: { package: 'thuế sàn khấu trừ', package_return: '' } };
+const vnd = (d: Decimal.Value) => new Decimal(d).toFixed(0);
+
+/**
+ * Luật hồi tố (25 §10.4, T1; E134, E148): bản vừa sang `active` có ngày hiệu lực không sau hôm nay thì với mọi kiện
+ * giao, kiện hoàn của ô trong khoảng [ngày hiệu lực, min(ngày hết, hôm nay)], tính lại khoản theo cấu hình bằng phiên
+ * bản đang áp ở ngày phát sinh (lúc này là bản mới) rồi so với số đã ghi (dòng ước tính cùng loại cộng điều chỉnh hồi
+ * tố trước đó cùng nhóm). Lệch thì thêm một dòng `adjustment` ước tính, ghi lý do; không sửa dòng cũ. Ngày của dòng
+ * là ngày ghi. GTGT đầu ra không có dòng sổ: lãi đọc theo phiên bản của ngày nên tự đổi theo bản mới.
+ */
+async function postRetroactive(row: ConfigRow, today: string): Promise<number> {
+  const scope = RETRO_GROUP[row.kind];
+  if (!scope || row.effectiveFrom! > today) return 0;
+  const range = { from: row.effectiveFrom!, to: row.effectiveTo !== null && row.effectiveTo < today ? row.effectiveTo : today };
+  const shopId = row.kind === 'fee' ? row.shopId! : undefined;
+  const entries: Parameters<typeof insertEntries>[0] = [];
+  const configAt = memoConfig();
+  for (const type of ['package', 'package_return'] as const) {
+    const kinds = RETRO_KINDS[scope.group][type];
+    if (!kinds.length) continue;
+    for (const src of await retroSources(type, range, kinds, scope.configKinds, shopId)) {
+      const expected = sumDrafts(await expectedCharges(configAt, scope.group, type, src));
+      const delta = expected.minus(src.charged);
+      if (delta.isZero()) continue;
+      entries.push({
+        companyId: row.companyId,
+        kind: 'adjustment',
+        amount: delta.toFixed(2),
+        isEstimate: true,
+        occurredOn: today,
+        orderId: src.orderId,
+        packageId: src.packageId,
+        shopId: src.shopId,
+        sourceType: type,
+        sourceId: src.sourceId,
+        configVersionId: row.id,
+        reason:
+          `Hồi tố theo phiên bản ${KIND_LABEL[row.kind]} hiệu lực từ ${row.effectiveFrom}: ${SOURCE_LABEL[scope.group][type]} ngày ` +
+          `${src.day} đã ghi ${vnd(src.charged)} đ, theo phiên bản mới ${vnd(expected)} đ`,
+      });
+    }
+  }
+  for (let i = 0; i < entries.length; i += insertBatch) await insertEntries(entries.slice(i, i + insertBatch));
+  return entries.length;
+}
+
+/** Dòng mỗi lần chèn: giữ số tham số của một câu lệnh dưới giới hạn 65.535 của PostgreSQL (mỗi dòng ~14 cột). */
+let insertBatch = 1000;
+
+/** Chỉ cho test: hạ cỡ lô để chạy nhánh chia lô mà không dựng hơn 1.000 kiện. Trả cỡ cũ. */
+export function setRetroInsertBatchForTest(size: number): number {
+  const was = insertBatch;
+  insertBatch = size;
+  return was;
+}
+
+type ConfigAt = <K extends ConfigKind>(kind: K, shopId: string | null, day: string) => ReturnType<typeof getEffectiveConfig<K>>;
+
+/** `getEffectiveConfig` nhớ theo (loại, gian hàng, ngày) trong một lượt: nhiều kiện cùng ngày chỉ đọc một lần. */
+function memoConfig(): ConfigAt {
+  const cache = new Map<string, Promise<unknown>>();
+  return (<K extends ConfigKind>(kind: K, shopId: string | null, day: string) => {
+    const key = `${kind}:${shopId ?? '-'}:${day}`;
+    if (!cache.has(key)) cache.set(key, getEffectiveConfig(kind, shopId, day));
+    return cache.get(key) as ReturnType<typeof getEffectiveConfig<K>>;
+  }) as ConfigAt;
+}
+
+/** Khoản theo cấu hình của một nguồn, tính bằng phiên bản đang áp ở ngày phát sinh của nguồn đó. */
+async function expectedCharges(
+  configAt: ConfigAt,
+  group: keyof typeof RETRO_KINDS,
+  type: 'package' | 'package_return',
+  src: RetroSource,
+): Promise<Draft[]> {
+  if (group === 'fee') {
+    const fee = await configAt('fee', src.shopId, src.day);
+    return type === 'package' ? configDraftsOfDelivered(src.revenue, { fee }) : postReturned(fee);
+  }
+  const regime = await configAt('tax_regime', null, src.day);
+  const rules = await configAt('tax_rules', null, src.day);
+  return configDraftsOfDelivered(src.revenue, { regime, rules });
 }
 
 /** Áp dụng các bản đã tới ngày của mọi công ty; mỗi bản một giao dịch, lỗi của một bản không chặn bản khác. */
@@ -329,10 +560,10 @@ export async function activateDueConfigs(now = new Date()): Promise<number> {
       await withCompany(due.companyId, async () => {
         const row = await findConfig(due.id);
         if (!row) return;
-        await lockCell(row.kind, row.shopId);
+        await lockCells(cellsOf(row));
         const locked = await findConfig(due.id, 'update');
         if (locked?.status !== 'scheduled' || locked.effectiveFrom! > vnDate(now)) return;
-        await activate(locked);
+        await activate(locked, vnDate(now));
         done++;
       });
     } catch (err) {
