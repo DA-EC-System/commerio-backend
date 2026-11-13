@@ -126,7 +126,7 @@ repackPackage?(accessToken: string, packageCode: string): Promise<void>;
 shippingDocuments?(accessToken: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
 ```
 
-`withTokenRefresh` gọi lại sau khi làm mới token; `packItems`, `readyToShip`, `repackPackage` là hàm ghi, phải vào `NO_RETRY` (`channel/CLAUDE.md` mục Token: hàm ghi không gọi lại, chỉ làm mới cho lần sau).
+`withTokenRefresh` gọi lại sau khi làm mới token. `packItems`, `readyToShip`, `repackPackage` **không** vào `NO_RETRY`: sàn báo `unauthorized` nghĩa là lệnh ghi chưa chạy, gọi lại là an toàn. `createProduct` khác vì có bước đọc sau bước ghi (`channel/CLAUDE.md` mục Token). `packItems` gọi providers (đọc) trước pack (ghi), không có bước nào sau pack. Route `ready` chỉ gửi một mã nên không có lô nửa chừng. (Sửa lúc lên plan, 13/11/2026.)
 
 **Lazada** (`lazada.ts`):
 - `shipmentProviders`: `GET /order/shipment/providers/get`, `getShipmentProvidersReq={"orders":[{"order_id","order_item_ids":[…]}]}`. `shipping_allocate_type = TFS` thì `platformChooses: true`, `items: []`; không thì `items` lấy từ `shipment_providers[]`, `isDefault` khi trùng `platform_default`. Shop thử trả danh sách rỗng nên chưa biết tên trường của từng phần tử: builder tra tài liệu GetShipmentProvider, viết theo tài liệu, thêm kịch bản `NTFS` vào sàn giả lập.
