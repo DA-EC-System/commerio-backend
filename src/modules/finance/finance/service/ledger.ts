@@ -1,12 +1,14 @@
 // Sổ tiền theo đơn (#116; Documents/21 §21.1, §11.2; 25 §10.1, §10.2, §10.4). Module tiền chỉ nghe sự kiện: các hàm
 // `record…` nhận payload của sự kiện (fulfillment, sales, inventory, purchasing) và ghi dòng, mỗi nguồn một lần.
 // Consumer `finance-ledger` (`registerLedgerConsumers`, #228) gọi chúng trong giao dịch của khung sự kiện.
+import { Decimal } from 'decimal.js';
 import { type EventEnvelope, type EventPayload, type EventType, registerConsumer } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { addDays, outputVatPctOf, vnDate } from '../domain/config-version.ts';
 import {
   costMissingOf,
   type Draft,
+  type NetLine,
   postDelivered,
   postInspected,
   postRefund,
@@ -14,7 +16,8 @@ import {
   postSupplierRefund,
   profitOf,
   taxWarnings,
-  vatDaysOf,
+  netRevenuePortions,
+  outputVatOf,
 } from '../domain/ledger.ts';
 import {
   entriesOfOrder,
@@ -103,6 +106,8 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
 export function recordPackageReturned(companyId: string, e: PackageReturned): Promise<number> {
   return withCompany(companyId, async () => {
     const day = dayOf(e.returnedAt);
+    // Như kiện giao: khoá chia sẻ ô phí để bản phí đang sang `active` không quét hồi tố sót kiện hoàn này (#230).
+    await lockCellsShared([['fee', e.shopId]]);
     const drafts = postReturned(await getEffectiveConfig('fee', e.shopId, day));
     const target = { source: { type: 'package_return' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
     return post(companyId, { ...target, occurredOn: day }, drafts);
@@ -257,16 +262,10 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
     // Đơn đã có số thật (#117): số thật của cả đơn thay mọi dòng ước tính, kể cả khoản sàn không thu.
     const settled = rows.some((r) => !r.isEstimate);
-    const vatDay = vatDaysOf(rows);
-    const vat = await outputVatByDay([...vatDay.values()]);
+    const replaced = (r: (typeof rows)[number]) => r.replacedBy !== null || (r.isEstimate && settled);
     const p = profitOf(
-      rows.map((r) => ({
-        kind: r.kind,
-        amount: r.amount,
-        isEstimate: r.isEstimate,
-        replaced: r.replacedBy !== null || (r.isEstimate && settled),
-        outputVatPct: vat.get(vatDay.get(r.id) ?? '') ?? 0,
-      })),
+      rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: replaced(r) })),
+      await outputVatOfLines(rows.filter((r) => !replaced(r)), rows),
     );
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');
     return {
@@ -278,6 +277,16 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
       lines: await lineViews(visible, orders),
     };
   });
+}
+
+/**
+ * GTGT đầu ra của các dòng doanh thu thuần còn tính (`live`), theo thuế suất của ngày giao (`netRevenuePortions`;
+ * `estimates` gồm mọi dòng doanh thu ước tính của các đơn đó). Gọi trong `withCompany` của bên gọi.
+ */
+export async function outputVatOfLines(live: readonly NetLine[], estimates: readonly NetLine[]): Promise<Decimal> {
+  const portions = netRevenuePortions(live, estimates);
+  const pct = await outputVatByDay(portions.map((x) => x.day));
+  return portions.reduce((sum, x) => sum.plus(outputVatOf({ kind: x.kind, amount: x.amount, outputVatPct: pct.get(x.day) ?? 0 })), new Decimal(0));
 }
 
 /**

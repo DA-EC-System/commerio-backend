@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { activateDueConfigs } from '#src/modules/finance/finance/service/config-versions.ts';
+import { activateDueConfigs, setRetroInsertBatchForTest } from '#src/modules/finance/finance/service/config-versions.ts';
 import { recordPackageDelivered, recordPackageReturned } from '#src/modules/finance/finance/service/ledger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -329,5 +329,59 @@ describe('GTGT đầu ra theo ngày giao (US-TI-13 dòng 3)', () => {
     const dry = await as(c.ceo.token).post(`/configs/${draft.body.id}/dry-run`, { version: draft.body.version });
     // 110.000/1,1 = 100.000; 110.000/1,08 = 101.851,85 → 101.852.
     expect(dry.body.dryRun.profit30).toEqual({ now: 100000, next: 101852 });
+  });
+});
+
+describe('GTGT đầu ra khi đơn nhiều ngày giao, hoàn tiền (US-TI-13 dòng 3)', () => {
+  async function companyWithVat() {
+    const c = await createCompany();
+    await version(c.companyId, 'tax_regime', 'active', { regime: 'company' }, '2026-10-01');
+    await version(c.companyId, 'tax_rules', 'superseded', { ...rules, outputVatPct: 10 }, '2026-10-01', '2026-10-31');
+    await version(c.companyId, 'tax_rules', 'active', { ...rules, outputVatPct: 8 }, '2026-11-01');
+    const shopId = randomUUID();
+    const orderId = randomUUID();
+    const insert = (cols: Record<string, unknown>) => {
+      const all = { company_id: c.companyId, shop_id: shopId, order_id: orderId, kind: 'revenue', is_estimate: true, ...cols };
+      const keys = Object.keys(all);
+      return testPool().query(`insert into finance.ledger_entries (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(all));
+    };
+    return { token: c.ceo.token, orderId, insert };
+  }
+
+  it('kiện 1 giao 31/10 (10%), kiện 2 giao 01/11 (8%), sàn quyết toán một dòng 1.000.000 đ: GTGT chia theo từng ngày giao', async () => {
+    const c = await companyWithVat();
+    await c.insert({ amount: '600000', occurred_on: '2026-10-31' });
+    await c.insert({ amount: '400000', occurred_on: '2026-11-01' });
+    await c.insert({ amount: '1000000', is_estimate: false, occurred_on: '2026-11-02' });
+    const profit = await as(c.token).get(`/orders/${c.orderId}/profit`);
+    expect(profit.status, JSON.stringify(profit.body)).toBe(200);
+    // GTGT 54.545 (600.000 ở 10%) + 29.630 (400.000 ở 8%) = 84.175.
+    expect(profit.body).toMatchObject({ net: 915825, estimated: false });
+  });
+
+  it('giao 31/10 (10%), hoàn toàn bộ 02/11 khi đã 8%: doanh thu thuần 0, GTGT 0, không có lãi ma', async () => {
+    const c = await companyWithVat();
+    await c.insert({ amount: '1100000', occurred_on: '2026-10-31' });
+    await c.insert({ kind: 'customer_refund', amount: '-1100000', occurred_on: '2026-11-02' });
+    const profit = await as(c.token).get(`/orders/${c.orderId}/profit`);
+    expect(profit.body).toMatchObject({ net: 0 });
+  });
+});
+
+describe('hồi tố chia lô khi chèn', () => {
+  it('nhiều dòng điều chỉnh hơn cỡ lô vẫn ghi đủ', async () => {
+    const was = setRetroInsertBatchForTest(1);
+    try {
+      const s = await setup();
+      const a = await s.deliver('2026-10-27');
+      const b = await s.deliver('2026-10-28');
+      const c = await s.deliver('2026-10-29');
+      await approve(s.admin, s.ceo, { kind: 'fee', shopId: s.shopId, payload: fee({ fixedPct: 5 }), effectiveFrom: '2026-10-25' });
+      const adj = await adjustments(s.companyId);
+      expect(adj.map((x) => x.package_id).sort()).toEqual([a.packageId, b.packageId, c.packageId].sort());
+      expect(adj.every((x) => x.amount === '-2580.00')).toBe(true);
+    } finally {
+      setRetroInsertBatchForTest(was);
+    }
   });
 });

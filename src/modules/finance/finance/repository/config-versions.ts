@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, lte, not, notInArray, sql } from 'drizzle-orm';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import type { ConfigKind, ConfigStatus } from '../domain/config-version.ts';
-import { type LedgerKind, NOT_SALES_PROFIT } from '../domain/ledger.ts';
+import { type LedgerKind, type NetLine, NOT_SALES_PROFIT } from '../domain/ledger.ts';
 import { isReplaced } from './ledger.ts';
 import { configVersions, ledgerEntries } from './schema.ts';
 
@@ -47,8 +47,18 @@ const cellOf = (kind: ConfigKind, shopId: string | null) =>
  * khoảng ngày không giẫm lên nhau.
  */
 export async function lockCell(kind: ConfigKind, shopId: string | null): Promise<void> {
-  const key = `finance.config:${currentCompanyId()}:${kind}:${shopId ?? '-'}`;
-  await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+  await lockCells([[kind, shopId]]);
+}
+
+const cellKey = (kind: ConfigKind, shopId: string | null) => `finance.config:${currentCompanyId()}:${kind}:${shopId ?? '-'}`;
+
+/**
+ * Khoá riêng nhiều ô tới hết giao dịch, theo thứ tự khoá đã sắp như `lockCellsShared`: áp một bản nhóm thuế khoá cả
+ * `tax_regime` và `tax_rules` (thuế khấu trừ tính từ cả hai) mà không tạo vòng chờ.
+ */
+export async function lockCells(cells: readonly (readonly [ConfigKind, string | null])[]): Promise<void> {
+  for (const key of [...new Set(cells.map(([kind, shopId]) => cellKey(kind, shopId)))].sort())
+    await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
 /**
@@ -56,8 +66,7 @@ export async function lockCell(kind: ConfigKind, shopId: string | null): Promise
  * song được, chỉ chờ khi một phiên bản của ô đang chuyển trạng thái.
  */
 export async function lockCellsShared(cells: readonly (readonly [ConfigKind, string | null])[]): Promise<void> {
-  const keys = cells.map(([kind, shopId]) => `finance.config:${currentCompanyId()}:${kind}:${shopId ?? '-'}`).sort();
-  for (const key of keys) await getDb().execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`);
+  for (const key of [...new Set(cells.map(([kind, shopId]) => cellKey(kind, shopId)))].sort()) await getDb().execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`);
 }
 
 /** Mọi phiên bản của một ô có trạng thái trong `statuses`. */
@@ -178,24 +187,36 @@ export async function retroSources(
 }
 
 /**
- * Doanh thu, hoàn tiền khách còn hiệu lực từ `from`, gộp theo ngày giao và loại (chạy thử: GTGT đầu ra, thuế khấu trừ
- * theo phiên bản của ngày giao, US-TI-13 dòng 3). Ngày giao của dòng thực tế là ngày của dòng ước tính nó thay, không
- * có thì ngày dòng doanh thu ước tính sớm nhất của đơn, không có nữa thì ngày của chính dòng.
+ * Dòng doanh thu, hoàn tiền khách còn hiệu lực từ `from` (chạy thử), kèm mọi dòng doanh thu ước tính của các đơn có
+ * dòng đó để chia theo ngày giao (`netRevenuePortions`).
  */
-export async function netRevenueByDay(from: string, shopId?: string): Promise<{ day: string; kind: 'revenue' | 'customer_refund'; amount: string }[]> {
-  const { rows } = await getDb().execute<{ day: string; kind: 'revenue' | 'customer_refund'; amount: string }>(sql`
-    select v.day, v.kind, sum(v.amount)::text as amount from (
-      select coalesce(
-          est.occurred_on,
-          (select min(f.occurred_on) from ${ledgerEntries} f
-           where f.order_id = ${ledgerEntries.orderId} and f.is_estimate and f.kind = 'revenue'),
-          ${ledgerEntries.occurredOn}
-        )::text as day,
-        ${ledgerEntries.kind}::text as kind, ${ledgerEntries.amount} as amount
-      from ${ledgerEntries} left join ${ledgerEntries} est on est.id = ${ledgerEntries.replacesEntryId}
-      where ${ledgerEntries.occurredOn} >= ${from} and ${ledgerEntries.kind} in ('revenue', 'customer_refund')
-        ${shopId ? sql`and ${ledgerEntries.shopId} = ${shopId}` : sql``}
-        and not (${isReplaced()})
-    ) v group by v.day, v.kind order by v.day, v.kind`);
-  return rows;
+export async function netRevenueLinesSince(from: string, shopId?: string): Promise<{ live: NetLine[]; estimates: NetLine[] }> {
+  const cols = {
+    id: ledgerEntries.id,
+    orderId: ledgerEntries.orderId,
+    kind: ledgerEntries.kind,
+    amount: ledgerEntries.amount,
+    occurredOn: ledgerEntries.occurredOn,
+    isEstimate: ledgerEntries.isEstimate,
+    replacesEntryId: ledgerEntries.replacesEntryId,
+  };
+  const live = await getDb()
+    .select(cols)
+    .from(ledgerEntries)
+    .where(
+      and(
+        gte(ledgerEntries.occurredOn, from),
+        inArray(ledgerEntries.kind, ['revenue', 'customer_refund']),
+        shopId ? eq(ledgerEntries.shopId, shopId) : undefined,
+        not(isReplaced()),
+      ),
+    );
+  const orderIds = [...new Set(live.map((l) => l.orderId).filter((id): id is string => !!id))];
+  const estimates = orderIds.length
+    ? await getDb()
+        .select(cols)
+        .from(ledgerEntries)
+        .where(and(inArray(ledgerEntries.orderId, orderIds), eq(ledgerEntries.isEstimate, true), eq(ledgerEntries.kind, 'revenue')))
+    : [];
+  return { live, estimates };
 }

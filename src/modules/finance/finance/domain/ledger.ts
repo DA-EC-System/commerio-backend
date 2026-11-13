@@ -227,55 +227,108 @@ export interface Entry {
   isEstimate: boolean;
   /** Đã có dòng thực tế thay: không còn tính. */
   replaced: boolean;
-  /** Thuế suất GTGT đầu ra áp ở ngày của dòng (doanh nghiệp, `outputVatPctOf`); thiếu hoặc 0 thì không bỏ. */
-  outputVatPct?: number;
 }
 
 /** Khoản thuộc doanh thu thuần (25 §10.2: "Σ doanh thu hàng của phần đã giao − hoàn tiền khách"). */
 export const NET_REVENUE: ReadonlySet<LedgerKind> = new Set(['revenue', 'customer_refund']);
 
+/** Một dòng sổ đủ để chọn ngày giao cho GTGT đầu ra. */
+export interface NetLine {
+  id: string;
+  orderId: string | null;
+  kind: LedgerKind;
+  amount: string;
+  occurredOn: string;
+  isEstimate: boolean;
+  replacesEntryId: string | null;
+}
+
+/** Phần của một dòng doanh thu thuần gắn với một ngày giao. */
+export interface NetPortion {
+  kind: LedgerKind;
+  amount: string;
+  day: string;
+}
+
 /**
- * Ngày chọn thuế suất GTGT đầu ra cho các dòng doanh thu thuần của một đơn (US-TI-13 dòng 3: "dùng phiên bản theo ngày
- * giao"): dòng ước tính lấy ngày của nó; dòng thực tế sau quyết toán lấy ngày của dòng ước tính nó thay, không có thì
- * ngày dòng doanh thu ước tính sớm nhất của đơn, không có nữa thì ngày của chính dòng.
+ * Dòng ước tính mà một dòng thực tế thay. Chỗ duy nhất đọc quan hệ thay khi chọn ngày giao (hiện là cột
+ * `replaces_entry_id`; đổi nguồn, vd bảng nối của #231, thì chỉ sửa hàm này).
  */
-export function vatDaysOf(
-  rows: readonly { id: string; kind: LedgerKind; occurredOn: string; isEstimate: boolean; replacesEntryId: string | null }[],
-): Map<string, string> {
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  const firstDelivery = rows
-    .filter((r) => r.isEstimate && r.kind === 'revenue')
-    .map((r) => r.occurredOn)
-    .sort()[0];
-  const out = new Map<string, string>();
-  for (const r of rows) {
-    if (!NET_REVENUE.has(r.kind)) continue;
-    const replaced = r.replacesEntryId ? byId.get(r.replacesEntryId) : undefined;
-    out.set(r.id, r.isEstimate ? r.occurredOn : (replaced?.occurredOn ?? firstDelivery ?? r.occurredOn));
+export const replacedEstimateOf =
+  (estimates: readonly NetLine[]) =>
+  (line: NetLine): NetLine | undefined => {
+    if (!line.replacesEntryId) return undefined;
+    return estimates.find((e) => e.id === line.replacesEntryId);
+  };
+
+/**
+ * Chia các dòng doanh thu thuần còn hiệu lực theo ngày giao, để chọn thuế suất GTGT đầu ra theo phiên bản của ngày
+ * giao (US-TI-13 dòng 3). `live`: dòng còn tính; `estimates`: mọi dòng doanh thu ước tính của các đơn đó (kể cả đã
+ * bị thay), mỗi dòng là một kiện giao (cùng đơn, nhiều kiện thì nhiều ngày).
+ * - Doanh thu ước tính: ngày của nó.
+ * - Dòng thực tế thay một dòng doanh thu ước tính: ngày của dòng đó.
+ * - Còn lại (doanh thu thực tế sàn trả một dòng cho cả đơn, hoàn tiền khách theo ngày hoàn): chia theo tỷ lệ doanh
+ *   thu ước tính của từng ngày giao trong đơn, làm tròn tới đồng, phần cuối nhận số dư. Đơn không có dòng ước tính
+ *   thì ngày của chính dòng.
+ */
+export function netRevenuePortions(live: readonly NetLine[], estimates: readonly NetLine[]): NetPortion[] {
+  const replaced = replacedEstimateOf(estimates);
+  const weights = new Map<string, Map<string, Decimal>>();
+  for (const e of estimates) {
+    if (!e.orderId || e.kind !== 'revenue' || !e.isEstimate) continue;
+    const byDay = weights.get(e.orderId) ?? new Map<string, Decimal>();
+    byDay.set(e.occurredOn, (byDay.get(e.occurredOn) ?? new Decimal(0)).plus(e.amount));
+    weights.set(e.orderId, byDay);
+  }
+  const out: NetPortion[] = [];
+  for (const line of live) {
+    if (!NET_REVENUE.has(line.kind)) continue;
+    const own = (day: string) => out.push({ kind: line.kind, amount: line.amount, day });
+    if (line.isEstimate && line.kind === 'revenue') {
+      own(line.occurredOn);
+      continue;
+    }
+    const target = replaced(line);
+    if (target?.kind === 'revenue') {
+      own(target.occurredOn);
+      continue;
+    }
+    const byDay = [...(line.orderId ? (weights.get(line.orderId) ?? []) : [])].filter(([, w]) => w.gt(0)).sort(([a], [b]) => (a < b ? -1 : 1));
+    const total = byDay.reduce((sum, [, w]) => sum.plus(w), new Decimal(0));
+    if (!byDay.length || total.isZero()) {
+      own(line.occurredOn);
+      continue;
+    }
+    const amount = new Decimal(line.amount);
+    let rest = amount;
+    byDay.forEach(([day, w], i) => {
+      const part = i === byDay.length - 1 ? rest : round(amount.times(w).div(total));
+      rest = rest.minus(part);
+      if (!part.isZero()) out.push({ kind: line.kind, amount: part.toFixed(2), day });
+    });
   }
   return out;
 }
 
 /**
- * Phần GTGT đầu ra nằm trong một dòng doanh thu thuần: số − số / (1 + v/100), làm tròn tới đồng (25 §10.2, E131).
- * Dòng khác, hay v = 0, là 0.
+ * Phần GTGT đầu ra nằm trong một dòng (hoặc một phần dòng) doanh thu thuần: số − số / (1 + v/100), làm tròn tới đồng
+ * (25 §10.2, E131). Dòng khác, hay v = 0, là 0.
  */
-export function outputVatOf(e: Pick<Entry, 'kind' | 'amount' | 'outputVatPct'>): Decimal {
+export function outputVatOf(e: { kind: LedgerKind; amount: Decimal.Value; outputVatPct: number }): Decimal {
   if (!NET_REVENUE.has(e.kind) || !e.outputVatPct) return new Decimal(0);
   const amount = new Decimal(e.amount);
   return amount.minus(round(amount.times(100).div(new Decimal(100).plus(e.outputVatPct))));
 }
 
 /**
- * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt, doanh nghiệp bỏ phần GTGT đầu ra
- * khỏi doanh thu thuần (`outputVatOf`); giá vốn = giá vốn trừ phần trả bán lại được; lãi gộp = thực nhận + giá vốn (giá
- * vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
+ * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt trừ GTGT đầu ra của doanh nghiệp
+ * (`outputVat`, tính bằng `netRevenuePortions` + `outputVatOf` theo ngày giao); giá vốn = giá vốn trừ phần trả bán lại
+ * được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
  */
-export function profitOf(entries: readonly Entry[]): { net: number; cogs: number; gross: number; estimated: boolean } {
+export function profitOf(entries: readonly Entry[], outputVat: Decimal.Value = 0): { net: number; cogs: number; gross: number; estimated: boolean } {
   const live = entries.filter((e) => !e.replaced);
   const sum = (pred: (e: Entry) => boolean) => live.filter(pred).reduce((s, e) => s.plus(e.amount), new Decimal(0));
-  const vat = live.reduce((s, e) => s.plus(outputVatOf(e)), new Decimal(0));
-  const net = sum((e) => !NON_CASH.has(e.kind)).minus(vat);
+  const net = sum((e) => !NON_CASH.has(e.kind)).minus(outputVat);
   const cogs = sum((e) => NON_CASH.has(e.kind));
   return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate) };
 }

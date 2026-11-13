@@ -22,7 +22,16 @@ import {
   taxPctOf,
   vnDate,
 } from '../domain/config-version.ts';
-import { configDraftsOfDelivered, type Draft, type LedgerKind, outputVatOf, postReturned, RETRO_KINDS, sumDrafts } from '../domain/ledger.ts';
+import {
+  configDraftsOfDelivered,
+  type Draft,
+  type LedgerKind,
+  netRevenuePortions,
+  outputVatOf,
+  postReturned,
+  RETRO_KINDS,
+  sumDrafts,
+} from '../domain/ledger.ts';
 import {
   type ConfigFilter,
   type ConfigRow,
@@ -31,8 +40,8 @@ import {
   findConfigs,
   findDueScheduledAnyCompany,
   insertConfig,
-  lockCell,
-  netRevenueByDay,
+  lockCells,
+  netRevenueLinesSince,
   retroSources,
   type RetroSource,
   setEffectiveTo,
@@ -211,14 +220,15 @@ export interface DryRun {
  * Chạy thử, không ghi sổ: lãi 30 ngày gần nhất theo sổ tiền (`now`) và lãi nếu áp phiên bản này cho cả 30 ngày
  * (`next`). Phí sàn đổi bao nhiêu phần trăm thì lãi đổi bấy nhiêu phần trăm doanh thu. Thuế đi cùng một hàm với lãi
  * theo đơn: thuế sàn khấu trừ như `configDraftsOfDelivered` (hộ kinh doanh, cá nhân), GTGT đầu ra bỏ khỏi doanh thu
- * thuần như `outputVatOf` (doanh nghiệp), theo phiên bản áp ở ngày giao của từng nhóm dòng (`netRevenueByDay`).
+ * thuần như `outputVatOf` (doanh nghiệp), theo phiên bản áp ở ngày giao của từng phần dòng (`netRevenuePortions`).
  */
 async function computeDryRun(ctx: FinanceContext, row: ConfigRow, now: Date): Promise<DryRun> {
   const today = vnDate(now);
   const shopFilter = row.kind === 'fee' ? row.shopId! : undefined;
   const from = addDays(today, -30);
   const { total, revenue } = await sumLedgerSince(from, shopFilter);
-  const groups = await netRevenueByDay(from, shopFilter);
+  const { live, estimates } = await netRevenueLinesSince(from, shopFilter);
+  const groups = netRevenuePortions(live, estimates);
   const configAt = memoConfig();
   const taxAt = async (day: string, proposed: boolean) => {
     const regime = (await configAt('tax_regime', null, day))?.payload;
@@ -293,6 +303,18 @@ export async function getEffectiveConfig<K extends ConfigKind>(
   return row && { id: row.id, payload: row.payload as ConfigPayload<K>, createdBy: row.createdBy };
 }
 
+/**
+ * Ô phải khoá riêng khi đổi trạng thái một bản: ô của nó; bản nhóm thuế khoá cả hai ô thuế vì thuế khấu trừ, GTGT đầu
+ * ra tính từ cả loại hình và quy tắc (áp hai bản thuế song song thì bản sau quét hồi tố thấy bản trước).
+ */
+const cellsOf = (row: ConfigRow): (readonly [ConfigKind, string | null])[] =>
+  row.kind === 'tax_regime' || row.kind === 'tax_rules'
+    ? [
+        ['tax_regime', null],
+        ['tax_rules', null],
+      ]
+    : [[row.kind, row.shopId]];
+
 /** Thao tác người dùng theo máy trạng thái (§21.4). Duyệt bản đã tới ngày thì áp dụng ngay. */
 export function actOnConfig(caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now = new Date()) {
   return overlapAsConflict(actOnConfigTx(caller, id, action, input, now));
@@ -313,7 +335,7 @@ async function overlapAsConflict<T>(work: Promise<T>): Promise<T> {
 function actOnConfigTx(caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now: Date) {
   return withCompany(caller.companyId, async () => {
     const row = await load(id);
-    await lockCell(row.kind, row.shopId);
+    await lockCells(cellsOf(row));
     const locked = await load(id, 'update');
     if (locked.version !== input.version) throw conflict(locked);
     const today = vnDate(now);
@@ -488,12 +510,19 @@ async function postRetroactive(row: ConfigRow, today: string): Promise<number> {
       });
     }
   }
-  for (let i = 0; i < entries.length; i += INSERT_BATCH) await insertEntries(entries.slice(i, i + INSERT_BATCH));
+  for (let i = 0; i < entries.length; i += insertBatch) await insertEntries(entries.slice(i, i + insertBatch));
   return entries.length;
 }
 
 /** Dòng mỗi lần chèn: giữ số tham số của một câu lệnh dưới giới hạn 65.535 của PostgreSQL (mỗi dòng ~14 cột). */
-const INSERT_BATCH = 1000;
+let insertBatch = 1000;
+
+/** Chỉ cho test: hạ cỡ lô để chạy nhánh chia lô mà không dựng hơn 1.000 kiện. Trả cỡ cũ. */
+export function setRetroInsertBatchForTest(size: number): number {
+  const was = insertBatch;
+  insertBatch = size;
+  return was;
+}
 
 type ConfigAt = <K extends ConfigKind>(kind: K, shopId: string | null, day: string) => ReturnType<typeof getEffectiveConfig<K>>;
 
@@ -531,7 +560,7 @@ export async function activateDueConfigs(now = new Date()): Promise<number> {
       await withCompany(due.companyId, async () => {
         const row = await findConfig(due.id);
         if (!row) return;
-        await lockCell(row.kind, row.shopId);
+        await lockCells(cellsOf(row));
         const locked = await findConfig(due.id, 'update');
         if (locked?.status !== 'scheduled' || locked.effectiveFrom! > vnDate(now)) return;
         await activate(locked, vnDate(now));

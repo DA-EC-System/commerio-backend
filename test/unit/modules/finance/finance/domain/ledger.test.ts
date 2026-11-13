@@ -11,7 +11,7 @@ import {
   postReturned,
   profitOf,
   taxWarnings,
-  vatDaysOf,
+  netRevenuePortions,
 } from '#src/modules/finance/finance/domain/ledger.ts';
 
 const pkg = {
@@ -114,9 +114,10 @@ describe('lãi theo đơn (25 §10.2)', () => {
     const drafts = postDelivered(pkg, { fee, regime: company, rules });
     expect(drafts.some((d) => d.kind === 'withholding_tax')).toBe(false);
     expect(amounts(drafts).revenue).toBe('258000.00'); // sổ ghi đủ tiền sàn trả, để so với quyết toán
-    const withVat = drafts.map((d) => ({ kind: d.kind, amount: d.amount, isEstimate: true, replaced: false, outputVatPct: 10 }));
+    const lines = drafts.map((d) => ({ kind: d.kind, amount: d.amount, isEstimate: true, replaced: false }));
+    const vat = outputVatOf({ kind: 'revenue', amount: amounts(drafts).revenue!, outputVatPct: 10 });
     // 258000 / 1,1 = 234545,45 → 234545; phần GTGT 23455. Thực nhận hộ kinh doanh 246070 + thuế khấu trừ 3870 − 23455.
-    expect(profitOf(withVat)).toEqual({ net: 226485, cogs: -120000, gross: 106485, estimated: true });
+    expect(profitOf(lines, vat)).toEqual({ net: 226485, cogs: -120000, gross: 106485, estimated: true });
   });
 
   it('phần GTGT đầu ra chỉ tính trên doanh thu, hoàn tiền khách; thuế suất 0 thì không bỏ gì', () => {
@@ -162,26 +163,48 @@ describe('khoản ngoài sàn, không vào lãi bán hàng (25 §10.1, §10.2; 2
   });
 });
 
-describe('ngày chọn thuế suất GTGT đầu ra (US-TI-13 dòng 3)', () => {
-  const row = (id: string, kind: 'revenue' | 'customer_refund' | 'fee_fixed', occurredOn: string, isEstimate: boolean, replacesEntryId: string | null = null) => ({
+describe('chia doanh thu thuần theo ngày giao để chọn GTGT đầu ra (US-TI-13 dòng 3)', () => {
+  const line = (id: string, kind: 'revenue' | 'customer_refund' | 'fee_fixed', amount: string, occurredOn: string, isEstimate: boolean, replacesEntryId: string | null = null) => ({
     id,
+    orderId: 'o1',
     kind,
+    amount,
     occurredOn,
     isEstimate,
     replacesEntryId,
   });
+  const vatAt = (byDay: Record<string, number>) => (portions: { kind: 'revenue' | 'customer_refund' | 'fee_fixed' | string; amount: string; day: string }[]) =>
+    portions.reduce((s, p) => s + outputVatOf({ kind: p.kind as never, amount: p.amount, outputVatPct: byDay[p.day] ?? 0 }).toNumber(), 0);
 
-  it('dòng thực tế lấy ngày dòng ước tính nó thay, không thay dòng nào thì ngày giao sớm nhất của đơn; dòng khác bỏ qua', () => {
-    const days = vatDaysOf([
-      row('e1', 'revenue', '2026-10-28', true),
-      row('a1', 'revenue', '2026-11-03', false, 'e1'),
-      row('a2', 'customer_refund', '2026-11-04', false),
-      row('f1', 'fee_fixed', '2026-10-28', true),
-    ]);
-    expect(Object.fromEntries(days)).toEqual({ e1: '2026-10-28', a1: '2026-10-28', a2: '2026-10-28' });
+  it('dòng thực tế thay dòng ước tính lấy ngày dòng đó; dòng khác ngoài doanh thu thuần bỏ qua', () => {
+    const est = line('e1', 'revenue', '110000', '2026-10-28', true);
+    const act = line('a1', 'revenue', '110000', '2026-11-03', false, 'e1');
+    expect(netRevenuePortions([act, line('f', 'fee_fixed', '-1', '2026-11-03', false)], [est])).toEqual([{ kind: 'revenue', amount: '110000', day: '2026-10-28' }]);
   });
 
-  it('đơn chỉ có dòng thực tế thì dùng ngày của chính dòng', () => {
-    expect(vatDaysOf([row('a', 'revenue', '2026-11-03', false)]).get('a')).toBe('2026-11-03');
+  it('đơn hai kiện giao 31/10 (10%), 01/11 (8%), sàn quyết toán một dòng 1.000.000 đ: chia theo doanh thu ước tính từng ngày', () => {
+    const estimates = [line('e1', 'revenue', '600000', '2026-10-31', true), line('e2', 'revenue', '400000', '2026-11-01', true)];
+    const portions = netRevenuePortions([line('a', 'revenue', '1000000', '2026-11-10', false)], estimates);
+    expect(portions).toEqual([
+      { kind: 'revenue', amount: '600000.00', day: '2026-10-31' },
+      { kind: 'revenue', amount: '400000.00', day: '2026-11-01' },
+    ]);
+    // 600.000 − 545.455 = 54.545; 400.000 − 370.370 = 29.630.
+    expect(vatAt({ '2026-10-31': 10, '2026-11-01': 8 })(portions)).toBe(84175);
+  });
+
+  it('hoàn toàn bộ ngày 02/11 (đã 8%) cho kiện giao 31/10 (10%): GTGT theo ngày giao, doanh thu thuần 0 thì GTGT 0', () => {
+    const est = line('e1', 'revenue', '1100000', '2026-10-31', true);
+    const refund = line('r1', 'customer_refund', '-1100000', '2026-11-02', true);
+    const portions = netRevenuePortions([est, refund], [est]);
+    expect(portions.map((p) => p.day)).toEqual(['2026-10-31', '2026-10-31']);
+    expect(vatAt({ '2026-10-31': 10, '2026-11-02': 8 })(portions)).toBe(0);
+  });
+
+  it('chia lẻ: phần cuối nhận số dư, tổng các phần bằng dòng gốc; đơn không có dòng ước tính thì ngày của chính dòng', () => {
+    const estimates = [line('e1', 'revenue', '1', '2026-10-30', true), line('e2', 'revenue', '1', '2026-10-31', true), line('e3', 'revenue', '1', '2026-11-01', true)];
+    const portions = netRevenuePortions([line('a', 'revenue', '100', '2026-11-10', false)], estimates);
+    expect(portions.map((p) => p.amount)).toEqual(['33.00', '33.00', '34.00']);
+    expect(netRevenuePortions([line('b', 'revenue', '100', '2026-11-10', false)], [])).toEqual([{ kind: 'revenue', amount: '100', day: '2026-11-10' }]);
   });
 });
