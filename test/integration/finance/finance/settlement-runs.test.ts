@@ -7,6 +7,7 @@ import { recordPackageDelivered } from '#src/modules/finance/finance/service/led
 import { markOrderCancelled } from '#src/modules/finance/finance/service/order-settlement-state.ts';
 import { openRun, processRun, runSettlement, runSettlementJob } from '#src/modules/finance/finance/service/settlement-runs.ts';
 import type { FinanceContext } from '#src/modules/finance/finance/service/settlement-views.ts';
+import { Order, OrderSummaryPage } from '#src/modules/order/sales/api/schemas.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -481,5 +482,55 @@ describe('trạng thái tiền của đơn và chốt lệch (§21.2)', () => {
     expect([res.status, res.body.type]).toEqual([404, '/problems/not_found']);
     const sale = await addMember(s.companyId, 'sale');
     expect((await get(sale.token, '/payments')).status).toBe(403);
+  });
+});
+
+// Trạng thái thanh toán trên đơn của sales (#234, US-TI-05, Documents/21 §21.2): sales đọc qua `ctx.paymentStatusOf`.
+describe('paymentStatus của đơn (#234)', () => {
+  const order = (token: string, id: string) => request(app).get(`/api/v1/sales/orders/${id}`).set('Authorization', `Bearer ${token}`);
+  const listed = async (token: string, id: string) => {
+    const res = await request(app).get('/api/v1/sales/orders?pageSize=100').set('Authorization', `Bearer ${token}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return OrderSummaryPage.parse(res.body).items.find((o) => o.id === id);
+  };
+
+  it('US-TI-05 dòng 1, D42-01: chưa kiện nào giao là none; kiện đầu tiên giao xong thì pending', async () => {
+    const s = await setup();
+    const before = await order(s.ceo, s.order.orderId);
+    expect(before.status, JSON.stringify(before.body)).toBe(200);
+    expect(Order.parse(before.body)).toMatchObject({ paymentStatus: 'none' });
+    expect(await listed(s.ceo, s.order.orderId)).toMatchObject({ paymentStatus: 'none' });
+
+    await deliver(s);
+    expect(Order.parse((await order(s.ceo, s.order.orderId)).body)).toMatchObject({ paymentStatus: 'pending' });
+    expect((await listed(s.ceo, s.order.orderId))?.flags).not.toContain('payment_mismatch');
+  });
+
+  it('D42-02, US-TI-05 dòng 5: đơn Hoàn tất, quyết toán khớp về thì chỉ trạng thái thanh toán đổi sang settled', async () => {
+    const s = await setup();
+    await deliver(s);
+    await testPool().query(`update "order".orders set status = 'completed', outcome = 'full' where id = $1`, [s.order.orderId]);
+    await runSettlement(fakeSource(() => settlementOf('P', '-5160.00')), s.companyId, null, s.shopId);
+    const body = Order.parse((await order(s.ceo, s.order.orderId)).body);
+    expect(body).toMatchObject({ status: 'completed', paymentStatus: 'settled' });
+    expect(body.flags).not.toContain('payment_mismatch');
+  });
+
+  it('D42-03, US-TI-05 dòng 4: quyết toán lệch quá ngưỡng thì mismatch, đơn mang cờ payment_mismatch, trạng thái đơn giữ nguyên', async () => {
+    const s = await setup();
+    await deliver(s);
+    const { rows } = await testPool().query(`select status from "order".orders where id = $1`, [s.order.orderId]);
+    await runSettlement(fakeSource(() => settlementOf('Q', '-10320.00')), s.companyId, null, s.shopId);
+    const body = Order.parse((await order(s.ceo, s.order.orderId)).body);
+    expect(body).toMatchObject({ status: rows[0].status, paymentStatus: 'mismatch' });
+    expect(body.flags).toContain('payment_mismatch');
+    expect(await listed(s.ceo, s.order.orderId)).toMatchObject({ paymentStatus: 'mismatch', flags: expect.arrayContaining(['payment_mismatch']) });
+  });
+
+  it('GET /sales/orders?flag=payment_mismatch: 422, cờ suy từ finance không lọc ở danh sách đơn', async () => {
+    const s = await setup();
+    const res = await request(app).get('/api/v1/sales/orders?flag=payment_mismatch').set('Authorization', `Bearer ${s.ceo}`);
+    expect(res.status).toBe(422);
+    expect(res.body.type).toMatch(/validation_failed$/);
   });
 });
