@@ -1,6 +1,7 @@
 // Registry adapter theo sàn (#103 B7, mẫu `GatewayFactory` của payment). Thêm sàn = thêm một file và một dòng ở đây.
 import { env } from '../../../../../shared/config/env.ts';
 import { reservePlatformCall } from '../../repository/api-usage.ts';
+import { callScope } from './call-scope.ts';
 import type { ConnectMethod, MarketplaceAdapter, ShopCapabilities } from './common.ts';
 import { createLazadaAdapter } from './lazada.ts';
 import { TIKTOK_RATE_LIMIT } from './tiktok-client.ts';
@@ -8,6 +9,18 @@ import { createTiktokAdapter } from './tiktok.ts';
 
 export type * from './common.ts';
 export { MarketplaceError, PROMOTION_LOCKED } from './common.ts';
+export { appOnly, forCompany, inBackground } from './call-scope.ts';
+
+/**
+ * Xin một lượt gọi sàn: trần chung `limit` của app, rồi phần của công ty theo ngữ cảnh lời gọi (`call-scope.ts`,
+ * Documents/21 §18.6.8: bấm tay tới 90%, việc nền tới 100%, tối thiểu `CHANNEL_COMPANY_MIN_CALLS`).
+ */
+function reserveFor(platform: 'lazada' | 'tiktok', limit: number) {
+  return () => {
+    const { companyId, background } = callScope();
+    return reservePlatformCall(platform, limit, { companyId, background, companyMin: env.CHANNEL_COMPANY_MIN_CALLS });
+  };
+}
 
 const lazada = createLazadaAdapter({
   appKey: env.LAZADA_APP_KEY,
@@ -15,7 +28,7 @@ const lazada = createLazadaAdapter({
   redirectUrl: env.LAZADA_REDIRECT_URL,
   apiUrl: env.LAZADA_API_URL,
   authUrl: env.LAZADA_AUTH_URL,
-  reserveCall: () => reservePlatformCall('lazada', env.LAZADA_DAILY_CALL_LIMIT),
+  reserveCall: reserveFor('lazada', env.LAZADA_DAILY_CALL_LIMIT),
 });
 
 const tiktok = createTiktokAdapter({
@@ -24,7 +37,7 @@ const tiktok = createTiktokAdapter({
   serviceId: env.TIKTOK_SERVICE_ID,
   apiUrl: env.TIKTOK_API_URL,
   authUrl: env.TIKTOK_AUTH_URL,
-  reserveCall: () => reservePlatformCall('tiktok', env.TIKTOK_DAILY_CALL_LIMIT),
+  reserveCall: reserveFor('tiktok', env.TIKTOK_DAILY_CALL_LIMIT),
   rateLimit: TIKTOK_RATE_LIMIT,
 });
 

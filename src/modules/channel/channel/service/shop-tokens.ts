@@ -8,7 +8,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { authDeadline, authLapsed, shopMachine } from '../domain/shop.ts';
 import { findShopRow, saveRefreshedTokens, type ShopRow, updateShop } from '../repository/shops.ts';
 import { DEFAULT_REFRESH_LEAD_MS, refreshBefore } from './marketplaces/common.ts';
-import { getAdapter, type MarketplaceAdapter, MarketplaceError, type TokenSet } from './marketplaces/index.ts';
+import { appOnly, forCompany, getAdapter, type MarketplaceAdapter, MarketplaceError, type TokenSet } from './marketplaces/index.ts';
 import { queueDueReauthMail } from './reauth-mail.ts';
 import { stopShopJobs } from './shop-jobs.ts';
 
@@ -133,7 +133,9 @@ export async function refreshShopTokenLocked(
       };
       let tokens: TokenSet;
       try {
-        tokens = await adapter.refreshToken(refreshToken);
+        // Lượt làm mới chỉ tính vào trần chung của app, không vào phần của công ty (#215): công ty tiêu hết phần thì thao
+        // tác khác dừng, nhưng không được vì thế mà mất token.
+        tokens = await appOnly(() => adapter.refreshToken(refreshToken));
       } catch (err) {
         if (err instanceof MarketplaceError && err.kind === 'unauthorized') {
           // Lần nối lại có thể đã thu hồi refresh token cũ: không hạ gian hàng vừa nối sang `needs_reauth`.
@@ -215,16 +217,21 @@ const NO_RETRY = new Set<string | symbol>(['createProduct', 'updateProduct']);
  * `unavailable` `token_refresh_busy` (không phải mất uỷ quyền). Hàm trong `NO_RETRY` không gọi lại: làm mới được thì ném
  * `unavailable` `token_refreshed` (bên gọi tự thử lại), không làm mới được thì ném lỗi gốc. Hàm gọi với token khác
  * giữ nguyên.
- * Giới hạn tần suất và thử lại khi lỗi tạm do từng adapter lo (Lazada `SellerCallLimit`, TikTok `rateLimit`).
+ * Giới hạn tần suất và thử lại khi lỗi tạm do từng adapter lo (Lazada `SellerCallLimit`, TikTok `rateLimit`). Mọi lời gọi
+ * chạy trong `forCompany(companyId)` để hạn mức gọi sàn tính vào phần của công ty (#215), trừ `refreshToken` chỉ tính trần
+ * chung (`appOnly`).
  */
 export function withTokenRefresh(adapter: MarketplaceAdapter, companyId: string, shopId: string, accessToken: string): MarketplaceAdapter {
   let current = accessToken;
   return new Proxy(adapter, {
     get(target, prop, receiver) {
       const value: unknown = Reflect.get(target, prop, receiver);
-      if (typeof value !== 'function' || NO_ACCESS_TOKEN.has(prop)) return value;
+      if (typeof value !== 'function') return value;
       const fn = value as (...args: unknown[]) => unknown;
-      return (...args: unknown[]) => {
+      // Mọi lời gọi qua phiên tính vào hạn mức gọi sàn của công ty sở hữu gian hàng (#215, 21 §18.6.8).
+      if (prop === 'refreshToken') return (...args: unknown[]) => appOnly(() => fn.apply(target, args));
+      if (NO_ACCESS_TOKEN.has(prop)) return (...args: unknown[]) => forCompany(companyId, () => fn.apply(target, args));
+      return (...args: unknown[]) => forCompany(companyId, () => {
         if (args[0] !== accessToken && args[0] !== current) return fn.apply(target, args);
         const used = current;
         const call = (token: string) => Promise.resolve(fn.apply(target, [token, ...args.slice(1)]));
@@ -243,7 +250,7 @@ export function withTokenRefresh(adapter: MarketplaceAdapter, companyId: string,
           current = fresh;
           return call(fresh);
         });
-      };
+      });
     },
   });
 }

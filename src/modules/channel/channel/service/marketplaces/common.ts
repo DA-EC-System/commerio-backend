@@ -653,3 +653,21 @@ export class MarketplaceError extends Error {
     this.platformMessage = platformMessage;
   }
 }
+
+/**
+ * Kết quả xin một lượt trong hạn mức gọi sàn trước mỗi request (#102, #215): `ok`, hết trần chung của app
+ * (`daily_call_limit`), hoặc hết phần của công ty (`company_call_limit`, Documents/21 §18.6.8).
+ */
+export type CallReservation = 'ok' | 'daily_call_limit' | 'company_call_limit';
+export type ReserveCall = () => Promise<CallReservation>;
+
+/** Xin lượt trước khi gọi mạng; hết lượt thì ném `unavailable` kèm mã hết lượt, không gọi mạng. */
+export async function reserveOrThrow(reserveCall: ReserveCall | undefined, platformName: string): Promise<void> {
+  const outcome = reserveCall ? await reserveCall() : 'ok';
+  if (outcome === 'ok') return;
+  const message =
+    outcome === 'company_call_limit'
+      ? `Công ty đã dùng hết phần hạn mức gọi ${platformName} hôm nay`
+      : `Đã dùng hết hạn mức gọi ${platformName} trong ngày`;
+  throw new MarketplaceError('unavailable', outcome, message);
+}
