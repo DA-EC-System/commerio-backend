@@ -1,12 +1,19 @@
-import request from 'supertest';
-import { expect } from 'vitest';
+import { randomBytes, randomInt } from 'node:crypto';
+import { Decimal } from 'decimal.js';
+import { vi } from 'vitest';
+import type { Gateway } from '#src/modules/finance/payment/index.ts';
+import { initOrderPayment } from '#src/modules/finance/payment/index.ts';
+import { encryptCredentials } from '#src/modules/finance/payment/service/credentials-cipher.ts';
+import { GatewayFactory } from '#src/modules/finance/payment/service/gateways/index.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
 
 // Helper riêng của test payment (#23). File test dùng chúng phải đặt PAYMENT_CREDENTIALS_KEY trong vi.hoisted.
+// Route lưu khoá cổng, tạo mã thanh toán đã gỡ ở #235 (cổng thanh toán ngoài MVP); webhook, tra cứu quá hạn còn giữ,
+// nên test ghi thẳng khoá cổng và mã thanh toán vào bảng (khoá mã hoá đúng cách, mã dựng bằng adapter thật của cổng).
 
 export const CREDENTIALS = {
   vnpay: { tmnCode: 'TESTCODE', hashSecret: 'SECRETHASHKEY123' },
@@ -15,15 +22,20 @@ export const CREDENTIALS = {
   vietqr: { bankBin: '970422', accountNo: '0123456789', accountName: 'CONG TY THU', sepayApiKey: 'SEPAY-KEY-55667788' },
 } as const;
 
-/** Công ty có CEO (lưu khoá) và Sale (tạo mã). */
+/** Công ty có CEO, Sale và các cổng đã lưu khoá (VietQR kèm khoá nhận webhook SePay riêng). */
 export async function shop(...gateways: (keyof typeof CREDENTIALS)[]) {
   const company = await createCompany();
   for (const gateway of gateways) {
-    const res = await request(testApp())
-      .put(`/api/v1/payment/gateways/${gateway}`)
-      .set('Authorization', `Bearer ${company.ceo.token}`)
-      .send({ credentials: CREDENTIALS[gateway], version: 0 });
-    expect(res.status).toBe(200);
+    await testPool().query(
+      `insert into finance.gateway_configs (company_id, gateway, credentials_enc, is_configured, webhook_receiver_key)
+       values ($1, $2, $3, true, $4)`,
+      [
+        company.companyId,
+        gateway,
+        encryptCredentials(CREDENTIALS[gateway], `${company.companyId}:${gateway}`),
+        gateway === 'vietqr' ? randomBytes(24).toString('base64url') : null,
+      ],
+    );
   }
   const sale = await addMember(company.companyId, 'sale');
   const { variantId } = await createVariant(company.companyId);
@@ -39,20 +51,50 @@ export function order(
   return createOrder(s.companyId, { lines: [{ variantId: s.variantId, quantity: 1, unitPrice }], ...options });
 }
 
-/** `POST /payment/orders/:orderId/links`; không có token thì gọi không kèm header. */
-export function createLink(token: string | undefined, orderId: string, gateway: string) {
-  const req = request(testApp()).post(`/api/v1/payment/orders/${orderId}/links`);
-  if (token) req.set('Authorization', `Bearer ${token}`);
-  return req.send({ gateway });
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+/** Mã thanh toán dạng `CM` + 10 ký tự (Documents/21 T3). */
+const paymentCode = () => `CM${Array.from({ length: 10 }, () => ALPHABET[randomInt(ALPHABET.length)]).join('')}`;
+
+/** Trả lời giả của cổng khi tạo mã (MoMo, ZaloPay gọi mạng; VNPay, VietQR không). */
+function fakeCreate(gateway: Gateway) {
+  if (gateway === 'momo') return { resultCode: 0, payUrl: 'https://test-payment.momo.vn/pay?t=x', qrCodeUrl: 'momo://x' };
+  if (gateway === 'zalopay') return { return_code: 1, order_url: 'https://qcgateway.zalopay.vn/openinapp?order=x' };
+  return undefined;
 }
 
-export const linksOf = async (orderId: string) =>
-  (
-    await testPool().query(
-      'select id, status, gateway, amount, payment_code, gateway_order_ref, expires_at from finance.payment_links where order_id = $1 order by created_at',
-      [orderId],
+/**
+ * Mã thanh toán `active` 15 phút của đơn trả trước `unpaid`. Ô của cổng (`gateway_order_ref`, `pay_url`, `qr_content`)
+ * lấy từ `createPayment` của adapter thật, `fetch` ra cổng bị thay bằng bản giả.
+ */
+export async function insertLink(companyId: string, o: { orderId: string; code: string }, gateway: Gateway, amount: number) {
+  const code = paymentCode();
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + 15 * 60_000);
+  const reply = fakeCreate(gateway);
+  const spy = reply
+    ? vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(reply), { status: 200 }))
+    : undefined;
+  const created = await GatewayFactory.of(gateway)
+    .createPayment(
+      {
+        paymentCode: code,
+        orderCode: o.code,
+        amount: new Decimal(amount),
+        createdAt,
+        expiresAt,
+        clientIp: '127.0.0.1',
+        ipnBaseUrl: 'http://localhost/api/v1/payment/webhooks',
+        returnUrl: 'http://localhost/thanh-toan/ket-qua',
+      },
+      CREDENTIALS[gateway],
+      AbortSignal.timeout(10_000),
     )
-  ).rows;
-
-export const orderPaymentOf = async (orderId: string) =>
-  (await testPool().query('select status, refund_status from finance.order_payments where order_id = $1', [orderId])).rows[0];
+    .finally(() => spy?.mockRestore());
+  await withCompany(companyId, () => initOrderPayment(o.orderId, 'prepaid'));
+  const { rows } = await testPool().query<{ id: string }>(
+    `insert into finance.payment_links (company_id, order_id, gateway, payment_code, gateway_order_ref, amount, pay_url, qr_content, expires_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+    [companyId, o.orderId, gateway, code, created.gatewayOrderRef, amount.toFixed(2), created.payUrl, created.qrContent, expiresAt],
+  );
+  return { id: rows[0]!.id, paymentCode: code, amount };
+}

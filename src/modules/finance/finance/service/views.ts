@@ -24,11 +24,6 @@ export const orderRef = (orders: Orders, id: string | null) => {
   return o ? { id: o.id, code: o.code, customerName: o.customerName } : null;
 };
 
-export const orderRefWithPhone = (orders: Orders, id: string) => {
-  const o = orders.get(id);
-  return o ? { id: o.id, code: o.code, customerName: o.customerName, customerPhone: o.customerPhone } : null;
-};
-
 type UserRef = { id: string; name: string };
 
 /**

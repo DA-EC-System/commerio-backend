@@ -1,4 +1,4 @@
-// API công khai của module `finance`: hoá đơn, phiếu thu, phiếu chi, khoản thu chưa khớp, đối soát.
+// API công khai của module `finance`: sổ tiền, trạng thái tiền của đơn, đối soát, phiên bản cấu hình.
 // Module khác chỉ được import từ file này.
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerFinanceOpenApi } from './api/openapi.ts';
@@ -30,12 +30,8 @@ export {
   type SupplierReturnRefunded,
 } from './service/ledger.ts';
 
-export { issueInvoiceForOrder, recordCodCollected } from './service/boundary.ts';
-export { getDailyFinanceTotals } from './service/daily-totals.ts';
 // Tiêm vào payment qua ctx.onVerifiedPayment ở src/modules/finance/index.ts (A11): finance → payment một chiều.
 export { handleVerifiedPayment } from './service/verified-payment.ts';
-// Tiêm vào payment qua ctx.financeRefsOf (#27 A21): phiếu thu của giao dịch cổng.
-export { getTransactionRefs } from './service/transaction-refs.ts';
 // Tên gian hàng cho đối soát (#30 A7): src/wiring.ts tiêm channel.getShops qua ctx.shopsOf.
 export type { FinanceContext, ShopInfo } from './service/settlement-views.ts';
 // Lệch ví của lần đối soát gần nhất có số, cho `Shop.walletMismatch` của channel (#251, Documents/21 §11.3).

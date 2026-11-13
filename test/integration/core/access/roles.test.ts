@@ -262,7 +262,7 @@ describe('PUT /identity/roles/:id', () => {
     const role = await createRole(a.admin.token, 'Thu ngân', ['sales.order.view']);
     const res = await call('put', `/roles/${role.id}`, a.admin.token, {
       name: 'Thu ngân ca tối',
-      permissions: ['sales.order.view', 'payment.link.create'],
+      permissions: ['sales.order.view', 'inventory.stock.view'],
       version: 1,
     });
     expect(res.status).toBe(200);
@@ -270,14 +270,14 @@ describe('PUT /identity/roles/:id', () => {
       id: role.id,
       name: 'Thu ngân ca tối',
       version: 2,
-      permissions: ['payment.link.create', 'sales.order.view'],
+      permissions: ['inventory.stock.view', 'sales.order.view'],
     });
-    expect((await roleRow(role.id))?.permissions).toEqual(['payment.link.create', 'sales.order.view']);
+    expect((await roleRow(role.id))?.permissions).toEqual(['inventory.stock.view', 'sales.order.view']);
     const logs = await auditOf(role.id);
     expect(logs[1]).toMatchObject({
       action: 'update',
       before: { name: 'Thu ngân', permissions: ['sales.order.view'] },
-      after: { name: 'Thu ngân ca tối', permissions: ['payment.link.create', 'sales.order.view'] },
+      after: { name: 'Thu ngân ca tối', permissions: ['inventory.stock.view', 'sales.order.view'] },
     });
   });
 

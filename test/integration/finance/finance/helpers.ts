@@ -1,44 +1,18 @@
 import { Decimal } from 'decimal.js';
-import request from 'supertest';
-import { expect, vi } from 'vitest';
-import { handleVerifiedPayment } from '#src/modules/finance/finance/index.ts';
-import {
-  initOrderPayment,
-  markDelivered,
-  markRefundPending,
-  type VerifiedGatewayPayment,
-} from '#src/modules/finance/payment/index.ts';
-import { withCompany } from '#src/shared/db/client.ts';
+import type { VerifiedGatewayPayment } from '#src/modules/finance/payment/index.ts';
 import { testPool } from '../../helpers/db.ts';
-import { testApp } from '../../helpers/http.ts';
-import { type CREDENTIALS, createLink, order, shop } from '../payment/helpers.ts';
+import { type CREDENTIALS, insertLink, order, shop } from '../payment/helpers.ts';
 
 // Helper riêng của test finance (#27). File dùng chúng phải đặt PAYMENT_CREDENTIALS_KEY trong vi.hoisted.
 
 type Gateway = keyof typeof CREDENTIALS;
 
-/** Trả lời giả của cổng khi tạo mã (MoMo, ZaloPay gọi mạng; VNPay, VietQR không). */
-function fakeCreate(gateway: Gateway) {
-  if (gateway === 'momo') return { resultCode: 0, payUrl: 'https://test-payment.momo.vn/pay?t=x', qrCodeUrl: 'momo://x' };
-  if (gateway === 'zalopay') return { return_code: 1, order_url: 'https://qcgateway.zalopay.vn/openinapp?order=x' };
-  return undefined;
-}
-
-/**
- * Công ty đã lưu khoá cổng, một đơn trả trước 150.000 đ và một mã thanh toán tạo qua API của #23 (đường thật, L004).
- * `fetch` ra cổng bị thay bằng bản giả chỉ trong lúc tạo mã.
- */
+/** Công ty đã lưu khoá cổng, một đơn trả trước 150.000 đ (mặc định) và một mã thanh toán `active` của đơn. */
 export async function linkedOrder(gateway: Gateway = 'vietqr', unitPrice = 150000) {
   const s = await shop(gateway);
   const o = await order(s, unitPrice);
-  const reply = fakeCreate(gateway);
-  const spy = reply
-    ? vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(reply), { status: 200 }))
-    : undefined;
-  const res = await createLink(s.sale.token, o.orderId, gateway);
-  spy?.mockRestore();
-  expect(res.status).toBe(201);
-  return { ...s, ...o, link: res.body as { id: string; paymentCode: string; amount: number } };
+  const link = await insertLink(s.companyId, o, gateway, unitPrice);
+  return { ...s, ...o, link };
 }
 
 let seq = 0;
@@ -85,36 +59,3 @@ export const orderPayment = async (orderId: string) =>
 
 export const linkStatus = async (linkId: string) =>
   (await rows('select status from finance.payment_links where id = $1', [linkId]))[0]?.status as string | undefined;
-
-/** Gọi API finance bằng token; `body` có thì gửi JSON. */
-export function api(method: 'get' | 'post' | 'put' | 'delete', path: string, token?: string, body?: object) {
-  const req = request(testApp())[method](`/api/v1/finance${path}`);
-  if (token) req.set('Authorization', `Bearer ${token}`);
-  return body ? req.send(body) : req;
-}
-
-/** Đơn trả trước đã thu qua cổng (handler webhook thật), có phiếu thu PT. */
-export async function paidOrder() {
-  const l = await linkedOrder();
-  const outcome = await withCompany(l.companyId, () => handleVerifiedPayment(verified(l)));
-  expect(outcome).toEqual({ outcome: 'recorded' });
-  return l;
-}
-
-/** Đơn đã thu rồi bị huỷ: hoàn tiền `pending_refund` (đường của #25: đổi đơn rồi `markRefundPending`). */
-export async function refundPendingOrder() {
-  const l = await paidOrder();
-  await testPool().query("update \"order\".orders set status = 'cancelled', updated_at = now() where id = $1", [l.orderId]); // của #25
-  await withCompany(l.companyId, () => markRefundPending(l.orderId));
-  return l;
-}
-
-/** Đơn COD đã xác nhận (`cod_pending`) của công ty; `delivered` thì #25 đã gọi `markDelivered`. */
-export async function codOrder(s: { companyId: string; variantId: string }, delivered = true, unitPrice = 200000) {
-  const o = await order(s, unitPrice, { paymentMethod: 'cod' });
-  await withCompany(s.companyId, async () => {
-    await initOrderPayment(o.orderId, 'cod');
-    if (delivered) await markDelivered(o.orderId, new Date('2026-10-18T03:00:00Z'));
-  });
-  return o;
-}
