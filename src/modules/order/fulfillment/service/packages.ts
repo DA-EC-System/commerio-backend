@@ -18,8 +18,13 @@ export interface FulfillmentContext extends ModuleContext {
   readonly orderRefsOf?: (orderIds: readonly string[]) => Promise<Map<string, PackageOrderRef>>;
   /** Gian hàng đang chờ kiểm kê đầu kỳ (channel); `lock` khoá dòng gian hàng `FOR SHARE` (spec 199b §5.6). */
   readonly stockHoldOf?: (shopIds: readonly string[], opts?: { lock?: boolean }) => Promise<Set<string>>;
-  /** Tách, giao kiện trên sàn (channel, #221) cho tách kiện #205, RTS #239. */
+  /** Thao tác kiện trên sàn (channel), tiêm qua src/wiring.ts. */
   readonly marketplacePackages?: MarketplacePackages;
+}
+
+export interface PlatformPackageItems {
+  externalOrderId: string;
+  externalLineIds: readonly string[];
 }
 
 /**
@@ -40,6 +45,15 @@ export interface MarketplacePackages {
   /** Mỗi nhóm là mã món sàn của một kiện mới; trả mã kiện sàn theo thứ tự nhóm. */
   split(companyId: string, shopId: string, externalOrderId: string, groups: readonly (readonly string[])[]): Promise<string[]>;
   ship(companyId: string, shopId: string, packageCode: string, opts?: { handover?: 'pickup' | 'drop_off' }): Promise<void>;
+  carriers(companyId: string, shopId: string, ref: PlatformPackageItems): Promise<{ code: string; name: string; isDefault: boolean }[]>;
+  pack(companyId: string, shopId: string, ref: PlatformPackageItems & { carrierCode?: string }): Promise<{
+    packageCode: string;
+    trackingCode: string | null;
+    carrier: { code: string; name: string } | null;
+  } | null>;
+  readyToShip(companyId: string, shopId: string, packageCode: string): Promise<void>;
+  repack(companyId: string, shopId: string, packageCode: string): Promise<'repacked' | 'not_supported'>;
+  shippingDocuments(companyId: string, shopId: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
 }
 
 export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) {
