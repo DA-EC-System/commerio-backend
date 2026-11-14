@@ -26,7 +26,7 @@ export interface UploadTicket {
   readonly headers: Readonly<Record<string, string>>;
 }
 
-const REJECTION_MESSAGES = {
+export const REJECTION_MESSAGES = {
   file_type_not_allowed: {
     product_image: 'Ảnh sản phẩm phải là JPG hoặc PNG',
     attachment: 'Tệp đính kèm phải là ảnh JPG, PNG, WebP hoặc PDF',
