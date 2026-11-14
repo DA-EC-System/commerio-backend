@@ -9,7 +9,11 @@ import { packageDocuments } from '../service/documents.ts';
 import { handOverPackages, undoHandover } from '../service/handover.ts';
 import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
 import { carriersOf, markReady, openPackage, packPackage, pickList } from '../service/packing.ts';
-import { FoundBody, HandOverBody, OpenBody, PackBody, PackageDocumentsQuery, PackageListQuery, PackageParams, PickListQuery, ReadyBody, ReceiveReturnBody, UndoHandoverBody } from './schemas.ts';
+import { splitPackage } from '../service/split.ts';
+import {
+  FoundBody, HandOverBody, OpenBody, PackBody, PackageDocumentsQuery, PackageListQuery, PackageParams, PickListQuery, ReadyBody,
+  ReceiveReturnBody, SplitBody, UndoHandoverBody,
+} from './schemas.ts';
 
 function actor(res: Response): Actor {
   const { accountId, companyId } = getAuth(res);
@@ -77,6 +81,12 @@ export function fulfillmentRouter(ctx: FulfillmentContext): Router {
   router.post('/packages/:id/open', process, validate({ params: PackageParams, body: OpenBody }), async (_req, res) => {
     const { id } = validated<typeof PackageParams>(res, 'params');
     res.json(await openPackage(ctx, actor(res), id, validated<typeof OpenBody>(res, 'body')));
+  });
+
+  // Tách kiện (spec 205 §5.4): service tự mở giao dịch theo từng bước; trả `Order` của sales (D9).
+  router.post('/packages/:id/split', process, validate({ params: PackageParams, body: SplitBody }), async (_req, res) => {
+    const { id } = validated<typeof PackageParams>(res, 'params');
+    res.json(await splitPackage(ctx, actor(res), id, validated<typeof SplitBody>(res, 'body')));
   });
 
   router.get('/packages/documents', process, validate({ query: PackageDocumentsQuery }), async (_req, res) => {
