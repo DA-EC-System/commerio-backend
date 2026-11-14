@@ -173,7 +173,8 @@ export function channelRouter(ctx: ModuleContext): Router {
   // Gọi sàn ngoài giao dịch: service tự mở `withCompany` từng bước (#104 A3).
   router.post('/shops/:id/listings/push', manage, validate({ params: ShopParams, body: PushBody }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
-    res.json(await listings.pushListings(productPort(ctx), actor(res), id, validated<typeof PushBody>(res, 'body')));
+    const { variantIds } = validated<typeof PushBody>(res, 'body');
+    res.json(await listings.pushListings(productPort(ctx), actor(res), id, { variantIds }));
   });
 
   router.post('/shops/:id/listings/sync', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {

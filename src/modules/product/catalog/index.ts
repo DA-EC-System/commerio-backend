@@ -21,3 +21,5 @@ export {
 } from './service/purchase-products.ts';
 // Giá chuẩn là cột của SKU (Documents/19 D9).
 export { type CatalogContext, standardPricesOf } from './service/standard-price.ts';
+// Link ảnh sản phẩm cho channel (ảnh đại diện của listing, ảnh đẩy lên sàn; #303).
+export { productImageUrls } from './service/product-images.ts';

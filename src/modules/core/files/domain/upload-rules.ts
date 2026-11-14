@@ -20,9 +20,12 @@ interface PurposeRule {
   readonly visibility: 'public' | 'private';
 }
 
-/** MVP không nhận video (Documents/21 §14.3, Documents/25 §13). */
+/**
+ * MVP không nhận video (Documents/21 §14.3, Documents/25 §13). Ảnh sản phẩm theo điều kiện ảnh của sàn (JPG, PNG,
+ * tối đa 1 MB; #303): FE nén trước khi tải, BE không đọc nội dung ảnh.
+ */
 export const PURPOSE_RULES: Readonly<Record<FilePurpose, PurposeRule>> = {
-  product_image: { contentTypes: ['image/jpeg', 'image/png', 'image/webp'], maxBytes: 5 * MB, visibility: 'public' },
+  product_image: { contentTypes: ['image/jpeg', 'image/png'], maxBytes: 1 * MB, visibility: 'public' },
   attachment: {
     contentTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
     maxBytes: 10 * MB,

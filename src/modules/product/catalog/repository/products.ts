@@ -16,6 +16,9 @@ const columns = {
   // SQL có bí danh: cột trong `sql` của Drizzle không kèm tên bảng.
   variantCount: sql<number>`(select count(*)::int from product.product_variants pv
     where pv.product_id = products.id and pv.archived_at is null)`,
+  /** Tệp của ảnh đại diện (`position` 0, #303); null khi chưa có ảnh. Một câu cho cả trang danh sách. */
+  thumbnailFileId: sql<string | null>`(select pi.file_id from product.product_images pi
+    where pi.product_id = products.id and pi.position = 0)`,
 };
 
 export type ProductRow = NonNullable<Awaited<ReturnType<typeof findProduct>>>;

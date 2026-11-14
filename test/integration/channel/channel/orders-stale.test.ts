@@ -40,6 +40,7 @@ const available = new Map<string, number>();
 const port = {
   variants: async (ids?: readonly string[]) => [shared, own].filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+  productImageUrls: async () => new Map<string, string[]>(),
   availableOf: async (ids: readonly string[]) =>
     new Map(ids.flatMap((id): [string, number][] => (available.has(id) ? [[id, available.get(id)!]] : []))),
 };

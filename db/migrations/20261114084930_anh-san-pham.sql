@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "product_images_product_position_uq" ON "product"."product_images" USING btree ("product_id","position");--> statement-breakpoint
+ALTER TABLE "product"."product_images" ADD CONSTRAINT "product_images_position_nonneg" CHECK ("product"."product_images"."position" >= 0);

@@ -53,7 +53,7 @@ describe('POST /catalog/products', () => {
         action: 'create',
         entity_type: 'product.products',
         before: null,
-        after: { name, category: category.name, description: 'Mô tả', images: 0, variants: ['AO-0012-DEN-XL', 'AO-0013-TRANG-XL'] },
+        after: { name, category: category.name, description: 'Mô tả', imageFileIds: [], variants: ['AO-0012-DEN-XL', 'AO-0013-TRANG-XL'] },
       },
     ]);
   });
@@ -108,7 +108,7 @@ describe('POST /catalog/products', () => {
     ['danh mục không phải uuid', { categoryId: 'abc' }, 'categoryId'],
     ['không có biến thể', { variants: [] }, 'variants'],
     ['hơn 100 biến thể', { variants: Array.from({ length: 101 }, () => ({ attributeValueIds: [] })) }, 'variants'],
-    ['gửi ảnh trước khi có #14', { imageFileIds: [randomUUID()] }, 'images'],
+    ['ảnh chưa tải lên (#303)', { imageFileIds: [randomUUID()] }, 'images'],
     ['mô tả quá 5000 ký tự', { description: 'a'.repeat(5001) }, 'description'],
   ])('%s → 422 errors.%s, không tạo, không tiêu số (AC-9)', async (_case, override, field) => {
     const category = await createCategory(token, uniq('Lỗi'), 'L-{SEQ}');

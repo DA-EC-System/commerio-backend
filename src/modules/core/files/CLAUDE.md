@@ -6,7 +6,7 @@ Thông tin tệp và tệp đính kèm chứng từ (#212). Nội dung tệp n�
 
 | Mục đích (`purpose`) | Kiểu | Tối đa | Bucket | Xem bằng |
 |---|---|---|---|---|
-| `product_image` | JPG, PNG, WebP | 5 MB | `S3_PUBLIC_BUCKET` | Link cố định `<S3_PUBLIC_URL>/<storage_key>` (tên miền riêng, có cache) |
+| `product_image` | JPG, PNG (điều kiện ảnh của sàn, #303; FE nén trước khi tải) | 1 MB | `S3_PUBLIC_BUCKET` | Link cố định `<S3_PUBLIC_URL>/<storage_key>` (tên miền riêng, có cache) |
 | `attachment` | JPG, PNG, WebP, PDF | 10 MB | `S3_PRIVATE_BUCKET` | Chỉ link ký sẵn 15 phút |
 
 - MVP không nhận video. Luật ở `domain/upload-rules.ts`.
@@ -36,10 +36,10 @@ Quyền phụ thuộc `purpose` trong body nên kiểm sau `validate()`.
 Chứng từ là `{ type: '<tên bảng>', id }` (vd `goods_receipts`). Bên gọi làm theo thứ tự:
 
 1. `confirmUploads(companyId, fileIds)` **trước** khi mở giao dịch: tệp chưa có `uploaded_at` thì `HeadObject` lên kho (song song), có và đúng cỡ đã khai thì ghi `uploaded_at`, lần sau khỏi hỏi lại. Lời gọi mạng nằm ngoài giao dịch để không giữ khoá dòng. Kho không trả lời thì 503 `storage_unavailable`.
-2. Trong `withCompany`: `attachmentProblem(fileIds)` trả câu lỗi cho ô tệp của chứng từ (`null` là được). Tệp phải thuộc công ty (RLS), xin vé với `purpose: 'attachment'`, đã PUT xong, không lặp, tối đa 10. Bên gọi đặt câu đó vào ô của mình (`errors.attachments` ở phiếu nhận, `errors.attachmentIds` ở yêu cầu trả).
+2. Trong `withCompany`: `attachmentProblem(fileIds)` trả câu lỗi cho ô tệp của chứng từ (`null` là được). Tệp phải thuộc công ty (RLS), xin vé với `purpose: 'attachment'`, đã PUT xong, không lặp, tối đa 10. Bên gọi đặt câu đó vào ô của mình (`errors.attachments` ở phiếu nhận, `errors.attachmentIds` ở yêu cầu trả). Hàm chung là `fileProblem(fileIds, purpose, max)` (catalog gọi với `product_image`, tối đa 9, #303): kiểm thêm kiểu, cỡ theo luật **hiện hành** của `purpose` (`rejectUpload`), chặn tệp xin vé trước khi đổi luật; câu lỗi theo `purpose` (`PROBLEM_TEXT`, ảnh sản phẩm khớp mock FE).
 3. `replaceAttachments(entity, fileIds, actorId)` thay toàn bộ theo thứ tự gửi. Gỡ tệp không xoá tệp.
 
-Đọc: `attachmentsOf(entity)` trả `{ fileId, name, url, contentType }[]`; `url` là link GET ký sẵn 15 phút, ép `Content-Type` theo kiểu đã lưu, `Content-Disposition` ảnh `inline`, PDF `attachment` (tên tệp UTF-8). `hasAttachments(entity)`, `attachmentIdsOf(entity)` cho bằng chứng và nhật ký.
+Đọc: `attachmentsOf(entity)` trả `{ fileId, name, url, contentType }[]`; `url` là link GET ký sẵn 15 phút, ép `Content-Type` theo kiểu đã lưu, `Content-Disposition` ảnh `inline`, PDF `attachment` (tên tệp UTF-8). `hasAttachments(entity)`, `attachmentIdsOf(entity)` cho bằng chứng và nhật ký. `publicFileUrls(fileIds)` (#303): link cố định `<S3_PUBLIC_URL>/<storage_key>` của tệp ở bucket công khai (ảnh sản phẩm), không gọi mạng; thiếu `S3_PUBLIC_URL` thì chuỗi rỗng, không 503.
 
 **`X-Content-Type-Options: nosniff`**: R2 không trả header này và link ký sẵn không thêm được. Tệp nằm ở tên miền của R2, khác origin của app (cookie refresh `HttpOnly` gắn với tên miền app), kiểu tệp đã ký lúc tải lên và ép lại lúc tải xuống. Ảnh công khai ở `S3_PUBLIC_URL` thêm được bằng Transform Rule của Cloudflare nếu cần.
 
@@ -54,6 +54,5 @@ Test thay kho bằng `setHeadObject(fake)` (`service/storage.ts`), trả về kh
 
 ## Chưa làm
 
-- Dọn tệp xin vé mà không gắn vào đâu (ngoài #212).
-- Bật ảnh sản phẩm ở catalog (`imageFileIds`, `noImages` ở `product/catalog/api/schemas.ts`): chưa có issue.
+- Dọn tệp xin vé mà không gắn vào đâu (P9, tách khỏi #303 thành issue riêng): cần đánh dấu tệp đã gắn phía `files` (vd `core.files.attached_at`), vì `core` không đọc bảng `product.product_images`; tệp còn được bất kỳ sản phẩm hay chứng từ nào tham chiếu là đang dùng.
 - Gắn tệp cho yêu cầu trả (#202) dùng các hàm trên.
