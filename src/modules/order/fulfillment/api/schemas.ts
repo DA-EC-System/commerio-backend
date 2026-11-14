@@ -21,7 +21,7 @@ export const PACKAGE_STATUS = [
   'lost',
   'cancelled',
 ] as const;
-export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'lost_reported', 'pickup_unconfirmed'] as const;
+export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'lost_reported', 'pickup_unconfirmed', 'label_error'] as const;
 
 export const ShopRef = z.object({ id: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'OrderShopRef' });
 
@@ -38,7 +38,7 @@ export const PackageSummary = z
     customerName: z.string().nullable(),
     status: z.enum(PACKAGE_STATUS),
     flags: z.array(z.enum(PACKAGE_FLAGS)).meta({
-      description: '`pickup_unconfirmed`: kho quét bàn giao quá 24 giờ mà sàn chưa xác nhận lấy (suy từ `pickup_confirmed_at`, không lưu)',
+      description: '`pickup_unconfirmed`: kho quét bàn giao quá 24 giờ mà sàn chưa xác nhận lấy. `label_error`: lần báo sẵn sàng giao gần nhất gặp lỗi từ sàn',
     }),
     flagNote: z.string().nullable(),
     notices: z
@@ -147,3 +147,46 @@ export const UndoHandoverBody = z.object({
   // Bắt buộc lý do do máy trạng thái kiểm (422 `reason_required`), nên ở đây cho phép rỗng.
   reason: z.string().trim().max(500, 'Lý do tối đa 500 ký tự').default(''),
 });
+
+const uuid = z.uuid();
+export function idsCsv(max: number) {
+  const split = (value: string) => value.split(',').map((id) => id.trim().toLowerCase());
+  return z.string().refine((value) => {
+    const ids = split(value);
+    return ids.length <= max && new Set(ids).size === ids.length && ids.every((id) => uuid.safeParse(id).success);
+  }, `Chọn từ 1 đến ${max} kiện, mã kiện hợp lệ và không trùng`).transform(split)
+    .meta({ description: `1–${max} UUID phân cách bằng dấu phẩy, không trùng` });
+}
+
+export const PickListQuery = z.object({ ids: idsCsv(200).optional() }).meta({ id: 'PickListQuery' });
+
+export const PickList = z.object({
+  items: z.array(z.object({
+    variantId: z.uuid().nullable(), sku: z.string(), productName: z.string(), attributesLabel: z.string(),
+    quantity: z.number().int().positive(), packageCount: z.number().int().positive(),
+  }).strict()),
+  packageCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+}).strict().meta({ id: 'PickList' });
+
+export const CarrierList = z.object({
+  items: z.array(z.object({ code: z.string(), name: z.string(), isDefault: z.boolean() }).strict()),
+}).strict().meta({ id: 'CarrierList' });
+
+const version = z.number().int().min(0);
+export const PackBody = z.object({
+  version,
+  lines: z.array(z.object({
+    variantId: z.uuid().transform((id) => id.toLowerCase()),
+    quantity: z.number().int().min(1).max(10_000),
+  })).max(200).refine((lines) => new Set(lines.map((line) => line.variantId)).size === lines.length, 'Mỗi biến thể chỉ quét một lần'),
+  carrierCode: z.string().trim().min(1).max(100).optional(),
+}).meta({ id: 'PackBody' });
+
+export const ReadyBody = z.object({ version }).meta({ id: 'ReadyBody' });
+export const OpenBody = z.object({ version }).meta({ id: 'OpenBody' });
+
+export const PackageDocumentsQuery = z.object({
+  ids: idsCsv(50),
+  kind: z.enum(['awb']).default('awb'),
+}).meta({ id: 'PackageDocumentsQuery' });

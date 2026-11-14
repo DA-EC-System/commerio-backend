@@ -1,14 +1,9 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
+import type { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
-  HandOverBody,
-  HandOverResult,
-  Package,
-  PackageListQuery,
-  PackagePage,
-  PackageParams,
-  ReceiveReturnBody,
-  UndoHandoverBody,
+  CarrierList, HandOverBody, HandOverResult, OpenBody, PackBody, Package, PackageDocumentsQuery, PackageListQuery,
+  PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, ReceiveReturnBody, UndoHandoverBody,
 } from './schemas.ts';
 
 const bearer = [{ bearerAuth: [] }];
@@ -17,9 +12,79 @@ const auth = {
   401: problemResponse('Thiếu, sai hoặc hết hạn token'),
   403: problemResponse('`forbidden`, `company_not_selected`, `module_disabled`'),
 };
+const packageMissing = problemResponse('`not_found`: kiện không có hoặc thuộc công ty khác');
+const marketplaceConflict = '`shop_not_connected`, `marketplace_unauthorized`, `marketplace_rejected`';
+const marketplaceUnavailable = problemResponse('`marketplace_unavailable`: sàn tạm thời không phục vụ');
+const versionConflict = '`version_conflict` kèm `current`, `invalid_transition`';
+
+function registerPackingAction(
+  registry: OpenAPIRegistry, action: 'pack' | 'ready' | 'open', schema: z.ZodType, summary: string, conflicts: string, inputErrors: string,
+) {
+  registry.registerPath({
+    method: 'post',
+    path: `/packages/:id/${action}`,
+    summary,
+    description: 'Cần `fulfillment.order.process`. Kiểm phiên bản và trả bản chi tiết kiện sau thao tác.',
+    security: bearer,
+    request: { params: PackageParams, body: json(schema) },
+    responses: {
+      200: { description: 'Kiện sau khi thực hiện thao tác', ...json(Package) },
+      ...auth,
+      404: packageMissing,
+      409: problemResponse(`${versionConflict}, ${conflicts}, ${marketplaceConflict}`),
+      422: problemResponse(`${inputErrors}, \`validation_failed\``),
+      503: marketplaceUnavailable,
+    },
+  });
+}
 
 /** Đường dẫn Swagger của module `fulfillment`, viết tương đối với /api/v1/fulfillment. */
 export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
+  registry.registerPath({
+    method: 'get',
+    path: '/pick-list',
+    summary: 'Danh sách nhặt hàng',
+    description: 'Cần `fulfillment.order.process`. Gộp theo biến thể, hoặc theo SKU nếu chưa ghép. Mặc định lấy tối đa 500 kiện tab Cần đóng gói.',
+    security: bearer,
+    request: { query: PickListQuery },
+    responses: { 200: { description: 'Danh sách nhặt', ...json(PickList) }, ...auth, 422: problemResponse('`validation_failed` tại `errors.ids`') },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/packages/:id/carriers',
+    summary: 'Nhà vận chuyển của kiện',
+    description: 'Cần `fulfillment.order.process`. Danh sách rỗng cho đơn tay, sàn tự chọn hoặc sàn không hỗ trợ chọn.',
+    security: bearer,
+    request: { params: PackageParams },
+    responses: {
+      200: { description: 'Nhà vận chuyển', ...json(CarrierList) }, ...auth, 404: packageMissing,
+      409: problemResponse(`\`item_not_packable\`, ${marketplaceConflict}`),
+      422: problemResponse('`marketplace_unsupported`'), 503: marketplaceUnavailable,
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/packages/documents',
+    summary: 'In vận đơn PDF',
+    description: 'Cần `fulfillment.order.process`. Gộp vận đơn 1–50 kiện thành một PDF, tên tệp theo giờ Việt Nam.',
+    security: bearer,
+    request: { query: PackageDocumentsQuery },
+    responses: {
+      200: { description: 'Tệp vận đơn', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } },
+      ...auth, 404: packageMissing,
+      409: problemResponse(`\`document_not_ready\`, \`package_status_not_allowed\`, \`rts_package_not_found\`, ${marketplaceConflict}`),
+      422: problemResponse('`validation_failed` (đầu vào hoặc tổng tệp quá 50 MB), `marketplace_unsupported`'),
+      503: marketplaceUnavailable,
+    },
+  });
+  registerPackingAction(registry, 'pack', PackBody, 'Quét và đóng gói kiện',
+    '`order_not_processing`, `package_group_not_ready`, `package_status_not_allowed`, `item_not_packable`',
+    '`scan_mismatch` tại `errors["lines.<variantId>"]`, `marketplace_unsupported`');
+  registerPackingAction(registry, 'ready', ReadyBody, 'Báo kiện sẵn sàng giao',
+    '`self_delivery`, `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`', '`marketplace_unsupported`');
+  registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói',
+    '`shop_awaiting_stocktake`, `package_status_not_allowed`', '`insufficient_stock`, `marketplace_unsupported`');
+
   registry.registerPath({
     method: 'get',
     path: '/packages',

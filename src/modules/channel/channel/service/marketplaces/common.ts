@@ -363,6 +363,26 @@ export interface RemoteCounts {
   skuCount: number | null;
 }
 
+/** Tham chiếu các món thuộc một kiện trên sàn. */
+export interface PackageItemsRef {
+  externalOrderId: string;
+  externalLineIds: readonly string[];
+}
+
+export interface CarrierOption {
+  code: string;
+  name: string;
+  isDefault: boolean;
+}
+
+export interface PlatformPack {
+  packageCode: string;
+  trackingCode: string | null;
+  carrier: { code: string; name: string } | null;
+}
+
+export const CARRIER_REQUIRED = 'carrier_required';
+
 export interface MarketplaceAdapter {
   /** Tên sàn hiển thị cho người dùng. */
   readonly name: string;
@@ -552,6 +572,17 @@ export interface MarketplaceAdapter {
    * (`drop_off`); không truyền thì sàn chọn theo cấu hình gian hàng. Trạng thái mới về qua lần kéo đơn kế tiếp.
    */
   shipPackage?(accessToken: string, packageCode: string, opts?: { handover?: 'pickup' | 'drop_off' }): Promise<void>;
+
+  /** Trả danh sách rỗng khi sàn tự chọn nhà vận chuyển. */
+  shipmentProviders?(accessToken: string, ref: PackageItemsRef): Promise<{ platformChooses: boolean; items: CarrierOption[] }>;
+  /** Đóng gói các món, trả mã kiện sàn mới. */
+  packItems?(accessToken: string, ref: PackageItemsRef & { carrierCode?: string }): Promise<PlatformPack>;
+  /** Báo các kiện đã sẵn sàng giao. */
+  readyToShip?(accessToken: string, packageCodes: readonly string[]): Promise<void>;
+  /** Cho phép đóng gói lại một kiện chưa báo giao. */
+  repackPackage?(accessToken: string, packageCode: string): Promise<void>;
+  /** Mỗi phần tử là một tệp PDF, có thể chứa vận đơn của nhiều kiện. */
+  shippingDocuments?(accessToken: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
 }
 
 /** Trạng thái yêu cầu trả của app (Documents/25 §9, Documents/21 §20; enum `sales.return_status`). */

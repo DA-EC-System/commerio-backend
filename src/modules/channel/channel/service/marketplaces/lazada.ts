@@ -28,6 +28,8 @@ import {
   type TokenSet,
 } from './common.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
+import { downloadDocument } from './image-source.ts';
+import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -395,7 +397,7 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
   };
 }
 
-export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
+export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch, deps: LazadaPackingDeps = {}): MarketplaceAdapter {
   // Một chỗ quyết định cấu hình đủ chưa: `connectMethods`, `credentials`, `authorizeUrl` cùng đọc (#163).
   const hasCredentials = Boolean(config.appKey && config.appSecret);
   const oauthReady = hasCredentials && Boolean(config.redirectUrl);
@@ -738,6 +740,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
     ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
+    ...lazadaPackingMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method), {
+      download: deps.download ?? ((url) => downloadDocument(url, { trustedOrigin: new URL(config.apiUrl).origin })),
+    }),
     name: 'Lazada',
     capabilities: LAZADA_CAPABILITIES,
     connectMethods() {

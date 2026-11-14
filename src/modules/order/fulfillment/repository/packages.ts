@@ -50,8 +50,13 @@ export async function updatePackage(
   id: string,
   patch: Partial<{
     status: PackageStatus;
-    platformPackageCode: string;
+    platformPackageCode: string | null;
     trackingCode: string | null;
+    carrierCode: string | null;
+    carrierName: string | null;
+    labelError: boolean;
+    packedBy: string | null;
+    packedAt: Date | null;
     needsOpen: boolean;
     openPurpose: 'cancel' | 'edit' | 'resplit' | null;
     needsAttention: boolean;
@@ -167,6 +172,7 @@ export interface PackageRow extends HandoverPackage {
   platformPackageCode: string | null;
   trackingCode: string | null;
   needsOpen: boolean;
+  labelError: boolean;
   shipping: PackageShipping;
   lines: (PlanLine & { orderLineId: string })[];
 }
@@ -180,6 +186,7 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
       platformPackageCode: packages.platformPackageCode,
       trackingCode: packages.trackingCode,
       needsOpen: packages.needsOpen,
+      labelError: packages.labelError,
       shipping: {
         shipmentProvider: packages.shipmentProvider,
         shippingProviderType: packages.shippingProviderType,

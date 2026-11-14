@@ -9,6 +9,15 @@ import { invariantBroken, packageDocuments, packageLineRows, packageRow, stockOf
 import { ingest, remote, setup, withStatus } from './platform-fixtures.ts';
 
 describe('đồng bộ sàn trừ tồn qua lõi bàn giao (spec 199a §5.4)', () => {
+  it('đồng bộ sàn đưa kiện khỏi packed thì xoá cờ lỗi lấy vận đơn', async () => {
+    const s = await setup(10);
+    const order = remote(s, { status: 'packed' });
+    const { packageId } = await ingest(s.companyId, order);
+    await testPool().query(`update "order".packages set label_error = true where id = $1`, [packageId]);
+    await ingest(s.companyId, withStatus(order, 'awaiting_pickup'));
+    expect(await packageRow(packageId)).toMatchObject({ status: 'awaiting_pickup', label_error: false });
+  });
+
   it('AC7 US-DH-10.2: kiện reserved, sàn báo in_transit → trừ đúng một lần, marketplace, có pickup_confirmed_at', async () => {
     const s = await setup(10);
     const o = remote(s);

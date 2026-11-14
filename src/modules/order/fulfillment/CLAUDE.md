@@ -58,12 +58,26 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 - **`package_returned`**: chỉ khi kho quét nhận hàng hoàn (`receiveReturn`). Lập phiếu `KT` nháp qua `StockPort.receiveBack` cho mọi dòng đã ghép (kể cả `before_cutoff`, bàn giao bắt buộc, hoãn trừ); không dòng nào ghép thì không lập phiếu, log `info`. Route chưa nhận `lines` nên gọi cổng với `expected = scanned = quantity` (coi như kho quét đủ, luật giai đoạn chuyển tiếp của `21` §19.2), `meta` có người quét (`actorId`) và mã kiện; kho cộng chờ xử lý ngay theo số quét (#208).
 - Cột `packages.delivery_posted_at` (migration `*_giao-hoan`, điền `= delivered_at` cho kiện đã giao trước 199c).
 
+## Đóng gói, báo sẵn sàng giao, vận đơn (#239)
+
+`pack`, `ready`, `open` kiểm trong giao dịch ngắn, gọi sàn ngoài giao dịch, rồi khoá dòng và ghi theo phiên bản. Khoá phiên theo kiện giữ qua cả ba bước, chờ tối đa 10 giây. Báo giao còn khoá theo mã kiện sàn của gian hàng để hai kiện cùng nhóm không gửi hai lệnh. Nếu lượt kéo đã đưa kiện tới đích với cùng mã sàn, trả bản chi tiết hiện tại và giữ lịch sử đã ghi.
+
+Đóng gói so số quét theo biến thể đã ghép, vẫn gửi đủ mã món sàn. Nhóm gói gồm các kiện chưa huỷ cùng gian hàng và mã kiện sàn. Đóng gói chờ các đơn của nhóm sang xử lý và các kiện đã giữ hoặc đóng. Báo giao chờ cả nhóm đóng xong, gọi sàn một lần và cập nhật cả nhóm trong một giao dịch theo thứ tự id. Lỗi gọi sàn lúc báo giao bật `label_error` trên kiện đang bấm, báo giao thành công hoặc đồng bộ sàn chuyển khỏi `packed` thì xoá cờ.
+
+`open` chỉ nhận kiện `packed`. Nếu kiện chưa giữ đủ hàng, giữ lại trước khi gọi repack và phát `allocation_done`. Lazada repack thành công thì xoá mã kiện và vận đơn cũ. TikTok giữ mã kiện. In vận đơn bỏ trùng mã theo gian hàng, tải tối đa ba gian hàng cùng lúc và gộp tối đa 50 MB PDF.
+
 ## Route (`/api/v1/fulfillment`)
 
 | Route | Quyền | Việc |
 |---|---|---|
 | `GET /packages` | `fulfillment.order.process` | Tab (`PACKAGE_TABS`, mặc định `reserved` chỉ đơn `processing`; `shipping` = `in_transit` + `self_delivering`; `needs_open` theo cờ), `search` (mã kiện, mã đơn, mã vận đơn; `%`, `_` khớp đúng chữ), `source`, `shopId`, phân trang; sắp `ship_by` null cuối rồi mã; `counts` một câu, không theo `tab` |
 | `GET /packages/:id` | `fulfillment.order.process` | `Package` = `PackageSummary` + `statusHistory` |
+| `GET /pick-list` | `fulfillment.order.process` | Danh sách nhặt của 1–200 kiện chọn hoặc tối đa 500 kiện tab Cần đóng gói, trả số kiện và cờ cắt |
+| `GET /packages/:id/carriers` | `fulfillment.order.process` | Nhà vận chuyển có thể chọn cho kiện |
+| `POST /packages/:id/pack` | `fulfillment.order.process` | So số quét, đóng gói, lưu mã kiện sàn và vận đơn nếu sàn trả |
+| `POST /packages/:id/ready` | `fulfillment.order.process` | Báo sẵn sàng giao cho kiện hoặc nhóm gói |
+| `POST /packages/:id/open` | `fulfillment.order.process` | Mở kiện đã đóng, giữ lại hàng nếu cần |
+| `GET /packages/documents` | `fulfillment.order.process` | Tải một PDF vận đơn gộp của 1–50 kiện |
 | `POST /packages/hand-over` | `fulfillment.order.process` | 1–50 kiện, id không trùng (422); mỗi kiện một giao dịch, tuần tự; `failed[].code`: `not_found`, `already_handed_over` (kiểm trước `version`), `version_conflict`, `invalid_transition`, `internal_error` (log `error`, câu chung). `issue` null khi kiện chưa có dòng nào ghép SKU (kiện sàn tới chờ lấy hàng khi chưa ghép) |
 | `POST /packages/:id/receive-return` | `fulfillment.order.process` | Kho quét nhận hàng hoàn `{ version, code }`: kiện có (404, kể cả công ty khác, id sai dạng) → máy trạng thái (409 `invalid_transition`, kể cả quét lần hai; kiểm trước `version` như bàn giao) → `version` (409 kèm `current`) → `code` khớp mã kiện hoặc mã vận đơn, không phân biệt hoa thường (422 `package_mismatch`, `errors.code`). Kiện `returned`, phiếu `KT` nháp, `package_status_changed`, `package_returned`; trả `Package` |
 | `POST /packages/:id/undo-handover` | `fulfillment.handover.revert` (CEO) | Bắt buộc lý do (422 `reason_required`); chỉ kiện `scan` mà sàn chưa xác nhận (409 `handover_confirmed_by_platform`); đơn `cancelling`/`platform_cancelled` thì kiện bật Cần xử lý "Đơn đang huỷ: dỡ kiện về kệ" (chưa có khung việc #209) |
@@ -81,6 +95,7 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `getOrderCogs` (finance).
 - `packageStatusOf(packageIds)` → `Map<id, { orderId, status, deliveredAt }>` (**finance E139**): chạy trong `withCompany` của bên gọi; bỏ id sai dạng, rỗng thì không truy vấn; id công ty khác vắng trong `Map`.
 - **#237** ghép SKU muộn phải bỏ qua kiện `returned` (hàng đã về kệ; trừ tồn lúc này là sai, spec 199c §10).
+- `ctx.marketplacePackages` do channel tiêm ở `src/wiring.ts`, cung cấp `carriers`, `pack`, `readyToShip`, `repack`, `shippingDocuments`.
 - Test thay cổng tồn bằng `setStockPort({ ... })` (`service/stock-port.ts`): phần không truyền là bản thật.
 
 ## Giới hạn đã biết
@@ -97,4 +112,5 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - Trace Lazada (thử 13/11/2026 trên shop thử, `Documents/tich-hop-san/lazada.md` §11.7): `ofc_package_id` trùng `package_id` của món; chỉ gặp `ready_to` (bỏ) và `delivered`. Mốc rời kho, giao không thành công qua đơn vị vận chuyển chưa gặp thật (shop thử chỉ đi tới delivered, đơn SOF), kiểm bằng fixture.
 - "Dỡ kiện về kệ" sau phiếu kiểm kê là cờ Cần xử lý, chưa phải việc trong khung #209 (spec 199b D9). Ghép SKU, tồn đổi vì lý do khác (xuất huỷ, nhặt thiếu) không bật cờ này: `25` §7.4 chỉ đòi khi do kiểm kê.
 - `receive-return` chưa nhận `lines` (số quét, `21` §19.2 đổi 11/11/2026): PR riêng sau #300 (issue #199; cổng `receiveBack` đã nhận `expected`/`scanned` và người quét từ #208). Route `found` cùng `lines` làm ở #238.
-- Chưa làm: FE (199d); đóng gói, RTS (#239); sàn chia lại kiện, thất lạc (#238); route `self-deliver`.
+- Lượt kéo đơn áp kết quả trước request thì lịch sử ghi nguồn sàn. Sau repack, lượt kéo có thể gắn lại mã cũ trong thời gian sàn còn trả mã đó. Lần đóng gói tiếp theo dùng mã mới sàn trả.
+- Chưa làm: FE (199d), mở kiện `awaiting_pickup`, sàn chia lại kiện, thất lạc (#238) và route `self-deliver`.
