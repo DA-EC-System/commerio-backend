@@ -1,4 +1,4 @@
-// Tách kiện trong app (spec 205 §5.4, Documents/21 §19.2, US-DH-19): nhánh `unit` (Lazada, đơn tay).
+// Tách kiện trong app (spec 205 §5.4, Documents/21 §19.2, US-DH-19). Mã ca `D2-Snn` theo Documents/26 §3.2, `ACn` theo spec 205 §9.
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Package } from '#src/modules/order/fulfillment/api/schemas.ts';
 import type { MarketplacePackages } from '#src/modules/order/fulfillment/service/packages.ts';
@@ -76,7 +76,7 @@ async function reasonOf(packageId: string, action: string) {
 }
 
 describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
-  it('AC1: kiện backordered tách món hết hàng ra, kiện cũ giữ được hàng, kiện mới chờ hàng', async () => {
+  it('D2-S01 AC1: kiện backordered tách món hết hàng ra, kiện cũ giữ được hàng, kiện mới chờ hàng', async () => {
     const { packageId, orderId, packageCode } = await seedPackage(companyId, {
       status: 'backordered', shopId, lines: [one(white), one(jeans), one(red)],
     });
@@ -95,7 +95,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect((await outboxOf(companyId, 'fulfillment.allocation_done')).length).toBe(before + 1);
   });
 
-  it('AC2: kiện reserved tách ra hai kiện reserved, phần giữ đi theo món, tổng đang giữ không đổi', async () => {
+  it('D2-S02 AC2: kiện reserved tách ra hai kiện reserved, phần giữ đi theo món, tổng đang giữ không đổi', async () => {
     const { packageId, orderId } = await seedPackage(companyId, {
       status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(jeans, { reserved: true }), one(blue, { reserved: true })],
     });
@@ -116,7 +116,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect((await outboxOf(companyId, 'fulfillment.allocation_done')).length).toBe(allocations);
   });
 
-  it('AC3: gian hàng unit hỏi mức tách ngoài giao dịch, không gọi sàn tách, kiện mới không có mã kiện sàn', async () => {
+  it('D2-S03 AC3: gian hàng unit hỏi mức tách ngoài giao dịch, không gọi sàn tách, kiện mới không có mã kiện sàn', async () => {
     const { packageId, orderId } = await seedPackage(companyId, {
       status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(jeans, { reserved: true })],
     });
@@ -130,7 +130,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect((await otherPackages(orderId, packageId))[0]!.platform_package_code).toBeNull();
   });
 
-  it('đơn tay coi như unit, không hỏi cổng sàn', async () => {
+  it('D2-S03: đơn tay coi như unit, không hỏi cổng sàn', async () => {
     const { packageId, orderId } = await seedPackage(companyId, {
       status: 'reserved', manual: true, lines: [one(white, { reserved: true }), one(jeans, { reserved: true })],
     });
@@ -156,7 +156,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect((await stockOfVariant(companyId, white)).reserved).toBe(heldBefore);
   });
 
-  it('AC7: sàn không cho tách thì 422 split_not_supported, đơn vẫn một kiện', async () => {
+  it('D2-S12 AC7: sàn không cho tách thì 422 split_not_supported, đơn vẫn một kiện', async () => {
     const { packageId, orderId } = await seedPackage(companyId, { status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(jeans, { reserved: true })] });
 
     const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: jeans, quantity: 1 }]] }, {
@@ -167,7 +167,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect(await packageCount(orderId)).toBe(1);
   });
 
-  it.each(['packed', 'awaiting_pickup'] as const)('AC8: kiện %s thì 409 package_sealed', async (status) => {
+  it.each(['packed', 'awaiting_pickup'] as const)('D2-S09 AC8: kiện %s thì 409 package_sealed', async (status) => {
     const { packageId } = await seedPackage(companyId, { status, shopId, lines: [one(white, { reserved: true }), one(jeans, { reserved: true })] });
 
     const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: jeans, quantity: 1 }]] });
@@ -175,7 +175,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expectProblem(res, 409, 'package_sealed');
   });
 
-  it('kiện đã rời kho thì 409 invalid_transition', async () => {
+  it('D2-S10: kiện đã rời kho thì 409 invalid_transition', async () => {
     const { packageId } = await seedPackage(companyId, { status: 'in_transit', shopId, lines: [one(white), one(jeans)] });
 
     const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: jeans, quantity: 1 }]] });
@@ -193,7 +193,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect(await packageCount(orderId)).toBe(1);
   });
 
-  it('AC9: chia hết món sang kiện mới thì 422, báo kiện cũ phải còn món', async () => {
+  it('D2-S11 AC9: chia hết món sang kiện mới thì 422, báo kiện cũ phải còn món', async () => {
     const { packageId } = await seedPackage(companyId, { status: 'reserved', shopId, lines: [one(white, { reserved: true })] });
 
     const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: white, quantity: 1 }]] });
@@ -222,7 +222,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect(res.body.errors['parts.0.1.variantId']).toBeTruthy();
   });
 
-  it('AC10: sau khi tách, mỗi dòng đơn có tổng số lượng trên các kiện chưa huỷ bằng số lượng dòng', async () => {
+  it('D2-S06 AC10: sau khi tách, mỗi dòng đơn có tổng số lượng trên các kiện chưa huỷ bằng số lượng dòng', async () => {
     const { packageId, orderId } = await seedPackage(companyId, { status: 'backordered', shopId, lines: [one(white), one(jeans), one(red)] });
 
     const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: red, quantity: 1 }]] });
@@ -239,7 +239,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     for (const row of rows) expect(row.placed).toBe(row.quantity);
   });
 
-  it.each(['admin', 'sale'] as const)('AC11: %s thì 403, không hỏi cổng sàn', async (role) => {
+  it.each(['admin', 'sale'] as const)('D2-S01q AC11: %s thì 403, không hỏi cổng sàn', async (role) => {
     const { packageId } = await seedPackage(companyId, { status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(jeans, { reserved: true })] });
     const fake = unit();
 
@@ -249,7 +249,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect(fake.splitLevel).not.toHaveBeenCalled();
   });
 
-  it('AC14: kiện mới ghi create kèm người tách, kiện cũ ghi split, lý do nối hai mã', async () => {
+  it('D2-S07 AC14: kiện mới ghi create kèm người tách, kiện cũ ghi split, lý do nối hai mã', async () => {
     const { packageId, orderId, packageCode } = await seedPackage(companyId, { status: 'backordered', shopId, lines: [one(white), one(jeans), one(red)] });
 
     const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: red, quantity: 1 }]] });
@@ -292,7 +292,7 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect((await otherPackages(orderId, packageId))[0]!.status).toBe('backordered');
   });
 
-  it('Review Focus 3: kiện còn dòng chưa ghép SKU, chuyển hết dòng đã ghép, dòng chưa ghép ở lại kiện cũ', async () => {
+  it('D2-S08 Review Focus 3: kiện còn dòng chưa ghép SKU, chuyển hết dòng đã ghép, dòng chưa ghép ở lại kiện cũ', async () => {
     const { packageId, orderId } = await seedPackage(companyId, {
       status: 'reserved', shopId, fallbackVariantId: white, lines: [one(white, { reserved: true }), one(null)],
     });
@@ -328,7 +328,7 @@ describe('nhánh sku (spec 205 D7, D8, D13, D14)', () => {
   )).rows[0]!.platform_package_code;
   const seedTwo = () => seedPackage(companyId, { status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(blue, { reserved: true })] });
 
-  it('AC4: gọi sàn tách một lần ngoài giao dịch, mỗi kiện mang mã kiện sàn của nhóm mình', async () => {
+  it('D2-S05 AC4: gọi sàn tách một lần ngoài giao dịch, mỗi kiện mang mã kiện sàn của nhóm mình', async () => {
     const { packageId, orderId, lineIds } = await seedTwo();
     const fake = sku();
 
@@ -343,7 +343,7 @@ describe('nhánh sku (spec 205 D7, D8, D13, D14)', () => {
     expect((await otherPackages(orderId, packageId))[0]!.platform_package_code).toBe('FP-NEW');
   });
 
-  it('AC5: chuyển một phần của một SKU thì 422 split_not_supported, không gọi sàn', async () => {
+  it('D2-S13 AC5: chuyển một phần của một SKU thì 422 split_not_supported, không gọi sàn', async () => {
     const { packageId } = await seedPackage(companyId, {
       status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(white, { reserved: true }), one(blue, { reserved: true })],
     });
@@ -355,7 +355,7 @@ describe('nhánh sku (spec 205 D7, D8, D13, D14)', () => {
     expect(fake.split).not.toHaveBeenCalled();
   });
 
-  it('AC6: sàn từ chối tách thì 422 kèm câu của sàn, không có kiện mới, không bật cờ', async () => {
+  it('D2-S14 AC6: sàn từ chối tách thì 422 kèm câu của sàn, không có kiện mới, không bật cờ', async () => {
     const { packageId, orderId } = await seedTwo();
     const fake = { ...sku(), split: vi.fn(async () => { throw new AppError(422, 'split_not_supported', 'Đơn ON_HOLD', { platformCode: '21001008' }); }) };
 
@@ -367,7 +367,7 @@ describe('nhánh sku (spec 205 D7, D8, D13, D14)', () => {
     expect((await packageRow(packageId)).needs_attention).toBe(false);
   });
 
-  it('AC7a: đơn đã có hai kiện chưa huỷ thì 422 split_not_supported, không gọi sàn', async () => {
+  it('D2-S15 AC7a: đơn đã có hai kiện chưa huỷ thì 422 split_not_supported, không gọi sàn', async () => {
     const { packageId, orderId } = await seedTwo();
     await testPool().query(
       `insert into "order".packages (company_id, code, order_id, shop_id, status) values ($1, $2, $3, $4, 'reserved')`,
@@ -381,7 +381,7 @@ describe('nhánh sku (spec 205 D7, D8, D13, D14)', () => {
     expect(fake.split).not.toHaveBeenCalled();
   });
 
-  it('AC7b: sàn đã tách mà bước ghi lỗi thì kiện cũ bật Cần xử lý, lỗi gốc trả về', async () => {
+  it('D2-S16 AC7b: sàn đã tách mà bước ghi lỗi thì kiện cũ bật Cần xử lý, lỗi gốc trả về', async () => {
     const { packageId, orderId } = await seedTwo();
     const fake = sku(undefined, () => testPool().query(`update "order".packages set status = 'packed' where id = $1`, [packageId]));
 

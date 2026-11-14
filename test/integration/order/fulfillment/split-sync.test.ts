@@ -49,7 +49,7 @@ async function historyCount(ids: readonly string[]) {
 }
 
 describe('đồng bộ giữ cách chia kiện của app (spec 205 D10)', () => {
-  it('AC12: đơn đã tách trong app, chưa đóng gói, kéo lại không đổi kiện, không bật Cần xử lý', async () => {
+  it('D2-S04 AC12: đơn đã tách trong app, chưa đóng gói, kéo lại không đổi kiện, không bật Cần xử lý', async () => {
     const v = await setup(10);
     const o = unpacked(remote(v, { lines: 2 }));
     const { orderId, packageId } = await ingest(v.companyId, o);

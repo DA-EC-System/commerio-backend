@@ -126,7 +126,7 @@ describe('bất biến dòng kiện', () => {
     [companyId, packageId, orderLineId, white],
   );
 
-  it('AC13: dòng đơn nằm trong hai kiện chưa huỷ, tổng vượt số lượng, thì commit bị chặn', async () => {
+  it('D2-S17 AC13: dòng đơn nằm trong hai kiện chưa huỷ, tổng vượt số lượng, thì commit bị chặn', async () => {
     const { orderId, orderLineId } = await seeded();
 
     await expect(inTransaction(async (c) => duplicateLine(c, await secondPackage(c, orderId, 'reserved'), orderLineId)))

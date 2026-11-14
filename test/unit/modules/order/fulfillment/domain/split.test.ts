@@ -33,7 +33,7 @@ describe('luật chia kiện (spec 205 §5.2)', () => {
     expect(planSplit([l('1', A), l('2', B)], [[{ variantId: A, quantity: 1 }], [{ variantId: A, quantity: 1 }]], 'unit'))
       .toEqual({ ok: false, code: 'validation_failed', errors: { 'parts.1.0.quantity': 'Vượt số lượng trong kiện' } }));
 
-  it('AC9: kiện cũ hết món', () =>
+  it('D2-S11 AC9: kiện cũ hết món', () =>
     expect(planSplit([l('1', A)], [[{ variantId: A, quantity: 1 }]], 'unit'))
       .toEqual({ ok: false, code: 'validation_failed', errors: { parts: 'Kiện cũ phải còn ít nhất một món' } }));
 
@@ -44,7 +44,7 @@ describe('luật chia kiện (spec 205 §5.2)', () => {
   it.each([
     ['chuyển một phần của SKU', [[{ variantId: A, quantity: 1 }]]],
     ['cùng SKU ở hai phần', [[{ variantId: A, quantity: 1 }], [{ variantId: A, quantity: 1 }]]],
-  ])('AC5 sku: %s thì split_not_supported', (_, parts) =>
+  ])('D2-S13 AC5 sku: %s thì split_not_supported', (_, parts) =>
     expect(planSplit([l('1', A), l('2', A), l('3', B)], parts, 'sku'))
       .toEqual({ ok: false, code: 'split_not_supported', message: 'Sàn chỉ cho tách theo SKU, không tách đôi cùng một SKU' }));
 
