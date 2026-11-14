@@ -86,6 +86,14 @@ describe('ràng buộc dòng kiện', () => {
     await expect(insertLine(c, p, { stock_deducted: true })).rejects.toThrow(/"package_lines_deducted_cost"/);
     await expect(insertLine(c, p, { stock_deducted: true, unit_cost: '1000' })).resolves.toBeDefined();
   });
+
+  it('số chờ bỏ nằm trong 0..số lượng (spec 205 §5.10)', async () => {
+    const c = randomUUID();
+    const p = (await insertPackage(c, {})).rows[0]!.id;
+    await expect(insertLine(c, p, { pending_drop_qty: 4 })).rejects.toThrow(/"package_lines_pending_drop"/);
+    await expect(insertLine(c, p, { pending_drop_qty: -1 })).rejects.toThrow(/"package_lines_pending_drop"/);
+    await expect(insertLine(c, p, { pending_drop_qty: 3 })).resolves.toBeDefined();
+  });
 });
 
 // Bất biến dòng kiện (spec 205 D1, D11, §5.1; Documents/25 §8): tổng một dòng đơn trên các kiện chưa huỷ không vượt số

@@ -136,6 +136,8 @@ export const packageLines = fulfillmentSchema.table(
     quantity: integer('quantity').notNull(),
     reservedQty: integer('reserved_qty').notNull().default(0),
     packedQty: integer('packed_qty').notNull().default(0),
+    /** Số món sàn đã huỷ mà kiện đã đóng gói, chờ mở kiện để bỏ ra (spec 205 §5.10; 19 mục 2). */
+    pendingDropQty: integer('pending_drop_qty').notNull().default(0),
     unitCost: money('unit_cost'),
     stockDeducted: boolean('stock_deducted').notNull().default(false),
     ...timestamps,
@@ -149,6 +151,7 @@ export const packageLines = fulfillmentSchema.table(
     check('package_lines_quantity', sql`${t.quantity} > 0`),
     check('package_lines_reserved_whole', sql`${t.reservedQty} in (0, ${t.quantity})`),
     check('package_lines_packed', sql`${t.packedQty} >= 0 and ${t.packedQty} <= ${t.quantity}`),
+    check('package_lines_pending_drop', sql`${t.pendingDropQty} >= 0 and ${t.pendingDropQty} <= ${t.quantity}`),
     check('package_lines_unmapped', sql`${t.variantId} is not null or ${t.reservedQty} = 0`),
     check('package_lines_deducted_cost', sql`not ${t.stockDeducted} or ${t.unitCost} is not null`),
   ],

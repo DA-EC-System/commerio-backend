@@ -1,0 +1,4 @@
+ALTER TABLE "order"."package_lines" ADD COLUMN "pending_drop_qty" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."order_lines" ADD COLUMN "cancelled_qty" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."package_lines" ADD CONSTRAINT "package_lines_pending_drop" CHECK ("order"."package_lines"."pending_drop_qty" >= 0 and "order"."package_lines"."pending_drop_qty" <= "order"."package_lines"."quantity");--> statement-breakpoint
+ALTER TABLE "order"."order_lines" ADD CONSTRAINT "order_lines_cancelled_qty" CHECK ("order"."order_lines"."cancelled_qty" >= 0 and "order"."order_lines"."cancelled_qty" <= "order"."order_lines"."quantity");
