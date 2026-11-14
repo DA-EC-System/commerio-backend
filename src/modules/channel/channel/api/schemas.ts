@@ -274,17 +274,14 @@ export const CategoryMapList = z.object({ items: z.array(CategoryMap) }).strict(
 // Listing (#104; Documents/21 §18.3, §18.4).
 export const ListingParams = z.object({ id: z.string(), variantId: z.uuid('Biến thể không hợp lệ') });
 
-const httpUrl = z.url({ protocol: /^https?$/, error: 'URL ảnh phải là http(s)' }).max(2000);
 export const PushBody = z
   .object({
     variantIds: z.array(z.uuid('Biến thể không hợp lệ')).min(1, 'Chọn ít nhất một biến thể').max(20, 'Tối đa 20 biến thể mỗi lần'),
-    imageUrls: z
-      .record(z.uuid(), z.array(httpUrl).min(1).max(8))
-      .default({})
-      .meta({
-        description:
-          'URL ảnh công khai theo `productId` (JPG/PNG ≥ 330×330, ≤ 1MB); BE đưa lên sàn. Bắt buộc lần đầu đẩy sản phẩm, vì catalog chưa lưu ảnh',
-      }),
+    // `z.unknown()` không `.optional()` là trường bắt buộc (Zod ≥ 4.4). Nhận mọi giá trị để FE cũ không bị 422.
+    imageUrls: z.unknown().optional().meta({
+      deprecated: true,
+      description: 'Bỏ qua từ commerio-backend#303: BE lấy ảnh catalog của sản phẩm (tối đa 8 ảnh đầu)',
+    }),
   })
   .meta({ id: 'ListingPushInput' });
 

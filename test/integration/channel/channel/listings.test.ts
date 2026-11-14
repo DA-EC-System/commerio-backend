@@ -48,6 +48,13 @@ const fresh = (sku: string) => {
   all.push(v);
   return v;
 };
+/** Biến thể của một sản phẩm riêng; `images` là ảnh catalog của sản phẩm đó (bỏ trống: chưa có ảnh). */
+const ownProduct = (sku: string, images: string[] = []) => {
+  const v = variant(`${sku}-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
+  all.push(v);
+  if (images.length) catalogImages.set(v.productId, images);
+  return v;
+};
 
 /** Ảnh catalog của sản phẩm chung (#303); sản phẩm không có trong Map là chưa có ảnh. */
 const CATALOG = ['https://files.commerio.test/a.jpg', 'https://files.commerio.test/b.jpg'];
@@ -92,10 +99,10 @@ const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
-const IMAGES = { [productId]: ['https://img.test/a.png'] };
-const push = (variantIds: string[], imageUrls: Record<string, string[]> = IMAGES) =>
-  auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send({ variantIds, imageUrls });
-const results = async (variantIds: string[], imageUrls?: Record<string, string[]>) => {
+/** Như FE: chỉ `{ variantIds }`; `imageUrls` cũ gửi kèm thì BE bỏ qua (#303). */
+const push = (variantIds: string[], imageUrls?: unknown) =>
+  auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(imageUrls === undefined ? { variantIds } : { variantIds, imageUrls });
+const results = async (variantIds: string[], imageUrls?: unknown) => {
   const res = await push(variantIds, imageUrls);
   expect(res.status).toBe(200);
   return PushResults.parse(res.body).results;
@@ -120,7 +127,7 @@ async function jobsOf(listingId: string) {
 
 /** Chạy việc nền của listing như worker: listing có mã sàn, `under_review`. */
 async function runJob(listingId: string) {
-  await runListingPush(port, { companyId: company.companyId, shopId, listingId, imageUrls: IMAGES[productId]! });
+  await runListingPush(port, { companyId: company.companyId, shopId, listingId, imageUrls: CATALOG });
 }
 
 beforeAll(async () => {
@@ -150,7 +157,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
 
     const [row] = await rowsOf(ok.id);
     expect(row).toMatchObject({ status: 'pushing', seller_sku: 'CMR-OK', push_attempts: 0 });
-    expect(await jobsOf(row.id)).toEqual([{ companyId: company.companyId, shopId, listingId: row.id, imageUrls: ['https://img.test/a.png'] }]);
+    expect(await jobsOf(row.id)).toEqual([{ companyId: company.companyId, shopId, listingId: row.id, imageUrls: CATALOG }]);
     expect(await rowsOf(noPrice.id)).toEqual([]);
     const history = await testPool().query(
       "select from_state, to_state, action, actor_id is null as by_system from core.state_transitions where entity_type = 'listings' and entity_id = $1",
@@ -159,9 +166,47 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(history.rows).toEqual([{ from_state: null, to_state: 'pushing', action: 'push', by_system: false }]);
   });
 
-  it('chưa có ảnh trên sàn mà không gửi URL ảnh thì images_missing', async () => {
-    const v = fresh('CMR-NOIMG');
-    expect((await results([v.id], {}))[0]).toMatchObject({ code: 'images_missing' });
+  it('sản phẩm không có ảnh catalog, listing chưa có ảnh trên sàn: images_missing (cổng không trả ảnh, không 5xx)', async () => {
+    const v = ownProduct('CMR-NOIMG');
+    expect((await results([v.id]))[0]).toMatchObject({ code: 'images_missing', message: 'Sàn bắt buộc ảnh: thêm ảnh cho sản phẩm' });
+  });
+
+  it('đẩy không gửi imageUrls: việc mang URL ảnh catalog; sản phẩm 9 ảnh lấy 8 ảnh đầu theo thứ tự (#303)', async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `https://files.commerio.test/${i}.jpg`);
+    const v = ownProduct('CMR-NINE', nine);
+    const [r] = await results([v.id]);
+    expect(r).toMatchObject({ status: 'pushing', code: null });
+    expect((await jobsOf(r!.listingId!))[0]!.imageUrls).toEqual(nine.slice(0, 8));
+  });
+
+  it.each([[{ [productId]: ['https://khac.test/x.jpg'] }], [{ [productId]: ['ftp://x/a.png'] }], ['rác'], [{ x: 1 }]])(
+    'imageUrls gửi kèm (%j) bị bỏ qua: 200, việc mang URL catalog (#303)',
+    async (imageUrls) => {
+      const v = fresh('CMR-IGNORE');
+      const [r] = await results([v.id], imageUrls);
+      expect(r).toMatchObject({ status: 'pushing', code: null });
+      expect((await jobsOf(r!.listingId!))[0]!.imageUrls).toEqual(CATALOG);
+    },
+  );
+
+  it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, hai việc cùng URL (#303)', async () => {
+    const a = ownProduct('CMR-PAIR-A', ['https://files.commerio.test/pair.jpg']);
+    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, { productId: a.productId });
+    all.push(b);
+    productImageUrls.mockClear();
+    const res = await results([a.id, b.id]);
+    expect(productImageUrls).toHaveBeenCalledTimes(1);
+    for (const r of res) expect((await jobsOf(r.listingId!))[0]!.imageUrls).toEqual(['https://files.commerio.test/pair.jpg']);
+  });
+
+  it('listing đã gỡ có ảnh trên sàn đẩy lại được khi catalog không có ảnh (#303)', async () => {
+    const v = ownProduct('CMR-GO-NOIMG');
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, external_image_urls)
+       values ($1, $2, $3, $4, 'delisted', $5, $6, $7)`,
+      [company.companyId, shopId, v.id, v.sku, `P-${v.sku}`, `S-${v.sku}`, ['https://slatic.test/cu.png']],
+    );
+    expect((await results([v.id]))[0]).toMatchObject({ status: 'pushing', code: null });
   });
 
   it('AC-S1: listing đang pushing thì push_in_progress, không thêm việc', async () => {
@@ -210,7 +255,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       );
       expect((await results([v.id], {}))[0]).toMatchObject({ listingId: rows[0]!.id, status: 'pushing', code: null });
       expect((await rowsOf(v.id))[0]).toMatchObject({ status: 'pushing', push_attempts: 0, push_error: null, reject_reason: null });
-      expect(await jobsOf(rows[0]!.id)).toEqual([expect.objectContaining({ imageUrls: [] })]);
+      expect(await jobsOf(rows[0]!.id)).toEqual([expect.objectContaining({ imageUrls: CATALOG })]);
     },
   );
 
@@ -302,7 +347,6 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
   it('kiểm đầu vào và quyền', async () => {
     expect((await push([])).status).toBe(422);
     expect((await push(Array.from({ length: 21 }, () => randomUUID()))).status).toBe(422);
-    expect((await push([ok.id], { [productId]: ['ftp://x/a.png'] })).status).toBe(422);
     const sale = await addMember(company.companyId, 'sale');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`), sale.token).send({ variantIds: [ok.id] })).status).toBe(403);
     const other = await createCompany({ optionalModules: ['channel'] });
@@ -355,7 +399,7 @@ describe('AC-11: lỗi cả request theo thứ tự 21 §18.6.11, không dòng n
     const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
     return res.body.shop.id as string;
   }
-  const pushTo = (id: string) => auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id], imageUrls: IMAGES });
+  const pushTo = (id: string) => auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id] });
   async function expectNothingWritten(id: string) {
     expect((await testPool().query('select 1 from channel.listings where shop_id = $1', [id])).rows).toEqual([]);
     const jobs = await testPool().query("select 1 from pgboss.job where name = 'channel.listing_push' and data->>'shopId' = $1", [id]);
