@@ -212,6 +212,23 @@ describe('đồng bộ sàn: hoàn về, huỷ vì giao không thành, nhảy t�
     expect((await transitionsOf(packageId)).filter((t) => t.to_state === 'returning')).toMatchObject([{ action: 'return', source: 'marketplace' }]);
   });
 
+  it('D2 + D5: kiện reserved, mọi món huỷ cancellation-failed Delivery → bù bàn giao (một phiếu XK) rồi returning; đơn vẫn processing, cờ platform_cancelled; kéo lại không trừ thêm', async () => {
+    const s = await setup(10);
+    const o = remote(s);
+    const { orderId, packageId } = await ingest(s.companyId, o);
+    expect((await packageRow(packageId)).status).toBe('reserved');
+
+    await ingest(s.companyId, withCancel(o, 'failed_delivery'));
+    await ingest(s.companyId, withCancel(o, 'failed_delivery'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'returning', handover_source: 'marketplace' });
+    expect((await packageDocuments(packageId)).map((d) => d.kind)).toEqual(['shipment']);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9, reserved: 0 });
+    expect(await outboxOf(orderId, 'fulfillment.package_shipped')).toHaveLength(1);
+    expect(await orderFlags(orderId)).toMatchObject({ status: 'processing', platform_cancelled: true, cancelling: false });
+    expect(await outboxOf(orderId, 'sales.order_cancelled')).toEqual([]);
+  });
+
   it('AC8 US-DH-10.2: kiện reserved, sàn báo failed_delivery → một phiếu XK, delivery_failed, có package_shipped, package_delivery_failed; kéo lại không trừ thêm', async () => {
     const s = await setup(10);
     const o = remote(s);

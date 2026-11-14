@@ -128,6 +128,9 @@ async function receiveBackPackage(
       await stockPort().receiveBack({ type: 'package', id: pkg.id }, lines, {
         actorId: actor.accountId,
         number: pkg.code,
+        // Đơn và gian hàng của kiện lưu trên phiếu để truy ngược (21 §11.1); kho chỉ phát `return_inspected` cho nguồn yêu cầu trả.
+        orderId: pkg.orderId,
+        shopId: pkg.shopId,
         unitCosts: returnUnitCosts(await lineCostsOf(pkg.id)),
       });
     } else logger.info({ packageId: pkg.id }, 'kiện về kho không có dòng nào đã ghép SKU hay được quét, không lập phiếu kiểm hàng hoàn');

@@ -95,14 +95,14 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `requestAllocation(variantIds)`: xếp lượt phân hàng cùng giao dịch của bên gọi (#237, #239).
 - `getOrderCogs` (finance).
 - `packageStatusOf(packageIds)` → `Map<id, { orderId, status, deliveredAt }>` (**finance E139**): chạy trong `withCompany` của bên gọi; bỏ id sai dạng, rỗng thì không truy vấn; id công ty khác vắng trong `Map`.
-- **#237** ghép SKU muộn phải bỏ qua kiện `returned` (hàng đã về kệ; trừ tồn lúc này là sai, spec 199c §10).
+- **#237** ghép SKU muộn phải bỏ qua kiện `returned` (hàng đã về kệ; trừ tồn lúc này là sai, spec 199c §10). Kiện đã `delivered` mà `delivery_posted_at` còn null (đang hoãn trừ) thì sau khi `shipLateMappedLines` trừ xong phải gọi `reportDelivered(packageId)`: hiện chỉ `settleDeferredHandovers` gọi lại, kiện còn dòng đã ghép chưa trừ sẽ không bao giờ phát `package_delivered`.
 - `ctx.marketplacePackages` do channel tiêm ở `src/wiring.ts`, cung cấp `carriers`, `pack`, `readyToShip`, `repack`, `shippingDocuments`.
 - Test thay cổng tồn bằng `setStockPort({ ... })` (`service/stock-port.ts`): phần không truyền là bản thật.
 
 ## Giới hạn đã biết
 
 - Đồng bộ một đơn nhiều kiện gọi cổng tồn nhiều lần trong một giao dịch: có thể deadlock `40P01` với giao dịch khác (thứ tự khoá chỉ đúng trong một lần gọi cổng); lượt kéo sau chạy lại.
-- `handed_over_at` của kiện sàn báo mà không có hành trình (TikTok, trace Lazada lỗi hay không khớp kiện) là lúc đồng bộ thấy, lệch tối đa một chu kỳ kéo đơn (5 phút): hàm bù có thể xếp nhầm kiện rời kho sát `countedAt`.
+- `handed_over_at` của kiện sàn báo mà không có hành trình (TikTok, trace Lazada lỗi hay không khớp kiện) là lúc đồng bộ thấy, lệch tối đa một chu kỳ kéo đơn (5 phút): hàm bù có thể xếp nhầm kiện rời kho sát `countedAt`. Trace Lazada thật chỉ có mốc `delivered` (dòng dưới), nên kiện lần đầu thấy đã giao lấy `handed_over_at` = `pickup_confirmed_at` = giờ giao, có thể muộn hơn lúc rời kho nhiều ngày: kiện rời kho trước `countedAt` mà giao sau bị hàm bù trừ tồn dù kiểm kê đã không đếm nó (trước 199c mốc này là giờ đồng bộ, còn muộn hơn). Sửa cần một nguồn giờ rời kho mà trace chưa cho.
 - Kiện vừa có dòng giữ vừa có dòng bắt buộc (chỉ với dòng ghép SKU muộn) thành hai phiếu `XK`.
 - Tìm kiếm `ilike` trên mã kiện, mã đơn chưa có index trigram (số kiện của đồ án nhỏ).
 - Một lượt phân hàng gọi `reserve`/`release` nhiều lần, mỗi lần khoá dòng tồn của kiện đó: có thể `40P01` với lượt kéo đơn; consumer, pg-boss thử lại.
@@ -111,6 +111,8 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - Hàng hoàn về khi sàn còn báo `delivery_failed`: kho chưa quét được (máy trạng thái chỉ cho `returning → returned`), chờ đồng bộ báo hoàn. `25` §8.3 cho chuyển tay sau 3 ngày nhưng `21` §19.2 chặn `return` với đơn sàn (`not_allowed_for_source`): lệch tài liệu, ngoài phạm vi 199c.
 - Dòng chưa ghép SKU không vào phiếu `KT` (kho lập phiếu tay). Ghép muộn sau khi đã phát `package_delivered`: dòng đó đã báo `unitCost: null`, không phát bù.
 - Trace Lazada (thử 13/11/2026 trên shop thử, `Documents/tich-hop-san/lazada.md` §11.7): `ofc_package_id` trùng `package_id` của món; chỉ gặp `ready_to` (bỏ) và `delivered`. Mốc rời kho, giao không thành công qua đơn vị vận chuyển chưa gặp thật (shop thử chỉ đi tới delivered, đơn SOF), kiểm bằng fixture.
+- Đơn nhiều kiện vắt qua lúc chạy migration `*_giao-hoan`: kiện giao trước 199c được điền `delivery_posted_at` mà không phát sự kiện (không phát bù), kiện giao sau thấy "kiện khác đã báo" nên mang ship `"0.00"`; ship cấp đơn của các đơn đó không vào sổ. Kiện hoãn trừ đã `delivered` trước migration cũng coi như đã báo. Chấp nhận vì staging là dữ liệu demo.
+- Phiếu `KT` của kiện hoàn lưu `order_id`, `shop_id` của kiện để truy ngược; kho chỉ phát `inventory.return_inspected` cho nguồn `return_request`, nguồn kiện không phát.
 - "Dỡ kiện về kệ" sau phiếu kiểm kê là cờ Cần xử lý, chưa phải việc trong khung #209 (spec 199b D9). Ghép SKU, tồn đổi vì lý do khác (xuất huỷ, nhặt thiếu) không bật cờ này: `25` §7.4 chỉ đòi khi do kiểm kê.
 - `lines` của `receive-return`, `found` còn tuỳ chọn (giai đoạn chuyển tiếp của `21` §15.3); thành bắt buộc sau FE#212 thì đổi `scanLines` ở `api/schemas.ts`. `found` mới có route nhận kiện về; báo và xác nhận thất lạc (`report-lost`, `confirm-lost`) thuộc #238.
 - Lượt kéo đơn áp kết quả trước request thì lịch sử ghi nguồn sàn. Sau repack, lượt kéo có thể gắn lại mã cũ trong thời gian sàn còn trả mã đó. Lần đóng gói tiếp theo dùng mã mới sàn trả.

@@ -194,6 +194,28 @@ describe('POST /fulfillment/packages/:id/receive-return (spec 199c §5.5, 21 §1
     expect(lines.get(p.b)).toEqual({ expected: 1, scanned: 1, unitCost: '15000.00' });
   });
 
+  it('phiếu KT lưu đơn và gian hàng của kiện; kho không phát inventory.return_inspected cho nguồn kiện', async () => {
+    const p = await returning();
+    expect((await scan(p.packageId, { code: p.packageCode })).status).toBe(200);
+    const { rows } = await testPool().query<{ order_id: string | null; shop_id: string | null }>(
+      `select d.order_id, d.shop_id from product.stock_documents d where d.source_type = 'package' and d.source_id = $1`,
+      [p.packageId],
+    );
+    const order = await testPool().query<{ shop_id: string | null }>('select shop_id from "order".orders where id = $1', [p.orderId]);
+    expect(rows).toEqual([{ order_id: p.orderId, shop_id: order.rows[0]!.shop_id }]);
+    expect(await outboxOf(p.orderId, 'inventory.return_inspected')).toEqual([]);
+  });
+
+  it('kiện before_cutoff (rời kho trước mốc, chưa từng trừ tồn) hoàn về → returned, phiếu KT theo số quét, dòng không có giá vốn', async () => {
+    const p = await seedPackage(company.companyId, { status: 'returning', handoverSource: 'before_cutoff', lines: [{ variantId, quantity: 2 }] });
+    const before = await quarantineOf(variantId);
+    const res = await scan(p.packageId, { code: p.packageCode, lines: [{ variantId, quantity: 1 }] });
+    expect(res.status).toBe(200);
+    expect(Package.parse(res.body).status).toBe('returned');
+    expect((await inspectionByVariant(p.packageId)).get(variantId)).toEqual({ expected: 2, scanned: 1, unitCost: null });
+    expect(await quarantineOf(variantId)).toBe(before + 1);
+  });
+
   it('giá vốn: một SKU trên hai dòng kiện khác giá → dòng phiếu KT mang giá bình quân theo số lượng', async () => {
     const p = await seedPackage(company.companyId, {
       status: 'returning',
