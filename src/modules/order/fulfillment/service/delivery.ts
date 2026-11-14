@@ -7,12 +7,14 @@ import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { deliveredAmounts, DEFAULT_FAIL_REASON } from '../domain/delivery.ts';
+import { getVariants } from '../../../product/index.ts';
+import { deliveredAmounts, DEFAULT_FAIL_REASON, mergeReceiveLines, returnUnitCosts, type ScanLine } from '../domain/delivery.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import {
   anotherDeliveryPosted,
   deliveryLinesOf,
   deliveryStateOf,
+  lineCostsOf,
   orderShippingOf,
   packageStatuses,
 } from '../repository/delivery.ts';
@@ -75,41 +77,62 @@ export async function reportDeliveryFailed(pkg: { id: string; orderId: string },
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy kiện');
 const MISMATCH = 'Mã quét không phải của kiện này';
 
+/** `variantId` trong `lines` không phải SKU của công ty: 422 theo bảng lỗi của 21 §15.3 (không ghi gì). */
+async function assertOwnVariants(lines: readonly ScanLine[] | undefined): Promise<void> {
+  if (!lines?.length) return;
+  const known = new Set((await getVariants(lines.map((l) => l.variantId).filter(isUuid))).map((v) => v.id));
+  const errors = Object.fromEntries(
+    lines.flatMap((l, i) => (known.has(l.variantId) ? [] : [[`lines.${i}.variantId`, 'Biến thể không thuộc công ty']])),
+  );
+  if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
+}
+
 /**
- * Kho quét nhận hàng hoàn (spec 199c §5.5, 25 §8.3, D2-24): kiện `returning` → `returned`. Thứ tự kiểm: kiện có (404,
- * kể cả công ty khác, id sai dạng) → máy trạng thái (409 `invalid_transition`) → `version` (409 kèm `current`) → mã
- * quét khớp mã kiện hoặc mã vận đơn, không phân biệt hoa thường (422 `package_mismatch`). Dòng đã ghép SKU vào một
- * phiếu `KT` nháp (chờ xử lý cộng ngay theo số quét, tồn thực chưa đổi tới khi phiếu ghi sổ); không dòng nào ghép thì
- * không lập phiếu. Phát
+ * Kho nhận kiện về (25 §8.3): kiện → `returned` theo mũi tên `action` của máy trạng thái. Thứ tự kiểm: kiện có (404, kể
+ * cả công ty khác, id sai dạng) → máy trạng thái (409 `invalid_transition`) → `version` (409 kèm `current`) → `code`
+ * khi route có quét mã (422 `package_mismatch`) → `lines` (422 `validation_failed`, 21 §15.3). Gộp `lines` với dòng kiện
+ * đã ghép SKU (món vắng: quét 0; món ngoài kiện: dự kiến 0; không gửi `lines`: coi như quét đủ) rồi gọi `receiveBack`
+ * kèm người quét và giá vốn dòng kiện: phiếu `KT` nháp, chờ xử lý cộng ngay theo số quét, tồn thực chưa đổi tới khi
+ * phiếu ghi sổ. Không có dòng nào để lập (kiện chưa ghép SKU, không quét món nào) thì không lập phiếu. Phát
  * `package_status_changed`, `package_returned`. Không cần khoá idempotency: khoá dòng kiện, `version`, trạng thái chặn
- * quét lần hai; `receiveBack` gọi lại cùng nguồn trả phiếu cũ.
+ * lần hai; `receiveBack` gọi lại cùng nguồn trả phiếu cũ.
  */
-export async function receiveReturn(ctx: FulfillmentContext, actor: Actor, id: string, input: { version: number; code: string }) {
+async function receiveBackPackage(
+  ctx: FulfillmentContext,
+  actor: Actor,
+  id: string,
+  action: 'receive_return' | 'found',
+  input: { version: number; code?: string; lines?: ScanLine[] | undefined },
+) {
   if (!isUuid(id)) throw notFound();
   return withCompany(actor.companyId, async () => {
     const pkg = await lockPackage(id);
     if (!pkg) throw notFound();
     // Trạng thái trước `version`: quét lần hai (gửi lại version máy quét đã tải) báo `invalid_transition`, không báo
     // xung đột (21 §19.2), cùng thứ tự với bàn giao (`handover.ts`).
-    const { to } = assertTransition(packageMachine, pkg.status, 'receive_return', { actor });
+    const { to } = assertTransition(packageMachine, pkg.status, action, { actor });
     if (pkg.version !== input.version) {
       throw new AppError(409, 'version_conflict', 'Kiện vừa được cập nhật, tải lại rồi thử lại', { current: await getPackage(ctx, id) });
     }
-    const code = input.code.trim().toLowerCase();
-    if (code !== pkg.code.toLowerCase() && code !== pkg.trackingCode?.toLowerCase()) {
-      throw new AppError(422, 'package_mismatch', MISMATCH, { errors: { code: MISMATCH } });
+    if (input.code !== undefined) {
+      const code = input.code.trim().toLowerCase();
+      if (code !== pkg.code.toLowerCase() && code !== pkg.trackingCode?.toLowerCase()) {
+        throw new AppError(422, 'package_mismatch', MISMATCH, { errors: { code: MISMATCH } });
+      }
     }
-    // Route chưa nhận `lines` (số quét, 21 §19.2; PR riêng sau #300): coi như kho quét đủ số dự kiến của mọi dòng, đúng
-    // luật giai đoạn chuyển tiếp khi không gửi `lines`.
-    const lines = pkg.lines
-      .filter((l) => l.variantId !== null)
-      .map((l) => ({ variantId: l.variantId!, expected: l.quantity, scanned: l.quantity }));
-    // Dòng chưa ghép SKU không vào phiếu (kho lập phiếu tay, giới hạn đã biết của spec 199c §10).
-    if (lines.length) await stockPort().receiveBack({ type: 'package', id: pkg.id }, lines, { actorId: actor.accountId, number: pkg.code });
-    else logger.info({ packageId: pkg.id }, 'kiện hoàn về không có dòng nào đã ghép SKU, không lập phiếu kiểm hàng hoàn');
+    await assertOwnVariants(input.lines);
+    // Dòng chưa ghép SKU không vào phiếu (kho ghi SKU thực nhận trên phiếu, hoặc lập phiếu tay; spec 199c §10).
+    const lines = mergeReceiveLines(pkg.lines, input.lines);
+    if (lines.length) {
+      await stockPort().receiveBack({ type: 'package', id: pkg.id }, lines, {
+        actorId: actor.accountId,
+        number: pkg.code,
+        unitCosts: returnUnitCosts(await lineCostsOf(pkg.id)),
+      });
+    } else logger.info({ packageId: pkg.id }, 'kiện về kho không có dòng nào đã ghép SKU hay được quét, không lập phiếu kiểm hàng hoàn');
     const from = pkg.status;
     await updatePackage(pkg.id, { status: to });
-    await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action: 'receive_return', actorId: actor.accountId });
+    await recordTransition({ entityType: 'packages', entityId: pkg.id, from, to, action, actorId: actor.accountId });
     await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: pkg.orderId, payload: { packageId: pkg.id, orderId: pkg.orderId, from, to } });
     if (pkg.shopId !== null) {
       await publishEvent({
@@ -120,6 +143,16 @@ export async function receiveReturn(ctx: FulfillmentContext, actor: Actor, id: s
     }
     return getPackage(ctx, id);
   });
+}
+
+/** Kho quét nhận hàng hoàn (spec 199c §5.5, 25 §8.3, D2-24): kiện `returning` → `returned`; `code` là mã kiện hoặc mã vận đơn. */
+export function receiveReturn(ctx: FulfillmentContext, actor: Actor, id: string, input: { version: number; code: string; lines?: ScanLine[] | undefined }) {
+  return receiveBackPackage(ctx, actor, id, 'receive_return', input);
+}
+
+/** Kho nhận kiện thất lạc tìm thấy (21 §19.2, 25 §8.3 E61): kiện `lost` → `returned`, hàng về như kiện hoàn. */
+export function foundPackage(ctx: FulfillmentContext, actor: Actor, id: string, input: { version: number; lines?: ScanLine[] | undefined }) {
+  return receiveBackPackage(ctx, actor, id, 'found', input);
 }
 
 /** Trạng thái một kiện cho finance (E139, spec 199c §5.6). */

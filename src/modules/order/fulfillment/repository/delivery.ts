@@ -64,6 +64,14 @@ export async function deliveryLinesOf(packageId: string): Promise<DeliveredLine[
   }));
 }
 
+/** Giá vốn đã lưu trên dòng kiện (chốt lúc trừ tồn), cho `meta.unitCosts` khi nhận hàng về (21 §11.1). */
+export async function lineCostsOf(packageId: string): Promise<{ variantId: string | null; quantity: number; unitCost: string | null }[]> {
+  return getDb()
+    .select({ variantId: packageLines.variantId, quantity: packageLines.quantity, unitCost: packageLines.unitCost })
+    .from(packageLines)
+    .where(eq(packageLines.packageId, packageId));
+}
+
 /** Ship cấp đơn (#260, null được cho đơn trước #260; spec 199c D10). */
 export async function orderShippingOf(orderId: string): Promise<OrderShipping> {
   const { rows } = await getDb().execute<{ shipping_fee: string; shipping_fee_original: string | null; shipping_fee_discount_platform: string | null }>(sql`

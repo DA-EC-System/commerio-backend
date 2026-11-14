@@ -151,3 +151,58 @@ export function deliveredAmounts(
     shippingCost: first ? round(new Decimal(shipping.shippingFeeOriginal ?? shipping.shippingFee)) : ZERO,
   };
 }
+
+// Số kho quét lúc nhận hàng về (Documents/21 §15.3): dùng chung cho `receive-return`, `found` của kiện và
+// `/returns/receive` của sales (sales import qua `fulfillment/index.ts`).
+export interface ScanLine {
+  variantId: string;
+  quantity: number;
+}
+
+export interface ReceiveLine {
+  variantId: string;
+  expected: number;
+  scanned: number;
+}
+
+/**
+ * Gộp dòng nguồn (dòng kiện, dòng yêu cầu trả) với số kho quét (Documents/21 §15.3, §19.2, §20): món nguồn vắng trong `scanned` thì quét 0; món ngoài nguồn thì dự kiến 0;
+ * `scanned` không gửi (giai đoạn chuyển tiếp) thì coi như quét đủ. Dòng nguồn chưa ghép SKU không vào (chưa rõ SKU).
+ */
+export function mergeReceiveLines(source: readonly { variantId: string | null; quantity: number }[], scanned?: readonly ScanLine[]): ReceiveLine[] {
+  const out = new Map<string, ReceiveLine>();
+  for (const l of source) {
+    if (!l.variantId) continue;
+    const line = out.get(l.variantId) ?? { variantId: l.variantId, expected: 0, scanned: 0 };
+    line.expected += l.quantity;
+    out.set(l.variantId, line);
+  }
+  if (!scanned) return [...out.values()].map((l) => ({ ...l, scanned: l.expected }));
+  for (const s of scanned) {
+    const line = out.get(s.variantId) ?? { variantId: s.variantId, expected: 0, scanned: 0 };
+    line.scanned += s.quantity;
+    out.set(s.variantId, line);
+  }
+  return [...out.values()];
+}
+
+/**
+ * Giá vốn dòng kiện gốc theo SKU cho `meta.unitCosts` của `receiveBack` (Documents/21 §11.1, 25 §7.1: hàng hoàn bán lại
+ * được nhập lại theo giá vốn đã lưu trên dòng kiện). SKU nằm trên nhiều dòng khác giá thì bình quân theo số lượng các
+ * dòng đã chốt giá; SKU không dòng nào chốt giá (chưa qua `ship`) thì null, kho lấy giá bình quân hiện tại.
+ */
+export function returnUnitCosts(lines: readonly { variantId: string | null; quantity: number; unitCost: string | null }[]): Record<string, string | null> {
+  const sums = new Map<string, { qty: number; total: Decimal }>();
+  for (const l of lines) {
+    if (!l.variantId) continue;
+    const sum = sums.get(l.variantId) ?? { qty: 0, total: new Decimal(0) };
+    if (l.unitCost !== null && l.quantity > 0) {
+      sum.qty += l.quantity;
+      sum.total = sum.total.plus(new Decimal(l.unitCost).times(l.quantity));
+    }
+    sums.set(l.variantId, sum);
+  }
+  return Object.fromEntries(
+    [...sums].map(([variantId, { qty, total }]) => [variantId, qty ? total.dividedBy(qty).toFixed(2, Decimal.ROUND_HALF_UP) : null]),
+  );
+}

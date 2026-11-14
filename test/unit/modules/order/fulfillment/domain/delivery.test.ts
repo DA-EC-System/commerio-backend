@@ -7,6 +7,8 @@ import {
   eventsOf,
   journeyTimes,
   lineStatus,
+  mergeReceiveLines,
+  returnUnitCosts,
 } from '#src/modules/order/fulfillment/domain/delivery.ts';
 import type { PlatformLineStatus } from '#src/modules/order/fulfillment/domain/delivery.ts';
 
@@ -158,5 +160,57 @@ describe('deliveredAmounts: tiền kiện giao xong (D4, D10, Review Focus 4–5
     const l = line({ variantId: null, unitCost: null });
     const r = deliveredAmounts([l], ship, true);
     expect(r.lines[0]).toEqual({ variantId: null, quantity: 1, unitPrice: '90000.00', unitCost: null });
+  });
+});
+
+describe('mergeReceiveLines (§15.3)', () => {
+  const source = [
+    { variantId: 'A', quantity: 2 },
+    { variantId: 'B', quantity: 1 },
+    { variantId: null, quantity: 1 },
+  ];
+
+  it('không gửi lines thì coi như quét đủ, bỏ dòng chưa ghép SKU', () => {
+    expect(mergeReceiveLines(source)).toEqual([
+      { variantId: 'A', expected: 2, scanned: 2 },
+      { variantId: 'B', expected: 1, scanned: 1 },
+    ]);
+  });
+
+  it('món vắng quét 0, món ngoài nguồn dự kiến 0', () => {
+    expect(mergeReceiveLines(source, [{ variantId: 'A', quantity: 1 }, { variantId: 'C', quantity: 3 }])).toEqual([
+      { variantId: 'A', expected: 2, scanned: 1 },
+      { variantId: 'B', expected: 1, scanned: 0 },
+      { variantId: 'C', expected: 0, scanned: 3 },
+    ]);
+  });
+
+  it('lines rỗng: mọi dòng thiếu', () => {
+    expect(mergeReceiveLines(source, []).map((l) => l.scanned)).toEqual([0, 0]);
+  });
+});
+
+describe('returnUnitCosts (21 §11.1, 25 §7.1)', () => {
+  it('mỗi SKU lấy giá vốn đã lưu trên dòng kiện', () => {
+    expect(returnUnitCosts([
+      { variantId: 'A', quantity: 2, unitCost: '60000.00' },
+      { variantId: 'B', quantity: 1, unitCost: '15000.50' },
+    ])).toEqual({ A: '60000.00', B: '15000.50' });
+  });
+
+  it('SKU trên hai dòng khác giá: bình quân theo số lượng, làm tròn 2 số lẻ', () => {
+    expect(returnUnitCosts([
+      { variantId: 'A', quantity: 1, unitCost: '100.00' },
+      { variantId: 'A', quantity: 2, unitCost: '200.00' },
+    ])).toEqual({ A: '166.67' });
+  });
+
+  it('dòng chưa chốt giá không kéo bình quân; SKU không dòng nào chốt giá thì null; bỏ dòng chưa ghép SKU', () => {
+    expect(returnUnitCosts([
+      { variantId: 'A', quantity: 3, unitCost: null },
+      { variantId: 'A', quantity: 1, unitCost: '90000.00' },
+      { variantId: 'B', quantity: 1, unitCost: null },
+      { variantId: null, quantity: 1, unitCost: null },
+    ])).toEqual({ A: '90000.00', B: null });
   });
 });

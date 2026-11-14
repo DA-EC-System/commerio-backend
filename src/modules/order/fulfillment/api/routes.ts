@@ -4,12 +4,12 @@ import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { Actor } from '../service/actor.ts';
-import { receiveReturn } from '../service/delivery.ts';
+import { foundPackage, receiveReturn } from '../service/delivery.ts';
 import { packageDocuments } from '../service/documents.ts';
 import { handOverPackages, undoHandover } from '../service/handover.ts';
 import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
 import { carriersOf, markReady, openPackage, packPackage, pickList } from '../service/packing.ts';
-import { HandOverBody, OpenBody, PackBody, PackageDocumentsQuery, PackageListQuery, PackageParams, PickListQuery, ReadyBody, ReceiveReturnBody, UndoHandoverBody } from './schemas.ts';
+import { FoundBody, HandOverBody, OpenBody, PackBody, PackageDocumentsQuery, PackageListQuery, PackageParams, PickListQuery, ReadyBody, ReceiveReturnBody, UndoHandoverBody } from './schemas.ts';
 
 function actor(res: Response): Actor {
   const { accountId, companyId } = getAuth(res);
@@ -46,6 +46,12 @@ export function fulfillmentRouter(ctx: FulfillmentContext): Router {
   router.post('/packages/:id/receive-return', process, validate({ params: PackageParams, body: ReceiveReturnBody }), async (_req, res) => {
     const { id } = validated<typeof PackageParams>(res, 'params');
     res.json(await receiveReturn(ctx, actor(res), id, validated<typeof ReceiveReturnBody>(res, 'body')));
+  });
+
+  // Kho nhận kiện thất lạc tìm thấy (21 §19.2): kiện `lost` → `returned`, phiếu `KT` nháp theo số quét.
+  router.post('/packages/:id/found', process, validate({ params: PackageParams, body: FoundBody }), async (_req, res) => {
+    const { id } = validated<typeof PackageParams>(res, 'params');
+    res.json(await foundPackage(ctx, actor(res), id, validated<typeof FoundBody>(res, 'body')));
   });
 
   router.get('/pick-list', process, validate({ query: PickListQuery }), async (_req, res) => {

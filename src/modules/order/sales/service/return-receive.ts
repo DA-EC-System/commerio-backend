@@ -6,7 +6,9 @@ import {
   findUnmatchedParcel,
   findUnmatchedParcels,
   insertUnmatchedParcel,
+  mergeReceiveLines,
   resolveUnmatchedParcel,
+  type ScanLine,
   setParcelInspection,
   unmatchedParcelLines,
   type UnmatchedParcelRow,
@@ -16,7 +18,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { mergeReceiveLines, returnMachine, type ScanLine } from '../domain/return.ts';
+import { returnMachine } from '../domain/return.ts';
 import { takeNextNumber } from '../repository/orders.ts';
 import { findReturn, findReturnLines, findReturnsByCode, type ReturnRow, updateReturnAt } from '../repository/returns.ts';
 import type { Actor } from './cancel.ts';

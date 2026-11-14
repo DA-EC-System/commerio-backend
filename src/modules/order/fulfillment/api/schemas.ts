@@ -136,11 +136,28 @@ export const HandOverResult = z
   .strict()
   .meta({ id: 'HandOverResult' });
 
+/** Số kho quét từng món lúc nhận hàng về (Documents/21 §15.3; dùng chung với `/returns/receive` của sales): số nguyên ≥ 0, `variantId` không lặp. */
+export const ScanLines = z.array(z.object({ variantId: z.string().min(1), quantity: z.number().int('Số lượng phải là số nguyên').min(0, 'Số lượng không âm') })).superRefine((lines, ctx) => {
+  const seen = new Set<string>();
+  lines.forEach((l, i) => {
+    if (seen.has(l.variantId)) ctx.addIssue({ code: 'custom', path: [i, 'variantId'], message: 'Biến thể bị lặp' });
+    seen.add(l.variantId);
+  });
+});
+
+const scanLines = ScanLines.optional().meta({
+  description: 'Số kho quét từng món; tuỳ chọn trong giai đoạn chuyển tiếp (21 §15.3), không gửi thì coi như quét đủ. Mảng rỗng: không quét được món nào',
+});
+
 /** Quét nhận hàng hoàn (spec 199c §5.5): `code` là mã kiện hoặc mã vận đơn, không phân biệt hoa thường. */
 export const ReceiveReturnBody = z.object({
   version: z.int().min(0),
   code: z.string().trim().min(1, 'Nhập hoặc quét mã kiện').max(100, 'Mã tối đa 100 ký tự'),
+  lines: scanLines,
 });
+
+/** Kho nhận kiện thất lạc tìm thấy (Documents/21 §19.2): `lines` như `receive-return`. */
+export const FoundBody = z.object({ version: z.int().min(0), lines: scanLines });
 
 export const UndoHandoverBody = z.object({
   version: z.number().int().min(0),
