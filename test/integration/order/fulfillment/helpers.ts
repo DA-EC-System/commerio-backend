@@ -72,8 +72,9 @@ export async function seedPackage(
   const shop = await db.query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [order.orderId]);
   const pkg = await db.query<{ id: string }>(
     `insert into "order".packages (company_id, code, order_id, shop_id, status, handed_over_at, handover_source,
-       pickup_confirmed_at, delivered_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at, platform_package_code, self_delivery)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) returning id`,
+       pickup_confirmed_at, delivered_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at, platform_package_code, self_delivery,
+       lost_source)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) returning id`,
     [
       companyId,
       packageCode,
@@ -91,6 +92,8 @@ export async function seedPackage(
       p.reservedAt !== undefined ? p.reservedAt : p.lines.some((l) => l.reserved) ? new Date() : null,
       p.platformPackageCode ?? null,
       p.selfDelivery ?? false,
+      // Kiện `lost` phải có nguồn (CHECK `packages_lost_confirmed`, #238): kiện seed coi như sàn báo mất.
+      p.status === 'lost' ? 'marketplace' : null,
     ],
   );
   const packageId = pkg.rows[0]!.id;
@@ -133,6 +136,14 @@ export async function packageRow(packageId: string) {
     flag_note: string | null;
     reserved_at: Date | null;
     version: number;
+    needs_open: boolean;
+    open_purpose: string | null;
+    lost_reported_by: string | null;
+    lost_reported_at: Date | null;
+    lost_claim_code: string | null;
+    lost_confirmed_by: string | null;
+    lost_self_approved: boolean;
+    lost_source: string | null;
   }>('select * from "order".packages where id = $1', [packageId]);
   return rows[0]!;
 }

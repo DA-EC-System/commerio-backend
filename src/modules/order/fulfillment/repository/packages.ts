@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
-import { HANDED_OVER, type PackageStatus } from '../domain/package.ts';
+import { canReportLost, HANDED_OVER, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
 import { type PackageNotice, packageLines, packages } from './schema.ts';
 
@@ -46,6 +46,40 @@ export async function insertPackageLines(
   return rows.map((r) => r.id);
 }
 
+type LostColumns = {
+  lostReportedBy: string | null;
+  lostReportedAt: Date | SQL | null;
+  lostClaimCode: string | null;
+  lostConfirmedBy: string | null;
+  lostSelfApproved: boolean;
+  lostSource: 'user' | 'marketplace' | null;
+};
+
+/**
+ * Luật xoá cột thất lạc theo lần ghi (spec #238 §5.3, D14, D21), một chỗ cho mọi service:
+ * - ghi `status` khác `lost` → xoá người xác nhận, nguồn, cờ tự duyệt (chỉ có nghĩa khi kiện đang `lost`);
+ * - ghi `status` khác `lost` mà không còn báo mất được, hoặc kiện đang rời `lost` → xoá báo cáo treo (người báo, giờ,
+ *   mã khiếu nại; hồ sơ đã nằm ở lịch sử trạng thái);
+ * - gỡ `needs_open` mà không ghi `status` → xoá báo cáo treo (kiện đã đóng chỉ báo mất được khi đang chờ mở).
+ * Bên gọi truyền cột `lost_*` tường minh thì giá trị đó thắng luật.
+ */
+function lostColumnRules(patch: { status?: PackageStatus; needsOpen?: boolean }): { [K in keyof LostColumns]?: LostColumns[K] | SQL } {
+  const clearReport = { lostReportedBy: null, lostReportedAt: null, lostClaimCode: null };
+  if (patch.status !== undefined && patch.status !== 'lost') {
+    const report = canReportLost(patch.status)
+      ? {
+          // Trong `UPDATE … SET`, cột bên phải là giá trị cũ: kiện rời `lost` thì xoá, còn lại giữ.
+          lostReportedBy: sql`case when ${packages.status} = 'lost' then null else ${packages.lostReportedBy} end`,
+          lostReportedAt: sql`case when ${packages.status} = 'lost' then null else ${packages.lostReportedAt} end`,
+          lostClaimCode: sql`case when ${packages.status} = 'lost' then null else ${packages.lostClaimCode} end`,
+        }
+      : clearReport;
+    return { lostConfirmedBy: null, lostSource: null, lostSelfApproved: false, ...report };
+  }
+  if (patch.status === undefined && patch.needsOpen === false) return clearReport;
+  return {};
+}
+
 export async function updatePackage(
   id: string,
   patch: Partial<{
@@ -71,11 +105,12 @@ export async function updatePackage(
     reservedAt: Date | SQL | null;
     deliveryPostedAt: Date | SQL | null;
   }> &
-    Partial<PackageShipping>,
+    Partial<PackageShipping> &
+    Partial<LostColumns>,
 ): Promise<void> {
   await getDb()
     .update(packages)
-    .set({ ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
+    .set({ ...lostColumnRules(patch), ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
     .where(eq(packages.id, id));
 }
 
@@ -93,6 +128,10 @@ export interface HandoverPackage {
   /** Mã vận đơn của sàn; quét nhận hoàn (spec 199c §5.5) so mã để khớp kiện, không thêm câu đọc. */
   trackingCode: string | null;
   needsAttention: boolean;
+  needsOpen: boolean;
+  /** Báo cáo thất lạc đang treo (spec #238 §5.3): người báo và mã khiếu nại cùng có hoặc cùng không. */
+  lostReportedBy: string | null;
+  lostClaimCode: string | null;
   lines: PlanLine[];
 }
 
@@ -108,6 +147,9 @@ const handoverColumns = {
   handedOverAt: packages.handedOverAt,
   trackingCode: packages.trackingCode,
   needsAttention: packages.needsAttention,
+  needsOpen: packages.needsOpen,
+  lostReportedBy: packages.lostReportedBy,
+  lostClaimCode: packages.lostClaimCode,
 };
 
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
@@ -185,7 +227,6 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
       ...handoverColumns,
       platformPackageCode: packages.platformPackageCode,
       trackingCode: packages.trackingCode,
-      needsOpen: packages.needsOpen,
       labelError: packages.labelError,
       shipping: {
         shipmentProvider: packages.shipmentProvider,

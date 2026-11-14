@@ -82,6 +82,10 @@ export const packages = fulfillmentSchema.table(
     lostReportedAt: timestamp('lost_reported_at', { withTimezone: true }),
     lostClaimCode: text('lost_claim_code'),
     lostConfirmedBy: uuid('lost_confirmed_by'),
+    /** CEO hoặc công ty một người tự xác nhận thất lạc mình báo (spec #238 §5.3). */
+    lostSelfApproved: boolean('lost_self_approved').notNull().default(false),
+    /** Ai đưa kiện sang `lost`: `user` (báo và xác nhận), `marketplace` (sàn báo). Chỉ có khi kiện đang `lost`. */
+    lostSource: text('lost_source').$type<'user' | 'marketplace'>(),
     /** Lúc `fulfillment.package_delivered` của kiện được ghi outbox; kiện giao đầu tiên của đơn mang ship cấp đơn (spec 199c §5.1, D4). Không bao giờ đặt lại null. */
     deliveryPostedAt: timestamp('delivery_posted_at', { withTimezone: true }),
     // Vận chuyển do sàn trả (#260).
@@ -107,9 +111,16 @@ export const packages = fulfillmentSchema.table(
     check('packages_cod_second_person', sql`${t.codConfirmedBy} is null or ${t.codConfirmedBy} is distinct from ${t.deliveredBy}`),
     check(
       'packages_lost_second_person',
-      sql`${t.lostConfirmedBy} is null or ${t.lostConfirmedBy} is distinct from ${t.lostReportedBy}`,
+      sql`${t.lostConfirmedBy} is null or ${t.lostConfirmedBy} is distinct from ${t.lostReportedBy} or ${t.lostSelfApproved}`,
     ),
     check('packages_lost_report', sql`(${t.lostReportedBy} is null) = (${t.lostClaimCode} is null)`),
+    check('packages_lost_source', sql`${t.lostSource} is null or ${t.lostSource} in ('user', 'marketplace')`),
+    // Kiện `lost` phải có nguồn: sàn báo, hoặc có người xác nhận (spec #238 §5.1, AC10). `is not distinct from`, không
+    // `=`: `lost_source` null làm `=` ra NULL, cả biểu thức NULL và CHECK cho qua.
+    check(
+      'packages_lost_confirmed',
+      sql`${t.status} <> 'lost' or ${t.lostSource} is not distinct from 'marketplace' or ${t.lostConfirmedBy} is not null`,
+    ),
     check('packages_handed_over', sql`${t.status} in ('backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled') or ${t.handedOverAt} is not null`),
     check(
       'packages_handover_source',
