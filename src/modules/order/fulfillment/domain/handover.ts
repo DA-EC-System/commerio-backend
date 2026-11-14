@@ -56,13 +56,17 @@ export function shipPlan(lines: readonly PlanLine[]): { held: PlanLine[]; unheld
 
 const PICKUP_GRACE_MS = 24 * 60 * 60 * 1000;
 
-/** Cờ `pickup_unconfirmed` (21 §19.2): kho quét, còn ở nhóm rời kho, sàn chưa xác nhận lấy sau 24 giờ. Suy ra, không lưu. */
+/**
+ * Cờ `pickup_unconfirmed` (21 §19.2): kho quét, còn ở nhóm rời kho, sàn chưa xác nhận lấy sau 24 giờ. Suy ra, không lưu.
+ * Kiện `lost` không mang cờ: `lose_on_unload` ghi bàn giao `scan` mà không sàn nào xác nhận lấy (spec #238 §5.2).
+ */
 export function pickupUnconfirmed(
   p: { status: PackageStatus; handoverSource: HandoverSource | null; pickupConfirmedAt: Date | null; handedOverAt: Date | null },
   now: number,
 ): boolean {
   return (
     isHandedOver(p.status) &&
+    p.status !== 'lost' &&
     p.handoverSource === 'scan' &&
     p.pickupConfirmedAt === null &&
     p.handedOverAt !== null &&
