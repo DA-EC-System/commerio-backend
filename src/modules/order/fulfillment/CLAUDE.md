@@ -1,6 +1,6 @@
 # src/modules/order/fulfillment/
 
-Kiện (giữ hàng, đóng gói, bàn giao, giao, hoàn), hàng trả không khớp, giá vốn theo đơn. Bảng trong schema `order`. Hợp đồng API: `Documents/21` §19.2; sự kiện §11.2; cổng tồn §11.1. Spec phần a của #199: `docs/superpowers/specs/2026-11-09-199a-ban-giao-tru-ton-design.md`; phần b: `docs/superpowers/specs/2026-11-09-199b-chia-hang-design.md`; phần c: `docs/superpowers/specs/2026-11-10-199c-giao-hoan-design.md`.
+Kiện (giữ hàng, đóng gói, bàn giao, giao, hoàn), hàng trả không khớp, giá vốn theo đơn. Bảng trong schema `order`. Hợp đồng API: `Documents/21` §19.2; sự kiện §11.2; cổng tồn §11.1. Spec phần a của #199: `docs/superpowers/specs/2026-11-09-199a-ban-giao-tru-ton-design.md`; phần b: `docs/superpowers/specs/2026-11-09-199b-chia-hang-design.md`; phần c: `docs/superpowers/specs/2026-11-10-199c-giao-hoan-design.md`. Tách kiện #205: `docs/superpowers/specs/2026-11-14-205-tach-kien-design.md`.
 
 ## Kiện và máy trạng thái
 
@@ -66,6 +66,17 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 
 `open` chỉ nhận kiện `packed`. Nếu kiện chưa giữ đủ hàng, giữ lại trước khi gọi repack và phát `allocation_done`. Lazada repack thành công thì xoá mã kiện và vận đơn cũ. TikTok giữ mã kiện. In vận đơn bỏ trùng mã theo gian hàng, tải tối đa ba gian hàng cùng lúc và gộp tối đa 50 MB PDF.
 
+## Tách kiện (#205)
+
+`POST /packages/:id/split` `{ version, parts }`: kiện cũ giữ phần còn lại (kể cả dòng chưa ghép SKU), mỗi phần thành một kiện mới mang mã `KH-` mới. Chỉ kiện `reserved`, `backordered`; `packed`, `awaiting_pickup` thì 409 `package_sealed`. Tách không là mũi tên của máy trạng thái (D3): kiện mới ghi lịch sử `create` (người bấm, "Tách từ <mã cũ>") và phát `package_status_changed` (`from: null`); kiện cũ ghi `split` với `from = to`, lý do liệt kê mã mới.
+
+- **Luật thuần** `domain/split.ts` (`planSplit`, `carveLine`): chọn dòng theo thứ tự dòng vào; dòng số lượng lớn (đơn tay) chuyển một phần thì giảm dòng cũ, chèn dòng mới, phần giữ theo nguyên dòng (D12). Lỗi theo trường `parts.<i>.<j>.variantId`, `parts.<i>.<j>.quantity`, `parts` (kiện cũ hết món). `sku` chỉ chuyển trọn một SKU, một SKU không ở hai kiện (D8).
+- **Ba bước** (`service/split.ts`) trong khoá phiên theo kiện: (1) giao dịch ngắn đọc và kiểm (trạng thái trước `version`), hỏi `splitLevel` của gian hàng ngoài giao dịch (đơn tay coi như `unit`; `none` thì 422 `split_not_supported`); (2) nhánh `sku` gọi sàn tách ngoài giao dịch; (2b) xin mã kiện mới trong giao dịch riêng, commit ngay (D15); (3) một giao dịch: khoá advisory phân hàng → `lockOrderPackages` → kiểm lại → chèn kiện, chuyển dòng → kiện cũ `backordered` thì `runAllocation` cho SKU của các kiện con (kiện đủ hàng sang `reserved` qua `hold`, lượt tự phát `allocation_done`). Trả `Order` của sales (`ctx.orderViewOf`).
+- **Không gọi cổng tồn** (D4): inventory chỉ giữ tổng theo SKU, chuyển dòng đang giữ sang kiện khác không đổi tổng. Kiện `reserved` tách thì kiện mới `reserved`, `reserved_at` chép kiện cũ, không phát `allocation_done`. Gian hàng chờ kiểm kê đầu kỳ vẫn tách được, lượt phân hàng tự bỏ qua (D5).
+- **Nhánh `sku`** (TikTok): đơn còn kiện chưa huỷ khác thì 422 `split_not_supported` (D13, chưa thử sàn nhận nhóm chỉ phủ một phần đơn). Nhóm gửi sàn: mã món của phần ở lại kiện cũ đứng đầu, rồi từng kiện mới; thiếu mã đơn hay mã món thì 409 `item_not_packable`. Bước ghi không so `version` (D7): kiện còn `reserved`/`backordered` và `planSplit` trên dòng vừa khoá ra đúng các dòng đã gửi sàn thì ghi, không thì 409 `version_conflict`. Mã sàn của kiện cũ ghi trước khi chèn kiện mới (tránh unique `packages_platform_code_order_uq` khi lượt kéo vừa gắn mã nhóm khác vào kiện cũ). Mọi lỗi sau khi sàn đã tách: log `error`, giao dịch riêng bật Cần xử lý trên kiện cũ với `SPLIT_UNSYNCED_NOTE` (D14), rồi ném lỗi gốc.
+- **Đồng bộ giữ cách chia của app** (D10, `syncPlatformPackages`): món chưa có mã kiện sàn mà đã nằm trong kiện app thì gom theo kiện đó, không bật `resplit`; món có mã sàn gom theo mã như cũ, món của hai kiện app về chung một mã vẫn là "Sàn chia lại kiện" (#238).
+- **CSDL** chặn tổng một dòng đơn trên các kiện chưa huỷ vượt số lượng dòng đơn bằng constraint trigger `package_lines_line_total` (kiểm lúc commit, `db/CLAUDE.md`).
+
 ## Route (`/api/v1/fulfillment`)
 
 | Route | Quyền | Việc |
@@ -77,6 +88,7 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 | `POST /packages/:id/pack` | `fulfillment.order.process` | So số quét, đóng gói, lưu mã kiện sàn và vận đơn nếu sàn trả |
 | `POST /packages/:id/ready` | `fulfillment.order.process` | Báo sẵn sàng giao cho kiện hoặc nhóm gói |
 | `POST /packages/:id/open` | `fulfillment.order.process` | Mở kiện đã đóng, giữ lại hàng nếu cần |
+| `POST /packages/:id/split` | `fulfillment.order.process` | Tách kiện `reserved`/`backordered` theo `parts` (mục Tách kiện); 404 → 409 `package_sealed`/`invalid_transition` → 409 `version_conflict` → 422 `split_not_supported` (sàn `none`) → 422 `validation_failed` → nhánh `sku`: 422 D13, 409 `item_not_packable`, lỗi sàn; trả `Order` |
 | `GET /packages/documents` | `fulfillment.order.process` | Tải một PDF vận đơn gộp của 1–50 kiện |
 | `POST /packages/hand-over` | `fulfillment.order.process` | 1–50 kiện, id không trùng (422); mỗi kiện một giao dịch, tuần tự; `failed[].code`: `not_found`, `already_handed_over` (kiểm trước `version`), `version_conflict`, `invalid_transition`, `internal_error` (log `error`, câu chung). `issue` null khi kiện chưa có dòng nào ghép SKU (kiện sàn tới chờ lấy hàng khi chưa ghép) |
 | `POST /packages/:id/receive-return` | `fulfillment.order.process` | Kho quét nhận hàng hoàn `{ version, code, lines? }`: kiện có (404, kể cả công ty khác, id sai dạng) → máy trạng thái (409 `invalid_transition`, kể cả quét lần hai; kiểm trước `version` như bàn giao) → `version` (409 kèm `current`) → `code` khớp mã kiện hoặc mã vận đơn, không phân biệt hoa thường (422 `package_mismatch`, `errors.code`) → `lines` (422 `validation_failed` theo bảng `21` §15.3). Kiện `returned`, phiếu `KT` nháp theo số quét kèm giá vốn dòng kiện, `package_status_changed`, `package_returned`; trả `Package` |
@@ -96,7 +108,8 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `getOrderCogs` (finance).
 - `packageStatusOf(packageIds)` → `Map<id, { orderId, status, deliveredAt }>` (**finance E139**): chạy trong `withCompany` của bên gọi; bỏ id sai dạng, rỗng thì không truy vấn; id công ty khác vắng trong `Map`.
 - **#237** ghép SKU muộn phải bỏ qua kiện `returned` (hàng đã về kệ; trừ tồn lúc này là sai, spec 199c §10). Kiện đã `delivered` mà `delivery_posted_at` còn null (đang hoãn trừ) thì sau khi `shipLateMappedLines` trừ xong phải gọi `reportDelivered(packageId)`: hiện chỉ `settleDeferredHandovers` gọi lại, kiện còn dòng đã ghép chưa trừ sẽ không bao giờ phát `package_delivered`.
-- `ctx.marketplacePackages` do channel tiêm ở `src/wiring.ts`, cung cấp `carriers`, `pack`, `readyToShip`, `repack`, `shippingDocuments`.
+- `ctx.marketplacePackages` do channel tiêm ở `src/wiring.ts`, cung cấp `carriers`, `pack`, `readyToShip`, `repack`, `shippingDocuments`, `split`, `splitLevel` (mức tách kiện của gian hàng, #205).
+- `ctx.orderViewOf(orderId)` (`getOrder` của sales) và `ctx.nextPackageCode()` (bộ đếm `KH-` của sales) do `order/index.ts` tiêm bằng `withContext` cho tách kiện (#205); thiếu thì 500 `internal_error` (`orderViewLookupOf`, `packageCodeLookupOf`).
 - Test thay cổng tồn bằng `setStockPort({ ... })` (`service/stock-port.ts`): phần không truyền là bản thật.
 
 ## Giới hạn đã biết
@@ -116,4 +129,8 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - "Dỡ kiện về kệ" sau phiếu kiểm kê là cờ Cần xử lý, chưa phải việc trong khung #209 (spec 199b D9). Ghép SKU, tồn đổi vì lý do khác (xuất huỷ, nhặt thiếu) không bật cờ này: `25` §7.4 chỉ đòi khi do kiểm kê.
 - `lines` của `receive-return`, `found` còn tuỳ chọn (giai đoạn chuyển tiếp của `21` §15.3); thành bắt buộc sau FE#212 thì đổi `scanLines` ở `api/schemas.ts`. `found` mới có route nhận kiện về; báo và xác nhận thất lạc (`report-lost`, `confirm-lost`) thuộc #238.
 - Lượt kéo đơn áp kết quả trước request thì lịch sử ghi nguồn sàn. Sau repack, lượt kéo có thể gắn lại mã cũ trong thời gian sàn còn trả mã đó. Lần đóng gói tiếp theo dùng mã mới sàn trả.
-- Chưa làm: FE (199d), mở kiện `awaiting_pickup`, sàn chia lại kiện, thất lạc (#238) và route `self-deliver`.
+- Tách kiện TikTok (`sku`) chỉ khi kiện là kiện chưa huỷ duy nhất của đơn (D13); gỡ khi thử thật trên shop thử cho thấy sàn nhận nhóm chỉ phủ một phần đơn.
+- Tách kiện `sku` mà bước ghi lỗi sau khi sàn đã tách: app một kiện, sàn hai kiện, lượt kéo không tự báo. Kiện cũ bật Cần xử lý (D14), xử lý tay tới khi có #238; bấm tách lại thì sàn từ chối.
+- Tách kiện xin mã `KH-` trước bước ghi (D15): bước ghi lỗi thì mất số, dãy `KH-` có lỗ (mã kiện không phải chứng từ kế toán).
+- Trigger `package_lines_line_total` không tự xếp hàng (D11, không khoá dòng đơn để tránh vòng khoá với luồng nhận đơn): hai giao dịch cùng ghi dòng kiện của một dòng đơn chỉ đúng khi cùng khoá kiện trước. Đường mới ghi dòng kiện phải khoá kiện (`lockOrderPackages`, `lockPackage`) trước khi ghi. PR 1 chỉ chặn tổng **vượt**; kiểm **bằng** (kèm huỷ dòng) là PR 2 (spec 205 §5.10).
+- Chưa làm: FE (199d), mở kiện `awaiting_pickup`, sàn chia lại kiện, thất lạc (#238), route `self-deliver`, gộp kiện sau khi tách.
