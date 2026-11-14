@@ -240,7 +240,8 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     }
   }
   next.cancelRequested = o.cancelRequested && next.status !== 'cancelled';
-  if (packages.unknown || packages.resplit) next.needsAttention = true;
+  // Sàn kéo lại kiện người dùng đã chuyển thất lạc/hoàn (spec #238 §5.4): bật cờ, đơn `completed` giữ trạng thái.
+  if (packages.unknown || packages.resplit || packages.revived) next.needsAttention = true;
   next.rawMarketplaceStatus = o.rawStatus;
   next.shipBy = o.shipBy;
 
@@ -261,7 +262,13 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       rawMarketplaceStatus: next.rawMarketplaceStatus,
       shipBy: next.shipBy,
       needsAttention: next.needsAttention,
-      attentionNote: packages.resplit ? 'Sàn chia lại kiện khác lần trước' : packages.unknown ? 'Sàn trả trạng thái app chưa biết' : undefined,
+      attentionNote: packages.resplit
+        ? 'Sàn chia lại kiện khác lần trước'
+        : packages.revived
+          ? 'Sàn báo lại kiện đã thất lạc hoặc đang hoàn'
+          : packages.unknown
+            ? 'Sàn trả trạng thái app chưa biết'
+            : undefined,
       cancelRequested: next.cancelRequested,
       cancelling: next.cancelling,
       platformCancelled: next.platformCancelled,

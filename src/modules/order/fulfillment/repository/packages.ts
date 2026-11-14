@@ -24,6 +24,8 @@ export async function insertPackage(input: {
   handoverSource?: HandoverSource;
   pickupConfirmedAt?: Date;
   deliveredAt?: Date;
+  /** Kiện lần đầu thấy đã `lost` (sàn báo, spec #238 §5.4). */
+  lostSource?: 'marketplace';
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
     .insert(packages)

@@ -206,6 +206,13 @@ export function arrowAction(from: PackageStatus, to: PackageStatus, opts: { syst
 }
 
 /**
+ * Sàn báo kiện `lost`/`returning` quay lại `in_transit`/`delivered` (`platform_in_transit`, `platform_deliver`): chỉ
+ * áp được khi trạng thái hiện tại do người chuyển tay; bên gọi nạp nguồn đó từ lịch sử trạng thái.
+ */
+export const isPlatformRevive = (from: PackageStatus, to: PackageStatus) =>
+  REVIVE_FROM.includes(from) && (to === 'in_transit' || to === 'delivered');
+
+/**
  * Sàn đẩy trạng thái kiện, xét theo thứ tự:
  * 1. Kiện `lost`/`returning` mà sàn báo `in_transit`/`delivered` (`platform_in_transit`, `platform_deliver`): `direct`
  *    khi trạng thái hiện tại do người chuyển tay (`ctx.statusSource = 'user'`), còn lại `invalid` (spec #238 §5.4).
@@ -220,9 +227,7 @@ export function platformUpdate(
   to: PackageStatus,
   ctx: { statusSource?: StatusSource } = {},
 ): 'direct' | 'jump' | 'invalid' {
-  if (REVIVE_FROM.includes(from) && (to === 'in_transit' || to === 'delivered')) {
-    return ctx.statusSource === 'user' ? 'direct' : 'invalid';
-  }
+  if (isPlatformRevive(from, to)) return ctx.statusSource === 'user' ? 'direct' : 'invalid';
   if (PRE_HANDOVER.includes(from) && (to === 'delivery_failed' || to === 'returning' || to === 'lost')) return 'jump';
   if (arrowAction(from, to, { system: true })) return 'direct';
   const a = MAIN_PATH.indexOf(from === 'backordered' ? 'reserved' : from);
