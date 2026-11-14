@@ -94,6 +94,8 @@ export async function seedPackage(
     ],
   );
   const packageId = pkg.rows[0]!.id;
+  // Kiện huỷ: món của nó là món đã huỷ, ghi `cancelled_qty` trước khi chèn dòng kiện (trigger kiểm bằng, spec 205 §5.10).
+  if (p.status === 'cancelled') await db.query('update "order".order_lines set cancelled_qty = quantity where order_id = $1', [order.orderId]);
   const lineIds: string[] = [];
   for (const l of p.lines) {
     const index = orderLines.findIndex((line) => line.variant_id === (l.variantId ?? firstVariant) && line.quantity === l.quantity);
