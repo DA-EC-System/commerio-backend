@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { setHeadObject } from '#src/modules/core/files/service/storage.ts';
+import { productImageUrls } from '#src/modules/product/catalog/index.ts';
+import { env } from '#src/shared/config/env.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -44,9 +47,12 @@ async function image(
 }
 
 let token: string;
+let companyId: string;
 let other: string;
 beforeAll(async () => {
-  token = (await createCompany()).ceo.token;
+  const company = await createCompany();
+  token = company.ceo.token;
+  companyId = company.companyId;
   other = (await createCompany()).ceo.token;
 });
 
@@ -194,5 +200,55 @@ describe('từ chối ảnh: không ghi gì', () => {
     const res = await put(p, p.version + 1, { imageFileIds: [b.id] });
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('/problems/product_archived');
+  });
+});
+
+describe('ảnh đại diện ở danh sách, ảnh cho module khác', () => {
+  const savedUrl = env.S3_PUBLIC_URL;
+  afterEach(() => {
+    env.S3_PUBLIC_URL = savedUrl;
+  });
+
+  /** Hai sản phẩm cùng tiền tố tên: một có hai ảnh, một không ảnh. */
+  async function pair() {
+    const [a, b] = [await image(token), await image(token)];
+    const category = await createCategory(token, uniq('Ảnh DS'), 'D-{SEQ}');
+    const prefix = uniq('DS');
+    const withImages = await api(token).post('/products', productBody(`${prefix} có ảnh`, category.id, [[]], { imageFileIds: [a.id, b.id] }));
+    const without = await api(token).post('/products', productBody(`${prefix} không ảnh`, category.id, [[]]));
+    expect([withImages.status, without.status]).toEqual([201, 201]);
+    return { prefix, a, b, withImages: withImages.body.id as string, without: without.body.id as string };
+  }
+  const listed = async (prefix: string) => {
+    const res = await api(token).get(`/products?search=${encodeURIComponent(prefix)}`);
+    expect(res.status).toBe(200);
+    return new Map((res.body.items as { id: string; thumbnailUrl: string | null }[]).map((i) => [i.id, i.thumbnailUrl]));
+  };
+
+  it('danh sách: thumbnailUrl là ảnh position 0, sản phẩm không ảnh là null', async () => {
+    const p = await pair();
+    const rows = await listed(p.prefix);
+    expect(rows.get(p.withImages)).toBe(url(p.a.key));
+    expect(rows.get(p.without)).toBeNull();
+  });
+
+  it('productImageUrls lấy tối đa max ảnh theo thứ tự, bỏ sản phẩm không ảnh', async () => {
+    const p = await pair();
+    const two = await withCompany(companyId, () => productImageUrls([p.withImages, p.without], 2));
+    expect(two.get(p.withImages)).toEqual([url(p.a.key), url(p.b.key)]);
+    expect(two.has(p.without)).toBe(false);
+    const one = await withCompany(companyId, () => productImageUrls([p.withImages], 1));
+    expect(one.get(p.withImages)).toEqual([url(p.a.key)]);
+  });
+
+  it('thiếu S3_PUBLIC_URL: chi tiết url rỗng, thumbnailUrl null ở chi tiết và danh sách, productImageUrls không có sản phẩm', async () => {
+    const p = await pair();
+    env.S3_PUBLIC_URL = undefined;
+    const detail = await api(token).get(`/products/${p.withImages}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.images.map((i: Image) => i.url)).toEqual(['', '']);
+    expect(detail.body.thumbnailUrl).toBeNull();
+    expect((await listed(p.prefix)).get(p.withImages)).toBeNull();
+    expect((await withCompany(companyId, () => productImageUrls([p.withImages], 8))).size).toBe(0);
   });
 });

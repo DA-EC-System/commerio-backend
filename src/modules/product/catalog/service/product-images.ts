@@ -14,6 +14,23 @@ export interface ProductImage {
   position: number;
 }
 
+/**
+ * Link ảnh của các sản phẩm cho module khác (channel: ảnh đại diện của listing, ảnh đẩy lên sàn), tối đa `max` ảnh đầu
+ * theo `position`. Chỉ có khoá cho sản phẩm có ít nhất một link khác rỗng (thiếu `S3_PUBLIC_URL` thì không có sản
+ * phẩm nào). Gọi trong `withCompany` của bên gọi.
+ */
+export async function productImageUrls(productIds: readonly string[], max: number): Promise<Map<string, string[]>> {
+  const rows = await productImageRows(productIds, max);
+  const urls = await publicFileUrls(rows.map((r) => r.fileId));
+  const out = new Map<string, string[]>();
+  for (const r of rows) {
+    const url = urls.get(r.fileId);
+    if (!url) continue;
+    out.set(r.productId, [...(out.get(r.productId) ?? []), url]);
+  }
+  return out;
+}
+
 /** Ảnh của một sản phẩm theo `position`. Gọi trong `withCompany`. */
 export async function imagesOf(productId: string): Promise<ProductImage[]> {
   const rows = await productImageRows([productId]);

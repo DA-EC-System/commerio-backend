@@ -1,7 +1,7 @@
 // Sản phẩm (UC-CP-02, UC-CP-04; Documents/21 5.2–5.4, C3, C5, P5–P8, V22, V24; D9; plan #12 B1, B2, B6).
 import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
-import { confirmUploads, fileProblem, recordAudit } from '../../../core/index.ts';
+import { confirmUploads, fileProblem, publicFileUrls, recordAudit } from '../../../core/index.ts';
 import { findCategories } from '../repository/categories.ts';
 import { productImageRows, replaceProductImages } from '../repository/product-images.ts';
 import {
@@ -127,7 +127,10 @@ function race(err: unknown): never {
 export async function listProducts(companyId: string, filter: ProductFilter) {
   return withCompany(companyId, async () => {
     const { rows, total } = await findPage(filter);
-    return { items: rows.map((p) => toListItem(p, null)), total, page: filter.page, pageSize: filter.pageSize };
+    // Một câu lấy link ảnh đại diện cho cả trang, không N+1.
+    const urls = await publicFileUrls(rows.flatMap((p) => (p.thumbnailFileId ? [p.thumbnailFileId] : [])));
+    const items = rows.map((p) => toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null));
+    return { items, total, page: filter.page, pageSize: filter.pageSize };
   });
 }
 
