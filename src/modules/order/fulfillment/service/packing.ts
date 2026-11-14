@@ -6,15 +6,19 @@ import { isUuid } from '../../../../shared/uuid.ts';
 import { packageMachine, type PackageAction, type PackageStatus } from '../domain/package.ts';
 import { buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, type ScannedLine } from '../domain/packing.ts';
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
-import { markLinesReserved, packageShopOf, updatePackage } from '../repository/packages.ts';
+import { clearPendingDrop, deleteLines } from '../repository/line-cancel.ts';
+import { markLinesReserved, packageShopOf, setReserved, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
-import { getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages } from './packages.ts';
+import { requestAllocation } from './allocation.ts';
+import {
+  cancelledOrderSettlerOf, getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages,
+} from './packages.ts';
 import { stockPort } from './stock-port.ts';
 
 const PICK_LIST_LIMIT = 500;
 export const PACKAGE_LOCK_WAIT_MS = 10_000;
 export type PackageDetail = Awaited<ReturnType<typeof getPackage>>;
-type PackingAction = Extract<PackageAction, 'pack' | 'mark_ready' | 'open'>;
+type PackingAction = Extract<PackageAction, 'pack' | 'mark_ready' | 'open' | 'open_cancel'>;
 type PackageIdentity = Pick<PackingPackage, 'id' | 'orderId' | 'status'>;
 type Group = Awaited<ReturnType<typeof packageGroupOf>>;
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy kiện');
@@ -207,6 +211,16 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
   }, groupKeys);
 }
 
+/** Sàn huỷ mọi món của kiện (spec 205 D21): mở kiện là huỷ kiện (`open_cancel`), không giữ lại, không gọi repack. */
+const allPendingDrop = (pkg: PackingPackage) => pkg.lines.length > 0 && pkg.lines.every((line) => line.pendingDropQty > 0);
+
+/** Nhả phần đang giữ của các dòng (dòng đã ghép SKU); trả SKU vừa nhả để xếp lượt phân hàng. */
+async function releaseLines(id: string, lines: PackingPackage['lines']): Promise<string[]> {
+  const held = lines.filter((line) => line.variantId !== null && line.reservedQty > 0);
+  if (held.length) await stockPort().release(id, held.map((line) => ({ variantId: line.variantId!, quantity: line.reservedQty })));
+  return held.map((line) => line.variantId!);
+}
+
 export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: string, input: { version: number }): Promise<PackageDetail> {
   const { companyId } = actor;
   return withPackageLock(ctx, companyId, id, async () => {
@@ -219,9 +233,14 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
       if (pkg.status === 'awaiting_pickup') {
         throw new AppError(409, 'invalid_transition', 'Kiện đã báo sàn sẵn sàng giao: dỡ kiện về kệ qua việc của kho (#238)');
       }
+      if (allPendingDrop(pkg)) {
+        await transition(ctx, actor, pkg, 'open_cancel');
+        return { shopId: null, code: null, version: pkg.version, cancel: true };
+      }
       await transition(ctx, actor, pkg, 'open');
 
-      const missing = pkg.lines.filter((line) => line.variantId !== null && line.reservedQty < line.quantity);
+      // Dòng chờ bỏ (món sàn đã huỷ, spec 205 §5.10) sẽ bị xoá ở bước ghi: không giữ thêm hàng cho chúng.
+      const missing = pkg.lines.filter((line) => line.variantId !== null && line.pendingDropQty === 0 && line.reservedQty < line.quantity);
       if (missing.length) {
         if (awaitingStocktake) throw new AppError(409, 'shop_awaiting_stocktake', 'Gian hàng đang chờ kiểm kê đầu kỳ');
         const { reserved } = await stockPort().reserve(id, missing.map((line) => ({ variantId: line.variantId!, quantity: line.quantity - line.reservedQty })));
@@ -231,29 +250,59 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         const variantIds = [...new Set(pkg.lines.flatMap((line) => line.variantId ? [line.variantId] : []))].sort();
         await publishEvent({ type: 'fulfillment.allocation_done', aggregateId: companyId, payload: { variantIds } });
       }
-      return { shopId: pkg.shopId, code: pkg.platformPackageCode, version: pkg.version + Number(missing.length > 0) };
+      return { shopId: pkg.shopId, code: pkg.platformPackageCode, version: pkg.version + Number(missing.length > 0), cancel: false };
     });
 
-    const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = target.shopId && target.code
+    // Sàn đã huỷ gói khi mọi món bị huỷ: gọi đóng gói lại chỉ nhận lỗi (D21).
+    const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = !target.cancel && target.shopId && target.code
       ? await marketplacePackagesOf(ctx).repack(companyId, target.shopId, target.code)
       : null;
+    let written: { detail: PackageDetail; cancelledOrderId: string | null };
     try {
-      return await withCompany(companyId, async () => {
+      written = await withCompany(companyId, async () => {
         const pkg = await readPackage(id, true);
         await checkVersion(ctx, pkg, target.version);
+        if (target.cancel) {
+          if (!allPendingDrop(pkg)) await versionConflict(ctx, id);
+          const { to } = await transition(ctx, actor, pkg, 'open_cancel');
+          const released = await releaseLines(id, pkg.lines);
+          await setReserved(id, false);
+          await clearPendingDrop(id);
+          await setLinesPacked(id, false);
+          await updatePackage(id, { status: to, needsOpen: false, openPurpose: null, packedBy: null, packedAt: null, labelError: false });
+          await recordPacking(pkg, to, 'open_cancel', actor.accountId);
+          await requestAllocation(released);
+          return { detail: await getPackage(ctx, id), cancelledOrderId: pkg.orderId };
+        }
         const { to } = await transition(ctx, actor, pkg, 'open');
+        const dropped = pkg.lines.filter((line) => line.pendingDropQty > 0);
+        const released = await releaseLines(id, dropped);
+        await deleteLines(dropped.map((line) => line.id));
         await updatePackage(id, {
           status: to, packedBy: null, packedAt: null, labelError: false,
+          ...(dropped.length && { needsOpen: false, openPurpose: null }),
           ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
         });
         await setLinesPacked(id, false);
         await recordPacking(pkg, to, 'open', actor.accountId);
-        return getPackage(ctx, id);
+        await requestAllocation(released);
+        return { detail: await getPackage(ctx, id), cancelledOrderId: null };
       });
     } catch (err) {
       // Sàn đã huỷ gói cũ mà app còn giữ mã đó: lượt kéo đơn không tự sửa (món về chờ đóng gói, kiện app vẫn `packed`).
       if (outcome === 'repacked') logger.error({ err, packageId: id, platformPackageCode: target.code }, 'sàn đã đóng gói lại, app chưa ghi; cần mở lại kiện');
       throw err;
     }
+    if (!written.cancelledOrderId) return written.detail;
+    // Sàn đã huỷ xong nên lượt kéo không chạy lại luật huỷ đơn (D21): khép đơn đang huỷ ở giao dịch riêng, sau khi nhả
+    // khoá kiện (lượt kéo khoá đơn trước kiện). Lỗi chỉ log: kiện đã huỷ xong, đơn giữ cờ đang huỷ.
+    const orderId = written.cancelledOrderId;
+    try {
+      await withCompany(companyId, () => cancelledOrderSettlerOf(ctx)(orderId));
+    } catch (err) {
+      logger.error({ err, packageId: id, orderId }, 'kiện đã huỷ khi mở, chưa khép được đơn đang huỷ');
+      return written.detail;
+    }
+    return withCompany(companyId, () => getPackage(ctx, id));
   });
 }

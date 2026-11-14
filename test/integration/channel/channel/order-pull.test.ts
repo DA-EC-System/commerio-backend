@@ -336,6 +336,23 @@ describe('đơn trước mốc đã có, giữ hàng và việc chưa làm trên
     expect(await pkgOf('B1')).toMatchObject([{ status: 'packed' }]);
   });
 
+  it('D22: đơn đặt trước mốc mà migration huỷ dòng đặt lại mốc đơn vẫn được kéo lại (spec 205 §5.10)', async () => {
+    // Đơn về qua lượt kéo đơn còn mở (dựng bằng ngày đặt sau mốc), sàn không đổi gì sau đó.
+    const first = remoteOrder('H1', sku, 'pending', at('2026-11-03T01:00:00Z'));
+    seed(first);
+    expect((await pull()).body).toMatchObject({ created: 1 });
+    refs = [];
+    // Áp đúng giá trị migration `*_huy-dong-du-lieu` ghi vào `external_update_time`, riêng cho đơn này.
+    const dir = join(process.cwd(), 'db', 'migrations');
+    const file = readdirSync(dir).find((f) => f.endsWith('_huy-dong-du-lieu.sql'))!;
+    const reset = /UPDATE channel\.raw_orders r SET external_update_time = ([^\n]+)\n/.exec(readFileSync(join(dir, file), 'utf8'))![1]!;
+    await testPool().query(`update channel.raw_orders set external_update_time = ${reset} where shop_id = $1 and external_order_id = 'H1'`, [shopId]);
+
+    seed({ ...first, placedAt: at('2026-10-01T00:00:00Z') });
+
+    expect((await pull()).body).toEqual({ pulled: 1, created: 0, updated: 0 });
+  });
+
   it('cổng tồn mặc định là reserve thật (#206): SKU chưa có tồn thì kiện backordered, notices rỗng', async () => {
     setStockPort();
     seed(remoteOrder('N0', sku, 'pending', at('2026-11-02T00:30:00Z')));

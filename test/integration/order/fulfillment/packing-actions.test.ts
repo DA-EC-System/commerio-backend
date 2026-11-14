@@ -277,4 +277,109 @@ describe('mở lại kiện', () => {
     expectProblem(await post(packageId, 'open', { version: 1 }, { repack }), 409, 'package_status_not_allowed');
     expect(await packageRow(packageId)).toMatchObject({ status: 'packed', version: 1, platform_package_code: 'REPACK-FAIL' });
   });
+
+  // Dòng chờ bỏ của món sàn huỷ (spec 205 §5.10, D21). Đặt chờ bỏ và số đã huỷ của dòng đơn trong một giao dịch như luồng
+  // nhận đơn (trigger kiểm bằng chạy lúc commit).
+  async function markPendingDrop(packageId: string, lineIds: readonly string[], purpose: 'edit' | 'cancel') {
+    const c = await testPool().connect();
+    try {
+      await c.query('begin');
+      await c.query(`update "order".package_lines set pending_drop_qty = quantity where id = any($1::uuid[])`, [lineIds]);
+      await c.query(
+        `update "order".order_lines ol set cancelled_qty = pl.quantity from "order".package_lines pl
+         where pl.order_line_id = ol.id and pl.id = any($1::uuid[])`,
+        [lineIds],
+      );
+      await c.query(`update "order".packages set needs_open = true, open_purpose = $2 where id = $1`, [packageId, purpose]);
+      await c.query('commit');
+    } finally {
+      await c.query('rollback').catch(() => undefined);
+      c.release();
+    }
+  }
+
+  it('AC17: mở kiện có một dòng chờ bỏ thì xoá và nhả dòng đó, kiện về reserved với phần còn lại', async () => {
+    const other = (await createVariant(companyId)).variantId;
+    await receive(companyId, other, 10, 100_000);
+    const { packageId } = await seed('packed', {
+      platformPackageCode: 'DROP-ONE',
+      lines: [{ variantId, quantity: 2, reserved: true }, { variantId: other, quantity: 1, reserved: true }],
+    });
+    const { rows: lines } = await testPool().query<{ id: string; variant_id: string }>(
+      'select id, variant_id from "order".package_lines where package_id = $1',
+      [packageId],
+    );
+    await markPendingDrop(packageId, lines.filter((l) => l.variant_id === other).map((l) => l.id), 'edit');
+    const heldOther = (await stockOfVariant(companyId, other)).reserved;
+    const repack = vi.fn(async () => 'repacked' as const);
+
+    const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('reserved');
+    const { rows: left } = await testPool().query('select variant_id from "order".package_lines where package_id = $1', [packageId]);
+    expect(left).toEqual([{ variant_id: variantId }]);
+    expect((await stockOfVariant(companyId, other)).reserved).toBe(heldOther - 1);
+    expect(await testPool().query('select needs_open, open_purpose from "order".packages where id = $1', [packageId]).then((r) => r.rows[0]))
+      .toEqual({ needs_open: false, open_purpose: null });
+    expect(await transitionsOf(packageId)).toContainEqual(expect.objectContaining({ action: 'open', from_state: 'packed', to_state: 'reserved' }));
+    expect(repack).toHaveBeenCalledTimes(1);
+  });
+
+  it('D21: mở kiện mà mọi dòng chờ bỏ thì huỷ kiện, nhả hết, không gọi repack', async () => {
+    const { packageId, orderId, lineIds } = await seed('packed', { platformPackageCode: 'DROP-ALL', lines: [{ variantId, quantity: 2, reserved: true }] });
+    await testPool().query(`update "order".package_lines set packed_qty = quantity where package_id = $1`, [packageId]);
+    await markPendingDrop(packageId, lineIds, 'cancel');
+    const held = (await stockOfVariant(companyId, variantId)).reserved;
+    const repack = vi.fn();
+
+    const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('cancelled');
+    const { rows } = await testPool().query('select pending_drop_qty, reserved_qty, packed_qty from "order".package_lines where package_id = $1', [packageId]);
+    expect(rows).toEqual([{ pending_drop_qty: 0, reserved_qty: 0, packed_qty: 0 }]);
+    expect((await stockOfVariant(companyId, variantId)).reserved).toBe(held - 2);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'cancelled', reserved_at: null });
+    expect(await testPool().query('select needs_open from "order".packages where id = $1', [packageId]).then((r) => r.rows[0].needs_open)).toBe(false);
+    expect(await transitionsOf(packageId)).toContainEqual({ action: 'open_cancel', from_state: 'packed', to_state: 'cancelled', source: 'user' });
+    expect(await outboxOf(orderId, 'fulfillment.package_status_changed')).toContainEqual(expect.objectContaining({ from: 'packed', to: 'cancelled' }));
+    expect(repack).not.toHaveBeenCalled();
+  });
+
+  const orderOf = async (orderId: string) =>
+    (await testPool().query<{ status: string; cancel_reason: string | null }>('select status, cancel_reason from "order".orders where id = $1', [orderId])).rows[0]!;
+
+  it('đơn đang huỷ mà mở kiện cuối (open_cancel) thì đơn sang cancelled, phát sales.order_cancelled', async () => {
+    const { packageId, orderId, lineIds } = await seed('packed', { cancelling: true, platformPackageCode: 'DROP-LAST', lines: [{ variantId, quantity: 1, reserved: true }] });
+    await markPendingDrop(packageId, lineIds, 'cancel');
+
+    const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack: vi.fn() });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await orderOf(orderId)).toEqual({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn' });
+    const { rows } = await testPool().query(
+      `select from_state, to_state, action, source from core.state_transitions where entity_type = 'orders' and entity_id = $1 order by id`,
+      [orderId],
+    );
+    expect(rows.at(-1)).toEqual({ from_state: 'processing', to_state: 'cancelled', action: 'platform_cancel', source: 'marketplace' });
+    expect(await outboxOf(orderId, 'sales.order_cancelled')).toEqual([expect.objectContaining({ orderId, source: 'marketplace', by: 'platform' })]);
+  });
+
+  it('đơn còn món chưa huỷ thì mở kiện huỷ không huỷ đơn', async () => {
+    const { packageId, orderId, lineIds } = await seed('packed', { cancelling: true, platformPackageCode: 'DROP-PART', lines: [{ variantId, quantity: 1, reserved: true }] });
+    await markPendingDrop(packageId, lineIds, 'cancel');
+    // Một món khác của đơn chưa vào kiện nào (trạng thái sàn lạ) và chưa bị huỷ.
+    await testPool().query(
+      `insert into "order".order_lines (company_id, order_id, variant_id, product_name, quantity, unit_price, line_total)
+       values ($1, $2, $3, 'Áo', 1, 0, 0)`,
+      [companyId, orderId, variantId],
+    );
+
+    const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack: vi.fn() });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('cancelled');
+    expect((await orderOf(orderId)).status).toBe('processing');
+  });
 });

@@ -39,7 +39,7 @@ export { getOrderChannels } from './service/daily-totals.ts';
 // Ngắt gian hàng (#207): channel đếm đơn chưa xong trong giao dịch ngắt; số đơn trên bảng gian hàng (#200 §18.7).
 export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop } from './service/channel-boundary.ts';
 // Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
-export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts';
+export { ingestMarketplaceOrder, type PlatformOrder, settleCancelledOrder } from './service/ingest.ts';
 export type { SalesContext } from './service/orders.ts';
 export { nextPackageCode, orderRefsOf } from './service/package-orders.ts';
 // Chi tiết đơn cho route tách kiện của fulfillment (spec 205 D9), tiêm qua `FulfillmentContext.orderViewOf`.
