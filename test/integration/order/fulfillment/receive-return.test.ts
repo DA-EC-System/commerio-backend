@@ -233,6 +233,17 @@ describe('POST /fulfillment/packages/:id/receive-return (spec 199c §5.5, 21 §1
     expect(await quarantineOf(variantId)).toBe(before);
   });
 
+  it('kiện mọi dòng chưa ghép SKU, lines chỉ có món số quét 0 → returned, không phiếu KT (không lỗi 500)', async () => {
+    const p = await returning();
+    await testPool().query('update "order".package_lines set variant_id = null, unit_cost = null, stock_deducted = false where package_id = $1', [
+      p.packageId,
+    ]);
+    const res = await scan(p.packageId, { code: p.packageCode, lines: [{ variantId, quantity: 0 }] });
+    expect(res.status).toBe(200);
+    expect(Package.parse(res.body).status).toBe('returned');
+    expect(await packageDocuments(p.packageId)).toEqual([]);
+  });
+
   it('lines sai (21 §15.3): không phải mảng, số âm, không nguyên, trùng variantId, SKU công ty khác → 422 validation_failed đúng khoá lỗi, kiện không đổi', async () => {
     const p = await twoSkuPackage();
     const foreign = (await createVariant((await createCompany()).companyId)).variantId;

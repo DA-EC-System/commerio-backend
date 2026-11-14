@@ -122,7 +122,8 @@ async function receiveBackPackage(
     }
     await assertOwnVariants(input.lines);
     // Dòng chưa ghép SKU không vào phiếu (kho ghi SKU thực nhận trên phiếu, hoặc lập phiếu tay; spec 199c §10).
-    const lines = mergeReceiveLines(pkg.lines, input.lines);
+    // Món ngoài kiện mà số quét 0 (`quantity = 0` hợp lệ, 21 §15.3) không có gì để ghi: bỏ, kho không nhận dòng 0/0.
+    const lines = mergeReceiveLines(pkg.lines, input.lines).filter((l) => l.expected > 0 || l.scanned > 0);
     if (lines.length) {
       await stockPort().receiveBack({ type: 'package', id: pkg.id }, lines, {
         actorId: actor.accountId,
