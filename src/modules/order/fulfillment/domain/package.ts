@@ -154,6 +154,8 @@ export const packageMachine = defineMachine<PackageStatus, PackageAction, Packag
 
 /** Đường chính: sàn báo nhảy cóc trên đường này thì áp thẳng. */
 export const MAIN_PATH: readonly PackageStatus[] = ['reserved', 'packed', 'awaiting_pickup', 'in_transit', 'delivered'];
+/** Trước bàn giao (spec 199c D5): kiện ở đây mà sàn báo giao lỗi thì bù bàn giao (trừ tồn một lần) rồi áp. */
+const PRE_HANDOVER: readonly PackageStatus[] = ['backordered', 'reserved', 'packed', 'awaiting_pickup'];
 
 const fromList = (from: PackageStatus | readonly PackageStatus[]) => (typeof from === 'string' ? [from] : from);
 
@@ -164,11 +166,15 @@ export function arrowAction(from: PackageStatus, to: PackageStatus): PackageActi
 
 /**
  * Sàn đẩy trạng thái kiện: `direct` khi có mũi tên, `jump` khi nhảy tới trên đường chính (kiện thiếu hàng tính như
- * đang giữ), `invalid` khi không áp được (kiện gắn cờ Cần xử lý).
+ * đang giữ), `invalid` khi không áp được (kiện gắn cờ Cần xử lý). Kiện trước bàn giao mà sàn báo nhánh giao lỗi
+ * (`delivery_failed`, `returning`) là `jump`: `stockEffectOf` trả `ship` nên lõi bàn giao tự bù trừ tồn (D5, spec
+ * 199c §5.2).
  */
 export function platformUpdate(from: PackageStatus, to: PackageStatus): 'direct' | 'jump' | 'invalid' {
   if (arrowAction(from, to)) return 'direct';
   const a = MAIN_PATH.indexOf(from === 'backordered' ? 'reserved' : from);
   const b = MAIN_PATH.indexOf(to);
-  return a >= 0 && b > a ? 'jump' : 'invalid';
+  if (a >= 0 && b > a) return 'jump';
+  if (PRE_HANDOVER.includes(from) && (to === 'delivery_failed' || to === 'returning')) return 'jump';
+  return 'invalid';
 }

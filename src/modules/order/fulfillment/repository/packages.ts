@@ -69,6 +69,7 @@ export async function updatePackage(
     pickupConfirmedAt: Date | null;
     deliveredAt: Date;
     reservedAt: Date | SQL | null;
+    deliveryPostedAt: Date | SQL | null;
   }> &
     Partial<PackageShipping>,
 ): Promise<void> {
@@ -89,6 +90,8 @@ export interface HandoverPackage {
   handoverSource: HandoverSource | null;
   pickupConfirmedAt: Date | null;
   handedOverAt: Date | null;
+  /** Mã vận đơn của sàn; quét nhận hoàn (spec 199c §5.5) so mã để khớp kiện, không thêm câu đọc. */
+  trackingCode: string | null;
   needsAttention: boolean;
   lines: PlanLine[];
 }
@@ -103,6 +106,7 @@ const handoverColumns = {
   handoverSource: packages.handoverSource,
   pickupConfirmedAt: packages.pickupConfirmedAt,
   handedOverAt: packages.handedOverAt,
+  trackingCode: packages.trackingCode,
   needsAttention: packages.needsAttention,
 };
 

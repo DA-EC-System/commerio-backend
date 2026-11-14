@@ -11,16 +11,19 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { receive } from '../../product/inventory/helpers.ts';
+import { EVENT_SCHEMAS } from '#src/modules/core/platform/domain/events.ts';
+import { deliverForReturn, type PackageEvent } from '#src/modules/order/fulfillment/index.ts';
 import { channelShop, invariantBroken, outboxOf, packageDocuments, packageLineRows, packageRow, seedPackage } from './helpers.ts';
+import { ingest, remote, withEvents } from './platform-fixtures.ts';
 
 const HOUR = 3_600_000;
 
 async function setup(stock: number) {
   const { companyId } = await createCompany();
-  const { variantId: A } = await createVariant(companyId);
+  const { variantId: A, sku } = await createVariant(companyId);
   const shopId = await channelShop(companyId, true);
   if (stock > 0) await receive(companyId, A, stock, 100000);
-  return { companyId, A, shopId, countedAt: new Date(Date.now() - 2 * HOUR), documentId: randomUUID() };
+  return { companyId, A, sku, shopId, countedAt: new Date(Date.now() - 2 * HOUR), documentId: randomUUID() };
 }
 
 /** Giao dịch thoát chờ kiểm kê của channel (#289): bỏ phiếu khỏi gian hàng rồi gọi fulfillment, cùng giao dịch. */
@@ -119,6 +122,82 @@ describe('settleOpeningStocktake: phiếu kiểm kê đầu kỳ ghi sổ (spec 
       expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 0 });
       expect(await packageDocuments(p.packageId)).toHaveLength(1);
     });
+  });
+
+  it('AC11: kiện hoãn trừ đã giao chưa phát; settleOpeningStocktake → phiếu XK rồi package_delivered có unitCost; gọi lại không phát thêm', async () => {
+    const s = await setup(3);
+    const o = { ...remote({ variantId: s.A, sku: s.sku }, { status: 'delivered', holdStock: false }), shopId: s.shopId };
+    const code = o.lines[0]!.packageCode!;
+    // Rời kho, giao sau lúc đếm (countedAt là 2 giờ trước, vẫn trong quá khứ so với giờ thật).
+    const events: PackageEvent[] = [
+      { packageCode: code, trackingCode: null, status: 'in_transit', at: new Date(s.countedAt.valueOf() + HOUR / 2), description: null },
+      { packageCode: code, trackingCode: null, status: 'delivered', at: new Date(s.countedAt.valueOf() + HOUR), description: null },
+    ];
+    const { orderId, packageId } = await ingest(s.companyId, withEvents(o, events));
+    expect(await packageRow(packageId)).toMatchObject({ status: 'delivered', handover_source: 'marketplace' });
+    expect(await packageDocuments(packageId)).toEqual([]);
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toEqual([]);
+
+    expect(await exitAwaiting(s)).toMatchObject({ deducted: 1, storedOnly: 0 });
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    const delivered = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => EVENT_SCHEMAS['fulfillment.package_delivered'].parse(p));
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.lines).toMatchObject([{ variantId: s.A, unitCost: '100000.00' }]);
+    expect(delivered[0]!.deliveredAt).toBe(events[1]!.at.toISOString());
+
+    await exitAwaiting(s);
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toHaveLength(1);
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+  });
+
+  it('kiện hoãn trừ đang giao, sàn mở yêu cầu trả (deliverForReturn) → delivered nhưng chưa phát; settleOpeningStocktake → phiếu XK rồi đúng một package_delivered có unitCost', async () => {
+    const s = await setup(3);
+    const o = { ...remote({ variantId: s.A, sku: s.sku }, { status: 'in_transit', holdStock: false }), shopId: s.shopId };
+    const events: PackageEvent[] = [
+      { packageCode: o.lines[0]!.packageCode!, trackingCode: null, status: 'in_transit', at: new Date(s.countedAt.valueOf() + HOUR / 2), description: null },
+    ];
+    const { orderId, packageId } = await ingest(s.companyId, withEvents(o, events));
+    expect(await packageRow(packageId)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace' });
+    expect(await packageDocuments(packageId)).toEqual([]);
+
+    expect(await withCompany(s.companyId, () => deliverForReturn(packageId, 'Sàn mở yêu cầu trả'))).toBe('jumped');
+    expect((await packageRow(packageId)).status).toBe('delivered');
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toEqual([]);
+
+    expect(await exitAwaiting(s)).toMatchObject({ deducted: 1, storedOnly: 0 });
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    const delivered = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => EVENT_SCHEMAS['fulfillment.package_delivered'].parse(p));
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.lines).toMatchObject([{ variantId: s.A, unitCost: '100000.00' }]);
+
+    await exitAwaiting(s);
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toHaveLength(1);
+  });
+
+  it('kiện hoãn trừ đã giao, rời kho trước lúc đếm → store_only: before_cutoff, không phiếu XK, package_delivered với unitCost null; gọi lại không phát thêm', async () => {
+    const s = await setup(3);
+    const o = { ...remote({ variantId: s.A, sku: s.sku }, { status: 'delivered', holdStock: false }), shopId: s.shopId };
+    const code = o.lines[0]!.packageCode!;
+    // Rời kho trước lúc đếm (kiểm kê đã tính hàng này), giao sau lúc đếm.
+    const events: PackageEvent[] = [
+      { packageCode: code, trackingCode: null, status: 'in_transit', at: new Date(s.countedAt.valueOf() - HOUR / 2), description: null },
+      { packageCode: code, trackingCode: null, status: 'delivered', at: new Date(s.countedAt.valueOf() + HOUR), description: null },
+    ];
+    const { orderId, packageId } = await ingest(s.companyId, withEvents(o, events));
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toEqual([]);
+
+    expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 1 });
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'delivered', handover_source: 'before_cutoff' });
+    expect(await packageDocuments(packageId)).toEqual([]);
+    expect(await outboxOf(orderId, 'fulfillment.package_shipped')).toEqual([]);
+    const delivered = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => EVENT_SCHEMAS['fulfillment.package_delivered'].parse(p));
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.lines).toMatchObject([{ variantId: s.A, quantity: 1, unitCost: null }]);
+    expect(delivered[0]!.deliveredAt).toBe(events[1]!.at.toISOString());
+
+    expect(await exitAwaiting(s)).toMatchObject({ deducted: 0, storedOnly: 0 });
+    expect(await outboxOf(orderId, 'fulfillment.package_delivered')).toHaveLength(1);
   });
 
   it('review I1: lấy khoá phân hàng trước khi bù kiện hoãn (thứ tự khoá §5.10): đang chờ khoá thì chưa khoá kiện nào', async () => {

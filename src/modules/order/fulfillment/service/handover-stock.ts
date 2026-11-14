@@ -15,6 +15,7 @@ import {
   markLinesShipped,
   updatePackage,
 } from '../repository/packages.ts';
+import { reportDelivered } from './delivery.ts';
 import { type DocumentRef, type ShipLine, stockPort } from './stock-port.ts';
 
 export const FORCED_HANDOVER_NOTE = 'Bàn giao bắt buộc: thiếu tồn, cần kiểm kê lại';
@@ -87,13 +88,15 @@ export async function settleHandover(
 /**
  * Hàm bù khi phiếu kiểm kê đầu kỳ của gian hàng ghi sổ (#198 gọi trong `withCompany` riêng, sau khi giao dịch ghi sổ commit, để giữ thứ tự khoá kiện → dòng tồn): kiện đã rời
  * kho lúc chờ kiểm kê (`defer`) thì rời kho từ `countedAt` trở đi trừ tồn, trước đó ghi `before_cutoff` (kiểm kê đã
- * tính). Gọi lần hai không trừ thêm: kiện đã trừ hết dòng hoặc đã `before_cutoff` không còn được chọn.
+ * tính). Gọi lần hai không trừ thêm: kiện đã trừ hết dòng hoặc đã `before_cutoff` không còn được chọn. Kiện đã giao
+ * trong lúc hoãn thì báo giao xong ngay sau khi chốt giá vốn (hoặc `before_cutoff` với `unitCost: null`), spec 199c §5.4.
  */
 export async function settleDeferredHandovers(shopId: string, countedAt: Date): Promise<{ deducted: number; storedOnly: number }> {
   const result = { deducted: 0, storedOnly: 0 };
   for (const pkg of await lockDeferredPackages(shopId)) {
     const deduct = pkg.handedOverAt !== null && pkg.handedOverAt >= countedAt;
     await settleHandover(pkg, { actorId: null, mode: deduct ? 'deduct' : 'store_only' });
+    if (pkg.status === 'delivered') await reportDelivered(pkg.id);
     result[deduct ? 'deducted' : 'storedOnly']++;
   }
   return result;

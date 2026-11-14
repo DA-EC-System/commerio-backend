@@ -7,7 +7,7 @@ import { packageMachine, type PackageAction, type PackageStatus } from '../domai
 import { buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, type ScannedLine } from '../domain/packing.ts';
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
 import { markLinesReserved, packageShopOf, updatePackage } from '../repository/packages.ts';
-import type { Actor } from './handover.ts';
+import type { Actor } from './actor.ts';
 import { getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages } from './packages.ts';
 import { stockPort } from './stock-port.ts';
 

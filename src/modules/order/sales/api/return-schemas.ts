@@ -1,6 +1,7 @@
 // Schema Zod của route yêu cầu trả (Documents/21 §20, §20.1). Tên `.meta({ id })` trùng kiểu FE `src/types/returns.ts`.
 import { z } from 'zod';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
+import { ScanLines } from '../../fulfillment/index.ts';
 import { RETURN_STATUSES } from '../domain/return.ts';
 
 const ReturnStatusSchema = z.enum(RETURN_STATUSES);
@@ -107,15 +108,6 @@ export const ReturnActionBody = z.object({
   reasonId: z.string().trim().min(1).optional(),
   comment: z.string().trim().max(500).optional(),
   attachmentIds: z.array(z.uuid()).max(10).optional(),
-});
-
-/** Số kho quét từng món (§15.3): số nguyên ≥ 0, `variantId` không lặp. */
-export const ScanLines = z.array(z.object({ variantId: z.string().min(1), quantity: z.number().int('Số lượng phải là số nguyên').min(0, 'Số lượng không âm') })).superRefine((lines, ctx) => {
-  const seen = new Set<string>();
-  lines.forEach((l, i) => {
-    if (seen.has(l.variantId)) ctx.addIssue({ code: 'custom', path: [i, 'variantId'], message: 'Biến thể bị lặp' });
-    seen.add(l.variantId);
-  });
 });
 
 export const ReceiveReturnBody = z.object({

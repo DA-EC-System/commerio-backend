@@ -86,38 +86,6 @@ export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnA
 /** Trạng thái app đi tới khi sàn báo `target`: `received` chỉ tới được bằng quét nên dừng ở `awaiting_return`. */
 export const syncTarget = (target: ReturnStatus): ReturnStatus => (target === 'received' ? 'awaiting_return' : target);
 
-export interface ScanLine {
-  variantId: string;
-  quantity: number;
-}
-
-export interface ReceiveLine {
-  variantId: string;
-  expected: number;
-  scanned: number;
-}
-
-/**
- * Gộp dòng nguồn với số kho quét (§15.3, §20): món nguồn vắng trong `scanned` thì quét 0; món ngoài nguồn thì dự kiến 0;
- * `scanned` không gửi (giai đoạn chuyển tiếp) thì coi như quét đủ. Dòng nguồn chưa ghép SKU không vào (chưa rõ SKU).
- */
-export function mergeReceiveLines(source: readonly { variantId: string | null; quantity: number }[], scanned?: readonly ScanLine[]): ReceiveLine[] {
-  const out = new Map<string, ReceiveLine>();
-  for (const l of source) {
-    if (!l.variantId) continue;
-    const line = out.get(l.variantId) ?? { variantId: l.variantId, expected: 0, scanned: 0 };
-    line.expected += l.quantity;
-    out.set(l.variantId, line);
-  }
-  if (!scanned) return [...out.values()].map((l) => ({ ...l, scanned: l.expected }));
-  for (const s of scanned) {
-    const line = out.get(s.variantId) ?? { variantId: s.variantId, expected: 0, scanned: 0 };
-    line.scanned += s.quantity;
-    out.set(s.variantId, line);
-  }
-  return [...out.values()];
-}
-
 /** Giá vốn một món của dòng trả: bình quân gia quyền các dòng kiện đã giao có giá vốn (25 §9); không dòng nào có thì null. */
 export function weightedUnitCost(lines: readonly { quantity: number; unitCost: string | null }[]): string | null {
   const costed = lines.filter((l) => l.unitCost !== null && l.quantity > 0);

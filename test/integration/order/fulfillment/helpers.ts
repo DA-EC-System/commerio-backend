@@ -16,6 +16,8 @@ export interface SeedLine {
   quantity: number;
   /** Dòng đã giữ hàng: gọi `reserve` thật để `stock_levels.reserved` khớp. */
   reserved?: boolean;
+  /** Dòng đã trừ (spec 199c §5.3): chèn `unit_cost` và `stock_deducted = true`. */
+  unitCost?: string;
 }
 
 /**
@@ -30,6 +32,7 @@ export async function seedPackage(
     handoverSource?: HandoverSource | null;
     handedOverAt?: Date | null;
     pickupConfirmedAt?: Date | null;
+    deliveredAt?: Date | null;
     shopId?: string;
     orderStatus?: 'unpaid' | 'processing' | 'cancelled';
     /** Lúc đơn về app (`orders.created_at`), cho thứ tự "đơn kéo về trước" của phân hàng. */
@@ -69,8 +72,8 @@ export async function seedPackage(
   const shop = await db.query<{ shop_id: string }>('select shop_id from "order".orders where id = $1', [order.orderId]);
   const pkg = await db.query<{ id: string }>(
     `insert into "order".packages (company_id, code, order_id, shop_id, status, handed_over_at, handover_source,
-       pickup_confirmed_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at, platform_package_code, self_delivery)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) returning id`,
+       pickup_confirmed_at, delivered_at, ship_by, tracking_code, needs_open, open_purpose, reserved_at, platform_package_code, self_delivery)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) returning id`,
     [
       companyId,
       packageCode,
@@ -80,6 +83,7 @@ export async function seedPackage(
       p.handedOverAt !== undefined ? p.handedOverAt : out ? new Date() : null,
       p.handoverSource !== undefined ? p.handoverSource : out ? 'scan' : null,
       p.pickupConfirmedAt ?? null,
+      p.deliveredAt ?? null,
       p.shipBy ?? null,
       p.trackingCode ?? null,
       p.needsOpen ?? false,
@@ -96,9 +100,9 @@ export async function seedPackage(
     if (index === -1) throw new Error('seedPackage: không thấy dòng đơn của món trong kiện');
     const [orderLine] = orderLines.splice(index, 1);
     const { rows } = await db.query<{ id: string }>(
-      `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty)
-       values ($1, $2, $3, $4, $5, $6) returning id`,
-      [companyId, packageId, orderLine!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0],
+      `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty, unit_cost, stock_deducted)
+       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      [companyId, packageId, orderLine!.id, l.variantId, l.quantity, l.reserved ? l.quantity : 0, l.unitCost ?? null, l.unitCost != null],
     );
     lineIds.push(rows[0]!.id);
   }
@@ -177,6 +181,42 @@ export async function channelShop(companyId: string, awaiting: boolean): Promise
   return rows[0]!.id;
 }
 
+/**
+ * Ship cấp đơn của một đơn (#260; spec 199c D10) để `reportDelivered` tính tiền. Chỉ ghi trường có khoá trong `s`
+ * (giá trị `null` thì ghi null); trường bỏ trống giữ nguyên.
+ */
+export async function setOrderShipping(
+  orderId: string,
+  s: Partial<{ shippingFee: string; shippingFeeOriginal: string | null; shippingFeeDiscountPlatform: string | null }>,
+) {
+  const columns = {
+    shippingFee: 'shipping_fee',
+    shippingFeeOriginal: 'shipping_fee_original',
+    shippingFeeDiscountPlatform: 'shipping_fee_discount_platform',
+  } as const;
+  const keys = (Object.keys(columns) as (keyof typeof columns)[]).filter((k) => k in s);
+  if (!keys.length) return;
+  const set = keys.map((k, i) => `${columns[k]} = $${i + 2}`).join(', ');
+  await testPool().query(`update "order".orders set ${set} where id = $1`, [orderId, ...keys.map((k) => s[k] ?? null)]);
+}
+
+/** Sửa tiền của dòng đơn mà dòng kiện trỏ tới (spec 199c D10, Review Focus 4). */
+export async function setOrderLineMoney(
+  packageLineId: string,
+  m: Partial<{ quantity: number; unitPrice: string; sellerDiscount: string; platformDiscount: string }>,
+) {
+  const { rows } = await testPool().query<{ order_line_id: string }>(
+    'select order_line_id from "order".package_lines where id = $1',
+    [packageLineId],
+  );
+  const orderLineId = rows[0]!.order_line_id;
+  await testPool().query(
+    `update "order".order_lines set quantity = coalesce($2, quantity), unit_price = coalesce($3, unit_price),
+       seller_discount = coalesce($4, seller_discount), platform_discount = coalesce($5, platform_discount) where id = $1`,
+    [orderLineId, m.quantity ?? null, m.unitPrice ?? null, m.sellerDiscount ?? null, m.platformDiscount ?? null],
+  );
+}
+
 /** Các mũi tên đã ghi cho kiện, cũ trước. */
 export async function transitionsOf(packageId: string) {
   const { rows } = await testPool().query<{ action: string; from_state: string | null; to_state: string; source: string }>(
@@ -184,6 +224,15 @@ export async function transitionsOf(packageId: string) {
     [packageId],
   );
   return rows;
+}
+
+/** Lý do của các mũi tên vào `to` của kiện, cũ trước (lịch sử giao thất bại có lý do, spec 199c §5.4). */
+export async function transitionReasonsOf(packageId: string, to: string) {
+  const { rows } = await testPool().query<{ reason: string | null }>(
+    `select reason from core.state_transitions where entity_type = 'packages' and entity_id = $1 and to_state = $2 order by id`,
+    [packageId, to],
+  );
+  return rows.map((r) => r.reason);
 }
 
 const unexpectedMarketplace = async (): Promise<never> => { throw new Error('Cổng sàn không được gọi trong test này'); };

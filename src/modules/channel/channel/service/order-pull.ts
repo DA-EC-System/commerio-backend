@@ -5,10 +5,17 @@
 import { sendJob } from '../../../core/index.ts';
 import { ingestMarketplaceOrder } from '../../../order/index.ts';
 import { env } from '../../../../shared/config/env.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { advanceOrderCursor, findRawOrderTimes, saveRawOrder, variantsBySellerSku } from '../repository/raw-orders.ts';
-import { MarketplaceError, type MarketplaceAdapter, type RemoteOrder, type RemoteOrderRef } from './marketplaces/common.ts';
+import {
+  MarketplaceError,
+  type MarketplaceAdapter,
+  type RemoteLineStatus,
+  type RemoteOrder,
+  type RemoteOrderRef,
+} from './marketplaces/common.ts';
 import { listShopRows, lockShopForOrders, markOpenOrdersPulled, markOrdersPulled, type ShopRow } from '../repository/shops.ts';
 import { listingSyncQueue, sendStockPush } from './shop-jobs.ts';
 import { shopOrdersStale } from './stock-trust.ts';
@@ -44,8 +51,32 @@ async function remoteOf({ adapter, accessToken }: Session, ref: RemoteOrderRef, 
   return batch?.get(ref.externalOrderId) ?? onMarketplace(() => adapter.getOrder!(accessToken, ref.externalOrderId));
 }
 
-/** Giao `order` một đơn đã lấy chi tiết và lưu bản gốc trong một giao dịch. */
-async function ingestRemote({ companyId, shopId }: Session, remote: RemoteOrder, result: PullResult) {
+// Món đã rời kho: chỉ đơn có món như vậy (hoặc món huỷ vì giao không thành) mới cần hành trình kiện (spec #199 phần c §5.7).
+const AFTER_HANDOVER: readonly RemoteLineStatus[] = ['in_transit', 'delivered', 'delivery_failed', 'returning', 'returned', 'return_failed', 'lost'];
+
+/**
+ * Gắn hành trình kiện vào đơn (spec #199 phần c §5.7, D3), gọi ngoài giao dịch, qua giới hạn tốc độ của sàn. Mốc giờ là
+ * thông tin phụ: lỗi bất kỳ chỉ log `warn`, đơn đi tiếp không có hành trình (kiện lấy giờ đồng bộ, lý do mặc định).
+ */
+async function withPackageEvents({ adapter, accessToken, shopId }: Session, remote: RemoteOrder): Promise<RemoteOrder> {
+  if (!adapter.getPackageEvents) return remote;
+  const wanted = remote.lines.some(
+    (l) => (l.status !== null && AFTER_HANDOVER.includes(l.status)) || (l.status === 'cancelled' && l.info.cancelKind === 'failed_delivery'),
+  );
+  if (!wanted) return remote;
+  try {
+    const packageEvents = await onMarketplace(() => adapter.getPackageEvents!(accessToken, remote.externalOrderId));
+    return { ...remote, packageEvents };
+  } catch (err) {
+    logger.warn({ err, shopId, externalOrderId: remote.externalOrderId }, 'đọc hành trình kiện lỗi');
+    return remote;
+  }
+}
+
+/** Giao `order` một đơn đã lấy chi tiết và lưu bản gốc trong một giao dịch; hành trình kiện đọc trước, ngoài giao dịch. */
+async function ingestRemote(session: Session, fetched: RemoteOrder, result: PullResult) {
+  const { companyId, shopId } = session;
+  const remote = await withPackageEvents(session, fetched);
   const res = await withCompany(companyId, async () => {
     // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
     const locked = await lockShopForOrders(shopId);

@@ -7,15 +7,9 @@ import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { isHandedOver, packageMachine } from '../domain/package.ts';
 import { lockPackage, packageShopOf, updatePackage } from '../repository/packages.ts';
+import type { Actor } from './actor.ts';
 import { revertHandover, settleHandover } from './handover-stock.ts';
 import { type FulfillmentContext, getPackage, stockHoldLookupOf } from './packages.ts';
-
-export interface Actor {
-  companyId: string;
-  accountId: string;
-  permissions: readonly string[];
-  enabledModules: readonly string[];
-}
 
 export interface HandOverResult {
   handedOver: { id: string; code: string; issue: { id: string; number: string } | null }[];

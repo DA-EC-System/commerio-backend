@@ -36,12 +36,16 @@ export {
   type PackageStatus,
 } from './domain/package.ts';
 export {
+  type CancelKind,
+  type PackageEvent,
   type PlatformLineStatus,
   type PlatformPackageLine,
   syncPlatformPackages,
 } from './service/platform-packages.ts';
 export { findPackagesOfOrders, type PackageViewRow } from './repository/packages.ts';
-export { PackageSummary, ShopRef, StatusChange } from './api/schemas.ts';
+export { PackageSummary, ScanLines, ShopRef, StatusChange } from './api/schemas.ts';
+// Số kho quét lúc nhận hàng về (21 §15.3): sales dùng chung cho `/returns/receive`.
+export { mergeReceiveLines, type ReceiveLine, type ScanLine } from './domain/delivery.ts';
 export { type PackageOrderLineRef, type PackageOrderRef, toPackageSummary } from './service/views.ts';
 export type { FulfillmentContext } from './service/packages.ts';
 // Hàm bù cho #198 (phiếu kiểm kê đầu kỳ ghi sổ) và dòng ghép SKU muộn cho #237; chạy trong `withCompany` của bên gọi.
@@ -50,6 +54,8 @@ export { settleDeferredHandovers, shipLateMappedLines } from './service/handover
 export { requestAllocation } from './service/allocation.ts';
 // Cho channel (#198 phần 2): gọi trong giao dịch thoát chờ kiểm kê, sau khi đặt `openingStocktake = null` (spec 199b §5.5).
 export { settleOpeningStocktake } from './service/allocation.ts';
+// Cho finance (E139, spec 199c §5.6): trạng thái kiện theo id, chạy trong `withCompany` của bên gọi.
+export { packageStatusOf, type PackageStatusInfo } from './service/delivery.ts';
 // Yêu cầu trả (#202): kiện của dòng trả khi sàn mở yêu cầu, kiện trả không khớp; chạy trong giao dịch của sales.
 export {
   countOpenUnmatchedParcels,
