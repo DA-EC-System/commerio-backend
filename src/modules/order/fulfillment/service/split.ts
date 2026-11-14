@@ -7,11 +7,12 @@
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { isSealed } from '../domain/package.ts';
 import { carveLine, type LineMove, planSplit, type SplitLevel, type SplitPart } from '../domain/split.ts';
 import { takeAllocationLock } from '../repository/allocation.ts';
 import { insertPackage, lockOrderPackages, updatePackage } from '../repository/packages.ts';
-import { carveLineInto, moveLines, readSplitSource, type SplitSource } from '../repository/split.ts';
+import { carveLineInto, liveSiblingCount, moveLines, platformLineIds, readSplitSource, type SplitSource } from '../repository/split.ts';
 import type { Actor } from './actor.ts';
 import { runAllocation } from './allocation.ts';
 import { type FulfillmentContext, marketplacePackagesOf, orderViewLookupOf, packageCodeLookupOf } from './packages.ts';
@@ -44,9 +45,18 @@ function plan(source: SplitSource, parts: readonly (readonly SplitPart[])[], lev
   throw notSupported(result.message);
 }
 
-/** Ghi tách (Bước 3, sau khi đã khoá): kiện mới, chuyển dòng, lịch sử, sự kiện; kiện cũ `backordered` thì phân hàng. */
-async function writeSplit(ctx: FulfillmentContext, actor: Actor, source: SplitSource, moves: readonly LineMove[][], codes: readonly string[]) {
+/**
+ * Ghi tách (Bước 3, sau khi đã khoá): kiện mới, chuyển dòng, lịch sử, sự kiện; kiện cũ `backordered` thì phân hàng.
+ * `platformCodes` (nhánh `sku`): mã kiện sàn theo thứ tự nhóm, nhóm đầu là kiện cũ.
+ */
+async function writeSplit(
+  ctx: FulfillmentContext, actor: Actor, source: SplitSource, moves: readonly LineMove[][], codes: readonly string[],
+  platformCodes: readonly string[] | null,
+) {
   const status = source.status;
+  // Sửa mã của kiện cũ trước khi chèn kiện mới: lượt kéo chen giữa có thể đã gắn cho kiện cũ mã của một nhóm khác, chèn
+  // kiện mới mang đúng mã đó trước sẽ vướng unique `packages_platform_code_order_uq` (spec 205 §5.4 bước 4).
+  if (platformCodes) await updatePackage(source.id, { platformPackageCode: platformCodes[0]! });
   // Số còn lại của từng dòng: một dòng lớn có thể bị lấy một phần ở nhiều kiện mới (D12).
   const left = new Map(source.lines.map((line) => [line.id, { quantity: line.quantity, reservedQty: line.reservedQty }]));
   for (const [i, part] of moves.entries()) {
@@ -54,7 +64,7 @@ async function writeSplit(ctx: FulfillmentContext, actor: Actor, source: SplitSo
       code: codes[i]!,
       orderId: source.orderId,
       shopId: source.shopId,
-      platformPackageCode: null,
+      platformPackageCode: platformCodes ? platformCodes[i + 1]! : null,
       trackingCode: null,
       status,
       shipBy: source.shipBy,
@@ -83,7 +93,7 @@ async function writeSplit(ctx: FulfillmentContext, actor: Actor, source: SplitSo
       payload: { packageId, orderId: source.orderId, from: null, to: status },
     });
   }
-  await updatePackage(source.id, {});
+  if (!platformCodes) await updatePackage(source.id, {});
   await recordTransition({
     entityType: 'packages', entityId: source.id, from: status, to: status, action: 'split', actorId: actor.accountId,
     reason: `Tách ra ${codes.join(', ')}`,
@@ -110,24 +120,76 @@ export async function splitPackage(
     // Đơn tay không có gian hàng: chia trong app như `unit` (D6).
     const level: SplitLevel = checked.shopId ? await marketplacePackagesOf(ctx).splitLevel(companyId, checked.shopId) : 'unit';
     if (level === 'none') throw notSupported('Sàn này không cho tách kiện');
-    if (level === 'sku') throw notSupported('Sàn chỉ cho tách theo SKU, chưa tách được trong app');
-    plan(checked, input.parts, level);
+    const moves = plan(checked, input.parts, level);
 
-    const codes = await withCompany(companyId, async () => {
-      const next = packageCodeLookupOf(ctx);
-      const out: string[] = [];
-      for (let i = 0; i < input.parts.length; i++) out.push(await next());
-      return out;
-    });
+    // Nhánh `sku`: sàn tách trước, ngoài giao dịch (D7); sàn từ chối thì app chưa ghi gì.
+    const target = level === 'sku' ? await withCompany(companyId, async () => {
+      if (await liveSiblingCount(checked.orderId, id) > 0) throw notSupported('Đơn đã có nhiều kiện trên sàn, chưa tách tiếp được trong app');
+      return platformGroups(checked, moves, await platformLineIds(id));
+    }) : null;
+    const platformCodes = target ? await marketplacePackagesOf(ctx).split(companyId, checked.shopId!, target.externalOrderId, target.groups) : null;
 
-    await withCompany(companyId, async () => {
-      await takeAllocationLock(companyId);
-      await lockOrderPackages(checked.orderId);
-      const source = await readSource(id);
-      checkStatus(source);
-      if (source.version !== input.version) await versionConflict(ctx, id);
-      await writeSplit(ctx, actor, source, plan(source, input.parts, level), codes);
-    });
+    try {
+      if (platformCodes && platformCodes.length !== target!.groups.length) {
+        throw new Error(`Sàn trả ${platformCodes.length} mã kiện cho ${target!.groups.length} nhóm`);
+      }
+      const codes = await withCompany(companyId, async () => {
+        const next = packageCodeLookupOf(ctx);
+        const out: string[] = [];
+        for (let i = 0; i < input.parts.length; i++) out.push(await next());
+        return out;
+      });
+
+      await withCompany(companyId, async () => {
+        await takeAllocationLock(companyId);
+        await lockOrderPackages(checked.orderId);
+        const source = await readSource(id);
+        if (platformCodes) {
+          // D7: sàn đã tách, không so `version` (lượt kéo vừa cập nhật vận đơn không được làm lỡ lần ghi). Kiện còn chưa
+          // đóng gói và còn đúng các dòng đã gửi sàn thì ghi.
+          const again = source.status === 'reserved' || source.status === 'backordered' ? planSplit(source.lines, input.parts, 'sku') : null;
+          if (!again?.ok || !sameMoves(again.moves, moves)) await versionConflict(ctx, id);
+          await writeSplit(ctx, actor, source, moves, codes, platformCodes);
+          return;
+        }
+        checkStatus(source);
+        if (source.version !== input.version) await versionConflict(ctx, id);
+        await writeSplit(ctx, actor, source, plan(source, input.parts, level), codes, null);
+      });
+    } catch (err) {
+      if (platformCodes) await flagUnsynced(companyId, id, checked.orderId, platformCodes, err);
+      throw err;
+    }
     return withCompany(companyId, () => orderViewLookupOf(ctx)(checked.orderId));
+  });
+}
+
+const sameMoves = (a: readonly LineMove[][], b: readonly LineMove[][]) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Nhóm mã món sàn cho cổng tách: nhóm của kiện cũ (phần còn lại, kể cả dòng chưa ghép) đứng đầu, rồi từng kiện mới theo
+ * thứ tự `parts`. Thiếu mã đơn hay mã món sàn thì 409 `item_not_packable`.
+ */
+function platformGroups(
+  source: SplitSource, moves: readonly LineMove[][], ids: Awaited<ReturnType<typeof platformLineIds>>,
+): { externalOrderId: string; groups: string[][] } {
+  const lines = new Map(source.lines.map((line) => [line.id, line]));
+  const moved = new Set(moves.flat().map((move) => move.lineId));
+  const external = (lineId: string) => ids.byOrderLine.get(lines.get(lineId)!.orderLineId) ?? null;
+  const groups = [
+    source.lines.filter((line) => !moved.has(line.id)).map((line) => external(line.id)),
+    ...moves.map((part) => part.map((move) => external(move.lineId))),
+  ];
+  if (!ids.externalOrderId || groups.some((group) => group.some((code) => !code))) {
+    throw new AppError(409, 'item_not_packable', 'Kiện thiếu mã đơn hoặc mã món trên sàn');
+  }
+  return { externalOrderId: ids.externalOrderId, groups: groups as string[][] };
+}
+
+/** D14: sàn đã tách mà app chưa ghi được; lượt kéo đơn không tự phát hiện ca này nên bật Cần xử lý trên kiện cũ. */
+async function flagUnsynced(companyId: string, packageId: string, orderId: string, platformPackageCodes: readonly string[], err: unknown) {
+  logger.error({ err, packageId, orderId, platformPackageCodes }, 'sàn đã tách kiện, app chưa ghi được');
+  await withCompany(companyId, () => updatePackage(packageId, { needsAttention: true, flagNote: SPLIT_UNSYNCED_NOTE })).catch((flagError: unknown) => {
+    logger.error({ err: flagError, packageId }, 'không lưu được cờ tách kiện lệch sàn');
   });
 }

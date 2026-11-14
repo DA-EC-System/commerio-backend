@@ -4,6 +4,7 @@ import { Package } from '#src/modules/order/fulfillment/api/schemas.ts';
 import type { MarketplacePackages } from '#src/modules/order/fulfillment/service/packages.ts';
 import { Order } from '#src/modules/order/sales/api/schemas.ts';
 import { currentCompanyId } from '#src/shared/db/client.ts';
+import { AppError } from '#src/shared/errors/app-error.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -301,5 +302,118 @@ describe('tách kiện, nhánh unit (spec 205 §5.4)', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(await linesOf(packageId)).toEqual([{ variant_id: null, quantity: 1, reserved_qty: 0 }]);
     expect(await linesOf((await otherPackages(orderId, packageId))[0]!.id)).toEqual([{ variant_id: white, quantity: 1, reserved_qty: 1 }]);
+  });
+});
+
+describe('nhánh sku (spec 205 D7, D8, D13, D14)', () => {
+  const sku = (codes = ['FP-OLD', 'FP-NEW'], before?: () => Promise<unknown>) => ({
+    splitLevel: vi.fn(async () => 'sku' as const),
+    split: vi.fn(async (..._args: Parameters<MarketplacePackages['split']>) => {
+      expect(currentCompanyId()).toBeNull();
+      await before?.();
+      return codes;
+    }),
+  });
+  const externalLineOf = async (packageLineId: string) => (await testPool().query<{ external_line_id: string }>(
+    `select ol.external_line_id from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id where pl.id = $1`,
+    [packageLineId],
+  )).rows[0]!.external_line_id;
+  const externalOrderOf = async (orderId: string) => (await testPool().query<{ external_order_id: string }>(
+    'select external_order_id from "order".orders where id = $1',
+    [orderId],
+  )).rows[0]!.external_order_id;
+  const codeOf = async (id: string) => (await testPool().query<{ platform_package_code: string | null }>(
+    'select platform_package_code from "order".packages where id = $1',
+    [id],
+  )).rows[0]!.platform_package_code;
+  const seedTwo = () => seedPackage(companyId, { status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(blue, { reserved: true })] });
+
+  it('AC4: gọi sàn tách một lần ngoài giao dịch, mỗi kiện mang mã kiện sàn của nhóm mình', async () => {
+    const { packageId, orderId, lineIds } = await seedTwo();
+    const fake = sku();
+
+    const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: blue, quantity: 1 }]] }, fake);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(fake.split).toHaveBeenCalledTimes(1);
+    expect(fake.split).toHaveBeenCalledWith(
+      companyId, shopId, await externalOrderOf(orderId), [[await externalLineOf(lineIds[0]!)], [await externalLineOf(lineIds[1]!)]],
+    );
+    expect(await codeOf(packageId)).toBe('FP-OLD');
+    expect((await otherPackages(orderId, packageId))[0]!.platform_package_code).toBe('FP-NEW');
+  });
+
+  it('AC5: chuyển một phần của một SKU thì 422 split_not_supported, không gọi sàn', async () => {
+    const { packageId } = await seedPackage(companyId, {
+      status: 'reserved', shopId, lines: [one(white, { reserved: true }), one(white, { reserved: true }), one(blue, { reserved: true })],
+    });
+    const fake = sku();
+
+    const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: white, quantity: 1 }]] }, fake);
+
+    expectProblem(res, 422, 'split_not_supported');
+    expect(fake.split).not.toHaveBeenCalled();
+  });
+
+  it('AC6: sàn từ chối tách thì 422 kèm câu của sàn, không có kiện mới, không bật cờ', async () => {
+    const { packageId, orderId } = await seedTwo();
+    const fake = { ...sku(), split: vi.fn(async () => { throw new AppError(422, 'split_not_supported', 'Đơn ON_HOLD', { platformCode: '21001008' }); }) };
+
+    const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: blue, quantity: 1 }]] }, fake);
+
+    expectProblem(res, 422, 'split_not_supported');
+    expect(res.body.detail).toBe('Đơn ON_HOLD');
+    expect(await packageCount(orderId)).toBe(1);
+    expect((await packageRow(packageId)).needs_attention).toBe(false);
+  });
+
+  it('AC7a: đơn đã có hai kiện chưa huỷ thì 422 split_not_supported, không gọi sàn', async () => {
+    const { packageId, orderId } = await seedTwo();
+    await testPool().query(
+      `insert into "order".packages (company_id, code, order_id, shop_id, status) values ($1, $2, $3, $4, 'reserved')`,
+      [companyId, `KH-T-${packageId.slice(0, 8)}`, orderId, shopId],
+    );
+    const fake = sku();
+
+    const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: blue, quantity: 1 }]] }, fake);
+
+    expectProblem(res, 422, 'split_not_supported');
+    expect(fake.split).not.toHaveBeenCalled();
+  });
+
+  it('AC7b: sàn đã tách mà bước ghi lỗi thì kiện cũ bật Cần xử lý, lỗi gốc trả về', async () => {
+    const { packageId, orderId } = await seedTwo();
+    const fake = sku(undefined, () => testPool().query(`update "order".packages set status = 'packed' where id = $1`, [packageId]));
+
+    const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: blue, quantity: 1 }]] }, fake);
+
+    expectProblem(res, 409, 'version_conflict');
+    const row = await packageRow(packageId);
+    expect(row.needs_attention).toBe(true);
+    expect(row.flag_note).toBe('Sàn đã tách kiện, app chưa ghi được: kiểm lại kiện trên sàn');
+    expect(await packageCount(orderId)).toBe(1);
+  });
+
+  it('kiện cũ đã bị lượt kéo gắn mã của nhóm khác trước bước ghi thì vẫn ghi được', async () => {
+    const { packageId, orderId } = await seedTwo();
+    const fake = sku(undefined, () => testPool().query(`update "order".packages set platform_package_code = 'FP-NEW' where id = $1`, [packageId]));
+
+    const res = await split(packageId, { version: await versionOf(packageId), parts: [[{ variantId: blue, quantity: 1 }]] }, fake);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await codeOf(packageId)).toBe('FP-OLD');
+    expect((await otherPackages(orderId, packageId))[0]!.platform_package_code).toBe('FP-NEW');
+  });
+
+  it('Review Focus 1: bấm tách hai lần cùng phiên bản thì sàn chỉ được gọi một lần', async () => {
+    const { packageId, orderId } = await seedTwo();
+    const fake = sku();
+    const body = { version: await versionOf(packageId), parts: [[{ variantId: blue, quantity: 1 }]] };
+
+    const results = await Promise.all([split(packageId, body, fake), split(packageId, body, fake)]);
+
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(fake.split).toHaveBeenCalledTimes(1);
+    expect(await packageCount(orderId)).toBe(2);
   });
 });
