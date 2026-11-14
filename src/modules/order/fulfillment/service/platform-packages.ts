@@ -13,7 +13,9 @@ import {
   journeyTimes,
   lineStatus,
 } from '../domain/delivery.ts';
+import { type CancelLine, planLineCancel } from '../domain/line-cancel.ts';
 import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
+import { deleteLines, setPendingDrop, setPendingDropAll } from '../repository/line-cancel.ts';
 import { reportDeliveryFailed, reportDelivered } from './delivery.ts';
 import {
   insertPackage,
@@ -62,6 +64,11 @@ export interface PlatformPackageLine {
   /** Loại huỷ của sàn (`cancellation_reason`); món huỷ vì giao không thành là `failed_delivery` (spec 199c D2). */
   cancelKind?: CancelKind | null;
   shipping: PackageShipping;
+  /**
+   * Dòng đơn đã ghi huỷ đủ (`cancelled_qty = quantity`, sales truyền). Món đã gỡ khỏi kiện ở lượt trước không còn kiện
+   * nào chứa: bỏ qua, không lập kiện `cancelled` mới cho nó (spec 205 D18).
+   */
+  alreadyCancelled?: boolean;
 }
 
 const SHIPPING_KEYS = ['shipmentProvider', 'shippingProviderType', 'shippingType', 'promisedShippingAt'] as const;
@@ -89,6 +96,11 @@ export interface PlatformPackagesResult {
   resplit: boolean;
   /** Món có trạng thái app chưa biết. */
   unknown: boolean;
+  /**
+   * `order_line_id` của món sàn huỷ mà kiện chứa món chưa rời kho (gỡ, chờ bỏ, hay huỷ cả kiện): sales ghi
+   * `cancelled_qty = quantity` trong cùng giao dịch (spec 205 §5.10). Có thể lặp lại qua các lượt kéo.
+   */
+  cancelledLines: string[];
 }
 
 // Món chậm nhất quyết định trạng thái kiện; món đã huỷ không tính trừ khi cả kiện huỷ.
@@ -255,10 +267,11 @@ async function createPackage(
     platformPackageCode: lines[0]!.packageCode,
     trackingCode: lines[0]!.trackingCode,
     needsOpen: false,
+    openPurpose: null,
     labelError: false,
     needsAttention: status === 'return_failed',
     shipping,
-    lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false })),
+    lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false, pendingDropQty: 0 })),
   };
   // Kiện lần đầu thấy đã rời kho: đơn đặt trước mốc kéo đơn thì chỉ lưu (kiểm kê đã tính), còn lại trừ (25 §8.1).
   // Kiện vào thẳng `returned` (D9) cũng chỉ lưu: không phiếu `KT`, không `package_returned`.
@@ -320,7 +333,7 @@ export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: Pa
   if (isSealed(pkg.status)) {
     if (!pkg.needsOpen) {
       await updatePackage(pkg.id, { needsOpen: true, openPurpose: 'cancel' });
-      pkg.needsOpen = true;
+      Object.assign(pkg, { needsOpen: true, openPurpose: 'cancel' });
     }
     return 'needs_open';
   }
@@ -334,6 +347,65 @@ export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: Pa
   return 'cancelled';
 }
 
+/** Sàn huỷ món (spec 205 D17): huỷ vì giao không thành là kiện hoàn về (spec 199c D2), không phải huỷ dòng. */
+const isLineCancel = (l: PlatformPackageLine) => l.status === 'cancelled' && l.cancelKind !== 'failed_delivery';
+
+/**
+ * Gỡ món sàn huỷ khỏi kiện chưa đóng gói (spec 205 §5.10): nhả phần đang giữ của dòng, xoá dòng, xếp lượt phân hàng cho
+ * SKU vừa nhả và SKU còn lại (kiện thiếu hàng bớt món có thể giữ đủ). Kiện giữ trạng thái; lịch sử `drop_lines` (D20).
+ */
+async function dropLines(pkg: PackageRow, dropped: readonly CancelLine[]) {
+  const held = dropped.filter((l) => l.variantId && l.reservedQty > 0);
+  if (held.length) await stockPort().release(pkg.id, held.map((l) => ({ variantId: l.variantId!, quantity: l.reservedQty })));
+  await deleteLines(dropped.map((l) => l.id));
+  const ids = new Set(dropped.map((l) => l.id));
+  pkg.lines = pkg.lines.filter((l) => !ids.has(l.id));
+  const variantIds = [...new Set([...dropped, ...pkg.lines].flatMap((l) => (l.variantId ? [l.variantId] : [])))].sort();
+  if (variantIds.length) await requestAllocation(variantIds);
+  await updatePackage(pkg.id, {});
+  await recordTransition({
+    entityType: 'packages',
+    entityId: pkg.id,
+    from: pkg.status,
+    to: pkg.status,
+    action: 'drop_lines',
+    actorId: null,
+    source: 'marketplace',
+    reason: `Sàn huỷ ${dropped.reduce((n, l) => n + l.quantity, 0)} món`,
+  });
+}
+
+/**
+ * Đánh dấu chờ bỏ món sàn huỷ ở kiện đã đóng gói (spec 205 §5.10): kiện vẫn giữ hàng, chờ mở (`edit`); kiện đang chờ mở
+ * thì giữ mục đích cũ, chỉ tăng `version`.
+ */
+async function markPendingDrop(pkg: PackageRow, fresh: readonly CancelLine[]) {
+  await setPendingDrop(fresh.map((l) => l.id));
+  const ids = new Set(fresh.map((l) => l.id));
+  for (const l of pkg.lines) if (ids.has(l.id)) l.pendingDropQty = l.quantity;
+  await updatePackage(pkg.id, pkg.needsOpen ? {} : { needsOpen: true, openPurpose: 'edit' });
+  if (!pkg.needsOpen) Object.assign(pkg, { needsOpen: true, openPurpose: 'edit' });
+}
+
+/**
+ * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa thì chuyển sang chờ mở để
+ * huỷ. Trả true khi có ghi.
+ */
+async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
+  let changed = false;
+  if (pkg.lines.some((l) => l.pendingDropQty < l.quantity)) {
+    await setPendingDropAll(pkg.id);
+    for (const l of pkg.lines) l.pendingDropQty = l.quantity;
+    changed = true;
+  }
+  if (pkg.openPurpose === 'edit') {
+    await updatePackage(pkg.id, { openPurpose: 'cancel' });
+    pkg.openPurpose = 'cancel';
+    changed = true;
+  }
+  return changed;
+}
+
 /**
  * Đồng bộ kiện của một đơn sàn với các món sàn trả về. `nextCode` cấp mã kiện mới (`KH-000001`), do `sales` giữ bộ
  * đếm. Trả trạng thái các kiện sau khi áp, để đơn suy cờ và quyết định huỷ.
@@ -345,17 +417,47 @@ export async function syncPlatformPackages(
 ): Promise<PlatformPackagesResult & { cancelled: ('cancelled' | 'needs_open' | 'handed_over')[] }> {
   const existing = await lockOrderPackages(order.id);
   const owner = new Map(existing.flatMap((p) => p.lines.map((l) => [l.orderLineId, p] as const)));
+  const result = {
+    changed: false,
+    resplit: false,
+    unknown: false,
+    cancelled: [] as ('cancelled' | 'needs_open' | 'handed_over')[],
+    cancelledLines: [] as string[],
+  };
+
+  // Huỷ dòng xét theo từng kiện, trước khi gom nhóm (spec 205 D16): món huỷ có thể không còn mang mã kiện sàn và rơi vào
+  // nhóm riêng chỉ gồm món huỷ, nhóm đó sẽ huỷ cả kiện dù kiện còn món sống. Kiện huỷ hết món thì để đường huỷ cả kiện.
+  const cancelledIds = new Set(lines.filter(isLineCancel).map((l) => l.orderLineId));
+  const handled = new Set<string>();
+  for (const pkg of existing) {
+    const plan = planLineCancel(pkg.status, pkg.lines, cancelledIds);
+    if (plan.kind === 'none' || plan.kind === 'whole') continue;
+    if (plan.kind === 'drop') {
+      await dropLines(pkg, plan.lines);
+      for (const l of plan.lines) owner.delete(l.orderLineId);
+      result.changed = true;
+    } else if (plan.fresh.length) {
+      await markPendingDrop(pkg, plan.fresh);
+      result.changed = true;
+    }
+    for (const l of plan.lines) {
+      handled.add(l.orderLineId);
+      result.cancelledLines.push(l.orderLineId);
+    }
+  }
+
   // Món chưa có mã kiện sàn mà đã nằm trong kiện app thì theo kiện đó (spec 205 D10): sàn chưa nói gì về cách chia, nên
-  // cách chia của app (tách kiện) là đúng, không phải "sàn chia lại". Món có mã sàn vẫn gom theo mã như cũ.
+  // cách chia của app (tách kiện) là đúng, không phải "sàn chia lại". Món có mã sàn vẫn gom theo mã như cũ. Món vừa xử
+  // lý huỷ dòng, và món đã huỷ ở lượt trước không còn kiện nào chứa (D18), không vào nhóm.
   const groups = new Map<string, { code: string; lines: PlatformPackageLine[] }>();
   for (const l of lines) {
+    if (handled.has(l.orderLineId) || (l.alreadyCancelled && !owner.has(l.orderLineId))) continue;
     const key = l.packageCode || `\u0000${owner.get(l.orderLineId)?.id ?? ''}`;
     const group = groups.get(key) ?? { code: l.packageCode || '', lines: [] };
     group.lines.push(l);
     groups.set(key, group);
   }
 
-  const result = { changed: false, resplit: false, unknown: false, cancelled: [] as ('cancelled' | 'needs_open' | 'handed_over')[] };
   const events = order.packageEvents ?? [];
   const touched = new Set<string>();
   for (const { code, lines: group } of groups.values()) {
@@ -381,8 +483,10 @@ export async function syncPlatformPackages(
       existing.push(pkg);
       touched.add(pkg.id);
       result.changed = true;
-      if (status === 'cancelled') result.cancelled.push('cancelled');
-      else if (allCancelled(group)) result.cancelled.push('handed_over');
+      if (status === 'cancelled') {
+        result.cancelled.push('cancelled');
+        result.cancelledLines.push(...group.map((l) => l.orderLineId));
+      } else if (allCancelled(group)) result.cancelled.push('handed_over');
       continue;
     }
     if (group.some((l) => owner.get(l.orderLineId) && owner.get(l.orderLineId) !== pkg)) result.resplit = true;
@@ -402,8 +506,13 @@ export async function syncPlatformPackages(
     if (status === null) result.unknown = true;
     else if (status === 'cancelled') {
       const before = [pkg.status, pkg.needsOpen].join();
-      result.cancelled.push(await cancelPlatformPackage(order, pkg));
+      const outcome = await cancelPlatformPackage(order, pkg);
+      result.cancelled.push(outcome);
       if ([pkg.status, pkg.needsOpen].join() !== before) result.changed = true;
+      // Kiện chưa rời kho bị huỷ cả kiện: mọi món của kiện là món sàn huỷ (spec 205 §5.10). Kiện đã đóng gói thì mọi dòng
+      // chờ bỏ tới khi mở (D21).
+      if (outcome !== 'handed_over') result.cancelledLines.push(...pkg.lines.map((l) => l.orderLineId));
+      if (outcome === 'needs_open' && (await markWholePendingDrop(pkg))) result.changed = true;
     } else {
       if (await applyStatus(order, pkg, status, journey)) result.changed = true;
       // Sàn huỷ món vì giao không thành (D2): kiện đi tiếp sang `returning`; báo `handed_over` như kiện đã rời kho bị

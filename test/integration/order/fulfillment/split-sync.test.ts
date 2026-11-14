@@ -3,26 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { PlatformOrder } from '#src/modules/order/index.ts';
 import { testPool } from '../../helpers/db.ts';
+import { splitByHand } from './helpers.ts';
 import { ingest, remote, setup } from './platform-fixtures.ts';
 
 const unpacked = (o: PlatformOrder): PlatformOrder => ({ ...o, lines: o.lines.map((l) => ({ ...l, packageCode: null })) });
-
-/** Tách tay như route tách kiện: kiện mới chép đơn, gian hàng, trạng thái, lúc giữ hàng; dòng của món chuyển sang. */
-async function splitByHand(packageId: string, externalLineId: string): Promise<string> {
-  const db = testPool();
-  const { rows } = await db.query<{ id: string }>(
-    `insert into "order".packages (company_id, code, order_id, shop_id, status, reserved_at)
-     select company_id, $2, order_id, shop_id, status, reserved_at from "order".packages where id = $1 returning id`,
-    [packageId, `KH-T-${randomUUID().slice(0, 8)}`],
-  );
-  const id = rows[0]!.id;
-  await db.query(
-    `update "order".package_lines pl set package_id = $2
-     from "order".order_lines ol where ol.id = pl.order_line_id and pl.package_id = $1 and ol.external_line_id = $3`,
-    [packageId, id, externalLineId],
-  );
-  return id;
-}
 
 async function packageOf(id: string) {
   const { rows } = await testPool().query<{ status: string; platform_package_code: string | null }>(
