@@ -28,11 +28,11 @@ export interface UploadTicket {
 
 const REJECTION_MESSAGES = {
   file_type_not_allowed: {
-    product_image: 'Ảnh sản phẩm phải là JPG, PNG hoặc WebP',
+    product_image: 'Ảnh sản phẩm phải là JPG hoặc PNG',
     attachment: 'Tệp đính kèm phải là ảnh JPG, PNG, WebP hoặc PDF',
   },
   file_too_large: {
-    product_image: 'Ảnh sản phẩm tối đa 5 MB',
+    product_image: 'Ảnh sản phẩm tối đa 1 MB',
     attachment: 'Tệp đính kèm tối đa 10 MB',
   },
 } as const;

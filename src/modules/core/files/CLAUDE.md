@@ -6,7 +6,7 @@ Thông tin tệp và tệp đính kèm chứng từ (#212). Nội dung tệp n�
 
 | Mục đích (`purpose`) | Kiểu | Tối đa | Bucket | Xem bằng |
 |---|---|---|---|---|
-| `product_image` | JPG, PNG, WebP | 5 MB | `S3_PUBLIC_BUCKET` | Link cố định `<S3_PUBLIC_URL>/<storage_key>` (tên miền riêng, có cache) |
+| `product_image` | JPG, PNG (điều kiện ảnh của sàn, #303; FE nén trước khi tải) | 1 MB | `S3_PUBLIC_BUCKET` | Link cố định `<S3_PUBLIC_URL>/<storage_key>` (tên miền riêng, có cache) |
 | `attachment` | JPG, PNG, WebP, PDF | 10 MB | `S3_PRIVATE_BUCKET` | Chỉ link ký sẵn 15 phút |
 
 - MVP không nhận video. Luật ở `domain/upload-rules.ts`.
