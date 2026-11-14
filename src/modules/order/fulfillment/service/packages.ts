@@ -1,6 +1,6 @@
 // Xem kiện cho kho (Documents/21 §19.2, spec 199a §5.5): danh sách theo tab có `counts`, chi tiết kèm lịch sử.
 // Dựng trang theo lô: dòng kiện một câu, đơn một lần qua `ctx.orderRefsOf`, gian hàng một lần qua `ctx.shopsOf`.
-import { getStatusHistory } from '../../../core/index.ts';
+import { findAccountSummaries, getStatusHistory } from '../../../core/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
@@ -75,16 +75,19 @@ const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is st
 
 async function summaries(ctx: FulfillmentContext, rows: readonly PackageViewRow[], now: number) {
   const shopIds = unique(rows.map((r) => r.shopId));
-  const [orders, shops] = await Promise.all([
+  const [orders, shops, accounts] = await Promise.all([
     orderRefsLookupOf(ctx)(unique(rows.map((r) => r.orderId))),
     ctx.shopsOf && shopIds.length ? ctx.shopsOf(shopIds) : Promise.resolve(new Map<string, { shopName: string; platform: string }>()),
+    // Tên người báo thất lạc, một câu cho cả trang (spec #238 §5.3); trang không có báo cáo thì không truy vấn.
+    findAccountSummaries(unique(rows.map((r) => r.lostReportedBy))),
   ]);
+  const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   return rows.map((p) => {
     const order = orders.get(p.orderId);
     // Kiện luôn có đơn cùng công ty; thiếu là dữ liệu hỏng.
     if (!order) throw new Error(`Kiện ${p.id} không có đơn ${p.orderId}`);
     const shop = p.shopId ? shops.get(p.shopId) : undefined;
-    return toPackageSummary(p, order, shop && p.shopId ? { id: p.shopId, shopName: shop.shopName, platform: shop.platform } : null, now);
+    return toPackageSummary(p, order, shop && p.shopId ? { id: p.shopId, shopName: shop.shopName, platform: shop.platform } : null, now, names);
   });
 }
 

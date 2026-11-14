@@ -96,7 +96,7 @@ export async function updatePackage(
     needsAttention: boolean;
     flagNote: string | null;
     notices: PackageNotice[];
-    handedOverAt: Date | null;
+    handedOverAt: Date | SQL | null;
     handedOverBy: string | null;
     handoverSource: HandoverSource | null;
     handoverRevertedBy: string;
@@ -129,6 +129,7 @@ export interface HandoverPackage {
   trackingCode: string | null;
   needsAttention: boolean;
   needsOpen: boolean;
+  selfDelivery: boolean;
   /** Báo cáo thất lạc đang treo (spec #238 §5.3): người báo và mã khiếu nại cùng có hoặc cùng không. */
   lostReportedBy: string | null;
   lostClaimCode: string | null;
@@ -148,6 +149,7 @@ const handoverColumns = {
   trackingCode: packages.trackingCode,
   needsAttention: packages.needsAttention,
   needsOpen: packages.needsOpen,
+  selfDelivery: packages.selfDelivery,
   lostReportedBy: packages.lostReportedBy,
   lostClaimCode: packages.lostClaimCode,
 };

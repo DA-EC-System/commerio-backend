@@ -255,6 +255,7 @@ async function createPackage(
     platformPackageCode: lines[0]!.packageCode,
     trackingCode: lines[0]!.trackingCode,
     needsOpen: false,
+    selfDelivery: false,
     lostReportedBy: null,
     lostClaimCode: null,
     labelError: false,

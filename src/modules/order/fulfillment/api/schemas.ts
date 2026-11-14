@@ -159,6 +159,14 @@ export const ReceiveReturnBody = z.object({
 /** Kho nhận kiện thất lạc tìm thấy (Documents/21 §19.2): `lines` như `receive-return`. */
 export const FoundBody = z.object({ version: z.int().min(0), lines: scanLines });
 
+/** Kho báo kiện thất lạc (Documents/21 §19.2, spec #238 §5.3): mã khiếu nại 1–100 ký tự sau khi cắt khoảng trắng. */
+export const ReportLostBody = z
+  .object({ version: z.int().min(0), claimCode: z.string().trim().min(1, 'Nhập mã khiếu nại').max(100, 'Mã khiếu nại tối đa 100 ký tự') })
+  .meta({ id: 'ReportLostBody' });
+
+/** Người khác người báo xác nhận kiện thất lạc (spec #238 §5.3). */
+export const ConfirmLostBody = z.object({ version: z.int().min(0) }).meta({ id: 'ConfirmLostBody' });
+
 export const UndoHandoverBody = z.object({
   version: z.number().int().min(0),
   // Bắt buộc lý do do máy trạng thái kiểm (422 `reason_required`), nên ở đây cho phép rỗng.
