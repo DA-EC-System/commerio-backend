@@ -2,7 +2,11 @@
 // ở `src/wiring.ts`, không import channel. Gọi sàn ngoài giao dịch nghiệp vụ; lỗi sàn đổi sang mã app (§1.1 R8, R9).
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { isUuid } from '../../../../shared/uuid.ts';
+import type { ShopCapabilities } from '../domain/shop.ts';
+import { findShopRow } from '../repository/shops.ts';
 import { CARRIER_REQUIRED, MarketplaceError, type PackageItemsRef, type SplitAttributes } from './marketplaces/common.ts';
+import { capabilitiesOf } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ huỷ đơn từ app');
@@ -81,6 +85,15 @@ export function splitGroupViolation(attrs: SplitAttributes, groups: readonly (re
   if (limits.length === 0) return null;
   const max = Math.min(...limits);
   return groups.some((g) => g.length > max) ? `Sàn chỉ cho tối đa ${max} món mỗi kiện` : null;
+}
+
+/**
+ * Mức tách kiện của gian hàng (`capabilities.splitLevel` theo sàn; spec 205 D6). Fulfillment rẽ nhánh theo đây, không theo
+ * mã sàn. Gian hàng không có (kể cả id sai dạng, công ty khác) thì `none`. Tự mở `withCompany`: gọi ngoài giao dịch.
+ */
+export async function marketplaceSplitLevel(companyId: string, shopId: string): Promise<ShopCapabilities['splitLevel']> {
+  const row = isUuid(shopId) ? await withCompany(companyId, () => findShopRow(shopId)) : undefined;
+  return row ? capabilitiesOf(row.platform).splitLevel : 'none';
 }
 
 /**
