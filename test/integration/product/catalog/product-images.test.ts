@@ -252,3 +252,23 @@ describe('ảnh đại diện ở danh sách, ảnh cho module khác', () => {
     expect((await withCompany(companyId, () => productImageUrls([p.withImages], 8))).size).toBe(0);
   });
 });
+
+describe('ràng buộc bảng product_images', () => {
+  const insertImage = (productId: string, position: number) =>
+    testPool().query('insert into product.product_images (company_id, product_id, file_id, position) values ($1, $2, gen_random_uuid(), $3)', [
+      companyId,
+      productId,
+      position,
+    ]);
+
+  it('hai ảnh cùng position của một sản phẩm: vi phạm unique product_images_product_position_uq', async () => {
+    const p = await newProduct([]);
+    await insertImage(p.id, 0);
+    await expect(insertImage(p.id, 0)).rejects.toMatchObject({ code: '23505', constraint: 'product_images_product_position_uq' });
+  });
+
+  it('position âm: vi phạm CHECK product_images_position_nonneg', async () => {
+    const p = await newProduct([]);
+    await expect(insertImage(p.id, -1)).rejects.toMatchObject({ code: '23514', constraint: 'product_images_position_nonneg' });
+  });
+});
