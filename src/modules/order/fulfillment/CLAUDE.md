@@ -92,7 +92,8 @@ Sàn huỷ lẻ một món (spec 205 §5.10, D16–D22). "Món bị huỷ" là m
 
 - **`cancelledLines`**: `order_line_id` của món đã gỡ, chờ bỏ, hay huỷ cùng kiện chưa rời kho; sales ghi `cancelled_qty = quantity` trong cùng giao dịch. Fulfillment không ghi `cancelled_qty`.
 - **`alreadyCancelled`** (D18): sales báo món mà dòng đơn đã ghi huỷ đủ. Món đó không còn thuộc kiện nào (đã gỡ ở lượt trước) thì bỏ qua: không lập kiện `cancelled` mới, không tốn mã `KH-`.
-- **Mở kiện** (`openPackage`): dòng chờ bỏ không được giữ lại; bước ghi nhả phần đang giữ của chúng rồi xoá, kiện về `reserved`, bỏ `needs_open`, `requestAllocation` cho SKU vừa nhả. Mọi dòng chờ bỏ thì đi `open_cancel` (D21): không gọi repack (sàn đã huỷ gói), nhả hết, `pending_drop_qty` về 0, kiện `cancelled`, lịch sử và `package_status_changed` mang `open_cancel`.
+- **Đơn lần đầu thấy đã có món huỷ** (D23): kiện sắp lập chưa rời kho (`pending`, `packed`, `awaiting_pickup`) thì món huỷ không vào kiện, không giữ hàng, vào `cancelledLines`; kiện lần đầu thấy đã rời kho giữ đủ món (E96).
+- **Mở kiện** (`openPackage`): dòng chờ bỏ không được giữ lại; bước ghi nhả phần đang giữ của chúng rồi xoá, kiện về `reserved`, bỏ `needs_open`, `requestAllocation` cho SKU vừa nhả. Mọi dòng chờ bỏ thì đi `open_cancel` (D21): không gọi repack (sàn đã huỷ gói), nhả hết, `pending_drop_qty` về 0, kiện `cancelled`, lịch sử và `package_status_changed` mang `open_cancel`. Sau khi giao dịch đó commit, `ctx.settleCancelledOrder` (sales) khép đơn đang huỷ trong giao dịch riêng (D24; lượt kéo khoá đơn trước kiện nên không ghi đơn khi còn giữ khoá kiện); lỗi chỉ log, đơn giữ cờ đang huỷ.
 
 ## Route (`/api/v1/fulfillment`)
 
@@ -126,7 +127,7 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `packageStatusOf(packageIds)` → `Map<id, { orderId, status, deliveredAt }>` (**finance E139**): chạy trong `withCompany` của bên gọi; bỏ id sai dạng, rỗng thì không truy vấn; id công ty khác vắng trong `Map`.
 - **#237** ghép SKU muộn phải bỏ qua kiện `returned` (hàng đã về kệ; trừ tồn lúc này là sai, spec 199c §10). Kiện đã `delivered` mà `delivery_posted_at` còn null (đang hoãn trừ) thì sau khi `shipLateMappedLines` trừ xong phải gọi `reportDelivered(packageId)`: hiện chỉ `settleDeferredHandovers` gọi lại, kiện còn dòng đã ghép chưa trừ sẽ không bao giờ phát `package_delivered`.
 - `ctx.marketplacePackages` do channel tiêm ở `src/wiring.ts`, cung cấp `carriers`, `pack`, `readyToShip`, `repack`, `shippingDocuments`, `split`, `splitLevel` (mức tách kiện của gian hàng, #205).
-- `ctx.orderViewOf(orderId)` (`getOrder` của sales) và `ctx.nextPackageCode()` (bộ đếm `KH-` của sales) do `order/index.ts` tiêm bằng `withContext` cho tách kiện (#205); thiếu thì 500 `internal_error` (`orderViewLookupOf`, `packageCodeLookupOf`).
+- `ctx.orderViewOf(orderId)` (`getOrder` của sales) và `ctx.nextPackageCode()` (bộ đếm `KH-` của sales) do `order/index.ts` tiêm bằng `withContext` cho tách kiện (#205); thiếu thì 500 `internal_error` (`orderViewLookupOf`, `packageCodeLookupOf`). `ctx.settleCancelledOrder(orderId)` (sales) tiêm cùng chỗ cho mở kiện `open_cancel` (D24; `cancelledOrderSettlerOf`).
 - Test thay cổng tồn bằng `setStockPort({ ... })` (`service/stock-port.ts`): phần không truyền là bản thật.
 
 ## Giới hạn đã biết

@@ -10,7 +10,9 @@ import { clearPendingDrop, deleteLines } from '../repository/line-cancel.ts';
 import { markLinesReserved, packageShopOf, setReserved, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
 import { requestAllocation } from './allocation.ts';
-import { getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages } from './packages.ts';
+import {
+  cancelledOrderSettlerOf, getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages,
+} from './packages.ts';
 import { stockPort } from './stock-port.ts';
 
 const PICK_LIST_LIMIT = 500;
@@ -255,8 +257,9 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
     const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = !target.cancel && target.shopId && target.code
       ? await marketplacePackagesOf(ctx).repack(companyId, target.shopId, target.code)
       : null;
+    let written: { detail: PackageDetail; cancelledOrderId: string | null };
     try {
-      return await withCompany(companyId, async () => {
+      written = await withCompany(companyId, async () => {
         const pkg = await readPackage(id, true);
         await checkVersion(ctx, pkg, target.version);
         if (target.cancel) {
@@ -269,7 +272,7 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
           await updatePackage(id, { status: to, needsOpen: false, openPurpose: null, packedBy: null, packedAt: null, labelError: false });
           await recordPacking(pkg, to, 'open_cancel', actor.accountId);
           await requestAllocation(released);
-          return getPackage(ctx, id);
+          return { detail: await getPackage(ctx, id), cancelledOrderId: pkg.orderId };
         }
         const { to } = await transition(ctx, actor, pkg, 'open');
         const dropped = pkg.lines.filter((line) => line.pendingDropQty > 0);
@@ -283,12 +286,23 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         await setLinesPacked(id, false);
         await recordPacking(pkg, to, 'open', actor.accountId);
         await requestAllocation(released);
-        return getPackage(ctx, id);
+        return { detail: await getPackage(ctx, id), cancelledOrderId: null };
       });
     } catch (err) {
       // Sàn đã huỷ gói cũ mà app còn giữ mã đó: lượt kéo đơn không tự sửa (món về chờ đóng gói, kiện app vẫn `packed`).
       if (outcome === 'repacked') logger.error({ err, packageId: id, platformPackageCode: target.code }, 'sàn đã đóng gói lại, app chưa ghi; cần mở lại kiện');
       throw err;
     }
+    if (!written.cancelledOrderId) return written.detail;
+    // Sàn đã huỷ xong nên lượt kéo không chạy lại luật huỷ đơn (D21): khép đơn đang huỷ ở giao dịch riêng, sau khi nhả
+    // khoá kiện (lượt kéo khoá đơn trước kiện). Lỗi chỉ log: kiện đã huỷ xong, đơn giữ cờ đang huỷ.
+    const orderId = written.cancelledOrderId;
+    try {
+      await withCompany(companyId, () => cancelledOrderSettlerOf(ctx)(orderId));
+    } catch (err) {
+      logger.error({ err, packageId: id, orderId }, 'kiện đã huỷ khi mở, chưa khép được đơn đang huỷ');
+      return written.detail;
+    }
+    return withCompany(companyId, () => getPackage(ctx, id));
   });
 }

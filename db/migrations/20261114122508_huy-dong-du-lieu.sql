@@ -11,13 +11,15 @@ WHERE ol.cancelled_qty <> ol.quantity
 --> statement-breakpoint
 -- (2) Đơn còn mở mà dữ liệu gốc (đơn đã chuẩn hoá, `lines[].status`) có món sàn đã huỷ: kéo lại để áp luật huỷ dòng.
 -- Cập nhật `shops` trước `raw_orders`, cùng thứ tự khoá với lượt kéo đơn (như 0022). Worker cũ còn chạy lúc đổi image
--- thì chạy lại hai câu này sau rollout.
+-- thì chạy lại hai câu này sau rollout. `external_update_time` đặt `epoch`, không đặt NULL như 0022: lượt kéo bỏ dòng
+-- NULL khỏi "đơn đã có", nên đơn đặt trước mốc (về qua lượt kéo đơn còn mở) sẽ bị lọc mãi; `epoch` vẫn là "đã có" và
+-- cũ hơn mọi lần sàn sửa.
 UPDATE channel.shops SET last_order_sync_at = NULL
 WHERE id IN (
   SELECT r.shop_id FROM channel.raw_orders r JOIN "order".orders o ON o.id = r.order_id
   WHERE o.status IN ('unpaid', 'processing') AND r.payload -> 'lines' @> '[{"status": "cancelled"}]'
 );
 --> statement-breakpoint
-UPDATE channel.raw_orders r SET external_update_time = NULL
+UPDATE channel.raw_orders r SET external_update_time = 'epoch'
 FROM "order".orders o
 WHERE o.id = r.order_id AND o.status IN ('unpaid', 'processing') AND r.payload -> 'lines' @> '[{"status": "cancelled"}]';

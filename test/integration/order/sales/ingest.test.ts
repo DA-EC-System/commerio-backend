@@ -473,6 +473,37 @@ describe('huỷ dòng', () => {
     expect(await reservedOf(v.companyId, v.variantId)).toBe(0);
   });
 
+  it('D23: đơn lần đầu thấy đã có một món huỷ thì món đó không vào kiện, không giữ hàng; kéo lại không lập kiện rác', async () => {
+    const v = await setup(10);
+    const o = withLineCancelled(remoteOf(v, { lines: 3 }), 2);
+
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+
+    expect(await all(
+      `select ol.external_line_id from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
+        where pl.package_id = $1 order by 1`,
+      [packageId],
+    )).toEqual([{ external_line_id: o.lines[0]!.externalLineId }, { external_line_id: o.lines[1]!.externalLineId }]);
+    expect(await reservedOf(v.companyId, v.variantId)).toBe(2);
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0, 1]);
+    const counter = await packageCounter(v.companyId);
+
+    await ingestIn(v.companyId, o);
+
+    expect(await all(`select id from "order".packages where order_id = $1`, [orderId])).toHaveLength(1);
+    expect(await packageCounter(v.companyId)).toBe(counter);
+  });
+
+  it('kiện lần đầu thấy đã rời kho: món sàn huỷ vẫn nằm trong kiện, cancelled_qty giữ 0 (25 E96)', async () => {
+    const v = await setup(10);
+    const o = withLineCancelled(withStatus(remoteOf(v, { lines: 2 }), 'in_transit'), 1);
+
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+
+    expect(await all(`select id from "order".package_lines where package_id = $1`, [packageId])).toHaveLength(2);
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0]);
+  });
+
   it('đơn lần đầu thấy đã huỷ hết: kiện huỷ, mọi dòng cancelled_qty = quantity', async () => {
     const v = await setup(10);
     const o = remoteOf(v, { lines: 2 });

@@ -3,12 +3,15 @@
 import { Decimal } from 'decimal.js';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { type PackageEvent, type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
+import { findPackagesOfOrders, type PackageEvent, type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
 import type { OrderFlag, OrderStatus } from '../domain/order.ts';
 import {
+  allLinesCancelled,
   cancelledLineIds,
+  hasUnmappedLines,
   insertMarketplaceOrder,
   lockMarketplaceOrder,
+  lockOrderRow,
   markLinesCancelled,
   type MarketplaceOrderRow,
   takeNextNumber,
@@ -165,6 +168,29 @@ async function createOrder(o: PlatformOrder, info: OrderInfo): Promise<Marketpla
 
 async function transition(orderId: string, from: OrderStatus | null, to: OrderStatus, action: string) {
   await recordTransition({ entityType: 'orders', entityId: orderId, from, to, action, actorId: null, source: 'marketplace' });
+}
+
+/**
+ * Khép đơn sàn đang huỷ sau khi kho mở kiện cuối (`open_cancel`, spec 205 D21): sàn đã huỷ xong nên không đổi
+ * `updated_at` nữa, lượt kéo không chạy lại luật huỷ đơn ở `ingestMarketplaceOrder`. Đơn còn mở, mang cờ `cancelling`,
+ * mọi dòng đã huỷ đủ và không còn kiện chưa huỷ thì `platform_cancel` như lượt kéo. Gọi trong `withCompany`, giao dịch
+ * riêng sau khi giao dịch mở kiện commit: khoá đơn trước, không giữ khoá kiện (cùng thứ tự với lượt kéo).
+ */
+export async function settleCancelledOrder(orderId: string): Promise<void> {
+  const row = await lockOrderRow(orderId);
+  if (!row || (row.status !== 'unpaid' && row.status !== 'processing') || !row.cancelling) return;
+  if (!(await allLinesCancelled(orderId))) return;
+  if ((await findPackagesOfOrders([orderId])).some((p) => p.status !== 'cancelled')) return;
+  await transition(orderId, row.status, 'cancelled', 'platform_cancel');
+  await updateOrder(orderId, { status: 'cancelled', cancelReason: 'Sàn huỷ đơn' });
+  await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', by: 'platform' } });
+  const flags = storedFlags(row);
+  if (await hasUnmappedLines(orderId)) flags.push('unmapped_sku');
+  await publishEvent({
+    type: 'sales.order_status_changed',
+    aggregateId: orderId,
+    payload: { orderId, code: row.code, from: row.status, to: 'cancelled', flags },
+  });
 }
 
 export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderId: string; created: boolean; changed: boolean }> {

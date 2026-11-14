@@ -479,10 +479,14 @@ export async function syncPlatformPackages(
         result.unknown = true;
         continue;
       }
-      pkg = await createPackage(order, await nextCode(), status, group, journey);
+      // Đơn lần đầu thấy đã có món sàn huỷ (spec 205 D23): kiện sắp lập chưa rời kho thì món huỷ không vào kiện, sales
+      // ghi `cancelled_qty`; lượt sau món đó không còn chủ nên bỏ qua (D18). Kiện lần đầu thấy đã rời kho giữ đủ món (E96).
+      const dropped = status === 'pending' || status === 'packed' || status === 'awaiting_pickup' ? group.filter(isLineCancel) : [];
+      pkg = await createPackage(order, await nextCode(), status, dropped.length ? group.filter((l) => !dropped.includes(l)) : group, journey);
       existing.push(pkg);
       touched.add(pkg.id);
       result.changed = true;
+      result.cancelledLines.push(...dropped.map((l) => l.orderLineId));
       if (status === 'cancelled') {
         result.cancelled.push('cancelled');
         result.cancelledLines.push(...group.map((l) => l.orderLineId));

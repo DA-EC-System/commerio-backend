@@ -83,7 +83,8 @@ describe('dữ liệu cũ cho huỷ dòng (spec 205 §5.10, AC20)', () => {
         sync: (await c.query('select last_order_sync_at from channel.shops where id = $1', [o.shopId])).rows[0].last_order_sync_at,
         update: (await c.query('select external_update_time from channel.raw_orders where order_id = $1', [o.orderId])).rows[0].external_update_time,
       });
-      expect(await state(open)).toEqual({ sync: null, update: null });
+      // `epoch`, không phải NULL: lượt kéo coi đơn là đã có (đơn đặt trước mốc vẫn được nhận) và cũ hơn mọi lần sàn sửa.
+      expect(await state(open)).toEqual({ sync: null, update: new Date(0) });
       expect(await state(quiet)).toEqual({ sync: seen, update: seen });
       expect(await state(closed)).toEqual({ sync: seen, update: seen });
     });

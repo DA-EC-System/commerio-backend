@@ -346,4 +346,40 @@ describe('mở lại kiện', () => {
     expect(await outboxOf(orderId, 'fulfillment.package_status_changed')).toContainEqual(expect.objectContaining({ from: 'packed', to: 'cancelled' }));
     expect(repack).not.toHaveBeenCalled();
   });
+
+  const orderOf = async (orderId: string) =>
+    (await testPool().query<{ status: string; cancel_reason: string | null }>('select status, cancel_reason from "order".orders where id = $1', [orderId])).rows[0]!;
+
+  it('đơn đang huỷ mà mở kiện cuối (open_cancel) thì đơn sang cancelled, phát sales.order_cancelled', async () => {
+    const { packageId, orderId, lineIds } = await seed('packed', { cancelling: true, platformPackageCode: 'DROP-LAST', lines: [{ variantId, quantity: 1, reserved: true }] });
+    await markPendingDrop(packageId, lineIds, 'cancel');
+
+    const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack: vi.fn() });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await orderOf(orderId)).toEqual({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn' });
+    const { rows } = await testPool().query(
+      `select from_state, to_state, action, source from core.state_transitions where entity_type = 'orders' and entity_id = $1 order by id`,
+      [orderId],
+    );
+    expect(rows.at(-1)).toEqual({ from_state: 'processing', to_state: 'cancelled', action: 'platform_cancel', source: 'marketplace' });
+    expect(await outboxOf(orderId, 'sales.order_cancelled')).toEqual([expect.objectContaining({ orderId, source: 'marketplace', by: 'platform' })]);
+  });
+
+  it('đơn còn món chưa huỷ thì mở kiện huỷ không huỷ đơn', async () => {
+    const { packageId, orderId, lineIds } = await seed('packed', { cancelling: true, platformPackageCode: 'DROP-PART', lines: [{ variantId, quantity: 1, reserved: true }] });
+    await markPendingDrop(packageId, lineIds, 'cancel');
+    // Một món khác của đơn chưa vào kiện nào (trạng thái sàn lạ) và chưa bị huỷ.
+    await testPool().query(
+      `insert into "order".order_lines (company_id, order_id, variant_id, product_name, quantity, unit_price, line_total)
+       values ($1, $2, $3, 'Áo', 1, 0, 0)`,
+      [companyId, orderId, variantId],
+    );
+
+    const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack: vi.fn() });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('cancelled');
+    expect((await orderOf(orderId)).status).toBe('processing');
+  });
 });

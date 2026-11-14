@@ -70,7 +70,9 @@
 | D19 | Trigger chỉ chạy khi có đổi thật: `packages` chỉ khi trạng thái **qua lại ranh giới `cancelled`**; `order_lines` chỉ khi `quantity` hoặc `cancelled_qty` đổi giá trị. Trigger từ `order_lines` bỏ qua dòng đơn chưa có dòng kiện nào; trigger từ `package_lines` và `packages` luôn kiểm | Đổi trạng thái thường (giữ hàng, đóng gói, bàn giao) không đụng bất biến, không nên trả giá kiểm. Dòng đơn chưa có kiện (món trạng thái lạ) hợp lệ; nhưng xoá dòng kiện cuối cùng mà không ghi `cancelled_qty` phải bị chặn (AC19) |
 | D20 | Gỡ dòng khỏi kiện chưa đóng gói ghi một dòng lịch sử `drop_lines` (`from = to`, nguồn `marketplace`, lý do "Sàn huỷ <n> món") và tăng `version` kiện | Kiện đổi nội dung mà không đổi trạng thái; cùng cách với `split` (D3) |
 | D21 | Cả kiện đã đóng gói bị huỷ khi kiện đang `needs_open` với `open_purpose = 'edit'` thì nâng thành `'cancel'`. `open` kiện mà mọi dòng đều chờ bỏ đi mũi tên `open_cancel`, **không gọi repack** trên sàn | Sàn đã huỷ gói đó; gọi đóng gói lại một gói đã huỷ chỉ nhận lỗi |
-| D22 | Kéo lại dữ liệu cũ chỉ cho đơn còn mở mà dữ liệu gốc có món `cancelled` (không kéo lại mọi đơn mở) | Chỉ các đơn đó cần áp luật huỷ dòng; kéo lại ít đơn thì ít tốn hạn mức gọi sàn |
+| D22 | Kéo lại dữ liệu cũ chỉ cho đơn còn mở mà dữ liệu gốc có món `cancelled` (không kéo lại mọi đơn mở). Mốc đơn đặt `epoch`, không đặt NULL | Chỉ các đơn đó cần áp luật huỷ dòng; kéo lại ít đơn thì ít tốn hạn mức gọi sàn. Lượt kéo bỏ dòng `external_update_time` NULL khỏi "đơn đã có", nên đơn đặt trước mốc kéo đơn sẽ bị lọc mãi (review PR 2 chỉ ra) |
+| D23 | Đơn **lần đầu thấy** đã có món sàn huỷ (D17): kiện sắp lập chưa rời kho thì món huỷ không vào kiện, sales ghi `cancelled_qty`; kiện lần đầu thấy đã rời kho giữ đủ món | Không thì món huỷ được giữ hàng, vào danh sách nhặt, gửi kèm lệnh đóng gói cho tới khi sàn đổi `updated_at` của đơn. Nới câu "kiện chứa món chưa rời kho" sang cả kiện sắp lập. Review PR 2 chỉ ra, Khang chốt 14/11/2026 |
+| D24 | Mở kiện đi `open_cancel` xong thì khép đơn: đơn còn mở, cờ `cancelling`, mọi dòng huỷ đủ, không còn kiện sống → `platform_cancel`, `sales.order_cancelled` như lượt kéo. Sales tiêm hàm qua `ctx`; chạy trong giao dịch riêng sau khi giao dịch mở kiện commit; lỗi chỉ log | Sàn đã huỷ xong nên không đổi `updated_at`, lượt kéo không chạy lại luật huỷ đơn: đơn kẹt "đang huỷ" mãi. Giao dịch riêng vì lượt kéo khoá đơn trước kiện. Review PR 2 chỉ ra, Khang chốt 14/11/2026 |
 
 ## 4. Phạm vi
 
@@ -237,7 +239,7 @@ Theo `test/CLAUDE.md`.
 | `packed`, `awaiting_pickup`, hết món | Đường cũ (`needs_open`, `open_purpose = 'cancel'`), thêm `pending_drop_qty = quantity` trên mọi dòng; kiện đang `needs_open` với `'edit'` thì nâng lên `'cancel'` (D21) |
 | Đã rời kho | Không đổi gì; `cancelled_qty` giữ 0 (`25` E96) |
 
-**Mở kiện** (`openPackage`, chỉ kiện `packed` như hiện nay): dòng có `pending_drop_qty > 0` thì xoá và `release`; mọi dòng đều chờ bỏ thì đi mũi tên `open_cancel` (kiện `cancelled`, nhả hết, đặt `pending_drop_qty` về 0) thay cho `open`, **không gọi repack** trên sàn (D21).
+**Mở kiện** (`openPackage`, chỉ kiện `packed` như hiện nay): dòng có `pending_drop_qty > 0` thì xoá và `release`; mọi dòng đều chờ bỏ thì đi mũi tên `open_cancel` (kiện `cancelled`, nhả hết, đặt `pending_drop_qty` về 0) thay cho `open`, **không gọi repack** trên sàn (D21), rồi khép đơn đang huỷ (D24). Đơn lần đầu thấy đã có món huỷ: D23.
 
 **Trigger siết lại** (thay hàm của PR 1, đổi tên ràng buộc không cần): với dòng đơn bị đụng,
 
@@ -245,7 +247,7 @@ Theo `test/CLAUDE.md`.
 
 Gắn thêm vào: `package_lines` `AFTER DELETE`; `package_lines` `UPDATE OF pending_drop_qty`; `packages` `AFTER UPDATE OF status` (kiểm mọi dòng đơn của kiện); `order_lines` `AFTER UPDATE OF quantity, cancelled_qty`. **Không** gắn vào `order_lines` `INSERT`: dòng đơn chưa có kiện (món có trạng thái app chưa biết, hoặc nhóm bị bỏ qua vì `resplit`) không bị kiểm cho tới khi có dòng kiện đầu tiên. Trigger chỉ chạy khi có đổi thật (D19): `packages` khi trạng thái qua lại ranh giới `cancelled`; `order_lines` khi `quantity` hoặc `cancelled_qty` đổi giá trị, bỏ qua dòng đơn chưa có dòng kiện nào; `package_lines` luôn kiểm (xoá dòng kiện cuối mà không ghi `cancelled_qty` vẫn bị chặn). Kiện chờ thay của #238 sẽ thêm điều kiện loại trừ khi #238 làm.
 
-**Dữ liệu cũ:** migration `--custom` chỉ dữ liệu, theo cách của `0018_keo-lai-don-truoc-0017.sql`: (1) dòng đơn mà mọi kiện chứa nó đều `cancelled` thì đặt `cancelled_qty = quantity`; (2) đơn `unpaid`, `processing` mà dữ liệu gốc có món `cancelled` (D22) thì xoá `external_update_time` ở `channel.raw_orders` và `last_order_sync_at` của gian hàng để lượt kéo sau đọc lại và áp luật huỷ dòng mới. Dòng không bị đụng thì trigger không kiểm, nên đơn đã dừng không lỗi.
+**Dữ liệu cũ:** migration `--custom` chỉ dữ liệu, theo cách của `0018_keo-lai-don-truoc-0017.sql`: (1) dòng đơn mà mọi kiện chứa nó đều `cancelled` thì đặt `cancelled_qty = quantity`; (2) đơn `unpaid`, `processing` mà dữ liệu gốc có món `cancelled` (D22) thì đặt `external_update_time = 'epoch'` ở `channel.raw_orders` và xoá `last_order_sync_at` của gian hàng để lượt kéo sau đọc lại và áp luật huỷ dòng mới. Dòng không bị đụng thì trigger không kiểm, nên đơn đã dừng không lỗi.
 
 **Test PR 2:** từng dòng của bảng trên; mở kiện có dòng chờ bỏ; trigger chặn cả hai chiều (thừa và thiếu), gồm ca xoá dòng kiện mà không ghi `cancelled_qty`; tách kiện vẫn qua trigger kiểm bằng; migration dữ liệu trên đơn mẫu.
 
