@@ -75,7 +75,24 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 - **Không gọi cổng tồn** (D4): inventory chỉ giữ tổng theo SKU, chuyển dòng đang giữ sang kiện khác không đổi tổng. Kiện `reserved` tách thì kiện mới `reserved`, `reserved_at` chép kiện cũ, không phát `allocation_done`. Gian hàng chờ kiểm kê đầu kỳ vẫn tách được, lượt phân hàng tự bỏ qua (D5).
 - **Nhánh `sku`** (TikTok): đơn còn kiện chưa huỷ khác thì 422 `split_not_supported` (D13, chưa thử sàn nhận nhóm chỉ phủ một phần đơn). Nhóm gửi sàn: mã món của phần ở lại kiện cũ đứng đầu, rồi từng kiện mới; thiếu mã đơn hay mã món thì 409 `item_not_packable`. Bước ghi không so `version` (D7): kiện còn `reserved`/`backordered` và `planSplit` trên dòng vừa khoá ra đúng các dòng đã gửi sàn thì ghi, không thì 409 `version_conflict`. Mã sàn của kiện cũ ghi trước khi chèn kiện mới (tránh unique `packages_platform_code_order_uq` khi lượt kéo vừa gắn mã nhóm khác vào kiện cũ). Mọi lỗi sau khi sàn đã tách: log `error`, giao dịch riêng bật Cần xử lý trên kiện cũ với `SPLIT_UNSYNCED_NOTE` (D14), rồi ném lỗi gốc.
 - **Đồng bộ giữ cách chia của app** (D10, `syncPlatformPackages`): món chưa có mã kiện sàn mà đã nằm trong kiện app thì gom theo kiện đó, không bật `resplit`; món có mã sàn gom theo mã như cũ, món của hai kiện app về chung một mã vẫn là "Sàn chia lại kiện" (#238).
-- **CSDL** chặn tổng một dòng đơn trên các kiện chưa huỷ vượt số lượng dòng đơn bằng constraint trigger `package_lines_line_total` (kiểm lúc commit, `db/CLAUDE.md`).
+- **CSDL** kiểm bằng: tổng `quantity − pending_drop_qty` của một dòng đơn trên các kiện chưa huỷ phải bằng `quantity − cancelled_qty` của dòng đơn, bằng ba constraint trigger kiểm lúc commit (`db/CLAUDE.md`). Tách kiện chỉ dời dòng nên luôn qua.
+
+## Huỷ dòng (#205 PR 2)
+
+Sàn huỷ lẻ một món (spec 205 §5.10, D16–D22). "Món bị huỷ" là món sàn báo `cancelled` mà `cancelKind` khác `failed_delivery` (D17: huỷ vì giao không thành là kiện hoàn về).
+
+- **Xét theo kiện, trước khi gom nhóm** (D16, `syncPlatformPackages`): mỗi kiện của đơn qua `planLineCancel` (`domain/line-cancel.ts`). Kiện chỉ có một phần món bị huỷ thì xử lý theo bảng dưới, các món đó không vào bước gom nhóm theo mã kiện sàn (món huỷ có thể không còn mang mã sàn, rơi vào nhóm riêng sẽ huỷ cả kiện). Mọi món bị huỷ thì đi đường huỷ cả kiện (`cancelPlatformPackage`) như cũ.
+
+  | Kiện | Xử lý |
+  |---|---|
+  | `backordered`, `reserved` | `release` phần đang giữ của dòng (dòng đã ghép), xoá dòng, `requestAllocation` cho SKU vừa nhả và SKU còn lại; kiện giữ trạng thái, `version` tăng, lịch sử `drop_lines` (`from = to`, nguồn `marketplace`, "Sàn huỷ <n> món", D20) |
+  | `packed`, `awaiting_pickup` | `pending_drop_qty = quantity` trên dòng; kiện `needs_open` với `open_purpose = 'edit'` (đang chờ mở thì giữ mục đích, chỉ tăng `version`); vẫn giữ hàng. Dòng đã chờ bỏ thì không ghi lại |
+  | Huỷ cả kiện đã đóng gói | Đường cũ (`needs_open`, `'cancel'`) cộng mọi dòng chờ bỏ; đang chờ mở để sửa (`'edit'`) thì nâng lên `'cancel'` (D21) |
+  | Đã rời kho, đã huỷ | Không đổi gì (`25` E96) |
+
+- **`cancelledLines`**: `order_line_id` của món đã gỡ, chờ bỏ, hay huỷ cùng kiện chưa rời kho; sales ghi `cancelled_qty = quantity` trong cùng giao dịch. Fulfillment không ghi `cancelled_qty`.
+- **`alreadyCancelled`** (D18): sales báo món mà dòng đơn đã ghi huỷ đủ. Món đó không còn thuộc kiện nào (đã gỡ ở lượt trước) thì bỏ qua: không lập kiện `cancelled` mới, không tốn mã `KH-`.
+- **Mở kiện** (`openPackage`): dòng chờ bỏ không được giữ lại; bước ghi nhả phần đang giữ của chúng rồi xoá, kiện về `reserved`, bỏ `needs_open`, `requestAllocation` cho SKU vừa nhả. Mọi dòng chờ bỏ thì đi `open_cancel` (D21): không gọi repack (sàn đã huỷ gói), nhả hết, `pending_drop_qty` về 0, kiện `cancelled`, lịch sử và `package_status_changed` mang `open_cancel`.
 
 ## Route (`/api/v1/fulfillment`)
 
@@ -87,7 +104,7 @@ Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts
 | `GET /packages/:id/carriers` | `fulfillment.order.process` | Nhà vận chuyển có thể chọn cho kiện |
 | `POST /packages/:id/pack` | `fulfillment.order.process` | So số quét, đóng gói, lưu mã kiện sàn và vận đơn nếu sàn trả |
 | `POST /packages/:id/ready` | `fulfillment.order.process` | Báo sẵn sàng giao cho kiện hoặc nhóm gói |
-| `POST /packages/:id/open` | `fulfillment.order.process` | Mở kiện đã đóng, giữ lại hàng nếu cần |
+| `POST /packages/:id/open` | `fulfillment.order.process` | Mở kiện đã đóng, giữ lại hàng nếu cần; bỏ dòng chờ bỏ, mọi dòng chờ bỏ thì huỷ kiện (`open_cancel`, mục Huỷ dòng) |
 | `POST /packages/:id/split` | `fulfillment.order.process` | Tách kiện `reserved`/`backordered` theo `parts` (mục Tách kiện); 404 → 409 `package_sealed`/`invalid_transition` → 409 `version_conflict` → 422 `split_not_supported` (sàn `none`) → 422 `validation_failed` → nhánh `sku`: 422 D13, 409 `item_not_packable`, lỗi sàn; trả `Order` |
 | `GET /packages/documents` | `fulfillment.order.process` | Tải một PDF vận đơn gộp của 1–50 kiện |
 | `POST /packages/hand-over` | `fulfillment.order.process` | 1–50 kiện, id không trùng (422); mỗi kiện một giao dịch, tuần tự; `failed[].code`: `not_found`, `already_handed_over` (kiểm trước `version`), `version_conflict`, `invalid_transition`, `internal_error` (log `error`, câu chung). `issue` null khi kiện chưa có dòng nào ghép SKU (kiện sàn tới chờ lấy hàng khi chưa ghép) |
@@ -99,7 +116,7 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 
 ## Cho module khác (`index.ts`)
 
-- `syncPlatformPackages` (sales, lúc nhận đơn sàn).
+- `syncPlatformPackages` (sales, lúc nhận đơn sàn). Nhận `alreadyCancelled` trên từng món, trả `cancelledLines` để sales ghi `cancelled_qty` (mục Huỷ dòng).
 - `findPackagesOfOrders`, `PackageSummary`, `ShopRef`, `StatusChange`, `toPackageSummary`, `PackageOrderRef` (sales dựng chi tiết đơn).
 - `settleDeferredHandovers(shopId, countedAt)` → `{ deducted, storedOnly }`: kiện rời kho từ `countedAt` trở đi thì trừ, trước đó thành `before_cutoff`; gọi lại không trừ thêm. Dùng bên trong `settleOpeningStocktake`.
 - `shipLateMappedLines(packageId)` → phiếu `XK` mới: **#237** gọi sau khi gán `variant_id` cho dòng kiện. Kiện chưa rời kho hoặc `before_cutoff` thì không làm gì. Kiện chưa rời kho thì gọi `requestAllocation(variantIds)`.
@@ -132,5 +149,9 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - Tách kiện TikTok (`sku`) chỉ khi kiện là kiện chưa huỷ duy nhất của đơn (D13); gỡ khi thử thật trên shop thử cho thấy sàn nhận nhóm chỉ phủ một phần đơn.
 - Tách kiện `sku` mà bước ghi lỗi sau khi sàn đã tách: app một kiện, sàn hai kiện, lượt kéo không tự báo. Kiện cũ bật Cần xử lý (D14), xử lý tay tới khi có #238; bấm tách lại thì sàn từ chối.
 - Tách kiện xin mã `KH-` trước bước ghi (D15): bước ghi lỗi thì mất số, dãy `KH-` có lỗ (mã kiện không phải chứng từ kế toán).
-- Trigger `package_lines_line_total` không tự xếp hàng (D11, không khoá dòng đơn để tránh vòng khoá với luồng nhận đơn): hai giao dịch cùng ghi dòng kiện của một dòng đơn chỉ đúng khi cùng khoá kiện trước. Đường mới ghi dòng kiện phải khoá kiện (`lockOrderPackages`, `lockPackage`) trước khi ghi. PR 1 chỉ chặn tổng **vượt**; kiểm **bằng** (kèm huỷ dòng) là PR 2 (spec 205 §5.10).
+- Trigger `package_lines_line_total` không tự xếp hàng (D11, không khoá dòng đơn để tránh vòng khoá với luồng nhận đơn): hai giao dịch cùng ghi dòng kiện của một dòng đơn chỉ đúng khi cùng khoá kiện trước. Đường mới ghi dòng kiện, đổi `pending_drop_qty`, hay huỷ kiện phải khoá kiện (`lockOrderPackages`, `lockPackage`, `lockPackingPackage`) trước khi ghi, và ghi `cancelled_qty` (qua luồng nhận đơn) trong cùng giao dịch, không thì commit bị chặn.
+- Kiện `awaiting_pickup` có dòng chờ bỏ chưa mở được (`open` chỉ nhận `packed`): chờ "dỡ kiện về kệ" của #238.
+- Kiện đang `needs_open` vẫn báo sẵn sàng giao và bàn giao được (chưa chặn); khi đó dòng chờ bỏ bị trừ tồn như dòng thường.
+- API kiện chưa trả `pendingDropQty`: kho xem món bị huỷ ở chi tiết đơn (lý do huỷ trên dòng đơn).
+- `open` kiện có một phần dòng chờ bỏ vẫn gọi repack như kiện thường; chưa thử thật trên sàn với gói vừa bị huỷ một món.
 - Chưa làm: FE (199d), mở kiện `awaiting_pickup`, sàn chia lại kiện, thất lạc (#238), route `self-deliver`, gộp kiện sau khi tách.
