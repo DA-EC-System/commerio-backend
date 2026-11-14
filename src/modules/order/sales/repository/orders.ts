@@ -121,6 +121,28 @@ export async function upsertMarketplaceLines(
   return new Map(rows.map((r) => [r.externalLineId ?? '', r.id]));
 }
 
+/** Dòng của đơn đã ghi huỷ đủ (`cancelled_qty = quantity`, spec 205 §5.10). */
+export async function cancelledLineIds(orderId: string): Promise<Set<string>> {
+  const rows = await getDb()
+    .select({ id: orderLines.id })
+    .from(orderLines)
+    .where(and(eq(orderLines.orderId, orderId), sql`${orderLines.cancelledQty} = ${orderLines.quantity}`));
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Ghi huỷ đủ cho các dòng đơn sàn đã huỷ mà fulfillment đã gỡ, đánh dấu chờ bỏ hoặc huỷ cùng kiện (spec 205 §5.10).
+ * Dòng đã ghi thì bỏ qua (kéo lại không tăng `version`). Chỉ luồng nhận đơn gọi; trigger `order_lines_line_total` kiểm
+ * lúc commit.
+ */
+export async function markLinesCancelled(orderLineIds: readonly string[]): Promise<void> {
+  if (!orderLineIds.length) return;
+  await getDb()
+    .update(orderLines)
+    .set({ cancelledQty: sql`${orderLines.quantity}`, version: sql`${orderLines.version} + 1`, updatedAt: sql`now()` })
+    .where(and(inArray(orderLines.id, [...new Set(orderLineIds)]), sql`${orderLines.cancelledQty} <> ${orderLines.quantity}`));
+}
+
 /** Số tiếp theo của bộ đếm mã (`order`, `package`) trong công ty của giao dịch. */
 export async function takeNextNumber(docType: string): Promise<number> {
   const [row] = await getDb()

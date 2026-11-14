@@ -6,8 +6,10 @@ import { logger } from '../../../../shared/logger.ts';
 import { type PackageEvent, type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
 import type { OrderFlag, OrderStatus } from '../domain/order.ts';
 import {
+  cancelledLineIds,
   insertMarketplaceOrder,
   lockMarketplaceOrder,
+  markLinesCancelled,
   type MarketplaceOrderRow,
   takeNextNumber,
   updateOrder,
@@ -201,6 +203,8 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       walletCredits: money2(l.info.walletCredits, 'walletCredits'),
     })),
   );
+  // Dòng đã ghi huỷ đủ ở lượt trước (spec 205 D18): fulfillment bỏ qua món đã gỡ khỏi kiện, không lập kiện mới cho nó.
+  const done = await cancelledLineIds(orderId);
   const packages = await syncPlatformPackages(
     {
       id: orderId,
@@ -213,6 +217,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     },
     o.lines.map((l) => ({
       orderLineId: lineIds.get(l.externalLineId)!,
+      alreadyCancelled: done.has(lineIds.get(l.externalLineId)!),
       variantId: l.variantId,
       quantity: 1,
       packageCode: l.packageCode,
@@ -223,6 +228,9 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     })),
     nextPackageCode,
   );
+  // Món sàn huỷ mà kiện chưa rời kho (gỡ, chờ bỏ, huỷ cùng kiện): ghi số đã huỷ trong cùng giao dịch; trigger kiểm bằng
+  // lúc commit. Chỉ luồng này ghi `cancelled_qty`, không suy ngược từ dòng kiện (spec 205 §5.10).
+  await markLinesCancelled(packages.cancelledLines);
 
   const next = { ...row };
   if (next.status === 'unpaid' && o.paid) {
