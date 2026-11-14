@@ -41,7 +41,9 @@ export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop
 // Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
 export { ingestMarketplaceOrder, type PlatformOrder } from './service/ingest.ts';
 export type { SalesContext } from './service/orders.ts';
-export { orderRefsOf } from './service/package-orders.ts';
+export { nextPackageCode, orderRefsOf } from './service/package-orders.ts';
+// Chi tiết đơn cho route tách kiện của fulfillment (spec 205 D9), tiêm qua `FulfillmentContext.orderViewOf`.
+export { getOrder } from './service/orders.ts';
 export { completeDueOrdersOnce } from './service/complete.ts';
 // Yêu cầu trả (#202, Documents/21 §11.3).
 export { hasOpenReturns } from './service/return-boundary.ts';

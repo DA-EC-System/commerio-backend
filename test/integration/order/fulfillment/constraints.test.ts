@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import type pg from 'pg';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createVariant } from '../../helpers/catalog.ts';
+import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { asCompany } from '../../helpers/rls.ts';
+import { seedPackage } from './helpers.ts';
 
 const db = () => testPool();
 
@@ -80,5 +85,84 @@ describe('ràng buộc dòng kiện', () => {
     await expect(insertLine(c, p, { variant_id: null, reserved_qty: 3 })).rejects.toThrow(/"package_lines_unmapped"/);
     await expect(insertLine(c, p, { stock_deducted: true })).rejects.toThrow(/"package_lines_deducted_cost"/);
     await expect(insertLine(c, p, { stock_deducted: true, unit_cost: '1000' })).resolves.toBeDefined();
+  });
+});
+
+// Bất biến dòng kiện (spec 205 D1, D11, §5.1; Documents/25 §8): tổng một dòng đơn trên các kiện chưa huỷ không vượt số
+// lượng dòng đơn. Constraint trigger hoãn tới commit, nên mỗi ca tự mở giao dịch.
+describe('bất biến dòng kiện', () => {
+  let companyId: string;
+  let white: string;
+  beforeAll(async () => {
+    ({ companyId } = await createCompany());
+    white = (await createVariant(companyId)).variantId;
+  });
+
+  /** Một đơn một dòng (áo trắng ×1) trong một kiện `backordered`; trả kiện, đơn và dòng đơn. */
+  async function seeded() {
+    const { packageId, orderId, lineIds } = await seedPackage(companyId, { status: 'backordered', lines: [{ variantId: white, quantity: 1 }] });
+    const { rows } = await db().query<{ order_line_id: string }>('select order_line_id from "order".package_lines where id = $1', [lineIds[0]]);
+    return { packageId, orderId, orderLineId: rows[0]!.order_line_id };
+  }
+
+  async function inTransaction(fn: (c: pg.PoolClient) => Promise<unknown>) {
+    const c = await db().connect();
+    try {
+      await c.query('begin');
+      await fn(c);
+      return await c.query('commit');
+    } finally {
+      await c.query('rollback').catch(() => undefined);
+      c.release();
+    }
+  }
+
+  const secondPackage = async (c: pg.PoolClient, orderId: string, status: string) => (await c.query<{ id: string }>(
+    `insert into "order".packages (company_id, code, order_id, status) values ($1, $2, $3, $4) returning id`,
+    [companyId, `KH-T-${randomUUID().slice(0, 8)}`, orderId, status],
+  )).rows[0]!.id;
+  const duplicateLine = (c: pg.PoolClient, packageId: string, orderLineId: string) => c.query(
+    `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity) values ($1, $2, $3, $4, 1)`,
+    [companyId, packageId, orderLineId, white],
+  );
+
+  it('D2-S17 AC13: dòng đơn nằm trong hai kiện chưa huỷ, tổng vượt số lượng, thì commit bị chặn', async () => {
+    const { orderId, orderLineId } = await seeded();
+
+    await expect(inTransaction(async (c) => duplicateLine(c, await secondPackage(c, orderId, 'reserved'), orderLineId)))
+      .rejects.toMatchObject({ code: '23514', constraint: 'package_lines_line_total' });
+  });
+
+  it('kiện đã huỷ không tính vào tổng', async () => {
+    const { orderId, orderLineId } = await seeded();
+
+    await expect(inTransaction(async (c) => duplicateLine(c, await secondPackage(c, orderId, 'cancelled'), orderLineId))).resolves.toBeDefined();
+  });
+
+  it('trạng thái trung gian trong giao dịch được phép, chỉ kiểm lúc commit', async () => {
+    const { packageId, orderId, orderLineId } = await seeded();
+
+    await expect(inTransaction(async (c) => {
+      await duplicateLine(c, await secondPackage(c, orderId, 'reserved'), orderLineId);
+      await c.query(`update "order".packages set status = 'cancelled' where id = $1`, [packageId]);
+    })).resolves.toBeDefined();
+  });
+
+  it('dòng kiện không có dòng đơn thì bỏ qua', async () => {
+    const p = (await insertPackage(companyId, {})).rows[0]!.id;
+
+    await expect(inTransaction((c) => c.query(
+      `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity) values ($1, $2, $3, $4, 5)`,
+      [companyId, p, randomUUID(), white],
+    ))).resolves.toBeDefined();
+  });
+
+  it('chạy dưới commerio_app vẫn kiểm được', async () => {
+    const { packageId, orderLineId } = await seeded();
+
+    await asCompany(companyId, async (c) => {
+      await c.query('set constraints "order".package_lines_line_total immediate');
+      await expect(duplicateLine(c, packageId, orderLineId)).rejects.toMatchObject({ code: '23514', constraint: 'package_lines_line_total' });
+    });
   });
 });

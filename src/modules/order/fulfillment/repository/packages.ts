@@ -24,6 +24,8 @@ export async function insertPackage(input: {
   handoverSource?: HandoverSource;
   pickupConfirmedAt?: Date;
   deliveredAt?: Date;
+  /** Kiện tách từ kiện `reserved` mang lúc giữ của kiện cũ (spec 205 D4). */
+  reservedAt?: Date | null;
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
     .insert(packages)
