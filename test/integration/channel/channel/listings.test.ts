@@ -49,10 +49,22 @@ const fresh = (sku: string) => {
   return v;
 };
 
+/** Ảnh catalog của sản phẩm chung (#303); sản phẩm không có trong Map là chưa có ảnh. */
+const CATALOG = ['https://files.commerio.test/a.jpg', 'https://files.commerio.test/b.jpg'];
+const catalogImages = new Map<string, string[]>([[productId, CATALOG]]);
+const productImageUrls = vi.fn(async (ids: readonly string[], max: number) =>
+  new Map(
+    ids.flatMap((id) => {
+      const urls = catalogImages.get(id);
+      return urls?.length ? [[id, urls.slice(0, max)] as const] : [];
+    }),
+  ),
+);
 const port = {
   variants: async (ids?: readonly string[]) => all.filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, id === noPrice.id ? null : new Decimal(150000)])),
   availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
+  productImageUrls,
 };
 setProductPort(port);
 
@@ -276,6 +288,15 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(items.map((i) => i.sku)).not.toContain('CMR-ARCHIVED');
     expect(items.find((i) => i.sku === 'CMR-OK')).toMatchObject({ price: 150000, listing: { status: 'under_review', pushError: null } });
     expect(items.find((i) => i.sku === 'CMR-NOPRICE')).toMatchObject({ price: null, listing: null });
+  });
+
+  it('GET listings: thumbnailUrl là ảnh đại diện catalog, null khi sản phẩm không có ảnh (#303)', async () => {
+    const bare = variant(`CMR-BARE-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
+    all.push(bare);
+    const res = await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`));
+    const items = ListingList.parse(res.body).items;
+    expect(items.find((i) => i.sku === 'CMR-OK')!.thumbnailUrl).toBe(CATALOG[0]);
+    expect(items.find((i) => i.variantId === bare.id)!.thumbnailUrl).toBeNull();
   });
 
   it('kiểm đầu vào và quyền', async () => {

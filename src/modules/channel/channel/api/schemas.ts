@@ -384,7 +384,7 @@ export const ListingRow = z
     productName: z.string(),
     sku: z.string(),
     attributesLabel: z.string(),
-    thumbnailUrl: z.null(),
+    thumbnailUrl: z.string().nullable().meta({ description: 'Ảnh đại diện catalog của sản phẩm; null khi sản phẩm chưa có ảnh (#303)' }),
     price: z.number().int().nullable().meta({ description: 'Giá sẽ đẩy: giá chuẩn của SKU' }),
     priceSource: z.enum(['standard']).nullable(),
     listing: ChannelListing.nullable(),

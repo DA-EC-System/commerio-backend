@@ -59,8 +59,8 @@ export interface ListingRowView {
   productName: string;
   sku: string;
   attributesLabel: string;
-  /** Catalog chưa lưu ảnh (#104 Q1). */
-  thumbnailUrl: null;
+  /** Ảnh đại diện catalog của sản phẩm (#303); null khi chưa có ảnh. */
+  thumbnailUrl: string | null;
   price: number | null;
   priceSource: 'standard' | null;
   listing: ChannelListing | null;
@@ -121,6 +121,8 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const shop = await ownShop(shopId);
   const variants = (await port.variants()).filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
+  // Chỉ ảnh đầu (ảnh đại diện), một lần cho mọi sản phẩm.
+  const thumbnails = await port.productImageUrls([...new Set(variants.map((v) => v.productId))], 1);
   const rows = await currentListingRows(shop.id);
   const names = await requesterNames(rows);
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
@@ -134,7 +136,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         productName: v.productName,
         sku: v.sku,
         attributesLabel: v.attributesLabel,
-        thumbnailUrl: null,
+        thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
         price: price === null ? null : price.toNumber(),
         priceSource: price === null ? null : 'standard',
         listing: listing ? toListing(listing, names) : null,

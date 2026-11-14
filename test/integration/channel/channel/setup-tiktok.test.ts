@@ -96,6 +96,7 @@ beforeAll(async () => {
   setProductPort({
     variants: async (ids) => [mugWhite, mugBlack].filter((v) => !ids || ids.includes(v.id)),
     standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+    productImageUrls: async () => new Map<string, string[]>(),
     availableOf: async (ids) => new Map(ids.map((id) => [id, 9])),
   });
   company = await createCompany({ optionalModules: ['channel'] });

@@ -24,6 +24,7 @@ const HOUR = 3_600_000;
 const port = {
   variants: async () => [],
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, new Decimal(1000)])),
+  productImageUrls: async () => new Map<string, string[]>(),
   availableOf: async () => new Map<string, number>(),
 };
 setProductPort(port);

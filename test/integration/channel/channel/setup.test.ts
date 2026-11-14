@@ -34,6 +34,7 @@ const notOnPlatform = variant('CMR-CHUA-LEN');
 setProductPort({
   variants: async (ids) => [onPlatform, notOnPlatform].filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+  productImageUrls: async () => new Map<string, string[]>(),
   availableOf: async (ids) => new Map(ids.map((id) => [id, 9])),
 });
 
