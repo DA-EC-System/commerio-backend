@@ -1,0 +1,4 @@
+ALTER TABLE "order"."packages" DROP CONSTRAINT "packages_lost_second_person";--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_lost_source" CHECK ("order"."packages"."lost_source" is null or "order"."packages"."lost_source" in ('user', 'marketplace'));--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_lost_confirmed" CHECK ("order"."packages"."status" <> 'lost' or "order"."packages"."lost_source" is not distinct from 'marketplace' or "order"."packages"."lost_confirmed_by" is not null);--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_lost_second_person" CHECK ("order"."packages"."lost_confirmed_by" is null or "order"."packages"."lost_confirmed_by" is distinct from "order"."packages"."lost_reported_by" or "order"."packages"."lost_self_approved");

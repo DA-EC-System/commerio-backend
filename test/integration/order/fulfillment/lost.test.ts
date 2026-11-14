@@ -323,6 +323,28 @@ describe('POST /fulfillment/packages/:id/report-lost, confirm-lost (spec #238 §
     expect(await lostEvents(p.orderId)).toHaveLength(1);
   });
 
+  it('đơn đang huỷ, kiện packed chờ mở để huỷ không thấy khi dỡ: A báo, B xác nhận → 200, kiện lost, tồn trừ một lần (spec #238 mục 10)', async () => {
+    const p = await seedPackage(company.companyId, {
+      status: 'packed',
+      needsOpen: true,
+      cancelling: true,
+      lines: [{ variantId, quantity: 2, reserved: true }],
+    });
+    expect((await report(p.packageId)).status).toBe(200);
+    const before = await stockOfVariant(company.companyId, variantId);
+
+    const res = await confirm(p.packageId);
+
+    expect(res.status).toBe(200);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'lost', needs_open: false, open_purpose: null, handover_source: 'scan' });
+    expect(await stockOfVariant(company.companyId, variantId)).toMatchObject({ onHand: before.onHand - 2, reserved: before.reserved - 2 });
+    expect(await outboxOf(p.orderId, 'fulfillment.package_shipped')).toHaveLength(1);
+    // 25 §8.2: có kiện hoá ra đã bàn giao thì đơn không sang `cancelled`. Cờ của đơn (`cancelling` còn bật,
+    // `platform_cancelled` chỉ bật ở lượt kéo đơn sau) lệch §8.2, chưa khẳng định: chờ Khang quyết phần sales.
+    const { rows } = await testPool().query<{ status: string }>('select status from "order".orders where id = $1', [p.orderId]);
+    expect(rows[0]!.status).toBe('processing');
+  });
+
   it('kiện công ty khác và id sai dạng trả 404', async () => {
     const other = await createCompany();
     const foreign = await inTransit(other.companyId, (await createVariant(other.companyId)).variantId);
