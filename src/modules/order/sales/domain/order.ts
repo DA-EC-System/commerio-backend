@@ -16,7 +16,11 @@ export type OrderFlag =
   | 'due_soon'
   | 'return_requested'
   | 'cod_mismatch'
-  | 'shop_disconnected';
+  | 'shop_disconnected'
+  | 'payment_mismatch';
+/** Trạng thái thanh toán của đơn theo sổ tiền của finance (Documents/21 §21.2, #234); không chặn trạng thái đơn. */
+export const PAYMENT_STATUSES = ['none', 'pending', 'settled', 'mismatch', 'resolved'] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 export type OrderStage =
   | 'awaiting_payment'
   | 'awaiting_confirmation'

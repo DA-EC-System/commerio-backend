@@ -1,15 +1,17 @@
 // Sổ tiền theo đơn (#116; Documents/21 §21.1, §11.2; 25 §10.1, §10.2, §10.4). Module tiền chỉ nghe sự kiện: các hàm
 // `record…` nhận payload của sự kiện (fulfillment, sales, inventory, purchasing) và ghi dòng, mỗi nguồn một lần.
 // Consumer `finance-ledger` (`registerLedgerConsumers`, #228) gọi chúng trong giao dịch của khung sự kiện.
+import { Decimal } from 'decimal.js';
 import { type EventEnvelope, type EventPayload, type EventType, registerConsumer } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
-import { addDays, vnDate } from '../domain/config-version.ts';
+import { addDays, outputVatPctOf, vnDate } from '../domain/config-version.ts';
 import {
   costMissingOf,
   isEstimateLine,
   NON_CASH,
   type Draft,
   type LedgerKind,
+  type NetLine,
   postDelivered,
   postInspected,
   postRefund,
@@ -17,6 +19,8 @@ import {
   postSupplierRefund,
   profitOf,
   taxWarnings,
+  netRevenuePortions,
+  outputVatOf,
 } from '../domain/ledger.ts';
 import {
   entriesOfOrder,
@@ -35,6 +39,7 @@ import {
   unpairedActual,
 } from '../repository/ledger.ts';
 import { bankMatchesOf } from '../repository/ledger.ts';
+import { lockCellsShared } from '../repository/config-versions.ts';
 import { findOrderSettlement } from '../repository/order-settlements.ts';
 import { getEffectiveConfig } from './config-versions.ts';
 import { markDelivered } from './order-settlement-state.ts';
@@ -119,6 +124,9 @@ const dayOf = (iso: string) => vnDate(new Date(iso));
 export function recordPackageDelivered(companyId: string, e: PackageDelivered): Promise<number> {
   return withCompany(companyId, async () => {
     const day = dayOf(e.deliveredAt);
+    // Khoá chia sẻ các ô cấu hình đọc dưới đây: phiên bản đang sang `active` (khoá riêng) chờ kiện này ghi xong rồi mới
+    // quét hồi tố, kiện tới sau đọc bản mới (#230).
+    await lockCellsShared([['fee', e.shopId], ['tax_regime', null], ['tax_rules', null]]);
     const configs = {
       fee: await getEffectiveConfig('fee', e.shopId, day),
       regime: await getEffectiveConfig('tax_regime', null, day),
@@ -152,6 +160,8 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
 export function recordPackageReturned(companyId: string, e: PackageReturned): Promise<number> {
   return withCompany(companyId, async () => {
     const day = dayOf(e.returnedAt);
+    // Như kiện giao: khoá chia sẻ ô phí để bản phí đang sang `active` không quét hồi tố sót kiện hoàn này (#230).
+    await lockCellsShared([['fee', e.shopId]]);
     const drafts = postReturned(await getEffectiveConfig('fee', e.shopId, day));
     const target = { source: { type: 'package_return' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
     return post(companyId, { ...target, occurredOn: day }, drafts);
@@ -304,8 +314,12 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
     const rows = await entriesOfOrder(orderId);
     const orders = await ordersOf([orderId]);
     if (!rows.length && !orders.has(orderId)) throw notFound('đơn');
-    // Dòng đã thay theo `isReplaced` (repository): cùng luật với lãi theo danh sách đơn, tổng tiền ở sàn.
-    const p = profitOf(rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replaced })));
+    // Dòng đã thay theo `isReplaced` (repository, #231: bảng nối `ledger_replacements` và thay theo nguồn): cùng luật
+    // với lãi theo danh sách đơn, tổng tiền ở sàn. GTGT đầu ra của doanh nghiệp tính trên các dòng còn hiệu lực (#230).
+    const p = profitOf(
+      rows.map((r) => ({ kind: r.kind, amount: r.amount, isEstimate: r.isEstimate, replaced: r.replaced })),
+      await outputVatOfLines(rows.filter((r) => !r.replaced), rows),
+    );
     const visible = canSeeCost ? rows : rows.filter((r) => r.kind !== 'cogs' && r.kind !== 'cogs_reversal');
     return {
       net: p.net,
@@ -316,6 +330,30 @@ export function orderProfit(companyId: string, orderId: string, canSeeCost: bool
       lines: await lineViews(visible, orders),
     };
   });
+}
+
+/**
+ * GTGT đầu ra của các dòng doanh thu thuần còn tính (`live`), theo thuế suất của ngày giao (`netRevenuePortions`;
+ * `estimates` gồm mọi dòng doanh thu ước tính của các đơn đó). Gọi trong `withCompany` của bên gọi.
+ */
+export async function outputVatOfLines(live: readonly NetLine[], estimates: readonly NetLine[]): Promise<Decimal> {
+  const portions = netRevenuePortions(live, estimates);
+  const pct = await outputVatByDay(portions.map((x) => x.day));
+  return portions.reduce((sum, x) => sum.plus(outputVatOf({ kind: x.kind, amount: x.amount, outputVatPct: pct.get(x.day) ?? 0 })), new Decimal(0));
+}
+
+/**
+ * Thuế suất GTGT đầu ra áp ở từng ngày (25 §10.2, §10.4: chọn phiên bản loại hình, quy tắc thuế theo ngày phát sinh).
+ * Gọi trong `withCompany` của bên gọi. Phiên bản hồi tố đã áp dụng thì lãi đọc lại theo bản mới, không cần dòng sổ.
+ */
+async function outputVatByDay(days: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (const day of new Set(days)) {
+    const regime = await getEffectiveConfig('tax_regime', null, day);
+    const rules = await getEffectiveConfig('tax_rules', null, day);
+    out.set(day, outputVatPctOf(regime?.payload, rules?.payload));
+  }
+  return out;
 }
 
 /** `GET /finance/tax-warnings` (25 §10.4): luỹ kế doanh thu năm so với mốc của quy tắc thuế đang áp, cảnh báo từ 90%. */

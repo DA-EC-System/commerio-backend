@@ -15,7 +15,7 @@ describe('marginPct', () => {
 });
 
 describe('appliedTimeline', () => {
-  const v = (id: string, status: 'active' | 'expired' | 'scheduled', effectiveFrom: string, effectiveTo: string | null, supersedesId: string | null = null) => ({
+  const v = (id: string, status: 'active' | 'superseded' | 'scheduled', effectiveFrom: string, effectiveTo: string | null, supersedesId: string | null = null) => ({
     id,
     status,
     effectiveFrom,
@@ -23,7 +23,7 @@ describe('appliedTimeline', () => {
     supersedesId,
   });
   it('chỉ bản đã áp, bỏ bản bị sửa lỗi thay, mới trước; khớp pickEffective', () => {
-    const versions = [v('a', 'expired', '2026-01-01', '2026-05-31'), v('b', 'active', '2026-06-01', null), v('c', 'scheduled', '2026-12-01', null), v('d', 'active', '2026-01-01', '2026-05-31', 'a')];
+    const versions = [v('a', 'superseded', '2026-01-01', '2026-05-31'), v('b', 'active', '2026-06-01', null), v('c', 'scheduled', '2026-12-01', null), v('d', 'active', '2026-01-01', '2026-05-31', 'a')];
     expect(appliedTimeline(versions).map((x) => x.id)).toEqual(['b', 'd']);
     expect(pickEffective(versions, '2026-03-01')?.id).toBe('d');
     expect(pickEffective(versions, '2026-07-01')?.id).toBe('b');

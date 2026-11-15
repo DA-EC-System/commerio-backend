@@ -20,7 +20,7 @@ export interface OrderProfitsQuery {
 
 /** Mốc lãi tối thiểu (`min_margin`, cấp công ty) đã áp dụng, để chọn bản theo ngày giao của từng đơn trong SQL. */
 async function marginSegments(): Promise<MarginSegment[]> {
-  const versions = appliedTimeline(await findCell('min_margin', null, ['active', 'expired']));
+  const versions = appliedTimeline(await findCell('min_margin', null, ['active', 'superseded']));
   return versions.map((v) => ({ from: v.effectiveFrom, to: v.effectiveTo, pct: (v.payload as ConfigPayload<'min_margin'>).pct }));
 }
 

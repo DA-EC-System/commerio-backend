@@ -8,6 +8,7 @@ import {
   hasInboxData,
   marketplaceCancelOrder,
   marketplaceCancelReasons,
+  marketplaceCancelRejectReasons,
   marketplaceCarriers,
   marketplaceDecideCancel,
   marketplacePack,
@@ -24,7 +25,7 @@ import {
   shopsToSettle,
 } from './modules/channel/index.ts';
 import { loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
-import type { FinanceContext } from './modules/finance/index.ts';
+import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
 import type { FulfillmentContext, SalesContext } from './modules/order/index.ts';
 import { hasPurchasingData } from './modules/product/index.ts';
@@ -34,7 +35,7 @@ import type { ModuleContext } from './shared/module.ts';
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
-  Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns'>> &
+  Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns' | 'paymentStatusOf'>> &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData'>>;
 
@@ -46,9 +47,14 @@ export function createModuleContext(): AppContext {
     // #117: finance kéo quyết toán qua token gian hàng của channel.
     settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
     // #105 PR 2: sales (lớp dưới) huỷ đơn, trả lời khách xin huỷ trên sàn qua token gian hàng của channel.
-    marketplaceOrders: { cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel },
+    marketplaceOrders: {
+      cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel,
+      cancelRejectReasons: marketplaceCancelRejectReasons,
+    },
     // #202: sales xử lý yêu cầu trả trên sàn (chấp nhận, từ chối, hoàn tiền, báo đã nhận) qua token của channel.
     marketplaceReturns,
+    // #234: sales (lớp dưới) trả `paymentStatus` của đơn theo sổ tiền của finance, không đọc bảng finance.
+    paymentStatusOf: paymentStatusesOf,
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
     // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.
