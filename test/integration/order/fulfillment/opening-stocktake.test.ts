@@ -3,7 +3,6 @@ import { sql } from 'drizzle-orm';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { settleOpeningStocktake } from '#src/modules/order/index.ts';
-import { DISMANTLE_NOTE } from '#src/modules/order/fulfillment/service/allocation.ts';
 import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -62,11 +61,11 @@ describe('settleOpeningStocktake: phiếu kiểm kê đầu kỳ ghi sổ (spec 
     });
   });
 
-  it('AC12: kiện đã đóng không giữ được → Cần xử lý với DISMANTLE_NOTE', async () => {
+  it('AC12: kiện đã đóng không giữ được → Cần mở với mục đích stocktake (spec #238 §5.5)', async () => {
     const s = await setup(1);
     const p = await seedPackage(s.companyId, { status: 'packed', shopId: s.shopId, lines: [{ variantId: s.A, quantity: 2 }] });
     await exitAwaiting(s);
-    expect(await packageRow(p.packageId)).toMatchObject({ status: 'packed', needs_attention: true, flag_note: DISMANTLE_NOTE });
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'stocktake', needs_attention: false });
   });
 
   it('AC13: không có gì để làm vẫn phát cause, variantIds rỗng; gọi lần hai không phiếu XK mới, không giữ thêm, phát lại cause', async () => {

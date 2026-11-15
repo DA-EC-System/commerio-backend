@@ -90,15 +90,17 @@ export function planReclaim<T extends ReclaimCandidate>(deficits: ReadonlyMap<st
 export interface SealedHolder {
   id: string;
   needsAttention: boolean;
+  /** Kiện đang chờ mở (vì bất kỳ mục đích nào). */
+  needsOpen: boolean;
   /** Phần kiện đang giữ thật (dòng có `reserved_qty`). */
   lines: StockLine[];
 }
 
 /**
  * Lượt do phiếu kiểm kê (25 §7.4, gạch cuối "Khi tồn thực xuống dưới đang giữ"): lấy lại hết kiện `reserved` mà tồn thực
- * vẫn nhỏ hơn đang giữ thì kho kiểm lại các kiện đã đóng đang giữ SKU đó. `deficits`: SKU → đang giữ − tồn thực sau khi
- * lấy lại. Kiện đã bật Cần xử lý giữ nguyên (không đè ghi chú khác).
+ * vẫn nhỏ hơn đang giữ thì kho mở các kiện đã đóng đang giữ SKU đó (cờ Cần mở `stocktake`, spec #238 §5.5). `deficits`:
+ * SKU → đang giữ − tồn thực sau khi lấy lại. Kiện đang chờ mở giữ mục đích cũ; Cần xử lý là cờ độc lập, không xét.
  */
 export function planDismantle<T extends SealedHolder>(sealed: readonly T[], deficits: ReadonlyMap<string, number>): T[] {
-  return sealed.filter((p) => !p.needsAttention && p.lines.some((l) => (deficits.get(l.variantId) ?? 0) > 0));
+  return sealed.filter((p) => !p.needsOpen && p.lines.some((l) => (deficits.get(l.variantId) ?? 0) > 0));
 }

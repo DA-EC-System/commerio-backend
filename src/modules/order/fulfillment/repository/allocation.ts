@@ -2,9 +2,9 @@
 // schema `order` nhưng fulfillment không import sales. Khoá kiện theo `code` tăng dần (cùng `lockDeferredPackages`).
 import { and, asc, eq, inArray, notInArray, or, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import type { AllocationCandidate, ReclaimCandidate, SealedHolder } from '../domain/allocation.ts';
+import type { AllocationCandidate, ReclaimCandidate, SealedHolder, StockLine } from '../domain/allocation.ts';
 import { planLinesOf } from './packages.ts';
-import { packageLines, packages } from './schema.ts';
+import { type OpenPurpose, packageLines, packages } from './schema.ts';
 
 /** Hai lượt phân hàng của cùng công ty chạy nối nhau, tới hết giao dịch. */
 export async function takeAllocationLock(companyId: string): Promise<void> {
@@ -18,12 +18,15 @@ const orderCreatedAt = sql<Date>`(select o.created_at from "order".orders o wher
 const hasVariant = (variantIds: readonly string[]) =>
   sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${inArray(packageLines.variantId, [...variantIds])})`;
 
-/** Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). */
+/**
+ * Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). Kiện chờ mở vì kiểm kê (`stocktake`)
+ * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5).
+ */
 const candidateWhere = and(
   sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
        and not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.reservedQty} > 0)))`,
   sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.variantId} is null)`,
-  eq(packages.needsOpen, false),
+  sql`(${packages.needsOpen} = false or ${packages.openPurpose} = 'stocktake')`,
   sql`${orderStatus} <> 'cancelled'`,
 );
 
@@ -65,6 +68,11 @@ export async function lockReclaimCandidates(variantIds: readonly string[]): Prom
   return rows.map((r) => ({ ...r, orderStatus: r.orderStatus as 'unpaid' | 'processing', lines: heldOf(lines.get(r.id)!) }));
 }
 
+/** Kiện đang giữ thật (dòng có `reserved_qty`) một SKU thuộc `variantIds`. */
+const holdsVariant = (variantIds: readonly string[]) =>
+  sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
+       and ${packageLines.reservedQty} > 0 and ${inArray(packageLines.variantId, [...variantIds])})`;
+
 /**
  * Kiện đã đóng (`packed`, `awaiting_pickup`) đang giữ một SKU thuộc `variantIds`; khoá `FOR UPDATE` cùng lúc khoá ứng viên
  * lấy lại, trước khi đổi tồn (thứ tự khoá spec 199b §5.10). Đơn huỷ vẫn lấy: hàng vẫn nằm trong kiện.
@@ -72,19 +80,36 @@ export async function lockReclaimCandidates(variantIds: readonly string[]): Prom
 export async function lockSealedHolders(variantIds: readonly string[]): Promise<SealedHolder[]> {
   if (!variantIds.length) return [];
   const rows = await getDb()
-    .select({ id: packages.id, needsAttention: packages.needsAttention })
+    .select({ id: packages.id, needsAttention: packages.needsAttention, needsOpen: packages.needsOpen })
+    .from(packages)
+    .where(and(inArray(packages.status, ['packed', 'awaiting_pickup']), holdsVariant(variantIds)))
+    .orderBy(asc(packages.code))
+    .for('update');
+  const lines = await planLinesOf(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, lines: heldOf(lines.get(r.id)!) }));
+}
+
+/**
+ * Kiện đã đóng đang chờ mở vì kiểm kê (`open_purpose = 'stocktake'`), đang giữ một SKU thuộc `variantIds`; khoá
+ * `FOR UPDATE`, theo `code`. Lượt phân hàng xét tự gỡ cờ khi tồn đã đủ (spec #238 §5.5). `lines`: phần đang giữ thật.
+ */
+export async function lockStocktakeFlagged(variantIds: readonly string[]): Promise<{ id: string; lines: StockLine[] }[]> {
+  if (!variantIds.length) return [];
+  const rows = await getDb()
+    .select({ id: packages.id })
     .from(packages)
     .where(
       and(
         inArray(packages.status, ['packed', 'awaiting_pickup']),
-        sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
-             and ${packageLines.reservedQty} > 0 and ${inArray(packageLines.variantId, [...variantIds])})`,
+        eq(packages.needsOpen, true),
+        eq(packages.openPurpose, 'stocktake'),
+        holdsVariant(variantIds),
       ),
     )
     .orderBy(asc(packages.code))
     .for('update');
   const lines = await planLinesOf(rows.map((r) => r.id));
-  return rows.map((r) => ({ ...r, lines: heldOf(lines.get(r.id)!) }));
+  return rows.map((r) => ({ id: r.id, lines: heldOf(lines.get(r.id)!) }));
 }
 
 export type LockedAllocationCandidate = AllocationCandidate & {
@@ -92,6 +117,8 @@ export type LockedAllocationCandidate = AllocationCandidate & {
   shopId: string | null;
   needsAttention: boolean;
   flagNote: string | null;
+  needsOpen: boolean;
+  openPurpose: OpenPurpose | null;
   lineIds: string[];
 };
 
@@ -121,6 +148,8 @@ export async function lockAllocationCandidates(
       shopId: packages.shopId,
       needsAttention: packages.needsAttention,
       flagNote: packages.flagNote,
+      needsOpen: packages.needsOpen,
+      openPurpose: packages.openPurpose,
       orderCreatedAt,
     })
     .from(packages)

@@ -21,7 +21,13 @@ export const packageStatus = fulfillmentSchema.enum('package_status', [
   'lost',
   'cancelled',
 ]);
-export const openPurpose = fulfillmentSchema.enum('open_purpose', ['cancel', 'edit', 'resplit']);
+/**
+ * Vì sao kiện đã đóng chờ mở: `cancel` (đơn huỷ), `edit`, `resplit` (sàn chia lại kiện), `stocktake` (phiếu kiểm kê đếm
+ * thấp hơn hàng trong kiện, spec #238 §5.5). Giá trị mới thêm bằng migration riêng: PostgreSQL không cho dùng giá trị
+ * enum mới trong chính giao dịch thêm nó, nên không migration nào được ghi giá trị đó.
+ */
+export const openPurpose = fulfillmentSchema.enum('open_purpose', ['cancel', 'edit', 'resplit', 'stocktake']);
+export type OpenPurpose = (typeof openPurpose.enumValues)[number];
 /**
  * Ai đưa kiện vào nhóm rời kho (spec 199a §5.1): `scan` kho quét, `marketplace` sàn báo (kể cả nhảy cóc), `forced`
  * bàn giao bắt buộc khi thiếu tồn, `before_cutoff` rời kho trước mốc kéo đơn (chỉ lưu, không trừ tồn).

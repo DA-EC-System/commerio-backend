@@ -44,7 +44,9 @@ export const PackageSummary = z
     notices: z
       .array(z.object({ code: z.literal('not_implemented'), issue: z.string(), owner: z.string(), message: z.string() }).strict())
       .meta({ description: 'Việc chạy ngầm chưa làm được vì chờ issue khác, vd giữ hàng khi `reserve` chờ commerio-backend#206 (21 §18.7.9). Rỗng khi không có' }),
-    openPurpose: z.enum(['cancel', 'edit', 'resplit']).nullable(),
+    openPurpose: z.enum(['cancel', 'edit', 'resplit', 'stocktake']).nullable().meta({
+      description: 'Vì sao kiện chờ mở; `stocktake`: phiếu kiểm kê đếm thấp hơn hàng trong kiện (#238)',
+    }),
     selfDelivery: z.boolean(),
     paymentMethod: z.enum(['prepaid', 'cod']).nullable(),
     paymentStatus: z.string().nullable().meta({ description: 'Chưa có: luôn null tới khi có trạng thái tiền theo đơn tay' }),

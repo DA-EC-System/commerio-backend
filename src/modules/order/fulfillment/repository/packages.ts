@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { canReportLost, HANDED_OVER, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
-import { type PackageNotice, packageLines, packages } from './schema.ts';
+import { type OpenPurpose, type PackageNotice, packageLines, packages } from './schema.ts';
 
 /** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
 export interface PackageShipping {
@@ -94,7 +94,7 @@ export async function updatePackage(
     packedBy: string | null;
     packedAt: Date | null;
     needsOpen: boolean;
-    openPurpose: 'cancel' | 'edit' | 'resplit' | null;
+    openPurpose: OpenPurpose | null;
     needsAttention: boolean;
     flagNote: string | null;
     notices: PackageNotice[];

@@ -45,6 +45,8 @@ export async function seedPackage(
     manual?: boolean;
     fallbackVariantId?: string;
     needsOpen?: boolean;
+    /** Mục đích mở khi `needsOpen` (mặc định `cancel`). */
+    openPurpose?: 'cancel' | 'edit' | 'resplit' | 'stocktake';
     /** Mặc định: lúc seed nếu có dòng `reserved`, null nếu không. */
     reservedAt?: Date | null;
   },
@@ -88,7 +90,7 @@ export async function seedPackage(
       p.shipBy ?? null,
       p.trackingCode ?? null,
       p.needsOpen ?? false,
-      p.needsOpen ? 'cancel' : null,
+      p.needsOpen ? (p.openPurpose ?? 'cancel') : null,
       p.reservedAt !== undefined ? p.reservedAt : p.lines.some((l) => l.reserved) ? new Date() : null,
       p.platformPackageCode ?? null,
       p.selfDelivery ?? false,
