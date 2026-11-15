@@ -5,6 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import type { PackageTab } from '../domain/package.ts';
+import type { SplitLevel } from '../domain/split.ts';
 import { countPackageTabs, findPackagePage, findPackagesByIds, type PackageFilter } from '../repository/package-list.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
 import { type PackageOrderRef, toPackageSummary } from './views.ts';
@@ -18,8 +19,22 @@ export interface FulfillmentContext extends ModuleContext {
   readonly orderRefsOf?: (orderIds: readonly string[]) => Promise<Map<string, PackageOrderRef>>;
   /** Gian hàng đang chờ kiểm kê đầu kỳ (channel); `lock` khoá dòng gian hàng `FOR SHARE` (spec 199b §5.6). */
   readonly stockHoldOf?: (shopIds: readonly string[], opts?: { lock?: boolean }) => Promise<Set<string>>;
-  /** Tách, giao kiện trên sàn (channel, #221) cho tách kiện #205, RTS #239. */
+  /** Thao tác kiện trên sàn (channel), tiêm qua src/wiring.ts. */
   readonly marketplacePackages?: MarketplacePackages;
+  /** `Order` đầy đủ của sales (spec 205 D9), chạy trong `withCompany` của bên gọi; route tách kiện trả bản này. */
+  readonly orderViewOf?: (orderId: string) => Promise<object>;
+  /** Mã kiện app kế tiếp (`KH-000001`) từ bộ đếm của sales, trong giao dịch của bên gọi (spec 205 D15). */
+  readonly nextPackageCode?: () => Promise<string>;
+  /**
+   * Khép đơn sàn đang huỷ khi mọi kiện đã huỷ (sales, spec 205 D21): gọi sau khi mở kiện đi `open_cancel`, trong
+   * `withCompany` riêng (khoá đơn, không giữ khoá kiện).
+   */
+  readonly settleCancelledOrder?: (orderId: string) => Promise<void>;
+}
+
+export interface PlatformPackageItems {
+  externalOrderId: string;
+  externalLineIds: readonly string[];
 }
 
 /**
@@ -27,6 +42,8 @@ export interface FulfillmentContext extends ModuleContext {
  * giới hạn sàn bắt tách (`mustSplitReasons`), thì 422 `split_not_supported` kèm câu của sàn.
  */
 export interface MarketplacePackages {
+  /** Mức tách kiện của gian hàng theo sàn (spec 205 D6); gian hàng không có thì `none`. */
+  splitLevel(companyId: string, shopId: string): Promise<SplitLevel>;
   splitAttributes(
     companyId: string,
     shopId: string,
@@ -40,6 +57,15 @@ export interface MarketplacePackages {
   /** Mỗi nhóm là mã món sàn của một kiện mới; trả mã kiện sàn theo thứ tự nhóm. */
   split(companyId: string, shopId: string, externalOrderId: string, groups: readonly (readonly string[])[]): Promise<string[]>;
   ship(companyId: string, shopId: string, packageCode: string, opts?: { handover?: 'pickup' | 'drop_off' }): Promise<void>;
+  carriers(companyId: string, shopId: string, ref: PlatformPackageItems): Promise<{ code: string; name: string; isDefault: boolean }[]>;
+  pack(companyId: string, shopId: string, ref: PlatformPackageItems & { carrierCode?: string }): Promise<{
+    packageCode: string;
+    trackingCode: string | null;
+    carrier: { code: string; name: string } | null;
+  } | null>;
+  readyToShip(companyId: string, shopId: string, packageCode: string): Promise<void>;
+  repack(companyId: string, shopId: string, packageCode: string): Promise<'repacked' | 'not_supported'>;
+  shippingDocuments(companyId: string, shopId: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
 }
 
 export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) {
@@ -47,9 +73,29 @@ export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) 
   return ctx.stockHoldOf;
 }
 
-function orderRefsLookupOf(ctx: FulfillmentContext) {
+export function orderRefsLookupOf(ctx: FulfillmentContext) {
   if (!ctx.orderRefsOf) throw new AppError(500, 'internal_error', 'Chưa nối dữ liệu đơn của sales (src/modules/order/index.ts)');
   return ctx.orderRefsOf;
+}
+
+export function orderViewLookupOf(ctx: FulfillmentContext) {
+  if (!ctx.orderViewOf) throw new AppError(500, 'internal_error', 'Chưa nối chi tiết đơn của sales (src/modules/order/index.ts)');
+  return ctx.orderViewOf;
+}
+
+export function cancelledOrderSettlerOf(ctx: FulfillmentContext) {
+  if (!ctx.settleCancelledOrder) throw new AppError(500, 'internal_error', 'Chưa nối khép đơn đang huỷ của sales (src/modules/order/index.ts)');
+  return ctx.settleCancelledOrder;
+}
+
+export function packageCodeLookupOf(ctx: FulfillmentContext) {
+  if (!ctx.nextPackageCode) throw new AppError(500, 'internal_error', 'Chưa nối bộ đếm mã kiện của sales (src/modules/order/index.ts)');
+  return ctx.nextPackageCode;
+}
+
+export function marketplacePackagesOf(ctx: FulfillmentContext): MarketplacePackages {
+  if (!ctx.marketplacePackages) throw new AppError(500, 'internal_error', 'Chưa nối cổng thao tác kiện của channel (src/wiring.ts)');
+  return ctx.marketplacePackages;
 }
 
 const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];

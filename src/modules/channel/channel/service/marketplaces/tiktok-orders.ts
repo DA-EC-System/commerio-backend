@@ -16,6 +16,7 @@ import {
   type RemoteOrderRef,
   type SplitAttributes,
 } from './common.ts';
+import { downloadDocument } from './image-source.ts';
 import type { TiktokClient } from './tiktok-client.ts';
 
 type Row = Record<string, unknown>;
@@ -203,9 +204,45 @@ const fresh = (a: number): OrderCursor => ({ a, seen: {} });
 
 type SearchData = { orders?: Row[]; next_page_token?: unknown; total_count?: unknown };
 
+export interface TiktokOrderDeps {
+  download?: (url: string) => Promise<Uint8Array>;
+}
+
 export function tiktokOrderMethods(
   client: TiktokClient,
-): Pick<MarketplaceAdapter, 'listOrders' | 'listOpenOrders' | 'getOrder' | 'getOrders' | 'splitAttributes' | 'splitOrder' | 'shipPackage'> {
+  { download = downloadDocument }: TiktokOrderDeps = {},
+): Pick<MarketplaceAdapter, 'listOrders' | 'listOpenOrders' | 'getOrder' | 'getOrders' | 'splitAttributes' | 'splitOrder' | 'shipPackage' | 'readyToShip' | 'shippingDocuments'> {
+  // TikTok giao (shipping_type TIKTOK); tự giao (self_shipment) chưa dùng.
+  const shipPackage: NonNullable<MarketplaceAdapter['shipPackage']> = async (accessToken, packageCode, opts) => {
+    const handover = opts?.handover === 'pickup' ? 'PICKUP' : opts?.handover === 'drop_off' ? 'DROP_OFF' : undefined;
+    try {
+      await client.call('POST', `/fulfillment/202309/packages/${encodeURIComponent(packageCode)}/ship`, {
+        token: accessToken,
+        body: handover ? { handover_method: handover } : {},
+      });
+    } catch (err) {
+      // 11006021: kiện đã được báo giao (docv2 ship-package-202309; gọi thật 07/11/2026).
+      if (!(err instanceof MarketplaceError && err.platformCode === '11006021')) throw err;
+    }
+  };
+
+  async function shippingDocument(token: string, code: string): Promise<Uint8Array> {
+    try {
+      const data = await client.call<{ doc_url?: unknown }>('GET', `/fulfillment/202309/packages/${encodeURIComponent(code)}/shipping_documents`, {
+        token,
+        query: { document_type: 'SHIPPING_LABEL', document_size: 'A6', document_format: 'PDF' },
+      });
+      if (typeof data?.doc_url !== 'string' || !data.doc_url) {
+        throw new MarketplaceError('unavailable', 'document_download_failed', 'Sàn trả tệp vận đơn hỏng, thử lại sau');
+      }
+      return await download(data.doc_url);
+    } catch (err) {
+      if (err instanceof MarketplaceError && err.kind === 'rejected') {
+        throw new MarketplaceError(err.kind, err.platformCode, `Kiện ${code}: ${err.platformMessage ?? 'Sàn từ chối in vận đơn'}`);
+      }
+      throw err;
+    }
+  }
   const search = (token: string, filter: Row, pageToken?: string) =>
     client.call<SearchData>('POST', '/order/202309/orders/search', {
       token,
@@ -329,19 +366,17 @@ export function tiktokOrderMethods(
         return id;
       });
     },
-    // TikTok giao (`shipping_type: TIKTOK`); tự giao (`self_shipment`) chưa dùng.
-    async shipPackage(accessToken, packageCode, opts) {
-      const handover = opts?.handover === 'pickup' ? 'PICKUP' : opts?.handover === 'drop_off' ? 'DROP_OFF' : undefined;
-      try {
-        await client.call('POST', `/fulfillment/202309/packages/${encodeURIComponent(packageCode)}/ship`, {
-          token: accessToken,
-          body: handover ? { handover_method: handover } : {},
-        });
-      } catch (err) {
-        // 11006021: "Package has been shipped. Please not ship the package again." (docv2 ship-package-202309, mục mã lỗi,
-        // tra 12/11/2026; gọi thật 07/11/2026). Gọi lại sau lần trước đã tới sàn thì coi là xong.
-        if (!(err instanceof MarketplaceError && err.platformCode === '11006021')) throw err;
+    shipPackage,
+    async readyToShip(token, codes) {
+      for (const code of codes) await shipPackage(token, code);
+    },
+    async shippingDocuments(token, codes) {
+      const files: Uint8Array[] = [];
+      for (let offset = 0; offset < codes.length; offset += 5) {
+        const batch = await Promise.all(codes.slice(offset, offset + 5).map((code) => shippingDocument(token, code)));
+        files.push(...batch);
       }
+      return files;
     },
   };
 }

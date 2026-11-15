@@ -52,6 +52,7 @@
     "express-rate-limit": "^8.7.1",
     "jose": "^6.2.12",
     "nodemailer": "^10.0.16",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.23.1",
     "pg-boss": "12.38.0",
     "pino": "^10.4.0",

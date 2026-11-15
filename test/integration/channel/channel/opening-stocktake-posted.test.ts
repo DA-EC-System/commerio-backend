@@ -140,6 +140,7 @@ function remoteOrder(id: string, placedAt: Date): RemoteOrder {
 const port = {
   variants: async (ids?: readonly string[]) => [variant, variant2, fresh].filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+  productImageUrls: async (ids: readonly string[]) => new Map(ids.map((id) => [id, ['https://img.test/a.png']])),
   availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
 };
 

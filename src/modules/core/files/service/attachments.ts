@@ -1,12 +1,14 @@
-// Gắn và đọc tệp đính kèm của chứng từ (#212; Documents/21 §14.3). Module khác gọi qua `core/index.ts`.
+// Gắn và đọc tệp của chứng từ, của sản phẩm (#212, #303; Documents/21 §5.4, §14.3). Module khác gọi qua `core/index.ts`.
+import { env } from '../../../../shared/config/env.ts';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { PURPOSE_RULES } from '../domain/upload-rules.ts';
+import { type FilePurpose, PURPOSE_RULES, rejectUpload, type UploadRejection } from '../domain/upload-rules.ts';
 import { attachedFiles, countAttachments, type EntityRef, replaceAttachmentRows } from '../repository/attachments.ts';
 import { type FileRow, findFiles, markUploaded } from '../repository/files.ts';
 import { headObject, signDownload, type StorageConfig, storageConfig } from './storage.ts';
+import { REJECTION_MESSAGES } from './uploads.ts';
 
 export type { EntityRef };
 
@@ -57,21 +59,68 @@ export async function confirmUploads(companyId: string, fileIds: readonly string
   await withCompany(companyId, () => markUploaded(seen.filter((id): id is string => id !== null)));
 }
 
+interface ProblemText {
+  readonly tooMany: (max: number) => string;
+  readonly duplicate: string;
+  readonly unusable: string;
+  readonly rejected: (file: FileRow, why: UploadRejection) => string;
+}
+
+/** Câu lỗi ô tệp theo mục đích: ảnh sản phẩm khớp mock FE (#303), tệp đính kèm giữ câu của #212. */
+const PROBLEM_TEXT: Readonly<Record<FilePurpose, ProblemText>> = {
+  product_image: {
+    tooMany: (max) => `Tối đa ${max} ảnh`,
+    duplicate: 'Ảnh bị trùng',
+    unusable: 'Có ảnh chưa tải xong hoặc không thuộc công ty',
+    rejected: (file, why) =>
+      why === 'file_type_not_allowed' ? `Ảnh ${file.fileName} không phải JPG hoặc PNG` : `Ảnh ${file.fileName} lớn hơn 1 MB`,
+  },
+  attachment: {
+    tooMany: (max) => `Tối đa ${max} tệp`,
+    duplicate: 'Có tệp bị lặp',
+    unusable: 'Có tệp chưa tải xong hoặc không thuộc công ty',
+    rejected: (_file, why) => REJECTION_MESSAGES[why].attachment,
+  },
+};
+
 /**
- * Câu lỗi cho ô tệp của chứng từ, `null` khi gắn được: mỗi id là tệp của công ty này (RLS), xin vé với
- * `purpose: 'attachment'`, đã PUT xong (`confirmUploads` đã ghi nhận), không lặp, tối đa 10. Gọi trong `withCompany`.
+ * Câu lỗi cho ô tệp, `null` khi gắn được: tối đa `max`, không lặp, mỗi id là tệp của công ty này (RLS), xin vé với
+ * đúng `purpose`, đã PUT xong (`confirmUploads` đã ghi nhận), và còn đúng kiểu, cỡ theo luật **hiện hành** của
+ * `purpose` (chặn tệp xin vé trước khi đổi luật). Gọi trong `withCompany`.
  */
-export async function attachmentProblem(fileIds: readonly string[]): Promise<string | null> {
-  requireCompanyId('attachmentProblem');
-  if (fileIds.length > MAX_ATTACHMENTS) return `Tối đa ${MAX_ATTACHMENTS} tệp`;
-  if (new Set(fileIds).size !== fileIds.length) return 'Có tệp bị lặp';
-  if (!fileIds.every(isUuid)) return 'Có tệp chưa tải xong hoặc không thuộc công ty';
+export async function fileProblem(fileIds: readonly string[], purpose: FilePurpose, max: number): Promise<string | null> {
+  requireCompanyId('fileProblem');
+  const text = PROBLEM_TEXT[purpose];
+  if (fileIds.length > max) return text.tooMany(max);
+  if (new Set(fileIds).size !== fileIds.length) return text.duplicate;
+  if (!fileIds.every(isUuid)) return text.unusable;
   const found = new Map((await findFiles(fileIds)).map((f) => [f.id, f]));
-  const usable = fileIds.every((id) => {
-    const file = found.get(id);
-    return file !== undefined && file.purpose === 'attachment' && file.uploadedAt !== null;
-  });
-  return usable ? null : 'Có tệp chưa tải xong hoặc không thuộc công ty';
+  const files = fileIds.map((id) => found.get(id));
+  if (!files.every((f) => f !== undefined && f.purpose === purpose && f.uploadedAt !== null)) return text.unusable;
+  for (const file of files as FileRow[]) {
+    const why = rejectUpload(purpose, file.contentType, file.sizeBytes);
+    if (why) return text.rejected(file, why);
+  }
+  return null;
+}
+
+/** Câu lỗi cho ô tệp đính kèm của chứng từ (tối đa 10), như `fileProblem`. Gọi trong `withCompany`. */
+export function attachmentProblem(fileIds: readonly string[]): Promise<string | null> {
+  return fileProblem(fileIds, 'attachment', MAX_ATTACHMENTS);
+}
+
+/**
+ * Link cố định của các tệp ở bucket công khai (ảnh sản phẩm): `<S3_PUBLIC_URL>/<storage_key>`; thiếu `S3_PUBLIC_URL`
+ * thì chuỗi rỗng (trang vẫn mở được, chỉ không có ảnh). Tệp ở bucket riêng, tệp công ty khác, id lạ không có trong
+ * Map. Không gọi mạng. Gọi trong `withCompany`.
+ */
+export async function publicFileUrls(fileIds: readonly string[]): Promise<Map<string, string>> {
+  requireCompanyId('publicFileUrls');
+  const base = env.S3_PUBLIC_URL?.replace(/\/+$/, '');
+  const files = await findFiles(fileIds.filter(isUuid));
+  return new Map(
+    files.filter((f) => PURPOSE_RULES[f.purpose].visibility === 'public').map((f) => [f.id, base ? `${base}/${f.storageKey}` : '']),
+  );
 }
 
 /**

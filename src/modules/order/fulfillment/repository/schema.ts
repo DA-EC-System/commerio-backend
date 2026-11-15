@@ -51,6 +51,9 @@ export const packages = fulfillmentSchema.table(
     shopId: uuid('shop_id'),
     platformPackageCode: text('platform_package_code'),
     trackingCode: text('tracking_code'),
+    carrierCode: text('carrier_code'),
+    carrierName: text('carrier_name'),
+    labelError: boolean('label_error').notNull().default(false),
     selfDelivery: boolean('self_delivery').notNull().default(false),
     status: packageStatus('status').notNull(),
     needsOpen: boolean('needs_open').notNull().default(false),
@@ -79,6 +82,8 @@ export const packages = fulfillmentSchema.table(
     lostReportedAt: timestamp('lost_reported_at', { withTimezone: true }),
     lostClaimCode: text('lost_claim_code'),
     lostConfirmedBy: uuid('lost_confirmed_by'),
+    /** Lúc `fulfillment.package_delivered` của kiện được ghi outbox; kiện giao đầu tiên của đơn mang ship cấp đơn (spec 199c §5.1, D4). Không bao giờ đặt lại null. */
+    deliveryPostedAt: timestamp('delivery_posted_at', { withTimezone: true }),
     // Vận chuyển do sàn trả (#260).
     shipmentProvider: text('shipment_provider'),
     shippingProviderType: text('shipping_provider_type'),
@@ -98,6 +103,7 @@ export const packages = fulfillmentSchema.table(
     index().on(t.status),
     index().on(t.trackingCode),
     check('packages_open', sql`${t.needsOpen} = (${t.openPurpose} is not null)`),
+    check('packages_carrier', sql`(${t.carrierCode} is null) = (${t.carrierName} is null)`),
     check('packages_cod_second_person', sql`${t.codConfirmedBy} is null or ${t.codConfirmedBy} is distinct from ${t.deliveredBy}`),
     check(
       'packages_lost_second_person',
@@ -130,6 +136,8 @@ export const packageLines = fulfillmentSchema.table(
     quantity: integer('quantity').notNull(),
     reservedQty: integer('reserved_qty').notNull().default(0),
     packedQty: integer('packed_qty').notNull().default(0),
+    /** Số món sàn đã huỷ mà kiện đã đóng gói, chờ mở kiện để bỏ ra (spec 205 §5.10; 19 mục 2). */
+    pendingDropQty: integer('pending_drop_qty').notNull().default(0),
     unitCost: money('unit_cost'),
     stockDeducted: boolean('stock_deducted').notNull().default(false),
     ...timestamps,
@@ -138,9 +146,12 @@ export const packageLines = fulfillmentSchema.table(
   (t) => [
     index().on(t.packageId),
     index().on(t.variantId),
+    // Trigger `package_lines_line_total` (spec 205 D11) cộng dòng kiện theo dòng đơn.
+    index().on(t.orderLineId),
     check('package_lines_quantity', sql`${t.quantity} > 0`),
     check('package_lines_reserved_whole', sql`${t.reservedQty} in (0, ${t.quantity})`),
     check('package_lines_packed', sql`${t.packedQty} >= 0 and ${t.packedQty} <= ${t.quantity}`),
+    check('package_lines_pending_drop', sql`${t.pendingDropQty} >= 0 and ${t.pendingDropQty} <= ${t.quantity}`),
     check('package_lines_unmapped', sql`${t.variantId} is not null or ${t.reservedQty} = 0`),
     check('package_lines_deducted_cost', sql`not ${t.stockDeducted} or ${t.unitCost} is not null`),
   ],

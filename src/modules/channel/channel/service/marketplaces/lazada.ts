@@ -17,6 +17,7 @@ import {
   type RemoteLineInfo,
   type RemoteLineStatus,
   type RemoteOrder,
+  type RemotePackageEvent,
   type RemoteSku,
   type RemoteState,
   refreshBefore,
@@ -27,6 +28,8 @@ import {
   type TokenSet,
 } from './common.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
+import { downloadDocument } from './image-source.ts';
+import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -253,6 +256,30 @@ const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
 
 export const lazadaPackageStatus = (raw: string): RemoteLineStatus | null => LINE_STATUS[raw] ?? null;
 
+/**
+ * Hành trình kiện từ `result` của `/logistic/order/trace` (spec #199 phần c §5.7, lazada.md §7.4): mỗi
+ * `module[].package_detail_info_list[]` (`ofc_package_id`, `tracking_number`), mỗi `logistic_detail_info_list[]` một mốc:
+ * `detail_type` theo bảng trạng thái món, `event_time` mili giây, `description`. Dòng `detail_type` lạ hay `event_time`
+ * không phải số dương thì bỏ (mốc là thông tin phụ). Module rỗng (đơn chưa sẵn sàng giao) trả `[]`.
+ */
+export function lazadaPackageEvents(result: unknown): RemotePackageEvent[] {
+  const list = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
+  const out: RemotePackageEvent[] = [];
+  for (const m of list((result as Record<string, unknown> | null | undefined)?.module)) {
+    for (const p of list(m.package_detail_info_list)) {
+      const packageCode = str(p.ofc_package_id) || null;
+      const trackingCode = str(p.tracking_number) || null;
+      for (const d of list(p.logistic_detail_info_list)) {
+        const status = lazadaPackageStatus(str(d.detail_type));
+        const time = typeof d.event_time === 'number' || typeof d.event_time === 'string' ? Number(d.event_time) : NaN;
+        if (status === null || !Number.isFinite(time) || time <= 0) continue;
+        out.push({ packageCode, trackingCode, status, at: new Date(time), description: str(d.description).trim() || null });
+      }
+    }
+  }
+  return out;
+}
+
 /** `2026-10-29 14:41:18 +0700` → Date. */
 const lazadaTime = (value: unknown) => new Date(String(value).replace(' ', 'T').replace(/ ([+-]\d{2})(\d{2})$/, '$1:$2'));
 
@@ -370,7 +397,7 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
   };
 }
 
-export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch): MarketplaceAdapter {
+export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch, deps: LazadaPackingDeps = {}): MarketplaceAdapter {
   // Một chỗ quyết định cấu hình đủ chưa: `connectMethods`, `credentials`, `authorizeUrl` cùng đọc (#163).
   const hasCredentials = Boolean(config.appKey && config.appSecret);
   const oauthReady = hasCredentials && Boolean(config.redirectUrl);
@@ -713,6 +740,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
     ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
+    ...lazadaPackingMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method), {
+      download: deps.download ?? ((url) => downloadDocument(url, { trustedOrigin: new URL(config.apiUrl).origin })),
+    }),
     name: 'Lazada',
     capabilities: LAZADA_CAPABILITIES,
     connectMethods() {
@@ -934,6 +964,11 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         out.push(toRemoteOrder(orders[i]!, own));
       }
       return out;
+    },
+    // Hành trình kiện (spec #199 phần c §5.7): chỉ lấy mốc, lý do; trạng thái kiện vẫn theo trạng thái món.
+    async getPackageEvents(accessToken, externalOrderId) {
+      const body = await call(config.apiUrl, '/logistic/order/trace', { access_token: accessToken, order_id: externalOrderId }, 'GET');
+      return lazadaPackageEvents(body.result);
     },
     // Huỷ đơn (#105 PR 2, tài liệu Return and Refund API đọc 29/10/2026).
     async cancelReasons(accessToken, externalOrderId, externalLineIds) {

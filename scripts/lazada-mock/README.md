@@ -45,13 +45,14 @@ Kết nối gian hàng trên app: trang uỷ quyền giả chuyển ngay về `L
 | `run <kịch bản>` | `load` rồi `next` tới bước cuối: chạy lại trọn kịch bản bằng một lệnh |
 | `state` | Kịch bản đang nạp và bước hiện tại |
 | `push [order_status]` | Gửi push của bước hiện tại (hoặc trạng thái chỉ định) cho cả hai dòng đơn |
-| `check` | Ký sai bị chặn; adapter của app đổi token, đọc shop, danh mục, SKU, cập nhật giá tồn; đọc đơn |
+| `check` | Ký sai bị chặn. Adapter đổi token, đọc shop, danh mục, SKU, cập nhật giá tồn và đọc đơn. Nếu vừa nạp kịch bản có đơn `pending`, kiểm cả đóng gói, báo sẵn sàng và tải vận đơn PDF; đơn giả chuyển sang `ready_to_ship` |
 
 ## Kịch bản
 
 | Kịch bản | Đơn | Yêu cầu trả | Ghi chú |
 |---|---|---|---|
 | `giao-thanh-cong` | pending → packed → ready_to_ship → shipped → delivered | | Quyết toán khớp khi đã giao |
+| `chon-nha-van-chuyen` | pending → packed → ready_to_ship → shipped → delivered | | NTFS, bắt chọn LEX hoặc J&T trước khi đóng gói |
 | `giao-that-bai` | … → shipped → failed_delivery → shipped_back → shipped_back_success | | Hàng hoàn về kho |
 | `that-lac` | … → shipped → lost_by_3pl | | |
 | `tra-mot-phan` | delivered | RETURN cho áo trắng: REQUEST_INITIATE → AGREE_RETURN → BUYER_RETURN_ITEM → REFUND_SUCCESS | Hoàn xong thì quyết toán có dòng `Reversal Item Price`, `Reversal Commission` |

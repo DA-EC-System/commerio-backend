@@ -49,7 +49,18 @@ async function api(req: IncomingMessage, url: URL, res: ServerResponse) {
     headers: req.headers['content-type'] ? { 'content-type': req.headers['content-type'] } : {},
     body: body || undefined,
   });
-  send(res, upstream.status, await upstream.text(), { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+  let text = await upstream.text();
+  if (apiPath === '/order/package/document/get' && req.headers.host) {
+    text = text.replace('__MOCK_GATE_ORIGIN__', new URL(`http://${req.headers.host}`).origin);
+  }
+  send(res, upstream.status, text, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+}
+
+async function document(res: ServerResponse) {
+  const upstream = await fetch(`${UPSTREAM}/files/awb-mock.pdf`);
+  const body = Buffer.from(await upstream.arrayBuffer());
+  res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/pdf' });
+  res.end(body);
 }
 
 createServer((req, res) => {
@@ -59,6 +70,8 @@ createServer((req, res) => {
       ? Promise.resolve(send(res, 200, { ok: true }))
       : url.pathname === '/oauth/authorize'
         ? Promise.resolve(authorize(url, res))
+        : req.method === 'GET' && url.pathname === '/files/awb-mock.pdf'
+          ? document(res)
         : url.pathname.startsWith('/rest/')
           ? api(req, url, res)
           : Promise.resolve(send(res, 404, { type: 'ISV', code: 'InvalidApiPath', message: 'The specified API path is invalid' }));

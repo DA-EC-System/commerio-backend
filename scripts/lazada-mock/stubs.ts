@@ -9,7 +9,7 @@ export interface Mapping {
   requiredScenarioState?: string;
   newScenarioState?: string;
   request: Record<string, unknown>;
-  response: { status: number; headers: Record<string, string>; jsonBody: unknown };
+  response: { status: number; headers: Record<string, string>; jsonBody?: unknown; base64Body?: string };
 }
 
 export interface Scenario {
@@ -22,12 +22,14 @@ export interface Scenario {
   mismatch?: boolean;
   /** Token đã hết hạn từ đầu; kết nối lại (đổi `code` lấy token) thì hết lỗi. */
   tokenExpired?: boolean;
+  ntfs?: boolean;
 }
 
 const SHIP = ['pending', 'packed', 'ready_to_ship', 'shipped'] as const;
 
 export const SCENARIOS: Record<string, Scenario> = {
   'giao-thanh-cong': { title: 'Giao thành công', order: [...SHIP, 'delivered'] },
+  'chon-nha-van-chuyen': { title: 'NTFS, kho chọn nhà vận chuyển', order: [...SHIP, 'delivered'], ntfs: true },
   'giao-that-bai': { title: 'Giao thất bại rồi hoàn về kho', order: [...SHIP, 'failed_delivery', 'shipped_back', 'shipped_back_success'] },
   'that-lac': { title: 'Thất lạc khi đang giao', order: [...SHIP, 'lost_by_3pl'] },
   'tra-mot-phan': {
@@ -51,6 +53,10 @@ const CREATED = '2026-10-28 09:15:00 +0700';
 const PACKAGE_ID = 'FP600000000000001';
 const TRACKING = 'LZVN0000000001';
 const PROVIDER = 'LEX VN';
+const MOCK_CARRIERS = [{ provider_code: 'LEX', name: PROVIDER }, { provider_code: 'JT', name: 'J&T VN' }];
+const AWB_URL = '__MOCK_GATE_ORIGIN__/files/awb-mock.pdf';
+// PDF A6 một trang, dùng cho kiểm tải và gộp vận đơn.
+const AWB_PDF = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9Db3VudCAxIC9LaWRzIFszIDAgUl0gPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyOTggNDIwXSA+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDQgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjE4NgolJUVPRgo=';
 const PRICE = 129000;
 const SHIPPING_FEE = 30000;
 
@@ -263,7 +269,7 @@ function stub(path: string, body: unknown, extra: StubOptions = {}): Mapping {
 }
 
 /** API của gian hàng, sản phẩm, token: luôn trả như shop thử bình thường (C1, C2). */
-function baseMappings(): Mapping[] {
+function baseMappings(s: Scenario): Mapping[] {
   const token = ok({
     access_token: 'mock-access-token',
     refresh_token: 'mock-refresh-token',
@@ -304,8 +310,17 @@ function baseMappings(): Mapping[] {
     stub('/product/create', ok({ data: { item_id: 2300000099, item_status: 'Active', sku_list: [{ seller_sku: 'MOI', shop_sku: 'mock', sku_id: 13000000099 }] } })),
     stub('/products/get', ok({ data: { total_products: ITEMS.length, products: ITEMS.map(product) } })),
     stub('/product/price_quantity/update', ok({})),
+    stub('/product/stock/sellable/update', ok({})),
     stub('/product/deactivate', ok({})),
-    stub('/order/shipment/providers/get', ok({ result: { success: true, data: { shipping_allocate_type: 'TFS', shipment_providers: [], platform_default: PROVIDER } } })),
+    stub('/order/shipment/providers/get', ok({ result: { success: true, data: {
+      shipping_allocate_type: s.ntfs ? 'NTFS' : 'TFS',
+      shipment_providers: s.ntfs ? MOCK_CARRIERS : [],
+      platform_default: PROVIDER,
+    } } })),
+    {
+      name: 'Vận đơn PDF', priority: 5, request: { method: 'GET', urlPath: '/files/awb-mock.pdf' },
+      response: { status: 200, headers: { 'Content-Type': 'application/pdf' }, base64Body: AWB_PDF },
+    },
     stub(
       '/order/reverse/reason/list',
       ok({ result: { success: true, data: [{ reason_id: 1, reason_name: 'Khách đổi ý' }, { reason_id: 2, reason_name: 'Sản phẩm không như mô tả' }] } }),
@@ -324,6 +339,9 @@ function orderMappings(s: Scenario): Mapping[] {
     out.push(stub('/order/get', ok({ data: order(state) }), at(state)));
     out.push(stub('/order/items/get', ok({ data: items(state) }), at(state)));
     out.push(stub('/logistic/order/trace', trace(s.order, state), at(state)));
+    out.push(stub('/order/package/document/get', RTS_OR_LATER.has(state)
+      ? ok({ result: { success: true, data: { doc_type: 'PDF', pdf_url: AWB_URL } } })
+      : err('30012', 'rts package not found', 'ISP'), at(state)));
     out.push(
       stub(
         '/order/document/get',
@@ -360,8 +378,11 @@ function orderMappings(s: Scenario): Mapping[] {
         },
       },
     });
-    out.push(stub('/order/fulfill/pack', packResult, at('pending', { newScenarioState: 'packed' })));
-    out.push(stub('/order/package/repack', ok({ result: { success: true } }), at('packed', { newScenarioState: 'pending' })));
+    out.push(stub('/order/fulfill/pack', packResult, at('pending', {
+      newScenarioState: 'packed',
+      ...(s.ntfs && { bodyPatterns: [{ matches: '.*shipment_provider_code%22%3A%22(?:LEX|JT)%22.*' }] }),
+    })));
+    out.push(stub('/order/package/repack', ok({ result: { success: true, data: { packages: [{ package_id: PACKAGE_ID, item_err_code: '0' }] } } }), at('packed', { newScenarioState: 'pending' })));
     out.push(
       stub(
         '/order/package/rts',
@@ -383,7 +404,7 @@ function orderMappings(s: Scenario): Mapping[] {
     out.push(stub('/order/items/get', ok({ data: items('canceled') }), at('canceled')));
   }
   // Thao tác sai trạng thái (pack lại đơn đã pack, RTS khi chưa pack, huỷ đơn đã giao): lỗi theo món như Lazada.
-  out.push(stub('/order/fulfill/pack', err('ORDER_STATUS_INVALID', 'Order status does not allow this operation', 'ISP'), { priority: 4 }));
+  out.push(stub('/order/fulfill/pack', err('700000', 'Order status does not allow this operation', 'ISP'), { priority: 4 }));
   out.push(stub('/order/package/rts', err('30012', 'rts package not found', 'ISP'), { priority: 4 }));
   out.push(stub('/order/reverse/cancel/validate', err('CANCEL_NOT_ALLOWED', 'Order can not be canceled in current status', 'ISP'), { priority: 4 }));
   out.push(stub('/order/reverse/cancel/create', err('CANCEL_NOT_ALLOWED', 'Order can not be canceled in current status', 'ISP'), { priority: 4 }));
@@ -437,7 +458,7 @@ function tokenMappings(): Mapping[] {
 /** Toàn bộ mapping của một kịch bản (nạp bằng `POST /__admin/mappings/import`, xoá mapping cũ). */
 export function mappingsFor(s: Scenario): Mapping[] {
   counter = 0;
-  return [...baseMappings(), ...orderMappings(s), ...reverseMappings(s), ...(s.tokenExpired ? tokenMappings() : [])];
+  return [...baseMappings(s), ...orderMappings(s), ...reverseMappings(s), ...(s.tokenExpired ? tokenMappings() : [])];
 }
 
 /** Trạng thái khởi đầu của từng kịch bản WireMock sau khi nạp. */

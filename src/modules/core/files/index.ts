@@ -17,7 +17,9 @@ export {
   attachmentsOf,
   confirmUploads,
   type EntityRef,
+  fileProblem,
   hasAttachments,
   MAX_ATTACHMENTS,
+  publicFileUrls,
   replaceAttachments,
 } from './service/attachments.ts';

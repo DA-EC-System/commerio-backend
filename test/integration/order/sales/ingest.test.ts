@@ -7,6 +7,8 @@ import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { stockOfVariant } from '../fulfillment/helpers.ts';
+import { ingest as ingestIn, remote as remoteOf, setup, withLineCancelled, withStatus } from '../fulfillment/platform-fixtures.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 let companyId: string;
@@ -388,5 +390,141 @@ describe('thông tin sàn trả null hoặc sai dạng (review #261 điểm 4, 7
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// Sàn huỷ lẻ món (spec 205 §5.10, D18; AC15, AC16, AC18): sales ghi `cancelled_qty` cho món fulfillment đã xử lý huỷ.
+describe('huỷ dòng', () => {
+  /** `cancelled_qty` các dòng của đơn, theo mã món sàn. */
+  const cancelledQtyOf = async (orderId: string) =>
+    (await all(`select cancelled_qty from "order".order_lines where order_id = $1 order by external_line_id`, [orderId])).map((r) => r.cancelled_qty);
+  const reservedOf = async (c: string, v: string) => (await stockOfVariant(c, v))?.reserved ?? 0;
+  const packageCounter = async (c: string) =>
+    (await one(`select next_number from "order".doc_counters where company_id = $1 and doc_type = 'package'`, [c]))?.next_number;
+
+  it('AC15: món sàn huỷ ở kiện chưa đóng gói được ghi cancelled_qty', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId } = await ingestIn(v.companyId, o);
+
+    await ingestIn(v.companyId, withLineCancelled(o, 2));
+
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0, 1]);
+  });
+
+  it('AC16: món chờ bỏ ở kiện đã đóng gói cũng ghi cancelled_qty', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId } = await ingestIn(v.companyId, o);
+    const packed = withStatus(o, 'packed');
+    await ingestIn(v.companyId, packed);
+
+    await ingestIn(v.companyId, withLineCancelled(packed, 2));
+
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0, 1]);
+  });
+
+  it('AC18: kiện đã rời kho thì cancelled_qty giữ 0', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId } = await ingestIn(v.companyId, o);
+    const shipped = withStatus(o, 'in_transit');
+    await ingestIn(v.companyId, shipped);
+
+    await ingestIn(v.companyId, withLineCancelled(shipped, 2));
+
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0, 0]);
+  });
+
+  it('kéo lại đơn đã gỡ món huỷ không đổi gì, không lập kiện rác, không tốn mã KH- (Review Focus 1)', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+    // Món huỷ không còn mang mã kiện sàn: không có D18 thì lượt sau lập cho nó một kiện `cancelled` riêng.
+    const cancelled = withLineCancelled(o, 2);
+    cancelled.lines[2] = { ...cancelled.lines[2]!, packageCode: null };
+    await ingestIn(v.companyId, cancelled);
+    const versions = async () => ({
+      pkg: (await one(`select version from "order".packages where id = $1`, [packageId])).version,
+      lines: (await all(`select version from "order".order_lines where order_id = $1 order by external_line_id`, [orderId])).map((r) => r.version),
+    });
+    const before = { counter: await packageCounter(v.companyId), reserved: await reservedOf(v.companyId, v.variantId), versions: await versions() };
+
+    await ingestIn(v.companyId, cancelled);
+
+    expect(await all(`select id from "order".packages where order_id = $1`, [orderId])).toHaveLength(1);
+    expect(await packageCounter(v.companyId)).toBe(before.counter);
+    expect(await reservedOf(v.companyId, v.variantId)).toBe(before.reserved);
+    expect(await versions()).toEqual(before.versions);
+  });
+
+  it('huỷ lẻ từng món cho tới hết: kiện huỷ, đơn huỷ, mọi dòng cancelled_qty = quantity (Review Focus 4)', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+    await ingestIn(v.companyId, withLineCancelled(o, 2));
+
+    await ingestIn(v.companyId, withStatus(o, 'cancelled'));
+
+    expect((await one(`select status from "order".packages where id = $1`, [packageId])).status).toBe('cancelled');
+    expect((await orderOf(orderId)).status).toBe('cancelled');
+    expect((await transitionsOf(orderId)).at(-1)).toMatchObject({ to_state: 'cancelled', action: 'platform_cancel' });
+    expect(await cancelledQtyOf(orderId)).toEqual([1, 1, 1]);
+    expect(await reservedOf(v.companyId, v.variantId)).toBe(0);
+  });
+
+  it('D23: đơn lần đầu thấy đã có một món huỷ thì món đó không vào kiện, không giữ hàng; kéo lại không lập kiện rác', async () => {
+    const v = await setup(10);
+    const o = withLineCancelled(remoteOf(v, { lines: 3 }), 2);
+
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+
+    expect(await all(
+      `select ol.external_line_id from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
+        where pl.package_id = $1 order by 1`,
+      [packageId],
+    )).toEqual([{ external_line_id: o.lines[0]!.externalLineId }, { external_line_id: o.lines[1]!.externalLineId }]);
+    expect(await reservedOf(v.companyId, v.variantId)).toBe(2);
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0, 1]);
+    const counter = await packageCounter(v.companyId);
+
+    await ingestIn(v.companyId, o);
+
+    expect(await all(`select id from "order".packages where order_id = $1`, [orderId])).toHaveLength(1);
+    expect(await packageCounter(v.companyId)).toBe(counter);
+  });
+
+  it('kiện lần đầu thấy đã rời kho: món sàn huỷ vẫn nằm trong kiện, cancelled_qty giữ 0 (25 E96)', async () => {
+    const v = await setup(10);
+    const o = withLineCancelled(withStatus(remoteOf(v, { lines: 2 }), 'in_transit'), 1);
+
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+
+    expect(await all(`select id from "order".package_lines where package_id = $1`, [packageId])).toHaveLength(2);
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 0]);
+  });
+
+  it('đơn lần đầu thấy đã huỷ hết: kiện huỷ, mọi dòng cancelled_qty = quantity', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 2 });
+
+    const { orderId, packageId } = await ingestIn(v.companyId, withStatus(o, 'cancelled'));
+
+    expect((await one(`select status from "order".packages where id = $1`, [packageId])).status).toBe('cancelled');
+    expect(await cancelledQtyOf(orderId)).toEqual([1, 1]);
+  });
+
+  it('sàn huỷ cả đơn khi kiện đã đóng gói: đơn đang huỷ, kiện chờ mở để huỷ, mọi dòng chờ bỏ và đã huỷ', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 2 });
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+    await ingestIn(v.companyId, withStatus(o, 'packed'));
+
+    await ingestIn(v.companyId, withStatus(o, 'cancelled'));
+
+    expect(await orderOf(orderId)).toMatchObject({ status: 'processing', cancelling: true });
+    expect(await one(`select needs_open, open_purpose from "order".packages where id = $1`, [packageId])).toEqual({ needs_open: true, open_purpose: 'cancel' });
+    expect((await all(`select pending_drop_qty from "order".package_lines where package_id = $1`, [packageId])).map((r) => r.pending_drop_qty)).toEqual([1, 1]);
+    expect(await cancelledQtyOf(orderId)).toEqual([1, 1]);
   });
 });

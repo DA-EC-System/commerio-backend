@@ -88,13 +88,23 @@ describe.runIf(await served('GET /finance/configs'))('D4.4 phiên bản cấu h�
     expectProblem(await fin('admin').post(`/finance/configs/${p.id}/submit`, { version: rejected.version }), 409, 'invalid_transition');
   });
 
-  it('D44-05: huỷ bản scheduled trước ngày hiệu lực thì cancelled', async () => {
+  it('D44-05: huỷ bản nháp trước ngày hiệu lực thì cancelled', async () => {
+    const d = await draft('admin');
+    expect((await step('admin', d.id, 'cancel', { version: d.version })).status).toBe('cancelled');
+  });
+
+  it('D44-06: huỷ bản chờ duyệt trước ngày hiệu lực thì cancelled', async () => {
+    const p = await pending('admin');
+    expect((await step('admin', p.id, 'cancel', { version: p.version })).status).toBe('cancelled');
+  });
+
+  it('D44-07: huỷ bản scheduled trước ngày hiệu lực thì cancelled', async () => {
     const p = await pending('admin');
     const approved = await step('ceo', p.id, 'approve', { version: p.version });
     expect((await step('ceo', p.id, 'cancel', { version: approved.version, ...REASON })).status).toBe('cancelled');
   });
 
-  it('D44-08: bản thứ hai cùng ô, cùng ngày hiệu lực với bản đã duyệt bị chặn 409 config_overlap (lúc gửi hoặc lúc duyệt)', async () => {
+  it('D44-O: bản thứ hai cùng ô, cùng ngày hiệu lực với bản đã duyệt bị chặn 409 config_overlap (lúc gửi hoặc lúc duyệt)', async () => {
     const first = await pending('admin');
     await step('ceo', first.id, 'approve', { version: first.version });
     const second = await draft('admin', first.effectiveFrom);

@@ -91,7 +91,10 @@ export const products = catalogSchema.table(
   ],
 );
 
-/** Ảnh sản phẩm theo thứ tự; `file_id` ở module files, không đặt khoá ngoại chéo schema. */
+/**
+ * Ảnh sản phẩm theo thứ tự, `position` 0 là ảnh đại diện (#303); `file_id` ở module files, không đặt khoá ngoại chéo
+ * schema. Mỗi vị trí một ảnh; `PUT` thay toàn bộ bằng xoá rồi chèn trong một giao dịch.
+ */
 export const productImages = catalogSchema.table(
   'product_images',
   {
@@ -105,7 +108,12 @@ export const productImages = catalogSchema.table(
     ...timestamps,
     ...version,
   },
-  (t) => [index().on(t.productId), index().on(t.fileId)],
+  (t) => [
+    index().on(t.productId),
+    index().on(t.fileId),
+    uniqueIndex('product_images_product_position_uq').on(t.productId, t.position),
+    check('product_images_position_nonneg', sql`${t.position} >= 0`),
+  ],
 );
 
 /** Trạng thái kinh doanh của SKU (Documents/21 mục 17, 25 §5.1). SKU mới luôn `selling`. */

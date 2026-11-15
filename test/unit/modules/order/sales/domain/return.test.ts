@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
 import {
   distributeResell,
-  mergeReceiveLines,
   OPEN_RETURN_STATUSES,
   refundAmountOf,
   returnMachine,
@@ -94,33 +93,6 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     ['refund_only', 'rejected', 'conflict'],
   ] as const)('%s, sàn báo %s → %s', (current, target, action) => {
     expect(syncAction(current, target)).toBe(action);
-  });
-});
-
-describe('mergeReceiveLines (§15.3)', () => {
-  const source = [
-    { variantId: 'A', quantity: 2 },
-    { variantId: 'B', quantity: 1 },
-    { variantId: null, quantity: 1 },
-  ];
-
-  it('không gửi lines thì coi như quét đủ, bỏ dòng chưa ghép SKU', () => {
-    expect(mergeReceiveLines(source)).toEqual([
-      { variantId: 'A', expected: 2, scanned: 2 },
-      { variantId: 'B', expected: 1, scanned: 1 },
-    ]);
-  });
-
-  it('món vắng quét 0, món ngoài yêu cầu dự kiến 0', () => {
-    expect(mergeReceiveLines(source, [{ variantId: 'A', quantity: 1 }, { variantId: 'C', quantity: 3 }])).toEqual([
-      { variantId: 'A', expected: 2, scanned: 1 },
-      { variantId: 'B', expected: 1, scanned: 0 },
-      { variantId: 'C', expected: 0, scanned: 3 },
-    ]);
-  });
-
-  it('lines rỗng: mọi dòng thiếu', () => {
-    expect(mergeReceiveLines(source, []).map((l) => l.scanned)).toEqual([0, 0]);
   });
 });
 

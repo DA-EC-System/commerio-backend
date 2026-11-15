@@ -82,18 +82,21 @@ const LOCK_RETRY_MIN_MS = 25;
 const LOCK_RETRY_MAX_MS = 500;
 
 /** Thử lấy khoá một lần trên một kết nối của pool; có thì trả kết nối (đang giữ khoá), không thì trả kết nối về pool. */
-async function tryLockOnce(key: string): Promise<pg.PoolClient | null> {
+async function tryLockOnce(keys: readonly string[]): Promise<pg.PoolClient | null> {
   const client = await pool!.connect();
   try {
-    const { rows } = await client.query<{ locked: boolean }>('select pg_try_advisory_lock(hashtextextended($1, 0)) as locked', [key]);
-    if (rows[0]!.locked) return client;
+    for (const [index, key] of keys.entries()) {
+      const { rows } = await client.query<{ locked: boolean }>('select pg_try_advisory_lock(hashtextextended($1, 0)) as locked', [key]);
+      if (rows[0]!.locked) continue;
+      if (index > 0) await client.query('select pg_advisory_unlock_all()');
+      client.release();
+      return null;
+    }
+    return client;
   } catch (err) {
     client.release(true);
     throw err;
   }
-  // Chưa có khoá thì phiên này không giữ gì: trả về pool dùng tiếp.
-  client.release();
-  return null;
 }
 
 /**
@@ -108,17 +111,21 @@ async function tryLockOnce(key: string): Promise<pg.PoolClient | null> {
  * hàng): bên chờ lâu chưa chắc được trước, đủ cho khoá làm mới token.
  * Cần kết nối giữ phiên (PostgreSQL thẳng, Supabase Session pooler); PgBouncer chế độ transaction không giữ được khoá.
  */
-export async function withSessionLock<T>(key: string, fn: () => Promise<T>, opts: { waitMs?: number } = {}): Promise<T | 'busy'> {
+export async function withSessionLock<T>(
+  key: string, fn: () => Promise<T>, opts: { waitMs?: number; additionalKeys?: readonly string[] } = {},
+): Promise<T | 'busy'> {
   rootDb();
+  // Khi cần nhiều khoá, dùng cùng một kết nối và nhả tất cả nếu lần thử hụt.
+  const keys = opts.additionalKeys?.length ? [...new Set([key, ...opts.additionalKeys])].sort() : [key];
   const deadline = Date.now() + Math.max(0, opts.waitMs ?? 0);
   let pause = LOCK_RETRY_MIN_MS;
-  let client = await tryLockOnce(key);
+  let client = await tryLockOnce(keys);
   while (!client) {
     const left = deadline - Date.now();
     if (left <= 0) return 'busy';
     await new Promise((resolve) => setTimeout(resolve, Math.min(pause, left)));
     pause = Math.min(pause * 2, LOCK_RETRY_MAX_MS);
-    client = await tryLockOnce(key);
+    client = await tryLockOnce(keys);
   }
   try {
     return await fn();

@@ -21,7 +21,7 @@ export const PACKAGE_STATUS = [
   'lost',
   'cancelled',
 ] as const;
-export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'lost_reported', 'pickup_unconfirmed'] as const;
+export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'lost_reported', 'pickup_unconfirmed', 'label_error'] as const;
 
 export const ShopRef = z.object({ id: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'OrderShopRef' });
 
@@ -38,7 +38,7 @@ export const PackageSummary = z
     customerName: z.string().nullable(),
     status: z.enum(PACKAGE_STATUS),
     flags: z.array(z.enum(PACKAGE_FLAGS)).meta({
-      description: '`pickup_unconfirmed`: kho quét bàn giao quá 24 giờ mà sàn chưa xác nhận lấy (suy từ `pickup_confirmed_at`, không lưu)',
+      description: '`pickup_unconfirmed`: kho quét bàn giao quá 24 giờ mà sàn chưa xác nhận lấy. `label_error`: lần báo sẵn sàng giao gần nhất gặp lỗi từ sàn',
     }),
     flagNote: z.string().nullable(),
     notices: z
@@ -136,8 +136,91 @@ export const HandOverResult = z
   .strict()
   .meta({ id: 'HandOverResult' });
 
+/** Số kho quét từng món lúc nhận hàng về (Documents/21 §15.3; dùng chung với `/returns/receive` của sales): số nguyên ≥ 0, `variantId` không lặp. */
+export const ScanLines = z.array(z.object({ variantId: z.string().min(1), quantity: z.number().int('Số lượng phải là số nguyên').min(0, 'Số lượng không âm') })).superRefine((lines, ctx) => {
+  const seen = new Set<string>();
+  lines.forEach((l, i) => {
+    if (seen.has(l.variantId)) ctx.addIssue({ code: 'custom', path: [i, 'variantId'], message: 'Biến thể bị lặp' });
+    seen.add(l.variantId);
+  });
+});
+
+const scanLines = ScanLines.optional().meta({
+  description: 'Số kho quét từng món; tuỳ chọn trong giai đoạn chuyển tiếp (21 §15.3), không gửi thì coi như quét đủ. Mảng rỗng: không quét được món nào',
+});
+
+/** Quét nhận hàng hoàn (spec 199c §5.5): `code` là mã kiện hoặc mã vận đơn, không phân biệt hoa thường. */
+export const ReceiveReturnBody = z.object({
+  version: z.int().min(0),
+  code: z.string().trim().min(1, 'Nhập hoặc quét mã kiện').max(100, 'Mã tối đa 100 ký tự'),
+  lines: scanLines,
+});
+
+/** Kho nhận kiện thất lạc tìm thấy (Documents/21 §19.2): `lines` như `receive-return`. */
+export const FoundBody = z.object({ version: z.int().min(0), lines: scanLines });
+
 export const UndoHandoverBody = z.object({
   version: z.number().int().min(0),
   // Bắt buộc lý do do máy trạng thái kiểm (422 `reason_required`), nên ở đây cho phép rỗng.
   reason: z.string().trim().max(500, 'Lý do tối đa 500 ký tự').default(''),
 });
+
+const uuid = z.uuid();
+export function idsCsv(max: number) {
+  const split = (value: string) => value.split(',').map((id) => id.trim().toLowerCase());
+  return z.string().refine((value) => {
+    const ids = split(value);
+    return ids.length <= max && new Set(ids).size === ids.length && ids.every((id) => uuid.safeParse(id).success);
+  }, `Chọn từ 1 đến ${max} kiện, mã kiện hợp lệ và không trùng`).transform(split)
+    .meta({ description: `1–${max} UUID phân cách bằng dấu phẩy, không trùng` });
+}
+
+export const PickListQuery = z.object({ ids: idsCsv(200).optional() }).meta({ id: 'PickListQuery' });
+
+export const PickList = z.object({
+  items: z.array(z.object({
+    variantId: z.uuid().nullable(), sku: z.string(), productName: z.string(), attributesLabel: z.string(),
+    quantity: z.number().int().positive(), packageCount: z.number().int().positive(),
+  }).strict()),
+  packageCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+}).strict().meta({ id: 'PickList' });
+
+export const CarrierList = z.object({
+  items: z.array(z.object({ code: z.string(), name: z.string(), isDefault: z.boolean() }).strict()),
+}).strict().meta({ id: 'CarrierList' });
+
+const version = z.number().int().min(0);
+export const PackBody = z.object({
+  version,
+  lines: z.array(z.object({
+    variantId: z.uuid().transform((id) => id.toLowerCase()),
+    quantity: z.number().int().min(1).max(10_000),
+  })).max(200).refine((lines) => new Set(lines.map((line) => line.variantId)).size === lines.length, 'Mỗi biến thể chỉ quét một lần'),
+  carrierCode: z.string().trim().min(1).max(100).optional(),
+}).meta({ id: 'PackBody' });
+
+/** Tách kiện (Documents/21 §19.2, spec 205 §5.2): mỗi phần thành một kiện mới, kiện cũ giữ phần còn lại. */
+export const SplitBody = z.object({
+  version,
+  parts: z.array(
+    z.array(z.object({
+      variantId: z.uuid('Biến thể không hợp lệ').transform((id) => id.toLowerCase()),
+      quantity: z.number().int('Số lượng phải là số nguyên').min(1, 'Số lượng phải lớn hơn 0'),
+    })).min(1, 'Mỗi kiện mới cần ít nhất một món').max(200, 'Mỗi kiện mới tối đa 200 dòng').superRefine((items, ctx) => {
+      const seen = new Set<string>();
+      items.forEach((item, i) => {
+        if (seen.has(item.variantId)) ctx.addIssue({ code: 'custom', path: [i, 'variantId'], message: 'Biến thể bị lặp trong cùng một kiện mới' });
+        seen.add(item.variantId);
+      });
+    }),
+  ).min(1, 'Chọn ít nhất một kiện mới').max(20, 'Tách tối đa 20 kiện mới một lần'),
+}).meta({ id: 'SplitPackageBody' });
+
+export const ReadyBody = z.object({ version }).meta({ id: 'ReadyBody' });
+export const OpenBody = z.object({ version }).meta({ id: 'OpenBody' });
+
+export const PackageDocumentsQuery = z.object({
+  ids: idsCsv(50),
+  kind: z.enum(['awb']).default('awb'),
+}).meta({ id: 'PackageDocumentsQuery' });

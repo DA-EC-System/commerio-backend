@@ -138,6 +138,22 @@ async function check() {
   const orders = await signedGet('/orders/get', { created_after: '2026-10-01T00:00:00+07:00' });
   const first = (orders.data as { orders?: { statuses?: string[] }[] } | undefined)?.orders?.[0];
   expect('/orders/get', orders.code === '0', `${(await loaded())}: ${first?.statuses?.join(',') ?? '(không có đơn)'}`);
+  if (first?.statuses?.includes('pending') && scenarioOf(await loaded()).order.includes('packed')) {
+    try {
+      const token = 'mock-access-token';
+      const ref = { externalOrderId: String(ORDER_ID), externalLineIds: ITEMS.map((item) => String(item.order_item_id)) };
+      const providers = await adapter.shipmentProviders!(token, ref);
+      const carrierCode = providers.items[0]?.code;
+      const packed = await adapter.packItems!(token, { ...ref, ...(carrierCode && { carrierCode }) });
+      expect('adapter.packItems', packed.packageCode === 'FP600000000000001', packed.packageCode);
+      await adapter.readyToShip!(token, [packed.packageCode]);
+      expect('adapter.readyToShip', true);
+      const [pdf] = await adapter.shippingDocuments!(token, [packed.packageCode]);
+      expect('adapter.shippingDocuments', !!pdf && Buffer.from(pdf).subarray(0, 5).toString() === '%PDF-');
+    } catch (err) {
+      expect('adapter đóng gói, RTS, vận đơn', false, String(err));
+    }
+  }
 
   for (const [name, pass, detail] of results) console.log(`${pass ? 'ĐẠT ' : 'LỖI '} ${name}${detail ? `  (${detail})` : ''}`);
   if (results.some(([, pass]) => !pass)) process.exitCode = 1;
