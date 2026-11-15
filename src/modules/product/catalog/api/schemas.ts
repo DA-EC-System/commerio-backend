@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
+import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
 // Giới hạn theo mock FE (Documents/21 V24): tên danh mục 60, thuộc tính 40, giá trị 40, sản phẩm 200, mô tả 5000.
 
@@ -77,11 +78,23 @@ const description = z
   .nullish()
   .transform((v) => v ?? '');
 
-// Ảnh làm ở #14: tới khi đó gửi ảnh là 422, không bỏ qua im lặng (Documents/21 D9).
-const imageFileIds = z.array(z.string()).optional();
+// Ảnh theo thứ tự hiển thị, ảnh đầu là ảnh đại diện (#303). `PUT` không gửi thì giữ nguyên, `[]` thì gỡ hết.
+const imageFileIds = z
+  .array(z.string())
+  .optional()
+  .meta({ description: `Tối đa ${MAX_PRODUCT_IMAGES} ảnh (P8), theo thứ tự hiển thị; ảnh đầu là ảnh đại diện` });
 
-function noImages(body: { imageFileIds?: string[] | undefined }, ctx: z.RefinementCtx) {
-  if (body.imageFileIds?.length) ctx.addIssue({ code: 'custom', path: ['images'], message: 'Chưa hỗ trợ ảnh sản phẩm' });
+/**
+ * Số ảnh (P8) và ảnh lặp kiểm ngay ở đây, trước khi hỏi kho tệp: body nhiều id không kéo theo nhiều lời gọi kho (#303).
+ * Lỗi ở `errors.images` như FE hiện; câu khớp mock FE.
+ */
+function imageLimits(body: { imageFileIds?: string[] | undefined }, ctx: z.RefinementCtx) {
+  const ids = body.imageFileIds ?? [];
+  if (ids.length > MAX_PRODUCT_IMAGES) {
+    ctx.addIssue({ code: 'custom', path: ['images'], message: `Tối đa ${MAX_PRODUCT_IMAGES} ảnh` });
+  } else if (new Set(ids).size !== ids.length) {
+    ctx.addIssue({ code: 'custom', path: ['images'], message: 'Ảnh bị trùng' });
+  }
 }
 
 const attributeValueIds = z.array(z.string(), 'Chọn giá trị thuộc tính');
@@ -97,13 +110,13 @@ export const CreateProductBody = z
       .min(1, 'Cần ít nhất một biến thể')
       .max(100, 'Tối đa 100 biến thể mỗi lần tạo'),
   })
-  .superRefine(noImages)
+  .superRefine(imageLimits)
   .meta({ id: 'CreateProductRequest' });
 
 /** Không có danh mục và biến thể: gửi kèm thì bỏ qua (P6, AC-13). */
 export const UpdateProductBody = z
   .object({ name: name('sản phẩm', 200), description, imageFileIds, version })
-  .superRefine(noImages)
+  .superRefine(imageLimits)
   .meta({ id: 'UpdateProductRequest' });
 
 export const AddVariantBody = z.object({ attributeValueIds }).meta({ id: 'AddVariantRequest' });
@@ -181,7 +194,16 @@ export const ProductListItem = z
 
 export const ProductDetail = ProductListItem.extend({
   description: z.string(),
-  images: z.array(z.object({ id: z.string(), fileId: z.uuid(), url: z.string(), position: z.number().int() })),
+  images: z.array(
+    z
+      .object({
+        id: z.string(),
+        fileId: z.uuid(),
+        url: z.string().meta({ description: 'Link cố định của ảnh; chuỗi rỗng khi máy chủ chưa cấu hình link ảnh' }),
+        position: z.number().int().meta({ description: '0 là ảnh đại diện' }),
+      })
+      .meta({ id: 'ProductImage' }),
+  ),
   variants: z.array(Variant),
 }).meta({ id: 'ProductDetail' });
 
