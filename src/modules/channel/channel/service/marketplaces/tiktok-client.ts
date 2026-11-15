@@ -5,7 +5,7 @@
 // - Mã lỗi chung: https://partner.tiktokshop.com/docv2/page/common-errors
 // - Token: https://partner.tiktokshop.com/docv2/page/authorization-overview-202407
 import { createHmac } from 'node:crypto';
-import { MarketplaceError } from './common.ts';
+import { MarketplaceError, type ReserveCall, reserveOrThrow } from './common.ts';
 import { createRateLimiter } from './rate-limit.ts';
 
 export interface TiktokConfig {
@@ -17,8 +17,8 @@ export interface TiktokConfig {
   apiUrl: string;
   /** Gốc máy chủ token, mặc định `https://auth.tiktok-shops.com`. */
   authUrl: string;
-  /** Xin một lượt trong hạn mức gọi của app trước mỗi request; `false` là hết lượt hôm nay. */
-  reserveCall?: () => Promise<boolean>;
+  /** Xin một lượt trong hạn mức gọi trước mỗi request (#215); khác `ok` là hết lượt. */
+  reserveCall?: ReserveCall;
   /**
    * Giãn lời gọi theo gian hàng (#215 phần TikTok). TikTok giới hạn QPS động theo app × gian hàng, không có hạn mức ngày
    * (docv2 Rate limits, tra 06/11/2026: gợi ý đọc 3–10 req/s, ghi 1–3 req/s mỗi gian hàng). Không đặt thì không giãn,
@@ -138,7 +138,7 @@ export interface TiktokClient {
   readonly hasCredentials: boolean;
   /**
    * Gọi Open API đã ký, trả `data` khi `code` = 0, không thì ném `MarketplaceError`. Thiếu cấu hình ném `unsupported`
-   * trước khi gọi mạng; hết hạn mức ngày ném `unavailable` `daily_call_limit`.
+   * trước khi gọi mạng; hết hạn mức ngày ném `unavailable` `daily_call_limit` (`company_call_limit` khi hết phần của công ty).
    */
   call<T = unknown>(method: TiktokMethod, path: string, opts?: TiktokCallOptions): Promise<T>;
   /** Như `call` nhưng nhận access token thô của sàn (chưa có cipher), chỉ cho lúc nối gian hàng. */
@@ -157,9 +157,7 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
   }
 
   async function reserve() {
-    if (config.reserveCall && !(await config.reserveCall())) {
-      throw new MarketplaceError('unavailable', 'daily_call_limit', 'Đã dùng hết hạn mức gọi TikTok trong ngày');
-    }
+    await reserveOrThrow(config.reserveCall, 'TikTok');
   }
 
   async function send(url: string, init: RequestInit): Promise<TiktokResponse> {

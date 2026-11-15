@@ -48,6 +48,7 @@ import {
 } from '../repository/shops.ts';
 import {
   capabilitiesOf,
+  forCompany,
   getAdapter,
   type MarketplaceAdapter,
   MarketplaceError,
@@ -364,7 +365,10 @@ export async function connectByCode(
   }
   if (claims.cid !== actor.companyId) throw await companyMismatch(claims.cid, actor.companyId);
   const params = input.params ?? { code: input.code! };
-  return attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params))));
+  // Lời gọi sàn lúc nối (đổi mã, đếm sản phẩm) tính vào phần hạn mức của công ty đang nối (#215).
+  return forCompany(actor.companyId, async () =>
+    attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params)))),
+  );
 }
 
 /**
@@ -387,10 +391,12 @@ export async function connectByToken(
   input: { accessToken: string; refreshToken?: string | undefined },
 ): Promise<ShopCallbackResult> {
   const { platform, adapter } = platformOf(raw);
-  const connections = await onMarketplace(async () =>
-    atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
-  );
-  return attachAll(platform, actor, connections);
+  return forCompany(actor.companyId, async () => {
+    const connections = await onMarketplace(async () =>
+      atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
+    );
+    return attachAll(platform, actor, connections);
+  });
 }
 
 /** Uỷ quyền mà không ra gian hàng nào: ném trong `onMarketplace` để thành 409 `marketplace_rejected`, không 500. */
