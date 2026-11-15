@@ -231,8 +231,12 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   const open = next.status === 'unpaid' || next.status === 'processing';
   let cancelled = false;
   if (open && o.lines.length && o.lines.every((l) => l.status === 'cancelled')) {
-    if (packages.cancelled.includes('handed_over')) next.platformCancelled = true;
-    else if (packages.cancelled.includes('needs_open')) next.cancelling = true;
+    if (packages.cancelled.includes('handed_over')) {
+      next.platformCancelled = true;
+      // 25 §8.2: đơn Đang huỷ có kiện hoá ra đã bàn giao (sàn báo đã lấy, kho không thấy kiện khi dỡ) đi theo "Sàn huỷ
+      // đơn khi đã có kiện bàn giao". Cờ Đang huỷ chỉ còn nghĩa khi còn kiện chờ mở.
+      if (!packages.cancelled.includes('needs_open')) next.cancelling = false;
+    } else if (packages.cancelled.includes('needs_open')) next.cancelling = true;
     else {
       await transition(orderId, next.status, 'cancelled', 'platform_cancel');
       next.status = 'cancelled';

@@ -3,6 +3,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { EVENT_SCHEMAS } from '#src/modules/core/platform/domain/events.ts';
 import { Package } from '#src/modules/order/fulfillment/api/schemas.ts';
+import { completeDueOrdersOnce } from '#src/modules/order/index.ts';
 import { updatePackage } from '#src/modules/order/fulfillment/repository/packages.ts';
 import { settleDeferredHandovers } from '#src/modules/order/fulfillment/service/handover-stock.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -339,10 +340,16 @@ describe('POST /fulfillment/packages/:id/report-lost, confirm-lost (spec #238 §
     expect(await packageRow(p.packageId)).toMatchObject({ status: 'lost', needs_open: false, open_purpose: null, handover_source: 'scan' });
     expect(await stockOfVariant(company.companyId, variantId)).toMatchObject({ onHand: before.onHand - 2, reserved: before.reserved - 2 });
     expect(await outboxOf(p.orderId, 'fulfillment.package_shipped')).toHaveLength(1);
-    // 25 §8.2: có kiện hoá ra đã bàn giao thì đơn không sang `cancelled`. Cờ của đơn (`cancelling` còn bật,
-    // `platform_cancelled` chỉ bật ở lượt kéo đơn sau) lệch §8.2, chưa khẳng định: chờ Khang quyết phần sales.
-    const { rows } = await testPool().query<{ status: string }>('select status from "order".orders where id = $1', [p.orderId]);
-    expect(rows[0]!.status).toBe('processing');
+    // 25 §8.2: có kiện hoá ra đã bàn giao thì đơn không sang `cancelled`, đi theo "Sàn huỷ đơn khi đã có kiện bàn giao":
+    // mọi kiện đã dừng thì lượt tự hoàn tất đưa đơn sang `completed` và gỡ Đang huỷ, không cần lượt kéo đơn ở giữa.
+    const order = async () =>
+      (await testPool().query<{ status: string; cancelling: boolean; outcome: string | null }>(
+        'select status, cancelling, outcome from "order".orders where id = $1',
+        [p.orderId],
+      )).rows[0]!;
+    expect(await order()).toMatchObject({ status: 'processing', cancelling: true });
+    await completeDueOrdersOnce();
+    expect(await order()).toEqual({ status: 'completed', cancelling: false, outcome: 'none' });
   });
 
   it('kiện công ty khác và id sai dạng trả 404', async () => {
