@@ -3,7 +3,7 @@ import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import type { ConfigKind, ConfigStatus } from '../domain/config-version.ts';
 import { type LedgerKind, type NetLine, NOT_SALES_PROFIT } from '../domain/ledger.ts';
 import { isReplaced } from './ledger.ts';
-import { configVersions, ledgerEntries } from './schema.ts';
+import { configVersions, ledgerEntries, ledgerReplacements } from './schema.ts';
 
 export type ConfigRow = typeof configVersions.$inferSelect;
 
@@ -120,8 +120,8 @@ export async function findDueScheduledAnyCompany(today: string, limit: number) {
 
 /**
  * Lãi gộp từ `from` (gồm cả ngày đó) cho chạy thử phiên bản cấu hình: chỉ dòng còn hiệu lực, hiểu "đã thay" như
- * tổng tiền ở sàn (`isReplaced`: có dòng thực tế thay, hoặc dòng ước tính của đơn đã có số quyết toán). Bỏ loại không
- * vào lãi gộp (`NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền, quảng cáo) theo loại dòng, không theo gian hàng. `revenue` là
+ * tổng tiền ở sàn (`isReplaced`: có cặp ở `ledger_replacements`, hoặc dòng tiền ước tính cùng nguồn với dòng đã có
+ * cặp; giá vốn không bị thay nên lãi gộp vẫn trừ giá vốn). Bỏ loại không vào lãi gộp (`NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền, quảng cáo) theo loại dòng, không theo gian hàng. `revenue` là
  * tổng dòng doanh thu.
  */
 export async function sumLedgerSince(from: string, shopId?: string): Promise<{ total: string; revenue: string }> {
@@ -188,7 +188,7 @@ export async function retroSources(
 
 /**
  * Dòng doanh thu, hoàn tiền khách còn hiệu lực từ `from` (chạy thử), kèm mọi dòng doanh thu ước tính của các đơn có
- * dòng đó để chia theo ngày giao (`netRevenuePortions`).
+ * dòng đó để chia theo ngày giao (`netRevenuePortions`). `replacesId` đọc từ bảng nối `ledger_replacements` (#231).
  */
 export async function netRevenueLinesSince(from: string, shopId?: string): Promise<{ live: NetLine[]; estimates: NetLine[] }> {
   const cols = {
@@ -198,11 +198,12 @@ export async function netRevenueLinesSince(from: string, shopId?: string): Promi
     amount: ledgerEntries.amount,
     occurredOn: ledgerEntries.occurredOn,
     isEstimate: ledgerEntries.isEstimate,
-    replacesEntryId: ledgerEntries.replacesEntryId,
+    replacesId: ledgerReplacements.estimateId,
   };
   const live = await getDb()
     .select(cols)
     .from(ledgerEntries)
+    .leftJoin(ledgerReplacements, eq(ledgerReplacements.actualId, ledgerEntries.id))
     .where(
       and(
         gte(ledgerEntries.occurredOn, from),
@@ -216,6 +217,7 @@ export async function netRevenueLinesSince(from: string, shopId?: string): Promi
     ? await getDb()
         .select(cols)
         .from(ledgerEntries)
+        .leftJoin(ledgerReplacements, eq(ledgerReplacements.actualId, ledgerEntries.id))
         .where(and(inArray(ledgerEntries.orderId, orderIds), eq(ledgerEntries.isEstimate, true), eq(ledgerEntries.kind, 'revenue')))
     : [];
   return { live, estimates };

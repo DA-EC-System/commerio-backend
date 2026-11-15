@@ -3,9 +3,13 @@ import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not,
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import { type LedgerKind, NON_CASH as NON_CASH_KINDS, NOT_SETTLEMENT_DIFF, OFF_PLATFORM } from '../domain/ledger.ts';
-import { bankMatches, ledgerEntries } from './schema.ts';
+import { bankMatches, ledgerEntries, ledgerPackageLines, ledgerReplacements } from './schema.ts';
 
-export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacedBy: string | null };
+/**
+ * Dòng sổ kèm quan hệ thay đọc từ `ledger_replacements` (#231): `replacesId` là dòng ước tính mà dòng thực tế này
+ * thay, `replacedBy` là dòng thực tế đã thay dòng ước tính này.
+ */
+export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacesId: string | null; replacedBy: string | null };
 
 /** Nguồn của dòng sổ: chứng từ hay sự kiện sinh ra nó (cột `source_type`). */
 export type LedgerSource = 'package' | 'package_return' | 'return_refund' | 'return_inspection' | 'supplier_return' | 'settlement_batch' | 'manual';
@@ -18,6 +22,18 @@ export async function lockSource(type: LedgerSource, id: string): Promise<void> 
   await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
+/**
+ * Khoá các đơn tới hết giao dịch (#231): ghi dòng ước tính (`post`) và ghi lô quyết toán (`applyRun`) của cùng đơn chạy
+ * lần lượt, để bên sau đọc được dòng bên trước đã commit và nối cặp (READ COMMITTED không thấy dòng chưa commit). Khoá
+ * theo thứ tự id để hai lô nhiều đơn không khoá chéo nhau.
+ */
+export async function lockOrders(orderIds: readonly string[]): Promise<void> {
+  for (const id of [...new Set(orderIds)].sort()) {
+    const key = `finance.ledger_order:${currentCompanyId()}:${id}`;
+    await getDb().execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+  }
+}
+
 /** Nguồn đã có dòng ước tính chưa (sự kiện phát lại, giao ít nhất một lần). */
 export async function sourcePosted(type: LedgerSource, id: string): Promise<boolean> {
   const [row] = await getDb()
@@ -27,33 +43,70 @@ export async function sourcePosted(type: LedgerSource, id: string): Promise<bool
   return (row?.n ?? 0) > 0;
 }
 
-export async function insertEntries(rows: (typeof ledgerEntries.$inferInsert)[]): Promise<void> {
-  if (rows.length) await getDb().insert(ledgerEntries).values(rows);
+export async function insertEntries(rows: (typeof ledgerEntries.$inferInsert)[]): Promise<{ id: string; kind: LedgerKind; externalTransactionId: string | null }[]> {
+  if (!rows.length) return [];
+  return getDb()
+    .insert(ledgerEntries)
+    .values(rows)
+    .returning({ id: ledgerEntries.id, kind: ledgerEntries.kind, externalTransactionId: ledgerEntries.externalTransactionId });
 }
 
-const replacing = alias(ledgerEntries, 'replacing');
-const actualOfOrder = alias(ledgerEntries, 'actual_of_order');
-/** Dòng thực tế thay dòng đang đọc, nối trái; unique `replaces_entry_id` nên mỗi dòng tối đa một dòng thay. */
-const replacer = alias(ledgerEntries, 'replacer');
 /**
- * Dòng không còn tính (#117): có dòng thực tế trỏ `replaces_entry_id` về nó, hoặc là dòng ước tính của đơn đã có số
- * thật từ quyết toán (số thật của cả đơn thay số ước tính, kể cả khoản sàn không thu). Dựng lúc gọi: `getDb()` theo
- * giao dịch của bên gọi.
+ * Ghi quan hệ thay. Bên ghi giữ khoá đơn (`lockOrders`) nên không có giao dịch khác nối cùng dòng: trùng cặp là lỗi
+ * logic, để lỗi unique nổi lên thay vì nuốt im.
+ */
+export async function insertReplacements(rows: { companyId: string; actualId: string; estimateId: string }[]): Promise<void> {
+  if (rows.length) await getDb().insert(ledgerReplacements).values(rows);
+}
+
+/** Dòng hàng của kiện đã giao (lãi theo SKU); phát lại sự kiện không ghi trùng (unique kiện, số thứ tự dòng). */
+export async function insertPackageLines(rows: (typeof ledgerPackageLines.$inferInsert)[]): Promise<void> {
+  if (rows.length) await getDb().insert(ledgerPackageLines).values(rows).onConflictDoNothing();
+}
+
+/** Cặp thay của dòng đang đọc theo phía ước tính (`replacedBy`) và phía thực tế (`replacesId`), nối trái. */
+const asEstimate = alias(ledgerReplacements, 'as_estimate');
+const asActual = alias(ledgerReplacements, 'as_actual');
+const pairOf = alias(ledgerReplacements, 'pair_of');
+const groupMate = alias(ledgerEntries, 'group_mate');
+const sameBatch = alias(ledgerEntries, 'same_batch');
+const batchPair = alias(ledgerReplacements, 'batch_pair');
+
+/**
+ * Dòng không còn tính (#117, #231), đọc từ `ledger_replacements`, không so thời điểm ghi:
+ * - dòng ước tính đã có cặp với một dòng thực tế;
+ * - dòng tiền ước tính cùng nguồn (`source_type`, `source_id`: một kiện giao, một lần hoàn tiền…) với một dòng đã có
+ *   cặp: lần quyết toán là số thật của cả khoản của nguồn đó, kể cả khoản sàn không thu (25 §10.1, T4: "Có quyết toán
+ *   thì số thật thay số ước tính").
+ * Giá vốn (`NON_CASH`) lấy từ thẻ kho, sàn không quyết toán, nên không bao giờ bị thay (25 §10.2).
+ * Dựng lúc gọi: `getDb()` theo giao dịch của bên gọi. Tổng tiền ở sàn, `openEstimates`, lãi theo đơn, lãi theo danh
+ * sách đơn, lãi theo SKU và chạy thử cấu hình dùng chung luật này.
  */
 export const isReplaced = () =>
-  or(
-    exists(getDb().select({ one: sql`1` }).from(replacing).where(eq(replacing.replacesEntryId, ledgerEntries.id))),
-    and(
-      eq(ledgerEntries.isEstimate, true),
-      isNotNull(ledgerEntries.orderId),
-      exists(
-        getDb()
-          .select({ one: sql`1` })
-          .from(actualOfOrder)
-          .where(and(eq(actualOfOrder.orderId, ledgerEntries.orderId), eq(actualOfOrder.isEstimate, false))),
+  and(
+    notInArray(ledgerEntries.kind, NON_CASH),
+    or(
+      exists(getDb().select({ one: sql`1` }).from(pairOf).where(eq(pairOf.estimateId, ledgerEntries.id))),
+      and(
+        eq(ledgerEntries.isEstimate, true),
+        isNotNull(ledgerEntries.sourceId),
+        exists(
+          getDb()
+            .select({ one: sql`1` })
+            .from(groupMate)
+            .innerJoin(pairOf, eq(pairOf.estimateId, groupMate.id))
+            .where(and(eq(groupMate.sourceType, ledgerEntries.sourceType), eq(groupMate.sourceId, ledgerEntries.sourceId))),
+        ),
       ),
     ),
   )!;
+
+const withPairs = { entry: ledgerEntries, replacesId: asActual.estimateId, replacedBy: asEstimate.actualId };
+const toRow = (r: { entry: typeof ledgerEntries.$inferSelect; replacesId: string | null; replacedBy: string | null }): LedgerRow => ({
+  ...r.entry,
+  replacesId: r.replacesId,
+  replacedBy: r.replacedBy,
+});
 
 export interface LedgerFilter {
   filter?: 'all' | 'estimated' | 'actual' | 'replaced';
@@ -71,8 +124,9 @@ export interface LedgerFilter {
 function where(f: LedgerFilter) {
   const repl = isReplaced();
   return and(
-    f.filter === 'estimated' ? and(eq(ledgerEntries.isEstimate, true), not(repl)) : undefined,
-    f.filter === 'actual' ? eq(ledgerEntries.isEstimate, false) : undefined,
+    // Giá vốn không mang nhãn Ước tính (`isEstimateLine`, domain/ledger.ts): thuộc lọc thực tế, không thuộc lọc ước tính.
+    f.filter === 'estimated' ? and(eq(ledgerEntries.isEstimate, true), notInArray(ledgerEntries.kind, NON_CASH), not(repl)) : undefined,
+    f.filter === 'actual' ? or(eq(ledgerEntries.isEstimate, false), inArray(ledgerEntries.kind, NON_CASH)) : undefined,
     f.filter === 'replaced' ? repl : undefined,
     f.kind ? eq(ledgerEntries.kind, f.kind) : undefined,
     f.shopId ? eq(ledgerEntries.shopId, f.shopId) : undefined,
@@ -86,26 +140,28 @@ function where(f: LedgerFilter) {
 /** Một trang sổ, mới trước; kèm tổng số dòng khớp lọc. */
 export async function findEntries(f: LedgerFilter, page: { limit: number; offset: number }): Promise<{ rows: LedgerRow[]; total: number }> {
   const rows = await getDb()
-    .select({ entry: ledgerEntries, replacedBy: replacer.id })
+    .select(withPairs)
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
+    .leftJoin(asEstimate, eq(asEstimate.estimateId, ledgerEntries.id))
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(where(f))
     .orderBy(desc(ledgerEntries.occurredOn), desc(ledgerEntries.createdAt), desc(ledgerEntries.id))
     .limit(page.limit)
     .offset(page.offset);
   const [total] = await getDb().select({ n: count() }).from(ledgerEntries).where(where(f));
-  return { rows: rows.map((r) => ({ ...r.entry, replacedBy: r.replacedBy })), total: total?.n ?? 0 };
+  return { rows: rows.map(toRow), total: total?.n ?? 0 };
 }
 
-/** Mọi dòng của một đơn, cũ trước. */
-export async function entriesOfOrder(orderId: string): Promise<LedgerRow[]> {
+/** Mọi dòng của một đơn, cũ trước; `replaced` theo `isReplaced` (một luật cho SQL và lãi của đơn). */
+export async function entriesOfOrder(orderId: string): Promise<(LedgerRow & { replaced: boolean })[]> {
   const rows = await getDb()
-    .select({ entry: ledgerEntries, replacedBy: replacer.id })
+    .select({ ...withPairs, replaced: sql<boolean>`(${isReplaced()})` })
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
+    .leftJoin(asEstimate, eq(asEstimate.estimateId, ledgerEntries.id))
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(eq(ledgerEntries.orderId, orderId))
     .orderBy(ledgerEntries.occurredOn, ledgerEntries.createdAt, ledgerEntries.id);
-  return rows.map((r) => ({ ...r.entry, replacedBy: r.replacedBy }));
+  return rows.map((r) => ({ ...toRow(r), replaced: r.replaced }));
 }
 
 /**
@@ -145,16 +201,84 @@ export async function existingTxnIds(shopId: string, ids: readonly string[]): Pr
   return new Set(rows.map((r) => r.id!));
 }
 
-/** Dòng ước tính chưa có dòng thực tế trỏ về, của các đơn: để nối dòng thực tế cùng loại về đúng dòng ước tính. */
-export async function openEstimates(orderIds: readonly string[]): Promise<{ id: string; orderId: string; kind: LedgerKind }[]> {
+/**
+ * Dòng tiền ước tính còn hiệu lực (chưa `isReplaced`) của các đơn, cũ trước: lần quyết toán nối dòng thực tế cùng đơn,
+ * cùng loại về đây. Dòng cùng nguồn với dòng đã nối coi như đã thay nên không nhận thêm dòng thực tế, để dòng thực tế
+ * của kiện giao sau nối về dòng ước tính của chính kiện đó.
+ */
+export interface OpenEstimate {
+  id: string;
+  orderId: string;
+  kind: LedgerKind;
+  sourceType: string | null;
+  sourceId: string | null;
+}
+
+export async function openEstimates(orderIds: readonly string[]): Promise<OpenEstimate[]> {
   if (!orderIds.length) return [];
   const rows = await getDb()
-    .select({ id: ledgerEntries.id, orderId: ledgerEntries.orderId, kind: ledgerEntries.kind })
+    .select({
+      id: ledgerEntries.id,
+      orderId: ledgerEntries.orderId,
+      kind: ledgerEntries.kind,
+      sourceType: ledgerEntries.sourceType,
+      sourceId: ledgerEntries.sourceId,
+    })
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
-    .where(and(eq(ledgerEntries.isEstimate, true), inArray(ledgerEntries.orderId, [...orderIds]), isNull(replacer.id)))
+    .where(and(eq(ledgerEntries.isEstimate, true), inArray(ledgerEntries.orderId, [...orderIds]), not(isReplaced())))
     .orderBy(ledgerEntries.createdAt, ledgerEntries.id);
-  return rows.map((r) => ({ id: r.id, orderId: r.orderId!, kind: r.kind }));
+  return rows.map((r) => ({ ...r, orderId: r.orderId! }));
+}
+
+/**
+ * Dòng thực tế của đơn, cùng loại, chưa nối, để nối với dòng ước tính vừa ghi (sàn quyết toán trước khi app nhận sự
+ * kiện: kiện giao sau, hoàn tiền, E139). Cũ trước.
+ * - Không truyền `batch`: chỉ nhận dòng của lô chưa nối dòng nào cùng đơn, cùng loại. Sàn trả nhiều dòng cùng loại cho
+ *   phần đã có ước tính (mỗi món một dòng doanh thu) thì các dòng dư thuộc phần đó, không nối nhầm sang kiện sau.
+ * - Truyền `batch` (lô của dòng doanh thu vừa nối với kiện này): chỉ nhận dòng của lô đó (#231, loại khác doanh thu
+ *   chỉ nối khi doanh thu cùng lô đã nối vào đúng kiện).
+ */
+export async function unpairedActual(
+  orderId: string,
+  kind: LedgerKind,
+  batch?: { sourceType: string | null; sourceId: string | null },
+): Promise<{ id: string; sourceType: string | null; sourceId: string | null } | undefined> {
+  const [row] = await getDb()
+    .select({ id: ledgerEntries.id, sourceType: ledgerEntries.sourceType, sourceId: ledgerEntries.sourceId })
+    .from(ledgerEntries)
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
+    .where(
+      and(
+        eq(ledgerEntries.orderId, orderId),
+        eq(ledgerEntries.kind, kind),
+        eq(ledgerEntries.isEstimate, false),
+        isNull(asActual.id),
+        batch
+          ? and(
+              batch.sourceType ? eq(ledgerEntries.sourceType, batch.sourceType) : isNull(ledgerEntries.sourceType),
+              batch.sourceId ? eq(ledgerEntries.sourceId, batch.sourceId) : isNull(ledgerEntries.sourceId),
+            )
+          : not(
+              exists(
+                getDb()
+                  .select({ one: sql`1` })
+                  .from(sameBatch)
+                  .innerJoin(batchPair, eq(batchPair.actualId, sameBatch.id))
+                  .where(
+                    and(
+                      eq(sameBatch.sourceType, ledgerEntries.sourceType),
+                      eq(sameBatch.sourceId, ledgerEntries.sourceId),
+                      eq(sameBatch.orderId, ledgerEntries.orderId),
+                      eq(sameBatch.kind, ledgerEntries.kind),
+                    ),
+                  ),
+              ),
+            ),
+      ),
+    )
+    .orderBy(ledgerEntries.createdAt, ledgerEntries.id)
+    .limit(1);
+  return row;
 }
 
 /** Tổng tiền mặt ước tính và thực tế theo đơn (không tính giá vốn, rút tiền), để so lệch quyết toán. */
@@ -183,11 +307,12 @@ export async function platformBalanceOf(shopId: string): Promise<string> {
 
 export async function findEntry(id: string): Promise<LedgerRow | undefined> {
   const [row] = await getDb()
-    .select({ entry: ledgerEntries, replacedBy: replacer.id })
+    .select(withPairs)
     .from(ledgerEntries)
-    .leftJoin(replacer, eq(replacer.replacesEntryId, ledgerEntries.id))
+    .leftJoin(asEstimate, eq(asEstimate.estimateId, ledgerEntries.id))
+    .leftJoin(asActual, eq(asActual.actualId, ledgerEntries.id))
     .where(eq(ledgerEntries.id, id));
-  return row && { ...row.entry, replacedBy: row.replacedBy };
+  return row && toRow(row);
 }
 
 /** Dòng các loại cần khớp sao kê (rút tiền, NCC hoàn, bồi thường), mới trước; `matched` lọc đã khớp hay chưa. */
@@ -214,7 +339,7 @@ export async function entriesToMatch(
     .from(ledgerEntries)
     .leftJoin(bankMatches, eq(bankMatches.entryId, ledgerEntries.id))
     .where(filter);
-  return { rows: rows.map((r) => ({ ...r.entry, replacedBy: null })), total: total?.n ?? 0 };
+  return { rows: rows.map((r) => ({ ...r.entry, replacesId: null, replacedBy: null })), total: total?.n ?? 0 };
 }
 
 export type BankMatchRow = typeof bankMatches.$inferSelect;

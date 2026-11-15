@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LEDGER_KINDS,
+  matchSettlement,
   NOT_SALES_PROFIT,
   OFF_PLATFORM,
   configDraftsOfDelivered,
@@ -163,15 +164,49 @@ describe('khoản ngoài sàn, không vào lãi bán hàng (25 §10.1, §10.2; 2
   });
 });
 
+describe('matchSettlement (#231)', () => {
+  const est = (id: string, kind: 'revenue' | 'fee_fixed' | 'customer_refund', sourceId: string, sourceType = 'package') => ({
+    id,
+    orderId: 'o',
+    kind,
+    sourceType,
+    sourceId,
+  });
+
+  it('loại khác doanh thu chỉ nối với kiện mà doanh thu của lô đã nối; kiện kia không có loại đó thì để không nối', () => {
+    const open = [est('r1', 'revenue', 'k1'), est('r2', 'revenue', 'k2'), est('f2', 'fee_fixed', 'k2')];
+    const out = matchSettlement(
+      [
+        { txnId: 'fee', orderId: 'o', kind: 'fee_fixed' },
+        { txnId: 'rev', orderId: 'o', kind: 'revenue' },
+      ],
+      open,
+    );
+    expect([...out]).toEqual([['rev', 'r1']]);
+  });
+
+  it('nguồn không phải kiện (hoàn tiền) nối theo đơn, loại; dòng không đơn không nối', () => {
+    const open = [est('c1', 'customer_refund', 'rr1', 'return_refund')];
+    const out = matchSettlement(
+      [
+        { txnId: 'x', orderId: null, kind: 'customer_refund' },
+        { txnId: 'ref', orderId: 'o', kind: 'customer_refund' },
+      ],
+      open,
+    );
+    expect([...out]).toEqual([['ref', 'c1']]);
+  });
+});
+
 describe('chia doanh thu thuần theo ngày giao để chọn GTGT đầu ra (US-TI-13 dòng 3)', () => {
-  const line = (id: string, kind: 'revenue' | 'customer_refund' | 'fee_fixed', amount: string, occurredOn: string, isEstimate: boolean, replacesEntryId: string | null = null) => ({
+  const line = (id: string, kind: 'revenue' | 'customer_refund' | 'fee_fixed', amount: string, occurredOn: string, isEstimate: boolean, replacesId: string | null = null) => ({
     id,
     orderId: 'o1',
     kind,
     amount,
     occurredOn,
     isEstimate,
-    replacesEntryId,
+    replacesId,
   });
   const vatAt = (byDay: Record<string, number>) => (portions: { kind: 'revenue' | 'customer_refund' | 'fee_fixed' | string; amount: string; day: string }[]) =>
     portions.reduce((s, p) => s + outputVatOf({ kind: p.kind as never, amount: p.amount, outputVatPct: byDay[p.day] ?? 0 }).toNumber(), 0);

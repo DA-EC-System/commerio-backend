@@ -421,6 +421,20 @@
       "when": 1794728025862,
       "tag": "20261115073345_go-quyen-tien-cu",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794728545860,
+      "tag": "20261115074225_lai-theo-sku-bang-noi",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794728547917,
+      "tag": "20261115074227_rls-lai-theo-sku-bang-noi",
+      "breakpoints": true
     }
   ]
 }

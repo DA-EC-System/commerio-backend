@@ -306,7 +306,9 @@ describe('GTGT đầu ra theo ngày giao (US-TI-13 dòng 3)', () => {
       return rows[0].id as string;
     };
     const est = await insert({ amount: '110000', is_estimate: true, occurred_on: '2026-10-28' });
-    await insert({ amount: '110000', is_estimate: false, occurred_on: '2026-11-02', replaces_entry_id: est });
+    const act = await insert({ amount: '110000', is_estimate: false, occurred_on: '2026-11-02' });
+    // Quan hệ thay ở bảng nối `ledger_replacements` (#231; cột `replaces_entry_id` không còn đọc).
+    await testPool().query('insert into finance.ledger_replacements (company_id, actual_id, estimate_id) values ($1, $2, $3)', [c.companyId, act, est]);
     const profit = await as(c.ceo.token).get(`/orders/${orderId}/profit`);
     expect(profit.status, JSON.stringify(profit.body)).toBe(200);
     expect(profit.body.net).toBe(110000); // hộ kinh doanh ngày giao 28/10: không bỏ GTGT
@@ -340,23 +342,39 @@ describe('GTGT đầu ra khi đơn nhiều ngày giao, hoàn tiền (US-TI-13 d�
     await version(c.companyId, 'tax_rules', 'active', { ...rules, outputVatPct: 8 }, '2026-11-01');
     const shopId = randomUUID();
     const orderId = randomUUID();
-    const insert = (cols: Record<string, unknown>) => {
+    const insert = async (cols: Record<string, unknown>) => {
       const all = { company_id: c.companyId, shop_id: shopId, order_id: orderId, kind: 'revenue', is_estimate: true, ...cols };
       const keys = Object.keys(all);
-      return testPool().query(`insert into finance.ledger_entries (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(all));
+      const { rows } = await testPool().query(
+        `insert into finance.ledger_entries (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
+        Object.values(all),
+      );
+      return rows[0].id as string;
     };
-    return { token: c.ceo.token, orderId, insert };
+    const pair = (actualId: string, estimateId: string) =>
+      testPool().query('insert into finance.ledger_replacements (company_id, actual_id, estimate_id) values ($1, $2, $3)', [c.companyId, actualId, estimateId]);
+    return { token: c.ceo.token, orderId, insert, pair };
   }
 
   it('kiện 1 giao 31/10 (10%), kiện 2 giao 01/11 (8%), sàn quyết toán một dòng 1.000.000 đ: GTGT chia theo từng ngày giao', async () => {
     const c = await companyWithVat();
-    await c.insert({ amount: '600000', occurred_on: '2026-10-31' });
-    await c.insert({ amount: '400000', occurred_on: '2026-11-01' });
+    // Luật thay của #231: dòng ước tính hết tính khi có cặp ở `ledger_replacements` hoặc cùng nguồn (kiện) với dòng đã
+    // có cặp. Mỗi kiện có một khoản phí đã nối cặp nên cả kiện coi như đã quyết toán; dòng doanh thu thực tế một dòng cả
+    // đơn không nối cặp, chia theo doanh thu ước tính từng ngày giao.
+    const settledPackage = async (amount: string, day: string) => {
+      const pkg = randomUUID();
+      const src = { source_type: 'package', source_id: pkg, package_id: pkg };
+      await c.insert({ ...src, amount, occurred_on: day });
+      const fee = await c.insert({ ...src, kind: 'fee_fixed', amount: '-10000', occurred_on: day });
+      await c.pair(await c.insert({ kind: 'fee_fixed', amount: '-10000', is_estimate: false, occurred_on: '2026-11-02' }), fee);
+    };
+    await settledPackage('600000', '2026-10-31');
+    await settledPackage('400000', '2026-11-01');
     await c.insert({ amount: '1000000', is_estimate: false, occurred_on: '2026-11-02' });
     const profit = await as(c.token).get(`/orders/${c.orderId}/profit`);
     expect(profit.status, JSON.stringify(profit.body)).toBe(200);
-    // GTGT 54.545 (600.000 ở 10%) + 29.630 (400.000 ở 8%) = 84.175.
-    expect(profit.body).toMatchObject({ net: 915825, estimated: false });
+    // GTGT 54.545 (600.000 ở 10%) + 29.630 (400.000 ở 8%) = 84.175; thực nhận 1.000.000 − 2 × 10.000 − 84.175.
+    expect(profit.body).toMatchObject({ net: 895825, estimated: false });
   });
 
   it('giao 31/10 (10%), hoàn toàn bộ 02/11 khi đã 8%: doanh thu thuần 0, GTGT 0, không có lãi ma', async () => {
