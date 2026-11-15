@@ -46,7 +46,7 @@ Máy trạng thái ở `domain/return.ts` (bảng §20): `requested` → `awaiti
 
 ## Cho module khác
 
-`orderRefsOf` (fulfillment, qua `ctx` do `order/index.ts` tiêm: thông tin đơn cho route kiện), `getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder`, `ingestMarketplaceReturn`, `countOpenOrders` (channel, chặn ngắt gian hàng #207). `hasOpenReturns` (§11.3). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
+`orderRefsOf` (fulfillment, qua `ctx` do `order/index.ts` tiêm: thông tin đơn cho route kiện), `getOrder` (fulfillment qua `ctx.orderViewOf`: route tách kiện trả `Order`, #205), `nextPackageCode` (mã `KH-` kế tiếp; nhận đơn sàn và tách kiện qua `ctx.nextPackageCode` dùng chung một dãy, #205), `getOrderForPayment` (payment), `getOrdersForFinance`, `findMarketplaceOrders`, `getOrderLines` (finance), `getOrderChannels` (report), `ingestMarketplaceOrder`, `ingestMarketplaceReturn`, `countOpenOrders` (channel, chặn ngắt gian hàng #207). `hasOpenReturns` (§11.3). `ctx.shopsOf` (tên gian hàng) tiêm ở `src/wiring.ts`.
 
 ## Chưa làm
 

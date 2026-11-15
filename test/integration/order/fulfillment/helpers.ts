@@ -242,6 +242,7 @@ export function packingApp(fake: Partial<MarketplacePackages> = {}) {
   const appContext: AppContext = {
     ...ctx,
     marketplacePackages: {
+      splitLevel: unexpectedMarketplace,
       splitAttributes: unexpectedMarketplace, split: unexpectedMarketplace, ship: unexpectedMarketplace,
       carriers: unexpectedMarketplace, pack: unexpectedMarketplace, readyToShip: unexpectedMarketplace,
       repack: unexpectedMarketplace, shippingDocuments: unexpectedMarketplace, ...fake,

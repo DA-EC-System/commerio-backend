@@ -345,13 +345,20 @@ export async function syncPlatformPackages(
 ): Promise<PlatformPackagesResult & { cancelled: ('cancelled' | 'needs_open' | 'handed_over')[] }> {
   const existing = await lockOrderPackages(order.id);
   const owner = new Map(existing.flatMap((p) => p.lines.map((l) => [l.orderLineId, p] as const)));
-  const groups = new Map<string, PlatformPackageLine[]>();
-  for (const l of lines) groups.set(l.packageCode ?? '', [...(groups.get(l.packageCode ?? '') ?? []), l]);
+  // Món chưa có mã kiện sàn mà đã nằm trong kiện app thì theo kiện đó (spec 205 D10): sàn chưa nói gì về cách chia, nên
+  // cách chia của app (tách kiện) là đúng, không phải "sàn chia lại". Món có mã sàn vẫn gom theo mã như cũ.
+  const groups = new Map<string, { code: string; lines: PlatformPackageLine[] }>();
+  for (const l of lines) {
+    const key = l.packageCode || `\u0000${owner.get(l.orderLineId)?.id ?? ''}`;
+    const group = groups.get(key) ?? { code: l.packageCode || '', lines: [] };
+    group.lines.push(l);
+    groups.set(key, group);
+  }
 
   const result = { changed: false, resplit: false, unknown: false, cancelled: [] as ('cancelled' | 'needs_open' | 'handed_over')[] };
   const events = order.packageEvents ?? [];
   const touched = new Set<string>();
-  for (const [code, group] of groups) {
+  for (const { code, lines: group } of groups.values()) {
     const status = groupStatus(group);
     // Hành trình kiện của nhóm (spec 199c §5.4): khớp mã kiện sàn rồi mã vận đơn, một lần mỗi nhóm; mốc thiếu/lai `now`.
     const journey = journeyTimes(eventsOf(events, { platformPackageCode: code || null, trackingCode: group.find((l) => l.trackingCode)?.trackingCode ?? null }), new Date());

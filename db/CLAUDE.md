@@ -22,6 +22,7 @@ Migration của PostgreSQL. Một database, **mỗi module lớn một schema c�
 - Bảng có bước duyệt dùng cột chung `approval` (`created_by`, `approved_by`, `approved_at`, `self_approved`) và CHECK `approvalCheck` (`src/shared/db/columns.ts`): người duyệt khác người lập, trừ khi `self_approved` (CEO, hoặc công ty một người; service quyết). Người thứ hai giữa hai cột khác (COD, thất lạc, kết quả trả NCC, chốt lệch) là CHECK riêng của bảng.
 - Trạng thái kéo theo cột bắt buộc (đã ghi sổ thì có `posted_at`, hoàn tiền NCC thì có số tiền…) là CHECK. Quy tắc trải nhiều bảng (`đạt + lỗi ≤ còn chờ`, người ghi sổ phiếu nhận khác người lập đề nghị) do service kiểm.
 - Tồn: `stock_levels_invariant` cho phép tồn thực âm hoặc nhỏ hơn đang giữ **chỉ khi** bật `invariant_broken` (hai ngoại lệ của `25` §7.1).
+- Dòng kiện: constraint trigger `package_lines_line_total` (migration `*_tach-kien-bat-bien`, hàm `"order".check_package_line_total()`, #205): tổng `quantity` của một dòng đơn trên các kiện chưa huỷ không vượt `order_lines.quantity`. `DEFERRABLE INITIALLY DEFERRED` (kiểm lúc commit), chỉ trên dòng kiện vừa chèn hay đổi `quantity`, `package_id`, `order_line_id`; dòng kiện trỏ tới dòng đơn không có thì bỏ qua. Hàm chạy quyền người gọi và **không khoá** dòng đơn (tránh vòng khoá với luồng nhận đơn), nên đường ghi dòng kiện phải khoá kiện trước. Lỗi `23514` kèm `constraint = package_lines_line_total`; muốn báo ngay trong giao dịch thì `set constraints "order".package_lines_line_total immediate`.
 
 ## Row-Level Security
 

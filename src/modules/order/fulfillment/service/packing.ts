@@ -40,7 +40,7 @@ export async function carriersOf(ctx: FulfillmentContext, companyId: string, id:
   return { items: target ? await marketplacePackagesOf(ctx).carriers(companyId, target.shopId, target.items) : [] };
 }
 
-async function versionConflict(ctx: FulfillmentContext, id: string): Promise<never> {
+export async function versionConflict(ctx: FulfillmentContext, id: string): Promise<never> {
   throw new AppError(409, 'version_conflict', 'Kiện vừa được cập nhật, tải lại rồi thử lại', { current: await getPackage(ctx, id) });
 }
 

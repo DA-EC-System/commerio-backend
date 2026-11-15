@@ -144,6 +144,8 @@ export const packageLines = fulfillmentSchema.table(
   (t) => [
     index().on(t.packageId),
     index().on(t.variantId),
+    // Trigger `package_lines_line_total` (spec 205 D11) cộng dòng kiện theo dòng đơn.
+    index().on(t.orderLineId),
     check('package_lines_quantity', sql`${t.quantity} > 0`),
     check('package_lines_reserved_whole', sql`${t.reservedQty} in (0, ${t.quantity})`),
     check('package_lines_packed', sql`${t.packedQty} >= 0 and ${t.packedQty} <= ${t.quantity}`),

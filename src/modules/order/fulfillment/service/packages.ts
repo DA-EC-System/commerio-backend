@@ -5,6 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import type { PackageTab } from '../domain/package.ts';
+import type { SplitLevel } from '../domain/split.ts';
 import { countPackageTabs, findPackagePage, findPackagesByIds, type PackageFilter } from '../repository/package-list.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
 import { type PackageOrderRef, toPackageSummary } from './views.ts';
@@ -20,6 +21,10 @@ export interface FulfillmentContext extends ModuleContext {
   readonly stockHoldOf?: (shopIds: readonly string[], opts?: { lock?: boolean }) => Promise<Set<string>>;
   /** Thao tác kiện trên sàn (channel), tiêm qua src/wiring.ts. */
   readonly marketplacePackages?: MarketplacePackages;
+  /** `Order` đầy đủ của sales (spec 205 D9), chạy trong `withCompany` của bên gọi; route tách kiện trả bản này. */
+  readonly orderViewOf?: (orderId: string) => Promise<object>;
+  /** Mã kiện app kế tiếp (`KH-000001`) từ bộ đếm của sales, trong giao dịch của bên gọi (spec 205 D15). */
+  readonly nextPackageCode?: () => Promise<string>;
 }
 
 export interface PlatformPackageItems {
@@ -32,6 +37,8 @@ export interface PlatformPackageItems {
  * giới hạn sàn bắt tách (`mustSplitReasons`), thì 422 `split_not_supported` kèm câu của sàn.
  */
 export interface MarketplacePackages {
+  /** Mức tách kiện của gian hàng theo sàn (spec 205 D6); gian hàng không có thì `none`. */
+  splitLevel(companyId: string, shopId: string): Promise<SplitLevel>;
   splitAttributes(
     companyId: string,
     shopId: string,
@@ -64,6 +71,16 @@ export function stockHoldLookupOf(ctx: Pick<FulfillmentContext, 'stockHoldOf'>) 
 export function orderRefsLookupOf(ctx: FulfillmentContext) {
   if (!ctx.orderRefsOf) throw new AppError(500, 'internal_error', 'Chưa nối dữ liệu đơn của sales (src/modules/order/index.ts)');
   return ctx.orderRefsOf;
+}
+
+export function orderViewLookupOf(ctx: FulfillmentContext) {
+  if (!ctx.orderViewOf) throw new AppError(500, 'internal_error', 'Chưa nối chi tiết đơn của sales (src/modules/order/index.ts)');
+  return ctx.orderViewOf;
+}
+
+export function packageCodeLookupOf(ctx: FulfillmentContext) {
+  if (!ctx.nextPackageCode) throw new AppError(500, 'internal_error', 'Chưa nối bộ đếm mã kiện của sales (src/modules/order/index.ts)');
+  return ctx.nextPackageCode;
 }
 
 export function marketplacePackagesOf(ctx: FulfillmentContext): MarketplacePackages {

@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   CarrierList, FoundBody, HandOverBody, HandOverResult, OpenBody, PackBody, Package, PackageDocumentsQuery, PackageListQuery,
-  PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, ReceiveReturnBody, UndoHandoverBody,
+  PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, ReceiveReturnBody, SplitBody, UndoHandoverBody,
 } from './schemas.ts';
 
 const bearer = [{ bearerAuth: [] }];
@@ -84,6 +84,27 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     '`self_delivery`, `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`', '`marketplace_unsupported`');
   registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói',
     '`shop_awaiting_stocktake`, `package_status_not_allowed`', '`insufficient_stock`, `marketplace_unsupported`');
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/split',
+    summary: 'Tách kiện',
+    description: 'Cần `fulfillment.order.process`. Chỉ kiện `reserved`, `backordered`. Mỗi phần của `parts` thành một kiện mới, '
+      + 'kiện cũ giữ phần còn lại (kể cả dòng chưa ghép SKU). Rẽ theo `splitLevel` của gian hàng: `unit` (và đơn tay) chia trong app; '
+      + '`sku` gọi sàn tách trước, chỉ chuyển trọn SKU, đơn đã có từ hai kiện chưa huỷ thì chưa tách được; bước ghi sau khi sàn đã tách '
+      + 'không so `version`, lỗi thì kiện cũ bật Cần xử lý; `none` không tách. Trả chi tiết đơn sau khi tách.',
+    security: bearer,
+    request: { params: PackageParams, body: json(SplitBody) },
+    responses: {
+      // `Order` là schema của sales: tham chiếu theo id để fulfillment không import sales (thành vòng).
+      200: { description: 'Đơn sau khi tách', content: { 'application/json': { schema: { $ref: '#/components/schemas/Order' } } } },
+      ...auth,
+      404: packageMissing,
+      409: problemResponse(`\`package_sealed\`, ${versionConflict}, \`item_not_packable\`, ${marketplaceConflict}`),
+      422: problemResponse('`validation_failed` tại `errors["parts.<i>.<j>.variantId"]`, `errors["parts.<i>.<j>.quantity"]`, `errors.parts`; '
+        + '`split_not_supported` (sàn không cho tách, `sku` tách đôi một SKU, sàn từ chối kèm câu của sàn)'),
+      503: marketplaceUnavailable,
+    },
+  });
 
   registry.registerPath({
     method: 'get',

@@ -200,6 +200,23 @@ export const PackBody = z.object({
   carrierCode: z.string().trim().min(1).max(100).optional(),
 }).meta({ id: 'PackBody' });
 
+/** Tách kiện (Documents/21 §19.2, spec 205 §5.2): mỗi phần thành một kiện mới, kiện cũ giữ phần còn lại. */
+export const SplitBody = z.object({
+  version,
+  parts: z.array(
+    z.array(z.object({
+      variantId: z.uuid('Biến thể không hợp lệ').transform((id) => id.toLowerCase()),
+      quantity: z.number().int('Số lượng phải là số nguyên').min(1, 'Số lượng phải lớn hơn 0'),
+    })).min(1, 'Mỗi kiện mới cần ít nhất một món').max(200, 'Mỗi kiện mới tối đa 200 dòng').superRefine((items, ctx) => {
+      const seen = new Set<string>();
+      items.forEach((item, i) => {
+        if (seen.has(item.variantId)) ctx.addIssue({ code: 'custom', path: [i, 'variantId'], message: 'Biến thể bị lặp trong cùng một kiện mới' });
+        seen.add(item.variantId);
+      });
+    }),
+  ).min(1, 'Chọn ít nhất một kiện mới').max(20, 'Tách tối đa 20 kiện mới một lần'),
+}).meta({ id: 'SplitPackageBody' });
+
 export const ReadyBody = z.object({ version }).meta({ id: 'ReadyBody' });
 export const OpenBody = z.object({ version }).meta({ id: 'OpenBody' });
 

@@ -13,6 +13,7 @@ import {
   updateOrder,
   upsertMarketplaceLines,
 } from '../repository/orders.ts';
+import { nextPackageCode } from './package-orders.ts';
 
 /** Đơn sàn đã chuẩn hoá; `variantId` do channel tra theo listing (null: chưa ghép SKU). Mỗi món một đơn vị. */
 export interface PlatformOrder {
@@ -220,7 +221,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       cancelKind: l.info.cancelKind,
       shipping: l.shipping,
     })),
-    () => code('KH', 'package'),
+    nextPackageCode,
   );
 
   const next = { ...row };
