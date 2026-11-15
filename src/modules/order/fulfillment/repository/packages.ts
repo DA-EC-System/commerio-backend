@@ -4,6 +4,8 @@ import { HANDED_OVER, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
 import { type PackageNotice, packageLines, packages } from './schema.ts';
 
+type OpenPurpose = NonNullable<(typeof packages.$inferSelect)['openPurpose']>;
+
 /** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
 export interface PackageShipping {
   shipmentProvider: string | null;
@@ -112,9 +114,12 @@ const handoverColumns = {
   needsAttention: packages.needsAttention,
 };
 
+/** Dòng kiện kèm dòng đơn và số chờ bỏ (spec 205 §5.10). */
+export type PackageLineRow = PlanLine & { orderLineId: string; pendingDropQty: number };
+
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
-export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
-  const byPackage = new Map<string, (PlanLine & { orderLineId: string })[]>(packageIds.map((id) => [id, []]));
+export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, PackageLineRow[]>> {
+  const byPackage = new Map<string, PackageLineRow[]>(packageIds.map((id) => [id, []]));
   if (!packageIds.length) return byPackage;
   const rows = await getDb()
     .select({
@@ -125,6 +130,7 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
       quantity: packageLines.quantity,
       reservedQty: packageLines.reservedQty,
       stockDeducted: packageLines.stockDeducted,
+      pendingDropQty: packageLines.pendingDropQty,
     })
     .from(packageLines)
     .where(inArray(packageLines.packageId, [...packageIds]))
@@ -174,9 +180,11 @@ export interface PackageRow extends HandoverPackage {
   platformPackageCode: string | null;
   trackingCode: string | null;
   needsOpen: boolean;
+  /** Mục đích mở kiện (`cancel`, `edit`, `resplit`); null khi không chờ mở. */
+  openPurpose: OpenPurpose | null;
   labelError: boolean;
   shipping: PackageShipping;
-  lines: (PlanLine & { orderLineId: string })[];
+  lines: PackageLineRow[];
 }
 
 /** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
@@ -188,6 +196,7 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
       platformPackageCode: packages.platformPackageCode,
       trackingCode: packages.trackingCode,
       needsOpen: packages.needsOpen,
+      openPurpose: packages.openPurpose,
       labelError: packages.labelError,
       shipping: {
         shipmentProvider: packages.shipmentProvider,

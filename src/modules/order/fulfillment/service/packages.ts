@@ -25,6 +25,11 @@ export interface FulfillmentContext extends ModuleContext {
   readonly orderViewOf?: (orderId: string) => Promise<object>;
   /** Mã kiện app kế tiếp (`KH-000001`) từ bộ đếm của sales, trong giao dịch của bên gọi (spec 205 D15). */
   readonly nextPackageCode?: () => Promise<string>;
+  /**
+   * Khép đơn sàn đang huỷ khi mọi kiện đã huỷ (sales, spec 205 D21): gọi sau khi mở kiện đi `open_cancel`, trong
+   * `withCompany` riêng (khoá đơn, không giữ khoá kiện).
+   */
+  readonly settleCancelledOrder?: (orderId: string) => Promise<void>;
 }
 
 export interface PlatformPackageItems {
@@ -76,6 +81,11 @@ export function orderRefsLookupOf(ctx: FulfillmentContext) {
 export function orderViewLookupOf(ctx: FulfillmentContext) {
   if (!ctx.orderViewOf) throw new AppError(500, 'internal_error', 'Chưa nối chi tiết đơn của sales (src/modules/order/index.ts)');
   return ctx.orderViewOf;
+}
+
+export function cancelledOrderSettlerOf(ctx: FulfillmentContext) {
+  if (!ctx.settleCancelledOrder) throw new AppError(500, 'internal_error', 'Chưa nối khép đơn đang huỷ của sales (src/modules/order/index.ts)');
+  return ctx.settleCancelledOrder;
 }
 
 export function packageCodeLookupOf(ctx: FulfillmentContext) {
