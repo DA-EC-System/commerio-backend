@@ -1,6 +1,6 @@
 // Xem đơn (Documents/21 §19.1): danh sách có giai đoạn, cờ suy ra; chi tiết kèm dòng, kiện, lịch sử.
 import { Decimal } from 'decimal.js';
-import { getStatusHistory } from '../../../core/index.ts';
+import { findAccountSummaries, getStatusHistory } from '../../../core/index.ts';
 import { getVariants } from '../../../product/index.ts';
 import { findPackagesOfOrders, type PackageOrderRef, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -207,7 +207,13 @@ export async function getOrder(ctx: SalesContext, id: string) {
     getStatusHistory('orders', id),
   ]);
   const f = facts.get(id)!;
-  const labels = await variantLabels(lines.map((l) => l.variantId));
+  const reporters = [...new Set(f.packages.flatMap((p) => (p.lostReportedBy ? [p.lostReportedBy] : [])))];
+  const [labels, accounts] = await Promise.all([
+    variantLabels(lines.map((l) => l.variantId)),
+    // Tên người báo thất lạc của mọi kiện, một câu (spec #238 §5.3); đơn không có báo cáo thì không truy vấn.
+    findAccountSummaries(reporters),
+  ]);
+  const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
   const lastDelivered = f.packages.reduce<Date | null>((a, p) => (p.deliveredAt && (!a || p.deliveredAt > a) ? p.deliveredAt : a), null);
@@ -263,7 +269,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
       reverseOrderId: l.reverseOrderId,
       returnStatus: l.returnStatus,
     })),
-    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now)),
+    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, names)),
     returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000).toISOString() : null,
     completionBlocker: blocker as 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed' | null,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),

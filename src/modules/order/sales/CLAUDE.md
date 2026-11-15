@@ -8,6 +8,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 - **Cờ lưu:** `needs_attention`, `cancel_requested`, `cancelling`, `platform_cancelled`, `shop_disconnected`. **Cờ suy ra** lúc đọc (`service/orders.ts`): `unmapped_sku` (dòng `variant_id` trống), `due_soon` (còn kiện chưa rời kho, dưới 24 giờ tới `ship_by`), `return_requested` (yêu cầu trả còn mở: `requested`, `awaiting_return`, `received`). `cod_mismatch` chưa có nguồn.
 - **Giai đoạn hiển thị** `stageOf` và **lý do chưa hoàn tất** `completionBlocker` suy từ kiện. Danh sách phân trang trong SQL; cờ lưu, `unmapped_sku`, `return_requested` lọc bằng SQL; chỉ giai đoạn suy từ kiện và `due_soon` lọc trong bộ nhớ, trên 1.000 đơn chưa dừng mới nhất (`DERIVED_SCAN`).
+- **Chi tiết đơn** dựng kiện bằng `toPackageSummary` của fulfillment; tên người báo thất lạc (`lostReport.by.name`, #238) tra một lần cho mọi kiện của đơn qua `findAccountSummaries` (`core`), đơn không có báo cáo thì không truy vấn.
 - Tiền lưu `numeric`, API trả số nguyên đồng.
 
 ## Nhận đơn sàn (#105)
