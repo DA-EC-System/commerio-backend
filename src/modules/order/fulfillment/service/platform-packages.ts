@@ -1,7 +1,7 @@
 // Kiện của đơn sàn theo trạng thái sàn đẩy về (#105). Mỗi mã kiện sàn một kiện; sàn chưa chia kiện thì một kiện tạm,
 // nhận mã ở lần kéo sau. Giữ, nhả lúc tạo, huỷ; kiện vào nhóm rời kho thì trừ tồn qua lõi `handover-stock.ts` (#199).
 import { sql } from 'drizzle-orm';
-import { publishEvent, recordTransition } from '../../../core/index.ts';
+import { getStatusHistory, publishEvent, recordTransition } from '../../../core/index.ts';
 import { handoverStockMode, stockEffectOf } from '../domain/handover.ts';
 import {
   type CancelKind,
@@ -14,7 +14,7 @@ import {
   lineStatus,
 } from '../domain/delivery.ts';
 import { type CancelLine, planLineCancel } from '../domain/line-cancel.ts';
-import { arrowAction, holdsStock, isHandedOver, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
+import { arrowAction, holdsStock, isHandedOver, isPlatformRevive, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
 import { deleteLines, setPendingDrop, setPendingDropAll } from '../repository/line-cancel.ts';
 import { reportDeliveryFailed, reportDelivered } from './delivery.ts';
 import {
@@ -28,6 +28,7 @@ import {
 } from '../repository/packages.ts';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import type { PackageNotice } from '../repository/schema.ts';
 import { requestAllocation } from './allocation.ts';
 import { settleHandover } from './handover-stock.ts';
@@ -96,6 +97,8 @@ export interface PlatformPackagesResult {
   resplit: boolean;
   /** Món có trạng thái app chưa biết. */
   unknown: boolean;
+  /** Sàn kéo lại kiện người dùng đã chuyển `lost`/`returning` (spec #238 §5.4): đơn cần người xem. */
+  revived: boolean;
   /**
    * `order_line_id` của món sàn huỷ mà kiện chứa món chưa rời kho (gỡ, chờ bỏ, hay huỷ cả kiện): sales ghi
    * `cancelled_qty = quantity` trong cùng giao dịch (spec 205 §5.10). Có thể lặp lại qua các lượt kéo.
@@ -168,7 +171,11 @@ async function changeStatus(
   const from = pkg.status;
   const marks = milestones(from, to, times);
   const flags = from === 'packed' && pkg.labelError ? { labelError: false } : {};
-  await updatePackage(pkg.id, { status: to, ...marks, ...flags });
+  // Sàn báo mất (spec #238 §5.4): kiện mang nguồn sàn (CHECK `packages_lost_confirmed`); kiện đang chờ mở thì gỡ cờ,
+  // hộp đã rời kho. Báo cáo thất lạc của kho (nếu có) giữ nguyên.
+  const lost = to === 'lost' ? { lostSource: 'marketplace' as const, ...(pkg.needsOpen ? { needsOpen: false, openPurpose: null } : {}) } : {};
+  if (to === 'lost' && !isHandedOver(from)) logger.warn({ packageId: pkg.id, from }, 'sàn báo mất kiện chưa bàn giao');
+  await updatePackage(pkg.id, { status: to, ...marks, ...flags, ...lost });
   await recordTransition({
     entityType: 'packages',
     entityId: pkg.id,
@@ -180,6 +187,14 @@ async function changeStatus(
     ...(to === 'delivery_failed' ? { reason: failReason ?? DEFAULT_FAIL_REASON } : {}),
   });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: pkg.id, orderId: order.id, from, to } });
+  if (to === 'lost') {
+    await publishEvent({
+      type: 'fulfillment.package_lost',
+      aggregateId: order.id,
+      payload: { packageId: pkg.id, orderId: order.id, claimCode: pkg.lostClaimCode ?? null },
+    });
+    pkg.needsOpen = false;
+  }
   Object.assign(pkg, { status: to }, marks, flags);
   // Sàn báo kiện rời kho (kể cả nhảy cóc từ thiếu hàng): trừ tồn một lần; chờ kiểm kê thì hoãn.
   if (stockEffectOf(from, to) === 'ship') await settleHandover(pkg, { actorId: null, mode: order.holdStock ? 'deduct' : 'defer' });
@@ -229,6 +244,8 @@ async function createPackage(
     status: initial,
     shipBy: order.shipBy,
     ...milestones(null, initial, { leftAt: journey.leftAt, deliveredAt: journey.deliveredAt }),
+    // Kiện lần đầu thấy đã mất: nguồn sàn (CHECK `packages_lost_confirmed`, spec #238 §5.4).
+    ...(initial === 'lost' ? { lostSource: 'marketplace' as const } : {}),
   });
   const { reserved, notices } = wantsStock && mapped && order.holdStock ? await tryReserve(id, lines) : { reserved: false, notices: [] };
   if (notices.length) await updatePackage(id, { notices });
@@ -253,6 +270,10 @@ async function createPackage(
     ...(to === 'delivery_failed' ? { reason: journey.failReason ?? DEFAULT_FAIL_REASON } : {}),
   });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: id, orderId: order.id, from: null, to } });
+  // Kiện rời kho trước mốc bắt đầu lấy đơn (`store_only`) không phát `package_lost` (spec #238 §5.4).
+  if (to === 'lost' && mode !== 'store_only') {
+    await publishEvent({ type: 'fulfillment.package_lost', aggregateId: order.id, payload: { packageId: id, orderId: order.id, claimCode: null } });
+  }
   const marks = milestones(null, initial, { leftAt: journey.leftAt, deliveredAt: journey.deliveredAt });
   const pkg: PackageRow = {
     id,
@@ -267,6 +288,9 @@ async function createPackage(
     platformPackageCode: lines[0]!.packageCode,
     trackingCode: lines[0]!.trackingCode,
     needsOpen: false,
+    selfDelivery: false,
+    lostReportedBy: null,
+    lostClaimCode: null,
     openPurpose: null,
     labelError: false,
     needsAttention: status === 'return_failed',
@@ -282,18 +306,24 @@ async function createPackage(
   return pkg;
 }
 
-/** Áp trạng thái sàn lên một kiện đã có; trả true khi có đổi. Món huỷ cả kiện xử lý ở `cancelPlatformPackage`. */
+const UNCHANGED = { changed: false, revived: false } as const;
+
+/**
+ * Áp trạng thái sàn lên một kiện đã có; `changed` khi có đổi, `revived` khi sàn kéo lại kiện người dùng đã chuyển
+ * `lost`/`returning` (spec #238 §5.4). Món huỷ cả kiện xử lý ở `cancelPlatformPackage`.
+ */
 async function applyStatus(
   order: PlatformPackageOrder,
   pkg: PackageRow,
   remote: Exclude<PlatformLineStatus, 'cancelled'>,
   journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
-): Promise<boolean> {
-  if (remote === 'pending') return false;
+): Promise<{ changed: boolean; revived: boolean }> {
+  if (remote === 'pending') return UNCHANGED;
   const to = deliveryTarget(remote, { firstSeen: false, storeOnly: false });
   // Kho đã quét nhận hàng hoàn trước, sàn báo hoàn chậm hơn: bỏ qua, không cờ (spec 199c §5.4, AC14).
-  if (pkg.status === 'returned' && to === 'returning') return false;
+  if (pkg.status === 'returned' && to === 'returning') return UNCHANGED;
   let changed = false;
+  let revived = false;
   // Kho đã quét mà sàn báo rời kho: sàn xác nhận lấy, không trừ thêm (spec 199a §5.4). Mốc theo hành trình (spec 199c).
   if (pkg.handoverSource === 'scan' && pkg.pickupConfirmedAt === null && isHandedOver(pkg.status) && isHandedOver(to)) {
     const at = journey.leftAt ?? new Date();
@@ -303,24 +333,37 @@ async function applyStatus(
   // Sàn không bao giờ kéo kiện ra khỏi nhóm rời kho (mũi tên `undo_handover` chỉ dành cho CEO, đi kèm đảo tồn). Kho vừa
   // quét mà sàn chưa cập nhật thì bỏ qua (sàn chậm hơn kho là bình thường); còn lại là bất thường, gắn cờ Cần xử lý.
   const backFromOut = stockEffectOf(pkg.status, to) === 'reverse';
-  if (backFromOut && pkg.handoverSource === 'scan' && pkg.pickupConfirmedAt === null) return false;
+  if (backFromOut && pkg.handoverSource === 'scan' && pkg.pickupConfirmedAt === null) return UNCHANGED;
   if (to !== pkg.status) {
-    const kind = backFromOut ? 'invalid' : platformUpdate(pkg.status, to);
+    const from = pkg.status;
+    // Sàn kéo lại kiện `lost`/`returning`: chỉ áp khi lần chuyển gần nhất do người dùng (spec #238 §5.4). Đọc lịch sử
+    // chỉ ở nhánh này.
+    const revive = isPlatformRevive(from, to);
+    const statusSource = revive ? (await getStatusHistory('packages', pkg.id)).at(-1)?.source : undefined;
+    const kind = backFromOut ? 'invalid' : platformUpdate(from, to, { statusSource });
     if (kind === 'invalid') {
-      if (pkg.needsAttention) return false;
-      await updatePackage(pkg.id, { needsAttention: true, flagNote: `Sàn báo ${remote} khi kiện đang ${pkg.status}` });
+      if (pkg.needsAttention) return UNCHANGED;
+      await updatePackage(pkg.id, { needsAttention: true, flagNote: `Sàn báo ${remote} khi kiện đang ${from}` });
       pkg.needsAttention = true;
-      return true;
+      return { changed: true, revived: false };
     }
-    await changeStatus(order, pkg, to, (kind === 'direct' && arrowAction(pkg.status, to)) || 'platform_sync', journey, journey.failReason);
+    // Đường sàn ưu tiên mũi tên hệ thống: sàn báo mất ghi `platform_lost`, không ghi `lose` của người dùng.
+    await changeStatus(order, pkg, to, (kind === 'direct' && arrowAction(from, to, { system: true })) || 'platform_sync', journey, journey.failReason);
     changed = true;
+    if (revive) {
+      // Cột `lost_*` đã tự xoá theo luật của `updatePackage` (D14); tồn không đổi (đã trừ lúc bàn giao).
+      await updatePackage(pkg.id, { needsAttention: true, flagNote: `Sàn báo ${to} sau khi người dùng chuyển ${from}` });
+      pkg.needsAttention = true;
+      revived = true;
+      logger.warn({ packageId: pkg.id, from, to }, 'sàn kéo lại kiện do người dùng chuyển');
+    }
   }
   if (remote === 'return_failed' && !pkg.needsAttention) {
     await updatePackage(pkg.id, { needsAttention: true, flagNote: 'Sàn báo hoàn hàng thất bại' });
     pkg.needsAttention = true;
     changed = true;
   }
-  return changed;
+  return { changed, revived };
 }
 
 /**
@@ -421,6 +464,7 @@ export async function syncPlatformPackages(
     changed: false,
     resplit: false,
     unknown: false,
+    revived: false,
     cancelled: [] as ('cancelled' | 'needs_open' | 'handed_over')[],
     cancelledLines: [] as string[],
   };
@@ -518,7 +562,9 @@ export async function syncPlatformPackages(
       if (outcome !== 'handed_over') result.cancelledLines.push(...pkg.lines.map((l) => l.orderLineId));
       if (outcome === 'needs_open' && (await markWholePendingDrop(pkg))) result.changed = true;
     } else {
-      if (await applyStatus(order, pkg, status, journey)) result.changed = true;
+      const applied = await applyStatus(order, pkg, status, journey);
+      if (applied.changed) result.changed = true;
+      if (applied.revived) result.revived = true;
       // Sàn huỷ món vì giao không thành (D2): kiện đi tiếp sang `returning`; báo `handed_over` như kiện đã rời kho bị
       // sàn huỷ để sales bật cờ `platform_cancelled`, không huỷ đơn (spec 199c §5.4, 25 §8.2).
       if (allCancelled(group)) result.cancelled.push('handed_over');

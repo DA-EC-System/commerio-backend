@@ -7,12 +7,13 @@ import type { Actor } from '../service/actor.ts';
 import { foundPackage, receiveReturn } from '../service/delivery.ts';
 import { packageDocuments } from '../service/documents.ts';
 import { handOverPackages, undoHandover } from '../service/handover.ts';
+import { confirmLost, reportLost } from '../service/lost.ts';
 import { type FulfillmentContext, getPackage, listPackages } from '../service/packages.ts';
 import { carriersOf, markReady, openPackage, packPackage, pickList } from '../service/packing.ts';
 import { splitPackage } from '../service/split.ts';
 import {
-  FoundBody, HandOverBody, OpenBody, PackBody, PackageDocumentsQuery, PackageListQuery, PackageParams, PickListQuery, ReadyBody,
-  ReceiveReturnBody, SplitBody, UndoHandoverBody,
+  ConfirmLostBody, FoundBody, HandOverBody, OpenBody, PackBody, PackageDocumentsQuery, PackageListQuery, PackageParams, PickListQuery,
+  ReadyBody, ReceiveReturnBody, ReportLostBody, SplitBody, UndoHandoverBody,
 } from './schemas.ts';
 
 function actor(res: Response): Actor {
@@ -56,6 +57,17 @@ export function fulfillmentRouter(ctx: FulfillmentContext): Router {
   router.post('/packages/:id/found', process, validate({ params: PackageParams, body: FoundBody }), async (_req, res) => {
     const { id } = validated<typeof PackageParams>(res, 'params');
     res.json(await foundPackage(ctx, actor(res), id, validated<typeof FoundBody>(res, 'body')));
+  });
+
+  // Kho báo kiện thất lạc kèm mã khiếu nại; người khác xác nhận thì kiện `lost` (spec #238 §5.3).
+  router.post('/packages/:id/report-lost', process, validate({ params: PackageParams, body: ReportLostBody }), async (_req, res) => {
+    const { id } = validated<typeof PackageParams>(res, 'params');
+    res.json(await reportLost(ctx, actor(res), id, validated<typeof ReportLostBody>(res, 'body')));
+  });
+
+  router.post('/packages/:id/confirm-lost', process, validate({ params: PackageParams, body: ConfirmLostBody }), async (_req, res) => {
+    const { id } = validated<typeof PackageParams>(res, 'params');
+    res.json(await confirmLost(ctx, actor(res), id, validated<typeof ConfirmLostBody>(res, 'body')));
   });
 
   router.get('/pick-list', process, validate({ query: PickListQuery }), async (_req, res) => {

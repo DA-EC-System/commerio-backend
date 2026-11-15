@@ -248,7 +248,11 @@ describe('kéo yêu cầu trả từ sàn', () => {
 describe('kiện đang hoàn hoặc thất lạc khi sàn mở yêu cầu (25 §9, review #202 mục 5)', () => {
   it.each(['returning', 'lost'])('kiện %s giữ nguyên; yêu cầu và đơn bật Cần xử lý', async (status) => {
     const { externalOrderId, orderId } = await marketplaceOrder();
-    await db().query(`update "order".packages set status = $2 where order_id = $1`, [orderId, status]);
+    // Kiện `lost` phải có nguồn (CHECK `packages_lost_confirmed`, #238): coi như sàn báo mất.
+    await db().query(
+      `update "order".packages set status = $2, lost_source = case when $2 = 'lost'::"order".package_status then 'marketplace' end where order_id = $1`,
+      [orderId, status],
+    );
     const r = remoteReturn(externalOrderId);
     remote = [r];
     await pullShopReturns(company.companyId, shopId);
@@ -336,7 +340,7 @@ describe('giá vốn dòng trả (25 §9, review #202 mục 4)', () => {
 
   it('chỉ tính dòng kiện đã giao (kể cả kiện vừa nhảy cóc), không tính kiện thất lạc', async () => {
     const lost = await marketplaceOrder();
-    await db().query(`update "order".packages set status = 'lost' where order_id = $1`, [lost.orderId]);
+    await db().query(`update "order".packages set status = 'lost', lost_source = 'marketplace' where order_id = $1`, [lost.orderId]);
     await db().query(`update "order".package_lines set unit_cost = 15000 where package_id in (select id from "order".packages where order_id = $1)`, [lost.orderId]);
     const r1 = remoteReturn(lost.externalOrderId);
     const moving = await marketplaceOrder('in_transit');

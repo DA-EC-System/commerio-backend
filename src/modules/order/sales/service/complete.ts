@@ -1,5 +1,6 @@
 // Tự hoàn tất đơn (Documents/21 §19.1, #105 PR 2): mọi kiện dừng, qua 7 ngày từ kiện giao cuối, không còn yêu cầu trả
-// mở → `completed` với kết quả theo kiện chưa huỷ. Đơn đang huỷ chờ mở kiện (#106) thì bỏ qua.
+// mở → `completed` với kết quả theo kiện chưa huỷ. Đơn Đang huỷ còn kiện chờ mở thì chưa dừng nên chưa hoàn tất; đơn Đang
+// huỷ mà mọi kiện đã dừng, có kiện không huỷ (kiện hoá ra đã bàn giao), thì hoàn tất và gỡ cờ (25 §8.2, #238).
 import { publishEvent, recordTransition, registerConsumer } from '../../../core/index.ts';
 import { findPackagesOfOrders } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
@@ -24,16 +25,21 @@ async function completeOne(orderId: string, now: Date): Promise<boolean> {
     now: now.getTime(),
   });
   if (blocker) return false;
+  // Đơn Đang huỷ mà mọi kiện đều huỷ phải sang `cancelled` (25 §8.2), không phải `completed`.
+  if (order.cancelling && statuses.every((s) => s === 'cancelled')) return false;
   const done = await updateOrderAt(orderId, order.version, {
     status: 'completed',
     outcome: outcomeOf(statuses),
     completedAt: now,
     returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000) : null,
+    // Cờ Đang huỷ chỉ có nghĩa khi còn kiện chờ mở: mọi kiện đã dừng thì gỡ, và đơn mang cờ Sàn đã huỷ như mọi đơn bị
+    // huỷ khi đã có kiện bàn giao (25 §8.2), kể cả khi lượt kéo đơn chưa kịp bật.
+    ...(order.cancelling && { cancelling: false, platformCancelled: true }),
   });
   // Người khác vừa sửa đơn: lượt sau xét lại.
   if (!done) return false;
   await recordTransition({ entityType: 'orders', entityId: orderId, from: 'processing', to: 'completed', action: 'complete', actorId: null, source: 'system' });
-  const flags = [order.needsAttention && 'needs_attention', order.platformCancelled && 'platform_cancelled'].filter((f): f is string => !!f);
+  const flags = [order.needsAttention && 'needs_attention', (order.platformCancelled || order.cancelling) && 'platform_cancelled'].filter((f): f is string => !!f);
   await publishEvent({
     type: 'sales.order_status_changed',
     aggregateId: orderId,

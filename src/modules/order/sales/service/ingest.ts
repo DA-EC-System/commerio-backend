@@ -266,8 +266,12 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   const open = next.status === 'unpaid' || next.status === 'processing';
   let cancelled = false;
   if (open && o.lines.length && o.lines.every((l) => l.status === 'cancelled')) {
-    if (packages.cancelled.includes('handed_over')) next.platformCancelled = true;
-    else if (packages.cancelled.includes('needs_open')) next.cancelling = true;
+    if (packages.cancelled.includes('handed_over')) {
+      next.platformCancelled = true;
+      // 25 §8.2: đơn Đang huỷ có kiện hoá ra đã bàn giao (sàn báo đã lấy, kho không thấy kiện khi dỡ) đi theo "Sàn huỷ
+      // đơn khi đã có kiện bàn giao". Cờ Đang huỷ chỉ còn nghĩa khi còn kiện chờ mở.
+      if (!packages.cancelled.includes('needs_open')) next.cancelling = false;
+    } else if (packages.cancelled.includes('needs_open')) next.cancelling = true;
     else {
       await transition(orderId, next.status, 'cancelled', 'platform_cancel');
       next.status = 'cancelled';
@@ -275,7 +279,8 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     }
   }
   next.cancelRequested = o.cancelRequested && next.status !== 'cancelled';
-  if (packages.unknown || packages.resplit) next.needsAttention = true;
+  // Sàn kéo lại kiện người dùng đã chuyển thất lạc/hoàn (spec #238 §5.4): bật cờ, đơn `completed` giữ trạng thái.
+  if (packages.unknown || packages.resplit || packages.revived) next.needsAttention = true;
   next.rawMarketplaceStatus = o.rawStatus;
   next.shipBy = o.shipBy;
 
@@ -296,7 +301,13 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       rawMarketplaceStatus: next.rawMarketplaceStatus,
       shipBy: next.shipBy,
       needsAttention: next.needsAttention,
-      attentionNote: packages.resplit ? 'Sàn chia lại kiện khác lần trước' : packages.unknown ? 'Sàn trả trạng thái app chưa biết' : undefined,
+      attentionNote: packages.resplit
+        ? 'Sàn chia lại kiện khác lần trước'
+        : packages.revived
+          ? 'Sàn báo lại kiện đã thất lạc hoặc đang hoàn'
+          : packages.unknown
+            ? 'Sàn trả trạng thái app chưa biết'
+            : undefined,
       cancelRequested: next.cancelRequested,
       cancelling: next.cancelling,
       platformCancelled: next.platformCancelled,
