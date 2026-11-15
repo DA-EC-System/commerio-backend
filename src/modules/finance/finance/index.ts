@@ -30,6 +30,9 @@ export {
   type SupplierReturnRefunded,
 } from './service/ledger.ts';
 
+// Trạng thái tiền theo đơn cho `OrderSummary.paymentStatus` của sales (#234): src/wiring.ts tiêm qua ctx.paymentStatusOf.
+export { paymentStatusesOf } from './service/order-settlement-state.ts';
+
 // Tiêm vào payment qua ctx.onVerifiedPayment ở src/modules/finance/index.ts (A11): finance → payment một chiều.
 export { handleVerifiedPayment } from './service/verified-payment.ts';
 // Tên gian hàng cho đối soát (#30 A7): src/wiring.ts tiêm channel.getShops qua ctx.shopsOf.

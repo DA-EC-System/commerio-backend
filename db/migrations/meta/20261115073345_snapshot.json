@@ -1,6 +1,6 @@
 {
-  "id": "f4535de4-d7ff-43fd-aa2d-06ec0efcd553",
-  "prevId": "5e98a07b-f1dd-47bf-9d54-3b958df1a4f0",
+  "id": "27839bef-310a-49d8-8766-688c4fe117c7",
+  "prevId": "bf9ebced-c385-4965-906b-587cc75ae5b6",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4042,7 +4042,7 @@
         },
         "config_versions_effective": {
           "name": "config_versions_effective",
-          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'expired') or \"finance\".\"config_versions\".\"effective_from\" is not null"
+          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'superseded') or \"finance\".\"config_versions\".\"effective_from\" is not null"
         },
         "config_versions_range": {
           "name": "config_versions_range",
@@ -4054,7 +4054,7 @@
         },
         "config_versions_approved": {
           "name": "config_versions_approved",
-          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'expired') or \"finance\".\"config_versions\".\"approved_by\" is not null"
+          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'superseded') or \"finance\".\"config_versions\".\"approved_by\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -12415,7 +12415,7 @@
         "rejected",
         "scheduled",
         "active",
-        "expired",
+        "superseded",
         "cancelled"
       ]
     },

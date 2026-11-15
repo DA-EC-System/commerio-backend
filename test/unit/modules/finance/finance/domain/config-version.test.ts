@@ -4,6 +4,7 @@ import { assertTransition } from '#src/modules/core/index.ts';
 import {
   addDays,
   configMachine,
+  outputVatPctOf,
   type DatedVersion,
   parsePayload,
   pickEffective,
@@ -47,6 +48,25 @@ describe('nội dung cấu hình theo loại', () => {
     expect(parsePayload('tax_regime', { regime: 'partnership' }).success).toBe(false);
   });
 
+  it('quy tắc thuế có thuế suất GTGT đầu ra của doanh nghiệp (21 §21.4); thiếu hay sai thì lỗi dưới ô outputVatPct', () => {
+    const ok = { vatPct: 1, pitPct: 0.5, outputVatPct: 10, milestones: [500_000_000] };
+    expect(parsePayload('tax_rules', ok).success).toBe(true);
+    const missing = { vatPct: 1, pitPct: 0.5, milestones: [500_000_000] };
+    for (const bad of [missing, { ...ok, outputVatPct: 101 }, { ...ok, outputVatPct: -1 }]) {
+      const r = parsePayload('tax_rules', bad);
+      expect(r.success).toBe(false);
+      expect(r.error?.issues.map((i) => i.path.join('.'))).toEqual(['outputVatPct']);
+    }
+  });
+
+  it('GTGT đầu ra chỉ bỏ khỏi doanh thu khi là doanh nghiệp có quy tắc thuế (25 §10.2)', () => {
+    const rules = { vatPct: 1, pitPct: 0.5, outputVatPct: 10, milestones: [] };
+    expect(outputVatPctOf({ regime: 'company' }, rules)).toBe(10);
+    expect(outputVatPctOf({ regime: 'household' }, rules)).toBe(0);
+    expect(outputVatPctOf({ regime: 'company' }, undefined)).toBe(0);
+    expect(outputVatPctOf(undefined, rules)).toBe(0);
+  });
+
   it('ngưỡng lệch cần số tuyệt đối, phần trăm và hạn mức tự chốt', () => {
     expect(parsePayload('mismatch_threshold', { abs: 5000, pct: 1, resolveLimit: 200000 }).success).toBe(true);
     expect(parsePayload('mismatch_threshold', { abs: 5000, pct: 1 }).success).toBe(false);
@@ -86,23 +106,27 @@ describe('máy trạng thái phiên bản cấu hình (§21.4)', () => {
     );
   });
 
-  it('huỷ được trước ngày hiệu lực, tới ngày thì 409 config_already_effective', () => {
+  it('D44-05, D44-06, D44-07: huỷ được từ nháp, chờ duyệt, chờ hiệu lực trước ngày hiệu lực; tới ngày thì 409 config_already_effective (D44-05g, D44-06g, D44-07g)', () => {
     const ctx = (effectiveFrom: string) => ({ actor: actor('author'), record: record({ effectiveFrom }) });
-    expect(assertTransition(configMachine, 'scheduled', 'cancel', ctx('2026-11-10')).to).toBe('cancelled');
-    expect(codeOf(() => assertTransition(configMachine, 'scheduled', 'cancel', ctx('2026-11-02')))).toBe('409 config_already_effective');
+    for (const from of ['draft', 'pending_approval', 'scheduled'] as const) {
+      expect(assertTransition(configMachine, from, 'cancel', ctx('2026-11-10')).to, from).toBe('cancelled');
+      expect(codeOf(() => assertTransition(configMachine, from, 'cancel', ctx('2026-11-02'))), from).toBe('409 config_already_effective');
+    }
+    expect(codeOf(() => assertTransition(configMachine, 'active', 'cancel', ctx('2026-11-10')))).toBe('409 invalid_transition');
   });
 
-  it('áp dụng, hết hiệu lực chỉ hệ thống làm; người dùng gọi thì 409 invalid_transition', () => {
+  it('D44-08, D44-09: áp dụng, hết hiệu lực (supersede → superseded) chỉ hệ thống làm; người dùng gọi thì 409 invalid_transition (D44-08x, D44-09x)', () => {
     expect(assertTransition(configMachine, 'scheduled', 'activate', { actor: null }).to).toBe('active');
-    expect(assertTransition(configMachine, 'active', 'expire', { actor: null }).to).toBe('expired');
+    expect(assertTransition(configMachine, 'active', 'supersede', { actor: null }).to).toBe('superseded');
     expect(codeOf(() => assertTransition(configMachine, 'scheduled', 'activate', { actor: actor('ceo') }))).toBe('409 invalid_transition');
+    expect(codeOf(() => assertTransition(configMachine, 'active', 'supersede', { actor: actor('ceo') }))).toBe('409 invalid_transition');
   });
 
   it('chuyển ngoài bảng bị chặn: duyệt bản nháp, gửi lại bản đang áp dụng, huỷ bản đã hết hiệu lực', () => {
     const ctx = { actor: actor('ceo'), record: record() };
     expect(codeOf(() => assertTransition(configMachine, 'draft', 'approve', ctx))).toBe('409 invalid_transition');
     expect(codeOf(() => assertTransition(configMachine, 'active', 'submit', ctx))).toBe('409 invalid_transition');
-    expect(codeOf(() => assertTransition(configMachine, 'expired', 'cancel', ctx))).toBe('409 invalid_transition');
+    expect(codeOf(() => assertTransition(configMachine, 'superseded', 'cancel', ctx))).toBe('409 invalid_transition');
   });
 });
 
@@ -115,7 +139,7 @@ const v = (id: string, status: DatedVersion['status'], effectiveFrom: string, ef
 });
 
 describe('chọn phiên bản theo ngày', () => {
-  const versions = [v('a', 'expired', '2026-10-01', '2026-10-31'), v('b', 'active', '2026-11-01'), v('c', 'scheduled', '2026-12-01')];
+  const versions = [v('a', 'superseded', '2026-10-01', '2026-10-31'), v('b', 'active', '2026-11-01'), v('c', 'scheduled', '2026-12-01')];
 
   it('lấy bản đã áp dụng có khoảng ngày chứa ngày cần tính', () => {
     expect(pickEffective(versions, '2026-10-15')?.id).toBe('a');
@@ -128,7 +152,7 @@ describe('chọn phiên bản theo ngày', () => {
   });
 
   it('bản sửa lỗi cùng ngày hiệu lực thay bản bị sửa', () => {
-    const fixed = [v('a', 'expired', '2026-10-01', '2026-10-01'), v('a2', 'active', '2026-10-01', null, 'a')];
+    const fixed = [v('a', 'superseded', '2026-10-01', '2026-10-01'), v('a2', 'active', '2026-10-01', null, 'a')];
     expect(pickEffective(fixed, '2026-10-01')?.id).toBe('a2');
   });
 });
