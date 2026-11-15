@@ -82,7 +82,7 @@ describe('đơn Đang huỷ có kiện đã bàn giao (25 §8.2)', () => {
 
     await completeDueOrdersOnce();
 
-    expect(await orderRow(o.orderId)).toMatchObject({ status: 'completed', outcome: outcomeOf(['lost']), cancelling: false });
+    expect(await orderRow(o.orderId)).toMatchObject({ status: 'completed', outcome: outcomeOf(['lost']), cancelling: false, platform_cancelled: true });
     const { rows } = await testPool().query(
       `select from_state, to_state, action, source from core.state_transitions where entity_type = 'orders' and entity_id = $1 order by id desc limit 1`,
       [o.orderId],
