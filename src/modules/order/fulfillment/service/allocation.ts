@@ -71,6 +71,9 @@ export async function runAllocation(
   const trigger = 'all' in scope ? [] : unique(scope.variantIds);
   let skus = 'all' in scope ? await variantsInPlay() : trigger;
   const touched = new Set<string>();
+  // Khoá kiện đang chờ mở vì kiểm kê **trước** khi lượt đổi tồn (thứ tự khoá spec 199b §5.10: kiện rồi mới dòng tồn):
+  // khoá sau khi đã nhả hàng thì đua với kho quét bàn giao (khoá kiện rồi trừ tồn) thành khoá chết.
+  const stocktakeFlagged = await lockStocktakeFlagged(skus);
 
   // Lấy lại phần giữ: SKU có đang giữ lớn hơn tồn thực.
   const reclaimed: string[] = [];
@@ -106,7 +109,7 @@ export async function runAllocation(
   // Tự gỡ cờ `stocktake` của kiện đang giữ hàng khi tồn thực không còn nhỏ hơn đang giữ ở mọi SKU kiện giữ (spec #238
   // §5.5). Gỡ cờ mà kiện không đổi trạng thái thì `updatePackage` xoá báo cáo thất lạc đang treo (D21).
   const cleared: string[] = [];
-  const flaggedOpen = (await lockStocktakeFlagged(skus)).filter((p) => !flagged.includes(p.id));
+  const flaggedOpen = stocktakeFlagged.filter((p) => !flagged.includes(p.id));
   if (flaggedOpen.length) {
     const stock = await port.stockOf(unique(flaggedOpen.flatMap((p) => p.lines.map((l) => l.variantId))));
     for (const p of flaggedOpen) {

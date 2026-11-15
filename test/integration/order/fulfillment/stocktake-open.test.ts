@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { awaitingStocktakeShops } from '#src/modules/channel/index.ts';
 import { PackagePage } from '#src/modules/order/fulfillment/api/schemas.ts';
 import { DISMANTLE_NOTE, onStocktakePosted, runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
+import { updatePackage } from '#src/modules/order/fulfillment/repository/packages.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -294,5 +295,23 @@ describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mụ
     expect(res.status, JSON.stringify(res.body)).toBe(409);
     expect(res.body.type).toBe('/problems/invalid_transition');
     expect(await packageRow(p.packageId)).toMatchObject({ status: 'awaiting_pickup', needs_open: true, open_purpose: 'stocktake', version });
+  });
+
+  it('kiện gắn cờ stocktake rời nhóm đã đóng (bàn giao): cờ gỡ, không nằm mãi trong tab Cần mở', async () => {
+    const p = await sealedHolder({ status: 'awaiting_pickup' });
+    await stocktake(p.variants);
+    expect((await packageRow(p.packageId)).open_purpose).toBe('stocktake');
+
+    await withCompany(companyId, () => updatePackage(p.packageId, { status: 'in_transit', handoverSource: 'scan', handedOverAt: new Date() }));
+
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', needs_open: false, open_purpose: null });
+  });
+
+  it('kiện chờ mở vì cancel rời nhóm đã đóng: cờ giữ nguyên (hành vi cũ)', async () => {
+    const p = await sealedHolder({ status: 'awaiting_pickup', needsOpen: true, openPurpose: 'cancel' });
+
+    await withCompany(companyId, () => updatePackage(p.packageId, { status: 'in_transit', handoverSource: 'scan', handedOverAt: new Date() }));
+
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', needs_open: true, open_purpose: 'cancel' });
   });
 });
