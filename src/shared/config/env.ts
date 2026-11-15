@@ -14,6 +14,11 @@ const EnvSchema = z.object({
   API_DOCS_ENABLED: z.stringbool().default(true),
   // Không bắt buộc lúc khởi động để test không cần DB; getDb() báo lỗi nếu thiếu.
   DATABASE_URL: z.string().min(1).optional(),
+  // Số kết nối tối đa của pool trong một tiến trình. Session pooler (Supabase) giới hạn tổng số kết nối của mọi tiến trình:
+  // vượt thì pooler từ chối và request trả 500 (#335), nên staging đặt riêng cho api, worker, realtime (deploy/k8s).
+  DB_POOL_MAX: z.coerce.number().int().positive().default(10),
+  // Chờ lấy kết nối của pool tối đa bao lâu, ms; hết hạn thì báo lỗi thay vì treo request. 0 là chờ mãi.
+  DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(0).default(10_000),
   // Cặp khoá Ed25519 dạng PEM ký access token; xuống dòng trong PEM viết `\n` được.
   // Thiếu thì máy dev tự sinh khoá tạm (token mất hiệu lực khi khởi động lại); production bắt buộc có.
   JWT_PRIVATE_KEY: z.string().min(1).optional(),

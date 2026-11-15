@@ -29,6 +29,10 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
+          env:
+            # Xem DB_POOL_MAX của api (#335)
+            - name: DB_POOL_MAX
+              value: "3"
           ports:
             - name: metrics
               containerPort: 3001

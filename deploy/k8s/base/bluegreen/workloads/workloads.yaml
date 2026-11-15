@@ -38,6 +38,10 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
+          env:
+            # Session pooler của Supabase Free nhận tối đa 15 kết nối cho cả api, worker, realtime (#335)
+            - name: DB_POOL_MAX
+              value: "7"
           ports:
             - name: http
               containerPort: 3000
@@ -97,6 +101,10 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
+          env:
+            # Xem DB_POOL_MAX của api (#335)
+            - name: DB_POOL_MAX
+              value: "2"
           # Cổng stream SSE (Caddy đưa ra ngoài) tách khỏi cổng vận hành /health, /metrics (REALTIME_OPS_PORT).
           ports:
             - name: http

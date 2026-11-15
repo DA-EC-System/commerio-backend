@@ -75,4 +75,6 @@ Các lệnh dưới chạy trên VPS bằng root (`K="kubectl -n commerio"`).
 
 ## Supabase
 
-Gói Free tạm dừng project sau 7 ngày không dùng: vào dashboard bấm Restore. Không chạy `Documents/erd/supabase-*.sql` lên database này.
+Gói Free tạm dừng project sau 7 ngày không dùng: vào dashboard bấm Restore.
+
+Session pooler của gói Free nhận tối đa 15 kết nối cùng lúc cho mọi tiến trình; vượt thì pooler từ chối kết nối mới và request trả 500 (#335). Vì vậy `deploy/k8s` đặt `DB_POOL_MAX` riêng: `api` 7, `worker` 3, `realtime` 2 (tổng 12), chừa chỗ cho `db:migrate`, `db:seed` của CI và script chạy từ máy. Thêm tiến trình hay tăng pool thì giữ tổng dưới 15, hoặc nâng gói. Không chạy `Documents/erd/supabase-*.sql` lên database này.

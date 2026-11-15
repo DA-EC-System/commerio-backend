@@ -14,7 +14,11 @@ let database: Database | undefined;
 function rootDb(): Database {
   if (!database) {
     if (!env.DATABASE_URL) throw new Error('Chưa đặt DATABASE_URL');
-    pool = new pg.Pool({ connectionString: env.DATABASE_URL });
+    pool = new pg.Pool({
+      connectionString: env.DATABASE_URL,
+      max: env.DB_POOL_MAX,
+      connectionTimeoutMillis: env.DB_CONNECT_TIMEOUT_MS,
+    });
     // Kết nối bị server cắt (restart, failover), lúc rảnh hay lúc đang giữ giao dịch mà chưa chạy truy vấn:
     // client phát `error`, thiếu listener thì EventEmitter ném và tiến trình thoát. Nghe và ghi log trên từng client;
     // pool phát lại lỗi của client rảnh nên cũng cần listener (rỗng). Pool bỏ kết nối hỏng, truy vấn đang chờ thì lỗi.
