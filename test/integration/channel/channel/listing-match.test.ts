@@ -42,6 +42,7 @@ const newVariant = (extra: Partial<ListingVariant> = {}) => {
 const port: ProductPort = {
   variants: async (ids) => variants.filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+  productImageUrls: async () => new Map<string, string[]>(),
   availableOf: async (ids) => new Map(ids.map((id) => [id, 5])),
 };
 setProductPort(port);

@@ -58,7 +58,7 @@ export async function createPurchaseProducts(
       entityType: 'product.products',
       entityId: productId,
       before: null,
-      after: { name: item.name, category: categories.get(item.categoryId)!.name, description, images: 0, variants: [sku] },
+      after: { name: item.name, category: categories.get(item.categoryId)!.name, description, imageFileIds: [], variants: [sku] },
     });
   }
   return { ok: true, variantIds };
