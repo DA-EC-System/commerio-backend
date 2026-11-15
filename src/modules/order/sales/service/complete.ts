@@ -32,13 +32,14 @@ async function completeOne(orderId: string, now: Date): Promise<boolean> {
     outcome: outcomeOf(statuses),
     completedAt: now,
     returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000) : null,
-    // Cờ Đang huỷ chỉ có nghĩa khi còn kiện chờ mở: mọi kiện đã dừng thì gỡ (25 §8.2).
-    ...(order.cancelling && { cancelling: false }),
+    // Cờ Đang huỷ chỉ có nghĩa khi còn kiện chờ mở: mọi kiện đã dừng thì gỡ, và đơn mang cờ Sàn đã huỷ như mọi đơn bị
+    // huỷ khi đã có kiện bàn giao (25 §8.2), kể cả khi lượt kéo đơn chưa kịp bật.
+    ...(order.cancelling && { cancelling: false, platformCancelled: true }),
   });
   // Người khác vừa sửa đơn: lượt sau xét lại.
   if (!done) return false;
   await recordTransition({ entityType: 'orders', entityId: orderId, from: 'processing', to: 'completed', action: 'complete', actorId: null, source: 'system' });
-  const flags = [order.needsAttention && 'needs_attention', order.platformCancelled && 'platform_cancelled'].filter((f): f is string => !!f);
+  const flags = [order.needsAttention && 'needs_attention', (order.platformCancelled || order.cancelling) && 'platform_cancelled'].filter((f): f is string => !!f);
   await publishEvent({
     type: 'sales.order_status_changed',
     aggregateId: orderId,
