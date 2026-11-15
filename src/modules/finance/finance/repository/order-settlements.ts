@@ -1,4 +1,4 @@
-import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { SettlementState } from '../domain/settlement.ts';
 import { orderSettlements } from './schema.ts';
@@ -9,6 +9,15 @@ export async function findOrderSettlement(orderId: string, lock?: 'update'): Pro
   const query = getDb().select().from(orderSettlements).where(eq(orderSettlements.orderId, orderId));
   const [row] = await (lock ? query.for('update') : query);
   return row;
+}
+
+/** Trạng thái tiền của các đơn đã có dòng; đơn chưa có dòng không có trong kết quả. */
+export async function findSettlementStatuses(orderIds: readonly string[]): Promise<{ orderId: string; status: SettlementState }[]> {
+  if (!orderIds.length) return [];
+  return getDb()
+    .select({ orderId: orderSettlements.orderId, status: orderSettlements.status })
+    .from(orderSettlements)
+    .where(inArray(orderSettlements.orderId, [...orderIds]));
 }
 
 /** Dòng trạng thái tiền của đơn, tạo ở `none` nếu chưa có; khoá tới hết giao dịch. */

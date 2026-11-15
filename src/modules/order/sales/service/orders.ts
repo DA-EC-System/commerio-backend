@@ -7,7 +7,15 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { completionBlocker, isDueSoon, type OrderFlag, type OrderStage, RETURN_WINDOW_DAYS, stageOf } from '../domain/order.ts';
+import {
+  completionBlocker,
+  isDueSoon,
+  type OrderFlag,
+  type OrderStage,
+  type PaymentStatus,
+  RETURN_WINDOW_DAYS,
+  stageOf,
+} from '../domain/order.ts';
 import {
   findOrder,
   findOrderLines,
@@ -37,6 +45,8 @@ export interface SalesContext extends ModuleContext {
   readonly marketplaceOrders?: MarketplaceOrders;
   /** Thao tác yêu cầu trả trên sàn (#202). */
   readonly marketplaceReturns?: MarketplaceReturns;
+  /** Trạng thái thanh toán theo sổ tiền của finance (#234); đơn finance chưa có dòng là `none`. */
+  readonly paymentStatusOf?: (orderIds: readonly string[]) => Promise<Map<string, PaymentStatus>>;
 }
 
 const toInt = (money: string | null) => (money === null ? 0 : new Decimal(money).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber());
@@ -63,10 +73,17 @@ interface Facts {
   unmapped: boolean;
   first: OrderLineRow | null;
   openReturns: number;
+  paymentStatus: PaymentStatus;
 }
 
-async function factsOf(orderIds: string[]): Promise<Map<string, Facts>> {
-  const [packages, lines, returns] = await Promise.all([findPackagesOfOrders(orderIds), lineFacts(orderIds), openReturnCounts(orderIds)]);
+async function factsOf(ctx: SalesContext, orderIds: string[]): Promise<Map<string, Facts>> {
+  const [packages, lines, returns, payments] = await Promise.all([
+    findPackagesOfOrders(orderIds),
+    lineFacts(orderIds),
+    openReturnCounts(orderIds),
+    // Thiếu `paymentStatusOf` (ctx dựng tay trong test) thì mọi đơn là `none`; `AppContext` khai Required nên app thật luôn có.
+    ctx.paymentStatusOf && orderIds.length ? ctx.paymentStatusOf(orderIds) : new Map<string, PaymentStatus>(),
+  ]);
   return new Map(
     orderIds.map((id) => [
       id,
@@ -77,6 +94,7 @@ async function factsOf(orderIds: string[]): Promise<Map<string, Facts>> {
         unmapped: lines.get(id)?.unmapped ?? false,
         first: lines.get(id)?.first ?? null,
         openReturns: returns.get(id) ?? 0,
+        paymentStatus: payments.get(id) ?? 'none',
       },
     ]),
   );
@@ -94,6 +112,7 @@ function flagsOf(o: OrderViewRow, f: Facts, now: number): OrderFlag[] {
   if (open && isDueSoon(isoOrNull(o.shipBy), statuses, now)) flags.push('due_soon');
   if (f.openReturns > 0) flags.push('return_requested');
   if (o.shopDisconnected) flags.push('shop_disconnected');
+  if (f.paymentStatus === 'mismatch') flags.push('payment_mismatch');
   return flags;
 }
 
@@ -117,6 +136,7 @@ function summary(o: OrderViewRow, f: Facts, shops: Map<string, ShopRef>, labels:
     outcome: o.outcome,
     rawMarketplaceStatus: o.rawMarketplaceStatus,
     paymentMethod: o.paymentMethod,
+    paymentStatus: f.paymentStatus,
     platformPaymentMethod: o.platformPaymentMethod,
     externalOrderId: o.externalOrderId,
     recipientName: o.source === 'marketplace' && !o.customer ? (o.shippingAddress as StoredAddress)?.name || null : null,
@@ -167,7 +187,13 @@ const DERIVED_SCAN = 1000;
 
 export async function listOrders(
   ctx: SalesContext,
-  q: Omit<OrderFilter, 'flag' | 'openOnly'> & { page: number; pageSize: number; stage?: OrderStage | undefined; flag?: OrderFlag | undefined },
+  q: Omit<OrderFilter, 'flag' | 'openOnly'> & {
+    page: number;
+    pageSize: number;
+    stage?: OrderStage | undefined;
+    // `payment_mismatch` suy từ finance, không lọc ở đây (#234).
+    flag?: Exclude<OrderFlag, 'payment_mismatch'> | undefined;
+  },
 ) {
   const now = Date.now();
   const offset = (q.page - 1) * q.pageSize;
@@ -183,7 +209,7 @@ export async function listOrders(
   };
 
   const { rows, total } = derived ? await findOrderPage(filter, DERIVED_SCAN, 0) : await findOrderPage(filter, q.pageSize, offset);
-  const facts = await factsOf(rows.map((r) => r.id));
+  const facts = await factsOf(ctx, rows.map((r) => r.id));
   const [shops, labels] = await Promise.all([
     shopsOf(ctx, rows.map((r) => r.shopId)),
     variantLabels([...facts.values()].map((f) => (f.first && !f.first.attributesLabel ? f.first.variantId : null))),
@@ -201,7 +227,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
   const o = await findOrder(id);
   if (!o) throw notFound();
   const [facts, lines, shops, history] = await Promise.all([
-    factsOf([id]),
+    factsOf(ctx, [id]),
     findOrderLines([id]),
     shopsOf(ctx, [o.shopId]),
     getStatusHistory('orders', id),
