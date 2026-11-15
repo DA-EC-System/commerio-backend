@@ -397,3 +397,25 @@ describe('cờ pickup_unconfirmed của kiện (#199 phần a, 21 §19.2)', () =
     expect(await flags()).not.toContain('pickup_unconfirmed');
   });
 });
+
+describe('báo cáo thất lạc của kiện ở chi tiết đơn (#238 §5.3)', () => {
+  it('GET /orders/:id trả lostReport kèm tên người báo', async () => {
+    const kho = await addMember(company.companyId, 'warehouse');
+    const { orderId, packageId } = await seedPackage(company.companyId, {
+      status: 'in_transit',
+      lines: [{ variantId, quantity: 1, unitCost: '100000.00' }],
+    });
+    const { rows } = await testPool().query<{ version: number }>('select version from "order".packages where id = $1', [packageId]);
+    const reported = await app()
+      .post(`/api/v1/fulfillment/packages/${packageId}/report-lost`)
+      .set('Authorization', `Bearer ${kho.token}`)
+      .send({ version: rows[0]!.version, claimCode: 'KN-001' });
+    expect(reported.status, JSON.stringify(reported.body)).toBe(200);
+
+    const res = await get(`/orders/${orderId}`);
+
+    expect(res.status).toBe(200);
+    const lostReport = Order.parse(res.body).packages.find((p) => p.id === packageId)!.lostReport;
+    expect(lostReport).toMatchObject({ by: { id: kho.accountId, name: 'Nhân Viên Thử' }, claimCode: 'KN-001' });
+  });
+});
