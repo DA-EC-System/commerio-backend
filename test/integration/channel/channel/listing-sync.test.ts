@@ -44,6 +44,7 @@ const port = {
   variants: async (ids?: readonly string[]) => [a, b, c].filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, new Decimal(99000)])),
   // Như cổng thật: id không có trong `available` thì không có trong Map.
+  productImageUrls: async (ids: readonly string[]) => new Map(ids.map((id) => [id, ['https://img.test/x.png']])),
   availableOf: async (ids: readonly string[]) =>
     new Map(ids.flatMap((id): [string, number][] => (available.has(id) ? [[id, available.get(id)!]] : []))),
 };

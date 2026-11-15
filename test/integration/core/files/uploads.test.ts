@@ -131,8 +131,12 @@ describe('từ chối tệp, không ghi dòng nào', () => {
     expectProblem(await upload(viewer.token, { ...pdf, contentType: 'video/mp4' }), 422, 'file_type_not_allowed');
   });
 
-  it('ảnh hơn 5 MB: 422 file_too_large', async () => {
-    expectProblem(await upload(ceo, { ...image, sizeBytes: 5 * 1024 * 1024 + 1 }), 422, 'file_too_large');
+  it('ảnh sản phẩm WebP: 422 file_type_not_allowed (sàn chỉ nhận JPG, PNG)', async () => {
+    expectProblem(await upload(ceo, { ...image, contentType: 'image/webp' }), 422, 'file_type_not_allowed');
+  });
+
+  it('ảnh hơn 1 MB: 422 file_too_large', async () => {
+    expectProblem(await upload(ceo, { ...image, sizeBytes: 1024 * 1024 + 1 }), 422, 'file_too_large');
   });
 
   it('đính kèm hơn 10 MB: 422 file_too_large', async () => {

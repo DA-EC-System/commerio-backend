@@ -4,6 +4,7 @@ import { publishEvent, recordTransition } from '../../../core/index.ts';
 import type { PackageStatus } from '../domain/package.ts';
 import { updatePackage } from '../repository/packages.ts';
 import { lockPackageStatus } from '../repository/returns.ts';
+import { reportDelivered } from './delivery.ts';
 
 export {
   countOpenUnmatchedParcels,
@@ -28,9 +29,9 @@ export type ReturnPackageOutcome = 'delivered' | 'jumped' | 'held' | 'returned' 
  * `held`: kiện ở `returning`, `lost` (hoặc chưa rời kho) giữ nguyên; `returned`: hàng đã về kho, không sinh phiếu kiểm
  * hàng hoàn lần nữa. Bên gọi bật cờ trên yêu cầu với mọi kết quả khác `delivered`.
  */
-// TODO(#199 phần c): bước đổi trạng thái kiện chép từ `changeStatus` của `platform-packages.ts` (cập nhật, lịch sử, sự
-// kiện). Dùng chung cần `PlatformPackageOrder` (giữ hàng, mốc kéo đơn) mà bên gọi ở đây không có; nhảy từ luồng chính tới
-// `delivered` không đổi tồn nên chưa gộp.
+// Bước đổi trạng thái kiện chép từ `changeStatus` của `platform-packages.ts` (cập nhật, lịch sử, sự kiện): dùng chung cần
+// `PlatformPackageOrder` (giữ hàng, mốc kéo đơn) mà bên gọi ở đây không có; nhảy từ luồng chính tới `delivered` không đổi
+// tồn nên chưa gộp. Báo finance qua `reportDelivered` như mọi lối vào `delivered` (#199 phần c).
 export async function deliverForReturn(packageId: string, note: string): Promise<ReturnPackageOutcome> {
   const pkg = await lockPackageStatus(packageId);
   if (!pkg) return 'missing';
@@ -46,5 +47,7 @@ export async function deliverForReturn(packageId: string, note: string): Promise
     aggregateId: pkg.orderId,
     payload: { packageId: pkg.id, orderId: pkg.orderId, from: pkg.status, to: 'delivered' },
   });
+  // Kiện vào `delivered` ở mọi lối đều báo finance đúng một lần (spec 199c §5.3; chặn bằng `delivery_posted_at`).
+  await reportDelivered(pkg.id);
   return 'jumped';
 }

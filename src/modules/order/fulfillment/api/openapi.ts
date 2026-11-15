@@ -2,8 +2,8 @@ import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import type { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
-  CarrierList, HandOverBody, HandOverResult, OpenBody, PackBody, Package, PackageDocumentsQuery, PackageListQuery,
-  PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, UndoHandoverBody,
+  CarrierList, FoundBody, HandOverBody, HandOverResult, OpenBody, PackBody, Package, PackageDocumentsQuery, PackageListQuery,
+  PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, ReceiveReturnBody, SplitBody, UndoHandoverBody,
 } from './schemas.ts';
 
 const bearer = [{ bearerAuth: [] }];
@@ -84,6 +84,27 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     '`self_delivery`, `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`', '`marketplace_unsupported`');
   registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói',
     '`shop_awaiting_stocktake`, `package_status_not_allowed`', '`insufficient_stock`, `marketplace_unsupported`');
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/split',
+    summary: 'Tách kiện',
+    description: 'Cần `fulfillment.order.process`. Chỉ kiện `reserved`, `backordered`. Mỗi phần của `parts` thành một kiện mới, '
+      + 'kiện cũ giữ phần còn lại (kể cả dòng chưa ghép SKU). Rẽ theo `splitLevel` của gian hàng: `unit` (và đơn tay) chia trong app; '
+      + '`sku` gọi sàn tách trước, chỉ chuyển trọn SKU, đơn đã có từ hai kiện chưa huỷ thì chưa tách được; bước ghi sau khi sàn đã tách '
+      + 'không so `version`, lỗi thì kiện cũ bật Cần xử lý; `none` không tách. Trả chi tiết đơn sau khi tách.',
+    security: bearer,
+    request: { params: PackageParams, body: json(SplitBody) },
+    responses: {
+      // `Order` là schema của sales: tham chiếu theo id để fulfillment không import sales (thành vòng).
+      200: { description: 'Đơn sau khi tách', content: { 'application/json': { schema: { $ref: '#/components/schemas/Order' } } } },
+      ...auth,
+      404: packageMissing,
+      409: problemResponse(`\`package_sealed\`, ${versionConflict}, \`item_not_packable\`, ${marketplaceConflict}`),
+      422: problemResponse('`validation_failed` tại `errors["parts.<i>.<j>.variantId"]`, `errors["parts.<i>.<j>.quantity"]`, `errors.parts`; '
+        + '`split_not_supported` (sàn không cho tách, `sku` tách đôi một SKU, sàn từ chối kèm câu của sàn)'),
+      503: marketplaceUnavailable,
+    },
+  });
 
   registry.registerPath({
     method: 'get',
@@ -118,6 +139,38 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: không có hoặc của công ty khác'),
       409: problemResponse('`version_conflict` kèm `current`, `invalid_transition`, `handover_confirmed_by_platform`'),
       422: problemResponse('`reason_required`, `validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/receive-return',
+    summary: 'Kho quét nhận hàng hoàn (§19.2)',
+    description:
+      'Cần `fulfillment.order.process`. Kiện `returning` → `returned`. `code` là mã kiện hoặc mã vận đơn, không phân biệt hoa thường. `lines` là số kho quét từng món: gộp với dòng kiện đã ghép SKU (món vắng: quét 0; món ngoài kiện: dự kiến 0; không gửi: coi như quét đủ) vào một phiếu kiểm hàng hoàn `KT` nháp kèm giá vốn dòng kiện; chờ xử lý cộng ngay theo số quét, tồn thực đổi khi phiếu ghi sổ. Không có dòng nào để lập thì không lập phiếu. Phát `fulfillment.package_returned`.',
+    security: bearer,
+    request: { params: PackageParams, body: { content: { 'application/json': { schema: ReceiveReturnBody } } } },
+    responses: {
+      200: { description: 'Kiện sau khi nhận hàng hoàn', ...json(Package) },
+      ...auth,
+      404: problemResponse('`not_found`: không có hoặc của công ty khác'),
+      409: problemResponse('`version_conflict` kèm `current`, `invalid_transition` (kiện không ở `returning`, kể cả quét lần hai)'),
+      422: problemResponse('`package_mismatch`: mã quét không phải của kiện này (`errors.code`); `validation_failed`: lỗi `lines` theo §15.3 (`lines.<i>.quantity`, `lines.<i>.variantId`)'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/found',
+    summary: 'Kho nhận kiện thất lạc tìm thấy (§19.2)',
+    description:
+      'Cần `fulfillment.order.process`. Kiện `lost` → `returned`. `lines` như `receive-return`: phiếu kiểm hàng hoàn `KT` nháp theo số quét, chờ xử lý cộng ngay. Phát `fulfillment.package_returned`.',
+    security: bearer,
+    request: { params: PackageParams, body: { content: { 'application/json': { schema: FoundBody } } } },
+    responses: {
+      200: { description: 'Kiện sau khi nhận về kho', ...json(Package) },
+      ...auth,
+      404: problemResponse('`not_found`: không có hoặc của công ty khác'),
+      409: problemResponse('`version_conflict` kèm `current`, `invalid_transition` (kiện không ở `lost`, kể cả gửi lần hai)'),
+      422: problemResponse('`validation_failed`: lỗi `lines` theo §15.3'),
     },
   });
   registry.registerPath({
