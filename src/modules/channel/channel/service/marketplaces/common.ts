@@ -194,6 +194,19 @@ export type RemoteLineStatus =
   | 'lost'
   | 'cancelled';
 
+/**
+ * Một mốc trong hành trình kiện của sàn (spec #199 phần c §5.7): chỉ lấy giờ và lý do, trạng thái kiện vẫn theo trạng thái
+ * món. `packageCode` là mã kiện sàn (Lazada `ofc_package_id`), `trackingCode` là mã vận đơn; app khớp kiện theo mã kiện
+ * rồi mã vận đơn.
+ */
+export interface RemotePackageEvent {
+  packageCode: string | null;
+  trackingCode: string | null;
+  status: RemoteLineStatus;
+  at: Date;
+  description: string | null;
+}
+
 export interface RemoteOrderRef {
   externalOrderId: string;
   placedAt: Date;
@@ -289,6 +302,8 @@ export interface RemoteOrder {
   deliveredAt?: Date | null;
   info: RemoteOrderInfo;
   lines: RemoteOrderLine[];
+  /** Hành trình kiện (spec #199 phần c §5.7), kéo đơn đọc riêng ngoài giao dịch; không có thì kiện lấy giờ đồng bộ. */
+  packageEvents?: RemotePackageEvent[];
 }
 
 /** Lý do sàn bắt tách kiện (TikTok `must_split_reasons`, #221): vượt số món theo danh mục hay tổng số món một kiện. */
@@ -489,6 +504,11 @@ export interface MarketplaceAdapter {
    * lô theo giới hạn của sàn và dùng `detail` của ref nếu có. Sàn không có thì bên gọi gọi `getOrder` từng đơn.
    */
   getOrders?(accessToken: string, refs: readonly RemoteOrderRef[]): Promise<RemoteOrder[]>;
+  /**
+   * Hành trình các kiện của một đơn (spec #199 phần c §5.7): mốc giờ, lý do giao không thành. Kéo đơn chỉ gọi cho đơn có
+   * món sau bàn giao, ngoài giao dịch; lỗi không chặn lượt kéo. Sàn không có thì kiện lấy giờ đồng bộ.
+   */
+  getPackageEvents?(accessToken: string, externalOrderId: string): Promise<RemotePackageEvent[]>;
   /** Lý do huỷ sàn cho phép với các món này; sàn không cho huỷ thì ném `rejected` kèm câu của sàn (#105 PR 2). */
   cancelReasons?(accessToken: string, externalOrderId: string, externalLineIds: readonly string[]): Promise<{ id: string; label: string }[]>;
   /** Người bán huỷ các món; sàn xác nhận sau, đơn về qua lần kéo kế tiếp. */

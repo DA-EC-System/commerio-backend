@@ -2,7 +2,7 @@
 // Trường cân nặng, kích thước, mô tả do #110 thêm vào `getVariants`; chưa có thì đọc ra null: đẩy sản phẩm báo
 // `dimensions_missing`. Khả dụng là cổng `availableOf` của inventory (Documents/21 mục 11.1).
 import type { Decimal } from 'decimal.js';
-import { availableOf, getVariants, standardPricesOf, type VariantSummary } from '../../../product/index.ts';
+import { availableOf, getVariants, productImageUrls, standardPricesOf, type VariantSummary } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 
 export interface ListingVariant {
@@ -32,6 +32,11 @@ export interface ProductPort {
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
   /** Có mọi biến thể của công ty (chưa có tồn thì 0); id lạ không có trong Map thì không đẩy tồn (#222). */
   availableOf(ids: readonly string[]): Promise<Map<string, number>>;
+  /**
+   * Link ảnh catalog theo sản phẩm (#303), tối đa `max` ảnh đầu theo thứ tự; sản phẩm chưa có ảnh (hoặc máy chủ chưa
+   * cấu hình link ảnh) không có trong Map.
+   */
+  productImageUrls(productIds: readonly string[], max: number): Promise<Map<string, string[]>>;
 }
 
 // Trường #110 sẽ thêm; đọc tuỳ chọn để code không đổi khi Khang merge.
@@ -64,6 +69,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       variants: async (ids) => (await getVariants(ids)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
+      productImageUrls,
     }
   );
 }

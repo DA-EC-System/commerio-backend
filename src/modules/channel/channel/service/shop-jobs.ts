@@ -4,7 +4,7 @@ import { defineQueue, JobDataSchema, scheduleForShop, sendJob, unscheduleForShop
 import { withCompany } from '../../../../shared/db/client.ts';
 import { findActiveShopsAnyCompany, findShopRow } from '../repository/shops.ts';
 
-/** Số ảnh tối đa của một sản phẩm khi đẩy: như `PushBody.imageUrls` (Lazada nhận tối đa 8 ảnh mỗi `Image`). */
+/** Số ảnh tối đa của một sản phẩm khi đẩy: 8 ảnh catalog đầu (Lazada nhận tối đa 8 ảnh mỗi `Image`; #303). */
 export const PUSH_IMAGE_MAX = 8;
 
 export const ShopJobSchema = JobDataSchema.extend({ shopId: z.uuid() });
@@ -32,7 +32,7 @@ export const tokenRefreshQueue = defineQueue('channel.token_refresh', ShopJobSch
  */
 export const stockPushQueue = defineQueue('channel.stock_push', ShopJobSchema, { policy: 'stately' });
 
-/** Việc đẩy một listing (#219, Documents/21 §18.6.4): `imageUrls` là URL ảnh nguồn của sản phẩm người dùng gửi lúc bấm. */
+/** Việc đẩy một listing (#219, Documents/21 §18.6.4): `imageUrls` là URL ảnh catalog của sản phẩm lúc bấm đẩy (#303). */
 export const ListingPushJobSchema = JobDataSchema.extend({
   shopId: z.uuid(),
   listingId: z.uuid(),
