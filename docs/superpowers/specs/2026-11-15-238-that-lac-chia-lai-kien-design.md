@@ -96,7 +96,7 @@
 - `packages.lost_source text null`, CHECK `lost_source in ('user', 'marketplace')`.
 - Backfill trước khi thêm CHECK: `update "order".packages set lost_source = 'marketplace' where status = 'lost' and lost_confirmed_by is null`. Trên `main` chưa có đường nào để người dùng đưa kiện sang `lost`, nên mọi kiện `lost` hiện có là do sàn.
 - Thay CHECK `packages_lost_second_person` bằng: `lost_confirmed_by is null or lost_confirmed_by is distinct from lost_reported_by or lost_self_approved`.
-- Thêm CHECK `packages_lost_confirmed`: `status <> 'lost' or lost_source = 'marketplace' or lost_confirmed_by is not null`.
+- Thêm CHECK `packages_lost_confirmed`: `status <> 'lost' or lost_source is not distinct from 'marketplace' or lost_confirmed_by is not null`. Phải dùng `is not distinct from`: với `lost_source` null, `lost_source = 'marketplace'` ra NULL, cả biểu thức ra NULL và CHECK cho qua kiện `lost` thiếu nguồn (bắt được khi thi công PR 1, test AC10).
 - Giữ CHECK `packages_lost_report`.
 - Ba file, sinh ở bước cuối của PR theo thứ tự: `that-lac-cot` (drizzle sinh: hai cột), `that-lac-du-lieu` (`--custom`: câu backfill), `that-lac-rang-buoc` (drizzle sinh: thay và thêm CHECK). Tách vì CHECK mới phải đứng sau backfill, mà backfill phải đứng sau cột.
 - An toàn migration: thêm cột `boolean not null default false` và cột `text null` không viết lại bảng (PostgreSQL 11+). `ADD CONSTRAINT … CHECK` quét bảng dưới khoá `ACCESS EXCLUSIVE`; `packages` trên staging là dữ liệu demo, ít dòng (cùng lập luận với migration của #329). Không dùng `NOT VALID` rồi `VALIDATE`: migrator của drizzle chạy mọi migration đang chờ trong **một** giao dịch (`db/CLAUDE.md`), nên tách hai bước không rút ngắn thời gian giữ khoá, mà snapshot của drizzle lại lệch `schema.ts`. Bảng lớn lên thì phải làm lại theo hai lần deploy.
@@ -146,7 +146,7 @@ Hợp đồng theo `21` §19.2, không đổi: `POST /packages/:id/report-lost {
 
 Thứ tự kiểm (404 → trạng thái → `version`) theo `receiveBackPackage` hiện có. Không cần khoá idempotency: khoá dòng, trạng thái và `version` chặn lần hai.
 
-**View (`service/views.ts`):** `lostReport = { by, at, claimCode }` khi kiện có `lost_reported_by` (dạng `by` theo `FE/src/types/fulfillment.ts`); `availableActions` của chi tiết kiện phản ánh `lose`/`lose_on_unload` đúng theo người đang xem.
+**View (`service/views.ts`):** `lostReport = { by, at, claimCode }` khi kiện có `lost_reported_by` (dạng `by` theo `FE/src/types/fulfillment.ts`). Schema `Package` trên `main` chưa có `availableActions`, nên PR 1 không thêm. Còn thiếu sau PR 1: chi tiết đơn của sales (`sales/service/orders.ts`) dựng kiện mà không truyền bảng tên, nên `lostReport.by.name` ở đó rỗng.
 
 **Xoá cột thất lạc (D14, D21):** một luật trong `updatePackage` (`repository/packages.ts`), theo trạng thái đích của lần ghi, không rải điều kiện ở từng service:
 
@@ -344,7 +344,8 @@ FE đã có mock cho `report-lost`, `confirm-lost`, nút Báo/Xác nhận thất
 
 - **D2 đến D6 chờ Thành.** Thành chốt khác thì sửa mục 5.2 và mục 8 trước khi code PR 1.
 - **Kiện tự giao** (D13): hiện người đi giao cũng xác nhận mất được. Phải vá khi làm route `self-deliver`.
-- **Đơn đang huỷ có kiện `lose_on_unload`:** kiện `lost` là kiện đã bàn giao, nên đơn đi theo cách huỷ khi đã có kiện bàn giao (`25` §8.2). PR 1 phải kiểm đường `cancelling` của sales với kiện này và ghi lại hành vi trong `fulfillment/CLAUDE.md`; nếu sales cần sửa thì báo Khang trước.
+- **Đơn đang huỷ có kiện `lose_on_unload` (đã kiểm ở PR 1, còn mở, chờ Khang quyết):** kiện sang `lost`, tồn trừ một lần, đơn ở lại `processing` (đúng `25` §8.2). Nhưng cờ `cancelling` của đơn không bao giờ được gỡ: lượt kéo sau bật `platform_cancelled` mà `cancelling` vẫn `true`, nên `sales/service/complete.ts` bỏ qua đơn và đơn không tự hoàn tất. Sửa nằm ở sales (gỡ `cancelling` khi không còn kiện nào chờ mở), ngoài phạm vi PR 1.
+- **Mở kiện `stocktake` rồi sàn huỷ đơn (PR 2):** kiện đang chờ mở vì kiểm kê mà sàn huỷ thì mục đích mở phải đổi sang `cancel` (huỷ thắng), nếu không kho mở ra kiện lại về `reserved`.
 - **Phần 2 viết trên code chưa merge.** #329, #330 đổi khi review thì đối chiếu lại mục 5.6 trước khi làm PR 3.
 - **Sàn thật.** Chia lại kiện và `lost` chưa gặp trên shop thử Lazada (trace 13/11/2026 chỉ tới `delivered`); kiểm bằng fixture. TikTok: hành vi `package_id` khi sàn chia lại cần Thành xác nhận từ #221.
 - **Dùng lại vận đơn sau khi mở kiện `awaiting_pickup`** (AC 19) dựa trên `25` §8.3; chưa thử thật việc sàn còn giữ vận đơn sau khi chia lại. Sàn đã bỏ mã thì kiện cũ đi nhánh `open_cancel`, không tới bước này.
