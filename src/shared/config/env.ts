@@ -60,6 +60,8 @@ const EnvSchema = z.object({
   // Ngân sách gọi TikTok mỗi ngày của cả app do mình đặt: TikTok không công bố hạn mức ngày, chỉ giới hạn tần suất động
   // theo app × gian hàng (docv2 Rate limits, tra 06/11/2026). Giữ để vòng việc nền lỗi không đốt request vô hạn.
   TIKTOK_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(20000),
+  // Phần tối thiểu mỗi công ty mỗi ngày trong trần chung của từng sàn (#215, Documents/21 §18.6.8).
+  CHANNEL_COMPANY_MIN_CALLS: z.coerce.number().int().positive().default(500),
   // Trần số đơn còn mở kéo về ở lượt sau thiết lập (#198): chỉ lấy N đơn đặt mới nhất, phần cũ hơn bỏ qua và báo ở
   // `Shop.setup.openOrdersSkipped`. Không đặt hoặc để trống là không giới hạn (Documents/25 §6.1); staging đặt để giữ hạn mức gọi sàn.
   OPEN_ORDER_PULL_MAX: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().positive().optional()),

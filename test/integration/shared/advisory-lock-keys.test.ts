@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
-import { lockInvoiceOfOrder } from '#src/modules/finance/finance/repository/invoices.ts';
+import { lockVariants } from '#src/modules/product/catalog/repository/variants.ts';
 import { tryLockRelay } from '#src/modules/core/platform/repository/outbox.ts';
 import { getDb, inTransaction } from '#src/shared/db/client.ts';
 import { pgError } from '#src/shared/db/pg-error.ts';
@@ -43,16 +43,16 @@ async function holdElsewhere(hash: 'hashtext($1)' | 'hashtextextended($1, 0)', k
 }
 
 describe('khoá advisory 64 bit (#63 B17)', () => {
-  it('lockInvoiceOfOrder và tryLockRelay giữ đúng khoá hashtextextended(…, 0)', async () => {
-    const orderId = randomUUID();
+  it('lockVariants và tryLockRelay giữ đúng khoá hashtextextended(…, 0)', async () => {
+    const companyId = randomUUID();
     const prefix = `t${randomUUID().slice(0, 8)}`;
     const keys = await inTransaction(async () => {
-      await lockInvoiceOfOrder(orderId);
+      await lockVariants(companyId);
       expect(await tryLockRelay(prefix)).toBe(true);
       return heldKeys();
     });
     expect(keys).toEqual(
-      expect.arrayContaining([await extendedKey(`finance.invoice:${orderId}`), await extendedKey(`platform.outbox_relay:${prefix}`)]),
+      expect.arrayContaining([await extendedKey(`catalog.sku:${companyId}`), await extendedKey(`platform.outbox_relay:${prefix}`)]),
     );
   });
 
@@ -62,12 +62,12 @@ describe('khoá advisory 64 bit (#63 B17)', () => {
     expect(await inTransaction(() => tryLockRelay(prefix))).toBe(false);
   });
 
-  it('phiên khác giữ khoá 64 bit của hoá đơn → lockInvoiceOfOrder phải chờ (hết lock_timeout, 55P03)', async () => {
-    const orderId = randomUUID();
-    await holdElsewhere('hashtextextended($1, 0)', `finance.invoice:${orderId}`);
+  it('phiên khác giữ khoá 64 bit của biến thể → lockVariants phải chờ (hết lock_timeout, 55P03)', async () => {
+    const companyId = randomUUID();
+    await holdElsewhere('hashtextextended($1, 0)', `catalog.sku:${companyId}`);
     const err = await inTransaction(async () => {
       await getDb().execute(sql`set local lock_timeout = '300ms'`);
-      return lockInvoiceOfOrder(orderId).then(
+      return lockVariants(companyId).then(
         () => null,
         (e: unknown) => e,
       );
@@ -76,13 +76,13 @@ describe('khoá advisory 64 bit (#63 B17)', () => {
   });
 
   it('khoá hashtext 32 bit cũ không chặn: hai nơi dùng chung khoá phải đổi hàm băm cùng nhau', async () => {
-    const orderId = randomUUID();
+    const companyId = randomUUID();
     const prefix = `t${randomUUID().slice(0, 8)}`;
-    await holdElsewhere('hashtext($1)', `finance.invoice:${orderId}`);
+    await holdElsewhere('hashtext($1)', `catalog.sku:${companyId}`);
     await holdElsewhere('hashtext($1)', `platform.outbox_relay:${prefix}`);
     await inTransaction(async () => {
       await getDb().execute(sql`set local lock_timeout = '300ms'`);
-      await lockInvoiceOfOrder(orderId);
+      await lockVariants(companyId);
       expect(await tryLockRelay(prefix)).toBe(true);
     });
   });

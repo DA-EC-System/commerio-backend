@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../../helpers/db.ts';
 import { asCompany } from '../../helpers/rls.ts';
@@ -30,6 +31,32 @@ describe('sổ tiền', () => {
       asCompany(c, async (x) => {
         await insertEntry((s, v) => x.query(s, v), c, {});
         await x.query('delete from finance.ledger_entries');
+      }),
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('khớp sao kê chỉ thêm (#235): role ứng dụng ghi được, không sửa, không xoá', async () => {
+    const c = randomUUID();
+    const match = async (x: PoolClient) => {
+      const entry = await insertEntry((q, v) => x.query(q, v), c, { kind: 'withdrawal', amount: '-100000', is_estimate: false });
+      await x.query('insert into finance.bank_matches (company_id, entry_id, bank_ref, matched_by) values ($1, $2, $3, $4)', [
+        c,
+        entry.rows[0]!.id,
+        'FT26111300001',
+        randomUUID(),
+      ]);
+    };
+    await expect(asCompany(c, match)).resolves.toBeUndefined();
+    await expect(
+      asCompany(c, async (x) => {
+        await match(x);
+        await x.query("update finance.bank_matches set bank_ref = 'FT-KHAC'");
+      }),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asCompany(c, async (x) => {
+        await match(x);
+        await x.query('delete from finance.bank_matches');
       }),
     ).rejects.toThrow(/permission denied/);
   });
