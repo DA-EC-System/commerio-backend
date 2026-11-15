@@ -1,6 +1,6 @@
 # Module `payment`
 
-Cấu hình khoá cổng (UC-PF-11), mã QR/link thanh toán (UC-PF-01), trạng thái tiền của đơn. Hợp đồng API: `Documents/21` mục 12 (12.3 API, 12.8 kiểu dữ liệu, 12.9 mã lỗi, T1–T15), mục 11 (hàm cho module khác), mục 10.8 (D14–D17). Bốn cổng `vnpay`, `momo`, `zalopay`, `vietqr`, **chỉ sandbox**.
+Webhook và tra cứu quá hạn của cổng, trạng thái tiền của đơn tay kiểu cũ. **#235 gỡ** route cấu hình khoá cổng, tạo mã thanh toán, trạng thái tiền của đơn, đơn chưa thu, giao dịch cổng, mô phỏng trả tiền (cổng thanh toán ngoài MVP; Documents/21 mục 12 "(bỏ)"), cùng service `gateway-configs` (trừ `loadGatewayCredentials`), `payment-links`, `transactions`, `order-list`, `daily-totals`, `markCodCollected`, `markRefunded`, `listOrderPayments`, `getDailyPaymentFees`. Bảng giữ nguyên. Hợp đồng API: `Documents/21` mục 12 (12.3 API, 12.8 kiểu dữ liệu, 12.9 mã lỗi, T1–T15), mục 11 (hàm cho module khác), mục 10.8 (D14–D17). Bốn cổng `vnpay`, `momo`, `zalopay`, `vietqr`, **chỉ sandbox**.
 
 ## Bảng
 
@@ -14,15 +14,7 @@ Cấu hình khoá cổng (UC-PF-11), mã QR/link thanh toán (UC-PF-01), trạng
 
 ## API (gắn tại `/api/v1/payment`)
 
-| API | Quyền | Việc |
-|---|---|---|
-| `GET /gateways` | `payment.gateway.manage` hoặc `payment.link.create` | 4 cổng theo thứ tự `GATEWAYS`. Có `manage`: `GatewayConfig` đã che; chỉ có `link.create`: `{ gateway, configured }` |
-| `PUT /gateways/:gateway` | `payment.gateway.manage` | Lưu đủ các ô của cổng theo `version` (0 = tạo); nhật ký `create`/`update` không có giá trị khoá |
-| `POST /orders/:orderId/links` | `payment.link.create` | Tạo mã (201) hoặc trả mã còn hạn (200); nhật ký `create` |
-| `GET /transactions`, `GET /transactions/:id` | `payment.transaction.view` | Giao dịch cổng; `receipt`, `unmatchedReceiptId` lấy qua `ctx.financeRefsOf` (finance, tiêm ở `src/modules/finance/index.ts`) |
-| `POST /dev/simulate/:paymentCode` | `payment.link.create` | Mô phỏng trả đủ tiền (demo, E2E), đi đúng đường webhook; **không gắn ở production** |
-| `GET /webhooks/vnpay`, `POST /webhooks/{momo,zalopay}`, `POST /webhooks/sepay/:receiverKey` | không token | Webhook của cổng (mục Webhook dưới) |
-| `GET /orders/:orderId` | `sales.order.view` | `OrderPayment`; đơn chưa có dòng `order_payments` thì suy từ đơn; đơn sàn 404 |
+Chỉ còn `GET /webhooks/vnpay`, `POST /webhooks/{momo,zalopay}`, `POST /webhooks/sepay/:receiverKey` (không token, mục Webhook dưới). `gateways`, `orders`, `transactions`, `dev/simulate` trả 404 (#235).
 
 ## Hàm cho module khác (`index.ts`, Documents/21 §11)
 
@@ -36,10 +28,6 @@ Cấu hình khoá cổng (UC-PF-11), mã QR/link thanh toán (UC-PF-01), trạng
 | `getOrderPayments(ids)` | chỉ finance | Trạng thái tiền theo lô; đơn chưa có dòng không có trong kết quả |
 | `markPaid(orderId, by)` | chỉ finance (webhook, gán khoản thu) | `unpaid` → `paid`, mã `active`/`expired` → `paid`; lệch → 409 |
 | `recordGatewayTransaction(payment, status)` | chỉ finance (handler webhook) | Ghi `webhook_events` rồi `payment_transactions`; trùng → `duplicate` |
-| `markCodCollected(orderIds)` | chỉ finance (xác nhận COD) | Cả lô `cod_pending` đã giao → `cod_collected`; lệch → 409 kèm `orders: [{ orderId, status }]` (finance gắn mã đơn); khoá theo thứ tự `order_id` |
-| `markRefunded(orderId)` | chỉ finance (ghi sổ phiếu chi hoàn tiền) | `pending_refund` → `refunded`; lệch → 409 kèm `current` |
-| `listOrderPayments(filter)`, `getPaymentTransactions(ids)`, `getOrderPaymentView(companyId, orderId)` | chỉ finance (danh sách COD, hoàn tiền; cổng của phiếu thu; `current` của 409) | Đọc, trong `withCompany` |
-| `getDailyPaymentFees({ from, to })` | report (#29) | Phí cổng theo ngày giờ VN và đơn, từ giao dịch `succeeded` có `fee` |
 | `revertPaid`, `revertRefunded` | — | Khung 501, chờ UC-PF-09 |
 
 `markRefundPending`, `markCodNotCollected` trả 404 cho đơn sàn (không có trạng thái tiền) và đơn công ty khác: #25 không gọi cho đơn sàn; `markDelivered` với đơn không có dòng thì bỏ qua. **Thứ tự khoá cho mọi hàm trên:** bên gọi đổi `sales.orders` trước (giữ khoá dòng đơn), rồi mới gọi hàm payment (khoá `order_payments`), cùng giao dịch; ngược lại thì deadlock với tạo mã, webhook, COD (đơn trước, `order_payments` sau). Mọi hàm phải gọi trong `withCompany` (ngoài đó là role chủ bảng, RLS không có hiệu lực).
@@ -49,11 +37,9 @@ Payment gọi `sales.getOrderForPayment(orderId, { lock?: 'share' })` để đ�
 ## Bất biến
 
 - **Khoá cổng là bí mật (T4):** API chỉ trả `{ last4 }` mỗi ô, kể cả trong `current` của 409. Không ghi giá trị khoá vào nhật ký thao tác, log, Problem Details. Không đưa khoá thô làm tham số SQL (`DrizzleQueryError` chép tham số vào `message`, lỗi lạ bị log).
-- `credentials_enc` = AES-256-GCM bằng `PAYMENT_CREDENTIALS_KEY` (`service/credentials-cipher.ts`), AAD `"<companyId>:<gateway>"`: bản mã chép sang công ty hay cổng khác không giải mã được. Máy thiếu biến → 500 `payment_credentials_key_missing`. Giải mã lỗi (đổi khoá chủ, bản mã hỏng) → `AppError` 500 `payment_credentials_unreadable` (`isCredentialsUnreadable`), mỗi chỗ đọc xử lý riêng (#63 B6): `GET /gateways` và `current` của 409 trả cổng `configured: true`, `credentials: null`, `display: null` (Admin lưu lại theo `version`); xem mã VietQR bỏ trống `bankTransfer.accountName` (cả khi thiếu khoá chủ); tạo mã → 422 `gateway_not_configured`; webhook và tra cứu quá hạn vẫn ném để cổng gửi lại / lượt sau thử lại.
-- Ô khoá theo cổng: `CredentialsByGateway` (`api/schemas.ts`), cũng là schema Swagger; ô bí mật tối thiểu 8 ký tự. Danh sách cổng và kiểu `Gateway`: `domain/gateways.ts` (`GATEWAYS`, trùng enum `payment.gateway`).
+- `credentials_enc` = AES-256-GCM bằng `PAYMENT_CREDENTIALS_KEY` (`service/credentials-cipher.ts`), AAD `"<companyId>:<gateway>"`: bản mã chép sang công ty hay cổng khác không giải mã được. Máy thiếu biến → 500 `payment_credentials_key_missing`; giải mã lỗi → 500 `payment_credentials_unreadable`: webhook và tra cứu quá hạn ném để cổng gửi lại / lượt sau thử lại.
+- Danh sách cổng và kiểu `Gateway`, `Credentials` (ô khoá từng cổng): `domain/gateways.ts`, trùng enum `payment.gateway`.
 - URL webhook SePay = `<PUBLIC_API_URL>/api/v1/payment/webhooks/sepay/<webhook_receiver_key>`; chưa đặt `PUBLIC_API_URL` thì `null`.
-- **Mã thanh toán** (`service/payment-links.ts`): mỗi đơn tối đa một mã `active` còn hạn (15 phút); `payment_code` `CM` + 10 ký tự, unique toàn hệ thống. Tạo mã ba bước: đọc và kiểm luật trong giao dịch → gọi cổng **ngoài** giao dịch (10 giây) → ghi trong giao dịch có khoá. Thứ tự khoá: dòng `sales.orders` (`FOR SHARE`) trước, `order_payments` (`FOR UPDATE`) sau, cùng chiều với huỷ đơn; ngược chiều thì deadlock. Hai yêu cầu song song: unique một phần chặn, bên thua trả 200 mã của bên thắng; mã bên thắng vừa rời `active` trước khi đọc lại thì làm lại từ bước 1 một lần (luật đơn ra 409 `payment_not_allowed`, #63 B8).
-- Luật được tạo mã: `domain/link-rules.ts` (luật theo đơn kiểm trước khi trả mã còn hạn; luật theo cổng, hạn mức MoMo 1.000–50.000.000 đ, kiểm sau). Mã `active` quá hạn hiện `expired` khi đọc, chỉ đổi DB khi tạo mã mới (#27 tra cứu quá hạn).
 - Cổng (Strategy + Factory, docs/16 #9): `service/gateways/` — `PaymentGateway` có `createPayment`, `codeOf` (mã trong callback, trước khi biết công ty), `readCallback` (kiểm chữ ký bằng khoá công ty, bỏ trường chữ ký khỏi payload), `respond` (định dạng phản hồi riêng của cổng), `queryPayment` (tra cứu). VNPay, VietQR không gọi mạng khi tạo mã; MoMo, ZaloPay gọi sandbox. Không chép `message` của cổng vào lỗi (MoMo lặp lại chuỗi ký).
 - Payment gọi `sales`, `staff`, `audit`; **không** gọi `finance` (webhook giao cho finance qua `ctx.onVerifiedPayment`, A11 của PR chuẩn bị).
 
@@ -67,4 +53,4 @@ Access log không ghi query (chữ ký VNPay) và che `receiverKey` SePay (`src/
 
 ## Test
 
-Test không gọi mạng: `vi.spyOn(globalThis, 'fetch')` cho MoMo, ZaloPay. Helper riêng: `test/integration/payment/helpers.ts` (`shop`, `order`). Env đọc một lần lúc import: file test cần khoá đặt `PAYMENT_CREDENTIALS_KEY` (và `PUBLIC_API_URL` nếu kiểm URL) trong `vi.hoisted` trước import, không dùng import trong khối đó (`test/integration/payment/gateway-configs.test.ts`).
+Test không gọi mạng: `vi.spyOn(globalThis, 'fetch')` cho MoMo, ZaloPay. Helper riêng: `test/integration/finance/payment/helpers.ts` (`shop` ghi khoá cổng đã mã hoá thẳng vào bảng, `order`, `insertLink` dựng mã bằng adapter thật rồi ghi bảng). Env đọc một lần lúc import: file test cần khoá đặt `PAYMENT_CREDENTIALS_KEY` (và `PUBLIC_API_URL` nếu kiểm URL) trong `vi.hoisted` trước import, không dùng import trong khối đó (`test/integration/payment/gateway-configs.test.ts`).

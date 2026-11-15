@@ -56,56 +56,9 @@ Cần quyền đủ để thử mọi API thì dùng `ceo@bk.demo`.
 
 Chưa đặt `GOOGLE_CLIENT_ID` thì API trả 503 `google_unavailable`; đăng nhập mật khẩu không bị ảnh hưởng.
 
-## Thử cổng thanh toán (sandbox)
+## Cổng thanh toán
 
-Bốn cổng `vnpay`, `momo`, `zalopay`, `vietqr`, **chỉ sandbox**. Không ghi khoá thật vào README, `.env.example` hay commit; khoá sandbox lấy ở trang đăng ký của từng cổng.
-
-1. **Khoá mã hoá khoá cổng** (lưu trong DB), đặt một lần trong `.env`:
-   ```bash
-   openssl rand -base64 32    # dán kết quả vào PAYMENT_CREDENTIALS_KEY=
-   ```
-   Thiếu thì lưu cấu hình cổng trả 500 `payment_credentials_key_missing`.
-
-2. **URL công khai cho webhook.** Cổng gọi về máy bạn nên cần HTTPS công khai:
-   ```bash
-   cloudflared tunnel --url http://localhost:3000    # in ra https://<tên>.trycloudflare.com
-   ```
-   Đặt `PUBLIC_API_URL=https://<tên>.trycloudflare.com` trong `.env` rồi khởi động lại `api`. URL đổi mỗi lần mở tunnel, nên đổi thì đặt lại biến này và khai lại URL với cổng cần khai tay (VNPay, SePay).
-
-3. **Khai khoá cổng** bằng `ceo@bk.demo` (quyền `payment.gateway.manage`): `PUT /api/v1/payment/gateways/{gateway}`, body `{ "credentials": { ... }, "version": 0 }`. Gửi đủ các ô của cổng mỗi lần lưu; `version` là 0 khi tạo mới, sửa thì gửi `version` hiện tại (`GET /api/v1/payment/gateways`). Ô bí mật tối thiểu 8 ký tự; API chỉ trả lại 4 ký tự cuối.
-
-   | Cổng | Ô trong `credentials` | Lấy ở |
-   |---|---|---|
-   | `vnpay` | `tmnCode`, `hashSecret` | Đăng ký merchant sandbox VNPay (bảng cuối mục) |
-   | `momo` | `partnerCode`, `accessKey`, `secretKey` | Cổng developer MoMo |
-   | `zalopay` | `appId` (chỉ số), `key1`, `key2` | Cổng developer ZaloPay |
-   | `vietqr` | `bankBin` (6 số), `accountNo` (6 đến 19 số), `accountName` (tối đa 50 ký tự), `sepayApiKey` | Tài khoản SePay |
-
-4. **Khai URL webhook với cổng.** Tất cả dưới `<PUBLIC_API_URL>/api/v1/payment/webhooks/`:
-
-   | Cổng | URL | Khai ở đâu |
-   |---|---|---|
-   | `vnpay` | `.../vnpay` (GET, IPN) | Khai tay trong trang quản trị merchant VNPay. `GET /gateways` trả sẵn URL này ở `webhookUrl` |
-   | `momo` | `.../momo` | Không cần khai: gửi kèm mỗi lần tạo mã |
-   | `zalopay` | `.../zalopay` | Không cần khai: gửi kèm mỗi lần tạo mã |
-   | `vietqr` | `.../sepay/<receiverKey>`, riêng từng công ty | Dán vào webhook trên `my.sepay.vn`. Lấy nguyên URL ở `webhookUrl` của `GET /gateways` (cổng `vietqr`), sau khi đã lưu khoá và đặt `PUBLIC_API_URL` |
-
-5. **Tạo mã và trả tiền.** `POST /api/v1/payment/orders/{orderId}/links` với `{ "gateway": "vnpay" }` trả `payUrl`/`qrContent`; trả bằng sandbox của cổng thì cổng gọi webhook về.
-
-### Demo khi chưa có cổng thật
-
-Không cần khoá, tunnel hay cổng nào: lấy `paymentCode` (dạng `CM...`) từ bước tạo mã ở trên, rồi gọi `POST /api/v1/payment/dev/simulate/{paymentCode}` (quyền `payment.link.create`). Nó chạy đúng đường webhook như mô phỏng trả đủ tiền. Route này không gắn khi `NODE_ENV=production`.
-
-### Đăng ký tài khoản sandbox
-
-| Cổng | Trang đăng ký, tài liệu |
-|---|---|
-| VNPay | https://sandbox.vnpayment.vn/devreg/ |
-| SePay | https://my.sepay.vn, tài liệu webhook: https://developer.sepay.vn |
-| MoMo | Cổng developer của MoMo (tìm "MoMo for Developers"), xem tài liệu để lấy thông tin test |
-| ZaloPay | Cổng developer của ZaloPay (tìm "ZaloPay Sandbox"), xem tài liệu để lấy `app_id`, `key1`, `key2` test |
-
-Thông tin test (thẻ, tài khoản ví) lấy trong tài liệu của từng cổng, đừng chép vào repo. Chi tiết thiết kế: `src/modules/finance/payment/CLAUDE.md`.
+Cổng thanh toán (VNPay, MoMo, ZaloPay, VietQR) ngoài MVP: route lưu khoá cổng, tạo mã thanh toán, giao dịch cổng, mô phỏng trả tiền đã gỡ ở #235 (Documents/21 mục 12 "(bỏ)"). Webhook `<PUBLIC_API_URL>/api/v1/payment/webhooks/...` và tra cứu quá hạn còn trong code. Chi tiết: `src/modules/finance/payment/CLAUDE.md`.
 
 ## Database
 

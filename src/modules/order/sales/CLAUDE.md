@@ -8,6 +8,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 - **Cờ lưu:** `needs_attention`, `cancel_requested`, `cancelling`, `platform_cancelled`, `shop_disconnected`. **Cờ suy ra** lúc đọc (`service/orders.ts`): `unmapped_sku` (dòng `variant_id` trống), `due_soon` (còn kiện chưa rời kho, dưới 24 giờ tới `ship_by`), `return_requested` (yêu cầu trả còn mở: `requested`, `awaiting_return`, `received`). `cod_mismatch` chưa có nguồn.
 - **Giai đoạn hiển thị** `stageOf` và **lý do chưa hoàn tất** `completionBlocker` suy từ kiện. Danh sách phân trang trong SQL; cờ lưu, `unmapped_sku`, `return_requested` lọc bằng SQL; chỉ giai đoạn suy từ kiện và `due_soon` lọc trong bộ nhớ, trên 1.000 đơn chưa dừng mới nhất (`DERIVED_SCAN`).
+- **Trạng thái thanh toán** `paymentStatus` (#234, §21.2) đọc qua `ctx.paymentStatusOf` (finance tiêm ở `src/wiring.ts`; sales không đọc bảng finance), đơn chưa có dòng là `none`; `mismatch` thì cờ `payment_mismatch`. Cờ này không lọc được ở `GET /sales/orders?flag=` (lọc ở `/finance/payments?status=mismatch`). Trạng thái đơn không đổi theo trạng thái thanh toán.
 - Tiền lưu `numeric`, API trả số nguyên đồng.
 
 ## Nhận đơn sàn (#105)
@@ -24,9 +25,10 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 ## Thao tác đơn sàn (#105 PR 2, §19.3)
 
-`service/cancel.ts`: `cancel-reasons`, `platform-cancel`, `cancel-request` (`sales.order.cancel`), `invoice-number` (`sales.order.create`). Thứ tự: đọc đơn → kiểm `version` (409 trước khi gọi sàn) → máy trạng thái → gọi sàn ngoài giao dịch qua `ctx.marketplaceOrders` (channel, tiêm ở `src/wiring.ts`) → ghi theo `version` kèm `recordAudit` (`order.orders`) và `sales.order_status_changed`.
+`service/cancel.ts`: `cancel-reasons`, `platform-cancel`, `cancel-request`, `cancel-reject-reasons` (`sales.order.cancel`), `invoice-number` (`sales.order.create`). Thứ tự: đọc đơn → kiểm `version` (409 trước khi gọi sàn) → máy trạng thái → gọi sàn ngoài giao dịch qua `ctx.marketplaceOrders` (channel, tiêm ở `src/wiring.ts`) → ghi theo `version` kèm `recordAudit` (`order.orders`) và `sales.order_status_changed`.
 
 - Người bán huỷ, hay đồng ý khách xin huỷ: đơn giữ trạng thái, cờ `cancelling`; đơn sang `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt 29/10/2026). `reasonId` phải nằm trong danh sách sàn trả lúc gửi (hỏi lại sàn), không thì 422.
+- Từ chối khách xin huỷ (#227): `rejectReasonId` lấy từ `cancel-reject-reasons` (sàn không có danh sách thì rỗng). Sales không biết sàn nào bắt buộc: channel đổi `reject_reason_required` của adapter (TikTok) sang 422 `errors.rejectReasonId`; Lazada bỏ qua trường này.
 - Số hoá đơn chỉ lưu, chưa gửi `SetInvoiceNumber`.
 
 ## Tự hoàn tất (#105 PR 2)

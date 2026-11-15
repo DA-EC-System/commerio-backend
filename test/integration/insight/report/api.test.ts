@@ -3,8 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { login, testApp } from '../../helpers/http.ts';
 import { revokePermission, setModuleEnabled } from '../../helpers/state.ts';
-import { invoice, issuedOrder, receipt, reverseInvoice, settlementLine, shopFor } from './helpers.ts';
-import { recompute } from '#src/modules/insight/report/service/recompute.ts';
+import { shopOf, summaryRow } from './helpers.ts';
 
 // API báo cáo CEO (Documents/21 §12.7; plan #29 lát 5–6; AC-1…AC-4, AC-6…AC-9, AC-11, AC-14, AC-15, AC-19).
 
@@ -15,22 +14,20 @@ const get = (path: string, token?: string) => {
 };
 const VIEW = ['report.dashboard.view', 'finance.invoice.view'];
 
-/** Công ty có: gian hàng A đã đối soát, gian hàng B chưa, đơn tay có phiếu thu (18/10) bị đảo hoá đơn (20/10). */
+/**
+ * Công ty có: gian hàng A đã đối soát, gian hàng B chưa, đơn tay có phiếu thu (18/10) bị đảo hoá đơn (20/10). Số là
+ * dòng bảng dựng sẵn mà bước tính lại cũ cho ra với kịch bản đó (ghi thẳng, #235).
+ */
 async function sample() {
   const company = await createCompany();
   const { companyId } = company;
-  const a = await issuedOrder(companyId, { unitCost: 120000, unitPrice: 200000, source: 'marketplace' });
-  const b = await issuedOrder(companyId, { unitCost: 50000, unitPrice: 80000, source: 'marketplace' });
-  const manual = await issuedOrder(companyId, { unitCost: '33333.33', unitPrice: 100000 });
-  const shopA = await shopFor(companyId, a.orderId, 'Gian A');
-  const shopB = await shopFor(companyId, b.orderId, 'Gian B');
-  await invoice(companyId, a.orderId, 200000, '2026-10-18T03:00:00Z');
-  await invoice(companyId, b.orderId, 80000, '2026-10-18T04:00:00Z');
-  const manualInvoice = await invoice(companyId, manual.orderId, 100000, '2026-10-18T05:00:00Z');
-  await receipt(companyId, manual.orderId, 100000, '2026-10-18T05:00:00Z');
-  await settlementLine(companyId, a.orderId, { fees: { commission: 10000, transactionFee: 2000 }, shippingCost: 15000 });
-  await reverseInvoice(companyId, manualInvoice, '2026-10-20T02:00:00Z');
-  await recompute(companyId, '2026-10-17', '2026-10-21');
+  const shopA = await shopOf(companyId, 'Gian A');
+  const shopB = await shopOf(companyId, 'Gian B');
+  const day = '2026-10-18';
+  await summaryRow(companyId, { day, source: 'marketplace', shopId: shopA, revenue: 200000, platformFee: 12000, shippingFee: 15000, cogs: 120000, profit: 53000 });
+  await summaryRow(companyId, { day, source: 'marketplace', shopId: shopB, revenue: 80000, cogs: 50000, profit: 30000, feesPending: true });
+  await summaryRow(companyId, { day, source: 'manual', revenue: 100000, cashCollected: 100000, cogs: 33333, profit: 66667 });
+  await summaryRow(companyId, { day: '2026-10-20', source: 'manual', revenue: -100000, cogs: -33333, profit: -66667 });
   return { ...company, shopA, shopB };
 }
 

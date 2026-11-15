@@ -1,6 +1,6 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
-import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, TaxWarnings } from './ledger-schemas.ts';
+import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, OrderProfitPage, OrderProfitsQuery, SkuProfitPage, SkuProfitsQuery, TaxWarnings } from './ledger-schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
 const bearer = [{ bearerAuth: [] }];
@@ -21,6 +21,32 @@ export function registerLedgerOpenApi(registry: OpenAPIRegistry): void {
     request: { query: LedgerListQuery },
     responses: {
       200: { description: 'Trang sổ', ...json(LedgerPage) },
+      ...auth,
+      422: problemResponse('`validation_failed` kèm `errors` theo ô'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/orders/profits',
+    summary: 'Lãi theo danh sách đơn: thực nhận, giá vốn, lãi gộp của phần đã giao trong kỳ giao',
+    description: `${VIEW} \`from\`, \`to\` lọc theo ngày kiện đầu tiên của đơn giao xong (giờ Việt Nam, gồm cả hai ngày). \`totals\` tính trên toàn bộ kết quả lọc. \`estimated\` tới khi đơn có số quyết toán.`,
+    security: bearer,
+    request: { query: OrderProfitsQuery },
+    responses: {
+      200: { description: 'Trang lãi theo đơn', ...json(OrderProfitPage) },
+      ...auth,
+      422: problemResponse('`validation_failed` kèm `errors` theo ô'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/skus/profits',
+    summary: 'Lãi theo SKU: số bán, thực nhận, giá vốn, lãi gộp của dòng hàng đã giao trong kỳ',
+    description: `${VIEW} \`from\`, \`to\` lọc theo ngày giao của dòng hàng (giờ Việt Nam, gồm cả hai ngày). Thực nhận của đơn (gồm phí, ship, hoàn tiền) chia cho mọi dòng hàng đã giao của đơn theo tỷ lệ doanh thu, giá vốn của đơn (gồm giảm giá vốn khi khách trả) theo tỷ lệ giá vốn dòng; làm tròn tới đồng theo phần dư lớn nhất trong từng đơn nên tổng các dòng của một đơn bằng số của đơn ở lãi theo đơn. Đơn có doanh thu dòng hàng bằng 0 thì thực nhận gom vào dòng \`variantId\` null. \`totals\` tính trên toàn bộ kết quả lọc. Giới hạn: hoàn tiền và giảm giá vốn khi khách trả chia theo tỷ lệ cho mọi SKU của đơn, chưa theo đúng dòng hàng bị trả (chưa có dữ liệu D3 theo dòng hàng). Đơn có kiện giao trước khi lưu dòng hàng bị loại, đếm ở \`excludedOrders\`.`,
+    security: bearer,
+    request: { query: SkuProfitsQuery },
+    responses: {
+      200: { description: 'Trang lãi theo SKU', ...json(SkuProfitPage) },
       ...auth,
       422: problemResponse('`validation_failed` kèm `errors` theo ô'),
     },

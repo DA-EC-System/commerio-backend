@@ -35,18 +35,9 @@ export type VerifiedPaymentHandler = (
   payment: VerifiedGatewayPayment,
 ) => Promise<{ outcome: 'recorded' | 'duplicate' | 'unmatched' | 'failed' }>;
 
-/**
- * Phiếu thu, khoản thu chưa khớp của các giao dịch cổng (`receipt`, `unmatchedReceiptId` của `PaymentTransaction`,
- * §12.8). Bảng nằm ở finance, payment không import finance: `src/modules/finance/index.ts` tiêm `finance.getTransactionRefs` (A21).
- */
-export type TransactionRefsLookup = (
-  transactionIds: readonly string[],
-) => Promise<Map<string, { receipt: { id: string; number: string } | null; unmatchedReceiptId: string | null }>>;
-
 /** `ctx` mà router (và việc nền) của payment nhận. */
 export interface PaymentContext extends ModuleContext {
   readonly onVerifiedPayment?: VerifiedPaymentHandler;
-  readonly financeRefsOf?: TransactionRefsLookup;
 }
 
 /** Handler đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 rõ ràng thay vì nuốt webhook. */
