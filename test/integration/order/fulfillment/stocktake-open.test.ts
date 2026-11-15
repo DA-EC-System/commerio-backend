@@ -210,6 +210,46 @@ describe('kiểm kê đếm thiếu: cờ Cần mở stocktake (spec #238 §5.5)
   });
 });
 
+describe('kiện đang giữ hàng còn mang cờ kiểm kê dạng cũ (needs_attention + DISMANTLE_NOTE, gắn trước PR 2)', () => {
+  const legacy = (packageId: string, note = DISMANTLE_NOTE) =>
+    testPool().query('update "order".packages set needs_attention = true, flag_note = $2 where id = $1', [packageId, note]);
+
+  it('hàng về đủ: lượt phân hàng gỡ cờ cũ, kiện vẫn packed và vẫn giữ hàng', async () => {
+    const p = await sealedHolder();
+    await legacy(p.packageId);
+    await receive(companyId, p.variants[0]!, 1, 100000);
+
+    const r = await run(p.variants);
+
+    expect(r.cleared).toEqual([p.packageId]);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'packed', needs_attention: false, flag_note: null, needs_open: false });
+    expect((await packageLineRows(p.packageId))[0]!.reserved_qty).toBe(1);
+  });
+
+  it('tồn chưa đủ: cờ cũ còn nguyên, version không đổi', async () => {
+    const p = await sealedHolder();
+    await legacy(p.packageId);
+    const { version } = await packageRow(p.packageId);
+
+    const r = await run(p.variants);
+
+    expect(r.cleared).toEqual([]);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_attention: true, flag_note: DISMANTLE_NOTE, version });
+  });
+
+  it('kiện có Cần xử lý với ghi chú khác, hàng về đủ: không đụng', async () => {
+    const p = await sealedHolder();
+    await legacy(p.packageId, 'Ghi chú khác');
+    await receive(companyId, p.variants[0]!, 1, 100000);
+    const { version } = await packageRow(p.packageId);
+
+    const r = await run(p.variants);
+
+    expect(r.cleared).toEqual([]);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_attention: true, flag_note: 'Ghi chú khác', version });
+  });
+});
+
 describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mục 10)', () => {
   let shopId: string;
   beforeAll(async () => {

@@ -87,6 +87,13 @@ export function planReclaim<T extends ReclaimCandidate>(deficits: ReadonlyMap<st
   return chosen;
 }
 
+/**
+ * **Dạng cũ** của cờ kiểm kê (trước #238 PR 2): Cần xử lý với ghi chú này. Nay kiện được gắn cờ Cần mở với mục đích
+ * `stocktake` (spec #238 §5.5, D15). Dữ liệu cũ không chuyển bằng migration (giá trị enum mới không dùng được trong giao
+ * dịch thêm nó): lượt phân hàng còn gỡ dạng này cho tới khi không còn kiện nào mang ghi chú cũ.
+ */
+export const DISMANTLE_NOTE = 'Dỡ kiện về kệ: số đếm thấp hơn hàng trong kiện';
+
 export interface SealedHolder {
   id: string;
   needsAttention: boolean;

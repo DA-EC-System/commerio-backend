@@ -6,7 +6,7 @@ import { assertTransition, defineQueue, JobDataSchema, publishEvent, recordTrans
 import { sql } from 'drizzle-orm';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { allocationQueue, planAllocation, planDismantle, planReclaim } from '../domain/allocation.ts';
+import { allocationQueue, DISMANTLE_NOTE, planAllocation, planDismantle, planReclaim } from '../domain/allocation.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import {
   allocationShops,
@@ -29,12 +29,8 @@ export interface AllocationCause {
 }
 export type AllocationContext = Pick<FulfillmentContext, 'stockHoldOf'>;
 
-/**
- * **Dạng cũ** của cờ kiểm kê (trước #238 PR 2): Cần xử lý với ghi chú này. Nay kiện được gắn cờ Cần mở với mục đích
- * `stocktake` (`STOCKTAKE_OPEN`, spec #238 §5.5, D15). Dữ liệu cũ không chuyển bằng migration (giá trị enum mới không dùng
- * được trong giao dịch thêm nó): chỗ gỡ cờ còn nhận dạng này cho tới khi không còn kiện nào mang ghi chú cũ.
- */
-export const DISMANTLE_NOTE = 'Dỡ kiện về kệ: số đếm thấp hơn hàng trong kiện';
+// Cờ kiểm kê dạng cũ (khai ở `domain/allocation.ts` để repository dùng được); export lại cho test và bên gọi hiện có.
+export { DISMANTLE_NOTE };
 
 /**
  * Kiện đã đóng không giữ được sau phiếu kiểm kê đầu kỳ (spec 199b D5), hoặc đang giữ SKU mà phiếu kiểm kê đếm thấp hơn
@@ -56,8 +52,8 @@ async function move(p: { id: string; orderId: string }, from: PackageStatus, act
  * `opening`: lượt sau phiếu kiểm kê đầu kỳ (spec 199b §5.5): không lọc gian hàng chờ kiểm kê, kiện đã đóng không giữ
  * được thì bật Cần mở `stocktake`. `stocktake`: lượt do phiếu kiểm kê (`opening` cũng là): lấy lại hết kiện `reserved` mà
  * tồn thực vẫn nhỏ hơn đang giữ thì kiện đã đóng đang giữ SKU đó bật Cần mở `stocktake` (25 §7.4, spec #238 §5.5). `cause`
- * gắn vào `allocation_done`. Mọi lượt: kiện đang giữ hàng mang cờ `stocktake` mà tồn thực đã đủ cho mọi SKU kiện giữ thì
- * gỡ cờ (`cleared`); kiện chưa giữ mang cờ đó (hoặc cờ dạng cũ) giữ được hàng thì cờ gỡ.
+ * gắn vào `allocation_done`. Mọi lượt: kiện đang giữ hàng mang cờ `stocktake` (hoặc cờ dạng cũ `DISMANTLE_NOTE`) mà tồn
+ * thực đã đủ cho mọi SKU kiện giữ thì gỡ cờ (`cleared`); kiện chưa giữ mang một trong hai cờ đó giữ được hàng thì cờ gỡ.
  */
 export async function runAllocation(
   ctx: AllocationContext,
@@ -71,7 +67,7 @@ export async function runAllocation(
   const trigger = 'all' in scope ? [] : unique(scope.variantIds);
   let skus = 'all' in scope ? await variantsInPlay() : trigger;
   const touched = new Set<string>();
-  // Khoá kiện đang chờ mở vì kiểm kê **trước** khi lượt đổi tồn (thứ tự khoá spec 199b §5.10: kiện rồi mới dòng tồn):
+  // Khoá kiện mang cờ kiểm kê (hai dạng) **trước** khi lượt đổi tồn (thứ tự khoá spec 199b §5.10: kiện rồi mới dòng tồn):
   // khoá sau khi đã nhả hàng thì đua với kho quét bàn giao (khoá kiện rồi trừ tồn) thành khoá chết.
   const stocktakeFlagged = await lockStocktakeFlagged(skus);
 
@@ -106,8 +102,9 @@ export async function runAllocation(
     skus = unique([...skus, ...touched]);
   }
 
-  // Tự gỡ cờ `stocktake` của kiện đang giữ hàng khi tồn thực không còn nhỏ hơn đang giữ ở mọi SKU kiện giữ (spec #238
-  // §5.5). Gỡ cờ mà kiện không đổi trạng thái thì `updatePackage` xoá báo cáo thất lạc đang treo (D21).
+  // Tự gỡ cờ kiểm kê của kiện đang giữ hàng khi tồn thực không còn nhỏ hơn đang giữ ở mọi SKU kiện giữ (spec #238 §5.5):
+  // cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện gắn trước PR 2. Gỡ `needs_open` mà kiện
+  // không đổi trạng thái thì `updatePackage` xoá báo cáo thất lạc đang treo (D21).
   const cleared: string[] = [];
   const flaggedOpen = stocktakeFlagged.filter((p) => !flagged.includes(p.id));
   if (flaggedOpen.length) {
@@ -118,7 +115,10 @@ export async function runAllocation(
         return s !== undefined && s.reserved <= s.onHand;
       });
       if (!enough) continue;
-      await updatePackage(p.id, CLEAR_OPEN);
+      await updatePackage(p.id, {
+        ...(p.stocktake && CLEAR_OPEN),
+        ...(p.legacy && { needsAttention: false, flagNote: null }),
+      });
       cleared.push(p.id);
     }
   }

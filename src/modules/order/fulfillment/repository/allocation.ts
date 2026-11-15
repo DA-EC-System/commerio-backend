@@ -2,7 +2,7 @@
 // schema `order` nhưng fulfillment không import sales. Khoá kiện theo `code` tăng dần (cùng `lockDeferredPackages`).
 import { and, asc, eq, inArray, notInArray, or, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import type { AllocationCandidate, ReclaimCandidate, SealedHolder, StockLine } from '../domain/allocation.ts';
+import { type AllocationCandidate, DISMANTLE_NOTE, type ReclaimCandidate, type SealedHolder, type StockLine } from '../domain/allocation.ts';
 import { planLinesOf } from './packages.ts';
 import { type OpenPurpose, packageLines, packages } from './schema.ts';
 
@@ -89,27 +89,34 @@ export async function lockSealedHolders(variantIds: readonly string[]): Promise<
   return rows.map((r) => ({ ...r, lines: heldOf(lines.get(r.id)!) }));
 }
 
+/** Kiện đã đóng mang cờ kiểm kê: dạng mới (Cần mở `stocktake`) và/hoặc dạng cũ (Cần xử lý `DISMANTLE_NOTE`). */
+export interface StocktakeFlagged {
+  id: string;
+  /** Cờ Cần mở `stocktake`. */
+  stocktake: boolean;
+  /** Cờ dạng cũ, gắn trước #238 PR 2. */
+  legacy: boolean;
+  /** Phần đang giữ thật. */
+  lines: StockLine[];
+}
+
 /**
- * Kiện đã đóng đang chờ mở vì kiểm kê (`open_purpose = 'stocktake'`), đang giữ một SKU thuộc `variantIds`; khoá
- * `FOR UPDATE`, theo `code`. Lượt phân hàng xét tự gỡ cờ khi tồn đã đủ (spec #238 §5.5). `lines`: phần đang giữ thật.
+ * Kiện đã đóng mang cờ kiểm kê (Cần mở `stocktake`, hoặc dạng cũ Cần xử lý `DISMANTLE_NOTE`), đang giữ một SKU thuộc
+ * `variantIds`; khoá `FOR UPDATE`, theo `code`. Lượt phân hàng xét tự gỡ cờ khi tồn đã đủ (spec #238 §5.5).
  */
-export async function lockStocktakeFlagged(variantIds: readonly string[]): Promise<{ id: string; lines: StockLine[] }[]> {
+export async function lockStocktakeFlagged(variantIds: readonly string[]): Promise<StocktakeFlagged[]> {
   if (!variantIds.length) return [];
+  // `coalesce`: `open_purpose`, `flag_note` null thì so sánh ra NULL.
+  const stocktake = sql<boolean>`coalesce(${packages.needsOpen} and ${packages.openPurpose} = 'stocktake', false)`;
+  const legacy = sql<boolean>`coalesce(${packages.needsAttention} and ${packages.flagNote} = ${DISMANTLE_NOTE}, false)`;
   const rows = await getDb()
-    .select({ id: packages.id })
+    .select({ id: packages.id, stocktake, legacy })
     .from(packages)
-    .where(
-      and(
-        inArray(packages.status, ['packed', 'awaiting_pickup']),
-        eq(packages.needsOpen, true),
-        eq(packages.openPurpose, 'stocktake'),
-        holdsVariant(variantIds),
-      ),
-    )
+    .where(and(inArray(packages.status, ['packed', 'awaiting_pickup']), or(stocktake, legacy), holdsVariant(variantIds)))
     .orderBy(asc(packages.code))
     .for('update');
   const lines = await planLinesOf(rows.map((r) => r.id));
-  return rows.map((r) => ({ id: r.id, lines: heldOf(lines.get(r.id)!) }));
+  return rows.map((r) => ({ ...r, lines: heldOf(lines.get(r.id)!) }));
 }
 
 export type LockedAllocationCandidate = AllocationCandidate & {
