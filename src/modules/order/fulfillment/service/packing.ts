@@ -8,6 +8,7 @@ import { buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, typ
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
 import { markLinesReserved, packageShopOf, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
+import { requestAllocation } from './allocation.ts';
 import { getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages } from './packages.ts';
 import { stockPort } from './stock-port.ts';
 
@@ -242,12 +243,18 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         const pkg = await readPackage(id, true);
         await checkVersion(ctx, pkg, target.version);
         const { to } = await transition(ctx, actor, pkg, 'open');
+        // Kiện chờ mở vì kiểm kê (spec #238 §5.5): mở xong là hết việc, gỡ cờ cùng câu với trạng thái (CHECK `packages_open`).
+        const stocktake = pkg.openPurpose === 'stocktake';
         await updatePackage(id, {
           status: to, packedBy: null, packedAt: null, labelError: false,
+          ...(stocktake && { needsOpen: false, openPurpose: null }),
           ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
         });
         await setLinesPacked(id, false);
         await recordPacking(pkg, to, 'open', actor.accountId);
+        // Kiện về `reserved` vẫn giữ hàng: lượt phân hàng sau commit lấy lại phần giữ nếu tồn thực vẫn nhỏ hơn đang giữ
+        // (kiện về `backordered`), không thì kiện ở lại `reserved`.
+        if (stocktake) await requestAllocation(pkg.lines.flatMap((line) => (line.variantId ? [line.variantId] : [])));
         return getPackage(ctx, id);
       });
     } catch (err) {

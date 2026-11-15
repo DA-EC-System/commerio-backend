@@ -218,6 +218,7 @@ export interface PackageRow extends HandoverPackage {
   platformPackageCode: string | null;
   trackingCode: string | null;
   needsOpen: boolean;
+  openPurpose: OpenPurpose | null;
   labelError: boolean;
   shipping: PackageShipping;
   lines: (PlanLine & { orderLineId: string })[];
@@ -231,6 +232,7 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
       ...handoverColumns,
       platformPackageCode: packages.platformPackageCode,
       trackingCode: packages.trackingCode,
+      openPurpose: packages.openPurpose,
       labelError: packages.labelError,
       shipping: {
         shipmentProvider: packages.shipmentProvider,

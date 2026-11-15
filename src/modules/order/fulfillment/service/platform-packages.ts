@@ -182,6 +182,7 @@ async function changeStatus(
       payload: { packageId: pkg.id, orderId: order.id, claimCode: pkg.lostClaimCode ?? null },
     });
     pkg.needsOpen = false;
+    pkg.openPurpose = null;
   }
   Object.assign(pkg, { status: to }, marks, flags);
   // Sàn báo kiện rời kho (kể cả nhảy cóc từ thiếu hàng): trừ tồn một lần; chờ kiểm kê thì hoãn.
@@ -276,6 +277,7 @@ async function createPackage(
     platformPackageCode: lines[0]!.packageCode,
     trackingCode: lines[0]!.trackingCode,
     needsOpen: false,
+    openPurpose: null,
     selfDelivery: false,
     lostReportedBy: null,
     lostClaimCode: null,
@@ -355,7 +357,8 @@ async function applyStatus(
 
 /**
  * Sàn huỷ cả kiện: chưa đóng gói thì huỷ và nhả hàng; đã đóng gói thì chờ mở (`needs_open`, mở là #106); đã rời kho
- * thì để kiện chạy tiếp (Documents/21 §19.1, #105 A5).
+ * thì để kiện chạy tiếp (Documents/21 §19.1, #105 A5). Kiện đang chờ mở vì kiểm kê thì huỷ thắng: mục đích thành
+ * `cancel`, kho mở ra là huỷ chứ không về `reserved` (spec #238 mục 10).
  */
 export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: PackageRow): Promise<'cancelled' | 'needs_open' | 'handed_over'> {
   if (pkg.status === 'cancelled') return 'cancelled';
@@ -364,6 +367,10 @@ export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: Pa
     if (!pkg.needsOpen) {
       await updatePackage(pkg.id, { needsOpen: true, openPurpose: 'cancel' });
       pkg.needsOpen = true;
+      pkg.openPurpose = 'cancel';
+    } else if (pkg.openPurpose === 'stocktake') {
+      await updatePackage(pkg.id, { openPurpose: 'cancel' });
+      pkg.openPurpose = 'cancel';
     }
     return 'needs_open';
   }
@@ -437,9 +444,9 @@ export async function syncPlatformPackages(
     }
     if (status === null) result.unknown = true;
     else if (status === 'cancelled') {
-      const before = [pkg.status, pkg.needsOpen].join();
+      const before = [pkg.status, pkg.needsOpen, pkg.openPurpose].join();
       result.cancelled.push(await cancelPlatformPackage(order, pkg));
-      if ([pkg.status, pkg.needsOpen].join() !== before) result.changed = true;
+      if ([pkg.status, pkg.needsOpen, pkg.openPurpose].join() !== before) result.changed = true;
     } else {
       const applied = await applyStatus(order, pkg, status, journey);
       if (applied.changed) result.changed = true;

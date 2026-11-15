@@ -9,6 +9,7 @@ const packingColumns = {
   id: packages.id, code: packages.code, orderId: packages.orderId, shopId: packages.shopId,
   status: packages.status, version: packages.version, selfDelivery: packages.selfDelivery,
   platformPackageCode: packages.platformPackageCode, trackingCode: packages.trackingCode, labelError: packages.labelError,
+  needsOpen: packages.needsOpen, openPurpose: packages.openPurpose,
 };
 
 async function packingPackage(id: string, lock: boolean) {
