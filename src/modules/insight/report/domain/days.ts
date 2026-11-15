@@ -1,5 +1,4 @@
 // Ngày theo giờ Việt Nam (UTC+7, không có giờ mùa hè; Documents/21 C6), dạng `YYYY-MM-DD`. Thuần, không I/O.
-import type { EventPayload } from '../../../core/index.ts';
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -21,21 +20,4 @@ export function eachDay(from: string, to: string): string[] {
 /** Số ngày từ `from` tới `to`, tính cả hai đầu. */
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS) + 1;
-}
-
-type SourceType = 'finance.invoice_posted' | 'finance.receipt_posted' | 'finance.voucher_posted';
-
-/** Sự kiện của module nguồn mà báo cáo nghe (plan #29 A5), payload đúng kiểu danh mục sự kiện. */
-export type SourceEvent = { [T in SourceType]: { type: T; payload: EventPayload<T> } }[SourceType];
-
-/** Ngày bị đổi số bởi sự kiện: ngày của chứng từ (A1). */
-export function dayOfSourceEvent(event: SourceEvent): string {
-  switch (event.type) {
-    case 'finance.invoice_posted':
-      return vnDay(event.payload.issuedAt);
-    case 'finance.receipt_posted':
-      return vnDay(event.payload.postedAt);
-    case 'finance.voucher_posted':
-      return event.payload.paidOn;
-  }
 }

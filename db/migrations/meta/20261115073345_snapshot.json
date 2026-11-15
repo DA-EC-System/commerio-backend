@@ -1,6 +1,6 @@
 {
-  "id": "9f025b71-5179-455e-b312-e393cfe06c18",
-  "prevId": "159d64af-d502-410c-88d8-abe4579878a8",
+  "id": "27839bef-310a-49d8-8766-688c4fe117c7",
+  "prevId": "bf9ebced-c385-4965-906b-587cc75ae5b6",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4287,27 +4287,6 @@
           "method": "btree",
           "concurrently": false
         },
-        "ledger_entries_source_type_source_id_index": {
-          "name": "ledger_entries_source_type_source_id_index",
-          "columns": [
-            {
-              "expression": "source_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
         "ledger_entries_replaces_uq": {
           "name": "ledger_entries_replaces_uq",
           "columns": [
@@ -4384,16 +4363,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "ledger_entries_id_estimate_uq": {
-          "name": "ledger_entries_id_estimate_uq",
-          "columns": [
-            "id",
-            "is_estimate"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
         "ledger_entries_amount": {
@@ -4411,225 +4381,6 @@
         "ledger_entries_shop_by_kind": {
           "name": "ledger_entries_shop_by_kind",
           "value": "(\"finance\".\"ledger_entries\".\"shop_id\" is not null or \"finance\".\"ledger_entries\".\"kind\" in ('opex', 'supplier_payment', 'supplier_refund', 'cod_collected')) and (\"finance\".\"ledger_entries\".\"shop_id\" is null or \"finance\".\"ledger_entries\".\"kind\" not in ('supplier_payment', 'supplier_refund', 'opex'))"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "finance.ledger_package_lines": {
-      "name": "ledger_package_lines",
-      "schema": "finance",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "package_id": {
-          "name": "package_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "line_no": {
-          "name": "line_no",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variant_id": {
-          "name": "variant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "unit_price": {
-          "name": "unit_price",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "unit_cost": {
-          "name": "unit_cost",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "occurred_on": {
-          "name": "occurred_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "ledger_package_lines_occurred_on_index": {
-          "name": "ledger_package_lines_occurred_on_index",
-          "columns": [
-            {
-              "expression": "occurred_on",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
-        "ledger_package_lines_order_id_index": {
-          "name": "ledger_package_lines_order_id_index",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "ledger_package_lines_line_uq": {
-          "name": "ledger_package_lines_line_uq",
-          "columns": [
-            "package_id",
-            "line_no"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "ledger_package_lines_quantity": {
-          "name": "ledger_package_lines_quantity",
-          "value": "\"finance\".\"ledger_package_lines\".\"quantity\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "finance.ledger_replacements": {
-      "name": "ledger_replacements",
-      "schema": "finance",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "actual_id": {
-          "name": "actual_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "actual_is_estimate": {
-          "name": "actual_is_estimate",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "estimate_id": {
-          "name": "estimate_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "estimate_is_estimate": {
-          "name": "estimate_is_estimate",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "ledger_replacements_actual_uq": {
-          "name": "ledger_replacements_actual_uq",
-          "columns": [
-            "actual_id"
-          ],
-          "nullsNotDistinct": false
-        },
-        "ledger_replacements_estimate_uq": {
-          "name": "ledger_replacements_estimate_uq",
-          "columns": [
-            "estimate_id"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "ledger_replacements_distinct": {
-          "name": "ledger_replacements_distinct",
-          "value": "\"finance\".\"ledger_replacements\".\"actual_id\" <> \"finance\".\"ledger_replacements\".\"estimate_id\""
-        },
-        "ledger_replacements_actual_flag": {
-          "name": "ledger_replacements_actual_flag",
-          "value": "not \"finance\".\"ledger_replacements\".\"actual_is_estimate\""
-        },
-        "ledger_replacements_estimate_flag": {
-          "name": "ledger_replacements_estimate_flag",
-          "value": "\"finance\".\"ledger_replacements\".\"estimate_is_estimate\""
         }
       },
       "isRLSEnabled": false

@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { settlementByOrder } from '#src/modules/finance/finance/repository/daily-totals.ts';
-import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import {
@@ -112,18 +110,5 @@ describe('chạy song song (AC-7)', () => {
     expect(await linesOf(companyId)).toHaveLength(2);
     expect((await receiptsOf(companyId)).map((r) => r.number)).toEqual(['PT-000001', 'PT-000002']);
     expect(await receiptEvents(companyId)).toHaveLength(2);
-  });
-});
-
-describe('phí lưu cho báo cáo #29 (AC-15)', () => {
-  it('fees là chuỗi theo dấu kế toán; báo cáo cộng ra đúng phí sàn và vận chuyển dương của đơn', async () => {
-    const { companyId, shopId } = await setup();
-    const o = await marketplaceOrder(companyId, shopId, 100000);
-    await ingest(companyId, shopId, statement(), [orderTx(o.externalOrderId, 100000)]);
-
-    const [line] = await linesOf(companyId);
-    expect(Object.values(line.fees).every((v) => typeof v === 'string')).toBe(true);
-    const [row] = await withCompany(companyId, () => settlementByOrder([o.orderId]));
-    expect(row).toMatchObject({ order_id: o.orderId, platform_fee: '17000.00', shipping_cost: '15000.00' });
   });
 });
