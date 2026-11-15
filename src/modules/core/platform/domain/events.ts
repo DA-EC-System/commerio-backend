@@ -212,6 +212,11 @@ export const EVENT_SCHEMAS = {
   // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
   // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
   'staff.invitation_otp_requested': z.object({ invitationId: id, requestedAt: timestamp }),
+  // Người được mời nộp yêu cầu (`pending`, Documents/21 mục 3.1): worker gửi thư báo người có quyền duyệt. Không mang
+  // email, họ tên: consumer đọc dòng lời mời, bỏ qua khi không còn `pending`.
+  'staff.invitation_submitted': z.object({ invitationId: id }),
+  // Admin duyệt hoặc từ chối: worker gửi thư báo kết quả tới email của yêu cầu; bỏ qua khi trạng thái dòng khác `decision`.
+  'staff.invitation_decided': z.object({ invitationId: id, decision: z.enum(['approved', 'rejected']) }),
   // Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền vừa xếp (#312). Không mang email, token: consumer đọc dòng
   // `channel.shop_reauth_mails` và danh sách CEO, Admin lúc gửi.
   'channel.shop_reauth_mail': z.object({ mailId: id, shopId: id }),

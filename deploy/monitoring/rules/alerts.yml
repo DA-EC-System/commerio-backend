@@ -60,6 +60,16 @@ groups:
         annotations:
           summary: Gửi thư mẫu {{ $labels.template }} lỗi vĩnh viễn trong 15 phút qua
 
+      # Worker khởi động mà SMTP chưa cấu hình hoặc đăng nhập thử lỗi (#7, gauge `mail_transport_up` đặt lúc khởi động):
+      # mọi thư mời, thư báo sẽ không tới, kể cả khi chưa ai bấm gửi.
+      - alert: CommerioMailTransportDown
+        expr: mail_transport_up{job="commerio"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Worker không dùng được SMTP (SMTP_URL, MAIL_FROM chưa đặt hoặc sai App Password)
+
   # Máy VPS (job "node", dashboard "Máy VPS"). Overlay local không có node-exporter: các luật này im lặng.
   - name: vps
     rules:

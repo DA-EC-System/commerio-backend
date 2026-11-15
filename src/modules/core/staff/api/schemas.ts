@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { newPasswordSchema } from '../../../../shared/auth/password-policy.ts';
-import { INVITATION_STATUSES } from '../domain/invitation-machine.ts';
+import { INVITATION_STATUSES, type InvitationStatus } from '../domain/invitation-machine.ts';
 
 const version = z.number('Thiếu version').int().positive();
 
@@ -56,8 +56,20 @@ export const StaffPage = z
 // Lời mời bằng link (#7 [C], Documents/21 mục 3.1).
 export const CreateInvitationBody = z.object({ roleIds }).meta({ id: 'CreateInvitationRequest' });
 
+const splitStatuses = (value: string) => [...new Set(value.split(',').map((s) => s.trim()))];
+const isStatus = (s: string): s is InvitationStatus => (INVITATION_STATUSES as readonly string[]).includes(s);
+
 export const InvitationListQuery = z.object({
-  status: z.enum(INVITATION_STATUSES, 'Trạng thái không hợp lệ').default('pending'),
+  // Một hoặc nhiều trạng thái cách nhau dấu phẩy (Documents/21 mục 3.1), vd `open,claimed` cho tab "Link đã tạo".
+  status: z
+    .string()
+    .default('pending')
+    .refine((value) => splitStatuses(value).every(isStatus), 'Trạng thái không hợp lệ')
+    .transform((value) => splitStatuses(value).filter(isStatus))
+    .meta({
+      description: `Một hoặc nhiều trong ${INVITATION_STATUSES.join(', ')}, cách nhau dấu phẩy; mặc định \`pending\``,
+      example: 'open,claimed',
+    }),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });

@@ -61,6 +61,8 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'purchasing.request_submitted': { requestId: id(), number: 'DN-000001' },
   'purchasing.goods_receipt_posted': { receiptId: id(), requestId: id(), lines: [{ variantId: id(), accepted: 5, defective: 1 }] },
   'staff.invitation_otp_requested': { invitationId: id(), requestedAt: '2026-10-21T00:00:00.000Z' },
+  'staff.invitation_submitted': { invitationId: id() },
+  'staff.invitation_decided': { invitationId: id(), decision: 'approved' },
   'channel.shop_reauth_mail': { mailId: id(), shopId: id() },
 };
 
@@ -104,6 +106,12 @@ describe('danh mục sự kiện (AC-11)', () => {
     const schema = EVENT_SCHEMAS['staff.invitation_otp_requested'];
     expect(schema.safeParse({ invitationId: id() }).success).toBe(false);
     expect(schema.safeParse({ invitationId: id(), requestedAt: 'hom qua' }).success).toBe(false);
+  });
+
+  it('kết quả duyệt lời mời: decision ngoài approved, rejected bị từ chối', () => {
+    const schema = EVENT_SCHEMAS['staff.invitation_decided'];
+    expect(schema.safeParse({ invitationId: id(), decision: 'revoked' }).success).toBe(false);
+    expect(schema.safeParse({ invitationId: id() }).success).toBe(false);
   });
 
   describe('fulfillment.package_shipped (21 §11.2)', () => {

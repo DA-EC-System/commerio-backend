@@ -1,7 +1,6 @@
 // Lời mời phía Admin (#7 [C], UC-PI-05): tạo link, hàng đợi, duyệt, từ chối. Thứ tự lỗi theo spec 6.5; luồng ghi
 // theo spec 6.7 "Tạo link", "Approve", "Reject". Mã lỗi theo Documents/21 mục 3.1.
 import { signPurposeToken } from '../../../../shared/auth/purpose-token.ts';
-import { env } from '../../../../shared/config/env.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -9,6 +8,7 @@ import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { findRolesWithPermissions, replaceMemberRoles, type RoleWithPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
+import { publishEvent } from '../../platform/index.ts';
 import { type InvitationStatus, isLinkExpired } from '../domain/invitation-machine.ts';
 import { checkRoleGrant } from '../domain/member-rules.ts';
 import {
@@ -24,6 +24,7 @@ import {
   type InvitationRow,
   insertInvitation,
   listInvitationRows,
+  revokeInvitationRow,
 } from '../repository/invitations.ts';
 import {
   type Caller,
@@ -35,6 +36,7 @@ import {
   staffMemberOf,
 } from './members.ts';
 import { countTransition } from './metrics.ts';
+import { joinLink } from './web-links.ts';
 
 /** Documents/21 mục 3.1 `Invitation`. */
 export interface InvitationView {
@@ -66,9 +68,6 @@ const alreadyMember = () => new AppError(409, 'already_member', 'Người này �
 const emailTaken = () => new AppError(409, 'email_taken', 'Email này đã có tài khoản');
 const conflict = (current: InvitationView) =>
   new AppError(409, 'version_conflict', 'Lời mời vừa được người khác cập nhật', { current });
-
-/** Gốc FE của link mời; máy dev chưa đặt `PUBLIC_WEB_URL` thì là Vite mặc định. */
-const webBase = () => (env.PUBLIC_WEB_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
 
 async function views(rows: readonly InvitationRow[]): Promise<InvitationView[]> {
   if (rows.length === 0) return [];
@@ -120,6 +119,10 @@ async function lockPending(id: string, version: number): Promise<InvitationRow> 
   return row;
 }
 
+function publishDecided(invitationId: string, decision: 'approved' | 'rejected') {
+  return publishEvent({ type: 'staff.invitation_decided', aggregateId: invitationId, payload: { invitationId, decision } });
+}
+
 function assertGrant(caller: Caller, requestedIds: readonly string[], found: readonly RoleWithPermissions[]) {
   const check = checkRoleGrant({ requestedIds, found, currentRoles: [], callerPermissions: caller.permissions });
   if (check === 'unknown_roles') throw invalidRoles();
@@ -148,15 +151,15 @@ export async function createInvitation(
   countTransition('open');
   logger.info({ invitationId: row.id, actorId: caller.accountId }, 'đã tạo link mời');
   const token = await signPurposeToken('invite', { jti: row.id, cid: caller.companyId });
-  return { id: row.id, link: `${webBase()}/tham-gia#${token}`, expiresAt: row.expiresAt.toISOString() };
+  return { id: row.id, link: joinLink(token), expiresAt: row.expiresAt.toISOString() };
 }
 
 export async function listInvitations(
   companyId: string,
-  query: { status: InvitationStatus; page: number; pageSize: number },
+  query: { status: InvitationStatus[]; page: number; pageSize: number },
 ): Promise<Page<InvitationView>> {
   return withCompany(companyId, async () => {
-    const { rows, total } = await listInvitationRows(query);
+    const { rows, total } = await listInvitationRows({ statuses: query.status, page: query.page, pageSize: query.pageSize });
     return { items: await views(rows), total, page: query.page, pageSize: query.pageSize };
   });
 }
@@ -199,6 +202,8 @@ export async function approveInvitation(
       entityId: membershipId,
       after: { invitationId: row.id, roles: [...new Set(row.roleIds)].sort() },
     });
+    // Thư báo kết quả gửi qua outbox, cùng giao dịch: duyệt rollback thì không có thư.
+    await publishDecided(row.id, 'approved');
     logger.info({ invitationId: row.id, membershipId, actorId: caller.accountId }, 'đã duyệt lời mời');
     return { invitation: await viewOf(decided), member: await staffMemberOf(accountId) };
   }).catch((err: unknown) => {
@@ -236,9 +241,40 @@ export async function rejectInvitation(
       before: { status: 'pending' },
       after: { status: 'rejected' },
     });
+    await publishDecided(row.id, 'rejected');
     logger.info({ invitationId: row.id, actorId: caller.accountId }, 'đã từ chối lời mời');
     return { invitation: await viewOf(decided) };
   });
   countTransition('rejected');
+  return result;
+}
+
+/**
+ * Huỷ link chưa nộp (`open | claimed → revoked`, Documents/21 mục 3.1). Lệch version hay không còn `open`, `claimed`:
+ * 409 kèm bản mới nhất. Link quá hạn vẫn huỷ được.
+ */
+export async function revokeInvitation(
+  caller: Caller,
+  id: string,
+  version: number,
+): Promise<{ invitation: InvitationView }> {
+  const result = await withCompany(caller.companyId, async () => {
+    const row = isUuid(id) ? await findInvitation(id, { forUpdate: true }) : undefined;
+    if (!row) throw notFound();
+    const revoked = await revokeInvitationRow(row.id, version, caller.accountId);
+    if (!revoked) throw conflict(await viewOf(row));
+    await recordAudit({
+      companyId: caller.companyId,
+      actorId: caller.accountId,
+      action: 'update',
+      entityType: ENTITY,
+      entityId: row.id,
+      before: { status: row.status },
+      after: { status: 'revoked' },
+    });
+    logger.info({ invitationId: row.id, actorId: caller.accountId }, 'đã huỷ link mời');
+    return { invitation: await viewOf(revoked) };
+  });
+  countTransition('revoked');
   return result;
 }
