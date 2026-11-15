@@ -34,6 +34,15 @@ function rootDb(): Database {
   return database;
 }
 
+/**
+ * Pool của tiến trình cho thư viện cần chạy SQL thẳng (pg-boss), để cả tiến trình chỉ có **một** pool và
+ * `DB_POOL_MAX` là trần thật (#335). Mỗi câu mượn một kết nối rồi trả ngay, không đi chung giao dịch đang mở.
+ */
+export function sharedPool(): pg.Pool {
+  rootDb();
+  return pool!;
+}
+
 // Transaction đang mở của yêu cầu hiện tại (docs/17 mục 2, luật 3), kèm công ty nếu mở bằng withCompany.
 interface OpenTransaction {
   readonly tx: Transaction;

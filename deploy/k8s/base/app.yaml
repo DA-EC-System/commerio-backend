@@ -30,9 +30,12 @@ spec:
             - secretRef:
                 name: app-env
           env:
-            # Xem DB_POOL_MAX của api (#335)
+            # Ít nhất: số khoá phiên giữ cùng lúc (6 hàng của channel gọi sàn có thể làm mới token, 3 việc định kỳ
+            # của finance) + số việc pg-boss chạy song song (tổng localConcurrency của workQueue, đang là 8) + 2
+            # (pg-boss lấy việc, relay outbox) = 19. Thêm hàng việc hay tăng concurrency thì tăng số này và xem lại
+            # ngân sách ở DB_POOL_MAX của api (#335).
             - name: DB_POOL_MAX
-              value: "3"
+              value: "19"
           ports:
             - name: metrics
               containerPort: 3001

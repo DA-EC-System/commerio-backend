@@ -39,7 +39,9 @@ spec:
             - secretRef:
                 name: app-env
           env:
-            # Session pooler của Supabase Free nhận tối đa 15 kết nối cho cả api, worker, realtime (#335)
+            # Ngân sách kết nối DB (#335, deploy/staging/README.md mục Supabase): mọi bản api, worker, realtime cộng lại,
+            # tính cả hai màu blue, green cùng sống lúc đổi màu, cộng 1 cho db:migrate, không vượt pool size của
+            # Session pooler. deploy/k8s/check.mjs kiểm trong CI. pg-boss dùng chung pool này.
             - name: DB_POOL_MAX
               value: "7"
           ports:
@@ -102,7 +104,7 @@ spec:
             - secretRef:
                 name: app-env
           env:
-            # Xem DB_POOL_MAX của api (#335)
+            # Chỉ đọc, ghi thông báo; xem ngân sách ở DB_POOL_MAX của api (#335)
             - name: DB_POOL_MAX
               value: "2"
           # Cổng stream SSE (Caddy đưa ra ngoài) tách khỏi cổng vận hành /health, /metrics (REALTIME_OPS_PORT).

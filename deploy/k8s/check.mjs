@@ -59,6 +59,24 @@ for (const d of workloads) {
   }
 }
 
+// Ngân sách kết nối DB (#335): cộng DB_POOL_MAX của mọi Deployment api, worker, realtime trong bản build (blue và
+// green đều tính vì lúc đổi màu cả hai cùng sống), thêm 1 cho db:migrate, không vượt pool size của Session pooler.
+// CI truyền DB_POOL_SIZE (biến STAGING_DB_POOL_SIZE) khi kiểm overlay vps; không truyền thì bỏ qua.
+const poolSize = Number(process.env.DB_POOL_SIZE ?? 0);
+if (poolSize > 0) {
+  const parts = workloads
+    .filter((d) => d.kind === 'Deployment' && APPS.includes(d.metadata.name.replace(/-(blue|green)$/, '')))
+    .map((d) => {
+      const value = d.spec.template.spec.containers.flatMap((c) => c.env ?? []).find((e) => e.name === 'DB_POOL_MAX')?.value;
+      // Không đặt thì app dùng mặc định 10 (src/shared/config/env.ts).
+      return { name: d.metadata.name, max: value === undefined ? 10 : Number(value) };
+    });
+  const total = parts.reduce((sum, p) => sum + p.max, 0) + 1;
+  const detail = parts.map((p) => `${p.name} ${p.max}`).join(' + ');
+  if (total > poolSize) errors.push(`kết nối DB: ${detail} + 1 (migrate) = ${total}, vượt pool size ${poolSize} của Session pooler`);
+  else process.stdout.write(`kết nối DB: ${detail} + 1 (migrate) = ${total} ≤ ${poolSize}\n`);
+}
+
 if (images.size !== 1) errors.push(`api, worker, realtime phải cùng một image, đang có: ${[...images].join(', ')}`);
 
 // Kafka phải ghi vào ổ của StatefulSet, không vào /tmp của container.

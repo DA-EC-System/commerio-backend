@@ -77,4 +77,14 @@ Các lệnh dưới chạy trên VPS bằng root (`K="kubectl -n commerio"`).
 
 Gói Free tạm dừng project sau 7 ngày không dùng: vào dashboard bấm Restore.
 
-Session pooler của gói Free nhận tối đa 15 kết nối cùng lúc cho mọi tiến trình; vượt thì pooler từ chối kết nối mới và request trả 500 (#335). Vì vậy `deploy/k8s` đặt `DB_POOL_MAX` riêng: `api` 7, `worker` 3, `realtime` 2 (tổng 12), chừa chỗ cho `db:migrate`, `db:seed` của CI và script chạy từ máy. Thêm tiến trình hay tăng pool thì giữ tổng dưới 15, hoặc nâng gói. Không chạy `Documents/erd/supabase-*.sql` lên database này.
+### Ngân sách kết nối (#335)
+
+Session pooler (Supavisor) chỉ nhận số kết nối bằng **Pool Size** của nó (dashboard → Database → Connection pooling; mặc định 15). Vượt thì pooler từ chối với `EMAXCONNSESSION`, request nhận 503 `service_unavailable` (trước #335 là 500). Mỗi tiến trình chỉ có một pool (pg-boss dùng chung), trần là `DB_POOL_MAX` đặt trong `deploy/k8s`. Điều kiện:
+
+```
+2 × api + worker + 2 × realtime + 1 (db:migrate) ≤ Pool Size
+```
+
+Hai lần `api`, `realtime` vì lúc đổi màu blue-green bản cũ và bản mới cùng sống. Đang đặt Pool Size **40** (Compute Nano có `max_connections` 60, chừa phần còn lại cho dashboard và kết nối trực tiếp), chia `api` 7, `worker` 19, `realtime` 2: 2 × 7 + 19 + 2 × 2 + 1 = 38. `worker` cần ít nhất (khoá phiên giữ cùng lúc + việc pg-boss song song + 2), cách tính ghi cạnh `DB_POOL_MAX` trong `deploy/k8s/base/app.yaml`.
+
+Job `manifests` của CI cộng các `DB_POOL_MAX` theo công thức và đỏ khi vượt biến repo `STAGING_DB_POOL_SIZE` (chưa đặt thì lấy 40). Đổi Pool Size ở dashboard thì đổi biến này theo. Đổi `DB_POOL_MAX` xong phải `kubectl apply -k deploy/k8s/overlays/vps` trên VPS (`commerio-deploy` chỉ đổi image). Không chạy `Documents/erd/supabase-*.sql` lên database này.
