@@ -269,7 +269,7 @@ describe('khách xin huỷ (§19.3)', () => {
     const { orderId } = await ingest(o);
     const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reject-reasons`));
     expect(reasons.status).toBe(200);
-    expect(reasons.body).toEqual({ items: [{ id: 'seller_reject_apply_product_has_been_packed', name: 'Hàng đã đóng gói' }] });
+    expect(reasons.body).toEqual({ items: [{ id: 'seller_reject_apply_product_has_been_packed', label: 'Hàng đã đóng gói' }] });
     expect(tiktokRejectReasons).toHaveBeenCalledWith(expect.any(String), o.externalOrderId);
     const res = await post(`${orderId}/cancel-request`, {
       version: (await detail(orderId)).version,

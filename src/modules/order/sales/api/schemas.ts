@@ -191,7 +191,7 @@ export const CancelReasons = z
   .meta({ id: 'CancelReasons' });
 
 export const CancelRejectReasons = z
-  .object({ items: z.array(z.object({ id: z.string(), name: z.string() })) })
+  .object({ items: z.array(z.object({ id: z.string(), label: z.string() })) })
   .meta({ id: 'CancelRejectReasons' });
 
 export const PlatformCancelResult = z

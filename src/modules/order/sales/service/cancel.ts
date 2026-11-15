@@ -120,7 +120,7 @@ export async function cancelRejectReasons(ctx: SalesContext, actor: Actor, id: s
   const { shopId, externalOrderId } = marketplaceRef(loaded);
   if (!loaded.order.flags.includes('cancel_requested')) throw invalid(loaded.order);
   const reasons = await marketplace(ctx).cancelRejectReasons(actor.companyId, shopId, externalOrderId);
-  return { items: reasons.map((r) => ({ id: r.id, name: r.label })) };
+  return { items: reasons.map((r) => ({ id: r.id, label: r.label })) };
 }
 
 export async function decideCancelRequest(
