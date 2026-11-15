@@ -225,6 +225,24 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(row.needs_attention).toBe(true);
     expect(row.attention_note).toContain('Đã giao');
   });
+
+  it('kiện nhảy tới Đã giao báo finance package_delivered đúng một lần (#199 phần c), kéo lại không phát thêm', async () => {
+    const { externalOrderId, orderId } = await marketplaceOrder('in_transit');
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+
+    const { rows } = await db().query<{ payload: { orderId: string } }>(
+      `select payload from core.outbox_messages where key = $1 and type = 'fulfillment.package_delivered'`,
+      [orderId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.orderId).toBe(orderId);
+    const pkg = await db().query(`select delivery_posted_at from "order".packages where order_id = $1`, [orderId]);
+    expect(pkg.rows[0].delivery_posted_at).not.toBeNull();
+  });
 });
 
 describe('kiện đang hoàn hoặc thất lạc khi sàn mở yêu cầu (25 §9, review #202 mục 5)', () => {

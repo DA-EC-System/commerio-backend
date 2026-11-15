@@ -1,6 +1,6 @@
 {
-  "id": "25da39a5-c17e-4186-aeb7-aa31d5bda75c",
-  "prevId": "94540133-9a5c-43a9-a38a-289511af9145",
+  "id": "235eaee2-2546-4df9-abe9-7256e5f64d1a",
+  "prevId": "d680f9ca-46ee-45d3-9322-0abada36d1e2",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6997,6 +6997,13 @@
           "notNull": true,
           "default": 0
         },
+        "pending_drop_qty": {
+          "name": "pending_drop_qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "unit_cost": {
           "name": "unit_cost",
           "type": "numeric(18, 2)",
@@ -7062,6 +7069,21 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "package_lines_order_line_id_index": {
+          "name": "package_lines_order_line_id_index",
+          "columns": [
+            {
+              "expression": "order_line_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -7095,6 +7117,10 @@
         "package_lines_packed": {
           "name": "package_lines_packed",
           "value": "\"order\".\"package_lines\".\"packed_qty\" >= 0 and \"order\".\"package_lines\".\"packed_qty\" <= \"order\".\"package_lines\".\"quantity\""
+        },
+        "package_lines_pending_drop": {
+          "name": "package_lines_pending_drop",
+          "value": "\"order\".\"package_lines\".\"pending_drop_qty\" >= 0 and \"order\".\"package_lines\".\"pending_drop_qty\" <= \"order\".\"package_lines\".\"quantity\""
         },
         "package_lines_unmapped": {
           "name": "package_lines_unmapped",
@@ -7326,6 +7352,12 @@
         "lost_confirmed_by": {
           "name": "lost_confirmed_by",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "delivery_posted_at": {
+          "name": "delivery_posted_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -8059,6 +8091,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "cancelled_qty": {
+          "name": "cancelled_qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "unit_price": {
           "name": "unit_price",
           "type": "numeric(18, 2)",
@@ -8263,6 +8302,10 @@
         "order_lines_quantity": {
           "name": "order_lines_quantity",
           "value": "\"order\".\"order_lines\".\"quantity\" > 0"
+        },
+        "order_lines_cancelled_qty": {
+          "name": "order_lines_cancelled_qty",
+          "value": "\"order\".\"order_lines\".\"cancelled_qty\" >= 0 and \"order\".\"order_lines\".\"cancelled_qty\" <= \"order\".\"order_lines\".\"quantity\""
         },
         "order_lines_unit_price": {
           "name": "order_lines_unit_price",
@@ -9613,6 +9656,27 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "product_images_product_position_uq": {
+          "name": "product_images_product_position_uq",
+          "columns": [
+            {
+              "expression": "product_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -9634,7 +9698,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "product_images_position_nonneg": {
+          "name": "product_images_position_nonneg",
+          "value": "\"product\".\"product_images\".\"position\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "product.product_variants": {

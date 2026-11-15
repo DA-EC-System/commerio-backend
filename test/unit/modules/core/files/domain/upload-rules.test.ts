@@ -4,8 +4,16 @@ import { PURPOSE_RULES, rejectUpload, storageKeyOf } from '#src/modules/core/fil
 const MB = 1024 * 1024;
 
 describe('rejectUpload: kiểu và cỡ theo mục đích (Documents/21 §5.3, §14.3)', () => {
-  it.each(['image/jpeg', 'image/png', 'image/webp'])('ảnh sản phẩm nhận %s', (type) => {
+  it.each(['image/jpeg', 'image/png'])('ảnh sản phẩm nhận %s', (type) => {
     expect(rejectUpload('product_image', type, 1024)).toBeNull();
+  });
+
+  it('ảnh sản phẩm không nhận WebP (sàn chỉ nhận JPG, PNG)', () => {
+    expect(rejectUpload('product_image', 'image/webp', 1024)).toBe('file_type_not_allowed');
+  });
+
+  it('đính kèm vẫn nhận WebP', () => {
+    expect(rejectUpload('attachment', 'image/webp', 1024)).toBeNull();
   });
 
   it('ảnh sản phẩm không nhận PDF', () => {
@@ -24,9 +32,9 @@ describe('rejectUpload: kiểu và cỡ theo mục đích (Documents/21 §5.3, �
     expect(rejectUpload('product_image', 'IMAGE/PNG', 1024)).toBeNull();
   });
 
-  it('ảnh sản phẩm đúng 5 MB thì nhận, hơn 1 byte thì từ chối', () => {
-    expect(rejectUpload('product_image', 'image/png', 5 * MB)).toBeNull();
-    expect(rejectUpload('product_image', 'image/png', 5 * MB + 1)).toBe('file_too_large');
+  it('ảnh sản phẩm đúng 1 MB thì nhận, hơn 1 byte thì từ chối', () => {
+    expect(rejectUpload('product_image', 'image/png', MB)).toBeNull();
+    expect(rejectUpload('product_image', 'image/png', MB + 1)).toBe('file_too_large');
   });
 
   it('đính kèm tối đa 10 MB', () => {

@@ -17,6 +17,7 @@ import {
   marketplaceShipPackage,
   marketplaceShippingDocuments,
   marketplaceSplitAttributes,
+  marketplaceSplitLevel,
   marketplaceSplitOrder,
   settlementPayouts,
   settlementTransactions,
@@ -51,7 +52,9 @@ export function createModuleContext(): AppContext {
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
     // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.
+    // #205: `splitLevel` cho fulfillment rẽ nhánh tách kiện theo năng lực sàn của gian hàng.
     marketplacePackages: {
+      splitLevel: marketplaceSplitLevel,
       splitAttributes: marketplaceSplitAttributes, split: marketplaceSplitOrder, ship: marketplaceShipPackage,
       carriers: marketplaceCarriers, pack: marketplacePack, readyToShip: marketplaceReadyToShip,
       repack: marketplaceRepack, shippingDocuments: marketplaceShippingDocuments,

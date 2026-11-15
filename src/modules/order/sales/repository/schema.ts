@@ -155,6 +155,8 @@ export const orderLines = salesSchema.table(
     sku: text('sku'),
     productName: text('product_name').notNull(),
     quantity: integer('quantity').notNull(),
+    /** Số món sàn đã huỷ khi kiện chứa món chưa rời kho; chỉ luồng nhận đơn ghi (spec 205 §5.10). */
+    cancelledQty: integer('cancelled_qty').notNull().default(0),
     unitPrice: money('unit_price').notNull(),
     sellerDiscount: money('seller_discount').notNull().default('0'),
     platformDiscount: money('platform_discount').notNull().default('0'),
@@ -182,6 +184,7 @@ export const orderLines = salesSchema.table(
     index().on(t.orderId),
     index().on(t.variantId),
     check('order_lines_quantity', sql`${t.quantity} > 0`),
+    check('order_lines_cancelled_qty', sql`${t.cancelledQty} >= 0 and ${t.cancelledQty} <= ${t.quantity}`),
     check('order_lines_unit_price', sql`${t.unitPrice} >= 0`),
     check('order_lines_item', sql`${t.variantId} is not null or ${t.externalSku} is not null`),
     unique().on(t.orderId, t.externalLineId),

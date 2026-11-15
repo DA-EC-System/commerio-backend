@@ -2,7 +2,7 @@
 // `{ variantId, expected, scanned }`, `meta`, nguồn `return_request` hoặc `unmatched_parcel`. Sales gọi qua cổng này để
 // test thay được bằng bản giả.
 import { type DocumentRef, receiveBack } from '../../../product/index.ts';
-import type { ReceiveLine } from '../domain/return.ts';
+import type { ReceiveLine } from '../../fulfillment/index.ts';
 
 export interface ReceiveBackMeta {
   actorId: string | null;

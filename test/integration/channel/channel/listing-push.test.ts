@@ -37,6 +37,7 @@ const noPrice = new Set<string>();
 const port = {
   variants: async (ids?: readonly string[]) => variants.filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, noPrice.has(id) ? null : new Decimal(150000)])),
+  productImageUrls: async () => new Map<string, string[]>(),
   availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
 };
 setProductPort(port);

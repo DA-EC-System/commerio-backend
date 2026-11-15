@@ -88,6 +88,7 @@ const available = vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) =
 const port: ProductPort = {
   variants: async () => [],
   standardPrices: async (ids) => new Map(ids.map((id) => [id, new Decimal(50000)])),
+  productImageUrls: async () => new Map<string, string[]>(),
   availableOf: available,
 };
 setProductPort(port);
