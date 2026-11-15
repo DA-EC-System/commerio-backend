@@ -1,6 +1,6 @@
 {
-  "id": "c3813e5f-61f3-44c4-9e41-1838eef2b631",
-  "prevId": "6dc474e7-69b1-4fea-8ad0-5b6735e45f05",
+  "id": "c5095880-4a46-4d3b-b7b4-f32c48025507",
+  "prevId": "32cfbf53-a6c1-4438-9b55-186c984dcce0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4042,7 +4042,7 @@
         },
         "config_versions_effective": {
           "name": "config_versions_effective",
-          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'expired') or \"finance\".\"config_versions\".\"effective_from\" is not null"
+          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'superseded') or \"finance\".\"config_versions\".\"effective_from\" is not null"
         },
         "config_versions_range": {
           "name": "config_versions_range",
@@ -4054,7 +4054,7 @@
         },
         "config_versions_approved": {
           "name": "config_versions_approved",
-          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'expired') or \"finance\".\"config_versions\".\"approved_by\" is not null"
+          "value": "\"finance\".\"config_versions\".\"status\" not in ('scheduled', 'active', 'superseded') or \"finance\".\"config_versions\".\"approved_by\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -6997,6 +6997,13 @@
           "notNull": true,
           "default": 0
         },
+        "pending_drop_qty": {
+          "name": "pending_drop_qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "unit_cost": {
           "name": "unit_cost",
           "type": "numeric(18, 2)",
@@ -7062,6 +7069,21 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "package_lines_order_line_id_index": {
+          "name": "package_lines_order_line_id_index",
+          "columns": [
+            {
+              "expression": "order_line_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -7095,6 +7117,10 @@
         "package_lines_packed": {
           "name": "package_lines_packed",
           "value": "\"order\".\"package_lines\".\"packed_qty\" >= 0 and \"order\".\"package_lines\".\"packed_qty\" <= \"order\".\"package_lines\".\"quantity\""
+        },
+        "package_lines_pending_drop": {
+          "name": "package_lines_pending_drop",
+          "value": "\"order\".\"package_lines\".\"pending_drop_qty\" >= 0 and \"order\".\"package_lines\".\"pending_drop_qty\" <= \"order\".\"package_lines\".\"quantity\""
         },
         "package_lines_unmapped": {
           "name": "package_lines_unmapped",
@@ -7504,11 +7530,19 @@
         },
         "packages_lost_second_person": {
           "name": "packages_lost_second_person",
-          "value": "\"order\".\"packages\".\"lost_confirmed_by\" is null or \"order\".\"packages\".\"lost_confirmed_by\" is distinct from \"order\".\"packages\".\"lost_reported_by\""
+          "value": "\"order\".\"packages\".\"lost_confirmed_by\" is null or \"order\".\"packages\".\"lost_confirmed_by\" is distinct from \"order\".\"packages\".\"lost_reported_by\" or \"order\".\"packages\".\"lost_self_approved\""
         },
         "packages_lost_report": {
           "name": "packages_lost_report",
           "value": "(\"order\".\"packages\".\"lost_reported_by\" is null) = (\"order\".\"packages\".\"lost_claim_code\" is null)"
+        },
+        "packages_lost_source": {
+          "name": "packages_lost_source",
+          "value": "\"order\".\"packages\".\"lost_source\" is null or \"order\".\"packages\".\"lost_source\" in ('user', 'marketplace')"
+        },
+        "packages_lost_confirmed": {
+          "name": "packages_lost_confirmed",
+          "value": "\"order\".\"packages\".\"status\" <> 'lost' or \"order\".\"packages\".\"lost_source\" is not distinct from 'marketplace' or \"order\".\"packages\".\"lost_confirmed_by\" is not null"
         },
         "packages_handed_over": {
           "name": "packages_handed_over",
@@ -8078,6 +8112,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "cancelled_qty": {
+          "name": "cancelled_qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "unit_price": {
           "name": "unit_price",
           "type": "numeric(18, 2)",
@@ -8282,6 +8323,10 @@
         "order_lines_quantity": {
           "name": "order_lines_quantity",
           "value": "\"order\".\"order_lines\".\"quantity\" > 0"
+        },
+        "order_lines_cancelled_qty": {
+          "name": "order_lines_cancelled_qty",
+          "value": "\"order\".\"order_lines\".\"cancelled_qty\" >= 0 and \"order\".\"order_lines\".\"cancelled_qty\" <= \"order\".\"order_lines\".\"quantity\""
         },
         "order_lines_unit_price": {
           "name": "order_lines_unit_price",
@@ -12391,7 +12436,7 @@
         "rejected",
         "scheduled",
         "active",
-        "expired",
+        "superseded",
         "cancelled"
       ]
     },

@@ -131,7 +131,7 @@ describe('dòng thời gian của một gian hàng', () => {
 
     await activateDueConfigs(new Date(`${later}T03:00:00Z`));
     expect((await admin.get(`/configs/${b.id}`)).body.status).toBe('active');
-    expect((await admin.get(`/configs/${a.id}`)).body).toMatchObject({ status: 'expired', effectiveTo: addDays(later, -1) });
+    expect((await admin.get(`/configs/${a.id}`)).body).toMatchObject({ status: 'superseded', effectiveTo: addDays(later, -1) });
 
     const { rows } = await testPool().query(
       "select payload from core.outbox_messages where type = 'finance.fee_config_activated' and key = $1",
@@ -163,6 +163,41 @@ describe('dòng thời gian của một gian hàng', () => {
 
     const late = await admin.post(`/configs/${a.id}/cancel`, { version: (await admin.get(`/configs/${a.id}`)).body.version });
     expect([late.status, late.body.type]).toEqual([409, '/problems/invalid_transition']);
+  });
+});
+
+describe('huỷ phiên bản (§21.4 `cancel`)', () => {
+  it('D44-05: huỷ bản nháp trước ngày hiệu lực thì cancelled; D44-05g: nháp đã tới ngày hiệu lực thì 409 config_already_effective', async () => {
+    const { admin } = await setup();
+    const d = await admin.post('/configs', { kind: 'min_margin', payload: { pct: 5 }, effectiveFrom: addDays(TODAY, 1) });
+    const ok = await admin.post(`/configs/${d.body.id}/cancel`, { version: d.body.version });
+    expect(ok.body).toMatchObject({ status: 'cancelled' });
+    expect(ok.body.statusHistory.at(-1)).toMatchObject({ from: 'draft', to: 'cancelled' });
+
+    const due = await admin.post('/configs', { kind: 'min_margin', payload: { pct: 5 }, effectiveFrom: TODAY });
+    const late = await admin.post(`/configs/${due.body.id}/cancel`, { version: due.body.version });
+    expect([late.status, late.body.type]).toEqual([409, '/problems/config_already_effective']);
+    expect((await admin.get(`/configs/${due.body.id}`)).body.status).toBe('draft');
+  });
+
+  it('D44-06: huỷ bản chờ duyệt trước ngày hiệu lực thì cancelled; D44-06g: đã tới ngày hiệu lực thì 409 config_already_effective', async () => {
+    const { admin } = await setup();
+    const p = await pending(admin, { kind: 'min_margin', payload: { pct: 5 }, effectiveFrom: addDays(TODAY, 1) });
+    expect((await admin.post(`/configs/${p.id}/cancel`, { version: p.version })).body).toMatchObject({ status: 'cancelled' });
+
+    const past = await pending(admin, { kind: 'mismatch_threshold', payload: { abs: 1, pct: 1, resolveLimit: 1 }, effectiveFrom: addDays(TODAY, -3) });
+    const late = await admin.post(`/configs/${past.id}/cancel`, { version: past.version });
+    expect([late.status, late.body.type]).toEqual([409, '/problems/config_already_effective']);
+    expect((await admin.get(`/configs/${past.id}`)).body.status).toBe('pending_approval');
+  });
+
+  it('D44-07: huỷ bản chờ hiệu lực thì cancelled; D44-05q: Sale gọi cancel thì 403', async () => {
+    const { companyId, ceo, admin } = await setup();
+    const s = await approved(admin, ceo, { kind: 'min_margin', payload: { pct: 5 }, effectiveFrom: addDays(TODAY, 2) });
+    const sale = as((await addMember(companyId, 'sale')).token);
+    const denied = await sale.post(`/configs/${s.id}/cancel`, { version: s.version });
+    expect([denied.status, denied.body.type]).toEqual([403, '/problems/forbidden']);
+    expect((await admin.post(`/configs/${s.id}/cancel`, { version: s.version })).body).toMatchObject({ status: 'cancelled' });
   });
 });
 

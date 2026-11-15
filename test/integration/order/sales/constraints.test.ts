@@ -71,4 +71,21 @@ describe('ràng buộc bảng sales (AC-9)', () => {
     );
     expect(other.rowCount).toBe(0);
   });
+
+  it('số đã huỷ của dòng đơn nằm trong 0..số lượng (spec 205 §5.10)', async () => {
+    const company = randomUUID();
+    const { rows } = await testPool().query<{ id: string }>(
+      `insert into "order".orders (company_id, code, source, payment_method, subtotal, total)
+       values ($1, $2, 'manual', 'prepaid', 0, 0) returning id`,
+      [company, `DH-${randomUUID().slice(0, 8)}`],
+    );
+    const line = (cancelledQty: number) => testPool().query(
+      `insert into "order".order_lines (company_id, order_id, external_sku, product_name, quantity, unit_price, line_total, cancelled_qty)
+       values ($1, $2, 'SKU-1', 'Áo', 1, 0, 0, $3)`,
+      [company, rows[0]!.id, cancelledQty],
+    );
+    await expect(line(2)).rejects.toThrow(/"order_lines_cancelled_qty"/);
+    await expect(line(-1)).rejects.toThrow(/"order_lines_cancelled_qty"/);
+    await expect(line(1)).resolves.toBeDefined();
+  });
 });

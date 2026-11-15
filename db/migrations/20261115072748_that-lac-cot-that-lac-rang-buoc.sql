@@ -1,4 +1,8 @@
 ALTER TABLE "order"."packages" DROP CONSTRAINT "packages_lost_second_person";--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD COLUMN "lost_self_approved" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD COLUMN "lost_source" text;--> statement-breakpoint
+-- #238: điền nguồn cho kiện `lost` cũ (do sàn báo) trước khi thêm CHECK `packages_lost_confirmed`; db:regen gộp hai migration sinh nên câu này phải nằm ở đây (migration `that-lac-du-lieu` phía sau chạy lại vô hại).
+update "order".packages set lost_source = 'marketplace' where status = 'lost' and lost_confirmed_by is null;--> statement-breakpoint
 ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_lost_source" CHECK ("order"."packages"."lost_source" is null or "order"."packages"."lost_source" in ('user', 'marketplace'));--> statement-breakpoint
 ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_lost_confirmed" CHECK ("order"."packages"."status" <> 'lost' or "order"."packages"."lost_source" is not distinct from 'marketplace' or "order"."packages"."lost_confirmed_by" is not null);--> statement-breakpoint
 ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_lost_second_person" CHECK ("order"."packages"."lost_confirmed_by" is null or "order"."packages"."lost_confirmed_by" is distinct from "order"."packages"."lost_reported_by" or "order"."packages"."lost_self_approved");

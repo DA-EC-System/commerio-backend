@@ -447,7 +447,8 @@ export const configStatus = financeSchema.enum('config_status', [
   'rejected',
   'scheduled',
   'active',
-  'expired',
+  // Đổi từ `expired` ngày 02/11/2026 (Documents/25 §10.4, #230): migration đổi tên giá trị, giữ dữ liệu.
+  'superseded',
   'cancelled',
 ]);
 
@@ -482,11 +483,11 @@ export const configVersions = financeSchema.table(
     check('config_versions_fee_shop', sql`(${t.kind} = 'fee') = (${t.shopId} is not null)`),
     check(
       'config_versions_effective',
-      sql`${t.status} not in ('scheduled', 'active', 'expired') or ${t.effectiveFrom} is not null`,
+      sql`${t.status} not in ('scheduled', 'active', 'superseded') or ${t.effectiveFrom} is not null`,
     ),
     check('config_versions_range', sql`${t.effectiveTo} is null or ${t.effectiveTo} >= ${t.effectiveFrom}`),
     check('config_versions_retroactive', sql`${t.retroactiveFrom} is null or ${t.isCorrection}`),
-    check('config_versions_approved', sql`${t.status} not in ('scheduled', 'active', 'expired') or ${t.approvedBy} is not null`),
+    check('config_versions_approved', sql`${t.status} not in ('scheduled', 'active', 'superseded') or ${t.approvedBy} is not null`),
   ],
 );
 

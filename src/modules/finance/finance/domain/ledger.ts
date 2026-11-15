@@ -148,9 +148,23 @@ export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs):
   push(out, 'platform_subsidy', new Decimal(pkg.platformSubsidy));
   push(out, 'shipping_income', new Decimal(pkg.shippingIncome));
   push(out, 'shipping_cost', new Decimal(pkg.shippingCost).negated());
+  out.push(...configDraftsOfDelivered(revenue, configs));
+  push(out, 'cogs', cost.negated());
+  return out;
+}
+
+/**
+ * Khoản theo cấu hình của kiện giao xong, tính trên doanh thu của kiện: bốn loại phí theo cấu hình phí của gian hàng,
+ * thuế sàn khấu trừ (chỉ hộ kinh doanh, cá nhân: GTGT + TNCN của quy tắc thuế). Doanh nghiệp không bị sàn khấu trừ;
+ * GTGT đầu ra chỉ bỏ khỏi doanh thu khi tính lãi (`profitOf`), không ghi dòng: sàn trả đủ giá bán, dòng doanh thu là
+ * tiền sàn sẽ trả để so với quyết toán. Dùng cả khi ghi điều chỉnh hồi tố (25 §10.4).
+ */
+export function configDraftsOfDelivered(revenue: Decimal.Value, configs: DeliveredConfigs): Draft[] {
+  const base = new Decimal(revenue);
+  const out: Draft[] = [];
   const fee = configs.fee;
   if (fee) {
-    const pct = (p: number) => revenue.times(p).div(100).negated();
+    const pct = (p: number) => base.times(p).div(100).negated();
     push(out, 'fee_fixed', pct(fee.payload.fixedPct), fee.id);
     push(out, 'fee_transaction', pct(fee.payload.transactionPct), fee.id);
     push(out, 'fee_service', pct(fee.payload.servicePct), fee.id);
@@ -158,11 +172,23 @@ export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs):
   }
   const { regime, rules } = configs;
   if (regime && regime.payload.regime !== 'company' && rules) {
-    push(out, 'withholding_tax', revenue.times(rules.payload.vatPct + rules.payload.pitPct).div(100).negated(), rules.id);
+    push(out, 'withholding_tax', base.times(rules.payload.vatPct + rules.payload.pitPct).div(100).negated(), rules.id);
   }
-  push(out, 'cogs', cost.negated());
   return out;
 }
+
+/**
+ * Loại dòng mỗi nhóm cấu hình sinh ra, theo nguồn dòng (điều chỉnh hồi tố, 25 §10.4): cấu hình phí sinh bốn loại phí
+ * khi kiện giao và phí khi hoàn khi kiện hoàn về; loại hình thuế, quy tắc thuế sinh thuế sàn khấu trừ khi kiện giao.
+ * Ngưỡng lệch, biên tối thiểu không sinh dòng sổ.
+ */
+export const RETRO_KINDS = {
+  fee: { package: ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional'], package_return: ['return_fee'] },
+  tax: { package: ['withholding_tax'], package_return: [] },
+} as const satisfies Record<string, Record<'package' | 'package_return', readonly LedgerKind[]>>;
+
+/** Tổng các dòng nháp (chuỗi hai chữ số), để so với số đã ghi khi tính điều chỉnh hồi tố. */
+export const sumDrafts = (drafts: readonly Draft[]) => drafts.reduce((s, d) => s.plus(d.amount), new Decimal(0));
 
 /** Kiện hoàn về kho (không giao được): phí khi hoàn theo cấu hình phí của gian hàng. Không có doanh thu cho kiện này. */
 export function postReturned(fee: Version<ConfigPayload<'fee'>> | undefined): Draft[] {
@@ -203,14 +229,106 @@ export interface Entry {
   replaced: boolean;
 }
 
+/** Khoản thuộc doanh thu thuần (25 §10.2: "Σ doanh thu hàng của phần đã giao − hoàn tiền khách"). */
+export const NET_REVENUE: ReadonlySet<LedgerKind> = new Set(['revenue', 'customer_refund']);
+
+/** Một dòng sổ đủ để chọn ngày giao cho GTGT đầu ra. */
+export interface NetLine {
+  id: string;
+  orderId: string | null;
+  kind: LedgerKind;
+  amount: string;
+  occurredOn: string;
+  isEstimate: boolean;
+  replacesEntryId: string | null;
+}
+
+/** Phần của một dòng doanh thu thuần gắn với một ngày giao. */
+export interface NetPortion {
+  kind: LedgerKind;
+  amount: string;
+  day: string;
+}
+
 /**
- * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt; giá vốn = giá vốn trừ phần trả
- * bán lại được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
+ * Dòng ước tính mà một dòng thực tế thay. Chỗ duy nhất đọc quan hệ thay khi chọn ngày giao (hiện là cột
+ * `replaces_entry_id`; đổi nguồn, vd bảng nối của #231, thì chỉ sửa hàm này).
  */
-export function profitOf(entries: readonly Entry[]): { net: number; cogs: number; gross: number; estimated: boolean } {
+export const replacedEstimateOf =
+  (estimates: readonly NetLine[]) =>
+  (line: NetLine): NetLine | undefined => {
+    if (!line.replacesEntryId) return undefined;
+    return estimates.find((e) => e.id === line.replacesEntryId);
+  };
+
+/**
+ * Chia các dòng doanh thu thuần còn hiệu lực theo ngày giao, để chọn thuế suất GTGT đầu ra theo phiên bản của ngày
+ * giao (US-TI-13 dòng 3). `live`: dòng còn tính; `estimates`: mọi dòng doanh thu ước tính của các đơn đó (kể cả đã
+ * bị thay), mỗi dòng là một kiện giao (cùng đơn, nhiều kiện thì nhiều ngày).
+ * - Doanh thu ước tính: ngày của nó.
+ * - Dòng thực tế thay một dòng doanh thu ước tính: ngày của dòng đó.
+ * - Còn lại (doanh thu thực tế sàn trả một dòng cho cả đơn, hoàn tiền khách theo ngày hoàn): chia theo tỷ lệ doanh
+ *   thu ước tính của từng ngày giao trong đơn, làm tròn tới đồng, phần cuối nhận số dư. Đơn không có dòng ước tính
+ *   thì ngày của chính dòng.
+ */
+export function netRevenuePortions(live: readonly NetLine[], estimates: readonly NetLine[]): NetPortion[] {
+  const replaced = replacedEstimateOf(estimates);
+  const weights = new Map<string, Map<string, Decimal>>();
+  for (const e of estimates) {
+    if (!e.orderId || e.kind !== 'revenue' || !e.isEstimate) continue;
+    const byDay = weights.get(e.orderId) ?? new Map<string, Decimal>();
+    byDay.set(e.occurredOn, (byDay.get(e.occurredOn) ?? new Decimal(0)).plus(e.amount));
+    weights.set(e.orderId, byDay);
+  }
+  const out: NetPortion[] = [];
+  for (const line of live) {
+    if (!NET_REVENUE.has(line.kind)) continue;
+    const own = (day: string) => out.push({ kind: line.kind, amount: line.amount, day });
+    if (line.isEstimate && line.kind === 'revenue') {
+      own(line.occurredOn);
+      continue;
+    }
+    const target = replaced(line);
+    if (target?.kind === 'revenue') {
+      own(target.occurredOn);
+      continue;
+    }
+    const byDay = [...(line.orderId ? (weights.get(line.orderId) ?? []) : [])].filter(([, w]) => w.gt(0)).sort(([a], [b]) => (a < b ? -1 : 1));
+    const total = byDay.reduce((sum, [, w]) => sum.plus(w), new Decimal(0));
+    if (!byDay.length || total.isZero()) {
+      own(line.occurredOn);
+      continue;
+    }
+    const amount = new Decimal(line.amount);
+    let rest = amount;
+    byDay.forEach(([day, w], i) => {
+      const part = i === byDay.length - 1 ? rest : round(amount.times(w).div(total));
+      rest = rest.minus(part);
+      if (!part.isZero()) out.push({ kind: line.kind, amount: part.toFixed(2), day });
+    });
+  }
+  return out;
+}
+
+/**
+ * Phần GTGT đầu ra nằm trong một dòng (hoặc một phần dòng) doanh thu thuần: số − số / (1 + v/100), làm tròn tới đồng
+ * (25 §10.2, E131). Dòng khác, hay v = 0, là 0.
+ */
+export function outputVatOf(e: { kind: LedgerKind; amount: Decimal.Value; outputVatPct: number }): Decimal {
+  if (!NET_REVENUE.has(e.kind) || !e.outputVatPct) return new Decimal(0);
+  const amount = new Decimal(e.amount);
+  return amount.minus(round(amount.times(100).div(new Decimal(100).plus(e.outputVatPct))));
+}
+
+/**
+ * Lãi theo đơn (25 §10.2) trên các dòng còn hiệu lực: thực nhận = tổng dòng tiền mặt trừ GTGT đầu ra của doanh nghiệp
+ * (`outputVat`, tính bằng `netRevenuePortions` + `outputVatOf` theo ngày giao); giá vốn = giá vốn trừ phần trả bán lại
+ * được; lãi gộp = thực nhận + giá vốn (giá vốn âm). `estimated` khi còn dòng ước tính chưa có số thật thay.
+ */
+export function profitOf(entries: readonly Entry[], outputVat: Decimal.Value = 0): { net: number; cogs: number; gross: number; estimated: boolean } {
   const live = entries.filter((e) => !e.replaced);
   const sum = (pred: (e: Entry) => boolean) => live.filter(pred).reduce((s, e) => s.plus(e.amount), new Decimal(0));
-  const net = sum((e) => !NON_CASH.has(e.kind));
+  const net = sum((e) => !NON_CASH.has(e.kind)).minus(outputVat);
   const cogs = sum((e) => NON_CASH.has(e.kind));
   return { net: net.toNumber(), cogs: cogs.toNumber(), gross: net.plus(cogs).toNumber(), estimated: live.some((e) => e.isEstimate) };
 }
