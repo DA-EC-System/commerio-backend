@@ -5,6 +5,7 @@ import { type BulkEditPorts, catalogModule } from './catalog/index.ts';
 import {
   applyReorderRule,
   inventoryModule,
+  minQtyOf,
   reorderRulesOf,
   setIncomingSource,
   setSupplierReturnPort,
@@ -46,8 +47,15 @@ const bulkEditPorts = (ctx: ModuleContext & { soldQtyOf?: BulkEditPorts['soldQty
 });
 
 export const productModules: readonly ModuleDefinition[] = [
-  // Sửa hàng loạt (#242); lý do chặn lưu trữ SKU phần kho, mua hàng (#204; phần đơn, sàn do `src/wiring.ts` nối).
-  withContext(catalogModule, (ctx) => ({ ...ctx, bulkEdit: bulkEditPorts(ctx), stockArchiveBlockers, purchaseArchiveBlockers })),
+  // Sửa hàng loạt (#242); lý do chặn lưu trữ SKU phần kho, mua hàng và ngưỡng tồn cho nhãn (#204; phần đơn, sàn do
+  // `src/wiring.ts` nối).
+  withContext(catalogModule, (ctx) => ({
+    ...ctx,
+    bulkEdit: bulkEditPorts(ctx),
+    stockArchiveBlockers,
+    purchaseArchiveBlockers,
+    minQtyOf,
+  })),
   withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf, purchaseDocumentNumbers })),
   purchasingModule,
 ];

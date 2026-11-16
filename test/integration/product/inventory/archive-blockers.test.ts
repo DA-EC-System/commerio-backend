@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { stockArchiveBlockers } from '#src/modules/product/inventory/index.ts';
+import { minQtyOf, stockArchiveBlockers } from '#src/modules/product/inventory/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testPool } from '../../helpers/db.ts';
 import { companyWithVariants, receive, setBuckets } from './helpers.ts';
@@ -75,6 +75,22 @@ describe('stockArchiveBlockers (#204)', () => {
     const v = variants[0]!;
     expect(await blockersOf(companyId, [v])).toEqual(new Map());
     const rows = await testPool().query('select 1 from product.stock_levels where variant_id = $1', [v]);
+    expect(rows.rowCount).toBe(0);
+  });
+});
+
+// Ngưỡng tồn cho nhãn độ hoàn thiện của catalog (#204, `missing.minQty`).
+describe('minQtyOf (#204)', () => {
+  it('trả ngưỡng đã đặt; SKU chưa có dòng tồn thì null, Map đủ mọi id, không tạo dòng', async () => {
+    const { companyId, variants } = await companyWithVariants(3);
+    const [set, cleared, none] = variants as [string, string, string];
+    await testPool().query(
+      'insert into product.stock_levels (company_id, variant_id, min_qty) values ($1, $2, 5), ($1, $3, null)',
+      [companyId, set, cleared],
+    );
+    const result = await withCompany(companyId, () => minQtyOf([set, cleared, none]));
+    expect(result).toEqual(new Map([[set, 5], [cleared, null], [none, null]]));
+    const rows = await testPool().query('select 1 from product.stock_levels where variant_id = $1', [none]);
     expect(rows.rowCount).toBe(0);
   });
 });

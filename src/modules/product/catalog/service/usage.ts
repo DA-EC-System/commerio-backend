@@ -1,8 +1,9 @@
-// `ctx` của catalog và lý do chặn lưu trữ SKU (#204, Documents/21 §17.3, spec 204 mục 5.2). Tồn, chứng từ, đơn, listing
-// nằm ở module khác: mỗi module tự trả câu lý do của phần mình, catalog chỉ gom lại.
+// `ctx` của catalog và lý do chặn lưu trữ SKU (#204, Documents/21 §17.1, §17.3, spec 204 mục 5.2, 5.3). Tồn, chứng từ,
+// đơn, listing nằm ở module khác: mỗi module tự trả phần của mình (câu lý do, ngưỡng tồn, hiện diện), catalog chỉ gom lại.
 // - inventory, purchasing (cùng module lớn, đã import catalog): `product/index.ts` nối bằng `withContext`;
 // - order, channel (module lớn lớp trên): `src/wiring.ts` nối.
 import type { ModuleContext } from '../../../../shared/module.ts';
+import type { Presence } from '../domain/labels.ts';
 
 /**
  * Câu lý do chặn lưu trữ theo SKU; SKU không vướng gì thì không có trong Map. Gọi trong `withCompany` của catalog.
@@ -10,6 +11,15 @@ import type { ModuleContext } from '../../../../shared/module.ts';
  * không khoá.
  */
 export type ArchiveBlockerSource = (variantIds: readonly string[], options?: { lock?: boolean }) => Promise<Map<string, string[]>>;
+
+/** Hiện diện trên sàn của một SKU (D8). */
+export interface ListingPresence {
+  presence: Presence;
+  /** Có listing lỗi, kể cả khi đã `live` (nhãn phụ "Có lỗi"). */
+  hasListingError: boolean;
+  /** Số listing chưa gỡ, mọi gian hàng. */
+  listingCount: number;
+}
 
 /** `ctx` mà router của catalog nhận. */
 export interface CatalogContext extends ModuleContext {
@@ -21,6 +31,10 @@ export interface CatalogContext extends ModuleContext {
   readonly orderArchiveBlockers?: ArchiveBlockerSource;
   /** Listing đang đẩy lên sàn. */
   readonly listingArchiveBlockers?: ArchiveBlockerSource;
+  /** Ngưỡng tồn theo SKU (inventory); Map đủ mọi id, chưa đặt là null. Không khoá. */
+  readonly minQtyOf?: (variantIds: readonly string[]) => Promise<Map<string, number | null>>;
+  /** Hiện diện trên sàn theo SKU (channel, D8); Map đủ mọi id. */
+  readonly listingPresenceOf?: (variantIds: readonly string[]) => Promise<Map<string, ListingPresence>>;
 }
 
 /** Thứ tự nguồn quyết thứ tự câu lý do. */
