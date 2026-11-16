@@ -94,22 +94,123 @@ export async function withCompany<T>(companyId: string, fn: (tx: Transaction) =>
 const LOCK_RETRY_MIN_MS = 25;
 const LOCK_RETRY_MAX_MS = 500;
 
-/** Thử lấy khoá một lần trên một kết nối của pool; có thì trả kết nối (đang giữ khoá), không thì trả kết nối về pool. */
+/*
+ * Khoá phiên và trần kết nối (#335). Người giữ khoá giữ một kết nối suốt `fn`, mà `fn` lại mượn thêm kết nối của pool
+ * (`withCompany`). Nếu mọi kết nối của pool đều do người giữ khoá cầm thì không ai lấy được kết nối thứ hai: cả tiến
+ * trình chờ nhau tới hết `DB_CONNECT_TIMEOUT_MS`. Hai luật giữ cho luôn còn kết nối rảnh:
+ * 1. Mỗi chuỗi khoá chỉ cầm **một** kết nối: `withSessionLock` lồng trong `fn` của khoá khác (vd đối soát → làm mới
+ *    token) lấy thêm khoá trên chính kết nối của khoá ngoài, không mượn kết nối mới.
+ * 2. Số chuỗi khoá cùng lúc trong tiến trình không quá nửa `DB_POOL_MAX` (ít nhất 1); chuỗi dư chờ chỗ, không cầm kết
+ *    nối khi chờ. Chờ quá `DB_CONNECT_TIMEOUT_MS` thì ném lỗi như pool hết hạn chờ (api trả 503, việc nền thử lại).
+ */
+
+/** Chuỗi khoá đang mở trong ngữ cảnh hiện tại: kết nối giữ khoá và các khoá đang giữ (kể cả khoá lồng). */
+interface LockChain {
+  readonly client: pg.PoolClient;
+  readonly keys: Set<string>;
+  open: boolean;
+  /** Câu lệnh trước trên `client`: nhánh song song trong `fn` xếp hàng, không gửi chồng lên một kết nối (pg@9 cấm). */
+  queue: Promise<unknown>;
+}
+const lockChain = new AsyncLocalStorage<LockChain>();
+
+/** Chạy một câu trên kết nối của chuỗi, sau câu trước đó. */
+function chainQuery<R extends pg.QueryResultRow>(chain: LockChain, text: string, values: unknown[]): Promise<pg.QueryResult<R>> {
+  const run = chain.queue.then(() => chain.client.query<R>(text, values));
+  chain.queue = run.catch(() => undefined);
+  return run;
+}
+
+let lockSlotsInUse = 0;
+const lockSlotWaiters: (() => void)[] = [];
+const lockSlotCap = () => Math.max(1, Math.floor(env.DB_POOL_MAX / 2));
+
+/** Lấy một chỗ cho chuỗi khoá mới; hết chỗ thì chờ theo thứ tự tới `DB_CONNECT_TIMEOUT_MS` (0 là chờ mãi). */
+async function takeLockSlot(): Promise<void> {
+  if (lockSlotsInUse < lockSlotCap()) {
+    lockSlotsInUse++;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timeoutMs = env.DB_CONNECT_TIMEOUT_MS;
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+          lockSlotWaiters.splice(lockSlotWaiters.indexOf(waiter), 1);
+          // Cùng câu với lỗi hết hạn chờ của pg-pool để `isConnectionUnavailable` nhận ra.
+          reject(new Error('timeout exceeded when trying to connect: đã đủ số khoá phiên giữ cùng lúc'));
+        }, timeoutMs)
+      : undefined;
+    const waiter = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    lockSlotWaiters.push(waiter);
+  });
+}
+
+/** Trả chỗ: có người chờ thì trao thẳng chỗ cho người đó (số chỗ đang dùng giữ nguyên). */
+function giveLockSlot(): void {
+  const next = lockSlotWaiters.shift();
+  if (next) next();
+  else lockSlotsInUse--;
+}
+
+const TRY_LOCK = 'select pg_try_advisory_lock(hashtextextended($1, 0)) as locked';
+
+/** Thử lấy khoá một lần trên một kết nối của pool; có thì trả kết nối (đang giữ khoá), không thì trả kết nối và chỗ. */
 async function tryLockOnce(keys: readonly string[]): Promise<pg.PoolClient | null> {
-  const client = await pool!.connect();
+  await takeLockSlot();
+  let client: pg.PoolClient;
+  try {
+    client = await pool!.connect();
+  } catch (err) {
+    giveLockSlot();
+    throw err;
+  }
   try {
     for (const [index, key] of keys.entries()) {
-      const { rows } = await client.query<{ locked: boolean }>('select pg_try_advisory_lock(hashtextextended($1, 0)) as locked', [key]);
+      const { rows } = await client.query<{ locked: boolean }>(TRY_LOCK, [key]);
       if (rows[0]!.locked) continue;
       if (index > 0) await client.query('select pg_advisory_unlock_all()');
       client.release();
+      giveLockSlot();
       return null;
     }
     return client;
   } catch (err) {
     client.release(true);
+    giveLockSlot();
     throw err;
   }
+}
+
+/**
+ * Thử lấy thêm khoá trên kết nối của chuỗi đang mở. Khoá phiên của PostgreSQL lấy lại được trên cùng phiên, nên khoá
+ * chuỗi đang giữ (hai nhánh song song trong cùng `fn` cùng xin một khoá) coi như bận; đánh dấu khoá trước khi gọi DB
+ * để hai nhánh không cùng lọt.
+ */
+async function tryNestedLockOnce(chain: LockChain, keys: readonly string[]): Promise<boolean> {
+  if (keys.some((key) => chain.keys.has(key))) return false;
+  for (const key of keys) chain.keys.add(key);
+  const taken: string[] = [];
+  try {
+    for (const key of keys) {
+      const { rows } = await chainQuery<{ locked: boolean }>(chain, TRY_LOCK, [key]);
+      if (!rows[0]!.locked) break;
+      taken.push(key);
+    }
+  } finally {
+    if (taken.length < keys.length) await unlockNested(chain, taken, keys);
+  }
+  return taken.length === keys.length;
+}
+
+/** Nhả các khoá lồng `taken` trên kết nối của chuỗi rồi bỏ đánh dấu `marked`. Lỗi nhả (kết nối đứt) thì thôi. */
+async function unlockNested(chain: LockChain, taken: readonly string[], marked: readonly string[]): Promise<void> {
+  for (const key of taken) {
+    await chainQuery(chain, 'select pg_advisory_unlock(hashtextextended($1, 0))', [key]).catch(() => undefined);
+  }
+  for (const key of marked) chain.keys.delete(key);
 }
 
 /**
@@ -123,6 +224,9 @@ async function tryLockOnce(keys: readonly string[]): Promise<pg.PoolClient | nul
  * nhả được trên phiên đã lấy nó, nên kết nối lấy được khoá giữ tới khi `fn` xong rồi mới nhả. Không công bằng (không xếp
  * hàng): bên chờ lâu chưa chắc được trước, đủ cho khoá làm mới token.
  * Cần kết nối giữ phiên (PostgreSQL thẳng, Supabase Session pooler); PgBouncer chế độ transaction không giữ được khoá.
+ *
+ * Gọi lồng trong `fn` của khoá khác thì lấy khoá trên kết nối của khoá ngoài, không mượn kết nối mới; số chuỗi khoá
+ * cùng lúc có trần (luật ở đầu phần này, #335).
  */
 export async function withSessionLock<T>(
   key: string, fn: () => Promise<T>, opts: { waitMs?: number; additionalKeys?: readonly string[] } = {},
@@ -131,22 +235,41 @@ export async function withSessionLock<T>(
   // Khi cần nhiều khoá, dùng cùng một kết nối và nhả tất cả nếu lần thử hụt.
   const keys = opts.additionalKeys?.length ? [...new Set([key, ...opts.additionalKeys])].sort() : [key];
   const deadline = Date.now() + Math.max(0, opts.waitMs ?? 0);
-  let pause = LOCK_RETRY_MIN_MS;
-  let client = await tryLockOnce(keys);
-  while (!client) {
-    const left = deadline - Date.now();
-    if (left <= 0) return 'busy';
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pause, left)));
-    pause = Math.min(pause * 2, LOCK_RETRY_MAX_MS);
-    client = await tryLockOnce(keys);
+  /** Thử lặp có nghỉ tới `deadline`; `false` khi hết hạn mà chưa lấy được. */
+  const retry = async (attempt: () => Promise<boolean>): Promise<boolean> => {
+    let pause = LOCK_RETRY_MIN_MS;
+    while (!(await attempt())) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(pause, left)));
+      pause = Math.min(pause * 2, LOCK_RETRY_MAX_MS);
+    }
+    return true;
+  };
+
+  const outer = lockChain.getStore();
+  // Việc chạy tiếp sau khi chuỗi ngoài đã đóng (promise bỏ lửng trong `fn`) thì mở chuỗi mới.
+  if (outer?.open) {
+    if (!(await retry(() => tryNestedLockOnce(outer, keys)))) return 'busy';
+    try {
+      return await fn();
+    } finally {
+      await unlockNested(outer, keys, keys);
+    }
   }
+
+  let client: pg.PoolClient | null = null;
+  if (!(await retry(async () => (client = await tryLockOnce(keys)) !== null))) return 'busy';
+  const chain: LockChain = { client: client!, keys: new Set(keys), open: true, queue: Promise.resolve() };
   try {
-    return await fn();
+    return await lockChain.run(chain, fn);
   } finally {
+    chain.open = false;
     // Nhả ngay phía server: huỷ kết nối không chờ phiên đóng, lượt liền sau có thể còn thấy khoá. Lỗi nhả (kết nối
     // đứt) thì thôi, phiên chết cũng nhả khoá; không che lỗi của `fn`.
-    await client.query('select pg_advisory_unlock_all()').catch(() => undefined);
-    client.release(true);
+    await chainQuery(chain, 'select pg_advisory_unlock_all()', []).catch(() => undefined);
+    chain.client.release(true);
+    giveLockSlot();
   }
 }
 
