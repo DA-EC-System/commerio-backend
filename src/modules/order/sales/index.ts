@@ -42,6 +42,8 @@ export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop
 export { ingestMarketplaceOrder, type PlatformOrder, settleCancelledOrder } from './service/ingest.ts';
 export type { SalesContext } from './service/orders.ts';
 export { nextPackageCode, orderRefsOf } from './service/package-orders.ts';
+// Số bán 30 ngày của SKU cho gợi ý ngưỡng tồn khi sửa hàng loạt (#242); product (lớp dưới) nhận qua `src/wiring.ts`.
+export { soldQtyByVariant as soldQtyOf } from './repository/orders.ts';
 // Chi tiết đơn cho route tách kiện của fulfillment (spec 205 D9), tiêm qua `FulfillmentContext.orderViewOf`.
 export { getOrder } from './service/orders.ts';
 export { completeDueOrdersOnce } from './service/complete.ts';

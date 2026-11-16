@@ -6,6 +6,7 @@ import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
 import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
+import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
 import { addVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
@@ -14,6 +15,8 @@ import {
   AddVariantBody,
   AttributeBody,
   BusinessStatusBody,
+  BulkEditQuery,
+  BulkSaveBody,
   CategoryBody,
   CreateProductBody,
   IdParams,
@@ -43,6 +46,10 @@ function can(res: Response, permission: string): boolean {
 function actor(res: Response): BusinessActor {
   const { permissions, enabledModules } = getAccess(res);
   return { ...caller(res), permissions, enabledModules };
+}
+
+function bulkViewer(res: Response): BulkViewer {
+  return { ...caller(res), permissions: getAccess(res).permissions };
 }
 
 /**
@@ -91,6 +98,15 @@ export function catalogRouter(ctx: CatalogContext): Router {
     const { id } = validated<typeof IdParams>(res, 'params');
     await attributes.deleteAttribute(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
     res.status(204).end();
+  });
+
+  // Sửa hàng loạt có gợi ý (#242, Documents/21 §17.5). Khai trước `/products` cho gọn; không trùng đường dẫn nào.
+  router.get('/variants/bulk-edit', manage, validate({ query: BulkEditQuery }), async (_req, res) => {
+    res.json(await listBulkEdit(ctx as BulkEditContext, bulkViewer(res), validated<typeof BulkEditQuery>(res, 'query')));
+  });
+
+  router.patch('/variants/bulk', manage, validate({ body: BulkSaveBody }), async (_req, res) => {
+    res.json(await saveBulkEdit(ctx as BulkEditContext, bulkViewer(res), validated<typeof BulkSaveBody>(res, 'body').rows));
   });
 
   router.get('/products', view, validate({ query: ProductListQuery }), async (_req, res) => {

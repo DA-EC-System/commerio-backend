@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BUSINESS_ACTIONS, BUSINESS_STATUSES } from '../domain/business-status.ts';
+import { BulkRowInput } from '../domain/bulk-row.ts';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
@@ -30,7 +31,38 @@ const skuPattern = z
   })
   .meta({ example: 'AO-{SEQ:4}-{VAL}', description: 'Quy tắc SKU (Documents/21 5.1, mục 9)' });
 
-export const CategoryBody = z.object({ name: name('danh mục', 60), skuPattern }).meta({ id: 'CategoryRequest' });
+const optionalInt = (max: number, min = 0) =>
+  z
+    .number('Nhập số nguyên')
+    .int('Nhập số nguyên')
+    .min(min, `Từ ${min} trở lên`)
+    .max(max, `Tối đa ${max}`)
+    .nullable();
+
+/** Cấu hình gợi ý khi sửa hàng loạt (#242). Gửi thì thay cả năm giá trị; `null` là chưa đặt. */
+export const SuggestConfig = z
+  .strictObject({
+    marginCoefficient: z
+      .number('Nhập hệ số lãi')
+      .min(1, 'Hệ số lãi từ 1 trở lên (1,4 là lãi 40%)')
+      .max(100, 'Hệ số lãi tối đa 100')
+      .refine((v) => Math.round(v * 100) / 100 === v, 'Hệ số lãi tối đa hai chữ số thập phân')
+      .nullable()
+      .meta({ description: 'Giá muốn bán gợi ý = giá nhập × hệ số' }),
+    priceRounding: optionalInt(1_000_000, 1).meta({ description: 'Bước làm tròn lên của giá muốn bán, đồng (vd 1000)' }),
+    reorderLeadDays: optionalInt(365).meta({ description: 'Số ngày chờ hàng về, để gợi ý ngưỡng tồn' }),
+    reorderSafetyQty: optionalInt(1_000_000).meta({ description: 'Tồn an toàn cộng vào ngưỡng tồn gợi ý' }),
+    reorderDefaultQty: optionalInt(1_000_000).meta({ description: 'Ngưỡng tồn gợi ý cho SKU chưa có lịch sử bán' }),
+  })
+  .meta({ id: 'CategorySuggestConfig' });
+
+export const CategoryBody = z
+  .object({
+    name: name('danh mục', 60),
+    skuPattern,
+    suggest: SuggestConfig.optional().meta({ description: 'Bỏ trống thì giữ cấu hình đang lưu (tạo mới: chưa đặt)' }),
+  })
+  .meta({ id: 'CategoryRequest' });
 export const UpdateCategoryBody = CategoryBody.extend({ version }).meta({ id: 'UpdateCategoryRequest' });
 
 // ---------- Thuộc tính ----------
@@ -183,6 +215,7 @@ export const Category = z
     name: z.string(),
     skuPattern: z.string(),
     skuNextSeq: z.number().int().meta({ description: 'Số thứ tự cấp cho biến thể kế tiếp ({SEQ})' }),
+    suggest: SuggestConfig,
     productCount: z.number().int().meta({ description: 'Số sản phẩm, kể cả đã lưu trữ' }),
     version: z.number().int(),
     updatedAt: z.string(),
@@ -286,3 +319,85 @@ export const BusinessStatusResult = z
       .meta({ description: 'SKU bỏ qua: không có thao tác này từ trạng thái hiện tại, hoặc bị chặn lưu trữ' }),
   })
   .meta({ id: 'BusinessStatusResult' });
+
+// ---------- Sửa hàng loạt có gợi ý (#242, Documents/21 §17.5) ----------
+
+const BULK_MAX_ROWS = 200;
+
+export { BulkRowInput };
+
+export const BulkEditQuery = z.object({
+  search: blankAsMissing(z.string('Chỉ gửi một từ khoá').trim().max(100, 'Từ khoá tối đa 100 ký tự').optional()),
+  categoryId: blankAsMissing(z.uuid('Danh mục không hợp lệ').optional()),
+  incomplete: blankAsMissing(
+    z
+      .enum(['true', 'false'], 'incomplete là true hoặc false')
+      .default('false')
+      .transform((v) => v === 'true'),
+  ),
+  page: blankAsMissing(z.coerce.number().int().min(1, 'Trang từ 1').default(1)),
+  pageSize: blankAsMissing(z.coerce.number().int().min(1, 'Từ 1 dòng').max(BULK_MAX_ROWS, `Tối đa ${BULK_MAX_ROWS} dòng`).default(50)),
+});
+
+/** Thân PATCH hàng loạt cho Zod kiểm: `rows` để thô, từng dòng kiểm bằng `BulkRowInput` ở service. */
+export const BulkSaveBody = z
+  .object({ rows: z.array(z.unknown(), 'Thiếu rows').min(1, 'Gửi ít nhất một dòng') })
+  .meta({ id: 'BulkEditSaveRequest', description: `Tối đa ${BULK_MAX_ROWS} dòng, vượt thì 400 \`too_many_rows\`` });
+/** Cùng thân, dùng cho tài liệu OpenAPI (kiểu từng dòng rõ ràng). */
+export const BulkSaveDocBody = z.object({ rows: z.array(BulkRowInput).min(1).max(BULK_MAX_ROWS) }).meta({ id: 'BulkEditSaveDocRequest' });
+
+const Suggestion = z
+  .object({ value: z.number(), basis: z.string().meta({ description: 'Câu giải thích cách ra số' }) })
+  .meta({ id: 'BulkEditSuggestion' });
+const nullableInt = z.number().int().nullable();
+
+export const BulkEditRow = z
+  .object({
+    variantId: z.uuid(),
+    productId: z.uuid(),
+    productName: z.string(),
+    sku: z.string(),
+    attributesLabel: z.string().meta({ description: 'Vd "Trắng / L"; rỗng khi SKU không có thuộc tính' }),
+    categoryName: z.string(),
+    version: z.number().int().meta({ description: '`version` của SKU' }),
+    reorderVersion: nullableInt.meta({ description: '`version` của dòng tồn; null khi chưa có dòng (gửi null hoặc 0)' }),
+    current: z.object({
+      standardPrice: nullableInt,
+      targetNetPrice: nullableInt,
+      minQty: nullableInt,
+      weightG: nullableInt,
+      lengthMm: nullableInt,
+      widthMm: nullableInt,
+      heightMm: nullableInt,
+    }),
+    source: z
+      .object({
+        purchaseRequestNumber: z.string(),
+        supplierName: z.string().nullable(),
+        lastCost: z.number().nullable().meta({ description: 'Giá nhập; null khi thiếu `inventory.cost.view`' }),
+      })
+      .nullable()
+      .meta({ description: 'Đề nghị nhập đã duyệt gần nhất có SKU; null khi chưa từng nhập' }),
+    suggestions: z
+      .partialRecord(z.enum(['standardPrice', 'targetNetPrice', 'minQty', 'weightG', 'lengthMm', 'widthMm', 'heightMm']), Suggestion)
+      .meta({ description: 'Chỉ có cho ô đang trống. Không tự lưu' }),
+  })
+  .meta({ id: 'BulkEditRow' });
+
+export const BulkEditPage = z
+  .object({ items: z.array(BulkEditRow), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() })
+  .meta({ id: 'BulkEditPage' });
+
+export const BulkSaveResult = z
+  .object({
+    saved: z.array(z.object({ variantId: z.string(), version: z.number().int().meta({ description: '`version` mới của SKU' }) })),
+    failed: z.array(
+      z.object({
+        variantId: z.string(),
+        code: z.enum(['validation_failed', 'version_conflict', 'not_found', 'product_archived']),
+        message: z.string(),
+        errors: z.record(z.string(), z.string()).optional().meta({ description: 'Lỗi theo ô, chỉ với `validation_failed` và `version_conflict` của ngưỡng' }),
+      }),
+    ),
+  })
+  .meta({ id: 'BulkEditSaveResult' });

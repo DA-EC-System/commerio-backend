@@ -45,4 +45,6 @@ export { setSupplierReturnPort, type SupplierReturnPort } from './service/docume
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 // Lý do chặn lưu trữ SKU phần kho cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog.
 export { stockArchiveBlockers } from './service/archive-blockers.ts';
+// Ngưỡng tồn cho sửa hàng loạt của catalog (#242), trong giao dịch của bên gọi.
+export { applyReorderRule, reorderRulesOf } from './service/stock.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';

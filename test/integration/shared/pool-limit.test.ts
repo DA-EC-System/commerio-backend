@@ -75,4 +75,19 @@ describe('trần kết nối của pool (#335)', () => {
     await expect(queues).resolves.toBeInstanceOf(Array);
     expect(client.sharedPool().totalCount).toBeLessThanOrEqual(2);
   });
+
+  // Người giữ khoá phiên cầm một kết nối rồi mượn thêm một kết nối trong `fn`. Trước khi có trần số chuỗi khoá, hai
+  // khoá cùng lúc với DB_POOL_MAX=2 cầm hết pool và cả hai chờ kết nối thứ hai tới hết hạn.
+  it('hai khoá phiên cùng lúc, fn mượn thêm kết nối: đều xong, không chờ nhau tới hết hạn', async () => {
+    const run = () => client.withSessionLock(`test.pool:${randomUUID()}`, () => pidIn(randomUUID()));
+    const results = await Promise.all([run(), run(), run()]);
+    for (const r of results) expect(r).toBeTypeOf('number');
+    expect(client.sharedPool().totalCount).toBeLessThanOrEqual(2);
+  });
+
+  it('khoá lồng trong khoá dùng kết nối của khoá ngoài, fn bên trong vẫn lấy được kết nối', async () => {
+    const result = await client.withSessionLock(`test.pool:${randomUUID()}`, () =>
+      client.withSessionLock(`test.pool:${randomUUID()}`, () => pidIn(randomUUID())));
+    expect(result).toBeTypeOf('number');
+  });
 });
