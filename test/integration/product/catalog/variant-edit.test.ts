@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ProductDetail } from '#src/modules/product/catalog/api/schemas.ts';
 import { getVariants } from '#src/modules/product/catalog/index.ts';
-import { withCompany } from '#src/shared/db/client.ts';
+import { findVariants } from '#src/modules/product/catalog/repository/variants.ts';
+import { applyVariantUpdate } from '#src/modules/product/catalog/service/variants.ts';
+import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
@@ -99,6 +102,14 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
     expect(res.status).toBe(422);
     expect(res.body.type).toBe('/problems/validation_failed');
     expect(res.body.errors[field]).toBeTruthy();
+    expect(await variantOf(product.id)).toMatchObject({ version: 1, weightG: null });
+  });
+
+  it('version vượt integer của PostgreSQL → 409 version_conflict, không lỗi 500 từ DB', async () => {
+    const product = await wallet();
+    const res = await patch(product.id, product.variants[0]!.id, { version: 2147483648, weightG: 250 });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/version_conflict');
     expect(await variantOf(product.id)).toMatchObject({ version: 1, weightG: null });
   });
 
@@ -245,5 +256,27 @@ describe('PATCH SKU phát catalog.variant_price_changed (#204, Documents/21 §11
     ]);
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
     expect(await priceEvents(variantId)).toHaveLength(1);
+  });
+});
+
+describe('applyVariantUpdate cho sửa hàng loạt (#242)', () => {
+  it('không khoá dòng sản phẩm cha: nhiều SKU một giao dịch không deadlock với PATCH đơn lẻ', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    const holder = await testPool().connect();
+    try {
+      // Giao dịch khác giữ dòng sản phẩm cha (như một PATCH đơn lẻ đang đổi updated_at của cha).
+      await holder.query('begin');
+      await holder.query('select 1 from product.products where id = $1 for update', [product.id]);
+      const outcome = await withCompany(companyId, async () => {
+        await getDb().execute(sql`set local lock_timeout = '1s'`);
+        const [current] = await findVariants({ ids: [variantId] });
+        return applyVariantUpdate({ companyId, accountId: randomUUID() }, current!, { version: 1, weightG: 250 });
+      });
+      expect(outcome).toBe('updated');
+    } finally {
+      await holder.query('rollback');
+      holder.release();
+    }
   });
 });

@@ -176,8 +176,11 @@ const samePrice = (stored: string | null, sent: number | null) =>
 /**
  * Sửa một SKU trong giao dịch `withCompany` của bên gọi (PATCH ở đây, sửa hàng loạt #242 gọi cho từng dòng). Chỉ ghi
  * trường khác hiện tại; không trường nào khác thì không ghi và không kiểm `version` (gửi lại PATCH đã thành công vẫn
- * 200). Ghi được thì tăng `version` SKU, đổi `updated_at` của cha (không đổi `version` cha, P7) và ghi nhật ký chỉ
- * gồm trường đổi, theo dạng API.
+ * 200). Ghi được thì tăng `version` SKU và ghi nhật ký chỉ gồm trường đổi, theo dạng API.
+ *
+ * Bên gọi tự: kiểm sản phẩm chưa lưu trữ và SKU thuộc sản phẩm; gọi `touchProduct` **một lần mỗi sản phẩm, sau mọi
+ * SKU** (đổi `updated_at` cha, P7). Hàm này không chạm dòng sản phẩm, để giao dịch sửa nhiều SKU khoá theo thứ tự
+ * SKU → sản phẩm như thêm, ngừng bán biến thể, không deadlock với PATCH đơn lẻ.
  */
 export async function applyVariantUpdate(
   caller: Caller,
@@ -202,10 +205,12 @@ export async function applyVariantUpdate(
     after[field] = sent;
   }
   if (!Object.keys(patch).length) return 'unchanged';
+  // So trước trong JS: phần chênh và `from` của sự kiện tính từ đúng bản `version` này, và số `version` vượt `integer`
+  // không tới được câu SQL (lỗi 22003 thành 500, làm hỏng cả giao dịch sửa hàng loạt).
+  if (input.version !== current.version) return 'stale';
 
   const updated = await updateVariantIfVersion(current.id, input.version, patch);
   if (!updated) return 'stale';
-  await touchProduct(current.productId);
   await recordAudit({ ...auditOf(caller, 'update', ENTITY, current.id), before, after });
   // Giá muốn bán đổi: channel chạy lại bộ lọc giá (#225). Câu UPDATE trên đã khoá dòng SKU, nên sự kiện của một SKU
   // vào outbox đúng thứ tự. Giá chuẩn đổi không phát (Documents/21 §11.2).
@@ -242,6 +247,7 @@ export async function updateVariant(
     const [current] = isUuid(variantId) ? await findVariants({ ids: [variantId] }) : [];
     if (!current || current.productId !== product.id) throw notFound('biến thể');
     const outcome = await applyVariantUpdate(caller, current, input);
+    if (outcome === 'updated') await touchProduct(product.id);
     if (outcome === 'stale') {
       throw versionConflict(`SKU ${current.sku} vừa được người khác sửa`, await productDetail(ctx, await findOwnProduct(productId)));
     }
