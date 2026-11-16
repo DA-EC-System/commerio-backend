@@ -27,7 +27,7 @@ import {
 import { loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
-import type { FulfillmentContext, SalesContext } from './modules/order/index.ts';
+import { type FulfillmentContext, type SalesContext, soldQtyOf } from './modules/order/index.ts';
 import { hasPurchasingData } from './modules/product/index.ts';
 import { createAuthorize } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
@@ -37,7 +37,7 @@ export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns' | 'paymentStatusOf'>> &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
-  Required<Pick<PlatformContext, 'moduleData'>>;
+  Required<Pick<PlatformContext, 'moduleData'>> & { soldQtyOf: typeof soldQtyOf };
 
 export function createModuleContext(): AppContext {
   return {
@@ -65,6 +65,8 @@ export function createModuleContext(): AppContext {
       carriers: marketplaceCarriers, pack: marketplacePack, readyToShip: marketplaceReadyToShip,
       repack: marketplaceRepack, shippingDocuments: marketplaceShippingDocuments,
     },
+    // #242: catalog (lớp dưới) gợi ý ngưỡng tồn theo số bán 30 ngày của sales khi sửa hàng loạt.
+    soldQtyOf,
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
   };

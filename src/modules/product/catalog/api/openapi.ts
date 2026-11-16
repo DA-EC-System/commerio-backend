@@ -5,6 +5,10 @@ import {
   AddVariantBody,
   Attribute,
   AttributeBody,
+  BulkEditPage,
+  BulkEditQuery,
+  BulkSaveDocBody,
+  BulkSaveResult,
   Category,
   CategoryBody,
   CreateProductBody,
@@ -199,5 +203,28 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`last_variant` hoặc `product_archived`'),
       ...missing('biến thể đang bán'),
     },
+  });
+  path({
+    method: 'get',
+    path: '/variants/bulk-edit',
+    summary: 'Lấy SKU để sửa hàng loạt, kèm giá trị gợi ý (không tự lưu)',
+    description:
+      'Chỉ SKU chưa lưu trữ của sản phẩm chưa lưu trữ. `incomplete=true`: còn ít nhất một ô giá muốn bán, cân nặng, dài, rộng, cao bỏ trống. ' +
+      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi của danh mục (làm tròn lên theo bước của danh mục), ' +
+      'không có thì chép từ SKU anh em; ngưỡng tồn theo tốc độ bán 30 ngày hoặc mặc định danh mục; cân nặng, kích thước, giá chuẩn chép từ SKU anh em. ' +
+      '`source.lastCost` là null khi thiếu quyền `inventory.cost.view`.',
+    request: { query: BulkEditQuery },
+    responses: { 200: json('Trang SKU kèm gợi ý', BulkEditPage), ...invalid },
+  });
+  path({
+    method: 'patch',
+    path: '/variants/bulk',
+    summary: 'Lưu nhiều SKU một lần; lỗi theo dòng, dòng lỗi không chặn dòng khác',
+    description:
+      'Tối đa 200 dòng (vượt thì 400 `too_many_rows`). Luôn 200 với `{ saved, failed }`. Mỗi dòng ghi trong giao dịch riêng: dòng lỗi không ghi gì, các dòng khác vẫn ghi. ' +
+      'Chỉ gửi ô người dùng đã sửa hoặc đã nhận gợi ý; null là xoá giá trị. Đổi `targetNetPrice` phát `catalog.variant_price_changed` cho từng SKU. ' +
+      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`.',
+    request: { body: body(BulkSaveDocBody) },
+    responses: { 200: json('Kết quả theo dòng', BulkSaveResult), 400: problemResponse('`too_many_rows`'), ...invalid },
   });
 }

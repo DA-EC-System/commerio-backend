@@ -256,3 +256,27 @@ export async function oldestOpenOrdersOfShop(shopId: string, limit: number): Pro
     .orderBy(sql`coalesce(${orders.placedAt}, ${orders.createdAt})`, asc(orders.code))
     .limit(limit);
 }
+
+/**
+ * Số món bán ra của từng SKU trong `days` ngày gần nhất, không tính đơn huỷ và phần dòng đã huỷ (gợi ý ngưỡng tồn,
+ * #242). SKU không bán được thì không có trong kết quả. Chạy trong `withCompany`.
+ */
+export async function soldQtyByVariant(variantIds: readonly string[], days: number): Promise<Map<string, number>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select({
+      variantId: orderLines.variantId,
+      qty: sql<number>`sum(${orderLines.quantity} - ${orderLines.cancelledQty})::int`,
+    })
+    .from(orderLines)
+    .innerJoin(orders, eq(orders.id, orderLines.orderId))
+    .where(
+      and(
+        inArray(orderLines.variantId, [...variantIds]),
+        notInArray(orders.status, ['cancelled']),
+        sql`coalesce(${orders.placedAt}, ${orders.createdAt}) >= now() - make_interval(days => ${days})`,
+      ),
+    )
+    .groupBy(orderLines.variantId);
+  return new Map(rows.filter((r) => r.variantId && r.qty > 0).map((r) => [r.variantId!, r.qty]));
+}
