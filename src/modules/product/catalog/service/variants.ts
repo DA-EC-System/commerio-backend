@@ -1,12 +1,32 @@
-// Biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B2–B5, B8, B10, B11) và `getVariants`
-// cho module khác (Documents/21 §11; chữ ký chốt ở plan chuẩn bị 4.5, không đổi).
+// Biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B2–B5, B8, B10, B11), sửa một SKU (#204, §17.2)
+// và `getVariants` cho module khác (Documents/21 §11; chữ ký chốt ở plan chuẩn bị 4.5, chỉ thêm trường).
+import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { recordAudit } from '../../../core/index.ts';
 import { touchProduct } from '../repository/products.ts';
-import { findVariants, insertVariant, lockVariants, setVariantArchived } from '../repository/variants.ts';
+import {
+  findVariants,
+  insertVariant,
+  lockVariants,
+  setVariantArchived,
+  updateVariantIfVersion,
+  type VariantPatch,
+  type VariantRow,
+} from '../repository/variants.ts';
 import { findCategories } from '../repository/categories.ts';
-import { auditOf, type Caller, invalid, isUuid, lastVariant, notFound, pgError, productArchived, variantExists } from './errors.ts';
-import { findOwnProduct, toVariantView } from './products.ts';
+import {
+  auditOf,
+  type Caller,
+  invalid,
+  isUuid,
+  lastVariant,
+  notFound,
+  pgError,
+  productArchived,
+  variantExists,
+  versionConflict,
+} from './errors.ts';
+import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 
@@ -129,5 +149,87 @@ export async function archiveVariant(caller: Caller, productId: string, variantI
     await setVariantArchived(variantId, true);
     await touchProduct(productId);
     await recordAudit({ ...auditOf(caller, 'delete', ENTITY, variantId), before: variantSnapshot(product.name, variant) });
+  });
+}
+
+/** Thân của PATCH SKU (Documents/21 §17.2); số nguyên đồng, gam, mm. Bỏ trường là giữ, `null` là xoá. */
+export interface UpdateVariantInput {
+  version: number;
+  standardPrice?: number | null | undefined;
+  targetNetPrice?: number | null | undefined;
+  weightG?: number | null | undefined;
+  lengthMm?: number | null | undefined;
+  widthMm?: number | null | undefined;
+  heightMm?: number | null | undefined;
+}
+
+/** `unchanged`: không trường nào khác hiện tại, không ghi. `stale`: `version` không còn đúng, không ghi. */
+export type VariantUpdateOutcome = 'unchanged' | 'updated' | 'stale';
+
+const PRICE_FIELDS = ['standardPrice', 'targetNetPrice'] as const;
+const MEASURE_FIELDS = ['weightG', 'lengthMm', 'widthMm', 'heightMm'] as const;
+
+/** Giá đang lưu (chuỗi `numeric`) và giá gửi lên (số đồng) có bằng nhau không; `null` chỉ bằng `null`. */
+const samePrice = (stored: string | null, sent: number | null) =>
+  stored === null || sent === null ? stored === sent : new Decimal(stored).eq(sent);
+
+/**
+ * Sửa một SKU trong giao dịch `withCompany` của bên gọi (PATCH ở đây, sửa hàng loạt #242 gọi cho từng dòng). Chỉ ghi
+ * trường khác hiện tại; không trường nào khác thì không ghi và không kiểm `version` (gửi lại PATCH đã thành công vẫn
+ * 200). Ghi được thì tăng `version` SKU, đổi `updated_at` của cha (không đổi `version` cha, P7) và ghi nhật ký chỉ
+ * gồm trường đổi, theo dạng API.
+ */
+export async function applyVariantUpdate(
+  caller: Caller,
+  current: VariantRow,
+  input: UpdateVariantInput,
+): Promise<VariantUpdateOutcome> {
+  const patch: VariantPatch = {};
+  const before: Record<string, number | null> = {};
+  const after: Record<string, number | null> = {};
+  for (const field of PRICE_FIELDS) {
+    const sent = input[field];
+    if (sent === undefined || samePrice(current[field], sent)) continue;
+    patch[field] = sent === null ? null : String(sent);
+    before[field] = toDong(current[field]);
+    after[field] = sent;
+  }
+  for (const field of MEASURE_FIELDS) {
+    const sent = input[field];
+    if (sent === undefined || sent === current[field]) continue;
+    patch[field] = sent;
+    before[field] = current[field];
+    after[field] = sent;
+  }
+  if (!Object.keys(patch).length) return 'unchanged';
+
+  const updated = await updateVariantIfVersion(current.id, input.version, patch);
+  if (!updated) return 'stale';
+  await touchProduct(current.productId);
+  await recordAudit({ ...auditOf(caller, 'update', ENTITY, current.id), before, after });
+  return 'updated';
+}
+
+/**
+ * `PATCH /catalog/products/:id/variants/:variantId` (#204). Sản phẩm lưu trữ báo `product_archived` trước
+ * `version_conflict` như mọi route ghi; SKU đã ngừng bán vẫn sửa được (điền cho đủ trước khi khôi phục).
+ */
+export async function updateVariant(
+  ctx: CatalogContext,
+  caller: Caller,
+  productId: string,
+  variantId: string,
+  input: UpdateVariantInput,
+): Promise<ProductDetail> {
+  return withCompany(caller.companyId, async () => {
+    const product = await findOwnProduct(productId);
+    if (product.archivedAt) throw productArchived();
+    const [current] = isUuid(variantId) ? await findVariants({ ids: [variantId] }) : [];
+    if (!current || current.productId !== product.id) throw notFound('biến thể');
+    const outcome = await applyVariantUpdate(caller, current, input);
+    if (outcome === 'stale') {
+      throw versionConflict(`SKU ${current.sku} vừa được người khác sửa`, await productDetail(ctx, await findOwnProduct(productId)));
+    }
+    return productDetail(ctx, await findOwnProduct(productId));
   });
 }

@@ -45,6 +45,33 @@ export async function setVariantArchived(id: string, archived: boolean): Promise
     .where(eq(productVariants.id, id));
 }
 
+/** Trường của SKU mà PATCH sửa được (#204); giá là chuỗi `numeric`. Khoá vắng mặt thì giữ nguyên, `null` là xoá. */
+export type VariantPatch = Partial<{
+  standardPrice: string | null;
+  targetNetPrice: string | null;
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+}>;
+
+/**
+ * Ghi khi `version` còn đúng, tăng `version` của SKU. Không trúng dòng (người khác vừa sửa) thì `undefined`. Câu UPDATE
+ * khoá dòng SKU tới hết giao dịch: sự kiện ghi outbox sau đó giữ đúng thứ tự theo SKU (outbox/README.md).
+ */
+export async function updateVariantIfVersion(id: string, version: number, patch: VariantPatch) {
+  const [row] = await getDb()
+    .update(productVariants)
+    .set({ ...patch, version: sql`${productVariants.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(productVariants.id, id), eq(productVariants.version, version)))
+    .returning({
+      version: productVariants.version,
+      updatedAt: productVariants.updatedAt,
+      targetNetPrice: productVariants.targetNetPrice,
+    });
+  return row;
+}
+
 /** Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. */
 export async function findVariants(filter: { productId?: string; ids?: readonly string[] } = {}) {
   const rows = await getDb()

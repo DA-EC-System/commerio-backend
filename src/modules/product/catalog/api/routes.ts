@@ -4,7 +4,7 @@ import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
 import * as products from '../service/products.ts';
-import { addVariant, archiveVariant } from '../service/variants.ts';
+import { addVariant, archiveVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
 import type { CatalogContext } from '../service/standard-price.ts';
 import {
@@ -17,6 +17,7 @@ import {
   UpdateAttributeBody,
   UpdateCategoryBody,
   UpdateProductBody,
+  UpdateVariantBody,
   VariantParams,
   VersionQuery,
 } from './schemas.ts';
@@ -104,6 +105,17 @@ export function catalogRouter(ctx: CatalogContext): Router {
     const { created, variant } = await addVariant(ctx, caller(res), id, attributeValueIds);
     res.status(created ? 201 : 200).json(variant);
   });
+
+  // Sửa giá, cân nặng, kích thước của một SKU; `version` là của SKU (#204, Documents/21 §17.2).
+  router.patch(
+    '/products/:id/variants/:variantId',
+    manage,
+    validate({ params: VariantParams, body: UpdateVariantBody }),
+    async (_req, res) => {
+      const { id, variantId } = validated<typeof VariantParams>(res, 'params');
+      res.json(await updateVariant(ctx, caller(res), id, variantId, validated<typeof UpdateVariantBody>(res, 'body')));
+    },
+  );
 
   // Ngừng bán không nhận `version` (Documents/21 5.2, P7; plan #12 B3).
   router.delete('/products/:id/variants/:variantId', manage, validate({ params: VariantParams }), async (_req, res) => {

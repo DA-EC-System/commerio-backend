@@ -121,6 +121,31 @@ export const UpdateProductBody = z
 
 export const AddVariantBody = z.object({ attributeValueIds }).meta({ id: 'AddVariantRequest' });
 
+const POSITIVE_INT = 'Nhập số nguyên lớn hơn 0';
+/** Giá (đồng) của SKU; bỏ trường là giữ, `null` là xoá. */
+const price = z.int(POSITIVE_INT).positive(POSITIVE_INT).nullable().optional();
+/** Cân nặng (g), kích thước (mm): cột `integer` của PostgreSQL, vượt trần thì 422 thay vì lỗi DB. */
+const measure = z.int(POSITIVE_INT).positive(POSITIVE_INT).max(2_147_483_647, 'Số quá lớn').nullable().optional();
+
+/**
+ * Sửa một SKU (#204, Documents/21 §17.2). Chưa nhận `imageFileId` (spec 204 D1): trường lạ trả 422. Ngưỡng tồn đặt ở
+ * inventory (mục 15), không ở đây.
+ */
+export const UpdateVariantBody = z
+  .strictObject(
+    {
+      version,
+      standardPrice: price.meta({ description: 'Giá chuẩn (đồng)' }),
+      targetNetPrice: price.meta({ description: 'Giá muốn bán: số muốn thực nhận mỗi món (đồng); đổi thì phát `catalog.variant_price_changed`' }),
+      weightG: measure.meta({ description: 'Cân nặng gói (gam)' }),
+      lengthMm: measure.meta({ description: 'Chiều dài gói (mm)' }),
+      widthMm: measure.meta({ description: 'Chiều rộng gói (mm)' }),
+      heightMm: measure.meta({ description: 'Chiều cao gói (mm)' }),
+    },
+    { error: (iss) => (iss.code === 'unrecognized_keys' ? `Không sửa được trường ${iss.keys.join(', ')} ở đây` : undefined) },
+  )
+  .meta({ id: 'UpdateVariantRequest' });
+
 /** Ô rỗng (`categoryId=`) coi như không lọc: FE gửi vậy (AC-14). */
 const blankAsMissing = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (v === '' ? undefined : v), schema);
 

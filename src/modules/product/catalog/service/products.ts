@@ -86,7 +86,7 @@ export function toVariantView(v: VariantRow, standardPrice: Decimal | null = nul
   };
 }
 
-async function detail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
+export async function productDetail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
   const rows = variants ?? (await findVariants({ productId: p.id }));
   const prices = await standardPricesOf(ctx, rows.map((v) => v.id));
   const images = await imagesOf(p.id);
@@ -97,7 +97,7 @@ async function detail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[
     variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null)),
   };
 }
-export type ProductDetail = Awaited<ReturnType<typeof detail>>;
+export type ProductDetail = Awaited<ReturnType<typeof productDetail>>;
 
 /** Sản phẩm của công ty đang chọn; không có, không phải uuid hay của công ty khác đều 404 (C4, V6). */
 export async function findOwnProduct(id: string): Promise<ProductRow> {
@@ -146,7 +146,7 @@ export async function listProducts(companyId: string, filter: ProductFilter) {
 }
 
 export async function getProduct(ctx: CatalogContext, companyId: string, id: string): Promise<ProductDetail> {
-  return withCompany(companyId, async () => detail(ctx, await findOwnProduct(id)));
+  return withCompany(companyId, async () => productDetail(ctx, await findOwnProduct(id)));
 }
 
 /**
@@ -175,7 +175,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
       await insertVariant(caller.companyId, id, skus[i]!, combo.map((v) => v.id), i);
     }
     await replaceProductImages(caller.companyId, id, imageIds);
-    const result = await detail(ctx, await findOwnProduct(id));
+    const result = await productDetail(ctx, await findOwnProduct(id));
     await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: snapshot(input, category.name, result.variants, imageIds) });
     return result;
   }).catch(race);
@@ -187,7 +187,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
  */
 async function rejectStale(ctx: CatalogContext, product: ProductRow): Promise<never> {
   if (product.archivedAt) throw productArchived();
-  throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await detail(ctx, product));
+  throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await productDetail(ctx, product));
 }
 
 async function editable(ctx: CatalogContext, id: string, version: number): Promise<ProductRow> {
@@ -218,7 +218,7 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
       before: snapshot(product, product.categoryName, variants, imagesBefore),
       after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore),
     });
-    return detail(ctx, await findOwnProduct(id), variants);
+    return productDetail(ctx, await findOwnProduct(id), variants);
   }).catch(race);
 }
 
