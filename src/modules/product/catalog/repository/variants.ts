@@ -32,19 +32,6 @@ export async function insertVariant(companyId: string, productId: string, sku: s
   return row!.id;
 }
 
-export async function setVariantArchived(id: string, archived: boolean): Promise<void> {
-  await getDb()
-    .update(productVariants)
-    .set({
-      archivedAt: archived ? sql`now()` : null,
-      // Ngừng bán kiểu cũ = lưu trữ SKU; máy trạng thái kinh doanh đầy đủ ở issue B1 (Documents/21 mục 17).
-      businessStatus: archived ? 'archived' : 'selling',
-      version: sql`${productVariants.version} + 1`,
-      updatedAt: sql`now()`,
-    })
-    .where(eq(productVariants.id, id));
-}
-
 type BusinessStatus = (typeof productVariants.businessStatus.enumValues)[number];
 
 /**

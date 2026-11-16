@@ -1,18 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
-import {
-  type AttributeBody,
-  api,
-  auditOf,
-  createAttribute,
-  createCategory,
-  createProduct,
-  type ProductBody,
-  productBody,
-  uniq,
-  valueId,
-} from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, type ProductBody, productBody, uniq, valueId, archiveSku, businessStatus } from './helpers.ts';
 
 // Sản phẩm, SKU tự sinh (UC-CP-02; Documents/21 5.1–5.4, mục 9, C3, C5, P5–P8, V24, D9).
 let token: string;
@@ -252,7 +241,7 @@ describe('GET /catalog/products', () => {
       categoryId: category.id,
       variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
     });
-    await api(token).delete(`/products/${product.id}/variants/${product.variants[0]!.id}`);
+    await archiveSku(token, product.id, product.variants[0]!.id);
     const res = await api(token).get(`/products?search=${product.variants[0]!.sku}`);
     expect(res.body.items.map((p: { id: string }) => p.id)).toEqual([product.id]);
     expect(res.body.items[0].variantCount).toBe(1);
@@ -335,7 +324,7 @@ describe('PUT, DELETE /catalog/products/:id', () => {
       update(product.id, 2),
       api(token).delete(`/products/${product.id}?version=2`),
       api(token).post(`/products/${product.id}/variants`, { attributeValueIds: [valueId(color, 'Trắng')] }),
-      api(token).delete(`/products/${product.id}/variants/${product.variants[0]!.id}`),
+      businessStatus(token, product.id, 'pause'),
     ];
     for (const res of await Promise.all(calls)) {
       expect(res.status).toBe(409);

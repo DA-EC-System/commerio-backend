@@ -29,8 +29,9 @@ export const archiveBlocked = (sku: string, reasons: readonly string[]) =>
 export const invalidTransition = (current: unknown) =>
   new AppError(409, 'invalid_transition', 'Thao tác không hợp lệ ở trạng thái hiện tại', { current });
 
-export const lastVariant = () =>
-  new AppError(409, 'last_variant', 'Sản phẩm phải còn ít nhất một biến thể đang bán. Muốn ngừng hẳn thì xoá sản phẩm');
+/** Thêm biến thể trùng tổ hợp của SKU đã lưu trữ (Documents/21 §17.4): dùng Khôi phục SKU đó. */
+export const variantArchived = (variantId: string) =>
+  new AppError(409, 'variant_archived', 'Tổ hợp này thuộc SKU đã lưu trữ, dùng Khôi phục', { variantId });
 
 /** 422 theo ô cho luật kiểm ở service (cần đọc DB), cùng dạng với `validate()`. */
 export const invalid = (errors: Record<string, string>) =>

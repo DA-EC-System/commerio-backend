@@ -166,12 +166,11 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'post',
     path: '/products/:id/variants',
-    summary: 'Thêm biến thể; tổ hợp từng ngừng bán thì bán lại với SKU cũ',
+    summary: 'Thêm biến thể; tổ hợp của SKU đã lưu trữ thì 409 variant_archived (dùng Khôi phục)',
     request: { params: IdParams, body: body(AddVariantBody) },
     responses: {
-      200: json('Biến thể được bán lại (SKU cũ)', Variant),
       201: json('Biến thể mới', Variant),
-      409: problemResponse('`variant_exists` hoặc `product_archived`'),
+      409: problemResponse('`variant_exists`, `variant_archived` (kèm `variantId`) hoặc `product_archived`'),
       ...missing('sản phẩm'),
       ...invalid,
     },
@@ -204,17 +203,6 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`version_conflict` (kèm `current`) hoặc `product_archived`'),
       ...missing('sản phẩm hoặc biến thể'),
       ...invalid,
-    },
-  });
-  path({
-    method: 'delete',
-    path: '/products/:id/variants/:variantId',
-    summary: 'Ngừng bán biến thể; SKU không cấp lại',
-    request: { params: VariantParams },
-    responses: {
-      204: noContent,
-      409: problemResponse('`last_variant` hoặc `product_archived`'),
-      ...missing('biến thể đang bán'),
     },
   });
 }
