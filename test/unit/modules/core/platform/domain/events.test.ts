@@ -62,6 +62,8 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'purchasing.goods_receipt_posted': { receiptId: id(), requestId: id(), lines: [{ variantId: id(), accepted: 5, defective: 1 }] },
   'staff.invitation_otp_requested': { invitationId: id(), requestedAt: '2026-10-21T00:00:00.000Z' },
   'channel.shop_reauth_mail': { mailId: id(), shopId: id() },
+  'catalog.variant_status_changed': { variantId: id(), productId: id(), from: 'selling', to: 'paused', changedAt: at },
+  'catalog.variant_price_changed': { variantId: id(), productId: id(), from: null, to: '150000.00', changedAt: at },
 };
 
 describe('danh mục sự kiện (AC-11)', () => {
@@ -74,6 +76,19 @@ describe('danh mục sự kiện (AC-11)', () => {
   it('inventory.return_inspected thiếu gian hàng thì bị từ chối: yêu cầu trả chỉ có ở đơn sàn (Documents/21 §11.2, #308)', () => {
     const schema = EVENT_SCHEMAS['inventory.return_inspected'];
     expect(schema.safeParse({ ...SAMPLES['inventory.return_inspected'], shopId: null }).success).toBe(false);
+  });
+
+  it('catalog.variant_price_changed: to null được (xoá giá muốn bán, spec 204 D3), tiền là number bị từ chối', () => {
+    const schema = EVENT_SCHEMAS['catalog.variant_price_changed'];
+    const sample = SAMPLES['catalog.variant_price_changed'];
+    expect(schema.safeParse({ ...sample, from: '150000.00', to: null }).success).toBe(true);
+    expect(schema.safeParse({ ...sample, to: 150000 }).success).toBe(false);
+  });
+
+  it('catalog.variant_status_changed: trạng thái ngoài 4 trạng thái kinh doanh bị từ chối (Documents/21 §17.1)', () => {
+    const schema = EVENT_SCHEMAS['catalog.variant_status_changed'];
+    expect(schema.safeParse({ ...SAMPLES['catalog.variant_status_changed'], to: 'deleted' }).success).toBe(false);
+    expect(schema.safeParse({ ...SAMPLES['catalog.variant_status_changed'], from: null }).success).toBe(false);
   });
 
   it('mỗi loại có mẫu, mẫu parse được bằng schema của loại đó', () => {
