@@ -1,7 +1,11 @@
-// Cổng product thật của channel (#303): ảnh catalog đi qua `productImageUrls` của `product/index.ts`.
+// Cổng product thật của channel (#303, #204): ảnh catalog đi qua `productImageUrls` của `product/index.ts`, số đo SKU
+// qua `getVariants`.
 import { randomUUID } from 'node:crypto';
+import { Decimal } from 'decimal.js';
 import { beforeAll, describe, expect, it } from 'vitest';
+import type { CategoryMapRow } from '#src/modules/channel/channel/repository/category-maps.ts';
 import { productPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
+import { pushBlock } from '#src/modules/channel/channel/service/push-block.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -38,5 +42,23 @@ describe('ProductPort.productImageUrls (cổng thật)', () => {
     expect(first).toEqual(new Map([[productId, [`https://files.commerio.test/${keys[0]}`]]]));
     const all = await withCompany(companyId, () => port.productImageUrls([productId], 8));
     expect(all.get(productId)).toEqual(keys.map((k) => `https://files.commerio.test/${k}`));
+  });
+});
+
+describe('ProductPort.variants (cổng thật, #204)', () => {
+  it('SKU có đủ số đo trong catalog thì qua được bước kiểm đẩy lên sàn, không còn dimensions_missing', async () => {
+    const { variantId } = await createVariant(companyId);
+    const port = productPort(createModuleContext());
+    const map = {} as CategoryMapRow; // pushBlock chỉ kiểm có ghép danh mục hay không
+    const check = async () => {
+      const [lv] = await withCompany(companyId, () => port.variants([variantId]));
+      return pushBlock(lv!, new Decimal(150000), map, true);
+    };
+    expect((await check())?.code).toBe('dimensions_missing'); // đối chứng: chưa có số đo
+    await testPool().query(
+      'update product.product_variants set weight_g = 250, length_mm = 200, width_mm = 100, height_mm = 30 where id = $1',
+      [variantId],
+    );
+    expect(await check()).toBeNull();
   });
 });
