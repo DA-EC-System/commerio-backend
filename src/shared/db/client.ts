@@ -111,6 +111,8 @@ interface LockChain {
   open: boolean;
   /** Câu lệnh trước trên `client`: nhánh song song trong `fn` xếp hàng, không gửi chồng lên một kết nối (pg@9 cấm). */
   queue: Promise<unknown>;
+  /** Khoá lồng đang chờ hoặc đang giữ trên chuỗi: chuỗi ngoài chờ hết rồi mới nhả khoá và trả kết nối. */
+  readonly nested: Set<Promise<void>>;
 }
 const lockChain = new AsyncLocalStorage<LockChain>();
 
@@ -248,23 +250,35 @@ export async function withSessionLock<T>(
   };
 
   const outer = lockChain.getStore();
-  // Việc chạy tiếp sau khi chuỗi ngoài đã đóng (promise bỏ lửng trong `fn`) thì mở chuỗi mới.
+  // Việc chạy tiếp sau khi chuỗi ngoài đã đóng (promise bỏ lửng trong `fn`) thì mở chuỗi mới. Kiểm `open` và đăng ký vào
+  // `nested` cùng một bước đồng bộ: chuỗi ngoài đóng sau đó sẽ chờ khoá lồng này xong (kể cả `fn` bỏ lửng chạy lâu hơn
+  // `fn` ngoài) rồi mới nhả khoá, nên không có lúc khoá lồng chạy mà khoá đã bị nhả.
   if (outer?.open) {
-    if (!(await retry(() => tryNestedLockOnce(outer, keys)))) return 'busy';
+    let done!: () => void;
+    const settled = new Promise<void>((resolve) => (done = resolve));
+    outer.nested.add(settled);
     try {
-      return await fn();
+      if (!(await retry(() => tryNestedLockOnce(outer, keys)))) return 'busy';
+      try {
+        return await fn();
+      } finally {
+        await unlockNested(outer, keys, keys);
+      }
     } finally {
-      await unlockNested(outer, keys, keys);
+      outer.nested.delete(settled);
+      done();
     }
   }
 
   let client: pg.PoolClient | null = null;
   if (!(await retry(async () => (client = await tryLockOnce(keys)) !== null))) return 'busy';
-  const chain: LockChain = { client: client!, keys: new Set(keys), open: true, queue: Promise.resolve() };
+  const chain: LockChain = { client: client!, keys: new Set(keys), open: true, queue: Promise.resolve(), nested: new Set() };
   try {
     return await lockChain.run(chain, fn);
   } finally {
     chain.open = false;
+    // Khoá lồng còn chạy (`fn` bỏ lửng): chờ xong mới nhả, không thì chúng chạy tiếp mà khoá đã bị nhả.
+    while (chain.nested.size) await Promise.all(chain.nested);
     // Nhả ngay phía server: huỷ kết nối không chờ phiên đóng, lượt liền sau có thể còn thấy khoá. Lỗi nhả (kết nối
     // đứt) thì thôi, phiên chết cũng nhả khoá; không che lỗi của `fn`.
     await chainQuery(chain, 'select pg_advisory_unlock_all()', []).catch(() => undefined);
