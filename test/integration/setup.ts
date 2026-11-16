@@ -7,6 +7,7 @@ afterAll(async () => {
   const { closeDb } = await import('#src/shared/db/client.ts');
   const { stopJobs } = await import('#src/modules/core/platform/service/jobs/boss.ts');
   const { closeTestPool } = await import('./helpers/db.ts');
-  // Đọc gian hàng có đếm việc giữ nên khởi động pg-boss (pool riêng); đóng cùng pool chính.
-  await Promise.all([closeDb(), stopJobs(), closeTestPool()]);
+  // pg-boss dùng chung pool của app (#335): dừng nó trước rồi mới đóng pool.
+  await stopJobs();
+  await Promise.all([closeDb(), closeTestPool()]);
 });

@@ -1,6 +1,6 @@
 // Hàng việc nền trên PostgreSQL (#102), dùng pg-boss. Schema `pgboss` tạo bằng migration 0011, không để thư viện tự tạo.
 import { PgBoss } from 'pg-boss';
-import { env } from '../../../../../shared/config/env.ts';
+import { sharedPool } from '../../../../../shared/db/client.ts';
 import { logger } from '../../../../../shared/logger.ts';
 
 let worker = false;
@@ -22,12 +22,15 @@ export function jobBoss(): Promise<PgBoss> {
 }
 
 function create(): PgBoss {
-  if (!env.DATABASE_URL) throw new Error('Chưa đặt DATABASE_URL');
+  const pool = sharedPool();
   const boss = new PgBoss({
-    connectionString: env.DATABASE_URL,
+    // Dùng chung pool của tiến trình, không mở pool riêng: Session pooler giới hạn tổng số kết nối, pool nằm ngoài
+    // `DB_POOL_MAX` sẽ làm vượt trần (#335). Không có `beginTransaction` nên không dùng được worker `transactional`.
+    db: {
+      executeSql: (text, values) => pool.query(text, values),
+      poolCounts: () => ({ max: pool.options.max ?? 10, total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount }),
+    },
     schema: 'pgboss',
-    application_name: worker ? 'commerio-worker-jobs' : 'commerio-api-jobs',
-    max: worker ? 10 : 2,
     // Schema của migration; bản schema lệch bản thư viện thì start() ném, không chạy lặng lẽ.
     migrate: false,
     createSchema: false,
@@ -42,7 +45,7 @@ function create(): PgBoss {
   return boss;
 }
 
-/** Dừng êm: chờ việc đang chạy xong rồi đóng pool riêng của pg-boss. */
+/** Dừng êm: chờ việc đang chạy xong. Pool là của tiến trình, đóng bằng `closeDb()` sau hàm này. */
 export async function stopJobs(): Promise<void> {
   if (!starting) return;
   const boss = await starting.catch(() => undefined);

@@ -1,0 +1,4 @@
+ALTER TYPE "core"."invitation_status" ADD VALUE 'revoked';--> statement-breakpoint
+ALTER TABLE "core"."invitations" DROP CONSTRAINT "invitations_identity_present";--> statement-breakpoint
+ALTER TABLE "core"."invitations" ADD CONSTRAINT "invitations_revoked_shape" CHECK ("core"."invitations"."status"::text <> 'revoked' or ("core"."invitations"."decided_by" is not null and "core"."invitations"."decided_at" is not null));--> statement-breakpoint
+ALTER TABLE "core"."invitations" ADD CONSTRAINT "invitations_identity_present" CHECK ("core"."invitations"."status"::text in ('open', 'revoked') or ("core"."invitations"."email" is not null and "core"."invitations"."full_name" is not null));

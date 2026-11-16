@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import request from 'supertest';
-import type { EventPayload } from '#src/modules/core/platform/index.ts';
+import type { EventEnvelope, EventPayload, EventType } from '#src/modules/core/platform/index.ts';
 import { handleOtpRequested } from '#src/modules/core/staff/service/otp-consumer.ts';
 import { hashPassword } from '#src/shared/crypto/password.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -111,4 +111,53 @@ export async function newLink(app: Express, token: string, roleIds: string[]): P
     .send({ roleIds });
   if (res.status !== 201) throw new Error(`Tạo link lỗi ${res.status}`);
   return { id: res.body.id as string, token: (res.body.link as string).split('#')[1]! };
+}
+
+/**
+ * Làm thay worker cho sự kiện `type` mới nhất của lời mời trong outbox: gọi `handler` như consumer `shared` (trong
+ * withCompany của sự kiện). Không có sự kiện thì trả `false`.
+ */
+export async function deliverLatest<T extends EventType>(
+  type: T,
+  invitationId: string,
+  handler: (event: EventEnvelope<T, EventPayload<T>>) => Promise<void>,
+): Promise<boolean> {
+  const res = await testPool().query<{ event_id: string; company_id: string; key: string; payload: unknown; created_at: Date }>(
+    `select event_id, company_id, key, payload, created_at from core.outbox_messages
+     where type = $1 and key = $2 order by id desc limit 1`,
+    [type, invitationId],
+  );
+  const row = res.rows[0];
+  if (!row) return false;
+  const event = {
+    eventId: row.event_id,
+    type,
+    companyId: row.company_id,
+    aggregateId: row.key,
+    occurredAt: row.created_at.toISOString(),
+    payload: row.payload as EventPayload<T>,
+  };
+  await withCompany(row.company_id, () => handler(event));
+  return true;
+}
+
+/** Đi trọn `/join/*` qua API tới bước nhập mã đúng; trả `registrationToken`, `next`. */
+export async function claimLink(
+  app: Express,
+  linkToken: string,
+  email: string,
+  fullName = 'Người Được Mời',
+): Promise<{ registrationToken: string; next: 'set_password' | 'sign_in' }> {
+  const join = joinApi(app);
+  const sent = captureMail();
+  const otp = await join.otp(linkToken, email, fullName);
+  if (otp.status !== 202) throw new Error(`Xin mã lỗi ${otp.status}`);
+  const { id } = (await testPool().query<{ id: string }>(
+    "select id from core.invitations where email = $1 and status in ('open', 'claimed') order by created_at desc limit 1",
+    [email],
+  )).rows[0]!;
+  await deliverOtp(id);
+  const verify = await join.verify(linkToken, email, codeIn(sent.at(-1)!));
+  if (verify.status !== 200) throw new Error(`Nhập mã lỗi ${verify.status}`);
+  return verify.body as { registrationToken: string; next: 'set_password' | 'sign_in' };
 }

@@ -6,6 +6,11 @@ metadata:
     app.kubernetes.io/name: worker
 spec:
   replicas: 1
+  # Tắt bản cũ rồi mới bật bản mới (#335): RollingUpdate mặc định (maxSurge 25%, làm tròn lên 1) để hai worker cùng sống
+  # lúc đổi image, cộng thêm DB_POOL_MAX của worker vào ngân sách kết nối và chạy hai relay outbox cùng lúc. Việc nền
+  # ngưng trong lúc đổi; pg-boss giữ việc trong hàng, chạy tiếp khi bản mới lên.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: worker
@@ -29,6 +34,13 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
+          env:
+            # Ít nhất: số khoá phiên giữ cùng lúc (6 hàng của channel gọi sàn có thể làm mới token, 3 việc định kỳ
+            # của finance) + số việc pg-boss chạy song song (tổng localConcurrency của workQueue, đang là 8) + 2
+            # (pg-boss lấy việc, relay outbox) = 19. Thêm hàng việc hay tăng concurrency thì tăng số này và xem lại
+            # ngân sách ở DB_POOL_MAX của api (#335).
+            - name: DB_POOL_MAX
+              value: "19"
           ports:
             - name: metrics
               containerPort: 3001

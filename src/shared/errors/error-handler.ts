@@ -1,5 +1,5 @@
 import type { ErrorRequestHandler, RequestHandler, Response } from 'express';
-import { pgError } from '../db/pg-error.ts';
+import { isConnectionUnavailable, pgError } from '../db/pg-error.ts';
 import { AppError } from './app-error.ts';
 
 const PROBLEM_TYPE_BASE = '/problems/';
@@ -43,6 +43,13 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   }
   if (isTooLarge(err)) {
     sendProblem(res, 413, 'payload_too_large', 'Thân yêu cầu quá lớn', req.originalUrl);
+    return;
+  }
+  // Hết kết nối DB là lỗi tạm thời: 503 kèm Retry-After để FE thử lại, không báo "Lỗi hệ thống" (#335).
+  if (isConnectionUnavailable(err)) {
+    req.log.warn({ err }, 'Không lấy được kết nối DB');
+    res.setHeader('Retry-After', '1');
+    sendProblem(res, 503, 'service_unavailable', 'Hệ thống đang bận, thử lại sau giây lát', req.originalUrl);
     return;
   }
   // Serializer lỗi của pino bỏ `cause`, nên ghi riêng mã PostgreSQL (nếu có) để gỡ lỗi.

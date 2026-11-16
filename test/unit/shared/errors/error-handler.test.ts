@@ -34,6 +34,21 @@ describe('errorHandler', () => {
     expect(lines.join('\n')).not.toContain('KHOA-BIMAT');
   });
 
+  it('hết kết nối DB: trả 503 service_unavailable kèm Retry-After để FE thử lại (#335)', async () => {
+    const app = express();
+    app.use(pinoHttp({ logger: createLogger({ write: () => undefined }) }));
+    app.get('/ban', (_req, _res, next) =>
+      next(new DrizzleQueryError('select 1', [], new Error('timeout exceeded when trying to connect'))),
+    );
+    app.use(errorHandler);
+
+    const res = await request(app).get('/ban');
+
+    expect(res.status).toBe(503);
+    expect(res.headers['retry-after']).toBe('1');
+    expect(res.body).toMatchObject({ type: '/problems/service_unavailable', code: 'service_unavailable' });
+  });
+
   it('AC-20: notImplemented trả 501 kèm issue, owner trong problem body (Documents/21 §18.7.9)', async () => {
     const app = express();
     app.get('/chua-lam', (_req, _res, next) => next(notImplemented('createOpeningStocktake', 'commerio-backend#245', 'Bình')));

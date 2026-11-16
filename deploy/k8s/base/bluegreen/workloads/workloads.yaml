@@ -38,6 +38,12 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
+          env:
+            # Ngân sách kết nối DB (#335, deploy/staging/README.md mục Supabase): mọi bản api, worker, realtime cộng lại,
+            # tính cả hai màu blue, green cùng sống lúc đổi màu, cộng 1 cho db:migrate, không vượt pool size của
+            # Session pooler. deploy/k8s/check.mjs kiểm trong CI. pg-boss dùng chung pool này.
+            - name: DB_POOL_MAX
+              value: "7"
           ports:
             - name: http
               containerPort: 3000
@@ -97,6 +103,10 @@ spec:
                 name: app-config
             - secretRef:
                 name: app-env
+          env:
+            # Chỉ đọc, ghi thông báo; xem ngân sách ở DB_POOL_MAX của api (#335)
+            - name: DB_POOL_MAX
+              value: "2"
           # Cổng stream SSE (Caddy đưa ra ngoài) tách khỏi cổng vận hành /health, /metrics (REALTIME_OPS_PORT).
           ports:
             - name: http
