@@ -4,6 +4,7 @@ import { type ModuleContext, type ModuleDefinition, withContext } from '../../sh
 import { type BulkEditPorts, catalogModule, variantReadinessOf } from './catalog/index.ts';
 import {
   applyReorderRule,
+  deleteStockLevels,
   inventoryModule,
   minQtyOf,
   reorderRulesOf,
@@ -65,6 +66,7 @@ export const productModules: readonly ModuleDefinition[] = [
     minQtyOf,
     stockInUse,
     purchaseInUse,
+    deleteStockLevels,
   })),
   withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf, purchaseDocumentNumbers })),
   purchasingModule,

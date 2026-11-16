@@ -1,6 +1,6 @@
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { categories, products } from './schema.ts';
+import { categories, productChannelSpecs, productImages, products, productVariants, variantAttributeValues } from './schema.ts';
 
 // Mọi hàm chạy trong `withCompany` của service.
 
@@ -112,4 +112,19 @@ export async function updateProductIfVersion(id: string, version: number, name: 
 /** Thêm, ngừng bán biến thể: đổi `updated_at` nhưng không đổi `version` (P7). */
 export async function touchProduct(id: string): Promise<void> {
   await getDb().update(products).set({ updatedAt: sql`now()` }).where(eq(products.id, id));
+}
+
+/** Khoá dòng sản phẩm, trả `version` (không có thì `undefined`). */
+export async function lockProduct(id: string): Promise<number | undefined> {
+  const [row] = await getDb().select({ version: products.version }).from(products).where(eq(products.id, id)).for('update');
+  return row?.version;
+}
+
+/** Xoá hẳn sản phẩm (#204): con trước cha theo khoá ngoại. Ảnh chỉ gỡ khỏi sản phẩm, tệp giữ nguyên. */
+export async function deleteProductTree(productId: string, variantIds: readonly string[]): Promise<void> {
+  if (variantIds.length) await getDb().delete(variantAttributeValues).where(inArray(variantAttributeValues.variantId, [...variantIds]));
+  await getDb().delete(productImages).where(eq(productImages.productId, productId));
+  await getDb().delete(productChannelSpecs).where(eq(productChannelSpecs.productId, productId));
+  await getDb().delete(productVariants).where(eq(productVariants.productId, productId));
+  await getDb().delete(products).where(eq(products.id, productId));
 }

@@ -40,6 +40,8 @@ export interface CatalogContext extends ModuleContext {
   readonly purchaseInUse?: InUseSource;
   readonly orderInUse?: InUseSource;
   readonly listingInUse?: InUseSource;
+  /** Xoá dòng tồn của SKU khi xoá hẳn sản phẩm (inventory; dòng chỉ còn ngưỡng tồn). */
+  readonly deleteStockLevels?: (variantIds: readonly string[]) => Promise<void>;
 }
 
 /** SKU đã dùng trong `variantIds`; SKU chưa dùng thì không có trong Set. Gọi trong `withCompany` của catalog. */
@@ -83,8 +85,11 @@ export async function archiveBlockersOf(
   return result;
 }
 
-/** Cổng một nguồn của `ctx` (ngưỡng tồn, hiện diện); thiếu là lỗi lập trình, không coi là "chưa có số". */
-export function requirePort<K extends 'minQtyOf' | 'listingPresenceOf'>(ctx: CatalogContext, name: K): NonNullable<CatalogContext[K]> {
+/** Cổng một nguồn của `ctx` (ngưỡng tồn, hiện diện, xoá dòng tồn); thiếu là lỗi lập trình, không coi là "chưa có số". */
+export function requirePort<K extends 'minQtyOf' | 'listingPresenceOf' | 'deleteStockLevels'>(
+  ctx: CatalogContext,
+  name: K,
+): NonNullable<CatalogContext[K]> {
   const port = ctx[name];
   if (!port) throw new Error(`Chưa nối cổng của catalog: ${name}`);
   return port as NonNullable<CatalogContext[K]>;

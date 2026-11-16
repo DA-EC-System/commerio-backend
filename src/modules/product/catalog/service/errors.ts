@@ -17,6 +17,13 @@ export const versionConflict = (detail: string, current: unknown) =>
 
 export const inUse = (detail: string) => new AppError(409, 'in_use', detail);
 
+/** Xoá hẳn sản phẩm đã hoàn thiện, đã dùng ở module khác hoặc sinh từ đề nghị nhập (#204, Documents/21 §17.4). */
+export const productInUse = (detail: string) => new AppError(409, 'product_in_use', detail);
+
+/** Biến thể quá 2 thuộc tính (#204, Documents/21 §17.4): kiểm trước khi ghi, thay lỗi CHECK `position in (0, 1)`. */
+export const tooManyAxes = () =>
+  new AppError(422, 'too_many_axes', 'Sản phẩm tối đa 2 thuộc tính phân loại', { errors: { variants: 'Mỗi biến thể tối đa 2 thuộc tính' } });
+
 export const variantExists = (sku: string) => new AppError(409, 'variant_exists', `Tổ hợp này đã có biến thể ${sku}`);
 
 /** Lưu trữ một SKU còn tồn hoặc chứng từ mở (Documents/21 §17.4); `reasons` là câu hiện thẳng ở FE. */

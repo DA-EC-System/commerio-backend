@@ -116,6 +116,7 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       lengthMm: productVariants.lengthMm,
       widthMm: productVariants.widthMm,
       heightMm: productVariants.heightMm,
+      sourceRequestLineId: productVariants.sourceRequestLineId,
       productName: products.name,
       description: products.description,
       categoryId: categories.id,
@@ -164,4 +165,14 @@ export async function variantPrices(
     .select({ id: productVariants.id, standardPrice: productVariants.standardPrice, targetNetPrice: productVariants.targetNetPrice })
     .from(productVariants)
     .where(inArray(productVariants.id, [...ids]));
+}
+
+/** Khoá mọi dòng SKU của sản phẩm theo id tăng dần (xoá hẳn, #204): cùng thứ tự với đổi trạng thái kinh doanh. */
+export async function lockProductVariants(productId: string): Promise<void> {
+  await getDb()
+    .select({ id: productVariants.id })
+    .from(productVariants)
+    .where(eq(productVariants.productId, productId))
+    .orderBy(asc(productVariants.id))
+    .for('update');
 }

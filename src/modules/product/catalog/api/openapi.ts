@@ -158,13 +158,15 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'delete',
     path: '/products/:id',
-    summary: 'Xoá hẳn sản phẩm chờ hoàn thiện chưa dùng (#204, đang làm: 501)',
-    description: 'Lưu trữ sản phẩm cha kiểu cũ đã bỏ: lưu trữ từng SKU bằng `POST /products/:id/business-status`.',
+    summary: 'Xoá hẳn sản phẩm chờ hoàn thiện chưa dùng',
+    description:
+      'Chỉ khi mọi SKU `incomplete`, chưa có ở chứng từ, đơn, listing, lần tính giá nào, không sinh từ đề nghị nhập. Xoá biến ' +
+      'thể, ảnh gắn (không xoá tệp), danh mục sàn, dòng tồn. Lưu trữ sản phẩm cha kiểu cũ đã bỏ: lưu trữ từng SKU bằng ' +
+      '`POST /products/:id/business-status`.',
     request: { params: IdParams, query: VersionQuery },
     responses: {
       204: noContent,
-      409: problemResponse('`version_conflict`'),
-      501: problemResponse('`not_implemented`'),
+      409: problemResponse('`product_in_use` hoặc `version_conflict` (kèm `current`)'),
       ...missing('sản phẩm'),
       ...invalid,
     },

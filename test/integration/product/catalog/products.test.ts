@@ -169,6 +169,21 @@ describe('POST /catalog/products', () => {
     expect(res.body.errors.name).toBeTruthy();
   });
 
+  it('biến thể 3 thuộc tính → 422 too_many_axes, không tạo, không tiêu số (#204)', async () => {
+    const material = await createAttribute(token, uniq('Chất liệu'), ['Cotton']);
+    const category = await createCategory(token, uniq('Ba trục'), 'BT-{SEQ}-{VAL}');
+    const name = uniq('SP ba trục');
+    const res = await api(token).post(
+      '/products',
+      body(name, category.id, [[valueId(color, 'Đen'), valueId(size, 'M'), valueId(material, 'Cotton')]]),
+    );
+    expect(res.status).toBe(422);
+    expect(res.body.type).toBe('/problems/too_many_axes');
+    expect(res.body.errors.variants).toBeTruthy();
+    expect((await api(token).get(`/products?search=${encodeURIComponent(name)}`)).body.total).toBe(0);
+    expect((await categoryOf(category.id)).skuNextSeq).toBe(1);
+  });
+
   // D4 (#204, Thành đồng ý 16/11/2026): bỏ lưu trữ cha nên tên không trùng trên mọi sản phẩm, thay B1 của #12.
   it('tên của sản phẩm mọi SKU đã lưu trữ vẫn bị giữ → 409 name_taken (D4)', async () => {
     const category = await createCategory(token, uniq('Tên'), 'T-{SEQ}');

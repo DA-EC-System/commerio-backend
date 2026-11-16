@@ -1,21 +1,22 @@
 // Sản phẩm (UC-CP-02, UC-CP-04; Documents/21 5.2–5.4, C3, C5, P5–P8, V22, V24; D9; plan #12 B1, B2, B6).
 import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
-import { notImplemented } from '../../../../shared/errors/app-error.ts';
 import { confirmUploads, fileProblem, publicFileUrls, recordAudit } from '../../../core/index.ts';
 import { countLabels, type LabelledSku } from '../domain/labels.ts';
 import { findCategories } from '../repository/categories.ts';
 import { productImageRows, replaceProductImages } from '../repository/product-images.ts';
 import {
+  deleteProductTree,
   findProduct,
   insertProduct,
   listProducts as findPage,
+  lockProduct,
   type ProductFilter,
   type ProductRow,
   productNameExists,
   updateProductIfVersion,
 } from '../repository/products.ts';
-import { findVariants, insertVariant, lockVariants, type VariantRow } from '../repository/variants.ts';
+import { findVariants, insertVariant, lockProductVariants, lockVariants, type VariantRow } from '../repository/variants.ts';
 import {
   auditOf,
   type Caller,
@@ -24,13 +25,15 @@ import {
   nameTaken,
   notFound,
   pgError,
+  productInUse,
+  tooManyAxes,
   versionConflict,
 } from './errors.ts';
 import { type SkuLabels, skuLabels } from './labels.ts';
 import { imagesOf, MAX_PRODUCT_IMAGES } from './product-images.ts';
 import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
-import { archiveBlockersOf } from './usage.ts';
+import { archiveBlockersOf, inUseOf, requirePort } from './usage.ts';
 
 export interface CreateProductInput {
   name: string;
@@ -208,6 +211,8 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
   const imageIds = input.imageFileIds ?? [];
   await confirmUploads(caller.companyId, imageIds);
   return withCompany(caller.companyId, async () => {
+    // Tối đa 2 trục (#204): kiểm trước mọi lần đọc, thay lỗi CHECK `variant_attribute_values_position` của DB.
+    if (input.variants.some((v) => v.attributeValueIds.length > 2)) throw tooManyAxes();
     await lockVariants(caller.companyId);
     // Khoá ngoại kiểm bằng quyền chủ bảng, bỏ qua RLS: phải đọc danh mục dưới công ty mình trước (ground-truth #12).
     const [category] = isUuid(input.categoryId) ? await findCategories(input.categoryId) : [];
@@ -274,11 +279,36 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
 }
 
 /**
- * `DELETE /catalog/products/:id`: xoá hẳn sản phẩm chờ hoàn thiện chưa dùng (#204, spec mục 6). Lưu trữ cha kiểu cũ đã
- * bỏ (lưu trữ từng SKU qua `business-status`); thân xoá hẳn làm ở Task 6 của PR 3, tới đó trả 501 sau khi kiểm có sản
- * phẩm.
+ * `DELETE /catalog/products/:id`: xoá hẳn (#204 spec mục 6, Documents/21 §17.2). Chỉ khi mọi SKU chờ hoàn thiện, không
+ * module nào đã dùng SKU (`inUseOf`), không SKU nào sinh từ đề nghị nhập; ngược lại 409 `product_in_use`. Lưu trữ sản
+ * phẩm cha kiểu cũ đã bỏ: lưu trữ từng SKU qua `business-status`.
+ *
+ * Thứ tự khoá: khoá công ty (cùng thêm biến thể, đổi trạng thái) → dòng SKU theo id → dòng sản phẩm → dòng tồn (inventory
+ * xoá cuối), cùng chiều với PATCH SKU và sửa hàng loạt (SKU → sản phẩm → dòng tồn). Khoá trước khi đọc để PATCH SKU, PUT
+ * sản phẩm không làm SKU hoàn thiện giữa lúc kiểm và lúc xoá.
  */
-export async function deleteProduct(_ctx: CatalogContext, caller: Caller, id: string, _version: number): Promise<void> {
-  await withCompany(caller.companyId, () => findOwnProduct(id));
-  throw notImplemented('Xoá hẳn sản phẩm', '#204', 'Khang');
+export async function deleteProduct(ctx: CatalogContext, caller: Caller, id: string, version: number): Promise<void> {
+  await withCompany(caller.companyId, async () => {
+    await lockVariants(caller.companyId);
+    await findOwnProduct(id);
+    await lockProductVariants(id);
+    if ((await lockProduct(id)) !== version) await rejectStale(ctx, await findOwnProduct(id));
+    const product = await findOwnProduct(id);
+    const variants = await findVariants({ productId: id });
+    const ids = variants.map((v) => v.id);
+    const imageIds = await imageIdsOf(id);
+    const parent = { name: product.name, categoryId: product.categoryId, imageCount: imageIds.length };
+    const labels = await skuLabels(ctx, variants, () => parent);
+    if (variants.some((v) => labels.get(v.id)!.readiness === 'ready')) {
+      throw productInUse('Sản phẩm có SKU đã hoàn thiện, không xoá hẳn được; lưu trữ từng SKU');
+    }
+    if ((await inUseOf(ctx, ids)).size) throw productInUse('Sản phẩm đã có chứng từ hoặc listing, không xoá hẳn được; lưu trữ từng SKU');
+    if (variants.some((v) => v.sourceRequestLineId)) throw productInUse('Sản phẩm sinh từ đề nghị nhập, không xoá hẳn được');
+    await requirePort(ctx, 'deleteStockLevels')(ids);
+    await deleteProductTree(id, ids);
+    await recordAudit({
+      ...auditOf(caller, 'delete', ENTITY, id),
+      before: { ...snapshot(product, product.categoryName, variants, imageIds), code: product.code },
+    });
+  });
 }
