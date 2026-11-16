@@ -34,7 +34,11 @@ export type PackageAction =
   | 'return'
   | 'receive_return'
   | 'lose'
-  | 'found';
+  | 'lose_on_unload'
+  | 'found'
+  | 'platform_lost'
+  | 'platform_in_transit'
+  | 'platform_deliver';
 
 /** Kiện đang giữ hàng: tính vào Đang giữ của tồn kho. */
 export const HOLDING: readonly PackageStatus[] = ['reserved', 'packed', 'awaiting_pickup'];
@@ -71,13 +75,30 @@ export const isHandedOver = (s: PackageStatus) => HANDED_OVER.includes(s);
 export const isStopped = (s: PackageStatus) => STOPPED.includes(s);
 export const isSealed = (s: PackageStatus) => SEALED.includes(s);
 
+/** Nguồn của lần chuyển gần nhất vào trạng thái hiện tại (cột `source` của lịch sử trạng thái). */
+export type StatusSource = 'user' | 'marketplace' | 'system';
+
 export interface PackageRecord {
   source: 'marketplace' | 'inbox' | 'manual';
   selfDelivery: boolean;
   orderStatus: 'unpaid' | 'processing' | 'completed' | 'cancelled';
+  /** Cờ Cần mở; chỉ cần nạp khi xét `lose_on_unload`. */
+  needsOpen?: boolean;
+  /** Bên gọi nạp từ lịch sử trạng thái, chỉ khi xét `platform_in_transit`, `platform_deliver`. */
+  statusSource?: StatusSource;
 }
 
+/** Tập `from` của `lose`: kiện đã rời kho mà chưa dừng. */
+const LOSE_FROM: readonly PackageStatus[] = ['in_transit', 'delivery_failed', 'returning', 'self_delivering'];
+/** Trạng thái còn báo mất được: tập `from` của `lose` và `lose_on_unload` (spec #238 §5.3). */
+export const LOSABLE: readonly PackageStatus[] = [...LOSE_FROM, ...SEALED];
+export const canReportLost = (s: PackageStatus) => LOSABLE.includes(s);
+
+/** Sàn kéo lại kiện người dùng đã chuyển sang `lost`/`returning` (spec #238 §5.4). */
+const REVIVE_FROM: readonly PackageStatus[] = ['lost', 'returning'];
+
 const carrierOnly = (r: PackageRecord) => (r.source === 'marketplace' ? 'not_allowed_for_source' : null);
+const userMoved = (r: PackageRecord) => (r.statusSource === 'user' ? null : 'status_from_platform');
 const process = 'fulfillment.order.process';
 const delivery = 'fulfillment.delivery.update';
 
@@ -141,15 +162,31 @@ export const packageMachine = defineMachine<PackageStatus, PackageAction, Packag
     guard: carrierOnly,
   },
   { from: 'returning', to: 'returned', action: 'receive_return', permission: process },
+  // `lose` đứng trước `platform_lost`: `arrowAction` không truyền `system` trả mũi tên khớp đầu tiên.
   {
-    from: ['awaiting_pickup', 'in_transit', 'delivery_failed', 'returning', 'self_delivering'],
+    from: LOSE_FROM,
     to: 'lost',
     action: 'lose',
     permission: process,
     needsSecondPerson: true,
+    allowSelfApproval: true,
     needsReason: true,
   },
+  // Kiện đã đóng không thấy khi dỡ (25 §8.3): chỉ khi đang chờ mở; bên gọi ghi bàn giao (trừ tồn) rồi `lost`.
+  {
+    from: SEALED,
+    to: 'lost',
+    action: 'lose_on_unload',
+    permission: process,
+    needsSecondPerson: true,
+    allowSelfApproval: true,
+    needsReason: true,
+    guard: (r) => (r.needsOpen ? null : 'not_awaiting_open'),
+  },
   { from: 'lost', to: 'returned', action: 'found', permission: process },
+  { from: LOSE_FROM, to: 'lost', action: 'platform_lost', system: true },
+  { from: REVIVE_FROM, to: 'in_transit', action: 'platform_in_transit', system: true, guard: userMoved },
+  { from: REVIVE_FROM, to: 'delivered', action: 'platform_deliver', system: true, guard: userMoved },
 ]);
 
 /** Đường chính: sàn báo nhảy cóc trên đường này thì áp thẳng. */
@@ -159,22 +196,42 @@ const PRE_HANDOVER: readonly PackageStatus[] = ['backordered', 'reserved', 'pack
 
 const fromList = (from: PackageStatus | readonly PackageStatus[]) => (typeof from === 'string' ? [from] : from);
 
-/** Thao tác của mũi tên `from → to` trong bảng, `undefined` khi không có mũi tên. */
-export function arrowAction(from: PackageStatus, to: PackageStatus): PackageAction | undefined {
-  return packageMachine.transitions.find((t) => t.to === to && fromList(t.from).includes(from))?.action;
+/**
+ * Thao tác của mũi tên `from → to` trong bảng, `undefined` khi không có mũi tên. `system`: đường sàn, mũi tên của hệ
+ * thống khớp trước (sàn báo mất ra `platform_lost`, không ra `lose`); không có thì trả mũi tên khớp bất kỳ.
+ */
+export function arrowAction(from: PackageStatus, to: PackageStatus, opts: { system?: boolean } = {}): PackageAction | undefined {
+  const arrows = packageMachine.transitions.filter((t) => t.to === to && fromList(t.from).includes(from));
+  return ((opts.system ? arrows.find((t) => t.system) : undefined) ?? arrows[0])?.action;
 }
 
 /**
- * Sàn đẩy trạng thái kiện: `direct` khi có mũi tên, `jump` khi nhảy tới trên đường chính (kiện thiếu hàng tính như
- * đang giữ), `invalid` khi không áp được (kiện gắn cờ Cần xử lý). Kiện trước bàn giao mà sàn báo nhánh giao lỗi
- * (`delivery_failed`, `returning`) là `jump`: `stockEffectOf` trả `ship` nên lõi bàn giao tự bù trừ tồn (D5, spec
- * 199c §5.2).
+ * Sàn báo kiện `lost`/`returning` quay lại `in_transit`/`delivered` (`platform_in_transit`, `platform_deliver`): chỉ
+ * áp được khi trạng thái hiện tại do người chuyển tay; bên gọi nạp nguồn đó từ lịch sử trạng thái.
  */
-export function platformUpdate(from: PackageStatus, to: PackageStatus): 'direct' | 'jump' | 'invalid' {
-  if (arrowAction(from, to)) return 'direct';
+export const isPlatformRevive = (from: PackageStatus, to: PackageStatus) =>
+  REVIVE_FROM.includes(from) && (to === 'in_transit' || to === 'delivered');
+
+/**
+ * Sàn đẩy trạng thái kiện, xét theo thứ tự:
+ * 1. Kiện `lost`/`returning` mà sàn báo `in_transit`/`delivered` (`platform_in_transit`, `platform_deliver`): `direct`
+ *    khi trạng thái hiện tại do người chuyển tay (`ctx.statusSource = 'user'`), còn lại `invalid` (spec #238 §5.4).
+ * 2. Kiện trước bàn giao mà sàn báo nhánh giao lỗi (`delivery_failed`, `returning`) hoặc `lost`: `jump`;
+ *    `stockEffectOf` trả `ship` nên lõi bàn giao tự bù trừ tồn (spec 199c D5, spec #238 D18). Xét trước mũi tên vì
+ *    `packed`/`awaiting_pickup` → `lost` có mũi tên `lose_on_unload` của người dùng.
+ * 3. `direct` khi có mũi tên (ưu tiên mũi tên hệ thống), `jump` khi nhảy tới trên đường chính (kiện thiếu hàng tính
+ *    như đang giữ), còn lại `invalid` (kiện gắn cờ Cần xử lý).
+ */
+export function platformUpdate(
+  from: PackageStatus,
+  to: PackageStatus,
+  ctx: { statusSource?: StatusSource } = {},
+): 'direct' | 'jump' | 'invalid' {
+  if (isPlatformRevive(from, to)) return ctx.statusSource === 'user' ? 'direct' : 'invalid';
+  if (PRE_HANDOVER.includes(from) && (to === 'delivery_failed' || to === 'returning' || to === 'lost')) return 'jump';
+  if (arrowAction(from, to, { system: true })) return 'direct';
   const a = MAIN_PATH.indexOf(from === 'backordered' ? 'reserved' : from);
   const b = MAIN_PATH.indexOf(to);
   if (a >= 0 && b > a) return 'jump';
-  if (PRE_HANDOVER.includes(from) && (to === 'delivery_failed' || to === 'returning')) return 'jump';
   return 'invalid';
 }

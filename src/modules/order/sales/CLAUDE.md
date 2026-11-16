@@ -8,6 +8,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 - **Cờ lưu:** `needs_attention`, `cancel_requested`, `cancelling`, `platform_cancelled`, `shop_disconnected`. **Cờ suy ra** lúc đọc (`service/orders.ts`): `unmapped_sku` (dòng `variant_id` trống), `due_soon` (còn kiện chưa rời kho, dưới 24 giờ tới `ship_by`), `return_requested` (yêu cầu trả còn mở: `requested`, `awaiting_return`, `received`). `cod_mismatch` chưa có nguồn.
 - **Giai đoạn hiển thị** `stageOf` và **lý do chưa hoàn tất** `completionBlocker` suy từ kiện. Danh sách phân trang trong SQL; cờ lưu, `unmapped_sku`, `return_requested` lọc bằng SQL; chỉ giai đoạn suy từ kiện và `due_soon` lọc trong bộ nhớ, trên 1.000 đơn chưa dừng mới nhất (`DERIVED_SCAN`).
+- **Chi tiết đơn** dựng kiện bằng `toPackageSummary` của fulfillment; tên người báo thất lạc (`lostReport.by.name`, #238) tra một lần cho mọi kiện của đơn qua `findAccountSummaries` (`core`), đơn không có báo cáo thì không truy vấn.
 - **Trạng thái thanh toán** `paymentStatus` (#234, §21.2) đọc qua `ctx.paymentStatusOf` (finance tiêm ở `src/wiring.ts`; sales không đọc bảng finance), đơn chưa có dòng là `none`; `mismatch` thì cờ `payment_mismatch`. Cờ này không lọc được ở `GET /sales/orders?flag=` (lọc ở `/finance/payments?status=mismatch`). Trạng thái đơn không đổi theo trạng thái thanh toán.
 - Tiền lưu `numeric`, API trả số nguyên đồng.
 
@@ -16,7 +17,7 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 `service/ingest.ts` `ingestMarketplaceOrder(order)`, gọi trong `withCompany`; channel gọi từ lượt kéo định kỳ (không có push, #133 đóng). Một đơn một giao dịch: đơn, dòng (mỗi món Lazada một dòng số lượng 1), kiện, giữ hàng, lịch sử, outbox.
 
 - Chèn `on conflict do nothing` rồi khoá đọc lại: hai lần kéo cùng đơn chỉ tạo một đơn. Mã `DH-000001`, mã kiện `KH-000001` từ `order.doc_counters`.
-- Sàn đã trả (mọi trạng thái trừ `unpaid`) → `pay`. Cả đơn bị huỷ: chưa kiện nào đóng gói → `platform_cancel`, phát `sales.order_cancelled`; còn kiện đã đóng gói → cờ `cancelling` (mở kiện là #106); có kiện đã rời kho → cờ `platform_cancelled`.
+- Sàn đã trả (mọi trạng thái trừ `unpaid`) → `pay`. Cả đơn bị huỷ: chưa kiện nào đóng gói → `platform_cancel`, phát `sales.order_cancelled`; còn kiện đã đóng gói → cờ `cancelling` (mở kiện là #106); có kiện đã rời kho → cờ `platform_cancelled`, và không còn kiện chờ mở thì gỡ `cancelling` (`25` §8.2: đơn Đang huỷ có kiện hoá ra đã bàn giao, vd kho xác nhận không thấy kiện khi dỡ `lose_on_unload` (#238), đi theo "Sàn huỷ đơn khi đã có kiện bàn giao"). Còn kiện chờ mở thì `cancelling` giữ nguyên.
 - Kiện do `fulfillment/service/platform-packages.ts`: mỗi mã kiện sàn một kiện, kiện tạm nhận mã ở lần sau; trạng thái kiện là món chậm nhất; sàn nhảy cóc trên đường chính thì áp thẳng (`platform_sync`), không áp được thì cờ kiện cần xử lý. Giữ hàng qua `fulfillment/service/stock-port.ts` (cổng thật của inventory, #206); kiện vào nhóm rời kho thì fulfillment trừ tồn (#199 phần a, `fulfillment/CLAUDE.md`). `PlatformOrder.holdStock = false` (gian hàng chờ kiểm kê đầu kỳ) thì không gọi `reserve`, kiện rời kho thì hoãn trừ; `PlatformOrder.orderCutoffAt` (mốc kéo đơn, channel truyền) quyết kiện lần đầu thấy đã rời kho có trừ tồn không.
 - `PlatformOrder.packageEvents` (hành trình kiện channel đọc ngoài giao dịch, #199 phần c) và `cancelKind` của món truyền nguyên xuống `syncPlatformPackages`. Sàn huỷ mọi món vì giao không thành (`cancelKind = 'failed_delivery'`): kiện sang `returning`, fulfillment báo `handed_over` nên đơn bật cờ `platform_cancelled`, không huỷ (sales không có luật riêng).
 - **Huỷ dòng** (#205 PR 2, spec 205 §5.10): `order_lines.cancelled_qty` (CHECK `order_lines_cancelled_qty`: 0..`quantity`) **chỉ** luồng này ghi. Trước khi đồng bộ kiện đọc dòng đã huỷ đủ (`cancelledLineIds`) và truyền `alreadyCancelled` cho từng món; sau đồng bộ ghi `cancelled_qty = quantity` cho `cancelledLines` fulfillment trả (`markLinesCancelled`, dòng đã ghi thì không tăng `version`): món sàn huỷ mà kiện chưa rời kho (gỡ khỏi kiện, chờ bỏ, huỷ cùng kiện). Kiện đã rời kho thì giữ 0. Không suy ngược từ dòng kiện: trigger kiểm bằng của CSDL (`db/CLAUDE.md`) mới có tác dụng. Quyết huỷ cả đơn không đổi.
@@ -33,7 +34,9 @@ Máy trạng thái ở `domain/order.ts`, cùng bảng FE `src/lib/machines/orde
 
 ## Tự hoàn tất (#105 PR 2)
 
-`service/complete.ts`, mỗi giờ trong worker (`startBackground`): đơn `processing`, không `cancelling`, mọi kiện dừng, qua 7 ngày từ kiện giao cuối, không còn yêu cầu trả mở → `complete` (người làm trống, `source = system`), ghi `outcome`, `completed_at`, `return_window_ends_at`. Đơn COD tay chờ kế toán (`cod_unconfirmed`) chưa có nguồn.
+`service/complete.ts`, mỗi giờ trong worker (`startBackground`): đơn `processing`, mọi kiện dừng, qua 7 ngày từ kiện giao cuối, không còn yêu cầu trả mở → `complete` (người làm trống, `source = system`), ghi `outcome`, `completed_at`, `return_window_ends_at`. Đơn COD tay chờ kế toán (`cod_unconfirmed`) chưa có nguồn.
+
+- Đơn `cancelling` (#238, `25` §8.2): còn kiện chờ mở thì kiện đó chưa dừng nên chưa hoàn tất; mọi kiện đã dừng và có kiện không huỷ (kiện hoá ra đã bàn giao) thì hoàn tất như thường và ghi `cancelling = false`, không chờ lượt kéo đơn (đơn sàn không đổi có thể không được kéo lại). Mọi kiện đều huỷ thì không hoàn tất: đơn đó phải sang `cancelled`.
 
 ## Yêu cầu trả (#202, §20, §20.1, 25 §9)
 

@@ -16,6 +16,7 @@ export function api(token: string) {
     get: (path: string) => auth(request(app).get(BASE + path)),
     post: (path: string, body: object) => auth(request(app).post(BASE + path).send(body)),
     put: (path: string, body: object) => auth(request(app).put(BASE + path).send(body)),
+    patch: (path: string, body: object) => auth(request(app).patch(BASE + path).send(body)),
     delete: (path: string) => auth(request(app).delete(BASE + path)),
   };
 }

@@ -261,13 +261,15 @@ describe('đồng bộ sàn: hoàn về, huỷ vì giao không thành, nhảy t�
     expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: -1 });
   });
 
-  it('AC8: kiện reserved, sàn báo lost → cờ Cần xử lý như cũ', async () => {
+  // #238 D18 đổi hành vi: trước bàn giao mà sàn báo `lost` là nhảy cóc như giao lỗi (trước #238: chỉ cờ Cần xử lý).
+  // Ca đầy đủ ở `platform-lost.test.ts` (AC11b).
+  it('AC8 (#238 D18): kiện reserved, sàn báo lost → bù bàn giao một phiếu XK rồi lost', async () => {
     const s = await setup(10);
     const o = remote(s);
     const { packageId } = await ingest(s.companyId, o);
     await ingest(s.companyId, withStatus(o, 'lost'));
-    expect(await packageRow(packageId)).toMatchObject({ status: 'reserved', needs_attention: true, flag_note: 'Sàn báo lost khi kiện đang reserved' });
-    expect(await packageDocuments(packageId)).toEqual([]);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'lost', handover_source: 'marketplace', needs_attention: false });
+    expect((await packageDocuments(packageId)).map((d) => d.kind)).toEqual(['shipment']);
   });
 
   it.each([

@@ -2,8 +2,9 @@ import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import type { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
-  CarrierList, FoundBody, HandOverBody, HandOverResult, OpenBody, PackBody, Package, PackageDocumentsQuery, PackageListQuery,
-  PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, ReceiveReturnBody, SplitBody, UndoHandoverBody,
+  CarrierList, ConfirmLostBody, FoundBody, HandOverBody, HandOverResult, OpenBody, PackBody, Package, PackageDocumentsQuery,
+  PackageListQuery, PackagePage, PackageParams, PickList, PickListQuery, ReadyBody, ReceiveReturnBody, ReportLostBody, SplitBody,
+  UndoHandoverBody,
 } from './schemas.ts';
 
 const bearer = [{ bearerAuth: [] }];
@@ -171,6 +172,40 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: không có hoặc của công ty khác'),
       409: problemResponse('`version_conflict` kèm `current`, `invalid_transition` (kiện không ở `lost`, kể cả gửi lần hai)'),
       422: problemResponse('`validation_failed`: lỗi `lines` theo §15.3'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/report-lost',
+    summary: 'Báo kiện thất lạc (§19.2)',
+    description:
+      'Cần `fulfillment.order.process`. Kiện sau bàn giao (`in_transit`, `delivery_failed`, `returning`, `self_delivering`), hoặc kiện đã đóng (`packed`, `awaiting_pickup`) đang chờ mở. Ghi người báo, giờ, mã khiếu nại; trạng thái giữ nguyên, kiện mang cờ `lost_reported` tới khi người khác xác nhận.',
+    security: bearer,
+    request: { params: PackageParams, body: json(ReportLostBody) },
+    responses: {
+      200: { description: 'Kiện sau khi báo', ...json(Package) },
+      ...auth,
+      404: packageMissing,
+      409: problemResponse('`invalid_transition` kèm `current`, `not_awaiting_open`, `already_reported`, `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed`: `claimCode` rỗng hoặc quá 100 ký tự'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/packages/:id/confirm-lost',
+    summary: 'Xác nhận kiện thất lạc (§19.2)',
+    description:
+      'Cần `fulfillment.order.process`. Người khác người báo (CEO, hoặc công ty một người, được tự xác nhận). Kiện `lost`, phát `fulfillment.package_lost` kèm mã khiếu nại. Kiện đã đóng không thấy khi dỡ: ghi bàn giao (trừ tồn một lần, phiếu `XK`) rồi `lost`.',
+    security: bearer,
+    request: { params: PackageParams, body: json(ConfirmLostBody) },
+    responses: {
+      200: { description: 'Kiện sau khi xác nhận', ...json(Package) },
+      ...auth,
+      404: packageMissing,
+      409: problemResponse(
+        '`not_reported`, `invalid_transition` kèm `current`, `second_person_required`, `not_awaiting_open`, `version_conflict` kèm `current`',
+      ),
+      422: problemResponse('`validation_failed`'),
     },
   });
   registry.registerPath({

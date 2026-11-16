@@ -89,4 +89,8 @@ describe('pickupUnconfirmed: kho quét quá 24 giờ mà sàn chưa xác nhận'
   it('kiện đã về chờ lấy (huỷ bàn giao) → false', () => {
     expect(pickupUnconfirmed({ ...base, status: 'awaiting_pickup' }, now)).toBe(false);
   });
+
+  it('kiện lost (không thấy khi dỡ, #238): kho ghi bàn giao nhưng không sàn nào xác nhận lấy → false', () => {
+    expect(pickupUnconfirmed({ ...base, status: 'lost', handedOverAt: hoursAgo(25) }, now)).toBe(false);
+  });
 });

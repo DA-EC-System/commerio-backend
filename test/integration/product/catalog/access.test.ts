@@ -33,7 +33,7 @@ describe('Sale chỉ có catalog.product.view (AC-15)', () => {
     expect((await api(sale).get(path === 'detail' ? `/products/${ownProductId}` : path)).status).toBe(200);
   });
 
-  // 11 operation ghi; body rỗng vẫn 403 vì kiểm quyền đứng trước validate.
+  // 12 operation ghi; body rỗng vẫn 403 vì kiểm quyền đứng trước validate.
   const writes: [string, (t: string) => request.Test][] = [
     ['POST /categories', (t) => api(t).post('/categories', {})],
     ['PUT /categories/:id', (t) => api(t).put(`/categories/${theirs.categoryId}`, {})],
@@ -46,6 +46,7 @@ describe('Sale chỉ có catalog.product.view (AC-15)', () => {
     ['DELETE /products/:id', (t) => api(t).delete(`/products/${theirs.product.id}`)],
     ['POST /products/:id/variants', (t) => api(t).post(`/products/${theirs.product.id}/variants`, {})],
     ['DELETE /products/:id/variants/:variantId', (t) => api(t).delete(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`)],
+    ['PATCH /products/:id/variants/:variantId', (t) => api(t).patch(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`, {})],
   ];
   it.each(writes)('%s → 403 forbidden', async (_name, call) => {
     const res = await call(sale);
@@ -65,6 +66,7 @@ describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)'
     ['DELETE sản phẩm', () => api(ceo).delete(`/products/${theirs.product.id}?version=1`)],
     ['thêm biến thể', () => api(ceo).post(`/products/${theirs.product.id}/variants`, { attributeValueIds: [] })],
     ['ngừng bán biến thể', () => api(ceo).delete(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`)],
+    ['sửa SKU', () => api(ceo).patch(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`, { version: 1, weightG: 1 })],
   ])('%s → 404 not_found', async (_name, call) => {
     const res = await call();
     expect(res.status).toBe(404);

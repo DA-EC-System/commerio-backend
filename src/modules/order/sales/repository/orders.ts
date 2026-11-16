@@ -194,6 +194,10 @@ export async function updateOrderAt(id: string, version: number, patch: Partial<
 /**
  * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền tự hoàn tất: gọi ngoài `withCompany`
  * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở kiểm tiếp trong `withCompany` của từng đơn.
+ *
+ * Đơn Đang huỷ (`cancelling`): còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại. Mọi kiện đã dừng mà còn kiện
+ * không huỷ (kiện hoá ra đã bàn giao) thì đi theo "Sàn huỷ đơn khi đã có kiện bàn giao" (25 §8.2): hoàn tất được, kể cả
+ * khi lượt kéo đơn chưa chạy lại để gỡ cờ. Mọi kiện đều huỷ thì đơn phải sang `cancelled` (25 §8.2), không hoàn tất.
  */
 export async function findCompletionCandidates(): Promise<{ id: string; companyId: string }[]> {
   return getDb()
@@ -202,7 +206,7 @@ export async function findCompletionCandidates(): Promise<{ id: string; companyI
     .where(
       and(
         eq(orders.status, 'processing'),
-        eq(orders.cancelling, false),
+        sql`(not ${orders.cancelling} or exists (select 1 from "order".packages p where p.order_id = ${orders.id} and p.status <> 'cancelled'))`,
         sql`exists (select 1 from "order".packages p where p.order_id = ${orders.id})`,
         sql`not exists (select 1 from "order".packages p where p.order_id = ${orders.id}
               and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,

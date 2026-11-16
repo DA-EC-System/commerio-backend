@@ -35,12 +35,22 @@ export interface PackageShopRef {
 
 const isoOrNull = (d: Date | null) => d?.toISOString() ?? null;
 
-/** Hình trả về khớp schema `PackageSummary` (`api/schemas.ts`); test route parse bằng schema đó. */
+/** Báo cáo thất lạc đang treo hoặc đã xác nhận (spec #238 §5.3); tên người báo bên gọi tra một lần cho cả trang. */
+function lostReportOf(p: PackageViewRow, names: ReadonlyMap<string, string>) {
+  if (p.lostReportedBy === null || p.lostReportedAt === null || p.lostClaimCode === null) return null;
+  return { by: { id: p.lostReportedBy, name: names.get(p.lostReportedBy) ?? '' }, at: p.lostReportedAt.toISOString(), claimCode: p.lostClaimCode };
+}
+
+/**
+ * Hình trả về khớp schema `PackageSummary` (`api/schemas.ts`); test route parse bằng schema đó. `names`: họ tên tài
+ * khoản theo id (người báo thất lạc); thiếu thì tên rỗng như `StatusChange.by`.
+ */
 export function toPackageSummary(
   p: PackageViewRow,
   order: PackageOrderRef,
   shop: PackageShopRef | null,
   now: number,
+  names: ReadonlyMap<string, string> = new Map(),
 ) {
   // Dòng kiện theo thứ tự dòng đơn (sales sắp theo mã món sàn), như chi tiết đơn; dòng kiện chèn một câu không có thứ tự riêng.
   const position = new Map([...order.lines.keys()].map((id, i) => [id, i]));
@@ -88,7 +98,7 @@ export function toPackageSummary(
     handedOverAt: isHandedOver(p.status) ? isoOrNull(p.handedOverAt) : null,
     deliveredAt: isoOrNull(p.deliveredAt),
     deliveredBy: null,
-    lostReport: null,
+    lostReport: lostReportOf(p, names),
     createdAt: p.createdAt.toISOString(),
     version: p.version,
   };

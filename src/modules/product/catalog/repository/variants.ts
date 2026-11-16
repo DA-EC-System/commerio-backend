@@ -45,6 +45,33 @@ export async function setVariantArchived(id: string, archived: boolean): Promise
     .where(eq(productVariants.id, id));
 }
 
+/** Trường của SKU mà PATCH sửa được (#204); giá là chuỗi `numeric`. Khoá vắng mặt thì giữ nguyên, `null` là xoá. */
+export type VariantPatch = Partial<{
+  standardPrice: string | null;
+  targetNetPrice: string | null;
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+}>;
+
+/**
+ * Ghi khi `version` còn đúng, tăng `version` của SKU. Không trúng dòng (người khác vừa sửa) thì `undefined`. Câu UPDATE
+ * khoá dòng SKU tới hết giao dịch: sự kiện ghi outbox sau đó giữ đúng thứ tự theo SKU (outbox/README.md).
+ */
+export async function updateVariantIfVersion(id: string, version: number, patch: VariantPatch) {
+  const [row] = await getDb()
+    .update(productVariants)
+    .set({ ...patch, version: sql`${productVariants.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(productVariants.id, id), eq(productVariants.version, version)))
+    .returning({
+      version: productVariants.version,
+      updatedAt: productVariants.updatedAt,
+      targetNetPrice: productVariants.targetNetPrice,
+    });
+  return row;
+}
+
 /** Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. */
 export async function findVariants(filter: { productId?: string; ids?: readonly string[] } = {}) {
   const rows = await getDb()
@@ -54,7 +81,15 @@ export async function findVariants(filter: { productId?: string; ids?: readonly 
       sku: productVariants.sku,
       archivedAt: productVariants.archivedAt,
       businessStatus: productVariants.businessStatus,
+      version: productVariants.version,
+      standardPrice: productVariants.standardPrice,
+      targetNetPrice: productVariants.targetNetPrice,
+      weightG: productVariants.weightG,
+      lengthMm: productVariants.lengthMm,
+      widthMm: productVariants.widthMm,
+      heightMm: productVariants.heightMm,
       productName: products.name,
+      description: products.description,
       productArchivedAt: products.archivedAt,
       categoryId: categories.id,
       categoryName: categories.name,
@@ -93,10 +128,12 @@ export async function findVariants(filter: { productId?: string; ids?: readonly 
 
 export type VariantRow = Awaited<ReturnType<typeof findVariants>>[number];
 
-/** Giá chuẩn của các biến thể (chuỗi `numeric`, trống khi chưa đặt). */
-export async function standardPricesByVariant(ids: readonly string[]): Promise<{ id: string; standardPrice: string | null }[]> {
+/** Giá chuẩn và giá muốn bán của các biến thể (chuỗi `numeric`, trống khi chưa đặt). */
+export async function variantPrices(
+  ids: readonly string[],
+): Promise<{ id: string; standardPrice: string | null; targetNetPrice: string | null }[]> {
   return getDb()
-    .select({ id: productVariants.id, standardPrice: productVariants.standardPrice })
+    .select({ id: productVariants.id, standardPrice: productVariants.standardPrice, targetNetPrice: productVariants.targetNetPrice })
     .from(productVariants)
     .where(inArray(productVariants.id, [...ids]));
 }
