@@ -129,7 +129,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
 
   router.delete('/products/:id', manage, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    await products.archiveProduct(ctx, caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
+    await products.deleteProduct(ctx, caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
     res.status(204).end();
   });
 

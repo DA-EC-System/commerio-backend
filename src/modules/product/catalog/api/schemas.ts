@@ -202,6 +202,7 @@ const blankAsMissing = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (
 export const ProductListQuery = z.object({
   search: blankAsMissing(z.string('Chỉ gửi một từ khoá').trim().optional()),
   categoryId: blankAsMissing(z.uuid('Danh mục không hợp lệ').optional()),
+  /** `active`: còn SKU chưa lưu trữ; `archived`: mọi SKU đã lưu trữ (#204). */
   status: blankAsMissing(z.enum(['active', 'archived'], 'Trạng thái là active hoặc archived').default('active')),
   page: blankAsMissing(z.coerce.number().int().min(1, 'Trang từ 1').default(1)),
   pageSize: blankAsMissing(z.coerce.number().int().min(1, 'Từ 1 đến 100 dòng').max(100, 'Từ 1 đến 100 dòng').default(20)),
@@ -246,7 +247,7 @@ export const Variant = z
     attributes: z.array(
       z.object({ attributeId: z.uuid(), attributeName: z.string(), valueId: z.uuid(), value: z.string() }),
     ),
-    archivedAt: z.string().nullable().meta({ description: 'Ngừng bán lúc nào; null là đang bán' }),
+    archivedAt: z.string().nullable().meta({ description: 'Lưu trữ lúc nào; null là chưa lưu trữ' }),
     businessStatus: z
       .enum(BUSINESS_STATUSES)
       .meta({ description: 'Trạng thái kinh doanh của SKU (Documents/21 §17.1)' }),
@@ -275,10 +276,11 @@ export const ProductListItem = z
   .object({
     id: z.uuid(),
     name: z.string(),
+    code: z.string().meta({ description: 'Mã cha, cấp lúc tạo theo quy tắc SKU của danh mục, không sửa (#204 D5)' }),
     category: z.object({ id: z.uuid(), name: z.string() }),
-    variantCount: z.number().int().meta({ description: 'Số biến thể đang bán' }),
+    variantCount: z.number().int().meta({ description: 'Số SKU chưa lưu trữ' }),
     thumbnailUrl: z.string().nullable(),
-    status: z.enum(['active', 'archived']),
+    status: z.enum(['active', 'archived']).meta({ description: '`archived` khi mọi SKU đã lưu trữ (suy từ SKU, không lưu)' }),
     updatedAt: z.string(),
     version: z.number().int(),
   })

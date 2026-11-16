@@ -29,7 +29,10 @@ export async function seedCatalog(api: SeedApi, small = false): Promise<SeedProd
       });
     products.push(product);
     if (!found && !small && index === names.length - 1) {
-      await api('DELETE', `/catalog/products/${product.id}?version=${product.version}`);
+      // Một sản phẩm mọi SKU đã lưu trữ (#204: lưu trữ theo SKU, sản phẩm cha không còn lưu trữ riêng).
+      for (const action of ['discontinue', 'archive']) {
+        await api('POST', `/catalog/products/${product.id}/business-status`, { action });
+      }
     }
   }
   return products;

@@ -477,6 +477,20 @@
       "when": 1794848707029,
       "tag": "20261116170507_goi-y-theo-danh-muc",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1794852044325,
+      "tag": "20261116180044_ma-cha-san-pham",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1794852053292,
+      "tag": "20261116180053_bo-luu-tru-san-pham-cha",
+      "breakpoints": true
     }
   ]
 }

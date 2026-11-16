@@ -1,11 +1,11 @@
 // Sản phẩm (UC-CP-02, UC-CP-04; Documents/21 5.2–5.4, C3, C5, P5–P8, V22, V24; D9; plan #12 B1, B2, B6).
 import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
+import { notImplemented } from '../../../../shared/errors/app-error.ts';
 import { confirmUploads, fileProblem, publicFileUrls, recordAudit } from '../../../core/index.ts';
 import { findCategories } from '../repository/categories.ts';
 import { productImageRows, replaceProductImages } from '../repository/product-images.ts';
 import {
-  archiveProductIfVersion,
   findProduct,
   insertProduct,
   listProducts as findPage,
@@ -23,11 +23,10 @@ import {
   nameTaken,
   notFound,
   pgError,
-  productArchived,
   versionConflict,
 } from './errors.ts';
 import { imagesOf, MAX_PRODUCT_IMAGES } from './product-images.ts';
-import { allocateSkus, resolveCombos } from './sku-allocation.ts';
+import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 import { archiveBlockersOf } from './usage.ts';
 
@@ -51,15 +50,19 @@ export interface UpdateProductInput {
 const ENTITY = 'product.products';
 const taken = () => nameTaken('Đã có sản phẩm cùng tên');
 
-/** `thumbnailUrl`: link ảnh đại diện; chuỗi rỗng (thiếu `S3_PUBLIC_URL`) coi như không có ảnh. */
+/**
+ * `thumbnailUrl`: link ảnh đại diện; chuỗi rỗng (thiếu `S3_PUBLIC_URL`) coi như không có ảnh. `status` suy từ SKU (#204):
+ * `archived` khi mọi SKU đã lưu trữ.
+ */
 function toListItem(p: ProductRow, thumbnailUrl: string | null) {
   return {
     id: p.id,
     name: p.name,
+    code: p.code,
     category: { id: p.categoryId, name: p.categoryName },
     variantCount: p.variantCount,
     thumbnailUrl: thumbnailUrl || null,
-    status: p.archivedAt ? ('archived' as const) : ('active' as const),
+    status: p.variantCount > 0 ? ('active' as const) : ('archived' as const),
     updatedAt: p.updatedAt.toISOString(),
     version: p.version,
   };
@@ -189,30 +192,30 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     if (!category || !resolved.ok || imageError) throw invalid(errors);
     if (await productNameExists(input.name)) throw taken();
 
-    const id = await insertProduct(caller.companyId, category.id, input.name, input.description);
     const skus = await allocateSkus(category, resolved.combos);
+    const code = await productCodeFor(category.skuPattern, skus[0]!.seq);
+    const id = await insertProduct(caller.companyId, category.id, input.name, input.description, code);
     for (const [i, combo] of resolved.combos.entries()) {
-      await insertVariant(caller.companyId, id, skus[i]!, combo.map((v) => v.id), i);
+      await insertVariant(caller.companyId, id, skus[i]!.sku, combo.map((v) => v.id), i);
     }
     await replaceProductImages(caller.companyId, id, imageIds);
     const result = await productDetail(ctx, await findOwnProduct(id));
-    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: snapshot(input, category.name, result.variants, imageIds) });
+    await recordAudit({
+      ...auditOf(caller, 'create', ENTITY, id),
+      after: { ...snapshot(input, category.name, result.variants, imageIds), code },
+    });
     return result;
   }).catch(race);
 }
 
-/**
- * Sản phẩm đã lưu trữ báo `product_archived` trước `version_conflict` (AC-12 "mọi PUT", plan B2). Dùng cả khi
- * kiểm trước lúc ghi lẫn khi ghi có điều kiện `version` không trúng (người khác vừa sửa, lưu trữ).
- */
+/** Dùng cả khi kiểm trước lúc ghi lẫn khi ghi có điều kiện `version` không trúng (người khác vừa sửa). */
 async function rejectStale(ctx: CatalogContext, product: ProductRow): Promise<never> {
-  if (product.archivedAt) throw productArchived();
   throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await productDetail(ctx, product));
 }
 
 async function editable(ctx: CatalogContext, id: string, version: number): Promise<ProductRow> {
   const product = await findOwnProduct(id);
-  if (product.archivedAt || product.version !== version) await rejectStale(ctx, product);
+  if (product.version !== version) await rejectStale(ctx, product);
   return product;
 }
 
@@ -243,18 +246,11 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
 }
 
 /**
- * Xoá là lưu trữ (P5). `product_has_active_orders` chưa kiểm: đơn hàng là #24 (D9), khi đó nhận hàm kiểm qua `ctx`
- * như giá chuẩn (catalog không import sales).
+ * `DELETE /catalog/products/:id`: xoá hẳn sản phẩm chờ hoàn thiện chưa dùng (#204, spec mục 6). Lưu trữ cha kiểu cũ đã
+ * bỏ (lưu trữ từng SKU qua `business-status`); thân xoá hẳn làm ở Task 6 của PR 3, tới đó trả 501 sau khi kiểm có sản
+ * phẩm.
  */
-export async function archiveProduct(ctx: CatalogContext, caller: Caller, id: string, version: number): Promise<void> {
-  await withCompany(caller.companyId, async () => {
-    // Cùng khoá với thêm biến thể: không để biến thể được thêm vào sản phẩm vừa lưu trữ (B2, B5).
-    await lockVariants(caller.companyId);
-    const product = await editable(ctx, id, version);
-    if (!(await archiveProductIfVersion(id, version))) await rejectStale(ctx, await findOwnProduct(id));
-    await recordAudit({
-      ...auditOf(caller, 'delete', ENTITY, id),
-      before: snapshot(product, product.categoryName, await findVariants({ productId: id }), await imageIdsOf(id)),
-    });
-  });
+export async function deleteProduct(_ctx: CatalogContext, caller: Caller, id: string, _version: number): Promise<void> {
+  await withCompany(caller.companyId, () => findOwnProduct(id));
+  throw notImplemented('Xoá hẳn sản phẩm', '#204', 'Khang');
 }

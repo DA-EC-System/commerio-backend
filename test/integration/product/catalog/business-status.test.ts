@@ -178,14 +178,6 @@ describe('đầu vào sai', () => {
     expect(res.status).toBe(422);
     expect(res.body.errors.action).toBeTruthy();
   });
-
-  it('sản phẩm đã lưu trữ kiểu cũ → 409 product_archived', async () => {
-    const { productId, variantId } = await skuAt('selling');
-    expect((await api(ceo).delete(`/products/${productId}?version=1`)).status).toBe(204);
-    const res = await change(ceo, productId, 'pause', [variantId]);
-    expect(res.status).toBe(409);
-    expect(res.body.type).toBe('/problems/product_archived');
-  });
 });
 
 describe('chi tiết sản phẩm: archiveBlockers', () => {

@@ -141,6 +141,7 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
   });
 }
 
+/** `product_archived` giữ trong hợp đồng (`Documents/21` §17.5) nhưng không còn sinh ra: #204 bỏ lưu trữ sản phẩm cha. */
 export type BulkFailureCode = 'validation_failed' | 'version_conflict' | 'not_found' | 'product_archived';
 export interface BulkFailure {
   variantId: string;
@@ -186,7 +187,6 @@ export async function saveBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, raw
       const version = await withCompany(viewer.companyId, async () => {
         const [current] = isUuid(row.variantId) ? await findVariants({ ids: [row.variantId] }) : [];
         if (!current) throw new RowFailure('not_found', 'Không tìm thấy SKU');
-        if (current.productArchivedAt) throw new RowFailure('product_archived', 'Sản phẩm đã lưu trữ, không sửa được');
         const outcome = await applyVariantUpdate(viewer, current, row);
         if (outcome === 'stale') throw new RowFailure('version_conflict', `SKU ${current.sku} vừa được người khác sửa`);
         if (outcome === 'updated') await touchProduct(current.productId);

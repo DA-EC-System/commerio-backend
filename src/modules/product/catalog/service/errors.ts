@@ -17,8 +17,6 @@ export const versionConflict = (detail: string, current: unknown) =>
 
 export const inUse = (detail: string) => new AppError(409, 'in_use', detail);
 
-export const productArchived = () => new AppError(409, 'product_archived', 'Sản phẩm đã lưu trữ, không sửa được');
-
 export const variantExists = (sku: string) => new AppError(409, 'variant_exists', `Tổ hợp này đã có biến thể ${sku}`);
 
 /** Lưu trữ một SKU còn tồn hoặc chứng từ mở (Documents/21 §17.4); `reasons` là câu hiện thẳng ở FE. */
