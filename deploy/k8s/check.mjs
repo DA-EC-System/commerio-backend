@@ -59,9 +59,24 @@ for (const d of workloads) {
   }
 }
 
-// Ngân sách kết nối DB (#335): cộng DB_POOL_MAX của mọi Deployment api, worker, realtime trong bản build (blue và
-// green đều tính vì lúc đổi màu cả hai cùng sống), thêm 1 cho db:migrate, không vượt pool size của Session pooler.
-// CI truyền DB_POOL_SIZE (biến STAGING_DB_POOL_SIZE) khi kiểm overlay vps; không truyền thì bỏ qua.
+/**
+ * Số pod cùng sống nhiều nhất của một Deployment lúc đổi image. Bản màu (`-blue`, `-green`): 1, vì commerio-deploy.sh
+ * đặt image cho màu nghỉ khi nó đang 0 bản rồi mới scale lên 1, và cả hai màu đã được cộng riêng. Còn lại: `replicas`
+ * cộng số pod dư của RollingUpdate (`maxSurge`, mặc định 25%, phần trăm làm tròn lên); `Recreate` không có pod dư.
+ */
+function peakPods(d) {
+  if (/-(blue|green)$/.test(d.metadata.name)) return 1;
+  const replicas = d.spec.replicas ?? 1;
+  if (d.spec.strategy?.type === 'Recreate') return replicas;
+  const surge = d.spec.strategy?.rollingUpdate?.maxSurge ?? '25%';
+  const extra = typeof surge === 'string' && surge.endsWith('%') ? Math.ceil((replicas * Number.parseFloat(surge)) / 100) : Number(surge);
+  return replicas + extra;
+}
+
+// Ngân sách kết nối DB (#335): cộng DB_POOL_MAX × số pod cùng sống nhiều nhất (`peakPods`) của mọi Deployment api,
+// worker, realtime trong bản build (blue và green đều tính vì lúc đổi màu cả hai cùng sống), thêm 1 cho db:migrate,
+// không vượt pool size của Session pooler. CI truyền DB_POOL_SIZE (biến STAGING_DB_POOL_SIZE) khi kiểm overlay vps;
+// không truyền thì bỏ qua.
 const poolSize = Number(process.env.DB_POOL_SIZE ?? 0);
 if (poolSize > 0) {
   const parts = workloads
@@ -69,10 +84,10 @@ if (poolSize > 0) {
     .map((d) => {
       const value = d.spec.template.spec.containers.flatMap((c) => c.env ?? []).find((e) => e.name === 'DB_POOL_MAX')?.value;
       // Không đặt thì app dùng mặc định 10 (src/shared/config/env.ts).
-      return { name: d.metadata.name, max: value === undefined ? 10 : Number(value) };
+      return { name: d.metadata.name, max: value === undefined ? 10 : Number(value), pods: peakPods(d) };
     });
-  const total = parts.reduce((sum, p) => sum + p.max, 0) + 1;
-  const detail = parts.map((p) => `${p.name} ${p.max}`).join(' + ');
+  const total = parts.reduce((sum, p) => sum + p.max * p.pods, 0) + 1;
+  const detail = parts.map((p) => (p.pods === 1 ? `${p.name} ${p.max}` : `${p.name} ${p.max} × ${p.pods}`)).join(' + ');
   if (total > poolSize) errors.push(`kết nối DB: ${detail} + 1 (migrate) = ${total}, vượt pool size ${poolSize} của Session pooler`);
   else process.stdout.write(`kết nối DB: ${detail} + 1 (migrate) = ${total} ≤ ${poolSize}\n`);
 }
