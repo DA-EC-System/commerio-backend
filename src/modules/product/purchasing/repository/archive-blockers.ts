@@ -1,0 +1,62 @@
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { getDb } from '../../../../shared/db/client.ts';
+import {
+  goodsReceiptLines,
+  goodsReceipts,
+  purchaseRequestLines,
+  purchaseRequests,
+  supplierReturnLines,
+  supplierReturns,
+} from './schema.ts';
+
+// Chạy trong `withCompany` của bên gọi. Mỗi hàm một câu cho cả lô SKU; SKU không có chứng từ nào thì không có trong Map.
+
+/** Đề nghị nhập chưa xong: chưa từ chối, huỷ, nhận đủ hay đóng thiếu. */
+const OPEN_REQUEST_STATUSES = ['draft', 'pending_approval', 'changes_requested', 'approved', 'ordered', 'partially_received'] as const;
+/** Phiếu trả NCC chưa có kết quả (NCC chưa hoàn tiền, bù hàng hay trả lại). */
+const OPEN_RETURN_STATUSES = ['draft', 'pending_approval', 'sent'] as const;
+
+const toMap = (rows: { variantId: string | null; n: number }[]) =>
+  new Map(rows.flatMap((r) => (r.variantId ? [[r.variantId, r.n] as const] : [])));
+
+/** Số đề nghị nhập chưa xong có dòng (không bị loại) mang SKU. */
+export async function openRequestCounts(variantIds: readonly string[]): Promise<Map<string, number>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select({ variantId: purchaseRequestLines.variantId, n: sql<number>`count(distinct ${purchaseRequestLines.requestId})::int` })
+    .from(purchaseRequestLines)
+    .innerJoin(purchaseRequests, eq(purchaseRequests.id, purchaseRequestLines.requestId))
+    .where(
+      and(
+        inArray(purchaseRequests.status, [...OPEN_REQUEST_STATUSES]),
+        eq(purchaseRequestLines.excluded, false),
+        inArray(purchaseRequestLines.variantId, [...variantIds]),
+      ),
+    )
+    .groupBy(purchaseRequestLines.variantId);
+  return toMap(rows);
+}
+
+/** Số phiếu nhận đang kiểm (`counting`, chưa ghi sổ) có SKU. */
+export async function countingReceiptCounts(variantIds: readonly string[]): Promise<Map<string, number>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select({ variantId: goodsReceiptLines.variantId, n: sql<number>`count(distinct ${goodsReceiptLines.receiptId})::int` })
+    .from(goodsReceiptLines)
+    .innerJoin(goodsReceipts, eq(goodsReceipts.id, goodsReceiptLines.receiptId))
+    .where(and(eq(goodsReceipts.status, 'counting'), inArray(goodsReceiptLines.variantId, [...variantIds])))
+    .groupBy(goodsReceiptLines.variantId);
+  return toMap(rows);
+}
+
+/** Số phiếu trả NCC chưa có kết quả có SKU. */
+export async function openSupplierReturnCounts(variantIds: readonly string[]): Promise<Map<string, number>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select({ variantId: supplierReturnLines.variantId, n: sql<number>`count(distinct ${supplierReturnLines.returnId})::int` })
+    .from(supplierReturnLines)
+    .innerJoin(supplierReturns, eq(supplierReturns.id, supplierReturnLines.returnId))
+    .where(and(inArray(supplierReturns.status, [...OPEN_RETURN_STATUSES]), inArray(supplierReturnLines.variantId, [...variantIds])))
+    .groupBy(supplierReturnLines.variantId);
+  return toMap(rows);
+}

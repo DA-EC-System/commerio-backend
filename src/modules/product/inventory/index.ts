@@ -37,4 +37,6 @@ export { createOpeningStocktake, createQuarantineWriteOff } from './service/docu
 export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.ts';
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
+// Lý do chặn lưu trữ SKU phần kho cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog.
+export { stockArchiveBlockers } from './service/archive-blockers.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';
