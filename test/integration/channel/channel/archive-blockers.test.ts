@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { listingArchiveBlockers, listingPresenceOf } from '#src/modules/channel/index.ts';
+import { listingArchiveBlockers, listingInUse, listingPresenceOf } from '#src/modules/channel/index.ts';
 import type { ListingStatus } from '#src/modules/channel/channel/domain/listing.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -76,5 +76,35 @@ describe('listingPresenceOf (#204)', () => {
 
   it('danh sách rỗng trả Map rỗng', async () => {
     expect(await withCompany(companyId, () => listingPresenceOf([]))).toEqual(new Map());
+  });
+});
+
+// SKU đã dùng (#204 spec mục 6): listing (kể cả đã gỡ), ghép chờ duyệt, lần tính giá.
+describe('listingInUse (#204)', () => {
+  const inUse = (ids: string[]) => withCompany(companyId, () => listingInUse(ids));
+
+  it('SKU mới không có; listing đã gỡ, chỉ chờ duyệt ghép, chỉ có lần tính giá đều tính', async () => {
+    const [fresh, delisted, pending, priced, mapped] = [
+      (await createVariant(companyId)).variantId,
+      (await createVariant(companyId)).variantId,
+      (await createVariant(companyId)).variantId,
+      (await createVariant(companyId)).variantId,
+      (await createVariant(companyId)).variantId,
+    ];
+    await listing(delisted, 'delisted');
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, status, seller_sku,
+         pending_variant_id, pending_mode, pending_requested_by, pending_requested_at)
+       values ($1, $2, $3, 'live', $4, $5, 'mapped', $6, now())`,
+      [companyId, await newShop(), mapped, `CMR-${randomUUID().slice(0, 8)}`, pending, randomUUID()],
+    );
+    await testPool().query(
+      `insert into channel.price_calculations (company_id, shop_id, variant_id, cost, target_net, raw_price, rounded_price,
+         net_received, margin_pct, below_floor)
+       values ($1, $2, $3, 150000, 200000, 236047, 239000, 202540, 35, false)`,
+      [companyId, shopId, priced],
+    );
+    expect(await inUse([fresh, delisted, pending, priced])).toEqual(new Set([delisted, pending, priced]));
+    expect(await inUse([])).toEqual(new Set());
   });
 });

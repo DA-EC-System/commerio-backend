@@ -21,4 +21,4 @@ export { type PurchaseDocumentIds, type PurchaseDocumentNumbers, purchaseDocumen
 export { draftSupplierReturn, type SupplierReturnDraftInput } from './service/supplier-returns.ts';
 export { returnsFromStockDocuments } from './repository/returns.ts';
 /** Lý do chặn lưu trữ SKU phần mua hàng cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog. */
-export { purchaseArchiveBlockers } from './service/archive-blockers.ts';
+export { purchaseArchiveBlockers, purchaseInUse } from './service/archive-blockers.ts';

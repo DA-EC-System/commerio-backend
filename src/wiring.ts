@@ -7,6 +7,7 @@ import {
   hasChannelData,
   hasInboxData,
   listingArchiveBlockers,
+  listingInUse,
   listingPresenceOf,
   marketplaceCancelOrder,
   marketplaceCancelReasons,
@@ -29,7 +30,7 @@ import {
 import { loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
-import { type FulfillmentContext, orderArchiveBlockers, type SalesContext, soldQtyOf } from './modules/order/index.ts';
+import { type FulfillmentContext, orderArchiveBlockers, orderInUse, type SalesContext, soldQtyOf } from './modules/order/index.ts';
 import { type CatalogContext, hasPurchasingData } from './modules/product/index.ts';
 import { createAuthorize } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
@@ -40,7 +41,7 @@ export type AppContext = ModuleContext &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns' | 'paymentStatusOf'>> &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData'>> & { soldQtyOf: typeof soldQtyOf } &
-  Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf'>>;
+  Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>>;
 
 export function createModuleContext(): AppContext {
   return {
@@ -73,6 +74,9 @@ export function createModuleContext(): AppContext {
     listingArchiveBlockers,
     // #204: nhãn hiện diện trên sàn của SKU (D8) ở danh sách, chi tiết sản phẩm.
     listingPresenceOf,
+    // #204: SKU đã dùng ở đơn, sàn thì không xoá hẳn sản phẩm.
+    orderInUse,
+    listingInUse,
     // #242: catalog (lớp dưới) gợi ý ngưỡng tồn theo số bán 30 ngày của sales khi sửa hàng loạt.
     soldQtyOf,
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).

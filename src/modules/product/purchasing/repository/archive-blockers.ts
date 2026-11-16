@@ -60,3 +60,17 @@ export async function openSupplierReturnCounts(variantIds: readonly string[]): P
     .groupBy(supplierReturnLines.variantId);
   return toMap(rows);
 }
+
+/**
+ * SKU đã dùng (#204 spec mục 6, chặn xoá hẳn sản phẩm), một câu cho cả lô; chứng từ ở mọi trạng thái, kể cả đã huỷ.
+ * SKU không có thì không có trong Set. Gọi trong `withCompany`.
+ */
+export async function usedVariants(variantIds: readonly string[]): Promise<Set<string>> {
+  if (!variantIds.length) return new Set();
+  const ids = [...variantIds];
+  const { rows } = await getDb().execute<{ id: string }>(sql`
+    select variant_id as id from product.purchase_request_lines where variant_id in ${ids}
+    union select variant_id from product.goods_receipt_lines where variant_id in ${ids}
+    union select variant_id from product.supplier_return_lines where variant_id in ${ids}`);
+  return new Set(rows.map((r) => r.id));
+}

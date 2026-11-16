@@ -24,3 +24,18 @@ export async function currentListingStatuses(variantIds: readonly string[]): Pro
     .where(and(ne(listings.status, 'delisted'), inArray(listings.variantId, [...variantIds])));
   return rows.flatMap((r) => (r.variantId ? [{ variantId: r.variantId, status: r.status }] : []));
 }
+
+/**
+ * SKU đã dùng (#204 spec mục 6, chặn xoá hẳn sản phẩm), một câu cho cả lô; chứng từ ở mọi trạng thái, kể cả đã huỷ.
+ * SKU không có thì không có trong Set. Gọi trong `withCompany`.
+ */
+export async function usedVariants(variantIds: readonly string[]): Promise<Set<string>> {
+  if (!variantIds.length) return new Set();
+  const ids = [...variantIds];
+  // Listing kể cả đã gỡ; ghép chờ CEO duyệt; lần tính giá theo sàn.
+  const { rows } = await getDb().execute<{ id: string }>(sql`
+    select variant_id as id from channel.listings where variant_id in ${ids}
+    union select pending_variant_id from channel.listings where pending_variant_id in ${ids}
+    union select variant_id from channel.price_calculations where variant_id in ${ids}`);
+  return new Set(rows.map((r) => r.id));
+}

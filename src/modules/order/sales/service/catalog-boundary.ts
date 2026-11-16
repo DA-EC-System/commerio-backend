@@ -1,6 +1,6 @@
-// Cổng của sales cho catalog (#204, Documents/21 §17.3): lý do chặn lưu trữ SKU phần đơn. `src/wiring.ts` nối vào `ctx`
-// của catalog (product ở lớp dưới order nên không gọi thẳng được). Gọi trong `withCompany` của bên gọi.
-import { openOrderCounts, openReturnCountsByVariant } from '../repository/archive-blockers.ts';
+// Cổng của sales cho catalog (#204, Documents/21 §17.3): lý do chặn lưu trữ SKU phần đơn, SKU đã dùng. `src/wiring.ts`
+// nối vào `ctx` của catalog (product ở lớp dưới order nên không gọi thẳng được). Gọi trong `withCompany` của bên gọi.
+import { openOrderCounts, openReturnCountsByVariant, usedVariants } from '../repository/archive-blockers.ts';
 
 /** Câu lý do theo SKU: đơn chưa xong, yêu cầu trả đang mở. SKU không vướng gì thì không có trong Map. */
 export async function orderArchiveBlockers(variantIds: readonly string[]): Promise<Map<string, string[]>> {
@@ -16,4 +16,9 @@ export async function orderArchiveBlockers(variantIds: readonly string[]): Promi
     if (reasons.length) result.set(id, reasons);
   }
   return result;
+}
+
+/** SKU nằm trên dòng đơn, yêu cầu trả, dòng kiện, kiện trả không khớp (mọi trạng thái): catalog không xoá hẳn được. */
+export async function orderInUse(variantIds: readonly string[]): Promise<Set<string>> {
+  return usedVariants([...new Set(variantIds)]);
 }

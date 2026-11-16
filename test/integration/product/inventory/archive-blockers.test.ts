@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { minQtyOf, stockArchiveBlockers } from '#src/modules/product/inventory/index.ts';
+import { minQtyOf, stockArchiveBlockers, stockInUse } from '#src/modules/product/inventory/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testPool } from '../../helpers/db.ts';
 import { companyWithVariants, receive, setBuckets } from './helpers.ts';
@@ -9,7 +9,7 @@ import { companyWithVariants, receive, setBuckets } from './helpers.ts';
 const blockersOf = (companyId: string, ids: string[]) => withCompany(companyId, () => stockArchiveBlockers(ids));
 
 /** Phiếu kiểm kê ở `status`, một dòng mang SKU. */
-async function stockDocument(companyId: string, variantId: string, status: 'draft' | 'pending' | 'posted') {
+async function stockDocument(companyId: string, variantId: string, status: 'draft' | 'pending' | 'posted' | 'cancelled') {
   const doc = await testPool().query<{ id: string }>(
     `insert into product.stock_documents (company_id, number, kind, status, counted_at, posted_at)
      values ($1, $2, 'stocktake', $3::product.stock_document_status, now(), case when $3::text = 'posted' then now() end)
@@ -92,5 +92,29 @@ describe('minQtyOf (#204)', () => {
     expect(result).toEqual(new Map([[set, 5], [cleared, null], [none, null]]));
     const rows = await testPool().query('select 1 from product.stock_levels where variant_id = $1', [none]);
     expect(rows.rowCount).toBe(0);
+  });
+});
+
+// SKU đã dùng (#204 spec mục 6): có thẻ kho hoặc nằm trên phiếu kho ở mọi trạng thái thì không xoá hẳn được.
+describe('stockInUse (#204)', () => {
+  const inUse = (companyId: string, ids: string[]) => withCompany(companyId, () => stockInUse(ids));
+
+  it('SKU mới không có; có thẻ kho, có trên phiếu kho đã huỷ, là SKU giao nhầm thì có', async () => {
+    const { companyId, variants } = await companyWithVariants(5);
+    const [fresh, moved, cancelled, actual, carrier] = variants as [string, string, string, string, string];
+    await receive(companyId, moved, 2, 100000);
+    await stockDocument(companyId, cancelled, 'cancelled');
+    const doc = await testPool().query<{ id: string }>(
+      `insert into product.stock_documents (company_id, number, kind, status, counted_at)
+       values ($1, $2, 'stocktake', 'draft', now()) returning id`,
+      [companyId, `KK-T${randomUUID().slice(0, 8)}`],
+    );
+    await testPool().query(
+      `insert into product.stock_document_lines (company_id, document_id, variant_id, actual_variant_id, book_qty, counted_qty)
+       values ($1, $2, $3, $4, 0, 1)`,
+      [companyId, doc.rows[0]!.id, carrier, actual],
+    );
+    expect(await inUse(companyId, [fresh, moved, cancelled, actual])).toEqual(new Set([moved, cancelled, actual]));
+    expect(await inUse(companyId, [])).toEqual(new Set());
   });
 });

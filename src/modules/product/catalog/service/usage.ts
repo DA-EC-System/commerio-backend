@@ -35,6 +35,29 @@ export interface CatalogContext extends ModuleContext {
   readonly minQtyOf?: (variantIds: readonly string[]) => Promise<Map<string, number | null>>;
   /** Hiện diện trên sàn theo SKU (channel, D8); Map đủ mọi id. */
   readonly listingPresenceOf?: (variantIds: readonly string[]) => Promise<Map<string, ListingPresence>>;
+  /** SKU đã dùng ở từng module (mọi trạng thái chứng từ): có thì không xoá hẳn sản phẩm (spec 204 mục 6). */
+  readonly stockInUse?: InUseSource;
+  readonly purchaseInUse?: InUseSource;
+  readonly orderInUse?: InUseSource;
+  readonly listingInUse?: InUseSource;
+}
+
+/** SKU đã dùng trong `variantIds`; SKU chưa dùng thì không có trong Set. Gọi trong `withCompany` của catalog. */
+export type InUseSource = (variantIds: readonly string[]) => Promise<Set<string>>;
+
+const IN_USE_SOURCES = ['stockInUse', 'purchaseInUse', 'orderInUse', 'listingInUse'] as const;
+
+/** Gộp SKU đã dùng của bốn module. Thiếu nguồn là lỗi lập trình. `variantIds` rỗng thì không gọi nguồn nào. */
+export async function inUseOf(ctx: CatalogContext, variantIds: readonly string[]): Promise<Set<string>> {
+  const result = new Set<string>();
+  if (!variantIds.length) return result;
+  for (const name of IN_USE_SOURCES) {
+    const source = ctx[name];
+    if (!source) throw new Error(`Chưa nối nguồn SKU đã dùng: ${name}`);
+    // Tuần tự: các nguồn dùng chung một client của giao dịch.
+    for (const id of await source(variantIds)) result.add(id);
+  }
+  return result;
 }
 
 /** Thứ tự nguồn quyết thứ tự câu lý do. */

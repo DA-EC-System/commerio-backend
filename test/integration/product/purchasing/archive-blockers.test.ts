@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { purchaseArchiveBlockers } from '#src/modules/product/purchasing/index.ts';
+import { purchaseArchiveBlockers, purchaseInUse } from '#src/modules/product/purchasing/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
-import { createReceipt, createRequest, createSupplier, orderedRequest, postedReceipt } from './helpers.ts';
+import { act, createReceipt, createRequest, createSupplier, orderedRequest, postedReceipt } from './helpers.ts';
 
 // Lý do chặn lưu trữ SKU phần mua hàng (#204, Documents/21 §17.3): catalog gọi trong giao dịch lưu trữ.
 let companyId: string;
@@ -50,5 +50,20 @@ describe('purchaseArchiveBlockers (#204)', () => {
     const { returnId } = await postedReceipt(t, supplierId, v, { accepted: 3, defectKept: 1 });
     expect(returnId).not.toBeNull();
     expect((await blockersOf([v])).get(v)).toContain('Còn 1 phiếu trả NCC chưa có kết quả');
+  });
+});
+
+// SKU đã dùng (#204 spec mục 6): dòng đề nghị nhập, phiếu nhận, phiếu trả NCC ở mọi trạng thái.
+describe('purchaseInUse (#204)', () => {
+  const inUse = (ids: string[]) => withCompany(companyId, () => purchaseInUse(ids));
+
+  it('SKU mới không có; đề nghị đã huỷ vẫn tính; phiếu nhận, phiếu trả NCC tính', async () => {
+    const [fresh, cancelled, received] = [await sku(), await sku(), await sku()];
+    const req = await createRequest(t.ceo, supplierId, [{ variantId: cancelled, quantity: 1, unitCost: 1000 }]);
+    const res = await act(t.ceo, req.id, 'cancel', { version: req.version, reason: 'Không nhập nữa' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    await postedReceipt(t, supplierId, received, { accepted: 3, defectKept: 1 });
+    expect(await inUse([fresh, cancelled, received])).toEqual(new Set([cancelled, received]));
+    expect(await inUse([])).toEqual(new Set());
   });
 });

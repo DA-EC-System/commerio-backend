@@ -10,6 +10,7 @@ import {
   setIncomingSource,
   setSupplierReturnPort,
   stockArchiveBlockers,
+  stockInUse,
 } from './inventory/index.ts';
 import {
   draftSupplierReturn,
@@ -17,6 +18,7 @@ import {
   lastCostsOf,
   purchaseArchiveBlockers,
   purchaseDocumentNumbers,
+  purchaseInUse,
   purchasingModule,
   returnsFromStockDocuments,
 } from './purchasing/index.ts';
@@ -61,6 +63,8 @@ export const productModules: readonly ModuleDefinition[] = [
     stockArchiveBlockers,
     purchaseArchiveBlockers,
     minQtyOf,
+    stockInUse,
+    purchaseInUse,
   })),
   withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf, purchaseDocumentNumbers })),
   purchasingModule,

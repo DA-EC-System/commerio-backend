@@ -3,7 +3,7 @@
 // `withCompany` của bên gọi.
 import type { ListingStatus } from '../domain/listing.ts';
 import { type ListingPresence, presenceOf } from '../domain/presence.ts';
-import { currentListingStatuses, pushingListingCounts } from '../repository/archive-blockers.ts';
+import { currentListingStatuses, pushingListingCounts, usedVariants } from '../repository/archive-blockers.ts';
 
 /** Câu lý do theo SKU: listing đang đẩy lên sàn (`pushing`). SKU không vướng gì thì không có trong Map. */
 export async function listingArchiveBlockers(variantIds: readonly string[]): Promise<Map<string, string[]>> {
@@ -31,4 +31,9 @@ export async function listingPresenceOf(variantIds: readonly string[]): Promise<
       return [id, { ...presenceOf(own), listingCount: own.length }];
     }),
   );
+}
+
+/** SKU có listing (kể cả đã gỡ), ghép chờ duyệt, lần tính giá: catalog không xoá hẳn sản phẩm có SKU này (#204). */
+export async function listingInUse(variantIds: readonly string[]): Promise<Set<string>> {
+  return usedVariants([...new Set(variantIds)]);
 }
