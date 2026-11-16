@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { classifyMailError, MailError, type MailTransport, sendMail, setMailTransport } from '#src/shared/mail/index.ts';
+import {
+  checkMailTransport,
+  classifyMailError,
+  escapeHtml,
+  MailError,
+  type MailTransport,
+  sendMail,
+  setMailTransport,
+} from '#src/shared/mail/index.ts';
 import { metricsRegistry } from '#src/shared/observability/metrics.ts';
 
 const msg = { to: 'nhan@vien.test', subject: 'Mã xác minh', text: 'Mã của bạn: 123456' };
@@ -81,5 +89,33 @@ describe('sendMail', () => {
     const pending = sendMail(msg, 'test-timeout').catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await pending).toMatchObject({ kind: 'transient' });
+  });
+});
+
+describe('escapeHtml', () => {
+  it('thoát năm ký tự đặc biệt của HTML', () => {
+    expect(escapeHtml(`<a href="x">Tom & Jerry's</a>`)).toBe('&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;');
+  });
+});
+
+describe('checkMailTransport', () => {
+  const up = async () => (await metricsRegistry.getSingleMetric('mail_transport_up')?.get())?.values[0]?.value;
+
+  it('verify được thì true, gauge 1 (vitest.config.ts đặt MAIL_FROM)', async () => {
+    setMailTransport({ sendMail: async () => ({}), verify: async () => true });
+    await expect(checkMailTransport()).resolves.toBe(true);
+    expect(await up()).toBe(1);
+  });
+
+  it('chưa có transport (không SMTP_URL) thì false, gauge 0', async () => {
+    setMailTransport(null);
+    await expect(checkMailTransport()).resolves.toBe(false);
+    expect(await up()).toBe(0);
+  });
+
+  it('verify lỗi thì false, gauge 0, không ném', async () => {
+    setMailTransport({ sendMail: async () => ({}), verify: async () => Promise.reject(Object.assign(new Error('x'), { code: 'EAUTH' })) });
+    await expect(checkMailTransport()).resolves.toBe(false);
+    expect(await up()).toBe(0);
   });
 });

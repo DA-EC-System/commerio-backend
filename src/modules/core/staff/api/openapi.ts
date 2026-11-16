@@ -98,7 +98,9 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/invitations',
     summary: 'Hàng đợi lời mời (UC-PI-05)',
-    description: '`status` mặc định `pending`: yêu cầu tham gia chờ duyệt, mới nộp trước. Cần `identity.account.view`.',
+    description:
+      '`status` mặc định `pending`: yêu cầu tham gia chờ duyệt, mới nộp trước. Nhiều trạng thái cách nhau dấu phẩy, ' +
+      'vd `open,claimed` (link đã tạo, chưa nộp). Cần `identity.account.view`.',
     security: bearer,
     request: { query: InvitationListQuery },
     responses: {
@@ -130,7 +132,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     method: 'post',
     path: '/invitations/:id/reject',
     summary: 'Từ chối yêu cầu tham gia (UC-PI-05)',
-    description: 'Không tạo tài khoản, không gửi thư báo. Cần `identity.account.manage`.',
+    description: 'Không tạo tài khoản. Worker gửi thư báo từ chối tới email của yêu cầu. Cần `identity.account.manage`.',
     security: bearer,
     request: { params: InvitationParams, body: json(VersionBody) },
     responses: {
@@ -138,6 +140,23 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       403: problemResponse('`forbidden`'),
       404: problemResponse('`not_found`'),
       409: problemResponse('`version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/invitations/:id/revoke',
+    summary: 'Huỷ link mời chưa nộp (US-CT-05)',
+    description:
+      'Chỉ link `open`, `claimed` (kể cả đã quá hạn); yêu cầu đã nộp thì từ chối. Link đã huỷ trả 410 ' +
+      '`invitation_invalid` ở mọi bước `/join/*`. Cần `identity.account.manage`.',
+    security: bearer,
+    request: { params: InvitationParams, body: json(VersionBody) },
+    responses: {
+      200: { description: 'Lời mời đã huỷ (`status: revoked`)', ...json(RejectedInvitationSchema) },
+      403: problemResponse('`forbidden`'),
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`version_conflict` kèm `current` (lệch version, hoặc không còn `open`, `claimed`)'),
       422: problemResponse('`validation_failed`'),
     },
   });
@@ -153,7 +172,9 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: { description: 'Tên công ty và hạn link', ...json(JoinCheckSchema) },
       409: problemResponse('`invitation_used`: đã nộp, đã duyệt hoặc đã từ chối'),
-      410: problemResponse('`invitation_invalid`: sai chữ ký, không phải link mời, quá 72 giờ, không còn lời mời'),
+      410: problemResponse(
+        '`invitation_invalid`: sai chữ ký, không phải link mời, quá 72 giờ, đã bị huỷ, không còn lời mời',
+      ),
       429: tooMany,
     },
   });

@@ -14,11 +14,13 @@ const ALLOWED: readonly [InvitationStatus, InvitationStatus][] = [
   ['claimed', 'pending'],
   ['pending', 'approved'],
   ['pending', 'rejected'],
+  ['open', 'revoked'],
+  ['claimed', 'revoked'],
 ];
 
 describe('máy trạng thái lời mời', () => {
-  it('đủ năm trạng thái', () => {
-    expect([...INVITATION_STATUSES].sort()).toEqual(['approved', 'claimed', 'open', 'pending', 'rejected']);
+  it('đủ sáu trạng thái', () => {
+    expect([...INVITATION_STATUSES].sort()).toEqual(['approved', 'claimed', 'open', 'pending', 'rejected', 'revoked']);
   });
 
   for (const from of INVITATION_STATUSES) {
@@ -30,10 +32,11 @@ describe('máy trạng thái lời mời', () => {
     }
   }
 
-  it('approved, rejected là trạng thái cuối', () => {
+  it('approved, rejected, revoked là trạng thái cuối', () => {
     for (const to of INVITATION_STATUSES) {
       expect(canTransition('approved', to)).toBe(false);
       expect(canTransition('rejected', to)).toBe(false);
+      expect(canTransition('revoked', to)).toBe(false);
     }
   });
 });
@@ -50,7 +53,7 @@ describe('link hết hạn', () => {
 
   it('đã nộp, đã duyệt, đã từ chối thì không tính hết hạn (Review Focus 4)', () => {
     const later = new Date('2026-11-30T00:00:00.000Z');
-    for (const status of ['pending', 'approved', 'rejected'] as const) {
+    for (const status of ['pending', 'approved', 'rejected', 'revoked'] as const) {
       expect(isLinkExpired({ status, expiresAt }, later)).toBe(false);
     }
   });

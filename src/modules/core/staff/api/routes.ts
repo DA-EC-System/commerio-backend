@@ -4,7 +4,7 @@ import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import { approveInvitation, createInvitation, listInvitations, rejectInvitation } from '../service/invitations.ts';
+import { approveInvitation, createInvitation, listInvitations, rejectInvitation, revokeInvitation } from '../service/invitations.ts';
 import { checkInvitation, completeJoin, requestOtp, RetryLaterError, verifyOtp } from '../service/join.ts';
 import { type Caller, changeRoles, listStaff, setLocked } from '../service/members.ts';
 import {
@@ -79,6 +79,7 @@ export function staffRouter(ctx: ModuleContext): Router {
   for (const [action, decide] of [
     ['approve', approveInvitation],
     ['reject', rejectInvitation],
+    ['revoke', revokeInvitation],
   ] as const) {
     router.post(
       `/invitations/:id/${action}`,

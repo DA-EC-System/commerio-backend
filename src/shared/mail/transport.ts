@@ -7,7 +7,9 @@ import { env } from '../config/env.ts';
 export const MAIL_TIMEOUT_MS = 10_000;
 
 export type MailTransport = {
-  sendMail(options: { from: string; to: string; subject: string; text: string }): Promise<unknown>;
+  sendMail(options: { from: string; to: string; subject: string; text: string; html?: string }): Promise<unknown>;
+  /** Kết nối và đăng nhập thử, không gửi thư (nodemailer `verify`). Transport giả của test có thể bỏ trống. */
+  verify?(): Promise<unknown>;
 };
 
 /** `null` khi chưa đặt `SMTP_URL`. */

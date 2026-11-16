@@ -3,6 +3,7 @@
 // `permanent` (mã 5xx, sai xác thực SMTP, chưa cấu hình) thì không. Lỗi không chép phản hồi SMTP (có thể chứa địa chỉ).
 import client from 'prom-client';
 import { env } from '../config/env.ts';
+import { logger } from '../logger.ts';
 import { metricsRegistry } from '../observability/metrics.ts';
 import { MAIL_TIMEOUT_MS, type MailTransport, smtpTransportFromEnv } from './transport.ts';
 
@@ -11,7 +12,17 @@ export type { MailTransport } from './transport.ts';
 export interface MailMessage {
   to: string;
   subject: string;
+  /** Bản chữ thô luôn có: trình đọc thư không hiện HTML vẫn đọc được. */
   text: string;
+  /** Bản HTML tuỳ chọn; mọi chuỗi người dùng gõ phải qua `escapeHtml`. */
+  html?: string;
+}
+
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/** Thoát ký tự đặc biệt của HTML cho chuỗi chèn vào thân thư HTML (họ tên, tên công ty, email). */
+export function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!);
 }
 
 export type MailErrorKind = 'transient' | 'permanent';
@@ -46,6 +57,12 @@ const sent = new client.Counter({
   name: 'mail_send_total',
   help: 'Số lần gửi thư theo mẫu và kết quả (ok, transient, permanent)',
   labelNames: ['template', 'result'] as const,
+  registers: [metricsRegistry],
+});
+
+const transportUp = new client.Gauge({
+  name: 'mail_transport_up',
+  help: 'SMTP dùng được lúc worker khởi động: 1 là kết nối, đăng nhập thử được; 0 là chưa cấu hình hoặc thử lỗi',
   registers: [metricsRegistry],
 });
 
@@ -109,5 +126,30 @@ export async function sendMail(message: MailMessage, template: string): Promise<
     throw mailErr;
   } finally {
     stop();
+  }
+}
+
+/**
+ * Kiểm SMTP một lần lúc worker khởi động (kết nối và đăng nhập thử, không gửi thư), đặt gauge `mail_transport_up`.
+ * Thiếu cấu hình hoặc thử lỗi thì log `error` (không log `SMTP_URL`) và trả `false`; worker vẫn chạy, cảnh báo
+ * `CommerioMailTransportDown` báo người vận hành. Không ném.
+ */
+export async function checkMailTransport(): Promise<boolean> {
+  const transport = currentTransport();
+  if (!transport || !env.MAIL_FROM) {
+    transportUp.set(0);
+    logger.error('chưa cấu hình SMTP_URL hoặc MAIL_FROM: không gửi được thư mời, thư báo');
+    return false;
+  }
+  try {
+    if (transport.verify) await withTimeout(transport.verify());
+    transportUp.set(1);
+    logger.info('SMTP dùng được');
+    return true;
+  } catch (err) {
+    const mailErr = err instanceof MailError ? err : toMailError(err);
+    transportUp.set(0);
+    logger.error({ kind: mailErr.kind, smtpCode: mailErr.smtpCode }, 'thử kết nối SMTP lỗi: thư mời, thư báo sẽ không tới');
+    return false;
   }
 }

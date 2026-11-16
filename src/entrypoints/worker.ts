@@ -3,6 +3,7 @@ import { env } from '../shared/config/env.ts';
 import { closeDb } from '../shared/db/client.ts';
 import { closeServer, onShutdown } from '../shared/lifecycle.ts';
 import { logger } from '../shared/logger.ts';
+import { checkMailTransport } from '../shared/mail/index.ts';
 import { startOpsServer } from '../shared/observability/ops-server.ts';
 import { createModuleContext } from '../wiring.ts';
 
@@ -10,6 +11,9 @@ import { createModuleContext } from '../wiring.ts';
 const opsServer = startOpsServer(env.WORKER_PORT, () => {
   logger.info({ port: env.WORKER_PORT }, 'worker đã chạy');
 });
+
+// Báo sớm khi SMTP chưa cấu hình hay sai mật khẩu, thay vì chỉ lộ ra lúc gửi thư đầu tiên (gauge `mail_transport_up`).
+void checkMailTransport();
 
 const ctx = createModuleContext();
 const stops: (() => Promise<void>)[] = [];

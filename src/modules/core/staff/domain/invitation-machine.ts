@@ -1,7 +1,7 @@
 // Máy trạng thái lời mời (#7 [C], spec 6.4). Câu UPDATE có điều kiện ở repository là nguồn sự thật cuối;
 // bảng này để test và để service đọc cho rõ.
 
-export const INVITATION_STATUSES = ['open', 'claimed', 'pending', 'approved', 'rejected'] as const;
+export const INVITATION_STATUSES = ['open', 'claimed', 'pending', 'approved', 'rejected', 'revoked'] as const;
 export type InvitationStatus = (typeof INVITATION_STATUSES)[number];
 
 /**
@@ -9,14 +9,19 @@ export type InvitationStatus = (typeof INVITATION_STATUSES)[number];
  * - `open | claimed → claimed`: nhập đúng mã.
  * - `claimed → pending`: nộp (đặt mật khẩu hoặc đăng nhập tài khoản đã có).
  * - `pending → approved | rejected`: Admin duyệt; hết hạn link không chặn.
+ * - `open | claimed → revoked`: Admin huỷ link chưa nộp (Documents/21 mục 3.1); hết hạn link không chặn.
  */
 export const TRANSITIONS: Readonly<Record<InvitationStatus, readonly InvitationStatus[]>> = {
-  open: ['open', 'claimed'],
-  claimed: ['claimed', 'pending'],
+  open: ['open', 'claimed', 'revoked'],
+  claimed: ['claimed', 'pending', 'revoked'],
   pending: ['approved', 'rejected'],
   approved: [],
   rejected: [],
+  revoked: [],
 };
+
+/** Trạng thái Admin còn huỷ được: người được mời chưa nộp. */
+export const REVOCABLE: readonly InvitationStatus[] = ['open', 'claimed'];
 
 export function canTransition(from: InvitationStatus, to: InvitationStatus): boolean {
   return TRANSITIONS[from].includes(to);
