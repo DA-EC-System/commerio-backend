@@ -11,6 +11,8 @@ export const catalogModule: ModuleDefinition = {
 };
 
 export { getVariants, type VariantSummary } from './service/variants.ts';
+/** Độ hoàn thiện theo SKU (#204); `product/index.ts` ghép với ngưỡng tồn thành `variantReadiness` cho channel. */
+export { variantReadinessOf } from './service/labels.ts';
 // Sửa hàng loạt có gợi ý (#242): dữ liệu của purchasing, inventory, sales vào qua cổng này (src/modules/product/index.ts).
 export type { BulkEditContext, BulkEditPorts } from './service/bulk-edit.ts';
 // Sản phẩm mới từ đề nghị nhập (#108): purchasing kiểm khi lập, tạo khi duyệt, trong giao dịch của purchasing.

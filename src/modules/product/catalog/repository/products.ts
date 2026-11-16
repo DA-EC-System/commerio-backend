@@ -14,8 +14,6 @@ const columns = {
   updatedAt: products.updatedAt,
   version: products.version,
   // SQL có bí danh: cột trong `sql` của Drizzle không kèm tên bảng.
-  variantCount: sql<number>`(select count(*)::int from product.product_variants pv
-    where pv.product_id = products.id and pv.archived_at is null)`,
   /** Tệp của ảnh đại diện (`position` 0, #303); null khi chưa có ảnh. Một câu cho cả trang danh sách. */
   thumbnailFileId: sql<string | null>`(select pi.file_id from product.product_images pi
     where pi.product_id = products.id and pi.position = 0)`,
@@ -36,6 +34,8 @@ export interface ProductFilter {
   search?: string | undefined;
   categoryId?: string | undefined;
   status: 'active' | 'archived';
+  /** Có ít nhất một SKU ở trạng thái này (#204). */
+  businessStatus?: 'selling' | 'paused' | 'discontinued' | undefined;
   page: number;
   pageSize: number;
 }
@@ -52,6 +52,10 @@ export async function listProducts(filter: ProductFilter) {
   const where = and(
     filter.status === 'archived' ? sql`not ${hasLiveVariant}` : hasLiveVariant,
     filter.categoryId ? eq(products.categoryId, filter.categoryId) : undefined,
+    filter.businessStatus
+      ? sql`exists (select 1 from product.product_variants pv
+          where pv.product_id = products.id and pv.business_status = ${filter.businessStatus})`
+      : undefined,
     filter.search
       ? sql`(strpos(lower(${products.name}), lower(${filter.search})) > 0 or exists (
           select 1 from product.product_variants pv

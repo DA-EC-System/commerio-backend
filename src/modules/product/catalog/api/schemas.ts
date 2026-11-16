@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BUSINESS_ACTIONS, BUSINESS_STATUSES } from '../domain/business-status.ts';
+import { MAIN_LABELS, type MainLabel, MISSING_FIELDS, PRESENCES } from '../domain/labels.ts';
 import { BulkRowInput } from '../domain/bulk-row.ts';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
@@ -204,6 +205,10 @@ export const ProductListQuery = z.object({
   categoryId: blankAsMissing(z.uuid('Danh mục không hợp lệ').optional()),
   /** `active`: còn SKU chưa lưu trữ; `archived`: mọi SKU đã lưu trữ (#204). */
   status: blankAsMissing(z.enum(['active', 'archived'], 'Trạng thái là active hoặc archived').default('active')),
+  /** Có ít nhất một SKU ở trạng thái này; lọc lưu trữ dùng `status=archived` (#204). */
+  businessStatus: blankAsMissing(
+    z.enum(['selling', 'paused', 'discontinued'], 'Trạng thái kinh doanh là selling, paused hoặc discontinued').optional(),
+  ),
   page: blankAsMissing(z.coerce.number().int().min(1, 'Trang từ 1').default(1)),
   pageSize: blankAsMissing(z.coerce.number().int().min(1, 'Từ 1 đến 100 dòng').max(100, 'Từ 1 đến 100 dòng').default(20)),
 });
@@ -269,8 +274,26 @@ export const Variant = z
     archiveBlockers: z
       .array(z.string())
       .meta({ description: 'Lý do chưa lưu trữ được (tồn, chứng từ mở); chỉ tính cho SKU Ngừng nhập, rỗng là lưu trữ được' }),
+    readiness: z.enum(['ready', 'incomplete']).meta({ description: 'Độ hoàn thiện (Documents/25 §5.4): đủ mọi phần ở `missing` thì ready' }),
+    missing: z.array(z.enum(MISSING_FIELDS)).meta({
+      description:
+        'Phần còn thiếu theo thứ tự cố định; `name`, `category`, `image` ở sản phẩm cha, `price` là giá muốn bán (`targetNetPrice`)',
+    }),
+    minQty: z.number().int().nullable().meta({ description: 'Ngưỡng tồn (inventory); null là chưa đặt' }),
+    presence: z.enum(PRESENCES).meta({
+      description: 'Hiện diện trên sàn (Documents/25 §5.1): live > error > pending > not_listed; listing `hidden` không tính là live',
+    }),
+    hasListingError: z.boolean().meta({ description: 'Có listing lỗi (push_failed, rejected, platform_hold), kể cả khi đã live' }),
+    listingCount: z.number().int().meta({ description: 'Số listing chưa gỡ, mọi gian hàng' }),
   })
   .meta({ id: 'ProductVariant' });
+
+const LabelCounts = z
+  .object(Object.fromEntries(MAIN_LABELS.map((l) => [l, z.number().int()])) as Record<MainLabel, z.ZodNumber>)
+  .meta({
+    id: 'LabelCounts',
+    description: 'Số SKU theo nhãn chính, đủ 7 khoá, tính mọi SKU: trạng thái kinh doanh khác selling, không thì hiện diện trên sàn',
+  });
 
 export const ProductListItem = z
   .object({
@@ -279,6 +302,10 @@ export const ProductListItem = z
     code: z.string().meta({ description: 'Mã cha, cấp lúc tạo theo quy tắc SKU của danh mục, không sửa (#204 D5)' }),
     category: z.object({ id: z.uuid(), name: z.string() }),
     variantCount: z.number().int().meta({ description: 'Số SKU chưa lưu trữ' }),
+    variantTotal: z.number().int().meta({ description: 'Số SKU, kể cả đã lưu trữ' }),
+    labelCounts: LabelCounts,
+    incompleteCount: z.number().int().meta({ description: 'Số SKU chưa lưu trữ còn thiếu phần (readiness incomplete)' }),
+    errorCount: z.number().int().meta({ description: 'Số SKU chưa lưu trữ có listing lỗi, kể cả SKU đang live' }),
     thumbnailUrl: z.string().nullable(),
     status: z.enum(['active', 'archived']).meta({ description: '`archived` khi mọi SKU đã lưu trữ (suy từ SKU, không lưu)' }),
     updatedAt: z.string(),

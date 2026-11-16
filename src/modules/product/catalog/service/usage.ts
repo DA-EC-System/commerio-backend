@@ -59,3 +59,10 @@ export async function archiveBlockersOf(
   }
   return result;
 }
+
+/** Cổng một nguồn của `ctx` (ngưỡng tồn, hiện diện); thiếu là lỗi lập trình, không coi là "chưa có số". */
+export function requirePort<K extends 'minQtyOf' | 'listingPresenceOf'>(ctx: CatalogContext, name: K): NonNullable<CatalogContext[K]> {
+  const port = ctx[name];
+  if (!port) throw new Error(`Chưa nối cổng của catalog: ${name}`);
+  return port as NonNullable<CatalogContext[K]>;
+}

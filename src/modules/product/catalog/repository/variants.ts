@@ -101,7 +101,7 @@ export async function updateVariantIfVersion(id: string, version: number, patch:
 }
 
 /** Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. */
-export async function findVariants(filter: { productId?: string; ids?: readonly string[] } = {}) {
+export async function findVariants(filter: { productId?: string; productIds?: readonly string[]; ids?: readonly string[] } = {}) {
   const rows = await getDb()
     .select({
       id: productVariants.id,
@@ -127,6 +127,7 @@ export async function findVariants(filter: { productId?: string; ids?: readonly 
     .where(
       and(
         filter.productId ? eq(productVariants.productId, filter.productId) : undefined,
+        filter.productIds ? inArray(productVariants.productId, [...filter.productIds]) : undefined,
         filter.ids ? inArray(productVariants.id, [...filter.ids]) : undefined,
       ),
     )

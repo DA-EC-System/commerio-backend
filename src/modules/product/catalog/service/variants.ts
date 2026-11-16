@@ -3,6 +3,7 @@
 import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { publishEvent, recordAudit } from '../../../core/index.ts';
+import { productImageRows } from '../repository/product-images.ts';
 import { touchProduct } from '../repository/products.ts';
 import {
   findVariants,
@@ -24,6 +25,7 @@ import {
   variantExists,
   versionConflict,
 } from './errors.ts';
+import { skuLabels } from './labels.ts';
 import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
@@ -111,7 +113,9 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
     const [variant] = await findVariants({ ids: [id] });
     await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: variantSnapshot(product.name, variant!) });
     const prices = await standardPricesOf(ctx, [id]);
-    return toVariantView(variant!, prices.get(id) ?? null);
+    const imageCount = (await productImageRows([productId], 1)).length;
+    const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, categoryId: product.categoryId, imageCount }));
+    return toVariantView(variant!, labels.get(id)!, prices.get(id) ?? null);
   }).catch((err: unknown) => {
     // Giá trị thuộc tính vừa bị xoá giữa lúc đọc và lúc chèn.
     if (pgError(err).code === '23503') throw badCombo('Có giá trị thuộc tính vừa bị xoá');

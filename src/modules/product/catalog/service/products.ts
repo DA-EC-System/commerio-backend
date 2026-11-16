@@ -3,6 +3,7 @@ import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { notImplemented } from '../../../../shared/errors/app-error.ts';
 import { confirmUploads, fileProblem, publicFileUrls, recordAudit } from '../../../core/index.ts';
+import { countLabels, type LabelledSku } from '../domain/labels.ts';
 import { findCategories } from '../repository/categories.ts';
 import { productImageRows, replaceProductImages } from '../repository/product-images.ts';
 import {
@@ -25,6 +26,7 @@ import {
   pgError,
   versionConflict,
 } from './errors.ts';
+import { type SkuLabels, skuLabels } from './labels.ts';
 import { imagesOf, MAX_PRODUCT_IMAGES } from './product-images.ts';
 import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
@@ -51,18 +53,19 @@ const ENTITY = 'product.products';
 const taken = () => nameTaken('Đã có sản phẩm cùng tên');
 
 /**
- * `thumbnailUrl`: link ảnh đại diện; chuỗi rỗng (thiếu `S3_PUBLIC_URL`) coi như không có ảnh. `status` suy từ SKU (#204):
- * `archived` khi mọi SKU đã lưu trữ.
+ * `thumbnailUrl`: link ảnh đại diện; chuỗi rỗng (thiếu `S3_PUBLIC_URL`) coi như không có ảnh. Số đếm và `status` suy từ
+ * nhãn của mọi SKU con (#204, Documents/21 §17.1): `archived` khi mọi SKU đã lưu trữ.
  */
-function toListItem(p: ProductRow, thumbnailUrl: string | null) {
+function toListItem(p: ProductRow, thumbnailUrl: string | null, skus: readonly LabelledSku[]) {
+  const counts = countLabels(skus);
   return {
     id: p.id,
     name: p.name,
     code: p.code,
     category: { id: p.categoryId, name: p.categoryName },
-    variantCount: p.variantCount,
+    ...counts,
     thumbnailUrl: thumbnailUrl || null,
-    status: p.variantCount > 0 ? ('active' as const) : ('archived' as const),
+    status: counts.variantCount > 0 ? ('active' as const) : ('archived' as const),
     updatedAt: p.updatedAt.toISOString(),
     version: p.version,
   };
@@ -73,8 +76,16 @@ export function toDong(value: Decimal | string | null): number | null {
   return value === null ? null : new Decimal(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
 }
 
-/** `archiveBlockers`: lý do chưa lưu trữ được, chỉ tính cho SKU `discontinued` (Documents/21 §17.1, spec 204 mục 5.2). */
-export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null, archiveBlockers: readonly string[] = []) {
+/**
+ * `labels`: độ hoàn thiện, ngưỡng tồn, hiện diện trên sàn (`skuLabels`). `archiveBlockers`: lý do chưa lưu trữ được, chỉ
+ * tính cho SKU `discontinued` (Documents/21 §17.1, spec 204 mục 5.2).
+ */
+export function toVariantView(
+  v: VariantRow,
+  labels: SkuLabels,
+  standardPrice: Decimal | null = null,
+  archiveBlockers: readonly string[] = [],
+) {
   return {
     id: v.id,
     sku: v.sku,
@@ -89,6 +100,8 @@ export function toVariantView(v: VariantRow, standardPrice: Decimal | null = nul
     heightMm: v.heightMm,
     version: v.version,
     archiveBlockers: [...archiveBlockers],
+    ...labels,
+    missing: [...labels.missing],
   };
 }
 
@@ -108,11 +121,13 @@ export async function productDetail(
   const discontinued = archiveBlockers ? rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id) : [];
   const blockers = await archiveBlockersOf(ctx, discontinued);
   const images = await imagesOf(p.id);
+  const labels = await skuLabels(ctx, rows, () => ({ name: p.name, categoryId: p.categoryId, imageCount: images.length }));
+  const views = rows.map((v) => toVariantView(v, labels.get(v.id)!, prices.get(v.id) ?? null, blockers.get(v.id)));
   return {
-    ...toListItem(p, images[0]?.url ?? null),
+    ...toListItem(p, images[0]?.url ?? null, views),
     description: p.description ?? '',
     images,
-    variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null, blockers.get(v.id))),
+    variants: views,
   };
 }
 export type ProductDetail = Awaited<ReturnType<typeof productDetail>>;
@@ -153,12 +168,25 @@ function race(err: unknown): never {
   throw err;
 }
 
-export async function listProducts(companyId: string, filter: ProductFilter) {
+/**
+ * Một trang danh sách với số câu truy vấn cố định (#204 Review Focus 2): trang sản phẩm, SKU của cả trang, ngưỡng tồn,
+ * hiện diện, link ảnh đại diện mỗi thứ một lần, không theo số dòng.
+ */
+export async function listProducts(ctx: CatalogContext, companyId: string, filter: ProductFilter) {
   return withCompany(companyId, async () => {
     const { rows, total } = await findPage(filter);
-    // Một câu lấy link ảnh đại diện cho cả trang, không N+1.
+    const variants = rows.length ? await findVariants({ productIds: rows.map((p) => p.id) }) : [];
+    // Độ hoàn thiện chỉ cần cha có ảnh hay không: ảnh `position` 0 có khi và chỉ khi có ảnh.
+    const parents = new Map(rows.map((p) => [p.id, { name: p.name, categoryId: p.categoryId, imageCount: p.thumbnailFileId ? 1 : 0 }]));
+    const labels = await skuLabels(ctx, variants, (id) => parents.get(id)!);
+    const skusOf = Map.groupBy(
+      variants.map((v) => ({ productId: v.productId, businessStatus: v.businessStatus, ...labels.get(v.id)! })),
+      (s) => s.productId,
+    );
     const urls = await publicFileUrls(rows.flatMap((p) => (p.thumbnailFileId ? [p.thumbnailFileId] : [])));
-    const items = rows.map((p) => toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null));
+    const items = rows.map((p) =>
+      toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null, skusOf.get(p.id) ?? []),
+    );
     return { items, total, page: filter.page, pageSize: filter.pageSize };
   });
 }

@@ -1,7 +1,7 @@
 // API công khai của module lớn `product` (Hàng hoá & kho: danh mục, tồn, mua hàng).
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
 import { type ModuleContext, type ModuleDefinition, withContext } from '../../shared/module.ts';
-import { type BulkEditPorts, catalogModule } from './catalog/index.ts';
+import { type BulkEditPorts, catalogModule, variantReadinessOf } from './catalog/index.ts';
 import {
   applyReorderRule,
   inventoryModule,
@@ -45,6 +45,12 @@ const bulkEditPorts = (ctx: ModuleContext & { soldQtyOf?: BulkEditPorts['soldQty
   applyReorderRule,
   soldQtyOf: (ids, days) => (ctx.soldQtyOf ? ctx.soldQtyOf(ids, days) : Promise.resolve(new Map())),
 });
+
+/**
+ * Độ hoàn thiện theo SKU (#204, Documents/25 §5.4) cho module khác: catalog tính, ngưỡng tồn lấy của inventory. Channel
+ * dùng để chặn đẩy SKU chưa hoàn thiện (thay luật tạm `paused → sku_not_ready`). Gọi trong `withCompany`.
+ */
+export const variantReadiness = (variantIds: readonly string[]) => variantReadinessOf(variantIds, minQtyOf);
 
 export const productModules: readonly ModuleDefinition[] = [
   // Sửa hàng loạt (#242); lý do chặn lưu trữ SKU phần kho, mua hàng và ngưỡng tồn cho nhãn (#204; phần đơn, sàn do
