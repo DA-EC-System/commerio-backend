@@ -26,9 +26,11 @@ WHERE p."id" = pv."product_id" AND p."archived_at" IS NOT NULL AND pv."business_
 DROP INDEX "product"."products_company_lower_name_uq";--> statement-breakpoint
 ALTER TABLE "product"."products" ADD COLUMN "code" text;--> statement-breakpoint
 CREATE UNIQUE INDEX "products_company_code_uq" ON "product"."products" USING btree ("company_id","code");--> statement-breakpoint
--- 2. D5: mã cha của sản phẩm đã có = SKU của biến thể tạo sớm nhất bỏ phần mã giá trị thuộc tính (như `renderSku` với
---    `{VAL}` rỗng: gộp dấu nối liền nhau, cắt dấu nối hai đầu), rỗng thì lấy nguyên SKU. Cấp theo thứ tự tạo sản phẩm,
---    mã đã có trong công ty thì thêm `-2`, `-3`… như `productCodeFor`. Sản phẩm không có biến thể (không có qua API) lấy
+-- 2. D5: mã cha của sản phẩm đã có = SKU của biến thể tạo sớm nhất, cắt phần mã giá trị thuộc tính của chính biến thể đó
+--    (nối bằng `-` theo `position`, như `{VAL}` của `renderSku`) **chỉ khi SKU kết thúc bằng phần ấy kèm dấu nối** `-`
+--    hoặc `_`; không cắt được thì lấy nguyên SKU (spec mục 5.3: mã cũ được phép lệch quy tắc hiện tại). Không dùng
+--    `replace`: mã giá trị 1 ký tự hay số (`M`, `40`) có thể nằm ở chỗ khác trong SKU. Cấp theo thứ tự tạo sản phẩm, mã
+--    đã có trong công ty thì thêm `-2`, `-3`… như `productCodeFor`. Sản phẩm không có biến thể (không có qua API) lấy
 --    `SP-` cộng 8 ký tự đầu của id.
 DO $$
 DECLARE
@@ -51,11 +53,11 @@ BEGIN
     SELECT p."id", p."company_id",
       CASE
         WHEN v."sku" IS NULL THEN 'SP-' || upper(left(p."id"::text, 8))
-        WHEN v.val = '' THEN v."sku"
-        ELSE coalesce(
-          nullif(trim(both '-_' from regexp_replace(replace(v."sku", v.val, ''), '([-_]){2,}', '\1', 'g')), ''),
+        WHEN v.val <> '' AND right(v."sku", length(v.val) + 1) IN ('-' || v.val, '_' || v.val) THEN coalesce(
+          nullif(rtrim(left(v."sku", length(v."sku") - length(v.val) - 1), '-_'), ''),
           v."sku"
         )
+        ELSE v."sku"
       END AS base
     FROM "product"."products" p
     LEFT JOIN vals v ON v."product_id" = p."id"
