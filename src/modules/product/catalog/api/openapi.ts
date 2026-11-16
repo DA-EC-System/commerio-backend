@@ -15,6 +15,7 @@ import {
   UpdateAttributeBody,
   UpdateCategoryBody,
   UpdateProductBody,
+  UpdateVariantBody,
   Variant,
   VariantParams,
   VersionQuery,
@@ -170,6 +171,21 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       201: json('Biến thể mới', Variant),
       409: problemResponse('`variant_exists` hoặc `product_archived`'),
       ...missing('sản phẩm'),
+      ...invalid,
+    },
+  });
+  path({
+    method: 'patch',
+    path: '/products/:id/variants/:variantId',
+    summary: 'Sửa giá, cân nặng, kích thước của một SKU; bỏ trường là giữ, null là xoá',
+    description:
+      '`version` là của SKU (`variants[].version`). Không trường nào khác giá trị đang lưu thì không ghi, trả bản hiện tại. ' +
+      'Đổi `targetNetPrice` phát `catalog.variant_price_changed` (Documents/21 §11.2); đổi `standardPrice` không phát.',
+    request: { params: VariantParams, body: body(UpdateVariantBody) },
+    responses: {
+      200: json('Sản phẩm sau khi sửa', ProductDetail),
+      409: problemResponse('`version_conflict` (kèm `current`) hoặc `product_archived`'),
+      ...missing('sản phẩm hoặc biến thể'),
       ...invalid,
     },
   });

@@ -1,12 +1,32 @@
-// Biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B2–B5, B8, B10, B11) và `getVariants`
-// cho module khác (Documents/21 §11; chữ ký chốt ở plan chuẩn bị 4.5, không đổi).
+// Biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B2–B5, B8, B10, B11), sửa một SKU (#204, §17.2)
+// và `getVariants` cho module khác (Documents/21 §11; chữ ký chốt ở plan chuẩn bị 4.5, chỉ thêm trường).
+import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
-import { recordAudit } from '../../../core/index.ts';
+import { publishEvent, recordAudit } from '../../../core/index.ts';
 import { touchProduct } from '../repository/products.ts';
-import { findVariants, insertVariant, lockVariants, setVariantArchived } from '../repository/variants.ts';
+import {
+  findVariants,
+  insertVariant,
+  lockVariants,
+  setVariantArchived,
+  updateVariantIfVersion,
+  type VariantPatch,
+  type VariantRow,
+} from '../repository/variants.ts';
 import { findCategories } from '../repository/categories.ts';
-import { auditOf, type Caller, invalid, isUuid, lastVariant, notFound, pgError, productArchived, variantExists } from './errors.ts';
-import { findOwnProduct, toVariantView } from './products.ts';
+import {
+  auditOf,
+  type Caller,
+  invalid,
+  isUuid,
+  lastVariant,
+  notFound,
+  pgError,
+  productArchived,
+  variantExists,
+  versionConflict,
+} from './errors.ts';
+import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 
@@ -22,6 +42,13 @@ export interface VariantSummary {
   archived: boolean;
   /** Trạng thái kinh doanh của SKU; nhập được khi `selling` hoặc `paused` (FE `purchasable`). */
   businessStatus: 'selling' | 'paused' | 'discontinued' | 'archived';
+  /** Mô tả của sản phẩm cha (#204: channel đẩy lên sàn). */
+  description: string | null;
+  /** Cân nặng (g) và kích thước gói (mm); sàn dùng để tính phí ship (#204). `null` khi chưa nhập. */
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
   attributes: { attributeId: string; attributeName: string; valueId: string; value: string; code: string }[];
 }
 
@@ -42,6 +69,11 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
     categoryName: v.categoryName,
     archived: v.archivedAt !== null || v.productArchivedAt !== null,
     businessStatus: v.businessStatus,
+    description: v.description,
+    weightG: v.weightG,
+    lengthMm: v.lengthMm,
+    widthMm: v.widthMm,
+    heightMm: v.heightMm,
     attributes: v.attributes,
   }));
 }
@@ -117,5 +149,108 @@ export async function archiveVariant(caller: Caller, productId: string, variantI
     await setVariantArchived(variantId, true);
     await touchProduct(productId);
     await recordAudit({ ...auditOf(caller, 'delete', ENTITY, variantId), before: variantSnapshot(product.name, variant) });
+  });
+}
+
+/** Thân của PATCH SKU (Documents/21 §17.2); số nguyên đồng, gam, mm. Bỏ trường là giữ, `null` là xoá. */
+export interface UpdateVariantInput {
+  version: number;
+  standardPrice?: number | null | undefined;
+  targetNetPrice?: number | null | undefined;
+  weightG?: number | null | undefined;
+  lengthMm?: number | null | undefined;
+  widthMm?: number | null | undefined;
+  heightMm?: number | null | undefined;
+}
+
+/** `unchanged`: không trường nào khác hiện tại, không ghi. `stale`: `version` không còn đúng, không ghi. */
+export type VariantUpdateOutcome = 'unchanged' | 'updated' | 'stale';
+
+const PRICE_FIELDS = ['standardPrice', 'targetNetPrice'] as const;
+const MEASURE_FIELDS = ['weightG', 'lengthMm', 'widthMm', 'heightMm'] as const;
+
+/** Giá đang lưu (chuỗi `numeric`) và giá gửi lên (số đồng) có bằng nhau không; `null` chỉ bằng `null`. */
+const samePrice = (stored: string | null, sent: number | null) =>
+  stored === null || sent === null ? stored === sent : new Decimal(stored).eq(sent);
+
+/**
+ * Sửa một SKU trong giao dịch `withCompany` của bên gọi (PATCH ở đây, sửa hàng loạt #242 gọi cho từng dòng). Chỉ ghi
+ * trường khác hiện tại; không trường nào khác thì không ghi và không kiểm `version` (gửi lại PATCH đã thành công vẫn
+ * 200). Ghi được thì tăng `version` SKU và ghi nhật ký chỉ gồm trường đổi, theo dạng API.
+ *
+ * Bên gọi tự: kiểm sản phẩm chưa lưu trữ và SKU thuộc sản phẩm; gọi `touchProduct` **một lần mỗi sản phẩm, sau mọi
+ * SKU** (đổi `updated_at` cha, P7). Hàm này không chạm dòng sản phẩm, để giao dịch sửa nhiều SKU khoá theo thứ tự
+ * SKU → sản phẩm như thêm, ngừng bán biến thể, không deadlock với PATCH đơn lẻ.
+ */
+export async function applyVariantUpdate(
+  caller: Caller,
+  current: VariantRow,
+  input: UpdateVariantInput,
+): Promise<VariantUpdateOutcome> {
+  const patch: VariantPatch = {};
+  const before: Record<string, number | null> = {};
+  const after: Record<string, number | null> = {};
+  for (const field of PRICE_FIELDS) {
+    const sent = input[field];
+    if (sent === undefined || samePrice(current[field], sent)) continue;
+    patch[field] = sent === null ? null : String(sent);
+    before[field] = toDong(current[field]);
+    after[field] = sent;
+  }
+  for (const field of MEASURE_FIELDS) {
+    const sent = input[field];
+    if (sent === undefined || sent === current[field]) continue;
+    patch[field] = sent;
+    before[field] = current[field];
+    after[field] = sent;
+  }
+  if (!Object.keys(patch).length) return 'unchanged';
+  // So trước trong JS: phần chênh và `from` của sự kiện tính từ đúng bản `version` này, và số `version` vượt `integer`
+  // không tới được câu SQL (lỗi 22003 thành 500, làm hỏng cả giao dịch sửa hàng loạt).
+  if (input.version !== current.version) return 'stale';
+
+  const updated = await updateVariantIfVersion(current.id, input.version, patch);
+  if (!updated) return 'stale';
+  await recordAudit({ ...auditOf(caller, 'update', ENTITY, current.id), before, after });
+  // Giá muốn bán đổi: channel chạy lại bộ lọc giá (#225). Câu UPDATE trên đã khoá dòng SKU, nên sự kiện của một SKU
+  // vào outbox đúng thứ tự. Giá chuẩn đổi không phát (Documents/21 §11.2).
+  if ('targetNetPrice' in patch) {
+    await publishEvent({
+      type: 'catalog.variant_price_changed',
+      aggregateId: current.id,
+      payload: {
+        variantId: current.id,
+        productId: current.productId,
+        from: current.targetNetPrice,
+        to: updated.targetNetPrice,
+        changedAt: updated.updatedAt.toISOString(),
+      },
+    });
+  }
+  return 'updated';
+}
+
+/**
+ * `PATCH /catalog/products/:id/variants/:variantId` (#204). Sản phẩm lưu trữ báo `product_archived` trước
+ * `version_conflict` như mọi route ghi; SKU đã ngừng bán vẫn sửa được (điền cho đủ trước khi khôi phục).
+ */
+export async function updateVariant(
+  ctx: CatalogContext,
+  caller: Caller,
+  productId: string,
+  variantId: string,
+  input: UpdateVariantInput,
+): Promise<ProductDetail> {
+  return withCompany(caller.companyId, async () => {
+    const product = await findOwnProduct(productId);
+    if (product.archivedAt) throw productArchived();
+    const [current] = isUuid(variantId) ? await findVariants({ ids: [variantId] }) : [];
+    if (!current || current.productId !== product.id) throw notFound('biến thể');
+    const outcome = await applyVariantUpdate(caller, current, input);
+    if (outcome === 'updated') await touchProduct(product.id);
+    if (outcome === 'stale') {
+      throw versionConflict(`SKU ${current.sku} vừa được người khác sửa`, await productDetail(ctx, await findOwnProduct(productId)));
+    }
+    return productDetail(ctx, await findOwnProduct(productId));
   });
 }
