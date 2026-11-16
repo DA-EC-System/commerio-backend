@@ -37,4 +37,6 @@ export { createOpeningStocktake, createQuarantineWriteOff } from './service/docu
 export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.ts';
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
+// Ngưỡng tồn cho sửa hàng loạt của catalog (#242), trong giao dịch của bên gọi.
+export { applyReorderRule, reorderRulesOf } from './service/stock.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';

@@ -1,8 +1,10 @@
 import { type Response, Router } from 'express';
+import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
+import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
 import { addVariant, archiveVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
@@ -10,6 +12,8 @@ import type { CatalogContext } from '../service/standard-price.ts';
 import {
   AddVariantBody,
   AttributeBody,
+  BulkEditQuery,
+  BulkSaveBody,
   CategoryBody,
   CreateProductBody,
   IdParams,
@@ -25,6 +29,10 @@ import {
 function caller(res: Response): Caller {
   const { accountId, companyId } = getAuth(res);
   return { accountId, companyId: companyId! };
+}
+
+function bulkViewer(res: Response): BulkViewer {
+  return { ...caller(res), permissions: getAccess(res).permissions };
 }
 
 /**
@@ -73,6 +81,15 @@ export function catalogRouter(ctx: CatalogContext): Router {
     const { id } = validated<typeof IdParams>(res, 'params');
     await attributes.deleteAttribute(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
     res.status(204).end();
+  });
+
+  // Sửa hàng loạt có gợi ý (#242, Documents/21 §17.5). Khai trước `/products` cho gọn; không trùng đường dẫn nào.
+  router.get('/variants/bulk-edit', manage, validate({ query: BulkEditQuery }), async (_req, res) => {
+    res.json(await listBulkEdit(ctx as BulkEditContext, bulkViewer(res), validated<typeof BulkEditQuery>(res, 'query')));
+  });
+
+  router.patch('/variants/bulk', manage, validate({ body: BulkSaveBody }), async (_req, res) => {
+    res.json(await saveBulkEdit(ctx as BulkEditContext, bulkViewer(res), validated<typeof BulkSaveBody>(res, 'body').rows));
   });
 
   router.get('/products', view, validate({ query: ProductListQuery }), async (_req, res) => {

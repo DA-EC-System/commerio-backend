@@ -193,3 +193,39 @@ export async function incomingByVariant(variantIds?: readonly string[]): Promise
     .groupBy(l.variantId);
   return new Map(rows.map((r) => [r.variantId!, r.qty]));
 }
+
+/** Trạng thái đề nghị mà giá nhập đã được CEO chốt (từ lúc duyệt). */
+const COST_FINAL_STATUSES = ['approved', 'ordered', 'partially_received', 'received', 'closed_short'] as const;
+
+export interface LastCost {
+  requestNumber: string;
+  supplierName: string | null;
+  /** Chuỗi `numeric` của DB, đồng. */
+  unitCost: string;
+}
+
+/**
+ * Giá nhập trên đề nghị đã duyệt gần nhất (theo ngày lập) có SKU, bỏ dòng bị loại; SKU chưa từng nhập thì không có
+ * trong kết quả (gợi ý giá muốn bán khi sửa hàng loạt, #242). Chạy trong `withCompany`.
+ */
+export async function lastCostsByVariant(variantIds: readonly string[]): Promise<Map<string, LastCost>> {
+  if (!variantIds.length) return new Map();
+  const l = purchaseRequestLines;
+  const rows = await getDb()
+    .selectDistinctOn([l.variantId], {
+      variantId: l.variantId,
+      requestNumber: purchaseRequests.number,
+      supplierName: suppliers.name,
+      unitCost: l.unitPrice,
+    })
+    .from(l)
+    .innerJoin(purchaseRequests, eq(purchaseRequests.id, l.requestId))
+    .leftJoin(suppliers, eq(suppliers.id, purchaseRequests.supplierId))
+    .where(
+      and(inArray(l.variantId, [...variantIds]), eq(l.excluded, false), inArray(purchaseRequests.status, [...COST_FINAL_STATUSES])),
+    )
+    .orderBy(l.variantId, desc(purchaseRequests.createdAt));
+  return new Map(
+    rows.map((r) => [r.variantId!, { requestNumber: r.requestNumber, supplierName: r.supplierName, unitCost: r.unitCost }]),
+  );
+}
