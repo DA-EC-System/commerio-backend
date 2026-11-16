@@ -22,6 +22,13 @@ export interface VariantSummary {
   archived: boolean;
   /** Trạng thái kinh doanh của SKU; nhập được khi `selling` hoặc `paused` (FE `purchasable`). */
   businessStatus: 'selling' | 'paused' | 'discontinued' | 'archived';
+  /** Mô tả của sản phẩm cha (#204: channel đẩy lên sàn). */
+  description: string | null;
+  /** Cân nặng (g) và kích thước gói (mm); sàn dùng để tính phí ship (#204). `null` khi chưa nhập. */
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
   attributes: { attributeId: string; attributeName: string; valueId: string; value: string; code: string }[];
 }
 
@@ -42,6 +49,11 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
     categoryName: v.categoryName,
     archived: v.archivedAt !== null || v.productArchivedAt !== null,
     businessStatus: v.businessStatus,
+    description: v.description,
+    weightG: v.weightG,
+    lengthMm: v.lengthMm,
+    widthMm: v.widthMm,
+    heightMm: v.heightMm,
     attributes: v.attributes,
   }));
 }

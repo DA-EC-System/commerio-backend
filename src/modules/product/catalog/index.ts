@@ -19,7 +19,7 @@ export {
   type NewProductItem,
   validateNewProducts,
 } from './service/purchase-products.ts';
-// Giá chuẩn là cột của SKU (Documents/19 D9).
-export { type CatalogContext, standardPricesOf } from './service/standard-price.ts';
+// Giá chuẩn và giá muốn bán là cột của SKU (Documents/19 D9); channel đọc giá muốn bán cho bộ lọc giá (#225).
+export { type CatalogContext, standardPricesOf, targetNetPricesOf } from './service/standard-price.ts';
 // Link ảnh sản phẩm cho channel (ảnh đại diện của listing, ảnh đẩy lên sàn; #303).
 export { productImageUrls } from './service/product-images.ts';
