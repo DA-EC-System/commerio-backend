@@ -33,6 +33,51 @@ describe('lazadaError với API sản phẩm', () => {
     expect(lazadaError({ code: '901', type: 'ISP', message: 'E901' }).kind).toBe('unavailable');
     expect(lazadaError({ code: 'ServiceTimeout', type: 'ISP' }).kind).toBe('unavailable');
   });
+
+  it('câu lỗi kèm lý do theo trường trong `detail` (payload thật 17/11/2026)', () => {
+    const err = lazadaError({
+      code: '4110',
+      type: 'ISP',
+      message: 'E500: Create product failed',
+      detail: [{ field: 'brandProp', message: 'C006:Vui lòng điền Brand trước khi tải lên lại.', code: 'BIZ_CHECK_CAT_PROP_MANDATORY' }],
+    });
+    expect(err.kind).toBe('rejected');
+    expect(err.platformCode).toBe('4110');
+    expect(err.platformMessage).toBe('E500: Create product failed (brandProp: C006:Vui lòng điền Brand trước khi tải lên lại.)');
+    expect(lazadaError({ code: '4110', type: 'ISP', message: 'E500', detail: [{ message: 'a' }, { field: 'x', message: 'b' }, {}] }).platformMessage)
+      .toBe('E500 (a; x: b)');
+    expect(lazadaError({ code: '4110', type: 'ISP', message: 'E500', detail: 'lạ' }).platformMessage).toBe('E500');
+  });
+});
+
+describe('adapter Lazada: brand khi tạo sản phẩm', () => {
+  const product = {
+    externalCategoryId: '10100278',
+    attributes: {},
+    name: '[DEMO] Thắt lưng - Đen',
+    description: 'Dữ liệu giả',
+    imageUrls: ['https://sg-test-11.slatic.net/p/a.jpg'],
+    sellerSku: 'DEMO-0004-DEN',
+    price: '100000',
+    quantity: 0,
+    weightG: 250,
+    lengthMm: 300,
+    widthMm: 50,
+    heightMm: 3,
+  };
+  const created = { code: '0', data: { item_id: 13511823308, sku_list: [{ sku_id: 117597376510 }], item_status: 'Active' } };
+
+  it('ghép danh mục không có brand: gửi "No Brand" (Lazada bắt Brand dù ghi không bắt buộc)', async () => {
+    const fn = fakeFetch({ code: '0', data: { products: [] } }, created);
+    await createLazadaAdapter(config, fn).createProduct('t', product);
+    expect(JSON.parse(sent(fn, 1).body.payload ?? '').Request.Product.Attributes.brand).toBe('No Brand');
+  });
+
+  it('ghép danh mục có brand: giữ brand đó', async () => {
+    const fn = fakeFetch({ code: '0', data: { products: [] } }, created);
+    await createLazadaAdapter(config, fn).createProduct('t', { ...product, attributes: { brand: 'Commerio' } });
+    expect(JSON.parse(sent(fn, 1).body.payload ?? '').Request.Product.Attributes.brand).toBe('Commerio');
+  });
 });
 
 describe('adapter Lazada: sản phẩm', () => {
