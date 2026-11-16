@@ -34,6 +34,8 @@ const packageStatus = z.enum([
   'lost',
   'cancelled',
 ]);
+/** Trạng thái kinh doanh của SKU (Documents/21 §17.1). */
+const businessStatus = z.enum(['selling', 'paused', 'discontinued', 'archived']);
 
 export const EVENT_SCHEMAS = {
   'inventory.stock_changed': z.object({ variantId: id, onHand: z.int(), reserved: z.int(), available: z.int() }),
@@ -208,6 +210,22 @@ export const EVENT_SCHEMAS = {
     receiptId: id,
     requestId: id,
     lines: z.array(z.object({ variantId: id, accepted: z.int().nonnegative(), defective: z.int().nonnegative() })),
+  }),
+  // Trạng thái kinh doanh của SKU đổi (#204, Documents/21 §11.2). Channel ẩn, hiện listing; inventory xét lại ngưỡng.
+  'catalog.variant_status_changed': z.object({
+    variantId: id,
+    productId: id,
+    from: businessStatus,
+    to: businessStatus,
+    changedAt: timestamp,
+  }),
+  // Giá muốn bán (`target_net_price`) đổi (#204, #242). `to` null là đã xoá giá. Channel chạy lại bộ lọc giá (#225).
+  'catalog.variant_price_changed': z.object({
+    variantId: id,
+    productId: id,
+    from: money.nullable(),
+    to: money.nullable(),
+    changedAt: timestamp,
   }),
   // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
   // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
