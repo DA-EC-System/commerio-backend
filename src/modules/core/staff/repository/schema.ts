@@ -58,6 +58,7 @@ export const invitationStatus = staffSchema.enum('invitation_status', [
   'pending',
   'approved',
   'rejected',
+  'revoked',
 ]);
 
 /**
@@ -109,7 +110,9 @@ export const invitations = staffSchema.table(
     check('invitations_role_ids_nonempty', sql`cardinality(${t.roleIds}) >= 1`),
     check(
       'invitations_identity_present',
-      sql`${t.status} = 'open' or (${t.email} is not null and ${t.fullName} is not null)`,
+      // `revoked` có thể huỷ từ `open` (chưa có email, họ tên). So dạng `text`: migration thêm giá trị enum `revoked` chạy
+      // cùng giao dịch, PostgreSQL không cho dùng giá trị enum mới trước khi commit (55P04).
+      sql`${t.status}::text in ('open', 'revoked') or (${t.email} is not null and ${t.fullName} is not null)`,
     ),
     check(
       'invitations_pending_shape',
@@ -122,6 +125,11 @@ export const invitations = staffSchema.table(
     check(
       'invitations_rejected_shape',
       sql`${t.status} <> 'rejected' or (${t.decidedBy} is not null and ${t.decidedAt} is not null)`,
+    ),
+    // Huỷ link ghi người huỷ, lúc huỷ vào `decided_by`, `decided_at` (Documents/21 mục 3.1).
+    check(
+      'invitations_revoked_shape',
+      sql`${t.status}::text <> 'revoked' or (${t.decidedBy} is not null and ${t.decidedAt} is not null)`,
     ),
     // 5 là OTP_MAX_ATTEMPTS, OTP_MAX_SENDS (`domain/otp.ts`).
     check(

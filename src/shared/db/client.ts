@@ -14,7 +14,11 @@ let database: Database | undefined;
 function rootDb(): Database {
   if (!database) {
     if (!env.DATABASE_URL) throw new Error('Chưa đặt DATABASE_URL');
-    pool = new pg.Pool({ connectionString: env.DATABASE_URL });
+    pool = new pg.Pool({
+      connectionString: env.DATABASE_URL,
+      max: env.DB_POOL_MAX,
+      connectionTimeoutMillis: env.DB_CONNECT_TIMEOUT_MS,
+    });
     // Kết nối bị server cắt (restart, failover), lúc rảnh hay lúc đang giữ giao dịch mà chưa chạy truy vấn:
     // client phát `error`, thiếu listener thì EventEmitter ném và tiến trình thoát. Nghe và ghi log trên từng client;
     // pool phát lại lỗi của client rảnh nên cũng cần listener (rỗng). Pool bỏ kết nối hỏng, truy vấn đang chờ thì lỗi.
@@ -28,6 +32,15 @@ function rootDb(): Database {
     database = drizzle({ client: pool });
   }
   return database;
+}
+
+/**
+ * Pool của tiến trình cho thư viện cần chạy SQL thẳng (pg-boss), để cả tiến trình chỉ có **một** pool và
+ * `DB_POOL_MAX` là trần thật (#335). Mỗi câu mượn một kết nối rồi trả ngay, không đi chung giao dịch đang mở.
+ */
+export function sharedPool(): pg.Pool {
+  rootDb();
+  return pool!;
 }
 
 // Transaction đang mở của yêu cầu hiện tại (docs/17 mục 2, luật 3), kèm công ty nếu mở bằng withCompany.

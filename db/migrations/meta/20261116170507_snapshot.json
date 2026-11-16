@@ -1,6 +1,6 @@
 {
-  "id": "8421d947-d983-4b7c-8db4-c9fecbfad02a",
-  "prevId": "6269dcb7-5592-4597-935e-a04f95a22d9e",
+  "id": "a4ab68de-11b9-441f-858e-2ba432f9eab1",
+  "prevId": "e4e30209-5a2a-4d9c-9742-5550f963c530",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3652,7 +3652,7 @@
         },
         "invitations_identity_present": {
           "name": "invitations_identity_present",
-          "value": "\"core\".\"invitations\".\"status\" = 'open' or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
         },
         "invitations_pending_shape": {
           "name": "invitations_pending_shape",
@@ -3665,6 +3665,10 @@
         "invitations_rejected_shape": {
           "name": "invitations_rejected_shape",
           "value": "\"core\".\"invitations\".\"status\" <> 'rejected' or (\"core\".\"invitations\".\"decided_by\" is not null and \"core\".\"invitations\".\"decided_at\" is not null)"
+        },
+        "invitations_revoked_shape": {
+          "name": "invitations_revoked_shape",
+          "value": "\"core\".\"invitations\".\"status\"::text <> 'revoked' or (\"core\".\"invitations\".\"decided_by\" is not null and \"core\".\"invitations\".\"decided_at\" is not null)"
         },
         "invitations_otp_counters_range": {
           "name": "invitations_otp_counters_range",
@@ -12696,7 +12700,8 @@
         "claimed",
         "pending",
         "approved",
-        "rejected"
+        "rejected",
+        "revoked"
       ]
     },
     "core.membership_status": {

@@ -14,9 +14,17 @@ describe('renderOtpMail', () => {
     expect(text).toContain('hết hạn sau 5 phút');
   });
 
-  it('không có link', () => {
-    const { subject, text } = renderOtpMail(input);
-    expect(`${subject}\n${text}`).not.toMatch(/https?:|www\./i);
+  it('không có link, cả bản chữ thô lẫn HTML', () => {
+    const { subject, text, html } = renderOtpMail(input);
+    expect(`${subject}\n${text}\n${html}`).not.toMatch(/https?:|www\.|<a /i);
+  });
+
+  it('bản HTML có mã, tên công ty; chuỗi người dùng gõ được escape', () => {
+    const { html } = renderOtpMail({ ...input, fullName: '<script>x</script>', companyName: 'A & "B"' });
+    expect(html).toContain('042195');
+    expect(html).toContain('A &amp; &quot;B&quot;');
+    expect(html).toContain('&lt;script&gt;x&lt;/script&gt;');
+    expect(html).not.toContain('<script>');
   });
 
   it('xuống dòng trong họ tên, tên công ty bị gộp thành khoảng trắng', () => {

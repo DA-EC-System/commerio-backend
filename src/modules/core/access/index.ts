@@ -8,6 +8,7 @@ import { BUILTIN_ROLES, permissionModule } from './domain/catalog.ts';
 import {
   insertMemberRole,
   memberRoleRows,
+  membershipIdsWithPermission as membershipIdsWithPermissionRows,
   membershipIdsWithRole as membershipIdsWithRoleRows,
   replaceMemberRoleRows,
   rolePermissionRows,
@@ -91,4 +92,13 @@ export async function replaceMemberRoles(membershipId: string, companyId: string
 export async function membershipIdsWithRole(roleId: string): Promise<string[]> {
   requireCompanyId('membershipIdsWithRole');
   return membershipIdsWithRoleRows(roleId);
+}
+
+/**
+ * Membership trong công ty đang chọn mang một vai trò có quyền `code` (staff gửi thư báo người có quyền duyệt lời mời).
+ * Chạy trong `withCompany`.
+ */
+export async function membershipIdsWithPermission(code: string): Promise<string[]> {
+  requireCompanyId('membershipIdsWithPermission');
+  return membershipIdsWithPermissionRows(code);
 }
