@@ -7,7 +7,7 @@ import type { VariantSummary } from '../../catalog/index.ts';
 import { getVariants } from '../../catalog/index.ts';
 import { areaOf, documentKind } from '../domain/moves.ts';
 import { toDong } from '../domain/stock.ts';
-import { allLevels, findLevel, latestMoves, lockLevel, type MoveRow, setMinQty } from '../repository/levels.ts';
+import { allLevels, findLevel, latestMoves, levelsOf, lockLevel, type MoveRow, setMinQty } from '../repository/levels.ts';
 import { documentHeads } from '../repository/move-sources.ts';
 import { recheckThresholds } from './thresholds.ts';
 import { lockedOf } from './port.ts';
@@ -186,4 +186,36 @@ export async function setReorderRule(
     }
     return toStockLevel(variant, (await findLevel(variant.id)) ?? undefined, viewer, incoming, locked);
   });
+}
+
+/** Ngưỡng và `reorderVersion` của các SKU (sửa hàng loạt, #242); SKU chưa có dòng tồn thì `{ minQty: null, version: 0 }`. */
+export async function reorderRulesOf(variantIds: readonly string[]): Promise<Map<string, { minQty: number | null; version: number }>> {
+  const levels = await levelsOf(variantIds);
+  return new Map(variantIds.map((id) => [id, { minQty: levels.get(id)?.minQty ?? null, version: levels.get(id)?.version ?? 0 }]));
+}
+
+/**
+ * Như `setReorderRule` nhưng chạy trong giao dịch `withCompany` của bên gọi và không dựng view (sửa hàng loạt gọi cho
+ * từng dòng, #242). `stale` khi `version` không còn đúng: bên gọi tự báo lỗi và huỷ giao dịch của dòng.
+ */
+export async function applyReorderRule(
+  actor: { companyId: string; accountId: string },
+  variantId: string,
+  input: { minQty: number | null; version: number },
+): Promise<'unchanged' | 'updated' | 'stale'> {
+  const level = await lockLevel(variantId);
+  if ((level.created ? 0 : level.version) !== input.version) return 'stale';
+  if (level.minQty === input.minQty) return 'unchanged';
+  await setMinQty(variantId, input.minQty);
+  await recordAudit({
+    companyId: actor.companyId,
+    actorId: actor.accountId,
+    action: level.minQty === null ? 'create' : input.minQty === null ? 'delete' : 'update',
+    entityType: 'product.stock_levels.min_qty',
+    entityId: variantId,
+    before: level.minQty === null ? null : { minQty: level.minQty },
+    after: input.minQty === null ? null : { minQty: input.minQty },
+  });
+  await recheckThresholds([variantId]);
+  return 'updated';
 }

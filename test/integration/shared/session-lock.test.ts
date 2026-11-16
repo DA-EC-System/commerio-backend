@@ -107,6 +107,76 @@ describe('withSessionLock', () => {
     await first;
   });
 
+  it('khoá lồng: giữ trên cùng phiên với khoá ngoài, nhả khi fn lồng xong, khoá ngoài vẫn giữ', async () => {
+    const outerKey = `test.lock:${randomUUID()}`;
+    const innerKey = `test.lock:${randomUUID()}`;
+    const result = await withSessionLock(outerKey, async () => {
+      const inner = await withSessionLock(innerKey, async () => {
+        const { rows } = await testPool().query<{ n: number }>(
+          `select count(distinct pid)::int as n from pg_locks
+            where locktype = 'advisory' and granted
+              and ((classid::bigint << 32) | objid::bigint) in (hashtextextended($1, 0), hashtextextended($2, 0))`,
+          [outerKey, innerKey],
+        );
+        return rows[0]!.n;
+      });
+      expect(await holders(innerKey)).toBe(0);
+      expect(await holders(outerKey)).toBe(1);
+      return inner;
+    });
+    expect(result).toBe(1);
+    expect(await holders(outerKey)).toBe(0);
+  });
+
+  it('khoá lồng trùng khoá chuỗi đang giữ thì busy, kể cả hai nhánh song song cùng xin một khoá', async () => {
+    const outerKey = `test.lock:${randomUUID()}`;
+    const shared = `test.lock:${randomUUID()}`;
+    await withSessionLock(outerKey, async () => {
+      expect(await withSessionLock(outerKey, async () => 'lại')).toBe('busy');
+      const gate = deferred();
+      const entered = deferred();
+      const first = withSessionLock(shared, async () => {
+        entered.resolve();
+        await gate.promise;
+        return 'a';
+      });
+      const second = withSessionLock(shared, async () => 'b');
+      expect(await second).toBe('busy');
+      await entered.promise;
+      gate.resolve();
+      expect(await first).toBe('a');
+    });
+    expect(await holders(shared)).toBe(0);
+  });
+
+  it('khoá lồng bỏ lửng chạy lâu hơn fn ngoài: khoá ngoài chờ nó xong mới nhả, khoá lồng giữ suốt fn của nó', async () => {
+    const outerKey = `test.lock:${randomUUID()}`;
+    const innerKey = `test.lock:${randomUUID()}`;
+    const gate = deferred();
+    const entered = deferred();
+    let dangling!: Promise<unknown>;
+    const outer = withSessionLock(outerKey, async () => {
+      dangling = withSessionLock(innerKey, async () => {
+        entered.resolve();
+        await gate.promise;
+        return holders(innerKey);
+      });
+      await entered.promise;
+      return 'ngoài xong';
+    });
+    await entered.promise;
+    // fn ngoài đã trả nhưng khoá lồng còn chạy: hai khoá vẫn giữ, phiên khác không lấy được khoá lồng.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await holders(innerKey)).toBe(1);
+    expect(await holders(outerKey)).toBe(1);
+    expect(await withSessionLock(innerKey, async () => 'chen')).toBe('busy');
+    gate.resolve();
+    expect(await dangling).toBe(1);
+    expect(await outer).toBe('ngoài xong');
+    expect(await holders(innerKey)).toBe(0);
+    expect(await holders(outerKey)).toBe(0);
+  });
+
   it('fn ném lỗi thì vẫn nhả khoá', async () => {
     const key = `test.lock:${randomUUID()}`;
     await expect(withSessionLock(key, async () => Promise.reject(new Error('hỏng')), { waitMs: 100 })).rejects.toThrow('hỏng');

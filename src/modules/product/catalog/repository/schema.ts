@@ -28,10 +28,23 @@ export const categories = catalogSchema.table(
     skuPattern: text('sku_pattern').notNull(),
     // Số thứ tự cấp cho biến thể kế tiếp của danh mục ({SEQ}).
     skuNextSeq: integer('sku_next_seq').notNull().default(1),
+    // Cấu hình gợi ý khi sửa hàng loạt (#242, Documents/25 §5.3); `null` là chưa đặt thì không gợi ý số đó.
+    // Giá muốn bán gợi ý = giá nhập × hệ số, làm tròn lên theo bước `price_rounding` (đồng).
+    marginCoefficient: numeric('margin_coefficient', { precision: 18, scale: 2 }),
+    priceRounding: integer('price_rounding'),
+    // Ngưỡng tồn = tốc độ bán/ngày × số ngày chờ hàng + tồn an toàn; SKU chưa có lịch sử bán thì lấy `reorder_default_qty`.
+    reorderLeadDays: integer('reorder_lead_days'),
+    reorderSafetyQty: integer('reorder_safety_qty'),
+    reorderDefaultQty: integer('reorder_default_qty'),
     ...timestamps,
     ...version,
   },
-  (t) => [uniqueIndex('categories_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`)],
+  (t) => [
+    uniqueIndex('categories_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    check('categories_margin_coefficient', sql`${t.marginCoefficient} >= 1`),
+    check('categories_price_rounding', sql`${t.priceRounding} > 0`),
+    check('categories_reorder_config', sql`${t.reorderLeadDays} >= 0 and ${t.reorderSafetyQty} >= 0 and ${t.reorderDefaultQty} >= 0`),
+  ],
 );
 
 export const attributes = catalogSchema.table(

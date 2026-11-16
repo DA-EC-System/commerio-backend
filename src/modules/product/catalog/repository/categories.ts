@@ -10,6 +10,11 @@ const columns = {
   name: categories.name,
   skuPattern: categories.skuPattern,
   skuNextSeq: categories.skuNextSeq,
+  marginCoefficient: categories.marginCoefficient,
+  priceRounding: categories.priceRounding,
+  reorderLeadDays: categories.reorderLeadDays,
+  reorderSafetyQty: categories.reorderSafetyQty,
+  reorderDefaultQty: categories.reorderDefaultQty,
   version: categories.version,
   updatedAt: categories.updatedAt,
   // Đếm cả sản phẩm đã lưu trữ: cùng điều kiện với `in_use` khi xoá (V25).
@@ -33,16 +38,36 @@ export async function categoryNameExists(name: string, exceptId?: string): Promi
   return rows.length > 0;
 }
 
-export async function insertCategory(companyId: string, name: string, skuPattern: string): Promise<string> {
-  const [row] = await getDb().insert(categories).values({ companyId, name, skuPattern }).returning({ id: categories.id });
+/** Cấu hình gợi ý của danh mục (#242), dạng cột; hệ số là chuỗi `numeric`. */
+export interface SuggestColumns {
+  marginCoefficient: string | null;
+  priceRounding: number | null;
+  reorderLeadDays: number | null;
+  reorderSafetyQty: number | null;
+  reorderDefaultQty: number | null;
+}
+
+export async function insertCategory(
+  companyId: string,
+  name: string,
+  skuPattern: string,
+  suggest: SuggestColumns,
+): Promise<string> {
+  const [row] = await getDb().insert(categories).values({ companyId, name, skuPattern, ...suggest }).returning({ id: categories.id });
   return row!.id;
 }
 
 /** Ghi có điều kiện version; `false` khi người khác vừa sửa hoặc xoá. */
-export async function updateCategoryIfVersion(id: string, version: number, name: string, skuPattern: string) {
+export async function updateCategoryIfVersion(
+  id: string,
+  version: number,
+  name: string,
+  skuPattern: string,
+  suggest: SuggestColumns,
+) {
   const rows = await getDb()
     .update(categories)
-    .set({ name, skuPattern, version: sql`${categories.version} + 1`, updatedAt: sql`now()` })
+    .set({ name, skuPattern, ...suggest, version: sql`${categories.version} + 1`, updatedAt: sql`now()` })
     .where(and(eq(categories.id, id), eq(categories.version, version)))
     .returning({ id: categories.id });
   return rows.length > 0;
