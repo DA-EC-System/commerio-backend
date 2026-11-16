@@ -2,8 +2,15 @@
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
 import { type ModuleDefinition, withContext } from '../../shared/module.ts';
 import { catalogModule } from './catalog/index.ts';
-import { inventoryModule, setIncomingSource, setSupplierReturnPort } from './inventory/index.ts';
-import { draftSupplierReturn, incomingOf, purchaseDocumentNumbers, purchasingModule, returnsFromStockDocuments } from './purchasing/index.ts';
+import { inventoryModule, setIncomingSource, setSupplierReturnPort, stockArchiveBlockers } from './inventory/index.ts';
+import {
+  draftSupplierReturn,
+  incomingOf,
+  purchaseArchiveBlockers,
+  purchaseDocumentNumbers,
+  purchasingModule,
+  returnsFromStockDocuments,
+} from './purchasing/index.ts';
 
 export * from './catalog/index.ts';
 export * from './inventory/index.ts';
@@ -20,7 +27,8 @@ setIncomingSource(incomingOf);
 setSupplierReturnPort({ draft: draftSupplierReturn, fromDocuments: returnsFromStockDocuments });
 
 export const productModules: readonly ModuleDefinition[] = [
-  catalogModule,
+  // Lý do chặn lưu trữ SKU phần kho, mua hàng (#204); phần đơn, sàn do `src/wiring.ts` nối.
+  withContext(catalogModule, (ctx) => ({ ...ctx, stockArchiveBlockers, purchaseArchiveBlockers })),
   withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf, purchaseDocumentNumbers })),
   purchasingModule,
 ];

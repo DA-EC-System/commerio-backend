@@ -21,6 +21,14 @@ export const productArchived = () => new AppError(409, 'product_archived', 'Sả
 
 export const variantExists = (sku: string) => new AppError(409, 'variant_exists', `Tổ hợp này đã có biến thể ${sku}`);
 
+/** Lưu trữ một SKU còn tồn hoặc chứng từ mở (Documents/21 §17.4); `reasons` là câu hiện thẳng ở FE. */
+export const archiveBlocked = (sku: string, reasons: readonly string[]) =>
+  new AppError(409, 'archive_blocked', `SKU ${sku} chưa lưu trữ được`, { reasons: [...reasons] });
+
+/** Thao tác trạng thái kinh doanh không có từ trạng thái hiện tại; `current` là sản phẩm mới nhất. */
+export const invalidTransition = (current: unknown) =>
+  new AppError(409, 'invalid_transition', 'Thao tác không hợp lệ ở trạng thái hiện tại', { current });
+
 export const lastVariant = () =>
   new AppError(409, 'last_variant', 'Sản phẩm phải còn ít nhất một biến thể đang bán. Muốn ngừng hẳn thì xoá sản phẩm');
 

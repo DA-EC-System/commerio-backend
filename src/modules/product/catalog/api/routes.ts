@@ -1,8 +1,10 @@
 import { type Response, Router } from 'express';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
+import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
+import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
 import * as products from '../service/products.ts';
 import { addVariant, archiveVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
@@ -10,6 +12,7 @@ import type { CatalogContext } from '../service/standard-price.ts';
 import {
   AddVariantBody,
   AttributeBody,
+  BusinessStatusBody,
   CategoryBody,
   CreateProductBody,
   IdParams,
@@ -25,6 +28,12 @@ import {
 function caller(res: Response): Caller {
   const { accountId, companyId } = getAuth(res);
   return { accountId, companyId: companyId! };
+}
+
+/** Người làm cho máy trạng thái: quyền và phân hệ đang bật lấy nguyên từ `getAccess` (khung tự bỏ quyền phân hệ tắt). */
+function actor(res: Response): BusinessActor {
+  const { permissions, enabledModules } = getAccess(res);
+  return { ...caller(res), permissions, enabledModules };
 }
 
 /**
@@ -104,6 +113,12 @@ export function catalogRouter(ctx: CatalogContext): Router {
     const { attributeValueIds } = validated<typeof AddVariantBody>(res, 'body');
     const { created, variant } = await addVariant(ctx, caller(res), id, attributeValueIds);
     res.status(created ? 201 : 200).json(variant);
+  });
+
+  // Đổi trạng thái kinh doanh của SKU hoặc cả sản phẩm (#204, Documents/21 §17.2, §17.3).
+  router.post('/products/:id/business-status', manage, validate({ params: IdParams, body: BusinessStatusBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await changeBusinessStatus(ctx, actor(res), id, validated<typeof BusinessStatusBody>(res, 'body')));
   });
 
   // Sửa giá, cân nặng, kích thước của một SKU; `version` là của SKU (#204, Documents/21 §17.2).

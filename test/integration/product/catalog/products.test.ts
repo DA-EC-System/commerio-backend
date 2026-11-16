@@ -94,6 +94,7 @@ describe('POST /catalog/products', () => {
         widthMm: null,
         heightMm: null,
         version: 1,
+        archiveBlockers: [],
         attributes: [
           { attributeId: color.id, attributeName: 'Màu', valueId: valueId(color, 'Xanh navy'), value: 'Xanh navy' },
           { attributeId: size.id, attributeName: 'Size', valueId: valueId(size, 'M'), value: 'M' },

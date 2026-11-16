@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BUSINESS_ACTIONS, BUSINESS_STATUSES } from '../domain/business-status.ts';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
@@ -146,6 +147,23 @@ export const UpdateVariantBody = z
   )
   .meta({ id: 'UpdateVariantRequest' });
 
+/**
+ * Đổi trạng thái kinh doanh (#204, Documents/21 §17.2). Bỏ `variantIds` là áp cho mọi SKU con; id sai dạng hoặc lặp thì
+ * 422, id không thuộc sản phẩm thì service trả 422 `errors.variantIds`.
+ */
+export const BusinessStatusBody = z
+  .object({
+    action: z.enum(BUSINESS_ACTIONS, 'Thao tác không hợp lệ'),
+    variantIds: z
+      .array(z.uuid('SKU không hợp lệ'), 'Chọn SKU')
+      .min(1, 'Chọn ít nhất một SKU')
+      .optional()
+      .superRefine((ids, ctx) => {
+        if (ids && new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', message: 'Một SKU được chọn hai lần' });
+      }),
+  })
+  .meta({ id: 'BusinessStatusRequest' });
+
 /** Ô rỗng (`categoryId=`) coi như không lọc: FE gửi vậy (AC-14). */
 const blankAsMissing = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (v === '' ? undefined : v), schema);
 
@@ -197,7 +215,7 @@ export const Variant = z
     ),
     archivedAt: z.string().nullable().meta({ description: 'Ngừng bán lúc nào; null là đang bán' }),
     businessStatus: z
-      .enum(['selling', 'paused', 'discontinued', 'archived'])
+      .enum(BUSINESS_STATUSES)
       .meta({ description: 'Trạng thái kinh doanh của SKU (Documents/21 §17.1)' }),
     standardPrice: z
       .number()
@@ -214,6 +232,9 @@ export const Variant = z
     widthMm: z.number().int().nullable().meta({ description: 'Chiều rộng gói (mm); null khi chưa nhập' }),
     heightMm: z.number().int().nullable().meta({ description: 'Chiều cao gói (mm); null khi chưa nhập' }),
     version: z.number().int().meta({ description: 'Version của SKU, gửi kèm PATCH /products/:id/variants/:variantId' }),
+    archiveBlockers: z
+      .array(z.string())
+      .meta({ description: 'Lý do chưa lưu trữ được (tồn, chứng từ mở); chỉ tính cho SKU Ngừng nhập, rỗng là lưu trữ được' }),
   })
   .meta({ id: 'ProductVariant' });
 
@@ -248,3 +269,20 @@ export const ProductDetail = ProductListItem.extend({
 export const ProductPage = z
   .object({ items: z.array(ProductListItem), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() })
   .meta({ id: 'ProductPage' });
+
+export const BusinessStatusResult = z
+  .object({
+    product: ProductDetail,
+    applied: z.array(z.uuid()).meta({ description: 'SKU đã đổi trạng thái' }),
+    skipped: z
+      .array(
+        z.object({
+          variantId: z.uuid(),
+          sku: z.string(),
+          code: z.enum(['invalid_transition', 'archive_blocked']),
+          reasons: z.array(z.string()).meta({ description: 'Lý do chặn lưu trữ; rỗng với invalid_transition' }),
+        }),
+      )
+      .meta({ description: 'SKU bỏ qua: không có thao tác này từ trạng thái hiện tại, hoặc bị chặn lưu trữ' }),
+  })
+  .meta({ id: 'BusinessStatusResult' });

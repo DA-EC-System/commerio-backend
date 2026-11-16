@@ -5,6 +5,8 @@ import {
   AddVariantBody,
   Attribute,
   AttributeBody,
+  BusinessStatusBody,
+  BusinessStatusResult,
   Category,
   CategoryBody,
   CreateProductBody,
@@ -170,6 +172,21 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       200: json('Biến thể được bán lại (SKU cũ)', Variant),
       201: json('Biến thể mới', Variant),
       409: problemResponse('`variant_exists` hoặc `product_archived`'),
+      ...missing('sản phẩm'),
+      ...invalid,
+    },
+  });
+  path({
+    method: 'post',
+    path: '/products/:id/business-status',
+    summary: 'Đổi trạng thái kinh doanh của SKU; bỏ variantIds là áp cho mọi SKU con',
+    description:
+      'Thao tác theo sơ đồ B1 (Documents/21 §17.3). Nhiều SKU: SKU không làm được nằm ở `skipped`. Đúng một `variantIds` mà ' +
+      'không làm được thì 409. Mỗi SKU đổi phát `catalog.variant_status_changed`.',
+    request: { params: IdParams, body: body(BusinessStatusBody) },
+    responses: {
+      200: json('Sản phẩm sau khi đổi, SKU đã đổi và SKU bỏ qua', BusinessStatusResult),
+      409: problemResponse('`invalid_transition` (kèm `current`), `archive_blocked` (kèm `reasons`) hoặc `product_archived`'),
       ...missing('sản phẩm'),
       ...invalid,
     },

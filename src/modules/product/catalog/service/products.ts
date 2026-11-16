@@ -29,6 +29,7 @@ import {
 import { imagesOf, MAX_PRODUCT_IMAGES } from './product-images.ts';
 import { allocateSkus, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
+import { archiveBlockersOf } from './usage.ts';
 
 export interface CreateProductInput {
   name: string;
@@ -69,7 +70,8 @@ export function toDong(value: Decimal | string | null): number | null {
   return value === null ? null : new Decimal(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
 }
 
-export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null) {
+/** `archiveBlockers`: lý do chưa lưu trữ được, chỉ tính cho SKU `discontinued` (Documents/21 §17.1, spec 204 mục 5.2). */
+export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null, archiveBlockers: readonly string[] = []) {
   return {
     id: v.id,
     sku: v.sku,
@@ -83,18 +85,21 @@ export function toVariantView(v: VariantRow, standardPrice: Decimal | null = nul
     widthMm: v.widthMm,
     heightMm: v.heightMm,
     version: v.version,
+    archiveBlockers: [...archiveBlockers],
   };
 }
 
 export async function productDetail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
   const rows = variants ?? (await findVariants({ productId: p.id }));
   const prices = await standardPricesOf(ctx, rows.map((v) => v.id));
+  // Chỉ SKU ngừng nhập mới có nút Lưu trữ: không có SKU nào như vậy thì không hỏi bốn nguồn.
+  const blockers = await archiveBlockersOf(ctx, rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id));
   const images = await imagesOf(p.id);
   return {
     ...toListItem(p, images[0]?.url ?? null),
     description: p.description ?? '',
     images,
-    variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null)),
+    variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null, blockers.get(v.id))),
   };
 }
 export type ProductDetail = Awaited<ReturnType<typeof productDetail>>;

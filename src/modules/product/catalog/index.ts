@@ -20,6 +20,8 @@ export {
   validateNewProducts,
 } from './service/purchase-products.ts';
 // Giá chuẩn và giá muốn bán là cột của SKU (Documents/19 D9); channel đọc giá muốn bán cho bộ lọc giá (#225).
-export { type CatalogContext, standardPricesOf, targetNetPricesOf } from './service/standard-price.ts';
+export { standardPricesOf, targetNetPricesOf } from './service/standard-price.ts';
+// `ctx` của catalog: nguồn lý do chặn lưu trữ SKU do `product/index.ts` và `src/wiring.ts` nối (#204).
+export type { ArchiveBlockerSource, CatalogContext } from './service/usage.ts';
 // Link ảnh sản phẩm cho channel (ảnh đại diện của listing, ảnh đẩy lên sàn; #303).
 export { productImageUrls } from './service/product-images.ts';

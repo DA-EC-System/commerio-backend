@@ -45,6 +45,26 @@ export async function setVariantArchived(id: string, archived: boolean): Promise
     .where(eq(productVariants.id, id));
 }
 
+type BusinessStatus = (typeof productVariants.businessStatus.enumValues)[number];
+
+/**
+ * Đổi trạng thái kinh doanh khi SKU còn ở `from` (#204): `archived_at` có giá trị đúng khi sang `archived` (CHECK
+ * `product_variants_archived`), tăng `version`. Không trúng dòng (trạng thái vừa đổi) thì `undefined`.
+ */
+export async function setBusinessStatus(id: string, from: BusinessStatus, to: BusinessStatus) {
+  const [row] = await getDb()
+    .update(productVariants)
+    .set({
+      businessStatus: to,
+      archivedAt: to === 'archived' ? sql`now()` : null,
+      version: sql`${productVariants.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(and(eq(productVariants.id, id), eq(productVariants.businessStatus, from)))
+    .returning({ updatedAt: productVariants.updatedAt });
+  return row;
+}
+
 /** Trường của SKU mà PATCH sửa được (#204); giá là chuỗi `numeric`. Khoá vắng mặt thì giữ nguyên, `null` là xoá. */
 export type VariantPatch = Partial<{
   standardPrice: string | null;

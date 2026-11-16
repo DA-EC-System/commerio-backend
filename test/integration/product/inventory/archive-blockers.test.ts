@@ -51,7 +51,7 @@ describe('stockArchiveBlockers (#204)', () => {
     const other = await testPool().connect();
     try {
       await withCompany(companyId, async () => {
-        await stockArchiveBlockers([v]);
+        await stockArchiveBlockers([v], { lock: true });
         // Ghi sổ kho khoá dòng tồn như `lockLevel`: chèn nếu chưa có rồi `for update`. Phải chờ tới khi lưu trữ xong.
         await other.query('begin');
         await other.query("set local lock_timeout = '300ms'");
@@ -68,5 +68,13 @@ describe('stockArchiveBlockers (#204)', () => {
     } finally {
       other.release();
     }
+  });
+
+  it('không lock (xem chi tiết): chỉ đọc, không tạo dòng tồn', async () => {
+    const { companyId, variants } = await companyWithVariants(1);
+    const v = variants[0]!;
+    expect(await blockersOf(companyId, [v])).toEqual(new Map());
+    const rows = await testPool().query('select 1 from product.stock_levels where variant_id = $1', [v]);
+    expect(rows.rowCount).toBe(0);
   });
 });
