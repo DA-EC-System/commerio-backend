@@ -52,6 +52,19 @@ export async function setBusinessStatus(id: string, from: BusinessStatus, to: Bu
   return row;
 }
 
+/**
+ * Đưa SKU đang `archived` về `discontinued` (hệ thống tự khôi phục khi có hàng vào, #204). Một câu cho cả lô; SKU không
+ * ở `archived` thì không đổi, không khoá chờ. Trả các dòng đã đổi.
+ */
+export async function restoreArchivedRows(ids: readonly string[]) {
+  if (!ids.length) return [];
+  return getDb()
+    .update(productVariants)
+    .set({ businessStatus: 'discontinued', archivedAt: null, version: sql`${productVariants.version} + 1`, updatedAt: sql`now()` })
+    .where(and(inArray(productVariants.id, [...ids]), eq(productVariants.businessStatus, 'archived')))
+    .returning({ id: productVariants.id, productId: productVariants.productId, updatedAt: productVariants.updatedAt });
+}
+
 /** Trường của SKU mà PATCH sửa được (#204); giá là chuỗi `numeric`. Khoá vắng mặt thì giữ nguyên, `null` là xoá. */
 export type VariantPatch = Partial<{
   standardPrice: string | null;

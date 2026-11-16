@@ -5,7 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { assertTransition, publishEvent, recordAudit, recordTransition } from '../../../core/index.ts';
 import { type BusinessAction, type BusinessStatus, businessStatusMachine } from '../domain/business-status.ts';
 import { touchProduct } from '../repository/products.ts';
-import { findVariants, lockVariants, setBusinessStatus } from '../repository/variants.ts';
+import { findVariants, lockVariants, restoreArchivedRows, setBusinessStatus } from '../repository/variants.ts';
 import { archiveBlocked, auditOf, invalid, invalidTransition, productArchived } from './errors.ts';
 import { findOwnProduct, type ProductDetail, productDetail } from './products.ts';
 import { archiveBlockersOf, type CatalogContext } from './usage.ts';
@@ -113,4 +113,32 @@ export async function changeBusinessStatus(
     if (applied.length) await touchProduct(product.id);
     return { product: await productDetail(ctx, await findOwnProduct(productId)), applied, skipped };
   });
+}
+
+/**
+ * Hệ thống tự khôi phục (Documents/21 §17.3 dòng "(hệ thống)", US-SP-07 dòng 4): SKU đang `archived` trong `variantIds`
+ * về `discontinued`, ghi lịch sử nguồn hệ thống (người làm trống), phát `catalog.variant_status_changed`. SKU khác bỏ
+ * qua. Inventory gọi trong giao dịch ghi sổ khi tồn thực hoặc chờ xử lý tăng.
+ *
+ * Không lấy `lockVariants`: dòng tồn đã khoá, lấy khoá công ty ở đây ngược thứ tự với luồng lưu trữ (khoá công ty → dòng
+ * tồn → SKU) và bắt mọi lần ghi sổ của công ty xếp hàng (spec 204 mục 5.2). Không bật cờ Cần xử lý (D6), không ghi nhật
+ * ký thao tác (không có người làm).
+ */
+export async function restoreArchivedBySystem(variantIds: readonly string[]): Promise<void> {
+  for (const row of await restoreArchivedRows([...new Set(variantIds)])) {
+    await recordTransition({
+      entityType: HISTORY_ENTITY,
+      entityId: row.id,
+      from: 'archived',
+      to: 'discontinued',
+      action: 'restore',
+      actorId: null,
+      source: 'system',
+    });
+    await publishEvent({
+      type: 'catalog.variant_status_changed',
+      aggregateId: row.id,
+      payload: { variantId: row.id, productId: row.productId, from: 'archived', to: 'discontinued', changedAt: row.updatedAt.toISOString() },
+    });
+  }
 }

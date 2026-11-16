@@ -4,11 +4,17 @@
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerInventoryOpenApi } from './api/openapi.ts';
 import { inventoryRouter } from './api/routes.ts';
+import { startInventoryConsumers } from './service/background.ts';
 
 export const inventoryModule: ModuleDefinition = {
   name: 'inventory',
   router: inventoryRouter,
   openapi: registerInventoryOpenApi,
+  // Nghe đổi trạng thái kinh doanh SKU để xét lại ngưỡng (#204).
+  async startBackground() {
+    startInventoryConsumers();
+    return async () => {};
+  },
 };
 
 export {
