@@ -2,7 +2,7 @@
 
 - **Ngày:** 16/11/2026
 - **Người soạn:** Khang (cùng Claude), theo issue commerio-backend#204 (thân issue và 5 comment tới 16/11/2026), `Documents/21` §11.2, §17 (bản `origin/main` sau Documents#117), `Documents/25` §5, `Documents/19` (bảng `products`, `product_variants`), `Documents/27` US-SP-02, 03, 05, 06, 07, 08, `Documents/kiem-thu/ca-theo-so-do.md` (B1)
-- **Trạng thái:** bản nháp chờ Khang duyệt. Các điểm D1 đến D11 (mục 10) là đề xuất của người soạn, lệch hoặc bổ sung tài liệu, cần Thành xác nhận trên issue
+- **Trạng thái:** Khang duyệt 16/11/2026. D1 đến D11 (mục 10) Khang chốt làm theo đề xuất ngày 16/11/2026; đã hỏi Thành trên issue #204, Thành trả lời khác thì sửa theo. PR 0 là #338, PR 1 là #339, sửa `Documents/21` cho D1 đến D3 ở Documents#124
 - **Nền:** `main` 2018c63
 - **Phạm vi spec:** Khang chốt 16/11/2026 là **một spec, ba PR** (mục 8). Sau khi một reviewer độc lập đọc spec, thêm **PR 0** chỉ khai hai sự kiện, theo luật "thêm loại sự kiện là PR riêng" của `src/modules/CLAUDE.md`. PR 0 và PR 1 gỡ kẹt staging làm trước
 
