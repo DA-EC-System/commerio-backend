@@ -4,6 +4,7 @@ import { ProductDetail } from '#src/modules/product/catalog/api/schemas.ts';
 import { getVariants } from '#src/modules/product/catalog/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
+import { testPool } from '../../helpers/db.ts';
 import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
 
 // Sửa một SKU: giá chuẩn, giá muốn bán, cân nặng, kích thước gói (#204, Documents/21 §17.1, §17.2).
@@ -176,5 +177,73 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
     const res = await patch(productId, variantId, { version: 1, weightG: 250 });
     expect(res.status).toBe(404);
     expect(res.body.type).toBe('/problems/not_found');
+  });
+});
+
+/** Payload `catalog.variant_price_changed` của một SKU trong outbox, cũ trước. */
+const priceEvents = async (variantId: string) =>
+  (
+    await testPool().query<{ payload: Record<string, unknown> }>(
+      "select payload from core.outbox_messages where type = 'catalog.variant_price_changed' and key = $1 order by id",
+      [variantId],
+    )
+  ).rows.map((r) => r.payload);
+
+describe('PATCH SKU phát catalog.variant_price_changed (#204, Documents/21 §11.2)', () => {
+  it('đặt giá muốn bán lần đầu → một sự kiện from null, to là chuỗi thập phân', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    await patch(product.id, variantId, { version: 1, targetNetPrice: 150000 });
+    expect(await priceEvents(variantId)).toEqual([
+      { variantId, productId: product.id, from: null, to: '150000.00', changedAt: expect.any(String) },
+    ]);
+  });
+
+  it('đổi giá rồi xoá giá → mỗi lần một sự kiện, xoá thì to null', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    await patch(product.id, variantId, { version: 1, targetNetPrice: 150000 });
+    await patch(product.id, variantId, { version: 2, targetNetPrice: 170000 });
+    await patch(product.id, variantId, { version: 3, targetNetPrice: null });
+    expect((await priceEvents(variantId)).map((e) => [e.from, e.to])).toEqual([
+      [null, '150000.00'],
+      ['150000.00', '170000.00'],
+      ['170000.00', null],
+    ]);
+  });
+
+  it('gửi lại cùng giá (150000 khi đang lưu "150000.00") → không thêm sự kiện, không tăng version', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    await patch(product.id, variantId, { version: 1, targetNetPrice: 150000 });
+    const res = await patch(product.id, variantId, { version: 2, targetNetPrice: 150000 });
+    expect(res.body.variants[0].version).toBe(2);
+    expect(await priceEvents(variantId)).toHaveLength(1);
+  });
+
+  it('chỉ đổi giá chuẩn hoặc số đo → không có sự kiện', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    await patch(product.id, variantId, { version: 1, standardPrice: 180000, weightG: 250 });
+    expect(await priceEvents(variantId)).toEqual([]);
+  });
+
+  it('sai version mà có đổi giá → 409 và không có sự kiện', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    const res = await patch(product.id, variantId, { version: 5, targetNetPrice: 150000 });
+    expect(res.status).toBe(409);
+    expect(await priceEvents(variantId)).toEqual([]);
+  });
+
+  it('hai PATCH cùng version chạy song song → đúng một 200, một 409, một sự kiện', async () => {
+    const product = await wallet();
+    const variantId = product.variants[0]!.id;
+    const results = await Promise.all([
+      patch(product.id, variantId, { version: 1, targetNetPrice: 150000 }),
+      patch(product.id, variantId, { version: 1, targetNetPrice: 160000 }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(await priceEvents(variantId)).toHaveLength(1);
   });
 });

@@ -2,7 +2,7 @@
 // và `getVariants` cho module khác (Documents/21 §11; chữ ký chốt ở plan chuẩn bị 4.5, chỉ thêm trường).
 import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
-import { recordAudit } from '../../../core/index.ts';
+import { publishEvent, recordAudit } from '../../../core/index.ts';
 import { touchProduct } from '../repository/products.ts';
 import {
   findVariants,
@@ -207,6 +207,21 @@ export async function applyVariantUpdate(
   if (!updated) return 'stale';
   await touchProduct(current.productId);
   await recordAudit({ ...auditOf(caller, 'update', ENTITY, current.id), before, after });
+  // Giá muốn bán đổi: channel chạy lại bộ lọc giá (#225). Câu UPDATE trên đã khoá dòng SKU, nên sự kiện của một SKU
+  // vào outbox đúng thứ tự. Giá chuẩn đổi không phát (Documents/21 §11.2).
+  if ('targetNetPrice' in patch) {
+    await publishEvent({
+      type: 'catalog.variant_price_changed',
+      aggregateId: current.id,
+      payload: {
+        variantId: current.id,
+        productId: current.productId,
+        from: current.targetNetPrice,
+        to: updated.targetNetPrice,
+        changedAt: updated.updatedAt.toISOString(),
+      },
+    });
+  }
   return 'updated';
 }
 
