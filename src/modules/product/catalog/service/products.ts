@@ -89,11 +89,21 @@ export function toVariantView(v: VariantRow, standardPrice: Decimal | null = nul
   };
 }
 
-export async function productDetail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
+/**
+ * `archiveBlockers: false` cho người không có `catalog.product.manage`: câu lý do chặn lưu trữ có số tồn, số mua hàng, chỉ
+ * người lưu trữ được mới cần (review PR 2).
+ */
+export async function productDetail(
+  ctx: CatalogContext,
+  p: ProductRow,
+  variants?: VariantRow[],
+  { archiveBlockers = true }: { archiveBlockers?: boolean } = {},
+) {
   const rows = variants ?? (await findVariants({ productId: p.id }));
   const prices = await standardPricesOf(ctx, rows.map((v) => v.id));
   // Chỉ SKU ngừng nhập mới có nút Lưu trữ: không có SKU nào như vậy thì không hỏi bốn nguồn.
-  const blockers = await archiveBlockersOf(ctx, rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id));
+  const discontinued = archiveBlockers ? rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id) : [];
+  const blockers = await archiveBlockersOf(ctx, discontinued);
   const images = await imagesOf(p.id);
   return {
     ...toListItem(p, images[0]?.url ?? null),
@@ -150,8 +160,13 @@ export async function listProducts(companyId: string, filter: ProductFilter) {
   });
 }
 
-export async function getProduct(ctx: CatalogContext, companyId: string, id: string): Promise<ProductDetail> {
-  return withCompany(companyId, async () => productDetail(ctx, await findOwnProduct(id)));
+export async function getProduct(
+  ctx: CatalogContext,
+  companyId: string,
+  id: string,
+  options: { archiveBlockers: boolean },
+): Promise<ProductDetail> {
+  return withCompany(companyId, async () => productDetail(ctx, await findOwnProduct(id), undefined, options));
 }
 
 /**

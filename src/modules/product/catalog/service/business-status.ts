@@ -63,7 +63,10 @@ export async function changeBusinessStatus(
     const variants = await findVariants({ productId });
     const byId = new Map(variants.map((v) => [v.id, v]));
     if (input.variantIds?.some((id) => !byId.has(id))) throw invalid({ variantIds: 'Có SKU không thuộc sản phẩm này' });
-    const targets = input.variantIds ? input.variantIds.map((id) => byId.get(id)!) : variants;
+    // Theo id tăng dần: khoá dòng SKU cùng thứ tự với hệ thống tự khôi phục (`restoreArchivedRows`), không khoá chéo.
+    const targets = (input.variantIds ? input.variantIds.map((id) => byId.get(id)!) : [...variants]).sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    );
     const single = input.variantIds?.length === 1;
 
     const candidates = input.action === 'archive' ? targets.filter((v) => v.businessStatus === 'discontinued') : [];

@@ -201,3 +201,22 @@ describe('chi tiết sản phẩm: archiveBlockers', () => {
     expect(ProductDetail.parse(res.body)).toEqual(res.body);
   });
 });
+
+describe('review cuối PR 2', () => {
+  it('áp SKU theo thứ tự id tăng dần dù gửi đảo: khoá dòng SKU cùng thứ tự với hệ thống tự khôi phục, không deadlock', async () => {
+    const product = await shirt(3);
+    const ids = product.variants.map((v) => v.id).sort();
+    const res = await change(ceo, product.id, 'pause', [...ids].reverse());
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toEqual(ids);
+  });
+
+  it('người không có catalog.product.manage xem chi tiết: archiveBlockers rỗng, không lộ số tồn, số mua hàng', async () => {
+    const { productId, variantId } = await skuAt('discontinued');
+    await receive(companyId, variantId, 3, 100000);
+    const blockersFor = async (token: string) =>
+      (await api(token).get(`/products/${productId}`)).body.variants.find((v: { id: string }) => v.id === variantId).archiveBlockers;
+    expect(await blockersFor(ceo)).toEqual(['Còn 3 tồn thực']);
+    expect(await blockersFor(sale)).toEqual([]);
+  });
+});

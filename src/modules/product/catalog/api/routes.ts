@@ -1,6 +1,7 @@
 import { type Response, Router } from 'express';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { getAccess } from '../../../../shared/auth/authorize.ts';
+import { moduleOfPermission } from '../../../../shared/auth/company-access.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
@@ -30,6 +31,14 @@ function caller(res: Response): Caller {
   return { accountId, companyId: companyId! };
 }
 
+const MANAGE = 'catalog.product.manage';
+
+/** Quyền phụ của route (`getAccess`, đọc DB lúc `authorize`); quyền của phân hệ đang tắt không tính. */
+function can(res: Response, permission: string): boolean {
+  const { permissions, enabledModules } = getAccess(res);
+  return permissions.includes(permission) && enabledModules.includes(moduleOfPermission(permission));
+}
+
 /** Người làm cho máy trạng thái: quyền và phân hệ đang bật lấy nguyên từ `getAccess` (khung tự bỏ quyền phân hệ tắt). */
 function actor(res: Response): BusinessActor {
   const { permissions, enabledModules } = getAccess(res);
@@ -44,7 +53,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
   const router = Router();
   const view = ctx.authorize('catalog.product.view');
   const setup = ctx.authorize('catalog.category.manage');
-  const manage = ctx.authorize('catalog.product.manage');
+  const manage = ctx.authorize(MANAGE);
 
   router.get('/categories', view, async (_req, res) => {
     res.json(await categories.listCategories(caller(res).companyId));
@@ -90,7 +99,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
 
   router.get('/products/:id', view, validate({ params: IdParams }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    res.json(await products.getProduct(ctx, caller(res).companyId, id));
+    res.json(await products.getProduct(ctx, caller(res).companyId, id, { archiveBlockers: can(res, MANAGE) }));
   });
 
   router.post('/products', manage, validate({ body: CreateProductBody }), async (_req, res) => {

@@ -58,6 +58,14 @@ export async function setBusinessStatus(id: string, from: BusinessStatus, to: Bu
  */
 export async function restoreArchivedRows(ids: readonly string[]) {
   if (!ids.length) return [];
+  // Khoá theo id tăng dần trước khi ghi: UPDATE khoá theo thứ tự quét, có thể ngược với thao tác người dùng trên nhiều
+  // SKU (cũng theo id) và khoá chéo (review PR 2).
+  await getDb()
+    .select({ id: productVariants.id })
+    .from(productVariants)
+    .where(and(inArray(productVariants.id, [...ids]), eq(productVariants.businessStatus, 'archived')))
+    .orderBy(asc(productVariants.id))
+    .for('update');
   return getDb()
     .update(productVariants)
     .set({ businessStatus: 'discontinued', archivedAt: null, version: sql`${productVariants.version} + 1`, updatedAt: sql`now()` })
