@@ -64,14 +64,25 @@ function toListItem(p: ProductRow, thumbnailUrl: string | null) {
   };
 }
 
+/** Giá trên API là số nguyên đồng (G1); DB giữ chuỗi `numeric`, service giữ Decimal. */
+export function toDong(value: Decimal | string | null): number | null {
+  return value === null ? null : new Decimal(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
+}
+
 export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null) {
   return {
     id: v.id,
     sku: v.sku,
     attributes: v.attributes.map(({ code: _, ...a }) => a),
     archivedAt: v.archivedAt?.toISOString() ?? null,
-    // Giá trên API là số nguyên đồng (G1); DB và service giữ Decimal.
-    standardPrice: standardPrice === null ? null : standardPrice.toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber(),
+    businessStatus: v.businessStatus,
+    standardPrice: toDong(standardPrice),
+    targetNetPrice: toDong(v.targetNetPrice),
+    weightG: v.weightG,
+    lengthMm: v.lengthMm,
+    widthMm: v.widthMm,
+    heightMm: v.heightMm,
+    version: v.version,
   };
 }
 

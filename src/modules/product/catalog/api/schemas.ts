@@ -171,11 +171,24 @@ export const Variant = z
       z.object({ attributeId: z.uuid(), attributeName: z.string(), valueId: z.uuid(), value: z.string() }),
     ),
     archivedAt: z.string().nullable().meta({ description: 'Ngừng bán lúc nào; null là đang bán' }),
+    businessStatus: z
+      .enum(['selling', 'paused', 'discontinued', 'archived'])
+      .meta({ description: 'Trạng thái kinh doanh của SKU (Documents/21 §17.1)' }),
     standardPrice: z
       .number()
       .int()
       .nullable()
-      .meta({ description: 'Giá trong bảng giá chuẩn (đồng); null khi chưa có giá (#14)' }),
+      .meta({ description: 'Giá chuẩn (đồng); null khi chưa có giá' }),
+    targetNetPrice: z
+      .number()
+      .int()
+      .nullable()
+      .meta({ description: 'Giá muốn bán: số muốn thực nhận mỗi món (đồng, Documents/25 §6.2); null khi chưa đặt' }),
+    weightG: z.number().int().nullable().meta({ description: 'Cân nặng gói (gam); null khi chưa nhập' }),
+    lengthMm: z.number().int().nullable().meta({ description: 'Chiều dài gói (mm); null khi chưa nhập' }),
+    widthMm: z.number().int().nullable().meta({ description: 'Chiều rộng gói (mm); null khi chưa nhập' }),
+    heightMm: z.number().int().nullable().meta({ description: 'Chiều cao gói (mm); null khi chưa nhập' }),
+    version: z.number().int().meta({ description: 'Version của SKU, gửi kèm PATCH /products/:id/variants/:variantId' }),
   })
   .meta({ id: 'ProductVariant' });
 
