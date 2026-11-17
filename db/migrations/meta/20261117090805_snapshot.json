@@ -1,5 +1,5 @@
 {
-  "id": "1ff67f0f-f094-4251-a12d-ab1a01e634bb",
+  "id": "8df3a334-0411-4b0e-9adc-fce3f103fd5d",
   "prevId": "f9d1e87e-3a9c-492a-8fc8-18550f05033e",
   "version": "7",
   "dialect": "postgresql",
@@ -1323,18 +1323,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "remote_skus_full_error": {
-          "name": "remote_skus_full_error",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "remote_skus_refresh_requested_at": {
-          "name": "remote_skus_refresh_requested_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "open_orders_pulled_at": {
           "name": "open_orders_pulled_at",
           "type": "timestamp with time zone",
@@ -1470,10 +1458,6 @@
         "shops_remote_skus_failed_at": {
           "name": "shops_remote_skus_failed_at",
           "value": "\"channel\".\"shops\".\"remote_skus_full_failures\" = 0 or \"channel\".\"shops\".\"remote_skus_full_failed_at\" is not null"
-        },
-        "shops_remote_skus_full_error": {
-          "name": "shops_remote_skus_full_error",
-          "value": "\"channel\".\"shops\".\"remote_skus_full_error\" is null or \"channel\".\"shops\".\"remote_skus_full_failed_at\" is not null"
         },
         "shops_allocation_pending": {
           "name": "shops_allocation_pending",
@@ -13063,7 +13047,8 @@
       "values": [
         "cancel",
         "edit",
-        "resplit"
+        "resplit",
+        "stocktake"
       ]
     },
     "order.package_status": {

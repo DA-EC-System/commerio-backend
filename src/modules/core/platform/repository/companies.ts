@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { ModuleCode } from '../domain/modules.ts';
 import { companies, companyModules } from './schema.ts';
@@ -47,4 +47,45 @@ export async function enabledModuleCodes(companyId: string): Promise<ModuleCode[
     .from(companyModules)
     .where(and(eq(companyModules.companyId, companyId), eq(companyModules.enabled, true)));
   return rows.map((r) => r.code);
+}
+
+export interface CompanyProfileRow {
+  id: string;
+  name: string;
+  taxCode: string;
+  address: string | null;
+  responsibleName: string | null;
+  responsibleAddress: string | null;
+  version: number;
+}
+
+export type CompanyProfilePatch = Partial<Pick<CompanyProfileRow, 'address' | 'responsibleName' | 'responsibleAddress'>>;
+
+const profileColumns = {
+  id: companies.id,
+  name: companies.name,
+  taxCode: companies.taxCode,
+  address: companies.address,
+  responsibleName: companies.responsibleName,
+  responsibleAddress: companies.responsibleAddress,
+  version: companies.version,
+};
+
+export async function findCompanyProfile(id: string): Promise<CompanyProfileRow | undefined> {
+  const [row] = await getDb().select(profileColumns).from(companies).where(eq(companies.id, id));
+  return row;
+}
+
+/** Sửa theo `version`; `undefined` khi lệch version. Chạy bằng role chủ bảng (`commerio_app` không có UPDATE). */
+export async function updateCompanyProfile(
+  id: string,
+  version: number,
+  patch: CompanyProfilePatch,
+): Promise<CompanyProfileRow | undefined> {
+  const [row] = await getDb()
+    .update(companies)
+    .set({ ...patch, updatedAt: new Date(), version: sql`${companies.version} + 1` })
+    .where(and(eq(companies.id, id), eq(companies.version, version)))
+    .returning(profileColumns);
+  return row;
 }

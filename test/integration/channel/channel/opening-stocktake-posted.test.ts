@@ -210,7 +210,7 @@ async function waitingShop(c: Company, externalSkuIds = ['sku-os']): Promise<{ s
     .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   expect(token.status).toBe(201);
   const shopId = token.body.shop.id as string;
-  const res = await app().post(`/api/v1/channel/shops/${shopId}/setup`).set(auth(c)).send({ externalSkuIds, openingStock: 'stocktake' });
+  const res = await app().post(`/api/v1/channel/shops/${shopId}/setup`).set(auth(c)).send({ externalSkuIds, openingStock: 'stocktake', returnWindowDays: 7 });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   await testPool().query('update channel.shops set open_orders_pulled_at = now() where id = $1', [shopId]);
   await testPool().query("delete from pgboss.job where name = 'channel.open_order_pull' and data->>'shopId' = $1", [shopId]);
@@ -463,14 +463,14 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
       .set(auth(c))
       .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
     const secondId = second.body.shop.id as string;
-    const blocked = await app().post(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push' });
+    const blocked = await app().post(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push', returnWindowDays: 7 });
     expect(blocked.status).toBe(422);
 
     await stocktakePosted(c, posted(shopId, documentId));
 
     const preview = await app().get(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c));
     expect(preview.body.firstShopOfCompany).toBe(false);
-    const ok = await app().post(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push' });
+    const ok = await app().post(`/api/v1/channel/shops/${secondId}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push', returnWindowDays: 7 });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
   });
 
@@ -701,7 +701,7 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
       .set(auth(c))
       .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
     const second = token.body.shop.id as string;
-    const setup = await app().post(`/api/v1/channel/shops/${second}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push' });
+    const setup = await app().post(`/api/v1/channel/shops/${second}/setup`).set(auth(c)).send({ externalSkuIds: [], openingStock: 'push', returnWindowDays: 7 });
     expect(setup.status, JSON.stringify(setup.body)).toBe(200);
     await mapCategory(c, second);
 
@@ -770,16 +770,24 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
   it.each([
     ['cancelled', 'cancelled' as const],
     ['không còn', null],
-  ])('phiếu %s: lập được phiếu mới', async (_name, status) => {
+  ])('phiếu %s: gian hàng báo cancelled (#368), lập được phiếu mới', async (_name, status) => {
     const c = await createCompany({ optionalModules: ['channel'] });
-    const { shopId, documentId } = await waitingShop(c);
+    const { shopId, documentId, number } = await waitingShop(c);
     if (status) docStatus.set(documentId, status);
     else docStatus.delete(documentId);
+    const view = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(view.body.openingStocktake).toEqual({ documentId, number, status: 'cancelled' });
+    const list = await app().get('/api/v1/channel/shops').set(auth(c));
+    expect(list.body.items.find((s: { id: string }) => s.id === shopId).openingStocktake.status).toBe('cancelled');
 
     const res = await recreate(c, shopId);
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.shop.openingStocktake.status).toBe('draft');
+    const next = res.body.shop.openingStocktake;
+    expect(next.status).toBe('draft');
+    const reread = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(reread.body.openingStocktake).toEqual(next);
+    expect(next.documentId).not.toBe(documentId);
   });
 
   it('phiếu đã ghi sổ (sự kiện chưa xử lý) hoặc openingStocktake null: 409 shop_not_awaiting_stocktake', async () => {

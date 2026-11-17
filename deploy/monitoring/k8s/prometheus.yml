@@ -7,6 +7,12 @@ global:
 rule_files:
   - alerts.yml
 
+# Gửi cảnh báo tới Alertmanager (deploy/k8s/overlays/vps/alertmanager.yaml, email qua Brevo). Overlay local không có: bỏ qua lỗi.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: commerio
     kubernetes_sd_configs:

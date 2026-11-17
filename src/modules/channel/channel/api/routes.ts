@@ -9,19 +9,25 @@ import * as categories from '../service/categories.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
+import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
 import { productPort } from '../service/product-port.ts';
 import * as setup from '../service/setup.ts';
+import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
   CallbackBody,
   DelistBody,
+  UpdateContentBody,
+  UpdateContentParams,
   ListingParams,
   MappingBody,
   MappingParams,
   MatchBody,
+  OutsideChangeBody,
+  OutsideChangeParams,
   PushBody,
   RemoteSkusQuery,
   SetupBody,
@@ -30,6 +36,7 @@ import {
   CategoryParams,
   CategorySearchQuery,
   DisconnectBody,
+  UpdateShopBody,
   PlatformParams,
   ShopParams,
   TokenBody,
@@ -54,7 +61,7 @@ export function channelRouter(ctx: ModuleContext): Router {
   const match = ctx.authorize('channel.listing.match');
   // Duyệt ghép: `listing.manage` + vai trò CEO (21 §18.3), kiểm trước `validate()` như quyền.
   const ceoOnly = async (_req: Request, res: Response, next: NextFunction) => {
-    if (!(await mapping.isCeo(actor(res)))) throw new AppError(403, 'forbidden', 'Chỉ CEO duyệt ghép SKU');
+    if (!(await mapping.isCeo(actor(res)))) throw new AppError(403, 'forbidden', 'Chỉ CEO làm được thao tác này');
     next();
   };
 
@@ -91,6 +98,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await withCompany(actor(res).companyId, () => shops.getShop(id)));
+  });
+
+  router.patch('/shops/:id', connect, validate({ params: ShopParams, body: UpdateShopBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const who = actor(res);
+    res.json(await withCompany(who.companyId, () => updateShopSettings(who, id, validated<typeof UpdateShopBody>(res, 'body'))));
   });
 
   router.post(
@@ -232,6 +245,17 @@ export function channelRouter(ctx: ModuleContext): Router {
   );
 
   router.post(
+    '/shops/:id/listings/:listingId/update-content',
+    manage,
+    validate({ params: UpdateContentParams, body: UpdateContentBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof UpdateContentParams>(res, 'params');
+      const { version } = validated<typeof UpdateContentBody>(res, 'body');
+      res.json(await listings.updateListingContent(productPort(ctx), actor(res), id, listingId, version));
+    },
+  );
+
+  router.post(
     '/shops/:id/listings/:variantId/delist',
     manage,
     validate({ params: ListingParams, body: DelistBody }),
@@ -239,6 +263,18 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, variantId } = validated<typeof ListingParams>(res, 'params');
       const { version } = validated<typeof DelistBody>(res, 'body');
       res.json(await listings.delistListing(actor(res), id, variantId, version));
+    },
+  );
+
+  router.post(
+    '/shops/:id/listings/:listingId/outside-change/:action',
+    manage,
+    ceoOnly,
+    validate({ params: OutsideChangeParams, body: OutsideChangeBody }),
+    async (_req, res) => {
+      const { id, listingId, action } = validated<typeof OutsideChangeParams>(res, 'params');
+      const { version } = validated<typeof OutsideChangeBody>(res, 'body');
+      res.json(await resolveOutsideChange(productPort(ctx), actor(res), id, listingId, action, version));
     },
   );
 

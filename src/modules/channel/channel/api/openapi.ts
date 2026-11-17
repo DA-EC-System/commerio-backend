@@ -6,11 +6,15 @@ import {
   CategoryAttributeList,
   ChannelListing,
   DelistBody,
+  UpdateContentBody,
+  UpdateContentParams,
   ListingList,
   ListingParams,
   ListingSyncResult,
   MappingBody,
   MappingParams,
+  OutsideChangeBody,
+  OutsideChangeParams,
   MatchBody,
   RemoteSkuList,
   RemoteSkusQuery,
@@ -28,6 +32,7 @@ import {
   CategoryParams,
   CategorySearchQuery,
   DisconnectBody,
+  UpdateShopBody,
   PlatformCategoryList,
   PlatformParams,
   Shop,
@@ -127,6 +132,23 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     request: { params: PlatformParams, body: json(TokenBody) },
     responses: { ...connected, ...auth, ...marketplace },
   });
+  registry.registerPath({
+    method: 'patch',
+    path: '/shops/:id',
+    summary: 'Sửa hạn trả hàng của gian hàng (§18.4, #362)',
+    description:
+      'Cần `channel.shop.connect`. Mọi trạng thái gian hàng. Thứ tự: 422 `validation_failed` (body: `returnWindowDays` số nguyên 1–60, `version`, không trường lạ) → 404 `not_found` → 409 `version_conflict` kèm `current` → 422 `errors.returnWindowDays` khi sàn `capabilities.returnWindow = platform_status`. Ghi nhật ký thao tác.',
+    security: bearer,
+    request: { params: ShopParams, body: json(UpdateShopBody) },
+    responses: {
+      200: { description: 'Gian hàng sau khi sửa', ...json(Shop) },
+      ...auth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`version_conflict` kèm `current` là gian hàng'),
+      422: problemResponse('`validation_failed`'),
+    },
+  });
+
   registry.registerPath({
     method: 'post',
     path: '/shops/:id/disconnect',
@@ -293,7 +315,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/setup',
     summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Tạo listing `live` theo `decisions` (hoặc `externalSkuIds` cũ), mốc kéo đơn = lúc gọi (`orderCutoffAt` trong body bị bỏ qua, §18.7.6), gian hàng `connecting → active`, xếp lượt kéo đơn còn mở; lúc này chỉ đẩy giá, tồn đẩy sau lượt đó (`Shop.setup`). `stocktake`: lập phiếu kiểm kê đầu kỳ, gian hàng ở chế độ chờ kiểm kê (`openingStocktake`). Sai: 422 `errors.openingStock` (gian hàng đầu tiên của công ty gửi `push`; công ty đang chờ phiếu đầu kỳ khác), `errors.decisions` (gửi cả `externalSkuIds`), `errors["decisions.<i>"]` (SKU không có trong gợi ý, SKU sàn chưa có SKU người bán, lặp, biến thể không thuộc công ty, lưu trữ, đã ghép ở gian hàng; tối đa 10000 dòng). Kiểm lại dưới khoá của công ty nên hai lần thiết lập cùng công ty chạy lần lượt, `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60; không gửi thì giữ giá trị đang có tới khi FE gửi trường này; sàn `platform_status` bỏ qua, lưu null).',
+      'Cần `channel.shop.connect`. Tạo listing `live` theo `decisions` (hoặc `externalSkuIds` cũ), mốc kéo đơn = lúc gọi (`orderCutoffAt` trong body bị bỏ qua, §18.7.6), gian hàng `connecting → active`, xếp lượt kéo đơn còn mở; lúc này chỉ đẩy giá, tồn đẩy sau lượt đó (`Shop.setup`). `stocktake`: lập phiếu kiểm kê đầu kỳ, gian hàng ở chế độ chờ kiểm kê (`openingStocktake`). Sai: 422 `errors.openingStock` (gian hàng đầu tiên của công ty gửi `push`; công ty đang chờ phiếu đầu kỳ khác), `errors.decisions` (gửi cả `externalSkuIds`), `errors["decisions.<i>"]` (SKU không có trong gợi ý, SKU sàn chưa có SKU người bán, lặp, biến thể không thuộc công ty, lưu trữ, đã ghép ở gian hàng; tối đa 10000 dòng). Kiểm lại dưới khoá của công ty nên hai lần thiết lập cùng công ty chạy lần lượt, `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60, bắt buộc, thiếu hoặc `null` cũng lỗi; sàn `platform_status` bỏ qua, lưu null).',
     security: bearer,
     request: { params: ShopParams, body: json(SetupBody) },
     responses: {
@@ -353,6 +375,43 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng hoặc biến thể chưa có listing'),
       409: problemResponse('`shop_not_connected`, `invalid_transition` (đang đẩy, đã gỡ), `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/outside-change/:action',
+    summary: 'CEO quyết listing bị sàn đổi ngoài app (#360, 21 §18.3)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn chưa bán lại mà không bật được từ app (TikTok): 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`. Gỡ dùng route `delist`.',
+    security: bearer,
+    request: { params: OutsideChangeParams, body: json(OutsideChangeBody) },
+    responses: {
+      200: { description: 'Listing sau khi quyết', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition` (không có `outsideChange`; `accept-price` với `kind = disabled`), `version_conflict` kèm `current`, `shop_not_connected`'),
+      422: problemResponse('`marketplace_unsupported`, `validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/update-content',
+    summary: 'Đưa nội dung mới của sản phẩm lên listing đang bán (§18.3, #293)',
+    description:
+      'Cần `channel.listing.manage`. Tên, mô tả, thuộc tính bắt buộc dựng từ catalog như lúc đẩy; không đổi ảnh, SKU, giá, tồn. ' +
+      'Sàn vẫn bán bản cũ trong lúc duyệt (TikTok) thì giữ `live` kèm `pendingRevision.status = auditing`; sàn ngừng bán để ' +
+      'duyệt thì `under_review` (hệ thống `request_review`). Đồng bộ 15 phút xoá bản sửa khi qua duyệt, ghi `failed` khi trượt.',
+    security: bearer,
+    request: { params: UpdateContentParams, body: json(UpdateContentBody) },
+    responses: {
+      200: { description: 'Listing sau khi gửi bản sửa', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
+      409: problemResponse(
+        '`invalid_transition` (listing không `live`), `version_conflict` kèm `current`, `listing_unmanaged`, `shared_remote_product`, `category_unmapped`, `marketplace_rejected` (kể cả danh mục sàn khác ghép)',
+      ),
+      422: problemResponse('`marketplace_unsupported`: sàn chưa hỗ trợ sửa nội dung'),
+      503: problemResponse('`marketplace_unavailable`'),
     },
   });
 }

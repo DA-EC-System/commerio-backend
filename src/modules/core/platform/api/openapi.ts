@@ -7,6 +7,7 @@ import {
   CompanyModule,
   CompanyPage,
   CompanyParams,
+  CompanyProfile,
   DeadJobListQuery,
   DeadJobPage,
   DeadJobParams,
@@ -18,6 +19,7 @@ import {
   SetModuleBody,
   SetModuleResult,
   UnlockCompanyBody,
+  UpdateCompanyProfileBody,
 } from './schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
@@ -33,6 +35,30 @@ const companyAuth = {
 
 /** Đường dẫn Swagger của module `platform`, viết tương đối với /api/v1/platform. */
 export function registerPlatformOpenApi(registry: OpenAPIRegistry): void {
+  registry.registerPath({
+    method: 'get',
+    path: '/company',
+    summary: 'Hồ sơ công ty đang chọn (#292)',
+    description: 'Cần `platform.company.manage` (CEO, Admin). Tên, mã số thuế chỉ đọc.',
+    security: bearer,
+    responses: { 200: { description: 'Hồ sơ công ty', ...json(CompanyProfile) }, ...companyAuth },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/company',
+    summary: 'Sửa địa chỉ đăng ký, tổ chức chịu trách nhiệm hàng hoá',
+    description:
+      'Cần `platform.company.manage`. Ô không gửi thì giữ nguyên, `null` = theo tên, địa chỉ công ty. ' +
+      '`effectiveResponsible` là giá trị điền sẵn khi ghép danh mục và lúc đẩy lên sàn.',
+    security: bearer,
+    request: { body: json(UpdateCompanyProfileBody) },
+    responses: {
+      200: { description: 'Hồ sơ sau khi sửa', ...json(CompanyProfile) },
+      ...companyAuth,
+      409: problemResponse('`version_conflict`, kèm `current`'),
+      422: problemResponse('`validation_failed`'),
+    },
+  });
   registry.registerPath({
     method: 'get',
     path: '/modules',

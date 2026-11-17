@@ -31,6 +31,10 @@ export const companies = platformSchema.table('companies', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   taxCode: text('tax_code').notNull(),
+  // Hồ sơ công ty (#292): địa chỉ đăng ký; tổ chức chịu trách nhiệm hàng hoá, null = theo tên, địa chỉ công ty.
+  address: text('address'),
+  responsibleName: text('responsible_name'),
+  responsibleAddress: text('responsible_address'),
   status: companyStatus('status').notNull().default('active'),
   lockReason: text('lock_reason'),
   lockedAt: timestamp('locked_at', { withTimezone: true }),
