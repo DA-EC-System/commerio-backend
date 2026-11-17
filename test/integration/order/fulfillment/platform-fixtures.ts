@@ -95,3 +95,11 @@ export const withCancel = (o: PlatformOrder, cancelKind: CancelKind): PlatformOr
   rawStatus: 'cancelled',
   lines: o.lines.map((l) => ({ ...l, status: 'cancelled', rawStatus: 'cancelled', info: { ...l.info, cancelKind } })),
 });
+
+/** Sàn huỷ riêng món thứ `index` (spec 205 §5.10); có `cancelKind` (loại huỷ) thì ghi kèm, không thì giữ như cũ. */
+export const withLineCancelled = (o: PlatformOrder, index: number, cancelKind?: CancelKind): PlatformOrder => ({
+  ...o,
+  lines: o.lines.map((l, i) =>
+    i === index ? { ...l, status: 'cancelled', rawStatus: 'cancelled', ...(cancelKind && { info: { ...l.info, cancelKind } }) } : l,
+  ),
+});

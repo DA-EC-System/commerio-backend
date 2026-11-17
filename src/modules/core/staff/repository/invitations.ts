@@ -4,7 +4,7 @@
 import { and, count, desc, eq, inArray, isNotNull, type SQL, sql } from 'drizzle-orm';
 import { PURPOSE_TTL_SECONDS } from '../../../../shared/auth/purpose-token.ts';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
-import type { InvitationStatus } from '../domain/invitation-machine.ts';
+import { type InvitationStatus, REVOCABLE } from '../domain/invitation-machine.ts';
 import { OTP_MAX_ATTEMPTS, OTP_MAX_SENDS, OTP_RESEND_SECONDS, OTP_TTL_SECONDS } from '../domain/otp.ts';
 import { invitations } from './schema.ts';
 
@@ -209,14 +209,42 @@ export async function decideInvitation(
   return row;
 }
 
-/** Trang lời mời: mới nộp trước, rồi mới tạo trước. `status` trống thì lấy mọi trạng thái. */
+/**
+ * Huỷ link chưa nộp (`open | claimed → revoked`) theo `version`; hết hạn link không chặn. Ghi người huỷ, lúc huỷ vào
+ * `decided_by`, `decided_at`, xoá mã OTP. `undefined` khi không trúng dòng (lệch version, đã nộp, đã quyết).
+ */
+export async function revokeInvitationRow(
+  id: string,
+  version: number,
+  revokedBy: string,
+): Promise<InvitationRow | undefined> {
+  const t = invitations;
+  const [row] = await getDb()
+    .update(t)
+    .set({
+      status: 'revoked',
+      decidedBy: revokedBy,
+      decidedAt: sql`now()`,
+      otpHash: null,
+      otpExpiresAt: null,
+      ...bump,
+    })
+    .where(inCompany('revokeInvitationRow', eq(t.id, id), eq(t.version, version), inArray(t.status, [...REVOCABLE])))
+    .returning();
+  return row;
+}
+
+/** Trang lời mời: mới nộp trước, rồi mới tạo trước. `statuses` trống thì lấy mọi trạng thái. */
 export async function listInvitationRows(query: {
-  status?: InvitationStatus;
+  statuses?: readonly InvitationStatus[];
   page: number;
   pageSize: number;
 }): Promise<{ rows: InvitationRow[]; total: number }> {
   const t = invitations;
-  const where = inCompany('listInvitationRows', ...(query.status ? [eq(t.status, query.status)] : []));
+  const where = inCompany(
+    'listInvitationRows',
+    ...(query.statuses?.length ? [inArray(t.status, [...query.statuses])] : []),
+  );
   const db = getDb();
   // Tuần tự: hai câu cùng một kết nối giao dịch.
   const [counted] = await db.select({ total: count() }).from(t).where(where);

@@ -26,6 +26,8 @@ export async function insertPackage(input: {
   deliveredAt?: Date;
   /** Kiện lần đầu thấy đã `lost` (sàn báo, spec #238 §5.4). */
   lostSource?: 'marketplace';
+  /** Kiện tách từ kiện `reserved` mang lúc giữ của kiện cũ (spec 205 D4). */
+  reservedAt?: Date | null;
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
     .insert(packages)
@@ -169,9 +171,12 @@ const handoverColumns = {
   lostClaimCode: packages.lostClaimCode,
 };
 
+/** Dòng kiện kèm dòng đơn và số chờ bỏ (spec 205 §5.10). */
+export type PackageLineRow = PlanLine & { orderLineId: string; pendingDropQty: number };
+
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
-export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, (PlanLine & { orderLineId: string })[]>> {
-  const byPackage = new Map<string, (PlanLine & { orderLineId: string })[]>(packageIds.map((id) => [id, []]));
+export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, PackageLineRow[]>> {
+  const byPackage = new Map<string, PackageLineRow[]>(packageIds.map((id) => [id, []]));
   if (!packageIds.length) return byPackage;
   const rows = await getDb()
     .select({
@@ -182,6 +187,7 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
       quantity: packageLines.quantity,
       reservedQty: packageLines.reservedQty,
       stockDeducted: packageLines.stockDeducted,
+      pendingDropQty: packageLines.pendingDropQty,
     })
     .from(packageLines)
     .where(inArray(packageLines.packageId, [...packageIds]))
@@ -231,10 +237,11 @@ export interface PackageRow extends HandoverPackage {
   platformPackageCode: string | null;
   trackingCode: string | null;
   needsOpen: boolean;
+  /** Mục đích mở kiện (`cancel`, `edit`, `resplit`, `stocktake`); null khi không chờ mở. */
   openPurpose: OpenPurpose | null;
   labelError: boolean;
   shipping: PackageShipping;
-  lines: (PlanLine & { orderLineId: string })[];
+  lines: PackageLineRow[];
 }
 
 /** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */

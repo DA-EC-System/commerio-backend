@@ -13,15 +13,24 @@ afterEach(() => vi.useRealTimers());
 describe('hạn mức gọi Lazada', () => {
   it('hết lượt thì ném unavailable daily_call_limit và không gọi mạng', async () => {
     const fetchFn = vi.fn();
-    const adapter = createLazadaAdapter({ ...base, reserveCall: async () => false }, fetchFn);
+    const adapter = createLazadaAdapter({ ...base, reserveCall: async () => 'daily_call_limit' as const }, fetchFn);
     const err = await adapter.listOrders!('t', since, null).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MarketplaceError);
     expect(err).toMatchObject({ kind: 'unavailable', platformCode: 'daily_call_limit' });
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  // #215: hết phần của công ty (bấm tay 90%, việc nền 100%) cũng không gọi mạng, mã riêng cho FE.
+  it('hết phần của công ty thì ném unavailable company_call_limit và không gọi mạng', async () => {
+    const fetchFn = vi.fn();
+    const adapter = createLazadaAdapter({ ...base, reserveCall: async () => 'company_call_limit' as const }, fetchFn);
+    const err = await adapter.listOrders!('t', since, null).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: 'unavailable', platformCode: 'company_call_limit' });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it('còn lượt thì mỗi request xin đúng một lượt', async () => {
-    const reserveCall = vi.fn(async () => true);
+    const reserveCall = vi.fn(async () => 'ok' as const);
     const fetchFn = vi.fn(async () => json(empty));
     await createLazadaAdapter({ ...base, reserveCall }, fetchFn).listOrders!('t', since, null);
     expect(reserveCall).toHaveBeenCalledTimes(1);
@@ -30,7 +39,7 @@ describe('hạn mức gọi Lazada', () => {
 
   it('gọi lại sau SellerCallLimit cũng tính một lượt', async () => {
     vi.useFakeTimers();
-    const reserveCall = vi.fn(async () => true);
+    const reserveCall = vi.fn(async () => 'ok' as const);
     const fetchFn = vi.fn().mockResolvedValueOnce(json({ code: 'SellerCallLimit', message: 'limit' })).mockResolvedValue(json(empty));
     const done = createLazadaAdapter({ ...base, reserveCall }, fetchFn).listOrders!('t', since, null);
     await vi.runAllTimersAsync();

@@ -72,13 +72,15 @@ describe('chạy thử cấu hình: lãi 30 ngày chỉ gồm lãi bán hàng', 
     expect(await profit30(c.ceo.token)).toBe(100000);
   });
 
-  it('đơn đã có số quyết toán: mọi dòng ước tính của đơn coi như đã thay, như tổng tiền ở sàn', async () => {
+  it('dòng ước tính cùng nguồn với dòng đã có số quyết toán coi như đã thay, như tổng tiền ở sàn (#231)', async () => {
     const c = await createCompany();
     const shopId = randomUUID();
     const orderId = randomUUID();
-    const est = await entry(c.companyId, { kind: 'revenue', amount: '100000', shop_id: shopId, order_id: orderId, is_estimate: true });
-    await entry(c.companyId, { kind: 'fee_fixed', amount: '-4000', shop_id: shopId, order_id: orderId, is_estimate: true });
-    await entry(c.companyId, { kind: 'revenue', amount: '100000', shop_id: shopId, order_id: orderId, replaces_entry_id: est });
+    const pkg = { shop_id: shopId, order_id: orderId, is_estimate: true, source_type: 'package', source_id: randomUUID() };
+    const est = await entry(c.companyId, { kind: 'revenue', amount: '100000', ...pkg });
+    await entry(c.companyId, { kind: 'fee_fixed', amount: '-4000', ...pkg });
+    const actual = await entry(c.companyId, { kind: 'revenue', amount: '100000', shop_id: shopId, order_id: orderId });
+    await testPool().query('insert into finance.ledger_replacements (company_id, actual_id, estimate_id) values ($1, $2, $3)', [c.companyId, actual, est]);
     await entry(c.companyId, { kind: 'fee_transaction', amount: '-3000', shop_id: shopId, order_id: orderId });
     expect(await profit30(c.ceo.token)).toBe(97000);
     expect(await totals(c.ceo.token)).toMatchObject({ receivable: 0, platformBalance: 97000 });

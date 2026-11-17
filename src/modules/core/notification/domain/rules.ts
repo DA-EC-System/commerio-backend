@@ -24,7 +24,7 @@ const RULES: { readonly [T in EventType]?: Rule<T> } = {
     permissions: ['sales.order.view'],
     fields: ({ orderId, from, to, isShortStock }) => ({ orderId, from, to, isShortStock }),
   },
-  // A1: Sale hoặc người có quyền tài chính. Không gửi mã giao dịch và cổng (cần payment.transaction.view, T13).
+  // A1: Sale hoặc người có quyền tài chính. Không gửi mã giao dịch và cổng (T13).
   'payment.succeeded': {
     permissions: ['sales.order.view', 'finance.invoice.view'],
     fields: ({ orderId, amount }) => ({ orderId, amount: dong(amount) }),

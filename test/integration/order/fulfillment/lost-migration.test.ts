@@ -10,7 +10,8 @@ import { seedPackage } from './helpers.ts';
 const MIGRATIONS = join(import.meta.dirname, '../../../../db/migrations');
 
 const migration = (slug: string): string => {
-  const file = readdirSync(MIGRATIONS).find((f) => f.endsWith(`_${slug}.sql`));
+  // db:regen gộp các migration sinh liền nhau thành một file tên ghép các slug (vd `_that-lac-cot-that-lac-rang-buoc`).
+  const file = readdirSync(MIGRATIONS).find((f) => f.endsWith(`_${slug}.sql`) || f.endsWith(`-${slug}.sql`));
   if (!file) throw new Error(`Không thấy migration *_${slug}.sql`);
   return readFileSync(join(MIGRATIONS, file), 'utf8');
 };

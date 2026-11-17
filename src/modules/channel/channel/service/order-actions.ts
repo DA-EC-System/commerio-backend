@@ -2,7 +2,11 @@
 // ở `src/wiring.ts`, không import channel. Gọi sàn ngoài giao dịch nghiệp vụ; lỗi sàn đổi sang mã app (§1.1 R8, R9).
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { isUuid } from '../../../../shared/uuid.ts';
+import type { ShopCapabilities } from '../domain/shop.ts';
+import { findShopRow } from '../repository/shops.ts';
 import { CARRIER_REQUIRED, MarketplaceError, type PackageItemsRef, type SplitAttributes } from './marketplaces/common.ts';
+import { capabilitiesOf } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ huỷ đơn từ app');
@@ -34,10 +38,42 @@ export async function marketplaceCancelOrder(
   await onMarketplace(() => adapter.cancelOrder!(accessToken, externalOrderId, externalLineIds, reasonId));
 }
 
-export async function marketplaceDecideCancel(companyId: string, shopId: string, externalOrderId: string, accept: boolean): Promise<void> {
+/**
+ * Trả lời khách xin huỷ. `rejectReasonId` chỉ dùng khi từ chối; sàn bắt buộc lý do (TikTok) mà thiếu thì 422 tại trường
+ * `rejectReasonId` (Documents/21 §19.3, #227); sàn không cần (Lazada) thì adapter bỏ qua.
+ */
+export async function marketplaceDecideCancel(
+  companyId: string,
+  shopId: string,
+  externalOrderId: string,
+  accept: boolean,
+  rejectReasonId?: string,
+): Promise<void> {
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.decideCancelRequest) throw unsupported();
-  await onMarketplace(() => adapter.decideCancelRequest!(accessToken, externalOrderId, accept));
+  await onMarketplace(async () => {
+    try {
+      await adapter.decideCancelRequest!(accessToken, externalOrderId, accept, accept ? undefined : rejectReasonId);
+    } catch (err) {
+      if (err instanceof MarketplaceError && err.platformCode === 'reject_reason_required') {
+        throw new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', {
+          errors: { rejectReasonId: err.platformMessage ?? 'Chọn lý do từ chối' },
+        });
+      }
+      throw err;
+    }
+  });
+}
+
+/** Lý do từ chối yêu cầu huỷ do sàn quy định (#227). Sàn không có danh sách này (Lazada) thì rỗng. */
+export async function marketplaceCancelRejectReasons(
+  companyId: string,
+  shopId: string,
+  externalOrderId: string,
+): Promise<{ id: string; label: string }[]> {
+  const { adapter, accessToken } = await session(companyId, shopId);
+  if (!adapter.cancelRequestRejectReasons) return [];
+  return onMarketplace(() => adapter.cancelRequestRejectReasons!(accessToken, externalOrderId));
 }
 
 // Tách kiện, giao kiện trên sàn cho fulfillment (#221; tách kiện #205, RTS #239 gọi), tiêm qua `ctx.marketplacePackages`.
@@ -81,6 +117,15 @@ export function splitGroupViolation(attrs: SplitAttributes, groups: readonly (re
   if (limits.length === 0) return null;
   const max = Math.min(...limits);
   return groups.some((g) => g.length > max) ? `Sàn chỉ cho tối đa ${max} món mỗi kiện` : null;
+}
+
+/**
+ * Mức tách kiện của gian hàng (`capabilities.splitLevel` theo sàn; spec 205 D6). Fulfillment rẽ nhánh theo đây, không theo
+ * mã sàn. Gian hàng không có (kể cả id sai dạng, công ty khác) thì `none`. Tự mở `withCompany`: gọi ngoài giao dịch.
+ */
+export async function marketplaceSplitLevel(companyId: string, shopId: string): Promise<ShopCapabilities['splitLevel']> {
+  const row = isUuid(shopId) ? await withCompany(companyId, () => findShopRow(shopId)) : undefined;
+  return row ? capabilitiesOf(row.platform).splitLevel : 'none';
 }
 
 /**

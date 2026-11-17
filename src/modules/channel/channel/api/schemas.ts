@@ -263,6 +263,10 @@ export const CategoryMap = z
     platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalCategoryId: z.string(),
     attributes: z.record(z.string(), z.string()),
+    sizeChartRule: z
+      .enum(['required', 'optional', 'unsupported'])
+      .nullable()
+      .meta({ description: 'Bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm cần ảnh bảng kích cỡ mới đẩy được; null là chưa biết' }),
     version: z.number().int(),
     updatedAt: iso,
   })

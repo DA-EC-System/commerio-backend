@@ -21,6 +21,8 @@ import {
   type RemoteSku,
   type RemoteState,
   refreshBefore,
+  type ReserveCall,
+  reserveOrThrow,
   type SellerInfo,
   type ShopCapabilities,
   type ShopConnection,
@@ -37,13 +39,15 @@ export interface LazadaConfig {
   redirectUrl: string | undefined;
   apiUrl: string;
   authUrl: string;
-  /** Xin một lượt trong hạn mức gọi của app trước mỗi request (#102 A7); `false` là hết lượt hôm nay. */
-  reserveCall?: () => Promise<boolean>;
+  /** Xin một lượt trong hạn mức gọi trước mỗi request (#102 A7, #215); khác `ok` là hết lượt. */
+  reserveCall?: ReserveCall;
 }
 
 type LazadaResponse = Record<string, unknown> & { code?: string; message?: string; type?: string };
 
 const TIMEOUT_MS = 10_000;
+/** Thương hiệu khi tạo sản phẩm mà ghép danh mục không có `brand` (createProduct). */
+const DEFAULT_BRAND = 'No Brand';
 /** Documents/21 §18.6.3: Lazada duyệt listing, ẩn bằng tắt, tách kiện từng đơn vị, hạn trả tính theo ngày của gian hàng. */
 const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
@@ -114,9 +118,27 @@ export function lazadaLedgerKind(feeName: string, transactionType: string): Ledg
  */
 export const normalizeLazadaTxnId = (raw: unknown): string => String(raw ?? '').replace(/\s+/g, '');
 
+/**
+ * Câu lỗi của sàn kèm `detail` (lý do theo trường). `/product/create` trả câu chung "E500: Create product failed" với code
+ * 4110, lý do thật nằm ở `detail` (gọi thật 17/11/2026, request_id 2151f12817948494392748354:
+ * `[{ field: 'brandProp', message: 'C006:Vui lòng điền Brand trước khi tải lên lại.', code: 'BIZ_CHECK_CAT_PROP_MANDATORY' }]`).
+ */
+function lazadaMessage(res: LazadaResponse): string | null {
+  const message = typeof res.message === 'string' ? res.message : null;
+  const details = (Array.isArray(res.detail) ? res.detail : [])
+    .map((d: { field?: unknown; message?: unknown }) => {
+      const text = typeof d?.message === 'string' ? d.message : '';
+      const field = typeof d?.field === 'string' ? d.field : '';
+      return text && field ? `${field}: ${text}` : text;
+    })
+    .filter(Boolean);
+  if (!details.length) return message;
+  return message ? `${message} (${details.join('; ')})` : details.join('; ');
+}
+
 export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
-  const message = typeof res.message === 'string' ? res.message : null;
+  const message = lazadaMessage(res);
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
   // `SYSTEM`, `ISP` với mã chữ: lỗi phía sàn; `ApiCallLimit`, `SellerCallLimit`: quá hạn mức; đều thử lại được.
   const numeric = /^\d+$/.test(code);
@@ -413,9 +435,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    */
   async function request(baseUrl: string, apiPath: string, params: Record<string, string>, method: 'GET' | 'POST' | 'FORM') {
     const { appKey, appSecret } = credentials();
-    if (config.reserveCall && !(await config.reserveCall())) {
-      throw new MarketplaceError('unavailable', 'daily_call_limit', 'Đã dùng hết hạn mức gọi Lazada trong ngày');
-    }
+    await reserveOrThrow(config.reserveCall, 'Lazada');
     const all = { app_key: appKey, timestamp: String(Date.now()), sign_method: 'sha256', ...params };
     const signed = new URLSearchParams({ ...all, sign: signLazada(apiPath, all, appSecret) });
     const signal = AbortSignal.timeout(TIMEOUT_MS);
@@ -832,7 +852,11 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
           Product: {
             PrimaryCategory: p.externalCategoryId,
             Images: { Image: p.imageUrls },
-            Attributes: { ...p.attributes, name: p.name, description: p.description },
+            // Lazada bắt Brand khi tạo dù GetCategoryAttributes ghi `brand` `is_mandatory: 0` và không kèm lựa chọn
+            // (gọi thật 17/11/2026, danh mục 10100278: thiếu thì E500 `brandProp` C006; gửi "No Brand" thì tạo được,
+            // request_id 2141336017948496094571739). Bộ ghép danh mục không hỏi brand nên mặc định "No Brand"; ghép có
+            // brand thì dùng brand đó. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
+            Attributes: { brand: DEFAULT_BRAND, ...p.attributes, name: p.name, description: p.description },
             Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
           },
         },

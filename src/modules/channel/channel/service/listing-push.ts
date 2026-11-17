@@ -10,7 +10,7 @@ import { findListingById, type ListingPatch, type ListingRow, updateListing } fr
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
-import { type MarketplaceAdapter, MarketplaceError, type NewProduct } from './marketplaces/index.ts';
+import { type MarketplaceAdapter, MarketplaceError, type NewProduct, type SizeChartRule } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
@@ -59,7 +59,14 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
   const { v, map, price, untrusted } = data;
   const quantity = untrusted ? 0 : data.quantity;
-  const block = pushBlock(v, price, map, Boolean(row.externalImageUrls?.length || job.imageUrls.length));
+  const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
+  const block = pushBlock(
+    v,
+    price,
+    map && { ...map, sizeChartRule },
+    Boolean(row.externalImageUrls?.length || job.imageUrls.length),
+    Boolean(job.sizeChartUrl),
+  );
   if (block) return finish(job, row, 'fail', { pushError: errorOf(block.code, block.message) });
 
   const priceText = price!.toFixed(0);
@@ -67,12 +74,16 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   let imageUrls: string[] = row.externalImageUrls ?? [];
   try {
     if (!imageUrls.length) imageUrls = await uploadAll(adapter, accessToken, job.imageUrls);
+    // Ảnh bảng kích cỡ (#347): danh mục không hỗ trợ thì không gửi; tải lên mỗi lượt (không lưu `uri`, sàn có thể đổi).
+    const sizeChartUri =
+      job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
       attributes: map!.attributes,
       name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
       description: v.description ?? v.productName,
       imageUrls,
+      ...(sizeChartUri && { sizeChartUri }),
       // Listing ghép lúc thiết lập mang SKU người bán trên sàn, có thể khác SKU Commerio.
       sellerSku: row.sellerSku ?? v.sku,
       price: priceText,
@@ -150,4 +161,22 @@ async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls:
   const out: string[] = [];
   for (const url of urls) out.push(await adapter.uploadImage(accessToken, url));
   return out;
+}
+
+/**
+ * Quy tắc bảng kích cỡ của danh mục (#347). Ghép mới đã lưu quy tắc; ghép trước #347 chưa có thì hỏi sàn một lần, lỗi thì
+ * coi như chưa biết (sàn tự quyết khi tạo sản phẩm, lỗi `unauthorized` được xử lý ở bước gọi sàn sau đó).
+ */
+async function sizeChartRuleOf(
+  adapter: MarketplaceAdapter,
+  accessToken: string,
+  map: { externalCategoryId: string; sizeChartRule: SizeChartRule | null },
+): Promise<SizeChartRule | null> {
+  if (map.sizeChartRule || !adapter.categoryRules) return map.sizeChartRule;
+  try {
+    return (await adapter.categoryRules(accessToken, map.externalCategoryId)).sizeChart;
+  } catch (err) {
+    if (err instanceof MarketplaceError) return null;
+    throw err;
+  }
 }

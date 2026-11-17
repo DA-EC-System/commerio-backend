@@ -95,6 +95,16 @@ export async function membershipIdsWithRole(roleId: string): Promise<string[]> {
   return rows.map((r) => r.membershipId);
 }
 
+/** Membership mang ít nhất một vai trò có quyền `code` (vai trò có sẵn và vai trò tuỳ biến), không trùng. */
+export async function membershipIdsWithPermission(code: string): Promise<string[]> {
+  const rows = await getDb()
+    .selectDistinct({ membershipId: memberRoles.membershipId })
+    .from(memberRoles)
+    .innerJoin(rolePermissions, eq(rolePermissions.roleId, memberRoles.roleId))
+    .where(eq(rolePermissions.permissionCode, code));
+  return rows.map((r) => r.membershipId);
+}
+
 /** Xoá mọi vai trò của membership rồi gán `roleIds`, trong giao dịch của bên gọi. */
 export async function replaceMemberRoleRows(membershipId: string, companyId: string, roleIds: readonly string[]): Promise<void> {
   const db = getDb();

@@ -12,6 +12,7 @@ import {
   type ProductFilter,
   type ProductRow,
   productNameExists,
+  setSizeChart,
   updateProductIfVersion,
 } from '../repository/products.ts';
 import { findVariants, insertVariant, lockVariants, type VariantRow } from '../repository/variants.ts';
@@ -26,7 +27,7 @@ import {
   productArchived,
   versionConflict,
 } from './errors.ts';
-import { imagesOf, MAX_PRODUCT_IMAGES } from './product-images.ts';
+import { imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
 import { allocateSkus, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 
@@ -36,6 +37,8 @@ export interface CreateProductInput {
   description: string;
   /** Id tệp ảnh theo thứ tự, ảnh đầu là ảnh đại diện (#303). */
   imageFileIds?: string[] | undefined;
+  /** Id tệp ảnh bảng kích cỡ (#347); bỏ trống là chưa có. */
+  sizeChartFileId?: string | null | undefined;
   variants: { attributeValueIds: string[] }[];
 }
 
@@ -44,6 +47,8 @@ export interface UpdateProductInput {
   description: string;
   /** Không gửi thì giữ nguyên ảnh; gửi thì thay toàn bộ (`[]` gỡ hết). */
   imageFileIds?: string[] | undefined;
+  /** Không gửi thì giữ nguyên bảng kích cỡ; `null` gỡ, id tệp thì thay (#347). */
+  sizeChartFileId?: string | null | undefined;
   version: number;
 }
 
@@ -64,18 +69,29 @@ function toListItem(p: ProductRow, thumbnailUrl: string | null) {
   };
 }
 
+/** Giá trên API là số nguyên đồng (G1); DB giữ chuỗi `numeric`, service giữ Decimal. */
+export function toDong(value: Decimal | string | null): number | null {
+  return value === null ? null : new Decimal(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
+}
+
 export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null) {
   return {
     id: v.id,
     sku: v.sku,
     attributes: v.attributes.map(({ code: _, ...a }) => a),
     archivedAt: v.archivedAt?.toISOString() ?? null,
-    // Giá trên API là số nguyên đồng (G1); DB và service giữ Decimal.
-    standardPrice: standardPrice === null ? null : standardPrice.toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber(),
+    businessStatus: v.businessStatus,
+    standardPrice: toDong(standardPrice),
+    targetNetPrice: toDong(v.targetNetPrice),
+    weightG: v.weightG,
+    lengthMm: v.lengthMm,
+    widthMm: v.widthMm,
+    heightMm: v.heightMm,
+    version: v.version,
   };
 }
 
-async function detail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
+export async function productDetail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
   const rows = variants ?? (await findVariants({ productId: p.id }));
   const prices = await standardPricesOf(ctx, rows.map((v) => v.id));
   const images = await imagesOf(p.id);
@@ -83,10 +99,11 @@ async function detail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[
     ...toListItem(p, images[0]?.url ?? null),
     description: p.description ?? '',
     images,
+    sizeChart: await sizeChartOf(p.sizeChartFileId),
     variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null)),
   };
 }
-export type ProductDetail = Awaited<ReturnType<typeof detail>>;
+export type ProductDetail = Awaited<ReturnType<typeof productDetail>>;
 
 /** Sản phẩm của công ty đang chọn; không có, không phải uuid hay của công ty khác đều 404 (C4, V6). */
 export async function findOwnProduct(id: string): Promise<ProductRow> {
@@ -100,12 +117,14 @@ function snapshot(
   category: string,
   variants: { sku: string; archivedAt: unknown }[],
   imageFileIds: readonly string[],
+  sizeChartFileId: string | null = null,
 ) {
   return {
     name: p.name,
     category,
     description: p.description ?? '',
     imageFileIds: [...imageFileIds],
+    ...(sizeChartFileId && { sizeChartFileId }),
     variants: variants.filter((v) => !v.archivedAt).map((v) => v.sku),
   };
 }
@@ -135,7 +154,7 @@ export async function listProducts(companyId: string, filter: ProductFilter) {
 }
 
 export async function getProduct(ctx: CatalogContext, companyId: string, id: string): Promise<ProductDetail> {
-  return withCompany(companyId, async () => detail(ctx, await findOwnProduct(id)));
+  return withCompany(companyId, async () => productDetail(ctx, await findOwnProduct(id)));
 }
 
 /**
@@ -144,7 +163,8 @@ export async function getProduct(ctx: CatalogContext, companyId: string, id: str
  */
 export async function createProduct(ctx: CatalogContext, caller: Caller, input: CreateProductInput) {
   const imageIds = input.imageFileIds ?? [];
-  await confirmUploads(caller.companyId, imageIds);
+  const sizeChartId = input.sizeChartFileId ?? null;
+  await confirmUploads(caller.companyId, sizeChartId ? [...imageIds, sizeChartId] : imageIds);
   return withCompany(caller.companyId, async () => {
     await lockVariants(caller.companyId);
     // Khoá ngoại kiểm bằng quyền chủ bảng, bỏ qua RLS: phải đọc danh mục dưới công ty mình trước (ground-truth #12).
@@ -155,7 +175,9 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     if (!category) errors.categoryId = 'Chọn danh mục';
     if (!resolved.ok) errors.variants = resolved.message;
     if (imageError) errors.images = imageError;
-    if (!category || !resolved.ok || imageError) throw invalid(errors);
+    const sizeChartError = sizeChartId ? await fileProblem([sizeChartId], 'product_image', 1) : null;
+    if (sizeChartError) errors.sizeChart = sizeChartError;
+    if (!category || !resolved.ok || imageError || sizeChartError) throw invalid(errors);
     if (await productNameExists(input.name)) throw taken();
 
     const id = await insertProduct(caller.companyId, category.id, input.name, input.description);
@@ -164,8 +186,12 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
       await insertVariant(caller.companyId, id, skus[i]!, combo.map((v) => v.id), i);
     }
     await replaceProductImages(caller.companyId, id, imageIds);
-    const result = await detail(ctx, await findOwnProduct(id));
-    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: snapshot(input, category.name, result.variants, imageIds) });
+    if (sizeChartId) await setSizeChart(id, sizeChartId);
+    const result = await productDetail(ctx, await findOwnProduct(id));
+    await recordAudit({
+      ...auditOf(caller, 'create', ENTITY, id),
+      after: snapshot(input, category.name, result.variants, imageIds, sizeChartId),
+    });
     return result;
   }).catch(race);
 }
@@ -176,7 +202,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
  */
 async function rejectStale(ctx: CatalogContext, product: ProductRow): Promise<never> {
   if (product.archivedAt) throw productArchived();
-  throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await detail(ctx, product));
+  throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await productDetail(ctx, product));
 }
 
 async function editable(ctx: CatalogContext, id: string, version: number): Promise<ProductRow> {
@@ -188,26 +214,36 @@ async function editable(ctx: CatalogContext, id: string, version: number): Promi
 /** Ảnh như `createProduct`; không gửi `imageFileIds` thì giữ nguyên, gửi thì thay toàn bộ sau khi ghi trúng `version`. */
 export async function updateProduct(ctx: CatalogContext, caller: Caller, id: string, input: UpdateProductInput) {
   const imageIds = input.imageFileIds;
-  if (imageIds) await confirmUploads(caller.companyId, imageIds);
+  const sizeChartId = input.sizeChartFileId;
+  const toConfirm = [...(imageIds ?? []), ...(sizeChartId ? [sizeChartId] : [])];
+  if (toConfirm.length) await confirmUploads(caller.companyId, toConfirm);
   return withCompany(caller.companyId, async () => {
     const product = await editable(ctx, id, input.version);
+    const errors: Record<string, string> = {};
     if (imageIds) {
       const imageError = await fileProblem(imageIds, 'product_image', MAX_PRODUCT_IMAGES);
-      if (imageError) throw invalid({ images: imageError });
+      if (imageError) errors.images = imageError;
     }
+    if (sizeChartId) {
+      const sizeChartError = await fileProblem([sizeChartId], 'product_image', 1);
+      if (sizeChartError) errors.sizeChart = sizeChartError;
+    }
+    if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name, id)) throw taken();
     const imagesBefore = await imageIdsOf(id);
     if (!(await updateProductIfVersion(id, input.version, input.name, input.description))) {
       await rejectStale(ctx, await findOwnProduct(id));
     }
     if (imageIds) await replaceProductImages(caller.companyId, id, imageIds);
+    if (sizeChartId !== undefined) await setSizeChart(id, sizeChartId);
+    const sizeChartAfter = sizeChartId === undefined ? product.sizeChartFileId : sizeChartId;
     const variants = await findVariants({ productId: id });
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
-      before: snapshot(product, product.categoryName, variants, imagesBefore),
-      after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore),
+      before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId),
+      after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore, sizeChartAfter),
     });
-    return detail(ctx, await findOwnProduct(id), variants);
+    return productDetail(ctx, await findOwnProduct(id), variants);
   }).catch(race);
 }
 
@@ -223,7 +259,7 @@ export async function archiveProduct(ctx: CatalogContext, caller: Caller, id: st
     if (!(await archiveProductIfVersion(id, version))) await rejectStale(ctx, await findOwnProduct(id));
     await recordAudit({
       ...auditOf(caller, 'delete', ENTITY, id),
-      before: snapshot(product, product.categoryName, await findVariants({ productId: id }), await imageIdsOf(id)),
+      before: snapshot(product, product.categoryName, await findVariants({ productId: id }), await imageIdsOf(id), product.sizeChartFileId),
     });
   });
 }

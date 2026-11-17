@@ -14,7 +14,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive, setBuckets } from '../../product/inventory/helpers.ts';
 import { channelShop, packageLineRows, packageRow, packingApp, seedPackage, transitionsOf } from './helpers.ts';
-import { ingest, remote, withStatus } from './platform-fixtures.ts';
+import { ingest, remote, withLineCancelled, withStatus } from './platform-fixtures.ts';
 
 const ctx = { stockHoldOf: awaitingStocktakeShops };
 const app = () => request(testApp());
@@ -322,6 +322,53 @@ describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mụ
     expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
     const { rows } = await testPool().query<{ status: string; cancelling: boolean }>('select status, cancelling from "order".orders where id = $1', [orderId]);
     expect(rows[0]).toEqual({ status: 'processing', cancelling: true });
+  });
+
+  /** `pending_drop_qty` các dòng của kiện, tăng dần (dòng chờ bỏ của món sàn huỷ, spec 205 §5.10). */
+  const pendingDrops = async (packageId: string) =>
+    (await testPool().query<{ q: number }>('select pending_drop_qty q from "order".package_lines where package_id = $1 order by 1', [packageId])).rows.map((r) => r.q);
+
+  it('kiện stocktake bị sàn huỷ cả kiện: mọi dòng chờ bỏ, kho mở ra là huỷ kiện (open_cancel), đơn đang huỷ khép lại', async () => {
+    const v = await createVariant(companyId);
+    await receive(companyId, v.variantId, 1, 100000);
+    const o = remote(v, { status: 'packed' });
+    const { orderId, packageId } = await ingest(companyId, o);
+    await setBuckets(companyId, v.variantId, { onHand: 0, invariantBroken: true });
+    await stocktake([v.variantId]);
+    await ingest(companyId, withStatus(o, 'cancelled'));
+    expect(await pendingDrops(packageId)).toEqual([1]);
+
+    const res = await open(packageId);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'cancelled', needs_open: false, open_purpose: null });
+    expect(await transitionsOf(packageId)).toContainEqual(expect.objectContaining({ action: 'open_cancel', from_state: 'packed', to_state: 'cancelled' }));
+    const { rows } = await testPool().query<{ status: string }>('select status from "order".orders where id = $1', [orderId]);
+    expect(rows[0]!.status).toBe('cancelled');
+  });
+
+  it('kiện stocktake bị sàn huỷ một món: giữ mục đích stocktake, tồn đủ cũng không tự gỡ; mở thì xoá dòng chờ bỏ, gỡ cờ, xếp lượt phân hàng', async () => {
+    const v = await createVariant(companyId);
+    await receive(companyId, v.variantId, 2, 100000);
+    const o = remote(v, { status: 'packed', lines: 2 });
+    const { packageId } = await ingest(companyId, o);
+    await setBuckets(companyId, v.variantId, { onHand: 0, invariantBroken: true });
+    await stocktake([v.variantId]);
+    await ingest(companyId, withLineCancelled(o, 1));
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'stocktake' });
+    expect(await pendingDrops(packageId)).toEqual([0, 1]);
+
+    // Hàng về đủ: cờ kiểm kê không gỡ vì kiện còn món sàn đã huỷ, kho vẫn phải mở để bỏ.
+    await receive(companyId, v.variantId, 2, 100000);
+    expect((await run([v.variantId])).cleared).not.toContain(packageId);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'stocktake' });
+
+    const res = await open(packageId);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'reserved', needs_open: false, open_purpose: null });
+    expect(await pendingDrops(packageId)).toEqual([0]);
+    expect(await allocationJobs(v.variantId)).toEqual([[v.variantId]]);
   });
 
   it('kiện awaiting_pickup gắn cờ stocktake: open trả 409 invalid_transition (tới PR 3)', async () => {

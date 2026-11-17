@@ -68,6 +68,31 @@ export async function lockMarketplaceOrder(shopId: string, externalOrderId: stri
   return row;
 }
 
+/** Đơn theo id, khoá dòng tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
+export async function lockOrderRow(id: string): Promise<MarketplaceOrderRow | undefined> {
+  const [row] = await getDb().select(rowColumns).from(orders).where(eq(orders.id, id)).for('update');
+  return row;
+}
+
+/** Mọi dòng của đơn đã ghi huỷ đủ (`cancelled_qty = quantity`, spec 205 §5.10), và đơn có dòng. */
+export async function allLinesCancelled(orderId: string): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ lines: count(), open: sql<number>`count(*) filter (where ${orderLines.cancelledQty} <> ${orderLines.quantity})`.mapWith(Number) })
+    .from(orderLines)
+    .where(eq(orderLines.orderId, orderId));
+  return !!row && row.lines > 0 && row.open === 0;
+}
+
+/** Đơn có dòng chưa ghép SKU (cờ `unmapped_sku` của sự kiện đổi trạng thái). */
+export async function hasUnmappedLines(orderId: string): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ id: orderLines.id })
+    .from(orderLines)
+    .where(and(eq(orderLines.orderId, orderId), sql`${orderLines.variantId} is null`))
+    .limit(1);
+  return !!row;
+}
+
 /** Chèn đơn sàn; đơn đã có (lần kéo khác vừa chèn) thì trả `undefined`. */
 export async function insertMarketplaceOrder(
   values: Omit<typeof orders.$inferInsert, 'companyId' | 'source'>,
@@ -119,6 +144,28 @@ export async function upsertMarketplaceLines(
     .from(orderLines)
     .where(eq(orderLines.orderId, orderId));
   return new Map(rows.map((r) => [r.externalLineId ?? '', r.id]));
+}
+
+/** Dòng của đơn đã ghi huỷ đủ (`cancelled_qty = quantity`, spec 205 §5.10). */
+export async function cancelledLineIds(orderId: string): Promise<Set<string>> {
+  const rows = await getDb()
+    .select({ id: orderLines.id })
+    .from(orderLines)
+    .where(and(eq(orderLines.orderId, orderId), sql`${orderLines.cancelledQty} = ${orderLines.quantity}`));
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Ghi huỷ đủ cho các dòng đơn sàn đã huỷ mà fulfillment đã gỡ, đánh dấu chờ bỏ hoặc huỷ cùng kiện (spec 205 §5.10).
+ * Dòng đã ghi thì bỏ qua (kéo lại không tăng `version`). Chỉ luồng nhận đơn gọi; trigger `order_lines_line_total` kiểm
+ * lúc commit.
+ */
+export async function markLinesCancelled(orderLineIds: readonly string[]): Promise<void> {
+  if (!orderLineIds.length) return;
+  await getDb()
+    .update(orderLines)
+    .set({ cancelledQty: sql`${orderLines.quantity}`, version: sql`${orderLines.version} + 1`, updatedAt: sql`now()` })
+    .where(and(inArray(orderLines.id, [...new Set(orderLineIds)]), sql`${orderLines.cancelledQty} <> ${orderLines.quantity}`));
 }
 
 /** Số tiếp theo của bộ đếm mã (`order`, `package`) trong công ty của giao dịch. */
@@ -208,4 +255,28 @@ export async function oldestOpenOrdersOfShop(shopId: string, limit: number): Pro
     .where(and(eq(orders.shopId, shopId), OPEN))
     .orderBy(sql`coalesce(${orders.placedAt}, ${orders.createdAt})`, asc(orders.code))
     .limit(limit);
+}
+
+/**
+ * Số món bán ra của từng SKU trong `days` ngày gần nhất, không tính đơn huỷ và phần dòng đã huỷ (gợi ý ngưỡng tồn,
+ * #242). SKU không bán được thì không có trong kết quả. Chạy trong `withCompany`.
+ */
+export async function soldQtyByVariant(variantIds: readonly string[], days: number): Promise<Map<string, number>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select({
+      variantId: orderLines.variantId,
+      qty: sql<number>`sum(${orderLines.quantity} - ${orderLines.cancelledQty})::int`,
+    })
+    .from(orderLines)
+    .innerJoin(orders, eq(orders.id, orderLines.orderId))
+    .where(
+      and(
+        inArray(orderLines.variantId, [...variantIds]),
+        notInArray(orders.status, ['cancelled']),
+        sql`coalesce(${orders.placedAt}, ${orders.createdAt}) >= now() - make_interval(days => ${days})`,
+      ),
+    )
+    .groupBy(orderLines.variantId);
+  return new Map(rows.filter((r) => r.variantId && r.qty > 0).map((r) => [r.variantId!, r.qty]));
 }

@@ -19,14 +19,20 @@ const hasVariant = (variantIds: readonly string[]) =>
   sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${inArray(packageLines.variantId, [...variantIds])})`;
 
 /**
+ * Kiện có dòng chờ bỏ (món sàn đã huỷ, spec 205 §5.10): kiện mang cờ `stocktake` mà sàn huỷ thêm một món thì giữ mục đích
+ * `stocktake` nhưng vẫn phải mở để bỏ dòng đó, nên lượt phân hàng không gỡ cờ, không giữ hàng cho nó.
+ */
+const hasPendingDrop = sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.pendingDropQty} > 0)`;
+
+/**
  * Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). Kiện chờ mở vì kiểm kê (`stocktake`)
- * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5).
+ * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5); trừ khi kiện có dòng chờ bỏ.
  */
 const candidateWhere = and(
   sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
        and not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.reservedQty} > 0)))`,
   sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.variantId} is null)`,
-  sql`(${packages.needsOpen} = false or ${packages.openPurpose} = 'stocktake')`,
+  sql`(${packages.needsOpen} = false or (${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop}))`,
   sql`${orderStatus} <> 'cancelled'`,
 );
 
@@ -102,12 +108,13 @@ export interface StocktakeFlagged {
 
 /**
  * Kiện đã đóng mang cờ kiểm kê (Cần mở `stocktake`, hoặc dạng cũ Cần xử lý `DISMANTLE_NOTE`), đang giữ một SKU thuộc
- * `variantIds`; khoá `FOR UPDATE`, theo `code`. Lượt phân hàng xét tự gỡ cờ khi tồn đã đủ (spec #238 §5.5).
+ * `variantIds`; khoá `FOR UPDATE`, theo `code`. Lượt phân hàng xét tự gỡ cờ khi tồn đã đủ (spec #238 §5.5). Kiện có dòng
+ * chờ bỏ không tính cờ `stocktake` (còn phải mở để bỏ dòng).
  */
 export async function lockStocktakeFlagged(variantIds: readonly string[]): Promise<StocktakeFlagged[]> {
   if (!variantIds.length) return [];
   // `coalesce`: `open_purpose`, `flag_note` null thì so sánh ra NULL.
-  const stocktake = sql<boolean>`coalesce(${packages.needsOpen} and ${packages.openPurpose} = 'stocktake', false)`;
+  const stocktake = sql<boolean>`coalesce(${packages.needsOpen} and ${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop}, false)`;
   const legacy = sql<boolean>`coalesce(${packages.needsAttention} and ${packages.flagNote} = ${DISMANTLE_NOTE}, false)`;
   const rows = await getDb()
     .select({ id: packages.id, stocktake, legacy })

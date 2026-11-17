@@ -146,9 +146,14 @@ describe('client TikTok', () => {
   it('thiếu key hoặc secret thì unsupported, không gọi mạng; hết hạn mức ngày thì unavailable daily_call_limit', async () => {
     const fetchFn = fakeFetch();
     await expect(createTiktokClient({ ...config, appSecret: undefined }, fetchFn).call('GET', '/x')).rejects.toMatchObject({ kind: 'unsupported' });
-    await expect(createTiktokClient({ ...config, reserveCall: async () => false }, fetchFn).callAuth('/api/v2/token/get', {})).rejects.toMatchObject({
+    await expect(createTiktokClient({ ...config, reserveCall: async () => 'daily_call_limit' as const }, fetchFn).callAuth('/api/v2/token/get', {})).rejects.toMatchObject({
       kind: 'unavailable',
       platformCode: 'daily_call_limit',
+    });
+    // #215: hết phần của công ty, cùng mã với Lazada (21 §18.6.8).
+    await expect(createTiktokClient({ ...config, reserveCall: async () => 'company_call_limit' as const }, fetchFn).call('GET', '/x')).rejects.toMatchObject({
+      kind: 'unavailable',
+      platformCode: 'company_call_limit',
     });
     expect(fetchFn).not.toHaveBeenCalled();
   });

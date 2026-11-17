@@ -1,5 +1,5 @@
 // Người nhận thư theo vai trò cho module khác (#312: channel gửi thư báo gian hàng mất uỷ quyền cho CEO, Admin).
-import { membershipIdsWithRole } from '../../access/index.ts';
+import { membershipIdsWithPermission, membershipIdsWithRole } from '../../access/index.ts';
 import { activeMemberEmails } from '../repository/accounts.ts';
 
 /**
@@ -10,4 +10,12 @@ export async function activeMemberEmailsWithRoles(roleIds: readonly string[]): P
   const membershipIds: string[] = [];
   for (const roleId of new Set(roleIds)) membershipIds.push(...(await membershipIdsWithRole(roleId)));
   return activeMemberEmails(membershipIds);
+}
+
+/**
+ * Email của thành viên đang hoạt động trong công ty hiện tại có quyền `code` qua một vai trò (CEO có mọi quyền), không
+ * gồm quản trị nền tảng, sắp theo email, không trùng. Chạy trong `withCompany`.
+ */
+export async function activeMemberEmailsWithPermission(code: string): Promise<string[]> {
+  return activeMemberEmails(await membershipIdsWithPermission(code));
 }

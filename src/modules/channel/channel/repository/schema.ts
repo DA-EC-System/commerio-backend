@@ -10,7 +10,6 @@ import {
   jsonb,
   numeric,
   pgSchema,
-  primaryKey,
   text,
   timestamp,
   unique,
@@ -265,10 +264,16 @@ export const categoryMaps = channelSchema.table(
     categoryId: uuid('category_id').notNull(),
     externalCategoryId: text('external_category_id').notNull(),
     attributes: jsonb('attributes').$type<Record<string, string>>().notNull().default({}),
+    // Quy tắc bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm phải có ảnh bảng kích cỡ mới đẩy được. Null là
+    // chưa biết (ghép trước #347, hoặc sàn không có quy tắc này): việc đẩy hỏi lại sàn.
+    sizeChartRule: text('size_chart_rule').$type<'required' | 'optional' | 'unsupported'>(),
     ...timestamps,
     ...version,
   },
-  (t) => [unique().on(t.companyId, t.platform, t.categoryId)],
+  (t) => [
+    unique().on(t.companyId, t.platform, t.categoryId),
+    check('category_maps_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
+  ],
 );
 
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
@@ -383,17 +388,20 @@ export const webhookEvents = channelSchema.table(
 );
 
 /**
- * Số lời gọi sàn trong một ngày (giờ Việt Nam) của cả app, mọi công ty cộng chung (#102 A7): hạn mức gọi do sàn đặt
- * cho app (Lazada 10.000/ngày). Không có `company_id` nên không RLS.
+ * Số lời gọi sàn trong một ngày (giờ Việt Nam) (#102 A7, #215). Dòng `company_id` trống là tổng của cả app, mọi công ty
+ * cộng chung: hạn mức gọi do sàn đặt cho app (Lazada 10.000/ngày). Dòng có `company_id` là phần công ty đó đã dùng
+ * (Documents/21 §18.6.8). Một lượt gọi cộng cả hai dòng trong một giao dịch (`repository/api-usage.ts`). Chỉ đọc ghi
+ * bằng role chủ bảng ngoài `withCompany`; RLS bật theo luật bảng có `company_id` (migration `rls-han-muc-cong-ty`).
  */
 export const apiUsage = channelSchema.table(
   'api_usage',
   {
     platform: marketplace('platform').notNull(),
     day: date('day').notNull(),
+    companyId: uuid('company_id'),
     calls: integer('calls').notNull(),
   },
-  (t) => [primaryKey({ columns: [t.platform, t.day] })],
+  (t) => [unique('api_usage_platform_day_company_uq').on(t.platform, t.day, t.companyId).nullsNotDistinct()],
 );
 
 /**

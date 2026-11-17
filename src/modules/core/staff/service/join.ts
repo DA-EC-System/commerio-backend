@@ -52,12 +52,16 @@ async function linkOf(token: string): Promise<{ invitationId: string; companyId:
   return { invitationId: claims.jti, companyId: claims.cid };
 }
 
+/** Link không còn dùng được, báo 410: không có dòng, quá hạn, hoặc Admin đã huỷ (Documents/21 mục 3.1). */
+const isDeadLink = (row: InvitationRow | undefined): boolean =>
+  !row || row.status === 'revoked' || isLinkExpired(row, new Date());
+
 /**
- * Người được mời còn làm tiếp được: còn dòng, còn hạn (410), chưa nộp (409). `email` cho trước mà link đã gắn email
- * khác (409).
+ * Người được mời còn làm tiếp được: còn dòng, còn hạn, chưa bị huỷ (410), chưa nộp (409). `email` cho trước mà link đã
+ * gắn email khác (409).
  */
 function assertUsable(row: InvitationRow | undefined, email?: string): asserts row is InvitationRow {
-  if (!row || isLinkExpired(row, new Date())) throw invalidLink();
+  if (!row || isDeadLink(row)) throw invalidLink();
   if (row.status !== 'open' && row.status !== 'claimed') throw linkUsed();
   if (email !== undefined && row.status === 'claimed' && row.email !== email) throw linkUsed();
 }
@@ -163,8 +167,7 @@ export async function completeJoin(input: {
   }
   // Link hết hạn báo trước khi kiểm mật khẩu (spec 6.5).
   await withCompany(cid, async () => {
-    const row = await findInvitation(jti);
-    if (!row || isLinkExpired(row, new Date())) throw invalidLink();
+    if (isDeadLink(await findInvitation(jti))) throw invalidLink();
   });
 
   let passwordHash: string | null = null;
@@ -181,9 +184,12 @@ export async function completeJoin(input: {
 
   const outcome = await withCompany(cid, async () => {
     if (accountId && (await findMemberByAccount(accountId))) return 'already_member';
-    if (await submitInvitation(jti, em, { passwordHash, accountId })) return 'pending';
-    const row = await findInvitation(jti);
-    return !row || isLinkExpired(row, new Date()) ? 'invalid' : 'used';
+    if (await submitInvitation(jti, em, { passwordHash, accountId })) {
+      // Thư báo người duyệt gửi qua outbox, cùng giao dịch với bước nộp.
+      await publishEvent({ type: 'staff.invitation_submitted', aggregateId: jti, payload: { invitationId: jti } });
+      return 'pending';
+    }
+    return isDeadLink(await findInvitation(jti)) ? 'invalid' : 'used';
   }).catch((err: unknown) => {
     // Đã có yêu cầu khác của email này chờ duyệt trong công ty.
     const { code, constraint } = pgError(err);

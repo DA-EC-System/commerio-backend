@@ -62,6 +62,8 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'doc_counters',
     'gateway_configs',
     'ledger_entries',
+    'ledger_package_lines',
+    'ledger_replacements',
     'order_payments',
     'order_settlements',
     'payment_links',

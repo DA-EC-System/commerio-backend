@@ -1,15 +1,19 @@
 import { type Response, Router } from 'express';
+import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
+import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
-import { addVariant, archiveVariant } from '../service/variants.ts';
+import { addVariant, archiveVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
 import type { CatalogContext } from '../service/standard-price.ts';
 import {
   AddVariantBody,
   AttributeBody,
+  BulkEditQuery,
+  BulkSaveBody,
   CategoryBody,
   CreateProductBody,
   IdParams,
@@ -17,6 +21,7 @@ import {
   UpdateAttributeBody,
   UpdateCategoryBody,
   UpdateProductBody,
+  UpdateVariantBody,
   VariantParams,
   VersionQuery,
 } from './schemas.ts';
@@ -24,6 +29,10 @@ import {
 function caller(res: Response): Caller {
   const { accountId, companyId } = getAuth(res);
   return { accountId, companyId: companyId! };
+}
+
+function bulkViewer(res: Response): BulkViewer {
+  return { ...caller(res), permissions: getAccess(res).permissions };
 }
 
 /**
@@ -74,6 +83,15 @@ export function catalogRouter(ctx: CatalogContext): Router {
     res.status(204).end();
   });
 
+  // Sửa hàng loạt có gợi ý (#242, Documents/21 §17.5). Khai trước `/products` cho gọn; không trùng đường dẫn nào.
+  router.get('/variants/bulk-edit', manage, validate({ query: BulkEditQuery }), async (_req, res) => {
+    res.json(await listBulkEdit(ctx as BulkEditContext, bulkViewer(res), validated<typeof BulkEditQuery>(res, 'query')));
+  });
+
+  router.patch('/variants/bulk', manage, validate({ body: BulkSaveBody }), async (_req, res) => {
+    res.json(await saveBulkEdit(ctx as BulkEditContext, bulkViewer(res), validated<typeof BulkSaveBody>(res, 'body').rows));
+  });
+
   router.get('/products', view, validate({ query: ProductListQuery }), async (_req, res) => {
     res.json(await products.listProducts(caller(res).companyId, validated<typeof ProductListQuery>(res, 'query')));
   });
@@ -104,6 +122,17 @@ export function catalogRouter(ctx: CatalogContext): Router {
     const { created, variant } = await addVariant(ctx, caller(res), id, attributeValueIds);
     res.status(created ? 201 : 200).json(variant);
   });
+
+  // Sửa giá, cân nặng, kích thước của một SKU; `version` là của SKU (#204, Documents/21 §17.2).
+  router.patch(
+    '/products/:id/variants/:variantId',
+    manage,
+    validate({ params: VariantParams, body: UpdateVariantBody }),
+    async (_req, res) => {
+      const { id, variantId } = validated<typeof VariantParams>(res, 'params');
+      res.json(await updateVariant(ctx, caller(res), id, variantId, validated<typeof UpdateVariantBody>(res, 'body')));
+    },
+  );
 
   // Ngừng bán không nhận `version` (Documents/21 5.2, P7; plan #12 B3).
   router.delete('/products/:id/variants/:variantId', manage, validate({ params: VariantParams }), async (_req, res) => {
