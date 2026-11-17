@@ -76,7 +76,11 @@ export async function resolveOutsideChange(
     } catch (err) {
       if (!(err instanceof AppError) || err.code !== 'version_conflict') throw err;
       const fresh = await findListingById(row.id);
-      if (fresh?.status !== 'hidden' || !fresh.outsideChangeKind) throw err;
+      if (fresh?.status !== 'hidden' || !fresh.outsideChangeKind) {
+        throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', {
+          current: fresh ? toListing(fresh, await requesterNames([fresh])) : null,
+        });
+      }
       moved = await moveListing(fresh, 'outside_resolve', actor, patch);
     }
     return toListing(moved, await requesterNames([moved]));
