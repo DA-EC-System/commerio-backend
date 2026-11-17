@@ -192,9 +192,24 @@ describe('adapter Lazada: sản phẩm', () => {
       widthMm: 200,
       heightMm: 15,
     });
-    expect(created).toEqual({ externalProductId: '77', externalSkuId: '770', live: false });
+    expect(created).toEqual({ externalProductId: '77', externalSkuId: '770', live: false, existing: true });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(sent(fn).path).toBe('/rest/products/get');
+  });
+
+  it('#346: sàn có nhiều SKU chưa xoá cùng SellerSku thì không chọn bừa, ném `rejected` `duplicate_seller_sku`', async () => {
+    const fn = fakeFetch({
+      code: '0',
+      data: {
+        products: [
+          { item_id: '77', status: 'Active', attributes: { name: 'SP' }, skus: [{ SkuId: 770, SellerSku: 'CMR-1', quantity: 7 }] },
+          { item_id: '78', status: 'Pending QC', attributes: { name: 'SP' }, skus: [{ SkuId: 780, SellerSku: 'CMR-1', quantity: 0 }] },
+        ],
+      },
+    });
+    const p = { externalCategoryId: '14275', attributes: {}, name: 'Áo', description: 'Áo', imageUrls: [], sellerSku: 'CMR-1', price: '150000', quantity: 7, weightG: 250, lengthMm: 300, widthMm: 200, heightMm: 15 };
+    await expect(createLazadaAdapter(config, fn).createProduct('t', p)).rejects.toMatchObject({ kind: 'rejected', platformCode: 'duplicate_seller_sku' });
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it('đọc SKU theo SellerSku: chuẩn hoá trạng thái, bỏ SKU không trong danh sách', async () => {

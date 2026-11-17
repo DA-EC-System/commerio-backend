@@ -7,6 +7,7 @@
 // { query, body, token })` với `token` là `TokenSet.accessToken` (client tự đặt header và `shop_cipher`), rồi spread vào
 // đối tượng trả về ở `createTiktokAdapter` dưới đây và bỏ hàm `unsupported` tương ứng.
 import {
+  existingSku,
   type MarketplaceAdapter,
   MarketplaceError,
   refreshBefore,
@@ -462,8 +463,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
   }
 
   /** SKU còn trên sàn (bỏ `deleted`) theo `seller_sku`, cho `createProduct` không tạo trùng. */
-  const findSku = async (accessToken: string, sellerSku: string) =>
-    (await getSkus(accessToken, [sellerSku])).find((s) => s.state !== 'deleted') ?? null;
+  const findSku = async (accessToken: string, sellerSku: string) => existingSku(await getSkus(accessToken, [sellerSku]), sellerSku);
 
   return {
     name: 'TikTok Shop',
