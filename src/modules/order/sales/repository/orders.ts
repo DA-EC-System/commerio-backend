@@ -10,6 +10,7 @@ export interface MarketplaceOrderRow {
   rawMarketplaceStatus: string | null;
   shipBy: Date | null;
   needsAttention: boolean;
+  attentionNote: string | null;
   cancelRequested: boolean;
   cancelling: boolean;
   platformCancelled: boolean;
@@ -28,6 +29,7 @@ const rowColumns = {
   rawMarketplaceStatus: orders.rawMarketplaceStatus,
   shipBy: orders.shipBy,
   needsAttention: orders.needsAttention,
+  attentionNote: orders.attentionNote,
   cancelRequested: orders.cancelRequested,
   cancelling: orders.cancelling,
   platformCancelled: orders.platformCancelled,

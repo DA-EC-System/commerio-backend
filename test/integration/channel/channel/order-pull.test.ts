@@ -256,10 +256,10 @@ describe('kéo đơn theo gian hàng (#105)', () => {
   });
 });
 
-// Migration chạy một lần (review #261 điểm 1): tìm theo tên để không vỡ khi đổi số lúc rebase.
-async function runRepullMigration() {
+// Migration chạy một lần (review #261 điểm 1): tìm theo đuôi tên để không vỡ khi đổi số lúc rebase hay sinh lại.
+async function runRepullMigration(suffix = '_keo-lai-don-truoc-0017.sql') {
   const dir = join(process.cwd(), 'db', 'migrations');
-  const file = readdirSync(dir).find((f) => f.endsWith('_keo-lai-don-truoc-0017.sql'))!;
+  const file = readdirSync(dir).find((f) => f.endsWith(suffix))!;
   for (const stmt of readFileSync(join(dir, file), 'utf8').split('--> statement-breakpoint')) {
     if (stmt.replace(/--.*$/gm, '').trim()) await testPool().query(stmt);
   }
@@ -309,6 +309,90 @@ describe('kéo lại đơn lưu trước #260 (migration chạy một lần)', (
     // Chạy lại (bước sau rollout): đơn đã kéo lại bằng adapter mới không bị chọn, mốc giữ nguyên.
     await runRepullMigration();
     expect(await cursor()).toEqual(at('2026-11-01T03:00:00Z'));
+  });
+});
+
+describe('kéo lại đơn có món trạng thái app chưa biết (#358, migration chạy một lần)', () => {
+  const MIGRATION = '_keo-lai-don-trang-thai-moi.sql';
+  const rawTimes = async (ids: string[]) =>
+    (
+      await testPool().query(
+        `select external_order_id as id, external_update_time = 'epoch' as epoch from channel.raw_orders
+          where shop_id = $1 and external_order_id = any($2) order by 1`,
+        [shopId, ids],
+      )
+    ).rows;
+  const packagesOf = async (externalOrderId: string) =>
+    (
+      await testPool().query(
+        `select p.status from "order".packages p join "order".orders o on o.id = p.order_id where o.shop_id = $1 and o.external_order_id = $2`,
+        [shopId, externalOrderId],
+      )
+    ).rows.map((r) => r.status);
+  /** Đơn kéo bằng adapter cũ: món `confirmed` chưa có ánh xạ nên `status` null. */
+  const unmapped = (id: string, updatedAt: Date) => {
+    const o = remoteOrder(id, sku, null, updatedAt);
+    o.rawStatus = 'confirmed';
+    o.lines[0]!.rawStatus = 'confirmed';
+    return o;
+  };
+
+  it('AC-6: mọi đơn có món status null (kể cả đơn đã hoàn tất) đặt epoch, xoá mốc gian hàng; lượt sau gọi lại đúng các đơn đó', async () => {
+    const q1 = unmapped('Q1', at('2026-11-04T01:00:00Z'));
+    const q2 = remoteOrder('Q2', sku, 'delivered', at('2026-11-04T02:00:00Z'));
+    const q3 = unmapped('Q3', at('2026-11-04T03:00:00Z'));
+    seed(q1, q2, q3);
+    expect((await pull()).body).toEqual({ pulled: 3, created: 3, updated: 0 });
+    expect(await packagesOf('Q1')).toEqual([]);
+    // Q3 đã hoàn tất: migration không lọc trạng thái đơn (câu chốt 5 của #358).
+    await testPool().query(`update "order".orders set status = 'completed', outcome = 'none' where shop_id = $1 and external_order_id = 'Q3'`, [shopId]);
+
+    await runRepullMigration(MIGRATION);
+
+    expect(await cursor()).toBeNull();
+    expect(await rawTimes(['Q1', 'Q2', 'Q3'])).toEqual([
+      { id: 'Q1', epoch: true },
+      { id: 'Q2', epoch: false },
+      { id: 'Q3', epoch: true },
+    ]);
+
+    // Adapter mới: `confirmed` → `delivered`; sàn không đổi `updated_at`.
+    getOrder.mockClear();
+    const known = (o: RemoteOrder): RemoteOrder => ({ ...o, lines: o.lines.map((l) => ({ ...l, status: 'delivered' })) });
+    details.set('Q1', known(q1));
+    details.set('Q3', known(q3));
+    expect((await pull()).status).toBe(200);
+    expect(getOrder.mock.calls.map((c) => c[1])).toEqual(['Q1', 'Q3']);
+    expect(await packagesOf('Q1')).toEqual(['delivered']);
+    const q3Order = await testPool().query(
+      `select status, needs_attention, attention_note from "order".orders where shop_id = $1 and external_order_id = 'Q3'`,
+      [shopId],
+    );
+    // Đơn đã hoàn tất vẫn được kéo lại để gỡ cờ "chưa biết": lý do migration không lọc trạng thái đơn.
+    expect(q3Order.rows[0]).toEqual({ status: 'completed', needs_attention: false, attention_note: null });
+    const synced = await cursor();
+    expect(synced).toEqual(at('2026-11-04T03:00:00Z'));
+
+    // Chạy lại (bước bắt buộc sau rollout): mọi món null đã có ánh xạ thì không chọn đơn nào, mốc giữ nguyên.
+    await runRepullMigration(MIGRATION);
+    expect(await cursor()).toEqual(synced);
+    expect(await rawTimes(['Q1', 'Q3'])).toEqual([
+      { id: 'Q1', epoch: false },
+      { id: 'Q3', epoch: false },
+    ]);
+  });
+
+  it('AC-6: món mã lạ thật còn null thì chạy lại chọn lại đơn đó và xoá mốc gian hàng (vô hại, ghi ở PR)', async () => {
+    const odd = remoteOrder('Q4', sku, null, at('2026-11-04T04:00:00Z'));
+    odd.lines[0]!.rawStatus = 'something_new';
+    seed(odd);
+    expect((await pull()).status).toBe(200);
+    expect(await cursor()).not.toBeNull();
+
+    await runRepullMigration(MIGRATION);
+
+    expect(await cursor()).toBeNull();
+    expect(await rawTimes(['Q4'])).toEqual([{ id: 'Q4', epoch: true }]);
   });
 });
 
@@ -490,5 +574,35 @@ describe('hành trình kiện (#199 phần c)', () => {
     expect((await pull()).status).toBe(200);
 
     expect(await packageOf(o.externalOrderId)).toMatchObject({ status: 'delivered', delivered_at: T });
+  });
+});
+
+describe('món mang trạng thái app chưa biết (#358 Việc 2)', () => {
+  it('AC-4: log warn một lần mỗi đơn kèm gian hàng, mã đơn, mã thô; đơn bật Cần xử lý', async () => {
+    const odd = remoteOrder('U1', sku, null, at('2026-11-05T01:00:00Z'));
+    odd.rawStatus = 'something_new,delivered';
+    odd.lines = [
+      { ...odd.lines[0]!, rawStatus: 'something_new' },
+      { ...odd.lines[0]!, externalLineId: 'U1-2', rawStatus: 'something_new' },
+      { ...odd.lines[0]!, externalLineId: 'U1-3', rawStatus: 'delivered', status: 'delivered' },
+    ];
+    const known = remoteOrder('U2', sku, 'pending', at('2026-11-05T02:00:00Z'));
+    seed(odd, known);
+    const warn = vi.spyOn(logger, 'warn');
+    try {
+      expect((await pull()).status).toBe(200);
+      const calls = warn.mock.calls.filter((c) => c[1] === 'sàn trả trạng thái món app chưa biết');
+      expect(calls).toEqual([[{ shopId, externalOrderId: 'U1', rawStatuses: ['something_new'] }, 'sàn trả trạng thái món app chưa biết']]);
+    } finally {
+      warn.mockRestore();
+    }
+    const flag = await testPool().query(
+      `select external_order_id as id, needs_attention from "order".orders where shop_id = $1 and external_order_id in ('U1', 'U2') order by 1`,
+      [shopId],
+    );
+    expect(flag.rows).toEqual([
+      { id: 'U1', needs_attention: true },
+      { id: 'U2', needs_attention: false },
+    ]);
   });
 });
