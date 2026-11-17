@@ -49,6 +49,19 @@ export type ListingPushJob = z.infer<typeof ListingPushJobSchema>;
  */
 export const listingPushQueue = defineQueue('channel.listing_push', ListingPushJobSchema, { attempts: 5, retryDelaySeconds: 30 });
 
+/**
+ * Lượt Tải lại SKU sàn chạy nền (`runRemoteSkusRefresh`, #361, Documents/21 §18.3): đọc sản phẩm sửa từ lần trước rồi đọc
+ * trọn. Không lịch: xếp khi bấm Tải lại hay mở trang ghép lần đầu. Mỗi gian hàng một lượt (`stately`, khoá gian hàng). Thử
+ * 2 lần, lần sau cách 30 giây (lỗi `incomplete_list` do danh sách đổi giữa chừng hay qua ở lần sau); cho chạy tới 15 phút,
+ * đúng mốc `refresh_stale` (`REFRESH_STALE_MS`).
+ */
+export const remoteSkusRefreshQueue = defineQueue('channel.remote_skus_refresh', ShopJobSchema, {
+  policy: 'stately',
+  attempts: 2,
+  retryDelaySeconds: 30,
+  expireInSeconds: 900,
+});
+
 const LISTING_SYNC_CRON = '*/15 * * * *';
 const ORDER_PULL_CRON = '*/5 * * * *';
 const TOKEN_REFRESH_CRON = '7 * * * *';
@@ -83,6 +96,11 @@ export async function sendStockPush(companyId: string, shopId: string): Promise<
 /** Xếp việc đẩy một listing, đi chung giao dịch vừa chuyển listing sang `pushing` (rollback thì không còn việc). */
 export async function sendListingPush(job: ListingPushJob): Promise<void> {
   await sendJob(listingPushQueue, job);
+}
+
+/** Xếp một lượt Tải lại SKU sàn; đã có việc chờ cùng gian hàng thì không thêm. Đi chung giao dịch đang mở. */
+export async function sendRemoteSkusRefresh(companyId: string, shopId: string): Promise<void> {
+  await sendJob(remoteSkusRefreshQueue, { companyId, shopId }, { key: shopId });
 }
 
 /** Xếp một lượt kéo đơn ngay (nối lại gian hàng, US-GH-14 dòng 1); đã có việc chờ cùng gian hàng thì không thêm. */
