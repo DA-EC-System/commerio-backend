@@ -506,3 +506,16 @@ export const OpeningStocktakeResult = z
   })
   .strict()
   .meta({ id: 'OpeningStocktakeResult' });
+
+export const UpdateShopBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    returnWindowDays: z
+      .number('Hạn trả hàng là số ngày')
+      .int('Hạn trả hàng là số ngày nguyên')
+      .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+  })
+  .strict()
+  .meta({ id: 'ShopUpdateInput' });

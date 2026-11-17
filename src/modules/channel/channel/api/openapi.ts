@@ -28,6 +28,7 @@ import {
   CategoryParams,
   CategorySearchQuery,
   DisconnectBody,
+  UpdateShopBody,
   PlatformCategoryList,
   PlatformParams,
   Shop,
@@ -127,6 +128,23 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     request: { params: PlatformParams, body: json(TokenBody) },
     responses: { ...connected, ...auth, ...marketplace },
   });
+  registry.registerPath({
+    method: 'patch',
+    path: '/shops/:id',
+    summary: 'Sửa hạn trả hàng của gian hàng (§18.4, #362)',
+    description:
+      'Cần `channel.shop.connect`. Mọi trạng thái gian hàng. Thứ tự: 422 `validation_failed` (body: `returnWindowDays` số nguyên 1–60, `version`, không trường lạ) → 404 `not_found` → 409 `version_conflict` kèm `current` → 422 `errors.returnWindowDays` khi sàn `capabilities.returnWindow = platform_status`. Ghi nhật ký thao tác.',
+    security: bearer,
+    request: { params: ShopParams, body: json(UpdateShopBody) },
+    responses: {
+      200: { description: 'Gian hàng sau khi sửa', ...json(Shop) },
+      ...auth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`version_conflict` kèm `current` là gian hàng'),
+      422: problemResponse('`validation_failed`'),
+    },
+  });
+
   registry.registerPath({
     method: 'post',
     path: '/shops/:id/disconnect',
