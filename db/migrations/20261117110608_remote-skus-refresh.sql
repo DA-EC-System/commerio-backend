@@ -1,0 +1,3 @@
+ALTER TABLE "channel"."shops" ADD COLUMN "remote_skus_full_error" jsonb;--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD COLUMN "remote_skus_refresh_requested_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_remote_skus_full_error" CHECK ("channel"."shops"."remote_skus_full_error" is null or "channel"."shops"."remote_skus_full_failed_at" is not null);
