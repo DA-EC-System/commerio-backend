@@ -156,6 +156,7 @@ export interface SyncError {
 }
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
+export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['disabled', 'price_changed']);
 /** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
 export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
 
@@ -183,6 +184,10 @@ export const listings = channelSchema.table(
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
+    /** Sàn đổi listing ngoài app (#360, 21 §18.3 `outsideChange`): dừng bán, chờ CEO quyết. Giá chỉ có khi `price_changed`. */
+    outsideChangeKind: outsideChangeKind('outside_change_kind'),
+    outsideChangePrice: money('outside_change_price'),
+    outsideChangeAt: timestamp('outside_change_at', { withTimezone: true }),
     stockSync: syncState('stock_sync').notNull().default('pending'),
     priceSync: syncState('price_sync').notNull().default('pending'),
     platformStock: integer('platform_stock'),
@@ -272,6 +277,10 @@ export const listings = channelSchema.table(
       sql`${t.approvedBy} is null or ${t.mappingRequestedBy} is null or ${t.approvedBy} <> ${t.mappingRequestedBy} or ${t.mappingSelfApproved}`,
     ),
     check('listings_hidden_by', sql`${t.hiddenBy} is null or ${t.status} in ('hidden', 'live')`),
+    check(
+      'listings_outside_change',
+      sql`(${t.outsideChangeKind} is null and ${t.outsideChangePrice} is null and ${t.outsideChangeAt} is null) or (${t.outsideChangeKind} is not null and ${t.status} = 'hidden' and ${t.outsideChangeAt} is not null and (${t.outsideChangeKind} = 'price_changed') = (${t.outsideChangePrice} is not null))`,
+    ),
     check(
       'listings_revision',
       sql`(${t.revisionStatus} is null) = (${t.revisionAt} is null)

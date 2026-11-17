@@ -356,6 +356,13 @@ export const ChannelListing = z
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
+    outsideChange: z
+      .object({ kind: z.enum(['disabled', 'price_changed']), platformPrice: z.number().int().nullable(), detectedAt: iso })
+      .nullable()
+      .meta({
+        description:
+          'Sàn đổi listing ngoài app, listing dừng bán chờ CEO quyết (21 §18.3, #360). `platformPrice`: giá gốc đọc trên sàn khi `kind = price_changed`',
+      }),
     pendingMapping,
     pendingRevision,
     version: z.number().int(),
@@ -400,6 +407,16 @@ export const MatchBody = z
   .meta({ id: 'ListingMatchInput' });
 
 export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
+
+export const OutsideChangeParams = z.object({
+  id: z.string(),
+  listingId: z.string(),
+  action: z.enum(['restore', 'accept-price']),
+});
+
+export const OutsideChangeBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingOutsideChangeDecisionInput' });
 
 export const MappingBody = z
   .object({
