@@ -45,7 +45,7 @@ const allocationJobs = async (companyId: string) =>
   (await testPool().query(`select data from pgboss.job where name = 'fulfillment.allocation' and data->>'companyId' = $1`, [companyId])).rows;
 
 describe('applySkuMapping: ghép SKU áp lên đơn đã về (spec 237 §5.4)', () => {
-  it('AC1: hai đơn cùng gian hàng có dòng chưa ghép cùng SKU → dòng đơn, dòng kiện có biến thể; cờ tắt; mỗi đơn một sự kiện; xếp phân hàng', async () => {
+  it('D2-G01 AC1: hai đơn cùng gian hàng có dòng chưa ghép cùng SKU → dòng đơn, dòng kiện có biến thể; cờ tắt; mỗi đơn một sự kiện; xếp phân hàng', async () => {
     const s = await setup(10);
     const shopId = randomUUID();
     const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;
@@ -65,7 +65,7 @@ describe('applySkuMapping: ghép SKU áp lên đơn đã về (spec 237 §5.4)',
     expect(await allocationJobs(s.companyId)).not.toEqual([]);
   });
 
-  it('Review Focus 4 / AC2: đơn của gian hàng khác cùng SKU người bán, và dòng đã ghép khác của cùng đơn → không đổi', async () => {
+  it('D2-G02 Review Focus 4 / AC2: đơn của gian hàng khác cùng SKU người bán, và dòng đã ghép khác của cùng đơn → không đổi', async () => {
     const s = await setup(10);
     const { variantId: w } = await createVariant(s.companyId);
     const shopId = randomUUID();
@@ -86,7 +86,7 @@ describe('applySkuMapping: ghép SKU áp lên đơn đã về (spec 237 §5.4)',
     expect((await orderLinesOf(own.orderId)).map((l) => l.variant_id)).toEqual([w, s.variantId]);
   });
 
-  it('AC10 (sales): ghép "không quản tồn" → dòng đơn, dòng kiện stock_untracked, sku null, cờ tắt; kiện chỉ có dòng đó sang reserved không qua cổng tồn', async () => {
+  it('D2-G06 AC10 (sales): ghép "không quản tồn" → dòng đơn, dòng kiện stock_untracked, sku null, cờ tắt; kiện chỉ có dòng đó sang reserved không qua cổng tồn', async () => {
     const s = await setup(10);
     const shopId = randomUUID();
     const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;
@@ -105,7 +105,7 @@ describe('applySkuMapping: ghép SKU áp lên đơn đã về (spec 237 §5.4)',
     expect((await statusEvents(o.orderId)).at(-1)!.flags).not.toContain('unmapped_sku');
   });
 
-  it('AC13 / Review Focus 5: gọi lại khi đã áp xong → không ghi gì: không phiếu XK, không sự kiện đơn, không lịch sử remap mới', async () => {
+  it('D2-G08 AC13 / Review Focus 5: gọi lại khi đã áp xong → không ghi gì: không phiếu XK, không sự kiện đơn, không lịch sử remap mới', async () => {
     const s = await setup(10);
     const shopId = randomUUID();
     const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;
@@ -124,7 +124,7 @@ describe('applySkuMapping: ghép SKU áp lên đơn đã về (spec 237 §5.4)',
     expect(await remapHistory(o.packageId)).toBe(1);
   });
 
-  it('AC14: cổng tồn ném lỗi giữa lúc áp → hàm ném, giao dịch rollback: dòng đơn vẫn chưa ghép, không sự kiện', async () => {
+  it('D2-G09 AC14: cổng tồn ném lỗi giữa lúc áp → hàm ném, giao dịch rollback: dòng đơn vẫn chưa ghép, không sự kiện', async () => {
     const s = await setup(10);
     const shopId = randomUUID();
     const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;
@@ -142,7 +142,7 @@ describe('applySkuMapping: ghép SKU áp lên đơn đã về (spec 237 §5.4)',
     expect(await statusEvents(o.orderId)).toHaveLength(events);
   });
 
-  it('D3, P6: đơn completed có kiện bàn giao bắt buộc chưa ghép → dòng được ghép và trừ tồn; không phát sự kiện đơn', async () => {
+  it('D2-G03 D3, P6: đơn completed có kiện bàn giao bắt buộc chưa ghép → dòng được ghép và trừ tồn; không phát sự kiện đơn', async () => {
     const s = await setup(10);
     const shopId = randomUUID();
     const sellerSku = `SAN-${randomUUID().slice(0, 8)}`;

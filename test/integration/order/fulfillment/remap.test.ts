@@ -75,7 +75,7 @@ const settle = (companyId: string, packageId: string) =>
   withCompany(companyId, async () => settleHandover((await lockPackage(packageId))!, { actorId: null, mode: 'deduct' }));
 
 describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 bảng 1)', () => {
-  it('kiện backordered → biến thể: dòng kiện có biến thể, xếp phân hàng, một dòng lịch sử remap, version tăng', async () => {
+  it('D2-G01 kiện backordered → biến thể: dòng kiện có biến thể, xếp phân hàng, một dòng lịch sử remap, version tăng', async () => {
     const { companyId, vs: [A] } = await setup();
     await receive(companyId, A!, 5, 100000);
     const p = await seedPackage(companyId, { status: 'backordered', lines: [{ variantId: null, quantity: 1 }], fallbackVariantId: A! });
@@ -92,7 +92,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await versionOf(p.packageId)).toBe(before + 1);
   });
 
-  it('16a: kiện backordered một dòng → không quản tồn: kiện reserved (lịch sử hold), có reserved_at, không gọi cổng tồn', async () => {
+  it('D2-G06 16a: kiện backordered một dòng → không quản tồn: kiện reserved (lịch sử hold), có reserved_at, không gọi cổng tồn', async () => {
     const { companyId, vs: [A] } = await setup();
     const p = await seedPackage(companyId, { status: 'backordered', lines: [{ variantId: null, quantity: 1 }], fallbackVariantId: A! });
     setStockPort({
@@ -111,7 +111,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await jobsOf(companyId)).toEqual([]);
   });
 
-  it('Review Focus 3: kiện reserved có dòng mới mà biến thể mới hết hàng → nhả cả kiện về backordered (reclaim), xếp phân hàng', async () => {
+  it('D2-G05 Review Focus 3: kiện reserved có dòng mới mà biến thể mới hết hàng → nhả cả kiện về backordered (reclaim), xếp phân hàng', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, A!, 5, 100000);
     const p = await seedPackage(companyId, {
@@ -132,7 +132,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await jobsOf(companyId)).toEqual([{ companyId, variantIds: [A!, B!].sort() }]);
   });
 
-  it('Review Focus 3: kiện reserved, biến thể mới đủ hàng → giữ dòng mới, kiện vẫn reserved', async () => {
+  it('D2-G05 Review Focus 3: kiện reserved, biến thể mới đủ hàng → giữ dòng mới, kiện vẫn reserved', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, A!, 5, 100000);
     await receive(companyId, B!, 5, 30000);
@@ -153,7 +153,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect((await historyOf(p.packageId)).map((h) => h.action)).toEqual(['remap']);
   });
 
-  it('AC3: kiện in_transit bàn giao bắt buộc có dòng chưa ghép → một phiếu XK mới chỉ gồm dòng đó, giá vốn bình quân; gọi lại không thêm phiếu', async () => {
+  it('D2-G03 AC3: kiện in_transit bàn giao bắt buộc có dòng chưa ghép → một phiếu XK mới chỉ gồm dòng đó, giá vốn bình quân; gọi lại không thêm phiếu', async () => {
     const { companyId, vs: [a, b] } = await setup(2);
     await receive(companyId, a!, 10, 100000);
     await receive(companyId, b!, 10, 30000);
@@ -181,7 +181,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await stockOfVariant(companyId, b!)).toMatchObject({ onHand: 8 });
   });
 
-  it('AC4: kiện delivered chưa phát package_delivered, ghép dòng cuối → trừ tồn rồi phát package_delivered một lần, dòng mang giá vốn thật', async () => {
+  it('D2-G03 AC4: kiện delivered chưa phát package_delivered, ghép dòng cuối → trừ tồn rồi phát package_delivered một lần, dòng mang giá vốn thật', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const p = await seedPackage(companyId, {
@@ -206,7 +206,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     );
   });
 
-  it('AC5: kiện delivered đã phát package_delivered → trừ tồn, không phát lần hai', async () => {
+  it('D2-G03 AC5: kiện delivered đã phát package_delivered → trừ tồn, không phát lần hai', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const p = await seedPackage(companyId, {
@@ -224,7 +224,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await outboxOf(p.orderId, 'fulfillment.package_delivered')).toEqual([]);
   });
 
-  it('AC6: kiện returned → dòng có biến thể, không phiếu XK, tồn không đổi', async () => {
+  it('D2-G04 AC6: kiện returned → dòng có biến thể, không phiếu XK, tồn không đổi', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const p = await seedPackage(companyId, { status: 'returned', lines: [{ variantId: null, quantity: 1 }], fallbackVariantId: A! });
@@ -236,7 +236,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await stockOfVariant(companyId, B!)).toMatchObject({ onHand: 10, reserved: 0 });
   });
 
-  it('AC7: kiện before_cutoff → dòng có biến thể, không trừ', async () => {
+  it('D2-G04 AC7: kiện before_cutoff → dòng có biến thể, không trừ', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const p = await seedPackage(companyId, {
@@ -252,7 +252,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await packageDocuments(p.packageId)).toEqual([]);
   });
 
-  it('16c: kiện rời kho trước mốc kéo đơn, chưa dòng nào trừ → dòng có biến thể, không phiếu, kiện ghi before_cutoff', async () => {
+  it('D2-G04 16c: kiện rời kho trước mốc kéo đơn, chưa dòng nào trừ → dòng có biến thể, không phiếu, kiện ghi before_cutoff', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const cutoff = new Date('2026-11-10T00:00:00Z');
@@ -271,7 +271,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await packageRow(p.packageId)).toMatchObject({ handover_source: 'before_cutoff' });
   });
 
-  it('AC8: gian hàng chờ kiểm kê → không giữ, không trừ; hàm bù của phiếu đầu kỳ trừ kiện in_transit sau đó', async () => {
+  it('D2-G04 AC8: gian hàng chờ kiểm kê → không giữ, không trừ; hàm bù của phiếu đầu kỳ trừ kiện in_transit sau đó', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const shopId = await channelShop(companyId, true);
@@ -311,7 +311,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await lineOf(out.lineIds[0]!)).toMatchObject({ stock_deducted: true });
   });
 
-  it('Review Focus 1: kiện in_transit có hai dòng chưa ghép, ghép một → chỉ dòng đó vào phiếu XK, dòng kia vẫn chưa ghép', async () => {
+  it('D2-G03 Review Focus 1: kiện in_transit có hai dòng chưa ghép, ghép một → chỉ dòng đó vào phiếu XK, dòng kia vẫn chưa ghép', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const p = await seedPackage(companyId, {
@@ -331,7 +331,7 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect(await lineOf(p.lineIds[1]!)).toMatchObject({ variant_id: null, stock_untracked: false, stock_deducted: false });
   });
 
-  it('AC14: cổng tồn ném lỗi giữa lúc áp → hàm ném, giao dịch rollback, dòng kiện vẫn chưa ghép', async () => {
+  it('D2-G09 AC14: cổng tồn ném lỗi giữa lúc áp → hàm ném, giao dịch rollback, dòng kiện vẫn chưa ghép', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, B!, 10, 30000);
     const p = await seedPackage(companyId, { status: 'in_transit', lines: [{ variantId: null, quantity: 1 }], fallbackVariantId: A! });

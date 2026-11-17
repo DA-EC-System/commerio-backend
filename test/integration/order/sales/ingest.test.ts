@@ -532,7 +532,7 @@ describe('huỷ dòng', () => {
 describe('ghép SKU của dòng khi nhận đơn (spec 237)', () => {
   const statusChanges = async (orderId: string) => (await eventsOf(orderId)).filter((e) => e.type === 'sales.order_status_changed');
 
-  it('AC11: dòng không quản tồn → dòng đơn stock_untracked, không biến thể, không SKU; sự kiện đơn không có cờ unmapped_sku', async () => {
+  it('D2-G07 AC11: dòng không quản tồn → dòng đơn stock_untracked, không biến thể, không SKU; sự kiện đơn không có cờ unmapped_sku', async () => {
     const o = remote();
     o.lines[0] = { ...o.lines[0]!, variantId: null, untracked: true, sellerSku: `KHONG-QUAN-TON-${seq}` };
     const res = await ingest(o);

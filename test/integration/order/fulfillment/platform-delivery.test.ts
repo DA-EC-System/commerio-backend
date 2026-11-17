@@ -396,7 +396,7 @@ describe('dòng "không quản tồn" khi nhận đơn sàn (spec 237)', () => {
   const allocationJobs = async (companyId: string) =>
     (await testPool().query(`select data from pgboss.job where name = 'fulfillment.allocation' and data->>'companyId' = $1`, [companyId])).rows;
 
-  it('AC16b: đơn chỉ có dòng không quản tồn → kiện reserved, reserved_qty 0, không xếp phân hàng, không allocation_done, tồn không đổi', async () => {
+  it('D2-G07 AC16b: đơn chỉ có dòng không quản tồn → kiện reserved, reserved_qty 0, không xếp phân hàng, không allocation_done, tồn không đổi', async () => {
     const s = await setup(10);
     const before = await stockOfVariant(s.companyId, s.variantId);
     const { packageId } = await ingest(s.companyId, remote(s, { lines: 0, untracked: 1 }));
@@ -408,7 +408,7 @@ describe('dòng "không quản tồn" khi nhận đơn sàn (spec 237)', () => {
     expect(await stockOfVariant(s.companyId, s.variantId)).toEqual(before);
   });
 
-  it('AC16b: gian hàng chờ kiểm kê đầu kỳ (holdStock false) cũng lập kiện reserved', async () => {
+  it('D2-G07 AC16b: gian hàng chờ kiểm kê đầu kỳ (holdStock false) cũng lập kiện reserved', async () => {
     const s = await setup(10);
     const { packageId } = await ingest(s.companyId, remote(s, { lines: 0, untracked: 1, holdStock: false }));
 
@@ -416,7 +416,7 @@ describe('dòng "không quản tồn" khi nhận đơn sàn (spec 237)', () => {
     expect(await allocationJobs(s.companyId)).toEqual([]);
   });
 
-  it('AC11: kiện có dòng biến thể và dòng không quản tồn giao xong → dòng không quản tồn variantId null, unitCost null; dòng biến thể có giá vốn', async () => {
+  it('D2-G07 AC11: kiện có dòng biến thể và dòng không quản tồn giao xong → dòng không quản tồn variantId null, unitCost null; dòng biến thể có giá vốn', async () => {
     const s = await setup(10);
     const { orderId, packageId } = await ingest(s.companyId, remote(s, { status: 'delivered', untracked: 1 }));
 

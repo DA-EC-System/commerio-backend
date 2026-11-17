@@ -524,7 +524,7 @@ describe('ghép "không quản tồn" khi kéo đơn (spec 237)', () => {
     );
   }
 
-  it('AC12: SKU sàn chỉ có ghép chờ "không quản tồn" chưa duyệt → dòng chưa ghép, đơn mang cờ unmapped_sku', async () => {
+  it('D2-G07 AC12: SKU sàn chỉ có ghép chờ "không quản tồn" chưa duyệt → dòng chưa ghép, đơn mang cờ unmapped_sku', async () => {
     const sellerSku = id('CHO-DUYET');
     await unmanagedListing(sellerSku, false);
     const o = remoteOrder(id('U1'), sellerSku, 'pending', at('2026-11-03T01:00:00Z'));
@@ -536,7 +536,7 @@ describe('ghép "không quản tồn" khi kéo đơn (spec 237)', () => {
     expect(await flagsOf(o.externalOrderId)).toEqual([['unmapped_sku']]);
   });
 
-  it('AC11: listing "không quản tồn" đã duyệt → dòng stock_untracked, đơn không cờ unmapped_sku', async () => {
+  it('D2-G07 AC11: listing "không quản tồn" đã duyệt → dòng stock_untracked, đơn không cờ unmapped_sku', async () => {
     const sellerSku = id('DA-DUYET');
     await unmanagedListing(sellerSku, true);
     const o = remoteOrder(id('U2'), sellerSku, 'pending', at('2026-11-03T02:00:00Z'));

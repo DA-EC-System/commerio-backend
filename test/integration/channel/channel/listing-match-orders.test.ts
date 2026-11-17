@@ -104,7 +104,7 @@ beforeAll(async () => {
 });
 
 describe('ghép SKU áp lên đơn đã về (spec 237 §5.3)', () => {
-  it('AC1: Sale ghép SKU sàn với biến thể → 200; dòng đơn đã về có biến thể; đơn không còn cờ unmapped_sku', async () => {
+  it('D2-G01 AC1: Sale ghép SKU sàn với biến thể → 200; dòng đơn đã về có biến thể; đơn không còn cờ unmapped_sku', async () => {
     const r = newRemote();
     const v = await variant();
     const { orderId } = await orderOf(r.sellerSku);
@@ -116,7 +116,7 @@ describe('ghép SKU áp lên đơn đã về (spec 237 §5.3)', () => {
     expect(await flagsOf(orderId)).not.toContain('unmapped_sku');
   });
 
-  it('AC9, AC10: Sale ghép "không quản tồn" → 202, đơn chưa đổi; CEO duyệt → dòng đơn stock_untracked, cờ tắt', async () => {
+  it('D2-G06 AC9, AC10: Sale ghép "không quản tồn" → 202, đơn chưa đổi; CEO duyệt → dòng đơn stock_untracked, cờ tắt', async () => {
     const r = newRemote();
     const { orderId } = await orderOf(r.sellerSku);
 
@@ -147,7 +147,7 @@ describe('ghép SKU áp lên đơn đã về (spec 237 §5.3)', () => {
     expect(await lineOf(after.orderId)).toEqual({ variant_id: b.variantId, stock_untracked: false });
   });
 
-  it('AC13: ghép đã đúng từ trước (dữ liệu trước PR), đơn cũ còn dòng chưa ghép → bấm ghép lại cùng biến thể thì đơn được áp', async () => {
+  it('D2-G08 AC13: ghép đã đúng từ trước (dữ liệu trước PR), đơn cũ còn dòng chưa ghép → bấm ghép lại cùng biến thể thì đơn được áp', async () => {
     const r = newRemote();
     const v = await variant();
     await testPool().query(
@@ -180,7 +180,7 @@ describe('ghép SKU áp lên đơn đã về (spec 237 §5.3)', () => {
     expect(await lineOf(orderId)).toEqual({ variant_id: winner.variantId, stock_untracked: false });
   });
 
-  it('AC14: cổng tồn ném lỗi giữa lúc áp → 500; listing không tạo, dòng đơn vẫn chưa ghép', async () => {
+  it('D2-G09 AC14: cổng tồn ném lỗi giữa lúc áp → 500; listing không tạo, dòng đơn vẫn chưa ghép', async () => {
     const r = newRemote();
     const v = await variant();
     const { orderId } = await orderOf(r.sellerSku, { status: 'in_transit' });
