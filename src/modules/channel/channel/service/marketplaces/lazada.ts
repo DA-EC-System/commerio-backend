@@ -781,7 +781,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     const data = body.data as { status?: unknown; skus?: unknown } | undefined;
     if (!data || typeof data !== 'object') return false;
     const status = String(data.status ?? '');
-    if (status === 'InActive' || status === 'Deleted') return true;
+    // `Suspended` (sàn đình chỉ) coi như đã tắt, như TikTok `PLATFORM_DEACTIVATED`.
+    if (status === 'InActive' || status === 'Deleted' || status === 'Suspended') return true;
     if (status === 'Pending QC') return false;
     const skus = Array.isArray(data.skus) ? (data.skus as { SkuId?: unknown; Status?: unknown }[]) : [];
     const sku = skus.find((s) => String(s?.SkuId ?? '') === skuId);

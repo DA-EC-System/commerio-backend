@@ -53,6 +53,7 @@ describe('Lazada deactivate: sản phẩm đã tắt sẵn (#359)', () => {
   it.each([
     ['sản phẩm InActive', item('InActive')],
     ['sản phẩm Deleted', item('Deleted')],
+    ['sản phẩm Suspended (sàn đình chỉ)', item('Suspended')],
     ['SKU inactive trong sản phẩm Active', item('Active', [{ SkuId: 2069, Status: 'inactive' }])],
   ])('AC-3: E0004 và sàn báo %s thì coi là đã tắt, gọi đúng hai API', async (_name, got) => {
     const fn = fakeFetch(e0004, got);
