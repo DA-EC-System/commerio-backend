@@ -771,6 +771,23 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     );
   }
 
+  /**
+   * Sản phẩm (hoặc SKU) đã tắt trên sàn chưa, đọc `/product/item/get` (#359): `data.status` `InActive`/`Deleted`, hoặc
+   * SKU `skuId` có `Status` `inactive` trong sản phẩm không chờ duyệt. Tài liệu GetProductItem chỉ có mẫu ("Active,
+   * InActive,Pending QC,Suspended,Deleted", SKU "active"), chưa đọc thật sản phẩm đã tắt; phản hồi không khớp thì `false`.
+   */
+  async function inactiveOnPlatform(accessToken: string, itemId: string, skuId: string): Promise<boolean> {
+    const body = await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET');
+    const data = body.data as { status?: unknown; skus?: unknown } | undefined;
+    if (!data || typeof data !== 'object') return false;
+    const status = String(data.status ?? '');
+    if (status === 'InActive' || status === 'Deleted') return true;
+    if (status === 'Pending QC') return false;
+    const skus = Array.isArray(data.skus) ? (data.skus as { SkuId?: unknown; Status?: unknown }[]) : [];
+    const sku = skus.find((s) => String(s?.SkuId ?? '') === skuId);
+    return String(sku?.Status ?? '').toLowerCase() === 'inactive';
+  }
+
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
     ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
@@ -955,7 +972,12 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       const apiRequestBody =
         `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
-      await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+      // E0004 "Product Status not online" (tài liệu DeactivateProduct: "already in the Inactive state"): đọc lại trạng thái,
+      // đã tắt thì coi là xong như TikTok; còn chờ duyệt hay đang bán thì ném lại lỗi gốc (#359).
+      await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM').catch(async (err: unknown) => {
+        if (!(err instanceof MarketplaceError) || err.platformCode !== 'E0004') throw err;
+        if (!(await inactiveOnPlatform(accessToken, externalProductId, externalSkuId))) throw err;
+      });
     },
     // Lật theo cửa sổ `update_after` tăng dần, không theo offset (#218): đơn đổi giữa chừng có `updated_at` mới nên nằm
     // sau con trỏ. Trang sau gọi từ giây của đơn cuối trang trừ 1 (tài liệu không nói `update_after` có lấy cả mốc) và
