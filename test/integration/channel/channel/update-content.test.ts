@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type ContentUpdate, MarketplaceError, type MarketplaceAdapter } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
+import {
+  type ContentRevision,
+  type ContentUpdate,
+  MarketplaceError,
+  type MarketplaceAdapter,
+} from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -41,12 +47,21 @@ setProductPort({
 
 let onContent: (productId: string, c: ContentUpdate) => Promise<{ underReview: boolean }>;
 const updateContent = vi.fn((_t: string, productId: string, c: ContentUpdate) => onContent(productId, c));
+/** Bản sửa trên sàn theo mã sản phẩm sàn; không có thì đang duyệt. Giá trị `Error` thì ném. */
+const revisions = new Map<string, ContentRevision | Error>();
+const contentRevision = vi.fn(async (_t: string, productId: string): Promise<ContentRevision> => {
+  const r = revisions.get(productId) ?? { state: 'auditing' };
+  if (r instanceof Error) throw r;
+  return r;
+});
 const adapter: MarketplaceAdapter = fakeAdapter({
   async getSeller(accessToken) {
     return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
   },
   categoryAttributes: async () => [],
   updateContent,
+  contentRevision,
+  getSkus: async () => [],
 });
 registerAdapter('lazada', adapter);
 afterAll(() => {
@@ -237,3 +252,41 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     }
   });
 });
+
+describe('đồng bộ đọc bản sửa đang duyệt (#293)', () => {
+  const productOf = async (id: string) =>
+    (await testPool().query<{ external_product_id: string }>('select external_product_id from channel.listings where id = $1', [id])).rows[0]!
+      .external_product_id;
+  const auditing = (status = 'live') => listing({ status, revision_status: 'auditing', revision_at: new Date('2026-11-17T01:00:00Z') });
+
+  it('C2-24, C2-25, C2-27: qua duyệt xoá; trượt ghi failed kèm lý do (không lý do thì câu mặc định); đang duyệt hay đang ẩn thì giữ', async () => {
+    const approved = await auditing();
+    const failed = await auditing();
+    const silent = await auditing();
+    const waiting = await auditing();
+    const hidden = await auditing('hidden');
+    revisions.set(await productOf(approved.id), { state: 'approved' });
+    revisions.set(await productOf(failed.id), { state: 'failed', reason: 'Mô tả có từ cấm' });
+    revisions.set(await productOf(silent.id), { state: 'failed', reason: null });
+    await syncListings({ variants: async () => [], standardPrices: async () => new Map(), productImageUrls: async () => new Map(), availableOf: async () => new Map() }, company.companyId, shopId);
+    expect(await row(approved.id)).toMatchObject({ status: 'live', revision_status: null, revision_at: null });
+    expect(await row(failed.id)).toMatchObject({ revision_status: 'failed', revision_reject_reason: 'Mô tả có từ cấm' });
+    expect((await row(silent.id)).revision_reject_reason).toBe('Sàn từ chối, không ghi lý do');
+    expect(await row(waiting.id)).toMatchObject({ revision_status: 'auditing' });
+    expect(await row(hidden.id)).toMatchObject({ status: 'hidden', revision_status: 'auditing' });
+    expect(contentRevision.mock.calls.map((c) => c[1])).toContain(await productOf(hidden.id));
+  });
+
+  it('lỗi đọc bản sửa của một listing không làm hỏng lượt đồng bộ: listing khác vẫn cập nhật, listing lỗi giữ auditing', async () => {
+    const broken = await auditing();
+    const ok = await auditing();
+    revisions.set(await productOf(broken.id), new MarketplaceError('unavailable', '500', 'Sàn lỗi'));
+    revisions.set(await productOf(ok.id), { state: 'approved' });
+    await expect(
+      syncListings({ variants: async () => [], standardPrices: async () => new Map(), productImageUrls: async () => new Map(), availableOf: async () => new Map() }, company.companyId, shopId),
+    ).resolves.toBeDefined();
+    expect((await row(broken.id)).revision_status).toBe('auditing');
+    expect((await row(ok.id)).revision_status).toBeNull();
+  });
+});
+
