@@ -131,10 +131,11 @@ export interface ShopCapabilities {
 }
 
 /**
- * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null là hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm;
- * không gửi thì chưa bắt buộc tới khi FE gửi trường này (luật chuyển tiếp 18.6, #200 A3).
+ * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null là hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm,
+ * và bắt buộc (#362).
  */
 export function returnWindowError(returnWindow: ShopCapabilities['returnWindow'], days: number | null | undefined): string | null {
-  if (returnWindow !== 'days' || days === null || days === undefined) return null;
+  if (returnWindow !== 'days') return null;
+  if (days === null || days === undefined) return 'Nhập hạn trả hàng (1–60 ngày)';
   return Number.isInteger(days) && days >= 1 && days <= 60 ? null : 'Hạn trả hàng từ 1 đến 60 ngày';
 }

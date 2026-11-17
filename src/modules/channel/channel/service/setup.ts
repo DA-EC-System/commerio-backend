@@ -303,9 +303,8 @@ export async function finishSetup(
       });
       await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
     }
-    // Sàn `platform_status` luôn null; sàn `days` chỉ ghi khi có gửi số, không gửi thì giữ giá trị đang có (A3).
-    const returnWindowDays =
-      returnWindow !== 'days' ? { returnWindowDays: null } : typeof input.returnWindowDays === 'number' ? { returnWindowDays: input.returnWindowDays } : {};
+    // Sàn `platform_status` luôn null; sàn `days` đã kiểm có số ở trên (#362).
+    const returnWindowDays = { returnWindowDays: returnWindow === 'days' ? (input.returnWindowDays ?? null) : null };
     // Bản tạm của cổng (chưa có #245) ném 501: cả giao dịch rollback, gian hàng vẫn `connecting` (Documents/21 §18.7.9).
     const doc =
       input.openingStock === 'stocktake' ? await stocktakePort().createOpeningStocktake(shop.id, { actorId: actor.accountId }) : null;
