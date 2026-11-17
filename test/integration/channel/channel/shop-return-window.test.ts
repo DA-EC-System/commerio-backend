@@ -2,10 +2,13 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { markNeedsReauth } from '#src/modules/channel/index.ts';
 import { Shop } from '#src/modules/channel/channel/api/schemas.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter } from './helpers.ts';
 
@@ -108,5 +111,18 @@ describe('PATCH /channel/shops/:id — returnWindowDays (#362)', () => {
     expect((await patch(id, { version, returnWindowDays: 7 }, other.ceo.token)).status).toBe(404);
     expect((await patch('khong-phai-uuid', { version, returnWindowDays: 7 })).status).toBe(404);
     expect((await patch(randomUUID(), { version, returnWindowDays: 7 })).status).toBe(404);
+  });
+
+  it('sửa hạn trả chen giữa lúc mất uỷ quyền: vẫn sang needs_reauth (khoá dòng, không mất cập nhật)', async () => {
+    const { id } = await activeShop();
+
+    await raceBehindLock(
+      (holder) => holder.query('update channel.shops set return_window_days = 9, version = version + 1 where id = $1', [id]),
+      1,
+      () => withCompany(co.companyId, () => markNeedsReauth(id, 'refresh token hết hạn')),
+    );
+
+    const { rows } = await testPool().query('select status, return_window_days from channel.shops where id = $1', [id]);
+    expect(rows[0]).toEqual({ status: 'needs_reauth', return_window_days: 9 });
   });
 });
