@@ -1,5 +1,6 @@
 // Danh mục sàn và ghép danh mục Commerio → danh mục lá của sàn (#104 A2). Gọi trong `withCompany`.
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { responsibleOrgOf } from '../../../core/index.ts';
 import {
   type CategoryMapRow,
   insertCategoryMap,
@@ -40,9 +41,19 @@ export async function searchCategories(shopId: string, search: string): Promise<
   return { items: all.filter((c) => c.name.toLocaleLowerCase('vi').includes(q)).slice(0, SEARCH_LIMIT) };
 }
 
-export async function categoryAttributes(shopId: string, externalCategoryId: string): Promise<{ items: CategoryAttribute[] }> {
-  const { adapter, accessToken } = await shopSession(shopId);
-  return { items: await onMarketplace(() => adapter.categoryAttributes(accessToken, externalCategoryId)) };
+/** `defaultValue`: giá trị điền từ hồ sơ công ty khi để trống (#292); null là phải nhập. */
+export type CategoryAttributeView = Omit<CategoryAttribute, 'prefill'> & { defaultValue: string | null };
+
+/** Thuộc tính sàn kèm giá trị mặc định từ hồ sơ công ty; chỉ đọc hồ sơ khi sàn có thuộc tính `prefill`. */
+async function withDefaults(companyId: string, attrs: CategoryAttribute[]): Promise<CategoryAttributeView[]> {
+  const org = attrs.some((a) => a.prefill) ? await responsibleOrgOf(companyId) : null;
+  return attrs.map(({ prefill, ...a }) => ({ ...a, defaultValue: (prefill && org?.[prefill]) || null }));
+}
+
+export async function categoryAttributes(shopId: string, externalCategoryId: string): Promise<{ items: CategoryAttributeView[] }> {
+  const { shop, adapter, accessToken } = await shopSession(shopId);
+  const attrs = await onMarketplace(() => adapter.categoryAttributes(accessToken, externalCategoryId));
+  return { items: await withDefaults(shop.companyId, attrs) };
 }
 
 export async function getCategoryMaps(shopId: string): Promise<{ items: CategoryMap[] }> {
@@ -52,8 +63,8 @@ export async function getCategoryMaps(shopId: string): Promise<{ items: Category
 
 /**
  * Ghép một danh mục Commerio. Thuộc tính bắt buộc của danh mục sàn phải đủ và đúng lựa chọn (422 theo từng thuộc
- * tính); `version: null` là ghép mới. Không kiểm `categoryId` có trong catalog: catalog chưa có cổng đọc danh mục,
- * mã lạ không khớp sản phẩm nào nên vô hại.
+ * tính), trừ thuộc tính có `defaultValue` từ hồ sơ công ty; `version: null` là ghép mới. Không kiểm `categoryId` có
+ * trong catalog: catalog chưa có cổng đọc danh mục, mã lạ không khớp sản phẩm nào nên vô hại.
  */
 export async function putCategoryMap(
   shopId: string,
@@ -61,18 +72,24 @@ export async function putCategoryMap(
   input: { externalCategoryId: string; attributes: Record<string, string>; version: number | null },
 ): Promise<CategoryMap> {
   const { shop, adapter, accessToken } = await shopSession(shopId);
-  const required = await onMarketplace(() => adapter.categoryAttributes(accessToken, input.externalCategoryId));
+  const required = await withDefaults(
+    shop.companyId,
+    await onMarketplace(() => adapter.categoryAttributes(accessToken, input.externalCategoryId)),
+  );
+  const attributes = { ...input.attributes };
   const errors: Record<string, string> = {};
   for (const a of required) {
-    const value = input.attributes[a.name]?.trim();
-    if (!value) errors[`attributes.${a.name}`] = `Nhập ${a.label}`;
+    const value = attributes[a.name]?.trim();
+    // Ô có giá trị từ hồ sơ để trống hoặc trùng thì không lưu: lúc đẩy lấy hồ sơ hiện tại (#292).
+    if (a.defaultValue !== null && (!value || value === a.defaultValue)) delete attributes[a.name];
+    else if (!value) errors[`attributes.${a.name}`] = `Nhập ${a.label}`;
     else if (a.options.length && !a.options.includes(value)) errors[`attributes.${a.name}`] = `${a.label} không có trong lựa chọn của sàn`;
   }
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
   // Quy tắc bảng kích cỡ lưu cùng ghép để request đẩy chặn được mà không gọi sàn (#347).
   const rules = adapter.categoryRules ? await onMarketplace(() => adapter.categoryRules!(accessToken, input.externalCategoryId)) : null;
-  const values = { externalCategoryId: input.externalCategoryId, attributes: input.attributes, sizeChartRule: rules?.sizeChart ?? null };
+  const values = { externalCategoryId: input.externalCategoryId, attributes, sizeChartRule: rules?.sizeChart ?? null };
   const row =
     input.version === null
       ? await insertCategoryMap({ companyId: shop.companyId, platform: shop.platform, categoryId, ...values })

@@ -516,8 +516,29 @@
     {
       "idx": 73,
       "version": "7",
-      "when": 1794908329027,
-      "tag": "20261117093849_ghi-bu-tra-ncc",
+      "when": 1794908497887,
+      "tag": "20261117094137_ho-so-cong-ty",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1794908502047,
+      "tag": "20261117094142_quyen-ho-so-cong-ty",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1794908693949,
+      "tag": "20261117094453_ban-sua-noi-dung",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1794910745906,
+      "tag": "20261117101905_ghi-bu-tra-ncc",
       "breakpoints": true
     }
   ]

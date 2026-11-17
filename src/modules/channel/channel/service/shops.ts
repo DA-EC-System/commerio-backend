@@ -28,7 +28,7 @@ import {
   shopMachine,
   tokenExpiringSoon,
 } from '../domain/shop.ts';
-import { DELISTED_REASON, type ListingStatus, type RemoteState } from '../domain/listing.ts';
+import { DELISTED_REASON, type ListingStatus, NO_REASON, type RemoteState } from '../domain/listing.ts';
 import { currentListingRows, currentUnmanagedRows, insertListing } from '../repository/listings.ts';
 import { unmatchedRemoteCounts } from '../repository/remote-skus.ts';
 import { isMarketplace } from '../repository/schema.ts';
@@ -676,7 +676,7 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
             externalSkuId: r.externalSkuId,
             externalImageUrls: row.externalImageUrls,
             hiddenBy: status === 'hidden' ? 'platform' : null,
-            rejectReason: status === 'rejected' ? (r.rejectReason ?? 'Sàn từ chối, không ghi lý do') : null,
+            rejectReason: status === 'rejected' ? (r.rejectReason ?? NO_REASON) : null,
             platformStock: r.quantity,
             replacesListingId: row.id,
           });

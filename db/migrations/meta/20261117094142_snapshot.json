@@ -1,6 +1,6 @@
 {
-  "id": "f6cc3cec-7bc2-4d52-9690-2e3cd8aba7c9",
-  "prevId": "8df3a334-0411-4b0e-9adc-fce3f103fd5d",
+  "id": "e78ac1e9-5813-421e-a163-f45018ff453f",
+  "prevId": "4396451a-1bf2-4274-968e-20b971daa6ff",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2889,6 +2889,24 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "address": {
+          "name": "address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "responsible_name": {
+          "name": "responsible_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "responsible_address": {
+          "name": "responsible_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "status": {
           "name": "status",

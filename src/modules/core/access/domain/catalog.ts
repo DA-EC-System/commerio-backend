@@ -12,6 +12,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { code: 'platform.module.manage', description: 'Bật, tắt phân hệ' },
   { code: 'platform.audit.view', description: 'Xem nhật ký thao tác' },
   { code: 'platform.job.manage', description: 'Xem, chạy lại việc nền lỗi' },
+  { code: 'platform.company.manage', description: 'Xem, sửa hồ sơ công ty' },
   { code: 'identity.account.view', description: 'Xem tài khoản nhân viên' },
   { code: 'identity.account.manage', description: 'Thêm nhân viên, gán vai trò, khoá tài khoản' },
   { code: 'identity.role.view', description: 'Xem vai trò' },
@@ -62,7 +63,12 @@ export const PERMISSIONS: readonly PermissionDef[] = [
 ];
 
 /** Quyền chỉ vai trò có sẵn được mang, không cấp cho vai trò tuỳ biến (Documents/21 M3). */
-export const BUILTIN_ONLY_PERMISSIONS: readonly string[] = ['platform.module.manage', 'platform.audit.view', 'platform.job.manage'];
+export const BUILTIN_ONLY_PERMISSIONS: readonly string[] = [
+  'platform.module.manage',
+  'platform.audit.view',
+  'platform.job.manage',
+  'platform.company.manage',
+];
 
 /** Phân hệ của một mã quyền: phần trước dấu chấm đầu tiên (cùng luật `authorize` dùng). */
 export { moduleOfPermission as permissionModule } from '../../../../shared/auth/company-access.ts';
@@ -82,6 +88,7 @@ export const BUILTIN_ROLES = {
       'platform.module.manage',
       'platform.audit.view',
       'platform.job.manage',
+      'platform.company.manage',
       'identity.account.view',
       'identity.account.manage',
       'identity.role.view',
@@ -137,6 +144,7 @@ export const BUILTIN_ROLES = {
     permissions: [
       'platform.audit.view',
       'platform.job.manage',
+      'platform.company.manage',
       'identity.account.view',
       'identity.account.manage',
       'identity.role.view',

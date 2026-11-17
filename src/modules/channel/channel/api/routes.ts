@@ -19,6 +19,8 @@ import * as shops from '../service/shops.ts';
 import {
   CallbackBody,
   DelistBody,
+  UpdateContentBody,
+  UpdateContentParams,
   ListingParams,
   MappingBody,
   MappingParams,
@@ -234,6 +236,17 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { id, listingId, action } = validated<typeof MappingParams>(res, 'params');
       res.json(await mapping.decideMapping(productPort(ctx), actor(res), id, listingId, action, validated<typeof MappingBody>(res, 'body')));
+    },
+  );
+
+  router.post(
+    '/shops/:id/listings/:listingId/update-content',
+    manage,
+    validate({ params: UpdateContentParams, body: UpdateContentBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof UpdateContentParams>(res, 'params');
+      const { version } = validated<typeof UpdateContentBody>(res, 'body');
+      res.json(await listings.updateListingContent(productPort(ctx), actor(res), id, listingId, version));
     },
   );
 
