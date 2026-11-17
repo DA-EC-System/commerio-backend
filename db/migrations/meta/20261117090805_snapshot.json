@@ -1,5 +1,5 @@
 {
-  "id": "6f3bbbdc-31f2-420e-999c-8479cb97b1b2",
+  "id": "8df3a334-0411-4b0e-9adc-fce3f103fd5d",
   "prevId": "f9d1e87e-3a9c-492a-8fc8-18550f05033e",
   "version": "7",
   "dialect": "postgresql",
@@ -2889,24 +2889,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "address": {
-          "name": "address",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "responsible_name": {
-          "name": "responsible_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "responsible_address": {
-          "name": "responsible_address",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "status": {
           "name": "status",
@@ -13065,7 +13047,8 @@
       "values": [
         "cancel",
         "edit",
-        "resplit"
+        "resplit",
+        "stocktake"
       ]
     },
     "order.package_status": {

@@ -1,9 +1,9 @@
 // Phiếu kiểm kê (thường và đầu kỳ) đếm thấp hơn đang giữ: lấy lại hết kiện `reserved` mà vẫn thiếu thì kiện đã đóng đang
-// giữ SKU đó bật Cần xử lý "Dỡ kiện về kệ" (Documents/25 §7.4 gạch cuối; review #298; chưa có khung việc #209).
+// giữ SKU đó bật Cần mở với mục đích `stocktake` (Documents/25 §7.4 gạch cuối; review #298; spec #238 §5.5, D15).
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { awaitingStocktakeShops } from '#src/modules/channel/index.ts';
-import { DISMANTLE_NOTE, onStocktakePosted, runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
+import { onStocktakePosted, runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -41,7 +41,7 @@ async function threeHolders(onHand: number) {
   return { companyId, A, reserved, packed, awaiting };
 }
 
-describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng bật Cần xử lý (25 §7.4)', () => {
+describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng bật Cần mở stocktake (25 §7.4, spec #238 §5.5)', () => {
   it('phiếu thường: lấy lại hết kiện reserved mà vẫn thiếu → kiện packed, awaiting_pickup giữ SKU bật cờ, trạng thái giữ nguyên', async () => {
     const { companyId, A, reserved, packed, awaiting } = await threeHolders(1);
 
@@ -49,7 +49,7 @@ describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng 
 
     expect((await packageRow(reserved.packageId)).status).toBe('backordered');
     for (const p of [packed, awaiting]) {
-      expect(await packageRow(p.packageId)).toMatchObject({ needs_attention: true, flag_note: DISMANTLE_NOTE });
+      expect(await packageRow(p.packageId)).toMatchObject({ needs_open: true, open_purpose: 'stocktake', needs_attention: false });
     }
     expect((await packageRow(packed.packageId)).status).toBe('packed');
     expect((await packageRow(awaiting.packageId)).status).toBe('awaiting_pickup');
@@ -62,8 +62,8 @@ describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng 
     const r = await withCompany(companyId, () => runAllocation(ctx, { variantIds: [A] }, { stocktake: true }));
 
     expect(r).toMatchObject({ reclaimed: [reserved.packageId], flagged: [] });
-    expect((await packageRow(packed.packageId)).needs_attention).toBe(false);
-    expect((await packageRow(awaiting.packageId)).needs_attention).toBe(false);
+    expect((await packageRow(packed.packageId)).needs_open).toBe(false);
+    expect((await packageRow(awaiting.packageId)).needs_open).toBe(false);
   });
 
   it('lượt không do kiểm kê (tồn đổi vì lý do khác) thì không bật cờ kiện đã đóng', async () => {
@@ -72,7 +72,7 @@ describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng 
     const r = await withCompany(companyId, () => runAllocation(ctx, { variantIds: [A] }));
 
     expect(r.flagged).toEqual([]);
-    expect((await packageRow(packed.packageId)).needs_attention).toBe(false);
+    expect((await packageRow(packed.packageId)).needs_open).toBe(false);
   });
 
   it('kiện đã đóng chỉ giữ SKU khác không bị bật cờ', async () => {
@@ -83,17 +83,32 @@ describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng 
 
     await withCompany(companyId, () => onStocktakePosted(ctx)(posted([A, B])));
 
-    expect((await packageRow(other.packageId)).needs_attention).toBe(false);
+    expect((await packageRow(other.packageId)).needs_open).toBe(false);
   });
 
-  it('kiện đã có Cần xử lý vì lý do khác giữ nguyên ghi chú', async () => {
+  it('kiện đã có Cần xử lý vì lý do khác: vẫn bật Cần mở, giữ nguyên ghi chú', async () => {
     const { companyId, A, packed } = await threeHolders(1);
     await testPool().query(`update "order".packages set needs_attention = true, flag_note = 'Ghi chú khác' where id = $1`, [packed.packageId]);
 
     const r = await withCompany(companyId, () => runAllocation(ctx, { variantIds: [A] }, { stocktake: true }));
 
+    expect(r.flagged).toContain(packed.packageId);
+    expect(await packageRow(packed.packageId)).toMatchObject({
+      needs_open: true,
+      open_purpose: 'stocktake',
+      needs_attention: true,
+      flag_note: 'Ghi chú khác',
+    });
+  });
+
+  it('kiện đang chờ mở vì lý do khác giữ mục đích cũ, không vào flagged', async () => {
+    const { companyId, A, packed } = await threeHolders(1);
+    await testPool().query(`update "order".packages set needs_open = true, open_purpose = 'cancel' where id = $1`, [packed.packageId]);
+
+    const r = await withCompany(companyId, () => runAllocation(ctx, { variantIds: [A] }, { stocktake: true }));
+
     expect(r.flagged).not.toContain(packed.packageId);
-    expect(await packageRow(packed.packageId)).toMatchObject({ needs_attention: true, flag_note: 'Ghi chú khác' });
+    expect(await packageRow(packed.packageId)).toMatchObject({ needs_open: true, open_purpose: 'cancel' });
   });
 
   it('nhận lại sự kiện: lượt sau không bật thêm, không lấy lại thêm', async () => {
@@ -112,7 +127,7 @@ describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng 
     await withCompany(companyId, () => onStocktakePosted(ctx)(posted([A], { type: 'shop_setup', shopId: randomUUID() })));
 
     expect((await packageRow(reserved.packageId)).status).toBe('reserved');
-    expect((await packageRow(packed.packageId)).needs_attention).toBe(false);
+    expect((await packageRow(packed.packageId)).needs_open).toBe(false);
   });
 
   it('lượt phiếu đầu kỳ ({ all: true }) thấy cả SKU chỉ còn kiện đã đóng giữ: kiện đó bật cờ', async () => {
@@ -127,6 +142,6 @@ describe('phiếu kiểm kê đếm thấp hơn đang giữ: kiện đã đóng 
     );
 
     expect(r.flagged).toEqual([packed.packageId]);
-    expect(await packageRow(packed.packageId)).toMatchObject({ status: 'packed', needs_attention: true, flag_note: DISMANTLE_NOTE });
+    expect(await packageRow(packed.packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'stocktake', needs_attention: false });
   });
 });
