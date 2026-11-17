@@ -6,7 +6,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, STALE_PUSH_MS } from '../domain/listing.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
-import { findListingByExternalSku, findListingById, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
+import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
@@ -103,7 +103,10 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     let rewritten = reshelve;
     if (result.existing) {
       const { externalProductId, externalSkuId } = result;
-      const owner = await inCompany(() => findListingByExternalSku(job.shopId, externalSkuId));
+      // Kể cả SKU đang chờ CEO duyệt ghép vào listing lỗi khác.
+      const owner = await inCompany(
+        async () => (await findListingByExternalSku(job.shopId, externalSkuId)) ?? (await findListingByPendingExternalSku(job.shopId, externalSkuId)),
+      );
       if (owner && owner.id !== row.id) {
         const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
         return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });

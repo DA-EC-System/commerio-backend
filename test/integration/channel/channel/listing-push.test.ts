@@ -190,6 +190,21 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(other.id)).toMatchObject({ status: 'live', external_sku_id: 'S-CHU' });
   });
 
+  it('#346: SKU có sẵn đang chờ CEO duyệt ghép vào listing lỗi khác → `push_failed`, không ghi đè', async () => {
+    const ceo = (await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [company.ceo.email])).rows[0]!.id;
+    const waiting = await pushing({ status: 'push_failed' });
+    await testPool().query(
+      `update channel.listings set pending_variant_id = variant_id, pending_mode = 'mapped', pending_requested_by = $2, pending_requested_at = now(),
+              pending_external_sku_id = 'S-CHO', pending_external_product_id = 'P-CHO', pending_seller_sku = 'SS-CHO' where id = $1`,
+      [waiting.id, ceo],
+    );
+    const { id } = await pushing();
+    onCreate = async () => ({ externalProductId: 'P-CHO', externalSkuId: 'S-CHO', live: true, existing: true });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', external_sku_id: null });
+  });
+
   it('AC-17, AC-20, C2-02…04: listing đã có mã sàn (đẩy lại) gọi updateProduct, không tạo; dùng ảnh đã có, tồn để đồng bộ đẩy', async () => {
     const { id } = await pushing({ external_product_id: 'P1', external_sku_id: 'S1', external_image_urls: ['https://slatic.test/cu.png'] });
     await runListingPush(port, job(id, []));
