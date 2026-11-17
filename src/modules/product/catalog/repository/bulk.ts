@@ -16,11 +16,10 @@ export interface BulkFilter {
 /** Bỏ ký tự đặc biệt của LIKE để từ khoá `50%` tìm đúng `50%`. */
 const likePattern = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-/** SKU chưa lưu trữ của sản phẩm chưa lưu trữ, theo tên sản phẩm rồi thứ tự tạo. */
+/** SKU chưa lưu trữ, theo tên sản phẩm rồi thứ tự tạo. */
 export async function findBulkVariants(filter: BulkFilter) {
   const where = and(
     isNull(productVariants.archivedAt),
-    isNull(products.archivedAt),
     filter.categoryId ? eq(products.categoryId, filter.categoryId) : undefined,
     filter.search
       ? or(ilike(productVariants.sku, likePattern(filter.search)), ilike(products.name, likePattern(filter.search)))

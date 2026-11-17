@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, valueId, uniq } from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, valueId, uniq, archiveSku } from './helpers.ts';
 
 // Thuộc tính và mã giá trị (UC-CP-01; Documents/21 5.2, 5.3, V21, V24).
 let token: string;
@@ -189,7 +189,7 @@ describe('DELETE /catalog/attributes/:id', () => {
       categoryId: category.id,
       variants: [[valueId(a, 'Đen')], [valueId(a, 'Trắng')]],
     });
-    await api(token).delete(`/products/${product.id}/variants/${product.variants[0]!.id}`);
+    await archiveSku(token, product.id, product.variants[0]!.id);
     const res = await api(token).delete(`/attributes/${a.id}?version=1`);
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('/problems/in_use');

@@ -45,7 +45,7 @@ describe('Sale chỉ có catalog.product.view (AC-15)', () => {
     ['PUT /products/:id', (t) => api(t).put(`/products/${theirs.product.id}`, {})],
     ['DELETE /products/:id', (t) => api(t).delete(`/products/${theirs.product.id}`)],
     ['POST /products/:id/variants', (t) => api(t).post(`/products/${theirs.product.id}/variants`, {})],
-    ['DELETE /products/:id/variants/:variantId', (t) => api(t).delete(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`)],
+    ['POST /products/:id/business-status', (t) => api(t).post(`/products/${theirs.product.id}/business-status`, {})],
     ['PATCH /products/:id/variants/:variantId', (t) => api(t).patch(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`, {})],
   ];
   it.each(writes)('%s → 403 forbidden', async (_name, call) => {
@@ -65,7 +65,7 @@ describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)'
     ['PUT sản phẩm', () => api(ceo).put(`/products/${theirs.product.id}`, { name: 'X', description: '', imageFileIds: [], version: 1 })],
     ['DELETE sản phẩm', () => api(ceo).delete(`/products/${theirs.product.id}?version=1`)],
     ['thêm biến thể', () => api(ceo).post(`/products/${theirs.product.id}/variants`, { attributeValueIds: [] })],
-    ['ngừng bán biến thể', () => api(ceo).delete(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`)],
+    ['đổi trạng thái kinh doanh', () => api(ceo).post(`/products/${theirs.product.id}/business-status`, { action: 'pause' })],
     ['sửa SKU', () => api(ceo).patch(`/products/${theirs.product.id}/variants/${theirs.product.variants[0]!.id}`, { version: 1, weightG: 1 })],
   ])('%s → 404 not_found', async (_name, call) => {
     const res = await call();
@@ -78,8 +78,12 @@ describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)'
     expect(products.body.total).toBe(0);
     const categories = await api(ceo).get('/categories');
     expect(categories.body.some((c: { id: string }) => c.id === theirs.categoryId)).toBe(false);
-    const { rows } = await testPool().query('select version, archived_at from product.products where id = $1', [theirs.product.id]);
-    expect(rows[0]).toEqual({ version: 1, archived_at: null });
+    const { rows } = await testPool().query(
+      `select p.version, count(*) filter (where v.business_status <> 'selling')::int as changed from product.products p
+       join product.product_variants v on v.product_id = p.id where p.id = $1 group by p.id`,
+      [theirs.product.id],
+    );
+    expect(rows[0]).toEqual({ version: 1, changed: 0 });
   });
 });
 

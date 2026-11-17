@@ -51,6 +51,8 @@ export function valueId(attribute: AttributeBody, value: string): string {
 export interface ProductBody {
   id: string;
   name: string;
+  /** Mã cha (#204 D5). */
+  code: string;
   version: number;
   status: 'active' | 'archived';
   variants: { id: string; sku: string; archivedAt: string | null; attributes: { valueId: string; value: string }[] }[];
@@ -84,4 +86,17 @@ export async function auditOf(entityId: string) {
     [entityId],
   );
   return res.rows;
+}
+
+/** Đổi trạng thái kinh doanh SKU (#204), như FE gọi. */
+export function businessStatus(token: string, productId: string, action: string, variantIds?: string[]) {
+  return api(token).post(`/products/${productId}/business-status`, variantIds ? { action, variantIds } : { action });
+}
+
+/** Lưu trữ một SKU như người dùng: Ngừng nhập rồi Lưu trữ (`version` SKU tăng 2). */
+export async function archiveSku(token: string, productId: string, variantId: string) {
+  for (const action of ['discontinue', 'archive']) {
+    const res = await businessStatus(token, productId, action, [variantId]);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  }
 }

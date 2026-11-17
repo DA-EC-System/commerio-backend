@@ -3,6 +3,7 @@
 import { renderSku, skuPatternError } from '../domain/sku.ts';
 import { findValuesWithAttribute } from '../repository/attributes.ts';
 import { setSkuNextSeq } from '../repository/categories.ts';
+import { productCodeTaken } from '../repository/products.ts';
 import { skuTaken } from '../repository/variants.ts';
 import { isUuid } from './errors.ts';
 
@@ -49,23 +50,34 @@ export const comboKey = (valueIds: readonly string[]) => [...valueIds].sort().jo
 /**
  * SKU cho từng tổ hợp theo thứ tự, mỗi biến thể một số. SKU đã có trong công ty (kể cả biến thể ngừng bán, hay danh
  * mục khác cùng quy tắc) hoặc vừa sinh trong lần này thì bỏ số đó, lấy số kế tiếp (D9, như mock FE). Ghi lại
- * `sku_next_seq`, không đổi `version` danh mục (P7).
+ * `sku_next_seq`, không đổi `version` danh mục (P7). Trả kèm số `{SEQ}` của từng SKU (mã cha lấy số của SKU đầu).
  */
 export async function allocateSkus(
   category: { id: string; skuPattern: string; skuNextSeq: number },
   combos: readonly (readonly ComboValue[])[],
-): Promise<string[]> {
+): Promise<{ sku: string; seq: number }[]> {
   // Quy tắc thiếu {SEQ} (ghi thẳng DB, không qua API) sẽ sinh cùng một SKU mãi trong lúc giữ khoá công ty.
   if (skuPatternError(category.skuPattern)) throw new Error(`Quy tắc SKU của danh mục ${category.id} không hợp lệ`);
   let seq = category.skuNextSeq;
-  const skus: string[] = [];
+  const result: { sku: string; seq: number }[] = [];
   for (const combo of combos) {
     const codes = combo.map((v) => v.code);
     let sku: string;
     do sku = renderSku(category.skuPattern, seq++, codes);
-    while (skus.includes(sku) || (await skuTaken(sku)));
-    skus.push(sku);
+    while (result.some((r) => r.sku === sku) || (await skuTaken(sku)));
+    result.push({ sku, seq: seq - 1 });
   }
   await setSkuNextSeq(category.id, seq);
-  return skus;
+  return result;
+}
+
+/**
+ * Mã cha (#204 D5): quy tắc của danh mục với số của SKU đầu tiên, bỏ phần giá trị thuộc tính. Mã đã có trong công ty
+ * (danh mục khác cùng quy tắc) thì thêm `-2`, `-3`… Gọi sau `lockVariants` như `allocateSkus`.
+ */
+export async function productCodeFor(pattern: string, firstSeq: number): Promise<string> {
+  const base = renderSku(pattern, firstSeq, []);
+  let code = base;
+  for (let n = 2; await productCodeTaken(code); n++) code = `${base}-${n}`;
+  return code;
 }
