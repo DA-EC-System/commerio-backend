@@ -117,7 +117,12 @@ describe('needOf', () => {
 });
 
 describe('planDismantle: kiện đã đóng cần kho kiểm lại sau phiếu kiểm kê (25 §7.4)', () => {
-  const sealed = (id: string, lines: { variantId: string; quantity: number }[], needsAttention = false) => ({ id, needsAttention, lines });
+  const sealed = (id: string, lines: { variantId: string; quantity: number }[], f: { needsAttention?: boolean; needsOpen?: boolean } = {}) => ({
+    id,
+    needsAttention: f.needsAttention ?? false,
+    needsOpen: f.needsOpen ?? false,
+    lines,
+  });
 
   it('kiện đang giữ SKU còn thiếu sau khi lấy lại thì được chọn, kiện chỉ giữ SKU khác thì không', () => {
     const r = planDismantle(
@@ -127,8 +132,13 @@ describe('planDismantle: kiện đã đóng cần kho kiểm lại sau phiếu k
     expect(ids(r)).toEqual(['KA', 'KAB']);
   });
 
-  it('kiện đã bật Cần xử lý thì giữ nguyên, không đè ghi chú', () => {
-    expect(planDismantle([sealed('KA', [{ variantId: A, quantity: 1 }], true)], new Map([[A, 1]]))).toEqual([]);
+  it('kiện đang chờ mở (needsOpen) thì bỏ qua: giữ mục đích mở cũ (spec #238 §5.5)', () => {
+    expect(planDismantle([sealed('KA', [{ variantId: A, quantity: 1 }], { needsOpen: true })], new Map([[A, 1]]))).toEqual([]);
+  });
+
+  it('kiện có Cần xử lý vì lý do khác vẫn được chọn: hai cờ độc lập', () => {
+    const r = planDismantle([sealed('KA', [{ variantId: A, quantity: 1 }], { needsAttention: true })], new Map([[A, 1]]));
+    expect(ids(r)).toEqual(['KA']);
   });
 
   it('hết thiếu (hoặc số thiếu không dương) thì không chọn kiện nào', () => {
