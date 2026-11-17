@@ -307,6 +307,25 @@ describe('adapter Lazada: sản phẩm', () => {
       '<Request><Product><ItemId>234</ItemId><Skus><SkuId>2069</SkuId></Skus></Product></Request>',
     );
   });
+
+  it('C2-14 (#224): bật lại SKU bằng /product/update Status active, gửi kèm thuộc tính giao hàng đang có, không gửi nội dung', async () => {
+    const fn = fakeFetch(
+      { code: '0', data: { attributes: { name: 'Áo', delivery_option_standard: 'No', Delivery_Option_Instant: 'Yes' } } },
+      { code: '0', data: {} },
+    );
+    await createLazadaAdapter(config, fn).activate!('t', '234', '2069');
+    expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/item/get', query: { item_id: '234' } });
+    expect(sent(fn, 1)).toMatchObject({ path: '/rest/product/update', method: 'POST' });
+    expect(JSON.parse(sent(fn, 1).body.payload ?? '')).toEqual({
+      Request: {
+        Product: {
+          ItemId: '234',
+          Attributes: { delivery_option_standard: 'No', Delivery_Option_Instant: 'Yes' },
+          Skus: { Sku: [{ SkuId: '2069', Status: 'active' }] },
+        },
+      },
+    });
+  });
 });
 
 describe('adapter Lazada: đẩy lại, sản phẩm đã xoá (#219)', () => {

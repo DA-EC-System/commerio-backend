@@ -94,6 +94,22 @@ export async function lastTransitionsAt(entityType: string, entityIds: readonly 
   return new Map(rows.flatMap((r) => (r.at ? [[r.id, r.at] as const] : [])));
 }
 
+/**
+ * Thao tác của lần gần nhất mỗi thực thể vào trạng thái `to` (vd listing vào `hidden` bằng `hide` hay `relist`), một câu
+ * cho cả danh sách. Thực thể chưa từng vào `to` không có trong Map. Gọi trong `withCompany`.
+ */
+export async function lastEntryActions(entityType: string, entityIds: readonly string[], to: string): Promise<Map<string, string>> {
+  requireCompanyId('lastEntryActions');
+  if (entityIds.length === 0) return new Map();
+  const t = stateTransitions;
+  const rows = await getDb()
+    .selectDistinctOn([t.entityId], { id: t.entityId, action: t.action })
+    .from(t)
+    .where(and(eq(t.entityType, entityType), inArray(t.entityId, [...entityIds]), eq(t.toState, to)))
+    .orderBy(t.entityId, desc(t.at), desc(t.id));
+  return new Map(rows.map((r) => [r.id, r.action]));
+}
+
 export interface SelfApprovalRow extends TransitionRow {
   entityType: string;
   entityId: string;
