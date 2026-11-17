@@ -129,7 +129,7 @@ const sameInfo = (a: OrderInfo, b: OrderInfo) =>
  * Note của cờ Cần xử lý khi sàn trả trạng thái món app chưa biết (#358). Note đầy đủ kèm mã thô (`<hằng>: <mã>`); dữ liệu
  * trước #358 chỉ có hằng. Gỡ cờ so theo tiền tố này nên khớp cả hai dạng.
  */
-export const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
+const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
 
 const code = async (prefix: string, docType: string) => `${prefix}-${String(await takeNextNumber(docType)).padStart(6, '0')}`;
 

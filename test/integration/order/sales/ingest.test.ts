@@ -581,14 +581,14 @@ describe('cờ "Sàn trả trạng thái app chưa biết" (#358 AC-5)', () => {
     expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: note });
   });
 
-  it('còn món mã lạ thì giữ cờ', async () => {
+  it('còn món mã lạ thì giữ cờ; mã món đổi mà trạng thái đơn không đổi vẫn ghi lại note', async () => {
     const o = odd();
     const { orderId } = await ingest(o);
 
-    await ingest({ ...o, rawStatus: 'other_new', lines: o.lines.map((l) => ({ ...l, rawStatus: 'other_new' })) });
+    // Trạng thái thô của đơn giữ nguyên nên chỉ vế note "chưa biết" đổi lý do làm đơn `dirty`.
+    await ingest({ ...o, lines: o.lines.map((l) => ({ ...l, rawStatus: 'other_new' })) });
 
-    expect(await flagOf(orderId)).toMatchObject({ needs_attention: true });
-    expect((await flagOf(orderId)).attention_note).toMatch(/^Sàn trả trạng thái app chưa biết/);
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn trả trạng thái app chưa biết: other_new' });
   });
 
   it('cùng lượt sàn chia lại kiện: giữ cờ, note thành note chia lại kiện', async () => {

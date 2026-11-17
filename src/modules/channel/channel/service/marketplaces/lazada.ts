@@ -276,7 +276,7 @@ interface OpenOrderCursor {
   inner: OrderCursor;
 }
 
-// Trạng thái món của Lazada (20 giá trị của GetOrders) → trạng thái kiện của app (#105 A3).
+// Trạng thái món của Lazada (giá trị của GetOrders, thêm `confirmed` gặp trên shop thử ở #358) → trạng thái kiện của app (#105 A3).
 const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
   unpaid: 'pending',
   pending: 'pending',

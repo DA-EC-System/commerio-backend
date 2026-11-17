@@ -364,8 +364,12 @@ describe('kéo lại đơn có món trạng thái app chưa biết (#358, migrat
     expect((await pull()).status).toBe(200);
     expect(getOrder.mock.calls.map((c) => c[1])).toEqual(['Q1', 'Q3']);
     expect(await packagesOf('Q1')).toEqual(['delivered']);
-    const q3Order = await testPool().query(`select status from "order".orders where shop_id = $1 and external_order_id = 'Q3'`, [shopId]);
-    expect(q3Order.rows[0].status).toBe('completed');
+    const q3Order = await testPool().query(
+      `select status, needs_attention, attention_note from "order".orders where shop_id = $1 and external_order_id = 'Q3'`,
+      [shopId],
+    );
+    // Đơn đã hoàn tất vẫn được kéo lại để gỡ cờ "chưa biết": lý do migration không lọc trạng thái đơn.
+    expect(q3Order.rows[0]).toEqual({ status: 'completed', needs_attention: false, attention_note: null });
     const synced = await cursor();
     expect(synced).toEqual(at('2026-11-04T03:00:00Z'));
 

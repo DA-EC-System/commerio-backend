@@ -133,4 +133,15 @@ describe('kiện có món delivered lẫn món returned là delivered (#358 AC-3
     expect(await packageDocuments(packageId)).toHaveLength(1);
     expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 6, reserved: 0 });
   });
+
+  it('còn món chậm hơn (in_transit) thì món chậm nhất quyết, không ra delivered', async () => {
+    const s = await setup(10);
+    const o = remote(s, { lines: 4 });
+    const { packageId } = await ingest(s.companyId, o);
+    const m = mixed(o, (i) => (i < 2 ? 'returned' : 'confirmed'));
+
+    await ingest(s.companyId, { ...m, lines: m.lines.map((l, i) => (i === 3 ? { ...l, status: 'in_transit', rawStatus: 'shipping' } : l)) });
+
+    expect((await packageRow(packageId)).status).toBe('in_transit');
+  });
 });
