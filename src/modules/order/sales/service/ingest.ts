@@ -20,7 +20,10 @@ import {
 } from '../repository/orders.ts';
 import { nextPackageCode } from './package-orders.ts';
 
-/** Đơn sàn đã chuẩn hoá; `variantId` do channel tra theo listing (null: chưa ghép SKU). Mỗi món một đơn vị. */
+/**
+ * Đơn sàn đã chuẩn hoá; `variantId` do channel tra theo listing (null: chưa ghép SKU, hoặc `untracked`). Mỗi món một
+ * đơn vị. Ghép chỉ dùng cho dòng đơn chèn mới: dòng đã có giữ ghép đã lưu (spec 237 D14).
+ */
 export interface PlatformOrder {
   shopId: string;
   /** Giữ hàng cho kiện mới; false khi gian hàng chờ kiểm kê đầu kỳ (#198). Thiếu là true. */
@@ -50,6 +53,8 @@ export interface PlatformOrder {
   lines: {
     externalLineId: string;
     variantId: string | null;
+    /** Ghép "không quản tồn" đã duyệt (spec 237): dòng không biến thể, không giữ, không trừ tồn. Thiếu là false. */
+    untracked?: boolean;
     sellerSku: string;
     productName: string;
     unitPrice: string;
@@ -135,7 +140,7 @@ const code = async (prefix: string, docType: string) => `${prefix}-${String(awai
 
 const sum = (values: string[]) => values.reduce((a, v) => a.plus(v), new Decimal(0));
 
-function storedFlags(o: Pick<MarketplaceOrderRow, 'needsAttention' | 'cancelRequested' | 'cancelling' | 'platformCancelled'>): OrderFlag[] {
+export function storedFlags(o: Pick<MarketplaceOrderRow, 'needsAttention' | 'cancelRequested' | 'cancelling' | 'platformCancelled'>): OrderFlag[] {
   const flags: OrderFlag[] = [];
   if (o.needsAttention) flags.push('needs_attention');
   if (o.cancelRequested) flags.push('cancel_requested');
@@ -215,11 +220,12 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     await publishEvent({ type: 'sales.order_created', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', total: totals(o).total.toFixed(2) } });
   }
 
-  const lineIds = await upsertMarketplaceLines(
+  const stored = await upsertMarketplaceLines(
     orderId,
     o.lines.map((l) => ({
       externalLineId: l.externalLineId,
       variantId: l.variantId,
+      stockUntracked: !l.variantId && !!l.untracked,
       externalSku: l.sellerSku,
       sku: l.variantId ? l.sellerSku : null,
       productName: l.productName,
@@ -237,6 +243,9 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   );
   // Dòng đã ghi huỷ đủ ở lượt trước (spec 205 D18): fulfillment bỏ qua món đã gỡ khỏi kiện, không lập kiện mới cho nó.
   const done = await cancelledLineIds(orderId);
+  // Ghép của dòng kiện lấy từ dòng đơn đã lưu, không từ lần tra vừa rồi (spec 237 D14): dòng đơn giữ A thì kiện sàn
+  // vừa chia lại cũng mang A.
+  const lineOf = (l: PlatformOrder['lines'][number]) => stored.get(l.externalLineId)!;
   const packages = await syncPlatformPackages(
     {
       id: orderId,
@@ -248,9 +257,10 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       packageEvents: o.packageEvents ?? [],
     },
     o.lines.map((l) => ({
-      orderLineId: lineIds.get(l.externalLineId)!,
-      alreadyCancelled: done.has(lineIds.get(l.externalLineId)!),
-      variantId: l.variantId,
+      orderLineId: lineOf(l).id,
+      alreadyCancelled: done.has(lineOf(l).id),
+      variantId: lineOf(l).variantId,
+      untracked: lineOf(l).stockUntracked,
       quantity: 1,
       packageCode: l.packageCode,
       trackingCode: l.trackingCode,
@@ -339,7 +349,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   const changed = created || dirty || packages.changed;
   if (changed) {
     const flags: OrderFlag[] = storedFlags(next);
-    if (o.lines.some((l) => !l.variantId)) flags.push('unmapped_sku');
+    if (await hasUnmappedLines(orderId)) flags.push('unmapped_sku');
     await publishEvent({
       type: 'sales.order_status_changed',
       aggregateId: orderId,

@@ -41,7 +41,13 @@ const CLEAR_OPEN = { needsOpen: false, openPurpose: null } as const;
 
 const unique = <T>(xs: Iterable<T>) => [...new Set(xs)];
 
-async function move(p: { id: string; orderId: string }, from: PackageStatus, action: 'hold' | 'reclaim', extra: Parameters<typeof updatePackage>[1]) {
+/** Chuyển kiện `hold`/`reclaim` do hệ thống (người làm trống): ghi trạng thái, lịch sử, `package_status_changed`. */
+export async function movePackage(
+  p: { id: string; orderId: string },
+  from: PackageStatus,
+  action: 'hold' | 'reclaim',
+  extra: Parameters<typeof updatePackage>[1],
+) {
   const { to } = assertTransition(packageMachine, from, action, { actor: null });
   await updatePackage(p.id, { status: to, ...extra });
   await recordTransition({ entityType: 'packages', entityId: p.id, from, to, action, actorId: null });
@@ -88,7 +94,7 @@ export async function runAllocation(
     for (const c of deficits.size ? planReclaim(deficits, locked) : []) {
       await port.release(c.id, c.lines);
       await setReserved(c.id, false);
-      await move(c, 'reserved', 'reclaim', {});
+      await movePackage(c, 'reserved', 'reclaim', {});
       reclaimed.push(c.id);
       for (const l of c.lines) touched.add(l.variantId);
     }
@@ -148,7 +154,7 @@ export async function runAllocation(
         ...(c.needsAttention && c.flagNote === DISMANTLE_NOTE && { needsAttention: false, flagNote: null }),
       };
       const reservedAt = sql`now()`;
-      if (c.status === 'backordered') await move(c, 'backordered', 'hold', { reservedAt, ...clear });
+      if (c.status === 'backordered') await movePackage(c, 'backordered', 'hold', { reservedAt, ...clear });
       else await updatePackage(c.id, { reservedAt, ...clear });
       held.push(c.id);
       for (const l of c.lines) touched.add(l.variantId);

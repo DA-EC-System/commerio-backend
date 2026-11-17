@@ -1,0 +1,4 @@
+ALTER TABLE "order"."package_lines" ADD COLUMN "stock_untracked" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."order_lines" ADD COLUMN "stock_untracked" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."package_lines" ADD CONSTRAINT "package_lines_untracked" CHECK (not "order"."package_lines"."stock_untracked" or ("order"."package_lines"."variant_id" is null and "order"."package_lines"."reserved_qty" = 0 and not "order"."package_lines"."stock_deducted"));--> statement-breakpoint
+ALTER TABLE "order"."order_lines" ADD CONSTRAINT "order_lines_untracked" CHECK (not "order"."order_lines"."stock_untracked" or "order"."order_lines"."variant_id" is null);

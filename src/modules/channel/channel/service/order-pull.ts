@@ -88,7 +88,7 @@ async function ingestRemote(session: Session, fetched: RemoteOrder, result: Pull
     if (!locked || locked.status === 'disconnected') {
       throw new AppError(409, 'shop_not_connected', 'Gian hàng đã ngắt', { current: 'disconnected' });
     }
-    const variants = await variantsBySellerSku(shopId, remote.lines.map((l) => l.sellerSku));
+    const skus = await variantsBySellerSku(shopId, remote.lines.map((l) => l.sellerSku));
     const r = await ingestMarketplaceOrder({
       ...remote,
       shopId,
@@ -96,7 +96,10 @@ async function ingestRemote(session: Session, fetched: RemoteOrder, result: Pull
       holdStock: locked.openingStocktakeId === null,
       // Kiện lần đầu thấy đã rời kho của đơn đặt trước mốc thì không trừ tồn (#199, 25 §8.1).
       orderCutoffAt: locked.orderCutoffAt,
-      lines: remote.lines.map((l) => ({ ...l, variantId: variants.get(l.sellerSku) ?? null })),
+      lines: remote.lines.map((l) => {
+        const s = skus.get(l.sellerSku);
+        return { ...l, variantId: s?.kind === 'variant' ? s.variantId : null, untracked: s?.kind === 'untracked' };
+      }),
     });
     await saveRawOrder({
       shopId,

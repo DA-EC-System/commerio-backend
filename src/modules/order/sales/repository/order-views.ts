@@ -1,7 +1,8 @@
 // Đọc đơn cho danh sách, chi tiết (Documents/21 §19.1). Chạy trong `withCompany` của bên gọi.
-import { and, count, desc, eq, exists, gte, ilike, inArray, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
+import { and, count, desc, eq, exists, gte, ilike, inArray, lt, or, type SQL, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { OPEN_RETURN_STATUSES } from '../domain/return.ts';
+import { unmappedLine } from './orders.ts';
 import { customers, orderLines, orders, returnRequests } from './schema.ts';
 
 const containsPattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -52,7 +53,7 @@ function flagCondition(flag: SqlFlag): SQL {
         db
           .select({ one: sql`1` })
           .from(orderLines)
-          .where(and(eq(orderLines.orderId, orders.id), isNull(orderLines.variantId))),
+          .where(and(eq(orderLines.orderId, orders.id), unmappedLine(orderLines))),
       );
     case 'return_requested':
       return exists(
@@ -164,7 +165,7 @@ export async function lineFacts(orderIds: readonly string[]): Promise<Map<string
     db
       .selectDistinct({ orderId: orderLines.orderId })
       .from(orderLines)
-      .where(and(inArray(orderLines.orderId, ids), isNull(orderLines.variantId))),
+      .where(and(inArray(orderLines.orderId, ids), unmappedLine(orderLines))),
     db
       .selectDistinctOn([orderLines.orderId])
       .from(orderLines)

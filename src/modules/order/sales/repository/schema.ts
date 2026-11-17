@@ -167,6 +167,8 @@ export const orderLines = salesSchema.table(
     externalSkuId: text('external_sku_id'),
     externalShopSku: text('external_shop_sku'),
     externalProductId: text('external_product_id'),
+    /** Ghép "không quản tồn" (25 §8.1, #237): không giữ, không trừ tồn. Chưa ghép là `variant_id is null and not stock_untracked`. */
+    stockUntracked: boolean('stock_untracked').notNull().default(false),
     paidPrice: money('paid_price'),
     taxAmount: money('tax_amount'),
     shippingAmount: money('shipping_amount'),
@@ -187,6 +189,7 @@ export const orderLines = salesSchema.table(
     check('order_lines_cancelled_qty', sql`${t.cancelledQty} >= 0 and ${t.cancelledQty} <= ${t.quantity}`),
     check('order_lines_unit_price', sql`${t.unitPrice} >= 0`),
     check('order_lines_item', sql`${t.variantId} is not null or ${t.externalSku} is not null`),
+    check('order_lines_untracked', sql`not ${t.stockUntracked} or ${t.variantId} is null`),
     unique().on(t.orderId, t.externalLineId),
   ],
 );

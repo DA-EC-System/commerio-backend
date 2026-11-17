@@ -88,4 +88,21 @@ describe('ràng buộc bảng sales (AC-9)', () => {
     await expect(line(-1)).rejects.toThrow(/"order_lines_cancelled_qty"/);
     await expect(line(1)).resolves.toBeDefined();
   });
+
+  it('dòng không quản tồn (25 §8.1) không được mang biến thể (spec 237)', async () => {
+    const company = randomUUID();
+    const { rows } = await testPool().query<{ id: string }>(
+      `insert into "order".orders (company_id, code, source, payment_method, subtotal, total)
+       values ($1, $2, 'manual', 'prepaid', 0, 0) returning id`,
+      [company, `DH-${randomUUID().slice(0, 8)}`],
+    );
+    const line = (untracked: boolean, variantId: string | null) => testPool().query(
+      `insert into "order".order_lines (company_id, order_id, external_sku, variant_id, product_name, quantity, unit_price, line_total, stock_untracked)
+       values ($1, $2, 'SKU-U', $3, 'Áo', 1, 0, 0, $4)`,
+      [company, rows[0]!.id, variantId, untracked],
+    );
+    await expect(line(true, randomUUID())).rejects.toMatchObject({ code: '23514', constraint: 'order_lines_untracked' });
+    await expect(line(true, null)).resolves.toBeDefined();
+    await expect(line(false, randomUUID())).resolves.toBeDefined();
+  });
 });

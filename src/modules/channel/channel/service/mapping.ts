@@ -1,10 +1,13 @@
 // Ghép SKU tay (#220; Documents/21 §18.3, §18.6.5; 25 §6.4 "Ghép listing có sẵn", §8.1, §11). Bảng ghép là `listings`:
 // SKU sàn chưa ghép thì tạo listing `live`, không đẩy lại. Ghép sang "không quản tồn" hoặc đổi ghép đã có đơn: người không
 // được tự duyệt (không phải CEO, công ty nhiều người) thì lưu ghép chờ (`pending_*`), CEO duyệt hoặc từ chối; CEO làm thì áp
-// luôn, ghi tự duyệt. Đơn đã nhận giữ ghép cũ: chỉ đơn kéo về sau theo ghép mới (vòng kéo đơn tra `seller_sku`).
+// luôn, ghi tự duyệt. Ghép có hiệu lực (áp ngay, CEO duyệt, bấm lại ghép đã đúng) thì áp lên dòng **chưa ghép** của đơn
+// đã nhận cùng gian hàng, cùng giao dịch (#237: `applySkuMapping` của `order` giữ hàng, trừ tồn bù); dòng đã ghép giữ ghép
+// cũ (đổi ghép đơn đã về là PR 2 của #237), đơn kéo về sau tra `seller_sku` theo ghép mới.
 // Biến thể có listing lỗi đẩy chưa có mã sàn (#346): ghép SKU sàn chưa có listing thì dùng lại listing đó; ghép SKU sàn đã có
 // listing thì listing lỗi tự gỡ.
 import { canSelfApprove, findMembership, memberRolesOf, recordTransition } from '../../../core/index.ts';
+import { applySkuMapping } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -21,9 +24,9 @@ import {
   liveListingRows,
   updateListing,
 } from '../repository/listings.ts';
-import { hasOrdersWithSellerSku } from '../repository/raw-orders.ts';
+import { hasOrdersWithSellerSku, variantsBySellerSku } from '../repository/raw-orders.ts';
 import { findRemoteSkuRow, listRemoteSkuRows, type RemoteSkuRow } from '../repository/remote-skus.ts';
-import { lockShopRow } from '../repository/shops.ts';
+import { lockShopRow, type ShopRow } from '../repository/shops.ts';
 import { REFRESH_COOLDOWN_MS, RemoteSkusRetryLater, requestRemoteSkusRefresh } from './remote-skus.ts';
 import { type RefreshState, refreshState } from '../domain/remote-skus-refresh.ts';
 import { NO_PENDING } from '../domain/listing.ts';
@@ -174,6 +177,26 @@ const applyPatch = (variantId: string | null, requestedBy: string, approvedBy: s
   priceSyncError: null,
 });
 
+/**
+ * Áp ghép có hiệu lực lên đơn đã về (spec 237 §5.3). Gọi trong giao dịch đã khoá dòng gian hàng, sau khi ghi listing.
+ * Ghép là của **dòng thắng** theo SKU người bán (D12: gian hàng có thể có hai listing trùng `seller_sku`; lượt kéo đơn cũng
+ * tra theo dòng thắng); dòng thắng chưa ghép (chỉ chờ duyệt "không quản tồn") thì không áp. Lỗi nào cũng ném: cả giao dịch
+ * ghép rollback, người bấm bấm lại.
+ */
+async function applyToOrders(shop: ShopRow, sellerSku: string | null, actorId: string): Promise<void> {
+  if (!sellerSku) return;
+  const to = (await variantsBySellerSku(shop.id, [sellerSku])).get(sellerSku);
+  if (!to || to.kind === 'unmapped') return;
+  await applySkuMapping({
+    shopId: shop.id,
+    sellerSku,
+    to,
+    actorId,
+    holdStock: shop.openingStocktakeId === null,
+    orderCutoffAt: shop.orderCutoffAt,
+  });
+}
+
 /** 409 `version_conflict` kèm `current` là listing mới nhất (null khi không còn), như mọi route sửa có `version`. */
 const conflict = (current: ListingRow | undefined, names?: Map<string, string>) =>
   new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại', { current: current ? toListing(current, names) : null });
@@ -229,14 +252,20 @@ export async function matchListing(
     const result = await inCompany(async () => {
       // Khoá dòng gian hàng chặn khoá chia sẻ của lượt nhận đơn (`lockShopForOrders`): đơn mang SellerSku này về giữa
       // lúc kiểm "đã có đơn" và lúc ghi thì không lọt bước CEO duyệt; lượt nhận đơn sau đó tra ra ghép mới (review #309 N1).
-      await lockShopRow(shop.id);
+      const locked = (await lockShopRow(shop.id))!;
       const row = await findListingByExternalSku(shop.id, externalSkuId);
       // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
       if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict(row, row ? await requesterNames([row]) : undefined);
       if (await findListingByPendingExternalSku(shop.id, externalSkuId)) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép');
       const failed = variantId ? await variantSlot(port, shop.id, variantId, row?.id ?? null) : undefined;
-      if (!row && failed) return reuseFailed(failed, remote!, actor, selfOk);
+      if (!row && failed) {
+        const reused = await reuseFailed(failed, remote!, actor, selfOk);
+        if (!reused.pending) await applyToOrders(locked, reused.row.sellerSku, actor.accountId);
+        return reused;
+      }
       if (row && effectiveMode(row) === (variantId ? 'mapped' : 'unmanaged') && row.variantId === variantId) {
+        // Ghép đã đúng: vẫn áp, là cách chạy bù cho đơn về trước #237 và cho lần áp lỗi (spec 237 §5.3, §5.9).
+        await applyToOrders(locked, row.sellerSku, actor.accountId);
         return { row, pending: false };
       }
       // 25 §8.1, §11: "không quản tồn" luôn cần CEO duyệt; đổi ghép cần khi đã có đơn mang SKU người bán này.
@@ -286,6 +315,7 @@ export async function matchListing(
         selfApproved: needsCeo,
         audit: { ...AUDIT, label: saved.sellerSku },
       });
+      await applyToOrders(locked, saved.sellerSku, actor.accountId);
       return { row: saved, pending: false };
     });
     return { listing: toListing(result.row, await inCompany(() => requesterNames([result.row]))), pending: result.pending };
@@ -344,7 +374,7 @@ async function reuseFailed(failed: ListingRow, remote: RemoteSkuRow, actor: Acto
 /**
  * `POST /shops/:id/listings/:listingId/mapping/:action` (§18.3, §18.6.5): CEO duyệt hoặc từ chối ghép chờ. Route đã kiểm
  * quyền và vai trò CEO. Thứ tự: 404 → 409 `invalid_transition` (không có ghép chờ, listing đã gỡ hoặc đang đẩy) → 409 `version_conflict`; hai lần duyệt đua về cùng biến thể → 422 `errors.variantId`.
- * Duyệt: áp ghép mới (kiểm lại biến thể); đơn đã nhận giữ ghép cũ. Từ chối: bỏ ghép chờ; dòng tạo ra chỉ để chờ duyệt
+ * Duyệt: áp ghép mới (kiểm lại biến thể), rồi áp lên dòng chưa ghép của đơn đã nhận (#237). Từ chối: bỏ ghép chờ; dòng tạo ra chỉ để chờ duyệt
  * "không quản tồn" thì xoá (CHECK `listings_unmanaged_approved`), body là listing lúc xoá.
  */
 export function decideMapping(
@@ -376,6 +406,8 @@ async function decide(
   if (action === 'reject' && !input.reason) throw invalid('reason', 'Nhập lý do từ chối');
   return withCompany(actor.companyId, async () => {
     const shop = await ownShop(shopId);
+    // Khoá dòng gian hàng như `matchListing`: lượt nhận đơn không chen giữa lúc duyệt và lúc áp lên đơn đã về (#237).
+    const locked = (await lockShopRow(shop.id))!;
     const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
     if (!row || row.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     const names = await requesterNames([row]);
@@ -410,6 +442,7 @@ async function decide(
       const saved = await updateListing(row.id, { version: row.version, status: row.status }, patch);
       if (!saved) throw await conflictById(row.id);
       await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: saved.sellerSku } });
+      await applyToOrders(locked, saved.sellerSku, actor.accountId);
       return toListing(saved);
     }
     const reason = input.reason ?? null;

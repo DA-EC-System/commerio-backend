@@ -308,7 +308,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       [company.companyId, shopId, live.id, gone.id, sellerSku],
     );
     const map = await withCompany(company.companyId, () => variantsBySellerSku(shopId, [sellerSku]));
-    expect(map.get(sellerSku)).toBe(live.id);
+    expect(map.get(sellerSku)).toEqual({ kind: 'variant', variantId: live.id });
   });
 
   it('#220: dòng hiện hành "không quản tồn" thắng dòng đã gỡ cùng SellerSku → đơn mới không trừ biến thể cũ', async () => {
@@ -322,8 +322,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       [company.companyId, shopId, gone.id, sellerSku, ceo],
     );
     const map = await withCompany(company.companyId, () => variantsBySellerSku(shopId, [sellerSku]));
-    expect(map.has(sellerSku)).toBe(true);
-    expect(map.get(sellerSku)).toBeNull();
+    expect(map.get(sellerSku)).toEqual({ kind: 'untracked' });
   });
 
   it('GET listings: mọi biến thể đang bán kèm listing hiện hành, đúng schema; pushError là object', async () => {

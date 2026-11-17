@@ -278,6 +278,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
     lines: lines.map((l) => ({
       id: l.id,
       variantId: l.variantId,
+      untracked: l.stockUntracked,
       sku: l.sku ?? l.externalSku ?? '',
       productName: l.productName,
       attributesLabel: attributesOf(l, labels),

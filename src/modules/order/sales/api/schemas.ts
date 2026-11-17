@@ -117,7 +117,10 @@ export const OrderSummaryPage = z
 const OrderLine = z
   .object({
     id: z.uuid(),
-    variantId: z.uuid().nullable().meta({ description: 'null: dòng sàn chưa ghép SKU (cờ `unmapped_sku`)' }),
+    variantId: z.uuid().nullable().meta({ description: 'null: dòng sàn chưa ghép SKU; kèm `untracked` true là ghép "không quản tồn"' }),
+    untracked: z.boolean().meta({
+      description: 'Ghép "không quản tồn": không giữ, không trừ tồn. `variantId` null và `untracked` false là chưa ghép (cờ `unmapped_sku`)',
+    }),
     sku: z.string(),
     productName: z.string(),
     attributesLabel: z.string(),

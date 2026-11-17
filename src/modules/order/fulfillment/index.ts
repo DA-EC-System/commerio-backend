@@ -24,6 +24,10 @@ export const fulfillmentModule: ModuleDefinition = {
 };
 
 export { getOrderCogs } from './service/cogs.ts';
+// Trạng thái ghép SKU của dòng (spec 237): biến thể / không quản tồn / chưa ghép.
+export { lineSkuOf, nothingToHold, type LineSku, type MappedSku, type RemapOutcome } from './domain/remap.ts';
+// Áp ghép SKU lên kiện đã có (spec 237 §5.5): sales `applySkuMapping` gọi trong giao dịch ghép.
+export { remapPackageLines, type RemapOptions } from './service/remap.ts';
 export {
   arrowAction,
   holdsStock,

@@ -384,3 +384,53 @@ describe('đồng bộ sàn: hoàn về, huỷ vì giao không thành, nhảy t�
     expect(await transitionsOf(packageId)).toHaveLength(before);
   });
 });
+
+describe('dòng "không quản tồn" khi nhận đơn sàn (spec 237)', () => {
+  const linesOf = async (packageId: string) =>
+    (
+      await testPool().query(
+        'select variant_id, stock_untracked, reserved_qty, stock_deducted from "order".package_lines where package_id = $1 order by stock_untracked',
+        [packageId],
+      )
+    ).rows;
+  const allocationJobs = async (companyId: string) =>
+    (await testPool().query(`select data from pgboss.job where name = 'fulfillment.allocation' and data->>'companyId' = $1`, [companyId])).rows;
+
+  it('D2-G07 AC16b: đơn chỉ có dòng không quản tồn → kiện reserved, reserved_qty 0, không xếp phân hàng, không allocation_done, tồn không đổi', async () => {
+    const s = await setup(10);
+    const before = await stockOfVariant(s.companyId, s.variantId);
+    const { packageId } = await ingest(s.companyId, remote(s, { lines: 0, untracked: 1 }));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'reserved' });
+    expect(await linesOf(packageId)).toEqual([{ variant_id: null, stock_untracked: true, reserved_qty: 0, stock_deducted: false }]);
+    expect(await allocationJobs(s.companyId)).toEqual([]);
+    expect(await outboxOf(s.companyId, 'fulfillment.allocation_done')).toEqual([]);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toEqual(before);
+  });
+
+  it('D2-G07 AC16b: gian hàng chờ kiểm kê đầu kỳ (holdStock false) cũng lập kiện reserved', async () => {
+    const s = await setup(10);
+    const { packageId } = await ingest(s.companyId, remote(s, { lines: 0, untracked: 1, holdStock: false }));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'reserved' });
+    expect(await allocationJobs(s.companyId)).toEqual([]);
+  });
+
+  it('D2-G07 AC11: kiện có dòng biến thể và dòng không quản tồn giao xong → dòng không quản tồn variantId null, unitCost null; dòng biến thể có giá vốn', async () => {
+    const s = await setup(10);
+    const { orderId, packageId } = await ingest(s.companyId, remote(s, { status: 'delivered', untracked: 1 }));
+
+    expect(await linesOf(packageId)).toEqual([
+      { variant_id: s.variantId, stock_untracked: false, reserved_qty: 0, stock_deducted: true },
+      { variant_id: null, stock_untracked: true, reserved_qty: 0, stock_deducted: false },
+    ]);
+    const payloads = (await outboxOf(orderId, 'fulfillment.package_delivered')).map((p) => DELIVERED.parse(p));
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]!.lines).toEqual(
+      expect.arrayContaining([
+        { variantId: s.variantId, quantity: 1, unitPrice: '100000.00', unitCost: '100000.00' },
+        { variantId: null, quantity: 1, unitPrice: '100000.00', unitCost: null },
+      ]),
+    );
+  });
+});

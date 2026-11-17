@@ -161,4 +161,32 @@ describe('lượt phân hàng: giữ kiện theo thứ tự (25 §7.4, spec 199b
       holder.release();
     }
   });
+
+  it('dòng không quản tồn không chặn giữ kiện (Review Focus 2, spec 237): giữ dòng biến thể, không giữ dòng không quản tồn', async () => {
+    const { companyId, A } = await setup(0);
+    const { packageId, lineIds } = await seedPackage(companyId, {
+      status: 'backordered',
+      lines: [{ variantId: A, quantity: 1 }, { variantId: null, quantity: 1 }],
+    });
+    // Dòng thứ hai (variantId null) là ghép "không quản tồn": không giữ, không trừ.
+    await testPool().query('update "order".package_lines set stock_untracked = true where id = $1', [lineIds[1]!]);
+    await receive(companyId, A, 1, 100000);
+    const r = await run(companyId, [A]);
+    expect(r.held).toEqual([packageId]);
+    const rows = new Map((await packageLineRows(packageId)).map((l) => [l.id, l]));
+    expect(rows.get(lineIds[0]!)!.reserved_qty).toBe(1);
+    expect(rows.get(lineIds[1]!)!.reserved_qty).toBe(0);
+    expect(await status(packageId)).toBe('reserved');
+  });
+
+  it('dòng chưa ghép thật vẫn chặn giữ kiện (Review Focus 2, spec 237)', async () => {
+    const { companyId, A } = await setup(1);
+    const { packageId } = await seedPackage(companyId, {
+      status: 'backordered',
+      lines: [{ variantId: A, quantity: 1 }, { variantId: null, quantity: 1 }],
+    });
+    const r = await run(companyId, [A]);
+    expect(r.held).toEqual([]);
+    expect(await status(packageId)).toBe('backordered');
+  });
 });

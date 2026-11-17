@@ -38,7 +38,8 @@ const stocktakeAutoClearable = sql`(${packages.openPurpose} = 'stocktake' and no
 const candidateWhere = and(
   sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
        and not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.reservedQty} > 0)))`,
-  sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.variantId} is null)`,
+  sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
+       and ${packageLines.variantId} is null and not ${packageLines.stockUntracked})`,
   sql`(${packages.needsOpen} = false or ${stocktakeAutoClearable})`,
   sql`${orderStatus} <> 'cancelled'`,
 );
@@ -61,7 +62,10 @@ export async function variantsInPlay(): Promise<string[]> {
   return rows.map((r) => r.variantId!).sort();
 }
 
-const linesOf = (lines: { variantId: string | null; quantity: number }[]) => lines.map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
+// Chỉ dòng có biến thể (dòng "không quản tồn" không giữ, spec 237).
+const variantLines = <T extends { variantId: string | null }>(lines: T[]) => lines.filter((l) => l.variantId) as T[];
+const linesOf = (lines: { variantId: string | null; quantity: number }[]) =>
+  variantLines(lines).map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
 /** Phần đang giữ thật của kiện: chỉ dòng có `reserved_qty`, đúng số đó (không nhả phần giữ của kiện khác). */
 const heldOf = (lines: { variantId: string | null; reservedQty: number }[]) =>
   lines.filter((l) => l.variantId && l.reservedQty > 0).map((l) => ({ variantId: l.variantId!, quantity: l.reservedQty }));
@@ -184,5 +188,10 @@ export async function lockAllocationCandidates(
     .orderBy(asc(packages.code))
     .for('update');
   const lines = await planLinesOf(rows.map((r) => r.id));
-  return rows.map((r) => ({ ...r, lines: linesOf(lines.get(r.id)!), lineIds: lines.get(r.id)!.map((l) => l.id) }));
+  return rows.map((r) => ({
+    ...r,
+    lines: linesOf(lines.get(r.id)!),
+    // Chỉ dòng có biến thể giữ hàng; dòng "không quản tồn" giữ `reserved_qty = 0` (spec 237).
+    lineIds: variantLines(lines.get(r.id)!).map((l) => l.id),
+  }));
 }

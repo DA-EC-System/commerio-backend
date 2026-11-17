@@ -1,5 +1,6 @@
-import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
+import type { MappedSku } from '../../fulfillment/index.ts';
 import type { OrderStatus } from '../domain/order.ts';
 import { docCounters, orderLines, orders } from './schema.ts';
 
@@ -85,14 +86,59 @@ export async function allLinesCancelled(orderId: string): Promise<boolean> {
   return !!row && row.lines > 0 && row.open === 0;
 }
 
+/** Dòng chưa ghép SKU: không biến thể và không "không quản tồn" (spec 237). */
+export const unmappedLine = (t: typeof orderLines): SQL => sql`${t.variantId} is null and not ${t.stockUntracked}`;
+
 /** Đơn có dòng chưa ghép SKU (cờ `unmapped_sku` của sự kiện đổi trạng thái). */
 export async function hasUnmappedLines(orderId: string): Promise<boolean> {
   const [row] = await getDb()
     .select({ id: orderLines.id })
     .from(orderLines)
-    .where(and(eq(orderLines.orderId, orderId), sql`${orderLines.variantId} is null`))
+    .where(and(eq(orderLines.orderId, orderId), unmappedLine(orderLines)))
     .limit(1);
   return !!row;
+}
+
+/**
+ * Dòng chưa ghép của các đơn thuộc gian hàng mang SKU người bán này (spec 237 §5.4, P1: PR 1 chỉ áp dòng chưa ghép), mọi
+ * trạng thái đơn; khoá dòng đơn theo id tăng (P4: khoá dòng đơn trước kiện, như luồng nhận đơn).
+ */
+export async function lockUnmappedLinesOfShopSku(shopId: string, sellerSku: string): Promise<{ id: string; orderId: string }[]> {
+  const db = getDb();
+  return db
+    .select({ id: orderLines.id, orderId: orderLines.orderId })
+    .from(orderLines)
+    .where(
+      and(
+        eq(orderLines.externalSku, sellerSku),
+        unmappedLine(orderLines),
+        inArray(orderLines.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.shopId, shopId))),
+      ),
+    )
+    .orderBy(asc(orderLines.id))
+    .for('update');
+}
+
+/** Ghi ghép lên dòng đơn: biến thể (kèm `sku` = SKU người bán, như lúc nhận đơn) hoặc "không quản tồn" (`sku` null). */
+export async function setOrderLineSku(ids: readonly string[], to: MappedSku, sellerSku: string): Promise<void> {
+  if (!ids.length) return;
+  const variant = to.kind === 'variant';
+  await getDb()
+    .update(orderLines)
+    .set({
+      variantId: variant ? to.variantId : null,
+      stockUntracked: !variant,
+      sku: variant ? sellerSku : null,
+      version: sql`${orderLines.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(inArray(orderLines.id, [...ids]));
+}
+
+/** Đơn theo id, không khoá (đọc cờ lưu để phát sự kiện). */
+export async function findOrderRows(ids: readonly string[]): Promise<MarketplaceOrderRow[]> {
+  if (!ids.length) return [];
+  return getDb().select(rowColumns).from(orders).where(inArray(orders.id, [...ids])).orderBy(asc(orders.id));
 }
 
 /** Chèn đơn sàn; đơn đã có (lần kéo khác vừa chèn) thì trả `undefined`. */
@@ -114,14 +160,22 @@ export async function updateOrder(id: string, patch: Partial<typeof orders.$infe
     .where(eq(orders.id, id));
 }
 
+/** Dòng đơn đã lưu theo mã món sàn: id và ghép SKU (spec 237). */
+export interface StoredLine {
+  id: string;
+  variantId: string | null;
+  stockUntracked: boolean;
+}
+
 /**
  * Chèn dòng đơn sàn chưa có (theo mã món sàn); dòng đã có chỉ cập nhật cột mô tả khi khác, sàn trả null thì giữ giá
- * trị đã lưu (không tăng `version` nếu không đổi). Trả id của mọi dòng theo mã món.
+ * trị đã lưu (không tăng `version` nếu không đổi). Trả mọi dòng theo mã món với ghép **đã lưu**: dòng đã có giữ biến thể,
+ * `stock_untracked` cũ (đổi ghép của đơn đã về là việc của `applySkuMapping`, spec 237 D14).
  */
 export async function upsertMarketplaceLines(
   orderId: string,
   lines: readonly Omit<typeof orderLines.$inferInsert, 'companyId' | 'orderId'>[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, StoredLine>> {
   const db = getDb();
   if (lines.length) {
     const companyId = requireCompanyId('upsertMarketplaceLines');
@@ -142,10 +196,10 @@ export async function upsertMarketplaceLines(
       });
   }
   const rows = await db
-    .select({ id: orderLines.id, externalLineId: orderLines.externalLineId })
+    .select({ id: orderLines.id, externalLineId: orderLines.externalLineId, variantId: orderLines.variantId, stockUntracked: orderLines.stockUntracked })
     .from(orderLines)
     .where(eq(orderLines.orderId, orderId));
-  return new Map(rows.map((r) => [r.externalLineId ?? '', r.id]));
+  return new Map(rows.map(({ externalLineId, ...r }) => [externalLineId ?? '', r]));
 }
 
 /** Dòng của đơn đã ghi huỷ đủ (`cancelled_qty = quantity`, spec 205 §5.10). */

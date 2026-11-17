@@ -577,6 +577,62 @@ describe('hành trình kiện (#199 phần c)', () => {
   });
 });
 
+describe('ghép "không quản tồn" khi kéo đơn (spec 237)', () => {
+  const id = (p: string) => `${p}-${randomUUID().slice(0, 8)}`;
+  const linesOfOrder = async (externalOrderId: string) =>
+    (
+      await testPool().query(
+        `select l.variant_id, l.stock_untracked from "order".order_lines l join "order".orders o on o.id = l.order_id
+          where o.shop_id = $1 and o.external_order_id = $2`,
+        [shopId, externalOrderId],
+      )
+    ).rows;
+  const flagsOf = async (externalOrderId: string) =>
+    (
+      await testPool().query<{ flags: string[] }>(
+        `select m.payload->'flags' as flags from core.outbox_messages m join "order".orders o on o.id::text = m.payload->>'orderId'
+          where o.shop_id = $1 and o.external_order_id = $2 and m.type = 'sales.order_status_changed' order by m.id`,
+        [shopId, externalOrderId],
+      )
+    ).rows.map((r) => r.flags);
+  async function unmanagedListing(sellerSku: string, approved: boolean) {
+    const ceo = (await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [company.ceo.email])).rows[0]!.id;
+    await testPool().query(
+      approved
+        ? `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_sku_id, mode, approved_by)
+           values ($1, $2, null, $3, 'live', $4, 'unmanaged', $5)`
+        : `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_sku_id, mode,
+             pending_mode, pending_requested_by, pending_requested_at)
+           values ($1, $2, null, $3, 'live', $4, 'unmanaged', 'unmanaged', $5, now())`,
+      [company.companyId, shopId, sellerSku, `sku-${randomUUID().slice(0, 8)}`, ceo],
+    );
+  }
+
+  it('D2-G07 AC12: SKU sàn chỉ có ghép chờ "không quản tồn" chưa duyệt → dòng chưa ghép, đơn mang cờ unmapped_sku', async () => {
+    const sellerSku = id('CHO-DUYET');
+    await unmanagedListing(sellerSku, false);
+    const o = remoteOrder(id('U1'), sellerSku, 'pending', at('2026-11-03T01:00:00Z'));
+    seed(o);
+
+    expect((await pull()).status).toBe(200);
+
+    expect(await linesOfOrder(o.externalOrderId)).toEqual([{ variant_id: null, stock_untracked: false }]);
+    expect(await flagsOf(o.externalOrderId)).toEqual([['unmapped_sku']]);
+  });
+
+  it('D2-G07 AC11: listing "không quản tồn" đã duyệt → dòng stock_untracked, đơn không cờ unmapped_sku', async () => {
+    const sellerSku = id('DA-DUYET');
+    await unmanagedListing(sellerSku, true);
+    const o = remoteOrder(id('U2'), sellerSku, 'pending', at('2026-11-03T02:00:00Z'));
+    seed(o);
+
+    expect((await pull()).status).toBe(200);
+
+    expect(await linesOfOrder(o.externalOrderId)).toEqual([{ variant_id: null, stock_untracked: true }]);
+    expect(await flagsOf(o.externalOrderId)).toEqual([[]]);
+  });
+});
+
 describe('món mang trạng thái app chưa biết (#358 Việc 2)', () => {
   it('AC-4: log warn một lần mỗi đơn kèm gian hàng, mã đơn, mã thô; đơn bật Cần xử lý', async () => {
     const odd = remoteOrder('U1', sku, null, at('2026-11-05T01:00:00Z'));

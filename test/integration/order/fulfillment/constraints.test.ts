@@ -88,6 +88,22 @@ describe('ràng buộc dòng kiện', () => {
     await expect(insertLine(c, p, { stock_deducted: true, unit_cost: '1000' })).resolves.toBeDefined();
   });
 
+  it('dòng không quản tồn (spec 237): không biến thể, không giữ, chưa trừ', async () => {
+    const c = randomUUID();
+    const p = (await insertPackage(c, {})).rows[0]!.id;
+    await expect(insertLine(c, p, { variant_id: null, stock_untracked: true, reserved_qty: 1 })).rejects.toMatchObject({
+      code: '23514',
+    });
+    // Mang biến thể + không quản tồn thì vi phạm CHECK `package_lines_untracked`.
+    await expect(insertLine(c, p, { stock_untracked: true })).rejects.toMatchObject({
+      code: '23514', constraint: 'package_lines_untracked',
+    });
+    await expect(insertLine(c, p, { stock_untracked: true, stock_deducted: true, unit_cost: '1000' })).rejects.toMatchObject({
+      code: '23514', constraint: 'package_lines_untracked',
+    });
+    await expect(insertLine(c, p, { variant_id: null, stock_untracked: true, reserved_qty: 0 })).resolves.toBeDefined();
+  });
+
   it('số chờ bỏ nằm trong 0..số lượng (spec 205 §5.10)', async () => {
     const c = randomUUID();
     const p = (await insertPackage(c, {})).rows[0]!.id;
