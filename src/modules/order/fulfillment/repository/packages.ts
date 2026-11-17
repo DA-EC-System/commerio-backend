@@ -1,11 +1,9 @@
 import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
-import { canReportLost, HANDED_OVER, type PackageStatus } from '../domain/package.ts';
+import { canReportLost, HANDED_OVER, isSealed, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
 import type { MappedSku } from '../domain/remap.ts';
-import { type PackageNotice, packageLines, packages } from './schema.ts';
-
-type OpenPurpose = NonNullable<(typeof packages.$inferSelect)['openPurpose']>;
+import { type OpenPurpose, type PackageNotice, packageLines, packages } from './schema.ts';
 
 /** Vận chuyển sàn trả cho kiện (#260); null khi sàn chưa trả. */
 export interface PackageShipping {
@@ -87,6 +85,19 @@ function lostColumnRules(patch: { status?: PackageStatus; needsOpen?: boolean })
   return {};
 }
 
+/**
+ * Cờ Cần mở vì kiểm kê (`open_purpose = 'stocktake'`, spec #238 §5.5) chỉ có nghĩa khi kiện còn đóng trong kho: kiện rời
+ * nhóm đã đóng (bàn giao, sàn báo rời kho, huỷ) mà bên gọi không ghi cờ thì gỡ, để kiện không nằm mãi trong tab Cần mở.
+ * Mục đích khác (`cancel`, `edit`, `resplit`) giữ nguyên. Trong `UPDATE … SET`, cột bên phải là giá trị cũ.
+ */
+function stocktakeFlagRules(patch: { status?: PackageStatus; needsOpen?: boolean; openPurpose?: unknown }) {
+  if (patch.status === undefined || isSealed(patch.status) || patch.needsOpen !== undefined || patch.openPurpose !== undefined) return {};
+  return {
+    needsOpen: sql`case when ${packages.openPurpose} = 'stocktake' then false else ${packages.needsOpen} end`,
+    openPurpose: sql`case when ${packages.openPurpose} = 'stocktake' then null else ${packages.openPurpose} end`,
+  };
+}
+
 export async function updatePackage(
   id: string,
   patch: Partial<{
@@ -99,7 +110,7 @@ export async function updatePackage(
     packedBy: string | null;
     packedAt: Date | null;
     needsOpen: boolean;
-    openPurpose: 'cancel' | 'edit' | 'resplit' | null;
+    openPurpose: OpenPurpose | null;
     needsAttention: boolean;
     flagNote: string | null;
     notices: PackageNotice[];
@@ -117,7 +128,7 @@ export async function updatePackage(
 ): Promise<void> {
   await getDb()
     .update(packages)
-    .set({ ...lostColumnRules(patch), ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
+    .set({ ...lostColumnRules(patch), ...stocktakeFlagRules(patch), ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
     .where(eq(packages.id, id));
 }
 
@@ -228,7 +239,7 @@ export interface PackageRow extends HandoverPackage {
   platformPackageCode: string | null;
   trackingCode: string | null;
   needsOpen: boolean;
-  /** Mục đích mở kiện (`cancel`, `edit`, `resplit`); null khi không chờ mở. */
+  /** Mục đích mở kiện (`cancel`, `edit`, `resplit`, `stocktake`); null khi không chờ mở. */
   openPurpose: OpenPurpose | null;
   labelError: boolean;
   shipping: PackageShipping;

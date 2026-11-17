@@ -5,13 +5,15 @@ import { z } from 'zod';
 import { assertTransition, defineQueue, JobDataSchema, publishEvent, recordTransition, sendJob } from '../../../core/index.ts';
 import { sql } from 'drizzle-orm';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
-import { allocationQueue, planAllocation, planDismantle, planReclaim } from '../domain/allocation.ts';
+import { logger } from '../../../../shared/logger.ts';
+import { allocationQueue, DISMANTLE_NOTE, planAllocation, planDismantle, planReclaim } from '../domain/allocation.ts';
 import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import {
   allocationShops,
   lockAllocationCandidates,
   lockReclaimCandidates,
   lockSealedHolders,
+  lockStocktakeFlagged,
   takeAllocationLock,
   variantsInPlay,
 } from '../repository/allocation.ts';
@@ -27,11 +29,15 @@ export interface AllocationCause {
 }
 export type AllocationContext = Pick<FulfillmentContext, 'stockHoldOf'>;
 
+// Cờ kiểm kê dạng cũ (khai ở `domain/allocation.ts` để repository dùng được); export lại cho test và bên gọi hiện có.
+export { DISMANTLE_NOTE };
+
 /**
  * Kiện đã đóng không giữ được sau phiếu kiểm kê đầu kỳ (spec 199b D5), hoặc đang giữ SKU mà phiếu kiểm kê đếm thấp hơn
- * đang giữ (25 §7.4). Chưa có khung việc #209 nên bật cờ Cần xử lý thay cho việc "Dỡ kiện về kệ".
+ * đang giữ (25 §7.4): kho mở kiện (tab Cần mở). Chỉ gắn lên kiện chưa chờ mở: mục đích khác (huỷ, chia lại) giữ nguyên.
  */
-export const DISMANTLE_NOTE = 'Dỡ kiện về kệ: số đếm thấp hơn hàng trong kiện';
+const STOCKTAKE_OPEN = { needsOpen: true, openPurpose: 'stocktake' } as const;
+const CLEAR_OPEN = { needsOpen: false, openPurpose: null } as const;
 
 const unique = <T>(xs: Iterable<T>) => [...new Set(xs)];
 
@@ -50,14 +56,17 @@ export async function movePackage(
 
 /**
  * `opening`: lượt sau phiếu kiểm kê đầu kỳ (spec 199b §5.5): không lọc gian hàng chờ kiểm kê, kiện đã đóng không giữ
- * được thì bật Cần xử lý. `stocktake`: lượt do phiếu kiểm kê (`opening` cũng là): lấy lại hết kiện `reserved` mà tồn thực
- * vẫn nhỏ hơn đang giữ thì kiện đã đóng đang giữ SKU đó bật Cần xử lý (25 §7.4). `cause` gắn vào `allocation_done`.
+ * được thì bật Cần mở `stocktake`. `stocktake`: lượt do phiếu kiểm kê (`opening` cũng là): lấy lại hết kiện `reserved` mà
+ * tồn thực vẫn nhỏ hơn đang giữ thì kiện đã đóng đang giữ SKU đó bật Cần mở `stocktake` (25 §7.4, spec #238 §5.5). `cause`
+ * gắn vào `allocation_done`. Mọi lượt: kiện đang giữ hàng mang cờ `stocktake` (hoặc cờ dạng cũ `DISMANTLE_NOTE`) mà tồn
+ * thực đã đủ cho mọi SKU kiện giữ thì gỡ cờ (`cleared`); kiện chưa giữ mang một trong hai cờ đó giữ được hàng thì cờ gỡ.
+ * Trừ kiện `stocktake` có dòng chờ bỏ hay có báo thất lạc chờ xác nhận: cờ còn tới khi kho mở hoặc người thứ hai xử lý.
  */
 export async function runAllocation(
   ctx: AllocationContext,
   scope: AllocationScope,
   opts: { opening?: boolean; stocktake?: boolean; cause?: AllocationCause } = {},
-): Promise<{ held: string[]; reclaimed: string[]; flagged: string[]; variantIds: string[] }> {
+): Promise<{ held: string[]; reclaimed: string[]; flagged: string[]; cleared: string[]; variantIds: string[] }> {
   const companyId = requireCompanyId('runAllocation');
   await takeAllocationLock(companyId);
   const port = stockPort();
@@ -65,6 +74,9 @@ export async function runAllocation(
   const trigger = 'all' in scope ? [] : unique(scope.variantIds);
   let skus = 'all' in scope ? await variantsInPlay() : trigger;
   const touched = new Set<string>();
+  // Khoá kiện mang cờ kiểm kê (hai dạng) **trước** khi lượt đổi tồn (thứ tự khoá spec 199b §5.10: kiện rồi mới dòng tồn):
+  // khoá sau khi đã nhả hàng thì đua với kho quét bàn giao (khoá kiện rồi trừ tồn) thành khoá chết.
+  const stocktakeFlagged = await lockStocktakeFlagged(skus);
 
   // Lấy lại phần giữ: SKU có đang giữ lớn hơn tồn thực.
   const reclaimed: string[] = [];
@@ -86,15 +98,37 @@ export async function runAllocation(
       reclaimed.push(c.id);
       for (const l of c.lines) touched.add(l.variantId);
     }
-    // Lấy lại hết mà vẫn thiếu: hàng thiếu nằm trong kiện đã đóng, kho kiểm lại (25 §7.4).
+    // Lấy lại hết mà vẫn thiếu: hàng thiếu nằm trong kiện đã đóng, kho mở kiện (25 §7.4, spec #238 §5.5).
     if (sealed.length) {
       const left = reclaimed.length ? deficitsOf(await port.stockOf(suspects)) : deficits;
       for (const p of planDismantle(sealed, left)) {
-        await updatePackage(p.id, { needsAttention: true, flagNote: DISMANTLE_NOTE });
+        await updatePackage(p.id, STOCKTAKE_OPEN);
         flagged.push(p.id);
       }
     }
     skus = unique([...skus, ...touched]);
+  }
+
+  // Tự gỡ cờ kiểm kê của kiện đang giữ hàng khi tồn thực không còn nhỏ hơn đang giữ ở mọi SKU kiện giữ (spec #238 §5.5):
+  // cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện gắn trước PR 2. Kiện có báo thất lạc chờ
+  // xác nhận không có trong `stocktakeFlagged` (gỡ `needs_open` thì `updatePackage` xoá báo cáo theo D21): cờ đợi người
+  // thứ hai xác nhận hoặc kho mở kiện.
+  const cleared: string[] = [];
+  const flaggedOpen = stocktakeFlagged.filter((p) => !flagged.includes(p.id));
+  if (flaggedOpen.length) {
+    const stock = await port.stockOf(unique(flaggedOpen.flatMap((p) => p.lines.map((l) => l.variantId))));
+    for (const p of flaggedOpen) {
+      const enough = p.lines.every((l) => {
+        const s = stock.get(l.variantId);
+        return s !== undefined && s.reserved <= s.onHand;
+      });
+      if (!enough) continue;
+      await updatePackage(p.id, {
+        ...(p.stocktake && CLEAR_OPEN),
+        ...(p.legacy && { needsAttention: false, flagNote: null }),
+      });
+      cleared.push(p.id);
+    }
   }
 
   // Giữ hàng cho kiện chưa giữ, theo thứ tự.
@@ -113,8 +147,12 @@ export async function runAllocation(
       // Giao dịch khác có thể vừa lấy mất hàng: `reserve` là kết quả cuối, không đủ thì bỏ qua kiện này.
       if (!(await port.reserve(c.id, c.lines)).reserved) continue;
       await markLinesReserved(c.lineIds);
-      // Giữ được thì cờ "Dỡ kiện về kệ" của phiếu đầu kỳ hết đúng; giờ DB cho `reserved_at` (một đồng hồ).
-      const clear = c.needsAttention && c.flagNote === DISMANTLE_NOTE ? { needsAttention: false, flagNote: null } : {};
+      // Giữ được thì cờ kiểm kê hết đúng: cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện cũ.
+      // Giờ DB cho `reserved_at` (một đồng hồ).
+      const clear = {
+        ...(c.openPurpose === 'stocktake' && CLEAR_OPEN),
+        ...(c.needsAttention && c.flagNote === DISMANTLE_NOTE && { needsAttention: false, flagNote: null }),
+      };
       const reservedAt = sql`now()`;
       if (c.status === 'backordered') await movePackage(c, 'backordered', 'hold', { reservedAt, ...clear });
       else await updatePackage(c.id, { reservedAt, ...clear });
@@ -123,19 +161,21 @@ export async function runAllocation(
     }
     if (opts.opening) {
       for (const c of candidates) {
-        if (c.status === 'backordered' || held.includes(c.id) || c.needsAttention) continue;
-        await updatePackage(c.id, { needsAttention: true, flagNote: DISMANTLE_NOTE });
+        if (c.status === 'backordered' || held.includes(c.id) || c.needsOpen) continue;
+        await updatePackage(c.id, STOCKTAKE_OPEN);
+        flagged.push(c.id);
       }
     }
   }
 
+  if (flagged.length || cleared.length) logger.info({ flagged, cleared }, 'lượt phân hàng đổi cờ Cần mở do kiểm kê');
   const variantIds = unique([...trigger, ...touched]).sort();
   await publishEvent({
     type: 'fulfillment.allocation_done',
     aggregateId: companyId,
     payload: { variantIds, ...(opts.cause && { cause: opts.cause }) },
   });
-  return { held, reclaimed, flagged, variantIds };
+  return { held, reclaimed, flagged, cleared, variantIds };
 }
 
 /**

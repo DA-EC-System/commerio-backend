@@ -20,6 +20,7 @@ const pct = (label: string) =>
     .min(0, `${label} từ 0 đến 100`)
     .max(100, `${label} từ 0 đến 100`)
     .multipleOf(0.01, `${label} tối đa hai chữ số thập phân`);
+const DEFAULT_ROUND_STEP = 1000;
 const vnd = (label: string) => z.number(`${label} là số đồng`).int(`${label} là số nguyên đồng`).min(0, `${label} không âm`);
 
 /**
@@ -34,6 +35,13 @@ export const PAYLOAD_SCHEMAS = {
     servicePct: pct('Phí dịch vụ'),
     optionalPct: pct('Phí tuỳ chọn'),
     returnFee: vnd('Phí hoàn hàng'),
+    // Bộ lọc giá theo gian hàng (#225, 25 §6.2). Tuỳ chọn vì bản lưu trước #225 không có; đọc qua `feeRoundingOf`.
+    perItemFee: vnd('Phí cố định mỗi món').optional(),
+    roundStep: vnd('Bậc làm tròn giá').min(1, 'Bậc làm tròn giá ít nhất 1 đồng').optional(),
+    roundEnding: vnd('Đuôi giá').optional(),
+  }).refine((p) => (p.roundEnding ?? 0) < (p.roundStep ?? DEFAULT_ROUND_STEP), {
+    path: ['roundEnding'],
+    message: 'Đuôi giá phải nhỏ hơn bậc làm tròn',
   }),
   tax_regime: z.strictObject({ regime: z.enum(['company', 'household', 'individual'], 'Loại hình là company, household hoặc individual') }),
   tax_rules: z.strictObject({
@@ -52,6 +60,13 @@ export type ConfigPayload<K extends ConfigKind = ConfigKind> = z.infer<(typeof P
 export function parsePayload(kind: ConfigKind, payload: unknown) {
   return PAYLOAD_SCHEMAS[kind].safeParse(payload);
 }
+
+/** Phí mỗi món và cách làm tròn giá của bộ lọc giá (#225); bản phí không ghi thì 0 đồng, bậc 1.000, đuôi 0. */
+export const feeRoundingOf = (p: ConfigPayload<'fee'>) => ({
+  perItemFee: p.perItemFee ?? 0,
+  roundStep: p.roundStep ?? DEFAULT_ROUND_STEP,
+  roundEnding: p.roundEnding ?? 0,
+});
 
 /** Tổng phần trăm phí sàn trừ trên doanh thu, dùng cho chạy thử. */
 export const feePctOf = (p: ConfigPayload<'fee'>) => p.fixedPct + p.transactionPct + p.servicePct + p.optionalPct;

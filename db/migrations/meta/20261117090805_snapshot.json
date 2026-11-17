@@ -1,5 +1,5 @@
 {
-  "id": "c5c06dfb-d058-4fa9-86b6-9d7474e5e7da",
+  "id": "8df3a334-0411-4b0e-9adc-fce3f103fd5d",
   "prevId": "f9d1e87e-3a9c-492a-8fc8-18550f05033e",
   "version": "7",
   "dialect": "postgresql",
@@ -7293,13 +7293,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "stock_untracked": {
-          "name": "stock_untracked",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "quantity": {
           "name": "quantity",
           "type": "integer",
@@ -7448,10 +7441,6 @@
         "package_lines_unmapped": {
           "name": "package_lines_unmapped",
           "value": "\"order\".\"package_lines\".\"variant_id\" is not null or \"order\".\"package_lines\".\"reserved_qty\" = 0"
-        },
-        "package_lines_untracked": {
-          "name": "package_lines_untracked",
-          "value": "not \"order\".\"package_lines\".\"stock_untracked\" or (\"order\".\"package_lines\".\"variant_id\" is null and \"order\".\"package_lines\".\"reserved_qty\" = 0 and not \"order\".\"package_lines\".\"stock_deducted\")"
         },
         "package_lines_deducted_cost": {
           "name": "package_lines_deducted_cost",
@@ -8502,13 +8491,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "stock_untracked": {
-          "name": "stock_untracked",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "paid_price": {
           "name": "paid_price",
           "type": "numeric(18, 2)",
@@ -8669,10 +8651,6 @@
         "order_lines_item": {
           "name": "order_lines_item",
           "value": "\"order\".\"order_lines\".\"variant_id\" is not null or \"order\".\"order_lines\".\"external_sku\" is not null"
-        },
-        "order_lines_untracked": {
-          "name": "order_lines_untracked",
-          "value": "not \"order\".\"order_lines\".\"stock_untracked\" or \"order\".\"order_lines\".\"variant_id\" is null"
         }
       },
       "isRLSEnabled": false
@@ -13069,7 +13047,8 @@
       "values": [
         "cancel",
         "edit",
-        "resplit"
+        "resplit",
+        "stocktake"
       ]
     },
     "order.package_status": {

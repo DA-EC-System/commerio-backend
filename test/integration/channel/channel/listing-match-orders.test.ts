@@ -6,7 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ChannelListing } from '#src/modules/channel/channel/api/schemas.ts';
 import { variantsBySellerSku } from '#src/modules/channel/channel/repository/raw-orders.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { inBackground, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { runRemoteSkusRefresh } from '#src/modules/channel/channel/service/remote-skus.ts';
 import { setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import type { PlatformOrder } from '#src/modules/order/index.ts';
 import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
@@ -60,7 +61,9 @@ const match = async (token: string, body: { externalSkuId: string; variantId: st
   if (dirty) {
     dirty = false;
     await testPool().query('update channel.shops set remote_skus_synced_at = null where id = $1', [shopId]);
-    expect((await as(app().post(`/api/v1/channel/shops/${shopId}/remote-skus/refresh`), company.ceo.token)).status).toBe(200);
+    // Tải lại xếp việc (202, #361) rồi chạy việc như worker, lần thử cuối.
+    expect((await as(app().post(`/api/v1/channel/shops/${shopId}/remote-skus/refresh`), company.ceo.token)).status).toBe(202);
+    await inBackground(() => runRemoteSkusRefresh({ companyId: company.companyId, shopId }, { attempt: 2, lastAttempt: true }));
   }
   return as(app().post(`/api/v1/channel/shops/${shopId}/listings/match`), token).send(body);
 };

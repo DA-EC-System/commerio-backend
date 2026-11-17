@@ -4,7 +4,8 @@
 // get-warehouse-list-202309 (bản 202502 của `/logistics/.../warehouses` là tạo kho, khác việc), get-categories-202309,
 // get-category-attributes-202309, upload-product-image-202309, create-product-202309, sign-your-api-request.
 // Đẩy lại (#219): edit-product-202509 (bản mới nhất của Edit Product trong OAS của skill `tts-openapi-guide`, tra
-// 11/11/2026), get-product-202309.
+// 11/11/2026), get-product-202309. Kiểm trước khi tạo (#305): check-listing-prerequisites-202312, check-product-listing-202309
+// (bản mới nhất trong OAS của skill, tra 17/11/2026; bản 202404 là global product, khác việc).
 // Kết quả gọi thật trên shop thử: mục TikTok của `channel/CLAUDE.md`.
 import {
   type CategoryAttribute,
@@ -19,6 +20,7 @@ import {
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteSku,
+  type Responsible,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
@@ -29,6 +31,9 @@ type Row = Record<string, unknown>;
 
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
+const htmlDescription = (text: string) => `<p>${escapeHtml(text)}</p>`;
+// Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026).
+const RESPONSIBLE_ATTRS: Record<string, keyof Responsible> = { '101489': 'name', '101490': 'address' };
 /** Commerio chỉ bán VND (một công ty, VN). */
 const CURRENCY = 'VND';
 /** Kho của shop ít đổi: giữ trong process một giờ, đỡ một lượt gọi mỗi lần đẩy. */
@@ -64,6 +69,7 @@ type ListingMethods = Pick<
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
+  | 'updateContent'
   | 'updatePriceQuantity'
   | 'deactivate'
   | 'activate'
@@ -194,17 +200,57 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     throw new MarketplaceError('rejected', code, message);
   }
 
-  /** Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính. */
-  async function productContent(token: string, p: NewProduct) {
+  /**
+   * Gian hàng đủ điều kiện đăng bán chưa (Check Listing Prerequisites 202312, #305): mục `is_failed` thì ném `rejected`
+   * `shop_not_eligible`, câu là lý do sàn trả (thiếu thì tên mục). Gọi thật 17/11/2026: shop thử đạt cả 10 mục.
+   */
+  async function assertShopEligible(token: string): Promise<void> {
+    const data = await client.call<{ check_results?: Row[] }>('GET', '/product/202312/prerequisites', { token });
+    const failed = (data?.check_results ?? []).filter((r) => r.is_failed === true);
+    if (!failed.length) return;
+    const reasons = failed.flatMap((r) => (Array.isArray(r.fail_reasons) && r.fail_reasons.length ? r.fail_reasons.map(String) : [String(r.check_item)]));
+    throw new MarketplaceError('rejected', 'shop_not_eligible', reasons.join('; '));
+  }
+
+  /**
+   * Thử body tạo sản phẩm bằng Check Product Listing 202309 (#305). Chỉ chặn khi `FAILED` kèm `fail_reasons` (cùng mã lỗi
+   * của Create Product); `FAILED` không lý do thì để Create Product quyết. `is_diagnosis_required=false`: bỏ phần gợi ý chất
+   * lượng (đã deprecated), gọi thật 17/11/2026 nhanh từ ~5 giây xuống dưới 1 giây, `fail_reasons` không đổi.
+   */
+  async function assertListingPasses(token: string, body: Row): Promise<void> {
+    const data = await client.call<{ check_result?: unknown; fail_reasons?: Row[] }>('POST', '/product/202309/products/listing_check', {
+      token,
+      query: { is_diagnosis_required: 'false' },
+      body,
+    });
+    const reasons = data?.check_result === 'FAILED' ? (data.fail_reasons ?? []) : [];
+    if (!reasons.length) return;
+    throw new MarketplaceError('rejected', 'listing_check_failed', reasons.map((r) => `${String(r.code)}: ${String(r.message ?? '')}`).join('; '));
+  }
+
+  /**
+   * Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính.
+   * Tổ chức chịu trách nhiệm (#292): ô người dùng để trống lấy hồ sơ công ty lúc đẩy, chỉ khi danh mục có mã đó.
+   */
+  async function productAttributes(token: string, p: Pick<NewProduct, 'externalCategoryId' | 'attributes' | 'responsible'>) {
     const attrs = await rawAttributes(token, p.externalCategoryId);
     const byId = new Map(attrs.map((a) => [String(a.id), a]));
-    const productAttributes = Object.entries(p.attributes).map(([id, value]) => {
+    const filled = { ...p.attributes };
+    for (const [id, field] of Object.entries(RESPONSIBLE_ATTRS)) {
+      const value = p.responsible?.[field];
+      if (!filled[id] && value && byId.has(id)) filled[id] = value;
+    }
+    return Object.entries(filled).map(([id, value]) => {
       const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
       return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
     });
+  }
+
+  async function productContent(token: string, p: NewProduct) {
+    const contentAttributes = await productAttributes(token, p);
     return {
       title: p.name,
-      description: `<p>${escapeHtml(p.description)}</p>`,
+      description: htmlDescription(p.description),
       category_id: p.externalCategoryId,
       category_version: CATEGORY_VERSION,
       main_images: p.imageUrls.map((uri) => ({ uri })),
@@ -212,7 +258,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       ...(p.sizeChartUri && { size_chart: { image: { uri: p.sizeChartUri } } }),
       package_weight: { value: kg(p.weightG), unit: 'KILOGRAM' },
       package_dimensions: { length: cm(p.lengthMm), width: cm(p.widthMm), height: cm(p.heightMm), unit: 'CENTIMETER' },
-      ...(productAttributes.length && { product_attributes: productAttributes }),
+      ...(contentAttributes.length && { product_attributes: contentAttributes }),
     };
   }
 
@@ -225,18 +271,23 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       return leavesOf(data?.categories ?? []);
     },
 
-    // Chỉ thuộc tính sản phẩm luôn bắt buộc (`PRODUCT_PROPERTY`, `is_requried`, sàn viết sai chính tả); thuộc tính bắt buộc
-    // theo điều kiện (`requirement_conditions`) và thuộc tính bán hàng (phân loại) chưa xử lý. `name` là mã thuộc tính
-    // của sàn. Thuộc tính cho tự nhập (`is_customizable`) trả `options` rỗng để người dùng gõ giá trị riêng; lúc tạo sản
+    // Chỉ thuộc tính sản phẩm luôn bắt buộc (`PRODUCT_PROPERTY`, `is_requried`, sàn viết sai chính tả); thuộc tính bán hàng
+    // (phân loại) chưa xử lý. Thuộc tính bắt buộc theo điều kiện (`requirement_conditions`) không hỏi ở bước ghép: 12 danh
+    // mục VN đo 17/11/2026 không có, thiếu thì Check Product Listing chặn trước khi tạo (#305, `listing_check_failed`).
+    // `name` là mã thuộc tính của sàn. Thuộc tính cho tự nhập (`is_customizable`) trả `options` rỗng để người dùng gõ giá trị riêng; lúc tạo sản
     // phẩm giá trị trùng tên lựa chọn có sẵn thì gửi theo mã.
     async categoryAttributes(token, externalCategoryId): Promise<CategoryAttribute[]> {
       return (await rawAttributes(token, externalCategoryId))
         .filter((a) => a.type === 'PRODUCT_PROPERTY' && a.is_requried === true)
-        .map((a) => ({
-          name: String(a.id),
-          label: String(a.name ?? a.id),
-          options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
-        }));
+        .map((a) => {
+          const prefill = RESPONSIBLE_ATTRS[String(a.id)];
+          return {
+            name: String(a.id),
+            label: String(a.name ?? a.id),
+            options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
+            ...(prefill && { prefill }),
+          };
+        });
     },
 
     // Get Category Rules 202309: `size_chart.is_required`, `is_supported` (#347). Danh mục không hỗ trợ bảng kích cỡ thì không
@@ -275,10 +326,9 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (existing) {
         return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live', existing: true };
       }
-      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p)]);
-      const body = {
-        save_mode: 'LISTING',
-        ...(p.idempotencyKey && { idempotency_key: p.idempotencyKey }),
+      // Kiểm điều kiện đăng trước khi tạo (#305, Documents/21 §18.6.4): gian hàng, rồi thử chính body tạo.
+      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p), assertShopEligible(token)]);
+      const listing = {
         ...content,
         skus: [
           {
@@ -289,6 +339,8 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
           },
         ],
       };
+      await assertListingPasses(token, listing);
+      const body = { save_mode: 'LISTING', ...(p.idempotencyKey && { idempotency_key: p.idempotencyKey }), ...listing };
       let data: { product_id?: unknown; skus?: Row[] } | undefined;
       try {
         data = await client.call<{ product_id?: unknown; skus?: Row[] }>('POST', '/product/202309/products', { token, body });
@@ -357,6 +409,30 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (status === 'ACTIVATE') return { live: true };
       if (status === 'PENDING' || status === 'FAILED') return { live: false };
       throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${status ?? 'không rõ'})`);
+    },
+
+    // Partial Edit 202509 (#293): chỉ gửi tiêu đề, mô tả, thuộc tính; không gửi `skus` (SKU thiếu trong danh sách bị sàn
+    // xoá) hay ảnh. Đọc sản phẩm trước để chặn sản phẩm nhiều SKU và danh mục lệch ghép (Partial Edit không đổi danh mục),
+    // đọc lại sau để biết sàn ngừng bán (`PENDING`) hay vẫn bán bản cũ trong lúc duyệt (gọi thật 09/11/2026: `ACTIVATE`).
+    async updateContent(token, externalProductId, c) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const [current, attributes] = await Promise.all([client.call<Row>('GET', path, { token }), productAttributes(token, c)]);
+      if (((current?.skus ?? []) as Row[]).length > 1) {
+        throw new MarketplaceError('rejected', 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; sửa nội dung từng SKU chưa hỗ trợ');
+      }
+      const leaf = ((current?.category_chains ?? []) as Row[]).find((x) => x.is_leaf === true)?.id;
+      if (leaf !== undefined && String(leaf) !== c.externalCategoryId) {
+        throw new MarketplaceError('rejected', 'category_mismatch', `Sản phẩm trên sàn ở danh mục ${String(leaf)}, khác danh mục đã ghép`);
+      }
+      const body = {
+        title: c.name,
+        description: htmlDescription(c.description),
+        ...(attributes.length && { product_attributes: attributes }),
+      };
+      await client.call('POST', `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`, { token, body });
+      // Sàn đã nhận bản sửa: đọc lại lỗi thì coi như vẫn bán, không ném (ném thì bên gọi tưởng chưa sửa, hay gửi lại).
+      const status = await productStatus(token, externalProductId).catch(() => null);
+      return { underReview: status === 'PENDING' };
     },
 
     // Hai API theo sản phẩm: tồn (`inventory/update`, kho mặc định) và giá (`prices/update`, chỉ nhận sản phẩm `ACTIVATE`).

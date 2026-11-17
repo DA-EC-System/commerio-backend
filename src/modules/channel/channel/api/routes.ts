@@ -9,19 +9,26 @@ import * as categories from '../service/categories.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
+import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
 import { productPort } from '../service/product-port.ts';
+import * as prices from '../service/pending-prices.ts';
 import * as setup from '../service/setup.ts';
+import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
   CallbackBody,
   DelistBody,
+  UpdateContentBody,
+  UpdateContentParams,
   ListingParams,
   MappingBody,
   MappingParams,
   MatchBody,
+  OutsideChangeBody,
+  OutsideChangeParams,
   PushBody,
   RemoteSkusQuery,
   SetupBody,
@@ -30,9 +37,15 @@ import {
   CategoryParams,
   CategorySearchQuery,
   DisconnectBody,
+  UpdateShopBody,
   PlatformParams,
   ShopParams,
   TokenBody,
+  ConfirmPriceBody,
+  ListingIdParams,
+  ManualPriceBody,
+  ManualPriceParams,
+  PendingPricesQuery,
 } from './schemas.ts';
 
 /** 201 khi lần nối có gian hàng tạo mới, kể cả không phải phần tử đầu; 200 khi chỉ nối lại (Documents/21 §18.4). */
@@ -54,7 +67,7 @@ export function channelRouter(ctx: ModuleContext): Router {
   const match = ctx.authorize('channel.listing.match');
   // Duyệt ghép: `listing.manage` + vai trò CEO (21 §18.3), kiểm trước `validate()` như quyền.
   const ceoOnly = async (_req: Request, res: Response, next: NextFunction) => {
-    if (!(await mapping.isCeo(actor(res)))) throw new AppError(403, 'forbidden', 'Chỉ CEO duyệt ghép SKU');
+    if (!(await mapping.isCeo(actor(res)))) throw new AppError(403, 'forbidden', 'Chỉ CEO làm được thao tác này');
     next();
   };
 
@@ -91,6 +104,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await withCompany(actor(res).companyId, () => shops.getShop(id)));
+  });
+
+  router.patch('/shops/:id', connect, validate({ params: ShopParams, body: UpdateShopBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const who = actor(res);
+    res.json(await withCompany(who.companyId, () => updateShopSettings(who, id, validated<typeof UpdateShopBody>(res, 'body'))));
   });
 
   router.post(
@@ -198,18 +217,20 @@ export function channelRouter(ctx: ModuleContext): Router {
     }
   };
 
-  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại gọi sàn ngoài giao dịch:
-  // service tự mở `withCompany`.
+  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại xếp lượt tải nền
+  // `channel.remote_skus_refresh`, không gọi sàn trong request (#361): Tải lại có xếp (hoặc đang chạy) thì 202.
   router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false)));
+    const { items, syncedAt, refresh } = await mapping.remoteSkus(actor(res), id, unmatched ?? false);
+    res.json({ items, syncedAt, refresh });
   });
 
   router.post('/shops/:id/remote-skus/refresh', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true)));
+    const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
+    res.status(accepted ? 202 : 200).json(list);
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {
@@ -230,6 +251,17 @@ export function channelRouter(ctx: ModuleContext): Router {
   );
 
   router.post(
+    '/shops/:id/listings/:listingId/update-content',
+    manage,
+    validate({ params: UpdateContentParams, body: UpdateContentBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof UpdateContentParams>(res, 'params');
+      const { version } = validated<typeof UpdateContentBody>(res, 'body');
+      res.json(await listings.updateListingContent(productPort(ctx), actor(res), id, listingId, version));
+    },
+  );
+
+  router.post(
     '/shops/:id/listings/:variantId/delist',
     manage,
     validate({ params: ListingParams, body: DelistBody }),
@@ -237,6 +269,39 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, variantId } = validated<typeof ListingParams>(res, 'params');
       const { version } = validated<typeof DelistBody>(res, 'body');
       res.json(await listings.delistListing(actor(res), id, variantId, version));
+    },
+  );
+
+  // Giá theo gian hàng (#225, 21 §18.6.7, §21.4).
+  router.get('/listings/pending-prices', manage, validate({ query: PendingPricesQuery }), async (_req, res) => {
+    const query = validated<typeof PendingPricesQuery>(res, 'query');
+    res.json(await withCompany(actor(res).companyId, () => prices.listPendingPrices(productPort(ctx), query)));
+  });
+  router.post('/listings/:id/confirm-price', manage, validate({ params: ListingIdParams, body: ConfirmPriceBody }), async (_req, res) => {
+    const { id } = validated<typeof ListingIdParams>(res, 'params');
+    const { version } = validated<typeof ConfirmPriceBody>(res, 'body');
+    const by = actor(res);
+    res.json(await withCompany(by.companyId, () => prices.confirmPrice(by, id, version)));
+  });
+  router.put(
+    '/shops/:id/listings/:listingId/price',
+    manage,
+    validate({ params: ManualPriceParams, body: ManualPriceBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof ManualPriceParams>(res, 'params');
+      const by = actor(res);
+      res.json(await withCompany(by.companyId, () => prices.setManualPrice(by, id, listingId, validated<typeof ManualPriceBody>(res, 'body'))));
+    },
+  );
+  router.post(
+    '/shops/:id/listings/:listingId/outside-change/:action',
+    manage,
+    ceoOnly,
+    validate({ params: OutsideChangeParams, body: OutsideChangeBody }),
+    async (_req, res) => {
+      const { id, listingId, action } = validated<typeof OutsideChangeParams>(res, 'params');
+      const { version } = validated<typeof OutsideChangeBody>(res, 'body');
+      res.json(await resolveOutsideChange(productPort(ctx), actor(res), id, listingId, action, version));
     },
   );
 

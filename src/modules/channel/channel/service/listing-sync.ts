@@ -5,19 +5,23 @@
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import type { EventPayload } from '../../../core/index.ts';
+import { type EventPayload, lastEntryActions } from '../../../core/index.ts';
 import {
   DELETABLE,
   type ListingAction,
   type ListingStatus,
+  NO_REASON,
+  NO_REVISION,
   STALE_PUSH_MS,
   STOCK_RECONCILED,
   type StockDecision,
   stockDecision,
   syncAction,
+  visibilityAction,
 } from '../domain/listing.ts';
 import { holdsStock } from '../domain/shop.ts';
 import {
+  findListingById,
   type ListingPatch,
   type ListingRow,
   listListingRows,
@@ -40,7 +44,7 @@ import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
 import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
-import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
+import { type Actor, onMarketplace, ownShop, shopSession, shopStopped } from './shops.ts';
 import { ordersStaleError, raisesStock, shopOrdersStale, untrustedVariants } from './stock-trust.ts';
 
 /**
@@ -63,7 +67,7 @@ export interface SyncSummary {
 }
 
 type InCompany = <T>(fn: () => Promise<T>) => Promise<T>;
-interface Session {
+export interface Session {
   shop: ShopRow;
   adapter: MarketplaceAdapter;
   accessToken: string;
@@ -96,10 +100,192 @@ export async function pushPending(port: ProductPort, companyId: string, shopId: 
   const inCompany: InCompany = (fn) => withCompany(companyId, fn);
   const session = await inCompany(() => shopSession(shopId));
   const summary: SyncSummary = { checked: 0, changed: 0, pushed: 0, errors: 0 };
-  const rows = await inCompany(() => listListingRows(session.shop.id));
+  let rows = await inCompany(() => listListingRows(session.shop.id));
+  rows = await applyVisibility(port, inCompany, session, rows, summary);
   await pushDue(port, inCompany, session, rows, holdsStock(session.shop), new Map(), summary);
   if (shopOrdersStale(session.shop)) await inCompany(() => sendOrderPull(companyId, shopId));
   return summary;
+}
+
+/** Listing ẩn bằng tồn 0 (`hideBy = 'zero_stock'`): số nên có trên sàn là 0, không phải số có thể bán (#224). */
+const zeroHidden = (row: ListingRow) => row.status === 'hidden' && row.hiddenBy === 'zero_stock';
+
+/**
+ * Sàn tắt, bật theo cả sản phẩm và bật lại phải duyệt lại (TikTok; #224 phần 2, 25 §6.4 "Sàn không ẩn riêng được một
+ * phân loại"): listing app ẩn luôn để tồn 0 trên sàn (`zero_stock`); mọi listing chưa gỡ của sản phẩm đều `hidden` thì tắt
+ * thêm cả sản phẩm; hiện lại khi sản phẩm đang tắt thì bật sản phẩm.
+ */
+export const hidesByProduct = (adapter: MarketplaceAdapter): boolean => adapter.togglesByProduct === true;
+/**
+ * Lần vào `hidden` mà app được tự hiện lại: `hide` (tạm ngừng SKU), hoặc `outside_hold` đã được CEO `restore` lúc SKU
+ * đang tạm ngừng (dòng chờ quyết lọc trước theo `outsideChangeKind`). `relist` (nối lại gian hàng) không.
+ */
+const APP_HIDDEN = new Set(['hide', 'outside_hold']);
+
+/** Bật lại SKU trên sàn (#224 hiện lại, #360 CEO bật lại); adapter không có `activate` thì `unsupported`. */
+export async function activateOnMarketplace(
+  { adapter, accessToken }: Pick<Session, 'adapter' | 'accessToken'>,
+  productId: string,
+  skuId: string,
+): Promise<void> {
+  if (!adapter.activate) throw new MarketplaceError('unsupported', 'activate_missing', 'Sàn chưa hỗ trợ bật lại sản phẩm từ app');
+  await adapter.activate(accessToken, productId, skuId);
+}
+
+export async function pausedVariants(port: ProductPort, variantIds: string[]): Promise<Set<string>> {
+  const variants = await port.variants([...new Set(variantIds)]);
+  return new Set(variants.filter((v) => v.businessStatus === 'paused').map((v) => v.id));
+}
+
+/**
+ * Ẩn, hiện listing theo trạng thái SKU (#224, 25 §6.4, `visibilityAction`). `hideBy = 'deactivate'`: gọi sàn tắt, bật
+ * (`hiddenBy = 'platform'`); `zero_stock`: không gọi sàn ở đây, `hiddenBy = 'zero_stock'` và chờ đẩy tồn để `pushDue` gửi 0
+ * (hiện lại thì gửi số có thể bán). Sàn ẩn theo sản phẩm (`hidesByProduct`): ẩn bằng tồn 0, tắt, bật cả sản phẩm theo
+ * nhóm mã sản phẩm sàn (`hideProducts`, `productBlocksUnhide`). Gọi sàn ngoài giao dịch, ghi DB sau khi sàn nhận. Lỗi của
+ * một listing chỉ ghi log và giữ nguyên trạng thái để lượt sau làm lại (mất uỷ quyền, gian hàng ngắt thì ném như mọi lời
+ * gọi sàn). Có dòng đổi thì trả danh sách listing đọc lại.
+ */
+async function applyVisibility(
+  port: ProductPort,
+  inCompany: InCompany,
+  session: Session,
+  rows: ListingRow[],
+  summary: SyncSummary,
+  remote: ReadonlyMap<string, RemoteSku> = new Map(),
+): Promise<ListingRow[]> {
+  const { shop, adapter, accessToken } = session;
+  const byProduct = hidesByProduct(adapter);
+  const candidates = rows.filter((r) => r.mode === 'mapped' && r.externalSkuId && (r.status === 'live' || r.status === 'hidden'));
+  if (!candidates.length) return rows;
+  const { paused, entered } = await inCompany(async () => {
+    const paused = await pausedVariants(port, candidates.map((r) => r.variantId!));
+    // Lịch sử chỉ cần cho dòng có thể hiện lại; dòng chờ CEO quyết sàn đổi ngoài app không tự hiện lại (#360).
+    const unhidable = candidates.filter((r) => r.status === 'hidden' && !r.outsideChangeKind && !paused.has(r.variantId!)).map((r) => r.id);
+    return { paused, entered: await lastEntryActions('listings', unhidable, 'hidden') };
+  });
+  const byPlatform = adapter.capabilities.hideBy === 'deactivate';
+  // Lệch tồn (`error`) giữ qua lần hiện lại; ẩn bằng tồn 0 thì chờ đẩy 0.
+  const patchFor = (action: ListingAction, row: ListingRow): ListingPatch => {
+    if (action === 'unhide') return { hiddenBy: null, stockSync: row.stockSync === 'error' ? 'error' : 'pending' };
+    if (byPlatform) return { hiddenBy: 'platform' };
+    return { hiddenBy: 'zero_stock', stockSync: 'pending' };
+  };
+  let changed = false;
+  const hidden = new Set<string>();
+  const products = new Map<string, RemoteSku['state'] | undefined>();
+  for (const row of candidates) {
+    const action = visibilityAction(row.status, paused.has(row.variantId!), APP_HIDDEN.has(entered.get(row.id) ?? ''));
+    if (!action) continue;
+    try {
+      if (byPlatform) {
+        await onMarketplace(async () => {
+          if (action === 'hide') return adapter.deactivate(accessToken, row.externalProductId!, row.externalSkuId!);
+          return activateOnMarketplace(session, row.externalProductId!, row.externalSkuId!);
+        });
+      } else if (byProduct && action === 'unhide' && (await onMarketplace(() => productBlocksUnhide(session, rows, row, remote, paused, products)))) {
+        continue;
+      }
+    } catch (err) {
+      if (shopStopped(err)) throw err;
+      logger.warn({ err, listingId: row.id, action }, 'Ẩn, hiện listing theo trạng thái SKU lỗi, lượt sau thử lại');
+      summary.errors++;
+      continue;
+    }
+    const reason = action === 'hide' ? 'SKU tạm ngừng bán' : 'SKU bỏ tạm ngừng bán';
+    if (await inCompany(() => moveAfterMarketplace(row, action, (r) => patchFor(action, r), reason))) {
+      changed = true;
+      summary.changed++;
+      if (action === 'hide') hidden.add(row.externalProductId!);
+    }
+  }
+  const fresh = changed ? await inCompany(() => listListingRows(shop.id)) : rows;
+  if (byProduct) await hideProducts(session, fresh, hidden, remote, summary);
+  return fresh;
+}
+
+/** Listing chưa gỡ cùng mã sản phẩm sàn trên gian hàng (kể cả ghép không quản tồn). */
+export const productGroup = (rows: readonly ListingRow[], productId: string) =>
+  rows.filter((r) => r.externalProductId === productId && r.status !== 'delisted');
+
+/**
+ * Hiện lại một listing của sàn ẩn theo sản phẩm. Sản phẩm đang tắt trên sàn thì bật sản phẩm, nhưng chỉ khi mọi listing
+ * khác còn ẩn của sản phẩm đã có tồn 0 trên sàn (`zero_stock` đã đồng bộ): chưa thì trả `true` (chờ lượt sau, `pushDue`
+ * đẩy 0 trước). Sản phẩm có listing chờ CEO quyết sàn đổi ngoài app (người bán tắt) thì không bật (21 §18.3).
+ */
+async function productBlocksUnhide(
+  session: Session,
+  rows: readonly ListingRow[],
+  row: ListingRow,
+  remote: ReadonlyMap<string, RemoteSku>,
+  paused: ReadonlySet<string>,
+  products: Map<string, RemoteSku['state'] | undefined>,
+): Promise<boolean> {
+  const productId = row.externalProductId!;
+  // Trạng thái sàn theo sản phẩm, đọc một lần mỗi lượt: lượt đồng bộ đã có `remote`, lượt đẩy tồn thì đọc một SKU.
+  if (!products.has(productId)) products.set(productId, (remote.get(row.externalSkuId!) ?? (await remoteSkuOf(session, row)))?.state);
+  if (products.get(productId) !== 'inactive') return false;
+  // Anh em còn ẩn hay SKU tạm ngừng (kể cả chưa kịp ẩn trong lượt này) phải đã có tồn 0 trên sàn.
+  const others = productGroup(rows, productId).filter((r) => r.id !== row.id);
+  const zeroed = (r: ListingRow) => r.hiddenBy === 'zero_stock' && r.stockSync === 'synced';
+  const unsafe = (r: ListingRow) => (r.status === 'hidden' || (!!r.variantId && paused.has(r.variantId))) && !zeroed(r);
+  if (others.some((r) => r.outsideChangeKind || unsafe(r))) return true;
+  await activateOnMarketplace(session, productId, row.externalSkuId!);
+  products.set(productId, 'review');
+  return false;
+}
+
+/** Trạng thái trên sàn của SKU của một listing (một lời gọi đọc). */
+export async function remoteSkuOf({ adapter, accessToken }: Session, row: ListingRow): Promise<RemoteSku | undefined> {
+  return (await adapter.getSkus(accessToken, [row.sellerSku!])).find((s) => s.externalSkuId === row.externalSkuId);
+}
+
+/**
+ * Tắt cả sản phẩm khi mọi listing chưa gỡ của nó đều do app ẩn (`zero_stock`, không chờ CEO quyết): sản phẩm vừa có listing ẩn trong lượt, hoặc lượt đồng bộ
+ * thấy sàn còn bán (lần tắt trước lỗi). Lượt đồng bộ thấy mọi SKU của sản phẩm đã tắt trên sàn thì không gọi.
+ */
+async function hideProducts(
+  { adapter, accessToken }: Session,
+  rows: readonly ListingRow[],
+  hidden: ReadonlySet<string>,
+  remote: ReadonlyMap<string, RemoteSku>,
+  summary: SyncSummary,
+): Promise<void> {
+  const stillSold = rows.filter((r) => r.status === 'hidden' && remote.get(r.externalSkuId ?? '')?.state === 'live');
+  for (const productId of new Set([...hidden, ...stillSold.map((r) => r.externalProductId!)])) {
+    const group = productGroup(rows, productId);
+    // Chỉ tắt khi mọi listing do app ẩn: listing chờ CEO quyết hay ẩn do nối lại gian hàng thì không đè quyết định của người bán.
+    if (!group.length || !group.every((r) => r.status === 'hidden' && r.hiddenBy === 'zero_stock' && !r.outsideChangeKind)) continue;
+    if (group.every((r) => (remote.get(r.externalSkuId ?? '')?.state ?? 'live') !== 'live')) continue;
+    try {
+      await onMarketplace(() => adapter.deactivate(accessToken, productId, group[0]!.externalSkuId!));
+    } catch (err) {
+      if (shopStopped(err)) throw err;
+      logger.warn({ err, productId }, 'Tắt sản phẩm khi mọi phân loại đều ẩn lỗi, lượt sau thử lại');
+      summary.errors++;
+    }
+  }
+}
+
+/**
+ * Ghi thao tác sau khi sàn đã nhận. Lệch `version` (tồn vừa đánh dấu chờ đẩy) thì đọc lại và ghi trên dòng mới nếu trạng
+ * thái chưa đổi, để app không lệch sàn; trạng thái đã đổi (gỡ, sàn khoá) thì bỏ, lượt sau so lại.
+ */
+async function moveAfterMarketplace(
+  row: ListingRow,
+  action: ListingAction,
+  patchFor: (row: ListingRow) => ListingPatch,
+  reason: string,
+): Promise<boolean> {
+  try {
+    await moveListing(row, action, null, patchFor(row), reason);
+    return true;
+  } catch (err) {
+    if (!(err instanceof AppError) || err.code !== 'version_conflict') throw err;
+  }
+  const fresh = await findListingById(row.id);
+  if (fresh?.status !== row.status) return false;
+  await moveListing(fresh, action, null, patchFor(fresh), reason);
+  return true;
 }
 
 /**
@@ -142,10 +328,16 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   if (watched.length) {
     const remote = await onMarketplace(() => adapter.getSkus(accessToken, watched.map((r) => r.sellerSku!)));
     bySku = new Map(remote.map((s) => [s.externalSkuId, s]));
-    for (const row of watched) {
+    const actions = watched.flatMap((row) => {
       const r = bySku.get(row.externalSkuId!);
       const action = r && syncAction(row.status, r.state);
-      if (!action) continue;
+      return action ? [{ row, r, action }] : [];
+    });
+    // SKU đang tạm ngừng mà sàn tắt: app tắt (#224, việc đẩy tồn chạy song song chưa kịp ghi), không phải người bán (#360).
+    const outside = actions.filter((a) => a.action === 'outside_hold').map((a) => a.row.variantId!);
+    const paused = outside.length ? await inCompany(() => pausedVariants(port, outside)) : new Set<string>();
+    for (const { row, r, action } of actions) {
+      if (action === 'outside_hold' && paused.has(row.variantId!)) continue;
       const { patch, reason } = remoteChange(action, r.rejectReason);
       // Listing sang `live` thì đẩy tồn ngay trong lượt này (25 §6.5).
       const toLive = (action === 'approve' || action === 'release') && row.stockSync === 'synced';
@@ -154,6 +346,9 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     }
     rows = await inCompany(() => listListingRows(shop.id));
   }
+  if (await checkRevisions(inCompany, adapter, accessToken, rows, summary)) rows = await inCompany(() => listListingRows(shop.id));
+  // Ẩn, hiện theo trạng thái SKU sau khi áp trạng thái sàn: listing vừa được duyệt mà SKU đang tạm ngừng thì ẩn ngay (E25).
+  rows = await applyVisibility(port, inCompany, session, rows, summary, bySku);
 
   const { changed, waiting } = reconcile
     ? await reconcileStock(port, inCompany, rows, bySku)
@@ -176,7 +371,7 @@ async function pullOrdersFirst(companyId: string, shop: ShopRow, adapter: Market
     await pullShopOrders(companyId, shop.id);
     return true;
   } catch (err) {
-    if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+    if (shopStopped(err)) throw err;
     logger.warn({ shopId: shop.id, err }, 'Lấy đơn trước đối chiếu tồn lỗi, bỏ đối chiếu lượt này');
     return false;
   }
@@ -199,6 +394,7 @@ async function reconcileStock(
     return (
       r.mode === 'mapped' &&
       STOCK_RECONCILED.includes(r.status) &&
+      !r.outsideChangeKind &&
       r.stockSync !== 'pending' &&
       remote?.sellableQuantity !== undefined &&
       !remote.stockLocked
@@ -213,7 +409,7 @@ async function reconcileStock(
     // cao hơn (đẩy giảm) vẫn làm; sàn thấp hơn (sẽ đẩy tăng, bật Lệch tồn) thì bỏ lượt này.
     const untrusted = await untrustedVariants();
     for (const row of candidates) {
-      const app = available.get(row.variantId!);
+      const app = zeroHidden(row) ? 0 : available.get(row.variantId!);
       if (app === undefined) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
       const decision = stockDecision(row, remote, app);
@@ -258,12 +454,19 @@ async function pushDue(
   summary: SyncSummary,
   waiting: ReadonlySet<string> = new Set(),
 ): Promise<void> {
+  // Gian hàng giữ tồn không gửi tồn, trừ listing ẩn bằng tồn 0 (gửi 0 không bao giờ làm bán quá).
+  const stockPending = (r: ListingRow) => (!holdStock || zeroHidden(r)) && r.stockSync !== 'synced';
+  // Sàn ẩn theo sản phẩm chỉ nhận giá khi sản phẩm đang bán (TikTok `prices/update`): listing ẩn giữ giá chờ, gửi khi hiện lại.
+  const byProduct = hidesByProduct(adapter);
+  const priceHeld = (r: ListingRow) => byProduct && r.status === 'hidden';
   const due = rows.filter(
     (r) =>
       r.mode === 'mapped' &&
       PUSHABLE.includes(r.status) &&
       r.externalSkuId &&
-      ((!holdStock && r.stockSync !== 'synced') || r.priceSync !== 'synced'),
+      // Sàn đổi ngoài app: thôi đẩy cả tồn lẫn giá tới khi CEO quyết, không tự đẩy đè (25 §6.5, #360).
+      !r.outsideChangeKind &&
+      (stockPending(r) || (r.priceSync !== 'synced' && !priceHeld(r))),
   );
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
@@ -283,17 +486,19 @@ async function pushDue(
     const r = remote.get(row.externalSkuId!);
     const standard = prices.get(row.variantId!) ?? undefined;
     // Giá chỉ gửi khi cần (#223 review 3): chờ đẩy giá, hoặc giá chuẩn khác giá đang trên sàn. Không gửi kèm mỗi lần đẩy tồn.
-    const priceDue = row.priceSync !== 'synced' || (standard !== undefined && (row.listedPrice === null || !standard.eq(row.listedPrice)));
+    const priceDue =
+      !priceHeld(row) && (row.priceSync !== 'synced' || (standard !== undefined && (row.listedPrice === null || !standard.eq(row.listedPrice))));
     const price = priceDue && !r?.priceLocked ? standard : undefined;
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
-    const stockDue = !holdStock && row.stockSync !== 'synced' && !waiting.has(row.id);
-    const wanted = !stockDue || r?.stockLocked ? undefined : available.get(row.variantId!);
+    const zero = zeroHidden(row);
+    const stockDue = stockPending(row) && !waiting.has(row.id);
+    const wanted = !stockDue || r?.stockLocked ? undefined : zero ? 0 : available.get(row.variantId!);
     // SKU chưa tin được (#223, 21 §18.6.6): số app chỉ có thể cao hơn thật, nên chỉ đẩy khi không làm tồn trên sàn tăng,
     // so với số sàn ĐỌC THẬT trong lượt này (`sellableQuantity`). Không so với `platform_stock`: đó là số app gửi lần trước,
     // sàn có thể đã bán bớt mà app chưa biết (review R2-1). Đường không đọc sàn (`pushPending`) vì thế không đẩy tồn SKU
     // này. Bị giữ thì `pending` kèm `orders_stale`; lượt đồng bộ 15 phút hoặc lấy đơn xong trọn thì đẩy lại.
     const staleShops = untrusted.get(row.variantId!);
-    const blocked = staleShops !== undefined && wanted !== undefined && raisesStock(wanted, r?.sellableQuantity);
+    const blocked = staleShops !== undefined && wanted !== undefined && !zero && raisesStock(wanted, r?.sellableQuantity);
     const quantity = blocked ? undefined : wanted;
     const item: PriceQuantity | null =
       !price && quantity === undefined
@@ -392,16 +597,55 @@ export async function restoreAfterZeroStock(actor: Actor, listingIds: readonly s
 }
 
 /**
+ * Bản sửa nội dung đang duyệt (#293, §18.3): qua duyệt thì xoá, trượt thì `failed` kèm lý do sàn ghi. Ghi theo dòng đọc
+ * lại, không so `version` của lúc đọc đầu lượt. Lỗi của một listing ghi log rồi bỏ qua, lượt sau đọc lại; mất uỷ quyền thì
+ * ném như mọi lời gọi sàn. Trả true khi có dòng đổi.
+ */
+async function checkRevisions(
+  inCompany: InCompany,
+  adapter: MarketplaceAdapter,
+  accessToken: string,
+  rows: readonly ListingRow[],
+  summary: SyncSummary,
+): Promise<boolean> {
+  if (!adapter.contentRevision) return false;
+  let changed = false;
+  for (const row of rows.filter((r) => r.revisionStatus === 'auditing' && r.externalProductId)) {
+    try {
+      const rev = await onMarketplace(() => adapter.contentRevision!(accessToken, row.externalProductId!));
+      if (rev.state === 'auditing') continue;
+      const patch: ListingPatch = rev.state === 'failed' ? { revisionStatus: 'failed', revisionRejectReason: rev.reason ?? NO_REASON } : NO_REVISION;
+      await inCompany(async () => {
+        const fresh = await findListingById(row.id);
+        if (fresh?.revisionStatus === 'auditing') await updateListing(fresh.id, { version: fresh.version, status: fresh.status }, patch);
+      });
+      changed = true;
+      summary.changed++;
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'marketplace_unauthorized') throw err;
+      logger.warn({ err, listingId: row.id }, 'Đọc bản sửa nội dung đang duyệt lỗi, lượt sau đọc lại');
+      summary.errors++;
+    }
+  }
+  return changed;
+}
+
+/**
  * Dữ liệu ghi kèm khi áp thao tác của sàn. Sàn xoá sản phẩm (`delist`, hệ thống): bỏ mã sản phẩm, mã SKU, ảnh trên sàn
  * vì sản phẩm không còn, giữ SellerSku; đẩy lại sẽ tạo sản phẩm mới (#219).
  */
 function remoteChange(action: ListingAction, rejectReason: string | null | undefined): { patch: ListingPatch; reason: string | null } {
   if (action === 'reject') {
-    const reason = rejectReason ?? 'Sàn từ chối, không ghi lý do';
+    const reason = rejectReason ?? NO_REASON;
     return { patch: { rejectReason: reason }, reason };
   }
+  // CHECK `listings_hidden_by`: chỉ `hidden`, `live` mang `hidden_by`.
   if (action === 'delist') {
-    return { patch: { externalProductId: null, externalSkuId: null, externalImageUrls: null }, reason: 'Sàn báo đã xoá sản phẩm' };
+    return { patch: { externalProductId: null, externalSkuId: null, externalImageUrls: null, hiddenBy: null }, reason: 'Sàn báo đã xoá sản phẩm' };
+  }
+  if (action === 'hold') return { patch: { hiddenBy: null }, reason: null };
+  if (action === 'outside_hold') {
+    return { patch: { hiddenBy: 'platform', outsideChangeKind: 'disabled', outsideChangeAt: new Date() }, reason: 'Sàn tắt ngoài app' };
   }
   return { patch: {}, reason: null };
 }

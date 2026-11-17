@@ -7,7 +7,7 @@ import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { stockOfVariant } from '../fulfillment/helpers.ts';
+import { splitByHand, stockOfVariant } from '../fulfillment/helpers.ts';
 import { ingest as ingestIn, remote as remoteOf, setup, withLineCancelled, withStatus } from '../fulfillment/platform-fixtures.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
@@ -583,5 +583,101 @@ describe('ghép SKU của dòng khi nhận đơn (spec 237)', () => {
     const b = (await statusChanges(second.orderId)).at(-1)!;
     expect(b.payload).toMatchObject({ from: 'unpaid', to: 'processing' });
     expect(b.payload.flags).toContain('unmapped_sku');
+  });
+});
+
+// #358 (câu chốt 3): note "chưa biết" kèm mã thô; lượt sau sàn trả mọi món mã đã biết thì gỡ cờ, trừ khi cùng lượt có lý do
+// cờ khác (chia lại kiện, kéo lại kiện) hay note là của luồng khác.
+describe('cờ "Sàn trả trạng thái app chưa biết" (#358 AC-5)', () => {
+  const OLD_NOTE = 'Sàn trả trạng thái app chưa biết';
+  const flagOf = (orderId: string) => one(`select needs_attention, attention_note from "order".orders where id = $1`, [orderId]);
+  const setFlag = (orderId: string, note: string) =>
+    testPool().query(`update "order".orders set needs_attention = true, attention_note = $2 where id = $1`, [orderId, note]);
+  /** Đơn một món mang mã lạ `raw` (adapter trả `status` null). */
+  const odd = (raw = 'something_new') => {
+    const o = remote();
+    o.rawStatus = raw;
+    o.lines[0]!.status = null;
+    o.lines[0]!.rawStatus = raw;
+    return o;
+  };
+  const known = (o: PlatformOrder, status: 'pending' | 'packed' = 'packed'): PlatformOrder => ({
+    ...o,
+    rawStatus: status,
+    lines: o.lines.map((l) => ({ ...l, status, rawStatus: status })),
+  });
+
+  it('note mới kèm mã thô; lượt sau mọi món đã biết thì gỡ cờ, xoá note', async () => {
+    const o = odd();
+    const { orderId } = await ingest(o);
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn trả trạng thái app chưa biết: something_new' });
+
+    await ingest(known(o));
+
+    expect(await flagOf(orderId)).toEqual({ needs_attention: false, attention_note: null });
+  });
+
+  it('note cũ không mã (dữ liệu trước #358) cũng được gỡ', async () => {
+    const o = odd();
+    const { orderId } = await ingest(o);
+    await setFlag(orderId, OLD_NOTE);
+
+    await ingest(known(o));
+
+    expect(await flagOf(orderId)).toEqual({ needs_attention: false, attention_note: null });
+  });
+
+  it('note của luồng khác (yêu cầu trả) giữ nguyên', async () => {
+    const o = remote();
+    const { orderId } = await ingest(o);
+    const note = 'Yêu cầu trả YCT-000001: kiện chưa ở trạng thái đã giao, đối chiếu với sàn';
+    await setFlag(orderId, note);
+
+    await ingest(known(o));
+
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: note });
+  });
+
+  it('còn món mã lạ thì giữ cờ; mã món đổi mà trạng thái đơn không đổi vẫn ghi lại note', async () => {
+    const o = odd();
+    const { orderId } = await ingest(o);
+
+    // Trạng thái thô của đơn giữ nguyên nên chỉ vế note "chưa biết" đổi lý do làm đơn `dirty`.
+    await ingest({ ...o, lines: o.lines.map((l) => ({ ...l, rawStatus: 'other_new' })) });
+
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn trả trạng thái app chưa biết: other_new' });
+  });
+
+  it('cùng lượt sàn chia lại kiện: giữ cờ, note thành note chia lại kiện', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 2 });
+    const free = { ...o, lines: o.lines.map((l) => ({ ...l, packageCode: null })) };
+    const { orderId, packageId } = await ingestIn(v.companyId, free);
+    await splitByHand(packageId, free.lines[1]!.externalLineId);
+    await setFlag(orderId, OLD_NOTE);
+
+    const shared = `FP-CHUNG-${randomUUID().slice(0, 8)}`;
+    await ingestIn(v.companyId, { ...free, lines: free.lines.map((l) => ({ ...l, packageCode: shared })) });
+
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn chia lại kiện khác lần trước' });
+  });
+
+  it('cùng lượt sàn kéo lại kiện người dùng đã chuyển: giữ cờ, note thành note kéo lại', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v);
+    const { orderId, packageId } = await ingestIn(v.companyId, o);
+    await ingestIn(v.companyId, withStatus(o, 'in_transit'));
+    await ingestIn(v.companyId, withStatus(o, 'returning'));
+    // Lần chuyển gần nhất do người dùng (như kho chuyển hoàn tay), để sàn báo delivered là kéo lại (spec #238 §5.4).
+    await testPool().query(
+      `insert into core.state_transitions (company_id, entity_type, entity_id, from_state, to_state, action, source)
+       values ($1, 'packages', $2, 'in_transit', 'returning', 'return', 'user')`,
+      [v.companyId, packageId],
+    );
+    await setFlag(orderId, OLD_NOTE);
+
+    await ingestIn(v.companyId, withStatus(o, 'delivered'));
+
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn báo lại kiện đã thất lạc hoặc đang hoàn' });
   });
 });

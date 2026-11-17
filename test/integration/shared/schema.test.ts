@@ -116,7 +116,13 @@ describe('schema sau migration', () => {
   });
 
   // Cột tỉ lệ phần trăm (biên lãi) không phải tiền.
-  const PERCENT_COLUMNS = ['product.product_variants.min_margin_pct', 'channel.price_calculations.margin_pct'];
+  const PERCENT_COLUMNS = [
+    'product.product_variants.min_margin_pct',
+    'channel.price_calculations.margin_pct',
+    'channel.price_calculations.fee_pct',
+    'channel.price_calculations.tax_pct',
+    'channel.price_calculations.min_margin_pct',
+  ];
 
   it('mọi cột numeric là numeric(18,2), trừ cột tỉ lệ phần trăm', async () => {
     const res = await testPool().query<{ col: string; p: number | null; s: number | null }>(

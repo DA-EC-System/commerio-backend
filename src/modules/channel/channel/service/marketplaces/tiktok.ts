@@ -17,6 +17,7 @@ import {
   type ShopCapabilities,
   type ShopConnection,
   type TokenSet,
+  type ContentRevision,
 } from './common.ts';
 import { logger } from '../../../../../shared/logger.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
@@ -38,12 +39,14 @@ const AUTHORIZE_URL = 'https://services.tiktokshop.com/open/authorize';
  * Documents/21 §18.4, tich-hop-san/tiktok.md §2: sản phẩm mới qua duyệt (`PENDING`), ẩn bằng
  * `POST /product/202309/products/deactivate`, VN chỉ tách kiện theo SKU, hết hạn trả khi đơn sang `COMPLETED`.
  */
-const TIKTOK_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' };
+const TIKTOK_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'zero_stock', splitLevel: 'sku', returnWindow: 'platform_status' };
 
 // Search Products 202502: `page_size` 1–100; `seller_skus` tối đa 10 (mã 12019027); tổng kết quả không quá 10000
 // (mã 12052180). docv2 search-products-202502, tra 06/11/2026; bản mới nhất trên docv2 ngày đó là 202502.
 const PRODUCT_PAGE = 100;
 const SELLER_SKU_BATCH = 10;
+/** Get Product khi không còn bản sửa đang duyệt: "no version is currently under review" (gọi thật 17/11/2026, #293). */
+const NO_REVISION_CODE = '12052547';
 const MAX_PRODUCTS = 10_000;
 // Một lần lật quá số trang này là sàn trả con trỏ lặp: dừng, không lặp vô hạn.
 const MAX_PAGES = MAX_PRODUCTS / PRODUCT_PAGE + 5;
@@ -462,12 +465,32 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return out.map((s) => (reasons.get(s.externalProductId) ? { ...s, rejectReason: reasons.get(s.externalProductId)! } : s));
   }
 
+  /**
+   * Bản sửa nội dung đang duyệt (#293): Get Product 202309 `return_under_review_version=true`. Không còn bản đang duyệt
+   * thì sàn trả 12052547 (gọi thật 17/11/2026), tức bản sửa đã qua duyệt và thành bản đang bán.
+   */
+  async function contentRevision(accessToken: string, productId: string): Promise<ContentRevision> {
+    try {
+      const detail = await client.call<Row>('GET', `/product/202309/products/${encodeURIComponent(productId)}`, {
+        token: accessToken,
+        query: { return_under_review_version: 'true' },
+      });
+      const status = (detail?.audit as Row | undefined)?.status;
+      if (status === 'FAILED') return { state: 'failed', reason: tiktokAuditReason(detail) };
+      return status === 'AUDITING' || status === 'PRE_APPROVED' ? { state: 'auditing' } : { state: 'approved' };
+    } catch (err) {
+      if (err instanceof MarketplaceError && err.platformCode === NO_REVISION_CODE) return { state: 'approved' };
+      throw err;
+    }
+  }
+
   /** SKU còn trên sàn (bỏ `deleted`) theo `seller_sku`, cho `createProduct` không tạo trùng. */
   const findSku = async (accessToken: string, sellerSku: string) => existingSku(await getSkus(accessToken, [sellerSku]), sellerSku);
 
   return {
     name: 'TikTok Shop',
     capabilities: TIKTOK_CAPABILITIES,
+    togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.
       return oauthReady ? ['oauth', 'token'] : client.hasCredentials ? ['token'] : [];
@@ -512,6 +535,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     },
     countRemote,
     getSkus,
+    contentRevision,
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client, { findSku }),
     ...tiktokReturnMethods(client),

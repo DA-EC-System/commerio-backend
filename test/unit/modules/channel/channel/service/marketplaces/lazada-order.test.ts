@@ -72,6 +72,8 @@ describe('Lazada: trạng thái món → trạng thái kiện (#105 A3)', () => 
     ['shipped', 'in_transit'],
     ['shipping', 'in_transit'],
     ['delivered', 'delivered'],
+    // Khách bấm "Đã nhận hàng" hoặc hết hạn bảo đảm (#358): sàn đã giao, tính như delivered.
+    ['confirmed', 'delivered'],
     ['failed_delivery', 'delivery_failed'],
     ['failed', 'delivery_failed'],
     ['shipped_back', 'returning'],
@@ -233,6 +235,28 @@ describe('Lazada: kéo đơn (#105)', () => {
     expect(info[5]!.returnStatus).toBe('refund_success');
     expect(o.lines[8]!.shipping.promisedShippingAt).toEqual(new Date('2026-11-06T16:59:02Z'));
     expect(info[8]!.paidPrice).toBeNull();
+  });
+
+  it('món confirmed là đã giao; đơn lẫn món returned (khách trả sau nhận) giữ cả hai mã thô (#358)', async () => {
+    // Dựng theo đơn thật 530740223180318 của shop thử (17/11/2026): một mã kiện, 2 món returned + 2 món confirmed.
+    const lines = [
+      { ...item, order_item_id: 1, status: 'returned', cancel_return_initiator: 'buyer-return', reverse_order_id: 708845742680318 },
+      { ...item, order_item_id: 2, status: 'returned', cancel_return_initiator: 'buyer-return', reverse_order_id: 708845742680318 },
+      { ...item, order_item_id: 3, status: 'confirmed' },
+      { ...item, order_item_id: 4, status: 'confirmed' },
+    ];
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: '0', data: { ...order, statuses: ['returned', 'confirmed'] } }))
+      .mockResolvedValueOnce(json({ code: '0', data: lines }));
+    const o = await createLazadaAdapter(config, fn).getOrder!('t', '1');
+    expect(o.rawStatus).toBe('returned,confirmed');
+    expect(o.lines.map((l) => [l.rawStatus, l.status])).toEqual([
+      ['returned', 'returned'],
+      ['returned', 'returned'],
+      ['confirmed', 'delivered'],
+      ['confirmed', 'delivered'],
+    ]);
   });
 
   it('đơn chưa trả: paid false; khách xin huỷ: cancelRequested', async () => {

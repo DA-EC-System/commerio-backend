@@ -21,7 +21,11 @@ export type ListingAction =
   | 'release'
   | 'hide'
   | 'unhide'
-  | 'delist';
+  | 'outside_hold'
+  | 'outside_resolve'
+  | 'delist'
+  | 'update_content'
+  | 'request_review';
 
 const manage = 'channel.listing.manage';
 
@@ -38,6 +42,13 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   { from: 'platform_hold', to: 'live', action: 'release', system: true },
   { from: 'live', to: 'hidden', action: 'hide', system: true },
   { from: 'hidden', to: 'live', action: 'unhide', system: true },
+  // Sàn đổi listing ngoài app (#360, 21 §18.3): lượt đồng bộ dừng bán, CEO quyết (route kiểm vai trò CEO).
+  { from: 'live', to: 'hidden', action: 'outside_hold', system: true },
+  { from: 'hidden', to: 'live', action: 'outside_resolve', permission: manage },
+  // Sửa nội dung (#293): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa đang duyệt; sàn ngừng bán để duyệt thì hệ thống
+  // chuyển tiếp `request_review` (ca C2-21).
+  { from: 'live', to: 'live', action: 'update_content', permission: manage },
+  { from: 'live', to: 'under_review', action: 'request_review', system: true },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
   {
     from: ['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'],
@@ -55,7 +66,7 @@ export const DELETABLE: readonly ListingStatus[] = ['under_review', 'live', 'hid
 
 /**
  * Thao tác của sàn cần áp khi đồng bộ, null khi không đổi. Sàn xoá sản phẩm → `delist` (25 §6.4 "gỡ trên sàn (sàn báo
- * về)"); sàn tắt sản phẩm ngoài app chưa có mũi tên trên sơ đồ C2 nên để nguyên.
+ * về)"); sàn tắt listing đang `live` → `outside_hold` (#360). Listing `hidden` mà sàn tắt là do chính app tắt: giữ nguyên.
  */
 export function syncAction(status: ListingStatus, remote: RemoteState): ListingAction | null {
   if (remote === 'deleted') return DELETABLE.includes(status) ? 'delist' : null;
@@ -63,6 +74,18 @@ export function syncAction(status: ListingStatus, remote: RemoteState): ListingA
   if (status === 'under_review' && remote === 'rejected') return 'reject';
   if ((status === 'live' || status === 'hidden') && remote === 'hold') return 'hold';
   if (status === 'platform_hold' && remote === 'live') return 'release';
+  if (status === 'live' && remote === 'inactive') return 'outside_hold';
+  return null;
+}
+
+/**
+ * Ẩn, hiện theo trạng thái SKU (#224, 25 §6.4), so mỗi lượt nên sàn lỗi thì lượt sau làm lại: SKU tạm ngừng mà listing
+ * `live` (kể cả vừa được sàn duyệt, E25) → `hide`; SKU hết tạm ngừng mà listing `hidden` do app ẩn (`appHidden`: lần vào
+ * `hidden` gần nhất là `hide`) → `unhide`. Listing ẩn vì lý do khác (nối lại gian hàng khi sàn đang tắt) giữ nguyên.
+ */
+export function visibilityAction(status: ListingStatus, paused: boolean, appHidden: boolean): ListingAction | null {
+  if (status === 'live' && paused) return 'hide';
+  if (status === 'hidden' && !paused && appHidden) return 'unhide';
   return null;
 }
 
@@ -101,6 +124,15 @@ export const NO_PENDING = {
   pendingExternalProductId: null,
   pendingSellerSku: null,
 } as const;
+/** Bỏ dấu "sàn đổi ngoài app" (#360; CHECK `listings_outside_change`: ba cột cùng rỗng khi rời `hidden`). */
+export const NO_OUTSIDE_CHANGE = { outsideChangeKind: null, outsideChangePrice: null, outsideChangeAt: null } as const;
+
+/** Trạng thái còn giữ bản sửa nội dung chờ sàn duyệt (#293): sàn vẫn duyệt bản sửa trong lúc ẩn hay khoá. */
+export const REVISION_KEPT: readonly ListingStatus[] = ['live', 'hidden', 'platform_hold'];
+export const NO_REVISION = { revisionStatus: null, revisionRejectReason: null, revisionAt: null } as const;
+
+/** Lý do khi sàn từ chối (sản phẩm hay bản sửa nội dung) mà không ghi câu nào. */
+export const NO_REASON = 'Sàn từ chối, không ghi lý do';
 /** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
 export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
 /** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */

@@ -157,7 +157,7 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
       [c.companyId, randomUUID()],
     );
     const setup = (id: string, body: object) =>
-      request(testApp()).post(`/api/v1/channel/shops/${id}/setup`).set('Authorization', `Bearer ${c.ceo.token}`).send(body);
+      request(testApp()).post(`/api/v1/channel/shops/${id}/setup`).set('Authorization', `Bearer ${c.ceo.token}`).send({ returnWindowDays: 7, ...body });
     expect((await setup(ok, { openingStock: 'push' })).status).toBe(200);
     // Thiết lập lỗi: cổng kiểm kê ném lỗi thì rollback, không xếp việc
     setStocktakePort({

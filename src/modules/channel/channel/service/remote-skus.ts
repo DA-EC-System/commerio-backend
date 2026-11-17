@@ -1,6 +1,7 @@
 // Bản sao SKU sàn của gian hàng (#220 đợt 2; Documents/21 §18.3 "SKU đang có trên sàn, đọc từ lần đồng bộ gần nhất").
 // Trang ghép, kiểm SKU khi ghép và số SKU chưa ghép đọc bảng `remote_skus`, không gọi sàn mỗi lần mở trang. Làm mới:
-// - đọc trọn (`listSkus` có nhãn): thiết lập, nút Tải lại, lần mở trang đầu tiên, và mỗi ngày một lần;
+// - đọc trọn (`listSkus` có nhãn): thiết lập, nút Tải lại và lần mở trang đầu tiên (chạy nền, việc
+//   `channel.remote_skus_refresh`, #361), và mỗi ngày một lần;
 // - đọc sản phẩm sửa từ lần trước (`listSkusChanged`): sau lượt `channel.listing_sync` (15 phút), tối đa mỗi giờ một lần
 //   (review #309 vòng 2 N2, `CHANGED_EVERY_MS`).
 // Số lời gọi Lazada mỗi gian hàng mỗi ngày: 24 lượt theo giờ sửa × 1 trang (≤ 50 sản phẩm sửa trong một giờ) + 1 lần đọc
@@ -13,8 +14,11 @@
 // `reserveCall`); hết hạn mức thì `daily_call_limit` như mọi lời gọi khác.
 import { withCompany, withSessionLock } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { findShopRow } from '../repository/shops.ts';
+import type { JobAttempt } from '../../../core/index.ts';
+import { findShopRow, type ShopRow } from '../repository/shops.ts';
 import {
+  clearRefreshRequested,
+  markRefreshRequested,
   countRemoteSkusSeenSince,
   dropRemoteSkusNotSeen,
   markRemoteSkus,
@@ -22,8 +26,11 @@ import {
   recordManualReadFailure,
   upsertRemoteSkus,
 } from '../repository/remote-skus.ts';
+import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
+import { asManual } from './marketplaces/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { sendRemoteSkusRefresh } from './shop-jobs.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 /** Bấm Tải lại trong khoảng này sau lần đọc trọn trước thì trả bản sao, không gọi sàn. */
@@ -34,8 +41,6 @@ export const FULL_REFRESH_EVERY_MS = 24 * 3600_000;
 export const CHANGED_EVERY_MS = 3600_000;
 /** Lùi mốc đọc theo giờ sửa, như kéo đơn: giờ của sàn và của app lệch nhau, sàn ghi giờ sửa trễ. */
 const CHANGED_LAG_MS = 2 * 60_000;
-/** Tải lại trong khoảng này sau lần đọc trọn lỗi gần nhất thì 429 kèm `Retry-After` (review #309 vòng 4 B2). */
-export const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
 
 /** 429 `remote_skus_retry_later`; route đặt header `Retry-After` theo `retryAfterSeconds`. */
 export class RemoteSkusRetryLater extends AppError {
@@ -47,9 +52,6 @@ export class RemoteSkusRetryLater extends AppError {
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
-/** Chờ lượt làm mới khác của cùng gian hàng (Tải lại trong request). */
-const LOCK_WAIT_MS = 30_000;
-
 const lockKey = (shopId: string) => `channel.remote_skus:${shopId}`;
 
 /**
@@ -74,39 +76,25 @@ export async function saveFullSnapshot(shopId: string, skus: readonly RemoteSku[
 }
 
 /**
- * Đọc trọn ngay (Tải lại, lần mở trang đầu). `cooldown`: lần đọc trọn trước còn trong `REFRESH_COOLDOWN_MS` thì thôi.
- * Lần đọc trọn lỗi gần nhất (định kỳ hay Tải lại) còn trong `RETRY_AFTER_FAILURE_MS` thì 429 `remote_skus_retry_later`
- * kèm số giây chờ, không gọi sàn; không chờ mốc giãn của lượt định kỳ.
- * Lượt khác đang làm mới thì chờ nó xong rồi dùng kết quả. Lỗi sàn ném như mọi lời gọi sàn trong request.
+ * Xếp lượt Tải lại chạy nền (#361; Documents/21 §18.3): đánh dấu lượt chờ và xếp `channel.remote_skus_refresh` cùng giao
+ * dịch của bên gọi (gọi trong `withCompany`; rollback thì không còn việc). Gian hàng không gọi được sàn (ngắt, mất token):
+ * 409 `shop_not_connected`, không xếp. Đã có việc chờ cùng gian hàng thì pg-boss không thêm (`stately`). Trả lúc đánh dấu.
  */
-export async function refreshRemoteSkusNow(companyId: string, shopId: string, opts: { cooldown: boolean }): Promise<void> {
-  const result = await withSessionLock(
-    lockKey(shopId),
-    async () => {
-      const shop = await withCompany(companyId, () => findShopRow(shopId));
-      const last = shop?.remoteSkusSyncedAt?.getTime();
-      if (last !== undefined && (opts.cooldown ? Date.now() - last < REFRESH_COOLDOWN_MS : true)) return;
-      const failedAt = shop?.remoteSkusFullFailedAt?.getTime();
-      if (failedAt !== undefined && Date.now() - failedAt < RETRY_AFTER_FAILURE_MS) {
-        throw new RemoteSkusRetryLater(Math.ceil((failedAt + RETRY_AFTER_FAILURE_MS - Date.now()) / 1000));
-      }
-      try {
-        await readFull(companyId, shopId);
-      } catch (err) {
-        await withCompany(companyId, () => recordManualReadFailure(shopId));
-        throw err;
-      }
-    },
-    { waitMs: LOCK_WAIT_MS },
-  );
-  if (result === 'busy') throw new AppError(503, 'remote_skus_busy', 'Đang tải danh sách SKU trên sàn, thử lại sau ít phút');
+export async function requestRemoteSkusRefresh(shop: ShopRow): Promise<Date> {
+  if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
+    throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+  }
+  const at = new Date();
+  await markRefreshRequested(shop.id, at);
+  await sendRemoteSkusRefresh(shop.companyId, shop.id);
+  return at;
 }
 
 /**
  * Lượt định kỳ sau `channel.listing_sync`: chưa có bản sao hoặc lần đọc trọn quá `FULL_REFRESH_EVERY_MS` thì đọc trọn,
  * lần đọc trước (trọn hay theo giờ sửa) chưa quá `CHANGED_EVERY_MS` thì thôi, không thì đọc sản phẩm sửa từ mốc.
  * Đọc trọn lỗi thì ghi mốc thử lại vào `shops` (1 giờ, 2 giờ, … tối đa 24 giờ; review vòng 3 R1): tới mốc mới đọc trọn
- * lại, giữa chừng vẫn đọc theo giờ sửa. Tải lại (`refreshRemoteSkusNow`) không chờ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
+ * lại, giữa chừng vẫn đọc theo giờ sửa. Tải lại (`runRemoteSkusRefresh`) không chờ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
  */
 export async function refreshRemoteSkusQuietly(companyId: string, shopId: string): Promise<void> {
   try {
@@ -121,21 +109,16 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
         try {
           return await readFull(companyId, shopId);
         } catch (err) {
-          await withCompany(companyId, () => recordFullReadFailure(shopId));
+          await withCompany(companyId, () => recordFullReadFailure(shopId, fullErrorOf(err)));
           throw err;
         }
       }
       // Đọc trọn đang chờ mốc thử lại: vẫn đọc theo giờ sửa nếu đã có bản sao.
       if (synced === undefined || !since) return;
       if (Date.now() - since.getTime() < CHANGED_EVERY_MS) return;
-      const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
-      if (!adapter.listSkusChanged) return readFull(companyId, shopId);
-      const startedAt = new Date();
-      const changed = await onMarketplace(() => adapter.listSkusChanged!(accessToken, new Date(since.getTime() - CHANGED_LAG_MS)));
-      await withCompany(companyId, async () => {
-        await upsertRemoteSkus(shopId, changed, startedAt);
-        await markRemoteSkus(shopId, { changedSince: startedAt });
-      });
+      const session = await withCompany(companyId, () => shopSession(shopId));
+      if (!session.adapter.listSkusChanged) return readFull(companyId, shopId, session);
+      await readChanged(companyId, shop, session);
     });
   } catch (err) {
     logger.warn(
@@ -145,10 +128,97 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
   }
 }
 
-async function readFull(companyId: string, shopId: string): Promise<void> {
-  const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
+/**
+ * Lỗi của lần đọc trọn để lưu ở `shops.remote_skus_full_error` (#361): mã app, mã sàn, câu của BE. Không chép câu thô của
+ * sàn hay lỗi không rõ (có thể mang URL ký, token).
+ */
+export function fullErrorOf(err: unknown): RemoteSkusFullError {
+  if (err instanceof AppError) {
+    const platformCode = err.extensions?.platformCode;
+    return { code: err.code, platformCode: typeof platformCode === 'string' ? platformCode : null, message: err.message };
+  }
+  return { code: 'internal_error', platformCode: null, message: 'Lỗi không rõ khi tải danh sách SKU trên sàn' };
+}
+
+/** Lỗi không nên thử lại trong cùng lượt Tải lại: ghi lỗi ngay (#361 A5). */
+const FINAL_CODES = new Set(['marketplace_unauthorized', 'marketplace_unsupported', 'shop_not_connected', 'not_found']);
+const FINAL_PLATFORM_CODES = new Set(['daily_call_limit', 'company_call_limit']);
+const retryable = (err: unknown): boolean => {
+  if (!(err instanceof AppError)) return true;
+  const { code, platformCode } = fullErrorOf(err);
+  return !FINAL_CODES.has(code) && !(platformCode && FINAL_PLATFORM_CODES.has(platformCode));
+};
+
+/** Chờ lượt làm mới khác của cùng gian hàng trong việc nền Tải lại; hết hạn thì ném để pg-boss chạy lại. */
+const REFRESH_LOCK_WAIT_MS = 5 * 60_000;
+
+/**
+ * Việc nền `channel.remote_skus_refresh` (#361; Documents/21 §18.3): lượt Tải lại xếp từ `POST remote-skus/refresh` hoặc lần
+ * mở trang ghép đầu tiên. Trong khoá phiên của bản sao:
+ * - không còn lượt chờ (`remote_skus_refresh_requested_at` null), hoặc lượt định kỳ đã đọc trọn sau lúc bấm: xoá lượt chờ,
+ *   không gọi sàn;
+ * - đã có bản sao và sàn đọc được theo giờ sửa: đọc sản phẩm sửa từ mốc trước (một lời gọi thường đủ), lưu, để SKU vừa tạo
+ *   trên sàn ghép được kể cả khi lần đọc trọn sau đó lỗi (shop thử dùng chung hay trả `incomplete_list`);
+ * - đọc trọn, lưu, xoá lượt chờ, ghi log thời gian để đo trên staging.
+ * Lời gọi sàn tính hạn mức như bấm tay (`asManual`, dừng ở 90%). Lỗi: lần cuối, hoặc lỗi không nên thử lại (mất token, ngắt,
+ * hết hạn mức) thì ghi giờ lỗi, mã lỗi, xoá lượt chờ và không ném; còn lại ném để pg-boss chạy lại sau 30 giây.
+ */
+export async function runRemoteSkusRefresh(job: { companyId: string; shopId: string }, attempt: JobAttempt): Promise<void> {
+  const { companyId, shopId } = job;
+  const result = await withSessionLock(
+    lockKey(shopId),
+    async () => {
+      const shop = await withCompany(companyId, () => findShopRow(shopId));
+      const requestedAt = shop?.remoteSkusRefreshRequestedAt;
+      if (!shop || !requestedAt) return;
+      if (shop.remoteSkusSyncedAt && shop.remoteSkusSyncedAt.getTime() >= requestedAt.getTime()) {
+        await withCompany(companyId, () => clearRefreshRequested(shopId));
+        return;
+      }
+      try {
+        const { ms, skus } = await asManual(async () => {
+          const session = await withCompany(companyId, () => shopSession(shopId));
+          await readChanged(companyId, shop, session);
+          return readFull(companyId, shopId, session);
+        });
+        await withCompany(companyId, () => clearRefreshRequested(shopId));
+        logger.info({ shopId, ms, skus, attempt: attempt.attempt }, 'remote_skus_refresh xong');
+      } catch (err) {
+        if (!attempt.lastAttempt && retryable(err)) throw err;
+        const error = fullErrorOf(err);
+        await withCompany(companyId, () => recordManualReadFailure(shopId, error));
+        logger.warn(
+          { shopId, code: error.code, platformCode: error.platformCode, attempt: attempt.attempt, err: err instanceof AppError ? undefined : err },
+          'remote_skus_refresh lỗi',
+        );
+      }
+    },
+    { waitMs: REFRESH_LOCK_WAIT_MS },
+  );
+  if (result === 'busy') throw new Error('Lượt làm mới bản sao SKU sàn khác của gian hàng đang chạy');
+}
+
+type Session = Awaited<ReturnType<typeof shopSession>>;
+
+/** Đọc sản phẩm sửa từ `remote_skus_changed_since` trừ 2 phút rồi lưu; chưa có bản sao hay sàn không có thì thôi. */
+async function readChanged(companyId: string, shop: ShopRow, { adapter, accessToken }: Session): Promise<void> {
+  const since = shop.remoteSkusChangedSince;
+  if (!shop.remoteSkusSyncedAt || !since || !adapter.listSkusChanged) return;
+  const startedAt = new Date();
+  const changed = await onMarketplace(() => adapter.listSkusChanged!(accessToken, new Date(since.getTime() - CHANGED_LAG_MS)));
+  await withCompany(companyId, async () => {
+    await upsertRemoteSkus(shop.id, changed, startedAt);
+    await markRemoteSkus(shop.id, { changedSince: startedAt });
+  });
+}
+
+/** Đọc trọn rồi lưu bản sao; trả thời gian gọi sàn và số SKU sàn trả. */
+async function readFull(companyId: string, shopId: string, session?: Session): Promise<{ ms: number; skus: number }> {
+  const { adapter, accessToken } = session ?? (await withCompany(companyId, () => shopSession(shopId)));
   if (!adapter.listSkus) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa đọc được danh sách SKU của gian hàng');
   const startedAt = new Date();
   const skus = await onMarketplace(() => adapter.listSkus!(accessToken, { labels: true }));
+  const ms = Date.now() - startedAt.getTime();
   await withCompany(companyId, () => saveFullSnapshot(shopId, skus, startedAt));
+  return { ms, skus: skus.length };
 }

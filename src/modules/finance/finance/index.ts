@@ -14,6 +14,8 @@ export const financeModule: ModuleDefinition = {
 
 // Sổ tiền (#116) chọn phiên bản cấu hình theo ngày kiện giao.
 export { getEffectiveConfig } from './service/config-versions.ts';
+// Bộ lọc giá theo gian hàng của channel (#225) đọc phí, thuế, lãi tối thiểu đang áp dụng.
+export { type ConfigPayload, feePctOf, feeRoundingOf, vnDate } from './domain/config-version.ts';
 // Loại khoản trong sổ: adapter sàn của channel điền `kind` cho khoản quyết toán (#203).
 export { LEDGER_KINDS, type LedgerKind } from './domain/ledger.ts';
 // Ghi sổ theo sự kiện (#116, Documents/21 §11.2); consumer `finance-ledger` đăng ký ở startFinanceBackground (#228).
@@ -25,6 +27,7 @@ export {
   recordReturnInspected,
   recordReturnRefunded,
   recordSupplierReturnRefunded,
+  recordGoodsReceiptPosted,
   type ReturnInspected,
   type ReturnRefunded,
   type SupplierReturnRefunded,

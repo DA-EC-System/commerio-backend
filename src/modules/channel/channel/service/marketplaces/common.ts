@@ -3,6 +3,7 @@
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
+import type { ResponsibleOrg } from '../../../../core/index.ts';
 
 export type { ShopCapabilities };
 
@@ -61,7 +62,12 @@ export interface CategoryAttribute {
   name: string;
   label: string;
   options: string[];
+  /** Thuộc tính sàn điền từ hồ sơ công ty (#292); service đổi thành `defaultValue`, lúc đẩy lấy `NewProduct.responsible`. */
+  prefill?: keyof Responsible;
 }
+
+/** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
+export type Responsible = ResponsibleOrg;
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
@@ -98,7 +104,21 @@ export interface NewProduct {
    * TikTok gửi làm `idempotency_key`; sàn không có khoá (Lazada tra theo SellerSku) thì bỏ qua.
    */
   idempotencyKey?: string;
+  /** Điền thuộc tính có `prefill` mà `attributes` không có giá trị (#292). */
+  responsible?: Responsible;
 }
+
+/** Nội dung đưa lên sản phẩm đang bán (#293): dựng từ catalog như lúc đẩy, không gồm ảnh, SKU, giá, tồn. */
+export interface ContentUpdate {
+  externalCategoryId: string;
+  name: string;
+  description: string;
+  attributes: Record<string, string>;
+  responsible?: Responsible;
+}
+
+/** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */
+export type ContentRevision = { state: 'auditing' | 'approved' } | { state: 'failed'; reason: string | null };
 
 export interface CreatedProduct {
   externalProductId: string;
@@ -362,6 +382,13 @@ export interface SplitAttributes {
  */
 export const PROMOTION_LOCKED = 'promotion_locked';
 
+/**
+ * Mã của bước kiểm trước khi tạo sản phẩm (#305, Documents/21 §18.6.4): `createProduct` ném `rejected` với `platformCode`
+ * là một trong hai mã, câu của sàn trong `platformMessage`; việc đẩy ghi nguyên mã vào `pushError.code`.
+ * `shop_not_eligible`: gian hàng chưa đủ điều kiện đăng bán; `listing_check_failed`: sản phẩm sai luật của sàn.
+ */
+export const PRECHECK_CODES: ReadonlySet<string> = new Set(['shop_not_eligible', 'listing_check_failed']);
+
 export type PartResult = { ok: true } | { ok: false; code: string; message: string };
 
 /**
@@ -467,6 +494,14 @@ export interface MarketplaceAdapter {
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
   /**
+   * Sửa nội dung sản phẩm đang bán (`update_content`, #293). Sản phẩm sàn nhiều SKU thì ném `rejected`
+   * `shared_remote_product`, danh mục sàn khác `externalCategoryId` thì `category_mismatch`. `underReview`: sàn ngừng bán
+   * bản cũ để duyệt; false là vẫn bán bản cũ trong lúc duyệt bản sửa. Sàn chưa hỗ trợ thì không có hàm này.
+   */
+  updateContent?(accessToken: string, externalProductId: string, content: ContentUpdate): Promise<{ underReview: boolean }>;
+  /** Trạng thái bản sửa nội dung đang duyệt (#293), đồng bộ đọc cho listing có bản sửa `auditing`. */
+  contentRevision?(accessToken: string, externalProductId: string): Promise<ContentRevision>;
+  /**
    * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5) và lần đọc trọn của bản sao SKU sàn
    * (#220). Gian hàng quá giới hạn đọc của sàn thì ném `rejected`, không trả thiếu: số sản phẩm đọc được ít hơn tổng sàn
    * báo (trang thiếu, trang rỗng giữa chừng) thì `incomplete_list`, phản hồi thành công mà không có danh sách thì
@@ -499,8 +534,16 @@ export interface MarketplaceAdapter {
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;
-  /** Tắt (ẩn) sản phẩm trên sàn. Sàn tắt theo cả sản phẩm (TikTok) thì mọi SKU của sản phẩm cùng ẩn. */
+  /**
+   * Tắt (ẩn) sản phẩm trên sàn. Sàn tắt theo cả sản phẩm (TikTok) thì mọi SKU của sản phẩm cùng ẩn. Sản phẩm đã tắt sẵn
+   * thì coi là xong, không ném (#359).
+   */
   deactivate(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
+  /**
+   * Sàn chỉ tắt, bật theo cả sản phẩm, không riêng SKU (TikTok; #224 phần 2). Nội bộ, không thuộc `capabilities` của
+   * hợp đồng API. Không khai là tắt theo SKU.
+   */
+  togglesByProduct?: boolean;
   /**
    * Hiện lại sản phẩm đã tắt (#224, `hideBy = 'deactivate'`). Sàn có thể đưa sản phẩm vào duyệt lại (TikTok về `PENDING`);
    * trạng thái về qua lần đồng bộ. Sàn chưa có thì không có hàm này.

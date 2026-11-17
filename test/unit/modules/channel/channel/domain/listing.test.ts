@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { type ListingAction, type ListingStatus, listingMachine, stockDecision, syncAction } from '#src/modules/channel/channel/domain/listing.ts';
+import { type ListingAction, type ListingStatus, listingMachine, stockDecision, syncAction, visibilityAction } from '#src/modules/channel/channel/domain/listing.ts';
 
 describe('syncAction: trạng thái trên sàn → thao tác', () => {
   it.each([
@@ -12,8 +12,11 @@ describe('syncAction: trạng thái trên sàn → thao tác', () => {
     ['platform_hold', 'live', 'release'],
     ['platform_hold', 'hold', null],
     ['live', 'live', null],
-    // Sàn tắt sản phẩm ngoài app: chưa có mũi tên trên sơ đồ, để nguyên.
-    ['live', 'inactive', null],
+    // Sàn tắt ngoài app (#360, 21 §18.3 `outside_hold`); listing app đã ẩn (sàn tắt do chính app) giữ nguyên.
+    ['live', 'inactive', 'outside_hold'],
+    ['hidden', 'inactive', null],
+    ['under_review', 'inactive', null],
+    ['platform_hold', 'inactive', null],
     ['rejected', 'live', null],
   ] as const)('%s + sàn %s → %s', (status, remote, action) => {
     expect(syncAction(status, remote)).toBe(action);
@@ -45,6 +48,8 @@ const ALL: ListingAction[] = [
   'hide',
   'unhide',
   'delist',
+  'update_content',
+  'request_review',
 ];
 
 describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
@@ -112,6 +117,26 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
     },
   );
 
+  it('C2-22, C2-23, C2-22q: live → update_content giữ live (người có quyền); sàn ngừng bán bản cũ thì hệ thống request_review → under_review', () => {
+    expect(assertTransition(listingMachine, 'live', 'update_content', { actor: staff }).to).toBe('live');
+    expect(() => assertTransition(listingMachine, 'live', 'update_content', { actor: { ...staff, permissions: [] } })).toThrow(
+      expect.objectContaining({ status: 403 }),
+    );
+    expect(assertTransition(listingMachine, 'live', 'request_review', { actor: null }).to).toBe('under_review');
+    expect(() => assertTransition(listingMachine, 'live', 'request_review', { actor: staff })).toThrow(
+      expect.objectContaining({ code: 'invalid_transition' }),
+    );
+  });
+
+  it.each(['pushing', 'push_failed', 'under_review', 'rejected', 'hidden', 'platform_hold'] as const)(
+    'C2-X: %s → update_content → 409 (#293)',
+    (from) => {
+      expect(() => assertTransition(listingMachine, from, 'update_content', { actor: staff })).toThrow(
+        expect.objectContaining({ status: 409, code: 'invalid_transition' }),
+      );
+    },
+  );
+
   it('C2-X05: đang đẩy không gỡ được', () => {
     expect(() => assertTransition(listingMachine, 'pushing', 'delist', { actor: staff })).toThrow(
       expect.objectContaining({ code: 'invalid_transition' }),
@@ -134,5 +159,52 @@ describe('stockDecision: đối chiếu tồn sàn với số có thể bán (25
     ['error', 3, 3, 5, 'drift'],
   ] as const)('%s, platform_stock %s, sàn %i, app %i → %s', (stockSync, platformStock, remote, available, expected) => {
     expect(stockDecision({ stockSync, platformStock }, remote, available)).toBe(expected);
+  });
+});
+
+describe('ẩn, hiện theo trạng thái SKU (#224, 25 §6.4, ca C2-13, C2-14)', () => {
+  it('C2-13, C2-14: chỉ hệ thống chuyển', () => {
+    expect(assertTransition(listingMachine, 'live', 'hide', { actor: null }).to).toBe('hidden');
+    expect(assertTransition(listingMachine, 'hidden', 'unhide', { actor: null }).to).toBe('live');
+  });
+
+  it.each([
+    ['live', 'hide'],
+    ['hidden', 'unhide'],
+  ] as const)('C2-13x, C2-14x: người dùng gọi %s → %s → 409 invalid_transition', (from, action) => {
+    expect(() => assertTransition(listingMachine, from, action, { actor: staff })).toThrow(
+      expect.objectContaining({ status: 409, code: 'invalid_transition' }),
+    );
+  });
+
+  it.each([
+    ['live', true, false, 'hide'],
+    ['live', false, false, null],
+    ['hidden', false, true, 'unhide'],
+    // Ẩn không do app (nối lại gian hàng khi sàn đang tắt): bỏ tạm ngừng không đưa về live (25 §6.4).
+    ['hidden', false, false, null],
+    ['hidden', true, true, null],
+    // E25: chưa live thì chờ; lượt sàn duyệt (`approve`) xong mới ẩn.
+    ['under_review', true, false, null],
+    ['platform_hold', true, false, null],
+    ['pushing', true, false, null],
+  ] as const)('%s, tạm ngừng %s, app ẩn %s → %s', (status, paused, appHidden, action) => {
+    expect(visibilityAction(status, paused, appHidden)).toBe(action);
+  });
+});
+
+describe('sàn đổi listing ngoài app (#360, 21 §18.3)', () => {
+  it('outside_hold: chỉ sàn (hệ thống) chuyển live → hidden', () => {
+    expect(assertTransition(listingMachine, 'live', 'outside_hold', { actor: null }).to).toBe('hidden');
+    expect(() => assertTransition(listingMachine, 'live', 'outside_hold', { actor: staff })).toThrow(
+      expect.objectContaining({ status: 409, code: 'invalid_transition' }),
+    );
+  });
+
+  it('outside_resolve: người có listing.manage chuyển hidden → live (vai trò CEO kiểm ở route)', () => {
+    expect(assertTransition(listingMachine, 'hidden', 'outside_resolve', { actor: staff }).to).toBe('live');
+    expect(() => assertTransition(listingMachine, 'live', 'outside_resolve', { actor: staff })).toThrow(
+      expect.objectContaining({ status: 409, code: 'invalid_transition' }),
+    );
   });
 });

@@ -130,6 +130,12 @@ const canonical = (v: unknown): string =>
 const sameInfo = (a: OrderInfo, b: OrderInfo) =>
   (Object.keys(a) as (keyof OrderInfo)[]).every((k) => canonical(a[k]) === canonical(b[k]));
 
+/**
+ * Note của cờ Cần xử lý khi sàn trả trạng thái món app chưa biết (#358). Note đầy đủ kèm mã thô (`<hằng>: <mã>`); dữ liệu
+ * trước #358 chỉ có hằng. Gỡ cờ so theo tiền tố này nên khớp cả hai dạng.
+ */
+const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
+
 const code = async (prefix: string, docType: string) => `${prefix}-${String(await takeNextNumber(docType)).padStart(6, '0')}`;
 
 const sum = (values: string[]) => values.reduce((a, v) => a.plus(v), new Decimal(0));
@@ -291,6 +297,22 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   next.cancelRequested = o.cancelRequested && next.status !== 'cancelled';
   // Sàn kéo lại kiện người dùng đã chuyển thất lạc/hoàn (spec #238 §5.4): bật cờ, đơn `completed` giữ trạng thái.
   if (packages.unknown || packages.resplit || packages.revived) next.needsAttention = true;
+  // #358: cờ do mã lạ tự gỡ khi lượt này sàn trả mọi món mã đã biết và không có lý do cờ nào khác của lượt (chia lại kiện,
+  // kéo lại kiện). Chỉ gỡ cờ mang note "chưa biết": cờ của luồng khác (yêu cầu trả...) giữ nguyên.
+  const ownNote = row.attentionNote?.startsWith(UNKNOWN_STATUS_NOTE) ?? false;
+  const unknownCodes = [...new Set(o.lines.filter((l) => l.status === null).map((l) => l.rawStatus))];
+  const clearUnknown = ownNote && !unknownCodes.length && !packages.resplit && !packages.revived;
+  if (clearUnknown) next.needsAttention = false;
+  // `undefined`: giữ note đã lưu; `null`: xoá note (chỉ khi gỡ cờ "chưa biết").
+  const attentionNote = packages.resplit
+    ? 'Sàn chia lại kiện khác lần trước'
+    : packages.revived
+      ? 'Sàn báo lại kiện đã thất lạc hoặc đang hoàn'
+      : packages.unknown
+        ? `${UNKNOWN_STATUS_NOTE}: ${unknownCodes.join(', ')}`
+        : clearUnknown
+          ? null
+          : undefined;
   next.rawMarketplaceStatus = o.rawStatus;
   next.shipBy = o.shipBy;
 
@@ -299,7 +321,10 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     next.status !== row.status ||
     storedFlags(next).join() !== storedFlags(row).join() ||
     next.rawMarketplaceStatus !== row.rawMarketplaceStatus ||
-    next.shipBy?.getTime() !== row.shipBy?.getTime();
+    next.shipBy?.getTime() !== row.shipBy?.getTime() ||
+    // Note "chưa biết" của chính luồng này đổi lý do (mã khác, chia lại kiện, kéo lại) dù cờ vẫn bật: ghi lại để lượt gỡ
+    // cờ sau không xoá mất lý do mới. Note của luồng khác chỉ bị ghi khi đơn có đổi khác như trước #358.
+    (ownNote && attentionNote !== undefined && attentionNote !== row.attentionNote);
   // Thông tin mô tả đổi thì ghi kèm, nhưng không phát sự kiện, không tính là đơn đổi (#260 AC-S1).
   const info = keepSaved(remoteInfo, row);
   const infoDirty = !sameInfo(info, row);
@@ -311,13 +336,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       rawMarketplaceStatus: next.rawMarketplaceStatus,
       shipBy: next.shipBy,
       needsAttention: next.needsAttention,
-      attentionNote: packages.resplit
-        ? 'Sàn chia lại kiện khác lần trước'
-        : packages.revived
-          ? 'Sàn báo lại kiện đã thất lạc hoặc đang hoàn'
-          : packages.unknown
-            ? 'Sàn trả trạng thái app chưa biết'
-            : undefined,
+      attentionNote,
       cancelRequested: next.cancelRequested,
       cancelling: next.cancelling,
       platformCancelled: next.platformCancelled,
