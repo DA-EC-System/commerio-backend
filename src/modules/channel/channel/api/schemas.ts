@@ -95,7 +95,7 @@ export const Shop = z
       .nullable()
       .meta({
         description:
-          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). `rejected`, `cancelled` giữ nguyên tới khi lập lại phiếu (18.6.11). Phiếu ghi sổ thì BE đặt `openingStocktake = null`, đổi `orderCutoffAt`, chạy lại lượt kéo đơn còn mở, rồi chờ phân hàng; nhận `fulfillment.allocation_done` có `cause` trùng phiếu mới bật cập nhật tồn (18.6.11)',
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). `rejected`, `cancelled` giữ nguyên tới khi lập lại phiếu (18.6.11); phiếu không còn đọc được thì báo `cancelled`. Phiếu ghi sổ thì BE đặt `openingStocktake = null`, đổi `orderCutoffAt`, chạy lại lượt kéo đơn còn mở, rồi chờ phân hàng; nhận `fulfillment.allocation_done` có `cause` trùng phiếu mới bật cập nhật tồn (18.6.11)',
       }),
     setup: z
       .object({
@@ -319,7 +319,7 @@ export const ChannelListing = z
     rejectReason: z.string().nullable(),
     pushError: syncError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
@@ -448,7 +448,7 @@ export const SetupBody = z
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
-        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`; sàn `platform_status` bỏ qua và lưu null. Chưa bắt buộc tới khi FE gửi (21 §18.6.2)',
+        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`, bắt buộc với sàn này: thiếu hoặc `null` thì 422 (#362). Sàn `platform_status` bỏ qua và lưu null (21 §18.6.2)',
     }),
   })
   .meta({ id: 'ShopSetupInput' });
@@ -506,3 +506,16 @@ export const OpeningStocktakeResult = z
   })
   .strict()
   .meta({ id: 'OpeningStocktakeResult' });
+
+export const UpdateShopBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    returnWindowDays: z
+      .number('Hạn trả hàng là số ngày')
+      .int('Hạn trả hàng là số ngày nguyên')
+      .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+  })
+  .strict()
+  .meta({ id: 'ShopUpdateInput' });

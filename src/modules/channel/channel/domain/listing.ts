@@ -66,6 +66,17 @@ export function syncAction(status: ListingStatus, remote: RemoteState): ListingA
   return null;
 }
 
+/**
+ * Ẩn, hiện theo trạng thái SKU (#224, 25 §6.4), so mỗi lượt nên sàn lỗi thì lượt sau làm lại: SKU tạm ngừng mà listing
+ * `live` (kể cả vừa được sàn duyệt, E25) → `hide`; SKU hết tạm ngừng mà listing `hidden` do app ẩn (`appHidden`: lần vào
+ * `hidden` gần nhất là `hide`) → `unhide`. Listing ẩn vì lý do khác (nối lại gian hàng khi sàn đang tắt) giữ nguyên.
+ */
+export function visibilityAction(status: ListingStatus, paused: boolean, appHidden: boolean): ListingAction | null {
+  if (status === 'live' && paused) return 'hide';
+  if (status === 'hidden' && !paused && appHidden) return 'unhide';
+  return null;
+}
+
 /** Listing có sản phẩm trên sàn mà đối chiếu tồn xét (25 §6.5). */
 export const STOCK_RECONCILED: readonly ListingStatus[] = ['under_review', 'live', 'hidden', 'platform_hold'];
 

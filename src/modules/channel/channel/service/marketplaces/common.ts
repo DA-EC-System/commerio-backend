@@ -362,6 +362,13 @@ export interface SplitAttributes {
  */
 export const PROMOTION_LOCKED = 'promotion_locked';
 
+/**
+ * Mã của bước kiểm trước khi tạo sản phẩm (#305, Documents/21 §18.6.4): `createProduct` ném `rejected` với `platformCode`
+ * là một trong hai mã, câu của sàn trong `platformMessage`; việc đẩy ghi nguyên mã vào `pushError.code`.
+ * `shop_not_eligible`: gian hàng chưa đủ điều kiện đăng bán; `listing_check_failed`: sản phẩm sai luật của sàn.
+ */
+export const PRECHECK_CODES: ReadonlySet<string> = new Set(['shop_not_eligible', 'listing_check_failed']);
+
 export type PartResult = { ok: true } | { ok: false; code: string; message: string };
 
 /**
@@ -499,7 +506,10 @@ export interface MarketplaceAdapter {
   getSkus(accessToken: string, sellerSkus: readonly string[]): Promise<RemoteSku[]>;
   /** Tự chia lô theo giới hạn của sàn. Token sai ném `unauthorized`; lỗi khác trả theo từng SKU. */
   updatePriceQuantity(accessToken: string, items: readonly PriceQuantity[]): Promise<PerSkuResult[]>;
-  /** Tắt (ẩn) sản phẩm trên sàn. Sàn tắt theo cả sản phẩm (TikTok) thì mọi SKU của sản phẩm cùng ẩn. */
+  /**
+   * Tắt (ẩn) sản phẩm trên sàn. Sàn tắt theo cả sản phẩm (TikTok) thì mọi SKU của sản phẩm cùng ẩn. Sản phẩm đã tắt sẵn
+   * thì coi là xong, không ném (#359).
+   */
   deactivate(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
   /**
    * Hiện lại sản phẩm đã tắt (#224, `hideBy = 'deactivate'`). Sàn có thể đưa sản phẩm vào duyệt lại (TikTok về `PENDING`);

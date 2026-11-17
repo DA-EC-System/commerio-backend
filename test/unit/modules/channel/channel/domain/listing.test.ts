@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { type ListingAction, type ListingStatus, listingMachine, stockDecision, syncAction } from '#src/modules/channel/channel/domain/listing.ts';
+import { type ListingAction, type ListingStatus, listingMachine, stockDecision, syncAction, visibilityAction } from '#src/modules/channel/channel/domain/listing.ts';
 
 describe('syncAction: trạng thái trên sàn → thao tác', () => {
   it.each([
@@ -134,5 +134,36 @@ describe('stockDecision: đối chiếu tồn sàn với số có thể bán (25
     ['error', 3, 3, 5, 'drift'],
   ] as const)('%s, platform_stock %s, sàn %i, app %i → %s', (stockSync, platformStock, remote, available, expected) => {
     expect(stockDecision({ stockSync, platformStock }, remote, available)).toBe(expected);
+  });
+});
+
+describe('ẩn, hiện theo trạng thái SKU (#224, 25 §6.4, ca C2-13, C2-14)', () => {
+  it('C2-13, C2-14: chỉ hệ thống chuyển', () => {
+    expect(assertTransition(listingMachine, 'live', 'hide', { actor: null }).to).toBe('hidden');
+    expect(assertTransition(listingMachine, 'hidden', 'unhide', { actor: null }).to).toBe('live');
+  });
+
+  it.each([
+    ['live', 'hide'],
+    ['hidden', 'unhide'],
+  ] as const)('C2-13x, C2-14x: người dùng gọi %s → %s → 409 invalid_transition', (from, action) => {
+    expect(() => assertTransition(listingMachine, from, action, { actor: staff })).toThrow(
+      expect.objectContaining({ status: 409, code: 'invalid_transition' }),
+    );
+  });
+
+  it.each([
+    ['live', true, false, 'hide'],
+    ['live', false, false, null],
+    ['hidden', false, true, 'unhide'],
+    // Ẩn không do app (nối lại gian hàng khi sàn đang tắt): bỏ tạm ngừng không đưa về live (25 §6.4).
+    ['hidden', false, false, null],
+    ['hidden', true, true, null],
+    // E25: chưa live thì chờ; lượt sàn duyệt (`approve`) xong mới ẩn.
+    ['under_review', true, false, null],
+    ['platform_hold', true, false, null],
+    ['pushing', true, false, null],
+  ] as const)('%s, tạm ngừng %s, app ẩn %s → %s', (status, paused, appHidden, action) => {
+    expect(visibilityAction(status, paused, appHidden)).toBe(action);
   });
 });

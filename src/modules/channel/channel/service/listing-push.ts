@@ -10,7 +10,7 @@ import { findListingByExternalSku, findListingById, findListingByPendingExternal
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
-import { type MarketplaceAdapter, MarketplaceError, type NewProduct, type SizeChartRule } from './marketplaces/index.ts';
+import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
@@ -149,7 +149,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       return;
     }
     const message = err.platformMessage ?? (err.kind === 'unsupported' ? 'Sàn chưa hỗ trợ đẩy sản phẩm' : 'Sàn từ chối sản phẩm');
-    return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: attempts }, err.platformCode);
+    // Bước kiểm trước khi tạo (#305) giữ mã riêng để FE báo đúng câu (Documents/21 §18.6.4).
+    const code = err.platformCode && PRECHECK_CODES.has(err.platformCode) ? err.platformCode : 'marketplace_rejected';
+    return finish(job, row, 'fail', { pushError: errorOf(code, message), pushAttempts: attempts }, err.platformCode);
   }
 }
 
@@ -161,8 +163,9 @@ async function finish(job: ListingPushJob, row: ListingRow, action: ListingActio
   await withCompany(job.companyId, async () => {
     try {
       await moveListing(row, action, null, patch, reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null));
-      // Đẩy lại không gửi tồn: listing lên sàn thì đẩy tồn ngay (25 §6.5, #223), cùng giao dịch.
-      if (patch.stockSync === 'pending') await sendStockPush(job.companyId, job.shopId);
+      // Đẩy lại không gửi tồn: listing lên sàn thì đẩy tồn ngay (25 §6.5, #223), cùng giao dịch. Lên `live` thì lượt đẩy
+      // tồn cũng ẩn ngay nếu SKU vừa tạm ngừng trong lúc đẩy (#224, E25).
+      if (patch.stockSync === 'pending' || action === 'go_live') await sendStockPush(job.companyId, job.shopId);
       return;
     } catch (err) {
       if (!(err instanceof AppError) || (err.code !== 'version_conflict' && err.code !== 'invalid_transition')) throw err;
