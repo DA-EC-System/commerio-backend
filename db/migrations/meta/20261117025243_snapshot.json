@@ -1,6 +1,6 @@
 {
-  "id": "bc0cb9fc-cbd2-46ee-99fb-6413de01aaa7",
-  "prevId": "a4ab68de-11b9-441f-858e-2ba432f9eab1",
+  "id": "876d32fa-5da1-421a-8ea4-fe637dc260cb",
+  "prevId": "61f8823e-0180-456a-997b-4d61aee4ee36",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -95,6 +95,12 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "size_chart_rule": {
+          "name": "size_chart_rule",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -132,7 +138,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "category_maps_size_chart_rule": {
+          "name": "category_maps_size_chart_rule",
+          "value": "\"channel\".\"category_maps\".\"size_chart_rule\" in ('required', 'optional', 'unsupported')"
+        }
+      },
       "isRLSEnabled": false
     },
     "channel.listings": {
@@ -10243,6 +10254,12 @@
         "description": {
           "name": "description",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "size_chart_file_id": {
+          "name": "size_chart_file_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },

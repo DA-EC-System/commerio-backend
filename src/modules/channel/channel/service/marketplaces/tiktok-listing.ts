@@ -8,6 +8,7 @@
 // Kết quả gọi thật trên shop thử: mục TikTok của `channel/CLAUDE.md`.
 import {
   type CategoryAttribute,
+  type CategoryRules,
   type CreatedProduct,
   type MarketplaceAdapter,
   MarketplaceError,
@@ -59,6 +60,7 @@ type ListingMethods = Pick<
   MarketplaceAdapter,
   | 'listCategories'
   | 'categoryAttributes'
+  | 'categoryRules'
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
@@ -206,6 +208,8 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       category_id: p.externalCategoryId,
       category_version: CATEGORY_VERSION,
       main_images: p.imageUrls.map((uri) => ({ uri })),
+      // Danh mục quần áo, giày dép bắt buộc (`size_chart_image is required`, #347).
+      ...(p.sizeChartUri && { size_chart: { image: { uri: p.sizeChartUri } } }),
       package_weight: { value: kg(p.weightG), unit: 'KILOGRAM' },
       package_dimensions: { length: cm(p.lengthMm), width: cm(p.widthMm), height: cm(p.heightMm), unit: 'CENTIMETER' },
       ...(productAttributes.length && { product_attributes: productAttributes }),
@@ -235,13 +239,27 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         }));
     },
 
+    // Get Category Rules 202309: `size_chart.is_required`, `is_supported` (#347). Danh mục không hỗ trợ bảng kích cỡ thì không
+    // gửi `size_chart`; sàn không trả khối này thì coi là tuỳ chọn.
+    async categoryRules(token, externalCategoryId): Promise<CategoryRules> {
+      const data = await client.call<{ size_chart?: { is_required?: unknown; is_supported?: unknown } }>(
+        'GET',
+        `/product/202309/categories/${encodeURIComponent(externalCategoryId)}/rules`,
+        { token, query: { category_version: CATEGORY_VERSION } },
+      );
+      const chart = data?.size_chart;
+      if (chart?.is_required === true) return { sizeChart: 'required' };
+      if (chart?.is_supported === false) return { sizeChart: 'unsupported' };
+      return { sizeChart: 'optional' };
+    },
+
     // Sàn chỉ nhận file (multipart), không nhận URL: tải ảnh nguồn rồi đưa lên. Không gửi `shop_cipher` (API không theo
     // gian hàng). Trả `uri`, chuỗi Create Product cần trong `main_images`.
-    async uploadImage(token, url) {
+    async uploadImage(token, url, purpose = 'main') {
       const image = await downloadImage(url, deps.image);
       const form = new FormData();
       form.append('data', new Blob([new Uint8Array(image.bytes)], { type: image.type }), image.name);
-      form.append('use_case', 'MAIN_IMAGE');
+      form.append('use_case', purpose === 'size_chart' ? 'SIZE_CHART_IMAGE' : 'MAIN_IMAGE');
       const data = await client.call<{ uri?: unknown }>('POST', '/product/202309/images/upload', { token, form, shopCipher: false });
       if (typeof data?.uri !== 'string' || !data.uri) throw new MarketplaceError('rejected', 'unexpected_response');
       return data.uri;

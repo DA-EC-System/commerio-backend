@@ -133,12 +133,19 @@ function imageLimits(body: { imageFileIds?: string[] | undefined }, ctx: z.Refin
 
 const attributeValueIds = z.array(z.string(), 'Chọn giá trị thuộc tính');
 
+// Ảnh bảng kích cỡ (#347): một tệp JPG/PNG ≤ 1 MB như ảnh sản phẩm; TikTok bắt buộc với quần áo, giày dép.
+const sizeChartFileId = z
+  .string()
+  .nullish()
+  .meta({ description: 'Tệp ảnh bảng kích cỡ (một ảnh). `PUT`: bỏ trống thì giữ nguyên, `null` thì gỡ; lỗi ở `errors.sizeChart`' });
+
 export const CreateProductBody = z
   .object({
     name: name('sản phẩm', 200),
     categoryId: z.string('Chọn danh mục').min(1, 'Chọn danh mục'),
     description,
     imageFileIds,
+    sizeChartFileId,
     variants: z
       .array(z.object({ attributeValueIds }), 'Cần ít nhất một biến thể')
       .min(1, 'Cần ít nhất một biến thể')
@@ -149,7 +156,7 @@ export const CreateProductBody = z
 
 /** Không có danh mục và biến thể: gửi kèm thì bỏ qua (P6, AC-13). */
 export const UpdateProductBody = z
-  .object({ name: name('sản phẩm', 200), description, imageFileIds, version })
+  .object({ name: name('sản phẩm', 200), description, imageFileIds, sizeChartFileId, version })
   .superRefine(imageLimits)
   .meta({ id: 'UpdateProductRequest' });
 
@@ -325,6 +332,10 @@ export const ProductDetail = ProductListItem.extend({
       })
       .meta({ id: 'ProductImage' }),
   ),
+  sizeChart: z
+    .object({ fileId: z.uuid(), url: z.string().meta({ description: 'Link cố định của ảnh; chuỗi rỗng khi máy chủ chưa cấu hình link ảnh' }) })
+    .nullable()
+    .meta({ description: 'Ảnh bảng kích cỡ (#347); null khi chưa có' }),
   variants: z.array(Variant),
 }).meta({ id: 'ProductDetail' });
 
