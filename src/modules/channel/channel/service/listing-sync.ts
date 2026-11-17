@@ -411,7 +411,7 @@ async function checkRevisions(
   let changed = false;
   for (const row of rows.filter((r) => r.revisionStatus === 'auditing' && r.externalProductId)) {
     try {
-      const rev = await adapter.contentRevision(accessToken, row.externalProductId!);
+      const rev = await onMarketplace(() => adapter.contentRevision!(accessToken, row.externalProductId!));
       if (rev.state === 'auditing') continue;
       const patch: ListingPatch = rev.state === 'failed' ? { revisionStatus: 'failed', revisionRejectReason: rev.reason ?? NO_REASON } : NO_REVISION;
       await inCompany(async () => {
@@ -421,7 +421,7 @@ async function checkRevisions(
       changed = true;
       summary.changed++;
     } catch (err) {
-      if (err instanceof MarketplaceError && err.kind === 'unauthorized') throw err;
+      if (err instanceof AppError && err.code === 'marketplace_unauthorized') throw err;
       logger.warn({ err, listingId: row.id }, 'Đọc bản sửa nội dung đang duyệt lỗi, lượt sau đọc lại');
       summary.errors++;
     }

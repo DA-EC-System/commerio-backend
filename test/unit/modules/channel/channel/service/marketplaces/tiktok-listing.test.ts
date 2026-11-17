@@ -882,6 +882,12 @@ describe('updateContent, contentRevision: sửa nội dung sản phẩm đang b�
     });
   });
 
+  it('sàn đã nhận bản sửa mà bước đọc lại lỗi → không ném (bản sửa đã gửi), underReview false, partial_edit một lần', async () => {
+    const san = fakeSan(routes(product(), json({}, 503)));
+    expect(await san.methods().updateContent!(TOKEN, 'P9', content)).toEqual({ underReview: false });
+    expect(san.calls.filter((c) => c.path.endsWith('/partial_edit'))).toHaveLength(1);
+  });
+
   it('sàn ngừng bán để duyệt (đọc lại PENDING) → underReview true', async () => {
     const san = fakeSan(routes(product(), product({ status: 'PENDING' })));
     expect(await san.methods().updateContent!(TOKEN, 'P9', content)).toEqual({ underReview: true });

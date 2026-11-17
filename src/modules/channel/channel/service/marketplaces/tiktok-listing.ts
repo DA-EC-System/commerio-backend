@@ -430,7 +430,9 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         ...(attributes.length && { product_attributes: attributes }),
       };
       await client.call('POST', `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`, { token, body });
-      return { underReview: (await productStatus(token, externalProductId)) === 'PENDING' };
+      // Sàn đã nhận bản sửa: đọc lại lỗi thì coi như vẫn bán, không ném (ném thì bên gọi tưởng chưa sửa, hay gửi lại).
+      const status = await productStatus(token, externalProductId).catch(() => null);
+      return { underReview: status === 'PENDING' };
     },
 
     // Hai API theo sản phẩm: tồn (`inventory/update`, kho mặc định) và giá (`prices/update`, chỉ nhận sản phẩm `ACTIVATE`).

@@ -274,6 +274,16 @@ describe('đồng bộ đọc bản sửa đang duyệt (#293)', () => {
     expect(contentRevision.mock.calls.map((c) => c[1])).toContain(await productOf(hidden.id));
   });
 
+  it('mất uỷ quyền khi đọc bản sửa → ném marketplace_unauthorized (việc nền giữ việc, báo kết nối lại)', async () => {
+    const lost = await auditing();
+    revisions.set(await productOf(lost.id), new MarketplaceError('unauthorized', '105002', 'token hết hạn'));
+    await expect(
+      syncListings({ variants: async () => [], standardPrices: async () => new Map(), productImageUrls: async () => new Map(), availableOf: async () => new Map() }, company.companyId, shopId),
+    ).rejects.toMatchObject({ code: 'marketplace_unauthorized' });
+    revisions.delete(await productOf(lost.id));
+    await testPool().query('update channel.listings set revision_status = null, revision_at = null where id = $1', [lost.id]);
+  });
+
   it('lỗi đọc bản sửa của một listing không làm hỏng lượt đồng bộ: listing khác vẫn cập nhật, listing lỗi giữ auditing', async () => {
     const broken = await auditing();
     const ok = await auditing();
