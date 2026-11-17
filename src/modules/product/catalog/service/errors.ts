@@ -17,12 +17,33 @@ export const versionConflict = (detail: string, current: unknown) =>
 
 export const inUse = (detail: string) => new AppError(409, 'in_use', detail);
 
-export const productArchived = () => new AppError(409, 'product_archived', 'Sản phẩm đã lưu trữ, không sửa được');
+/** Xoá hẳn sản phẩm đã hoàn thiện, đã dùng ở module khác hoặc sinh từ đề nghị nhập (#204, Documents/21 §17.4). */
+export const productInUse = (detail: string) => new AppError(409, 'product_in_use', detail);
+
+/** Biến thể quá 2 thuộc tính (#204, Documents/21 §17.4): kiểm trước khi ghi, thay lỗi CHECK `position in (0, 1)`. */
+export const tooManyAxes = () =>
+  new AppError(422, 'too_many_axes', 'Sản phẩm tối đa 2 thuộc tính phân loại', { errors: { variants: 'Mỗi biến thể tối đa 2 thuộc tính' } });
 
 export const variantExists = (sku: string) => new AppError(409, 'variant_exists', `Tổ hợp này đã có biến thể ${sku}`);
 
-export const lastVariant = () =>
-  new AppError(409, 'last_variant', 'Sản phẩm phải còn ít nhất một biến thể đang bán. Muốn ngừng hẳn thì xoá sản phẩm');
+/** Lưu trữ một SKU còn tồn hoặc chứng từ mở (Documents/21 §17.4); `reasons` là câu hiện thẳng ở FE. */
+export const archiveBlocked = (sku: string, reasons: readonly string[]) =>
+  new AppError(409, 'archive_blocked', `SKU ${sku} chưa lưu trữ được`, { reasons: [...reasons] });
+
+/** Thao tác trạng thái kinh doanh không có từ trạng thái hiện tại; `current` là sản phẩm mới nhất. */
+export const invalidTransition = (current: unknown) =>
+  new AppError(409, 'invalid_transition', 'Thao tác không hợp lệ ở trạng thái hiện tại', { current });
+
+/** Thêm biến thể trùng tổ hợp của SKU đã lưu trữ (Documents/21 §17.4): dùng Khôi phục SKU đó. */
+export const variantArchived = (variantId: string) =>
+  new AppError(409, 'variant_archived', 'Tổ hợp này thuộc SKU đã lưu trữ, dùng Khôi phục', { variantId });
+
+/**
+ * Xoá trống trường bắt buộc chung khi SKU còn listing chưa gỡ (US-SP-03 dòng 7, Documents/25 §5.1, Documents/21 §17.4);
+ * `errors` theo ô như 422 để FE đánh dấu đúng ô.
+ */
+export const listingFieldRequired = (detail: string, errors: Record<string, string>) =>
+  new AppError(409, 'listing_field_required', detail, { errors });
 
 /** 422 theo ô cho luật kiểm ở service (cần đọc DB), cùng dạng với `validate()`. */
 export const invalid = (errors: Record<string, string>) =>

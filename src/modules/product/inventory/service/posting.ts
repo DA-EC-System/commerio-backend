@@ -2,7 +2,7 @@
 // giá vốn). Chạy trong giao dịch của bên gọi. `applyChange` không export ra `index.ts`: module khác gọi hàm theo nghiệp vụ
 // (`receiveGoods`, cổng theo kiện).
 import { publishEvent } from '../../../core/index.ts';
-import { getVariants } from '../../catalog/index.ts';
+import { getVariants, restoreArchivedBySystem } from '../../catalog/index.ts';
 import { availableQty, breaksInvariant, weightedAvgCost, worsens } from '../domain/stock.ts';
 import { companyOfTransaction, insertMoves, type LevelRow, lockLevel, type NewMove, saveLevel } from '../repository/levels.ts';
 import type { stockSourceType } from '../repository/schema.ts';
@@ -123,6 +123,10 @@ export async function applyChange(change: StockChange, precheck?: (locked: Reado
     await saveLevel(id, { ...n, invariantBroken: breaksInvariant(n.onHand, n.reserved) }, moved.has(id));
   }
   await insertMoves(rows);
+  // Hàng vào SKU đã lưu trữ (khách trả muộn, NCC bù, đảo xuất kho): SKU tự về Ngừng nhập (#204, Documents/21 §17.3).
+  // Trước `recheckThresholds` để cờ ngưỡng tính theo trạng thái mới.
+  const grown = [...new Set(moves.filter((m) => m.qty > 0).map((m) => m.variantId))];
+  if (grown.length) await restoreArchivedBySystem(grown);
 
   // Payload là số tuyệt đối sau khi ghi: bên nghe nhận trùng hay lệch thứ tự vẫn đúng (Q7).
   const onHandChanged = new Set(moves.filter((m) => m.bucket === 'on_hand').map((m) => m.variantId));

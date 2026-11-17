@@ -6,7 +6,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
 import { createSupplier, orderedRequest, pur } from '../purchasing/helpers.ts';
-import { api, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { api, archiveSku, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
 
 // Sửa hàng loạt có gợi ý (#242, Documents/21 §17.5, 27 US-SP-04).
 let companyId: string;
@@ -193,7 +193,7 @@ describe('GET /variants/bulk-edit', () => {
     expect((await bulk(ceo).list(`?categoryId=${full.category.id}&incomplete=true`)).body.items).toEqual([]);
     expect((await bulk(ceo).list(`?categoryId=${full.category.id}`)).body.total).toBe(1);
     expect((await bulk(ceo).list('?search=%25')).body.total).toBe(0); // `%` là chữ, không phải mẫu LIKE
-    await api(ceo).delete(`/products/${empty.product.id}?version=1`);
+    await archiveSku(ceo, empty.product.id, empty.variantId);
     expect((await bulk(ceo).list(`?categoryId=${empty.category.id}`)).body.items).toEqual([]);
     expect((await bulk(ceo).list('?page=1&pageSize=1')).body).toMatchObject({ page: 1, pageSize: 1 });
     expect((await bulk(ceo).list('?pageSize=201')).status).toBe(422);
@@ -287,14 +287,11 @@ describe('PATCH /variants/bulk', () => {
     expect((await testPool().query('select min_qty from product.stock_levels where variant_id = $1', [variantId])).rows[0].min_qty).toBeNull();
   });
 
-  it('SKU của sản phẩm đã lưu trữ: product_archived; SKU công ty khác: not_found', async () => {
-    const { product, variantId } = await setup();
+  it('SKU công ty khác: not_found', async () => {
+    const { variantId } = await setup();
     const other = await createCompany();
-    await api(ceo).delete(`/products/${product.id}?version=1`);
     const cross = await bulk(other.ceo.token).save([{ variantId, version: 1, weightG: 1 }]);
     expect(cross.body.failed[0].code).toBe('not_found');
-    const mine = await bulk(ceo).save([{ variantId, version: 1, weightG: 1 }]);
-    expect(mine.body.failed[0].code).toBe('product_archived');
   });
 
   it('thiếu `inventory.reorder.manage`: dòng có minQty bị từ chối theo ô, dòng không có minQty vẫn lưu', async () => {

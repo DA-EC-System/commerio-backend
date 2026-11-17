@@ -1,18 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
-import {
-  type AttributeBody,
-  api,
-  auditOf,
-  createAttribute,
-  createCategory,
-  createProduct,
-  type ProductBody,
-  productBody,
-  uniq,
-  valueId,
-} from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, type ProductBody, productBody, uniq, valueId, archiveSku, businessStatus } from './helpers.ts';
 
 // Sản phẩm, SKU tự sinh (UC-CP-02; Documents/21 5.1–5.4, mục 9, C3, C5, P5–P8, V24, D9).
 let token: string;
@@ -53,7 +42,14 @@ describe('POST /catalog/products', () => {
         action: 'create',
         entity_type: 'product.products',
         before: null,
-        after: { name, category: category.name, description: 'Mô tả', imageFileIds: [], variants: ['AO-0012-DEN-XL', 'AO-0013-TRANG-XL'] },
+        after: {
+          name,
+          code: 'AO-0012',
+          category: category.name,
+          description: 'Mô tả',
+          imageFileIds: [],
+          variants: ['AO-0012-DEN-XL', 'AO-0013-TRANG-XL'],
+        },
       },
     ]);
   });
@@ -94,6 +90,13 @@ describe('POST /catalog/products', () => {
         widthMm: null,
         heightMm: null,
         version: 1,
+        archiveBlockers: [],
+        readiness: 'incomplete',
+        missing: ['image', 'price', 'minQty', 'weight', 'dimensions'],
+        minQty: null,
+        presence: 'not_listed',
+        hasListingError: false,
+        listingCount: 0,
         attributes: [
           { attributeId: color.id, attributeName: 'Màu', valueId: valueId(color, 'Xanh navy'), value: 'Xanh navy' },
           { attributeId: size.id, attributeName: 'Size', valueId: valueId(size, 'M'), value: 'M' },
@@ -166,14 +169,66 @@ describe('POST /catalog/products', () => {
     expect(res.body.errors.name).toBeTruthy();
   });
 
-  // B1 (Thành chốt 18/10): tên của sản phẩm đã lưu trữ dùng lại được (index unique một phần, migration CB-4).
-  it('tạo lại tên của sản phẩm đã lưu trữ → 201 (B1, cần migration của CB-4)', async () => {
+  it('biến thể 3 thuộc tính → 422 too_many_axes, không tạo, không tiêu số (#204)', async () => {
+    const material = await createAttribute(token, uniq('Chất liệu'), ['Cotton']);
+    const category = await createCategory(token, uniq('Ba trục'), 'BT-{SEQ}-{VAL}');
+    const name = uniq('SP ba trục');
+    const res = await api(token).post(
+      '/products',
+      body(name, category.id, [[valueId(color, 'Đen'), valueId(size, 'M'), valueId(material, 'Cotton')]]),
+    );
+    expect(res.status).toBe(422);
+    expect(res.body.type).toBe('/problems/too_many_axes');
+    expect(res.body.errors.variants).toBeTruthy();
+    expect((await api(token).get(`/products?search=${encodeURIComponent(name)}`)).body.total).toBe(0);
+    expect((await categoryOf(category.id)).skuNextSeq).toBe(1);
+  });
+
+  // D4 (#204, Thành đồng ý 16/11/2026): bỏ lưu trữ cha nên tên không trùng trên mọi sản phẩm, thay B1 của #12.
+  it('tên của sản phẩm mọi SKU đã lưu trữ vẫn bị giữ → 409 name_taken (D4)', async () => {
     const category = await createCategory(token, uniq('Tên'), 'T-{SEQ}');
     const name = uniq('Giày chạy bộ');
     const old = await createProduct(token, { name, categoryId: category.id, variants: [[]] });
-    expect((await api(token).delete(`/products/${old.id}?version=1`)).status).toBe(204);
+    await archiveSku(token, old.id, old.variants[0]!.id);
     const res = await api(token).post('/products', body(name, category.id, [[]]));
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/name_taken');
+  });
+});
+
+describe('mã cha (#204 D5)', () => {
+  it('SKU đầu bỏ phần giá trị thuộc tính; không thuộc tính thì bằng SKU; có ở chi tiết, danh sách, nhật ký', async () => {
+    const { ceo } = await createCompany();
+    const own = await createAttribute(ceo.token, 'Màu', ['Đen', 'Trắng']);
+    const ownSize = await createAttribute(ceo.token, 'Size', ['XL']);
+    const shirts = await createCategory(ceo.token, 'Áo', 'AO-{SEQ:4}-{VAL}');
+    const belts = await createCategory(ceo.token, 'Phụ kiện', 'PK-{SEQ}');
+    const shirt = await createProduct(ceo.token, {
+      name: 'Áo thun',
+      categoryId: shirts.id,
+      variants: [
+        [valueId(own, 'Đen'), valueId(ownSize, 'XL')],
+        [valueId(own, 'Trắng'), valueId(ownSize, 'XL')],
+      ],
+    });
+    expect([shirt.variants[0]!.sku, shirt.code]).toEqual(['AO-0001-DEN-XL', 'AO-0001']);
+    const belt = await createProduct(ceo.token, { name: 'Thắt lưng', categoryId: belts.id, variants: [[]] });
+    expect([belt.variants[0]!.sku, belt.code]).toEqual(['PK-0001', 'PK-0001']);
+    expect((await api(ceo.token).get(`/products/${shirt.id}`)).body.code).toBe('AO-0001');
+    const list = await api(ceo.token).get('/products?search=thun');
+    expect(list.body.items.map((p: { code: string }) => p.code)).toEqual(['AO-0001']);
+    expect((await auditOf(shirt.id))[0]!.after).toMatchObject({ code: 'AO-0001' });
+  });
+
+  it('hai danh mục cùng ra một mã cha: mã sau thêm -2', async () => {
+    const { ceo } = await createCompany();
+    const own = await createAttribute(ceo.token, 'Màu', ['Đen']);
+    const shirts = await createCategory(ceo.token, 'Áo', 'MC-{SEQ:4}-{VAL}');
+    const hats = await createCategory(ceo.token, 'Mũ', 'MC-{SEQ:4}');
+    const shirt = await createProduct(ceo.token, { name: 'Áo', categoryId: shirts.id, variants: [[valueId(own, 'Đen')]] });
+    const hat = await createProduct(ceo.token, { name: 'Mũ', categoryId: hats.id, variants: [[]] });
+    expect([shirt.variants[0]!.sku, shirt.code]).toEqual(['MC-0001-DEN', 'MC-0001']);
+    expect([hat.variants[0]!.sku, hat.code]).toEqual(['MC-0001', 'MC-0001-2']);
   });
 });
 
@@ -210,7 +265,7 @@ describe('GET /catalog/products', () => {
     for (let i = 0; i < 12; i++) await createProduct(ceo.token, { name: `Lót ${i}`, categoryId: other.id, variants: [[]] });
     const target = await createProduct(ceo.token, { name: 'Áo thun', categoryId: category.id, variants: [[valueId(own, 'Đen')]] });
     const archived = await createProduct(ceo.token, { name: 'Áo cũ 0012', categoryId: category.id, variants: [[]] });
-    await api(ceo.token).delete(`/products/${archived.id}?version=1`);
+    await archiveSku(ceo.token, archived.id, archived.variants[0]!.id);
 
     // SKU Q0012 (sản phẩm Lót 11) và AO-0001-DEN không chứa 0012; "Áo cũ 0012" đã lưu trữ.
     const bySku = await api(ceo.token).get('/products?search=0012&categoryId=&status=&page=1&pageSize=20');
@@ -223,8 +278,13 @@ describe('GET /catalog/products', () => {
     expect(byName.body.items[0]).toEqual({
       id: target.id,
       name: 'Áo thun',
+      code: 'AO-0001',
       category: { id: category.id, name: 'Áo' },
       variantCount: 1,
+      variantTotal: 1,
+      labelCounts: { archived: 0, discontinued: 0, paused: 0, live: 0, error: 0, pending: 0, not_listed: 1 },
+      incompleteCount: 1,
+      errorCount: 0,
       thumbnailUrl: null,
       status: 'active',
       updatedAt: expect.any(String),
@@ -251,7 +311,7 @@ describe('GET /catalog/products', () => {
       categoryId: category.id,
       variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
     });
-    await api(token).delete(`/products/${product.id}/variants/${product.variants[0]!.id}`);
+    await archiveSku(token, product.id, product.variants[0]!.id);
     const res = await api(token).get(`/products?search=${product.variants[0]!.sku}`);
     expect(res.body.items.map((p: { id: string }) => p.id)).toEqual([product.id]);
     expect(res.body.items[0].variantCount).toBe(1);
@@ -322,33 +382,22 @@ describe('PUT, DELETE /catalog/products/:id', () => {
     expect(long.body.errors.name).toBeTruthy();
   });
 
-  it('lưu trữ → 204, status archived, nhật ký delete; sau đó mọi PUT, DELETE, thêm và ngừng bán biến thể → 409 product_archived (AC-12, B2)', async () => {
+  // #204: cha không còn trạng thái lưu riêng (bỏ `product_archived`); `status` suy từ SKU.
+  it('mọi SKU lưu trữ: status archived; vẫn sửa, thêm biến thể, đổi trạng thái được; SKU mới làm cha active lại', async () => {
     const product = await simple();
-    expect((await api(token).delete(`/products/${product.id}?version=1`)).status).toBe(204);
-    const detail = await api(token).get(`/products/${product.id}`);
-    expect(detail.body).toMatchObject({ status: 'archived', version: 2 });
-    expect((await auditOf(product.id)).map((l) => l.action)).toEqual(['create', 'delete']);
-
-    const calls = [
-      update(product.id, 1),
-      update(product.id, 2),
-      api(token).delete(`/products/${product.id}?version=2`),
-      api(token).post(`/products/${product.id}/variants`, { attributeValueIds: [valueId(color, 'Trắng')] }),
-      api(token).delete(`/products/${product.id}/variants/${product.variants[0]!.id}`),
-    ];
-    for (const res of await Promise.all(calls)) {
-      expect(res.status).toBe(409);
-      expect(res.body.type).toBe('/problems/product_archived');
-    }
+    await archiveSku(token, product.id, product.variants[0]!.id);
+    expect((await api(token).get(`/products/${product.id}`)).body).toMatchObject({ status: 'archived', variantCount: 0, version: 1 });
+    expect((await update(product.id, 1)).status).toBe(200);
+    const added = await api(token).post(`/products/${product.id}/variants`, { attributeValueIds: [valueId(color, 'Trắng')] });
+    expect(added.status).toBe(201);
+    expect((await businessStatus(token, product.id, 'pause', [added.body.id])).status).toBe(200);
+    expect((await api(token).get(`/products/${product.id}`)).body).toMatchObject({ status: 'active', variantCount: 1 });
   });
 
-  it('DELETE thiếu ?version= → 422 errors.version; version cũ → 409 (AC-20)', async () => {
+  it('DELETE thiếu ?version= → 422 errors.version (AC-20)', async () => {
     const product = await simple();
     const missing = await api(token).delete(`/products/${product.id}`);
     expect(missing.status).toBe(422);
     expect(missing.body.errors.version).toBeTruthy();
-    const stale = await api(token).delete(`/products/${product.id}?version=5`);
-    expect(stale.status).toBe(409);
-    expect(stale.body.type).toBe('/problems/version_conflict');
   });
 });
