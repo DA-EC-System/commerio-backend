@@ -150,7 +150,9 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     request: { params: IdParams, body: body(UpdateProductBody) },
     responses: {
       200: json('Sản phẩm sau khi sửa', ProductDetail),
-      409: problemResponse('`version_conflict` (kèm `current`) hoặc `name_taken`'),
+      409: problemResponse(
+        '`version_conflict` (kèm `current`), `name_taken`, hoặc `listing_field_required` (`imageFileIds` rỗng khi có SKU còn listing chưa gỡ; `errors.images`)',
+      ),
       ...missing('sản phẩm'),
       ...invalid,
     },
@@ -204,11 +206,12 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Sửa giá, cân nặng, kích thước của một SKU; bỏ trường là giữ, null là xoá',
     description:
       '`version` là của SKU (`variants[].version`). Không trường nào khác giá trị đang lưu thì không ghi, trả bản hiện tại. ' +
-      'Đổi `targetNetPrice` phát `catalog.variant_price_changed` (Documents/21 §11.2); đổi `standardPrice` không phát.',
+      'Đổi `targetNetPrice` phát `catalog.variant_price_changed` (Documents/21 §11.2); đổi `standardPrice` không phát. ' +
+      'SKU còn listing chưa gỡ thì không xoá trống `targetNetPrice`, `weightG`, `lengthMm`, `widthMm`, `heightMm` (US-SP-03 dòng 7).',
     request: { params: VariantParams, body: body(UpdateVariantBody) },
     responses: {
       200: json('Sản phẩm sau khi sửa', ProductDetail),
-      409: problemResponse('`version_conflict` (kèm `current`)'),
+      409: problemResponse('`version_conflict` (kèm `current`) hoặc `listing_field_required` (kèm `errors` theo trường bị xoá trống)'),
       ...missing('sản phẩm hoặc biến thể'),
       ...invalid,
     },
@@ -232,7 +235,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     description:
       'Tối đa 200 dòng (vượt thì 400 `too_many_rows`). Luôn 200 với `{ saved, failed }`. Mỗi dòng ghi trong giao dịch riêng: dòng lỗi không ghi gì, các dòng khác vẫn ghi. ' +
       'Chỉ gửi ô người dùng đã sửa hoặc đã nhận gợi ý; null là xoá giá trị. Đổi `targetNetPrice` phát `catalog.variant_price_changed` cho từng SKU. ' +
-      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`.',
+      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`. Dòng xoá trống giá muốn bán, cân nặng, kích thước của SKU còn ' +
+      'listing chưa gỡ lỗi `listing_field_required` kèm `errors`.',
     request: { body: body(BulkSaveDocBody) },
     responses: { 200: json('Kết quả theo dòng', BulkSaveResult), 400: problemResponse('`too_many_rows`'), ...invalid },
   });

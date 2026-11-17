@@ -434,9 +434,12 @@ export const BulkSaveResult = z
     failed: z.array(
       z.object({
         variantId: z.string(),
-        code: z.enum(['validation_failed', 'version_conflict', 'not_found', 'product_archived']),
+        code: z.enum(['validation_failed', 'version_conflict', 'not_found', 'product_archived', 'listing_field_required']),
         message: z.string(),
-        errors: z.record(z.string(), z.string()).optional().meta({ description: 'Lỗi theo ô, chỉ với `validation_failed` và `version_conflict` của ngưỡng' }),
+        errors: z
+          .record(z.string(), z.string())
+          .optional()
+          .meta({ description: 'Lỗi theo ô, chỉ với `validation_failed`, `listing_field_required` và `version_conflict` của ngưỡng' }),
       }),
     ),
   })

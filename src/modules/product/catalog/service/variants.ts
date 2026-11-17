@@ -19,6 +19,7 @@ import {
   type Caller,
   invalid,
   isUuid,
+  listingFieldRequired,
   notFound,
   pgError,
   variantArchived,
@@ -26,6 +27,7 @@ import {
   versionConflict,
 } from './errors.ts';
 import { skuLabels } from './labels.ts';
+import { listedFieldErrors } from './listed-fields.ts';
 import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
@@ -203,7 +205,8 @@ export async function applyVariantUpdate(
 
 /**
  * `PATCH /catalog/products/:id/variants/:variantId` (#204). SKU đã ngừng nhập, đã lưu trữ vẫn sửa được (điền cho đủ
- * trước khi khôi phục).
+ * trước khi khôi phục). SKU còn listing chưa gỡ mà gửi `null` cho giá muốn bán, cân nặng, kích thước đang có giá trị:
+ * 409 `listing_field_required` (`listed-fields.ts`).
  */
 export async function updateVariant(
   ctx: CatalogContext,
@@ -216,6 +219,8 @@ export async function updateVariant(
     const product = await findOwnProduct(productId);
     const [current] = isUuid(variantId) ? await findVariants({ ids: [variantId] }) : [];
     if (!current || current.productId !== product.id) throw notFound('biến thể');
+    const listed = await listedFieldErrors(ctx, current, input);
+    if (listed) throw listingFieldRequired(listed.detail, listed.errors);
     const outcome = await applyVariantUpdate(caller, current, input);
     if (outcome === 'updated') await touchProduct(product.id);
     if (outcome === 'stale') {

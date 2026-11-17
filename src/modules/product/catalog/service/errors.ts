@@ -38,6 +38,13 @@ export const invalidTransition = (current: unknown) =>
 export const variantArchived = (variantId: string) =>
   new AppError(409, 'variant_archived', 'Tổ hợp này thuộc SKU đã lưu trữ, dùng Khôi phục', { variantId });
 
+/**
+ * Xoá trống trường bắt buộc chung khi SKU còn listing chưa gỡ (US-SP-03 dòng 7, Documents/25 §5.1, Documents/21 §17.4);
+ * `errors` theo ô như 422 để FE đánh dấu đúng ô.
+ */
+export const listingFieldRequired = (detail: string, errors: Record<string, string>) =>
+  new AppError(409, 'listing_field_required', detail, { errors });
+
 /** 422 theo ô cho luật kiểm ở service (cần đọc DB), cùng dạng với `validate()`. */
 export const invalid = (errors: Record<string, string>) =>
   new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', { errors });

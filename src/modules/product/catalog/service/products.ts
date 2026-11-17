@@ -23,6 +23,7 @@ import {
   type Caller,
   invalid,
   isUuid,
+  listingFieldRequired,
   nameTaken,
   notFound,
   pgError,
@@ -31,6 +32,7 @@ import {
   versionConflict,
 } from './errors.ts';
 import { type SkuLabels, skuLabels } from './labels.ts';
+import { listedImageErrors } from './listed-fields.ts';
 import { imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
 import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
@@ -264,7 +266,10 @@ async function editable(ctx: CatalogContext, id: string, version: number): Promi
   return product;
 }
 
-/** Ảnh như `createProduct`; không gửi `imageFileIds` thì giữ nguyên, gửi thì thay toàn bộ sau khi ghi trúng `version`. */
+/**
+ * Ảnh như `createProduct`; không gửi `imageFileIds` thì giữ nguyên, gửi thì thay toàn bộ sau khi ghi trúng `version`.
+ * Gửi `imageFileIds: []` khi sản phẩm còn ảnh và có SKU còn listing chưa gỡ: 409 `listing_field_required`.
+ */
 export async function updateProduct(ctx: CatalogContext, caller: Caller, id: string, input: UpdateProductInput) {
   const imageIds = input.imageFileIds;
   const sizeChartId = input.sizeChartFileId;
@@ -284,13 +289,16 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name, id)) throw taken();
     const imagesBefore = await imageIdsOf(id);
+    const variants = await findVariants({ productId: id });
+    // Gỡ hết ảnh khi còn listing chưa gỡ (US-SP-03 dòng 7): 409, không ghi gì.
+    const listed = await listedImageErrors(ctx, variants.map((v) => v.id), imagesBefore, imageIds);
+    if (listed) throw listingFieldRequired(listed.detail, listed.errors);
     if (!(await updateProductIfVersion(id, input.version, input.name, input.description))) {
       await rejectStale(ctx, await findOwnProduct(id));
     }
     if (imageIds) await replaceProductImages(caller.companyId, id, imageIds);
     if (sizeChartId !== undefined) await setSizeChart(id, sizeChartId);
     const sizeChartAfter = sizeChartId === undefined ? product.sizeChartFileId : sizeChartId;
-    const variants = await findVariants({ productId: id });
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
       before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId),
