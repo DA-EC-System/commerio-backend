@@ -895,7 +895,7 @@ describe('updateContent, contentRevision: sửa nội dung sản phẩm đang b�
     for (const san of [multi, other]) expect(san.calls.some((c) => c.path.endsWith('/partial_edit'))).toBe(false);
   });
 
-  it('contentRevision: AUDITING, PRE_APPROVED giữ; APPROVED hoặc 12052547 (không còn bản đang duyệt) → approved; FAILED → lý do', async () => {
+  it('C2-24, C2-25: contentRevision: AUDITING, PRE_APPROVED giữ; APPROVED hoặc 12052547 (không còn bản đang duyệt) → approved; FAILED → lý do', async () => {
     const revision = async (r: Record<string, Response>) => {
       const san = fakeSan(r);
       return { result: await createTiktokAdapter(config, san.fetchFn).contentRevision!(TOKEN, 'P9'), calls: san.calls };

@@ -114,7 +114,7 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
     },
   );
 
-  it('#293: live → update_content giữ live (người có quyền); sàn ngừng bán bản cũ thì hệ thống request_review → under_review', () => {
+  it('C2-22, C2-23, C2-22q: live → update_content giữ live (người có quyền); sàn ngừng bán bản cũ thì hệ thống request_review → under_review', () => {
     expect(assertTransition(listingMachine, 'live', 'update_content', { actor: staff }).to).toBe('live');
     expect(() => assertTransition(listingMachine, 'live', 'update_content', { actor: { ...staff, permissions: [] } })).toThrow(
       expect.objectContaining({ status: 403 }),
@@ -126,7 +126,7 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
   });
 
   it.each(['pushing', 'push_failed', 'under_review', 'rejected', 'hidden', 'platform_hold'] as const)(
-    '#293: %s → update_content → 409',
+    'C2-X: %s → update_content → 409 (#293)',
     (from) => {
       expect(() => assertTransition(listingMachine, from, 'update_content', { actor: staff })).toThrow(
         expect.objectContaining({ status: 409, code: 'invalid_transition' }),
