@@ -21,6 +21,8 @@ export type ListingAction =
   | 'release'
   | 'hide'
   | 'unhide'
+  | 'outside_hold'
+  | 'outside_resolve'
   | 'delist'
   | 'update_content'
   | 'request_review';
@@ -40,6 +42,9 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   { from: 'platform_hold', to: 'live', action: 'release', system: true },
   { from: 'live', to: 'hidden', action: 'hide', system: true },
   { from: 'hidden', to: 'live', action: 'unhide', system: true },
+  // Sàn đổi listing ngoài app (#360, 21 §18.3): lượt đồng bộ dừng bán, CEO quyết (route kiểm vai trò CEO).
+  { from: 'live', to: 'hidden', action: 'outside_hold', system: true },
+  { from: 'hidden', to: 'live', action: 'outside_resolve', permission: manage },
   // Sửa nội dung (#293): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa đang duyệt; sàn ngừng bán để duyệt thì hệ thống
   // chuyển tiếp `request_review` (ca C2-21).
   { from: 'live', to: 'live', action: 'update_content', permission: manage },
@@ -61,7 +66,7 @@ export const DELETABLE: readonly ListingStatus[] = ['under_review', 'live', 'hid
 
 /**
  * Thao tác của sàn cần áp khi đồng bộ, null khi không đổi. Sàn xoá sản phẩm → `delist` (25 §6.4 "gỡ trên sàn (sàn báo
- * về)"); sàn tắt sản phẩm ngoài app chưa có mũi tên trên sơ đồ C2 nên để nguyên.
+ * về)"); sàn tắt listing đang `live` → `outside_hold` (#360). Listing `hidden` mà sàn tắt là do chính app tắt: giữ nguyên.
  */
 export function syncAction(status: ListingStatus, remote: RemoteState): ListingAction | null {
   if (remote === 'deleted') return DELETABLE.includes(status) ? 'delist' : null;
@@ -69,6 +74,7 @@ export function syncAction(status: ListingStatus, remote: RemoteState): ListingA
   if (status === 'under_review' && remote === 'rejected') return 'reject';
   if ((status === 'live' || status === 'hidden') && remote === 'hold') return 'hold';
   if (status === 'platform_hold' && remote === 'live') return 'release';
+  if (status === 'live' && remote === 'inactive') return 'outside_hold';
   return null;
 }
 
@@ -118,6 +124,8 @@ export const NO_PENDING = {
   pendingExternalProductId: null,
   pendingSellerSku: null,
 } as const;
+/** Bỏ dấu "sàn đổi ngoài app" (#360; CHECK `listings_outside_change`: ba cột cùng rỗng khi rời `hidden`). */
+export const NO_OUTSIDE_CHANGE = { outsideChangeKind: null, outsideChangePrice: null, outsideChangeAt: null } as const;
 
 /** Trạng thái còn giữ bản sửa nội dung chờ sàn duyệt (#293): sàn vẫn duyệt bản sửa trong lúc ẩn hay khoá. */
 export const REVISION_KEPT: readonly ListingStatus[] = ['live', 'hidden', 'platform_hold'];

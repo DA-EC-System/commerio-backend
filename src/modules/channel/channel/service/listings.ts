@@ -10,6 +10,7 @@ import {
   type ListingAction,
   type ListingStatus,
   listingMachine,
+  NO_OUTSIDE_CHANGE,
   NO_PENDING,
   NO_REVISION,
   pendingOnly,
@@ -35,7 +36,7 @@ import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 
-const ENTITY = 'listings';
+export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
 /** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
@@ -60,6 +61,8 @@ export interface ChannelListing {
   qcAlert: null;
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
+  /** Sàn đổi listing ngoài app, chờ CEO quyết (#360, 21 §18.3). */
+  outsideChange: { kind: NonNullable<ListingRow['outsideChangeKind']>; platformPrice: number | null; detectedAt: Date } | null;
   /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
   pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   /** Bản sửa nội dung chờ sàn duyệt (§18.3, #293). */
@@ -118,6 +121,14 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
+    outsideChange:
+      r.outsideChangeKind && r.outsideChangeAt
+        ? {
+            kind: r.outsideChangeKind,
+            platformPrice: r.outsideChangePrice === null ? null : Number(r.outsideChangePrice),
+            detectedAt: r.outsideChangeAt,
+          }
+        : null,
     pendingMapping:
       r.pendingRequestedBy && r.pendingRequestedAt
         ? {
@@ -187,7 +198,7 @@ export async function moveListing(
     row.id,
     { version: row.version, status: row.status },
     // Bản sửa nội dung chỉ còn ở trạng thái sàn vẫn duyệt nó (#293, CHECK `listings_revision`).
-    { ...patch, ...(dropPending && NO_PENDING), ...(!REVISION_KEPT.includes(to) && NO_REVISION), status: to },
+    { ...(to !== 'hidden' && NO_OUTSIDE_CHANGE), ...patch, ...(dropPending && NO_PENDING), ...(!REVISION_KEPT.includes(to) && NO_REVISION), status: to },
   );
   if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });
