@@ -211,18 +211,20 @@ export function channelRouter(ctx: ModuleContext): Router {
     }
   };
 
-  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại gọi sàn ngoài giao dịch:
-  // service tự mở `withCompany`.
+  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại xếp lượt tải nền
+  // `channel.remote_skus_refresh`, không gọi sàn trong request (#361): Tải lại có xếp (hoặc đang chạy) thì 202.
   router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false)));
+    const { items, syncedAt, refresh } = await mapping.remoteSkus(actor(res), id, unmatched ?? false);
+    res.json({ items, syncedAt, refresh });
   });
 
   router.post('/shops/:id/remote-skus/refresh', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true)));
+    const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
+    res.status(accepted ? 202 : 200).json(list);
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {

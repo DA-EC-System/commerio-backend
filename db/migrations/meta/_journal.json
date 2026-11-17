@@ -551,8 +551,15 @@
     {
       "idx": 78,
       "version": "7",
-      "when": 1794913332810,
-      "tag": "20261117110212_keo-lai-don-trang-thai-moi",
+      "when": 1794913568452,
+      "tag": "20261117110608_remote-skus-refresh",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1794914437629,
+      "tag": "20261117112037_keo-lai-don-trang-thai-moi",
       "breakpoints": true
     }
   ]

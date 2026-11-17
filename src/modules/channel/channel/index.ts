@@ -6,6 +6,7 @@ import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runStockPush, runTokenRefresh } from './service/background.ts';
 import { registerChannelConsumer, workChannelQueue } from './service/background-jobs.ts';
 import { runListingPush } from './service/listing-push.ts';
+import { runRemoteSkusRefresh } from './service/remote-skus.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
 import { productPort } from './service/product-port.ts';
@@ -16,6 +17,7 @@ import {
   openOrderPullQueue,
   orderPullQueue,
   reconcileShopJobs,
+  remoteSkusRefreshQueue,
   stockPushQueue,
   tokenRefreshQueue,
 } from './service/shop-jobs.ts';
@@ -46,6 +48,8 @@ export const channelModule: ModuleDefinition = {
     await workChannelQueue(stockPushQueue, (job) => runStockPush(port, job));
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
+    // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.
+    await workChannelQueue(remoteSkusRefreshQueue, runRemoteSkusRefresh);
     await reconcileShopJobs();
     // Thư báo CEO, Admin khi gian hàng sắp hết hoặc đã mất uỷ quyền (#312): xếp mốc mỗi 15 phút, consumer gửi thư.
     registerChannelConsumer('channel.shop_reauth_mail', handleReauthMail, { consumer: REAUTH_MAIL_CONSUMER });

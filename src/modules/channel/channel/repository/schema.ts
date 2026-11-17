@@ -17,6 +17,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { bytea, money, timestamps, version } from '../../../../shared/db/columns.ts';
+import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
 export const channelSchema = pgSchema('channel');
@@ -79,6 +80,13 @@ export const shops = channelSchema.table(
     remoteSkusFullRetryAt: timestamp('remote_skus_full_retry_at', { withTimezone: true }),
     /** Lần đọc trọn lỗi gần nhất (định kỳ hay Tải lại): Tải lại trong 10 phút sau đó trả 429 (review #309 vòng 4 B2). */
     remoteSkusFullFailedAt: timestamp('remote_skus_full_failed_at', { withTimezone: true }),
+    /**
+     * Lỗi của lần đọc trọn lỗi gần nhất `{ code, platformCode, message }` (#361): `GET remote-skus` trả ở `refresh.error`.
+     * Câu của BE, không chép câu thô của sàn. Đọc trọn được thì xoá cùng các mốc lỗi.
+     */
+    remoteSkusFullError: jsonb('remote_skus_full_error').$type<RemoteSkusFullError>(),
+    /** Lượt Tải lại đang chờ hoặc chạy nền (#361); xoá khi xong hay lỗi. Quá 15 phút là kẹt (`refresh_stale`). */
+    remoteSkusRefreshRequestedAt: timestamp('remote_skus_refresh_requested_at', { withTimezone: true }),
     /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
     openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
     /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
@@ -123,6 +131,8 @@ export const shops = channelSchema.table(
       sql`${t.remoteSkusFullFailures} >= 0 and (${t.remoteSkusFullFailures} = 0) = (${t.remoteSkusFullRetryAt} is null)`,
     ),
     check('shops_remote_skus_failed_at', sql`${t.remoteSkusFullFailures} = 0 or ${t.remoteSkusFullFailedAt} is not null`),
+    // Có lỗi đọc trọn thì có giờ lỗi (#361).
+    check('shops_remote_skus_full_error', sql`${t.remoteSkusFullError} is null or ${t.remoteSkusFullFailedAt} is not null`),
     // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
     check(
       'shops_allocation_pending',

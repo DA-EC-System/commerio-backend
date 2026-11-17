@@ -395,6 +395,24 @@ export const RemoteSkuList = z
       .datetime({ offset: true })
       .nullable()
       .meta({ description: 'Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao BE lưu); null khi sàn chưa đọc được lần nào' }),
+    refresh: z
+      .object({
+        status: z.enum(['idle', 'running', 'failed']).meta({
+          description: '`running`: lượt tải nền đang chờ hoặc chạy (FE hỏi lại `GET` tới khi khác `running`); `failed`: lần đọc trọn lỗi gần nhất chưa quá 10 phút, hoặc lượt tải quá 15 phút chưa xong (`refresh_stale`)',
+        }),
+        requestedAt: z.iso.datetime({ offset: true }).nullable().meta({ description: 'Lúc xếp lượt tải đang chờ hoặc chạy; null khi không có' }),
+        error: z
+          .object({
+            code: z.string().meta({ description: 'Mã lỗi app, vd `marketplace_rejected`, `marketplace_unavailable`, `shop_not_connected`, `refresh_stale`' }),
+            platformCode: z.string().nullable().meta({ description: 'Mã của sàn, vd `incomplete_list`, `too_many_calls`, `daily_call_limit`' }),
+            message: z.string(),
+          })
+          .strict()
+          .nullable(),
+        retryAfterSeconds: z.number().int().nullable().meta({ description: 'Số giây còn phải chờ trước khi Tải lại (lỗi đọc trọn); null khi bấm được ngay' }),
+      })
+      .strict()
+      .meta({ id: 'RemoteSkuRefresh', description: 'Lượt Tải lại chạy nền (#361)' }),
   })
   .strict()
   .meta({ id: 'RemoteSkuList' });
