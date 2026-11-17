@@ -8,7 +8,7 @@ import { TIKTOK_RATE_LIMIT } from './tiktok-client.ts';
 import { createTiktokAdapter } from './tiktok.ts';
 
 export type * from './common.ts';
-export { MarketplaceError, PROMOTION_LOCKED } from './common.ts';
+export { MarketplaceError, PRECHECK_CODES, PROMOTION_LOCKED } from './common.ts';
 export { appOnly, forCompany, inBackground } from './call-scope.ts';
 
 /**
