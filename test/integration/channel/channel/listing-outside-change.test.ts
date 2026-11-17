@@ -29,7 +29,7 @@ const getSkus = vi.fn(async () => remote);
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' });
 registerAdapter('lazada', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
 // TikTok có `activate` như adapter thật (bật cả sản phẩm, phải duyệt lại).
-registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
+registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate, togglesByProduct: true }));
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());

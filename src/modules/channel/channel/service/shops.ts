@@ -291,6 +291,10 @@ function toAppError(err: MarketplaceError): AppError {
   }
 }
 
+/** Mất uỷ quyền, gian hàng ngắt: dừng cả lượt của gian hàng, không nuốt thành lỗi của một dòng. */
+export const shopStopped = (err: unknown): boolean =>
+  err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected');
+
 export async function onMarketplace<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();

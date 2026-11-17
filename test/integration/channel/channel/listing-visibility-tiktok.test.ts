@@ -50,7 +50,7 @@ const getSkus = vi.fn(async (_t: string, sellerSkus: readonly string[]) =>
   }),
 );
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' });
-registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
+registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate, togglesByProduct: true }));
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
@@ -136,6 +136,15 @@ describe('TikTok: ẩn theo SKU bằng tồn 0, tắt cả sản phẩm khi mọ
     expect(deactivate).toHaveBeenCalledTimes(1);
     expect(deactivate).toHaveBeenCalledWith(expect.any(String), product, expect.any(String));
     for (const x of [a, b]) expect(await listing(x!.listingId)).toMatchObject({ status: 'hidden', hidden_by: 'zero_stock' });
+  });
+
+  it('sản phẩm đã tắt trên sàn, lượt đồng bộ ẩn mọi SKU tạm ngừng → không gọi tắt lại', async () => {
+    const { product, items } = await seedProduct(2);
+    state.set(product, 'inactive');
+    for (const x of items) await setStatus(x.variantId, 'paused');
+    await sync();
+    for (const x of items) expect(await listing(x.listingId)).toMatchObject({ status: 'hidden', hidden_by: 'zero_stock' });
+    expect(deactivate).not.toHaveBeenCalled();
   });
 
   it('P2-8: tạm ngừng hai SKU trong cùng một lượt → sản phẩm bị tắt', async () => {

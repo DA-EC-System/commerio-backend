@@ -44,7 +44,7 @@ import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
 import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
-import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
+import { type Actor, onMarketplace, ownShop, shopSession, shopStopped } from './shops.ts';
 import { ordersStaleError, raisesStock, shopOrdersStale, untrustedVariants } from './stock-trust.ts';
 
 /**
@@ -67,7 +67,7 @@ export interface SyncSummary {
 }
 
 type InCompany = <T>(fn: () => Promise<T>) => Promise<T>;
-interface Session {
+export interface Session {
   shop: ShopRow;
   adapter: MarketplaceAdapter;
   accessToken: string;
@@ -115,8 +115,7 @@ const zeroHidden = (row: ListingRow) => row.status === 'hidden' && row.hiddenBy 
  * phân loại"): listing app ẩn luôn để tồn 0 trên sàn (`zero_stock`); mọi listing chưa gỡ của sản phẩm đều `hidden` thì tắt
  * thêm cả sản phẩm; hiện lại khi sản phẩm đang tắt thì bật sản phẩm.
  */
-const HIDES_BY_PRODUCT: ReadonlySet<string> = new Set(['tiktok']);
-export const hidesByProduct = (platform: string): boolean => HIDES_BY_PRODUCT.has(platform);
+export const hidesByProduct = (adapter: MarketplaceAdapter): boolean => adapter.togglesByProduct === true;
 /**
  * Lần vào `hidden` mà app được tự hiện lại: `hide` (tạm ngừng SKU), hoặc `outside_hold` đã được CEO `restore` lúc SKU
  * đang tạm ngừng (dòng chờ quyết lọc trước theo `outsideChangeKind`). `relist` (nối lại gian hàng) không.
@@ -155,7 +154,7 @@ async function applyVisibility(
   remote: ReadonlyMap<string, RemoteSku> = new Map(),
 ): Promise<ListingRow[]> {
   const { shop, adapter, accessToken } = session;
-  const byProduct = hidesByProduct(shop.platform);
+  const byProduct = hidesByProduct(adapter);
   const candidates = rows.filter((r) => r.mode === 'mapped' && r.externalSkuId && (r.status === 'live' || r.status === 'hidden'));
   if (!candidates.length) return rows;
   const { paused, entered } = await inCompany(async () => {
@@ -173,6 +172,7 @@ async function applyVisibility(
   };
   let changed = false;
   const hidden = new Set<string>();
+  const enabled = new Set<string>();
   for (const row of candidates) {
     const action = visibilityAction(row.status, paused.has(row.variantId!), APP_HIDDEN.has(entered.get(row.id) ?? ''));
     if (!action) continue;
@@ -182,11 +182,11 @@ async function applyVisibility(
           if (action === 'hide') return adapter.deactivate(accessToken, row.externalProductId!, row.externalSkuId!);
           return activateOnMarketplace(session, row.externalProductId!, row.externalSkuId!);
         });
-      } else if (byProduct && action === 'unhide' && (await onMarketplace(() => productBlocksUnhide(session, rows, row)))) {
+      } else if (byProduct && action === 'unhide' && (await onMarketplace(() => productBlocksUnhide(session, rows, row, remote, enabled)))) {
         continue;
       }
     } catch (err) {
-      if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+      if (shopStopped(err)) throw err;
       logger.warn({ err, listingId: row.id, action }, 'Ẩn, hiện listing theo trạng thái SKU lỗi, lượt sau thử lại');
       summary.errors++;
       continue;
@@ -212,20 +212,34 @@ export const productGroup = (rows: readonly ListingRow[], productId: string) =>
  * khác còn ẩn của sản phẩm đã có tồn 0 trên sàn (`zero_stock` đã đồng bộ): chưa thì trả `true` (chờ lượt sau, `pushDue`
  * đẩy 0 trước). Sản phẩm có listing chờ CEO quyết sàn đổi ngoài app (người bán tắt) thì không bật (21 §18.3).
  */
-async function productBlocksUnhide(session: Session, rows: readonly ListingRow[], row: ListingRow): Promise<boolean> {
-  const { adapter, accessToken } = session;
-  const sku = (await adapter.getSkus(accessToken, [row.sellerSku!])).find((s) => s.externalSkuId === row.externalSkuId);
+async function productBlocksUnhide(
+  session: Session,
+  rows: readonly ListingRow[],
+  row: ListingRow,
+  remote: ReadonlyMap<string, RemoteSku>,
+  enabled: Set<string>,
+): Promise<boolean> {
+  const productId = row.externalProductId!;
+  if (enabled.has(productId)) return false;
+  // Lượt đồng bộ đã đọc trạng thái sàn (`remote`); lượt đẩy tồn thì đọc một SKU.
+  const sku = remote.get(row.externalSkuId!) ?? (await remoteSkuOf(session, row));
   if (sku?.state !== 'inactive') return false;
-  const others = productGroup(rows, row.externalProductId!).filter((r) => r.id !== row.id);
+  const others = productGroup(rows, productId).filter((r) => r.id !== row.id);
   const unsafe = (r: ListingRow) => r.status === 'hidden' && !(r.hiddenBy === 'zero_stock' && r.stockSync === 'synced');
   if (others.some((r) => r.outsideChangeKind || unsafe(r))) return true;
-  await activateOnMarketplace(session, row.externalProductId!, row.externalSkuId!);
+  await activateOnMarketplace(session, productId, row.externalSkuId!);
+  enabled.add(productId);
   return false;
+}
+
+/** Trạng thái trên sàn của SKU của một listing (một lời gọi đọc). */
+export async function remoteSkuOf({ adapter, accessToken }: Session, row: ListingRow): Promise<RemoteSku | undefined> {
+  return (await adapter.getSkus(accessToken, [row.sellerSku!])).find((s) => s.externalSkuId === row.externalSkuId);
 }
 
 /**
  * Tắt cả sản phẩm khi mọi listing chưa gỡ của nó đều `hidden`: sản phẩm vừa có listing ẩn trong lượt, hoặc lượt đồng bộ
- * thấy sàn còn bán (lần tắt trước lỗi). Gọi lại khi đã tắt vẫn an toàn (adapter coi là xong).
+ * thấy sàn còn bán (lần tắt trước lỗi). Lượt đồng bộ thấy mọi SKU của sản phẩm đã tắt trên sàn thì không gọi.
  */
 async function hideProducts(
   { adapter, accessToken }: Session,
@@ -238,10 +252,11 @@ async function hideProducts(
   for (const productId of new Set([...hidden, ...stillSold.map((r) => r.externalProductId!)])) {
     const group = productGroup(rows, productId);
     if (!group.length || !group.every((r) => r.status === 'hidden')) continue;
+    if (group.every((r) => (remote.get(r.externalSkuId ?? '')?.state ?? 'live') !== 'live')) continue;
     try {
       await onMarketplace(() => adapter.deactivate(accessToken, productId, group[0]!.externalSkuId!));
     } catch (err) {
-      if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+      if (shopStopped(err)) throw err;
       logger.warn({ err, productId }, 'Tắt sản phẩm khi mọi phân loại đều ẩn lỗi, lượt sau thử lại');
       summary.errors++;
     }
@@ -353,7 +368,7 @@ async function pullOrdersFirst(companyId: string, shop: ShopRow, adapter: Market
     await pullShopOrders(companyId, shop.id);
     return true;
   } catch (err) {
-    if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+    if (shopStopped(err)) throw err;
     logger.warn({ shopId: shop.id, err }, 'Lấy đơn trước đối chiếu tồn lỗi, bỏ đối chiếu lượt này');
     return false;
   }
@@ -439,7 +454,8 @@ async function pushDue(
   // Gian hàng giữ tồn không gửi tồn, trừ listing ẩn bằng tồn 0 (gửi 0 không bao giờ làm bán quá).
   const stockPending = (r: ListingRow) => (!holdStock || zeroHidden(r)) && r.stockSync !== 'synced';
   // Sàn ẩn theo sản phẩm chỉ nhận giá khi sản phẩm đang bán (TikTok `prices/update`): listing ẩn giữ giá chờ, gửi khi hiện lại.
-  const priceHeld = (r: ListingRow) => hidesByProduct(shop.platform) && r.status === 'hidden';
+  const byProduct = hidesByProduct(adapter);
+  const priceHeld = (r: ListingRow) => byProduct && r.status === 'hidden';
   const due = rows.filter(
     (r) =>
       r.mode === 'mapped' &&

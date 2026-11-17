@@ -5,7 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { listingMachine, NO_OUTSIDE_CHANGE } from '../domain/listing.ts';
 import { findListingById, type ListingRow, listListingRows, updateListing } from '../repository/listings.ts';
-import { activateOnMarketplace, hidesByProduct, pausedVariants, productGroup } from './listing-sync.ts';
+import { activateOnMarketplace, hidesByProduct, pausedVariants, productGroup, remoteSkuOf, type Session } from './listing-sync.ts';
 import { MarketplaceError } from './marketplaces/common.ts';
 import type { ProductPort } from './product-port.ts';
 import { type ChannelListing, ENTITY, moveListing, requesterNames, toListing } from './listings.ts';
@@ -13,8 +13,6 @@ import { sendStockPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, shopSession } from './shops.ts';
 
 export type OutsideChangeAction = 'restore' | 'accept-price';
-
-type Session = Awaited<ReturnType<typeof shopSession>>;
 
 const notAllowed = (message: string) => new AppError(409, 'invalid_transition', message);
 const conflict = async (fresh: ListingRow | undefined) =>
@@ -39,17 +37,17 @@ export async function resolveOutsideChange(
   version: number,
 ): Promise<ChannelListing> {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
-  const { session, row, group, paused } = await inCompany(async () => {
+  const { session, row, byProduct, group, paused } = await inCompany(async () => {
     const session = await shopSession(shopId);
     const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
     if (!row || row.shopId !== shopId) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     if (row.version !== version) throw await conflict(row);
     if (!row.outsideChangeKind) throw notAllowed('Listing không có thay đổi ngoài app chờ quyết');
     if (action === 'accept-price') throw notAllowed('Chỉ nhận giá sàn khi giá trên sàn bị sửa');
-    const byProduct = hidesByProduct(session.shop.platform) && !!row.externalProductId;
-    const group = byProduct ? productGroup(await listListingRows(shopId), row.externalProductId!) : [row];
+    const byProduct = hidesByProduct(session.adapter);
+    const group = byProduct && row.externalProductId ? productGroup(await listListingRows(shopId), row.externalProductId) : [row];
     const paused = await pausedVariants(port, group.flatMap((r) => (r.variantId ? [r.variantId] : [])));
-    return { session, row, group, paused };
+    return { session, row, byProduct, group, paused };
   });
   assertTransition(listingMachine, row.status, 'outside_resolve', { actor, view: toListing(row) });
 
@@ -58,14 +56,14 @@ export async function resolveOutsideChange(
   const toLive = targets.filter((r) => !isPaused(r));
   if (toLive.length) await onMarketplace(() => enableOnMarketplace(session, group, toLive));
 
-  const byProduct = hidesByProduct(session.shop.platform);
   const updated = await inCompany(async () => {
-    let result: ListingRow | undefined;
+    let result = row;
     for (const target of targets) {
-      const moved = await decide(target, isPaused(target), byProduct, actor, target.id === row.id);
-      if (target.id === row.id) result = moved;
+      const clicked = target.id === row.id;
+      const moved = await decide(target, isPaused(target), byProduct, actor, clicked);
+      if (clicked) result = moved;
     }
-    return toListing(result!, await requesterNames([result!]));
+    return toListing(result, await requesterNames([result]));
   });
   if (toLive.length) await sendStockPush(actor.companyId, shopId);
   return updated;
@@ -76,20 +74,17 @@ export async function resolveOutsideChange(
  * phẩm còn ẩn sau quyết định (SKU tạm ngừng, chờ quyết giá), lỗi thì chưa bật để không lộ SKU đó.
  */
 async function enableOnMarketplace(session: Session, group: readonly ListingRow[], toLive: readonly ListingRow[]): Promise<void> {
-  const { adapter, accessToken, shop } = session;
   const probe = toLive.find((r) => r.hiddenBy === 'platform' && r.externalProductId && r.externalSkuId && r.sellerSku);
   if (!probe) return;
-  const remote = (await adapter.getSkus(accessToken, [probe.sellerSku!])).find((s) => s.externalSkuId === probe.externalSkuId);
-  if (remote?.state === 'live') return;
-  if (hidesByProduct(shop.platform)) {
-    const staying = group.filter((r) => r.status === 'hidden' && !toLive.includes(r) && r.externalSkuId);
-    if (staying.length) {
-      const items = staying.map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
-      const results = await adapter.updatePriceQuantity(accessToken, items);
-      const ok = new Set(results.filter((x) => (x.stock ?? x).ok).map((x) => x.externalSkuId));
-      if (!items.every((i) => ok.has(i.externalSkuId))) {
-        throw new MarketplaceError('rejected', 'zero_stock_failed', 'Chưa đưa được tồn 0 lên sàn cho phân loại còn ẩn, chưa bật lại sản phẩm');
-      }
+  if ((await remoteSkuOf(session, probe))?.state === 'live') return;
+  // Nhóm chỉ có hơn một dòng khi sàn tắt theo sản phẩm.
+  const staying = group.filter((r) => r.status === 'hidden' && !toLive.includes(r) && r.externalSkuId);
+  if (staying.length) {
+    const items = staying.map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
+    const results = await session.adapter.updatePriceQuantity(session.accessToken, items);
+    const ok = new Set(results.filter((x) => (x.stock ?? x).ok).map((x) => x.externalSkuId));
+    if (!items.every((i) => ok.has(i.externalSkuId))) {
+      throw new MarketplaceError('rejected', 'zero_stock_failed', 'Chưa đưa được tồn 0 lên sàn cho phân loại còn ẩn, chưa bật lại sản phẩm');
     }
   }
   await activateOnMarketplace(session, probe.externalProductId!, probe.externalSkuId!);

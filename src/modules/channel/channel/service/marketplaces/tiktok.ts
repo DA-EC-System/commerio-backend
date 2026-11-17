@@ -490,6 +490,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
   return {
     name: 'TikTok Shop',
     capabilities: TIKTOK_CAPABILITIES,
+    togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.
       return oauthReady ? ['oauth', 'token'] : client.hasCredentials ? ['token'] : [];
