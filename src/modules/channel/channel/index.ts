@@ -19,6 +19,7 @@ import {
   stockPushQueue,
   tokenRefreshQueue,
 } from './service/shop-jobs.ts';
+import { onVariantStatusChanged } from './service/variant-status.ts';
 
 export const channelModule: ModuleDefinition = {
   name: 'channel',
@@ -34,6 +35,8 @@ export const channelModule: ModuleDefinition = {
     // Chia hàng xong (số có thể bán đổi) mới đẩy tồn (#223, 21 §11.2): đánh dấu chờ đẩy và xếp `channel.stock_push`, không
     // gọi sàn trong giao dịch của consumer. Thay consumer `inventory.stock_changed` cũ.
     registerChannelConsumer('fulfillment.allocation_done', (e) => onAvailableChanged(e.payload), { consumer: 'channel-stock-push' });
+    // SKU vào, rời tạm ngừng: xếp `channel.stock_push` để ẩn, hiện listing trên sàn (#224, 21 §11.2, 25 §6.4).
+    registerChannelConsumer('catalog.variant_status_changed', (e) => onVariantStatusChanged(e.payload), { consumer: 'channel-variant-status' });
     // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
     const port = productPort(ctx);
     await workChannelQueue(listingSyncQueue, (job) => runListingSync(port, job));

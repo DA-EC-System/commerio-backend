@@ -982,6 +982,20 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         throw err;
       }
     },
+    // Hiện lại SKU (#224, lazada.md §11.4): `/product/update` `Status: active` về Active ngay, không qua QC, giữ giá, tồn.
+    // Chỉ gửi SkuId, Status và thuộc tính giao hàng đang có (update tự bật giao hàng khi không gửi).
+    async activate(accessToken, externalProductId, externalSkuId) {
+      const payload = JSON.stringify({
+        Request: {
+          Product: {
+            ItemId: externalProductId,
+            Attributes: await deliveryOptions(accessToken, externalProductId),
+            Skus: { Sku: [{ SkuId: externalSkuId, Status: 'active' }] },
+          },
+        },
+      });
+      await call(config.apiUrl, '/product/update', { access_token: accessToken, payload }, 'FORM');
+    },
     // Lật theo cửa sổ `update_after` tăng dần, không theo offset (#218): đơn đổi giữa chừng có `updated_at` mới nên nằm
     // sau con trỏ. Trang sau gọi từ giây của đơn cuối trang trừ 1 (tài liệu không nói `update_after` có lấy cả mốc) và
     // bỏ đơn đã trả theo `order_id`. Cả trang trong một giây thì mốc không tiến: giữ mốc, lật `offset` gối một đơn.
