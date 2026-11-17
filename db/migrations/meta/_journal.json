@@ -505,6 +505,20 @@
       "when": 1794892429847,
       "tag": "20261117051349_bo-luu-tru-san-pham-cha",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1794899718071,
+      "tag": "20261117071518_ho-so-cong-ty",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1794899724510,
+      "tag": "20261117071524_quyen-ho-so-cong-ty",
+      "breakpoints": true
     }
   ]
 }

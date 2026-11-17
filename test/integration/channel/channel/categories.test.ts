@@ -22,6 +22,12 @@ registerAdapter(
       ];
     },
     async categoryAttributes(_token, externalCategoryId) {
+      // Danh mục có thuộc tính điền từ hồ sơ công ty (#292), như TikTok 101489, 101490.
+      if (externalCategoryId === 'R1')
+        return [
+          { name: '101489', label: 'Tên tổ chức chịu trách nhiệm hàng hóa', options: [], prefill: 'name' },
+          { name: '101490', label: 'Địa chỉ tổ chức chịu trách nhiệm hàng hóa', options: [], prefill: 'address' },
+        ];
       if (externalCategoryId !== '14275') return [];
       return [
         { name: 'brand', label: 'Thương hiệu', options: ['No Brand', 'Khác'] },
@@ -116,5 +122,39 @@ describe('ghép danh mục', () => {
     const other = await createCompany({ optionalModules: ['channel'] });
     const rows = await asCompany(other.companyId, (c) => c.query('select * from channel.category_maps'));
     expect(rows.rows).toEqual([]);
+  });
+});
+
+describe('thuộc tính điền từ hồ sơ công ty (#292)', () => {
+  const setProfile = (body: object) => auth(app().put('/api/v1/platform/company')).send(body);
+  const mapOf = (id: string, attributes: Record<string, string>) =>
+    auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${id}`)).send({ externalCategoryId: 'R1', attributes, version: null });
+
+  it('defaultValue có trên mọi item: hai mã lấy từ hồ sơ, thuộc tính khác null (AC-6)', async () => {
+    const res = await auth(app().get(`/api/v1/channel/shops/${shopId}/categories/R1/attributes`));
+    expect(res.status).toBe(200);
+    expect(res.body.items[0]).toEqual({ name: '101489', label: 'Tên tổ chức chịu trách nhiệm hàng hóa', options: [], defaultValue: expect.any(String) });
+    expect(res.body.items[1].defaultValue).toBeNull();
+    const plain = await auth(app().get(`/api/v1/channel/shops/${shopId}/categories/14275/attributes`));
+    expect(plain.body.items.every((a: { defaultValue: unknown }) => a.defaultValue === null)).toBe(true);
+  });
+
+  it('chưa có địa chỉ: bỏ trống tên được, địa chỉ vẫn 422 (AC-7)', async () => {
+    const res = await mapOf(randomUUID(), {});
+    expect(res.status).toBe(422);
+    expect(Object.keys(res.body.errors)).toEqual(['attributes.101490']);
+  });
+
+  it('có địa chỉ: bỏ trống hoặc trùng mặc định thì không lưu khoá; giá trị người dùng nhập thì lưu (AC-7)', async () => {
+    const profile = (await auth(app().get('/api/v1/platform/company'))).body;
+    await setProfile({ address: '12 Lý Thường Kiệt', version: profile.version });
+    const attrs = await auth(app().get(`/api/v1/channel/shops/${shopId}/categories/R1/attributes`));
+    expect(attrs.body.items.map((a: { defaultValue: string }) => a.defaultValue)).toEqual([profile.name, '12 Lý Thường Kiệt']);
+
+    const empty = await mapOf(randomUUID(), { '101489': profile.name });
+    expect(empty.status).toBe(200);
+    expect(empty.body.attributes).toEqual({});
+    const typed = await mapOf(randomUUID(), { '101489': 'Cty Nhập B', '101490': '' });
+    expect(typed.body.attributes).toEqual({ '101489': 'Cty Nhập B' });
   });
 });
