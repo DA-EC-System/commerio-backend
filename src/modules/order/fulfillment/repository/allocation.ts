@@ -25,14 +25,21 @@ const hasVariant = (variantIds: readonly string[]) =>
 const hasPendingDrop = sql`exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.pendingDropQty} > 0)`;
 
 /**
+ * Cờ Cần mở `stocktake` mà lượt phân hàng được tự gỡ (spec #238 §5.5): không có dòng chờ bỏ (còn phải mở để bỏ dòng),
+ * không có báo cáo thất lạc chờ người thứ hai xác nhận (Thành chốt ở review #366: gỡ cờ thì `updatePackage` xoá báo cáo
+ * và mã khiếu nại theo D21, tức hệ thống bỏ qua bước duyệt). Chưa gồm `needs_open`: bên dùng tự ghép.
+ */
+const stocktakeAutoClearable = sql`(${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop} and ${packages.lostReportedBy} is null)`;
+
+/**
  * Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). Kiện chờ mở vì kiểm kê (`stocktake`)
- * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5); trừ khi kiện có dòng chờ bỏ.
+ * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5); trừ khi kiện có dòng chờ bỏ hay báo thất lạc treo.
  */
 const candidateWhere = and(
   sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
        and not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.reservedQty} > 0)))`,
   sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.variantId} is null)`,
-  sql`(${packages.needsOpen} = false or (${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop}))`,
+  sql`(${packages.needsOpen} = false or ${stocktakeAutoClearable})`,
   sql`${orderStatus} <> 'cancelled'`,
 );
 
@@ -109,12 +116,12 @@ export interface StocktakeFlagged {
 /**
  * Kiện đã đóng mang cờ kiểm kê (Cần mở `stocktake`, hoặc dạng cũ Cần xử lý `DISMANTLE_NOTE`), đang giữ một SKU thuộc
  * `variantIds`; khoá `FOR UPDATE`, theo `code`. Lượt phân hàng xét tự gỡ cờ khi tồn đã đủ (spec #238 §5.5). Kiện có dòng
- * chờ bỏ không tính cờ `stocktake` (còn phải mở để bỏ dòng).
+ * chờ bỏ hay báo thất lạc treo không tính cờ `stocktake` (`stocktakeAutoClearable`).
  */
 export async function lockStocktakeFlagged(variantIds: readonly string[]): Promise<StocktakeFlagged[]> {
   if (!variantIds.length) return [];
   // `coalesce`: `open_purpose`, `flag_note` null thì so sánh ra NULL.
-  const stocktake = sql<boolean>`coalesce(${packages.needsOpen} and ${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop}, false)`;
+  const stocktake = sql<boolean>`coalesce(${packages.needsOpen} and ${stocktakeAutoClearable}, false)`;
   const legacy = sql<boolean>`coalesce(${packages.needsAttention} and ${packages.flagNote} = ${DISMANTLE_NOTE}, false)`;
   const rows = await getDb()
     .select({ id: packages.id, stocktake, legacy })

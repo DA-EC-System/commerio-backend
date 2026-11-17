@@ -21,9 +21,12 @@ const app = () => request(testApp());
 
 let companyId: string;
 let kho: Awaited<ReturnType<typeof addMember>>;
+/** Người thứ hai xác nhận thất lạc. */
+let kho2: Awaited<ReturnType<typeof addMember>>;
 beforeAll(async () => {
   ({ companyId } = await createCompany());
   kho = await addMember(companyId, 'warehouse');
+  kho2 = await addMember(companyId, 'warehouse');
 });
 
 /** Sự kiện `inventory.stocktake_posted` của phiếu kiểm kê thường (không nguồn, Documents/21 §11.2). */
@@ -59,6 +62,15 @@ async function sealedHolder(opts: Partial<Parameters<typeof seedPackage>[1]> = {
   for (const v of variants) await setBuckets(companyId, v, { onHand: 0, invariantBroken: true });
   return { ...p, variants };
 }
+
+const CLAIM = 'Không thấy kiện khi dỡ';
+
+/** `report-lost` (người báo `kho`) hoặc `confirm-lost` (người xác nhận `kho2`) với `version` hiện tại. */
+const lostAction = async (packageId: string, action: 'report-lost' | 'confirm-lost') =>
+  app()
+    .post(`/api/v1/fulfillment/packages/${packageId}/${action}`)
+    .set('Authorization', `Bearer ${(action === 'report-lost' ? kho : kho2).token}`)
+    .send({ version: (await packageRow(packageId)).version, ...(action === 'report-lost' && { claimCode: CLAIM }) });
 
 const tab = async (name: string) => {
   const res = await app().get(`/api/v1/fulfillment/packages?tab=${name}&pageSize=100`).set('Authorization', `Bearer ${kho.token}`);
@@ -155,31 +167,50 @@ describe('kiểm kê đếm thiếu: cờ Cần mở stocktake (spec #238 §5.5)
     expect(await packageRow(p.packageId)).toMatchObject({ needs_open: true, open_purpose: 'stocktake', version });
   });
 
-  it('Review 4: kiện gắn cờ stocktake có báo cáo thất lạc treo, cờ tự gỡ: ba cột báo cáo về null, report-lost trả 409 not_awaiting_open', async () => {
+  it('Review 4 (#366): kiện gắn cờ stocktake có báo thất lạc chờ xác nhận, hàng về đủ: cờ và báo cáo còn; người khác confirm-lost ra lost', async () => {
     const p = await sealedHolder();
     await stocktake(p.variants);
-    const report = async () =>
-      app()
-        .post(`/api/v1/fulfillment/packages/${p.packageId}/report-lost`)
-        .set('Authorization', `Bearer ${kho.token}`)
-        .send({ version: (await packageRow(p.packageId)).version, claimCode: 'Không thấy kiện khi dỡ' });
-    const first = await report();
-    expect(first.status, JSON.stringify(first.body)).toBe(200);
-    expect((await packageRow(p.packageId)).lost_reported_by).toBe(kho.accountId);
+    const reported = await lostAction(p.packageId, 'report-lost');
+    expect(reported.status, JSON.stringify(reported.body)).toBe(200);
+    const { version } = await packageRow(p.packageId);
 
     await receive(companyId, p.variants[0]!, 1, 100000);
-    expect((await run(p.variants)).cleared).toEqual([p.packageId]);
+    expect((await run(p.variants)).cleared).toEqual([]);
 
     expect(await packageRow(p.packageId)).toMatchObject({
       status: 'packed',
-      needs_open: false,
-      lost_reported_by: null,
-      lost_reported_at: null,
-      lost_claim_code: null,
+      needs_open: true,
+      open_purpose: 'stocktake',
+      lost_reported_by: kho.accountId,
+      lost_claim_code: CLAIM,
+      version,
     });
-    const again = await report();
-    expect(again.status, JSON.stringify(again.body)).toBe(409);
-    expect(again.body.type).toBe('/problems/not_awaiting_open');
+
+    const confirmed = await lostAction(p.packageId, 'confirm-lost');
+    expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
+    expect(await packageRow(p.packageId)).toMatchObject({
+      status: 'lost',
+      lost_source: 'user',
+      lost_confirmed_by: kho2.accountId,
+      lost_claim_code: CLAIM,
+      needs_open: false,
+      open_purpose: null,
+    });
+    expect(await transitionsOf(p.packageId)).toContainEqual(expect.objectContaining({ action: 'lose_on_unload', from_state: 'packed', to_state: 'lost' }));
+  });
+
+  it('Review 4 (#366): kiện packed chưa giữ hàng mang cờ stocktake có báo thất lạc chờ xác nhận: hàng về, lượt không giữ hàng cho nó, cờ và báo cáo còn', async () => {
+    const A = await sku(0);
+    const p = await seedPackage(companyId, { status: 'packed', lines: [{ variantId: A, quantity: 1 }], needsOpen: true, openPurpose: 'stocktake' });
+    const reported = await lostAction(p.packageId, 'report-lost');
+    expect(reported.status, JSON.stringify(reported.body)).toBe(200);
+    await receive(companyId, A, 1, 100000);
+
+    const r = await run([A]);
+
+    expect(r.held).not.toContain(p.packageId);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_open: true, open_purpose: 'stocktake', lost_reported_by: kho.accountId, lost_claim_code: CLAIM });
+    expect((await packageLineRows(p.packageId))[0]!.reserved_qty).toBe(0);
   });
 
   it('Review 5: kiện mang cờ dạng cũ (needs_attention + DISMANTLE_NOTE) giữ lại được hàng: cờ cũ gỡ', async () => {

@@ -54,6 +54,7 @@ async function move(p: { id: string; orderId: string }, from: PackageStatus, act
  * tồn thực vẫn nhỏ hơn đang giữ thì kiện đã đóng đang giữ SKU đó bật Cần mở `stocktake` (25 §7.4, spec #238 §5.5). `cause`
  * gắn vào `allocation_done`. Mọi lượt: kiện đang giữ hàng mang cờ `stocktake` (hoặc cờ dạng cũ `DISMANTLE_NOTE`) mà tồn
  * thực đã đủ cho mọi SKU kiện giữ thì gỡ cờ (`cleared`); kiện chưa giữ mang một trong hai cờ đó giữ được hàng thì cờ gỡ.
+ * Trừ kiện `stocktake` có dòng chờ bỏ hay có báo thất lạc chờ xác nhận: cờ còn tới khi kho mở hoặc người thứ hai xử lý.
  */
 export async function runAllocation(
   ctx: AllocationContext,
@@ -103,8 +104,9 @@ export async function runAllocation(
   }
 
   // Tự gỡ cờ kiểm kê của kiện đang giữ hàng khi tồn thực không còn nhỏ hơn đang giữ ở mọi SKU kiện giữ (spec #238 §5.5):
-  // cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện gắn trước PR 2. Gỡ `needs_open` mà kiện
-  // không đổi trạng thái thì `updatePackage` xoá báo cáo thất lạc đang treo (D21).
+  // cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện gắn trước PR 2. Kiện có báo thất lạc chờ
+  // xác nhận không có trong `stocktakeFlagged` (gỡ `needs_open` thì `updatePackage` xoá báo cáo theo D21): cờ đợi người
+  // thứ hai xác nhận hoặc kho mở kiện.
   const cleared: string[] = [];
   const flaggedOpen = stocktakeFlagged.filter((p) => !flagged.includes(p.id));
   if (flaggedOpen.length) {
