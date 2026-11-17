@@ -26,21 +26,20 @@ export const floorView = (r: PriceFilterResult | undefined) =>
       ? { netReceived: Number(r.net), belowFloor: r.belowFloor, feeWarning: r.feeWarning }
       : { netReceived: null, belowFloor: true, feeWarning: 'over_50' as const };
 
-/** Giá của từng biến thể trên gian hàng; `rows` là listing hiện hành (biến thể chưa có listing dùng giá chuẩn). */
-export async function listingPrices(
-  shopId: string,
+type Own = Pick<ListingPrice, 'price' | 'priceSource' | 'shopPrice'>;
+
+/**
+ * Giá đang bán của từng biến thể (ghi đè tay > giá theo gian hàng đã xác nhận > giá chuẩn), giá lượt đồng bộ đẩy lên sàn
+ * (#225 phần 2). `rows` là listing hiện hành; biến thể chưa có listing dùng giá chuẩn.
+ */
+export async function currentPrices(
   variantIds: readonly string[],
   rows: readonly ListingRow[],
   standard: ReadonlyMap<string, Decimal | null>,
-): Promise<Map<string, ListingPrice>> {
-  const listed = rows.filter((l) => l.variantId && l.status !== 'delisted');
-  const byVariant = new Map(listed.map((l) => [l.variantId!, l]));
-  const [pending, confirmed] = await Promise.all([
-    pendingCalculations(shopId, [...byVariant.keys()]),
-    findCalculations(listed.flatMap((l) => (l.priceCalcId ? [l.priceCalcId] : []))),
-  ]);
-  type Own = Pick<ListingPrice, 'price' | 'priceSource' | 'shopPrice'>;
-  const own = new Map(
+): Promise<Map<string, Own>> {
+  const byVariant = new Map(rows.filter((l) => l.variantId && l.status !== 'delisted').map((l) => [l.variantId!, l]));
+  const confirmed = await findCalculations([...byVariant.values()].flatMap((l) => (l.priceCalcId ? [l.priceCalcId] : [])));
+  return new Map(
     variantIds.map((id): [string, Own] => {
       const std = standard.get(id) ?? null;
       const base: Own = { price: std && std.toNumber(), priceSource: std ? 'standard' : null, shopPrice: null };
@@ -52,6 +51,17 @@ export async function listingPrices(
       return [id, shopPrice !== null ? { price: shopPrice, priceSource: 'shop', shopPrice } : base];
     }),
   );
+}
+
+/** Giá của từng biến thể trên gian hàng kèm giá chờ, thực nhận, cờ (trang listing). */
+export async function listingPrices(
+  shopId: string,
+  variantIds: readonly string[],
+  rows: readonly ListingRow[],
+  standard: ReadonlyMap<string, Decimal | null>,
+): Promise<Map<string, ListingPrice>> {
+  const byVariant = new Map(rows.filter((l) => l.variantId && l.status !== 'delisted').map((l) => [l.variantId!, l]));
+  const [pending, own] = await Promise.all([pendingCalculations(shopId, [...byVariant.keys()]), currentPrices(variantIds, rows, standard)]);
   const listedPrices = new Map(
     [...byVariant.keys()].flatMap((id) => {
       const p = own.get(id)?.price;

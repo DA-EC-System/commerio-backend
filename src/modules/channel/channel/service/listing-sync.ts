@@ -2,6 +2,7 @@
 // đối chiếu tồn (#223, 25 §6.5), đẩy giá và tồn của listing chờ đồng bộ theo lô. Gọi sàn ngoài giao dịch như
 // `listings.ts`. Bấm tay ở route `sync`; #102 gọi lại `syncListings` theo lịch. Đẩy ngay khi số có thể bán đổi:
 // `pushPending` (việc `channel.stock_push`).
+import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
@@ -30,6 +31,7 @@ import {
   markStockPendingRows,
   updateListing,
 } from '../repository/listings.ts';
+import { markPushed } from '../repository/price-calculations.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
 import {
@@ -41,6 +43,7 @@ import {
   type PriceQuantity,
   type RemoteSku,
 } from './marketplaces/index.ts';
+import { currentPrices } from './listing-prices.ts';
 import { moveListing } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
@@ -412,7 +415,7 @@ function reconcilePatch(row: ListingRow, decision: StockDecision, remote: number
 }
 
 /**
- * Đẩy giá chuẩn và số có thể bán của listing `mapped` có `stock_sync`/`price_sync` khác `synced`, lỗi ghi theo từng SKU.
+ * Đẩy giá đang bán (ghi đè tay > giá theo gian hàng đã xác nhận > giá chuẩn, #225 phần 2) và số có thể bán của listing `mapped` có `stock_sync`/`price_sync` khác `synced`, lỗi ghi theo từng SKU.
  * `remote` (lần đọc trạng thái của lượt, rỗng ở `pushPending`): phần sàn khoá do khuyến mãi không gửi, chỉ báo (25 §6.5
  * bước 3, E32).
  */
@@ -428,19 +431,28 @@ async function pushDue(
 ): Promise<void> {
   // Gian hàng giữ tồn không gửi tồn, trừ listing ẩn bằng tồn 0 (gửi 0 không bao giờ làm bán quá).
   const stockPending = (r: ListingRow) => (!holdStock || zeroHidden(r)) && r.stockSync !== 'synced';
-  const due = rows.filter(
-    (r) =>
-      r.mode === 'mapped' &&
-      PUSHABLE.includes(r.status) &&
-      r.externalSkuId &&
-      // Sàn đổi ngoài app: thôi đẩy cả tồn lẫn giá tới khi CEO quyết, không tự đẩy đè (25 §6.5, #360); riêng dòng ẩn
-      // bằng tồn 0 vẫn gửi 0 (giá thì không, xem `priceDue`).
-      (!r.outsideChangeKind ? stockPending(r) || r.priceSync !== 'synced' : zeroHidden(r) && stockPending(r)),
-  );
+  const onPlatform = rows.filter((r) => r.mode === 'mapped' && PUSHABLE.includes(r.status) && r.externalSkuId);
+  if (!onPlatform.length) return;
+  // Giá đang bán của mọi listing trên sàn: đổi giá chuẩn hay xác nhận giá gian hàng không đánh dấu dòng, nên so ở đây (#360).
+  const prices = await inCompany(async () => {
+    const ids = onPlatform.map((r) => r.variantId!);
+    return currentPrices(ids, onPlatform, await port.standardPrices(ids));
+  });
+  const priceOf = (r: ListingRow) => {
+    const p = prices.get(r.variantId!)?.price;
+    return p == null ? undefined : new Decimal(p);
+  };
+  // Giá chỉ gửi khi cần (#223 review 3): chờ đẩy giá, hoặc giá đang bán khác giá đang trên sàn. Không gửi kèm mỗi lần đẩy tồn.
+  // Sàn đổi ngoài app: thôi đẩy giá tới khi CEO quyết, không tự đẩy đè (25 §6.5, #360).
+  const priceDueOf = (r: ListingRow) => {
+    const p = priceOf(r);
+    return !r.outsideChangeKind && (r.priceSync !== 'synced' || (p !== undefined && (r.listedPrice === null || !p.eq(r.listedPrice))));
+  };
+  // Tồn cũng thôi đẩy khi có `outsideChange`, trừ dòng ẩn bằng tồn 0 (vẫn gửi 0).
+  const due = onPlatform.filter((r) => (r.outsideChangeKind ? zeroHidden(r) && stockPending(r) : stockPending(r) || priceDueOf(r)));
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
-  const { prices, available, untrusted } = await inCompany(async () => ({
-    prices: await port.standardPrices(ids),
+  const { available, untrusted } = await inCompany(async () => ({
     available: holdStock ? new Map<string, number>() : await port.availableOf(ids),
     untrusted: holdStock ? new Map<string, ShopRow[]>() : await untrustedVariants(),
   }));
@@ -453,12 +465,8 @@ async function pushDue(
   };
   const plan = due.map((row) => {
     const r = remote.get(row.externalSkuId!);
-    const standard = prices.get(row.variantId!) ?? undefined;
-    // Giá chỉ gửi khi cần (#223 review 3): chờ đẩy giá, hoặc giá chuẩn khác giá đang trên sàn. Không gửi kèm mỗi lần đẩy tồn.
-    const priceDue =
-      !row.outsideChangeKind &&
-      (row.priceSync !== 'synced' || (standard !== undefined && (row.listedPrice === null || !standard.eq(row.listedPrice))));
-    const price = priceDue && !r?.priceLocked ? standard : undefined;
+    const priceDue = priceDueOf(row);
+    const price = priceDue && !r?.priceLocked ? priceOf(row) : undefined;
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
     const zero = zeroHidden(row);
     const stockDue = stockPending(row) && !waiting.has(row.id);
@@ -509,6 +517,8 @@ async function pushDue(
         if ((stock && !stock.ok) || (price && !price.ok)) summary.errors++;
         if (stock) patch = { ...patch, ...(stock.ok ? stockSynced(row, item.quantity!) : stockFailed(row, syncError(stock, at))) };
         if (price) patch = { ...patch, ...(price.ok ? { priceSync: 'synced', priceSyncError: null, listedPrice: item.price! } : { priceSync: 'error', priceSyncError: syncError(price, at) }) };
+        // Giá theo gian hàng đã lên sàn: lần tính `confirmed` → `pushed` (Documents/19 `price_calculations`).
+        if (price?.ok && row.priceCalcId && row.manualPrice === null) await markPushed(row.priceCalcId);
         if (stock?.ok || price?.ok) patch = { ...patch, lastPushedAt: at };
       }
       patch = { ...patch, ...locked };

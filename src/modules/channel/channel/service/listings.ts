@@ -1,5 +1,6 @@
 // Listing: danh sách, đẩy lên sàn, gỡ (#104; Documents/21 §18.3, §18.4, §18.6.4). Đẩy chạy nền (#219): request chỉ
 // kiểm, chuyển `pushing` và xếp việc `channel.listing_push` (`listing-push.ts`) trong cùng giao dịch, trả ngay.
+import { Decimal } from 'decimal.js';
 import { assertTransition, findAccountSummaries, recordTransition, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
@@ -143,6 +144,16 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
   };
 }
 
+/**
+ * "Giá đã đổi, chưa đẩy" (#360, 21 §18.6.6) tính lúc đọc: listing có trên sàn ghi `synced` mà giá đang bán khác giá đẩy
+ * lần cuối (đổi giá chuẩn, xác nhận giá gian hàng) thì trả `pending`; lượt đồng bộ đẩy khi hai giá khác nhau. Listing chờ
+ * CEO quyết thay đổi ngoài app giữ nguyên.
+ */
+function shownPriceSync(l: ListingRow, price: number | null): ListingRow['priceSync'] {
+  const stale = l.priceSync === 'synced' && !l.outsideChangeKind && l.externalSkuId && l.status !== 'delisted' && price !== null && l.listedPrice !== null;
+  return stale && !new Decimal(l.listedPrice!).eq(price) ? 'pending' : l.priceSync;
+}
+
 /** Mọi biến thể đang bán kèm giá chuẩn và listing trên gian hàng này. Gọi trong `withCompany`. */
 export async function listListings(port: ProductPort, shopId: string): Promise<{ items: ListingRowView[] }> {
   const shop = await ownShop(shopId);
@@ -157,6 +168,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   return {
     items: variants.map((v) => {
       const listing = byVariant.get(v.id);
+      const price = shopPrices.get(v.id)!;
       return {
         variantId: v.id,
         productId: v.productId,
@@ -164,8 +176,8 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         sku: v.sku,
         attributesLabel: v.attributesLabel,
         thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
-        ...shopPrices.get(v.id)!,
-        listing: listing ? toListing(listing, names) : null,
+        ...price,
+        listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
       };
     }),
   };
