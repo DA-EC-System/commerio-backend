@@ -223,13 +223,12 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/remote-skus',
     summary: 'SKU đang có trên sàn kèm ghép hiện hành (#220)',
     description:
-      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc bản sao danh sách SKU của gian hàng BE lưu ở lần đồng bộ gần nhất (`syncedAt`: lần đọc trọn); SKU đã xoá trên sàn không có. Chưa có bản sao thì đọc trọn sàn một lần rồi lưu. Bản sao làm mới sau mỗi lượt đồng bộ listing (sản phẩm sửa từ lần trước), mỗi ngày đọc trọn một lần, và khi bấm Tải lại. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). `listingId`, `listingVersion`, `pendingMapping`: listing chưa gỡ của SKU sàn và ghép chờ duyệt của nó; CEO tìm yêu cầu chờ duyệt ở đây (yêu cầu "không quản tồn" của SKU chưa ghép không có trong `GET /listings`). Sàn chưa đọc được danh sách SKU: 422 `marketplace_unsupported`. Chưa có bản sao mà lần đọc trọn trước lỗi chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây), không gọi sàn. Lần đọc trọn này lỗi vì sàn trả thiếu danh sách: 409 `marketplace_rejected` (`platformCode` `incomplete_list`, `too_many_calls`).',
+      'Cần `channel.listing.match` (CEO, Admin, Sale). Đọc bản sao danh sách SKU của gian hàng BE lưu ở lần đồng bộ gần nhất (`syncedAt`: lần đọc trọn); SKU đã xoá trên sàn không có. Không gọi sàn trong request (#361): chưa có bản sao thì xếp lượt tải nền như Tải lại và trả `items: []`, `syncedAt: null`, `refresh.status = running`. Bản sao làm mới sau mỗi lượt đồng bộ listing (sản phẩm sửa từ lần trước), mỗi ngày đọc trọn một lần, và khi bấm Tải lại. `unmatched=true`: chỉ SKU chưa ghép (kể cả đang chờ CEO duyệt ghép sang "không quản tồn"). `listingId`, `listingVersion`, `pendingMapping`: listing chưa gỡ của SKU sàn và ghép chờ duyệt của nó; CEO tìm yêu cầu chờ duyệt ở đây (yêu cầu "không quản tồn" của SKU chưa ghép không có trong `GET /listings`). `refresh`: `running` (FE hỏi lại tới khi khác `running`; quá 15 phút thì `failed` mã `refresh_stale`), `failed` kèm `error` { `code`, `platformCode` (`incomplete_list`, `too_many_calls`, `daily_call_limit` …), `message` } và `retryAfterSeconds` khi lần đọc trọn lỗi gần nhất chưa quá 10 phút (không xếp lại, không 429). Chưa có bản sao mà gian hàng ngắt hoặc mất token: 409 `shop_not_connected`.',
     security: bearer,
     request: { params: ShopParams, query: RemoteSkusQuery },
     responses: {
       200: { description: 'SKU trên sàn', ...json(RemoteSkuList) },
       ...onShop,
-      429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
     },
   });
   registry.registerPath({
@@ -237,14 +236,15 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/remote-skus/refresh',
     summary: 'Tải lại danh sách SKU trên sàn (#220)',
     description:
-      'Cần `channel.listing.match`. Đọc trọn danh sách SKU của gian hàng từ sàn ngay trong request, lưu bản sao, trả như `GET remote-skus`. Lần đọc trọn trước còn trong 60 giây thì trả bản sao, không gọi sàn. Lượt tải khác của gian hàng đang chạy quá 30 giây: 503 `remote_skus_busy`. Lần đọc trọn lỗi gần nhất (Tải lại hay lượt định kỳ) chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây), không gọi sàn. Sàn trả thiếu danh sách: 409 `marketplace_rejected` (`platformCode` `incomplete_list`, `too_many_calls`). Lời gọi tính vào hạn mức gọi sàn trong ngày (hết: 503 `marketplace_unavailable`).',
+      'Cần `channel.listing.match`. Không gọi sàn trong request (#361). Lần đọc trọn trước còn trong 60 giây: 200 trả bản sao như `GET remote-skus`. Không thì xếp lượt tải nền `channel.remote_skus_refresh` (đọc sản phẩm sửa từ lần trước rồi đọc trọn; mỗi gian hàng một lượt; lỗi sàn thử lại một lần sau 30 giây) và trả 202, `refresh.status = running`; đang có lượt chạy thì 202 không xếp thêm. FE hỏi lại `GET remote-skus` tới khi `refresh.status` khác `running`; lỗi của sàn ở `refresh.error`. Lần đọc trọn lỗi gần nhất (Tải lại hay lượt định kỳ) chưa quá 10 phút: 429 `remote_skus_retry_later`, header `Retry-After` (giây), không xếp. Gian hàng ngắt hoặc mất token: 409 `shop_not_connected`. Lượt tải tính hạn mức gọi sàn như thao tác bấm tay (dừng ở 90%). Không còn 503 `remote_skus_busy`.',
     security: bearer,
     request: { params: ShopParams, query: RemoteSkusQuery },
     responses: {
-      200: { description: 'SKU trên sàn', ...json(RemoteSkuList) },
+      200: { description: 'Lần đọc trọn trước còn trong 60 giây: bản sao', ...json(RemoteSkuList) },
+      202: { description: 'Đã xếp hoặc đang có lượt tải nền: bản sao hiện có kèm `refresh.status = running`', ...json(RemoteSkuList) },
       ...onShop,
+      409: problemResponse('`shop_not_connected` kèm `current`'),
       429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
-      503: problemResponse('`marketplace_unavailable`, `remote_skus_busy`'),
     },
   });
   registry.registerPath({

@@ -1,6 +1,7 @@
 // Bản sao SKU sàn của gian hàng (#220 đợt 2; Documents/21 §18.3 "SKU đang có trên sàn, đọc từ lần đồng bộ gần nhất").
 // Trang ghép, kiểm SKU khi ghép và số SKU chưa ghép đọc bảng `remote_skus`, không gọi sàn mỗi lần mở trang. Làm mới:
-// - đọc trọn (`listSkus` có nhãn): thiết lập, nút Tải lại, lần mở trang đầu tiên, và mỗi ngày một lần;
+// - đọc trọn (`listSkus` có nhãn): thiết lập, nút Tải lại và lần mở trang đầu tiên (chạy nền, việc
+//   `channel.remote_skus_refresh`, #361), và mỗi ngày một lần;
 // - đọc sản phẩm sửa từ lần trước (`listSkusChanged`): sau lượt `channel.listing_sync` (15 phút), tối đa mỗi giờ một lần
 //   (review #309 vòng 2 N2, `CHANGED_EVERY_MS`).
 // Số lời gọi Lazada mỗi gian hàng mỗi ngày: 24 lượt theo giờ sửa × 1 trang (≤ 50 sản phẩm sửa trong một giờ) + 1 lần đọc
@@ -17,6 +18,7 @@ import type { JobAttempt } from '../../../core/index.ts';
 import { findShopRow, type ShopRow } from '../repository/shops.ts';
 import {
   clearRefreshRequested,
+  markRefreshRequested,
   countRemoteSkusSeenSince,
   dropRemoteSkusNotSeen,
   markRemoteSkus,
@@ -28,6 +30,7 @@ import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
 import { asManual } from './marketplaces/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { sendRemoteSkusRefresh } from './shop-jobs.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 /** Bấm Tải lại trong khoảng này sau lần đọc trọn trước thì trả bản sao, không gọi sàn. */
@@ -38,8 +41,6 @@ export const FULL_REFRESH_EVERY_MS = 24 * 3600_000;
 export const CHANGED_EVERY_MS = 3600_000;
 /** Lùi mốc đọc theo giờ sửa, như kéo đơn: giờ của sàn và của app lệch nhau, sàn ghi giờ sửa trễ. */
 const CHANGED_LAG_MS = 2 * 60_000;
-/** Tải lại trong khoảng này sau lần đọc trọn lỗi gần nhất thì 429 kèm `Retry-After` (review #309 vòng 4 B2). */
-export const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
 
 /** 429 `remote_skus_retry_later`; route đặt header `Retry-After` theo `retryAfterSeconds`. */
 export class RemoteSkusRetryLater extends AppError {
@@ -51,9 +52,6 @@ export class RemoteSkusRetryLater extends AppError {
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
-/** Chờ lượt làm mới khác của cùng gian hàng (Tải lại trong request). */
-const LOCK_WAIT_MS = 30_000;
-
 const lockKey = (shopId: string) => `channel.remote_skus:${shopId}`;
 
 /**
@@ -78,39 +76,23 @@ export async function saveFullSnapshot(shopId: string, skus: readonly RemoteSku[
 }
 
 /**
- * Đọc trọn ngay (Tải lại, lần mở trang đầu). `cooldown`: lần đọc trọn trước còn trong `REFRESH_COOLDOWN_MS` thì thôi.
- * Lần đọc trọn lỗi gần nhất (định kỳ hay Tải lại) còn trong `RETRY_AFTER_FAILURE_MS` thì 429 `remote_skus_retry_later`
- * kèm số giây chờ, không gọi sàn; không chờ mốc giãn của lượt định kỳ.
- * Lượt khác đang làm mới thì chờ nó xong rồi dùng kết quả. Lỗi sàn ném như mọi lời gọi sàn trong request.
+ * Xếp lượt Tải lại chạy nền (#361; Documents/21 §18.3): đánh dấu lượt chờ và xếp `channel.remote_skus_refresh` cùng giao
+ * dịch của bên gọi (gọi trong `withCompany`; rollback thì không còn việc). Gian hàng không gọi được sàn (ngắt, mất token):
+ * 409 `shop_not_connected`, không xếp. Đã có việc chờ cùng gian hàng thì pg-boss không thêm (`stately`).
  */
-export async function refreshRemoteSkusNow(companyId: string, shopId: string, opts: { cooldown: boolean }): Promise<void> {
-  const result = await withSessionLock(
-    lockKey(shopId),
-    async () => {
-      const shop = await withCompany(companyId, () => findShopRow(shopId));
-      const last = shop?.remoteSkusSyncedAt?.getTime();
-      if (last !== undefined && (opts.cooldown ? Date.now() - last < REFRESH_COOLDOWN_MS : true)) return;
-      const failedAt = shop?.remoteSkusFullFailedAt?.getTime();
-      if (failedAt !== undefined && Date.now() - failedAt < RETRY_AFTER_FAILURE_MS) {
-        throw new RemoteSkusRetryLater(Math.ceil((failedAt + RETRY_AFTER_FAILURE_MS - Date.now()) / 1000));
-      }
-      try {
-        await readFull(companyId, shopId);
-      } catch (err) {
-        await withCompany(companyId, () => recordManualReadFailure(shopId, fullErrorOf(err)));
-        throw err;
-      }
-    },
-    { waitMs: LOCK_WAIT_MS },
-  );
-  if (result === 'busy') throw new AppError(503, 'remote_skus_busy', 'Đang tải danh sách SKU trên sàn, thử lại sau ít phút');
+export async function requestRemoteSkusRefresh(shop: ShopRow): Promise<void> {
+  if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
+    throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+  }
+  await markRefreshRequested(shop.id, new Date());
+  await sendRemoteSkusRefresh(shop.companyId, shop.id);
 }
 
 /**
  * Lượt định kỳ sau `channel.listing_sync`: chưa có bản sao hoặc lần đọc trọn quá `FULL_REFRESH_EVERY_MS` thì đọc trọn,
  * lần đọc trước (trọn hay theo giờ sửa) chưa quá `CHANGED_EVERY_MS` thì thôi, không thì đọc sản phẩm sửa từ mốc.
  * Đọc trọn lỗi thì ghi mốc thử lại vào `shops` (1 giờ, 2 giờ, … tối đa 24 giờ; review vòng 3 R1): tới mốc mới đọc trọn
- * lại, giữa chừng vẫn đọc theo giờ sửa. Tải lại (`refreshRemoteSkusNow`) không chờ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
+ * lại, giữa chừng vẫn đọc theo giờ sửa. Tải lại (`runRemoteSkusRefresh`) không chờ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
  */
 export async function refreshRemoteSkusQuietly(companyId: string, shopId: string): Promise<void> {
   try {

@@ -8,8 +8,9 @@ import { ChannelListing, RemoteSkuList } from '#src/modules/channel/channel/api/
 import { MarketplaceError, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { unmatchedRemoteCounts } from '#src/modules/channel/channel/repository/remote-skus.ts';
 import { runListingSync } from '#src/modules/channel/channel/service/background.ts';
+import { runRemoteSkusRefresh } from '#src/modules/channel/channel/service/remote-skus.ts';
 import { withCompany } from '#src/shared/db/client.ts';
-import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { inBackground, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { type ListingVariant, type ProductPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
@@ -107,11 +108,14 @@ let admin: Awaited<ReturnType<typeof addMember>>;
 let sale: Awaited<ReturnType<typeof addMember>>;
 let shopId: string;
 const as = (r: request.Test, token: string) => r.set('Authorization', `Bearer ${token}`);
-/** Đọc trọn lại bản sao SKU sàn của gian hàng (bỏ khoảng chờ giữa hai lần Tải lại). */
+/** Chạy lượt Tải lại đang chờ như worker (#361), lần thử cuối. */
+const runJob = (id = shopId) => inBackground(() => runRemoteSkusRefresh({ companyId: company.companyId, shopId: id }, { attempt: 2, lastAttempt: true }));
+/** Đọc trọn lại bản sao SKU sàn của gian hàng (bỏ khoảng chờ giữa hai lần Tải lại): Tải lại xếp việc (202), chạy việc. */
 const reload = async (id = shopId) => {
   await testPool().query('update channel.shops set remote_skus_synced_at = null where id = $1', [id]);
   const res = await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), company.ceo.token);
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(202);
+  await runJob(id);
   return res;
 };
 const match = async (token: string, body: { externalSkuId: string; variantId: string | null }) => {
@@ -512,34 +516,44 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
     return id;
   }
   const remoteSkusOf = (id: string, q = '') => as(app().get(`/api/v1/channel/shops/${id}/remote-skus${q}`), sale.token);
+  /** Lần mở trang đầu: `GET` xếp lượt tải nền (#361), chạy việc đó. */
+  const openFirst = async (id: string) => {
+    expect((await remoteSkusOf(id)).status).toBe(200);
+    await runJob(id);
+  };
+  const refreshOf = (id: string) => as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
 
-  it('Lần mở đầu gọi sàn một lần rồi lưu; lần sau đọc bản sao, không gọi sàn; trả `syncedAt`', async () => {
+  it('Lần mở đầu xếp lượt tải nền (không gọi sàn trong request), lượt đó gọi sàn một lần rồi lưu; lần sau đọc bản sao; trả `syncedAt`', async () => {
     const id = await freshShop();
     const before = listSkusCalls;
     const first = await remoteSkusOf(id);
     expect(first.status).toBe(200);
+    expect(RemoteSkuList.parse(first.body)).toMatchObject({ items: [], syncedAt: null, refresh: { status: 'running' } });
+    expect(listSkusCalls).toBe(before);
+    await runJob(id);
     expect(listSkusCalls).toBe(before + 1);
-    const second = await remoteSkusOf(id);
+    const second = RemoteSkuList.parse((await remoteSkusOf(id)).body);
+    const third = RemoteSkuList.parse((await remoteSkusOf(id)).body);
     expect(listSkusCalls).toBe(before + 1);
-    const body = RemoteSkuList.parse(second.body);
-    expect(body.syncedAt).toEqual(first.body.syncedAt);
-    expect(body.syncedAt).not.toBeNull();
-    expect(body.items.length).toBe(first.body.items.length);
+    expect(second.syncedAt).not.toBeNull();
+    expect(third.syncedAt).toEqual(second.syncedAt);
+    expect(third.items.length).toBe(second.items.length);
+    expect(second.refresh.status).toBe('idle');
   });
 
   it('Tải lại: đọc trọn, SKU đã mất trên sàn bị bỏ khỏi bản sao; bấm lại trong 60 giây thì không gọi sàn', async () => {
     const id = await freshShop();
     const r = newRemote();
     dirty = false;
-    await remoteSkusOf(id);
+    await openFirst(id);
     r.state = 'deleted';
     await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '2 minutes' where id = $1", [id]);
     const before = listSkusCalls;
-    const res = await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
-    expect(res.status).toBe(200);
+    expect((await refreshOf(id)).status).toBe(202);
+    await runJob(id);
     expect(listSkusCalls).toBe(before + 1);
-    expect(RemoteSkuList.parse(res.body).items.some((i) => i.externalSkuId === r.externalSkuId)).toBe(false);
-    await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+    expect(RemoteSkuList.parse((await remoteSkusOf(id)).body).items.some((i) => i.externalSkuId === r.externalSkuId)).toBe(false);
+    expect((await refreshOf(id)).status).toBe(200);
     expect(listSkusCalls).toBe(before + 1);
   });
 
@@ -560,7 +574,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
   it('Số SKU chưa ghép đếm từ bản sao: giảm ngay khi ghép; chờ duyệt "không quản tồn" vẫn tính là chưa ghép', async () => {
     const id = await freshShop();
     const count = async () => (await withCompany(company.companyId, () => unmatchedRemoteCounts([id]))).get(id) ?? 0;
-    await remoteSkusOf(id);
+    await openFirst(id);
     const start = await count();
     expect(start).toBe(remote.filter((r) => r.state !== 'deleted').length);
     const r = remote.find((x) => x.state !== 'deleted' && x.sellerSku)!;
@@ -575,7 +589,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
 
   it('Lượt đồng bộ listing định kỳ đọc sản phẩm sửa từ mốc trừ 2 phút: SKU mới vào, SKU đã xoá ra; sàn lỗi thì lượt đồng bộ vẫn xong', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     // Đọc theo giờ sửa mỗi giờ một lần (review vòng 2 N2): mốc phải cũ hơn 1 giờ.
     const mark = new Date(Date.now() - 70 * 60_000);
     await testPool().query('update channel.shops set remote_skus_changed_since = $2 where id = $1', [id, mark]);
@@ -603,7 +617,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
 
   it('Review vòng 2 N2: lần đọc trước chưa quá 1 giờ thì lượt đồng bộ listing không gọi sàn để làm mới bản sao', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     await testPool().query("update channel.shops set remote_skus_changed_since = now() - interval '30 minutes' where id = $1", [id]);
     const before = listSkusCalls;
     changedSince.length = 0;
@@ -614,7 +628,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
 
   it('Review vòng 2 N1: lần đọc trọn ra rỗng trong khi lần trước có SKU thì không xoá bản sao; rỗng lần thứ hai liền mới xoá', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     const count = async () => Number((await testPool().query('select count(*) from channel.remote_skus where shop_id = $1', [id])).rows[0].count);
     const had = await count();
     expect(had).toBeGreaterThan(0);
@@ -622,13 +636,17 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
       // Lùi cả đồng hồ của bản sao 2 phút, như thể lần đọc trước đã qua khoảng chờ 60 giây.
       await testPool().query("update channel.shops set remote_skus_synced_at = remote_skus_synced_at - interval '2 minutes' where id = $1", [id]);
       await testPool().query("update channel.remote_skus set seen_at = seen_at - interval '2 minutes' where shop_id = $1", [id]);
-      return as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+      const res = await refreshOf(id);
+      await runJob(id);
+      return res;
     };
+    // Lượt Tải lại đọc theo giờ sửa trước (#361): sàn không báo sửa gì, để chỉ còn ảnh hưởng của lần đọc trọn rỗng.
+    changedResult = [];
     listSkusEmpty = true;
     try {
-      expect((await refresh()).status).toBe(200);
+      expect((await refresh()).status).toBe(202);
       expect(await count()).toBe(had);
-      expect((await refresh()).status).toBe(200);
+      expect((await refresh()).status).toBe(202);
       expect(await count()).toBe(0);
     } finally {
       listSkusEmpty = false;
@@ -639,7 +657,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
     const id = await freshShop();
     const r = newRemote({ title: 'Áo - Trắng, M' });
     dirty = false;
-    await remoteSkusOf(id);
+    await openFirst(id);
     await testPool().query("update channel.shops set remote_skus_changed_since = now() - interval '70 minutes' where id = $1", [id]);
     changedResult = [{ ...r, title: `Áo - ${r.sellerSku}`, labelMissing: true, quantity: 9, state: 'inactive' }];
     await runListingSync(port, { companyId: company.companyId, shopId: id });
@@ -649,7 +667,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
 
   it('Review vòng 3 R1: đọc trọn định kỳ lỗi thì giãn lần thử (1 giờ, 2 giờ, …), mốc ở CSDL; Tải lại vẫn đọc ngay, đọc được thì xoá mốc', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     const state = async () =>
       (
         await testPool().query<{ failures: number; retry: Date | null }>(
@@ -686,25 +704,28 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
       // Tải lại không chờ mốc giãn của lượt định kỳ, chỉ chờ 10 phút sau lần lỗi gần nhất (vòng 4 B2).
       await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
       before = listSkusCalls;
-      expect((await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token)).status).toBe(409);
+      expect((await refreshOf(id)).status).toBe(202);
+      await runJob(id);
       expect(listSkusCalls).toBe(before + 1);
     } finally {
       listSkusFails = false;
     }
     await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
-    expect((await as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token)).status).toBe(200);
+    expect((await refreshOf(id)).status).toBe(202);
+    await runJob(id);
     expect(await state()).toEqual({ failures: 0, retry: null });
   });
 
   it('Review vòng 4 B2: Tải lại trong 10 phút sau lần đọc trọn lỗi → 429 `remote_skus_retry_later` kèm `Retry-After`, không gọi sàn', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '2 minutes' where id = $1", [id]);
-    const refresh = () => as(app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`), sale.token);
+    const refresh = () => refreshOf(id);
     listSkusFails = true;
     try {
       let before = listSkusCalls;
-      expect((await refresh()).status).toBe(409);
+      expect((await refresh()).status).toBe(202);
+      await runJob(id);
       expect(listSkusCalls).toBe(before + 1);
       before = listSkusCalls;
       const res = await refresh();
@@ -715,27 +736,31 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
       expect(wait).toBeLessThanOrEqual(600);
       expect(listSkusCalls).toBe(before);
       await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
-      expect((await refresh()).status).toBe(409);
+      expect((await refresh()).status).toBe(202);
+      await runJob(id);
       expect(listSkusCalls).toBe(before + 1);
     } finally {
       listSkusFails = false;
     }
     await testPool().query("update channel.shops set remote_skus_full_failed_at = now() - interval '11 minutes' where id = $1", [id]);
-    expect((await refresh()).status).toBe(200);
+    expect((await refresh()).status).toBe(202);
+    await runJob(id);
     const { rows } = await testPool().query('select remote_skus_full_failed_at as f from channel.shops where id = $1', [id]);
     expect(rows[0].f).toBeNull();
   });
 
-  it('Review vòng 5 C2: lần mở trang đầu (chưa có bản sao) lỗi thì `GET remote-skus` lần sau trong 10 phút → 429 kèm `Retry-After`', async () => {
+  it('Review vòng 5 C2 (#361): lần mở trang đầu lỗi thì `GET remote-skus` lần sau trong 10 phút → 200 kèm `refresh.failed`, số giây chờ, không gọi sàn lại', async () => {
     const id = await freshShop();
     listSkusFails = true;
     try {
       const before = listSkusCalls;
-      expect((await remoteSkusOf(id)).status).toBe(409);
+      await openFirst(id);
       const res = await remoteSkusOf(id);
-      expect(res.status).toBe(429);
-      expect(res.body.type).toMatch(/remote_skus_retry_later$/);
-      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+      expect(res.status).toBe(200);
+      const body = RemoteSkuList.parse(res.body);
+      expect(body.refresh).toMatchObject({ status: 'failed', error: { code: 'marketplace_rejected', platformCode: 'incomplete_list' } });
+      expect(body.refresh.retryAfterSeconds).toBeGreaterThan(0);
+      await runJob(id);
       expect(listSkusCalls).toBe(before + 1);
     } finally {
       listSkusFails = false;
@@ -744,7 +769,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
 
   it('Review vòng 3 R1: giãn lần thử tối đa 24 giờ', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     await testPool().query(
       "update channel.shops set remote_skus_synced_at = now() - interval '25 hours', remote_skus_full_failures = 9, remote_skus_full_retry_at = now() - interval '1 minute', remote_skus_full_failed_at = now() - interval '1 hour' where id = $1",
       [id],
@@ -762,7 +787,7 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
 
   it('Lần đọc trọn đã quá 24 giờ thì lượt định kỳ đọc trọn thay vì đọc theo giờ sửa', async () => {
     const id = await freshShop();
-    await remoteSkusOf(id);
+    await openFirst(id);
     await testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '25 hours' where id = $1", [id]);
     const before = listSkusCalls;
     changedSince.length = 0;

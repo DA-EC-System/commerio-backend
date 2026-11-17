@@ -24,7 +24,8 @@ import {
 import { hasOrdersWithSellerSku } from '../repository/raw-orders.ts';
 import { findRemoteSkuRow, listRemoteSkuRows, type RemoteSkuRow } from '../repository/remote-skus.ts';
 import { findShopRow, lockShopRow } from '../repository/shops.ts';
-import { refreshRemoteSkusNow } from './remote-skus.ts';
+import { REFRESH_COOLDOWN_MS, RemoteSkusRetryLater, requestRemoteSkusRefresh } from './remote-skus.ts';
+import { type RefreshState, refreshState } from '../domain/remote-skus-refresh.ts';
 import { NO_PENDING } from '../domain/listing.ts';
 import { type ChannelListing, moveListing, requesterNames, toListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
@@ -53,20 +54,35 @@ const invalid = (field: string, message: string) =>
 
 /**
  * SKU đang có trên sàn kèm ghép hiện hành (§18.3 `remote-skus`), đọc từ bản sao `remote_skus` (lần đồng bộ gần nhất,
- * `syncedAt` là lần đọc trọn). Chưa có bản sao thì đọc trọn sàn một lần rồi lưu; `refresh` (nút Tải lại) đọc trọn lại,
- * trừ khi lần trước còn trong `REFRESH_COOLDOWN_MS`. Ghép theo `external_sku_id` của listing chưa gỡ. `unmatched`: chỉ
- * SKU chưa có ghép hiệu lực.
+ * `syncedAt` là lần đọc trọn), kèm `refresh` (trạng thái lượt Tải lại, `refreshState`). Không gọi sàn trong request (#361):
+ * - `refresh` (nút Tải lại): lần đọc trọn trước còn trong `REFRESH_COOLDOWN_MS` thì trả bản sao (`accepted: false`, 200);
+ *   lần đọc trọn lỗi chưa quá 10 phút thì 429 `remote_skus_retry_later`; đang có lượt chạy thì không xếp thêm; còn lại
+ *   (kể cả lượt kẹt `refresh_stale`) xếp lượt tải nền. Hai nhánh sau trả `accepted: true` (202).
+ * - Chưa có bản sao: xếp lượt tải nền như Tải lại, trừ khi đang chạy hoặc lần lỗi gần nhất chưa quá 10 phút (lỗi trả ở
+ *   `refresh.error`, không 429).
+ * Ghép theo `external_sku_id` của listing chưa gỡ. `unmatched`: chỉ SKU chưa có ghép hiệu lực.
  */
 export async function remoteSkus(
   actor: Actor,
   shopId: string,
   unmatched: boolean,
   refresh = false,
-): Promise<{ items: RemoteSkuItem[]; syncedAt: Date | null }> {
-  const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
-  const shop = await inCompany(() => ownShop(shopId));
-  if (refresh || !shop.remoteSkusSyncedAt) await refreshRemoteSkusNow(actor.companyId, shop.id, { cooldown: refresh });
-  return inCompany(async () => {
+): Promise<{ items: RemoteSkuItem[]; syncedAt: Date | null; refresh: RefreshState; accepted: boolean }> {
+  return withCompany(actor.companyId, async () => {
+    const shop = await ownShop(shopId);
+    const now = new Date();
+    const state = refreshState(shop, now);
+    let accepted = false;
+    if (refresh) {
+      const synced = shop.remoteSkusSyncedAt?.getTime();
+      if (synced === undefined || now.getTime() - synced >= REFRESH_COOLDOWN_MS) {
+        if (state.status === 'failed' && state.retryAfterSeconds !== null) throw new RemoteSkusRetryLater(state.retryAfterSeconds);
+        if (state.status !== 'running') await requestRemoteSkusRefresh(shop);
+        accepted = true;
+      }
+    } else if (!shop.remoteSkusSyncedAt && state.status !== 'running' && state.retryAfterSeconds === null) {
+      await requestRemoteSkusRefresh(shop);
+    }
     const remote = await listRemoteSkuRows(shop.id);
     const rows = await liveListingRows(shop.id);
     const names = await requesterNames(rows);
@@ -90,8 +106,13 @@ export async function remoteSkus(
         pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
       };
     });
-    const syncedAt = (await findShopRow(shop.id))?.remoteSkusSyncedAt ?? null;
-    return { items: unmatched ? items.filter((i) => i.mode === null) : items, syncedAt };
+    const row = (await findShopRow(shop.id)) ?? shop;
+    return {
+      items: unmatched ? items.filter((i) => i.mode === null) : items,
+      syncedAt: row.remoteSkusSyncedAt,
+      refresh: refreshState(row, new Date()),
+      accepted,
+    };
   });
 }
 
