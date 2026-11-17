@@ -126,6 +126,10 @@ function groupStatus(lines: readonly PlatformPackageLine[]): PlatformLineStatus 
   if (statuses.some((s) => s === null)) return null;
   const live = statuses.filter((s) => s !== 'cancelled') as (keyof typeof RANK)[];
   if (!live.length) return 'cancelled';
+  // #358: kiện có món đã giao và món `returned` là kiện đã giao; món `returned` lúc đó là khách trả sau khi nhận, đi
+  // theo yêu cầu trả (Documents/25 §9), không phải kiện hoàn về. Chỉ khi mọi món là một trong hai trạng thái này: có món
+  // chậm hơn thì món chậm nhất vẫn quyết, có món `lost` thì giữ luật hoà cũ (món đứng trước thắng).
+  if (live.includes('delivered') && live.includes('returned') && live.every((s) => s === 'delivered' || s === 'returned')) return 'delivered';
   return live.reduce((a, b) => (RANK[b] < RANK[a] ? b : a));
 }
 
