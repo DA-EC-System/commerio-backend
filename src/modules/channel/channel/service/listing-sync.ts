@@ -19,6 +19,7 @@ import {
   syncAction,
   visibilityAction,
 } from '../domain/listing.ts';
+import { platformPriceChanged } from '../domain/outside-price.ts';
 import { holdsStock } from '../domain/shop.ts';
 import {
   findListingById,
@@ -198,6 +199,44 @@ async function applyVisibility(
 }
 
 /**
+ * Giá gốc trên sàn khác giá app đẩy lần cuối (#360, 21 §18.3, 25 §6.5): không tự đẩy đè. Listing `live` → `outside_hold`
+ * kèm `outsideChange` `price_changed`, app tắt SKU trên sàn (`hideBy = 'deactivate'` và app tự ẩn được trên sàn này) hoặc
+ * đưa tồn sàn về 0 (`hidden_by = 'zero_stock'`, `pushDue` gửi 0). Listing `hidden` sẵn chỉ ghi `outsideChange`, giữ cách ẩn.
+ * Lỗi sàn của một listing chỉ log, lượt sau so lại; mất uỷ quyền, gian hàng ngắt thì ném.
+ */
+async function holdChangedPrices(
+  inCompany: InCompany,
+  { shop, adapter, accessToken }: Session,
+  rows: ListingRow[],
+  bySku: Map<string, RemoteSku>,
+  summary: SyncSummary,
+): Promise<void> {
+  const now = Date.now();
+  const byPlatform = adapter.capabilities.hideBy === 'deactivate' && appHidesOn(shop.platform);
+  for (const row of rows) {
+    const remote = bySku.get(row.externalSkuId!);
+    if (!remote || !platformPriceChanged(row, remote, now)) continue;
+    const change = { outsideChangeKind: 'price_changed', outsideChangePrice: remote.price!, outsideChangeAt: new Date() } as const;
+    if (row.status === 'hidden') {
+      if (await inCompany(() => updateListing(row.id, { version: row.version, status: 'hidden' }, change))) summary.changed++;
+      continue;
+    }
+    if (byPlatform) {
+      try {
+        await onMarketplace(() => adapter.deactivate(accessToken, row.externalProductId!, row.externalSkuId!));
+      } catch (err) {
+        if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+        logger.warn({ err, listingId: row.id }, 'Tắt SKU bị sửa giá ngoài app lỗi, lượt sau thử lại');
+        summary.errors++;
+        continue;
+      }
+    }
+    const hide: ListingPatch = byPlatform ? { hiddenBy: 'platform' } : { hiddenBy: 'zero_stock', stockSync: 'pending' };
+    if (await inCompany(() => moveAfterMarketplace(row, 'outside_hold', () => ({ ...change, ...hide }), 'Giá trên sàn bị sửa'))) summary.changed++;
+  }
+}
+
+/**
  * Ghi thao tác sau khi sàn đã nhận. Lệch `version` (tồn vừa đánh dấu chờ đẩy) thì đọc lại và ghi trên dòng mới nếu trạng
  * thái chưa đổi, để app không lệch sàn; trạng thái đã đổi (gỡ, sàn khoá) thì bỏ, lượt sau so lại.
  */
@@ -275,6 +314,8 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
       await inCompany(() => moveListing(row, action, null, toLive ? { ...patch, stockSync: 'pending' } : patch, reason));
       summary.changed++;
     }
+    const acted = new Set(actions.map((a) => a.row.id));
+    await holdChangedPrices(inCompany, session, watched.filter((r) => !acted.has(r.id)), bySku, summary);
     rows = await inCompany(() => listListingRows(shop.id));
   }
   if (await checkRevisions(inCompany, adapter, accessToken, rows, summary)) rows = await inCompany(() => listListingRows(shop.id));
@@ -392,9 +433,9 @@ async function pushDue(
       r.mode === 'mapped' &&
       PUSHABLE.includes(r.status) &&
       r.externalSkuId &&
-      // Sàn đổi ngoài app: thôi đẩy cả tồn lẫn giá tới khi CEO quyết, không tự đẩy đè (25 §6.5, #360).
-      !r.outsideChangeKind &&
-      (stockPending(r) || r.priceSync !== 'synced'),
+      // Sàn đổi ngoài app: thôi đẩy cả tồn lẫn giá tới khi CEO quyết, không tự đẩy đè (25 §6.5, #360); riêng dòng ẩn
+      // bằng tồn 0 vẫn gửi 0 (giá thì không, xem `priceDue`).
+      (!r.outsideChangeKind ? stockPending(r) || r.priceSync !== 'synced' : zeroHidden(r) && stockPending(r)),
   );
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
@@ -414,7 +455,9 @@ async function pushDue(
     const r = remote.get(row.externalSkuId!);
     const standard = prices.get(row.variantId!) ?? undefined;
     // Giá chỉ gửi khi cần (#223 review 3): chờ đẩy giá, hoặc giá chuẩn khác giá đang trên sàn. Không gửi kèm mỗi lần đẩy tồn.
-    const priceDue = row.priceSync !== 'synced' || (standard !== undefined && (row.listedPrice === null || !standard.eq(row.listedPrice)));
+    const priceDue =
+      !row.outsideChangeKind &&
+      (row.priceSync !== 'synced' || (standard !== undefined && (row.listedPrice === null || !standard.eq(row.listedPrice))));
     const price = priceDue && !r?.priceLocked ? standard : undefined;
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
     const zero = zeroHidden(row);

@@ -181,7 +181,7 @@ type LazadaProduct = {
   created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
   images?: unknown;
-  skus?: { SkuId?: unknown; SellerSku?: unknown; Status?: unknown; quantity?: unknown; sellableStock?: unknown; Images?: unknown }[];
+  skus?: { SkuId?: unknown; SellerSku?: unknown; Status?: unknown; quantity?: unknown; sellableStock?: unknown; price?: unknown; Images?: unknown }[];
 };
 
 /** URL đầu tiên khác rỗng của `images` (GetProducts): mảng chuỗi hoặc chuỗi JSON của mảng; không có thì null. */
@@ -246,6 +246,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     // `withholdQuantity`); 6 SKU có hàng bị đơn chiếm, vd tồn tổng 99, chiếm 2, `sellableStock` 97. App đẩy bằng
     // UpdateSellableQuantity nên so với `sellableStock`; thiếu trường thì không đối chiếu.
     ...(s.sellableStock !== undefined && s.sellableStock !== null && { sellableQuantity: Number(s.sellableStock) }),
+    ...(s.price !== undefined && s.price !== null && s.price !== '' && { price: String(s.price) }),
   }));
 }
 

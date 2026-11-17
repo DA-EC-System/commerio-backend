@@ -183,6 +183,7 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
       quantity,
       // "The SKU quantity available in the warehouse": cùng nghĩa với số app đẩy, dùng để đối chiếu (#223).
       sellableQuantity: quantity,
+      ...(typeof (s.price as Row | undefined)?.tax_exclusive_price === 'string' && { price: (s.price as Row).tax_exclusive_price as string }),
     };
   });
 }
