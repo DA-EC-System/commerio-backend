@@ -24,10 +24,10 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # Overlay sinh Secret từ .env (gitignore): dùng file mẫu để build.
-      - name: File .env mẫu
+      # Overlay sinh Secret từ .env, alertmanager.yml (gitignore): dùng file mẫu để build.
+      - name: File cấu hình mẫu
         run: |
-          for f in $(find deploy/k8s/overlays -name .env.example); do cp "$f" "${f%.example}"; done
+          for f in $(find deploy/k8s/overlays -name '*.example'); do cp "$f" "${f%.example}"; done
 
       # kubectl (có Kustomize) và yq có sẵn trên ubuntu-latest.
       - name: Build, kubeconform, kiểm tham chiếu
@@ -48,6 +48,10 @@ jobs:
         run: |
           docker run --rm -v "$PWD/deploy/monitoring:/m" --entrypoint sh prom/prometheus:v3.5.0 -c \
             'cp /m/k8s/prometheus.yml /m/rules/alerts.yml /tmp/ && promtool check config /tmp/prometheus.yml && promtool test rules /m/rules/alerts.test.yml'
+
+      - name: Cấu hình Alertmanager
+        run: |
+          docker run --rm -v "$PWD/deploy/k8s/overlays/vps/alertmanager:/a" --entrypoint amtool prom/alertmanager:v0.28.1             check-config /a/alertmanager.yml.example
 
       - name: Dashboard là JSON hợp lệ
         run: node -e "JSON.parse(require('fs').readFileSync('deploy/monitoring/dashboards/commerio.json', 'utf8'))"

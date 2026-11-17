@@ -2,7 +2,6 @@
 // người dùng gửi lên mới được lưu. Mỗi dòng lưu trong giao dịch riêng: dòng lỗi huỷ riêng dòng đó, dòng khác vẫn ghi.
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import type { ModuleContext } from '../../../../shared/module.ts';
 import { BulkRowInput } from '../domain/bulk-row.ts';
 import {
   SALES_WINDOW_DAYS,
@@ -17,7 +16,9 @@ import { type BulkFilter, findBulkVariants, findSiblingVariants } from '../repos
 import { touchProduct } from '../repository/products.ts';
 import { findVariants } from '../repository/variants.ts';
 import { type Caller, isUuid } from './errors.ts';
+import { listedFieldErrors } from './listed-fields.ts';
 import { toDong } from './products.ts';
+import type { CatalogContext } from './usage.ts';
 import { applyVariantUpdate } from './variants.ts';
 
 /** Dữ liệu của module khác mà catalog (lớp dưới) cần; `src/modules/product/index.ts` và `src/wiring.ts` nối vào. */
@@ -36,7 +37,8 @@ export interface BulkEditPorts {
   soldQtyOf(ids: readonly string[], days: number): Promise<Map<string, number>>;
 }
 
-export interface BulkEditContext extends ModuleContext {
+/** `ctx` của catalog: cần thêm `listingPresenceOf` (chặn xoá trống trường bắt buộc của SKU còn listing). */
+export interface BulkEditContext extends CatalogContext {
   readonly bulkEdit?: BulkEditPorts;
 }
 
@@ -141,7 +143,11 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
   });
 }
 
-export type BulkFailureCode = 'validation_failed' | 'version_conflict' | 'not_found' | 'product_archived';
+/**
+ * `product_archived` giữ trong hợp đồng (`Documents/21` §17.5) nhưng không còn sinh ra: #204 bỏ lưu trữ sản phẩm cha.
+ * `listing_field_required`: dòng xoá trống giá muốn bán, cân nặng, kích thước của SKU còn listing chưa gỡ, kèm `errors`.
+ */
+export type BulkFailureCode = 'validation_failed' | 'version_conflict' | 'not_found' | 'product_archived' | 'listing_field_required';
 export interface BulkFailure {
   variantId: string;
   code: BulkFailureCode;
@@ -186,7 +192,8 @@ export async function saveBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, raw
       const version = await withCompany(viewer.companyId, async () => {
         const [current] = isUuid(row.variantId) ? await findVariants({ ids: [row.variantId] }) : [];
         if (!current) throw new RowFailure('not_found', 'Không tìm thấy SKU');
-        if (current.productArchivedAt) throw new RowFailure('product_archived', 'Sản phẩm đã lưu trữ, không sửa được');
+        const listed = await listedFieldErrors(ctx, current, row);
+        if (listed) throw new RowFailure('listing_field_required', listed.detail, listed.errors);
         const outcome = await applyVariantUpdate(viewer, current, row);
         if (outcome === 'stale') throw new RowFailure('version_conflict', `SKU ${current.sku} vừa được người khác sửa`);
         if (outcome === 'updated') await touchProduct(current.productId);

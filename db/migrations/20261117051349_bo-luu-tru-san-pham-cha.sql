@@ -1,0 +1,1 @@
+ALTER TABLE "product"."products" DROP COLUMN "archived_at";

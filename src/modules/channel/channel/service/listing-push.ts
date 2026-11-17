@@ -6,7 +6,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, STALE_PUSH_MS } from '../domain/listing.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
-import { findListingById, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
+import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
@@ -95,9 +95,27 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       // Giữ nguyên qua các lần thử của lượt, đổi khi người dùng bấm đẩy lại (#219 A4).
       idempotencyKey: `cm-${row.id}-${row.pushStartedAt!.getTime()}`,
     };
-    const result = reshelve
+    let result = reshelve
       ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, product)) }
       : await adapter.createProduct(accessToken, product);
+    // Sàn đã có SKU cùng SellerSku (#346, Documents/21 §18.6.4): SKU đó thuộc listing khác thì không ghi đè; không thì ghi
+    // nội dung, giá của app lên như đẩy lại.
+    let rewritten = reshelve;
+    if (result.existing) {
+      const { externalProductId, externalSkuId } = result;
+      // Kể cả SKU đang chờ CEO duyệt ghép vào listing lỗi khác.
+      const owner = await inCompany(
+        async () => (await findListingByExternalSku(job.shopId, externalSkuId)) ?? (await findListingByPendingExternalSku(job.shopId, externalSkuId)),
+      );
+      if (owner && owner.id !== row.id) {
+        const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
+        return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });
+      }
+      if (adapter.updateProduct) {
+        result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, product)) };
+        rewritten = true;
+      }
+    }
     const at = new Date();
     await finish(job, row, result.live ? 'go_live' : 'send_review', {
       externalProductId: result.externalProductId,
@@ -105,12 +123,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       externalImageUrls: imageUrls,
       pushError: null,
       listedPrice: priceText,
-      priceSync: 'synced',
+      // Nhận về sản phẩm có sẵn mà sàn không cho sửa: giá chưa ghi lên, để đồng bộ đẩy.
+      priceSync: result.existing && !rewritten ? 'pending' : 'synced',
       priceSyncError: null,
       lastPushedAt: at,
       // Tạo mới gửi kèm tồn; đẩy lại thì TikTok không gửi tồn (Edit Product giữ tồn cũ): để đồng bộ đẩy.
       // SKU chưa tin được: sàn nhận 0, chờ đẩy tồn thật (lấy đơn xong trọn thì `channel.stock_push` chạy lại).
-      ...(reshelve
+      ...(rewritten || result.existing
         ? { stockSync: 'pending' as const }
         : { platformStock: quantity, stockSync: untrusted ? ('pending' as const) : ('synced' as const), stockSyncError: null }),
     });

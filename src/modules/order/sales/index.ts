@@ -49,6 +49,8 @@ export { getOrder } from './service/orders.ts';
 export { completeDueOrdersOnce } from './service/complete.ts';
 // Yêu cầu trả (#202, Documents/21 §11.3).
 export { hasOpenReturns } from './service/return-boundary.ts';
+// Lý do chặn lưu trữ SKU phần đơn cho catalog (#204), tiêm qua `ctx.orderArchiveBlockers` ở `src/wiring.ts`.
+export { orderArchiveBlockers, orderInUse } from './service/catalog-boundary.ts';
 export type { MarketplaceReturns } from './service/marketplace-returns.ts';
 // Yêu cầu trả từ sàn (#202): channel kéo về gọi trong `withCompany`.
 export { ingestMarketplaceReturn, type PlatformReturn, type ReturnIngestOutcome } from './service/return-ingest.ts';

@@ -4,11 +4,17 @@
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerInventoryOpenApi } from './api/openapi.ts';
 import { inventoryRouter } from './api/routes.ts';
+import { startInventoryConsumers } from './service/background.ts';
 
 export const inventoryModule: ModuleDefinition = {
   name: 'inventory',
   router: inventoryRouter,
   openapi: registerInventoryOpenApi,
+  // Nghe đổi trạng thái kinh doanh SKU để xét lại ngưỡng (#204).
+  async startBackground() {
+    startInventoryConsumers();
+    return async () => {};
+  },
 };
 
 export {
@@ -37,6 +43,8 @@ export { createOpeningStocktake, createQuarantineWriteOff } from './service/docu
 export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.ts';
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
+// Lý do chặn lưu trữ SKU phần kho cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog.
+export { deleteStockLevels, stockArchiveBlockers, stockInUse } from './service/archive-blockers.ts';
 // Ngưỡng tồn cho sửa hàng loạt của catalog (#242), trong giao dịch của bên gọi.
-export { applyReorderRule, reorderRulesOf } from './service/stock.ts';
+export { applyReorderRule, minQtyOf, reorderRulesOf } from './service/stock.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';

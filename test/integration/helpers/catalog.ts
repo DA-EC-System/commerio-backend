@@ -15,7 +15,7 @@ export async function createVariant(companyId: string, options: { sku?: string; 
       .returning({ id: categories.id });
     const [product] = await tx
       .insert(products)
-      .values({ companyId, categoryId: category!.id, name: `Sản phẩm ${suffix}` })
+      .values({ companyId, categoryId: category!.id, name: `Sản phẩm ${suffix}`, code: `SP-${suffix.toUpperCase()}` })
       .returning({ id: products.id });
     const sku = options.sku ?? `TEST-${suffix.toUpperCase()}`;
     const [variant] = await tx

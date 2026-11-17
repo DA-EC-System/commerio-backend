@@ -166,3 +166,11 @@ export async function latestMoves(variantId: string, limit: number): Promise<Mov
     .orderBy(desc(stockMoves.id))
     .limit(limit);
 }
+
+/** Xoá dòng tồn của SKU (catalog xoá hẳn sản phẩm chưa dùng, #204): dòng chỉ còn ngưỡng tồn, không có thẻ kho. */
+export async function deleteLevels(variantIds: readonly string[]): Promise<void> {
+  if (!variantIds.length) return;
+  await getDb()
+    .delete(stockLevels)
+    .where(and(eq(stockLevels.companyId, companyOfTransaction()), inArray(stockLevels.variantId, [...variantIds])));
+}

@@ -195,6 +195,16 @@ export async function reorderRulesOf(variantIds: readonly string[]): Promise<Map
 }
 
 /**
+ * Ngưỡng tồn theo SKU cho nhãn độ hoàn thiện của catalog (#204, `missing.minQty`); catalog nhận qua `ctx`
+ * (`product/index.ts`). Chưa có dòng tồn hay chưa đặt thì null; Map đủ mọi id; không khoá, không tạo dòng.
+ */
+export async function minQtyOf(variantIds: readonly string[]): Promise<Map<string, number | null>> {
+  const ids = [...new Set(variantIds)];
+  const levels = await levelsOf(ids);
+  return new Map(ids.map((id) => [id, levels.get(id)?.minQty ?? null]));
+}
+
+/**
  * Như `setReorderRule` nhưng chạy trong giao dịch `withCompany` của bên gọi và không dựng view (sửa hàng loạt gọi cho
  * từng dòng, #242). `stale` khi `version` không còn đúng: bên gọi tự báo lỗi và huỷ giao dịch của dòng.
  */

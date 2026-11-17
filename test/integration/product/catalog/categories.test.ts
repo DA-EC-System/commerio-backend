@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
-import { api, auditOf, createAttribute, createCategory, createProduct, valueId, uniq } from './helpers.ts';
+import { api, archiveSku, auditOf, createAttribute, createCategory, createProduct, valueId, uniq } from './helpers.ts';
 
 // Danh mục và quy tắc SKU (UC-CP-01; Documents/21 5.1–5.3, 9.3, V7, V8, V24, V25).
 let token: string;
@@ -147,14 +147,14 @@ describe('DELETE /catalog/categories/:id', () => {
     expect(res.body.type).toBe('/problems/version_conflict');
   });
 
-  it('danh mục có sản phẩm → 409 in_use, kể cả khi sản phẩm đã lưu trữ (AC-6, AC-19)', async () => {
+  it('danh mục có sản phẩm → 409 in_use, kể cả khi mọi SKU đã lưu trữ (AC-6, AC-19)', async () => {
     const category = await createCategory(token, uniq('Đang dùng'));
     const product = await createProduct(token, { name: uniq('SP'), categoryId: category.id, variants: [[]] });
     const first = await api(token).delete(`/categories/${category.id}?version=1`);
     expect(first.status).toBe(409);
     expect(first.body.type).toBe('/problems/in_use');
 
-    expect((await api(token).delete(`/products/${product.id}?version=1`)).status).toBe(204);
+    await archiveSku(token, product.id, product.variants[0]!.id);
     const list = await api(token).get('/categories');
     expect(list.body.find((c: { id: string }) => c.id === category.id)).toMatchObject({ productCount: 1 });
     const second = await api(token).delete(`/categories/${category.id}?version=1`);

@@ -4,7 +4,7 @@ import { recordAudit } from '../../../core/index.ts';
 import { findCategories } from '../repository/categories.ts';
 import { insertProduct, productNameExists } from '../repository/products.ts';
 import { insertVariant, lockVariants } from '../repository/variants.ts';
-import { allocateSkus } from './sku-allocation.ts';
+import { allocateSkus, productCodeFor } from './sku-allocation.ts';
 
 export interface NewProductItem {
   name: string;
@@ -47,9 +47,11 @@ export async function createPurchaseProducts(
   for (const item of items) {
     // Cấp SKU từng mục: `sku_next_seq` của danh mục vừa tăng, đọc lại trước mục kế tiếp cùng danh mục.
     const [category] = await findCategories(item.categoryId);
-    const productId = await insertProduct(caller.companyId, item.categoryId, item.name, description);
-    const [sku] = await allocateSkus(category!, [[]]);
-    const variantId = await insertVariant(caller.companyId, productId, sku!, [], 0);
+    const [allocated] = await allocateSkus(category!, [[]]);
+    const { sku, seq } = allocated!;
+    const code = await productCodeFor(category!.skuPattern, seq);
+    const productId = await insertProduct(caller.companyId, item.categoryId, item.name, description, code);
+    const variantId = await insertVariant(caller.companyId, productId, sku, [], 0);
     variantIds.push(variantId);
     await recordAudit({
       companyId: caller.companyId,
@@ -58,7 +60,14 @@ export async function createPurchaseProducts(
       entityType: 'product.products',
       entityId: productId,
       before: null,
-      after: { name: item.name, category: categories.get(item.categoryId)!.name, description, imageFileIds: [], variants: [sku] },
+      after: {
+        name: item.name,
+        code,
+        category: categories.get(item.categoryId)!.name,
+        description,
+        imageFileIds: [],
+        variants: [sku],
+      },
     });
   }
   return { ok: true, variantIds };

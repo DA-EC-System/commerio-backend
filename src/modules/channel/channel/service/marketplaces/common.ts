@@ -105,6 +105,23 @@ export interface CreatedProduct {
   externalSkuId: string;
   /** Sàn cho bán ngay (Lazada `item_status: Active`, gọi thật 28/10); false là chờ duyệt. */
   live: boolean;
+  /**
+   * Không tạo: sàn đã có SKU cùng SellerSku (lần đẩy trước tạo dù báo lỗi, #346). Bên gọi kiểm SKU đó chưa ghép listing khác
+   * rồi ghi nội dung của app lên (`updateProduct`).
+   */
+  existing?: true;
+}
+
+/**
+ * SKU chưa xoá trên sàn mang SellerSku này, cho `createProduct` không tạo trùng (#346). Nhiều SKU cùng SellerSku thì không
+ * chọn bừa: ném `rejected` `duplicate_seller_sku`, người dùng ghép tay SKU đúng.
+ */
+export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(skus: readonly T[], sellerSku: string): T | null {
+  const found = skus.filter((s) => s.sellerSku === sellerSku && s.state !== 'deleted');
+  if (found.length > 1) {
+    throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, ghép tay SKU đúng`);
+  }
+  return found[0] ?? null;
 }
 
 /**

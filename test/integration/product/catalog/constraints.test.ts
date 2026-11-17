@@ -72,28 +72,28 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     const company = randomUUID();
     const category = await insertCategory(company, 'Giày');
     const insert = (name: string) =>
-      db().query('insert into product.products (company_id, category_id, name) values ($1, $2, $3)', [
+      db().query('insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4)', [
         company,
         category,
         name,
+        `G-${randomUUID().slice(0, 8)}`,
       ]);
     await insert('Giày chạy bộ');
     await expect(insert('GIÀY CHẠY BỘ')).rejects.toThrow(/products_company_lower_name_uq/);
   });
 
-  it('tên của sản phẩm đã lưu trữ dùng lại được (#12 B1)', async () => {
+  it('mã cha không trùng trong một công ty, khác công ty thì được (#204 D5)', async () => {
+    const insert = async (companyId: string, name: string) =>
+      db().query('insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4)', [
+        companyId,
+        await insertCategory(companyId, `Dép ${name}`),
+        name,
+        'DEP-0001',
+      ]);
     const company = randomUUID();
-    const category = await insertCategory(company, 'Dép');
-    const insert = (name: string, archived: boolean) =>
-      db().query(
-        `insert into product.products (company_id, category_id, name, archived_at)
-         values ($1, $2, $3, case when $4 then now() end)`,
-        [company, category, name, archived],
-      );
-    await insert('Dép lê', true);
-    await insert('dép lê', true);
-    await expect(insert('Dép Lê', false)).resolves.toBeDefined();
-    await expect(insert('DÉP LÊ', false)).rejects.toThrow(/products_company_lower_name_uq/);
+    await insert(company, 'Dép lê');
+    await expect(insert(company, 'Dép tổ ong')).rejects.toThrow(/products_company_code_uq/);
+    await expect(insert(randomUUID(), 'Dép lê')).resolves.toBeDefined();
   });
 
   it('SKU không trùng trong một công ty, khác công ty thì được', async () => {
