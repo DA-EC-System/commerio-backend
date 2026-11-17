@@ -1,5 +1,5 @@
-// Ẩn, hiện listing theo trạng thái SKU (#224; 25 §6.4, E25; 21 §18.3; US-GH-10, ca C2-13, C2-14). Sự kiện
-// `catalog.variant_status_changed` chưa có nơi phát (#204 PR 2) nên gọi thẳng handler với payload 21 §11.2.
+// Ẩn, hiện listing theo trạng thái SKU (#224; 25 §6.4, E25; 21 §18.3; US-GH-10, ca C2-13, C2-14).
+// Phần lớn ca gọi thẳng handler với payload 21 §11.2; ca cuối đi trọn từ route đổi trạng thái của catalog.
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -238,5 +238,29 @@ describe('gian hàng hideBy = zero_stock', () => {
     expect(activate).not.toHaveBeenCalled();
     expect(sent().find((i) => i.externalSkuId === `sku-${sku}`)).toMatchObject({ quantity: 5 });
     expect(await listing(listingId)).toMatchObject({ status: 'live', hidden_by: null, stock_sync: 'synced' });
+  });
+});
+
+// Chuỗi thật với catalog (#204 đã merge): route đổi trạng thái → outbox `catalog.variant_status_changed` → consumer → việc.
+describe('chuỗi catalog → sự kiện → consumer → ẩn trên sàn', () => {
+  it('US-GH-10 dòng 1: Admin tạm ngừng SKU qua API → listing Lazada hidden, sàn nhận deactivate', async () => {
+    const { variantId, sku, listingId } = await seed(shops.lazada);
+    const { rows: v } = await testPool().query('select product_id from product.product_variants where id = $1', [variantId]);
+    const res = await app()
+      .post(`/api/v1/catalog/products/${v[0].product_id}/business-status`)
+      .set('Authorization', `Bearer ${company.ceo.token}`)
+      .send({ action: 'pause', variantIds: [variantId] });
+    expect(res.status).toBe(200);
+    const { rows } = await testPool().query(
+      "select payload from core.outbox_messages where type = 'catalog.variant_status_changed' and payload->>'variantId' = $1",
+      [variantId],
+    );
+    expect(rows.map((r) => r.payload)).toEqual([expect.objectContaining({ variantId, from: 'selling', to: 'paused' })]);
+
+    await clearJobs(shops.lazada);
+    await withCompany(company.companyId, () => onVariantStatusChanged(rows[0].payload));
+    await runPush(shops.lazada);
+    expect(deactivate).toHaveBeenCalledWith(expect.any(String), `item-${sku}`, `sku-${sku}`);
+    expect(await listing(listingId)).toMatchObject({ status: 'hidden', hidden_by: 'platform' });
   });
 });
