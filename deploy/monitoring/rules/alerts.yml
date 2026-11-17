@@ -1,4 +1,4 @@
-# Cảnh báo cơ bản (#36). Xem trạng thái ở trang /alerts của Prometheus; chưa gửi đi đâu (chưa có Alertmanager).
+# Cảnh báo cơ bản (#36). Xem ở trang /alerts của Prometheus; staging gửi email qua Alertmanager (deploy/k8s/overlays/vps/alertmanager.yaml, #350).
 # Test: alerts.test.yml cùng thư mục.
 groups:
   - name: commerio
