@@ -189,6 +189,12 @@ export interface RemoteSku {
    * UpdateSellableQuantity nên cùng nghĩa.
    */
   sellableQuantity?: number;
+  /**
+   * Giá gốc của SKU trên sàn (trước khuyến mãi), chuỗi số, để phát hiện người bán sửa giá ngoài app (#360, 21 §18.3).
+   * Lazada: `skus[].price` (cùng trường app ghi bằng `<Price>`; giá khuyến mãi là `special_price`). TikTok: `price.tax_exclusive_price`
+   * ("local display price shown on the product page before any discounts" cho người bán nội địa). Thiếu thì không so.
+   */
+  price?: string;
 }
 
 export interface PriceQuantity {
