@@ -547,6 +547,20 @@
       "when": 1794912165062,
       "tag": "20261117104245_listing-doi-ngoai-app",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1794913568452,
+      "tag": "20261117110608_remote-skus-refresh",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1794914241222,
+      "tag": "20261117111721_gia-theo-gian-hang",
+      "breakpoints": true
     }
   ]
 }

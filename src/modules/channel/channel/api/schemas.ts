@@ -395,6 +395,24 @@ export const RemoteSkuList = z
       .datetime({ offset: true })
       .nullable()
       .meta({ description: 'Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao BE lưu); null khi sàn chưa đọc được lần nào' }),
+    refresh: z
+      .object({
+        status: z.enum(['idle', 'running', 'failed']).meta({
+          description: '`running`: lượt tải nền đang chờ hoặc chạy (FE hỏi lại `GET` tới khi khác `running`); `failed`: lần đọc trọn lỗi gần nhất chưa quá 10 phút, hoặc lượt tải quá 15 phút chưa xong (`refresh_stale`)',
+        }),
+        requestedAt: z.iso.datetime({ offset: true }).nullable().meta({ description: 'Lúc xếp lượt tải đang chờ hoặc chạy; null khi không có' }),
+        error: z
+          .object({
+            code: z.string().meta({ description: 'Mã lỗi app, vd `marketplace_rejected`, `marketplace_unavailable`, `shop_not_connected`, `refresh_stale`' }),
+            platformCode: z.string().nullable().meta({ description: 'Mã của sàn, vd `incomplete_list`, `too_many_calls`, `daily_call_limit`' }),
+            message: z.string(),
+          })
+          .strict()
+          .nullable(),
+        retryAfterSeconds: z.number().int().nullable().meta({ description: 'Số giây còn phải chờ trước khi Tải lại (lỗi đọc trọn); null khi bấm được ngay' }),
+      })
+      .strict()
+      .meta({ id: 'RemoteSkuRefresh', description: 'Lượt Tải lại chạy nền (#361)' }),
   })
   .strict()
   .meta({ id: 'RemoteSkuList' });
@@ -433,8 +451,17 @@ export const ListingRow = z
     sku: z.string(),
     attributesLabel: z.string(),
     thumbnailUrl: z.string().nullable().meta({ description: 'Ảnh đại diện catalog của sản phẩm; null khi sản phẩm chưa có ảnh (#303)' }),
-    price: z.number().int().nullable().meta({ description: 'Giá sẽ đẩy: giá chuẩn của SKU' }),
-    priceSource: z.enum(['standard']).nullable(),
+    price: z.number().int().nullable().meta({ description: 'Giá đang bán: giá ghi đè tay, giá theo gian hàng đã xác nhận, hoặc giá chuẩn (#225)' }),
+    priceSource: z.enum(['standard', 'shop', 'override']).nullable(),
+    shopPrice: z.number().nullable().meta({ description: 'Giá theo bộ lọc giá của gian hàng đã xác nhận (Documents/25 §6.2); null khi chưa có' }),
+    pendingPrice: z.number().nullable().meta({ description: 'Giá mới chờ xác nhận' }),
+    configVersionId: z.uuid().nullable().meta({ description: 'Phiên bản phí sinh ra giá chờ xác nhận' }),
+    netReceived: z.number().nullable().meta({ description: 'Thực nhận mỗi món theo giá đang bán; null khi gian hàng chưa có phí' }),
+    belowFloor: z
+      .boolean()
+      .nullable()
+      .meta({ description: 'Giá đang bán dưới giá thấp nhất; null khi chưa có giá vốn hoặc chưa có phí. Không kèm giá vốn (R4)' }),
+    feeWarning: z.enum(['over_50']).nullable().meta({ description: 'Tổng phí và thuế của gian hàng trên 50%' }),
     listing: ChannelListing.nullable(),
   })
   .strict()
@@ -550,6 +577,45 @@ export const OpeningStocktakeResult = z
   .strict()
   .meta({ id: 'OpeningStocktakeResult' });
 
+// Giá theo gian hàng (#225; Documents/21 §18.6.7, §21.4).
+export const PendingPricesQuery = z.object({
+  shopId: z.uuid('Gian hàng không hợp lệ').optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export const ListingIdParams = z.object({ id: z.string() });
+export const ConfirmPriceBody = z.object({ version: z.number('Thiếu version').int().positive() }).meta({ id: 'ListingConfirmPriceInput' });
+export const ManualPriceParams = z.object({ id: z.string(), listingId: z.string() });
+export const ManualPriceBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    price: z
+      .number('Giá là số đồng')
+      .int('Giá là số nguyên đồng')
+      .positive('Giá phải lớn hơn 0')
+      .max(1_000_000_000_000, 'Giá quá lớn')
+      .nullable()
+      .meta({ description: 'Giá ghi đè tay; null bỏ ghi đè' }),
+  })
+  .meta({ id: 'ListingManualPriceInput' });
+export const PendingPrice = z
+  .object({
+    listing: ChannelListing,
+    shopId: z.uuid(),
+    variantId: z.uuid(),
+    price: z.number().nullable().meta({ description: 'Giá đang bán (ghi đè, giá theo gian hàng đã xác nhận, hoặc giá chuẩn)' }),
+    pendingPrice: z.number().meta({ description: 'Giá mới chờ xác nhận' }),
+    netReceived: z.number().meta({ description: 'Thực nhận mỗi món theo giá chờ' }),
+    belowFloor: z.boolean().nullable().meta({ description: 'Giá chờ dưới giá thấp nhất (không xác nhận được); null khi chưa có giá vốn' }),
+    feeWarning: z.enum(['over_50']).nullable(),
+    configVersionId: z.uuid().nullable().meta({ description: 'Phiên bản phí sinh ra giá chờ' }),
+  })
+  .strict()
+  .meta({ id: 'PendingPrice' });
+export const PendingPricePage = z
+  .object({ items: z.array(PendingPrice), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() })
+  .strict()
+  .meta({ id: 'PendingPricePage' });
 export const UpdateShopBody = z
   .object({
     version: z.number('Thiếu version').int().positive(),

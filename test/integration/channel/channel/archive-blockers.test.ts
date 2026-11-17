@@ -100,8 +100,8 @@ describe('listingInUse (#204)', () => {
     );
     await testPool().query(
       `insert into channel.price_calculations (company_id, shop_id, variant_id, cost, target_net, raw_price, rounded_price,
-         net_received, margin_pct, below_floor)
-       values ($1, $2, $3, 150000, 200000, 236047, 239000, 202540, 35, false)`,
+         net_received, margin_pct, below_floor, fee_pct, tax_pct, trigger)
+       values ($1, $2, $3, 150000, 200000, 236047, 239000, 202540, 35, false, 14, 0, 'push')`,
       [companyId, shopId, priced],
     );
     expect(await inUse([fresh, delisted, pending, priced])).toEqual(new Set([delisted, pending, priced]));
