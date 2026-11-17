@@ -2,6 +2,8 @@
 // SKU sàn chưa ghép thì tạo listing `live`, không đẩy lại. Ghép sang "không quản tồn" hoặc đổi ghép đã có đơn: người không
 // được tự duyệt (không phải CEO, công ty nhiều người) thì lưu ghép chờ (`pending_*`), CEO duyệt hoặc từ chối; CEO làm thì áp
 // luôn, ghi tự duyệt. Đơn đã nhận giữ ghép cũ: chỉ đơn kéo về sau theo ghép mới (vòng kéo đơn tra `seller_sku`).
+// Biến thể có listing lỗi đẩy chưa có mã sàn (#346): ghép SKU sàn chưa có listing thì dùng lại listing đó; ghép SKU sàn đã có
+// listing thì listing lỗi tự gỡ.
 import { canSelfApprove, findMembership, memberRolesOf, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
@@ -11,6 +13,7 @@ import {
   deleteListing,
   findListingById,
   findListingByExternalSku,
+  findListingByPendingExternalSku,
   findListingRow,
   insertListing,
   type ListingPatch,
@@ -22,7 +25,8 @@ import { hasOrdersWithSellerSku } from '../repository/raw-orders.ts';
 import { findRemoteSkuRow, listRemoteSkuRows, type RemoteSkuRow } from '../repository/remote-skus.ts';
 import { findShopRow, lockShopRow } from '../repository/shops.ts';
 import { refreshRemoteSkusNow } from './remote-skus.ts';
-import { type ChannelListing, requesterNames, toListing } from './listings.ts';
+import { NO_PENDING } from '../domain/listing.ts';
+import { type ChannelListing, moveListing, requesterNames, toListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, ownShop } from './shops.ts';
 
@@ -67,9 +71,11 @@ export async function remoteSkus(
     const rows = await liveListingRows(shop.id);
     const names = await requesterNames(rows);
     const byExternal = new Map(rows.flatMap((r) => (r.externalSkuId ? [[r.externalSkuId, r] as const] : [])));
+    const byPending = new Map(rows.flatMap((r) => (r.pendingExternalSkuId ? [[r.pendingExternalSkuId, r] as const] : [])));
     const items = remote.map((r): RemoteSkuItem => {
-      const listing = byExternal.get(r.externalSkuId);
-      const mode = listing ? effectiveMode(listing) : null;
+      // SKU sàn chờ CEO duyệt ghép vào listing lỗi đẩy (#346): chưa ghép, CEO duyệt qua listing đó.
+      const listing = byExternal.get(r.externalSkuId) ?? byPending.get(r.externalSkuId);
+      const mode = listing?.externalSkuId === r.externalSkuId ? effectiveMode(listing) : null;
       return {
         externalProductId: r.externalProductId,
         externalSkuId: r.externalSkuId,
@@ -98,16 +104,39 @@ export async function isCeo(actor: Actor): Promise<boolean> {
   });
 }
 
-/** Biến thể của công ty, chưa lưu trữ, chưa ghép listing khác (chưa gỡ) của gian hàng. Gọi trong `withCompany`. */
-async function assertVariantFree(port: ProductPort, shopId: string, variantId: string, listingId: string | null): Promise<void> {
+const TAKEN = 'Biến thể đã ghép SKU sàn khác của gian hàng này';
+/** Lý do gỡ listing lỗi đẩy khi biến thể của nó ghép SKU sàn đã có listing (#346). */
+const SUPERSEDED = 'Thay bằng ghép SKU sàn có sẵn';
+
+/**
+ * Biến thể của công ty, chưa lưu trữ; trả listing lỗi đẩy chưa có mã sàn của nó trên gian hàng (bên gọi dùng lại hoặc gỡ,
+ * #346), không có thì `undefined`. Listing khác của biến thể đang đẩy: 409 `invalid_transition`; listing lỗi đang chờ duyệt
+ * ghép: 409 `mapping_pending`; còn lại (đã có mã sàn): 422. Gọi trong `withCompany`.
+ */
+async function variantSlot(port: ProductPort, shopId: string, variantId: string, listingId: string | null): Promise<ListingRow | undefined> {
   const [v] = await port.variants([variantId]);
   if (!v) throw invalid('variantId', 'Biến thể không thuộc công ty');
   if (v.archived) throw invalid('variantId', 'Biến thể đã lưu trữ');
   const other = await findListingRow(shopId, variantId);
-  if (other && other.status !== 'delisted' && other.id !== listingId) {
-    throw invalid('variantId', 'Biến thể đã ghép SKU sàn khác của gian hàng này');
+  if (!other || other.status === 'delisted' || other.id === listingId) return undefined;
+  if (other.status === 'pushing') {
+    throw new AppError(409, 'invalid_transition', 'Biến thể đang đẩy lên sàn, ghép sau khi có kết quả', { current: toListing(other) });
   }
+  if (other.status !== 'push_failed' || other.externalSkuId) throw invalid('variantId', TAKEN);
+  if (other.pendingRequestedBy) {
+    throw new AppError(409, 'mapping_pending', 'Listing lỗi đẩy của biến thể đang chờ CEO duyệt ghép', { current: toListing(other) });
+  }
+  return other;
 }
+
+/** Ghi SKU sàn vào listing lỗi đẩy: `live`, xoá lỗi; tồn, giá đẩy ở lượt đồng bộ (`applyPatch` đặt `pending`). */
+const attach = (sku: { externalSkuId: string; externalProductId: string; sellerSku: string }, platformStock: number | null): ListingPatch => ({
+  ...sku,
+  status: 'live',
+  pushError: null,
+  hiddenBy: null,
+  platformStock,
+});
 
 /** Ghép mới chép vào cột hiện hành; tồn, giá của SKU sàn đẩy lại theo biến thể mới ở lượt đồng bộ sau. */
 const applyPatch = (variantId: string | null, requestedBy: string, approvedBy: string | null, selfApproved: boolean): ListingPatch => ({
@@ -116,10 +145,7 @@ const applyPatch = (variantId: string | null, requestedBy: string, approvedBy: s
   mappingRequestedBy: requestedBy,
   approvedBy,
   mappingSelfApproved: selfApproved,
-  pendingVariantId: null,
-  pendingMode: null,
-  pendingRequestedBy: null,
-  pendingRequestedAt: null,
+  ...NO_PENDING,
   stockSync: 'pending',
   priceSync: 'pending',
   stockSyncError: null,
@@ -165,7 +191,9 @@ export async function matchListing(
   if (before?.status === 'pushing') {
     throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, ghép sau khi có kết quả', { current: toListing(before) });
   }
-  if (variantId) await inCompany(() => assertVariantFree(port, shop.id, variantId, before?.id ?? null));
+  const waiting = await inCompany(() => findListingByPendingExternalSku(shop.id, externalSkuId));
+  if (waiting) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép', { current: toListing(waiting) });
+  if (variantId) await inCompany(() => variantSlot(port, shop.id, variantId, before?.id ?? null));
   let remote: RemoteSkuRow | undefined;
   if (!before) {
     // SKU người bán (vòng kéo đơn tra biến thể theo đây) và mã sản phẩm lấy từ bản sao SKU sàn, không gọi sàn (#220 đợt 2).
@@ -183,7 +211,9 @@ export async function matchListing(
       const row = await findListingByExternalSku(shop.id, externalSkuId);
       // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
       if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict(row, row ? await requesterNames([row]) : undefined);
-      if (variantId) await assertVariantFree(port, shop.id, variantId, row?.id ?? null);
+      if (await findListingByPendingExternalSku(shop.id, externalSkuId)) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép');
+      const failed = variantId ? await variantSlot(port, shop.id, variantId, row?.id ?? null) : undefined;
+      if (!row && failed) return reuseFailed(failed, remote!, actor, selfOk);
       if (row && effectiveMode(row) === (variantId ? 'mapped' : 'unmanaged') && row.variantId === variantId) {
         return { row, pending: false };
       }
@@ -209,6 +239,7 @@ export async function matchListing(
         await recordTransition({ entityType: ENTITY, entityId: saved.id, from: row?.status ?? null, to: saved.status, action: 'request_mapping', actorId: actor.accountId });
         return { row: saved, pending: true };
       }
+      if (failed) await moveListing(failed, 'delist', actor, { hiddenBy: null }, SUPERSEDED);
       const patch = applyPatch(variantId, actor.accountId, needsCeo ? actor.accountId : null, needsCeo);
       const saved = row
         ? await updateListing(row.id, { version: row.version, status: row.status }, patch)
@@ -239,10 +270,53 @@ export async function matchListing(
   } catch (err) {
     // Hai request ghép cùng lúc: unique của bảng chặn dòng thứ hai (lỗi 23505 làm hỏng giao dịch nên bắt ngoài).
     const constraint = pgError(err).constraint;
-    if (constraint === 'listings_shop_variant_uq') throw invalid('variantId', 'Biến thể đã ghép SKU sàn khác của gian hàng này');
+    if (constraint === 'listings_shop_variant_uq') throw invalid('variantId', TAKEN);
     if (constraint === 'listings_shop_external_sku_uq') throw await inCompany(() => conflictAt(shop.id, externalSkuId));
+    if (constraint === 'listings_shop_pending_external_sku_uq') throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép');
     throw err;
   }
+}
+
+/**
+ * Ghép SKU sàn chưa có listing vào biến thể có listing lỗi đẩy chưa có mã sàn (#346, Documents/21 §18.3 `match`): dùng lại
+ * listing đó. Đổi SKU người bán mà đã có đơn mang SKU người bán cũ là đổi ánh xạ đã dùng: người không được tự duyệt thì ghi
+ * yêu cầu chờ (kèm SKU sàn) lên listing lỗi, giữ `push_failed`. Gọi trong giao dịch đã khoá gian hàng.
+ */
+async function reuseFailed(failed: ListingRow, remote: RemoteSkuRow, actor: Actor, selfOk: boolean): Promise<{ row: ListingRow; pending: boolean }> {
+  const sku = { externalSkuId: remote.externalSkuId, externalProductId: remote.externalProductId, sellerSku: remote.sellerSku };
+  const needsCeo =
+    failed.sellerSku !== null && failed.sellerSku !== remote.sellerSku && (await hasOrdersWithSellerSku(failed.shopId, failed.sellerSku));
+  const guard = { version: failed.version, status: failed.status };
+  if (needsCeo && !selfOk) {
+    const saved = await updateListing(failed.id, guard, {
+      pendingVariantId: failed.variantId,
+      pendingMode: 'mapped',
+      pendingRequestedBy: actor.accountId,
+      pendingRequestedAt: new Date(),
+      pendingExternalSkuId: sku.externalSkuId,
+      pendingExternalProductId: sku.externalProductId,
+      pendingSellerSku: sku.sellerSku,
+    });
+    if (!saved) throw await conflictById(failed.id);
+    await recordTransition({ entityType: ENTITY, entityId: saved.id, from: failed.status, to: saved.status, action: 'request_mapping', actorId: actor.accountId });
+    return { row: saved, pending: true };
+  }
+  const saved = await updateListing(failed.id, guard, {
+    ...applyPatch(failed.variantId, actor.accountId, needsCeo ? actor.accountId : null, needsCeo),
+    ...attach(sku, remote.quantity),
+  });
+  if (!saved) throw await conflictById(failed.id);
+  await recordTransition({
+    entityType: ENTITY,
+    entityId: saved.id,
+    from: failed.status,
+    to: saved.status,
+    action: 'match',
+    actorId: actor.accountId,
+    selfApproved: needsCeo,
+    audit: { ...AUDIT, label: saved.sellerSku },
+  });
+  return { row: saved, pending: false };
 }
 
 /**
@@ -261,7 +335,10 @@ export function decideMapping(
 ): Promise<ChannelListing> {
   // Hai lần duyệt đua về cùng biến thể: unique chặn lần sau (23505 làm hỏng giao dịch nên bắt ngoài).
   return decide(port, actor, shopId, listingId, action, input).catch((err: unknown) => {
-    if (pgError(err).constraint === 'listings_shop_variant_uq') throw invalid('variantId', 'Biến thể đã ghép SKU sàn khác của gian hàng này');
+    const constraint = pgError(err).constraint;
+    if (constraint === 'listings_shop_variant_uq') throw invalid('variantId', TAKEN);
+    // SKU sàn chờ ghép vào listing lỗi đã có listing khác lúc duyệt (#346).
+    if (constraint === 'listings_shop_external_sku_uq') throw invalid('externalSkuId', 'SKU sàn đã ghép listing khác, từ chối yêu cầu này');
     throw err;
   });
 }
@@ -298,14 +375,19 @@ async function decide(
       if (selfApproved && !(await canSelfApprove(actor.accountId))) {
         throw new AppError(409, 'second_person_required', 'Bước này cần người khác người lập thực hiện');
       }
-      if (row.pendingVariantId) await assertVariantFree(port, shop.id, row.pendingVariantId, row.id);
-      const saved = await updateListing(
-        row.id,
-        { version: row.version, status: row.status },
-        applyPatch(row.pendingVariantId, row.pendingRequestedBy, actor.accountId, selfApproved),
-      );
+      const patch = applyPatch(row.pendingVariantId, row.pendingRequestedBy, actor.accountId, selfApproved);
+      const { pendingExternalSkuId, pendingExternalProductId, pendingSellerSku } = row;
+      if (pendingExternalSkuId && pendingExternalProductId && pendingSellerSku) {
+        // Yêu cầu ghép SKU sàn vào listing lỗi đẩy (#346): ghi mã sàn, listing thành `live`.
+        const quantity = (await findRemoteSkuRow(shop.id, pendingExternalSkuId))?.quantity ?? null;
+        Object.assign(patch, attach({ externalSkuId: pendingExternalSkuId, externalProductId: pendingExternalProductId, sellerSku: pendingSellerSku }, quantity));
+      } else if (row.pendingVariantId) {
+        const failed = await variantSlot(port, shop.id, row.pendingVariantId, row.id);
+        if (failed) await moveListing(failed, 'delist', actor, { hiddenBy: null }, SUPERSEDED);
+      }
+      const saved = await updateListing(row.id, { version: row.version, status: row.status }, patch);
       if (!saved) throw await conflictById(row.id);
-      await recordTransition({ ...transition, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: row.sellerSku } });
+      await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: saved.sellerSku } });
       return toListing(saved);
     }
     const reason = input.reason ?? null;
@@ -317,7 +399,7 @@ async function decide(
     const saved = await updateListing(
       row.id,
       { version: row.version, status: row.status },
-      { pendingVariantId: null, pendingMode: null, pendingRequestedBy: null, pendingRequestedAt: null },
+      NO_PENDING,
     );
     if (!saved) throw await conflictById(row.id);
     await recordTransition({ ...transition, action: 'reject_mapping', reason });

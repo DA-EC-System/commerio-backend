@@ -771,3 +771,175 @@ describe('đợt 2: bản sao SKU sàn (Documents/21 §18.3 "đọc từ lần �
     expect(changedSince).toEqual([]);
   });
 });
+
+// #346: lần đẩy hỏng mà sàn vẫn tạo sản phẩm (Lazada E500) không còn khoá biến thể (Documents/21 §18.3 `match`, §18.6.5).
+describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
+  /** Listing lỗi đẩy chưa có mã sàn của biến thể (như sau E500), trả id. */
+  const failedRow = async (variantId: string, sellerSku: string, status = 'push_failed') =>
+    (
+      await testPool().query<{ id: string }>(
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, push_error, push_attempts, listed_price, external_image_urls)
+         values ($1, $2, $3, $4, $5, $6, 1, 50000, '{https://img/a.jpg}') returning id`,
+        [
+          company.companyId,
+          shopId,
+          variantId,
+          sellerSku,
+          status,
+          status === 'push_failed' ? JSON.stringify({ code: 'marketplace_rejected', message: 'E500: Create product failed', at: new Date().toISOString() }) : null,
+        ],
+      )
+    ).rows[0]!.id;
+  const byId = async (id: string) => (await testPool().query('select * from channel.listings where id = $1', [id])).rows[0];
+  const openRowsOf = async (variantId: string) =>
+    (await testPool().query("select id from channel.listings where shop_id = $1 and variant_id = $2 and status <> 'delisted'", [shopId, variantId])).rows;
+
+  it('AC-1: cùng SKU người bán → 200, dùng lại listing lỗi: `live`, mã sàn, tồn sàn, xoá lỗi, chờ đẩy tồn và giá', async () => {
+    const r = newRemote();
+    const v = newVariant();
+    const id = await failedRow(v.id, r.sellerSku);
+    const res = await match(sale.token, { externalSkuId: r.externalSkuId, variantId: v.id });
+    expect(res.status).toBe(200);
+    expect(ChannelListing.parse(res.body)).toMatchObject({ id, status: 'live', externalSkuId: r.externalSkuId, pendingMapping: null });
+    expect(await byId(id)).toMatchObject({
+      external_product_id: r.externalProductId,
+      platform_stock: 3,
+      push_error: null,
+      stock_sync: 'pending',
+      price_sync: 'pending',
+      external_image_urls: ['https://img/a.jpg'],
+      listed_price: '50000.00',
+    });
+    expect(await openRowsOf(v.id)).toHaveLength(1);
+    expect((await transitionsOf(id)).at(-1)).toMatchObject({ action: 'match' });
+  });
+
+  it('Khác SKU người bán, chưa có đơn mang SKU người bán cũ → 200 dùng lại, SKU người bán theo SKU sàn', async () => {
+    const r = newRemote();
+    const v = newVariant();
+    const id = await failedRow(v.id, `CU-${randomUUID().slice(0, 6)}`);
+    const res = await match(sale.token, { externalSkuId: r.externalSkuId, variantId: v.id });
+    expect(res.status).toBe(200);
+    expect(await byId(id)).toMatchObject({ status: 'live', seller_sku: r.sellerSku, external_sku_id: r.externalSkuId });
+  });
+
+  async function pendingOnFailed() {
+    const r = newRemote();
+    const v = newVariant();
+    const old = `CU-${randomUUID().slice(0, 6)}`;
+    const id = await failedRow(v.id, old);
+    await orderWith(old);
+    const res = await match(sale.token, { externalSkuId: r.externalSkuId, variantId: v.id });
+    return { r, v, id, old, res };
+  }
+
+  it('Khác SKU người bán, đã có đơn mang SKU người bán cũ, Sale → 202, yêu cầu chờ ghi lên listing lỗi; SKU sàn hiện chờ duyệt', async () => {
+    const { r, v, id, old, res } = await pendingOnFailed();
+    expect(res.status).toBe(202);
+    expect(ChannelListing.parse(res.body)).toMatchObject({ id, status: 'push_failed', pendingMapping: { variantId: v.id, externalSkuId: r.externalSkuId } });
+    expect(await byId(id)).toMatchObject({ external_sku_id: null, seller_sku: old, pending_external_sku_id: r.externalSkuId, pending_seller_sku: r.sellerSku });
+    const list = await as(app().get(`/api/v1/channel/shops/${shopId}/remote-skus?unmatched=true`), company.ceo.token);
+    const item = RemoteSkuList.parse(list.body).items.find((i) => i.externalSkuId === r.externalSkuId)!;
+    expect(item).toMatchObject({ mode: null, listingId: id, pendingMapping: { externalSkuId: r.externalSkuId } });
+    // Ghép SKU sàn đang chờ lần nữa → 409 `mapping_pending`.
+    const again = await match(admin.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id });
+    expect(again.status).toBe(409);
+    expect(again.body.type).toMatch(/mapping_pending$/);
+    // Đẩy lại listing đang chờ duyệt bị chặn theo dòng.
+    const push = await as(app().post(`/api/v1/channel/shops/${shopId}/listings/push`), company.ceo.token).send({ variantIds: [v.id] });
+    expect(push.body.results[0]).toMatchObject({ code: 'mapping_pending' });
+  });
+
+  it('CEO duyệt → listing lỗi thành `live` với mã sàn chờ; từ chối → giữ `push_failed`, bỏ yêu cầu', async () => {
+    const a = await pendingOnFailed();
+    const ok = await decide(company.ceo.token, a.id, 'approve', { version: a.res.body.version });
+    expect(ok.status).toBe(200);
+    expect(await byId(a.id)).toMatchObject({
+      status: 'live',
+      external_sku_id: a.r.externalSkuId,
+      external_product_id: a.r.externalProductId,
+      seller_sku: a.r.sellerSku,
+      platform_stock: 3,
+      push_error: null,
+      pending_external_sku_id: null,
+      pending_requested_by: null,
+    });
+    const b = await pendingOnFailed();
+    const no = await decide(company.ceo.token, b.id, 'reject', { version: b.res.body.version, reason: 'Sai SKU' });
+    expect(no.status).toBe(200);
+    expect(await byId(b.id)).toMatchObject({ status: 'push_failed', external_sku_id: null, pending_external_sku_id: null, pending_requested_by: null });
+  });
+
+  it('CEO ghép khác SKU người bán đã có đơn → 200 áp luôn, tự duyệt', async () => {
+    const r = newRemote();
+    const v = newVariant();
+    const old = `CU-${randomUUID().slice(0, 6)}`;
+    const id = await failedRow(v.id, old);
+    await orderWith(old);
+    const res = await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: v.id });
+    expect(res.status).toBe(200);
+    expect(await byId(id)).toMatchObject({ status: 'live', external_sku_id: r.externalSkuId, mapping_self_approved: true });
+  });
+
+  it('AC-2: listing kia đã có mã sàn → 422 câu cũ; AC-3: listing đang đẩy → 409 `invalid_transition`', async () => {
+    const { v } = await mapped();
+    const taken = await match(sale.token, { externalSkuId: newRemote().externalSkuId, variantId: v.id });
+    expect(taken.status).toBe(422);
+    expect(taken.body.errors.variantId).toBe('Biến thể đã ghép SKU sàn khác của gian hàng này');
+    const v2 = newVariant();
+    await failedRow(v2.id, `PU-${randomUUID().slice(0, 6)}`, 'pushing');
+    const busy = await match(sale.token, { externalSkuId: newRemote().externalSkuId, variantId: v2.id });
+    expect(busy.status).toBe(409);
+    expect(busy.body.type).toMatch(/invalid_transition$/);
+  });
+
+  it('Đổi ghép SKU sàn đã có listing sang biến thể có listing lỗi → listing lỗi tự gỡ, ghép áp luôn', async () => {
+    const { r } = await mapped();
+    const x = newVariant();
+    const id = await failedRow(x.id, x.sku);
+    const res = await match(admin.token, { externalSkuId: r.externalSkuId, variantId: x.id });
+    expect(res.status).toBe(200);
+    expect(await byId(id)).toMatchObject({ status: 'delisted' });
+    expect((await transitionsOf(id)).at(-1)).toMatchObject({ action: 'delist', reason: 'Thay bằng ghép SKU sàn có sẵn' });
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: x.id });
+  });
+
+  it('Đổi ghép đó cần CEO: Sale → 202, listing lỗi giữ tới lúc CEO duyệt rồi mới tự gỡ', async () => {
+    const { r } = await mapped();
+    await orderWith(r.sellerSku);
+    const x = newVariant();
+    const id = await failedRow(x.id, x.sku);
+    const res = await match(sale.token, { externalSkuId: r.externalSkuId, variantId: x.id });
+    expect(res.status).toBe(202);
+    expect(await byId(id)).toMatchObject({ status: 'push_failed' });
+    const ok = await decide(company.ceo.token, res.body.id, 'approve', { version: res.body.version });
+    expect(ok.status).toBe(200);
+    expect(await byId(id)).toMatchObject({ status: 'delisted' });
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: x.id });
+  });
+
+  it('Listing lỗi đang chờ duyệt SKU sàn khác: ghép SKU sàn khác vào biến thể đó → 409 `mapping_pending`', async () => {
+    const { v } = await pendingOnFailed();
+    const res = await match(admin.token, { externalSkuId: newRemote().externalSkuId, variantId: v.id });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/mapping_pending$/);
+  });
+
+  it('AC-6: listing lỗi chuyển sang đang đẩy giữa lúc đọc và lúc ghi → 409 `invalid_transition`, không ghi', async () => {
+    const r = newRemote();
+    const v = newVariant();
+    const id = await failedRow(v.id, r.sellerSku);
+    await reload();
+    dirty = false;
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
+        await holder.query("update channel.listings set status = 'pushing', push_error = null, version = version + 1 where id = $1", [id]);
+      },
+      1,
+      () => match(sale.token, { externalSkuId: r.externalSkuId, variantId: v.id }).then((x) => x),
+    );
+    expect(res.status).toBe(409);
+    expect(await byId(id)).toMatchObject({ status: 'pushing', external_sku_id: null });
+  });
+});

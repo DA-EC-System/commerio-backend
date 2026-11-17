@@ -91,8 +91,16 @@ export function stockDecision(
 /** Listing kẹt `pushing` quá lâu (server chết giữa lúc gọi sàn): lần đồng bộ sau chuyển `push_failed` (§18.3). */
 export const STALE_PUSH_MS = 30 * 60_000;
 
-/** Bỏ ghép chờ duyệt (#220; CHECK `listings_pending_mapping`: bốn cột cùng rỗng). */
-export const NO_PENDING = { pendingVariantId: null, pendingMode: null, pendingRequestedBy: null, pendingRequestedAt: null } as const;
+/** Bỏ ghép chờ duyệt (#220; CHECK `listings_pending_mapping`: bốn cột cùng rỗng), kể cả SKU sàn chờ ghép (#346). */
+export const NO_PENDING = {
+  pendingVariantId: null,
+  pendingMode: null,
+  pendingRequestedBy: null,
+  pendingRequestedAt: null,
+  pendingExternalSkuId: null,
+  pendingExternalProductId: null,
+  pendingSellerSku: null,
+} as const;
 /** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
 export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
 /** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */

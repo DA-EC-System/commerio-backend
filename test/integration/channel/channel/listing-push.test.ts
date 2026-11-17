@@ -165,6 +165,31 @@ describe('việc nền channel.listing_push', () => {
     expect(v.sku).not.toBe('SKU-TREN-SAN');
   });
 
+  it('#346 AC-7: sàn đã có sẵn SKU cùng SellerSku (lần trước tạo dù báo lỗi) → ghi nội dung, giá của app lên SKU đó, tồn để đồng bộ đẩy', async () => {
+    const { id } = await pushing();
+    onCreate = async (p) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false, existing: true });
+    await runListingPush(port, job(id));
+    expect(updateProduct).toHaveBeenCalledTimes(1);
+    const [, productId, skuId, sent] = updateProduct.mock.calls[0]!;
+    expect(productId).toMatch(/^item-/);
+    expect(skuId).toMatch(/^sku-/);
+    expect(sent).toMatchObject({ price: '150000' });
+    expect(await listing(id)).toMatchObject({ status: 'live', external_sku_id: skuId, stock_sync: 'pending', price_sync: 'synced', listed_price: '150000.00' });
+  });
+
+  it('#346 AC-8: SKU có sẵn đang thuộc listing chưa gỡ khác → `push_failed` `marketplace_rejected`, không ghi đè', async () => {
+    const other = await pushing({ status: 'live', external_product_id: 'P-CHU', external_sku_id: 'S-CHU' });
+    const { id } = await pushing();
+    onCreate = async () => ({ externalProductId: 'P-CHU', externalSkuId: 'S-CHU', live: true, existing: true });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    const row = await listing(id);
+    expect(row).toMatchObject({ status: 'push_failed', external_sku_id: null });
+    expect(row.push_error).toMatchObject({ code: 'marketplace_rejected' });
+    expect(row.push_error.message).toMatch(/đang ghép với biến thể khác/);
+    expect(await listing(other.id)).toMatchObject({ status: 'live', external_sku_id: 'S-CHU' });
+  });
+
   it('AC-17, AC-20, C2-02…04: listing đã có mã sàn (đẩy lại) gọi updateProduct, không tạo; dùng ảnh đã có, tồn để đồng bộ đẩy', async () => {
     const { id } = await pushing({ external_product_id: 'P1', external_sku_id: 'S1', external_image_urls: ['https://slatic.test/cu.png'] });
     await runListingPush(port, job(id, []));

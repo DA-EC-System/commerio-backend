@@ -434,9 +434,22 @@ describe('createProduct', () => {
       rejectReason: null,
       quantity: 5,
     }));
-    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false });
+    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false, existing: true });
     expect(findSku).toHaveBeenCalledWith(TOKEN, 'CM-TEST-COC');
     expect(san.calls).toHaveLength(0);
+  });
+
+  it('#346: Search Products thấy nhiều SKU chưa xoá cùng seller_sku → ném `rejected` `duplicate_seller_sku`, không tạo', async () => {
+    const sku = (p: string, s: string) => ({ id: p, title: 't', status: 'ACTIVATE', skus: [{ id: s, seller_sku: 'CM-TEST-COC', inventory: [] }] });
+    const san = fakeSan({
+      ...routes(ok({ status: 'ACTIVATE' })),
+      'POST /product/202502/products/search': ok({ total_count: 2, products: [sku('P1', 'S1'), sku('P2', 'S2')] }),
+    });
+    await expect(createTiktokAdapter(config, san.fetchFn).createProduct(TOKEN, product)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'duplicate_seller_sku',
+    });
+    expect(san.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /product/202502/products/search']);
   });
 
   it('adapter TikTok tra Search Products theo seller_sku trước khi tạo: đã có thì không tạo, chỉ có bản đã xoá thì tạo', async () => {
@@ -447,7 +460,7 @@ describe('createProduct', () => {
       return { san, adapter: createTiktokAdapter(config, san.fetchFn) };
     };
     const live = make('ACTIVATE');
-    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true });
+    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true, existing: true });
     expect(live.san.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /product/202502/products/search']);
     expect(live.san.calls[0]!.body).toEqual({ status: 'ALL', seller_skus: ['CM-TEST-COC'] });
     const deleted = make('DELETED');
