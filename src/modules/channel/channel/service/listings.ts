@@ -23,7 +23,7 @@ import { pushBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 
-const ENTITY = 'listings';
+export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
 /** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
@@ -49,7 +49,7 @@ export interface ChannelListing {
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
   /** Sàn đổi listing ngoài app, chờ CEO quyết (#360, 21 §18.3). */
-  outsideChange: { kind: 'disabled' | 'price_changed'; platformPrice: number | null; detectedAt: Date } | null;
+  outsideChange: { kind: NonNullable<ListingRow['outsideChangeKind']>; platformPrice: number | null; detectedAt: Date } | null;
   /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
   pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   version: number;

@@ -119,6 +119,12 @@ const VISIBILITY_LATER: ReadonlySet<string> = new Set(['tiktok']);
  */
 const APP_HIDDEN = new Set(['hide', 'outside_hold']);
 
+/** Bật lại SKU trên sàn (#224 hiện lại, #360 CEO bật lại); adapter không có `activate` (TikTok tới phần 2 của #224) thì `unsupported`. */
+export async function activateOnMarketplace(adapter: MarketplaceAdapter, accessToken: string, productId: string, skuId: string): Promise<void> {
+  if (!adapter.activate) throw new MarketplaceError('unsupported', 'activate_missing', 'Sàn chưa hỗ trợ bật lại sản phẩm từ app');
+  await adapter.activate(accessToken, productId, skuId);
+}
+
 export async function pausedVariants(port: ProductPort, variantIds: string[]): Promise<Set<string>> {
   const variants = await port.variants([...new Set(variantIds)]);
   return new Set(variants.filter((v) => v.businessStatus === 'paused').map((v) => v.id));
@@ -162,8 +168,7 @@ async function applyVisibility(
       if (byPlatform) {
         await onMarketplace(async () => {
           if (action === 'hide') return adapter.deactivate(accessToken, row.externalProductId!, row.externalSkuId!);
-          if (!adapter.activate) throw new MarketplaceError('unsupported', 'activate_missing', 'Sàn chưa hỗ trợ bật lại sản phẩm');
-          return adapter.activate(accessToken, row.externalProductId!, row.externalSkuId!);
+          return activateOnMarketplace(adapter, accessToken, row.externalProductId!, row.externalSkuId!);
         });
       }
     } catch (err) {
