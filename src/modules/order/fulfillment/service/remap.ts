@@ -2,7 +2,7 @@
 // được ghép. Sales (`applySkuMapping`) gọi trong giao dịch ghép của channel, sau khi đã khoá dòng đơn. Luật thuần ở
 // `domain/remap.ts`.
 import { sql } from 'drizzle-orm';
-import { recordTransition } from '../../../core/index.ts';
+import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { type MappedSku, planRemap, type RemapOutcome, type RemapStock } from '../domain/remap.ts';
 import { takeAllocationLock } from '../repository/allocation.ts';
@@ -127,6 +127,13 @@ async function applyStock(pkg: LockedPackage, stock: RemapStock, opts: RemapOpti
       if (reserved) {
         await markLinesReserved(stock.lineIds);
         for (const l of fresh) l.reservedQty = l.quantity;
+        // Giữ ngoài lượt phân hàng: inventory `reserve` không phát `stock_changed`, channel chỉ đẩy tồn theo
+        // `allocation_done` (như kiện mới lập, spec 199b D4).
+        await publishEvent({
+          type: 'fulfillment.allocation_done',
+          aggregateId: requireCompanyId('remapPackageLines'),
+          payload: { variantIds: variantIdsOf(fresh) },
+        });
       } else if (!stock.sealed) {
         // Kiện `reserved` không được giữ thiếu (Review Focus 3): nhả cả kiện, xếp lượt cho mọi biến thể của kiện.
         await reclaim(pkg);

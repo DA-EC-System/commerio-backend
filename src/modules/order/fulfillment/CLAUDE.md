@@ -56,10 +56,10 @@ Spec `docs/superpowers/specs/2026-11-17-237-ghep-sku-dong-don-design.md` §5.5. 
   |---|---|
   | `cancelled`, `returned` | Ghi dòng, không đụng tồn |
   | `backordered` | Không còn gì để giữ: `hold` ngay (D10); còn thì `requestAllocation` cho mọi biến thể của kiện (còn dòng chưa ghép khác thì lượt bỏ qua kiện, không giữ lẻ) |
-  | `reserved` | Dòng mới có biến thể: `reserve` dòng đó; không được thì nhả mọi dòng đang giữ, `reclaim` về `backordered`, xếp lượt cho mọi biến thể của kiện (không để kiện `reserved` giữ thiếu). Chờ kiểm kê: `reclaim`, không xếp lượt (lượt phiếu đầu kỳ `{ all: true }` giữ) |
-  | `packed`, `awaiting_pickup` | Đang giữ dòng khác: `reserve` dòng mới, không được thì giữ nguyên (bàn giao sẽ thử lại rồi bắt buộc), xếp lượt cho biến thể mới. Chưa giữ dòng nào (lập lúc còn dòng chưa ghép): xếp lượt cho mọi biến thể (P2, nguyên kiện). Chờ kiểm kê: không đụng tồn |
+  | `reserved` | Dòng mới có biến thể: `reserve` dòng đó (được thì phát `allocation_done` cho biến thể vừa giữ, như kiện mới lập: `reserve` không phát `stock_changed`); không được thì nhả mọi dòng đang giữ, `reclaim` về `backordered`, xếp lượt cho mọi biến thể của kiện (không để kiện `reserved` giữ thiếu). Chờ kiểm kê: `reclaim`, không xếp lượt (lượt phiếu đầu kỳ `{ all: true }` giữ) |
+  | `packed`, `awaiting_pickup` | Đang giữ dòng khác: `reserve` dòng mới, không được thì giữ nguyên (bàn giao sẽ thử lại rồi bắt buộc), xếp lượt cho biến thể mới. Chưa giữ dòng nào (lập lúc còn dòng chưa ghép): xếp lượt cho mọi biến thể (P2, nguyên kiện), kể cả khi dòng chưa ghép cuối sang "không quản tồn". Chờ kiểm kê: không đụng tồn |
   | Đã rời kho | Gian hàng chờ kiểm kê hoặc kiện `before_cutoff`: không trừ (hàm bù lo). Rời kho trước `orderCutoffAt` mà chưa dòng nào trừ: `settleHandover(store_only)` ghi `before_cutoff` (P3, D11, 16c); không thì `shipLateMappedLines` (một phiếu `XK` mới chỉ gồm dòng vừa ghép). Kiện `delivered` thì `reportDelivered` sau bước tồn (phòng thủ: kiện giao xong có dòng chưa ghép đã phát với `unitCost: null`) |
-  | Dòng sang "không quản tồn" | Không đụng tồn (trừ `backordered` vừa hết dòng chưa ghép thì `hold`) |
+  | Dòng sang "không quản tồn" | Không đụng tồn, trừ: `backordered` hết dòng chưa ghép thì `hold` (không còn gì để giữ) hoặc xếp lượt; kiện đã đóng chưa giữ dòng nào mà hết dòng chưa ghép thì xếp lượt |
 
 - Lỗi nào (cổng tồn, `40P01`, CHECK) cũng ném: cả giao dịch ghép rollback.
 

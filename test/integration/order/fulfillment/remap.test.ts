@@ -151,6 +151,8 @@ describe('remapPackageLines: ghép lần đầu áp lên kiện (spec 237 §5.5 
     expect((await stockOfVariant(companyId, B!)).reserved).toBe(1);
     expect((await stockOfVariant(companyId, A!)).reserved).toBe(1);
     expect((await historyOf(p.packageId)).map((h) => h.action)).toEqual(['remap']);
+    // Giữ ngoài lượt phân hàng: báo channel đẩy tồn mới của biến thể vừa giữ (review I2, như kiện mới lập, spec 199b D4).
+    expect(await outboxOf(companyId, 'fulfillment.allocation_done')).toEqual([{ variantIds: [B] }]);
   });
 
   it('D2-G03 AC3: kiện in_transit bàn giao bắt buộc có dòng chưa ghép → một phiếu XK mới chỉ gồm dòng đó, giá vốn bình quân; gọi lại không thêm phiếu', async () => {

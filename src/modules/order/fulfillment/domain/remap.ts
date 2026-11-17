@@ -117,15 +117,20 @@ function stockStep(pkg: RemapPackage, writes: RemapPlan['writes'], opts: { holdS
     const ids = variantIds();
     return ids.length ? { kind: 'allocate', variantIds: ids } : NONE;
   }
-  if (!fresh.length) return NONE;
   if (HOLDING.includes(status)) {
     const sealed = status !== 'reserved';
     // Chờ kiểm kê: không gọi cổng tồn; lượt phiếu đầu kỳ `{ all: true }` sẽ giữ.
-    if (!opts.holdStock) return sealed ? NONE : { kind: 'reclaim' };
-    // Kiện đã đóng chưa giữ dòng nào (lập lúc còn dòng chưa ghép): lượt giữ nguyên kiện, không giữ lẻ một dòng (P2).
-    if (sealed && !pkg.lines.some((l) => l.reservedQty > 0)) return { kind: 'allocate', variantIds: variantIds() };
-    return { kind: 'reserve_new', lineIds: fresh, sealed };
+    if (!opts.holdStock) return sealed || !fresh.length ? NONE : { kind: 'reclaim' };
+    // Kiện đã đóng chưa giữ dòng nào (lập lúc còn dòng chưa ghép): lượt giữ nguyên kiện, không giữ lẻ một dòng (P2). Dòng
+    // chưa ghép cuối sang "không quản tồn" cũng làm kiện vừa đủ điều kiện giữ (review I1).
+    if (sealed && !pkg.lines.some((l) => l.reservedQty > 0)) {
+      const ids = variantIds();
+      const eligible = fresh.length > 0 || after.every((l) => lineSkuOf(l).kind !== 'unmapped');
+      return eligible && ids.length ? { kind: 'allocate', variantIds: ids } : NONE;
+    }
+    return fresh.length ? { kind: 'reserve_new', lineIds: fresh, sealed } : NONE;
   }
+  if (!fresh.length) return NONE;
   if (status === 'returned' || !HANDED_OVER.includes(status)) return NONE;
   // Chờ kiểm kê: `settleDeferredHandovers` trừ khi phiếu đầu kỳ ghi sổ (D8). Kiện đã mang mốc: hàm trừ tự bỏ qua.
   if (!opts.holdStock || pkg.handoverSource === 'before_cutoff') return NONE;

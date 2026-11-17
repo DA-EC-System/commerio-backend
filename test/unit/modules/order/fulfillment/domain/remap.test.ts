@@ -95,6 +95,16 @@ describe('planRemap: ghép lần đầu (spec 237 bảng 1)', () => {
     }
   });
 
+  it('kiện đã đóng chưa giữ dòng nào, dòng chưa ghép cuối sang không quản tồn: xếp phân hàng mọi biến thể (review I1); còn dòng chưa ghép khác thì không', () => {
+    for (const status of ['packed', 'awaiting_pickup'] as const) {
+      const last = pkg(status, [pl('a'), pl('b', { variantId: 'w' })]);
+      expect(planRemap(last, to(['a', U]), HOLD).stock).toEqual({ kind: 'allocate', variantIds: ['w'] });
+      const more = pkg(status, [pl('a'), pl('b', { variantId: 'w' }), pl('c')]);
+      expect(planRemap(more, to(['a', U]), HOLD).stock).toEqual({ kind: 'none' });
+      expect(planRemap(last, to(['a', U]), NO_HOLD).stock).toEqual({ kind: 'none' });
+    }
+  });
+
   it('kiện reserved, packed, dòng sang không quản tồn: không đụng tồn', () => {
     for (const status of ['reserved', 'packed'] as const) {
       const p = pkg(status, [pl('a'), pl('b', { variantId: 'w', reservedQty: 1 })]);
