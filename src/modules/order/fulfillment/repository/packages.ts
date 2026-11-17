@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { canReportLost, HANDED_OVER, type PackageStatus } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
+import type { MappedSku } from '../domain/remap.ts';
 import { type PackageNotice, packageLines, packages } from './schema.ts';
 
 type OpenPurpose = NonNullable<(typeof packages.$inferSelect)['openPurpose']>;
@@ -258,6 +259,42 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
   if (!rows.length) return [];
   const lines = await planLinesOf(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
+}
+
+/**
+ * Kiện có dòng trỏ tới các dòng đơn (mọi trạng thái) kèm dòng, khoá theo id tăng dần tới hết giao dịch (spec 237 §5.5,
+ * thứ tự khoá §5.8: sau khoá advisory phân hàng).
+ */
+export async function lockPackagesOfOrderLines(orderLineIds: readonly string[]): Promise<(HandoverPackage & { lines: PackageLineRow[] })[]> {
+  if (!orderLineIds.length) return [];
+  const db = getDb();
+  const rows = await db
+    .select(handoverColumns)
+    .from(packages)
+    .where(
+      inArray(
+        packages.id,
+        db.select({ id: packageLines.packageId }).from(packageLines).where(inArray(packageLines.orderLineId, [...orderLineIds])),
+      ),
+    )
+    .orderBy(asc(packages.id))
+    .for('update');
+  const lines = await planLinesOf(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
+}
+
+/** Ghi ghép SKU lên dòng kiện (spec 237): biến thể hoặc "không quản tồn". Không đổi số giữ, số trừ. */
+export async function setLineSku(lineIds: readonly string[], to: MappedSku): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({
+      variantId: to.kind === 'variant' ? to.variantId : null,
+      stockUntracked: to.kind === 'untracked',
+      version: sql`${packageLines.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(inArray(packageLines.id, [...lineIds]));
 }
 
 /** Dòng vừa giữ được hàng: `reserved_qty = quantity`. */
