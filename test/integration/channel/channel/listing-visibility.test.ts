@@ -127,6 +127,19 @@ describe('gian hàng hideBy = deactivate (Lazada)', () => {
     }
   });
 
+  it('app ẩn rồi có lịch sử hidden → hidden (CEO từ chối ghép) → bỏ tạm ngừng vẫn hiện lại', async () => {
+    const { variantId, listingId } = await seed(shops.lazada);
+    await changeStatus(variantId, 'selling', 'paused');
+    await runPush(shops.lazada);
+    await testPool().query(
+      "insert into core.state_transitions (company_id, entity_type, entity_id, from_state, to_state, action, source) values ($1, 'listings', $2, 'hidden', 'hidden', 'reject_mapping', 'user')",
+      [company.companyId, listingId],
+    );
+    await changeStatus(variantId, 'paused', 'selling');
+    await runPush(shops.lazada);
+    expect(await listing(listingId)).toMatchObject({ status: 'live', hidden_by: null });
+  });
+
   it('listing ẩn không do app (nối lại gian hàng khi sàn đang tắt) → SKU đang bán cũng không bật lại (25 §6.4)', async () => {
     const { listingId } = await seed(shops.lazada, 'hidden');
     await testPool().query(
