@@ -24,3 +24,5 @@ Desktop.ini
 
 # Token uỷ quyền sàn của smoke test (scripts/smoke)
 .smoke-tokens.json
+# Cấu hình Alertmanager có khoá SMTP (deploy/k8s/overlays/vps/alertmanager.yaml)
+deploy/k8s/overlays/vps/alertmanager/alertmanager.yml
