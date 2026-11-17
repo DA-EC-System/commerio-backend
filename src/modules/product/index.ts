@@ -2,11 +2,19 @@
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
 import { type ModuleContext, type ModuleDefinition, withContext } from '../../shared/module.ts';
 import { type BulkEditPorts, catalogModule } from './catalog/index.ts';
-import { applyReorderRule, inventoryModule, reorderRulesOf, setIncomingSource, setSupplierReturnPort } from './inventory/index.ts';
+import {
+  applyReorderRule,
+  inventoryModule,
+  reorderRulesOf,
+  setIncomingSource,
+  setSupplierReturnPort,
+  stockArchiveBlockers,
+} from './inventory/index.ts';
 import {
   draftSupplierReturn,
   incomingOf,
   lastCostsOf,
+  purchaseArchiveBlockers,
   purchaseDocumentNumbers,
   purchasingModule,
   returnsFromStockDocuments,
@@ -38,7 +46,8 @@ const bulkEditPorts = (ctx: ModuleContext & { soldQtyOf?: BulkEditPorts['soldQty
 });
 
 export const productModules: readonly ModuleDefinition[] = [
-  withContext(catalogModule, (ctx) => ({ ...ctx, bulkEdit: bulkEditPorts(ctx) })),
+  // Sửa hàng loạt (#242); lý do chặn lưu trữ SKU phần kho, mua hàng (#204; phần đơn, sàn do `src/wiring.ts` nối).
+  withContext(catalogModule, (ctx) => ({ ...ctx, bulkEdit: bulkEditPorts(ctx), stockArchiveBlockers, purchaseArchiveBlockers })),
   withContext(inventoryModule, (ctx) => ({ ...ctx, incomingOf, purchaseDocumentNumbers })),
   purchasingModule,
 ];

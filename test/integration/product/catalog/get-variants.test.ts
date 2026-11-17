@@ -4,7 +4,7 @@ import { getVariants, targetNetPricesOf } from '#src/modules/product/catalog/ind
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { api, createAttribute, createCategory, createProduct, valueId } from './helpers.ts';
+import { api, createAttribute, createCategory, createProduct, valueId, archiveSku } from './helpers.ts';
 
 // `catalog.getVariants(ids?)` cho inventory, pricing, sales, channel (Documents/21 §11; plan #12 S-5, B10).
 describe('getVariants', () => {
@@ -21,7 +21,7 @@ describe('getVariants', () => {
         [valueId(color, 'Trắng'), valueId(size, 'XL')],
       ],
     });
-    await api(ceo.token).delete(`/products/${shirt.id}/variants/${shirt.variants[1]!.id}`);
+    await archiveSku(ceo.token, shirt.id, shirt.variants[1]!.id);
     const old = await createProduct(ceo.token, { name: 'Áo cũ', categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
     await api(ceo.token).delete(`/products/${old.id}?version=1`);
 

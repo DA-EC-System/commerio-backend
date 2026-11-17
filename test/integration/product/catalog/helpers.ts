@@ -85,3 +85,16 @@ export async function auditOf(entityId: string) {
   );
   return res.rows;
 }
+
+/** Đổi trạng thái kinh doanh SKU (#204), như FE gọi. */
+export function businessStatus(token: string, productId: string, action: string, variantIds?: string[]) {
+  return api(token).post(`/products/${productId}/business-status`, variantIds ? { action, variantIds } : { action });
+}
+
+/** Lưu trữ một SKU như người dùng: Ngừng nhập rồi Lưu trữ (`version` SKU tăng 2). */
+export async function archiveSku(token: string, productId: string, variantId: string) {
+  for (const action of ['discontinue', 'archive']) {
+    const res = await businessStatus(token, productId, action, [variantId]);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  }
+}

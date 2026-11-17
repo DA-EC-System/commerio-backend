@@ -30,6 +30,7 @@ import {
 import { imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
 import { allocateSkus, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
+import { archiveBlockersOf } from './usage.ts';
 
 export interface CreateProductInput {
   name: string;
@@ -74,7 +75,8 @@ export function toDong(value: Decimal | string | null): number | null {
   return value === null ? null : new Decimal(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
 }
 
-export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null) {
+/** `archiveBlockers`: lý do chưa lưu trữ được, chỉ tính cho SKU `discontinued` (Documents/21 §17.1, spec 204 mục 5.2). */
+export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null, archiveBlockers: readonly string[] = []) {
   return {
     id: v.id,
     sku: v.sku,
@@ -88,19 +90,32 @@ export function toVariantView(v: VariantRow, standardPrice: Decimal | null = nul
     widthMm: v.widthMm,
     heightMm: v.heightMm,
     version: v.version,
+    archiveBlockers: [...archiveBlockers],
   };
 }
 
-export async function productDetail(ctx: CatalogContext, p: ProductRow, variants?: VariantRow[]) {
+/**
+ * `archiveBlockers: false` cho người không có `catalog.product.manage`: câu lý do chặn lưu trữ có số tồn, số mua hàng, chỉ
+ * người lưu trữ được mới cần (review PR 2).
+ */
+export async function productDetail(
+  ctx: CatalogContext,
+  p: ProductRow,
+  variants?: VariantRow[],
+  { archiveBlockers = true }: { archiveBlockers?: boolean } = {},
+) {
   const rows = variants ?? (await findVariants({ productId: p.id }));
   const prices = await standardPricesOf(ctx, rows.map((v) => v.id));
+  // Chỉ SKU ngừng nhập mới có nút Lưu trữ: không có SKU nào như vậy thì không hỏi bốn nguồn.
+  const discontinued = archiveBlockers ? rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id) : [];
+  const blockers = await archiveBlockersOf(ctx, discontinued);
   const images = await imagesOf(p.id);
   return {
     ...toListItem(p, images[0]?.url ?? null),
     description: p.description ?? '',
     images,
     sizeChart: await sizeChartOf(p.sizeChartFileId),
-    variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null)),
+    variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null, blockers.get(v.id))),
   };
 }
 export type ProductDetail = Awaited<ReturnType<typeof productDetail>>;
@@ -153,8 +168,13 @@ export async function listProducts(companyId: string, filter: ProductFilter) {
   });
 }
 
-export async function getProduct(ctx: CatalogContext, companyId: string, id: string): Promise<ProductDetail> {
-  return withCompany(companyId, async () => productDetail(ctx, await findOwnProduct(id)));
+export async function getProduct(
+  ctx: CatalogContext,
+  companyId: string,
+  id: string,
+  options: { archiveBlockers: boolean },
+): Promise<ProductDetail> {
+  return withCompany(companyId, async () => productDetail(ctx, await findOwnProduct(id), undefined, options));
 }
 
 /**

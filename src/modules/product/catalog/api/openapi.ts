@@ -5,6 +5,8 @@ import {
   AddVariantBody,
   Attribute,
   AttributeBody,
+  BusinessStatusBody,
+  BusinessStatusResult,
   BulkEditPage,
   BulkEditQuery,
   BulkSaveDocBody,
@@ -168,12 +170,26 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'post',
     path: '/products/:id/variants',
-    summary: 'Thêm biến thể; tổ hợp từng ngừng bán thì bán lại với SKU cũ',
+    summary: 'Thêm biến thể; tổ hợp của SKU đã lưu trữ thì 409 variant_archived (dùng Khôi phục)',
     request: { params: IdParams, body: body(AddVariantBody) },
     responses: {
-      200: json('Biến thể được bán lại (SKU cũ)', Variant),
       201: json('Biến thể mới', Variant),
-      409: problemResponse('`variant_exists` hoặc `product_archived`'),
+      409: problemResponse('`variant_exists`, `variant_archived` (kèm `variantId`) hoặc `product_archived`'),
+      ...missing('sản phẩm'),
+      ...invalid,
+    },
+  });
+  path({
+    method: 'post',
+    path: '/products/:id/business-status',
+    summary: 'Đổi trạng thái kinh doanh của SKU; bỏ variantIds là áp cho mọi SKU con',
+    description:
+      'Thao tác theo sơ đồ B1 (Documents/21 §17.3). Nhiều SKU: SKU không làm được nằm ở `skipped`. Đúng một `variantIds` mà ' +
+      'không làm được thì 409. Mỗi SKU đổi phát `catalog.variant_status_changed`.',
+    request: { params: IdParams, body: body(BusinessStatusBody) },
+    responses: {
+      200: json('Sản phẩm sau khi đổi, SKU đã đổi và SKU bỏ qua', BusinessStatusResult),
+      409: problemResponse('`invalid_transition` (kèm `current`), `archive_blocked` (kèm `reasons`) hoặc `product_archived`'),
       ...missing('sản phẩm'),
       ...invalid,
     },
@@ -191,17 +207,6 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`version_conflict` (kèm `current`) hoặc `product_archived`'),
       ...missing('sản phẩm hoặc biến thể'),
       ...invalid,
-    },
-  });
-  path({
-    method: 'delete',
-    path: '/products/:id/variants/:variantId',
-    summary: 'Ngừng bán biến thể; SKU không cấp lại',
-    request: { params: VariantParams },
-    responses: {
-      204: noContent,
-      409: problemResponse('`last_variant` hoặc `product_archived`'),
-      ...missing('biến thể đang bán'),
     },
   });
   path({

@@ -8,7 +8,6 @@ import {
   findVariants,
   insertVariant,
   lockVariants,
-  setVariantArchived,
   updateVariantIfVersion,
   type VariantPatch,
   type VariantRow,
@@ -19,10 +18,10 @@ import {
   type Caller,
   invalid,
   isUuid,
-  lastVariant,
   notFound,
   pgError,
   productArchived,
+  variantArchived,
   variantExists,
   versionConflict,
 } from './errors.ts';
@@ -87,8 +86,9 @@ const variantSnapshot = (productName: string, v: { sku: string; attributes: { va
 });
 
 /**
- * Thêm biến thể (V23, P5, P7): tổ hợp đang bán → 409 `variant_exists`; từng ngừng bán → bán lại với SKU cũ (200);
- * mới → SKU mới (201). Không đổi `version` sản phẩm. Khoá công ty lấy trước khi đọc biến thể (B5).
+ * Thêm biến thể (V23, P5, P7): tổ hợp của SKU chưa lưu trữ → 409 `variant_exists`; của SKU đã lưu trữ → 409
+ * `variant_archived` kèm `variantId` (dùng Khôi phục, không bán lại ngầm; Documents/21 §17.2, #204); mới → SKU mới.
+ * Không đổi `version` sản phẩm. Khoá công ty lấy trước khi đọc biến thể (B5).
  */
 export async function addVariant(ctx: CatalogContext, caller: Caller, productId: string, attributeValueIds: string[]) {
   return withCompany(caller.companyId, async () => {
@@ -104,51 +104,20 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
 
     const key = comboKey(combo.map((v) => v.id));
     const same = variants.find((v) => comboKey(v.attributes.map((a) => a.valueId)) === key);
-    if (same && !same.archivedAt) throw variantExists(same.sku);
-    let id: string;
-    if (same) {
-      // Từng ngừng bán: bán lại với SKU cũ, không cấp SKU mới (P5).
-      id = same.id;
-      await setVariantArchived(id, false);
-    } else {
-      const [category] = await findCategories(product.categoryId);
-      const [sku] = await allocateSkus(category!, [combo]);
-      id = await insertVariant(caller.companyId, productId, sku!, combo.map((v) => v.id), 0);
-    }
+    if (same?.businessStatus === 'archived') throw variantArchived(same.id);
+    if (same) throw variantExists(same.sku);
+    const [category] = await findCategories(product.categoryId);
+    const [sku] = await allocateSkus(category!, [combo]);
+    const id = await insertVariant(caller.companyId, productId, sku!, combo.map((v) => v.id), 0);
     await touchProduct(productId);
     const [variant] = await findVariants({ ids: [id] });
-    const after = variantSnapshot(product.name, variant!);
-    await recordAudit(
-      same
-        ? {
-            ...auditOf(caller, 'update', ENTITY, id),
-            before: { ...after, archivedAt: same.archivedAt!.toISOString() },
-            after: { ...after, archivedAt: null },
-          }
-        : { ...auditOf(caller, 'create', ENTITY, id), after },
-    );
+    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: variantSnapshot(product.name, variant!) });
     const prices = await standardPricesOf(ctx, [id]);
-    return { created: !same, variant: toVariantView(variant!, prices.get(id) ?? null) };
+    return toVariantView(variant!, prices.get(id) ?? null);
   }).catch((err: unknown) => {
     // Giá trị thuộc tính vừa bị xoá giữa lúc đọc và lúc chèn.
     if (pgError(err).code === '23503') throw badCombo('Có giá trị thuộc tính vừa bị xoá');
     throw err;
-  });
-}
-
-/** Ngừng bán (P5): SKU giữ nguyên, không cấp lại; phải còn ít nhất một biến thể đang bán. */
-export async function archiveVariant(caller: Caller, productId: string, variantId: string): Promise<void> {
-  await withCompany(caller.companyId, async () => {
-    await lockVariants(caller.companyId);
-    const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
-    const variants = await findVariants({ productId });
-    const variant = variants.find((v) => v.id === variantId && !v.archivedAt);
-    if (!variant) throw notFound('biến thể đang bán');
-    if (variants.filter((v) => !v.archivedAt).length === 1) throw lastVariant();
-    await setVariantArchived(variantId, true);
-    await touchProduct(productId);
-    await recordAudit({ ...auditOf(caller, 'delete', ENTITY, variantId), before: variantSnapshot(product.name, variant) });
   });
 }
 

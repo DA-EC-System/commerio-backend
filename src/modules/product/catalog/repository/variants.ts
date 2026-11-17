@@ -32,17 +32,45 @@ export async function insertVariant(companyId: string, productId: string, sku: s
   return row!.id;
 }
 
-export async function setVariantArchived(id: string, archived: boolean): Promise<void> {
-  await getDb()
+type BusinessStatus = (typeof productVariants.businessStatus.enumValues)[number];
+
+/**
+ * Đổi trạng thái kinh doanh khi SKU còn ở `from` (#204): `archived_at` có giá trị đúng khi sang `archived` (CHECK
+ * `product_variants_archived`), tăng `version`. Không trúng dòng (trạng thái vừa đổi) thì `undefined`.
+ */
+export async function setBusinessStatus(id: string, from: BusinessStatus, to: BusinessStatus) {
+  const [row] = await getDb()
     .update(productVariants)
     .set({
-      archivedAt: archived ? sql`now()` : null,
-      // Ngừng bán kiểu cũ = lưu trữ SKU; máy trạng thái kinh doanh đầy đủ ở issue B1 (Documents/21 mục 17).
-      businessStatus: archived ? 'archived' : 'selling',
+      businessStatus: to,
+      archivedAt: to === 'archived' ? sql`now()` : null,
       version: sql`${productVariants.version} + 1`,
       updatedAt: sql`now()`,
     })
-    .where(eq(productVariants.id, id));
+    .where(and(eq(productVariants.id, id), eq(productVariants.businessStatus, from)))
+    .returning({ updatedAt: productVariants.updatedAt });
+  return row;
+}
+
+/**
+ * Đưa SKU đang `archived` về `discontinued` (hệ thống tự khôi phục khi có hàng vào, #204). Một câu cho cả lô; SKU không
+ * ở `archived` thì không đổi, không khoá chờ. Trả các dòng đã đổi.
+ */
+export async function restoreArchivedRows(ids: readonly string[]) {
+  if (!ids.length) return [];
+  // Khoá theo id tăng dần trước khi ghi: UPDATE khoá theo thứ tự quét, có thể ngược với thao tác người dùng trên nhiều
+  // SKU (cũng theo id) và khoá chéo (review PR 2).
+  await getDb()
+    .select({ id: productVariants.id })
+    .from(productVariants)
+    .where(and(inArray(productVariants.id, [...ids]), eq(productVariants.businessStatus, 'archived')))
+    .orderBy(asc(productVariants.id))
+    .for('update');
+  return getDb()
+    .update(productVariants)
+    .set({ businessStatus: 'discontinued', archivedAt: null, version: sql`${productVariants.version} + 1`, updatedAt: sql`now()` })
+    .where(and(inArray(productVariants.id, [...ids]), eq(productVariants.businessStatus, 'archived')))
+    .returning({ id: productVariants.id, productId: productVariants.productId, updatedAt: productVariants.updatedAt });
 }
 
 /** Trường của SKU mà PATCH sửa được (#204); giá là chuỗi `numeric`. Khoá vắng mặt thì giữ nguyên, `null` là xoá. */

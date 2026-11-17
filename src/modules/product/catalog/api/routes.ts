@@ -1,17 +1,20 @@
 import { type Response, Router } from 'express';
-import { getAccess } from '../../../../shared/auth/authorize.ts';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
+import { getAccess } from '../../../../shared/auth/authorize.ts';
+import { moduleOfPermission } from '../../../../shared/auth/company-access.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as categories from '../service/categories.ts';
+import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
 import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
-import { addVariant, archiveVariant, updateVariant } from '../service/variants.ts';
+import { addVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
 import type { CatalogContext } from '../service/standard-price.ts';
 import {
   AddVariantBody,
   AttributeBody,
+  BusinessStatusBody,
   BulkEditQuery,
   BulkSaveBody,
   CategoryBody,
@@ -31,6 +34,20 @@ function caller(res: Response): Caller {
   return { accountId, companyId: companyId! };
 }
 
+const MANAGE = 'catalog.product.manage';
+
+/** Quyền phụ của route (`getAccess`, đọc DB lúc `authorize`); quyền của phân hệ đang tắt không tính. */
+function can(res: Response, permission: string): boolean {
+  const { permissions, enabledModules } = getAccess(res);
+  return permissions.includes(permission) && enabledModules.includes(moduleOfPermission(permission));
+}
+
+/** Người làm cho máy trạng thái: quyền và phân hệ đang bật lấy nguyên từ `getAccess` (khung tự bỏ quyền phân hệ tắt). */
+function actor(res: Response): BusinessActor {
+  const { permissions, enabledModules } = getAccess(res);
+  return { ...caller(res), permissions, enabledModules };
+}
+
 function bulkViewer(res: Response): BulkViewer {
   return { ...caller(res), permissions: getAccess(res).permissions };
 }
@@ -43,7 +60,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
   const router = Router();
   const view = ctx.authorize('catalog.product.view');
   const setup = ctx.authorize('catalog.category.manage');
-  const manage = ctx.authorize('catalog.product.manage');
+  const manage = ctx.authorize(MANAGE);
 
   router.get('/categories', view, async (_req, res) => {
     res.json(await categories.listCategories(caller(res).companyId));
@@ -98,7 +115,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
 
   router.get('/products/:id', view, validate({ params: IdParams }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    res.json(await products.getProduct(ctx, caller(res).companyId, id));
+    res.json(await products.getProduct(ctx, caller(res).companyId, id, { archiveBlockers: can(res, MANAGE) }));
   });
 
   router.post('/products', manage, validate({ body: CreateProductBody }), async (_req, res) => {
@@ -119,8 +136,13 @@ export function catalogRouter(ctx: CatalogContext): Router {
   router.post('/products/:id/variants', manage, validate({ params: IdParams, body: AddVariantBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
     const { attributeValueIds } = validated<typeof AddVariantBody>(res, 'body');
-    const { created, variant } = await addVariant(ctx, caller(res), id, attributeValueIds);
-    res.status(created ? 201 : 200).json(variant);
+    res.status(201).json(await addVariant(ctx, caller(res), id, attributeValueIds));
+  });
+
+  // Đổi trạng thái kinh doanh của SKU hoặc cả sản phẩm (#204, Documents/21 §17.2, §17.3).
+  router.post('/products/:id/business-status', manage, validate({ params: IdParams, body: BusinessStatusBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await changeBusinessStatus(ctx, actor(res), id, validated<typeof BusinessStatusBody>(res, 'body')));
   });
 
   // Sửa giá, cân nặng, kích thước của một SKU; `version` là của SKU (#204, Documents/21 §17.2).
@@ -133,13 +155,6 @@ export function catalogRouter(ctx: CatalogContext): Router {
       res.json(await updateVariant(ctx, caller(res), id, variantId, validated<typeof UpdateVariantBody>(res, 'body')));
     },
   );
-
-  // Ngừng bán không nhận `version` (Documents/21 5.2, P7; plan #12 B3).
-  router.delete('/products/:id/variants/:variantId', manage, validate({ params: VariantParams }), async (_req, res) => {
-    const { id, variantId } = validated<typeof VariantParams>(res, 'params');
-    await archiveVariant(caller(res), id, variantId);
-    res.status(204).end();
-  });
 
   return router;
 }
