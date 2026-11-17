@@ -28,7 +28,7 @@ let remote: RemoteSku[] = [];
 const getSkus = vi.fn(async () => remote);
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' });
 registerAdapter('lazada', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
-// TikTok có `activate` như adapter thật (bật cả sản phẩm, phải duyệt lại), app chưa gọi tới phần 2 của #224.
+// TikTok có `activate` như adapter thật (bật cả sản phẩm, phải duyệt lại).
 registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
 afterAll(() => resetAdapters());
 
@@ -167,13 +167,13 @@ describe('lượt đồng bộ: sàn tắt SKU ngoài app (outside_hold)', () =>
     expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
   });
 
-  it('TikTok (app chưa tự ẩn được): SKU tạm ngừng mà người bán tắt trên sàn → vẫn outside_hold', async () => {
+  it('TikTok (#224 phần 2): SKU tạm ngừng mà sàn báo tắt → app tự hide bằng tồn 0, không outside_hold', async () => {
     const tiktok = await connect('tiktok');
     const { variantId, sku, listingId } = await seed(tiktok);
     await setStatus(variantId, 'paused');
     remote = [remoteSku(sku, 'inactive')];
     await sync(tiktok);
-    expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
+    expect(await listing(listingId)).toMatchObject({ status: 'hidden', hidden_by: 'zero_stock', outside_change_kind: null });
   });
 
   it('TikTok: SELLER_DEACTIVATED (inactive) cũng outside_hold', async () => {
@@ -267,19 +267,48 @@ describe('POST …/outside-change/:action (CEO quyết)', () => {
     expect(res.body.status).toBe('live');
   });
 
-  it('AC-8: TikTok sàn còn tắt → 422 marketplace_unsupported, listing giữ nguyên; người bán bật lại rồi restore → live', async () => {
+  it('AC-8: TikTok sàn còn tắt → bật cả sản phẩm, live (#224 phần 2)', async () => {
     const tiktok = await connect('tiktok');
     const { sku, listingId } = await seed(tiktok, true);
     remote = [remoteSku(sku, 'inactive')];
     const res = await decide(listingId, 'restore', { version: await versionOf(listingId) }, company.ceo.token, tiktok);
-    expect(res.status).toBe(422);
-    expect(res.body.type).toMatch(/marketplace_unsupported$/);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'live', outsideChange: null });
+    expect(activate).toHaveBeenCalledWith(expect.any(String), `item-${sku}`, `sku-${sku}`);
+  });
+
+  it('Q2 TikTok: restore một listing → mọi listing disabled cùng sản phẩm cùng live; listing còn ẩn được đẩy tồn 0 trước khi bật', async () => {
+    const tiktok = await connect('tiktok');
+    const a = await seed(tiktok, true);
+    const b = await seed(tiktok, true);
+    const c = await seed(tiktok, true);
+    await setStatus(c.variantId, 'paused');
+    const product = `item-${a.sku}`;
+    await testPool().query('update channel.listings set external_product_id = $1 where id = any($2)', [product, [b.listingId, c.listingId]]);
+    remote = [{ ...remoteSku(a.sku, 'inactive'), externalProductId: product }];
+    const res = await decide(a.listingId, 'restore', { version: await versionOf(a.listingId) }, company.ceo.token, tiktok);
+    expect(res.status).toBe(200);
+    expect(activate).toHaveBeenCalledTimes(1);
+    for (const id of [a.listingId, b.listingId]) expect(await listing(id)).toMatchObject({ status: 'live', outside_change_kind: null });
+    expect(await listing(c.listingId)).toMatchObject({ status: 'hidden', hidden_by: 'zero_stock', outside_change_kind: null });
+    const zero = updatePriceQuantity.mock.calls.findIndex(([, items]) => items.some((i) => i.externalSkuId === `sku-${c.sku}` && i.quantity === 0));
+    expect(zero).toBeGreaterThanOrEqual(0);
+    expect(updatePriceQuantity.mock.invocationCallOrder[zero]!).toBeLessThan(activate.mock.invocationCallOrder[0]!);
+  });
+
+  it('Q2 TikTok: đẩy tồn 0 cho listing còn ẩn lỗi → không bật sản phẩm, mọi listing giữ nguyên', async () => {
+    const tiktok = await connect('tiktok');
+    const a = await seed(tiktok, true);
+    const c = await seed(tiktok, true);
+    await setStatus(c.variantId, 'paused');
+    const product = `item-${a.sku}`;
+    await testPool().query('update channel.listings set external_product_id = $1 where id = $2', [product, c.listingId]);
+    remote = [{ ...remoteSku(a.sku, 'inactive'), externalProductId: product }];
+    updatePriceQuantity.mockImplementationOnce(async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: false, code: 'x', message: 'lỗi' })));
+    const res = await decide(a.listingId, 'restore', { version: await versionOf(a.listingId) }, company.ceo.token, tiktok);
+    expect(res.status).toBe(409);
     expect(activate).not.toHaveBeenCalled();
-    expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
-    remote = [remoteSku(sku, 'live')];
-    const ok = await decide(listingId, 'restore', { version: await versionOf(listingId) }, company.ceo.token, tiktok);
-    expect(ok.status).toBe(200);
-    expect(ok.body.status).toBe('live');
+    expect(await listing(a.listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
   });
 
   it('AC-6: restore khi SKU đang tạm ngừng → xoá outsideChange, giữ hidden; bỏ tạm ngừng sau đó thì tự bật lại', async () => {
@@ -308,14 +337,15 @@ describe('POST …/outside-change/:action (CEO quyết)', () => {
     expect(await listing(listingId)).toMatchObject({ status: 'live', outside_change_kind: null });
   });
 
-  it('review diff: TikTok, SKU tạm ngừng → không giữ hidden (app không tự bật lại TikTok); sàn đã bán lại thì live', async () => {
+  it('TikTok, SKU tạm ngừng → xoá outsideChange, giữ hidden ẩn bằng tồn 0, không bật sản phẩm', async () => {
     const tiktok = await connect('tiktok');
     const { variantId, sku, listingId } = await seed(tiktok, true);
     await setStatus(variantId, 'paused');
-    remote = [remoteSku(sku, 'live')];
+    remote = [remoteSku(sku, 'inactive')];
     const res = await decide(listingId, 'restore', { version: await versionOf(listingId) }, company.ceo.token, tiktok);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: 'live', outsideChange: null });
+    expect(res.body).toMatchObject({ status: 'hidden', outsideChange: null, hiddenBy: 'zero_stock' });
+    expect(activate).not.toHaveBeenCalled();
   });
 
   it('AC-7: không có outsideChange → 409 invalid_transition; accept-price với disabled → 409; version cũ → 409 version_conflict', async () => {
