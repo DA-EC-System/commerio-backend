@@ -302,10 +302,23 @@ export const PushBody = z
   .meta({ id: 'ListingPushInput' });
 
 export const DelistBody = z.object({ version: z.number('Thiếu version').int().positive() }).meta({ id: 'ListingDelistInput' });
+export const UpdateContentParams = z.object({ id: z.string(), listingId: z.string() });
+export const UpdateContentBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingUpdateContentInput' });
 
 const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
+
+const pendingRevision = z
+  .object({ status: z.enum(['auditing', 'failed']), rejectReason: z.string().nullable(), at: iso })
+  .strict()
+  .nullable()
+  .meta({
+    description:
+      'Bản sửa nội dung chờ sàn duyệt trong lúc listing vẫn bán (21 §18.3, #293); `failed` kèm lý do sàn ghi. Null khi không có',
+  });
 
 const pendingMapping = z
   .object({
@@ -344,6 +357,7 @@ export const ChannelListing = z
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
     pendingMapping,
+    pendingRevision,
     version: z.number().int(),
   })
   .strict()

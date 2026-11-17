@@ -526,6 +526,13 @@
       "when": 1794908502047,
       "tag": "20261117094142_quyen-ho-so-cong-ty",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1794908693949,
+      "tag": "20261117094453_ban-sua-noi-dung",
+      "breakpoints": true
     }
   ]
 }

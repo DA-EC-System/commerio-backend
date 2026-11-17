@@ -12,7 +12,7 @@ import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
-import { pushBlock } from './push-block.ts';
+import { listingText, pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 import { untrustedVariants } from './stock-trust.ts';
@@ -82,8 +82,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       externalCategoryId: map!.externalCategoryId,
       attributes: map!.attributes,
       responsible,
-      name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
-      description: v.description ?? v.productName,
+      ...listingText(v),
       imageUrls,
       ...(sizeChartUri && { sizeChartUri }),
       // Listing ghép lúc thiết lập mang SKU người bán trên sàn, có thể khác SKU Commerio.

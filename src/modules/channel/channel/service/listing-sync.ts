@@ -10,6 +10,8 @@ import {
   DELETABLE,
   type ListingAction,
   type ListingStatus,
+  NO_REASON,
+  NO_REVISION,
   STALE_PUSH_MS,
   STOCK_RECONCILED,
   type StockDecision,
@@ -246,6 +248,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     }
     rows = await inCompany(() => listListingRows(shop.id));
   }
+  if (await checkRevisions(inCompany, adapter, accessToken, rows, summary)) rows = await inCompany(() => listListingRows(shop.id));
   // Ẩn, hiện theo trạng thái SKU sau khi áp trạng thái sàn: listing vừa được duyệt mà SKU đang tạm ngừng thì ẩn ngay (E25).
   rows = await applyVisibility(port, inCompany, session, rows, summary);
 
@@ -485,12 +488,46 @@ export async function restoreAfterZeroStock(actor: Actor, listingIds: readonly s
 }
 
 /**
+ * Bản sửa nội dung đang duyệt (#293, §18.3): qua duyệt thì xoá, trượt thì `failed` kèm lý do sàn ghi. Ghi theo dòng đọc
+ * lại, không so `version` của lúc đọc đầu lượt. Lỗi của một listing ghi log rồi bỏ qua, lượt sau đọc lại; mất uỷ quyền thì
+ * ném như mọi lời gọi sàn. Trả true khi có dòng đổi.
+ */
+async function checkRevisions(
+  inCompany: InCompany,
+  adapter: MarketplaceAdapter,
+  accessToken: string,
+  rows: readonly ListingRow[],
+  summary: SyncSummary,
+): Promise<boolean> {
+  if (!adapter.contentRevision) return false;
+  let changed = false;
+  for (const row of rows.filter((r) => r.revisionStatus === 'auditing' && r.externalProductId)) {
+    try {
+      const rev = await onMarketplace(() => adapter.contentRevision!(accessToken, row.externalProductId!));
+      if (rev.state === 'auditing') continue;
+      const patch: ListingPatch = rev.state === 'failed' ? { revisionStatus: 'failed', revisionRejectReason: rev.reason ?? NO_REASON } : NO_REVISION;
+      await inCompany(async () => {
+        const fresh = await findListingById(row.id);
+        if (fresh?.revisionStatus === 'auditing') await updateListing(fresh.id, { version: fresh.version, status: fresh.status }, patch);
+      });
+      changed = true;
+      summary.changed++;
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'marketplace_unauthorized') throw err;
+      logger.warn({ err, listingId: row.id }, 'Đọc bản sửa nội dung đang duyệt lỗi, lượt sau đọc lại');
+      summary.errors++;
+    }
+  }
+  return changed;
+}
+
+/**
  * Dữ liệu ghi kèm khi áp thao tác của sàn. Sàn xoá sản phẩm (`delist`, hệ thống): bỏ mã sản phẩm, mã SKU, ảnh trên sàn
  * vì sản phẩm không còn, giữ SellerSku; đẩy lại sẽ tạo sản phẩm mới (#219).
  */
 function remoteChange(action: ListingAction, rejectReason: string | null | undefined): { patch: ListingPatch; reason: string | null } {
   if (action === 'reject') {
-    const reason = rejectReason ?? 'Sàn từ chối, không ghi lý do';
+    const reason = rejectReason ?? NO_REASON;
     return { patch: { rejectReason: reason }, reason };
   }
   // CHECK `listings_hidden_by`: chỉ `hidden`, `live` mang `hidden_by`.
