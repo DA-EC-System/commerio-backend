@@ -77,6 +77,11 @@ async function withPackageEvents({ adapter, accessToken, shopId }: Session, remo
 async function ingestRemote(session: Session, fetched: RemoteOrder, result: PullResult) {
   const { companyId, shopId } = session;
   const remote = await withPackageEvents(session, fetched);
+  // #358: món mang mã adapter chưa ánh xạ thì kiện giữ nguyên, đơn bật Cần xử lý; log mã thô để biết sàn vừa trả mã gì.
+  const unknown = [...new Set(remote.lines.filter((l) => l.status === null).map((l) => l.rawStatus))];
+  if (unknown.length) {
+    logger.warn({ shopId, externalOrderId: remote.externalOrderId, rawStatuses: unknown }, 'sàn trả trạng thái món app chưa biết');
+  }
   const res = await withCompany(companyId, async () => {
     // Khoá chia sẻ dòng gian hàng tới hết giao dịch: không chèn đơn vào gian hàng vừa ngắt (#207).
     const locked = await lockShopForOrders(shopId);

@@ -492,3 +492,33 @@ describe('hành trình kiện (#199 phần c)', () => {
     expect(await packageOf(o.externalOrderId)).toMatchObject({ status: 'delivered', delivered_at: T });
   });
 });
+
+describe('món mang trạng thái app chưa biết (#358 Việc 2)', () => {
+  it('AC-4: log warn một lần mỗi đơn kèm gian hàng, mã đơn, mã thô; đơn bật Cần xử lý', async () => {
+    const odd = remoteOrder('U1', sku, null, at('2026-11-05T01:00:00Z'));
+    odd.rawStatus = 'something_new,delivered';
+    odd.lines = [
+      { ...odd.lines[0]!, rawStatus: 'something_new' },
+      { ...odd.lines[0]!, externalLineId: 'U1-2', rawStatus: 'something_new' },
+      { ...odd.lines[0]!, externalLineId: 'U1-3', rawStatus: 'delivered', status: 'delivered' },
+    ];
+    const known = remoteOrder('U2', sku, 'pending', at('2026-11-05T02:00:00Z'));
+    seed(odd, known);
+    const warn = vi.spyOn(logger, 'warn');
+    try {
+      expect((await pull()).status).toBe(200);
+      const calls = warn.mock.calls.filter((c) => c[1] === 'sàn trả trạng thái món app chưa biết');
+      expect(calls).toEqual([[{ shopId, externalOrderId: 'U1', rawStatuses: ['something_new'] }, 'sàn trả trạng thái món app chưa biết']]);
+    } finally {
+      warn.mockRestore();
+    }
+    const flag = await testPool().query(
+      `select external_order_id as id, needs_attention from "order".orders where shop_id = $1 and external_order_id in ('U1', 'U2') order by 1`,
+      [shopId],
+    );
+    expect(flag.rows).toEqual([
+      { id: 'U1', needs_attention: true },
+      { id: 'U2', needs_attention: false },
+    ]);
+  });
+});
