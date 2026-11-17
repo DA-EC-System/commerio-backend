@@ -108,6 +108,18 @@ export interface NewProduct {
   responsible?: Responsible;
 }
 
+/** Nội dung đưa lên sản phẩm đang bán (#293): dựng từ catalog như lúc đẩy, không gồm ảnh, SKU, giá, tồn. */
+export interface ContentUpdate {
+  externalCategoryId: string;
+  name: string;
+  description: string;
+  attributes: Record<string, string>;
+  responsible?: Responsible;
+}
+
+/** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */
+export type ContentRevision = { state: 'auditing' | 'approved' } | { state: 'failed'; reason: string | null };
+
 export interface CreatedProduct {
   externalProductId: string;
   externalSkuId: string;
@@ -481,6 +493,14 @@ export interface MarketplaceAdapter {
    * listing đang bán (`update_content`) là việc của #293, không dùng hàm này. Sàn chưa có thì không có hàm này.
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
+  /**
+   * Sửa nội dung sản phẩm đang bán (`update_content`, #293). Sản phẩm sàn nhiều SKU thì ném `rejected`
+   * `shared_remote_product`, danh mục sàn khác `externalCategoryId` thì `category_mismatch`. `underReview`: sàn ngừng bán
+   * bản cũ để duyệt; false là vẫn bán bản cũ trong lúc duyệt bản sửa. Sàn chưa hỗ trợ thì không có hàm này.
+   */
+  updateContent?(accessToken: string, externalProductId: string, content: ContentUpdate): Promise<{ underReview: boolean }>;
+  /** Trạng thái bản sửa nội dung đang duyệt (#293), đồng bộ đọc cho listing có bản sửa `auditing`. */
+  contentRevision?(accessToken: string, externalProductId: string): Promise<ContentRevision>;
   /**
    * Mọi SKU của gian hàng, cho gợi ý ghép lúc thiết lập (#198, Documents/21 §18.7.5) và lần đọc trọn của bản sao SKU sàn
    * (#220). Gian hàng quá giới hạn đọc của sàn thì ném `rejected`, không trả thiếu: số sản phẩm đọc được ít hơn tổng sàn

@@ -6,6 +6,8 @@ import {
   CategoryAttributeList,
   ChannelListing,
   DelistBody,
+  UpdateContentBody,
+  UpdateContentParams,
   ListingList,
   ListingParams,
   ListingSyncResult,
@@ -353,6 +355,27 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng hoặc biến thể chưa có listing'),
       409: problemResponse('`shop_not_connected`, `invalid_transition` (đang đẩy, đã gỡ), `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/update-content',
+    summary: 'Đưa nội dung mới của sản phẩm lên listing đang bán (§18.3, #293)',
+    description:
+      'Cần `channel.listing.manage`. Tên, mô tả, thuộc tính bắt buộc dựng từ catalog như lúc đẩy; không đổi ảnh, SKU, giá, tồn. ' +
+      'Sàn vẫn bán bản cũ trong lúc duyệt (TikTok) thì giữ `live` kèm `pendingRevision.status = auditing`; sàn ngừng bán để ' +
+      'duyệt thì `under_review` (hệ thống `request_review`). Đồng bộ 15 phút xoá bản sửa khi qua duyệt, ghi `failed` khi trượt.',
+    security: bearer,
+    request: { params: UpdateContentParams, body: json(UpdateContentBody) },
+    responses: {
+      200: { description: 'Listing sau khi gửi bản sửa', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
+      409: problemResponse(
+        '`invalid_transition` (listing không `live`), `version_conflict` kèm `current`, `listing_unmanaged`, `shared_remote_product`, `category_unmapped`, `marketplace_rejected` (kể cả danh mục sàn khác ghép)',
+      ),
+      422: problemResponse('`marketplace_unsupported`: sàn chưa hỗ trợ sửa nội dung'),
+      503: problemResponse('`marketplace_unavailable`'),
     },
   });
 }

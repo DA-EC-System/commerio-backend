@@ -21,7 +21,9 @@ export type ListingAction =
   | 'release'
   | 'hide'
   | 'unhide'
-  | 'delist';
+  | 'delist'
+  | 'update_content'
+  | 'request_review';
 
 const manage = 'channel.listing.manage';
 
@@ -38,6 +40,10 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   { from: 'platform_hold', to: 'live', action: 'release', system: true },
   { from: 'live', to: 'hidden', action: 'hide', system: true },
   { from: 'hidden', to: 'live', action: 'unhide', system: true },
+  // Sửa nội dung (#293): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa đang duyệt; sàn ngừng bán để duyệt thì hệ thống
+  // chuyển tiếp `request_review` (ca C2-21).
+  { from: 'live', to: 'live', action: 'update_content', permission: manage },
+  { from: 'live', to: 'under_review', action: 'request_review', system: true },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
   {
     from: ['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'],
@@ -92,6 +98,10 @@ export function stockDecision(
 export const STALE_PUSH_MS = 30 * 60_000;
 
 /** Bỏ ghép chờ duyệt (#220; CHECK `listings_pending_mapping`: bốn cột cùng rỗng), kể cả SKU sàn chờ ghép (#346). */
+/** Trạng thái còn giữ bản sửa nội dung chờ sàn duyệt (#293): sàn vẫn duyệt bản sửa trong lúc ẩn hay khoá. */
+export const REVISION_KEPT: readonly ListingStatus[] = ['live', 'hidden', 'platform_hold'];
+export const NO_REVISION = { revisionStatus: null, revisionRejectReason: null, revisionAt: null } as const;
+
 export const NO_PENDING = {
   pendingVariantId: null,
   pendingMode: null,

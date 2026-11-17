@@ -68,6 +68,7 @@ type ListingMethods = Pick<
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
+  | 'updateContent'
   | 'updatePriceQuantity'
   | 'deactivate'
   | 'activate'
@@ -230,7 +231,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
    * Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính.
    * Tổ chức chịu trách nhiệm (#292): ô người dùng để trống lấy hồ sơ công ty lúc đẩy, chỉ khi danh mục có mã đó.
    */
-  async function productContent(token: string, p: NewProduct) {
+  async function productAttributes(token: string, p: Pick<NewProduct, 'externalCategoryId' | 'attributes' | 'responsible'>) {
     const attrs = await rawAttributes(token, p.externalCategoryId);
     const byId = new Map(attrs.map((a) => [String(a.id), a]));
     const filled = { ...p.attributes };
@@ -238,10 +239,14 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       const value = p.responsible?.[field];
       if (!filled[id] && value && byId.has(id)) filled[id] = value;
     }
-    const productAttributes = Object.entries(filled).map(([id, value]) => {
+    return Object.entries(filled).map(([id, value]) => {
       const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
       return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
     });
+  }
+
+  async function productContent(token: string, p: NewProduct) {
+    const contentAttributes = await productAttributes(token, p);
     return {
       title: p.name,
       description: `<p>${escapeHtml(p.description)}</p>`,
@@ -252,7 +257,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       ...(p.sizeChartUri && { size_chart: { image: { uri: p.sizeChartUri } } }),
       package_weight: { value: kg(p.weightG), unit: 'KILOGRAM' },
       package_dimensions: { length: cm(p.lengthMm), width: cm(p.widthMm), height: cm(p.heightMm), unit: 'CENTIMETER' },
-      ...(productAttributes.length && { product_attributes: productAttributes }),
+      ...(contentAttributes.length && { product_attributes: contentAttributes }),
     };
   }
 
@@ -403,6 +408,28 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (status === 'ACTIVATE') return { live: true };
       if (status === 'PENDING' || status === 'FAILED') return { live: false };
       throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${status ?? 'không rõ'})`);
+    },
+
+    // Partial Edit 202509 (#293): chỉ gửi tiêu đề, mô tả, thuộc tính; không gửi `skus` (SKU thiếu trong danh sách bị sàn
+    // xoá) hay ảnh. Đọc sản phẩm trước để chặn sản phẩm nhiều SKU và danh mục lệch ghép (Partial Edit không đổi danh mục),
+    // đọc lại sau để biết sàn ngừng bán (`PENDING`) hay vẫn bán bản cũ trong lúc duyệt (gọi thật 09/11/2026: `ACTIVATE`).
+    async updateContent(token, externalProductId, c) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const [current, attributes] = await Promise.all([client.call<Row>('GET', path, { token }), productAttributes(token, c)]);
+      if (((current?.skus ?? []) as Row[]).length > 1) {
+        throw new MarketplaceError('rejected', 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; sửa nội dung từng SKU chưa hỗ trợ');
+      }
+      const leaf = ((current?.category_chains ?? []) as Row[]).find((x) => x.is_leaf === true)?.id;
+      if (leaf !== undefined && String(leaf) !== c.externalCategoryId) {
+        throw new MarketplaceError('rejected', 'category_mismatch', `Sản phẩm trên sàn ở danh mục ${String(leaf)}, khác danh mục đã ghép`);
+      }
+      const body = {
+        title: c.name,
+        description: `<p>${escapeHtml(c.description)}</p>`,
+        ...(attributes.length && { product_attributes: attributes }),
+      };
+      await client.call('POST', `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`, { token, body });
+      return { underReview: (await productStatus(token, externalProductId)) === 'PENDING' };
     },
 
     // Hai API theo sản phẩm: tồn (`inventory/update`, kho mặc định) và giá (`prices/update`, chỉ nhận sản phẩm `ACTIVATE`).
