@@ -189,4 +189,54 @@ describe('consumer finance-ledger (§11.2)', () => {
     const dry = await request(app).post(`/api/v1/finance/configs/${draft.body.id}/dry-run`).set('Authorization', auth).send({ version: draft.body.version });
     expect(dry.body.dryRun.profit30).toMatchObject({ now: 0 });
   });
+
+  it('D41-09: goods_receipt_posted ghi một dòng thực tế supplier_payment = −(đạt + lỗi giữ) × giá, làm tròn trên tổng; khớp sao kê được; phát lại không trùng (#357)', async () => {
+    const s = await setup();
+    const receiptId = randomUUID();
+    const posted = {
+      receiptId,
+      requestId: randomUUID(),
+      supplierId: randomUUID(),
+      // 17:30 UTC ngày 04 là ngày 05 giờ Việt Nam.
+      postedAt: '2026-11-04T17:30:00.000Z',
+      replacement: false,
+      lines: [
+        { variantId: s.variantId, accepted: 55, defective: 2, unitPrice: '100000.00' },
+        // Ba dòng 33.333,33: làm tròn từng dòng ra 99.999, làm tròn tổng ra 100.000.
+        { variantId: randomUUID(), accepted: 1, defective: 0, unitPrice: '33333.33' },
+        { variantId: randomUUID(), accepted: 0, defective: 1, unitPrice: '33333.33' },
+        { variantId: randomUUID(), accepted: 1, defective: 0, unitPrice: '33333.33' },
+        { variantId: randomUUID(), accepted: 0, defective: 0, unitPrice: '50000.00' },
+      ],
+    };
+    const eventId = randomUUID();
+    await deliver(s.companyId, 'purchasing.goods_receipt_posted', posted, eventId);
+    await deliver(s.companyId, 'purchasing.goods_receipt_posted', posted, eventId);
+    await deliver(s.companyId, 'purchasing.goods_receipt_posted', posted);
+    const { rows: written } = await testPool().query(
+      'select kind, amount, is_estimate, source_type, source_id, shop_id, order_id, occurred_on::text from finance.ledger_entries where company_id = $1',
+      [s.companyId],
+    );
+    expect(written).toEqual([
+      { kind: 'supplier_payment', amount: '-5800000.00', is_estimate: false, source_type: 'goods_receipt', source_id: receiptId, shop_id: null, order_id: null, occurred_on: '2026-11-05' },
+    ]);
+    const matching = await get(s.ceo, '/bank-matching');
+    expect(matching.body.items).toMatchObject([{ kind: 'supplier_payment', amount: -5800000, estimated: false, source: { type: 'goods_receipt', id: receiptId } }]);
+    expect((await get(s.ceo, '/bank-matching?kind=supplier_payment')).body.total).toBe(1);
+    const auth = `Bearer ${s.ceo}`;
+    const match = () => request(app).post(`/api/v1/finance/ledger/${matching.body.items[0].id}/bank-match`).set('Authorization', auth).send({ bankRef: 'VCB-001' });
+    expect((await match()).body.bankMatch).toMatchObject({ bankRef: 'VCB-001' });
+    const twice = await match();
+    expect([twice.status, twice.body.type]).toEqual([409, '/problems/already_matched']);
+    expect((await get(s.ceo, '/ledger')).body.totals).toMatchObject({ receivable: 0, platformBalance: 0 });
+  });
+
+  it('D41-10: phiếu nhận của đề nghị bù hàng, hoặc tổng 0 đồng, không sinh khoản trả NCC (#357)', async () => {
+    const s = await setup();
+    const base = { requestId: randomUUID(), supplierId: randomUUID(), postedAt: '2026-11-05T01:00:00.000Z' };
+    const line = { variantId: s.variantId, accepted: 2, defective: 0, unitPrice: '100000.00' };
+    await deliver(s.companyId, 'purchasing.goods_receipt_posted', { ...base, receiptId: randomUUID(), replacement: true, lines: [line] });
+    await deliver(s.companyId, 'purchasing.goods_receipt_posted', { ...base, receiptId: randomUUID(), replacement: false, lines: [{ ...line, accepted: 0 }] });
+    expect(await rows(s.companyId)).toEqual([]);
+  });
 });
