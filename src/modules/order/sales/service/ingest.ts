@@ -290,9 +290,10 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   // #358: cờ do mã lạ tự gỡ khi lượt này sàn trả mọi món mã đã biết và không có lý do cờ nào khác của lượt (chia lại kiện,
   // kéo lại kiện). Chỉ gỡ cờ mang note "chưa biết": cờ của luồng khác (yêu cầu trả...) giữ nguyên.
   const ownNote = row.attentionNote?.startsWith(UNKNOWN_STATUS_NOTE) ?? false;
-  const clearUnknown = ownNote && !o.lines.some((l) => l.status === null) && !packages.resplit && !packages.revived;
-  if (clearUnknown) next.needsAttention = false;
   const unknownCodes = [...new Set(o.lines.filter((l) => l.status === null).map((l) => l.rawStatus))];
+  const clearUnknown = ownNote && !unknownCodes.length && !packages.resplit && !packages.revived;
+  if (clearUnknown) next.needsAttention = false;
+  // `undefined`: giữ note đã lưu; `null`: xoá note (chỉ khi gỡ cờ "chưa biết").
   const attentionNote = packages.resplit
     ? 'Sàn chia lại kiện khác lần trước'
     : packages.revived
