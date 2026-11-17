@@ -9,6 +9,7 @@ resources:
   - caddy-data.yaml
   - ci-deployer.yaml
   - node-exporter.yaml
+  - alertmanager.yaml
 
 # Image của CI (#37, amd64 + arm64): backend từ repo này, FE từ repo FE, test-ui từ repo Test_UI.
 # Deploy đổi tag sang sha-<7 ký tự> của commit (ci-deploy/commerio-deploy.sh).
@@ -34,6 +35,9 @@ secretGenerator:
   - name: grafana-admin
     envs:
       - grafana/.env
+  - name: alertmanager-config
+    files:
+      - alertmanager.yml=alertmanager/alertmanager.yml
 
 configMapGenerator:
   - name: caddy-site

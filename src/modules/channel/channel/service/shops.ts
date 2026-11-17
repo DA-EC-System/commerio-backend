@@ -233,7 +233,8 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
         ? {
             documentId: row.openingStocktakeId,
             number: row.openingStocktakeNumber,
-            status: extras.stocktakeStatus.get(row.openingStocktakeId) ?? 'draft',
+            // Phiếu không còn đọc được: báo như đã huỷ để lập lại được (§18.6.2, §18.6.11, #368).
+            status: extras.stocktakeStatus.get(row.openingStocktakeId) ?? 'cancelled',
           }
         : null,
     setup: setupOf(
@@ -551,6 +552,18 @@ async function writeShop(
   return { shop: await shopView(row), created: false, reconnect, previousStatus: existing.status };
 }
 
+/** Khoá dòng gian hàng tới hết giao dịch; id sai định dạng hoặc không thấy là 404. */
+export async function lockShopOr404(id: string): Promise<ShopRow> {
+  const row = isUuid(id) ? await lockShopRow(id) : undefined;
+  if (!row) throw notFound();
+  return row;
+}
+
+/** 409 `version_conflict` kèm `current` là gian hàng hiện tại. */
+export async function versionConflict(row: ShopRow): Promise<AppError> {
+  return new AppError(409, 'version_conflict', `Gian hàng "${row.shopName}" vừa được người khác cập nhật`, { current: await shopView(row) });
+}
+
 /**
  * Kiểm ngắt được theo thứ tự Documents/21 §18.6.1: 404, `invalid_transition`, `version_conflict`, `shop_has_open_orders`.
  * Khoá dòng gian hàng tới hết giao dịch của bên gọi, nên đơn đang về (`order-pull.ts` khoá chia sẻ) không lọt.
@@ -558,14 +571,9 @@ async function writeShop(
  */
 export async function checkDisconnect(actor: Actor, id: string, version: number): Promise<{ row: ShopRow; to: ShopStatus }> {
   requireCompanyId('checkDisconnect');
-  const row = isUuid(id) ? await lockShopRow(id) : undefined;
-  if (!row) throw notFound();
+  const row = await lockShopOr404(id);
   const { to } = assertTransition(shopMachine, row.status, 'disconnect', { actor });
-  if (row.version !== version) {
-    throw new AppError(409, 'version_conflict', `Gian hàng "${row.shopName}" vừa được người khác cập nhật`, {
-      current: await shopView(row),
-    });
-  }
+  if (row.version !== version) throw await versionConflict(row);
   const openOrders = await countOpenOrders(id);
   if (openOrders > 0) assertNoOpenOrders(openOrders, await oldestOpenOrders(id, OPEN_ORDERS_LISTED));
   return { row, to };

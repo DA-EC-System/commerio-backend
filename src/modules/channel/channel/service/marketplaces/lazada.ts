@@ -53,8 +53,25 @@ const DEFAULT_BRAND = 'No Brand';
 const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
 const AUTH_CODES = new Set(['IllegalAccessToken', 'IllegalRefreshToken', 'InvalidCode', 'InvalidRefreshToken']);
-// Mã số là lỗi nghiệp vụ dù mang type ISP (probe-104b), trừ mã lỗi tạm: nội bộ, gọi quá nhanh (tài liệu CreateProduct).
-const TRANSIENT_NUMERIC = new Set(['6', '901', '1000', '4154']);
+/**
+ * Lỗi tạm theo danh sách cho phép (#359); mã khác là sàn từ chối dù mang type ISP: lỗi nghiệp vụ sản phẩm mang type ISP
+ * cả mã số (probe-104b) lẫn mã chữ (E0004 "Product Status not online" khi tắt sản phẩm đã tắt, staging 17/11/2026).
+ * `ApiCallLimit`, `SellerCallLimit`: quá hạn mức (gọi thật #105); `6`, `901`, `1000`, `4154`: nội bộ, gọi quá nhanh
+ * (tài liệu CreateProduct); `E0006` "Unexpected internal error" (tài liệu DeactivateProduct, tra 17/11/2026);
+ * `ServiceTimeout`, `ServiceUnavailable`: không có nguồn tài liệu, giữ để không đổi hành vi cũ. Gặp mã tạm mới thật thì
+ * thêm vào đây kèm ngày và request_id. `type: SYSTEM` luôn là lỗi tạm.
+ */
+const TRANSIENT_CODES = new Set([
+  'ApiCallLimit',
+  'SellerCallLimit',
+  'ServiceTimeout',
+  'ServiceUnavailable',
+  '6',
+  '901',
+  '1000',
+  '4154',
+  'E0006',
+]);
 // UpdatePriceQuantity, UpdateSellableQuantity: tối đa 50 SKU một lần, Lazada khuyên 20.
 const PRICE_QTY_BATCH = 20;
 /**
@@ -141,11 +158,7 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = lazadaMessage(res);
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
-  // `SYSTEM`, `ISP` với mã chữ: lỗi phía sàn; `ApiCallLimit`, `SellerCallLimit`: quá hạn mức; đều thử lại được.
-  const numeric = /^\d+$/.test(code);
-  if (res.type === 'SYSTEM' || code === 'ApiCallLimit' || code === 'SellerCallLimit' || TRANSIENT_NUMERIC.has(code) || (res.type === 'ISP' && !numeric)) {
-    return new MarketplaceError('unavailable', code, message);
-  }
+  if (res.type === 'SYSTEM' || TRANSIENT_CODES.has(code)) return new MarketplaceError('unavailable', code, message);
   return new MarketplaceError('rejected', code, message);
 }
 
@@ -768,6 +781,24 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     );
   }
 
+  /**
+   * Sản phẩm (hoặc SKU) đã tắt trên sàn chưa, đọc `/product/item/get` (#359): `data.status` `InActive`/`Deleted`, hoặc
+   * SKU `skuId` có `Status` `inactive` trong sản phẩm không chờ duyệt. Tài liệu GetProductItem chỉ có mẫu ("Active,
+   * InActive,Pending QC,Suspended,Deleted", SKU "active"), chưa đọc thật sản phẩm đã tắt; phản hồi không khớp thì `false`.
+   */
+  async function inactiveOnPlatform(accessToken: string, itemId: string, skuId: string): Promise<boolean> {
+    const body = await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET');
+    const data = body.data as { status?: unknown; skus?: unknown } | undefined;
+    if (!data || typeof data !== 'object') return false;
+    const status = String(data.status ?? '');
+    // `Suspended` (sàn đình chỉ) coi như đã tắt, như TikTok `PLATFORM_DEACTIVATED`.
+    if (status === 'InActive' || status === 'Deleted' || status === 'Suspended') return true;
+    if (status === 'Pending QC') return false;
+    const skus = Array.isArray(data.skus) ? (data.skus as { SkuId?: unknown; Status?: unknown }[]) : [];
+    const sku = skus.find((s) => String(s?.SkuId ?? '') === skuId);
+    return String(sku?.Status ?? '').toLowerCase() === 'inactive';
+  }
+
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
     ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
@@ -952,7 +983,14 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       const apiRequestBody =
         `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
-      await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+      // E0004 "Product Status not online" (tài liệu DeactivateProduct: "already in the Inactive state"): đọc lại trạng thái,
+      // đã tắt thì coi là xong như TikTok; còn chờ duyệt hay đang bán thì ném lại lỗi gốc (#359).
+      try {
+        await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+      } catch (err) {
+        if (err instanceof MarketplaceError && err.platformCode === 'E0004' && (await inactiveOnPlatform(accessToken, externalProductId, externalSkuId))) return;
+        throw err;
+      }
     },
     // Hiện lại SKU (#224, lazada.md §11.4): `/product/update` `Status: active` về Active ngay, không qua QC, giữ giá, tồn.
     // Chỉ gửi SkuId, Status và thuộc tính giao hàng đang có (update tự bật giao hàng khi không gửi).

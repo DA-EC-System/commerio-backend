@@ -1,5 +1,5 @@
 {
-  "id": "03927334-7a09-4971-a2ec-211d7b53dda4",
+  "id": "8df3a334-0411-4b0e-9adc-fce3f103fd5d",
   "prevId": "f9d1e87e-3a9c-492a-8fc8-18550f05033e",
   "version": "7",
   "dialect": "postgresql",
@@ -238,25 +238,6 @@
           "name": "hidden_by",
           "type": "hidden_by",
           "typeSchema": "channel",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "outside_change_kind": {
-          "name": "outside_change_kind",
-          "type": "outside_change_kind",
-          "typeSchema": "channel",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "outside_change_price": {
-          "name": "outside_change_price",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "outside_change_at": {
-          "name": "outside_change_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -569,10 +550,6 @@
         "listings_hidden_by": {
           "name": "listings_hidden_by",
           "value": "\"channel\".\"listings\".\"hidden_by\" is null or \"channel\".\"listings\".\"status\" in ('hidden', 'live')"
-        },
-        "listings_outside_change": {
-          "name": "listings_outside_change",
-          "value": "(\"channel\".\"listings\".\"outside_change_kind\" is null and \"channel\".\"listings\".\"outside_change_price\" is null and \"channel\".\"listings\".\"outside_change_at\" is null) or (\"channel\".\"listings\".\"outside_change_kind\" is not null and \"channel\".\"listings\".\"status\" = 'hidden' and \"channel\".\"listings\".\"outside_change_at\" is not null and (\"channel\".\"listings\".\"outside_change_kind\" = 'price_changed') = (\"channel\".\"listings\".\"outside_change_price\" is not null))"
         },
         "listings_reject_reason": {
           "name": "listings_reject_reason",
@@ -12676,14 +12653,6 @@
         "mock"
       ]
     },
-    "channel.outside_change_kind": {
-      "name": "outside_change_kind",
-      "schema": "channel",
-      "values": [
-        "disabled",
-        "price_changed"
-      ]
-    },
     "channel.price_calc_status": {
       "name": "price_calc_status",
       "schema": "channel",
@@ -13078,7 +13047,8 @@
       "values": [
         "cancel",
         "edit",
-        "resplit"
+        "resplit",
+        "stocktake"
       ]
     },
     "order.package_status": {

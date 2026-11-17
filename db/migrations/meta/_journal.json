@@ -509,8 +509,15 @@
     {
       "idx": 72,
       "version": "7",
-      "when": 1794901270654,
-      "tag": "20261117074110_listing-doi-ngoai-app",
+      "when": 1794906485991,
+      "tag": "20261117090805_mo-kien-kiem-ke",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1794908295785,
+      "tag": "20261117093815_listing-doi-ngoai-app",
       "breakpoints": true
     }
   ]

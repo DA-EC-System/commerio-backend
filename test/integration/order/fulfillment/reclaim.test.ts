@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { awaitingStocktakeShops } from '#src/modules/channel/index.ts';
-import { DISMANTLE_NOTE, runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
+import { runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -67,16 +67,16 @@ describe('lượt phân hàng: lấy lại phần giữ (25 §7.4, spec 199b §5
     expect((await packageRow(p1.packageId)).status).toBe('backordered');
   });
 
-  it('opening: kiện packed không giữ được thì bật Cần xử lý với DISMANTLE_NOTE; lượt thường thì không', async () => {
+  it('opening: kiện packed không giữ được thì bật Cần mở stocktake; lượt thường thì không', async () => {
     const { companyId } = await createCompany();
     const { variantId: A } = await createVariant(companyId);
     await receive(companyId, A, 1, 100000);
     const normal = await seedPackage(companyId, { status: 'packed', lines: [{ variantId: A, quantity: 2 }] });
     await run(companyId, [A]);
-    expect((await packageRow(normal.packageId)).needs_attention).toBe(false);
+    expect((await packageRow(normal.packageId)).needs_open).toBe(false);
 
     await withCompany(companyId, () => runAllocation({}, { all: true }, { opening: true, cause: { type: 'stocktake', documentId: normal.orderId } }));
-    expect(await packageRow(normal.packageId)).toMatchObject({ status: 'packed', needs_attention: true, flag_note: DISMANTLE_NOTE });
+    expect(await packageRow(normal.packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'stocktake', needs_attention: false });
   });
 
   it('minor 1: đọc lại thiếu hụt sau khi khoá kiện: hàng về trong lúc chờ khoá thì không lấy lại kiện nào', async () => {
@@ -135,16 +135,16 @@ describe('lượt phân hàng: lấy lại phần giữ (25 §7.4, spec 199b §5
     });
   });
 
-  it('minor 6: lượt sau giữ được kiện đã đóng thì gỡ cờ Dỡ kiện về kệ của phiếu đầu kỳ', async () => {
+  it('minor 6: lượt sau giữ được kiện đã đóng thì gỡ cờ Cần mở stocktake của phiếu đầu kỳ', async () => {
     const { companyId } = await createCompany();
     const { variantId: A } = await createVariant(companyId);
     await receive(companyId, A, 1, 100000);
     const p = await seedPackage(companyId, { status: 'packed', lines: [{ variantId: A, quantity: 2 }] });
     await withCompany(companyId, () => runAllocation({}, { all: true }, { opening: true }));
-    expect((await packageRow(p.packageId)).flag_note).toBe(DISMANTLE_NOTE);
+    expect((await packageRow(p.packageId)).open_purpose).toBe('stocktake');
     await receive(companyId, A, 1, 100000);
     await run(companyId, [A]);
-    expect(await packageRow(p.packageId)).toMatchObject({ needs_attention: false, flag_note: null });
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_open: false, open_purpose: null, needs_attention: false, flag_note: null });
   });
 
   it('AC6: cùng nhóm đơn processing thì kiện giữ sau cùng bị lấy trước', async () => {
