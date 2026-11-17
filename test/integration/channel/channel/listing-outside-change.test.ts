@@ -28,8 +28,8 @@ let remote: RemoteSku[] = [];
 const getSkus = vi.fn(async () => remote);
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' });
 registerAdapter('lazada', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
-// TikTok giả không có `activate` (bật lại theo cả sản phẩm, phải duyệt lại: phần 2 của #224).
-registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate }));
+// TikTok có `activate` như adapter thật (bật cả sản phẩm, phải duyệt lại), app chưa gọi tới phần 2 của #224.
+registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
@@ -274,6 +274,7 @@ describe('POST …/outside-change/:action (CEO quyết)', () => {
     const res = await decide(listingId, 'restore', { version: await versionOf(listingId) }, company.ceo.token, tiktok);
     expect(res.status).toBe(422);
     expect(res.body.type).toMatch(/marketplace_unsupported$/);
+    expect(activate).not.toHaveBeenCalled();
     expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
     remote = [remoteSku(sku, 'live')];
     const ok = await decide(listingId, 'restore', { version: await versionOf(listingId) }, company.ceo.token, tiktok);

@@ -64,7 +64,7 @@ export async function resolveOutsideChange(
     const { adapter, accessToken } = session;
     await onMarketplace(async () => {
       const remote = (await adapter.getSkus(accessToken, [sellerSku])).find((s) => s.externalSkuId === externalSkuId);
-      if (remote?.state !== 'live') await activateOnMarketplace(adapter, accessToken, externalProductId, externalSkuId);
+      if (remote?.state !== 'live') await activateOnMarketplace(session, externalProductId, externalSkuId);
     });
   }
   // Sàn đã bật: lệch `version` (tồn vừa đổi) thì ghi trên dòng mới nếu vẫn chờ quyết, không để app thôi đẩy tồn khi sàn đang bán.

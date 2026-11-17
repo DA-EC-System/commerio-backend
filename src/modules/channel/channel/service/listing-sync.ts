@@ -121,9 +121,16 @@ export const appHidesOn = (platform: string): boolean => !VISIBILITY_LATER.has(p
  */
 const APP_HIDDEN = new Set(['hide', 'outside_hold']);
 
-/** Bật lại SKU trên sàn (#224 hiện lại, #360 CEO bật lại); adapter không có `activate` (TikTok tới phần 2 của #224) thì `unsupported`. */
-export async function activateOnMarketplace(adapter: MarketplaceAdapter, accessToken: string, productId: string, skuId: string): Promise<void> {
-  if (!adapter.activate) throw new MarketplaceError('unsupported', 'activate_missing', 'Sàn chưa hỗ trợ bật lại sản phẩm từ app');
+/**
+ * Bật lại SKU trên sàn (#224 hiện lại, #360 CEO bật lại). Adapter không có `activate`, hoặc sàn bật theo cả sản phẩm mà
+ * app chưa tự ẩn, hiện (TikTok tới phần 2 của #224: bật một listing sẽ bật mọi SKU cùng sản phẩm) thì `unsupported`.
+ */
+export async function activateOnMarketplace(
+  { shop, adapter, accessToken }: Pick<Session, 'shop' | 'adapter' | 'accessToken'>,
+  productId: string,
+  skuId: string,
+): Promise<void> {
+  if (!adapter.activate || !appHidesOn(shop.platform)) throw new MarketplaceError('unsupported', 'activate_missing', 'Sàn chưa hỗ trợ bật lại sản phẩm từ app');
   await adapter.activate(accessToken, productId, skuId);
 }
 
@@ -170,7 +177,7 @@ async function applyVisibility(
       if (byPlatform) {
         await onMarketplace(async () => {
           if (action === 'hide') return adapter.deactivate(accessToken, row.externalProductId!, row.externalSkuId!);
-          return activateOnMarketplace(adapter, accessToken, row.externalProductId!, row.externalSkuId!);
+          return activateOnMarketplace({ shop, adapter, accessToken }, row.externalProductId!, row.externalSkuId!);
         });
       }
     } catch (err) {
