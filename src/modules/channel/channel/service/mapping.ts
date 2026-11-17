@@ -59,7 +59,7 @@ const invalid = (field: string, message: string) =>
  *   lần đọc trọn lỗi chưa quá 10 phút thì 429 `remote_skus_retry_later`; đang có lượt chạy thì không xếp thêm; còn lại
  *   (kể cả lượt kẹt `refresh_stale`) xếp lượt tải nền. Hai nhánh sau trả `accepted: true` (202).
  * - Chưa có bản sao: xếp lượt tải nền như Tải lại, trừ khi đang chạy hoặc lần lỗi gần nhất chưa quá 10 phút (lỗi trả ở
- *   `refresh.error`, không 429).
+ *   `refresh.error`, không 429) hoặc lượt chờ kẹt `refresh_stale` (chỉ Tải lại xếp lại, review #361).
  * Ghép theo `external_sku_id` của listing chưa gỡ. `unmatched`: chỉ SKU chưa có ghép hiệu lực.
  */
 export async function remoteSkus(
@@ -80,7 +80,7 @@ export async function remoteSkus(
         if (state.status !== 'running') await requestRemoteSkusRefresh(shop);
         accepted = true;
       }
-    } else if (!shop.remoteSkusSyncedAt && state.status !== 'running' && state.retryAfterSeconds === null) {
+    } else if (!shop.remoteSkusSyncedAt && state.status === 'idle') {
       await requestRemoteSkusRefresh(shop);
     }
     const remote = await listRemoteSkuRows(shop.id);

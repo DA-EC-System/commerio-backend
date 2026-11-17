@@ -305,6 +305,19 @@ describe('route `remote-skus`, `remote-skus/refresh` chạy nền (#361)', () =>
     expect(after.refresh.status).toBe('idle');
   });
 
+  it('AC-7: `GET` lần đầu khi lượt chờ đã quá 15 phút → `refresh_stale`, không tự xếp lại việc (review diff)', async () => {
+    const id = await freshShop();
+    await request_(id, "now() - interval '16 minutes'");
+    const { rows: before } = await testPool().query('select remote_skus_refresh_requested_at as at from channel.shops where id = $1', [id]);
+
+    const res = await open(id);
+
+    expect(RemoteSkuList.parse(res.body).refresh).toMatchObject({ status: 'failed', error: { code: 'refresh_stale' } });
+    expect(await jobs(id)).toBe(0);
+    const { rows: after } = await testPool().query('select remote_skus_refresh_requested_at as at from channel.shops where id = $1', [id]);
+    expect(after[0].at).toEqual(before[0].at);
+  });
+
   it('`GET` lần đầu sau lượt tải lỗi chưa quá 10 phút → 200 kèm `refresh.error`, không xếp lại việc', async () => {
     const id = await freshShop();
     await open(id);
