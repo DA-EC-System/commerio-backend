@@ -233,7 +233,8 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
         ? {
             documentId: row.openingStocktakeId,
             number: row.openingStocktakeNumber,
-            status: extras.stocktakeStatus.get(row.openingStocktakeId) ?? 'draft',
+            // Phiếu không còn đọc được: báo như đã huỷ để lập lại được (§18.6.2, §18.6.11, #368).
+            status: extras.stocktakeStatus.get(row.openingStocktakeId) ?? 'cancelled',
           }
         : null,
     setup: setupOf(
