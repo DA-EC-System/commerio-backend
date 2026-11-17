@@ -16,6 +16,7 @@ import {
   postInspected,
   postRefund,
   postReturned,
+  postSupplierPayment,
   postSupplierRefund,
   profitOf,
   taxWarnings,
@@ -51,6 +52,7 @@ export type PackageReturned = EventPayload<'fulfillment.package_returned'>;
 export type ReturnRefunded = EventPayload<'sales.return_refunded'>;
 export type ReturnInspected = EventPayload<'inventory.return_inspected'>;
 export type SupplierReturnRefunded = EventPayload<'purchasing.supplier_return_refunded'>;
+export type GoodsReceiptPosted = EventPayload<'purchasing.goods_receipt_posted'>;
 
 interface Target {
   source: { type: LedgerSource; id: string };
@@ -207,6 +209,17 @@ export function recordSupplierReturnRefunded(companyId: string, e: SupplierRetur
   );
 }
 
+/** `purchasing.goods_receipt_posted`: dòng thực tế `supplier_payment` không gắn đơn, gian hàng, chờ khớp sao kê (#357). */
+export function recordGoodsReceiptPosted(companyId: string, e: GoodsReceiptPosted): Promise<number> {
+  return withCompany(companyId, () =>
+    post(
+      companyId,
+      { source: { type: 'goods_receipt', id: e.receiptId }, orderId: null, shopId: null, occurredOn: dayOf(e.postedAt), isEstimate: false },
+      postSupplierPayment(e),
+    ),
+  );
+}
+
 export const LEDGER_CONSUMER = 'finance-ledger';
 
 type Recorder<T extends EventType> = (companyId: string, payload: EventPayload<T>) => Promise<number>;
@@ -227,6 +240,7 @@ export const ledgerHandlers = {
   'sales.return_refunded': on<'sales.return_refunded'>(recordReturnRefunded),
   'inventory.return_inspected': on<'inventory.return_inspected'>(recordReturnInspected),
   'purchasing.supplier_return_refunded': on<'purchasing.supplier_return_refunded'>(recordSupplierReturnRefunded),
+  'purchasing.goods_receipt_posted': on<'purchasing.goods_receipt_posted'>(recordGoodsReceiptPosted),
 };
 
 /** Đăng ký mọi loại của consumer `finance-ledger` trong một khối đồng bộ (worker, `startFinanceBackground`). */
@@ -237,6 +251,7 @@ export function registerLedgerConsumers(): void {
   registerConsumer('sales.return_refunded', ledgerHandlers['sales.return_refunded'], options);
   registerConsumer('inventory.return_inspected', ledgerHandlers['inventory.return_inspected'], options);
   registerConsumer('purchasing.supplier_return_refunded', ledgerHandlers['purchasing.supplier_return_refunded'], options);
+  registerConsumer('purchasing.goods_receipt_posted', ledgerHandlers['purchasing.goods_receipt_posted'], options);
 }
 
 type Names = Map<string, Promise<{ id: string; name: string } | null>>;

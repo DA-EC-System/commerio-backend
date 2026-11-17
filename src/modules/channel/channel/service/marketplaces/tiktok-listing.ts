@@ -20,6 +20,7 @@ import {
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteSku,
+  type Responsible,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
@@ -30,6 +31,9 @@ type Row = Record<string, unknown>;
 
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
+const htmlDescription = (text: string) => `<p>${escapeHtml(text)}</p>`;
+// Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026).
+const RESPONSIBLE_ATTRS: Record<string, keyof Responsible> = { '101489': 'name', '101490': 'address' };
 /** Commerio chỉ bán VND (một công ty, VN). */
 const CURRENCY = 'VND';
 /** Kho của shop ít đổi: giữ trong process một giờ, đỡ một lượt gọi mỗi lần đẩy. */
@@ -65,6 +69,7 @@ type ListingMethods = Pick<
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
+  | 'updateContent'
   | 'updatePriceQuantity'
   | 'deactivate'
   | 'activate'
@@ -223,17 +228,29 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     throw new MarketplaceError('rejected', 'listing_check_failed', reasons.map((r) => `${String(r.code)}: ${String(r.message ?? '')}`).join('; '));
   }
 
-  /** Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính. */
-  async function productContent(token: string, p: NewProduct) {
+  /**
+   * Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính.
+   * Tổ chức chịu trách nhiệm (#292): ô người dùng để trống lấy hồ sơ công ty lúc đẩy, chỉ khi danh mục có mã đó.
+   */
+  async function productAttributes(token: string, p: Pick<NewProduct, 'externalCategoryId' | 'attributes' | 'responsible'>) {
     const attrs = await rawAttributes(token, p.externalCategoryId);
     const byId = new Map(attrs.map((a) => [String(a.id), a]));
-    const productAttributes = Object.entries(p.attributes).map(([id, value]) => {
+    const filled = { ...p.attributes };
+    for (const [id, field] of Object.entries(RESPONSIBLE_ATTRS)) {
+      const value = p.responsible?.[field];
+      if (!filled[id] && value && byId.has(id)) filled[id] = value;
+    }
+    return Object.entries(filled).map(([id, value]) => {
       const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
       return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
     });
+  }
+
+  async function productContent(token: string, p: NewProduct) {
+    const contentAttributes = await productAttributes(token, p);
     return {
       title: p.name,
-      description: `<p>${escapeHtml(p.description)}</p>`,
+      description: htmlDescription(p.description),
       category_id: p.externalCategoryId,
       category_version: CATEGORY_VERSION,
       main_images: p.imageUrls.map((uri) => ({ uri })),
@@ -241,7 +258,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       ...(p.sizeChartUri && { size_chart: { image: { uri: p.sizeChartUri } } }),
       package_weight: { value: kg(p.weightG), unit: 'KILOGRAM' },
       package_dimensions: { length: cm(p.lengthMm), width: cm(p.widthMm), height: cm(p.heightMm), unit: 'CENTIMETER' },
-      ...(productAttributes.length && { product_attributes: productAttributes }),
+      ...(contentAttributes.length && { product_attributes: contentAttributes }),
     };
   }
 
@@ -262,11 +279,15 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     async categoryAttributes(token, externalCategoryId): Promise<CategoryAttribute[]> {
       return (await rawAttributes(token, externalCategoryId))
         .filter((a) => a.type === 'PRODUCT_PROPERTY' && a.is_requried === true)
-        .map((a) => ({
-          name: String(a.id),
-          label: String(a.name ?? a.id),
-          options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
-        }));
+        .map((a) => {
+          const prefill = RESPONSIBLE_ATTRS[String(a.id)];
+          return {
+            name: String(a.id),
+            label: String(a.name ?? a.id),
+            options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
+            ...(prefill && { prefill }),
+          };
+        });
     },
 
     // Get Category Rules 202309: `size_chart.is_required`, `is_supported` (#347). Danh mục không hỗ trợ bảng kích cỡ thì không
@@ -388,6 +409,30 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (status === 'ACTIVATE') return { live: true };
       if (status === 'PENDING' || status === 'FAILED') return { live: false };
       throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${status ?? 'không rõ'})`);
+    },
+
+    // Partial Edit 202509 (#293): chỉ gửi tiêu đề, mô tả, thuộc tính; không gửi `skus` (SKU thiếu trong danh sách bị sàn
+    // xoá) hay ảnh. Đọc sản phẩm trước để chặn sản phẩm nhiều SKU và danh mục lệch ghép (Partial Edit không đổi danh mục),
+    // đọc lại sau để biết sàn ngừng bán (`PENDING`) hay vẫn bán bản cũ trong lúc duyệt (gọi thật 09/11/2026: `ACTIVATE`).
+    async updateContent(token, externalProductId, c) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const [current, attributes] = await Promise.all([client.call<Row>('GET', path, { token }), productAttributes(token, c)]);
+      if (((current?.skus ?? []) as Row[]).length > 1) {
+        throw new MarketplaceError('rejected', 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; sửa nội dung từng SKU chưa hỗ trợ');
+      }
+      const leaf = ((current?.category_chains ?? []) as Row[]).find((x) => x.is_leaf === true)?.id;
+      if (leaf !== undefined && String(leaf) !== c.externalCategoryId) {
+        throw new MarketplaceError('rejected', 'category_mismatch', `Sản phẩm trên sàn ở danh mục ${String(leaf)}, khác danh mục đã ghép`);
+      }
+      const body = {
+        title: c.name,
+        description: htmlDescription(c.description),
+        ...(attributes.length && { product_attributes: attributes }),
+      };
+      await client.call('POST', `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`, { token, body });
+      // Sàn đã nhận bản sửa: đọc lại lỗi thì coi như vẫn bán, không ném (ném thì bên gọi tưởng chưa sửa, hay gửi lại).
+      const status = await productStatus(token, externalProductId).catch(() => null);
+      return { underReview: status === 'PENDING' };
     },
 
     // Hai API theo sản phẩm: tồn (`inventory/update`, kho mặc định) và giá (`prices/update`, chỉ nhận sản phẩm `ACTIVATE`).

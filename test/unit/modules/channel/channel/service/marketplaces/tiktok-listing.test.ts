@@ -774,3 +774,146 @@ it('adapter TikTok có đủ năng lực listing (không còn unsupported), kể
   }
   expect(adapter.capabilities.hideBy).toBe('deactivate');
 });
+
+describe('tổ chức chịu trách nhiệm hàng hoá lấy từ hồ sơ công ty (#292)', () => {
+  const RESPONSIBLE_ATTRS = ok({
+    attributes: [
+      { id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [{ id: '1000854', name: 'Việt Nam' }] },
+      { id: '101489', name: 'Tên tổ chức chịu trách nhiệm hàng hóa', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [] },
+      { id: '101490', name: 'Địa chỉ tổ chức chịu trách nhiệm hàng hóa', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [] },
+    ],
+  });
+  const product = {
+    externalCategoryId: '600042',
+    attributes: { '100149': 'Việt Nam' },
+    name: 'CM-TEST Cốc sứ có quai 350ml thử API',
+    description: 'Cốc thử',
+    imageUrls: ['tos-alisg/abc'],
+    sellerSku: 'CM-TEST-COC',
+    price: '99000',
+    quantity: 5,
+    weightG: 300,
+    lengthMm: 95,
+    widthMm: 100,
+    heightMm: 120,
+  };
+  const routes = (attrs: Response) => ({
+    ...PRECHECK_OK,
+    'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+    'GET /product/202309/categories/600042/attributes': attrs,
+    'POST /product/202309/products': ok({ product_id: 'P9', skus: [{ id: 'S9', seller_sku: 'CM-TEST-COC' }] }),
+    'GET /product/202309/products/P9': ok({ status: 'PENDING' }),
+  });
+  const sentAttributes = async (san: ReturnType<typeof fakeSan>, p: Parameters<ReturnType<ReturnType<typeof fakeSan>['methods']>['createProduct']>[1]) => {
+    await san.methods().createProduct(TOKEN, p);
+    return (san.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body as { product_attributes: unknown }).product_attributes;
+  };
+
+  it('categoryAttributes đánh dấu 101489, 101490 để điền từ hồ sơ (AC-6)', async () => {
+    const attrs = await fakeSan(routes(RESPONSIBLE_ATTRS)).methods().categoryAttributes(TOKEN, '600042');
+    expect(attrs.map((a) => [a.name, a.prefill])).toEqual([
+      ['100149', undefined],
+      ['101489', 'name'],
+      ['101490', 'address'],
+    ]);
+  });
+
+  it('map không có hai mã: gửi giá trị hồ sơ; map có giá trị người dùng thì giữ (AC-8)', async () => {
+    const responsible = { name: 'Cty A', address: '1 Lê Lợi' };
+    expect(await sentAttributes(fakeSan(routes(RESPONSIBLE_ATTRS)), { ...product, responsible })).toEqual([
+      { id: '100149', values: [{ id: '1000854' }] },
+      { id: '101489', values: [{ name: 'Cty A' }] },
+      { id: '101490', values: [{ name: '1 Lê Lợi' }] },
+    ]);
+    const typed = { ...product, attributes: { ...product.attributes, '101489': 'Cty Nhập B' }, responsible };
+    expect(await sentAttributes(fakeSan(routes(RESPONSIBLE_ATTRS)), typed)).toContainEqual({ id: '101489', values: [{ name: 'Cty Nhập B' }] });
+  });
+
+  it('địa chỉ null thì không gửi 101490; danh mục không có mã thì không gửi (AC-8)', async () => {
+    const noAddress = await sentAttributes(fakeSan(routes(RESPONSIBLE_ATTRS)), { ...product, responsible: { name: 'Cty A', address: null } });
+    expect(noAddress).toEqual([
+      { id: '100149', values: [{ id: '1000854' }] },
+      { id: '101489', values: [{ name: 'Cty A' }] },
+    ]);
+    const plain = ok({ attributes: [{ id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', values: [{ id: '1000854', name: 'Việt Nam' }] }] });
+    expect(await sentAttributes(fakeSan(routes(plain)), { ...product, responsible: { name: 'Cty A', address: '1 Lê Lợi' } })).toEqual([
+      { id: '100149', values: [{ id: '1000854' }] },
+    ]);
+  });
+});
+
+describe('updateContent, contentRevision: sửa nội dung sản phẩm đang bán (#293)', () => {
+  const content = {
+    externalCategoryId: '600042',
+    name: 'CM-TEST Cốc sứ có quai 350ml bản sửa',
+    description: 'Mô tả mới <b>',
+    attributes: { '100149': 'Việt Nam' },
+    responsible: { name: 'Cty A', address: '1 Lê Lợi' },
+  };
+  const ATTRS = ok({
+    attributes: [
+      { id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', is_requried: true, values: [{ id: '1000854', name: 'Việt Nam' }] },
+      { id: '101489', name: 'Tên tổ chức chịu trách nhiệm hàng hóa', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [] },
+    ],
+  });
+  const product = (extra: Record<string, unknown> = {}) =>
+    ok({ id: 'P9', status: 'ACTIVATE', category_chains: [{ id: '600001', is_leaf: false }, { id: '600042', is_leaf: true }], skus: [{ id: 'S9' }], ...extra });
+  const routes = (read: Response | ((b: unknown) => Response), after: Response = product()) => {
+    let reads = 0;
+    return {
+      'GET /product/202309/categories/600042/attributes': ATTRS,
+      'GET /product/202309/products/P9': () => (reads++ === 0 ? (typeof read === 'function' ? read(undefined) : read.clone()) : after.clone()),
+      'POST /product/202509/products/P9/partial_edit': ok({ product_id: 'P9', audit: { status: 'APPROVED' }, skus: [] }),
+    };
+  };
+
+  it('gửi partial_edit chỉ title, description, product_attributes (có tổ chức chịu trách nhiệm), không skus, không ảnh; vẫn bán → underReview false', async () => {
+    const san = fakeSan(routes(product()));
+    expect(await san.methods().updateContent!(TOKEN, 'P9', content)).toEqual({ underReview: false });
+    const edit = san.calls.find((c) => c.path === '/product/202509/products/P9/partial_edit')!;
+    expect(edit.method).toBe('POST');
+    expect(edit.body).toEqual({
+      title: content.name,
+      description: '<p>Mô tả mới &lt;b&gt;</p>',
+      product_attributes: [
+        { id: '100149', values: [{ id: '1000854' }] },
+        { id: '101489', values: [{ name: 'Cty A' }] },
+      ],
+    });
+  });
+
+  it('sàn đã nhận bản sửa mà bước đọc lại lỗi → không ném (bản sửa đã gửi), underReview false, partial_edit một lần', async () => {
+    const san = fakeSan(routes(product(), json({}, 503)));
+    expect(await san.methods().updateContent!(TOKEN, 'P9', content)).toEqual({ underReview: false });
+    expect(san.calls.filter((c) => c.path.endsWith('/partial_edit'))).toHaveLength(1);
+  });
+
+  it('sàn ngừng bán để duyệt (đọc lại PENDING) → underReview true', async () => {
+    const san = fakeSan(routes(product(), product({ status: 'PENDING' })));
+    expect(await san.methods().updateContent!(TOKEN, 'P9', content)).toEqual({ underReview: true });
+  });
+
+  it('sản phẩm sàn nhiều SKU → shared_remote_product; danh mục sàn khác ghép → category_mismatch; không gọi partial_edit', async () => {
+    const multi = fakeSan(routes(product({ skus: [{ id: 'S9' }, { id: 'S10' }] })));
+    await expect(multi.methods().updateContent!(TOKEN, 'P9', content)).rejects.toMatchObject({ kind: 'rejected', platformCode: 'shared_remote_product' });
+    const other = fakeSan(routes(product({ category_chains: [{ id: '700000', is_leaf: true }] })));
+    await expect(other.methods().updateContent!(TOKEN, 'P9', content)).rejects.toMatchObject({ kind: 'rejected', platformCode: 'category_mismatch' });
+    for (const san of [multi, other]) expect(san.calls.some((c) => c.path.endsWith('/partial_edit'))).toBe(false);
+  });
+
+  it('C2-24, C2-25: contentRevision: AUDITING, PRE_APPROVED giữ; APPROVED hoặc 12052547 (không còn bản đang duyệt) → approved; FAILED → lý do', async () => {
+    const revision = async (r: Record<string, Response>) => {
+      const san = fakeSan(r);
+      return { result: await createTiktokAdapter(config, san.fetchFn).contentRevision!(TOKEN, 'P9'), calls: san.calls };
+    };
+    const review = (audit: unknown, extra: Record<string, unknown> = {}) => ({ 'GET /product/202309/products/P9': ok({ id: 'P9', status: 'ACTIVATE', audit, ...extra }) });
+    expect((await revision(review({ status: 'AUDITING' }))).result).toEqual({ state: 'auditing' });
+    expect((await revision(review({ status: 'PRE_APPROVED' }))).result).toEqual({ state: 'auditing' });
+    expect((await revision(review({ status: 'APPROVED' }))).result).toEqual({ state: 'approved' });
+    const failed = await revision(review({ status: 'FAILED' }, { audit_failed_reasons: [{ reasons: ['Mô tả có từ cấm'], suggestions: ['Bỏ từ cấm'] }] }));
+    expect(failed.result).toEqual({ state: 'failed', reason: 'Mô tả có từ cấm: Bỏ từ cấm' });
+    expect(failed.calls[0]!.query.get('return_under_review_version')).toBe('true');
+    const none = await revision({ 'GET /product/202309/products/P9': fail(12052547, 'Precondition Required. no version is currently under review') });
+    expect(none.result).toEqual({ state: 'approved' });
+  });
+});

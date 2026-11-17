@@ -69,7 +69,7 @@ export function registerPaymentOpenApi(registry: OpenAPIRegistry): void {
       422: problemResponse('`marketplace_unsupported`; `file_import_unsupported`; `validation_failed`'),
     },
   );
-  path('get', '/bank-matching', 'Khoản cần khớp sao kê ngân hàng (rút tiền, NCC hoàn, bồi thường)', VIEW, { query: BankMatchingQuery }, {
+  path('get', '/bank-matching', 'Khoản cần khớp sao kê ngân hàng (rút tiền, NCC hoàn, trả NCC, bồi thường)', VIEW, { query: BankMatchingQuery }, {
     200: { description: 'Trang dòng sổ', ...json(LedgerLinePage) },
   });
   path('post', '/ledger/:id/bank-match', 'Khớp dòng sổ với sao kê ngân hàng', 'Cần `finance.settlement.resolve`.', { params: EntryIdParams, body: json(BankMatchBody) }, {

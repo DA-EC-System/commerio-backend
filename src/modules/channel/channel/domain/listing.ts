@@ -23,7 +23,9 @@ export type ListingAction =
   | 'unhide'
   | 'outside_hold'
   | 'outside_resolve'
-  | 'delist';
+  | 'delist'
+  | 'update_content'
+  | 'request_review';
 
 const manage = 'channel.listing.manage';
 
@@ -43,6 +45,10 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   // Sàn đổi listing ngoài app (#360, 21 §18.3): lượt đồng bộ dừng bán, CEO quyết (route kiểm vai trò CEO).
   { from: 'live', to: 'hidden', action: 'outside_hold', system: true },
   { from: 'hidden', to: 'live', action: 'outside_resolve', permission: manage },
+  // Sửa nội dung (#293): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa đang duyệt; sàn ngừng bán để duyệt thì hệ thống
+  // chuyển tiếp `request_review` (ca C2-21).
+  { from: 'live', to: 'live', action: 'update_content', permission: manage },
+  { from: 'live', to: 'under_review', action: 'request_review', system: true },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
   {
     from: ['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'],
@@ -120,6 +126,13 @@ export const NO_PENDING = {
 } as const;
 /** Bỏ dấu "sàn đổi ngoài app" (#360; CHECK `listings_outside_change`: ba cột cùng rỗng khi rời `hidden`). */
 export const NO_OUTSIDE_CHANGE = { outsideChangeKind: null, outsideChangePrice: null, outsideChangeAt: null } as const;
+
+/** Trạng thái còn giữ bản sửa nội dung chờ sàn duyệt (#293): sàn vẫn duyệt bản sửa trong lúc ẩn hay khoá. */
+export const REVISION_KEPT: readonly ListingStatus[] = ['live', 'hidden', 'platform_hold'];
+export const NO_REVISION = { revisionStatus: null, revisionRejectReason: null, revisionAt: null } as const;
+
+/** Lý do khi sàn từ chối (sản phẩm hay bản sửa nội dung) mà không ghi câu nào. */
+export const NO_REASON = 'Sàn từ chối, không ghi lý do';
 /** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
 export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
 /** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */

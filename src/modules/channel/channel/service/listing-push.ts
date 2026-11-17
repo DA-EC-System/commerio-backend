@@ -1,6 +1,6 @@
 // Việc nền đẩy một listing lên sàn (#219, Documents/21 §18.3, §18.6.4). Request `push` chỉ kiểm, chuyển `pushing` và xếp
 // việc `channel.listing_push` (`shop-jobs.ts`); việc này gọi sàn ngoài giao dịch rồi ghi kết quả trong giao dịch ngắn.
-import { HoldJob } from '../../../core/index.ts';
+import { HoldJob, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
@@ -12,7 +12,7 @@ import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
-import { pushBlock } from './push-block.ts';
+import { listingText, pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 import { untrustedVariants } from './stock-trust.ts';
@@ -54,10 +54,11 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       quantity: (await port.availableOf([variantId])).get(variantId) ?? 0,
       // SKU chưa tin được (#223, 21 §18.6.6): sàn bắt buộc có số lượng nên gửi 0, listing chờ đẩy tồn tới khi lấy đơn xong.
       untrusted: (await untrustedVariants()).has(variantId),
+      responsible: await responsibleOrgOf(shop.companyId),
     };
   });
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
-  const { v, map, price, untrusted } = data;
+  const { v, map, price, untrusted, responsible } = data;
   const quantity = untrusted ? 0 : data.quantity;
   const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
   const block = pushBlock(
@@ -80,8 +81,8 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
       attributes: map!.attributes,
-      name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
-      description: v.description ?? v.productName,
+      responsible,
+      ...listingText(v),
       imageUrls,
       ...(sizeChartUri && { sizeChartUri }),
       // Listing ghép lúc thiết lập mang SKU người bán trên sàn, có thể khác SKU Commerio.

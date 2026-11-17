@@ -91,7 +91,8 @@ async function post(
   const defects = moved.filter(({ line }) => line.defectiveQty > 0);
   if (defects.length) await draftReturn(actor, receipt, request, defects);
 
-  await updateReceipt(receipt.id, { status: to, postedBy: actor.accountId, postedAt: new Date(), selfApproved });
+  const postedAt = new Date();
+  await updateReceipt(receipt.id, { status: to, postedBy: actor.accountId, postedAt, selfApproved });
   await recordTransition({
     entityType: RECEIPT_ENTITY,
     entityId: receipt.id,
@@ -111,7 +112,15 @@ async function post(
     payload: {
       receiptId: receipt.id,
       requestId: request.id,
-      lines: moved.map(({ line }) => ({ variantId: line.variantId, accepted: line.acceptedQty, defective: line.defectiveQty })),
+      supplierId: request.supplierId!,
+      postedAt: postedAt.toISOString(),
+      replacement: request.sourceReturnId !== null,
+      lines: moved.map(({ line, unitCost }) => ({
+        variantId: line.variantId,
+        accepted: line.acceptedQty,
+        defective: line.defectiveQty,
+        unitPrice: unitCost,
+      })),
     },
   });
 }

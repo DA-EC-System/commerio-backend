@@ -165,6 +165,15 @@ describe('việc nền channel.listing_push', () => {
     expect(v.sku).not.toBe('SKU-TREN-SAN');
   });
 
+  it('#292 AC-8: gửi tổ chức chịu trách nhiệm hiệu lực của hồ sơ công ty lúc đẩy (adapter điền khi map để trống)', async () => {
+    const profile = (await auth(app().get('/api/v1/platform/company'))).body;
+    const set = await auth(app().put('/api/v1/platform/company')).send({ responsibleName: 'Cty Nhập A', address: '1 Lê Lợi', version: profile.version });
+    expect(set.status).toBe(200);
+    const { id } = await pushing();
+    await runListingPush(port, job(id));
+    expect(createProduct.mock.calls[0]![1]).toMatchObject({ attributes: { brand: 'No Brand' }, responsible: { name: 'Cty Nhập A', address: '1 Lê Lợi' } });
+  });
+
   it('#346 AC-7: sàn đã có sẵn SKU cùng SellerSku (lần trước tạo dù báo lỗi) → ghi nội dung, giá của app lên SKU đó, tồn để đồng bộ đẩy', async () => {
     const { id } = await pushing();
     onCreate = async (p) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false, existing: true });
