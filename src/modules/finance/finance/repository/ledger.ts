@@ -12,7 +12,15 @@ import { bankMatches, ledgerEntries, ledgerPackageLines, ledgerReplacements } fr
 export type LedgerRow = typeof ledgerEntries.$inferSelect & { replacesId: string | null; replacedBy: string | null };
 
 /** Nguồn của dòng sổ: chứng từ hay sự kiện sinh ra nó (cột `source_type`). */
-export type LedgerSource = 'package' | 'package_return' | 'return_refund' | 'return_inspection' | 'supplier_return' | 'settlement_batch' | 'manual';
+export type LedgerSource =
+  | 'package'
+  | 'package_return'
+  | 'return_refund'
+  | 'return_inspection'
+  | 'supplier_return'
+  | 'goods_receipt'
+  | 'settlement_batch'
+  | 'manual';
 
 const NON_CASH = [...NON_CASH_KINDS];
 

@@ -205,11 +205,16 @@ export const EVENT_SCHEMAS = {
   'purchasing.request_submitted': z.object({ requestId: id, number: z.string() }),
   // NCC hoàn tiền phiếu trả (#210, Documents/21 mục 11.2); sổ tiền ghi dòng `supplier_refund` chờ khớp ngân hàng (#228).
   'purchasing.supplier_return_refunded': z.object({ supplierReturnId: id, supplierId: id, refundAmount: money, recordedAt: timestamp }),
-  // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý.
+  // Phiếu nhận đã ghi sổ (#109, Documents/21 mục 11.2): số đạt vào tồn thực, số lỗi vào chờ xử lý. Sổ tiền ghi khoản
+  // trả NCC = (đạt + lỗi giữ lại) × `unitPrice` (giá dòng đề nghị); `replacement`: phiếu của đề nghị bù hàng, không sinh
+  // khoản trả (#357).
   'purchasing.goods_receipt_posted': z.object({
     receiptId: id,
     requestId: id,
-    lines: z.array(z.object({ variantId: id, accepted: z.int().nonnegative(), defective: z.int().nonnegative() })),
+    supplierId: id,
+    postedAt: timestamp,
+    replacement: z.boolean(),
+    lines: z.array(z.object({ variantId: id, accepted: z.int().nonnegative(), defective: z.int().nonnegative(), unitPrice: money })),
   }),
   // Trạng thái kinh doanh của SKU đổi (#204, Documents/21 §11.2). Channel ẩn, hiện listing; inventory xét lại ngưỡng.
   'catalog.variant_status_changed': z.object({
