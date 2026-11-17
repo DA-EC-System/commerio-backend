@@ -73,6 +73,14 @@ describe('GET/PUT /platform/company', () => {
     expect(log.rows).toEqual([
       { company_id: companyId, action: 'update', before: { responsibleName: null }, after: { responsibleName: 'Cty B' } },
     ]);
+    // Gửi lại đúng giá trị cũ cùng một ô mới: chỉ ô mới vào nhật ký; gửi toàn giá trị cũ thì không tăng version, không ghi.
+    await as(ceo.token).put({ responsibleName: 'Cty B', address: '1 Lê Lợi', version: 2 });
+    expect((await as(ceo.token).put({ responsibleName: 'Cty B', version: 3 })).body.version).toBe(3);
+    const logs = await testPool().query(
+      `select before, after from core.audit_logs where entity_type = 'core.companies' and entity_id = $1 and action = 'update' order by id`,
+      [companyId],
+    );
+    expect(logs.rows.slice(1)).toEqual([{ before: { address: null }, after: { address: '1 Lê Lợi' } }]);
     const platformLog = await testPool().query(
       `select count(*)::int as n from core.audit_logs a where a.entity_type = 'core.companies' and a.entity_id = $1
        and (a.action = 'create' or a.after->>'status' in ('locked', 'active'))`,

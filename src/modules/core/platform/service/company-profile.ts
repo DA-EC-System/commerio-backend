@@ -36,13 +36,15 @@ export const responsibleOrgOf = async (companyId: string) => effectiveResponsibl
 
 /**
  * Sửa theo `version`, lệch thì 409 `version_conflict` kèm `current`. Ghi bằng role chủ bảng như `setCompanyLock`.
- * Không gửi ô nào thì trả hồ sơ, không ghi. Nhật ký chỉ mang các ô đổi, không có `status` nên trang nhật ký nền tảng không lấy dòng này.
+ * Chỉ ghi ô có giá trị khác hiện tại; không ô nào đổi thì trả hồ sơ, không tăng version, không ghi nhật ký.
+ * Nhật ký mang `company_id` của công ty nên trang nhật ký nền tảng (chỉ lấy `company_id` null) không hiện.
  */
 export function updateCompanyProfile(actorId: string, companyId: string, input: CompanyProfilePatch & { version: number }) {
-  const { version, ...patch } = input;
-  const keys = Object.keys(patch) as (keyof CompanyProfilePatch)[];
+  const { version, ...requested } = input;
   return inTransaction(async () => {
     const before = await load(companyId);
+    const keys = (Object.keys(requested) as (keyof CompanyProfilePatch)[]).filter((k) => requested[k] !== before[k]);
+    const patch: CompanyProfilePatch = Object.fromEntries(keys.map((k) => [k, requested[k]]));
     const saved = keys.length === 0 && before.version === version ? before : await saveProfile(companyId, version, patch);
     if (!saved) {
       throw new AppError(409, 'version_conflict', 'Hồ sơ công ty vừa được đổi ở một phiên khác', {
