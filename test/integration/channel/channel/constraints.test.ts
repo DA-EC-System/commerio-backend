@@ -226,12 +226,71 @@ describe('ràng buộc lần tính giá', () => {
     const insert = (status: string, belowFloor: boolean) =>
       db().query(
         `insert into channel.price_calculations (company_id, shop_id, variant_id, cost, target_net, raw_price, rounded_price,
-           net_received, margin_pct, below_floor, status, confirmed_by)
-         values ($1, $2, $3, 150000, 200000, 236047, 239000, 202540, 35, $4, $5, $6)`,
+           net_received, margin_pct, below_floor, status, confirmed_by, fee_pct, tax_pct, trigger)
+         values ($1, $2, $3, 150000, 200000, 236047, 239000, 202540, 35, $4, $5, $6, 14, 0, 'push')`,
         [c, s, randomUUID(), belowFloor, status, status === 'pending_confirm' ? null : randomUUID()],
       );
     await expect(insert('pending_confirm', true)).resolves.toBeDefined();
     await expect(insert('confirmed', true)).rejects.toThrow(/"price_calculations_floor"/);
     await expect(insert('confirmed', false)).resolves.toBeDefined();
+  });
+
+  // #225: chưa có giá vốn thì không có cờ; mỗi (gian hàng, SKU) một bản chờ; listing trỏ lần tính có thật.
+  const calc = (c: string, s: string, v: string, over: Record<string, unknown> = {}) => {
+    const all = {
+      company_id: c,
+      shop_id: s,
+      variant_id: v,
+      cost: 150000,
+      target_net: 200000,
+      raw_price: 236047,
+      rounded_price: 239000,
+      net_received: 202540,
+      margin_pct: 35,
+      below_floor: false,
+      fee_pct: 14,
+      tax_pct: 0,
+      trigger: 'push',
+      ...over,
+    };
+    const keys = Object.keys(all);
+    return db().query<{ id: string }>(
+      `insert into channel.price_calculations (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
+      Object.values(all),
+    );
+  };
+
+  it('giá vốn và cờ Dưới giá thấp nhất cùng có hoặc cùng trống', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    await expect(calc(c, s, randomUUID(), { cost: null, below_floor: null, margin_pct: null })).resolves.toBeDefined();
+    await expect(calc(c, s, randomUUID(), { cost: null, below_floor: true })).rejects.toThrow(/"price_calculations_cost_floor"/);
+    await expect(calc(c, s, randomUUID(), { below_floor: null })).rejects.toThrow(/"price_calculations_cost_floor"/);
+  });
+
+  it('một SKU trên một gian hàng chỉ có một bản chờ xác nhận', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const v = randomUUID();
+    await calc(c, s, v);
+    await expect(calc(c, s, v)).rejects.toThrow(/price_calculations_one_pending/);
+    await expect(calc(c, s, v, { status: 'superseded' })).resolves.toBeDefined();
+    await expect(calc(c, await shop(c), v)).resolves.toBeDefined();
+  });
+
+  it('lý do có lần tính chỉ nhận push, target_changed, config_activated', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    await expect(calc(c, s, randomUUID(), { trigger: 'config_activated' })).resolves.toBeDefined();
+    await expect(calc(c, s, randomUUID(), { trigger: 'cost_changed' })).rejects.toThrow(/"price_calculations_trigger"/);
+  });
+
+  it('listing chỉ trỏ tới lần tính có thật', async () => {
+    const c = randomUUID();
+    const s = await shop(c);
+    const v = randomUUID();
+    const { rows } = await calc(c, s, v);
+    await expect(insertListing(c, s, { variant_id: v, price_calc_id: rows[0]!.id })).resolves.toBeDefined();
+    await expect(insertListing(c, s, { variant_id: randomUUID(), price_calc_id: randomUUID() })).rejects.toThrow(/foreign key/);
   });
 });
