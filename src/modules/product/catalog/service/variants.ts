@@ -3,6 +3,7 @@
 import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { publishEvent, recordAudit } from '../../../core/index.ts';
+import { productImageRows } from '../repository/product-images.ts';
 import { touchProduct } from '../repository/products.ts';
 import {
   findVariants,
@@ -18,13 +19,15 @@ import {
   type Caller,
   invalid,
   isUuid,
+  listingFieldRequired,
   notFound,
   pgError,
-  productArchived,
   variantArchived,
   variantExists,
   versionConflict,
 } from './errors.ts';
+import { skuLabels } from './labels.ts';
+import { listedFieldErrors } from './listed-fields.ts';
 import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
@@ -66,7 +69,7 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
     sku: v.sku,
     categoryId: v.categoryId,
     categoryName: v.categoryName,
-    archived: v.archivedAt !== null || v.productArchivedAt !== null,
+    archived: v.businessStatus === 'archived',
     businessStatus: v.businessStatus,
     description: v.description,
     weightG: v.weightG,
@@ -94,7 +97,6 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
   return withCompany(caller.companyId, async () => {
     await lockVariants(caller.companyId);
     const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
     const variants = await findVariants({ productId });
     const order = variants[0]?.attributes.map((a) => a.attributeId) ?? [];
     if (!order.length) throw badCombo('Sản phẩm tạo không có thuộc tính nên chỉ có một biến thể');
@@ -107,13 +109,15 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
     if (same?.businessStatus === 'archived') throw variantArchived(same.id);
     if (same) throw variantExists(same.sku);
     const [category] = await findCategories(product.categoryId);
-    const [sku] = await allocateSkus(category!, [combo]);
-    const id = await insertVariant(caller.companyId, productId, sku!, combo.map((v) => v.id), 0);
+    const [allocated] = await allocateSkus(category!, [combo]);
+    const id = await insertVariant(caller.companyId, productId, allocated!.sku, combo.map((v) => v.id), 0);
     await touchProduct(productId);
     const [variant] = await findVariants({ ids: [id] });
     await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: variantSnapshot(product.name, variant!) });
     const prices = await standardPricesOf(ctx, [id]);
-    return toVariantView(variant!, prices.get(id) ?? null);
+    const imageCount = (await productImageRows([productId], 1)).length;
+    const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, categoryId: product.categoryId, imageCount }));
+    return toVariantView(variant!, labels.get(id)!, prices.get(id) ?? null);
   }).catch((err: unknown) => {
     // Giá trị thuộc tính vừa bị xoá giữa lúc đọc và lúc chèn.
     if (pgError(err).code === '23503') throw badCombo('Có giá trị thuộc tính vừa bị xoá');
@@ -200,8 +204,9 @@ export async function applyVariantUpdate(
 }
 
 /**
- * `PATCH /catalog/products/:id/variants/:variantId` (#204). Sản phẩm lưu trữ báo `product_archived` trước
- * `version_conflict` như mọi route ghi; SKU đã ngừng bán vẫn sửa được (điền cho đủ trước khi khôi phục).
+ * `PATCH /catalog/products/:id/variants/:variantId` (#204). SKU đã ngừng nhập, đã lưu trữ vẫn sửa được (điền cho đủ
+ * trước khi khôi phục). SKU còn listing chưa gỡ mà gửi `null` cho giá muốn bán, cân nặng, kích thước đang có giá trị:
+ * 409 `listing_field_required` (`listed-fields.ts`).
  */
 export async function updateVariant(
   ctx: CatalogContext,
@@ -212,9 +217,10 @@ export async function updateVariant(
 ): Promise<ProductDetail> {
   return withCompany(caller.companyId, async () => {
     const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
     const [current] = isUuid(variantId) ? await findVariants({ ids: [variantId] }) : [];
     if (!current || current.productId !== product.id) throw notFound('biến thể');
+    const listed = await listedFieldErrors(ctx, current, input);
+    if (listed) throw listingFieldRequired(listed.detail, listed.errors);
     const outcome = await applyVariantUpdate(caller, current, input);
     if (outcome === 'updated') await touchProduct(product.id);
     if (outcome === 'stale') {

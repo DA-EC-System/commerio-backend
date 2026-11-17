@@ -101,7 +101,7 @@ export async function updateVariantIfVersion(id: string, version: number, patch:
 }
 
 /** Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. */
-export async function findVariants(filter: { productId?: string; ids?: readonly string[] } = {}) {
+export async function findVariants(filter: { productId?: string; productIds?: readonly string[]; ids?: readonly string[] } = {}) {
   const rows = await getDb()
     .select({
       id: productVariants.id,
@@ -116,9 +116,9 @@ export async function findVariants(filter: { productId?: string; ids?: readonly 
       lengthMm: productVariants.lengthMm,
       widthMm: productVariants.widthMm,
       heightMm: productVariants.heightMm,
+      sourceRequestLineId: productVariants.sourceRequestLineId,
       productName: products.name,
       description: products.description,
-      productArchivedAt: products.archivedAt,
       categoryId: categories.id,
       categoryName: categories.name,
     })
@@ -128,6 +128,7 @@ export async function findVariants(filter: { productId?: string; ids?: readonly 
     .where(
       and(
         filter.productId ? eq(productVariants.productId, filter.productId) : undefined,
+        filter.productIds ? inArray(productVariants.productId, [...filter.productIds]) : undefined,
         filter.ids ? inArray(productVariants.id, [...filter.ids]) : undefined,
       ),
     )
@@ -164,4 +165,14 @@ export async function variantPrices(
     .select({ id: productVariants.id, standardPrice: productVariants.standardPrice, targetNetPrice: productVariants.targetNetPrice })
     .from(productVariants)
     .where(inArray(productVariants.id, [...ids]));
+}
+
+/** Khoá mọi dòng SKU của sản phẩm theo id tăng dần (xoá hẳn, #204): cùng thứ tự với đổi trạng thái kinh doanh. */
+export async function lockProductVariants(productId: string): Promise<void> {
+  await getDb()
+    .select({ id: productVariants.id })
+    .from(productVariants)
+    .where(eq(productVariants.productId, productId))
+    .orderBy(asc(productVariants.id))
+    .for('update');
 }

@@ -110,7 +110,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
   });
 
   router.get('/products', view, validate({ query: ProductListQuery }), async (_req, res) => {
-    res.json(await products.listProducts(caller(res).companyId, validated<typeof ProductListQuery>(res, 'query')));
+    res.json(await products.listProducts(ctx, caller(res).companyId, validated<typeof ProductListQuery>(res, 'query')));
   });
 
   router.get('/products/:id', view, validate({ params: IdParams }), async (_req, res) => {
@@ -129,7 +129,7 @@ export function catalogRouter(ctx: CatalogContext): Router {
 
   router.delete('/products/:id', manage, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    await products.archiveProduct(ctx, caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
+    await products.deleteProduct(ctx, caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
     res.status(204).end();
   });
 

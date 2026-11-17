@@ -2,35 +2,41 @@
 import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { confirmUploads, fileProblem, publicFileUrls, recordAudit } from '../../../core/index.ts';
+import { countLabels, type LabelledSku } from '../domain/labels.ts';
 import { findCategories } from '../repository/categories.ts';
 import { productImageRows, replaceProductImages } from '../repository/product-images.ts';
 import {
-  archiveProductIfVersion,
+  deleteProductTree,
   findProduct,
   insertProduct,
   listProducts as findPage,
+  lockProduct,
   type ProductFilter,
   type ProductRow,
   productNameExists,
   setSizeChart,
   updateProductIfVersion,
 } from '../repository/products.ts';
-import { findVariants, insertVariant, lockVariants, type VariantRow } from '../repository/variants.ts';
+import { findVariants, insertVariant, lockProductVariants, lockVariants, type VariantRow } from '../repository/variants.ts';
 import {
   auditOf,
   type Caller,
   invalid,
   isUuid,
+  listingFieldRequired,
   nameTaken,
   notFound,
   pgError,
-  productArchived,
+  productInUse,
+  tooManyAxes,
   versionConflict,
 } from './errors.ts';
+import { type SkuLabels, skuLabels } from './labels.ts';
+import { listedImageErrors } from './listed-fields.ts';
 import { imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
-import { allocateSkus, resolveCombos } from './sku-allocation.ts';
+import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
-import { archiveBlockersOf } from './usage.ts';
+import { archiveBlockersOf, inUseOf, requirePort } from './usage.ts';
 
 export interface CreateProductInput {
   name: string;
@@ -56,15 +62,20 @@ export interface UpdateProductInput {
 const ENTITY = 'product.products';
 const taken = () => nameTaken('Đã có sản phẩm cùng tên');
 
-/** `thumbnailUrl`: link ảnh đại diện; chuỗi rỗng (thiếu `S3_PUBLIC_URL`) coi như không có ảnh. */
-function toListItem(p: ProductRow, thumbnailUrl: string | null) {
+/**
+ * `thumbnailUrl`: link ảnh đại diện; chuỗi rỗng (thiếu `S3_PUBLIC_URL`) coi như không có ảnh. Số đếm và `status` suy từ
+ * nhãn của mọi SKU con (#204, Documents/21 §17.1): `archived` khi mọi SKU đã lưu trữ.
+ */
+function toListItem(p: ProductRow, thumbnailUrl: string | null, skus: readonly LabelledSku[]) {
+  const counts = countLabels(skus);
   return {
     id: p.id,
     name: p.name,
+    code: p.code,
     category: { id: p.categoryId, name: p.categoryName },
-    variantCount: p.variantCount,
+    ...counts,
     thumbnailUrl: thumbnailUrl || null,
-    status: p.archivedAt ? ('archived' as const) : ('active' as const),
+    status: counts.variantCount > 0 ? ('active' as const) : ('archived' as const),
     updatedAt: p.updatedAt.toISOString(),
     version: p.version,
   };
@@ -75,8 +86,16 @@ export function toDong(value: Decimal | string | null): number | null {
   return value === null ? null : new Decimal(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
 }
 
-/** `archiveBlockers`: lý do chưa lưu trữ được, chỉ tính cho SKU `discontinued` (Documents/21 §17.1, spec 204 mục 5.2). */
-export function toVariantView(v: VariantRow, standardPrice: Decimal | null = null, archiveBlockers: readonly string[] = []) {
+/**
+ * `labels`: độ hoàn thiện, ngưỡng tồn, hiện diện trên sàn (`skuLabels`). `archiveBlockers`: lý do chưa lưu trữ được, chỉ
+ * tính cho SKU `discontinued` (Documents/21 §17.1, spec 204 mục 5.2).
+ */
+export function toVariantView(
+  v: VariantRow,
+  labels: SkuLabels,
+  standardPrice: Decimal | null = null,
+  archiveBlockers: readonly string[] = [],
+) {
   return {
     id: v.id,
     sku: v.sku,
@@ -91,6 +110,8 @@ export function toVariantView(v: VariantRow, standardPrice: Decimal | null = nul
     heightMm: v.heightMm,
     version: v.version,
     archiveBlockers: [...archiveBlockers],
+    ...labels,
+    missing: [...labels.missing],
   };
 }
 
@@ -110,12 +131,14 @@ export async function productDetail(
   const discontinued = archiveBlockers ? rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id) : [];
   const blockers = await archiveBlockersOf(ctx, discontinued);
   const images = await imagesOf(p.id);
+  const labels = await skuLabels(ctx, rows, () => ({ name: p.name, categoryId: p.categoryId, imageCount: images.length }));
+  const views = rows.map((v) => toVariantView(v, labels.get(v.id)!, prices.get(v.id) ?? null, blockers.get(v.id)));
   return {
-    ...toListItem(p, images[0]?.url ?? null),
+    ...toListItem(p, images[0]?.url ?? null, views),
     description: p.description ?? '',
     images,
     sizeChart: await sizeChartOf(p.sizeChartFileId),
-    variants: rows.map((v) => toVariantView(v, prices.get(v.id) ?? null, blockers.get(v.id))),
+    variants: views,
   };
 }
 export type ProductDetail = Awaited<ReturnType<typeof productDetail>>;
@@ -158,12 +181,25 @@ function race(err: unknown): never {
   throw err;
 }
 
-export async function listProducts(companyId: string, filter: ProductFilter) {
+/**
+ * Một trang danh sách với số câu truy vấn cố định (#204 Review Focus 2): trang sản phẩm, SKU của cả trang, ngưỡng tồn,
+ * hiện diện, link ảnh đại diện mỗi thứ một lần, không theo số dòng.
+ */
+export async function listProducts(ctx: CatalogContext, companyId: string, filter: ProductFilter) {
   return withCompany(companyId, async () => {
     const { rows, total } = await findPage(filter);
-    // Một câu lấy link ảnh đại diện cho cả trang, không N+1.
+    const variants = rows.length ? await findVariants({ productIds: rows.map((p) => p.id) }) : [];
+    // Độ hoàn thiện chỉ cần cha có ảnh hay không: ảnh `position` 0 có khi và chỉ khi có ảnh.
+    const parents = new Map(rows.map((p) => [p.id, { name: p.name, categoryId: p.categoryId, imageCount: p.thumbnailFileId ? 1 : 0 }]));
+    const labels = await skuLabels(ctx, variants, (id) => parents.get(id)!);
+    const skusOf = Map.groupBy(
+      variants.map((v) => ({ productId: v.productId, businessStatus: v.businessStatus, ...labels.get(v.id)! })),
+      (s) => s.productId,
+    );
     const urls = await publicFileUrls(rows.flatMap((p) => (p.thumbnailFileId ? [p.thumbnailFileId] : [])));
-    const items = rows.map((p) => toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null));
+    const items = rows.map((p) =>
+      toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null, skusOf.get(p.id) ?? []),
+    );
     return { items, total, page: filter.page, pageSize: filter.pageSize };
   });
 }
@@ -186,6 +222,8 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
   const sizeChartId = input.sizeChartFileId ?? null;
   await confirmUploads(caller.companyId, sizeChartId ? [...imageIds, sizeChartId] : imageIds);
   return withCompany(caller.companyId, async () => {
+    // Tối đa 2 trục (#204): kiểm trước mọi lần đọc, thay lỗi CHECK `variant_attribute_values_position` của DB.
+    if (input.variants.some((v) => v.attributeValueIds.length > 2)) throw tooManyAxes();
     await lockVariants(caller.companyId);
     // Khoá ngoại kiểm bằng quyền chủ bảng, bỏ qua RLS: phải đọc danh mục dưới công ty mình trước (ground-truth #12).
     const [category] = isUuid(input.categoryId) ? await findCategories(input.categoryId) : [];
@@ -200,38 +238,38 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     if (!category || !resolved.ok || imageError || sizeChartError) throw invalid(errors);
     if (await productNameExists(input.name)) throw taken();
 
-    const id = await insertProduct(caller.companyId, category.id, input.name, input.description);
     const skus = await allocateSkus(category, resolved.combos);
+    const code = await productCodeFor(category.skuPattern, skus[0]!.seq);
+    const id = await insertProduct(caller.companyId, category.id, input.name, input.description, code);
     for (const [i, combo] of resolved.combos.entries()) {
-      await insertVariant(caller.companyId, id, skus[i]!, combo.map((v) => v.id), i);
+      await insertVariant(caller.companyId, id, skus[i]!.sku, combo.map((v) => v.id), i);
     }
     await replaceProductImages(caller.companyId, id, imageIds);
     if (sizeChartId) await setSizeChart(id, sizeChartId);
     const result = await productDetail(ctx, await findOwnProduct(id));
     await recordAudit({
       ...auditOf(caller, 'create', ENTITY, id),
-      after: snapshot(input, category.name, result.variants, imageIds, sizeChartId),
+      after: { ...snapshot(input, category.name, result.variants, imageIds, sizeChartId), code },
     });
     return result;
   }).catch(race);
 }
 
-/**
- * Sản phẩm đã lưu trữ báo `product_archived` trước `version_conflict` (AC-12 "mọi PUT", plan B2). Dùng cả khi
- * kiểm trước lúc ghi lẫn khi ghi có điều kiện `version` không trúng (người khác vừa sửa, lưu trữ).
- */
+/** Dùng cả khi kiểm trước lúc ghi lẫn khi ghi có điều kiện `version` không trúng (người khác vừa sửa). */
 async function rejectStale(ctx: CatalogContext, product: ProductRow): Promise<never> {
-  if (product.archivedAt) throw productArchived();
   throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await productDetail(ctx, product));
 }
 
 async function editable(ctx: CatalogContext, id: string, version: number): Promise<ProductRow> {
   const product = await findOwnProduct(id);
-  if (product.archivedAt || product.version !== version) await rejectStale(ctx, product);
+  if (product.version !== version) await rejectStale(ctx, product);
   return product;
 }
 
-/** Ảnh như `createProduct`; không gửi `imageFileIds` thì giữ nguyên, gửi thì thay toàn bộ sau khi ghi trúng `version`. */
+/**
+ * Ảnh như `createProduct`; không gửi `imageFileIds` thì giữ nguyên, gửi thì thay toàn bộ sau khi ghi trúng `version`.
+ * Gửi `imageFileIds: []` khi sản phẩm còn ảnh và có SKU còn listing chưa gỡ: 409 `listing_field_required`.
+ */
 export async function updateProduct(ctx: CatalogContext, caller: Caller, id: string, input: UpdateProductInput) {
   const imageIds = input.imageFileIds;
   const sizeChartId = input.sizeChartFileId;
@@ -251,13 +289,16 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name, id)) throw taken();
     const imagesBefore = await imageIdsOf(id);
+    const variants = await findVariants({ productId: id });
+    // Gỡ hết ảnh khi còn listing chưa gỡ (US-SP-03 dòng 7): 409, không ghi gì.
+    const listed = await listedImageErrors(ctx, variants.map((v) => v.id), imagesBefore, imageIds);
+    if (listed) throw listingFieldRequired(listed.detail, listed.errors);
     if (!(await updateProductIfVersion(id, input.version, input.name, input.description))) {
       await rejectStale(ctx, await findOwnProduct(id));
     }
     if (imageIds) await replaceProductImages(caller.companyId, id, imageIds);
     if (sizeChartId !== undefined) await setSizeChart(id, sizeChartId);
     const sizeChartAfter = sizeChartId === undefined ? product.sizeChartFileId : sizeChartId;
-    const variants = await findVariants({ productId: id });
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
       before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId),
@@ -268,18 +309,36 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
 }
 
 /**
- * Xoá là lưu trữ (P5). `product_has_active_orders` chưa kiểm: đơn hàng là #24 (D9), khi đó nhận hàm kiểm qua `ctx`
- * như giá chuẩn (catalog không import sales).
+ * `DELETE /catalog/products/:id`: xoá hẳn (#204 spec mục 6, Documents/21 §17.2). Chỉ khi mọi SKU chờ hoàn thiện, không
+ * module nào đã dùng SKU (`inUseOf`), không SKU nào sinh từ đề nghị nhập; ngược lại 409 `product_in_use`. Lưu trữ sản
+ * phẩm cha kiểu cũ đã bỏ: lưu trữ từng SKU qua `business-status`.
+ *
+ * Thứ tự khoá: khoá công ty (cùng thêm biến thể, đổi trạng thái) → dòng SKU theo id → dòng sản phẩm → dòng tồn (inventory
+ * xoá cuối), cùng chiều với PATCH SKU và sửa hàng loạt (SKU → sản phẩm → dòng tồn). Khoá trước khi đọc để PATCH SKU, PUT
+ * sản phẩm không làm SKU hoàn thiện giữa lúc kiểm và lúc xoá.
  */
-export async function archiveProduct(ctx: CatalogContext, caller: Caller, id: string, version: number): Promise<void> {
+export async function deleteProduct(ctx: CatalogContext, caller: Caller, id: string, version: number): Promise<void> {
   await withCompany(caller.companyId, async () => {
-    // Cùng khoá với thêm biến thể: không để biến thể được thêm vào sản phẩm vừa lưu trữ (B2, B5).
     await lockVariants(caller.companyId);
-    const product = await editable(ctx, id, version);
-    if (!(await archiveProductIfVersion(id, version))) await rejectStale(ctx, await findOwnProduct(id));
+    await findOwnProduct(id);
+    await lockProductVariants(id);
+    if ((await lockProduct(id)) !== version) await rejectStale(ctx, await findOwnProduct(id));
+    const product = await findOwnProduct(id);
+    const variants = await findVariants({ productId: id });
+    const ids = variants.map((v) => v.id);
+    const imageIds = await imageIdsOf(id);
+    const parent = { name: product.name, categoryId: product.categoryId, imageCount: imageIds.length };
+    const labels = await skuLabels(ctx, variants, () => parent);
+    if (variants.some((v) => labels.get(v.id)!.readiness === 'ready')) {
+      throw productInUse('Sản phẩm có SKU đã hoàn thiện, không xoá hẳn được; lưu trữ từng SKU');
+    }
+    if ((await inUseOf(ctx, ids)).size) throw productInUse('Sản phẩm đã có chứng từ hoặc listing, không xoá hẳn được; lưu trữ từng SKU');
+    if (variants.some((v) => v.sourceRequestLineId)) throw productInUse('Sản phẩm sinh từ đề nghị nhập, không xoá hẳn được');
+    await requirePort(ctx, 'deleteStockLevels')(ids);
+    await deleteProductTree(id, ids);
     await recordAudit({
       ...auditOf(caller, 'delete', ENTITY, id),
-      before: snapshot(product, product.categoryName, await findVariants({ productId: id }), await imageIdsOf(id), product.sizeChartFileId),
+      before: { ...snapshot(product, product.categoryName, variants, imageIds, product.sizeChartFileId), code: product.code },
     });
   });
 }

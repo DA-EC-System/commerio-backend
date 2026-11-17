@@ -1,6 +1,6 @@
 // Lý do chặn lưu trữ SKU phần mua hàng (#204, Documents/21 §17.3): catalog nhận hàm này qua `ctx` (product/index.ts) và
 // gọi trong giao dịch lưu trữ của mình.
-import { countingReceiptCounts, openRequestCounts, openSupplierReturnCounts } from '../repository/archive-blockers.ts';
+import { countingReceiptCounts, openRequestCounts, openSupplierReturnCounts, usedVariants } from '../repository/archive-blockers.ts';
 import { incomingByVariant } from '../repository/requests.ts';
 
 /**
@@ -26,4 +26,9 @@ export async function purchaseArchiveBlockers(variantIds: readonly string[]): Pr
     if (reasons.length) result.set(id, reasons);
   }
   return result;
+}
+
+/** SKU nằm trên dòng đề nghị nhập, phiếu nhận, phiếu trả NCC (mọi trạng thái): catalog không xoá hẳn sản phẩm có SKU này. */
+export async function purchaseInUse(variantIds: readonly string[]): Promise<Set<string>> {
+  return usedVariants([...new Set(variantIds)]);
 }

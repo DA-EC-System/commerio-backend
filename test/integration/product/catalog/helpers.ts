@@ -51,6 +51,8 @@ export function valueId(attribute: AttributeBody, value: string): string {
 export interface ProductBody {
   id: string;
   name: string;
+  /** Mã cha (#204 D5). */
+  code: string;
   version: number;
   status: 'active' | 'archived';
   variants: { id: string; sku: string; archivedAt: string | null; attributes: { valueId: string; value: string }[] }[];

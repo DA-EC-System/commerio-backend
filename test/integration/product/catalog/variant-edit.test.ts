@@ -171,14 +171,6 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
     expect(res.body.variants.find((v: { id: string }) => v.id === stopped.id)).toMatchObject({ weightG: 250, version: 4 });
   });
 
-  it('sản phẩm đã lưu trữ → 409 product_archived, kể cả khi version sai', async () => {
-    const product = await wallet();
-    expect((await api(token).delete(`/products/${product.id}?version=1`)).status).toBe(204);
-    const res = await patch(product.id, product.variants[0]!.id, { version: 99, weightG: 250 });
-    expect(res.status).toBe(409);
-    expect(res.body.type).toBe('/problems/product_archived');
-  });
-
   it.each([
     ['SKU của sản phẩm khác', async () => ({ productId: (await wallet()).id, variantId: (await wallet()).variants[0]!.id })],
     ['variantId không phải uuid', async () => ({ productId: (await wallet()).id, variantId: 'abc' })],

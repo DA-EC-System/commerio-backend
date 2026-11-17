@@ -78,8 +78,12 @@ describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)'
     expect(products.body.total).toBe(0);
     const categories = await api(ceo).get('/categories');
     expect(categories.body.some((c: { id: string }) => c.id === theirs.categoryId)).toBe(false);
-    const { rows } = await testPool().query('select version, archived_at from product.products where id = $1', [theirs.product.id]);
-    expect(rows[0]).toEqual({ version: 1, archived_at: null });
+    const { rows } = await testPool().query(
+      `select p.version, count(*) filter (where v.business_status <> 'selling')::int as changed from product.products p
+       join product.product_variants v on v.product_id = p.id where p.id = $1 group by p.id`,
+      [theirs.product.id],
+    );
+    expect(rows[0]).toEqual({ version: 1, changed: 0 });
   });
 });
 

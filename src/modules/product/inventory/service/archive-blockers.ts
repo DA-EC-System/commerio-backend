@@ -1,7 +1,7 @@
 // Lý do chặn lưu trữ SKU phần kho (#204, Documents/21 §17.3): catalog nhận hàm này qua `ctx` (product/index.ts) và gọi
 // trong giao dịch lưu trữ của mình.
-import { openDocumentCounts } from '../repository/archive-blockers.ts';
-import { type LevelRow, levelsOf, lockLevel } from '../repository/levels.ts';
+import { openDocumentCounts, usedVariants } from '../repository/archive-blockers.ts';
+import { deleteLevels, type LevelRow, levelsOf, lockLevel } from '../repository/levels.ts';
 
 /**
  * Câu lý do theo SKU: tồn thực, đang giữ, chờ xử lý khác 0, phiếu kho nháp hoặc chờ duyệt. SKU không vướng gì thì không
@@ -37,4 +37,14 @@ export async function stockArchiveBlockers(
     if (reasons.length) result.set(id, reasons);
   }
   return result;
+}
+
+/** SKU đã có thẻ kho hoặc nằm trên phiếu kho (mọi trạng thái): catalog không xoá hẳn sản phẩm có SKU này (#204). */
+export async function stockInUse(variantIds: readonly string[]): Promise<Set<string>> {
+  return usedVariants([...new Set(variantIds)]);
+}
+
+/** Catalog xoá hẳn sản phẩm (#204): xoá dòng tồn của SKU chưa dùng (`stockInUse` rỗng), trong giao dịch của catalog. */
+export async function deleteStockLevels(variantIds: readonly string[]): Promise<void> {
+  await deleteLevels([...new Set(variantIds)].sort());
 }

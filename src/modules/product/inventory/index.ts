@@ -44,7 +44,7 @@ export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.t
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 // Lý do chặn lưu trữ SKU phần kho cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog.
-export { stockArchiveBlockers } from './service/archive-blockers.ts';
+export { deleteStockLevels, stockArchiveBlockers, stockInUse } from './service/archive-blockers.ts';
 // Ngưỡng tồn cho sửa hàng loạt của catalog (#242), trong giao dịch của bên gọi.
-export { applyReorderRule, reorderRulesOf } from './service/stock.ts';
+export { applyReorderRule, minQtyOf, reorderRulesOf } from './service/stock.ts';
 export type { IncomingLookup, InventoryContext } from './service/views.ts';

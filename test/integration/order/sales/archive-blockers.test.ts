@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { orderArchiveBlockers } from '#src/modules/order/index.ts';
+import { orderArchiveBlockers, orderInUse } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -71,5 +71,25 @@ describe('orderArchiveBlockers (#204)', () => {
     await returnRequest(open, 'requested');
     await returnRequest(closed, 'closed');
     expect(await blockersOf([open, closed])).toEqual(new Map([[open, ['Còn 1 yêu cầu trả đang mở']]]));
+  });
+});
+
+// SKU đã dùng (#204 spec mục 6): dòng đơn, yêu cầu trả, dòng kiện, kiện trả không khớp ở mọi trạng thái.
+describe('orderInUse (#204)', () => {
+  const inUse = (ids: string[]) => withCompany(companyId, () => orderInUse(ids));
+
+  it('SKU mới không có; đơn đã huỷ vẫn tính; chỉ có trong kiện trả không khớp cũng tính', async () => {
+    const [fresh, cancelled, parcel] = [await sku(), await sku(), await sku()];
+    await orderWith(cancelled, 'cancelled');
+    const p = await testPool().query<{ id: string }>(
+      `insert into "order".unmatched_return_parcels (company_id, code, scanned_code) values ($1, $2, $3) returning id`,
+      [companyId, `KL-T${randomUUID().slice(0, 8)}`, randomUUID()],
+    );
+    await testPool().query(
+      `insert into "order".unmatched_return_parcel_lines (company_id, parcel_id, variant_id, quantity) values ($1, $2, $3, 1)`,
+      [companyId, p.rows[0]!.id, parcel],
+    );
+    expect(await inUse([fresh, cancelled, parcel])).toEqual(new Set([cancelled, parcel]));
+    expect(await inUse([])).toEqual(new Set());
   });
 });

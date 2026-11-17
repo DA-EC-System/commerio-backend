@@ -223,17 +223,23 @@ describe('gửi duyệt và duyệt', () => {
     expect(line.variantId).not.toBeNull();
     expect(line.sku).toMatch(/^TEST-\d{4}$/);
     const product = await testPool().query(
-      'select p.name, p.description from product.products p join product.product_variants v on v.product_id = p.id where v.id = $1',
+      'select p.name, p.description, p.code from product.products p join product.product_variants v on v.product_id = p.id where v.id = $1',
       [line.variantId],
     );
-    expect(product.rows[0]).toEqual({ name, description: `Tạo từ đề nghị nhập ${r.number}` });
+    // Mã cha (#204 D5): sản phẩm một SKU không thuộc tính có mã bằng SKU.
+    expect(product.rows[0]).toEqual({ name, description: `Tạo từ đề nghị nhập ${r.number}`, code: line.sku });
   });
 
   it('tên sản phẩm mới bị dùng trước lúc duyệt: 422 và không đổi trạng thái', async () => {
     const name = newName();
     const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { name, categoryId: A.categoryId }, quantity: 1, unitCost: 1000 }]);
     const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
-    await testPool().query('insert into product.products (company_id, category_id, name) values ($1, $2, $3)', [A.companyId, A.categoryId, name]);
+    await testPool().query('insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4)', [
+      A.companyId,
+      A.categoryId,
+      name,
+      `SP-${randomUUID().slice(0, 8)}`,
+    ]);
     const res = await act(A.ceo, r.id, 'approve', { version: submitted.body.version });
     expect(res.status).toBe(422);
     expect(res.body.errors).toEqual({ 'lines.0.newProduct.name': 'Đã có sản phẩm cùng tên' });

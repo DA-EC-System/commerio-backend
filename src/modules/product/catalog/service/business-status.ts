@@ -6,7 +6,7 @@ import { assertTransition, publishEvent, recordAudit, recordTransition } from '.
 import { type BusinessAction, type BusinessStatus, businessStatusMachine } from '../domain/business-status.ts';
 import { touchProduct } from '../repository/products.ts';
 import { findVariants, lockVariants, restoreArchivedRows, setBusinessStatus } from '../repository/variants.ts';
-import { archiveBlocked, auditOf, invalid, invalidTransition, productArchived } from './errors.ts';
+import { archiveBlocked, auditOf, invalid, invalidTransition } from './errors.ts';
 import { findOwnProduct, type ProductDetail, productDetail } from './products.ts';
 import { archiveBlockersOf, type CatalogContext } from './usage.ts';
 
@@ -59,7 +59,6 @@ export async function changeBusinessStatus(
   return withCompany(actor.companyId, async () => {
     await lockVariants(actor.companyId);
     const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
     const variants = await findVariants({ productId });
     const byId = new Map(variants.map((v) => [v.id, v]));
     if (input.variantIds?.some((id) => !byId.has(id))) throw invalid({ variantIds: 'Có SKU không thuộc sản phẩm này' });
