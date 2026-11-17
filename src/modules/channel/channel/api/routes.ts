@@ -14,6 +14,7 @@ import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
 import { productPort } from '../service/product-port.ts';
+import * as prices from '../service/pending-prices.ts';
 import * as setup from '../service/setup.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
@@ -40,6 +41,11 @@ import {
   PlatformParams,
   ShopParams,
   TokenBody,
+  ConfirmPriceBody,
+  ListingIdParams,
+  ManualPriceBody,
+  ManualPriceParams,
+  PendingPricesQuery,
 } from './schemas.ts';
 
 /** 201 khi lần nối có gian hàng tạo mới, kể cả không phải phần tử đầu; 200 khi chỉ nối lại (Documents/21 §18.4). */
@@ -211,18 +217,20 @@ export function channelRouter(ctx: ModuleContext): Router {
     }
   };
 
-  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại gọi sàn ngoài giao dịch:
-  // service tự mở `withCompany`.
+  // Ghép SKU tay (#220, 21 §18.6.5). `remote-skus` đọc bản sao SKU sàn; lần đầu và Tải lại xếp lượt tải nền
+  // `channel.remote_skus_refresh`, không gọi sàn trong request (#361): Tải lại có xếp (hoặc đang chạy) thì 202.
   router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false)));
+    const { items, syncedAt, refresh } = await mapping.remoteSkus(actor(res), id, unmatched ?? false);
+    res.json({ items, syncedAt, refresh });
   });
 
   router.post('/shops/:id/remote-skus/refresh', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    res.json(await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true)));
+    const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
+    res.status(accepted ? 202 : 200).json(list);
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {
@@ -264,6 +272,27 @@ export function channelRouter(ctx: ModuleContext): Router {
     },
   );
 
+  // Giá theo gian hàng (#225, 21 §18.6.7, §21.4).
+  router.get('/listings/pending-prices', manage, validate({ query: PendingPricesQuery }), async (_req, res) => {
+    const query = validated<typeof PendingPricesQuery>(res, 'query');
+    res.json(await withCompany(actor(res).companyId, () => prices.listPendingPrices(productPort(ctx), query)));
+  });
+  router.post('/listings/:id/confirm-price', manage, validate({ params: ListingIdParams, body: ConfirmPriceBody }), async (_req, res) => {
+    const { id } = validated<typeof ListingIdParams>(res, 'params');
+    const { version } = validated<typeof ConfirmPriceBody>(res, 'body');
+    const by = actor(res);
+    res.json(await withCompany(by.companyId, () => prices.confirmPrice(by, id, version)));
+  });
+  router.put(
+    '/shops/:id/listings/:listingId/price',
+    manage,
+    validate({ params: ManualPriceParams, body: ManualPriceBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof ManualPriceParams>(res, 'params');
+      const by = actor(res);
+      res.json(await withCompany(by.companyId, () => prices.setManualPrice(by, id, listingId, validated<typeof ManualPriceBody>(res, 'body'))));
+    },
+  );
   router.post(
     '/shops/:id/listings/:listingId/outside-change/:action',
     manage,

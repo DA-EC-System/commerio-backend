@@ -1,6 +1,7 @@
 // Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, bảng `remote_skus`). Chạy trong `withCompany` của bên gọi.
 import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
+import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import { listings, remoteSkus, shops } from './schema.ts';
 
 export type RemoteSkuRow = typeof remoteSkus.$inferSelect;
@@ -84,7 +85,7 @@ export async function markRemoteSkus(shopId: string, marks: { syncedAt?: Date; c
     .update(shops)
     .set({
       // Đọc trọn được thì xoá mốc giãn lần thử.
-      ...(marks.syncedAt && { remoteSkusSyncedAt: marks.syncedAt, remoteSkusFullFailures: 0, remoteSkusFullRetryAt: null, remoteSkusFullFailedAt: null }),
+      ...(marks.syncedAt && { remoteSkusSyncedAt: marks.syncedAt, remoteSkusFullFailures: 0, remoteSkusFullRetryAt: null, remoteSkusFullFailedAt: null, remoteSkusFullError: null }),
       remoteSkusChangedSince: marks.changedSince,
     })
     .where(eq(shops.id, shopId));
@@ -94,20 +95,37 @@ export async function markRemoteSkus(shopId: string, marks: { syncedAt?: Date; c
  * Lượt đọc trọn định kỳ lỗi: tăng số lần lỗi, mốc thử lại = bây giờ + 1 giờ × 2^(số lần lỗi trước), tối đa 24 giờ
  * (review #309 vòng 3 R1). Một câu UPDATE nên hai lượt không ghi đè nhau.
  */
-export async function recordFullReadFailure(shopId: string): Promise<void> {
+export async function recordFullReadFailure(shopId: string, error: RemoteSkusFullError): Promise<void> {
   await getDb()
     .update(shops)
     .set({
       remoteSkusFullFailures: sql`${shops.remoteSkusFullFailures} + 1`,
       remoteSkusFullRetryAt: sql`now() + least(interval '1 hour' * power(2, least(${shops.remoteSkusFullFailures}, 10)), interval '24 hours')`,
       remoteSkusFullFailedAt: sql`now()`,
+      remoteSkusFullError: error,
     })
     .where(eq(shops.id, shopId));
 }
 
-/** Tải lại (hoặc lần mở đầu) đọc trọn lỗi: chỉ ghi giờ lỗi cho cooldown của Tải lại, không tính vào giãn của lượt định kỳ. */
-export async function recordManualReadFailure(shopId: string): Promise<void> {
-  await getDb().update(shops).set({ remoteSkusFullFailedAt: sql`now()` }).where(eq(shops.id, shopId));
+/**
+ * Lượt Tải lại (hoặc lần mở đầu) lỗi hẳn (#361): ghi giờ lỗi, mã lỗi cho `refresh` và cooldown 10 phút, xoá lượt chờ; không
+ * tính vào giãn của lượt định kỳ.
+ */
+export async function recordManualReadFailure(shopId: string, error: RemoteSkusFullError): Promise<void> {
+  await getDb()
+    .update(shops)
+    .set({ remoteSkusFullFailedAt: sql`now()`, remoteSkusFullError: error, remoteSkusRefreshRequestedAt: null })
+    .where(eq(shops.id, shopId));
+}
+
+/** Đánh dấu có lượt Tải lại chờ chạy nền (#361); gọi cùng giao dịch với lúc xếp việc. */
+export async function markRefreshRequested(shopId: string, at: Date): Promise<void> {
+  await getDb().update(shops).set({ remoteSkusRefreshRequestedAt: at }).where(eq(shops.id, shopId));
+}
+
+/** Lượt Tải lại xong (hoặc không còn việc để làm): xoá lượt chờ. */
+export async function clearRefreshRequested(shopId: string): Promise<void> {
+  await getDb().update(shops).set({ remoteSkusRefreshRequestedAt: null }).where(eq(shops.id, shopId));
 }
 
 export async function listRemoteSkuRows(shopId: string): Promise<RemoteSkuRow[]> {

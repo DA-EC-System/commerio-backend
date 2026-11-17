@@ -23,6 +23,14 @@ export function inBackground<T>(fn: () => Promise<T>): Promise<T> {
   return store.run({ companyId: store.getStore()?.companyId ?? null, background: true }, fn);
 }
 
+/**
+ * Chạy `fn` như thao tác bấm tay dù đang trong việc nền: lời gọi sàn dừng ở 90% phần của công ty. Lượt Tải lại SKU chạy nền
+ * (#361) do người bấm, không được ăn vào phần để dành cho kéo đơn, đẩy tồn (Documents/21 §18.6.8).
+ */
+export function asManual<T>(fn: () => Promise<T>): Promise<T> {
+  return store.run({ companyId: store.getStore()?.companyId ?? null, background: false }, fn);
+}
+
 /** Chạy `fn` với lời gọi sàn tính vào phần của `companyId`; giữ cờ việc nền của ngữ cảnh ngoài. */
 export function forCompany<T>(companyId: string, fn: () => T): T {
   return store.run({ companyId, background: store.getStore()?.background ?? false }, fn);

@@ -17,6 +17,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { bytea, money, timestamps, version } from '../../../../shared/db/columns.ts';
+import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
 export const channelSchema = pgSchema('channel');
@@ -79,6 +80,13 @@ export const shops = channelSchema.table(
     remoteSkusFullRetryAt: timestamp('remote_skus_full_retry_at', { withTimezone: true }),
     /** Lần đọc trọn lỗi gần nhất (định kỳ hay Tải lại): Tải lại trong 10 phút sau đó trả 429 (review #309 vòng 4 B2). */
     remoteSkusFullFailedAt: timestamp('remote_skus_full_failed_at', { withTimezone: true }),
+    /**
+     * Lỗi của lần đọc trọn lỗi gần nhất `{ code, platformCode, message }` (#361): `GET remote-skus` trả ở `refresh.error`.
+     * Câu của BE, không chép câu thô của sàn. Đọc trọn được thì xoá cùng các mốc lỗi.
+     */
+    remoteSkusFullError: jsonb('remote_skus_full_error').$type<RemoteSkusFullError>(),
+    /** Lượt Tải lại đang chờ hoặc chạy nền (#361); xoá khi xong hay lỗi. Quá 15 phút là kẹt (`refresh_stale`). */
+    remoteSkusRefreshRequestedAt: timestamp('remote_skus_refresh_requested_at', { withTimezone: true }),
     /** Lượt kéo đơn còn mở sau thiết lập đã xong; null thì chưa đẩy tồn (A10). */
     openOrdersPulledAt: timestamp('open_orders_pulled_at', { withTimezone: true }),
     /** Số đơn còn mở cũ hơn không kéo về vì vượt trần `OPEN_ORDER_PULL_MAX`. */
@@ -123,6 +131,8 @@ export const shops = channelSchema.table(
       sql`${t.remoteSkusFullFailures} >= 0 and (${t.remoteSkusFullFailures} = 0) = (${t.remoteSkusFullRetryAt} is null)`,
     ),
     check('shops_remote_skus_failed_at', sql`${t.remoteSkusFullFailures} = 0 or ${t.remoteSkusFullFailedAt} is not null`),
+    // Có lỗi đọc trọn thì có giờ lỗi (#361).
+    check('shops_remote_skus_full_error', sql`${t.remoteSkusFullError} is null or ${t.remoteSkusFullFailedAt} is not null`),
     // Chờ phân hàng chỉ có sau khi đã thoát chờ kiểm kê, ở gian hàng đã có mốc (#198).
     check(
       'shops_allocation_pending',
@@ -199,7 +209,7 @@ export const listings = channelSchema.table(
     externalImageUrls: text('external_image_urls').array(),
     listedPrice: money('listed_price'),
     manualPrice: money('manual_price'),
-    priceCalcId: uuid('price_calc_id'),
+    priceCalcId: uuid('price_calc_id').references((): AnyPgColumn => priceCalculations.id),
     delistedByDisconnect: boolean('delisted_by_disconnect').notNull().default(false),
     approvedBy: uuid('approved_by'),
     /**
@@ -318,6 +328,7 @@ export const categoryMaps = channelSchema.table(
   ],
 );
 
+export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated';
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
 
 /**
@@ -334,14 +345,24 @@ export const priceCalculations = channelSchema.table(
       .references(() => shops.id),
     variantId: uuid('variant_id').notNull(),
     feeVersionId: uuid('fee_version_id'),
+    /** Bản `tax_rules` đã dùng. */
     taxVersionId: uuid('tax_version_id'),
-    cost: money('cost').notNull(),
+    taxRegimeVersionId: uuid('tax_regime_version_id'),
+    minMarginVersionId: uuid('min_margin_version_id'),
+    /** Giá vốn bước 5 (#225); null khi chưa có, khi đó không có cờ Dưới giá thấp nhất. */
+    cost: money('cost'),
     targetNet: money('target_net').notNull(),
+    perItemFee: money('per_item_fee').notNull().default('0'),
+    feePct: numeric('fee_pct', { precision: 5, scale: 2 }).notNull(),
+    taxPct: numeric('tax_pct', { precision: 7, scale: 4 }).notNull(),
+    minMarginPct: numeric('min_margin_pct', { precision: 5, scale: 2 }),
     rawPrice: money('raw_price').notNull(),
     roundedPrice: money('rounded_price').notNull(),
     netReceived: money('net_received').notNull(),
-    marginPct: numeric('margin_pct', { precision: 7, scale: 2 }).notNull(),
-    belowFloor: boolean('below_floor').notNull(),
+    marginPct: numeric('margin_pct', { precision: 7, scale: 2 }),
+    belowFloor: boolean('below_floor'),
+    /** Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính). */
+    trigger: text('trigger').$type<PriceCalcTrigger>().notNull(),
     status: priceCalcStatus('status').notNull().default('pending_confirm'),
     confirmedBy: uuid('confirmed_by'),
     confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
@@ -353,6 +374,9 @@ export const priceCalculations = channelSchema.table(
     // Chặn đáy: giá dưới biên tối thiểu không được xác nhận để đẩy (E8).
     check('price_calculations_floor', sql`not ${t.belowFloor} or ${t.status} in ('pending_confirm', 'superseded')`),
     check('price_calculations_confirmed', sql`${t.status} not in ('confirmed', 'pushed') or ${t.confirmedBy} is not null`),
+    check('price_calculations_cost_floor', sql`(${t.cost} is null) = (${t.belowFloor} is null)`),
+    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated')`),
+    uniqueIndex('price_calculations_one_pending').on(t.shopId, t.variantId).where(sql`${t.status} = 'pending_confirm'`),
   ],
 );
 

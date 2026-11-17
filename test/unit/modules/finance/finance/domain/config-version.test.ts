@@ -4,6 +4,7 @@ import { assertTransition } from '#src/modules/core/index.ts';
 import {
   addDays,
   configMachine,
+  feeRoundingOf,
   outputVatPctOf,
   type DatedVersion,
   parsePayload,
@@ -41,6 +42,22 @@ describe('nội dung cấu hình theo loại', () => {
     expect(parsePayload('fee', { ...ok, fixedPct: 1.234 }).success).toBe(false);
     expect(parsePayload('fee', { ...ok, returnFee: 1.5 }).success).toBe(false);
     expect(parsePayload('fee', { ...ok, extra: 1 }).success).toBe(false);
+  });
+
+  it('phí sàn nhận thêm phí cố định mỗi món, bậc và đuôi làm tròn giá (#225)', () => {
+    const ok = { fixedPct: 4, transactionPct: 2, servicePct: 0, optionalPct: 0, returnFee: 0 };
+    expect(parsePayload('fee', { ...ok, perItemFee: 3000, roundStep: 10000, roundEnding: 9000 }).success).toBe(true);
+    expect(parsePayload('fee', { ...ok, perItemFee: 1.5 }).success).toBe(false);
+    expect(parsePayload('fee', { ...ok, roundStep: 0 }).success).toBe(false);
+    const ending = parsePayload('fee', { ...ok, roundStep: 1000, roundEnding: 1000 });
+    expect(ending.success).toBe(false);
+    expect(ending.error?.issues[0]?.path).toEqual(['roundEnding']);
+  });
+
+  it('bản phí lưu trước #225 không có ba trường mới: phí mỗi món 0, làm tròn lên bậc 1.000, đuôi 0', () => {
+    const old = { fixedPct: 4, transactionPct: 2, servicePct: 0, optionalPct: 0, returnFee: 0 };
+    expect(feeRoundingOf(old)).toEqual({ perItemFee: 0, roundStep: 1000, roundEnding: 0 });
+    expect(feeRoundingOf({ ...old, roundEnding: 900 })).toEqual({ perItemFee: 0, roundStep: 1000, roundEnding: 900 });
   });
 
   it('loại hình thuế chỉ nhận công ty, hộ kinh doanh, cá nhân', () => {
