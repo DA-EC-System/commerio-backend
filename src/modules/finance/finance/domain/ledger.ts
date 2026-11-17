@@ -223,6 +223,21 @@ export function postSupplierRefund(refundAmount: string): Draft[] {
   return out;
 }
 
+/**
+ * Khoản trả NCC của một phiếu nhận (25 §4.2, #357): −Σ (đạt + lỗi giữ lại) × giá dòng đề nghị, làm tròn trên tổng
+ * phiếu. Phiếu của đề nghị bù hàng không sinh khoản: NCC bù thay cho hoàn tiền, phần lỗi đã tính ở phiếu gốc (25 §4.3).
+ */
+export function postSupplierPayment(receipt: {
+  replacement: boolean;
+  lines: readonly { accepted: number; defective: number; unitPrice: string }[];
+}): Draft[] {
+  const out: Draft[] = [];
+  if (receipt.replacement) return out;
+  const total = receipt.lines.reduce((s, l) => s.plus(new Decimal(l.unitPrice).times(l.accepted + l.defective)), new Decimal(0));
+  push(out, 'supplier_payment', total.negated());
+  return out;
+}
+
 export interface Entry {
   kind: LedgerKind;
   amount: string;

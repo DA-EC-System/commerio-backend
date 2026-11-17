@@ -48,6 +48,8 @@ const ALL: ListingAction[] = [
   'hide',
   'unhide',
   'delist',
+  'update_content',
+  'request_review',
 ];
 
 describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
@@ -111,6 +113,26 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
       expect(assertTransition(listingMachine, from, 'delist', { actor: null }).to).toBe('delisted');
       expect(() => assertTransition(listingMachine, from, 'delist', { actor: { ...staff, permissions: [] } })).toThrow(
         expect.objectContaining({ status: 403 }),
+      );
+    },
+  );
+
+  it('C2-22, C2-23, C2-22q: live → update_content giữ live (người có quyền); sàn ngừng bán bản cũ thì hệ thống request_review → under_review', () => {
+    expect(assertTransition(listingMachine, 'live', 'update_content', { actor: staff }).to).toBe('live');
+    expect(() => assertTransition(listingMachine, 'live', 'update_content', { actor: { ...staff, permissions: [] } })).toThrow(
+      expect.objectContaining({ status: 403 }),
+    );
+    expect(assertTransition(listingMachine, 'live', 'request_review', { actor: null }).to).toBe('under_review');
+    expect(() => assertTransition(listingMachine, 'live', 'request_review', { actor: staff })).toThrow(
+      expect.objectContaining({ code: 'invalid_transition' }),
+    );
+  });
+
+  it.each(['pushing', 'push_failed', 'under_review', 'rejected', 'hidden', 'platform_hold'] as const)(
+    'C2-X: %s → update_content → 409 (#293)',
+    (from) => {
+      expect(() => assertTransition(listingMachine, from, 'update_content', { actor: staff })).toThrow(
+        expect.objectContaining({ status: 409, code: 'invalid_transition' }),
       );
     },
   );

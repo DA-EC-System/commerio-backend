@@ -157,6 +157,8 @@ export interface SyncError {
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
 export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['disabled', 'price_changed']);
+/** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
+export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
 
 /**
  * Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app. Mã sàn trống khi chưa đẩy lần nào.
@@ -223,6 +225,13 @@ export const listings = channelSchema.table(
      * người xin (Documents/19 mục 2 "Người duyệt khác", #220). Null với dòng có trước #220 hay chưa từng qua bước duyệt.
      */
     mappingRequestedBy: uuid('mapping_requested_by'),
+    /**
+     * Bản sửa nội dung chờ sàn duyệt (`pendingRevision`, #293): ghi khi `update_content` mà sàn vẫn bán bản cũ; đồng bộ xoá
+     * khi qua duyệt, ghi `failed` kèm lý do khi trượt. Giữ khi ẩn, sàn khoá; xoá khi rời các trạng thái đó.
+     */
+    revisionStatus: revisionStatus('revision_status'),
+    revisionRejectReason: text('revision_reject_reason'),
+    revisionAt: timestamp('revision_at', { withTimezone: true }),
     /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
     replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,
@@ -271,6 +280,12 @@ export const listings = channelSchema.table(
     check(
       'listings_outside_change',
       sql`(${t.outsideChangeKind} is null and ${t.outsideChangePrice} is null and ${t.outsideChangeAt} is null) or (${t.outsideChangeKind} is not null and ${t.status} = 'hidden' and ${t.outsideChangeAt} is not null and (${t.outsideChangeKind} = 'price_changed') = (${t.outsideChangePrice} is not null))`,
+    ),
+    check(
+      'listings_revision',
+      sql`(${t.revisionStatus} is null) = (${t.revisionAt} is null)
+        and (${t.revisionRejectReason} is null or ${t.revisionStatus} = 'failed')
+        and (${t.revisionStatus} is null or ${t.status} in ('live', 'hidden', 'platform_hold'))`,
     ),
     check('listings_reject_reason', sql`${t.status} <> 'rejected' or ${t.rejectReason} is not null`),
     check('listings_push_attempts', sql`${t.pushAttempts} >= 0`),

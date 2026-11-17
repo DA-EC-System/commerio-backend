@@ -35,3 +35,9 @@ export function pushBlock(
   }
   return null;
 }
+
+/** Tên, mô tả đưa lên sàn của một biến thể, chung cho đẩy mới và sửa nội dung (#219, #293). */
+export const listingText = (v: Pick<ListingVariant, 'productName' | 'attributesLabel' | 'description'>) => ({
+  name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
+  description: v.description ?? v.productName,
+});

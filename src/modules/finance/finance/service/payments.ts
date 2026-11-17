@@ -178,7 +178,7 @@ export function approvePayment(caller: Caller, orderId: string, input: { version
 }
 
 /** Loại khoản cần khớp với sao kê ngân hàng (§21.3). */
-export const BANK_KINDS: readonly LedgerKind[] = ['withdrawal', 'supplier_refund', 'lost_compensation'];
+export const BANK_KINDS: readonly LedgerKind[] = ['withdrawal', 'supplier_refund', 'supplier_payment', 'lost_compensation'];
 
 export function listBankMatching(companyId: string, q: { kind?: LedgerKind; matched?: boolean; page: number; pageSize: number }) {
   return withCompany(companyId, async () => {
@@ -194,7 +194,7 @@ export function matchBank(caller: Caller, entryId: string, bankRef: string) {
     const entry = isUuid(entryId) ? await findEntry(entryId) : undefined;
     if (!entry) throw notFound('dòng sổ');
     if (!BANK_KINDS.includes(entry.kind) || entry.isEstimate) {
-      throw new AppError(422, 'not_bank_matchable', 'Chỉ khớp sao kê cho rút tiền, NCC hoàn tiền, bồi thường đã ghi thực tế');
+      throw new AppError(422, 'not_bank_matchable', 'Chỉ khớp sao kê cho rút tiền, NCC hoàn tiền, trả NCC, bồi thường đã ghi thực tế');
     }
     const ref = bankRef.trim();
     const match = await insertBankMatch({ companyId: caller.companyId, entryId, bankRef: ref, matchedBy: caller.accountId });

@@ -4,6 +4,7 @@ import { assertTokenCurrent } from '../../../../shared/auth/company-access.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import { listCompanies, listPlatformAuditLogs, platformOverview, setCompanyLock } from '../service/admin.ts';
+import { getCompanyProfile, updateCompanyProfile } from '../service/company-profile.ts';
 import type { PlatformContext } from '../service/context.ts';
 import { listDeadJobs, retryDeadJob } from '../service/jobs/dead.ts';
 import { listCompanyModules, setCompanyModule } from '../service/modules.ts';
@@ -17,6 +18,7 @@ import {
   PlatformAuditQuery,
   SetModuleBody,
   UnlockCompanyBody,
+  UpdateCompanyProfileBody,
 } from './schemas.ts';
 
 /** Route của module `platform`, gắn tại /api/v1/platform (Documents/21 M1, V18). */
@@ -24,6 +26,7 @@ export function platformRouter(ctx: PlatformContext): Router {
   const router = Router();
   const manageModules = ctx.authorize('platform.module.manage');
   const manageJobs = ctx.authorize('platform.job.manage');
+  const manageCompany = ctx.authorize('platform.company.manage');
 
   // Quản trị nền tảng: cờ `core.accounts.is_platform_admin` đọc từ DB mỗi request, gỡ cờ là chặn ngay (#152 A1).
   // Token phát trước lần đổi mật khẩu gần nhất → 401, như `authorize` (#62).
@@ -44,6 +47,15 @@ export function platformRouter(ctx: PlatformContext): Router {
     const { accountId, companyId } = getAuth(res);
     const { code } = validated<typeof ModuleParams>(res, 'params');
     res.json(await setCompanyModule(ctx, { accountId, companyId: companyId! }, code, validated<typeof SetModuleBody>(res, 'body')));
+  });
+
+  router.get('/company', manageCompany, async (_req, res) => {
+    res.json(await getCompanyProfile(getAuth(res).companyId!));
+  });
+
+  router.put('/company', manageCompany, validate({ body: UpdateCompanyProfileBody }), async (_req, res) => {
+    const { accountId, companyId } = getAuth(res);
+    res.json(await updateCompanyProfile(accountId, companyId!, validated<typeof UpdateCompanyProfileBody>(res, 'body')));
   });
 
   router.get('/overview', platformAdmin, async (_req, res) => {
