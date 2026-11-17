@@ -14,6 +14,7 @@ import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
 import { productPort } from '../service/product-port.ts';
 import * as setup from '../service/setup.ts';
+import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
   CallbackBody,
@@ -30,6 +31,7 @@ import {
   CategoryParams,
   CategorySearchQuery,
   DisconnectBody,
+  UpdateShopBody,
   PlatformParams,
   ShopParams,
   TokenBody,
@@ -91,6 +93,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await withCompany(actor(res).companyId, () => shops.getShop(id)));
+  });
+
+  router.patch('/shops/:id', connect, validate({ params: ShopParams, body: UpdateShopBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const who = actor(res);
+    res.json(await withCompany(who.companyId, () => updateShopSettings(who, id, validated<typeof UpdateShopBody>(res, 'body'))));
   });
 
   router.post(

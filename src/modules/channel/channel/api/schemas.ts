@@ -448,7 +448,7 @@ export const SetupBody = z
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
-        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`; sàn `platform_status` bỏ qua và lưu null. Chưa bắt buộc tới khi FE gửi (21 §18.6.2)',
+        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`, bắt buộc với sàn này: thiếu hoặc `null` thì 422 (#362). Sàn `platform_status` bỏ qua và lưu null (21 §18.6.2)',
     }),
   })
   .meta({ id: 'ShopSetupInput' });
@@ -506,3 +506,16 @@ export const OpeningStocktakeResult = z
   })
   .strict()
   .meta({ id: 'OpeningStocktakeResult' });
+
+export const UpdateShopBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    returnWindowDays: z
+      .number('Hạn trả hàng là số ngày')
+      .int('Hạn trả hàng là số ngày nguyên')
+      .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+  })
+  .strict()
+  .meta({ id: 'ShopUpdateInput' });

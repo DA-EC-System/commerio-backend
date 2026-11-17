@@ -100,7 +100,7 @@ async function connectingShop() {
     c,
     shopId,
     preview: () => auth(request(testApp()).get(`/api/v1/channel/shops/${shopId}/setup`)),
-    setup: (body: object) => auth(request(testApp()).post(`/api/v1/channel/shops/${shopId}/setup`)).send({ openingStock: 'push', ...body }),
+    setup: (body: object) => auth(request(testApp()).post(`/api/v1/channel/shops/${shopId}/setup`)).send({ openingStock: 'push', returnWindowDays: 7, ...body }),
   };
 }
 const listingsOf = async (shopId: string) =>
