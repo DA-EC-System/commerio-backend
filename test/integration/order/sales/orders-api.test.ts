@@ -398,6 +398,49 @@ describe('cờ pickup_unconfirmed của kiện (#199 phần a, 21 §19.2)', () =
   });
 });
 
+describe('dòng ghép không quản tồn không mang cờ Chưa ghép (spec 237 AC15)', () => {
+  let untrackedOrderId: string;
+
+  beforeAll(async () => {
+    ({ orderId: untrackedOrderId } = await withCompany(company.companyId, () => ingestMarketplaceOrder(order('U-237', [
+      { variantId: null, status: 'pending', pkg: 'FP-U1' },
+      { variantId: null, status: 'pending', pkg: 'FP-U2' },
+    ]))));
+  });
+
+  const setUntracked = async (lineId: string) => {
+    await testPool().query(`update "order".order_lines set stock_untracked = true where id = $1`, [lineId]);
+  };
+
+  const lineIds = async (): Promise<[string, string]> => {
+    const { rows } = await testPool().query<{ id: string }>(
+      `select id from "order".order_lines where order_id = $1 order by id`,
+      [untrackedOrderId],
+    );
+    return [rows[0]!.id, rows[1]!.id];
+  };
+
+  it('một dòng không quản tồn: đơn vẫn có cờ (dòng kia chưa ghép thật), lines trả untracked', async () => {
+    const [a, b] = await lineIds();
+    await setUntracked(a);
+    const o = Order.parse((await get(`/orders/${untrackedOrderId}`)).body);
+    expect(o.flags).toContain('unmapped_sku');
+    expect(o.lines.filter((l) => l.untracked)).toHaveLength(1);
+    expect(o.lines.find((l) => l.id === a)).toMatchObject({ variantId: null, untracked: true });
+    expect(o.lines.find((l) => l.id === b)).toMatchObject({ variantId: null, untracked: false });
+  });
+
+  it('mọi dòng không quản tồn: cờ tắt, lọc stage/flag không còn đơn này', async () => {
+    const [, b] = await lineIds();
+    await setUntracked(b);
+    const o = Order.parse((await get(`/orders/${untrackedOrderId}`)).body);
+    expect(o.flags).not.toContain('unmapped_sku');
+    expect(o.lines.every((l) => l.untracked)).toBe(true);
+    const list = OrderSummaryPage.parse((await get('/orders?flag=unmapped_sku&pageSize=50')).body);
+    expect(list.items.map((i) => i.id)).toEqual([ids.unmapped]);
+  });
+});
+
 describe('báo cáo thất lạc của kiện ở chi tiết đơn (#238 §5.3)', () => {
   it('GET /orders/:id trả lostReport kèm tên người báo', async () => {
     const kho = await addMember(company.companyId, 'warehouse');

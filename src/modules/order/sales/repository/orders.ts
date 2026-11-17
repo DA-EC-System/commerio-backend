@@ -1,4 +1,4 @@
-import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { OrderStatus } from '../domain/order.ts';
 import { docCounters, orderLines, orders } from './schema.ts';
@@ -83,12 +83,15 @@ export async function allLinesCancelled(orderId: string): Promise<boolean> {
   return !!row && row.lines > 0 && row.open === 0;
 }
 
+/** Dòng chưa ghép SKU: không biến thể và không "không quản tồn" (spec 237). */
+export const unmappedLine = (t: typeof orderLines): SQL => sql`${t.variantId} is null and not ${t.stockUntracked}`;
+
 /** Đơn có dòng chưa ghép SKU (cờ `unmapped_sku` của sự kiện đổi trạng thái). */
 export async function hasUnmappedLines(orderId: string): Promise<boolean> {
   const [row] = await getDb()
     .select({ id: orderLines.id })
     .from(orderLines)
-    .where(and(eq(orderLines.orderId, orderId), sql`${orderLines.variantId} is null`))
+    .where(and(eq(orderLines.orderId, orderId), unmappedLine(orderLines)))
     .limit(1);
   return !!row;
 }
