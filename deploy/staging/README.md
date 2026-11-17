@@ -56,6 +56,14 @@ Worker gửi thư mã OTP, thư báo người duyệt và thư báo kết quả 
 
 Đã làm trên staging ngày 17/11/2026 với địa chỉ gửi của nhóm.
 
+## Cảnh báo qua email
+
+Prometheus tính các luật ở `deploy/monitoring/rules/alerts.yml` (tiến trình chết, lỗi 5xx, outbox kẹt, SMTP hỏng, VPS đầy đĩa…) và gửi cảnh báo sang Alertmanager (`deploy/k8s/overlays/vps/alertmanager.yaml`). Alertmanager gửi email qua cùng SMTP Brevo ở trên, kèm email "đã hết" khi cảnh báo tự hết.
+
+1. Trên VPS, chép `deploy/k8s/overlays/vps/alertmanager/alertmanager.yml.example` thành `alertmanager.yml` cùng thư mục (đã gitignore), điền `smtp_from` (địa chỉ đã Verified), `smtp_auth_username`, `smtp_auth_password` (login và SMTP key như `SMTP_URL`, không mã hoá `%40`), `to` (hộp thư nhận cảnh báo).
+2. Áp manifest như đoạn "Secret và biến của repo" (Secret `alertmanager-config`, Deployment `alertmanager`, ConfigMap Prometheus mới).
+3. Kiểm: `kubectl -n commerio exec deploy/prometheus -- wget -qO- localhost:9090/api/v1/alertmanagers` có `alertmanager:9093` trong `activeAlertmanagers`. Thử gửi một cảnh báo giả: `kubectl -n commerio exec deploy/alertmanager -- amtool alert add ThuCanhBao severity=warning --annotation=summary="Thử kênh cảnh báo" --alertmanager.url=http://localhost:9093`, email tới sau khoảng 30 giây.
+
 ## Dữ liệu demo
 
 `npm run db:seed` (`db/seed/`): công ty "Công ty Demo Commerio" và bốn tài khoản `ceo@`, `admin@`, `sale@`, `kho@bk.demo` với vai trò có sẵn tương ứng, mật khẩu là `SEED_PASSWORD`. Chạy lại không sinh trùng, thiếu thì bù. Dừng với mã lỗi nếu một email demo đã thuộc người hay công ty khác (ví dụ ai đó tự đăng ký `ceo@bk.demo` với mật khẩu khác). Seed nhận ra tài khoản CEO của mình bằng mật khẩu, nên **đổi `STAGING_SEED_PASSWORD` thì phải đổi mật khẩu cả bốn tài khoản demo theo** (đăng nhập, đổi mật khẩu); không thì job `migrate` đỏ và chặn deploy. Sản phẩm, kho thêm vào seed khi có #12, #16.
