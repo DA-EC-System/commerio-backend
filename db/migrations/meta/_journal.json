@@ -477,6 +477,13 @@
       "when": 1794848707029,
       "tag": "20261116170507_goi-y-theo-danh-muc",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1794878373116,
+      "tag": "20261117011933_bang-kich-co",
+      "breakpoints": true
     }
   ]
 }

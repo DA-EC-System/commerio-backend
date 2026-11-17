@@ -6,7 +6,7 @@ import {
   listCategoryMaps,
   updateCategoryMap,
 } from '../repository/category-maps.ts';
-import type { CategoryAttribute, PlatformCategory } from './marketplaces/index.ts';
+import type { CategoryAttribute, PlatformCategory, SizeChartRule } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const SEARCH_LIMIT = 50;
@@ -16,6 +16,8 @@ export interface CategoryMap {
   platform: CategoryMapRow['platform'];
   externalCategoryId: string;
   attributes: Record<string, string>;
+  /** Quy tắc bảng kích cỡ của danh mục sàn (#347); null là chưa biết (ghép trước #347 hoặc sàn không có quy tắc này). */
+  sizeChartRule: SizeChartRule | null;
   version: number;
   updatedAt: Date;
 }
@@ -25,6 +27,7 @@ const toMap = (r: CategoryMapRow): CategoryMap => ({
   platform: r.platform,
   externalCategoryId: r.externalCategoryId,
   attributes: r.attributes,
+  sizeChartRule: r.sizeChartRule,
   version: r.version,
   updatedAt: r.updatedAt,
 });
@@ -67,7 +70,9 @@ export async function putCategoryMap(
   }
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
-  const values = { externalCategoryId: input.externalCategoryId, attributes: input.attributes };
+  // Quy tắc bảng kích cỡ lưu cùng ghép để request đẩy chặn được mà không gọi sàn (#347).
+  const rules = adapter.categoryRules ? await onMarketplace(() => adapter.categoryRules!(accessToken, input.externalCategoryId)) : null;
+  const values = { externalCategoryId: input.externalCategoryId, attributes: input.attributes, sizeChartRule: rules?.sizeChart ?? null };
   const row =
     input.version === null
       ? await insertCategoryMap({ companyId: shop.companyId, platform: shop.platform, categoryId, ...values })
