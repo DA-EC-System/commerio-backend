@@ -113,6 +113,8 @@ const zeroHidden = (row: ListingRow) => row.status === 'hidden' && row.hiddenBy 
  * SKU tạm ngừng sẽ ẩn cả các SKU còn bán cùng sản phẩm.
  */
 const VISIBILITY_LATER: ReadonlySet<string> = new Set(['tiktok']);
+/** App tự ẩn, hiện listing theo trạng thái SKU trên sàn này chưa (`applyVisibility`; TikTok tới phần 2 của #224). */
+export const appHidesOn = (platform: string): boolean => !VISIBILITY_LATER.has(platform);
 /**
  * Lần vào `hidden` mà app được tự hiện lại: `hide` (tạm ngừng SKU), hoặc `outside_hold` đã được CEO `restore` lúc SKU
  * đang tạm ngừng (dòng chờ quyết lọc trước theo `outsideChangeKind`). `relist` (nối lại gian hàng) không.
@@ -255,7 +257,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     });
     // SKU đang tạm ngừng mà sàn tắt: app tắt (#224, việc đẩy tồn chạy song song chưa kịp ghi), không phải người bán (#360).
     const outside = actions.filter((a) => a.action === 'outside_hold').map((a) => a.row.variantId!);
-    const paused = outside.length ? await inCompany(() => pausedVariants(port, outside)) : new Set<string>();
+    const paused = outside.length && appHidesOn(shop.platform) ? await inCompany(() => pausedVariants(port, outside)) : new Set<string>();
     for (const { row, r, action } of actions) {
       if (action === 'outside_hold' && paused.has(row.variantId!)) continue;
       const { patch, reason } = remoteChange(action, r.rejectReason);

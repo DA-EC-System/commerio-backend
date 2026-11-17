@@ -167,6 +167,15 @@ describe('lượt đồng bộ: sàn tắt SKU ngoài app (outside_hold)', () =>
     expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
   });
 
+  it('TikTok (app chưa tự ẩn được): SKU tạm ngừng mà người bán tắt trên sàn → vẫn outside_hold', async () => {
+    const tiktok = await connect('tiktok');
+    const { variantId, sku, listingId } = await seed(tiktok);
+    await setStatus(variantId, 'paused');
+    remote = [remoteSku(sku, 'inactive')];
+    await sync(tiktok);
+    expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
+  });
+
   it('TikTok: SELLER_DEACTIVATED (inactive) cũng outside_hold', async () => {
     const tiktok = await connect('tiktok');
     const { sku, listingId } = await seed(tiktok);
@@ -285,6 +294,27 @@ describe('POST …/outside-change/:action (CEO quyết)', () => {
     await runPush();
     expect(activate).toHaveBeenCalledWith(expect.any(String), `item-${sku}`, `sku-${sku}`);
     expect(await listing(listingId)).toMatchObject({ status: 'live', hidden_by: null });
+  });
+
+  it('review diff: tồn đổi (version tăng) trong lúc gọi sàn bật → vẫn ghi live trên dòng mới, không kẹt hidden', async () => {
+    const { sku, listingId } = await seed(shopId, true);
+    remote = [remoteSku(sku, 'inactive')];
+    activate.mockImplementationOnce(async () => {
+      await testPool().query("update channel.listings set version = version + 1, stock_sync = 'pending' where id = $1", [listingId]);
+    });
+    const res = await decide(listingId, 'restore', { version: await versionOf(listingId) });
+    expect(res.status).toBe(200);
+    expect(await listing(listingId)).toMatchObject({ status: 'live', outside_change_kind: null });
+  });
+
+  it('review diff: TikTok, SKU tạm ngừng → không giữ hidden (app không tự bật lại TikTok); sàn đã bán lại thì live', async () => {
+    const tiktok = await connect('tiktok');
+    const { variantId, sku, listingId } = await seed(tiktok, true);
+    await setStatus(variantId, 'paused');
+    remote = [remoteSku(sku, 'live')];
+    const res = await decide(listingId, 'restore', { version: await versionOf(listingId) }, company.ceo.token, tiktok);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'live', outsideChange: null });
   });
 
   it('AC-7: không có outsideChange → 409 invalid_transition; accept-price với disabled → 409; version cũ → 409 version_conflict', async () => {
