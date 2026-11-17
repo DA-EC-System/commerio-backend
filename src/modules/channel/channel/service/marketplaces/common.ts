@@ -370,6 +370,13 @@ export interface SplitAttributes {
  */
 export const PROMOTION_LOCKED = 'promotion_locked';
 
+/**
+ * Mã của bước kiểm trước khi tạo sản phẩm (#305, Documents/21 §18.6.4): `createProduct` ném `rejected` với `platformCode`
+ * là một trong hai mã, câu của sàn trong `platformMessage`; việc đẩy ghi nguyên mã vào `pushError.code`.
+ * `shop_not_eligible`: gian hàng chưa đủ điều kiện đăng bán; `listing_check_failed`: sản phẩm sai luật của sàn.
+ */
+export const PRECHECK_CODES: ReadonlySet<string> = new Set(['shop_not_eligible', 'listing_check_failed']);
+
 export type PartResult = { ok: true } | { ok: false; code: string; message: string };
 
 /**

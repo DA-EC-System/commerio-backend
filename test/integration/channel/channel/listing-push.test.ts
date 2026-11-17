@@ -254,6 +254,21 @@ describe('việc nền channel.listing_push', () => {
     expect((await history(id)).at(-1)).toMatchObject({ to: 'push_failed', action: 'fail', actor_id: null });
   });
 
+  it('#305 AC-6: bước kiểm trước khi tạo chặn thì push_failed giữ mã kiểm (shop_not_eligible, listing_check_failed), câu của sàn', async () => {
+    for (const code of ['shop_not_eligible', 'listing_check_failed']) {
+      onCreate = async () => {
+        throw new MarketplaceError('rejected', code, '12052051: The product name must be between 25 and 255 characters, inclusive.');
+      };
+      const { id } = await pushing();
+      await expect(runListingPush(port, job(id))).resolves.toBeUndefined();
+      expect(await listing(id)).toMatchObject({
+        status: 'push_failed',
+        push_attempts: 1,
+        push_error: { code, message: '12052051: The product name must be between 25 and 255 characters, inclusive.' },
+      });
+    }
+  });
+
   it('việc chạy lại khi listing không còn pushing thì bỏ, không gọi sàn', async () => {
     const { id } = await pushing({ status: 'under_review', external_product_id: 'P', external_sku_id: `S-${randomUUID()}` });
     await runListingPush(port, job(id));

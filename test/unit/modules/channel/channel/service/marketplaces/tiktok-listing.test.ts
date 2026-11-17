@@ -21,6 +21,12 @@ const WAREHOUSES = {
   ],
 };
 
+/** Kiểm trước khi tạo (#305) đều đạt: Check Listing Prerequisites 202312, Check Product Listing 202309 `PASS`. */
+const PRECHECK_OK = {
+  'GET /product/202312/prerequisites': ok({ check_results: [{ check_item: 'SHOP_STATUS', is_failed: false, fail_reasons: [] }] }),
+  'POST /product/202309/products/listing_check': ok({ check_result: 'PASS' }),
+};
+
 interface Call {
   method: string;
   path: string;
@@ -375,6 +381,7 @@ describe('createProduct', () => {
     'GET /product/202309/categories/600042/attributes': ok({
       attributes: [{ id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', values: [{ id: '1000854', name: 'Việt Nam' }] }],
     }),
+    ...PRECHECK_OK,
     'POST /product/202309/products': ok({ product_id: 'P9', skus: [{ id: 'S9', seller_sku: 'CM-TEST-COC' }] }),
     'GET /product/202309/products/P9': status,
   });
@@ -480,6 +487,111 @@ describe('createProduct', () => {
   });
 });
 
+describe('createProduct: kiểm điều kiện đăng trước khi tạo (#305)', () => {
+  const product = {
+    externalCategoryId: '600042',
+    attributes: { '100149': 'Việt Nam' },
+    name: 'CM-TEST Cốc sứ có quai 350ml thử API',
+    description: 'Cốc thử',
+    imageUrls: ['tos-alisg/abc'],
+    sellerSku: 'CM-TEST-COC',
+    price: '99000',
+    quantity: 5,
+    weightG: 300,
+    lengthMm: 95,
+    widthMm: 100,
+    heightMm: 120,
+    idempotencyKey: 'cm-l1-1794394649000',
+  };
+  const routes = (over: Record<string, Response> = {}) => ({
+    'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+    'GET /product/202309/categories/600042/attributes': ok({ attributes: [] }),
+    ...PRECHECK_OK,
+    'POST /product/202309/products': ok({ product_id: 'P9', skus: [{ id: 'S9' }] }),
+    'GET /product/202309/products/P9': ok({ status: 'ACTIVATE' }),
+    ...over,
+  });
+  const paths = (san: ReturnType<typeof fakeSan>) => san.calls.map((c) => `${c.method} ${c.path}`);
+  const CREATE = 'POST /product/202309/products';
+  const CHECK = 'POST /product/202309/products/listing_check';
+
+  it('AC-1: gian hàng chưa đủ điều kiện → rejected `shop_not_eligible` kèm lý do sàn, không gọi listing_check, không tạo', async () => {
+    const reason = "Couldn't publish this product as you haven't set the return warehouse for your shop.";
+    const san = fakeSan(
+      routes({
+        'GET /product/202312/prerequisites': ok({
+          check_results: [
+            { check_item: 'SHOP_STATUS', is_failed: false, fail_reasons: [] },
+            { check_item: 'RETURN_WAREHOUSE', is_failed: true, fail_reasons: [reason] },
+            { check_item: 'BANk_ACCOUNT', is_failed: true },
+          ],
+        }),
+      }),
+    );
+    await expect(san.methods().createProduct(TOKEN, product)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'shop_not_eligible',
+      platformMessage: `${reason}; BANk_ACCOUNT`,
+    });
+    expect(paths(san)).not.toContain(CHECK);
+    expect(paths(san)).not.toContain(CREATE);
+  });
+
+  it('AC-2: listing_check FAILED → rejected `listing_check_failed` "<mã>: <câu>" nối "; ", không tạo', async () => {
+    const san = fakeSan(
+      routes({
+        [CHECK]: ok({
+          check_result: 'FAILED',
+          fail_reasons: [
+            { code: 12052051, message: 'The product name must be between 25 and 255 characters, inclusive.' },
+            { code: 12052104, message: 'The following product attribute is missing, include it and try again. ID:101489' },
+          ],
+        }),
+      }),
+    );
+    await expect(san.methods().createProduct(TOKEN, product)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'listing_check_failed',
+      platformMessage:
+        '12052051: The product name must be between 25 and 255 characters, inclusive.; 12052104: The following product attribute is missing, include it and try again. ID:101489',
+    });
+    expect(paths(san)).not.toContain(CREATE);
+  });
+
+  it('AC-3: PASS thì tạo; listing_check gửi body tạo trừ save_mode, idempotency_key, kèm is_diagnosis_required=false', async () => {
+    const san = fakeSan(routes());
+    expect(await san.methods().createProduct(TOKEN, product)).toEqual({ externalProductId: 'P9', externalSkuId: 'S9', live: true });
+    const check = san.calls.find((c) => `${c.method} ${c.path}` === CHECK)!;
+    const create = san.calls.find((c) => `${c.method} ${c.path}` === CREATE)!.body as Record<string, unknown>;
+    const { save_mode, idempotency_key, ...rest } = create;
+    expect(save_mode).toBe('LISTING');
+    expect(idempotency_key).toBe('cm-l1-1794394649000');
+    expect(check.body).toEqual(rest);
+    expect(check.query.get('is_diagnosis_required')).toBe('false');
+    expect(paths(san).indexOf(CHECK)).toBeLessThan(paths(san).indexOf(CREATE));
+  });
+
+  it('FAILED mà không có fail_reasons thì không chặn, để Create Product quyết', async () => {
+    const san = fakeSan(routes({ [CHECK]: ok({ check_result: 'FAILED' }) }));
+    expect(await san.methods().createProduct(TOKEN, product)).toMatchObject({ externalProductId: 'P9' });
+  });
+
+  it('AC-4: lỗi tạm của bước kiểm → unavailable (việc nền thử lại), không tạo', async () => {
+    const prereq = fakeSan(routes({ 'GET /product/202312/prerequisites': json({}, 503) }));
+    await expect(prereq.methods().createProduct(TOKEN, product)).rejects.toMatchObject({ kind: 'unavailable' });
+    const check = fakeSan(routes({ [CHECK]: fail(36009003, 'Internal error') }));
+    await expect(check.methods().createProduct(TOKEN, product)).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(paths(check)).not.toContain(CREATE);
+  });
+
+  it('AC-5: findSku thấy SKU có sẵn thì trả luôn, không gọi kiểm', async () => {
+    const san = fakeSan(routes());
+    const findSku = vi.fn(async () => ({ externalProductId: 'P1', externalSkuId: 'S1', sellerSku: 'CM-TEST-COC', title: 't', state: 'live' as const, rejectReason: null, quantity: 5 }));
+    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toMatchObject({ existing: true });
+    expect(san.calls).toHaveLength(0);
+  });
+});
+
 describe('createProduct: khoá của lượt đẩy (#219)', () => {
   const base = {
     externalCategoryId: '600042',
@@ -499,6 +611,7 @@ describe('createProduct: khoá của lượt đẩy (#219)', () => {
   const routes = (create: Response) => ({
     'GET /logistics/202309/warehouses': ok(WAREHOUSES),
     'GET /product/202309/categories/600042/attributes': ok({ attributes: [] }),
+    ...PRECHECK_OK,
     'POST /product/202309/products': create,
     'GET /product/202309/products/P9': ok({ status: 'ACTIVATE' }),
   });
@@ -685,6 +798,7 @@ describe('tổ chức chịu trách nhiệm hàng hoá lấy từ hồ sơ công
     heightMm: 120,
   };
   const routes = (attrs: Response) => ({
+    ...PRECHECK_OK,
     'GET /logistics/202309/warehouses': ok(WAREHOUSES),
     'GET /product/202309/categories/600042/attributes': attrs,
     'POST /product/202309/products': ok({ product_id: 'P9', skus: [{ id: 'S9', seller_sku: 'CM-TEST-COC' }] }),

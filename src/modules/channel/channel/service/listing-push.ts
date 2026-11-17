@@ -10,7 +10,7 @@ import { findListingByExternalSku, findListingById, findListingByPendingExternal
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
-import { type MarketplaceAdapter, MarketplaceError, type NewProduct, type SizeChartRule } from './marketplaces/index.ts';
+import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
@@ -151,7 +151,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       return;
     }
     const message = err.platformMessage ?? (err.kind === 'unsupported' ? 'Sàn chưa hỗ trợ đẩy sản phẩm' : 'Sàn từ chối sản phẩm');
-    return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: attempts }, err.platformCode);
+    // Bước kiểm trước khi tạo (#305) giữ mã riêng để FE báo đúng câu (Documents/21 §18.6.4).
+    const code = err.platformCode && PRECHECK_CODES.has(err.platformCode) ? err.platformCode : 'marketplace_rejected';
+    return finish(job, row, 'fail', { pushError: errorOf(code, message), pushAttempts: attempts }, err.platformCode);
   }
 }
 

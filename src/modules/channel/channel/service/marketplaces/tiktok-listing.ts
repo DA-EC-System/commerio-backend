@@ -4,7 +4,8 @@
 // get-warehouse-list-202309 (bản 202502 của `/logistics/.../warehouses` là tạo kho, khác việc), get-categories-202309,
 // get-category-attributes-202309, upload-product-image-202309, create-product-202309, sign-your-api-request.
 // Đẩy lại (#219): edit-product-202509 (bản mới nhất của Edit Product trong OAS của skill `tts-openapi-guide`, tra
-// 11/11/2026), get-product-202309.
+// 11/11/2026), get-product-202309. Kiểm trước khi tạo (#305): check-listing-prerequisites-202312, check-product-listing-202309
+// (bản mới nhất trong OAS của skill, tra 17/11/2026; bản 202404 là global product, khác việc).
 // Kết quả gọi thật trên shop thử: mục TikTok của `channel/CLAUDE.md`.
 import {
   type CategoryAttribute,
@@ -198,6 +199,34 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
   }
 
   /**
+   * Gian hàng đủ điều kiện đăng bán chưa (Check Listing Prerequisites 202312, #305): mục `is_failed` thì ném `rejected`
+   * `shop_not_eligible`, câu là lý do sàn trả (thiếu thì tên mục). Gọi thật 17/11/2026: shop thử đạt cả 10 mục.
+   */
+  async function assertShopEligible(token: string): Promise<void> {
+    const data = await client.call<{ check_results?: Row[] }>('GET', '/product/202312/prerequisites', { token });
+    const failed = (data?.check_results ?? []).filter((r) => r.is_failed === true);
+    if (!failed.length) return;
+    const reasons = failed.flatMap((r) => (Array.isArray(r.fail_reasons) && r.fail_reasons.length ? r.fail_reasons.map(String) : [String(r.check_item)]));
+    throw new MarketplaceError('rejected', 'shop_not_eligible', reasons.join('; '));
+  }
+
+  /**
+   * Thử body tạo sản phẩm bằng Check Product Listing 202309 (#305). Chỉ chặn khi `FAILED` kèm `fail_reasons` (cùng mã lỗi
+   * của Create Product); `FAILED` không lý do thì để Create Product quyết. `is_diagnosis_required=false`: bỏ phần gợi ý chất
+   * lượng (đã deprecated), gọi thật 17/11/2026 nhanh từ ~5 giây xuống dưới 1 giây, `fail_reasons` không đổi.
+   */
+  async function assertListingPasses(token: string, body: Row): Promise<void> {
+    const data = await client.call<{ check_result?: unknown; fail_reasons?: Row[] }>('POST', '/product/202309/products/listing_check', {
+      token,
+      query: { is_diagnosis_required: 'false' },
+      body,
+    });
+    const reasons = data?.check_result === 'FAILED' ? (data.fail_reasons ?? []) : [];
+    if (!reasons.length) return;
+    throw new MarketplaceError('rejected', 'listing_check_failed', reasons.map((r) => `${String(r.code)}: ${String(r.message ?? '')}`).join('; '));
+  }
+
+  /**
    * Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính.
    * Tổ chức chịu trách nhiệm (#292): ô người dùng để trống lấy hồ sơ công ty lúc đẩy, chỉ khi danh mục có mã đó.
    */
@@ -236,9 +265,10 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       return leavesOf(data?.categories ?? []);
     },
 
-    // Chỉ thuộc tính sản phẩm luôn bắt buộc (`PRODUCT_PROPERTY`, `is_requried`, sàn viết sai chính tả); thuộc tính bắt buộc
-    // theo điều kiện (`requirement_conditions`) và thuộc tính bán hàng (phân loại) chưa xử lý. `name` là mã thuộc tính
-    // của sàn. Thuộc tính cho tự nhập (`is_customizable`) trả `options` rỗng để người dùng gõ giá trị riêng; lúc tạo sản
+    // Chỉ thuộc tính sản phẩm luôn bắt buộc (`PRODUCT_PROPERTY`, `is_requried`, sàn viết sai chính tả); thuộc tính bán hàng
+    // (phân loại) chưa xử lý. Thuộc tính bắt buộc theo điều kiện (`requirement_conditions`) không hỏi ở bước ghép: 12 danh
+    // mục VN đo 17/11/2026 không có, thiếu thì Check Product Listing chặn trước khi tạo (#305, `listing_check_failed`).
+    // `name` là mã thuộc tính của sàn. Thuộc tính cho tự nhập (`is_customizable`) trả `options` rỗng để người dùng gõ giá trị riêng; lúc tạo sản
     // phẩm giá trị trùng tên lựa chọn có sẵn thì gửi theo mã.
     async categoryAttributes(token, externalCategoryId): Promise<CategoryAttribute[]> {
       return (await rawAttributes(token, externalCategoryId))
@@ -290,10 +320,9 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (existing) {
         return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live', existing: true };
       }
-      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p)]);
-      const body = {
-        save_mode: 'LISTING',
-        ...(p.idempotencyKey && { idempotency_key: p.idempotencyKey }),
+      // Kiểm điều kiện đăng trước khi tạo (#305, Documents/21 §18.6.4): gian hàng, rồi thử chính body tạo.
+      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p), assertShopEligible(token)]);
+      const listing = {
         ...content,
         skus: [
           {
@@ -304,6 +333,8 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
           },
         ],
       };
+      await assertListingPasses(token, listing);
+      const body = { save_mode: 'LISTING', ...(p.idempotencyKey && { idempotency_key: p.idempotencyKey }), ...listing };
       let data: { product_id?: unknown; skus?: Row[] } | undefined;
       try {
         data = await client.call<{ product_id?: unknown; skus?: Row[] }>('POST', '/product/202309/products', { token, body });
