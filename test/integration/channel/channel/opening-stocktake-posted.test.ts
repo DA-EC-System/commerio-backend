@@ -770,16 +770,24 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
   it.each([
     ['cancelled', 'cancelled' as const],
     ['không còn', null],
-  ])('phiếu %s: lập được phiếu mới', async (_name, status) => {
+  ])('phiếu %s: gian hàng báo cancelled (#368), lập được phiếu mới', async (_name, status) => {
     const c = await createCompany({ optionalModules: ['channel'] });
-    const { shopId, documentId } = await waitingShop(c);
+    const { shopId, documentId, number } = await waitingShop(c);
     if (status) docStatus.set(documentId, status);
     else docStatus.delete(documentId);
+    const view = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(view.body.openingStocktake).toEqual({ documentId, number, status: 'cancelled' });
+    const list = await app().get('/api/v1/channel/shops').set(auth(c));
+    expect(list.body.items.find((s: { id: string }) => s.id === shopId).openingStocktake.status).toBe('cancelled');
 
     const res = await recreate(c, shopId);
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.shop.openingStocktake.status).toBe('draft');
+    const next = res.body.shop.openingStocktake;
+    expect(next.status).toBe('draft');
+    const reread = await app().get(`/api/v1/channel/shops/${shopId}`).set(auth(c));
+    expect(reread.body.openingStocktake).toEqual(next);
+    expect(next.documentId).not.toBe(documentId);
   });
 
   it('phiếu đã ghi sổ (sự kiện chưa xử lý) hoặc openingStocktake null: 409 shop_not_awaiting_stocktake', async () => {
