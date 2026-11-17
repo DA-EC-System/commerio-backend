@@ -37,6 +37,8 @@ export const ListingPushJobSchema = JobDataSchema.extend({
   shopId: z.uuid(),
   listingId: z.uuid(),
   imageUrls: z.array(z.string()).max(PUSH_IMAGE_MAX),
+  /** Link ảnh bảng kích cỡ của sản phẩm lúc bấm đẩy (#347); việc xếp trước #347 không có. */
+  sizeChartUrl: z.string().nullish(),
 });
 export type ListingPushJob = z.infer<typeof ListingPushJobSchema>;
 /**

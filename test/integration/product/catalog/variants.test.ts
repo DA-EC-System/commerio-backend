@@ -2,14 +2,28 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, valueId, uniq } from './helpers.ts';
+import {
+  type AttributeBody,
+  api,
+  archiveSku,
+  auditOf,
+  businessStatus,
+  createAttribute,
+  createCategory,
+  createProduct,
+  valueId,
+  uniq,
+} from './helpers.ts';
 
 // Thêm, ngừng bán biến thể (UC-CP-02; Documents/21 5.2, 5.3, P5, P7, V23; plan #12 B3, B5, B8, B11).
+let companyId: string;
 let token: string;
 let color: AttributeBody;
 let size: AttributeBody;
 beforeAll(async () => {
-  token = (await createCompany()).ceo.token;
+  const company = await createCompany();
+  companyId = company.companyId;
+  token = company.ceo.token;
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng', 'Xám']);
   size = await createAttribute(token, 'Size', ['M', 'XL']);
 });
@@ -26,7 +40,6 @@ const shirt = async () => {
   });
 };
 const add = (productId: string, ids: string[]) => api(token).post(`/products/${productId}/variants`, { attributeValueIds: ids });
-const stop = (productId: string, variantId: string) => api(token).delete(`/products/${productId}/variants/${variantId}`);
 const detailOf = async (id: string) => (await api(token).get(`/products/${id}`)).body;
 
 describe('POST /catalog/products/:id/variants', () => {
@@ -49,15 +62,15 @@ describe('POST /catalog/products/:id/variants', () => {
     expect(res.body.type).toBe('/problems/variant_exists');
   });
 
-  it('tổ hợp từng ngừng bán → 200, bán lại đúng biến thể và SKU cũ, nhật ký update (AC-10, B8)', async () => {
+  it('tổ hợp của SKU đã lưu trữ → 409 variant_archived kèm variantId, không cấp SKU mới (Documents/21 §17.2)', async () => {
     const product = await shirt();
     const old = product.variants[0]!;
-    expect((await stop(product.id, old.id)).status).toBe(204);
+    await archiveSku(token, product.id, old.id);
     const res = await add(product.id, [valueId(color, 'Đen'), valueId(size, 'XL')]);
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: old.id, sku: old.sku, archivedAt: null });
-    expect(await detailOf(product.id)).toMatchObject({ version: 1, variantCount: 2 });
-    expect((await auditOf(old.id)).map((l) => l.action)).toEqual(['delete', 'update']);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/variant_archived');
+    expect(res.body.variantId).toBe(old.id);
+    expect((await detailOf(product.id)).variants).toHaveLength(2);
   });
 
   it.each([
@@ -90,15 +103,20 @@ describe('POST /catalog/products/:id/variants', () => {
   });
 });
 
-describe('DELETE /catalog/products/:id/variants/:variantId', () => {
-  it('còn nhiều biến thể → 204, biến thể có archivedAt, vẫn trong chi tiết, SKU không cấp lại (AC-11)', async () => {
+describe('lưu trữ SKU (thay ngừng bán kiểu cũ, #204)', () => {
+  it('route ngừng bán cũ DELETE …/variants/:variantId đã bỏ → 404', async () => {
+    const product = await shirt();
+    expect((await api(token).delete(`/products/${product.id}/variants/${product.variants[1]!.id}`)).status).toBe(404);
+  });
+
+  it('SKU lưu trữ có archivedAt, vẫn trong chi tiết, SKU không cấp lại', async () => {
     const product = await shirt();
     const target = product.variants[1]!;
-    expect((await stop(product.id, target.id)).status).toBe(204);
+    await archiveSku(token, product.id, target.id);
     const detail = await detailOf(product.id);
     expect(detail.variants.find((v: { id: string }) => v.id === target.id).archivedAt).toEqual(expect.any(String));
     expect(detail).toMatchObject({ variantCount: 1, version: 1 });
-    // Danh mục khác cùng quy tắc tới đúng số đó thì nhảy qua SKU đã ngừng bán.
+    // Danh mục khác cùng quy tắc tới đúng số đó thì nhảy qua SKU đã lưu trữ.
     const category = await createCategory(token, uniq('Cùng quy tắc'), 'AO-{SEQ:4}-{VAL}');
     const again = await createProduct(token, {
       name: uniq('Áo'),
@@ -108,35 +126,26 @@ describe('DELETE /catalog/products/:id/variants/:variantId', () => {
     expect(again.variants.map((v) => v.sku)).not.toContain(target.sku);
   });
 
-  it('biến thể cuối còn bán → 409 last_variant (AC-11)', async () => {
+  it('lưu trữ được cả SKU cuối (bỏ last_variant)', async () => {
     const product = await shirt();
-    await stop(product.id, product.variants[0]!.id);
-    const res = await stop(product.id, product.variants[1]!.id);
-    expect(res.status).toBe(409);
-    expect(res.body.type).toBe('/problems/last_variant');
-  });
-
-  it('biến thể đã ngừng, không có, hoặc của sản phẩm khác → 404', async () => {
-    const product = await shirt();
-    const other = await shirt();
-    await stop(product.id, product.variants[0]!.id);
-    for (const variantId of [product.variants[0]!.id, randomUUID(), 'abc', other.variants[0]!.id]) {
-      expect((await stop(product.id, variantId)).status).toBe(404);
-    }
+    await archiveSku(token, product.id, product.variants[0]!.id);
+    await archiveSku(token, product.id, product.variants[1]!.id);
+    expect((await detailOf(product.id)).variantCount).toBe(0);
   });
 });
 
 describe('chạy đua (S-3 c, d; plan B5)', () => {
-  it('hai lần ngừng bán song song trên sản phẩm còn 2 biến thể: một 204, một 409, còn đúng 1 biến thể đang bán', async () => {
+  it('hai lần Ngừng nhập song song cùng SKU: một 200, một 409 invalid_transition (khoá công ty)', async () => {
     const product = await shirt();
-    // Giữ khoá dòng sản phẩm: cả hai request phải chờ (thiếu khoá công ty thì cả hai đã đếm "còn 2" trước khi chờ).
+    const variantId = product.variants[0]!.id;
+    // Giữ khoá công ty của catalog: cả hai request phải chờ (thiếu khoá thì cả hai đã đọc "selling" trước khi chờ).
     const results = await raceBehindLock(
-      (holder) => holder.query('select 1 from product.products where id = $1 for update', [product.id]),
+      (holder) => holder.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`catalog.sku:${companyId}`]),
       2,
-      () => Promise.all(product.variants.map((v) => stop(product.id, v.id))),
+      () => Promise.all([0, 1].map(() => businessStatus(token, product.id, 'discontinue', [variantId]))),
     );
-    expect(results.map((r) => r.status).sort()).toEqual([204, 409]);
-    expect((await detailOf(product.id)).variantCount).toBe(1);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(results.find((r) => r.status === 409)!.body.type).toBe('/problems/invalid_transition');
   });
 
   it('hai lần thêm cùng tổ hợp mới song song: một 201, một 409, chỉ một biến thể mang tổ hợp đó', async () => {

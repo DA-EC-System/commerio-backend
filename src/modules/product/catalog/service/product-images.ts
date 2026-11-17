@@ -1,6 +1,7 @@
 // Ảnh sản phẩm (#303; Documents/21 §5.2, §5.4 P8, P10). Tệp và link ảnh ở module `files` (bucket công khai).
 import { publicFileUrls } from '../../../core/index.ts';
 import { productImageRows } from '../repository/product-images.ts';
+import { sizeChartRows } from '../repository/products.ts';
 
 /** Tối đa 9 ảnh mỗi sản phẩm (P8). */
 export const MAX_PRODUCT_IMAGES = 9;
@@ -36,4 +37,26 @@ export async function imagesOf(productId: string): Promise<ProductImage[]> {
   const rows = await productImageRows([productId]);
   const urls = await publicFileUrls(rows.map((r) => r.fileId));
   return rows.map((r) => ({ id: r.id, fileId: r.fileId, url: urls.get(r.fileId) ?? '', position: r.position }));
+}
+
+/** Ảnh bảng kích cỡ của sản phẩm (#347). */
+export interface SizeChart {
+  fileId: string;
+  /** Link cố định; chuỗi rỗng khi máy chủ chưa cấu hình `S3_PUBLIC_URL`. */
+  url: string;
+}
+
+export async function sizeChartOf(fileId: string | null): Promise<SizeChart | null> {
+  if (!fileId) return null;
+  return { fileId, url: (await publicFileUrls([fileId])).get(fileId) ?? '' };
+}
+
+/**
+ * Link ảnh bảng kích cỡ cho module khác (channel đẩy lên sàn, #347). Chỉ có khoá cho sản phẩm có ảnh và có link khác
+ * rỗng. Gọi trong `withCompany` của bên gọi.
+ */
+export async function productSizeChartUrls(productIds: readonly string[]): Promise<Map<string, string>> {
+  const rows = await sizeChartRows(productIds);
+  const urls = await publicFileUrls(rows.map((r) => r.fileId));
+  return new Map(rows.flatMap((r) => (urls.get(r.fileId) ? [[r.productId, urls.get(r.fileId)!] as const] : [])));
 }

@@ -2,7 +2,7 @@
 
 - **Ngày:** 16/11/2026
 - **Người soạn:** Khang (cùng Claude), theo issue commerio-backend#204 (thân issue và 5 comment tới 16/11/2026), `Documents/21` §11.2, §17 (bản `origin/main` sau Documents#117), `Documents/25` §5, `Documents/19` (bảng `products`, `product_variants`), `Documents/27` US-SP-02, 03, 05, 06, 07, 08, `Documents/kiem-thu/ca-theo-so-do.md` (B1)
-- **Trạng thái:** bản nháp chờ Khang duyệt. Các điểm D1 đến D11 (mục 10) là đề xuất của người soạn, lệch hoặc bổ sung tài liệu, cần Thành xác nhận trên issue
+- **Trạng thái:** Khang duyệt 16/11/2026. Thành trả lời D1 đến D11 trên issue #204 ngày 16/11/2026: đồng ý 10 điểm, **sửa D8** theo `Documents/25` §5.1 (mục 10). PR 0 là #338, PR 1 là #339 (đã merge 16/11/2026), sửa `Documents/21` cho D1 đến D3 ở Documents#124
 - **Nền:** `main` 2018c63
 - **Phạm vi spec:** Khang chốt 16/11/2026 là **một spec, ba PR** (mục 8). Sau khi một reviewer độc lập đọc spec, thêm **PR 0** chỉ khai hai sự kiện, theo luật "thêm loại sự kiện là PR riêng" của `src/modules/CLAUDE.md`. PR 0 và PR 1 gỡ kẹt staging làm trước
 
@@ -224,14 +224,15 @@ Câu lý do viết cho người đọc, có số khi có ("Còn 3 tồn thực",
 
 `readiness = 'ready'` khi `missing` rỗng, ngược lại `'incomplete'`. Cha thiếu trường chung thì mọi SKU con mang cùng phần thiếu đó. Ngưỡng tồn lấy từ inventory bằng một hàm tra theo lô, nối ở `src/modules/product/index.ts`.
 
-**Hiện diện trên sàn.** Channel cấp qua `ModuleContext` một hàm tra theo lô trả, cho mỗi SKU: `presence` và `listingCount`. Quy tắc tính nằm ở channel (D8):
+**Hiện diện trên sàn.** Channel cấp qua `ModuleContext` một hàm tra theo lô trả, cho mỗi SKU: `presence`, `listingCount`, `hasListingError`. Quy tắc tính nằm ở channel, theo `Documents/25` §5.1 (D8, Thành sửa 16/11/2026):
 
+- `presence`: `live` nếu có listing `live`; không thì `error` nếu có `push_failed`, `rejected`, `platform_hold`; không thì `pending` nếu có `pushing`, `under_review`; còn lại `not_listed`. `hidden` không tính là `live` (SKU tạm ngừng thì nhãn chính đã là Tạm ngừng).
+- `hasListingError`: có listing `push_failed`, `rejected`, `platform_hold`, kể cả khi đã có `live`. FE hiện nhãn phụ "Có lỗi" khi `presence = 'live'` và cờ này bật.
 - `listingCount`: số listing chưa `delisted` của SKU.
-- `presence`: `error` nếu có listing `push_failed`, `rejected`, `platform_hold`; không thì `live` nếu có `live` hoặc `hidden`; không thì `pending` nếu có `pushing`, `under_review`; còn lại `not_listed`.
 
-Nhãn chính của SKU (tính ở catalog, cùng công thức `mainLabel` của FE): trạng thái kinh doanh khác `selling` thì lấy trạng thái đó; `selling` thì lấy `presence`, riêng `error` hiện là `live`.
+Nhãn chính của SKU (tính ở catalog): trạng thái kinh doanh khác `selling` thì lấy trạng thái đó; `selling` thì lấy `presence`. Nhãn chính có 7 giá trị: `archived`, `discontinued`, `paused`, `live`, `error`, `pending`, `not_listed`. `error` là nhãn chính khi SKU đang bán mà không có listing `live` nào, chỉ có listing lỗi. FE đang có 6 giá trị và đổi `error` thành `live`: phải sửa theo (mục 7).
 
-**`ProductVariant`** (trong `ProductDetail`) đủ theo `FE/src/types/catalog.ts`, thêm so với PR 2: `readiness`, `missing`, `minQty`, `presence`, `listingCount`.
+**`ProductVariant`** (trong `ProductDetail`) đủ theo `FE/src/types/catalog.ts`, thêm so với PR 2: `readiness`, `missing`, `minQty`, `presence`, `listingCount`, `hasListingError`.
 
 **`ProductListItem`** thêm và đổi:
 
@@ -240,9 +241,9 @@ Nhãn chính của SKU (tính ở catalog, cùng công thức `mainLabel` của 
 | `code` | mã cha |
 | `variantCount` | số SKU chưa lưu trữ |
 | `variantTotal` | mọi SKU |
-| `labelCounts` | số SKU theo 6 nhãn chính, đủ 6 khoá |
+| `labelCounts` | số SKU theo 7 nhãn chính, đủ 7 khoá |
 | `incompleteCount` | số SKU chưa lưu trữ đang `incomplete` |
-| `errorCount` | số SKU chưa lưu trữ có `presence = 'error'` |
+| `errorCount` | số SKU chưa lưu trữ có `hasListingError` (kể cả SKU đang `live`: lỗi đếm riêng, D8) |
 | `status` | `'archived'` khi mọi SKU `archived`, ngược lại `'active'` (suy ra, không lưu) |
 
 **`GET /catalog/products`:** `status=active` (mặc định) là sản phẩm còn ít nhất một SKU chưa lưu trữ; `status=archived` là sản phẩm mọi SKU đã lưu trữ. Thêm `businessStatus` (`selling`, `paused`, `discontinued`): sản phẩm có ít nhất một SKU ở trạng thái đó; gửi `archived` thì 422. Một trang danh sách dùng số câu truy vấn cố định (SKU của cả trang, ngưỡng tồn, hiện diện, ảnh mỗi thứ một lần gọi), không theo số dòng.
@@ -279,6 +280,10 @@ Mọi lỗi ném `AppError`, trả Problem Details. Bảng mã lỗi `Documents/
 
 - `21` §17.2: PATCH chưa nhận `imageFileId` (D1); `to` của `variant_price_changed` có thể `null` (D3); cổng `targetNetPricesOf`, `variantReadiness`, `restoreArchivedBySystem` vào §11.3; quy tắc `code` (D5); `presence` (D8).
 - `19`: tên sản phẩm unique trên mọi sản phẩm (D4).
+- `21` §17.1 (PR 3): `presence` theo `25` §5.1 (D8 Thành sửa): `pending` là `pushing`, `under_review` (không còn "đã ghép, chưa đẩy"); thứ tự `live` > `error` > `pending`; nhãn chính có `error`; `hasListingError`; `errorCount` đếm SKU có listing lỗi kể cả đang `live`.
+- `21` §17.3 (PR 2): "đơn mở" là `unpaid`, `processing` (D9); mức chặn khi ghi song song (D10); tự khôi phục chưa bật cờ Cần xử lý (D6).
+
+**Issue #209** (việc của Khang theo Thành, D6): ghi phần nợ "SKU tự khôi phục thì bật cờ Cần xử lý" (`25` §5.1, US-SP-07 dòng 4) để khung việc làm.
 - `kiem-thu/ca-theo-so-do.md`: ca B1 đã đủ cho máy trạng thái; thêm ca cho PATCH SKU, xoá hẳn, tự khôi phục nếu Thành muốn mã ca.
 
 **`src/modules/product/catalog/CLAUDE.md`** cập nhật ở từng PR (bất biến Lưu trữ, mục Gọi vào và gọi ra, "Không phát sự kiện").
@@ -290,6 +295,7 @@ Mọi lỗi ném `AppError`, trả Problem Details. Bảng mã lỗi `Documents/
 - `ProductListItem` thiếu `code`; `labelCounts`, `incompleteCount`, `errorCount` chuyển thành bắt buộc sau PR 3, bỏ nhánh dự phòng ở `businessStatus.tsx`.
 - Sau PR 2: bỏ gọi `DELETE …/variants/:variantId`; `POST …/variants` không còn trả 200.
 - Sau PR 3: `DELETE /catalog/products/:id` là xoá hẳn, không còn là lưu trữ.
+- Sau PR 3 (D8 Thành sửa): `VariantMainLabel` thêm `error` ("Có lỗi"); `mainLabel` không đổi `error` thành `live` nữa; nhãn phụ "Có lỗi" dựa vào `ProductVariant.hasListingError` khi `presence = 'live'`; `labelCounts` có 7 khoá.
 
 ## 8. Chia PR
 
@@ -338,21 +344,23 @@ Test đặt theo `test/CLAUDE.md`: hàm thuần ở `test/unit/…`, route ở `
 22. Migration: sản phẩm cha đang lưu trữ thành mọi SKU `archived`; `npm run db:ci-check` xanh.
 23. `getVariants().archived` đúng theo `businessStatus` ở các chỗ inventory, channel đang dùng (test sẵn của hai module vẫn xanh).
 
-## 10. Điểm người soạn tự quyết, cần Thành xác nhận
+## 10. Điểm người soạn tự quyết, Thành đã xác nhận
 
-| # | Điểm | Đề xuất | Vì sao |
-|---|---|---|---|
-| D1 | `21` §17.2 PATCH có `imageFileId` | Chưa nhận, gửi thì 422 | Ảnh theo biến thể cần bảng mới, tách issue cùng thương hiệu và khoá trục |
-| D2 | #225 đọc giá muốn bán bằng gì | Catalog xuất `targetNetPricesOf` | Channel không được đọc bảng catalog; `ProductPort` hiện chỉ có `standardPrices` |
+Thành trả lời trên issue #204 ngày 16/11/2026. Cột cuối là ý kiến của Thành.
+
+| # | Điểm | Đề xuất | Vì sao | Thành |
+|---|---|---|---|---|
+| D1 | `21` §17.2 PATCH có `imageFileId` | Chưa nhận, gửi thì 422 | Ảnh theo biến thể cần bảng mới, tách issue cùng thương hiệu và khoá trục | Đồng ý. Thành tạo issue riêng cho ảnh phân loại theo SKU, thương hiệu, khoá trục; đổi phụ thuộc của #295 sang issue đó |
+| D2 | #225 đọc giá muốn bán bằng gì | Catalog xuất `targetNetPricesOf` | Channel không được đọc bảng catalog; `ProductPort` hiện chỉ có `standardPrices` | Đồng ý |
 | D3 | `to` của `variant_price_changed` | `string \| null` | PATCH cho phép xoá giá muốn bán bằng `null` (`21` §17.2) |
-| D4 | Tên sản phẩm sau khi bỏ `archived_at` | Unique trên mọi sản phẩm của công ty | Trạng thái cha là suy ra, index một phần không tham chiếu được SKU con; khôi phục không sinh hai sản phẩm trùng tên |
-| D5 | Cách sinh `code` | SKU đầu tiên bỏ `{VAL}`, trùng thì thêm `-2` | `21` §17 chỉ ghi "sinh theo quy tắc danh mục"; cách này không tiêu thêm `{SEQ}` nên không lệch bản xem trước SKU của FE |
-| D6 | Cờ Cần xử lý khi tự khôi phục | Chưa làm, chỉ khôi phục và phát sự kiện | Chưa có nơi lưu cờ theo SKU; chờ #209 |
-| D7 | `missing: 'price'` là giá nào | Giá muốn bán `target_net_price` | `21` §17.1, `25` §5.2; FE đang ghi nhãn "giá chuẩn" |
-| D8 | Cách tính `presence` | `error` > `live` (gồm `hidden`) > `pending` (`pushing`, `under_review`) > `not_listed` | `21` §17.1 ghi `pending` là "đã ghép, chưa đẩy", `25` §5.1 ghi theo trạng thái listing; FE hiện `error` như `live` kèm nhãn phụ |
-| D9 | "Đơn mở" ở `21` §17.3 ghi `pending`, `processing` | `unpaid`, `processing` | Enum đơn trong code không có `pending` |
-| D10 | Mức chặn khi có ghi song song | Khoá dòng tồn khi lưu trữ; đơn và listing chỉ kiểm tại thời điểm lưu trữ | Chặn tuyệt đối phải sửa đường ghi của sales, channel, vượt phạm vi issue |
-| D11 | SKU của cha đang lưu trữ mà còn tồn, khi migration | Còn tồn thì `discontinued`, còn lại `archived` | `DELETE` cha kiểu cũ không kiểm điều kiện; không để SKU `archived` còn tồn |
+| D4 | Tên sản phẩm sau khi bỏ `archived_at` | Unique trên mọi sản phẩm của công ty | Trạng thái cha là suy ra, index một phần không tham chiếu được SKU con; khôi phục không sinh hai sản phẩm trùng tên | Đồng ý. Là đổi luật; migration PR 3 phải xử lý tên đang trùng (thêm hậu tố), không thì tạo index lỗi |
+| D5 | Cách sinh `code` | SKU đầu tiên bỏ `{VAL}`, trùng thì thêm `-2` | `21` §17 chỉ ghi "sinh theo quy tắc danh mục"; cách này không tiêu thêm `{SEQ}` nên không lệch bản xem trước SKU của FE | Đồng ý |
+| D6 | Cờ Cần xử lý khi tự khôi phục | Chưa làm, chỉ khôi phục và phát sự kiện | Chưa có nơi lưu cờ theo SKU; chờ #209 | Đồng ý tạm. `25` §5.1 có bật cờ Cần xử lý: Khang ghi phần cờ còn nợ vào #209 |
+| D7 | `missing: 'price'` là giá nào | Giá muốn bán `target_net_price` | `21` §17.1, `25` §5.2; FE đang ghi nhãn "giá chuẩn" | Đồng ý; nhãn FE "giá chuẩn" phải sửa |
+| D8 | Cách tính `presence` | `error` > `live` (gồm `hidden`) > `pending` (`pushing`, `under_review`) > `not_listed` | `21` §17.1 ghi `pending` là "đã ghép, chưa đẩy", `25` §5.1 ghi theo trạng thái listing; FE hiện `error` như `live` kèm nhãn phụ | **Sửa**: `live` > `error` > `pending` > `not_listed`, `hidden` không tính là `live`, lỗi đếm riêng (`25` §5.1). `21` §17.1 sửa `pending` theo `25` trong PR Documents của PR 3. Đã sửa mục 5.3 |
+| D9 | "Đơn mở" ở `21` §17.3 ghi `pending`, `processing` | `unpaid`, `processing` | Enum đơn trong code không có `pending` | Đồng ý; sửa `21` §17.3 theo enum trong code |
+| D10 | Mức chặn khi có ghi song song | Khoá dòng tồn khi lưu trữ; đơn và listing chỉ kiểm tại thời điểm lưu trữ | Chặn tuyệt đối phải sửa đường ghi của sales, channel, vượt phạm vi issue | Đồng ý |
+| D11 | SKU của cha đang lưu trữ mà còn tồn, khi migration | Còn tồn thì `discontinued`, còn lại `archived` | `DELETE` cha kiểu cũ không kiểm điều kiện; không để SKU `archived` còn tồn | Đồng ý |
 
 ## 11. Để lại cho người thi công
 

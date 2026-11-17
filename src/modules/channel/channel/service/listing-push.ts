@@ -6,11 +6,11 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, STALE_PUSH_MS } from '../domain/listing.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
-import { findListingById, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
+import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { moveListing } from './listings.ts';
-import { type MarketplaceAdapter, MarketplaceError, type NewProduct } from './marketplaces/index.ts';
+import { type MarketplaceAdapter, MarketplaceError, type NewProduct, type SizeChartRule } from './marketplaces/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
@@ -59,7 +59,14 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
   const { v, map, price, untrusted } = data;
   const quantity = untrusted ? 0 : data.quantity;
-  const block = pushBlock(v, price, map, Boolean(row.externalImageUrls?.length || job.imageUrls.length));
+  const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
+  const block = pushBlock(
+    v,
+    price,
+    map && { ...map, sizeChartRule },
+    Boolean(row.externalImageUrls?.length || job.imageUrls.length),
+    Boolean(job.sizeChartUrl),
+  );
   if (block) return finish(job, row, 'fail', { pushError: errorOf(block.code, block.message) });
 
   const priceText = price!.toFixed(0);
@@ -67,12 +74,16 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   let imageUrls: string[] = row.externalImageUrls ?? [];
   try {
     if (!imageUrls.length) imageUrls = await uploadAll(adapter, accessToken, job.imageUrls);
+    // Ảnh bảng kích cỡ (#347): danh mục không hỗ trợ thì không gửi; tải lên mỗi lượt (không lưu `uri`, sàn có thể đổi).
+    const sizeChartUri =
+      job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
       attributes: map!.attributes,
       name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
       description: v.description ?? v.productName,
       imageUrls,
+      ...(sizeChartUri && { sizeChartUri }),
       // Listing ghép lúc thiết lập mang SKU người bán trên sàn, có thể khác SKU Commerio.
       sellerSku: row.sellerSku ?? v.sku,
       price: priceText,
@@ -84,9 +95,27 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       // Giữ nguyên qua các lần thử của lượt, đổi khi người dùng bấm đẩy lại (#219 A4).
       idempotencyKey: `cm-${row.id}-${row.pushStartedAt!.getTime()}`,
     };
-    const result = reshelve
+    let result = reshelve
       ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, product)) }
       : await adapter.createProduct(accessToken, product);
+    // Sàn đã có SKU cùng SellerSku (#346, Documents/21 §18.6.4): SKU đó thuộc listing khác thì không ghi đè; không thì ghi
+    // nội dung, giá của app lên như đẩy lại.
+    let rewritten = reshelve;
+    if (result.existing) {
+      const { externalProductId, externalSkuId } = result;
+      // Kể cả SKU đang chờ CEO duyệt ghép vào listing lỗi khác.
+      const owner = await inCompany(
+        async () => (await findListingByExternalSku(job.shopId, externalSkuId)) ?? (await findListingByPendingExternalSku(job.shopId, externalSkuId)),
+      );
+      if (owner && owner.id !== row.id) {
+        const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
+        return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });
+      }
+      if (adapter.updateProduct) {
+        result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, product)) };
+        rewritten = true;
+      }
+    }
     const at = new Date();
     await finish(job, row, result.live ? 'go_live' : 'send_review', {
       externalProductId: result.externalProductId,
@@ -94,12 +123,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       externalImageUrls: imageUrls,
       pushError: null,
       listedPrice: priceText,
-      priceSync: 'synced',
+      // Nhận về sản phẩm có sẵn mà sàn không cho sửa: giá chưa ghi lên, để đồng bộ đẩy.
+      priceSync: result.existing && !rewritten ? 'pending' : 'synced',
       priceSyncError: null,
       lastPushedAt: at,
       // Tạo mới gửi kèm tồn; đẩy lại thì TikTok không gửi tồn (Edit Product giữ tồn cũ): để đồng bộ đẩy.
       // SKU chưa tin được: sàn nhận 0, chờ đẩy tồn thật (lấy đơn xong trọn thì `channel.stock_push` chạy lại).
-      ...(reshelve
+      ...(rewritten || result.existing
         ? { stockSync: 'pending' as const }
         : { platformStock: quantity, stockSync: untrusted ? ('pending' as const) : ('synced' as const), stockSyncError: null }),
     });
@@ -150,4 +180,22 @@ async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls:
   const out: string[] = [];
   for (const url of urls) out.push(await adapter.uploadImage(accessToken, url));
   return out;
+}
+
+/**
+ * Quy tắc bảng kích cỡ của danh mục (#347). Ghép mới đã lưu quy tắc; ghép trước #347 chưa có thì hỏi sàn một lần, lỗi thì
+ * coi như chưa biết (sàn tự quyết khi tạo sản phẩm, lỗi `unauthorized` được xử lý ở bước gọi sàn sau đó).
+ */
+async function sizeChartRuleOf(
+  adapter: MarketplaceAdapter,
+  accessToken: string,
+  map: { externalCategoryId: string; sizeChartRule: SizeChartRule | null },
+): Promise<SizeChartRule | null> {
+  if (map.sizeChartRule || !adapter.categoryRules) return map.sizeChartRule;
+  try {
+    return (await adapter.categoryRules(accessToken, map.externalCategoryId)).sizeChart;
+  } catch (err) {
+    if (err instanceof MarketplaceError) return null;
+    throw err;
+  }
 }

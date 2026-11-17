@@ -3,12 +3,12 @@
 import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { publishEvent, recordAudit } from '../../../core/index.ts';
+import { productImageRows } from '../repository/product-images.ts';
 import { touchProduct } from '../repository/products.ts';
 import {
   findVariants,
   insertVariant,
   lockVariants,
-  setVariantArchived,
   updateVariantIfVersion,
   type VariantPatch,
   type VariantRow,
@@ -19,13 +19,15 @@ import {
   type Caller,
   invalid,
   isUuid,
-  lastVariant,
+  listingFieldRequired,
   notFound,
   pgError,
-  productArchived,
+  variantArchived,
   variantExists,
   versionConflict,
 } from './errors.ts';
+import { skuLabels } from './labels.ts';
+import { listedFieldErrors } from './listed-fields.ts';
 import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
@@ -67,7 +69,7 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
     sku: v.sku,
     categoryId: v.categoryId,
     categoryName: v.categoryName,
-    archived: v.archivedAt !== null || v.productArchivedAt !== null,
+    archived: v.businessStatus === 'archived',
     businessStatus: v.businessStatus,
     description: v.description,
     weightG: v.weightG,
@@ -87,14 +89,14 @@ const variantSnapshot = (productName: string, v: { sku: string; attributes: { va
 });
 
 /**
- * Thêm biến thể (V23, P5, P7): tổ hợp đang bán → 409 `variant_exists`; từng ngừng bán → bán lại với SKU cũ (200);
- * mới → SKU mới (201). Không đổi `version` sản phẩm. Khoá công ty lấy trước khi đọc biến thể (B5).
+ * Thêm biến thể (V23, P5, P7): tổ hợp của SKU chưa lưu trữ → 409 `variant_exists`; của SKU đã lưu trữ → 409
+ * `variant_archived` kèm `variantId` (dùng Khôi phục, không bán lại ngầm; Documents/21 §17.2, #204); mới → SKU mới.
+ * Không đổi `version` sản phẩm. Khoá công ty lấy trước khi đọc biến thể (B5).
  */
 export async function addVariant(ctx: CatalogContext, caller: Caller, productId: string, attributeValueIds: string[]) {
   return withCompany(caller.companyId, async () => {
     await lockVariants(caller.companyId);
     const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
     const variants = await findVariants({ productId });
     const order = variants[0]?.attributes.map((a) => a.attributeId) ?? [];
     if (!order.length) throw badCombo('Sản phẩm tạo không có thuộc tính nên chỉ có một biến thể');
@@ -104,51 +106,22 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
 
     const key = comboKey(combo.map((v) => v.id));
     const same = variants.find((v) => comboKey(v.attributes.map((a) => a.valueId)) === key);
-    if (same && !same.archivedAt) throw variantExists(same.sku);
-    let id: string;
-    if (same) {
-      // Từng ngừng bán: bán lại với SKU cũ, không cấp SKU mới (P5).
-      id = same.id;
-      await setVariantArchived(id, false);
-    } else {
-      const [category] = await findCategories(product.categoryId);
-      const [sku] = await allocateSkus(category!, [combo]);
-      id = await insertVariant(caller.companyId, productId, sku!, combo.map((v) => v.id), 0);
-    }
+    if (same?.businessStatus === 'archived') throw variantArchived(same.id);
+    if (same) throw variantExists(same.sku);
+    const [category] = await findCategories(product.categoryId);
+    const [allocated] = await allocateSkus(category!, [combo]);
+    const id = await insertVariant(caller.companyId, productId, allocated!.sku, combo.map((v) => v.id), 0);
     await touchProduct(productId);
     const [variant] = await findVariants({ ids: [id] });
-    const after = variantSnapshot(product.name, variant!);
-    await recordAudit(
-      same
-        ? {
-            ...auditOf(caller, 'update', ENTITY, id),
-            before: { ...after, archivedAt: same.archivedAt!.toISOString() },
-            after: { ...after, archivedAt: null },
-          }
-        : { ...auditOf(caller, 'create', ENTITY, id), after },
-    );
+    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: variantSnapshot(product.name, variant!) });
     const prices = await standardPricesOf(ctx, [id]);
-    return { created: !same, variant: toVariantView(variant!, prices.get(id) ?? null) };
+    const imageCount = (await productImageRows([productId], 1)).length;
+    const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, categoryId: product.categoryId, imageCount }));
+    return toVariantView(variant!, labels.get(id)!, prices.get(id) ?? null);
   }).catch((err: unknown) => {
     // Giá trị thuộc tính vừa bị xoá giữa lúc đọc và lúc chèn.
     if (pgError(err).code === '23503') throw badCombo('Có giá trị thuộc tính vừa bị xoá');
     throw err;
-  });
-}
-
-/** Ngừng bán (P5): SKU giữ nguyên, không cấp lại; phải còn ít nhất một biến thể đang bán. */
-export async function archiveVariant(caller: Caller, productId: string, variantId: string): Promise<void> {
-  await withCompany(caller.companyId, async () => {
-    await lockVariants(caller.companyId);
-    const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
-    const variants = await findVariants({ productId });
-    const variant = variants.find((v) => v.id === variantId && !v.archivedAt);
-    if (!variant) throw notFound('biến thể đang bán');
-    if (variants.filter((v) => !v.archivedAt).length === 1) throw lastVariant();
-    await setVariantArchived(variantId, true);
-    await touchProduct(productId);
-    await recordAudit({ ...auditOf(caller, 'delete', ENTITY, variantId), before: variantSnapshot(product.name, variant) });
   });
 }
 
@@ -231,8 +204,9 @@ export async function applyVariantUpdate(
 }
 
 /**
- * `PATCH /catalog/products/:id/variants/:variantId` (#204). Sản phẩm lưu trữ báo `product_archived` trước
- * `version_conflict` như mọi route ghi; SKU đã ngừng bán vẫn sửa được (điền cho đủ trước khi khôi phục).
+ * `PATCH /catalog/products/:id/variants/:variantId` (#204). SKU đã ngừng nhập, đã lưu trữ vẫn sửa được (điền cho đủ
+ * trước khi khôi phục). SKU còn listing chưa gỡ mà gửi `null` cho giá muốn bán, cân nặng, kích thước đang có giá trị:
+ * 409 `listing_field_required` (`listed-fields.ts`).
  */
 export async function updateVariant(
   ctx: CatalogContext,
@@ -243,9 +217,10 @@ export async function updateVariant(
 ): Promise<ProductDetail> {
   return withCompany(caller.companyId, async () => {
     const product = await findOwnProduct(productId);
-    if (product.archivedAt) throw productArchived();
     const [current] = isUuid(variantId) ? await findVariants({ ids: [variantId] }) : [];
     if (!current || current.productId !== product.id) throw notFound('biến thể');
+    const listed = await listedFieldErrors(ctx, current, input);
+    if (listed) throw listingFieldRequired(listed.detail, listed.errors);
     const outcome = await applyVariantUpdate(caller, current, input);
     if (outcome === 'updated') await touchProduct(product.id);
     if (outcome === 'stale') {

@@ -204,6 +204,13 @@ export const listings = channelSchema.table(
     pendingMode: listingMode('pending_mode'),
     pendingRequestedBy: uuid('pending_requested_by'),
     pendingRequestedAt: timestamp('pending_requested_at', { withTimezone: true }),
+    /**
+     * SKU sàn chờ CEO duyệt ghép vào listing lỗi đẩy chưa có mã sàn (#346, Documents/19): đổi SKU người bán mà đã có đơn
+     * mang SKU người bán cũ. Duyệt thì chép sang `external_*`, `seller_sku`; từ chối thì xoá cùng bốn cột chờ duyệt.
+     */
+    pendingExternalSkuId: text('pending_external_sku_id'),
+    pendingExternalProductId: text('pending_external_product_id'),
+    pendingSellerSku: text('pending_seller_sku'),
     /** Ghép hiện hành do CEO (hoặc công ty một người) tự làm ở bước cần CEO duyệt (25 §11 ngoại lệ tự duyệt). */
     mappingSelfApproved: boolean('mapping_self_approved').notNull().default(false),
     /**
@@ -224,6 +231,10 @@ export const listings = channelSchema.table(
     uniqueIndex('listings_shop_external_sku_uq')
       .on(t.shopId, t.externalSkuId)
       .where(sql`${t.externalSkuId} is not null and ${t.status} <> 'delisted'`),
+    // Một SKU sàn không chờ ghép vào hai listing lỗi cùng lúc (#346).
+    uniqueIndex('listings_shop_pending_external_sku_uq')
+      .on(t.shopId, t.pendingExternalSkuId)
+      .where(sql`${t.pendingExternalSkuId} is not null`),
     index().on(t.variantId),
     check('listings_mode', sql`(${t.mode} = 'mapped') = (${t.variantId} is not null)`),
     // "Không quản tồn" có hiệu lực phải có CEO duyệt; dòng mới tạo chờ duyệt ghép sang "không quản tồn" (#220) chưa có.
@@ -235,6 +246,13 @@ export const listings = channelSchema.table(
       'listings_pending_mapping',
       sql`(${t.pendingMode} is null and ${t.pendingVariantId} is null and ${t.pendingRequestedBy} is null and ${t.pendingRequestedAt} is null)
         or (${t.pendingRequestedBy} is not null and ${t.pendingRequestedAt} is not null and ${t.pendingMode} is not null and (${t.pendingMode} = 'mapped') = (${t.pendingVariantId} is not null))`,
+    ),
+    // SKU sàn chờ ghép chỉ có trên listing lỗi đẩy chưa có mã sàn, đang chờ duyệt; ba cột cùng có hoặc cùng trống (#346).
+    check(
+      'listings_pending_external',
+      sql`(${t.pendingExternalSkuId} is null and ${t.pendingExternalProductId} is null and ${t.pendingSellerSku} is null)
+        or (${t.pendingExternalSkuId} is not null and ${t.pendingExternalProductId} is not null and ${t.pendingSellerSku} is not null
+          and ${t.pendingRequestedBy} is not null and ${t.status} = 'push_failed' and ${t.externalSkuId} is null)`,
     ),
     // Người duyệt khác người xin ghép, trừ tự duyệt (CEO, công ty một người): cùng mẫu với `self_approved` của bảng khác.
     // Gỡ là trạng thái cuối: mọi đường gỡ (tay, sàn xoá, ngắt) phải bỏ ghép chờ duyệt cùng lúc (#220 đợt 2).
@@ -264,10 +282,16 @@ export const categoryMaps = channelSchema.table(
     categoryId: uuid('category_id').notNull(),
     externalCategoryId: text('external_category_id').notNull(),
     attributes: jsonb('attributes').$type<Record<string, string>>().notNull().default({}),
+    // Quy tắc bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm phải có ảnh bảng kích cỡ mới đẩy được. Null là
+    // chưa biết (ghép trước #347, hoặc sàn không có quy tắc này): việc đẩy hỏi lại sàn.
+    sizeChartRule: text('size_chart_rule').$type<'required' | 'optional' | 'unsupported'>(),
     ...timestamps,
     ...version,
   },
-  (t) => [unique().on(t.companyId, t.platform, t.categoryId)],
+  (t) => [
+    unique().on(t.companyId, t.platform, t.categoryId),
+    check('category_maps_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
+  ],
 );
 
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);

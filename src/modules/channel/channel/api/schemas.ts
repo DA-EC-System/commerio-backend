@@ -263,6 +263,10 @@ export const CategoryMap = z
     platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalCategoryId: z.string(),
     attributes: z.record(z.string(), z.string()),
+    sizeChartRule: z
+      .enum(['required', 'optional', 'unsupported'])
+      .nullable()
+      .meta({ description: 'Bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm cần ảnh bảng kích cỡ mới đẩy được; null là chưa biết' }),
     version: z.number().int(),
     updatedAt: iso,
   })
@@ -294,6 +298,10 @@ const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).s
 const pendingMapping = z
   .object({
     variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
+    externalSkuId: z
+      .string()
+      .nullable()
+      .meta({ description: 'SKU sàn chờ ghép vào listing lỗi đẩy chưa có mã sàn (#346); null khi đổi ghép thường' }),
     requestedBy: z.object({ id: z.uuid(), name: z.string() }).strict(),
     requestedAt: iso,
   })
@@ -398,7 +406,7 @@ export const PushResult = z
     status: listingStatus.nullable().meta({ description: '`pushing` khi đã xếp việc; dòng bị chặn: trạng thái listing hiện có' }),
     code: z.string().nullable().meta({
       description:
-        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
+        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `mapping_pending` (listing lỗi đang chờ CEO duyệt ghép SKU sàn có sẵn), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
     }),
     message: z.string().nullable(),
   })

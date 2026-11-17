@@ -80,7 +80,10 @@ export const attributeValues = catalogSchema.table(
   ],
 );
 
-/** Sản phẩm; không đổi danh mục sau khi tạo (Documents/21 P6). Xoá là lưu trữ (`archived_at`). */
+/**
+ * Sản phẩm; không đổi danh mục sau khi tạo (Documents/21 P6). Không có trạng thái lưu riêng: trạng thái suy từ SKU con
+ * (#204). `code` là mã cha cấp lúc tạo, không route nào sửa (spec 204 D5).
+ */
 export const products = catalogSchema.table(
   'products',
   {
@@ -90,16 +93,17 @@ export const products = catalogSchema.table(
       .notNull()
       .references(() => categories.id),
     name: text('name').notNull(),
+    code: text('code').notNull(),
     description: text('description'),
-    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    // Ảnh bảng kích cỡ (#347): một ảnh mỗi sản phẩm, tệp ở module `files` như ảnh sản phẩm (không khoá ngoại sang `core`).
+    sizeChartFileId: uuid('size_chart_file_id'),
     ...timestamps,
     ...version,
   },
   (t) => [
-    // Tên chỉ không trùng giữa sản phẩm chưa lưu trữ: tên của sản phẩm đã lưu trữ dùng lại được (#12 B1).
-    uniqueIndex('products_company_lower_name_uq')
-      .on(t.companyId, sql`lower(${t.name})`)
-      .where(sql`${t.archivedAt} is null`),
+    // Tên không trùng trên mọi sản phẩm của công ty, kể cả sản phẩm mọi SKU đã lưu trữ (#204 D4, thay B1 của #12).
+    uniqueIndex('products_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('products_company_code_uq').on(t.companyId, t.code),
     index().on(t.categoryId),
   ],
 );

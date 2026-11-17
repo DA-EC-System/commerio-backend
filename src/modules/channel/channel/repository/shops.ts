@@ -1,6 +1,7 @@
 // Gian hàng (#103). Chạy trong `withCompany` của bên gọi, trừ `findLiveCompanyOf`.
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
+import { NO_PENDING } from '../domain/listing.ts';
 import type { ShopStatus } from '../domain/shop.ts';
 import { listings, shops } from './schema.ts';
 
@@ -167,10 +168,7 @@ export async function delistForDisconnect(
         status: 'delisted',
         hiddenBy: null,
         delistedByDisconnect: true,
-        pendingVariantId: null,
-        pendingMode: null,
-        pendingRequestedBy: null,
-        pendingRequestedAt: null,
+        ...NO_PENDING,
         version: sql`${listings.version} + 1`,
         updatedAt: sql`now()`,
       })

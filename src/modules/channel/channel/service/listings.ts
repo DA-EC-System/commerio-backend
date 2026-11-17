@@ -49,7 +49,7 @@ export interface ChannelListing {
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
   /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
-  pendingMapping: { variantId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
+  pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   version: number;
 }
 
@@ -108,6 +108,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
       r.pendingRequestedBy && r.pendingRequestedAt
         ? {
             variantId: r.pendingVariantId,
+            externalSkuId: r.pendingExternalSkuId,
             requestedBy: { id: r.pendingRequestedBy, name: names.get(r.pendingRequestedBy) ?? '' },
             requestedAt: r.pendingRequestedAt,
           }
@@ -195,7 +196,7 @@ const inProgress = (variantId: string, existing: ListingRow | undefined) =>
 /**
  * Xếp việc đẩy các biến thể lên gian hàng (Documents/21 §18.6.4). Kiểm cả request trước (gian hàng gọi được sàn, không
  * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `already_listed`, `sku_not_ready`, `price_missing`,
- * `category_unmapped`, `dimensions_missing`, `images_missing`. Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
+ * `category_unmapped`, `dimensions_missing`, `images_missing`, `size_chart_missing`. Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
  * ghi lịch sử, xếp việc; hai request đua cùng SKU thì dòng thua ra `push_in_progress` (unique của bảng, `version`).
  * Listing đã gỡ thì tạo bản ghi mới trỏ bản cũ (`replaces_listing_id`), chép mã sàn, SellerSku, ảnh của bản cũ: gỡ chỉ
  * tắt sản phẩm trên sàn nên đẩy lại là bật lại đúng sản phẩm đó.
@@ -217,7 +218,7 @@ export async function pushListings(
     throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
   }
   const ids = [...new Set(input.variantIds)];
-  const { variants, prices, maps, current, images } = await inCompany(async () => {
+  const { variants, prices, maps, current, images, sizeCharts } = await inCompany(async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
     const categoryIds = [...new Set([...variants.values()].map((v) => v.categoryId))];
     const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
@@ -227,6 +228,7 @@ export async function pushListings(
       maps: new Map((await listCategoryMaps(shop.platform, categoryIds)).map((m) => [m.categoryId, m])),
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
       images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
+      sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
     };
   });
   const results: PushResult[] = [];
@@ -241,17 +243,29 @@ export async function pushListings(
       results.push(inProgress(variantId, existing));
       continue;
     }
+    // CHECK `listings_pending_external`: SKU sàn chờ ghép chỉ nằm trên listing `push_failed` (#346).
+    if (existing?.pendingExternalSkuId) {
+      results.push(blocked(variantId, existing, 'mapping_pending', 'Listing đang chờ CEO duyệt ghép SKU sàn có sẵn; duyệt hoặc từ chối trước khi đẩy lại'));
+      continue;
+    }
     if (existing && LISTED.includes(existing.status)) {
       results.push(blocked(variantId, existing, 'already_listed', 'Đã có trên sàn: giá và tồn cập nhật bằng Đồng bộ'));
       continue;
     }
     const imageUrls = images.get(v.productId) ?? [];
-    const block = pushBlock(v, prices.get(v.id) ?? null, maps.get(v.categoryId), Boolean(existing?.externalImageUrls?.length || imageUrls.length));
+    const sizeChartUrl = sizeCharts.get(v.productId) ?? null;
+    const block = pushBlock(
+      v,
+      prices.get(v.id) ?? null,
+      maps.get(v.categoryId),
+      Boolean(existing?.externalImageUrls?.length || imageUrls.length),
+      Boolean(sizeChartUrl),
+    );
     if (block) {
       results.push(blocked(variantId, existing, block.code, block.message));
       continue;
     }
-    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls));
+    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl));
   }
   return { results };
 }
@@ -289,6 +303,7 @@ async function enqueue(
   sku: string,
   existing: ListingRow | undefined,
   imageUrls: string[],
+  sizeChartUrl: string | null,
 ): Promise<PushResult> {
   const pushStartedAt = new Date();
   try {
@@ -312,7 +327,7 @@ async function enqueue(
         });
         await recordTransition({ entityType: ENTITY, entityId: row.id, from: null, to: 'pushing', action: 'push', actorId: actor.accountId });
       }
-      await sendListingPush({ companyId: actor.companyId, shopId, listingId: row.id, imageUrls });
+      await sendListingPush({ companyId: actor.companyId, shopId, listingId: row.id, imageUrls, ...(sizeChartUrl && { sizeChartUrl }) });
       return row;
     });
     return { variantId, listingId: row.id, status: row.status, code: null, message: null };

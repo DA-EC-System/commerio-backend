@@ -25,7 +25,7 @@ export async function updateCategoryMap(
   platform: Platform,
   categoryId: string,
   version: number,
-  patch: Pick<CategoryMapRow, 'externalCategoryId' | 'attributes'>,
+  patch: Pick<CategoryMapRow, 'externalCategoryId' | 'attributes' | 'sizeChartRule'>,
 ): Promise<CategoryMapRow | undefined> {
   const [row] = await getDb()
     .update(categoryMaps)

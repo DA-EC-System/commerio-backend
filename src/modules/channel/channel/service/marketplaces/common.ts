@@ -64,6 +64,19 @@ export interface CategoryAttribute {
 }
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
+/** Mục đích ảnh khi đưa lên sàn. */
+export type ImagePurpose = 'main' | 'size_chart';
+
+/**
+ * Bảng kích cỡ của danh mục sàn: `required` bắt buộc (thiếu thì sàn từ chối), `optional` gửi được, `unsupported` danh mục
+ * không có bảng kích cỡ (không gửi).
+ */
+export type SizeChartRule = 'required' | 'optional' | 'unsupported';
+
+export interface CategoryRules {
+  sizeChart: SizeChartRule;
+}
+
 export interface NewProduct {
   externalCategoryId: string;
   attributes: Record<string, string>;
@@ -71,6 +84,8 @@ export interface NewProduct {
   description: string;
   /** Ảnh đã nằm trên sàn, đúng chuỗi `uploadImage` trả (Lazada URL, TikTok `uri`). */
   imageUrls: string[];
+  /** Ảnh bảng kích cỡ đã nằm trên sàn (`uploadImage(..., 'size_chart')`); bỏ trống là không gửi (#347). */
+  sizeChartUri?: string;
   sellerSku: string;
   price: string;
   quantity: number;
@@ -90,6 +105,23 @@ export interface CreatedProduct {
   externalSkuId: string;
   /** Sàn cho bán ngay (Lazada `item_status: Active`, gọi thật 28/10); false là chờ duyệt. */
   live: boolean;
+  /**
+   * Không tạo: sàn đã có SKU cùng SellerSku (lần đẩy trước tạo dù báo lỗi, #346). Bên gọi kiểm SKU đó chưa ghép listing khác
+   * rồi ghi nội dung của app lên (`updateProduct`).
+   */
+  existing?: true;
+}
+
+/**
+ * SKU chưa xoá trên sàn mang SellerSku này, cho `createProduct` không tạo trùng (#346). Nhiều SKU cùng SellerSku thì không
+ * chọn bừa: ném `rejected` `duplicate_seller_sku`, người dùng ghép tay SKU đúng.
+ */
+export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(skus: readonly T[], sellerSku: string): T | null {
+  const found = skus.filter((s) => s.sellerSku === sellerSku && s.state !== 'deleted');
+  if (found.length > 1) {
+    throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, ghép tay SKU đúng`);
+  }
+  return found[0] ?? null;
 }
 
 /**
@@ -417,11 +449,14 @@ export interface MarketplaceAdapter {
   readonly refreshKeepsAuthDeadline?: boolean;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
+  /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
+  categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**
    * Đưa ảnh từ URL công khai lên sàn, trả chuỗi định danh ảnh trên sàn để truyền lại vào `createProduct`
-   * (`NewProduct.imageUrls`): Lazada là URL, TikTok là `uri` của ảnh.
+   * (`NewProduct.imageUrls`): Lazada là URL, TikTok là `uri` của ảnh. `purpose` mặc định là ảnh sản phẩm; `size_chart` là
+   * ảnh bảng kích cỡ (TikTok `SIZE_CHART_IMAGE`, #347).
    */
-  uploadImage(accessToken: string, url: string): Promise<string>;
+  uploadImage(accessToken: string, url: string, purpose?: ImagePurpose): Promise<string>;
   createProduct(accessToken: string, product: NewProduct): Promise<CreatedProduct>;
   /**
    * Đẩy lại sản phẩm đã có trên sàn (#219: listing `push_failed`, `rejected`, `platform_hold`, hay dòng mới sau gỡ còn

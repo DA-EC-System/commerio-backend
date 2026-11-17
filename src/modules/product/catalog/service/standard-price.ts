@@ -1,11 +1,10 @@
 // Giá của SKU là cột của `product_variants` (Documents/19 D9: bỏ module con pricing): giá chuẩn `standard_price` và
 // giá muốn bán `target_net_price` (số muốn thực nhận, Documents/25 §6.2; channel đọc cho bộ lọc giá, #225).
 import { Decimal } from 'decimal.js';
-import type { ModuleContext } from '../../../../shared/module.ts';
 import { variantPrices } from '../repository/variants.ts';
+import type { CatalogContext } from './usage.ts';
 
-/** `ctx` mà router của catalog nhận. */
-export type CatalogContext = ModuleContext;
+export type { CatalogContext } from './usage.ts';
 
 type PriceColumn = 'standardPrice' | 'targetNetPrice';
 

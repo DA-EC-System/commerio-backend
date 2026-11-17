@@ -7,7 +7,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { api, auditOf, createCategory, productBody, uniq } from './helpers.ts';
+import { api, archiveSku, auditOf, createCategory, productBody, uniq } from './helpers.ts';
 
 // Ảnh sản phẩm ở catalog (#303; Documents/21 §5.2–5.4 P8, P10, V26). Kho tệp là bản giả: `setHeadObject` trả cỡ của
 // tệp đã "PUT"; ký URL tính trong máy. Link công khai theo `S3_PUBLIC_URL` của vitest.config.ts.
@@ -63,7 +63,14 @@ async function newProduct(imageFileIds: string[]) {
   const category = await createCategory(token, uniq('Ảnh'), 'A-{SEQ}');
   const res = await api(token).post('/products', productBody(uniq('SP ảnh'), category.id, [[]], { imageFileIds }));
   expect(res.status, JSON.stringify(res.body)).toBe(201);
-  return res.body as { id: string; name: string; version: number; images: Image[]; thumbnailUrl: string | null };
+  return res.body as {
+    id: string;
+    name: string;
+    version: number;
+    images: Image[];
+    thumbnailUrl: string | null;
+    variants: { id: string }[];
+  };
 }
 
 const put = (p: { id: string; name: string }, version: number, extra: object = {}) =>
@@ -123,14 +130,6 @@ describe('tạo, sửa sản phẩm có ảnh', () => {
     expect(res.body).toMatchObject({ images: [], thumbnailUrl: null });
     const updated = (await auditOf(p.id)).find((r) => r.action === 'update');
     expect(updated).toMatchObject({ before: { imageFileIds: [a.id] }, after: { imageFileIds: [] } });
-  });
-
-  it('lưu trữ ghi imageFileIds đang có vào nhật ký', async () => {
-    const [a] = [await image(token)];
-    const p = await newProduct([a.id]);
-    expect((await api(token).delete(`/products/${p.id}?version=${p.version}`)).status).toBe(204);
-    const deleted = (await auditOf(p.id)).find((r) => r.action === 'delete');
-    expect(deleted).toMatchObject({ before: { imageFileIds: [a.id] } });
   });
 });
 
@@ -193,13 +192,13 @@ describe('từ chối ảnh: không ghi gì', () => {
     expect((await api(token).get(`/products?search=${encodeURIComponent(name)}`)).body.total).toBe(0);
   });
 
-  it('sản phẩm đã lưu trữ: PUT kèm ảnh → 409 product_archived', async () => {
+  it('mọi SKU đã lưu trữ: PUT kèm ảnh vẫn được (#204, bỏ product_archived)', async () => {
     const [a, b] = [await image(token), await image(token)];
     const p = await newProduct([a.id]);
-    expect((await api(token).delete(`/products/${p.id}?version=${p.version}`)).status).toBe(204);
-    const res = await put(p, p.version + 1, { imageFileIds: [b.id] });
-    expect(res.status).toBe(409);
-    expect(res.body.type).toBe('/problems/product_archived');
+    await archiveSku(token, p.id, p.variants[0]!.id);
+    const res = await put(p, p.version, { imageFileIds: [b.id] });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(fileIdsOf(res.body.images)).toEqual([b.id]);
   });
 });
 

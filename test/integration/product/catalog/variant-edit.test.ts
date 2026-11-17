@@ -8,7 +8,7 @@ import { applyVariantUpdate } from '#src/modules/product/catalog/service/variant
 import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, uniq, valueId, archiveSku } from './helpers.ts';
 
 // Sửa một SKU: giá chuẩn, giá muốn bán, cân nặng, kích thước gói (#204, Documents/21 §17.1, §17.2).
 let companyId: string;
@@ -165,18 +165,10 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
       variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
     });
     const stopped = product.variants[0]!;
-    expect((await api(token).delete(`/products/${product.id}/variants/${stopped.id}`)).status).toBe(204);
-    const res = await patch(product.id, stopped.id, { version: 2, weightG: 250 });
+    await archiveSku(token, product.id, stopped.id);
+    const res = await patch(product.id, stopped.id, { version: 3, weightG: 250 });
     expect(res.status).toBe(200);
-    expect(res.body.variants.find((v: { id: string }) => v.id === stopped.id)).toMatchObject({ weightG: 250, version: 3 });
-  });
-
-  it('sản phẩm đã lưu trữ → 409 product_archived, kể cả khi version sai', async () => {
-    const product = await wallet();
-    expect((await api(token).delete(`/products/${product.id}?version=1`)).status).toBe(204);
-    const res = await patch(product.id, product.variants[0]!.id, { version: 99, weightG: 250 });
-    expect(res.status).toBe(409);
-    expect(res.body.type).toBe('/problems/product_archived');
+    expect(res.body.variants.find((v: { id: string }) => v.id === stopped.id)).toMatchObject({ weightG: 250, version: 4 });
   });
 
   it.each([

@@ -340,6 +340,21 @@ describe('uploadImage: chặn nguồn ảnh trước khi nối (tải thật qua
   });
 });
 
+describe('categoryRules: bảng kích cỡ (#347)', () => {
+  const rules = (data: unknown) => ({ 'GET /product/202309/categories/600042/rules': ok(data) });
+
+  it.each([
+    ['is_required true', { size_chart: { is_required: true, is_supported: true } }, 'required'],
+    ['được hỗ trợ, không bắt buộc', { size_chart: { is_required: false, is_supported: true } }, 'optional'],
+    ['không hỗ trợ', { size_chart: { is_required: false, is_supported: false } }, 'unsupported'],
+    ['sàn không trả khối size_chart', {}, 'optional'],
+  ])('%s → %s', async (_name, data, expected) => {
+    const san = fakeSan(rules(data));
+    expect(await san.methods().categoryRules!(TOKEN, '600042')).toEqual({ sizeChart: expected });
+    expect(san.calls[0]!.query.get('category_version')).toBe('v2');
+  });
+});
+
 describe('createProduct', () => {
   const product = {
     externalCategoryId: '600042',
@@ -384,6 +399,16 @@ describe('createProduct', () => {
     });
   });
 
+  it('có ảnh bảng kích cỡ thì gửi size_chart.image.uri (#347); không có thì không gửi khoá size_chart', async () => {
+    const withChart = fakeSan(routes(ok({ status: 'PENDING' })));
+    await withChart.methods().createProduct(TOKEN, { ...product, sizeChartUri: 'tos-alisg/size-chart' });
+    const sent = withChart.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body as Record<string, unknown>;
+    expect(sent.size_chart).toEqual({ image: { uri: 'tos-alisg/size-chart' } });
+    const without = fakeSan(routes(ok({ status: 'PENDING' })));
+    await without.methods().createProduct(TOKEN, product);
+    expect(without.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body).not.toHaveProperty('size_chart');
+  });
+
   it('live theo trạng thái đọc lại; đọc lỗi tạm thì coi như chờ duyệt; tồn 0 thì bỏ quantity', async () => {
     expect((await fakeSan(routes(ok({ status: 'ACTIVATE' }))).methods().createProduct(TOKEN, product)).live).toBe(true);
     const san = fakeSan(routes(json({}, 503)));
@@ -409,9 +434,22 @@ describe('createProduct', () => {
       rejectReason: null,
       quantity: 5,
     }));
-    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false });
+    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false, existing: true });
     expect(findSku).toHaveBeenCalledWith(TOKEN, 'CM-TEST-COC');
     expect(san.calls).toHaveLength(0);
+  });
+
+  it('#346: Search Products thấy nhiều SKU chưa xoá cùng seller_sku → ném `rejected` `duplicate_seller_sku`, không tạo', async () => {
+    const sku = (p: string, s: string) => ({ id: p, title: 't', status: 'ACTIVATE', skus: [{ id: s, seller_sku: 'CM-TEST-COC', inventory: [] }] });
+    const san = fakeSan({
+      ...routes(ok({ status: 'ACTIVATE' })),
+      'POST /product/202502/products/search': ok({ total_count: 2, products: [sku('P1', 'S1'), sku('P2', 'S2')] }),
+    });
+    await expect(createTiktokAdapter(config, san.fetchFn).createProduct(TOKEN, product)).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'duplicate_seller_sku',
+    });
+    expect(san.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /product/202502/products/search']);
   });
 
   it('adapter TikTok tra Search Products theo seller_sku trước khi tạo: đã có thì không tạo, chỉ có bản đã xoá thì tạo', async () => {
@@ -422,7 +460,7 @@ describe('createProduct', () => {
       return { san, adapter: createTiktokAdapter(config, san.fetchFn) };
     };
     const live = make('ACTIVATE');
-    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true });
+    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true, existing: true });
     expect(live.san.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /product/202502/products/search']);
     expect(live.san.calls[0]!.body).toEqual({ status: 'ALL', seller_skus: ['CM-TEST-COC'] });
     const deleted = make('DELETED');

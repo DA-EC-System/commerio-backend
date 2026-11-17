@@ -190,6 +190,16 @@ export async function findListingByExternalSku(shopId: string, externalSkuId: st
   return row;
 }
 
+/** Listing lỗi đẩy đang chờ CEO duyệt ghép SKU sàn này (#346). */
+export async function findListingByPendingExternalSku(shopId: string, externalSkuId: string): Promise<ListingRow | undefined> {
+  const [row] = await getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), eq(listings.pendingExternalSkuId, externalSkuId)))
+    .limit(1);
+  return row;
+}
+
 /** Listing chưa gỡ của gian hàng, mọi chế độ ghép (kể cả "không quản tồn", `variant_id` trống). */
 export async function liveListingRows(shopId: string): Promise<ListingRow[]> {
   return getDb()
