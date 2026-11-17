@@ -264,10 +264,16 @@ export const categoryMaps = channelSchema.table(
     categoryId: uuid('category_id').notNull(),
     externalCategoryId: text('external_category_id').notNull(),
     attributes: jsonb('attributes').$type<Record<string, string>>().notNull().default({}),
+    // Quy tắc bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm phải có ảnh bảng kích cỡ mới đẩy được. Null là
+    // chưa biết (ghép trước #347, hoặc sàn không có quy tắc này): việc đẩy hỏi lại sàn.
+    sizeChartRule: text('size_chart_rule').$type<'required' | 'optional' | 'unsupported'>(),
     ...timestamps,
     ...version,
   },
-  (t) => [unique().on(t.companyId, t.platform, t.categoryId)],
+  (t) => [
+    unique().on(t.companyId, t.platform, t.categoryId),
+    check('category_maps_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
+  ],
 );
 
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);

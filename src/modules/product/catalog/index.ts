@@ -26,6 +26,6 @@ export { standardPricesOf, targetNetPricesOf } from './service/standard-price.ts
 // `ctx` của catalog: nguồn lý do chặn lưu trữ SKU do `product/index.ts` và `src/wiring.ts` nối (#204).
 export type { ArchiveBlockerSource, CatalogContext } from './service/usage.ts';
 // Link ảnh sản phẩm cho channel (ảnh đại diện của listing, ảnh đẩy lên sàn; #303).
-export { productImageUrls } from './service/product-images.ts';
+export { productImageUrls, productSizeChartUrls } from './service/product-images.ts';
 // Hệ thống tự khôi phục SKU lưu trữ khi có hàng vào; inventory gọi trong `applyChange` (#204).
 export { restoreArchivedBySystem } from './service/business-status.ts';

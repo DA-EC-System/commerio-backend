@@ -91,6 +91,8 @@ export const products = catalogSchema.table(
       .references(() => categories.id),
     name: text('name').notNull(),
     description: text('description'),
+    // Ảnh bảng kích cỡ (#347): một ảnh mỗi sản phẩm, tệp ở module `files` như ảnh sản phẩm (không khoá ngoại sang `core`).
+    sizeChartFileId: uuid('size_chart_file_id'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     ...timestamps,
     ...version,
