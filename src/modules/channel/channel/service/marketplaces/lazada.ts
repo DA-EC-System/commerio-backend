@@ -277,7 +277,7 @@ interface OpenOrderCursor {
   inner: OrderCursor;
 }
 
-// Trạng thái món của Lazada (20 giá trị của GetOrders) → trạng thái kiện của app (#105 A3).
+// Trạng thái món của Lazada (giá trị của GetOrders, thêm `confirmed` gặp trên shop thử ở #358) → trạng thái kiện của app (#105 A3).
 const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
   unpaid: 'pending',
   pending: 'pending',
@@ -288,6 +288,10 @@ const LINE_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
   shipped: 'in_transit',
   shipping: 'in_transit',
   delivered: 'delivered',
+  // #358: tài liệu API không định nghĩa `confirmed`; trợ giúp người bán Lazada ghi đơn sang Confirmed khi khách bấm
+  // "Order Received" hoặc hết hạn bảo đảm, và đơn thật 530740223180318 ghi món `confirmed` 10 giây sau mốc `delivered`
+  // của hành trình. Nên tính như đã giao.
+  confirmed: 'delivered',
   failed_delivery: 'delivery_failed',
   failed: 'delivery_failed',
   shipped_back: 'returning',

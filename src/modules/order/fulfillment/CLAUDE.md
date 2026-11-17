@@ -8,7 +8,7 @@ Kiện (giữ hàng, đóng gói, bàn giao, giao, hoàn), hàng trả không kh
 
 Thất lạc (#238): `lose` (người dùng) chỉ từ sau bàn giao (`in_transit`, `delivery_failed`, `returning`, `self_delivering`), **không** từ `awaiting_pickup`; `lose_on_unload` (người dùng) từ `packed`, `awaiting_pickup`, guard `not_awaiting_open` khi kiện không có cờ `needs_open`. Cả hai `needsSecondPerson`, `allowSelfApproval`, `needsReason`. Mũi tên hệ thống: `platform_lost` (cùng tập `from` với `lose`), `platform_in_transit`, `platform_deliver` (`lost`, `returning` →, guard `status_from_platform` khi `record.statusSource` khác `user`). `arrowAction(from, to, { system: true })` trả mũi tên hệ thống trước (đường sàn), không truyền thì mũi tên khớp đầu tiên. `LOSABLE`/`canReportLost`: tập `from` của `lose` và `lose_on_unload`.
 
-Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts` (#105) trong giao dịch kéo đơn của channel: mỗi mã kiện sàn một kiện, trạng thái là món chậm nhất, sàn nhảy cóc trên đường chính thì áp thẳng (`platformUpdate`), không áp được thì cờ Cần xử lý.
+Kiện của đơn sàn lập và cập nhật ở `service/platform-packages.ts` (#105) trong giao dịch kéo đơn của channel: mỗi mã kiện sàn một kiện, trạng thái là món chậm nhất (luật hoà, #358: mọi món chỉ là `delivered` hoặc `returned`, có cả hai, thì kiện `delivered`, món `returned` là khách trả sau nhận, đi theo yêu cầu trả; hoà khác thì món đứng trước thắng), sàn nhảy cóc trên đường chính thì áp thẳng (`platformUpdate`), không áp được thì cờ Cần xử lý.
 
 ## Thất lạc (#238 PR 1)
 
