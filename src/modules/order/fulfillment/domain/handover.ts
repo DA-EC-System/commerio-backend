@@ -43,6 +43,8 @@ export interface PlanLine {
   quantity: number;
   reservedQty: number;
   stockDeducted: boolean;
+  /** Ghép "không quản tồn" (25 §8.1, #237): không giữ, không trừ tồn. Dòng `variant_id` null, `stock_untracked` false là chưa ghép. */
+  stockUntracked: boolean;
 }
 
 /**

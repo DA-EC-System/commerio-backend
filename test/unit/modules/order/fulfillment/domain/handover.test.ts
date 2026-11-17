@@ -51,7 +51,7 @@ describe('handoverStockMode: trừ, chỉ lưu hay hoãn theo mốc', () => {
 });
 
 describe('shipPlan: dòng nào trừ', () => {
-  const line = (p: Partial<PlanLine>): PlanLine => ({ id: 'l', variantId: 'v', quantity: 2, reservedQty: 2, stockDeducted: false, ...p });
+  const line = (p: Partial<PlanLine>): PlanLine => ({ id: 'l', variantId: 'v', quantity: 2, reservedQty: 2, stockDeducted: false, stockUntracked: false, ...p });
 
   it('bỏ dòng chưa ghép SKU và dòng đã trừ; chia dòng đã giữ và chưa giữ', () => {
     const held = line({ id: 'held' });

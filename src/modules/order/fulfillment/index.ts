@@ -24,6 +24,8 @@ export const fulfillmentModule: ModuleDefinition = {
 };
 
 export { getOrderCogs } from './service/cogs.ts';
+// Trạng thái ghép SKU của dòng (spec 237): biến thể / không quản tồn / chưa ghép.
+export { lineSkuOf, nothingToHold, type LineSku, type MappedSku } from './domain/remap.ts';
 export {
   arrowAction,
   holdsStock,

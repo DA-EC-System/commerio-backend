@@ -41,7 +41,7 @@ export async function insertPackage(input: {
 /** Chèn dòng kiện, trả id theo đúng thứ tự `lines`. */
 export async function insertPackageLines(
   packageId: string,
-  lines: readonly { orderLineId: string; variantId: string | null; quantity: number; reservedQty: number }[],
+  lines: readonly { orderLineId: string; variantId: string | null; quantity: number; reservedQty: number; stockUntracked?: boolean }[],
 ): Promise<string[]> {
   if (!lines.length) return [];
   const companyId = requireCompanyId('insertPackageLines');
@@ -176,6 +176,7 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
       quantity: packageLines.quantity,
       reservedQty: packageLines.reservedQty,
       stockDeducted: packageLines.stockDeducted,
+      stockUntracked: packageLines.stockUntracked,
       pendingDropQty: packageLines.pendingDropQty,
     })
     .from(packageLines)

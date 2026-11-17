@@ -70,6 +70,8 @@ export interface PlatformPackageLine {
    * nào chứa: bỏ qua, không lập kiện `cancelled` mới cho nó (spec 205 D18).
    */
   alreadyCancelled?: boolean;
+  /** Ghép "không quản tồn" (25 §8.1, #237): dòng không giữ, không trừ tồn; không có `variantId`. */
+  untracked?: boolean;
 }
 
 const SHIPPING_KEYS = ['shipmentProvider', 'shippingProviderType', 'shippingType', 'promisedShippingAt'] as const;
@@ -226,9 +228,11 @@ async function createPackage(
   lines: readonly PlatformPackageLine[],
   journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
 ): Promise<PackageRow> {
-  // Món chưa đóng gói, hoặc đã đóng gói nhưng chưa rời kho, thì giữ hàng; đủ ghép SKU mới gọi cổng tồn.
+  // Món chưa đóng gói, hoặc đã đóng gói nhưng chưa rời kho, thì giữ hàng; đủ ghép SKU (hoặc "không quản tồn") mới qua
+  // cổng tồn (spec 237).
   const wantsStock = status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
-  const mapped = lines.every((l) => l.variantId);
+  const mapped = lines.every((l) => l.variantId || l.untracked);
+  const variantLines = stockLines(lines);
   // Cách xử lý tồn tính trước khi chèn: kiện lần đầu thấy đã hoàn về của đơn đặt trước mốc vào thẳng `returned` (D9).
   const mode = handoverStockMode({ firstSeen: true, placedAt: order.placedAt, orderCutoffAt: order.orderCutoffAt, awaitingStocktake: !order.holdStock });
   const initial: PackageStatus =
@@ -247,15 +251,29 @@ async function createPackage(
     // Kiện lần đầu thấy đã mất: nguồn sàn (CHECK `packages_lost_confirmed`, spec #238 §5.4).
     ...(initial === 'lost' ? { lostSource: 'marketplace' as const } : {}),
   });
-  const { reserved, notices } = wantsStock && mapped && order.holdStock ? await tryReserve(id, lines) : { reserved: false, notices: [] };
+  // Kiện chỉ toàn dòng không quản tồn (chưa có dòng biến thể): coi như giữ được, không qua cổng tồn, kể cả
+  // `holdStock` false (spec 237 D10). Có dòng biến thể thì giữ như cũ qua cổng tồn.
+  const untrackedOnly = wantsStock && mapped && variantLines.length === 0;
+  const { reserved, notices } = untrackedOnly
+    ? { reserved: true, notices: [] }
+    : wantsStock && mapped && order.holdStock
+      ? await tryReserve(id, lines)
+      : { reserved: false, notices: [] };
   if (notices.length) await updatePackage(id, { notices });
   const to: PackageStatus = initial === 'backordered' && reserved ? 'reserved' : initial;
-  const rows = lines.map((l) => ({ orderLineId: l.orderLineId, variantId: l.variantId, quantity: l.quantity, reservedQty: reserved ? l.quantity : 0 }));
+  const rows = lines.map((l) => ({
+    orderLineId: l.orderLineId,
+    variantId: l.variantId,
+    quantity: l.quantity,
+    reservedQty: reserved && l.variantId ? l.quantity : 0,
+    stockUntracked: !l.variantId && !!l.untracked,
+  }));
   const lineIds = await insertPackageLines(id, rows);
   if (to !== initial || reserved) await updatePackage(id, { ...(to !== initial && { status: to }), ...(reserved && { reservedAt: sql`now()` }) });
   // Kiện mới giữ hàng làm số có thể bán giảm: báo channel đẩy tồn (spec 199b D4), không chạy lượt phân hàng.
-  if (reserved) {
-    const variantIds = [...new Set(stockLines(lines).map((l) => l.variantId))].sort();
+  // Chỉ khi có dòng biến thể (dòng không quản tồn không giữ, không trừ — spec 237 D10).
+  if (reserved && variantLines.length) {
+    const variantIds = [...new Set(variantLines.map((l) => l.variantId))].sort();
     await publishEvent({ type: 'fulfillment.allocation_done', aggregateId: requireCompanyId('createPackage'), payload: { variantIds } });
   }
   if (status === 'return_failed') await updatePackage(id, { needsAttention: true, flagNote: 'Sàn báo hoàn hàng thất bại' });
