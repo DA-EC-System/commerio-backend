@@ -22,6 +22,7 @@ import {
   recordManualReadFailure,
   upsertRemoteSkus,
 } from '../repository/remote-skus.ts';
+import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { onMarketplace, shopSession } from './shops.ts';
@@ -93,7 +94,7 @@ export async function refreshRemoteSkusNow(companyId: string, shopId: string, op
       try {
         await readFull(companyId, shopId);
       } catch (err) {
-        await withCompany(companyId, () => recordManualReadFailure(shopId));
+        await withCompany(companyId, () => recordManualReadFailure(shopId, fullErrorOf(err)));
         throw err;
       }
     },
@@ -121,7 +122,7 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
         try {
           return await readFull(companyId, shopId);
         } catch (err) {
-          await withCompany(companyId, () => recordFullReadFailure(shopId));
+          await withCompany(companyId, () => recordFullReadFailure(shopId, fullErrorOf(err)));
           throw err;
         }
       }
@@ -143,6 +144,18 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
       'Không làm mới được bản sao SKU sàn',
     );
   }
+}
+
+/**
+ * Lỗi của lần đọc trọn để lưu ở `shops.remote_skus_full_error` (#361): mã app, mã sàn, câu của BE. Không chép câu thô của
+ * sàn hay lỗi không rõ (có thể mang URL ký, token).
+ */
+export function fullErrorOf(err: unknown): RemoteSkusFullError {
+  if (err instanceof AppError) {
+    const platformCode = err.extensions?.platformCode;
+    return { code: err.code, platformCode: typeof platformCode === 'string' ? platformCode : null, message: err.message };
+  }
+  return { code: 'internal_error', platformCode: null, message: 'Lỗi không rõ khi tải danh sách SKU trên sàn' };
 }
 
 async function readFull(companyId: string, shopId: string): Promise<void> {
