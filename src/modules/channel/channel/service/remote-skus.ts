@@ -78,14 +78,16 @@ export async function saveFullSnapshot(shopId: string, skus: readonly RemoteSku[
 /**
  * Xếp lượt Tải lại chạy nền (#361; Documents/21 §18.3): đánh dấu lượt chờ và xếp `channel.remote_skus_refresh` cùng giao
  * dịch của bên gọi (gọi trong `withCompany`; rollback thì không còn việc). Gian hàng không gọi được sàn (ngắt, mất token):
- * 409 `shop_not_connected`, không xếp. Đã có việc chờ cùng gian hàng thì pg-boss không thêm (`stately`).
+ * 409 `shop_not_connected`, không xếp. Đã có việc chờ cùng gian hàng thì pg-boss không thêm (`stately`). Trả lúc đánh dấu.
  */
-export async function requestRemoteSkusRefresh(shop: ShopRow): Promise<void> {
+export async function requestRemoteSkusRefresh(shop: ShopRow): Promise<Date> {
   if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
     throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
   }
-  await markRefreshRequested(shop.id, new Date());
+  const at = new Date();
+  await markRefreshRequested(shop.id, at);
   await sendRemoteSkusRefresh(shop.companyId, shop.id);
+  return at;
 }
 
 /**
@@ -114,14 +116,9 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
       // Đọc trọn đang chờ mốc thử lại: vẫn đọc theo giờ sửa nếu đã có bản sao.
       if (synced === undefined || !since) return;
       if (Date.now() - since.getTime() < CHANGED_EVERY_MS) return;
-      const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
-      if (!adapter.listSkusChanged) return readFull(companyId, shopId);
-      const startedAt = new Date();
-      const changed = await onMarketplace(() => adapter.listSkusChanged!(accessToken, new Date(since.getTime() - CHANGED_LAG_MS)));
-      await withCompany(companyId, async () => {
-        await upsertRemoteSkus(shopId, changed, startedAt);
-        await markRemoteSkus(shopId, { changedSince: startedAt });
-      });
+      const session = await withCompany(companyId, () => shopSession(shopId));
+      if (!session.adapter.listSkusChanged) return readFull(companyId, shopId, session);
+      await readChanged(companyId, shop, session);
     });
   } catch (err) {
     logger.warn(
@@ -148,8 +145,8 @@ const FINAL_CODES = new Set(['marketplace_unauthorized', 'marketplace_unsupporte
 const FINAL_PLATFORM_CODES = new Set(['daily_call_limit', 'company_call_limit']);
 const retryable = (err: unknown): boolean => {
   if (!(err instanceof AppError)) return true;
-  const platformCode = err.extensions?.platformCode;
-  return !FINAL_CODES.has(err.code) && !(typeof platformCode === 'string' && FINAL_PLATFORM_CODES.has(platformCode));
+  const { code, platformCode } = fullErrorOf(err);
+  return !FINAL_CODES.has(code) && !(platformCode && FINAL_PLATFORM_CODES.has(platformCode));
 };
 
 /** Chờ lượt làm mới khác của cùng gian hàng trong việc nền Tải lại; hết hạn thì ném để pg-boss chạy lại. */

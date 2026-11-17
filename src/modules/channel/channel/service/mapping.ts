@@ -23,7 +23,7 @@ import {
 } from '../repository/listings.ts';
 import { hasOrdersWithSellerSku } from '../repository/raw-orders.ts';
 import { findRemoteSkuRow, listRemoteSkuRows, type RemoteSkuRow } from '../repository/remote-skus.ts';
-import { findShopRow, lockShopRow } from '../repository/shops.ts';
+import { lockShopRow } from '../repository/shops.ts';
 import { REFRESH_COOLDOWN_MS, RemoteSkusRetryLater, requestRemoteSkusRefresh } from './remote-skus.ts';
 import { type RefreshState, refreshState } from '../domain/remote-skus-refresh.ts';
 import { NO_PENDING } from '../domain/listing.ts';
@@ -73,15 +73,16 @@ export async function remoteSkus(
     const now = new Date();
     const state = refreshState(shop, now);
     let accepted = false;
+    let requestedAt: Date | undefined;
     if (refresh) {
       const synced = shop.remoteSkusSyncedAt?.getTime();
       if (synced === undefined || now.getTime() - synced >= REFRESH_COOLDOWN_MS) {
         if (state.status === 'failed' && state.retryAfterSeconds !== null) throw new RemoteSkusRetryLater(state.retryAfterSeconds);
-        if (state.status !== 'running') await requestRemoteSkusRefresh(shop);
+        if (state.status !== 'running') requestedAt = await requestRemoteSkusRefresh(shop);
         accepted = true;
       }
     } else if (!shop.remoteSkusSyncedAt && state.status === 'idle') {
-      await requestRemoteSkusRefresh(shop);
+      requestedAt = await requestRemoteSkusRefresh(shop);
     }
     const remote = await listRemoteSkuRows(shop.id);
     const rows = await liveListingRows(shop.id);
@@ -106,11 +107,11 @@ export async function remoteSkus(
         pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
       };
     });
-    const row = (await findShopRow(shop.id)) ?? shop;
     return {
       items: unmatched ? items.filter((i) => i.mode === null) : items,
-      syncedAt: row.remoteSkusSyncedAt,
-      refresh: refreshState(row, new Date()),
+      syncedAt: shop.remoteSkusSyncedAt,
+      // Chỉ lượt vừa xếp đổi trạng thái so với dòng đã đọc: không đọc lại `shops` (FE hỏi lại GET liên tục).
+      refresh: requestedAt ? refreshState({ ...shop, remoteSkusRefreshRequestedAt: requestedAt }, now) : state,
       accepted,
     };
   });

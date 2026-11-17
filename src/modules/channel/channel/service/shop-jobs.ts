@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { defineQueue, JobDataSchema, scheduleForShop, sendJob, unscheduleForShop } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
+import { REFRESH_STALE_MS } from '../domain/remote-skus-refresh.ts';
 import { findActiveShopsAnyCompany, findShopRow } from '../repository/shops.ts';
 
 /** Số ảnh tối đa của một sản phẩm khi đẩy: 8 ảnh catalog đầu (Lazada nhận tối đa 8 ảnh mỗi `Image`; #303). */
@@ -59,7 +60,7 @@ export const remoteSkusRefreshQueue = defineQueue('channel.remote_skus_refresh',
   policy: 'stately',
   attempts: 2,
   retryDelaySeconds: 30,
-  expireInSeconds: 900,
+  expireInSeconds: REFRESH_STALE_MS / 1000,
 });
 
 const LISTING_SYNC_CRON = '*/15 * * * *';
