@@ -278,7 +278,7 @@ async function hideProducts(
  */
 async function holdChangedPrices(
   inCompany: InCompany,
-  { shop, adapter, accessToken }: Session,
+  { adapter, accessToken }: Session,
   rows: ListingRow[],
   bySku: Map<string, RemoteSku>,
   summary: SyncSummary,
