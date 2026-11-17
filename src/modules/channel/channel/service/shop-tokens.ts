@@ -6,7 +6,7 @@ import { decryptBytes, encryptBytes } from '../../../../shared/crypto/aes-gcm.ts
 import { outsideTransaction, requireCompanyId, withCompany, withSessionLock } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { authDeadline, authLapsed, shopMachine } from '../domain/shop.ts';
-import { findShopRow, saveRefreshedTokens, type ShopRow, updateShop } from '../repository/shops.ts';
+import { findShopRow, lockShopRow, saveRefreshedTokens, type ShopRow, updateShop } from '../repository/shops.ts';
 import { DEFAULT_REFRESH_LEAD_MS, refreshBefore } from './marketplaces/common.ts';
 import { appOnly, forCompany, getAdapter, type MarketplaceAdapter, MarketplaceError, type TokenSet } from './marketplaces/index.ts';
 import { queueDueReauthMail } from './reauth-mail.ts';
@@ -42,7 +42,8 @@ export function decryptAccessToken(row: ShopRow): string | null {
  */
 export async function markNeedsReauth(shopId: string, reason: string): Promise<void> {
   requireCompanyId('markNeedsReauth');
-  const row = await findShopRow(shopId);
+  // Khoá dòng: thao tác khác tăng `version` chen giữa (vd sửa hạn trả, #362) không làm lệnh dưới trượt im lặng.
+  const row = await lockShopRow(shopId);
   if (row?.status !== 'connecting' && row?.status !== 'active') return;
   const { to } = assertTransition(shopMachine, row.status, 'lose_auth', { actor: null });
   const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason, ordersPulledOkAt: null });

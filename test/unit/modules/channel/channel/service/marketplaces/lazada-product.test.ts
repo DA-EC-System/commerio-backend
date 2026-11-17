@@ -243,6 +243,35 @@ describe('adapter Lazada: sản phẩm', () => {
     expect(JSON.parse(sent(fn).query.sku_seller_list ?? '')).toEqual(['A', 'B', 'C', 'D']);
   });
 
+  it('#360: sản phẩm Active mà một SKU Status inactive → SKU đó inactive; Status deleted → deleted; phân loại khác vẫn live', async () => {
+    const fn = fakeFetch({
+      code: '0',
+      data: {
+        products: [
+          {
+            item_id: '7',
+            status: 'Active',
+            attributes: { name: 'SP nhiều phân loại' },
+            skus: [
+              { SkuId: 71, SellerSku: 'DO', quantity: 1, Status: 'active' },
+              { SkuId: 72, SellerSku: 'XANH', quantity: 1, Status: 'inactive' },
+              { SkuId: 73, SellerSku: 'VANG', quantity: 1, Status: 'deleted' },
+            ],
+          },
+          // Sản phẩm đang duyệt: trạng thái sản phẩm thắng (SKU chưa bán được dù Status active).
+          { item_id: '8', status: 'Pending QC', attributes: { name: 'SP mới' }, skus: [{ SkuId: 81, SellerSku: 'MOI', quantity: 1, Status: 'inactive' }] },
+        ],
+      },
+    });
+    const skus = await createLazadaAdapter(config, fn).getSkus('t', ['DO', 'XANH', 'VANG', 'MOI']);
+    expect(skus.map((s) => [s.sellerSku, s.state])).toEqual([
+      ['DO', 'live'],
+      ['XANH', 'inactive'],
+      ['VANG', 'deleted'],
+      ['MOI', 'review'],
+    ]);
+  });
+
   it('đổi giá và tồn: chia lô 20, gửi ItemId và SkuId', async () => {
     const items = Array.from({ length: 21 }, (_, i) => ({
       externalProductId: `I${i}`,
@@ -306,6 +335,25 @@ describe('adapter Lazada: sản phẩm', () => {
     expect(sent(fn).body.apiRequestBody).toBe(
       '<Request><Product><ItemId>234</ItemId><Skus><SkuId>2069</SkuId></Skus></Product></Request>',
     );
+  });
+
+  it('C2-14 (#224): bật lại SKU bằng /product/update Status active, gửi kèm thuộc tính giao hàng đang có, không gửi nội dung', async () => {
+    const fn = fakeFetch(
+      { code: '0', data: { attributes: { name: 'Áo', delivery_option_standard: 'No', Delivery_Option_Instant: 'Yes' } } },
+      { code: '0', data: {} },
+    );
+    await createLazadaAdapter(config, fn).activate!('t', '234', '2069');
+    expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/item/get', query: { item_id: '234' } });
+    expect(sent(fn, 1)).toMatchObject({ path: '/rest/product/update', method: 'POST' });
+    expect(JSON.parse(sent(fn, 1).body.payload ?? '')).toEqual({
+      Request: {
+        Product: {
+          ItemId: '234',
+          Attributes: { delivery_option_standard: 'No', Delivery_Option_Instant: 'Yes' },
+          Skus: { Sku: [{ SkuId: '2069', Status: 'active' }] },
+        },
+      },
+    });
   });
 });
 

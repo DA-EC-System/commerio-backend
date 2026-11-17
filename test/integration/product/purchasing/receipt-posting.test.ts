@@ -78,7 +78,16 @@ describe('ghi sổ phiếu nhận', () => {
       { variant_id: v, quantity: 2, unit_cost: '100000.00' },
     ]);
     expect(await rows("select payload from core.outbox_messages where type = 'purchasing.goods_receipt_posted' and key = $1", [r.id])).toEqual([
-      { payload: { receiptId: r.id, requestId: req.id, lines: [{ variantId: v, accepted: 55, defective: 2 }] } },
+      {
+        payload: {
+          receiptId: r.id,
+          requestId: req.id,
+          supplierId: A.supplierId,
+          postedAt: posted.postedAt,
+          replacement: false,
+          lines: [{ variantId: v, accepted: 55, defective: 2, unitPrice: '100000.00' }],
+        },
+      },
     ]);
     expect(await rows("select count(*)::int as n from core.outbox_messages where type = 'inventory.stock_changed' and key = $1", [v])).toEqual([
       { n: 1 },

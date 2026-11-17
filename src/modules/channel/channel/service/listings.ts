@@ -1,15 +1,27 @@
 // Listing: danh sách, đẩy lên sàn, gỡ (#104; Documents/21 §18.3, §18.4, §18.6.4). Đẩy chạy nền (#219): request chỉ
 // kiểm, chuyển `pushing` và xếp việc `channel.listing_push` (`listing-push.ts`) trong cùng giao dịch, trả ngay.
-import { assertTransition, findAccountSummaries, recordTransition } from '../../../core/index.ts';
+import { assertTransition, findAccountSummaries, recordTransition, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
+import { isUuid } from '../../../../shared/uuid.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { DELISTED_REASON, type ListingAction, type ListingStatus, listingMachine, NO_PENDING, pendingOnly } from '../domain/listing.ts';
+import {
+  DELISTED_REASON,
+  type ListingAction,
+  type ListingStatus,
+  listingMachine,
+  NO_OUTSIDE_CHANGE,
+  NO_PENDING,
+  NO_REVISION,
+  pendingOnly,
+  REVISION_KEPT,
+} from '../domain/listing.ts';
 import { awaitingAllocation } from '../domain/shop.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import {
   currentListingRows,
   deleteListing,
+  findListingById,
   findListingRow,
   insertListing,
   type ListingPatch,
@@ -20,11 +32,12 @@ import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
 import { type ListingPrice, listingPrices } from './listing-prices.ts';
-import { pushBlock } from './push-block.ts';
+import { listingText, pushBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
+import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 
-const ENTITY = 'listings';
+export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
 /** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
@@ -49,8 +62,12 @@ export interface ChannelListing {
   qcAlert: null;
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
+  /** Sàn đổi listing ngoài app, chờ CEO quyết (#360, 21 §18.3). */
+  outsideChange: { kind: NonNullable<ListingRow['outsideChangeKind']>; platformPrice: number | null; detectedAt: Date } | null;
   /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
   pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
+  /** Bản sửa nội dung chờ sàn duyệt (§18.3, #293). */
+  pendingRevision: { status: 'auditing' | 'failed'; rejectReason: string | null; at: Date } | null;
   version: number;
 }
 
@@ -103,6 +120,14 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
+    outsideChange:
+      r.outsideChangeKind && r.outsideChangeAt
+        ? {
+            kind: r.outsideChangeKind,
+            platformPrice: r.outsideChangePrice === null ? null : Number(r.outsideChangePrice),
+            detectedAt: r.outsideChangeAt,
+          }
+        : null,
     pendingMapping:
       r.pendingRequestedBy && r.pendingRequestedAt
         ? {
@@ -112,6 +137,8 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
             requestedAt: r.pendingRequestedAt,
           }
         : null,
+    pendingRevision:
+      r.revisionStatus && r.revisionAt ? { status: r.revisionStatus, rejectReason: r.revisionRejectReason, at: r.revisionAt } : null,
     version: r.version,
   };
 }
@@ -168,7 +195,8 @@ export async function moveListing(
   const updated = await updateListing(
     row.id,
     { version: row.version, status: row.status },
-    { ...patch, ...(dropPending && NO_PENDING), status: to },
+    // Bản sửa nội dung chỉ còn ở trạng thái sàn vẫn duyệt nó (#293, CHECK `listings_revision`).
+    { ...(to !== 'hidden' && NO_OUTSIDE_CHANGE), ...patch, ...(dropPending && NO_PENDING), ...(!REVISION_KEPT.includes(to) && NO_REVISION), status: to },
   );
   if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });
@@ -359,4 +387,56 @@ export async function delistListing(actor: Actor, shopId: string, variantId: str
     moveListing(row, 'delist', actor, { hiddenBy: null, platformStock: 0 }),
   );
   return toListing(updated, await withCompany(actor.companyId, () => requesterNames([updated])));
+}
+
+/**
+ * `update_content` (§18.3, #293): đưa tên, mô tả, thuộc tính của catalog lên sản phẩm đang bán. Gọi sàn ngoài giao dịch;
+ * sàn nhận rồi mới ghi, đọc lại dòng (đồng bộ tồn tăng `version` liên tục): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa
+ * `auditing`, sàn ngừng bán để duyệt thì hệ thống chuyển tiếp `request_review`.
+ */
+export async function updateListingContent(
+  port: ProductPort,
+  actor: Actor,
+  shopId: string,
+  listingId: string,
+  version: number,
+): Promise<ChannelListing> {
+  const { shop, adapter, accessToken, row, productId, v, map, responsible } = await withCompany(actor.companyId, async () => {
+    const session = await shopSession(shopId);
+    const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
+    if (!row || row.shopId !== session.shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
+    if (row.version !== version) {
+      throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', { current: toListing(row) });
+    }
+    assertTransition(listingMachine, row.status, 'update_content', { actor, view: toListing(row) });
+    if (!row.variantId || !row.externalProductId) {
+      throw new AppError(409, 'listing_unmanaged', 'Listing không gắn sản phẩm Commerio, không có nội dung để đưa lên');
+    }
+    const [v] = await port.variants([row.variantId]);
+    if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
+    const [map] = await listCategoryMaps(session.shop.platform, [v.categoryId]);
+    if (!map) throw new AppError(409, 'category_unmapped', 'Danh mục chưa ghép với danh mục của sàn');
+    return { ...session, row, productId: row.externalProductId, v, map, responsible: await responsibleOrgOf(session.shop.companyId) };
+  });
+  const update = adapter.updateContent;
+  if (!update) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ sửa nội dung sản phẩm đang bán');
+  const { underReview } = await onMarketplace(async () => {
+    try {
+      return await update(accessToken, productId, { externalCategoryId: map.externalCategoryId, ...listingText(v), attributes: map.attributes, responsible });
+    } catch (err) {
+      // Sản phẩm sàn nhiều SKU: mã riêng của route (§18.5), không phải lỗi chung của sàn.
+      if (err instanceof MarketplaceError && err.platformCode === 'shared_remote_product') {
+        throw new AppError(409, 'shared_remote_product', err.platformMessage ?? 'Sản phẩm trên sàn có nhiều SKU');
+      }
+      throw err;
+    }
+  });
+  return withCompany(actor.companyId, async () => {
+    const fresh = await findListingById(row.id);
+    if (!fresh || fresh.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
+    const revision = underReview ? {} : { revisionStatus: 'auditing' as const, revisionRejectReason: null, revisionAt: new Date() };
+    let updated = await moveListing(fresh, 'update_content', actor, revision);
+    if (underReview) updated = await moveListing(updated, 'request_review', null);
+    return toListing(updated, await requesterNames([updated]));
+  });
 }

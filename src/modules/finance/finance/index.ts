@@ -27,6 +27,7 @@ export {
   recordReturnInspected,
   recordReturnRefunded,
   recordSupplierReturnRefunded,
+  recordGoodsReceiptPosted,
   type ReturnInspected,
   type ReturnRefunded,
   type SupplierReturnRefunded,

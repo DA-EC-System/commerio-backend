@@ -29,7 +29,9 @@ export const RunBody = z
 
 export const BankMatchingQuery = z.object({
   ...paging,
-  kind: z.enum(['withdrawal', 'supplier_refund', 'lost_compensation'], 'Loại là withdrawal, supplier_refund hoặc lost_compensation').optional(),
+  kind: z
+    .enum(['withdrawal', 'supplier_refund', 'supplier_payment', 'lost_compensation'], 'Loại là withdrawal, supplier_refund, supplier_payment hoặc lost_compensation')
+    .optional(),
   matched: z
     .enum(['true', 'false'], 'matched là true hoặc false')
     .transform((v) => v === 'true')

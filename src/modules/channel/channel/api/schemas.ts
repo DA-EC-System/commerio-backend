@@ -95,7 +95,7 @@ export const Shop = z
       .nullable()
       .meta({
         description:
-          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). `rejected`, `cancelled` giữ nguyên tới khi lập lại phiếu (18.6.11). Phiếu ghi sổ thì BE đặt `openingStocktake = null`, đổi `orderCutoffAt`, chạy lại lượt kéo đơn còn mở, rồi chờ phân hàng; nhận `fulfillment.allocation_done` có `cause` trùng phiếu mới bật cập nhật tồn (18.6.11)',
+          'Phiếu kiểm kê đầu kỳ đang chờ ghi sổ. Khác null: gian hàng `active` ở chế độ chờ kiểm kê lần đầu, không đẩy tồn, không giữ hàng, đẩy listing 409 `shop_awaiting_stocktake` (21 §18.6.2). `rejected`, `cancelled` giữ nguyên tới khi lập lại phiếu (18.6.11); phiếu không còn đọc được thì báo `cancelled`. Phiếu ghi sổ thì BE đặt `openingStocktake = null`, đổi `orderCutoffAt`, chạy lại lượt kéo đơn còn mở, rồi chờ phân hàng; nhận `fulfillment.allocation_done` có `cause` trùng phiếu mới bật cập nhật tồn (18.6.11)',
       }),
     setup: z
       .object({
@@ -252,7 +252,19 @@ export const PlatformCategoryList = z
 
 export const CategoryAttributeList = z
   .object({
-    items: z.array(z.object({ name: z.string(), label: z.string(), options: z.array(z.string()) }).strict()),
+    items: z.array(
+      z
+        .object({
+          name: z.string(),
+          label: z.string(),
+          options: z.array(z.string()),
+          defaultValue: z
+            .string()
+            .nullable()
+            .meta({ description: 'Giá trị điền từ hồ sơ công ty khi để trống (TikTok 101489, 101490; #292); null là phải nhập' }),
+        })
+        .strict(),
+    ),
   })
   .strict()
   .meta({ id: 'CategoryAttributeList', description: 'Thuộc tính bắt buộc cấp sản phẩm; `options` rỗng là nhập tự do' });
@@ -290,10 +302,23 @@ export const PushBody = z
   .meta({ id: 'ListingPushInput' });
 
 export const DelistBody = z.object({ version: z.number('Thiếu version').int().positive() }).meta({ id: 'ListingDelistInput' });
+export const UpdateContentParams = z.object({ id: z.string(), listingId: z.string() });
+export const UpdateContentBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingUpdateContentInput' });
 
 const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
+
+const pendingRevision = z
+  .object({ status: z.enum(['auditing', 'failed']), rejectReason: z.string().nullable(), at: iso })
+  .strict()
+  .nullable()
+  .meta({
+    description:
+      'Bản sửa nội dung chờ sàn duyệt trong lúc listing vẫn bán (21 §18.3, #293); `failed` kèm lý do sàn ghi. Null khi không có',
+  });
 
 const pendingMapping = z
   .object({
@@ -319,7 +344,7 @@ export const ChannelListing = z
     rejectReason: z.string().nullable(),
     pushError: syncError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
@@ -331,7 +356,15 @@ export const ChannelListing = z
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
+    outsideChange: z
+      .object({ kind: z.enum(['disabled', 'price_changed']), platformPrice: z.number().int().nullable(), detectedAt: iso })
+      .nullable()
+      .meta({
+        description:
+          'Sàn đổi listing ngoài app, listing dừng bán chờ CEO quyết (21 §18.3, #360). `platformPrice`: giá gốc đọc trên sàn khi `kind = price_changed`',
+      }),
     pendingMapping,
+    pendingRevision,
     version: z.number().int(),
   })
   .strict()
@@ -362,6 +395,24 @@ export const RemoteSkuList = z
       .datetime({ offset: true })
       .nullable()
       .meta({ description: 'Lần đọc trọn danh sách SKU của gian hàng gần nhất (bản sao BE lưu); null khi sàn chưa đọc được lần nào' }),
+    refresh: z
+      .object({
+        status: z.enum(['idle', 'running', 'failed']).meta({
+          description: '`running`: lượt tải nền đang chờ hoặc chạy (FE hỏi lại `GET` tới khi khác `running`); `failed`: lần đọc trọn lỗi gần nhất chưa quá 10 phút, hoặc lượt tải quá 15 phút chưa xong (`refresh_stale`)',
+        }),
+        requestedAt: z.iso.datetime({ offset: true }).nullable().meta({ description: 'Lúc xếp lượt tải đang chờ hoặc chạy; null khi không có' }),
+        error: z
+          .object({
+            code: z.string().meta({ description: 'Mã lỗi app, vd `marketplace_rejected`, `marketplace_unavailable`, `shop_not_connected`, `refresh_stale`' }),
+            platformCode: z.string().nullable().meta({ description: 'Mã của sàn, vd `incomplete_list`, `too_many_calls`, `daily_call_limit`' }),
+            message: z.string(),
+          })
+          .strict()
+          .nullable(),
+        retryAfterSeconds: z.number().int().nullable().meta({ description: 'Số giây còn phải chờ trước khi Tải lại (lỗi đọc trọn); null khi bấm được ngay' }),
+      })
+      .strict()
+      .meta({ id: 'RemoteSkuRefresh', description: 'Lượt Tải lại chạy nền (#361)' }),
   })
   .strict()
   .meta({ id: 'RemoteSkuList' });
@@ -374,6 +425,16 @@ export const MatchBody = z
   .meta({ id: 'ListingMatchInput' });
 
 export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
+
+export const OutsideChangeParams = z.object({
+  id: z.string(),
+  listingId: z.string(),
+  action: z.enum(['restore', 'accept-price']),
+});
+
+export const OutsideChangeBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingOutsideChangeDecisionInput' });
 
 export const MappingBody = z
   .object({
@@ -457,7 +518,7 @@ export const SetupBody = z
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
-        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`; sàn `platform_status` bỏ qua và lưu null. Chưa bắt buộc tới khi FE gửi (21 §18.6.2)',
+        'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`, bắt buộc với sàn này: thiếu hoặc `null` thì 422 (#362). Sàn `platform_status` bỏ qua và lưu null (21 §18.6.2)',
     }),
   })
   .meta({ id: 'ShopSetupInput' });
@@ -555,3 +616,15 @@ export const PendingPricePage = z
   .object({ items: z.array(PendingPrice), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() })
   .strict()
   .meta({ id: 'PendingPricePage' });
+export const UpdateShopBody = z
+  .object({
+    version: z.number('Thiếu version').int().positive(),
+    returnWindowDays: z
+      .number('Hạn trả hàng là số ngày')
+      .int('Hạn trả hàng là số ngày nguyên')
+      .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+  })
+  .strict()
+  .meta({ id: 'ShopUpdateInput' });

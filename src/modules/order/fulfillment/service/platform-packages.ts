@@ -194,6 +194,7 @@ async function changeStatus(
       payload: { packageId: pkg.id, orderId: order.id, claimCode: pkg.lostClaimCode ?? null },
     });
     pkg.needsOpen = false;
+    pkg.openPurpose = null;
   }
   Object.assign(pkg, { status: to }, marks, flags);
   // Sàn báo kiện rời kho (kể cả nhảy cóc từ thiếu hàng): trừ tồn một lần; chờ kiểm kê thì hoãn.
@@ -368,7 +369,8 @@ async function applyStatus(
 
 /**
  * Sàn huỷ cả kiện: chưa đóng gói thì huỷ và nhả hàng; đã đóng gói thì chờ mở (`needs_open`, mở là #106); đã rời kho
- * thì để kiện chạy tiếp (Documents/21 §19.1, #105 A5).
+ * thì để kiện chạy tiếp (Documents/21 §19.1, #105 A5). Kiện đang chờ mở để sửa hay vì kiểm kê thì `markWholePendingDrop`
+ * (bên gọi) nâng mục đích lên `cancel`.
  */
 export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: PackageRow): Promise<'cancelled' | 'needs_open' | 'handed_over'> {
   if (pkg.status === 'cancelled') return 'cancelled';
@@ -431,8 +433,9 @@ async function markPendingDrop(pkg: PackageRow, fresh: readonly CancelLine[]) {
 }
 
 /**
- * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa thì chuyển sang chờ mở để
- * huỷ. Trả true khi có ghi.
+ * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa (`edit`) hay vì kiểm kê
+ * (`stocktake`, huỷ thắng, spec #238 mục 10) thì chuyển sang chờ mở để huỷ: kho mở ra là huỷ (`open_cancel`), không về
+ * `reserved`. Trả true khi có ghi.
  */
 async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
   let changed = false;
@@ -441,7 +444,7 @@ async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
     for (const l of pkg.lines) l.pendingDropQty = l.quantity;
     changed = true;
   }
-  if (pkg.openPurpose === 'edit') {
+  if (pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake') {
     await updatePackage(pkg.id, { openPurpose: 'cancel' });
     pkg.openPurpose = 'cancel';
     changed = true;

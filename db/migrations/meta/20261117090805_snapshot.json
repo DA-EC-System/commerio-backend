@@ -1,5 +1,5 @@
 {
-  "id": "52ec5063-f77d-40ba-8a62-f02f99ef1263",
+  "id": "8df3a334-0411-4b0e-9adc-fce3f103fd5d",
   "prevId": "f9d1e87e-3a9c-492a-8fc8-18550f05033e",
   "version": "7",
   "dialect": "postgresql",
@@ -500,20 +500,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "listings_price_calc_id_price_calculations_id_fk": {
-          "name": "listings_price_calc_id_price_calculations_id_fk",
-          "tableFrom": "listings",
-          "tableTo": "price_calculations",
-          "schemaTo": "channel",
-          "columnsFrom": [
-            "price_calc_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "listings_replaces_listing_id_listings_id_fk": {
           "name": "listings_replaces_listing_id_listings_id_fk",
           "tableFrom": "listings",
@@ -621,54 +607,17 @@
           "primaryKey": false,
           "notNull": false
         },
-        "tax_regime_version_id": {
-          "name": "tax_regime_version_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "min_margin_version_id": {
-          "name": "min_margin_version_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "cost": {
           "name": "cost",
           "type": "numeric(18, 2)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "target_net": {
           "name": "target_net",
           "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": true
-        },
-        "per_item_fee": {
-          "name": "per_item_fee",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "fee_pct": {
-          "name": "fee_pct",
-          "type": "numeric(5, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "tax_pct": {
-          "name": "tax_pct",
-          "type": "numeric(7, 4)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "min_margin_pct": {
-          "name": "min_margin_pct",
-          "type": "numeric(5, 2)",
-          "primaryKey": false,
-          "notNull": false
         },
         "raw_price": {
           "name": "raw_price",
@@ -692,17 +641,11 @@
           "name": "margin_pct",
           "type": "numeric(7, 2)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "below_floor": {
           "name": "below_floor",
           "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "trigger": {
-          "name": "trigger",
-          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -769,28 +712,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "price_calculations_one_pending": {
-          "name": "price_calculations_one_pending",
-          "columns": [
-            {
-              "expression": "shop_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "variant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"channel\".\"price_calculations\".\"status\" = 'pending_confirm'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -820,14 +741,6 @@
         "price_calculations_confirmed": {
           "name": "price_calculations_confirmed",
           "value": "\"channel\".\"price_calculations\".\"status\" not in ('confirmed', 'pushed') or \"channel\".\"price_calculations\".\"confirmed_by\" is not null"
-        },
-        "price_calculations_cost_floor": {
-          "name": "price_calculations_cost_floor",
-          "value": "(\"channel\".\"price_calculations\".\"cost\" is null) = (\"channel\".\"price_calculations\".\"below_floor\" is null)"
-        },
-        "price_calculations_trigger": {
-          "name": "price_calculations_trigger",
-          "value": "\"channel\".\"price_calculations\".\"trigger\" in ('push', 'target_changed', 'config_activated')"
         }
       },
       "isRLSEnabled": false
@@ -13134,7 +13047,8 @@
       "values": [
         "cancel",
         "edit",
-        "resplit"
+        "resplit",
+        "stocktake"
       ]
     },
     "order.package_status": {
