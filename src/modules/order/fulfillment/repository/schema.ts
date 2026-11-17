@@ -144,6 +144,8 @@ export const packageLines = fulfillmentSchema.table(
       .references(() => packages.id),
     orderLineId: uuid('order_line_id').notNull(),
     variantId: uuid('variant_id'),
+    /** Ghép "không quản tồn" (25 §8.1, #237): không giữ, không trừ tồn. */
+    stockUntracked: boolean('stock_untracked').notNull().default(false),
     quantity: integer('quantity').notNull(),
     reservedQty: integer('reserved_qty').notNull().default(0),
     packedQty: integer('packed_qty').notNull().default(0),
@@ -164,6 +166,7 @@ export const packageLines = fulfillmentSchema.table(
     check('package_lines_packed', sql`${t.packedQty} >= 0 and ${t.packedQty} <= ${t.quantity}`),
     check('package_lines_pending_drop', sql`${t.pendingDropQty} >= 0 and ${t.pendingDropQty} <= ${t.quantity}`),
     check('package_lines_unmapped', sql`${t.variantId} is not null or ${t.reservedQty} = 0`),
+    check('package_lines_untracked', sql`not ${t.stockUntracked} or (${t.variantId} is null and ${t.reservedQty} = 0 and not ${t.stockDeducted})`),
     check('package_lines_deducted_cost', sql`not ${t.stockDeducted} or ${t.unitCost} is not null`),
   ],
 );
