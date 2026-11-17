@@ -80,7 +80,7 @@ export async function setManualPrice(by: Actor, shopId: string, listingId: strin
 }
 
 /** Bước 5 với giá vốn, cấu hình hiện tại; tổng phí từ 100% trở lên (thực nhận ≤ 0) cũng là dưới giá thấp nhất. */
-async function assertAboveFloor(row: ListingRow, price: string) {
+export async function assertAboveFloor(row: ListingRow, price: string) {
   const r = (await evaluatePrices(row.shopId, new Map([[row.variantId!, price]]))).results.get(row.variantId!)!;
   if (!r.ok || r.belowFloor) throw belowFloor();
 }

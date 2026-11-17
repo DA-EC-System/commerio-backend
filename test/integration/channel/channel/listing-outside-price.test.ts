@@ -158,3 +158,56 @@ describe('lượt đồng bộ: giá gốc trên sàn khác giá app đẩy lầ
     expect(await listing(listingId)).toMatchObject({ status: 'live', outside_change_kind: null });
   });
 });
+
+describe('POST …/outside-change/:action sau khi giá trên sàn bị sửa', () => {
+  const decide = (listingId: string, action: string, version: number) =>
+    request(testApp())
+      .post(`/api/v1/channel/shops/${lazada}/listings/${listingId}/outside-change/${action}`)
+      .set('Authorization', `Bearer ${company.ceo.token}`)
+      .send({ version });
+  /** Phí 14% + 3.000 mỗi món, lãi tối thiểu 10%, giá vốn 1.000 (seed): giá thấp nhất 1.100. */
+  beforeAll(async () => {
+    const fee = { fixedPct: 4, transactionPct: 5, servicePct: 3, optionalPct: 2, returnFee: 0, perItemFee: 3000 };
+    await testPool().query(
+      `insert into finance.config_versions (company_id, kind, shop_id, status, payload, effective_from, created_by, approved_by, approved_at)
+       values ($1, 'fee', $2, 'active', $3, '2026-10-01', $4, $5, now()), ($1, 'min_margin', null, 'active', '{"pct":10}', '2026-10-01', $4, $5, now())`,
+      [company.companyId, lazada, JSON.stringify(fee), randomUUID(), randomUUID()],
+    );
+  });
+  async function changed(price: string) {
+    const s = await seed(lazada);
+    remote = [remoteSku(s.sku, price)];
+    await sync(lazada);
+    remote = [remoteSku(s.sku, price, { state: 'inactive' })];
+    vi.clearAllMocks();
+    return s;
+  }
+
+  it('accept-price: giá sàn thành giá ghi đè tay và giá đã đẩy, bật SKU, hidden → live, không đẩy giá', async () => {
+    const { sku, listingId } = await changed('95000');
+    const res = await decide(listingId, 'accept-price', (await listing(listingId)).version);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ status: 'live', outsideChange: null, priceSync: 'synced', lastPushedPrice: 95000 });
+    expect(await listing(listingId)).toMatchObject({ status: 'live', manual_price: '95000.00', listed_price: '95000.00', hidden_by: null, stock_sync: 'pending' });
+    expect(activate).toHaveBeenCalledWith(expect.any(String), `item-${sku}`, `sku-${sku}`);
+    expect(await lastTransition(listingId)).toMatchObject({ action: 'outside_resolve', from_state: 'hidden', to_state: 'live' });
+    expect(updatePriceQuantity.mock.calls.flatMap(([, items]) => items.filter((i) => i.price !== undefined))).toEqual([]);
+  });
+
+  it('accept-price: giá sàn dưới giá thấp nhất → 422 below_floor, listing giữ nguyên', async () => {
+    const { listingId } = await changed('1000');
+    const before = await listing(listingId);
+    const res = await decide(listingId, 'accept-price', before.version);
+    expect(res.status).toBe(422);
+    expect(res.body.type).toMatch(/below_floor/);
+    expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'price_changed', manual_price: null, version: before.version });
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('restore: đẩy lại giá app (price_sync pending), không đổi giá ghi đè', async () => {
+    const { listingId } = await changed('95000');
+    const res = await decide(listingId, 'restore', (await listing(listingId)).version);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await listing(listingId)).toMatchObject({ status: 'live', price_sync: 'pending', manual_price: null, listed_price: '100000.00', outside_change_kind: null });
+  });
+});

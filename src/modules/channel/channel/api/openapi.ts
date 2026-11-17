@@ -430,7 +430,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/:listingId/outside-change/:action',
     summary: 'CEO quyết listing bị sàn đổi ngoài app (#360, 21 §18.3)',
     description:
-      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn chưa bán lại mà không bật được từ app (TikTok): 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`. Gỡ dùng route `delist`.',
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn chưa bán lại mà không bật được từ app (TikTok): 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`: giá sàn thành giá ghi đè tay (`priceSource = override`), bật SKU, `hidden → live`, không đẩy giá; giá sàn dưới giá thấp nhất trả 422 `below_floor`. Gỡ dùng route `delist`.',
     security: bearer,
     request: { params: OutsideChangeParams, body: json(OutsideChangeBody) },
     responses: {
@@ -438,7 +438,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng hoặc listing'),
       409: problemResponse('`invalid_transition` (không có `outsideChange`; `accept-price` với `kind = disabled`), `version_conflict` kèm `current`, `shop_not_connected`'),
-      422: problemResponse('`marketplace_unsupported`, `validation_failed`'),
+      422: problemResponse('`marketplace_unsupported`, `validation_failed`, `below_floor` (`accept-price`)'),
     },
   });
   registry.registerPath({
