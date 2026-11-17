@@ -103,6 +103,7 @@ describe('PATCH /channel/shops/:id — returnWindowDays (#362)', () => {
     expect((await app().patch(`/api/v1/channel/shops/${id}`).send({ version, returnWindowDays: 7 })).status).toBe(401);
     const viewer = await addMember(co.companyId, await createCustomRole(co.companyId, ['channel.shop.view']));
     expect((await patch(id, { version, returnWindowDays: 7 }, viewer.token)).status).toBe(403);
+    expect((await patch(id, { returnWindowDays: 0 }, viewer.token)).status, '403 trước validate').toBe(403);
     const other = await createCompany({ optionalModules: ['channel'] });
     expect((await patch(id, { version, returnWindowDays: 7 }, other.ceo.token)).status).toBe(404);
     expect((await patch('khong-phai-uuid', { version, returnWindowDays: 7 })).status).toBe(404);

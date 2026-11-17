@@ -131,8 +131,8 @@ export interface ShopCapabilities {
 }
 
 /**
- * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null là hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm,
- * và bắt buộc (#362).
+ * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null khi hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm,
+ * và bắt buộc: thiếu hoặc `null` là lỗi (#362).
  */
 export function returnWindowError(returnWindow: ShopCapabilities['returnWindow'], days: number | null | undefined): string | null {
   if (returnWindow !== 'days') return null;
