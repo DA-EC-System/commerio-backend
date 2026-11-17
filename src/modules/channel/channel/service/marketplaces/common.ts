@@ -3,6 +3,7 @@
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
+import type { ResponsibleOrg } from '../../../../core/index.ts';
 
 export type { ShopCapabilities };
 
@@ -61,7 +62,12 @@ export interface CategoryAttribute {
   name: string;
   label: string;
   options: string[];
+  /** Thuộc tính sàn điền từ hồ sơ công ty (#292); service đổi thành `defaultValue`, lúc đẩy lấy `NewProduct.responsible`. */
+  prefill?: keyof Responsible;
 }
+
+/** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
+export type Responsible = ResponsibleOrg;
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
@@ -98,6 +104,8 @@ export interface NewProduct {
    * TikTok gửi làm `idempotency_key`; sàn không có khoá (Lazada tra theo SellerSku) thì bỏ qua.
    */
   idempotencyKey?: string;
+  /** Điền thuộc tính có `prefill` mà `attributes` không có giá trị (#292). */
+  responsible?: Responsible;
 }
 
 export interface CreatedProduct {

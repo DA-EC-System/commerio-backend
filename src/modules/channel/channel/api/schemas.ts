@@ -252,7 +252,19 @@ export const PlatformCategoryList = z
 
 export const CategoryAttributeList = z
   .object({
-    items: z.array(z.object({ name: z.string(), label: z.string(), options: z.array(z.string()) }).strict()),
+    items: z.array(
+      z
+        .object({
+          name: z.string(),
+          label: z.string(),
+          options: z.array(z.string()),
+          defaultValue: z
+            .string()
+            .nullable()
+            .meta({ description: 'Giá trị điền từ hồ sơ công ty khi để trống (TikTok 101489, 101490; #292); null là phải nhập' }),
+        })
+        .strict(),
+    ),
   })
   .strict()
   .meta({ id: 'CategoryAttributeList', description: 'Thuộc tính bắt buộc cấp sản phẩm; `options` rỗng là nhập tự do' });

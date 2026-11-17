@@ -512,6 +512,20 @@
       "when": 1794906485991,
       "tag": "20261117090805_mo-kien-kiem-ke",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1794908497887,
+      "tag": "20261117094137_ho-so-cong-ty",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1794908502047,
+      "tag": "20261117094142_quyen-ho-so-cong-ty",
+      "breakpoints": true
     }
   ]
 }

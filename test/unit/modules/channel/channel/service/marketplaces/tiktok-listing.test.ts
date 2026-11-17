@@ -774,3 +774,70 @@ it('adapter TikTok có đủ năng lực listing (không còn unsupported), kể
   }
   expect(adapter.capabilities.hideBy).toBe('deactivate');
 });
+
+describe('tổ chức chịu trách nhiệm hàng hoá lấy từ hồ sơ công ty (#292)', () => {
+  const RESPONSIBLE_ATTRS = ok({
+    attributes: [
+      { id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [{ id: '1000854', name: 'Việt Nam' }] },
+      { id: '101489', name: 'Tên tổ chức chịu trách nhiệm hàng hóa', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [] },
+      { id: '101490', name: 'Địa chỉ tổ chức chịu trách nhiệm hàng hóa', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [] },
+    ],
+  });
+  const product = {
+    externalCategoryId: '600042',
+    attributes: { '100149': 'Việt Nam' },
+    name: 'CM-TEST Cốc sứ có quai 350ml thử API',
+    description: 'Cốc thử',
+    imageUrls: ['tos-alisg/abc'],
+    sellerSku: 'CM-TEST-COC',
+    price: '99000',
+    quantity: 5,
+    weightG: 300,
+    lengthMm: 95,
+    widthMm: 100,
+    heightMm: 120,
+  };
+  const routes = (attrs: Response) => ({
+    ...PRECHECK_OK,
+    'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+    'GET /product/202309/categories/600042/attributes': attrs,
+    'POST /product/202309/products': ok({ product_id: 'P9', skus: [{ id: 'S9', seller_sku: 'CM-TEST-COC' }] }),
+    'GET /product/202309/products/P9': ok({ status: 'PENDING' }),
+  });
+  const sentAttributes = async (san: ReturnType<typeof fakeSan>, p: Parameters<ReturnType<ReturnType<typeof fakeSan>['methods']>['createProduct']>[1]) => {
+    await san.methods().createProduct(TOKEN, p);
+    return (san.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body as { product_attributes: unknown }).product_attributes;
+  };
+
+  it('categoryAttributes đánh dấu 101489, 101490 để điền từ hồ sơ (AC-6)', async () => {
+    const attrs = await fakeSan(routes(RESPONSIBLE_ATTRS)).methods().categoryAttributes(TOKEN, '600042');
+    expect(attrs.map((a) => [a.name, a.prefill])).toEqual([
+      ['100149', undefined],
+      ['101489', 'name'],
+      ['101490', 'address'],
+    ]);
+  });
+
+  it('map không có hai mã: gửi giá trị hồ sơ; map có giá trị người dùng thì giữ (AC-8)', async () => {
+    const responsible = { name: 'Cty A', address: '1 Lê Lợi' };
+    expect(await sentAttributes(fakeSan(routes(RESPONSIBLE_ATTRS)), { ...product, responsible })).toEqual([
+      { id: '100149', values: [{ id: '1000854' }] },
+      { id: '101489', values: [{ name: 'Cty A' }] },
+      { id: '101490', values: [{ name: '1 Lê Lợi' }] },
+    ]);
+    const typed = { ...product, attributes: { ...product.attributes, '101489': 'Cty Nhập B' }, responsible };
+    expect(await sentAttributes(fakeSan(routes(RESPONSIBLE_ATTRS)), typed)).toContainEqual({ id: '101489', values: [{ name: 'Cty Nhập B' }] });
+  });
+
+  it('địa chỉ null thì không gửi 101490; danh mục không có mã thì không gửi (AC-8)', async () => {
+    const noAddress = await sentAttributes(fakeSan(routes(RESPONSIBLE_ATTRS)), { ...product, responsible: { name: 'Cty A', address: null } });
+    expect(noAddress).toEqual([
+      { id: '100149', values: [{ id: '1000854' }] },
+      { id: '101489', values: [{ name: 'Cty A' }] },
+    ]);
+    const plain = ok({ attributes: [{ id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', values: [{ id: '1000854', name: 'Việt Nam' }] }] });
+    expect(await sentAttributes(fakeSan(routes(plain)), { ...product, responsible: { name: 'Cty A', address: '1 Lê Lợi' } })).toEqual([
+      { id: '100149', values: [{ id: '1000854' }] },
+    ]);
+  });
+});

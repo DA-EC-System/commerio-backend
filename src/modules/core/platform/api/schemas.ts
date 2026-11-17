@@ -132,3 +132,27 @@ export const DeadJobPage = z
     pageSize: z.number().int(),
   })
   .meta({ id: 'DeadJobPage' });
+
+// Hồ sơ công ty (#292, Documents/21 mục 4). `null` = theo tên, địa chỉ đăng ký của công ty.
+const profileText = z.string().trim().min(1, 'Không để trống, xoá thì gửi null').max(500, 'Tối đa 500 ký tự').nullable();
+export const UpdateCompanyProfileBody = z.object({
+  address: profileText.optional(),
+  responsibleName: profileText.optional(),
+  responsibleAddress: profileText.optional(),
+  version,
+});
+
+export const CompanyProfile = z
+  .object({
+    id: z.uuid(),
+    name: z.string(),
+    taxCode: z.string(),
+    address: z.string().nullable().meta({ description: 'Địa chỉ đăng ký' }),
+    responsibleName: z.string().nullable().meta({ description: 'Tên tổ chức chịu trách nhiệm hàng hoá; null = tên công ty' }),
+    responsibleAddress: z.string().nullable().meta({ description: 'Địa chỉ tổ chức chịu trách nhiệm; null = `address`' }),
+    effectiveResponsible: z
+      .object({ name: z.string(), address: z.string().nullable() })
+      .meta({ description: 'Giá trị điền lên sàn (TikTok 101489, 101490)' }),
+    version: z.number().int(),
+  })
+  .meta({ id: 'CompanyProfile' });

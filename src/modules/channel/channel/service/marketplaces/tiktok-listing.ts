@@ -20,6 +20,7 @@ import {
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteSku,
+  type Responsible,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
@@ -30,6 +31,8 @@ type Row = Record<string, unknown>;
 
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
+// Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026).
+const RESPONSIBLE_ATTRS: Record<string, keyof Responsible> = { '101489': 'name', '101490': 'address' };
 /** Commerio chỉ bán VND (một công ty, VN). */
 const CURRENCY = 'VND';
 /** Kho của shop ít đổi: giữ trong process một giờ, đỡ một lượt gọi mỗi lần đẩy. */
@@ -223,11 +226,19 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     throw new MarketplaceError('rejected', 'listing_check_failed', reasons.map((r) => `${String(r.code)}: ${String(r.message ?? '')}`).join('; '));
   }
 
-  /** Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính. */
+  /**
+   * Phần nội dung chung của Create Product và Edit Product: tiêu đề, mô tả, danh mục, ảnh, gói hàng, thuộc tính.
+   * Tổ chức chịu trách nhiệm (#292): ô người dùng để trống lấy hồ sơ công ty lúc đẩy, chỉ khi danh mục có mã đó.
+   */
   async function productContent(token: string, p: NewProduct) {
     const attrs = await rawAttributes(token, p.externalCategoryId);
     const byId = new Map(attrs.map((a) => [String(a.id), a]));
-    const productAttributes = Object.entries(p.attributes).map(([id, value]) => {
+    const filled = { ...p.attributes };
+    for (const [id, field] of Object.entries(RESPONSIBLE_ATTRS)) {
+      const value = p.responsible?.[field];
+      if (!filled[id] && value && byId.has(id)) filled[id] = value;
+    }
+    const productAttributes = Object.entries(filled).map(([id, value]) => {
       const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
       return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
     });
@@ -262,11 +273,15 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     async categoryAttributes(token, externalCategoryId): Promise<CategoryAttribute[]> {
       return (await rawAttributes(token, externalCategoryId))
         .filter((a) => a.type === 'PRODUCT_PROPERTY' && a.is_requried === true)
-        .map((a) => ({
-          name: String(a.id),
-          label: String(a.name ?? a.id),
-          options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
-        }));
+        .map((a) => {
+          const prefill = RESPONSIBLE_ATTRS[String(a.id)];
+          return {
+            name: String(a.id),
+            label: String(a.name ?? a.id),
+            options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
+            ...(prefill && { prefill }),
+          };
+        });
     },
 
     // Get Category Rules 202309: `size_chart.is_required`, `is_supported` (#347). Danh mục không hỗ trợ bảng kích cỡ thì không
