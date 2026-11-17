@@ -12,7 +12,7 @@ import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, FAKE_CAPABILITIES, fakeAdapter } from './helpers.ts';
 
 setProductPort(null);
 const updatePriceQuantity = vi.fn(async (_t: string, items: readonly PriceQuantity[]) =>
@@ -24,7 +24,10 @@ let remote: RemoteSku[] = [];
 const getSkus = vi.fn(async () => remote);
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' });
 registerAdapter('lazada', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
-registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate }));
+registerAdapter(
+  'tiktok',
+  fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate, togglesByProduct: true, capabilities: { ...FAKE_CAPABILITIES, hideBy: 'zero_stock' } }),
+);
 afterAll(() => resetAdapters());
 
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -101,7 +104,7 @@ describe('lượt đồng bộ: giá gốc trên sàn khác giá app đẩy lầ
     expect(sent(sku)).toEqual([]);
   });
 
-  it('TikTok (chưa tắt riêng SKU): hidden_by zero_stock, đẩy tồn 0, không đẩy giá, không gọi tắt', async () => {
+  it('TikTok (ẩn bằng tồn 0): hidden_by zero_stock, đẩy tồn 0, không đẩy giá, không gọi tắt', async () => {
     const { sku, listingId } = await seed(tiktok);
     remote = [remoteSku(sku, '120000')];
     await sync(tiktok);
