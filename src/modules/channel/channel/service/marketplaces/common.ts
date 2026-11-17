@@ -540,6 +540,11 @@ export interface MarketplaceAdapter {
    */
   deactivate(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
   /**
+   * Sàn chỉ tắt, bật theo cả sản phẩm, không riêng SKU (TikTok; #224 phần 2). Nội bộ, không thuộc `capabilities` của
+   * hợp đồng API. Không khai là tắt theo SKU.
+   */
+  togglesByProduct?: boolean;
+  /**
    * Hiện lại sản phẩm đã tắt (#224, `hideBy = 'deactivate'`). Sàn có thể đưa sản phẩm vào duyệt lại (TikTok về `PENDING`);
    * trạng thái về qua lần đồng bộ. Sàn chưa có thì không có hàm này.
    */
