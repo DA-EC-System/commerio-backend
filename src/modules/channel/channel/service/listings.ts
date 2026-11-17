@@ -49,7 +49,7 @@ export interface ChannelListing {
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
   /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
-  pendingMapping: { variantId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
+  pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   version: number;
 }
 
@@ -108,6 +108,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
       r.pendingRequestedBy && r.pendingRequestedAt
         ? {
             variantId: r.pendingVariantId,
+            externalSkuId: r.pendingExternalSkuId,
             requestedBy: { id: r.pendingRequestedBy, name: names.get(r.pendingRequestedBy) ?? '' },
             requestedAt: r.pendingRequestedAt,
           }
@@ -240,6 +241,11 @@ export async function pushListings(
     }
     if (existing?.status === 'pushing') {
       results.push(inProgress(variantId, existing));
+      continue;
+    }
+    // CHECK `listings_pending_external`: SKU sàn chờ ghép chỉ nằm trên listing `push_failed` (#346).
+    if (existing?.pendingExternalSkuId) {
+      results.push(blocked(variantId, existing, 'mapping_pending', 'Listing đang chờ CEO duyệt ghép SKU sàn có sẵn; duyệt hoặc từ chối trước khi đẩy lại'));
       continue;
     }
     if (existing && LISTED.includes(existing.status)) {

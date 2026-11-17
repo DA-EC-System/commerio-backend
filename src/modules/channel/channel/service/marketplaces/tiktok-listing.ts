@@ -272,7 +272,9 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       // đọc lại) thì trả sản phẩm đó, không tạo thêm. Search Products có thể trễ vài giây sau khi tạo (gọi thật 07/11/2026),
       // nên còn gửi `idempotency_key` của lượt đẩy (#219): sàn nhận lại khoá đã dùng thì trả `12052996`, không tạo trùng.
       const existing = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
-      if (existing) return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live' };
+      if (existing) {
+        return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live', existing: true };
+      }
       const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p)]);
       const body = {
         save_mode: 'LISTING',

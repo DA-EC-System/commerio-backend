@@ -4,6 +4,7 @@ import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CategoryAttribute,
   DEFAULT_REFRESH_LEAD_MS,
+  existingSku,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -845,8 +846,10 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     async createProduct(accessToken, p: NewProduct) {
       // Idempotent theo SellerSku: lần đẩy trước đã tạo mà bên gọi mất kết quả thì trả sản phẩm đó, không tạo thêm.
-      const existing = (await skusIn(accessToken, [p.sellerSku], 'all')).find((s) => s.state !== 'deleted');
-      if (existing) return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live' };
+      const existing = existingSku(await skusIn(accessToken, [p.sellerSku], 'all'), p.sellerSku);
+      if (existing) {
+        return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live', existing: true };
+      }
       const payload = JSON.stringify({
         Request: {
           Product: {
