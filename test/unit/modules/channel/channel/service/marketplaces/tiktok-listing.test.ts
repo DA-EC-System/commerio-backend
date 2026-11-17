@@ -340,6 +340,21 @@ describe('uploadImage: chặn nguồn ảnh trước khi nối (tải thật qua
   });
 });
 
+describe('categoryRules: bảng kích cỡ (#347)', () => {
+  const rules = (data: unknown) => ({ 'GET /product/202309/categories/600042/rules': ok(data) });
+
+  it.each([
+    ['is_required true', { size_chart: { is_required: true, is_supported: true } }, 'required'],
+    ['được hỗ trợ, không bắt buộc', { size_chart: { is_required: false, is_supported: true } }, 'optional'],
+    ['không hỗ trợ', { size_chart: { is_required: false, is_supported: false } }, 'unsupported'],
+    ['sàn không trả khối size_chart', {}, 'optional'],
+  ])('%s → %s', async (_name, data, expected) => {
+    const san = fakeSan(rules(data));
+    expect(await san.methods().categoryRules!(TOKEN, '600042')).toEqual({ sizeChart: expected });
+    expect(san.calls[0]!.query.get('category_version')).toBe('v2');
+  });
+});
+
 describe('createProduct', () => {
   const product = {
     externalCategoryId: '600042',
@@ -382,6 +397,16 @@ describe('createProduct', () => {
       ],
       skus: [{ seller_sku: 'CM-TEST-COC', price: { amount: '99000', currency: 'VND' }, inventory: [{ warehouse_id: 'W1', quantity: 5 }] }],
     });
+  });
+
+  it('có ảnh bảng kích cỡ thì gửi size_chart.image.uri (#347); không có thì không gửi khoá size_chart', async () => {
+    const withChart = fakeSan(routes(ok({ status: 'PENDING' })));
+    await withChart.methods().createProduct(TOKEN, { ...product, sizeChartUri: 'tos-alisg/size-chart' });
+    const sent = withChart.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body as Record<string, unknown>;
+    expect(sent.size_chart).toEqual({ image: { uri: 'tos-alisg/size-chart' } });
+    const without = fakeSan(routes(ok({ status: 'PENDING' })));
+    await without.methods().createProduct(TOKEN, product);
+    expect(without.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body).not.toHaveProperty('size_chart');
   });
 
   it('live theo trạng thái đọc lại; đọc lỗi tạm thì coi như chờ duyệt; tồn 0 thì bỏ quantity', async () => {

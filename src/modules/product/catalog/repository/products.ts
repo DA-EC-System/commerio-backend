@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { categories, products } from './schema.ts';
 
@@ -8,6 +8,7 @@ const columns = {
   id: products.id,
   name: products.name,
   description: products.description,
+  sizeChartFileId: products.sizeChartFileId,
   categoryId: products.categoryId,
   categoryName: categories.name,
   archivedAt: products.archivedAt,
@@ -112,4 +113,19 @@ export async function archiveProductIfVersion(id: string, version: number) {
 /** Thêm, ngừng bán biến thể: đổi `updated_at` nhưng không đổi `version` (P7). */
 export async function touchProduct(id: string): Promise<void> {
   await getDb().update(products).set({ updatedAt: sql`now()` }).where(eq(products.id, id));
+}
+
+/** Đặt hoặc gỡ (`null`) ảnh bảng kích cỡ; gỡ không xoá tệp. Bên gọi đã ghi trúng `version` của sản phẩm. */
+export async function setSizeChart(id: string, fileId: string | null): Promise<void> {
+  await getDb().update(products).set({ sizeChartFileId: fileId }).where(eq(products.id, id));
+}
+
+/** Tệp bảng kích cỡ của các sản phẩm; sản phẩm chưa có thì không có trong kết quả. */
+export async function sizeChartRows(productIds: readonly string[]): Promise<{ productId: string; fileId: string }[]> {
+  if (!productIds.length) return [];
+  const rows = await getDb()
+    .select({ productId: products.id, fileId: products.sizeChartFileId })
+    .from(products)
+    .where(and(inArray(products.id, [...productIds]), isNotNull(products.sizeChartFileId)));
+  return rows.map((r) => ({ productId: r.productId, fileId: r.fileId! }));
 }
