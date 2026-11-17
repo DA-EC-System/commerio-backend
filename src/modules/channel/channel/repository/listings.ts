@@ -216,3 +216,12 @@ export async function deleteListing(id: string, version: number): Promise<number
     .returning({ id: listings.id });
   return rows.length;
 }
+
+/** Gian hàng có listing `live`, `hidden` của biến thể (ẩn, hiện theo trạng thái SKU, #224). */
+export async function shopsShowingVariant(variantId: string): Promise<string[]> {
+  const rows = await getDb()
+    .selectDistinct({ shopId: listings.shopId })
+    .from(listings)
+    .where(and(eq(listings.variantId, variantId), inArray(listings.status, ['live', 'hidden'])));
+  return rows.map((r) => r.shopId);
+}

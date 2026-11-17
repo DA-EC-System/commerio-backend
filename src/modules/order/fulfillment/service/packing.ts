@@ -275,17 +275,23 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
           return { detail: await getPackage(ctx, id), cancelledOrderId: pkg.orderId };
         }
         const { to } = await transition(ctx, actor, pkg, 'open');
+        // Kiện chờ mở vì kiểm kê (spec #238 §5.5): mở xong là hết việc, gỡ cờ cùng câu với trạng thái (CHECK `packages_open`).
+        // Kiện chờ mở để bỏ dòng chờ bỏ (spec 205 §5.10) cũng hết việc khi các dòng đó đã xoá.
+        const stocktake = pkg.openPurpose === 'stocktake';
         const dropped = pkg.lines.filter((line) => line.pendingDropQty > 0);
         const released = await releaseLines(id, dropped);
         await deleteLines(dropped.map((line) => line.id));
         await updatePackage(id, {
           status: to, packedBy: null, packedAt: null, labelError: false,
-          ...(dropped.length && { needsOpen: false, openPurpose: null }),
+          ...((stocktake || dropped.length > 0) && { needsOpen: false, openPurpose: null }),
           ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
         });
         await setLinesPacked(id, false);
         await recordPacking(pkg, to, 'open', actor.accountId);
-        await requestAllocation(released);
+        // Kiện `stocktake` về `reserved` vẫn giữ hàng: lượt phân hàng sau commit lấy lại phần giữ nếu tồn thực vẫn nhỏ hơn
+        // đang giữ (kiện về `backordered`), không thì kiện ở lại `reserved`. Cộng SKU vừa nhả của dòng chờ bỏ.
+        const kept = stocktake ? pkg.lines.flatMap((line) => (line.variantId && line.pendingDropQty === 0 ? [line.variantId] : [])) : [];
+        await requestAllocation([...released, ...kept]);
         return { detail: await getPackage(ctx, id), cancelledOrderId: null };
       });
     } catch (err) {

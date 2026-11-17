@@ -1,6 +1,6 @@
 {
-  "id": "21f2f5f3-afa0-42fe-a319-37cbc837b1e4",
-  "prevId": "6f3bbbdc-31f2-420e-999c-8479cb97b1b2",
+  "id": "e78ac1e9-5813-421e-a163-f45018ff453f",
+  "prevId": "4396451a-1bf2-4274-968e-20b971daa6ff",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -13065,7 +13065,8 @@
       "values": [
         "cancel",
         "edit",
-        "resplit"
+        "resplit",
+        "stocktake"
       ]
     },
     "order.package_status": {

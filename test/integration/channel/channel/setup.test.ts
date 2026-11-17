@@ -75,7 +75,7 @@ const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
-const setup = (body: object) => auth(app().post(`/api/v1/channel/shops/${shopId}/setup`)).send(body);
+const setup = (body: object) => auth(app().post(`/api/v1/channel/shops/${shopId}/setup`)).send({ returnWindowDays: 7, ...body });
 
 beforeAll(async () => {
   company = await createCompany({ optionalModules: ['channel'] });
@@ -227,12 +227,13 @@ describe('returnWindowDays ở thiết lập', () => {
     expect(await stored(id)).toEqual({ status: 'connecting', return_window_days: null });
   });
 
-  it('chuyển tiếp đợt 2: không gửi hoặc gửi null thì vẫn thiết lập được, hạn để trống', async () => {
+  it('#362: không gửi hoặc gửi null thì 422 errors.returnWindowDays, gian hàng vẫn connecting', async () => {
     for (const extra of [{}, { returnWindowDays: null }]) {
       const id = await newShop();
       const res = await finish(id, extra);
-      expect(res.status).toBe(200);
-      expect(await stored(id)).toEqual({ status: 'active', return_window_days: null });
+      expect(res.status, JSON.stringify(extra)).toBe(422);
+      expect(res.body.errors).toHaveProperty('returnWindowDays');
+      expect(await stored(id)).toEqual({ status: 'connecting', return_window_days: null });
     }
   });
 

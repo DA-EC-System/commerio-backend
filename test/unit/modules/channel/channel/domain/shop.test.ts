@@ -118,9 +118,9 @@ describe('hạn trả hàng nhập lúc thiết lập (Documents/21 §18.6.2)', 
     for (const bad of [0, 61, -1, 1.5, 1e10]) expect(returnWindowError('days', bad)).toBe('Hạn trả hàng từ 1 đến 60 ngày');
   });
 
-  it('chuyển tiếp đợt 2: không gửi (undefined, null) thì không lỗi', () => {
-    expect(returnWindowError('days', undefined)).toBeNull();
-    expect(returnWindowError('days', null)).toBeNull();
+  it('#362: không gửi (undefined, null) thì báo thiếu', () => {
+    expect(returnWindowError('days', undefined)).toBe('Nhập hạn trả hàng (1–60 ngày)');
+    expect(returnWindowError('days', null)).toBe('Nhập hạn trả hàng (1–60 ngày)');
   });
 
   it('sàn tính hạn theo trạng thái sàn: bỏ qua trường này', () => {

@@ -1,0 +1,1 @@
+ALTER TYPE "order"."open_purpose" ADD VALUE 'stocktake';

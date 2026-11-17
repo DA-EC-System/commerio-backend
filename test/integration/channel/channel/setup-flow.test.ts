@@ -92,7 +92,7 @@ const waiting = { ...setUp, opening_stocktake_id: randomUUID(), opening_stocktak
 const preview = (c: Company, shopId: string) =>
   app().get(`/api/v1/channel/shops/${shopId}/setup`).set('Authorization', `Bearer ${c.ceo.token}`);
 const setup = (c: Company, shopId: string, body: object) =>
-  app().post(`/api/v1/channel/shops/${shopId}/setup`).set('Authorization', `Bearer ${c.ceo.token}`).send(body);
+  app().post(`/api/v1/channel/shops/${shopId}/setup`).set('Authorization', `Bearer ${c.ceo.token}`).send({ returnWindowDays: 7, ...body });
 
 async function shopRow(id: string) {
   const { rows } = await testPool().query('select status, order_cutoff_at from channel.shops where id = $1', [id]);
