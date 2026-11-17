@@ -71,7 +71,8 @@ describe('PATCH /channel/shops/:id — returnWindowDays (#362)', () => {
 
   it('body sai: ngoài 1–60, lẻ, chuỗi, null, thiếu trường, thừa trường → 422 trước 404', async () => {
     const { id, version } = await activeShop();
-    for (const bad of [{ version, returnWindowDays: 0 }, { version, returnWindowDays: 61 }, { version, returnWindowDays: 1.5 }, { version, returnWindowDays: '7' }, { version, returnWindowDays: null }, { version }]) {
+    const bads = [0, 61, 1.5, '7', null].map((returnWindowDays) => ({ version, returnWindowDays }));
+    for (const bad of [...bads, { version }]) {
       const res = await patch(id, bad);
       expect(res.status, JSON.stringify(bad)).toBe(422);
       expect(res.body.errors, JSON.stringify(bad)).toHaveProperty('returnWindowDays');
