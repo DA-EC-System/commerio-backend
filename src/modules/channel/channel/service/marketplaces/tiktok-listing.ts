@@ -243,12 +243,15 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     async categoryAttributes(token, externalCategoryId): Promise<CategoryAttribute[]> {
       return (await rawAttributes(token, externalCategoryId))
         .filter((a) => a.type === 'PRODUCT_PROPERTY' && a.is_requried === true)
-        .map((a) => ({
-          name: String(a.id),
-          label: String(a.name ?? a.id),
-          options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
-          ...(RESPONSIBLE_ATTRS[String(a.id)] && { prefill: RESPONSIBLE_ATTRS[String(a.id)] }),
-        }));
+        .map((a) => {
+          const prefill = RESPONSIBLE_ATTRS[String(a.id)];
+          return {
+            name: String(a.id),
+            label: String(a.name ?? a.id),
+            options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
+            ...(prefill && { prefill }),
+          };
+        });
     },
 
     // Get Category Rules 202309: `size_chart.is_required`, `is_supported` (#347). Danh mục không hỗ trợ bảng kích cỡ thì không

@@ -9,8 +9,14 @@ import {
   updateCompanyProfile as saveProfile,
 } from '../repository/companies.ts';
 
+/** Tổ chức chịu trách nhiệm hàng hoá hiệu lực; `address` null khi công ty chưa khai địa chỉ. */
+export interface ResponsibleOrg {
+  name: string;
+  address: string | null;
+}
+
 /** Ô ghi đè trống thì theo tên, địa chỉ đăng ký của công ty. */
-export const effectiveResponsible = (r: CompanyProfileRow) => ({
+export const effectiveResponsible = (r: CompanyProfileRow): ResponsibleOrg => ({
   name: r.responsibleName ?? r.name,
   address: r.responsibleAddress ?? r.address,
 });
@@ -25,6 +31,9 @@ async function load(companyId: string): Promise<CompanyProfileRow> {
 
 export const getCompanyProfile = async (companyId: string) => toView(await load(companyId));
 
+/** Cổng cho channel điền thuộc tính sàn (Documents/21 mục 11.3). */
+export const responsibleOrgOf = async (companyId: string) => effectiveResponsible(await load(companyId));
+
 /**
  * Sửa theo `version`, lệch thì 409 `version_conflict` kèm `current`. Ghi bằng role chủ bảng như `setCompanyLock`.
  * Không gửi ô nào thì trả hồ sơ, không ghi. Nhật ký chỉ mang các ô đổi, không có `status` nên trang nhật ký nền tảng không lấy dòng này.
@@ -34,12 +43,13 @@ export function updateCompanyProfile(actorId: string, companyId: string, input: 
   const keys = Object.keys(patch) as (keyof CompanyProfilePatch)[];
   return inTransaction(async () => {
     const before = await load(companyId);
-    if (keys.length === 0 && before.version === version) return toView(before);
-    if (before.version !== version || !(await saveProfile(companyId, version, patch))) {
+    const saved = keys.length === 0 && before.version === version ? before : await saveProfile(companyId, version, patch);
+    if (!saved) {
       throw new AppError(409, 'version_conflict', 'Hồ sơ công ty vừa được đổi ở một phiên khác', {
         current: toView(await load(companyId)),
       });
     }
+    if (saved === before) return toView(before);
     await recordAudit({
       companyId,
       actorId,
@@ -49,6 +59,6 @@ export function updateCompanyProfile(actorId: string, companyId: string, input: 
       before: Object.fromEntries(keys.map((k) => [k, before[k]])),
       after: patch,
     });
-    return toView(await load(companyId));
+    return toView(saved);
   });
 }

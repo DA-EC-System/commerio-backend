@@ -8,11 +8,9 @@ import {
   type CompanyRow,
   enabledModuleCodes,
   findCompanies,
-  findCompanyProfile,
   insertCompany,
   insertModules,
 } from './repository/companies.ts';
-import { effectiveResponsible } from './service/company-profile.ts';
 import { startPlatformBackground } from './service/jobs/public.ts';
 
 export const platformModule: ModuleDefinition = {
@@ -25,6 +23,9 @@ export const platformModule: ModuleDefinition = {
 export { CORE_MODULES, OPTIONAL_MODULES };
 export type { CompanyRow, ModuleCode, OptionalModule };
 export type { PlatformContext } from './service/context.ts';
+
+// Hồ sơ công ty (#292): tổ chức chịu trách nhiệm hàng hoá, channel điền thuộc tính sàn.
+export { responsibleOrgOf, type ResponsibleOrg } from './service/company-profile.ts';
 
 // Sự kiện giữa module (Documents/21 D4–D7), cách dùng ở service/outbox/README.md.
 export type { EventEnvelope } from '../../../shared/events/envelope.ts';
@@ -94,13 +95,3 @@ export async function getCompanies(ids: readonly string[]): Promise<Map<string, 
 }
 
 export const getEnabledModules = enabledModuleCodes;
-
-/**
- * Tổ chức chịu trách nhiệm hàng hoá của công ty (hồ sơ, #292; Documents/21 mục 11.3), channel điền thuộc tính sàn.
- * Ô ghi đè trống thì theo tên, địa chỉ đăng ký; `address` null khi công ty chưa khai địa chỉ.
- */
-export async function responsibleOrgOf(companyId: string): Promise<{ name: string; address: string | null }> {
-  const row = await findCompanyProfile(companyId);
-  if (!row) throw new Error(`Không có công ty ${companyId}`);
-  return effectiveResponsible(row);
-}

@@ -61,28 +61,31 @@ export interface CompanyProfileRow {
 
 export type CompanyProfilePatch = Partial<Pick<CompanyProfileRow, 'address' | 'responsibleName' | 'responsibleAddress'>>;
 
+const profileColumns = {
+  id: companies.id,
+  name: companies.name,
+  taxCode: companies.taxCode,
+  address: companies.address,
+  responsibleName: companies.responsibleName,
+  responsibleAddress: companies.responsibleAddress,
+  version: companies.version,
+};
+
 export async function findCompanyProfile(id: string): Promise<CompanyProfileRow | undefined> {
-  const [row] = await getDb()
-    .select({
-      id: companies.id,
-      name: companies.name,
-      taxCode: companies.taxCode,
-      address: companies.address,
-      responsibleName: companies.responsibleName,
-      responsibleAddress: companies.responsibleAddress,
-      version: companies.version,
-    })
-    .from(companies)
-    .where(eq(companies.id, id));
+  const [row] = await getDb().select(profileColumns).from(companies).where(eq(companies.id, id));
   return row;
 }
 
-/** Sửa theo `version`; `false` khi lệch version. Chạy bằng role chủ bảng (`commerio_app` không có UPDATE). */
-export async function updateCompanyProfile(id: string, version: number, patch: CompanyProfilePatch): Promise<boolean> {
-  const rows = await getDb()
+/** Sửa theo `version`; `undefined` khi lệch version. Chạy bằng role chủ bảng (`commerio_app` không có UPDATE). */
+export async function updateCompanyProfile(
+  id: string,
+  version: number,
+  patch: CompanyProfilePatch,
+): Promise<CompanyProfileRow | undefined> {
+  const [row] = await getDb()
     .update(companies)
     .set({ ...patch, updatedAt: new Date(), version: sql`${companies.version} + 1` })
     .where(and(eq(companies.id, id), eq(companies.version, version)))
-    .returning({ id: companies.id });
-  return rows.length > 0;
+    .returning(profileColumns);
+  return row;
 }

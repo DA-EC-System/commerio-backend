@@ -41,23 +41,13 @@ export async function searchCategories(shopId: string, search: string): Promise<
   return { items: all.filter((c) => c.name.toLocaleLowerCase('vi').includes(q)).slice(0, SEARCH_LIMIT) };
 }
 
-export interface CategoryAttributeView {
-  name: string;
-  label: string;
-  options: string[];
-  /** Giá trị điền từ hồ sơ công ty khi để trống (#292); null là phải nhập. */
-  defaultValue: string | null;
-}
+/** `defaultValue`: giá trị điền từ hồ sơ công ty khi để trống (#292); null là phải nhập. */
+export type CategoryAttributeView = Omit<CategoryAttribute, 'prefill'> & { defaultValue: string | null };
 
 /** Thuộc tính sàn kèm giá trị mặc định từ hồ sơ công ty; chỉ đọc hồ sơ khi sàn có thuộc tính `prefill`. */
 async function withDefaults(companyId: string, attrs: CategoryAttribute[]): Promise<CategoryAttributeView[]> {
   const org = attrs.some((a) => a.prefill) ? await responsibleOrgOf(companyId) : null;
-  return attrs.map((a) => ({
-    name: a.name,
-    label: a.label,
-    options: a.options,
-    defaultValue: (a.prefill && org?.[a.prefill]) || null,
-  }));
+  return attrs.map(({ prefill, ...a }) => ({ ...a, defaultValue: (prefill && org?.[prefill]) || null }));
 }
 
 export async function categoryAttributes(shopId: string, externalCategoryId: string): Promise<{ items: CategoryAttributeView[] }> {

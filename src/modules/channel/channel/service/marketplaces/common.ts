@@ -3,6 +3,7 @@
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
+import type { ResponsibleOrg } from '../../../../core/index.ts';
 
 export type { ShopCapabilities };
 
@@ -66,10 +67,7 @@ export interface CategoryAttribute {
 }
 
 /** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
-export interface Responsible {
-  name: string;
-  address: string | null;
-}
+export type Responsible = ResponsibleOrg;
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
