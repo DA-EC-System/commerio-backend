@@ -39,7 +39,7 @@ const AUTHORIZE_URL = 'https://services.tiktokshop.com/open/authorize';
  * Documents/21 §18.4, tich-hop-san/tiktok.md §2: sản phẩm mới qua duyệt (`PENDING`), ẩn bằng
  * `POST /product/202309/products/deactivate`, VN chỉ tách kiện theo SKU, hết hạn trả khi đơn sang `COMPLETED`.
  */
-const TIKTOK_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' };
+const TIKTOK_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'zero_stock', splitLevel: 'sku', returnWindow: 'platform_status' };
 
 // Search Products 202502: `page_size` 1–100; `seller_skus` tối đa 10 (mã 12019027); tổng kết quả không quá 10000
 // (mã 12052180). docv2 search-products-202502, tra 06/11/2026; bản mới nhất trên docv2 ngày đó là 202502.

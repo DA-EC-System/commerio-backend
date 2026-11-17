@@ -163,7 +163,7 @@ async function applyVisibility(
     const unhidable = candidates.filter((r) => r.status === 'hidden' && !r.outsideChangeKind && !paused.has(r.variantId!)).map((r) => r.id);
     return { paused, entered: await lastEntryActions('listings', unhidable, 'hidden') };
   });
-  const byPlatform = adapter.capabilities.hideBy === 'deactivate' && !byProduct;
+  const byPlatform = adapter.capabilities.hideBy === 'deactivate';
   // Lệch tồn (`error`) giữ qua lần hiện lại; ẩn bằng tồn 0 thì chờ đẩy 0.
   const patchFor = (action: ListingAction, row: ListingRow): ListingPatch => {
     if (action === 'unhide') return { hiddenBy: null, stockSync: row.stockSync === 'error' ? 'error' : 'pending' };

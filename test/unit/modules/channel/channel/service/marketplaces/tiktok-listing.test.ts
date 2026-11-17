@@ -772,7 +772,8 @@ it('adapter TikTok có đủ năng lực listing (không còn unsupported), kể
   for (const k of ['listCategories', 'categoryAttributes', 'uploadImage', 'createProduct', 'updateProduct', 'updatePriceQuantity', 'deactivate', 'activate'] as const) {
     expect(typeof adapter[k]).toBe('function');
   }
-  expect(adapter.capabilities.hideBy).toBe('deactivate');
+  expect(adapter.capabilities.hideBy).toBe('zero_stock');
+  expect(adapter.togglesByProduct).toBe(true);
 });
 
 describe('tổ chức chịu trách nhiệm hàng hoá lấy từ hồ sơ công ty (#292)', () => {

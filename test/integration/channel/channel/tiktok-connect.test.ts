@@ -75,7 +75,7 @@ describe('nối gian hàng TikTok (#217)', () => {
     expect(res.status).toBe(201);
     const body = ShopCallbackResult.parse(res.body);
     expect(body.shop).toMatchObject({ status: 'connecting', platform: 'tiktok', externalShopId: shopId, shopName: 'Shop thử TikTok' });
-    expect(body.shop.capabilities).toEqual({ listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' });
+    expect(body.shop.capabilities).toEqual({ listingReview: true, hideBy: 'zero_stock', splitLevel: 'sku', returnWindow: 'platform_status' });
     expect(JSON.stringify(res.body)).not.toMatch(new RegExp(`TTP_|${cipher}|tts1\\.`));
 
     const { row, access, refresh } = await storedTokens(body.shop.id);

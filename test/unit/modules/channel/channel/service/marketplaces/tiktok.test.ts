@@ -174,7 +174,7 @@ describe('adapter TikTok: nối gian hàng', () => {
   });
 
   it('capabilities: duyệt listing, ẩn bằng deactivate, tách theo SKU, hạn trả theo trạng thái sàn', () => {
-    expect(createTiktokAdapter(config).capabilities).toEqual({ listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' });
+    expect(createTiktokAdapter(config).capabilities).toEqual({ listingReview: true, hideBy: 'zero_stock', splitLevel: 'sku', returnWindow: 'platform_status' });
   });
 
   it('exchangeCode: đổi auth_code (grant_type authorized_code), hạn là mốc Unix tuyệt đối, mỗi gian hàng gói cipher riêng', async () => {

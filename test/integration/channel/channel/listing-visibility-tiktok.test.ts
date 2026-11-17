@@ -17,7 +17,7 @@ import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, FAKE_CAPABILITIES, fakeAdapter } from './helpers.ts';
 
 setProductPort(null);
 const calls: string[] = [];
@@ -50,7 +50,7 @@ const getSkus = vi.fn(async (_t: string, sellerSkus: readonly string[]) =>
   }),
 );
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' });
-registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate, togglesByProduct: true }));
+registerAdapter('tiktok', fakeAdapter({ getSeller: seller, getSkus, updatePriceQuantity, deactivate, activate, togglesByProduct: true, capabilities: { ...FAKE_CAPABILITIES, hideBy: 'zero_stock' } }));
 afterAll(() => resetAdapters());
 
 const app = () => request(testApp());
