@@ -11,6 +11,8 @@ import {
   ListingSyncResult,
   MappingBody,
   MappingParams,
+  OutsideChangeBody,
+  OutsideChangeParams,
   MatchBody,
   RemoteSkuList,
   RemoteSkusQuery,
@@ -353,6 +355,22 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng hoặc biến thể chưa có listing'),
       409: problemResponse('`shop_not_connected`, `invalid_transition` (đang đẩy, đã gỡ), `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/outside-change/:action',
+    summary: 'CEO quyết listing bị sàn đổi ngoài app (#360, 21 §18.3)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn chưa bán lại mà không bật được từ app (TikTok): 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`. Gỡ dùng route `delist`.',
+    security: bearer,
+    request: { params: OutsideChangeParams, body: json(OutsideChangeBody) },
+    responses: {
+      200: { description: 'Listing sau khi quyết', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition` (không có `outsideChange`; `accept-price` với `kind = disabled`), `version_conflict` kèm `current`, `shop_not_connected`'),
+      422: problemResponse('`marketplace_unsupported`, `validation_failed`'),
     },
   });
 }

@@ -4,7 +4,7 @@ import { assertTransition, findAccountSummaries, recordTransition } from '../../
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { DELISTED_REASON, type ListingAction, type ListingStatus, listingMachine, NO_PENDING, pendingOnly } from '../domain/listing.ts';
+import { DELISTED_REASON, type ListingAction, type ListingStatus, listingMachine, NO_OUTSIDE_CHANGE, NO_PENDING, pendingOnly } from '../domain/listing.ts';
 import { awaitingAllocation } from '../domain/shop.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import {
@@ -48,6 +48,8 @@ export interface ChannelListing {
   qcAlert: null;
   lastPushedAt: Date | null;
   lastPushedPrice: number | null;
+  /** Sàn đổi listing ngoài app, chờ CEO quyết (#360, 21 §18.3). */
+  outsideChange: { kind: 'disabled' | 'price_changed'; platformPrice: number | null; detectedAt: Date } | null;
   /** Ghép chờ CEO duyệt (§18.6.5); `variantId` null là "không quản tồn". */
   pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   version: number;
@@ -104,6 +106,14 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
+    outsideChange:
+      r.outsideChangeKind && r.outsideChangeAt
+        ? {
+            kind: r.outsideChangeKind,
+            platformPrice: r.outsideChangePrice === null ? null : Number(r.outsideChangePrice),
+            detectedAt: r.outsideChangeAt,
+          }
+        : null,
     pendingMapping:
       r.pendingRequestedBy && r.pendingRequestedAt
         ? {
@@ -170,7 +180,7 @@ export async function moveListing(
   const updated = await updateListing(
     row.id,
     { version: row.version, status: row.status },
-    { ...patch, ...(dropPending && NO_PENDING), status: to },
+    { ...(to !== 'hidden' && NO_OUTSIDE_CHANGE), ...patch, ...(dropPending && NO_PENDING), status: to },
   );
   if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });

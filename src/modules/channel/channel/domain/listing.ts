@@ -21,6 +21,8 @@ export type ListingAction =
   | 'release'
   | 'hide'
   | 'unhide'
+  | 'outside_hold'
+  | 'outside_resolve'
   | 'delist';
 
 const manage = 'channel.listing.manage';
@@ -38,6 +40,9 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   { from: 'platform_hold', to: 'live', action: 'release', system: true },
   { from: 'live', to: 'hidden', action: 'hide', system: true },
   { from: 'hidden', to: 'live', action: 'unhide', system: true },
+  // Sàn đổi listing ngoài app (#360, 21 §18.3): lượt đồng bộ dừng bán, CEO quyết (route kiểm vai trò CEO).
+  { from: 'live', to: 'hidden', action: 'outside_hold', system: true },
+  { from: 'hidden', to: 'live', action: 'outside_resolve', permission: manage },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
   {
     from: ['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'],
@@ -55,7 +60,7 @@ export const DELETABLE: readonly ListingStatus[] = ['under_review', 'live', 'hid
 
 /**
  * Thao tác của sàn cần áp khi đồng bộ, null khi không đổi. Sàn xoá sản phẩm → `delist` (25 §6.4 "gỡ trên sàn (sàn báo
- * về)"); sàn tắt sản phẩm ngoài app chưa có mũi tên trên sơ đồ C2 nên để nguyên.
+ * về)"); sàn tắt listing đang `live` → `outside_hold` (#360). Listing `hidden` mà sàn tắt là do chính app tắt: giữ nguyên.
  */
 export function syncAction(status: ListingStatus, remote: RemoteState): ListingAction | null {
   if (remote === 'deleted') return DELETABLE.includes(status) ? 'delist' : null;
@@ -63,6 +68,7 @@ export function syncAction(status: ListingStatus, remote: RemoteState): ListingA
   if (status === 'under_review' && remote === 'rejected') return 'reject';
   if ((status === 'live' || status === 'hidden') && remote === 'hold') return 'hold';
   if (status === 'platform_hold' && remote === 'live') return 'release';
+  if (status === 'live' && remote === 'inactive') return 'outside_hold';
   return null;
 }
 
@@ -112,6 +118,8 @@ export const NO_PENDING = {
   pendingExternalProductId: null,
   pendingSellerSku: null,
 } as const;
+/** Bỏ dấu "sàn đổi ngoài app" (#360; CHECK `listings_outside_change`: ba cột cùng rỗng khi rời `hidden`). */
+export const NO_OUTSIDE_CHANGE = { outsideChangeKind: null, outsideChangePrice: null, outsideChangeAt: null } as const;
 /** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
 export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
 /** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */

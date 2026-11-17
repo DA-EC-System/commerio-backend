@@ -1,0 +1,5 @@
+CREATE TYPE "channel"."outside_change_kind" AS ENUM('disabled', 'price_changed');--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD COLUMN "outside_change_kind" "channel"."outside_change_kind";--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD COLUMN "outside_change_price" numeric(18, 2);--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD COLUMN "outside_change_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD CONSTRAINT "listings_outside_change" CHECK (("channel"."listings"."outside_change_kind" is null and "channel"."listings"."outside_change_price" is null and "channel"."listings"."outside_change_at" is null) or ("channel"."listings"."outside_change_kind" is not null and "channel"."listings"."status" = 'hidden' and "channel"."listings"."outside_change_at" is not null and ("channel"."listings"."outside_change_kind" = 'price_changed') = ("channel"."listings"."outside_change_price" is not null)));

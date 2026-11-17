@@ -168,7 +168,7 @@ type LazadaProduct = {
   created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
   images?: unknown;
-  skus?: { SkuId?: unknown; SellerSku?: unknown; quantity?: unknown; sellableStock?: unknown; Images?: unknown }[];
+  skus?: { SkuId?: unknown; SellerSku?: unknown; Status?: unknown; quantity?: unknown; sellableStock?: unknown; Images?: unknown }[];
 };
 
 /** URL đầu tiên khác rỗng của `images` (GetProducts): mảng chuỗi hoặc chuỗi JSON của mảng; không có thì null. */
@@ -202,6 +202,16 @@ function remoteState(p: LazadaProduct): { state: RemoteState; rejectReason: stri
   return { state: 'inactive', rejectReason: null };
 }
 
+/**
+ * Trạng thái riêng của SKU (`skus[].Status`: `active`, `inactive`, `deleted`; GetProducts, open.lazada.com tra 17/11/2026):
+ * người bán tắt một phân loại thì sản phẩm vẫn `Active` (#360). SKU đã xoá thì `deleted`; `inactive` chỉ đè khi sản phẩm
+ * đang bán, còn đang duyệt, bị khoá, từ chối thì trạng thái sản phẩm thắng.
+ */
+function skuState(product: RemoteState, status: unknown): RemoteState {
+  if (status === 'deleted') return 'deleted';
+  return product === 'live' && status === 'inactive' ? 'inactive' : product;
+}
+
 /** `imageUrl` (#282): ảnh đầu tiên của sản phẩm (`images`), sản phẩm không có ảnh thì ảnh đầu của SKU (`skus[].Images`). */
 function skusOf(p: LazadaProduct): RemoteSku[] {
   const { state, rejectReason } = remoteState(p);
@@ -212,7 +222,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     sellerSku: String(s.SellerSku ?? ''),
     title: String(p.attributes?.name ?? ''),
     imageUrl: productImage ?? firstImage(s.Images),
-    state,
+    state: skuState(state, s.Status),
     rejectReason,
     quantity: Number(s.quantity ?? 0),
     // Số bán được để đối chiếu tồn (#223). Tài liệu GetProducts không định nghĩa trường nào trong `skus`, chỉ ghi tham số

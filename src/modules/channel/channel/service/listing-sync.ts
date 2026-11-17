@@ -113,6 +113,16 @@ const zeroHidden = (row: ListingRow) => row.status === 'hidden' && row.hiddenBy 
  * SKU tạm ngừng sẽ ẩn cả các SKU còn bán cùng sản phẩm.
  */
 const VISIBILITY_LATER: ReadonlySet<string> = new Set(['tiktok']);
+/**
+ * Lần vào `hidden` mà app được tự hiện lại: `hide` (tạm ngừng SKU), hoặc `outside_hold` đã được CEO `restore` lúc SKU
+ * đang tạm ngừng (dòng chờ quyết lọc trước theo `outsideChangeKind`). `relist` (nối lại gian hàng) không.
+ */
+const APP_HIDDEN = new Set(['hide', 'outside_hold']);
+
+export async function pausedVariants(port: ProductPort, variantIds: string[]): Promise<Set<string>> {
+  const variants = await port.variants([...new Set(variantIds)]);
+  return new Set(variants.filter((v) => v.businessStatus === 'paused').map((v) => v.id));
+}
 
 /**
  * Ẩn, hiện listing theo trạng thái SKU (#224, 25 §6.4, `visibilityAction`). `hideBy = 'deactivate'`: gọi sàn tắt, bật
@@ -132,10 +142,9 @@ async function applyVisibility(
   const candidates = rows.filter((r) => r.mode === 'mapped' && r.externalSkuId && (r.status === 'live' || r.status === 'hidden'));
   if (!candidates.length) return rows;
   const { paused, entered } = await inCompany(async () => {
-    const variants = await port.variants([...new Set(candidates.map((r) => r.variantId!))]);
-    const paused = new Set(variants.filter((v) => v.businessStatus === 'paused').map((v) => v.id));
-    // Lịch sử chỉ cần cho dòng có thể hiện lại.
-    const unhidable = candidates.filter((r) => r.status === 'hidden' && !paused.has(r.variantId!)).map((r) => r.id);
+    const paused = await pausedVariants(port, candidates.map((r) => r.variantId!));
+    // Lịch sử chỉ cần cho dòng có thể hiện lại; dòng chờ CEO quyết sàn đổi ngoài app không tự hiện lại (#360).
+    const unhidable = candidates.filter((r) => r.status === 'hidden' && !r.outsideChangeKind && !paused.has(r.variantId!)).map((r) => r.id);
     return { paused, entered: await lastEntryActions('listings', unhidable, 'hidden') };
   });
   const byPlatform = adapter.capabilities.hideBy === 'deactivate';
@@ -147,7 +156,7 @@ async function applyVisibility(
   };
   let changed = false;
   for (const row of candidates) {
-    const action = visibilityAction(row.status, paused.has(row.variantId!), entered.get(row.id) === 'hide');
+    const action = visibilityAction(row.status, paused.has(row.variantId!), APP_HIDDEN.has(entered.get(row.id) ?? ''));
     if (!action) continue;
     try {
       if (byPlatform) {
@@ -234,10 +243,16 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   if (watched.length) {
     const remote = await onMarketplace(() => adapter.getSkus(accessToken, watched.map((r) => r.sellerSku!)));
     bySku = new Map(remote.map((s) => [s.externalSkuId, s]));
-    for (const row of watched) {
+    const actions = watched.flatMap((row) => {
       const r = bySku.get(row.externalSkuId!);
       const action = r && syncAction(row.status, r.state);
-      if (!action) continue;
+      return action ? [{ row, r, action }] : [];
+    });
+    // SKU đang tạm ngừng mà sàn tắt: app tắt (#224, việc đẩy tồn chạy song song chưa kịp ghi), không phải người bán (#360).
+    const outside = actions.filter((a) => a.action === 'outside_hold').map((a) => a.row.variantId!);
+    const paused = outside.length ? await inCompany(() => pausedVariants(port, outside)) : new Set<string>();
+    for (const { row, r, action } of actions) {
+      if (action === 'outside_hold' && paused.has(row.variantId!)) continue;
       const { patch, reason } = remoteChange(action, r.rejectReason);
       // Listing sang `live` thì đẩy tồn ngay trong lượt này (25 §6.5).
       const toLive = (action === 'approve' || action === 'release') && row.stockSync === 'synced';
@@ -293,6 +308,7 @@ async function reconcileStock(
     return (
       r.mode === 'mapped' &&
       STOCK_RECONCILED.includes(r.status) &&
+      !r.outsideChangeKind &&
       r.stockSync !== 'pending' &&
       remote?.sellableQuantity !== undefined &&
       !remote.stockLocked
@@ -355,7 +371,13 @@ async function pushDue(
   // Gian hàng giữ tồn không gửi tồn, trừ listing ẩn bằng tồn 0 (gửi 0 không bao giờ làm bán quá).
   const stockPending = (r: ListingRow) => (!holdStock || zeroHidden(r)) && r.stockSync !== 'synced';
   const due = rows.filter(
-    (r) => r.mode === 'mapped' && PUSHABLE.includes(r.status) && r.externalSkuId && (stockPending(r) || r.priceSync !== 'synced'),
+    (r) =>
+      r.mode === 'mapped' &&
+      PUSHABLE.includes(r.status) &&
+      r.externalSkuId &&
+      // Sàn đổi ngoài app: thôi đẩy cả tồn lẫn giá tới khi CEO quyết, không tự đẩy đè (25 §6.5, #360).
+      !r.outsideChangeKind &&
+      (stockPending(r) || r.priceSync !== 'synced'),
   );
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
@@ -498,6 +520,9 @@ function remoteChange(action: ListingAction, rejectReason: string | null | undef
     return { patch: { externalProductId: null, externalSkuId: null, externalImageUrls: null, hiddenBy: null }, reason: 'Sàn báo đã xoá sản phẩm' };
   }
   if (action === 'hold') return { patch: { hiddenBy: null }, reason: null };
+  if (action === 'outside_hold') {
+    return { patch: { hiddenBy: 'platform', outsideChangeKind: 'disabled', outsideChangeAt: new Date() }, reason: 'Sàn tắt ngoài app' };
+  }
   return { patch: {}, reason: null };
 }
 
