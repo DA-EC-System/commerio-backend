@@ -53,8 +53,25 @@ const DEFAULT_BRAND = 'No Brand';
 const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
 const AUTH_CODES = new Set(['IllegalAccessToken', 'IllegalRefreshToken', 'InvalidCode', 'InvalidRefreshToken']);
-// Mã số là lỗi nghiệp vụ dù mang type ISP (probe-104b), trừ mã lỗi tạm: nội bộ, gọi quá nhanh (tài liệu CreateProduct).
-const TRANSIENT_NUMERIC = new Set(['6', '901', '1000', '4154']);
+/**
+ * Lỗi tạm theo danh sách cho phép (#359); mã khác là sàn từ chối dù mang type ISP: lỗi nghiệp vụ sản phẩm mang type ISP
+ * cả mã số (probe-104b) lẫn mã chữ (E0004 "Product Status not online" khi tắt sản phẩm đã tắt, staging 17/11/2026).
+ * `ApiCallLimit`, `SellerCallLimit`: quá hạn mức (gọi thật #105); `6`, `901`, `1000`, `4154`: nội bộ, gọi quá nhanh
+ * (tài liệu CreateProduct); `E0006` "Unexpected internal error" (tài liệu DeactivateProduct, tra 17/11/2026);
+ * `ServiceTimeout`, `ServiceUnavailable`: không có nguồn tài liệu, giữ để không đổi hành vi cũ. Gặp mã tạm mới thật thì
+ * thêm vào đây kèm ngày và request_id. `type: SYSTEM` luôn là lỗi tạm.
+ */
+const TRANSIENT_CODES = new Set([
+  'ApiCallLimit',
+  'SellerCallLimit',
+  'ServiceTimeout',
+  'ServiceUnavailable',
+  '6',
+  '901',
+  '1000',
+  '4154',
+  'E0006',
+]);
 // UpdatePriceQuantity, UpdateSellableQuantity: tối đa 50 SKU một lần, Lazada khuyên 20.
 const PRICE_QTY_BATCH = 20;
 /**
@@ -141,11 +158,7 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = lazadaMessage(res);
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
-  // `SYSTEM`, `ISP` với mã chữ: lỗi phía sàn; `ApiCallLimit`, `SellerCallLimit`: quá hạn mức; đều thử lại được.
-  const numeric = /^\d+$/.test(code);
-  if (res.type === 'SYSTEM' || code === 'ApiCallLimit' || code === 'SellerCallLimit' || TRANSIENT_NUMERIC.has(code) || (res.type === 'ISP' && !numeric)) {
-    return new MarketplaceError('unavailable', code, message);
-  }
+  if (res.type === 'SYSTEM' || TRANSIENT_CODES.has(code)) return new MarketplaceError('unavailable', code, message);
   return new MarketplaceError('rejected', code, message);
 }
 
