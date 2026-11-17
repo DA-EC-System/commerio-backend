@@ -1,0 +1,66 @@
+# Alertmanager nhận cảnh báo từ Prometheus (deploy/monitoring/rules/alerts.yml) và gửi email qua Brevo (#350).
+# Cấu hình là Secret alertmanager-config sinh từ alertmanager/alertmanager.yml trên VPS, vì có khoá SMTP.
+# Chỉ staging có; overlay local không có Service này nên Prometheus ở máy dev ghi lỗi gửi cảnh báo, bỏ qua.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  labels:
+    app.kubernetes.io/name: alertmanager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.28.1
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - name: web
+              containerPort: 9093
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+              readOnly: true
+            - name: data
+              mountPath: /alertmanager
+      volumes:
+        - name: config
+          secret:
+            secretName: alertmanager-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager
+  ports:
+    - name: web
+      port: 9093
+      targetPort: web
