@@ -38,7 +38,23 @@ Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữ
 | `STAGING_SSH_KEY`, `STAGING_SSH_KNOWN_HOSTS` | secret | Khoá riêng `ci-deploy-backend` do `ci-deploy/setup.sh` sinh, dòng `ssh-keyscan -t ed25519 <host>` |
 | `STAGING_API_URL` | biến | Gốc của staging, vd `https://<tên miền>` (không có `/api`). Có thì job `blackbox` chạy bộ test hộp đen (#120) sau `deploy` |
 
-`DATABASE_URL`, cặp khoá JWT và khoá kho tệp mà ứng dụng dùng **không** đi qua CI: chúng nằm trong `deploy/k8s/overlays/vps/.env` trên VPS (Secret `app-env`). Kho tệp (#212) là Cloudflare R2: điền các biến `S3_*` theo `.env.example`, với `S3_KEY_PREFIX=staging` để tệp staging không lẫn với tệp máy dev trên cùng bucket. Thiếu thì api vẫn chạy, chỉ `POST /files/uploads` trả 503 `storage_unavailable`. Đổi giá trị thì sửa file đó rồi `kubectl apply -k deploy/k8s/overlays/vps` và `kubectl -n commerio rollout restart deploy/api deploy/worker deploy/realtime`.
+`DATABASE_URL`, cặp khoá JWT và khoá kho tệp mà ứng dụng dùng **không** đi qua CI: chúng nằm trong `deploy/k8s/overlays/vps/.env` trên VPS (Secret `app-env`). Thư (#350) đi qua Brevo: `SMTP_URL`, `MAIL_FROM`, xem mục "Gửi thư". Kho tệp (#212) là Cloudflare R2: điền các biến `S3_*` theo `.env.example`, với `S3_KEY_PREFIX=staging` để tệp staging không lẫn với tệp máy dev trên cùng bucket. Thiếu thì api vẫn chạy, chỉ `POST /files/uploads` trả 503 `storage_unavailable`. Đổi giá trị thì sửa file đó rồi `kubectl apply -k deploy/k8s/overlays/vps` và `kubectl -n commerio rollout restart deploy/api deploy/worker deploy/realtime`.
+
+## Gửi thư (Brevo)
+
+Worker gửi thư mã OTP, thư báo người duyệt và thư báo kết quả của luồng mời nhân viên (#350) qua SMTP của Brevo, gói Free (300 thư/ngày). Thiếu `SMTP_URL`, `MAIL_FROM` thì người được mời không nhận được mã, log worker ghi "chưa cấu hình SMTP_URL hoặc MAIL_FROM".
+
+1. Brevo → Senders, domains, IPs → **Senders**: thêm địa chỉ gửi, mở thư xác minh. Chờ trạng thái **Verified**.
+2. Brevo → **SMTP & API** → tab SMTP: lấy Login (dạng `<mã>@smtp-brevo.com`) và tạo SMTP key.
+3. Thêm vào `deploy/k8s/overlays/vps/.env` trên VPS (viết `@` trong login thành `%40`):
+   ```
+   SMTP_URL=smtp://<login>%40smtp-brevo.com:<smtp-key>@smtp-relay.brevo.com:587
+   MAIL_FROM=Commerio <địa chỉ đã Verified>
+   ```
+4. Áp vào Secret `app-env` như đoạn trên, rồi `kubectl -n commerio rollout restart deploy/worker` (chỉ worker gửi thư).
+5. Kiểm: `kubectl -n commerio logs deploy/worker | grep SMTP` có "SMTP dùng được"; tạo link mời, xin mã, thư tới trong vòng một phút. Người nhận thấy người gửi là `<địa chỉ>@<mã>.brevosend.com` vì địa chỉ Gmail không có bản ghi domain; muốn đẹp hơn thì xác thực domain riêng ở Brevo.
+
+Đã làm trên staging ngày 17/11/2026 với địa chỉ gửi của nhóm.
 
 ## Dữ liệu demo
 

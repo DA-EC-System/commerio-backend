@@ -48,7 +48,7 @@ groups:
         annotations:
           summary: Có sự kiện bị chuyển sang DLQ trong 10 phút qua
 
-      # Thư lỗi vĩnh viễn (hết hạn mức Gmail, sai App Password, chưa cấu hình SMTP): thử lại vô ích, người được mời
+      # Thư lỗi vĩnh viễn (hết hạn mức gửi, sai khoá SMTP, chưa cấu hình SMTP): thử lại vô ích, người được mời
       # không nhận được mã OTP (#7). Vế "chuỗi chưa có 15 phút trước" như CommerioDeadLettered.
       - alert: CommerioMailPermanentFailure
         expr: |
@@ -63,12 +63,13 @@ groups:
       # Worker khởi động mà SMTP chưa cấu hình hoặc đăng nhập thử lỗi (#7, gauge `mail_transport_up` đặt lúc khởi động):
       # mọi thư mời, thư báo sẽ không tới, kể cả khi chưa ai bấm gửi.
       - alert: CommerioMailTransportDown
-        expr: mail_transport_up{job="commerio"} == 0
+        # Chỉ worker gửi thư và đặt gauge; api, realtime luôn xuất 0.
+        expr: mail_transport_up{job="commerio",process="worker"} == 0
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: Worker không dùng được SMTP (SMTP_URL, MAIL_FROM chưa đặt hoặc sai App Password)
+          summary: Worker không dùng được SMTP (SMTP_URL, MAIL_FROM chưa đặt hoặc sai khoá SMTP)
 
   # Máy VPS (job "node", dashboard "Máy VPS"). Overlay local không có node-exporter: các luật này im lặng.
   - name: vps
