@@ -528,3 +528,60 @@ describe('huỷ dòng', () => {
     expect(await cancelledQtyOf(orderId)).toEqual([1, 1]);
   });
 });
+
+describe('ghép SKU của dòng khi nhận đơn (spec 237)', () => {
+  const statusChanges = async (orderId: string) => (await eventsOf(orderId)).filter((e) => e.type === 'sales.order_status_changed');
+
+  it('AC11: dòng không quản tồn → dòng đơn stock_untracked, không biến thể, không SKU; sự kiện đơn không có cờ unmapped_sku', async () => {
+    const o = remote();
+    o.lines[0] = { ...o.lines[0]!, variantId: null, untracked: true, sellerSku: `KHONG-QUAN-TON-${seq}` };
+    const res = await ingest(o);
+
+    expect(await all(`select variant_id, sku, stock_untracked from "order".order_lines where order_id = $1`, [res.orderId])).toEqual([
+      { variant_id: null, sku: null, stock_untracked: true },
+    ]);
+    const changed = await statusChanges(res.orderId);
+    expect(changed).toHaveLength(1);
+    expect(changed[0].payload.flags).not.toContain('unmapped_sku');
+  });
+
+  it('AC16d: kéo lại đơn đã có, sàn gắn kiện mới cho dòng: dòng kiện mới mang biến thể đã lưu trên dòng đơn, không theo lần tra mới', async () => {
+    const other = await createVariant(companyId);
+    // Lần đầu sàn trả trạng thái app chưa biết: chưa lập kiện; lần sau mới lập kiện cho dòng đã có.
+    const o = remote({}, null);
+    const res = await ingest(o);
+    expect(await packagesOf(res.orderId)).toHaveLength(0);
+
+    const again = structuredClone(o);
+    again.lines[0] = { ...again.lines[0]!, variantId: other.variantId, sellerSku: other.sku, status: 'pending', packageCode: `FP-MOI-${seq}` };
+    await ingest(again);
+
+    const pkgs = await packagesOf(res.orderId);
+    expect(pkgs).toHaveLength(1);
+    expect(await all(`select variant_id from "order".package_lines where package_id = $1`, [pkgs[0].id])).toEqual([{ variant_id: variantId }]);
+    expect(await all(`select variant_id from "order".order_lines where order_id = $1`, [res.orderId])).toEqual([{ variant_id: variantId }]);
+  });
+
+  it('AC16d: cờ unmapped_sku của sự kiện đơn tính từ dòng đơn đã lưu, không theo lần tra mới', async () => {
+    const mapped = remote({ paid: false, rawStatus: 'unpaid' });
+    const first = await ingest(mapped);
+    const remapped = structuredClone(mapped);
+    remapped.paid = true;
+    remapped.lines[0] = { ...remapped.lines[0]!, variantId: null };
+    await ingest(remapped);
+    const a = (await statusChanges(first.orderId)).at(-1)!;
+    expect(a.payload).toMatchObject({ from: 'unpaid', to: 'processing' });
+    expect(a.payload.flags).not.toContain('unmapped_sku');
+
+    const unmapped = remote({ paid: false, rawStatus: 'unpaid' });
+    unmapped.lines[0] = { ...unmapped.lines[0]!, variantId: null };
+    const second = await ingest(unmapped);
+    const nowMapped = structuredClone(unmapped);
+    nowMapped.paid = true;
+    nowMapped.lines[0] = { ...nowMapped.lines[0]!, variantId };
+    await ingest(nowMapped);
+    const b = (await statusChanges(second.orderId)).at(-1)!;
+    expect(b.payload).toMatchObject({ from: 'unpaid', to: 'processing' });
+    expect(b.payload.flags).toContain('unmapped_sku');
+  });
+});

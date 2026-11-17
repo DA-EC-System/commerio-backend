@@ -18,18 +18,31 @@ export async function setup(stock: number | null) {
   return { companyId, variantId, sku };
 }
 
-/** Đơn sàn; `lines` món, mỗi món một đơn vị. `packages > 1` chia món lần lượt vào `FP-${tag}-${n}` (spec 199c AC2). */
+/**
+ * Đơn sàn; `lines` món đã ghép, `unmapped` món chưa ghép, `untracked` món "không quản tồn" (spec 237), mỗi món một đơn
+ * vị. `packages > 1` chia món lần lượt vào `FP-${tag}-${n}` (spec 199c AC2).
+ */
 export function remote(
   v: { variantId: string; sku: string },
-  o: { status?: LineStatus; lines?: number; unmapped?: number; packages?: number; placedAt?: Date; orderCutoffAt?: Date | null; holdStock?: boolean } = {},
+  o: {
+    status?: LineStatus;
+    lines?: number;
+    unmapped?: number;
+    untracked?: number;
+    packages?: number;
+    placedAt?: Date;
+    orderCutoffAt?: Date | null;
+    holdStock?: boolean;
+  } = {},
 ): PlatformOrder {
   const tag = randomUUID().slice(0, 8);
   const status = o.status ?? 'pending';
   const packages = o.packages ?? 1;
-  const line = (i: number, mapped: boolean) => ({
+  const line = (i: number, mapped: boolean, untracked = false) => ({
     externalLineId: `${tag}-${i}`,
     variantId: mapped ? v.variantId : null,
-    sellerSku: mapped ? v.sku : `CHUA-GHEP-${tag}`,
+    sellerSku: mapped ? v.sku : untracked ? `KHONG-QUAN-TON-${tag}` : `CHUA-GHEP-${tag}`,
+    untracked,
     productName: 'Áo thun',
     unitPrice: '100000',
     sellerDiscount: '0',
@@ -42,6 +55,7 @@ export function remote(
     shipping: noShipping,
   });
   const mapped = o.lines ?? 1;
+  const unmapped = o.unmapped ?? 0;
   return {
     shopId: randomUUID(),
     holdStock: o.holdStock ?? true,
@@ -58,7 +72,8 @@ export function remote(
     info: noOrderInfo,
     lines: [
       ...Array.from({ length: mapped }, (_, i) => line(i, true)),
-      ...Array.from({ length: o.unmapped ?? 0 }, (_, i) => line(mapped + i, false)),
+      ...Array.from({ length: unmapped }, (_, i) => line(mapped + i, false)),
+      ...Array.from({ length: o.untracked ?? 0 }, (_, i) => line(mapped + unmapped + i, false, true)),
     ],
   };
 }

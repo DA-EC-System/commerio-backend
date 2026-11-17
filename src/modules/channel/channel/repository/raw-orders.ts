@@ -1,5 +1,6 @@
 // Dữ liệu gốc đơn sàn và mốc kéo đơn (#105). Chạy trong `withCompany` của bên gọi.
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { LineSku } from '../../../order/index.ts';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { listings, rawOrders, shops } from './schema.ts';
 
@@ -32,20 +33,26 @@ export async function saveRawOrder(input: {
 }
 
 /**
- * Biến thể đã ghép theo SellerSku của gian hàng (listing, #104). Cùng SellerSku có cả dòng đã gỡ và dòng hiện hành (đẩy
- * lại sau khi gỡ, #219) thì dòng hiện hành thắng, rồi tới dòng mới hơn. Chọn dòng thắng trước rồi mới đọc biến thể: dòng
- * thắng "không quản tồn" (đã duyệt hay đang chờ, `variant_id` null) thì SKU đó không có biến thể, không rơi về biến thể của
- * dòng đã gỡ (#220).
+ * Ghép SKU theo SellerSku của gian hàng (listing, #104, spec 237). Cùng SellerSku có cả dòng đã gỡ và dòng hiện hành (đẩy
+ * lại sau khi gỡ, #219) thì dòng hiện hành thắng, rồi tới dòng mới hơn. Chọn dòng thắng trước rồi mới đọc ghép: dòng thắng
+ * `mapped` → biến thể; `unmanaged` đã duyệt (`approved_by`) → "không quản tồn"; `unmanaged` chỉ chờ duyệt → chưa ghép.
+ * Dòng thắng không có biến thể thì không rơi về biến thể của dòng đã gỡ (#220). SellerSku không có listing thì vắng.
  */
-export async function variantsBySellerSku(shopId: string, sellerSkus: readonly string[]): Promise<Map<string, string | null>> {
+export async function variantsBySellerSku(shopId: string, sellerSkus: readonly string[]): Promise<Map<string, LineSku>> {
   if (!sellerSkus.length) return new Map();
   const rows = await getDb()
-    .select({ sku: listings.sellerSku, variantId: listings.variantId })
+    .select({ sku: listings.sellerSku, variantId: listings.variantId, mode: listings.mode, approvedBy: listings.approvedBy })
     .from(listings)
     .where(and(eq(listings.shopId, shopId), inArray(listings.sellerSku, [...sellerSkus])))
     // Dòng thắng đứng cuối để `new Map` giữ nó.
     .orderBy(sql`${listings.status} <> 'delisted'`, listings.createdAt);
-  return new Map(rows.map((r) => [r.sku!, r.variantId]));
+  const skuOf = (r: (typeof rows)[number]): LineSku =>
+    r.mode === 'mapped' && r.variantId
+      ? { kind: 'variant', variantId: r.variantId }
+      : r.mode === 'unmanaged' && r.approvedBy
+        ? { kind: 'untracked' }
+        : { kind: 'unmapped' };
+  return new Map(rows.map((r) => [r.sku!, skuOf(r)]));
 }
 
 /** Đẩy mốc kéo đơn, không lùi (lần kéo tay và việc nền có thể chạy cùng lúc). */

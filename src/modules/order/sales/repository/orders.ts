@@ -115,14 +115,22 @@ export async function updateOrder(id: string, patch: Partial<typeof orders.$infe
     .where(eq(orders.id, id));
 }
 
+/** Dòng đơn đã lưu theo mã món sàn: id và ghép SKU (spec 237). */
+export interface StoredLine {
+  id: string;
+  variantId: string | null;
+  stockUntracked: boolean;
+}
+
 /**
  * Chèn dòng đơn sàn chưa có (theo mã món sàn); dòng đã có chỉ cập nhật cột mô tả khi khác, sàn trả null thì giữ giá
- * trị đã lưu (không tăng `version` nếu không đổi). Trả id của mọi dòng theo mã món.
+ * trị đã lưu (không tăng `version` nếu không đổi). Trả mọi dòng theo mã món với ghép **đã lưu**: dòng đã có giữ biến thể,
+ * `stock_untracked` cũ (đổi ghép của đơn đã về là việc của `applySkuMapping`, spec 237 D14).
  */
 export async function upsertMarketplaceLines(
   orderId: string,
   lines: readonly Omit<typeof orderLines.$inferInsert, 'companyId' | 'orderId'>[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, StoredLine>> {
   const db = getDb();
   if (lines.length) {
     const companyId = requireCompanyId('upsertMarketplaceLines');
@@ -143,10 +151,10 @@ export async function upsertMarketplaceLines(
       });
   }
   const rows = await db
-    .select({ id: orderLines.id, externalLineId: orderLines.externalLineId })
+    .select({ id: orderLines.id, externalLineId: orderLines.externalLineId, variantId: orderLines.variantId, stockUntracked: orderLines.stockUntracked })
     .from(orderLines)
     .where(eq(orderLines.orderId, orderId));
-  return new Map(rows.map((r) => [r.externalLineId ?? '', r.id]));
+  return new Map(rows.map(({ externalLineId, ...r }) => [externalLineId ?? '', r]));
 }
 
 /** Dòng của đơn đã ghi huỷ đủ (`cancelled_qty = quantity`, spec 205 §5.10). */
