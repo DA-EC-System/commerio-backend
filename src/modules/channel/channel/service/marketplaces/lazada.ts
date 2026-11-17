@@ -975,10 +975,12 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
       // E0004 "Product Status not online" (tài liệu DeactivateProduct: "already in the Inactive state"): đọc lại trạng thái,
       // đã tắt thì coi là xong như TikTok; còn chờ duyệt hay đang bán thì ném lại lỗi gốc (#359).
-      await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM').catch(async (err: unknown) => {
-        if (!(err instanceof MarketplaceError) || err.platformCode !== 'E0004') throw err;
-        if (!(await inactiveOnPlatform(accessToken, externalProductId, externalSkuId))) throw err;
-      });
+      try {
+        await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+      } catch (err) {
+        if (err instanceof MarketplaceError && err.platformCode === 'E0004' && (await inactiveOnPlatform(accessToken, externalProductId, externalSkuId))) return;
+        throw err;
+      }
     },
     // Lật theo cửa sổ `update_after` tăng dần, không theo offset (#218): đơn đổi giữa chừng có `updated_at` mới nên nằm
     // sau con trỏ. Trang sau gọi từ giây của đơn cuối trang trừ 1 (tài liệu không nói `update_after` có lấy cả mốc) và
