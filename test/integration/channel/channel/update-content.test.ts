@@ -214,13 +214,10 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect(updateContent).not.toHaveBeenCalled();
   });
 
-  it('C2-22g: không quản tồn → 409 listing_unmanaged; sản phẩm sàn chung nhiều SKU → 409 shared_remote_product', async () => {
+  it('C2-22g: không quản tồn → 409 listing_unmanaged; sàn báo sản phẩm nhiều SKU → 409 shared_remote_product', async () => {
     const ceoId = (await testPool().query('select id from core.accounts where email = $1', [company.ceo.email])).rows[0].id;
     const unmanaged = await listing({ variant_id: null, mode: 'unmanaged', approved_by: ceoId });
     expect((await edit(unmanaged.id, unmanaged.version)).body.type).toBe('/problems/listing_unmanaged');
-    const a = await listing();
-    await listing({ external_product_id: (await testPool().query('select external_product_id from channel.listings where id = $1', [a.id])).rows[0].external_product_id });
-    expect((await edit(a.id, a.version)).body.type).toBe('/problems/shared_remote_product');
     onContent = async () => {
       throw new MarketplaceError('rejected', 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU');
     };

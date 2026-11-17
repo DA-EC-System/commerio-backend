@@ -22,7 +22,6 @@ import {
   deleteListing,
   findListingById,
   findListingRow,
-  hasSiblingListing,
   insertListing,
   type ListingPatch,
   type ListingRow,
@@ -31,7 +30,7 @@ import {
 import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
-import { pushBlock } from './push-block.ts';
+import { listingText, pushBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
@@ -381,9 +380,6 @@ export async function delistListing(actor: Actor, shopId: string, variantId: str
   return toListing(updated, await withCompany(actor.companyId, () => requesterNames([updated])));
 }
 
-const sharedProduct = () =>
-  new AppError(409, 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; sửa nội dung từng SKU chưa hỗ trợ');
-
 /**
  * `update_content` (§18.3, #293): đưa tên, mô tả, thuộc tính của catalog lên sản phẩm đang bán. Gọi sàn ngoài giao dịch;
  * sàn nhận rồi mới ghi, đọc lại dòng (đồng bộ tồn tăng `version` liên tục): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa
@@ -396,45 +392,42 @@ export async function updateListingContent(
   listingId: string,
   version: number,
 ): Promise<ChannelListing> {
-  const { shop, adapter, accessToken } = await withCompany(actor.companyId, () => shopSession(shopId));
-  const data = await withCompany(actor.companyId, async () => {
+  const { shop, adapter, accessToken, row, productId, v, map, responsible } = await withCompany(actor.companyId, async () => {
+    const session = await shopSession(shopId);
     const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
-    if (!row || row.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
+    if (!row || row.shopId !== session.shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     if (row.version !== version) {
       throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', { current: toListing(row) });
     }
     assertTransition(listingMachine, row.status, 'update_content', { actor, view: toListing(row) });
-    if (!row.variantId) throw new AppError(409, 'listing_unmanaged', 'Listing không gắn sản phẩm Commerio, không có nội dung để đưa lên');
-    if (row.externalProductId && (await hasSiblingListing(shop.id, row.externalProductId, row.id))) throw sharedProduct();
+    if (!row.variantId || !row.externalProductId) {
+      throw new AppError(409, 'listing_unmanaged', 'Listing không gắn sản phẩm Commerio, không có nội dung để đưa lên');
+    }
     const [v] = await port.variants([row.variantId]);
     if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
-    const [map] = await listCategoryMaps(shop.platform, [v.categoryId]);
-    if (!map) throw new AppError(409, 'category_unmapped', 'Danh mục của sản phẩm chưa ghép với danh mục sàn');
-    return { row, v, map, responsible: await responsibleOrgOf(shop.companyId) };
+    const [map] = await listCategoryMaps(session.shop.platform, [v.categoryId]);
+    if (!map) throw new AppError(409, 'category_unmapped', 'Danh mục chưa ghép với danh mục của sàn');
+    return { ...session, row, productId: row.externalProductId, v, map, responsible: await responsibleOrgOf(session.shop.companyId) };
   });
-  if (!adapter.updateContent) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ sửa nội dung sản phẩm đang bán');
-  const { row, v, map, responsible } = data;
+  const update = adapter.updateContent;
+  if (!update) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ sửa nội dung sản phẩm đang bán');
   const { underReview } = await onMarketplace(async () => {
     try {
-      return await adapter.updateContent!(accessToken, row.externalProductId!, {
-        externalCategoryId: map.externalCategoryId,
-        name: v.attributesLabel ? `${v.productName} - ${v.attributesLabel}` : v.productName,
-        description: v.description ?? v.productName,
-        attributes: map.attributes,
-        responsible,
-      });
+      return await update(accessToken, productId, { externalCategoryId: map.externalCategoryId, ...listingText(v), attributes: map.attributes, responsible });
     } catch (err) {
-      if (err instanceof MarketplaceError && err.platformCode === 'shared_remote_product') throw sharedProduct();
+      // Sản phẩm sàn nhiều SKU: mã riêng của route (§18.5), không phải lỗi chung của sàn.
+      if (err instanceof MarketplaceError && err.platformCode === 'shared_remote_product') {
+        throw new AppError(409, 'shared_remote_product', err.platformMessage ?? 'Sản phẩm trên sàn có nhiều SKU');
+      }
       throw err;
     }
   });
   return withCompany(actor.companyId, async () => {
     const fresh = await findListingById(row.id);
-    if (!fresh) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
+    if (!fresh || fresh.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     const revision = underReview ? {} : { revisionStatus: 'auditing' as const, revisionRejectReason: null, revisionAt: new Date() };
     let updated = await moveListing(fresh, 'update_content', actor, revision);
     if (underReview) updated = await moveListing(updated, 'request_review', null);
     return toListing(updated, await requesterNames([updated]));
   });
 }
-

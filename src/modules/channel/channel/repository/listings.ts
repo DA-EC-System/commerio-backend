@@ -190,23 +190,6 @@ export async function findListingByExternalSku(shopId: string, externalSkuId: st
   return row;
 }
 
-/** Listing chưa gỡ khác của gian hàng cùng sản phẩm sàn (sản phẩm nhiều SKU, #293). */
-export async function hasSiblingListing(shopId: string, externalProductId: string, exceptId: string): Promise<boolean> {
-  const [row] = await getDb()
-    .select({ id: listings.id })
-    .from(listings)
-    .where(
-      and(
-        eq(listings.shopId, shopId),
-        eq(listings.externalProductId, externalProductId),
-        ne(listings.id, exceptId),
-        sql`${listings.status} <> 'delisted'`,
-      ),
-    )
-    .limit(1);
-  return row !== undefined;
-}
-
 /** Listing lỗi đẩy đang chờ CEO duyệt ghép SKU sàn này (#346). */
 export async function findListingByPendingExternalSku(shopId: string, externalSkuId: string): Promise<ListingRow | undefined> {
   const [row] = await getDb()

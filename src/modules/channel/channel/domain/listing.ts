@@ -98,10 +98,6 @@ export function stockDecision(
 export const STALE_PUSH_MS = 30 * 60_000;
 
 /** Bỏ ghép chờ duyệt (#220; CHECK `listings_pending_mapping`: bốn cột cùng rỗng), kể cả SKU sàn chờ ghép (#346). */
-/** Trạng thái còn giữ bản sửa nội dung chờ sàn duyệt (#293): sàn vẫn duyệt bản sửa trong lúc ẩn hay khoá. */
-export const REVISION_KEPT: readonly ListingStatus[] = ['live', 'hidden', 'platform_hold'];
-export const NO_REVISION = { revisionStatus: null, revisionRejectReason: null, revisionAt: null } as const;
-
 export const NO_PENDING = {
   pendingVariantId: null,
   pendingMode: null,
@@ -111,6 +107,13 @@ export const NO_PENDING = {
   pendingExternalProductId: null,
   pendingSellerSku: null,
 } as const;
+
+/** Trạng thái còn giữ bản sửa nội dung chờ sàn duyệt (#293): sàn vẫn duyệt bản sửa trong lúc ẩn hay khoá. */
+export const REVISION_KEPT: readonly ListingStatus[] = ['live', 'hidden', 'platform_hold'];
+export const NO_REVISION = { revisionStatus: null, revisionRejectReason: null, revisionAt: null } as const;
+
+/** Lý do khi sàn từ chối (sản phẩm hay bản sửa nội dung) mà không ghi câu nào. */
+export const NO_REASON = 'Sàn từ chối, không ghi lý do';
 /** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
 export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
 /** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */

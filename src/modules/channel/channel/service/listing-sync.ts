@@ -10,8 +10,8 @@ import {
   DELETABLE,
   type ListingAction,
   type ListingStatus,
+  NO_REASON,
   NO_REVISION,
-  REVISION_KEPT,
   STALE_PUSH_MS,
   STOCK_RECONCILED,
   type StockDecision,
@@ -395,8 +395,6 @@ export async function restoreAfterZeroStock(actor: Actor, listingIds: readonly s
   if (listingIds.length) await withCompany(actor.companyId, () => markStockPendingIds(listingIds));
 }
 
-const NO_REASON = 'Sàn từ chối, không ghi lý do';
-
 /**
  * Bản sửa nội dung đang duyệt (#293, §18.3): qua duyệt thì xoá, trượt thì `failed` kèm lý do sàn ghi. Ghi theo dòng đọc
  * lại, không so `version` của lúc đọc đầu lượt. Lỗi của một listing ghi log rồi bỏ qua, lượt sau đọc lại; mất uỷ quyền thì
@@ -411,7 +409,7 @@ async function checkRevisions(
 ): Promise<boolean> {
   if (!adapter.contentRevision) return false;
   let changed = false;
-  for (const row of rows.filter((r) => r.revisionStatus === 'auditing' && r.externalProductId && REVISION_KEPT.includes(r.status))) {
+  for (const row of rows.filter((r) => r.revisionStatus === 'auditing' && r.externalProductId)) {
     try {
       const rev = await adapter.contentRevision(accessToken, row.externalProductId!);
       if (rev.state === 'auditing') continue;

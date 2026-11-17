@@ -31,6 +31,7 @@ type Row = Record<string, unknown>;
 
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
+const htmlDescription = (text: string) => `<p>${escapeHtml(text)}</p>`;
 // Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026).
 const RESPONSIBLE_ATTRS: Record<string, keyof Responsible> = { '101489': 'name', '101490': 'address' };
 /** Commerio chỉ bán VND (một công ty, VN). */
@@ -249,7 +250,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     const contentAttributes = await productAttributes(token, p);
     return {
       title: p.name,
-      description: `<p>${escapeHtml(p.description)}</p>`,
+      description: htmlDescription(p.description),
       category_id: p.externalCategoryId,
       category_version: CATEGORY_VERSION,
       main_images: p.imageUrls.map((uri) => ({ uri })),
@@ -425,7 +426,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       }
       const body = {
         title: c.name,
-        description: `<p>${escapeHtml(c.description)}</p>`,
+        description: htmlDescription(c.description),
         ...(attributes.length && { product_attributes: attributes }),
       };
       await client.call('POST', `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`, { token, body });
