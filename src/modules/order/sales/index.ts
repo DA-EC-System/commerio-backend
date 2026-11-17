@@ -40,6 +40,8 @@ export { getOrderChannels } from './service/daily-totals.ts';
 export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop } from './service/channel-boundary.ts';
 // Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
 export { ingestMarketplaceOrder, type PlatformOrder, settleCancelledOrder } from './service/ingest.ts';
+// Ghép SKU áp lên đơn đã về (spec 237): channel gọi trong giao dịch ghép.
+export { applySkuMapping, type ApplySkuMappingInput } from './service/sku-mapping.ts';
 export type { SalesContext } from './service/orders.ts';
 export { nextPackageCode, orderRefsOf } from './service/package-orders.ts';
 // Số bán 30 ngày của SKU cho gợi ý ngưỡng tồn khi sửa hàng loạt (#242); product (lớp dưới) nhận qua `src/wiring.ts`.

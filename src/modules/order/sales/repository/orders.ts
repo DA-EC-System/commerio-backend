@@ -1,5 +1,6 @@
 import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
+import type { MappedSku } from '../../fulfillment/index.ts';
 import type { OrderStatus } from '../domain/order.ts';
 import { docCounters, orderLines, orders } from './schema.ts';
 
@@ -94,6 +95,48 @@ export async function hasUnmappedLines(orderId: string): Promise<boolean> {
     .where(and(eq(orderLines.orderId, orderId), unmappedLine(orderLines)))
     .limit(1);
   return !!row;
+}
+
+/**
+ * Dòng chưa ghép của các đơn thuộc gian hàng mang SKU người bán này (spec 237 §5.4, P1: PR 1 chỉ áp dòng chưa ghép), mọi
+ * trạng thái đơn; khoá dòng đơn theo id tăng (P4: khoá dòng đơn trước kiện, như luồng nhận đơn).
+ */
+export async function lockUnmappedLinesOfShopSku(shopId: string, sellerSku: string): Promise<{ id: string; orderId: string }[]> {
+  const db = getDb();
+  return db
+    .select({ id: orderLines.id, orderId: orderLines.orderId })
+    .from(orderLines)
+    .where(
+      and(
+        eq(orderLines.externalSku, sellerSku),
+        unmappedLine(orderLines),
+        inArray(orderLines.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.shopId, shopId))),
+      ),
+    )
+    .orderBy(asc(orderLines.id))
+    .for('update');
+}
+
+/** Ghi ghép lên dòng đơn: biến thể (kèm `sku` = SKU người bán, như lúc nhận đơn) hoặc "không quản tồn" (`sku` null). */
+export async function setOrderLineSku(ids: readonly string[], to: MappedSku, sellerSku: string): Promise<void> {
+  if (!ids.length) return;
+  const variant = to.kind === 'variant';
+  await getDb()
+    .update(orderLines)
+    .set({
+      variantId: variant ? to.variantId : null,
+      stockUntracked: !variant,
+      sku: variant ? sellerSku : null,
+      version: sql`${orderLines.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(inArray(orderLines.id, [...ids]));
+}
+
+/** Đơn theo id, không khoá (đọc cờ lưu để phát sự kiện). */
+export async function findOrderRows(ids: readonly string[]): Promise<MarketplaceOrderRow[]> {
+  if (!ids.length) return [];
+  return getDb().select(rowColumns).from(orders).where(inArray(orders.id, [...ids])).orderBy(asc(orders.id));
 }
 
 /** Chèn đơn sàn; đơn đã có (lần kéo khác vừa chèn) thì trả `undefined`. */
