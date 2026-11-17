@@ -172,7 +172,7 @@ async function applyVisibility(
   };
   let changed = false;
   const hidden = new Set<string>();
-  const enabled = new Set<string>();
+  const products = new Map<string, RemoteSku['state'] | undefined>();
   for (const row of candidates) {
     const action = visibilityAction(row.status, paused.has(row.variantId!), APP_HIDDEN.has(entered.get(row.id) ?? ''));
     if (!action) continue;
@@ -182,7 +182,7 @@ async function applyVisibility(
           if (action === 'hide') return adapter.deactivate(accessToken, row.externalProductId!, row.externalSkuId!);
           return activateOnMarketplace(session, row.externalProductId!, row.externalSkuId!);
         });
-      } else if (byProduct && action === 'unhide' && (await onMarketplace(() => productBlocksUnhide(session, rows, row, remote, enabled)))) {
+      } else if (byProduct && action === 'unhide' && (await onMarketplace(() => productBlocksUnhide(session, rows, row, remote, paused, products)))) {
         continue;
       }
     } catch (err) {
@@ -217,18 +217,20 @@ async function productBlocksUnhide(
   rows: readonly ListingRow[],
   row: ListingRow,
   remote: ReadonlyMap<string, RemoteSku>,
-  enabled: Set<string>,
+  paused: ReadonlySet<string>,
+  products: Map<string, RemoteSku['state'] | undefined>,
 ): Promise<boolean> {
   const productId = row.externalProductId!;
-  if (enabled.has(productId)) return false;
-  // Lượt đồng bộ đã đọc trạng thái sàn (`remote`); lượt đẩy tồn thì đọc một SKU.
-  const sku = remote.get(row.externalSkuId!) ?? (await remoteSkuOf(session, row));
-  if (sku?.state !== 'inactive') return false;
+  // Trạng thái sàn theo sản phẩm, đọc một lần mỗi lượt: lượt đồng bộ đã có `remote`, lượt đẩy tồn thì đọc một SKU.
+  if (!products.has(productId)) products.set(productId, (remote.get(row.externalSkuId!) ?? (await remoteSkuOf(session, row)))?.state);
+  if (products.get(productId) !== 'inactive') return false;
+  // Anh em còn ẩn hay SKU tạm ngừng (kể cả chưa kịp ẩn trong lượt này) phải đã có tồn 0 trên sàn.
   const others = productGroup(rows, productId).filter((r) => r.id !== row.id);
-  const unsafe = (r: ListingRow) => r.status === 'hidden' && !(r.hiddenBy === 'zero_stock' && r.stockSync === 'synced');
+  const zeroed = (r: ListingRow) => r.hiddenBy === 'zero_stock' && r.stockSync === 'synced';
+  const unsafe = (r: ListingRow) => (r.status === 'hidden' || (!!r.variantId && paused.has(r.variantId))) && !zeroed(r);
   if (others.some((r) => r.outsideChangeKind || unsafe(r))) return true;
   await activateOnMarketplace(session, productId, row.externalSkuId!);
-  enabled.add(productId);
+  products.set(productId, 'review');
   return false;
 }
 
@@ -238,7 +240,7 @@ export async function remoteSkuOf({ adapter, accessToken }: Session, row: Listin
 }
 
 /**
- * Tắt cả sản phẩm khi mọi listing chưa gỡ của nó đều `hidden`: sản phẩm vừa có listing ẩn trong lượt, hoặc lượt đồng bộ
+ * Tắt cả sản phẩm khi mọi listing chưa gỡ của nó đều do app ẩn (`zero_stock`, không chờ CEO quyết): sản phẩm vừa có listing ẩn trong lượt, hoặc lượt đồng bộ
  * thấy sàn còn bán (lần tắt trước lỗi). Lượt đồng bộ thấy mọi SKU của sản phẩm đã tắt trên sàn thì không gọi.
  */
 async function hideProducts(
@@ -251,7 +253,8 @@ async function hideProducts(
   const stillSold = rows.filter((r) => r.status === 'hidden' && remote.get(r.externalSkuId ?? '')?.state === 'live');
   for (const productId of new Set([...hidden, ...stillSold.map((r) => r.externalProductId!)])) {
     const group = productGroup(rows, productId);
-    if (!group.length || !group.every((r) => r.status === 'hidden')) continue;
+    // Chỉ tắt khi mọi listing do app ẩn: listing chờ CEO quyết hay ẩn do nối lại gian hàng thì không đè quyết định của người bán.
+    if (!group.length || !group.every((r) => r.status === 'hidden' && r.hiddenBy === 'zero_stock' && !r.outsideChangeKind)) continue;
     if (group.every((r) => (remote.get(r.externalSkuId ?? '')?.state ?? 'live') !== 'live')) continue;
     try {
       await onMarketplace(() => adapter.deactivate(accessToken, productId, group[0]!.externalSkuId!));

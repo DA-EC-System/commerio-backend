@@ -200,6 +200,36 @@ describe('TikTok: ẩn theo SKU bằng tồn 0, tắt cả sản phẩm khi mọ
     expect(await listing(a!.listingId)).toMatchObject({ status: 'live' });
   });
 
+  it('review: listing chờ CEO quyết (người bán tắt) mà người bán tự bật lại trên sàn → lượt đồng bộ không tắt lại sản phẩm', async () => {
+    const { product, items } = await seedProduct(1);
+    await testPool().query(
+      `update channel.listings set status = 'hidden', hidden_by = 'platform', outside_change_kind = 'disabled', outside_change_at = now()
+       where id = $1`,
+      [items[0]!.listingId],
+    );
+    state.set(product, 'live');
+    await sync();
+    expect(deactivate).not.toHaveBeenCalled();
+    expect(await listing(items[0]!.listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
+  });
+
+  it('review: sản phẩm đang tắt, bỏ tạm ngừng A cùng lượt B vừa tạm ngừng (B còn live, chưa tồn 0) → chưa bật; lượt sau B đã tồn 0 thì bật', async () => {
+    const { product, items } = await seedProduct(2);
+    const [a, b] = items;
+    await changeStatus(a!.variantId, 'selling', 'paused');
+    await runPush();
+    state.set(product, 'inactive');
+    await setStatus(b!.variantId, 'paused');
+    await changeStatus(a!.variantId, 'paused', 'selling');
+    await runPush();
+    expect(activate).not.toHaveBeenCalled();
+    expect(await listing(a!.listingId)).toMatchObject({ status: 'hidden' });
+    expect(await listing(b!.listingId)).toMatchObject({ status: 'hidden', hidden_by: 'zero_stock', platform_stock: 0 });
+    await runPush();
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(await listing(a!.listingId)).toMatchObject({ status: 'live' });
+  });
+
   it('P2-4: sản phẩm một SKU: tạm ngừng → tắt sản phẩm; bỏ tạm ngừng → bật, live, đẩy lại tồn', async () => {
     const { product, items } = await seedProduct(1);
     const [a] = items;

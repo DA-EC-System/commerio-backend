@@ -307,8 +307,10 @@ describe('POST …/outside-change/:action (CEO quyết)', () => {
     updatePriceQuantity.mockImplementationOnce(async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: false, code: 'x', message: 'lỗi' })));
     const res = await decide(a.listingId, 'restore', { version: await versionOf(a.listingId) }, company.ceo.token, tiktok);
     expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/marketplace_rejected$/);
     expect(activate).not.toHaveBeenCalled();
     expect(await listing(a.listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
+    expect(await listing(c.listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
   });
 
   it('AC-6: restore khi SKU đang tạm ngừng → xoá outsideChange, giữ hidden; bỏ tạm ngừng sau đó thì tự bật lại', async () => {

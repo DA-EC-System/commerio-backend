@@ -54,7 +54,7 @@ export async function resolveOutsideChange(
   const isPaused = (r: ListingRow) => !!r.variantId && paused.has(r.variantId);
   const targets = group.filter((r) => r.id === row.id || (r.status === 'hidden' && r.outsideChangeKind === 'disabled'));
   const toLive = targets.filter((r) => !isPaused(r));
-  if (toLive.length) await onMarketplace(() => enableOnMarketplace(session, group, toLive));
+  if (toLive.length) await onMarketplace(() => enableOnMarketplace(session, group, toLive, isPaused));
 
   const updated = await inCompany(async () => {
     let result = row;
@@ -73,12 +73,17 @@ export async function resolveOutsideChange(
  * Bật trên sàn trước khi ghi DB; sàn đã bán lại thì thôi. Sàn tắt theo cả sản phẩm: đưa tồn 0 lên cho listing cùng sản
  * phẩm còn ẩn sau quyết định (SKU tạm ngừng, chờ quyết giá), lỗi thì chưa bật để không lộ SKU đó.
  */
-async function enableOnMarketplace(session: Session, group: readonly ListingRow[], toLive: readonly ListingRow[]): Promise<void> {
+async function enableOnMarketplace(
+  session: Session,
+  group: readonly ListingRow[],
+  toLive: readonly ListingRow[],
+  isPaused: (r: ListingRow) => boolean,
+): Promise<void> {
   const probe = toLive.find((r) => r.hiddenBy === 'platform' && r.externalProductId && r.externalSkuId && r.sellerSku);
   if (!probe) return;
   if ((await remoteSkuOf(session, probe))?.state === 'live') return;
   // Nhóm chỉ có hơn một dòng khi sàn tắt theo sản phẩm.
-  const staying = group.filter((r) => r.status === 'hidden' && !toLive.includes(r) && r.externalSkuId);
+  const staying = group.filter((r) => (r.status === 'hidden' || isPaused(r)) && !toLive.includes(r) && r.externalSkuId);
   if (staying.length) {
     const items = staying.map((r) => ({ externalProductId: r.externalProductId!, externalSkuId: r.externalSkuId!, quantity: 0 }));
     const results = await session.adapter.updatePriceQuantity(session.accessToken, items);
