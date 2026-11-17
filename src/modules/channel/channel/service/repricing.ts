@@ -6,10 +6,10 @@ import type { EventPayload } from '../../../core/index.ts';
 import { targetNetPricesOf } from '../../../product/index.ts';
 import { priceFilter } from '../domain/price-filter.ts';
 import { currentListingRows } from '../repository/listings.ts';
-import { findCalculations, insertPending, supersedePending } from '../repository/price-calculations.ts';
+import { findCalculations, insertPending, type NewPriceCalculation, supersedePending } from '../repository/price-calculations.ts';
 import type { PriceCalcTrigger } from '../repository/schema.ts';
 import { listShopRows } from '../repository/shops.ts';
-import { costsOf, shopPriceConfig } from './price-inputs.ts';
+import { costsOf, type ShopPriceConfig, shopPriceConfig } from './price-inputs.ts';
 
 const PRICE_KINDS = new Set(['fee', 'tax_regime', 'tax_rules', 'min_margin']);
 
@@ -32,35 +32,65 @@ export async function repriceShop(shopId: string, trigger: PriceCalcTrigger, var
   ]);
   for (const l of rows) {
     const variantId = l.variantId!;
-    const target = targets.get(variantId);
-    const cost = costs.get(variantId) ?? null;
-    const r = target ? priceFilter({ target: target.toFixed(), fee: config.fee, taxPct: config.taxPct, cost, minMarginPct: config.minMarginPct }) : null;
+    const calc = calculationOf(shopId, variantId, config, targets.get(variantId), costs.get(variantId) ?? null, trigger);
     const inUse = l.priceCalcId ? current.get(l.priceCalcId) : undefined;
-    if (!r?.ok || (inUse && Number(inUse.roundedPrice) === Number(r.price))) {
+    if (!calc || (inUse && Number(inUse.roundedPrice) === Number(calc.roundedPrice))) {
       await supersedePending(shopId, variantId);
       continue;
     }
-    await insertPending({
-      shopId,
-      variantId,
-      feeVersionId: config.feeConfigId,
-      taxVersionId: config.taxRulesVersionId,
-      taxRegimeVersionId: config.taxRegimeVersionId,
-      minMarginVersionId: config.minMarginVersionId,
-      cost,
-      targetNet: target!.toFixed(),
-      perItemFee: String(config.fee.perItemFee),
-      feePct: String(config.fee.feePct),
-      taxPct: config.taxPct.toFixed(4),
-      minMarginPct: cost === null ? null : String(config.minMarginPct),
-      rawPrice: r.rawPrice,
-      roundedPrice: r.price,
-      netReceived: r.net,
-      marginPct: r.marginPct,
-      belowFloor: r.belowFloor,
-      trigger,
-    });
+    await insertPending(calc);
   }
+}
+
+/** Một lần tính bước 1–5 của bộ lọc giá; không có giá muốn bán hay tổng phí không hợp lệ thì null. */
+function calculationOf(
+  shopId: string,
+  variantId: string,
+  config: ShopPriceConfig,
+  target: { toFixed(): string } | null | undefined,
+  cost: string | null,
+  trigger: PriceCalcTrigger,
+): NewPriceCalculation | null {
+  if (!config.fee || !target) return null;
+  const r = priceFilter({ target: target.toFixed(), fee: config.fee, taxPct: config.taxPct, cost, minMarginPct: config.minMarginPct });
+  if (!r.ok) return null;
+  return {
+    shopId,
+    variantId,
+    feeVersionId: config.feeConfigId,
+    taxVersionId: config.taxRulesVersionId,
+    taxRegimeVersionId: config.taxRegimeVersionId,
+    minMarginVersionId: config.minMarginVersionId,
+    cost,
+    targetNet: target.toFixed(),
+    perItemFee: String(config.fee.perItemFee),
+    feePct: String(config.fee.feePct),
+    taxPct: config.taxPct.toFixed(4),
+    minMarginPct: cost === null ? null : String(config.minMarginPct),
+    rawPrice: r.rawPrice,
+    roundedPrice: r.price,
+    netReceived: r.net,
+    marginPct: r.marginPct,
+    belowFloor: r.belowFloor,
+    trigger,
+  };
+}
+
+/**
+ * Giá bộ lọc cho lần đẩy đầu (#225 phần 2, 21 §18.6.4): gian hàng có cấu hình phí và SKU có giá muốn bán. SKU không có
+ * trong Map thì đẩy giá chuẩn như trước. `belowFloor` true thì chặn đẩy `below_floor`.
+ */
+export async function firstPushCalculations(shopId: string, variantIds: readonly string[], now = new Date()): Promise<Map<string, NewPriceCalculation>> {
+  if (!variantIds.length) return new Map();
+  const config = await shopPriceConfig(shopId, now);
+  if (!config.fee) return new Map();
+  const [targets, costs] = await Promise.all([targetNetPricesOf(variantIds), costsOf(variantIds)]);
+  return new Map(
+    variantIds.flatMap((id) => {
+      const calc = calculationOf(shopId, id, config, targets.get(id), costs.get(id) ?? null, 'push');
+      return calc ? [[id, calc] as const] : [];
+    }),
+  );
 }
 
 /** Gian hàng còn nối (chưa ngắt) của công ty. */
