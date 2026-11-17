@@ -4,9 +4,10 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { listingMachine, NO_OUTSIDE_CHANGE } from '../domain/listing.ts';
-import { findListingById, type ListingRow, listListingRows, updateListing } from '../repository/listings.ts';
+import { findListingById, type ListingPatch, type ListingRow, listListingRows, updateListing } from '../repository/listings.ts';
 import { activateOnMarketplace, hidesByProduct, pausedVariants, productGroup, remoteSkuOf, type Session } from './listing-sync.ts';
 import { MarketplaceError } from './marketplaces/common.ts';
+import { assertAboveFloor } from './pending-prices.ts';
 import type { ProductPort } from './product-port.ts';
 import { type ChannelListing, ENTITY, moveListing, requesterNames, toListing } from './listings.ts';
 import { sendStockPush } from './shop-jobs.ts';
@@ -26,7 +27,8 @@ const conflict = async (fresh: ListingRow | undefined) =>
  * này vì `outside_resolve` từ `hidden` đã đi `live`); bỏ tạm ngừng sau đó thì `unhide` bật lại. Sàn tắt theo cả sản phẩm
  * (TikTok, #224 phần 2): người bán tắt cả sản phẩm nên quyết cho mọi listing `disabled` cùng sản phẩm; listing cùng sản
  * phẩm còn ẩn sau quyết định được đưa tồn 0 lên sàn trước khi bật sản phẩm. `accept-price` chỉ cho `price_changed`
- * (phát hiện giá sàn là phần giá của #360), `disabled` thì 409.
+ * (`disabled` thì 409), chỉ listing được bấm: giá sàn qua bước kiểm giá thấp nhất (422 `below_floor`), thành giá ghi đè
+ * tay (`priceSource = override`) và `listedPrice`, giá coi như đã đồng bộ vì sàn đang bán đúng giá đó (#360).
  */
 export async function resolveOutsideChange(
   port: ProductPort,
@@ -43,7 +45,10 @@ export async function resolveOutsideChange(
     if (!row || row.shopId !== shopId) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     if (row.version !== version) throw await conflict(row);
     if (!row.outsideChangeKind) throw notAllowed('Listing không có thay đổi ngoài app chờ quyết');
-    if (action === 'accept-price') throw notAllowed('Chỉ nhận giá sàn khi giá trên sàn bị sửa');
+    if (action === 'accept-price') {
+      if (row.outsideChangeKind !== 'price_changed') throw notAllowed('Chỉ nhận giá sàn khi giá trên sàn bị sửa');
+      await assertAboveFloor(row, row.outsideChangePrice!);
+    }
     const byProduct = hidesByProduct(session.adapter);
     const group = byProduct && row.externalProductId ? productGroup(await listListingRows(shopId), row.externalProductId) : [row];
     const paused = await pausedVariants(port, group.flatMap((r) => (r.variantId ? [r.variantId] : [])));
@@ -52,7 +57,10 @@ export async function resolveOutsideChange(
   assertTransition(listingMachine, row.status, 'outside_resolve', { actor, view: toListing(row) });
 
   const isPaused = (r: ListingRow) => !!r.variantId && paused.has(r.variantId);
-  const targets = group.filter((r) => r.id === row.id || (r.status === 'hidden' && r.outsideChangeKind === 'disabled'));
+  const targets =
+    action === 'accept-price' ? [row] : group.filter((r) => r.id === row.id || (r.status === 'hidden' && r.outsideChangeKind === 'disabled'));
+  const price: ListingPatch =
+    action === 'accept-price' ? { manualPrice: row.outsideChangePrice!, listedPrice: row.outsideChangePrice!, priceSync: 'synced', priceSyncError: null } : {};
   const toLive = targets.filter((r) => !isPaused(r));
   if (toLive.length) await onMarketplace(() => enableOnMarketplace(session, group, toLive, isPaused));
 
@@ -60,7 +68,7 @@ export async function resolveOutsideChange(
     let result = row;
     for (const target of targets) {
       const clicked = target.id === row.id;
-      const moved = await decide(target, isPaused(target), byProduct, actor, clicked);
+      const moved = await decide(target, isPaused(target), byProduct, actor, clicked, clicked ? price : {});
       if (clicked) result = moved;
     }
     return toListing(result, await requesterNames([result]));
@@ -99,11 +107,18 @@ async function enableOnMarketplace(
  * Ghi quyết định cho một listing. Lệch `version` (tồn vừa đổi trong lúc gọi sàn) thì ghi trên dòng mới nếu vẫn chờ quyết,
  * không để app thôi đẩy tồn khi sàn đang bán; dòng đã đổi thì 409 kèm `current` cho dòng được bấm, bỏ qua dòng cùng sản phẩm.
  */
-async function decide(row: ListingRow, paused: boolean, byProduct: boolean, actor: Actor, clicked: boolean): Promise<ListingRow> {
+async function decide(
+  row: ListingRow,
+  paused: boolean,
+  byProduct: boolean,
+  actor: Actor,
+  clicked: boolean,
+  price: ListingPatch,
+): Promise<ListingRow> {
   const write = async (r: ListingRow) => {
-    if (!paused) return moveListing(r, 'outside_resolve', actor, { hiddenBy: null, stockSync: 'pending', priceSync: 'pending' });
+    if (!paused) return moveListing(r, 'outside_resolve', actor, { hiddenBy: null, stockSync: 'pending', priceSync: 'pending', ...price });
     // Sàn tắt theo sản phẩm: listing còn ẩn để tồn 0 như mọi listing app ẩn (`zero_stock`).
-    const patch = { ...NO_OUTSIDE_CHANGE, ...(byProduct && { hiddenBy: 'zero_stock' as const, stockSync: 'pending' as const }) };
+    const patch = { ...NO_OUTSIDE_CHANGE, ...(byProduct && { hiddenBy: 'zero_stock' as const, stockSync: 'pending' as const }), ...price };
     const updated = await updateListing(r.id, { version: r.version, status: 'hidden' }, patch);
     if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật');
     await recordTransition({ entityType: ENTITY, entityId: r.id, from: 'hidden', to: 'hidden', action: 'outside_resolve', actorId: actor.accountId });

@@ -11,6 +11,18 @@ export type NewPriceCalculation = Omit<typeof priceCalculations.$inferInsert, 'i
 const pending = (shopId: string, variantId: string) =>
   and(eq(priceCalculations.shopId, shopId), eq(priceCalculations.variantId, variantId), eq(priceCalculations.status, 'pending_confirm'));
 
+/**
+ * Giá bộ lọc dùng cho lần đẩy đầu (#225 phần 2, trigger `push`): người bấm đẩy là người xác nhận, ghi thẳng `confirmed`;
+ * lượt đẩy lên sàn xong thì `pushed`.
+ */
+export async function insertConfirmed(calc: NewPriceCalculation, by: string, at = new Date()): Promise<PriceCalculationRow> {
+  const [row] = await getDb()
+    .insert(priceCalculations)
+    .values({ ...calc, companyId: requireCompanyId('insertConfirmed'), status: 'confirmed', confirmedBy: by, confirmedAt: at })
+    .returning();
+  return row!;
+}
+
 /** Bỏ bản chờ của SKU trên gian hàng (giá muốn bán bị xoá, cấu hình không còn tính được). */
 export async function supersedePending(shopId: string, variantId: string): Promise<void> {
   await getDb().update(priceCalculations).set({ status: 'superseded', updatedAt: new Date() }).where(pending(shopId, variantId));

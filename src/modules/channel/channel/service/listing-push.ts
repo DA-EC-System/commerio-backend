@@ -1,5 +1,6 @@
 // Việc nền đẩy một listing lên sàn (#219, Documents/21 §18.3, §18.6.4). Request `push` chỉ kiểm, chuyển `pushing` và xếp
 // việc `channel.listing_push` (`shop-jobs.ts`); việc này gọi sàn ngoài giao dịch rồi ghi kết quả trong giao dịch ngắn.
+import { Decimal } from 'decimal.js';
 import { HoldJob, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -8,9 +9,12 @@ import { type ListingAction, STALE_PUSH_MS } from '../domain/listing.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
+import { markPushed } from '../repository/price-calculations.ts';
 import { findShopRow } from '../repository/shops.ts';
+import { currentPrices } from './listing-prices.ts';
 import { moveListing } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
+import { evaluatePrices } from './price-inputs.ts';
 import type { ProductPort } from './product-port.ts';
 import { listingText, pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
@@ -47,10 +51,16 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     const [v] = await port.variants([variantId]);
     if (!v) return null;
     const [map] = await listCategoryMaps(shop.platform, [v.categoryId]);
+    // Giá đang bán (#225 phần 2): ghi đè tay > giá bộ lọc đã xác nhận lúc bấm đẩy > giá chuẩn.
+    const own = (await currentPrices([variantId], [row], await port.standardPrices([variantId]))).get(variantId)!;
+    // Giá bộ lọc kiểm lại giá thấp nhất với giá vốn, cấu hình lúc chạy (có thể đổi sau lúc bấm).
+    const floor = own.priceSource === 'shop' ? (await evaluatePrices(row.shopId, new Map([[variantId, String(own.price)]]))).results.get(variantId) : undefined;
     return {
       v,
       map,
-      price: (await port.standardPrices([variantId])).get(variantId) ?? null,
+      price: own.price === null ? null : new Decimal(own.price),
+      shopPrice: own.priceSource === 'shop',
+      belowFloor: floor !== undefined && (!floor.ok || floor.belowFloor === true),
       quantity: (await port.availableOf([variantId])).get(variantId) ?? 0,
       // SKU chưa tin được (#223, 21 §18.6.6): sàn bắt buộc có số lượng nên gửi 0, listing chờ đẩy tồn tới khi lấy đơn xong.
       untrusted: (await untrustedVariants()).has(variantId),
@@ -58,7 +68,10 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     };
   });
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
-  const { v, map, price, untrusted, responsible } = data;
+  const { v, map, price, untrusted, responsible, shopPrice, belowFloor } = data;
+  if (belowFloor) {
+    return finish(job, row, 'fail', { pushError: errorOf('below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất') });
+  }
   const quantity = untrusted ? 0 : data.quantity;
   const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
   const block = pushBlock(
@@ -118,6 +131,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       }
     }
     const at = new Date();
+    const priceSent = !result.existing || rewritten;
+    // Giá bộ lọc đã lên sàn: lần tính `confirmed` → `pushed`.
+    if (shopPrice && priceSent) await inCompany(() => markPushed(row.priceCalcId!));
     await finish(job, row, result.live ? 'go_live' : 'send_review', {
       externalProductId: result.externalProductId,
       externalSkuId: result.externalSkuId,
