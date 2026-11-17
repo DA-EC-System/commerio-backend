@@ -119,7 +119,7 @@ describe('GET /channel/shops/platforms (#163)', () => {
     const res = await get('/shops/platforms');
     expect(res.status).toBe(200);
     expect(res.body.items.filter((p: { platform: string }) => p.platform === 'tiktok')).toEqual([
-      { platform: 'tiktok', name: 'TikTok Shop', connectable: true, reason: null, methods: ['oauth', 'token'], capabilities: { listingReview: true, hideBy: 'deactivate', splitLevel: 'sku', returnWindow: 'platform_status' } },
+      { platform: 'tiktok', name: 'TikTok Shop', connectable: true, reason: null, methods: ['oauth', 'token'], capabilities: { listingReview: true, hideBy: 'zero_stock', splitLevel: 'sku', returnWindow: 'platform_status' } },
     ]);
     expect(JSON.stringify(res.body)).not.toMatch(/tiktok-secret|internal\.test/);
     const auth = await get('/shops/tiktok/authorize-url');

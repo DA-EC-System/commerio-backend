@@ -430,7 +430,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/:listingId/outside-change/:action',
     summary: 'CEO quyết listing bị sàn đổi ngoài app (#360, 21 §18.3)',
     description:
-      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn chưa bán lại mà không bật được từ app (TikTok): 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`: giá sàn thành giá ghi đè tay (`priceSource = override`), bật SKU, `hidden → live`, không đẩy giá; giá sàn dưới giá thấp nhất trả 422 `below_floor`. Gỡ dùng route `delist`.',
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn tắt theo cả sản phẩm (TikTok): quyết cho mọi listing `disabled` cùng sản phẩm, listing còn ẩn được đẩy tồn 0 trước khi bật sản phẩm (sàn duyệt lại); đẩy 0 lỗi thì 409 `marketplace_rejected`, không bật. Sàn chưa hỗ trợ bật từ app: 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`, chỉ listing được bấm: giá sàn thành giá ghi đè tay (`priceSource = override`), bật SKU, `hidden → live`, không đẩy giá; giá sàn dưới giá thấp nhất trả 422 `below_floor`. Gỡ dùng route `delist`.',
     security: bearer,
     request: { params: OutsideChangeParams, body: json(OutsideChangeBody) },
     responses: {

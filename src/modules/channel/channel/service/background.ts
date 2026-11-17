@@ -11,7 +11,7 @@ import type { ProductPort } from './product-port.ts';
 import { refreshRemoteSkusQuietly } from './remote-skus.ts';
 import type { ShopJob } from './shop-jobs.ts';
 import { stopShopJobs } from './shop-jobs.ts';
-import { loseShopAuth, refreshShopToken } from './shops.ts';
+import { loseShopAuth, refreshShopToken, shopStopped } from './shops.ts';
 
 /**
  * Việc gọi sàn của một gian hàng. Gian hàng không còn `active` (lịch sót sau khi ngắt) thì bỏ lịch, không gọi sàn.
@@ -73,15 +73,14 @@ export function runOrderPull(job: ShopJob): Promise<void> {
     } catch (err) {
       // Lỗi kéo yêu cầu trả không làm hỏng lượt kéo đơn (lượt sau kéo lại từ mốc cũ); mất token, gian hàng ngắt thì
       // `onActiveShop` xử lý như kéo đơn.
-      if (err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected')) throw err;
+      if (shopStopped(err)) throw err;
       logger.warn({ err, shopId: job.shopId }, 'kéo yêu cầu trả lỗi');
     }
   });
 }
 
 /** Mất token, ngắt gian hàng: đã có trạng thái riêng báo người dùng, không ghi `last_error`. */
-const silentPullError = (err: unknown) =>
-  err instanceof AppError && (err.code === 'marketplace_unauthorized' || err.code === 'shop_not_connected');
+const silentPullError = shopStopped;
 /** Người dùng đọc `last_error`: lỗi nghiệp vụ ghi câu của nó, lỗi khác chỉ ghi câu chung, chi tiết ở log việc nền. */
 const pullErrorMessage = (err: unknown) => (err instanceof AppError ? err.message : 'lỗi hệ thống, đang thử lại');
 
