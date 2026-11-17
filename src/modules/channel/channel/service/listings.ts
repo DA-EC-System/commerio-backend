@@ -19,6 +19,7 @@ import {
 import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
+import { type ListingPrice, listingPrices } from './listing-prices.ts';
 import { pushBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
@@ -53,7 +54,7 @@ export interface ChannelListing {
   version: number;
 }
 
-export interface ListingRowView {
+export interface ListingRowView extends ListingPrice {
   variantId: string;
   productId: string;
   productName: string;
@@ -61,8 +62,6 @@ export interface ListingRowView {
   attributesLabel: string;
   /** Ảnh đại diện catalog của sản phẩm (#303); null khi chưa có ảnh. */
   thumbnailUrl: string | null;
-  price: number | null;
-  priceSource: 'standard' | null;
   listing: ChannelListing | null;
 }
 
@@ -127,9 +126,9 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const rows = await currentListingRows(shop.id);
   const names = await requesterNames(rows);
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
+  const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
   return {
     items: variants.map((v) => {
-      const price = prices.get(v.id) ?? null;
       const listing = byVariant.get(v.id);
       return {
         variantId: v.id,
@@ -138,8 +137,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         sku: v.sku,
         attributesLabel: v.attributesLabel,
         thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
-        price: price === null ? null : price.toNumber(),
-        priceSource: price === null ? null : 'standard',
+        ...shopPrices.get(v.id)!,
         listing: listing ? toListing(listing, names) : null,
       };
     }),

@@ -38,6 +38,12 @@ import {
   ShopParams,
   ShopPlatformList,
   TokenBody,
+  ConfirmPriceBody,
+  ListingIdParams,
+  ManualPriceBody,
+  ManualPriceParams,
+  PendingPricePage,
+  PendingPricesQuery,
 } from './schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
@@ -353,6 +359,48 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng hoặc biến thể chưa có listing'),
       409: problemResponse('`shop_not_connected`, `invalid_transition` (đang đẩy, đã gỡ), `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/listings/pending-prices',
+    summary: 'Giá chờ xác nhận (#225, 21 §21.4)',
+    description:
+      'Cần `channel.listing.manage`. Bản chờ do đổi giá muốn bán hoặc kích hoạt phí, thuế, lãi tối thiểu sinh ra (Documents/25 §6.2), mới trước. Không trả giá vốn, giá thấp nhất.',
+    security: bearer,
+    request: { query: PendingPricesQuery },
+    responses: { 200: { description: 'Một trang giá chờ', ...json(PendingPricePage) }, ...auth, 404: problemResponse('`not_found`: gian hàng') },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/listings/:id/confirm-price',
+    summary: 'Xác nhận giá chờ của listing (#225)',
+    description:
+      'Cần `channel.listing.manage`. `version` là của listing. Giá chờ thành giá đang bán (`priceSource = shop`), bỏ giá ghi đè tay, `priceSync = pending` để lượt đồng bộ đẩy lên sàn.',
+    security: bearer,
+    request: { params: ListingIdParams, body: json(ConfirmPriceBody) },
+    responses: {
+      200: { description: 'Listing sau khi xác nhận', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`invalid_transition` (không có giá chờ), `version_conflict`'),
+      422: problemResponse('`below_floor`: giá chờ dưới giá thấp nhất'),
+    },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/shops/:id/listings/:listingId/price',
+    summary: 'Ghi đè tay giá listing (#225, 25 §6.2 bước 6)',
+    description:
+      'Cần `channel.listing.manage`. `price` null bỏ ghi đè. Giá ghi đè vẫn qua bước 5: thực nhận dưới giá thấp nhất trả 422 `below_floor`. `priceSync = pending`.',
+    security: bearer,
+    request: { params: ManualPriceParams, body: json(ManualPriceBody) },
+    responses: {
+      200: { description: 'Listing sau khi sửa giá', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`version_conflict`'),
+      422: problemResponse('`validation_failed` (`errors.price`), `below_floor`, `fee_config_invalid`'),
     },
   });
 }

@@ -171,6 +171,16 @@ Lazada (gọi thật 28/10/2026): đổi giá, tồn phải gửi `ItemId` + `Sk
 
 Lazada (#219, gọi thật 11/11/2026): `/products/get` `filter=all` không trả sản phẩm đã xoá; E506 "Get product failed" của API này (gặp ngay sau khi xoá) là lỗi tạm; `getSkus` tra thêm `filter=deleted` cho SellerSku không thấy ở `all` (vắng không coi là xoá). `updateProduct`: đọc `/product/item/get` để giữ các thuộc tính `delivery_option_*` đang có, gửi `/product/update` kèm `ItemId`, `SkuId`, `Status: active`, rồi đọc lại: `Active` → `live`, chờ duyệt hay từ chối → chờ duyệt, khác → `rejected` `still_inactive`. Sản phẩm bị khoá sửa trả 4155/4218 (`rejected`). Gọi thật: sửa sản phẩm đang bán và sản phẩm đã tắt đều về `live`. Tạo sản phẩm: Lazada bắt Brand dù GetCategoryAttributes ghi `brand` không bắt buộc (gọi thật 17/11/2026, thiếu thì 4110 "E500: Create product failed" kèm `detail` `brandProp` C006), nên `createProduct` gửi `brand: "No Brand"` khi ghép danh mục không có brand; `updateProduct` không gửi mặc định. Câu lỗi Lazada nối các lý do trong `detail` (`lazadaMessage`), nên FE thấy lý do thật thay cho câu chung.
 
+## Giá theo gian hàng (#225; Documents/25 §6.2, 21 §18.6.7, §21.4)
+
+- Bộ lọc giá thuần ở `domain/price-filter.ts` (`priceFilter`, `taxPctFor`): bước 2 bù phí `(giá muốn bán + phí mỗi món) / (1 − tổng %)`, bước 4 làm tròn lên theo bậc và đuôi, bước 5 thực nhận so với giá thấp nhất `giá vốn × (1 + lãi tối thiểu)`, bước 6 ghi đè tay vẫn qua bước 5. Bước 3 (điều chỉnh) chưa làm trong MVP. Tổng % = phí (`feePctOf`) + phần thuế: hộ kinh doanh, cá nhân GTGT + TNCN; doanh nghiệp `v / (1 + v)`. Tổng ≥ 100% là `fee_config_invalid` (không tính, không có bản chờ), > 50% là `feeWarning = 'over_50'`.
+- Đầu vào (`service/price-inputs.ts`): phí của gian hàng, loại hình và quy tắc thuế, lãi tối thiểu cấp công ty đang áp dụng (`getEffectiveConfig` của finance; phí mỗi món, bậc, đuôi qua `feeRoundingOf`, bản phí cũ mặc định 0, 1000, 0); chưa có lãi tối thiểu là 0. Giá vốn: bình quân khi còn tồn, hết tồn thì giá đề nghị nhập đã duyệt gần nhất (`lastCostsOf`), không có thì null (không có cờ).
+- Lần tính lưu ở `price_calculations` (đầu vào đã dùng, phiên bản cấu hình, `trigger`). Mỗi (gian hàng, SKU) tối đa một bản `pending_confirm` (unique `price_calculations_one_pending`); CHECK `price_calculations_floor` chặn xác nhận bản dưới giá thấp nhất, `price_calculations_cost_floor` bắt giá vốn và cờ cùng có hoặc cùng trống. `listings.price_calc_id` có FK.
+- Tính lại (`service/repricing.ts`): consumer `channel-reprice-target` (`catalog.variant_price_changed`) và `channel-reprice-config` (`finance.fee_config_activated`, chỉ `fee` của gian hàng đó hoặc `tax_regime`, `tax_rules`, `min_margin` cho mọi gian hàng chưa ngắt) tạo bản chờ cho listing chưa gỡ, thay bản chờ cũ. Gian hàng chưa có phí, giá muốn bán bị xoá, tổng phí không hợp lệ hoặc giá tính ra trùng giá đang bán thì bỏ bản chờ. Đổi giá vốn không tạo bản chờ.
+- Giá đang bán (`service/listing-prices.ts`): ghi đè tay (`manual_price`, `override`) > lần tính đã xác nhận (`shop`) > giá chuẩn. `netReceived`, `belowFloor`, `feeWarning` tính lúc đọc từ giá đang bán với phí, thuế, giá vốn hiện tại; không trả giá vốn, giá thấp nhất cho ai (R4).
+- Route (`service/pending-prices.ts`, `channel.listing.manage`): `GET /listings/pending-prices`; `POST /listings/:id/confirm-price` (`version` của listing; bỏ giá ghi đè, `price_sync = pending`; không có bản chờ 409 `invalid_transition`, dưới giá thấp nhất 422 `below_floor`); `PUT /shops/:id/listings/:listingId/price` (`price` null bỏ ghi đè; dưới giá thấp nhất 422 `below_floor`). Cả hai ghi `core.audit_logs`.
+- Chưa làm (phần 2/2, sau #360): lượt đồng bộ đẩy giá đang bán thay giá chuẩn và đánh lần tính `pushed`; đẩy lần đầu dùng giá bộ lọc, chặn `below_floor`. Sổ tiền, chạy thử của finance chưa tính phí mỗi món.
+
 ## Kéo đơn (#105)
 
 Kéo định kỳ là đường nhận đơn duy nhất. Không nhận push của sàn: Lazada chỉ đẩy tới HTTPS có chứng chỉ OV/EV, nhóm không xin được (#133, #135 đóng 31/10/2026; `Documents/tich-hop-san/lazada.md` mục 8). Đừng thêm route webhook cho sàn. Bảng `channel.webhook_events` còn trong schema nhưng không dùng; xoá ở migration sau.
@@ -211,4 +221,4 @@ Hạn mức gọi sàn (#102, #215, 21 §14.5, §18.6.8): mỗi request của ad
 
 ## Chưa làm
 
-Ẩn/hiện theo trạng thái SKU (#110); giá theo phí (#118); cảnh báo QC; phân loại Lazada.
+Ẩn/hiện theo trạng thái SKU (#110); đẩy giá theo gian hàng lên sàn (#225 phần 2); cảnh báo QC; phân loại Lazada.

@@ -8,6 +8,7 @@ import { registerChannelConsumer, workChannelQueue } from './service/background-
 import { runListingPush } from './service/listing-push.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
+import { onConfigActivated, onVariantPriceChanged } from './service/repricing.ts';
 import { productPort } from './service/product-port.ts';
 import { handleReauthMail, REAUTH_MAIL_CONSUMER, startReauthMailLoop } from './service/reauth-mail.ts';
 import {
@@ -34,6 +35,9 @@ export const channelModule: ModuleDefinition = {
     // Chia hàng xong (số có thể bán đổi) mới đẩy tồn (#223, 21 §11.2): đánh dấu chờ đẩy và xếp `channel.stock_push`, không
     // gọi sàn trong giao dịch của consumer. Thay consumer `inventory.stock_changed` cũ.
     registerChannelConsumer('fulfillment.allocation_done', (e) => onAvailableChanged(e.payload), { consumer: 'channel-stock-push' });
+    // Giá theo gian hàng (#225, 21 §11.2): đổi giá muốn bán, kích hoạt phí, thuế, lãi tối thiểu thì có bản chờ xác nhận.
+    registerChannelConsumer('catalog.variant_price_changed', (e) => onVariantPriceChanged(e.payload), { consumer: 'channel-reprice-target' });
+    registerChannelConsumer('finance.fee_config_activated', (e) => onConfigActivated(e.payload), { consumer: 'channel-reprice-config' });
     // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
     const port = productPort(ctx);
     await workChannelQueue(listingSyncQueue, (job) => runListingSync(port, job));
