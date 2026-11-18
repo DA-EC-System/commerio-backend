@@ -20,6 +20,7 @@ import * as setup from '../service/setup.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
+  AuthorizeUrlQuery,
   CallbackBody,
   DelistBody,
   UpdateContentBody,
@@ -85,9 +86,16 @@ export function channelRouter(ctx: ModuleContext): Router {
     res.json(shops.shopPlatforms());
   });
 
-  router.get('/shops/:platform/authorize-url', connect, validate({ params: PlatformParams }), async (_req, res) => {
-    res.json(await shops.authorizeUrl(validated<typeof PlatformParams>(res, 'params').platform, actor(res)));
-  });
+  router.get(
+    '/shops/:platform/authorize-url',
+    connect,
+    validate({ params: PlatformParams, query: AuthorizeUrlQuery }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      const { shopId } = validated<typeof AuthorizeUrlQuery>(res, 'query');
+      res.json(await shops.authorizeUrl(platform, actor(res), shopId));
+    },
+  );
 
   router.post(
     '/shops/:platform/callback',
