@@ -5,6 +5,17 @@ import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
 
+// `shopId` không phải uuid, của công ty khác hay sàn khác: 404 ở service (#398), nên ở đây chỉ là chuỗi.
+export const AuthorizeUrlQuery = z
+  .object({
+    shopId: z
+      .string()
+      .max(64)
+      .optional()
+      .meta({ description: 'Gian hàng đang kết nối lại; FE gửi khi bấm Kết nối lại, không gửi khi Thêm gian hàng' }),
+  })
+  .meta({ id: 'ShopAuthorizeUrlQuery' });
+
 // `id` sai định dạng trả 404 ở service, nên ở đây chỉ là chuỗi.
 export const ShopParams = z.object({ id: z.string() });
 

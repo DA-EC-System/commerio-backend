@@ -2,6 +2,7 @@ import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   AuthorizeUrl,
+  AuthorizeUrlQuery,
   CallbackBody,
   CategoryAttributeList,
   ChannelListing,
@@ -109,10 +110,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/shops/:platform/authorize-url',
     summary: 'URL uỷ quyền của sàn (§18.4)',
-    description: 'Cần `channel.shop.connect`. `state` trong URL hết hạn sau 10 phút, chỉ dùng được cho người bấm.',
+    description:
+      'Cần `channel.shop.connect`. `state` trong URL hết hạn sau 10 phút, chỉ dùng được cho người bấm. Query `shopId` (tuỳ chọn, nút Kết nối lại): `state` mang gian hàng đó, callback chỉ nối lại đúng gian hàng này (409 `shop_mismatch` khi sàn trả seller khác). Không gửi thì gian hàng nhận ra theo mã seller sàn trả về.',
     security: bearer,
-    request: { params: PlatformParams },
-    responses: { 200: { description: 'URL uỷ quyền', ...json(AuthorizeUrl) }, ...auth, 422: marketplace[422] },
+    request: { params: PlatformParams, query: AuthorizeUrlQuery },
+    responses: {
+      200: { description: 'URL uỷ quyền', ...json(AuthorizeUrl) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không thuộc công ty hoặc thuộc sàn khác'),
+      422: marketplace[422],
+    },
   });
   registry.registerPath({
     method: 'post',

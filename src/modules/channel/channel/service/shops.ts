@@ -348,11 +348,24 @@ export async function getShop(id: string): Promise<Shop & { statusHistory: Statu
   return { ...(await shopView(row)), statusHistory: await getStatusHistory(ENTITY, id) };
 }
 
-/** URL uỷ quyền; `state` là token ký 10 phút gắn công ty, người bấm và sàn (#103 B1). */
-export async function authorizeUrl(raw: string, actor: Actor): Promise<{ url: string }> {
+/**
+ * URL uỷ quyền; `state` là token ký 10 phút gắn công ty, người bấm và sàn (#103 B1). `shopId` (nút Kết nối lại, #398): gian
+ * hàng phải thuộc công ty và đúng sàn, không thì 404; `state` mang theo nó (claim `shp`) để callback chỉ nối lại gian hàng này.
+ */
+export async function authorizeUrl(raw: string, actor: Actor, shopId?: string): Promise<{ url: string }> {
   const { platform, adapter } = platformOf(raw);
-  const state = await signPurposeToken('oauth', { cid: actor.companyId, sub: actor.accountId, plt: platform });
+  if (shopId) await reconnectTarget(actor.companyId, platform, shopId);
+  const state = await signPurposeToken('oauth', { cid: actor.companyId, sub: actor.accountId, plt: platform, shp: shopId });
   return { url: await onMarketplace(async () => adapter.authorizeUrl(state)) };
+}
+
+/** Gian hàng cần nối lại (#398): của công ty, đúng sàn; không thì 404 như gian hàng công ty khác (không lộ gian hàng nào). */
+async function reconnectTarget(companyId: string, platform: Platform, shopId: string): Promise<ShopRow> {
+  return withCompany(companyId, async () => {
+    const row = await ownShop(shopId);
+    if (row.platform !== platform) throw notFound();
+    return row;
+  });
 }
 
 /**

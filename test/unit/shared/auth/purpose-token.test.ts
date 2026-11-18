@@ -17,6 +17,11 @@ describe('token mục đích riêng', () => {
     expect(await verifyPurposeToken('join', token)).toMatchObject({ jti: ID, cid: CID, em: 'a@x.vn', nxt: 'sign_in' });
   });
 
+  it('state OAuth mang shp (gian hàng cần nối lại, #398)', async () => {
+    const token = await signPurposeToken('oauth', { cid: CID, sub: ID, plt: 'lazada', shp: ID });
+    expect(await verifyPurposeToken('oauth', token)).toMatchObject({ cid: CID, sub: ID, plt: 'lazada', shp: ID });
+  });
+
   it('token mfa mang sub', async () => {
     const token = await signPurposeToken('mfa', { sub: ID });
     expect(await verifyPurposeToken('mfa', token)).toMatchObject({ sub: ID });
