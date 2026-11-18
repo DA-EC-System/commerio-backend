@@ -149,7 +149,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       if (!previousCall || !result.createdAt || Math.abs(result.createdAt.getTime() - previousCall.getTime()) > CLOCK_SKEW_MS) {
         const named = result.title ? ` (${result.title})` : '';
         const message = `SKU ${product.sellerSku} đã có trên ${adapter.name}${named}. Dùng Ghép SKU thay vì đẩy.`;
-        return finish(job, row, 'fail', { pushError: errorOf('sku_exists_on_platform', message), pushAttempts: row.pushAttempts + 1 });
+        // Lần gọi này không tạo gì trên sàn: trả mốc về lần gọi trước. Giữ mốc vừa ghi thì sản phẩm người bán tạo trong
+        // `CLOCK_SKEW_MS` trước lần gọi này sẽ bị lần đẩy lại nhận nhầm là của app và ghi đè (review #407).
+        return finish(job, row, 'fail', {
+          pushError: errorOf('sku_exists_on_platform', message),
+          pushAttempts: row.pushAttempts + 1,
+          createAttemptedAt: previousCall,
+        });
       }
       if (adapter.updateProduct) {
         result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, product)) };

@@ -325,6 +325,21 @@ describe('việc nền channel.listing_push', () => {
     expect((await attemptedAt(id))!.getTime()).toBeGreaterThan(first!.getTime());
   });
 
+  it('#399 (review #407): người bán tạo sản phẩm 2 phút trước lần đẩy, bị báo `sku_exists_on_platform`; bấm đẩy lại vẫn không ghi đè', async () => {
+    const { id } = await pushing();
+    const sellerCreatedAt = new Date(Date.now() - 2 * 60_000);
+    onCreate = async () => ({ externalProductId: 'P-NB6', externalSkuId: `S-NB6-${randomUUID()}`, live: true, existing: true, createdAt: sellerCreatedAt });
+    await runListingPush(port, job(id));
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'sku_exists_on_platform' } });
+    // Lần gọi không tạo gì trên sàn: mốc trả về như trước lần gọi (chưa từng gọi tạo).
+    expect(await attemptedAt(id)).toBeNull();
+    // Người dùng bấm đẩy lại.
+    await testPool().query("update channel.listings set status = 'pushing', push_started_at = now(), push_error = null where id = $1", [id]);
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'sku_exists_on_platform' } });
+  });
+
   it('#399 AC-3: sàn không trả giờ tạo của SKU có sẵn → coi là của người bán, `sku_exists_on_platform`', async () => {
     const { id } = await pushing();
     onCreate = async () => ({ externalProductId: 'P-NB2', externalSkuId: `S-NB2-${randomUUID()}`, live: true, existing: true, title: 'SP' });
