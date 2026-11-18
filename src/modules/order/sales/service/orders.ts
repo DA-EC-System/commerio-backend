@@ -5,11 +5,12 @@ import { getVariants } from '../../../product/index.ts';
 import { findPackagesOfOrders, type PackageOrderRef, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
+import { policyOf, returnPoliciesFor } from './return-policy.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import {
+  codUnconfirmed,
   completionBlocker,
-  DEFAULT_RETURN_POLICY,
   isDueSoon,
   lastDeliveredAt,
   type OrderFlag,
@@ -234,11 +235,12 @@ export async function getOrder(ctx: SalesContext, id: string) {
   if (!isUuid(id)) throw notFound();
   const o = await findOrder(id);
   if (!o) throw notFound();
-  const [facts, lines, shops, history] = await Promise.all([
+  const [facts, lines, shops, history, policies] = await Promise.all([
     factsOf(ctx, [id]),
     findOrderLines([id]),
     shopsOf(ctx, [o.shopId]),
     getStatusHistory('orders', id),
+    returnPoliciesFor(ctx, [o.shopId]),
   ]);
   const f = facts.get(id)!;
   const reporters = [...new Set(f.packages.flatMap((p) => (p.lostReportedBy ? [p.lostReportedBy] : [])))];
@@ -251,15 +253,20 @@ export async function getOrder(ctx: SalesContext, id: string) {
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
   const lastDelivered = lastDeliveredAt(f.packages);
-  const endsAt = returnWindowEndsAt(DEFAULT_RETURN_POLICY, lastDelivered, null);
   const open = o.status === 'processing';
+  // Đơn đã dừng trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12); đơn chưa trả: không có hạn.
+  const endsAt = open
+    ? returnWindowEndsAt(policyOf(policies, o.shopId), lastDelivered, o.returnWindowEndsAt)
+    : o.status === 'unpaid'
+      ? null
+      : o.returnWindowEndsAt;
   const blocker = open
     ? completionBlocker({
         packages: f.packages.map((p) => p.status),
         lastDeliveredAt: lastDelivered,
         returnWindowEndsAt: endsAt,
         openReturnRequests: f.openReturns,
-        codUnconfirmed: false,
+        codUnconfirmed: codUnconfirmed(f.packages),
         now: Date.now(),
       })
     : null;
