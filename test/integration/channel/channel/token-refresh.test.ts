@@ -38,6 +38,24 @@ let seq = 0;
 registerAdapter(
   'shopee',
   fakeAdapter({
+    authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
+    // Callback giả (#398): `code` là access token muốn cấp (`<seller>:acc-x`).
+    async exchangeCode({ code }) {
+      const seller = code!.split(':')[0]!;
+      return [
+        {
+          externalShopId: seller,
+          shopName: 'Shop 4 giờ',
+          region: 'VN',
+          tokens: {
+            accessToken: code!,
+            refreshToken: `${seller}:ref-cb`,
+            accessExpiresAt: new Date(Date.now() + 4 * HOUR),
+            refreshExpiresAt: new Date(Date.now() + 30 * DAY),
+          },
+        },
+      ];
+    },
     refreshDueAt: (t) => (t.accessExpiresAt ? new Date(t.accessExpiresAt.getTime() - HOUR) : null),
     async refreshToken(refreshToken): Promise<TokenSet> {
       sàn.refresh(refreshToken);
@@ -288,12 +306,23 @@ describe('không lấy được khoá làm mới (busy) không phải mất uỷ
 });
 
 describe('làm mới đua với nối lại gian hàng (review #217 mục 6)', () => {
-  const reconnect = (token: string, accessToken: string) =>
-    app().post('/api/v1/channel/shops/shopee/token').set('Authorization', `Bearer ${token}`).send({ accessToken });
+  /** Nối lại bằng token dán từ console, hoặc qua OAuth (`authorize-url?shopId=` rồi `callback`, #398). */
+  const reconnect = async (via: 'token' | 'callback', token: string, shopId: string, accessToken: string) => {
+    if (via === 'token') {
+      return app().post('/api/v1/channel/shops/shopee/token').set('Authorization', `Bearer ${token}`).send({ accessToken });
+    }
+    const url = await app().get(`/api/v1/channel/shops/shopee/authorize-url?shopId=${shopId}`).set('Authorization', `Bearer ${token}`);
+    expect(url.status).toBe(200);
+    const state = new URL(url.body.url).searchParams.get('state');
+    return app()
+      .post('/api/v1/channel/shops/shopee/callback')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ state, params: { code: accessToken } });
+  };
   const storedAccess = async (companyId: string, shopId: string) =>
     (await withCompany(companyId, () => shopSession(shopId))).accessToken;
 
-  it('người dùng nối lại trong lúc gọi sàn làm mới: giữ token của lần nối, bỏ cặp vừa làm mới', async () => {
+  it.each(['token', 'callback'] as const)('người dùng nối lại (%s) trong lúc gọi sàn làm mới: giữ token của lần nối, bỏ cặp vừa làm mới', async (via) => {
     const { company, shopId, companyId, seller } = await activeShop();
     await setExpiry(shopId, `access_expires_at = now() + interval '10 minutes'`);
     sàn.slowMs = 600;
@@ -301,7 +330,7 @@ describe('làm mới đua với nối lại gian hàng (review #217 mục 6)', (
     const refreshing = refreshShopToken(companyId, shopId);
     await new Promise((r) => setTimeout(r, 150));
     expect(sàn.refresh).toHaveBeenCalledTimes(1);
-    expect((await reconnect(company.ceo.token, `${seller}:acc-x`)).status).toBe(200);
+    expect((await reconnect(via, company.ceo.token, shopId, `${seller}:acc-x`)).status).toBe(200);
     expect(await refreshing).toBe('refreshed');
     expect(await storedAccess(companyId, shopId)).toBe(`${seller}:acc-x`);
     expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
@@ -315,7 +344,7 @@ describe('làm mới đua với nối lại gian hàng (review #217 mục 6)', (
     sàn.valid.add(`${seller}:acc-y`);
     const refreshing = refreshShopToken(companyId, shopId);
     await new Promise((r) => setTimeout(r, 150));
-    expect((await reconnect(company.ceo.token, `${seller}:acc-y`)).status).toBe(200);
+    expect((await reconnect('token', company.ceo.token, shopId, `${seller}:acc-y`)).status).toBe(200);
     expect(await refreshing).toBe('refreshed');
     expect(await shopRow(shopId)).toMatchObject({ status: 'active' });
     expect(await storedAccess(companyId, shopId)).toBe(`${seller}:acc-y`);

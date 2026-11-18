@@ -89,6 +89,8 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     ['rejected', 'closed', null],
     ['received', 'refund_only', null],
     ['requested', 'requested', null],
+    // Kho quét nhận trước khi sàn ghi nhận (TikTok còn BUYER_SHIPPED_ITEM, TRA-B04, #364): app đi trước, không bật cờ.
+    ['received', 'awaiting_return', null],
     ['closed', 'awaiting_return', 'conflict'],
     ['refund_only', 'rejected', 'conflict'],
   ] as const)('%s, sàn báo %s → %s', (current, target, action) => {
