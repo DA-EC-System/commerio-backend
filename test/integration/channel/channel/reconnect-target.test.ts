@@ -16,13 +16,15 @@ const DAY = 24 * 3600_000;
 const MINUTE = 60_000;
 
 // Sàn giả: code `c-<seller>` (hoặc `c-<a>+<b>`: một lần uỷ quyền ra nhiều gian hàng). Mỗi lần đổi mã cấp token mới
-// `tok-<seller>-<n>`, hạn truy cập dời thêm n phút, để test phân biệt token của lần nối nào đã được lưu.
-const sàn = { exchanges: 0 };
+// `tok-<seller>-<n>`, hạn truy cập dời thêm n phút, để test phân biệt token của lần nối nào đã được lưu. `afterExchange` chạy
+// sau khi đổi mã, trước khi trả về (ca gian hàng mất giữa lúc đổi mã và lúc ghi).
+const sàn = { exchanges: 0, afterExchange: null as null | (() => Promise<void>) };
 registerAdapter('lazada', fakeAdapter({
   authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
   async exchangeCode({ code }) {
     if (!code?.startsWith('c-')) throw new MarketplaceError('rejected', 'missing_parameter');
     const n = ++sàn.exchanges;
+    await sàn.afterExchange?.();
     return code
       .slice(2)
       .split('+')
@@ -221,6 +223,27 @@ describe('callback nối lại theo shopId trong state (#398)', () => {
     expect(res.status).toBe(404);
     expect(res.body.type).toBe('/problems/not_found');
     expect(sàn.exchanges).toBe(exchanges);
+    expect(await testPool().query('select 1 from channel.shops where external_shop_id = $1', [a])).toMatchObject({ rowCount: 0 });
+  });
+
+  // Gian hàng mất giữa lúc đổi mã và lúc ghi (#398 phần 1 có nút xoá): không được tạo gian hàng mới cho seller đó (review #412).
+  it('gian hàng trong state bị xoá sau khi đổi mã thì 404 not_found, không tạo dòng mới', async () => {
+    const a = seller();
+    const shopId = await disconnectedShop(token, a);
+    const state = await stateFor(token, 'lazada', shopId);
+    sàn.afterExchange = async () => {
+      await testPool().query('delete from channel.shops where id = $1', [shopId]);
+    };
+    try {
+      const res = await app()
+        .post('/api/v1/channel/shops/lazada/callback')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ state, params: { code: `c-${a}` } });
+      expect(res.status).toBe(404);
+      expect(res.body.type).toBe('/problems/not_found');
+    } finally {
+      sàn.afterExchange = null;
+    }
     expect(await testPool().query('select 1 from channel.shops where external_shop_id = $1', [a])).toMatchObject({ rowCount: 0 });
   });
 
