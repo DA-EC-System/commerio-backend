@@ -75,6 +75,7 @@ export async function onOpeningStocktakePosted(event: EventPayload<'inventory.st
     action: 'update',
     entityType: 'channel.shops',
     entityId: shop.id,
+    label: shop.shopName,
     before: { orderCutoffAt: shop.orderCutoffAt, openingStocktakeId: shop.openingStocktakeId, openingStocktakeNumber: shop.openingStocktakeNumber },
     after: { orderCutoffAt, openingStocktakeId: null, openingStocktakeNumber: null, stocktakeNumber: event.number, allocationStocktakeId },
   });
@@ -138,6 +139,7 @@ export async function recreateOpeningStocktake(actor: Actor, shopId: string): Pr
       action: 'update',
       entityType: 'channel.shops',
       entityId: shop.id,
+      label: shop.shopName,
       before: { openingStocktakeId: current, openingStocktakeNumber: shop.openingStocktakeNumber, openingStocktakeStatus: status ?? null },
       after: { openingStocktakeId: doc.documentId, openingStocktakeNumber: doc.number },
     });

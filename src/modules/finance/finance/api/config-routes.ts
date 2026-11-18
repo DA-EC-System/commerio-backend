@@ -50,6 +50,6 @@ export function mountConfigRoutes(router: Router, ctx: FinanceContext): void {
   });
   router.post('/configs/:id/:action', act, validate({ params: ConfigActionParams, body: ConfigActionBody }), async (_req, res) => {
     const { id: configId, action } = input<typeof ConfigActionParams>(res, 'params');
-    res.json(await actOnConfig(caller(res), configId, USER_ACTIONS[action], input<typeof ConfigActionBody>(res, 'body')));
+    res.json(await actOnConfig(ctx, caller(res), configId, USER_ACTIONS[action], input<typeof ConfigActionBody>(res, 'body')));
   });
 }

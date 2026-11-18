@@ -85,6 +85,11 @@ describe('soạn, chạy thử, gửi duyệt, duyệt (§21.4)', () => {
     const { companyId, ceo } = await setup();
     const own = await approved(ceo, ceo, { kind: 'tax_regime', payload: { regime: 'household' }, effectiveFrom: addDays(TODAY, 3) });
     expect(own).toMatchObject({ status: 'scheduled', selfApproved: true });
+    // #352: dòng nhật ký tự duyệt có thao tác và nhãn đọc được, không phải tên bảng.
+    const log = await testPool().query('select operation, entity_label, after from core.audit_logs where entity_id = $1', [own.id]);
+    expect(log.rows).toEqual([{ operation: 'approve', entity_label: 'Loại hình thuế từ 05/11/2026', after: expect.any(Object) }]);
+    // Cấu hình không có số chứng từ: `after` không có `code` (Documents/21 mục 14.1 `after { code?, … }`).
+    expect(log.rows[0].after).not.toHaveProperty('code');
 
     const both = await createCustomRole(companyId, ['finance.config.manage', 'finance.config.approve']);
     const author = as((await addMember(companyId, both)).token);

@@ -63,6 +63,7 @@ async function save(
       action: 'update',
       entityType: 'order.orders',
       entityId: order.id,
+      label: order.code,
       before: { code: order.code, flags: order.flags },
       after: { code: order.code, ...audit },
     });

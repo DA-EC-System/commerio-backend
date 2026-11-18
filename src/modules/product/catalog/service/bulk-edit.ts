@@ -31,7 +31,7 @@ export interface BulkEditPorts {
   applyReorderRule(
     actor: Caller,
     variantId: string,
-    input: { minQty: number | null; version: number },
+    input: { minQty: number | null; version: number; label: string },
   ): Promise<'unchanged' | 'updated' | 'stale'>;
   /** Số món bán ra trong `days` ngày gần nhất (sales). */
   soldQtyOf(ids: readonly string[], days: number): Promise<Map<string, number>>;
@@ -198,7 +198,11 @@ export async function saveBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, raw
         if (outcome === 'stale') throw new RowFailure('version_conflict', `SKU ${current.sku} vừa được người khác sửa`);
         if (outcome === 'updated') await touchProduct(current.productId);
         if (row.minQty !== undefined) {
-          const rule = await ports.applyReorderRule(viewer, current.id, { minQty: row.minQty, version: row.reorderVersion ?? 0 });
+          const rule = await ports.applyReorderRule(viewer, current.id, {
+            minQty: row.minQty,
+            version: row.reorderVersion ?? 0,
+            label: `${current.productName} · ${current.sku}`,
+          });
           if (rule === 'stale') {
             throw new RowFailure('version_conflict', 'Ngưỡng tồn vừa được người khác sửa', { minQty: 'Ngưỡng tồn vừa được người khác sửa' });
           }

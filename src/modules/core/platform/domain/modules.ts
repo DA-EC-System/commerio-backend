@@ -16,4 +16,13 @@ export const CORE_MODULES = [
 export const OPTIONAL_MODULES = ['purchasing', 'channel', 'inbox', 'assistant', 'report'] as const;
 
 export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
+
+/** Tên phân hệ người dùng thấy, cho nhãn nhật ký (#352; chữ chép `MODULE_LABELS` của FE `src/utils/modules.ts`). */
+export const MODULE_NAMES: Record<OptionalModule, string> = {
+  purchasing: 'Mua hàng',
+  channel: 'Kênh bán',
+  inbox: 'Hộp thư chung',
+  assistant: 'Trợ lý AI',
+  report: 'Báo cáo',
+};
 export type ModuleCode = (typeof CORE_MODULES)[number] | OptionalModule;

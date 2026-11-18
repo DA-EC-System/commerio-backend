@@ -94,9 +94,10 @@ export async function createReceipt(
     }
     const note = input.note.trim() || null;
     const deliveryMode = toDbMode(input.deliveryMode);
+    const number = docNumber('NH', await nextDocNumber('goods_receipt'));
     const id = await insertReceipt({
       companyId: actor.companyId,
-      number: docNumber('NH', await nextDocNumber('goods_receipt')),
+      number,
       requestId: request.id,
       deliveryMode,
       note,
@@ -115,6 +116,7 @@ export async function createReceipt(
       action: 'create',
       entityType: RECEIPT_AUDIT_ENTITY,
       entityId: id,
+      label: number,
       before: null,
       after: { requestId: request.id, deliveryMode, note, requestLineIds: lines.map((l) => l.id) },
     });
@@ -205,6 +207,7 @@ export async function updateReceiptCount(actor: Actor, id: string, input: CountI
       action: 'update',
       entityType: RECEIPT_AUDIT_ENTITY,
       entityId: id,
+      label: receipt.number,
       before: snapshot(receipt, lines, attachedBefore),
       after: snapshot({ deliveryMode, note }, await receiptLines([id]), input.attachmentIds ?? attachedBefore),
     });

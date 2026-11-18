@@ -118,7 +118,7 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
       actorId: actor.accountId,
       reason,
       selfApproved,
-      audit: { entityType: AUDIT_ENTITY, label: row.number },
+      audit: { entityType: AUDIT_ENTITY, code: row.number },
     });
     // Vào hoặc ra Đã đặt, Nhận một phần thì đang về của các SKU đổi: xét lại ngưỡng (Documents/25 mục 7.5).
     if (countsIncoming(row.status) || countsIncoming(to)) await recheckThresholds(variantIdsOf(lines));

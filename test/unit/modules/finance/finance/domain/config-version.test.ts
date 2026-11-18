@@ -3,6 +3,7 @@ import { AppError } from '#src/shared/errors/app-error.ts';
 import { assertTransition } from '#src/modules/core/index.ts';
 import {
   addDays,
+  configLabel,
   configMachine,
   feeRoundingOf,
   outputVatPctOf,
@@ -201,5 +202,17 @@ describe('ngày theo giờ Việt Nam', () => {
   it('cộng trừ ngày qua đầu tháng', () => {
     expect(addDays('2026-11-01', -1)).toBe('2026-10-31');
     expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
+  });
+});
+
+describe('nhãn nhật ký của phiên bản cấu hình (#352)', () => {
+  it('phí sàn ghi tên gian hàng và ngày hiệu lực; loại khác ghi tên loại', () => {
+    expect(configLabel('fee', 'Ngô gia phát 111', '2026-11-01')).toBe('Phí sàn Ngô gia phát 111 từ 01/11/2026');
+    expect(configLabel('tax_regime', null, '2026-12-01')).toBe('Loại hình thuế từ 01/12/2026');
+  });
+
+  it('thiếu tên gian hàng hay ngày hiệu lực thì bỏ phần đó', () => {
+    expect(configLabel('fee', null, '2026-11-01')).toBe('Phí sàn từ 01/11/2026');
+    expect(configLabel('min_margin', null, null)).toBe('Biên tối thiểu');
   });
 });

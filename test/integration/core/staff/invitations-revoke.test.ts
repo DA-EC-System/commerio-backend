@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { setMailTransport } from '#src/shared/mail/index.ts';
+import { vnShortDateTime } from '#src/shared/vn-format.ts';
 import { addMember, createCompany, uniqueEmail } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { PASSWORD, testApp } from '../../helpers/http.ts';
@@ -34,7 +35,7 @@ const rowOf = async (id: string) =>
 const versionOf = async (id: string) => (await rowOf(id)).version as number;
 const auditOf = (id: string) =>
   db.query<{ action: string; before: unknown; after: unknown; actor_id: string }>(
-    "select action, before, after, actor_id from core.audit_logs where entity_id = $1 and action = 'update' order by id",
+    "select action, operation, entity_label as label, before, after, actor_id from core.audit_logs where entity_id = $1 and action = 'update' order by id",
     [id],
   );
 
@@ -119,7 +120,14 @@ describe('POST /invitations/:id/revoke', () => {
     expect(res.body.invitation.decidedAt).toBeTruthy();
     expect(await rowOf(link.id)).toMatchObject({ status: 'revoked', decided_by: ceoId });
     expect((await auditOf(link.id)).rows).toEqual([
-      { action: 'update', actor_id: ceoId, before: { status: 'open' }, after: { status: 'revoked' } },
+      {
+        action: 'update',
+        operation: 'revoke',
+        label: `Link mời vai Sale (tạo ${vnShortDateTime((await rowOf(link.id)).created_at as Date)})`,
+        actor_id: ceoId,
+        before: { status: 'open' },
+        after: { status: 'revoked' },
+      },
     ]);
 
     const check = await join.check(link.token);
@@ -128,6 +136,17 @@ describe('POST /invitations/:id/revoke', () => {
     const otp = await join.otp(link.token, uniqueEmail('muon'));
     expect(otp.status).toBe(410);
     expect(otp.body.code).toBe('invitation_invalid');
+  });
+
+  it('#352: link open đã xin mã nhưng chưa qua OTP → huỷ, nhãn nhật ký không lộ email, họ tên người cầm link tự gõ', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    expect((await join.otp(link.token, uniqueEmail('chua-xac-minh'), 'Người Tự Gõ')).status).toBe(202);
+    const row = await rowOf(link.id);
+    expect(row.status).toBe('open');
+    expect((await ceo.revoke(link.id, row.version as number)).status).toBe(200);
+    expect((await auditOf(link.id)).rows).toMatchObject([
+      { operation: 'revoke', label: `Link mời vai Sale (tạo ${vnShortDateTime(row.created_at as Date)})` },
+    ]);
   });
 
   it('AC 5 / US-CT-06 AC 8: huỷ link claimed → nhập mã, nộp đều 410 invitation_invalid; mã OTP bị xoá', async () => {

@@ -596,6 +596,13 @@
       "when": 1795017806645,
       "tag": "20261118160326_xoa-email-link-huy-chua-xac-minh",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1795018916017,
+      "tag": "20261118162156_nhat-ky-nhan-thao-tac",
+      "breakpoints": true
     }
   ]
 }

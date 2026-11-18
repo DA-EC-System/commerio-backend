@@ -58,6 +58,7 @@ export function updateCompanyProfile(actorId: string, companyId: string, input: 
       action: 'update',
       entityType: 'core.companies',
       entityId: companyId,
+      label: before.name,
       before: Object.fromEntries(keys.map((k) => [k, before[k]])),
       after: patch,
     });

@@ -117,6 +117,7 @@ export async function createRole(caller: Caller, input: RoleInput): Promise<Role
       action: 'create',
       entityType: ENTITY,
       entityId: id,
+      label: input.name,
       after: snapshot({ name: input.name, permissions }),
     });
     const [created] = await findRoles(id);
@@ -141,6 +142,7 @@ export async function updateRole(caller: Caller, id: string, input: RoleInput & 
       action: 'update',
       entityType: ENTITY,
       entityId: id,
+      label: input.name,
       before: snapshot(role),
       after: snapshot({ name: input.name, permissions }),
     });
@@ -164,6 +166,7 @@ export async function deleteRole(caller: Caller, id: string, version: number): P
       action: 'delete',
       entityType: ENTITY,
       entityId: id,
+      label: role.name,
       before: snapshot(role),
     });
   }).catch((err: unknown) => {

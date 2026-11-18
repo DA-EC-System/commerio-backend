@@ -24,6 +24,7 @@ export async function updateShopSettings(actor: Actor, id: string, input: { vers
     action: 'update',
     entityType: 'channel.shops',
     entityId: id,
+    label: row.shopName,
     before: { returnWindowDays: row.returnWindowDays },
     after: { returnWindowDays: input.returnWindowDays },
   });

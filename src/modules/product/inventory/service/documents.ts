@@ -162,6 +162,7 @@ export function createDocument(
       action: 'create',
       entityType: DOC_AUDIT_ENTITY,
       entityId: row.id,
+      label: row.number,
       after: { code: row.number, kind: row.kind, area: row.area, note, lines: lines.length },
     });
     return detail(row, actor);
@@ -446,7 +447,7 @@ export function actOnDocument(actor: DocActor, id: string, action: DocAction, in
       actorId: actor.accountId,
       reason,
       selfApproved,
-      audit: { entityType: DOC_AUDIT_ENTITY, label: row.number },
+      audit: { entityType: DOC_AUDIT_ENTITY, code: row.number },
     });
     return detail(updated, actor);
   });
@@ -491,6 +492,7 @@ export function decideDocument(actor: DocActor, id: string, input: { decision: '
       action: 'update',
       entityType: DOC_AUDIT_ENTITY,
       entityId: row.id,
+      label: row.number,
       before: { code: row.number, rejectDecision: null },
       after: { code: row.number, rejectDecision: input.decision },
     });
