@@ -104,6 +104,15 @@ export async function staffMemberOf(accountId: string): Promise<StaffMember> {
 const conflict = (member: StaffMember) =>
   new AppError(409, 'version_conflict', `Nhân viên "${member.fullName}" vừa được người khác cập nhật`, { current: member });
 
+/** Đã ở trạng thái đích (Documents/21 mục 14), kiểm trước version (#353). */
+const alreadyThere = (member: StaffMember) =>
+  new AppError(
+    409,
+    'invalid_transition',
+    `Nhân viên "${member.fullName}" ${member.status === 'locked' ? 'đang bị khoá' : 'đang hoạt động'}`,
+    { current: member },
+  );
+
 /** Ghi có điều kiện không trúng dòng: người khác vừa sửa. Trả 409 kèm bản mới nhất. */
 async function lostRace(accountId: string): Promise<AppError> {
   const { row, roles } = await loadMember(accountId);
@@ -182,8 +191,8 @@ export async function setLocked(caller: Caller, accountId: string, locked: boole
   const to = locked ? 'suspended' : 'active';
   return withCompany(caller.companyId, async () => {
     const { row, roles } = await loadTarget(caller, accountId);
-    // Lệch version hoặc đã ở trạng thái đích: cùng 409, kèm bản mới nhất.
-    if (row.version !== version || row.status !== from) throw conflict(toStaffMember(row, roles));
+    if (row.status !== from) throw alreadyThere(toStaffMember(row, roles));
+    if (row.version !== version) throw conflict(toStaffMember(row, roles));
     if (!(await updateMembershipStatus(row.membershipId, version, from, to))) throw await lostRace(accountId);
     await recordAudit({
       companyId: caller.companyId,
