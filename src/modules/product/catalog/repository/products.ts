@@ -1,6 +1,14 @@
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { categories, productChannelSpecs, productImages, products, productVariants, variantAttributeValues } from './schema.ts';
+import {
+  categories,
+  productAttributeValueImages,
+  productChannelSpecs,
+  productImages,
+  products,
+  productVariants,
+  variantAttributeValues,
+} from './schema.ts';
 
 // Mọi hàm chạy trong `withCompany` của service.
 
@@ -125,6 +133,7 @@ export async function lockProduct(id: string): Promise<number | undefined> {
 export async function deleteProductTree(productId: string, variantIds: readonly string[]): Promise<void> {
   if (variantIds.length) await getDb().delete(variantAttributeValues).where(inArray(variantAttributeValues.variantId, [...variantIds]));
   await getDb().delete(productImages).where(eq(productImages.productId, productId));
+  await getDb().delete(productAttributeValueImages).where(eq(productAttributeValueImages.productId, productId));
   await getDb().delete(productChannelSpecs).where(eq(productChannelSpecs.productId, productId));
   await getDb().delete(productVariants).where(eq(productVariants.productId, productId));
   await getDb().delete(products).where(eq(products.id, productId));

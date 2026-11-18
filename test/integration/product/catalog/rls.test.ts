@@ -32,13 +32,20 @@ async function seedCompany(prefix: string) {
     [companyId, product.id, randomUUID()],
   );
   await testPool().query('insert into product.stock_levels (company_id, variant_id) values ($1, $2)', [companyId, variantId]);
+  // Ảnh phân loại (#340): thuộc tính gắn ảnh là Màu, ảnh cho giá trị Đen.
+  await testPool().query('update product.products set image_attribute_id = $2 where id = $1', [product.id, color.id]);
+  await testPool().query(
+    `insert into product.product_attribute_value_images (company_id, product_id, attribute_id, attribute_value_id, file_id)
+     values ($1, $2, $3, $4, $5)`,
+    [companyId, product.id, color.id, valueId(color, 'Đen'), randomUUID()],
+  );
   return companyId;
 }
 
 describe('RLS schema product (AC-1)', () => {
   it('mọi bảng có company_id của schema product bật RLS và có đúng policy cô lập theo app.company_id', async () => {
     const tables = await companyTables();
-    expect(tables).toHaveLength(20);
+    expect(tables).toHaveLength(21);
     const res = await testPool().query<{ name: string; rls: boolean; quals: string[] }>(
       `select n.nspname || '.' || c.relname as name, c.relrowsecurity as rls,
               coalesce((select array_agg(qual) from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname), '{}') as quals
@@ -58,6 +65,7 @@ describe('RLS schema product (AC-1)', () => {
       'product.attribute_values',
       'product.products',
       'product.product_images',
+      'product.product_attribute_value_images',
       'product.product_variants',
       'product.variant_attribute_values',
       'product.stock_levels',
