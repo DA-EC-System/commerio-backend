@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Order, OrderSummaryPage } from '#src/modules/order/sales/api/schemas.ts';
-import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
+import { getOrder, ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -478,16 +479,27 @@ describe('hạn trả theo gian hàng (#236)', () => {
     shop15 = r.rows[0]!.id;
   });
 
-  /** Đơn một kiện đã giao `daysAgo` ngày trước (theo giờ thật: chi tiết đơn tính theo `Date.now()`). */
-  async function deliveredOrder(daysAgo: number): Promise<{ orderId: string; deliveredAt: Date }> {
+  /**
+   * Đơn một kiện đã giao `daysAgo` ngày trước (theo giờ thật: chi tiết đơn tính theo `Date.now()`). Việc hoàn tất của
+   * file khác chạy song song theo giờ thật (`complete.test.ts`, `lost.test.ts`): `prepare` ghi điều kiện chặn (yêu cầu
+   * trả, cột COD, trạng thái) trước khi lùi mốc giao, để đơn không lúc nào vừa qua hạn trả vừa chưa bị chặn.
+   */
+  async function deliveredOrder(daysAgo: number, prepare?: (orderId: string) => Promise<unknown>): Promise<{ orderId: string; deliveredAt: Date }> {
     const tag = randomUUID().slice(0, 8);
     const { orderId } = await withCompany(co.companyId, () =>
       ingestMarketplaceOrder(order(`R-${tag}`, [{ variantId: null, status: 'delivered', pkg: `FP-R-${tag}` }], { shopId: shop15 })),
     );
+    await prepare?.(orderId);
     const deliveredAt = new Date(Date.now() - daysAgo * DAY);
     await testPool().query(`update "order".packages set delivered_at = $2 where order_id = $1`, [orderId, deliveredAt]);
     return { orderId, deliveredAt };
   }
+  /** Đơn đã hoàn tất ở lượt trước, hạn trả đã lưu `stored`. */
+  const markCompleted = (orderId: string, stored: Date) =>
+    testPool().query(
+      `update "order".orders set status = 'completed', outcome = 'full', completed_at = now(), return_window_ends_at = $2 where id = $1`,
+      [orderId, stored],
+    );
   const detail = async (id: string) => {
     const res = await get(`/orders/${id}`, co.ceo.token);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -537,5 +549,26 @@ describe('hạn trả theo gian hàng (#236)', () => {
 
     expect(body.returnWindowEndsAt).toBe(stored.toISOString());
     expect(body.completionBlocker).toBeNull();
+  });
+
+  it('đơn đã hoàn tất không đọc chính sách gian hàng: channel lỗi vẫn trả chi tiết với hạn đã lưu', async () => {
+    const stored = new Date(Date.now() - 5 * DAY);
+    const { orderId } = await deliveredOrder(20, (id) => markCompleted(id, stored));
+    const policyDown = vi.fn(async (): Promise<never> => {
+      throw new Error('channel lỗi');
+    });
+
+    const body = await withCompany(co.companyId, () => getOrder({ ...createModuleContext(), returnPoliciesOf: policyDown }, orderId));
+
+    expect(body.returnWindowEndsAt).toBe(stored.toISOString());
+    expect(policyDown).not.toHaveBeenCalled();
+  });
+
+  it('đơn processing mà ctx thiếu returnPoliciesOf → lỗi, không rơi về 7 ngày', async () => {
+    const { orderId } = await deliveredOrder(8);
+
+    await expect(
+      withCompany(co.companyId, () => getOrder({ ...createModuleContext(), returnPoliciesOf: undefined }, orderId)),
+    ).rejects.toMatchObject({ status: 500, code: 'internal_error' });
   });
 });

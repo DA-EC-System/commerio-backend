@@ -235,12 +235,15 @@ export async function getOrder(ctx: SalesContext, id: string) {
   if (!isUuid(id)) throw notFound();
   const o = await findOrder(id);
   if (!o) throw notFound();
+  const open = o.status === 'processing';
   const [facts, lines, shops, history, policies] = await Promise.all([
     factsOf(ctx, [id]),
     findOrderLines([id]),
     shopsOf(ctx, [o.shopId]),
     getStatusHistory('orders', id),
-    returnPoliciesFor(ctx, [o.shopId]),
+    // Chỉ đơn đang xử lý tính hạn theo chính sách hiện hành: đơn khác không đọc channel, để channel lỗi không làm hỏng
+    // chi tiết đơn đã dừng hay chưa trả (và các luồng gọi `getOrder` như huỷ đơn, tách kiện).
+    open ? returnPoliciesFor(ctx, [o.shopId]) : new Map<string, ReturnPolicy>(),
   ]);
   const f = facts.get(id)!;
   const reporters = [...new Set(f.packages.flatMap((p) => (p.lostReportedBy ? [p.lostReportedBy] : [])))];
@@ -253,7 +256,6 @@ export async function getOrder(ctx: SalesContext, id: string) {
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
   const lastDelivered = lastDeliveredAt(f.packages);
-  const open = o.status === 'processing';
   // Đơn đã dừng trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12); đơn chưa trả: không có hạn.
   const endsAt = open
     ? returnWindowEndsAt(policyOf(policies, o.shopId), lastDelivered, o.returnWindowEndsAt)
