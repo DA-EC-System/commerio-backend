@@ -124,111 +124,43 @@ async function newShop(company: string, platform: string, days: number | null): 
   return r.rows[0]!.id;
 }
 
+// Việc hoàn tất quét mọi công ty trong DB test dùng chung (các file chạy song song): dựng mọi đơn trước rồi chạy ít lượt,
+// mỗi `it` chỉ kiểm kết quả, để không tải DB của file khác.
 describe('hạn trả theo gian hàng (#236)', () => {
   const ctx = createModuleContext();
-  let lazada15: string, lazadaNull: string, tiktok: string;
+  const spy = { returnPoliciesOf: vi.fn((ids: readonly string[]) => ctx.returnPoliciesOf(ids)) };
+  let lazada15: string, lazadaNull: string, tiktok: string, shopLowered: string;
+  const id: Record<string, string> = {};
+  const before: Record<string, string> = {};
+  let manualOrder: string;
+  const calls: string[][] = [];
 
   beforeAll(async () => {
     lazada15 = await newShop(companyId, 'lazada', 15);
     lazadaNull = await newShop(companyId, 'lazada', null);
     tiktok = await newShop(companyId, 'tiktok', null);
-  });
-
-  it('AC1: gian hàng 15 ngày, giao 8 ngày trước → chưa hoàn tất', async () => {
-    const id = await delivered(['delivered'], 8, lazada15);
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('processing');
-  });
-
-  it('AC2 (D1-03): gian hàng 15 ngày, giao 16 ngày trước → completed, hạn = mốc giao + 15 ngày', async () => {
-    const id = await delivered(['delivered'], 16, lazada15);
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect(await orderOf(id)).toMatchObject({ status: 'completed', outcome: 'full' });
-    expect((await orderOf(id)).return_window_ends_at).toEqual(new Date(now.getTime() - 16 * DAY + 15 * DAY));
-  });
-
-  it('AC3: gian hàng chưa nhập số ngày, giao 8 ngày trước → completed (7 ngày)', async () => {
-    const id = await delivered(['delivered'], 8, lazadaNull);
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('completed');
-  });
-
-  it('AC4: đơn của gian hàng không tìm thấy → 7 ngày', async () => {
-    const id = await delivered(['delivered'], 8, randomUUID());
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('completed');
-  });
-
-  it('AC5: Admin giảm số ngày 15 → 5 thì lượt sau hoàn tất', async () => {
-    const shop = await newShop(companyId, 'lazada', 15);
-    const id = await delivered(['delivered'], 8, shop);
-    await completeDueOrdersOnce(now, ctx);
-    expect((await orderOf(id)).status).toBe('processing');
-
-    await testPool().query('update channel.shops set return_window_days = 5 where id = $1', [shop]);
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('completed');
-  });
-
-  it('AC6 (US-DH-16 1b): mọi kiện không huỷ đã hoàn về → completed ngay, kết quả none, không hạn trả', async () => {
-    const id = await delivered(['returned'], 0, lazada15);
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect(await orderOf(id)).toMatchObject({ status: 'completed', outcome: 'none', return_window_ends_at: null });
-  });
-
-  it('AC8: kiện tự giao thu COD chưa xác nhận chặn; xác nhận (người khác người giao) thì lượt sau hoàn tất', async () => {
-    const id = await delivered(['delivered'], 8, lazadaNull);
+    shopLowered = await newShop(companyId, 'lazada', 15);
+    id.ac1 = await delivered(['delivered'], 8, lazada15);
+    id.ac2 = await delivered(['delivered'], 16, lazada15);
+    id.ac3 = await delivered(['delivered'], 8, lazadaNull);
+    id.ac4 = await delivered(['delivered'], 8, randomUUID());
+    id.ac5 = await delivered(['delivered'], 8, shopLowered);
+    id.ac6 = await delivered(['returned'], 0, lazada15);
+    id.ac8 = await delivered(['delivered'], 8, lazadaNull);
     await testPool().query(
       `update "order".packages set self_delivery = true, cod_expected = 100000, delivered_by = $2 where order_id = $1`,
-      [id, randomUUID()],
+      [id.ac8, randomUUID()],
     );
-    await completeDueOrdersOnce(now, ctx);
-    expect((await orderOf(id)).status).toBe('processing');
-
-    await testPool().query(`update "order".packages set cod_confirmed_by = $2, cod_confirmed_at = now() where order_id = $1`, [
-      id,
-      randomUUID(),
-    ]);
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('completed');
-  });
-
-  it('AC9: kiện tự giao không thu COD (0) → không chặn', async () => {
-    const id = await delivered(['delivered'], 8, lazadaNull);
-    await testPool().query(`update "order".packages set self_delivery = true, cod_expected = 0 where order_id = $1`, [id]);
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('completed');
-  });
-
-  it('AC11a: gian hàng TikTok, giao 8 ngày trước → completed (PR 1 tạm 7 ngày, D13)', async () => {
-    const id = await delivered(['delivered'], 8, tiktok);
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect((await orderOf(id)).status).toBe('completed');
-  });
-
-  it('AC11b: đơn không cờ Đang huỷ, mọi kiện huỷ → giữ hành vi hiện tại (completed, none; D16, PR 3 đổi)', async () => {
-    const id = await delivered(['delivered'], 8, lazadaNull);
+    id.ac9 = await delivered(['delivered'], 8, lazadaNull);
+    await testPool().query(`update "order".packages set self_delivery = true, cod_expected = 0 where order_id = $1`, [id.ac9]);
+    id.ac11a = await delivered(['delivered'], 8, tiktok);
+    id.ac11b = await delivered(['delivered'], 8, lazadaNull);
+    // Trigger kiểm bằng dòng kiện chạy lúc commit (db/CLAUDE.md): huỷ kiện và dòng đơn trong một giao dịch.
     const client = await testPool().connect();
     try {
       await client.query('begin');
-      await client.query(`update "order".packages set status = 'cancelled', delivered_at = null where order_id = $1`, [id]);
-      await client.query(`update "order".order_lines set cancelled_qty = quantity where order_id = $1`, [id]);
+      await client.query(`update "order".packages set status = 'cancelled', delivered_at = null where order_id = $1`, [id.ac11b]);
+      await client.query(`update "order".order_lines set cancelled_qty = quantity where order_id = $1`, [id.ac11b]);
       await client.query('commit');
     } catch (err) {
       await client.query('rollback');
@@ -236,23 +168,82 @@ describe('hạn trả theo gian hàng (#236)', () => {
     } finally {
       client.release();
     }
-
-    await completeDueOrdersOnce(now, ctx);
-
-    expect(await orderOf(id)).toMatchObject({ status: 'completed', outcome: 'none' });
-  });
-
-  it('AC11: ba đơn ở hai gian hàng cùng công ty → đọc chính sách một lần cho công ty', async () => {
-    await delivered(['delivered'], 8, lazada15);
-    await delivered(['delivered'], 8, lazada15);
-    await delivered(['delivered'], 8, lazadaNull);
-    const spy = { returnPoliciesOf: vi.fn((ids: readonly string[]) => ctx.returnPoliciesOf(ids)) };
+    const { variantId } = await createVariant(companyId);
+    ({ orderId: manualOrder } = await seedPackage(companyId, {
+      status: 'delivered',
+      deliveredAt: new Date(now.getTime() - 8 * DAY),
+      manual: true,
+      orderStatus: 'processing',
+      lines: [{ variantId, quantity: 1 }],
+    }));
 
     await completeDueOrdersOnce(now, spy);
+    // Chép lời gọi của lượt đầu ngay sau lượt (trạng thái mock không giữ qua hook sang test).
+    calls.push(...spy.returnPoliciesOf.mock.calls.map(([ids]) => [...ids]));
+    for (const k of ['ac5', 'ac8']) before[k] = (await orderOf(id[k]!)).status;
 
-    const ours = spy.returnPoliciesOf.mock.calls.filter(([ids]) => ids.includes(lazada15) || ids.includes(lazadaNull));
+    // Lượt sau: Admin giảm số ngày 15 → 5; kế toán (người khác người giao) xác nhận COD.
+    await testPool().query('update channel.shops set return_window_days = 5 where id = $1', [shopLowered]);
+    await testPool().query(`update "order".packages set cod_confirmed_by = $2, cod_confirmed_at = now() where order_id = $1`, [
+      id.ac8,
+      randomUUID(),
+    ]);
+    await completeDueOrdersOnce(now, ctx);
+  });
+
+  it('AC1: gian hàng 15 ngày, giao 8 ngày trước → chưa hoàn tất', async () => {
+    expect((await orderOf(id.ac1!)).status).toBe('processing');
+  });
+
+  it('AC2 (D1-03): gian hàng 15 ngày, giao 16 ngày trước → completed, hạn = mốc giao + 15 ngày', async () => {
+    expect(await orderOf(id.ac2!)).toMatchObject({ status: 'completed', outcome: 'full' });
+    expect((await orderOf(id.ac2!)).return_window_ends_at).toEqual(new Date(now.getTime() - 16 * DAY + 15 * DAY));
+  });
+
+  it('AC3: gian hàng chưa nhập số ngày, giao 8 ngày trước → completed (7 ngày)', async () => {
+    expect((await orderOf(id.ac3!)).status).toBe('completed');
+  });
+
+  it('AC4: đơn của gian hàng không tìm thấy → 7 ngày', async () => {
+    expect((await orderOf(id.ac4!)).status).toBe('completed');
+  });
+
+  it('AC5: Admin giảm số ngày 15 → 5 thì lượt sau hoàn tất', async () => {
+    expect(before.ac5).toBe('processing');
+    expect((await orderOf(id.ac5!)).status).toBe('completed');
+  });
+
+  it('AC6 (US-DH-16 1b): mọi kiện không huỷ đã hoàn về → completed ngay, kết quả none, không hạn trả', async () => {
+    expect(await orderOf(id.ac6!)).toMatchObject({ status: 'completed', outcome: 'none', return_window_ends_at: null });
+  });
+
+  it('AC8: kiện tự giao thu COD chưa xác nhận chặn; xác nhận (người khác người giao) thì lượt sau hoàn tất', async () => {
+    expect(before.ac8).toBe('processing');
+    expect((await orderOf(id.ac8!)).status).toBe('completed');
+  });
+
+  it('AC9: kiện tự giao không thu COD (0) → không chặn', async () => {
+    expect((await orderOf(id.ac9!)).status).toBe('completed');
+  });
+
+  it('AC11a: gian hàng TikTok, giao 8 ngày trước → completed (PR 1 tạm 7 ngày, D13)', async () => {
+    expect((await orderOf(id.ac11a!)).status).toBe('completed');
+  });
+
+  it('AC11b: đơn không cờ Đang huỷ, mọi kiện huỷ → giữ hành vi hiện tại (completed, none; D16, PR 3 đổi)', async () => {
+    expect(await orderOf(id.ac11b!)).toMatchObject({ status: 'completed', outcome: 'none' });
+  });
+
+  it('AC11: đơn ở nhiều gian hàng cùng công ty → một lượt đọc chính sách một lần cho công ty', () => {
+    const ours = calls.filter((ids) => ids.includes(lazada15) || ids.includes(lazadaNull));
     expect(ours).toHaveLength(1);
-    expect(ours[0]![0]).toEqual(expect.arrayContaining([lazada15, lazadaNull]));
+    expect(ours[0]).toEqual(expect.arrayContaining([lazada15, lazadaNull, tiktok, shopLowered]));
+  });
+
+  it('đơn không có gian hàng (đơn tay) → 7 ngày, không gọi channel với null', async () => {
+    expect((await orderOf(manualOrder)).status).toBe('completed');
+    expect(calls.length).toBeGreaterThan(0);
+    for (const ids of calls) expect(ids).not.toContain(null);
   });
 
   it('lật trang: trang cỡ 1 vẫn hoàn tất mọi đơn tới hạn trong một lượt', async () => {
@@ -264,7 +255,7 @@ describe('hạn trả theo gian hàng (#236)', () => {
 
     await completeDueOrdersOnce(now, ctx, 1);
 
-    for (const id of ids) expect((await orderOf(id)).status).toBe('completed');
+    for (const o of ids) expect((await orderOf(o)).status).toBe('completed');
   });
 
   it('đọc hạn trả của một công ty lỗi → đơn công ty đó không hoàn tất, công ty khác vẫn chạy', async () => {
@@ -282,22 +273,5 @@ describe('hạn trả theo gian hàng (#236)', () => {
 
     expect((await orderOf(mine)).status).toBe('processing');
     expect((await orderOf(theirs)).status).toBe('completed');
-  });
-
-  it('đơn không có gian hàng (đơn tay) → 7 ngày, không gọi channel với null', async () => {
-    const { variantId } = await createVariant(companyId);
-    const { orderId } = await seedPackage(companyId, {
-      status: 'delivered',
-      deliveredAt: new Date(now.getTime() - 8 * DAY),
-      manual: true,
-      orderStatus: 'processing',
-      lines: [{ variantId, quantity: 1 }],
-    });
-    const spy = { returnPoliciesOf: vi.fn((ids: readonly string[]) => ctx.returnPoliciesOf(ids)) };
-
-    await completeDueOrdersOnce(now, spy);
-
-    expect((await orderOf(orderId)).status).toBe('completed');
-    for (const [ids] of spy.returnPoliciesOf.mock.calls) expect(ids).not.toContain(null);
   });
 });
