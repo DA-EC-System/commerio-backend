@@ -8,8 +8,8 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { packageRow, packingApp, stockOfVariant, transitionsOf } from './helpers.ts';
-import { ingest, remote, withLineCancelled } from './platform-fixtures.ts';
+import { packageDocuments, packageRow, packingApp, stockOfVariant, transitionsOf } from './helpers.ts';
+import { ingest, remote, withLineCancelled, withStatus } from './platform-fixtures.ts';
 import { external, historyCount, itemStatuses, lineRows, packagesOf, packedSplit, relabeled, setup, tag } from './resplit-fixtures.ts';
 
 type Action = 'open' | 'pack' | 'ready' | 'report-lost' | 'confirm-lost';
@@ -205,6 +205,76 @@ describe('mở kiện awaiting_pickup giữ vận đơn (#238 D25)', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(409);
     expect(res.body.type).toBe('/problems/invalid_transition');
     expect(await packageRow(packageId)).toMatchObject({ status: 'awaiting_pickup', version });
+  });
+});
+
+describe('kiện đang chờ mở: chặn báo sẵn sàng, quét bàn giao; sàn báo rời kho (#238 D27, D28)', () => {
+  it('AC19a: ready kiện packed có cờ Cần mở: 409 awaiting_open, không gọi readyToShip', async () => {
+    const { v, packageId } = await packedSplit();
+    const version = await versionOf(packageId);
+
+    const res = await post(v.token, packageId, 'ready', { version });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body.type).toBe('/problems/awaiting_open');
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, version });
+  });
+
+  it('AC19a: quét bàn giao kiện awaiting_pickup có cờ Cần mở: failed[].code awaiting_open, kiện không đổi, tồn không đổi', async () => {
+    const { v, packageId } = await pickupEdited();
+    const version = await versionOf(packageId);
+    const before = await stockOfVariant(v.companyId, v.variantId);
+
+    const res = await packingApp().post('/api/v1/fulfillment/packages/hand-over').set('Authorization', `Bearer ${v.token}`).send({ packages: [{ id: packageId, version }] });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual({ handedOver: [], failed: [{ packageId, code: 'awaiting_open', detail: expect.any(String) }] });
+    expect(await packageRow(packageId)).toMatchObject({ status: 'awaiting_pickup', needs_open: true, version });
+    expect(await stockOfVariant(v.companyId, v.variantId)).toEqual(before);
+  });
+
+  it('AC19b: sàn báo kiện packed chờ mở resplit đã in_transit: in_transit, trừ mọi dòng một lần, needs_open false, needs_attention với note rời kho; kiện thay thành ứng viên', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, status: 'packed' });
+    const { orderId, packageId } = await ingest(v.companyId, o);
+    // Sàn giữ mã cũ cho món 1, món 2 sang mã mới: kiện cũ còn món 1 và dòng chờ bỏ của món 2.
+    const next = itemStatuses(relabeled(o, [o.lines[0]!.packageCode, `FP-B-${tag()}`]), ['packed', 'pending']);
+    await ingest(v.companyId, next);
+    const fresh = (await packagesOf(orderId)).find((r) => r.replaces === packageId)!;
+
+    await ingest(v.companyId, itemStatuses(next, ['in_transit', 'pending']));
+
+    expect(await packageRow(packageId)).toMatchObject({
+      status: 'in_transit',
+      handover_source: 'marketplace',
+      needs_open: false,
+      open_purpose: null,
+      needs_attention: true,
+      flag_note: 'Sàn báo kiện rời kho khi còn chờ dỡ kiện về kệ',
+    });
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    expect(await lineRows(packageId)).toEqual([
+      { item: external(o, 0), reserved: 0, drop: 0 },
+      { item: external(o, 1), reserved: 0, drop: 1 },
+    ]);
+    const stock = await stockOfVariant(v.companyId, v.variantId);
+    expect([stock.onHand, stock.reserved]).toEqual([8, 0]);
+
+    const r = await withCompany(v.companyId, () => runAllocation({ stockHoldOf: awaitingStocktakeShops }, { variantIds: [v.variantId] }));
+
+    expect(r.held).toEqual([fresh.id]);
+    expect((await packageRow(fresh.id)).status).toBe('reserved');
+  });
+
+  it('kiện chờ mở vì stocktake rời kho: gỡ cờ, không bật Cần xử lý (như PR 2)', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 1, status: 'packed' });
+    const { packageId } = await ingest(v.companyId, o);
+    await testPool().query(`update "order".packages set needs_open = true, open_purpose = 'stocktake' where id = $1`, [packageId]);
+
+    await ingest(v.companyId, withStatus(o, 'in_transit'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'in_transit', needs_open: false, open_purpose: null, needs_attention: false, flag_note: null });
   });
 });
 

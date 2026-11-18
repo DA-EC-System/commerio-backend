@@ -23,6 +23,11 @@ type PackingAction = Extract<PackageAction, 'pack' | 'mark_ready' | 'open' | 'op
 type PackageIdentity = Pick<PackingPackage, 'id' | 'orderId' | 'status'>;
 type Group = Awaited<ReturnType<typeof packageGroupOf>>;
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy kiện');
+/**
+ * Kiện đang có cờ Cần mở (dỡ kiện về kệ) không báo sẵn sàng giao, không quét bàn giao (spec #238 D28): kiểm ở service, sau
+ * `version` và máy trạng thái, không là guard của máy (bàn giao không nạp `record`).
+ */
+export const awaitingOpen = () => new AppError(409, 'awaiting_open', 'Kiện đang chờ dỡ kiện về kệ, mở kiện trước');
 
 export async function pickList(ctx: FulfillmentContext, ids: readonly string[] | undefined) {
   const { rows, packageIds, truncated } = await pickListBase(ids ? { ids } : { limit: PICK_LIST_LIMIT });
@@ -169,6 +174,7 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
         await versionConflict(ctx, id);
       }
       await transition(ctx, actor, pkg, 'mark_ready');
+      if (pkg.needsOpen) throw awaitingOpen();
       const others = await otherGroupMembers(pkg);
       checkGroup(readyGroupBlockers(others));
       if (pkg.shopId && !pkg.platformPackageCode) throw new AppError(409, 'rts_package_not_found', 'Kiện chưa có mã kiện trên sàn');

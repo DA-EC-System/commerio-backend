@@ -132,7 +132,7 @@ export const HandOverResult = z
       z
         .object({
           packageId: z.string(),
-          code: z.enum(['not_found', 'version_conflict', 'already_handed_over', 'invalid_transition', 'internal_error']),
+          code: z.enum(['not_found', 'version_conflict', 'already_handed_over', 'invalid_transition', 'awaiting_open', 'internal_error']),
           detail: z.string(),
         })
         .strict(),
