@@ -313,6 +313,14 @@ describe('toTiktokOrder (GET /order/202507/orders)', () => {
     expect(system.lines[0]!.info.cancelInitiator).toBe('platform');
     expect(() => toTiktokOrder({ id: 'O', status: 'ON_HOLD', line_items: [] })).toThrow(MarketplaceError);
   });
+
+  it('AC12: DELIVERED → returnWindowEndedAt null; COMPLETED, CANCELLED → bằng update_time', () => {
+    const u = 1795000000;
+    const of = (status: string) => toTiktokOrder({ ...deliveredOrder(), status, update_time: u }).returnWindowEndedAt;
+    expect(of('DELIVERED')).toBeNull();
+    expect(of('COMPLETED')).toEqual(new Date(u * 1000));
+    expect(of('CANCELLED')).toEqual(new Date(u * 1000));
+  });
 });
 
 describe('tiktokLineStatus: trạng thái TikTok → trạng thái kiện', () => {
