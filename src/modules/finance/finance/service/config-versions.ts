@@ -11,6 +11,7 @@ import {
   addDays,
   type ConfigAction,
   type ConfigKind,
+  configLabel,
   type ConfigPayload,
   configMachine,
   type ConfigStatus,
@@ -315,9 +316,22 @@ const cellsOf = (row: ConfigRow): (readonly [ConfigKind, string | null])[] =>
       ]
     : [[row.kind, row.shopId]];
 
+/** Nhãn nhật ký của phiên bản (#352): tên gian hàng qua `ctx.shopsOf`, gian hàng không còn thì bỏ tên. */
+async function configLabelOf(ctx: FinanceContext, row: ConfigRow): Promise<string> {
+  const shop = row.shopId && ctx.shopsOf ? (await ctx.shopsOf([row.shopId])).get(row.shopId) : undefined;
+  return configLabel(row.kind, shop?.shopName ?? null, row.effectiveFrom);
+}
+
 /** Thao tác người dùng theo máy trạng thái (§21.4). Duyệt bản đã tới ngày thì áp dụng ngay. */
-export function actOnConfig(caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now = new Date()) {
-  return overlapAsConflict(actOnConfigTx(caller, id, action, input, now));
+export function actOnConfig(
+  ctx: FinanceContext,
+  caller: Caller,
+  id: string,
+  action: ConfigAction,
+  input: { version: number; reason?: string },
+  now = new Date(),
+) {
+  return overlapAsConflict(actOnConfigTx(ctx, caller, id, action, input, now));
 }
 
 /** Lỗi `config_versions_no_overlap` (23P01) còn lọt qua kiểm tra của service thì trả 409 `config_overlap`, không 500. */
@@ -332,7 +346,7 @@ async function overlapAsConflict<T>(work: Promise<T>): Promise<T> {
   }
 }
 
-function actOnConfigTx(caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now: Date) {
+function actOnConfigTx(ctx: FinanceContext, caller: Caller, id: string, action: ConfigAction, input: { version: number; reason?: string }, now: Date) {
   return withCompany(caller.companyId, async () => {
     const row = await load(id);
     await lockCells(cellsOf(row));
@@ -383,7 +397,7 @@ function actOnConfigTx(caller: Caller, id: string, action: ConfigAction, input: 
       actorId: caller.accountId,
       reason,
       selfApproved,
-      audit: { entityType: 'finance.config_versions' },
+      audit: { entityType: 'finance.config_versions', label: await configLabelOf(ctx, locked) },
     });
     // Sau khi bản này rời `scheduled`: nới bản trước khi bản này còn trong ràng buộc `config_versions_no_overlap` là chồng ngày.
     if (action === 'cancel' && locked.status === 'scheduled') await reopenPredecessor(locked);

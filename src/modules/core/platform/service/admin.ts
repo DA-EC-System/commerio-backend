@@ -77,16 +77,19 @@ export function setCompanyLock(actorId: string, companyId: string, input: { vers
         current: toCompany(current),
       });
     }
+    const company = (await findCompanyAdmin(companyId))!;
     await recordAudit({
       companyId: null,
       actorId,
       action: 'update',
+      operation: status === 'locked' ? 'lock' : 'unlock',
       entityType: 'core.companies',
       entityId: companyId,
+      label: company.name,
       before: { status: status === 'locked' ? 'active' : 'locked' },
       after: { status, lockReason: input.reason },
     });
-    return toCompany((await findCompanyAdmin(companyId))!);
+    return toCompany(company);
   });
 }
 

@@ -4,6 +4,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { verifyPurposeToken } from '#src/shared/auth/purpose-token.ts';
+import { vnShortDateTime } from '#src/shared/vn-format.ts';
 import { addMember, createCompany, createCustomRole, uniqueEmail } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { login, PASSWORD, testApp } from '../../helpers/http.ts';
@@ -37,7 +38,7 @@ const invitationCount = async (companyId: string) =>
   Number((await db.query('select count(*) from core.invitations where company_id = $1', [companyId])).rows[0].count);
 const auditOf = (entityId: string) =>
   db.query<{ action: string; entity_type: string; actor_id: string; before: unknown; after: unknown }>(
-    'select action, entity_type, actor_id, before, after from core.audit_logs where entity_id = $1 order by id',
+    'select action, operation, entity_label as label, entity_type, actor_id, before, after from core.audit_logs where entity_id = $1 order by id',
     [entityId],
   );
 
@@ -69,7 +70,15 @@ describe('tạo link mời', () => {
     expect((row.expires_at as Date).getTime() - (row.created_at as Date).getTime()).toBe(72 * 3600_000);
     expect(new Date(res.body.expiresAt).getTime()).toBe((row.expires_at as Date).getTime());
     expect((await auditOf(res.body.id)).rows).toEqual([
-      { action: 'create', entity_type: 'core.invitations', actor_id: ceoId, before: null, after: { roles: [SALE] } },
+      {
+        action: 'create',
+        operation: null,
+        label: `Link mời vai Sale (tạo ${vnShortDateTime(row.created_at as Date)})`,
+        entity_type: 'core.invitations',
+        actor_id: ceoId,
+        before: null,
+        after: { roles: ['Sale'] },
+      },
     ]);
   });
 
@@ -98,10 +107,33 @@ describe('tạo link mời', () => {
     expect(await invitationCount(own.companyId)).toBe(0);
   });
 
-  it('Admin tạo được link cho vai trò gồm quyền mình có; vai trò Sale có quyền giao hàng mà Admin không có (Documents/21 mục 8)', async () => {
+  it('#351 AC-1: Admin tạo link vai có sẵn Sale, Nhân viên kho dù thiếu quyền của chúng (Documents/21 I5); nhật ký create', async () => {
     const admin = await addMember(company.companyId, 'admin');
+    const adminId = await accountIdOf(admin.email);
     expect((await as(admin.token).create([BUILTIN_ROLES.admin.id])).status).toBe(201);
-    expect((await as(admin.token).create([SALE])).body.code).toBe('permission_not_held');
+    const cases: [string[], string[]][] = [
+      [[SALE], ['Sale']],
+      [[BUILTIN_ROLES.kho.id], ['Nhân viên kho']],
+      [[SALE, BUILTIN_ROLES.kho.id], ['Nhân viên kho', 'Sale']],
+    ];
+    for (const [roleIds, names] of cases) {
+      const res = await as(admin.token).create(roleIds);
+      expect(res.status, roleIds.join()).toBe(201);
+      // #352: vai trò ghi bằng tên.
+      expect((await auditOf(res.body.id)).rows).toMatchObject([
+        { action: 'create', entity_type: 'core.invitations', actor_id: adminId, before: null, after: { roles: names } },
+      ]);
+    }
+  });
+
+  it('#351 AC-5: người quản lý tài khoản qua vai tự tạo: mời Kho được, mời vai Admin (có quyền mình không có) → 403', async () => {
+    const own = await createCompany();
+    const manager = await addMember(own.companyId, await createCustomRole(own.companyId, ['identity.account.manage']));
+    expect((await as(manager.token).create([BUILTIN_ROLES.kho.id])).status).toBe(201);
+    const res = await as(manager.token).create([BUILTIN_ROLES.admin.id]);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('permission_not_held');
+    expect(await invitationCount(own.companyId)).toBe(1);
   });
 });
 
@@ -184,10 +216,12 @@ describe('duyệt, từ chối', () => {
     expect((await auditOf(membership.rows[0]!.id)).rows).toEqual([
       {
         action: 'create',
+        operation: 'join',
+        label: `Nhân Viên Mới (${inv.email})`,
         entity_type: 'core.memberships',
         actor_id: ceoId,
         before: null,
-        after: { invitationId: inv.id, roles: [SALE] },
+        after: { fullName: 'Nhân Viên Mới', email: inv.email, roles: ['Sale'] },
       },
     ]);
     const { body } = await login(inv.email, PASSWORD);
@@ -225,6 +259,8 @@ describe('duyệt, từ chối', () => {
     expect((await auditOf(inv.id)).rows).toEqual([
       {
         action: 'update',
+        operation: 'reject',
+        label: `Link mời vai Sale cho Nhân Viên Mới (${inv.email})`,
         entity_type: 'core.invitations',
         actor_id: ceoId,
         before: { status: 'pending' },
@@ -250,6 +286,21 @@ describe('duyệt, từ chối', () => {
     }
   });
 
+  it('#351 AC-6: Admin duyệt yêu cầu vai Nhân viên kho do CEO tạo → 200; quản lý qua vai tự tạo duyệt vai Admin → 403', async () => {
+    const admin = await addMember(company.companyId, 'admin');
+    const kho = await pending({ roleIds: [BUILTIN_ROLES.kho.id] });
+    const res = await as(admin.token).approve(kho.id, kho.version);
+    expect(res.status).toBe(200);
+    expect(res.body.member.roles).toEqual([{ id: BUILTIN_ROLES.kho.id, name: 'Nhân viên kho' }]);
+
+    const manager = await addMember(company.companyId, await createCustomRole(company.companyId, ['identity.account.manage']));
+    const adminInv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
+    const denied = await as(manager.token).approve(adminInv.id, adminInv.version);
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('permission_not_held');
+    expect(await invitationRow(adminInv.id)).toMatchObject({ status: 'pending', version: adminInv.version });
+  });
+
   it('AC-C16: email đã có tài khoản do đường khác → 409 email_taken; đã là thành viên → 409 already_member', async () => {
     const taken = await pending();
     await db.query("insert into core.accounts (email, full_name) values ($1, 'Đăng Ký Riêng')", [taken.email]);
@@ -269,17 +320,37 @@ describe('duyệt, từ chối', () => {
     for (const inv of [taken, again, joined]) expect((await invitationRow(inv.id)).status).toBe('pending');
   });
 
-  it('AC-C17: version lệch hay đã quyết định → 409 version_conflict kèm current', async () => {
+  it('AC-C17: version lệch → 409 version_conflict kèm current', async () => {
     const inv = await pending();
     const stale = await ceo.approve(inv.id, inv.version + 5);
     expect(stale.status).toBe(409);
     expect(stale.body.code).toBe('version_conflict');
     expect(stale.body.current).toMatchObject({ id: inv.id, status: 'pending', version: inv.version });
+    expect((await ceo.reject(inv.id, inv.version + 5)).body.code).toBe('version_conflict');
+    expect(await invitationRow(inv.id)).toMatchObject({ status: 'pending', version: inv.version });
+  });
+
+  it('#353 AC-C17: chưa nộp hay đã quyết định (version đúng) → 409 invalid_transition kèm current; không đổi gì, không nhật ký', async () => {
+    const link = await ceo.create([SALE]);
+    const open = await invitationRow(link.body.id);
+    for (const call of [ceo.approve, ceo.reject]) {
+      const res = await call(link.body.id, open.version as number);
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('invalid_transition');
+      expect(res.body.current).toMatchObject({ id: link.body.id, status: 'open', email: null, version: open.version });
+    }
+    expect(await invitationRow(link.body.id)).toMatchObject({ status: 'open', version: open.version });
+
+    const inv = await pending();
     expect((await ceo.reject(inv.id, inv.version)).status).toBe(200);
-    const decided = await ceo.approve(inv.id, inv.version + 1);
-    expect(decided.status).toBe(409);
-    expect(decided.body.current).toMatchObject({ status: 'rejected', version: inv.version + 1 });
-    expect((await ceo.reject(inv.id, inv.version + 1)).body.code).toBe('version_conflict');
+    for (const call of [ceo.approve, ceo.reject]) {
+      const res = await call(inv.id, inv.version + 1);
+      expect(res.body.code).toBe('invalid_transition');
+      expect(res.body.current).toMatchObject({ status: 'rejected', version: inv.version + 1 });
+    }
+    // Trạng thái sai thì báo trạng thái trước, kể cả khi version cũng lệch (Documents/21 mục 3.1, #353).
+    expect((await ceo.approve(inv.id, inv.version)).body.code).toBe('invalid_transition');
+    expect((await auditOf(inv.id)).rows.map((r) => r.after)).toEqual([{ status: 'rejected' }]);
   });
 
   it('AC-C18: id của công ty khác, không tồn tại, không phải uuid → 404; Sale duyệt → 403', async () => {
@@ -311,29 +382,30 @@ const lockInvitation = (id: string) => (holder: PoolClient) =>
   holder.query('select 1 from core.invitations where id = $1 for update', [id]);
 
 describe('duyệt chạy đồng thời', () => {
-  it('hai Admin duyệt cùng lúc: một 200, một 409 version_conflict; chỉ một tài khoản, một membership', async () => {
+  it('hai Admin duyệt cùng lúc: một 200, một 409 invalid_transition (đã duyệt); chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
-    // Mời làm Admin: Admin cấp được đủ quyền. Mời làm Sale thì Admin thiếu `fulfillment.delivery.update`, nên khi chạy
-    // trước CEO sẽ nhận 403 `permission_not_held` thay vì 409, kết quả tuỳ thứ tự.
+    // Mời làm Admin: Admin cấp được đủ quyền, nên hai bên chỉ khác nhau ở thứ tự giành khoá.
     const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
     const results = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
     );
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-    expect(results.find((r) => r.status === 409)!.body.code).toBe('version_conflict');
+    const lost = results.find((r) => r.status === 409)!;
+    expect(lost.body.code).toBe('invalid_transition');
+    expect(lost.body.current).toMatchObject({ status: 'approved' });
     const accounts = await db.query<{ id: string }>('select id from core.accounts where email = $1', [inv.email]);
     expect(accounts.rows).toHaveLength(1);
     const memberships = await db.query('select 1 from core.memberships where account_id = $1', [accounts.rows[0]!.id]);
     expect(memberships.rowCount).toBe(1);
   });
 
-  it('duyệt và từ chối cùng lúc: đúng một bên thắng, bên kia 409 version_conflict', async () => {
+  it('duyệt và từ chối cùng lúc: đúng một bên thắng, bên kia 409 invalid_transition', async () => {
     const inv = await pending();
     const [approved, rejected] = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), ceo.reject(inv.id, inv.version)]),
     );
     expect([approved.status, rejected.status].sort()).toEqual([200, 409]);
-    expect([approved, rejected].find((r) => r.status === 409)!.body.code).toBe('version_conflict');
+    expect([approved, rejected].find((r) => r.status === 409)!.body.code).toBe('invalid_transition');
     const status = (await invitationRow(inv.id)).status;
     expect(status).toBe(approved.status === 200 ? 'approved' : 'rejected');
     const accounts = await db.query('select 1 from core.accounts where email = $1', [inv.email]);

@@ -1,1 +1,0 @@
-ALTER TABLE "channel"."listings" ADD COLUMN "create_attempted_at" timestamp with time zone;

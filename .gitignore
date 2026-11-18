@@ -26,3 +26,5 @@ Desktop.ini
 .smoke-tokens.json
 # Cấu hình Alertmanager có khoá SMTP (deploy/k8s/overlays/vps/alertmanager.yaml)
 deploy/k8s/overlays/vps/alertmanager/alertmanager.yml
+# Tài khoản đăng nhập Dozzle, mật khẩu đã băm (deploy/k8s/overlays/vps/dozzle.yaml)
+deploy/k8s/overlays/vps/dozzle/users.yml

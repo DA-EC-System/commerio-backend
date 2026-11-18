@@ -11,15 +11,18 @@ import { insertTransition, type TransitionRecord } from '../repository/transitio
 export async function recordTransition(input: TransitionRecord): Promise<void> {
   await insertTransition(input);
   if (!input.selfApproved) return;
+  const { audit } = input;
   await recordAudit({
     companyId: requireCompanyId('recordTransition'),
     actorId: input.actorId,
     action: 'update',
-    entityType: input.audit?.entityType ?? input.entityType,
+    operation: input.action,
+    entityType: audit.entityType,
     entityId: input.entityId,
+    label: 'code' in audit ? audit.code : audit.label,
     before: { status: input.from },
     after: {
-      ...(input.audit?.label && { code: input.audit.label }),
+      ...('code' in audit && { code: audit.code }),
       status: input.to,
       action: input.action,
       selfApproved: true,

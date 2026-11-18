@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { setMailTransport } from '#src/shared/mail/index.ts';
+import { vnShortDateTime } from '#src/shared/vn-format.ts';
 import { addMember, createCompany, uniqueEmail } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { PASSWORD, testApp } from '../../helpers/http.ts';
@@ -34,7 +35,7 @@ const rowOf = async (id: string) =>
 const versionOf = async (id: string) => (await rowOf(id)).version as number;
 const auditOf = (id: string) =>
   db.query<{ action: string; before: unknown; after: unknown; actor_id: string }>(
-    "select action, before, after, actor_id from core.audit_logs where entity_id = $1 and action = 'update' order by id",
+    "select action, operation, entity_label as label, before, after, actor_id from core.audit_logs where entity_id = $1 and action = 'update' order by id",
     [id],
   );
 
@@ -86,6 +87,31 @@ describe('tab "Link đã tạo": GET /invitations?status=open,claimed', () => {
 });
 
 describe('POST /invitations/:id/revoke', () => {
+  it('#403: huỷ link còn open sau khi người cầm link đã gõ email (chưa qua OTP) → không trả, không giữ email, họ tên', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    const typed = uniqueEmail('chua-xac-minh');
+    expect((await join.otp(link.token, typed, 'Người Gõ Thử')).status).toBe(202);
+    expect(await rowOf(link.id)).toMatchObject({ status: 'open', email: typed });
+
+    const res = await ceo.revoke(link.id, await versionOf(link.id));
+    expect(res.status).toBe(200);
+    expect(res.body.invitation).toMatchObject({ status: 'revoked', email: null, fullName: null });
+    const again = await ceo.revoke(link.id, await versionOf(link.id));
+    expect(again.body.current).toMatchObject({ status: 'revoked', email: null, fullName: null });
+    const listed = (await ceo.list('revoked')).body.items.find((i: { id: string }) => i.id === link.id);
+    expect(listed).toMatchObject({ email: null, fullName: null });
+    expect(await rowOf(link.id)).toMatchObject({ email: null, full_name: null });
+  });
+
+  it('#403: huỷ link đã claimed (email đã qua OTP) → giữ email, họ tên', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    const email = uniqueEmail('da-xac-minh');
+    await claimLink(app, link.token, email);
+    const res = await ceo.revoke(link.id, await versionOf(link.id));
+    expect(res.body.invitation).toMatchObject({ status: 'revoked', email });
+    expect((await rowOf(link.id)).email).toBe(email);
+  });
+
   it('AC 5: huỷ link open → 200 revoked, ghi người huỷ, nhật ký update; mở link → 410 invitation_invalid', async () => {
     const link = await newLink(app, company.ceo.token, [SALE]);
     const res = await ceo.revoke(link.id, await versionOf(link.id));
@@ -94,7 +120,14 @@ describe('POST /invitations/:id/revoke', () => {
     expect(res.body.invitation.decidedAt).toBeTruthy();
     expect(await rowOf(link.id)).toMatchObject({ status: 'revoked', decided_by: ceoId });
     expect((await auditOf(link.id)).rows).toEqual([
-      { action: 'update', actor_id: ceoId, before: { status: 'open' }, after: { status: 'revoked' } },
+      {
+        action: 'update',
+        operation: 'revoke',
+        label: `Link mời vai Sale (tạo ${vnShortDateTime((await rowOf(link.id)).created_at as Date)})`,
+        actor_id: ceoId,
+        before: { status: 'open' },
+        after: { status: 'revoked' },
+      },
     ]);
 
     const check = await join.check(link.token);
@@ -103,6 +136,17 @@ describe('POST /invitations/:id/revoke', () => {
     const otp = await join.otp(link.token, uniqueEmail('muon'));
     expect(otp.status).toBe(410);
     expect(otp.body.code).toBe('invitation_invalid');
+  });
+
+  it('#352: link open đã xin mã nhưng chưa qua OTP → huỷ, nhãn nhật ký không lộ email, họ tên người cầm link tự gõ', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    expect((await join.otp(link.token, uniqueEmail('chua-xac-minh'), 'Người Tự Gõ')).status).toBe(202);
+    const row = await rowOf(link.id);
+    expect(row.status).toBe('open');
+    expect((await ceo.revoke(link.id, row.version as number)).status).toBe(200);
+    expect((await auditOf(link.id)).rows).toMatchObject([
+      { operation: 'revoke', label: `Link mời vai Sale (tạo ${vnShortDateTime(row.created_at as Date)})` },
+    ]);
   });
 
   it('AC 5 / US-CT-06 AC 8: huỷ link claimed → nhập mã, nộp đều 410 invitation_invalid; mã OTP bị xoá', async () => {
@@ -132,24 +176,34 @@ describe('POST /invitations/:id/revoke', () => {
     expect(res.body.invitation.status).toBe('revoked');
   });
 
-  it('AC 6: yêu cầu đã nộp, lệch version, đã huỷ → 409 version_conflict kèm current; không đổi gì', async () => {
+  it('AC 6 (#353): yêu cầu đã nộp, đã huỷ → 409 invalid_transition kèm current; không đổi gì', async () => {
     const submitted = await pendingInvitation(company.companyId, { createdBy: ceoId, roleIds: [SALE] });
     const onPending = await ceo.revoke(submitted.id, submitted.version);
     expect(onPending.status).toBe(409);
-    expect(onPending.body.code).toBe('version_conflict');
+    expect(onPending.body.code).toBe('invalid_transition');
     expect(onPending.body.current).toMatchObject({ id: submitted.id, status: 'pending' });
     expect((await rowOf(submitted.id)).status).toBe('pending');
 
     const link = await newLink(app, company.ceo.token, [SALE]);
     const version = await versionOf(link.id);
+    expect((await ceo.revoke(link.id, version)).status).toBe(200);
+    for (const v of [version + 1, version]) {
+      const again = await ceo.revoke(link.id, v);
+      expect(again.status).toBe(409);
+      expect(again.body.code).toBe('invalid_transition');
+      expect(again.body.current).toMatchObject({ status: 'revoked', version: version + 1 });
+    }
+    expect((await auditOf(link.id)).rows).toHaveLength(1);
+  });
+
+  it('AC 7: lệch version → 409 version_conflict kèm current; không đổi gì', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    const version = await versionOf(link.id);
     const stale = await ceo.revoke(link.id, version + 1);
     expect(stale.status).toBe(409);
+    expect(stale.body.code).toBe('version_conflict');
     expect(stale.body.current).toMatchObject({ status: 'open', version });
-
-    expect((await ceo.revoke(link.id, version)).status).toBe(200);
-    const again = await ceo.revoke(link.id, version + 1);
-    expect(again.status).toBe(409);
-    expect(again.body.current.status).toBe('revoked');
+    expect(await rowOf(link.id)).toMatchObject({ status: 'open', version });
   });
 
   it('không có, sai dạng, của công ty khác → 404; Sale không có quyền → 403; thiếu version → 422', async () => {

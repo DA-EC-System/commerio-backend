@@ -586,22 +586,50 @@
     {
       "idx": 83,
       "version": "7",
-      "when": 1795013831252,
-      "tag": "20261118145711_nguon-noi-dung-listing",
+      "when": 1795013122577,
+      "tag": "20261118144522_bo-quyen-giao-vai-sale",
       "breakpoints": true
     },
     {
       "idx": 84,
       "version": "7",
-      "when": 1795015412306,
-      "tag": "20261118152332_nguon-noi-dung-listing-du-lieu",
+      "when": 1795017806645,
+      "tag": "20261118160326_xoa-email-link-huy-chua-xac-minh",
       "breakpoints": true
     },
     {
       "idx": 85,
       "version": "7",
-      "when": 1795018731493,
-      "tag": "20261118161851_listing-create-attempted-at",
+      "when": 1795018916017,
+      "tag": "20261118162156_nhat-ky-nhan-thao-tac",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1795022809336,
+      "tag": "20261118172649_ten-tren-san",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1795022813694,
+      "tag": "20261118172653_ten-tren-san-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1795023567134,
+      "tag": "20261118173927_nguon-noi-dung-listing-listing-create-attempted-at",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1795023578598,
+      "tag": "20261118173938_nguon-noi-dung-listing-du-lieu",
       "breakpoints": true
     }
   ]

@@ -1,6 +1,6 @@
 {
-  "id": "97455c4a-562f-4d84-86e6-e3d5acb5ca66",
-  "prevId": "35781404-cfe0-4ba4-b94e-bf2310b765c0",
+  "id": "11506388-b881-4d56-943b-e412054cc29d",
+  "prevId": "19b22d78-ed41-416b-a345-2b0e4b87827d",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -234,6 +234,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "create_attempted_at": {
+          "name": "create_attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "hidden_by": {
           "name": "hidden_by",
           "type": "hidden_by",
@@ -419,6 +425,30 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'platform'"
+        },
+        "remote_title_at_match": {
+          "name": "remote_title_at_match",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "remote_title_en_at_match": {
+          "name": "remote_title_en_at_match",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "remote_title_matched_at": {
+          "name": "remote_title_matched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "remote_title_changed_at": {
+          "name": "remote_title_changed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "replaces_listing_id": {
           "name": "replaces_listing_id",
@@ -618,6 +648,10 @@
         "listings_revision": {
           "name": "listings_revision",
           "value": "(\"channel\".\"listings\".\"revision_status\" is null) = (\"channel\".\"listings\".\"revision_at\" is null)\n        and (\"channel\".\"listings\".\"revision_reject_reason\" is null or \"channel\".\"listings\".\"revision_status\" = 'failed')\n        and (\"channel\".\"listings\".\"revision_status\" is null or \"channel\".\"listings\".\"status\" in ('live', 'hidden', 'platform_hold'))"
+        },
+        "listings_remote_title": {
+          "name": "listings_remote_title",
+          "value": "(\"channel\".\"listings\".\"remote_title_at_match\" is not null or (\"channel\".\"listings\".\"remote_title_en_at_match\" is null and \"channel\".\"listings\".\"remote_title_matched_at\" is null))\n        and (\"channel\".\"listings\".\"remote_title_changed_at\" is null or \"channel\".\"listings\".\"remote_title_matched_at\" is not null)"
         },
         "listings_reject_reason": {
           "name": "listings_reject_reason",
@@ -1070,6 +1104,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "title_en": {
+          "name": "title_en",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "state": {
           "name": "state",
@@ -2630,6 +2670,18 @@
         "entity_id": {
           "name": "entity_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entity_label": {
+          "name": "entity_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

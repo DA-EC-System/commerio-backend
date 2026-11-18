@@ -101,7 +101,7 @@ async function post(
     action,
     actorId: actor.accountId,
     selfApproved,
-    audit: { entityType: RECEIPT_AUDIT_ENTITY, label: receipt.number },
+    audit: { entityType: RECEIPT_AUDIT_ENTITY, code: receipt.number },
   });
   await applyReceiving(request, { receiptId: receipt.id, actorId: actor.accountId });
   // Hàng lỗi và phần nhận đều làm giảm đang về, kể cả SKU không có move tồn thực (Documents/25 mục 7.5).

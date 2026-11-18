@@ -177,6 +177,7 @@ interface Picked {
   externalSkuId: string;
   externalProductId: string;
   sellerSku: string;
+  title: string;
   variantId: string;
   platformStock: number;
 }
@@ -301,6 +302,8 @@ export async function finishSetup(
         status: 'live',
         platformStock: p.platformStock,
         contentSource: 'platform',
+        // Mốc tên trên sàn (#396): tên vừa đọc, cùng lượt đã lưu vào bản sao; tên tiếng Anh lấy ở lần ghi bản sao sau.
+        remoteTitleAtMatch: p.title,
       });
       await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
     }

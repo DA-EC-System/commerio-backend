@@ -16,13 +16,17 @@ export interface AuditEntry {
   /** Bảng của đối tượng, vd `core.companies`. */
   entityType: string;
   entityId: string | null;
+  /** Tên người đọc được của đối tượng lúc ghi: "Họ tên (email)", số chứng từ, tên gian hàng… (#352). */
+  label: string;
+  /** Mã thao tác cụ thể khi `action` chưa nói đủ: `lock`, `change_roles`, mã thao tác máy trạng thái… FE dịch ra chữ. */
+  operation?: string;
   before?: unknown;
   after?: unknown;
 }
 
 /** Ghi một dòng nhật ký trong transaction của bên gọi: thao tác lỗi thì nhật ký cũng không còn. */
-export async function recordAudit(entry: AuditEntry): Promise<void> {
+export async function recordAudit({ label, ...entry }: AuditEntry): Promise<void> {
   await getDb()
     .insert(auditLogs)
-    .values({ ...entry, before: entry.before ?? null, after: entry.after ?? null });
+    .values({ ...entry, entityLabel: label, before: entry.before ?? null, after: entry.after ?? null });
 }

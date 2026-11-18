@@ -6,10 +6,12 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, type RemoteState, STALE_PUSH_MS } from '../domain/listing.ts';
+import { sentBaseline, snapshotBaseline } from '../domain/remote-title.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, markCreateAttempted, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
+import { findRemoteSkuRow } from '../repository/remote-skus.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
 import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
@@ -166,6 +168,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     const priceSent = !result.existing || rewritten;
     // Giá bộ lọc đã lên sàn: lần tính `confirmed` → `pushed`.
     if (shopPrice && priceSent) await inCompany(() => markPushed(row.priceCalcId!));
+    // Mốc tên trên sàn (#396): app vừa ghi tên lên sàn thì là tên đã gửi, không thì tên trong bản sao.
+    const remote = await inCompany(() => findRemoteSkuRow(job.shopId, result.externalSkuId));
+    const titleBaseline = priceSent ? sentBaseline(product.name, remote, at) : snapshotBaseline(remote);
     await finish(job, row, result.live ? 'go_live' : 'send_review', {
       externalProductId: result.externalProductId,
       externalSkuId: result.externalSkuId,
@@ -173,6 +178,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       pushError: null,
       // Nội dung trên sàn giờ là của app (tạo mới, ghi lại, hay CEO ghi đè bằng `take-over-content`).
       contentSource: 'app',
+      ...titleBaseline,
       listedPrice: priceText,
       // Nhận về sản phẩm có sẵn mà sàn không cho sửa: giá chưa ghi lên, để đồng bộ đẩy.
       priceSync: result.existing && !rewritten ? 'pending' : 'synced',

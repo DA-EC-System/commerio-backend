@@ -127,6 +127,28 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
     expect(history.rows).toEqual([{ from_state: null, to_state: 'live', action: 'relist', actor_id: null }]);
   });
 
+  it('#396: dòng đưa lên lại giữ mốc tên trên sàn và cờ của dòng cũ', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const sellerSku = `R-${tag}-T`;
+    const { shopId, reconnect } = await disconnectedShop([sellerSku]);
+    const detected = new Date('2026-11-18T01:00:00Z');
+    await testPool().query(
+      `update channel.listings set remote_title_at_match = 'Tên lúc ghép', remote_title_en_at_match = 'Name', remote_title_matched_at = $2,
+              remote_title_changed_at = $2 where shop_id = $1`,
+      [shopId, detected],
+    );
+    remote.set(sellerSku, { state: 'live' });
+    expect((await reconnect()).status).toBe(200);
+    const { rows } = await testPool().query(
+      `select remote_title_at_match, remote_title_en_at_match, remote_title_matched_at, remote_title_changed_at
+         from channel.listings where shop_id = $1 and status <> 'delisted'`,
+      [shopId],
+    );
+    expect(rows).toEqual([
+      { remote_title_at_match: 'Tên lúc ghép', remote_title_en_at_match: 'Name', remote_title_matched_at: detected, remote_title_changed_at: detected },
+    ]);
+  });
+
   it('Đợt 2 #220: dòng "không quản tồn" gỡ do ngắt cũng được đưa lên lại, giữ quyết định duyệt cũ', async () => {
     const s = `R-${randomUUID().slice(0, 6)}-U`;
     const approvedBy = randomUUID();

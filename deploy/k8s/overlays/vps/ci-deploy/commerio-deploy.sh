@@ -2,12 +2,11 @@
 # Lệnh duy nhất mà khoá SSH của CI chạy được (forced command trong ~ci-deploy/.ssh/authorized_keys):
 #   restrict,command="/usr/local/bin/commerio-deploy fe" ssh-ed25519 …        (khoá của repo FE)
 #   restrict,command="/usr/local/bin/commerio-deploy backend" ssh-ed25519 …   (khoá của repo backend)
-#   restrict,command="/usr/local/bin/commerio-deploy test-ui" ssh-ed25519 …   (khoá của repo Test_UI)
 # CI gửi đúng một chuỗi (ssh ci-deploy@host <chuỗi>):
 #   sha-abc1234   deploy bản đó
 #   rollback      quay về màu vừa nghỉ (image của lần deploy trước vẫn còn trên Deployment đó)
 #
-# Blue-green cho api, realtime, fe, fe-mock, test-ui (base/bluegreen): mỗi ứng dụng có <tên>-blue và <tên>-green; Service <tên>
+# Blue-green cho api, realtime, fe (base/bluegreen): mỗi ứng dụng có <tên>-blue và <tên>-green; Service <tên>
 # chọn màu đang chạy qua nhãn color. Deploy: đổi image và bật màu nghỉ, chờ pod sẵn sàng (readinessProbe), chuyển Service
 # sang màu đó, chờ kết nối cũ đóng, tắt màu cũ (replicas 0). Pod mới không lên thì dừng, Service vẫn ở màu cũ.
 # worker không nhận yêu cầu từ ngoài nên đổi image kiểu rolling update.
@@ -20,10 +19,9 @@ fi
 
 # Mỗi phần tử: <ứng dụng>=<image không kèm tag>. Container cùng tên với ứng dụng.
 case ${1:-} in
-  fe) apps=(fe=ghcr.io/da-ec-system/commerio-fe fe-mock=ghcr.io/da-ec-system/commerio-fe-mock); rolling=() ;;
+  fe) apps=(fe=ghcr.io/da-ec-system/commerio-fe); rolling=() ;;
   backend) apps=(api=ghcr.io/da-ec-system/commerio-backend realtime=ghcr.io/da-ec-system/commerio-backend)
            rolling=(worker=ghcr.io/da-ec-system/commerio-backend) ;;
-  test-ui) apps=(test-ui=ghcr.io/da-ec-system/commerio-test-ui); rolling=() ;;
   *) echo "Không rõ thành phần: '${1:-}'" >&2; exit 2 ;;
 esac
 

@@ -32,7 +32,14 @@ export const CompanyAuditLog = z
       .string()
       .meta({ description: '`<schema>.<bảng>`, vd `core.roles`' }),
     entityId: z.uuid().nullable(),
-    entityLabel: z.string(),
+    entityLabel: z.string().meta({
+      description:
+        'Tên đối tượng lúc ghi: "Họ tên (email)", số chứng từ, tên gian hàng, tên phân hệ… Dòng ghi trước commerio-backend#352 có thể là mã hay tên bảng',
+    }),
+    operation: z.string().nullable().meta({
+      description:
+        'Mã thao tác cụ thể, FE dịch ra chữ: `lock`, `unlock`, `change_roles`, `join`, `revoke`, `reject`, hoặc mã thao tác máy trạng thái ở dòng tự duyệt (vd `approve_send`). `null`: chỉ là thêm/sửa/xoá theo `action`',
+    }),
     actor: AuditActor,
     selfApproved: z.boolean().meta({ description: 'Bước người duyệt khác đi theo ngoại lệ tự duyệt: FE hiện nhãn "Tự duyệt"' }),
     createdAt: z.iso.datetime(),
