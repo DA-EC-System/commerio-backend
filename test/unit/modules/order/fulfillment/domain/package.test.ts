@@ -107,3 +107,22 @@ describe('thất lạc (#238)', () => {
     for (const s of ['backordered', 'reserved', 'delivered', 'returned', 'lost', 'cancelled'] as const) expect(canReportLost(s)).toBe(false);
   });
 });
+
+describe('giữ hàng, lấy lại phần giữ là bước của hệ thống (US-DH-04 dòng 5)', () => {
+  // CEO có mọi quyền của kiện: bị chặn vì là người dùng, không phải vì thiếu quyền.
+  const ceo = {
+    accountId: 'ceo-a',
+    permissions: ['fulfillment.order.process', 'fulfillment.handover.revert'],
+    enabledModules: ['fulfillment'],
+  };
+
+  it.each<[string, PackageStatus, 'hold' | 'reclaim', PackageStatus]>([
+    ['D2-01x', 'backordered', 'hold', 'reserved'],
+    ['D2-02x', 'reserved', 'reclaim', 'backordered'],
+  ])('%s: kiện %s, người dùng gọi %s → 409 invalid_transition; hệ thống thì qua', (_, from, action, to) => {
+    expect(() => assertTransition(packageMachine, from, action, { actor: ceo, record })).toThrowError(
+      expect.objectContaining({ code: 'invalid_transition', status: 409 }),
+    );
+    expect(assertTransition(packageMachine, from, action, { actor: null, record }).to).toBe(to);
+  });
+});
