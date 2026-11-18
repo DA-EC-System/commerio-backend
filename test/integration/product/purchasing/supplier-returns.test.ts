@@ -114,6 +114,18 @@ describe('B4 phiếu trả NCC', () => {
     expect(ok.body.statusHistory.at(-1)).toMatchObject({ to: 'returned_to_us', selfApproved: true });
   });
 
+  it('#352: CEO tự duyệt và gửi phiếu mình lập → nhật ký lọc Tự duyệt có thao tác approve_send, nhãn là số phiếu', async () => {
+    const d = await draft(ceo);
+    const p = (await act(ceo, d.id, 'submit', { version: d.version })).body;
+    const s = await act(ceo, d.id, 'approve_send', { version: p.version });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    const logs = await testPool().query(
+      "select operation, entity_label from core.audit_logs where entity_id = $1 and after @> '{\"selfApproved\": true}'",
+      [d.id],
+    );
+    expect(logs.rows).toEqual([{ operation: 'approve_send', entity_label: d.number }]);
+  });
+
   it('B4-02, B4-02r: CEO trả về cần lý do; người lập có quyền duyệt không tự duyệt gửi phiếu mình lập', async () => {
     const d = await draft();
     const p = (await act(kho, d.id, 'submit', { version: d.version })).body;

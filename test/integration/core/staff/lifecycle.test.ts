@@ -88,6 +88,7 @@ describe('getStatusHistory (AC-8)', () => {
         action: 'lose',
         actorId: ceo.accountId,
         selfApproved: true,
+        audit: { entityType: 'order.packages', label: 'KIEN-TEST' },
       }),
     );
     const history = await withCompany(companyId, () => getStatusHistory('packages', entityId));

@@ -4,7 +4,7 @@ import { stateTransitions } from './schema.ts';
 
 export type TransitionSource = 'user' | 'marketplace' | 'system';
 
-export interface TransitionRecord {
+interface TransitionBase {
   /** Tên bảng của thực thể, vd `packages`. */
   entityType: string;
   entityId: string;
@@ -16,14 +16,18 @@ export interface TransitionRecord {
   actorId: string | null;
   source?: TransitionSource;
   reason?: string | null;
-  /** `selfApproved` mà `assertTransition` trả: bước người duyệt khác đi theo ngoại lệ tự duyệt. */
-  selfApproved?: boolean;
-  /**
-   * Dòng nhật ký thao tác của lần tự duyệt: `entityType` theo mẫu nhật ký `<schema>.<bảng>` (vd
-   * `product.purchase_requests`), `label` là mã chứng từ. Không có thì ghi tên bảng của lịch sử. Chỉ dùng khi `selfApproved`.
-   */
-  audit?: { entityType: string; label?: string | null };
 }
+
+/**
+ * Bước có người duyệt khác truyền `selfApproved` (lấy nguyên từ `assertTransition`) và bắt buộc kèm `audit`: lần tự duyệt
+ * ghi một dòng nhật ký thao tác với `entityType` theo mẫu `<schema>.<bảng>` (vd `product.purchase_requests`) và `label`
+ * là tên người đọc được (số chứng từ…; #352).
+ */
+export type TransitionRecord = TransitionBase &
+  (
+    | { selfApproved?: undefined; audit?: undefined }
+    | { selfApproved: boolean; audit: { entityType: string; label: string } }
+  );
 
 /**
  * Chèn một dòng lịch sử trong giao dịch của bên gọi. Bảng chỉ thêm. `source` mặc định `user` khi có `actorId`,

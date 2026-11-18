@@ -6,6 +6,21 @@ import { defineMachine } from '../../../core/index.ts';
 export const CONFIG_KINDS = ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin'] as const;
 export type ConfigKind = (typeof CONFIG_KINDS)[number];
 
+/** Tên loại cấu hình người dùng thấy (chép `CONFIG_KINDS` của FE `src/features/finance/lifecycleShared.ts`). */
+const CONFIG_KIND_NAMES: Record<ConfigKind, string> = {
+  fee: 'Phí sàn',
+  tax_regime: 'Loại hình thuế',
+  tax_rules: 'Quy tắc thuế',
+  mismatch_threshold: 'Ngưỡng lệch',
+  min_margin: 'Biên tối thiểu',
+};
+
+/** Nhãn nhật ký: "Phí sàn <gian hàng> từ dd/MM/yyyy"; thiếu gian hàng hay ngày thì bỏ phần đó (#352). */
+export function configLabel(kind: ConfigKind, shopName: string | null, effectiveFrom: string | null): string {
+  const [y, m, d] = effectiveFrom?.split('-') ?? [];
+  return [CONFIG_KIND_NAMES[kind], shopName, effectiveFrom && `từ ${d}/${m}/${y}`].filter(Boolean).join(' ');
+}
+
 /** Tên theo Documents/25 §10.4, 21 §21.4 (đổi `expired` → `superseded` ngày 02/11/2026, #230). */
 export const CONFIG_STATUSES = ['draft', 'pending_approval', 'rejected', 'scheduled', 'active', 'superseded', 'cancelled'] as const;
 export type ConfigStatus = (typeof CONFIG_STATUSES)[number];

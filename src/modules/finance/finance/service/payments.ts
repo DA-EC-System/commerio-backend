@@ -155,7 +155,7 @@ export function resolvePayment(caller: Caller, orderId: string, input: { version
       actorId: caller.accountId,
       reason,
       selfApproved,
-      audit: { entityType: 'finance.order_settlements', label: (await ordersOf([orderId])).get(orderId)?.code ?? null },
+      audit: { entityType: 'finance.order_settlements', label: (await ordersOf([orderId])).get(orderId)?.code ?? 'Đơn không còn trong hệ thống' },
     });
     return detail(updated, canSeeCost, now);
   });
