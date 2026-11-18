@@ -215,7 +215,7 @@ export interface SettlementTxn {
   /** Mã phí gốc của sàn (Lazada `fee_type`), ghi kèm tên khi khoản chưa ánh xạ được (US-TI-06 dòng 2). */
   feeCode: string | null;
   transactionType: string;
-  /** Có dấu: sàn trả shop dương, sàn trừ âm. Chuỗi thập phân. */
+  /** Có dấu: sàn trả shop dương, sàn trừ âm. Chuỗi thập phân trơn, không dấu phân nhóm (adapter chuẩn hoá, #349). */
   amount: string;
   /** Thuế sàn khấu trừ của khoản này (số dương), `"0"` khi không có. */
   withholding: string;
@@ -387,6 +387,12 @@ export interface SplitAttributes {
  * E32). Adapter đổi mã riêng của sàn thành mã này, giữ câu của sàn trong `message`.
  */
 export const PROMOTION_LOCKED = 'promotion_locked';
+
+/**
+ * Mã của `MarketplaceError` `rejected` khi sàn trả số tiền không đọc được (#349): adapter ném kèm trường, chứng từ và giá
+ * trị gốc trong `platformMessage`; `toAppError` đổi thành 502 `marketplace_invalid_amount`.
+ */
+export const INVALID_AMOUNT = 'invalid_amount';
 
 /**
  * Mã của bước kiểm trước khi tạo sản phẩm (#305, Documents/21 §18.6.4): `createProduct` ném `rejected` với `platformCode`

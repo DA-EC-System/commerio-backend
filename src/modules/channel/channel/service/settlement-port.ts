@@ -3,18 +3,32 @@
 // `finance.settlement_run` gọi nên lời gọi sàn tính như việc nền (tới 100% phần của công ty, #215).
 import { currentCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { findActiveShopsAnyCompany } from '../repository/shops.ts';
 import { inBackground, type Payout, type SettlementTxn } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo quyết toán');
 
+/**
+ * Sàn trả số tiền không đọc được (#349) là lỗi của hệ thống: ghi `error` kèm trường, chứng từ, giá trị gốc cho kỹ thuật
+ * (người dùng chỉ thấy câu cố định của `marketplace_invalid_amount`), rồi ném lại nguyên lỗi.
+ */
+function reportInvalidAmount(companyId: string, shopId: string) {
+  return (err: unknown): never => {
+    if (err instanceof AppError && err.code === 'marketplace_invalid_amount') {
+      logger.error({ companyId, shopId, platformMessage: err.extensions?.platformMessage }, 'Sàn trả số tiền quyết toán không đọc được');
+    }
+    throw err;
+  };
+}
+
 /** Khoản tiền theo đơn trong `[from, to]` của một gian hàng. Gọi ngoài giao dịch nghiệp vụ (gọi mạng). */
 export async function settlementTransactions(companyId: string, shopId: string, from: string, to: string): Promise<SettlementTxn[]> {
   return inBackground(async () => {
     const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
     if (!adapter.getTransactions) throw unsupported();
-    return onMarketplace(() => adapter.getTransactions!(accessToken, from, to));
+    return onMarketplace(() => adapter.getTransactions!(accessToken, from, to)).catch(reportInvalidAmount(companyId, shopId));
   });
 }
 
@@ -23,7 +37,7 @@ export async function settlementPayouts(companyId: string, shopId: string, from:
   return inBackground(async () => {
     const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
     if (!adapter.getPayouts) return [];
-    return onMarketplace(() => adapter.getPayouts!(accessToken, from));
+    return onMarketplace(() => adapter.getPayouts!(accessToken, from)).catch(reportInvalidAmount(companyId, shopId));
   });
 }
 
