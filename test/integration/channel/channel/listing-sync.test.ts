@@ -174,6 +174,33 @@ describe('đồng bộ trạng thái từ sàn', () => {
   });
 });
 
+describe('kẹt pushing của take-over-content (#399)', () => {
+  it('listing xuất phát từ `live` kẹt quá 30 phút → về `live` kèm `pushError`, giữ `platform`; cùng lượt đồng bộ đẩy lại tồn, giá', async () => {
+    const stuck = await listing(c.id);
+    await testPool().query(
+      `update channel.listings set status = 'pushing', content_source = 'platform', stock_sync = 'synced', price_sync = 'synced',
+              push_started_at = now() - interval '31 minutes' where id = $1`,
+      [stuck.id],
+    );
+    await testPool().query(
+      `insert into core.state_transitions (company_id, entity_type, entity_id, from_state, to_state, action, source)
+       values ($1, 'listings', $2, 'live', 'pushing', 'take_over_content', 'user')`,
+      [company.companyId, stuck.id],
+    );
+    updatePriceQuantity.mockClear();
+    await sync();
+    // Tồn, giá bị đánh `pending` lúc về `live`; lượt đồng bộ này đã đẩy lại (listing không còn `push_failed` nên không bị bỏ).
+    expect(await listing(c.id)).toMatchObject({
+      status: 'live',
+      content_source: 'platform',
+      stock_sync: 'synced',
+      price_sync: 'synced',
+      push_error: { code: 'marketplace_unavailable' },
+    });
+    expect(updatePriceQuantity).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('đồng bộ tồn và giá', () => {
   it('tồn đổi: listing chuyển stockSync pending; lần đồng bộ sau đẩy số khả dụng và đọc lại synced', async () => {
     available.set(a.id, 12);

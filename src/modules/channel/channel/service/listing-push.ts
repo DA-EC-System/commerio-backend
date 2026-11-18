@@ -13,7 +13,7 @@ import { markPushed } from '../repository/price-calculations.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
 import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
-import { moveListing } from './listings.ts';
+import { moveListing, pushFailureOf } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import type { ProductPort } from './product-port.ts';
@@ -25,7 +25,7 @@ import { untrustedVariants } from './stock-trust.ts';
 /** Số lần gọi sàn tối đa của một lượt đẩy (Documents/21 §18.6.4), bằng `attempts` của hàng `channel.listing_push`. */
 export const PUSH_ATTEMPTS = 5;
 
-/** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với lúc bắt đầu lượt đẩy (#399). */
+/** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ tạo dòng listing (#399). */
 export const CLOCK_SKEW_MS = 5 * 60_000;
 
 const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
@@ -138,9 +138,10 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
         const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
         return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });
       }
-      // #399 Ca 2: sàn tạo sản phẩm trước lượt này (hoặc không cho biết giờ tạo) là sản phẩm người bán: không ghi đè.
-      // Chỉ sản phẩm tạo sau lúc bắt đầu lượt mới là của chính lượt này (sàn báo lỗi mà vẫn tạo, #346).
-      if (!result.createdAt || result.createdAt.getTime() < row.pushStartedAt!.getTime() - CLOCK_SKEW_MS) {
+      // #399 Ca 2: sàn tạo sản phẩm trước khi dòng listing này ra đời (hoặc không cho biết giờ tạo) là sản phẩm người bán:
+      // không ghi đè. Sản phẩm tạo sau đó là của chính listing này (sàn báo lỗi mà vẫn tạo, #346), kể cả khi đẩy lại cùng
+      // listing `push_failed` sau nhiều phút nên mốc là giờ tạo dòng, không phải `pushStartedAt` của lượt hiện tại.
+      if (!result.createdAt || result.createdAt.getTime() < row.createdAt.getTime() - CLOCK_SKEW_MS) {
         const named = result.title ? ` (${result.title})` : '';
         const message = `SKU ${product.sellerSku} đã có trên ${adapter.name}${named}. Dùng Ghép SKU thay vì đẩy.`;
         return finish(job, row, 'fail', { pushError: errorOf('sku_exists_on_platform', message), pushAttempts: row.pushAttempts + 1 });
@@ -201,10 +202,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
 async function finish(job: ListingPushJob, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
   await withCompany(job.companyId, async () => {
     try {
-      await moveListing(row, action, null, patch, reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null));
+      const reasonText = reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null);
+      // Lỗi của lượt ghi nội dung xuất phát từ `live`: về `live`, không `push_failed` (sản phẩm người bán vẫn đang bán).
+      const failure = action === 'fail' ? await pushFailureOf(row) : { action, patch: {} };
+      await moveListing(row, failure.action, null, { ...patch, ...failure.patch }, reasonText);
       // Đẩy lại không gửi tồn: listing lên sàn thì đẩy tồn ngay (25 §6.5, #223), cùng giao dịch. Lên `live` thì lượt đẩy
       // tồn cũng ẩn ngay nếu SKU vừa tạm ngừng trong lúc đẩy (#224, E25).
-      if (patch.stockSync === 'pending' || action === 'go_live') await sendStockPush(job.companyId, job.shopId);
+      if (patch.stockSync === 'pending' || failure.patch.stockSync === 'pending' || action === 'go_live') await sendStockPush(job.companyId, job.shopId);
       return;
     } catch (err) {
       if (!(err instanceof AppError) || (err.code !== 'version_conflict' && err.code !== 'invalid_transition')) throw err;

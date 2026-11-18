@@ -26,11 +26,15 @@ export type ListingAction =
   | 'delist'
   | 'update_content'
   | 'request_review'
-  | 'take_over_content';
+  | 'take_over_content'
+  | 'take_over_failed';
 
 const manage = 'channel.listing.manage';
-/** Listing có sản phẩm trên sàn mà CEO ghi nội dung Commerio lên được (#399). */
-export const TAKE_OVER_FROM = ['live', 'hidden', 'platform_hold', 'rejected', 'push_failed'] as const satisfies readonly ListingStatus[];
+/**
+ * Listing có sản phẩm trên sàn mà CEO ghi nội dung Commerio lên được (#399). Không có `hidden`: `updateProduct` bật SKU
+ * trên sàn, nên phải hiện lại listing trước.
+ */
+export const TAKE_OVER_FROM = ['live', 'platform_hold', 'rejected', 'push_failed'] as const satisfies readonly ListingStatus[];
 
 export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   // `not_listed` không có bản ghi: đẩy lần đầu (hoặc sau khi gỡ) tạo dòng mới ở `pushing`, không qua bảng này. `delisted`
@@ -60,6 +64,9 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
     action: 'take_over_content',
     permission: manage,
   },
+  // Lượt ghi nội dung xuất phát từ `live` lỗi (sàn từ chối, hết lượt thử, quá 30 phút): sản phẩm người bán vẫn đang bán trên
+  // sàn nên về `live` (giữ `pushError`), không `push_failed` làm ngừng đẩy tồn, giá. Xuất phát từ trạng thái khác thì `fail`.
+  { from: 'pushing', to: 'live', action: 'take_over_failed', system: true },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
   {
     from: ['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'],

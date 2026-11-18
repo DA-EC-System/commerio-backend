@@ -103,6 +103,8 @@ async function listing(cols: Record<string, unknown> = {}) {
     variant_id: v.id,
     seller_sku: v.sku,
     status: 'live',
+    // Listing do app tạo (cột mặc định `platform`, #399); ca sản phẩm người bán ghi đè.
+    content_source: 'app',
     external_product_id: `P-${randomUUID().slice(0, 8)}`,
     external_sku_id: `S-${randomUUID().slice(0, 8)}`,
     ...cols,
@@ -132,6 +134,17 @@ const history = async (id: string) =>
   ).rows;
 
 describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', () => {
+  it('review R3: listing `content_source = platform` → 409 `invalid_transition` kèm `current`, không gọi sàn, không đổi listing', async () => {
+    const { id, version } = await listing({ content_source: 'platform' });
+    const res = await edit(id, version);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/invalid_transition$/);
+    expect(res.body.detail ?? res.body.message).toContain('CEO dùng Ghi nội dung Commerio lên sàn');
+    expect(res.body.current).toMatchObject({ id, status: 'live', contentSource: 'platform' });
+    expect(updateContent).not.toHaveBeenCalled();
+    expect(await row(id)).toMatchObject({ status: 'live', version, revision_status: null });
+  });
+
   it('C2-22: sàn vẫn bán bản cũ → giữ live, bản sửa auditing; nội dung dựng từ catalog; lịch sử live → live', async () => {
     const { id, version, v } = await listing();
     const res = await edit(id, version);

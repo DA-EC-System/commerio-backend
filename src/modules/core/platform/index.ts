@@ -61,6 +61,7 @@ export {
   type TransitionContext,
 } from './domain/state-machine.ts';
 export {
+  lastEntries,
   lastEntryActions,
   lastTransitionsAt,
   listSelfApprovals,

@@ -153,15 +153,18 @@ describe('take-over-content (#399)', () => {
     expect(await row(l.id)).toMatchObject({ status: 'live', content_source: 'app', push_error: null });
   });
 
-  it('listing `hidden` (app ẩn bằng tắt trên sàn) cũng ghi được: rời `hidden` thì bỏ `hidden_by`', async () => {
+  it('listing `hidden` → 409 `invalid_transition` (updateProduct bật SKU trên sàn): hiện lại listing trước', async () => {
     const l = await matched({ status: 'hidden', hidden_by: 'platform' });
     const res = await takeOver(l.id, l.version);
-    expect(res.status).toBe(202);
-    expect(await row(l.id)).toMatchObject({ status: 'pushing', hidden_by: null });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/invalid_transition$/);
+    expect(res.body.detail ?? res.body.message).toContain('Hiện lại listing trước khi ghi nội dung Commerio lên sàn');
+    expect(await jobOf(l.id)).toEqual([]);
+    expect(await row(l.id)).toMatchObject({ status: 'hidden', hidden_by: 'platform' });
   });
 
-  it('AC-4: sàn từ chối khi ghi → `push_failed` kèm `pushError`, giữ `platform`', async () => {
-    const l = await matched();
+  it('AC-4: sàn từ chối khi ghi, listing xuất phát từ `push_failed` → `push_failed` kèm `pushError`, giữ `platform`', async () => {
+    const l = await matched({ status: 'push_failed' });
     expect((await takeOver(l.id, l.version)).status).toBe(202);
     onUpdate = async () => {
       throw new MarketplaceError('rejected', '4155', 'Sản phẩm đang bị khoá sửa');
@@ -172,6 +175,38 @@ describe('take-over-content (#399)', () => {
       content_source: 'platform',
       push_error: { code: 'marketplace_rejected', message: 'Sản phẩm đang bị khoá sửa' },
     });
+  });
+
+  it('review R2: sàn từ chối khi ghi, listing xuất phát từ `live` → về `live`, giữ `pushError`, `platform`, tồn, giá `pending`', async () => {
+    const l = await matched({ stock_sync: 'synced', price_sync: 'synced' });
+    expect((await takeOver(l.id, l.version)).status).toBe(202);
+    onUpdate = async () => {
+      throw new MarketplaceError('rejected', '4155', 'Sản phẩm đang bị khoá sửa');
+    };
+    await runListingPush(port, (await jobOf(l.id))[0]!);
+    const after = await testPool().query('select status, content_source, push_error, stock_sync, price_sync from channel.listings where id = $1', [l.id]);
+    expect(after.rows[0]).toMatchObject({
+      status: 'live',
+      content_source: 'platform',
+      push_error: { code: 'marketplace_rejected', message: 'Sản phẩm đang bị khoá sửa' },
+      stock_sync: 'pending',
+      price_sync: 'pending',
+    });
+    const history = await testPool().query(
+      "select from_state, to_state, action, actor_id from core.state_transitions where entity_type = 'listings' and entity_id = $1 order by id",
+      [l.id],
+    );
+    expect(history.rows.map((r) => r.action)).toEqual(['take_over_content', 'take_over_failed']);
+    expect(history.rows[1]).toMatchObject({ from_state: 'pushing', to_state: 'live', actor_id: null });
+  });
+
+  it('review R2: quá 30 phút chưa có kết quả, listing xuất phát từ `live` → về `live` kèm `pushError`', async () => {
+    const l = await matched();
+    expect((await takeOver(l.id, l.version)).status).toBe(202);
+    await testPool().query("update channel.listings set push_started_at = now() - interval '31 minutes' where id = $1", [l.id]);
+    await runListingPush(port, (await jobOf(l.id))[0]!);
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await row(l.id)).toMatchObject({ status: 'live', content_source: 'platform', push_error: { code: 'marketplace_unavailable' } });
   });
 
   it('AC-4: Admin, Sale 403 (chỉ CEO); Kho 403 (thiếu quyền), không xếp việc', async () => {
@@ -214,7 +249,7 @@ describe('take-over-content (#399)', () => {
     expect(b.body.type).toMatch(/mapping_pending$/);
   });
 
-  it('AC-4: sản phẩm trên sàn nhiều SKU (bản sao SKU sàn) → 422 `shared_remote_product`, không xếp việc', async () => {
+  it('AC-4: sản phẩm trên sàn nhiều SKU (bản sao SKU sàn) → 409 `shared_remote_product` (như update-content), không xếp việc', async () => {
     const l = await matched();
     for (const sku of ['S-A', 'S-B']) {
       await testPool().query(
@@ -224,9 +259,58 @@ describe('take-over-content (#399)', () => {
       );
     }
     const res = await takeOver(l.id, l.version);
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(409);
     expect(res.body.type).toMatch(/shared_remote_product$/);
     expect(await jobOf(l.id)).toEqual([]);
+  });
+
+  describe('kiểm gian hàng như `push` (review R4)', () => {
+    const setShop = (set: string) => testPool().query(`update channel.shops set ${set} where id = $1`, [shopId]);
+    const untouched = async (l: { id: string; version: number }) => {
+      expect(await jobOf(l.id)).toEqual([]);
+      expect(await row(l.id)).toMatchObject({ status: 'live', content_source: 'platform', version: l.version });
+    };
+
+    it('gian hàng `needs_reauth` → 409 `shop_not_active` kèm `current`, listing không đổi', async () => {
+      const l = await matched();
+      await setShop("status = 'needs_reauth'");
+      try {
+        const res = await takeOver(l.id, l.version);
+        expect(res.status).toBe(409);
+        expect(res.body.type).toMatch(/shop_not_active$/);
+        expect(res.body.current).toBe('needs_reauth');
+      } finally {
+        await setShop("status = 'active'");
+      }
+      await untouched(l);
+    });
+
+    it('gian hàng `active` mà hết token → 409 `shop_not_connected`, listing không đổi', async () => {
+      const l = await matched();
+      const saved = (await testPool().query('select access_token_enc from channel.shops where id = $1', [shopId])).rows[0].access_token_enc;
+      await setShop('access_token_enc = null');
+      try {
+        const res = await takeOver(l.id, l.version);
+        expect(res.status).toBe(409);
+        expect(res.body.type).toMatch(/shop_not_connected$/);
+      } finally {
+        await testPool().query('update channel.shops set access_token_enc = $2 where id = $1', [shopId, saved]);
+      }
+      await untouched(l);
+    });
+
+    it('gian hàng chờ phiếu kiểm kê đầu kỳ → 409 `shop_awaiting_stocktake`, listing không đổi', async () => {
+      const l = await matched();
+      await setShop("opening_stocktake_id = gen_random_uuid(), opening_stocktake_number = 'KK-0001'");
+      try {
+        const res = await takeOver(l.id, l.version);
+        expect(res.status).toBe(409);
+        expect(res.body.type).toMatch(/shop_awaiting_stocktake$/);
+      } finally {
+        await setShop('opening_stocktake_id = null, opening_stocktake_number = null');
+      }
+      await untouched(l);
+    });
   });
 
   it('404: listing của công ty khác, mã sai dạng', async () => {

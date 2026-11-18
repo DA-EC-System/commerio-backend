@@ -231,6 +231,35 @@ describe('việc nền channel.listing_push', () => {
     expect(row.push_error.message).toBe(`SKU ${v.sku} đã có trên Sàn giả (Áo thun cotton form rộng). Dùng Ghép SKU thay vì đẩy.`);
   });
 
+  it('#346 (sửa sau review): đẩy lại listing `push_failed` sau hơn 5 phút, sàn có sản phẩm tạo sau giờ tạo listing (lần trước E500 mà vẫn tạo) → nhận lại, `content_source = app`', async () => {
+    // Listing tạo cách đây 20 phút, lượt đẩy lại vừa bắt đầu: sản phẩm sàn tạo 10 phút trước (giữa hai mốc).
+    const { id } = await pushing({ created_at: new Date(Date.now() - 20 * 60_000) });
+    onCreate = async (p) => ({
+      externalProductId: `item-${p.sellerSku}`,
+      externalSkuId: `sku-${p.sellerSku}`,
+      live: false,
+      existing: true,
+      createdAt: new Date(Date.now() - 10 * 60_000),
+    });
+    await runListingPush(port, job(id));
+    expect(updateProduct).toHaveBeenCalledTimes(1);
+    expect(await listing(id)).toMatchObject({ status: 'live', content_source: 'app', push_error: null });
+  });
+
+  it('#346 (sửa sau review): sản phẩm sàn tạo trước giờ tạo listing (trừ 5 phút) vẫn là của người bán → `sku_exists_on_platform`', async () => {
+    const { id } = await pushing({ created_at: new Date(Date.now() - 20 * 60_000) });
+    onCreate = async () => ({
+      externalProductId: 'P-NB3',
+      externalSkuId: `S-NB3-${randomUUID()}`,
+      live: true,
+      existing: true,
+      createdAt: new Date(Date.now() - 30 * 60_000),
+    });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'sku_exists_on_platform' } });
+  });
+
   it('#399 AC-3: sàn không trả giờ tạo của SKU có sẵn → coi là của người bán, `sku_exists_on_platform`', async () => {
     const { id } = await pushing();
     onCreate = async () => ({ externalProductId: 'P-NB2', externalSkuId: `S-NB2-${randomUUID()}`, live: true, existing: true, title: 'SP' });
