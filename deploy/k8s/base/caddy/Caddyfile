@@ -28,6 +28,16 @@
 		reverse_proxy test-ui:80
 	}
 
+	# Xem log các pod (Dozzle, chỉ overlay vps: deploy/k8s/overlays/vps/dozzle.yaml); Dozzle tự bắt đăng nhập. Giữ nguyên
+	# tiền tố /logs vì Dozzle chạy với DOZZLE_BASE=/logs. flush_interval -1: đẩy log ngay, không gom bộ đệm.
+	# Máy dev không có Service dozzle nên /logs/ trả 502.
+	redir /logs /logs/ 308
+	handle /logs/* {
+		reverse_proxy dozzle:8080 {
+			flush_interval -1
+		}
+	}
+
 	# Còn lại là FE (Deployment fe, image của repo FE, gọi backend thật); SPA và cache do Caddy trong image đó lo.
 	handle {
 		reverse_proxy fe:80
