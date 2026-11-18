@@ -1,0 +1,5 @@
+ALTER TABLE "order"."packages" ADD COLUMN "replaces_package_id" uuid;--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD COLUMN "waybill_kept" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_replaces_package_id_packages_id_fk" FOREIGN KEY ("replaces_package_id") REFERENCES "order"."packages"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "packages_replaces_package_id_index" ON "order"."packages" USING btree ("replaces_package_id") WHERE "order"."packages"."replaces_package_id" is not null;--> statement-breakpoint
+ALTER TABLE "order"."packages" ADD CONSTRAINT "packages_waybill_kept" CHECK (not "order"."packages"."waybill_kept" or ("order"."packages"."platform_package_code" is not null and "order"."packages"."tracking_code" is not null));
