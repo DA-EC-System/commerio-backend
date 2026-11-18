@@ -238,10 +238,17 @@ export const FinanceDataCountsSchema = z
   .strict()
   .meta({ id: 'ShopFinanceData' });
 
-/** 409 của xoá gian hàng: `shop_not_disconnected`, `version_conflict` kèm `current`; `shop_has_finance_data` kèm `financeData`. */
+/**
+ * 409 của xoá gian hàng: `shop_not_disconnected`, `version_conflict` kèm `current`; `shop_has_finance_data` kèm
+ * `financeData`; `shop_has_open_inspection` kèm `documents`.
+ */
 export const ShopDeleteConflict = ProblemDetailsSchema.extend({
   current: Shop.optional().meta({ description: '`shop_not_disconnected`, `version_conflict`: gian hàng hiện tại' }),
   financeData: FinanceDataCountsSchema.optional().meta({ description: 'Chỉ có với `shop_has_finance_data`' }),
+  documents: z
+    .array(z.object({ id: z.uuid(), number: z.string() }).strict())
+    .optional()
+    .meta({ description: 'Chỉ có với `shop_has_open_inspection`: phiếu kiểm hàng hoàn chưa ghi sổ đã cộng chờ xử lý' }),
 }).meta({ id: 'ShopDeleteConflict' });
 
 export const ShopList = z.object({ items: z.array(Shop) }).strict().meta({ id: 'ShopList' });

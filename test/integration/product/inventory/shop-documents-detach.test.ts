@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { detachShopStockDocuments } from '#src/modules/product/index.ts';
+import { detachShopStockDocuments, receiveBack } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -138,6 +138,23 @@ describe('tách phiếu kho khỏi gian hàng bị xoá (#398)', () => {
     expect((await docRow(byRequest))!.note).toBe('Gian hàng Shop B đã xoá');
     expect((await docRow(byOrder))!.note).toBe('Gian hàng Shop B đã xoá');
     expect((await docRow(unrelated))!.status).toBe('draft');
+  });
+
+  it('phiếu kiểm hàng hoàn nháp đã quét (thẻ kho trỏ phiếu): 409 shop_has_open_inspection, không xoá gì', async () => {
+    const s = await seed();
+    const packageId = randomUUID();
+    const { documentId } = await withCompany(companyId, () =>
+      receiveBack({ type: 'package', id: packageId }, [{ variantId, expected: 1, scanned: 1 }], { shopId: s.scope.shopId }),
+    );
+
+    const err = await withCompany(companyId, () => detachShopStockDocuments({ ...s.scope, packageIds: [packageId] })).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(err).toMatchObject({ status: 409, code: 'shop_has_open_inspection' });
+    expect((err as { extensions?: { documents?: { id: string }[] } }).extensions?.documents?.map((d) => d.id)).toEqual([documentId]);
+    expect((await docRow(documentId))!.status).toBe('draft');
   });
 
   it('tồn thực và thẻ kho không đổi', async () => {

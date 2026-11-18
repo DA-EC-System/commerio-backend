@@ -5,7 +5,7 @@ import { and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { getDb } from '../../../../shared/db/client.ts';
 import type { DocumentRef, SystemDocKind } from '../domain/documents.ts';
 import { companyOfTransaction } from './levels.ts';
-import { stockDocumentLines, stockDocuments } from './schema.ts';
+import { stockDocumentLines, stockDocuments, stockMoves } from './schema.ts';
 
 export type DocumentSourceType = 'package' | 'return_request' | 'unmatched_parcel';
 
@@ -354,11 +354,11 @@ export interface ShopDocumentRefs {
  * Khoá (`FOR UPDATE`, id tăng dần) phiếu thuộc gian hàng: `shop_id` của gian hàng, kiểm kê đầu kỳ (`shop_setup`), phiếu
  * theo kiện, yêu cầu trả, kiện trả lạc của gian hàng, hoặc `order_id` thuộc đơn của gian hàng.
  */
-export async function lockShopDocuments(refs: ShopDocumentRefs): Promise<{ id: string; status: DocRow['status'] }[]> {
+export async function lockShopDocuments(refs: ShopDocumentRefs): Promise<{ id: string; number: string; status: DocRow['status'] }[]> {
   const t = stockDocuments;
   const bySource = (type: string, ids: readonly string[]) => (ids.length ? and(eq(t.sourceType, type), inArray(t.sourceId, [...ids])) : undefined);
   return getDb()
-    .select({ id: t.id, status: t.status })
+    .select({ id: t.id, number: t.number, status: t.status })
     .from(t)
     .where(
       or(
@@ -372,6 +372,16 @@ export async function lockShopDocuments(refs: ShopDocumentRefs): Promise<{ id: s
     )
     .orderBy(asc(t.id))
     .for('update');
+}
+
+/** Id các phiếu đã có dòng thẻ kho trỏ tới (vd phiếu kiểm hàng hoàn nháp: `receiveBack` cộng chờ xử lý ngay). */
+export async function documentsWithMoves(ids: readonly string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await getDb()
+    .selectDistinct({ id: stockMoves.sourceId })
+    .from(stockMoves)
+    .where(and(eq(stockMoves.sourceType, 'stock_document'), inArray(stockMoves.sourceId, [...ids])));
+  return new Set(rows.map((r) => r.id));
 }
 
 /** Xoá phiếu (dòng trước) theo id; trả số phiếu đã xoá. */

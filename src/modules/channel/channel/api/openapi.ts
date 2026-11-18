@@ -203,7 +203,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id',
     summary: 'Xoá gian hàng đã ngắt (#398)',
     description:
-      'Cần `channel.shop.disconnect` và vai trò CEO (403 trước 422). Body `confirm` phải đúng chuỗi `XOA`. Kiểm theo thứ tự, dừng ở lỗi đầu: 404 `not_found` → 409 `shop_not_disconnected` (chỉ xoá gian hàng `disconnected`) → 409 `version_conflict` → 409 `shop_has_finance_data` (còn sổ tiền, dòng hàng sổ, bảng kê, lần đối soát, đối soát theo đơn khác `none`, chứng từ hay dòng thanh toán của đơn; kèm `financeData`). Việc nền của gian hàng giữ khoá quá 3 giây: 409 `shop_busy`. Xoá trong một giao dịch đơn, kiện (nhả hàng đang giữ), yêu cầu trả, kiện trả lạc, listing, lần tính giá, đơn gốc, SKU sàn, thư báo uỷ quyền, cấu hình phí, đối soát `none`, số liệu theo ngày, hộp thư; phiếu kho nháp, chờ duyệt xoá, phiếu đã ghi sổ giữ (`shop_id` null, thêm ghi chú). Không xoá lịch sử trạng thái, nhật ký thao tác, thẻ kho. Ghi một dòng nhật ký `delete` `channel.shops`.',
+      'Cần `channel.shop.disconnect` và vai trò CEO (403 trước 422). Body `confirm` phải đúng chuỗi `XOA`. Kiểm theo thứ tự, dừng ở lỗi đầu: 404 `not_found` → 409 `shop_not_disconnected` (chỉ xoá gian hàng `disconnected`) → 409 `version_conflict` → 409 `shop_has_finance_data` (còn sổ tiền, dòng hàng sổ, bảng kê, lần đối soát, đối soát theo đơn khác `none`, chứng từ hay dòng thanh toán của đơn; kèm `financeData`). Còn phiếu kiểm hàng hoàn nháp, chờ duyệt đã cộng chờ xử lý (kho đã quét): 409 `shop_has_open_inspection` kèm `documents`, ghi sổ phiếu rồi xoá lại. Việc nền của gian hàng giữ khoá quá 3 giây: 409 `shop_busy`. Xoá trong một giao dịch đơn, kiện (nhả hàng đang giữ), yêu cầu trả, kiện trả lạc, listing, lần tính giá, đơn gốc, SKU sàn, thư báo uỷ quyền, cấu hình phí, đối soát `none`, số liệu theo ngày, hộp thư; phiếu kho nháp, chờ duyệt xoá, phiếu đã ghi sổ giữ (`shop_id` null, thêm ghi chú). Không xoá lịch sử trạng thái, nhật ký thao tác, thẻ kho. Ghi một dòng nhật ký `delete` `channel.shops`.',
     security: bearer,
     request: { params: ShopParams, body: json(ShopDeleteBody) },
     responses: {
@@ -212,7 +212,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: gian hàng không có, của công ty khác, hoặc id sai dạng'),
       409: {
         description:
-          '`shop_not_disconnected`, `version_conflict` kèm `current` là gian hàng; `shop_has_finance_data` kèm `financeData`; `shop_busy`',
+          '`shop_not_disconnected`, `version_conflict` kèm `current` là gian hàng; `shop_has_finance_data` kèm `financeData`; `shop_has_open_inspection` kèm `documents`; `shop_busy`',
         content: { 'application/problem+json': { schema: ShopDeleteConflict } },
       },
       422: problemResponse('`validation_failed`: `errors.confirm` khi không gõ đúng `XOA`, `errors.version`'),

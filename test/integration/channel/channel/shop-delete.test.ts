@@ -3,7 +3,8 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ShopDeleteConflict, ShopDeleteResult } from '#src/modules/channel/channel/api/schemas.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { withSessionLock } from '#src/shared/db/client.ts';
+import { receiveBack } from '#src/modules/product/index.ts';
+import { withCompany, withSessionLock } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -294,6 +295,23 @@ describe('DELETE /channel/shops/:id (#398)', () => {
     expect(res.status).toBe(409);
     expect(ShopDeleteConflict.parse(res.body)).toMatchObject({ code: 'shop_has_finance_data', financeData: { orderSettlements: 1 } });
     expect(await n('select count(*) as n from channel.shops where id = $1', [s.id])).toBe(1);
+  });
+
+  it('còn phiếu kiểm hàng hoàn nháp đã quét: 409 shop_has_open_inspection, không xoá gì', async () => {
+    const s = await fullShop();
+    const { documentId, number } = await withCompany(company.companyId, () =>
+      receiveBack({ type: 'package', id: s.packageIds[1]! }, [{ variantId, expected: 1, scanned: 1 }], { shopId: s.id, orderId: s.orderIds[1]! }),
+    );
+    const rowsBefore = await rowsOf(s);
+    const stockBefore = await stockOfVariant(company.companyId, variantId);
+
+    const res = await del(s.id, { confirm: 'XOA', version: s.version });
+
+    expect(res.status).toBe(409);
+    expect(ShopDeleteConflict.parse(res.body)).toMatchObject({ code: 'shop_has_open_inspection', documents: [{ id: documentId, number }] });
+    expect(await rowsOf(s)).toEqual(rowsBefore);
+    expect(await stockOfVariant(company.companyId, variantId)).toEqual(stockBefore);
+    expect((await docOf(documentId))!.status).toBe('draft');
   });
 
   it.each([['xoa'], ['XOA '], [undefined]])('confirm %j: 422 errors.confirm', async (confirm) => {
