@@ -9,7 +9,7 @@ import { isUuid } from '../../../../shared/uuid.ts';
 import { findRolesWithPermissions, replaceMemberRoles, type RoleWithPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { publishEvent } from '../../platform/index.ts';
-import { type InvitationStatus, isLinkExpired } from '../domain/invitation-machine.ts';
+import { type InvitationStatus, isLinkExpired, REVOCABLE } from '../domain/invitation-machine.ts';
 import { checkRoleGrant } from '../domain/member-rules.ts';
 import {
   findAccountByEmail,
@@ -69,6 +69,18 @@ const emailTaken = () => new AppError(409, 'email_taken', 'Email này đã có t
 const conflict = (current: InvitationView) =>
   new AppError(409, 'version_conflict', 'Lời mời vừa được người khác cập nhật', { current });
 
+const STATUS_DETAIL: Record<InvitationStatus, string> = {
+  open: 'Người được mời chưa nộp yêu cầu',
+  claimed: 'Người được mời chưa nộp yêu cầu',
+  pending: 'Người được mời đã nộp yêu cầu: duyệt hoặc từ chối ở tab Chờ duyệt',
+  approved: 'Yêu cầu đã được duyệt',
+  rejected: 'Yêu cầu đã bị từ chối',
+  revoked: 'Link đã bị huỷ',
+};
+/** Trạng thái hiện tại không cho thao tác này (Documents/21 mục 14), kiểm trước version (#353). */
+const invalidTransition = (current: InvitationView) =>
+  new AppError(409, 'invalid_transition', STATUS_DETAIL[current.status], { current });
+
 async function views(rows: readonly InvitationRow[]): Promise<InvitationView[]> {
   if (rows.length === 0) return [];
   const roles = new Map(
@@ -114,8 +126,9 @@ async function lockPending(id: string, version: number): Promise<InvitationRow> 
   // `id` sai dạng coi như không có (V6).
   const row = isUuid(id) ? await findInvitation(id, { forUpdate: true }) : undefined;
   if (!row) throw notFound();
-  // Lệch version hay đã quyết định ở phiên khác: cùng 409, kèm bản mới nhất.
-  if (row.status !== 'pending' || row.version !== version) throw conflict(await viewOf(row));
+  // Trạng thái trước version (#353): đã quyết định ở phiên khác thì báo trạng thái, không báo "vừa được cập nhật".
+  if (row.status !== 'pending') throw invalidTransition(await viewOf(row));
+  if (row.version !== version) throw conflict(await viewOf(row));
   return row;
 }
 
@@ -250,8 +263,8 @@ export async function rejectInvitation(
 }
 
 /**
- * Huỷ link chưa nộp (`open | claimed → revoked`, Documents/21 mục 3.1). Lệch version hay không còn `open`, `claimed`:
- * 409 kèm bản mới nhất. Link quá hạn vẫn huỷ được.
+ * Huỷ link chưa nộp (`open | claimed → revoked`, Documents/21 mục 3.1). Không còn `open`, `claimed`: 409
+ * `invalid_transition`; lệch version: 409 `version_conflict`; cả hai kèm bản mới nhất. Link quá hạn vẫn huỷ được.
  */
 export async function revokeInvitation(
   caller: Caller,
@@ -261,6 +274,8 @@ export async function revokeInvitation(
   const result = await withCompany(caller.companyId, async () => {
     const row = isUuid(id) ? await findInvitation(id, { forUpdate: true }) : undefined;
     if (!row) throw notFound();
+    if (!REVOCABLE.includes(row.status)) throw invalidTransition(await viewOf(row));
+    if (row.version !== version) throw conflict(await viewOf(row));
     const revoked = await revokeInvitationRow(row.id, version, caller.accountId);
     if (!revoked) throw conflict(await viewOf(row));
     await recordAudit({

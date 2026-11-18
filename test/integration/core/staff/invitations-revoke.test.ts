@@ -132,24 +132,34 @@ describe('POST /invitations/:id/revoke', () => {
     expect(res.body.invitation.status).toBe('revoked');
   });
 
-  it('AC 6: yêu cầu đã nộp, lệch version, đã huỷ → 409 version_conflict kèm current; không đổi gì', async () => {
+  it('AC 6 (#353): yêu cầu đã nộp, đã huỷ → 409 invalid_transition kèm current; không đổi gì', async () => {
     const submitted = await pendingInvitation(company.companyId, { createdBy: ceoId, roleIds: [SALE] });
     const onPending = await ceo.revoke(submitted.id, submitted.version);
     expect(onPending.status).toBe(409);
-    expect(onPending.body.code).toBe('version_conflict');
+    expect(onPending.body.code).toBe('invalid_transition');
     expect(onPending.body.current).toMatchObject({ id: submitted.id, status: 'pending' });
     expect((await rowOf(submitted.id)).status).toBe('pending');
 
     const link = await newLink(app, company.ceo.token, [SALE]);
     const version = await versionOf(link.id);
+    expect((await ceo.revoke(link.id, version)).status).toBe(200);
+    for (const v of [version + 1, version]) {
+      const again = await ceo.revoke(link.id, v);
+      expect(again.status).toBe(409);
+      expect(again.body.code).toBe('invalid_transition');
+      expect(again.body.current).toMatchObject({ status: 'revoked', version: version + 1 });
+    }
+    expect((await auditOf(link.id)).rows).toHaveLength(1);
+  });
+
+  it('AC 7: lệch version → 409 version_conflict kèm current; không đổi gì', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    const version = await versionOf(link.id);
     const stale = await ceo.revoke(link.id, version + 1);
     expect(stale.status).toBe(409);
+    expect(stale.body.code).toBe('version_conflict');
     expect(stale.body.current).toMatchObject({ status: 'open', version });
-
-    expect((await ceo.revoke(link.id, version)).status).toBe(200);
-    const again = await ceo.revoke(link.id, version + 1);
-    expect(again.status).toBe(409);
-    expect(again.body.current.status).toBe('revoked');
+    expect(await rowOf(link.id)).toMatchObject({ status: 'open', version });
   });
 
   it('không có, sai dạng, của công ty khác → 404; Sale không có quyền → 403; thiếu version → 422', async () => {

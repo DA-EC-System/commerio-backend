@@ -215,11 +215,28 @@ describe('khoá, mở khoá', () => {
     ]);
   });
 
-  it('AC-B6: đã ở trạng thái đích → 409 version_conflict kèm current', async () => {
+  it('AC-B6 (#353): đã ở trạng thái đích → 409 invalid_transition kèm current, kể cả version lệch; không nhật ký', async () => {
     const a = await createCompany();
     const target = await addMember(a.companyId, 'sale');
-    const res = await lock(a.ceo.token, target.accountId, 1, 'unlock');
+    for (const version of [1, 9]) {
+      const res = await lock(a.ceo.token, target.accountId, version, 'unlock');
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('invalid_transition');
+      expect(res.body.current).toMatchObject({ accountId: target.accountId, status: 'active', version: 1 });
+    }
+    expect((await lock(a.ceo.token, target.accountId, 1)).status).toBe(200);
+    const again = await lock(a.ceo.token, target.accountId, 2);
+    expect(again.body.code).toBe('invalid_transition');
+    expect(again.body.current).toMatchObject({ status: 'locked', version: 2 });
+    expect((await memberAudits(target.membershipId)).rows).toHaveLength(1);
+  });
+
+  it('AC-B6: version lệch khi khoá → 409 version_conflict kèm current', async () => {
+    const a = await createCompany();
+    const target = await addMember(a.companyId, 'sale');
+    const res = await lock(a.ceo.token, target.accountId, 4);
     expect(res.status).toBe(409);
+    expect(res.body.code).toBe('version_conflict');
     expect(res.body.current).toMatchObject({ status: 'active', version: 1 });
   });
 
@@ -233,6 +250,8 @@ describe('khoá, mở khoá', () => {
       () => Promise.all([lock(a.ceo.token, target.accountId, 1), lock(a.ceo.token, target.accountId, 1)]),
     );
     expect([x.status, y.status].sort()).toEqual([200, 409]);
+    // Người sau đã qua bước đọc, chỉ trượt ở UPDATE có điều kiện: báo người khác vừa sửa.
+    expect([x, y].find((r) => r.status === 409)!.body.code).toBe('version_conflict');
     expect((await memberAudits(target.membershipId)).rows).toHaveLength(1);
   });
 });

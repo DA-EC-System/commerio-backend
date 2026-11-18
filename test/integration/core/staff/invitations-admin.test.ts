@@ -301,17 +301,37 @@ describe('duyệt, từ chối', () => {
     for (const inv of [taken, again, joined]) expect((await invitationRow(inv.id)).status).toBe('pending');
   });
 
-  it('AC-C17: version lệch hay đã quyết định → 409 version_conflict kèm current', async () => {
+  it('AC-C17: version lệch → 409 version_conflict kèm current', async () => {
     const inv = await pending();
     const stale = await ceo.approve(inv.id, inv.version + 5);
     expect(stale.status).toBe(409);
     expect(stale.body.code).toBe('version_conflict');
     expect(stale.body.current).toMatchObject({ id: inv.id, status: 'pending', version: inv.version });
+    expect((await ceo.reject(inv.id, inv.version + 5)).body.code).toBe('version_conflict');
+    expect(await invitationRow(inv.id)).toMatchObject({ status: 'pending', version: inv.version });
+  });
+
+  it('#353 AC-C17: chưa nộp hay đã quyết định (version đúng) → 409 invalid_transition kèm current; không đổi gì, không nhật ký', async () => {
+    const link = await ceo.create([SALE]);
+    const open = await invitationRow(link.body.id);
+    for (const call of [ceo.approve, ceo.reject]) {
+      const res = await call(link.body.id, open.version as number);
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('invalid_transition');
+      expect(res.body.current).toMatchObject({ id: link.body.id, status: 'open', email: null, version: open.version });
+    }
+    expect(await invitationRow(link.body.id)).toMatchObject({ status: 'open', version: open.version });
+
+    const inv = await pending();
     expect((await ceo.reject(inv.id, inv.version)).status).toBe(200);
-    const decided = await ceo.approve(inv.id, inv.version + 1);
-    expect(decided.status).toBe(409);
-    expect(decided.body.current).toMatchObject({ status: 'rejected', version: inv.version + 1 });
-    expect((await ceo.reject(inv.id, inv.version + 1)).body.code).toBe('version_conflict');
+    for (const call of [ceo.approve, ceo.reject]) {
+      const res = await call(inv.id, inv.version + 1);
+      expect(res.body.code).toBe('invalid_transition');
+      expect(res.body.current).toMatchObject({ status: 'rejected', version: inv.version + 1 });
+    }
+    // Trạng thái sai thì báo trạng thái trước, kể cả khi version cũng lệch (Documents/21 mục 3.1, #353).
+    expect((await ceo.approve(inv.id, inv.version)).body.code).toBe('invalid_transition');
+    expect((await auditOf(inv.id)).rows.map((r) => r.after)).toEqual([{ status: 'rejected' }]);
   });
 
   it('AC-C18: id của công ty khác, không tồn tại, không phải uuid → 404; Sale duyệt → 403', async () => {
@@ -343,7 +363,7 @@ const lockInvitation = (id: string) => (holder: PoolClient) =>
   holder.query('select 1 from core.invitations where id = $1 for update', [id]);
 
 describe('duyệt chạy đồng thời', () => {
-  it('hai Admin duyệt cùng lúc: một 200, một 409 version_conflict; chỉ một tài khoản, một membership', async () => {
+  it('hai Admin duyệt cùng lúc: một 200, một 409 invalid_transition (đã duyệt); chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
     // Mời làm Admin: Admin cấp được đủ quyền, nên hai bên chỉ khác nhau ở thứ tự giành khoá.
     const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
@@ -351,20 +371,22 @@ describe('duyệt chạy đồng thời', () => {
       Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
     );
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-    expect(results.find((r) => r.status === 409)!.body.code).toBe('version_conflict');
+    const lost = results.find((r) => r.status === 409)!;
+    expect(lost.body.code).toBe('invalid_transition');
+    expect(lost.body.current).toMatchObject({ status: 'approved' });
     const accounts = await db.query<{ id: string }>('select id from core.accounts where email = $1', [inv.email]);
     expect(accounts.rows).toHaveLength(1);
     const memberships = await db.query('select 1 from core.memberships where account_id = $1', [accounts.rows[0]!.id]);
     expect(memberships.rowCount).toBe(1);
   });
 
-  it('duyệt và từ chối cùng lúc: đúng một bên thắng, bên kia 409 version_conflict', async () => {
+  it('duyệt và từ chối cùng lúc: đúng một bên thắng, bên kia 409 invalid_transition', async () => {
     const inv = await pending();
     const [approved, rejected] = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), ceo.reject(inv.id, inv.version)]),
     );
     expect([approved.status, rejected.status].sort()).toEqual([200, 409]);
-    expect([approved, rejected].find((r) => r.status === 409)!.body.code).toBe('version_conflict');
+    expect([approved, rejected].find((r) => r.status === 409)!.body.code).toBe('invalid_transition');
     const status = (await invitationRow(inv.id)).status;
     expect(status).toBe(approved.status === 200 ? 'approved' : 'rejected');
     const accounts = await db.query('select 1 from core.accounts where email = $1', [inv.email]);
