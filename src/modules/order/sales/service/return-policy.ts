@@ -1,7 +1,11 @@
 // Chính sách hạn trả của gian hàng (#236): channel trả qua `ctx.returnPoliciesOf` (tiêm ở `src/wiring.ts`), sales điền
 // mặc định cho đơn không gian hàng hay gian hàng không tìm thấy. Gọi trong `withCompany`.
 import { DEFAULT_RETURN_POLICY, type ReturnPolicy } from '../domain/order.ts';
-import type { SalesContext } from './orders.ts';
+
+/** Phần `SalesContext` cần ở đây; khai tại chỗ để `orders.ts` import file này không thành vòng. */
+export interface ReturnPolicySource {
+  readonly returnPoliciesOf?: (shopIds: readonly string[]) => Promise<Map<string, ReturnPolicy>>;
+}
 
 /**
  * Chính sách theo id gian hàng, một lời gọi cho cả lô. Bỏ `null` (đơn tay), bỏ trùng; danh sách rỗng hay `ctx` thiếu hàm
@@ -9,7 +13,7 @@ import type { SalesContext } from './orders.ts';
  * hàng đặt hạn dài hơn).
  */
 export async function returnPoliciesFor(
-  ctx: Pick<SalesContext, 'returnPoliciesOf'>,
+  ctx: ReturnPolicySource,
   shopIds: readonly (string | null)[],
 ): Promise<Map<string, ReturnPolicy>> {
   const ids = [...new Set(shopIds.filter((id): id is string => id !== null))];
