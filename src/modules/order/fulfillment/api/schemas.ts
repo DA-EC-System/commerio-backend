@@ -59,9 +59,18 @@ export const PackageSummary = z
     promisedShippingAt: iso.nullable().meta({ description: 'Hạn sàn hứa gửi; null khi sàn không trả' }),
     shipBy: iso.nullable(),
     lines: z.array(
-      z.object({ variantId: z.uuid().nullable(), sku: z.string(), productName: z.string(), attributesLabel: z.string(), quantity: z.number().int() }),
+      z.object({
+        variantId: z.uuid().nullable(),
+        sku: z.string(),
+        productName: z.string(),
+        attributesLabel: z.string(),
+        quantity: z.number().int().meta({ description: 'Số đang nằm trong kiện, gồm cả phần chờ bỏ' }),
+        pendingDropQty: z.number().int().min(0).meta({
+          description: 'Phần chờ bỏ (0..`quantity`): sàn đã huỷ món của kiện đã đóng gói, kho bỏ ra khi mở kiện (#205). 0 khi không chờ bỏ',
+        }),
+      }),
     ),
-    totalQty: z.number().int(),
+    totalQty: z.number().int().meta({ description: 'Tổng `quantity` của các dòng, gồm cả phần chờ bỏ' }),
     handedOverAt: iso.nullable(),
     handoverSource: z.enum(HANDOVER_SOURCES).nullable().meta({
       description:
