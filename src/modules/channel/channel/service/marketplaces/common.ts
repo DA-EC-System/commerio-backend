@@ -155,6 +155,11 @@ export interface RemoteSku {
   externalSkuId: string;
   sellerSku: string;
   title: string;
+  /**
+   * Tên tiếng Anh của sản phẩm trên sàn (#396): Lazada `attributes.name_en` (Seller Center giao diện tiếng Anh hiện tên này,
+   * người mua VN thấy `name` = `title`). Sàn không có tên tiếng Anh (TikTok) hoặc rỗng thì null hay thiếu.
+   */
+  titleEn?: string | null;
   state: RemoteState;
   rejectReason: string | null;
   quantity: number;

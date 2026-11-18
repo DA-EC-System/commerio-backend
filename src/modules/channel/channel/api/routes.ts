@@ -13,6 +13,7 @@ import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
+import { acknowledgeRemoteTitle } from '../service/remote-title.ts';
 import { productPort } from '../service/product-port.ts';
 import * as prices from '../service/pending-prices.ts';
 import * as setup from '../service/setup.ts';
@@ -27,6 +28,8 @@ import {
   MappingBody,
   MappingParams,
   MatchBody,
+  AcknowledgeTitleBody,
+  AcknowledgeTitleParams,
   OutsideChangeBody,
   OutsideChangeParams,
   PushBody,
@@ -302,6 +305,17 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, listingId, action } = validated<typeof OutsideChangeParams>(res, 'params');
       const { version } = validated<typeof OutsideChangeBody>(res, 'body');
       res.json(await resolveOutsideChange(productPort(ctx), actor(res), id, listingId, action, version));
+    },
+  );
+  // Xác nhận tên trên sàn đã đổi (#396, 21 §18.3): quyền như các thao tác listing khác, không cần vai trò CEO.
+  router.post(
+    '/shops/:id/listings/:listingId/acknowledge-title',
+    manage,
+    validate({ params: AcknowledgeTitleParams, body: AcknowledgeTitleBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof AcknowledgeTitleParams>(res, 'params');
+      const { version } = validated<typeof AcknowledgeTitleBody>(res, 'body');
+      res.json(await acknowledgeRemoteTitle(actor(res), id, listingId, version));
     },
   );
 
