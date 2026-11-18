@@ -49,7 +49,15 @@ export const SCENARIOS: Record<string, Scenario> = {
 // ── Dữ liệu demo ─────────────────────────────────────────────────────────────────────────────────────────────────
 export const SELLER = { seller_id: 200000000001, name: 'Thời trang ABC', short_code: 'VNABC001', email: 'shop-abc@example.com' };
 export const ORDER_ID = 600000000000001;
-const CREATED = '2026-10-28 09:15:00 +0700';
+/**
+ * Đồng hồ của kịch bản đơn: bước thứ `n` của `Scenario.order` (huỷ: sau bước cuối) mang `updated_at` = lúc đặt + n giờ,
+ * hành trình cùng mốc. Kéo đơn bỏ đơn có `updated_at` không mới hơn bản đã lưu (#199), nên giờ phải tăng theo bước.
+ */
+const PLACED_AT = Date.parse('2026-10-28T09:15:00+07:00');
+const stepAt = (n: number) => PLACED_AT + n * 3_600_000;
+/** Mili giây → `2026-10-28 09:15:00 +0700`, dạng `lazadaTime` của adapter đọc. */
+const lazadaTime = (ms: number) => `${new Date(ms + 7 * 3_600_000).toISOString().slice(0, 19).replace('T', ' ')} +0700`;
+const CREATED = lazadaTime(PLACED_AT);
 const PACKAGE_ID = 'FP600000000000001';
 const TRACKING = 'LZVN0000000001';
 const PROVIDER = 'LEX VN';
@@ -71,12 +79,13 @@ const RTS_OR_LATER = new Set([...PACKED_OR_LATER].filter((s) => s !== 'packed'))
 const ok = (body: Record<string, unknown>) => ({ code: '0', request_id: 'mock-request', ...body });
 const err = (code: string, message: string, type = 'ISV') => ({ type, code, message, request_id: 'mock-request' });
 
-function order(status: string) {
+/** `step`: vị trí của trạng thái trong kịch bản, quyết định `updated_at`. */
+function order(status: string, step: number) {
   return {
     order_id: ORDER_ID,
     order_number: ORDER_ID,
     created_at: CREATED,
-    updated_at: CREATED,
+    updated_at: lazadaTime(stepAt(step)),
     price: (PRICE * ITEMS.length).toFixed(2),
     payment_method: 'COD',
     items_count: ITEMS.length,
@@ -95,7 +104,7 @@ function order(status: string) {
   };
 }
 
-function items(status: string) {
+function items(status: string, step: number) {
   const packed = PACKED_OR_LATER.has(status);
   return ITEMS.map((i) => ({
     order_item_id: i.order_item_id,
@@ -115,7 +124,7 @@ function items(status: string) {
     is_digital: 0,
     reason: '',
     created_at: CREATED,
-    updated_at: CREATED,
+    updated_at: lazadaTime(stepAt(step)),
     warehouse_code: 'dropshipping',
   }));
 }
@@ -131,7 +140,10 @@ const TRACE_STEPS: Record<string, { status_code: string; description: string }> 
 };
 
 function trace(path: readonly string[], status: string) {
-  const reached = path.slice(0, path.indexOf(status) + 1).filter((s) => TRACE_STEPS[s]);
+  // Mốc của mỗi sự kiện là `updated_at` của bước đó (cùng `stepAt`).
+  const reached = path
+    .slice(0, path.indexOf(status) + 1)
+    .flatMap((s, n) => (TRACE_STEPS[s] ? [{ ...TRACE_STEPS[s], detail_type: s, event_time: stepAt(n) }] : []));
   return ok({
     result: {
       success: true,
@@ -143,7 +155,7 @@ function trace(path: readonly string[], status: string) {
                 {
                   ofc_package_id: PACKAGE_ID,
                   tracking_number: TRACKING,
-                  logistic_detail_info_list: reached.map((s, n) => ({ ...TRACE_STEPS[s], detail_type: s, event_time: 1761617700000 + n * 3_600_000 })),
+                  logistic_detail_info_list: reached,
                 },
               ]
             : [],
@@ -334,10 +346,10 @@ function orderMappings(s: Scenario): Mapping[] {
   const sc = 'don';
   const at = (state: string, more: Partial<Mapping> = {}) => ({ priority: 3, scenarioName: sc, requiredScenarioState: state, ...more });
   const out: Mapping[] = [];
-  for (const state of s.order) {
-    out.push(stub('/orders/get', ok({ data: { count: 1, countTotal: 1, orders: [order(state)] } }), at(state)));
-    out.push(stub('/order/get', ok({ data: order(state) }), at(state)));
-    out.push(stub('/order/items/get', ok({ data: items(state) }), at(state)));
+  for (const [step, state] of s.order.entries()) {
+    out.push(stub('/orders/get', ok({ data: { count: 1, countTotal: 1, orders: [order(state, step)] } }), at(state)));
+    out.push(stub('/order/get', ok({ data: order(state, step) }), at(state)));
+    out.push(stub('/order/items/get', ok({ data: items(state, step) }), at(state)));
     out.push(stub('/logistic/order/trace', trace(s.order, state), at(state)));
     out.push(stub('/order/package/document/get', RTS_OR_LATER.has(state)
       ? ok({ result: { success: true, data: { doc_type: 'PDF', pdf_url: AWB_URL } } })
@@ -400,8 +412,10 @@ function orderMappings(s: Scenario): Mapping[] {
       );
       out.push(stub('/order/reverse/cancel/create', ok({ result: { success: true, data: { reverse_order_id: 700000000000009 } } }), at(state, { newScenarioState: 'canceled' })));
     }
-    out.push(stub('/orders/get', ok({ data: { count: 1, countTotal: 1, orders: [order('canceled')] } }), at('canceled')));
-    out.push(stub('/order/items/get', ok({ data: items('canceled') }), at('canceled')));
+    // Huỷ đi sau bước cuối của kịch bản trên đồng hồ: luôn mới hơn mọi bước app có thể đã thấy.
+    const canceled = s.order.length;
+    out.push(stub('/orders/get', ok({ data: { count: 1, countTotal: 1, orders: [order('canceled', canceled)] } }), at('canceled')));
+    out.push(stub('/order/items/get', ok({ data: items('canceled', canceled) }), at('canceled')));
   }
   // Thao tác sai trạng thái (pack lại đơn đã pack, RTS khi chưa pack, huỷ đơn đã giao): lỗi theo món như Lazada.
   out.push(stub('/order/fulfill/pack', err('700000', 'Order status does not allow this operation', 'ISP'), { priority: 4 }));
