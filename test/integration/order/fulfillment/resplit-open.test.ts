@@ -320,6 +320,55 @@ describe('kiện đang chờ mở: chặn báo sẵn sàng, quét bàn giao; sà
   });
 });
 
+describe('kiện chờ thay không báo sẵn sàng, không quét bàn giao (#238 D9, D28, review #393)', () => {
+  const handOver = (token: string, id: string, version: number) =>
+    packingApp().post('/api/v1/fulfillment/packages/hand-over').set('Authorization', `Bearer ${token}`).send({ packages: [{ id, version }] });
+
+  it('sàn đẩy kiện chờ thay sang awaiting_pickup, packed: quét bàn giao vào failed awaiting_open, ready 409 awaiting_open, kiện và tồn không đổi', async () => {
+    const { v, next, a, b } = await packedSplit();
+    await ingest(v.companyId, itemStatuses(next, ['awaiting_pickup', 'packed']));
+    expect((await packageRow(a.id)).status).toBe('awaiting_pickup');
+    expect((await packageRow(b.id)).status).toBe('packed');
+    const stock = await stockOfVariant(v.companyId, v.variantId);
+    const [versionA, versionB] = [await versionOf(a.id), await versionOf(b.id)];
+
+    const scan = await handOver(v.token, a.id, versionA);
+    const ready = await post(v.token, b.id, 'ready', { version: versionB });
+
+    expect(scan.status, JSON.stringify(scan.body)).toBe(200);
+    expect(scan.body.handedOver).toEqual([]);
+    expect(scan.body.failed).toEqual([expect.objectContaining({ packageId: a.id, code: 'awaiting_open' })]);
+    expect(ready.status, JSON.stringify(ready.body)).toBe(409);
+    expect(ready.body.type).toBe('/problems/awaiting_open');
+    expect(await packageRow(a.id)).toMatchObject({ status: 'awaiting_pickup', version: versionA });
+    expect(await packageRow(b.id)).toMatchObject({ status: 'packed', version: versionB });
+    expect(await stockOfVariant(v.companyId, v.variantId)).toEqual(stock);
+  });
+
+  it('kiện chờ thay đã bị quét bàn giao (dữ liệu trước khi chặn) rồi sàn báo in_transit: nhả phần giữ của dòng chờ bỏ, không chuyển sang dòng đã trừ; mở kiện cũ thì đang giữ 1, có thể bán 8', async () => {
+    const { v, o, packageId, next, a, b } = await packedSplit();
+    await ingest(v.companyId, itemStatuses(next, ['awaiting_pickup', 'pending']));
+    // Dựng dữ liệu như trước khi chặn quét kiện chờ thay: tạm đưa kiện cũ ra khỏi nhóm đã đóng để quét được kiện thay.
+    await testPool().query(`update "order".packages set status = 'reserved' where id = $1`, [packageId]);
+    expect((await handOver(v.token, a.id, await versionOf(a.id))).body.handedOver).toHaveLength(1);
+    await testPool().query(`update "order".packages set status = 'packed' where id = $1`, [packageId]);
+    expect(await stockOfVariant(v.companyId, v.variantId)).toMatchObject({ onHand: 9, reserved: 2 });
+
+    await ingest(v.companyId, itemStatuses(next, ['in_transit', 'pending']));
+
+    expect(await lineRows(packageId)).toEqual([{ item: external(o, 1), reserved: 1, drop: 1 }]);
+    expect(await lineRows(a.id)).toEqual([{ item: external(o, 0), reserved: 0, drop: 0 }]);
+    expect(await stockOfVariant(v.companyId, v.variantId)).toMatchObject({ onHand: 9, reserved: 1 });
+
+    const res = await post(v.token, packageId, 'open', { version: await versionOf(packageId) });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'cancelled' });
+    expect(await packageRow(b.id)).toMatchObject({ status: 'reserved' });
+    expect(await stockOfVariant(v.companyId, v.variantId)).toMatchObject({ onHand: 9, reserved: 1, available: 8 });
+  });
+});
+
 describe('kiện cũ chờ dỡ để chia lại bị xác nhận mất (#238 D20)', () => {
   it('AC11c: kiện cũ packed chờ mở resplit bị xác nhận mất (lose_on_unload): tồn trừ mọi món trong hộp một lần, xếp lượt cho SKU dòng chờ bỏ, chạy lượt thì kiện thay reserved khi đủ hàng, kiểm bằng không vỡ', async () => {
     const { v, packageId, a, b } = await packedSplit();

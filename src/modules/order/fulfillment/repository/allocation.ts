@@ -42,6 +42,17 @@ const awaitingReplacement = sql`exists (select 1 from ${packageLines} nl
   where nl.package_id = ${packages.id})`;
 
 /**
+ * Kiện còn là kiện chờ thay trong `ids` (cùng điều kiện với lượt phân hàng): chưa báo sẵn sàng, chưa quét bàn giao được
+ * vì hàng của nó còn trong kiện cũ chờ dỡ (spec #238 D9, D28; review #393). Đọc không khoá: kiện cũ mở xong thì lần sau
+ * qua; một kiện đã có không thể thành kiện chờ thay về sau (kiện thay chỉ sinh lúc lập).
+ */
+export async function awaitingReplacementIds(ids: readonly string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const rows = await getDb().select({ id: packages.id }).from(packages).where(and(inArray(packages.id, [...ids]), awaitingReplacement));
+  return rows.map((r) => r.id);
+}
+
+/**
  * Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). Kiện chờ mở vì kiểm kê (`stocktake`)
  * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5); trừ khi kiện có dòng chờ bỏ hay báo thất lạc treo.
  * Kiện chờ thay không là ứng viên: hàng của nó còn nằm trong kiện cũ chờ dỡ.

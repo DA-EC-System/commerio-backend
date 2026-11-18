@@ -93,7 +93,7 @@
 | D25 | Mở kiện `awaiting_pickup` có cờ Cần mở (mọi mục đích) **không gọi `repack`**, giữ mã kiện sàn, vận đơn, ĐVVC (`25` §8.3 "giữ vận đơn"). Còn món thì kiện về `reserved` với cột mới `waybill_kept = true`; đóng gói lại và báo sẵn sàng lại **không gọi sàn** khi cột này bật (báo sẵn sàng xong thì tắt). Sửa câu cũ của mục 5.6 ("kiện đã có `tracking_code` và mã kiện sàn thì không gọi `readyToShip`"): sai với Lazada vì `pack` đã trả mã vận đơn trước bước báo sẵn sàng | Khang (18/11) |
 | D26 | Kho mở kiện cũ đang chờ mở để chia lại: giao dịch ghi lấy khoá advisory phân hàng trước khoá kiện; sau khi nhả dòng chờ bỏ thì **giữ hàng ngay cho kiện của cùng đơn** vừa hết chờ thay (dùng chung bước giữ hàng của lượt phân hàng, chỉ ứng viên của đơn đó), rồi mới xếp lượt cho phần dư (`25` §8.1 bước 3) | Khang (18/11) |
 | D27 | Kiện rời nhóm đã đóng khi còn cờ Cần mở (sau D28 chỉ còn đường sàn báo rời kho): gỡ cờ; mục đích `cancel`, `edit`, `resplit` thì bật Cần xử lý "Sàn báo kiện rời kho khi còn chờ dỡ kiện về kệ"; `stocktake` gỡ im như PR 2. Bàn giao trừ mọi dòng của kiện, kể cả dòng chờ bỏ (hàng còn trong hộp, `25` §8.3 "đi theo sàn"); kiện thay hết chờ thay và đi phân hàng như kiện `backordered` thường | Khang (18/11) |
-| D28 | Chặn `ready` và quét bàn giao kiện đang có cờ Cần mở: 409 `awaiting_open` (`hand-over` trả trong `failed[].code`). Kiểm ở service, không là guard của máy trạng thái (bàn giao không nạp `record`) | Khang (18/11) |
+| D28 | Chặn `ready` và quét bàn giao kiện đang có cờ Cần mở, và kiện chờ thay (thêm sau review #393: hàng của nó còn trong kiện cũ, quét trước rồi sàn báo rời kho làm kẹt số đang giữ): 409 `awaiting_open` (`hand-over` trả trong `failed[].code`). Kiểm ở service, không là guard của máy trạng thái (bàn giao không nạp `record`) | Khang (18/11) |
 | D29 | `resplit` của kết quả đồng bộ chỉ còn nghĩa "có phần sàn chia lại mà app không tự xử lý" (kiện đã bàn giao, chia lạ ở D22); note đơn đổi thành "Sàn chia lại kiện, app chưa tự xử lý được"; kiện đã bàn giao bị chia khác mang Cần xử lý "Sàn chia lại kiện đã bàn giao". Chia lại xử lý được thì `changed = true`, không bật cờ đơn | Khang (18/11) |
 
 ## 4. Phạm vi
@@ -240,7 +240,7 @@ Chạy lại trên dữ liệu sau khi áp: mọi nhóm khớp ở bước 1, `s
 
 **Kiện chờ thay được ĐVVC lấy trước khi kho dỡ** (`25` §8.1). Vòng áp trạng thái, trước `applyStatus` của kiện có `replacementPairs` mà trạng thái sàn rời kho:
 
-1. Mỗi cặp: dòng mới nhận `reserved_qty` của dòng cũ, xoá dòng cũ. Không gọi cổng tồn (tổng đang giữ theo SKU không đổi).
+1. Mỗi cặp: dòng mới nhận `reserved_qty` của dòng cũ, xoá dòng cũ. Không gọi cổng tồn (tổng đang giữ theo SKU không đổi). Dòng mới đã trừ tồn hay đã tự giữ (kiện thay bị quét bàn giao trước khi có chặn ở D28): nhả phần giữ của dòng cũ qua cổng tồn rồi xoá, xếp lượt phân hàng cho SKU đó (review #393).
 2. Kiện cũ hết dòng → mũi tên `replaced` (`cancelled`), gỡ cờ Cần mở; lịch sử nguồn `marketplace`, lý do "Kiện thay <mã> đã được lấy"; `package_status_changed`. Còn dòng mà hết dòng chờ bỏ và mục đích `resplit` → gỡ cờ.
 3. `applyStatus` kiện mới như thường (nhảy cóc, `settleHandover`): dòng đã giữ thì trừ thường; dòng chưa giữ (chuyển từ kiện chưa đóng) thì thử giữ, không được mới bắt buộc. Kiện cũ không bao giờ tự ghi bàn giao phần đã có kiện thay.
 
@@ -389,6 +389,7 @@ FE đã có mock cho `report-lost`, `confirm-lost`, nút Báo/Xác nhận thất
 18. Kéo đơn lại sau mỗi ca 12 đến 17: không đổi gì, `version` các kiện không đổi.
 19. Kiện `awaiting_pickup` có cờ Cần mở (mọi mục đích), mở xong còn món: về `reserved`, giữ mã kiện sàn, vận đơn, ĐVVC, không gọi `repack`; đóng gói và báo sẵn sàng lại không gọi `pack`, `readyToShip` của sàn, kiện về `awaiting_pickup` với vận đơn cũ. Kiện `awaiting_pickup` không có cờ: `open` vẫn 409 `invalid_transition`.
 19a. (D28) `ready` kiện có cờ Cần mở: 409 `awaiting_open`; quét bàn giao kiện đó: `failed[].code = 'awaiting_open'`, kiện không đổi.
+19c. (D28, review #393) Kiện chờ thay bị sàn đẩy sang `packed`/`awaiting_pickup`: `ready` 409 `awaiting_open`, quét bàn giao `failed[].code = 'awaiting_open'`, kiện và tồn không đổi. Kiện thay đã bị quét bàn giao (dữ liệu trước khi chặn) rồi sàn báo `in_transit`: phần giữ của dòng chờ bỏ được nhả, không chuyển sang dòng đã trừ; mở kiện cũ xong số đang giữ đúng.
 19b. (D27) Sàn báo kiện `packed` đang chờ mở để chia lại đã `in_transit`: kiện `in_transit`, trừ mọi dòng một lần (kể cả dòng chờ bỏ), cờ Cần mở gỡ, bật Cần xử lý; kiện thay thành ứng viên phân hàng.
 
 **Nguồn nhắc (PR 4)**

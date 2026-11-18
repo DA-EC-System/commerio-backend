@@ -9,6 +9,7 @@ import { packageMachine } from '../domain/package.ts';
 import { replacementPairs, type ResplitPlan } from '../domain/resplit.ts';
 import { deleteLines, setPendingDrop } from '../repository/line-cancel.ts';
 import { moveReservations, type PackageRow, setReserved, updatePackage } from '../repository/packages.ts';
+import { requestAllocation } from './allocation.ts';
 import { stockPort } from './stock-port.ts';
 
 /** Cần xử lý trên kiện đã bàn giao mà sàn báo chia khác (D29). */
@@ -138,16 +139,37 @@ export async function applyResplit(
 export async function takeOverReplaced(order: PlatformPackageOrder, pkg: PackageRow, packages: PackageRow[]): Promise<boolean> {
   const pairs = replacementPairs(packages, pkg.id);
   if (!pairs.length) return false;
-  logger.warn({ orderId: order.id, packageId: pkg.id, replaced: [...new Set(pairs.map((p) => p.oldPackageId))] }, 'kiện thay được lấy trước khi dỡ kiện cũ');
-  await moveReservations(pairs.map((p) => ({ fromLineId: p.oldLineId, toLineId: p.newLineId })));
+  const moves: { fromLineId: string; toLineId: string }[] = [];
+  // Dòng kiện thay đã trừ tồn hay đã tự giữ (kiện thay bị quét bàn giao trước khi có chặn, review #393): phần giữ của dòng
+  // chờ bỏ thừa, nhả về số có thể bán thay vì chuyển sang (chuyển sang dòng đã trừ thì không bao giờ được nhả).
+  const released = new Map<string, { variantId: string; quantity: number }[]>();
+  const dropped: string[] = [];
   const olds = new Map<string, PackageRow>();
   for (const pair of pairs) {
     const old = packages.find((p) => p.id === pair.oldPackageId)!;
     const oldLine = old.lines.find((l) => l.id === pair.oldLineId)!;
-    pkg.lines.find((l) => l.id === pair.newLineId)!.reservedQty = oldLine.reservedQty;
+    const newLine = pkg.lines.find((l) => l.id === pair.newLineId)!;
+    if (newLine.stockDeducted || newLine.reservedQty > 0) {
+      if (oldLine.variantId && oldLine.reservedQty > 0) {
+        released.set(old.id, [...(released.get(old.id) ?? []), { variantId: oldLine.variantId, quantity: oldLine.reservedQty }]);
+      }
+      dropped.push(oldLine.id);
+    } else {
+      moves.push({ fromLineId: pair.oldLineId, toLineId: pair.newLineId });
+      newLine.reservedQty = oldLine.reservedQty;
+    }
     old.lines = old.lines.filter((l) => l !== oldLine);
     olds.set(old.id, old);
   }
+  const releasedVariants = [...new Set([...released.values()].flat().map((l) => l.variantId))].sort();
+  logger.warn(
+    { orderId: order.id, packageId: pkg.id, replaced: [...olds.keys()], releasedVariants },
+    'kiện thay được lấy trước khi dỡ kiện cũ',
+  );
+  await moveReservations(moves);
+  for (const [oldId, lines] of released) await stockPort().release(oldId, lines);
+  await deleteLines(dropped);
+  if (releasedVariants.length) await requestAllocation(releasedVariants);
   for (const old of olds.values()) {
     if (!old.lines.length) {
       const from = old.status;

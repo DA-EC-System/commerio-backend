@@ -7,7 +7,7 @@ import { packageMachine, type PackageAction, type PackageStatus } from '../domai
 import { buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, type ScannedLine } from '../domain/packing.ts';
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
 import { clearPendingDrop, deleteLines } from '../repository/line-cancel.ts';
-import { takeAllocationLock } from '../repository/allocation.ts';
+import { awaitingReplacementIds, takeAllocationLock } from '../repository/allocation.ts';
 import { markLinesReserved, packageShopOf, setReserved, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
 import { holdOrderReplacements, requestAllocation } from './allocation.ts';
@@ -28,6 +28,17 @@ const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy kiện
  * `version` và máy trạng thái, không là guard của máy (bàn giao không nạp `record`).
  */
 export const awaitingOpen = () => new AppError(409, 'awaiting_open', 'Kiện đang chờ dỡ kiện về kệ, mở kiện trước');
+/**
+ * Kiện chờ thay (spec #238 D9) cũng không báo sẵn sàng, không quét bàn giao: hàng của nó còn trong kiện cũ chờ dỡ, kiện
+ * cũ vẫn giữ phần đó (review #393: quét trước rồi sàn báo rời kho làm kẹt số đang giữ). Cùng mã `awaiting_open`.
+ */
+export const awaitingReplacedOpen = () =>
+  new AppError(409, 'awaiting_open', 'Kiện thay đang chờ kho mở kiện cũ (sàn chia lại kiện), mở kiện cũ trước');
+
+/** Kiện `id` còn là kiện chờ thay thì ném `awaiting_open`. */
+export async function assertNotAwaitingReplaced(id: string): Promise<void> {
+  if ((await awaitingReplacementIds([id])).length) throw awaitingReplacedOpen();
+}
 
 export async function pickList(ctx: FulfillmentContext, ids: readonly string[] | undefined) {
   const { rows, packageIds, truncated } = await pickListBase(ids ? { ids } : { limit: PICK_LIST_LIMIT });
@@ -176,7 +187,11 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
       await transition(ctx, actor, pkg, 'mark_ready');
       if (pkg.needsOpen) throw awaitingOpen();
       const others = await otherGroupMembers(pkg);
-      checkGroup(readyGroupBlockers(others));
+      // Kiện chờ thay (của kiện bấm, hay của kiện khác trong nhóm gói): chưa báo sẵn sàng được.
+      const replaced = await awaitingReplacementIds([pkg.id, ...others.map((member) => member.id)]);
+      if (replaced.includes(pkg.id)) throw awaitingReplacedOpen();
+      const waitingMembers = others.filter((member) => member.status === 'packed' && replaced.includes(member.id)).map((member) => member.code);
+      checkGroup([...readyGroupBlockers(others), ...waitingMembers]);
       if (pkg.shopId && !pkg.platformPackageCode) throw new AppError(409, 'rts_package_not_found', 'Kiện chưa có mã kiện trên sàn');
       return {
         shopId: pkg.shopId, code: pkg.platformPackageCode, ids: [pkg.id, ...others.map((member) => member.id)], waybillKept: pkg.waybillKept,

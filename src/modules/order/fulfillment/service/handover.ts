@@ -10,7 +10,7 @@ import { lockPackage, packageShopOf, updatePackage } from '../repository/package
 import type { Actor } from './actor.ts';
 import { revertHandover, settleHandover } from './handover-stock.ts';
 import { type FulfillmentContext, getPackage, stockHoldLookupOf } from './packages.ts';
-import { awaitingOpen } from './packing.ts';
+import { assertNotAwaitingReplaced, awaitingOpen } from './packing.ts';
 
 export interface HandOverResult {
   handedOver: { id: string; code: string; issue: { id: string; number: string } | null }[];
@@ -39,6 +39,8 @@ async function handOverOne(ctx: Pick<FulfillmentContext, 'stockHoldOf'>, actor: 
     const { to } = assertTransition(packageMachine, pkg.status, 'hand_over', { actor });
     // Kiện đang chờ dỡ kiện về kệ không rời kho qua quét (spec #238 D28): dòng chờ bỏ sẽ bị trừ như dòng thường.
     if (pkg.needsOpen) throw awaitingOpen();
+    // Kiện chờ thay: hàng còn trong kiện cũ chờ dỡ, kiện cũ vẫn giữ phần đó (D9, review #393).
+    await assertNotAwaitingReplaced(pkg.id);
     const from = pkg.status;
     const at = new Date();
     await updatePackage(pkg.id, { status: to, handoverSource: 'scan', handedOverBy: actor.accountId, handedOverAt: at });
