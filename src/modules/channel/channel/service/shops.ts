@@ -397,11 +397,16 @@ export async function connectByCode(
   // Lời gọi sàn lúc nối (đổi mã, đếm sản phẩm) tính vào phần hạn mức của công ty đang nối (#215).
   return forCompany(actor.companyId, async () => {
     const connections = await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params)));
-    if (target && !connections.some((c) => c.externalShopId === target.externalShopId)) {
-      throw await shopMismatch(actor.companyId, platform, target, connections);
-    }
-    return attachAll(platform, actor, connections, 'oauth');
+    await assertTarget(actor.companyId, platform, target, connections);
+    return attachAll(platform, actor, connections, 'oauth', target);
   });
+}
+
+/** Có gian hàng cần nối lại mà sàn trả không có seller đó: 409 `shop_mismatch` (#398). Gọi ngoài giao dịch, trước `attachAll`. */
+async function assertTarget(companyId: string, platform: Platform, target: ShopRow | null, connections: ShopConnection[]): Promise<void> {
+  if (target && !connections.some((c) => c.externalShopId === target.externalShopId)) {
+    throw await shopMismatch(companyId, platform, target, connections);
+  }
 }
 
 /**
@@ -451,7 +456,7 @@ export async function connectByToken(
     const connections = await onMarketplace(async () =>
       atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
     );
-    return attachAll(platform, actor, connections, 'token');
+    return attachAll(platform, actor, connections, 'token', null);
   });
 }
 
@@ -463,18 +468,21 @@ function atLeastOne(connections: ShopConnection[]): ShopConnection[] {
 
 const connectedElsewhere = () => new AppError(409, 'shop_connected_elsewhere', 'Gian hàng này đã kết nối ở công ty khác');
 
-/**
- * Nối mọi gian hàng của một lần uỷ quyền, tất cả hoặc không (#200): kiểm "đã gắn công ty khác" cho từng gian hàng ngoài
- * giao dịch (role chủ bảng, RLS không che), ghi tất cả trong một `withCompany`, rồi mới chạy việc sau commit.
- */
 /** Cách nối của một lần ghi gian hàng, ghi vào nhật ký nối lại (#398). */
 type ConnectVia = 'oauth' | 'token';
 
+/**
+ * Nối mọi gian hàng của một lần uỷ quyền, tất cả hoặc không (#200): kiểm "đã gắn công ty khác" cho từng gian hàng ngoài
+ * giao dịch (role chủ bảng, RLS không che), ghi tất cả trong một `withCompany`, rồi mới chạy việc sau commit.
+ * `target` (gian hàng cần nối lại, #398) bị khoá đầu giao dịch ghi: mất giữa lúc gọi sàn và lúc ghi thì 404, bỏ token vừa
+ * nhận, không tạo gian hàng mới cho seller đó.
+ */
 async function attachAll(
   platform: Platform,
   actor: Actor,
   connections: ShopConnection[],
   via: ConnectVia,
+  target: ShopRow | null,
 ): Promise<ShopCallbackResult> {
   const unique = [...new Map(connections.map((c) => [c.externalShopId, c])).values()];
   for (const c of unique) {
@@ -486,6 +494,7 @@ async function attachAll(
   let results: ShopConnectionItem[];
   try {
     results = await withCompany(actor.companyId, async () => {
+      if (target) await lockShopOr404(target.id);
       const out: ShopConnectionItem[] = [];
       for (const [i, c] of unique.entries()) {
         const { productCount, skuCount } = counts[i]!;
