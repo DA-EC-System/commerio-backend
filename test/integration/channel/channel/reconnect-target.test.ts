@@ -4,7 +4,9 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { shopSession } from '#src/modules/channel/channel/service/shops.ts';
 import { verifyPurposeToken } from '#src/shared/auth/purpose-token.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -220,5 +222,77 @@ describe('callback nối lại theo shopId trong state (#398)', () => {
     const res = await connectOAuth(token, [a], shopId);
     expect(res.status).toBe(200);
     expect(res.body.shop.id).toBe(shopId);
+  });
+});
+
+/** Gian hàng Lazada đã thiết lập (`active`), rồi đưa về `status`: `needs_reauth` bằng SQL, `disconnected` bằng API ngắt. */
+async function shopIn(status: 'active' | 'needs_reauth' | 'disconnected', sellerId: string) {
+  const shopId = await newShop(token, sellerId);
+  await activateShop(shopId);
+  const expiresAt: Date = (await shopOf(shopId)).access_expires_at;
+  if (status === 'needs_reauth') {
+    await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);
+  } else if (status === 'disconnected') {
+    const { version } = await shopOf(shopId);
+    const res = await app()
+      .post(`/api/v1/channel/shops/${shopId}/disconnect`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ version, zeroStock: false });
+    expect(res.status).toBe(200);
+  }
+  return { shopId, expiresAt };
+}
+
+describe('nối lại qua callback lưu token mới (#398 AC 1)', () => {
+  it.each(['needs_reauth', 'disconnected'] as const)('gian hàng %s nối lại đúng seller thì active, lưu token và hạn của lần đổi mã', async (status) => {
+    const a = seller();
+    const { shopId, expiresAt } = await shopIn(status, a);
+    const res = await connectOAuth(token, [a], shopId);
+    expect(res.status).toBe(200);
+    expect(res.body.shop).toMatchObject({ id: shopId, status: 'active' });
+    expect(res.body.reconnect).not.toBeNull();
+    const session = await withCompany(company.companyId, () => shopSession(shopId));
+    expect(session.accessToken).toBe(`tok-${a}-${sàn.exchanges}`);
+    expect((await shopOf(shopId)).access_expires_at.getTime()).toBeGreaterThan(expiresAt.getTime());
+  });
+});
+
+async function shopAudits(shopId: string) {
+  const { rows } = await testPool().query(
+    "select action, actor_id, before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1 order by created_at",
+    [shopId],
+  );
+  return rows;
+}
+
+describe('nhật ký nối lại (#398 AC 4)', () => {
+  it.each(['active', 'needs_reauth'] as const)('nối lại gian hàng %s qua callback ghi đúng một dòng update, không có token', async (status) => {
+    const a = seller();
+    const { shopId } = await shopIn(status, a);
+    const actorId = (await verifyPurposeToken('oauth', await stateFor(token, 'lazada'))).sub;
+    expect(await shopAudits(shopId)).toHaveLength(0);
+    const res = await connectOAuth(token, [a], shopId);
+    expect(res.status).toBe(200);
+    const audits = await shopAudits(shopId);
+    expect(audits).toHaveLength(1);
+    const [row] = audits;
+    expect(row).toMatchObject({ action: 'update', actor_id: actorId, before: { status }, after: { status: 'active', connectedVia: 'oauth' } });
+    expect(row.after.accessExpiresAt).not.toEqual(row.before.accessExpiresAt);
+    expect(JSON.stringify(row.before) + JSON.stringify(row.after)).not.toContain('tok-');
+  });
+
+  it('nối lại bằng token dán từ console ghi connectedVia token', async () => {
+    const id = seller();
+    const connect = () =>
+      app().post('/api/v1/channel/shops/tiktok/token').set('Authorization', `Bearer ${token}`).send({ accessToken: `tok-${id}` });
+    const first = await connect();
+    expect(first.status).toBe(201);
+    expect((await connect()).status).toBe(200);
+    expect(await shopAudits(first.body.shop.id)).toMatchObject([{ action: 'update', after: { connectedVia: 'token' } }]);
+  });
+
+  it('tạo gian hàng mới qua callback không ghi nhật ký channel.shops', async () => {
+    const shopId = await newShop(token);
+    expect(await shopAudits(shopId)).toHaveLength(0);
   });
 });

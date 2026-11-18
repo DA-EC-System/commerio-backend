@@ -8,6 +8,7 @@ import {
   getCompanies,
   getStatusHistory,
   lastTransitionsAt,
+  recordAudit,
   recordTransition,
   releaseHeld,
   type StatusChange,
@@ -399,7 +400,7 @@ export async function connectByCode(
     if (target && !connections.some((c) => c.externalShopId === target.externalShopId)) {
       throw await shopMismatch(actor.companyId, platform, target, connections);
     }
-    return attachAll(platform, actor, connections);
+    return attachAll(platform, actor, connections, 'oauth');
   });
 }
 
@@ -450,7 +451,7 @@ export async function connectByToken(
     const connections = await onMarketplace(async () =>
       atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
     );
-    return attachAll(platform, actor, connections);
+    return attachAll(platform, actor, connections, 'token');
   });
 }
 
@@ -466,7 +467,15 @@ const connectedElsewhere = () => new AppError(409, 'shop_connected_elsewhere', '
  * Nối mọi gian hàng của một lần uỷ quyền, tất cả hoặc không (#200): kiểm "đã gắn công ty khác" cho từng gian hàng ngoài
  * giao dịch (role chủ bảng, RLS không che), ghi tất cả trong một `withCompany`, rồi mới chạy việc sau commit.
  */
-async function attachAll(platform: Platform, actor: Actor, connections: ShopConnection[]): Promise<ShopCallbackResult> {
+/** Cách nối của một lần ghi gian hàng, ghi vào nhật ký nối lại (#398). */
+type ConnectVia = 'oauth' | 'token';
+
+async function attachAll(
+  platform: Platform,
+  actor: Actor,
+  connections: ShopConnection[],
+  via: ConnectVia,
+): Promise<ShopCallbackResult> {
   const unique = [...new Map(connections.map((c) => [c.externalShopId, c])).values()];
   for (const c of unique) {
     const owner = await findLiveCompanyOf(platform, c.externalShopId);
@@ -480,7 +489,7 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
       const out: ShopConnectionItem[] = [];
       for (const [i, c] of unique.entries()) {
         const { productCount, skuCount } = counts[i]!;
-        out.push({ ...(await writeShop(platform, actor, c)), remoteProductCount: productCount, remoteSkuCount: skuCount });
+        out.push({ ...(await writeShop(platform, actor, c, via)), remoteProductCount: productCount, remoteSkuCount: skuCount });
       }
       return out;
     });
@@ -567,11 +576,16 @@ async function remoteCounts(
   }
 }
 
-/** Tạo hoặc nối lại một gian hàng; gọi trong `withCompany`. */
+/**
+ * Tạo hoặc nối lại một gian hàng; gọi trong `withCompany`. Ghi đè gian hàng đã có (mọi trạng thái trước) thì ghi một dòng
+ * nhật ký `update` `channel.shops` cùng giao dịch (#398): trạng thái, tên, hai hạn token trước và sau, kèm cách nối.
+ * Không ghi token.
+ */
 async function writeShop(
   platform: Platform,
   actor: Actor,
   c: ShopConnection,
+  via: ConnectVia,
 ): Promise<ShopConnectionResult & { previousStatus: ShopStatus | null }> {
   const existing = await findShopByExternal(platform, c.externalShopId);
   if (!existing) {
@@ -598,12 +612,31 @@ async function writeShop(
     { ...tokenColumns(existing.id, c.tokens), shopName: c.shopName, status: to, disconnectedAt: null, lastError: null },
   );
   if (!row) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
+  await recordAudit({
+    companyId: actor.companyId,
+    actorId: actor.accountId,
+    action: 'update',
+    entityType: 'channel.shops',
+    entityId: existing.id,
+    before: connectionAudit(existing),
+    after: { ...connectionAudit(row), connectedVia: via },
+  });
   if (action) {
     await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
   }
   // `relisted`, `jobsRun` điền sau khi commit (`attachAll`).
   const reconnect = action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
   return { shop: await shopView(row), created: false, reconnect, previousStatus: existing.status };
+}
+
+/** Phần gian hàng ghi vào nhật ký nối lại: không có token. */
+function connectionAudit(row: ShopRow) {
+  return {
+    status: row.status,
+    shopName: row.shopName,
+    accessExpiresAt: row.accessExpiresAt,
+    refreshExpiresAt: row.refreshExpiresAt,
+  };
 }
 
 /** Khoá dòng gian hàng tới hết giao dịch; id sai định dạng hoặc không thấy là 404. */
