@@ -167,6 +167,11 @@ export interface SyncError {
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
 export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['disabled', 'price_changed']);
+/**
+ * Ai tạo nội dung (tên, mô tả, ảnh, danh mục) của sản phẩm trên sàn (#399): `app` do app đẩy tạo; `platform` do người
+ * bán tạo trên sàn rồi ghép. Đẩy lại listing `platform` chỉ bật lại SKU, không ghi nội dung của app.
+ */
+export const contentSource = channelSchema.enum('listing_content_source', ['app', 'platform']);
 /** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
 export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
 
@@ -193,6 +198,8 @@ export const listings = channelSchema.table(
     pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
+    /** Lần đầu app gọi `createProduct` cho listing này (#399): mốc phân biệt sản phẩm app tạo với sản phẩm người bán có sẵn. Chỉ ghi khi null, không tăng `version`. */
+    createAttemptedAt: timestamp('create_attempted_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
     /** Sàn đổi listing ngoài app (#360, 21 §18.3 `outsideChange`): dừng bán, chờ CEO quyết. Giá chỉ có khi `price_changed`. */
     outsideChangeKind: outsideChangeKind('outside_change_kind'),
@@ -242,6 +249,8 @@ export const listings = channelSchema.table(
     revisionStatus: revisionStatus('revision_status'),
     revisionRejectReason: text('revision_reject_reason'),
     revisionAt: timestamp('revision_at', { withTimezone: true }),
+    /** Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị. */
+    contentSource: contentSource('content_source').notNull().default('platform'),
     /**
      * Tên trên sàn lúc ghép (#396, 21 §18.3 `remoteTitleChanged`): mốc để biết người bán đổi tên ngoài app. Đặt khi ghép có
      * hiệu lực, thiết lập, xác nhận (từ bản sao) và khi app đẩy, sửa nội dung (tên app vừa gửi). `matched_at` null: tên

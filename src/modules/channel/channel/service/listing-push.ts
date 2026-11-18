@@ -5,16 +5,17 @@ import { HoldJob, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { type ListingAction, STALE_PUSH_MS } from '../domain/listing.ts';
+import { type ListingAction, type RemoteState, STALE_PUSH_MS } from '../domain/listing.ts';
 import { sentBaseline, snapshotBaseline } from '../domain/remote-title.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
-import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
+import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, markCreateAttempted, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
-import { moveListing } from './listings.ts';
+import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
+import { moveListing, pushFailureOf } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import type { ProductPort } from './product-port.ts';
@@ -25,6 +26,9 @@ import { untrustedVariants } from './stock-trust.ts';
 
 /** Số lần gọi sàn tối đa của một lượt đẩy (Documents/21 §18.6.4), bằng `attempts` của hàng `channel.listing_push`. */
 export const PUSH_ATTEMPTS = 5;
+
+/** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ của lần gọi tạo trước (`create_attempted_at`, #399). */
+export const CLOCK_SKEW_MS = 5 * 60_000;
 
 const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
 
@@ -46,7 +50,8 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     return finish(job, row, 'fail', { pushError: errorOf('shop_not_connected', 'Gian hàng đã ngắt') });
   }
   if (shop.status === 'needs_reauth') throw new HoldJob('gian hàng mất uỷ quyền');
-  const { adapter, accessToken } = await inCompany(() => shopSession(job.shopId));
+  const session = await inCompany(() => shopSession(job.shopId));
+  const { adapter, accessToken } = session;
 
   const variantId = row.variantId!;
   const data = await inCompany(async () => {
@@ -75,7 +80,10 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     return finish(job, row, 'fail', { pushError: errorOf('below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất') });
   }
   const quantity = untrusted ? 0 : data.quantity;
-  const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
+  // Sản phẩm người bán đã có trên sàn (#399 Ca 1): đẩy lại chỉ bật lại SKU, không gửi nội dung, ảnh của app;
+  // `take-over-content` (CEO) mới ghi nội dung lên.
+  const keepContent = row.contentSource === 'platform' && !job.takeOver && Boolean(row.externalProductId && row.externalSkuId);
+  const sizeChartRule = map && !keepContent ? await sizeChartRuleOf(adapter, accessToken, map) : null;
   const block = pushBlock(
     v,
     price,
@@ -89,6 +97,11 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const reshelve = Boolean(row.externalProductId && row.externalSkuId && adapter.updateProduct);
   let imageUrls: string[] = row.externalImageUrls ?? [];
   try {
+    if (keepContent) {
+      // Giá, tồn để lượt đẩy tồn gửi như sau khi ghép (`finish` xếp `channel.stock_push`).
+      const action = await reactivate(session, row);
+      return await finish(job, row, action, { pushError: null, stockSync: 'pending', priceSync: 'pending', priceSyncError: null });
+    }
     if (!imageUrls.length) imageUrls = await uploadAll(adapter, accessToken, job.imageUrls);
     // Ảnh bảng kích cỡ (#347): danh mục không hỗ trợ thì không gửi; tải lên mỗi lượt (không lưu `uri`, sàn có thể đổi).
     const sizeChartUri =
@@ -111,6 +124,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       // Giữ nguyên qua các lần thử của lượt, đổi khi người dùng bấm đẩy lại (#219 A4).
       idempotencyKey: `cm-${row.id}-${row.pushStartedAt!.getTime()}`,
     };
+    // Mốc lần gọi tạo gần nhất (#399): ghi đè mỗi lần, commit trước khi gọi sàn để lần thử sau thấy mốc dù lần gọi này lỗi hay ném.
+    // `row` giữ giá trị của lần gọi trước.
+    if (!reshelve) await inCompany(() => markCreateAttempted(row.id));
     let result = reshelve
       ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, product)) }
       : await adapter.createProduct(accessToken, product);
@@ -126,6 +142,22 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       if (owner && owner.id !== row.id) {
         const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
         return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });
+      }
+      // #399 Ca 2: sản phẩm của app sinh ra trong đúng lần gọi tạo ngay trước (sàn báo lỗi mà vẫn tạo, #346); nếu nó tồn tại
+      // thì lần gọi kế luôn thấy nó ở bước tra `existing` trước khi tạo, nên chỉ xét lần gọi trước (`create_attempted_at` lúc
+      // đọc dòng). Chưa có lần gọi trước, không có giờ tạo, hoặc giờ tạo lệch quá `CLOCK_SKEW_MS` so với lần đó (sản phẩm người
+      // bán, kể cả tạo sau một lần gọi bị sàn từ chối) thì là của người bán: không ghi đè.
+      const previousCall = row.createAttemptedAt;
+      if (!previousCall || !result.createdAt || Math.abs(result.createdAt.getTime() - previousCall.getTime()) > CLOCK_SKEW_MS) {
+        const named = result.title ? ` (${result.title})` : '';
+        const message = `SKU ${product.sellerSku} đã có trên ${adapter.name}${named}. Dùng Ghép SKU thay vì đẩy.`;
+        // Lần gọi này không tạo gì trên sàn: trả mốc về lần gọi trước. Giữ mốc vừa ghi thì sản phẩm người bán tạo trong
+        // `CLOCK_SKEW_MS` trước lần gọi này sẽ bị lần đẩy lại nhận nhầm là của app và ghi đè (review #407).
+        return finish(job, row, 'fail', {
+          pushError: errorOf('sku_exists_on_platform', message),
+          pushAttempts: row.pushAttempts + 1,
+          createAttemptedAt: previousCall,
+        });
       }
       if (adapter.updateProduct) {
         result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, product)) };
@@ -144,6 +176,8 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       externalSkuId: result.externalSkuId,
       externalImageUrls: imageUrls,
       pushError: null,
+      // Nội dung trên sàn giờ là của app (tạo mới, ghi lại, hay CEO ghi đè bằng `take-over-content`).
+      contentSource: 'app',
       ...titleBaseline,
       listedPrice: priceText,
       // Nhận về sản phẩm có sẵn mà sàn không cho sửa: giá chưa ghi lên, để đồng bộ đẩy.
@@ -185,10 +219,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
 async function finish(job: ListingPushJob, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
   await withCompany(job.companyId, async () => {
     try {
-      await moveListing(row, action, null, patch, reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null));
+      const reasonText = reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null);
+      // Lỗi của lượt ghi nội dung xuất phát từ `live`: về `live`, không `push_failed` (sản phẩm người bán vẫn đang bán).
+      const failure = action === 'fail' ? await pushFailureOf(row) : { action, patch: {} };
+      await moveListing(row, failure.action, null, { ...patch, ...failure.patch }, reasonText);
       // Đẩy lại không gửi tồn: listing lên sàn thì đẩy tồn ngay (25 §6.5, #223), cùng giao dịch. Lên `live` thì lượt đẩy
       // tồn cũng ẩn ngay nếu SKU vừa tạm ngừng trong lúc đẩy (#224, E25).
-      if (patch.stockSync === 'pending' || action === 'go_live') await sendStockPush(job.companyId, job.shopId);
+      if (patch.stockSync === 'pending' || failure.patch.stockSync === 'pending' || action === 'go_live') await sendStockPush(job.companyId, job.shopId);
       return;
     } catch (err) {
       if (!(err instanceof AppError) || (err.code !== 'version_conflict' && err.code !== 'invalid_transition')) throw err;
@@ -200,6 +237,25 @@ async function finish(job: ListingPushJob, row: ListingRow, action: ListingActio
     }
     logger.warn({ listingId: row.id, action, status: now?.status }, 'Listing đổi trong lúc đẩy, bỏ kết quả lượt đẩy');
   });
+}
+
+/**
+ * Bật lại SKU của sản phẩm người bán (#399 Ca 1), như `restore` của #360: sàn đang bán hay đang duyệt thì không gọi bật.
+ * Trả thao tác theo trạng thái sàn sau khi bật; sàn không còn SKU thì `sku_not_found`, vẫn tắt hay bị khoá thì
+ * `still_inactive` (như `updateProduct`).
+ */
+async function reactivate(session: Session, row: ListingRow): Promise<ListingAction> {
+  const found = await remoteSkuOf(session, row);
+  if (!found || found.state === 'deleted') throw new MarketplaceError('rejected', 'sku_not_found', 'Sản phẩm trên sàn không còn SKU của listing này');
+  let state: RemoteState = found.state;
+  if (state === 'inactive') {
+    await activateOnMarketplace(session, row.externalProductId!, row.externalSkuId!);
+    // Sàn đã nhận lệnh bật: đọc lại lỗi thì coi như chờ duyệt, lượt đồng bộ sửa sau (không ném để khỏi bật lại).
+    state = (await remoteSkuOf(session, row).catch(() => undefined))?.state ?? 'review';
+  }
+  if (state === 'live') return 'go_live';
+  if (state === 'review' || state === 'rejected') return 'send_review';
+  throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${state})`);
 }
 
 async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls: readonly string[]): Promise<string[]> {

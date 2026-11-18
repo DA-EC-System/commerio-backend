@@ -4,6 +4,8 @@ import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CategoryAttribute,
   DEFAULT_REFRESH_LEAD_MS,
+  epochDate,
+  existingProduct,
   existingSku,
   INVALID_AMOUNT,
   type MarketplaceAdapter,
@@ -259,6 +261,7 @@ function skuState(product: RemoteState, status: unknown): RemoteState {
 function skusOf(p: LazadaProduct): RemoteSku[] {
   const { state, rejectReason } = remoteState(p);
   const productImage = firstImage(p.images);
+  const createdAt = epochDate(Number(p.created_time));
   return (p.skus ?? []).map((s) => ({
     externalProductId: String(p.item_id),
     externalSkuId: String(s.SkuId),
@@ -278,6 +281,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     // UpdateSellableQuantity nên so với `sellableStock`; thiếu trường thì không đối chiếu.
     ...(s.sellableStock !== undefined && s.sellableStock !== null && { sellableQuantity: Number(s.sellableStock) }),
     ...(s.price !== undefined && s.price !== null && s.price !== '' && { price: String(s.price) }),
+    ...(createdAt && { createdAt }),
   }));
 }
 
@@ -925,7 +929,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       // Idempotent theo SellerSku: lần đẩy trước đã tạo mà bên gọi mất kết quả thì trả sản phẩm đó, không tạo thêm.
       const existing = existingSku(await skusIn(accessToken, [p.sellerSku], 'all'), p.sellerSku);
       if (existing) {
-        return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live', existing: true };
+        return existingProduct(existing);
       }
       const payload = JSON.stringify({
         Request: {

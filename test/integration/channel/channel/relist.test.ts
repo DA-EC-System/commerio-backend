@@ -73,7 +73,7 @@ const rowsOf = async (shopId: string) =>
   (
     await testPool().query(
       `select id, seller_sku, status, external_product_id, external_sku_id, external_image_urls, hidden_by, reject_reason,
-              stock_sync, price_sync, platform_stock, replaces_listing_id, delisted_by_disconnect
+              stock_sync, price_sync, platform_stock, replaces_listing_id, delisted_by_disconnect, content_source
        from channel.listings where shop_id = $1 order by seller_sku, created_at`,
       [shopId],
     )
@@ -90,6 +90,8 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
     remote.set(sku('D'), { state: 'inactive' });
     remote.set(sku('E'), { state: 'rejected', rejectReason: 'Ảnh mờ' });
     remote.set(sku('F'), { state: 'hold' });
+    // #399: dòng mới chép chủ nội dung của dòng cũ.
+    await testPool().query("update channel.listings set content_source = 'app' where shop_id = $1 and seller_sku = $2", [shopId, sku('A')]);
 
     const res = await reconnect();
     expect(res.status).toBe(200);
@@ -114,6 +116,8 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
         delisted_by_disconnect: false,
       });
     }
+    expect(bySku('A')[1]).toMatchObject({ content_source: 'app' });
+    expect(bySku('B')[1]).toMatchObject({ content_source: 'platform' });
     expect(bySku('D')[1]).toMatchObject({ hidden_by: 'platform' });
     expect(bySku('E')[1]).toMatchObject({ reject_reason: 'Ảnh mờ' });
     const history = await testPool().query(

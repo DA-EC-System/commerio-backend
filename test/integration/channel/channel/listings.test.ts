@@ -111,7 +111,7 @@ const results = async (variantIds: string[], imageUrls?: unknown) => {
 async function rowsOf(variantId: string) {
   const { rows } = await testPool().query(
     `select id, status, seller_sku, external_product_id, external_sku_id, external_image_urls, push_error, push_attempts,
-            reject_reason, replaces_listing_id, version from channel.listings where shop_id = $1 and variant_id = $2 order by created_at`,
+            reject_reason, replaces_listing_id, content_source, version from channel.listings where shop_id = $1 and variant_id = $2 order by created_at`,
     [shopId, variantId],
   );
   return rows;
@@ -156,7 +156,8 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(createProduct).not.toHaveBeenCalled();
 
     const [row] = await rowsOf(ok.id);
-    expect(row).toMatchObject({ status: 'pushing', seller_sku: 'CMR-OK', push_attempts: 0 });
+    // #399: đẩy tạo sản phẩm mới thì nội dung là của app.
+    expect(row).toMatchObject({ status: 'pushing', seller_sku: 'CMR-OK', push_attempts: 0, content_source: 'app' });
     expect(await jobsOf(row.id)).toEqual([{ companyId: company.companyId, shopId, listingId: row.id, imageUrls: CATALOG }]);
     expect(await rowsOf(noPrice.id)).toEqual([]);
     const history = await testPool().query(
@@ -262,8 +263,8 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
   it('AC-4, DoD#4: listing đã gỡ đẩy lại thành bản ghi mới trỏ bản cũ, chép mã sàn, SellerSku, ảnh; bảng hiện bản mới', async () => {
     const v = fresh('CMR-GO');
     await testPool().query(
-      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, external_image_urls)
-       values ($1, $2, $3, 'SKU-SAN-CU', 'delisted', 'P-CU', 'S-CU', $4)`,
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, external_image_urls, content_source)
+       values ($1, $2, $3, 'SKU-SAN-CU', 'delisted', 'P-CU', 'S-CU', $4, 'platform')`,
       [company.companyId, shopId, v.id, ['https://slatic.test/cu.png']],
     );
     const [old] = await rowsOf(v.id);
@@ -280,6 +281,8 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       external_sku_id: 'S-CU',
       external_image_urls: ['https://slatic.test/cu.png'],
       replaces_listing_id: old.id,
+      // #399: đẩy lại từ bản gỡ còn mã sàn chép chủ nội dung của bản gỡ.
+      content_source: 'platform',
     });
     const list = ListingList.parse((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`))).body);
     expect(list.items.find((i) => i.variantId === v.id)!.listing).toMatchObject({ id: res.listingId, status: 'pushing' });

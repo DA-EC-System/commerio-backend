@@ -301,6 +301,7 @@ export async function finishSetup(
         sellerSku: p.sellerSku,
         status: 'live',
         platformStock: p.platformStock,
+        contentSource: 'platform',
         // Mốc tên trên sàn (#396): tên vừa đọc, cùng lượt đã lưu vào bản sao; tên tiếng Anh lấy ở lần ghi bản sao sau.
         remoteTitleAtMatch: p.title,
       });

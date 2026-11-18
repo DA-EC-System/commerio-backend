@@ -352,7 +352,9 @@ describe('app đẩy, sửa nội dung thì không bật cờ (AC-5)', () => {
   it('đẩy lại sản phẩm đã ghép (tên sàn cũ khác tên app): không bật cờ, `name_en` của sàn giữ làm mốc', async () => {
     const r = newRemote({ title: 'Tên gốc của shop', titleEn: 'Original name' });
     await reload();
+    // Listing do app đẩy (#399): đẩy lại ghi nội dung của app lên sàn.
     const { v, id } = await pushing({
+      content_source: 'app',
       external_product_id: r.externalProductId,
       external_sku_id: r.externalSkuId,
       seller_sku: r.sellerSku,
@@ -371,11 +373,32 @@ describe('app đẩy, sửa nội dung thì không bật cờ (AC-5)', () => {
     expect(await flagOf(v.id, r.externalSkuId)).toBeNull();
   });
 
+  it('đẩy lại listing nội dung của người bán (#399): chỉ bật lại SKU, giữ mốc tên lúc ghép', async () => {
+    const r = newRemote({ title: 'Tên gốc của shop', titleEn: 'Original name' });
+    await reload();
+    const { v, id } = await pushing({
+      content_source: 'platform',
+      external_product_id: r.externalProductId,
+      external_sku_id: r.externalSkuId,
+      seller_sku: r.sellerSku,
+      external_image_urls: ['https://slatic.test/a.png'],
+      remote_title_at_match: r.title,
+      remote_title_en_at_match: r.titleEn,
+      remote_title_matched_at: new Date(Date.now() - 60_000),
+    });
+    await push(id);
+    expect(await rowOf(id)).toMatchObject({ remote_title_at_match: 'Tên gốc của shop', remote_title_en_at_match: 'Original name' });
+    await reload();
+    expect(await flagOf(v.id, r.externalSkuId)).toBeNull();
+  });
+
   it('nhánh `existing` (#346): sàn đã có SellerSku, app ghi đè tên → không bật cờ', async () => {
     const r = newRemote({ title: 'Tên SKU có sẵn', titleEn: null });
     await reload();
-    onCreate = async () => ({ externalProductId: r.externalProductId, externalSkuId: r.externalSkuId, live: true, existing: true });
-    const { v, id } = await pushing({ seller_sku: r.sellerSku });
+    // Sản phẩm của app sinh ra ở lần gọi tạo trước (#399 Ca 2): giờ tạo khớp lần gọi đó thì mới ghi đè.
+    const previousCall = new Date(Date.now() - 60_000);
+    onCreate = async () => ({ externalProductId: r.externalProductId, externalSkuId: r.externalSkuId, live: true, existing: true, createdAt: previousCall });
+    const { v, id } = await pushing({ seller_sku: r.sellerSku, create_attempted_at: previousCall });
     await push(id);
     expect(await rowOf(id)).toMatchObject({ remote_title_at_match: sentName(v) });
     await reload();
@@ -384,6 +407,8 @@ describe('app đẩy, sửa nội dung thì không bật cờ (AC-5)', () => {
 
   it('sửa nội dung (#293): mốc = tên app gửi, không bật cờ; cờ đang bật cũng được xoá', async () => {
     const { r, v, listing } = await flagged();
+    // Sửa nội dung chỉ cho listing nội dung của app (#399).
+    await testPool().query(`update channel.listings set content_source = 'app' where id = $1`, [listing.id]);
     const res = await as(app().post(`/api/v1/channel/shops/${shopId}/listings/${listing.id}/update-content`)).send({
       version: (await rowOf(listing.id)).version,
     });

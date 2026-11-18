@@ -344,7 +344,7 @@ export const ChannelListing = z
     rejectReason: z.string().nullable(),
     pushError: syncError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
@@ -365,6 +365,10 @@ export const ChannelListing = z
       }),
     pendingMapping,
     pendingRevision,
+    contentSource: z.enum(['app', 'platform']).meta({
+      description:
+        'Ai tạo nội dung (tên, mô tả, ảnh) của sản phẩm trên sàn (#399): `app` do app đẩy tạo; `platform` do người bán tạo rồi ghép. Đẩy lại listing `platform` chỉ bật lại SKU và đẩy giá, tồn; ghi nội dung Commerio lên bằng `take-over-content` (CEO)',
+    }),
     version: z.number().int(),
   })
   .strict()
@@ -446,6 +450,11 @@ export const MatchBody = z
   .meta({ id: 'ListingMatchInput' });
 
 export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
+
+export const TakeOverContentParams = z.object({ id: z.string(), listingId: z.string() });
+export const TakeOverContentBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingTakeOverContentInput' });
 
 export const OutsideChangeParams = z.object({
   id: z.string(),
