@@ -29,6 +29,8 @@ export async function insertPackage(input: {
   lostSource?: 'marketplace';
   /** Kiện tách từ kiện `reserved` mang lúc giữ của kiện cũ (spec 205 D4). */
   reservedAt?: Date | null;
+  /** Kiện lập khi sàn chia lại kiện: kiện cũ nó thay (spec #238 §5.6), chỉ để truy vết. */
+  replacesPackageId?: string;
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
     .insert(packages)
@@ -122,6 +124,7 @@ export async function updatePackage(
     deliveredAt: Date;
     reservedAt: Date | SQL | null;
     deliveryPostedAt: Date | SQL | null;
+    waybillKept: boolean;
   }> &
     Partial<PackageShipping> &
     Partial<LostColumns>,
@@ -242,20 +245,25 @@ export interface PackageRow extends HandoverPackage {
   /** Mục đích mở kiện (`cancel`, `edit`, `resplit`, `stocktake`); null khi không chờ mở. */
   openPurpose: OpenPurpose | null;
   labelError: boolean;
+  /** Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6). */
+  replacesPackageId: string | null;
+  /** Đã mở kiện `awaiting_pickup`, giữ vận đơn: đóng gói, báo sẵn sàng lại không gọi sàn (D25). */
+  waybillKept: boolean;
   shipping: PackageShipping;
   lines: PackageLineRow[];
 }
 
-/** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
-export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> {
+async function orderPackages(orderId: string, lock: boolean): Promise<PackageRow[]> {
   const db = getDb();
-  const rows = await db
+  const query = db
     .select({
       ...handoverColumns,
       platformPackageCode: packages.platformPackageCode,
       trackingCode: packages.trackingCode,
       openPurpose: packages.openPurpose,
       labelError: packages.labelError,
+      replacesPackageId: packages.replacesPackageId,
+      waybillKept: packages.waybillKept,
       shipping: {
         shipmentProvider: packages.shipmentProvider,
         shippingProviderType: packages.shippingProviderType,
@@ -265,11 +273,24 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
     })
     .from(packages)
     .where(eq(packages.orderId, orderId))
-    .orderBy(asc(packages.code))
-    .for('update');
+    .orderBy(asc(packages.code));
+  const rows = lock ? await query.for('update') : await query;
   if (!rows.length) return [];
   const lines = await planLinesOf(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
+}
+
+/** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
+export function lockOrderPackages(orderId: string): Promise<PackageRow[]> {
+  return orderPackages(orderId, true);
+}
+
+/**
+ * Như `lockOrderPackages` nhưng không khoá: lượt kéo đơn xem trước kế hoạch chia lại kiện để biết có phải lấy khoá
+ * advisory phân hàng trước khi khoá kiện không (spec #238 §5.6 "Khoá").
+ */
+export function readOrderPackages(orderId: string): Promise<PackageRow[]> {
+  return orderPackages(orderId, false);
 }
 
 /**
@@ -364,11 +385,21 @@ export async function setReserved(packageId: string, reserved: boolean): Promise
 
 export type PackageViewRow = typeof packages.$inferSelect & {
   lines: { variantId: string | null; orderLineId: string; quantity: number }[];
+  /** Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6); null khi không phải kiện thay. */
+  replaces: { id: string; code: string; status: PackageStatus } | null;
 };
 
-/** Gắn dòng cho các kiện đã đọc (một câu), giữ thứ tự kiện. */
+/**
+ * Gắn dòng cho các kiện đã đọc (một câu), giữ thứ tự kiện; kiện thay gắn thêm mã, trạng thái của kiện cũ (một câu, chỉ
+ * khi có kiện thay). Mọi đường dựng `PackageViewRow` đi qua đây.
+ */
 export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): Promise<PackageViewRow[]> {
   if (!rows.length) return [];
+  const replacedIds = [...new Set(rows.flatMap((r) => (r.replacesPackageId ? [r.replacesPackageId] : [])))];
+  const replaced = replacedIds.length
+    ? await getDb().select({ id: packages.id, code: packages.code, status: packages.status }).from(packages).where(inArray(packages.id, replacedIds))
+    : [];
+  const replacedById = new Map(replaced.map((r) => [r.id, r]));
   const lines = await getDb()
     .select({ packageId: packageLines.packageId, variantId: packageLines.variantId, orderLineId: packageLines.orderLineId, quantity: packageLines.quantity })
     .from(packageLines)
@@ -379,7 +410,11 @@ export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): P
       ),
     )
     .orderBy(asc(packageLines.createdAt), asc(packageLines.id));
-  return rows.map((r) => ({ ...r, lines: lines.filter((l) => l.packageId === r.id) }));
+  return rows.map((r) => ({
+    ...r,
+    lines: lines.filter((l) => l.packageId === r.id),
+    replaces: (r.replacesPackageId && replacedById.get(r.replacesPackageId)) || null,
+  }));
 }
 
 /** Kiện của các đơn kèm dòng, cũ trước; để đọc, không khoá. */

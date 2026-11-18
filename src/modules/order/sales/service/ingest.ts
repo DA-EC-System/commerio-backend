@@ -135,6 +135,11 @@ const sameInfo = (a: OrderInfo, b: OrderInfo) =>
  * trước #358 chỉ có hằng. Gỡ cờ so theo tiền tố này nên khớp cả hai dạng.
  */
 const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
+/**
+ * Note của cờ Cần xử lý khi sàn chia lại kiện mà app không tự xử lý được (#238 D29: kiện đã bàn giao, sàn gộp món vào
+ * mã kiện cũ, một món ở hai mã). Chia lại xử lý được thì fulfillment tự huỷ, lập kiện, đơn không bật cờ.
+ */
+const RESPLIT_NOTE = 'Sàn chia lại kiện, app chưa tự xử lý được';
 
 const code = async (prefix: string, docType: string) => `${prefix}-${String(await takeNextNumber(docType)).padStart(6, '0')}`;
 
@@ -305,7 +310,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   if (clearUnknown) next.needsAttention = false;
   // `undefined`: giữ note đã lưu; `null`: xoá note (chỉ khi gỡ cờ "chưa biết").
   const attentionNote = packages.resplit
-    ? 'Sàn chia lại kiện khác lần trước'
+    ? RESPLIT_NOTE
     : packages.revived
       ? 'Sàn báo lại kiện đã thất lạc hoặc đang hoàn'
       : packages.unknown

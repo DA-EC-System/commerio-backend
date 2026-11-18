@@ -99,6 +99,7 @@ export function toPackageSummary(
     deliveredAt: isoOrNull(p.deliveredAt),
     deliveredBy: null,
     lostReport: lostReportOf(p, names),
+    replaces: p.replaces,
     createdAt: p.createdAt.toISOString(),
     version: p.version,
   };

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, integer, jsonb, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { type AnyPgColumn, boolean, check, index, integer, jsonb, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module con `fulfillment` khai báo trong schema của module lớn `order` (Documents/19 D1).
@@ -94,6 +94,16 @@ export const packages = fulfillmentSchema.table(
     lostSource: text('lost_source').$type<'user' | 'marketplace'>(),
     /** Lúc `fulfillment.package_delivered` của kiện được ghi outbox; kiện giao đầu tiên của đơn mang ship cấp đơn (spec 199c §5.1, D4). Không bao giờ đặt lại null. */
     deliveryPostedAt: timestamp('delivery_posted_at', { withTimezone: true }),
+    /**
+     * Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6), chỉ để truy vết; "kiện chờ thay" suy ra từ dòng
+     * chờ bỏ, không lưu (D9). Kiện không bao giờ bị xoá nên khoá ngoại `no action`.
+     */
+    replacesPackageId: uuid('replaces_package_id').references((): AnyPgColumn => packages.id),
+    /**
+     * Mở kiện `awaiting_pickup` xong còn món: giữ mã kiện sàn, vận đơn, ĐVVC; đóng gói và báo sẵn sàng lại không gọi sàn
+     * (spec #238 D25). `updatePackage` tự tắt khi kiện sang trạng thái ngoài `backordered`, `reserved`, `packed`.
+     */
+    waybillKept: boolean('waybill_kept').notNull().default(false),
     // Vận chuyển do sàn trả (#260).
     shipmentProvider: text('shipment_provider'),
     shippingProviderType: text('shipping_provider_type'),
@@ -112,7 +122,10 @@ export const packages = fulfillmentSchema.table(
     index().on(t.orderId),
     index().on(t.status),
     index().on(t.trackingCode),
+    // Khoá ngoại phía con cần index; chỉ kiện thay mới có giá trị.
+    index().on(t.replacesPackageId).where(sql`${t.replacesPackageId} is not null`),
     check('packages_open', sql`${t.needsOpen} = (${t.openPurpose} is not null)`),
+    check('packages_waybill_kept', sql`not ${t.waybillKept} or (${t.platformPackageCode} is not null and ${t.trackingCode} is not null)`),
     check('packages_carrier', sql`(${t.carrierCode} is null) = (${t.carrierName} is null)`),
     check('packages_cod_second_person', sql`${t.codConfirmedBy} is null or ${t.codConfirmedBy} is distinct from ${t.deliveredBy}`),
     check(

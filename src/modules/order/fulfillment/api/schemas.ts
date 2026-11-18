@@ -65,6 +65,9 @@ export const PackageSummary = z
     deliveredAt: iso.nullable(),
     deliveredBy: z.object({ id: z.uuid(), name: z.string() }).nullable(),
     lostReport: z.object({ by: z.object({ id: z.uuid(), name: z.string() }), at: iso, claimCode: z.string() }).nullable(),
+    replaces: z.object({ id: z.uuid(), code: z.string(), status: z.enum(PACKAGE_STATUS) }).nullable().meta({
+      description: 'Kiện cũ mà kiện này thay khi sàn chia lại kiện (#238); kiện cũ còn `packed`/`awaiting_pickup` thì kiện này chờ kho mở kiện cũ',
+    }),
     createdAt: iso,
     version: z.number().int(),
   })
