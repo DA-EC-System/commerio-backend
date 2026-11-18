@@ -224,3 +224,74 @@ describe('số câu truy vấn của trang danh sách (Review Focus 2)', () => {
     expect(await count(2)).toBe(await count(20));
   });
 });
+
+// Ảnh phân loại có một phần (#340, Documents/21 §17.1): đã có ảnh cho một giá trị đang dùng mà còn giá trị đang dùng
+// (SKU chưa lưu trữ mang) chưa có ảnh thì mọi SKU thiếu `variantImages`.
+describe('độ hoàn thiện: ảnh phân loại (#340, AC-12)', () => {
+  /** Sản phẩm 3 SKU (Đen, Trắng, Xám) đã đủ mọi phần, chọn Màu làm thuộc tính gắn ảnh. */
+  async function ready() {
+    const p = await product(3);
+    await withImage(p.id);
+    for (const v of p.variants) await complete(p.id, v.id);
+    await testPool().query('update product.products set image_attribute_id = $2 where id = $1', [p.id, color.id]);
+    return p;
+  }
+  const image = (productId: string, value: string) =>
+    testPool().query(
+      `insert into product.product_attribute_value_images (company_id, product_id, attribute_id, attribute_value_id, file_id)
+       values ($1, $2, $3, $4, $5)`,
+      [companyId, productId, color.id, valueId(color, value), randomUUID()],
+    );
+  /** Kết quả ở ba nơi: chi tiết, danh sách (`incompleteCount`), `variantReadiness`. */
+  async function everywhere(p: { id: string; variants: { id: string }[] }) {
+    const body = await detail(p.id);
+    const item = (await listItem(p.id)) as unknown as { incompleteCount: number };
+    const port = await withCompany(companyId, () => variantReadiness(p.variants.map((v) => v.id)));
+    return {
+      detail: p.variants.map((v) => sku(body, v.id).missing),
+      incompleteCount: [body.incompleteCount, item.incompleteCount],
+      port: p.variants.map((v) => port.get(v.id)!.missing),
+    };
+  }
+
+  it('chưa có ảnh phân loại nào, hoặc chưa chọn thuộc tính: không thiếu', async () => {
+    const p = await ready();
+    expect(await everywhere(p)).toEqual({ detail: [[], [], []], incompleteCount: [0, 0], port: [[], [], []] });
+    await testPool().query('update product.products set image_attribute_id = null where id = $1', [p.id]);
+    expect((await everywhere(p)).incompleteCount).toEqual([0, 0]);
+  });
+
+  it('có ảnh Đen, thiếu Trắng, Xám: mọi SKU thiếu variantImages ở chi tiết, danh sách, variantReadiness', async () => {
+    const p = await ready();
+    await image(p.id, 'Đen');
+    const partial = ['variantImages'];
+    expect(await everywhere(p)).toEqual({ detail: [partial, partial, partial], incompleteCount: [3, 3], port: [partial, partial, partial] });
+    expect(sku(await detail(p.id), p.variants[0]!.id).readiness).toBe('incomplete');
+  });
+
+  it('variantImages đứng ngay sau image', async () => {
+    const p = await product(2);
+    await testPool().query('update product.products set image_attribute_id = $2 where id = $1', [p.id, color.id]);
+    await image(p.id, 'Đen');
+    expect(sku(await detail(p.id), p.variants[0]!.id).missing).toEqual(['image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions']);
+  });
+
+  it('đủ ảnh mọi giá trị → hết thiếu; giá trị chỉ còn SKU lưu trữ mang thì không cần ảnh', async () => {
+    const p = await ready();
+    await image(p.id, 'Đen');
+    await image(p.id, 'Trắng');
+    await archiveSku(token, p.id, p.variants[2]!.id);
+    const after = await everywhere(p);
+    expect(after.detail.slice(0, 2)).toEqual([[], []]);
+    expect(after.incompleteCount).toEqual([0, 0]);
+    await image(p.id, 'Xám');
+    expect((await everywhere(p)).detail).toEqual([[], [], []]);
+  });
+
+  it('ảnh chỉ nằm ở giá trị mà mọi SKU mang nó đã lưu trữ: không tính là có một phần', async () => {
+    const p = await ready();
+    await archiveSku(token, p.id, p.variants[0]!.id);
+    await image(p.id, 'Đen');
+    expect((await everywhere(p)).incompleteCount).toEqual([0, 0]);
+  });
+});

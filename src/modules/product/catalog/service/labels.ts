@@ -4,6 +4,7 @@
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { type MissingField, type ParentFields, type Readiness, readinessOf } from '../domain/labels.ts';
 import { productImageRows } from '../repository/product-images.ts';
+import { partialVariantImageProducts } from '../repository/variant-images.ts';
 import { findVariants, type VariantRow } from '../repository/variants.ts';
 import { isUuid } from './errors.ts';
 import { type CatalogContext, type ListingPresence, requirePort } from './usage.ts';
@@ -18,20 +19,25 @@ export interface SkuLabels extends ListingPresence {
   minQty: number | null;
 }
 
+/** Trường chung của cha mà bên gọi tự có; ảnh phân loại một phần do `skuLabels` hỏi một lần cho cả lô. */
+export type ParentInput = Omit<ParentFields, 'variantImagesPartial'>;
+
 /** Nhãn cho các SKU (có thể của nhiều sản phẩm); `parentOf` cho trường chung của cha (tên, danh mục, số ảnh). */
 export async function skuLabels(
   ctx: CatalogContext,
   rows: readonly VariantRow[],
-  parentOf: (productId: string) => ParentFields,
+  parentOf: (productId: string) => ParentInput,
 ): Promise<Map<string, SkuLabels>> {
   const ids = rows.map((v) => v.id);
+  const partial = await partialVariantImageProducts([...new Set(rows.map((v) => v.productId))]);
   // Tuần tự: hai cổng dùng chung một client của giao dịch.
   const minQty = await requirePort(ctx, 'minQtyOf')(ids);
   const presence = await requirePort(ctx, 'listingPresenceOf')(ids);
   return new Map(
     rows.map((v) => {
       const q = minQty.get(v.id) ?? null;
-      return [v.id, { ...readinessOf(parentOf(v.productId), { ...v, minQty: q }), minQty: q, ...(presence.get(v.id) ?? NOT_LISTED) }];
+      const parent = { ...parentOf(v.productId), variantImagesPartial: partial.has(v.productId) };
+      return [v.id, { ...readinessOf(parent, { ...v, minQty: q }), minQty: q, ...(presence.get(v.id) ?? NOT_LISTED) }];
     }),
   );
 }
@@ -48,13 +54,20 @@ export async function variantReadinessOf(
   requireCompanyId('variantReadiness');
   const rows = await findVariants({ ids: variantIds.filter(isUuid) });
   if (!rows.length) return new Map();
-  const withImage = new Set((await productImageRows([...new Set(rows.map((v) => v.productId))], 1)).map((i) => i.productId));
+  const productIds = [...new Set(rows.map((v) => v.productId))];
+  const withImage = new Set((await productImageRows(productIds, 1)).map((i) => i.productId));
+  const partial = await partialVariantImageProducts(productIds);
   const minQty = await minQtyOf(rows.map((v) => v.id));
   return new Map(
     rows.map((v) => [
       v.id,
       readinessOf(
-        { name: v.productName, categoryId: v.categoryId, imageCount: withImage.has(v.productId) ? 1 : 0 },
+        {
+          name: v.productName,
+          categoryId: v.categoryId,
+          imageCount: withImage.has(v.productId) ? 1 : 0,
+          variantImagesPartial: partial.has(v.productId),
+        },
         { ...v, minQty: minQty.get(v.id) ?? null },
       ),
     ]),
