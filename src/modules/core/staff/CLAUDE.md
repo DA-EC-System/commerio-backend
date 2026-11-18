@@ -20,7 +20,7 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 | `POST /invitations` | `identity.account.manage` | Tạo link `<PUBLIC_WEB_URL>/tham-gia#<token>` (token `invite`, 72 giờ, `jti` = id lời mời, `cid` = công ty), nhật ký `create` trên `staff.invitations` |
 | `GET /invitations` | `identity.account.view` | Trang `Invitation`, `status` mặc định `pending`; nhiều trạng thái cách nhau dấu phẩy (`open,claimed`: tab "Link đã tạo") |
 | `POST /invitations/:id/approve`, `/reject` | `identity.account.manage` | Duyệt: tạo tài khoản (email mới) hoặc dùng tài khoản đã có, thêm membership, vai trò, nhật ký `create` trên `staff.memberships`. Từ chối: nhật ký `update` trên `staff.invitations`. Cả hai phát `staff.invitation_decided` (thư báo kết quả) |
-| `POST /invitations/:id/revoke` | `identity.account.manage` | Huỷ link `open`, `claimed` (kể cả quá hạn) theo `version`: `revoked`, ghi `decided_by`, `decided_at`, xoá OTP, nhật ký `update`. Không còn `open`/`claimed` hay lệch version: 409 `version_conflict` kèm `current` |
+| `POST /invitations/:id/revoke` | `identity.account.manage` | Huỷ link `open`, `claimed` (kể cả quá hạn) theo `version`: `revoked`, ghi `decided_by`, `decided_at`, xoá OTP, nhật ký `update`. Không còn `open`/`claimed`: 409 `invalid_transition`; lệch version: 409 `version_conflict`; cả hai kèm `current` |
 | `POST /join/check`, `/join/otp`, `/join/verify`, `/join/complete` | Công khai, rate limit (`api/join-limits.ts`) | Người được mời: mở link, xin mã (202, worker gửi thư), nhập mã (`registrationToken` 30 phút, `next`), nộp (`pending`) |
 
 ## Luồng mời (#7 [C], `service/invitations.ts`, `service/join.ts`)
@@ -36,8 +36,9 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 
 ## Bất biến
 
-- Thứ tự kiểm sau `authorize → validate`: 404 → 403 `protected_account` (đích là CEO hoặc chính mình) → 409 `version_conflict` kèm `current` → 422 `errors.roleIds` → 403 `protected_account` (gán CEO) → 403 `permission_not_held`. Khoá, mở khoá: 404 → `protected_account` → 409 (lệch version hoặc đã ở trạng thái đích).
-- `permission_not_held` tính trên quyền của vai trò **được thêm và bị gỡ**, so với quyền thô của người gọi (`getAccess(res)`, D1); vai trò giữ nguyên không tính. Luật thuần ở `domain/member-rules.ts` (`checkRoleGrant`, `isProtectedTarget`), dùng lại khi tạo link mời và duyệt.
+- Thứ tự kiểm sau `authorize → validate`: 404 → 403 `protected_account` (đích là CEO hoặc chính mình) → 409 `version_conflict` kèm `current` → 422 `errors.roleIds` → 403 `protected_account` (gán CEO) → 403 `permission_not_held`. Khoá, mở khoá: 404 → `protected_account` → 409 `invalid_transition` (đã ở trạng thái đích) → 409 `version_conflict`.
+- Lời mời và nhân viên sai trạng thái kiểm **trước** version (#353, Documents/21 mục 3.1): duyệt, từ chối lời mời không còn `pending`, huỷ link không còn `open`/`claimed`, khoá người đang khoá → 409 `invalid_transition` kèm `current` (`Invitation` hoặc `StaffMember`), câu báo theo trạng thái hiện tại. Bên thua cuộc đua duyệt (chờ khoá dòng) nhận `invalid_transition`; hai lần khoá cùng version thì bên thua trượt ở UPDATE có điều kiện, nhận `version_conflict`.
+- `permission_not_held` tính trên quyền của vai trò **được thêm và bị gỡ**, so với quyền thô của người gọi (`getAccess(res)`, D1); vai trò giữ nguyên không tính. Vai có sẵn Sale, Nhân viên kho (`freelyAssignable` do `access` gắn) không tính: ai có `identity.account.manage` cũng gán, gỡ được (Documents/21 I5, #351); vai Admin và vai tự tạo vẫn tính. Luật thuần ở `domain/member-rules.ts` (`checkRoleGrant`, `isProtectedTarget`), dùng lại khi tạo link mời và duyệt.
 - Ghi có điều kiện `WHERE id AND version (AND status)`; không trúng dòng thì đọc lại, 409 kèm bản mới nhất. Hai lần khoá cùng `version`: một 200, một 409.
 - Khoá có hiệu lực ngay: `authorize` đọc trạng thái membership từ DB mỗi request (403 `account_locked`). Kênh SSE đang mở đóng chậm nhất khi token hết hạn.
 - `accountId` sai dạng, của công ty khác hay không tồn tại: 404 `not_found` (C4, V6).
