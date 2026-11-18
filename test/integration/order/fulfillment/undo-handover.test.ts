@@ -176,3 +176,36 @@ describe('huỷ bàn giao kiện đang hoãn trừ (spec 199b §5.7)', () => {
     expect((await packageLineRows(p.packageId))[0]).toMatchObject({ reserved_qty: 0, stock_deducted: false });
   });
 });
+
+describe('Package trả nguồn bàn giao và mốc sàn xác nhận lấy (21 §19.2, FE ẩn nút Đảo bàn giao)', () => {
+  const view = async (id: string) =>
+    Package.parse((await app().get(`/api/v1/fulfillment/packages/${id}`).set('Authorization', `Bearer ${company.ceo.token}`)).body);
+
+  it('kho quét: scan, chưa xác nhận; sàn xác nhận lấy: có mốc; huỷ bàn giao: cả hai null', async () => {
+    const p = await scanned();
+    expect(await view(p.packageId)).toMatchObject({ status: 'in_transit', handoverSource: 'scan', pickupConfirmedAt: null });
+
+    const undone = await undo(p.packageId, { version: await versionOf(p.packageId), reason: 'Quét nhầm' });
+    expect(Package.parse(undone.body)).toMatchObject({ status: 'awaiting_pickup', handoverSource: null, pickupConfirmedAt: null });
+
+    const again = await scanned();
+    const at = new Date('2026-11-18T05:00:00Z');
+    await testPool().query('update "order".packages set pickup_confirmed_at = $2 where id = $1', [again.packageId, at]);
+    expect(await view(again.packageId)).toMatchObject({ handoverSource: 'scan', pickupConfirmedAt: at.toISOString() });
+  });
+
+  it('kiện sàn báo rời kho: marketplace kèm mốc; kiện chưa rời kho: null', async () => {
+    const at = new Date('2026-11-18T06:00:00Z');
+    const left = await seedPackage(company.companyId, {
+      status: 'in_transit',
+      handoverSource: 'marketplace',
+      handedOverAt: at,
+      pickupConfirmedAt: at,
+      lines: [{ variantId, quantity: 1 }],
+    });
+    expect(await view(left.packageId)).toMatchObject({ handoverSource: 'marketplace', pickupConfirmedAt: at.toISOString() });
+
+    const waiting = await seedPackage(company.companyId, { status: 'awaiting_pickup', lines: [{ variantId, quantity: 1, reserved: true }] });
+    expect(await view(waiting.packageId)).toMatchObject({ handoverSource: null, pickupConfirmedAt: null });
+  });
+});

@@ -3,7 +3,8 @@
 import { isHandedOver, type PackageStatus } from './package.ts';
 
 /** Ai đưa kiện vào nhóm rời kho; cùng giá trị enum `order.handover_source`. */
-export type HandoverSource = 'scan' | 'marketplace' | 'forced' | 'before_cutoff';
+export const HANDOVER_SOURCES = ['scan', 'marketplace', 'forced', 'before_cutoff'] as const;
+export type HandoverSource = (typeof HANDOVER_SOURCES)[number];
 
 export type StockEffect = 'ship' | 'reverse' | 'none';
 

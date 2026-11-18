@@ -96,6 +96,8 @@ export function toPackageSummary(
     lines,
     totalQty: lines.reduce((a, l) => a + l.quantity, 0),
     handedOverAt: isHandedOver(p.status) ? isoOrNull(p.handedOverAt) : null,
+    handoverSource: isHandedOver(p.status) ? p.handoverSource : null,
+    pickupConfirmedAt: isHandedOver(p.status) ? isoOrNull(p.pickupConfirmedAt) : null,
     deliveredAt: isoOrNull(p.deliveredAt),
     deliveredBy: null,
     lostReport: lostReportOf(p, names),

@@ -2,6 +2,7 @@
 // (spec 199a D8). Tên `.meta({ id })` trùng kiểu ở FE.
 import { z } from 'zod';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
+import { HANDOVER_SOURCES } from '../domain/handover.ts';
 import { PACKAGE_TABS } from '../domain/package.ts';
 
 const iso = z.iso.datetime();
@@ -62,6 +63,13 @@ export const PackageSummary = z
     ),
     totalQty: z.number().int(),
     handedOverAt: iso.nullable(),
+    handoverSource: z.enum(HANDOVER_SOURCES).nullable().meta({
+      description:
+        'Ai đưa kiện ra khỏi kho: `scan` kho quét, `marketplace` sàn báo, `forced` bàn giao bắt buộc khi thiếu hàng, `before_cutoff` kiện rời kho trước mốc kéo đơn (chỉ lưu). Null khi kiện chưa rời kho. Chỉ kiện `scan` chưa có `pickupConfirmedAt` mới đảo bàn giao được (21 §19.2)',
+    }),
+    pickupConfirmedAt: iso.nullable().meta({
+      description: 'Lúc sàn xác nhận đơn vị vận chuyển đã lấy kiện (kiện sàn báo rời kho: bằng `handedOverAt`). Null khi chưa xác nhận hoặc kiện chưa rời kho',
+    }),
     deliveredAt: iso.nullable(),
     deliveredBy: z.object({ id: z.uuid(), name: z.string() }).nullable(),
     lostReport: z.object({ by: z.object({ id: z.uuid(), name: z.string() }), at: iso, claimCode: z.string() }).nullable(),
