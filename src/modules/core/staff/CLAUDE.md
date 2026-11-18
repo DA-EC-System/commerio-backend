@@ -15,12 +15,12 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 | API | Quyền | Việc |
 |---|---|---|
 | `GET /staff` | `identity.account.view` | Trang `StaffMember`: `search` (họ tên, email, `ILIKE` có thoát `\`, `%`, `_`), `status`, `roleId`, `page`, `pageSize` |
-| `PUT /staff/:accountId/roles` | `identity.account.manage` | Thay trọn vai trò theo `version` của membership, nhật ký `update` (`before.roles`, `after.roles`, chỉ id) |
-| `POST /staff/:accountId/lock`, `/unlock` | `identity.account.manage` | Đổi `status` theo `version`, nhật ký `update` (`before.status`, `after.status`) |
-| `POST /invitations` | `identity.account.manage` | Tạo link `<PUBLIC_WEB_URL>/tham-gia#<token>` (token `invite`, 72 giờ, `jti` = id lời mời, `cid` = công ty), nhật ký `create` trên `staff.invitations` |
+| `PUT /staff/:accountId/roles` | `identity.account.manage` | Thay trọn vai trò theo `version` của membership, nhật ký `update`, `operation` `change_roles`, nhãn "Họ tên (email)", `before.roles`, `after.roles` là tên vai (#352) |
+| `POST /staff/:accountId/lock`, `/unlock` | `identity.account.manage` | Đổi `status` theo `version`, nhật ký `update`, `operation` `lock`/`unlock`, nhãn "Họ tên (email)" (`before.status`, `after.status`) |
+| `POST /invitations` | `identity.account.manage` | Tạo link `<PUBLIC_WEB_URL>/tham-gia#<token>` (token `invite`, 72 giờ, `jti` = id lời mời, `cid` = công ty), nhật ký `create` trên `staff.invitations`, nhãn "Link mời vai <vai> (tạo dd/MM HH:mm)", `after.roles` là tên vai |
 | `GET /invitations` | `identity.account.view` | Trang `Invitation`, `status` mặc định `pending`; nhiều trạng thái cách nhau dấu phẩy (`open,claimed`: tab "Link đã tạo") |
-| `POST /invitations/:id/approve`, `/reject` | `identity.account.manage` | Duyệt: tạo tài khoản (email mới) hoặc dùng tài khoản đã có, thêm membership, vai trò, nhật ký `create` trên `staff.memberships`. Từ chối: nhật ký `update` trên `staff.invitations`. Cả hai phát `staff.invitation_decided` (thư báo kết quả) |
-| `POST /invitations/:id/revoke` | `identity.account.manage` | Huỷ link `open`, `claimed` (kể cả quá hạn) theo `version`: `revoked`, ghi `decided_by`, `decided_at`, xoá OTP, nhật ký `update`. Không còn `open`/`claimed` hay lệch version: 409 `version_conflict` kèm `current` |
+| `POST /invitations/:id/approve`, `/reject` | `identity.account.manage` | Duyệt: tạo tài khoản (email mới) hoặc dùng tài khoản đã có, thêm membership, vai trò, nhật ký `create` trên `staff.memberships` (`operation` `join`, `after { fullName, email, roles }` tên vai). Từ chối: nhật ký `update` trên `staff.invitations` (`operation` `reject`). Cả hai phát `staff.invitation_decided` (thư báo kết quả) |
+| `POST /invitations/:id/revoke` | `identity.account.manage` | Huỷ link `open`, `claimed` (kể cả quá hạn) theo `version`: `revoked`, ghi `decided_by`, `decided_at`, xoá OTP, nhật ký `update` (`operation` `revoke`). Không còn `open`/`claimed` hay lệch version: 409 `version_conflict` kèm `current` |
 | `POST /join/check`, `/join/otp`, `/join/verify`, `/join/complete` | Công khai, rate limit (`api/join-limits.ts`) | Người được mời: mở link, xin mã (202, worker gửi thư), nhập mã (`registrationToken` 30 phút, `next`), nộp (`pending`) |
 
 ## Luồng mời (#7 [C], `service/invitations.ts`, `service/join.ts`)
@@ -43,7 +43,7 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 - `accountId` sai dạng, của công ty khác hay không tồn tại: 404 `not_found` (C4, V6).
 - Không log email, họ tên; log dùng id.
 - `/join/*` không trả 401 (FE coi 401 là hết phiên): lỗi là 409, 410, 422 hoặc 429.
-- Lời mời: không log, không trả mã OTP, token link, token đăng ký, mật khẩu băm; nhật ký chỉ ghi id.
+- Lời mời: không log, không trả mã OTP, token link, token đăng ký, mật khẩu băm. Nhãn nhật ký (#352) có họ tên, email chỉ khi lời mời đã qua OTP (`claimed` trở đi); huỷ link `open` thì nhãn chỉ có vai và giờ tạo, không ghi email người cầm link tự gõ.
 
 ## Cho module khác (`index.ts`)
 

@@ -290,7 +290,8 @@ export async function revokeInvitation(
       operation: 'revoke',
       entityType: ENTITY,
       entityId: row.id,
-      label: invitationLabel(invitation),
+      // Huỷ lúc còn `open`: email, họ tên chưa qua OTP (người cầm link tự gõ), không ghi vào nhãn (Documents/21 mục 3.1).
+      label: invitationLabel(row.status === 'open' ? { ...invitation, email: null, fullName: null } : invitation),
       before: { status: row.status },
       after: { status: 'revoked' },
     });

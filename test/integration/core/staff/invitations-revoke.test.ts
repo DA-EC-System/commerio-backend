@@ -113,6 +113,17 @@ describe('POST /invitations/:id/revoke', () => {
     expect(otp.body.code).toBe('invitation_invalid');
   });
 
+  it('#352: link open đã xin mã nhưng chưa qua OTP → huỷ, nhãn nhật ký không lộ email, họ tên người cầm link tự gõ', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    expect((await join.otp(link.token, uniqueEmail('chua-xac-minh'), 'Người Tự Gõ')).status).toBe(202);
+    const row = await rowOf(link.id);
+    expect(row.status).toBe('open');
+    expect((await ceo.revoke(link.id, row.version as number)).status).toBe(200);
+    expect((await auditOf(link.id)).rows).toMatchObject([
+      { operation: 'revoke', label: `Link mời vai Sale (tạo ${vnShortDateTime(row.created_at as Date)})` },
+    ]);
+  });
+
   it('AC 5 / US-CT-06 AC 8: huỷ link claimed → nhập mã, nộp đều 410 invitation_invalid; mã OTP bị xoá', async () => {
     const link = await newLink(app, company.ceo.token, [SALE]);
     const email = uniqueEmail('bi-huy');
