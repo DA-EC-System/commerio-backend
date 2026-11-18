@@ -30,7 +30,7 @@ describe('GET /audit/logs', () => {
       action: 'update',
       entityType: 'core.company_modules',
       entityId: null,
-      entityLabel: 'inbox',
+      entityLabel: 'Hộp thư chung',
       actor: { email: ceo.email },
       createdAt: expect.any(String),
     });

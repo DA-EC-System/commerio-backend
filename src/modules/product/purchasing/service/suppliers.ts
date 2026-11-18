@@ -68,6 +68,7 @@ export async function createSupplier(actor: Actor, input: SupplierInput) {
       action: 'create',
       entityType: ENTITY,
       entityId: row.id,
+      label: row.name,
       before: null,
       after: values(input),
     });
@@ -89,6 +90,7 @@ export async function updateSupplier(actor: Actor, id: string, input: SupplierIn
       action: 'update',
       entityType: ENTITY,
       entityId: id,
+      label: row.name,
       before: { name: before.name, phone: before.phone, email: before.email, address: before.address, note: before.note, active: before.active },
       after: values(input),
     });

@@ -54,6 +54,7 @@ export async function reportLost(
       action: 'update',
       entityType: 'order.packages',
       entityId: pkg.id,
+      label: pkg.code,
       after: { code: pkg.code, lostReported: true, claimCode: input.claimCode },
     });
     return getPackage(ctx, id);

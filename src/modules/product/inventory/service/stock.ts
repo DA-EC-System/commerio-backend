@@ -178,6 +178,7 @@ export async function setReorderRule(
         action: level.minQty === null ? 'create' : input.minQty === null ? 'delete' : 'update',
         entityType: 'product.stock_levels.min_qty',
         entityId: variant.id,
+        label: `${variant.productName} · ${variant.sku}`,
         before: level.minQty === null ? null : { minQty: level.minQty },
         after: input.minQty === null ? null : { minQty: input.minQty },
       });
@@ -211,7 +212,8 @@ export async function minQtyOf(variantIds: readonly string[]): Promise<Map<strin
 export async function applyReorderRule(
   actor: { companyId: string; accountId: string },
   variantId: string,
-  input: { minQty: number | null; version: number },
+  /** `label`: nhãn nhật ký "<tên SP> · <SKU>" bên gọi đã có (#352), không đọc lại mỗi dòng. */
+  input: { minQty: number | null; version: number; label: string },
 ): Promise<'unchanged' | 'updated' | 'stale'> {
   const level = await lockLevel(variantId);
   if ((level.created ? 0 : level.version) !== input.version) return 'stale';
@@ -223,6 +225,7 @@ export async function applyReorderRule(
     action: level.minQty === null ? 'create' : input.minQty === null ? 'delete' : 'update',
     entityType: 'product.stock_levels.min_qty',
     entityId: variantId,
+    label: input.label,
     before: level.minQty === null ? null : { minQty: level.minQty },
     after: input.minQty === null ? null : { minQty: input.minQty },
   });

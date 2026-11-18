@@ -224,7 +224,7 @@ export function createSupplierReturn(actor: Actor, input: SupplierReturnInput) {
     await insertReturnLines(actor.companyId, id, lines);
     await recordTransition({ entityType: RETURN_ENTITY, entityId: id, from: null, to: 'draft', action: 'create', actorId: actor.accountId });
     const row = (await findReturn(id))!;
-    await recordAudit({ companyId: actor.companyId, actorId: actor.accountId, action: 'create', entityType: AUDIT_ENTITY, entityId: id, after: snapshot(row, lines.length) });
+    await recordAudit({ companyId: actor.companyId, actorId: actor.accountId, action: 'create', entityType: AUDIT_ENTITY, entityId: id, label: row.number, after: snapshot(row, lines.length) });
     return detail(row, actor);
   });
 }
@@ -245,6 +245,7 @@ export function updateSupplierReturn(actor: Actor, id: string, input: SupplierRe
       action: 'update',
       entityType: AUDIT_ENTITY,
       entityId: row.id,
+      label: row.number,
       before: snapshot(row, 0),
       after: snapshot(updated, lines.length),
     });

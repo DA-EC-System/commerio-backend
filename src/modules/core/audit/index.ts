@@ -17,7 +17,7 @@ export interface AuditEntry {
   entityType: string;
   entityId: string | null;
   /** Tên người đọc được của đối tượng lúc ghi: "Họ tên (email)", số chứng từ, tên gian hàng… (#352). */
-  label?: string;
+  label: string;
   /** Mã thao tác cụ thể khi `action` chưa nói đủ: `lock`, `change_roles`, mã thao tác máy trạng thái… FE dịch ra chữ. */
   operation?: string;
   before?: unknown;
@@ -28,5 +28,5 @@ export interface AuditEntry {
 export async function recordAudit({ label, ...entry }: AuditEntry): Promise<void> {
   await getDb()
     .insert(auditLogs)
-    .values({ ...entry, entityLabel: label ?? null, before: entry.before ?? null, after: entry.after ?? null });
+    .values({ ...entry, entityLabel: label, before: entry.before ?? null, after: entry.after ?? null });
 }

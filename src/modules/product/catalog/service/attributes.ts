@@ -56,7 +56,7 @@ export async function createAttribute(caller: Caller, input: AttributeInput): Pr
     if (await attributeNameExists(input.name)) throw taken();
     const id = await insertAttribute(caller.companyId, input.name);
     await insertValues(caller.companyId, id, input.values);
-    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: snapshot(input) });
+    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), label: input.name, after: snapshot(input) });
     return findAttribute(id);
   }).catch(race);
 }
@@ -91,7 +91,7 @@ export async function updateAttribute(caller: Caller, id: string, input: Attribu
     for (const v of changed) await updateValue(v.id, v.value, v.code);
     await insertValues(caller.companyId, id, input.values.filter((v) => v.id === undefined));
 
-    await recordAudit({ ...auditOf(caller, 'update', ENTITY, id), before: snapshot(attribute), after: snapshot(input) });
+    await recordAudit({ ...auditOf(caller, 'update', ENTITY, id), label: input.name, before: snapshot(attribute), after: snapshot(input) });
     return findAttribute(id);
   }).catch(race);
 }
@@ -104,7 +104,7 @@ export async function deleteAttribute(caller: Caller, id: string, version: numbe
       throw inUse(`Không xoá được thuộc tính ${attribute.name} vì có ${attribute.productCount} sản phẩm đang dùng`);
     }
     if (!(await deleteAttributeIfVersion(id, version))) await lostRace(id);
-    await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), before: snapshot(attribute) });
+    await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), label: attribute.name, before: snapshot(attribute) });
   }).catch(race);
 }
 
