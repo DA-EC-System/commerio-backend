@@ -15,6 +15,7 @@ import {
   type OrderFlag,
   type OrderStage,
   type PaymentStatus,
+  type ReturnPolicy,
   returnWindowEndsAt,
   stageOf,
 } from '../domain/order.ts';
@@ -52,6 +53,8 @@ export interface SalesContext extends ModuleContext {
   readonly marketplaceReturns?: MarketplaceReturns;
   /** Trạng thái thanh toán theo sổ tiền của finance (#234); đơn finance chưa có dòng là `none`. */
   readonly paymentStatusOf?: (orderIds: readonly string[]) => Promise<Map<string, PaymentStatus>>;
+  /** Chính sách hạn trả của gian hàng (#236); gian hàng không thấy thì vắng, sales điền mặc định 7 ngày. */
+  readonly returnPoliciesOf?: (shopIds: readonly string[]) => Promise<Map<string, ReturnPolicy>>;
 }
 
 const toInt = (money: string | null) => (money === null ? 0 : new Decimal(money).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber());

@@ -10,3 +10,12 @@ export async function findShops(ids: readonly string[]) {
     .from(shops)
     .where(inArray(shops.id, [...ids]));
 }
+
+/** Sàn và số ngày hạn trả của các gian hàng (#236), mọi trạng thái; một câu cho cả lô. */
+export async function findShopReturnSettings(ids: readonly string[]) {
+  if (ids.length === 0) return [];
+  return getDb()
+    .select({ id: shops.id, platform: shops.platform, returnWindowDays: shops.returnWindowDays })
+    .from(shops)
+    .where(inArray(shops.id, [...ids]));
+}
