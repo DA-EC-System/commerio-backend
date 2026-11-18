@@ -462,3 +462,80 @@ describe('báo cáo thất lạc của kiện ở chi tiết đơn (#238 §5.3)'
     expect(lostReport).toMatchObject({ by: { id: kho.accountId, name: 'Nhân Viên Thử' }, claimCode: 'KN-001' });
   });
 });
+
+describe('hạn trả theo gian hàng (#236)', () => {
+  const DAY = 86_400_000;
+  let co: Awaited<ReturnType<typeof createCompany>>;
+  let shop15: string;
+
+  beforeAll(async () => {
+    co = await createCompany({ optionalModules: ['channel'] });
+    const r = await testPool().query<{ id: string }>(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at, return_window_days)
+       values ($1, 'lazada', $2, 'Shop 15 ngày', 'active', now(), 15) returning id`,
+      [co.companyId, `s-${randomUUID().slice(0, 8)}`],
+    );
+    shop15 = r.rows[0]!.id;
+  });
+
+  /** Đơn một kiện đã giao `daysAgo` ngày trước (theo giờ thật: chi tiết đơn tính theo `Date.now()`). */
+  async function deliveredOrder(daysAgo: number): Promise<{ orderId: string; deliveredAt: Date }> {
+    const tag = randomUUID().slice(0, 8);
+    const { orderId } = await withCompany(co.companyId, () =>
+      ingestMarketplaceOrder(order(`R-${tag}`, [{ variantId: null, status: 'delivered', pkg: `FP-R-${tag}` }], { shopId: shop15 })),
+    );
+    const deliveredAt = new Date(Date.now() - daysAgo * DAY);
+    await testPool().query(`update "order".packages set delivered_at = $2 where order_id = $1`, [orderId, deliveredAt]);
+    return { orderId, deliveredAt };
+  }
+  const detail = async (id: string) => {
+    const res = await get(`/orders/${id}`, co.ceo.token);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return Order.parse(res.body);
+  };
+
+  it('AC1: gian hàng 15 ngày, giao 8 ngày trước → chờ hạn trả, hạn = mốc giao + 15 ngày', async () => {
+    const { orderId, deliveredAt } = await deliveredOrder(8);
+
+    const body = await detail(orderId);
+
+    expect(body.completionBlocker).toBe('return_window');
+    expect(body.returnWindowEndsAt).toBe(new Date(deliveredAt.getTime() + 15 * DAY).toISOString());
+  });
+
+  it('AC7 (US-DH-16 2): qua hạn trả mà còn yêu cầu trả requested → return_requested', async () => {
+    const { orderId } = await deliveredOrder(16);
+    await testPool().query(
+      `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, reason)
+       values ($1, $2, $3, 'marketplace', $4, $5, 'Khách đổi ý')`,
+      [co.companyId, `TR-${randomUUID().slice(0, 8)}`, orderId, shop15, randomUUID()],
+    );
+
+    expect((await detail(orderId)).completionBlocker).toBe('return_requested');
+  });
+
+  it('AC8: qua hạn trả, kiện tự giao thu COD chưa xác nhận → cod_unconfirmed', async () => {
+    const { orderId } = await deliveredOrder(16);
+    await testPool().query(
+      `update "order".packages set self_delivery = true, cod_expected = 100000, delivered_by = $2 where order_id = $1`,
+      [orderId, randomUUID()],
+    );
+
+    expect((await detail(orderId)).completionBlocker).toBe('cod_unconfirmed');
+  });
+
+  it('AC10: đơn đã hoàn tất trả hạn đã lưu, không tính lại khi gian hàng đổi số ngày', async () => {
+    const { orderId } = await deliveredOrder(20);
+    const stored = new Date(Date.now() - 5 * DAY);
+    await testPool().query(
+      `update "order".orders set status = 'completed', outcome = 'full', completed_at = now(), return_window_ends_at = $2 where id = $1`,
+      [orderId, stored],
+    );
+    await testPool().query('update channel.shops set return_window_days = 30 where id = $1', [shop15]);
+
+    const body = await detail(orderId);
+
+    expect(body.returnWindowEndsAt).toBe(stored.toISOString());
+    expect(body.completionBlocker).toBeNull();
+  });
+});

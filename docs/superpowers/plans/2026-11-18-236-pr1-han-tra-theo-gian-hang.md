@@ -193,16 +193,16 @@ it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
 - Consumes: Task 1, Task 3 (`returnPoliciesFor`, `policyOf`).
 - Produces: `Order.returnWindowEndsAt`: đơn `completed`/`cancelled` → cột đã lưu; `processing` → `returnWindowEndsAt(policy, lastDeliveredAt, cột)`; `unpaid` → `null`. `Order.completionBlocker` từ `completionBlocker` với `codUnconfirmed(f.packages)`.
 
-- [ ] **Step 1: Viết test thất bại** — trong `orders-api.test.ts` thêm `describe('hạn trả theo gian hàng (#236)')`, công ty và gian hàng Lazada `return_window_days = 15` riêng:
+- [x] **Step 1: Viết test thất bại** — trong `orders-api.test.ts` thêm `describe('hạn trả theo gian hàng (#236)')`, công ty và gian hàng Lazada `return_window_days = 15` riêng:
   - AC1: đơn giao 8 ngày trước → `GET /api/v1/sales/orders/:id`: `completionBlocker: 'return_window'`, `returnWindowEndsAt` = mốc giao + 15 ngày (ISO).
   - AC7 (US-DH-16 2): đơn giao 16 ngày trước có yêu cầu trả `requested` (chèn như `complete.test.ts`) → `completionBlocker: 'return_requested'`.
   - AC8: đơn giao 16 ngày trước, kiện tự giao COD chưa xác nhận (như Task 3) → `completionBlocker: 'cod_unconfirmed'`.
   - AC10: đơn đã `completed` với `return_window_ends_at` = X (đặt bằng `testPool()`), rồi đổi `return_window_days` sang 30 → `returnWindowEndsAt` vẫn X, `completionBlocker: null`.
   - Mọi phản hồi qua `Order.parse` / `OrderSummaryPage.parse` như các ca hiện có. AC11c (object `shop` không thêm trường) không viết test riêng: Task 2 không đổi `getShops`, và job `blackbox` của CI kiểm "không trường thừa" bằng `expectContract`.
-- [ ] **Step 2: Chạy, thấy đỏ** — `npx vitest run --project integration test/integration/order/sales/orders-api.test.ts` → FAIL (AC1 ra +7 ngày, AC8 ra `null`, AC10 ra hạn tính lại).
-- [ ] **Step 3: Viết** — `getOrder` gọi `returnPoliciesFor(ctx, [o.shopId])` song song với `shopsOf`; tính `last = lastDeliveredAt(f.packages)`; trả hạn và lý do theo Interfaces; bỏ import `RETURN_WINDOW_DAYS`. Mô tả schema: `'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); đơn đã hoàn tất là hạn đã lưu'`.
-- [ ] **Step 4: Chạy lại, thấy xanh** — cùng lệnh → PASS.
-- [ ] **Step 5: Commit** — `feat(sales): chi tiết đơn trả hạn trả theo gian hàng, lý do chờ COD (#236)`.
+- [x] **Step 2: Chạy, thấy đỏ** — `npx vitest run --project integration test/integration/order/sales/orders-api.test.ts` → FAIL (AC1 ra +7 ngày, AC8 ra `null`, AC10 ra hạn tính lại).
+- [x] **Step 3: Viết** — `getOrder` gọi `returnPoliciesFor(ctx, [o.shopId])` song song với `shopsOf`; tính `last = lastDeliveredAt(f.packages)`; trả hạn và lý do theo Interfaces; bỏ import `RETURN_WINDOW_DAYS`. Mô tả schema: `'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); đơn đã hoàn tất là hạn đã lưu'`.
+- [x] **Step 4: Chạy lại, thấy xanh** — cùng lệnh → PASS.
+- [x] **Step 5: Commit** — `feat(sales): chi tiết đơn trả hạn trả theo gian hàng, lý do chờ COD (#236)`.
 
 ### Task 5: CLAUDE.md, kiểm toàn bộ
 
