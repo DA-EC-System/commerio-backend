@@ -1,5 +1,4 @@
 // Sàn chia lại kiện (#238 PR 3, spec §5.6, D22, D23, D29): đồng bộ kiện của đơn sàn khi danh sách kiện của sàn khác app.
-import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { awaitingStocktakeShops } from '#src/modules/channel/index.ts';
@@ -9,78 +8,25 @@ import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.
 import type { PlatformOrder } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testApp } from '../../helpers/http.ts';
-import { createVariant } from '../../helpers/catalog.ts';
-import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { receive } from '../../product/inventory/helpers.ts';
 import { packageDocuments, packageRow, splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
-import { ingest, remote, withCancel, withLineCancelled, withStatus, type LineStatus } from './platform-fixtures.ts';
+import { ingest, remote, withCancel, withLineCancelled, withStatus } from './platform-fixtures.ts';
+import {
+  external,
+  historyCount,
+  itemStatuses,
+  lineRows,
+  orderFlag,
+  packagesOf,
+  packedSplit,
+  relabeled,
+  setup,
+  tag,
+  unpacked,
+} from './resplit-fixtures.ts';
 
 afterEach(() => setStockPort());
 
-const tag = () => randomUUID().slice(0, 8);
-
-async function setup(stock: number) {
-  const company = await createCompany();
-  const { variantId, sku } = await createVariant(company.companyId);
-  if (stock > 0) await receive(company.companyId, variantId, stock, 100000);
-  return { companyId: company.companyId, token: company.ceo.token, variantId, sku };
-}
-
-/** Mã kiện sàn của từng món (`codes[i]` cho món thứ i). */
-const relabeled = (o: PlatformOrder, codes: readonly (string | null)[]): PlatformOrder => ({
-  ...o,
-  lines: o.lines.map((l, i) => ({ ...l, packageCode: codes[i] ?? null })),
-});
-const unpacked = (o: PlatformOrder) => relabeled(o, o.lines.map(() => null));
-
-interface Row {
-  id: string;
-  code: string;
-  status: string;
-  platformCode: string | null;
-  replaces: string | null;
-  version: number;
-  needsAttention: boolean;
-  flagNote: string | null;
-  needsOpen: boolean;
-  openPurpose: string | null;
-  items: string[];
-}
-
-/** Kiện của đơn theo mã app, kèm món (`external_line_id`) theo thứ tự dòng. */
-async function packagesOf(orderId: string): Promise<Row[]> {
-  const { rows } = await testPool().query<Row>(
-    `select p.id, p.code, p.status, p.platform_package_code as "platformCode", p.replaces_package_id as "replaces", p.version,
-            p.needs_attention as "needsAttention", p.flag_note as "flagNote", p.needs_open as "needsOpen", p.open_purpose as "openPurpose",
-            coalesce(array_agg(ol.external_line_id order by ol.external_line_id) filter (where ol.id is not null), '{}') as items
-       from "order".packages p
-       left join "order".package_lines pl on pl.package_id = p.id
-       left join "order".order_lines ol on ol.id = pl.order_line_id
-      where p.order_id = $1 group by p.id order by p.code`,
-    [orderId],
-  );
-  return rows;
-}
-
-async function orderFlag(orderId: string) {
-  const { rows } = await testPool().query<{ needs_attention: boolean; attention_note: string | null }>(
-    'select needs_attention, attention_note from "order".orders where id = $1',
-    [orderId],
-  );
-  return rows[0]!;
-}
-
-async function historyCount(orderId: string) {
-  const { rows } = await testPool().query<{ n: number }>(
-    `select count(*)::int as n from core.state_transitions where entity_type = 'packages'
-       and entity_id in (select id from "order".packages where order_id = $1)`,
-    [orderId],
-  );
-  return rows[0]!.n;
-}
-
-const external = (o: PlatformOrder, i: number) => o.lines[i]!.externalLineId;
 const NO_FLAG = { needs_attention: false, attention_note: null };
 const UNHANDLED = 'Sàn chia lại kiện, app chưa tự xử lý được';
 
@@ -349,38 +295,6 @@ describe('sàn chia lại kiện chưa đóng (#238 §5.6)', () => {
     expect(Package.parse(oldRes.body).replaces).toBeNull();
   });
 });
-
-/** Trạng thái riêng từng món (`statuses[i]` cho món i). */
-const itemStatuses = (o: PlatformOrder, statuses: readonly LineStatus[]): PlatformOrder => ({
-  ...o,
-  lines: o.lines.map((l, i) => ({ ...l, status: statuses[i]!, rawStatus: statuses[i]! })),
-});
-
-/** Dòng của kiện theo món: số đang giữ, số chờ bỏ. */
-async function lineRows(packageId: string) {
-  const { rows } = await testPool().query<{ item: string; reserved: number; drop: number }>(
-    `select ol.external_line_id as item, pl.reserved_qty as reserved, pl.pending_drop_qty as drop
-       from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
-      where pl.package_id = $1 order by ol.external_line_id`,
-    [packageId],
-  );
-  return rows;
-}
-
-/**
- * AC15: kiện `packed` 2 món chia thành 2 mã mới. Sàn chia lại kiện đã đóng thì món về chờ đóng gói (`pending`): kiện mới
- * nằm ở `backordered` chờ kho mở kiện cũ (sàn báo `packed` thì vòng áp trạng thái nhảy cóc như kiện đã có, D23).
- */
-async function packedSplit(stock = 10) {
-  const v = await setup(stock);
-  const o = remote(v, { lines: 2, status: 'packed' });
-  const { orderId, packageId } = await ingest(v.companyId, o);
-  const next = withStatus(relabeled(o, [`FP-A-${tag()}`, `FP-B-${tag()}`]), 'pending');
-  await ingest(v.companyId, next);
-  const rows = await packagesOf(orderId);
-  const fresh = (i: number) => rows.find((r) => r.replaces === packageId && r.items.includes(external(o, i)))!;
-  return { v, o, orderId, packageId, next, a: fresh(0), b: fresh(1) };
-}
 
 const allocate = (companyId: string, variantId: string) =>
   withCompany(companyId, () => runAllocation({ stockHoldOf: awaitingStocktakeShops }, { variantIds: [variantId] }));

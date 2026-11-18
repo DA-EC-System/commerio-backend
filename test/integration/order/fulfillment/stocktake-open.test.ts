@@ -402,17 +402,16 @@ describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mụ
     expect(await allocationJobs(v.variantId)).toEqual([[v.variantId]]);
   });
 
-  it('kiện awaiting_pickup gắn cờ stocktake: open trả 409 invalid_transition (tới PR 3)', async () => {
+  it('kiện awaiting_pickup gắn cờ stocktake: mở được (#238 PR 3, D25), về reserved, gỡ cờ, không gọi repack, xếp lượt phân hàng', async () => {
     const p = await sealedHolder({ status: 'awaiting_pickup' });
     await stocktake(p.variants);
     expect((await packageRow(p.packageId)).open_purpose).toBe('stocktake');
-    const { version } = await packageRow(p.packageId);
 
     const res = await open(p.packageId);
 
-    expect(res.status, JSON.stringify(res.body)).toBe(409);
-    expect(res.body.type).toBe('/problems/invalid_transition');
-    expect(await packageRow(p.packageId)).toMatchObject({ status: 'awaiting_pickup', needs_open: true, open_purpose: 'stocktake', version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'reserved', needs_open: false, open_purpose: null });
+    expect(await allocationJobs(p.variants[0]!)).toEqual([p.variants]);
   });
 
   it('kiện gắn cờ stocktake rời nhóm đã đóng (bàn giao): cờ gỡ, không nằm mãi trong tab Cần mở', async () => {

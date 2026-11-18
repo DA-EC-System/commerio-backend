@@ -7,9 +7,10 @@ import { packageMachine, type PackageAction, type PackageStatus } from '../domai
 import { buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, type ScannedLine } from '../domain/packing.ts';
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
 import { clearPendingDrop, deleteLines } from '../repository/line-cancel.ts';
+import { takeAllocationLock } from '../repository/allocation.ts';
 import { markLinesReserved, packageShopOf, setReserved, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
-import { requestAllocation } from './allocation.ts';
+import { holdOrderReplacements, requestAllocation } from './allocation.ts';
 import {
   cancelledOrderSettlerOf, getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages,
 } from './packages.ts';
@@ -115,7 +116,8 @@ export async function packPackage(
         const orders = await orderRefsLookupOf(ctx)(others.map((member) => member.orderId));
         checkGroup(packGroupBlockers(others.map((member) => ({ ...member, orderStatus: orders.get(member.orderId)?.status ?? 'cancelled' }))));
       }
-      return pkg.shopId ? { shopId: pkg.shopId, items: await platformItemsOf(id) } : null;
+      // Kiện giữ vận đơn sau khi mở (spec #238 D25): sàn vẫn giữ gói, mã và vận đơn cũ; đóng gói lại không gọi sàn.
+      return pkg.shopId && !pkg.waybillKept ? { shopId: pkg.shopId, items: await platformItemsOf(id) } : null;
     });
 
     const result = target ? await marketplacePackagesOf(ctx).pack(companyId, target.shopId, {
@@ -135,7 +137,8 @@ export async function packPackage(
         }
         await updatePackage(id, {
           status: to, packedBy: actor.accountId, packedAt: new Date(), labelError: false,
-          carrierCode: result?.carrier?.code ?? null, carrierName: result?.carrier?.name ?? null,
+          // Giữ vận đơn: không ghi đè mã kiện sàn, vận đơn, ĐVVC (D25).
+          ...(!pkg.waybillKept && { carrierCode: result?.carrier?.code ?? null, carrierName: result?.carrier?.name ?? null }),
           ...(result && { platformPackageCode: result.packageCode }),
           ...(result?.trackingCode != null && { trackingCode: result.trackingCode }),
         });
@@ -169,10 +172,14 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
       const others = await otherGroupMembers(pkg);
       checkGroup(readyGroupBlockers(others));
       if (pkg.shopId && !pkg.platformPackageCode) throw new AppError(409, 'rts_package_not_found', 'Kiện chưa có mã kiện trên sàn');
-      return { shopId: pkg.shopId, code: pkg.platformPackageCode, ids: [pkg.id, ...others.map((member) => member.id)] };
+      return {
+        shopId: pkg.shopId, code: pkg.platformPackageCode, ids: [pkg.id, ...others.map((member) => member.id)], waybillKept: pkg.waybillKept,
+      };
     });
 
-    if (target.shopId && target.code) {
+    // Kiện giữ vận đơn sau khi mở (spec #238 D25): sàn đã có vận đơn cũ, chỉ chuyển `packed → awaiting_pickup` trong app
+    // (`updatePackage` tự tắt `waybill_kept`).
+    if (target.shopId && target.code && !target.waybillKept) {
       try {
         await marketplacePackagesOf(ctx).readyToShip(companyId, target.shopId, target.code);
       } catch (err) {
@@ -230,12 +237,17 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
       const awaitingStocktake = shop.shopId !== null && (await stockHoldLookupOf(ctx)([shop.shopId], { lock: true })).has(shop.shopId);
       const pkg = await readPackage(id, true);
       await checkVersion(ctx, pkg, input.version);
-      if (pkg.status === 'awaiting_pickup') {
-        throw new AppError(409, 'invalid_transition', 'Kiện đã báo sàn sẵn sàng giao: dỡ kiện về kệ qua việc của kho (#238)');
+      // Kiện đã báo sàn sẵn sàng giao chỉ mở khi có cờ Cần mở (dỡ kiện về kệ, spec #238 §5.6, D25).
+      if (pkg.status === 'awaiting_pickup' && !pkg.needsOpen) {
+        throw new AppError(409, 'invalid_transition', 'Kiện đã báo sàn sẵn sàng giao, không có việc dỡ kiện về kệ');
       }
+      // Giữ vận đơn (D25): kiện `awaiting_pickup` hay đã giữ vận đơn từ lần mở trước. Không gọi `repack` khi giữ vận đơn,
+      // hoặc mở để chia lại (sàn đã tự chia lại, D24).
+      const keepWaybill = pkg.status === 'awaiting_pickup' || pkg.waybillKept;
+      const plan = { purpose: pkg.openPurpose, keepWaybill, noRepack: keepWaybill || pkg.openPurpose === 'resplit' };
       if (allPendingDrop(pkg)) {
         await transition(ctx, actor, pkg, 'open_cancel');
-        return { shopId: null, code: null, version: pkg.version, cancel: true };
+        return { shopId: null, code: null, version: pkg.version, cancel: true, ...plan };
       }
       await transition(ctx, actor, pkg, 'open');
 
@@ -250,16 +262,22 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         const variantIds = [...new Set(pkg.lines.flatMap((line) => line.variantId ? [line.variantId] : []))].sort();
         await publishEvent({ type: 'fulfillment.allocation_done', aggregateId: companyId, payload: { variantIds } });
       }
-      return { shopId: pkg.shopId, code: pkg.platformPackageCode, version: pkg.version + Number(missing.length > 0), cancel: false };
+      return {
+        shopId: pkg.shopId, code: pkg.platformPackageCode, version: pkg.version + Number(missing.length > 0), cancel: false, ...plan,
+      };
     });
 
-    // Sàn đã huỷ gói khi mọi món bị huỷ: gọi đóng gói lại chỉ nhận lỗi (D21).
-    const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = !target.cancel && target.shopId && target.code
+    // Sàn đã huỷ gói khi mọi món bị huỷ: gọi đóng gói lại chỉ nhận lỗi (D21). Giữ vận đơn hay mở để chia lại: không gọi.
+    const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = !target.cancel && !target.noRepack && target.shopId && target.code
       ? await marketplacePackagesOf(ctx).repack(companyId, target.shopId, target.code)
       : null;
     let written: { detail: PackageDetail; cancelledOrderId: string | null };
     try {
       written = await withCompany(companyId, async () => {
+        // Mở để chia lại (D26): khoá advisory phân hàng trước khi khoá kiện (thứ tự khoá §5.10) để giữ ngay cho kiện thay.
+        // `version` không đổi từ bước kiểm nên mục đích không đổi; lệch thì `version_conflict`.
+        const resplit = target.purpose === 'resplit';
+        if (resplit) await takeAllocationLock(companyId);
         const pkg = await readPackage(id, true);
         await checkVersion(ctx, pkg, target.version);
         if (target.cancel) {
@@ -271,26 +289,34 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
           await setLinesPacked(id, false);
           await updatePackage(id, { status: to, needsOpen: false, openPurpose: null, packedBy: null, packedAt: null, labelError: false });
           await recordPacking(pkg, to, 'open_cancel', actor.accountId);
+          if (resplit) await holdOrderReplacements(ctx, pkg.orderId, released);
           await requestAllocation(released);
-          return { detail: await getPackage(ctx, id), cancelledOrderId: pkg.orderId };
+          // Mở để chia lại: đơn không huỷ, không khép.
+          return { detail: await getPackage(ctx, id), cancelledOrderId: resplit ? null : pkg.orderId };
         }
         const { to } = await transition(ctx, actor, pkg, 'open');
-        // Kiện chờ mở vì kiểm kê (spec #238 §5.5): mở xong là hết việc, gỡ cờ cùng câu với trạng thái (CHECK `packages_open`).
-        // Kiện chờ mở để bỏ dòng chờ bỏ (spec 205 §5.10) cũng hết việc khi các dòng đó đã xoá.
+        // Kiện chờ mở vì kiểm kê (spec #238 §5.5) hay để chia lại: mở xong là hết việc, gỡ cờ cùng câu với trạng thái (CHECK
+        // `packages_open`). Kiện chờ mở để bỏ dòng chờ bỏ (spec 205 §5.10) cũng hết việc khi các dòng đó đã xoá.
         const stocktake = pkg.openPurpose === 'stocktake';
         const dropped = pkg.lines.filter((line) => line.pendingDropQty > 0);
         const released = await releaseLines(id, dropped);
         await deleteLines(dropped.map((line) => line.id));
         await updatePackage(id, {
           status: to, packedBy: null, packedAt: null, labelError: false,
-          ...((stocktake || dropped.length > 0) && { needsOpen: false, openPurpose: null }),
+          ...((stocktake || resplit || dropped.length > 0) && { needsOpen: false, openPurpose: null }),
           ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
+          // Giữ mã kiện sàn, vận đơn, ĐVVC (D25): đóng gói, báo sẵn sàng lại không gọi sàn.
+          ...(target.keepWaybill && pkg.platformPackageCode !== null && pkg.trackingCode !== null && { waybillKept: true }),
         });
         await setLinesPacked(id, false);
         await recordPacking(pkg, to, 'open', actor.accountId);
-        // Kiện `stocktake` về `reserved` vẫn giữ hàng: lượt phân hàng sau commit lấy lại phần giữ nếu tồn thực vẫn nhỏ hơn
-        // đang giữ (kiện về `backordered`), không thì kiện ở lại `reserved`. Cộng SKU vừa nhả của dòng chờ bỏ.
-        const kept = stocktake ? pkg.lines.flatMap((line) => (line.variantId && line.pendingDropQty === 0 ? [line.variantId] : [])) : [];
+        if (resplit) await holdOrderReplacements(ctx, pkg.orderId, released);
+        // Kiện `stocktake`, `resplit` về `reserved` vẫn giữ hàng: lượt phân hàng sau commit lấy lại phần giữ nếu tồn thực
+        // vẫn nhỏ hơn đang giữ (kiện về `backordered`), không thì kiện ở lại `reserved` (D24). Cộng SKU vừa nhả của dòng
+        // chờ bỏ (phần dư sau khi kiện thay đã giữ).
+        const kept = stocktake || resplit
+          ? pkg.lines.flatMap((line) => (line.variantId && line.pendingDropQty === 0 ? [line.variantId] : []))
+          : [];
         await requestAllocation([...released, ...kept]);
         return { detail: await getPackage(ctx, id), cancelledOrderId: null };
       });

@@ -100,6 +100,16 @@ function stocktakeFlagRules(patch: { status?: PackageStatus; needsOpen?: boolean
   };
 }
 
+/**
+ * Giữ vận đơn sau khi mở kiện `awaiting_pickup` (spec #238 D25) chỉ có nghĩa tới khi kiện báo sẵn sàng lại: kiện sang
+ * trạng thái ngoài `backordered`, `reserved`, `packed` mà bên gọi không ghi cột này thì tắt (CHECK `packages_waybill_kept`
+ * không đổi vì mã, vận đơn giữ nguyên).
+ */
+function waybillRules(patch: { status?: PackageStatus; waybillKept?: boolean }) {
+  if (patch.status === undefined || patch.waybillKept !== undefined) return {};
+  return patch.status === 'backordered' || patch.status === 'reserved' || patch.status === 'packed' ? {} : { waybillKept: false };
+}
+
 export async function updatePackage(
   id: string,
   patch: Partial<{
@@ -131,7 +141,14 @@ export async function updatePackage(
 ): Promise<void> {
   await getDb()
     .update(packages)
-    .set({ ...lostColumnRules(patch), ...stocktakeFlagRules(patch), ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
+    .set({
+      ...lostColumnRules(patch),
+      ...stocktakeFlagRules(patch),
+      ...waybillRules(patch),
+      ...patch,
+      version: sql`${packages.version} + 1`,
+      updatedAt: sql`now()`,
+    })
     .where(eq(packages.id, id));
 }
 
@@ -208,7 +225,7 @@ export async function packageShopOf(id: string): Promise<{ shopId: string | null
 }
 
 /** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
-export async function lockPackage(id: string): Promise<HandoverPackage | undefined> {
+export async function lockPackage(id: string): Promise<(Omit<HandoverPackage, 'lines'> & { lines: PackageLineRow[] }) | undefined> {
   const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
   if (!row) return undefined;
   return { ...row, lines: (await planLinesOf([row.id])).get(row.id)! };

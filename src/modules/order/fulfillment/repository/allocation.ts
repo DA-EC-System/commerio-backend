@@ -169,12 +169,20 @@ export async function allocationShops(variantIds: readonly string[]): Promise<st
   return rows.map((r) => r.shopId!);
 }
 
-/** Ứng viên giữ hàng có dòng thuộc `variantIds`, trừ kiện của `excludeShopIds`; khoá `FOR UPDATE`. */
+/** Kiện không có dòng biến thể nào (toàn dòng "không quản tồn", spec 237 D10): giữ không qua cổng tồn. */
+const noVariantLine = sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.variantId} is not null)`;
+
+/**
+ * Ứng viên giữ hàng có dòng thuộc `variantIds`, trừ kiện của `excludeShopIds`; khoá `FOR UPDATE`. `orderId`: chỉ kiện của
+ * đơn đó (kiện vừa hết chờ thay khi kho mở kiện cũ, spec #238 D26), gồm cả kiện toàn dòng "không quản tồn" của đơn (không
+ * còn gì để giữ, lượt theo SKU không bao giờ tìm thấy nó).
+ */
 export async function lockAllocationCandidates(
   variantIds: readonly string[],
   excludeShopIds: readonly string[] = [],
+  opts: { orderId?: string } = {},
 ): Promise<LockedAllocationCandidate[]> {
-  if (!variantIds.length) return [];
+  if (!variantIds.length && !opts.orderId) return [];
   const rows = await getDb()
     .select({
       id: packages.id,
@@ -193,7 +201,9 @@ export async function lockAllocationCandidates(
     .where(
       and(
         candidateWhere,
-        hasVariant(variantIds),
+        opts.orderId
+          ? and(eq(packages.orderId, opts.orderId), variantIds.length ? or(hasVariant(variantIds), noVariantLine) : noVariantLine)
+          : hasVariant(variantIds),
         excludeShopIds.length ? or(isNull(packages.shopId), notInArray(packages.shopId, [...excludeShopIds])) : undefined,
       ),
     )
