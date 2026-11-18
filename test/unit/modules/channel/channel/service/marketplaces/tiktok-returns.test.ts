@@ -379,3 +379,84 @@ describe('decideCancelRequest, cancelRequestRejectReasons', () => {
     });
   });
 });
+
+// Approve Return, Reject Return, Get Reject Reasons 202309 (OAS cục bộ của skill tts-openapi-guide, tra 19/11/2026; #364).
+describe('returnReasons, decideReturn, confirmReturnReceived', () => {
+  const RET = '4035318504086604999';
+  const approve = `POST /return_refund/202309/returns/${RET}/approve`;
+  const reject = `POST /return_refund/202309/returns/${RET}/reject`;
+  const reasons = 'GET /return_refund/202309/reject_reasons';
+
+  it.each([
+    ['accept', 'return', { decision: 'APPROVE_RETURN' }],
+    ['refund', 'return', { decision: 'APPROVE_RETURN', buyer_keep_item: true }],
+    ['refund', 'refund', { decision: 'APPROVE_REFUND' }],
+  ] as const)('%s yêu cầu loại %s → approve %j, có idempotency_key', async (decision, kind, body) => {
+    const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], decision, { kind });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.path).toBe(`/return_refund/202309/returns/${RET}/approve`);
+    expect(calls[0]!.body).toEqual(body);
+    expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-${body.decision}`);
+  });
+
+  it('thiếu kind coi như trả hàng: accept → APPROVE_RETURN', async () => {
+    const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
+    await adapter.decideReturn!(TOKEN, RET, [], 'accept', {});
+    expect(calls[0]!.body).toEqual({ decision: 'APPROVE_RETURN' });
+  });
+
+  it.each([
+    ['return', 'REJECT_RETURN', 'Người bán từ chối yêu cầu trả'],
+    ['refund', 'REJECT_REFUND', 'Người bán không đồng ý hoàn tiền'],
+  ] as const)('từ chối yêu cầu loại %s → reject %s kèm lý do, câu mặc định khi trống', async (kind, decision, fallback) => {
+    const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1' });
+    expect(calls[0]!.path).toBe(`/return_refund/202309/returns/${RET}/reject`);
+    expect(calls[0]!.body).toEqual({ decision, reject_reason: 'seller_reject_r1', comment: fallback });
+    expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-${decision}-seller_reject_r1`);
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1', comment: 'Hàng còn nguyên tem' });
+    expect((calls[1]!.body as { comment: string }).comment).toBe('Hàng còn nguyên tem');
+  });
+
+  it('từ chối thiếu lý do → reject_reason_required, không gọi sàn', async () => {
+    const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
+    await expect(adapter.decideReturn!(TOKEN, RET, [], 'reject', { kind: 'return' })).rejects.toMatchObject({ kind: 'rejected', platformCode: 'reject_reason_required' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('đồng ý trả hàng với yêu cầu chỉ hoàn tiền → refund_only_request, không gọi sàn', async () => {
+    const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
+    await expect(adapter.decideReturn!(TOKEN, RET, [], 'accept', { kind: 'refund' })).rejects.toMatchObject({ kind: 'rejected', platformCode: 'refund_only_request' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sàn trả code khác 0 → rejected giữ mã và câu của sàn', async () => {
+    const { adapter } = fakeSan({ [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }) });
+    await expect(adapter.decideReturn!(TOKEN, RET, [], 'accept', { kind: 'return' })).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: '25011011',
+      platformMessage: 'reverse status cannot approve',
+    });
+  });
+
+  it('confirmReturnReceived → approve APPROVE_RECEIVED_PACKAGE', async () => {
+    const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
+    await adapter.confirmReturnReceived!(TOKEN, RET, ['L1']);
+    expect(calls[0]!.body).toEqual({ decision: 'APPROVE_RECEIVED_PACKAGE' });
+    expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-APPROVE_RECEIVED_PACKAGE`);
+  });
+
+  it.each(['reject', 'refuse-refund'] as const)('returnReasons (%s): Get Reject Reasons vi-VN, bỏ lý do không có name', async (action) => {
+    const { adapter, calls } = fakeSan({
+      [reasons]: () =>
+        ok({ reasons: [{ name: 'seller_reject_r1', text: 'Hàng đã qua sử dụng' }, { name: 'seller_reject_r2' }, { text: 'không tên' }] }),
+    });
+    expect(await adapter.returnReasons!(TOKEN, RET, action)).toEqual([
+      { id: 'seller_reject_r1', label: 'Hàng đã qua sử dụng', requiresImage: false },
+      { id: 'seller_reject_r2', label: 'seller_reject_r2', requiresImage: false },
+    ]);
+    expect(calls[0]!.query.get('return_or_cancel_id')).toBe(RET);
+    expect(calls[0]!.query.get('locale')).toBe('vi-VN');
+  });
+});
