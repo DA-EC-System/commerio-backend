@@ -80,6 +80,9 @@ export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnA
   if (current === 'rejected' && target === 'closed') return null;
   // Đã nhận hàng hay đã đóng, sàn báo hoàn tiền xong: tiền đi theo kiểm hàng hoàn của app, không đổi trạng thái.
   if (target === 'refund_only' && (current === 'received' || current === 'closed')) return null;
+  // Kho đã quét nhận mà sàn còn báo hàng đang về (TikTok BUYER_SHIPPED_ITEM tới khi sàn ghi nhận người bán đã nhận, #364):
+  // app đi trước sàn là luồng thường (tich-hop-san/tiktok.md §2.3), không phải mâu thuẫn.
+  if (current === 'received' && target === 'awaiting_return') return null;
   return 'conflict';
 }
 

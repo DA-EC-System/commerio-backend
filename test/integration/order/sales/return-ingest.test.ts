@@ -202,6 +202,18 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(await requestOf(r.externalId)).toMatchObject({ kind: 'refund', status: 'requested' });
   });
 
+  it('kho đã quét nhận mà sàn còn báo hàng đang về (TikTok BUYER_SHIPPED_ITEM, TRA-B04): giữ received, không bật cờ', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'AWAITING_BUYER_SHIP', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    // Kho quét nhận (app đi trước sàn): đặt thẳng trạng thái như sau `receive`.
+    await db().query(`update "order".return_requests set status = 'received', received_at = now() where shop_id = $1 and external_return_id = $2`, [shopId, r.externalId]);
+    remote = [{ ...r, rawStatus: 'BUYER_SHIPPED_ITEM', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'received', needs_attention: false, attention_note: null, raw_marketplace_status: 'BUYER_SHIPPED_ITEM' });
+  });
+
   it('sàn báo trạng thái app không tới được: giữ trạng thái, bật Cần xử lý', async () => {
     const { externalOrderId } = await marketplaceOrder();
     const r = remoteReturn(externalOrderId, { rawStatus: 'REQUEST_REJECT', status: 'rejected' });
