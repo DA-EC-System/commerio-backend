@@ -4,7 +4,7 @@ import { requireCompanyId } from '../../../shared/db/client.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerAccessOpenApi } from './api/openapi.ts';
 import { accessRouter } from './api/routes.ts';
-import { BUILTIN_ROLES, permissionModule } from './domain/catalog.ts';
+import { BUILTIN_ROLES, type BuiltinRoleDef, permissionModule } from './domain/catalog.ts';
 import {
   insertMemberRole,
   memberRoleRows,
@@ -52,7 +52,9 @@ export interface RoleWithPermissions {
   permissions: string[];
 }
 
-const FREELY_ASSIGNABLE: readonly string[] = [BUILTIN_ROLES.sale.id, BUILTIN_ROLES.kho.id];
+const FREELY_ASSIGNABLE: readonly string[] = Object.values(BUILTIN_ROLES).flatMap((r: BuiltinRoleDef) =>
+  r.freelyAssignable ? [r.id] : [],
+);
 
 const withFlags = (r: { id: string; name: string; permissions: string[] }): RoleWithPermissions => ({
   ...r,

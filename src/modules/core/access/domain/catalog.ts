@@ -76,6 +76,8 @@ export { moduleOfPermission as permissionModule } from '../../../../shared/auth/
 export interface BuiltinRoleDef {
   readonly id: string;
   readonly name: string;
+  /** Người có `identity.account.manage` gán, gỡ vai này không so quyền (Documents/21 I5, #351). */
+  readonly freelyAssignable?: true;
   readonly permissions: readonly string[];
 }
 
@@ -183,6 +185,7 @@ export const BUILTIN_ROLES = {
   sale: {
     id: '00000000-0000-4000-8000-000000000003',
     name: 'Sale',
+    freelyAssignable: true,
     permissions: [
       'catalog.product.view',
       'pricing.pricelist.view',
@@ -202,6 +205,7 @@ export const BUILTIN_ROLES = {
   kho: {
     id: '00000000-0000-4000-8000-000000000004',
     name: 'Nhân viên kho',
+    freelyAssignable: true,
     permissions: [
       'catalog.product.view',
       'inventory.stock.view',

@@ -9,7 +9,7 @@ import { isUuid } from '../../../../shared/uuid.ts';
 import { findRolesWithPermissions, replaceMemberRoles, type RoleWithPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { publishEvent } from '../../platform/index.ts';
-import { type InvitationStatus, isLinkExpired, REVOCABLE } from '../domain/invitation-machine.ts';
+import { canTransition, type InvitationStatus, isLinkExpired } from '../domain/invitation-machine.ts';
 import { checkRoleGrant } from '../domain/member-rules.ts';
 import {
   findAccountByEmail,
@@ -121,13 +121,16 @@ async function views(rows: readonly InvitationRow[]): Promise<InvitationView[]> 
 
 const viewOf = async (row: InvitationRow) => (await views([row]))[0]!;
 
-/** Khoá dòng trước mọi bước (thứ tự khoá: lời mời → tài khoản → membership → vai trò). */
-async function lockPending(id: string, version: number): Promise<InvitationRow> {
+/**
+ * Khoá dòng trước mọi bước (thứ tự khoá: lời mời → tài khoản → membership → vai trò), rồi kiểm lời mời còn chuyển
+ * sang `to` được. Trạng thái trước version (#353): đã quyết định ở phiên khác thì báo trạng thái, không báo "vừa được
+ * cập nhật".
+ */
+async function lockInvitation(id: string, version: number, to: InvitationStatus): Promise<InvitationRow> {
   // `id` sai dạng coi như không có (V6).
   const row = isUuid(id) ? await findInvitation(id, { forUpdate: true }) : undefined;
   if (!row) throw notFound();
-  // Trạng thái trước version (#353): đã quyết định ở phiên khác thì báo trạng thái, không báo "vừa được cập nhật".
-  if (row.status !== 'pending') throw invalidTransition(await viewOf(row));
+  if (!canTransition(row.status, to)) throw invalidTransition(await viewOf(row));
   if (row.version !== version) throw conflict(await viewOf(row));
   return row;
 }
@@ -187,7 +190,7 @@ export async function approveInvitation(
   version: number,
 ): Promise<{ invitation: InvitationView; member: StaffMember }> {
   const result = await withCompany(caller.companyId, async () => {
-    const row = await lockPending(id, version);
+    const row = await lockInvitation(id, version, 'approved');
     const found = await findRolesWithPermissions(row.roleIds);
     if (found.length < new Set(row.roleIds).size) throw outdated();
     assertGrant(caller, row.roleIds, found);
@@ -242,7 +245,7 @@ export async function rejectInvitation(
   version: number,
 ): Promise<{ invitation: InvitationView }> {
   const result = await withCompany(caller.companyId, async () => {
-    const row = await lockPending(id, version);
+    const row = await lockInvitation(id, version, 'rejected');
     const decided = await decideInvitation(row.id, version, { status: 'rejected', decidedBy: caller.accountId });
     if (!decided) throw new Error(`rejectInvitation: không ghi được lời mời ${row.id}`);
     await recordAudit({
@@ -272,12 +275,10 @@ export async function revokeInvitation(
   version: number,
 ): Promise<{ invitation: InvitationView }> {
   const result = await withCompany(caller.companyId, async () => {
-    const row = isUuid(id) ? await findInvitation(id, { forUpdate: true }) : undefined;
-    if (!row) throw notFound();
-    if (!REVOCABLE.includes(row.status)) throw invalidTransition(await viewOf(row));
-    if (row.version !== version) throw conflict(await viewOf(row));
+    const row = await lockInvitation(id, version, 'revoked');
     const revoked = await revokeInvitationRow(row.id, version, caller.accountId);
-    if (!revoked) throw conflict(await viewOf(row));
+    // Đã giữ khoá dòng từ đầu nên câu ghi có điều kiện luôn trúng.
+    if (!revoked) throw new Error(`revokeInvitation: không ghi được lời mời ${row.id}`);
     await recordAudit({
       companyId: caller.companyId,
       actorId: caller.accountId,

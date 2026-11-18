@@ -2,19 +2,17 @@ import { describe, expect, it } from 'vitest';
 import type { RoleWithPermissions } from '#src/modules/core/access/index.ts';
 import { checkRoleGrant, isProtectedTarget } from '#src/modules/core/staff/domain/member-rules.ts';
 
-const role = (id: string, permissions: string[], isCeo = false, freelyAssignable = false): RoleWithPermissions => ({
-  id,
-  name: id,
-  isCeo,
-  freelyAssignable,
-  permissions,
-});
-const ceo = role('ceo', ['identity.account.manage', 'finance.invoice.view'], true);
+const role = (
+  id: string,
+  permissions: string[],
+  { isCeo = false, freelyAssignable = false }: { isCeo?: boolean; freelyAssignable?: boolean } = {},
+): RoleWithPermissions => ({ id, name: id, isCeo, freelyAssignable, permissions });
+const ceo = role('ceo', ['identity.account.manage', 'finance.invoice.view'], { isCeo: true });
 const sale = role('sale', ['sales.order.view']);
 const kho = role('kho', ['inventory.receipt.create']);
 // Vai có sẵn Sale, Nhân viên kho: gán không so quyền (Documents/21 I5, đổi 17/11/2026, #351).
-const builtinSale = role('builtin-sale', ['fulfillment.delivery.update'], false, true);
-const builtinKho = role('builtin-kho', ['inventory.receipt.create', 'purchasing.request.manage'], false, true);
+const builtinSale = role('builtin-sale', ['fulfillment.delivery.update'], { freelyAssignable: true });
+const builtinKho = role('builtin-kho', ['inventory.receipt.create', 'purchasing.request.manage'], { freelyAssignable: true });
 const adminRole = role('admin', ['identity.account.manage', 'platform.audit.view']);
 const adminPerms = ['identity.account.manage', 'sales.order.view'];
 
