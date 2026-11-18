@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialStates, type Mapping, mappingsFor, SCENARIOS } from '../../../../scripts/lazada-mock/stubs.ts';
+import { initialStates, type Mapping, mappingsFor, ORDER_ID, SCENARIOS } from '../../../../scripts/lazada-mock/stubs.ts';
 
 const pathOf = (m: Mapping) => (m.request.urlPath ?? m.request.urlPathPattern) as string;
 const body = (m: Mapping) => m.response.jsonBody as Record<string, unknown>;
@@ -10,7 +10,7 @@ describe('stub của sàn giả lập Lazada (#115)', () => {
   it.each(Object.entries(SCENARIOS))('%s: mỗi trạng thái đơn có đủ stub đọc đơn, món, hành trình', (_, s) => {
     const ms = mappingsFor(s);
     for (const state of s.order) {
-      for (const path of ['/orders/get', '/order/get', '/order/items/get', '/logistic/order/trace']) {
+      for (const path of ['/orders/get', '/order/get', '/order/items/get', '/orders/items/get', '/logistic/order/trace']) {
         expect(at(ms, path, 'don', state), `${path} @ ${state}`).toHaveLength(1);
       }
       const orders = body(at(ms, '/orders/get', 'don', state)[0]!).data as { orders: { statuses: string[] }[] };
@@ -20,6 +20,16 @@ describe('stub của sàn giả lập Lazada (#115)', () => {
   });
 
   // Kéo đơn bỏ đơn có `updated_at` không mới hơn bản đã lưu (#199): giờ cố định thì app không bao giờ thấy bước mới.
+  // Kéo đơn theo lô (#267) lấy món ở `/orders/items/get`; thiếu stub thì sàn giả lập trả InvalidApiPath, đơn không về.
+  it.each(Object.entries(SCENARIOS))('%s: /orders/items/get trả món của đơn theo từng bước, như /order/items/get', (_, s) => {
+    const ms = mappingsFor(s);
+    for (const state of s.order.includes('pending') ? [...s.order, 'canceled'] : s.order) {
+      const batch = body(at(ms, '/orders/items/get', 'don', state)[0]!).data as { order_id: number; order_items: unknown[] }[];
+      expect(batch.map((o) => o.order_id), state).toEqual([ORDER_ID]);
+      expect(batch[0]!.order_items, state).toEqual(body(at(ms, '/order/items/get', 'don', state)[0]!).data);
+    }
+  });
+
   it.each(Object.entries(SCENARIOS))('%s: updated_at của /orders/get, /order/get, /order/items/get tăng nghiêm ngặt theo các bước', (_, s) => {
     const ms = mappingsFor(s);
     // Cùng cách đọc giờ của adapter (`lazadaTime` ở lazada.ts): 'YYYY-MM-DD HH:mm:ss +0700'.
