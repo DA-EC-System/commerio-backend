@@ -1,6 +1,7 @@
 // Phiên bản cấu hình tiền (D4.4; Documents/21 §21.4, 25 §10 T5): phí sàn theo gian hàng, loại hình thuế, quy tắc thuế,
 // ngưỡng lệch quyết toán, biên tối thiểu. Không cứng hoá mức phí, thuế suất: đổi bằng phiên bản có người thứ hai duyệt.
 import { z } from 'zod';
+import { vnDateText } from '../../../../shared/vn-format.ts';
 import { defineMachine } from '../../../core/index.ts';
 
 export const CONFIG_KINDS = ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin'] as const;
@@ -17,8 +18,7 @@ const CONFIG_KIND_NAMES: Record<ConfigKind, string> = {
 
 /** Nhãn nhật ký: "Phí sàn <gian hàng> từ dd/MM/yyyy"; thiếu gian hàng hay ngày thì bỏ phần đó (#352). */
 export function configLabel(kind: ConfigKind, shopName: string | null, effectiveFrom: string | null): string {
-  const [y, m, d] = effectiveFrom?.split('-') ?? [];
-  return [CONFIG_KIND_NAMES[kind], shopName, effectiveFrom && `từ ${d}/${m}/${y}`].filter(Boolean).join(' ');
+  return [CONFIG_KIND_NAMES[kind], shopName, effectiveFrom && `từ ${vnDateText(effectiveFrom)}`].filter(Boolean).join(' ');
 }
 
 /** Tên theo Documents/25 §10.4, 21 §21.4 (đổi `expired` → `superseded` ngày 02/11/2026, #230). */

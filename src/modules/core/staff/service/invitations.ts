@@ -114,10 +114,10 @@ const viewOf = async (row: InvitationRow) => (await views([row]))[0]!;
 
 /** Nhãn nhật ký của lời mời: đã có email (qua OTP) thì nói người được mời, chưa có thì giờ tạo link (#352). */
 function invitationLabel(view: Pick<InvitationView, 'roles' | 'email' | 'fullName' | 'createdAt'>): string {
-  const roles = roleNames(view.roles).join(', ');
+  const roles = view.roles.length ? `vai ${roleNames(view.roles).join(', ')}` : '(vai đã xoá)';
   return view.email
-    ? `Link mời vai ${roles} cho ${memberLabel({ fullName: view.fullName ?? '', email: view.email })}`
-    : `Link mời vai ${roles} (tạo ${vnShortDateTime(new Date(view.createdAt))})`;
+    ? `Link mời ${roles} cho ${memberLabel({ fullName: view.fullName ?? '', email: view.email })}`
+    : `Link mời ${roles} (tạo ${vnShortDateTime(new Date(view.createdAt))})`;
 }
 
 /** Khoá dòng trước mọi bước (thứ tự khoá: lời mời → tài khoản → membership → vai trò). */
