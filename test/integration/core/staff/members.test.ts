@@ -131,9 +131,10 @@ describe('đổi vai trò', () => {
     expect(added.body.roles.map((r: { id: string }) => r.id).sort()).toEqual(both);
     const removed = await putRoles(admin.token, target.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 2 });
     expect(removed.status).toBe(200);
-    expect((await memberAudits(target.membershipId)).rows).toEqual([
-      { action: 'update', before: { roles: [BUILTIN_ROLES.sale.id] }, after: { roles: both } },
-      { action: 'update', before: { roles: both }, after: { roles: [BUILTIN_ROLES.sale.id] } },
+    expect((await memberAudits(target.membershipId)).rows).toMatchObject([
+      // #352: vai trò ghi bằng tên.
+      { action: 'update', before: { roles: ['Sale'] }, after: { roles: ['Nhân viên kho', 'Sale'] } },
+      { action: 'update', before: { roles: ['Nhân viên kho', 'Sale'] }, after: { roles: ['Sale'] } },
     ]);
   });
 

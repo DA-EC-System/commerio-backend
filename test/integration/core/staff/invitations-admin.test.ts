@@ -111,11 +111,17 @@ describe('tạo link mời', () => {
     const admin = await addMember(company.companyId, 'admin');
     const adminId = await accountIdOf(admin.email);
     expect((await as(admin.token).create([BUILTIN_ROLES.admin.id])).status).toBe(201);
-    for (const roleIds of [[SALE], [BUILTIN_ROLES.kho.id], [SALE, BUILTIN_ROLES.kho.id]]) {
+    const cases: [string[], string[]][] = [
+      [[SALE], ['Sale']],
+      [[BUILTIN_ROLES.kho.id], ['Nhân viên kho']],
+      [[SALE, BUILTIN_ROLES.kho.id], ['Nhân viên kho', 'Sale']],
+    ];
+    for (const [roleIds, names] of cases) {
       const res = await as(admin.token).create(roleIds);
       expect(res.status, roleIds.join()).toBe(201);
-      expect((await auditOf(res.body.id)).rows).toEqual([
-        { action: 'create', entity_type: 'core.invitations', actor_id: adminId, before: null, after: { roles: [...roleIds].sort() } },
+      // #352: vai trò ghi bằng tên.
+      expect((await auditOf(res.body.id)).rows).toMatchObject([
+        { action: 'create', entity_type: 'core.invitations', actor_id: adminId, before: null, after: { roles: names } },
       ]);
     }
   });
