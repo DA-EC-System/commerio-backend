@@ -9,7 +9,7 @@ Tạo các tình huống khó có trên shop thử Lazada: giao thất bại, th
 | `lazada-wiremock` | `deploy/compose.yaml`, cổng `127.0.0.1:8091` | WireMock giữ stub có trạng thái (scenario); cổng này là admin API |
 | `lazada-mock` | `deploy/compose.yaml`, cổng `127.0.0.1:8090`; code `gate.ts` | Cổng trước WireMock: kiểm chữ ký như Lazada (WireMock không tính được HMAC), giả trang uỷ quyền OAuth `/oauth/authorize`. Chạy trong container Node, không cần Node trên máy |
 | `stubs.ts` | thư mục này | Dữ liệu demo và mapping của từng kịch bản |
-| `index.ts` | `npm run mock:lazada` | Nạp kịch bản, chuyển bước, gửi push có ký, kiểm adapter |
+| `index.ts` | `npm run mock:lazada` | Nạp kịch bản, chuyển bước, kiểm adapter (lệnh push còn giữ nhưng app không nhận) |
 
 App ký đúng thì cổng chuyển request nguyên vẹn sang WireMock. Ký sai trả `IncompleteSignature`, sai `app_key` trả `InvalidAppKey`, đường dẫn lạ trả `InvalidApiPath`, cùng dạng lỗi của Lazada (`type`, `code`, `message`, `request_id`, HTTP 200).
 
@@ -41,10 +41,10 @@ Kết nối gian hàng trên app: trang uỷ quyền giả chuyển ngay về `L
 |---|---|
 | `list` | Các kịch bản và các bước |
 | `load <kịch bản>` | Xoá mapping cũ, nạp kịch bản, đặt bước đầu |
-| `next` | Sang bước sau (đơn trước, rồi yêu cầu trả), gửi push như Lazada báo thay đổi |
+| `next` | Sang bước sau (đơn trước, rồi yêu cầu trả). App chỉ thấy bước mới ở lượt kéo đơn kế tiếp (mục "App thấy bước mới thế nào") |
 | `run <kịch bản>` | `load` rồi `next` tới bước cuối: chạy lại trọn kịch bản bằng một lệnh |
 | `state` | Kịch bản đang nạp và bước hiện tại |
-| `push [order_status]` | Gửi push của bước hiện tại (hoặc trạng thái chỉ định) cho cả hai dòng đơn |
+| `push [order_status]` | Gửi push có ký của bước hiện tại (hoặc trạng thái chỉ định) cho cả hai dòng đơn. App không nhận push (mục dưới) |
 | `check` | Ký sai bị chặn. Adapter đổi token, đọc shop, danh mục, SKU, cập nhật giá tồn và đọc đơn. Nếu vừa nạp kịch bản có đơn `pending`, kiểm cả đóng gói, báo sẵn sàng và tải vận đơn PDF; đơn giả chuyển sang `ready_to_ship` |
 
 ## Kịch bản
@@ -62,9 +62,16 @@ Kết nối gian hàng trên app: trang uỷ quyền giả chuyển ngay về `L
 
 **Bước do app gọi cũng chuyển trạng thái:** `/order/fulfill/pack` (pending → packed), `/order/package/rts` (packed → ready_to_ship), `/order/package/repack` (packed → pending), `/order/reverse/cancel/create` (pending, packed → canceled), `/order/reverse/return/update` (chấp nhận sang bước kế; tham số hoặc body chứa `refuse` thì sang `REQUEST_REJECT`). Gọi sai trạng thái thì nhận lỗi: RTS hay lấy nhãn khi chưa RTS trả `30012 rts package not found` như Lazada thật; pack lại, huỷ đơn đã giao, xử lý yêu cầu trả đã xong trả mã giả `ORDER_STATUS_INVALID`, `CANCEL_NOT_ALLOWED`, `REVERSE_STATUS_INVALID`.
 
-## Push vào webhook của app
+## App thấy bước mới thế nào
 
-`next`, `run`, `push` gửi tin như Lazada Message Service tới `LAZADA_MOCK_WEBHOOK_URL` (mặc định `http://localhost:3000/api/v1/channel/webhooks/lazada`, route của #133), header `Authorization` = `hex(HMAC_SHA256(app_secret, app_key + rawBody))` (`Documents/tich-hop-san/lazada.md` §8). Mỗi dòng đơn một tin. Dùng thử realtime khi chưa có chứng chỉ OV (#135).
+App **không nhận push** của sàn: kéo đơn là đường nhận đơn duy nhất (#133, #135 đóng; `src/modules/channel/channel/CLAUDE.md` mục "Kéo đơn"). Sau `next` (hoặc `PUT /__admin/scenarios/don/state` thân `{ "state": "<bước>" }` trên cổng admin), app thấy bước mới khi có lượt kéo đơn:
+
+- bấm nút kéo đơn trên trang gian hàng, hoặc gọi `POST /api/v1/channel/shops/:id/orders/pull` (quyền `channel.shop.sync`);
+- hoặc chờ việc nền `channel.order_pull` (5 phút, cần `npm run dev:worker`).
+
+Kéo đơn bỏ đơn có `updated_at` không mới hơn bản đã lưu, nên đơn giả mang **`updated_at` tăng theo bước** (#199): bước thứ `n` của kịch bản (đếm từ 0) là lúc đặt `2026-10-28 09:15:00 +0700` cộng `n` giờ; `canceled` lấy bậc sau bước cuối. Món cùng giờ với đơn; `created_at` giữ lúc đặt. Hành trình (`/logistic/order/trace`) mang cùng mốc: sự kiện của bước `n` có `event_time` = `updated_at` của bước đó. Lùi về bước trước (đặt lại trạng thái WireMock) thì `updated_at` cũ hơn bản app đã lưu, app bỏ qua: muốn chạy lại thì nối gian hàng mới (hoặc công ty mới) và `load` lại kịch bản.
+
+`next`, `run`, `push` vẫn gửi tin như Lazada Message Service tới `LAZADA_MOCK_WEBHOOK_URL` (mặc định `http://localhost:3000/api/v1/channel/webhooks/lazada`, route của #133 đã bỏ, app trả 404), header `Authorization` = `hex(HMAC_SHA256(app_secret, app_key + rawBody))` (`Documents/tich-hop-san/lazada.md` §8). Mỗi dòng đơn một tin. Giữ lại cho khi có chứng chỉ OV.
 
 ## Biến môi trường
 

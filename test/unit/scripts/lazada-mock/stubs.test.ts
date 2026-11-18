@@ -19,6 +19,43 @@ describe('stub của sàn giả lập Lazada (#115)', () => {
     expect(initialStates(s).don).toBe(s.order[0]);
   });
 
+  // Kéo đơn bỏ đơn có `updated_at` không mới hơn bản đã lưu (#199): giờ cố định thì app không bao giờ thấy bước mới.
+  it.each(Object.entries(SCENARIOS))('%s: updated_at của /orders/get, /order/get, /order/items/get tăng nghiêm ngặt theo các bước', (_, s) => {
+    const ms = mappingsFor(s);
+    // Cùng cách đọc giờ của adapter (`lazadaTime` ở lazada.ts): 'YYYY-MM-DD HH:mm:ss +0700'.
+    const time = (v: unknown) => {
+      expect(v).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+0700$/);
+      return Date.parse(String(v).replace(' ', 'T').replace(/ ([+-]\d{2})(\d{2})$/, '$1:$2'));
+    };
+    const steps = s.order.includes('pending') ? [...s.order, 'canceled'] : s.order;
+    const timesAt = (state: string) => {
+      const list = (body(at(ms, '/orders/get', 'don', state)[0]!).data as { orders: { updated_at: string; created_at: string }[] }).orders[0]!;
+      const items = body(at(ms, '/order/items/get', 'don', state)[0]!).data as { updated_at: string }[];
+      const one = at(ms, '/order/get', 'don', state)[0];
+      const times = [list.updated_at, ...items.map((i) => i.updated_at), ...(one ? [(body(one).data as { updated_at: string }).updated_at] : [])];
+      expect(new Set(times).size, `${state}: đơn và món cùng giờ`).toBe(1);
+      expect(list.created_at).toBe('2026-10-28 09:15:00 +0700');
+      return time(times[0]);
+    };
+    const times = steps.map(timesAt);
+    expect(times[0]).toBe(Date.parse('2026-10-28T09:15:00+07:00'));
+    for (let n = 1; n < times.length; n++) expect(times[n], `${steps[n - 1]} → ${steps[n]}`).toBeGreaterThan(times[n - 1]!);
+  });
+
+  it('mốc hành trình khớp updated_at của bước sàn báo', () => {
+    const s = SCENARIOS['giao-that-bai']!;
+    const ms = mappingsFor(s);
+    const last = s.order.at(-1)!;
+    type Trace = { result: { module: { package_detail_info_list: { logistic_detail_info_list: { detail_type: string; event_time: number }[] }[] }[] } };
+    const events = (body(at(ms, '/logistic/order/trace', 'don', last)[0]!) as unknown as Trace).result.module[0]!.package_detail_info_list[0]!
+      .logistic_detail_info_list;
+    expect(events.map((e) => e.detail_type)).toEqual(['ready_to_ship', 'shipped', 'failed_delivery', 'shipped_back', 'shipped_back_success']);
+    for (const e of events) {
+      const order = (body(at(ms, '/orders/get', 'don', e.detail_type)[0]!).data as { orders: { updated_at: string }[] }).orders[0]!;
+      expect(new Date(e.event_time).getTime(), e.detail_type).toBe(Date.parse(order.updated_at.replace(' ', 'T').replace(' +0700', '+07:00')));
+    }
+  });
+
   it('tên mapping không trùng, mapping bắt mọi đường dẫn có độ ưu tiên thấp nhất', () => {
     const ms = mappingsFor(SCENARIOS['giao-thanh-cong']!);
     expect(new Set(ms.map((m) => m.name)).size).toBe(ms.length);
