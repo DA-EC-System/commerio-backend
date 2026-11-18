@@ -503,7 +503,7 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect(body.returnWindowEndsAt).toBe(new Date(deliveredAt.getTime() + 15 * DAY).toISOString());
   });
 
-  it('AC7 (US-DH-16 2): qua hạn trả mà còn yêu cầu trả requested → return_requested', async () => {
+  it('D1-W (US-DH-16 2, AC7): qua hạn trả mà còn yêu cầu trả requested → return_requested', async () => {
     const { orderId } = await deliveredOrder(16);
     await testPool().query(
       `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, reason)

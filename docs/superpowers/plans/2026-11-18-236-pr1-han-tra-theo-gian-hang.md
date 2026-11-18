@@ -214,7 +214,7 @@ it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
 - [x] **Step 2: Kiểm toàn bộ** — `npm run check` → xanh (lint, typecheck, depcruise, test).
 - [x] **Step 3: Cập nhật đồ thị** — `graphify update .`
 - [x] **Step 4: Commit** — `docs(sales): CLAUDE.md theo hạn trả của gian hàng (#236)`.
-- [ ] **Step 5: Mở PR khi Khang bảo** — base `main`; mô tả ghi "Closes #390", "Phần 1/3 của #236", AC đã qua, D13 (TikTok tạm 7 ngày).
+- [ ] **Step 5: Mở PR khi Khang bảo** (chưa mở) — base `main`; mô tả ghi "Closes #390", "Phần 1/3 của #236", AC đã qua, D13 (TikTok tạm 7 ngày).
 
 ### Task 6: Documents (repo `D:\DA-TMDT\Documents`, PR riêng)
 
@@ -222,10 +222,10 @@ it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
 - Modify: `21-hop-dong-api-fe-be.md` §19.1 đoạn "Hoàn tất"
 - Modify: `27-user-story.md` US-DH-16; `kiem-thu/ca-theo-so-do.md` mục D1
 
-- [ ] **Step 1: Nhánh** — `git -C D:/DA-TMDT/Documents checkout -b docs/236-han-tra-gian-hang origin/main`.
-- [ ] **Step 2: Sửa** — `21` "Hoàn tất": gian hàng `days` chưa nhập số ngày tính 7 ngày; đơn đã hoàn tất trả hạn đã lưu. `27` US-DH-16 dòng 1b, 2: cấp mã ca mới trong mục D1 của `ca-theo-so-do.md` (theo cách đặt mã sẵn có của mục đó), thay "(chưa có ca)".
-- [ ] **Step 3: Đổi tên test** — test của Task 3 (AC6) và Task 4 (AC7) mang mã vừa cấp; commit ở nhánh backend `test(sales): mã ca US-DH-16 (#236)`.
-- [ ] **Step 4: Commit Documents, mở PR khi Khang bảo** — `docs: hạn trả theo gian hàng, mã ca US-DH-16 (commerio-backend#236)`.
+- [x] **Step 1: Nhánh** — `git -C D:/DA-TMDT/Documents checkout -b docs/236-han-tra-gian-hang origin/main`.
+- [x] **Step 2: Sửa** — `21` "Hoàn tất": gian hàng `days` chưa nhập số ngày tính 7 ngày; đơn đã hoàn tất trả hạn đã lưu. `27` US-DH-16 dòng 1b, 2: cấp mã ca mới trong mục D1 của `ca-theo-so-do.md` (theo cách đặt mã sẵn có của mục đó), thay "(chưa có ca)".
+- [x] **Step 3: Đổi tên test** — test của Task 3 (AC6) và Task 4 (AC7) mang mã vừa cấp; commit ở nhánh backend `test(sales): mã ca US-DH-16 (#236)`.
+- [ ] **Step 4: Commit Documents, mở PR khi Khang bảo** (đã commit 72c1bf9 ở worktree `D:/DA-TMDT/Documents-236`; PR chờ Khang) — `docs: hạn trả theo gian hàng, mã ca US-DH-16 (commerio-backend#236)`.
 
 ## Ngoài plan này
 
