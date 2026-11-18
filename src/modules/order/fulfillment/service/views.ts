@@ -1,5 +1,7 @@
 // Dựng `PackageSummary` ở một nơi (spec 199a D8): route kiện của fulfillment và chi tiết đơn của sales cùng dùng.
-// Thông tin của đơn (mã, khách, SKU, tên sản phẩm đã chép trên dòng đơn) do sales đưa vào qua `PackageOrderRef`.
+// Thông tin của đơn (mã, khách, SKU, tên sản phẩm đã chép trên dòng đơn) do sales đưa vào qua `PackageOrderRef`; SKU,
+// tên, nhãn của biến thể app mà dòng kiện giữ do `packageVariantsOf` tra một lần cho cả trang (Documents/21 §19.2).
+import { getVariants } from '../../../product/index.ts';
 import { pickupUnconfirmed } from '../domain/handover.ts';
 import { isHandedOver } from '../domain/package.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
@@ -9,6 +11,27 @@ export interface PackageOrderLineRef {
   sku: string;
   productName: string;
   attributesLabel: string;
+  /** SKU người bán trên sàn; null với đơn tay. */
+  externalSku: string | null;
+}
+
+/** SKU, tên sản phẩm, nhãn thuộc tính của biến thể app (khoá là `variantId`). */
+export interface PackageVariantRef {
+  sku: string;
+  productName: string;
+  attributesLabel: string;
+}
+
+/**
+ * Biến thể app của mọi dòng kiện đã ghép trong các kiện, một câu cho cả trang; gọi trong `withCompany` của bên gọi.
+ * Biến thể không đọc được (đã xoá) thì vắng, dòng kiện lấy lại SKU, tên trên dòng đơn.
+ */
+export async function packageVariantsOf(rows: readonly { lines: readonly { variantId: string | null }[] }[]): Promise<Map<string, PackageVariantRef>> {
+  const ids = [...new Set(rows.flatMap((r) => r.lines.flatMap((l) => (l.variantId ? [l.variantId] : []))))];
+  if (!ids.length) return new Map();
+  return new Map(
+    (await getVariants(ids)).map((v) => [v.id, { sku: v.sku, productName: v.productName, attributesLabel: v.attributes.map((a) => a.value).join(' / ') }]),
+  );
 }
 
 /** Thông tin đơn của kiện, do sales dựng (`orderRefsOf`, `getOrder`). */
@@ -42,14 +65,17 @@ function lostReportOf(p: PackageViewRow, names: ReadonlyMap<string, string>) {
 }
 
 /**
- * Hình trả về khớp schema `PackageSummary` (`api/schemas.ts`); test route parse bằng schema đó. `names`: họ tên tài
- * khoản theo id (người báo thất lạc); thiếu thì tên rỗng như `StatusChange.by`.
+ * Hình trả về khớp schema `PackageSummary` (`api/schemas.ts`); test route parse bằng schema đó. `variants`: biến thể
+ * app theo id (`packageVariantsOf`): dòng đã ghép hiện SKU, tên, nhãn của biến thể app, dòng chưa ghép hay "không quản
+ * tồn" hiện của sàn (dòng đơn). `names`: họ tên tài khoản theo id (người báo thất lạc); thiếu thì tên rỗng như
+ * `StatusChange.by`.
  */
 export function toPackageSummary(
   p: PackageViewRow,
   order: PackageOrderRef,
   shop: PackageShopRef | null,
   now: number,
+  variants: ReadonlyMap<string, PackageVariantRef>,
   names: ReadonlyMap<string, string> = new Map(),
 ) {
   // Dòng kiện theo thứ tự dòng đơn (sales sắp theo mã món sàn), như chi tiết đơn; dòng kiện chèn một câu không có thứ tự riêng.
@@ -57,11 +83,15 @@ export function toPackageSummary(
   const ordered = [...p.lines].sort((a, b) => (position.get(a.orderLineId) ?? Infinity) - (position.get(b.orderLineId) ?? Infinity));
   const lines = ordered.map((pl) => {
     const l = order.lines.get(pl.orderLineId);
+    const v = pl.variantId ? variants.get(pl.variantId) : undefined;
     return {
+      id: pl.id,
       variantId: pl.variantId,
-      sku: l?.sku ?? '',
-      productName: l?.productName ?? '',
-      attributesLabel: l?.attributesLabel ?? '',
+      untracked: pl.stockUntracked,
+      sku: v?.sku ?? l?.sku ?? '',
+      productName: v?.productName ?? l?.productName ?? '',
+      attributesLabel: v?.attributesLabel ?? l?.attributesLabel ?? '',
+      externalSku: l?.externalSku ?? null,
       quantity: pl.quantity,
       pendingDropQty: pl.pendingDropQty,
     };

@@ -2,7 +2,7 @@
 import { Decimal } from 'decimal.js';
 import { findAccountSummaries, getStatusHistory } from '../../../core/index.ts';
 import { getVariants } from '../../../product/index.ts';
-import { findPackagesOfOrders, type PackageOrderRef, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
+import { findPackagesOfOrders, type PackageOrderRef, packageVariantsOf, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
@@ -175,7 +175,10 @@ export function packageOrderRef(o: OrderViewRow, lines: readonly OrderLineRow[],
     lines: new Map(
       lines
         .filter((l) => l.orderId === o.id)
-        .map((l) => [l.id, { sku: l.sku ?? l.externalSku ?? '', productName: l.productName, attributesLabel: attributesOf(l, labels) }]),
+        .map((l) => [
+          l.id,
+          { sku: l.sku ?? l.externalSku ?? '', productName: l.productName, attributesLabel: attributesOf(l, labels), externalSku: l.externalSku },
+        ]),
     ),
   };
 }
@@ -237,10 +240,12 @@ export async function getOrder(ctx: SalesContext, id: string) {
   ]);
   const f = facts.get(id)!;
   const reporters = [...new Set(f.packages.flatMap((p) => (p.lostReportedBy ? [p.lostReportedBy] : [])))];
-  const [labels, accounts] = await Promise.all([
+  const [labels, accounts, packageVariants] = await Promise.all([
     variantLabels(lines.map((l) => l.variantId)),
     // Tên người báo thất lạc của mọi kiện, một câu (spec #238 §5.3); đơn không có báo cáo thì không truy vấn.
     findAccountSummaries(reporters),
+    // Biến thể app mà dòng kiện giữ (Documents/21 §19.2), một câu cho mọi kiện của đơn.
+    packageVariantsOf(f.packages),
   ]);
   const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   const now = Date.now();
@@ -299,7 +304,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
       reverseOrderId: l.reverseOrderId,
       returnStatus: l.returnStatus,
     })),
-    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, names)),
+    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, packageVariants, names)),
     returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000).toISOString() : null,
     completionBlocker: blocker as 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed' | null,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),

@@ -50,7 +50,7 @@ export { findPackagesOfOrders, type PackageViewRow } from './repository/packages
 export { PackageSummary, ScanLines, ShopRef, StatusChange } from './api/schemas.ts';
 // Số kho quét lúc nhận hàng về (21 §15.3): sales dùng chung cho `/returns/receive`.
 export { mergeReceiveLines, type ReceiveLine, type ScanLine } from './domain/delivery.ts';
-export { type PackageOrderLineRef, type PackageOrderRef, toPackageSummary } from './service/views.ts';
+export { type PackageOrderLineRef, type PackageOrderRef, type PackageVariantRef, packageVariantsOf, toPackageSummary } from './service/views.ts';
 export type { FulfillmentContext } from './service/packages.ts';
 // Hàm bù cho #198 (phiếu kiểm kê đầu kỳ ghi sổ) và dòng ghép SKU muộn cho #237; chạy trong `withCompany` của bên gọi.
 export { settleDeferredHandovers, shipLateMappedLines } from './service/handover-stock.ts';
