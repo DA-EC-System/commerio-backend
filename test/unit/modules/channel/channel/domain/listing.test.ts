@@ -107,7 +107,7 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
   });
 
   it.each(['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'] as const)(
-    'C2-15…20: %s → delist (người có quyền, hoặc sàn báo xoá)',
+    'C2-17…20: %s → delist (người có quyền, hoặc sàn báo xoá)',
     (from) => {
       expect(assertTransition(listingMachine, from, 'delist', { actor: staff }).to).toBe('delisted');
       expect(assertTransition(listingMachine, from, 'delist', { actor: null }).to).toBe('delisted');
@@ -117,7 +117,7 @@ describe('máy trạng thái listing (Documents/21 §18.3, ca C2)', () => {
     },
   );
 
-  it('C2-22, C2-23, C2-22q: live → update_content giữ live (người có quyền); sàn ngừng bán bản cũ thì hệ thống request_review → under_review', () => {
+  it('C2-24, C2-25, C2-24q: live → update_content giữ live (người có quyền); sàn ngừng bán bản cũ thì hệ thống request_review → under_review', () => {
     expect(assertTransition(listingMachine, 'live', 'update_content', { actor: staff }).to).toBe('live');
     expect(() => assertTransition(listingMachine, 'live', 'update_content', { actor: { ...staff, permissions: [] } })).toThrow(
       expect.objectContaining({ status: 403 }),

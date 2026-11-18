@@ -46,7 +46,7 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   { from: 'live', to: 'hidden', action: 'outside_hold', system: true },
   { from: 'hidden', to: 'live', action: 'outside_resolve', permission: manage },
   // Sửa nội dung (#293): sàn vẫn bán bản cũ thì giữ `live` kèm bản sửa đang duyệt; sàn ngừng bán để duyệt thì hệ thống
-  // chuyển tiếp `request_review` (ca C2-21).
+  // chuyển tiếp `request_review` (ca C2-23).
   { from: 'live', to: 'live', action: 'update_content', permission: manage },
   { from: 'live', to: 'under_review', action: 'request_review', system: true },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
