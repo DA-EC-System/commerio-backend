@@ -274,6 +274,16 @@ describe('acknowledge-title, đổi ghép', () => {
     expect((await acknowledge(listing.id, 'x')).status).toBe(422);
   });
 
+  it('review diff: listing đang đẩy → 409 `invalid_transition`, không tăng version (việc đẩy không bỏ kết quả)', async () => {
+    const { listing, version } = await flagged();
+    await testPool().query("update channel.listings set status = 'pushing', push_started_at = now() where id = $1", [listing.id]);
+    const res = await acknowledge(listing.id, version);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/invalid_transition$/);
+    expect(res.body.current).toMatchObject({ id: listing.id, status: 'pushing' });
+    expect((await rowOf(listing.id)).version).toBe(version);
+  });
+
   it('AC-3: listing công ty khác, gian hàng công ty khác 404', async () => {
     const { listing, version } = await flagged();
     expect((await acknowledge(listing.id, version, other.ceo.token)).status).toBe(404);

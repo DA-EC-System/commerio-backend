@@ -11,7 +11,7 @@ import { type Actor, ownShop } from './shops.ts';
 
 /**
  * Thứ tự kiểm như `outside-change`: gian hàng, listing (404) → `version` (409 `version_conflict` kèm `current`) → có cờ (409
- * `invalid_transition`; SKU đã rời bản sao tính là không có cờ, không có tên hiện tại để làm mốc). Thành công: mốc = tên
+ * `invalid_transition`; listing đang `pushing` cũng vậy; SKU đã rời bản sao tính là không có cờ, không có tên hiện tại để làm mốc). Thành công: mốc = tên
  * hiện tại, xoá cờ, tăng `version`, ghi nhật ký cùng giao dịch.
  */
 export async function acknowledgeRemoteTitle(actor: Actor, shopId: string, listingId: string, version: number): Promise<ChannelListing> {
@@ -26,6 +26,8 @@ export async function acknowledgeRemoteTitle(actor: Actor, shopId: string, listi
       });
     };
     if (row.version !== version) throw await conflict();
+    // Đang đẩy: tăng `version` làm việc đẩy bỏ kết quả, listing kẹt `pushing` (review diff #396).
+    if (row.status === 'pushing') throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, xác nhận tên sau', { current: toListing(row) });
     const remote = row.externalSkuId ? await findRemoteSkuRow(shop.id, row.externalSkuId) : undefined;
     const changed = remoteTitleChanged(row, remote);
     if (!changed) throw new AppError(409, 'invalid_transition', 'Tên trên sàn không đổi so với lúc ghép', { current: toListing(row) });
