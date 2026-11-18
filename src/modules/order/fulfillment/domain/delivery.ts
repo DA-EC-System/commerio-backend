@@ -39,6 +39,7 @@ export interface PackageEvent {
 export interface PlatformPackageOrder {
   id: string;
   shopId: string;
+  /** Hạn bàn giao đơn đang mang sau lượt kéo (sàn trả null thì sales truyền hạn đã lưu); kiện chưa bàn giao nhận theo. */
   shipBy: Date | null;
   holdStock: boolean;
   placedAt: Date;

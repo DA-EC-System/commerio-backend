@@ -510,3 +510,36 @@ describe('sàn chia lại kiện đã đóng: kiện chờ thay (#238 §5.6, D9,
     expect(gift).toMatchObject({ status: 'backordered', replaces: packageId, items: [external(o, 1)] });
   });
 });
+
+describe('hạn bàn giao của kiện thay khi sàn chia lại (KH-B01)', () => {
+  const deadline = new Date('2026-11-23T05:00:00Z');
+  const shipByOf = async (orderId: string) =>
+    (
+      await testPool().query<{ status: string; ship_by: Date | null; replaces: string | null }>(
+        'select status, ship_by, replaces_package_id as replaces from "order".packages where order_id = $1',
+        [orderId],
+      )
+    ).rows;
+
+  it('kiện chưa đóng chia thành hai mã mới cùng lượt sàn có hạn: hai kiện thay nhận hạn, kiện cũ huỷ giữ hạn cũ', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2 });
+    const { orderId, packageId } = await ingest(v.companyId, o);
+
+    await ingest(v.companyId, { ...relabeled(o, [`FP-A-${tag()}`, `FP-B-${tag()}`]), shipBy: deadline });
+
+    const rows = await shipByOf(orderId);
+    expect(rows.filter((r) => r.replaces === packageId).map((r) => r.ship_by)).toEqual([deadline, deadline]);
+    expect(rows.find((r) => r.replaces === null)).toMatchObject({ status: 'cancelled', ship_by: null });
+  });
+
+  it('kiện đã đóng chia lại: kiện cũ chờ dỡ và hai kiện thay cùng nhận hạn mới ở lượt sau', async () => {
+    const { v, orderId, next } = await packedSplit();
+
+    await ingest(v.companyId, { ...next, shipBy: deadline });
+
+    const rows = await shipByOf(orderId);
+    expect(rows).toHaveLength(3);
+    for (const r of rows) expect(r.ship_by).toEqual(deadline);
+  });
+});

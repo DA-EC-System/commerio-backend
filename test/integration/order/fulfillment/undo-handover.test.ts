@@ -209,3 +209,23 @@ describe('Package trả nguồn bàn giao và mốc sàn xác nhận lấy (21 �
     expect(await view(waiting.packageId)).toMatchObject({ handoverSource: null, pickupConfirmedAt: null });
   });
 });
+
+describe('huỷ bàn giao nhận hạn của đơn (KH-B01)', () => {
+  it('sàn dời hạn khi kiện đang ở in_transit: huỷ bàn giao thì kiện nhận hạn đơn đang mang, trigger không chặn', async () => {
+    const old = new Date('2026-11-20T10:00:00Z');
+    const moved = new Date('2026-11-24T10:00:00Z');
+    const seeded = await seedPackage(company.companyId, {
+      status: 'awaiting_pickup',
+      shipBy: old,
+      lines: [{ variantId, quantity: 1, reserved: true }],
+    });
+    expect((await handOver(seeded.packageId)).handedOver).toHaveLength(1);
+    // Kiện đã rời kho giữ hạn cũ; đơn nhận hạn mới (lượt kéo sàn).
+    await testPool().query('update "order".orders set ship_by = $2 where id = $1', [seeded.orderId, moved]);
+
+    const res = await undo(seeded.packageId, { version: await versionOf(seeded.packageId), reason: 'Quét nhầm' });
+
+    expect(res.status).toBe(200);
+    expect(Package.parse(res.body).shipBy).toBe(moved.toISOString());
+  });
+});

@@ -251,11 +251,13 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   // Ghép của dòng kiện lấy từ dòng đơn đã lưu, không từ lần tra vừa rồi (spec 237 D14): dòng đơn giữ A thì kiện sàn
   // vừa chia lại cũng mang A.
   const lineOf = (l: PlatformOrder['lines'][number]) => stored.get(l.externalLineId)!;
+  // Sàn trả null cho hạn đã có thì giữ hạn đã lưu (Documents/21 §19.1, KH-B01): TikTok bỏ `rts_sla_time` khi đơn ON_HOLD.
+  const shipBy = o.shipBy ?? row.shipBy;
   const packages = await syncPlatformPackages(
     {
       id: orderId,
       shopId: o.shopId,
-      shipBy: o.shipBy,
+      shipBy,
       holdStock: o.holdStock ?? true,
       placedAt: o.placedAt,
       orderCutoffAt: o.orderCutoffAt ?? null,
@@ -319,7 +321,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
           ? null
           : undefined;
   next.rawMarketplaceStatus = o.rawStatus;
-  next.shipBy = o.shipBy;
+  next.shipBy = shipBy;
 
   // `row` là bản đã lưu (đơn vừa chèn: `unpaid`, chưa cờ): chỉ ghi khi có khác.
   const dirty =
