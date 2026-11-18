@@ -123,7 +123,11 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
     const id = await insertVariant(caller.companyId, productId, allocated!.sku, combo.map((v) => v.id), 0);
     await touchProduct(productId);
     const [variant] = await findVariants({ ids: [id] });
-    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: variantSnapshot(product.name, variant!) });
+    await recordAudit({
+      ...auditOf(caller, 'create', ENTITY, id),
+      label: `${product.name} · ${variant!.sku}`,
+      after: variantSnapshot(product.name, variant!),
+    });
     const prices = await standardPricesOf(ctx, [id]);
     const imageCount = (await productImageRows([productId], 1)).length;
     const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, categoryId: product.categoryId, imageCount }));
@@ -194,7 +198,7 @@ export async function applyVariantUpdate(
 
   const updated = await updateVariantIfVersion(current.id, input.version, patch);
   if (!updated) return 'stale';
-  await recordAudit({ ...auditOf(caller, 'update', ENTITY, current.id), before, after });
+  await recordAudit({ ...auditOf(caller, 'update', ENTITY, current.id), label: `${current.productName} · ${current.sku}`, before, after });
   // Giá muốn bán đổi: channel chạy lại bộ lọc giá (#225). Câu UPDATE trên đã khoá dòng SKU, nên sự kiện của một SKU
   // vào outbox đúng thứ tự. Giá chuẩn đổi không phát (Documents/21 §11.2).
   if ('targetNetPrice' in patch) {

@@ -98,6 +98,7 @@ const audit = (by: Actor, before: ListingRow, after: ListingRow, change: Record<
     action: 'update',
     entityType: 'channel.listings',
     entityId: after.id,
+    label: after.sellerSku ?? after.externalSkuId ?? 'Listing chưa có SKU',
     before: { manualPrice: before.manualPrice, priceCalcId: before.priceCalcId },
     after: change,
   });

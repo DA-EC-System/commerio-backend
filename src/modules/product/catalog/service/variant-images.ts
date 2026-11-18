@@ -33,9 +33,11 @@ async function lockOwnProduct(id: string): Promise<ProductRow> {
 const currentFile = async (productId: string, attributeValueId: string) =>
   (await variantImageRows([productId])).find((r) => r.attributeValueId === attributeValueId)?.fileId ?? null;
 
-async function audit(caller: Caller, productId: string, attributeValueId: string, before: string | null, after: string | null) {
+async function audit(caller: Caller, product: ProductRow, attributeValueId: string, before: string | null, after: string | null) {
   await recordAudit({
-    ...auditOf(caller, 'update', ENTITY, productId),
+    ...auditOf(caller, 'update', ENTITY, product.id),
+    // Nhãn nhật ký (#352): tên sản phẩm lúc ghi.
+    label: product.name,
     before: { attributeValueImage: { attributeValueId, fileId: before } },
     after: { attributeValueImage: { attributeValueId, fileId: after } },
   });
@@ -65,7 +67,7 @@ export async function setVariantImage(
     if (before !== fileId) {
       await upsertVariantImage({ companyId: caller.companyId, productId, attributeId: product.imageAttributeId!, attributeValueId, fileId });
       await touchProduct(productId);
-      await audit(caller, productId, attributeValueId, before, fileId);
+      await audit(caller, product, attributeValueId, before, fileId);
     }
     return productDetail(ctx, await findOwnProduct(productId));
   });
@@ -84,7 +86,7 @@ export async function removeVariantImage(
     if (before) {
       await deleteVariantImage(productId, attributeValueId);
       await touchProduct(productId);
-      await audit(caller, productId, attributeValueId, before, null);
+      await audit(caller, product, attributeValueId, before, null);
     }
     return productDetail(ctx, before ? await findOwnProduct(productId) : product);
   });

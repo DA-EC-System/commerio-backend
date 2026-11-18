@@ -167,6 +167,11 @@ export interface SyncError {
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
 export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['disabled', 'price_changed']);
+/**
+ * Ai tạo nội dung (tên, mô tả, ảnh, danh mục) của sản phẩm trên sàn (#399): `app` do app đẩy tạo; `platform` do người
+ * bán tạo trên sàn rồi ghép. Đẩy lại listing `platform` chỉ bật lại SKU, không ghi nội dung của app.
+ */
+export const contentSource = channelSchema.enum('listing_content_source', ['app', 'platform']);
 /** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
 export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
 
@@ -193,6 +198,8 @@ export const listings = channelSchema.table(
     pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
+    /** Lần đầu app gọi `createProduct` cho listing này (#399): mốc phân biệt sản phẩm app tạo với sản phẩm người bán có sẵn. Chỉ ghi khi null, không tăng `version`. */
+    createAttemptedAt: timestamp('create_attempted_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
     /** Sàn đổi listing ngoài app (#360, 21 §18.3 `outsideChange`): dừng bán, chờ CEO quyết. Giá chỉ có khi `price_changed`. */
     outsideChangeKind: outsideChangeKind('outside_change_kind'),
@@ -242,6 +249,18 @@ export const listings = channelSchema.table(
     revisionStatus: revisionStatus('revision_status'),
     revisionRejectReason: text('revision_reject_reason'),
     revisionAt: timestamp('revision_at', { withTimezone: true }),
+    /** Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị. */
+    contentSource: contentSource('content_source').notNull().default('platform'),
+    /**
+     * Tên trên sàn lúc ghép (#396, 21 §18.3 `remoteTitleChanged`): mốc để biết người bán đổi tên ngoài app. Đặt khi ghép có
+     * hiệu lực, thiết lập, xác nhận (từ bản sao) và khi app đẩy, sửa nội dung (tên app vừa gửi). `matched_at` null: tên
+     * tiếng Anh lúc ghép chưa biết, lần ghi bản sao kế tiếp lấy `title_en` làm mốc; có giá trị thì chỉ bản sao đọc từ mốc
+     * đó trở đi mới được so (lượt đọc bắt đầu trước khi đẩy xong còn tên cũ). `changed_at`: lúc thấy tên khác mốc.
+     */
+    remoteTitleAtMatch: text('remote_title_at_match'),
+    remoteTitleEnAtMatch: text('remote_title_en_at_match'),
+    remoteTitleMatchedAt: timestamp('remote_title_matched_at', { withTimezone: true }),
+    remoteTitleChangedAt: timestamp('remote_title_changed_at', { withTimezone: true }),
     /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
     replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,
@@ -296,6 +315,12 @@ export const listings = channelSchema.table(
       sql`(${t.revisionStatus} is null) = (${t.revisionAt} is null)
         and (${t.revisionRejectReason} is null or ${t.revisionStatus} = 'failed')
         and (${t.revisionStatus} is null or ${t.status} in ('live', 'hidden', 'platform_hold'))`,
+    ),
+    // Không có mốc tên thì không có mốc tiếng Anh, giờ mốc; cờ chỉ bật khi mốc đã có giờ (mỗi nhánh tự chặn NULL, L024).
+    check(
+      'listings_remote_title',
+      sql`(${t.remoteTitleAtMatch} is not null or (${t.remoteTitleEnAtMatch} is null and ${t.remoteTitleMatchedAt} is null))
+        and (${t.remoteTitleChangedAt} is null or ${t.remoteTitleMatchedAt} is not null)`,
     ),
     check('listings_reject_reason', sql`${t.status} <> 'rejected' or ${t.rejectReason} is not null`),
     check('listings_push_attempts', sql`${t.pushAttempts} >= 0`),
@@ -424,6 +449,8 @@ export const remoteSkus = channelSchema.table(
     /** SKU người bán trên sàn; rỗng khi sàn không có (không ghép được tới khi đặt trên sàn). */
     sellerSku: text('seller_sku').notNull(),
     title: text('title').notNull(),
+    /** Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có. */
+    titleEn: text('title_en'),
     state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
     quantity: integer('quantity').notNull(),
     /** Lần gần nhất đọc thấy SKU này trên sàn. */

@@ -125,9 +125,10 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
   return withCompany(actor.companyId, async () => {
     const lines = await buildLines(input);
     const note = input.note || null;
+    const number = docNumber('DN', await nextDocNumber('purchase_request'));
     const id = await insertRequest({
       companyId: actor.companyId,
-      number: docNumber('DN', await nextDocNumber('purchase_request')),
+      number,
       supplierId: input.supplierId,
       source: input.sourceReturnId ? 'replacement' : 'manual',
       sourceReturnId: input.sourceReturnId ?? null,
@@ -143,6 +144,7 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
       action: 'create',
       entityType: AUDIT_ENTITY,
       entityId: id,
+      label: number,
       before: null,
       after: snapshot(input.supplierId, note, lines),
     });
@@ -170,6 +172,7 @@ export async function updateRequestDraft(actor: Actor, id: string, input: Reques
       action: 'update',
       entityType: AUDIT_ENTITY,
       entityId: id,
+      label: row.number,
       before: snapshot(row.supplierId, row.note, old),
       after: snapshot(input.supplierId, note, lines),
     });
@@ -201,11 +204,12 @@ export async function addLine(
 
     const unitPrice = (await stockOf([variant!.id])).get(variant!.id)?.avgCost ?? '0';
     const created = !row;
+    const number = row?.number ?? docNumber('DN', await nextDocNumber('purchase_request'));
     const id =
       row?.id ??
       (await insertRequest({
         companyId: actor.companyId,
-        number: docNumber('DN', await nextDocNumber('purchase_request')),
+        number,
         supplierId: input.supplierId!,
         source: 'reorder',
         note: 'Lập từ gợi ý nhập lại',
@@ -229,6 +233,7 @@ export async function addLine(
       action: created ? 'create' : 'update',
       entityType: AUDIT_ENTITY,
       entityId: id,
+      label: number,
       before: created ? null : snapshot(row!.supplierId, row!.note, lines),
       after: snapshot(row?.supplierId ?? input.supplierId, row?.note ?? 'Lập từ gợi ý nhập lại', await findLines([id])),
     });
@@ -268,6 +273,7 @@ export async function excludeLine(
         action: 'update',
         entityType: AUDIT_ENTITY,
         entityId: id,
+        label: row.number,
         before: { lineId, excluded: target.excluded, reason: target.excludedReason },
         after: { lineId, excluded: input.excluded, reason: input.excluded ? reason : null },
       });

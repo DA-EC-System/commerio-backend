@@ -59,6 +59,7 @@ export async function createPurchaseProducts(
       action: 'create',
       entityType: 'product.products',
       entityId: productId,
+      label: item.name,
       before: null,
       after: {
         name: item.name,

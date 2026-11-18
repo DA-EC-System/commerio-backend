@@ -5,7 +5,6 @@ Bản chạy chung cho FE, demo GVHD cuối mỗi phase (#37, `Documents/21` D12
 ```
 trình duyệt ──► Caddy ─┬─ /api/v1/notification/stream* ─► realtime:3002
                        ├─ /api/*                        ─► api:3000 ─► Supabase
-                       ├─ /mock/*  (bỏ tiền tố)         ─► fe-mock:80 (SPA, MSW, dữ liệu giả)
                        └─ /                             ─► fe:80 (SPA, gọi backend thật)
 ```
 
@@ -24,7 +23,7 @@ Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước
 | `deploy` | SSH vào `ci-deploy@<VPS>` gửi tag; VPS chạy `commerio-deploy backend`: blue-green cho `api`, `realtime` (bật màu nghỉ với image mới, chờ sẵn sàng, chuyển Service, tắt màu cũ), rolling update cho `worker` (`deploy/k8s/README.md`). **Bỏ qua khi chưa đặt biến `STAGING_SSH_HOST`** |
 | `blackbox` | `npm run test:blackbox` gọi vào `STAGING_API_URL` bằng tài khoản QA. **Bỏ qua khi chưa đặt biến `STAGING_API_URL`** (hoặc khi `deploy` bị bỏ qua) |
 
-Repo FE có workflow cùng tên: build hai image `ghcr.io/da-ec-system/commerio-fe:sha-<7 ký tự>` (gọi backend thật) và `commerio-fe-mock:sha-<7 ký tự>` (MSW, `/mock/`), rồi `commerio-deploy fe` đổi image của Deployment `fe` và `fe-mock`.
+Repo FE có workflow cùng tên: build image `ghcr.io/da-ec-system/commerio-fe:sha-<7 ký tự>` (gọi backend thật), rồi `commerio-deploy fe` đổi image của Deployment `fe`.
 
 Hai lần merge sát nhau: lần sau chờ lần trước xong; commit ở giữa có thể không có image riêng.
 

@@ -30,23 +30,31 @@ import { lockShopRow, type ShopRow } from '../repository/shops.ts';
 import { REFRESH_COOLDOWN_MS, RemoteSkusRetryLater, requestRemoteSkusRefresh } from './remote-skus.ts';
 import { type RefreshState, refreshState } from '../domain/remote-skus-refresh.ts';
 import { NO_PENDING } from '../domain/listing.ts';
+import { type RemoteTitleChanged, remoteTitleChanged, snapshotBaseline } from '../domain/remote-title.ts';
 import { type ChannelListing, moveListing, requesterNames, toListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, ownShop } from './shops.ts';
 
 const ENTITY = 'listings';
-const AUDIT = { entityType: 'channel.listings' };
+/** Dòng nhật ký của lần tự duyệt ghép SKU: nhãn là SKU người bán, thiếu thì mã SKU sàn (#352). */
+const auditOf = (row: { sellerSku: string | null; externalSkuId: string | null }) => ({
+  entityType: 'channel.listings',
+  label: row.sellerSku ?? row.externalSkuId ?? 'Listing chưa có SKU',
+});
 
 export interface RemoteSkuItem {
   externalProductId: string;
   externalSkuId: string;
   sellerSku: string;
   title: string;
+  titleEn: string | null;
   matchedVariantId: string | null;
   mode: 'mapped' | 'unmanaged' | null;
   listingId: string | null;
   listingVersion: number | null;
   pendingMapping: ChannelListing['pendingMapping'];
+  /** Tên trên sàn khác tên lúc ghép (#396), chỉ với listing đang ghép SKU này. */
+  remoteTitleChanged: RemoteTitleChanged | null;
 }
 
 /** Ghép đang có hiệu lực: dòng tạo ra chỉ để chờ duyệt "không quản tồn" (chưa ai duyệt) là chưa ghép. */
@@ -101,6 +109,7 @@ export async function remoteSkus(
         externalSkuId: r.externalSkuId,
         sellerSku: r.sellerSku,
         title: r.title,
+        titleEn: r.titleEn,
         matchedVariantId: mode === 'mapped' ? listing!.variantId : null,
         mode,
         // CEO tìm yêu cầu ghép chờ duyệt ở đây, kể cả "không quản tồn" của SKU chưa ghép (dòng `variant_id` null không có
@@ -108,6 +117,7 @@ export async function remoteSkus(
         listingId: listing?.id ?? null,
         listingVersion: listing?.version ?? null,
         pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
+        remoteTitleChanged: listing?.externalSkuId === r.externalSkuId ? remoteTitleChanged(listing, r) : null,
       };
     });
     return {
@@ -158,6 +168,8 @@ async function variantSlot(port: ProductPort, shopId: string, variantId: string,
 const attach = (sku: { externalSkuId: string; externalProductId: string; sellerSku: string }, platformStock: number | null): ListingPatch => ({
   ...sku,
   status: 'live',
+  // #399: SKU sàn có sẵn, nội dung là của người bán (kể cả dùng lại listing lỗi đẩy).
+  contentSource: 'platform',
   pushError: null,
   hiddenBy: null,
   platformStock,
@@ -284,6 +296,7 @@ export async function matchListing(
               sellerSku: remote!.sellerSku,
               status: 'live',
               platformStock: remote!.quantity,
+              contentSource: 'platform',
               ...pending,
             });
         if (!saved) throw await conflictAt(shop.id, externalSkuId);
@@ -291,7 +304,11 @@ export async function matchListing(
         return { row: saved, pending: true };
       }
       if (failed) await moveListing(failed, 'delist', actor, { hiddenBy: null }, SUPERSEDED);
-      const patch = applyPatch(variantId, actor.accountId, needsCeo ? actor.accountId : null, needsCeo);
+      // Ghép có hiệu lực: mốc tên trên sàn là tên hiện tại trong bản sao, xoá cờ (#396).
+      const patch = {
+        ...applyPatch(variantId, actor.accountId, needsCeo ? actor.accountId : null, needsCeo),
+        ...snapshotBaseline(row ? await findRemoteSkuRow(shop.id, externalSkuId) : remote),
+      };
       const saved = row
         ? await updateListing(row.id, { version: row.version, status: row.status }, patch)
         : await insertListing({
@@ -303,6 +320,7 @@ export async function matchListing(
             sellerSku: remote!.sellerSku,
             status: 'live',
             platformStock: remote!.quantity,
+            contentSource: 'platform',
           });
       if (!saved) throw await conflictAt(shop.id, externalSkuId);
       await recordTransition({
@@ -313,7 +331,7 @@ export async function matchListing(
         action: 'match',
         actorId: actor.accountId,
         selfApproved: needsCeo,
-        audit: { ...AUDIT, label: saved.sellerSku },
+        audit: auditOf(saved),
       });
       await applyToOrders(locked, saved.sellerSku, actor.accountId);
       return { row: saved, pending: false };
@@ -356,6 +374,7 @@ async function reuseFailed(failed: ListingRow, remote: RemoteSkuRow, actor: Acto
   const saved = await updateListing(failed.id, guard, {
     ...applyPatch(failed.variantId, actor.accountId, needsCeo ? actor.accountId : null, needsCeo),
     ...attach(sku, remote.quantity),
+    ...snapshotBaseline(remote),
   });
   if (!saved) throw await conflictById(failed.id);
   await recordTransition({
@@ -366,7 +385,7 @@ async function reuseFailed(failed: ListingRow, remote: RemoteSkuRow, actor: Acto
     action: 'match',
     actorId: actor.accountId,
     selfApproved: needsCeo,
-    audit: { ...AUDIT, label: saved.sellerSku },
+    audit: auditOf(saved),
   });
   return { row: saved, pending: false };
 }
@@ -439,9 +458,11 @@ async function decide(
         const failed = await variantSlot(port, shop.id, row.pendingVariantId, row.id);
         if (failed) await moveListing(failed, 'delist', actor, { hiddenBy: null }, SUPERSEDED);
       }
+      const externalSkuId = pendingExternalSkuId ?? row.externalSkuId;
+      Object.assign(patch, snapshotBaseline(externalSkuId ? await findRemoteSkuRow(shop.id, externalSkuId) : undefined));
       const saved = await updateListing(row.id, { version: row.version, status: row.status }, patch);
       if (!saved) throw await conflictById(row.id);
-      await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: saved.sellerSku } });
+      await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: auditOf(saved) });
       await applyToOrders(locked, saved.sellerSku, actor.accountId);
       return toListing(saved);
     }

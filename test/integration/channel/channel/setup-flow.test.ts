@@ -250,6 +250,15 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
     expect(rows).toEqual([{ stock_sync: 'pending', stock_sync_error: null }]);
   });
 
+  it('#396: listing ghép lúc thiết lập lấy tên trên sàn làm mốc "tên lúc ghép"', async () => {
+    const c = await createCompany({ optionalModules: ['channel'] });
+    const shopId = await connectingShop(c);
+    await otherShop(c.companyId, setUp);
+    expect((await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'push' })).status).toBe(200);
+    const { rows } = await testPool().query('select remote_title_at_match, remote_title_changed_at from channel.listings where shop_id = $1', [shopId]);
+    expect(rows).toEqual([{ remote_title_at_match: 'Áo thun trắng', remote_title_changed_at: null }]);
+  });
+
   it('AC-18: hai gian hàng cùng công ty lập phiếu đầu kỳ cùng lúc → đúng một 200, một 422, một phiếu', async () => {
     const create = fakeStocktake();
     const c = await createCompany({ optionalModules: ['channel'] });

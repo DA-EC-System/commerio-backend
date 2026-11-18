@@ -158,6 +158,9 @@ describe('quyết định từng SKU khi thiết lập (AC-23)', () => {
       { external_sku_id: 'sku-1', variant_id: vSku.id, seller_sku: 'CMR-1' },
       { external_sku_id: 'sku-2', variant_id: vOther.id, seller_sku: 'LZ-JEAN' },
     ]);
+    // #399: ghép ở thiết lập là sản phẩm người bán có sẵn.
+    const sources = await testPool().query('select distinct content_source from channel.listings where shop_id = $1', [shopId]);
+    expect(sources.rows).toEqual([{ content_source: 'platform' }]);
     // Số SKU chưa ghép đếm từ bản sao SKU sàn lưu lúc thiết lập (#220 đợt 2), gồm SKU bỏ qua.
     const { rows } = await testPool().query('select count(*)::int as n from channel.remote_skus where shop_id = $1', [shopId]);
     expect(rows[0].n).toBe(4);

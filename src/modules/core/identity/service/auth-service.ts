@@ -160,6 +160,7 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
         action: 'create',
         entityType: 'core.companies',
         entityId: companyId,
+        label: input.company.name,
         after: { ...input.company, ceoEmail: input.ceo.email, optionalModules: input.optionalModules },
       });
       return { companyId, email: input.ceo.email };
@@ -224,12 +225,14 @@ export async function refresh(refreshToken: string | undefined): Promise<Session
     // Không dời mốc xoay vòng: hạn dùng lại tính từ lần xoay đầu, không kéo dài mãi.
     if (Date.now() - row.rotatedAt.getTime() <= graceMs) return { kind: 'ok', row } as const;
     await revokeRefreshFamily(row.familyId);
+    const owner = await findAccountById(row.accountId);
     await recordAudit({
       companyId: null,
       actorId: row.accountId,
       action: 'update',
       entityType: 'core.refresh_tokens',
       entityId: row.id,
+      label: `Phiên đăng nhập của ${owner?.email ?? 'tài khoản đã xoá'}`,
       after: { reason: 'refresh_token_reuse', familyId: row.familyId },
     });
     return { kind: 'reuse', row } as const;
@@ -297,6 +300,7 @@ export async function changePassword(
       action: 'update',
       entityType: 'core.accounts',
       entityId: account.id,
+      label: `${account.fullName} (${account.email})`,
       after: { passwordChanged: true },
     });
     return token;

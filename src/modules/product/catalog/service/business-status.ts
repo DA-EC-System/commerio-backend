@@ -102,6 +102,7 @@ export async function changeBusinessStatus(
       });
       await recordAudit({
         ...auditOf(actor, 'update', AUDIT_ENTITY, v.id),
+        label: `${product.name} · ${v.sku}`,
         before: { businessStatus: v.businessStatus },
         after: { businessStatus: to },
       });

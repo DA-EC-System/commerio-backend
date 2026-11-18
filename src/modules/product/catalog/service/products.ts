@@ -273,6 +273,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     const result = await productDetail(ctx, await findOwnProduct(id));
     await recordAudit({
       ...auditOf(caller, 'create', ENTITY, id),
+      label: input.name,
       after: { ...snapshot(input, category.name, result.variants, imageIds, sizeChartId), code },
     });
     return result;
@@ -342,6 +343,7 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     const sizeChartAfter = sizeChartId === undefined ? product.sizeChartFileId : sizeChartId;
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
+      label: input.name ?? product.name,
       before: {
         ...snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
         ...(removedImages.length && { attributeValueImages: removedImages }),
@@ -383,6 +385,7 @@ export async function deleteProduct(ctx: CatalogContext, caller: Caller, id: str
     await deleteProductTree(id, ids);
     await recordAudit({
       ...auditOf(caller, 'delete', ENTITY, id),
+      label: product.name,
       before: { ...snapshot(product, product.categoryName, variants, imageIds, product.sizeChartFileId), code: product.code },
     });
   });

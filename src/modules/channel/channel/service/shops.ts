@@ -50,6 +50,7 @@ import {
   capabilitiesOf,
   forCompany,
   getAdapter,
+  INVALID_AMOUNT,
   type MarketplaceAdapter,
   MarketplaceError,
   type PlatformEntry,
@@ -279,6 +280,11 @@ function platformOf(platform: string): { platform: Platform; adapter: Marketplac
 /** Lỗi sàn đổi sang mã app, giữ mã gốc (Documents/21 §1.1 R8, R9). */
 function toAppError(err: MarketplaceError): AppError {
   const platform = { platformCode: err.platformCode, platformMessage: err.platformMessage };
+  // Sàn trả số tiền không đọc được (#349): lỗi của hệ thống, không phải sàn từ chối. Người dùng thấy câu cố định;
+  // trường, chứng từ, giá trị gốc ở `platformMessage` cho kỹ thuật.
+  if (err.platformCode === INVALID_AMOUNT) {
+    return new AppError(502, 'marketplace_invalid_amount', 'Không đọc được số tiền sàn trả về. Đã báo kỹ thuật, thử lại sau.', platform);
+  }
   switch (err.kind) {
     case 'unavailable':
       return new AppError(503, 'marketplace_unavailable', 'Sàn đang không phản hồi, thử lại sau', platform);
@@ -683,6 +689,12 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
             rejectReason: status === 'rejected' ? (r.rejectReason ?? NO_REASON) : null,
             platformStock: r.quantity,
             replacesListingId: row.id,
+            contentSource: row.contentSource,
+            // Mốc tên trên sàn giữ của dòng cũ (#396): người bán đổi tên trong lúc ngắt thì cờ vẫn bật ở lượt đọc sau.
+            remoteTitleAtMatch: row.remoteTitleAtMatch,
+            remoteTitleEnAtMatch: row.remoteTitleEnAtMatch,
+            remoteTitleMatchedAt: row.remoteTitleMatchedAt,
+            remoteTitleChangedAt: row.remoteTitleChangedAt,
           });
           await recordTransition({ entityType: 'listings', entityId: created.id, from: null, to: status, action: 'relist', actorId: null, reason: 'Kết nối lại gian hàng' });
         });

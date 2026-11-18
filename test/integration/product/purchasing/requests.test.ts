@@ -134,6 +134,15 @@ describe('lập và sửa đề nghị', () => {
     expect(page.items[0]!.totalCost).toBeNull(); // chỉ nhận hàng, không thấy giá
   });
 
+  it('#352: lập đề nghị → nhật ký create mang nhãn là số đề nghị', async () => {
+    const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 1, unitCost: 1000 }]);
+    const { rows } = await testPool().query(
+      "select entity_label from core.audit_logs where entity_id = $1 and action = 'create'",
+      [r.id],
+    );
+    expect(rows).toEqual([{ entity_label: r.number }]);
+  });
+
   it('người chỉ nhận hàng xem chi tiết không thấy giá; công ty khác nhận 404', async () => {
     const r = await createRequest(A.requester, A.supplierId, [{ variantId: A.v1, quantity: 2, unitCost: 5000 }]);
     const byReceiver = PurchaseRequest.parse((await pur(A.receiver).get(`/requests/${r.id}`)).body);

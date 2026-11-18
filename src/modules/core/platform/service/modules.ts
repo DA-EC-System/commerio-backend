@@ -2,7 +2,7 @@
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../audit/index.ts';
-import { OPTIONAL_MODULES, type OptionalModule } from '../domain/modules.ts';
+import { MODULE_NAMES, OPTIONAL_MODULES, type OptionalModule } from '../domain/modules.ts';
 import { enabledModuleCodes } from '../repository/companies.ts';
 import { findModuleRows, lockModuleRow, type ModuleRow, saveModule } from '../repository/modules.ts';
 import { type AccountRef, accountRefs, type PlatformContext } from './context.ts';
@@ -75,6 +75,7 @@ export function setCompanyModule(
       action: 'update',
       entityType: 'core.company_modules',
       entityId: null,
+      label: MODULE_NAMES[code],
       before: { module: code, enabled: before.enabled },
       after: aiConsent
         ? { module: code, enabled: true, aiConsentAt: saved.aiConsentAt?.toISOString() }
