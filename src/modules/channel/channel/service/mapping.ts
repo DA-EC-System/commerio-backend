@@ -158,6 +158,8 @@ async function variantSlot(port: ProductPort, shopId: string, variantId: string,
 const attach = (sku: { externalSkuId: string; externalProductId: string; sellerSku: string }, platformStock: number | null): ListingPatch => ({
   ...sku,
   status: 'live',
+  // #399: SKU sàn có sẵn, nội dung là của người bán (kể cả dùng lại listing lỗi đẩy).
+  contentSource: 'platform',
   pushError: null,
   hiddenBy: null,
   platformStock,
@@ -284,6 +286,7 @@ export async function matchListing(
               sellerSku: remote!.sellerSku,
               status: 'live',
               platformStock: remote!.quantity,
+              contentSource: 'platform',
               ...pending,
             });
         if (!saved) throw await conflictAt(shop.id, externalSkuId);
@@ -303,6 +306,7 @@ export async function matchListing(
             sellerSku: remote!.sellerSku,
             status: 'live',
             platformStock: remote!.quantity,
+            contentSource: 'platform',
           });
       if (!saved) throw await conflictAt(shop.id, externalSkuId);
       await recordTransition({

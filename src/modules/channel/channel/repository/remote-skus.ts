@@ -1,5 +1,5 @@
 // Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, bảng `remote_skus`). Chạy trong `withCompany` của bên gọi.
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import { listings, remoteSkus, shops } from './schema.ts';
@@ -130,6 +130,15 @@ export async function clearRefreshRequested(shopId: string): Promise<void> {
 
 export async function listRemoteSkuRows(shopId: string): Promise<RemoteSkuRow[]> {
   return getDb().select().from(remoteSkus).where(eq(remoteSkus.shopId, shopId)).orderBy(asc(remoteSkus.title), asc(remoteSkus.externalSkuId));
+}
+
+/** Số SKU của một sản phẩm sàn trong bản sao (#399: sản phẩm nhiều SKU thì ghi nội dung đè cả sản phẩm). */
+export async function countRemoteSkusOfProduct(shopId: string, externalProductId: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ n: count() })
+    .from(remoteSkus)
+    .where(and(eq(remoteSkus.shopId, shopId), eq(remoteSkus.externalProductId, externalProductId)));
+  return row?.n ?? 0;
 }
 
 export async function findRemoteSkuRow(shopId: string, externalSkuId: string): Promise<RemoteSkuRow | undefined> {

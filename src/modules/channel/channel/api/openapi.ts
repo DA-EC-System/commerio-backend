@@ -8,6 +8,8 @@ import {
   DelistBody,
   UpdateContentBody,
   UpdateContentParams,
+  TakeOverContentBody,
+  TakeOverContentParams,
   ListingList,
   ListingParams,
   ListingSyncResult,
@@ -439,6 +441,26 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: gian hàng hoặc listing'),
       409: problemResponse('`invalid_transition` (không có `outsideChange`; `accept-price` với `kind = disabled`), `version_conflict` kèm `current`, `shop_not_connected`'),
       422: problemResponse('`marketplace_unsupported`, `validation_failed`, `below_floor` (`accept-price`)'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/take-over-content',
+    summary: 'CEO ghi nội dung Commerio lên sản phẩm người bán đã ghép (#399)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). Chỉ listing `contentSource = platform` có mã sàn ở `live`, `hidden`, `platform_hold`, `rejected`, `push_failed`. ' +
+      'Listing chuyển `pushing` (`take_over_content`), xếp việc đẩy ghi tên, mô tả, ảnh, danh mục, thuộc tính, giá của Commerio lên sản phẩm (nội dung đang có trên sàn mất, không hoàn tác); ' +
+      'xong thì `contentSource = app`, `live` hoặc `under_review`; sàn từ chối thì `push_failed` kèm `pushError`, giữ `platform`. Ghi nhật ký thao tác.',
+    security: bearer,
+    request: { params: TakeOverContentParams, body: json(TakeOverContentBody) },
+    responses: {
+      202: { description: 'Listing `pushing`, việc ghi nội dung đã xếp', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
+      409: problemResponse(
+        '`invalid_transition` kèm `current` (listing `app`, chưa có mã sàn, trạng thái khác, đang chờ CEO quyết thay đổi ngoài app), `mapping_pending`, `version_conflict` kèm `current`, mã chặn đẩy (`category_unmapped`, `price_missing`, `dimensions_missing`, `images_missing`, `size_chart_missing`, `sku_not_ready`)',
+      ),
+      422: problemResponse('`shared_remote_product`: sản phẩm trên sàn có nhiều SKU (ghi đè cả sản phẩm); `validation_failed`'),
     },
   });
   registry.registerPath({

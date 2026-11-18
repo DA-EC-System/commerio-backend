@@ -25,9 +25,12 @@ export type ListingAction =
   | 'outside_resolve'
   | 'delist'
   | 'update_content'
-  | 'request_review';
+  | 'request_review'
+  | 'take_over_content';
 
 const manage = 'channel.listing.manage';
+/** Listing có sản phẩm trên sàn mà CEO ghi nội dung Commerio lên được (#399). */
+export const TAKE_OVER_FROM = ['live', 'hidden', 'platform_hold', 'rejected', 'push_failed'] as const satisfies readonly ListingStatus[];
 
 export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   // `not_listed` không có bản ghi: đẩy lần đầu (hoặc sau khi gỡ) tạo dòng mới ở `pushing`, không qua bảng này. `delisted`
@@ -49,6 +52,14 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   // chuyển tiếp `request_review` (ca C2-21).
   { from: 'live', to: 'live', action: 'update_content', permission: manage },
   { from: 'live', to: 'under_review', action: 'request_review', system: true },
+  // Ghi nội dung Commerio lên sản phẩm người bán đã ghép (#399): đi lại luồng đẩy (`channel.listing_push`); route kiểm
+  // vai trò CEO và `content_source = 'platform'`.
+  {
+    from: [...TAKE_OVER_FROM],
+    to: 'pushing',
+    action: 'take_over_content',
+    permission: manage,
+  },
   // Người gỡ cần quyền; sàn báo đã xoá sản phẩm thì hệ thống gỡ (`actor` null, E24).
   {
     from: ['live', 'hidden', 'under_review', 'platform_hold', 'rejected', 'push_failed'],

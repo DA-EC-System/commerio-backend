@@ -300,6 +300,7 @@ export async function finishSetup(
         sellerSku: p.sellerSku,
         status: 'live',
         platformStock: p.platformStock,
+        contentSource: 'platform',
       });
       await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
     }

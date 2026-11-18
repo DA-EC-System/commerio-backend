@@ -1,7 +1,7 @@
 // Listing: danh sách, đẩy lên sàn, gỡ (#104; Documents/21 §18.3, §18.4, §18.6.4). Đẩy chạy nền (#219): request chỉ
 // kiểm, chuyển `pushing` và xếp việc `channel.listing_push` (`listing-push.ts`) trong cùng giao dịch, trả ngay.
 import { Decimal } from 'decimal.js';
-import { assertTransition, findAccountSummaries, recordTransition, responsibleOrgOf } from '../../../core/index.ts';
+import { assertTransition, findAccountSummaries, recordAudit, recordTransition, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
@@ -16,6 +16,7 @@ import {
   NO_REVISION,
   pendingOnly,
   REVISION_KEPT,
+  TAKE_OVER_FROM,
 } from '../domain/listing.ts';
 import { awaitingAllocation } from '../domain/shop.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
@@ -33,7 +34,8 @@ import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
 import { insertConfirmed, type NewPriceCalculation } from '../repository/price-calculations.ts';
-import { type ListingPrice, listingPrices } from './listing-prices.ts';
+import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
+import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
 import { firstPushCalculations } from './repricing.ts';
 import { listingText, pushBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
@@ -71,6 +73,8 @@ export interface ChannelListing {
   pendingMapping: { variantId: string | null; externalSkuId: string | null; requestedBy: { id: string; name: string }; requestedAt: Date } | null;
   /** Bản sửa nội dung chờ sàn duyệt (§18.3, #293). */
   pendingRevision: { status: 'auditing' | 'failed'; rejectReason: string | null; at: Date } | null;
+  /** Ai tạo nội dung sản phẩm trên sàn (#399). */
+  contentSource: ListingRow['contentSource'];
   version: number;
 }
 
@@ -142,6 +146,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
         : null,
     pendingRevision:
       r.revisionStatus && r.revisionAt ? { status: r.revisionStatus, rejectReason: r.revisionRejectReason, at: r.revisionAt } : null,
+    contentSource: r.contentSource,
     version: r.version,
   };
 }
@@ -378,6 +383,8 @@ async function enqueue(
           externalImageUrls: existing?.externalImageUrls ?? null,
           replacesListingId: existing?.id ?? null,
           priceCalcId: priceCalcId ?? null,
+          // #399: bản gỡ còn mã sàn thì đẩy lại đúng sản phẩm đó, chủ nội dung giữ như cũ; không có thì app tạo mới.
+          contentSource: existing?.externalSkuId ? existing.contentSource : 'app',
         });
         await recordTransition({ entityType: ENTITY, entityId: row.id, from: null, to: 'pushing', action: 'push', actorId: actor.accountId });
       }
@@ -465,6 +472,67 @@ export async function updateListingContent(
     const revision = underReview ? {} : { revisionStatus: 'auditing' as const, revisionRejectReason: null, revisionAt: new Date() };
     let updated = await moveListing(fresh, 'update_content', actor, revision);
     if (underReview) updated = await moveListing(updated, 'request_review', null);
+    return toListing(updated, await requesterNames([updated]));
+  });
+}
+
+/**
+ * `take-over-content` (#399): CEO ghi tên, mô tả, ảnh, danh mục của Commerio lên sản phẩm người bán đã ghép
+ * (`content_source = 'platform'`). Route đã kiểm quyền và vai trò CEO. Thứ tự: 404 → 409 `invalid_transition` (listing
+ * `app`, chưa có mã sàn, trạng thái khác `TAKE_OVER_FROM`, đang chờ CEO quyết thay đổi ngoài app) → 409 `mapping_pending`
+ * → 409 `version_conflict` → 422 `shared_remote_product` (sản phẩm sàn nhiều SKU theo bản sao: ghi đè cả sản phẩm) →
+ * mã chặn của `pushBlock`. Hợp lệ: chuyển `pushing`, ghi lịch sử, nhật ký, xếp `channel.listing_push` có `takeOver` cùng
+ * giao dịch. Việc nền ghi nội dung (`updateProduct`) như đẩy lại, xong thì `content_source = 'app'`; sàn lỗi thì
+ * `push_failed` kèm `pushError`, giữ `platform`.
+ */
+export async function takeOverContent(
+  port: ProductPort,
+  actor: Actor,
+  shopId: string,
+  listingId: string,
+  version: number,
+): Promise<ChannelListing> {
+  return withCompany(actor.companyId, async () => {
+    const shop = await ownShop(shopId);
+    const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
+    if (!row || row.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
+    const current = { current: toListing(row, await requesterNames([row])) };
+    const { externalProductId, variantId } = row;
+    if (row.contentSource !== 'platform' || !externalProductId || !row.externalSkuId || !variantId || !(TAKE_OVER_FROM as readonly ListingStatus[]).includes(row.status)) {
+      throw new AppError(409, 'invalid_transition', 'Chỉ ghi nội dung Commerio lên sản phẩm người bán đang có trên sàn', current);
+    }
+    if (row.outsideChangeKind) throw new AppError(409, 'invalid_transition', 'Quyết thay đổi ngoài app của listing trước', current);
+    if (row.pendingRequestedBy) throw new AppError(409, 'mapping_pending', 'Listing đang chờ CEO duyệt ghép', current);
+    if (row.version !== version) throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', current);
+    if ((await countRemoteSkusOfProduct(shop.id, externalProductId)) > 1) {
+      throw new AppError(422, 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; ghi nội dung sẽ đổi mọi SKU của sản phẩm');
+    }
+    const [v] = await port.variants([variantId]);
+    if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
+    const imageUrls = (await port.productImageUrls([v.productId], PUSH_IMAGE_MAX)).get(v.productId) ?? [];
+    const sizeChartUrl = (await port.productSizeChartUrls?.([v.productId]))?.get(v.productId) ?? null;
+    const [map] = await listCategoryMaps(shop.platform, [v.categoryId]);
+    const own = (await currentPrices([variantId], [row], await port.standardPrices([variantId]))).get(variantId)!;
+    const block = pushBlock(v, own.price === null ? null : new Decimal(own.price), map, imageUrls.length > 0, Boolean(sizeChartUrl));
+    if (block) throw new AppError(409, block.code, block.message, current);
+    const updated = await moveListing(row, 'take_over_content', actor, {
+      pushStartedAt: new Date(),
+      pushAttempts: 0,
+      pushError: null,
+      rejectReason: null,
+      // CHECK `listings_hidden_by`: rời `hidden` thì bỏ cách ẩn; lên sàn lại thì lượt đẩy tồn ẩn lại nếu SKU tạm ngừng.
+      hiddenBy: null,
+    });
+    await recordAudit({
+      companyId: actor.companyId,
+      actorId: actor.accountId,
+      action: 'update',
+      entityType: 'channel.listings',
+      entityId: row.id,
+      before: { code: row.sellerSku, status: row.status, contentSource: row.contentSource },
+      after: { code: row.sellerSku, status: updated.status, action: 'take_over_content', contentSource: 'app' },
+    });
+    await sendListingPush({ companyId: actor.companyId, shopId: shop.id, listingId: row.id, imageUrls, ...(sizeChartUrl && { sizeChartUrl }), takeOver: true });
     return toListing(updated, await requesterNames([updated]));
   });
 }

@@ -130,7 +130,26 @@ export interface CreatedProduct {
    * rồi ghi nội dung của app lên (`updateProduct`).
    */
   existing?: true;
+  /**
+   * Với `existing`: giờ sàn tạo sản phẩm có sẵn và tên trên sàn (#399). Việc đẩy so giờ tạo với lúc bắt đầu lượt để biết
+   * sản phẩm do chính lượt này tạo (lỗi mà vẫn tạo, #346) hay người bán tạo từ trước. Sàn không trả giờ tạo thì thiếu.
+   */
+  createdAt?: Date;
+  title?: string;
 }
+
+/** Mốc mili giây hợp lệ (dương) thành `Date`; không thì `undefined`. */
+export const epochDate = (ms: number): Date | undefined => (Number.isFinite(ms) && ms > 0 ? new Date(ms) : undefined);
+
+/** Kết quả `createProduct` khi sàn đã có SKU cùng SellerSku (#346, #399). */
+export const existingProduct = (s: RemoteSku): CreatedProduct => ({
+  externalProductId: s.externalProductId,
+  externalSkuId: s.externalSkuId,
+  live: s.state === 'live',
+  existing: true,
+  ...(s.createdAt && { createdAt: s.createdAt }),
+  title: s.title,
+});
 
 /**
  * SKU chưa xoá trên sàn mang SellerSku này, cho `createProduct` không tạo trùng (#346). Nhiều SKU cùng SellerSku thì không
@@ -182,6 +201,8 @@ export interface RemoteSku {
    */
   stockLocked?: boolean;
   priceLocked?: boolean;
+  /** Giờ sàn tạo sản phẩm (#399; Lazada `created_time` mili giây, TikTok `create_time` giây); sàn không trả thì thiếu. */
+  createdAt?: Date;
   /**
    * Số còn bán được trên sàn, cùng nghĩa với số app đẩy lên (số có thể bán), để đối chiếu tồn (#223, 25 §6.5). Thiếu thì
    * không đối chiếu SKU đó. TikTok: tổng `inventory[].quantity` ("quantity available in the warehouse", cũng là số app

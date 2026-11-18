@@ -167,6 +167,11 @@ export interface SyncError {
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
 export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['disabled', 'price_changed']);
+/**
+ * Ai tạo nội dung (tên, mô tả, ảnh, danh mục) của sản phẩm trên sàn (#399): `app` do app đẩy tạo; `platform` do người
+ * bán tạo trên sàn rồi ghép. Đẩy lại listing `platform` chỉ bật lại SKU, không ghi nội dung của app.
+ */
+export const contentSource = channelSchema.enum('listing_content_source', ['app', 'platform']);
 /** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
 export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
 
@@ -242,6 +247,8 @@ export const listings = channelSchema.table(
     revisionStatus: revisionStatus('revision_status'),
     revisionRejectReason: text('revision_reject_reason'),
     revisionAt: timestamp('revision_at', { withTimezone: true }),
+    /** Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị. */
+    contentSource: contentSource('content_source').notNull().default('platform'),
     /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
     replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
     ...timestamps,

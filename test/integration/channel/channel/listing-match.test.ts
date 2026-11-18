@@ -208,6 +208,8 @@ describe('listings/match', () => {
   it('US-GH-04 AC1: Sale ghép SKU sàn chưa ghép → 200, listing `live` mang SKU người bán trên sàn, không xếp việc đẩy', async () => {
     const { r, v, listing } = await mapped();
     expect(listing).toMatchObject({ status: 'live', sellerSku: r.sellerSku, externalSkuId: r.externalSkuId, pendingMapping: null });
+    // #399: SKU người bán có sẵn trên sàn, nội dung là của người bán.
+    expect(listing.contentSource).toBe('platform');
     expect(await rowOf(r.externalSkuId)).toMatchObject({ mode: 'mapped', variant_id: v.id, approved_by: null, mapping_self_approved: false });
     const jobs = await testPool().query("select 1 from pgboss.job where name = 'channel.listing_push' and data->>'listingId' = $1", [listing.id]);
     expect(jobs.rowCount).toBe(0);
@@ -258,6 +260,7 @@ describe('listings/match', () => {
     const res = await match(sale.token, { externalSkuId: r.externalSkuId, variantId: null });
     expect(res.status).toBe(202);
     expect(res.body.pendingMapping).toMatchObject({ variantId: null, requestedBy: { id: sale.accountId } });
+    expect(res.body.contentSource).toBe('platform');
     expect(await rowOf(r.externalSkuId)).toMatchObject({ mode: 'unmanaged', variant_id: null, approved_by: null, pending_mode: 'unmanaged' });
     const open = await as(app().get(`/api/v1/channel/shops/${shopId}/remote-skus?unmatched=true`), sale.token);
     expect(RemoteSkuList.parse(open.body).items.map((i) => i.externalSkuId)).toContain(r.externalSkuId);
@@ -803,8 +806,8 @@ describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
   const failedRow = async (variantId: string, sellerSku: string, status = 'push_failed') =>
     (
       await testPool().query<{ id: string }>(
-        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, push_error, push_attempts, listed_price, external_image_urls)
-         values ($1, $2, $3, $4, $5, $6, 1, 50000, '{https://img/a.jpg}') returning id`,
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, push_error, push_attempts, listed_price, external_image_urls, content_source)
+         values ($1, $2, $3, $4, $5, $6, 1, 50000, '{https://img/a.jpg}', 'app') returning id`,
         [
           company.companyId,
           shopId,
@@ -834,6 +837,8 @@ describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
       price_sync: 'pending',
       external_image_urls: ['https://img/a.jpg'],
       listed_price: '50000.00',
+      // #399: gắn SKU sàn có sẵn thì nội dung trên sàn coi là của người bán.
+      content_source: 'platform',
     });
     expect(await openRowsOf(v.id)).toHaveLength(1);
     expect((await transitionsOf(id)).at(-1)).toMatchObject({ action: 'match' });
@@ -888,6 +893,7 @@ describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
       push_error: null,
       pending_external_sku_id: null,
       pending_requested_by: null,
+      content_source: 'platform',
     });
     const b = await pendingOnFailed();
     const no = await decide(company.ceo.token, b.id, 'reject', { version: b.res.body.version, reason: 'Sai SKU' });

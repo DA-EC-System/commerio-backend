@@ -29,6 +29,8 @@ import {
   MatchBody,
   OutsideChangeBody,
   OutsideChangeParams,
+  TakeOverContentBody,
+  TakeOverContentParams,
   PushBody,
   RemoteSkusQuery,
   SetupBody,
@@ -258,6 +260,18 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, listingId } = validated<typeof UpdateContentParams>(res, 'params');
       const { version } = validated<typeof UpdateContentBody>(res, 'body');
       res.json(await listings.updateListingContent(productPort(ctx), actor(res), id, listingId, version));
+    },
+  );
+
+  router.post(
+    '/shops/:id/listings/:listingId/take-over-content',
+    manage,
+    ceoOnly,
+    validate({ params: TakeOverContentParams, body: TakeOverContentBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof TakeOverContentParams>(res, 'params');
+      const { version } = validated<typeof TakeOverContentBody>(res, 'body');
+      res.status(202).json(await listings.takeOverContent(productPort(ctx), actor(res), id, listingId, version));
     },
   );
 

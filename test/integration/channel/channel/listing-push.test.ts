@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { HoldJob } from '#src/modules/core/index.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { PUSH_ATTEMPTS, runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
-import { type CreatedProduct, MarketplaceError, type NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { type CreatedProduct, MarketplaceError, type NewProduct, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -48,6 +48,18 @@ let onUpdate: (productId: string, skuId: string, p: NewProduct) => Promise<{ liv
 const createProduct = vi.fn((_t: string, p: NewProduct) => onCreate(p));
 const updateProduct = vi.fn((_t: string, productId: string, skuId: string, p: NewProduct) => onUpdate(productId, skuId, p));
 const uploadImage = vi.fn(async (_t: string, url: string) => `https://slatic.test/${encodeURIComponent(url)}`);
+/** Trạng thái SKU trên sàn giả theo SellerSku (#399): `getSkus` đọc, `activate` bật lên `afterActivate`. */
+const remote = new Map<string, { productId: string; skuId: string; state: RemoteSku['state'] }>();
+let afterActivate: RemoteSku['state'] = 'live';
+const getSkus = vi.fn(async (_t: string, sellerSkus: readonly string[]): Promise<RemoteSku[]> =>
+  sellerSkus.flatMap((sellerSku) => {
+    const r = remote.get(sellerSku);
+    return r ? [{ externalProductId: r.productId, externalSkuId: r.skuId, sellerSku, title: 'Áo của người bán', state: r.state, rejectReason: null, quantity: 3 }] : [];
+  }),
+);
+const activate = vi.fn(async (_t: string, productId: string) => {
+  for (const r of remote.values()) if (r.productId === productId) r.state = afterActivate;
+});
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -58,6 +70,8 @@ registerAdapter(
     uploadImage,
     createProduct,
     updateProduct,
+    getSkus,
+    activate,
   }),
 );
 // Gian hàng TikTok kéo đơn được: mất uỷ quyền thì SKU bán trên đó chưa tin được (#223).
@@ -68,6 +82,14 @@ registerAdapter(
       return { externalShopId: accessToken.slice(4), shopName: 'Shop TikTok', region: 'VN' };
     },
     listOrders: async () => ({ orders: [], nextCursor: null, safeUntil: null }),
+    // #399: như TikTok, bật theo cả sản phẩm, `updateProduct` thay nội dung cả sản phẩm.
+    togglesByProduct: true,
+    categoryAttributes: async () => [],
+    uploadImage,
+    createProduct,
+    updateProduct,
+    getSkus,
+    activate,
     getOrder: async () => {
       throw new Error('không có đơn');
     },
@@ -101,6 +123,9 @@ beforeEach(() => {
   createProduct.mockClear();
   updateProduct.mockClear();
   uploadImage.mockClear();
+  getSkus.mockClear();
+  activate.mockClear();
+  afterActivate = 'live';
   onCreate = async (p) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false });
   onUpdate = async () => ({ live: true });
 });
@@ -109,7 +134,8 @@ beforeEach(() => {
 async function pushing(cols: Record<string, unknown> = {}, extra: Partial<ListingVariant> = {}) {
   const v = variant(`CMR-${randomUUID().slice(0, 8)}`, extra);
   variants.push(v);
-  const all = { company_id: company.companyId, shop_id: shopId, variant_id: v.id, seller_sku: v.sku, status: 'pushing', push_started_at: new Date(), ...cols };
+  // Listing do app tạo (#399: cột mặc định `platform`); ca cần sản phẩm người bán thì ghi đè.
+  const all = { company_id: company.companyId, shop_id: shopId, variant_id: v.id, seller_sku: v.sku, status: 'pushing', push_started_at: new Date(), content_source: 'app', ...cols };
   const keys = Object.keys(all);
   const { rows } = await testPool().query<{ id: string }>(
     `insert into channel.listings (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
@@ -121,7 +147,7 @@ async function pushing(cols: Record<string, unknown> = {}, extra: Partial<Listin
 async function listing(id: string) {
   const { rows } = await testPool().query(
     `select status, external_product_id, external_sku_id, external_image_urls, push_error, push_attempts, stock_sync, price_sync,
-            listed_price, platform_stock, reject_reason from channel.listings where id = $1`,
+            listed_price, platform_stock, reject_reason, content_source from channel.listings where id = $1`,
     [id],
   );
   return rows[0];
@@ -176,14 +202,41 @@ describe('việc nền channel.listing_push', () => {
 
   it('#346 AC-7: sàn đã có sẵn SKU cùng SellerSku (lần trước tạo dù báo lỗi) → ghi nội dung, giá của app lên SKU đó, tồn để đồng bộ đẩy', async () => {
     const { id } = await pushing();
-    onCreate = async (p) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false, existing: true });
+    // #399: sàn tạo sản phẩm sau lúc bắt đầu lượt (lần thử trước báo lỗi mà vẫn tạo) → của app, ghi như cũ.
+    onCreate = async (p) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false, existing: true, createdAt: new Date() });
     await runListingPush(port, job(id));
     expect(updateProduct).toHaveBeenCalledTimes(1);
     const [, productId, skuId, sent] = updateProduct.mock.calls[0]!;
     expect(productId).toMatch(/^item-/);
     expect(skuId).toMatch(/^sku-/);
     expect(sent).toMatchObject({ price: '150000' });
-    expect(await listing(id)).toMatchObject({ status: 'live', external_sku_id: skuId, stock_sync: 'pending', price_sync: 'synced', listed_price: '150000.00' });
+    expect(await listing(id)).toMatchObject({ status: 'live', external_sku_id: skuId, stock_sync: 'pending', price_sync: 'synced', listed_price: '150000.00', content_source: 'app' });
+  });
+
+  it('#399 AC-3: SKU có sẵn do người bán tạo trước lượt đẩy → `push_failed` `sku_exists_on_platform`, không ghi gì lên sàn', async () => {
+    const { id, v } = await pushing();
+    const startedAt = (await testPool().query('select push_started_at from channel.listings where id = $1', [id])).rows[0].push_started_at as Date;
+    onCreate = async () => ({
+      externalProductId: 'P-NB',
+      externalSkuId: `S-NB-${v.sku}`,
+      live: true,
+      existing: true,
+      createdAt: new Date(startedAt.getTime() - 5 * 60_000 - 1000),
+      title: 'Áo thun cotton form rộng',
+    });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    const row = await listing(id);
+    expect(row).toMatchObject({ status: 'push_failed', external_sku_id: null, push_error: { code: 'sku_exists_on_platform' } });
+    expect(row.push_error.message).toBe(`SKU ${v.sku} đã có trên Sàn giả (Áo thun cotton form rộng). Dùng Ghép SKU thay vì đẩy.`);
+  });
+
+  it('#399 AC-3: sàn không trả giờ tạo của SKU có sẵn → coi là của người bán, `sku_exists_on_platform`', async () => {
+    const { id } = await pushing();
+    onCreate = async () => ({ externalProductId: 'P-NB2', externalSkuId: `S-NB2-${randomUUID()}`, live: true, existing: true, title: 'SP' });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'sku_exists_on_platform' } });
   });
 
   it('#346 AC-8: SKU có sẵn đang thuộc listing chưa gỡ khác → `push_failed` `marketplace_rejected`, không ghi đè', async () => {
@@ -221,7 +274,8 @@ describe('việc nền channel.listing_push', () => {
     expect(uploadImage).not.toHaveBeenCalled();
     expect(updateProduct.mock.calls[0]!.slice(1, 3)).toEqual(['P1', 'S1']);
     expect(updateProduct.mock.calls[0]![3].imageUrls).toEqual(['https://slatic.test/cu.png']);
-    expect(await listing(id)).toMatchObject({ status: 'live', external_product_id: 'P1', stock_sync: 'pending', price_sync: 'synced' });
+    // #399 AC-2: listing app tạo vẫn ghi nội dung như trước.
+    expect(await listing(id)).toMatchObject({ status: 'live', external_product_id: 'P1', stock_sync: 'pending', price_sync: 'synced', content_source: 'app' });
   });
 
   it('AC-7: lỗi tạm thì ghi pushError, tăng pushAttempts, giữ pushing và ném để thử lại; lần thứ 5 thì push_failed, không ném', async () => {
@@ -363,6 +417,84 @@ describe('việc nền channel.listing_push', () => {
       await runListingPush(port, job(id, []));
       expect(updateProduct.mock.calls[0]![3].quantity).toBe(0);
       expect(await listing(id)).toMatchObject({ stock_sync: 'pending' });
+    });
+  });
+
+  describe('#399 Ca 1: đẩy lại listing nội dung của người bán (ghép → gỡ → đẩy lại)', () => {
+    /** Listing `pushing` chép mã sàn từ bản gỡ của listing ghép; `state` là trạng thái SKU trên sàn giả, null là sàn không còn. */
+    async function reshelved(state: RemoteSku['state'] | null) {
+      const tag = randomUUID().slice(0, 8);
+      const sellerSku = `NB-${tag}`;
+      if (state) remote.set(sellerSku, { productId: `P-${tag}`, skuId: `S-${tag}`, state });
+      return pushing({ content_source: 'platform', seller_sku: sellerSku, external_product_id: `P-${tag}`, external_sku_id: `S-${tag}` });
+    }
+    const stockPushJobs = async (shop: string) =>
+      Number((await testPool().query("select count(*) from pgboss.job where name = 'channel.stock_push' and data->>'shopId' = $1", [shop])).rows[0].count);
+
+    it('AC-1 Lazada: sàn đang tắt → chỉ bật lại SKU; không updateProduct, không đưa ảnh; giá, tồn chờ đồng bộ đẩy', async () => {
+      const { id } = await reshelved('inactive');
+      await runListingPush(port, job(id));
+      expect(activate).toHaveBeenCalledTimes(1);
+      expect(updateProduct).not.toHaveBeenCalled();
+      expect(createProduct).not.toHaveBeenCalled();
+      expect(uploadImage).not.toHaveBeenCalled();
+      expect(await listing(id)).toMatchObject({
+        status: 'live',
+        content_source: 'platform',
+        stock_sync: 'pending',
+        price_sync: 'pending',
+        listed_price: null,
+        external_image_urls: null,
+        push_error: null,
+      });
+      expect((await history(id)).at(-1)).toMatchObject({ action: 'go_live', actor_id: null });
+      expect(await stockPushJobs(shopId)).toBeGreaterThan(0);
+    });
+
+    it('sàn vẫn đang bán thì không gọi bật; sàn đưa vào duyệt sau khi bật thì `under_review`', async () => {
+      const live = await reshelved('live');
+      await runListingPush(port, job(live.id));
+      expect(activate).not.toHaveBeenCalled();
+      expect(await listing(live.id)).toMatchObject({ status: 'live' });
+      afterActivate = 'review';
+      const review = await reshelved('inactive');
+      await runListingPush(port, job(review.id));
+      expect(activate).toHaveBeenCalledTimes(1);
+      expect(await listing(review.id)).toMatchObject({ status: 'under_review', content_source: 'platform' });
+    });
+
+    it('sàn không còn SKU → `push_failed` như đẩy lại (sku_not_found), không gọi ghi', async () => {
+      const { id } = await reshelved(null);
+      await runListingPush(port, job(id));
+      expect(activate).not.toHaveBeenCalled();
+      expect(updateProduct).not.toHaveBeenCalled();
+      const row = await listing(id);
+      expect(row).toMatchObject({ status: 'push_failed', push_error: { code: 'marketplace_rejected' } });
+      expect(row.push_error.message).toMatch(/không còn SKU/);
+    });
+
+    it('bật xong mà sàn vẫn tắt → `push_failed` kèm câu', async () => {
+      afterActivate = 'inactive';
+      const { id } = await reshelved('inactive');
+      await runListingPush(port, job(id));
+      const row = await listing(id);
+      expect(row).toMatchObject({ status: 'push_failed', push_error: { code: 'marketplace_rejected' } });
+      expect(row.push_error.message).toMatch(/chưa bật lại/);
+    });
+
+    it('AC-1 sàn bật theo cả sản phẩm (kiểu TikTok): chỉ `activate` theo sản phẩm, không updateProduct', async () => {
+      const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+      const tiktokShop = res.body.shop.id as string;
+      const map = await auth(app().put(`/api/v1/channel/shops/${tiktokShop}/category-maps/${categoryId}`)).send({ externalCategoryId: '600042', attributes: {}, version: null });
+      expect(map.status).toBe(200);
+      const tag = randomUUID().slice(0, 8);
+      remote.set(`NB-${tag}`, { productId: `TP-${tag}`, skuId: `TS-${tag}`, state: 'inactive' });
+      const { id } = await pushing({ shop_id: tiktokShop, content_source: 'platform', seller_sku: `NB-${tag}`, external_product_id: `TP-${tag}`, external_sku_id: `TS-${tag}` });
+      await runListingPush(port, { companyId: company.companyId, shopId: tiktokShop, listingId: id, imageUrls: ['https://img.test/a.png'] });
+      expect(activate.mock.calls[0]![1]).toBe(`TP-${tag}`);
+      expect(updateProduct).not.toHaveBeenCalled();
+      expect(uploadImage).not.toHaveBeenCalled();
+      expect(await listing(id)).toMatchObject({ status: 'live', content_source: 'platform', stock_sync: 'pending', price_sync: 'pending' });
     });
   });
 });

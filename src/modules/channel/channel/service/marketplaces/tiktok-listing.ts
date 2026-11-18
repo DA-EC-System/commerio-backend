@@ -11,6 +11,7 @@ import {
   type CategoryAttribute,
   type CategoryRules,
   type CreatedProduct,
+  existingProduct,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -324,7 +325,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       // nên còn gửi `idempotency_key` của lượt đẩy (#219): sàn nhận lại khoá đã dùng thì trả `12052996`, không tạo trùng.
       const existing = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
       if (existing) {
-        return { externalProductId: existing.externalProductId, externalSkuId: existing.externalSkuId, live: existing.state === 'live', existing: true };
+        return existingProduct(existing);
       }
       // Kiểm điều kiện đăng trước khi tạo (#305, Documents/21 §18.6.4): gian hàng, rồi thử chính body tạo.
       const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p), assertShopEligible(token)]);

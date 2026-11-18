@@ -683,6 +683,7 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
             rejectReason: status === 'rejected' ? (r.rejectReason ?? NO_REASON) : null,
             platformStock: r.quantity,
             replacesListingId: row.id,
+            contentSource: row.contentSource,
           });
           await recordTransition({ entityType: 'listings', entityId: created.id, from: null, to: status, action: 'relist', actorId: null, reason: 'Kết nối lại gian hàng' });
         });
