@@ -86,6 +86,31 @@ describe('tab "Link đã tạo": GET /invitations?status=open,claimed', () => {
 });
 
 describe('POST /invitations/:id/revoke', () => {
+  it('#403: huỷ link còn open sau khi người cầm link đã gõ email (chưa qua OTP) → không trả, không giữ email, họ tên', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    const typed = uniqueEmail('chua-xac-minh');
+    expect((await join.otp(link.token, typed, 'Người Gõ Thử')).status).toBe(202);
+    expect(await rowOf(link.id)).toMatchObject({ status: 'open', email: typed });
+
+    const res = await ceo.revoke(link.id, await versionOf(link.id));
+    expect(res.status).toBe(200);
+    expect(res.body.invitation).toMatchObject({ status: 'revoked', email: null, fullName: null });
+    const again = await ceo.revoke(link.id, await versionOf(link.id));
+    expect(again.body.current).toMatchObject({ status: 'revoked', email: null, fullName: null });
+    const listed = (await ceo.list('revoked')).body.items.find((i: { id: string }) => i.id === link.id);
+    expect(listed).toMatchObject({ email: null, fullName: null });
+    expect(await rowOf(link.id)).toMatchObject({ email: null, full_name: null });
+  });
+
+  it('#403: huỷ link đã claimed (email đã qua OTP) → giữ email, họ tên', async () => {
+    const link = await newLink(app, company.ceo.token, [SALE]);
+    const email = uniqueEmail('da-xac-minh');
+    await claimLink(app, link.token, email);
+    const res = await ceo.revoke(link.id, await versionOf(link.id));
+    expect(res.body.invitation).toMatchObject({ status: 'revoked', email });
+    expect((await rowOf(link.id)).email).toBe(email);
+  });
+
   it('AC 5: huỷ link open → 200 revoked, ghi người huỷ, nhật ký update; mở link → 410 invitation_invalid', async () => {
     const link = await newLink(app, company.ceo.token, [SALE]);
     const res = await ceo.revoke(link.id, await versionOf(link.id));
