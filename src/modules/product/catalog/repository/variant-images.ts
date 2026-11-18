@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { attributeValues, productAttributeValueImages } from './schema.ts';
 
@@ -29,4 +29,28 @@ export async function variantImageRows(productIds: readonly string[]): Promise<V
 /** Gỡ mọi ảnh phân loại của sản phẩm (đổi thuộc tính gắn ảnh); không xoá tệp. */
 export async function deleteVariantImages(productId: string): Promise<void> {
   await getDb().delete(productAttributeValueImages).where(eq(productAttributeValueImages.productId, productId));
+}
+
+/** Đặt hoặc thay ảnh của một giá trị; bên gọi đã khoá dòng sản phẩm và kiểm giá trị thuộc thuộc tính gắn ảnh. */
+export async function upsertVariantImage(row: {
+  companyId: string;
+  productId: string;
+  attributeId: string;
+  attributeValueId: string;
+  fileId: string;
+}): Promise<void> {
+  await getDb()
+    .insert(productAttributeValueImages)
+    .values(row)
+    .onConflictDoUpdate({
+      target: [productAttributeValueImages.productId, productAttributeValueImages.attributeValueId],
+      set: { fileId: row.fileId, updatedAt: sql`now()`, version: sql`${productAttributeValueImages.version} + 1` },
+    });
+}
+
+/** Gỡ ảnh của một giá trị; không xoá tệp. */
+export async function deleteVariantImage(productId: string, attributeValueId: string): Promise<void> {
+  await getDb()
+    .delete(productAttributeValueImages)
+    .where(and(eq(productAttributeValueImages.productId, productId), eq(productAttributeValueImages.attributeValueId, attributeValueId)));
 }

@@ -19,6 +19,8 @@ const version = z.number('Thiếu version').int().positive();
 /** `id` sai định dạng trả 404 ở service (như bản ghi không tồn tại), nên ở đây chỉ là chuỗi. */
 export const IdParams = z.object({ id: z.string() });
 export const VariantParams = z.object({ id: z.string(), variantId: z.string() });
+/** Ảnh phân loại (#340): `attributeValueId` sai dạng ra 422 câu hợp đồng (PUT) hoặc 200 (DELETE) ở service. */
+export const VariantImageParams = z.object({ id: z.string(), attributeValueId: z.string() });
 export const VersionQuery = z.object({ version: z.coerce.number('Thiếu version').int().positive('Thiếu version') });
 
 // ---------- Danh mục ----------
@@ -186,6 +188,11 @@ export const UpdateProductBody = z
   .meta({ id: 'UpdateProductRequest' });
 
 export const AddVariantBody = z.object({ attributeValueIds }).meta({ id: 'AddVariantRequest' });
+
+/** Đặt ảnh phân loại (#340). `fileId` là chuỗi: id sai dạng báo ở `errors.image` như tệp không dùng được (A11). */
+export const SetVariantImageBody = z
+  .strictObject({ fileId: z.string('Chọn ảnh').meta({ description: 'Tệp lấy bằng POST /files/uploads, purpose product_image' }) })
+  .meta({ id: 'SetVariantImageRequest' });
 
 const POSITIVE_INT = 'Nhập số nguyên lớn hơn 0';
 /** Giá (đồng) của SKU; bỏ trường là giữ, `null` là xoá. */
