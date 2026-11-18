@@ -80,6 +80,28 @@ describe('DELETE /catalog/products/:id (#204, xoá hẳn)', () => {
     expect(deleted).toMatchObject({ entity_type: 'product.products', before: { name: p.name, code: p.code, imageFileIds: [fileId] } });
   });
 
+  it('sản phẩm có ảnh phân loại → 204, bảng ảnh phân loại không còn dòng của sản phẩm, tệp còn (#340, AC-S7)', async () => {
+    const p = await product();
+    await testPool().query('update product.products set image_attribute_id = $2 where id = $1', [p.id, color.id]);
+    const fileId = randomUUID();
+    await testPool().query(
+      `insert into core.files (id, company_id, storage_key, file_name, content_type, size_bytes, purpose, uploaded_at)
+       values ($1, $2, $3, 'anh.png', 'image/png', 2048, 'product_image', now())`,
+      [fileId, companyId, `test/${fileId}.png`],
+    );
+    await testPool().query(
+      `insert into product.product_attribute_value_images (company_id, product_id, attribute_id, attribute_value_id, file_id)
+       values ($1, $2, $3, $4, $5)`,
+      [companyId, p.id, color.id, valueId(color, 'Đen'), fileId],
+    );
+    const res = await remove(p);
+    expect(res.status, JSON.stringify(res.body)).toBe(204);
+    const { rows } = await testPool().query('select 1 from product.product_attribute_value_images where product_id = $1', [p.id]);
+    expect(rows).toHaveLength(0);
+    expect((await rowsOf(p)).products).toBe(0);
+    expect((await testPool().query('select 1 from core.files where id = $1', [fileId])).rowCount).toBe(1);
+  });
+
   it('có một SKU đã hoàn thiện → 409 product_in_use', async () => {
     const p = await product();
     await testPool().query('insert into product.product_images (company_id, product_id, file_id, position) values ($1, $2, $3, 0)', [

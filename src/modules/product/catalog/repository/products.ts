@@ -1,6 +1,14 @@
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { categories, productChannelSpecs, productImages, products, productVariants, variantAttributeValues } from './schema.ts';
+import {
+  categories,
+  productAttributeValueImages,
+  productChannelSpecs,
+  productImages,
+  products,
+  productVariants,
+  variantAttributeValues,
+} from './schema.ts';
 
 // Mọi hàm chạy trong `withCompany` của service.
 
@@ -10,6 +18,9 @@ const columns = {
   code: products.code,
   description: products.description,
   sizeChartFileId: products.sizeChartFileId,
+  imageAttributeId: products.imageAttributeId,
+  originCountry: products.originCountry,
+  brand: products.brand,
   categoryId: products.categoryId,
   categoryName: categories.name,
   updatedAt: products.updatedAt,
@@ -101,10 +112,13 @@ export async function insertProduct(companyId: string, categoryId: string, name:
 
 const current = (id: string, version: number) => and(eq(products.id, id), eq(products.version, version));
 
-export async function updateProductIfVersion(id: string, version: number, name: string, description: string) {
+/** Trường của sản phẩm ghi cùng câu (#340); khoá vắng mặt thì giữ nguyên. */
+export type ProductExtras = Partial<{ imageAttributeId: string | null; originCountry: string | null; brand: string | null }>;
+
+export async function updateProductIfVersion(id: string, version: number, name: string, description: string, extras: ProductExtras = {}) {
   const rows = await getDb()
     .update(products)
-    .set({ name, description, version: sql`${products.version} + 1`, updatedAt: sql`now()` })
+    .set({ name, description, ...extras, version: sql`${products.version} + 1`, updatedAt: sql`now()` })
     .where(current(id, version))
     .returning({ id: products.id });
   return rows.length > 0;
@@ -125,6 +139,7 @@ export async function lockProduct(id: string): Promise<number | undefined> {
 export async function deleteProductTree(productId: string, variantIds: readonly string[]): Promise<void> {
   if (variantIds.length) await getDb().delete(variantAttributeValues).where(inArray(variantAttributeValues.variantId, [...variantIds]));
   await getDb().delete(productImages).where(eq(productImages.productId, productId));
+  await getDb().delete(productAttributeValueImages).where(eq(productAttributeValueImages.productId, productId));
   await getDb().delete(productChannelSpecs).where(eq(productChannelSpecs.productId, productId));
   await getDb().delete(productVariants).where(eq(productVariants.productId, productId));
   await getDb().delete(products).where(eq(products.id, productId));

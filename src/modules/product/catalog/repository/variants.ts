@@ -1,7 +1,15 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { orderedNow } from './attributes.ts';
-import { attributes, attributeValues, categories, products, productVariants, variantAttributeValues } from './schema.ts';
+import {
+  attributes,
+  attributeValues,
+  categories,
+  productAttributeValueImages,
+  products,
+  productVariants,
+  variantAttributeValues,
+} from './schema.ts';
 
 // Mọi hàm chạy trong `withCompany` của service.
 
@@ -100,7 +108,10 @@ export async function updateVariantIfVersion(id: string, version: number, patch:
   return row;
 }
 
-/** Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. */
+/**
+ * Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. Đúng 2 câu (inventory gọi khi
+ * đang khoá dòng tồn). `image`: tệp ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340), null khi chưa có.
+ */
 export async function findVariants(filter: { productId?: string; productIds?: readonly string[]; ids?: readonly string[] } = {}) {
   const rows = await getDb()
     .select({
@@ -119,6 +130,8 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       sourceRequestLineId: productVariants.sourceRequestLineId,
       productName: products.name,
       description: products.description,
+      originCountry: products.originCountry,
+      brand: products.brand,
       categoryId: categories.id,
       categoryName: categories.name,
     })
@@ -142,17 +155,33 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       valueId: attributeValues.id,
       value: attributeValues.value,
       code: attributeValues.code,
+      imageFileId: productAttributeValueImages.fileId,
     })
     .from(variantAttributeValues)
     .innerJoin(attributeValues, eq(attributeValues.id, variantAttributeValues.attributeValueId))
     .innerJoin(attributes, eq(attributes.id, attributeValues.attributeId))
+    .innerJoin(productVariants, eq(productVariants.id, variantAttributeValues.variantId))
+    // Giá trị thuộc tính là cấp công ty: ảnh phải khớp cả sản phẩm. Khoá ngoại ghép bảo đảm dòng ảnh khớp luôn thuộc
+    // thuộc tính gắn ảnh hiện tại, nên không lọc thêm theo thuộc tính.
+    .leftJoin(
+      productAttributeValueImages,
+      and(
+        eq(productAttributeValueImages.productId, productVariants.productId),
+        eq(productAttributeValueImages.attributeValueId, variantAttributeValues.attributeValueId),
+      ),
+    )
     .where(inArray(variantAttributeValues.variantId, rows.map((r) => r.id)))
     .orderBy(asc(variantAttributeValues.position));
   const byVariant = Map.groupBy(values, (v) => v.variantId);
-  return rows.map((r) => ({
-    ...r,
-    attributes: (byVariant.get(r.id) ?? []).map(({ variantId: _, ...v }) => v),
-  }));
+  return rows.map((r) => {
+    const own = byVariant.get(r.id) ?? [];
+    const withImage = own.find((v) => v.imageFileId);
+    return {
+      ...r,
+      attributes: own.map(({ variantId: _, imageFileId: __, ...v }) => v),
+      image: withImage ? { attributeValueId: withImage.valueId, fileId: withImage.imageFileId! } : null,
+    };
+  });
 }
 
 export type VariantRow = Awaited<ReturnType<typeof findVariants>>[number];

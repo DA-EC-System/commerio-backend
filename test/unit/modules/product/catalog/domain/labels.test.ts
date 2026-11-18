@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { countLabels, mainLabel, readinessOf } from '#src/modules/product/catalog/domain/labels.ts';
 
 // Độ hoàn thiện, nhãn chính, đếm nhãn của SKU (#204, Documents/21 §17.1, 25 §5.1, §5.2; D7, D8 Thành sửa 16/11/2026).
-const parent = { name: 'Áo thun', categoryId: 'c1', imageCount: 1 };
+const parent = { name: 'Áo thun', categoryId: 'c1', imageCount: 1, variantImagesPartial: false };
 const full = { targetNetPrice: '150000.00', minQty: 5, weightG: 250, lengthMm: 200, widthMm: 100, heightMm: 30 };
 
 describe('readinessOf', () => {
@@ -12,10 +12,13 @@ describe('readinessOf', () => {
 
   it('mỗi trường thiếu ra đúng phần tử, theo thứ tự cố định', () => {
     const r = readinessOf(
-      { name: ' ', categoryId: null, imageCount: 0 },
+      { name: ' ', categoryId: null, imageCount: 0, variantImagesPartial: true },
       { targetNetPrice: null, minQty: null, weightG: null, lengthMm: 200, widthMm: null, heightMm: 30 },
     );
-    expect(r).toEqual({ readiness: 'incomplete', missing: ['name', 'category', 'image', 'price', 'minQty', 'weight', 'dimensions'] });
+    expect(r).toEqual({
+      readiness: 'incomplete',
+      missing: ['name', 'category', 'image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions'],
+    });
   });
 
   it('chỉ một kích thước trống → dimensions; giá muốn bán là target_net_price (D7)', () => {
@@ -25,6 +28,16 @@ describe('readinessOf', () => {
 
   it('cha không ảnh → SKU nào cũng thiếu image', () => {
     expect(readinessOf({ ...parent, imageCount: 0 }, full).missing).toEqual(['image']);
+  });
+
+  it('ảnh phân loại có một phần → variantImages ngay sau image, SKU incomplete; đủ hoặc chưa có ảnh nào thì không (#340)', () => {
+    expect(readinessOf({ ...parent, variantImagesPartial: true }, full)).toEqual({ readiness: 'incomplete', missing: ['variantImages'] });
+    expect(readinessOf({ ...parent, imageCount: 0, variantImagesPartial: true }, { ...full, targetNetPrice: null }).missing).toEqual([
+      'image',
+      'variantImages',
+      'price',
+    ]);
+    expect(readinessOf({ ...parent, variantImagesPartial: false }, full).readiness).toBe('ready');
   });
 });
 

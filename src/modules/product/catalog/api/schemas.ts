@@ -19,6 +19,8 @@ const version = z.number('Thiếu version').int().positive();
 /** `id` sai định dạng trả 404 ở service (như bản ghi không tồn tại), nên ở đây chỉ là chuỗi. */
 export const IdParams = z.object({ id: z.string() });
 export const VariantParams = z.object({ id: z.string(), variantId: z.string() });
+/** Ảnh phân loại (#340): `attributeValueId` sai dạng ra 422 câu hợp đồng (PUT) hoặc 200 (DELETE) ở service. */
+export const VariantImageParams = z.object({ id: z.string(), attributeValueId: z.string() });
 export const VersionQuery = z.object({ version: z.coerce.number('Thiếu version').int().positive('Thiếu version') });
 
 // ---------- Danh mục ----------
@@ -154,13 +156,43 @@ export const CreateProductBody = z
   .superRefine(imageLimits)
   .meta({ id: 'CreateProductRequest' });
 
+// Thuộc tính gắn ảnh, xuất xứ, thương hiệu (#340, Documents/21 §17.2): bỏ trường là giữ, `null` là bỏ chọn / xoá.
+const imageAttributeId = z
+  .string()
+  .nullish()
+  .meta({ description: 'Thuộc tính gắn ảnh (một trục phân loại của sản phẩm); đổi hoặc `null` thì gỡ mọi ảnh phân loại cũ' });
+
+const COUNTRY = /^[A-Z]{2}$/;
+/** Cắt khoảng trắng, viết hoa; chuỗi rỗng sau khi cắt lưu `null` như `brand` (Đ1). */
+const originCountry = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine((v) => v === '' || COUNTRY.test(v), 'Mã nước không hợp lệ (2 chữ cái, vd VN)')
+  .transform((v) => v || null)
+  .nullish()
+  .meta({ description: 'Xuất xứ, mã ISO 3166-1 alpha-2 (vd VN)' });
+
+const brand = z
+  .string()
+  .trim()
+  .max(100, 'Thương hiệu tối đa 100 ký tự')
+  .transform((v) => v || null)
+  .nullish()
+  .meta({ description: 'Thương hiệu, tối đa 100 ký tự; rỗng hoặc `null` là không thương hiệu' });
+
 /** Không có danh mục và biến thể: gửi kèm thì bỏ qua (P6, AC-13). */
 export const UpdateProductBody = z
-  .object({ name: name('sản phẩm', 200), description, imageFileIds, sizeChartFileId, version })
+  .object({ name: name('sản phẩm', 200), description, imageFileIds, sizeChartFileId, imageAttributeId, originCountry, brand, version })
   .superRefine(imageLimits)
   .meta({ id: 'UpdateProductRequest' });
 
 export const AddVariantBody = z.object({ attributeValueIds }).meta({ id: 'AddVariantRequest' });
+
+/** Đặt ảnh phân loại (#340). `fileId` là chuỗi: id sai dạng báo ở `errors.image` như tệp không dùng được (A11). */
+export const SetVariantImageBody = z
+  .strictObject({ fileId: z.string('Chọn ảnh').meta({ description: 'Tệp lấy bằng POST /files/uploads, purpose product_image' }) })
+  .meta({ id: 'SetVariantImageRequest' });
 
 const POSITIVE_INT = 'Nhập số nguyên lớn hơn 0';
 /** Giá (đồng) của SKU; bỏ trường là giữ, `null` là xoá. */
@@ -169,8 +201,8 @@ const price = z.int(POSITIVE_INT).positive(POSITIVE_INT).nullable().optional();
 const measure = z.int(POSITIVE_INT).positive(POSITIVE_INT).max(2_147_483_647, 'Số quá lớn').nullable().optional();
 
 /**
- * Sửa một SKU (#204, Documents/21 §17.2). Chưa nhận `imageFileId` (spec 204 D1): trường lạ trả 422. Ngưỡng tồn đặt ở
- * inventory (mục 15), không ở đây.
+ * Sửa một SKU (#204, Documents/21 §17.2). Không nhận `imageFileId`: ảnh phân loại đặt theo giá trị thuộc tính, không theo
+ * SKU (#340); trường lạ trả 422. Ngưỡng tồn đặt ở inventory (mục 15), không ở đây.
  */
 export const UpdateVariantBody = z
   .strictObject(
@@ -252,6 +284,15 @@ export const Attribute = z
   })
   .meta({ id: 'Attribute' });
 
+/** Ảnh phân loại của một giá trị (#340). */
+const VariantImage = z
+  .object({
+    attributeValueId: z.uuid(),
+    fileId: z.uuid(),
+    url: z.string().meta({ description: 'Link cố định của ảnh; chuỗi rỗng khi máy chủ chưa cấu hình link ảnh' }),
+  })
+  .meta({ id: 'VariantImage' });
+
 export const Variant = z
   .object({
     id: z.uuid(),
@@ -278,6 +319,9 @@ export const Variant = z
     widthMm: z.number().int().nullable().meta({ description: 'Chiều rộng gói (mm); null khi chưa nhập' }),
     heightMm: z.number().int().nullable().meta({ description: 'Chiều cao gói (mm); null khi chưa nhập' }),
     version: z.number().int().meta({ description: 'Version của SKU, gửi kèm PATCH /products/:id/variants/:variantId' }),
+    image: VariantImage.nullable().meta({
+      description: 'Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); null khi chưa chọn thuộc tính hoặc giá trị chưa có ảnh',
+    }),
     archiveBlockers: z
       .array(z.string())
       .meta({ description: 'Lý do chưa lưu trữ được (tồn, chứng từ mở); chỉ tính cho SKU Ngừng nhập, rỗng là lưu trữ được' }),
@@ -336,6 +380,12 @@ export const ProductDetail = ProductListItem.extend({
     .object({ fileId: z.uuid(), url: z.string().meta({ description: 'Link cố định của ảnh; chuỗi rỗng khi máy chủ chưa cấu hình link ảnh' }) })
     .nullable()
     .meta({ description: 'Ảnh bảng kích cỡ (#347); null khi chưa có' }),
+  imageAttributeId: z.uuid().nullable().meta({ description: 'Thuộc tính gắn ảnh (#340); null khi chưa chọn' }),
+  attributeValueImages: z
+    .array(VariantImage)
+    .meta({ description: 'Ảnh phân loại theo giá trị của thuộc tính gắn ảnh, theo thứ tự giá trị trong thuộc tính' }),
+  originCountry: z.string().nullable().meta({ description: 'Xuất xứ, mã ISO 3166-1 alpha-2; null khi chưa đặt' }),
+  brand: z.string().nullable().meta({ description: 'Thương hiệu; null là không thương hiệu' }),
   variants: z.array(Variant),
 }).meta({ id: 'ProductDetail' });
 

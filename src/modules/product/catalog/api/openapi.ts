@@ -18,11 +18,13 @@ import {
   ProductDetail,
   ProductListQuery,
   ProductPage,
+  SetVariantImageBody,
   UpdateAttributeBody,
   UpdateCategoryBody,
   UpdateProductBody,
   UpdateVariantBody,
   Variant,
+  VariantImageParams,
   VariantParams,
   VersionQuery,
 } from './schemas.ts';
@@ -146,7 +148,10 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'put',
     path: '/products/:id',
-    summary: 'Sửa tên, mô tả; không đổi danh mục và biến thể',
+    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu; không đổi danh mục và biến thể',
+    description:
+      '`imageAttributeId` phải là một trục phân loại của sản phẩm; đổi sang thuộc tính khác hoặc `null` thì gỡ mọi ảnh phân loại ' +
+      'cũ (không xoá tệp). `originCountry` cắt khoảng trắng, viết hoa; `originCountry`, `brand` rỗng lưu null.',
     request: { params: IdParams, body: body(UpdateProductBody) },
     responses: {
       200: json('Sản phẩm sau khi sửa', ProductDetail),
@@ -215,6 +220,30 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       ...missing('sản phẩm hoặc biến thể'),
       ...invalid,
     },
+  });
+  path({
+    method: 'put',
+    path: '/products/:id/attribute-value-images/:attributeValueId',
+    summary: 'Đặt hoặc thay ảnh phân loại của một giá trị thuộc tính gắn ảnh',
+    description:
+      'Không nhận `version`, không tăng `version` sản phẩm; gửi lại đúng tệp đang có thì không ghi. Ảnh cũ gỡ ra không xoá tệp. ' +
+      'Mọi SKU mang giá trị này dùng chung ảnh (`variants[].image`).',
+    request: { params: VariantImageParams, body: body(SetVariantImageBody) },
+    responses: {
+      200: json('Sản phẩm sau khi đặt ảnh', ProductDetail),
+      ...missing('sản phẩm'),
+      422: problemResponse(
+        '`validation_failed`: `errors.attributeValueId` (chưa chọn thuộc tính gắn ảnh, giá trị không thuộc thuộc tính gắn ảnh), `errors.image` (tệp)',
+      ),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/products/:id/attribute-value-images/:attributeValueId',
+    summary: 'Gỡ ảnh phân loại của một giá trị (không xoá tệp)',
+    description: 'Giá trị chưa có ảnh vẫn 200 bản hiện tại.',
+    request: { params: VariantImageParams },
+    responses: { 200: json('Sản phẩm sau khi gỡ ảnh', ProductDetail), ...missing('sản phẩm') },
   });
   path({
     method: 'get',
