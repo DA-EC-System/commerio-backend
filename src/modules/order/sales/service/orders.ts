@@ -9,11 +9,13 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import {
   completionBlocker,
+  DEFAULT_RETURN_POLICY,
   isDueSoon,
+  lastDeliveredAt,
   type OrderFlag,
   type OrderStage,
   type PaymentStatus,
-  RETURN_WINDOW_DAYS,
+  returnWindowEndsAt,
   stageOf,
 } from '../domain/order.ts';
 import {
@@ -245,12 +247,14 @@ export async function getOrder(ctx: SalesContext, id: string) {
   const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
-  const lastDelivered = f.packages.reduce<Date | null>((a, p) => (p.deliveredAt && (!a || p.deliveredAt > a) ? p.deliveredAt : a), null);
+  const lastDelivered = lastDeliveredAt(f.packages);
+  const endsAt = returnWindowEndsAt(DEFAULT_RETURN_POLICY, lastDelivered, null);
   const open = o.status === 'processing';
   const blocker = open
     ? completionBlocker({
         packages: f.packages.map((p) => p.status),
-        lastDeliveredAt: isoOrNull(lastDelivered),
+        lastDeliveredAt: lastDelivered,
+        returnWindowEndsAt: endsAt,
         openReturnRequests: f.openReturns,
         codUnconfirmed: false,
         now: Date.now(),
@@ -300,8 +304,8 @@ export async function getOrder(ctx: SalesContext, id: string) {
       returnStatus: l.returnStatus,
     })),
     packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, names)),
-    returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000).toISOString() : null,
-    completionBlocker: blocker as 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed' | null,
+    returnWindowEndsAt: isoOrNull(endsAt),
+    completionBlocker: blocker,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),
   };
 }
