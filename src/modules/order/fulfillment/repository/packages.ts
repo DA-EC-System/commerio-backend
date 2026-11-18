@@ -433,7 +433,7 @@ export async function setReserved(packageId: string, reserved: boolean): Promise
 }
 
 export type PackageViewRow = typeof packages.$inferSelect & {
-  lines: { variantId: string | null; orderLineId: string; quantity: number }[];
+  lines: { variantId: string | null; orderLineId: string; quantity: number; pendingDropQty: number }[];
   /** Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6); null khi không phải kiện thay. */
   replaces: { id: string; code: string; status: PackageStatus } | null;
 };
@@ -450,7 +450,13 @@ export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): P
     : [];
   const replacedById = new Map(replaced.map((r) => [r.id, r]));
   const lines = await getDb()
-    .select({ packageId: packageLines.packageId, variantId: packageLines.variantId, orderLineId: packageLines.orderLineId, quantity: packageLines.quantity })
+    .select({
+      packageId: packageLines.packageId,
+      variantId: packageLines.variantId,
+      orderLineId: packageLines.orderLineId,
+      quantity: packageLines.quantity,
+      pendingDropQty: packageLines.pendingDropQty,
+    })
     .from(packageLines)
     .where(
       inArray(

@@ -63,6 +63,7 @@ export function toPackageSummary(
       productName: l?.productName ?? '',
       attributesLabel: l?.attributesLabel ?? '',
       quantity: pl.quantity,
+      pendingDropQty: pl.pendingDropQty,
     };
   });
   return {
