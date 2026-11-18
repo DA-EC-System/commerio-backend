@@ -91,11 +91,21 @@ Các lệnh dưới chạy trên VPS bằng root (`K="kubectl -n commerio"`).
 
 - **Trạng thái deploy:** tab Actions, workflow "Deploy staging" của từng repo (hoặc `gh run list -w deploy-staging.yml`).
 - **Tình trạng tiến trình:** `$K get pods`; mọi pod `1/1 Running`. Image đang chạy: `$K get deploy -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image`.
-- **Log:** `$K logs deploy/api -f` (tương tự `worker`, `realtime`, `fe`, `caddy`; thêm `--since=1h` để giới hạn).
+- **Log trên trình duyệt (không cần SSH):** `https://<tên miền>/logs/` (Dozzle, mục "Xem log bằng Dozzle" bên dưới).
+- **Log bằng kubectl:** `$K logs -l app.kubernetes.io/name=api -f --prefix` (chọn theo nhãn nên gồm cả `api-blue`, `api-green`; tương tự `worker`, `realtime`, `fe`, `caddy`; thêm `--since=1h` để giới hạn). Pod vừa khởi động lại: `$K logs <tên pod> --previous`.
 - **Deploy lại một commit cũ:**
   - Qua CI: mở run của commit đó trong Actions → "Re-run all jobs" (trong 30 ngày kể từ run gốc).
   - Trên VPS, quay về bản vừa thay: `sudo -u ci-deploy -H env SSH_ORIGINAL_COMMAND=rollback commerio-deploy backend` (hoặc `fe`): bật lại màu vừa nghỉ, vẫn giữ image cũ, rồi chuyển Service về đó. Về một commit bất kỳ: `SSH_ORIGINAL_COMMAND=sha-<7 ký tự>`.
   - Chỉ lùi được code, **không lùi schema**: migration đã chạy vẫn giữ. Migration mới phải tương thích với code của bản trước một bước.
+
+## Xem log bằng Dozzle
+
+`https://<tên miền>/logs/` hiện log trực tiếp của mọi pod trong namespace `commerio`, tìm và lọc trên giao diện, xem CPU/RAM từng pod. Dành cho cả người không có khoá SSH. Một tài khoản dùng chung cả nhóm, tên `commerio`; đăng nhập giữ 72 giờ.
+
+- Manifest: `deploy/k8s/overlays/vps/dozzle.yaml`. Quyền trong cụm chỉ đọc pod và log của `commerio`; tắt actions và shell nên không restart, xoá hay exec được pod từ giao diện.
+- Dozzle không lưu log: pod bị thay (deploy blue-green, restart) thì log của pod cũ mất, như `kubectl logs`.
+- Tốn khoảng 20–40 MB RAM, CPU gần 0 khi không ai mở.
+- Dựng lần đầu, hoặc đổi mật khẩu (`--doi-mat-khau`), trên VPS bằng root: `bash /opt/commerio/repo/deploy/k8s/overlays/vps/dozzle/setup.sh`. Script sinh mật khẩu ngẫu nhiên, ghi bản băm bcrypt vào `overlays/vps/dozzle/users.yml` (gitignore, chỉ có trên VPS), apply riêng object Dozzle, ConfigMap Caddyfile và Deployment `caddy` (không apply cả overlay), rồi in mật khẩu một lần. Từ lần này `kubectl apply -k overlays/vps` cần có `dozzle/users.yml`.
 
 ## Supabase
 

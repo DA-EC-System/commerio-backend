@@ -170,7 +170,8 @@ function trace(path: readonly string[], status: string) {
   });
 }
 
-const VND = (n: number) => n.toFixed(2);
+// Lazada trả số tiền quyết toán có dấu phẩy nghìn ("1,600.02", staging 17/11/2026, #349).
+const VND = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Từng khoản theo món (`/finance/transaction/details/get`). `lech`: phí cố định 8% và thêm phí quảng cáo. */
 function financeRows(opts: { mismatch?: boolean; refunded?: boolean }) {
@@ -212,7 +213,7 @@ function financeRows(opts: { mismatch?: boolean; refunded?: boolean }) {
 }
 
 function payout(rows: ReturnType<typeof financeRows>) {
-  const sum = (pred: (r: (typeof rows)[number]) => boolean) => rows.filter(pred).reduce((s, r) => s + Number(r.amount), 0);
+  const sum = (pred: (r: (typeof rows)[number]) => boolean) => rows.filter(pred).reduce((s, r) => s + Number(r.amount.replaceAll(',', '')), 0);
   const revenue = sum((r) => r.fee_name === 'Item Price Credit');
   const refunds = sum((r) => r.transaction_type === 'Refunds-Claims');
   const fees = sum((r) => r.transaction_type !== 'Orders-Sales' && r.transaction_type !== 'Refunds-Claims');

@@ -1,0 +1,155 @@
+# Dozzle: xem log mọi pod của namespace commerio trên trình duyệt, ở https://<tên miền>/logs/ (route trong
+# base/caddy/Caddyfile). Cho cả người không có khoá SSH vào VPS. Một tài khoản dùng chung cả nhóm, đăng nhập bằng
+# trang của Dozzle (auth simple); Secret dozzle-users sinh từ dozzle/users.yml chỉ có trên VPS (gitignore), tạo
+# bằng dozzle/tao-tai-khoan.sh.
+# Dozzle chỉ đọc log của pod đang chạy, không lưu: pod bị thay (deploy blue-green, restart) thì log cũ mất.
+# Quyền trong cụm chỉ đọc; tắt actions và shell nên không xoá, restart hay exec được pod từ giao diện.
+# Tài liệu: https://dozzle.dev/guide/k8s (v11.4.3, truy cập 18/11/2026).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dozzle
+---
+# Đọc pod, log và CPU/RAM (metrics-server có sẵn trong k3s) của riêng namespace commerio.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dozzle-log-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dozzle-log-reader
+subjects:
+  - kind: ServiceAccount
+    name: dozzle
+    namespace: commerio
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dozzle-log-reader
+---
+# Node là tài nguyên cấp cụm: Dozzle đọc tên node và RAM của node (thanh RAM của container không đặt limit).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: commerio-dozzle-node-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: commerio-dozzle-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: dozzle
+    namespace: commerio
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: commerio-dozzle-node-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dozzle
+  labels:
+    app.kubernetes.io/name: dozzle
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dozzle
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dozzle
+    spec:
+      serviceAccountName: dozzle
+      enableServiceLinks: false
+      containers:
+        - name: dozzle
+          image: amir20/dozzle:v11.4.3
+          env:
+            - name: DOZZLE_MODE
+              value: k8s
+            - name: DOZZLE_NAMESPACE
+              value: commerio
+            # Caddy chuyển nguyên đường dẫn /logs/... vào, không bỏ tiền tố.
+            - name: DOZZLE_BASE
+              value: /logs
+            - name: DOZZLE_HOSTNAME
+              value: staging
+            - name: DOZZLE_AUTH_PROVIDER
+              value: simple
+            - name: DOZZLE_AUTH_TTL
+              value: 72h
+            - name: DOZZLE_ENABLE_ACTIONS
+              value: "false"
+            - name: DOZZLE_ENABLE_SHELL
+              value: "false"
+            - name: DOZZLE_DISABLE_SETUP_WIZARD
+              value: "true"
+            - name: DOZZLE_NO_ANALYTICS
+              value: "true"
+            - name: DOZZLE_RELEASE_CHECK_MODE
+              value: manual
+            - name: DOZZLE_IMAGE_CHECK_MODE
+              value: "off"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            # Dozzle ghi cài đặt người dùng vào /data; mất khi pod khởi động lại, không sao.
+            - name: data
+              mountPath: /data
+            - name: users
+              mountPath: /data/users.yml
+              subPath: users.yml
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: users
+          secret:
+            secretName: dozzle-users
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dozzle
+spec:
+  selector:
+    app.kubernetes.io/name: dozzle
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
