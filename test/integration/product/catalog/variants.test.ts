@@ -175,8 +175,10 @@ describe('không đổi được trục phân loại (#340, AC-13)', () => {
     for (const ids of [[valueId(color, 'Xám'), valueId(size, 'M'), valueId(material, 'Cotton')], [valueId(color, 'Xám')]]) {
       const res = await add(product.id, ids);
       expect(res.status, JSON.stringify(res.body)).toBe(422);
-      expect(res.body.errors).toHaveProperty('attributeValueIds');
+      expect(res.body.errors.attributeValueIds).toBe('Chọn đủ mỗi thuộc tính một giá trị');
     }
-    expect((await detailOf(product.id)).variants).toHaveLength(2);
+    const after = (await detailOf(product.id)).variants as { attributes: { attributeId: string }[] }[];
+    expect(after).toHaveLength(2);
+    expect(after.map((v) => v.attributes.map((a) => a.attributeId))).toEqual(Array(2).fill([color.id, size.id]));
   });
 });

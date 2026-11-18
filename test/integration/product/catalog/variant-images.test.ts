@@ -73,7 +73,7 @@ describe('PUT /catalog/products/:id: thuộc tính gắn ảnh (#340)', () => {
 
   it('thuộc tính không phải trục, của công ty khác, không phải uuid → 422 errors.imageAttributeId; không đổi (AC-2)', async () => {
     const p = await shirt();
-    for (const id of [material.id, otherColor.id, 'khong-phai-uuid']) {
+    for (const id of [material.id, otherColor.id, 'khong-phai-uuid', '']) {
       const res = await put(p, { imageAttributeId: id });
       expect(res.status, id).toBe(422);
       expect(res.body.errors.imageAttributeId).toBe('Thuộc tính không phải trục phân loại của sản phẩm');
@@ -128,6 +128,25 @@ describe('PUT /catalog/products/:id: thuộc tính gắn ảnh (#340)', () => {
     expect(updates[0]!.before).not.toHaveProperty('imageAttributeId');
     expect(updates[0]!.after).toMatchObject({ imageAttributeId: color.id });
     expect(updates[1]).toMatchObject({ before: { imageAttributeId: color.id }, after: { imageAttributeId: size.id } });
+  });
+
+  it('đổi thuộc tính gắn ảnh khi còn ảnh: nhật ký ghi các ảnh phân loại bị gỡ ở before (AC-S6, review N2)', async () => {
+    const p = await shirt();
+    const first = (await put(p, { imageAttributeId: color.id })).body as Detail;
+    const images = [];
+    for (const value of ['Trắng', 'Đen']) {
+      const fileId = randomUUID();
+      await testPool().query(
+        `insert into product.product_attribute_value_images (company_id, product_id, attribute_id, attribute_value_id, file_id)
+         values ($1, $2, $3, $4, $5)`,
+        [companyId, p.id, color.id, valueId(color, value), fileId],
+      );
+      images.push({ attributeValueId: valueId(color, value), fileId });
+    }
+    expect((await put(first, { imageAttributeId: size.id })).status).toBe(200);
+    const last = (await auditOf(p.id)).filter((l) => l.action === 'update').at(-1)!;
+    expect(last.before).toMatchObject({ imageAttributeId: color.id, attributeValueImages: images });
+    expect(last.after).not.toHaveProperty('attributeValueImages');
   });
 });
 

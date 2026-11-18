@@ -18,7 +18,7 @@ import {
   setSizeChart,
   updateProductIfVersion,
 } from '../repository/products.ts';
-import { deleteVariantImages } from '../repository/variant-images.ts';
+import { deleteVariantImages, variantImageRows } from '../repository/variant-images.ts';
 import { findVariants, insertVariant, lockProductVariants, lockVariants, type VariantRow } from '../repository/variants.ts';
 import {
   auditOf,
@@ -315,7 +315,8 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     }
     // Trục đọc qua RLS từ SKU: thuộc tính công ty khác hay id lạ đều không phải trục (khoá ngoại bỏ qua RLS).
     const axes = new Set(variants.flatMap((v) => v.attributes.map((a) => a.attributeId)));
-    if (input.imageAttributeId && !axes.has(input.imageAttributeId)) errors.imageAttributeId = NOT_AXIS;
+    // `!= null`: chuỗi rỗng cũng là id sai (422), không lọt xuống UPDATE thành 500.
+    if (input.imageAttributeId != null && !axes.has(input.imageAttributeId)) errors.imageAttributeId = NOT_AXIS;
     if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name, id)) throw taken();
     const imagesBefore = await imageIdsOf(id);
@@ -328,6 +329,10 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
       ...(input.brand !== undefined && { brand: input.brand }),
     };
     // Khoá ngoại ghép `pavi_product_fk` bắt xoá ảnh cũ trước khi đổi thuộc tính; sai `version` thì cả giao dịch lùi lại.
+    // Ảnh phân loại gỡ kèm ghi vào nhật ký như route ảnh, để truy được ảnh nào mất (#340, review N2).
+    const removedImages = changesImageAttribute
+      ? (await variantImageRows([id])).map((r) => ({ attributeValueId: r.attributeValueId, fileId: r.fileId }))
+      : [];
     if (changesImageAttribute) await deleteVariantImages(id);
     if (!(await updateProductIfVersion(id, input.version, input.name, input.description, extras))) {
       await rejectStale(ctx, await findOwnProduct(id));
@@ -337,7 +342,10 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     const sizeChartAfter = sizeChartId === undefined ? product.sizeChartFileId : sizeChartId;
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
-      before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
+      before: {
+        ...snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
+        ...(removedImages.length && { attributeValueImages: removedImages }),
+      },
       after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore, sizeChartAfter, { ...extrasOf(product), ...extras }),
     });
     // Đổi thuộc tính gắn ảnh thì `variants` còn mang ảnh cũ: đọc lại.
