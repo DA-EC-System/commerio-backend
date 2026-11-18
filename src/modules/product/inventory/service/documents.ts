@@ -447,7 +447,7 @@ export function actOnDocument(actor: DocActor, id: string, action: DocAction, in
       actorId: actor.accountId,
       reason,
       selfApproved,
-      audit: { entityType: DOC_AUDIT_ENTITY, label: row.number },
+      audit: { entityType: DOC_AUDIT_ENTITY, code: row.number },
     });
     return detail(updated, actor);
   });

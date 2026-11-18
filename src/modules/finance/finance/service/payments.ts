@@ -155,7 +155,7 @@ export function resolvePayment(caller: Caller, orderId: string, input: { version
       actorId: caller.accountId,
       reason,
       selfApproved,
-      audit: { entityType: 'finance.order_settlements', label: (await ordersOf([orderId])).get(orderId)?.code ?? 'Đơn không còn trong hệ thống' },
+      audit: await settlementAudit(orderId),
     });
     return detail(updated, canSeeCost, now);
   });
@@ -201,4 +201,11 @@ export function matchBank(caller: Caller, entryId: string, bankRef: string) {
     if (!match) throw new AppError(409, 'already_matched', 'Dòng này đã khớp sao kê');
     return (await lineViews([entry]))[0]!;
   });
+}
+
+/** Dòng nhật ký lần tự chốt lệch: mã đơn là số chứng từ; đơn không còn thì chỉ có nhãn (#352). */
+async function settlementAudit(orderId: string) {
+  const code = (await ordersOf([orderId])).get(orderId)?.code;
+  const entityType = 'finance.order_settlements';
+  return code ? { entityType, code } : { entityType, label: 'Đơn không còn trong hệ thống' };
 }

@@ -247,10 +247,13 @@ describe('listings/match', () => {
     expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: v2.id, approved_by: ceoId, mapping_self_approved: true });
     expect((await transitionsOf(listing.id)).at(-1)).toMatchObject({ action: 'match', actor_id: ceoId, self_approved: true });
     const audit = await testPool().query(
-      `select 1 from core.audit_logs where entity_id = $1 and after @> '{"selfApproved": true}'::jsonb`,
+      `select operation, after from core.audit_logs where entity_id = $1 and after @> '{"selfApproved": true}'::jsonb`,
       [listing.id],
     );
     expect(audit.rowCount).toBe(1);
+    // #352: SKU không phải số chứng từ: nhãn ở cột riêng, `after` không có `code`.
+    expect(audit.rows[0].operation).toBe('match');
+    expect(audit.rows[0].after).not.toHaveProperty('code');
   });
 
   it('DoD: Sale ghép SKU sàn chưa ghép sang "không quản tồn" → 202; SKU vẫn tính là chưa ghép tới khi CEO duyệt', async () => {

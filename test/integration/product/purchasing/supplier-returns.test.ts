@@ -120,10 +120,10 @@ describe('B4 phiếu trả NCC', () => {
     const s = await act(ceo, d.id, 'approve_send', { version: p.version });
     expect(s.status, JSON.stringify(s.body)).toBe(200);
     const logs = await testPool().query(
-      "select operation, entity_label from core.audit_logs where entity_id = $1 and after @> '{\"selfApproved\": true}'",
+      "select operation, entity_label, after->>'code' as code from core.audit_logs where entity_id = $1 and after @> '{\"selfApproved\": true}'",
       [d.id],
     );
-    expect(logs.rows).toEqual([{ operation: 'approve_send', entity_label: d.number }]);
+    expect(logs.rows).toEqual([{ operation: 'approve_send', entity_label: d.number, code: d.number }]);
   });
 
   it('B4-02, B4-02r: CEO trả về cần lý do; người lập có quyền duyệt không tự duyệt gửi phiếu mình lập', async () => {

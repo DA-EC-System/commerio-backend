@@ -19,15 +19,15 @@ interface TransitionBase {
 }
 
 /**
- * Bước có người duyệt khác truyền `selfApproved` (lấy nguyên từ `assertTransition`) và bắt buộc kèm `audit`: lần tự duyệt
- * ghi một dòng nhật ký thao tác với `entityType` theo mẫu `<schema>.<bảng>` (vd `product.purchase_requests`) và `label`
- * là tên người đọc được (số chứng từ…; #352).
+ * Dòng nhật ký của lần tự duyệt: `entityType` theo mẫu `<schema>.<bảng>` (vd `product.purchase_requests`). Có số chứng
+ * từ (`DN-`, `NH-`, `TN-`, số phiếu kho, mã kiện, mã đơn) thì truyền `code`: vừa là nhãn vừa ghi `after.code`. Không có
+ * số (cấu hình phí, thuế, SKU) thì truyền `label`: chỉ là nhãn, `after` không có `code` (#352).
  */
+export type TransitionAudit = { entityType: string; code: string } | { entityType: string; label: string };
+
+/** Bước có người duyệt khác truyền `selfApproved` (lấy nguyên từ `assertTransition`) và bắt buộc kèm `audit`. */
 export type TransitionRecord = TransitionBase &
-  (
-    | { selfApproved?: undefined; audit?: undefined }
-    | { selfApproved: boolean; audit: { entityType: string; label: string } }
-  );
+  ({ selfApproved?: undefined; audit?: undefined } | { selfApproved: boolean; audit: TransitionAudit });
 
 /**
  * Chèn một dòng lịch sử trong giao dịch của bên gọi. Bảng chỉ thêm. `source` mặc định `user` khi có `actorId`,

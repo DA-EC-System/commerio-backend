@@ -366,7 +366,7 @@ export function actOnSupplierReturn(actor: Actor, id: string, action: SupplierRe
       actorId: actor.accountId,
       reason,
       selfApproved,
-      audit: { entityType: AUDIT_ENTITY, label: row.number },
+      audit: { entityType: AUDIT_ENTITY, code: row.number },
     });
     if (action === 'record_refund') {
       await publishEvent({

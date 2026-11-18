@@ -130,7 +130,7 @@ export async function confirmLost(ctx: FulfillmentContext, actor: Actor, id: str
       actorId: actor.accountId,
       reason,
       selfApproved,
-      audit: { entityType: 'order.packages', label: pkg.code },
+      audit: { entityType: 'order.packages', code: pkg.code },
     });
     // Trừ mọi dòng đã ghép SKU một lần (kể cả dòng chờ bỏ, D20); `settleHandover` phát `package_shipped`.
     if (action === 'lose_on_unload') {
