@@ -129,6 +129,11 @@ function items(status: string, step: number) {
   }));
 }
 
+/** Món theo lô (`/orders/items/get`, GetMultipleOrderItems): app kéo đơn theo lô từ #267. */
+function multipleItems(status: string, step: number) {
+  return ok({ data: [{ order_id: ORDER_ID, order_number: ORDER_ID, order_items: items(status, step) }] });
+}
+
 const TRACE_STEPS: Record<string, { status_code: string; description: string }> = {
   ready_to_ship: { status_code: 'ready_to_ship', description: 'Người bán đã sẵn sàng giao' },
   shipped: { status_code: 'shipped', description: 'Đơn vị vận chuyển đã lấy hàng' },
@@ -350,6 +355,7 @@ function orderMappings(s: Scenario): Mapping[] {
     out.push(stub('/orders/get', ok({ data: { count: 1, countTotal: 1, orders: [order(state, step)] } }), at(state)));
     out.push(stub('/order/get', ok({ data: order(state, step) }), at(state)));
     out.push(stub('/order/items/get', ok({ data: items(state, step) }), at(state)));
+    out.push(stub('/orders/items/get', multipleItems(state, step), at(state)));
     out.push(stub('/logistic/order/trace', trace(s.order, state), at(state)));
     out.push(stub('/order/package/document/get', RTS_OR_LATER.has(state)
       ? ok({ result: { success: true, data: { doc_type: 'PDF', pdf_url: AWB_URL } } })
@@ -416,6 +422,7 @@ function orderMappings(s: Scenario): Mapping[] {
     const canceled = s.order.length;
     out.push(stub('/orders/get', ok({ data: { count: 1, countTotal: 1, orders: [order('canceled', canceled)] } }), at('canceled')));
     out.push(stub('/order/items/get', ok({ data: items('canceled', canceled) }), at('canceled')));
+    out.push(stub('/orders/items/get', multipleItems('canceled', canceled), at('canceled')));
   }
   // Thao tác sai trạng thái (pack lại đơn đã pack, RTS khi chưa pack, huỷ đơn đã giao): lỗi theo món như Lazada.
   out.push(stub('/order/fulfill/pack', err('700000', 'Order status does not allow this operation', 'ISP'), { priority: 4 }));
