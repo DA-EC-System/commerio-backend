@@ -32,7 +32,10 @@ EOF
   echo "Đã ghi $USERS"
 fi
 
-python3 - "$OVERLAY" >/tmp/dozzle-apply.yaml <<'PY'
+# File tạm có Secret dozzle-users: mktemp (quyền 600, tên ngẫu nhiên), xoá khi script thoát.
+manifest=$(mktemp)
+trap 'rm -f "$manifest"' EXIT
+python3 - "$OVERLAY" >"$manifest" <<'PY'
 import subprocess, sys, yaml
 out = subprocess.run(["kubectl", "kustomize", sys.argv[1]], check=True, capture_output=True, text=True).stdout
 keep = []
@@ -48,9 +51,8 @@ print(yaml.safe_dump_all(keep, sort_keys=False))
 PY
 
 echo "Sẽ apply:"
-grep -E '^(kind|  name):' /tmp/dozzle-apply.yaml | paste - - | sed 's/^/  /'
-kubectl apply -f /tmp/dozzle-apply.yaml
-rm -f /tmp/dozzle-apply.yaml
+grep -E '^(kind|  name):' "$manifest" | paste - - | sed 's/^/  /'
+kubectl apply -f "$manifest"
 
 # Secret đổi tên theo hash nên Deployment dozzle tự thay pod; chờ cả hai lên.
 $K rollout status deploy/dozzle --timeout=120s
