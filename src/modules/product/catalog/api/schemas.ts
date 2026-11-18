@@ -319,6 +319,9 @@ export const Variant = z
     widthMm: z.number().int().nullable().meta({ description: 'Chiều rộng gói (mm); null khi chưa nhập' }),
     heightMm: z.number().int().nullable().meta({ description: 'Chiều cao gói (mm); null khi chưa nhập' }),
     version: z.number().int().meta({ description: 'Version của SKU, gửi kèm PATCH /products/:id/variants/:variantId' }),
+    image: VariantImage.nullable().meta({
+      description: 'Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); null khi chưa chọn thuộc tính hoặc giá trị chưa có ảnh',
+    }),
     archiveBlockers: z
       .array(z.string())
       .meta({ description: 'Lý do chưa lưu trữ được (tồn, chứng từ mở); chỉ tính cho SKU Ngừng nhập, rỗng là lưu trữ được' }),

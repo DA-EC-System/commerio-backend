@@ -70,6 +70,19 @@ export interface VariantImage {
   url: string;
 }
 
+/**
+ * Ảnh phân loại theo SKU (#340): id SKU → ảnh kèm link. Chỉ hỏi `files` khi có SKU mang ảnh, nên `getVariants` không ảnh
+ * vẫn đúng 2 câu. Gọi trong `withCompany`.
+ */
+export async function variantImagesOf(
+  rows: readonly { id: string; image: { attributeValueId: string; fileId: string } | null }[],
+): Promise<Map<string, VariantImage>> {
+  const withImage = rows.filter((r) => r.image);
+  if (!withImage.length) return new Map();
+  const urls = await publicFileUrls([...new Set(withImage.map((r) => r.image!.fileId))]);
+  return new Map(withImage.map((r) => [r.id, { ...r.image!, url: urls.get(r.image!.fileId) ?? '' }]));
+}
+
 /** Ảnh phân loại của sản phẩm theo thứ tự giá trị (#340). Gọi trong `withCompany`. */
 export async function attributeValueImagesOf(productId: string): Promise<VariantImage[]> {
   const rows = await variantImageRows([productId]);

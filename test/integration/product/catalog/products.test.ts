@@ -76,6 +76,10 @@ describe('POST /catalog/products', () => {
       version: 1,
       description: '',
       images: [],
+      imageAttributeId: null,
+      attributeValueImages: [],
+      originCountry: null,
+      brand: null,
     });
     expect(res.body.variants).toEqual([
       {
@@ -91,6 +95,7 @@ describe('POST /catalog/products', () => {
         heightMm: null,
         version: 1,
         archiveBlockers: [],
+        image: null,
         readiness: 'incomplete',
         missing: ['image', 'price', 'minQty', 'weight', 'dimensions'],
         minQty: null,

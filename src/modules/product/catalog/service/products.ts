@@ -35,7 +35,7 @@ import {
 } from './errors.ts';
 import { type SkuLabels, skuLabels } from './labels.ts';
 import { listedImageErrors } from './listed-fields.ts';
-import { attributeValueImagesOf, imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
+import { attributeValueImagesOf, imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf, type VariantImage, variantImagesOf } from './product-images.ts';
 import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 import { archiveBlockersOf, inUseOf, requirePort } from './usage.ts';
@@ -102,6 +102,7 @@ export function toVariantView(
   labels: SkuLabels,
   standardPrice: Decimal | null = null,
   archiveBlockers: readonly string[] = [],
+  image: VariantImage | null = null,
 ) {
   return {
     id: v.id,
@@ -117,6 +118,7 @@ export function toVariantView(
     heightMm: v.heightMm,
     version: v.version,
     archiveBlockers: [...archiveBlockers],
+    image,
     ...labels,
     missing: [...labels.missing],
   };
@@ -139,7 +141,10 @@ export async function productDetail(
   const blockers = await archiveBlockersOf(ctx, discontinued);
   const images = await imagesOf(p.id);
   const labels = await skuLabels(ctx, rows, () => ({ name: p.name, categoryId: p.categoryId, imageCount: images.length }));
-  const views = rows.map((v) => toVariantView(v, labels.get(v.id)!, prices.get(v.id) ?? null, blockers.get(v.id)));
+  const variantImages = await variantImagesOf(rows);
+  const views = rows.map((v) =>
+    toVariantView(v, labels.get(v.id)!, prices.get(v.id) ?? null, blockers.get(v.id), variantImages.get(v.id)),
+  );
   return {
     ...toListItem(p, images[0]?.url ?? null, views),
     description: p.description ?? '',
@@ -335,7 +340,8 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
       before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
       after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore, sizeChartAfter, { ...extrasOf(product), ...extras }),
     });
-    return productDetail(ctx, await findOwnProduct(id), variants);
+    // Đổi thuộc tính gắn ảnh thì `variants` còn mang ảnh cũ: đọc lại.
+    return productDetail(ctx, await findOwnProduct(id), changesImageAttribute ? undefined : variants);
   }).catch(race);
 }
 

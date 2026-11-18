@@ -4,6 +4,7 @@ import { Decimal } from 'decimal.js';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { publishEvent, recordAudit } from '../../../core/index.ts';
 import { productImageRows } from '../repository/product-images.ts';
+import { type VariantImage, variantImagesOf } from './product-images.ts';
 import { touchProduct } from '../repository/products.ts';
 import {
   findVariants,
@@ -51,6 +52,11 @@ export interface VariantSummary {
   lengthMm: number | null;
   widthMm: number | null;
   heightMm: number | null;
+  /** Xuất xứ (ISO 3166-1 alpha-2), thương hiệu của sản phẩm cha (#340); null khi chưa đặt. */
+  originCountry: string | null;
+  brand: string | null;
+  /** Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); `url` rỗng khi thiếu `S3_PUBLIC_URL`. */
+  image: VariantImage | null;
   attributes: { attributeId: string; attributeName: string; valueId: string; value: string; code: string }[];
 }
 
@@ -62,6 +68,7 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
   // Ngoài `withCompany` (role chủ bảng) RLS không có hiệu lực: hàm sẽ trả biến thể của mọi công ty.
   requireCompanyId('getVariants');
   const rows = await findVariants(ids ? { ids: ids.filter(isUuid) } : {});
+  const images = await variantImagesOf(rows);
   return rows.map((v) => ({
     id: v.id,
     productId: v.productId,
@@ -76,6 +83,9 @@ export async function getVariants(ids?: readonly string[]): Promise<VariantSumma
     lengthMm: v.lengthMm,
     widthMm: v.widthMm,
     heightMm: v.heightMm,
+    originCountry: v.originCountry,
+    brand: v.brand,
+    image: images.get(v.id) ?? null,
     attributes: v.attributes,
   }));
 }
@@ -117,7 +127,7 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
     const prices = await standardPricesOf(ctx, [id]);
     const imageCount = (await productImageRows([productId], 1)).length;
     const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, categoryId: product.categoryId, imageCount }));
-    return toVariantView(variant!, labels.get(id)!, prices.get(id) ?? null);
+    return toVariantView(variant!, labels.get(id)!, prices.get(id) ?? null, [], (await variantImagesOf([variant!])).get(id));
   }).catch((err: unknown) => {
     // Giá trị thuộc tính vừa bị xoá giữa lúc đọc và lúc chèn.
     if (pgError(err).code === '23503') throw badCombo('Có giá trị thuộc tính vừa bị xoá');

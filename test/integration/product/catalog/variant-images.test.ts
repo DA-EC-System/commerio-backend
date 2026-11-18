@@ -93,6 +93,7 @@ describe('PUT /catalog/products/:id: thuộc tính gắn ảnh (#340)', () => {
     const toSize = await put(same, { imageAttributeId: size.id });
     expect(toSize.status, JSON.stringify(toSize.body)).toBe(200);
     expect(toSize.body).toMatchObject({ imageAttributeId: size.id, attributeValueImages: [] });
+    expect(toSize.body.variants.map((v: { image: unknown }) => v.image)).toEqual([null, null, null, null]);
     expect(await imageCount(p)).toBe(0);
 
     await insertImage(p, size.id, valueId(size, 'M'));
@@ -148,7 +149,7 @@ async function fileRow(
 const fileExists = async (id: string) => (await testPool().query('select 1 from core.files where id = $1', [id])).rowCount === 1;
 
 interface DetailWithVariants extends Detail {
-  variants: { id: string; attributes: { valueId: string }[] }[];
+  variants: { id: string; attributes: { valueId: string }[]; image: unknown }[];
 }
 
 /** Áo đã chọn Màu làm thuộc tính gắn ảnh. */
@@ -176,6 +177,10 @@ describe('PUT, DELETE /catalog/products/:id/attribute-value-images/:attributeVal
     expect(res.body.version).toBe(p.version);
     expect(res.body.updatedAt).not.toBe(p.updatedAt);
     expect((await read(p)).attributeValueImages).toEqual(res.body.attributeValueImages);
+    // Hai SKU Trắng (M, L) cùng ảnh, hai SKU Đen null.
+    const white = res.body.attributeValueImages[0];
+    const images = ((await read(p)) as DetailWithVariants).variants.map((v) => v.image);
+    expect(images).toEqual([white, white, null, null]);
   });
 
   it('đặt lại bằng tệp khác: vẫn 1 dòng, tệp cũ còn; gửi lại đúng tệp đang có → 200, không thêm nhật ký (AC-5)', async () => {
