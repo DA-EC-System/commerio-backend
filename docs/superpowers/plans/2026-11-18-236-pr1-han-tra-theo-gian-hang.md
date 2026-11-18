@@ -210,10 +210,10 @@ it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
 - Modify: `src/modules/order/sales/CLAUDE.md` (mục "Tự hoàn tất", "Cho module khác": `ctx.returnPoliciesOf`)
 - Modify: `src/modules/channel/channel/CLAUDE.md` (bỏ câu "Hạn trả của đơn chưa đọc cột này (`order` còn cứng 7 ngày)"; mục "Cho module khác" thêm `returnPoliciesOf`)
 
-- [ ] **Step 1: Sửa hai CLAUDE.md** — mục Tự hoàn tất của sales: hạn = mốc giao cuối + `returnWindowDays` của gian hàng (null hoặc không thấy gian hàng: 7 ngày; sàn `platform_status` tạm 7 ngày tới PR 2); kiện tự giao thu COD chưa xác nhận chặn `cod_unconfirmed`; job nhận `ctx`, lật trang 500 theo `id`, đọc lô mỗi công ty, đọc lô lỗi thì bỏ công ty đó ở lượt; log tóm tắt mỗi lượt và ba số liệu `sales_*` trên `/metrics` của worker.
-- [ ] **Step 2: Kiểm toàn bộ** — `npm run check` → xanh (lint, typecheck, depcruise, test).
-- [ ] **Step 3: Cập nhật đồ thị** — `graphify update .`
-- [ ] **Step 4: Commit** — `docs(sales): CLAUDE.md theo hạn trả của gian hàng (#236)`.
+- [x] **Step 1: Sửa hai CLAUDE.md** — mục Tự hoàn tất của sales: hạn = mốc giao cuối + `returnWindowDays` của gian hàng (null hoặc không thấy gian hàng: 7 ngày; sàn `platform_status` tạm 7 ngày tới PR 2); kiện tự giao thu COD chưa xác nhận chặn `cod_unconfirmed`; job nhận `ctx`, lật trang 500 theo `id`, đọc lô mỗi công ty, đọc lô lỗi thì bỏ công ty đó ở lượt; log tóm tắt mỗi lượt và ba số liệu `sales_*` trên `/metrics` của worker.
+- [x] **Step 2: Kiểm toàn bộ** — `npm run check` → xanh (lint, typecheck, depcruise, test).
+- [x] **Step 3: Cập nhật đồ thị** — `graphify update .`
+- [x] **Step 4: Commit** — `docs(sales): CLAUDE.md theo hạn trả của gian hàng (#236)`.
 - [ ] **Step 5: Mở PR khi Khang bảo** — base `main`; mô tả ghi "Closes #390", "Phần 1/3 của #236", AC đã qua, D13 (TikTok tạm 7 ngày).
 
 ### Task 6: Documents (repo `D:\DA-TMDT\Documents`, PR riêng)
