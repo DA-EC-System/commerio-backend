@@ -75,7 +75,7 @@ describe('lazadaAmount: số tiền Lazada có dấu phẩy nghìn (#349)', () =
     expect(lazadaAmount(raw, 'amount, giao dịch TX1', { required: true })).toBe(want);
   });
 
-  it.each(['1.600,02', '1,60.00', '1,6000.00', ',600', '₫1,600', '1,600.02 VND', 'abc', 'NaN', 'Infinity', '0x10', '1_600.00', NaN, Infinity, {}, true])(
+  it.each(['1.600,02', '1.600', '1600.025', '1,60.00', '1,6000.00', ',600', '₫1,600', '1,600.02 VND', 'abc', 'NaN', 'Infinity', '0x10', '1_600.00', NaN, Infinity, {}, true])(
     '%j không đọc được: ném rejected invalid_amount kèm chỗ và giá trị gốc',
     async (raw) => {
       expect(await thrown(() => lazadaAmount(raw, 'amount, giao dịch TX1', { required: true }))).toMatchObject({

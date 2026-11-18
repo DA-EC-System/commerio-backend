@@ -137,8 +137,11 @@ export function lazadaLedgerKind(feeName: string, transactionType: string): Ledg
  */
 export const normalizeLazadaTxnId = (raw: unknown): string => String(raw ?? '').replace(/\s+/g, '');
 
-/** Số có dấu, phần nguyên trơn hoặc nhóm ba chữ số bằng dấu phẩy, phần thập phân sau dấu chấm. */
-const LAZADA_AMOUNT = /^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/;
+/**
+ * Số có dấu, phần nguyên trơn hoặc nhóm ba chữ số bằng dấu phẩy, tối đa hai chữ số thập phân sau dấu chấm. Giới hạn hai
+ * chữ số để "1.600" (1.600 đồng viết kiểu Việt) là lỗi chứ không thành 1,6 trong sổ tiền chỉ thêm (review #349).
+ */
+const LAZADA_AMOUNT = /^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$/;
 
 /**
  * Số tiền quyết toán Lazada thành chuỗi thập phân trơn cho finance (#349). Sàn trả chuỗi có dấu phẩy nghìn ("1,600.02",
