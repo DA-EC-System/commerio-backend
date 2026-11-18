@@ -133,15 +133,15 @@ it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
   - Channel `returnPoliciesOf(ids: readonly string[]): Promise<Map<string, { returnWindow: 'days' | 'platform_status'; returnWindowDays: number | null }>>`, gọi trong `withCompany` (`requireCompanyId('returnPoliciesOf')`), một câu cho cả lô, mọi trạng thái gian hàng; id không thấy vắng mặt. Export ở `channel/channel/index.ts`.
   - `SalesContext.returnPoliciesOf?: (shopIds: readonly string[]) => Promise<Map<string, ReturnPolicy>>`; `AppContext` thêm `'returnPoliciesOf'` vào `Required<Pick<SalesContext, …>>`; `createModuleContext()` gán `returnPoliciesOf`.
 
-- [ ] **Step 1: Viết test thất bại** — `return-policies.test.ts`: công ty A có gian hàng Lazada `return_window_days = 15`, Lazada `null`, TikTok, Lazada `disconnected` `return_window_days = 10`; công ty B có một gian hàng Lazada. `withCompany(A, () => returnPoliciesOf([4 id của A, id của B, randomUUID()]))`:
+- [x] **Step 1: Viết test thất bại** — `return-policies.test.ts`: công ty A có gian hàng Lazada `return_window_days = 15`, Lazada `null`, TikTok, Lazada `disconnected` `return_window_days = 10`; công ty B có một gian hàng Lazada. `withCompany(A, () => returnPoliciesOf([4 id của A, id của B, randomUUID()]))`:
   - Lazada 15 → `{ returnWindow: 'days', returnWindowDays: 15 }`; Lazada null → `{ 'days', null }`; TikTok → `{ 'platform_status', null }`; gian hàng ngắt → `{ 'days', 10 }`.
   - Map có đúng 4 khoá (không có gian hàng của B, không có id lạ).
   - `returnPoliciesOf([])` → Map rỗng, không truy vấn lỗi.
   - Không test riêng việc nối ở `wiring.ts`: `AppContext` khai Required nên quên nối là lỗi kiểu; Task 3 chạy job với `createModuleContext()` thật.
-- [ ] **Step 2: Chạy, thấy đỏ** — `npx vitest run --project integration test/integration/channel/channel/return-policies.test.ts` → FAIL.
-- [ ] **Step 3: Viết** `findShopReturnSettings(ids)` ở repository (chọn `id`, `platform`, `returnWindowDays`), `returnPoliciesOf` ở service (map qua `capabilitiesOf(platform).returnWindow`), export, khai `SalesContext.returnPoliciesOf`, nối ở `wiring.ts` kèm comment `// #236: sales (lớp dưới) tính hạn trả theo cấu hình gian hàng của channel.`
-- [ ] **Step 4: Chạy lại, thấy xanh** — cùng lệnh → PASS; `npx tsc --noEmit` sạch; `npm run depcruise` sạch.
-- [ ] **Step 5: Commit** — `feat(channel): returnPoliciesOf cho sales tính hạn trả (#236)`.
+- [x] **Step 2: Chạy, thấy đỏ** — `npx vitest run --project integration test/integration/channel/channel/return-policies.test.ts` → FAIL.
+- [x] **Step 3: Viết** `findShopReturnSettings(ids)` ở repository (chọn `id`, `platform`, `returnWindowDays`), `returnPoliciesOf` ở service (map qua `capabilitiesOf(platform).returnWindow`), export, khai `SalesContext.returnPoliciesOf`, nối ở `wiring.ts` kèm comment `// #236: sales (lớp dưới) tính hạn trả theo cấu hình gian hàng của channel.`
+- [x] **Step 4: Chạy lại, thấy xanh** — cùng lệnh → PASS; `npx tsc --noEmit` sạch; `npm run depcruise` sạch.
+- [x] **Step 5: Commit** — `feat(channel): returnPoliciesOf cho sales tính hạn trả (#236)`.
 
 ### Task 3: Job tự hoàn tất theo chính sách và COD
 
