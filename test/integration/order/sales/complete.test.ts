@@ -86,7 +86,7 @@ describe('tự hoàn tất đơn (#105 PR 2)', () => {
       [companyId, `TR-${randomUUID().slice(0, 8)}`, withReturn, shopId, randomUUID()],
     );
 
-    await completeDueOrdersOnce(now);
+    await completeDueOrdersOnce(now, createModuleContext());
 
     expect(await orderOf(full)).toMatchObject({ status: 'completed', outcome: 'full', completed_at: now });
     expect((await orderOf(full)).return_window_ends_at).toEqual(new Date(now.getTime() - DAY));
@@ -109,7 +109,7 @@ describe('tự hoàn tất đơn (#105 PR 2)', () => {
     expect(event.rows[0].payload).toMatchObject({ from: 'processing', to: 'completed' });
 
     // Chạy lại không làm gì thêm.
-    await completeDueOrdersOnce(now);
+    await completeDueOrdersOnce(now, createModuleContext());
     const count = await testPool().query(`select count(*)::int as n from core.state_transitions where entity_id = $1 and action = 'complete'`, [full]);
     expect(count.rows[0].n).toBe(1);
   });
@@ -258,13 +258,15 @@ describe('hạn trả theo gian hàng (#236)', () => {
     for (const o of ids) expect((await orderOf(o)).status).toBe('completed');
   });
 
-  it('đọc hạn trả của một công ty lỗi → đơn công ty đó không hoàn tất, công ty khác vẫn chạy', async () => {
+  it('đọc hạn trả của một công ty lỗi → đơn công ty đó không hoàn tất (không rơi về 7 ngày), công ty khác vẫn chạy', async () => {
     const other = await createCompany();
-    const mine = await delivered(['delivered'], 16, lazada15);
+    // Gian hàng 60 ngày, giao 16 ngày trước: rơi về 7 ngày thì hoàn tất; lượt của file khác (ctx thật) thì không.
+    const shop60 = await newShop(companyId, 'lazada', 60);
+    const mine = await delivered(['delivered'], 16, shop60);
     const theirs = await delivered(['delivered'], 8, randomUUID(), () => other.companyId);
     const failing = {
       returnPoliciesOf: vi.fn(async (ids: readonly string[]) => {
-        if (ids.includes(lazada15)) throw new Error('DB lỗi giữa chừng');
+        if (ids.includes(shop60)) throw new Error('DB lỗi giữa chừng');
         return ctx.returnPoliciesOf(ids);
       }),
     };
