@@ -1,4 +1,4 @@
-// Sửa nội dung listing đang bán (#293, Documents/21 §18.3, ca C2-22…C2-28): route `update-content` với adapter giả.
+// Sửa nội dung listing đang bán (#293, Documents/21 §18.3, ca C2-24…C2-30): route `update-content` với adapter giả.
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
@@ -132,7 +132,7 @@ const history = async (id: string) =>
   ).rows;
 
 describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', () => {
-  it('C2-22: sàn vẫn bán bản cũ → giữ live, bản sửa auditing; nội dung dựng từ catalog; lịch sử live → live', async () => {
+  it('C2-24: sàn vẫn bán bản cũ → giữ live, bản sửa auditing; nội dung dựng từ catalog; lịch sử live → live', async () => {
     const { id, version, v } = await listing();
     const res = await edit(id, version);
     expect(res.status).toBe(200);
@@ -150,7 +150,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect(await history(id)).toEqual([{ from: 'live', to: 'live', action: 'update_content', actor_id: expect.any(String) }]);
   });
 
-  it('C2-23: sàn ngừng bán để duyệt → under_review qua request_review, không có bản sửa', async () => {
+  it('C2-25: sàn ngừng bán để duyệt → under_review qua request_review, không có bản sửa', async () => {
     onContent = async () => ({ underReview: true });
     const { id, version } = await listing();
     const res = await edit(id, version);
@@ -163,7 +163,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     ]);
   });
 
-  it('C2-26: bản sửa đã trượt, gọi lại → auditing, lý do xoá, at mới', async () => {
+  it('C2-28: bản sửa đã trượt, gọi lại → auditing, lý do xoá, at mới', async () => {
     const { id, version } = await listing({ revision_status: 'failed', revision_reject_reason: 'Ảnh mờ', revision_at: new Date('2026-01-01') });
     const res = await edit(id, version);
     expect(res.body.pendingRevision).toMatchObject({ status: 'auditing', rejectReason: null });
@@ -180,7 +180,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect((await row(id)).revision_status).toBe('auditing');
   });
 
-  it('C2-28: listing có bản sửa bị gỡ → ba cột bản sửa null', async () => {
+  it('C2-30: listing có bản sửa bị gỡ → ba cột bản sửa null', async () => {
     const { id, v } = await listing({ revision_status: 'auditing', revision_at: new Date() });
     const deactivate = vi.spyOn(adapter, 'deactivate').mockResolvedValue(undefined);
     const { version } = await row(id);
@@ -200,7 +200,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect(updateContent).not.toHaveBeenCalled();
   });
 
-  it('version cũ → 409 version_conflict kèm current; Sale → 403 (C2-22q); listing gian hàng khác → 404', async () => {
+  it('version cũ → 409 version_conflict kèm current; Sale → 403 (C2-24q); listing gian hàng khác → 404', async () => {
     const { id, version } = await listing();
     const stale = await edit(id, version + 5);
     expect(stale.status).toBe(409);
@@ -214,7 +214,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect(updateContent).not.toHaveBeenCalled();
   });
 
-  it('C2-22g: không quản tồn → 409 listing_unmanaged; sàn báo sản phẩm nhiều SKU → 409 shared_remote_product', async () => {
+  it('C2-24g: không quản tồn → 409 listing_unmanaged; sàn báo sản phẩm nhiều SKU → 409 shared_remote_product', async () => {
     const ceoId = (await testPool().query('select id from core.accounts where email = $1', [company.ceo.email])).rows[0].id;
     const unmanaged = await listing({ variant_id: null, mode: 'unmanaged', approved_by: ceoId });
     expect((await edit(unmanaged.id, unmanaged.version)).body.type).toBe('/problems/listing_unmanaged');
@@ -256,7 +256,7 @@ describe('đồng bộ đọc bản sửa đang duyệt (#293)', () => {
       .external_product_id;
   const auditing = (status = 'live') => listing({ status, revision_status: 'auditing', revision_at: new Date('2026-11-17T01:00:00Z') });
 
-  it('C2-24, C2-25, C2-27: qua duyệt xoá; trượt ghi failed kèm lý do (không lý do thì câu mặc định); đang duyệt hay đang ẩn thì giữ', async () => {
+  it('C2-26, C2-27, C2-29: qua duyệt xoá; trượt ghi failed kèm lý do (không lý do thì câu mặc định); đang duyệt hay đang ẩn thì giữ', async () => {
     const approved = await auditing();
     const failed = await auditing();
     const silent = await auditing();
