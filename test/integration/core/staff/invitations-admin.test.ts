@@ -4,6 +4,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { verifyPurposeToken } from '#src/shared/auth/purpose-token.ts';
+import { vnShortDateTime } from '#src/shared/vn-format.ts';
 import { addMember, createCompany, createCustomRole, uniqueEmail } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { login, PASSWORD, testApp } from '../../helpers/http.ts';
@@ -37,7 +38,7 @@ const invitationCount = async (companyId: string) =>
   Number((await db.query('select count(*) from core.invitations where company_id = $1', [companyId])).rows[0].count);
 const auditOf = (entityId: string) =>
   db.query<{ action: string; entity_type: string; actor_id: string; before: unknown; after: unknown }>(
-    'select action, entity_type, actor_id, before, after from core.audit_logs where entity_id = $1 order by id',
+    'select action, operation, entity_label as label, entity_type, actor_id, before, after from core.audit_logs where entity_id = $1 order by id',
     [entityId],
   );
 
@@ -69,7 +70,15 @@ describe('tạo link mời', () => {
     expect((row.expires_at as Date).getTime() - (row.created_at as Date).getTime()).toBe(72 * 3600_000);
     expect(new Date(res.body.expiresAt).getTime()).toBe((row.expires_at as Date).getTime());
     expect((await auditOf(res.body.id)).rows).toEqual([
-      { action: 'create', entity_type: 'core.invitations', actor_id: ceoId, before: null, after: { roles: [SALE] } },
+      {
+        action: 'create',
+        operation: null,
+        label: `Link mời vai Sale (tạo ${vnShortDateTime(row.created_at as Date)})`,
+        entity_type: 'core.invitations',
+        actor_id: ceoId,
+        before: null,
+        after: { roles: ['Sale'] },
+      },
     ]);
   });
 
@@ -184,10 +193,12 @@ describe('duyệt, từ chối', () => {
     expect((await auditOf(membership.rows[0]!.id)).rows).toEqual([
       {
         action: 'create',
+        operation: 'join',
+        label: `Nhân Viên Mới (${inv.email})`,
         entity_type: 'core.memberships',
         actor_id: ceoId,
         before: null,
-        after: { invitationId: inv.id, roles: [SALE] },
+        after: { fullName: 'Nhân Viên Mới', email: inv.email, roles: ['Sale'] },
       },
     ]);
     const { body } = await login(inv.email, PASSWORD);
@@ -225,6 +236,8 @@ describe('duyệt, từ chối', () => {
     expect((await auditOf(inv.id)).rows).toEqual([
       {
         action: 'update',
+        operation: 'reject',
+        label: `Link mời vai Sale cho Nhân Viên Mới (${inv.email})`,
         entity_type: 'core.invitations',
         actor_id: ceoId,
         before: { status: 'pending' },

@@ -17,7 +17,7 @@ const lock = (token: string, accountId: string, version: number, action: 'lock' 
   request(app).post(`/api/v1/identity/staff/${accountId}/${action}`).set('Authorization', `Bearer ${token}`).send({ version });
 const memberAudits = (membershipId: string) =>
   db.query(
-    "select action, before, after from core.audit_logs where entity_type = 'core.memberships' and entity_id = $1 order by id",
+    "select action, operation, entity_label as label, before, after from core.audit_logs where entity_type = 'core.memberships' and entity_id = $1 order by id",
     [membershipId],
   );
 
@@ -85,12 +85,19 @@ describe('đổi vai trò', () => {
   it('AC-B2: hợp lệ → 200 StaffMember mới, version tăng, nhật ký có vai trò trước và sau, request kế tiếp dùng quyền mới', async () => {
     const a = await createCompany();
     const target = await addMember(a.companyId, 'sale');
+    await rename(target.accountId, 'Mua Hàng Demo');
     expect((await get('/api/v1/identity/staff', target.token)).status).toBe(403);
     const res = await putRoles(a.ceo.token, target.accountId, { roleIds: [BUILTIN_ROLES.admin.id], version: 1 });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ accountId: target.accountId, version: 2, roles: [{ id: BUILTIN_ROLES.admin.id, name: 'Admin' }] });
     expect((await memberAudits(target.membershipId)).rows).toEqual([
-      { action: 'update', before: { roles: [BUILTIN_ROLES.sale.id] }, after: { roles: [BUILTIN_ROLES.admin.id] } },
+      {
+        action: 'update',
+        operation: 'change_roles',
+        label: `Mua Hàng Demo (${target.email})`,
+        before: { roles: ['Sale'] },
+        after: { roles: ['Admin'] },
+      },
     ]);
     expect((await get('/api/v1/identity/staff', target.token)).status).toBe(200);
   });
@@ -164,6 +171,8 @@ describe('khoá, mở khoá', () => {
   it('AC-B5: khoá → locked, version tăng, nhật ký; token cũ của người bị khoá → 403 account_locked; mở khoá làm ngược lại', async () => {
     const a = await createCompany();
     const target = await addMember(a.companyId, 'admin');
+    await rename(target.accountId, 'Mua Hàng Demo');
+    const label = `Mua Hàng Demo (${target.email})`;
     const res = await lock(a.ceo.token, target.accountId, 1);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'locked', version: 2 });
@@ -178,8 +187,8 @@ describe('khoá, mở khoá', () => {
     expect(unlock.body).toMatchObject({ status: 'active', version: 3 });
     expect((await get('/api/v1/identity/staff', target.token)).status).toBe(200);
     expect((await memberAudits(target.membershipId)).rows).toEqual([
-      { action: 'update', before: { status: 'active' }, after: { status: 'locked' } },
-      { action: 'update', before: { status: 'locked' }, after: { status: 'active' } },
+      { action: 'update', operation: 'lock', label, before: { status: 'active' }, after: { status: 'locked' } },
+      { action: 'update', operation: 'unlock', label, before: { status: 'locked' }, after: { status: 'active' } },
     ]);
   });
 

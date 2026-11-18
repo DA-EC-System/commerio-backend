@@ -5,6 +5,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
+import { vnShortDateTime } from '../../../../shared/vn-format.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { findRolesWithPermissions, replaceMemberRoles, type RoleWithPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
@@ -29,9 +30,11 @@ import {
 import {
   type Caller,
   invalidRoles,
+  memberLabel,
   notHeld,
   type Page,
   protectedAccount,
+  roleNames,
   type StaffMember,
   staffMemberOf,
 } from './members.ts';
@@ -109,6 +112,14 @@ async function views(rows: readonly InvitationRow[]): Promise<InvitationView[]> 
 
 const viewOf = async (row: InvitationRow) => (await views([row]))[0]!;
 
+/** Nhãn nhật ký của lời mời: đã có email (qua OTP) thì nói người được mời, chưa có thì giờ tạo link (#352). */
+function invitationLabel(view: Pick<InvitationView, 'roles' | 'email' | 'fullName' | 'createdAt'>): string {
+  const roles = roleNames(view.roles).join(', ');
+  return view.email
+    ? `Link mời vai ${roles} cho ${memberLabel({ fullName: view.fullName ?? '', email: view.email })}`
+    : `Link mời vai ${roles} (tạo ${vnShortDateTime(new Date(view.createdAt))})`;
+}
+
 /** Khoá dòng trước mọi bước (thứ tự khoá: lời mời → tài khoản → membership → vai trò). */
 async function lockPending(id: string, version: number): Promise<InvitationRow> {
   // `id` sai dạng coi như không có (V6).
@@ -136,7 +147,8 @@ export async function createInvitation(
   roleIds: string[],
 ): Promise<{ id: string; link: string; expiresAt: string }> {
   const row = await withCompany(caller.companyId, async () => {
-    assertGrant(caller, roleIds, await findRolesWithPermissions(roleIds));
+    const found = await findRolesWithPermissions(roleIds);
+    assertGrant(caller, roleIds, found);
     const created = await insertInvitation({ companyId: caller.companyId, roleIds, createdBy: caller.accountId });
     await recordAudit({
       companyId: caller.companyId,
@@ -144,7 +156,8 @@ export async function createInvitation(
       action: 'create',
       entityType: ENTITY,
       entityId: created.id,
-      after: { roles: [...roleIds].sort() },
+      label: invitationLabel({ roles: found, email: null, fullName: null, createdAt: created.createdAt.toISOString() }),
+      after: { roles: roleNames(found) },
     });
     return created;
   });
@@ -194,18 +207,21 @@ export async function approveInvitation(
     });
     // Đã giữ khoá dòng từ đầu nên câu ghi có điều kiện luôn trúng.
     if (!decided) throw new Error(`approveInvitation: không ghi được lời mời ${row.id}`);
+    const member = await staffMemberOf(accountId);
     await recordAudit({
       companyId: caller.companyId,
       actorId: caller.accountId,
       action: 'create',
+      operation: 'join',
       entityType: 'core.memberships',
       entityId: membershipId,
-      after: { invitationId: row.id, roles: [...new Set(row.roleIds)].sort() },
+      label: memberLabel(member),
+      after: { fullName: member.fullName, email: member.email, roles: roleNames(member.roles) },
     });
     // Thư báo kết quả gửi qua outbox, cùng giao dịch: duyệt rollback thì không có thư.
     await publishDecided(row.id, 'approved');
     logger.info({ invitationId: row.id, membershipId, actorId: caller.accountId }, 'đã duyệt lời mời');
-    return { invitation: await viewOf(decided), member: await staffMemberOf(accountId) };
+    return { invitation: await viewOf(decided), member };
   }).catch((err: unknown) => {
     // Lưới cuối cho phiên chạy song song: tài khoản cùng email vừa được tạo, hay vai trò vừa bị xoá.
     const { code, constraint } = pgError(err);
@@ -232,18 +248,21 @@ export async function rejectInvitation(
     const row = await lockPending(id, version);
     const decided = await decideInvitation(row.id, version, { status: 'rejected', decidedBy: caller.accountId });
     if (!decided) throw new Error(`rejectInvitation: không ghi được lời mời ${row.id}`);
+    const invitation = await viewOf(decided);
     await recordAudit({
       companyId: caller.companyId,
       actorId: caller.accountId,
       action: 'update',
+      operation: 'reject',
       entityType: ENTITY,
       entityId: row.id,
+      label: invitationLabel(invitation),
       before: { status: 'pending' },
       after: { status: 'rejected' },
     });
     await publishDecided(row.id, 'rejected');
     logger.info({ invitationId: row.id, actorId: caller.accountId }, 'đã từ chối lời mời');
-    return { invitation: await viewOf(decided) };
+    return { invitation };
   });
   countTransition('rejected');
   return result;
@@ -263,17 +282,20 @@ export async function revokeInvitation(
     if (!row) throw notFound();
     const revoked = await revokeInvitationRow(row.id, version, caller.accountId);
     if (!revoked) throw conflict(await viewOf(row));
+    const invitation = await viewOf(revoked);
     await recordAudit({
       companyId: caller.companyId,
       actorId: caller.accountId,
       action: 'update',
+      operation: 'revoke',
       entityType: ENTITY,
       entityId: row.id,
+      label: invitationLabel(invitation),
       before: { status: row.status },
       after: { status: 'revoked' },
     });
     logger.info({ invitationId: row.id, actorId: caller.accountId }, 'đã huỷ link mời');
-    return { invitation: await viewOf(revoked) };
+    return { invitation };
   });
   countTransition('revoked');
   return result;
