@@ -228,7 +228,7 @@ Chạy lại trên dữ liệu sau khi áp: mọi nhóm khớp ở bước 1, `s
 
 **Thi hành (`service/resplit.ts`, mới).** Trong giao dịch kéo đơn, kiện đã khoá:
 
-- `clear_code`, `relabel`: hai pha, ghi `platform_package_code = null` cho mọi kiện của hai loại bước rồi mới ghi mã mới (hai kiện đổi mã cho nhau không vấp unique).
+- `clear_code`, `relabel`: hai pha, ghi `platform_package_code = null` cho mọi kiện của hai loại bước rồi mới ghi mã mới (hai kiện đổi mã cho nhau không vấp unique). Kiện đổi hay mất mã thì tắt `waybill_kept` cùng câu (vận đơn giữ lại theo D25 không còn là vận đơn của gói trên sàn; CHECK `packages_waybill_kept` cần mã).
 - `flag`: `needs_attention`, note "Sàn chia lại kiện đã bàn giao"; kiện đã có cờ thì không ghi (không tăng `version`).
 - `cancel_open`: nhả phần đang giữ thật (`reserved_qty`), `setReserved(false)`, `cancelled`; lịch sử `cancel`, lý do "Sàn chia lại kiện", nguồn `marketplace`; `package_status_changed`.
 - `move_out`: nhả phần giữ của dòng chuyển đi, xoá dòng, `version` tăng; lịch sử `drop_lines` (`from = to`), lý do "Sàn chia lại kiện: chuyển <n> món"; kiện `backordered` còn dòng thì xếp lượt phân hàng cho SKU còn lại.
@@ -383,7 +383,7 @@ FE đã có mock cho `report-lost`, `confirm-lost`, nút Báo/Xác nhận thất
 14. Như 13 nhưng có kiện `backordered` của đơn khác chờ cùng SKU: kiện mới của đơn này giữ được hàng, kiện kia vẫn `backordered`.
 14a. Hai kiện app chưa đóng (đã tách trong app) về chung một mã sàn mới: hai kiện cũ `cancelled`, một kiện mới giữ hàng, đơn không bật cờ. Sàn gộp món của kiện kia vào mã của một kiện cũ: không đổi gì, đơn bật Cần xử lý "Sàn chia lại kiện, app chưa tự xử lý được".
 15. Kiện `packed`, sàn chia thành 2 mã: kiện cũ giữ `packed`, vẫn giữ hàng, cờ Cần mở với `openPurpose = 'resplit'`; 2 kiện mới `backordered`, có `replaces`, không được phân hàng dù kho còn hàng. Kho mở: kiện cũ `cancelled`, 2 kiện mới `reserved` trước kiện `backordered` của đơn khác. Không gọi `repack`, đơn không bị khép.
-15a. Kiện đã đóng đang chờ mở vì `edit` hoặc `stocktake` bị sàn chia lại: mục đích thành `resplit`; đang `cancel` thì giữ `cancel`. Sàn huỷ cả kiện đang chờ mở để chia lại: mục đích thành `cancel` (D24).
+15a. Kiện đã đóng đang chờ mở vì `edit` hoặc `stocktake` bị sàn chia lại: mục đích thành `resplit`; đang `cancel` thì giữ `cancel`. Sàn huỷ cả kiện đang chờ mở để chia lại: mục đích thành `cancel` (D24). Mọi món của kiện cũ đã sang kiện thay rồi sàn huỷ cả đơn (kiện cũ không còn nhóm nào trên sàn): kiện thay `cancelled`, kiện cũ mục đích `cancel`, đơn `processing` với `cancelling` tới khi kho mở kiện cũ (`open_cancel` khép đơn), không `cancelled` ngay (soát PR 3, 18/11).
 16. Như 15, sàn báo một kiện mới đã `in_transit` trước khi kho mở: kiện mới `in_transit`, tồn trừ đúng một lần, `handover_source = 'marketplace'` (không `forced`), kiện cũ mất các món đó; kiện cũ hết món thì `cancelled` với lịch sử `replaced`.
 17. Kiện `in_transit`, sàn báo chia khác: không đổi gì, kiện và đơn bật Cần xử lý.
 18. Kéo đơn lại sau mỗi ca 12 đến 17: không đổi gì, `version` các kiện không đổi.

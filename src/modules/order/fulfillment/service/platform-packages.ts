@@ -737,5 +737,19 @@ export async function syncPlatformPackages(
       if (allCancelled(group)) result.cancelled.push('handed_over');
     }
   }
+
+  // Kiện đã đóng chờ mở mà không nhóm nào trên sàn trỏ tới (mọi món đã sang kiện thay), mọi dòng chờ bỏ và sàn đã huỷ mọi
+  // món của nó: như sàn huỷ cả kiện đã đóng (D24, `cancel` thắng mục đích khác) và báo `needs_open` để đơn huỷ hết món ở
+  // Đang huỷ tới khi kho dỡ kiện (`25` §8.2); mở ra là `open_cancel`, khép đơn.
+  for (const pkg of existing) {
+    if (touched.has(pkg.id) || !isSealed(pkg.status) || !pkg.needsOpen || !pkg.lines.length) continue;
+    if (!pkg.lines.every((l) => l.pendingDropQty > 0 && cancelledIds.has(l.orderLineId))) continue;
+    if (pkg.openPurpose !== 'cancel') {
+      await updatePackage(pkg.id, { openPurpose: 'cancel' });
+      pkg.openPurpose = 'cancel';
+      result.changed = true;
+    }
+    result.cancelled.push('needs_open');
+  }
   return { ...result, statuses: existing.map((p) => p.status) };
 }

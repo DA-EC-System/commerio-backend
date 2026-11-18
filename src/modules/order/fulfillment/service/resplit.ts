@@ -39,21 +39,22 @@ export async function applyResplit(
   const created = new Map<string, PackageRow>();
 
   // Hai pha mã (unique `packages_platform_code_order_uq` không lọc trạng thái): gỡ mã của kiện bị gỡ, và của kiện sắp đổi
-  // mà mã đang có là mã kiện khác sắp nhận (hai kiện đổi mã cho nhau), rồi mới gắn mã mới.
+  // mà mã đang có là mã kiện khác sắp nhận (hai kiện đổi mã cho nhau), rồi mới gắn mã mới. Kiện đổi hay mất mã thì vận đơn
+  // giữ lại (D25) không còn là vận đơn của gói trên sàn: tắt `waybill_kept` cùng câu (CHECK `packages_waybill_kept` cần mã).
   const incoming = new Set(plan.steps.flatMap((s) => (s.kind === 'relabel' ? [s.code] : [])));
   for (const s of plan.steps) {
     if (s.kind !== 'clear_code' && s.kind !== 'relabel') continue;
     const pkg = byId(s.packageId);
     if (pkg.platformPackageCode === null || (s.kind === 'relabel' && !incoming.has(pkg.platformPackageCode))) continue;
-    await updatePackage(pkg.id, { platformPackageCode: null });
-    pkg.platformPackageCode = null;
+    await updatePackage(pkg.id, { platformPackageCode: null, waybillKept: false });
+    Object.assign(pkg, { platformPackageCode: null, waybillKept: false });
   }
 
   for (const s of pendingSteps(plan, packages)) {
     if (s.kind === 'clear_code') continue;
     if (s.kind === 'relabel') {
-      await updatePackage(s.packageId, { platformPackageCode: s.code });
-      byId(s.packageId).platformPackageCode = s.code;
+      await updatePackage(s.packageId, { platformPackageCode: s.code, waybillKept: false });
+      Object.assign(byId(s.packageId), { platformPackageCode: s.code, waybillKept: false });
     } else if (s.kind === 'flag') {
       await updatePackage(s.packageId, { needsAttention: true, flagNote: RESPLIT_HANDED_OVER_NOTE });
       byId(s.packageId).needsAttention = true;

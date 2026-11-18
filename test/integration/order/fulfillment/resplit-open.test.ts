@@ -9,7 +9,7 @@ import { addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import { packageDocuments, packageRow, packingApp, stockOfVariant, transitionsOf } from './helpers.ts';
-import { ingest, remote, withLineCancelled, withStatus } from './platform-fixtures.ts';
+import { ingest, remote, withCancel, withLineCancelled, withStatus } from './platform-fixtures.ts';
 import { external, historyCount, itemStatuses, lineRows, packagesOf, packedSplit, relabeled, setup, tag } from './resplit-fixtures.ts';
 
 type Action = 'open' | 'pack' | 'ready' | 'report-lost' | 'confirm-lost';
@@ -146,9 +146,47 @@ describe('mở kiện cũ chờ dỡ để chia lại (#238 §5.6, D24, D26)', (
     expect(await historyCount(orderId)).toBe(history);
     expect(before.find((r) => r.id === packageId)).toMatchObject({ status: 'cancelled', platformCode: o.lines[0]!.packageCode });
   });
+
+  it('sàn huỷ cả đơn khi mọi món của kiện cũ đã sang kiện thay: kiện thay cancelled, kiện cũ chờ mở cancel, đơn Đang huỷ tới khi kho mở kiện cũ', async () => {
+    const { v, orderId, packageId, next, a, b } = await packedSplit();
+
+    await ingest(v.companyId, withCancel(next, 'cancellation'));
+
+    for (const p of [a, b]) expect((await packageRow(p.id)).status).toBe('cancelled');
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
+    expect(await orderRow(orderId)).toEqual({ status: 'processing', cancelling: true });
+    const version = await versionOf(packageId);
+
+    // Kéo lại: đơn vẫn Đang huỷ, kiện cũ không ghi lại.
+    await ingest(v.companyId, withCancel(next, 'cancellation'));
+    expect(await orderRow(orderId)).toEqual({ status: 'processing', cancelling: true });
+    expect(await versionOf(packageId)).toBe(version);
+
+    const res = await post(v.token, packageId, 'open', { version });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'cancelled', needs_open: false });
+    expect((await orderRow(orderId)).status).toBe('cancelled');
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(0);
+  });
 });
 
 describe('mở kiện awaiting_pickup giữ vận đơn (#238 D25)', () => {
+  it('kiện giữ vận đơn bị sàn đổi mã (hai kiện đổi mã cho nhau): không vỡ CHECK packages_waybill_kept, mã đổi, waybill_kept tắt', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingest(v.companyId, o);
+    const rows = await packagesOf(orderId);
+    const first = rows.find((r) => r.items.includes(external(o, 0)));
+    const second = rows.find((r) => r.items.includes(external(o, 1)));
+    await testPool().query(`update "order".packages set tracking_code = $2, waybill_kept = true where id = $1`, [first!.id, `VD-${tag()}`]);
+
+    await ingest(v.companyId, relabeled(o, [second!.platformCode, first!.platformCode]));
+
+    expect(await waybillOf(first!.id)).toMatchObject({ platform_package_code: second!.platformCode, waybill_kept: false });
+    expect(await waybillOf(second!.id)).toMatchObject({ platform_package_code: first!.platformCode });
+  });
+
   it('AC19: kiện awaiting_pickup chờ mở vì edit, mở còn món: reserved, giữ mã kiện sàn, vận đơn, ĐVVC, waybill_kept true, không gọi repack', async () => {
     const { v, o, packageId, tracking } = await pickupEdited();
 
