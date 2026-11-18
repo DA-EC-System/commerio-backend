@@ -13,6 +13,8 @@ import {
   ListingSyncResult,
   MappingBody,
   MappingParams,
+  AcknowledgeTitleBody,
+  AcknowledgeTitleParams,
   OutsideChangeBody,
   OutsideChangeParams,
   MatchBody,
@@ -439,6 +441,22 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: gian hàng hoặc listing'),
       409: problemResponse('`invalid_transition` (không có `outsideChange`; `accept-price` với `kind = disabled`), `version_conflict` kèm `current`, `shop_not_connected`'),
       422: problemResponse('`marketplace_unsupported`, `validation_failed`, `below_floor` (`accept-price`)'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/acknowledge-title',
+    summary: 'Xác nhận tên trên sàn đã đổi (#396, 21 §18.3)',
+    description:
+      'Cần `channel.listing.manage`. Listing có `remoteTitleChanged` (trên `ListingRow`, phần tử `remote-skus`): mốc tên lúc ghép thành tên hiện tại trong bản sao SKU sàn (cả tên tiếng Anh), xoá cờ, tăng `version`, ghi nhật ký thao tác. Không gọi sàn, không đổi tên trong catalog. Cờ bật khi lần đọc bản sao thấy (tên, tên tiếng Anh) khác mốc; ghép, đổi ghép, CEO duyệt ghép đặt mốc từ bản sao; app đẩy, sửa nội dung đặt mốc là tên app vừa gửi.',
+    security: bearer,
+    request: { params: AcknowledgeTitleParams, body: json(AcknowledgeTitleBody) },
+    responses: {
+      200: { description: 'Listing sau khi xác nhận', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition` (không có `remoteTitleChanged`), `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed` (`errors.version`)'),
     },
   });
   registry.registerPath({

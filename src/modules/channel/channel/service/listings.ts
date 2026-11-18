@@ -17,6 +17,7 @@ import {
   pendingOnly,
   REVISION_KEPT,
 } from '../domain/listing.ts';
+import { type RemoteTitleChanged, remoteTitleChanged, sentBaseline } from '../domain/remote-title.ts';
 import { awaitingAllocation } from '../domain/shop.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import {
@@ -29,6 +30,7 @@ import {
   type ListingRow,
   updateListing,
 } from '../repository/listings.ts';
+import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
 import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
@@ -83,6 +85,8 @@ export interface ListingRowView extends ListingPrice {
   /** Ảnh đại diện catalog của sản phẩm (#303); null khi chưa có ảnh. */
   thumbnailUrl: string | null;
   listing: ChannelListing | null;
+  /** Tên trên sàn khác tên lúc ghép (#396, 21 §18.3); tính từ bản sao SKU sàn lúc đọc. */
+  remoteTitleChanged: RemoteTitleChanged | null;
 }
 
 /**
@@ -167,6 +171,10 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const names = await requesterNames(rows);
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
   const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
+  // Tên hiện tại trong bản sao, một câu, chỉ cho listing đang có cờ.
+  const titles = new Map(
+    (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
+  );
   return {
     items: variants.map((v) => {
       const listing = byVariant.get(v.id);
@@ -180,6 +188,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
         ...price,
         listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
+        remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
       };
     }),
   };
@@ -448,9 +457,10 @@ export async function updateListingContent(
   });
   const update = adapter.updateContent;
   if (!update) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ sửa nội dung sản phẩm đang bán');
+  const text = listingText(v);
   const { underReview } = await onMarketplace(async () => {
     try {
-      return await update(accessToken, productId, { externalCategoryId: map.externalCategoryId, ...listingText(v), attributes: map.attributes, responsible });
+      return await update(accessToken, productId, { externalCategoryId: map.externalCategoryId, ...text, attributes: map.attributes, responsible });
     } catch (err) {
       // Sản phẩm sàn nhiều SKU: mã riêng của route (§18.5), không phải lỗi chung của sàn.
       if (err instanceof MarketplaceError && err.platformCode === 'shared_remote_product') {
@@ -463,7 +473,9 @@ export async function updateListingContent(
     const fresh = await findListingById(row.id);
     if (!fresh || fresh.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     const revision = underReview ? {} : { revisionStatus: 'auditing' as const, revisionRejectReason: null, revisionAt: new Date() };
-    let updated = await moveListing(fresh, 'update_content', actor, revision);
+    // Sàn đã nhận tên mới: mốc tên trên sàn là tên vừa gửi, không bật "Tên trên sàn đã đổi" ở lượt đọc sau (#396).
+    const remote = fresh.externalSkuId ? await findRemoteSkuRow(shop.id, fresh.externalSkuId) : undefined;
+    let updated = await moveListing(fresh, 'update_content', actor, { ...revision, ...sentBaseline(text.name, remote, new Date()) });
     if (underReview) updated = await moveListing(updated, 'request_review', null);
     return toListing(updated, await requesterNames([updated]));
   });

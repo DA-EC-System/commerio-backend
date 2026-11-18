@@ -205,7 +205,8 @@ type LazadaProduct = {
   status?: unknown;
   subStatus?: unknown;
   rejectReason?: { violationDetail?: unknown }[];
-  attributes?: { name?: unknown };
+  /** `name`: tên người mua VN thấy; `name_en`: tên tiếng Anh (Seller Center giao diện tiếng Anh hiện tên này, #396). */
+  attributes?: { name?: unknown; name_en?: unknown };
   /** Giờ tạo, mili giây dạng chuỗi (gọi thật 12/11/2026): điểm chia của lần đọc trọn (review #309 vòng 5 C1). */
   created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
@@ -263,6 +264,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     externalSkuId: String(s.SkuId),
     sellerSku: String(s.SellerSku ?? ''),
     title: String(p.attributes?.name ?? ''),
+    titleEn: typeof p.attributes?.name_en === 'string' && p.attributes.name_en.trim() !== '' ? p.attributes.name_en : null,
     imageUrl: productImage ?? firstImage(s.Images),
     state: skuState(state, s.Status),
     rejectReason,

@@ -689,6 +689,11 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
             rejectReason: status === 'rejected' ? (r.rejectReason ?? NO_REASON) : null,
             platformStock: r.quantity,
             replacesListingId: row.id,
+            // Mốc tên trên sàn giữ của dòng cũ (#396): người bán đổi tên trong lúc ngắt thì cờ vẫn bật ở lượt đọc sau.
+            remoteTitleAtMatch: row.remoteTitleAtMatch,
+            remoteTitleEnAtMatch: row.remoteTitleEnAtMatch,
+            remoteTitleMatchedAt: row.remoteTitleMatchedAt,
+            remoteTitleChangedAt: row.remoteTitleChangedAt,
           });
           await recordTransition({ entityType: 'listings', entityId: created.id, from: null, to: status, action: 'relist', actorId: null, reason: 'Kết nối lại gian hàng' });
         });
