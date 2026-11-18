@@ -153,6 +153,11 @@ async function listing(id: string) {
   return rows[0];
 }
 
+async function attemptedAt(id: string) {
+  const { rows } = await testPool().query('select create_attempted_at from channel.listings where id = $1', [id]);
+  return rows[0].create_attempted_at as Date | null;
+}
+
 async function history(id: string) {
   const { rows } = await testPool().query<{ from: string; to: string; action: string; actor_id: string | null }>(
     `select from_state as "from", to_state as "to", action, actor_id from core.state_transitions
@@ -201,8 +206,8 @@ describe('việc nền channel.listing_push', () => {
   });
 
   it('#346 AC-7: sàn đã có sẵn SKU cùng SellerSku (lần trước tạo dù báo lỗi) → ghi nội dung, giá của app lên SKU đó, tồn để đồng bộ đẩy', async () => {
-    const { id } = await pushing();
-    // #399: sàn tạo sản phẩm sau lúc bắt đầu lượt (lần thử trước báo lỗi mà vẫn tạo) → của app, ghi như cũ.
+    // #399: lần gọi tạo trước báo lỗi mà sàn vẫn tạo sản phẩm (giờ tạo sát mốc lần gọi đó) → của app, ghi như cũ.
+    const { id } = await pushing({ create_attempted_at: new Date(Date.now() - 60_000) });
     onCreate = async (p) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false, existing: true, createdAt: new Date() });
     await runListingPush(port, job(id));
     expect(updateProduct).toHaveBeenCalledTimes(1);
@@ -231,9 +236,9 @@ describe('việc nền channel.listing_push', () => {
     expect(row.push_error.message).toBe(`SKU ${v.sku} đã có trên Sàn giả (Áo thun cotton form rộng). Dùng Ghép SKU thay vì đẩy.`);
   });
 
-  it('#346 (sửa sau review): đẩy lại listing `push_failed` sau hơn 5 phút, sàn có sản phẩm tạo sau giờ tạo listing (lần trước E500 mà vẫn tạo) → nhận lại, `content_source = app`', async () => {
-    // Listing tạo cách đây 20 phút, lượt đẩy lại vừa bắt đầu: sản phẩm sàn tạo 10 phút trước (giữa hai mốc).
-    const { id } = await pushing({ created_at: new Date(Date.now() - 20 * 60_000) });
+  it('#346 (sửa sau review): đẩy lại listing `push_failed` sau hơn 5 phút, sản phẩm sàn tạo sát lần gọi tạo trước (lần trước E500 mà vẫn tạo) → nhận lại, `content_source = app`', async () => {
+    // Lần gọi tạo trước cách đây 10 phút; sàn tạo sản phẩm lúc đó (lệch 1 phút).
+    const { id } = await pushing({ created_at: new Date(Date.now() - 20 * 60_000), create_attempted_at: new Date(Date.now() - 10 * 60_000) });
     onCreate = async (p) => ({
       externalProductId: `item-${p.sellerSku}`,
       externalSkuId: `sku-${p.sellerSku}`,
@@ -246,8 +251,8 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({ status: 'live', content_source: 'app', push_error: null });
   });
 
-  it('#346 (sửa sau review): sản phẩm sàn tạo trước giờ tạo listing (trừ 5 phút) vẫn là của người bán → `sku_exists_on_platform`', async () => {
-    const { id } = await pushing({ created_at: new Date(Date.now() - 20 * 60_000) });
+  it('#346 (sửa sau review): sản phẩm sàn tạo lệch hơn 5 phút so với lần gọi tạo trước vẫn là của người bán → `sku_exists_on_platform`', async () => {
+    const { id } = await pushing({ created_at: new Date(Date.now() - 20 * 60_000), create_attempted_at: new Date(Date.now() - 10 * 60_000) });
     onCreate = async () => ({
       externalProductId: 'P-NB3',
       externalSkuId: `S-NB3-${randomUUID()}`,
@@ -258,6 +263,66 @@ describe('việc nền channel.listing_push', () => {
     await runListingPush(port, job(id));
     expect(updateProduct).not.toHaveBeenCalled();
     expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'sku_exists_on_platform' } });
+  });
+
+  it('#399 sau rà bảo mật: listing tạo 3 ngày trước, chưa từng gọi tạo; người bán tự tạo sản phẩm cùng SellerSku 1 ngày trước → `sku_exists_on_platform`, không ghi gì lên sàn', async () => {
+    const { id } = await pushing({ created_at: new Date(Date.now() - 3 * 24 * 3600_000) });
+    onCreate = async () => ({
+      externalProductId: 'P-NB4',
+      externalSkuId: `S-NB4-${randomUUID()}`,
+      live: true,
+      existing: true,
+      createdAt: new Date(Date.now() - 24 * 3600_000),
+    });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', external_sku_id: null, push_error: { code: 'sku_exists_on_platform' } });
+  });
+
+  it('#399 sau rà bảo mật (vòng 2): lần gọi tạo trước bị sàn từ chối 9 ngày trước, người bán tự tạo sản phẩm 5 ngày trước → `sku_exists_on_platform`, không ghi lên sàn', async () => {
+    const { id } = await pushing({ create_attempted_at: new Date(Date.now() - 9 * 24 * 3600_000) });
+    onCreate = async () => ({
+      externalProductId: 'P-NB5',
+      externalSkuId: `S-NB5-${randomUUID()}`,
+      live: true,
+      existing: true,
+      createdAt: new Date(Date.now() - 5 * 24 * 3600_000),
+    });
+    await runListingPush(port, job(id));
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(await listing(id)).toMatchObject({ status: 'push_failed', push_error: { code: 'sku_exists_on_platform' } });
+  });
+
+  it('#399 sau rà bảo mật, ca E500 #346: lần 1 gọi tạo, sàn tạo mà báo lỗi; lần 2 (sau hơn 5 phút) thấy existing sát lần gọi trước → nhận lại, content_source = app', async () => {
+    const { id } = await pushing({ created_at: new Date(Date.now() - 3 * 24 * 3600_000) });
+    let created: CreatedProduct | undefined;
+    onCreate = async (p) => {
+      if (created) return { ...created, existing: true };
+      created = { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false, createdAt: new Date() };
+      throw new MarketplaceError('unavailable', 'E500', 'Create product failed');
+    };
+    await expect(runListingPush(port, job(id))).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(await attemptedAt(id)).not.toBeNull();
+    // Hơn 5 phút sau: lùi cả mốc lần gọi lẫn giờ tạo trên sàn.
+    await testPool().query("update channel.listings set create_attempted_at = create_attempted_at - interval '10 minutes' where id = $1", [id]);
+    created = { ...created!, createdAt: new Date(created!.createdAt!.getTime() - 10 * 60_000) };
+    await runListingPush(port, job(id));
+    expect(updateProduct).toHaveBeenCalledTimes(1);
+    expect(await listing(id)).toMatchObject({ status: 'live', content_source: 'app', push_error: null });
+  });
+
+  it('#399 sau rà bảo mật: mỗi lần gọi tạo đều cập nhật create_attempted_at', async () => {
+    const { id } = await pushing();
+    onCreate = async () => {
+      throw new MarketplaceError('unavailable', '901', 'Hệ thống bận');
+    };
+    await expect(runListingPush(port, job(id))).rejects.toMatchObject({ kind: 'unavailable' });
+    const first = await attemptedAt(id);
+    expect(first).not.toBeNull();
+    await new Promise((r) => setTimeout(r, 30));
+    await expect(runListingPush(port, job(id))).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(createProduct).toHaveBeenCalledTimes(2);
+    expect((await attemptedAt(id))!.getTime()).toBeGreaterThan(first!.getTime());
   });
 
   it('#399 AC-3: sàn không trả giờ tạo của SKU có sẵn → coi là của người bán, `sku_exists_on_platform`', async () => {

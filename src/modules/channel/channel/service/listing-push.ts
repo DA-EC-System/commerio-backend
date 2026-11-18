@@ -7,7 +7,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, type RemoteState, STALE_PUSH_MS } from '../domain/listing.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
-import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, updateListing } from '../repository/listings.ts';
+import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, markCreateAttempted, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { findShopRow } from '../repository/shops.ts';
@@ -25,7 +25,7 @@ import { untrustedVariants } from './stock-trust.ts';
 /** Số lần gọi sàn tối đa của một lượt đẩy (Documents/21 §18.6.4), bằng `attempts` của hàng `channel.listing_push`. */
 export const PUSH_ATTEMPTS = 5;
 
-/** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ tạo dòng listing (#399). */
+/** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ của lần gọi tạo trước (`create_attempted_at`, #399). */
 export const CLOCK_SKEW_MS = 5 * 60_000;
 
 const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
@@ -122,6 +122,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       // Giữ nguyên qua các lần thử của lượt, đổi khi người dùng bấm đẩy lại (#219 A4).
       idempotencyKey: `cm-${row.id}-${row.pushStartedAt!.getTime()}`,
     };
+    // Mốc lần gọi tạo gần nhất (#399): ghi đè mỗi lần, commit trước khi gọi sàn để lần thử sau thấy mốc dù lần gọi này lỗi hay ném.
+    // `row` giữ giá trị của lần gọi trước.
+    if (!reshelve) await inCompany(() => markCreateAttempted(row.id));
     let result = reshelve
       ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, product)) }
       : await adapter.createProduct(accessToken, product);
@@ -138,10 +141,12 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
         const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
         return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });
       }
-      // #399 Ca 2: sàn tạo sản phẩm trước khi dòng listing này ra đời (hoặc không cho biết giờ tạo) là sản phẩm người bán:
-      // không ghi đè. Sản phẩm tạo sau đó là của chính listing này (sàn báo lỗi mà vẫn tạo, #346), kể cả khi đẩy lại cùng
-      // listing `push_failed` sau nhiều phút nên mốc là giờ tạo dòng, không phải `pushStartedAt` của lượt hiện tại.
-      if (!result.createdAt || result.createdAt.getTime() < row.createdAt.getTime() - CLOCK_SKEW_MS) {
+      // #399 Ca 2: sản phẩm của app sinh ra trong đúng lần gọi tạo ngay trước (sàn báo lỗi mà vẫn tạo, #346); nếu nó tồn tại
+      // thì lần gọi kế luôn thấy nó ở bước tra `existing` trước khi tạo, nên chỉ xét lần gọi trước (`create_attempted_at` lúc
+      // đọc dòng). Chưa có lần gọi trước, không có giờ tạo, hoặc giờ tạo lệch quá `CLOCK_SKEW_MS` so với lần đó (sản phẩm người
+      // bán, kể cả tạo sau một lần gọi bị sàn từ chối) thì là của người bán: không ghi đè.
+      const previousCall = row.createAttemptedAt;
+      if (!previousCall || !result.createdAt || Math.abs(result.createdAt.getTime() - previousCall.getTime()) > CLOCK_SKEW_MS) {
         const named = result.title ? ` (${result.title})` : '';
         const message = `SKU ${product.sellerSku} đã có trên ${adapter.name}${named}. Dùng Ghép SKU thay vì đẩy.`;
         return finish(job, row, 'fail', { pushError: errorOf('sku_exists_on_platform', message), pushAttempts: row.pushAttempts + 1 });

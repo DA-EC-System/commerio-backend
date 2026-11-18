@@ -198,6 +198,8 @@ export const listings = channelSchema.table(
     pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
+    /** Lần đầu app gọi `createProduct` cho listing này (#399): mốc phân biệt sản phẩm app tạo với sản phẩm người bán có sẵn. Chỉ ghi khi null, không tăng `version`. */
+    createAttemptedAt: timestamp('create_attempted_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
     /** Sàn đổi listing ngoài app (#360, 21 §18.3 `outsideChange`): dừng bán, chờ CEO quyết. Giá chỉ có khi `price_changed`. */
     outsideChangeKind: outsideChangeKind('outside_change_kind'),
