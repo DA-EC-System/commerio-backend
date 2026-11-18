@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
+import { testPool } from '../../helpers/db.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import {
   type AttributeBody,
@@ -154,5 +155,28 @@ describe('chạy đua (S-3 c, d; plan B5)', () => {
     const results = await Promise.all([add(product.id, ids), add(product.id, ids)]);
     expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
     expect((await detailOf(product.id)).variants).toHaveLength(3);
+  });
+});
+
+// Khoá trục (#340, Documents/21 §17.2, §17.4 `axis_locked`): chưa route nào thêm, bớt trục hay chuyển SKU sang cha khác;
+// thêm biến thể chỉ nhận đúng bộ trục của sản phẩm, kể cả khi SKU đang có listing chưa gỡ.
+describe('không đổi được trục phân loại (#340, AC-13)', () => {
+  it('thêm biến thể mang thêm trục hoặc thiếu trục → 422 errors.attributeValueIds, kể cả khi SKU có listing live', async () => {
+    const material = await createAttribute(token, uniq('Chất liệu'), ['Cotton']);
+    const product = await shirt();
+    const shop = await testPool().query<{ id: string }>(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name) values ($1, 'lazada', $2, 'Shop Thử') returning id`,
+      [companyId, randomUUID()],
+    );
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, status, seller_sku) values ($1, $2, $3, 'live', $4)`,
+      [companyId, shop.rows[0]!.id, product.variants[0]!.id, `CMR-${randomUUID().slice(0, 8)}`],
+    );
+    for (const ids of [[valueId(color, 'Xám'), valueId(size, 'M'), valueId(material, 'Cotton')], [valueId(color, 'Xám')]]) {
+      const res = await add(product.id, ids);
+      expect(res.status, JSON.stringify(res.body)).toBe(422);
+      expect(res.body.errors).toHaveProperty('attributeValueIds');
+    }
+    expect((await detailOf(product.id)).variants).toHaveLength(2);
   });
 });

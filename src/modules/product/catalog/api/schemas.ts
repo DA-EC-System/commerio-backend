@@ -201,8 +201,8 @@ const price = z.int(POSITIVE_INT).positive(POSITIVE_INT).nullable().optional();
 const measure = z.int(POSITIVE_INT).positive(POSITIVE_INT).max(2_147_483_647, 'Số quá lớn').nullable().optional();
 
 /**
- * Sửa một SKU (#204, Documents/21 §17.2). Chưa nhận `imageFileId` (spec 204 D1): trường lạ trả 422. Ngưỡng tồn đặt ở
- * inventory (mục 15), không ở đây.
+ * Sửa một SKU (#204, Documents/21 §17.2). Không nhận `imageFileId`: ảnh phân loại đặt theo giá trị thuộc tính, không theo
+ * SKU (#340); trường lạ trả 422. Ngưỡng tồn đặt ở inventory (mục 15), không ở đây.
  */
 export const UpdateVariantBody = z
   .strictObject(
