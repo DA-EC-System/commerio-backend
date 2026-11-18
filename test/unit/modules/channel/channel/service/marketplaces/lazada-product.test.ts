@@ -176,7 +176,11 @@ describe('adapter Lazada: sản phẩm', () => {
   it('tạo sản phẩm idempotent: SellerSku đã có trên sàn (lần trước tạo xong mà mất kết quả) thì trả sản phẩm đó, không tạo', async () => {
     const fn = fakeFetch({
       code: '0',
-      data: { products: [{ item_id: '77', status: 'Pending QC', attributes: { name: 'SP' }, skus: [{ SkuId: 770, SellerSku: 'CMR-1', quantity: 7 }] }] },
+      data: {
+        products: [
+          { item_id: '77', status: 'Pending QC', created_time: '1795000000000', attributes: { name: 'SP' }, skus: [{ SkuId: 770, SellerSku: 'CMR-1', quantity: 7 }] },
+        ],
+      },
     });
     const created = await createLazadaAdapter(config, fn).createProduct('t', {
       externalCategoryId: '14275',
@@ -192,7 +196,15 @@ describe('adapter Lazada: sản phẩm', () => {
       widthMm: 200,
       heightMm: 15,
     });
-    expect(created).toEqual({ externalProductId: '77', externalSkuId: '770', live: false, existing: true });
+    // #399: kèm giờ tạo (`created_time` mili giây) và tên trên sàn để việc đẩy biết sản phẩm có từ trước hay không.
+    expect(created).toEqual({
+      externalProductId: '77',
+      externalSkuId: '770',
+      live: false,
+      existing: true,
+      createdAt: new Date(1795000000000),
+      title: 'SP',
+    });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(sent(fn).path).toBe('/rest/products/get');
   });

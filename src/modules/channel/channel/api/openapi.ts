@@ -8,11 +8,15 @@ import {
   DelistBody,
   UpdateContentBody,
   UpdateContentParams,
+  TakeOverContentBody,
+  TakeOverContentParams,
   ListingList,
   ListingParams,
   ListingSyncResult,
   MappingBody,
   MappingParams,
+  AcknowledgeTitleBody,
+  AcknowledgeTitleParams,
   OutsideChangeBody,
   OutsideChangeParams,
   MatchBody,
@@ -443,6 +447,42 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   });
   registry.registerPath({
     method: 'post',
+    path: '/shops/:id/listings/:listingId/take-over-content',
+    summary: 'CEO ghi nội dung Commerio lên sản phẩm người bán đã ghép (#399)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). Chỉ listing `contentSource = platform` có mã sàn ở `live`, `platform_hold`, `rejected`, `push_failed` (`hidden`: 409, hiện lại listing trước vì `updateProduct` bật SKU trên sàn). Kiểm gian hàng như `push` (`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`). ' +
+      'Listing chuyển `pushing` (`take_over_content`), xếp việc đẩy ghi tên, mô tả, ảnh, danh mục, thuộc tính, giá của Commerio lên sản phẩm (nội dung đang có trên sàn mất, không hoàn tác); ' +
+      'xong thì `contentSource = app`, `live` hoặc `under_review`; sàn lỗi (từ chối, hết lượt thử, quá 30 phút) thì kèm `pushError`, giữ `platform`: xuất phát từ `live` về `live` (tồn, giá chờ đẩy lại), xuất phát từ trạng thái khác `push_failed`. Ghi nhật ký thao tác.',
+    security: bearer,
+    request: { params: TakeOverContentParams, body: json(TakeOverContentBody) },
+    responses: {
+      202: { description: 'Listing `pushing`, việc ghi nội dung đã xếp', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
+      409: problemResponse(
+        '`invalid_transition` kèm `current` (listing `app`, chưa có mã sàn, `hidden`, trạng thái khác, đang chờ CEO quyết thay đổi ngoài app), `mapping_pending`, `version_conflict` kèm `current`, `shared_remote_product` (sản phẩm trên sàn có nhiều SKU, ghi đè cả sản phẩm), `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`, mã chặn đẩy (`category_unmapped`, `price_missing`, `dimensions_missing`, `images_missing`, `size_chart_missing`, `sku_not_ready`)',
+      ),
+      422: problemResponse('`validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/acknowledge-title',
+    summary: 'Xác nhận tên trên sàn đã đổi (#396, 21 §18.3)',
+    description:
+      'Cần `channel.listing.manage`. Listing có `remoteTitleChanged` (trên `ListingRow`, phần tử `remote-skus`): mốc tên lúc ghép thành tên hiện tại trong bản sao SKU sàn (cả tên tiếng Anh), xoá cờ, tăng `version`, ghi nhật ký thao tác. Không gọi sàn, không đổi tên trong catalog. Cờ bật khi lần đọc bản sao thấy (tên, tên tiếng Anh) khác mốc; ghép, đổi ghép, CEO duyệt ghép đặt mốc từ bản sao; app đẩy, sửa nội dung đặt mốc là tên app vừa gửi.',
+    security: bearer,
+    request: { params: AcknowledgeTitleParams, body: json(AcknowledgeTitleBody) },
+    responses: {
+      200: { description: 'Listing sau khi xác nhận', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition` (không có `remoteTitleChanged`), `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed` (`errors.version`)'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
     path: '/shops/:id/listings/:listingId/update-content',
     summary: 'Đưa nội dung mới của sản phẩm lên listing đang bán (§18.3, #293)',
     description:
@@ -456,7 +496,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
       409: problemResponse(
-        '`invalid_transition` (listing không `live`), `version_conflict` kèm `current`, `listing_unmanaged`, `shared_remote_product`, `category_unmapped`, `marketplace_rejected` (kể cả danh mục sàn khác ghép)',
+        '`invalid_transition` (listing không `live`; `contentSource = platform`: CEO dùng take-over-content), `version_conflict` kèm `current`, `listing_unmanaged`, `shared_remote_product`, `category_unmapped`, `marketplace_rejected` (kể cả danh mục sàn khác ghép)',
       ),
       422: problemResponse('`marketplace_unsupported`: sàn chưa hỗ trợ sửa nội dung'),
       503: problemResponse('`marketplace_unavailable`'),

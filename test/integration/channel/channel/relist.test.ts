@@ -73,7 +73,7 @@ const rowsOf = async (shopId: string) =>
   (
     await testPool().query(
       `select id, seller_sku, status, external_product_id, external_sku_id, external_image_urls, hidden_by, reject_reason,
-              stock_sync, price_sync, platform_stock, replaces_listing_id, delisted_by_disconnect
+              stock_sync, price_sync, platform_stock, replaces_listing_id, delisted_by_disconnect, content_source
        from channel.listings where shop_id = $1 order by seller_sku, created_at`,
       [shopId],
     )
@@ -90,6 +90,8 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
     remote.set(sku('D'), { state: 'inactive' });
     remote.set(sku('E'), { state: 'rejected', rejectReason: 'Ảnh mờ' });
     remote.set(sku('F'), { state: 'hold' });
+    // #399: dòng mới chép chủ nội dung của dòng cũ.
+    await testPool().query("update channel.listings set content_source = 'app' where shop_id = $1 and seller_sku = $2", [shopId, sku('A')]);
 
     const res = await reconnect();
     expect(res.status).toBe(200);
@@ -114,6 +116,8 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
         delisted_by_disconnect: false,
       });
     }
+    expect(bySku('A')[1]).toMatchObject({ content_source: 'app' });
+    expect(bySku('B')[1]).toMatchObject({ content_source: 'platform' });
     expect(bySku('D')[1]).toMatchObject({ hidden_by: 'platform' });
     expect(bySku('E')[1]).toMatchObject({ reject_reason: 'Ảnh mờ' });
     const history = await testPool().query(
@@ -121,6 +125,28 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
       [bySku('A')[1].id],
     );
     expect(history.rows).toEqual([{ from_state: null, to_state: 'live', action: 'relist', actor_id: null }]);
+  });
+
+  it('#396: dòng đưa lên lại giữ mốc tên trên sàn và cờ của dòng cũ', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const sellerSku = `R-${tag}-T`;
+    const { shopId, reconnect } = await disconnectedShop([sellerSku]);
+    const detected = new Date('2026-11-18T01:00:00Z');
+    await testPool().query(
+      `update channel.listings set remote_title_at_match = 'Tên lúc ghép', remote_title_en_at_match = 'Name', remote_title_matched_at = $2,
+              remote_title_changed_at = $2 where shop_id = $1`,
+      [shopId, detected],
+    );
+    remote.set(sellerSku, { state: 'live' });
+    expect((await reconnect()).status).toBe(200);
+    const { rows } = await testPool().query(
+      `select remote_title_at_match, remote_title_en_at_match, remote_title_matched_at, remote_title_changed_at
+         from channel.listings where shop_id = $1 and status <> 'delisted'`,
+      [shopId],
+    );
+    expect(rows).toEqual([
+      { remote_title_at_match: 'Tên lúc ghép', remote_title_en_at_match: 'Name', remote_title_matched_at: detected, remote_title_changed_at: detected },
+    ]);
   });
 
   it('Đợt 2 #220: dòng "không quản tồn" gỡ do ngắt cũng được đưa lên lại, giữ quyết định duyệt cũ', async () => {
