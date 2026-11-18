@@ -7,7 +7,7 @@ import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { splitByHand, stockOfVariant } from '../fulfillment/helpers.ts';
+import { stockOfVariant } from '../fulfillment/helpers.ts';
 import { ingest as ingestIn, remote as remoteOf, setup, withLineCancelled, withStatus } from '../fulfillment/platform-fixtures.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
@@ -649,17 +649,16 @@ describe('cờ "Sàn trả trạng thái app chưa biết" (#358 AC-5)', () => {
   });
 
   it('cùng lượt sàn chia lại kiện: giữ cờ, note thành note chia lại kiện', async () => {
+    // Sàn gộp món của kiện thứ hai vào mã kiện thứ nhất: app không tự xử lý (#238 D22, D29).
     const v = await setup(10);
-    const o = remoteOf(v, { lines: 2 });
-    const free = { ...o, lines: o.lines.map((l) => ({ ...l, packageCode: null })) };
-    const { orderId, packageId } = await ingestIn(v.companyId, free);
-    await splitByHand(packageId, free.lines[1]!.externalLineId);
+    const o = remoteOf(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingestIn(v.companyId, o);
     await setFlag(orderId, OLD_NOTE);
 
-    const shared = `FP-CHUNG-${randomUUID().slice(0, 8)}`;
-    await ingestIn(v.companyId, { ...free, lines: free.lines.map((l) => ({ ...l, packageCode: shared })) });
+    const kept = o.lines[0]!.packageCode;
+    await ingestIn(v.companyId, { ...o, lines: o.lines.map((l) => ({ ...l, packageCode: kept })) });
 
-    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn chia lại kiện khác lần trước' });
+    expect(await flagOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn chia lại kiện, app chưa tự xử lý được' });
   });
 
   it('cùng lượt sàn kéo lại kiện người dùng đã chuyển: giữ cờ, note thành note kéo lại', async () => {

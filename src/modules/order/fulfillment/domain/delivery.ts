@@ -30,6 +30,23 @@ export interface PackageEvent {
   description: string | null;
 }
 
+/**
+ * Đơn của kiện sàn (chuyển từ `service/platform-packages.ts` để `service/resplit.ts` dùng mà không thành vòng import).
+ * `holdStock` false: gian hàng chờ kiểm kê đầu kỳ (#198), không giữ hàng cho kiện mới, kiện rời kho thì hoãn trừ tồn tới
+ * `settleDeferredHandovers`. `placedAt`, `orderCutoffAt` (mốc kéo đơn của gian hàng) quyết kiện lần đầu thấy đã rời kho có
+ * trừ tồn không (25 §6.1, §8.1).
+ */
+export interface PlatformPackageOrder {
+  id: string;
+  shopId: string;
+  shipBy: Date | null;
+  holdStock: boolean;
+  placedAt: Date;
+  orderCutoffAt: Date | null;
+  /** Hành trình kiện của sàn (spec 199c §5.7), đọc ngoài giao dịch; thiếu là `[]` (mốc lấy giờ đồng bộ). */
+  packageEvents?: readonly PackageEvent[];
+}
+
 /** Câu mặc định khi hành trình không cho lý do giao không thành (spec 199c §5.2, 21 §11.2). */
 export const DEFAULT_FAIL_REASON = 'Sàn báo giao không thành công';
 

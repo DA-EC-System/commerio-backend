@@ -402,17 +402,16 @@ describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mụ
     expect(await allocationJobs(v.variantId)).toEqual([[v.variantId]]);
   });
 
-  it('kiện awaiting_pickup gắn cờ stocktake: open trả 409 invalid_transition (tới PR 3)', async () => {
+  it('kiện awaiting_pickup gắn cờ stocktake: mở được (#238 PR 3, D25), về reserved, gỡ cờ, không gọi repack, xếp lượt phân hàng', async () => {
     const p = await sealedHolder({ status: 'awaiting_pickup' });
     await stocktake(p.variants);
     expect((await packageRow(p.packageId)).open_purpose).toBe('stocktake');
-    const { version } = await packageRow(p.packageId);
 
     const res = await open(p.packageId);
 
-    expect(res.status, JSON.stringify(res.body)).toBe(409);
-    expect(res.body.type).toBe('/problems/invalid_transition');
-    expect(await packageRow(p.packageId)).toMatchObject({ status: 'awaiting_pickup', needs_open: true, open_purpose: 'stocktake', version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'reserved', needs_open: false, open_purpose: null });
+    expect(await allocationJobs(p.variants[0]!)).toEqual([p.variants]);
   });
 
   it('kiện gắn cờ stocktake rời nhóm đã đóng (bàn giao): cờ gỡ, không nằm mãi trong tab Cần mở', async () => {
@@ -425,11 +424,26 @@ describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mụ
     expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', needs_open: false, open_purpose: null });
   });
 
-  it('kiện chờ mở vì cancel rời nhóm đã đóng: cờ giữ nguyên (hành vi cũ)', async () => {
+  it('kiện chờ mở vì cancel rời nhóm đã đóng: gỡ cờ, bật Cần xử lý rời kho khi còn chờ dỡ (#238 D27)', async () => {
     const p = await sealedHolder({ status: 'awaiting_pickup', needsOpen: true, openPurpose: 'cancel' });
 
     await withCompany(companyId, () => updatePackage(p.packageId, { status: 'in_transit', handoverSource: 'scan', handedOverAt: new Date() }));
 
-    expect(await packageRow(p.packageId)).toMatchObject({ status: 'in_transit', needs_open: true, open_purpose: 'cancel' });
+    expect(await packageRow(p.packageId)).toMatchObject({
+      status: 'in_transit',
+      needs_open: false,
+      open_purpose: null,
+      needs_attention: true,
+      flag_note: 'Sàn báo kiện rời kho khi còn chờ dỡ kiện về kệ',
+    });
+  });
+
+  it('kiện chờ mở vì edit đã có Cần xử lý rời nhóm đã đóng: gỡ cờ Cần mở, giữ ghi chú cũ (#238 D27)', async () => {
+    const p = await sealedHolder({ status: 'awaiting_pickup', needsOpen: true, openPurpose: 'edit' });
+    await testPool().query(`update "order".packages set needs_attention = true, flag_note = 'Ghi chú cũ' where id = $1`, [p.packageId]);
+
+    await withCompany(companyId, () => updatePackage(p.packageId, { status: 'in_transit', handoverSource: 'scan', handedOverAt: new Date() }));
+
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_open: false, open_purpose: null, needs_attention: true, flag_note: 'Ghi chú cũ' });
   });
 });

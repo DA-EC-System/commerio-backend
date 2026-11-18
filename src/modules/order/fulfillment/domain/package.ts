@@ -38,7 +38,8 @@ export type PackageAction =
   | 'found'
   | 'platform_lost'
   | 'platform_in_transit'
-  | 'platform_deliver';
+  | 'platform_deliver'
+  | 'replaced';
 
 /** Kiện đang giữ hàng: tính vào Đang giữ của tồn kho. */
 export const HOLDING: readonly PackageStatus[] = ['reserved', 'packed', 'awaiting_pickup'];
@@ -123,6 +124,9 @@ export const packageMachine = defineMachine<PackageStatus, PackageAction, Packag
   { from: 'in_transit', to: 'awaiting_pickup', action: 'undo_handover', permission: 'fulfillment.handover.revert', needsReason: true },
   { from: SEALED, to: 'reserved', action: 'open', permission: process },
   { from: SEALED, to: 'cancelled', action: 'open_cancel', permission: process },
+  // Sàn chia lại kiện (#238 PR 3): kiện cũ đã đóng hết dòng vì kiện thay đã được ĐVVC lấy. Đứng sau `open_cancel` để
+  // `arrowAction('packed', 'cancelled')` vẫn ra `open_cancel`.
+  { from: SEALED, to: 'cancelled', action: 'replaced', system: true },
   { from: ['backordered', 'reserved'], to: 'cancelled', action: 'cancel', system: true },
   {
     from: 'packed',

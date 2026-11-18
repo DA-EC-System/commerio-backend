@@ -1,10 +1,10 @@
 # Spec: Kiện thất lạc, sàn chia lại kiện, nguồn nhắc, Mở kiện (#238)
 
-- **Ngày:** 15/11/2026
-- **Người soạn:** Khang (cùng Claude), theo issue commerio-backend#238 (body viết lại 15/11/2026), `Documents/21` §11.2, §14.1, §14.2, §19.2, `Documents/25` §7.4, §8.1, §8.3, §8.4, §8.5, `Documents/19` (bảng `packages`, `package_lines`), `Documents/27` US-DH-12, US-DH-15, `Documents/kiem-thu/ca-theo-so-do.md` (D2)
-- **Trạng thái:** Khang duyệt 15/11/2026. D2 đến D6 còn chờ Thành xác nhận trên issue
-- **Nền:** `main` 7d3ed9d (đã có #199 a/b/c, #206, #239, #303). Phần 2 viết trên nền **sau khi PR #329 và #330 của #205 merge** (nhánh `feature/205-huy-dong`); chỗ nào dựa vào code của hai PR đó có ghi "(#330)".
-- **Phạm vi spec:** Khang chốt 15/11/2026 là **một spec phủ cả 5 phần** của issue. Thi công vẫn nhiều PR (mục 6).
+- **Ngày:** 15/11/2026; sửa 18/11/2026 (mục 5.6 viết lại cho PR 3)
+- **Người soạn:** Khang (cùng Claude), theo issue commerio-backend#238 (body viết lại 15/11/2026, cập nhật 18/11/2026), `Documents/21` §11.2, §14.1, §14.2, §19.2, `Documents/25` §7.4, §8.1, §8.3, §8.4, §8.5, `Documents/19` (bảng `packages`, `package_lines`), `Documents/27` US-DH-12, US-DH-15, `Documents/kiem-thu/ca-theo-so-do.md` (D2)
+- **Trạng thái:** Khang duyệt 15/11/2026. D2 đến D6 Thành chốt 15/11/2026. PR 1 (#331) và PR 2 (#366) đã merge. D22 đến D29 (PR 3, thêm 18/11/2026) Khang duyệt 18/11/2026.
+- **Nền:** `main` 7d3ed9d cho PR 1, PR 2. **PR 3 (mục 5.6) đối chiếu lại với `main` eb49bba** (18/11/2026: đã có #329, #330 của #205, #237 PR 1, #358, PR 1 và PR 2 của spec này). Hiện trạng dùng cho PR 3 ở mục 2, đoạn "`main` eb49bba".
+- **Phạm vi spec:** Khang chốt 15/11/2026 là **một spec phủ cả 5 phần** của issue. Thi công vẫn nhiều PR (mục 6). Kế hoạch PR 3: `docs/superpowers/plans/2026-11-18-238-pr3-chia-lai-kien.md`.
 
 ---
 
@@ -38,12 +38,20 @@
 - `GET /tasks` chưa có trên `main` (#209 còn mở).
 - Enum `open_purpose`: `cancel`, `edit`, `resplit`.
 
-**Sau #329, #330 (nhánh `feature/205-huy-dong`):**
+**`main` eb49bba (18/11/2026), nền của PR 3:** đã có #329, #330 của #205, #237 PR 1, #358, PR 1 và PR 2 của spec này.
 
-- `package_lines.pending_drop_qty` (dòng chờ bỏ). Ba constraint trigger kiểm bằng lúc commit: tổng `quantity − pending_drop_qty` của một dòng đơn trên các kiện chưa huỷ bằng `order_lines.quantity − cancelled_qty` (`db/CLAUDE.md`).
-- `openPackage` (`service/packing.ts`): mọi dòng chờ bỏ thì `open_cancel`; còn lại `open`, xoá dòng chờ bỏ, nhả phần giữ của chúng, gọi `repack` trên sàn; kiện `awaiting_pickup` trả 409 `invalid_transition` ("dỡ kiện về kệ qua việc của kho (#238)").
-- `syncPlatformPackages`: món chưa có mã kiện sàn theo kiện app đang chứa nó (cách chia của app); món có mã sàn gom theo mã.
+- `package_lines.pending_drop_qty` (dòng chờ bỏ). Ba constraint trigger kiểm bằng lúc commit: tổng `quantity − pending_drop_qty` của một dòng đơn trên các kiện chưa huỷ bằng `order_lines.quantity − cancelled_qty` (`db/CLAUDE.md`). Mọi đường ghi dòng kiện phải khoá kiện trước.
+- `openPackage` (`service/packing.ts`): mọi dòng chờ bỏ thì `open_cancel` (rồi `settleCancelledOrder` của sales ở giao dịch riêng); còn lại `open`, xoá dòng chờ bỏ, nhả phần giữ của chúng, **luôn gọi `repack`** khi kiện có gian hàng và mã kiện sàn (Lazada `repacked` thì xoá mã kiện, vận đơn, ĐVVC); `stocktake` gỡ cờ và xếp lượt phân hàng. Kiện `awaiting_pickup` trả 409 `invalid_transition` ("dỡ kiện về kệ qua việc của kho (#238)"), dù máy trạng thái đã cho `open`/`open_cancel` từ `SEALED`.
+- `packPackage` gọi `pack` của sàn (Lazada trả luôn mã kiện và **mã vận đơn** ngay lúc đóng gói), rồi ghi `carrier_*` theo kết quả (null khi sàn không trả). `markReady` gọi `readyToShip` khi kiện có gian hàng và mã kiện sàn.
+- `syncPlatformPackages`: huỷ dòng xét theo kiện trước (`planLineCancel`); món chưa có mã kiện sàn theo kiện app đang chứa nó (spec 205 D10); món có mã sàn gom theo mã. Mỗi nhóm tìm kiện bằng `existing.find(mã) || owner.get(món đầu)`: nhóm mã mới mà món còn trong kiện cũ thì **gán về kiện cũ, không đổi gì** (kiện cũ giữ mã cũ đã mất trên sàn: ca TikTok `it.skip` "sàn tách kiện theo SKU" của #221 ở `test/integration/channel/channel/tiktok-order-pull.test.ts`); nhóm có món của hai kiện app thì `resplit = true` và bỏ qua nhóm. Kiện tạm mang mã khi đang null; mã đã có thì không gắn lại. `owner` gồm cả dòng của kiện đã huỷ.
+- Unique `packages_platform_code_order_uq` (gian hàng, mã kiện sàn, đơn) **không lọc trạng thái**: kiện đã huỷ vẫn giữ mã của nó; hai kiện của một đơn không thể đổi mã cho nhau trong một câu.
+- `createPackage` (đường sàn): kiện lần đầu thấy, thử giữ hàng khi sàn còn ở `pending`/`packed`/`awaiting_pickup` và mọi dòng đã ghép; kiện chỉ toàn dòng "không quản tồn" coi như giữ được (#237 D10). Kiện lần đầu thấy đã rời kho đi luật mốc kéo đơn (`store_only`/`deduct`/`defer`).
+- `markWholePendingDrop`: sàn huỷ cả kiện đã đóng đang chờ mở vì `edit`/`stocktake` thì mục đích thành `cancel`; `resplit` chưa được nâng.
+- `updatePackage`: `stocktakeFlagRules` gỡ cờ `stocktake` khi kiện rời nhóm đã đóng; cờ `cancel`, `edit`, `resplit` thì treo (`fulfillment/CLAUDE.md` ghi "để PR 3"). Kiện đang `needs_open` vẫn báo sẵn sàng giao và quét bàn giao được.
+- Lượt phân hàng (`repository/allocation.ts`, `candidateWhere`): ứng viên là kiện `backordered` và kiện đã đóng chưa giữ hàng, mọi dòng đã ghép, không `needs_open` (trừ `stocktake` tự gỡ được). Thứ tự: kiện đã đóng trước, `ship_by`, đơn về trước, mã kiện. Bước giữ hàng nằm trong `runAllocation`, chưa tách thành hàm dùng lại.
+- Sales (`service/ingest.ts`): `resplit` bật Cần xử lý trên đơn, note "Sàn chia lại kiện khác lần trước". Hai test khẳng định hành vi này: `split-sync.test.ts` ("món của hai kiện app về chung một mã sàn vẫn bật Sàn chia lại kiện"), `ingest.test.ts` ("cùng lượt sàn chia lại kiện").
 - Cổng tồn `reserve`/`release` chỉ giữ tổng theo SKU, không ghi theo kiện (spec 205 §2): chuyển dòng đang giữ từ kiện này sang kiện khác không cần gọi cổng tồn.
+- #237 PR 2 (đổi ghép đã dùng, áp lại khi mở kiện) chưa làm, cũng sẽ sửa `openPackage`.
 
 **Ràng buộc:**
 
@@ -54,16 +62,16 @@
 
 ## 3. Quyết định
 
-Đánh dấu **(Khang)** là Khang chốt trong buổi soạn; **(đề xuất)** là Claude đề xuất, Khang chưa bác; **(chờ Thành)** là Khang đồng ý tạm, còn chờ Thành xác nhận trên issue.
+Đánh dấu **(Khang)** là Khang chốt trong buổi soạn; **(đề xuất)** là Claude đề xuất, Khang chưa bác; **(Thành)** là Thành chốt trên issue hoặc trong review.
 
 | # | Quyết định | Nguồn |
 |---|---|---|
 | D1 | Một spec cho cả 5 phần của issue | Khang |
-| D2 | Tên thao tác theo máy FE và bộ ca: `lose_on_unload`, `platform_in_transit`, `platform_deliver`. Sửa `21` §19.2 (đang ghi `lose_unfound`, `platform_revive`) | chờ Thành |
-| D3 | Thêm `platform_lost` vào máy FE và BE, sinh ca D2 mới | chờ Thành |
-| D4 | Bỏ `awaiting_pickup` khỏi `lose` (theo `25` §8.3). Kiện đã đóng mà mất đi `lose_on_unload`, từ cả `packed` và `awaiting_pickup` | chờ Thành |
-| D5 | Cờ `cod_unconfirmed` ngoài phạm vi #238 (đơn COD tay chưa có nguồn) | chờ Thành |
-| D6 | Bảng `21` §14.2: ba dòng `package.*` đổi `#106` thành `#238` | chờ Thành |
+| D2 | Tên thao tác theo máy FE và bộ ca: `lose_on_unload`, `platform_in_transit`, `platform_deliver`. Sửa `21` §19.2 (đang ghi `lose_unfound`, `platform_revive`) | Thành (15/11) |
+| D3 | Thêm `platform_lost` vào máy FE và BE, sinh ca D2 mới | Thành (15/11) |
+| D4 | Bỏ `awaiting_pickup` khỏi `lose` (theo `25` §8.3). Kiện đã đóng mà mất đi `lose_on_unload`, từ cả `packed` và `awaiting_pickup` | Thành (15/11) |
+| D5 | Cờ `cod_unconfirmed` ngoài phạm vi #238 (đơn COD tay chưa có nguồn) | Thành (15/11) |
+| D6 | Bảng `21` §14.2: ba dòng `package.*` đổi `#106` thành `#238` | Thành (15/11) |
 | D7 | Phần 2 theo cách A: lập kế hoạch thuần (`domain/resplit.ts`) rồi thi hành; kiện cũ đã đóng dùng lại dòng chờ bỏ của #205, **không sửa trigger kiểm bằng** | Khang |
 | D8 | Hệ quả của D7: dòng chờ bỏ của kiện cũ không tính vào bất biến, dòng của kiện mới tính. `25` §8.1 đang viết kiện chờ thay "không tính vào bất biến": sửa câu chữ ở `25` | đề xuất |
 | D9 | "Kiện chờ thay" là **suy ra**, không lưu cờ: kiện có ít nhất một dòng mà cùng `order_line_id` đang có dòng chờ bỏ ở kiện khác **đang đóng** (`packed`, `awaiting_pickup`). `replaces_package_id` chỉ để truy vết | đề xuất |
@@ -79,10 +87,18 @@
 | D19 | `platform_in_transit`, `platform_deliver` giữ `returning` trong tập `from` cho khớp máy FE và ca D2-34, D2-36, dù với kiện sàn nhánh này chưa tới được (xem mục 2). Chỉ test ở mức luật thuần | đề xuất |
 | D20 | Kiện cũ đã đóng đang chờ mở để chia lại mà bị xác nhận mất (`lose_on_unload`): bàn giao trừ **mọi** dòng của kiện, kể cả dòng chờ bỏ (hàng nằm trong hộp đã mất); dòng chờ bỏ giữ nguyên để kiểm bằng không vỡ. Kiện thay hết "chờ thay" (D9 chỉ xét kiện đang đóng) và thành kiện `backordered` thường, chờ hàng khác | đề xuất |
 | D21 | Cờ `needs_open` của kiện đã đóng bị gỡ mà kiện không đổi trạng thái thì xoá luôn báo cáo thất lạc đang treo, để kiện không kẹt giữa `already_reported` và `not_awaiting_open`. **Kiểm kê tự gỡ (mục 5.5) không áp vào kiện có báo thất lạc chờ xác nhận**: lượt phân hàng bỏ qua kiện đó, cờ và báo cáo còn tới khi người thứ hai xác nhận hoặc kho mở kiện | luật xoá cột: đề xuất; ngoại lệ kiểm kê: Thành chốt (review #366, 17/11) |
+| D22 | Lập kế hoạch chia lại theo ba bước (mục 5.6): (1) **khớp theo tập** dòng sống (dòng đơn, số lượng) với mọi kiện chưa huỷ, khớp thì chỉ gắn lại mã (kiện đã bàn giao thì không gắn); (2) nhóm mang mã của một kiện sống mà tập nhóm nằm trọn trong kiện đó thì **kiện đó giữ nhóm** (sàn giữ mã cũ cho phần còn lại); (3) nhóm còn lại có món thuộc kiện app thì lập kiện mới. **Không lập kế hoạch** (giữ nguyên, Cần xử lý, như `main`) khi: một dòng đơn ở hai nhóm, hoặc nhóm mang mã của kiện sống mà có món ngoài kiện đó (sàn gộp món vào mã kiện cũ). Mã đang nằm ở kiện đã huỷ thì gỡ khỏi kiện đó trước. Nhóm không món nào thuộc kiện app, nhóm không mã, nhóm trạng thái `cancelled` hay lạ: đi đường cũ | Khang (18/11) |
+| D23 | Kiện mới do chia lại lập ở `backordered` (thử giữ ngay; dòng có chủ cũ là kiện đã đóng thì chờ thay, dòng khác vẫn giữ ngay: Thành chốt ở review #393) rồi vòng áp trạng thái áp trạng thái sàn như kiện đã có (nhảy cóc, bàn giao bù). **Không** đi luật "kiện lần đầu thấy" (`store_only`, mốc kéo đơn): hàng của nó đã nằm trong kho, đã giữ ở kiện cũ. Khác `createPackage` của đơn mới | Khang (18/11) |
+| D24 | Mục đích mở: `resplit` **thắng** `edit` và `stocktake` (mở `resplit` mà mọi món đã chuyển đi thì `open_cancel`, không gọi `repack`; còn món thì gói cũ còn trên sàn với phần còn lại nên gọi `repack` như `edit`, trừ kiện giữ vận đơn theo D25; Khang chốt lại 18/11 sau soát, trước ghi "không gọi `repack` vì sàn đã tự chia lại" làm lần đóng gói sau gọi `pack` của sàn trên gói đã đóng; dòng chờ bỏ của `edit` vẫn bỏ khi mở; kiện mang `stocktake` mở xong vẫn xếp lượt phân hàng cho dòng còn lại). `cancel` thắng `resplit`: sàn huỷ cả kiện đang chờ mở để chia lại thì `markWholePendingDrop` nâng `resplit` lên `cancel` | Khang (18/11) |
+| D25 | Mở kiện `awaiting_pickup` có cờ Cần mở (mọi mục đích) **không gọi `repack`**, giữ mã kiện sàn, vận đơn, ĐVVC (`25` §8.3 "giữ vận đơn"). Còn món thì kiện về `reserved` với cột mới `waybill_kept = true`; đóng gói lại và báo sẵn sàng lại **không gọi sàn** khi cột này bật (báo sẵn sàng xong thì tắt). Sửa câu cũ của mục 5.6 ("kiện đã có `tracking_code` và mã kiện sàn thì không gọi `readyToShip`"): sai với Lazada vì `pack` đã trả mã vận đơn trước bước báo sẵn sàng | Khang (18/11) |
+| D26 | Kho mở kiện cũ đang chờ mở để chia lại: giao dịch ghi lấy khoá advisory phân hàng trước khoá kiện; sau khi nhả dòng chờ bỏ thì **giữ hàng ngay cho kiện của cùng đơn** vừa hết chờ thay (dùng chung bước giữ hàng của lượt phân hàng, chỉ ứng viên của đơn đó), rồi mới xếp lượt cho phần dư (`25` §8.1 bước 3) | Khang (18/11) |
+| D27 | Kiện rời nhóm đã đóng khi còn cờ Cần mở (sau D28 chỉ còn đường sàn báo rời kho): gỡ cờ; mục đích `cancel`, `edit`, `resplit` thì bật Cần xử lý "Sàn báo kiện rời kho khi còn chờ dỡ kiện về kệ"; `stocktake` gỡ im như PR 2. Bàn giao trừ mọi dòng của kiện, kể cả dòng chờ bỏ (hàng còn trong hộp, `25` §8.3 "đi theo sàn"); kiện thay hết chờ thay và đi phân hàng như kiện `backordered` thường | Khang (18/11) |
+| D28 | Chặn `ready` và quét bàn giao kiện đang có cờ Cần mở, và kiện chờ thay (thêm sau review #393: hàng của nó còn trong kiện cũ, quét trước rồi sàn báo rời kho làm kẹt số đang giữ): 409 `awaiting_open` (`hand-over` trả trong `failed[].code`). Kiểm ở service, không là guard của máy trạng thái (bàn giao không nạp `record`) | Khang (18/11) |
+| D29 | `resplit` của kết quả đồng bộ chỉ còn nghĩa "có phần sàn chia lại mà app không tự xử lý" (kiện đã bàn giao, chia lạ ở D22); note đơn đổi thành "Sàn chia lại kiện, app chưa tự xử lý được"; kiện đã bàn giao bị chia khác mang Cần xử lý "Sàn chia lại kiện đã bàn giao". Chia lại xử lý được thì `changed = true`, không bật cờ đơn | Khang (18/11) |
 
 ## 4. Phạm vi
 
-**Trong phạm vi:** route `report-lost`, `confirm-lost`; mũi tên `platform_lost`, `platform_in_transit`, `platform_deliver`, `lose_on_unload`; cột và CHECK thất lạc; phát `package_lost`; xử lý sàn chia lại kiện (chưa đóng, đã đóng, chờ thay bị lấy trước, đã bàn giao); mở kiện `awaiting_pickup`; kiểm kê → `needs_open`; ba nguồn nhắc; FE nối API; sửa Documents.
+**Trong phạm vi:** route `report-lost`, `confirm-lost`; mũi tên `platform_lost`, `platform_in_transit`, `platform_deliver`, `lose_on_unload`; cột và CHECK thất lạc; phát `package_lost`; xử lý sàn chia lại kiện (chưa đóng, đã đóng, chờ thay bị lấy trước, đã bàn giao); mở kiện `awaiting_pickup` giữ vận đơn (D25); chặn báo sẵn sàng và quét bàn giao kiện đang chờ mở (D28); gỡ cờ Cần mở khi sàn báo kiện rời kho (D27); kiểm kê → `needs_open`; ba nguồn nhắc; FE nối API; sửa Documents.
 
 **Ngoài phạm vi:** cờ `cod_unconfirmed` (D5); luật người đi giao của kiện tự giao (D13); route `self-deliver`; gộp kiện; ghi bồi thường khi kiện mất (`21` §11.2: finance không nghe `package_lost`); consumer thông báo cho `package_lost` (module `notification`, issue khác); khung `GET /tasks` (#209).
 
@@ -104,7 +120,12 @@
 
 **PR 2 (kiểm kê → Cần mở), migration `mo-kien-kiem-ke`:** `alter type "order".open_purpose add value 'stocktake'`. PostgreSQL không cho **dùng** giá trị enum mới trong chính giao dịch thêm nó, và drizzle chạy mọi migration đang chờ trong một giao dịch: migration này **không được** kèm câu `update` nào dùng `'stocktake'`, kể cả ở file khác cùng PR.
 
-**PR 3 (chia lại kiện), migration `chia-lai-kien`:** `packages.replaces_package_id uuid null references "order".packages(id)`, index. Không đổi trigger kiểm bằng (D7).
+**PR 3 (chia lại kiện), migration `chia-lai-kien`:** một file drizzle sinh, không câu ghi dữ liệu.
+
+- `packages.replaces_package_id uuid null`, khoá ngoại về `"order".packages(id)` (`on delete no action`: kiện không bao giờ bị xoá). Drizzle: `.references((): AnyPgColumn => packages.id)` (tự tham chiếu phải khai kiểu trả về). Index một phần `where replaces_package_id is not null` (khoá ngoại phía con cần index; chỉ kiện thay mới có giá trị).
+- `packages.waybill_kept boolean not null default false` (D25) và CHECK `packages_waybill_kept`: `not waybill_kept or (platform_package_code is not null and tracking_code is not null)`.
+- Không đổi trigger kiểm bằng (D7). Không thêm giá trị enum (`replaced` là chuỗi trong `core.state_transitions.action`).
+- An toàn: hai cột thêm không viết lại bảng (PostgreSQL 11+, mặc định hằng). `ADD CONSTRAINT … FOREIGN KEY` và `CHECK` quét bảng dưới khoá; cột mới toàn null/false nên quét rẻ, `packages` trên staging ít dòng (cùng lập luận mục 5.1 PR 1: migrator chạy một giao dịch, không dùng `CONCURRENTLY`/`NOT VALID`). Lùi: `drop constraint packages_waybill_kept; drop column waybill_kept; drop column replaces_package_id;` (index và khoá ngoại đi theo cột). Bản app cũ chạy song song không ghi hai cột mới: vô hại.
 
 ### 5.2 Máy trạng thái (`domain/package.ts`)
 
@@ -115,7 +136,7 @@
 | `platform_lost` (mới) | `in_transit`, `self_delivering`, `delivery_failed`, `returning` | `lost` | hệ thống | |
 | `platform_in_transit` (mới) | `lost`, `returning` | `in_transit` | hệ thống | guard `status_from_platform` khi trạng thái hiện tại không do người chuyển tay |
 | `platform_deliver` (mới) | `lost`, `returning` | `delivered` | hệ thống | như trên |
-| `replaced` (mới, PR 3) | `packed`, `awaiting_pickup` | `cancelled` | hệ thống | kiện cũ bị kiện thay lấy hết món (mục 5.6) |
+| `replaced` (mới, PR 3) | `packed`, `awaiting_pickup` | `cancelled` | hệ thống | kiện cũ hết dòng vì kiện thay đã được ĐVVC lấy (mục 5.6); đứng sau `open_cancel` để `arrowAction` không đổi |
 
 - `PackageRecord` thêm `needsOpen: boolean` và `statusSource: 'user' | 'marketplace' | 'system'` (nguồn của lần chuyển gần nhất vào trạng thái hiện tại; bên gọi nạp từ lịch sử trạng thái qua hàm của `core`, chỉ nạp khi cần xét hai mũi tên `platform_in_transit`, `platform_deliver`).
 - `arrowAction(from, to)` hiện trả mũi tên đầu tiên khớp, nên `in_transit → lost` ra `lose`. Thêm tham số để đường sàn ưu tiên mũi tên `system`; đường sàn không bao giờ ghi `action = 'lose'` nữa.
@@ -179,48 +200,68 @@ Hiện có hai loại kiện đã đóng bị gắn `DISMANTLE_NOTE`, cả hai �
 - Dữ liệu cũ: **không chuyển bằng migration** (xem mục 5.1: giá trị enum mới chưa dùng được trong giao dịch migration). Kiện đang mang `needs_attention` với `DISMANTLE_NOTE` giữ nguyên cờ cũ; chỗ gỡ cờ trong `allocation.ts` nhận cả hai dạng (ghi chú cũ và `open_purpose = 'stocktake'`) cho tới khi không còn kiện nào mang ghi chú cũ. Lượt kiểm kê sau gắn cờ theo dạng mới.
 - FE: thêm nhãn `stocktake: 'Kiểm kê thiếu hàng'` vào `OPEN_PURPOSE_LABELS`; `21` §19.2 thêm giá trị.
 
-### 5.6 Sàn chia lại kiện (PR 3, trên nền #330)
+### 5.6 Sàn chia lại kiện (PR 3, viết lại 18/11/2026 trên `main` eb49bba)
 
-**Luật thuần `domain/resplit.ts` (mới).** Vào: kiện chưa huỷ của đơn (`id`, `status`, `platformPackageCode`, dòng `{ orderLineId, quantity, pendingDropQty }`) và các nhóm món theo mã kiện sàn (`code`, dòng `{ orderLineId, quantity }`), chỉ gồm nhóm có mã sàn (món chưa có mã theo kiện app, spec 205 D10). Ra: danh sách bước, theo thứ tự thi hành. So tập theo dòng **không chờ bỏ**. Luật làm việc trên **nguyên dòng**: món sàn là dòng đơn số lượng 1 (mục 2) nên một dòng đơn chỉ nằm trong một nhóm; gặp một dòng đơn xuất hiện ở hai nhóm thì không lập kế hoạch cho đơn đó, `resplit = true` (Cần xử lý) và log `warn`.
+Bản đầu (15/11) viết trên nhánh của #330; đối chiếu lại với `main` (mục 2, đoạn "`main` eb49bba") thì phải thêm: khớp theo tập trước khi tìm theo mã (ca TikTok của #221), giữ mã cũ cho phần còn lại, mã nằm ở kiện đã huỷ, kiện mới không đi luật "lần đầu thấy", thứ tự mục đích mở, giữ vận đơn khi mở kiện `awaiting_pickup` (câu cũ về `readyToShip` sai với Lazada), kiện rời kho khi còn chờ mở. Quyết định ở D22 đến D29.
 
-1. **Khớp** (`25` §8.1 "Khớp kiện"): nhóm có tập (dòng đơn, số lượng) trùng đúng một kiện chưa bàn giao → bước `relabel` khi mã khác (kể cả đang null). Không đổi gì khác.
-2. Nhóm còn lại là **chia lại**. Với mỗi nhóm, xét các kiện đang chứa món của nhóm:
-   - Có kiện **đã bàn giao** → bước `flag` cho kiện đó ("Sàn chia lại kiện đã bàn giao"), nhóm không được lập; đơn bật Cần xử lý (`resplit = true` như hiện tại).
-   - Ngược lại nhóm được lập thành kiện mới (bước `create`, kèm `replaces` = kiện cũ chứa nhiều món của nhóm nhất, hoà thì mã kiện nhỏ hơn).
-3. Với mỗi kiện cũ **chưa đóng** (`backordered`, `reserved`) có món bị chuyển đi:
-   - Mọi món đều chuyển đi → bước `cancel_open` (nhả phần giữ, `cancelled`).
-   - Còn món ở lại (sàn giữ mã cũ cho phần còn lại, hoặc món chưa có mã sàn) → bước `move_out` cho các dòng chuyển đi (xoá dòng khỏi kiện cũ, nhả phần giữ của chúng); kiện cũ giữ trạng thái.
-4. Với mỗi kiện cũ **đã đóng** (`packed`, `awaiting_pickup`) có món bị chuyển đi → bước `mark_drop` cho các dòng chuyển đi (chờ bỏ) và bật `needs_open` với `openPurpose = 'resplit'` (đang chờ mở vì `cancel` thì giữ `cancel`). Kiện mới nhận các món đó là **kiện chờ thay** (D9).
-5. Nhóm có trạng thái sàn lạ (`groupStatus` null) không lập, `unknown = true` như hiện tại.
+**Từ ngữ.** *Kiện sống*: kiện khác `cancelled`. *Dòng sống*: dòng kiện có `pending_drop_qty = 0`. *Chủ* của một dòng đơn: kiện sống có dòng sống của dòng đơn đó (đơn sàn mỗi món một dòng đơn số lượng 1, trigger kiểm bằng giữ tối đa một chủ). *Nhóm xét chia lại*: nhóm có mã kiện sàn, `groupStatus` biết và khác `cancelled`, có ít nhất một món có chủ. Nhóm không mã (theo kiện app, spec 205 D10), nhóm `cancelled`, nhóm trạng thái lạ (`unknown`) và nhóm không món nào có chủ (đơn mới, món mới) đi đường cũ của `syncPlatformPackages`.
 
-**Thi hành (`service/platform-packages.ts`).** Chạy sau bước huỷ dòng của #330, trước vòng áp trạng thái:
+**Luật thuần `domain/resplit.ts` (mới).** `planResplit(packages, groups)` nhận mọi kiện của đơn (kể cả đã huỷ, cần cho mã) và các nhóm xét chia lại; trả `{ targets, steps, resplit }`: `targets` là khoá nhóm → id kiện đã có nhận nhóm đó; `steps` theo thứ tự thi hành; `resplit` là có phần app không tự xử lý (D29).
 
-- Đọc kiện không khoá để biết có bước chia lại nào không. Có thì lấy khoá advisory phân hàng **trước** khi khoá kiện (đúng thứ tự khoá ở mục 2), rồi lập kế hoạch lại trên dữ liệu đã khoá. Không có thì đi đường cũ, không lấy advisory.
-- Thứ tự: `relabel` → `cancel_open`, `move_out` (nhả hàng) → `mark_drop` → `create`. `create` dùng `createPackage` hiện có, vốn thử giữ hàng ngay lúc lập: vì đang giữ khoá advisory nên kiện mới của đơn lấy được phần vừa nhả trước mọi kiện `backordered` khác (`25` §8.1 bước 3, cùng giao dịch). Kiện mới nào không giữ đủ thì `backordered`.
-- **Kiện chờ thay không giữ hàng lúc lập** (hàng còn nằm trong kiện cũ): `createPackage` nhận cờ bỏ qua bước giữ, kiện ở `backordered`, ghi `replaces_package_id`.
-- Sau khi xong, phần hàng nhả còn dư: `requestAllocation` cho các SKU liên quan (chạy sau commit, như hiện tại).
-- Lịch sử: kiện cũ ghi `action = 'cancel'` hoặc `drop_lines` (đã có ở #330) với `reason = 'Sàn chia lại kiện'`, `source = 'marketplace'`.
-- Kiểm bằng: mỗi bước giữ tổng theo dòng đơn không đổi lúc commit (dòng chuyển đi bị xoá hoặc chờ bỏ, dòng mới thêm đúng số lượng). Mọi bước ghi dòng kiện đều sau khi đã khoá kiện (yêu cầu của trigger, `db/CLAUDE.md`).
+0. Một dòng đơn ở hai nhóm xét chia lại → không lập cho đơn: `targets`, `steps` rỗng, `resplit = true` (service log `warn`).
+1. **Khớp theo tập** (`25` §8.1 "Khớp kiện"): nhóm có tập (dòng đơn, số lượng) bằng tập dòng sống của một kiện sống → `targets`. Kiện chưa bàn giao mà mã khác mã nhóm (kể cả null) → bước `relabel`. Kiện đã bàn giao khớp tập thì nhận nhóm, không gắn lại mã.
+2. Nhóm chưa khớp, xét theo mã nhóm tăng dần:
+   1. Có món mà chủ đã bàn giao (`HANDED_OVER`) → bước `flag` cho chủ đó (một lần mỗi kiện), nhóm bỏ qua, `resplit = true` (`25` §8.1 "Kiện đã bàn giao không chia lại được").
+   2. Có kiện sống mang mã nhóm (*holder*) chưa khớp ở bước 1: tập nhóm nằm trọn trong dòng sống của holder → `targets` (sàn giữ mã cũ cho phần còn lại; các dòng khác của holder đi theo nhóm của chúng ở bước 3). Không nằm trọn (sàn gộp món vào mã của kiện cũ) → không lập cho đơn, như bước 0. Holder đã khớp nhóm khác ở bước 1 thì sẽ đổi mã: coi như không có holder.
+   3. Kiện đã huỷ mang mã nhóm → bước `clear_code` cho kiện đó (unique không lọc trạng thái).
+   4. Còn lại → bước `create`: `replaces` là kiện chứa nhiều món của nhóm nhất (hoà thì mã kiện app nhỏ hơn), `awaitingOrderLineIds` là các dòng đơn mà chủ là kiện đã đóng (có thì kiện mới là *kiện chờ thay*, D9).
+3. Mỗi kiện sống chưa bàn giao có dòng sống thuộc nhóm `create` (dòng *chuyển đi*):
+   - chưa đóng (`backordered`, `reserved`): mọi dòng sống chuyển đi → `cancel_open`; còn dòng → `move_out`;
+   - đã đóng (`packed`, `awaiting_pickup`) → `mark_drop`.
+4. Thứ tự: `clear_code`, `relabel`, `flag`, `cancel_open`, `move_out`, `mark_drop`, `create`.
 
-**Phân hàng (`repository/allocation.ts`).** `candidateWhere` thêm điều kiện loại kiện chờ thay (D9): không tồn tại dòng chờ bỏ ở kiện khác đang `packed`/`awaiting_pickup` cùng `order_line_id` với một dòng của kiện. Kiện cũ mở xong (dòng chờ bỏ bị xoá), hoặc kiện cũ bị xác nhận mất (D20), thì kiện mới tự thành ứng viên. Bước chuyển phần giữ ở "lấy trước" bên dưới cũng chỉ lấy từ kiện cũ đang đóng.
+Chạy lại trên dữ liệu sau khi áp: mọi nhóm khớp ở bước 1, `steps` rỗng (gọi lặp không đổi gì).
 
-**Mở kiện cũ (`service/packing.ts`, `openPackage`).**
+`replacementPairs(packages, packageId)`: mỗi dòng sống của kiện ghép với dòng chờ bỏ cùng `order_line_id` ở một kiện khác **đang đóng**. Kiện có cặp là kiện chờ thay (D9, suy ra, không lưu cờ).
 
-- Cho phép kiện `awaiting_pickup` khi kiện có cờ `needs_open` (bỏ câu 409 trỏ sang #238). Kiện `awaiting_pickup` không có cờ vẫn 409 `invalid_transition`.
-- `openPurpose = 'resplit'`: **không gọi `repack`** (sàn đã tự chia), **không khép đơn** (`settleCancelledOrder` chỉ dành cho `openPurpose = 'cancel'`).
-- Kết quả theo `25` §8.3: mọi dòng chờ bỏ → `open_cancel` (kiện cũ `cancelled`); còn món → `open` (về `reserved`, xoá dòng chờ bỏ).
-- Kiện `awaiting_pickup` còn món sau khi mở: giữ `platform_package_code`, `tracking_code`, `carrier_*`. `markReady` cho kiện đã có `tracking_code` và mã kiện sàn thì **không gọi `readyToShip` lần nữa**, chỉ chuyển `packed → awaiting_pickup` (dùng lại vận đơn, in lại nhãn; `25` §8.3).
-- Trong giao dịch ghi của lần mở có `openPurpose = 'resplit'`: lấy khoá advisory phân hàng ở đầu giao dịch (trước khoá kiện), và sau khi nhả hàng thì thử giữ ngay cho các kiện chờ thay của cùng đơn vừa hết chờ (theo `ship_by`, mã kiện), trước khi `requestAllocation` cho phần dư.
+**Khoá (`service/platform-packages.ts`).** Đọc kiện của đơn không khoá, dựng nhóm và kế hoạch bằng cùng các hàm thuần (`groupsOf` trong `platform-packages.ts`, `planResplit`); kế hoạch có bước thì `takeAllocationLock` **trước** `lockOrderPackages` (thứ tự khoá mục 2: đơn → advisory → kiện). Sau khi khoá và xử lý huỷ dòng, lập lại kế hoạch trên dữ liệu đã khoá. Có bước mà lượt chưa lấy advisory (dữ liệu đổi giữa hai lần đọc): không thi hành, nhóm xét chia lại chưa khớp bỏ qua, không bật cờ, log `warn`; lượt kéo sau làm. Không có bước thì không lấy advisory (lượt kéo thường không đụng khoá phân hàng).
 
-**Kiện chờ thay được ĐVVC lấy trước khi kho dỡ** (`25` §8.1). Vòng áp trạng thái gặp kiện chờ thay mà sàn báo trạng thái đã rời kho:
+**Thi hành (`service/resplit.ts`, mới).** Trong giao dịch kéo đơn, kiện đã khoá:
 
-1. Với từng dòng của kiện mới: tìm dòng chờ bỏ cùng `order_line_id` ở kiện cũ; đặt `reserved_qty` của dòng mới bằng `reserved_qty` của dòng cũ, xoá dòng cũ. Không gọi cổng tồn (tổng đang giữ theo SKU không đổi).
-2. Kiện cũ hết dòng → mũi tên `replaced` (`cancelled`), gỡ `needs_open`. Còn dòng → gỡ `needs_open` nếu không còn dòng chờ bỏ.
-3. Áp trạng thái sàn cho kiện mới như thường (`changeStatus` → `settleHandover`): dòng đã giữ thì trừ thường, **không** bàn giao bắt buộc. Kiện cũ không bao giờ tự ghi bàn giao.
+- `clear_code`, `relabel`: hai pha, ghi `platform_package_code = null` cho mọi kiện của hai loại bước rồi mới ghi mã mới (hai kiện đổi mã cho nhau không vấp unique). Kiện đổi hay mất mã thì tắt `waybill_kept` cùng câu (vận đơn giữ lại theo D25 không còn là vận đơn của gói trên sàn; CHECK `packages_waybill_kept` cần mã).
+- `flag`: `needs_attention`, note "Sàn chia lại kiện đã bàn giao"; kiện đã có cờ thì không ghi (không tăng `version`).
+- `cancel_open`: nhả phần đang giữ thật (`reserved_qty`), `setReserved(false)`, `cancelled`; lịch sử `cancel`, lý do "Sàn chia lại kiện", nguồn `marketplace`; `package_status_changed`.
+- `move_out`: nhả phần giữ của dòng chuyển đi, xoá dòng, `version` tăng; lịch sử `drop_lines` (`from = to`), lý do "Sàn chia lại kiện: chuyển <n> món"; kiện `backordered` còn dòng thì xếp lượt phân hàng cho SKU còn lại.
+- `mark_drop`: `pending_drop_qty = quantity` trên dòng chuyển đi (vẫn giữ hàng); cờ theo D24: chưa chờ mở → `needs_open`, `resplit`; đang `edit`, `stocktake` → `resplit`; `cancel`, `resplit` giữ. Không ghi lịch sử (như `markPendingDrop` của #205), log `info`.
+- `create`: `createPackage` nhận thêm `resplit: { replacesPackageId, replacesCode, awaiting }` (`awaiting` = `awaitingOrderLineIds`): kiện vào `backordered` (D23) bất kể trạng thái sàn; dòng ngoài `awaiting` (từ kiện chưa đóng vừa nhả, món mới) giữ ngay khi mọi dòng đã ghép và gian hàng không chờ kiểm kê đầu kỳ, dòng trong `awaiting` chờ thay (nhận phần giữ khi kho mở kiện cũ hoặc khi ĐVVC lấy kiện thay); kiện sang `reserved` chỉ khi không còn dòng chờ thay (kiện toàn dòng "không quản tồn" coi như giữ được). Nhóm lẫn nguồn (món của kiện đã đóng và kiện chưa đóng): trước review #393 cả kiện không giữ lúc lập, đơn khác có thể giành phần vừa nhả; Thành chốt giữ ngay phần từ kiện chưa đóng. Ứng viên phân hàng chỉ giữ dòng chưa giữ (không giữ trùng); sàn huỷ kiện chưa đóng nhả đúng `reserved_qty`; ghi `replaces_package_id`; lịch sử `create` lý do "Sàn chia lại kiện <mã cũ>". Vì lượt đang giữ advisory, kiện mới của đơn lấy phần vừa nhả trước mọi kiện `backordered` khác (`25` §8.1 bước 3).
+- Sau cùng: `requestAllocation` cho SKU đã nhả (phần dư cho kiện khác, chạy sau commit).
+- Kiểm bằng: mỗi bước giữ tổng theo dòng đơn lúc commit (dòng chuyển đi bị xoá, chờ bỏ, hoặc thuộc kiện vừa huỷ; dòng mới đủ số lượng).
+- Vòng áp trạng thái: nhóm xét chia lại dùng `targets` hoặc kiện vừa lập; trạng thái sàn áp bằng `applyStatus` như kiện đã có. Kết quả đồng bộ: `changed = true` khi có bước; `resplit` theo D29.
 
-**View.** `Package` thêm `replaces: { id, code } | null`. Kiện chờ thay hiện ở tab `backordered`; FE hiện dòng "Chờ mở kiện <mã kiện cũ>".
+**Kiện chờ thay được ĐVVC lấy trước khi kho dỡ** (`25` §8.1). Vòng áp trạng thái, trước `applyStatus` của kiện có `replacementPairs` mà trạng thái sàn rời kho:
 
-**Sales (`service/ingest.ts`).** `resplit` giờ chỉ còn nghĩa "có phần sàn chia lại mà app không tự xử lý được" (kiện đã bàn giao); ghi chú đổi thành "Sàn chia lại kiện đã bàn giao". Chia lại xử lý được thì `changed = true`, không bật cờ đơn.
+1. Mỗi cặp: dòng mới nhận `reserved_qty` của dòng cũ, xoá dòng cũ. Không gọi cổng tồn (tổng đang giữ theo SKU không đổi). Dòng mới đã trừ tồn hay đã tự giữ (kiện thay bị quét bàn giao trước khi có chặn ở D28): nhả phần giữ của dòng cũ qua cổng tồn rồi xoá, xếp lượt phân hàng cho SKU đó (review #393).
+2. Kiện cũ hết dòng → mũi tên `replaced` (`cancelled`), gỡ cờ Cần mở; lịch sử nguồn `marketplace`, lý do "Kiện thay <mã> đã được lấy"; `package_status_changed`. Còn dòng mà hết dòng chờ bỏ và mục đích `resplit` → gỡ cờ.
+3. `applyStatus` kiện mới như thường (nhảy cóc, `settleHandover`): dòng đã giữ thì trừ thường; dòng chưa giữ (chuyển từ kiện chưa đóng) thì thử giữ, không được mới bắt buộc. Kiện cũ không bao giờ tự ghi bàn giao phần đã có kiện thay.
+
+**Phân hàng (`repository/allocation.ts`, `service/allocation.ts`).** `candidateWhere` thêm `not exists` dòng chờ bỏ cùng `order_line_id` ở kiện khác đang `packed`/`awaiting_pickup` (D9; tra theo index `package_lines(order_line_id)`). Kiện cũ mở xong, bị xác nhận mất (D20), hay bị sàn báo rời kho (D27) thì kiện thay tự thành ứng viên. Bước giữ hàng của `runAllocation` tách thành `holdCandidates` dùng chung cho D26; `lockAllocationCandidates` nhận thêm lọc theo đơn.
+
+**Mở kiện (`service/packing.ts`).**
+
+- `open`, `open_cancel` nhận kiện `awaiting_pickup` **khi có cờ Cần mở**; không có cờ vẫn 409 `invalid_transition`.
+- Không gọi `repack` khi kiện đang `awaiting_pickup` hoặc đang `waybill_kept` (D25). Mục đích `resplit` còn món thì gọi `repack` như `edit` (D24, sửa sau soát 18/11).
+- Mục đích `resplit`: giao dịch ghi lấy advisory trước khi khoá kiện; sau khi nhả dòng chờ bỏ thì giữ ngay cho kiện của cùng đơn vừa hết chờ thay (D26), rồi xếp lượt cho phần dư; `open_cancel` không gọi `settleCancelledOrder` (đơn không huỷ).
+- Kết quả theo `25` §8.3: mọi dòng chờ bỏ → `open_cancel`; còn dòng → `open` (về `reserved`, xoá dòng chờ bỏ). Mục đích `resplit`, `stocktake`: xếp lượt cho SKU của dòng còn lại (D24).
+- Kiện `awaiting_pickup` hoặc `waybill_kept` còn món: giữ `platform_package_code`, `tracking_code`, `carrier_*`, đặt `waybill_kept = true` (D25).
+- `pack` khi `waybill_kept`: không gọi `pack` của sàn, không ghi đè mã, vận đơn, ĐVVC. `ready` khi `waybill_kept`: không gọi `readyToShip`, chỉ `packed → awaiting_pickup`. `updatePackage` tự tắt `waybill_kept` khi kiện sang trạng thái ngoài `backordered`, `reserved`, `packed`.
+
+**Xác nhận mất kiện cũ** (`lose_on_unload`, D20): sau khi ghi `lost`, xếp lượt phân hàng cho SKU của các dòng chờ bỏ (kiện thay hết chờ thay, AC 11c).
+
+**Rời kho khi còn cờ (D27), chặn báo sẵn sàng và quét bàn giao (D28).** `updatePackage` thay `stocktakeFlagRules` bằng `openFlagRules`: ghi `status` ngoài nhóm đã đóng mà không ghi cờ thì gỡ `needs_open`/`open_purpose` (giá trị cũ là bất kỳ), mục đích cũ khác `stocktake` thì bật `needs_attention` và note (đã có cờ thì giữ note cũ). `markReady` và `handOverPackages` kiểm `needs_open` → 409 `awaiting_open`.
+
+**View.** `Package.replaces: { id, code, status } | null`, gắn trong `attachViewLines` (một câu cho mọi kiện có `replaces_package_id`; mọi đường dựng `PackageViewRow` đi qua hàm này). FE hiện "Chờ mở kiện <mã>" khi `replaces.status` là `packed`/`awaiting_pickup`. Kiện chờ thay ở tab `backordered`.
+
+**Sales (`service/ingest.ts`).** D29: note "Sàn chia lại kiện, app chưa tự xử lý được".
 
 ### 5.7 Nguồn nhắc (PR 4, sau #209)
 
@@ -244,8 +285,9 @@ Khai trong trường `tasks` của `ModuleDefinition` fulfillment theo khuôn #2
 | `version_conflict` | 409 | `version` lệch; kèm `current` |
 | `forbidden` | 403 | thiếu `fulfillment.order.process` |
 | `validation_failed` | 422 | `claimCode` rỗng hoặc quá 100 ký tự |
+| `awaiting_open` | 409 | (PR 3, D28) `ready` cho kiện đang có cờ Cần mở; `hand-over` trả trong `failed[].code` |
 
-Mọi lỗi ném `AppError`, trả Problem Details. `not_awaiting_open` là mã mới: thêm vào `21` §19.2.
+Mọi lỗi ném `AppError`, trả Problem Details. `not_awaiting_open` (PR 1) và `awaiting_open` (PR 3) là mã mới: thêm vào `21` §19.2. Route `open` không thêm mã: kiện `awaiting_pickup` không có cờ Cần mở vẫn `invalid_transition`.
 
 ### 5.9 Chạy đồng thời và gọi lặp
 
@@ -253,15 +295,19 @@ Mọi lỗi ném `AppError`, trả Problem Details. `not_awaiting_open` là mã 
 - `report-lost` lặp: `already_reported`.
 - Sàn báo `lost` giữa lúc kho đã báo, chưa xác nhận: `platform_lost` áp, `confirm-lost` sau đó trả `invalid_transition`; việc `package.lost_reported` tự hết vì kiện đã `lost`.
 - Sàn báo đã lấy giữa lúc chờ xác nhận `lose_on_unload`: kiện sang `in_transit` theo sàn (`25` §8.3 "đi theo sàn"), báo cáo vẫn treo; người xác nhận sau đó đi mũi tên `lose` thường. Chấp nhận.
-- Lượt kéo đơn lặp sau khi đã chia lại: tập món khớp → không bước nào, không đổi gì (idempotent). Test bắt buộc.
-- Chia lại và phân hàng: khoá advisory tuần tự hoá; thứ tự khoá theo mục 2.
-- Chia lại và `openPackage` cùng lúc: cả hai khoá kiện; `version` của kiện tăng ở bước `mark_drop` nên lần mở đang dở gặp `version_conflict`.
+- Lượt kéo đơn lặp sau khi đã chia lại: tập món khớp → không bước nào, không đổi gì, không tăng `version` (idempotent). Test bắt buộc. Lượt lặp của ca không tự xử lý được (D22 bước 0, 2.2; kiện đã bàn giao): không ghi lại cờ đã có.
+- Chia lại và phân hàng: khoá advisory tuần tự hoá; thứ tự khoá đơn → advisory → kiện → dòng tồn (cùng `remapPackageLines` của #237). Lượt kéo không có bước chia lại thì không lấy advisory.
+- Dữ liệu đổi giữa lần đọc không khoá và lần khoá (kế hoạch mới có bước mà chưa lấy advisory): không thi hành, lượt sau làm. Không lấy advisory sau khi đã khoá kiện (ngược thứ tự, khoá chết với lượt phân hàng).
+- Chia lại và `openPackage` cùng lúc: cả hai khoá kiện; `version` của kiện tăng ở bước `mark_drop` nên lần mở đang dở gặp `version_conflict`. Mở kiện `resplit` lấy advisory trước khoá kiện nên không đan xen với lượt kéo đang chia lại cùng đơn.
+- Kiện chờ thay được lấy và kho mở kiện cũ cùng lúc: lượt kéo khoá mọi kiện của đơn trước; mở kiện gặp `version_conflict` (dòng chờ bỏ đã chuyển) hoặc chờ tới khi lượt kéo commit rồi thấy kiện cũ đã `cancelled` (`invalid_transition`).
+- Kho quét bàn giao kiện đang chờ mở: 409 `awaiting_open` (D28); sàn báo rời kho thì theo D27.
 
 ### 5.10 Test
 
 Theo `test/CLAUDE.md` (đọc trước khi viết). Tên test mang mã ca D2 khi có.
 
-- **Unit** `test/unit/modules/order/fulfillment/domain/`: `package.test.ts` (mũi tên mới, guard, `arrowAction` ưu tiên hệ thống, `platformUpdate`), `resplit.test.ts` (khớp và gắn lại mã; chia một kiện thành hai; gộp hai kiện thành một; kiện cũ chưa đóng, đã đóng, đã bàn giao, lẫn lộn; món chưa có mã sàn; gọi lại ra kế hoạch rỗng).
+- **Unit** `test/unit/modules/order/fulfillment/domain/`: `package.test.ts` (mũi tên mới, guard, `arrowAction` ưu tiên hệ thống, `platformUpdate`), `resplit.test.ts` (khớp và gắn lại mã; hai kiện đổi mã cho nhau; chia một kiện thành hai; sàn giữ mã cũ cho phần còn lại; gộp hai kiện vào mã mới; gộp vào mã kiện cũ và một món hai nhóm thì không lập; mã nằm ở kiện đã huỷ; kiện cũ chưa đóng, đã đóng, đã bàn giao, lẫn lộn; món chưa có mã sàn; gọi lại ra kế hoạch rỗng; `replacementPairs`).
+- **PR 3, sửa test hiện có:** bỏ `it.skip` ca "sàn tách kiện theo SKU" ở `test/integration/channel/channel/tiktok-order-pull.test.ts` (đọc kiện chưa huỷ; kiện cũ `PK-1` thành `cancelled`); `split-sync.test.ts` ca "món của hai kiện app về chung một mã sàn" và `ingest.test.ts` ca "cùng lượt sàn chia lại kiện" đổi theo D22, D29 (gộp vào mã mới thì app tự xử lý; ca giữ cờ dùng gộp vào mã kiện cũ).
 - **API** `test/api/`: quyền, validate, mã lỗi của hai route.
 - **Integration** `test/integration/order/fulfillment/`:
   - `lost.test.ts`: báo, xác nhận bởi người khác, tự xác nhận (409 và ngoại lệ tự duyệt ghi `lost_self_approved`), `lose_on_unload` trừ tồn đúng một lần, sự kiện `package_lost`, CHECK DB chặn ghi tay `status = 'lost'` thiếu nguồn.
@@ -275,14 +321,14 @@ Theo `test/CLAUDE.md` (đọc trước khi viết). Tên test mang mã ca D2 khi
 
 | PR | Nội dung | Phụ thuộc |
 |---|---|---|
-| Docs | Sửa `21`, `25`, `19`, ca D2, `27` theo mục 8. Merge trước hoặc cùng PR 1 | Thành xác nhận D2 đến D6 |
-| PR 1 | Thất lạc: mục 5.1 (PR 1), 5.2 (trừ `replaced`), 5.3, 5.4 | không |
-| PR 2 | Kiểm kê → Cần mở: mục 5.5 | không; nên sau PR 1 để khỏi regen migration |
-| PR 3 | Sàn chia lại kiện: mục 5.6, mũi tên `replaced` | #329, #330 đã merge |
-| PR 4 | Nguồn nhắc: mục 5.7 | #209 đã merge; nội dung đầy đủ khi PR 1 đến 3 đã merge |
-| FE | Mục 7 | PR 1 (thất lạc), PR 3 (chờ thay) |
+| Docs | Sửa `21`, `25`, `19`, ca D2, `27` theo mục 8 | Đã merge cho PR 1 (Documents#121), PR 2 (Documents#130); PR 3 có PR Documents riêng |
+| PR 1 | Thất lạc: mục 5.1 (PR 1), 5.2 (trừ `replaced`), 5.3, 5.4 | **Đã merge** (#331, 15/11) |
+| PR 2 | Kiểm kê → Cần mở: mục 5.5 | **Đã merge** (#366, 17/11) |
+| PR 3 | Sàn chia lại kiện: mục 5.1 (PR 3), 5.6, mũi tên `replaced`, D22 đến D29. Kế hoạch `docs/superpowers/plans/2026-11-18-238-pr3-chia-lai-kien.md` | D22 đến D29 đã duyệt; nên trước #237 PR 2 (cùng sửa `openPackage`) |
+| PR 4 | Nguồn nhắc: mục 5.7 | #209 (Bình) đã merge; nội dung đầy đủ khi PR 1 đến 3 đã merge |
+| FE | Mục 7, theo dõi ở FE#284 (Khoa) | PR 1 (thất lạc), PR 3 (chờ thay) |
 
-Mỗi PR cập nhật `src/modules/order/fulfillment/CLAUDE.md` và chạy `graphify update .`. Sau khi spec được duyệt, sửa body issue #238: `lose_on_unload` chuyển sang Phần 1 (D11); Phần 4 không còn chờ #208 (sự kiện là `inventory.stocktake_posted`, đã có).
+Mỗi PR cập nhật `src/modules/order/fulfillment/CLAUDE.md` và chạy `graphify update .`. Body issue #238 đã sửa theo spec (15/11, 18/11).
 
 ## 7. Ảnh hưởng tới FE
 
@@ -290,17 +336,20 @@ FE đã có mock cho `report-lost`, `confirm-lost`, nút Báo/Xác nhận thất
 
 - `src/lib/machines/order.ts`: bỏ `awaiting_pickup` khỏi `lose`; `lose_on_unload` thêm `awaiting_pickup` và guard `needs_open`; thêm `platform_lost`. Sinh lại `ca-theo-so-do.md` (mã ca có thể đổi số: cập nhật tham chiếu ở `27`).
 - Tắt mock, nối API thật cho hai route; xử lý mã lỗi mục 5.8.
-- `OpenPurpose` thêm `stocktake`; `Package` thêm `replaces`; hiện "Chờ mở kiện <mã>" cho kiện chờ thay.
-- Mở kiện `awaiting_pickup` có cờ Cần mở: bật nút.
+- `OpenPurpose` thêm `stocktake`; `Package` thêm `replaces: { id, code, status } | null`; hiện "Chờ mở kiện <mã>" cho kiện chờ thay (khi `replaces.status` là `packed`/`awaiting_pickup`).
+- Mở kiện `awaiting_pickup` có cờ Cần mở: bật nút. Máy `order.ts` thêm mũi tên `replaced` (hệ thống, `SEALED → cancelled`).
+- Nút Báo sẵn sàng, Quét bàn giao: tắt khi kiện có cờ Cần mở; xử lý 409 `awaiting_open` (D28).
 - E2E Playwright cho luồng báo và xác nhận thất lạc (`e2e/mock/pN/`, thêm `e2e/be/pN/` khi nối API thật).
 
 ## 8. Ảnh hưởng tới Documents
 
 - `21` §19.2: đổi tên `lose_unfound` → `lose_on_unload`, tách `platform_revive` thành `platform_in_transit`, `platform_deliver`; `lose` ghi rõ không từ `awaiting_pickup`; thêm mã `not_awaiting_open`; `openPurpose` thêm `stocktake`; `Package` thêm `replaces`; bỏ `cod_unconfirmed` khỏi phạm vi #238 (ghi "chưa có nguồn").
 - `21` §14.2: ba dòng `package.*` đổi `#106` → `#238`; mốc của `package.needs_open` thành "lần cập nhật gần nhất".
-- `25` §8.1: câu về kiện chờ thay và bất biến (D8).
-- `19` mục 2: `lost_source` đã có trong tài liệu, không đổi; ghi `open_purpose` thêm `stocktake`.
-- `kiem-thu/ca-theo-so-do.md`: sinh lại từ máy FE; thêm ca cho `platform_lost`, `lose_on_unload` từ `awaiting_pickup`.
+- `25` §8.1: câu về kiện chờ thay và bất biến (D8); khớp kiện giữ mã cũ cho phần còn lại, sàn gộp món vào mã kiện cũ thì Cần xử lý (D22); thứ tự mục đích mở (D24).
+- `25` §8.3: kiện rời kho khi còn chờ dỡ kiện về kệ (D27); không báo sẵn sàng, không quét bàn giao kiện đang chờ dỡ (D28).
+- `21` §19.2 (PR 3): `open` nhận `awaiting_pickup` có cờ Cần mở, không gọi `repack` khi giữ vận đơn; `pack`, `ready` không gọi sàn khi dùng lại vận đơn; mã `awaiting_open`; `Package.replaces`; máy D2 thêm `replaced`.
+- `19` mục 2: `lost_source` đã có trong tài liệu, không đổi; ghi `open_purpose` thêm `stocktake`; (PR 3) `packages.replaces_package_id`, `packages.waybill_kept`.
+- `kiem-thu/ca-theo-so-do.md`: sinh lại từ máy FE; thêm ca cho `platform_lost`, `lose_on_unload` từ `awaiting_pickup`, `replaced`.
 - `27`: US-DH-12, US-DH-15 cập nhật mã ca.
 
 ## 9. Acceptance criteria
@@ -327,14 +376,21 @@ FE đã có mock cho `report-lost`, `confirm-lost`, nút Báo/Xác nhận thất
 
 **Chia lại kiện (PR 3)**
 
-12. Sàn đổi mã gói, tập món không đổi: chỉ mã kiện sàn đổi, không kiện nào huỷ hay lập.
-13. Kiện `reserved` 2 món, sàn chia thành 2 mã: kiện cũ `cancelled`, 2 kiện mới `reserved`, số có thể bán trước và sau bằng nhau, đơn không bật cờ.
+12. Sàn đổi mã gói, tập món không đổi: chỉ mã kiện sàn đổi (kể cả hai kiện của đơn đổi mã cho nhau), không kiện nào huỷ hay lập, đơn không bật cờ.
+13. Kiện `reserved` 2 món, sàn chia thành 2 mã mới: kiện cũ `cancelled`, 2 kiện mới `reserved` có `replaces` trỏ kiện cũ, số có thể bán trước và sau bằng nhau, đơn không bật cờ.
+13a. Kiện `reserved` 2 món, sàn giữ mã cũ cho món 1 và đưa món 2 sang mã mới: kiện cũ ở `reserved` với 1 món, kiện mới `reserved` 1 món, không kiện nào huỷ.
+13b. (#221, TikTok) Đơn có kiện `backordered` mã `PK-1` (một món chưa ghép SKU), sàn tách thành `PK-A`, `PK-B`: kiện chưa huỷ của đơn mang đúng `PK-A`, `PK-B`; `PK-1` thành `cancelled`. Ca `it.skip` ở `tiktok-order-pull.test.ts` chạy lại.
 14. Như 13 nhưng có kiện `backordered` của đơn khác chờ cùng SKU: kiện mới của đơn này giữ được hàng, kiện kia vẫn `backordered`.
-15. Kiện `packed`, sàn chia thành 2 mã: kiện cũ giữ `packed`, vẫn giữ hàng, cờ Cần mở với `openPurpose = 'resplit'`; 2 kiện mới `backordered`, có `replaces`, không được phân hàng. Kho mở: kiện cũ `cancelled`, 2 kiện mới `reserved`. Không gọi `repack`, đơn không bị khép.
-16. Như 15, sàn báo một kiện mới đã `in_transit` trước khi kho mở: kiện mới `in_transit`, tồn trừ đúng một lần, `handover_source = 'marketplace'` (không `forced`), kiện cũ mất các món đó.
+14a. Hai kiện app chưa đóng (đã tách trong app) về chung một mã sàn mới: hai kiện cũ `cancelled`, một kiện mới giữ hàng, đơn không bật cờ. Sàn gộp món của kiện kia vào mã của một kiện cũ: không đổi gì, đơn bật Cần xử lý "Sàn chia lại kiện, app chưa tự xử lý được".
+15. Kiện `packed`, sàn chia thành 2 mã, món về chờ đóng gói (`pending`): kiện cũ giữ `packed`, vẫn giữ hàng, cờ Cần mở với `openPurpose = 'resplit'`; 2 kiện mới `backordered`, có `replaces`, không được phân hàng dù kho còn hàng (sàn báo nhóm mới đã đóng gói thì kiện mới theo trạng thái sàn như kiện đã có, D23, vẫn chờ thay, không giữ hàng). Kho mở: kiện cũ `cancelled`, 2 kiện mới `reserved` trước kiện `backordered` của đơn khác. Không gọi `repack`, đơn không bị khép. Sàn giữ mã cũ cho phần còn lại: mở kiện cũ gọi `repack` một lần (như `edit`), kiện về `reserved` với phần còn lại.
+15a. Kiện đã đóng đang chờ mở vì `edit` hoặc `stocktake` bị sàn chia lại: mục đích thành `resplit`; đang `cancel` thì giữ `cancel`. Sàn huỷ cả kiện đang chờ mở để chia lại: mục đích thành `cancel` (D24). Mọi món của kiện cũ đã sang kiện thay rồi sàn huỷ cả đơn (kiện cũ không còn nhóm nào trên sàn): kiện thay `cancelled`, kiện cũ mục đích `cancel`, đơn `processing` với `cancelling` tới khi kho mở kiện cũ (`open_cancel` khép đơn), không `cancelled` ngay (soát PR 3, 18/11).
+16. Như 15, sàn báo một kiện mới đã `in_transit` trước khi kho mở: kiện mới `in_transit`, tồn trừ đúng một lần, `handover_source = 'marketplace'` (không `forced`), kiện cũ mất các món đó; kiện cũ hết món thì `cancelled` với lịch sử `replaced`.
 17. Kiện `in_transit`, sàn báo chia khác: không đổi gì, kiện và đơn bật Cần xử lý.
-18. Kéo đơn lại sau mỗi ca 12 đến 17: không đổi gì.
-19. Kiện `awaiting_pickup` có cờ Cần mở, mở xong còn món: về `reserved`, giữ mã vận đơn; đóng gói và báo sẵn sàng lại không gọi sàn lần hai.
+18. Kéo đơn lại sau mỗi ca 12 đến 17: không đổi gì, `version` các kiện không đổi.
+19. Kiện `awaiting_pickup` có cờ Cần mở (mọi mục đích), mở xong còn món: về `reserved`, giữ mã kiện sàn, vận đơn, ĐVVC, không gọi `repack`; đóng gói và báo sẵn sàng lại không gọi `pack`, `readyToShip` của sàn, kiện về `awaiting_pickup` với vận đơn cũ. Kiện `awaiting_pickup` không có cờ: `open` vẫn 409 `invalid_transition`.
+19a. (D28) `ready` kiện có cờ Cần mở: 409 `awaiting_open`; quét bàn giao kiện đó: `failed[].code = 'awaiting_open'`, kiện không đổi.
+19c. (D28, review #393) Kiện chờ thay bị sàn đẩy sang `packed`/`awaiting_pickup`: `ready` 409 `awaiting_open`, quét bàn giao `failed[].code = 'awaiting_open'`, kiện và tồn không đổi. Kiện thay đã bị quét bàn giao (dữ liệu trước khi chặn) rồi sàn báo `in_transit`: phần giữ của dòng chờ bỏ được nhả, không chuyển sang dòng đã trừ; mở kiện cũ xong số đang giữ đúng.
+19b. (D27) Sàn báo kiện `packed` đang chờ mở để chia lại đã `in_transit`: kiện `in_transit`, trừ mọi dòng một lần (kể cả dòng chờ bỏ), cờ Cần mở gỡ, bật Cần xử lý; kiện thay thành ứng viên phân hàng.
 
 **Nguồn nhắc (PR 4)**
 
@@ -342,12 +398,17 @@ FE đã có mock cho `report-lost`, `confirm-lost`, nút Báo/Xác nhận thất
 
 ## 10. Rủi ro và điểm còn mở
 
-- **D2 đến D6 chờ Thành.** Thành chốt khác thì sửa mục 5.2 và mục 8 trước khi code PR 1.
+- ~~D2 đến D6 chờ Thành~~: Thành chốt 15/11/2026.
+- ~~D22 đến D29 chờ Khang~~: Khang duyệt 18/11/2026.
+- ~~Kiện thay gom món từ kiện đã đóng lẫn kiện chưa đóng không giữ lúc lập~~: Thành chốt ở review #393 (18/11), giữ ngay phần từ kiện chưa đóng (D23, mục 5.6 bước `create`).
 - **Kiện tự giao** (D13): hiện người đi giao cũng xác nhận mất được. Phải vá khi làm route `self-deliver`.
-- **Đơn đang huỷ có kiện `lose_on_unload` (đã kiểm ở PR 1, còn mở, chờ Khang quyết):** kiện sang `lost`, tồn trừ một lần, đơn ở lại `processing` (đúng `25` §8.2). Nhưng cờ `cancelling` của đơn không bao giờ được gỡ: lượt kéo sau bật `platform_cancelled` mà `cancelling` vẫn `true`, nên `sales/service/complete.ts` bỏ qua đơn và đơn không tự hoàn tất. Sửa nằm ở sales (gỡ `cancelling` khi không còn kiện nào chờ mở), ngoài phạm vi PR 1.
-- **Mở kiện `stocktake` rồi sàn huỷ đơn (PR 2):** kiện đang chờ mở vì kiểm kê mà sàn huỷ thì mục đích mở phải đổi sang `cancel` (huỷ thắng), nếu không kho mở ra kiện lại về `reserved`.
-- **Phần 2 viết trên code chưa merge.** #329, #330 đổi khi review thì đối chiếu lại mục 5.6 trước khi làm PR 3.
-- **Sàn thật.** Chia lại kiện và `lost` chưa gặp trên shop thử Lazada (trace 13/11/2026 chỉ tới `delivered`); kiểm bằng fixture. TikTok: hành vi `package_id` khi sàn chia lại cần Thành xác nhận từ #221.
-- **Dùng lại vận đơn sau khi mở kiện `awaiting_pickup`** (AC 19) dựa trên `25` §8.3; chưa thử thật việc sàn còn giữ vận đơn sau khi chia lại. Sàn đã bỏ mã thì kiện cũ đi nhánh `open_cancel`, không tới bước này.
+- ~~Đơn đang huỷ có kiện `lose_on_unload`~~: đã sửa ở sales cùng PR 1 (#331): gỡ `cancelling` khi không còn kiện chờ mở, tự hoàn tất.
+- ~~Mở kiện `stocktake` rồi sàn huỷ đơn~~: đã làm ở PR 2 (`markWholePendingDrop`). PR 3 thêm `resplit` vào cùng luật (D24).
+- ~~Phần 2 viết trên code chưa merge~~: mục 5.6 đã đối chiếu lại với `main` eb49bba (18/11/2026).
+- **#237 PR 2 cũng sửa `openPackage`** (áp lại ghép khi mở kiện, cờ dỡ kiện): làm sau PR 3, hoặc người merge sau gộp lại nhánh `resplit`/`waybill_kept`.
+- **Sàn thật.** Chia lại kiện và `lost` chưa gặp trên shop thử Lazada (trace 13/11/2026 chỉ tới `delivered`); kiểm bằng fixture. TikTok: gọi thật 07/11/2026 (đơn 587022741397144586) cho thấy tách kiện làm `line_items[].package_id` đổi và `update_time` tăng (ca `it.skip` của #221); chưa rõ sàn có giữ `package_id` cũ cho một phần không, nên D22 bước 2.2 lo cả hai.
+- **Dùng lại vận đơn sau khi mở kiện `awaiting_pickup`** (AC 19, D25) dựa trên `25` §8.3; chưa thử thật việc sàn còn giữ vận đơn và chấp nhận in lại nhãn khi không gọi `pack`, `readyToShip`. Sàn đã bỏ mã thì kiện cũ đi nhánh `open_cancel`, không tới bước này. Sàn báo vận đơn đã huỷ: chưa có tín hiệu, kho xử lý tay (mở lại rồi chờ lượt kéo).
+- **Kiện cũ giữ mã bị sàn báo rời kho khi còn dòng chờ bỏ** (D27): trừ cả dòng chờ bỏ, kiện thay đi phân hàng nên có thể xuất thêm một lần nữa. Đúng nếu hộp rời kho còn nguyên món; sai một lần nếu kho đã gỡ món ra mà chưa bấm mở. Cờ Cần xử lý để người xem, lệch thì phiếu kiểm kê.
+- **Kiện chờ thay lập từ dòng của kiện chưa đóng** (một nhóm gồm món của kiện đã đóng và kiện chưa đóng): cả kiện không giữ lúc lập; dòng từ kiện chưa đóng đã nhả về số có thể bán, lúc kiện thay được lấy thì giữ lại hoặc bàn giao bắt buộc. Hiếm, chấp nhận.
 - **Mã ca D2 đổi số** khi sinh lại từ máy FE: tham chiếu ở `27` và tên test hiện có phải cập nhật cùng PR Docs/FE.
 - **Khung #209** có thể khác khuôn đã ghi trong issue; mục 5.7 chỉ cố định dữ liệu (điều kiện, mốc, thời hạn), không cố định kiểu.

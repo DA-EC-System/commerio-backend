@@ -5,8 +5,8 @@ import { getStatusHistory, publishEvent, recordTransition } from '../../../core/
 import { handoverStockMode, stockEffectOf } from '../domain/handover.ts';
 import {
   type CancelKind,
-  type PackageEvent,
   type PlatformLineStatus,
+  type PlatformPackageOrder,
   DEFAULT_FAIL_REASON,
   deliveryTarget,
   eventsOf,
@@ -14,7 +14,9 @@ import {
   lineStatus,
 } from '../domain/delivery.ts';
 import { type CancelLine, planLineCancel } from '../domain/line-cancel.ts';
-import { arrowAction, holdsStock, isHandedOver, isPlatformRevive, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
+import { arrowAction, isHandedOver, isPlatformRevive, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
+import { planResplit, type ResplitGroup, type ResplitPackage } from '../domain/resplit.ts';
+import { takeAllocationLock } from '../repository/allocation.ts';
 import { deleteLines, setPendingDrop, setPendingDropAll } from '../repository/line-cancel.ts';
 import { reportDeliveryFailed, reportDelivered } from './delivery.ts';
 import {
@@ -23,6 +25,7 @@ import {
   lockOrderPackages,
   type PackageRow,
   type PackageShipping,
+  readOrderPackages,
   setReserved,
   updatePackage,
 } from '../repository/packages.ts';
@@ -32,27 +35,13 @@ import { logger } from '../../../../shared/logger.ts';
 import type { PackageNotice } from '../repository/schema.ts';
 import { requestAllocation } from './allocation.ts';
 import { settleHandover } from './handover-stock.ts';
+import { applyResplit, pendingSteps, takeOverReplaced } from './resplit.ts';
 import { type StockLine, stockPort } from './stock-port.ts';
 
-// Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter) khai trong `domain/delivery.ts`
-// (domain không được import service); re-export để sales, test giữ import cũ.
-export type { PlatformLineStatus, CancelKind, PackageEvent } from '../domain/delivery.ts';
-
-/**
- * Đơn của kiện. `holdStock` false: gian hàng chờ kiểm kê đầu kỳ (#198), không giữ hàng cho kiện mới, kiện rời kho thì
- * hoãn trừ tồn tới `settleDeferredHandovers`. `placedAt`, `orderCutoffAt` (mốc kéo đơn của gian hàng) quyết kiện lần đầu
- * thấy đã rời kho có trừ tồn không (25 §6.1, §8.1).
- */
-export interface PlatformPackageOrder {
-  id: string;
-  shopId: string;
-  shipBy: Date | null;
-  holdStock: boolean;
-  placedAt: Date;
-  orderCutoffAt: Date | null;
-  /** Hành trình kiện của sàn (spec 199c §5.7), đọc ngoài giao dịch; thiếu là `[]` (mốc lấy giờ đồng bộ). */
-  packageEvents?: readonly PackageEvent[];
-}
+// Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter) và đơn của kiện khai trong
+// `domain/delivery.ts` (domain không được import service; `service/resplit.ts` dùng đơn mà không vòng import); re-export
+// để sales, test giữ import cũ.
+export type { PlatformLineStatus, CancelKind, PackageEvent, PlatformPackageOrder } from '../domain/delivery.ts';
 
 export interface PlatformPackageLine {
   orderLineId: string;
@@ -95,7 +84,10 @@ const NO_SHIPPING: PackageShipping = { shipmentProvider: null, shippingProviderT
 export interface PlatformPackagesResult {
   statuses: PackageStatus[];
   changed: boolean;
-  /** Sàn chia lại kiện khác lần trước: chưa tự xử lý, đơn cần người xem. */
+  /**
+   * Có phần sàn chia lại kiện mà app không tự xử lý (spec #238 D29: kiện đã bàn giao, sàn gộp món vào mã kiện cũ, một
+   * món ở hai mã): đơn cần người xem. Chia lại xử lý được thì chỉ `changed`.
+   */
   resplit: boolean;
   /** Món có trạng thái app chưa biết. */
   unknown: boolean;
@@ -226,22 +218,38 @@ async function tryReserve(id: string, lines: readonly PlatformPackageLine[]): Pr
   }
 }
 
+/**
+ * Lập kiện cho một nhóm món sàn. `resplit`: kiện mới do sàn chia lại kiện (spec #238 §5.6, D23): vào `backordered` bất kể
+ * trạng thái sàn (vòng áp trạng thái áp sau, như kiện đã có), không đi luật "kiện lần đầu thấy" (`store_only`, mốc kéo
+ * đơn): hàng của nó đã nằm trong kho, đã giữ ở kiện cũ. Dòng đơn trong `awaiting` (chủ cũ là kiện đã đóng, đang chờ dỡ)
+ * chưa giữ: nhận phần giữ khi kho mở kiện cũ hoặc khi ĐVVC lấy kiện thay. Dòng khác (từ kiện chưa đóng vừa nhả, món mới)
+ * giữ ngay trong cùng giao dịch, đơn khác không chen vào (`25` §8.1 bước 3, review #393); kiện chỉ sang `reserved` khi
+ * không còn dòng chờ thay.
+ */
 async function createPackage(
   order: PlatformPackageOrder,
   code: string,
   status: PlatformLineStatus,
   lines: readonly PlatformPackageLine[],
   journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
+  resplit?: { replacesPackageId: string; replacesCode: string; awaiting: ReadonlySet<string> },
 ): Promise<PackageRow> {
   // Món chưa đóng gói, hoặc đã đóng gói nhưng chưa rời kho, thì giữ hàng; đủ ghép SKU (hoặc "không quản tồn") mới qua
   // cổng tồn (spec 237).
-  const wantsStock = status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
+  const holding = resplit ? lines.filter((l) => !resplit.awaiting.has(l.orderLineId)) : lines;
+  const whole = holding.length === lines.length;
+  const wantsStock = resplit ? holding.length > 0 : status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
   const mapped = lines.every((l) => l.variantId || l.untracked);
-  const variantLines = stockLines(lines);
+  const variantLines = stockLines(holding);
   // Cách xử lý tồn tính trước khi chèn: kiện lần đầu thấy đã hoàn về của đơn đặt trước mốc vào thẳng `returned` (D9).
   const mode = handoverStockMode({ firstSeen: true, placedAt: order.placedAt, orderCutoffAt: order.orderCutoffAt, awaitingStocktake: !order.holdStock });
-  const initial: PackageStatus =
-    status === 'pending' ? 'backordered' : status === 'cancelled' ? 'cancelled' : deliveryTarget(status, { firstSeen: true, storeOnly: mode === 'store_only' });
+  const initial: PackageStatus = resplit
+    ? 'backordered'
+    : status === 'pending'
+      ? 'backordered'
+      : status === 'cancelled'
+        ? 'cancelled'
+        : deliveryTarget(status, { firstSeen: true, storeOnly: mode === 'store_only' });
   const shipping = shippingOf(lines, NO_SHIPPING);
   const id = await insertPackage({
     ...shipping,
@@ -255,6 +263,7 @@ async function createPackage(
     ...milestones(null, initial, { leftAt: journey.leftAt, deliveredAt: journey.deliveredAt }),
     // Kiện lần đầu thấy đã mất: nguồn sàn (CHECK `packages_lost_confirmed`, spec #238 §5.4).
     ...(initial === 'lost' ? { lostSource: 'marketplace' as const } : {}),
+    ...(resplit ? { replacesPackageId: resplit.replacesPackageId } : {}),
   });
   // Kiện chỉ toàn dòng không quản tồn (chưa có dòng biến thể): coi như giữ được, không qua cổng tồn, kể cả
   // `holdStock` false (spec 237 D10). Có dòng biến thể thì giữ như cũ qua cổng tồn.
@@ -262,26 +271,29 @@ async function createPackage(
   const { reserved, notices } = untrackedOnly
     ? { reserved: true, notices: [] }
     : wantsStock && mapped && order.holdStock
-      ? await tryReserve(id, lines)
+      ? await tryReserve(id, holding)
       : { reserved: false, notices: [] };
   if (notices.length) await updatePackage(id, { notices });
-  const to: PackageStatus = initial === 'backordered' && reserved ? 'reserved' : initial;
+  const to: PackageStatus = initial === 'backordered' && reserved && whole ? 'reserved' : initial;
   const rows = lines.map((l) => ({
     orderLineId: l.orderLineId,
     variantId: l.variantId,
     quantity: l.quantity,
-    reservedQty: reserved && l.variantId ? l.quantity : 0,
+    reservedQty: reserved && l.variantId && !resplit?.awaiting.has(l.orderLineId) ? l.quantity : 0,
     stockUntracked: !l.variantId && !!l.untracked,
   }));
   const lineIds = await insertPackageLines(id, rows);
-  if (to !== initial || reserved) await updatePackage(id, { ...(to !== initial && { status: to }), ...(reserved && { reservedAt: sql`now()` }) });
+  const heldAt = reserved && (to === 'reserved' || variantLines.length > 0);
+  if (to !== initial || heldAt) await updatePackage(id, { ...(to !== initial && { status: to }), ...(heldAt && { reservedAt: sql`now()` }) });
   // Kiện mới giữ hàng làm số có thể bán giảm: báo channel đẩy tồn (spec 199b D4), không chạy lượt phân hàng.
   // Chỉ khi có dòng biến thể (dòng không quản tồn không giữ, không trừ — spec 237 D10).
   if (reserved && variantLines.length) {
     const variantIds = [...new Set(variantLines.map((l) => l.variantId))].sort();
     await publishEvent({ type: 'fulfillment.allocation_done', aggregateId: requireCompanyId('createPackage'), payload: { variantIds } });
   }
-  if (status === 'return_failed') await updatePackage(id, { needsAttention: true, flagNote: 'Sàn báo hoàn hàng thất bại' });
+  // Kiện chia lại: cờ hoàn thất bại do vòng áp trạng thái bật (`applyStatus`).
+  const returnFailed = status === 'return_failed' && !resplit;
+  if (returnFailed) await updatePackage(id, { needsAttention: true, flagNote: 'Sàn báo hoàn hàng thất bại' });
   await recordTransition({
     entityType: 'packages',
     entityId: id,
@@ -290,7 +302,11 @@ async function createPackage(
     action: 'create',
     actorId: null,
     source: 'marketplace',
-    ...(to === 'delivery_failed' ? { reason: journey.failReason ?? DEFAULT_FAIL_REASON } : {}),
+    ...(resplit
+      ? { reason: `Sàn chia lại kiện ${resplit.replacesCode}` }
+      : to === 'delivery_failed'
+        ? { reason: journey.failReason ?? DEFAULT_FAIL_REASON }
+        : {}),
   });
   await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: id, orderId: order.id, from: null, to } });
   // Kiện rời kho trước mốc bắt đầu lấy đơn (`store_only`) không phát `package_lost` (spec #238 §5.4).
@@ -316,7 +332,9 @@ async function createPackage(
     lostClaimCode: null,
     openPurpose: null,
     labelError: false,
-    needsAttention: status === 'return_failed',
+    needsAttention: returnFailed,
+    replacesPackageId: resplit?.replacesPackageId ?? null,
+    waybillKept: false,
     shipping,
     lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false, pendingDropQty: 0 })),
   };
@@ -404,11 +422,14 @@ export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: Pa
     }
     return 'needs_open';
   }
-  if (holdsStock(pkg.status)) {
-    await stockPort().release(pkg.id, stockLines(pkg.lines));
+  // Nhả đúng phần đang giữ thật (`reserved_qty`): kiện `reserved` giữ mọi dòng; kiện thay `backordered` có thể giữ một
+  // phần (dòng từ kiện chưa đóng, review #393).
+  const held = pkg.lines.flatMap((l) => (l.variantId && l.reservedQty > 0 ? [{ variantId: l.variantId, quantity: l.reservedQty }] : []));
+  if (held.length) {
+    await stockPort().release(pkg.id, held);
     await setReserved(pkg.id, false);
     // Số có thể bán tăng: phân hàng cho kiện khác sau khi giao dịch commit (spec 199b §5.4).
-    await requestAllocation(stockLines(pkg.lines).map((l) => l.variantId));
+    await requestAllocation(held.map((l) => l.variantId));
   }
   await changeStatus(order, pkg, 'cancelled', 'cancel');
   return 'cancelled';
@@ -455,9 +476,9 @@ async function markPendingDrop(pkg: PackageRow, fresh: readonly CancelLine[]) {
 }
 
 /**
- * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa (`edit`) hay vì kiểm kê
- * (`stocktake`, huỷ thắng, spec #238 mục 10) thì chuyển sang chờ mở để huỷ: kho mở ra là huỷ (`open_cancel`), không về
- * `reserved`. Trả true khi có ghi.
+ * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa (`edit`), vì kiểm kê
+ * (`stocktake`, huỷ thắng, spec #238 mục 10) hay để chia lại (`resplit`, #238 D24) thì chuyển sang chờ mở để huỷ: kho mở
+ * ra là huỷ (`open_cancel`), không về `reserved`. Trả true khi có ghi.
  */
 async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
   let changed = false;
@@ -466,7 +487,7 @@ async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
     for (const l of pkg.lines) l.pendingDropQty = l.quantity;
     changed = true;
   }
-  if (pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake') {
+  if (pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake' || pkg.openPurpose === 'resplit') {
     await updatePackage(pkg.id, { openPurpose: 'cancel' });
     pkg.openPurpose = 'cancel';
     changed = true;
@@ -474,17 +495,114 @@ async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
   return changed;
 }
 
+/** Nhóm món sàn của một lượt kéo: theo mã kiện sàn, món chưa có mã theo kiện app chứa nó (`code` rỗng). */
+interface PlatformGroup {
+  code: string;
+  lines: PlatformPackageLine[];
+}
+
+const isLive = (p: PackageRow) => p.status !== 'cancelled';
+
+/**
+ * Kiện chứa từng dòng đơn: chủ (kiện sống có dòng sống của dòng đơn, spec #238 §5.6) thắng; dòng đơn không có chủ thì
+ * kiện cuối (theo mã) còn chứa dòng của nó, kể cả kiện đã huỷ hay dòng chờ bỏ (như trước #238: món đã huỷ ở lượt trước
+ * vẫn theo kiện đã huỷ của nó, không lập kiện mới). Sau khi chia lại, món có kiện cũ đã huỷ và kiện mới: kiện mới thắng.
+ */
+function ownersOf(packages: readonly PackageRow[]): Map<string, PackageRow> {
+  const owner = new Map<string, PackageRow>();
+  for (const p of packages) for (const l of p.lines) owner.set(l.orderLineId, p);
+  for (const p of packages.filter(isLive)) for (const l of p.lines) if (l.pendingDropQty === 0) owner.set(l.orderLineId, p);
+  return owner;
+}
+
+/** Món xử lý bằng huỷ dòng (spec 205 D16): kiện chỉ có một phần món bị huỷ. Luật thuần, không ghi. */
+function lineCancelHandled(packages: readonly PackageRow[], lines: readonly PlatformPackageLine[]): Set<string> {
+  const cancelledIds = new Set(lines.filter(isLineCancel).map((l) => l.orderLineId));
+  const handled = new Set<string>();
+  for (const pkg of packages) {
+    const plan = planLineCancel(pkg.status, pkg.lines, cancelledIds);
+    if (plan.kind === 'drop' || plan.kind === 'pending') for (const l of plan.lines) handled.add(l.orderLineId);
+  }
+  return handled;
+}
+
+/**
+ * Gom món: món chưa có mã kiện sàn mà đã nằm trong kiện app thì theo kiện đó (spec 205 D10): sàn chưa nói gì về cách
+ * chia, nên cách chia của app (tách kiện) là đúng. Món có mã sàn gom theo mã. Món xử lý bằng huỷ dòng, và món đã huỷ ở
+ * lượt trước không còn kiện nào chứa (D18), không vào nhóm. Khoá: mã sàn, không mã thì `\u0000<id kiện app>`.
+ */
+function groupsOf(packages: readonly PackageRow[], lines: readonly PlatformPackageLine[]): Map<string, PlatformGroup> {
+  const handled = lineCancelHandled(packages, lines);
+  const owner = ownersOf(packages);
+  const groups = new Map<string, PlatformGroup>();
+  for (const l of lines) {
+    if (handled.has(l.orderLineId) || (l.alreadyCancelled && !owner.has(l.orderLineId))) continue;
+    const key = l.packageCode || `\u0000${owner.get(l.orderLineId)?.id ?? ''}`;
+    const group = groups.get(key) ?? { code: l.packageCode || '', lines: [] };
+    group.lines.push(l);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+/**
+ * Đầu vào của luật chia lại (spec #238 §5.6): mọi kiện của đơn (bỏ dòng của món xử lý bằng huỷ dòng: lượt này gỡ hoặc
+ * chờ bỏ chúng) và nhóm xét chia lại: có mã, trạng thái biết và khác `cancelled`, có món mà chủ là kiện sống.
+ */
+function resplitInput(packages: readonly PackageRow[], lines: readonly PlatformPackageLine[], groups: ReadonlyMap<string, PlatformGroup>) {
+  const handled = lineCancelHandled(packages, lines);
+  const owned = new Set(
+    packages.filter(isLive).flatMap((p) => p.lines.filter((l) => l.pendingDropQty === 0 && !handled.has(l.orderLineId)).map((l) => l.orderLineId)),
+  );
+  const considered: ResplitGroup[] = [];
+  for (const { code, lines: group } of groups.values()) {
+    const status = groupStatus(group);
+    if (!code || status === null || status === 'cancelled' || !group.some((l) => owned.has(l.orderLineId))) continue;
+    considered.push({ code, lines: group.map((l) => ({ orderLineId: l.orderLineId, quantity: l.quantity })) });
+  }
+  const resplitPackages: ResplitPackage[] = packages.map((p) => ({
+    id: p.id,
+    code: p.code,
+    status: p.status,
+    platformPackageCode: p.platformPackageCode,
+    lines: p.lines
+      .filter((l) => !handled.has(l.orderLineId))
+      .map((l) => ({ id: l.id, orderLineId: l.orderLineId, quantity: l.quantity, pendingDropQty: l.pendingDropQty })),
+  }));
+  return { packages: resplitPackages, groups: considered };
+}
+
+/** Kiện nhận nhóm vì khớp theo tập (bước 1 của luật): tập dòng sống bằng tập món của nhóm. */
+function matchesBySet(pkg: ResplitPackage, group: ResplitGroup): boolean {
+  const key = (lines: readonly { orderLineId: string; quantity: number }[]) => {
+    const qty = new Map<string, number>();
+    for (const l of lines) qty.set(l.orderLineId, (qty.get(l.orderLineId) ?? 0) + l.quantity);
+    return [...qty].map(([id, q]) => `${id}:${q}`).sort().join('|');
+  };
+  return key(pkg.lines.filter((l) => l.pendingDropQty === 0)) === key(group.lines);
+}
+
 /**
  * Đồng bộ kiện của một đơn sàn với các món sàn trả về. `nextCode` cấp mã kiện mới (`KH-000001`), do `sales` giữ bộ
  * đếm. Trả trạng thái các kiện sau khi áp, để đơn suy cờ và quyết định huỷ.
+ *
+ * Sàn chia lại kiện (spec #238 §5.6): xem trước kế hoạch trên kiện đọc không khoá; có bước thì lấy khoá advisory phân
+ * hàng **trước** khi khoá kiện (thứ tự đơn → advisory → kiện), lập lại kế hoạch trên kiện đã khoá rồi thi hành. Kế hoạch
+ * mới có bước mà lượt chưa lấy advisory (dữ liệu đổi giữa hai lần đọc): không thi hành, để lượt sau.
  */
 export async function syncPlatformPackages(
   order: PlatformPackageOrder,
   lines: readonly PlatformPackageLine[],
   nextCode: () => Promise<string>,
 ): Promise<PlatformPackagesResult & { cancelled: ('cancelled' | 'needs_open' | 'handed_over')[] }> {
+  const unlocked = await readOrderPackages(order.id);
+  const previewInput = resplitInput(unlocked, lines, groupsOf(unlocked, lines));
+  const allocationLocked = pendingSteps(planResplit(previewInput.packages, previewInput.groups), unlocked).length > 0;
+  if (allocationLocked) await takeAllocationLock(requireCompanyId('syncPlatformPackages'));
+
   const existing = await lockOrderPackages(order.id);
-  const owner = new Map(existing.flatMap((p) => p.lines.map((l) => [l.orderLineId, p] as const)));
+  // Gom nhóm trước khi ghi huỷ dòng: món huỷ dòng tính bằng luật thuần trên dòng chưa đổi.
+  const groups = groupsOf(existing, lines);
   const result = {
     changed: false,
     resplit: false,
@@ -497,49 +615,79 @@ export async function syncPlatformPackages(
   // Huỷ dòng xét theo từng kiện, trước khi gom nhóm (spec 205 D16): món huỷ có thể không còn mang mã kiện sàn và rơi vào
   // nhóm riêng chỉ gồm món huỷ, nhóm đó sẽ huỷ cả kiện dù kiện còn món sống. Kiện huỷ hết món thì để đường huỷ cả kiện.
   const cancelledIds = new Set(lines.filter(isLineCancel).map((l) => l.orderLineId));
-  const handled = new Set<string>();
   for (const pkg of existing) {
     const plan = planLineCancel(pkg.status, pkg.lines, cancelledIds);
     if (plan.kind === 'none' || plan.kind === 'whole') continue;
     if (plan.kind === 'drop') {
       await dropLines(pkg, plan.lines);
-      for (const l of plan.lines) owner.delete(l.orderLineId);
       result.changed = true;
     } else if (plan.fresh.length) {
       await markPendingDrop(pkg, plan.fresh);
       result.changed = true;
     }
-    for (const l of plan.lines) {
-      handled.add(l.orderLineId);
-      result.cancelledLines.push(l.orderLineId);
-    }
-  }
-
-  // Món chưa có mã kiện sàn mà đã nằm trong kiện app thì theo kiện đó (spec 205 D10): sàn chưa nói gì về cách chia, nên
-  // cách chia của app (tách kiện) là đúng, không phải "sàn chia lại". Món có mã sàn vẫn gom theo mã như cũ. Món vừa xử
-  // lý huỷ dòng, và món đã huỷ ở lượt trước không còn kiện nào chứa (D18), không vào nhóm.
-  const groups = new Map<string, { code: string; lines: PlatformPackageLine[] }>();
-  for (const l of lines) {
-    if (handled.has(l.orderLineId) || (l.alreadyCancelled && !owner.has(l.orderLineId))) continue;
-    const key = l.packageCode || `\u0000${owner.get(l.orderLineId)?.id ?? ''}`;
-    const group = groups.get(key) ?? { code: l.packageCode || '', lines: [] };
-    group.lines.push(l);
-    groups.set(key, group);
+    result.cancelledLines.push(...plan.lines.map((l) => l.orderLineId));
   }
 
   const events = order.packageEvents ?? [];
+  const journeyOf = (code: string, group: readonly PlatformPackageLine[]) =>
+    // Hành trình kiện của nhóm (spec 199c §5.4): khớp mã kiện sàn rồi mã vận đơn, một lần mỗi nhóm; mốc thiếu/lai `now`.
+    journeyTimes(eventsOf(events, { platformPackageCode: code || null, trackingCode: group.find((l) => l.trackingCode)?.trackingCode ?? null }), new Date());
+
+  // Kế hoạch chia lại trên kiện đã khoá, sau huỷ dòng.
+  const input = resplitInput(existing, lines, groups);
+  const considered = new Set(input.groups.map((g) => g.code));
+  let plan = planResplit(input.packages, input.groups);
+  let steps = pendingSteps(plan, existing);
+  if (steps.length && !allocationLocked) {
+    // Chưa giữ advisory (thứ tự khoá: không lấy advisory sau khi đã khoá kiện): chỉ nhận nhóm khớp theo tập, nhóm khác bỏ
+    // qua tới lượt sau, không bật cờ.
+    logger.warn({ orderId: order.id, steps: steps.map((s) => s.kind) }, 'chia lại kiện để lượt sau');
+    const targets = new Map(
+      [...plan.targets].filter(([code, id]) => {
+        const pkg = input.packages.find((p) => p.id === id)!;
+        return matchesBySet(pkg, input.groups.find((g) => g.code === code)!);
+      }),
+    );
+    plan = { targets, steps: [], resplit: false };
+    steps = [];
+  }
+  if (plan.resplit) logger.warn({ orderId: order.id, steps: steps.map((s) => s.kind) }, 'sàn chia lại kiện, app không tự xử lý được');
+  let created = new Map<string, PackageRow>();
+  if (steps.length) {
+    const applied = await applyResplit(order, plan, existing, async (code, replacesPackageId, awaitingOrderLineIds) => {
+      const group = groups.get(code)!.lines;
+      return createPackage(order, await nextCode(), groupStatus(group)!, group, journeyOf(code, group), {
+        replacesPackageId,
+        replacesCode: existing.find((p) => p.id === replacesPackageId)!.code,
+        awaiting: new Set(awaitingOrderLineIds),
+      });
+    });
+    created = applied.created;
+    if (applied.releasedVariantIds.length) await requestAllocation(applied.releasedVariantIds);
+    logger.info({ orderId: order.id, steps: steps.map((s) => s.kind) }, 'áp kế hoạch sàn chia lại kiện');
+    result.changed = true;
+  }
+  result.resplit ||= plan.resplit;
+
+  const owner = ownersOf(existing);
   const touched = new Set<string>();
   for (const { code, lines: group } of groups.values()) {
     const status = groupStatus(group);
-    // Hành trình kiện của nhóm (spec 199c §5.4): khớp mã kiện sàn rồi mã vận đơn, một lần mỗi nhóm; mốc thiếu/lai `now`.
-    const journey = journeyTimes(eventsOf(events, { platformPackageCode: code || null, trackingCode: group.find((l) => l.trackingCode)?.trackingCode ?? null }), new Date());
-    let pkg = (code && existing.find((p) => p.platformPackageCode === code)) || owner.get(group[0]!.orderLineId);
+    const journey = journeyOf(code, group);
+    let pkg: PackageRow | undefined;
+    if (considered.has(code)) {
+      // Nhóm xét chia lại: kiện nhận nhóm theo kế hoạch, hoặc kiện vừa lập; không có (bị cờ, để lượt sau) thì bỏ qua.
+      const target = plan.targets.get(code);
+      pkg = target ? existing.find((p) => p.id === target) : created.get(code);
+      if (!pkg) continue;
+    } else pkg = (code && existing.find((p) => p.platformPackageCode === code)) || owner.get(group[0]!.orderLineId);
     if (pkg && code && pkg.platformPackageCode === null) {
       await updatePackage(pkg.id, { platformPackageCode: code });
       pkg.platformPackageCode = code;
       result.changed = true;
     }
     if (!pkg) {
+      // Nhóm `cancelled` hay trạng thái lạ có món đang thuộc kiện khác (nhóm xét chia lại đã đi kế hoạch ở trên).
       if (group.some((l) => owner.has(l.orderLineId))) {
         result.resplit = true;
         continue;
@@ -562,7 +710,6 @@ export async function syncPlatformPackages(
       } else if (allCancelled(group)) result.cancelled.push('handed_over');
       continue;
     }
-    if (group.some((l) => owner.get(l.orderLineId) && owner.get(l.orderLineId) !== pkg)) result.resplit = true;
     touched.add(pkg.id);
     const tracking = group.find((l) => l.trackingCode)?.trackingCode ?? null;
     if (tracking && tracking !== pkg.trackingCode) {
@@ -587,6 +734,10 @@ export async function syncPlatformPackages(
       if (outcome !== 'handed_over') result.cancelledLines.push(...pkg.lines.map((l) => l.orderLineId));
       if (outcome === 'needs_open' && (await markWholePendingDrop(pkg))) result.changed = true;
     } else {
+      // Kiện chờ thay mà sàn báo rời kho trước khi kho dỡ kiện cũ: nhận phần giữ của kiện cũ trước khi áp (spec #238 §5.6).
+      if (status !== 'pending' && isHandedOver(deliveryTarget(status, { firstSeen: false, storeOnly: false })) && (await takeOverReplaced(order, pkg, existing))) {
+        result.changed = true;
+      }
       const applied = await applyStatus(order, pkg, status, journey);
       if (applied.changed) result.changed = true;
       if (applied.revived) result.revived = true;
@@ -594,6 +745,20 @@ export async function syncPlatformPackages(
       // sàn huỷ để sales bật cờ `platform_cancelled`, không huỷ đơn (spec 199c §5.4, 25 §8.2).
       if (allCancelled(group)) result.cancelled.push('handed_over');
     }
+  }
+
+  // Kiện đã đóng chờ mở mà không nhóm nào trên sàn trỏ tới (mọi món đã sang kiện thay), mọi dòng chờ bỏ và sàn đã huỷ mọi
+  // món của nó: như sàn huỷ cả kiện đã đóng (D24, `cancel` thắng mục đích khác) và báo `needs_open` để đơn huỷ hết món ở
+  // Đang huỷ tới khi kho dỡ kiện (`25` §8.2); mở ra là `open_cancel`, khép đơn.
+  for (const pkg of existing) {
+    if (touched.has(pkg.id) || !isSealed(pkg.status) || !pkg.needsOpen || !pkg.lines.length) continue;
+    if (!pkg.lines.every((l) => l.pendingDropQty > 0 && cancelledIds.has(l.orderLineId))) continue;
+    if (pkg.openPurpose !== 'cancel') {
+      await updatePackage(pkg.id, { openPurpose: 'cancel' });
+      pkg.openPurpose = 'cancel';
+      result.changed = true;
+    }
+    result.cancelled.push('needs_open');
   }
   return { ...result, statuses: existing.map((p) => p.status) };
 }

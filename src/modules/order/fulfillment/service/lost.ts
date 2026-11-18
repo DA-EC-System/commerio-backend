@@ -10,6 +10,7 @@ import { isUuid } from '../../../../shared/uuid.ts';
 import { canReportLost, isSealed, packageMachine, type PackageStatus } from '../domain/package.ts';
 import { lockPackage, packageShopOf, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
+import { requestAllocation } from './allocation.ts';
 import { settleHandover } from './handover-stock.ts';
 import { type FulfillmentContext, getPackage, orderRefsLookupOf, stockHoldLookupOf } from './packages.ts';
 import type { PackageDetail } from './packing.ts';
@@ -131,7 +132,12 @@ export async function confirmLost(ctx: FulfillmentContext, actor: Actor, id: str
       audit: { entityType: 'order.packages', label: pkg.code },
     });
     // Trừ mọi dòng đã ghép SKU một lần (kể cả dòng chờ bỏ, D20); `settleHandover` phát `package_shipped`.
-    if (action === 'lose_on_unload') await settleHandover(pkg, { actorId: actor.accountId, mode: awaiting ? 'defer' : 'deduct' });
+    if (action === 'lose_on_unload') {
+      await settleHandover(pkg, { actorId: actor.accountId, mode: awaiting ? 'defer' : 'deduct' });
+      // Kiện cũ chờ dỡ để chia lại bị mất (spec #238 D20, AC 11c): kiện thay hết chờ thay (D9 chỉ xét kiện đang đóng),
+      // thành ứng viên phân hàng như kiện `backordered` thường; xếp lượt cho SKU của dòng chờ bỏ.
+      await requestAllocation(pkg.lines.flatMap((l) => (l.variantId && l.pendingDropQty > 0 ? [l.variantId] : [])));
+    }
     await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: pkg.orderId, payload: { packageId: pkg.id, orderId: pkg.orderId, from, to } });
     await publishEvent({
       type: 'fulfillment.package_lost',

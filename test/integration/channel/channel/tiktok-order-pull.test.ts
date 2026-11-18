@@ -95,7 +95,7 @@ const packagesOf = async (externalOrderId: string) =>
   (
     await testPool().query(
       `select p.platform_package_code as code from "order".packages p join "order".orders o on o.id = p.order_id
-        where o.shop_id = $1 and o.external_order_id = $2 order by p.platform_package_code nulls first`,
+        where o.shop_id = $1 and o.external_order_id = $2 and p.status <> 'cancelled' order by p.platform_package_code nulls first`,
       [shopId, externalOrderId],
     )
   ).rows.map((r) => r.code as string | null);
@@ -130,13 +130,18 @@ describe('kéo đơn TikTok qua order-pull (#221)', () => {
     expect(shop.rows[0].last_order_sync_at).toEqual(new Date('2026-11-06T10:05:00Z'));
   });
 
-  // Bỏ qua tới #238 (Khang, sàn chia lại kiện): hiện `syncPlatformPackages` gán mọi nhóm mã kiện mới về kiện cũ đang giữ
-  // món (`owner`), không tạo kiện mới cũng không đánh dấu cần xử lý, nên kiện vẫn mang mã PK-1 đã mất trên sàn. Gọi thật
-  // 07/11/2026 (đơn 587022741397144586): tách kiện làm `line_items[].package_id` đổi và `update_time` của đơn tăng.
-  it.skip('sàn tách kiện theo SKU (package_id của món đổi): app theo kiện mới của sàn', async () => {
+  // Gọi thật 07/11/2026 (đơn 587022741397144586): tách kiện làm `line_items[].package_id` đổi và `update_time` của đơn
+  // tăng. #238 PR 3 (AC13b): app huỷ kiện cũ PK-1, lập kiện theo hai mã mới của sàn.
+  it('sàn tách kiện theo SKU (package_id của món đổi): app theo kiện mới của sàn', async () => {
     orders = [order('T1', 'AWAITING_SHIPMENT', '2026-11-06T10:06:00Z', sku, 'PK-A', 'PK-B')];
     await auth(request(testApp()).post(`/api/v1/channel/shops/${shopId}/orders/pull`));
     expect(await packagesOf('T1')).toEqual(['PK-A', 'PK-B']);
+    const old = await testPool().query(
+      `select p.status from "order".packages p join "order".orders o on o.id = p.order_id
+        where o.shop_id = $1 and o.external_order_id = 'T1' and p.platform_package_code = 'PK-1'`,
+      [shopId],
+    );
+    expect(old.rows).toEqual([{ status: 'cancelled' }]);
   });
 
   it('lượt đơn còn mở nhận đơn đặt trước mốc đang chờ giao, bỏ đơn đã giao', async () => {

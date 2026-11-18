@@ -68,15 +68,24 @@ describe('đồng bộ giữ cách chia kiện của app (spec 205 D10)', () => 
     expect((await orderOf(orderId)).needs_attention).toBe(false);
   });
 
-  it('món của hai kiện app về chung một mã sàn vẫn bật Sàn chia lại kiện', async () => {
+  it('món của hai kiện app về chung một mã sàn mới: hai kiện cũ huỷ, một kiện mới theo sàn, đơn không cờ (#238 D22)', async () => {
     const v = await setup(10);
     const o = unpacked(remote(v, { lines: 2 }));
     const { orderId, packageId } = await ingest(v.companyId, o);
-    await splitByHand(packageId, o.lines[1]!.externalLineId);
+    const second = await splitByHand(packageId, o.lines[1]!.externalLineId);
     const code = `FP-Y-${randomUUID().slice(0, 8)}`;
 
     await ingest(v.companyId, { ...o, lines: o.lines.map((l) => ({ ...l, packageCode: code })) });
 
-    expect(await orderOf(orderId)).toEqual({ needs_attention: true, attention_note: 'Sàn chia lại kiện khác lần trước' });
+    expect(await packageOf(packageId)).toEqual({ status: 'cancelled', platform_package_code: null });
+    expect(await packageOf(second)).toEqual({ status: 'cancelled', platform_package_code: null });
+    const { rows } = await testPool().query<{ status: string; platform_package_code: string; n: number }>(
+      `select p.status, p.platform_package_code, count(pl.id)::int as n from "order".packages p
+         join "order".package_lines pl on pl.package_id = p.id
+        where p.order_id = $1 and p.status <> 'cancelled' group by p.id`,
+      [orderId],
+    );
+    expect(rows).toEqual([{ status: 'reserved', platform_package_code: code, n: 2 }]);
+    expect((await orderOf(orderId)).needs_attention).toBe(false);
   });
 });

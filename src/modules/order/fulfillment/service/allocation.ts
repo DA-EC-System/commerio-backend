@@ -11,6 +11,7 @@ import { packageMachine, type PackageStatus } from '../domain/package.ts';
 import {
   allocationShops,
   lockAllocationCandidates,
+  type LockedAllocationCandidate,
   lockReclaimCandidates,
   lockSealedHolders,
   lockStocktakeFlagged,
@@ -141,24 +142,9 @@ export async function runAllocation(
   }
   const candidates = (await lockAllocationCandidates(skus, waiting)).filter((c) => !reclaimed.includes(c.id));
   if (candidates.length) {
-    const stock = await port.stockOf(unique(candidates.flatMap((c) => c.lines.map((l) => l.variantId))));
-    const available = new Map([...stock].map(([v, s]) => [v, s.available]));
-    for (const c of planAllocation(allocationQueue(candidates), available)) {
-      // Giao dịch khác có thể vừa lấy mất hàng: `reserve` là kết quả cuối, không đủ thì bỏ qua kiện này.
-      if (!(await port.reserve(c.id, c.lines)).reserved) continue;
-      await markLinesReserved(c.lineIds);
-      // Giữ được thì cờ kiểm kê hết đúng: cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện cũ.
-      // Giờ DB cho `reserved_at` (một đồng hồ).
-      const clear = {
-        ...(c.openPurpose === 'stocktake' && CLEAR_OPEN),
-        ...(c.needsAttention && c.flagNote === DISMANTLE_NOTE && { needsAttention: false, flagNote: null }),
-      };
-      const reservedAt = sql`now()`;
-      if (c.status === 'backordered') await movePackage(c, 'backordered', 'hold', { reservedAt, ...clear });
-      else await updatePackage(c.id, { reservedAt, ...clear });
-      held.push(c.id);
-      for (const l of c.lines) touched.add(l.variantId);
-    }
+    const step = await holdCandidates(candidates);
+    held.push(...step.held);
+    for (const v of step.touched) touched.add(v);
     if (opts.opening) {
       for (const c of candidates) {
         if (c.status === 'backordered' || held.includes(c.id) || c.needsOpen) continue;
@@ -176,6 +162,54 @@ export async function runAllocation(
     payload: { variantIds, ...(opts.cause && { cause: opts.cause }) },
   });
   return { held, reclaimed, flagged, cleared, variantIds };
+}
+
+/**
+ * Bước giữ hàng của một lượt (spec 199b §5.3 bước 3), tách từ `runAllocation`; bên gọi đã giữ advisory và khoá ứng viên.
+ * Theo hàng đợi (`allocationQueue`), nguyên kiện; `reserve` là kết quả cuối (giao dịch khác có thể vừa lấy mất hàng).
+ * Kiện `backordered` → `reserved` (`hold`), kiện đã đóng giữ nguyên trạng thái; giữ được thì gỡ cờ kiểm kê (Cần mở
+ * `stocktake` và cờ dạng cũ `DISMANTLE_NOTE`); `reserved_at` giờ DB. Trả kiện giữ được và SKU của chúng.
+ */
+async function holdCandidates(candidates: LockedAllocationCandidate[]): Promise<{ held: string[]; touched: string[] }> {
+  const held: string[] = [];
+  const touched = new Set<string>();
+  if (!candidates.length) return { held, touched: [] };
+  const port = stockPort();
+  const variantIds = unique(candidates.flatMap((c) => c.lines.map((l) => l.variantId)));
+  const stock = variantIds.length ? await port.stockOf(variantIds) : new Map<string, { available: number }>();
+  const available = new Map([...stock].map(([v, s]) => [v, s.available]));
+  for (const c of planAllocation(allocationQueue(candidates), available)) {
+    // Giao dịch khác có thể vừa lấy mất hàng: `reserve` là kết quả cuối, không đủ thì bỏ qua kiện này.
+    if (!(await port.reserve(c.id, c.lines)).reserved) continue;
+    await markLinesReserved(c.lineIds);
+    // Giữ được thì cờ kiểm kê hết đúng: cờ Cần mở `stocktake`, và cờ dạng cũ (Cần xử lý `DISMANTLE_NOTE`) của kiện cũ.
+    // Giờ DB cho `reserved_at` (một đồng hồ).
+    const clear = {
+      ...(c.openPurpose === 'stocktake' && CLEAR_OPEN),
+      ...(c.needsAttention && c.flagNote === DISMANTLE_NOTE && { needsAttention: false, flagNote: null }),
+    };
+    const reservedAt = sql`now()`;
+    if (c.status === 'backordered') await movePackage(c, 'backordered', 'hold', { reservedAt, ...clear });
+    else await updatePackage(c.id, { reservedAt, ...clear });
+    held.push(c.id);
+    for (const l of c.lines) touched.add(l.variantId);
+  }
+  return { held, touched: [...touched] };
+}
+
+/**
+ * Kho mở kiện cũ chờ dỡ để chia lại (spec #238 D26): giữ ngay cho kiện của cùng đơn vừa hết chờ thay, trước mọi kiện
+ * `backordered` khác (`25` §8.1 bước 3), bằng chung bước giữ hàng của lượt phân hàng, chỉ ứng viên của đơn đó có dòng
+ * thuộc `variantIds` (SKU vừa nhả) hoặc toàn dòng "không quản tồn". Bên gọi đã giữ advisory phân hàng (trước khi khoá
+ * kiện), rồi xếp lượt cho phần dư; không phát `allocation_done` (lượt xếp sau phát). Bỏ gian hàng chờ kiểm kê đầu kỳ.
+ */
+export async function holdOrderReplacements(ctx: AllocationContext, orderId: string, variantIds: readonly string[]): Promise<string[]> {
+  const skus = unique(variantIds);
+  const shopIds = await allocationShops(skus);
+  const waiting = shopIds.length ? [...(await stockHoldLookupOf(ctx)(shopIds))] : [];
+  const { held } = await holdCandidates(await lockAllocationCandidates(skus, waiting, { orderId }));
+  if (held.length) logger.info({ orderId, held }, 'giữ hàng cho kiện thay khi mở kiện cũ');
+  return held;
 }
 
 /**

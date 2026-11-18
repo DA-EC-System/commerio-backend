@@ -29,6 +29,8 @@ export async function insertPackage(input: {
   lostSource?: 'marketplace';
   /** Kiện tách từ kiện `reserved` mang lúc giữ của kiện cũ (spec 205 D4). */
   reservedAt?: Date | null;
+  /** Kiện lập khi sàn chia lại kiện: kiện cũ nó thay (spec #238 §5.6), chỉ để truy vết. */
+  replacesPackageId?: string;
 } & Partial<PackageShipping>): Promise<string> {
   const [row] = await getDb()
     .insert(packages)
@@ -85,17 +87,34 @@ function lostColumnRules(patch: { status?: PackageStatus; needsOpen?: boolean })
   return {};
 }
 
+/** Cần xử lý khi sàn báo kiện rời kho lúc còn chờ dỡ kiện về kệ (spec #238 D27). */
+export const LEFT_WHILE_AWAITING_OPEN_NOTE = 'Sàn báo kiện rời kho khi còn chờ dỡ kiện về kệ';
+
 /**
- * Cờ Cần mở vì kiểm kê (`open_purpose = 'stocktake'`, spec #238 §5.5) chỉ có nghĩa khi kiện còn đóng trong kho: kiện rời
- * nhóm đã đóng (bàn giao, sàn báo rời kho, huỷ) mà bên gọi không ghi cờ thì gỡ, để kiện không nằm mãi trong tab Cần mở.
- * Mục đích khác (`cancel`, `edit`, `resplit`) giữ nguyên. Trong `UPDATE … SET`, cột bên phải là giá trị cũ.
+ * Cờ Cần mở chỉ có nghĩa khi kiện còn đóng trong kho (spec #238 §5.5, D27): kiện rời nhóm đã đóng (sau D28 chỉ còn đường
+ * sàn báo rời kho) mà bên gọi không ghi cờ thì gỡ, để kiện không nằm mãi trong tab Cần mở. Mục đích `cancel`, `edit`,
+ * `resplit` thì bật Cần xử lý (hộp đi theo sàn mà kho chưa dỡ); kiện đã có Cần xử lý thì giữ ghi chú cũ. `stocktake` gỡ
+ * im. Trong `UPDATE … SET`, cột bên phải là giá trị cũ; bên gọi ghi `needsAttention`/`flagNote` tường minh thì thắng.
  */
-function stocktakeFlagRules(patch: { status?: PackageStatus; needsOpen?: boolean; openPurpose?: unknown }) {
+function openFlagRules(patch: { status?: PackageStatus; needsOpen?: boolean; openPurpose?: unknown; needsAttention?: boolean; flagNote?: unknown }) {
   if (patch.status === undefined || isSealed(patch.status) || patch.needsOpen !== undefined || patch.openPurpose !== undefined) return {};
+  const attention = sql`${packages.openPurpose} in ('cancel', 'edit', 'resplit')`;
   return {
-    needsOpen: sql`case when ${packages.openPurpose} = 'stocktake' then false else ${packages.needsOpen} end`,
-    openPurpose: sql`case when ${packages.openPurpose} = 'stocktake' then null else ${packages.openPurpose} end`,
+    needsOpen: sql`false`,
+    openPurpose: sql`null`,
+    needsAttention: sql`case when ${attention} then true else ${packages.needsAttention} end`,
+    flagNote: sql`case when ${attention} and not ${packages.needsAttention} then ${LEFT_WHILE_AWAITING_OPEN_NOTE}::text else ${packages.flagNote} end`,
   };
+}
+
+/**
+ * Giữ vận đơn sau khi mở kiện `awaiting_pickup` (spec #238 D25) chỉ có nghĩa tới khi kiện báo sẵn sàng lại: kiện sang
+ * trạng thái ngoài `backordered`, `reserved`, `packed` mà bên gọi không ghi cột này thì tắt (CHECK `packages_waybill_kept`
+ * không đổi vì mã, vận đơn giữ nguyên).
+ */
+function waybillRules(patch: { status?: PackageStatus; waybillKept?: boolean }) {
+  if (patch.status === undefined || patch.waybillKept !== undefined) return {};
+  return patch.status === 'backordered' || patch.status === 'reserved' || patch.status === 'packed' ? {} : { waybillKept: false };
 }
 
 export async function updatePackage(
@@ -122,13 +141,21 @@ export async function updatePackage(
     deliveredAt: Date;
     reservedAt: Date | SQL | null;
     deliveryPostedAt: Date | SQL | null;
+    waybillKept: boolean;
   }> &
     Partial<PackageShipping> &
     Partial<LostColumns>,
 ): Promise<void> {
   await getDb()
     .update(packages)
-    .set({ ...lostColumnRules(patch), ...stocktakeFlagRules(patch), ...patch, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
+    .set({
+      ...lostColumnRules(patch),
+      ...openFlagRules(patch),
+      ...waybillRules(patch),
+      ...patch,
+      version: sql`${packages.version} + 1`,
+      updatedAt: sql`now()`,
+    })
     .where(eq(packages.id, id));
 }
 
@@ -205,7 +232,7 @@ export async function packageShopOf(id: string): Promise<{ shopId: string | null
 }
 
 /** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
-export async function lockPackage(id: string): Promise<HandoverPackage | undefined> {
+export async function lockPackage(id: string): Promise<(Omit<HandoverPackage, 'lines'> & { lines: PackageLineRow[] }) | undefined> {
   const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
   if (!row) return undefined;
   return { ...row, lines: (await planLinesOf([row.id])).get(row.id)! };
@@ -242,20 +269,25 @@ export interface PackageRow extends HandoverPackage {
   /** Mục đích mở kiện (`cancel`, `edit`, `resplit`, `stocktake`); null khi không chờ mở. */
   openPurpose: OpenPurpose | null;
   labelError: boolean;
+  /** Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6). */
+  replacesPackageId: string | null;
+  /** Đã mở kiện `awaiting_pickup`, giữ vận đơn: đóng gói, báo sẵn sàng lại không gọi sàn (D25). */
+  waybillKept: boolean;
   shipping: PackageShipping;
   lines: PackageLineRow[];
 }
 
-/** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
-export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> {
+async function orderPackages(orderId: string, lock: boolean): Promise<PackageRow[]> {
   const db = getDb();
-  const rows = await db
+  const query = db
     .select({
       ...handoverColumns,
       platformPackageCode: packages.platformPackageCode,
       trackingCode: packages.trackingCode,
       openPurpose: packages.openPurpose,
       labelError: packages.labelError,
+      replacesPackageId: packages.replacesPackageId,
+      waybillKept: packages.waybillKept,
       shipping: {
         shipmentProvider: packages.shipmentProvider,
         shippingProviderType: packages.shippingProviderType,
@@ -265,11 +297,24 @@ export async function lockOrderPackages(orderId: string): Promise<PackageRow[]> 
     })
     .from(packages)
     .where(eq(packages.orderId, orderId))
-    .orderBy(asc(packages.code))
-    .for('update');
+    .orderBy(asc(packages.code));
+  const rows = lock ? await query.for('update') : await query;
   if (!rows.length) return [];
   const lines = await planLinesOf(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, lines: lines.get(r.id)! }));
+}
+
+/** Các kiện của đơn kèm dòng, khoá dòng kiện tới hết giao dịch. */
+export function lockOrderPackages(orderId: string): Promise<PackageRow[]> {
+  return orderPackages(orderId, true);
+}
+
+/**
+ * Như `lockOrderPackages` nhưng không khoá: lượt kéo đơn xem trước kế hoạch chia lại kiện để biết có phải lấy khoá
+ * advisory phân hàng trước khi khoá kiện không (spec #238 §5.6 "Khoá").
+ */
+export function readOrderPackages(orderId: string): Promise<PackageRow[]> {
+  return orderPackages(orderId, false);
 }
 
 /**
@@ -315,6 +360,31 @@ export async function markLinesReserved(lineIds: readonly string[]): Promise<voi
     .update(packageLines)
     .set({ reservedQty: sql`${packageLines.quantity}`, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
     .where(inArray(packageLines.id, [...lineIds]));
+}
+
+/**
+ * Kiện thay được lấy trước khi kho dỡ kiện cũ (spec #238 §5.6): dòng đích nhận `reserved_qty` của dòng nguồn (dòng chờ
+ * bỏ cùng dòng đơn ở kiện cũ), rồi xoá dòng nguồn. Không đổi tổng đang giữ theo SKU nên không gọi cổng tồn. Một câu
+ * update, một câu delete; bên gọi đã khoá cả hai kiện.
+ */
+export async function moveReservations(pairs: readonly { fromLineId: string; toLineId: string }[]): Promise<void> {
+  if (!pairs.length) return;
+  const values = sql.join(
+    pairs.map((p) => sql`(${p.fromLineId}::uuid, ${p.toLineId}::uuid)`),
+    sql`, `,
+  );
+  await getDb().execute(sql`
+    update ${packageLines} as t set reserved_qty = f.reserved_qty, version = t.version + 1, updated_at = now()
+    from (values ${values}) as v(from_id, to_id) join ${packageLines} as f on f.id = v.from_id
+    where t.id = v.to_id`);
+  await getDb()
+    .delete(packageLines)
+    .where(
+      inArray(
+        packageLines.id,
+        pairs.map((p) => p.fromLineId),
+      ),
+    );
 }
 
 /** Dòng vừa trừ tồn: chốt giá vốn, `stock_deducted`, hết giữ. Một câu cho mọi dòng. */
@@ -364,11 +434,21 @@ export async function setReserved(packageId: string, reserved: boolean): Promise
 
 export type PackageViewRow = typeof packages.$inferSelect & {
   lines: { variantId: string | null; orderLineId: string; quantity: number }[];
+  /** Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6); null khi không phải kiện thay. */
+  replaces: { id: string; code: string; status: PackageStatus } | null;
 };
 
-/** Gắn dòng cho các kiện đã đọc (một câu), giữ thứ tự kiện. */
+/**
+ * Gắn dòng cho các kiện đã đọc (một câu), giữ thứ tự kiện; kiện thay gắn thêm mã, trạng thái của kiện cũ (một câu, chỉ
+ * khi có kiện thay). Mọi đường dựng `PackageViewRow` đi qua đây.
+ */
 export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): Promise<PackageViewRow[]> {
   if (!rows.length) return [];
+  const replacedIds = [...new Set(rows.flatMap((r) => (r.replacesPackageId ? [r.replacesPackageId] : [])))];
+  const replaced = replacedIds.length
+    ? await getDb().select({ id: packages.id, code: packages.code, status: packages.status }).from(packages).where(inArray(packages.id, replacedIds))
+    : [];
+  const replacedById = new Map(replaced.map((r) => [r.id, r]));
   const lines = await getDb()
     .select({ packageId: packageLines.packageId, variantId: packageLines.variantId, orderLineId: packageLines.orderLineId, quantity: packageLines.quantity })
     .from(packageLines)
@@ -379,7 +459,11 @@ export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): P
       ),
     )
     .orderBy(asc(packageLines.createdAt), asc(packageLines.id));
-  return rows.map((r) => ({ ...r, lines: lines.filter((l) => l.packageId === r.id) }));
+  return rows.map((r) => ({
+    ...r,
+    lines: lines.filter((l) => l.packageId === r.id),
+    replaces: (r.replacesPackageId && replacedById.get(r.replacesPackageId)) || null,
+  }));
 }
 
 /** Kiện của các đơn kèm dòng, cũ trước; để đọc, không khoá. */

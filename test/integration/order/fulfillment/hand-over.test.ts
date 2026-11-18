@@ -54,6 +54,29 @@ describe('POST /fulfillment/packages/hand-over (21 §19.2)', () => {
     }
   });
 
+  it('#238 D28: kiện awaiting_pickup đang có cờ Cần mở → failed awaiting_open, kiện và tồn không đổi, kiện khác trong lô vẫn bàn giao', async () => {
+    const ok = await awaiting();
+    const blocked = await seedPackage(company.companyId, {
+      status: 'awaiting_pickup',
+      needsOpen: true,
+      openPurpose: 'edit',
+      lines: [{ variantId, quantity: 1, reserved: true }],
+    });
+    const version = await versionOf(blocked.packageId);
+
+    const res = await handOver([
+      { id: blocked.packageId, version },
+      { id: ok.packageId, version: await versionOf(ok.packageId) },
+    ]);
+
+    expect(res.status).toBe(200);
+    const body = HandOverResult.parse(res.body);
+    expect(body.failed).toEqual([{ packageId: blocked.packageId, code: 'awaiting_open', detail: expect.any(String) }]);
+    expect(body.handedOver.map((h) => h.id)).toEqual([ok.packageId]);
+    expect(await packageRow(blocked.packageId)).toMatchObject({ status: 'awaiting_pickup', needs_open: true, version });
+    expect(await packageDocuments(blocked.packageId)).toEqual([]);
+  });
+
   it('AC2 US-DH-08.2: lô có kiện sai version, kiện reserved, kiện của công ty khác → failed đúng mã, kiện còn lại bàn giao', async () => {
     const ok = await awaiting();
     const stale = await awaiting();

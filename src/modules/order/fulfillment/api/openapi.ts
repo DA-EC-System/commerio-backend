@@ -82,8 +82,9 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     '`order_not_processing`, `package_group_not_ready`, `package_status_not_allowed`, `item_not_packable`',
     '`scan_mismatch` tại `errors["lines.<variantId>"]`, `marketplace_unsupported`');
   registerPackingAction(registry, 'ready', ReadyBody, 'Báo kiện sẵn sàng giao',
-    '`self_delivery`, `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`', '`marketplace_unsupported`');
-  registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói',
+    '`self_delivery`, `awaiting_open` (kiện đang có cờ Cần mở hay kiện chờ thay, #238), `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`',
+    '`marketplace_unsupported`');
+  registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói (kiện `awaiting_pickup` chỉ khi có cờ Cần mở, giữ vận đơn)',
     '`shop_awaiting_stocktake`, `package_status_not_allowed`', '`insufficient_stock`, `marketplace_unsupported`');
   registry.registerPath({
     method: 'post',
@@ -121,7 +122,7 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     path: '/packages/hand-over',
     summary: 'Kho quét bàn giao kiện theo lô (§19.2)',
     description:
-      'Cần `fulfillment.order.process`. 1–50 kiện, mỗi kiện một lần; mỗi kiện một giao dịch, kiện lỗi vào `failed` với `code`: `not_found`, `version_conflict`, `already_handed_over`, `invalid_transition`, `internal_error`. Kiện bàn giao sang `in_transit`, trừ tồn một lần, có phiếu `XK`.',
+      'Cần `fulfillment.order.process`. 1–50 kiện, mỗi kiện một lần; mỗi kiện một giao dịch, kiện lỗi vào `failed` với `code`: `not_found`, `version_conflict`, `already_handed_over`, `invalid_transition`, `awaiting_open` (kiện đang có cờ Cần mở hay kiện chờ thay, #238), `internal_error`. Kiện bàn giao sang `in_transit`, trừ tồn một lần, có phiếu `XK`.',
     security: bearer,
     request: { body: { content: { 'application/json': { schema: HandOverBody } } } },
     responses: { 200: { description: 'Kết quả từng kiện', ...json(HandOverResult) }, ...auth, 422: problemResponse('`validation_failed`: body rỗng, quá 50, id trùng hoặc sai dạng') },

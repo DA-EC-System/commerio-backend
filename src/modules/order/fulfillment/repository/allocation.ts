@@ -32,17 +32,52 @@ const hasPendingDrop = sql`exists (select 1 from ${packageLines} where ${package
 const stocktakeAutoClearable = sql`(${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop} and ${packages.lostReportedBy} is null)`;
 
 /**
+ * Kiện chờ thay (spec #238 §5.6, D9): có dòng mà cùng dòng đơn đang có dòng chờ bỏ ở kiện khác đang đóng. Suy ra, không
+ * lưu cờ: kiện cũ mở xong, bị xác nhận mất, hay rời kho thì kiện thay tự thành ứng viên. Tra theo index
+ * `package_lines(order_line_id)`.
+ */
+const awaitingReplacement = sql`exists (select 1 from ${packageLines} nl
+  join ${packageLines} ol on ol.order_line_id = nl.order_line_id and ol.package_id <> nl.package_id and ol.pending_drop_qty > 0
+  join ${packages} op on op.id = ol.package_id and op.status in ('packed', 'awaiting_pickup')
+  where nl.package_id = ${packages.id})`;
+
+/**
+ * Kiện còn là kiện chờ thay trong `ids` (cùng điều kiện với lượt phân hàng): chưa báo sẵn sàng, chưa quét bàn giao được
+ * vì hàng của nó còn trong kiện cũ chờ dỡ (spec #238 D9, D28; review #393). Đọc không khoá: kiện cũ mở xong thì lần sau
+ * qua; một kiện đã có không thể thành kiện chờ thay về sau (kiện thay chỉ sinh lúc lập).
+ */
+export async function awaitingReplacementIds(ids: readonly string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const rows = await getDb().select({ id: packages.id }).from(packages).where(and(inArray(packages.id, [...ids]), awaitingReplacement));
+  return rows.map((r) => r.id);
+}
+
+/** Trạng thái ứng viên giữ hàng: kiện `backordered`, hay kiện đã đóng chưa giữ dòng nào (spec 199b §5.2, 237 P2). */
+const candidateStatus = sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
+       and not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.reservedQty} > 0)))`;
+
+/**
+ * Kiện thay đã đóng (sàn báo nhóm mới đã đóng gói, D23) còn giữ một phần (dòng từ kiện chưa đóng, review #393) và còn dòng
+ * có biến thể chưa giữ: chỉ bước giữ hàng khi kho mở kiện cũ (`holdOrderReplacements`, D26) xét, để phần chờ thay được giữ
+ * như kiện thay chưa đóng. Lượt phân hàng chung không xét (kiện đã đóng giữ một phần đi theo luật P2 của spec 237).
+ */
+const sealedReplacement = sql`(${packages.status} in ('packed', 'awaiting_pickup') and ${packages.replacesPackageId} is not null
+       and exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
+         and ${packageLines.variantId} is not null and ${packageLines.reservedQty} = 0))`;
+
+/**
  * Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). Kiện chờ mở vì kiểm kê (`stocktake`)
  * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5); trừ khi kiện có dòng chờ bỏ hay báo thất lạc treo.
+ * Kiện chờ thay không là ứng viên: hàng của nó còn nằm trong kiện cũ chờ dỡ.
  */
-const candidateWhere = and(
-  sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
-       and not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.reservedQty} > 0)))`,
+const candidateRest = and(
   sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id}
        and ${packageLines.variantId} is null and not ${packageLines.stockUntracked})`,
   sql`(${packages.needsOpen} = false or ${stocktakeAutoClearable})`,
   sql`${orderStatus} <> 'cancelled'`,
+  sql`not ${awaitingReplacement}`,
 );
+const candidateWhere = and(candidateStatus, candidateRest);
 
 /**
  * SKU còn liên quan tới phân hàng (lượt `{ all: true }`): của kiện đang giữ (`reserved`, và kiện đã đóng để lượt do phiếu
@@ -66,6 +101,11 @@ export async function variantsInPlay(): Promise<string[]> {
 const variantLines = <T extends { variantId: string | null }>(lines: T[]) => lines.filter((l) => l.variantId) as T[];
 const linesOf = (lines: { variantId: string | null; quantity: number }[]) =>
   variantLines(lines).map((l) => ({ variantId: l.variantId!, quantity: l.quantity }));
+/**
+ * Phần còn phải giữ của ứng viên: dòng có biến thể chưa giữ. Ứng viên thường chưa giữ dòng nào; kiện thay giữ một phần
+ * (dòng từ kiện chưa đóng giữ ngay lúc lập, review #393) chỉ giữ thêm phần chờ thay, không giữ trùng.
+ */
+const unheldOf = <T extends { variantId: string | null; reservedQty: number }>(lines: T[]) => variantLines(lines).filter((l) => l.reservedQty === 0);
 /** Phần đang giữ thật của kiện: chỉ dòng có `reserved_qty`, đúng số đó (không nhả phần giữ của kiện khác). */
 const heldOf = (lines: { variantId: string | null; reservedQty: number }[]) =>
   lines.filter((l) => l.variantId && l.reservedQty > 0).map((l) => ({ variantId: l.variantId!, quantity: l.reservedQty }));
@@ -157,12 +197,20 @@ export async function allocationShops(variantIds: readonly string[]): Promise<st
   return rows.map((r) => r.shopId!);
 }
 
-/** Ứng viên giữ hàng có dòng thuộc `variantIds`, trừ kiện của `excludeShopIds`; khoá `FOR UPDATE`. */
+/** Kiện không có dòng biến thể nào (toàn dòng "không quản tồn", spec 237 D10): giữ không qua cổng tồn. */
+const noVariantLine = sql`not exists (select 1 from ${packageLines} where ${packageLines.packageId} = ${packages.id} and ${packageLines.variantId} is not null)`;
+
+/**
+ * Ứng viên giữ hàng có dòng thuộc `variantIds`, trừ kiện của `excludeShopIds`; khoá `FOR UPDATE`. `orderId`: chỉ kiện của
+ * đơn đó (kiện vừa hết chờ thay khi kho mở kiện cũ, spec #238 D26), gồm cả kiện toàn dòng "không quản tồn" của đơn (không
+ * còn gì để giữ, lượt theo SKU không bao giờ tìm thấy nó).
+ */
 export async function lockAllocationCandidates(
   variantIds: readonly string[],
   excludeShopIds: readonly string[] = [],
+  opts: { orderId?: string } = {},
 ): Promise<LockedAllocationCandidate[]> {
-  if (!variantIds.length) return [];
+  if (!variantIds.length && !opts.orderId) return [];
   const rows = await getDb()
     .select({
       id: packages.id,
@@ -180,8 +228,10 @@ export async function lockAllocationCandidates(
     .from(packages)
     .where(
       and(
-        candidateWhere,
-        hasVariant(variantIds),
+        opts.orderId ? and(or(candidateStatus, sealedReplacement), candidateRest) : candidateWhere,
+        opts.orderId
+          ? and(eq(packages.orderId, opts.orderId), variantIds.length ? or(hasVariant(variantIds), noVariantLine) : noVariantLine)
+          : hasVariant(variantIds),
         excludeShopIds.length ? or(isNull(packages.shopId), notInArray(packages.shopId, [...excludeShopIds])) : undefined,
       ),
     )
@@ -190,8 +240,8 @@ export async function lockAllocationCandidates(
   const lines = await planLinesOf(rows.map((r) => r.id));
   return rows.map((r) => ({
     ...r,
-    lines: linesOf(lines.get(r.id)!),
-    // Chỉ dòng có biến thể giữ hàng; dòng "không quản tồn" giữ `reserved_qty = 0` (spec 237).
-    lineIds: variantLines(lines.get(r.id)!).map((l) => l.id),
+    // Chỉ dòng có biến thể chưa giữ; dòng "không quản tồn" giữ `reserved_qty = 0` (spec 237).
+    lines: linesOf(unheldOf(lines.get(r.id)!)),
+    lineIds: unheldOf(lines.get(r.id)!).map((l) => l.id),
   }));
 }
