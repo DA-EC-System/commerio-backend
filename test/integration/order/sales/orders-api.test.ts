@@ -535,6 +535,17 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect(body.returnWindowEndsAt).toBeNull();
   });
 
+  it('đơn đã huỷ trả returnWindowEndsAt null dù cột có mốc sàn báo lúc còn cờ Đang huỷ (review PR 2)', async () => {
+    // Sàn huỷ đơn còn kiện chờ mở: đơn processing cờ Đang huỷ nhận mốc CANCELLED; kho mở kiện xong thì đơn sang cancelled.
+    const { orderId } = await deliveredOrder(1, undefined, tiktok);
+    await testPool().query(`update "order".orders set status = 'cancelled', return_window_ends_at = now() - interval '1 day' where id = $1`, [orderId]);
+
+    const body = await detail(orderId);
+
+    expect(body.status).toBe('cancelled');
+    expect(body.returnWindowEndsAt).toBeNull();
+  });
+
   it('D1-W (US-DH-16 2, AC7): qua hạn trả mà còn yêu cầu trả requested → việc hoàn tất bỏ qua, chi tiết đơn return_requested', async () => {
     const { orderId } = await deliveredOrder(16, (id) =>
       testPool().query(

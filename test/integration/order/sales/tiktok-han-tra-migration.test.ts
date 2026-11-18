@@ -46,7 +46,7 @@ describe('migration tiktok-han-tra (#236 PR 2, AC 12b)', () => {
         c: PoolClient,
         o: { shop: string; raw: string; status?: 'processing' | 'completed'; ends?: Date | null; updatedAt?: Date | 'epoch' },
       ) => {
-        const { orderId } = await createOrder(companyId, { lines: [{ variantId, quantity: 1, unitPrice: '100000' }], source: 'marketplace' });
+        const { orderId } = await createOrder(companyId, { lines: [{ variantId, quantity: 1, unitPrice: 100000 }], source: 'marketplace' });
         const ext = `E-${randomUUID().slice(0, 8)}`;
         const completed = o.status === 'completed';
         await c.query(
