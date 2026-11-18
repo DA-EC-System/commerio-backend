@@ -85,6 +85,23 @@ describe('thất lạc (#238)', () => {
     expect(platformUpdate('in_transit', 'lost')).toBe('direct');
   });
 
+  it('replaced: packed, awaiting_pickup → cancelled, chỉ hệ thống (PR 3, §5.2)', () => {
+    for (const s of ['packed', 'awaiting_pickup'] as const) {
+      expect(assertTransition(packageMachine, s, 'replaced', { actor: null }).to).toBe('cancelled');
+      expect(() => assertTransition(packageMachine, s, 'replaced', { actor: warehouse })).toThrowError(
+        expect.objectContaining({ code: 'invalid_transition', status: 409 }),
+      );
+    }
+    for (const s of ['backordered', 'reserved', 'in_transit'] as const) {
+      expect(() => assertTransition(packageMachine, s, 'replaced', { actor: null })).toThrowError(
+        expect.objectContaining({ code: 'invalid_transition' }),
+      );
+    }
+    // Đứng sau `open_cancel`: mũi tên khớp đầu tiên không đổi.
+    expect(arrowAction('packed', 'cancelled')).toBe('open_cancel');
+    expect(arrowAction('awaiting_pickup', 'cancelled')).toBe('open_cancel');
+  });
+
   it('canReportLost', () => {
     expect(LOSABLE.filter(canReportLost)).toHaveLength(6);
     for (const s of ['backordered', 'reserved', 'delivered', 'returned', 'lost', 'cancelled'] as const) expect(canReportLost(s)).toBe(false);
