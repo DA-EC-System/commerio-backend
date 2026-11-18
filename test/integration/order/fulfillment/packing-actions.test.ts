@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Package } from '#src/modules/order/fulfillment/api/schemas.ts';
 import type { MarketplacePackages } from '#src/modules/order/fulfillment/service/packages.ts';
+import { Order } from '#src/modules/order/sales/api/schemas.ts';
 import { currentCompanyId } from '#src/shared/db/client.ts';
 import { AppError } from '#src/shared/errors/app-error.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -324,6 +325,35 @@ describe('mở lại kiện', () => {
       .toEqual({ needs_open: false, open_purpose: null });
     expect(await transitionsOf(packageId)).toContainEqual(expect.objectContaining({ action: 'open', from_state: 'packed', to_state: 'reserved' }));
     expect(repack).toHaveBeenCalledTimes(1);
+  });
+
+  it('chi tiết kiện và chi tiết đơn trả pendingDropQty của dòng chờ bỏ, quantity và totalQty giữ cả phần chờ bỏ', async () => {
+    const other = (await createVariant(companyId)).variantId;
+    await receive(companyId, other, 10, 100_000);
+    const { packageId, orderId } = await seed('packed', {
+      platformPackageCode: 'DROP-VIEW',
+      lines: [{ variantId, quantity: 2, reserved: true }, { variantId: other, quantity: 1, reserved: true }],
+    });
+    const { rows: lines } = await testPool().query<{ id: string; variant_id: string }>(
+      'select id, variant_id from "order".package_lines where package_id = $1',
+      [packageId],
+    );
+    await markPendingDrop(packageId, lines.filter((l) => l.variant_id === other).map((l) => l.id), 'edit');
+    const expected = [
+      expect.objectContaining({ variantId, quantity: 2, pendingDropQty: 0 }),
+      expect.objectContaining({ variantId: other, quantity: 1, pendingDropQty: 1 }),
+    ];
+
+    const detail = await packingApp().get(`/api/v1/fulfillment/packages/${packageId}`).set('Authorization', `Bearer ${warehouse}`);
+    expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+    const pkg = Package.parse(detail.body);
+    expect(pkg.lines).toEqual(expect.arrayContaining(expected));
+    expect(pkg).toMatchObject({ totalQty: 3, flags: expect.arrayContaining(['needs_open']), openPurpose: 'edit' });
+
+    const order = await packingApp().get(`/api/v1/sales/orders/${orderId}`).set('Authorization', `Bearer ${sale}`);
+    expect(order.status, JSON.stringify(order.body)).toBe(200);
+    const view = Order.parse(order.body).packages.find((p) => p.id === packageId);
+    expect(view?.lines).toEqual(expect.arrayContaining(expected));
   });
 
   it('D21: mở kiện mà mọi dòng chờ bỏ thì huỷ kiện, nhả hết, không gọi repack', async () => {
