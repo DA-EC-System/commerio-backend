@@ -1,6 +1,6 @@
 // Mở kiện cũ chờ dỡ để chia lại, mở kiện `awaiting_pickup` giữ vận đơn (#238 PR 3, spec §5.6 "Mở kiện", D20, D24 đến
 // D26). Cổng sàn giả `packingApp`: hàm sàn không truyền thì ném, nên route gọi sàn sai là 500.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { awaitingStocktakeShops } from '#src/modules/channel/index.ts';
 import type { MarketplacePackages } from '#src/modules/order/fulfillment/service/packages.ts';
 import { runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
@@ -96,18 +96,22 @@ describe('mở kiện cũ chờ dỡ để chia lại (#238 §5.6, D24, D26)', (
     expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(2);
   });
 
-  it('AC15: mở kiện cũ resplit còn dòng (sàn giữ mã cũ): về reserved, không gọi repack, dòng chờ bỏ xoá, kiện thay reserved', async () => {
+  it('AC15: mở kiện packed resplit còn dòng (sàn giữ mã cũ): gọi repack một lần như kiện sửa, về reserved, dòng chờ bỏ xoá, kiện thay reserved', async () => {
     const v = await setup(10);
     const o = remote(v, { lines: 2, status: 'packed' });
     const { orderId, packageId } = await ingest(v.companyId, o);
     await ingest(v.companyId, itemStatuses(relabeled(o, [o.lines[0]!.packageCode, `FP-B-${tag()}`]), ['packed', 'pending']));
     const fresh = (await packagesOf(orderId)).find((r) => r.replaces === packageId)!;
     expect(fresh.status).toBe('backordered');
+    // Gói cũ còn trên sàn với phần còn lại (đã đóng): đóng gói lại phải qua repack, không gọi `pack` trên gói đã đóng.
+    const repack = vi.fn(async () => 'repacked' as const);
 
-    const res = await post(v.token, packageId, 'open', { version: await versionOf(packageId) });
+    const res = await post(v.token, packageId, 'open', { version: await versionOf(packageId) }, { repack });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(await waybillOf(packageId)).toMatchObject({ status: 'reserved', needs_open: false, platform_package_code: o.lines[0]!.packageCode, waybill_kept: false });
+    expect(repack).toHaveBeenCalledTimes(1);
+    expect(repack).toHaveBeenCalledWith(v.companyId, expect.any(String), o.lines[0]!.packageCode);
+    expect(await waybillOf(packageId)).toMatchObject({ status: 'reserved', needs_open: false, platform_package_code: null, tracking_code: null, waybill_kept: false });
     expect(await packageRow(packageId)).toMatchObject({ open_purpose: null });
     expect(await lineRows(packageId)).toEqual([{ item: external(o, 0), reserved: 1, drop: 0 }]);
     expect(await packageRow(fresh.id)).toMatchObject({ status: 'reserved' });

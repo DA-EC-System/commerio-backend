@@ -247,10 +247,11 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
       if (pkg.status === 'awaiting_pickup' && !pkg.needsOpen) {
         throw new AppError(409, 'invalid_transition', 'Kiện đã báo sàn sẵn sàng giao, không có việc dỡ kiện về kệ');
       }
-      // Giữ vận đơn (D25): kiện `awaiting_pickup` hay đã giữ vận đơn từ lần mở trước. Không gọi `repack` khi giữ vận đơn,
-      // hoặc mở để chia lại (sàn đã tự chia lại, D24).
+      // Giữ vận đơn (D25): kiện `awaiting_pickup` hay đã giữ vận đơn từ lần mở trước, không gọi `repack`. Mở để chia lại
+      // (`resplit`) mà còn món thì gói cũ còn trên sàn với phần còn lại (sàn giữ mã cũ): `repack` như kiện sửa (D24), không
+      // thì lần đóng gói sau gọi `pack` của sàn trên gói đã đóng. Mọi món đã chuyển đi thì đi `open_cancel`, không gọi.
       const keepWaybill = pkg.status === 'awaiting_pickup' || pkg.waybillKept;
-      const plan = { purpose: pkg.openPurpose, keepWaybill, noRepack: keepWaybill || pkg.openPurpose === 'resplit' };
+      const plan = { purpose: pkg.openPurpose, keepWaybill };
       if (allPendingDrop(pkg)) {
         await transition(ctx, actor, pkg, 'open_cancel');
         return { shopId: null, code: null, version: pkg.version, cancel: true, ...plan };
@@ -273,8 +274,8 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
       };
     });
 
-    // Sàn đã huỷ gói khi mọi món bị huỷ: gọi đóng gói lại chỉ nhận lỗi (D21). Giữ vận đơn hay mở để chia lại: không gọi.
-    const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = !target.cancel && !target.noRepack && target.shopId && target.code
+    // Sàn đã huỷ gói khi mọi món bị huỷ: gọi đóng gói lại chỉ nhận lỗi (D21). Giữ vận đơn (D25): không gọi.
+    const outcome: Awaited<ReturnType<MarketplacePackages['repack']>> | null = !target.cancel && !target.keepWaybill && target.shopId && target.code
       ? await marketplacePackagesOf(ctx).repack(companyId, target.shopId, target.code)
       : null;
     let written: { detail: PackageDetail; cancelledOrderId: string | null };
