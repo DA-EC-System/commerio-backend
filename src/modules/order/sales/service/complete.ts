@@ -6,7 +6,7 @@ import { findPackagesOfOrders } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { every } from '../../../../shared/lifecycle.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { completionBlocker, outcomeOf, RETURN_WINDOW_DAYS } from '../domain/order.ts';
+import { completionBlocker, DEFAULT_RETURN_POLICY, lastDeliveredAt, outcomeOf, returnWindowEndsAt } from '../domain/order.ts';
 import { findOrder, openReturnCounts } from '../repository/order-views.ts';
 import { findCompletionCandidates, updateOrderAt } from '../repository/orders.ts';
 import { onReturnInspected } from './return-ingest.ts';
@@ -16,10 +16,12 @@ async function completeOne(orderId: string, now: Date): Promise<boolean> {
   if (order?.status !== 'processing') return false;
   const [packages, returns] = await Promise.all([findPackagesOfOrders([orderId]), openReturnCounts([orderId])]);
   const statuses = packages.map((p) => p.status);
-  const lastDelivered = packages.reduce<Date | null>((a, p) => (p.deliveredAt && (!a || p.deliveredAt > a) ? p.deliveredAt : a), null);
+  const lastDelivered = lastDeliveredAt(packages);
+  const endsAt = returnWindowEndsAt(DEFAULT_RETURN_POLICY, lastDelivered, order.returnWindowEndsAt);
   const blocker = completionBlocker({
     packages: statuses,
-    lastDeliveredAt: lastDelivered?.toISOString() ?? null,
+    lastDeliveredAt: lastDelivered,
+    returnWindowEndsAt: endsAt,
     openReturnRequests: returns.get(orderId) ?? 0,
     codUnconfirmed: false,
     now: now.getTime(),
@@ -31,7 +33,7 @@ async function completeOne(orderId: string, now: Date): Promise<boolean> {
     status: 'completed',
     outcome: outcomeOf(statuses),
     completedAt: now,
-    returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000) : null,
+    returnWindowEndsAt: endsAt,
     // Cờ Đang huỷ chỉ có nghĩa khi còn kiện chờ mở: mọi kiện đã dừng thì gỡ, và đơn mang cờ Sàn đã huỷ như mọi đơn bị
     // huỷ khi đã có kiện bàn giao (25 §8.2), kể cả khi lượt kéo đơn chưa kịp bật.
     ...(order.cancelling && { cancelling: false, platformCancelled: true }),

@@ -69,7 +69,7 @@ Truy vấn (query-discipline, supabase): ứng viên lật trang theo `id` (keys
   - `type CompletionBlocker = 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed'`.
   - `CompletionInput { packages: readonly PackageStatus[]; lastDeliveredAt: Date | null; returnWindowEndsAt: Date | null; openReturnRequests: number; codUnconfirmed: boolean; now: number }`; `completionBlocker(i: CompletionInput): CompletionBlocker | null`.
 
-- [ ] **Step 0: Tạo nhánh, commit spec và plan**
+- [x] **Step 0: Tạo nhánh, commit spec và plan**
 
 ```bash
 git checkout -b feature/236-hoan-tat-huy-theo-kien
@@ -77,7 +77,7 @@ git add docs/superpowers/specs/2026-11-18-236-hoan-tat-huy-theo-kien-design.md d
 git commit -m "docs(sales): spec và plan PR 1 của #236"
 ```
 
-- [ ] **Step 1: Viết test thất bại** — trong `order.test.ts`, đổi `describe('cancelPlan, outcomeOf, completionBlocker')` sang đầu vào mới và thêm:
+- [x] **Step 1: Viết test thất bại** — trong `order.test.ts`, đổi `describe('cancelPlan, outcomeOf, completionBlocker')` sang đầu vào mới và thêm:
 
 ```ts
 const DAY = 86_400_000;
@@ -109,13 +109,13 @@ it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
 
   Bảng `completionBlocker` đổi `lastDeliveredAt` sang `Date`, thêm `returnWindowEndsAt`: `['delivered']`, giao 25/10, hạn 01/11 (sau `now` 29/10) → `return_window`; hạn 27/10 (trước `now`) và không gì khác → `null`; có kiện giao mà hạn `null` → `return_window`; `['returned']`, cả hai mốc null → `null`; các dòng `packages_open`, `return_requested`, `cod_unconfirmed` giữ như cũ (hạn trước `now`).
 
-- [ ] **Step 2: Chạy, thấy đỏ** — `npx vitest run --project unit test/unit/modules/order/sales/domain/order.test.ts` → FAIL (export chưa có).
+- [x] **Step 2: Chạy, thấy đỏ** — `npx vitest run --project unit test/unit/modules/order/sales/domain/order.test.ts` → FAIL (export chưa có).
 
-- [ ] **Step 3: Viết luật** trong `domain/order.ts` theo Interfaces. `returnWindowEndsAt` ở PR 1: `lastDelivered` null → null; ngược lại cộng `policy.returnWindow === 'days' ? (policy.returnWindowDays ?? 7) : 7` ngày, `stored` chưa dùng (comment: PR 2 #236 đọc cột cho `platform_status`). `codUnconfirmed` so `new Decimal(codExpected).gt(0)`. `completionBlocker` bước 2: `lastDeliveredAt && (!returnWindowEndsAt || returnWindowEndsAt.getTime() > now)` → `return_window`.
+- [x] **Step 3: Viết luật** trong `domain/order.ts` theo Interfaces. `returnWindowEndsAt` ở PR 1: `lastDelivered` null → null; ngược lại cộng `policy.returnWindow === 'days' ? (policy.returnWindowDays ?? 7) : 7` ngày, `stored` chưa dùng (comment: PR 2 #236 đọc cột cho `platform_status`). `codUnconfirmed` so `new Decimal(codExpected).gt(0)`. `completionBlocker` bước 2: `lastDeliveredAt && (!returnWindowEndsAt || returnWindowEndsAt.getTime() > now)` → `return_window`.
 
-- [ ] **Step 4: Chạy lại, thấy xanh** — cùng lệnh → PASS. `npx tsc --noEmit` báo lỗi ở `complete.ts`, `orders.ts` (còn dùng `RETURN_WINDOW_DAYS`): sửa tạm bằng `DEFAULT_RETURN_POLICY` và đầu vào mới, hành vi giữ 7 ngày; Task 3, 4 thay hẳn.
+- [x] **Step 4: Chạy lại, thấy xanh** — cùng lệnh → PASS. `npx tsc --noEmit` báo lỗi ở `complete.ts`, `orders.ts` (còn dùng `RETURN_WINDOW_DAYS`): sửa tạm bằng `DEFAULT_RETURN_POLICY` và đầu vào mới, hành vi giữ 7 ngày; Task 3, 4 thay hẳn.
 
-- [ ] **Step 5: Commit** — `feat(sales): luật hạn trả theo chính sách gian hàng, điều kiện COD (#236)`.
+- [x] **Step 5: Commit** — `feat(sales): luật hạn trả theo chính sách gian hàng, điều kiện COD (#236)`.
 
 ### Task 2: Channel trả chính sách hạn trả, tiêm vào sales
 
