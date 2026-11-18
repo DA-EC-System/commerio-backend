@@ -33,7 +33,7 @@ export async function applyResplit(
   order: PlatformPackageOrder,
   plan: ResplitPlan,
   packages: PackageRow[],
-  create: (code: string, replacesPackageId: string, awaitingOpen: boolean) => Promise<PackageRow>,
+  create: (code: string, replacesPackageId: string, awaitingOrderLineIds: readonly string[]) => Promise<PackageRow>,
 ): Promise<{ created: Map<string, PackageRow>; releasedVariantIds: string[] }> {
   const byId = (id: string) => packages.find((p) => p.id === id)!;
   const allocate = new Set<string>();
@@ -120,7 +120,7 @@ export async function applyResplit(
       Object.assign(pkg, purpose);
       logger.info({ packageId: pkg.id, orderLineIds: s.orderLineIds }, 'kiện đã đóng chờ dỡ để chia lại');
     } else {
-      const pkg = await create(s.code, s.replacesPackageId, s.awaitingOpen);
+      const pkg = await create(s.code, s.replacesPackageId, s.awaitingOrderLineIds);
       packages.push(pkg);
       created.set(s.code, pkg);
     }

@@ -36,7 +36,11 @@ export type ResplitStep =
   | { kind: 'cancel_open'; packageId: string }
   | { kind: 'move_out'; packageId: string; orderLineIds: string[] }
   | { kind: 'mark_drop'; packageId: string; orderLineIds: string[] }
-  | { kind: 'create'; code: string; replacesPackageId: string; awaitingOpen: boolean };
+  /**
+   * `awaitingOrderLineIds`: dòng đơn mà chủ là kiện đã đóng (đang chờ dỡ, D9), kiện mới chưa giữ phần đó; dòng khác (từ
+   * kiện chưa đóng, hay món mới) giữ ngay trong cùng giao dịch (`25` §8.1 bước 3, review #393).
+   */
+  | { kind: 'create'; code: string; replacesPackageId: string; awaitingOrderLineIds: string[] };
 
 export interface ResplitPlan {
   /** Mã nhóm → id kiện đã có nhận nhóm (khớp theo tập, hoặc giữ mã cũ). Nhóm `create` không có ở đây. */
@@ -73,7 +77,7 @@ const noPlan = (): ResplitPlan => ({ targets: new Map(), steps: [], resplit: tru
  * 1. Khớp theo tập dòng sống với kiện sống → `targets`; kiện chưa bàn giao mà mã khác thì `relabel`.
  * 2. Nhóm chưa khớp (mã tăng dần): món của kiện đã bàn giao → `flag`, bỏ nhóm; kiện sống mang mã nhóm (holder) chứa
  *    trọn nhóm → `targets`, không chứa trọn → không lập; còn lại `create` (thay kiện chứa nhiều món nhất, hoà thì mã app
- *    nhỏ hơn; chờ thay khi có món của kiện đã đóng).
+ *    nhỏ hơn; dòng có chủ là kiện đã đóng thì chờ thay, dòng khác giữ ngay).
  * 3. Kiện sống chưa bàn giao có dòng chuyển sang nhóm `create`: chưa đóng → `cancel_open` (mọi dòng sống đi) hoặc
  *    `move_out`; đã đóng → `mark_drop`.
  * Mã sắp gắn (relabel, create) đang nằm ở kiện khác không nhận mã mới: gỡ (`clear_code`, unique
@@ -158,11 +162,15 @@ export function planResplit(packages: readonly ResplitPackage[], groups: readonl
     }
     const codeOf = (id: string) => live.find((p) => p.id === id)!.code;
     const [replaces] = [...count].sort((a, b) => b[1] - a[1] || byText(codeOf(a[0]), codeOf(b[0])));
-    const awaitingOpen = g.lines.some((l) => {
-      const p = owner.get(l.orderLineId);
-      return p !== undefined && isSealed(p.status);
-    });
-    createSteps.push({ kind: 'create', code: g.code, replacesPackageId: replaces![0], awaitingOpen });
+    const awaitingOrderLineIds = [
+      ...new Set(
+        g.lines.flatMap((l) => {
+          const p = owner.get(l.orderLineId);
+          return p !== undefined && isSealed(p.status) ? [l.orderLineId] : [];
+        }),
+      ),
+    ].sort(byText);
+    createSteps.push({ kind: 'create', code: g.code, replacesPackageId: replaces![0], awaitingOrderLineIds });
   }
 
   // Bước 3: kiện có dòng chuyển sang nhóm `create`.

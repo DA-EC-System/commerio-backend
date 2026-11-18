@@ -9,7 +9,7 @@ import type { PlatformOrder } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testApp } from '../../helpers/http.ts';
 import { testPool } from '../../helpers/db.ts';
-import { packageDocuments, packageRow, splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
+import { packageDocuments, packageRow, packingApp, splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
 import { ingest, remote, withCancel, withLineCancelled, withStatus } from './platform-fixtures.ts';
 import {
   external,
@@ -418,11 +418,14 @@ describe('sàn chia lại kiện đã đóng: kiện chờ thay (#238 §5.6, D9,
     }
   });
 
-  it('Review 3: nhóm gồm món của kiện packed và kiện reserved: kiện thay không giữ lúc lập; khi được lấy, dòng từ kiện packed nhận phần giữ, dòng kia giữ lại được thì không forced', async () => {
-    const v = await setup(10);
+  it('Review 3 (review #393): nhóm gồm món của kiện packed và kiện reserved: kiện thay giữ ngay dòng từ kiện reserved trong cùng giao dịch, đơn khác không chen vào; dòng từ kiện packed chờ thay; khi được lấy thì nhận phần giữ, không forced', async () => {
+    // Kho chỉ có 2: cả hai món của đơn đang giữ; đơn khác chờ cùng SKU.
+    const v = await setup(2);
     const o = remote(v, { lines: 2, packages: 2 });
     const { orderId } = await ingest(v.companyId, o);
     await ingest(v.companyId, withStatus(o, 'packed', o.lines[0]!.packageCode!));
+    const other = await ingest(v.companyId, remote(v, { lines: 1 }));
+    expect((await packagesOf(other.orderId))[0]!.status).toBe('backordered');
     const before = await packagesOf(orderId);
     const packed = before.find((r) => r.items.includes(external(o, 0)))!;
     const reserved = before.find((r) => r.items.includes(external(o, 1)))!;
@@ -433,18 +436,66 @@ describe('sàn chia lại kiện đã đóng: kiện chờ thay (#238 §5.6, D9,
     await ingest(v.companyId, next);
 
     const fresh = (await packagesOf(orderId)).find((r) => r.platformCode === code)!;
+    // Kiện thay còn chờ thay (món 1 nằm trong kiện packed) nên ở `backordered`, nhưng món 2 (từ kiện reserved) đã giữ.
     expect(fresh).toMatchObject({ status: 'backordered', items: [external(o, 0), external(o, 1)] });
-    expect((await lineRows(fresh.id)).map((l) => l.reserved)).toEqual([0, 0]);
+    expect(await lineRows(fresh.id)).toEqual([
+      { item: external(o, 0), reserved: 0, drop: 0 },
+      { item: external(o, 1), reserved: 1, drop: 0 },
+    ]);
     expect(await packageRow(reserved.id)).toMatchObject({ status: 'cancelled' });
     expect(await packageRow(packed.id)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
-    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(1);
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(2);
+    // Lượt phân hàng của phần vừa nhả: đơn khác không giành được (kiện thay đã giữ trong cùng giao dịch).
+    expect((await allocate(v.companyId, v.variantId)).held).toEqual([]);
+    expect((await packagesOf(other.orderId))[0]!.status).toBe('backordered');
 
     await ingest(v.companyId, withStatus(next, 'in_transit'));
 
     expect(await packageRow(fresh.id)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace', needs_attention: false });
     expect(await packageRow(packed.id)).toMatchObject({ status: 'cancelled', needs_open: false });
     const stock = await stockOfVariant(v.companyId, v.variantId);
-    expect([stock.onHand, stock.reserved]).toEqual([8, 0]);
+    expect([stock.onHand, stock.reserved]).toEqual([0, 0]);
+    expect((await packagesOf(other.orderId))[0]!.status).toBe('backordered');
+  });
+
+  it('Review 3 (review #393): kiện thay giữ một phần, kho mở kiện cũ: phần chờ thay được giữ, kiện thay sang reserved, không giữ trùng phần đã giữ', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingest(v.companyId, o);
+    await ingest(v.companyId, withStatus(o, 'packed', o.lines[0]!.packageCode!));
+    const packed = (await packagesOf(orderId)).find((r) => r.items.includes(external(o, 0)))!;
+    const code = `FP-N-${tag()}`;
+    await ingest(v.companyId, withStatus(relabeled(o, [code, code]), 'pending'));
+    const fresh = (await packagesOf(orderId)).find((r) => r.platformCode === code)!;
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(2);
+
+    const res = await packingApp().post(`/api/v1/fulfillment/packages/${packed.id}/open`).set('Authorization', `Bearer ${v.token}`).send({ version: (await packageRow(packed.id)).version });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(packed.id)).toMatchObject({ status: 'cancelled' });
+    expect(await packageRow(fresh.id)).toMatchObject({ status: 'reserved' });
+    expect((await lineRows(fresh.id)).map((l) => l.reserved)).toEqual([1, 1]);
+    const stock = await stockOfVariant(v.companyId, v.variantId);
+    expect([stock.onHand, stock.reserved]).toEqual([10, 2]);
+  });
+
+  it('Review 3 (review #393): sàn huỷ kiện thay đang giữ một phần: nhả đúng phần đã giữ', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingest(v.companyId, o);
+    await ingest(v.companyId, withStatus(o, 'packed', o.lines[0]!.packageCode!));
+    const code = `FP-N-${tag()}`;
+    const next = withStatus(relabeled(o, [code, code]), 'pending');
+    await ingest(v.companyId, next);
+    const fresh = (await packagesOf(orderId)).find((r) => r.platformCode === code)!;
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(2);
+
+    await ingest(v.companyId, withCancel(next, 'cancellation'));
+
+    expect(await packageRow(fresh.id)).toMatchObject({ status: 'cancelled' });
+    expect((await lineRows(fresh.id)).map((l) => l.reserved)).toEqual([0, 0]);
+    // Còn phần giữ của kiện cũ đã đóng (chờ mở để huỷ).
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(1);
   });
 
   it('Review 4: kiện chờ thay chỉ có dòng không quản tồn: backordered lúc lập, không reserved', async () => {

@@ -14,7 +14,7 @@ import {
   lineStatus,
 } from '../domain/delivery.ts';
 import { type CancelLine, planLineCancel } from '../domain/line-cancel.ts';
-import { arrowAction, holdsStock, isHandedOver, isPlatformRevive, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
+import { arrowAction, isHandedOver, isPlatformRevive, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
 import { planResplit, type ResplitGroup, type ResplitPackage } from '../domain/resplit.ts';
 import { takeAllocationLock } from '../repository/allocation.ts';
 import { deleteLines, setPendingDrop, setPendingDropAll } from '../repository/line-cancel.ts';
@@ -220,8 +220,11 @@ async function tryReserve(id: string, lines: readonly PlatformPackageLine[]): Pr
 
 /**
  * Lập kiện cho một nhóm món sàn. `resplit`: kiện mới do sàn chia lại kiện (spec #238 §5.6, D23): vào `backordered` bất kể
- * trạng thái sàn (vòng áp trạng thái áp sau, như kiện đã có), giữ ngay khi `hold` (kiện chờ thay thì không), không đi
- * luật "kiện lần đầu thấy" (`store_only`, mốc kéo đơn): hàng của nó đã nằm trong kho, đã giữ ở kiện cũ.
+ * trạng thái sàn (vòng áp trạng thái áp sau, như kiện đã có), không đi luật "kiện lần đầu thấy" (`store_only`, mốc kéo
+ * đơn): hàng của nó đã nằm trong kho, đã giữ ở kiện cũ. Dòng đơn trong `awaiting` (chủ cũ là kiện đã đóng, đang chờ dỡ)
+ * chưa giữ: nhận phần giữ khi kho mở kiện cũ hoặc khi ĐVVC lấy kiện thay. Dòng khác (từ kiện chưa đóng vừa nhả, món mới)
+ * giữ ngay trong cùng giao dịch, đơn khác không chen vào (`25` §8.1 bước 3, review #393); kiện chỉ sang `reserved` khi
+ * không còn dòng chờ thay.
  */
 async function createPackage(
   order: PlatformPackageOrder,
@@ -229,13 +232,15 @@ async function createPackage(
   status: PlatformLineStatus,
   lines: readonly PlatformPackageLine[],
   journey: { leftAt: Date | null; deliveredAt: Date | null; failReason: string | null },
-  resplit?: { replacesPackageId: string; replacesCode: string; hold: boolean },
+  resplit?: { replacesPackageId: string; replacesCode: string; awaiting: ReadonlySet<string> },
 ): Promise<PackageRow> {
   // Món chưa đóng gói, hoặc đã đóng gói nhưng chưa rời kho, thì giữ hàng; đủ ghép SKU (hoặc "không quản tồn") mới qua
   // cổng tồn (spec 237).
-  const wantsStock = resplit ? resplit.hold : status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
+  const holding = resplit ? lines.filter((l) => !resplit.awaiting.has(l.orderLineId)) : lines;
+  const whole = holding.length === lines.length;
+  const wantsStock = resplit ? holding.length > 0 : status === 'pending' || status === 'packed' || status === 'awaiting_pickup';
   const mapped = lines.every((l) => l.variantId || l.untracked);
-  const variantLines = stockLines(lines);
+  const variantLines = stockLines(holding);
   // Cách xử lý tồn tính trước khi chèn: kiện lần đầu thấy đã hoàn về của đơn đặt trước mốc vào thẳng `returned` (D9).
   const mode = handoverStockMode({ firstSeen: true, placedAt: order.placedAt, orderCutoffAt: order.orderCutoffAt, awaitingStocktake: !order.holdStock });
   const initial: PackageStatus = resplit
@@ -266,19 +271,20 @@ async function createPackage(
   const { reserved, notices } = untrackedOnly
     ? { reserved: true, notices: [] }
     : wantsStock && mapped && order.holdStock
-      ? await tryReserve(id, lines)
+      ? await tryReserve(id, holding)
       : { reserved: false, notices: [] };
   if (notices.length) await updatePackage(id, { notices });
-  const to: PackageStatus = initial === 'backordered' && reserved ? 'reserved' : initial;
+  const to: PackageStatus = initial === 'backordered' && reserved && whole ? 'reserved' : initial;
   const rows = lines.map((l) => ({
     orderLineId: l.orderLineId,
     variantId: l.variantId,
     quantity: l.quantity,
-    reservedQty: reserved && l.variantId ? l.quantity : 0,
+    reservedQty: reserved && l.variantId && !resplit?.awaiting.has(l.orderLineId) ? l.quantity : 0,
     stockUntracked: !l.variantId && !!l.untracked,
   }));
   const lineIds = await insertPackageLines(id, rows);
-  if (to !== initial || reserved) await updatePackage(id, { ...(to !== initial && { status: to }), ...(reserved && { reservedAt: sql`now()` }) });
+  const heldAt = reserved && (to === 'reserved' || variantLines.length > 0);
+  if (to !== initial || heldAt) await updatePackage(id, { ...(to !== initial && { status: to }), ...(heldAt && { reservedAt: sql`now()` }) });
   // Kiện mới giữ hàng làm số có thể bán giảm: báo channel đẩy tồn (spec 199b D4), không chạy lượt phân hàng.
   // Chỉ khi có dòng biến thể (dòng không quản tồn không giữ, không trừ — spec 237 D10).
   if (reserved && variantLines.length) {
@@ -416,11 +422,14 @@ export async function cancelPlatformPackage(order: PlatformPackageOrder, pkg: Pa
     }
     return 'needs_open';
   }
-  if (holdsStock(pkg.status)) {
-    await stockPort().release(pkg.id, stockLines(pkg.lines));
+  // Nhả đúng phần đang giữ thật (`reserved_qty`): kiện `reserved` giữ mọi dòng; kiện thay `backordered` có thể giữ một
+  // phần (dòng từ kiện chưa đóng, review #393).
+  const held = pkg.lines.flatMap((l) => (l.variantId && l.reservedQty > 0 ? [{ variantId: l.variantId, quantity: l.reservedQty }] : []));
+  if (held.length) {
+    await stockPort().release(pkg.id, held);
     await setReserved(pkg.id, false);
     // Số có thể bán tăng: phân hàng cho kiện khác sau khi giao dịch commit (spec 199b §5.4).
-    await requestAllocation(stockLines(pkg.lines).map((l) => l.variantId));
+    await requestAllocation(held.map((l) => l.variantId));
   }
   await changeStatus(order, pkg, 'cancelled', 'cancel');
   return 'cancelled';
@@ -645,12 +654,12 @@ export async function syncPlatformPackages(
   if (plan.resplit) logger.warn({ orderId: order.id, steps: steps.map((s) => s.kind) }, 'sàn chia lại kiện, app không tự xử lý được');
   let created = new Map<string, PackageRow>();
   if (steps.length) {
-    const applied = await applyResplit(order, plan, existing, async (code, replacesPackageId, awaitingOpen) => {
+    const applied = await applyResplit(order, plan, existing, async (code, replacesPackageId, awaitingOrderLineIds) => {
       const group = groups.get(code)!.lines;
       return createPackage(order, await nextCode(), groupStatus(group)!, group, journeyOf(code, group), {
         replacesPackageId,
         replacesCode: existing.find((p) => p.id === replacesPackageId)!.code,
-        hold: !awaitingOpen,
+        awaiting: new Set(awaitingOrderLineIds),
       });
     });
     created = applied.created;

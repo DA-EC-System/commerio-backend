@@ -76,12 +76,12 @@ describe('planResplit: sàn chia lại kiện (spec #238 §5.6, D22)', () => {
     expect(plan.resplit).toBe(false);
   });
 
-  it('kiện reserved 2 món chia thành 2 mã mới: cancel_open kiện cũ, 2 create replaces kiện cũ, awaitingOpen false', () => {
+  it('kiện reserved 2 món chia thành 2 mã mới: cancel_open kiện cũ, 2 create replaces kiện cũ, không dòng nào chờ thay', () => {
     const plan = planResplit([pkg('a', 'reserved', 'X', ['1', '2'])], [group('B', ['2']), group('A', ['1'])]);
     expect(plan.steps).toEqual([
       { kind: 'cancel_open', packageId: 'a' },
-      { kind: 'create', code: 'A', replacesPackageId: 'a', awaitingOpen: false },
-      { kind: 'create', code: 'B', replacesPackageId: 'a', awaitingOpen: false },
+      { kind: 'create', code: 'A', replacesPackageId: 'a', awaitingOrderLineIds: [] },
+      { kind: 'create', code: 'B', replacesPackageId: 'a', awaitingOrderLineIds: [] },
     ]);
     expect(plan.targets.size).toBe(0);
     expect(plan.resplit).toBe(false);
@@ -92,16 +92,25 @@ describe('planResplit: sàn chia lại kiện (spec #238 §5.6, D22)', () => {
     expect(plan.targets).toEqual(new Map([['X', 'a']]));
     expect(plan.steps).toEqual([
       { kind: 'move_out', packageId: 'a', orderLineIds: ['2'] },
-      { kind: 'create', code: 'Y', replacesPackageId: 'a', awaitingOpen: false },
+      { kind: 'create', code: 'Y', replacesPackageId: 'a', awaitingOrderLineIds: [] },
     ]);
   });
 
-  it('kiện packed chia thành 2 mã mới: mark_drop mọi dòng, 2 create awaitingOpen true', () => {
+  it('kiện packed chia thành 2 mã mới: mark_drop mọi dòng, 2 create mà mọi dòng chờ thay', () => {
     const plan = planResplit([pkg('a', 'packed', 'X', ['1', '2'])], [group('A', ['1']), group('B', ['2'])]);
     expect(plan.steps).toEqual([
       { kind: 'mark_drop', packageId: 'a', orderLineIds: ['1', '2'] },
-      { kind: 'create', code: 'A', replacesPackageId: 'a', awaitingOpen: true },
-      { kind: 'create', code: 'B', replacesPackageId: 'a', awaitingOpen: true },
+      { kind: 'create', code: 'A', replacesPackageId: 'a', awaitingOrderLineIds: ['1'] },
+      { kind: 'create', code: 'B', replacesPackageId: 'a', awaitingOrderLineIds: ['2'] },
+    ]);
+  });
+
+  it('nhóm gom món của kiện packed và kiện reserved: chỉ dòng của kiện packed chờ thay (review #393), dòng của kiện reserved giữ ngay', () => {
+    const plan = planResplit([pkg('a', 'packed', 'A', ['1']), pkg('b', 'reserved', 'B', ['2'])], [group('N', ['1', '2'])]);
+    expect(plan.steps).toEqual([
+      { kind: 'cancel_open', packageId: 'b' },
+      { kind: 'mark_drop', packageId: 'a', orderLineIds: ['1'] },
+      { kind: 'create', code: 'N', replacesPackageId: 'a', awaitingOrderLineIds: ['1'] },
     ]);
   });
 
@@ -113,10 +122,10 @@ describe('planResplit: sàn chia lại kiện (spec #238 §5.6, D22)', () => {
     expect(more.steps).toEqual([
       { kind: 'cancel_open', packageId: 'a' },
       { kind: 'cancel_open', packageId: 'b' },
-      { kind: 'create', code: 'N', replacesPackageId: 'b', awaitingOpen: false },
+      { kind: 'create', code: 'N', replacesPackageId: 'b', awaitingOrderLineIds: [] },
     ]);
     const tie = planResplit([pkg('b', 'reserved', 'B', ['2']), pkg('a', 'reserved', 'A', ['1'])], [group('N', ['1', '2'])]);
-    expect(tie.steps.at(-1)).toEqual({ kind: 'create', code: 'N', replacesPackageId: 'a', awaitingOpen: false });
+    expect(tie.steps.at(-1)).toEqual({ kind: 'create', code: 'N', replacesPackageId: 'a', awaitingOrderLineIds: [] });
   });
 
   it('sàn gộp món của kiện B vào mã của kiện A: không lập, resplit true', () => {
@@ -144,8 +153,8 @@ describe('planResplit: sàn chia lại kiện (spec #238 §5.6, D22)', () => {
     expect(plan.steps).toEqual([
       { kind: 'clear_code', packageId: 'c' },
       { kind: 'cancel_open', packageId: 'a' },
-      { kind: 'create', code: 'X', replacesPackageId: 'a', awaitingOpen: false },
-      { kind: 'create', code: 'Y', replacesPackageId: 'a', awaitingOpen: false },
+      { kind: 'create', code: 'X', replacesPackageId: 'a', awaitingOrderLineIds: [] },
+      { kind: 'create', code: 'Y', replacesPackageId: 'a', awaitingOrderLineIds: [] },
     ]);
   });
 
@@ -184,7 +193,7 @@ describe('planResplit: sàn chia lại kiện (spec #238 §5.6, D22)', () => {
     const plan = planResplit([pkg('a', 'reserved', 'O', ['1', '2'])], [group('A', ['1'])]);
     expect(plan.steps).toEqual([
       { kind: 'move_out', packageId: 'a', orderLineIds: ['1'] },
-      { kind: 'create', code: 'A', replacesPackageId: 'a', awaitingOpen: false },
+      { kind: 'create', code: 'A', replacesPackageId: 'a', awaitingOrderLineIds: [] },
     ]);
   });
 
