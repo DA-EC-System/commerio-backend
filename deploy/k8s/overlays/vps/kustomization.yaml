@@ -10,6 +10,7 @@ resources:
   - ci-deployer.yaml
   - node-exporter.yaml
   - alertmanager.yaml
+  - dozzle.yaml
 
 # Image của CI (#37, amd64 + arm64): backend từ repo này, FE từ repo FE, test-ui từ repo Test_UI.
 # Deploy đổi tag sang sha-<7 ký tự> của commit (ci-deploy/commerio-deploy.sh).
@@ -38,6 +39,10 @@ secretGenerator:
   - name: alertmanager-config
     files:
       - alertmanager.yml=alertmanager/alertmanager.yml
+  # Tài khoản đăng nhập Dozzle (/logs/), chỉ có trên VPS: dozzle/tao-tai-khoan.sh.
+  - name: dozzle-users
+    files:
+      - users.yml=dozzle/users.yml
 
 configMapGenerator:
   - name: caddy-site
