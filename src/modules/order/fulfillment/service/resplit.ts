@@ -3,11 +3,12 @@
 // mới của đơn lấy phần vừa nhả trước mọi kiện `backordered` khác (`25` §8.1 bước 3). Kiểm bằng theo dòng đơn (trigger,
 // `db/CLAUDE.md`) giữ lúc commit: dòng chuyển đi bị xoá, chờ bỏ, hoặc thuộc kiện vừa huỷ; dòng của kiện mới đủ số lượng.
 import { assertTransition, publishEvent, recordTransition } from '../../../core/index.ts';
+import { logger } from '../../../../shared/logger.ts';
 import type { PlatformPackageOrder } from '../domain/delivery.ts';
 import { packageMachine } from '../domain/package.ts';
-import type { ResplitPlan } from '../domain/resplit.ts';
-import { deleteLines } from '../repository/line-cancel.ts';
-import { type PackageRow, setReserved, updatePackage } from '../repository/packages.ts';
+import { replacementPairs, type ResplitPlan } from '../domain/resplit.ts';
+import { deleteLines, setPendingDrop } from '../repository/line-cancel.ts';
+import { moveReservations, type PackageRow, setReserved, updatePackage } from '../repository/packages.ts';
 import { stockPort } from './stock-port.ts';
 
 /** Cần xử lý trên kiện đã bàn giao mà sàn báo chia khác (D29). */
@@ -101,8 +102,21 @@ export async function applyResplit(
         reason: `${RESPLIT_REASON}: chuyển ${moving.reduce((n, l) => n + l.quantity, 0)} món`,
       });
     } else if (s.kind === 'mark_drop') {
-      // Kiện đã đóng: Task 3 (spec §5.6). Bên gọi chưa thi hành kế hoạch có bước này.
-      throw new Error('mark_drop chưa được thi hành ở đường đồng bộ');
+      // Kiện đã đóng: dòng chuyển đi chờ bỏ (vẫn giữ hàng) tới khi kho mở; mục đích theo D24 (`resplit` thắng `edit`,
+      // `stocktake`; `cancel` thắng `resplit`). Không ghi lịch sử (như `markPendingDrop` của #205).
+      const pkg = byId(s.packageId);
+      const ids = new Set(s.orderLineIds);
+      const fresh = pkg.lines.filter((l) => ids.has(l.orderLineId) && l.pendingDropQty < l.quantity);
+      await setPendingDrop(fresh.map((l) => l.id));
+      for (const l of fresh) l.pendingDropQty = l.quantity;
+      const purpose = !pkg.needsOpen
+        ? ({ needsOpen: true, openPurpose: 'resplit' } as const)
+        : pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake'
+          ? ({ openPurpose: 'resplit' } as const)
+          : {};
+      await updatePackage(pkg.id, purpose);
+      Object.assign(pkg, purpose);
+      logger.info({ packageId: pkg.id, orderLineIds: s.orderLineIds }, 'kiện đã đóng chờ dỡ để chia lại');
     } else {
       const pkg = await create(s.code, s.replacesPackageId, s.awaitingOpen);
       packages.push(pkg);
@@ -110,4 +124,50 @@ export async function applyResplit(
     }
   }
   return { created, releasedVariantIds: [...allocate].sort() };
+}
+
+/**
+ * Kiện chờ thay mà sàn báo rời kho trước khi kho dỡ kiện cũ (spec #238 §5.6, `25` §8.1): mỗi dòng của kiện nhận phần giữ
+ * của dòng chờ bỏ cùng dòng đơn ở kiện cũ đang đóng, dòng cũ xoá (tổng đang giữ theo SKU không đổi, không gọi cổng tồn).
+ * Kiện cũ hết dòng thì `replaced` (`cancelled`, gỡ cờ Cần mở); còn dòng mà hết dòng chờ bỏ, mục đích `resplit`, thì gỡ
+ * cờ; còn dòng chờ bỏ thì chỉ tăng `version` (lần mở đang dở gặp `version_conflict`). Bên gọi áp trạng thái sàn sau:
+ * dòng đã nhận phần giữ thì trừ thường, dòng chưa giữ (từ kiện chưa đóng) thử giữ, không được mới bàn giao bắt buộc.
+ * `packages` đã khoá, sửa tại chỗ. Trả true khi có ghi.
+ */
+export async function takeOverReplaced(order: PlatformPackageOrder, pkg: PackageRow, packages: PackageRow[]): Promise<boolean> {
+  const pairs = replacementPairs(packages, pkg.id);
+  if (!pairs.length) return false;
+  logger.warn({ orderId: order.id, packageId: pkg.id, replaced: [...new Set(pairs.map((p) => p.oldPackageId))] }, 'kiện thay được lấy trước khi dỡ kiện cũ');
+  await moveReservations(pairs.map((p) => ({ fromLineId: p.oldLineId, toLineId: p.newLineId })));
+  const olds = new Map<string, PackageRow>();
+  for (const pair of pairs) {
+    const old = packages.find((p) => p.id === pair.oldPackageId)!;
+    const oldLine = old.lines.find((l) => l.id === pair.oldLineId)!;
+    pkg.lines.find((l) => l.id === pair.newLineId)!.reservedQty = oldLine.reservedQty;
+    old.lines = old.lines.filter((l) => l !== oldLine);
+    olds.set(old.id, old);
+  }
+  for (const old of olds.values()) {
+    if (!old.lines.length) {
+      const from = old.status;
+      assertTransition(packageMachine, from, 'replaced', { actor: null });
+      await updatePackage(old.id, { status: 'cancelled', needsOpen: false, openPurpose: null, packedBy: null, packedAt: null, labelError: false });
+      await recordTransition({
+        entityType: 'packages',
+        entityId: old.id,
+        from,
+        to: 'cancelled',
+        action: 'replaced',
+        actorId: null,
+        source: 'marketplace',
+        reason: `Kiện thay ${pkg.code} đã được lấy`,
+      });
+      await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: old.id, orderId: order.id, from, to: 'cancelled' } });
+      Object.assign(old, { status: 'cancelled', needsOpen: false, openPurpose: null, labelError: false });
+    } else if (old.openPurpose === 'resplit' && !old.lines.some((l) => l.pendingDropQty > 0)) {
+      await updatePackage(old.id, { needsOpen: false, openPurpose: null });
+      Object.assign(old, { needsOpen: false, openPurpose: null });
+    } else await updatePackage(old.id, {});
+  }
+  return true;
 }

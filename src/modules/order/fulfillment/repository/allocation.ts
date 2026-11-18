@@ -32,8 +32,19 @@ const hasPendingDrop = sql`exists (select 1 from ${packageLines} where ${package
 const stocktakeAutoClearable = sql`(${packages.openPurpose} = 'stocktake' and not ${hasPendingDrop} and ${packages.lostReportedBy} is null)`;
 
 /**
+ * Kiện chờ thay (spec #238 §5.6, D9): có dòng mà cùng dòng đơn đang có dòng chờ bỏ ở kiện khác đang đóng. Suy ra, không
+ * lưu cờ: kiện cũ mở xong, bị xác nhận mất, hay rời kho thì kiện thay tự thành ứng viên. Tra theo index
+ * `package_lines(order_line_id)`.
+ */
+const awaitingReplacement = sql`exists (select 1 from ${packageLines} nl
+  join ${packageLines} ol on ol.order_line_id = nl.order_line_id and ol.package_id <> nl.package_id and ol.pending_drop_qty > 0
+  join ${packages} op on op.id = ol.package_id and op.status in ('packed', 'awaiting_pickup')
+  where nl.package_id = ${packages.id})`;
+
+/**
  * Ứng viên giữ hàng (spec 199b §5.2), trừ lọc gian hàng chờ kiểm kê (service lọc). Kiện chờ mở vì kiểm kê (`stocktake`)
  * vẫn là ứng viên: giữ được hàng là lúc cờ của nó gỡ (spec #238 §5.5); trừ khi kiện có dòng chờ bỏ hay báo thất lạc treo.
+ * Kiện chờ thay không là ứng viên: hàng của nó còn nằm trong kiện cũ chờ dỡ.
  */
 const candidateWhere = and(
   sql`(${packages.status} = 'backordered' or (${packages.status} in ('packed', 'awaiting_pickup')
@@ -42,6 +53,7 @@ const candidateWhere = and(
        and ${packageLines.variantId} is null and not ${packageLines.stockUntracked})`,
   sql`(${packages.needsOpen} = false or ${stocktakeAutoClearable})`,
   sql`${orderStatus} <> 'cancelled'`,
+  sql`not ${awaitingReplacement}`,
 );
 
 /**

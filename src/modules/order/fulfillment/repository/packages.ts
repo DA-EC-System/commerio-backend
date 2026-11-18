@@ -338,6 +338,31 @@ export async function markLinesReserved(lineIds: readonly string[]): Promise<voi
     .where(inArray(packageLines.id, [...lineIds]));
 }
 
+/**
+ * Kiện thay được lấy trước khi kho dỡ kiện cũ (spec #238 §5.6): dòng đích nhận `reserved_qty` của dòng nguồn (dòng chờ
+ * bỏ cùng dòng đơn ở kiện cũ), rồi xoá dòng nguồn. Không đổi tổng đang giữ theo SKU nên không gọi cổng tồn. Một câu
+ * update, một câu delete; bên gọi đã khoá cả hai kiện.
+ */
+export async function moveReservations(pairs: readonly { fromLineId: string; toLineId: string }[]): Promise<void> {
+  if (!pairs.length) return;
+  const values = sql.join(
+    pairs.map((p) => sql`(${p.fromLineId}::uuid, ${p.toLineId}::uuid)`),
+    sql`, `,
+  );
+  await getDb().execute(sql`
+    update ${packageLines} as t set reserved_qty = f.reserved_qty, version = t.version + 1, updated_at = now()
+    from (values ${values}) as v(from_id, to_id) join ${packageLines} as f on f.id = v.from_id
+    where t.id = v.to_id`);
+  await getDb()
+    .delete(packageLines)
+    .where(
+      inArray(
+        packageLines.id,
+        pairs.map((p) => p.fromLineId),
+      ),
+    );
+}
+
 /** Dòng vừa trừ tồn: chốt giá vốn, `stock_deducted`, hết giữ. Một câu cho mọi dòng. */
 export async function markLinesShipped(rows: readonly { id: string; unitCost: string }[]): Promise<void> {
   if (!rows.length) return;

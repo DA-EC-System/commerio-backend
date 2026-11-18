@@ -2,16 +2,19 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { awaitingStocktakeShops } from '#src/modules/channel/index.ts';
 import { Package } from '#src/modules/order/fulfillment/api/schemas.ts';
+import { runAllocation } from '#src/modules/order/fulfillment/service/allocation.ts';
 import { setStockPort } from '#src/modules/order/fulfillment/service/stock-port.ts';
 import type { PlatformOrder } from '#src/modules/order/index.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
-import { ingest, remote, withStatus } from './platform-fixtures.ts';
+import { packageDocuments, packageRow, splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
+import { ingest, remote, withCancel, withLineCancelled, withStatus, type LineStatus } from './platform-fixtures.ts';
 
 afterEach(() => setStockPort());
 
@@ -344,5 +347,201 @@ describe('sàn chia lại kiện chưa đóng (#238 §5.6)', () => {
     expect(res.status).toBe(200);
     expect(Package.parse(res.body).replaces).toEqual({ id: packageId, code: old.code, status: 'cancelled' });
     expect(Package.parse(oldRes.body).replaces).toBeNull();
+  });
+});
+
+/** Trạng thái riêng từng món (`statuses[i]` cho món i). */
+const itemStatuses = (o: PlatformOrder, statuses: readonly LineStatus[]): PlatformOrder => ({
+  ...o,
+  lines: o.lines.map((l, i) => ({ ...l, status: statuses[i]!, rawStatus: statuses[i]! })),
+});
+
+/** Dòng của kiện theo món: số đang giữ, số chờ bỏ. */
+async function lineRows(packageId: string) {
+  const { rows } = await testPool().query<{ item: string; reserved: number; drop: number }>(
+    `select ol.external_line_id as item, pl.reserved_qty as reserved, pl.pending_drop_qty as drop
+       from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
+      where pl.package_id = $1 order by ol.external_line_id`,
+    [packageId],
+  );
+  return rows;
+}
+
+/**
+ * AC15: kiện `packed` 2 món chia thành 2 mã mới. Sàn chia lại kiện đã đóng thì món về chờ đóng gói (`pending`): kiện mới
+ * nằm ở `backordered` chờ kho mở kiện cũ (sàn báo `packed` thì vòng áp trạng thái nhảy cóc như kiện đã có, D23).
+ */
+async function packedSplit(stock = 10) {
+  const v = await setup(stock);
+  const o = remote(v, { lines: 2, status: 'packed' });
+  const { orderId, packageId } = await ingest(v.companyId, o);
+  const next = withStatus(relabeled(o, [`FP-A-${tag()}`, `FP-B-${tag()}`]), 'pending');
+  await ingest(v.companyId, next);
+  const rows = await packagesOf(orderId);
+  const fresh = (i: number) => rows.find((r) => r.replaces === packageId && r.items.includes(external(o, i)))!;
+  return { v, o, orderId, packageId, next, a: fresh(0), b: fresh(1) };
+}
+
+const allocate = (companyId: string, variantId: string) =>
+  withCompany(companyId, () => runAllocation({ stockHoldOf: awaitingStocktakeShops }, { variantIds: [variantId] }));
+
+describe('sàn chia lại kiện đã đóng: kiện chờ thay (#238 §5.6, D9, D24)', () => {
+  it('AC15: kiện packed chia thành 2 mã: kiện cũ packed, vẫn giữ, needs_open resplit, dòng chờ bỏ; 2 kiện mới backordered có replaces', async () => {
+    const { v, o, orderId, packageId, a, b } = await packedSplit();
+
+    const old = (await packagesOf(orderId)).find((r) => r.id === packageId)!;
+    expect(old).toMatchObject({ status: 'packed', needsOpen: true, openPurpose: 'resplit' });
+    expect(await lineRows(packageId)).toEqual([
+      { item: external(o, 0), reserved: 1, drop: 1 },
+      { item: external(o, 1), reserved: 1, drop: 1 },
+    ]);
+    for (const p of [a, b]) {
+      expect(p).toMatchObject({ status: 'backordered', replaces: packageId });
+      expect((await lineRows(p.id)).map((l) => l.reserved)).toEqual([0]);
+    }
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(2);
+    expect(await orderFlag(orderId)).toEqual(NO_FLAG);
+  });
+
+  it('AC15: chạy lượt phân hàng khi kho còn hàng: hai kiện chờ thay vẫn backordered', async () => {
+    const { v, a, b } = await packedSplit();
+
+    const r = await allocate(v.companyId, v.variantId);
+
+    expect(r.held).toEqual([]);
+    expect((await packageRow(a.id)).status).toBe('backordered');
+    expect((await packageRow(b.id)).status).toBe('backordered');
+  });
+
+  it('AC15a: kiện packed đang chờ mở vì edit bị chia lại: open_purpose thành resplit; đang cancel thì giữ cancel', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 3, status: 'packed' });
+    const { orderId, packageId } = await ingest(v.companyId, o);
+    const edited = withLineCancelled(o, 2);
+    await ingest(v.companyId, edited);
+    expect((await packageRow(packageId)).open_purpose).toBe('edit');
+
+    await ingest(v.companyId, relabeled(itemStatuses(edited, ['pending', 'pending', 'cancelled']), [`FP-A-${tag()}`, `FP-B-${tag()}`, o.lines[2]!.packageCode]));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
+    expect((await lineRows(packageId)).map((l) => l.drop)).toEqual([1, 1, 1]);
+    expect((await packagesOf(orderId)).filter((r) => r.replaces === packageId)).toHaveLength(2);
+
+    for (const [before, after] of [['stocktake', 'resplit'], ['cancel', 'cancel']] as const) {
+      const w = await setup(10);
+      const p = remote(w, { lines: 2, status: 'packed' });
+      const seeded = await ingest(w.companyId, p);
+      await testPool().query(`update "order".packages set needs_open = true, open_purpose = $2 where id = $1`, [seeded.packageId, before]);
+
+      await ingest(w.companyId, withStatus(relabeled(p, [`FP-A-${tag()}`, `FP-B-${tag()}`]), 'pending'));
+
+      expect(await packageRow(seeded.packageId)).toMatchObject({ needs_open: true, open_purpose: after });
+    }
+  });
+
+  it('AC15a: sàn huỷ cả kiện đang chờ mở vì resplit: open_purpose thành cancel, đơn cancelling', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, status: 'packed' });
+    const { orderId, packageId } = await ingest(v.companyId, o);
+    // Sàn giữ mã cũ cho món 1 (vẫn đóng), món 2 sang mã mới: kiện cũ còn món 1, chờ mở để bỏ món 2.
+    const next = itemStatuses(relabeled(o, [o.lines[0]!.packageCode, `FP-B-${tag()}`]), ['packed', 'pending']);
+    await ingest(v.companyId, next);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
+
+    await ingest(v.companyId, withCancel(next, 'cancellation'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
+    expect((await lineRows(packageId)).map((l) => l.drop)).toEqual([1, 1]);
+    const { rows } = await testPool().query<{ status: string; cancelling: boolean }>('select status, cancelling from "order".orders where id = $1', [orderId]);
+    expect(rows[0]).toEqual({ status: 'processing', cancelling: true });
+  });
+
+  it('AC16: sàn báo một kiện chờ thay đã in_transit: kiện mới in_transit, handover_source marketplace, tồn trừ đúng một lần, kiện cũ mất dòng đó', async () => {
+    const { v, o, packageId, next, a, b } = await packedSplit();
+
+    await ingest(v.companyId, itemStatuses(next, ['in_transit', 'pending']));
+
+    expect(await packageRow(a.id)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace', needs_attention: false });
+    expect(await packageDocuments(a.id)).toHaveLength(1);
+    expect(await lineRows(a.id)).toEqual([{ item: external(o, 0), reserved: 0, drop: 0 }]);
+    const stock = await stockOfVariant(v.companyId, v.variantId);
+    expect([stock.onHand, stock.reserved]).toEqual([9, 1]);
+    expect(await lineRows(packageId)).toEqual([{ item: external(o, 1), reserved: 1, drop: 1 }]);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
+    expect((await packageRow(b.id)).status).toBe('backordered');
+  });
+
+  it('AC16: kiện cũ hết dòng sau khi kiện thay được lấy: kiện cũ cancelled, lịch sử replaced, needs_open false', async () => {
+    const { v, packageId, next, a, b } = await packedSplit();
+
+    await ingest(v.companyId, withStatus(next, 'in_transit'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'cancelled', needs_open: false, open_purpose: null });
+    expect(await lineRows(packageId)).toEqual([]);
+    expect(await transitionsOf(packageId)).toContainEqual({ action: 'replaced', from_state: 'packed', to_state: 'cancelled', source: 'marketplace' });
+    expect(await transitionReasonsOf(packageId, 'cancelled')).toEqual([expect.stringMatching(/^Kiện thay KH-.+ đã được lấy$/)]);
+    for (const p of [a, b]) expect(await packageRow(p.id)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace' });
+    const stock = await stockOfVariant(v.companyId, v.variantId);
+    expect([stock.onHand, stock.reserved]).toEqual([8, 0]);
+  });
+
+  it('AC18: kéo lại sau AC15, AC16: không đổi gì', async () => {
+    const one = await packedSplit();
+    const two = await packedSplit();
+    const taken = itemStatuses(two.next, ['in_transit', 'pending']);
+    await ingest(two.v.companyId, taken);
+    for (const { companyId, orderId, next } of [
+      { companyId: one.v.companyId, orderId: one.orderId, next: one.next },
+      { companyId: two.v.companyId, orderId: two.orderId, next: taken },
+    ]) {
+      const before = await packagesOf(orderId);
+      const history = await historyCount(orderId);
+
+      await ingest(companyId, next);
+
+      expect(await packagesOf(orderId)).toEqual(before);
+      expect(await historyCount(orderId)).toBe(history);
+    }
+  });
+
+  it('Review 3: nhóm gồm món của kiện packed và kiện reserved: kiện thay không giữ lúc lập; khi được lấy, dòng từ kiện packed nhận phần giữ, dòng kia giữ lại được thì không forced', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingest(v.companyId, o);
+    await ingest(v.companyId, withStatus(o, 'packed', o.lines[0]!.packageCode!));
+    const before = await packagesOf(orderId);
+    const packed = before.find((r) => r.items.includes(external(o, 0)))!;
+    const reserved = before.find((r) => r.items.includes(external(o, 1)))!;
+    expect([packed.status, reserved.status]).toEqual(['packed', 'reserved']);
+    const code = `FP-N-${tag()}`;
+    const next = withStatus(relabeled(o, [code, code]), 'pending');
+
+    await ingest(v.companyId, next);
+
+    const fresh = (await packagesOf(orderId)).find((r) => r.platformCode === code)!;
+    expect(fresh).toMatchObject({ status: 'backordered', items: [external(o, 0), external(o, 1)] });
+    expect((await lineRows(fresh.id)).map((l) => l.reserved)).toEqual([0, 0]);
+    expect(await packageRow(reserved.id)).toMatchObject({ status: 'cancelled' });
+    expect(await packageRow(packed.id)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
+    expect((await stockOfVariant(v.companyId, v.variantId)).reserved).toBe(1);
+
+    await ingest(v.companyId, withStatus(next, 'in_transit'));
+
+    expect(await packageRow(fresh.id)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace', needs_attention: false });
+    expect(await packageRow(packed.id)).toMatchObject({ status: 'cancelled', needs_open: false });
+    const stock = await stockOfVariant(v.companyId, v.variantId);
+    expect([stock.onHand, stock.reserved]).toEqual([8, 0]);
+  });
+
+  it('Review 4: kiện chờ thay chỉ có dòng không quản tồn: backordered lúc lập, không reserved', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 1, untracked: 1, status: 'packed' });
+    const { orderId, packageId } = await ingest(v.companyId, o);
+    const code = `FP-Q-${tag()}`;
+
+    await ingest(v.companyId, withStatus(relabeled(o, [`FP-A-${tag()}`, code]), 'pending'));
+
+    const gift = (await packagesOf(orderId)).find((r) => r.platformCode === code)!;
+    expect(gift).toMatchObject({ status: 'backordered', replaces: packageId, items: [external(o, 1)] });
   });
 });

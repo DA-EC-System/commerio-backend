@@ -35,7 +35,7 @@ import { logger } from '../../../../shared/logger.ts';
 import type { PackageNotice } from '../repository/schema.ts';
 import { requestAllocation } from './allocation.ts';
 import { settleHandover } from './handover-stock.ts';
-import { applyResplit, pendingSteps } from './resplit.ts';
+import { applyResplit, pendingSteps, takeOverReplaced } from './resplit.ts';
 import { type StockLine, stockPort } from './stock-port.ts';
 
 // Trạng thái món sàn đã chuẩn hoá (cùng giá trị `RemoteLineStatus` của adapter) và đơn của kiện khai trong
@@ -467,9 +467,9 @@ async function markPendingDrop(pkg: PackageRow, fresh: readonly CancelLine[]) {
 }
 
 /**
- * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa (`edit`) hay vì kiểm kê
- * (`stocktake`, huỷ thắng, spec #238 mục 10) thì chuyển sang chờ mở để huỷ: kho mở ra là huỷ (`open_cancel`), không về
- * `reserved`. Trả true khi có ghi.
+ * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa (`edit`), vì kiểm kê
+ * (`stocktake`, huỷ thắng, spec #238 mục 10) hay để chia lại (`resplit`, #238 D24) thì chuyển sang chờ mở để huỷ: kho mở
+ * ra là huỷ (`open_cancel`), không về `reserved`. Trả true khi có ghi.
  */
 async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
   let changed = false;
@@ -478,7 +478,7 @@ async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
     for (const l of pkg.lines) l.pendingDropQty = l.quantity;
     changed = true;
   }
-  if (pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake') {
+  if (pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake' || pkg.openPurpose === 'resplit') {
     await updatePackage(pkg.id, { openPurpose: 'cancel' });
     pkg.openPurpose = 'cancel';
     changed = true;
@@ -629,9 +629,9 @@ export async function syncPlatformPackages(
   const considered = new Set(input.groups.map((g) => g.code));
   let plan = planResplit(input.packages, input.groups);
   let steps = pendingSteps(plan, existing);
-  if (steps.length && (!allocationLocked || steps.some((s) => s.kind === 'mark_drop'))) {
-    // Chưa giữ advisory (thứ tự khoá: không lấy advisory sau khi đã khoá kiện) hoặc có kiện đã đóng phải chờ dỡ (Task 3):
-    // chỉ nhận nhóm khớp theo tập, nhóm khác bỏ qua tới lượt sau, không bật cờ.
+  if (steps.length && !allocationLocked) {
+    // Chưa giữ advisory (thứ tự khoá: không lấy advisory sau khi đã khoá kiện): chỉ nhận nhóm khớp theo tập, nhóm khác bỏ
+    // qua tới lượt sau, không bật cờ.
     logger.warn({ orderId: order.id, steps: steps.map((s) => s.kind) }, 'chia lại kiện để lượt sau');
     const targets = new Map(
       [...plan.targets].filter(([code, id]) => {
@@ -725,6 +725,10 @@ export async function syncPlatformPackages(
       if (outcome !== 'handed_over') result.cancelledLines.push(...pkg.lines.map((l) => l.orderLineId));
       if (outcome === 'needs_open' && (await markWholePendingDrop(pkg))) result.changed = true;
     } else {
+      // Kiện chờ thay mà sàn báo rời kho trước khi kho dỡ kiện cũ: nhận phần giữ của kiện cũ trước khi áp (spec #238 §5.6).
+      if (status !== 'pending' && isHandedOver(deliveryTarget(status, { firstSeen: false, storeOnly: false })) && (await takeOverReplaced(order, pkg, existing))) {
+        result.changed = true;
+      }
       const applied = await applyStatus(order, pkg, status, journey);
       if (applied.changed) result.changed = true;
       if (applied.revived) result.revived = true;
