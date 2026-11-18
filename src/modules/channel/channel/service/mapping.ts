@@ -212,6 +212,13 @@ async function applyToOrders(shop: ShopRow, sellerSku: string | null, actorId: s
 /** 409 `version_conflict` kèm `current` là listing mới nhất (null khi không còn), như mọi route sửa có `version`. */
 const conflict = (current: ListingRow | undefined, names?: Map<string, string>) =>
   new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại', { current: current ? toListing(current, names) : null });
+/**
+ * Cùng ghép: so cột ghép, không so `version`, vì việc đẩy tồn, giá tăng `version` mà không đổi ghép (#411). Lúc ghi vẫn
+ * theo `version` của lần đọc dưới khoá.
+ */
+const MAPPING_COLUMNS = ['id', 'variantId', 'mode', 'approvedBy', 'status', 'pendingVariantId', 'pendingMode', 'pendingRequestedBy', 'pendingExternalSkuId'] as const;
+const sameMapping = (a: ListingRow | undefined, b: ListingRow | undefined) =>
+  a === b || (a !== undefined && b !== undefined && MAPPING_COLUMNS.every((k) => a[k] === b[k]));
 /** Đọc lại listing chưa gỡ của SKU sàn rồi báo 409. Gọi trong `withCompany`. */
 const conflictAt = async (shopId: string, externalSkuId: string) => {
   const row = await findListingByExternalSku(shopId, externalSkuId);
@@ -267,7 +274,7 @@ export async function matchListing(
       const locked = (await lockShopRow(shop.id))!;
       const row = await findListingByExternalSku(shop.id, externalSkuId);
       // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
-      if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict(row, row ? await requesterNames([row]) : undefined);
+      if (!sameMapping(row, before)) throw conflict(row, row ? await requesterNames([row]) : undefined);
       if (await findListingByPendingExternalSku(shop.id, externalSkuId)) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép');
       const failed = variantId ? await variantSlot(port, shop.id, variantId, row?.id ?? null) : undefined;
       if (!row && failed) {

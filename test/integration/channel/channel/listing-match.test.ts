@@ -497,19 +497,61 @@ describe('đợt 2: đơn về giữa lúc đổi ghép (review #309 N1)', () =>
 });
 
 describe('đợt 2: 409 `version_conflict` kèm `current`', () => {
-  it('Listing đổi giữa lúc ghép đọc và lúc ghi → 409 `version_conflict` có `current` là listing mới nhất', async () => {
-    const { r, listing } = await mapped();
-    const res = await raceBehindLock(
+  /** Chạy `match` sau giao dịch giữ khoá gian hàng và đổi listing bằng `change` (chưa commit tới khi `match` chờ khoá). */
+  const matchBehind = (externalSkuId: string, change: string, params: unknown[]) =>
+    raceBehindLock(
       async (holder) => {
         await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
-        await holder.query('update channel.listings set version = version + 1 where id = $1', [listing.id]);
+        await holder.query(change, params);
       },
       1,
-      () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id }).then((x) => x),
+      () => match(admin.token, { externalSkuId, variantId: newVariant().id }).then((x) => x),
     );
+
+  it('Request khác đổi ghép giữa lúc ghép đọc và lúc ghi → 409 `version_conflict` có `current` là listing mới nhất', async () => {
+    const { r, listing } = await mapped();
+    const other = newVariant();
+    const res = await matchBehind(r.externalSkuId, 'update channel.listings set variant_id = $2, version = version + 1 where id = $1', [listing.id, other.id]);
     expect(res.status).toBe(409);
     expect(res.body.type).toMatch(/version_conflict$/);
     expect(ChannelListing.parse(res.body.current)).toMatchObject({ id: listing.id, version: listing.version + 1 });
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: other.id });
+  });
+
+  it('#411: việc đẩy tồn, giá chỉ tăng `version` giữa hai lần đọc → ghép vẫn 200, ghi theo `version` mới', async () => {
+    const { r, listing } = await mapped();
+    const v2 = newVariant();
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
+        await holder.query("update channel.listings set stock_sync = 'synced', version = version + 3 where id = $1", [listing.id]);
+      },
+      1,
+      () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: v2.id }).then((x) => x),
+    );
+    expect(res.status).toBe(200);
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: v2.id, version: listing.version + 4 });
+  });
+
+  it('#411: request khác ghi ghép chờ CEO duyệt giữa hai lần đọc → 409 `version_conflict`, ghép chờ giữ nguyên', async () => {
+    const { r, listing } = await mapped();
+    const other = newVariant();
+    const res = await matchBehind(
+      r.externalSkuId,
+      `update channel.listings set pending_variant_id = $2, pending_mode = 'mapped', pending_requested_by = $3, pending_requested_at = now(),
+              version = version + 1 where id = $1`,
+      [listing.id, other.id, sale.accountId],
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/version_conflict$/);
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ pending_variant_id: other.id, pending_requested_by: sale.accountId });
+  });
+
+  it('#411: listing sang `pushing` giữa hai lần đọc → 409, không ghép listing đang đẩy', async () => {
+    const { r, v, listing } = await mapped();
+    const res = await matchBehind(r.externalSkuId, "update channel.listings set status = 'pushing', version = version + 1 where id = $1", [listing.id]);
+    expect(res.status).toBe(409);
+    expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: v.id, status: 'pushing' });
   });
 });
 
