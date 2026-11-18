@@ -7,7 +7,7 @@ import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { stockOfVariant } from '../fulfillment/helpers.ts';
+import { CANCELLING_SQL, stockOfVariant } from '../fulfillment/helpers.ts';
 import { ingest as ingestIn, remote as remoteOf, setup, withLineCancelled, withStatus } from '../fulfillment/platform-fixtures.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
@@ -71,7 +71,7 @@ const all = async (sql: string, params: unknown[]) => (await testPool().query(sq
 
 async function orderOf(orderId: string) {
   return one(
-    `select status, outcome, raw_marketplace_status, is_cod, subtotal, total, ship_by, cancel_requested, cancelling,
+    `select status, outcome, raw_marketplace_status, is_cod, subtotal, total, ship_by, cancel_requested, ${CANCELLING_SQL} as cancelling, cancel_pending, cancel_reason, cancel_initiator,
             platform_cancelled, needs_attention, code from "order".orders where id = $1`,
     [orderId],
   );
@@ -312,6 +312,68 @@ describe('nhận đơn sàn (#105)', () => {
     await ingest(cancelled);
     expect(await orderOf(res.orderId)).toMatchObject({ status: 'processing', platform_cancelled: true });
     expect((await packagesOf(res.orderId))[0].status).toBe('in_transit');
+  });
+
+  it('DH-B03 (DH-000010): Sale đã gửi huỷ, sàn huỷ mọi món, chưa kiện nào đóng gói: đơn cancelled, hết cờ Đang huỷ, giữ người và lý do Sale', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    await testPool().query(
+      `update "order".orders set cancel_pending = true, cancel_reason = 'Hết hàng', cancel_initiator = 'seller' where id = $1`,
+      [res.orderId],
+    );
+    expect(await orderOf(res.orderId)).toMatchObject({ cancelling: true });
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({
+      status: 'cancelled',
+      cancelling: false,
+      cancel_pending: false,
+      cancel_reason: 'Hết hàng',
+      cancel_initiator: 'seller',
+    });
+    const changed = (await eventsOf(res.orderId)).filter((e) => e.type === 'sales.order_status_changed').at(-1);
+    expect(changed?.payload).toMatchObject({ to: 'cancelled' });
+    expect((changed?.payload as { flags: string[] }).flags).not.toContain('cancelling');
+  });
+
+  it('DH-B06: sàn tự huỷ (không ai gửi huỷ trong app): lý do "Sàn huỷ đơn", người huỷ platform', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn', cancel_initiator: 'platform', cancel_pending: false });
+  });
+
+  it('Sale đã gửi huỷ, kiện đã đóng gói: sàn xác nhận thì gỡ cancel_pending, cờ Đang huỷ còn theo kiện chờ mở', async () => {
+    const o = remote({}, 'packed');
+    const res = await ingest(o);
+    await testPool().query(`update "order".orders set cancel_pending = true, cancel_initiator = 'buyer', cancel_reason = 'Đổi ý' where id = $1`, [res.orderId]);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'processing', cancel_pending: false, cancelling: true, cancel_reason: 'Đổi ý', cancel_initiator: 'buyer' });
+  });
+
+  it('DH-B04: Sale từ chối khách xin huỷ, lượt sau sàn không còn người huỷ: dòng bỏ thông tin huỷ; loại cancellation ghi nhầm thì bỏ', async () => {
+    const o = remote({ cancelRequested: true });
+    // Dữ liệu adapter TikTok cũ ghi: món mới xin huỷ đã mang loại `cancellation`.
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    const res = await ingest(o);
+    const lineOf = async () =>
+      one(`select cancel_initiator, cancel_reason, cancel_kind from "order".order_lines where order_id = $1`, [res.orderId]);
+    // Lượt kéo bằng adapter mới (còn xin huỷ, loại null): bỏ loại ghi nhầm, giữ người và lý do của yêu cầu.
+    const stillRequested = structuredClone(o);
+    stillRequested.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý' };
+    await ingest(stillRequested);
+    expect(await lineOf()).toEqual({ cancel_initiator: 'buyer', cancel_reason: 'Đổi ý', cancel_kind: null });
+    const rejected = structuredClone(o);
+    rejected.cancelRequested = false;
+    rejected.lines[0]!.info = noLineInfo;
+    await ingest(rejected);
+    expect(await lineOf()).toEqual({ cancel_initiator: null, cancel_reason: null, cancel_kind: null });
+    expect((await orderOf(res.orderId)).cancel_requested).toBe(false);
   });
 
   it('khách xin huỷ bật cờ, sàn bỏ thì tắt cờ', async () => {

@@ -110,6 +110,7 @@ function flagsOf(o: OrderViewRow, f: Facts, now: number): OrderFlag[] {
   if (o.needsAttention) flags.push('needs_attention');
   if (f.unmapped) flags.push('unmapped_sku');
   if (o.cancelRequested) flags.push('cancel_requested');
+  // Suy ra (`cancellingSql`): lệnh huỷ chờ sàn, hoặc còn kiện chờ mở vì món đã huỷ.
   if (o.cancelling) flags.push('cancelling');
   if (o.platformCancelled) flags.push('platform_cancelled');
   if (open && isDueSoon(isoOrNull(o.shipBy), statuses, now)) flags.push('due_soon');
@@ -274,6 +275,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
     note: '',
     buyerNote: o.buyerNote,
     cancelReason: o.cancelReason,
+    cancelInitiator: o.cancelInitiator,
     invoiceNumber: o.invoiceNumber,
     lines: lines.map((l) => ({
       id: l.id,
@@ -283,6 +285,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
       productName: l.productName,
       attributesLabel: attributesOf(l, labels),
       quantity: l.quantity,
+      cancelledQty: l.cancelledQty,
       unitPrice: toInt(l.unitPrice),
       lineTotal: toInt(l.lineTotal),
       externalSku: l.externalSku,

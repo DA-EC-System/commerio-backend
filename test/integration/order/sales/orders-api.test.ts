@@ -113,6 +113,28 @@ describe('GET /sales/orders (#105)', () => {
     expect(second.items).toHaveLength(1);
   });
 
+  it('lọc flag=cancelling theo cờ suy ra: lệnh huỷ chờ sàn, kiện chờ mở vì món đã huỷ; đơn đã huỷ không tính (DH-B03, KH-B09)', async () => {
+    const own = await createCompany();
+    const tag = randomUUID().slice(0, 6);
+    const add = (o: PlatformOrder) => withCompany(own.companyId, () => ingestMarketplaceOrder(o));
+    const two = (id: string) => [
+      { variantId: null, status: 'packed' as const, pkg: `FP-${id}-${tag}` },
+      { variantId: null, status: 'packed' as const, pkg: `FP-${id}-${tag}` },
+    ];
+    // Kiện hai món đã đóng, sàn huỷ một món: kiện chờ mở (`edit`), đơn Đang huỷ.
+    const partialOrder = order(`P-${tag}`, two('P'));
+    const partial = (await add(partialOrder)).orderId;
+    await add({ ...partialOrder, lines: partialOrder.lines.map((l, i) => (i === 0 ? { ...l, status: 'cancelled' as const } : l)) });
+    const pending = (await add(order(`Q-${tag}`, [{ variantId: null, status: 'pending', pkg: `FP-Q-${tag}` }]))).orderId;
+    await testPool().query(`update "order".orders set cancel_pending = true where id = $1`, [pending]);
+    await add(order(`R-${tag}`, [{ variantId: null, status: 'pending', pkg: `FP-R-${tag}` }]));
+    const res = await app().get('/api/v1/sales/orders?flag=cancelling').set('Authorization', `Bearer ${own.ceo.token}`);
+    expect(res.status).toBe(200);
+    const page = OrderSummaryPage.parse(res.body);
+    expect(page.items.map((i) => i.id).sort()).toEqual([partial, pending].sort());
+    for (const i of page.items) expect(i.flags).toContain('cancelling');
+  });
+
   it('cờ có yêu cầu trả: lọc theo yêu cầu trả còn mở, yêu cầu đã đóng không tính', async () => {
     const insert = (status: string, close: string | null) =>
       testPool().query(

@@ -313,6 +313,21 @@ describe('toTiktokOrder (GET /order/202507/orders)', () => {
     expect(system.lines[0]!.info.cancelInitiator).toBe('platform');
     expect(() => toTiktokOrder({ id: 'O', status: 'ON_HOLD', line_items: [] })).toThrow(MarketplaceError);
   });
+
+  it('khách mới xin huỷ (món chưa huỷ): giữ người, lý do làm thông tin yêu cầu, cancelKind null (DH-B04)', () => {
+    const base = { id: 'O', create_time: 1, update_time: 2 };
+    const requested = toTiktokOrder({
+      ...base,
+      status: 'AWAITING_SHIPMENT',
+      is_buyer_request_cancel: true,
+      line_items: [{ id: 'L', display_status: 'AWAITING_SHIPMENT', cancel_user: 'BUYER', cancel_reason: 'Đổi ý' }],
+    });
+    expect(requested.cancelRequested).toBe(true);
+    expect(requested.lines[0]).toMatchObject({ status: 'pending', info: { cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: null } });
+    // Đơn đã huỷ mà món thiếu `display_status`: theo trạng thái đơn.
+    const byOrder = toTiktokOrder({ ...base, status: 'CANCELLED', line_items: [{ id: 'L', cancel_user: 'BUYER' }] });
+    expect(byOrder.lines[0]).toMatchObject({ status: 'cancelled', info: { cancelInitiator: 'buyer', cancelKind: 'cancellation' } });
+  });
 });
 
 describe('tiktokLineStatus: trạng thái TikTok → trạng thái kiện', () => {

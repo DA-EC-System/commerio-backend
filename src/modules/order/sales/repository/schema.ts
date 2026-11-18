@@ -99,7 +99,9 @@ export const orders = salesSchema.table(
     needsAttention: boolean('needs_attention').notNull().default(false),
     attentionNote: text('attention_note'),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
-    cancelling: boolean('cancelling').notNull().default(false),
+    // Đã gửi lệnh huỷ lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn xác nhận. Cờ `cancelling` của API suy ra
+    // lúc đọc: cột này hoặc còn kiện chờ mở vì món đã huỷ (`cancellingSql` ở `repository/orders.ts`).
+    cancelPending: boolean('cancel_pending').notNull().default(false),
     platformCancelled: boolean('platform_cancelled').notNull().default(false),
     shopDisconnected: boolean('shop_disconnected').notNull().default(false),
     shippingAddress: jsonb('shipping_address'),
@@ -109,6 +111,8 @@ export const orders = salesSchema.table(
     shippingFee: money('shipping_fee').notNull().default('0'),
     total: money('total').notNull(),
     cancelReason: text('cancel_reason'),
+    // Người khởi xướng huỷ cả đơn (Documents/21 §19.1): ghi một lần, sàn xác nhận huỷ không ghi đè.
+    cancelInitiator: lineCancelInitiator('cancel_initiator'),
     // Số hoá đơn người bán nhập để gửi sàn (Documents/21 §19.3).
     invoiceNumber: text('invoice_number'),
     // Thông tin đơn sàn (#260): phương thức khách trả trên sàn (giá trị gốc), ghi chú khách, phí ship của sàn.
@@ -134,6 +138,9 @@ export const orders = salesSchema.table(
       'orders_marketplace_ref',
       sql`${t.source} <> 'marketplace' or (${t.shopId} is not null and ${t.externalOrderId} is not null)`,
     ),
+    // Cờ chờ sàn trả lời chỉ có nghĩa khi đơn còn mở (test đêm 18/11/2026, DH-B03).
+    check('orders_cancel_pending_open', sql`not ${t.cancelPending} or ${t.status} in ('unpaid', 'processing')`),
+    check('orders_cancel_requested_open', sql`not ${t.cancelRequested} or ${t.status} in ('unpaid', 'processing')`),
   ],
 );
 

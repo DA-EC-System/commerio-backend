@@ -157,7 +157,7 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     expect(res.status).toBe(200);
     expect(res.body.pendingOpen).toBe(1);
     const order = Order.parse(res.body.order);
-    expect(order).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng' });
+    expect(order).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng', cancelInitiator: 'seller' });
     expect(order.flags).toContain('cancelling');
     expect(cancelOrder).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, [o.lines[0]!.externalLineId], '10000007');
 
@@ -177,6 +177,9 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     await ingest(confirmed);
     const after = await detail(orderId);
     expect(after.packages[0]!.flags).toContain('needs_open');
+    // Sàn xác nhận huỷ không ghi đè người và lý do Sale đã chọn (DH-B06); cờ Đang huỷ còn theo kiện chờ mở.
+    expect(after).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng', cancelInitiator: 'seller' });
+    expect(after.flags).toContain('cancelling');
   });
 
   it('lý do không có trong danh sách sàn: 422 errors.reasonId, không gọi huỷ', async () => {
@@ -231,7 +234,26 @@ describe('khách xin huỷ (§19.3)', () => {
     const order = Order.parse(res.body);
     expect(order.flags).toEqual(expect.arrayContaining(['cancelling']));
     expect(order.flags).not.toContain('cancel_requested');
+    expect(order).toMatchObject({ cancelInitiator: 'buyer', cancelReason: 'Khách xin huỷ' });
     expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, true, undefined);
+  });
+
+  it('DH-B06: đồng ý khách xin huỷ thì lý do huỷ của đơn là lý do khách ghi trên sàn', async () => {
+    const o = remote('pending', { cancelRequested: true });
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Muốn đổi địa chỉ' };
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'accept' });
+    expect(res.status).toBe(200);
+    expect(Order.parse(res.body)).toMatchObject({ cancelInitiator: 'buyer', cancelReason: 'Muốn đổi địa chỉ' });
+    // Sàn huỷ ở lượt sau: không ghi đè thành "Sàn huỷ đơn".
+    const confirmed = structuredClone(o);
+    confirmed.cancelRequested = false;
+    confirmed.lines[0]!.status = 'cancelled';
+    confirmed.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Muốn đổi địa chỉ', cancelKind: 'cancellation' };
+    await ingest(confirmed);
+    const after = await detail(orderId);
+    expect(after).toMatchObject({ status: 'cancelled', cancelInitiator: 'buyer', cancelReason: 'Muốn đổi địa chỉ' });
+    expect(after.flags).not.toContain('cancelling');
   });
 
   it('từ chối: báo sàn, bỏ cờ, đơn chạy tiếp', async () => {

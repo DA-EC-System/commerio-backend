@@ -40,10 +40,10 @@ const undo = async (id: string, body: Record<string, unknown>, token = company.c
   app().post(`/api/v1/fulfillment/packages/${id}/undo-handover`).set('Authorization', `Bearer ${token}`).send(body);
 
 /** Kiện kho vừa quét bàn giao (trừ tồn thật). */
-async function scanned(p: { quantity?: number; cancelling?: boolean } = {}) {
+async function scanned(p: { quantity?: number; cancelPending?: boolean } = {}) {
   const seeded = await seedPackage(company.companyId, {
     status: 'awaiting_pickup',
-    cancelling: p.cancelling,
+    cancelPending: p.cancelPending,
     lines: [{ variantId, quantity: p.quantity ?? 2, reserved: true }],
   });
   expect((await handOver(seeded.packageId)).handedOver).toHaveLength(1);
@@ -143,7 +143,7 @@ describe('POST /fulfillment/packages/:id/undo-handover (21 §19.2)', () => {
   });
 
   it('Review Focus 4: đơn đang huỷ → kiện về awaiting_pickup, cờ Cần xử lý "Đơn đang huỷ: dỡ kiện về kệ"', async () => {
-    const p = await scanned({ cancelling: true });
+    const p = await scanned({ cancelPending: true });
     const res = await undo(p.packageId, { version: await versionOf(p.packageId), reason: 'Nhầm' });
     expect(res.status).toBe(200);
     const pkg = Package.parse(res.body);

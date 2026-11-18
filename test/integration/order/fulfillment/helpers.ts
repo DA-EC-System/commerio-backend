@@ -11,6 +11,16 @@ import { createModuleContext, type AppContext } from '#src/wiring.ts';
 import { testPool } from '../../helpers/db.ts';
 import { createOrder } from '../../helpers/sales.ts';
 
+/**
+ * Cờ Đang huỷ suy ra như `cancellingSql` (`src/modules/order/sales/repository/orders.ts`), dùng trong câu `select … from
+ * "order".orders`: lệnh huỷ chờ sàn, hoặc còn kiện chờ mở vì món đã huỷ.
+ */
+export const CANCELLING_SQL = `(orders.status in ('unpaid', 'processing') and (orders.cancel_pending or exists (
+  select 1 from "order".packages p where p.order_id = orders.id and p.status <> 'cancelled' and p.needs_open
+    and (p.open_purpose = 'cancel' or exists (
+      select 1 from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
+      where pl.package_id = p.id and pl.pending_drop_qty > 0 and ol.cancelled_qty > 0)))))`;
+
 export interface SeedLine {
   variantId: string | null;
   quantity: number;
@@ -37,7 +47,8 @@ export async function seedPackage(
     orderStatus?: 'unpaid' | 'processing' | 'cancelled';
     /** Lúc đơn về app (`orders.created_at`), cho thứ tự "đơn kéo về trước" của phân hàng. */
     orderCreatedAt?: Date;
-    cancelling?: boolean;
+    /** Lệnh huỷ đã gửi lên sàn, chờ sàn trả lời (`cancel_pending`). */
+    cancelPending?: boolean;
     shipBy?: Date | null;
     trackingCode?: string | null;
     platformPackageCode?: string | null;
@@ -59,8 +70,8 @@ export async function seedPackage(
   });
   const db = testPool();
   await db.query(
-    `update "order".orders set status = $2, cancelling = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at) where id = $1`,
-    [order.orderId, p.orderStatus ?? 'processing', p.cancelling ?? false, p.shopId ?? null, p.orderCreatedAt ?? null],
+    `update "order".orders set status = $2, cancel_pending = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at) where id = $1`,
+    [order.orderId, p.orderStatus ?? 'processing', p.cancelPending ?? false, p.shopId ?? null, p.orderCreatedAt ?? null],
   );
   const { rows: orderLines } = await db.query<{ id: string; variant_id: string; quantity: number }>(
     `with updated as (

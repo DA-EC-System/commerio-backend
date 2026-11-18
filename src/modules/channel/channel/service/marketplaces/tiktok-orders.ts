@@ -139,6 +139,7 @@ export function toTiktokOrder(o: Row): RemoteOrder {
     },
     lines: items.map((i) => {
       const cancelUser = str(i.cancel_user);
+      const lineStatus = tiktokLineStatus(str(i.display_status), str(i.package_status), status);
       const tax = taxes(i);
       return {
         externalLineId: str(i.id),
@@ -151,7 +152,7 @@ export function toTiktokOrder(o: Row): RemoteOrder {
         packageCode: opt(i.package_id),
         trackingCode: opt(i.tracking_number),
         rawStatus: tiktokLineRawStatus(str(i.display_status), status),
-        status: tiktokLineStatus(str(i.display_status), str(i.package_status), status),
+        status: lineStatus,
         info: {
           thumbnailUrl: opt(i.sku_image),
           attributesLabel: opt(i.sku_name),
@@ -165,7 +166,9 @@ export function toTiktokOrder(o: Row): RemoteOrder {
           cancelReason: opt(i.cancel_reason),
           cancelReasonDetail: null,
           cancelInitiator: CANCEL_BY[cancelUser] ?? null,
-          cancelKind: cancelUser || str(i.display_status) === 'CANCELLED' ? 'cancellation' : null,
+          // `cancel_user` là "người khởi xướng yêu cầu huỷ" (OAS get-order-detail-202507): có cả khi khách mới xin huỷ. Chỉ
+          // món đã huỷ thật mới là `cancellation`; đang xin thì giữ người, lý do làm thông tin yêu cầu (test đêm 18/11, DH-B04).
+          cancelKind: lineStatus === 'cancelled' ? 'cancellation' : null,
           // Trả hàng, hoàn tiền đọc ở API return_refund (#227), không có trong chi tiết đơn.
           reverseOrderId: null,
           returnStatus: null,

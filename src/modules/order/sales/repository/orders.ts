@@ -13,8 +13,10 @@ export interface MarketplaceOrderRow {
   needsAttention: boolean;
   attentionNote: string | null;
   cancelRequested: boolean;
-  cancelling: boolean;
+  cancelPending: boolean;
   platformCancelled: boolean;
+  cancelReason: string | null;
+  cancelInitiator: 'buyer' | 'seller' | 'platform' | null;
   shippingAddress: unknown;
   platformPaymentMethod: string | null;
   buyerNote: string | null;
@@ -32,8 +34,10 @@ const rowColumns = {
   needsAttention: orders.needsAttention,
   attentionNote: orders.attentionNote,
   cancelRequested: orders.cancelRequested,
-  cancelling: orders.cancelling,
+  cancelPending: orders.cancelPending,
   platformCancelled: orders.platformCancelled,
+  cancelReason: orders.cancelReason,
+  cancelInitiator: orders.cancelInitiator,
   shippingAddress: orders.shippingAddress,
   platformPaymentMethod: orders.platformPaymentMethod,
   buyerNote: orders.buyerNote,
@@ -61,6 +65,25 @@ const LINE_INFO_COLUMNS = [
   'returnStatus',
 ] as const;
 
+/**
+ * Cờ Đang huỷ (`cancelling`) suy ra lúc đọc (Documents/21 §19.2, 25 §8.2, §8.3): đơn còn mở và đã gửi lệnh huỷ chờ sàn
+ * (`cancel_pending`), hoặc còn kiện chưa huỷ đang chờ mở vì món đã huỷ (mở để huỷ cả kiện, hay dòng chờ bỏ của dòng đơn
+ * đã huỷ). Kho mở hết kiện đó thì cờ tự hết; không lưu nên không kẹt (test đêm 18/11/2026, DH-B03, KH-B09). Kiện chờ mở
+ * vì kiểm kê hay chia lại không tính.
+ */
+export const cancellingSql = sql<boolean>`(${orders.status} in ('unpaid', 'processing') and (${orders.cancelPending} or exists (
+  select 1 from "order".packages p
+  where p.order_id = ${orders.id} and p.status <> 'cancelled' and p.needs_open
+    and (p.open_purpose = 'cancel' or exists (
+      select 1 from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
+      where pl.package_id = p.id and pl.pending_drop_qty > 0 and ol.cancelled_qty > 0)))))`;
+
+/** Cờ Đang huỷ suy ra của một đơn (`cancellingSql`), đọc trong giao dịch của bên gọi (thấy cả ghi chưa commit). */
+export async function isCancelling(orderId: string): Promise<boolean> {
+  const [row] = await getDb().select({ v: cancellingSql }).from(orders).where(eq(orders.id, orderId));
+  return row?.v === true;
+}
+
 /** Đơn sàn theo mã đơn sàn, khoá dòng tới hết giao dịch. */
 export async function lockMarketplaceOrder(shopId: string, externalOrderId: string): Promise<MarketplaceOrderRow | undefined> {
   const [row] = await getDb()
@@ -84,6 +107,61 @@ export async function allLinesCancelled(orderId: string): Promise<boolean> {
     .from(orderLines)
     .where(eq(orderLines.orderId, orderId));
   return !!row && row.lines > 0 && row.open === 0;
+}
+
+/**
+ * Tính lại tiền của đơn khi sàn huỷ một phần món (test đêm 18/11/2026, KH-B09): tạm tính, giảm giá, tổng chỉ gồm dòng
+ * chưa huỷ hết; phí ship giữ nguyên. Đơn huỷ hết món giữ tiền lúc đặt (giá trị đơn đã huỷ). Không đổi thì không ghi.
+ */
+export async function recomputeTotals(orderId: string): Promise<boolean> {
+  const rows = await getDb().execute(sql`
+    with s as (
+      select coalesce(sum(l.unit_price * (l.quantity - l.cancelled_qty)), 0)::numeric(18, 2) as subtotal,
+             coalesce(sum(l.seller_discount) filter (where l.cancelled_qty < l.quantity), 0)::numeric(18, 2) as seller_discount,
+             coalesce(sum(l.platform_discount) filter (where l.cancelled_qty < l.quantity), 0)::numeric(18, 2) as platform_discount
+      from "order".order_lines l
+      where l.order_id = ${orderId}
+      having bool_or(l.cancelled_qty < l.quantity) and bool_or(l.cancelled_qty > 0)
+    )
+    update "order".orders o
+    set subtotal = s.subtotal, seller_discount = s.seller_discount, platform_discount = s.platform_discount,
+        total = greatest(0, s.subtotal - s.seller_discount - s.platform_discount + o.shipping_fee),
+        version = o.version + 1, updated_at = now()
+    from s
+    where o.id = ${orderId}
+      and (o.subtotal, o.seller_discount, o.platform_discount) is distinct from (s.subtotal, s.seller_discount, s.platform_discount)
+    returning o.id`);
+  return rows.rows.length > 0;
+}
+
+/**
+ * Bỏ thông tin huỷ cũ của món sàn nay không huỷ (test đêm 18/11/2026, DH-B04). Chỉ dòng chưa ghi huỷ (`cancelled_qty = 0`),
+ * loại `cancellation` hoặc trống (trả hàng, hoàn tiền, giao không thành giữ nguyên).
+ * - `clear`: khách không còn xin huỷ (Sale đã từ chối) và sàn không còn báo người huỷ, lý do: dòng mang yêu cầu của khách
+ *   (`cancel_initiator = buyer`) bỏ người, lý do, loại. Cột mô tả giữ giá trị khi sàn trả null (#260) nên phải xoá riêng.
+ * - `keepRequest`: món sàn còn báo người huỷ (đang xin huỷ): chỉ bỏ loại `cancellation` adapter cũ ghi nhầm.
+ */
+export async function clearStaleLineCancel(orderId: string, lines: { clear: readonly string[]; keepRequest: readonly string[] }): Promise<void> {
+  const db = getDb();
+  const stale = and(eq(orderLines.orderId, orderId), eq(orderLines.cancelledQty, 0), sql`(${orderLines.cancelKind} is null or ${orderLines.cancelKind} = 'cancellation')`);
+  if (lines.clear.length) {
+    await db
+      .update(orderLines)
+      .set({ cancelKind: null, cancelInitiator: null, cancelReason: null, cancelReasonDetail: null, version: sql`${orderLines.version} + 1`, updatedAt: sql`now()` })
+      .where(
+        and(
+          stale,
+          inArray(orderLines.externalLineId, [...lines.clear]),
+          eq(orderLines.cancelInitiator, 'buyer'),
+        ),
+      );
+  }
+  if (lines.keepRequest.length) {
+    await db
+      .update(orderLines)
+      .set({ cancelKind: null, version: sql`${orderLines.version} + 1`, updatedAt: sql`now()` })
+      .where(and(stale, inArray(orderLines.externalLineId, [...lines.keepRequest]), eq(orderLines.cancelKind, 'cancellation')));
+  }
 }
 
 /** Dòng chưa ghép SKU: không biến thể và không "không quản tồn" (spec 237). */
@@ -251,7 +329,7 @@ export async function updateOrderAt(id: string, version: number, patch: Partial<
  * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền tự hoàn tất: gọi ngoài `withCompany`
  * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở kiểm tiếp trong `withCompany` của từng đơn.
  *
- * Đơn Đang huỷ (`cancelling`): còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại. Mọi kiện đã dừng mà còn kiện
+ * Đơn Đang huỷ: còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại; mọi kiện đã dừng thì chỉ còn `cancel_pending`. Mọi kiện đã dừng mà còn kiện
  * không huỷ (kiện hoá ra đã bàn giao) thì đi theo "Sàn huỷ đơn khi đã có kiện bàn giao" (25 §8.2): hoàn tất được, kể cả
  * khi lượt kéo đơn chưa chạy lại để gỡ cờ. Mọi kiện đều huỷ thì đơn phải sang `cancelled` (25 §8.2), không hoàn tất.
  */
@@ -262,7 +340,7 @@ export async function findCompletionCandidates(): Promise<{ id: string; companyI
     .where(
       and(
         eq(orders.status, 'processing'),
-        sql`(not ${orders.cancelling} or exists (select 1 from "order".packages p where p.order_id = ${orders.id} and p.status <> 'cancelled'))`,
+        sql`(not ${orders.cancelPending} or exists (select 1 from "order".packages p where p.order_id = ${orders.id} and p.status <> 'cancelled'))`,
         sql`exists (select 1 from "order".packages p where p.order_id = ${orders.id})`,
         sql`not exists (select 1 from "order".packages p where p.order_id = ${orders.id}
               and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,

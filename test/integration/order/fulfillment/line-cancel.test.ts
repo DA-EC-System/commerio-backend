@@ -1,8 +1,11 @@
 // Đồng bộ khi sàn huỷ lẻ một món (spec 205 §5.10, D16–D21; AC15, AC16, AC18).
 import { describe, expect, it } from 'vitest';
-import type { PlatformOrder } from '#src/modules/order/index.ts';
+import { completeDueOrdersOnce, type PlatformOrder } from '#src/modules/order/index.ts';
+import { withCompany } from '#src/shared/db/client.ts';
+import { addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { splitByHand, stockOfVariant, transitionsOf } from './helpers.ts';
+import { getOrder } from '#src/modules/order/sales/service/orders.ts';
+import { CANCELLING_SQL, packageRow, packingApp, splitByHand, stockOfVariant, transitionsOf } from './helpers.ts';
 import { ingest, remote, setup, withLineCancelled, withStatus } from './platform-fixtures.ts';
 
 const unpacked = (o: PlatformOrder): PlatformOrder => ({ ...o, lines: o.lines.map((l) => ({ ...l, packageCode: null })) });
@@ -175,5 +178,50 @@ describe('sàn huỷ lẻ một món (spec 205 §5.10)', () => {
     await ingest(v.companyId, withLineCancelled(o, 1, 'failed_delivery'));
 
     expect(await linesOf(packageId)).toHaveLength(2);
+  });
+
+  it('KH-B09: khách huỷ một món đã đóng kiện riêng: đơn Đang huỷ tới khi kho mở kiện, tiền bỏ món huỷ; kiện còn lại giao xong thì hoàn tất, không cờ Sàn đã huỷ', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, packages: 2, status: 'packed' });
+    const { orderId } = await ingest(v.companyId, o);
+    const codes = [...new Set(o.lines.map((l) => l.packageCode!))];
+    const cancelledCode = o.lines[0]!.packageCode!;
+    const liveCode = codes.find((c) => c !== cancelledCode)!;
+    const pkgOf = async (code: string) =>
+      (await testPool().query<{ id: string }>('select id from "order".packages where order_id = $1 and platform_package_code = $2', [orderId, code])).rows[0]!.id;
+    const cancelledPkg = await pkgOf(cancelledCode);
+    const flagOf = async () =>
+      (
+        await testPool().query<{ status: string; cancelling: boolean; cancel_pending: boolean; platform_cancelled: boolean; cancel_reason: string | null; subtotal: string; total: string }>(
+          `select status, ${CANCELLING_SQL} as cancelling, cancel_pending, platform_cancelled, cancel_reason, subtotal, total from "order".orders where id = $1`,
+          [orderId],
+        )
+      ).rows[0]!;
+    expect(await flagOf()).toMatchObject({ subtotal: '200000.00', total: '200000.00' });
+
+    const lineCancel = withLineCancelled(o, 0);
+    lineCancel.lines[0]!.info = { ...lineCancel.lines[0]!.info, cancelInitiator: 'buyer', cancelKind: 'cancellation', cancelReason: 'Đổi ý' };
+    await ingest(v.companyId, lineCancel);
+
+    expect(await packageRow(cancelledPkg)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
+    // Đơn chưa huỷ: cờ Đang huỷ theo kiện chờ mở, không lý do huỷ cả đơn; tiền chỉ còn món chưa huỷ.
+    expect(await flagOf()).toMatchObject({ status: 'processing', cancelling: true, cancel_pending: false, cancel_reason: null, subtotal: '100000.00', total: '100000.00' });
+    const view = await withCompany(v.companyId, () => getOrder({} as never, orderId));
+    expect(view.flags).toContain('cancelling');
+    expect(view.display.stage).toBe('cancelling');
+    expect(view.lines.map((l) => l.cancelledQty)).toEqual([1, 0]);
+
+    const kho = await addMember(v.companyId, 'warehouse');
+    const opened = await packingApp()
+      .post(`/api/v1/fulfillment/packages/${cancelledPkg}/open`)
+      .set('Authorization', `Bearer ${kho.token}`)
+      .send({ version: (await packageRow(cancelledPkg)).version });
+    expect(opened.status, JSON.stringify(opened.body)).toBe(200);
+    expect(opened.body.status).toBe('cancelled');
+    expect(await flagOf()).toMatchObject({ status: 'processing', cancelling: false });
+
+    await ingest(v.companyId, withStatus(lineCancel, 'delivered', liveCode));
+    expect(await completeDueOrdersOnce(new Date(Date.now() + 8 * 86_400_000))).toBeGreaterThanOrEqual(1);
+    expect(await flagOf()).toMatchObject({ status: 'completed', cancelling: false, cancel_pending: false, platform_cancelled: false });
   });
 });

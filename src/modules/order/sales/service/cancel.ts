@@ -1,6 +1,6 @@
 // Thao tác đơn sàn như trên Seller Center (Documents/21 §19.3, #105 PR 2): lý do huỷ, người bán huỷ, trả lời khách xin
-// huỷ, số hoá đơn. Gọi sàn ngoài giao dịch rồi mới ghi theo `version`. Huỷ trên sàn chỉ gắn cờ `cancelling`; đơn sang
-// `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt phương án a, 29/10/2026).
+// huỷ, số hoá đơn. Gọi sàn ngoài giao dịch rồi mới ghi theo `version`. Huỷ trên sàn chỉ ghi `cancel_pending` (API: cờ
+// `cancelling`); đơn sang `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt phương án a, 29/10/2026).
 import { assertTransition, publishEvent, recordAudit } from '../../../core/index.ts';
 import { isSealed } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
@@ -32,7 +32,12 @@ async function load(ctx: SalesContext, actor: Actor, id: string) {
       order,
       shopId: row!.shopId,
       externalOrderId: row!.externalOrderId,
+      // Lệnh huỷ đã gửi, chờ sàn: chặn gửi lại. Cờ `cancelling` suy ra còn gồm kiện chờ mở vì một món đã huỷ, lúc đó Sale
+      // vẫn huỷ được phần còn lại.
+      cancelPending: row!.cancelPending,
       lineIds: lines.flatMap((l) => (l.externalLineId ? [l.externalLineId] : [])),
+      // Lý do khách ghi khi xin huỷ (sàn chép lên món), cho lý do huỷ cả đơn khi Sale đồng ý (DH-B06).
+      buyerReason: lines.find((l) => l.cancelInitiator === 'buyer' && l.cancelReason)?.cancelReason ?? null,
     };
   });
 }
@@ -88,7 +93,7 @@ export async function cancelReasons(ctx: SalesContext, actor: Actor, id: string)
   const loaded = await load(ctx, actor, id);
   const { shopId, externalOrderId } = marketplaceRef(loaded);
   const { order, lineIds } = loaded;
-  if ((order.status !== 'unpaid' && order.status !== 'processing') || order.flags.includes('cancelling')) throw invalid(order);
+  if ((order.status !== 'unpaid' && order.status !== 'processing') || loaded.cancelPending) throw invalid(order);
   return { items: await marketplace(ctx).cancelReasons(actor.companyId, shopId, externalOrderId, lineIds) };
 }
 
@@ -96,7 +101,7 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
   const loaded = await load(ctx, actor, id);
   const { order, lineIds } = loaded;
   checkVersion(order, input.version);
-  if (order.flags.includes('cancelling')) throw invalid(order);
+  if (loaded.cancelPending) throw invalid(order);
   const packages = order.packages.map((p) => p.status);
   assertTransition(orderMachine, order.status, 'cancel_on_platform', {
     actor,
@@ -110,8 +115,16 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
     throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { reasonId: 'Lý do không có trong danh sách sàn cho phép' } });
   }
   await port.cancel(actor.companyId, shopId, externalOrderId, lineIds, reason.id);
-  const flags = [...order.flags.filter((f) => f !== 'cancel_requested'), 'cancelling' as const];
-  const saved = await save(ctx, actor, order, { cancelling: true, cancelReason: reason.label }, { reasonId: reason.id, reason: reason.label, flags }, flags);
+  const flags = [...order.flags.filter((f) => f !== 'cancel_requested' && f !== 'cancelling'), 'cancelling' as const];
+  // Người bán khởi xướng huỷ: ghi người và lý do Sale chọn; sàn xác nhận huỷ không ghi đè (DH-B06).
+  const saved = await save(
+    ctx,
+    actor,
+    order,
+    { cancelPending: true, cancelRequested: false, cancelReason: reason.label, cancelInitiator: 'seller' },
+    { reasonId: reason.id, reason: reason.label, flags },
+    flags,
+  );
   return { order: saved, pendingOpen: packages.filter(isSealed).length };
 }
 
@@ -140,12 +153,13 @@ export async function decideCancelRequest(
   const rejectReasonId = accept ? undefined : input.rejectReasonId;
   await marketplace(ctx).decideCancel(actor.companyId, shopId, externalOrderId, accept, rejectReasonId);
   const flags = order.flags.filter((f) => f !== 'cancel_requested');
-  if (accept) flags.push('cancelling');
+  if (accept && !flags.includes('cancelling')) flags.push('cancelling');
   return save(
     ctx,
     actor,
     order,
-    { cancelRequested: false, ...(accept ? { cancelling: true, cancelReason: 'Khách xin huỷ' } : {}) },
+    // Đồng ý: khách khởi xướng huỷ, lý do của khách trên sàn (không có thì "Khách xin huỷ"; DH-B06).
+    { cancelRequested: false, ...(accept ? { cancelPending: true, cancelReason: loaded.buyerReason ?? 'Khách xin huỷ', cancelInitiator: 'buyer' as const } : {}) },
     { decision: input.decision, ...(rejectReasonId ? { rejectReasonId } : {}), flags },
     flags,
   );

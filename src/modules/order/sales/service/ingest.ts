@@ -8,12 +8,15 @@ import type { OrderFlag, OrderStatus } from '../domain/order.ts';
 import {
   allLinesCancelled,
   cancelledLineIds,
+  clearStaleLineCancel,
   hasUnmappedLines,
   insertMarketplaceOrder,
+  isCancelling,
   lockMarketplaceOrder,
   lockOrderRow,
   markLinesCancelled,
   type MarketplaceOrderRow,
+  recomputeTotals,
   takeNextNumber,
   updateOrder,
   upsertMarketplaceLines,
@@ -145,14 +148,28 @@ const code = async (prefix: string, docType: string) => `${prefix}-${String(awai
 
 const sum = (values: string[]) => values.reduce((a, v) => a.plus(v), new Decimal(0));
 
-export function storedFlags(o: Pick<MarketplaceOrderRow, 'needsAttention' | 'cancelRequested' | 'cancelling' | 'platformCancelled'>): OrderFlag[] {
+type StoredFlagColumns = Pick<MarketplaceOrderRow, 'needsAttention' | 'cancelRequested' | 'cancelPending' | 'platformCancelled'>;
+
+/** Cột cờ lưu, để so đơn có đổi không (`cancel_pending` không phải cờ API: cờ `cancelling` suy ra lúc đọc). */
+const storedKey = (o: StoredFlagColumns) => [o.needsAttention, o.cancelRequested, o.cancelPending, o.platformCancelled].join();
+
+/**
+ * Cờ của sự kiện `sales.order_status_changed`: cờ lưu cộng cờ suy ra `cancelling` (`cancellingSql`), `unmapped_sku`. Đọc
+ * trong giao dịch của bên gọi, sau khi đã ghi đơn và kiện.
+ */
+export async function eventFlags(orderId: string, o: StoredFlagColumns): Promise<OrderFlag[]> {
   const flags: OrderFlag[] = [];
   if (o.needsAttention) flags.push('needs_attention');
   if (o.cancelRequested) flags.push('cancel_requested');
-  if (o.cancelling) flags.push('cancelling');
+  if (await isCancelling(orderId)) flags.push('cancelling');
   if (o.platformCancelled) flags.push('platform_cancelled');
+  if (await hasUnmappedLines(orderId)) flags.push('unmapped_sku');
   return flags;
 }
+
+/** Lý do và người huỷ cả đơn khi sàn tự huỷ: chỉ ghi khi đơn chưa có (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi; DH-B06). */
+const platformCancelReason = (row: Pick<MarketplaceOrderRow, 'cancelReason' | 'cancelInitiator'>) =>
+  row.cancelReason || row.cancelInitiator ? {} : { cancelReason: 'Sàn huỷ đơn', cancelInitiator: 'platform' as const };
 
 function totals(o: PlatformOrder) {
   const subtotal = sum(o.lines.map((l) => l.unitPrice));
@@ -188,20 +205,21 @@ async function transition(orderId: string, from: OrderStatus | null, to: OrderSt
 
 /**
  * Khép đơn sàn đang huỷ sau khi kho mở kiện cuối (`open_cancel`, spec 205 D21): sàn đã huỷ xong nên không đổi
- * `updated_at` nữa, lượt kéo không chạy lại luật huỷ đơn ở `ingestMarketplaceOrder`. Đơn còn mở, mang cờ `cancelling`,
- * mọi dòng đã huỷ đủ và không còn kiện chưa huỷ thì `platform_cancel` như lượt kéo. Gọi trong `withCompany`, giao dịch
+ * `updated_at` nữa, lượt kéo không chạy lại luật huỷ đơn ở `ingestMarketplaceOrder`. Đơn còn mở, mọi dòng đã huỷ đủ và
+ * không còn kiện chưa huỷ thì `platform_cancel` như lượt kéo (25 §8.3 "Mọi kiện của đơn đều huỷ thì đơn → `cancelled`"),
+ * gỡ `cancel_pending`; lý do, người huỷ đã có (Sale huỷ, đồng ý khách xin huỷ) thì giữ. Gọi trong `withCompany`, giao dịch
  * riêng sau khi giao dịch mở kiện commit: khoá đơn trước, không giữ khoá kiện (cùng thứ tự với lượt kéo).
  */
 export async function settleCancelledOrder(orderId: string): Promise<void> {
   const row = await lockOrderRow(orderId);
-  if (!row || (row.status !== 'unpaid' && row.status !== 'processing') || !row.cancelling) return;
+  if (!row || (row.status !== 'unpaid' && row.status !== 'processing')) return;
   if (!(await allLinesCancelled(orderId))) return;
   if ((await findPackagesOfOrders([orderId])).some((p) => p.status !== 'cancelled')) return;
   await transition(orderId, row.status, 'cancelled', 'platform_cancel');
-  await updateOrder(orderId, { status: 'cancelled', cancelReason: 'Sàn huỷ đơn' });
+  const after = { ...row, status: 'cancelled' as const, cancelPending: false, cancelRequested: false };
+  await updateOrder(orderId, { status: 'cancelled', cancelPending: false, cancelRequested: false, ...platformCancelReason(row) });
   await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', by: 'platform' } });
-  const flags = storedFlags(row);
-  if (await hasUnmappedLines(orderId)) flags.push('unmapped_sku');
+  const flags = await eventFlags(orderId, after);
   await publishEvent({
     type: 'sales.order_status_changed',
     aggregateId: orderId,
@@ -278,6 +296,15 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   // Món sàn huỷ mà kiện chưa rời kho (gỡ, chờ bỏ, huỷ cùng kiện): ghi số đã huỷ trong cùng giao dịch; trigger kiểm bằng
   // lúc commit. Chỉ luồng này ghi `cancelled_qty`, không suy ngược từ dòng kiện (spec 205 §5.10).
   await markLinesCancelled(packages.cancelledLines);
+  // Huỷ một phần món: tiền của đơn chỉ gồm dòng chưa huỷ (KH-B09); không tính là đơn đổi trạng thái.
+  const totalsChanged = packages.cancelledLines.length > 0 && (await recomputeTotals(orderId));
+  // Món sàn không huỷ, khách không còn xin huỷ (Sale đã từ chối) thì bỏ thông tin xin huỷ cũ của dòng (DH-B04).
+  const notCancelled = o.lines.filter((l) => l.status !== null && l.status !== 'cancelled');
+  const hasRequest = (l: PlatformOrder['lines'][number]) => !!(l.info.cancelInitiator || l.info.cancelReason || l.info.cancelReasonDetail);
+  await clearStaleLineCancel(orderId, {
+    clear: o.cancelRequested ? [] : notCancelled.filter((l) => !l.info.cancelKind && !hasRequest(l)).map((l) => l.externalLineId),
+    keepRequest: notCancelled.filter((l) => !l.info.cancelKind && hasRequest(l)).map((l) => l.externalLineId),
+  });
 
   const next = { ...row };
   if (next.status === 'unpaid' && o.paid) {
@@ -285,21 +312,23 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     next.status = 'processing';
   }
   const open = next.status === 'unpaid' || next.status === 'processing';
+  const allCancelled = o.lines.length > 0 && o.lines.every((l) => l.status === 'cancelled');
   let cancelled = false;
-  if (open && o.lines.length && o.lines.every((l) => l.status === 'cancelled')) {
-    if (packages.cancelled.includes('handed_over')) {
-      next.platformCancelled = true;
-      // 25 §8.2: đơn Đang huỷ có kiện hoá ra đã bàn giao (sàn báo đã lấy, kho không thấy kiện khi dỡ) đi theo "Sàn huỷ
-      // đơn khi đã có kiện bàn giao". Cờ Đang huỷ chỉ còn nghĩa khi còn kiện chờ mở.
-      if (!packages.cancelled.includes('needs_open')) next.cancelling = false;
-    } else if (packages.cancelled.includes('needs_open')) next.cancelling = true;
-    else {
+  // Cờ Đang huỷ không lưu (`cancellingSql`): còn kiện chờ mở thì đơn tự mang cờ tới khi kho mở hết (25 §8.2, §8.3).
+  // Có kiện đã bàn giao thì đi theo "Sàn huỷ đơn khi đã có kiện bàn giao" (cờ Sàn đã huỷ, 25 §8.2).
+  if (open && allCancelled) {
+    if (packages.cancelled.includes('handed_over')) next.platformCancelled = true;
+    else if (!packages.cancelled.includes('needs_open')) {
       await transition(orderId, next.status, 'cancelled', 'platform_cancel');
       next.status = 'cancelled';
       cancelled = true;
     }
   }
-  next.cancelRequested = o.cancelRequested && next.status !== 'cancelled';
+  const stillOpen = next.status === 'unpaid' || next.status === 'processing';
+  // Sàn đã trả lời lệnh huỷ (Documents/21 §19.3 "tới khi sàn xác nhận"): lượt này có món vừa ghi huỷ, sàn báo huỷ mọi
+  // món, hoặc đơn đã dừng. Phần còn chờ kho mở kiện do cờ suy ra giữ (DH-B03).
+  if (!stillOpen || allCancelled || packages.cancelledLines.some((id) => !done.has(id))) next.cancelPending = false;
+  next.cancelRequested = o.cancelRequested && stillOpen;
   // Sàn kéo lại kiện người dùng đã chuyển thất lạc/hoàn (spec #238 §5.4): bật cờ, đơn `completed` giữ trạng thái.
   if (packages.unknown || packages.resplit || packages.revived) next.needsAttention = true;
   // #358: cờ do mã lạ tự gỡ khi lượt này sàn trả mọi món mã đã biết và không có lý do cờ nào khác của lượt (chia lại kiện,
@@ -324,7 +353,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   // `row` là bản đã lưu (đơn vừa chèn: `unpaid`, chưa cờ): chỉ ghi khi có khác.
   const dirty =
     next.status !== row.status ||
-    storedFlags(next).join() !== storedFlags(row).join() ||
+    storedKey(next) !== storedKey(row) ||
     next.rawMarketplaceStatus !== row.rawMarketplaceStatus ||
     next.shipBy?.getTime() !== row.shipBy?.getTime() ||
     // Note "chưa biết" của chính luồng này đổi lý do (mã khác, chia lại kiện, kéo lại) dù cờ vẫn bật: ghi lại để lượt gỡ
@@ -343,18 +372,17 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       needsAttention: next.needsAttention,
       attentionNote,
       cancelRequested: next.cancelRequested,
-      cancelling: next.cancelling,
+      cancelPending: next.cancelPending,
       platformCancelled: next.platformCancelled,
-      cancelReason: cancelled ? 'Sàn huỷ đơn' : undefined,
+      ...(cancelled ? platformCancelReason(row) : {}),
     });
   }
   if (cancelled) {
     await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', by: 'platform' } });
   }
-  const changed = created || dirty || packages.changed;
+  const changed = created || dirty || packages.changed || totalsChanged;
   if (changed) {
-    const flags: OrderFlag[] = storedFlags(next);
-    if (await hasUnmappedLines(orderId)) flags.push('unmapped_sku');
+    const flags = await eventFlags(orderId, next);
     await publishEvent({
       type: 'sales.order_status_changed',
       aggregateId: orderId,

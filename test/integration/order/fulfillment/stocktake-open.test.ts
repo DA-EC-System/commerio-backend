@@ -13,7 +13,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive, setBuckets } from '../../product/inventory/helpers.ts';
-import { channelShop, packageLineRows, packageRow, packingApp, seedPackage, transitionsOf } from './helpers.ts';
+import { CANCELLING_SQL, channelShop, packageLineRows, packageRow, packingApp, seedPackage, transitionsOf } from './helpers.ts';
 import { ingest, remote, withLineCancelled, withStatus } from './platform-fixtures.ts';
 
 const ctx = { stockHoldOf: awaitingStocktakeShops };
@@ -351,7 +351,7 @@ describe('mở kiện stocktake, huỷ thắng kiểm kê (spec #238 §5.5, mụ
     await ingest(companyId, withStatus(o, 'cancelled'));
 
     expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
-    const { rows } = await testPool().query<{ status: string; cancelling: boolean }>('select status, cancelling from "order".orders where id = $1', [orderId]);
+    const { rows } = await testPool().query<{ status: string; cancelling: boolean }>(`select status, ${CANCELLING_SQL} as cancelling from "order".orders where id = $1`, [orderId]);
     expect(rows[0]).toEqual({ status: 'processing', cancelling: true });
   });
 
