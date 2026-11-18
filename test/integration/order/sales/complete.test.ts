@@ -277,3 +277,14 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect((await orderOf(theirs)).status).toBe('completed');
   });
 });
+
+describe('không có hàm đọc hạn trả (#236, review)', () => {
+  it('lượt chạy không có returnPoliciesOf bị từ chối, không rơi về 7 ngày', async () => {
+    // Gian hàng 60 ngày: chỉ lượt rơi về 7 ngày mới hoàn tất đơn giao 16 ngày trước.
+    const id = await delivered(['delivered'], 16, await newShop(companyId, 'lazada', 60));
+
+    await expect(completeDueOrdersOnce(now, {} as never)).rejects.toThrow(/returnPoliciesOf/);
+
+    expect((await orderOf(id)).status).toBe('processing');
+  });
+});

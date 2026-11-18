@@ -73,7 +73,7 @@ async function completeOne(orderId: string, now: Date, policy: ReturnPolicy): Pr
  * yêu cầu trả mở, chính sách gian hàng (số câu không tỉ lệ với số đơn đang chờ hạn trả).
  */
 async function dueOrdersOfCompany(
-  ctx: Pick<SalesContext, 'returnPoliciesOf'>,
+  ctx: Required<Pick<SalesContext, 'returnPoliciesOf'>>,
   companyId: string,
   orderIds: readonly string[],
   now: Date,
@@ -108,13 +108,14 @@ async function dueOrdersOfCompany(
 /**
  * Một lượt tự hoàn tất cho mọi công ty, lật trang ứng viên theo `id`. Đọc lô của một công ty lỗi (kể cả đọc chính sách
  * gian hàng) thì bỏ công ty đó ở lượt này, không rơi về 7 ngày; đơn lỗi không chặn đơn khác. Trả số đơn đã hoàn tất.
- * `ctx` thiếu `returnPoliciesOf` (test cũ) thì mọi đơn tính 7 ngày; worker luôn truyền đủ.
+ * `ctx.returnPoliciesOf` bắt buộc: thiếu thì ném ngay, không chạy lượt nào (không rơi về 7 ngày, #390).
  */
 export async function completeDueOrdersOnce(
   now = new Date(),
-  ctx: Pick<SalesContext, 'returnPoliciesOf'> = {},
+  ctx: Required<Pick<SalesContext, 'returnPoliciesOf'>>,
   pageSize = COMPLETION_PAGE,
 ): Promise<number> {
+  if (!ctx.returnPoliciesOf) throw new Error('completeDueOrdersOnce cần ctx.returnPoliciesOf');
   const started = Date.now();
   let candidates = 0;
   let completed = 0;
@@ -155,8 +156,11 @@ export async function completeDueOrdersOnce(
 
 /** Việc nền của `sales` trong worker: tự hoàn tất mỗi giờ. */
 export async function startSalesBackground(ctx: SalesContext): Promise<() => Promise<void>> {
+  const { returnPoliciesOf } = ctx;
+  // `AppContext` khai bắt buộc; thiếu (ctx dựng tay) thì không khởi động việc nền thay vì chốt đơn theo 7 ngày.
+  if (!returnPoliciesOf) throw new Error('startSalesBackground cần ctx.returnPoliciesOf');
   // Kiểm hàng hoàn của yêu cầu trả ghi sổ thì đóng yêu cầu, hoàn tiền (#202, §11.2).
   registerConsumer('inventory.return_inspected', onReturnInspected, { consumer: 'sales-return-inspected' });
   registerSalesMetrics();
-  return every(3_600_000, () => completeDueOrdersOnce(new Date(), ctx), 'việc nền tự hoàn tất đơn lỗi');
+  return every(3_600_000, () => completeDueOrdersOnce(new Date(), { returnPoliciesOf }), 'việc nền tự hoàn tất đơn lỗi');
 }
