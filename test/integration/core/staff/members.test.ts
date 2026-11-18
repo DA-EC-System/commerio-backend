@@ -98,18 +98,50 @@ describe('đổi vai trò', () => {
   it('AC-B3: thêm hay gỡ vai trò có quyền người gọi không có → 403 permission_not_held; gán CEO → 403 protected_account', async () => {
     const a = await createCompany();
     const admin = await addMember(a.companyId, 'admin');
-    const target = await addMember(a.companyId, 'warehouse');
-    const custom = await createCustomRole(a.companyId, ['identity.account.view']);
-    // Gỡ "Nhân viên kho" (có quyền lập phiếu Admin không có).
-    const removing = await putRoles(admin.token, target.accountId, { roleIds: [custom], version: 1 });
+    const finance = await createCustomRole(a.companyId, ['inventory.cost.view']);
+    const target = await addMember(a.companyId, finance);
+    // Gỡ vai tự tạo có quyền xem giá vốn mà Admin không có (US-CT-08 AC5).
+    const removing = await putRoles(admin.token, target.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 1 });
     expect(removing.status).toBe(403);
     expect(removing.body.code).toBe('permission_not_held');
+    const custom = await createCustomRole(a.companyId, ['identity.account.view']);
     const ceoRole = await putRoles(admin.token, target.accountId, { roleIds: [BUILTIN_ROLES.ceo.id], version: 1 });
     expect(ceoRole.body.code).toBe('protected_account');
     const plain = await addMember(a.companyId, custom);
-    const adding = await putRoles(admin.token, plain.accountId, { roleIds: [custom, BUILTIN_ROLES.kho.id], version: 1 });
+    const adding = await putRoles(admin.token, plain.accountId, { roleIds: [custom, finance], version: 1 });
     expect(adding.body.code).toBe('permission_not_held');
     expect((await memberAudits(target.membershipId)).rows).toEqual([]);
+  });
+
+  it('#351 AC-2: Admin thêm Nhân viên kho cho nhân viên Sale rồi gỡ ra → 200, nhật ký vai trước và sau (US-CT-08 AC1)', async () => {
+    const a = await createCompany();
+    const admin = await addMember(a.companyId, 'admin');
+    const target = await addMember(a.companyId, 'sale');
+    const both = [BUILTIN_ROLES.sale.id, BUILTIN_ROLES.kho.id].sort();
+    const added = await putRoles(admin.token, target.accountId, { roleIds: both, version: 1 });
+    expect(added.status).toBe(200);
+    expect(added.body).toMatchObject({ version: 2 });
+    expect(added.body.roles.map((r: { id: string }) => r.id).sort()).toEqual(both);
+    const removed = await putRoles(admin.token, target.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 2 });
+    expect(removed.status).toBe(200);
+    expect((await memberAudits(target.membershipId)).rows).toEqual([
+      { action: 'update', before: { roles: [BUILTIN_ROLES.sale.id] }, after: { roles: both } },
+      { action: 'update', before: { roles: both }, after: { roles: [BUILTIN_ROLES.sale.id] } },
+    ]);
+  });
+
+  it('#351 AC-5: quản lý tài khoản qua vai tự tạo: gán Kho được; gán hay gỡ vai Admin → 403 permission_not_held', async () => {
+    const a = await createCompany();
+    const manager = await addMember(a.companyId, await createCustomRole(a.companyId, ['identity.account.manage']));
+    const sale = await addMember(a.companyId, 'sale');
+    expect((await putRoles(manager.token, sale.accountId, { roleIds: [BUILTIN_ROLES.kho.id], version: 1 })).status).toBe(200);
+    const promote = await putRoles(manager.token, sale.accountId, { roleIds: [BUILTIN_ROLES.admin.id], version: 2 });
+    expect(promote.body.code).toBe('permission_not_held');
+    const admin = await addMember(a.companyId, 'admin');
+    const demote = await putRoles(manager.token, admin.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 1 });
+    expect(demote.status).toBe(403);
+    expect(demote.body.code).toBe('permission_not_held');
+    expect((await memberAudits(admin.membershipId)).rows).toEqual([]);
   });
 
   it('AC-B3: roleIds rỗng, không tồn tại, của công ty khác → 422 errors.roleIds', async () => {

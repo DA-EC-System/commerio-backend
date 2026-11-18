@@ -47,12 +47,17 @@ export interface RoleWithPermissions {
   id: string;
   name: string;
   isCeo: boolean;
+  /** Vai có sẵn Sale, Nhân viên kho: người có `identity.account.manage` gán, gỡ không so quyền (Documents/21 I5). */
+  freelyAssignable: boolean;
   permissions: string[];
 }
 
-const withCeoFlag = (r: { id: string; name: string; permissions: string[] }): RoleWithPermissions => ({
+const FREELY_ASSIGNABLE: readonly string[] = [BUILTIN_ROLES.sale.id, BUILTIN_ROLES.kho.id];
+
+const withFlags = (r: { id: string; name: string; permissions: string[] }): RoleWithPermissions => ({
   ...r,
   isCeo: r.id === BUILTIN_ROLES.ceo.id,
+  freelyAssignable: FREELY_ASSIGNABLE.includes(r.id),
 });
 
 /**
@@ -61,7 +66,7 @@ const withCeoFlag = (r: { id: string; name: string; permissions: string[] }): Ro
  */
 export async function findRolesWithPermissions(roleIds: readonly string[]): Promise<RoleWithPermissions[]> {
   requireCompanyId('findRolesWithPermissions');
-  return (await rolesWithPermissionRows([...new Set(roleIds)])).map(withCeoFlag);
+  return (await rolesWithPermissionRows([...new Set(roleIds)])).map(withFlags);
 }
 
 /** Vai trò của từng membership; membership không có vai trò thì không có trong Map. Chạy trong `withCompany`. */
@@ -69,7 +74,7 @@ export async function memberRolesOf(membershipIds: readonly string[]): Promise<M
   requireCompanyId('memberRolesOf');
   const pairs = await memberRoleRows(membershipIds);
   const found = await rolesWithPermissionRows([...new Set(pairs.map((p) => p.roleId))]);
-  const byId = new Map(found.map((r) => [r.id, withCeoFlag(r)]));
+  const byId = new Map(found.map((r) => [r.id, withFlags(r)]));
   const result = new Map<string, RoleWithPermissions[]>();
   for (const { membershipId, roleId } of pairs) {
     const role = byId.get(roleId);

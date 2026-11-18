@@ -98,10 +98,27 @@ describe('tạo link mời', () => {
     expect(await invitationCount(own.companyId)).toBe(0);
   });
 
-  it('Admin tạo được link cho vai trò gồm quyền mình có; vai trò Sale có quyền giao hàng mà Admin không có (Documents/21 mục 8)', async () => {
+  it('#351 AC-1: Admin tạo link vai có sẵn Sale, Nhân viên kho dù thiếu quyền của chúng (Documents/21 I5); nhật ký create', async () => {
     const admin = await addMember(company.companyId, 'admin');
+    const adminId = await accountIdOf(admin.email);
     expect((await as(admin.token).create([BUILTIN_ROLES.admin.id])).status).toBe(201);
-    expect((await as(admin.token).create([SALE])).body.code).toBe('permission_not_held');
+    for (const roleIds of [[SALE], [BUILTIN_ROLES.kho.id], [SALE, BUILTIN_ROLES.kho.id]]) {
+      const res = await as(admin.token).create(roleIds);
+      expect(res.status, roleIds.join()).toBe(201);
+      expect((await auditOf(res.body.id)).rows).toEqual([
+        { action: 'create', entity_type: 'core.invitations', actor_id: adminId, before: null, after: { roles: [...roleIds].sort() } },
+      ]);
+    }
+  });
+
+  it('#351 AC-5: người quản lý tài khoản qua vai tự tạo: mời Kho được, mời vai Admin (có quyền mình không có) → 403', async () => {
+    const own = await createCompany();
+    const manager = await addMember(own.companyId, await createCustomRole(own.companyId, ['identity.account.manage']));
+    expect((await as(manager.token).create([BUILTIN_ROLES.kho.id])).status).toBe(201);
+    const res = await as(manager.token).create([BUILTIN_ROLES.admin.id]);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('permission_not_held');
+    expect(await invitationCount(own.companyId)).toBe(1);
   });
 });
 
@@ -250,6 +267,21 @@ describe('duyệt, từ chối', () => {
     }
   });
 
+  it('#351 AC-6: Admin duyệt yêu cầu vai Nhân viên kho do CEO tạo → 200; quản lý qua vai tự tạo duyệt vai Admin → 403', async () => {
+    const admin = await addMember(company.companyId, 'admin');
+    const kho = await pending({ roleIds: [BUILTIN_ROLES.kho.id] });
+    const res = await as(admin.token).approve(kho.id, kho.version);
+    expect(res.status).toBe(200);
+    expect(res.body.member.roles).toEqual([{ id: BUILTIN_ROLES.kho.id, name: 'Nhân viên kho' }]);
+
+    const manager = await addMember(company.companyId, await createCustomRole(company.companyId, ['identity.account.manage']));
+    const adminInv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
+    const denied = await as(manager.token).approve(adminInv.id, adminInv.version);
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('permission_not_held');
+    expect(await invitationRow(adminInv.id)).toMatchObject({ status: 'pending', version: adminInv.version });
+  });
+
   it('AC-C16: email đã có tài khoản do đường khác → 409 email_taken; đã là thành viên → 409 already_member', async () => {
     const taken = await pending();
     await db.query("insert into core.accounts (email, full_name) values ($1, 'Đăng Ký Riêng')", [taken.email]);
@@ -313,8 +345,7 @@ const lockInvitation = (id: string) => (holder: PoolClient) =>
 describe('duyệt chạy đồng thời', () => {
   it('hai Admin duyệt cùng lúc: một 200, một 409 version_conflict; chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
-    // Mời làm Admin: Admin cấp được đủ quyền. Mời làm Sale thì Admin thiếu `fulfillment.delivery.update`, nên khi chạy
-    // trước CEO sẽ nhận 403 `permission_not_held` thay vì 409, kết quả tuỳ thứ tự.
+    // Mời làm Admin: Admin cấp được đủ quyền, nên hai bên chỉ khác nhau ở thứ tự giành khoá.
     const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
     const results = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
