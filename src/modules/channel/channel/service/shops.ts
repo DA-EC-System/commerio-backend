@@ -445,18 +445,23 @@ async function companyMismatch(expectedId: string, actualId: string): Promise<Ap
   });
 }
 
-/** Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần. */
+/**
+ * Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần.
+ * `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn (404); token của seller khác thì 409 `shop_mismatch`.
+ */
 export async function connectByToken(
   raw: string,
   actor: Actor,
-  input: { accessToken: string; refreshToken?: string | undefined },
+  input: { accessToken: string; refreshToken?: string | undefined; shopId?: string | undefined },
 ): Promise<ShopCallbackResult> {
   const { platform, adapter } = platformOf(raw);
+  const target = input.shopId ? await reconnectTarget(actor.companyId, platform, input.shopId) : null;
   return forCompany(actor.companyId, async () => {
     const connections = await onMarketplace(async () =>
       atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
     );
-    return attachAll(platform, actor, connections, 'token', null);
+    await assertTarget(actor.companyId, platform, target, connections);
+    return attachAll(platform, actor, connections, 'token', target);
   });
 }
 

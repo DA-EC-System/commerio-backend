@@ -18,7 +18,7 @@ const MINUTE = 60_000;
 // Sàn giả: code `c-<seller>` (hoặc `c-<a>+<b>`: một lần uỷ quyền ra nhiều gian hàng). Mỗi lần đổi mã cấp token mới
 // `tok-<seller>-<n>`, hạn truy cập dời thêm n phút, để test phân biệt token của lần nối nào đã được lưu. `afterExchange` chạy
 // sau khi đổi mã, trước khi trả về (ca gian hàng mất giữa lúc đổi mã và lúc ghi).
-const sàn = { exchanges: 0, afterExchange: null as null | (() => Promise<void>) };
+const sàn = { exchanges: 0, afterExchange: null as null | (() => Promise<void>), sellerCalls: 0 };
 registerAdapter('lazada', fakeAdapter({
   authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
   async exchangeCode({ code }) {
@@ -41,9 +41,10 @@ registerAdapter('lazada', fakeAdapter({
       }));
   },
 }));
-// TikTok giả chỉ để có gian hàng thuộc sàn khác, nối bằng token (`tok-<seller>`).
+// TikTok giả nối bằng token (`tok-<seller>`): gian hàng thuộc sàn khác, và đường dán token có `shopId`.
 registerAdapter('tiktok', fakeAdapter({
   async getSeller(accessToken) {
+    sàn.sellerCalls++;
     const id = accessToken.slice(4);
     return { externalShopId: id, shopName: `TikTok ${id.slice(0, 8)}`, region: 'VN' };
   },
@@ -333,5 +334,61 @@ describe('nhật ký nối lại (#398 AC 4)', () => {
   it('tạo gian hàng mới qua callback không ghi nhật ký channel.shops', async () => {
     const shopId = await newShop(token);
     expect(await shopAudits(shopId)).toHaveLength(0);
+  });
+});
+
+// Shop thử Lazada chỉ nối lại được bằng token: dán nhầm token seller khác cũng ghi sai gian hàng như OAuth (review #412).
+describe('dán token nối lại theo shopId (#398)', () => {
+  const pasteToken = (bearer: string, sellerId: string, shopId?: string) =>
+    app()
+      .post('/api/v1/channel/shops/tiktok/token')
+      .set('Authorization', `Bearer ${bearer}`)
+      .send({ accessToken: `tok-${sellerId}`, ...(shopId === undefined ? {} : { shopId }) });
+
+  async function tiktokShop(bearer: string, sellerId = seller()): Promise<string> {
+    const res = await pasteToken(bearer, sellerId);
+    expect(res.status).toBe(201);
+    return res.body.shop.id;
+  }
+
+  it('token của đúng seller thì nối lại đúng gian hàng đó', async () => {
+    const a = seller();
+    const shopId = await tiktokShop(token, a);
+    const res = await pasteToken(token, a, shopId);
+    expect(res.status).toBe(200);
+    expect(res.body.shop.id).toBe(shopId);
+  });
+
+  it('token của seller khác thì 409 shop_mismatch, không tạo gian hàng, không ghi nhật ký, không lộ token', async () => {
+    const [a, b] = [seller(), seller()];
+    const shopId = await tiktokShop(token, a);
+    const before = await snapshot(company.companyId);
+    const res = await pasteToken(token, b, shopId);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/shop_mismatch');
+    expect(res.body.expected).toEqual({ name: `TikTok ${a.slice(0, 8)}`, externalShopId: a });
+    expect(res.body.actual).toEqual({ name: null, externalShopId: b });
+    expect(JSON.stringify(res.body)).not.toContain('tok-');
+    expect(await snapshot(company.companyId)).toEqual(before);
+  });
+
+  it('shopId của công ty khác hoặc của sàn khác thì 404 not_found, chưa gọi sàn', async () => {
+    const other = await createCompany({ optionalModules: ['channel'] });
+    const foreign = await tiktokShop(other.ceo.token);
+    const lazadaShop = await newShop(token);
+    for (const shopId of [foreign, lazadaShop, 'abc']) {
+      const calls = sàn.sellerCalls;
+      const res = await pasteToken(token, seller(), shopId);
+      expect(res.status).toBe(404);
+      expect(res.body.type).toBe('/problems/not_found');
+      expect(sàn.sellerCalls).toBe(calls);
+    }
+  });
+
+  it.each(['', '  '])('shopId rỗng (%j) thì 422 validation_failed errors.shopId', async (shopId) => {
+    const res = await pasteToken(token, seller(), shopId);
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('validation_failed');
+    expect(res.body.errors).toHaveProperty('shopId');
   });
 });

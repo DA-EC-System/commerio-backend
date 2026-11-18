@@ -5,17 +5,15 @@ import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
 
-// `shopId` không phải uuid, của công ty khác hay sàn khác: 404 ở service (#398), nên ở đây chỉ là chuỗi.
+// Gian hàng đang kết nối lại (#398). Không phải uuid, của công ty khác hay sàn khác: 404 ở service, nên ở đây chỉ là chuỗi.
+// Rỗng không coi là vắng: coi là vắng thì đi đường cũ, ghi token cho seller sàn trả.
+const ReconnectShopId = z.string().trim().min(1, 'Mã gian hàng không được rỗng').max(64);
+
 export const AuthorizeUrlQuery = z
   .object({
-    // Rỗng không coi là vắng: ký `shp: ''` thì callback quay về đường cũ, ghi token cho seller sàn trả (#398).
-    shopId: z
-      .string()
-      .trim()
-      .min(1, 'Mã gian hàng không được rỗng')
-      .max(64)
-      .optional()
-      .meta({ description: 'Gian hàng đang kết nối lại; FE gửi khi bấm Kết nối lại, không gửi khi Thêm gian hàng' }),
+    shopId: ReconnectShopId.optional().meta({
+      description: 'Gian hàng đang kết nối lại; FE gửi khi bấm Kết nối lại, không gửi khi Thêm gian hàng',
+    }),
   })
   .meta({ id: 'ShopAuthorizeUrlQuery' });
 
@@ -43,6 +41,9 @@ export const TokenBody = z
   .object({
     accessToken: z.string('Nhập access token').trim().min(1, 'Nhập access token').max(2000),
     refreshToken: z.string().trim().min(1).max(2000).optional(),
+    shopId: ReconnectShopId.optional().meta({
+      description: 'Gian hàng đang kết nối lại bằng token; token của seller khác thì 409 `shop_mismatch` (#398)',
+    }),
   })
   .meta({ id: 'ShopTokenInput', description: 'Token lấy trên console của sàn (shop thử không đi OAuth được)' });
 
