@@ -9,8 +9,12 @@ export interface AuditContext extends ModuleContext {
   readonly accountSummaries?: (ids: readonly string[]) => Promise<{ id: string; email: string; fullName: string }[]>;
 }
 
-/** Tên dễ đọc của đối tượng lúc ghi: trường đầu tiên có trong `after` (hoặc `before` khi xoá). */
+/**
+ * Tên dễ đọc của đối tượng lúc ghi: cột `entity_label` (#352). Dòng ghi trước đó không có cột này thì lấy trường đầu
+ * tiên có trong `after` (hoặc `before` khi xoá).
+ */
 function entityLabel(row: AuditLogRow): string {
+  if (row.entityLabel) return row.entityLabel;
   const data = (row.after ?? row.before) as Record<string, unknown> | null;
   const label = ['name', 'fullName', 'email', 'module', 'code'].map((k) => data?.[k]).find((v) => typeof v === 'string');
   return (label as string | undefined) ?? row.entityType;
@@ -28,6 +32,7 @@ async function toViews(ctx: AuditContext, rows: readonly AuditLogRow[]) {
       entityType: r.entityType,
       entityId: r.entityId,
       entityLabel: entityLabel(r),
+      operation: r.operation,
       actor: {
         accountId: r.actorId ?? '',
         email: a?.email ?? '',

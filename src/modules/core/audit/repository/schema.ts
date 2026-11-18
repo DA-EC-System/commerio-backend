@@ -18,6 +18,10 @@ export const auditLogs = auditSchema.table(
     action: auditAction('action').notNull(),
     entityType: text('entity_type').notNull(),
     entityId: uuid('entity_id'),
+    /** Tên đối tượng lúc ghi (#352); trống ở dòng ghi trước đó. */
+    entityLabel: text('entity_label'),
+    /** Mã thao tác cụ thể (`lock`, `change_roles`, `approve_send`…); trống khi chỉ là thêm/sửa/xoá thường. */
+    operation: text('operation'),
     before: jsonb('before'),
     after: jsonb('after'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
