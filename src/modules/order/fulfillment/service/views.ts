@@ -90,7 +90,8 @@ export function toPackageSummary(
       untracked: pl.stockUntracked,
       sku: v?.sku ?? l?.sku ?? '',
       productName: v?.productName ?? l?.productName ?? '',
-      attributesLabel: v?.attributesLabel ?? l?.attributesLabel ?? '',
+      // Biến thể app không có thuộc tính thì dùng nhãn phân loại của sàn để kho vẫn biết món nào.
+      attributesLabel: v?.attributesLabel || l?.attributesLabel || '',
       externalSku: l?.externalSku ?? null,
       quantity: pl.quantity,
       pendingDropQty: pl.pendingDropQty,

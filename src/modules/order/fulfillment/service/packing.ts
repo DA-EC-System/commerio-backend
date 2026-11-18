@@ -57,7 +57,7 @@ export async function pickList(ctx: FulfillmentContext, ids: readonly string[] |
       packageId, variantId, untracked: stockUntracked, quantity,
       sku: variant?.sku ?? line.sku,
       productName: variant?.productName ?? line.productName,
-      attributesLabel: variant?.attributesLabel ?? line.attributesLabel,
+      attributesLabel: variant?.attributesLabel || line.attributesLabel,
     };
   }));
   return { items, packageCount: packageIds.length, truncated };
