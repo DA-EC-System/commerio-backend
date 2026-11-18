@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { assertTransition } from '#src/modules/core/index.ts';
 import {
   arrowAction,
@@ -124,5 +125,23 @@ describe('giữ hàng, lấy lại phần giữ là bước của hệ thống (
       expect.objectContaining({ code: 'invalid_transition', status: 409 }),
     );
     expect(assertTransition(packageMachine, from, action, { actor: null, record }).to).toBe(to);
+  });
+});
+
+describe('tự giao kiện sàn theo vai có sẵn (#351, Documents/25 mục 11: chỉ Nhân viên kho)', () => {
+  const actorOf = (role: 'sale' | 'kho') => ({
+    accountId: role,
+    permissions: [...BUILTIN_ROLES[role].permissions],
+    enabledModules: ['fulfillment'],
+  });
+  const marketplaceSelf: PackageRecord = { source: 'marketplace', selfDelivery: true, orderStatus: 'processing' };
+
+  it('Nhân viên kho tự giao được, Sale bị 403 forbidden', () => {
+    expect(assertTransition(packageMachine, 'packed', 'self_deliver', { actor: actorOf('kho'), record: marketplaceSelf }).to).toBe(
+      'self_delivering',
+    );
+    expect(() => assertTransition(packageMachine, 'packed', 'self_deliver', { actor: actorOf('sale'), record: marketplaceSelf })).toThrow(
+      expect.objectContaining({ status: 403, code: 'forbidden' }),
+    );
   });
 });

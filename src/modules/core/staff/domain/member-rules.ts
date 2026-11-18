@@ -1,5 +1,6 @@
 // Luật đổi nhân viên (#7 [B]) và gán vai trò khi tạo link mời, duyệt (#7 [C]). Thuần, không I/O.
-// Documents/21 I5: không gán CEO qua màn này; không thêm hay gỡ vai trò có quyền mình không có.
+// Documents/21 I5: không gán CEO qua màn này; không thêm hay gỡ vai trò có quyền mình không có, trừ vai có sẵn Sale,
+// Nhân viên kho (đổi 17/11/2026, #351).
 import type { RoleWithPermissions } from '../../access/index.ts';
 
 export type RoleCheck = 'ok' | 'unknown_roles' | 'ceo_role' | 'not_held';
@@ -7,7 +8,7 @@ export type RoleCheck = 'ok' | 'unknown_roles' | 'ceo_role' | 'not_held';
 /**
  * Kiểm theo thứ tự `unknown_roles` (id không có trong `found`: không tồn tại hoặc của công ty khác) → `ceo_role`
  * → `not_held`. `not_held` tính trên quyền của vai trò được thêm và bị gỡ so với `currentRoles`, so với quyền thô
- * của người gọi; vai trò giữ nguyên không tính. Tạo link và duyệt gọi với `currentRoles: []`.
+ * của người gọi; vai trò giữ nguyên và vai `freelyAssignable` (Sale, Nhân viên kho có sẵn) không tính. Tạo link và duyệt gọi với `currentRoles: []`.
  */
 export function checkRoleGrant(input: {
   requestedIds: readonly string[];
@@ -26,7 +27,7 @@ export function checkRoleGrant(input: {
     ...input.currentRoles.filter((r) => !requested.has(r.id)),
   ];
   const held = new Set(input.callerPermissions);
-  return changed.some((r) => r.permissions.some((p) => !held.has(p))) ? 'not_held' : 'ok';
+  return changed.some((r) => !r.freelyAssignable && r.permissions.some((p) => !held.has(p))) ? 'not_held' : 'ok';
 }
 
 /** Không đổi vai trò, khoá, mở khoá chính mình hay người mang vai trò CEO. */

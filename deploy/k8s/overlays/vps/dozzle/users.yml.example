@@ -1,0 +1,6 @@
+# Mẫu cho CI build overlay. File thật users.yml do setup.sh sinh trên VPS (gitignore).
+# Mật khẩu là bcrypt; bản băm dưới là giả, không đăng nhập được.
+users:
+  commerio:
+    name: Nhóm Commerio
+    password: '$2a$14$0000000000000000000000000000000000000000000000000000.'
