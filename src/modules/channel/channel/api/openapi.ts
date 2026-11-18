@@ -145,7 +145,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/token',
     summary: 'Nối gian hàng bằng token lấy trên console của sàn',
     description:
-      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token. `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn: gian hàng không thuộc công ty, khác sàn hay id sai thì 404, rỗng thì 422; token của seller khác thì 409 `shop_mismatch` như `callback`, không ghi gian hàng nào; gian hàng mất trước khi ghi thì 404.',
+      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token. `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn: sai dạng hay rỗng thì 422 `errors.shopId`, gian hàng không thuộc công ty hay khác sàn thì 404, đã ngắt vẫn nhận; token của seller khác thì 409 `shop_mismatch` như `callback`, không ghi gian hàng nào; gian hàng mất trước khi ghi thì 404.',
     security: bearer,
     request: { params: PlatformParams, body: json(TokenBody) },
     responses: {

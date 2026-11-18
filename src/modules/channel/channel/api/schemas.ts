@@ -5,9 +5,9 @@ import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
 
-// Gian hàng đang kết nối lại (#398). Không phải uuid, của công ty khác hay sàn khác: 404 ở service, nên ở đây chỉ là chuỗi.
-// Rỗng không coi là vắng: coi là vắng thì đi đường cũ, ghi token cho seller sàn trả.
-const ReconnectShopId = z.string().trim().min(1, 'Mã gian hàng không được rỗng').max(64);
+// Gian hàng đang kết nối lại (#398). Sai dạng, rỗng: 422 (rỗng mà coi là vắng thì đi đường cũ, ghi token cho seller sàn trả);
+// của công ty khác hay sàn khác: 404 ở service (review #412).
+const ReconnectShopId = z.uuid('Mã gian hàng không hợp lệ');
 
 export const AuthorizeUrlQuery = z
   .object({

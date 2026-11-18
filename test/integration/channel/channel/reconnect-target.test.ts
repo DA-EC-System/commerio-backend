@@ -18,7 +18,13 @@ const MINUTE = 60_000;
 // Sàn giả: code `c-<seller>` (hoặc `c-<a>+<b>`: một lần uỷ quyền ra nhiều gian hàng). Mỗi lần đổi mã cấp token mới
 // `tok-<seller>-<n>`, hạn truy cập dời thêm n phút, để test phân biệt token của lần nối nào đã được lưu. `afterExchange` chạy
 // sau khi đổi mã, trước khi trả về (ca gian hàng mất giữa lúc đổi mã và lúc ghi).
-const sàn = { exchanges: 0, afterExchange: null as null | (() => Promise<void>), sellerCalls: 0 };
+const sàn = {
+  exchanges: 0,
+  afterExchange: null as null | (() => Promise<void>),
+  sellerCalls: 0,
+  /** Chạy sau khi TikTok giả đọc seller từ token, trước khi trả về (ca gian hàng mất giữa lúc đọc token và lúc ghi). */
+  afterSeller: null as null | (() => Promise<void>),
+};
 registerAdapter('lazada', fakeAdapter({
   authorizeUrl: (state) => `https://auth.fake/oauth/authorize?state=${encodeURIComponent(state)}`,
   async exchangeCode({ code }) {
@@ -45,6 +51,7 @@ registerAdapter('lazada', fakeAdapter({
 registerAdapter('tiktok', fakeAdapter({
   async getSeller(accessToken) {
     sàn.sellerCalls++;
+    await sàn.afterSeller?.();
     const id = accessToken.slice(4);
     return { externalShopId: id, shopName: `TikTok ${id.slice(0, 8)}`, region: 'VN' };
   },
@@ -113,10 +120,12 @@ describe('authorize-url nhận shopId (#398, 21 §18.4)', () => {
     expect(res.body.type).toBe('/problems/not_found');
   });
 
-  it('shopId không phải uuid thì 404 not_found', async () => {
+  // Sai dạng là lỗi đầu vào (422), không phải "không tìm thấy" (review #412, cùng luật với `POST /token`).
+  it('shopId không phải uuid thì 422 validation_failed errors.shopId', async () => {
     const res = await authorizeUrl(token, 'lazada', '?shopId=abc');
-    expect(res.status).toBe(404);
-    expect(res.body.type).toBe('/problems/not_found');
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('validation_failed');
+    expect(res.body.errors).toHaveProperty('shopId');
   });
 
   // Rỗng mà coi như vắng thì state mang `shp: ''`, callback đi đường cũ và ghi token cho seller sàn trả (review #398).
@@ -376,7 +385,7 @@ describe('dán token nối lại theo shopId (#398)', () => {
     const other = await createCompany({ optionalModules: ['channel'] });
     const foreign = await tiktokShop(other.ceo.token);
     const lazadaShop = await newShop(token);
-    for (const shopId of [foreign, lazadaShop, 'abc']) {
+    for (const shopId of [foreign, lazadaShop]) {
       const calls = sàn.sellerCalls;
       const res = await pasteToken(token, seller(), shopId);
       expect(res.status).toBe(404);
@@ -385,10 +394,42 @@ describe('dán token nối lại theo shopId (#398)', () => {
     }
   });
 
-  it.each(['', '  '])('shopId rỗng (%j) thì 422 validation_failed errors.shopId', async (shopId) => {
+  it.each(['', '  ', 'abc'])('shopId rỗng hoặc sai dạng (%j) thì 422 validation_failed errors.shopId, chưa gọi sàn', async (shopId) => {
+    const calls = sàn.sellerCalls;
     const res = await pasteToken(token, seller(), shopId);
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('validation_failed');
     expect(res.body.errors).toHaveProperty('shopId');
+    expect(sàn.sellerCalls).toBe(calls);
+  });
+
+  // Ngắt rồi vẫn nối lại được bằng token (gian hàng `786769e1` trên staging là gian hàng đã ngắt).
+  it('gian hàng đã ngắt, token đúng seller thì nối lại đúng dòng đó', async () => {
+    const a = seller();
+    const shopId = await tiktokShop(token, a);
+    await testPool().query(
+      "update channel.shops set status = 'disconnected', disconnected_at = now(), access_token_enc = null, refresh_token_enc = null where id = $1",
+      [shopId],
+    );
+    const res = await pasteToken(token, a, shopId);
+    expect(res.status).toBe(200);
+    expect(res.body.shop.id).toBe(shopId);
+    expect(res.body.shop.status).not.toBe('disconnected');
+  });
+
+  it('gian hàng bị xoá giữa lúc đọc token và lúc ghi thì 404 not_found, không tạo dòng mới', async () => {
+    const a = seller();
+    const shopId = await tiktokShop(token, a);
+    sàn.afterSeller = async () => {
+      await testPool().query('delete from channel.shops where id = $1', [shopId]);
+    };
+    try {
+      const res = await pasteToken(token, a, shopId);
+      expect(res.status).toBe(404);
+      expect(res.body.type).toBe('/problems/not_found');
+    } finally {
+      sàn.afterSeller = null;
+    }
+    expect(await testPool().query('select 1 from channel.shops where external_shop_id = $1', [a])).toMatchObject({ rowCount: 0 });
   });
 });
