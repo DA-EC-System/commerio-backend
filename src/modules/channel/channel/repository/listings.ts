@@ -125,6 +125,15 @@ export async function updateListing(
 }
 
 /**
+ * Ghi mốc `create_attempted_at` = lúc của lần gọi `createProduct` gần nhất, ghi đè mỗi lần, ngay trước lời gọi (#399). Là
+ * cột hệ thống như `push_attempts`: không tăng `version` vì lượt đẩy đang giữ version lúc đọc. Phải commit trước khi gọi
+ * sàn để lần thử sau thấy mốc dù lần gọi này lỗi.
+ */
+export async function markCreateAttempted(id: string): Promise<void> {
+  await getDb().update(listings).set({ createAttemptedAt: sql`now()` }).where(eq(listings.id, id));
+}
+
+/**
  * Tồn trên sàn vừa bị đẩy về 0 mà ngắt bị chặn (#207): như `markStockPendingRows`, thêm `platform_stock = 0`.
  */
 export async function markStockPendingIds(ids: readonly string[]): Promise<void> {

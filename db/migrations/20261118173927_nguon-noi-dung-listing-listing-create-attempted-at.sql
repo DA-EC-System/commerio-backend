@@ -1,0 +1,3 @@
+CREATE TYPE "channel"."listing_content_source" AS ENUM('app', 'platform');--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD COLUMN "create_attempted_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD COLUMN "content_source" "channel"."listing_content_source" DEFAULT 'platform' NOT NULL;

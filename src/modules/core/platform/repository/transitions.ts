@@ -115,6 +115,26 @@ export async function lastEntryActions(entityType: string, entityIds: readonly s
   return new Map(rows.map((r) => [r.id, r.action]));
 }
 
+/**
+ * Như `lastEntryActions` nhưng kèm trạng thái trước (`from`) của lần vào đó: cho việc cần biết listing vào `pushing` từ
+ * đâu (vd `take_over_content` từ `live`, #399). Gọi trong `withCompany`.
+ */
+export async function lastEntries(
+  entityType: string,
+  entityIds: readonly string[],
+  to: string,
+): Promise<Map<string, { action: string; from: string | null }>> {
+  requireCompanyId('lastEntries');
+  if (entityIds.length === 0) return new Map();
+  const t = stateTransitions;
+  const rows = await getDb()
+    .selectDistinctOn([t.entityId], { id: t.entityId, action: t.action, from: t.fromState })
+    .from(t)
+    .where(and(eq(t.entityType, entityType), inArray(t.entityId, [...entityIds]), eq(t.toState, to), sql`${t.fromState} is distinct from ${t.toState}`))
+    .orderBy(t.entityId, desc(t.at), desc(t.id));
+  return new Map(rows.map((r) => [r.id, { action: r.action, from: r.from }]));
+}
+
 export interface SelfApprovalRow extends TransitionRow {
   entityType: string;
   entityId: string;

@@ -344,7 +344,7 @@ export const ChannelListing = z
     rejectReason: z.string().nullable(),
     pushError: syncError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
@@ -365,10 +365,30 @@ export const ChannelListing = z
       }),
     pendingMapping,
     pendingRevision,
+    contentSource: z.enum(['app', 'platform']).meta({
+      description:
+        'Ai tạo nội dung (tên, mô tả, ảnh) của sản phẩm trên sàn (#399): `app` do app đẩy tạo; `platform` do người bán tạo rồi ghép. Đẩy lại listing `platform` chỉ bật lại SKU và đẩy giá, tồn; ghi nội dung Commerio lên bằng `take-over-content` (CEO)',
+    }),
     version: z.number().int(),
   })
   .strict()
   .meta({ id: 'ChannelListing' });
+
+export const RemoteTitleChanged = z
+  .object({
+    from: z.string().meta({ description: 'Tên trên sàn lúc ghép (hoặc lần app đẩy, sửa nội dung, lần xác nhận gần nhất)' }),
+    to: z.string().meta({ description: 'Tên trong bản sao SKU sàn hiện tại' }),
+    fromEn: z.string().nullable().meta({ description: 'Tên tiếng Anh lúc ghép (Lazada `name_en`); null khi sàn không có' }),
+    toEn: z.string().nullable().meta({ description: 'Tên tiếng Anh hiện tại; null khi sàn không có' }),
+    detectedAt: iso.meta({ description: 'Lần đọc bản sao đầu tiên thấy tên khác' }),
+  })
+  .strict()
+  .nullable()
+  .meta({
+    id: 'RemoteTitleChanged',
+    description:
+      'Tên trên sàn đã đổi ngoài app (#396, 21 §18.3): bản sao SKU sàn có (tên, tên tiếng Anh) khác lúc ghép. null khi không đổi. CEO xác nhận bằng `acknowledge-title`; đổi ghép, app đẩy, sửa nội dung cũng đặt lại mốc',
+  });
 
 export const RemoteSkusQuery = z.object({
   unmatched: z.stringbool().optional().meta({ description: '`true`: chỉ SKU sàn chưa ghép' }),
@@ -382,12 +402,17 @@ export const RemoteSkuList = z
           externalProductId: z.string(),
           externalSkuId: z.string(),
           sellerSku: z.string(),
-          title: z.string(),
+          title: z.string().meta({ description: 'Tên trên sàn người mua VN thấy (Lazada `attributes.name`)' }),
+          titleEn: z
+            .string()
+            .nullable()
+            .meta({ description: 'Tên tiếng Anh (Lazada `attributes.name_en`, Seller Center giao diện tiếng Anh hiện tên này); null khi sàn không có (#396)' }),
           matchedVariantId: z.uuid().nullable(),
           mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
           listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt "không quản tồn"); null khi chưa có. CEO dùng để gọi `mapping/approve|reject`' }),
           listingVersion: z.number().int().nullable().meta({ description: '`version` của listing đó, gửi kèm khi duyệt; null khi chưa có listing' }),
           pendingMapping,
+          remoteTitleChanged: RemoteTitleChanged,
         })
         .strict(),
     ),
@@ -426,6 +451,11 @@ export const MatchBody = z
 
 export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
 
+export const TakeOverContentParams = z.object({ id: z.string(), listingId: z.string() });
+export const TakeOverContentBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingTakeOverContentInput' });
+
 export const OutsideChangeParams = z.object({
   id: z.string(),
   listingId: z.string(),
@@ -463,9 +493,15 @@ export const ListingRow = z
       .meta({ description: 'Giá đang bán dưới giá thấp nhất; null khi chưa có giá vốn hoặc chưa có phí. Không kèm giá vốn (R4)' }),
     feeWarning: z.enum(['over_50']).nullable().meta({ description: 'Tổng phí và thuế của gian hàng trên 50%' }),
     listing: ChannelListing.nullable(),
+    remoteTitleChanged: RemoteTitleChanged,
   })
   .strict()
   .meta({ id: 'ListingRow' });
+
+export const AcknowledgeTitleParams = z.object({ id: z.string(), listingId: z.string() });
+export const AcknowledgeTitleBody = z
+  .object({ version: z.number('Thiếu version').int().positive() })
+  .meta({ id: 'ListingAcknowledgeTitleInput' });
 
 export const ListingList = z.object({ items: z.array(ListingRow) }).strict().meta({ id: 'ListingList' });
 
