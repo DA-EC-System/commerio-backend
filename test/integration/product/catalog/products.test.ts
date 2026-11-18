@@ -76,6 +76,10 @@ describe('POST /catalog/products', () => {
       version: 1,
       description: '',
       images: [],
+      imageAttributeId: null,
+      attributeValueImages: [],
+      originCountry: null,
+      brand: null,
     });
     expect(res.body.variants).toEqual([
       {
@@ -91,6 +95,7 @@ describe('POST /catalog/products', () => {
         heightMm: null,
         version: 1,
         archiveBlockers: [],
+        image: null,
         readiness: 'incomplete',
         missing: ['image', 'price', 'minQty', 'weight', 'dimensions'],
         minQty: null,
@@ -392,6 +397,37 @@ describe('PUT, DELETE /catalog/products/:id', () => {
     expect(added.status).toBe(201);
     expect((await businessStatus(token, product.id, 'pause', [added.body.id])).status).toBe(200);
     expect((await api(token).get(`/products/${product.id}`)).body).toMatchObject({ status: 'active', variantCount: 1 });
+  });
+
+  // #340: xuất xứ, thương hiệu dùng chung mọi sàn (Documents/21 §17.2).
+  it('xuất xứ, thương hiệu: lưu, đọc lại; bỏ trường giữ; null xoá; rỗng → null; vn → VN; nhật ký có khi có giá trị (AC-15, AC-S6)', async () => {
+    const product = await simple();
+    const set = await update(product.id, 1, { originCountry: 'VN', brand: 'Coolmate' });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body).toMatchObject({ originCountry: 'VN', brand: 'Coolmate' });
+    expect((await api(token).get(`/products/${product.id}`)).body).toMatchObject({ originCountry: 'VN', brand: 'Coolmate' });
+    expect((await auditOf(product.id)).at(-1)!.after).toMatchObject({ originCountry: 'VN', brand: 'Coolmate' });
+
+    expect((await update(product.id, 2)).body).toMatchObject({ originCountry: 'VN', brand: 'Coolmate' });
+    expect((await update(product.id, 3, { originCountry: null, brand: null })).body).toMatchObject({ originCountry: null, brand: null });
+    expect((await auditOf(product.id)).at(-1)!.after).not.toHaveProperty('brand');
+    expect((await update(product.id, 4, { originCountry: ' vn ', brand: '  ' })).body).toMatchObject({ originCountry: 'VN', brand: null });
+    expect((await update(product.id, 5, { originCountry: '', brand: '' })).body).toMatchObject({ originCountry: null, brand: null });
+    expect((await update(product.id, 6, { originCountry: '  ' })).body).toMatchObject({ originCountry: null, version: 7 });
+  });
+
+  it('mã nước sai dạng, thương hiệu quá 100 ký tự → 422 theo ô, không đổi (AC-16)', async () => {
+    const product = await simple();
+    for (const bad of ['VNM', 'V1', 'V']) {
+      const res = await update(product.id, 1, { originCountry: bad });
+      expect(res.status, bad).toBe(422);
+      expect(res.body.errors.originCountry).toBe('Mã nước không hợp lệ (2 chữ cái, vd VN)');
+    }
+    const long = await update(product.id, 1, { brand: ` ${'x'.repeat(101)} ` });
+    expect(long.status).toBe(422);
+    expect(long.body.errors.brand).toBeTruthy();
+    expect((await update(product.id, 1, { brand: ` ${'x'.repeat(100)} ` })).status).toBe(200);
+    expect((await api(token).get(`/products/${product.id}`)).body).toMatchObject({ originCountry: null, version: 2 });
   });
 
   it('DELETE thiếu ?version= → 422 errors.version (AC-20)', async () => {
