@@ -267,7 +267,7 @@ describe('nối lại qua callback lưu token mới (#398 AC 1)', () => {
 
 async function shopAudits(shopId: string) {
   const { rows } = await testPool().query(
-    "select action, actor_id, before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1 order by created_at",
+    "select action, actor_id, entity_label, operation, before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1 order by created_at",
     [shopId],
   );
   return rows;
@@ -284,7 +284,15 @@ describe('nhật ký nối lại (#398 AC 4)', () => {
     const audits = await shopAudits(shopId);
     expect(audits).toHaveLength(1);
     const [row] = audits;
-    expect(row).toMatchObject({ action: 'update', actor_id: actorId, before: { status }, after: { status: 'active', connectedVia: 'oauth' } });
+    // Nhãn là tên gian hàng (Documents/21 M5, #352); không `operation` vì M5 chưa có mã cho nối lại, `connectedVia` phân biệt.
+    expect(row).toMatchObject({
+      action: 'update',
+      actor_id: actorId,
+      entity_label: res.body.shop.shopName,
+      operation: null,
+      before: { status },
+      after: { status: 'active', connectedVia: 'oauth' },
+    });
     expect(row.after.accessExpiresAt).not.toEqual(row.before.accessExpiresAt);
     expect(JSON.stringify(row.before) + JSON.stringify(row.after)).not.toContain('tok-');
   });

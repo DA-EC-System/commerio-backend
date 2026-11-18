@@ -618,6 +618,8 @@ async function writeShop(
     action: 'update',
     entityType: 'channel.shops',
     entityId: existing.id,
+    // Không `operation`: Documents/21 M5 chưa có mã cho nối lại; `after.connectedVia` phân biệt với lần sửa thường.
+    label: row.shopName,
     before: connectionAudit(existing),
     after: { ...connectionAudit(row), connectedVia: via },
   });
