@@ -192,7 +192,6 @@ export const BUILTIN_ROLES = {
       'sales.order.cancel',
       'sales.return.view',
       'sales.return.process',
-      'fulfillment.delivery.update',
       'channel.shop.view',
       'channel.listing.match',
       'inbox.conversation.view',
