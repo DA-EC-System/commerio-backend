@@ -2,6 +2,7 @@
 import { publicFileUrls } from '../../../core/index.ts';
 import { productImageRows } from '../repository/product-images.ts';
 import { sizeChartRows } from '../repository/products.ts';
+import { variantImageRows } from '../repository/variant-images.ts';
 
 /** Tối đa 9 ảnh mỗi sản phẩm (P8). */
 export const MAX_PRODUCT_IMAGES = 9;
@@ -59,4 +60,20 @@ export async function productSizeChartUrls(productIds: readonly string[]): Promi
   const rows = await sizeChartRows(productIds);
   const urls = await publicFileUrls(rows.map((r) => r.fileId));
   return new Map(rows.flatMap((r) => (urls.get(r.fileId) ? [[r.productId, urls.get(r.fileId)!] as const] : [])));
+}
+
+/** Ảnh phân loại của một giá trị thuộc tính gắn ảnh (#340). */
+export interface VariantImage {
+  attributeValueId: string;
+  fileId: string;
+  /** Link cố định; chuỗi rỗng khi máy chủ chưa cấu hình `S3_PUBLIC_URL`. */
+  url: string;
+}
+
+/** Ảnh phân loại của sản phẩm theo thứ tự giá trị (#340). Gọi trong `withCompany`. */
+export async function attributeValueImagesOf(productId: string): Promise<VariantImage[]> {
+  const rows = await variantImageRows([productId]);
+  if (!rows.length) return [];
+  const urls = await publicFileUrls(rows.map((r) => r.fileId));
+  return rows.map((r) => ({ attributeValueId: r.attributeValueId, fileId: r.fileId, url: urls.get(r.fileId) ?? '' }));
 }

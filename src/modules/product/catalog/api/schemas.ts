@@ -154,9 +154,34 @@ export const CreateProductBody = z
   .superRefine(imageLimits)
   .meta({ id: 'CreateProductRequest' });
 
+// Thuộc tính gắn ảnh, xuất xứ, thương hiệu (#340, Documents/21 §17.2): bỏ trường là giữ, `null` là bỏ chọn / xoá.
+const imageAttributeId = z
+  .string()
+  .nullish()
+  .meta({ description: 'Thuộc tính gắn ảnh (một trục phân loại của sản phẩm); đổi hoặc `null` thì gỡ mọi ảnh phân loại cũ' });
+
+const COUNTRY = /^[A-Z]{2}$/;
+/** Cắt khoảng trắng, viết hoa; chuỗi rỗng sau khi cắt lưu `null` như `brand` (Đ1). */
+const originCountry = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine((v) => v === '' || COUNTRY.test(v), 'Mã nước không hợp lệ (2 chữ cái, vd VN)')
+  .transform((v) => v || null)
+  .nullish()
+  .meta({ description: 'Xuất xứ, mã ISO 3166-1 alpha-2 (vd VN)' });
+
+const brand = z
+  .string()
+  .trim()
+  .max(100, 'Thương hiệu tối đa 100 ký tự')
+  .transform((v) => v || null)
+  .nullish()
+  .meta({ description: 'Thương hiệu, tối đa 100 ký tự; rỗng hoặc `null` là không thương hiệu' });
+
 /** Không có danh mục và biến thể: gửi kèm thì bỏ qua (P6, AC-13). */
 export const UpdateProductBody = z
-  .object({ name: name('sản phẩm', 200), description, imageFileIds, sizeChartFileId, version })
+  .object({ name: name('sản phẩm', 200), description, imageFileIds, sizeChartFileId, imageAttributeId, originCountry, brand, version })
   .superRefine(imageLimits)
   .meta({ id: 'UpdateProductRequest' });
 
@@ -252,6 +277,15 @@ export const Attribute = z
   })
   .meta({ id: 'Attribute' });
 
+/** Ảnh phân loại của một giá trị (#340). */
+const VariantImage = z
+  .object({
+    attributeValueId: z.uuid(),
+    fileId: z.uuid(),
+    url: z.string().meta({ description: 'Link cố định của ảnh; chuỗi rỗng khi máy chủ chưa cấu hình link ảnh' }),
+  })
+  .meta({ id: 'VariantImage' });
+
 export const Variant = z
   .object({
     id: z.uuid(),
@@ -336,6 +370,12 @@ export const ProductDetail = ProductListItem.extend({
     .object({ fileId: z.uuid(), url: z.string().meta({ description: 'Link cố định của ảnh; chuỗi rỗng khi máy chủ chưa cấu hình link ảnh' }) })
     .nullable()
     .meta({ description: 'Ảnh bảng kích cỡ (#347); null khi chưa có' }),
+  imageAttributeId: z.uuid().nullable().meta({ description: 'Thuộc tính gắn ảnh (#340); null khi chưa chọn' }),
+  attributeValueImages: z
+    .array(VariantImage)
+    .meta({ description: 'Ảnh phân loại theo giá trị của thuộc tính gắn ảnh, theo thứ tự giá trị trong thuộc tính' }),
+  originCountry: z.string().nullable().meta({ description: 'Xuất xứ, mã ISO 3166-1 alpha-2; null khi chưa đặt' }),
+  brand: z.string().nullable().meta({ description: 'Thương hiệu; null là không thương hiệu' }),
   variants: z.array(Variant),
 }).meta({ id: 'ProductDetail' });
 

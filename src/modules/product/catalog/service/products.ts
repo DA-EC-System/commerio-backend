@@ -11,12 +11,14 @@ import {
   insertProduct,
   listProducts as findPage,
   lockProduct,
+  type ProductExtras,
   type ProductFilter,
   type ProductRow,
   productNameExists,
   setSizeChart,
   updateProductIfVersion,
 } from '../repository/products.ts';
+import { deleteVariantImages } from '../repository/variant-images.ts';
 import { findVariants, insertVariant, lockProductVariants, lockVariants, type VariantRow } from '../repository/variants.ts';
 import {
   auditOf,
@@ -33,7 +35,7 @@ import {
 } from './errors.ts';
 import { type SkuLabels, skuLabels } from './labels.ts';
 import { listedImageErrors } from './listed-fields.ts';
-import { imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
+import { attributeValueImagesOf, imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf } from './product-images.ts';
 import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 import { archiveBlockersOf, inUseOf, requirePort } from './usage.ts';
@@ -56,10 +58,15 @@ export interface UpdateProductInput {
   imageFileIds?: string[] | undefined;
   /** Không gửi thì giữ nguyên bảng kích cỡ; `null` gỡ, id tệp thì thay (#347). */
   sizeChartFileId?: string | null | undefined;
+  /** Thuộc tính gắn ảnh, xuất xứ, thương hiệu (#340): không gửi thì giữ, `null` bỏ chọn / xoá. */
+  imageAttributeId?: string | null | undefined;
+  originCountry?: string | null | undefined;
+  brand?: string | null | undefined;
   version: number;
 }
 
 const ENTITY = 'product.products';
+const NOT_AXIS = 'Thuộc tính không phải trục phân loại của sản phẩm';
 const taken = () => nameTaken('Đã có sản phẩm cùng tên');
 
 /**
@@ -138,6 +145,10 @@ export async function productDetail(
     description: p.description ?? '',
     images,
     sizeChart: await sizeChartOf(p.sizeChartFileId),
+    imageAttributeId: p.imageAttributeId,
+    attributeValueImages: await attributeValueImagesOf(p.id),
+    originCountry: p.originCountry,
+    brand: p.brand,
     variants: views,
   };
 }
@@ -156,6 +167,7 @@ function snapshot(
   variants: { sku: string; archivedAt: unknown }[],
   imageFileIds: readonly string[],
   sizeChartFileId: string | null = null,
+  extras: ProductExtras = {},
 ) {
   return {
     name: p.name,
@@ -163,9 +175,15 @@ function snapshot(
     description: p.description ?? '',
     imageFileIds: [...imageFileIds],
     ...(sizeChartFileId && { sizeChartFileId }),
+    // Chỉ nêu khi có giá trị, như `sizeChartFileId` (#340).
+    ...(extras.imageAttributeId && { imageAttributeId: extras.imageAttributeId }),
+    ...(extras.originCountry && { originCountry: extras.originCountry }),
+    ...(extras.brand && { brand: extras.brand }),
     variants: variants.filter((v) => !v.archivedAt).map((v) => v.sku),
   };
 }
+
+const extrasOf = (p: ProductRow): ProductExtras => ({ imageAttributeId: p.imageAttributeId, originCountry: p.originCountry, brand: p.brand });
 
 /** Id tệp ảnh đang gắn, theo thứ tự (cho nhật ký). Gọi trong `withCompany`. */
 async function imageIdsOf(productId: string): Promise<string[]> {
@@ -177,7 +195,8 @@ function race(err: unknown): never {
   if (code === '23505' && constraint?.startsWith('products_')) throw taken();
   // Danh mục hay giá trị vừa bị xoá giữa lúc đọc và lúc ghi.
   if (code === '23503' && constraint?.startsWith('products_category_id')) throw invalid({ categoryId: 'Danh mục vừa bị xoá' });
-  if (code === '23503') throw invalid({ variants: 'Có giá trị thuộc tính vừa bị xoá' });
+  if (code === '23503' && constraint?.startsWith('variant_attribute_values_')) throw invalid({ variants: 'Có giá trị thuộc tính vừa bị xoá' });
+  if (code === '23503' && constraint === 'products_image_attribute_id_attributes_id_fk') throw invalid({ imageAttributeId: NOT_AXIS });
   throw err;
 }
 
@@ -260,12 +279,6 @@ async function rejectStale(ctx: CatalogContext, product: ProductRow): Promise<ne
   throw versionConflict(`Sản phẩm "${product.name}" vừa được người khác sửa`, await productDetail(ctx, product));
 }
 
-async function editable(ctx: CatalogContext, id: string, version: number): Promise<ProductRow> {
-  const product = await findOwnProduct(id);
-  if (product.version !== version) await rejectStale(ctx, product);
-  return product;
-}
-
 /**
  * Ảnh như `createProduct`; không gửi `imageFileIds` thì giữ nguyên, gửi thì thay toàn bộ sau khi ghi trúng `version`.
  * Gửi `imageFileIds: []` khi sản phẩm còn ảnh và có SKU còn listing chưa gỡ: 409 `listing_field_required`.
@@ -276,7 +289,16 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
   const toConfirm = [...(imageIds ?? []), ...(sizeChartId ? [sizeChartId] : [])];
   if (toConfirm.length) await confirmUploads(caller.companyId, toConfirm);
   return withCompany(caller.companyId, async () => {
-    const product = await editable(ctx, id, input.version);
+    let product = await findOwnProduct(id);
+    // Đổi thuộc tính gắn ảnh (#340): khoá dòng sản phẩm như route ảnh phân loại rồi đọc lại, để ảnh vừa đặt không chen
+    // giữa lúc xoá ảnh và lúc ghi thuộc tính mới.
+    if (input.imageAttributeId !== undefined && input.imageAttributeId !== product.imageAttributeId) {
+      await lockProduct(id);
+      product = await findOwnProduct(id);
+    }
+    if (product.version !== input.version) await rejectStale(ctx, product);
+    const changesImageAttribute = input.imageAttributeId !== undefined && input.imageAttributeId !== product.imageAttributeId;
+    const variants = await findVariants({ productId: id });
     const errors: Record<string, string> = {};
     if (imageIds) {
       const imageError = await fileProblem(imageIds, 'product_image', MAX_PRODUCT_IMAGES);
@@ -286,14 +308,23 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
       const sizeChartError = await fileProblem([sizeChartId], 'product_image', 1);
       if (sizeChartError) errors.sizeChart = sizeChartError;
     }
+    // Trục đọc qua RLS từ SKU: thuộc tính công ty khác hay id lạ đều không phải trục (khoá ngoại bỏ qua RLS).
+    const axes = new Set(variants.flatMap((v) => v.attributes.map((a) => a.attributeId)));
+    if (input.imageAttributeId && !axes.has(input.imageAttributeId)) errors.imageAttributeId = NOT_AXIS;
     if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name, id)) throw taken();
     const imagesBefore = await imageIdsOf(id);
-    const variants = await findVariants({ productId: id });
     // Gỡ hết ảnh khi còn listing chưa gỡ (US-SP-03 dòng 7): 409, không ghi gì.
     const listed = await listedImageErrors(ctx, variants.map((v) => v.id), imagesBefore, imageIds);
     if (listed) throw listingFieldRequired(listed.detail, listed.errors);
-    if (!(await updateProductIfVersion(id, input.version, input.name, input.description))) {
+    const extras: ProductExtras = {
+      ...(changesImageAttribute && { imageAttributeId: input.imageAttributeId }),
+      ...(input.originCountry !== undefined && { originCountry: input.originCountry }),
+      ...(input.brand !== undefined && { brand: input.brand }),
+    };
+    // Khoá ngoại ghép `pavi_product_fk` bắt xoá ảnh cũ trước khi đổi thuộc tính; sai `version` thì cả giao dịch lùi lại.
+    if (changesImageAttribute) await deleteVariantImages(id);
+    if (!(await updateProductIfVersion(id, input.version, input.name, input.description, extras))) {
       await rejectStale(ctx, await findOwnProduct(id));
     }
     if (imageIds) await replaceProductImages(caller.companyId, id, imageIds);
@@ -301,8 +332,8 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     const sizeChartAfter = sizeChartId === undefined ? product.sizeChartFileId : sizeChartId;
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
-      before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId),
-      after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore, sizeChartAfter),
+      before: snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
+      after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore, sizeChartAfter, { ...extrasOf(product), ...extras }),
     });
     return productDetail(ctx, await findOwnProduct(id), variants);
   }).catch(race);
