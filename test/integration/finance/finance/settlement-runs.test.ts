@@ -9,6 +9,7 @@ import { openRun, processRun, runSettlement, runSettlementJob } from '#src/modul
 import type { FinanceContext } from '#src/modules/finance/finance/service/settlement-views.ts';
 import { Order, OrderSummaryPage } from '#src/modules/order/sales/api/schemas.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { AppError } from '#src/shared/errors/app-error.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -258,6 +259,15 @@ describe('kéo quyết toán (§21.3)', () => {
     expect(open.periodFrom.toISOString()).toBe(failed.periodFrom.toISOString());
     await expect(openRun(ctx, s.companyId, null, s.shopId)).rejects.toMatchObject({ code: 'settlement_running' });
     expect((await processRun(ctx, s.companyId, open.id)).status).toBe('done');
+  });
+
+  it('sàn trả số tiền không đọc được: lần chạy failed kèm câu cho người dùng, không kèm mã lỗi (#349)', async () => {
+    const s = await setup();
+    const sentence = 'Không đọc được số tiền sàn trả về. Đã báo kỹ thuật, thử lại sau.';
+    const broken = fakeSource(() => {
+      throw new AppError(502, 'marketplace_invalid_amount', sentence);
+    });
+    expect(await runSettlement(broken, s.companyId, null, s.shopId)).toMatchObject({ status: 'failed', error: sentence });
   });
 
   it('D43-04 (E142): lượt chưa cuối lỗi thì giữ running, không ghi gì, mốc không tiến; lượt sau ghi đủ, không trùng', async () => {

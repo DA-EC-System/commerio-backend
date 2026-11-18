@@ -14,8 +14,10 @@ const APPS = ['api', 'worker', 'realtime'];
 const has = (kind, name) => docs.some((d) => d.kind === kind && d.metadata.name === name);
 const workloads = docs.filter((d) => ['Deployment', 'StatefulSet', 'Job', 'CronJob', 'DaemonSet'].includes(d.kind));
 
+// Object cấp cụm không có namespace. ClusterRole chỉ dùng cho Dozzle đọc node (overlays/vps/dozzle.yaml).
+const CLUSTER_SCOPED = ['Namespace', 'ClusterRole', 'ClusterRoleBinding'];
 for (const d of docs) {
-  if (d.kind !== 'Namespace' && d.metadata.namespace !== NS) errors.push(`${d.kind}/${d.metadata.name}: namespace là ${d.metadata.namespace}, cần ${NS}`);
+  if (!CLUSTER_SCOPED.includes(d.kind) && d.metadata.namespace !== NS) errors.push(`${d.kind}/${d.metadata.name}: namespace là ${d.metadata.namespace}, cần ${NS}`);
 }
 
 // Migration chạy từ runner CI (Documents/21 V36), không chạy trong cluster.

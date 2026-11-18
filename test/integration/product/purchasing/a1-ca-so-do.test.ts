@@ -34,11 +34,11 @@ const ARROWS: [caseId: string, from: string, action: string, to: string, actor: 
   ['A1-05', 'pending_approval', 'request_changes', 'changes_requested', 'ceo', true, 'approve'],
   ['A1-06', 'pending_approval', 'reject', 'rejected', 'ceo', true, 'approve'],
   ['A1-07', 'approved', 'order', 'ordered', 'kho', false, 'manage'],
-  ['A1-14', 'draft', 'cancel', 'cancelled', 'kho', false, 'manage'],
-  ['A1-15', 'changes_requested', 'cancel', 'cancelled', 'kho', false, 'manage'],
-  ['A1-16', 'pending_approval', 'cancel', 'cancelled', 'kho', false, 'manage'],
-  ['A1-17', 'approved', 'cancel', 'cancelled', 'ceo', true, 'approve'],
-  ['A1-18', 'ordered', 'cancel', 'cancelled', 'ceo', true, 'approve'],
+  ['A1-13', 'draft', 'cancel', 'cancelled', 'kho', false, 'manage'],
+  ['A1-14', 'changes_requested', 'cancel', 'cancelled', 'kho', false, 'manage'],
+  ['A1-15', 'pending_approval', 'cancel', 'cancelled', 'kho', false, 'manage'],
+  ['A1-16', 'approved', 'cancel', 'cancelled', 'ceo', true, 'approve'],
+  ['A1-17', 'ordered', 'cancel', 'cancelled', 'ceo', true, 'approve'],
 ];
 /** Vai trò có sẵn không có quyền của bước (Documents/kiem-thu/ma-tran-quyen.md). */
 const LACKING: Record<'manage' | 'approve', Role[]> = { manage: ['admin', 'sale'], approve: ['admin', 'sale', 'kho'] };
@@ -96,7 +96,7 @@ describe('A1 Đề nghị nhập: mỗi mũi tên một ca đúng', () => {
   });
 
   it.todo('A1-08..A1-11: nhận một phần, nhận xong do phiếu nhận ghi sổ (chờ #109)');
-  it.todo('A1-13: đóng thiếu đề nghị đã nhận một phần (chờ #109)');
+  it.todo('A1-12: đóng thiếu đề nghị đã nhận một phần (chờ #109)');
 });
 
 describe('A1 Đề nghị nhập: ca bị chặn', () => {

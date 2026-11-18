@@ -102,7 +102,7 @@ export async function createCategory(caller: Caller, input: CategoryInput): Prom
     if (await categoryNameExists(input.name)) throw taken();
     const suggest = input.suggest ?? NO_SUGGEST;
     const id = await insertCategory(caller.companyId, input.name, input.skuPattern, columnsOf(suggest));
-    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), after: snapshot(input, suggest) });
+    await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), label: input.name, after: snapshot(input, suggest) });
     return toView(await findCategory(id));
   }).catch(nameRace);
 }
@@ -117,6 +117,7 @@ export async function updateCategory(caller: Caller, id: string, input: Category
     if (!(await updateCategoryIfVersion(id, input.version, input.name, input.skuPattern, columnsOf(suggest)))) await lostRace(id);
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
+      label: input.name,
       before: snapshot(category, suggestOf(category)),
       after: snapshot(input, suggest),
     });
@@ -133,7 +134,7 @@ export async function deleteCategory(caller: Caller, id: string, version: number
       throw inUse(`Không xoá được danh mục ${category.name} vì có ${category.productCount} sản phẩm đang dùng`);
     }
     if (!(await deleteCategoryIfVersion(id, version))) await lostRace(id);
-    await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), before: snapshot(category, suggestOf(category)) });
+    await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), label: category.name, before: snapshot(category, suggestOf(category)) });
   }).catch((err: unknown) => {
     // Người khác vừa tạo sản phẩm trong danh mục này: khoá ngoại chặn xoá.
     if (pgError(err).code === '23503') throw inUse('Danh mục đang có sản phẩm dùng');

@@ -88,6 +88,7 @@ export async function retryDeadJob(companyId: string, actorId: string, id: strin
       action: 'update',
       entityType: 'pgboss.job',
       entityId: id,
+      label: `Việc nền ${job.sourceName}`,
       before: { queue: job.sourceName, state: 'dead' },
     });
     if ((await boss.redrive(DEAD_QUEUE, { ids: [id], data: { companyId } })) === 0) throw notFound;

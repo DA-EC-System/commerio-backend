@@ -36,7 +36,11 @@ import type { ProductPort } from './product-port.ts';
 import { type Actor, ownShop } from './shops.ts';
 
 const ENTITY = 'listings';
-const AUDIT = { entityType: 'channel.listings' };
+/** Dòng nhật ký của lần tự duyệt ghép SKU: nhãn là SKU người bán, thiếu thì mã SKU sàn (#352). */
+const auditOf = (row: { sellerSku: string | null; externalSkuId: string | null }) => ({
+  entityType: 'channel.listings',
+  label: row.sellerSku ?? row.externalSkuId ?? 'Listing chưa có SKU',
+});
 
 export interface RemoteSkuItem {
   externalProductId: string;
@@ -323,7 +327,7 @@ export async function matchListing(
         action: 'match',
         actorId: actor.accountId,
         selfApproved: needsCeo,
-        audit: { ...AUDIT, label: saved.sellerSku },
+        audit: auditOf(saved),
       });
       await applyToOrders(locked, saved.sellerSku, actor.accountId);
       return { row: saved, pending: false };
@@ -377,7 +381,7 @@ async function reuseFailed(failed: ListingRow, remote: RemoteSkuRow, actor: Acto
     action: 'match',
     actorId: actor.accountId,
     selfApproved: needsCeo,
-    audit: { ...AUDIT, label: saved.sellerSku },
+    audit: auditOf(saved),
   });
   return { row: saved, pending: false };
 }
@@ -454,7 +458,7 @@ async function decide(
       Object.assign(patch, snapshotBaseline(externalSkuId ? await findRemoteSkuRow(shop.id, externalSkuId) : undefined));
       const saved = await updateListing(row.id, { version: row.version, status: row.status }, patch);
       if (!saved) throw await conflictById(row.id);
-      await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: { ...AUDIT, label: saved.sellerSku } });
+      await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: auditOf(saved) });
       await applyToOrders(locked, saved.sellerSku, actor.accountId);
       return toListing(saved);
     }

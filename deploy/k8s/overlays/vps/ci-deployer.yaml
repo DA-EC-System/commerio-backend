@@ -24,17 +24,17 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    resourceNames: ["worker", "api-blue", "api-green", "realtime-blue", "realtime-green", "fe-blue", "fe-green", "fe-mock-blue", "fe-mock-green", "test-ui-blue", "test-ui-green"]
+    resourceNames: ["worker", "api-blue", "api-green", "realtime-blue", "realtime-green", "fe-blue", "fe-green"]
     verbs: ["get", "patch"]
   # kubectl scale đi qua subresource scale.
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
-    resourceNames: ["api-blue", "api-green", "realtime-blue", "realtime-green", "fe-blue", "fe-green", "fe-mock-blue", "fe-mock-green", "test-ui-blue", "test-ui-green"]
+    resourceNames: ["api-blue", "api-green", "realtime-blue", "realtime-green", "fe-blue", "fe-green"]
     verbs: ["get", "patch", "update"]
   # Chuyển màu: thêm hoặc đổi nhãn color trong selector của Service.
   - apiGroups: [""]
     resources: ["services"]
-    resourceNames: ["api", "realtime", "fe", "fe-mock", "test-ui"]
+    resourceNames: ["api", "realtime", "fe"]
     verbs: ["get", "patch"]
   # rollout status theo dõi Deployment và ReplicaSet của nó.
   - apiGroups: ["apps"]

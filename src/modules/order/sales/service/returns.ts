@@ -182,7 +182,9 @@ export async function applyReturnStep(
       actorId: step.actorId,
       action: 'update',
       entityType: 'order.return_requests',
+      operation: step.action,
       entityId: row.id,
+      label: row.code,
       before: { code: row.code, status: row.status },
       after: { code: row.code, status: step.to, action: step.action, ...(step.reason && { reason: step.reason }) },
     });

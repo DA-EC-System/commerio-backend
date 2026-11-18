@@ -5,6 +5,7 @@ import {
   type CategoryAttribute,
   DEFAULT_REFRESH_LEAD_MS,
   existingSku,
+  INVALID_AMOUNT,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -135,6 +136,34 @@ export function lazadaLedgerKind(feeName: string, transactionType: string): Ledg
  * khoá chống trùng (gian hàng, mã giao dịch) so được (#250).
  */
 export const normalizeLazadaTxnId = (raw: unknown): string => String(raw ?? '').replace(/\s+/g, '');
+
+/**
+ * Số có dấu, phần nguyên trơn hoặc nhóm ba chữ số bằng dấu phẩy, tối đa hai chữ số thập phân sau dấu chấm. Giới hạn hai
+ * chữ số để "1.600" (1.600 đồng viết kiểu Việt) là lỗi chứ không thành 1,6 trong sổ tiền chỉ thêm (review #349).
+ */
+const LAZADA_AMOUNT = /^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$/;
+
+/**
+ * Số tiền quyết toán Lazada thành chuỗi thập phân trơn cho finance (#349). Sàn trả chuỗi có dấu phẩy nghìn ("1,600.02",
+ * staging 17/11/2026), có thể là số JSON. Chỉ nhận đúng dạng đó: không đoán định dạng khác ("1.600,02") và không để
+ * `Decimal` tự đọc, vì decimal.js nhận cả 'NaN', '0x10', '1_600' mà không ném. Vắng (`undefined`, `null`, chuỗi rỗng)
+ * thì `required` là lỗi, không thì `"0"`. `where` (trường, chứng từ) đi vào câu lỗi cho kỹ thuật.
+ */
+export function lazadaAmount(raw: unknown, where: string, opts: { required?: boolean } = {}): string {
+  const invalid = () => new MarketplaceError('rejected', INVALID_AMOUNT, `Số tiền sàn trả không đọc được (${where}): ${JSON.stringify(raw)}`);
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) throw invalid();
+    return String(raw);
+  }
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    if (opts.required) throw invalid();
+    return '0';
+  }
+  if (typeof raw !== 'string') throw invalid();
+  const text = raw.trim();
+  if (!LAZADA_AMOUNT.test(text)) throw invalid();
+  return text.replace(/^\+/, '').replaceAll(',', '');
+}
 
 /**
  * Câu lỗi của sàn kèm `detail` (lý do theo trường). `/product/create` trả câu chung "E500: Create product failed" với code
@@ -1104,7 +1133,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         'GET',
       );
     },
-    // Tài chính (#117, lazada.md §7.6). Tên trường theo tài liệu và sàn giả lập #115, chưa đối chiếu response thật.
+    // Tài chính (#117, lazada.md §7.6). Tên trường theo tài liệu và sàn giả lập #115; số tiền có dấu phẩy nghìn
+    // ("1,600.02", staging 17/11/2026, #349), chuẩn hoá bằng `lazadaAmount`.
     async getTransactions(accessToken, from, to): Promise<SettlementTxn[]> {
       const out: SettlementTxn[] = [];
       for (let offset = 0; ; offset += TXN_PAGE) {
@@ -1112,30 +1142,37 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         const body = await call(config.apiUrl, '/finance/transaction/details/get', params, 'GET');
         const rows = (body.data as Row[] | undefined) ?? [];
         for (const r of rows) {
+          const txnId = normalizeLazadaTxnId(r.transaction_number);
+          // Dòng không mã giao dịch không ghi sổ được (khoá chống trùng): bỏ trước khi đọc số, số hỏng ở đó không làm
+          // hỏng cả lần chạy.
+          if (!txnId) continue;
           out.push({
-            txnId: normalizeLazadaTxnId(r.transaction_number),
+            txnId,
             externalOrderId: r.order_no ? String(r.order_no) : null,
             date: String(r.transaction_date ?? '').slice(0, 10),
             feeName: String(r.fee_name ?? ''),
             feeCode: r.fee_type === undefined || r.fee_type === null || r.fee_type === '' ? null : String(r.fee_type),
             transactionType: String(r.transaction_type ?? ''),
-            amount: String(r.amount ?? '0'),
-            withholding: String(r.WHT_amount ?? '0'),
+            amount: lazadaAmount(r.amount, `amount, giao dịch ${txnId}`, { required: true }),
+            withholding: lazadaAmount(r.WHT_amount, `WHT_amount, giao dịch ${txnId}`),
             kind: lazadaLedgerKind(String(r.fee_name ?? ''), String(r.transaction_type ?? '')),
           });
         }
-        if (rows.length < TXN_PAGE) return out.filter((t) => t.txnId);
+        if (rows.length < TXN_PAGE) return out;
       }
     },
     async getPayouts(accessToken, from): Promise<Payout[]> {
       const body = await call(config.apiUrl, '/finance/payout/status/get', { access_token: accessToken, created_after: from }, 'GET');
-      return ((body.data as Record<string, unknown>[] | undefined) ?? []).map((p) => ({
-        statementNumber: String(p.statement_number ?? ''),
-        createdAt: String(p.created_at ?? ''),
-        payout: String(p.payout ?? '0'),
-        closingBalance: String(p.closing_balance ?? '0'),
-        paid: String(p.paid ?? '0') === '1' || p.paid === true,
-      }));
+      return ((body.data as Record<string, unknown>[] | undefined) ?? []).map((p) => {
+        const statementNumber = String(p.statement_number ?? '');
+        return {
+          statementNumber,
+          createdAt: String(p.created_at ?? ''),
+          payout: lazadaAmount(p.payout, `payout, kỳ ${statementNumber}`),
+          closingBalance: lazadaAmount(p.closing_balance, `closing_balance, kỳ ${statementNumber}`),
+          paid: String(p.paid ?? '0') === '1' || p.paid === true,
+        };
+      });
     },
   };
 }

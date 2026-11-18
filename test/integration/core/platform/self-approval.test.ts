@@ -61,6 +61,7 @@ describe('tự duyệt (#246)', () => {
       action: 'update',
       entityType: 'product.purchase_requests',
       entityLabel: body.number,
+      operation: 'approve',
       selfApproved: true,
     });
     const all = CompanyAuditLogPage.parse((await get(ceo, '/audit/logs?pageSize=100')).body);

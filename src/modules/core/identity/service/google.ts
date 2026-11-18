@@ -82,6 +82,7 @@ async function linkAccount(account: AccountRow, sub: string): Promise<void> {
         action: 'update',
         entityType: 'core.accounts',
         entityId: account.id,
+        label: `${account.fullName} (${account.email})`,
         after: { googleLinked: true },
       });
       return true;

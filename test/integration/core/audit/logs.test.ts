@@ -30,7 +30,7 @@ describe('GET /audit/logs', () => {
       action: 'update',
       entityType: 'core.company_modules',
       entityId: null,
-      entityLabel: 'inbox',
+      entityLabel: 'Hộp thư chung',
       actor: { email: ceo.email },
       createdAt: expect.any(String),
     });
@@ -67,6 +67,30 @@ describe('GET /audit/logs', () => {
     const { companyId } = await createCompany();
     expect((await get((await addMember(companyId, 'admin')).token, '/audit/logs')).status).toBe(200);
     expect((await get((await addMember(companyId, 'sale')).token, '/audit/logs')).body.type).toBe('/problems/forbidden');
+  });
+});
+
+describe('nhãn và thao tác lưu lúc ghi (#352)', () => {
+  const insertRow = (companyId: string, extra: { label?: string; operation?: string }) =>
+    testPool().query(
+      `insert into core.audit_logs (company_id, action, entity_type, entity_id, after, entity_label, operation)
+       values ($1, 'update', 'core.memberships', gen_random_uuid(), '{"status":"locked"}', $2, $3)`,
+      [companyId, extra.label ?? null, extra.operation ?? null],
+    );
+
+  it('trả entityLabel và operation lưu trong dòng', async () => {
+    const { companyId, ceo } = await createCompany({ optionalModules: [] });
+    await insertRow(companyId, { label: 'Mua hàng Demo (mua@bk.demo)', operation: 'lock' });
+    const [item] = (await get(ceo.token, '/audit/logs')).body.items;
+    expect(item).toMatchObject({ entityLabel: 'Mua hàng Demo (mua@bk.demo)', operation: 'lock', action: 'update' });
+    expect((await get(ceo.token, `/audit/logs/${item.id}`)).body).toMatchObject({ operation: 'lock' });
+  });
+
+  it('dòng ghi trước #352 (cột trống) giữ nhãn đoán như cũ, operation null', async () => {
+    const { companyId, ceo } = await createCompany({ optionalModules: [] });
+    await insertRow(companyId, {});
+    const [item] = (await get(ceo.token, '/audit/logs')).body.items;
+    expect(item).toMatchObject({ entityLabel: 'core.memberships', operation: null });
   });
 });
 

@@ -53,10 +53,14 @@ describe('PATCH /channel/shops/:id — returnWindowDays (#362)', () => {
     const reread = await app().get(`/api/v1/channel/shops/${id}`).set('Authorization', `Bearer ${co.ceo.token}`);
     expect(reread.body).toMatchObject({ returnWindowDays: 14, version: version + 1 });
     const { rows } = await testPool().query(
-      "select action, before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1",
+      "select action, entity_label as label, before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1",
       [id],
     );
-    expect(rows).toEqual([{ action: 'update', before: { returnWindowDays: null }, after: { returnWindowDays: 14 } }]);
+    // #352: nhãn là tên gian hàng, không phải tên bảng.
+    expect(rows).toEqual([
+      { action: 'update', label: reread.body.shopName, before: { returnWindowDays: null }, after: { returnWindowDays: 14 } },
+    ]);
+    expect(reread.body.shopName).toEqual(expect.any(String));
   });
 
   it('version cũ: 409 version_conflict kèm current, không đổi', async () => {

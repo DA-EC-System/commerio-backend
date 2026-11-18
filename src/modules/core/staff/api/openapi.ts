@@ -46,8 +46,9 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     path: '/staff/:accountId/roles',
     summary: 'Đổi vai trò của nhân viên (UC-PI-05)',
     description:
-      'Thay trọn danh sách vai trò. Không đụng CEO, chính mình; không gán CEO; không thêm hay gỡ vai trò có quyền ' +
-      'người gọi không có. Cần `identity.account.manage`.',
+      'Thay trọn danh sách vai trò. Không đụng CEO, chính mình; không gán CEO; không thêm hay gỡ vai trò Admin hay ' +
+      'vai trò tự tạo có quyền người gọi không có (vai trò có sẵn Sale, Nhân viên kho không xét, Documents/21 I5). ' +
+      'Cần `identity.account.manage`.',
     security: bearer,
     request: { params: StaffParams, body: json(ChangeRolesBody) },
     responses: {
@@ -73,7 +74,9 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
         200: { description: 'Nhân viên sau khi đổi', ...json(StaffMemberSchema) },
         403: problemResponse('`protected_account`, `forbidden`'),
         404: problemResponse('`not_found`'),
-        409: problemResponse('`version_conflict` kèm `current` (lệch version hoặc đã ở trạng thái đích)'),
+        409: problemResponse(
+          '`invalid_transition` kèm `current` (đã ở trạng thái đích, xét trước version), `version_conflict` kèm `current`',
+        ),
         422: problemResponse('`validation_failed`'),
       },
     });
@@ -84,8 +87,9 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     path: '/invitations',
     summary: 'Tạo link mời nhân viên (UC-PI-05)',
     description:
-      'Link dùng một lần, sống 72 giờ; Admin tự gửi cho người được mời. Không gán CEO; không chọn vai trò có quyền ' +
-      'người gọi không có. Cần `identity.account.manage`.',
+      'Link dùng một lần, sống 72 giờ; Admin tự gửi cho người được mời. Không gán CEO; không chọn vai trò Admin hay ' +
+      'vai trò tự tạo có quyền người gọi không có (Sale, Nhân viên kho có sẵn thì được, Documents/21 I5). ' +
+      'Cần `identity.account.manage`.',
     security: bearer,
     request: { body: json(CreateInvitationBody) },
     responses: {
@@ -123,7 +127,8 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       403: problemResponse('`protected_account`, `permission_not_held`, `forbidden`'),
       404: problemResponse('`not_found`'),
       409: problemResponse(
-        '`version_conflict` kèm `current` (kể cả đã quyết định), `invitation_outdated`, `already_member`, `email_taken`',
+        '`invalid_transition` kèm `current` (không còn `pending`, xét trước version), `version_conflict` kèm `current`, ' +
+          '`invitation_outdated`, `already_member`, `email_taken`',
       ),
       422: problemResponse('`validation_failed`'),
     },
@@ -139,7 +144,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Lời mời đã từ chối', ...json(RejectedInvitationSchema) },
       403: problemResponse('`forbidden`'),
       404: problemResponse('`not_found`'),
-      409: problemResponse('`version_conflict` kèm `current`'),
+      409: problemResponse('`invalid_transition` kèm `current` (không còn `pending`), `version_conflict` kèm `current`'),
       422: problemResponse('`validation_failed`'),
     },
   });
@@ -156,7 +161,9 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Lời mời đã huỷ (`status: revoked`)', ...json(RejectedInvitationSchema) },
       403: problemResponse('`forbidden`'),
       404: problemResponse('`not_found`'),
-      409: problemResponse('`version_conflict` kèm `current` (lệch version, hoặc không còn `open`, `claimed`)'),
+      409: problemResponse(
+        '`invalid_transition` kèm `current` (không còn `open`, `claimed`), `version_conflict` kèm `current` (lệch version)',
+      ),
       422: problemResponse('`validation_failed`'),
     },
   });
