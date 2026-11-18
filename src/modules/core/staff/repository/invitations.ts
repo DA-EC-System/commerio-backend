@@ -211,7 +211,8 @@ export async function decideInvitation(
 
 /**
  * Huỷ link chưa nộp (`open | claimed → revoked`) theo `version`; hết hạn link không chặn. Ghi người huỷ, lúc huỷ vào
- * `decided_by`, `decided_at`, xoá mã OTP. `undefined` khi không trúng dòng (lệch version, đã nộp, đã quyết).
+ * `decided_by`, `decided_at`, xoá mã OTP. Huỷ từ `open` thì xoá luôn email, họ tên người cầm link tự gõ (chưa qua OTP,
+ * #403). `undefined` khi không trúng dòng (lệch version, đã nộp, đã quyết).
  */
 export async function revokeInvitationRow(
   id: string,
@@ -227,6 +228,8 @@ export async function revokeInvitationRow(
       decidedAt: sql`now()`,
       otpHash: null,
       otpExpiresAt: null,
+      email: sql`case when ${t.status} = 'open' then null else ${t.email} end`,
+      fullName: sql`case when ${t.status} = 'open' then null else ${t.fullName} end`,
       ...bump,
     })
     .where(inCompany('revokeInvitationRow', eq(t.id, id), eq(t.version, version), inArray(t.status, [...REVOCABLE])))

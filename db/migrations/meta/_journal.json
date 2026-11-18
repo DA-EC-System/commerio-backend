@@ -582,6 +582,20 @@
       "when": 1794998534384,
       "tag": "20261118104214_chia-lai-kien",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1795013122577,
+      "tag": "20261118144522_bo-quyen-giao-vai-sale",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1795017806645,
+      "tag": "20261118160326_xoa-email-link-huy-chua-xac-minh",
+      "breakpoints": true
     }
   ]
 }

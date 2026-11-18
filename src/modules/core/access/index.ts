@@ -4,7 +4,7 @@ import { requireCompanyId } from '../../../shared/db/client.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerAccessOpenApi } from './api/openapi.ts';
 import { accessRouter } from './api/routes.ts';
-import { BUILTIN_ROLES, permissionModule } from './domain/catalog.ts';
+import { BUILTIN_ROLES, type BuiltinRoleDef, permissionModule } from './domain/catalog.ts';
 import {
   insertMemberRole,
   memberRoleRows,
@@ -47,12 +47,19 @@ export interface RoleWithPermissions {
   id: string;
   name: string;
   isCeo: boolean;
+  /** Vai có sẵn Sale, Nhân viên kho: người có `identity.account.manage` gán, gỡ không so quyền (Documents/21 I5). */
+  freelyAssignable: boolean;
   permissions: string[];
 }
 
-const withCeoFlag = (r: { id: string; name: string; permissions: string[] }): RoleWithPermissions => ({
+const FREELY_ASSIGNABLE: readonly string[] = Object.values(BUILTIN_ROLES).flatMap((r: BuiltinRoleDef) =>
+  r.freelyAssignable ? [r.id] : [],
+);
+
+const withFlags = (r: { id: string; name: string; permissions: string[] }): RoleWithPermissions => ({
   ...r,
   isCeo: r.id === BUILTIN_ROLES.ceo.id,
+  freelyAssignable: FREELY_ASSIGNABLE.includes(r.id),
 });
 
 /**
@@ -61,7 +68,7 @@ const withCeoFlag = (r: { id: string; name: string; permissions: string[] }): Ro
  */
 export async function findRolesWithPermissions(roleIds: readonly string[]): Promise<RoleWithPermissions[]> {
   requireCompanyId('findRolesWithPermissions');
-  return (await rolesWithPermissionRows([...new Set(roleIds)])).map(withCeoFlag);
+  return (await rolesWithPermissionRows([...new Set(roleIds)])).map(withFlags);
 }
 
 /** Vai trò của từng membership; membership không có vai trò thì không có trong Map. Chạy trong `withCompany`. */
@@ -69,7 +76,7 @@ export async function memberRolesOf(membershipIds: readonly string[]): Promise<M
   requireCompanyId('memberRolesOf');
   const pairs = await memberRoleRows(membershipIds);
   const found = await rolesWithPermissionRows([...new Set(pairs.map((p) => p.roleId))]);
-  const byId = new Map(found.map((r) => [r.id, withCeoFlag(r)]));
+  const byId = new Map(found.map((r) => [r.id, withFlags(r)]));
   const result = new Map<string, RoleWithPermissions[]>();
   for (const { membershipId, roleId } of pairs) {
     const role = byId.get(roleId);
