@@ -128,7 +128,8 @@ export async function processRun(
     const payouts = await ctx.settlementSource!.payouts(companyId, run.shopId, from);
     return await withCompany(companyId, () => applyRun(run, txns, payouts));
   } catch (err) {
-    const message = err instanceof AppError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+    // FE hiện nguyên `error` (#349): lưu câu cho người đọc, mã lỗi chỉ ở log ngay dưới.
+    const message = err instanceof Error ? err.message : String(err);
     logger.warn({ err, runId, shopId: run.shopId, lastAttempt: attempt.lastAttempt }, 'đối soát lỗi');
     if (!attempt.lastAttempt) throw err;
     return (await withCompany(companyId, () => finishRun(run.id, { status: 'failed', error: message.slice(0, 500) }))) ?? run;

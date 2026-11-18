@@ -92,15 +92,16 @@ describe('stub của sàn giả lập Lazada (#115)', () => {
       }[];
       return rows.filter((r) => r.fee_name === 'Commission' || r.fee_name.startsWith('Sponsored')).map((r) => `${r.fee_name} ${r.amount}`);
     };
-    expect(fees('giao-thanh-cong')).toEqual(['Commission -5160.00', 'Commission -5160.00']);
-    expect(fees('quyet-toan-lech')).toEqual(['Commission -10320.00', 'Commission -10320.00', 'Sponsored Discovery - Top up -5000.00']);
+    expect(fees('giao-thanh-cong')).toEqual(['Commission -5,160.00', 'Commission -5,160.00']);
+    expect(fees('quyet-toan-lech')).toEqual(['Commission -10,320.00', 'Commission -10,320.00', 'Sponsored Discovery - Top up -5,000.00']);
   });
 
-  it('payout cộng đúng các dòng: doanh thu + phí = tiền về', () => {
+  it('payout cộng đúng các dòng: doanh thu + phí = tiền về; số có dấu phẩy nghìn như Lazada thật (#349)', () => {
     const ms = mappingsFor(SCENARIOS['giao-thanh-cong']!);
     const payout = (body(at(ms, '/finance/payout/status/get', 'don', 'delivered')[0]!).data as Record<string, string>[])[0]!;
-    expect(Number(payout.item_revenue) + Number(payout.fees_total)).toBe(Number(payout.payout));
-    expect(payout.item_revenue).toBe('258000.00');
+    const num = (v: string) => Number(v.replaceAll(',', ''));
+    expect(num(payout.item_revenue!) + num(payout.fees_total!)).toBe(num(payout.payout!));
+    expect(payout.item_revenue).toBe('258,000.00');
   });
 
   it('trả hàng: chấp nhận sang bước kế, chứa "refuse" thì từ chối; hoàn tiền xong có dòng hoàn trong quyết toán', () => {
