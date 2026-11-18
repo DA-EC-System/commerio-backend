@@ -213,7 +213,7 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect((await orderOf(id.ac5!)).status).toBe('completed');
   });
 
-  it('AC6 (US-DH-16 1b): mọi kiện không huỷ đã hoàn về → completed ngay, kết quả none, không hạn trả', async () => {
+  it('D1-R (US-DH-16 1b, AC6): mọi kiện không huỷ đã hoàn về → completed ngay, kết quả none, không hạn trả', async () => {
     expect(await orderOf(id.ac6!)).toMatchObject({ status: 'completed', outcome: 'none', return_window_ends_at: null });
   });
 
