@@ -39,6 +39,8 @@ export async function acknowledgeRemoteTitle(actor: Actor, shopId: string, listi
       action: 'update',
       entityType: 'channel.listings',
       entityId: row.id,
+      // Nhãn như các dòng nhật ký listing khác (#352): SKU người bán, thiếu thì mã SKU sàn.
+      label: row.sellerSku ?? row.externalSkuId ?? 'Listing chưa có SKU',
       before: { remoteTitleAtMatch: changed.from, remoteTitleEnAtMatch: changed.fromEn },
       after: { remoteTitleAtMatch: changed.to, remoteTitleEnAtMatch: changed.toEn },
     });
