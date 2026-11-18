@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Order, OrderSummaryPage } from '#src/modules/order/sales/api/schemas.ts';
-import { getOrder, ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
+import { completeDueOrdersOnce, getOrder, ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -515,34 +515,36 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect(body.returnWindowEndsAt).toBe(new Date(deliveredAt.getTime() + 15 * DAY).toISOString());
   });
 
-  it('D1-W (US-DH-16 2, AC7): qua hạn trả mà còn yêu cầu trả requested → return_requested', async () => {
-    const { orderId } = await deliveredOrder(16);
-    await testPool().query(
-      `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, reason)
-       values ($1, $2, $3, 'marketplace', $4, $5, 'Khách đổi ý')`,
-      [co.companyId, `TR-${randomUUID().slice(0, 8)}`, orderId, shop15, randomUUID()],
+  it('D1-W (US-DH-16 2, AC7): qua hạn trả mà còn yêu cầu trả requested → việc hoàn tất bỏ qua, chi tiết đơn return_requested', async () => {
+    const { orderId } = await deliveredOrder(16, (id) =>
+      testPool().query(
+        `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, reason)
+         values ($1, $2, $3, 'marketplace', $4, $5, 'Khách đổi ý')`,
+        [co.companyId, `TR-${randomUUID().slice(0, 8)}`, id, shop15, randomUUID()],
+      ),
     );
 
-    expect((await detail(orderId)).completionBlocker).toBe('return_requested');
+    await completeDueOrdersOnce(new Date(), createModuleContext());
+
+    const body = await detail(orderId);
+    expect(body.status).toBe('processing');
+    expect(body.completionBlocker).toBe('return_requested');
   });
 
   it('AC8: qua hạn trả, kiện tự giao thu COD chưa xác nhận → cod_unconfirmed', async () => {
-    const { orderId } = await deliveredOrder(16);
-    await testPool().query(
-      `update "order".packages set self_delivery = true, cod_expected = 100000, delivered_by = $2 where order_id = $1`,
-      [orderId, randomUUID()],
+    const { orderId } = await deliveredOrder(16, (id) =>
+      testPool().query(
+        `update "order".packages set self_delivery = true, cod_expected = 100000, delivered_by = $2 where order_id = $1`,
+        [id, randomUUID()],
+      ),
     );
 
     expect((await detail(orderId)).completionBlocker).toBe('cod_unconfirmed');
   });
 
   it('AC10: đơn đã hoàn tất trả hạn đã lưu, không tính lại khi gian hàng đổi số ngày', async () => {
-    const { orderId } = await deliveredOrder(20);
     const stored = new Date(Date.now() - 5 * DAY);
-    await testPool().query(
-      `update "order".orders set status = 'completed', outcome = 'full', completed_at = now(), return_window_ends_at = $2 where id = $1`,
-      [orderId, stored],
-    );
+    const { orderId } = await deliveredOrder(20, (id) => markCompleted(id, stored));
     await testPool().query('update channel.shops set return_window_days = 30 where id = $1', [shop15]);
 
     const body = await detail(orderId);
