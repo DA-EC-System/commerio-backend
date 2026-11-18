@@ -116,6 +116,14 @@ describe('authorize-url nhận shopId (#398, 21 §18.4)', () => {
     expect(res.body.type).toBe('/problems/not_found');
   });
 
+  // Rỗng mà coi như vắng thì state mang `shp: ''`, callback đi đường cũ và ghi token cho seller sàn trả (review #398).
+  it.each(['', '%20%20'])('shopId rỗng (%j) thì 422 validation_failed errors.shopId, không quay về đường cũ', async (raw) => {
+    const res = await authorizeUrl(token, 'lazada', `?shopId=${raw}`);
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('validation_failed');
+    expect(res.body.errors).toHaveProperty('shopId');
+  });
+
   it('shopId gửi hai lần thì 422 validation_failed errors.shopId', async () => {
     const shopId = await newShop(token);
     const res = await authorizeUrl(token, 'lazada', `?shopId=${shopId}&shopId=${shopId}`);

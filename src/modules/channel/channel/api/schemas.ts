@@ -8,8 +8,11 @@ export const PlatformParams = z.object({ platform: z.string().max(40) });
 // `shopId` không phải uuid, của công ty khác hay sàn khác: 404 ở service (#398), nên ở đây chỉ là chuỗi.
 export const AuthorizeUrlQuery = z
   .object({
+    // Rỗng không coi là vắng: ký `shp: ''` thì callback quay về đường cũ, ghi token cho seller sàn trả (#398).
     shopId: z
       .string()
+      .trim()
+      .min(1, 'Mã gian hàng không được rỗng')
       .max(64)
       .optional()
       .meta({ description: 'Gian hàng đang kết nối lại; FE gửi khi bấm Kết nối lại, không gửi khi Thêm gian hàng' }),
