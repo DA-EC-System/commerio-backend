@@ -126,7 +126,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/callback',
     summary: 'Callback OAuth: adapter đổi tham số sàn trả lấy token, tạo hoặc nối lại các gian hàng (§18.4, §18.6.3)',
     description:
-      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới), `remoteProductCount` (số sản phẩm trên sàn) và `remoteSkuCount` (số phân loại, tức SKU của sàn; `null` khi sàn không trả tổng) (§18.7.4); cả hai `null` khi sàn lỗi hoặc quá 10 giây, việc nối vẫn xong.',
+      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). `state` lấy bằng `authorize-url?shopId=` (Kết nối lại): gian hàng đó không còn thì 404 `not_found` trước khi đổi `code`; sàn trả không có seller của gian hàng đó thì 409 `shop_mismatch`, bỏ token vừa nhận, không ghi gian hàng nào (#398). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới), `remoteProductCount` (số sản phẩm trên sàn) và `remoteSkuCount` (số phân loại, tức SKU của sàn; `null` khi sàn không trả tổng) (§18.7.4); cả hai `null` khi sàn lỗi hoặc quá 10 giây, việc nối vẫn xong.',
     security: bearer,
     request: { params: PlatformParams, body: json(CallbackBody) },
     responses: {
@@ -134,8 +134,9 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       ...marketplace,
       409: problemResponse(
-        '`company_mismatch` kèm `expected`, `actual` (`{ id, name }`); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+        '`company_mismatch` kèm `expected`, `actual` (`{ id, name }`); `shop_mismatch` kèm `expected`, `actual` (`{ name, externalShopId }`, `actual.name` null khi seller chưa có trong công ty); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
       ),
+      404: problemResponse('`not_found`: gian hàng trong `state` không còn'),
       422: problemResponse('`validation_failed`, `oauth_state_invalid`, `marketplace_unsupported`'),
     },
   });

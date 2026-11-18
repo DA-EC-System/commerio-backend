@@ -371,6 +371,9 @@ async function reconnectTarget(companyId: string, platform: Platform, shopId: st
 /**
  * Callback OAuth: kiểm `state`, adapter đổi `params` (mọi query sàn trả trừ `state`) lấy các gian hàng, tạo hoặc nối lại.
  * Body cũ `{ code, state }` coi như `params = { code }` (21 §18.6.3).
+ * `state` có gian hàng cần nối lại (`shp`, #398): sàn trả không có seller đó thì 409 `shop_mismatch`, bỏ token vừa nhận.
+ * Thứ tự lỗi: 422 `oauth_state_invalid` → 409 `company_mismatch` → 404 (gian hàng trong `state` không còn) → đổi mã →
+ * 409 `shop_mismatch` → 409 `shop_connected_elsewhere`. Ba lỗi đầu ném trước khi đổi mã nên mã uỷ quyền chưa bị tiêu.
  */
 export async function connectByCode(
   raw: string,
@@ -388,11 +391,39 @@ export async function connectByCode(
     throw new AppError(422, 'oauth_state_invalid', 'Phiên kết nối đã hết hạn hoặc không hợp lệ');
   }
   if (claims.cid !== actor.companyId) throw await companyMismatch(claims.cid, actor.companyId);
+  const target = claims.shp ? await reconnectTarget(actor.companyId, platform, claims.shp) : null;
   const params = input.params ?? { code: input.code! };
   // Lời gọi sàn lúc nối (đổi mã, đếm sản phẩm) tính vào phần hạn mức của công ty đang nối (#215).
-  return forCompany(actor.companyId, async () =>
-    attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params)))),
+  return forCompany(actor.companyId, async () => {
+    const connections = await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params)));
+    if (target && !connections.some((c) => c.externalShopId === target.externalShopId)) {
+      throw await shopMismatch(actor.companyId, platform, target, connections);
+    }
+    return attachAll(platform, actor, connections);
+  });
+}
+
+/**
+ * Nối lại gian hàng `target` mà sàn trả seller khác (đăng nhập nhầm tài khoản trên sàn, 21 §18.4, #398): bỏ token vừa nhận,
+ * không ghi gì. `actual` là gian hàng đầu sàn trả; tên đọc trong công ty đang nối nên seller chưa có, hay đang gắn công ty
+ * khác, đều là `null`. Lỗi của người dùng nên log `warn`, không ghi token hay `params`.
+ */
+async function shopMismatch(
+  companyId: string,
+  platform: Platform,
+  target: ShopRow,
+  connections: ShopConnection[],
+): Promise<AppError> {
+  const first = connections[0]!;
+  const known = await withCompany(companyId, () => findShopByExternal(platform, first.externalShopId));
+  logger.warn(
+    { companyId, shopId: target.id, expected: target.externalShopId, actual: connections.map((c) => c.externalShopId) },
+    'Nối lại gian hàng nhưng sàn trả seller khác',
   );
+  return new AppError(409, 'shop_mismatch', 'Tài khoản sàn vừa uỷ quyền không phải gian hàng đang kết nối lại', {
+    expected: { name: target.shopName, externalShopId: target.externalShopId },
+    actual: { name: known?.shopName ?? null, externalShopId: first.externalShopId },
+  });
 }
 
 /**

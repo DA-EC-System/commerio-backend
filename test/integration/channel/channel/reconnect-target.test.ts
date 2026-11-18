@@ -6,8 +6,9 @@ import { MarketplaceError } from '#src/modules/channel/channel/service/marketpla
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { verifyPurposeToken } from '#src/shared/auth/purpose-token.ts';
 import { createCompany } from '../../helpers/company.ts';
+import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter } from './helpers.ts';
 
 const DAY = 24 * 3600_000;
 const MINUTE = 60_000;
@@ -119,5 +120,105 @@ describe('authorize-url nhận shopId (#398, 21 §18.4)', () => {
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('validation_failed');
     expect(res.body.errors).toHaveProperty('shopId');
+  });
+});
+
+/** Mọi dòng gian hàng của công ty và số dòng nhật ký: ca lỗi so trước, sau phải bằng nhau (kể cả token mã hoá, `version`). */
+async function snapshot(companyId: string) {
+  const shops = await testPool().query('select * from channel.shops where company_id = $1 order by id', [companyId]);
+  const audits = await testPool().query<{ n: number }>('select count(*)::int as n from core.audit_logs where company_id = $1', [
+    companyId,
+  ]);
+  return { shops: shops.rows, audits: audits.rows[0]!.n };
+}
+
+async function shopOf(id: string) {
+  const { rows } = await testPool().query('select * from channel.shops where id = $1', [id]);
+  return rows[0];
+}
+
+async function disconnectedShop(bearer: string, sellerId = seller()): Promise<string> {
+  const id = await newShop(bearer, sellerId);
+  await testPool().query(
+    "update channel.shops set status = 'disconnected', disconnected_at = now(), access_token_enc = null, refresh_token_enc = null where id = $1",
+    [id],
+  );
+  return id;
+}
+
+describe('callback nối lại theo shopId trong state (#398)', () => {
+  it('sàn trả seller chưa có trong công ty thì 409 shop_mismatch, actual.name null, không ghi gì', async () => {
+    const [a, b] = [seller(), seller()];
+    const shopId = await disconnectedShop(token, a);
+    const before = await snapshot(company.companyId);
+    const res = await connectOAuth(token, [b], shopId);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/shop_mismatch');
+    expect(res.body.expected).toEqual({ name: `Shop ${a.slice(0, 8)}`, externalShopId: a });
+    expect(res.body.actual).toEqual({ name: null, externalShopId: b });
+    expect(JSON.stringify(res.body)).not.toContain('tok-');
+    expect(await snapshot(company.companyId)).toEqual(before);
+    expect((await shopOf(shopId)).status).toBe('disconnected');
+  });
+
+  it('sàn trả seller đã có trong công ty thì 409, actual.name là tên gian hàng đó, gian hàng đó giữ token cũ', async () => {
+    const [a, b] = [seller(), seller()];
+    const shopId = await disconnectedShop(token, a);
+    await activateShop(await newShop(token, b));
+    const before = await snapshot(company.companyId);
+    const res = await connectOAuth(token, [b], shopId);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/shop_mismatch');
+    expect(res.body.expected).toEqual({ name: `Shop ${a.slice(0, 8)}`, externalShopId: a });
+    expect(res.body.actual).toEqual({ name: `Shop ${b.slice(0, 8)}`, externalShopId: b });
+    expect(await snapshot(company.companyId)).toEqual(before);
+  });
+
+  it('sàn trả seller đang gắn công ty khác thì 409 shop_mismatch (không phải shop_connected_elsewhere), actual.name null', async () => {
+    const [a, b] = [seller(), seller()];
+    const other = await createCompany({ optionalModules: ['channel'] });
+    await newShop(other.ceo.token, b);
+    const shopId = await disconnectedShop(token, a);
+    const before = await snapshot(company.companyId);
+    const otherBefore = await snapshot(other.companyId);
+    const res = await connectOAuth(token, [b], shopId);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/shop_mismatch');
+    expect(res.body.actual).toEqual({ name: null, externalShopId: b });
+    expect(await snapshot(company.companyId)).toEqual(before);
+    expect(await snapshot(other.companyId)).toEqual(otherBefore);
+  });
+
+  it('một lần uỷ quyền ra nhiều gian hàng có gian hàng đích thì nối tất cả', async () => {
+    const [a, b] = [seller(), seller()];
+    const shopId = await disconnectedShop(token, a);
+    const res = await connectOAuth(token, [a, b], shopId);
+    expect(res.status).toBe(201);
+    expect(res.body.shops.map((r: { shop: { externalShopId: string } }) => r.shop.externalShopId)).toEqual([a, b]);
+    expect(res.body.shops[0].shop.id).toBe(shopId);
+  });
+
+  it('gian hàng trong state bị xoá trước callback thì 404 not_found, chưa đổi mã', async () => {
+    const a = seller();
+    const shopId = await newShop(token, a);
+    const state = await stateFor(token, 'lazada', shopId);
+    await testPool().query('delete from channel.shops where id = $1', [shopId]);
+    const exchanges = sàn.exchanges;
+    const res = await app()
+      .post('/api/v1/channel/shops/lazada/callback')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ state, params: { code: `c-${a}` } });
+    expect(res.status).toBe(404);
+    expect(res.body.type).toBe('/problems/not_found');
+    expect(sàn.exchanges).toBe(exchanges);
+    expect(await testPool().query('select 1 from channel.shops where external_shop_id = $1', [a])).toMatchObject({ rowCount: 0 });
+  });
+
+  it('sàn trả đúng seller của gian hàng đích thì nối lại gian hàng đó', async () => {
+    const a = seller();
+    const shopId = await disconnectedShop(token, a);
+    const res = await connectOAuth(token, [a], shopId);
+    expect(res.status).toBe(200);
+    expect(res.body.shop.id).toBe(shopId);
   });
 });
