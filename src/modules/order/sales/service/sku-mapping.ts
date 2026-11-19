@@ -34,7 +34,7 @@ export async function applySkuMapping(input: ApplySkuMappingInput): Promise<{ li
 
   const outcomes = await remapPackageLines(
     locked.map((l) => ({ orderLineId: l.id, to })),
-    { actorId: input.actorId, holdStock: input.holdStock, orderCutoffAt: input.orderCutoffAt, reason: `Ghép SKU ${sellerSku}` },
+    { actorId: input.actorId, holdStock: input.holdStock, orderCutoffAt: input.orderCutoffAt, reason: `Liên kết SKU ${sellerSku}` },
   );
   // Dòng đơn đã bằng `to` (chọn vì dấu, D27) không ghi: `version` giữ.
   const changed = locked.filter((l) => (outcomes.get(l.id) ?? 'applied') === 'applied' && !sameMappedSku(lineSkuOf(l), to));

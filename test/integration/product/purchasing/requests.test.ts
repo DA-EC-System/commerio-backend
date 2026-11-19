@@ -236,7 +236,7 @@ describe('gửi duyệt và duyệt', () => {
       [line.variantId],
     );
     // Mã cha (#204 D5): sản phẩm một SKU không thuộc tính có mã bằng SKU.
-    expect(product.rows[0]).toEqual({ name, description: `Tạo từ đề nghị nhập ${r.number}`, code: line.sku });
+    expect(product.rows[0]).toEqual({ name, description: `Tạo từ đơn đặt hàng nhập ${r.number}`, code: line.sku });
   });
 
   it('tên sản phẩm mới bị dùng trước lúc duyệt: 422 và không đổi trạng thái', async () => {

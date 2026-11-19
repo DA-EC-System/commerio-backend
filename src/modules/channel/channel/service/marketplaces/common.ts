@@ -185,7 +185,7 @@ export const existingProduct = (s: RemoteSku): CreatedProduct => ({
 export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(skus: readonly T[], sellerSku: string): T | null {
   const found = skus.filter((s) => s.sellerSku === sellerSku && s.state !== 'deleted');
   if (found.length > 1) {
-    throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, ghép tay SKU đúng`);
+    throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, liên kết tay SKU đúng`);
   }
   return found[0] ?? null;
 }
@@ -799,6 +799,11 @@ export interface MarketplaceAdapter {
   packItems?(accessToken: string, ref: PackageItemsRef & { carrierCode?: string }): Promise<PlatformPack>;
   /** Báo các kiện đã sẵn sàng giao. */
   readyToShip?(accessToken: string, packageCodes: readonly string[]): Promise<void>;
+  /**
+   * Mã vận đơn của kiện trên sàn sau khi báo giao; null khi sàn chưa cấp. Sàn có vận đơn từ lúc đóng gói (Lazada) không
+   * khai (#239 KH-B02).
+   */
+  packageTracking?(accessToken: string, packageCode: string): Promise<string | null>;
   /** Cho phép đóng gói lại một kiện chưa báo giao. */
   repackPackage?(accessToken: string, packageCode: string): Promise<void>;
   /** Mỗi phần tử là một tệp PDF, có thể chứa vận đơn của nhiều kiện. */

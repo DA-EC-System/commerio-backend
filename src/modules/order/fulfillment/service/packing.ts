@@ -39,6 +39,12 @@ export const awaitingOpen = () => new AppError(409, 'awaiting_open', 'Kiện đa
  */
 export const awaitingReplacedOpen = () =>
   new AppError(409, 'awaiting_open', 'Kiện thay đang chờ kho mở kiện cũ (sàn chia lại kiện), mở kiện cũ trước');
+/**
+ * Khách đang xin huỷ (cờ `cancel_requested` của đơn, hay sàn báo khi app chưa kịp thấy cờ): báo giao phải chờ Sale trả lời.
+ * Không bật `label_error`: bấm lại không giúp (#239 KH-B07).
+ */
+const cancelRequestedError = () =>
+  new AppError(409, 'cancel_requested', 'Khách đang xin huỷ đơn, chờ Sale trả lời yêu cầu huỷ rồi mới báo sàn sẵn sàng giao');
 
 /** Kiện `id` còn là kiện chờ thay thì ném `awaiting_open`. */
 export async function assertNotAwaitingReplaced(id: string): Promise<void> {
@@ -203,23 +209,30 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
       await transition(ctx, actor, pkg, 'mark_ready');
       if (pkg.needsOpen) throw awaitingOpen();
       const others = await otherGroupMembers(pkg);
+      // Đơn của kiện bấm hay của kiện khác trong nhóm gói đang có khách xin huỷ: sàn sẽ từ chối, chặn trước khi gọi.
+      const orders = await orderRefsLookupOf(ctx)([...new Set([pkg.orderId, ...others.map((member) => member.orderId)])]);
+      if ([...orders.values()].some((order) => order.cancelRequested)) throw cancelRequestedError();
       // Kiện chờ thay (của kiện bấm, hay của kiện khác trong nhóm gói): chưa báo sẵn sàng được.
       const replaced = await awaitingReplacementIds([pkg.id, ...others.map((member) => member.id)]);
       if (replaced.includes(pkg.id)) throw awaitingReplacedOpen();
       const waitingMembers = others.filter((member) => member.status === 'packed' && replaced.includes(member.id)).map((member) => member.code);
       checkGroup([...readyGroupBlockers(others), ...waitingMembers]);
-      if (pkg.shopId && !pkg.platformPackageCode) throw new AppError(409, 'rts_package_not_found', 'Kiện chưa có mã kiện trên sàn');
+      if (pkg.shopId && !pkg.platformPackageCode) {
+        throw new AppError(409, 'rts_package_not_found', 'Sàn chưa cấp mã kiện cho đơn này (đơn còn chờ sàn duyệt). Kéo đơn ngay rồi thử lại');
+      }
       return {
         shopId: pkg.shopId, code: pkg.platformPackageCode, ids: [pkg.id, ...others.map((member) => member.id)], waybillKept: pkg.waybillKept,
       };
     });
 
     // Kiện giữ vận đơn sau khi mở (spec #238 D25): sàn đã có vận đơn cũ, chỉ chuyển `packed → awaiting_pickup` trong app
-    // (`updatePackage` tự tắt `waybill_kept`).
+    // (`updatePackage` tự tắt `waybill_kept`). Sàn cấp mã vận đơn ngay sau khi báo giao (TikTok, KH-B02) thì ghi ở bước sau.
+    let trackingCode: string | null = null;
     if (target.shopId && target.code && !target.waybillKept) {
       try {
-        await marketplacePackagesOf(ctx).readyToShip(companyId, target.shopId, target.code);
+        ({ trackingCode } = await marketplacePackagesOf(ctx).readyToShip(companyId, target.shopId, target.code));
       } catch (err) {
+        if (err instanceof AppError && err.code === 'cancel_requested') throw err;
         await withCompany(companyId, async () => {
           const pkg = await lockPackingPackage(id);
           if (pkg?.status === 'packed') await updatePackage(id, { labelError: true });
@@ -243,7 +256,8 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
             logger.warn({ packageId: member.id, platformPackageCode: target.code }, 'kiện trong nhóm đã đổi khi báo sẵn sàng giao');
             continue;
           }
-          await updatePackage(member.id, { status: 'awaiting_pickup', labelError: false });
+          // Mã vận đơn sàn trả ghi lên mọi kiện vừa chuyển của nhóm; sàn chưa cấp thì giữ mã cũ (Lazada có từ lúc pack).
+          await updatePackage(member.id, { status: 'awaiting_pickup', labelError: false, ...(trackingCode !== null && { trackingCode }) });
           await recordPacking(member, 'awaiting_pickup', 'mark_ready', actor.accountId);
         }
         return getPackage(ctx, id);

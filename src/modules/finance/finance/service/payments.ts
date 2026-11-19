@@ -133,7 +133,7 @@ export function resolvePayment(caller: Caller, orderId: string, input: { version
     });
     const isCeo = caller.permissions.includes('finance.settlement.approve');
     if (!isCeo && !row.approvedBy && needsCeoApproval(row.diff ?? 0, row.resolvedDiffBase, await currentThreshold(now))) {
-      throw new AppError(409, 'ceo_approval_required', 'Lệch vượt hạn mức tự chốt: cần CEO duyệt trước');
+      throw new AppError(409, 'ceo_approval_required', 'Chênh lệch vượt hạn mức tự xử lý chênh lệch: cần CEO duyệt trước');
     }
     const updated = await updateOrderSettlement(orderId, row, {
       status: to,
@@ -166,9 +166,9 @@ export function approvePayment(caller: Caller, orderId: string, input: { version
   return withCompany(caller.companyId, async () => {
     const row = await load(orderId, 'update');
     if (row.version !== input.version) throw conflict(row);
-    if (row.status !== 'mismatch') throw new AppError(409, 'invalid_transition', 'Chỉ duyệt đơn đang lệch', { current: row.status });
+    if (row.status !== 'mismatch') throw new AppError(409, 'invalid_transition', 'Chỉ duyệt đơn đang có chênh lệch', { current: row.status });
     if (!needsCeoApproval(row.diff ?? 0, row.resolvedDiffBase, await currentThreshold(now))) {
-      throw new AppError(409, 'approval_not_needed', 'Lệch trong hạn mức tự chốt, không cần CEO duyệt');
+      throw new AppError(409, 'approval_not_needed', 'Chênh lệch trong hạn mức tự xử lý chênh lệch, không cần CEO duyệt');
     }
     const updated = await updateOrderSettlement(orderId, row, { approvedBy: caller.accountId });
     if (!updated) throw conflict(row);

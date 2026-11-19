@@ -206,7 +206,7 @@ function pickListings(
   if (!input.decisions) {
     const ids = new Set(input.externalSkuIds ?? []);
     const picked = offered.flatMap((s) => (s.variantId && ids.has(s.externalSkuId) ? [{ ...s, variantId: s.variantId }] : []));
-    if (picked.length !== ids.size) errors.externalSkuIds = 'Có SKU sàn không còn để ghép';
+    if (picked.length !== ids.size) errors.externalSkuIds = 'Có SKU sàn không còn để liên kết';
     return picked;
   }
   const byExternal = new Map(offered.map((s) => [s.externalSkuId, s]));
@@ -220,7 +220,7 @@ function pickListings(
     const error = !s
       ? 'SKU sàn không có trong gợi ý'
       : d.variantId !== null && !s.sellerSku
-        ? 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi ghép'
+        ? 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi liên kết'
         : seenSkus.has(d.externalSkuId)
         ? 'SKU sàn bị chọn hai lần'
         : d.variantId === null
@@ -230,7 +230,7 @@ function pickListings(
             : v.archived
               ? 'Biến thể đã lưu trữ'
               : listed.has(v.id)
-                ? 'Biến thể đã ghép listing khác của gian hàng này'
+                ? 'Variant đã liên kết listing khác của gian hàng này'
                 : seenVariants.has(v.id)
                   ? 'Biến thể đã chọn cho SKU sàn khác'
                   : null;
@@ -250,7 +250,7 @@ async function companySetupState(actor: Actor, shopId: string) {
   return { firstShopOfCompany: !state.hasSetUpShop, awaitingStocktake: state.awaitingStocktake };
 }
 
-const awaitingError = (number: string) => `Công ty đang chờ phiếu kiểm kê đầu kỳ ${number} ghi sổ`;
+const awaitingError = (number: string) => `Công ty đang chờ phiếu kiểm kho đầu kỳ ${number} hoàn thành`;
 
 export async function setupPreview(port: ProductPort, actor: Actor, shopId: string) {
   const { offered, nameMatchSkipped } = await suggestions(port, actor, shopId);
@@ -343,7 +343,7 @@ export async function finishSetup(
     // Hai gian hàng cùng lập phiếu đầu kỳ một lúc: index một phần chặn phiếu thứ hai (#198 A12).
     if (pgError(err).constraint === 'shops_one_opening_stocktake_uq') {
       throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
-        errors: { openingStock: 'Công ty đang chờ một phiếu kiểm kê đầu kỳ khác ghi sổ' },
+        errors: { openingStock: 'Công ty đang chờ một phiếu kiểm kho đầu kỳ khác hoàn thành' },
       });
     }
     throw err;

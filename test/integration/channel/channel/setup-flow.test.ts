@@ -168,7 +168,7 @@ describe('mốc kéo đơn và gian hàng đầu tiên (AC-1, AC-2, AC-4, AC-5, 
     await otherShop(c.companyId, waiting);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: mode });
     expect(res.status).toBe(422);
-    expect(res.body.errors.openingStock).toBe('Công ty đang chờ phiếu kiểm kê đầu kỳ KK-000001 ghi sổ');
+    expect(res.body.errors.openingStock).toBe('Công ty đang chờ phiếu kiểm kho đầu kỳ KK-000001 hoàn thành');
     expect(await shopRow(shopId)).toMatchObject({ status: 'connecting', listings: 0 });
   });
 });

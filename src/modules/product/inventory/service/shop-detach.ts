@@ -21,7 +21,7 @@ export async function detachShopStockDocuments(scope: ShopDocumentScope): Promis
   const openDocs = docs.filter((d) => d.status === 'draft' || d.status === 'pending');
   const moved = await documentsWithMoves(openDocs.map((d) => d.id));
   if (moved.size) {
-    throw new AppError(409, 'shop_has_open_inspection', 'Gian hàng còn phiếu kiểm hàng hoàn chưa ghi sổ, ghi sổ xong mới xoá được', {
+    throw new AppError(409, 'shop_has_open_inspection', 'Gian hàng còn phiếu kiểm hàng hoàn chưa hoàn thành, hoàn thành phiếu rồi mới xoá được', {
       documents: openDocs.filter((d) => moved.has(d.id)).map((d) => ({ id: d.id, number: d.number })),
     });
   }

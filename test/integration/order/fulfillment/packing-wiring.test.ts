@@ -131,6 +131,8 @@ describe('đóng gói, báo sẵn sàng, in vận đơn qua cổng thật của 
   it('in vận đơn trả một PDF gộp từ tệp adapter trả', async () => {
     const a = await seed('awaiting_pickup', 'FP-WIRE-DOC-1');
     const b = await seed('awaiting_pickup', 'FP-WIRE-DOC-2');
+    // Chỉ in kiện sàn đã cấp vận đơn (#239 KH-B03).
+    await testPool().query(`update "order".packages set tracking_code = 'VD-' || code where id = any($1)`, [[a.packageId, b.packageId]]);
     sàn.shippingDocuments.mockResolvedValue([await onePagePdf(), await onePagePdf()]);
     const res = await auth(api().get('/api/v1/fulfillment/packages/documents').query({ ids: `${a.packageId},${b.packageId}` }))
       .buffer(true)

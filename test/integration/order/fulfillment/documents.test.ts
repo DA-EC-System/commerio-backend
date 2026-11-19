@@ -25,8 +25,17 @@ beforeAll(async () => {
   ids = (await Promise.all([seed(shop1, 'FP1'), seed(shop1, 'FP1'), seed(shop2, 'FP2')])).map((pkg) => pkg.packageId);
 });
 
+// Kiện in được phải có mã kiện sàn và mã vận đơn (#239 KH-B03).
 const seed = (shopId: string, platformPackageCode: string | null) =>
-  seedPackage(companyId, { status: 'awaiting_pickup', shopId, platformPackageCode, lines: [{ variantId, quantity: 1 }] });
+  seedPackage(companyId, {
+    status: 'awaiting_pickup', shopId, platformPackageCode, trackingCode: `VD-${randomUUID().slice(0, 8)}`, lines: [{ variantId, quantity: 1 }],
+  });
+const readPdf = (req: ReturnType<typeof get>) => req.buffer(true).parse((response, callback) => {
+  const chunks: Buffer[] = [];
+  response.on('data', (chunk: Buffer) => chunks.push(chunk));
+  response.on('end', () => callback(null, Buffer.concat(chunks)));
+  response.on('error', callback);
+});
 
 const get = (selected: readonly string[], fake: Partial<MarketplacePackages> = {}, token = warehouse, kind = 'awb') =>
   packingApp(fake).get('/api/v1/fulfillment/packages/documents')
@@ -44,12 +53,7 @@ describe('in vận đơn PDF', () => {
       expect(currentCompanyId()).toBeNull();
       return [await pdf(shopId === shop1 ? 100 : 150)];
     });
-    const res = await get([ids[2]!, ids[0]!, ids[1]!], { shippingDocuments }).buffer(true).parse((response, callback) => {
-      const chunks: Buffer[] = [];
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.on('end', () => callback(null, Buffer.concat(chunks)));
-      response.on('error', callback);
-    });
+    const res = await readPdf(get([ids[2]!, ids[0]!, ids[1]!], { shippingDocuments }));
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('application/pdf');
     expect(res.headers['content-disposition']).toMatch(/^attachment; filename="van-don-\d{8}-\d{4}\.pdf"$/);
@@ -66,6 +70,30 @@ describe('in vận đơn PDF', () => {
     expect(res.body.detail).toContain(missing.packageCode);
     expect(res.body.detail).toContain(manual.packageCode);
     expect(res.body.detail.match(/KH-/g)).toHaveLength(2);
+  });
+
+  it('US-DH-07 AC3 KH-B03: kiện chưa có mã vận đơn thì 409 document_not_ready, không gọi sàn', async () => {
+    const packed = await seedPackage(companyId, {
+      status: 'packed', shopId: shop1, platformPackageCode: 'FP-NO-TRACK', trackingCode: null, lines: [{ variantId, quantity: 1 }],
+    });
+    const shippingDocuments = vi.fn();
+    const res = await get([ids[0]!, packed.packageId], { shippingDocuments });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('/problems/document_not_ready');
+    expect(res.body.detail).toContain(packed.packageCode);
+    expect(res.body.detail.match(/KH-/g)).toHaveLength(1);
+    expect(shippingDocuments).not.toHaveBeenCalled();
+  });
+
+  it('KH-B03: kiện đã đóng gói có mã vận đơn in được, chưa cần báo sàn sẵn sàng giao', async () => {
+    const packed = await seedPackage(companyId, {
+      status: 'packed', shopId: shop1, platformPackageCode: 'FP-PACKED-TRACK', trackingCode: 'LZ-PACKED', lines: [{ variantId, quantity: 1 }],
+    });
+    const shippingDocuments = vi.fn(async () => [await pdf(120)]);
+    const res = await readPdf(get([packed.packageId], { shippingDocuments }));
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(shippingDocuments).toHaveBeenCalledWith(companyId, shop1, ['FP-PACKED-TRACK']);
   });
 
   it('kiện thuộc công ty khác trả 404', async () => {

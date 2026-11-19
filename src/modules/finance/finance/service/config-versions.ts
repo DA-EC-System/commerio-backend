@@ -477,12 +477,12 @@ const RETRO_GROUP: Partial<Record<ConfigKind, { group: keyof typeof RETRO_KINDS;
 };
 const KIND_LABEL: Record<ConfigKind, string> = {
   fee: 'phí sàn',
-  tax_regime: 'loại hình thuế',
-  tax_rules: 'quy tắc thuế',
-  mismatch_threshold: 'ngưỡng lệch',
-  min_margin: 'biên tối thiểu',
+  tax_regime: 'loại hình kinh doanh',
+  tax_rules: 'biểu thuế',
+  mismatch_threshold: 'ngưỡng chênh lệch đối soát',
+  min_margin: 'lãi tối thiểu trên giá vốn',
 };
-const SOURCE_LABEL = { fee: { package: 'phí sàn', package_return: 'phí khi hoàn' }, tax: { package: 'thuế sàn khấu trừ', package_return: '' } };
+const SOURCE_LABEL = { fee: { package: 'phí sàn', package_return: 'phí khi hàng hoàn' }, tax: { package: 'thuế sàn khấu trừ', package_return: '' } };
 const vnd = (d: Decimal.Value) => new Decimal(d).toFixed(0);
 
 /**

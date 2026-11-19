@@ -2,6 +2,7 @@
 // ở `src/wiring.ts`, không import channel. Gọi sàn ngoài giao dịch nghiệp vụ; lỗi sàn đổi sang mã app (§1.1 R8, R9).
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import type { ShopCapabilities } from '../domain/shop.ts';
 import { findShopRow } from '../repository/shops.ts';
@@ -170,9 +171,19 @@ const packageErrors = new Map<string, readonly [string, string]>([
   ['11034037', documentNotReady],
   ['21023059', packageStatusError],
   ['21042102', packageStatusError],
+  ['21042061', ['cancel_requested', 'Khách đang xin huỷ đơn trên sàn, chờ Sale trả lời yêu cầu huỷ']],
 ]);
 
-export function onPackageAction<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Mã chỉ đổi ở cổng in vận đơn: Lazada 50008 ("not support operation for sof order", smoke #239 19/11/2026) có thể là mã
+ * chung "không hỗ trợ thao tác" ở pack, RTS, repack nên không đưa vào `packageErrors`.
+ */
+const documentErrors = new Map<string, readonly [string, string]>([
+  ['50008', ['document_not_supported', 'Sàn không cấp vận đơn cho kiện người bán tự giao (SOF), in phiếu giao của shop']],
+]);
+
+/** `extra`: mã sàn riêng của một thao tác, xét trước bảng chung. */
+export function onPackageAction<T>(fn: () => Promise<T>, extra?: ReadonlyMap<string, readonly [string, string]>): Promise<T> {
   return onMarketplace(async () => {
     try {
       return await fn();
@@ -189,7 +200,7 @@ export function onPackageAction<T>(fn: () => Promise<T>): Promise<T> {
           ...platform, errors: { carrierCode: platformMessage ?? 'Chọn nhà vận chuyển trong danh sách' },
         });
       }
-      const mapped = packageErrors.get(platformCode);
+      const mapped = extra?.get(platformCode) ?? packageErrors.get(platformCode);
       if (mapped) throw new AppError(409, mapped[0], mapped[1], platform);
       throw err;
     }
@@ -208,10 +219,21 @@ export async function marketplacePack(companyId: string, shopId: string, ref: Pa
   return adapter.packItems ? onPackageAction(() => adapter.packItems!(accessToken, ref)) : null;
 }
 
-export async function marketplaceReadyToShip(companyId: string, shopId: string, packageCode: string): Promise<void> {
+/**
+ * Báo sàn kiện sẵn sàng giao, rồi đọc mã vận đơn nếu sàn cấp sau khi báo giao (TikTok, #239 KH-B02). Đọc lỗi thì chỉ log
+ * và trả null: sàn đã nhận báo giao, lượt kéo đơn sẽ điền mã.
+ */
+export async function marketplaceReadyToShip(companyId: string, shopId: string, packageCode: string): Promise<{ trackingCode: string | null }> {
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.readyToShip) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ báo sẵn sàng giao từ app');
   await onPackageAction(() => adapter.readyToShip!(accessToken, [packageCode]));
+  if (!adapter.packageTracking) return { trackingCode: null };
+  try {
+    return { trackingCode: await adapter.packageTracking(accessToken, packageCode) };
+  } catch (err) {
+    logger.warn({ err, shopId, packageCode }, 'đã báo sàn sẵn sàng giao, chưa đọc được mã vận đơn; lượt kéo đơn sẽ lấy');
+    return { trackingCode: null };
+  }
 }
 
 export async function marketplaceRepack(companyId: string, shopId: string, packageCode: string): Promise<'repacked' | 'not_supported'> {
@@ -224,5 +246,5 @@ export async function marketplaceRepack(companyId: string, shopId: string, packa
 export async function marketplaceShippingDocuments(companyId: string, shopId: string, packageCodes: readonly string[]): Promise<Uint8Array[]> {
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.shippingDocuments) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ in vận đơn từ app');
-  return onPackageAction(() => adapter.shippingDocuments!(accessToken, packageCodes));
+  return onPackageAction(() => adapter.shippingDocuments!(accessToken, packageCodes), documentErrors);
 }

@@ -240,9 +240,9 @@ export function updateDocument(
       if (!(err instanceof InsufficientStock)) throw err;
       const errors: Errors = {};
       lines.forEach((l, i) => {
-        if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.scanned`] = 'Chờ xử lý không còn đủ hàng để giảm số quét';
+        if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.scanned`] = 'Khu hàng lỗi/chờ kiểm không còn đủ hàng để giảm số quét';
       });
-      throw invalid(Object.keys(errors).length ? errors : { lines: 'Chờ xử lý không còn đủ hàng để giảm số quét' }, 'stock_insufficient');
+      throw invalid(Object.keys(errors).length ? errors : { lines: 'Khu hàng lỗi/chờ kiểm không còn đủ hàng để giảm số quét' }, 'stock_insufficient');
     }
     return detail(updated, actor);
   });
@@ -258,7 +258,7 @@ async function checkDecrease(row: DocRow, lines: readonly DocLineRow[]) {
   lines.forEach((l, i) => {
     const s = stock.get(l.variantId);
     const has = row.area === 'on_hand' ? (s?.available ?? 0) : (s?.quarantine ?? 0);
-    if ((l.quantity ?? 0) > has) errors[`lines.${i}.quantity`] = `Chỉ còn ${has} ${row.area === 'on_hand' ? 'khả dụng' : 'chờ xử lý'}`;
+    if ((l.quantity ?? 0) > has) errors[`lines.${i}.quantity`] = `Chỉ còn ${has} ${row.area === 'on_hand' ? 'có thể bán' : 'hàng lỗi/chờ kiểm'}`;
   });
   if (Object.keys(errors).length) throw invalid(errors, 'stock_insufficient');
 }
@@ -311,7 +311,7 @@ async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string, 
     if (!(err instanceof InsufficientStock)) throw err;
     const errors: Errors = {};
     lines.forEach((l, i) => {
-      if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.quantity`] = 'Không đủ hàng để ghi sổ';
+      if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.quantity`] = 'Không đủ hàng để hoàn thành phiếu';
     });
     throw invalid(errors, 'stock_insufficient');
   }
@@ -460,7 +460,7 @@ export function decideDocument(actor: DocActor, id: string, input: { decision: '
     if (row.version !== input.version) throw await conflict(row, actor);
     if (row.rejectDecision) throw new AppError(409, 'decision_made', 'Phiếu đã chọn cách xử lý hàng');
     if (!needsDecision(row)) {
-      throw new AppError(409, 'invalid_transition', 'Chỉ chọn cách xử lý cho xuất huỷ hàng chờ xử lý bị từ chối', {
+      throw new AppError(409, 'invalid_transition', 'Chỉ chọn cách xử lý cho phiếu xuất huỷ hàng lỗi/chờ kiểm bị từ chối', {
         current: await detail(row, actor),
       });
     }
@@ -473,7 +473,7 @@ export function decideDocument(actor: DocActor, id: string, input: { decision: '
       try {
         await applyMoves({ type: 'stock_document', id: row.id }, moves, actor.accountId);
       } catch (err) {
-        if (err instanceof InsufficientStock) throw invalid({ lines: 'Chờ xử lý không còn đủ hàng' }, 'stock_insufficient');
+        if (err instanceof InsufficientStock) throw invalid({ lines: 'Khu hàng lỗi/chờ kiểm không còn đủ hàng' }, 'stock_insufficient');
         throw err;
       }
     } else {

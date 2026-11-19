@@ -139,9 +139,9 @@ export async function isCeo(actor: Actor): Promise<boolean> {
   });
 }
 
-const TAKEN = 'Biến thể đã ghép SKU sàn khác của gian hàng này';
+const TAKEN = 'Variant đã liên kết SKU sàn khác của gian hàng này';
 /** Lý do gỡ listing lỗi đẩy khi biến thể của nó ghép SKU sàn đã có listing (#346). */
-const SUPERSEDED = 'Thay bằng ghép SKU sàn có sẵn';
+const SUPERSEDED = 'Thay bằng liên kết SKU sàn có sẵn';
 
 /**
  * Biến thể của công ty, chưa lưu trữ; trả listing lỗi đẩy chưa có mã sàn của nó trên gian hàng (bên gọi dùng lại hoặc gỡ,
@@ -155,11 +155,11 @@ async function variantSlot(port: ProductPort, shopId: string, variantId: string,
   const other = await findListingRow(shopId, variantId);
   if (!other || other.status === 'delisted' || other.id === listingId) return undefined;
   if (other.status === 'pushing') {
-    throw new AppError(409, 'invalid_transition', 'Biến thể đang đẩy lên sàn, ghép sau khi có kết quả', { current: toListing(other) });
+    throw new AppError(409, 'invalid_transition', 'Variant đang đăng bán lên sàn, liên kết SKU sau khi có kết quả', { current: toListing(other) });
   }
   if (other.status !== 'push_failed' || other.externalSkuId) throw invalid('variantId', TAKEN);
   if (other.pendingRequestedBy) {
-    throw new AppError(409, 'mapping_pending', 'Listing lỗi đẩy của biến thể đang chờ CEO duyệt ghép', { current: toListing(other) });
+    throw new AppError(409, 'mapping_pending', 'Listing đăng bán lỗi của variant đang chờ CEO duyệt liên kết SKU', { current: toListing(other) });
   }
   return other;
 }
@@ -246,25 +246,25 @@ export async function matchListing(
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   const shop = await inCompany(() => ownShop(shopId));
   if (shop.status !== 'active') {
-    throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi ghép SKU', { current: shop.status });
+    throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi liên kết SKU', { current: shop.status });
   }
   const { variantId, externalSkuId } = input;
   const before = await inCompany(() => findListingByExternalSku(shop.id, externalSkuId));
   if (before?.pendingRequestedBy) {
-    throw new AppError(409, 'mapping_pending', 'Listing này đang chờ CEO duyệt ghép', { current: toListing(before) });
+    throw new AppError(409, 'mapping_pending', 'Listing này đang chờ CEO duyệt liên kết SKU', { current: toListing(before) });
   }
   if (before?.status === 'pushing') {
-    throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, ghép sau khi có kết quả', { current: toListing(before) });
+    throw new AppError(409, 'invalid_transition', 'Listing đang đăng bán lên sàn, liên kết SKU sau khi có kết quả', { current: toListing(before) });
   }
   const waiting = await inCompany(() => findListingByPendingExternalSku(shop.id, externalSkuId));
-  if (waiting) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép', { current: toListing(waiting) });
+  if (waiting) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt liên kết', { current: toListing(waiting) });
   if (variantId) await inCompany(() => variantSlot(port, shop.id, variantId, before?.id ?? null));
   let remote: RemoteSkuRow | undefined;
   if (!before) {
     // SKU người bán (vòng kéo đơn tra biến thể theo đây) và mã sản phẩm lấy từ bản sao SKU sàn, không gọi sàn (#220 đợt 2).
     remote = await inCompany(() => findRemoteSkuRow(shop.id, externalSkuId));
-    if (!remote) throw invalid('externalSkuId', 'SKU sàn chưa có trong lần đồng bộ gần nhất, bấm Tải lại rồi ghép');
-    if (!remote.sellerSku) throw invalid('externalSkuId', 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi ghép');
+    if (!remote) throw invalid('externalSkuId', 'SKU sàn chưa có trong lần đồng bộ gần nhất, bấm Tải lại rồi liên kết');
+    if (!remote.sellerSku) throw invalid('externalSkuId', 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi liên kết');
   }
   const selfOk = await inCompany(() => canSelfApprove(actor.accountId));
 
@@ -276,7 +276,7 @@ export async function matchListing(
       const row = await findListingByExternalSku(shop.id, externalSkuId);
       // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
       if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict(row, row ? await requesterNames([row]) : undefined);
-      if (await findListingByPendingExternalSku(shop.id, externalSkuId)) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép');
+      if (await findListingByPendingExternalSku(shop.id, externalSkuId)) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt liên kết');
       const failed = variantId ? await variantSlot(port, shop.id, variantId, row?.id ?? null) : undefined;
       if (!row && failed) {
         const reused = await reuseFailed(failed, remote!, actor, selfOk);
@@ -356,7 +356,7 @@ export async function matchListing(
     const constraint = pgError(err).constraint;
     if (constraint === 'listings_shop_variant_uq') throw invalid('variantId', TAKEN);
     if (constraint === 'listings_shop_external_sku_uq') throw await inCompany(() => conflictAt(shop.id, externalSkuId));
-    if (constraint === 'listings_shop_pending_external_sku_uq') throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt ghép');
+    if (constraint === 'listings_shop_pending_external_sku_uq') throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt liên kết');
     throw err;
   }
 }
@@ -423,7 +423,7 @@ export function decideMapping(
     const constraint = pgError(err).constraint;
     if (constraint === 'listings_shop_variant_uq') throw invalid('variantId', TAKEN);
     // SKU sàn chờ ghép vào listing lỗi đã có listing khác lúc duyệt (#346).
-    if (constraint === 'listings_shop_external_sku_uq') throw invalid('externalSkuId', 'SKU sàn đã ghép listing khác, từ chối yêu cầu này');
+    if (constraint === 'listings_shop_external_sku_uq') throw invalid('externalSkuId', 'SKU sàn đã liên kết listing khác, từ chối yêu cầu này');
     throw err;
   });
 }
@@ -445,11 +445,11 @@ async function decide(
     if (!row || row.shopId !== shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
     const names = await requesterNames([row]);
     if (!row.pendingRequestedBy || row.status === 'delisted') {
-      throw new AppError(409, 'invalid_transition', 'Listing không có ghép chờ duyệt', { current: toListing(row, names) });
+      throw new AppError(409, 'invalid_transition', 'Listing không có liên kết SKU chờ duyệt', { current: toListing(row, names) });
     }
     // Đổi biến thể giữa lúc việc đẩy đang chạy thì việc đẩy nội dung biến thể mới lên sản phẩm cũ (review #220).
     if (row.status === 'pushing') {
-      throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, duyệt sau khi có kết quả', { current: toListing(row, names) });
+      throw new AppError(409, 'invalid_transition', 'Listing đang đăng bán lên sàn, duyệt sau khi có kết quả', { current: toListing(row, names) });
     }
     if (row.version !== input.version) {
       throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', { current: toListing(row, names) });

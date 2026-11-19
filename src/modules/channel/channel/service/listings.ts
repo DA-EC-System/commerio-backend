@@ -266,7 +266,7 @@ const blocked = (variantId: string, existing: ListingRow | undefined, code: stri
 });
 
 const inProgress = (variantId: string, existing: ListingRow | undefined) =>
-  blocked(variantId, existing, 'push_in_progress', 'Đang đẩy, chờ sàn trả kết quả');
+  blocked(variantId, existing, 'push_in_progress', 'Đang đăng bán, chờ sàn trả kết quả');
 
 /**
  * Xếp việc đẩy các biến thể lên gian hàng (Documents/21 §18.6.4). Kiểm cả request trước (gian hàng gọi được sàn, không
@@ -326,7 +326,7 @@ export async function pushListings(
     }
     // CHECK `listings_pending_external`: SKU sàn chờ ghép chỉ nằm trên listing `push_failed` (#346).
     if (existing?.pendingExternalSkuId) {
-      results.push(blocked(variantId, existing, 'mapping_pending', 'Listing đang chờ CEO duyệt ghép SKU sàn có sẵn; duyệt hoặc từ chối trước khi đẩy lại'));
+      results.push(blocked(variantId, existing, 'mapping_pending', 'Listing đang chờ CEO duyệt liên kết SKU sàn có sẵn; duyệt hoặc từ chối trước khi đăng bán lại'));
       continue;
     }
     if (existing && LISTED.includes(existing.status)) {
@@ -358,8 +358,8 @@ export async function pushListings(
 }
 
 const WAITING_MESSAGE = {
-  open_orders: 'Đang kéo đơn còn mở về. Đẩy sản phẩm sau khi lượt này xong',
-  allocation: 'Đang chia hàng cho các kiện sau kiểm kê. Đẩy sản phẩm sau khi chia xong',
+  open_orders: 'Đang đồng bộ đơn còn mở về. Đăng bán sau khi lượt này xong',
+  allocation: 'Đang chia hàng cho các kiện sau kiểm kho. Đăng bán sau khi chia xong',
 } as const;
 
 /**
@@ -370,10 +370,10 @@ const WAITING_MESSAGE = {
  */
 function assertPushable(shop: ShopRow): void {
   if (shop.status !== 'active') {
-    throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi đẩy', { current: shop.status });
+    throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi đăng bán', { current: shop.status });
   }
   if (shop.openingStocktakeNumber) {
-    throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kê đầu kỳ ${shop.openingStocktakeNumber} ghi sổ`);
+    throw new AppError(409, 'shop_awaiting_stocktake', `Gian hàng đang chờ phiếu kiểm kho đầu kỳ ${shop.openingStocktakeNumber} hoàn thành`);
   }
   const waitingFor = awaitingAllocation(shop);
   if (waitingFor) throw new AppError(409, 'shop_awaiting_allocation', WAITING_MESSAGE[waitingFor], { waitingFor });
@@ -554,7 +554,7 @@ export async function takeOverContent(
       throw new AppError(409, 'invalid_transition', 'Chỉ ghi nội dung Commerio lên sản phẩm người bán đang có trên sàn', current);
     }
     if (row.outsideChangeKind) throw new AppError(409, 'invalid_transition', 'Quyết thay đổi ngoài app của listing trước', current);
-    if (row.pendingRequestedBy) throw new AppError(409, 'mapping_pending', 'Listing đang chờ CEO duyệt ghép', current);
+    if (row.pendingRequestedBy) throw new AppError(409, 'mapping_pending', 'Listing đang chờ CEO duyệt liên kết SKU', current);
     if (row.version !== version) throw new AppError(409, 'version_conflict', 'Listing vừa được người khác cập nhật', current);
     if ((await countRemoteSkusOfProduct(shop.id, externalProductId)) > 1) {
       throw new AppError(409, 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; ghi nội dung sẽ đổi mọi SKU của sản phẩm');

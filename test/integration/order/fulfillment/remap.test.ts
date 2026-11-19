@@ -15,7 +15,7 @@ import { receive } from '../../product/inventory/helpers.ts';
 import { channelShop, outboxOf, packageDocuments, packageRow, seedPackage, stockOfVariant } from './helpers.ts';
 import { packedSplit } from './resplit-fixtures.ts';
 
-const REASON = 'Ghép SKU LZ-1';
+const REASON = 'Liên kết SKU LZ-1';
 const actorId = randomUUID();
 
 afterEach(() => setStockPort());

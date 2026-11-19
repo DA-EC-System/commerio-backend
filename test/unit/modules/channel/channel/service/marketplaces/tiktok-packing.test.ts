@@ -16,6 +16,19 @@ function fake(handler: (path: string) => Promise<unknown> | unknown) {
 }
 
 describe('RTS và vận đơn TikTok', () => {
+  it('đọc mã vận đơn của kiện: ưu tiên shipping_info, không có thì trường phẳng, chưa có thì null (KH-B02)', async () => {
+    const data: Record<string, unknown> = {
+      A: { package_id: 'A', shipping_info: [{ tracking_number: 'TT-A1' }, { tracking_number: 'TT-A2' }], tracking_number: 'CU' },
+      B: { package_id: 'B', tracking_number: 'TT-B' },
+      C: { package_id: 'C', tracking_number: '' },
+    };
+    const { adapter, calls } = fake((path) => ({ code: 0, data: data[path.split('/').at(-1)!] }));
+    expect(await adapter.packageTracking!(token, 'A')).toBe('TT-A1');
+    expect(await adapter.packageTracking!(token, 'B')).toBe('TT-B');
+    expect(await adapter.packageTracking!(token, 'C')).toBeNull();
+    expect(calls.map((c) => [c.method, c.url.pathname])).toContainEqual(['GET', '/fulfillment/202309/packages/A']);
+  });
+
   it('giao từng kiện, coi mã đã giao 11006021 là thành công', async () => {
     const { adapter, calls } = fake((path) => ({ code: path.includes('/A/') ? 11006021 : 0, data: {} }));
     await adapter.readyToShip!(token, ['A', 'B']);
