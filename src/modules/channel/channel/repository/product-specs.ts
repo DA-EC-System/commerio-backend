@@ -1,7 +1,8 @@
 // Spec sàn của sản phẩm cha (#400, Documents/21 §18.5, Documents/19 mục 3.3). Chạy trong `withCompany` của bên gọi (RLS).
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { type Marketplace, productSpecs } from './schema.ts';
+import type { CategoryPermission } from '../domain/product-spec.ts';
+import { type Marketplace, productSpecs, shopCategoryPermissions } from './schema.ts';
 
 export type ProductSpecRow = typeof productSpecs.$inferSelect;
 
@@ -91,4 +92,33 @@ export async function markSpecCategory(
     )
     .returning({ id: productSpecs.id });
   return rows.length > 0;
+}
+
+/** Quyền category đã ghi của một gian hàng (TikTok, A17), theo leaf. Gọi trong `withCompany`. */
+export async function permissionsOf(
+  shopId: string,
+  externalCategoryIds: readonly string[],
+): Promise<Map<string, { status: CategoryPermission; checkedAt: Date }>> {
+  if (!externalCategoryIds.length) return new Map();
+  const rows = await getDb()
+    .select()
+    .from(shopCategoryPermissions)
+    .where(and(eq(shopCategoryPermissions.shopId, shopId), inArray(shopCategoryPermissions.externalCategoryId, [...new Set(externalCategoryIds)])));
+  return new Map(rows.map((r) => [r.externalCategoryId, { status: r.status, checkedAt: r.checkedAt }]));
+}
+
+/** Ghi quyền mọi leaf của một gian hàng bằng một câu upsert theo lô (A17). Gọi trong `withCompany`. */
+export async function upsertPermissions(
+  companyId: string,
+  shopId: string,
+  items: readonly { externalCategoryId: string; status: CategoryPermission }[],
+  checkedAt: Date,
+): Promise<void> {
+  if (!items.length) return;
+  await getDb().execute(sql`
+    insert into channel.shop_category_permissions (company_id, shop_id, external_category_id, status, checked_at)
+    select ${companyId}::uuid, ${shopId}::uuid, c, s, ${checkedAt.toISOString()}::timestamptz
+    from unnest(${`{${items.map((i) => `"${i.externalCategoryId.replace(/"/g, '')}"`).join(',')}}`}::text[],
+                ${`{${items.map((i) => i.status).join(',')}}`}::text[]) as t(c, s)
+    on conflict (shop_id, external_category_id) do update set status = excluded.status, checked_at = excluded.checked_at`);
 }

@@ -15,10 +15,19 @@ import {
 } from '../domain/product-spec.ts';
 import { listCategoryMaps } from '../repository/category-maps.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
-import { findSpec, insertSpec, type ProductSpecRow, refreshCopiedSpecs, specsOf, updateSpec } from '../repository/product-specs.ts';
+import {
+  findSpec,
+  insertSpec,
+  permissionsOf,
+  type ProductSpecRow,
+  refreshCopiedSpecs,
+  specsOf,
+  updateSpec,
+} from '../repository/product-specs.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import type { MarketplaceAdapter, Responsible } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
+import type { SpecCheck } from './push-block.ts';
 import { type ListingVariant, productPort } from './product-port.ts';
 import { platformOf } from './shops.ts';
 
@@ -372,5 +381,58 @@ export async function refreshCopiesForCategory(
   values: { externalCategoryId: string; attributes: Record<string, string> },
 ): Promise<void> {
   const productIds = [...new Set((await productPort(ctx).variants()).filter((v) => v.categoryId === categoryId).map((v) => v.productId))];
-  await refreshCopiedSpecs(productIds, platform, values);
+  // Chỉ hai trường này: không chép `version` hay cột khác của ghép danh mục sang spec.
+  await refreshCopiedSpecs(productIds, platform, { externalCategoryId: values.externalCategoryId, attributes: values.attributes });
+}
+
+/** Spec kèm attribute leaf đã đọc, để việc nền dựng `NewProduct` mà không đọc lại. */
+export interface SpecCheckFull extends SpecCheck {
+  row: ProductSpecRow;
+  attributes: PlatformAttribute[] | null;
+  product: SpecProduct;
+}
+
+/**
+ * Tình trạng spec của các sản phẩm với một gian hàng, theo lô (request đẩy, việc nền, bảng listing): chép lười (A18), `missing`
+ * theo attribute đã có, quyền category đã ghi của gian hàng, luật bảng kích cỡ của category (ghép cũ chưa có dòng category thì
+ * lấy ở `category_maps`, khe BE2–BE3). Gọi trong `withCompany`. `variants`: mọi biến thể của các sản phẩm cần xét.
+ */
+export async function specChecks(
+  shop: { id: string; companyId: string; platform: Marketplace },
+  adapter: MarketplaceAdapter,
+  variants: readonly ListingVariant[],
+): Promise<Map<string, SpecCheckFull>> {
+  const specs = await specsWithCopy(shop.platform, variants);
+  if (!specs.size) return new Map();
+  const org = adapter.responsibleFields ? await responsibleOrgOf(shop.companyId) : null;
+  const permissions = await permissionsOf(shop.id, [...specs.values()].map((s) => s.externalCategoryId));
+  const byProduct = new Map<string, ListingVariant[]>();
+  for (const v of variants) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
+  const categoryIds = [...new Set(variants.filter((v) => specs.has(v.productId)).map((v) => v.categoryId))];
+  const maps = new Map((await listCategoryMaps(shop.platform, categoryIds)).map((m) => [m.categoryId, m]));
+  const out = new Map<string, SpecCheckFull>();
+  for (const [productId, row] of specs) {
+    const vs = byProduct.get(productId) ?? [];
+    const product = specProductOf(vs);
+    const { missing, attributes } = await missingOf(adapter, row, product, org);
+    const category = await findCategory(shop.platform, row.externalCategoryId);
+    const map = vs[0] ? maps.get(vs[0].categoryId) : undefined;
+    const legacyRule = map && map.externalCategoryId === row.externalCategoryId ? map.sizeChartRule : null;
+    out.set(productId, {
+      externalCategoryId: row.externalCategoryId,
+      missing,
+      permission: permissions.get(row.externalCategoryId)?.status ?? null,
+      sizeChartRule: category?.sizeChartRule ?? legacyRule ?? null,
+      row,
+      attributes,
+      product,
+    });
+  }
+  return out;
+}
+
+/** `specStatus` của dòng listing (§18.5): theo lô, không gọi sàn. */
+export function specStatusOf(check: SpecCheck | undefined): 'complete' | 'incomplete' | 'missing' {
+  if (!check) return 'missing';
+  return check.missing.length ? 'incomplete' : 'complete';
 }

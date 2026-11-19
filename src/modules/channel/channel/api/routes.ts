@@ -8,7 +8,7 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
-import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
+import { getProductSpec, putProductSpec, refreshCopiesForCategory } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
@@ -245,7 +245,14 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { id, categoryId } = validated<typeof CategoryMapParams>(res, 'params');
       const body = validated<typeof CategoryMapBody>(res, 'body');
-      res.json(await withCompany(actor(res).companyId, () => categories.putCategoryMap(id, categoryId, body)));
+      // Bản chép spec `version = 0` của sản phẩm thuộc danh mục này theo ghép mới, cùng giao dịch (#400 A18, khe BE2–BE3).
+      res.json(
+        await withCompany(actor(res).companyId, async () => {
+          const map = await categories.putCategoryMap(id, categoryId, body);
+          await refreshCopiesForCategory(ctx, map.platform, categoryId, map);
+          return map;
+        }),
+      );
     },
   );
 

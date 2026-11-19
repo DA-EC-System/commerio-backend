@@ -1,8 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
-import type { CategoryMapRow } from '#src/modules/channel/channel/repository/category-maps.ts';
 import type { ListingVariant } from '#src/modules/channel/channel/service/product-port.ts';
-import { pushBlock } from '#src/modules/channel/channel/service/push-block.ts';
+import { pushBlock, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
 
 // Mã chặn size_chart_missing (#347, Documents/21 §18.5).
 const variant: ListingVariant = {
@@ -22,7 +21,13 @@ const variant: ListingVariant = {
   widthMm: 100,
   heightMm: 100,
 };
-const map = (sizeChartRule: CategoryMapRow['sizeChartRule']) => ({ sizeChartRule }) as CategoryMapRow;
+const map = (sizeChartRule: SpecCheck['sizeChartRule'], extra: Partial<SpecCheck> = {}): SpecCheck => ({
+  externalCategoryId: 'L1',
+  missing: [],
+  permission: null,
+  sizeChartRule,
+  ...extra,
+});
 const price = new Decimal(1000);
 
 describe('pushBlock: bảng kích cỡ', () => {
@@ -45,5 +50,29 @@ describe('pushBlock: bảng kích cỡ', () => {
   it('thứ tự kiểm: thiếu ảnh sản phẩm báo images_missing trước, thiếu giá báo price_missing trước', () => {
     expect(pushBlock(variant, price, map('required'), false, false)?.code).toBe('images_missing');
     expect(pushBlock(variant, null, map('required'), true, false)?.code).toBe('price_missing');
+  });
+});
+
+// Mã chặn theo spec sàn (#400 A14, Documents/21 §18.5): chưa có spec, còn thiếu, gian hàng chưa được bán category.
+describe('pushBlock: spec sàn', () => {
+  it('chưa có spec: category_unmapped, sau price_missing, trước dimensions_missing', () => {
+    expect(pushBlock(variant, price, undefined, true)?.code).toBe('category_unmapped');
+    expect(pushBlock(variant, null, undefined, true)?.code).toBe('price_missing');
+    expect(pushBlock({ ...variant, weightG: null }, price, undefined, true)?.code).toBe('category_unmapped');
+  });
+
+  it('spec còn thiếu: spec_incomplete, message liệt kê nhãn', () => {
+    const missing = [
+      { code: 'a', label: 'Chất liệu', reason: 'required' as const },
+      { code: 'b', label: 'Màu', reason: 'axis_unmapped' as const },
+    ];
+    const block = pushBlock(variant, price, map(null, { missing }), true);
+    expect(block).toEqual({ code: 'spec_incomplete', message: 'Chất liệu, Màu' });
+  });
+
+  it('quyền category khác available: category_not_permitted; available hoặc chưa biết: qua', () => {
+    expect(pushBlock(variant, price, map(null, { permission: 'invite_only' as SpecCheck['permission'] }), true)?.code).toBe('category_not_permitted');
+    expect(pushBlock(variant, price, map(null, { permission: 'available' }), true)).toBeNull();
+    expect(pushBlock(variant, price, map(null), true)).toBeNull();
   });
 });

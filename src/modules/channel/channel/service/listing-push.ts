@@ -7,7 +7,6 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, type RemoteState, STALE_PUSH_MS } from '../domain/listing.ts';
 import { sentBaseline, snapshotBaseline } from '../domain/remote-title.ts';
-import { listCategoryMaps } from '../repository/category-maps.ts';
 import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, markCreateAttempted, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
@@ -18,7 +17,9 @@ import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync
 import { moveListing, pushFailureOf } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
-import type { ProductPort } from './product-port.ts';
+import type { ListingVariant, ProductPort } from './product-port.ts';
+import { ensureLeaf } from './platform-categories.ts';
+import { pushAttributes, specChecks } from './product-specs.ts';
 import { listingText, pushBlock } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
@@ -54,10 +55,25 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const { adapter, accessToken } = session;
 
   const variantId = row.variantId!;
+  // Spec của sản phẩm (#400): attribute leaf thiếu hay quá 7 ngày thì lấy lại trước khi kiểm (A16, ngoài giao dịch; sàn lỗi mà
+  // còn bản cũ thì kiểm theo bản cũ, chưa có bản nào thì kiểm theo category, trục và để sàn quyết).
+  const specOf = async (v: ListingVariant) =>
+    (await specChecks(shop, adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+  const first = await inCompany(async () => {
+    const [v] = await port.variants([variantId]);
+    return v ? specOf(v) : undefined;
+  });
+  if (first && !first.attributes && adapter.leafAttributes) {
+    try {
+      await ensureLeaf(shop.companyId, shop.platform, adapter, first.externalCategoryId, { shopId: shop.id });
+    } catch (err) {
+      if (!(err instanceof MarketplaceError) && !(err instanceof AppError)) throw err;
+    }
+  }
   const data = await inCompany(async () => {
     const [v] = await port.variants([variantId]);
     if (!v) return null;
-    const [map] = await listCategoryMaps(shop.platform, [v.categoryId]);
+    const map = await specOf(v);
     // Giá đang bán (#225 phần 2): ghi đè tay > giá bộ lọc đã xác nhận lúc bấm đẩy > giá chuẩn.
     const own = (await currentPrices([variantId], [row], await port.standardPrices([variantId]))).get(variantId)!;
     // Giá bộ lọc kiểm lại giá thấp nhất với giá vốn, cấu hình lúc chạy (có thể đổi sau lúc bấm).
@@ -87,7 +103,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const block = pushBlock(
     v,
     price,
-    map && { ...map, sizeChartRule },
+    map && { ...map, sizeChartRule, ...(keepContent && { missing: [], permission: null }) },
     Boolean(row.externalImageUrls?.length || job.imageUrls.length),
     Boolean(job.sizeChartUrl),
   );
@@ -108,7 +124,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
-      attributes: map!.attributes,
+      attributes: pushAttributes(adapter, map!.attributes, map!.row, map!.product),
       responsible,
       ...listingText(v),
       imageUrls,

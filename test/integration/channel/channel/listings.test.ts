@@ -40,7 +40,8 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
 const ok = variant('CMR-OK');
 const noPrice = variant('CMR-NOPRICE');
 const noDims = variant('CMR-NODIMS', { weightG: null });
-const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID() });
+// Spec sàn theo sản phẩm cha (#400): sản phẩm khác, danh mục chưa ghép.
+const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID(), productId: randomUUID() });
 const paused = variant('CMR-PAUSED', { businessStatus: 'paused' });
 const archived = variant('CMR-ARCHIVED', { archived: true });
 const all = [ok, noPrice, noDims, unmapped, paused, archived];
@@ -70,7 +71,8 @@ const productImageUrls = vi.fn(async (ids: readonly string[], max: number) =>
   ),
 );
 const port = {
-  variants: async (ids?: readonly string[]) => all.filter((v) => !ids || ids.includes(v.id)),
+  variants: async (ids?: readonly string[], opts?: { productIds?: readonly string[] }) =>
+    all.filter((v) => (!ids || ids.includes(v.id)) && (!opts?.productIds || opts.productIds.includes(v.productId))),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, id === noPrice.id ? null : new Decimal(150000)])),
   availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
   productImageUrls,
@@ -167,6 +169,24 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       [row.id],
     );
     expect(history.rows).toEqual([{ from_state: null, to_state: 'pushing', action: 'push', by_system: false }]);
+  });
+
+  it('#400 A18: lần đẩy chép ghép danh mục thành spec version 0, trục __custom; route ghép cũ cập nhật bản chép; category đổi chặn spec_incomplete', async () => {
+    const spec = async () =>
+      (await testPool().query('select version, external_category_id, attributes, category_status from channel.product_specs where product_id = $1 and platform = $2', [ok.productId, 'lazada'])).rows[0];
+    expect(await spec()).toMatchObject({ version: 0, external_category_id: '14275', attributes: { brand: 'No Brand' }, category_status: 'ok' });
+    const cur = await auth(app().get(`/api/v1/channel/shops/${shopId}/category-maps`));
+    const version = cur.body.items.find((m: { categoryId: string }) => m.categoryId === categoryId).version;
+    const put = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({ externalCategoryId: '14276', attributes: {}, version });
+    expect(put.status).toBe(200);
+    expect(await spec()).toMatchObject({ version: 0, external_category_id: '14276' });
+    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [ok.productId]);
+    try {
+      const [r] = await results([noDims.id]);
+      expect(r).toMatchObject({ code: 'spec_incomplete' });
+    } finally {
+      await testPool().query("update channel.product_specs set category_status = 'ok', external_category_id = '14275' where product_id = $1", [ok.productId]);
+    }
   });
 
   it('sản phẩm không có ảnh catalog, listing chưa có ảnh trên sàn: images_missing (cổng không trả ảnh, không 5xx)', async () => {
