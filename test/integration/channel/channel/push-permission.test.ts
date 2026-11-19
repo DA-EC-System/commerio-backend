@@ -6,6 +6,8 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PlatformAttribute } from '#src/modules/channel/channel/domain/product-spec.ts';
+import { replaceLeaf } from '#src/modules/channel/channel/repository/platform-categories.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { MarketplaceError, type NewProduct, type PlatformCategoryNode } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -34,6 +36,9 @@ const categoryTree = vi.fn(async (): Promise<PlatformCategoryNode[]> => [
   { externalId: 'ROOT', parentExternalId: null, name: 'Gốc', isLeaf: false, path: 'Gốc', permissionStatuses: ['AVAILABLE'] },
   ...[...tree].map(([id, statuses]) => ({ externalId: id, parentExternalId: 'ROOT', name: id, isLeaf: true, path: `Gốc > ${id}`, permissionStatuses: statuses })),
 ]);
+/** Attribute leaf sàn trả khi việc đẩy lấy lại (A16); mặc định không có attribute. */
+let leafAttrs: PlatformAttribute[] = [];
+const leafAttributes = vi.fn(async () => leafAttrs);
 const createProduct = vi.fn(async (_t: string, p: NewProduct) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: true }));
 registerAdapter(
   'tiktok',
@@ -42,6 +47,7 @@ registerAdapter(
     categoriesNeedToken: true,
     categoryPermissionsPerShop: true,
     categoryTree,
+    leafAttributes,
     uploadImage: async (_t, url) => url,
     createProduct,
   }),
@@ -116,6 +122,8 @@ beforeEach(() => {
   tree.clear();
   categoryTree.mockClear();
   createProduct.mockClear();
+  leafAttributes.mockClear();
+  leafAttrs = [];
 });
 
 describe('quyền category trước khi đẩy (A17)', () => {
@@ -154,6 +162,8 @@ describe('quyền category trước khi đẩy (A17)', () => {
       `insert into channel.shop_category_permissions (company_id, shop_id, external_category_id, status, checked_at) values ($1, $2, $3, 'available', now() - interval '8 days')`,
       [company.companyId, shopId, leaf],
     );
+    // Lần đọc cây gần nhất của gian hàng cũng quá 7 ngày (dòng của ca khác cùng gian hàng).
+    await testPool().query("update channel.shop_category_permissions set checked_at = now() - interval '8 days' where shop_id = $1", [shopId]);
     tree.set(leaf, ['PROHIBITED']);
     const { listingId } = await productWithSpec(leaf);
     await run(listingId);
@@ -165,11 +175,69 @@ describe('quyền category trước khi đẩy (A17)', () => {
   });
 
   it('đọc cây lỗi: bỏ qua, vẫn đẩy (sàn quyết)', async () => {
+    await testPool().query("update channel.shop_category_permissions set checked_at = now() - interval '8 days' where shop_id = $1", [shopId]);
     categoryTree.mockRejectedValueOnce(new MarketplaceError('unavailable'));
     const { listingId } = await productWithSpec(num());
     await run(listingId);
+    expect(categoryTree).toHaveBeenCalledTimes(1);
     expect(createProduct).toHaveBeenCalledTimes(1);
     expect((await listingOf(listingId)).status).toBe('live');
+  });
+
+  it('review BE2 P2-4: leaf không có trong cây (không có dòng quyền) mà gian hàng vừa đọc cây: không đọc lại mỗi lần đẩy', async () => {
+    await testPool().query("update channel.shop_category_permissions set checked_at = now() - interval '8 days' where shop_id = $1", [shopId]);
+    tree.set(num(), ['AVAILABLE']);
+    const missing = num();
+    const first = await productWithSpec(missing);
+    await run(first.listingId);
+    expect(categoryTree).toHaveBeenCalledTimes(1);
+    expect(await permissionOf(missing)).toBeUndefined();
+    const second = await productWithSpec(missing);
+    await run(second.listingId);
+    expect(categoryTree).toHaveBeenCalledTimes(1);
+    expect((await listingOf(second.listingId)).status).toBe('live');
+  });
+});
+
+// Review BE2 P2-3 (A16, AC-13): việc đẩy lấy lại attribute leaf cả khi bản trong bảng **quá 7 ngày**, không chỉ khi chưa có:
+// attribute bắt buộc sàn mới thêm phải vào `missing` (`spec_incomplete`) thay vì để sàn từ chối với câu khó hiểu.
+describe('attribute leaf cũ trước khi đẩy (A16)', () => {
+  const required: PlatformAttribute = {
+    code: '100999',
+    label: 'Thuộc tính mới',
+    kind: 'property',
+    input: 'text',
+    options: [],
+    allowCustom: true,
+    required: true,
+    requiredWhen: null,
+    isKey: false,
+    tier: 'category',
+    raw: {},
+  };
+  const days = (n: number) => new Date(Date.now() - n * 24 * 3600_000);
+
+  it('attribute quá 7 ngày: lấy lại; sàn vừa thêm attribute bắt buộc → push_failed spec_incomplete, không tạo', async () => {
+    const leaf = num();
+    tree.set(leaf, ['AVAILABLE']);
+    await replaceLeaf('tiktok', leaf, { attributes: [], sizeChartRule: null, fetchedAt: days(8) });
+    leafAttrs = [required];
+    const { listingId } = await productWithSpec(leaf);
+    await run(listingId);
+    expect(leafAttributes).toHaveBeenCalledTimes(1);
+    expect(createProduct).not.toHaveBeenCalled();
+    expect(await listingOf(listingId)).toMatchObject({ status: 'push_failed', push_error: { code: 'spec_incomplete' } });
+  });
+
+  it('attribute còn mới (dưới 7 ngày): không gọi sàn', async () => {
+    const leaf = num();
+    tree.set(leaf, ['AVAILABLE']);
+    await replaceLeaf('tiktok', leaf, { attributes: [], sizeChartRule: null, fetchedAt: days(1) });
+    leafAttrs = [required];
+    const { listingId } = await productWithSpec(leaf);
+    await run(listingId);
+    expect(leafAttributes).not.toHaveBeenCalled();
+    expect(createProduct).toHaveBeenCalledTimes(1);
   });
 });
 

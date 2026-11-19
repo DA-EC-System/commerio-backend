@@ -12,7 +12,7 @@ import { findListingByExternalSku, findListingById, findListingByPendingExternal
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
-import { permissionsOf, upsertPermissions } from '../repository/product-specs.ts';
+import { lastPermissionCheck, upsertPermissions } from '../repository/product-specs.ts';
 import { findShopRow, type ShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
 import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
@@ -68,7 +68,8 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     const [v] = await port.variants([variantId]);
     return v ? specOf(v) : undefined;
   });
-  if (first && !keepContent && !first.attributes && adapter.leafAttributes) {
+  // `ensureLeaf` tự bỏ qua khi bản trong bảng còn mới (review BE2 P2-3: trước chỉ gọi khi chưa có bản nào).
+  if (first && !keepContent && adapter.leafAttributes) {
     try {
       await ensureLeaf(shop.companyId, shop.platform, adapter, first.externalCategoryId, { shopId: shop.id });
     } catch (err) {
@@ -295,13 +296,16 @@ export const PERMISSION_TTL_MS = 7 * 24 * 60 * 60_000;
 
 /**
  * Quyền category theo gian hàng (#400 A17, Documents/21 §18.5): sàn có quyền theo gian hàng (`categoryPermissionsPerShop`,
- * TikTok) mà chưa có dòng quyền cho leaf của spec hoặc dòng quá `PERMISSION_TTL_MS`, thì đọc cây bằng token gian hàng (ngoài
- * giao dịch) và ghi quyền mọi leaf một lần (`upsertPermissions`). Sàn lỗi thì bỏ qua: không có dòng thì không chặn, sàn quyết.
+ * TikTok) mà lần đọc cây gần nhất của gian hàng (`lastPermissionCheck`) chưa có hoặc quá `PERMISSION_TTL_MS`, thì đọc cây bằng
+ * token gian hàng (ngoài giao dịch) và ghi quyền mọi leaf một lần (`upsertPermissions`). Mốc theo gian hàng, không theo leaf
+ * (review BE2 P2-4): leaf không có trong cây (hay node không có `permission_statuses`) không có dòng, xét theo leaf thì mỗi lần
+ * đẩy lại đọc cả cây. Cây đọc được mà không leaf nào có quyền thì không có mốc, lần sau đọc lại. Sàn lỗi thì bỏ qua: không có
+ * dòng thì không chặn, sàn quyết.
  */
 async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, accessToken: string, externalCategoryId: string): Promise<void> {
   if (!adapter.categoryPermissionsPerShop || !adapter.categoryTree) return;
-  const current = (await withCompany(shop.companyId, () => permissionsOf(shop.id, [externalCategoryId]))).get(externalCategoryId);
-  if (current && current.checkedAt.getTime() > Date.now() - PERMISSION_TTL_MS) return;
+  const last = await withCompany(shop.companyId, () => lastPermissionCheck(shop.id));
+  if (last && last.getTime() > Date.now() - PERMISSION_TTL_MS) return;
   let nodes;
   try {
     nodes = await adapter.categoryTree(accessToken);

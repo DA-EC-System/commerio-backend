@@ -1,5 +1,5 @@
 // Spec sàn của sản phẩm cha (#400, Documents/21 §18.5, Documents/19 mục 3.3). Chạy trong `withCompany` của bên gọi (RLS).
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, max, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { CategoryPermission } from '../domain/product-spec.ts';
 import { type Marketplace, productSpecs, shopCategoryPermissions } from './schema.ts';
@@ -105,6 +105,18 @@ export async function permissionsOf(
     .from(shopCategoryPermissions)
     .where(and(eq(shopCategoryPermissions.shopId, shopId), inArray(shopCategoryPermissions.externalCategoryId, [...new Set(externalCategoryIds)])));
   return new Map(rows.map((r) => [r.externalCategoryId, { status: r.status, checkedAt: r.checkedAt }]));
+}
+
+/**
+ * Lần đọc cây gần nhất ghi quyền cho gian hàng (`max(checked_at)`; `upsertPermissions` ghi mọi leaf cùng một mốc), null khi chưa
+ * có dòng nào. Gọi trong `withCompany`.
+ */
+export async function lastPermissionCheck(shopId: string): Promise<Date | null> {
+  const [row] = await getDb()
+    .select({ at: max(shopCategoryPermissions.checkedAt) })
+    .from(shopCategoryPermissions)
+    .where(eq(shopCategoryPermissions.shopId, shopId));
+  return row?.at ? new Date(row.at) : null;
 }
 
 /** Ghi quyền mọi leaf của một gian hàng bằng một câu upsert theo lô (A17). Gọi trong `withCompany`. */
