@@ -8,6 +8,7 @@ import * as categories from '../service/categories.ts';
 import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
 import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
+import { removeVariantImage, setVariantImage } from '../service/variant-images.ts';
 import { addVariant, updateVariant } from '../service/variants.ts';
 import type { Caller } from '../service/errors.ts';
 import type { CatalogContext } from '../service/standard-price.ts';
@@ -21,10 +22,12 @@ import {
   CreateProductBody,
   IdParams,
   ProductListQuery,
+  SetVariantImageBody,
   UpdateAttributeBody,
   UpdateCategoryBody,
   UpdateProductBody,
   UpdateVariantBody,
+  VariantImageParams,
   VariantParams,
   VersionQuery,
 } from './schemas.ts';
@@ -155,6 +158,19 @@ export function catalogRouter(ctx: CatalogContext): Router {
       res.json(await updateVariant(ctx, caller(res), id, variantId, validated<typeof UpdateVariantBody>(res, 'body')));
     },
   );
+
+  // Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/21 §17.2); không nhận `version`.
+  const imagePath = '/products/:id/attribute-value-images/:attributeValueId';
+  router.put(imagePath, manage, validate({ params: VariantImageParams, body: SetVariantImageBody }), async (_req, res) => {
+    const { id, attributeValueId } = validated<typeof VariantImageParams>(res, 'params');
+    const { fileId } = validated<typeof SetVariantImageBody>(res, 'body');
+    res.json(await setVariantImage(ctx, caller(res), id, attributeValueId, fileId));
+  });
+
+  router.delete(imagePath, manage, validate({ params: VariantImageParams }), async (_req, res) => {
+    const { id, attributeValueId } = validated<typeof VariantImageParams>(res, 'params');
+    res.json(await removeVariantImage(ctx, caller(res), id, attributeValueId));
+  });
 
   return router;
 }

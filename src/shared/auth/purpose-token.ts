@@ -24,6 +24,8 @@ export interface PurposeClaims {
   nxt?: 'set_password' | 'sign_in';
   /** Sàn của lần uỷ quyền (`oauth`). */
   plt?: string;
+  /** Gian hàng cần nối lại (`oauth`, #398): FE gửi `shopId` khi bấm Kết nối lại. */
+  shp?: string;
 }
 
 /** Sai chữ ký, sai issuer, hết hạn hoặc không phải JWT. Bên gọi đổi thành mã lỗi của luồng mình. */
@@ -62,6 +64,7 @@ export async function verifyPurposeToken(purpose: TokenPurpose, token: string): 
       em: text(payload.em),
       nxt,
       plt: text(payload.plt),
+      shp: text(payload.shp),
       exp: Number(payload.exp),
     };
   } catch {

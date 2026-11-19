@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getVariants, targetNetPricesOf } from '#src/modules/product/catalog/index.ts';
+import { env } from '#src/shared/config/env.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -45,6 +47,9 @@ describe('getVariants', () => {
         lengthMm: null,
         widthMm: null,
         heightMm: null,
+        originCountry: null,
+        brand: null,
+        image: null,
         attributes: [
           { attributeId: color.id, attributeName: 'Màu', valueId: valueId(color, 'Đen'), value: 'Đen', code: 'DEN' },
           { attributeId: size.id, attributeName: 'Size', valueId: valueId(size, 'XL'), value: 'XL', code: 'XL' },
@@ -91,5 +96,103 @@ describe('getVariants', () => {
 
   it('gọi ngoài withCompany thì báo lỗi, không trả biến thể của mọi công ty', async () => {
     await expect(getVariants()).rejects.toThrow('getVariants phải gọi trong withCompany');
+  });
+});
+
+// Ảnh phân loại và thông tin cha theo SKU (#340, Documents/21 §11, §17.2): channel gửi ảnh theo từng SKU (#295).
+describe('getVariants: ảnh phân loại, xuất xứ, thương hiệu (#340)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  async function setup() {
+    const { companyId, ceo } = await createCompany();
+    const color = await createAttribute(ceo.token, 'Màu', ['Trắng', 'Đen']);
+    const size = await createAttribute(ceo.token, 'Size', ['M', 'L']);
+    const category = await createCategory(ceo.token, 'Áo', 'AO-{SEQ}-{VAL}');
+    const make = (name: string) =>
+      createProduct(ceo.token, {
+        name,
+        categoryId: category.id,
+        variants: ['Trắng', 'Đen'].flatMap((c) => ['M', 'L'].map((s) => [valueId(color, c), valueId(size, s)])),
+      });
+    return { companyId, color, make };
+  }
+  const chooseColor = (productId: string, colorId: string) =>
+    testPool().query('update product.products set image_attribute_id = $2 where id = $1', [productId, colorId]);
+  async function image(companyId: string, productId: string, attributeId: string, attributeValueId: string) {
+    const fileId = randomUUID();
+    await testPool().query(
+      `insert into core.files (id, company_id, storage_key, file_name, content_type, size_bytes, purpose, uploaded_at)
+       values ($1, $2, $3, 'anh.png', 'image/png', 2048, 'product_image', now())`,
+      [fileId, companyId, `test/${fileId}.png`],
+    );
+    await testPool().query(
+      `insert into product.product_attribute_value_images (company_id, product_id, attribute_id, attribute_value_id, file_id)
+       values ($1, $2, $3, $4, $5)`,
+      [companyId, productId, attributeId, attributeValueId, fileId],
+    );
+    return fileId;
+  }
+  /** `getVariants` và số câu SQL của riêng lời gọi đó (spy bật, tháo bên trong `withCompany`). */
+  const counted = (companyId: string, ids: string[]) =>
+    withCompany(companyId, async () => {
+      const spy = vi.spyOn(pg.Client.prototype, 'query');
+      const rows = await getVariants(ids);
+      const queries = spy.mock.calls.length;
+      spy.mockRestore();
+      return { rows, queries };
+    });
+
+  it('SKU Trắng có ảnh, SKU Đen null; chưa chọn thuộc tính thì mọi SKU null; không ảnh nào thì 2 câu (AC-11)', async () => {
+    const { companyId, color, make } = await setup();
+    const p = await make('Áo thun');
+    const ids = p.variants.map((v) => v.id);
+
+    const none = await counted(companyId, ids);
+    expect(none.rows.map((v) => v.image)).toEqual([null, null, null, null]);
+    expect(none.queries).toBe(2);
+
+    await chooseColor(p.id, color.id);
+    const fileId = await image(companyId, p.id, color.id, valueId(color, 'Trắng'));
+    const some = await counted(companyId, ids);
+    const white = { attributeValueId: valueId(color, 'Trắng'), fileId, url: `https://files.commerio.test/test/${fileId}.png` };
+    expect(some.rows.map((v) => v.image)).toEqual([white, white, null, null]);
+    expect(some.queries).toBe(3);
+  });
+
+  it('hai sản phẩm cùng dùng giá trị Trắng, chỉ sản phẩm 1 có ảnh: SKU Trắng của sản phẩm 2 null (AC-11)', async () => {
+    const { companyId, color, make } = await setup();
+    const one = await make('Áo một');
+    const two = await make('Áo hai');
+    await chooseColor(one.id, color.id);
+    await chooseColor(two.id, color.id);
+    await image(companyId, one.id, color.id, valueId(color, 'Trắng'));
+    const rows = await withCompany(companyId, () => getVariants(two.variants.map((v) => v.id)));
+    expect(rows.map((v) => v.image)).toEqual([null, null, null, null]);
+  });
+
+  it('thiếu S3_PUBLIC_URL thì url rỗng (AC-11)', async () => {
+    const { companyId, color, make } = await setup();
+    const p = await make('Áo thun');
+    await chooseColor(p.id, color.id);
+    const fileId = await image(companyId, p.id, color.id, valueId(color, 'Đen'));
+    const saved = env.S3_PUBLIC_URL;
+    env.S3_PUBLIC_URL = undefined;
+    try {
+      const rows = await withCompany(companyId, () => getVariants([p.variants[2]!.id]));
+      expect(rows[0]!.image).toEqual({ attributeValueId: valueId(color, 'Đen'), fileId, url: '' });
+    } finally {
+      env.S3_PUBLIC_URL = saved;
+    }
+  });
+
+  it('xuất xứ, thương hiệu của sản phẩm cha cho mọi SKU, null khi chưa đặt, vẫn 2 câu (AC-17)', async () => {
+    const { companyId, make } = await setup();
+    const p = await make('Áo thun');
+    const ids = p.variants.map((v) => v.id);
+    expect((await counted(companyId, ids)).rows.map((v) => [v.originCountry, v.brand])).toEqual(Array(4).fill([null, null]));
+    await testPool().query("update product.products set origin_country = 'VN', brand = 'Coolmate' where id = $1", [p.id]);
+    const after = await counted(companyId, ids);
+    expect(after.rows.map((v) => [v.originCountry, v.brand])).toEqual(Array(4).fill(['VN', 'Coolmate']));
+    expect(after.queries).toBe(2);
   });
 });

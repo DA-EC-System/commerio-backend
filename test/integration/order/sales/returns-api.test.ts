@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
+import { retryReturnConfirms } from '#src/modules/channel/channel/service/return-pull.ts';
+import { ingestMarketplaceOrder, ingestMarketplaceReturn, type PlatformOrder } from '#src/modules/order/index.ts';
+import { AppError } from '#src/shared/errors/app-error.ts';
 import { ReceiveResult, ReturnListResponse, ReturnRequest, UnmatchedList, UnmatchedParcel } from '#src/modules/order/sales/api/return-schemas.ts';
 import { type ReturnStockPort, setReturnStockPort } from '#src/modules/order/sales/service/return-stock-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -21,17 +23,15 @@ const returnReasons = vi.fn(async () => [
   { id: '1001', label: 'Hàng đã qua sử dụng', requiresImage: false },
   { id: '1002', label: 'Thiếu phụ kiện', requiresImage: true },
 ]);
-registerAdapter(
-  'lazada',
-  fakeAdapter({
+const lazada = fakeAdapter({
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
     decideReturn,
     confirmReturnReceived,
     returnReasons,
-  }),
-);
+});
+registerAdapter('lazada', lazada);
 afterAll(() => resetAdapters());
 afterEach(() => {
   setReturnStockPort();
@@ -95,10 +95,11 @@ async function seedReturn(status: 'requested' | 'awaiting_return' | 'rejected' =
   const db = testPool();
   const code = `YCT-${randomUUID().slice(0, 6)}`;
   const tracking = `JNT-${randomUUID().slice(0, 8)}`;
+  const externalReturnId = randomUUID().slice(0, 12);
   const req = await db.query<{ id: string }>(
     `insert into "order".return_requests (company_id, code, order_id, source, shop_id, external_return_id, status, reason, refund_amount, return_tracking_code, raw_marketplace_status, kind)
      values ($1, $2, $3, 'marketplace', $4, $5, $6, 'Khách đổi ý', 64000, $7, 'REFUND_PENDING', $8) returning id`,
-    [company.companyId, code, orderId, shopId, randomUUID().slice(0, 12), status, tracking, kind],
+    [company.companyId, code, orderId, shopId, externalReturnId, status, tracking, kind],
   );
   const lines = await db.query<{ id: string; package_id: string }>(
     `select ol.id, pl.package_id from "order".order_lines ol join "order".package_lines pl on pl.order_line_id = ol.id where ol.order_id = $1 order by ol.external_line_id`,
@@ -111,7 +112,7 @@ async function seedReturn(status: 'requested' | 'awaiting_return' | 'rejected' =
       [company.companyId, req.rows[0]!.id, l.id, l.package_id, variantId, `RL-${i}`],
     );
   }
-  return { id: req.rows[0]!.id, code, tracking, orderId };
+  return { id: req.rows[0]!.id, code, tracking, orderId, externalReturnId, externalOrderId: id };
 }
 
 const detail = async (id: string, token?: string) => ReturnRequest.parse((await auth(app().get(`/api/v1/returns/${id}`), token)).body);
@@ -285,6 +286,68 @@ describe('quét nhận hàng trả (§20, §15.3)', () => {
     );
     expect(doc.rows).toEqual([{ kind: 'return_inspection', status: 'draft', expected_qty: 2, scanned_qty: 1 }]);
     expect(await quarantineOf(variantId)).toBe(before + 1);
+  });
+});
+
+describe('thử lại báo sàn đã nhận hàng (§20.1)', () => {
+  const flagOf = async (id: string) =>
+    (await testPool().query(`select needs_attention, attention_note from "order".return_requests where id = $1`, [id])).rows[0] as {
+      needs_attention: boolean;
+      attention_note: string | null;
+    };
+  const scanFailing = async () => {
+    fakePort();
+    const r = await seedReturn('awaiting_return');
+    confirmReturnReceived.mockRejectedValueOnce(new AppError(503, 'marketplace_unavailable', 'Sàn đang lỗi.'));
+    expect((await receive({ code: r.code })).status).toBe(200);
+    expect(await flagOf(r.id)).toMatchObject({ needs_attention: true, attention_note: expect.stringMatching(/^Chưa báo được sàn đã nhận hàng: Sàn đang lỗi\. App tự thử lại/) });
+    confirmReturnReceived.mockClear();
+    return r;
+  };
+
+  it('báo sàn lỗi lúc quét thì bật cờ; lượt sau thử lại được thì gỡ cờ, lượt kế không gọi sàn nữa', async () => {
+    const r = await scanFailing();
+    expect(await retryReturnConfirms(company.companyId, shopId, lazada, 'tok')).toBeGreaterThanOrEqual(1);
+    expect(confirmReturnReceived).toHaveBeenCalledWith('tok', r.externalReturnId, ['RL-0', 'RL-1']);
+    expect(await flagOf(r.id)).toEqual({ needs_attention: false, attention_note: null });
+    confirmReturnReceived.mockClear();
+    await retryReturnConfirms(company.companyId, shopId, lazada, 'tok');
+    expect(confirmReturnReceived).not.toHaveBeenCalledWith('tok', r.externalReturnId, expect.anything());
+  });
+
+  it('thử lại vẫn lỗi thì giữ cờ; mất uỷ quyền thì ném', async () => {
+    const r = await scanFailing();
+    confirmReturnReceived.mockRejectedValue(new AppError(503, 'marketplace_unavailable', 'Sàn đang lỗi'));
+    await retryReturnConfirms(company.companyId, shopId, lazada, 'tok');
+    expect((await flagOf(r.id)).needs_attention).toBe(true);
+    confirmReturnReceived.mockRejectedValue(new AppError(409, 'marketplace_unauthorized', 'Sàn từ chối token'));
+    await expect(retryReturnConfirms(company.companyId, shopId, lazada, 'tok')).rejects.toMatchObject({ code: 'marketplace_unauthorized' });
+    confirmReturnReceived.mockReset();
+    confirmReturnReceived.mockImplementation(async () => {});
+    await retryReturnConfirms(company.companyId, shopId, lazada, 'tok');
+  });
+
+  it('lượt kéo thấy sàn đã qua bước chờ hàng về (người bán xác nhận trên Seller Center) thì gỡ cờ', async () => {
+    const r = await scanFailing();
+    await withCompany(company.companyId, () =>
+      ingestMarketplaceReturn({
+        shopId,
+        externalReturnId: r.externalReturnId,
+        externalOrderId: r.externalOrderId,
+        kind: 'return',
+        status: 'received',
+        rawStatus: 'RETURN_OR_REFUND_REQUEST_SUCCESS',
+        ofcStatus: null,
+        disputeInProgress: false,
+        returnTo: null,
+        returnTrackingCode: r.tracking,
+        reason: 'Khách đổi ý',
+        refundAmount: '64000',
+        lines: [],
+        updatedAt: new Date(),
+      }),
+    );
+    expect(await flagOf(r.id)).toEqual({ needs_attention: false, attention_note: null });
   });
 });
 
