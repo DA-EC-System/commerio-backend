@@ -1,6 +1,6 @@
 {
-  "id": "8c306f0e-420d-42d0-8a12-79891ca3a90f",
-  "prevId": "e52d5998-1014-47d2-8726-703724343bcd",
+  "id": "0b7e6aee-c5b9-4a74-8c3c-28e64d67b060",
+  "prevId": "b5a46059-ec77-4ed3-a932-cc5cf9621409",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -9583,13 +9583,6 @@
           "notNull": true,
           "default": false
         },
-        "cancel_pending": {
-          "name": "cancel_pending",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "cancelling": {
           "name": "cancelling",
           "type": "boolean",
@@ -9818,14 +9811,6 @@
         "orders_marketplace_ref": {
           "name": "orders_marketplace_ref",
           "value": "\"order\".\"orders\".\"source\" <> 'marketplace' or (\"order\".\"orders\".\"shop_id\" is not null and \"order\".\"orders\".\"external_order_id\" is not null)"
-        },
-        "orders_cancel_pending_open": {
-          "name": "orders_cancel_pending_open",
-          "value": "not \"order\".\"orders\".\"cancel_pending\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
-        },
-        "orders_cancel_requested_open": {
-          "name": "orders_cancel_requested_open",
-          "value": "not \"order\".\"orders\".\"cancel_requested\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
         }
       },
       "isRLSEnabled": false

@@ -1,6 +1,5 @@
-// Migration dọn cờ Đang huỷ kẹt (test đêm 18/11/2026: DH-B03, KH-B09) và chép cờ cũ sang `cancel_pending`: chạy câu SQL
-// của từng file trong giao dịch rồi rollback, như `line-cancel-migration.test.ts`. `*_dang-huy-du-lieu.sql` chạy trước
-// migration thêm hai CHECK nên giao dịch tạm bỏ hai CHECK để dựng dữ liệu cũ.
+// Migration dọn cờ Đang huỷ kẹt (test đêm 18/11/2026: DH-B03, KH-B09), chép cờ cũ sang `cancel_pending` và trigger giữ hai
+// cột bằng nhau (#417): chạy câu SQL của từng file trong giao dịch rồi rollback, như `line-cancel-migration.test.ts`.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type pg from 'pg';
@@ -22,7 +21,6 @@ async function rolledBack(fn: (c: pg.PoolClient) => Promise<void>) {
   const c = await testPool().connect();
   try {
     await c.query('begin');
-    await c.query(`alter table "order".orders drop constraint orders_cancel_pending_open, drop constraint orders_cancel_requested_open`);
     await fn(c);
   } finally {
     await c.query('rollback');
@@ -134,17 +132,16 @@ describe('dọn cờ Đang huỷ kẹt (DH-B03, KH-B09)', () => {
   });
 });
 
-describe('chép cờ cũ sang cancel_pending', () => {
-  it('đơn còn mở mang cờ cũ thì cancel_pending theo cờ cũ; đơn khác không đổi; chạy lại cũng vậy', async () => {
+describe('chép cờ cũ sang cancel_pending, trigger giữ hai cột bằng nhau', () => {
+  it('chép cờ cũ của mọi đơn; chạy lại cũng vậy', async () => {
     const order = await seed();
     const waiting = await order(1);
     const plain = await order(1);
-    const clearedByOldWorker = await order(1);
     await rolledBack(async (c) => {
-      await c.query(`update "order".orders set status = 'processing' where id = any($1::uuid[])`, [[waiting, plain, clearedByOldWorker]]);
-      await c.query(`update "order".orders set cancelling = true where id = $1`, [waiting]);
-      // Image cũ còn chạy lúc đổi image gỡ cờ cũ mà cờ mới vẫn bật: chạy lại sau rollout thì theo cờ cũ.
-      await c.query(`update "order".orders set cancel_pending = true where id = $1`, [clearedByOldWorker]);
+      await c.query(`alter table "order".orders disable trigger orders_sync_cancel_pending`);
+      await c.query(`update "order".orders set status = 'processing' where id = any($1::uuid[])`, [[waiting, plain]]);
+      await c.query(`update "order".orders set cancelling = true, cancel_pending = false where id = $1`, [waiting]);
+      await c.query(`update "order".orders set cancelling = false, cancel_pending = false where id = $1`, [plain]);
 
       for (const s of statements('dang-huy-chuyen-co')) await c.query(s);
       for (const s of statements('dang-huy-chuyen-co')) await c.query(s);
@@ -152,7 +149,22 @@ describe('chép cờ cũ sang cancel_pending', () => {
       const row = rowOf(c);
       expect(await row(waiting)).toMatchObject({ cancelling: true, cancel_pending: true });
       expect(await row(plain)).toMatchObject({ cancelling: false, cancel_pending: false });
-      expect(await row(clearedByOldWorker)).toMatchObject({ cancelling: false, cancel_pending: false });
     });
+  });
+
+  it('image cũ ghi cột cũ thì cột mới theo; code mới ghi cột mới thì cột cũ theo (lúc đổi image, lùi image)', async () => {
+    const order = await seed();
+    const id = await order(1);
+    const both = async () =>
+      (await testPool().query(`select cancelling, cancel_pending from "order".orders where id = $1`, [id])).rows[0];
+    await testPool().query(`update "order".orders set status = 'processing' where id = $1`, [id]);
+    await testPool().query(`update "order".orders set cancelling = true where id = $1`, [id]);
+    expect(await both()).toEqual({ cancelling: true, cancel_pending: true });
+    await testPool().query(`update "order".orders set cancel_pending = false where id = $1`, [id]);
+    expect(await both()).toEqual({ cancelling: false, cancel_pending: false });
+    // Cập nhật cột khác không đụng cờ.
+    await testPool().query(`update "order".orders set cancel_pending = true where id = $1`, [id]);
+    await testPool().query(`update "order".orders set attention_note = 'x' where id = $1`, [id]);
+    expect(await both()).toEqual({ cancelling: true, cancel_pending: true });
   });
 });

@@ -59,7 +59,8 @@ async function completeOne(orderId: string, now: Date, policy: ReturnPolicy): Pr
     outcome: outcomeOf(statuses),
     completedAt: now,
     returnWindowEndsAt: endsAt,
-    // Cờ chờ sàn chỉ có nghĩa khi đơn còn mở (CHECK `orders_cancel_pending_open`, `orders_cancel_requested_open`).
+    // Cờ chờ sàn chỉ có nghĩa khi đơn còn mở (CHECK `orders_cancel_pending_open`, `orders_cancel_requested_open` thêm ở PR
+    // bỏ cột `cancelling`).
     cancelPending: false,
     cancelRequested: false,
     // Sàn huỷ mọi món mà có kiện hoá ra đã bàn giao (kho không thấy kiện khi dỡ, #238): cờ Sàn đã huỷ như mọi đơn bị

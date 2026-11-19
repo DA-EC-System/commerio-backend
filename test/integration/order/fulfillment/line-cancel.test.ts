@@ -213,6 +213,9 @@ describe('sàn huỷ lẻ một món (spec 205 §5.10)', () => {
     expect(view.display.stage).not.toBe('cancelling');
     expect(view.cancelInitiators).toEqual(['buyer']);
     expect(view.lines.map((l) => l.cancelledQty)).toEqual([1, 0]);
+    // Giờ huỷ món cho lịch sử đơn (#417): chỉ món đã huỷ có giờ.
+    expect(view.lines[0]!.cancelledAt).toEqual(expect.any(String));
+    expect(view.lines[1]!.cancelledAt).toBeNull();
 
     const kho = await addMember(v.companyId, 'warehouse');
     const opened = await packingApp()

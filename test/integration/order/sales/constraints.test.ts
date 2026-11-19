@@ -45,24 +45,6 @@ describe('ràng buộc bảng sales (AC-9)', () => {
     await expect(insertOrder(company, { source: 'manual', paymentMethod: 'cod' })).resolves.toBeDefined();
   });
 
-  it('cờ chờ sàn huỷ, khách xin huỷ chỉ có ở đơn còn mở (DH-B03)', async () => {
-    const company = randomUUID();
-    const shop = randomUUID();
-    const insert = (status: string, cancelPending: boolean, cancelRequested: boolean) =>
-      testPool().query(
-        `insert into "order".orders (company_id, code, source, shop_id, external_order_id, status, outcome, cancel_pending, cancel_requested, subtotal, total)
-         values ($1, $2, 'marketplace', $3, $2, $4, $5, $6, $7, 100000, 100000)`,
-        [company, `DH-${randomUUID().slice(0, 8)}`, shop, status, status === 'completed' ? 'full' : null, cancelPending, cancelRequested],
-      );
-    await expect(insert('cancelled', true, false)).rejects.toThrow(/"orders_cancel_pending_open"/);
-    await expect(insert('completed', true, false)).rejects.toThrow(/"orders_cancel_pending_open"/);
-    await expect(insert('cancelled', false, true)).rejects.toThrow(/"orders_cancel_requested_open"/);
-    await expect(insert('completed', false, true)).rejects.toThrow(/"orders_cancel_requested_open"/);
-    await expect(insert('processing', true, true)).resolves.toBeDefined();
-    await expect(insert('unpaid', true, false)).resolves.toBeDefined();
-    await expect(insert('cancelled', false, false)).resolves.toBeDefined();
-  });
-
   it('một đơn sàn chỉ vào hệ thống một lần (19-D32)', async () => {
     const company = randomUUID();
     const shop = randomUUID();

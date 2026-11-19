@@ -309,6 +309,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
       attributesLabel: attributesOf(l, labels),
       quantity: l.quantity,
       cancelledQty: l.cancelledQty,
+      cancelledAt: isoOrNull(l.cancelledAt),
       unitPrice: toInt(l.unitPrice),
       lineTotal: toInt(l.lineTotal),
       externalSku: l.externalSku,

@@ -128,6 +128,10 @@ const OrderLine = z
     cancelledQty: z.number().int().meta({
       description: 'Số món sàn đã huỷ của dòng (0..quantity). Dòng huỷ hết không tính vào `subtotal`, `total` của đơn',
     }),
+    cancelledAt: z.iso.datetime().nullable().meta({
+      description:
+        'Lúc app ghi huỷ món theo sàn báo (#417). FE xen vào lịch sử đơn để người xem biết vì sao tiền lúc đặt khác tiền còn thu. Null khi chưa huỷ, hay huỷ trước #417',
+    }),
     unitPrice: money,
     lineTotal: money,
     externalSku: z.string().nullable(),
