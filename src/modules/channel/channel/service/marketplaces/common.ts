@@ -799,6 +799,11 @@ export interface MarketplaceAdapter {
   packItems?(accessToken: string, ref: PackageItemsRef & { carrierCode?: string }): Promise<PlatformPack>;
   /** Báo các kiện đã sẵn sàng giao. */
   readyToShip?(accessToken: string, packageCodes: readonly string[]): Promise<void>;
+  /**
+   * Mã vận đơn của kiện trên sàn sau khi báo giao; null khi sàn chưa cấp. Sàn có vận đơn từ lúc đóng gói (Lazada) không
+   * khai (#239 KH-B02).
+   */
+  packageTracking?(accessToken: string, packageCode: string): Promise<string | null>;
   /** Cho phép đóng gói lại một kiện chưa báo giao. */
   repackPackage?(accessToken: string, packageCode: string): Promise<void>;
   /** Mỗi phần tử là một tệp PDF, có thể chứa vận đơn của nhiều kiện. */

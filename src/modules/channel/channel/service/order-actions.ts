@@ -2,6 +2,7 @@
 // ở `src/wiring.ts`, không import channel. Gọi sàn ngoài giao dịch nghiệp vụ; lỗi sàn đổi sang mã app (§1.1 R8, R9).
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import type { ShopCapabilities } from '../domain/shop.ts';
 import { findShopRow } from '../repository/shops.ts';
@@ -170,6 +171,7 @@ const packageErrors = new Map<string, readonly [string, string]>([
   ['11034037', documentNotReady],
   ['21023059', packageStatusError],
   ['21042102', packageStatusError],
+  ['21042061', ['cancel_requested', 'Khách đang xin huỷ đơn trên sàn, chờ Sale trả lời yêu cầu huỷ']],
 ]);
 
 export function onPackageAction<T>(fn: () => Promise<T>): Promise<T> {
@@ -208,10 +210,21 @@ export async function marketplacePack(companyId: string, shopId: string, ref: Pa
   return adapter.packItems ? onPackageAction(() => adapter.packItems!(accessToken, ref)) : null;
 }
 
-export async function marketplaceReadyToShip(companyId: string, shopId: string, packageCode: string): Promise<void> {
+/**
+ * Báo sàn kiện sẵn sàng giao, rồi đọc mã vận đơn nếu sàn cấp sau khi báo giao (TikTok, #239 KH-B02). Đọc lỗi thì chỉ log
+ * và trả null: sàn đã nhận báo giao, lượt kéo đơn sẽ điền mã.
+ */
+export async function marketplaceReadyToShip(companyId: string, shopId: string, packageCode: string): Promise<{ trackingCode: string | null }> {
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.readyToShip) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ báo sẵn sàng giao từ app');
   await onPackageAction(() => adapter.readyToShip!(accessToken, [packageCode]));
+  if (!adapter.packageTracking) return { trackingCode: null };
+  try {
+    return { trackingCode: await adapter.packageTracking(accessToken, packageCode) };
+  } catch (err) {
+    logger.warn({ err, shopId, packageCode }, 'đã báo sàn sẵn sàng giao, chưa đọc được mã vận đơn; lượt kéo đơn sẽ lấy');
+    return { trackingCode: null };
+  }
 }
 
 export async function marketplaceRepack(companyId: string, shopId: string, packageCode: string): Promise<'repacked' | 'not_supported'> {

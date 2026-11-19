@@ -220,7 +220,7 @@ export interface TiktokOrderDeps {
 export function tiktokOrderMethods(
   client: TiktokClient,
   { download = downloadDocument }: TiktokOrderDeps = {},
-): Pick<MarketplaceAdapter, 'listOrders' | 'listOpenOrders' | 'getOrder' | 'getOrders' | 'splitAttributes' | 'splitOrder' | 'shipPackage' | 'readyToShip' | 'shippingDocuments'> {
+): Pick<MarketplaceAdapter, 'listOrders' | 'listOpenOrders' | 'getOrder' | 'getOrders' | 'splitAttributes' | 'splitOrder' | 'shipPackage' | 'readyToShip' | 'packageTracking' | 'shippingDocuments'> {
   // TikTok giao (shipping_type TIKTOK); tự giao (self_shipment) chưa dùng.
   const shipPackage: NonNullable<MarketplaceAdapter['shipPackage']> = async (accessToken, packageCode, opts) => {
     const handover = opts?.handover === 'pickup' ? 'PICKUP' : opts?.handover === 'drop_off' ? 'DROP_OFF' : undefined;
@@ -378,6 +378,15 @@ export function tiktokOrderMethods(
     shipPackage,
     async readyToShip(token, codes) {
       for (const code of codes) await shipPackage(token, code);
+    },
+    // Get Package Detail (docv2 get-package-detail-202309, tra 19/11/2026): `shipping_info` là trường mới, trường phẳng
+    // `tracking_number` cho dữ liệu cũ. Sàn chưa cấp mã thì cả hai rỗng.
+    async packageTracking(token, code) {
+      const data = await client.call<{ shipping_info?: { tracking_number?: unknown }[]; tracking_number?: unknown }>(
+        'GET', `/fulfillment/202309/packages/${encodeURIComponent(code)}`, { token },
+      );
+      const info = Array.isArray(data?.shipping_info) ? data.shipping_info[0] : undefined;
+      return str(info?.tracking_number) || str(data?.tracking_number) || null;
     },
     async shippingDocuments(token, codes) {
       const files: Uint8Array[] = [];

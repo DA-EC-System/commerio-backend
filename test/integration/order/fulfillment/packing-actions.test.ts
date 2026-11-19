@@ -38,7 +38,10 @@ const expectProblem = (res: Awaited<ReturnType<typeof post>>, status: number, co
 };
 const packBody = () => ({ version: 1, lines: [{ variantId, quantity: 2 }] });
 const packed = { packageCode: 'FP1', trackingCode: 'LZ1', carrier: null };
-const ready = () => vi.fn(async () => { expect(currentCompanyId()).toBeNull(); });
+const ready = () => vi.fn(async () => {
+  expect(currentCompanyId()).toBeNull();
+  return { trackingCode: null };
+});
 
 describe('đóng gói kiện', () => {
   it('D2-03 US-DH-06 AC2: đóng gói qua sàn ngoài giao dịch, lưu vận đơn, dòng kiện, lịch sử và sự kiện', async () => {
@@ -289,6 +292,7 @@ describe('báo sẵn sàng giao', () => {
     const other = await seed('packed', { platformPackageCode: 'RTS-PULL' });
     const readyToShip = async () => {
       await testPool().query(`update "order".packages set status = 'awaiting_pickup', version = version + 1 where id = $1`, [packageId]);
+      return { trackingCode: null };
     };
     const res = await post(packageId, 'ready', { version: 1 }, { readyToShip });
     expect(res.status).toBe(200);
@@ -316,7 +320,10 @@ describe('báo sẵn sàng giao', () => {
   it('hai kiện cùng nhóm được báo sẵn sàng đồng thời chỉ gửi một lệnh lên sàn', async () => {
     const first = await seed('packed', { platformPackageCode: 'GROUP-RACE' });
     const second = await seed('packed', { platformPackageCode: 'GROUP-RACE' });
-    const readyToShip = vi.fn(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+    const readyToShip = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return { trackingCode: null };
+    });
     const result = await Promise.all([first, second].map((pkg) => post(pkg.packageId, 'ready', { version: 1 }, { readyToShip })));
     expect(result.map((res) => res.status).sort()).toEqual([200, 409]);
     expect(readyToShip).toHaveBeenCalledTimes(1);

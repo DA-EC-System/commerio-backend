@@ -21,6 +21,7 @@ describe('cổng thao tác kiện trên sàn', () => {
     ['30012', 'rts_package_not_found'], ['21042104', 'document_not_ready'],
     ['21023035', 'document_not_ready'], ['11034037', 'document_not_ready'],
     ['21023059', 'package_status_not_allowed'], ['21042102', 'package_status_not_allowed'],
+    ['21042061', 'cancel_requested'],
   ])('đổi mã sàn %s sang %s, giữ thông tin gốc', async (platformCode, code) => {
     await expect(onPackageAction(async () => { throw new MarketplaceError('rejected', platformCode, 'Lỗi gốc'); }))
       .rejects.toMatchObject({ status: 409, code, extensions: { platformCode, platformMessage: 'Lỗi gốc' } });
@@ -48,6 +49,17 @@ describe('cổng thao tác kiện trên sàn', () => {
     await expect(marketplaceCarriers('c', 's', ref)).resolves.toEqual([]);
     await expect(marketplaceRepack('c', 's', 'FP1')).resolves.toBe('repacked');
     expect(repackPackage).toHaveBeenCalledWith('token', 'FP1');
+  });
+
+  it('báo giao xong thì đọc mã vận đơn nếu sàn có; đọc lỗi hay sàn không có thì null, không ném (KH-B02)', async () => {
+    const readyToShip = vi.fn(async () => {});
+    session({ readyToShip, packageTracking: async () => 'TT-1' });
+    await expect(marketplaceReadyToShip('c', 's', 'P1')).resolves.toEqual({ trackingCode: 'TT-1' });
+    expect(readyToShip).toHaveBeenCalledWith('token', ['P1']);
+    session({ readyToShip, packageTracking: async () => { throw new MarketplaceError('unavailable'); } });
+    await expect(marketplaceReadyToShip('c', 's', 'P1')).resolves.toEqual({ trackingCode: null });
+    session({ readyToShip });
+    await expect(marketplaceReadyToShip('c', 's', 'P1')).resolves.toEqual({ trackingCode: null });
   });
 });
 
