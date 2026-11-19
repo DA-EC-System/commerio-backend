@@ -90,10 +90,14 @@ describe('returnWindowEndsAt', () => {
     expect(returnWindowEndsAt({ returnWindow: 'days', returnWindowDays: 15 }, d, null)).toEqual(new Date(d.getTime() + 15 * DAY)));
   it('gian hàng chưa nhập số ngày: 7 ngày', () =>
     expect(returnWindowEndsAt({ returnWindow: 'days', returnWindowDays: null }, d, null)).toEqual(new Date(d.getTime() + 7 * DAY)));
-  it('PR 1: sàn platform_status vẫn 7 ngày, bỏ qua cột đã lưu (D13)', () =>
-    expect(returnWindowEndsAt({ returnWindow: 'platform_status', returnWindowDays: null }, d, null)).toEqual(
-      new Date(d.getTime() + 7 * DAY),
-    ));
+  const tiktok = { returnWindow: 'platform_status', returnWindowDays: null } as const;
+  const stored = at('2026-11-10T08:00:00Z');
+  it('platform_status: trả mốc sàn báo đã lưu, không cộng ngày', () =>
+    expect(returnWindowEndsAt(tiktok, d, stored)).toEqual(stored));
+  it('platform_status: sàn chưa báo thì null, không rơi về 7 ngày (D8)', () =>
+    expect(returnWindowEndsAt(tiktok, d, null)).toBeNull());
+  it('platform_status: chưa kiện nào giao thì null dù sàn đã báo', () =>
+    expect(returnWindowEndsAt(tiktok, null, stored)).toBeNull());
   it('chưa kiện nào giao: null', () => expect(returnWindowEndsAt(DEFAULT_RETURN_POLICY, null, null)).toBeNull());
 });
 

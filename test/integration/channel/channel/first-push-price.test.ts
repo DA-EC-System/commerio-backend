@@ -61,6 +61,8 @@ async function variant(target: number | null, cost: number) {
     sku,
     categoryId,
     attributesLabel: 'Đen / M',
+    productCode: 'SP-TEST',
+    attributes: [],
     archived: false,
     businessStatus: 'selling',
     description: 'Áo cotton',

@@ -142,6 +142,7 @@ describe('hạn trả theo gian hàng (#236)', () => {
   const id: Record<string, string> = {};
   const before: Record<string, string> = {};
   let manualOrder: string;
+  let tiktokEndedAt: Date;
   const calls: string[][] = [];
 
   beforeAll(async () => {
@@ -165,9 +166,17 @@ describe('hạn trả theo gian hàng (#236)', () => {
     });
     id.ac9 = await delivered(['delivered'], 8, { shop: lazadaNull });
     await testPool().query(`update "order".packages set self_delivery = true, cod_expected = 0 where order_id = $1`, [id.ac9]);
-    id.ac11a = await delivered(['delivered'], 8, { shop: tiktok });
-    // AC11 cần đơn TikTok trong lô của lượt đầu: ac11a tới hạn nên lượt của file khác có thể chốt trước; đơn này còn chờ.
+    id.ac12a = await delivered(['delivered'], 8, { shop: tiktok });
+    // AC11 cần đơn TikTok trong lô của lượt đầu: đơn này còn chờ dù luật TikTok có đổi.
     id.tiktokWaiting = await delivered(['delivered'], 2, { shop: tiktok });
+    id.ac16 = await delivered(['returned'], 0, { shop: tiktok });
+    // Sàn đã báo hết quyền trả hôm qua: ghi mốc trước khi lùi mốc giao (đơn chưa lúc nào tới hạn mà chưa có mốc).
+    tiktokEndedAt = new Date(now.getTime() - DAY);
+    id.ac14 = await delivered(['delivered'], 30, {
+      shop: tiktok,
+      prepare: (orderId) =>
+        testPool().query('update "order".orders set return_window_ends_at = $2 where id = $1', [orderId, tiktokEndedAt]),
+    });
     // Huỷ kiện và dòng đơn trước khi lùi mốc giao (đơn chưa lúc nào tới hạn với kiện còn giao). Trigger kiểm bằng dòng
     // kiện chạy lúc commit (db/CLAUDE.md): huỷ kiện và dòng đơn trong một giao dịch.
     id.ac11b = await delivered(['delivered'], 8, {
@@ -246,8 +255,16 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect((await orderOf(id.ac9!)).status).toBe('completed');
   });
 
-  it('AC11a: gian hàng TikTok, giao 8 ngày trước → completed (PR 1 tạm 7 ngày, D13)', async () => {
-    expect((await orderOf(id.ac11a!)).status).toBe('completed');
+  it('AC12a: gian hàng TikTok, giao 8 ngày trước, sàn chưa báo COMPLETED → chưa hoàn tất (D8)', async () => {
+    expect((await orderOf(id.ac12a!)).status).toBe('processing');
+  });
+
+  it('AC14 (luật job): gian hàng TikTok, sàn đã báo (cột có mốc) → completed, hạn = mốc sàn báo', async () => {
+    expect(await orderOf(id.ac14!)).toMatchObject({ status: 'completed', outcome: 'full', return_window_ends_at: tiktokEndedAt });
+  });
+
+  it('AC16: gian hàng TikTok, mọi kiện không huỷ đã hoàn về → completed không chờ sàn', async () => {
+    expect(await orderOf(id.ac16!)).toMatchObject({ status: 'completed', outcome: 'none' });
   });
 
   it('AC11b: đơn không cờ Đang huỷ, mọi dòng và mọi kiện đã huỷ → cancelled, không hoàn tất (25 §8.2 "Mọi kiện đã cancelled thì đơn → cancelled")', async () => {

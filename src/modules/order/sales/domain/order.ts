@@ -91,14 +91,14 @@ export function lastDeliveredAt(packages: readonly { deliveredAt: Date | null }[
 
 /**
  * Hết hạn trả của đơn đang xử lý; null khi chưa kiện nào giao (điều kiện hạn trả không áp).
- * PR 1 #236: sàn `platform_status` tạm tính như `days` 7 ngày (D13); `stored` chưa dùng,
- * PR 2 #236 đọc cột đã lưu cho nhánh `platform_status`.
+ * Sàn `days`: mốc giao của kiện giao cuối + số ngày của gian hàng (7 khi chưa nhập).
+ * Sàn `platform_status` (TikTok): mốc sàn báo hết quyền trả đã lưu (`stored`, nhận đơn ghi một lần); sàn chưa báo thì
+ * null, đơn có kiện đã giao chưa hoàn tất, không có hạn dự phòng theo ngày (#236 D8).
  */
 export function returnWindowEndsAt(policy: ReturnPolicy, lastDelivered: Date | null, stored: Date | null): Date | null {
-  void stored;
   if (!lastDelivered) return null;
-  const days = policy.returnWindow === 'days' ? (policy.returnWindowDays ?? DEFAULT_RETURN_WINDOW_DAYS) : DEFAULT_RETURN_WINDOW_DAYS;
-  return new Date(lastDelivered.getTime() + days * DAY_MS);
+  if (policy.returnWindow === 'platform_status') return stored;
+  return new Date(lastDelivered.getTime() + (policy.returnWindowDays ?? DEFAULT_RETURN_WINDOW_DAYS) * DAY_MS);
 }
 
 export interface CodPackage {

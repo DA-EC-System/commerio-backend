@@ -28,6 +28,8 @@ const newVariant = (): ListingVariant => {
     sku: `CMR-${randomUUID().slice(0, 8)}`,
     categoryId,
     attributesLabel: 'Trắng',
+    productCode: 'SP-TEST',
+    attributes: [],
     archived: false,
     businessStatus: 'selling',
     description: 'Cốc sứ trắng',

@@ -322,6 +322,14 @@ describe('toTiktokOrder (GET /order/202507/orders)', () => {
     const rejected = toTiktokOrder({ ...base, line_items: [item] });
     expect(rejected.lines[0]).toMatchObject({ status: 'pending', info: { cancelInitiator: null, cancelReason: null, cancelKind: null } });
   });
+
+  it('AC12: DELIVERED → returnWindowEndedAt null; COMPLETED, CANCELLED → bằng update_time', () => {
+    const u = 1795000000;
+    const of = (status: string) => toTiktokOrder({ ...deliveredOrder(), status, update_time: u }).returnWindowEndedAt;
+    expect(of('DELIVERED')).toBeNull();
+    expect(of('COMPLETED')).toEqual(new Date(u * 1000));
+    expect(of('CANCELLED')).toEqual(new Date(u * 1000));
+  });
 });
 
 describe('tiktokLineStatus: trạng thái TikTok → trạng thái kiện', () => {

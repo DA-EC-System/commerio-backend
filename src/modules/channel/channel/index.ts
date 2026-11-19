@@ -24,6 +24,8 @@ import {
 } from './service/shop-jobs.ts';
 import { onVariantStatusChanged } from './service/variant-status.ts';
 
+import { categorySyncQueue, runCategorySync, scheduleCategorySync } from './service/category-sync.ts';
+
 export const channelModule: ModuleDefinition = {
   name: 'channel',
   router: channelRouter,
@@ -54,6 +56,9 @@ export const channelModule: ModuleDefinition = {
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
     // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.
     await workChannelQueue(remoteSkusRefreshQueue, runRemoteSkusRefresh);
+    // Cây category của sàn (#400): mỗi sàn một lượt đêm, lời gọi sàn chỉ tính trần chung.
+    await workChannelQueue(categorySyncQueue, (job) => runCategorySync(job));
+    await scheduleCategorySync();
     await reconcileShopJobs();
     // Thư báo CEO, Admin khi gian hàng sắp hết hoặc đã mất uỷ quyền (#312): xếp mốc mỗi 15 phút, consumer gửi thư.
     registerChannelConsumer('channel.shop_reauth_mail', handleReauthMail, { consumer: REAUTH_MAIL_CONSUMER });
