@@ -266,12 +266,24 @@ describe('quét nhận hàng trả (§20, §15.3)', () => {
     expect((await detail(r.id)).status).toBe('awaiting_return');
   });
 
-  it('không gửi lines thì coi như quét đủ; yêu cầu chưa chờ hàng về thì 409 return_not_awaiting', async () => {
+  it('#363: yêu cầu khớp mà không gửi lines thì 422 errors.lines, không lập phiếu, yêu cầu giữ awaiting_return', async () => {
     const calls = fakePort();
     const r = await seedReturn('awaiting_return');
-    await receive({ code: r.code });
-    expect(calls[0]![1]).toEqual([{ variantId, expected: 2, scanned: 2 }]);
-    const again = await receive({ code: r.code });
+    const res = await receive({ code: r.code });
+    expect([res.status, res.body.code, Object.keys(res.body.errors ?? {})]).toEqual([422, 'validation_failed', ['lines']]);
+    expect(calls).toEqual([]);
+    expect((await detail(r.id)).status).toBe('awaiting_return');
+  });
+
+  it('#363: nhận 0 trên 2 món (lines rỗng) thì phiếu kiểm ghi thiếu cả hai; nhận 1 thì thiếu 1; lần sau 409 return_not_awaiting', async () => {
+    const calls = fakePort();
+    const none = await seedReturn('awaiting_return');
+    expect((await receive({ code: none.code, lines: [] })).status).toBe(200);
+    expect(calls[0]![1]).toEqual([{ variantId, expected: 2, scanned: 0 }]);
+    const one = await seedReturn('awaiting_return');
+    expect((await receive({ code: one.code, lines: [{ variantId, quantity: 1 }] })).status).toBe(200);
+    expect(calls[1]![1]).toEqual([{ variantId, expected: 2, scanned: 1 }]);
+    const again = await receive({ code: one.code, lines: [{ variantId, quantity: 1 }] });
     expect([again.status, again.body.code]).toEqual([409, 'return_not_awaiting']);
   });
 
@@ -299,7 +311,7 @@ describe('thử lại báo sàn đã nhận hàng (§20.1)', () => {
     fakePort();
     const r = await seedReturn('awaiting_return');
     confirmReturnReceived.mockRejectedValueOnce(new AppError(503, 'marketplace_unavailable', 'Sàn đang lỗi.'));
-    expect((await receive({ code: r.code })).status).toBe(200);
+    expect((await receive({ code: r.code, lines: [{ variantId, quantity: 2 }] })).status).toBe(200);
     expect(await flagOf(r.id)).toMatchObject({ needs_attention: true, attention_note: expect.stringMatching(/^Chưa báo được sàn đã nhận hàng: Sàn đang lỗi\. App tự thử lại/) });
     confirmReturnReceived.mockClear();
     return r;

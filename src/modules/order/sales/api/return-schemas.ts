@@ -113,7 +113,10 @@ export const ReturnActionBody = z.object({
 export const ReceiveReturnBody = z.object({
   code: z.string().trim().min(1, 'Quét mã yêu cầu, mã vận đơn hoặc mã đơn').max(100),
   note: z.string().trim().max(500).optional(),
-  lines: ScanLines.optional().meta({ description: 'Tuỳ chọn trong giai đoạn chuyển tiếp (FE#212); không gửi thì coi như quét đủ' }),
+  lines: ScanLines.optional().meta({
+    description:
+      'Số kho quét từng món lúc nhận. Bắt buộc khi mã khớp yêu cầu trả (thiếu thì 422 `errors.lines`, #363); `[]` là chưa nhận món nào. Kiện không khớp yêu cầu nào thì tuỳ chọn',
+  }),
 });
 
 export const UnmatchedParcel = z
