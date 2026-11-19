@@ -39,7 +39,7 @@ export const RECEIPT_AUDIT_ENTITY = 'product.goods_receipts';
  */
 export async function lockOwnReceipt(id: string): Promise<{ receipt: ReceiptRow; request: RequestRow; requestLines: LineRow[] }> {
   const found = isUuid(id) ? await findReceipt(id) : undefined;
-  if (!found) throw notFound('phiếu nhận');
+  if (!found) throw notFound('phiếu nhập kho');
   const request = (await lockRequest(found.requestId))!;
   const requestLines = await lockLines(request.id);
   const receipt = (await lockReceipt(id))!;
@@ -49,7 +49,7 @@ export async function lockOwnReceipt(id: string): Promise<{ receipt: ReceiptRow;
 /** `version` gửi lên khác bản đang khoá: 409 kèm bản mới nhất (N7). */
 export async function assertReceiptVersion(row: ReceiptRow, version: number): Promise<void> {
   if (row.version !== version) {
-    throw new AppError(409, 'version_conflict', 'Phiếu vừa được người khác sửa hoặc ghi sổ', { current: await toReceiptDetail(row) });
+    throw new AppError(409, 'version_conflict', 'Phiếu vừa được người khác sửa hoặc nhập kho', { current: await toReceiptDetail(row) });
   }
 }
 
@@ -63,7 +63,7 @@ export async function listReceiptPage(actor: Actor, q: ReceiptFilter) {
 export async function getReceipt(actor: Actor, id: string): Promise<GoodsReceiptView> {
   return withCompany(actor.companyId, async () => {
     const row = isUuid(id) ? await findReceipt(id) : undefined;
-    if (!row) throw notFound('phiếu nhận');
+    if (!row) throw notFound('phiếu nhập kho');
     return toReceiptDetail(row);
   });
 }
@@ -78,7 +78,7 @@ export async function createReceipt(
 ) {
   return withCompany(actor.companyId, async () => {
     const request = isUuid(input.requestId) ? await lockRequest(input.requestId) : undefined;
-    if (!request) throw invalid({ requestId: 'Chọn đề nghị nhập' });
+    if (!request) throw invalid({ requestId: 'Chọn đơn đặt hàng nhập' });
     if (request.status !== 'ordered' && request.status !== 'partially_received') {
       throw new AppError(409, 'invalid_transition', 'Đề nghị chưa đặt NCC hoặc đã đóng', { current: request.status });
     }

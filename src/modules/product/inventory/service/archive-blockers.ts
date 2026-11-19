@@ -29,11 +29,11 @@ export async function stockArchiveBlockers(
   for (const id of ids) {
     const { onHand, reserved, quarantine } = levels.get(id) ?? { onHand: 0, reserved: 0, quarantine: 0 };
     const reasons: string[] = [];
-    if (onHand) reasons.push(`Còn ${onHand} tồn thực`);
-    if (reserved) reasons.push(`Đang giữ ${reserved} cho đơn`);
-    if (quarantine) reasons.push(`Còn ${quarantine} chờ xử lý`);
+    if (onHand) reasons.push(`Còn ${onHand} tồn kho`);
+    if (reserved) reasons.push(`Tạm giữ ${reserved} cho đơn`);
+    if (quarantine) reasons.push(`Còn ${quarantine} hàng lỗi/chờ kiểm`);
     const open = docs.get(id) ?? 0;
-    if (open) reasons.push(`Còn ${open} phiếu kho chưa ghi sổ`);
+    if (open) reasons.push(`Còn ${open} phiếu kho chưa hoàn thành`);
     if (reasons.length) result.set(id, reasons);
   }
   return result;

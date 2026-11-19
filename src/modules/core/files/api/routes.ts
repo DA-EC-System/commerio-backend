@@ -40,7 +40,7 @@ export function filesRouter(_ctx: ModuleContext): Router {
     if (permission) {
       const access = getAccess(res);
       if (!access.enabledModules.includes(moduleOfPermission(permission))) {
-        throw new AppError(403, 'module_disabled', 'Phân hệ này đang tắt');
+        throw new AppError(403, 'module_disabled', 'Tính năng này đang tắt');
       }
       if (!access.permissions.includes(permission)) {
         throw new AppError(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');

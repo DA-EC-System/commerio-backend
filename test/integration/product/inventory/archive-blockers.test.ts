@@ -33,7 +33,7 @@ describe('stockArchiveBlockers (#204)', () => {
     const v = variants[0]!;
     await receive(companyId, v, 3, 100000);
     await setBuckets(companyId, v, { reserved: 1, quarantine: 2 });
-    expect(await blockersOf(companyId, [v])).toEqual(new Map([[v, ['Còn 3 tồn thực', 'Đang giữ 1 cho đơn', 'Còn 2 chờ xử lý']]]));
+    expect(await blockersOf(companyId, [v])).toEqual(new Map([[v, ['Còn 3 tồn kho', 'Tạm giữ 1 cho đơn', 'Còn 2 hàng lỗi/chờ kiểm']]]));
   });
 
   it('đếm phiếu kho nháp, chờ duyệt có SKU; phiếu đã ghi sổ không tính', async () => {
@@ -42,7 +42,7 @@ describe('stockArchiveBlockers (#204)', () => {
     await stockDocument(companyId, draft, 'draft');
     await stockDocument(companyId, draft, 'pending');
     await stockDocument(companyId, posted, 'posted');
-    expect(await blockersOf(companyId, [draft, posted])).toEqual(new Map([[draft, ['Còn 2 phiếu kho chưa ghi sổ']]]));
+    expect(await blockersOf(companyId, [draft, posted])).toEqual(new Map([[draft, ['Còn 2 phiếu kho chưa hoàn thành']]]));
   });
 
   it('khoá dòng tồn tới hết giao dịch, kể cả SKU chưa có dòng tồn (spec 204 D10)', async () => {

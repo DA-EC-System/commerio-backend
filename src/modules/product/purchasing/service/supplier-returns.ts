@@ -191,7 +191,7 @@ async function buildLines(input: SupplierReturnInput, old: readonly ReturnLineRo
     seen.add(l.variantId);
     const has = stock.get(l.variantId)?.quarantine ?? 0;
     if (!Number.isInteger(l.quantity) || l.quantity < 1) errors[`lines.${i}.quantity`] = 'Số lượng là số nguyên từ 1';
-    else if (l.quantity > has) errors[`lines.${i}.quantity`] = `Chỉ còn ${has} chờ xử lý`;
+    else if (l.quantity > has) errors[`lines.${i}.quantity`] = `Chỉ còn ${has} hàng lỗi/chờ kiểm`;
     const prev = old.find((o) => o.variantId === l.variantId);
     return { variantId: l.variantId, quantity: l.quantity, unitCost: prev?.unitCost ?? avg.get(l.variantId) ?? null, sourceLineId: prev?.sourceLineId ?? null };
   });
@@ -275,7 +275,7 @@ async function moveStock(row: ReturnRow, kind: 'send' | 'back' | 'restock', line
     if (!(err instanceof InsufficientStock)) throw err;
     const errors: Record<string, string> = {};
     lines.forEach((l, i) => {
-      if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.quantity`] = 'Chờ xử lý không còn đủ hàng';
+      if (err.variantIds.includes(l.variantId)) errors[`lines.${i}.quantity`] = 'Khu hàng lỗi/chờ kiểm không còn đủ hàng';
     });
     throw invalid(errors, 'stock_insufficient');
   }

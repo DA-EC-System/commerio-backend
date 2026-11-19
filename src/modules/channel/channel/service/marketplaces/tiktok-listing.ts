@@ -475,7 +475,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       }
       const leaf = ((current?.category_chains ?? []) as Row[]).find((x) => x.is_leaf === true)?.id;
       if (leaf !== undefined && String(leaf) !== c.externalCategoryId) {
-        throw new MarketplaceError('rejected', 'category_mismatch', `Sản phẩm trên sàn ở danh mục ${String(leaf)}, khác danh mục đã ghép`);
+        throw new MarketplaceError('rejected', 'category_mismatch', `Sản phẩm trên sàn ở danh mục ${String(leaf)}, khác category đã liên kết`);
       }
       const body = {
         title: c.name,

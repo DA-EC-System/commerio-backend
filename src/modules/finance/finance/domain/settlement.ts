@@ -39,22 +39,22 @@ export interface SettlementRecord {
 /** Bảng chuyển §21.2. Chỉ `resolve` do người làm; còn lại hệ thống, sau lô quyết toán hoặc khi kiện giao. */
 export const settlementMachine = defineMachine<SettlementState, SettlementAction, SettlementRecord>([
   { from: 'none', to: 'pending', action: 'first_delivered', label: 'Kiện đầu tiên giao xong', system: true },
-  { from: 'pending', to: 'settled', action: 'settle', label: 'Quyết toán khớp', system: true },
-  { from: 'pending', to: 'mismatch', action: 'mismatch', label: 'Quyết toán lệch', system: true },
+  { from: 'pending', to: 'settled', action: 'settle', label: 'Đối soát khớp', system: true },
+  { from: 'pending', to: 'mismatch', action: 'mismatch', label: 'Đối soát có chênh lệch', system: true },
   { from: 'settled', to: 'mismatch', action: 'late_adjust', label: 'Điều chỉnh muộn', system: true },
   { from: 'none', to: 'mismatch', action: 'cancelled_charged', label: 'Sàn thu tiền đơn chưa giao', system: true },
   {
     from: 'mismatch',
     to: 'resolved',
     action: 'resolve',
-    label: 'Chốt lệch',
+    label: 'Xử lý chênh lệch',
     permission: 'finance.settlement.resolve',
     needsSecondPerson: true,
     // CEO hoặc công ty một người chốt được lệch của gian hàng mình soạn cấu hình phí (25 §11, #249)
     allowSelfApproval: true,
     needsReason: true,
   },
-  { from: 'resolved', to: 'mismatch', action: 'new_adjust', label: 'Lệch mới sau khi chốt', system: true },
+  { from: 'resolved', to: 'mismatch', action: 'new_adjust', label: 'Chênh lệch mới sau khi xử lý', system: true },
 ]);
 
 export type Threshold = ConfigPayload<'mismatch_threshold'>;

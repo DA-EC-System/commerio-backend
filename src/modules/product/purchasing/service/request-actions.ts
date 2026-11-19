@@ -45,7 +45,7 @@ async function createNewProducts(actor: Actor, row: RequestRow, lines: readonly 
   const pending = lines.flatMap((l, i) => (!l.excluded && !l.variantId && l.newProductName ? [{ l, i }] : []));
   if (!pending.length) return;
   const items = pending.map(({ l }) => ({ name: l.newProductName!, categoryId: l.newCategoryId! }));
-  const result = await createPurchaseProducts(actor, items, `Tạo từ đề nghị nhập ${row.number}`);
+  const result = await createPurchaseProducts(actor, items, `Tạo từ đơn đặt hàng nhập ${row.number}`);
   if (!result.ok) {
     const errors: Record<string, string> = {};
     for (const [k, e] of result.errors) errors[`lines.${pending[k]!.i}.newProduct.${e.field}`] = e.message;
