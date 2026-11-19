@@ -44,6 +44,9 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: { description: 'Đăng nhập được', ...json(LoginResponse) },
       401: problemResponse('`invalid_credentials`: sai email hoặc mật khẩu'),
+      403: problemResponse(
+        '`pending_approval`: email chưa có tài khoản, đúng mật khẩu đặt lúc nộp yêu cầu tham gia đang chờ Admin duyệt',
+      ),
       422: problemResponse('`validation_failed`'),
       429: problemResponse('`too_many_requests`'),
     },

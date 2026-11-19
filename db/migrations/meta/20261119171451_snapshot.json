@@ -1,6 +1,6 @@
 {
-  "id": "ae04a8c4-64fe-439c-a988-980aa210c864",
-  "prevId": "58a7334f-f073-4c86-b759-6f3cf62d8cc0",
+  "id": "d58be707-a939-45b4-a683-001737cab50c",
+  "prevId": "6adc4cc4-9f01-474d-8ed4-afba75cad3ab",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4133,6 +4133,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "purged_at": {
+          "name": "purged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4332,7 +4338,11 @@
         },
         "invitations_identity_present": {
           "name": "invitations_identity_present",
-          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or \"core\".\"invitations\".\"purged_at\" is not null or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+        },
+        "invitations_purged_shape": {
+          "name": "invitations_purged_shape",
+          "value": "\"core\".\"invitations\".\"purged_at\" is null or (\"core\".\"invitations\".\"status\"::text in ('open', 'claimed', 'revoked') and \"core\".\"invitations\".\"email\" is null and \"core\".\"invitations\".\"full_name\" is null and \"core\".\"invitations\".\"otp_hash\" is null and \"core\".\"invitations\".\"password_hash\" is null)"
         },
         "invitations_pending_shape": {
           "name": "invitations_pending_shape",

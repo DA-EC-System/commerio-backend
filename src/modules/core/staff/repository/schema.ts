@@ -94,6 +94,8 @@ export const invitations = staffSchema.table(
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     decidedBy: uuid('decided_by').references(() => accounts.id),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
+    // Việc dọn nháp quá hạn (`staff.invitation_purge`) xoá email, họ tên, OTP của link `open`, `claimed` chưa nộp.
+    purgedAt: timestamp('purged_at', { withTimezone: true }),
     ...timestamps,
     ...version,
   },
@@ -112,7 +114,13 @@ export const invitations = staffSchema.table(
       'invitations_identity_present',
       // `revoked` có thể huỷ từ `open` (chưa có email, họ tên). So dạng `text`: migration thêm giá trị enum `revoked` chạy
       // cùng giao dịch, PostgreSQL không cho dùng giá trị enum mới trước khi commit (55P04).
-      sql`${t.status}::text in ('open', 'revoked') or (${t.email} is not null and ${t.fullName} is not null)`,
+      // Nháp quá hạn đã dọn (`purged_at`) cũng không còn email, họ tên.
+      sql`${t.status}::text in ('open', 'revoked') or ${t.purgedAt} is not null or (${t.email} is not null and ${t.fullName} is not null)`,
+    ),
+    // Dọn chỉ áp cho link chưa nộp; dòng đã dọn không còn email, họ tên, mã OTP, mật khẩu.
+    check(
+      'invitations_purged_shape',
+      sql`${t.purgedAt} is null or (${t.status}::text in ('open', 'claimed', 'revoked') and ${t.email} is null and ${t.fullName} is null and ${t.otpHash} is null and ${t.passwordHash} is null)`,
     ),
     check(
       'invitations_pending_shape',

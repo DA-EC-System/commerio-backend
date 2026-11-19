@@ -3,7 +3,7 @@ import { metricsRegistry } from '../../../../shared/observability/metrics.ts';
 
 // Số liệu đăng nhập trên /metrics của api (#7 spec 6.12).
 export type LoginMethod = 'password' | 'google' | 'mfa';
-export type LoginOutcome = 'ok' | 'invalid' | 'not_found' | 'unavailable' | 'mfa_required';
+export type LoginOutcome = 'ok' | 'invalid' | 'not_found' | 'unavailable' | 'mfa_required' | 'pending_approval';
 
 const logins = new client.Counter({
   name: 'auth_login_total',
