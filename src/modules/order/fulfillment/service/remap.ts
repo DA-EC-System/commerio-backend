@@ -12,6 +12,7 @@ import {
   clearLinesReserved,
   lockPackagesOfOrderLines,
   markLinesReserved,
+  RESERVED_AT_OR_NOW,
   type RemapLockedPackage,
   setLineSku,
   setRemapPending,
@@ -174,6 +175,9 @@ export async function applyRemapStock(pkg: LockedPackage, stock: RemapStock, opt
       if (reserved) {
         await markLinesReserved(stock.lineIds);
         for (const l of fresh) l.reservedQty = l.quantity;
+        // Kiện chưa từng giữ (P2, mở kiện 20d) nhận mốc giữ bằng giờ DB như lượt phân hàng; kiện đã có mốc giữ nguyên
+        // (`planReclaim` sắp theo mốc này).
+        await updatePackage(pkg.id, { reservedAt: RESERVED_AT_OR_NOW });
         // Giữ ngoài lượt phân hàng: inventory `reserve` không phát `stock_changed`, channel chỉ đẩy tồn theo
         // `allocation_done` (như kiện mới lập, spec 199b D4).
         await publishEvent({

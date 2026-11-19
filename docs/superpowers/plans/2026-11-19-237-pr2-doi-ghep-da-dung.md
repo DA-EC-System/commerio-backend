@@ -40,7 +40,7 @@
 2. Mở kiện khi ghép hiện hành của SKU là `unmapped` (listing đã gỡ, hay chỉ còn ghép chờ duyệt): dòng giữ ghép đang có, không bị gỡ ghép, dấu vẫn xoá và kiện vẫn mở được. Test ở Task 8.
 3. Kiện `reserved` có hai dòng A và B, đổi A → B: hai dòng cùng biến thể B, giữ đủ tổng; thiếu B thì cả kiện về `backordered`. Test ở Task 4.
 4. Gian hàng chờ kiểm kê, dòng "không quản tồn" ở kiện `reserved` sang biến thể: không gọi cổng tồn, kiện `reclaim` về `backordered`, không xếp lượt. Test ở Task 4.
-5. Mở một kiện thay đã đóng còn đang chờ thay (#238 D23): không áp ghép (D26), mở như cũ. Test ở Task 8.
+5. Mở một kiện thay đã đóng còn đang chờ thay (#238 D23): dòng chờ thay giữ ghép cũ (D26), dòng khác của kiện vẫn được áp (sửa sau review: bản đầu bỏ áp cả kiện mà vẫn xoá dấu). Test ở Task 8.
 
 ---
 

@@ -10,6 +10,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { raceBehindLock } from '../../helpers/locks.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import { channelShop, packageRow, packingApp, seedPackage, stockOfVariant, transitionsOf } from './helpers.ts';
 
@@ -190,6 +191,9 @@ describe('mở kiện đơn sàn áp lại ghép hiện hành (spec 237 §5.6)',
     expect(await packageRow(p.packageId)).toMatchObject({ status: 'reserved' });
     expect(await lineOf(p.lineIds[0]!)).toMatchObject({ variant_id: b, reserved_qty: 1 });
     expect((await stockOfVariant(companyId, b)).reserved).toBe(1);
+    // Kiện chưa từng giữ nhận mốc giữ khi giữ được B (`planReclaim` sắp theo mốc này; review PR 2).
+    const { rows } = await testPool().query<{ reserved_at: Date | null }>('select reserved_at from "order".packages where id = $1', [p.packageId]);
+    expect(rows[0]!.reserved_at).not.toBeNull();
   });
 
   it('D2-G13 20e: trong lúc repack, ghép đổi B → C (dấu không đổi, version giữ) → bước ghi áp C', async () => {
@@ -261,11 +265,21 @@ describe('mở kiện đơn sàn áp lại ghép hiện hành (spec 237 §5.6)',
     expect(await orderLineRow(p.lineIds[0]!)).toEqual({ variant_id: a, stock_untracked: false });
   });
 
-  it('D2-G18 Review Focus 5: kiện thay đã đóng đang chờ thay, ghép đã đổi → mở: không áp, dòng giữ ghép cũ', async () => {
-    const [a, b] = [await sku(5), await sku(5)];
-    const s = newSku();
-    const p = await packedHolding(a, s);
-    // Kiện cũ đã đóng của cùng đơn còn dòng chờ bỏ cho cùng dòng đơn: kiện `p` là kiện thay đang chờ thay (#238 D9).
+  it('D2-G18 Review Focus 5, D26: kiện thay đã đóng có dòng chờ thay và dòng thường, ghép cả hai đã đổi → mở: dòng chờ thay giữ ghép cũ, dòng thường thành ghép mới', async () => {
+    const [a, b, c, d] = [await sku(5), await sku(5), await sku(5), await sku(5)];
+    const [s, s2] = [newSku(), newSku()];
+    mapping.set(s, variant(a));
+    mapping.set(s2, variant(c));
+    const p = await seedPackage(companyId, {
+      status: 'packed',
+      shopId,
+      platformPackageCode: `FP-${randomUUID().slice(0, 8)}`,
+      lines: [
+        { variantId: a, quantity: 1, reserved: true, externalSku: s },
+        { variantId: c, quantity: 1, reserved: true, externalSku: s2 },
+      ],
+    });
+    // Kiện cũ đã đóng của cùng đơn còn dòng chờ bỏ cho dòng đơn đầu: dòng đó của `p` là dòng chờ thay (#238 D9).
     const { rows } = await testPool().query<{ id: string }>(
       `insert into "order".packages (company_id, code, order_id, shop_id, status) values ($1, $2, $3, $4, 'packed') returning id`,
       [companyId, `KH-${randomUUID().slice(0, 8)}`, p.orderId, shopId],
@@ -275,11 +289,59 @@ describe('mở kiện đơn sàn áp lại ghép hiện hành (spec 237 §5.6)',
       [companyId, rows[0]!.id, await orderLineOf(p.lineIds[0]!), a],
     );
     mapping.set(s, variant(b));
+    mapping.set(s2, variant(d));
 
     const res = await open(p.packageId);
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(await lineOf(p.lineIds[0]!)).toMatchObject({ variant_id: a, reserved_qty: 1 });
     expect(await orderLineRow(p.lineIds[0]!)).toEqual({ variant_id: a, stock_untracked: false });
+    expect(await lineOf(p.lineIds[1]!)).toMatchObject({ variant_id: d, reserved_qty: 1 });
+    expect(await orderLineRow(p.lineIds[1]!)).toEqual({ variant_id: d, stock_untracked: false });
+  });
+
+  it('D2-G13 D21: bước ghi khoá đơn trước dòng đơn như lượt nhận đơn (không khoá chéo): đơn đang bị giữ thì mở kiện chờ rồi xong', async () => {
+    const [a, b] = [await sku(5), await sku(5)];
+    const s = newSku();
+    const p = await packedHolding(a, s);
+    await remap(p.lineIds[0]!, s, variant(b));
+    const version = (await packageRow(p.packageId)).version;
+
+    const res = await raceBehindLock(
+      (holder) => holder.query('select id from "order".orders where id = $1 for update', [p.orderId]),
+      1,
+      () =>
+        packingApp(repacked, ctx)
+          .post(`/api/v1/fulfillment/packages/${p.packageId}/open`)
+          .set('Authorization', `Bearer ${kho.token}`)
+          .send({ version })
+          .then((r) => r),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await lineOf(p.lineIds[0]!)).toMatchObject({ variant_id: b, reserved_qty: 1 });
+  });
+
+  it('D2-G12 open_cancel: kiện mang dấu chờ đổi ghép mà mọi dòng chờ bỏ → mở là huỷ kiện, dấu xoá', async () => {
+    const [a, b] = [await sku(5), await sku(5)];
+    const s = newSku();
+    const p = await packedHolding(a, s);
+    await remap(p.lineIds[0]!, s, variant(b));
+    const client = await testPool().connect();
+    try {
+      await client.query('begin');
+      await client.query('update "order".order_lines set cancelled_qty = quantity where id = $1', [await orderLineOf(p.lineIds[0]!)]);
+      await client.query('update "order".package_lines set pending_drop_qty = quantity where id = $1', [p.lineIds[0]]);
+      await client.query('commit');
+    } finally {
+      client.release();
+    }
+
+    const res = await open(p.packageId);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'cancelled', needs_open: false, open_purpose: null });
+    expect(await lineOf(p.lineIds[0]!)).toMatchObject({ variant_id: a, remap_pending: false });
+    expect((await stockOfVariant(companyId, a)).reserved).toBe(0);
   });
 });

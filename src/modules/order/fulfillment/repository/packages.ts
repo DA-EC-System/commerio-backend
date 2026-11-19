@@ -167,6 +167,9 @@ export async function updatePackage(
  */
 export const ORDER_SHIP_BY = sql`(select o.ship_by from "order".orders o where o.id = ${packages.orderId})`;
 
+/** Mốc giữ hàng cho `UPDATE … SET`: giữ mốc đang có, chưa có thì giờ DB (kiện giữ được dòng mới ngoài lượt phân hàng). */
+export const RESERVED_AT_OR_NOW = sql`coalesce(${packages.reservedAt}, now())`;
+
 /**
  * Kiện chưa bàn giao của đơn nhận hạn bàn giao của đơn (KH-B01, Documents/21 §19.1): kiện đã rời kho hay đã huỷ giữ hạn
  * cũ. Hạn đổi thật thì tăng `version` dù không phát sự kiện. Trả số kiện đã ghi. Bên gọi đã khoá kiện của đơn.

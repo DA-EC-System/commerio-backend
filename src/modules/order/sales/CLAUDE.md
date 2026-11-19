@@ -39,7 +39,7 @@ Spec `docs/superpowers/specs/2026-11-17-237-ghep-sku-dong-don-design.md` §5.4. 
 - Giao `remapPackageLines` của fulfillment mọi việc trên kiện, tồn; dòng đơn có kết quả `applied` (hoặc không có dòng kiện nào) mà ghép đang có khác `to` thì ghi `variant_id`, `stock_untracked`, `sku` (= `external_sku` khi có biến thể, null khi "không quản tồn"). `kept`, `needs_unload` (kiện đã đóng chờ dỡ: dòng đơn giữ ghép cũ tới khi mở kiện, D4) giữ nguyên. `lines`, `orders` chỉ đếm dòng thật sự ghi.
 - Đơn `unpaid`, `processing` có dòng đổi phát `sales.order_status_changed` (`publishOrdersChanged`, dùng lại cho mở kiện) (`from = to`, cờ lưu cộng `unmapped_sku` nếu còn dòng chưa ghép); đơn đã dừng vẫn được ghi dòng, không phát (P6). Log `info` một dòng (gian hàng, SKU người bán, số dòng, số đơn, số kiện cần dỡ).
 - Idempotent: gọi lại khi đã áp xong không chọn dòng nào (hay chỉ dòng chờ dỡ không đổi gì), không ghi, không phát. Lỗi nào (cổng tồn, `40P01`, CHECK) cũng ném: cả giao dịch ghép rollback.
-- Cho mở kiện đơn sàn áp lại ghép (fulfillment, PR 2): `lockOrderLines(ids)` (khoá dòng đơn theo id, trước khoá phân hàng, D21) và `applyLineSkus(rows)` (gom theo đích, `setOrderLineSku`, phát sự kiện đơn), tiêm qua `withContext` ở `order/index.ts`.
+- Cho mở kiện đơn sàn áp lại ghép (fulfillment, PR 2): `lockOrderLines(ids)` (`lockOrderLinesById`: khoá đơn rồi dòng đơn theo id, trước khoá phân hàng, D21; đơn trước dòng như lượt nhận đơn để không khoá chéo với upsert dòng theo thứ tự món sàn) và `applyLineSkus(rows)` (gom theo đích, `setOrderLineSku`, phát sự kiện đơn), tiêm qua `withContext` ở `order/index.ts`.
 
 ## Thao tác đơn sàn (#105 PR 2, §19.3)
 

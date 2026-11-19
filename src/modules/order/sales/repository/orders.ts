@@ -231,10 +231,21 @@ export async function lockLinesToRemap(
     .for('update');
 }
 
-/** Khoá dòng đơn theo id tăng (mở kiện đơn sàn áp lại ghép, spec 237 D21: dòng đơn trước khoá phân hàng). */
+/**
+ * Khoá đơn rồi dòng đơn, theo id tăng (mở kiện đơn sàn áp lại ghép, spec 237 D21: dòng đơn trước khoá phân hàng). Đơn
+ * trước dòng như lượt nhận đơn (`lockMarketplaceOrder` rồi upsert dòng theo thứ tự món sàn trả): chỉ khoá dòng theo id
+ * thì lệch thứ tự với upsert đó và khoá chéo (`40P01`) khi lượt kéo nhận lại đơn đúng lúc kho mở kiện (review PR 2).
+ */
 export async function lockOrderLinesById(ids: readonly string[]): Promise<void> {
   if (!ids.length) return;
-  await getDb()
+  const db = getDb();
+  await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(inArray(orders.id, db.select({ id: orderLines.orderId }).from(orderLines).where(inArray(orderLines.id, [...ids]))))
+    .orderBy(asc(orders.id))
+    .for('update');
+  await db
     .select({ id: orderLines.id })
     .from(orderLines)
     .where(inArray(orderLines.id, [...ids]))

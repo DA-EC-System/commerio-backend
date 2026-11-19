@@ -13,7 +13,8 @@ import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import { channelShop, outboxOf, packageDocuments, packageRow, seedPackage, stockOfVariant } from './helpers.ts';
-import { packedSplit } from './resplit-fixtures.ts';
+import { ingest } from './platform-fixtures.ts';
+import { itemStatuses, packedSplit } from './resplit-fixtures.ts';
 
 const REASON = 'Liên kết SKU LZ-1';
 const actorId = randomUUID();
@@ -474,6 +475,64 @@ describe('remapPackageLines: đổi ghép đã dùng (spec 237 §5.5 bảng 2, 3
     expect(await historyOf(p.packageId)).toHaveLength(1);
   });
 
+  it('D2-G11 19b: kiện packed đang Cần mở stocktake → đổi ghép: mục đích remap; lượt phân hàng khi tồn đủ không gỡ cờ', async () => {
+    const { companyId, vs: [A, B] } = await setup(2);
+    await receive(companyId, A!, 5, 100000);
+    await receive(companyId, B!, 5, 30000);
+    const p = await seedPackage(companyId, {
+      status: 'packed',
+      needsOpen: true,
+      openPurpose: 'stocktake',
+      lines: [{ variantId: A!, quantity: 1, reserved: true }],
+    });
+
+    await remap(companyId, [[p.lineIds[0]!, variant(B!)]]);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_open: true, open_purpose: 'remap' });
+
+    await allocate(companyId, [A!, B!]);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'remap' });
+    expect(await pendingOf(p.lineIds[0]!)).toBe(true);
+  });
+
+  it('D2-G11 19: kiện packed chưa giữ hàng mang Cần mở remap không là ứng viên phân hàng (không giữ B cho hộp còn món A)', async () => {
+    const { companyId, vs: [A, B] } = await setup(2);
+    await receive(companyId, A!, 5, 100000);
+    await receive(companyId, B!, 5, 30000);
+    const p = await seedPackage(companyId, { status: 'packed', lines: [{ variantId: A!, quantity: 1 }] });
+    await remap(companyId, [[p.lineIds[0]!, variant(B!)]]);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_open: true, open_purpose: 'remap' });
+
+    await allocate(companyId, [A!, B!]);
+
+    expect(await lineOf(p.lineIds[0]!)).toMatchObject({ variant_id: A, reserved_qty: 0 });
+    expect((await stockOfVariant(companyId, A!)).reserved).toBe(0);
+    expect((await stockOfVariant(companyId, B!)).reserved).toBe(0);
+  });
+
+  it('D2-G12 20c: kiện packed có hai dòng của hai SKU sàn cùng chờ đổi, đổi một về như cũ → dấu dòng đó xoá, cờ remap còn', async () => {
+    const { companyId, vs: [A, B, C, D] } = await setup(4);
+    await receive(companyId, A!, 5, 100000);
+    await receive(companyId, C!, 5, 100000);
+    const p = await seedPackage(companyId, {
+      status: 'packed',
+      lines: [
+        { variantId: A!, quantity: 1, reserved: true },
+        { variantId: C!, quantity: 1, reserved: true },
+      ],
+    });
+    await remap(companyId, [
+      [p.lineIds[0]!, variant(B!)],
+      [p.lineIds[1]!, variant(D!)],
+    ]);
+    expect([await pendingOf(p.lineIds[0]!), await pendingOf(p.lineIds[1]!)]).toEqual([true, true]);
+
+    const out = await remap(companyId, [[p.lineIds[0]!, variant(A!)]]);
+
+    expect([...out.values()]).toEqual(['applied']);
+    expect([await pendingOf(p.lineIds[0]!), await pendingOf(p.lineIds[1]!)]).toEqual([false, true]);
+    expect(await packageRow(p.packageId)).toMatchObject({ needs_open: true, open_purpose: 'remap' });
+  });
+
   it('D2-G12 20b: kiện ở 19, đổi về A → dấu xoá, mục đích stocktake, có việc phân hàng; chạy runAllocation cho A thì cờ gỡ', async () => {
     const { companyId, vs: [A, B] } = await setup(2);
     await receive(companyId, A!, 5, 100000);
@@ -606,7 +665,7 @@ describe('remapPackageLines: đổi ghép đã dùng (spec 237 §5.5 bảng 2, 3
   });
 
   it('D2-G18 18b: kiện thay backordered có dòng chờ thay A, kiện cũ packed có dòng chờ bỏ A → đổi ghép: dòng chờ thay giữ A, kiện thay không sang reserved', async () => {
-    const { v, orderId, packageId, a, b } = await packedSplit();
+    const { v, orderId, packageId, next, a, b } = await packedSplit();
     const { variantId: B } = await createVariant(v.companyId);
     await receive(v.companyId, B, 10, 30000);
     const { rows: lines } = await testPool().query<{ id: string }>('select id from "order".order_lines where order_id = $1', [orderId]);
@@ -627,6 +686,21 @@ describe('remapPackageLines: đổi ghép đã dùng (spec 237 §5.5 bảng 2, 3
     expect(await packageRow(a.id)).toMatchObject({ status: 'backordered' });
     expect(await packageRow(b.id)).toMatchObject({ status: 'backordered' });
     expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
+
+    // Rồi kiện thay được lấy (sàn báo `in_transit`): phần giữ A của dòng chờ bỏ chuyển sang đúng dòng A, trừ A một lần,
+    // không bàn giao bắt buộc, B không bị giữ hay trừ.
+    await ingest(v.companyId, itemStatuses(next, ['in_transit', 'pending']));
+
+    expect(await packageRow(a.id)).toMatchObject({ status: 'in_transit', handover_source: 'marketplace', needs_attention: false });
+    const { rows: taken } = await testPool().query<{ variant_id: string; stock_deducted: boolean }>(
+      'select variant_id, stock_deducted from "order".package_lines where package_id = $1',
+      [a.id],
+    );
+    expect(taken).toEqual([{ variant_id: v.variantId, stock_deducted: true }]);
+    const stockA = await stockOfVariant(v.companyId, v.variantId);
+    expect([stockA.onHand, stockA.reserved]).toEqual([9, 1]);
+    const stockB = await stockOfVariant(v.companyId, B);
+    expect([stockB.onHand, stockB.reserved]).toEqual([10, 0]);
   });
 
   it('D2-G10 Review Focus 3: kiện reserved hai dòng A, B; đổi A → B: hai dòng B, giữ đủ tổng; B thiếu thì kiện backordered', async () => {
