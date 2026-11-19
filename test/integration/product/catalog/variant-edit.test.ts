@@ -120,7 +120,7 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
     expect(res.body.errors.version).toBeTruthy();
   });
 
-  it('trường lạ (imageFileId chưa nhận, spec D1) → 422, không ghi gì', async () => {
+  it('trường lạ (imageFileId: ảnh phân loại theo giá trị, không theo SKU, #340) → 422, không ghi gì', async () => {
     const product = await wallet();
     const res = await patch(product.id, product.variants[0]!.id, { version: 1, weightG: 250, imageFileId: randomUUID() });
     expect(res.status).toBe(422);

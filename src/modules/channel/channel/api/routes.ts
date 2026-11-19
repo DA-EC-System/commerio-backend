@@ -13,12 +13,14 @@ import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
+import { acknowledgeRemoteTitle } from '../service/remote-title.ts';
 import { productPort } from '../service/product-port.ts';
 import * as prices from '../service/pending-prices.ts';
 import * as setup from '../service/setup.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
+  AuthorizeUrlQuery,
   CallbackBody,
   DelistBody,
   UpdateContentBody,
@@ -27,8 +29,12 @@ import {
   MappingBody,
   MappingParams,
   MatchBody,
+  AcknowledgeTitleBody,
+  AcknowledgeTitleParams,
   OutsideChangeBody,
   OutsideChangeParams,
+  TakeOverContentBody,
+  TakeOverContentParams,
   PushBody,
   RemoteSkusQuery,
   SetupBody,
@@ -80,9 +86,16 @@ export function channelRouter(ctx: ModuleContext): Router {
     res.json(shops.shopPlatforms());
   });
 
-  router.get('/shops/:platform/authorize-url', connect, validate({ params: PlatformParams }), async (_req, res) => {
-    res.json(await shops.authorizeUrl(validated<typeof PlatformParams>(res, 'params').platform, actor(res)));
-  });
+  router.get(
+    '/shops/:platform/authorize-url',
+    connect,
+    validate({ params: PlatformParams, query: AuthorizeUrlQuery }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      const { shopId } = validated<typeof AuthorizeUrlQuery>(res, 'query');
+      res.json(await shops.authorizeUrl(platform, actor(res), shopId));
+    },
+  );
 
   router.post(
     '/shops/:platform/callback',
@@ -262,6 +275,18 @@ export function channelRouter(ctx: ModuleContext): Router {
   );
 
   router.post(
+    '/shops/:id/listings/:listingId/take-over-content',
+    manage,
+    ceoOnly,
+    validate({ params: TakeOverContentParams, body: TakeOverContentBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof TakeOverContentParams>(res, 'params');
+      const { version } = validated<typeof TakeOverContentBody>(res, 'body');
+      res.status(202).json(await listings.takeOverContent(productPort(ctx), actor(res), id, listingId, version));
+    },
+  );
+
+  router.post(
     '/shops/:id/listings/:variantId/delist',
     manage,
     validate({ params: ListingParams, body: DelistBody }),
@@ -302,6 +327,17 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, listingId, action } = validated<typeof OutsideChangeParams>(res, 'params');
       const { version } = validated<typeof OutsideChangeBody>(res, 'body');
       res.json(await resolveOutsideChange(productPort(ctx), actor(res), id, listingId, action, version));
+    },
+  );
+  // Xác nhận tên trên sàn đã đổi (#396, 21 §18.3): quyền như các thao tác listing khác, không cần vai trò CEO.
+  router.post(
+    '/shops/:id/listings/:listingId/acknowledge-title',
+    manage,
+    validate({ params: AcknowledgeTitleParams, body: AcknowledgeTitleBody }),
+    async (_req, res) => {
+      const { id, listingId } = validated<typeof AcknowledgeTitleParams>(res, 'params');
+      const { version } = validated<typeof AcknowledgeTitleBody>(res, 'body');
+      res.json(await acknowledgeRemoteTitle(actor(res), id, listingId, version));
     },
   );
 

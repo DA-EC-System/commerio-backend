@@ -23,6 +23,7 @@ import { takeNextNumber } from '../repository/orders.ts';
 import { findReturn, findReturnLines, findReturnsByCode, type ReturnRow, updateReturnAt } from '../repository/returns.ts';
 import type { Actor } from './cancel.ts';
 import type { SalesContext } from './orders.ts';
+import { confirmFailedNote } from './return-confirm.ts';
 import { returnStockPort } from './return-stock-port.ts';
 import { applyReturnStep, canViewCost, invalidField, returnView } from './returns.ts';
 
@@ -94,7 +95,8 @@ async function confirmOnMarketplace(ctx: SalesContext, actor: Actor, row: Return
     const message = err instanceof AppError ? err.message : 'lỗi không rõ';
     await withCompany(actor.companyId, async () => {
       const fresh = (await findReturn(row.id, { lock: true }))!;
-      await updateReturnAt(fresh.id, fresh.version, fresh.status, { needsAttention: true, attentionNote: `Chưa báo được sàn đã nhận hàng: ${message}` });
+      // Channel thử lại sau mỗi lượt kéo yêu cầu trả, gỡ cờ khi sàn nhận (`return-confirm.ts`).
+      await updateReturnAt(fresh.id, fresh.version, fresh.status, { needsAttention: true, attentionNote: confirmFailedNote(message) });
     });
   }
 }

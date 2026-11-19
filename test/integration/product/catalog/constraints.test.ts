@@ -105,3 +105,76 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     await expect(createVariant(randomUUID(), { sku: 'MU-0001' })).resolves.toBeDefined();
   });
 });
+
+// Ảnh phân loại, xuất xứ, thương hiệu (#340, Documents/19 §3.2): CSDL tự chặn ảnh nằm sai thuộc tính và giá trị sai dạng.
+describe('ràng buộc ảnh phân loại, xuất xứ, thương hiệu (#340, AC-S4)', () => {
+  async function seed() {
+    const company = randomUUID();
+    const color = await insertAttribute(company, `Màu ${randomUUID()}`);
+    const size = await insertAttribute(company, `Size ${randomUUID()}`);
+    const value = async (attributeId: string, v: string, code: string) =>
+      (
+        await db().query<{ id: string }>(
+          'insert into product.attribute_values (company_id, attribute_id, value, code) values ($1, $2, $3, $4) returning id',
+          [company, attributeId, v, code],
+        )
+      ).rows[0]!.id;
+    const white = await value(color, 'Trắng', 'TRANG');
+    const black = await value(color, 'Đen', 'DEN');
+    const m = await value(size, 'M', 'M');
+    const category = await insertCategory(company, `Áo ${randomUUID()}`);
+    const product = (
+      await db().query<{ id: string }>(
+        'insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4) returning id',
+        [company, category, `Áo ${randomUUID()}`, `A-${randomUUID().slice(0, 8)}`],
+      )
+    ).rows[0]!.id;
+    const image = (attributeId: string, valueId: string) =>
+      db().query(
+        `insert into product.product_attribute_value_images (company_id, product_id, attribute_id, attribute_value_id, file_id)
+         values ($1, $2, $3, $4, $5)`,
+        [company, product, attributeId, valueId, randomUUID()],
+      );
+    const setImageAttribute = (id: string | null) =>
+      db().query('update product.products set image_attribute_id = $2 where id = $1', [product, id]);
+    return { color, size, white, black, m, product, image, setImageAttribute };
+  }
+  const fk = (constraint: string) => ({ code: '23503', constraint });
+  const check = (constraint: string) => ({ code: '23514', constraint });
+
+  it('sản phẩm chưa chọn thuộc tính gắn ảnh thì không chèn được ảnh', async () => {
+    const s = await seed();
+    await expect(s.image(s.color, s.white)).rejects.toMatchObject(fk('pavi_product_fk'));
+  });
+
+  it('ảnh mang thuộc tính khác thuộc tính gắn ảnh, hoặc giá trị của thuộc tính khác, bị chặn', async () => {
+    const s = await seed();
+    await s.setImageAttribute(s.color);
+    await expect(s.image(s.size, s.m)).rejects.toMatchObject(fk('pavi_product_fk'));
+    await expect(s.image(s.color, s.m)).rejects.toMatchObject(fk('pavi_value_fk'));
+    await s.image(s.color, s.white);
+    await expect(s.image(s.color, s.white)).rejects.toMatchObject({ code: '23505', constraint: 'pavi_product_value_uq' });
+  });
+
+  it('đổi hoặc bỏ thuộc tính gắn ảnh khi còn ảnh bị chặn; xoá ảnh rồi đổi thì được', async () => {
+    const s = await seed();
+    await s.setImageAttribute(s.color);
+    await s.image(s.color, s.black);
+    await expect(s.setImageAttribute(s.size)).rejects.toMatchObject(fk('pavi_product_fk'));
+    await expect(s.setImageAttribute(null)).rejects.toMatchObject(fk('pavi_product_fk'));
+    await db().query('delete from product.product_attribute_value_images where product_id = $1', [s.product]);
+    await expect(s.setImageAttribute(s.size)).resolves.toBeDefined();
+  });
+
+  it('xuất xứ chỉ nhận 2 chữ in hoa, thương hiệu tối đa 100 ký tự; null cả hai qua', async () => {
+    const s = await seed();
+    const set = (origin: string | null, brand: string | null) =>
+      db().query('update product.products set origin_country = $2, brand = $3 where id = $1', [s.product, origin, brand]);
+    for (const bad of ['vn', 'VNM', 'V1']) {
+      await expect(set(bad, null), bad).rejects.toMatchObject(check('products_origin_country'));
+    }
+    await expect(set(null, 'x'.repeat(101))).rejects.toMatchObject(check('products_brand_length'));
+    await expect(set('VN', 'x'.repeat(100))).resolves.toBeDefined();
+    await expect(set(null, null)).resolves.toBeDefined();
+  });
+});

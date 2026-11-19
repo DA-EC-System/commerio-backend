@@ -147,6 +147,22 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     ]);
   });
 
+  it('#396: `title` là `attributes.name` (tên người mua VN thấy), `titleEn` là `attributes.name_en`; rỗng hoặc vắng thì null', async () => {
+    // Gọi thật 18/11/2026 (request_id 212e3a4217950102938992867): sản phẩm có cả hai tên, Seller Center tiếng Anh hiện `name_en`.
+    const products = [
+      { item_id: 1, status: 'Active', attributes: { name: 'Áo thun - Đen', name_en: 'Bomber Jacket' }, skus: [{ SkuId: 11, SellerSku: 'A' }] },
+      { item_id: 2, status: 'Active', attributes: { name: 'Quần', name_en: '  ' }, skus: [{ SkuId: 21, SellerSku: 'B' }] },
+      { item_id: 3, status: 'Active', attributes: { name: 'Giày' }, skus: [{ SkuId: 31, SellerSku: 'C' }] },
+    ];
+    const fetchFn = async () => new Response(JSON.stringify({ code: '0', data: { total_products: 3, products } }), { status: 200 });
+    const skus = await createLazadaAdapter(config, fetchFn).listSkus!('t');
+    expect(skus.map((s) => [s.externalSkuId, s.title, s.titleEn])).toEqual([
+      ['11', 'Áo thun - Đen', 'Bomber Jacket'],
+      ['21', 'Quần', null],
+      ['31', 'Giày', null],
+    ]);
+  });
+
   it('review vòng 2 N1: sàn trả thành công mà `data` vắng thì rejected `unexpected_response`, không coi là gian hàng rỗng', async () => {
     const fetchFn = async () => new Response(JSON.stringify({ code: '0' }), { status: 200 });
     await expect(createLazadaAdapter(config, fetchFn).listSkus!('t')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });

@@ -7,6 +7,7 @@
 // { query, body, token })` với `token` là `TokenSet.accessToken` (client tự đặt header và `shop_cipher`), rồi spread vào
 // đối tượng trả về ở `createTiktokAdapter` dưới đây và bỏ hàm `unsupported` tương ứng.
 import {
+  epochDate,
   existingSku,
   type MarketplaceAdapter,
   MarketplaceError,
@@ -164,6 +165,8 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
   const skus = (p.skus ?? []) as Row[];
   const title = typeof p.title === 'string' ? p.title : '';
   const imageUrl = details?.images.get(String(p.id)) ?? null;
+  // Search Products 202502: `create_time` "The time when the product is created. Unix timestamp." (giây, OAS cục bộ).
+  const createdAt = epochDate(Number(p.create_time) * 1000);
   return skus.map((s) => {
     const sellerSku = typeof s.seller_sku === 'string' ? s.seller_sku : '';
     const variantLabel = details?.labels.get(String(s.id)) ?? null;
@@ -184,6 +187,7 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
       // "The SKU quantity available in the warehouse": cùng nghĩa với số app đẩy, dùng để đối chiếu (#223).
       sellableQuantity: quantity,
       ...(typeof (s.price as Row | undefined)?.tax_exclusive_price === 'string' && { price: (s.price as Row).tax_exclusive_price as string }),
+      ...(createdAt && { createdAt }),
     };
   });
 }

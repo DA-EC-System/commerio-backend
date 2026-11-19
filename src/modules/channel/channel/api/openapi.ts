@@ -2,17 +2,22 @@ import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   AuthorizeUrl,
+  AuthorizeUrlQuery,
   CallbackBody,
   CategoryAttributeList,
   ChannelListing,
   DelistBody,
   UpdateContentBody,
   UpdateContentParams,
+  TakeOverContentBody,
+  TakeOverContentParams,
   ListingList,
   ListingParams,
   ListingSyncResult,
   MappingBody,
   MappingParams,
+  AcknowledgeTitleBody,
+  AcknowledgeTitleParams,
   OutsideChangeBody,
   OutsideChangeParams,
   MatchBody,
@@ -105,17 +110,23 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/shops/:platform/authorize-url',
     summary: 'URL uỷ quyền của sàn (§18.4)',
-    description: 'Cần `channel.shop.connect`. `state` trong URL hết hạn sau 10 phút, chỉ dùng được cho người bấm.',
+    description:
+      'Cần `channel.shop.connect`. `state` trong URL hết hạn sau 10 phút, chỉ dùng được cho người bấm. Query `shopId` (tuỳ chọn, nút Kết nối lại): `state` mang gian hàng đó, callback chỉ nối lại đúng gian hàng này (409 `shop_mismatch` khi sàn trả seller khác). Không gửi thì gian hàng nhận ra theo mã seller sàn trả về.',
     security: bearer,
-    request: { params: PlatformParams },
-    responses: { 200: { description: 'URL uỷ quyền', ...json(AuthorizeUrl) }, ...auth, 422: marketplace[422] },
+    request: { params: PlatformParams, query: AuthorizeUrlQuery },
+    responses: {
+      200: { description: 'URL uỷ quyền', ...json(AuthorizeUrl) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không thuộc công ty hoặc thuộc sàn khác'),
+      422: marketplace[422],
+    },
   });
   registry.registerPath({
     method: 'post',
     path: '/shops/:platform/callback',
     summary: 'Callback OAuth: adapter đổi tham số sàn trả lấy token, tạo hoặc nối lại các gian hàng (§18.4, §18.6.3)',
     description:
-      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới), `remoteProductCount` (số sản phẩm trên sàn) và `remoteSkuCount` (số phân loại, tức SKU của sàn; `null` khi sàn không trả tổng) (§18.7.4); cả hai `null` khi sàn lỗi hoặc quá 10 giây, việc nối vẫn xong.',
+      'Cần `channel.shop.connect`. Body `{ state, params }`, `params` là mọi query trên URL callback trừ `state`; body cũ `{ code, state }` vẫn nhận (coi như `params = { code }`), gửi cả hai thì `params` thắng. Thiếu, rỗng, sai chữ ký, quá 10 phút, khác người bấm hoặc khác sàn `state`: 422 `oauth_state_invalid`. `state` hợp lệ nhưng công ty trong `state` khác công ty trong token: 409 `company_mismatch` kèm `expected`, `actual` (`{ id, name }`, công ty trong `state` và trong token), không đổi `code`, không ghi gian hàng nào (§18.7.4). `state` lấy bằng `authorize-url?shopId=` (Kết nối lại): gian hàng đó không còn thì 404 `not_found` (kiểm trước khi đổi `code`, và khoá lại lúc ghi: mất giữa chừng cũng 404, không tạo gian hàng mới); sàn trả không có seller của gian hàng đó thì 409 `shop_mismatch`, bỏ token vừa nhận, không ghi gian hàng nào (#398). Một lần uỷ quyền có thể ra nhiều gian hàng: nối tất cả hoặc không; `shops` đủ cả, `shop`/`created`/`reconnect` là của phần tử đầu. Gian hàng đã có thì dùng lại bản ghi. Mỗi phần tử `shops` có `previousStatus` (null khi tạo mới), `remoteProductCount` (số sản phẩm trên sàn) và `remoteSkuCount` (số phân loại, tức SKU của sàn; `null` khi sàn không trả tổng) (§18.7.4); cả hai `null` khi sàn lỗi hoặc quá 10 giây, việc nối vẫn xong.',
     security: bearer,
     request: { params: PlatformParams, body: json(CallbackBody) },
     responses: {
@@ -123,8 +134,9 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       ...marketplace,
       409: problemResponse(
-        '`company_mismatch` kèm `expected`, `actual` (`{ id, name }`); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+        '`company_mismatch` kèm `expected`, `actual` (`{ id, name }`); `shop_mismatch` kèm `expected`, `actual` (`{ name, externalShopId }`, `actual.name` null khi seller chưa có trong công ty); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
       ),
+      404: problemResponse('`not_found`: gian hàng trong `state` không còn'),
       422: problemResponse('`validation_failed`, `oauth_state_invalid`, `marketplace_unsupported`'),
     },
   });
@@ -133,10 +145,18 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/token',
     summary: 'Nối gian hàng bằng token lấy trên console của sàn',
     description:
-      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token.',
+      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token. `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn: sai dạng hay rỗng thì 422 `errors.shopId`, gian hàng không thuộc công ty hay khác sàn thì 404, đã ngắt vẫn nhận; token của seller khác thì 409 `shop_mismatch` như `callback`, không ghi gian hàng nào; gian hàng mất trước khi ghi thì 404.',
     security: bearer,
     request: { params: PlatformParams, body: json(TokenBody) },
-    responses: { ...connected, ...auth, ...marketplace },
+    responses: {
+      ...connected,
+      ...auth,
+      ...marketplace,
+      409: problemResponse(
+        '`shop_mismatch` kèm `expected`, `actual` (`{ name, externalShopId }`, `actual.name` null khi seller chưa có trong công ty); `shop_connected_elsewhere`; `marketplace_rejected` kèm `platformCode`, `platformMessage`; `version_conflict`',
+      ),
+      404: problemResponse('`not_found`: gian hàng trong `shopId` không thuộc công ty, khác sàn, hoặc không còn'),
+    },
   });
   registry.registerPath({
     method: 'patch',
@@ -443,6 +463,42 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   });
   registry.registerPath({
     method: 'post',
+    path: '/shops/:id/listings/:listingId/take-over-content',
+    summary: 'CEO ghi nội dung Commerio lên sản phẩm người bán đã ghép (#399)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). Chỉ listing `contentSource = platform` có mã sàn ở `live`, `platform_hold`, `rejected`, `push_failed` (`hidden`: 409, hiện lại listing trước vì `updateProduct` bật SKU trên sàn). Kiểm gian hàng như `push` (`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`). ' +
+      'Listing chuyển `pushing` (`take_over_content`), xếp việc đẩy ghi tên, mô tả, ảnh, danh mục, thuộc tính, giá của Commerio lên sản phẩm (nội dung đang có trên sàn mất, không hoàn tác); ' +
+      'xong thì `contentSource = app`, `live` hoặc `under_review`; sàn lỗi (từ chối, hết lượt thử, quá 30 phút) thì kèm `pushError`, giữ `platform`: xuất phát từ `live` về `live` (tồn, giá chờ đẩy lại), xuất phát từ trạng thái khác `push_failed`. Ghi nhật ký thao tác.',
+    security: bearer,
+    request: { params: TakeOverContentParams, body: json(TakeOverContentBody) },
+    responses: {
+      202: { description: 'Listing `pushing`, việc ghi nội dung đã xếp', ...json(ChannelListing) },
+      ...onShop,
+      404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
+      409: problemResponse(
+        '`invalid_transition` kèm `current` (listing `app`, chưa có mã sàn, `hidden`, trạng thái khác, đang chờ CEO quyết thay đổi ngoài app), `mapping_pending`, `version_conflict` kèm `current`, `shared_remote_product` (sản phẩm trên sàn có nhiều SKU, ghi đè cả sản phẩm), `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`, mã chặn đẩy (`category_unmapped`, `price_missing`, `dimensions_missing`, `images_missing`, `size_chart_missing`, `sku_not_ready`)',
+      ),
+      422: problemResponse('`validation_failed`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/:listingId/acknowledge-title',
+    summary: 'Xác nhận tên trên sàn đã đổi (#396, 21 §18.3)',
+    description:
+      'Cần `channel.listing.manage`. Listing có `remoteTitleChanged` (trên `ListingRow`, phần tử `remote-skus`): mốc tên lúc ghép thành tên hiện tại trong bản sao SKU sàn (cả tên tiếng Anh), xoá cờ, tăng `version`, ghi nhật ký thao tác. Không gọi sàn, không đổi tên trong catalog. Cờ bật khi lần đọc bản sao thấy (tên, tên tiếng Anh) khác mốc; ghép, đổi ghép, CEO duyệt ghép đặt mốc từ bản sao; app đẩy, sửa nội dung đặt mốc là tên app vừa gửi.',
+    security: bearer,
+    request: { params: AcknowledgeTitleParams, body: json(AcknowledgeTitleBody) },
+    responses: {
+      200: { description: 'Listing sau khi xác nhận', ...json(ChannelListing) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc listing'),
+      409: problemResponse('`invalid_transition` (không có `remoteTitleChanged`), `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed` (`errors.version`)'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
     path: '/shops/:id/listings/:listingId/update-content',
     summary: 'Đưa nội dung mới của sản phẩm lên listing đang bán (§18.3, #293)',
     description:
@@ -456,7 +512,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...onShop,
       404: problemResponse('`not_found`: gian hàng, listing, hoặc biến thể không còn bán'),
       409: problemResponse(
-        '`invalid_transition` (listing không `live`), `version_conflict` kèm `current`, `listing_unmanaged`, `shared_remote_product`, `category_unmapped`, `marketplace_rejected` (kể cả danh mục sàn khác ghép)',
+        '`invalid_transition` (listing không `live`; `contentSource = platform`: CEO dùng take-over-content), `version_conflict` kèm `current`, `listing_unmanaged`, `shared_remote_product`, `category_unmapped`, `marketplace_rejected` (kể cả danh mục sàn khác ghép)',
       ),
       422: problemResponse('`marketplace_unsupported`: sàn chưa hỗ trợ sửa nội dung'),
       503: problemResponse('`marketplace_unavailable`'),

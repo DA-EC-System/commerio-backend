@@ -44,7 +44,7 @@ import {
   type RemoteSku,
 } from './marketplaces/index.ts';
 import { currentPrices } from './listing-prices.ts';
-import { moveListing } from './listings.ts';
+import { moveListing, pushFailureOf } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
 import type { ProductPort } from './product-port.ts';
 import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
@@ -360,7 +360,11 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   for (const row of rows.filter((r) => r.status === 'pushing' && (r.pushStartedAt?.getTime() ?? 0) < staleBefore)) {
     const message = 'Quá 30 phút chưa có kết quả từ sàn, đẩy lại';
     const pushError: SyncError = { code: 'marketplace_unavailable', message, at: new Date().toISOString() };
-    await inCompany(() => moveListing(row, 'fail', null, { pushError }, message));
+    // Lượt take-over xuất phát từ `live` kẹt quá 30 phút: về `live` như lỗi sàn, không `push_failed` (#399).
+    await inCompany(async () => {
+      const failure = await pushFailureOf(row);
+      await moveListing(row, failure.action, null, { pushError, ...failure.patch }, message);
+    });
     summary.changed++;
   }
 

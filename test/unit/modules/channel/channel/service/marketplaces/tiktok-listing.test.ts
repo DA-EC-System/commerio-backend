@@ -441,7 +441,7 @@ describe('createProduct', () => {
       rejectReason: null,
       quantity: 5,
     }));
-    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false, existing: true });
+    expect(await san.methods({ findSku }).createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: false, existing: true, title: 't' });
     expect(findSku).toHaveBeenCalledWith(TOKEN, 'CM-TEST-COC');
     expect(san.calls).toHaveLength(0);
   });
@@ -461,13 +461,21 @@ describe('createProduct', () => {
 
   it('adapter TikTok tra Search Products theo seller_sku trước khi tạo: đã có thì không tạo, chỉ có bản đã xoá thì tạo', async () => {
     const search = (status: string) =>
-      ok({ total_count: 1, products: [{ id: 'P1', title: 't', status, skus: [{ id: 'S1', seller_sku: 'CM-TEST-COC', inventory: [] }] }] });
+      ok({ total_count: 1, products: [{ id: 'P1', title: 't', status, create_time: 1795000000, skus: [{ id: 'S1', seller_sku: 'CM-TEST-COC', inventory: [] }] }] });
     const make = (status: string) => {
       const san = fakeSan({ ...routes(ok({ status: 'ACTIVATE' })), 'POST /product/202502/products/search': search(status) });
       return { san, adapter: createTiktokAdapter(config, san.fetchFn) };
     };
     const live = make('ACTIVATE');
-    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({ externalProductId: 'P1', externalSkuId: 'S1', live: true, existing: true });
+    // #399: `create_time` (giây) của Search Products thành `createdAt`, kèm tên trên sàn.
+    expect(await live.adapter.createProduct(TOKEN, product)).toEqual({
+      externalProductId: 'P1',
+      externalSkuId: 'S1',
+      live: true,
+      existing: true,
+      createdAt: new Date(1795000000 * 1000),
+      title: 't',
+    });
     expect(live.san.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /product/202502/products/search']);
     expect(live.san.calls[0]!.body).toEqual({ status: 'ALL', seller_skus: ['CM-TEST-COC'] });
     const deleted = make('DELETED');

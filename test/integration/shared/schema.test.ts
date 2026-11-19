@@ -28,6 +28,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'doc_counters',
     'goods_receipt_lines',
     'goods_receipts',
+    'product_attribute_value_images',
     'product_channel_specs',
     'product_images',
     'product_variants',

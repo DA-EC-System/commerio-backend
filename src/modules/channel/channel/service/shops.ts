@@ -8,6 +8,7 @@ import {
   getCompanies,
   getStatusHistory,
   lastTransitionsAt,
+  recordAudit,
   recordTransition,
   releaseHeld,
   type StatusChange,
@@ -348,16 +349,32 @@ export async function getShop(id: string): Promise<Shop & { statusHistory: Statu
   return { ...(await shopView(row)), statusHistory: await getStatusHistory(ENTITY, id) };
 }
 
-/** URL uỷ quyền; `state` là token ký 10 phút gắn công ty, người bấm và sàn (#103 B1). */
-export async function authorizeUrl(raw: string, actor: Actor): Promise<{ url: string }> {
+/**
+ * URL uỷ quyền; `state` là token ký 10 phút gắn công ty, người bấm và sàn (#103 B1). `shopId` (nút Kết nối lại, #398): gian
+ * hàng phải thuộc công ty và đúng sàn, không thì 404; `state` mang theo nó (claim `shp`) để callback chỉ nối lại gian hàng này.
+ */
+export async function authorizeUrl(raw: string, actor: Actor, shopId?: string): Promise<{ url: string }> {
   const { platform, adapter } = platformOf(raw);
-  const state = await signPurposeToken('oauth', { cid: actor.companyId, sub: actor.accountId, plt: platform });
+  if (shopId) await reconnectTarget(actor.companyId, platform, shopId);
+  const state = await signPurposeToken('oauth', { cid: actor.companyId, sub: actor.accountId, plt: platform, shp: shopId });
   return { url: await onMarketplace(async () => adapter.authorizeUrl(state)) };
+}
+
+/** Gian hàng cần nối lại (#398): của công ty, đúng sàn; không thì 404 như gian hàng công ty khác (không lộ gian hàng nào). */
+async function reconnectTarget(companyId: string, platform: Platform, shopId: string): Promise<ShopRow> {
+  return withCompany(companyId, async () => {
+    const row = await ownShop(shopId);
+    if (row.platform !== platform) throw notFound();
+    return row;
+  });
 }
 
 /**
  * Callback OAuth: kiểm `state`, adapter đổi `params` (mọi query sàn trả trừ `state`) lấy các gian hàng, tạo hoặc nối lại.
  * Body cũ `{ code, state }` coi như `params = { code }` (21 §18.6.3).
+ * `state` có gian hàng cần nối lại (`shp`, #398): sàn trả không có seller đó thì 409 `shop_mismatch`, bỏ token vừa nhận.
+ * Thứ tự lỗi: 422 `oauth_state_invalid` → 409 `company_mismatch` → 404 (gian hàng trong `state` không còn) → đổi mã →
+ * 409 `shop_mismatch` → 409 `shop_connected_elsewhere`. Ba lỗi đầu ném trước khi đổi mã nên mã uỷ quyền chưa bị tiêu.
  */
 export async function connectByCode(
   raw: string,
@@ -375,11 +392,44 @@ export async function connectByCode(
     throw new AppError(422, 'oauth_state_invalid', 'Phiên kết nối đã hết hạn hoặc không hợp lệ');
   }
   if (claims.cid !== actor.companyId) throw await companyMismatch(claims.cid, actor.companyId);
+  const target = claims.shp ? await reconnectTarget(actor.companyId, platform, claims.shp) : null;
   const params = input.params ?? { code: input.code! };
   // Lời gọi sàn lúc nối (đổi mã, đếm sản phẩm) tính vào phần hạn mức của công ty đang nối (#215).
-  return forCompany(actor.companyId, async () =>
-    attachAll(platform, actor, await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params)))),
+  return forCompany(actor.companyId, async () => {
+    const connections = await onMarketplace(async () => atLeastOne(await adapter.exchangeCode(params)));
+    await assertTarget(actor.companyId, platform, target, connections);
+    return attachAll(platform, actor, connections, 'oauth', target);
+  });
+}
+
+/** Có gian hàng cần nối lại mà sàn trả không có seller đó: 409 `shop_mismatch` (#398). Gọi ngoài giao dịch, trước `attachAll`. */
+async function assertTarget(companyId: string, platform: Platform, target: ShopRow | null, connections: ShopConnection[]): Promise<void> {
+  if (target && !connections.some((c) => c.externalShopId === target.externalShopId)) {
+    throw await shopMismatch(companyId, platform, target, connections);
+  }
+}
+
+/**
+ * Nối lại gian hàng `target` mà sàn trả seller khác (đăng nhập nhầm tài khoản trên sàn, 21 §18.4, #398): bỏ token vừa nhận,
+ * không ghi gì. `actual` là gian hàng đầu sàn trả; tên đọc trong công ty đang nối nên seller chưa có, hay đang gắn công ty
+ * khác, đều là `null`. Lỗi của người dùng nên log `warn`, không ghi token hay `params`.
+ */
+async function shopMismatch(
+  companyId: string,
+  platform: Platform,
+  target: ShopRow,
+  connections: ShopConnection[],
+): Promise<AppError> {
+  const first = connections[0]!;
+  const known = await withCompany(companyId, () => findShopByExternal(platform, first.externalShopId));
+  logger.warn(
+    { companyId, shopId: target.id, expected: target.externalShopId, actual: connections.map((c) => c.externalShopId) },
+    'Nối lại gian hàng nhưng sàn trả seller khác',
   );
+  return new AppError(409, 'shop_mismatch', 'Tài khoản sàn vừa uỷ quyền không phải gian hàng đang kết nối lại', {
+    expected: { name: target.shopName, externalShopId: target.externalShopId },
+    actual: { name: known?.shopName ?? null, externalShopId: first.externalShopId },
+  });
 }
 
 /**
@@ -395,18 +445,23 @@ async function companyMismatch(expectedId: string, actualId: string): Promise<Ap
   });
 }
 
-/** Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần. */
+/**
+ * Nối gian hàng bằng token lấy trên console của sàn (#103 B2, shop thử không đi OAuth được); adapter tự làm mới nếu cần.
+ * `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn (404); token của seller khác thì 409 `shop_mismatch`.
+ */
 export async function connectByToken(
   raw: string,
   actor: Actor,
-  input: { accessToken: string; refreshToken?: string | undefined },
+  input: { accessToken: string; refreshToken?: string | undefined; shopId?: string | undefined },
 ): Promise<ShopCallbackResult> {
   const { platform, adapter } = platformOf(raw);
+  const target = input.shopId ? await reconnectTarget(actor.companyId, platform, input.shopId) : null;
   return forCompany(actor.companyId, async () => {
     const connections = await onMarketplace(async () =>
       atLeastOne(await adapter.connectWithToken({ accessToken: input.accessToken, refreshToken: input.refreshToken ?? null })),
     );
-    return attachAll(platform, actor, connections);
+    await assertTarget(actor.companyId, platform, target, connections);
+    return attachAll(platform, actor, connections, 'token', target);
   });
 }
 
@@ -418,11 +473,22 @@ function atLeastOne(connections: ShopConnection[]): ShopConnection[] {
 
 const connectedElsewhere = () => new AppError(409, 'shop_connected_elsewhere', 'Gian hàng này đã kết nối ở công ty khác');
 
+/** Cách nối của một lần ghi gian hàng, ghi vào nhật ký nối lại (#398). */
+type ConnectVia = 'oauth' | 'token';
+
 /**
  * Nối mọi gian hàng của một lần uỷ quyền, tất cả hoặc không (#200): kiểm "đã gắn công ty khác" cho từng gian hàng ngoài
  * giao dịch (role chủ bảng, RLS không che), ghi tất cả trong một `withCompany`, rồi mới chạy việc sau commit.
+ * `target` (gian hàng cần nối lại, #398) bị khoá đầu giao dịch ghi: mất giữa lúc gọi sàn và lúc ghi thì 404, bỏ token vừa
+ * nhận, không tạo gian hàng mới cho seller đó.
  */
-async function attachAll(platform: Platform, actor: Actor, connections: ShopConnection[]): Promise<ShopCallbackResult> {
+async function attachAll(
+  platform: Platform,
+  actor: Actor,
+  connections: ShopConnection[],
+  via: ConnectVia,
+  target: ShopRow | null,
+): Promise<ShopCallbackResult> {
   const unique = [...new Map(connections.map((c) => [c.externalShopId, c])).values()];
   for (const c of unique) {
     const owner = await findLiveCompanyOf(platform, c.externalShopId);
@@ -433,10 +499,11 @@ async function attachAll(platform: Platform, actor: Actor, connections: ShopConn
   let results: ShopConnectionItem[];
   try {
     results = await withCompany(actor.companyId, async () => {
+      if (target) await lockShopOr404(target.id);
       const out: ShopConnectionItem[] = [];
       for (const [i, c] of unique.entries()) {
         const { productCount, skuCount } = counts[i]!;
-        out.push({ ...(await writeShop(platform, actor, c)), remoteProductCount: productCount, remoteSkuCount: skuCount });
+        out.push({ ...(await writeShop(platform, actor, c, via)), remoteProductCount: productCount, remoteSkuCount: skuCount });
       }
       return out;
     });
@@ -523,11 +590,16 @@ async function remoteCounts(
   }
 }
 
-/** Tạo hoặc nối lại một gian hàng; gọi trong `withCompany`. */
+/**
+ * Tạo hoặc nối lại một gian hàng; gọi trong `withCompany`. Ghi đè gian hàng đã có (mọi trạng thái trước) thì ghi một dòng
+ * nhật ký `update` `channel.shops` cùng giao dịch (#398): trạng thái, tên, hai hạn token trước và sau, kèm cách nối.
+ * Không ghi token.
+ */
 async function writeShop(
   platform: Platform,
   actor: Actor,
   c: ShopConnection,
+  via: ConnectVia,
 ): Promise<ShopConnectionResult & { previousStatus: ShopStatus | null }> {
   const existing = await findShopByExternal(platform, c.externalShopId);
   if (!existing) {
@@ -554,12 +626,33 @@ async function writeShop(
     { ...tokenColumns(existing.id, c.tokens), shopName: c.shopName, status: to, disconnectedAt: null, lastError: null },
   );
   if (!row) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
+  await recordAudit({
+    companyId: actor.companyId,
+    actorId: actor.accountId,
+    action: 'update',
+    entityType: 'channel.shops',
+    entityId: existing.id,
+    // Không `operation`: Documents/21 M5 chưa có mã cho nối lại; `after.connectedVia` phân biệt với lần sửa thường.
+    label: row.shopName,
+    before: connectionAudit(existing),
+    after: { ...connectionAudit(row), connectedVia: via },
+  });
   if (action) {
     await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
   }
   // `relisted`, `jobsRun` điền sau khi commit (`attachAll`).
   const reconnect = action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
   return { shop: await shopView(row), created: false, reconnect, previousStatus: existing.status };
+}
+
+/** Phần gian hàng ghi vào nhật ký nối lại: không có token. */
+function connectionAudit(row: ShopRow) {
+  return {
+    status: row.status,
+    shopName: row.shopName,
+    accessExpiresAt: row.accessExpiresAt,
+    refreshExpiresAt: row.refreshExpiresAt,
+  };
 }
 
 /** Khoá dòng gian hàng tới hết giao dịch; id sai định dạng hoặc không thấy là 404. */
@@ -689,6 +782,12 @@ async function relistAfterReconnect(companyId: string, shopId: string): Promise<
             rejectReason: status === 'rejected' ? (r.rejectReason ?? NO_REASON) : null,
             platformStock: r.quantity,
             replacesListingId: row.id,
+            contentSource: row.contentSource,
+            // Mốc tên trên sàn giữ của dòng cũ (#396): người bán đổi tên trong lúc ngắt thì cờ vẫn bật ở lượt đọc sau.
+            remoteTitleAtMatch: row.remoteTitleAtMatch,
+            remoteTitleEnAtMatch: row.remoteTitleEnAtMatch,
+            remoteTitleMatchedAt: row.remoteTitleMatchedAt,
+            remoteTitleChangedAt: row.remoteTitleChangedAt,
           });
           await recordTransition({ entityType: 'listings', entityId: created.id, from: null, to: status, action: 'relist', actorId: null, reason: 'Kết nối lại gian hàng' });
         });

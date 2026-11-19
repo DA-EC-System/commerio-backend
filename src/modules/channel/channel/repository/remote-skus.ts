@@ -1,5 +1,5 @@
 // Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, bảng `remote_skus`). Chạy trong `withCompany` của bên gọi.
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import { listings, remoteSkus, shops } from './schema.ts';
@@ -11,6 +11,7 @@ export interface RemoteSkuInput {
   externalSkuId: string;
   sellerSku: string;
   title: string;
+  titleEn?: string | null;
   state: string;
   quantity: number;
   /** Tiêu đề thiếu nhãn biến thể: dòng đã có thì giữ tiêu đề cũ (review #309 vòng 2 N3). */
@@ -38,6 +39,7 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
       externalSkuId: s.externalSkuId,
       sellerSku: s.sellerSku,
       title: s.title,
+      titleEn: s.titleEn ?? null,
       state: s.state as RemoteSkuRow['state'],
       // Sàn không có tồn âm; số lạ không làm hỏng cả bản sao.
       quantity: Math.max(0, Math.trunc(s.quantity)),
@@ -56,6 +58,7 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
             externalProductId: sql`excluded.external_product_id`,
             sellerSku: sql`excluded.seller_sku`,
             ...(!keepTitle && { title: sql`excluded.title` }),
+            titleEn: sql`excluded.title_en`,
             state: sql`excluded.state`,
             quantity: sql`excluded.quantity`,
             seenAt: sql`excluded.seen_at`,
@@ -63,6 +66,39 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
         });
     }
   }
+  await refreshRemoteTitleFlags(shopId, seenAt);
+}
+
+/**
+ * Cờ "Tên trên sàn đã đổi" (#396) sau một lần ghi bản sao. Chỉ xét SKU vừa ghi ở lượt này (`seen_at = seenAt`: dòng không
+ * có trong lượt đọc theo giờ sửa còn tên cũ) của listing chưa gỡ, không đang đẩy (tăng `version` làm việc đẩy bỏ kết quả),
+ * có mốc tên. Hai bước:
+ * 1. Mốc chưa có giờ (`matched_at` null: mốc lấy từ bản sao, dòng bản sao có thể chưa có `title_en`): lấy tên tiếng Anh vừa
+ *    đọc làm mốc, giờ mốc = lúc lượt đọc bắt đầu. Không đổi thứ người dùng thấy nên không tăng `version`.
+ * 2. Bản đọc từ giờ mốc trở đi (lượt đọc bắt đầu trước khi app đẩy xong còn tên cũ): (tên, tên tiếng Anh) khác mốc mà chưa
+ *    có cờ thì bật (`changed_at` = bây giờ), giống mốc mà đang có cờ thì tắt; chỉ dòng đổi trạng thái cờ, tăng `version` như
+ *    `outside_change`. Đổi tiếp khi cờ đang bật thì giữ lúc phát hiện đầu.
+ */
+async function refreshRemoteTitleFlags(shopId: string, seenAt: Date): Promise<void> {
+  const fresh = sql`r.shop_id = l.shop_id and r.external_sku_id = l.external_sku_id and r.seen_at = ${seenAt}
+    and l.shop_id = ${shopId} and l.status not in ('delisted', 'pushing') and l.remote_title_at_match is not null`;
+  await getDb().execute(sql`
+    update ${listings} l set remote_title_en_at_match = r.title_en, remote_title_matched_at = r.seen_at
+      from ${remoteSkus} r where ${fresh} and l.remote_title_matched_at is null`);
+  const differs = sql`((r.title, r.title_en) is distinct from (l.remote_title_at_match, l.remote_title_en_at_match))`;
+  await getDb().execute(sql`
+    update ${listings} l set remote_title_changed_at = case when ${differs} then now() end, version = l.version + 1, updated_at = now()
+      from ${remoteSkus} r where ${fresh} and r.seen_at >= l.remote_title_matched_at
+        and ${differs} <> (l.remote_title_changed_at is not null)`);
+}
+
+/** Dòng bản sao của các SKU sàn (cờ tên trên `GET /listings`, xác nhận tên). */
+export async function remoteSkuRowsOf(shopId: string, externalSkuIds: readonly string[]): Promise<RemoteSkuRow[]> {
+  if (!externalSkuIds.length) return [];
+  return getDb()
+    .select()
+    .from(remoteSkus)
+    .where(and(eq(remoteSkus.shopId, shopId), inArray(remoteSkus.externalSkuId, [...externalSkuIds])));
 }
 
 /** Số dòng của bản sao đã thấy từ `since` (lần đọc trọn trước, hoặc lượt đọc theo giờ sửa sau đó). */
@@ -130,6 +166,15 @@ export async function clearRefreshRequested(shopId: string): Promise<void> {
 
 export async function listRemoteSkuRows(shopId: string): Promise<RemoteSkuRow[]> {
   return getDb().select().from(remoteSkus).where(eq(remoteSkus.shopId, shopId)).orderBy(asc(remoteSkus.title), asc(remoteSkus.externalSkuId));
+}
+
+/** Số SKU của một sản phẩm sàn trong bản sao (#399: sản phẩm nhiều SKU thì ghi nội dung đè cả sản phẩm). */
+export async function countRemoteSkusOfProduct(shopId: string, externalProductId: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ n: count() })
+    .from(remoteSkus)
+    .where(and(eq(remoteSkus.shopId, shopId), eq(remoteSkus.externalProductId, externalProductId)));
+  return row?.n ?? 0;
 }
 
 export async function findRemoteSkuRow(shopId: string, externalSkuId: string): Promise<RemoteSkuRow | undefined> {
