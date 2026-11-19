@@ -665,3 +665,20 @@ describe('món mang trạng thái app chưa biết (#358 Việc 2)', () => {
     ]);
   });
 });
+
+describe('đơn xuất từ kho sàn app không quản (#430)', () => {
+  it('adapter bỏ hết món (mọi món ở kho khác): không tạo đơn, không lưu dữ liệu gốc; đơn khác cùng trang vẫn nhận', async () => {
+    const other = remoteOrder('W1', sku, 'pending', at('2026-11-06T01:00:00Z'));
+    other.lines = [];
+    const own = remoteOrder('W2', sku, 'pending', at('2026-11-06T02:00:00Z'));
+    seed(other, own);
+    expect((await pull()).status).toBe(200);
+    const { rows } = await testPool().query(
+      `select external_order_id as id from "order".orders where shop_id = $1 and external_order_id in ('W1', 'W2')
+        union all select 'raw:' || external_order_id from channel.raw_orders where shop_id = $1 and external_order_id in ('W1', 'W2')
+        order by 1`,
+      [shopId],
+    );
+    expect(rows.map((r) => r.id).sort()).toEqual(['W2', 'raw:W2'].sort());
+  });
+});

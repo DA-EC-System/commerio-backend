@@ -116,7 +116,7 @@ async function listing(variantId: string) {
 async function resetListing(v: ListingVariant, platformStock: number) {
   await testPool().query(
     `update channel.listings set stock_sync = 'synced', price_sync = 'synced', platform_stock = $3, listed_price = 99000,
-       stock_sync_error = null, price_sync_error = null where shop_id = $1 and variant_id = $2`,
+       stock_sync_error = null, price_sync_error = null, last_pushed_at = null where shop_id = $1 and variant_id = $2`,
     [shopId, v.id, platformStock],
   );
 }
@@ -165,6 +165,21 @@ describe('đối chiếu tồn 15 phút (25 §6.5)', () => {
     // Giá đã synced và bằng giá chuẩn: không gửi kèm giá (#223 review 3).
     expect(sentFor(a.sku)).toEqual({ externalProductId: `item-${a.sku}`, externalSkuId: `sku-${a.sku}`, quantity: 5 });
     expect(sentFor(b.sku)).toBeUndefined();
+    expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 5 });
+  });
+
+  it('#430: đã đẩy giảm mà lượt sau sàn vẫn cao hơn (sàn bán tổng hai kho) → Lệch tồn, vẫn đẩy lại; khớp thì hết cờ', async () => {
+    remote.set(a.sku, { quantity: 9 });
+    await sync();
+    expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 5 });
+
+    updatePriceQuantity.mockClear();
+    await sync();
+    expect(sentFor(a.sku)).toMatchObject({ quantity: 5 });
+    expect(await listing(a.id)).toMatchObject({ stock_sync: 'error', platform_stock: 5 });
+
+    remote.set(a.sku, { quantity: 5 });
+    await sync();
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', platform_stock: 5 });
   });
 

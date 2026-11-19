@@ -833,6 +833,24 @@ export const CascadeLevelSchema = z
   .meta({ id: 'CascadeLevel' });
 
 // Gợi ý category của sàn theo sản phẩm (#400 lát 9, Documents/21 §18.5).
+export const ShopWarehousesView = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          code: z.string(),
+          name: z.string(),
+          address: z.string().nullable(),
+          kind: z.enum(['sales', 'return']).meta({ description: 'Kho bán hàng hay kho nhận hàng trả' }),
+          isDefault: z.boolean().meta({ description: 'Sàn đánh dấu kho mặc định' }),
+          managed: z.boolean().meta({ description: 'Kho app quản: app chỉ đọc, đẩy tồn và nhận món của kho này (#430)' }),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ShopWarehouses' });
+
 export const CategorySuggestionsQuery = z.object({
   productId: z.string('Chọn sản phẩm').trim().min(1, 'Chọn sản phẩm').max(60),
 });
