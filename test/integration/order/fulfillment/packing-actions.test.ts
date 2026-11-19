@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { Package } from '#src/modules/order/fulfillment/api/schemas.ts';
+import { Package, PickList } from '#src/modules/order/fulfillment/api/schemas.ts';
 import type { MarketplacePackages } from '#src/modules/order/fulfillment/service/packages.ts';
 import { Order } from '#src/modules/order/sales/api/schemas.ts';
 import { currentCompanyId } from '#src/shared/db/client.ts';
@@ -134,6 +134,101 @@ describe('đóng gói kiện', () => {
     const res = await post(packageId, 'pack', { version: 1, lines: [] }, { pack });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(pack).toHaveBeenCalledWith(companyId, shopId, expect.objectContaining({ externalLineIds: [expect.any(String)] }));
+  });
+
+  describe('dòng không quản tồn và SKU của biến thể app (TRA-B01, KH-B06)', () => {
+    /** Kiện một dòng đã ghép (SKU, tên sàn khác app) và một dòng "không quản tồn" (SKU sàn riêng). */
+    async function seedMixed() {
+      const seeded = await seed('reserved', {
+        lines: [{ variantId, quantity: 2, reserved: true }, { variantId: null, quantity: 1 }],
+      });
+      const [mappedLine, untrackedLine] = seeded.lineIds as [string, string];
+      await testPool().query('update "order".package_lines set stock_untracked = true where id = $1', [untrackedLine]);
+      await testPool().query(
+        `update "order".order_lines ol set sku = 'SAN-AO-DO', external_sku = 'SAN-AO-DO', product_name = 'Áo đỏ (tên trên sàn)'
+         from "order".package_lines pl where pl.id = $1 and ol.id = pl.order_line_id`,
+        [mappedLine],
+      );
+      await testPool().query(
+        `update "order".order_lines ol set sku = null, external_sku = 'SAN-QUA-TANG', product_name = 'Quà tặng kèm'
+         from "order".package_lines pl where pl.id = $1 and ol.id = pl.order_line_id`,
+        [untrackedLine],
+      );
+      const { rows: [app] } = await testPool().query<{ sku: string; name: string }>(
+        `select v.sku, p.name from product.product_variants v join product.products p on p.id = v.product_id where v.id = $1`,
+        [variantId],
+      );
+      return { ...seeded, mappedLine, untrackedLine, app: app! };
+    }
+
+    it('chưa cho dòng không quản tồn vào hộp thì 422 theo id dòng, đủ thì đóng gói', async () => {
+      const { packageId, untrackedLine } = await seedMixed();
+      const pack = vi.fn(async () => packed);
+      const missing = await post(packageId, 'pack', packBody(), { pack });
+      expectProblem(missing, 422, 'scan_mismatch');
+      expect(missing.body.errors).toEqual({ [`untrackedLines.${untrackedLine}`]: expect.any(String) });
+      expect(pack).not.toHaveBeenCalled();
+
+      const res = await post(packageId, 'pack', { ...packBody(), untrackedLines: [{ lineId: untrackedLine.toUpperCase(), quantity: 1 }] }, { pack });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.status).toBe('packed');
+    });
+
+    it('lines rỗng với kiện có dòng không quản tồn không còn trả 200', async () => {
+      const { packageId } = await seed('reserved', { lines: [{ variantId: null, quantity: 1 }], fallbackVariantId: variantId });
+      const { rows: [line] } = await testPool().query<{ id: string }>(
+        'update "order".package_lines set stock_untracked = true where package_id = $1 returning id',
+        [packageId],
+      );
+      const pack = vi.fn(async () => packed);
+      expectProblem(await post(packageId, 'pack', { version: 1, lines: [] }, { pack }), 422, 'scan_mismatch');
+      expect(pack).not.toHaveBeenCalled();
+      const res = await post(packageId, 'pack', { version: 1, lines: [], untrackedLines: [{ lineId: line!.id, quantity: 1 }] }, { pack });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+    });
+
+    it('id dòng lạ hay dòng đã ghép trong untrackedLines thì 422', async () => {
+      const { packageId, untrackedLine, mappedLine } = await seedMixed();
+      const res = await post(packageId, 'pack', {
+        ...packBody(), untrackedLines: [{ lineId: untrackedLine, quantity: 1 }, { lineId: mappedLine, quantity: 2 }],
+      });
+      expectProblem(res, 422, 'scan_mismatch');
+      expect(Object.keys(res.body.errors)).toEqual([`untrackedLines.${mappedLine}`]);
+      const dup = await post(packageId, 'pack', { ...packBody(), untrackedLines: [{ lineId: untrackedLine, quantity: 1 }, { lineId: untrackedLine, quantity: 1 }] });
+      expectProblem(dup, 422, 'validation_failed');
+    });
+
+    it('chi tiết kiện, chi tiết đơn, danh sách nhặt hiện SKU, tên biến thể app cho dòng đã ghép, SKU sàn cho dòng không quản tồn', async () => {
+      const { packageId, orderId, mappedLine, untrackedLine, app } = await seedMixed();
+      const expected = [
+        {
+          id: mappedLine, variantId, untracked: false, sku: app.sku, productName: app.name, attributesLabel: '',
+          externalSku: 'SAN-AO-DO', quantity: 2, pendingDropQty: 0,
+        },
+        {
+          id: untrackedLine, variantId: null, untracked: true, sku: 'SAN-QUA-TANG', productName: 'Quà tặng kèm', attributesLabel: '',
+          externalSku: 'SAN-QUA-TANG', quantity: 1, pendingDropQty: 0,
+        },
+      ];
+      const detail = await packingApp().get(`/api/v1/fulfillment/packages/${packageId}`).set('Authorization', `Bearer ${warehouse}`);
+      expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+      expect(Package.parse(detail.body).lines).toEqual(expect.arrayContaining(expected));
+      expect(detail.body.lines).toHaveLength(2);
+
+      const order = await packingApp().get(`/api/v1/sales/orders/${orderId}`).set('Authorization', `Bearer ${sale}`);
+      expect(order.status, JSON.stringify(order.body)).toBe(200);
+      const parsed = Order.parse(order.body);
+      expect(parsed.packages.find((p) => p.id === packageId)?.lines).toEqual(expect.arrayContaining(expected));
+      // Dòng đơn giữ SKU, tên sàn (§19.1); chỉ dòng kiện đổi nghĩa.
+      expect(parsed.lines).toEqual(expect.arrayContaining([expect.objectContaining({ variantId, sku: 'SAN-AO-DO', productName: 'Áo đỏ (tên trên sàn)' })]));
+
+      const pick = await packingApp().get(`/api/v1/fulfillment/pick-list?ids=${packageId}`).set('Authorization', `Bearer ${warehouse}`);
+      expect(pick.status, JSON.stringify(pick.body)).toBe(200);
+      expect(PickList.parse(pick.body).items).toEqual(expect.arrayContaining([
+        { variantId, untracked: false, sku: app.sku, productName: app.name, attributesLabel: '', quantity: 2, packageCount: 1 },
+        { variantId: null, untracked: true, sku: 'SAN-QUA-TANG', productName: 'Quà tặng kèm', attributesLabel: '', quantity: 1, packageCount: 1 },
+      ]));
+    });
   });
 
   it('đóng gói nhóm bị chặn bởi đơn chưa trả, đi tiếp khi kiện kia đã đóng', async () => {
