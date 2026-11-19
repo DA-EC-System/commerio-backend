@@ -23,6 +23,7 @@ import { takeNextNumber } from '../repository/orders.ts';
 import { findReturn, findReturnLines, findReturnsByCode, type ReturnRow, updateReturnAt } from '../repository/returns.ts';
 import type { Actor } from './cancel.ts';
 import type { SalesContext } from './orders.ts';
+import { confirmFailedNote } from './return-confirm.ts';
 import { returnStockPort } from './return-stock-port.ts';
 import { applyReturnStep, canViewCost, invalidField, returnView } from './returns.ts';
 
@@ -91,14 +92,11 @@ async function confirmOnMarketplace(ctx: SalesContext, actor: Actor, row: Return
     await ctx.marketplaceReturns.confirmReceived(actor.companyId, row.shopId, row.externalReturnId, externalLineIds);
   } catch (err) {
     logger.warn({ err, returnRequestId: row.id }, 'báo sàn đã nhận hàng trả lỗi');
-    const message = (err instanceof AppError ? err.message : 'lỗi không rõ').replace(/[.\s]+$/, '');
+    const message = err instanceof AppError ? err.message : 'lỗi không rõ';
     await withCompany(actor.companyId, async () => {
       const fresh = (await findReturn(row.id, { lock: true }))!;
-      // App chưa có nút thử lại báo sàn: câu cờ nói việc người dùng phải tự làm để khách không kẹt hoàn tiền (review #413).
-      await updateReturnAt(fresh.id, fresh.version, fresh.status, {
-        needsAttention: true,
-        attentionNote: `Chưa báo được sàn đã nhận hàng: ${message}. Xác nhận đã nhận hàng trên Seller Center để sàn hoàn tiền cho khách.`,
-      });
+      // Channel thử lại sau mỗi lượt kéo yêu cầu trả, gỡ cờ khi sàn nhận (`return-confirm.ts`).
+      await updateReturnAt(fresh.id, fresh.version, fresh.status, { needsAttention: true, attentionNote: confirmFailedNote(message) });
     });
   }
 }
