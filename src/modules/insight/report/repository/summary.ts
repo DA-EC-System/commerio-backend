@@ -34,3 +34,12 @@ export async function readDays(
       ),
     );
 }
+
+/** Xoá số liệu theo ngày của gian hàng bị xoá (#398); trả số dòng đã xoá. */
+export async function deleteShopSummaries(shopId: string): Promise<number> {
+  const rows = await getDb()
+    .delete(dailyChannelSummary)
+    .where(eq(dailyChannelSummary.shopId, shopId))
+    .returning({ id: dailyChannelSummary.id });
+  return rows.length;
+}

@@ -667,9 +667,11 @@ export const shopReauthMails = channelSchema.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
+    // Xoá gian hàng đã ngắt (#398) xoá luôn thư: `commerio_app` không có DELETE trên bảng này, hành động khoá ngoại chạy
+    // bằng quyền chủ bảng.
     shopId: uuid('shop_id')
       .notNull()
-      .references(() => shops.id),
+      .references(() => shops.id, { onDelete: 'cascade' }),
     stage: text('stage').$type<'expiring_3d' | 'expiring_1d' | 'lost'>().notNull(),
     deadline: timestamp('deadline', { withTimezone: true }).notNull(),
     seq: integer('seq').notNull().default(0),

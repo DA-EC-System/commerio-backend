@@ -3,7 +3,7 @@ import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { NO_OUTSIDE_CHANGE, NO_PENDING, NO_REVISION } from '../domain/listing.ts';
 import type { ShopStatus } from '../domain/shop.ts';
-import { listings, shops } from './schema.ts';
+import { listings, priceCalculations, rawOrders, remoteSkus, shops } from './schema.ts';
 
 export type ShopRow = typeof shops.$inferSelect;
 type Platform = ShopRow['platform'];
@@ -314,4 +314,22 @@ export async function awaitingStocktakeShops(ids: readonly string[], opts: { loc
     .orderBy(asc(shops.id));
   const rows = opts.lock ? await query.for('share') : await query;
   return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Xoá dữ liệu channel của gian hàng bị xoá (#398), con trước cha: listing (trỏ lần tính giá, trỏ nhau qua
+ * `replaces_listing_id`, cùng gian hàng nên một câu) → lần tính giá → đơn gốc → SKU sàn. Trả số dòng mỗi bảng.
+ */
+export async function purgeShopRows(shopId: string) {
+  const db = getDb();
+  const l = await db.delete(listings).where(eq(listings.shopId, shopId)).returning({ id: listings.id });
+  const p = await db.delete(priceCalculations).where(eq(priceCalculations.shopId, shopId)).returning({ id: priceCalculations.id });
+  const r = await db.delete(rawOrders).where(eq(rawOrders.shopId, shopId)).returning({ id: rawOrders.id });
+  const s = await db.delete(remoteSkus).where(eq(remoteSkus.shopId, shopId)).returning({ id: remoteSkus.id });
+  return { listings: l.length, priceCalculations: p.length, rawOrders: r.length, remoteSkus: s.length };
+}
+
+/** Xoá dòng gian hàng; thư báo uỷ quyền đi theo khoá ngoại `ON DELETE CASCADE` (#398). */
+export async function deleteShopRow(shopId: string): Promise<void> {
+  await getDb().delete(shops).where(eq(shops.id, shopId));
 }
