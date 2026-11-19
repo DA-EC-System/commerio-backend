@@ -169,7 +169,8 @@ function shownPriceSync(l: ListingRow, price: number | null): ListingRow['priceS
 /** Mọi biến thể đang bán kèm giá chuẩn và listing trên gian hàng này. Gọi trong `withCompany`. */
 export async function listListings(port: ProductPort, shopId: string): Promise<{ items: ListingRowView[] }> {
   const shop = await ownShop(shopId);
-  const variants = (await port.variants()).filter((v) => !v.archived);
+  const catalog = await port.variants();
+  const variants = catalog.filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
   // Chỉ ảnh đầu (ảnh đại diện), một lần cho mọi sản phẩm.
   const thumbnails = await port.productImageUrls([...new Set(variants.map((v) => v.productId))], 1);
@@ -179,7 +180,9 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
   // Tên hiện tại trong bản sao, một câu, chỉ cho listing đang có cờ.
   // Trạng thái spec theo sản phẩm (#400 §18.5), theo lô: một câu spec, mỗi category một lần đọc.
-  const specs = await specChecks(shop, platformOf(shop.platform).adapter, variants);
+  // Mọi biến thể (kể cả lưu trữ) của sản phẩm đang hiện, cùng tập với request đẩy và `PUT` spec (review BE2 P2-6).
+  const shown = new Set(variants.map((v) => v.productId));
+  const specs = await specChecks(shop, platformOf(shop.platform).adapter, catalog.filter((v) => shown.has(v.productId)));
   const titles = new Map(
     (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
   );

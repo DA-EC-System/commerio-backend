@@ -128,6 +128,20 @@ describe('spec sàn của sản phẩm', () => {
     expect((await get(ceo.token, 'khong-phai-uuid')).status).toBe(404);
   });
 
+  it('review BE2 P2-5: GET chép lười như GET listing: danh mục đã ghép thì trả bản chép version 0, PUT theo version đó được', async () => {
+    const v = await createVariant(ceo.companyId);
+    await testPool().query(
+      `insert into channel.category_maps (company_id, platform, category_id, external_category_id, attributes) values ($1, 'lazada', $2, $3, '{"material":"Cotton"}')`,
+      [ceo.companyId, v.categoryId, leaf],
+    );
+    const res = await get(ceo.token, v.productId);
+    expect(res.status).toBe(200);
+    expect(res.body.spec).toMatchObject({ externalCategoryId: leaf, attributes: { material: 'Cotton' }, version: 0, source: 'push' });
+    const saved = await put({ externalCategoryId: leaf, attributes: { material: '11' }, version: 0 }, ceo.token, v.productId);
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.spec.version).toBe(1);
+  });
+
   it('AC-S1: Sale đọc được, lưu bị 403 trước 422; sàn không có adapter 422', async () => {
     const sale = await addMember(ceo.companyId, 'sale');
     const token = sale.token;

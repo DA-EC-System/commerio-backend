@@ -184,17 +184,24 @@ async function view(companyId: string, adapter: MarketplaceAdapter, row: Product
   return { spec: toSpec(row, category && category.syncedAt ? category.path : null), missing };
 }
 
-async function productOf(ctx: ModuleContext, productId: string): Promise<SpecProduct> {
+/** Mọi biến thể của sản phẩm, kể cả biến thể lưu trữ (cùng tập với bảng listing và request đẩy, review BE2 P2-6). */
+async function variantsOf(ctx: ModuleContext, productId: string): Promise<ListingVariant[]> {
   const variants = await productPort(ctx).variants(undefined, { productIds: [productId] });
   if (!variants.length) throw notFound();
-  return specProductOf(variants);
+  return variants;
 }
 
+async function productOf(ctx: ModuleContext, productId: string): Promise<SpecProduct> {
+  return specProductOf(await variantsOf(ctx, productId));
+}
+
+/** Đọc spec; chưa có mà danh mục Commerio đã ghép thì chép lười như GET listing, request đẩy (A18, review BE2 P2-5). */
 export async function getProductSpec(ctx: ModuleContext, companyId: string, productId: string, raw: string): Promise<SpecView> {
   const { platform, adapter } = platformOf(raw);
   return withCompany(companyId, async () => {
-    const product = await productOf(ctx, productId);
-    return view(companyId, adapter, await findSpec(productId, platform), product);
+    const variants = await variantsOf(ctx, productId);
+    const row = (await specsWithCopy(platform, variants)).get(productId);
+    return view(companyId, adapter, row, specProductOf(variants));
   });
 }
 

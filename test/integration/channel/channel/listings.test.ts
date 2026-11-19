@@ -393,6 +393,25 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     }
   });
 
+  it('review BE2 P2-6: specStatus và request đẩy xét cùng tập biến thể (cả biến thể lưu trữ): trục chỉ ở biến thể lưu trữ chưa ánh xạ', async () => {
+    const live = ownProduct('CMR-AXIS', CATALOG);
+    const axisId = randomUUID();
+    all.push(
+      variant(`CMR-AXIS-OLD-${randomUUID().slice(0, 6)}`, {
+        productId: live.productId,
+        archived: true,
+        attributes: [{ attributeId: axisId, attributeName: 'Màu', valueId: randomUUID(), value: 'Đỏ' }],
+      }),
+    );
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, version) values ($1, $2, 'lazada', '14275', '{"brand":"No Brand"}', 'push', 1)`,
+      [company.companyId, live.productId],
+    );
+    const items = ListingList.parse((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`))).body).items;
+    expect(items.find((i) => i.variantId === live.id)?.specStatus).toBe('incomplete');
+    expect((await results([live.id]))[0]).toMatchObject({ code: 'spec_incomplete' });
+  });
+
   it('GET listings: thumbnailUrl là ảnh đại diện catalog, null khi sản phẩm không có ảnh (#303)', async () => {
     const bare = variant(`CMR-BARE-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
     all.push(bare);
