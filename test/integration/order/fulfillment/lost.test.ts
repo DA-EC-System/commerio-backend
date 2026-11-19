@@ -15,6 +15,7 @@ import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import {
+  CANCELLING_SQL,
   channelShop,
   outboxOf,
   packageDocuments,
@@ -329,7 +330,7 @@ describe('POST /fulfillment/packages/:id/report-lost, confirm-lost (spec #238 §
     const p = await seedPackage(company.companyId, {
       status: 'packed',
       needsOpen: true,
-      cancelling: true,
+      cancelPending: true,
       lines: [{ variantId, quantity: 2, reserved: true }],
     });
     expect((await report(p.packageId)).status).toBe(200);
@@ -345,7 +346,7 @@ describe('POST /fulfillment/packages/:id/report-lost, confirm-lost (spec #238 §
     // mọi kiện đã dừng thì lượt tự hoàn tất đưa đơn sang `completed` và gỡ Đang huỷ, không cần lượt kéo đơn ở giữa.
     const order = async () =>
       (await testPool().query<{ status: string; cancelling: boolean; outcome: string | null }>(
-        'select status, cancelling, outcome from "order".orders where id = $1',
+        `select status, ${CANCELLING_SQL} as cancelling, outcome from "order".orders where id = $1`,
         [p.orderId],
       )).rows[0]!;
     expect(await order()).toMatchObject({ status: 'processing', cancelling: true });

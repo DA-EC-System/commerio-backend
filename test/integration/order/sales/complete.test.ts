@@ -267,8 +267,8 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect(await orderOf(id.ac16!)).toMatchObject({ status: 'completed', outcome: 'none' });
   });
 
-  it('AC11b: đơn không cờ Đang huỷ, mọi kiện huỷ → giữ hành vi hiện tại (completed, none; D16, PR 3 đổi)', async () => {
-    expect(await orderOf(id.ac11b!)).toMatchObject({ status: 'completed', outcome: 'none' });
+  it('AC11b: đơn không cờ Đang huỷ, mọi dòng và mọi kiện đã huỷ → cancelled, không hoàn tất (25 §8.2 "Mọi kiện đã cancelled thì đơn → cancelled")', async () => {
+    expect(await orderOf(id.ac11b!)).toMatchObject({ status: 'cancelled' });
   });
 
   it('AC11: đơn ở nhiều gian hàng cùng công ty → một lượt đọc chính sách một lần cho công ty', () => {

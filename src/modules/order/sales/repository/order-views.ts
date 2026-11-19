@@ -2,7 +2,7 @@
 import { and, count, desc, eq, exists, gte, ilike, inArray, lt, or, type SQL, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { OPEN_RETURN_STATUSES } from '../domain/return.ts';
-import { unmappedLine } from './orders.ts';
+import { cancellingSql, unmappedLine } from './orders.ts';
 import { customers, orderLines, orders, returnRequests } from './schema.ts';
 
 const containsPattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -18,7 +18,7 @@ export interface OrderFilter {
   to?: Date | undefined;
   /** Chỉ đơn chưa dừng (`unpaid`, `processing`). */
   openOnly?: boolean | undefined;
-  /** Cờ lọc được bằng SQL: cờ lưu, `unmapped_sku`, `return_requested`. */
+  /** Cờ lọc được bằng SQL: cờ lưu, `cancelling`, `unmapped_sku`, `return_requested`. */
   flag?: SqlFlag | undefined;
 }
 
@@ -43,7 +43,7 @@ function flagCondition(flag: SqlFlag): SQL {
     case 'cancel_requested':
       return eq(orders.cancelRequested, true);
     case 'cancelling':
-      return eq(orders.cancelling, true);
+      return cancellingSql;
     case 'platform_cancelled':
       return eq(orders.platformCancelled, true);
     case 'shop_disconnected':
@@ -68,7 +68,8 @@ function flagCondition(flag: SqlFlag): SQL {
   }
 }
 
-export type OrderViewRow = typeof orders.$inferSelect & { customer: { id: string; name: string; phone: string } | null };
+/** `cancelling`: cờ Đang huỷ suy ra (`cancellingSql`), không phải cột. */
+export type OrderViewRow = typeof orders.$inferSelect & { customer: { id: string; name: string; phone: string } | null; cancelling: boolean };
 
 // Đơn sàn không có `payment_method` (sàn thu hộ): COD theo `is_cod`, còn lại là trả trước.
 const paymentCondition = (m: 'prepaid' | 'cod') =>
@@ -94,7 +95,7 @@ function where(f: OrderFilter): SQL | undefined {
 
 async function select(condition: SQL | undefined, limit = 1, offset = 0): Promise<OrderViewRow[]> {
   const rows = await getDb()
-    .select({ order: orders, customer: { id: customers.id, name: customers.name, phone: customers.phone } })
+    .select({ order: orders, cancelling: cancellingSql, customer: { id: customers.id, name: customers.name, phone: customers.phone } })
     .from(orders)
     .leftJoin(customers, eq(customers.id, orders.customerId))
     .where(condition)
@@ -103,6 +104,7 @@ async function select(condition: SQL | undefined, limit = 1, offset = 0): Promis
     .offset(offset);
   return rows.map((r) => ({
     ...r.order,
+    cancelling: r.cancelling === true,
     customer: r.customer?.id ? { id: r.customer.id, name: r.customer.name ?? '', phone: r.customer.phone ?? '' } : null,
   }));
 }

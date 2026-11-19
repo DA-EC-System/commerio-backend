@@ -3,7 +3,7 @@ import { EVENT_SCHEMAS } from '#src/modules/core/platform/domain/events.ts';
 import type { PackageEvent } from '#src/modules/order/fulfillment/index.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { outboxOf, packageDocuments, packageRow, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
+import { CANCELLING_SQL, outboxOf, packageDocuments, packageRow, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
 import { ingest, remote, setup, withCancel, withEvents, withShipping, withStatus } from './platform-fixtures.ts';
 
 const DELIVERED = EVENT_SCHEMAS['fulfillment.package_delivered'];
@@ -179,7 +179,7 @@ describe('đồng bộ sàn: giao xong, giao thất bại (spec 199c §5.4)', ()
 const orderFlags = async (orderId: string) =>
   (
     await testPool().query<{ status: string; platform_cancelled: boolean; cancelling: boolean }>(
-      'select status, platform_cancelled, cancelling from "order".orders where id = $1',
+      `select status, platform_cancelled, ${CANCELLING_SQL} as cancelling from "order".orders where id = $1`,
       [orderId],
     )
   ).rows[0]!;

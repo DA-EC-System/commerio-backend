@@ -1,6 +1,6 @@
 // Thao tác đơn sàn như trên Seller Center (Documents/21 §19.3, #105 PR 2): lý do huỷ, người bán huỷ, trả lời khách xin
-// huỷ, số hoá đơn. Gọi sàn ngoài giao dịch rồi mới ghi theo `version`. Huỷ trên sàn chỉ gắn cờ `cancelling`; đơn sang
-// `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt phương án a, 29/10/2026).
+// huỷ, số hoá đơn. Gọi sàn ngoài giao dịch rồi mới ghi theo `version`. Huỷ trên sàn chỉ ghi `cancel_pending` (API: cờ
+// `cancelling`); đơn sang `cancelled` khi lần kéo sau thấy sàn báo huỷ (Thành chốt phương án a, 29/10/2026).
 import { assertTransition, publishEvent, recordAudit } from '../../../core/index.ts';
 import { isSealed } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
@@ -28,11 +28,20 @@ async function load(ctx: SalesContext, actor: Actor, id: string) {
   return withCompany(actor.companyId, async () => {
     const order = await getOrder(ctx, id);
     const [row, lines] = await Promise.all([findOrder(order.id), findOrderLines([order.id])]);
+    // Món chưa huỷ hết: phần Sale còn huỷ được. Gửi cả món sàn đã huỷ thì TikTok báo không hợp lệ (`cancelEligibility`).
+    const open = lines.filter((l) => l.cancelledQty < l.quantity);
+    // Món khách đang xin huỷ (sàn chép người, lý do lên món); món đã huỷ trước giữ lý do cũ nên không tính.
+    const requested = open.filter((l) => l.cancelInitiator === 'buyer');
     return {
       order,
       shopId: row!.shopId,
       externalOrderId: row!.externalOrderId,
-      lineIds: lines.flatMap((l) => (l.externalLineId ? [l.externalLineId] : [])),
+      lineIds: open.flatMap((l) => (l.externalLineId ? [l.externalLineId] : [])),
+      // Lý do khách ghi khi xin huỷ, cho lý do huỷ cả đơn khi Sale đồng ý (DH-B06).
+      buyerReason: requested.find((l) => l.cancelReason)?.cancelReason ?? null,
+      // Khách xin huỷ chỉ một phần món (Lazada huỷ theo món): đồng ý là huỷ dòng (25 §8.3), không phải huỷ cả đơn. Sàn
+      // không ghi món nào thì coi như cả đơn (TikTok VN chỉ huỷ cả đơn).
+      partialRequest: requested.length > 0 && requested.length < open.length,
     };
   });
 }
@@ -84,11 +93,17 @@ function marketplaceRef(l: Awaited<ReturnType<typeof load>>) {
   return { shopId: l.shopId, externalOrderId: l.externalOrderId };
 }
 
+/**
+ * Đơn Đang huỷ (cờ suy ra: lệnh huỷ cả đơn chờ sàn, hay sàn đã huỷ cả đơn mà còn kiện chờ mở) không gửi huỷ lần nữa.
+ * Huỷ một phần món không bật cờ này nên Sale vẫn huỷ được phần còn lại.
+ */
+const cancelling = (order: OrderView) => order.flags.includes('cancelling');
+
 export async function cancelReasons(ctx: SalesContext, actor: Actor, id: string) {
   const loaded = await load(ctx, actor, id);
   const { shopId, externalOrderId } = marketplaceRef(loaded);
   const { order, lineIds } = loaded;
-  if ((order.status !== 'unpaid' && order.status !== 'processing') || order.flags.includes('cancelling')) throw invalid(order);
+  if ((order.status !== 'unpaid' && order.status !== 'processing') || cancelling(order)) throw invalid(order);
   return { items: await marketplace(ctx).cancelReasons(actor.companyId, shopId, externalOrderId, lineIds) };
 }
 
@@ -96,7 +111,7 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
   const loaded = await load(ctx, actor, id);
   const { order, lineIds } = loaded;
   checkVersion(order, input.version);
-  if (order.flags.includes('cancelling')) throw invalid(order);
+  if (cancelling(order)) throw invalid(order);
   const packages = order.packages.map((p) => p.status);
   assertTransition(orderMachine, order.status, 'cancel_on_platform', {
     actor,
@@ -111,7 +126,15 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
   }
   await port.cancel(actor.companyId, shopId, externalOrderId, lineIds, reason.id);
   const flags = [...order.flags.filter((f) => f !== 'cancel_requested'), 'cancelling' as const];
-  const saved = await save(ctx, actor, order, { cancelling: true, cancelReason: reason.label }, { reasonId: reason.id, reason: reason.label, flags }, flags);
+  // Huỷ cả đơn (mọi món chưa huỷ): ghi lý do Sale chọn; sàn xác nhận huỷ không ghi đè (DH-B06).
+  const saved = await save(
+    ctx,
+    actor,
+    order,
+    { cancelPending: true, cancelRequested: false, cancelReason: reason.label },
+    { reasonId: reason.id, reason: reason.label, flags },
+    flags,
+  );
   return { order: saved, pendingOpen: packages.filter(isSealed).length };
 }
 
@@ -139,13 +162,17 @@ export async function decideCancelRequest(
   // Sàn bắt buộc lý do từ chối (TikTok) mà thiếu thì channel trả 422 `errors.rejectReasonId`; sàn không cần thì bỏ qua (#227).
   const rejectReasonId = accept ? undefined : input.rejectReasonId;
   await marketplace(ctx).decideCancel(actor.companyId, shopId, externalOrderId, accept, rejectReasonId);
+  // Đồng ý yêu cầu huỷ cả đơn đi như Sale huỷ (21 §19.3): chờ sàn huỷ mọi món, lý do của khách trên sàn (không có thì
+  // "Khách xin huỷ"; DH-B06). Yêu cầu chỉ một phần món là huỷ dòng: không cờ Đang huỷ, không lý do cấp đơn. Người huỷ
+  // nằm ở dòng (sàn ghi khi huỷ).
+  const wholeOrder = accept && !loaded.partialRequest;
   const flags = order.flags.filter((f) => f !== 'cancel_requested');
-  if (accept) flags.push('cancelling');
+  if (wholeOrder && !flags.includes('cancelling')) flags.push('cancelling');
   return save(
     ctx,
     actor,
     order,
-    { cancelRequested: false, ...(accept ? { cancelling: true, cancelReason: 'Khách xin huỷ' } : {}) },
+    { cancelRequested: false, ...(wholeOrder ? { cancelPending: true, cancelReason: loaded.buyerReason ?? 'Khách xin huỷ' } : {}) },
     { decision: input.decision, ...(rejectReasonId ? { rejectReasonId } : {}), flags },
     flags,
   );

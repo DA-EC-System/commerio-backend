@@ -8,7 +8,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { packageDocuments, packageRow, packingApp, stockOfVariant, transitionsOf } from './helpers.ts';
+import { CANCELLING_SQL, packageDocuments, packageRow, packingApp, stockOfVariant, transitionsOf } from './helpers.ts';
 import { ingest, remote, withCancel, withLineCancelled, withStatus } from './platform-fixtures.ts';
 import { external, historyCount, itemStatuses, lineRows, packagesOf, packedSplit, relabeled, setup, tag } from './resplit-fixtures.ts';
 
@@ -18,7 +18,7 @@ const post = (token: string, id: string, action: Action, body: object, fake: Par
 const versionOf = async (id: string) => (await packageRow(id)).version;
 
 async function orderRow(orderId: string) {
-  const { rows } = await testPool().query<{ status: string; cancelling: boolean }>('select status, cancelling from "order".orders where id = $1', [orderId]);
+  const { rows } = await testPool().query<{ status: string; cancelling: boolean }>(`select status, ${CANCELLING_SQL} as cancelling from "order".orders where id = $1`, [orderId]);
   return rows[0]!;
 }
 
