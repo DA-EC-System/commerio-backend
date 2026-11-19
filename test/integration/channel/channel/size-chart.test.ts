@@ -1,6 +1,5 @@
-// Ảnh bảng kích cỡ khi đẩy lên TikTok (#347, Documents/21 §18.5): quy tắc của category sàn (`platform_categories`, #400; ghép
-// danh mục cũ còn lưu quy tắc tới lát 16), request chặn trước khi xếp
-// việc, việc nền tải ảnh lên sàn rồi gửi `size_chart`. Sàn và cổng sản phẩm đều giả.
+// Ảnh bảng kích cỡ khi đẩy lên TikTok (#347, Documents/21 §18.5): quy tắc của category sàn (`platform_categories`, #400; lấy cùng
+// attribute của leaf, test ở `platform-categories.test.ts`), request chặn trước khi xếp việc, việc nền tải ảnh lên sàn rồi gửi `size_chart`. Sàn và cổng sản phẩm đều giả.
 import { randomInt, randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
@@ -73,7 +72,6 @@ registerAdapter(
     getOrder: async () => {
       throw new Error('không có đơn');
     },
-    categoryAttributes: async () => [],
     categoryRules,
     uploadImage,
     createProduct,
@@ -89,18 +87,6 @@ const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
-
-/** Ghép danh mục Commerio mới với danh mục sàn `externalId`; trả mã danh mục và dòng ghép. */
-async function mapCategory(externalId: string) {
-  const categoryId = randomUUID();
-  const res = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: externalId,
-    attributes: {},
-    version: null,
-  });
-  expect(res.status, JSON.stringify(res.body)).toBe(200);
-  return { categoryId, body: res.body as { sizeChartRule: string | null } };
-}
 
 /**
  * Spec TikTok của sản phẩm mới (#400 lát 15, thay ghép danh mục cũ) ở một category lá riêng; quy tắc bảng kích cỡ lưu ở
@@ -171,28 +157,6 @@ beforeEach(() => {
   categoryRules.mockClear();
   uploadImage.mockClear();
   createProduct.mockClear();
-});
-
-describe('ghép danh mục lưu quy tắc bảng kích cỡ của sàn', () => {
-  it('REQ → required, OPT → optional, NONE → unsupported; GET danh sách ghép trả lại', async () => {
-    const req = await mapCategory('REQ');
-    const opt = await mapCategory('OPT');
-    const none = await mapCategory('NONE');
-    expect([req.body.sizeChartRule, opt.body.sizeChartRule, none.body.sizeChartRule]).toEqual(['required', 'optional', 'unsupported']);
-    const list = await auth(app().get(`/api/v1/channel/shops/${shopId}/category-maps`));
-    const byCategory = new Map((list.body.items as { categoryId: string; sizeChartRule: string | null }[]).map((m) => [m.categoryId, m.sizeChartRule]));
-    expect(byCategory.get(req.categoryId)).toBe('required');
-    expect(byCategory.get(none.categoryId)).toBe('unsupported');
-  });
-
-  it('sàn trả lỗi tạm khi hỏi quy tắc: ghép không lưu, báo lỗi sàn', async () => {
-    const res = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${randomUUID()}`)).send({
-      externalCategoryId: 'LOI',
-      attributes: {},
-      version: null,
-    });
-    expect(res.status).toBeGreaterThanOrEqual(500);
-  });
 });
 
 describe('request đẩy: chặn size_chart_missing trước khi xếp việc', () => {

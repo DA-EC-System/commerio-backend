@@ -45,7 +45,7 @@ async function seedCompany(prefix: string) {
 describe('RLS schema product (AC-1)', () => {
   it('mọi bảng có company_id của schema product bật RLS và có đúng policy cô lập theo app.company_id', async () => {
     const tables = await companyTables();
-    expect(tables).toHaveLength(21);
+    expect(tables).toHaveLength(20); // #400 BE3 xoá product.product_channel_specs
     const res = await testPool().query<{ name: string; rls: boolean; quals: string[] }>(
       `select n.nspname || '.' || c.relname as name, c.relrowsecurity as rls,
               coalesce((select array_agg(qual) from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname), '{}') as quals

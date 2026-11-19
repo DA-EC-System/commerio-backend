@@ -81,40 +81,6 @@ describe('adapter Lazada: brand khi tạo sản phẩm', () => {
 });
 
 describe('adapter Lazada: sản phẩm', () => {
-  it('danh mục: chỉ lấy danh mục lá, tên là cả đường dẫn', async () => {
-    const fn = fakeFetch({
-      code: '0',
-      data: [
-        {
-          category_id: 1,
-          name: 'Quần áo nam',
-          leaf: false,
-          children: [{ category_id: 14275, name: 'Áo thun có cổ nam', leaf: true }],
-        },
-      ],
-    });
-    expect(await createLazadaAdapter(config, fn).listCategories('t')).toEqual([
-      { externalId: '14275', name: 'Quần áo nam > Áo thun có cổ nam' },
-    ]);
-    expect(sent(fn).query).toMatchObject({ language_code: 'vi_VN', access_token: 't' });
-  });
-
-  it('thuộc tính: chỉ thuộc tính bắt buộc cấp sản phẩm', async () => {
-    const fn = fakeFetch({
-      code: '0',
-      data: [
-        { name: 'brand', label: 'Thương hiệu', is_mandatory: 1, attribute_type: 'normal', options: [{ name: 'No Brand' }] },
-        { name: 'name', label: 'Tên', is_mandatory: 1, attribute_type: 'normal', options: [] },
-        { name: 'price', label: 'Giá', is_mandatory: 1, attribute_type: 'sku' },
-        { name: 'color', label: 'Màu', is_mandatory: 0, attribute_type: 'normal' },
-      ],
-    });
-    expect(await createLazadaAdapter(config, fn).categoryAttributes('t', '14275')).toEqual([
-      { name: 'brand', label: 'Thương hiệu', options: ['No Brand'] },
-    ]);
-    expect(sent(fn).query.primary_category_id).toBe('14275');
-  });
-
   it('đưa ảnh lên sàn: POST form body, URL thoát ký tự XML', async () => {
     const fn = fakeFetch({ code: '0', data: { image: { url: 'https://sg-test-11.slatic.net/p/a.png' } } });
     expect(await createLazadaAdapter(config, fn).uploadImage('t', 'https://img.test/a.png?s=460&v=4')).toBe(

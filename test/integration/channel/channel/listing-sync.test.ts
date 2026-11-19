@@ -68,7 +68,6 @@ registerAdapter(
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
-    categoryAttributes: async () => [],
     uploadImage: async (_t, url) => url,
     async createProduct(_t, p) {
       return { externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false };

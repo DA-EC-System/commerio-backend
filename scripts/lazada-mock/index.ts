@@ -124,8 +124,8 @@ async function check() {
     const token = seller.tokens;
     expect('adapter.exchangeCode', token.accessToken.startsWith('mock-access-token'));
     expect('adapter.exchangeCode seller', seller.externalShopId === String(SELLER.seller_id), seller.shopName);
-    const cats = await adapter.listCategories(token.accessToken);
-    expect('adapter.listCategories', cats.length > 0, cats.map((c) => c.name).join('; '));
+    const cats = (await adapter.categoryTree!(token.accessToken)).filter((c) => c.isLeaf);
+    expect('adapter.categoryTree', cats.length > 0, cats.map((c) => c.path).join('; '));
     const skus = await adapter.getSkus(token.accessToken, ITEMS.map((i) => i.sku));
     expect('adapter.getSkus', skus.length === ITEMS.length, skus.map((x) => `${x.sellerSku}:${x.state}`).join(', '));
     const pq = await adapter.updatePriceQuantity(token.accessToken, [

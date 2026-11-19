@@ -5,11 +5,10 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import * as categories from '../service/categories.ts';
 import { suggestCategories } from '../service/category-suggestions.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
-import { getProductSpec, putProductSpec, refreshCopiesForCategory } from '../service/product-specs.ts';
+import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
@@ -43,10 +42,6 @@ import {
   PushBody,
   RemoteSkusQuery,
   SetupBody,
-  CategoryMapBody,
-  CategoryMapParams,
-  CategoryParams,
-  CategorySearchQuery,
   DisconnectBody,
   ShopDeleteBody,
   UpdateShopBody,
@@ -264,45 +259,6 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
       res.json(await putProductSpec(ctx, actor(res), productId, platform, validated<typeof ProductSpecBody>(res, 'body')));
-    },
-  );
-
-  router.get(
-    '/shops/:id/categories',
-    manage,
-    validate({ params: ShopParams, query: CategorySearchQuery }),
-    async (_req, res) => {
-      const { id } = validated<typeof ShopParams>(res, 'params');
-      const { search } = validated<typeof CategorySearchQuery>(res, 'query');
-      res.json(await withCompany(actor(res).companyId, () => categories.searchCategories(id, search)));
-    },
-  );
-
-  router.get('/shops/:id/categories/:externalId/attributes', manage, validate({ params: CategoryParams }), async (_req, res) => {
-    const { id, externalId } = validated<typeof CategoryParams>(res, 'params');
-    res.json(await withCompany(actor(res).companyId, () => categories.categoryAttributes(id, externalId)));
-  });
-
-  router.get('/shops/:id/category-maps', view, validate({ params: ShopParams }), async (_req, res) => {
-    const { id } = validated<typeof ShopParams>(res, 'params');
-    res.json(await withCompany(actor(res).companyId, () => categories.getCategoryMaps(id)));
-  });
-
-  router.put(
-    '/shops/:id/category-maps/:categoryId',
-    manage,
-    validate({ params: CategoryMapParams, body: CategoryMapBody }),
-    async (_req, res) => {
-      const { id, categoryId } = validated<typeof CategoryMapParams>(res, 'params');
-      const body = validated<typeof CategoryMapBody>(res, 'body');
-      // Bản chép spec `version = 0` của sản phẩm thuộc danh mục này theo ghép mới, cùng giao dịch (#400 A18, khe BE2–BE3).
-      res.json(
-        await withCompany(actor(res).companyId, async () => {
-          const map = await categories.putCategoryMap(id, categoryId, body);
-          await refreshCopiesForCategory(ctx, map.platform, categoryId, map);
-          return map;
-        }),
-      );
     },
   );
 

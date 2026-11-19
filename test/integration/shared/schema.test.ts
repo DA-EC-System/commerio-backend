@@ -29,7 +29,6 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'goods_receipt_lines',
     'goods_receipts',
     'product_attribute_value_images',
-    'product_channel_specs',
     'product_images',
     'product_variants',
     'products',
@@ -82,7 +81,6 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   ],
   channel: [
     'api_usage',
-    'category_maps',
     'conversation_notes',
     'conversation_tags',
     'conversations',

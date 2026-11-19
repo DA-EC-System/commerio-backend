@@ -13,14 +13,12 @@ import {
   type SpecAttributeValue,
   specMissing,
 } from '../domain/product-spec.ts';
-import { listCategoryMaps } from '../repository/category-maps.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
 import {
   findSpec,
   insertSpec,
   permissionsOf,
   type ProductSpecRow,
-  refreshCopiedSpecs,
   specsOf,
   updateSpec,
 } from '../repository/product-specs.ts';
@@ -195,12 +193,12 @@ async function productOf(ctx: ModuleContext, productId: string): Promise<SpecPro
   return specProductOf(await variantsOf(ctx, productId));
 }
 
-/** Đọc spec; chưa có mà danh mục Commerio đã ghép thì chép lười như GET listing, request đẩy (A18, review BE2 P2-5). */
+/** Đọc spec của sản phẩm trên sàn; chưa có thì `spec: null`. */
 export async function getProductSpec(ctx: ModuleContext, companyId: string, productId: string, raw: string): Promise<SpecView> {
   const { platform, adapter } = platformOf(raw);
   return withCompany(companyId, async () => {
     const variants = await variantsOf(ctx, productId);
-    const row = (await specsWithCopy(platform, variants)).get(productId);
+    const row = await findSpec(productId, platform);
     return view(companyId, adapter, row, specProductOf(variants));
   });
 }
@@ -356,53 +354,6 @@ export async function putProductSpec(
   });
 }
 
-/**
- * Chép lười (A18, khe BE2–BE3): sản phẩm chưa có spec của sàn mà danh mục Commerio đã ghép (`category_maps`) thì tạo bản chép
- * `version = 0`, `source = 'push'`, mọi trục `__custom`, giống câu chép của migration `*_chep-spec-tu-ghep-danh-muc`. Gọi trong
- * `withCompany`. Trả spec theo sản phẩm (đã có và vừa chép).
- */
-export async function specsWithCopy(platform: Marketplace, variants: readonly ListingVariant[]): Promise<Map<string, ProductSpecRow>> {
-  const byProduct = new Map<string, ListingVariant[]>();
-  for (const v of variants) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
-  const specs = await specsOf([...byProduct.keys()], platform);
-  const lacking = [...byProduct.keys()].filter((id) => !specs.has(id));
-  if (!lacking.length) return specs;
-  const categoryIds = [...new Set(lacking.map((id) => byProduct.get(id)![0]!.categoryId))];
-  const maps = new Map((await listCategoryMaps(platform, categoryIds)).map((m) => [m.categoryId, m]));
-  for (const productId of lacking) {
-    const vs = byProduct.get(productId)!;
-    const map = maps.get(vs[0]!.categoryId);
-    if (!map) continue;
-    const axisMap = Object.fromEntries(specProductOf(vs).axes.map((a) => [a.attributeId, CUSTOM_AXIS]));
-    const row =
-      (await insertSpec({
-        companyId: map.companyId,
-        productId,
-        platform,
-        externalCategoryId: map.externalCategoryId,
-        attributes: map.attributes,
-        axisMap,
-        valueMap: {},
-        source: 'push',
-        version: 0,
-      })) ?? (await findSpec(productId, platform));
-    if (row) specs.set(productId, row);
-  }
-  return specs;
-}
-
-/** Route cũ `PUT category-maps` lưu xong: bản chép `version = 0` của sản phẩm thuộc danh mục đó theo ghép mới (A18). */
-export async function refreshCopiesForCategory(
-  ctx: ModuleContext,
-  platform: Marketplace,
-  categoryId: string,
-  values: { externalCategoryId: string; attributes: Record<string, string> },
-): Promise<void> {
-  const productIds = [...new Set((await productPort(ctx).variants()).filter((v) => v.categoryId === categoryId).map((v) => v.productId))];
-  // Chỉ hai trường này: không chép `version` hay cột khác của ghép danh mục sang spec.
-  await refreshCopiedSpecs(productIds, platform, { externalCategoryId: values.externalCategoryId, attributes: values.attributes });
-}
-
 /** Spec kèm attribute leaf đã đọc, để việc nền dựng `NewProduct` mà không đọc lại. */
 export interface SpecCheckFull extends SpecCheck {
   row: ProductSpecRow;
@@ -411,23 +362,20 @@ export interface SpecCheckFull extends SpecCheck {
 }
 
 /**
- * Tình trạng spec của các sản phẩm với một gian hàng, theo lô (request đẩy, việc nền, bảng listing): chép lười (A18), `missing`
- * theo attribute đã có, quyền category đã ghi của gian hàng, luật bảng kích cỡ của category (ghép cũ chưa có dòng category thì
- * lấy ở `category_maps`, khe BE2–BE3). Gọi trong `withCompany`. `variants`: mọi biến thể của các sản phẩm cần xét.
+ * Tình trạng spec của các sản phẩm với một gian hàng, theo lô (request đẩy, việc nền, bảng listing): `missing` theo attribute
+ * đã có, quyền category đã ghi của gian hàng, luật bảng kích cỡ của category (`platform_categories`). Gọi trong `withCompany`. `variants`: mọi biến thể của các sản phẩm cần xét.
  */
 export async function specChecks(
   shop: { id: string; companyId: string; platform: Marketplace },
   adapter: MarketplaceAdapter,
   variants: readonly ListingVariant[],
 ): Promise<Map<string, SpecCheckFull>> {
-  const specs = await specsWithCopy(shop.platform, variants);
+  const specs = await specsOf([...new Set(variants.map((v) => v.productId))], shop.platform);
   if (!specs.size) return new Map();
   const org = adapter.responsibleFields ? await responsibleOrgOf(shop.companyId) : null;
   const permissions = await permissionsOf(shop.id, [...specs.values()].map((s) => s.externalCategoryId));
   const byProduct = new Map<string, ListingVariant[]>();
   for (const v of variants) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
-  const categoryIds = [...new Set(variants.filter((v) => specs.has(v.productId)).map((v) => v.categoryId))];
-  const maps = new Map((await listCategoryMaps(shop.platform, categoryIds)).map((m) => [m.categoryId, m]));
   // Mỗi category đọc một lần cho cả lô (bảng listing nhiều sản phẩm cùng category), không đọc theo từng sản phẩm.
   const leaves = new Map<string, Promise<{ category: Awaited<ReturnType<typeof findCategory>>; attributes: PlatformAttribute[] | null }>>();
   const leafOf = (id: string) => {
@@ -447,13 +395,11 @@ export async function specChecks(
     const product = specProductOf(vs);
     const { category, attributes } = await leafOf(row.externalCategoryId);
     const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: specFallbacks(adapter, attributes, product, org) });
-    const map = vs[0] ? maps.get(vs[0].categoryId) : undefined;
-    const legacyRule = map && map.externalCategoryId === row.externalCategoryId ? map.sizeChartRule : null;
     out.set(productId, {
       externalCategoryId: row.externalCategoryId,
       missing,
       permission: permissions.get(row.externalCategoryId)?.status ?? null,
-      sizeChartRule: category?.sizeChartRule ?? legacyRule ?? null,
+      sizeChartRule: category?.sizeChartRule ?? null,
       row,
       attributes,
       product,

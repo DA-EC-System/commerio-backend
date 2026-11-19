@@ -87,7 +87,6 @@ registerAdapter(
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
-    categoryAttributes: async () => [],
     uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,
     createProduct,
     deactivate,
@@ -104,7 +103,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 /** Như FE: chỉ `{ variantIds }`; `imageUrls` cũ gửi kèm thì BE bỏ qua (#303). */
-/** Sản phẩm dùng ghép danh mục cũ (ca A18), không chèn spec sẵn. */
+/** Sản phẩm không chèn spec sẵn (ca BE3). */
 const legacy = new Set<string>();
 /** Spec sàn của mọi sản phẩm trong catalog giả (#400 lát 15), trừ sản phẩm "chưa ghép" và sản phẩm của ca ghép cũ. */
 const seedAll = () =>
@@ -179,28 +178,20 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(history.rows).toEqual([{ from_state: null, to_state: 'pushing', action: 'push', by_system: false }]);
   });
 
-  // Ghép danh mục cũ (route `PUT category-maps`) còn tới lát 16; ca này dùng sản phẩm, danh mục riêng.
-  it('#400 A18: lần đẩy chép ghép danh mục thành spec version 0, trục __custom; route ghép cũ cập nhật bản chép; category đổi chặn spec_incomplete', async () => {
-    const legacyCategory = randomUUID();
-    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: legacyCategory });
-    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: legacyCategory, weightG: null });
+  // Sau BE3 không còn chép lười từ ghép danh mục: spec chỉ đến từ migration (bản chép `version = 0`), `PUT` spec hay ghép SKU.
+  it('#400 BE3: sản phẩm chưa có spec → category_unmapped (không chép lười); bản chép version 0 bị đồng bộ đánh changed → spec_incomplete', async () => {
+    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: randomUUID() });
+    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: first.categoryId, weightG: null });
     all.push(first, second);
     legacy.add(first.productId);
     catalogImages.set(first.productId, CATALOG);
-    const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${legacyCategory}`)).send({
-      externalCategoryId: '14275',
-      attributes: { brand: 'No Brand' },
-      version: null,
-    });
-    expect(map.status).toBe(200);
-    expect((await results([first.id]))[0]).toMatchObject({ status: 'pushing' });
-    const spec = async () =>
-      (await testPool().query('select version, external_category_id, attributes, category_status from channel.product_specs where product_id = $1 and platform = $2', [first.productId, 'lazada'])).rows[0];
-    expect(await spec()).toMatchObject({ version: 0, external_category_id: '14275', attributes: { brand: 'No Brand' }, category_status: 'ok' });
-    const put = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${legacyCategory}`)).send({ externalCategoryId: '14276', attributes: {}, version: map.body.version });
-    expect(put.status).toBe(200);
-    expect(await spec()).toMatchObject({ version: 0, external_category_id: '14276' });
-    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [first.productId]);
+    expect((await results([first.id]))[0]).toMatchObject({ code: 'category_unmapped' });
+    expect((await testPool().query('select 1 from channel.product_specs where product_id = $1', [first.productId])).rowCount).toBe(0);
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, category_status, version)
+       values ($1, $2, 'lazada', '14275', '{"brand":"No Brand"}', 'push', 'changed', 0)`,
+      [company.companyId, first.productId],
+    );
     const [r] = await results([second.id]);
     expect(r).toMatchObject({ code: 'spec_incomplete' });
   });

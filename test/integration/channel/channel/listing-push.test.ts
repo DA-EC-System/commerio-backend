@@ -69,7 +69,6 @@ registerAdapter(
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
-    categoryAttributes: async () => [],
     // Như Lazada thật (review BE2 P1-2): xuất xứ, thương hiệu lấy ở catalog.
     productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
     uploadImage,
@@ -89,7 +88,6 @@ registerAdapter(
     listOrders: async () => ({ orders: [], nextCursor: null, safeUntil: null }),
     // #399: như TikTok, bật theo cả sản phẩm, `updateProduct` thay nội dung cả sản phẩm.
     togglesByProduct: true,
-    categoryAttributes: async () => [],
     uploadImage,
     createProduct,
     updateProduct,

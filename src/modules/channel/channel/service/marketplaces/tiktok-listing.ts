@@ -8,7 +8,6 @@
 // (bản mới nhất trong OAS của skill, tra 17/11/2026; bản 202404 là global product, khác việc).
 // Kết quả gọi thật trên shop thử: mục TikTok của `channel/CLAUDE.md`.
 import {
-  type CategoryAttribute,
   type CategoryRules,
   type CategorySuggestion,
   type CreatedProduct,
@@ -18,7 +17,6 @@ import {
   type NewProduct,
   partResults,
   type PerSkuResult,
-  type PlatformCategory,
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteProductCategory,
@@ -64,8 +62,6 @@ export interface TiktokListingDeps {
 
 type ListingMethods = Pick<
   MarketplaceAdapter,
-  | 'listCategories'
-  | 'categoryAttributes'
   | 'categoryTree'
   | 'leafAttributes'
   | 'categoryRules'
@@ -106,24 +102,6 @@ function itemError(e: Row): { code: string; message: string } {
   const extra = ((detail.extra_errors ?? []) as Row[])[0];
   const src = extra ?? e;
   return { code: String(src.code ?? e.code ?? 'unknown'), message: typeof src.message === 'string' ? src.message : String(e.message ?? '') };
-}
-
-/** Danh mục lá dùng được (`AVAILABLE`), tên là đường dẫn từ gốc. */
-function leavesOf(categories: Row[]): PlatformCategory[] {
-  const byId = new Map(categories.map((c) => [String(c.id), c]));
-  const pathOf = (c: Row): string => {
-    const names: string[] = [];
-    const seen = new Set<string>();
-    for (let n: Row | undefined = c; n && !seen.has(String(n.id)); n = byId.get(String(n.parent_id))) {
-      seen.add(String(n.id));
-      names.unshift(String(n.local_name ?? ''));
-    }
-    return names.join(' > ');
-  };
-  return categories
-    .filter((c) => c.is_leaf === true)
-    .filter((c) => !Array.isArray(c.permission_statuses) || c.permission_statuses.includes('AVAILABLE'))
-    .map((c) => ({ externalId: String(c.id), name: pathOf(c) }));
 }
 
 /** Cây, attribute TikTok theo gian hàng: token null thì `unauthorized`, không gọi sàn (#400 A4). */
@@ -357,33 +335,6 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn trả attribute của category không phải danh sách');
       }
       return tiktokLeafAttributes(data.attributes as Row[]);
-    },
-
-    async listCategories(token) {
-      const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
-        token,
-        query: { category_version: CATEGORY_VERSION },
-      });
-      return leavesOf(data?.categories ?? []);
-    },
-
-    // Chỉ thuộc tính sản phẩm luôn bắt buộc (`PRODUCT_PROPERTY`, `is_requried`, sàn viết sai chính tả); thuộc tính bán hàng
-    // (phân loại) chưa xử lý. Thuộc tính bắt buộc theo điều kiện (`requirement_conditions`) không hỏi ở bước ghép: 12 danh
-    // mục VN đo 17/11/2026 không có, thiếu thì Check Product Listing chặn trước khi tạo (#305, `listing_check_failed`).
-    // `name` là mã thuộc tính của sàn. Thuộc tính cho tự nhập (`is_customizable`) trả `options` rỗng để người dùng gõ giá trị riêng; lúc tạo sản
-    // phẩm giá trị trùng tên lựa chọn có sẵn thì gửi theo mã.
-    async categoryAttributes(token, externalCategoryId): Promise<CategoryAttribute[]> {
-      return (await rawAttributes(token, externalCategoryId))
-        .filter((a) => a.type === 'PRODUCT_PROPERTY' && a.is_requried === true)
-        .map((a) => {
-          const prefill = RESPONSIBLE_ATTRS[String(a.id)];
-          return {
-            name: String(a.id),
-            label: String(a.name ?? a.id),
-            options: a.is_customizable === true ? [] : ((a.values ?? []) as Row[]).map((v) => String(v.name)),
-            ...(prefill && { prefill }),
-          };
-        });
     },
 
     // Get Category Rules 202309: `size_chart.is_required`, `is_supported` (#347). Danh mục không hỗ trợ bảng kích cỡ thì không
