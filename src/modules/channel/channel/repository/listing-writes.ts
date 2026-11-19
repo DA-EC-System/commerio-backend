@@ -1,8 +1,11 @@
 // Câu ghi listing có thể đổi bộ ba `status`, `stock_sync`, `price_sync` (#216, spec 5.5). Chỉ `service/listing-writes.ts`
 // được import file này (dependency-cruiser `ghi-listing-qua-lop-phat`): lớp đó phát `channel.listing_sync_changed` khi bộ ba
-// đổi. Mỗi câu UPDATE trả bộ ba trước và sau; bộ ba trước đọc bằng `SELECT … FOR UPDATE … ORDER BY id` cùng điều kiện, cùng
-// giao dịch của bên gọi, rồi mới UPDATE theo id đã khoá: chạy được trên PG17 (staging), không dùng `RETURNING old.*` (PG18).
-// Khoá dòng theo thứ tự id nên hai lượt chạm cùng tập listing không khoá chéo nhau.
+// đổi. `updateListing`, `markStockPendingIds`, `markStockPendingRows` trả bộ ba trước và sau; bộ ba trước đọc bằng
+// `SELECT … FOR UPDATE … ORDER BY id` cùng điều kiện, cùng giao dịch của bên gọi, rồi mới UPDATE theo id đã khoá: chạy được
+// trên PG17 (staging), không dùng `RETURNING old.*` (PG18). Hai hàm của ngắt gian hàng (`delistForDisconnect`,
+// `failPushingForDisconnect`) không trả bộ ba vì không phát (D12). Ba hàm trên khoá theo thứ tự id nên không khoá chéo nhau;
+// đường khác khoá listing không theo id (`pushDue`, `reconcileStock`, `delistForDisconnect`) vẫn có thể gặp 40P01 với chúng,
+// lỗi đó rollback giao dịch và lượt sau chạy lại.
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { NO_OUTSIDE_CHANGE, NO_PENDING, NO_REVISION, type ListingStatus } from '../domain/listing.ts';

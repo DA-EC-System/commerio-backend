@@ -145,6 +145,9 @@ export const RETURN_SHOWN_FIELDS = [
   'refundAmount',
 ] as const;
 
+/** Phần thông tin sàn của `RETURN_SHOWN_FIELDS` (bỏ cờ Cần xử lý): lượt kéo đổi trường này thì tính là `updated`. */
+export const RETURN_PLATFORM_SHOWN_FIELDS = RETURN_SHOWN_FIELDS.filter((k) => k !== 'needsAttention' && k !== 'attentionNote');
+
 /** Trường khác giá trị đang lưu (tiền so theo số, thời điểm theo mốc): kéo lại không đổi gì thì không ghi, không tăng `version`. */
 export function changedFields<T extends Record<string, unknown>>(row: T, patch: Partial<T>): Partial<T> {
   const same = (a: unknown, b: unknown) => {

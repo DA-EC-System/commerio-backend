@@ -3,7 +3,16 @@
 // trước khi hàng về; app là nguồn của nhận hàng (quét) và kiểm hàng.
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { deliverForReturn, packageLinesOfOrderLines } from '../../fulfillment/index.ts';
-import { changedFields, distributeResell, refundAmountOf, type ReturnStatus, syncAction, syncTarget, weightedUnitCost } from '../domain/return.ts';
+import {
+  changedFields,
+  distributeResell,
+  RETURN_PLATFORM_SHOWN_FIELDS,
+  refundAmountOf,
+  type ReturnStatus,
+  syncAction,
+  syncTarget,
+  weightedUnitCost,
+} from '../domain/return.ts';
 import { lockMarketplaceOrder, takeNextNumber, updateOrder } from '../repository/orders.ts';
 import {
   findMarketplaceReturn,
@@ -191,8 +200,7 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   const diff = changedFields(row, fields);
   if (!Object.keys(diff).length) return 'unchanged';
   await updateReturnShown(row, diff);
-  const shown = ['rawMarketplaceStatus', 'ofcStatus', 'disputeInProgress', 'returnTo', 'returnTrackingCode', 'refundAmount'] as const;
-  return shown.some((k) => k in diff) ? 'updated' : 'unchanged';
+  return RETURN_PLATFORM_SHOWN_FIELDS.some((k) => k in diff) ? 'updated' : 'unchanged';
 }
 
 /**
