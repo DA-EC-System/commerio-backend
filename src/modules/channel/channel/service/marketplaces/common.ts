@@ -83,6 +83,12 @@ export interface CategoryAttribute {
 /** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
 export type Responsible = ResponsibleOrg;
 
+/** Một cấp của attribute cascade (#400, Documents/21 §18.5): thuộc tính cấp kế (null ở cấp cuối) và giá trị chọn được. */
+export interface CascadeLevel {
+  prop: { id: string; label: string; required: boolean } | null;
+  items: { id: string; label: string; leaf: boolean }[];
+}
+
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
 export type ImagePurpose = 'main' | 'size_chart';
@@ -556,6 +562,11 @@ export interface MarketplaceAdapter {
   readonly productFields?: Readonly<Record<string, 'originCountry' | 'brand'>>;
   /** Thương hiệu gửi khi catalog để trống (Lazada "No Brand"); có thì attribute thương hiệu không bao giờ thiếu. */
   readonly defaultBrand?: string;
+  /**
+   * Giá trị cấp kế của attribute `input = 'cascade'` (#400, Lazada GetNextCascadeProp, cần token gian hàng). `cascadeId` là id
+   * attribute của sàn (trong `raw`), `path` các cấp đã chọn theo định dạng của sàn. Sàn không có thì không khai.
+   */
+  cascadeNext?(accessToken: string, externalCategoryId: string, cascadeId: string, path: string | null): Promise<CascadeLevel>;
   /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
   categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**

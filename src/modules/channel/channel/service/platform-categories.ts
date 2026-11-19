@@ -18,7 +18,7 @@ import {
 } from '../repository/platform-categories.ts';
 import { listShopRows } from '../repository/shops.ts';
 import type { CategoryStatus, Marketplace, SizeChartRule, SpecSource } from '../repository/schema.ts';
-import { forCompany, type MarketplaceAdapter, MarketplaceError, type PlatformAttribute } from './marketplaces/index.ts';
+import { type CascadeLevel, forCompany, type MarketplaceAdapter, MarketplaceError, type PlatformAttribute } from './marketplaces/index.ts';
 import { productPort } from './product-port.ts';
 import { onMarketplace, platformOf, shopSession } from './shops.ts';
 
@@ -195,4 +195,37 @@ async function productsOn(ctx: ModuleContext, platform: Marketplace, externalId:
     const v = byProduct.get(s.productId);
     return v ? [{ productId: s.productId, code: v.productCode, name: v.productName, source: s.source }] : [];
   });
+}
+
+/**
+ * Giá trị cấp kế của attribute `input = 'cascade'` (#400, Documents/21 §18.5, Lazada GetNextCascadeProp): gọi sàn, không lưu.
+ * API cần token gian hàng (khác cây, attribute): `shopId` hoặc gian hàng `active` đầu tiên của công ty trên sàn đó, không có
+ * thì 409 `shop_not_connected`. Sàn không có cascade: 422 `marketplace_unsupported`. `cascadeId` lấy ở `raw.id` của attribute
+ * đã lưu; attribute chưa có hoặc không phải cascade: 422 `errors.code`.
+ */
+export async function cascadeLevel(
+  companyId: string,
+  raw: string,
+  externalId: string,
+  query: { code: string; path?: string; shopId?: string },
+): Promise<CascadeLevel> {
+  const { platform, adapter } = platformOf(raw);
+  if (!adapter.cascadeNext) throw unsupported();
+  const attr = (await leafAttributesOf(platform, externalId)).find((a) => a.code === query.code);
+  const cascadeId = attr?.input === 'cascade' && attr.raw['id'] != null ? String(attr.raw['id']) : null;
+  if (!cascadeId) {
+    throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { code: 'Không phải attribute cascade của category này' } });
+  }
+  const session = await withCompany(companyId, async () => {
+    let id = query.shopId;
+    if (id === undefined) {
+      const shop = (await listShopRows()).find((s) => s.platform === platform && s.status === 'active' && s.accessTokenEnc);
+      if (!shop) throw noShop();
+      id = shop.id;
+    }
+    const s = await shopSession(id);
+    if (s.shop.platform !== platform) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
+    return s;
+  });
+  return onMarketplace(() => session.adapter.cascadeNext!(session.accessToken, externalId, cascadeId, query.path?.trim() || null));
 }

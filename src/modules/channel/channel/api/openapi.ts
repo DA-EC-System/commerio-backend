@@ -7,6 +7,8 @@ import {
   CategoryAttributeList,
   CategorySyncResult,
   LeafDetailQuery,
+  CascadeLevelSchema,
+  CascadeQuery,
   ProductSpecBody,
   ProductSpecParams,
   ProductSpecView,
@@ -256,6 +258,23 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ),
       422: problemResponse('`validation_failed`; `category_not_leaf`; `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm và chưa có bản nào'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/categories/:externalId/cascade',
+    summary: 'Giá trị cấp kế của attribute cascade (Lazada propCascade) (#400)',
+    description:
+      'Cần `channel.listing.manage`. Gọi sàn (Lazada GetNextCascadeProp), không lưu. Cần token gian hàng Lazada: `shopId`, không gửi thì gian hàng `active` đầu tiên. `path` là các cấp đã chọn theo định dạng `path` của sàn; `leaf = true` là cấp cuối, spec lưu `path` tới cấp đó.',
+    security: bearer,
+    request: { params: PlatformLeafParams, query: CascadeQuery },
+    responses: {
+      200: { description: 'Cấp kế', ...json(CascadeLevelSchema) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng `shopId` không có, của công ty khác hoặc khác sàn'),
+      409: problemResponse('`shop_not_connected`: không có gian hàng `active` của sàn; `marketplace_rejected`, `marketplace_unauthorized`'),
+      422: problemResponse('`validation_failed` (`errors.code`: không phải attribute cascade đã lưu của leaf); `marketplace_unsupported`: sàn không có cascade'),
+      503: problemResponse('`marketplace_unavailable`'),
     },
   });
   registry.registerPath({

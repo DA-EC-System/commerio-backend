@@ -7,7 +7,7 @@ import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
-import { leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
+import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { getProductSpec, putProductSpec, refreshCopiesForCategory } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
@@ -51,6 +51,7 @@ import {
   PlatformCategoriesQuery,
   PlatformLeafParams,
   LeafDetailQuery,
+  CascadeQuery,
   ProductSpecBody,
   ProductSpecParams,
   ShopParams,
@@ -198,6 +199,17 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
       const { shopId } = validated<typeof LeafDetailQuery>(res, 'query');
       res.json(await leafDetail(ctx, actor(res).companyId, platform, externalId, { shopId }));
+    },
+  );
+
+  // Gọi sàn ngoài giao dịch; service tự mở `withCompany` lấy token gian hàng.
+  router.get(
+    '/platforms/:platform/categories/:externalId/cascade',
+    manage,
+    validate({ params: PlatformLeafParams, query: CascadeQuery }),
+    async (_req, res) => {
+      const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
+      res.json(await cascadeLevel(actor(res).companyId, platform, externalId, validated<typeof CascadeQuery>(res, 'query')));
     },
   );
 

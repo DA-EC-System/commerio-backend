@@ -798,3 +798,17 @@ export const ProductSpecView = z
   })
   .strict()
   .meta({ id: 'ProductSpecView' });
+
+// Cấp kế của attribute cascade (#400, Documents/21 §18.5).
+export const CascadeQuery = z.object({
+  code: z.string('Chọn attribute').trim().min(1, 'Chọn attribute').max(60),
+  path: z.string().trim().max(2000).optional(),
+  shopId: z.uuid('Gian hàng không hợp lệ').optional(),
+});
+export const CascadeLevelSchema = z
+  .object({
+    prop: z.object({ id: z.string(), label: z.string(), required: z.boolean() }).strict().nullable(),
+    items: z.array(z.object({ id: z.string(), label: z.string(), leaf: z.boolean() }).strict()),
+  })
+  .strict()
+  .meta({ id: 'CascadeLevel' });

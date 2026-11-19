@@ -2,6 +2,7 @@
 import { createHmac } from 'node:crypto';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import {
+  type CascadeLevel,
   type CategoryAttribute,
   DEFAULT_REFRESH_LEAD_MS,
   epochDate,
@@ -53,6 +54,20 @@ type LazadaResponse = Record<string, unknown> & { code?: string; message?: strin
 const TIMEOUT_MS = 10_000;
 /** Thương hiệu khi tạo sản phẩm mà ghép danh mục không có `brand` (createProduct). */
 const DEFAULT_BRAND = 'No Brand';
+
+/**
+ * Cấp kế của attribute `propCascade` (GetNextCascadeProp, open.lazada.com tra 19/11/2026): `data.prop { id, name, required }` là
+ * thuộc tính của cấp kế (vắng ở cấp cuối), `data.propValue[{ id, name, leaf }]` các giá trị chọn được.
+ */
+export function lazadaCascade(data: unknown): CascadeLevel {
+  const d = (data ?? {}) as { prop?: { id?: unknown; name?: unknown; required?: unknown } | null; propValue?: unknown };
+  const prop = d.prop && d.prop.id != null ? { id: String(d.prop.id), label: String(d.prop.name ?? ''), required: d.prop.required === true || d.prop.required === 'true' } : null;
+  const values = Array.isArray(d.propValue) ? (d.propValue as { id?: unknown; name?: unknown; leaf?: unknown }[]) : [];
+  return {
+    prop,
+    items: values.filter((v) => v.id != null).map((v) => ({ id: String(v.id), label: String(v.name ?? ''), leaf: v.leaf === true || v.leaf === 'true' })),
+  };
+}
 
 /** Lazada nhận giá trị multiSelect là chuỗi nối dấu phẩy (#400: spec lưu mảng). */
 const flatAttributes = (attrs: Record<string, string | string[]>): Record<string, string> =>
@@ -902,6 +917,10 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     async leafAttributes(accessToken, externalCategoryId) {
       const params = { ...(accessToken && { access_token: accessToken }), primary_category_id: externalCategoryId, language_code: 'vi_VN' };
       return lazadaLeafAttributes((await call(config.apiUrl, '/category/attributes/get', params, 'GET')).data);
+    },
+    async cascadeNext(accessToken, externalCategoryId, cascadeId, path) {
+      const params = { access_token: accessToken, categoryId: externalCategoryId, cascadeId, ...(path && { path }) };
+      return lazadaCascade((await call(config.apiUrl, '/category/cascade/getNextCascadeProp', params, 'GET')).data);
     },
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
