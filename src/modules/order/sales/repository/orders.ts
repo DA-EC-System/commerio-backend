@@ -1,4 +1,4 @@
-import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { MappedSku } from '../../fulfillment/index.ts';
 import type { OrderStatus } from '../domain/order.ts';
@@ -249,25 +249,29 @@ export async function updateOrderAt(id: string, version: number, patch: Partial<
 
 /**
  * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền tự hoàn tất: gọi ngoài `withCompany`
- * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở kiểm tiếp trong `withCompany` của từng đơn.
+ * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở, COD kiểm tiếp trong `withCompany` của công ty. Lật trang theo `id`
+ * tăng (`afterId` là `id` cuối trang trước, null là trang đầu), mỗi trang `limit` đơn.
  *
  * Đơn Đang huỷ (`cancelling`): còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại. Mọi kiện đã dừng mà còn kiện
  * không huỷ (kiện hoá ra đã bàn giao) thì đi theo "Sàn huỷ đơn khi đã có kiện bàn giao" (25 §8.2): hoàn tất được, kể cả
  * khi lượt kéo đơn chưa chạy lại để gỡ cờ. Mọi kiện đều huỷ thì đơn phải sang `cancelled` (25 §8.2), không hoàn tất.
  */
-export async function findCompletionCandidates(): Promise<{ id: string; companyId: string }[]> {
+export async function findCompletionCandidates(afterId: string | null, limit: number): Promise<{ id: string; companyId: string }[]> {
   return getDb()
     .select({ id: orders.id, companyId: orders.companyId })
     .from(orders)
     .where(
       and(
         eq(orders.status, 'processing'),
+        afterId ? gt(orders.id, afterId) : undefined,
         sql`(not ${orders.cancelling} or exists (select 1 from "order".packages p where p.order_id = ${orders.id} and p.status <> 'cancelled'))`,
         sql`exists (select 1 from "order".packages p where p.order_id = ${orders.id})`,
         sql`not exists (select 1 from "order".packages p where p.order_id = ${orders.id}
               and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,
       ),
-    );
+    )
+    .orderBy(asc(orders.id))
+    .limit(limit);
 }
 
 /** Đơn chưa xong: một vị từ cho `openOrders` của ngắt, `orders` của 409 và `pendingOrderCount` (§18.7.1), để không lệch. */

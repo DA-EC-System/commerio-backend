@@ -18,6 +18,7 @@ CSV (`domain/csv.ts`): UTF-8 có BOM, CRLF, tiêu đề tiếng Việt; ô chữ
 
 - Bảng `insight.daily_channel_summary` không còn code nào ghi (#235): API chỉ trả các dòng đã có từ trước, khoảng mới ra số 0, `asOf` null. Dựng lại bảng từ `finance.ledger_entries` (Documents/19 mục 3.6) làm ở issue riêng, gồm cả cách tính lại (sự kiện, vòng quét, dựng tay).
 - `channel.getShops` phải gọi trong `withCompany` (ném lỗi nếu không), vì ngoài đó là role chủ bảng.
+- `deleteShopSummaries(shopId)` (export ở `index.ts`, #398): channel xoá gian hàng gọi qua `ctx.deleteShopSummaries` (`src/wiring.ts`; insight đã import channel nên channel không import insight), xoá dòng `daily_channel_summary` của gian hàng trong giao dịch xoá.
 
 ## Test
 

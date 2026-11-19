@@ -64,6 +64,8 @@ export const channelModule: ModuleDefinition = {
 };
 
 export { getShops, type ShopRef } from './service/shops-lookup.ts';
+// Hạn trả của gian hàng cho sales tính hạn trả, tự hoàn tất (#236), tiêm qua `ctx.returnPoliciesOf` ở `src/wiring.ts`.
+export { returnPoliciesOf, type ShopReturnPolicy } from './service/shops-lookup.ts';
 // Cho #133 (sàn báo gỡ app): `loseShopAuth` gọi ngoài giao dịch, đặt `needs_reauth` và dừng lịch việc nền của gian hàng.
 export { loseShopAuth, markNeedsReauth } from './service/shops.ts';
 // Cho finance kéo quyết toán (#117), tiêm qua `ctx.settlementSource` ở `src/wiring.ts`.
@@ -85,3 +87,5 @@ export {
   marketplaceCarriers, marketplacePack, marketplaceReadyToShip, marketplaceRepack, marketplaceShipPackage,
   marketplaceShippingDocuments, marketplaceSplitAttributes, marketplaceSplitLevel, marketplaceSplitOrder,
 } from './service/order-actions.ts';
+// Xoá gian hàng đã ngắt (#398): `src/wiring.ts` tiêm `deleteShopSummaries` của insight vào `ctx` của router.
+export type { ChannelContext } from './service/shop-delete.ts';

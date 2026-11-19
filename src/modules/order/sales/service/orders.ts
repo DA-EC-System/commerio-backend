@@ -5,15 +5,19 @@ import { getVariants } from '../../../product/index.ts';
 import { findPackagesOfOrders, type PackageOrderRef, packageVariantsOf, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
+import { policyOf, returnPoliciesFor } from './return-policy.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import {
+  codUnconfirmed,
   completionBlocker,
   isDueSoon,
+  lastDeliveredAt,
   type OrderFlag,
   type OrderStage,
   type PaymentStatus,
-  RETURN_WINDOW_DAYS,
+  type ReturnPolicy,
+  returnWindowEndsAt,
   stageOf,
 } from '../domain/order.ts';
 import {
@@ -50,6 +54,8 @@ export interface SalesContext extends ModuleContext {
   readonly marketplaceReturns?: MarketplaceReturns;
   /** Trạng thái thanh toán theo sổ tiền của finance (#234); đơn finance chưa có dòng là `none`. */
   readonly paymentStatusOf?: (orderIds: readonly string[]) => Promise<Map<string, PaymentStatus>>;
+  /** Chính sách hạn trả của gian hàng (#236); gian hàng không thấy thì vắng, sales điền mặc định 7 ngày. */
+  readonly returnPoliciesOf?: (shopIds: readonly string[]) => Promise<Map<string, ReturnPolicy>>;
 }
 
 const toInt = (money: string | null) => (money === null ? 0 : new Decimal(money).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber());
@@ -232,11 +238,15 @@ export async function getOrder(ctx: SalesContext, id: string) {
   if (!isUuid(id)) throw notFound();
   const o = await findOrder(id);
   if (!o) throw notFound();
-  const [facts, lines, shops, history] = await Promise.all([
+  const open = o.status === 'processing';
+  const [facts, lines, shops, history, policies] = await Promise.all([
     factsOf(ctx, [id]),
     findOrderLines([id]),
     shopsOf(ctx, [o.shopId]),
     getStatusHistory('orders', id),
+    // Chỉ đơn đang xử lý tính hạn theo chính sách hiện hành: đơn khác không đọc channel, để channel lỗi không làm hỏng
+    // chi tiết đơn đã dừng hay chưa trả (và các luồng gọi `getOrder` như huỷ đơn, tách kiện).
+    open ? returnPoliciesFor(ctx, [o.shopId]) : new Map<string, ReturnPolicy>(),
   ]);
   const f = facts.get(id)!;
   const reporters = [...new Set(f.packages.flatMap((p) => (p.lostReportedBy ? [p.lostReportedBy] : [])))];
@@ -250,14 +260,20 @@ export async function getOrder(ctx: SalesContext, id: string) {
   const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
-  const lastDelivered = f.packages.reduce<Date | null>((a, p) => (p.deliveredAt && (!a || p.deliveredAt > a) ? p.deliveredAt : a), null);
-  const open = o.status === 'processing';
+  const lastDelivered = lastDeliveredAt(f.packages);
+  // Đơn đã dừng trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12); đơn chưa trả: không có hạn.
+  const endsAt = open
+    ? returnWindowEndsAt(policyOf(policies, o.shopId), lastDelivered, o.returnWindowEndsAt)
+    : o.status === 'unpaid'
+      ? null
+      : o.returnWindowEndsAt;
   const blocker = open
     ? completionBlocker({
         packages: f.packages.map((p) => p.status),
-        lastDeliveredAt: isoOrNull(lastDelivered),
+        lastDeliveredAt: lastDelivered,
+        returnWindowEndsAt: endsAt,
         openReturnRequests: f.openReturns,
-        codUnconfirmed: false,
+        codUnconfirmed: codUnconfirmed(f.packages),
         now: Date.now(),
       })
     : null;
@@ -305,8 +321,8 @@ export async function getOrder(ctx: SalesContext, id: string) {
       returnStatus: l.returnStatus,
     })),
     packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, packageVariants, names)),
-    returnWindowEndsAt: lastDelivered ? new Date(lastDelivered.getTime() + RETURN_WINDOW_DAYS * 86_400_000).toISOString() : null,
-    completionBlocker: blocker as 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed' | null,
+    returnWindowEndsAt: isoOrNull(endsAt),
+    completionBlocker: blocker,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),
   };
 }
