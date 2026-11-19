@@ -53,6 +53,8 @@ npm run smoke:tiktok -- skus [shopId] [sellerSku ...]   # listSkus, hoặc getSk
 npm run smoke:tiktok -- returns [ngày]            # listReturns: yêu cầu trả cập nhật trong N ngày (mặc định 30), #227
 npm run smoke:tiktok -- cancellations [ngày]      # listCancellations: lần huỷ cập nhật trong N ngày
 npm run smoke:tiktok -- cancel-reasons <orderId>  # lý do người bán huỷ được đơn; chỉ đọc, không huỷ
+npm run smoke:tiktok -- return-reasons <returnId> [reject|refuse-refund]  # lý do từ chối theo quyết định (Decision Eligibility); chỉ đọc, #392
+npm run smoke:tiktok -- return-records <returnId>  # lịch sử yêu cầu trả (Get Return Records); chỉ đọc, #392
 npm run smoke:tiktok -- warehouses                # /logistics/202309/warehouses
 npm run smoke:tiktok -- categories [từ khoá]      # danh mục lá AVAILABLE (cây v2)
 npm run smoke:tiktok -- attrs <categoryId>        # thuộc tính bắt buộc

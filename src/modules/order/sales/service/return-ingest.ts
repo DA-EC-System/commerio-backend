@@ -166,6 +166,10 @@ function changedFields(row: ReturnRow, patch: ReturnPatch): ReturnPatch {
 /** Trạng thái sàn sau bước chờ hàng về: sàn đã ghi nhận hàng tới người bán. */
 const PAST_AWAITING: readonly ReturnStatus[] = ['received', 'refund_only', 'closed'];
 
+/** Đầu câu cờ khi sàn báo trạng thái app không đi tới được; lượt sau sàn khớp lại thì gỡ (nhận theo đầu câu, không thêm cột). */
+export const CONFLICT_NOTE = 'Sàn báo ';
+const isConflictNote = (note: string | null) => note?.startsWith(CONFLICT_NOTE) ?? false;
+
 /** Đưa yêu cầu tới trạng thái sàn báo nếu máy trạng thái cho phép; không cho thì bật Cần xử lý, giữ trạng thái app. */
 async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIngestOutcome> {
   const stale = row.externalUpdatedAt !== null && r.updatedAt.getTime() < row.externalUpdatedAt.getTime();
@@ -175,12 +179,18 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   if (row.needsAttention && isConfirmFailedNote(row.attentionNote) && r.status && PAST_AWAITING.includes(r.status)) {
     Object.assign(fields, { needsAttention: false, attentionNote: null });
   }
-  const action = r.status ? syncAction(row.status, r.status) : null;
+  const action = r.status ? syncAction(row.status, r.status, row.closeResult) : null;
   if (action === 'conflict') {
-    const note = `Sàn báo ${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
-    await updateReturnAt(row.id, row.version, row.status, { ...fields, needsAttention: true, attentionNote: note });
+    // Cờ báo sàn đã nhận còn đó thì giữ câu của nó: lượt thử lại tìm yêu cầu theo đầu câu này (`returnsAwaitingConfirm`).
+    const keep = row.needsAttention && isConfirmFailedNote(row.attentionNote) && !('attentionNote' in fields);
+    const note = keep ? row.attentionNote : `${CONFLICT_NOTE}${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
+    const diff = changedFields(row, { ...fields, needsAttention: true, attentionNote: note });
+    if (!Object.keys(diff).length) return 'unchanged';
+    await updateReturnAt(row.id, row.version, row.status, diff);
     return 'updated';
   }
+  // Sàn đã khớp lại với app: gỡ cờ mâu thuẫn của lượt trước. Cờ của luồng khác giữ nguyên.
+  if (row.needsAttention && isConflictNote(row.attentionNote)) Object.assign(fields, { needsAttention: false, attentionNote: null });
   if (action) {
     await applyReturnStep(
       row,

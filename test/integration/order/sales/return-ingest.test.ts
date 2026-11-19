@@ -226,6 +226,50 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(row.attention_note).toContain('REQUEST_INITIATE');
   });
 
+  it('đã kiểm hàng và đóng mà sàn còn báo hàng đang về (báo sàn chưa xong): giữ closed, không bật cờ (TRA-B04)', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'AWAITING_BUYER_SHIP', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    await db().query(
+      `update "order".return_requests set status = 'closed', close_result = 'inspected', received_at = now()
+        where shop_id = $1 and external_return_id = $2`,
+      [shopId, r.externalId],
+    );
+    remote = [{ ...r, rawStatus: 'BUYER_SHIPPED_ITEM', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'closed', needs_attention: false, attention_note: null });
+  });
+
+  it('cờ báo sàn đã nhận còn đó mà sàn báo trạng thái lệch: giữ câu cờ báo sàn để lượt thử lại còn thấy', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'AWAITING_BUYER_SHIP', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const note = 'Chưa báo được sàn đã nhận hàng: sàn đang bận. App tự thử lại mỗi lượt đồng bộ';
+    await db().query(
+      `update "order".return_requests set status = 'received', received_at = now(), needs_attention = true, attention_note = $3
+        where shop_id = $1 and external_return_id = $2`,
+      [shopId, r.externalId, note],
+    );
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'received', needs_attention: true, attention_note: note });
+  });
+
+  it('mâu thuẫn rồi lượt sau sàn khớp lại: gỡ cờ', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'REQUEST_REJECT', status: 'rejected' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ needs_attention: true });
+    remote = [{ ...r, updatedAt: new Date(Date.now() + 2000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'rejected', needs_attention: false, attention_note: null });
+  });
+
   it('kiện còn đang giao khi sàn mở yêu cầu: kiện nhảy tới Đã giao kèm cờ, yêu cầu bật Cần xử lý', async () => {
     const { externalOrderId, orderId } = await marketplaceOrder('in_transit');
     const r = remoteReturn(externalOrderId);

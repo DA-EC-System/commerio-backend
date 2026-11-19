@@ -381,11 +381,12 @@ describe('decideCancelRequest, cancelRequestRejectReasons', () => {
 });
 
 // Approve Return, Reject Return, Get Reject Reasons 202309 (OAS cục bộ của skill tts-openapi-guide, tra 19/11/2026; #364).
-describe('returnReasons, decideReturn, confirmReturnReceived', () => {
+describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', () => {
   const RET = '4035318504086604999';
   const approve = `POST /return_refund/202309/returns/${RET}/approve`;
-  const reject = `POST /return_refund/202309/returns/${RET}/reject`;
-  const reasons = 'GET /return_refund/202309/reject_reasons';
+  const reject = `POST /return_refund/202606/returns/${RET}/reject`;
+  const eligibility = 'GET /return_refund/202601/decision_eligibility';
+  const records = `GET /return_refund/202309/returns/${RET}/records`;
 
   it.each([
     ['accept', 'return', { decision: 'APPROVE_RETURN' }],
@@ -412,7 +413,7 @@ describe('returnReasons, decideReturn, confirmReturnReceived', () => {
   ] as const)('từ chối yêu cầu loại %s → reject %s kèm lý do, câu mặc định khi trống', async (kind, decision, fallback) => {
     const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
     await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1' });
-    expect(calls[0]!.path).toBe(`/return_refund/202309/returns/${RET}/reject`);
+    expect(calls[0]!.path).toBe(`/return_refund/202606/returns/${RET}/reject`);
     expect(calls[0]!.body).toEqual({ decision, reject_reason: 'seller_reject_r1', comment: fallback });
     expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-${decision}-seller_reject_r1`);
     await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1', comment: 'Hàng còn nguyên tem' });
@@ -447,16 +448,60 @@ describe('returnReasons, decideReturn, confirmReturnReceived', () => {
     expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-APPROVE_RECEIVED_PACKAGE`);
   });
 
-  it.each(['reject', 'refuse-refund'] as const)('returnReasons (%s): Get Reject Reasons vi-VN, bỏ lý do không có name', async (action) => {
+  it.each([
+    ['reject', 'REJECT_RETURN'],
+    ['refuse-refund', 'REJECT_REFUND'],
+  ] as const)('returnReasons (%s): Get Decision Eligibility cho %s, vi-VN, bỏ lý do không có name', async (action, decision) => {
     const { adapter, calls } = fakeSan({
-      [reasons]: () =>
-        ok({ reasons: [{ name: 'seller_reject_r1', text: 'Hàng đã qua sử dụng' }, { name: 'seller_reject_r2' }, { text: 'không tên' }] }),
+      [eligibility]: () =>
+        ok({
+          decisions: [
+            {
+              decision,
+              eligible: true,
+              available_reject_reasons: [{ name: 'seller_reject_r1', text: 'Hàng đã qua sử dụng' }, { name: 'seller_reject_r2' }, { text: 'không tên' }],
+            },
+          ],
+        }),
     });
     expect(await adapter.returnReasons!(TOKEN, RET, action)).toEqual([
       { id: 'seller_reject_r1', label: 'Hàng đã qua sử dụng', requiresImage: false },
       { id: 'seller_reject_r2', label: 'seller_reject_r2', requiresImage: false },
     ]);
     expect(calls[0]!.query.get('return_or_cancel_id')).toBe(RET);
+    expect(calls[0]!.query.get('check_decisions')).toBe(decision);
+    expect(calls[0]!.query.get('locale')).toBe('vi-VN');
+  });
+
+  it('returnReasons: sàn không cho quyết lúc này → rejected kèm mã, câu của sàn; thiếu quyết định → not_rejectable', async () => {
+    const { adapter } = fakeSan({
+      [eligibility]: () => ok({ decisions: [{ decision: 'REJECT_RETURN', eligible: false, ineligible_code: '25020010', ineligible_reason: 'Request already approved' }] }),
+    });
+    await expect(adapter.returnReasons!(TOKEN, RET, 'reject')).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: '25020010',
+      platformMessage: 'Request already approved',
+    });
+    const empty = fakeSan({ [eligibility]: () => ok({ decisions: [] }) });
+    await expect(empty.adapter.returnReasons!(TOKEN, RET, 'refuse-refund')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'not_rejectable' });
+  });
+
+  it('returnHistory: Get Return Records vi-VN, mới nhất trước, ghép vai trò, mô tả, lý do, ghi chú, số ảnh và video', async () => {
+    const { adapter, calls } = fakeSan({
+      [records]: () =>
+        ok({
+          records: [
+            { create_time: 1793634765, event: 'ORDER_RETURN', role: 'BUYER', description: 'Khách gửi yêu cầu trả', reason_text: 'Sai sản phẩm', images: [{ url: 'a' }, { url: 'b' }], videos: [{ url: 'v' }] },
+            { create_time: 1793638365, event: 'ORDER_RETURN', role: 'SELLER', description: 'Người bán đồng ý', note: 'Đã thoả thuận' },
+            { create_time: 1793630000, event: 'ORDER_RETURN' },
+          ],
+        }),
+    });
+    expect(await adapter.returnHistory!(TOKEN, RET, [])).toEqual([
+      { at: new Date(1793638365 * 1000), reverseStatus: '', ofcStatus: null, note: 'Người bán · Người bán đồng ý · Đã thoả thuận' },
+      { at: new Date(1793634765 * 1000), reverseStatus: '', ofcStatus: null, note: 'Khách · Khách gửi yêu cầu trả · Sai sản phẩm · 2 ảnh · 1 video' },
+      { at: new Date(1793630000 * 1000), reverseStatus: '', ofcStatus: null, note: null },
+    ]);
     expect(calls[0]!.query.get('locale')).toBe('vi-VN');
   });
 });
