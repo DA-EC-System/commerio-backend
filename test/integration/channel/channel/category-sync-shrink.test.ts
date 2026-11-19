@@ -1,14 +1,12 @@
 // Cờ `allowShrink` của "Đồng bộ ngay" (#400, Thành chốt 19/11/2026): chỉ quản trị nền tảng gửi được, người khác 403
 // `forbidden`; cờ đi theo việc xuống `syncTree`, lượt bị chặn vì cây thiếu ghi log `error` kèm số node bỏ và tổng node.
-// Dùng sàn `shopee` (adapter giả trong file) để cây của file khác không tính vào ngưỡng thiếu.
+// Sàn `shopee` (adapter giả trong file): chỉ xếp việc, không ghi cây (cây `shopee` là của `platform-categories.test.ts`).
+// Phần `runCategorySync` truyền cờ, log `error`: `test/unit/modules/channel/channel/service/category-sync.test.ts`.
 import { randomInt } from 'node:crypto';
 import request from 'supertest';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { CategoryTreeShrunkError, findCategory } from '#src/modules/channel/channel/repository/platform-categories.ts';
-import { runCategorySync } from '#src/modules/channel/channel/service/category-sync.ts';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { PlatformCategoryNode } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { logger } from '#src/shared/logger.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
@@ -16,7 +14,6 @@ import { fakeAdapter } from './helpers.ts';
 
 const app = testApp();
 afterAll(() => resetAdapters());
-afterEach(() => vi.restoreAllMocks());
 
 // Mã node là số (BE1 ép `externalId` số).
 const base = randomInt(1_000_000, 9_000_000) * 1000;
@@ -31,7 +28,7 @@ const nodes = (n: number): PlatformCategoryNode[] => [
     path: `Gốc > Lá ${i}`,
   })),
 ];
-let tree = nodes(120);
+const tree = nodes(3);
 registerAdapter('shopee', fakeAdapter({ categoriesNeedToken: false, categoryTree: async () => tree }));
 
 const post = (token: string, body?: object) => {
@@ -63,20 +60,5 @@ describe('route đồng bộ cây: allowShrink', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(202);
     expect((await queued()).map((r) => r.data.allowShrink)).toEqual([true]);
     await testPool().query("delete from pgboss.job where name = 'channel.category_sync' and data->>'platform' = 'shopee'");
-  });
-});
-
-describe('runCategorySync: cây thiếu', () => {
-  it('không cờ: chặn, log error kèm số node bỏ và tổng, không ghi; có cờ: ghi, node vắng thành removed', async () => {
-    tree = nodes(120);
-    await runCategorySync({ platform: 'shopee' });
-    tree = nodes(100);
-    const error = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
-    await expect(runCategorySync({ platform: 'shopee' })).rejects.toBeInstanceOf(CategoryTreeShrunkError);
-    expect(error).toHaveBeenCalledWith(expect.objectContaining({ platform: 'shopee', removing: 20, active: expect.any(Number) }), expect.any(String));
-    expect((await findCategory('shopee', id(110)))?.status).toBe('active');
-    await runCategorySync({ platform: 'shopee', allowShrink: true });
-    expect((await findCategory('shopee', id(110)))?.status).toBe('removed');
-    expect((await findCategory('shopee', id(5)))?.status).toBe('active');
   });
 });

@@ -1,6 +1,6 @@
 // Cấp kế của attribute cascade (#400, Documents/21 §18.5): gọi sàn bằng token gian hàng Lazada, `cascadeId` từ `raw` attribute
 // đã lưu, `path` chuyển nguyên; không có gian hàng 409, sàn không có cascade 422, quyền `listing.manage`.
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CascadeLevelSchema } from '#src/modules/channel/channel/api/schemas.ts';
@@ -29,7 +29,8 @@ registerAdapter(
 );
 afterAll(() => resetAdapters());
 
-const leaf = `CAS-${randomUUID().slice(0, 8)}`;
+// Mã category sàn là số (BE1 ép `externalId` số trên URL).
+const leaf = String(randomInt(800_000_000, 900_000_000));
 const attr = (code: string, input: PlatformAttribute['input'], raw: Record<string, unknown>): PlatformAttribute => ({
   code,
   label: code,
