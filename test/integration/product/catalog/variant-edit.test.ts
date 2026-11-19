@@ -94,6 +94,10 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
     ['chiều dài số lẻ', { lengthMm: 2.5 }, 'lengthMm'],
     ['chiều rộng là chuỗi', { widthMm: '250' }, 'widthMm'],
     ['chiều cao vượt integer của PostgreSQL', { heightMm: 2147483648 }, 'heightMm'],
+    ['cân nặng 50001 (Documents/21 §17.5, #434)', { weightG: 50_001 }, 'weightG'],
+    ['cân nặng 999999999 (ca test staging 18/11, #434)', { weightG: 999_999_999 }, 'weightG'],
+    ['cân nặng 0.25 (#434)', { weightG: 0.25 }, 'weightG'],
+    ['chiều dài 2001 (#434)', { lengthMm: 2_001 }, 'lengthMm'],
     ['giá muốn bán số lẻ', { targetNetPrice: 150000.5 }, 'targetNetPrice'],
     ['giá chuẩn bằng 0', { standardPrice: 0 }, 'standardPrice'],
   ])('%s → 422 errors.<ô>', async (_case, body, field) => {
@@ -103,6 +107,21 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
     expect(res.body.type).toBe('/problems/validation_failed');
     expect(res.body.errors[field]).toBeTruthy();
     expect(await variantOf(product.id)).toMatchObject({ version: 1, weightG: null });
+  });
+
+  it('đúng trần: cân nặng 50000, ba cạnh 2000 → 200, lưu nguyên số (#434)', async () => {
+    const product = await wallet();
+    const edge = { weightG: 50_000, lengthMm: 2_000, widthMm: 2_000, heightMm: 2_000 };
+    const res = await patch(product.id, product.variants[0]!.id, { version: 1, ...edge });
+    expect(res.status).toBe(200);
+    expect(await variantOf(product.id)).toMatchObject(edge);
+  });
+
+  it('cân nặng vượt trần báo "Cân nặng tối đa 50 kg" (#434)', async () => {
+    const product = await wallet();
+    const res = await patch(product.id, product.variants[0]!.id, { version: 1, weightG: 50_001 });
+    expect(res.status).toBe(422);
+    expect(res.body.errors.weightG).toBe('Cân nặng tối đa 50 kg');
   });
 
   it('version vượt integer của PostgreSQL → 409 version_conflict, không lỗi 500 từ DB', async () => {

@@ -258,6 +258,26 @@ describe('PATCH /variants/bulk', () => {
     expect((await variantRow(invalid.variantId)).weight_g).toBeNull();
   });
 
+  it('dòng cân nặng 50001 hoặc cạnh 2001 lỗi theo ô, dòng khác vẫn lưu (#434)', async () => {
+    const good = await setup();
+    const bad = await setup();
+    const res = await bulk(ceo).save([
+      { variantId: good.variantId, version: 1, weightG: 50_000, lengthMm: 2_000 },
+      { variantId: bad.variantId, version: 1, weightG: 50_001, widthMm: 2_001 },
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.saved).toEqual([{ variantId: good.variantId, version: 2 }]);
+    expect(res.body.failed).toMatchObject([
+      {
+        variantId: bad.variantId,
+        code: 'validation_failed',
+        errors: { weightG: 'Cân nặng tối đa 50 kg', widthMm: 'Chiều rộng tối đa 2.000 mm' },
+      },
+    ]);
+    expect((await variantRow(good.variantId)).weight_g).toBe(50_000);
+    expect((await variantRow(bad.variantId)).weight_g).toBeNull();
+  });
+
   it('dòng lỗi huỷ cả những gì đã ghi cho dòng đó: sai reorderVersion thì giá của dòng cũng không đổi, không có sự kiện', async () => {
     const { variantId } = await setup();
     const res = await bulk(ceo).save([{ variantId, version: 1, reorderVersion: 5, targetNetPrice: 120_000, minQty: 4 }]);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BUSINESS_ACTIONS, BUSINESS_STATUSES } from '../domain/business-status.ts';
 import { MAIN_LABELS, type MainLabel, MISSING_FIELDS, PRESENCES } from '../domain/labels.ts';
 import { BulkRowInput } from '../domain/bulk-row.ts';
+import { edgeMm, weightG } from '../domain/measure.ts';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
@@ -197,8 +198,6 @@ export const SetVariantImageBody = z
 const POSITIVE_INT = 'Nhập số nguyên lớn hơn 0';
 /** Giá (đồng) của SKU; bỏ trường là giữ, `null` là xoá. */
 const price = z.int(POSITIVE_INT).positive(POSITIVE_INT).nullable().optional();
-/** Cân nặng (g), kích thước (mm): cột `integer` của PostgreSQL, vượt trần thì 422 thay vì lỗi DB. */
-const measure = z.int(POSITIVE_INT).positive(POSITIVE_INT).max(2_147_483_647, 'Số quá lớn').nullable().optional();
 
 /**
  * Sửa một SKU (#204, Documents/21 §17.2). Không nhận `imageFileId`: ảnh phân loại đặt theo giá trị thuộc tính, không theo
@@ -210,10 +209,10 @@ export const UpdateVariantBody = z
       version,
       standardPrice: price.meta({ description: 'Giá chuẩn (đồng)' }),
       targetNetPrice: price.meta({ description: 'Giá muốn bán: số muốn thực nhận mỗi món (đồng); đổi thì phát `catalog.variant_price_changed`' }),
-      weightG: measure.meta({ description: 'Cân nặng gói (gam)' }),
-      lengthMm: measure.meta({ description: 'Chiều dài gói (mm)' }),
-      widthMm: measure.meta({ description: 'Chiều rộng gói (mm)' }),
-      heightMm: measure.meta({ description: 'Chiều cao gói (mm)' }),
+      weightG: weightG.meta({ description: 'Cân nặng gói (gam), tối đa 50.000 (Documents/21 §17.5)' }),
+      lengthMm: edgeMm('Chiều dài').meta({ description: 'Chiều dài gói (mm), tối đa 2.000' }),
+      widthMm: edgeMm('Chiều rộng').meta({ description: 'Chiều rộng gói (mm), tối đa 2.000' }),
+      heightMm: edgeMm('Chiều cao').meta({ description: 'Chiều cao gói (mm), tối đa 2.000' }),
     },
     { error: (iss) => (iss.code === 'unrecognized_keys' ? `Không sửa được trường ${iss.keys.join(', ')} ở đây` : undefined) },
   )
