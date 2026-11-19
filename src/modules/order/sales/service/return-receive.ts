@@ -20,12 +20,12 @@ import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { returnMachine } from '../domain/return.ts';
 import { takeNextNumber } from '../repository/orders.ts';
-import { findReturn, findReturnLines, findReturnsByCode, type ReturnRow, updateReturnAt } from '../repository/returns.ts';
+import { findReturn, findReturnLines, findReturnsByCode, type ReturnRow } from '../repository/returns.ts';
 import type { Actor } from './cancel.ts';
 import type { SalesContext } from './orders.ts';
 import { confirmFailedNote } from './return-confirm.ts';
 import { returnStockPort } from './return-stock-port.ts';
-import { applyReturnStep, canViewCost, invalidField, returnView } from './returns.ts';
+import { applyReturnStep, canViewCost, invalidField, returnView, updateReturnShown } from './returns.ts';
 
 export interface ReceiveInput {
   code: string;
@@ -96,7 +96,7 @@ async function confirmOnMarketplace(ctx: SalesContext, actor: Actor, row: Return
     await withCompany(actor.companyId, async () => {
       const fresh = (await findReturn(row.id, { lock: true }))!;
       // Channel thử lại sau mỗi lượt kéo yêu cầu trả, gỡ cờ khi sàn nhận (`return-confirm.ts`).
-      await updateReturnAt(fresh.id, fresh.version, fresh.status, { needsAttention: true, attentionNote: confirmFailedNote(message) });
+      await updateReturnShown(fresh, { needsAttention: true, attentionNote: confirmFailedNote(message) });
     });
   }
 }

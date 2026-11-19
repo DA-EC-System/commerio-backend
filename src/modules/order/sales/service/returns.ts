@@ -7,8 +7,10 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import {
+  changedFields,
   CLOSE_RESULT,
   REFUNDING_ACTIONS,
+  RETURN_SHOWN_FIELDS,
   RETURN_STATUSES,
   type ReturnAction,
   returnMachine,
@@ -145,6 +147,22 @@ export async function listReturns(ctx: SalesContext, companyId: string, q: Retur
   });
 }
 
+/** `sales.return_status_changed` (#216): `from` null khi vừa tạo, `from = to` khi chỉ trường hiện trên màn đổi. Key là đơn. */
+export async function publishReturnStatusChanged(row: { id: string; orderId: string }, from: ReturnStatus | null, to: ReturnStatus): Promise<void> {
+  await publishEvent({ type: 'sales.return_status_changed', aggregateId: row.orderId, payload: { returnId: row.id, orderId: row.orderId, from, to } });
+}
+
+/**
+ * Ghi trường của yêu cầu mà không đổi trạng thái (theo `version`, như `updateReturnAt`). Trúng dòng và có trường hiện trên
+ * màn đổi (`RETURN_SHOWN_FIELDS`: cờ Cần xử lý, thông tin sàn) thì phát `from = to` (#216 D8). Trả kết quả UPDATE.
+ */
+export async function updateReturnShown(row: ReturnRow, patch: ReturnPatch): Promise<boolean> {
+  const shown = Object.keys(changedFields(row, patch)).some((k) => (RETURN_SHOWN_FIELDS as readonly string[]).includes(k));
+  if (!(await updateReturnAt(row.id, row.version, row.status, patch))) return false;
+  if (shown) await publishReturnStatusChanged(row, row.status, row.status);
+  return true;
+}
+
 /**
  * Ghi một bước của máy trạng thái trong giao dịch hiện tại: UPDATE theo `version` + trạng thái, lịch sử, nhật ký,
  * `sales.return_refunded` khi bước hoàn tiền cho khách. `actorId` null là sàn hoặc hệ thống. Trả false khi bản ghi vừa đổi.
@@ -176,6 +194,8 @@ export async function applyReturnStep(
     source: step.source ?? (step.actorId ? 'user' : 'system'),
     reason: step.reason ?? null,
   });
+  // Trước `return_refunded`: outbox theo đúng diễn biến (#216).
+  await publishReturnStatusChanged(row, row.status, step.to);
   if (step.actorId) {
     await recordAudit({
       companyId: row.companyId,
