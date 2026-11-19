@@ -322,7 +322,9 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   const notCancelled = o.lines.filter((l) => l.status !== null && l.status !== 'cancelled');
   const hasRequest = (l: PlatformOrder['lines'][number]) => !!(l.info.cancelInitiator || l.info.cancelReason || l.info.cancelReasonDetail);
   await clearStaleLineCancel(orderId, {
-    clear: o.cancelRequested ? [] : notCancelled.filter((l) => !l.info.cancelKind && !hasRequest(l)).map((l) => l.externalLineId),
+    // Dọn theo từng món: sàn không còn báo người, lý do cho món đó thì món không còn xin huỷ, kể cả khi đơn vẫn có cờ
+    // khách xin huỷ (khách đang xin huỷ món khác). Để sót dấu cũ thì đồng ý yêu cầu một phần bị coi là huỷ cả đơn.
+    clear: notCancelled.filter((l) => !l.info.cancelKind && !hasRequest(l)).map((l) => l.externalLineId),
     keepRequest: notCancelled.filter((l) => !l.info.cancelKind && hasRequest(l)).map((l) => l.externalLineId),
   });
 
