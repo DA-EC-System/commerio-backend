@@ -150,10 +150,14 @@ export function tiktokRemoteState(productStatus: string, sku: Row): RemoteState 
   }
 }
 
-/** Chi tiết đọc bằng Get Product: `labels` mã SKU → nhãn biến thể, `images` mã sản phẩm → URL ảnh đầu tiên. */
+/**
+ * Chi tiết đọc bằng Get Product: `labels` mã SKU → nhãn biến thể, `images` mã sản phẩm → URL ảnh đầu tiên, `categories` mã
+ * sản phẩm → category lá (`category_chains` phần tử `is_leaf`, #400 lát 13).
+ */
 interface ProductDetails {
   labels: Map<string, string>;
   images: Map<string, string>;
+  categories: Map<string, string>;
 }
 
 /**
@@ -166,6 +170,7 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
   const skus = (p.skus ?? []) as Row[];
   const title = typeof p.title === 'string' ? p.title : '';
   const imageUrl = details?.images.get(String(p.id)) ?? null;
+  const category = details?.categories.get(String(p.id));
   // Search Products 202502: `create_time` "The time when the product is created. Unix timestamp." (giây, OAS cục bộ).
   const createdAt = epochDate(Number(p.create_time) * 1000);
   return skus.map((s) => {
@@ -189,6 +194,7 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
       sellableQuantity: quantity,
       ...(typeof (s.price as Row | undefined)?.tax_exclusive_price === 'string' && { price: (s.price as Row).tax_exclusive_price as string }),
       ...(createdAt && { createdAt }),
+      ...(category && { externalCategoryId: category }),
     };
   });
 }
@@ -238,10 +244,11 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return (await searchProducts(accessToken, filter)).flatMap((p) => skusOf(p));
   }
 
-  /** Chi tiết đã đọc của một sản phẩm: nhãn theo mã SKU, ảnh đầu tiên. */
+  /** Chi tiết đã đọc của một sản phẩm: nhãn theo mã SKU, ảnh đầu tiên, category lá. */
   interface ProductDetail {
     labels: [string, string][];
     image: string | null;
+    category: string | null;
   }
   const detailCache = new Map<string, { updateTime: string; at: number; detail: ProductDetail }>();
   const cacheKey = (shopId: string, p: Row) => `${shopId}:${String(p.id)}`;
@@ -258,8 +265,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     while (detailCache.size > DETAIL_CACHE_MAX) detailCache.delete(detailCache.keys().next().value!);
   }
 
-  /** Nhãn biến thể, ảnh đầu tiên trong phản hồi Get Product. */
-  function parseDetail(detail: { skus?: Row[]; main_images?: Row[] } | undefined): ProductDetail {
+  /** Nhãn biến thể, ảnh đầu tiên, category lá trong phản hồi Get Product. */
+  function parseDetail(detail: { skus?: Row[]; main_images?: Row[]; category_chains?: Row[] } | undefined): ProductDetail {
     const first = (detail?.main_images ?? [])[0]?.urls;
     const url = Array.isArray(first) ? first[0] : undefined;
     const labels: [string, string][] = [];
@@ -270,7 +277,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         .join(', ');
       if (label) labels.push([String(s.id), label]);
     }
-    return { labels, image: typeof url === 'string' && url ? url : null };
+    const leaf = (detail?.category_chains ?? []).find((c) => c.is_leaf === true)?.id;
+    return { labels, image: typeof url === 'string' && url ? url : null, category: leaf == null || leaf === '' ? null : String(leaf) };
   }
 
   /**
@@ -295,8 +303,10 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     const shopId = unpackTiktokToken(accessToken).shopId;
     const labels = new Map<string, string>();
     const images = new Map<string, string>();
+    const categories = new Map<string, string>();
     const apply = (p: Row, d: ProductDetail) => {
       if (d.image) images.set(String(p.id), d.image);
+      if (d.category) categories.set(String(p.id), d.category);
       for (const [skuId, label] of d.labels) labels.set(skuId, label);
     };
     const isMulti = (p: Row) => ((p.skus ?? []) as Row[]).length > 1;
@@ -350,7 +360,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         'Không đọc được chi tiết sản phẩm TikTok, dùng SKU người bán làm nhãn, không có ảnh',
       );
     }
-    return { labels, images };
+    return { labels, images, categories };
   }
 
   /**

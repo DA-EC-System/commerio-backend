@@ -412,6 +412,27 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
 }
 
 /**
+ * Category của SKU sàn vừa sửa (#400 lát 13, TikTok, Thành chốt cách 2 ngày 19/11/2026): Search Products không trả category
+ * nên lượt đồng bộ không biết; lần đọc theo giờ sửa (`listSkusChanged`, lọc `update_time_ge`) đã gọi Get Product cho sản phẩm
+ * vừa sửa và adapter điền `externalCategoryId`. Áp lên listing đang theo dõi của gian hàng như nhánh Lazada (`syncCategories`).
+ * Gọi ngoài giao dịch, sau khi đã gọi sàn.
+ */
+export async function syncChangedCategories(
+  port: ProductPort,
+  companyId: string,
+  shop: Pick<ShopRow, 'id' | 'platform'>,
+  skus: readonly RemoteSku[],
+): Promise<void> {
+  const bySku = new Map(skus.filter((s) => s.externalCategoryId).map((s) => [s.externalSkuId, s]));
+  if (!bySku.size) return;
+  const inCompany: InCompany = (fn) => withCompany(companyId, fn);
+  const rows = (await inCompany(() => listListingRows(shop.id))).filter(
+    (r) => WATCHED.includes(r.status) && r.externalSkuId !== null && bySku.has(r.externalSkuId),
+  );
+  await syncCategories(port, inCompany, shop.platform, rows, bySku);
+}
+
+/**
  * Category thật của listing trên sàn (#400 lát 13, Documents/19 mục 3.3): sàn trả category kèm SKU (`externalCategoryId`)
  * khác cột thì ghi cột (không tăng `version`); giá trị cũ trùng category của spec sản phẩm thì spec `changed` (`markSpecCategory`
  * chỉ đổi khi spec còn ở category cũ): người bán đổi category trên sàn, người dùng chọn lại trước lần đẩy sau. Cột còn trống

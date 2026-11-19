@@ -57,7 +57,7 @@ export const channelModule: ModuleDefinition = {
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
     // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.
-    await workChannelQueue(remoteSkusRefreshQueue, runRemoteSkusRefresh);
+    await workChannelQueue(remoteSkusRefreshQueue, (job, attempt) => runRemoteSkusRefresh(job, attempt, port));
     // Ghép SKU dựng spec từ category trên sàn (#400 lát 12).
     await workChannelQueue(specFromMatchQueue, (job) => runSpecFromMatch(port, job));
     // Cây category của sàn (#400): mỗi sàn một lượt đêm, lời gọi sàn chỉ tính trần chung.

@@ -308,6 +308,28 @@ describe('adapter TikTok: SKU', () => {
     ]);
   });
 
+  // Get Product 202309 (OAS cục bộ, gọi thật 18/11/2026, fixture tiktok-product.json): `category_chains` từ gốc tới lá, lá có `is_leaf`.
+  it('#400 lát 13: listSkusChanged điền externalCategoryId từ category_chains của Get Product; sản phẩm không đọc chi tiết thì không có', async () => {
+    const fetchFn = fakeFetch(
+      ok({ total_count: 2, next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M', [2])]), product('2', 'DELETED', [sku('21', 'CU')])] }),
+      ok({
+        id: '1',
+        main_images: [],
+        skus: [{ id: '11' }],
+        category_chains: [
+          { id: '600001', is_leaf: false, local_name: 'Nhà cửa', parent_id: '0' },
+          { id: '600042', is_leaf: true, local_name: 'Cốc có quai', parent_id: '600001' },
+        ],
+      }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkusChanged!(packed(), new Date('2026-11-12T01:00:00Z'));
+    expect(skus.map((s) => [s.externalSkuId, s.externalCategoryId])).toEqual([
+      ['11', '600042'],
+      ['21', undefined],
+    ]);
+    expect(skus[1]).not.toHaveProperty('externalCategoryId');
+  });
+
   it('review vòng 2 N1: trang rỗng giữa chừng (token vẫn khác rỗng) mà chưa đủ `total_count` thì rejected `incomplete_list`', async () => {
     const fetchFn = fakeFetch(
       ok({ total_count: 3, next_page_token: 'p2', products: [product('1', 'ACTIVATE', [sku('11', 'A')])] }),

@@ -5,7 +5,8 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { runListingSync } from '#src/modules/channel/channel/service/background.ts';
 import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -26,12 +27,16 @@ const port: ProductPort = {
 setProductPort(port);
 
 const remote: RemoteSku[] = [];
+/** SKU sàn trả cho lần đọc theo giờ sửa (`listSkusChanged`, TikTok lấy category từ Get Product của sản phẩm vừa sửa). */
+let changed: RemoteSku[] = [];
+const listSkusChanged = vi.fn(async () => changed);
 registerAdapter(
   'lazada',
   fakeAdapter({
     getSeller: async (accessToken) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' }),
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
     updatePriceQuantity: async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true })),
+    listSkusChanged,
   }),
 );
 afterAll(async () => {
@@ -87,7 +92,7 @@ async function setup(current: string | null, specCategory: string | null, remote
       [companyId, v.productId, specCategory],
     );
   }
-  return { listingId: rows[0]!.id, productId: v.productId };
+  return { listingId: rows[0]!.id, productId: v.productId, sku: remote.at(-1)! };
 }
 const listing = async (id: string) => (await testPool().query('select external_category_id, version from channel.listings where id = $1', [id])).rows[0];
 const specStatus = async (productId: string) =>
@@ -125,5 +130,32 @@ describe('đồng bộ category của listing', () => {
     expect(await listing(same.listingId)).toEqual({ external_category_id: a, version: before[3].version });
     expect(await specStatus(same.productId)).toBe('ok');
     expect((await listing(silent.listingId)).external_category_id).toBe(a);
+  });
+});
+
+// TikTok (#400 lát 13, Thành chốt cách 2 ngày 19/11/2026): Search Products không trả category nên lượt đồng bộ không biết; lần đọc
+// theo giờ sửa sau lượt đồng bộ (`listSkusChanged`, lọc `update_time_ge` từ `remote_skus_changed_since`) đã gọi Get Product cho
+// sản phẩm vừa sửa, adapter điền `externalCategoryId` từ `category_chains`; áp như nhánh Lazada. Không thêm lời gọi, không thêm cột.
+describe('đồng bộ category theo sản phẩm sàn vừa sửa', () => {
+  it('lần đọc theo giờ sửa trả category khác: ghi cột, spec ở category cũ → changed; SKU không có category hay không đổi thì giữ', async () => {
+    const [a, b] = [num(), num()];
+    const moved = await setup(a, a, undefined);
+    const quiet = await setup(a, a, undefined);
+    const same = await setup(a, a, undefined);
+    await testPool().query(
+      "update channel.shops set remote_skus_synced_at = now() - interval '2 minutes', remote_skus_changed_since = now() - interval '70 minutes' where id = $1",
+      [shopId],
+    );
+    changed = [{ ...moved.sku, externalCategoryId: b }, quiet.sku, { ...same.sku, externalCategoryId: a }];
+    const before = await listing(moved.listingId);
+
+    await runListingSync(port, { companyId, shopId });
+
+    expect(listSkusChanged).toHaveBeenCalledTimes(1);
+    expect(await listing(moved.listingId)).toEqual({ external_category_id: b, version: before.version });
+    expect(await specStatus(moved.productId)).toBe('changed');
+    expect((await listing(quiet.listingId)).external_category_id).toBe(a);
+    expect((await listing(same.listingId)).external_category_id).toBe(a);
+    expect(await specStatus(same.productId)).toBe('ok');
   });
 });
