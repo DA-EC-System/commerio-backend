@@ -6,7 +6,7 @@ import { defineQueue, schedulePlatform, sendJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { oldestActiveShopOn, syncTree } from '../repository/platform-categories.ts';
+import { CategoryTreeShrunkError, oldestActiveShopOn, syncTree } from '../repository/platform-categories.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import { appOnly, getAdapter, type PlatformCategoryNode, registeredPlatforms } from './marketplaces/index.ts';
 import { platformOf, shopSession } from './shops.ts';
@@ -45,17 +45,24 @@ export async function scheduleCategorySync(): Promise<void> {
 /**
  * Một lượt: đọc cả cây rồi `syncTree` (ngoài `withCompany`). Sàn cần token (TikTok) mượn phiên gian hàng `active` cũ nhất
  * trên sàn (giữ lớp làm mới token), không có thì bỏ lượt. Lỗi sàn ném để pg-boss thử lại; cây rỗng là phản hồi lạ, không
- * ghi (khỏi đánh `removed` cả sàn).
+ * ghi (khỏi đánh `removed` cả sàn); cây thiếu bất thường (`CategoryTreeShrunkError`) log `error` rồi ném.
+ * Mốc `synced_at` lấy **trước** khi đọc sàn: hai lượt chồng nhau thì lượt đọc sau thắng (review BE1 P2-4).
+ * `borrowShop` thay được trong test (review BE1 P2-8: không phụ thuộc gian hàng của file khác trên DB dùng chung).
  */
-export async function runCategorySync(job: CategorySyncJob, now: () => Date = () => new Date()): Promise<void> {
+export async function runCategorySync(
+  job: CategorySyncJob,
+  opts: { now?: () => Date; borrowShop?: typeof oldestActiveShopOn } = {},
+): Promise<void> {
+  const { now = () => new Date(), borrowShop = oldestActiveShopOn } = opts;
   const adapter = getAdapter(job.platform);
   if (!adapter?.categoryTree || !isMarketplace(job.platform)) return;
   const platform = job.platform;
+  const startedAt = now();
   let nodes: PlatformCategoryNode[];
   if (adapter.categoriesNeedToken === false) {
     nodes = await appOnly(() => adapter.categoryTree!(null));
   } else {
-    const shop = await oldestActiveShopOn(platform);
+    const shop = await borrowShop(platform);
     if (!shop) {
       logger.info({ platform }, 'đồng bộ cây category: sàn cần token mà không có gian hàng active, bỏ lượt');
       return;
@@ -65,7 +72,13 @@ export async function runCategorySync(job: CategorySyncJob, now: () => Date = ()
       return session.adapter.categoryTree!(session.accessToken);
     });
   }
-  const startedAt = now();
-  const result = await syncTree(platform, nodes, startedAt);
-  logger.info({ platform, ...result }, 'đồng bộ cây category xong');
+  try {
+    const result = await syncTree(platform, nodes, startedAt);
+    logger.info({ platform, ...result }, result.skipped ? 'đồng bộ cây category: đã có lượt mới hơn, bỏ' : 'đồng bộ cây category xong');
+  } catch (err) {
+    if (err instanceof CategoryTreeShrunkError) {
+      logger.error({ platform, active: err.active, removing: err.removing }, 'đồng bộ cây category: cây thiếu bất thường, không ghi');
+    }
+    throw err;
+  }
 }

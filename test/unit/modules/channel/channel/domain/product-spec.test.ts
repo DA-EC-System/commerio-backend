@@ -13,6 +13,7 @@ import {
   type PlatformAttribute,
   resolveOption,
   specMissing,
+  treeShrinkBlocked,
 } from '#src/modules/channel/channel/domain/product-spec.ts';
 
 const fixture = <T>(name: string): T => JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/channel', name), 'utf8')) as T;
@@ -218,5 +219,15 @@ describe('xuất xứ: ISO ↔ giá trị sàn (A19)', () => {
     expect(countryOption('AQ', [{ id: '1', label: 'Việt Nam' }])).toBeNull();
     expect(countryOption('vietnam', tt)).toBeNull();
     expect(countryOption('', tt)).toBeNull();
+  });
+});
+
+describe('treeShrinkBlocked (review BE1 P2-3)', () => {
+  it('chặn khi bỏ hơn 5% node active; cây dưới 100 node không xét', () => {
+    expect(treeShrinkBlocked(3524, 176)).toBe(false);
+    expect(treeShrinkBlocked(3524, 177)).toBe(true);
+    expect(treeShrinkBlocked(100, 6)).toBe(true);
+    expect(treeShrinkBlocked(99, 99)).toBe(false);
+    expect(treeShrinkBlocked(0, 0)).toBe(false);
   });
 });

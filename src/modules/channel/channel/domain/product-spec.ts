@@ -322,3 +322,17 @@ export function countryOption(
   }
   return best?.id ?? null;
 }
+
+/**
+ * Chốt chặn cây thiếu bất thường (review BE1 P2-3): lượt đồng bộ sắp đánh `removed` hơn 5% số node `active` đã đồng bộ thì
+ * từ chối ghi. Lý do chọn: sàn thêm, bỏ category theo đợt nhỏ (vài chục node mỗi lần đổi), 5% của cây Lazada thật (3524
+ * node, đo 19/11/2026) là 176 node, cao hơn hẳn mức đổi thường; còn cây TikTok mượn gian hàng chỉ được phép vài nhóm
+ * category, hay phản hồi cụt, sẽ mất hàng chục phần trăm. Cây dưới 100 node (sàn mới, lần đầu) không xét: lệch vài node
+ * đã quá 5%. Sàn tái cấu trúc thật (vd đổi phiên bản cây) thì người vận hành chạy lại với `allowShrink`.
+ */
+export const TREE_SHRINK_MAX_RATIO = 0.05;
+export const TREE_SHRINK_MIN_ACTIVE = 100;
+
+export function treeShrinkBlocked(activeBefore: number, removing: number): boolean {
+  return activeBefore >= TREE_SHRINK_MIN_ACTIVE && removing > activeBefore * TREE_SHRINK_MAX_RATIO;
+}

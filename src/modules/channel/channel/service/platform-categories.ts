@@ -20,7 +20,7 @@ import { listShopRows } from '../repository/shops.ts';
 import type { CategoryStatus, Marketplace, SizeChartRule, SpecSource } from '../repository/schema.ts';
 import { forCompany, type MarketplaceAdapter, MarketplaceError, type PlatformAttribute } from './marketplaces/index.ts';
 import { productPort } from './product-port.ts';
-import { onMarketplace, platformOf, shopSession } from './shops.ts';
+import { onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
 
 /** Attribute của leaf dùng lại 7 ngày (Documents/21 §18.5). */
 export const ATTRIBUTES_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -82,10 +82,20 @@ const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn nà
 const notLeaf = () => new AppError(422, 'category_not_leaf', 'Category này không phải category lá, chọn category cấp cuối');
 const noShop = () => new AppError(409, 'shop_not_connected', 'Công ty chưa có gian hàng đang hoạt động trên sàn này để đọc category');
 
+const shopNotFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
+
+/** `shopId` gửi kèm phải là gian hàng của công ty, đúng sàn; không thì 404 (cả khi bảng còn hạn, review BE1 P2-7). */
+async function assertShopOn(companyId: string, platform: Marketplace, shopId: string): Promise<void> {
+  const shop = await withCompany(companyId, () => ownShop(shopId));
+  if (shop.platform !== platform) throw shopNotFound();
+}
+
 /**
- * Gọi sàn lấy attribute và luật bảng kích cỡ của một leaf. Sàn cần token: gian hàng `shopId` (phải của công ty, đúng sàn:
- * không thì 404), không gửi thì gian hàng `active` cũ nhất của công ty trên sàn; không có thì 409 `shop_not_connected`.
- * Sàn không cần token: gọi thẳng, tính vào hạn mức của công ty. Lỗi luật bảng kích cỡ không làm hỏng lời gọi (null).
+ * Gọi sàn lấy attribute và luật bảng kích cỡ của một leaf, **ngoài** giao dịch (`channel/CLAUDE.md`: gọi sàn trước, ghi
+ * sau; review BE1 P1-2). Sàn cần token: chỉ mở `withCompany` để chọn gian hàng `shopId` (đã kiểm ở `leafDetail`), không
+ * gửi thì gian hàng `active` cũ nhất của công ty trên sàn (không có: 409 `shop_not_connected`), rồi lấy phiên; lớp bọc token
+ * tự `forCompany` nên hạn mức tính đúng công ty. Sàn không cần token: gọi thẳng trong `forCompany`.
+ * `sizeChartRule` `undefined` là không hỏi được (sàn không có luật, hay hỏi lỗi): `replaceLeaf` giữ giá trị đang có (P2-2).
  */
 async function fetchLeaf(
   companyId: string,
@@ -93,32 +103,32 @@ async function fetchLeaf(
   adapter: MarketplaceAdapter,
   externalId: string,
   shopId: string | undefined,
-): Promise<{ attributes: PlatformAttribute[]; sizeChartRule: SizeChartRule | null }> {
+): Promise<{ attributes: PlatformAttribute[]; sizeChartRule: SizeChartRule | null | undefined }> {
   const call = async (a: MarketplaceAdapter, token: string | null) => {
     const [attributes, rules] = await Promise.all([
       a.leafAttributes!(token, externalId),
-      token && a.categoryRules ? a.categoryRules(token, externalId).catch(() => null) : Promise.resolve(null),
+      token && a.categoryRules ? a.categoryRules(token, externalId).catch(() => undefined) : Promise.resolve(undefined),
     ]);
-    return { attributes, sizeChartRule: rules?.sizeChart ?? null };
+    return { attributes, sizeChartRule: rules === undefined ? undefined : (rules.sizeChart ?? null) };
   };
   if (adapter.categoriesNeedToken === false) return forCompany(companyId, () => call(adapter, null));
-  return withCompany(companyId, async () => {
+  const session = await withCompany(companyId, async () => {
     let id = shopId;
     if (id === undefined) {
       const shop = (await listShopRows()).find((s) => s.platform === platform && s.status === 'active' && s.accessTokenEnc);
       if (!shop) throw noShop();
       id = shop.id;
     }
-    const session = await shopSession(id);
-    if (session.shop.platform !== platform) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
-    return call(session.adapter, session.accessToken);
+    return shopSession(id);
   });
+  return call(session.adapter, session.accessToken);
 }
 
 /**
  * Chi tiết một leaf (AC-5, AC-S6): attribute từ bảng, chưa có hoặc quá 7 ngày thì gọi sàn rồi thay cả tập (A3). Gọi sàn
  * lỗi (sàn lỗi, không có gian hàng để gọi) mà bảng còn bản cũ thì trả bản cũ `stale: true`; chưa có bản nào thì lỗi
- * (sàn lỗi tạm 503). Category `removed` không gọi sàn. Node không phải lá: 422 `category_not_leaf`.
+ * (sàn lỗi tạm 503). Category `removed` không gọi sàn. Node không phải lá: 422 `category_not_leaf`. `shopId` khác công ty
+ * hay khác sàn: 404 trước mọi bước khác.
  */
 export async function leafDetail(
   ctx: ModuleContext,
@@ -129,6 +139,7 @@ export async function leafDetail(
 ): Promise<LeafDetail> {
   const { platform, adapter } = platformOf(raw);
   const now = opts.now ?? new Date();
+  if (opts.shopId !== undefined) await assertShopOn(companyId, platform, opts.shopId);
   let category = await findCategory(platform, externalId);
   if (category && !category.isLeaf) throw notLeaf();
   const fetchedAt = category?.attributesFetchedAt ?? null;
@@ -168,7 +179,7 @@ export async function leafDetail(
   };
 }
 
-/** Sản phẩm của công ty có spec trỏ tới leaf, mã và tên lấy qua `getVariants({ productIds })` (A13). */
+/** Sản phẩm của công ty có spec trỏ tới leaf (tối đa 200, `specsOnCategory`), mã và tên qua `getVariants({ productIds })` (A13). */
 async function productsOn(ctx: ModuleContext, platform: Marketplace, externalId: string): Promise<LeafDetail['products']> {
   const specs = await specsOnCategory(platform, externalId);
   if (!specs.length) return [];

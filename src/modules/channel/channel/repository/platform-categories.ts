@@ -3,7 +3,7 @@
 // (migration `*_category-san-quyen`), role chủ bảng ghi được (A3).
 import { and, asc, eq, inArray, isNotNull, isNull, max, notInArray, or, sql } from 'drizzle-orm';
 import { currentCompanyId, getDb, inTransaction } from '../../../../shared/db/client.ts';
-import { normalizePath, type PlatformAttribute } from '../domain/product-spec.ts';
+import { normalizePath, type PlatformAttribute, treeShrinkBlocked } from '../domain/product-spec.ts';
 import {
   type Marketplace,
   platformCategories,
@@ -126,11 +126,13 @@ function assertOutsideCompany(fn: string): void {
  * Thay cả tập attribute của một leaf trong một giao dịch (A3): xoá `code` sàn đã bỏ, upsert phần còn lại, ghi
  * `size_chart_rule`, `attributes_fetched_at` (leaf không có attribute nào cũng không gọi sàn lại trong 7 ngày). Leaf chưa
  * có dòng (leaf mới sau lượt đồng bộ đêm) thì chèn dòng tạm `synced_at = null` (tìm kiếm bỏ qua; lượt đồng bộ sau ghi đè).
+ * `sizeChartRule` `undefined` (sàn không có luật, hay hỏi luật lỗi tạm) giữ giá trị đang có; chỉ ghi null khi sàn nói rõ
+ * (review BE1 P2-2: không xoá luật đã biết, kể cả giá trị BE2 chép từ `category_maps`).
  */
 export async function replaceLeaf(
   platform: Marketplace,
   externalId: string,
-  input: { attributes: PlatformAttribute[]; sizeChartRule: SizeChartRule | null; fetchedAt: Date },
+  input: { attributes: PlatformAttribute[]; sizeChartRule?: SizeChartRule | null; fetchedAt: Date },
 ): Promise<void> {
   assertOutsideCompany('replaceLeaf');
   await inTransaction(async (tx) => {
@@ -188,29 +190,78 @@ export async function replaceLeaf(
     }
     await tx
       .update(platformCategories)
-      .set({ sizeChartRule: input.sizeChartRule, attributesFetchedAt: input.fetchedAt })
+      .set({ ...(input.sizeChartRule !== undefined && { sizeChartRule: input.sizeChartRule }), attributesFetchedAt: input.fetchedAt })
       .where(and(eq(platformCategories.platform, platform), eq(platformCategories.externalId, externalId)));
   });
 }
 
+/** Lượt đồng bộ sắp đánh `removed` quá ngưỡng `treeShrinkBlocked` (review BE1 P2-3): không ghi gì, việc nền log `error`. */
+export class CategoryTreeShrunkError extends Error {
+  readonly platform: Marketplace;
+  readonly active: number;
+  readonly removing: number;
+
+  constructor(platform: Marketplace, active: number, removing: number) {
+    super(`syncTree: cây ${platform} thiếu bất thường (bỏ ${removing}/${active} node active), không ghi`);
+    this.name = 'CategoryTreeShrunkError';
+    this.platform = platform;
+    this.active = active;
+    this.removing = removing;
+  }
+}
+
+export interface SyncTreeResult {
+  upserted: number;
+  removed: number;
+  specsRemoved: number;
+  specsRestored: number;
+  /** Đã có lượt ghi mới hơn `syncedAt` (hai lượt chồng nhau): lượt này không ghi gì. */
+  skipped: boolean;
+}
+
 /**
  * Ghi cả cây của sàn trong một giao dịch: upsert mọi node (`active`, `synced_at = syncedAt`), node vắng trong cây
- * (kể cả dòng tạm) → `removed`, spec mọi công ty trỏ tới node vừa `removed` → `category_status = 'removed'`. Không xoá
- * dòng nào (attribute, spec, listing còn trỏ tới). Trả số node bị đánh `removed`, số spec đổi.
+ * (kể cả dòng tạm) → `removed`, spec mọi công ty trỏ tới node vừa `removed` → `category_status = 'removed'`, spec
+ * `removed` trỏ tới node `active` (category quay lại) → `ok`. Không xoá dòng nào (attribute, spec, listing còn trỏ tới).
+ *
+ * Chốt (review BE1 P2-3, P2-4): `nodes` khử trùng theo `externalId` (sàn trả trùng mã trong một lô làm hỏng
+ * `ON CONFLICT`); khoá advisory theo sàn trong giao dịch, đã có `synced_at` mới hơn `syncedAt` thì bỏ cả lượt (lượt cũ
+ * commit sau không kéo cây lùi, `synced_at` chỉ tiến); số node sắp `removed` vượt `treeShrinkBlocked` thì ném
+ * `CategoryTreeShrunkError` (trừ `allowShrink`).
  */
 export async function syncTree(
   platform: Marketplace,
   nodes: readonly CategoryNodeInput[],
   syncedAt: Date,
-): Promise<{ upserted: number; removed: number; specsRemoved: number }> {
+  opts: { allowShrink?: boolean } = {},
+): Promise<SyncTreeResult> {
   assertOutsideCompany('syncTree');
-  if (!nodes.length) throw new Error('syncTree: cây rỗng, không ghi để khỏi đánh removed cả sàn');
+  const unique = [...new Map(nodes.map((n) => [n.externalId, n])).values()];
+  if (!unique.length) throw new Error('syncTree: cây rỗng, không ghi để khỏi đánh removed cả sàn');
   return inTransaction(async (tx) => {
-    for (let i = 0; i < nodes.length; i += BATCH) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`channel.category_tree:${platform}`}))`);
+    const onPlatform = eq(platformCategories.platform, platform);
+    const [last] = await tx.select({ at: max(platformCategories.syncedAt) }).from(platformCategories).where(onPlatform);
+    if (last?.at && new Date(last.at).getTime() > syncedAt.getTime()) {
+      return { upserted: 0, removed: 0, specsRemoved: 0, specsRestored: 0, skipped: true };
+    }
+    const ids = unique.map((n) => n.externalId);
+    const synced = and(onPlatform, eq(platformCategories.status, 'active'), isNotNull(platformCategories.syncedAt));
+    const [counts] = await tx
+      .select({
+        active: sql<number>`count(*)::int`,
+        removing: sql<number>`(count(*) filter (where ${notInArray(platformCategories.externalId, ids)}))::int`,
+      })
+      .from(platformCategories)
+      .where(synced);
+    const { active = 0, removing = 0 } = counts ?? {};
+    if (!opts.allowShrink && treeShrinkBlocked(active, removing)) throw new CategoryTreeShrunkError(platform, active, removing);
+
+    for (let i = 0; i < unique.length; i += BATCH) {
       await tx
         .insert(platformCategories)
         .values(
-          nodes.slice(i, i + BATCH).map((n) => ({
+          unique.slice(i, i + BATCH).map((n) => ({
             platform,
             externalId: n.externalId,
             parentExternalId: n.parentExternalId,
@@ -240,39 +291,60 @@ export async function syncTree(
       .set({ status: 'removed' })
       .where(
         and(
-          eq(platformCategories.platform, platform),
+          onPlatform,
           eq(platformCategories.status, 'active'),
           or(isNull(platformCategories.syncedAt), sql`${platformCategories.syncedAt} < ${syncedAt}`),
         ),
       )
       .returning({ externalId: platformCategories.externalId });
     let specsRemoved = 0;
-    const ids = removed.map((r) => r.externalId);
-    for (let i = 0; i < ids.length; i += BATCH) {
+    const gone = removed.map((r) => r.externalId);
+    for (let i = 0; i < gone.length; i += BATCH) {
       const changed = await tx
         .update(productSpecs)
         .set({ categoryStatus: 'removed', updatedAt: syncedAt })
         .where(
           and(
             eq(productSpecs.platform, platform),
-            inArray(productSpecs.externalCategoryId, ids.slice(i, i + BATCH)),
+            inArray(productSpecs.externalCategoryId, gone.slice(i, i + BATCH)),
             sql`${productSpecs.categoryStatus} <> 'removed'`,
           ),
         )
         .returning({ id: productSpecs.id });
       specsRemoved += changed.length;
     }
-    return { upserted: nodes.length, removed: ids.length, specsRemoved };
+    const restored = await tx
+      .update(productSpecs)
+      .set({ categoryStatus: 'ok', updatedAt: syncedAt })
+      .where(
+        and(
+          eq(productSpecs.platform, platform),
+          eq(productSpecs.categoryStatus, 'removed'),
+          inArray(
+            productSpecs.externalCategoryId,
+            tx
+              .select({ id: platformCategories.externalId })
+              .from(platformCategories)
+              .where(and(onPlatform, eq(platformCategories.status, 'active'))),
+          ),
+        ),
+      )
+      .returning({ id: productSpecs.id });
+    return { upserted: unique.length, removed: gone.length, specsRemoved, specsRestored: restored.length, skipped: false };
   });
 }
 
-/** Spec của công ty (RLS, gọi trong `withCompany`) trỏ tới một leaf: cho danh sách `products` của chi tiết leaf. */
+/** Danh sách `products` của chi tiết leaf chặn 200 dòng (plan §8, L019; ghi ở OpenAPI). */
+export const SPEC_PRODUCTS_LIMIT = 200;
+
+/** Spec của công ty (RLS, gọi trong `withCompany`) trỏ tới một leaf, cũ trước, tối đa `SPEC_PRODUCTS_LIMIT`. */
 export async function specsOnCategory(platform: Marketplace, externalId: string): Promise<{ productId: string; source: SpecSource }[]> {
   return getDb()
     .select({ productId: productSpecs.productId, source: productSpecs.source })
     .from(productSpecs)
     .where(and(eq(productSpecs.platform, platform), eq(productSpecs.externalCategoryId, externalId)))
-    .orderBy(asc(productSpecs.createdAt));
+    .orderBy(asc(productSpecs.createdAt), asc(productSpecs.id))
+    .limit(SPEC_PRODUCTS_LIMIT);
 }
 
 /** Gian hàng `active` còn token, nối sớm nhất trên sàn, mọi công ty (lượt đồng bộ cây mượn token, A4). Gọi ngoài `withCompany`. */
