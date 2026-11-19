@@ -56,7 +56,11 @@ export const REFUNDING_ACTIONS: readonly ReturnAction[] = ['refund_only', 'platf
  * Bước máy trạng thái ứng với trạng thái sàn báo (25 §9). null: không đổi (trùng, hoặc `received` chờ kho quét).
  * `'conflict'`: sàn tới trạng thái app không có mũi tên tới (vd đã `closed` mà sàn mở lại), bật cờ Cần xử lý.
  */
-export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnAction | null | 'conflict' {
+export function syncAction(
+  current: ReturnStatus,
+  target: ReturnStatus,
+  closeResult: ReturnCloseResult | null = null,
+): ReturnAction | null | 'conflict' {
   if (current === target) return null;
   // Sàn báo hàng đã về người bán: app chờ kho quét (`receive` chỉ qua quét nhận, §20). Chưa đồng ý thì sàn đã đồng ý
   // thay người bán: đi tới `awaiting_return` (`syncTarget`) bằng bước hệ thống, không gọi lại sàn.
@@ -83,6 +87,9 @@ export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnA
   // Kho đã quét nhận mà sàn còn báo hàng đang về (TikTok BUYER_SHIPPED_ITEM tới khi sàn ghi nhận người bán đã nhận, #364):
   // app đi trước sàn là luồng thường (tich-hop-san/tiktok.md §2.3), không phải mâu thuẫn.
   if (current === 'received' && target === 'awaiting_return') return null;
+  // Cùng lý do khi app đã kiểm hàng và đóng (`inspected`) trước khi sàn ghi nhận người bán đã nhận (vd báo sàn lỗi, đang thử
+  // lại). Đóng vì khách huỷ hay không gửi hàng mà sàn báo hàng đang về thì mới là mâu thuẫn.
+  if (current === 'closed' && closeResult === 'inspected' && target === 'awaiting_return') return null;
   return 'conflict';
 }
 

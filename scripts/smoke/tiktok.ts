@@ -203,6 +203,18 @@ async function cancelReasons(orderId: string | undefined): Promise<void> {
   printStep('cancelReasons (return_refund/202602/orders/{id}/aftersale_eligibility)', true, await adapter.cancelReasons!(packedFor(saved), orderId, []));
 }
 
+/** Lý do từ chối (Get Decision Eligibility 202601) và lịch sử (Get Return Records 202309) của một yêu cầu trả (#392). Chỉ đọc. */
+async function returnInfo(kind: 'reasons' | 'records', returnId: string | undefined, action: string | undefined): Promise<void> {
+  if (!returnId) throw new Error(kind === 'reasons' ? 'Cú pháp: return-reasons <returnId> [reject|refuse-refund]' : 'Cú pháp: return-records <returnId>');
+  const packed = packedFor(loadTokens<TiktokTokens>('tiktok'));
+  if (kind === 'records') {
+    printStep('returnHistory (return_refund/202309/returns/{id}/records)', true, await adapter.returnHistory!(packed, returnId, []));
+    return;
+  }
+  const which = action === 'refuse-refund' ? 'refuse-refund' : 'reject';
+  printStep('returnReasons ' + which + ' (return_refund/202601/decision_eligibility)', true, await adapter.returnReasons!(packed, returnId, which));
+}
+
 function session(): string {
   const saved = loadTokens<TiktokTokens>('tiktok');
   if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}.`);
@@ -378,6 +390,9 @@ const commands: Record<string, () => Promise<void> | void> = {
   returns: () => aftersales('returns', args[0]),
   cancellations: () => aftersales('cancellations', args[0]),
   'cancel-reasons': () => cancelReasons(args[0]),
+  // return-reasons <returnId> [reject|refuse-refund], return-records <returnId> (#392, chỉ đọc)
+  'return-reasons': () => returnInfo('reasons', args[0], args[1]),
+  'return-records': () => returnInfo('records', args[0], undefined),
   warehouses,
   categories: () => categories(args[0]),
   attrs: () => attrs(args[0]),
@@ -402,6 +417,7 @@ if (!run) {
       '  attrs <categoryId> | push-stock <sellerSku> <qty> | push-price <sellerSku> <giá> | deactivate <sellerSku> | activate <sellerSku> |\n' +
       '  upload-image <URL ảnh> | create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...] |\n' +
       '  returns [ngày] | cancellations [ngày] | cancel-reasons <orderId> |\n' +
+      '  return-reasons <returnId> [reject|refuse-refund] | return-records <returnId> |\n' +
       '  orders [ngày] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [pickup|drop_off]',
   );
   process.exitCode = 1;
