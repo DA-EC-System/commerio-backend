@@ -114,6 +114,7 @@ export function toTiktokOrder(o: Row): RemoteOrder {
   const pay = (o.payment ?? {}) as Row;
   const items = (o.line_items ?? []) as Row[];
   const taxes = (i: Row) => ((i.item_tax ?? []) as Row[]).map((t) => str(t.tax_amount)).filter(Boolean);
+  const cancelRequested = o.is_buyer_request_cancel === true;
   return {
     externalOrderId: str(o.id),
     rawStatus: status,
@@ -128,7 +129,7 @@ export function toTiktokOrder(o: Row): RemoteOrder {
     // Phí ship khách trả (`shipping_fee` = gốc − giảm của người bán − giảm của sàn).
     shippingFee: str(pay.shipping_fee ?? 0) || '0',
     // Docs: "True when the buyer has a pending cancellation request"; gọi thật: sàn bỏ trường khi false.
-    cancelRequested: o.is_buyer_request_cancel === true,
+    cancelRequested,
     info: {
       platformPaymentMethod: opt(o.payment_method_name),
       buyerNote: opt(o.buyer_message),
@@ -138,9 +139,13 @@ export function toTiktokOrder(o: Row): RemoteOrder {
       shippingFeeDiscountPlatform: opt(pay.shipping_fee_platform_discount),
     },
     lines: items.map((i) => {
-      const cancelUser = str(i.cancel_user);
-      const lineStatus = tiktokLineStatus(str(i.display_status), str(i.package_status), status);
       const tax = taxes(i);
+      const lineStatus = tiktokLineStatus(str(i.display_status), str(i.package_status), status);
+      // Sàn giữ `cancel_user`, `cancel_reason` trên món cả khi khách mới xin huỷ hay người bán đã từ chối (DH-B04, test
+      // đêm 18/11/2026): chỉ đọc khi món đã huỷ, hoặc khách còn đang xin huỷ (FE ghi "Khách xin huỷ"). Từ chối xong thì
+      // món không còn dấu huỷ, lần kéo sau ghi đè thông tin cũ.
+      const cancelled = lineStatus === 'cancelled';
+      const cancelUser = cancelled || cancelRequested ? str(i.cancel_user) : '';
       return {
         externalLineId: str(i.id),
         sellerSku: str(i.seller_sku),
@@ -163,12 +168,10 @@ export function toTiktokOrder(o: Row): RemoteOrder {
           taxAmount: tax.length ? String(tax.reduce((s, t) => s + Number(t), 0)) : null,
           shippingAmount: null,
           walletCredits: null,
-          cancelReason: opt(i.cancel_reason),
+          cancelReason: cancelled || cancelRequested ? opt(i.cancel_reason) : null,
           cancelReasonDetail: null,
           cancelInitiator: CANCEL_BY[cancelUser] ?? null,
-          // `cancel_user` là "người khởi xướng yêu cầu huỷ" (OAS get-order-detail-202507): có cả khi khách mới xin huỷ. Chỉ
-          // món đã huỷ thật mới là `cancellation`; đang xin thì giữ người, lý do làm thông tin yêu cầu (test đêm 18/11, DH-B04).
-          cancelKind: lineStatus === 'cancelled' ? 'cancellation' : null,
+          cancelKind: cancelled ? 'cancellation' : null,
           // Trả hàng, hoàn tiền đọc ở API return_refund (#227), không có trong chi tiết đơn.
           reverseOrderId: null,
           returnStatus: null,

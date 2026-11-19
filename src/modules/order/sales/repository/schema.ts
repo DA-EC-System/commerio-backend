@@ -111,8 +111,6 @@ export const orders = salesSchema.table(
     shippingFee: money('shipping_fee').notNull().default('0'),
     total: money('total').notNull(),
     cancelReason: text('cancel_reason'),
-    // Người khởi xướng huỷ cả đơn (Documents/21 §19.1): ghi một lần, sàn xác nhận huỷ không ghi đè.
-    cancelInitiator: lineCancelInitiator('cancel_initiator'),
     // Số hoá đơn người bán nhập để gửi sàn (Documents/21 §19.3).
     invoiceNumber: text('invoice_number'),
     // Thông tin đơn sàn (#260): phương thức khách trả trên sàn (giá trị gốc), ghi chú khách, phí ship của sàn.

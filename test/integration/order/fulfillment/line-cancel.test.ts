@@ -6,6 +6,7 @@ import { addMember } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { getOrder } from '#src/modules/order/sales/service/orders.ts';
 import { CANCELLING_SQL, packageRow, packingApp, splitByHand, stockOfVariant, transitionsOf } from './helpers.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { ingest, remote, setup, withLineCancelled, withStatus } from './platform-fixtures.ts';
 
 const unpacked = (o: PlatformOrder): PlatformOrder => ({ ...o, lines: o.lines.map((l) => ({ ...l, packageCode: null })) });
@@ -180,7 +181,7 @@ describe('sàn huỷ lẻ một món (spec 205 §5.10)', () => {
     expect(await linesOf(packageId)).toHaveLength(2);
   });
 
-  it('KH-B09: khách huỷ một món đã đóng kiện riêng: đơn Đang huỷ tới khi kho mở kiện, tiền bỏ món huỷ; kiện còn lại giao xong thì hoàn tất, không cờ Sàn đã huỷ', async () => {
+  it('KH-B09: khách huỷ một món đã đóng kiện riêng: đơn không Đang huỷ (chỉ kiện chờ mở), tiền bỏ món huỷ; kiện còn lại giao xong thì hoàn tất, không cờ Sàn đã huỷ', async () => {
     const v = await setup(10);
     const o = remote(v, { lines: 2, packages: 2, status: 'packed' });
     const { orderId } = await ingest(v.companyId, o);
@@ -204,11 +205,13 @@ describe('sàn huỷ lẻ một món (spec 205 §5.10)', () => {
     await ingest(v.companyId, lineCancel);
 
     expect(await packageRow(cancelledPkg)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
-    // Đơn chưa huỷ: cờ Đang huỷ theo kiện chờ mở, không lý do huỷ cả đơn; tiền chỉ còn món chưa huỷ.
-    expect(await flagOf()).toMatchObject({ status: 'processing', cancelling: true, cancel_pending: false, cancel_reason: null, subtotal: '100000.00', total: '100000.00' });
-    const view = await withCompany(v.companyId, () => getOrder({} as never, orderId));
-    expect(view.flags).toContain('cancelling');
-    expect(view.display.stage).toBe('cancelling');
+    // Huỷ một món (25 §8.3 Huỷ dòng): đơn chạy tiếp, không mang cờ Đang huỷ (chỉ kiện chờ mở), không lý do huỷ cả đơn;
+    // tiền chỉ còn món chưa huỷ; người huỷ suy ra từ dòng.
+    expect(await flagOf()).toMatchObject({ status: 'processing', cancelling: false, cancel_pending: false, cancel_reason: null, subtotal: '100000.00', total: '100000.00' });
+    const view = await withCompany(v.companyId, () => getOrder(createModuleContext(), orderId));
+    expect(view.flags).not.toContain('cancelling');
+    expect(view.display.stage).not.toBe('cancelling');
+    expect(view.cancelInitiators).toEqual(['buyer']);
     expect(view.lines.map((l) => l.cancelledQty)).toEqual([1, 0]);
 
     const kho = await addMember(v.companyId, 'warehouse');
@@ -221,7 +224,7 @@ describe('sàn huỷ lẻ một món (spec 205 §5.10)', () => {
     expect(await flagOf()).toMatchObject({ status: 'processing', cancelling: false });
 
     await ingest(v.companyId, withStatus(lineCancel, 'delivered', liveCode));
-    expect(await completeDueOrdersOnce(new Date(Date.now() + 8 * 86_400_000))).toBeGreaterThanOrEqual(1);
+    expect(await completeDueOrdersOnce(new Date(Date.now() + 8 * 86_400_000), createModuleContext())).toBeGreaterThanOrEqual(1);
     expect(await flagOf()).toMatchObject({ status: 'completed', cancelling: false, cancel_pending: false, platform_cancelled: false });
   });
 });

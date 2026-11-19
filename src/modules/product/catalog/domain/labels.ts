@@ -2,8 +2,11 @@
 // hiện diện trên sàn (tính từ listing, do channel cấp). Hàm thuần.
 import type { BusinessStatus } from './business-status.ts';
 
-/** Phần còn thiếu theo thứ tự cố định; `name`, `category`, `image` ở cha, còn lại ở SKU. `price` là giá muốn bán (D7). */
-export const MISSING_FIELDS = ['name', 'category', 'image', 'price', 'minQty', 'weight', 'dimensions'] as const;
+/**
+ * Phần còn thiếu theo thứ tự cố định; `name`, `category`, `image`, `variantImages` ở cha, còn lại ở SKU. `price` là giá
+ * muốn bán (D7). `variantImages`: ảnh phân loại có một phần (#340).
+ */
+export const MISSING_FIELDS = ['name', 'category', 'image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions'] as const;
 export type MissingField = (typeof MISSING_FIELDS)[number];
 
 /** Hiện diện trên sàn (D8, `25` §5.1): `live` > `error` > `pending` > `not_listed`. */
@@ -20,6 +23,11 @@ export interface ParentFields {
   name: string;
   categoryId: string | null;
   imageCount: number;
+  /**
+   * Ảnh phân loại có một phần (#340, Documents/21 §17.1): có ảnh cho ít nhất một giá trị của thuộc tính gắn ảnh mà SKU
+   * chưa lưu trữ đang dùng, và còn giá trị đang dùng khác chưa có ảnh. Chưa có ảnh nào thì không thiếu.
+   */
+  variantImagesPartial: boolean;
 }
 
 export interface SkuFields {
@@ -38,6 +46,7 @@ export function readinessOf(parent: ParentFields, sku: SkuFields): { readiness: 
     name: !parent.name.trim(),
     category: !parent.categoryId,
     image: parent.imageCount < 1,
+    variantImages: parent.variantImagesPartial,
     price: sku.targetNetPrice === null,
     minQty: sku.minQty === null,
     weight: sku.weightG === null,

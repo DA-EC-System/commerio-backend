@@ -18,6 +18,7 @@ import {
   updateReturnAt,
   updateReturnLine,
 } from '../repository/returns.ts';
+import { isConfirmFailedNote } from './return-confirm.ts';
 import { applyReturnStep } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
@@ -162,11 +163,18 @@ function changedFields(row: ReturnRow, patch: ReturnPatch): ReturnPatch {
   return Object.fromEntries(Object.entries(patch).filter(([k, v]) => !same(row[k as keyof ReturnRow], v))) as ReturnPatch;
 }
 
+/** Trạng thái sàn sau bước chờ hàng về: sàn đã ghi nhận hàng tới người bán. */
+const PAST_AWAITING: readonly ReturnStatus[] = ['received', 'refund_only', 'closed'];
+
 /** Đưa yêu cầu tới trạng thái sàn báo nếu máy trạng thái cho phép; không cho thì bật Cần xử lý, giữ trạng thái app. */
 async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIngestOutcome> {
   const stale = row.externalUpdatedAt !== null && r.updatedAt.getTime() < row.externalUpdatedAt.getTime();
   if (stale) return 'unchanged';
   const fields = platformFields(r);
+  // Sàn đã qua bước chờ hàng về (lần thử lại báo sàn vừa xong, hay người bán xác nhận trên Seller Center): gỡ cờ báo sàn.
+  if (row.needsAttention && isConfirmFailedNote(row.attentionNote) && r.status && PAST_AWAITING.includes(r.status)) {
+    Object.assign(fields, { needsAttention: false, attentionNote: null });
+  }
   const action = r.status ? syncAction(row.status, r.status) : null;
   if (action === 'conflict') {
     const note = `Sàn báo ${r.rawStatus} nhưng yêu cầu đang ${row.status}`;

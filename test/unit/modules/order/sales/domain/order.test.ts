@@ -2,13 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
 import { platformUpdate } from '#src/modules/order/fulfillment/domain/package.ts';
 import {
+  cancelInitiatorsOf,
   cancelPlan,
+  codUnconfirmed,
   completionBlocker,
+  DEFAULT_RETURN_POLICY,
   isDueSoon,
+  lastDeliveredAt,
+  orderCancelReasonFromLines,
   orderMachine,
   outcomeOf,
+  returnWindowEndsAt,
   stageOf,
 } from '#src/modules/order/sales/domain/order.ts';
+
+const DAY = 86_400_000;
+const at = (iso: string) => new Date(iso);
 
 const sale = { accountId: 'a', permissions: ['sales.order.cancel', 'sales.order.create'], enabledModules: ['sales'] };
 const lazadaOrder = { source: 'marketplace' as const, paymentMethod: null, packages: ['reserved' as const] };
@@ -57,20 +66,53 @@ describe('cancelPlan, outcomeOf, completionBlocker', () => {
   });
 
   const now = Date.parse('2026-10-29T00:00:00Z');
-  const base = { lastDeliveredAt: null, openReturnRequests: 0, codUnconfirmed: false, now };
+  const base = { lastDeliveredAt: null, returnWindowEndsAt: null, openReturnRequests: 0, codUnconfirmed: false, now };
+  const past = { lastDeliveredAt: at('2026-10-20T00:00:00Z'), returnWindowEndsAt: at('2026-10-27T00:00:00Z') };
 
   it.each([
     [{ packages: ['in_transit'] }, 'packages_open'],
     [{ packages: [] }, 'packages_open'],
-    [{ packages: ['delivered'], lastDeliveredAt: '2026-10-25T00:00:00Z' }, 'return_window'],
-    [{ packages: ['delivered'], lastDeliveredAt: '2026-10-20T00:00:00Z', openReturnRequests: 1 }, 'return_requested'],
-    [{ packages: ['delivered'], lastDeliveredAt: '2026-10-20T00:00:00Z', codUnconfirmed: true }, 'cod_unconfirmed'],
-    [{ packages: ['delivered', 'cancelled'], lastDeliveredAt: '2026-10-20T00:00:00Z' }, null],
+    [{ packages: ['delivered'], lastDeliveredAt: at('2026-10-25T00:00:00Z'), returnWindowEndsAt: at('2026-11-01T00:00:00Z') }, 'return_window'],
+    [{ packages: ['delivered'], lastDeliveredAt: at('2026-10-20T00:00:00Z'), returnWindowEndsAt: at('2026-10-27T00:00:00Z') }, null],
+    [{ packages: ['delivered'], lastDeliveredAt: at('2026-10-20T00:00:00Z'), returnWindowEndsAt: null }, 'return_window'],
+    [{ packages: ['delivered'], ...past, openReturnRequests: 1 }, 'return_requested'],
+    [{ packages: ['delivered'], ...past, codUnconfirmed: true }, 'cod_unconfirmed'],
+    [{ packages: ['delivered', 'cancelled'], ...past }, null],
     [{ packages: ['returned'] }, null],
   ] as const)('%o → %s', (input, expected) => {
     expect(completionBlocker({ ...base, ...input })).toBe(expected);
   });
 });
+
+describe('returnWindowEndsAt', () => {
+  const d = at('2026-11-01T00:00:00Z');
+  it('sàn days: mốc giao + số ngày của gian hàng', () =>
+    expect(returnWindowEndsAt({ returnWindow: 'days', returnWindowDays: 15 }, d, null)).toEqual(new Date(d.getTime() + 15 * DAY)));
+  it('gian hàng chưa nhập số ngày: 7 ngày', () =>
+    expect(returnWindowEndsAt({ returnWindow: 'days', returnWindowDays: null }, d, null)).toEqual(new Date(d.getTime() + 7 * DAY)));
+  it('PR 1: sàn platform_status vẫn 7 ngày, bỏ qua cột đã lưu (D13)', () =>
+    expect(returnWindowEndsAt({ returnWindow: 'platform_status', returnWindowDays: null }, d, null)).toEqual(
+      new Date(d.getTime() + 7 * DAY),
+    ));
+  it('chưa kiện nào giao: null', () => expect(returnWindowEndsAt(DEFAULT_RETURN_POLICY, null, null)).toBeNull());
+});
+
+describe('codUnconfirmed', () => {
+  const p = { selfDelivery: true, status: 'delivered', codExpected: '100000.00', codConfirmedAt: null } as const;
+  it.each([
+    [p, true],
+    [{ ...p, codConfirmedAt: at('2026-11-02T00:00:00Z') }, false],
+    [{ ...p, codExpected: '0.00' }, false],
+    [{ ...p, codExpected: null }, false],
+    [{ ...p, status: 'returned' }, false],
+    [{ ...p, selfDelivery: false }, false],
+  ] as const)('%o → %s', (pkg, expected) => expect(codUnconfirmed([pkg])).toBe(expected));
+});
+
+it('lastDeliveredAt lấy mốc lớn nhất, bỏ null', () =>
+  expect(
+    lastDeliveredAt([{ deliveredAt: null }, { deliveredAt: at('2026-11-02T00:00:00Z') }, { deliveredAt: at('2026-11-01T00:00:00Z') }]),
+  ).toEqual(at('2026-11-02T00:00:00Z')));
 
 describe('stageOf', () => {
   const o = { status: 'processing' as const, source: 'marketplace' as const, paymentMethod: null, flags: [] };
@@ -111,5 +153,31 @@ describe('platformUpdate: sàn đẩy trạng thái kiện', () => {
     ['returned', 'in_transit', 'invalid'],
   ] as const)('%s → %s: %s', (from, to, expected) => {
     expect(platformUpdate(from, to)).toBe(expected);
+  });
+});
+
+describe('người, lý do huỷ cấp đơn suy ra từ dòng (DH-B06)', () => {
+  const line = (cancelledQty: number, cancelInitiator: 'buyer' | 'seller' | 'platform' | null, cancelReason: string | null = null) => ({
+    cancelledQty,
+    cancelInitiator,
+    cancelReason,
+  });
+
+  it('nhiều người huỷ: không trùng, thứ tự buyer, seller, platform; bỏ dòng chưa huỷ và dòng không ghi người', () => {
+    expect(cancelInitiatorsOf([line(1, 'platform'), line(1, 'buyer'), line(2, 'buyer'), line(0, 'seller'), line(1, null)])).toEqual(['buyer', 'platform']);
+    expect(cancelInitiatorsOf([line(0, 'buyer')])).toEqual([]);
+  });
+
+  it('mọi món cùng một lý do thì lấy lý do đó', () => {
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'buyer', ' Đổi ý '), line(0, null, 'Khác')])).toBe('Đổi ý');
+  });
+
+  it('không món nào ghi người lẫn lý do thì "Sàn huỷ đơn"', () => {
+    expect(orderCancelReasonFromLines([line(1, null)])).toBe('Sàn huỷ đơn');
+  });
+
+  it('nhiều lý do, hay có người huỷ mà không lý do, thì để trống', () => {
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'platform', 'Hết hạn giao')])).toBeUndefined();
+    expect(orderCancelReasonFromLines([line(1, 'seller')])).toBeUndefined();
   });
 });

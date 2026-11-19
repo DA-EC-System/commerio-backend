@@ -121,7 +121,7 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
     ctx,
     actor,
     order,
-    { cancelPending: true, cancelRequested: false, cancelReason: reason.label, cancelInitiator: 'seller' },
+    { cancelPending: true, cancelRequested: false, cancelReason: reason.label },
     { reasonId: reason.id, reason: reason.label, flags },
     flags,
   );
@@ -158,8 +158,8 @@ export async function decideCancelRequest(
     ctx,
     actor,
     order,
-    // Đồng ý: khách khởi xướng huỷ, lý do của khách trên sàn (không có thì "Khách xin huỷ"; DH-B06).
-    { cancelRequested: false, ...(accept ? { cancelPending: true, cancelReason: loaded.buyerReason ?? 'Khách xin huỷ', cancelInitiator: 'buyer' as const } : {}) },
+    // Đồng ý: lý do của khách trên sàn (không có thì "Khách xin huỷ"; DH-B06). Người huỷ nằm ở dòng (sàn ghi khi huỷ).
+    { cancelRequested: false, ...(accept ? { cancelPending: true, cancelReason: loaded.buyerReason ?? 'Khách xin huỷ' } : {}) },
     { decision: input.decision, ...(rejectReasonId ? { rejectReasonId } : {}), flags },
     flags,
   );

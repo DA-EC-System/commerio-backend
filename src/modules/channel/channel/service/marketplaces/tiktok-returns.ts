@@ -1,10 +1,13 @@
-// Huỷ đơn và trả hàng TikTok Shop (#227): lý do huỷ, người bán huỷ, trả lời khách xin huỷ, kéo yêu cầu trả và lần huỷ.
+// Huỷ đơn và trả hàng TikTok Shop (#227, #364): lý do huỷ, người bán huỷ, trả lời khách xin huỷ, kéo yêu cầu trả và lần
+// huỷ, người bán quyết yêu cầu trả (đồng ý, từ chối, hoàn tiền), báo sàn đã nhận hàng trả.
 // Gọi sàn qua `client.call` của `tiktok-client.ts`; nghiệp vụ yêu cầu trả (máy trạng thái) là của #202.
 // Nguồn (docv2, tra 07/11/2026; bản mới nhất trên docv2 ngày đó, OAS cục bộ của skill `tts-openapi-guide` còn 202309):
 // - Return, refund, and cancel API overview: https://partner.tiktokshop.com/docv2/page/return-refund-and-cancel-api-overview
 // - Cancel reasons: https://partner.tiktokshop.com/docv2/page/cancel-reasons
 // - get-aftersale-eligibility-202602, cancel-order-202602, search-cancellations-202602, search-returns-202602,
 //   approve-cancellation-202309, reject-cancellation-202309, get-decision-eligibility-202601
+// - Approve Return 202309, Reject Return 202309, Get Reject Reasons 202309 (OAS cục bộ của skill `tts-openapi-guide`,
+//   tra 19/11/2026): TikTok quyết theo cả `return_id`, không theo từng món.
 // Dạng phản hồi đối chiếu gọi thật trên shop thử VN ngày 07/11/2026 (`npm run smoke:tiktok -- returns|cancellations|cancel-reasons`).
 import {
   type MarketplaceAdapter,
@@ -25,6 +28,12 @@ const SEARCH_RETURNS = '/return_refund/202602/returns/search';
 const DECISION_ELIGIBILITY = '/return_refund/202601/decision_eligibility';
 const cancellationAction = (cancelId: string, action: 'approve' | 'reject') =>
   `/return_refund/202309/cancellations/${encodeURIComponent(cancelId)}/${action}`;
+const returnAction = (returnId: string, action: 'approve' | 'reject') =>
+  `/return_refund/202309/returns/${encodeURIComponent(returnId)}/${action}`;
+const REJECT_REASONS = '/return_refund/202309/reject_reasons';
+
+/** `decision` của Approve Return / Reject Return 202309 mà app dùng. */
+type ReturnDecision = 'APPROVE_RETURN' | 'APPROVE_REFUND' | 'APPROVE_RECEIVED_PACKAGE' | 'REJECT_RETURN' | 'REJECT_REFUND';
 
 /** `page_size` tối đa 50 cho cả Search Returns (10–50) và Search Cancellations (1–50). */
 const PAGE_SIZE = 50;
@@ -169,7 +178,15 @@ export function tiktokReturnMethods(
   client: TiktokClient,
 ): Pick<
   MarketplaceAdapter,
-  'cancelReasons' | 'cancelOrder' | 'decideCancelRequest' | 'cancelRequestRejectReasons' | 'listReturns' | 'listCancellations'
+  | 'cancelReasons'
+  | 'cancelOrder'
+  | 'decideCancelRequest'
+  | 'cancelRequestRejectReasons'
+  | 'listReturns'
+  | 'listCancellations'
+  | 'returnReasons'
+  | 'decideReturn'
+  | 'confirmReturnReceived'
 > {
   /**
    * Người bán huỷ được những món nào và với lý do gì (Get Aftersale Eligibility, `SELLER`, `CANCEL`). Trả mọi món huỷ được
@@ -220,6 +237,19 @@ export function tiktokReturnMethods(
     return { rows, nextCursor: next && next !== cursor ? next : null };
   }
 
+  /**
+   * Approve Return / Reject Return 202309 cho cả yêu cầu. Thử lại cùng quyết định thì sàn nhận là một lần
+   * (`idempotency_key` theo yêu cầu, quyết định và lý do từ chối).
+   */
+  async function decide(token: string, returnId: string, decision: ReturnDecision, body: Row, reasonId?: string) {
+    const action = decision.startsWith('REJECT_') ? 'reject' : 'approve';
+    await client.call('POST', returnAction(returnId, action), {
+      token,
+      query: { idempotency_key: `commerio-ret-${returnId}-${decision}${reasonId ? `-${reasonId}` : ''}` },
+      body: { decision, ...body },
+    });
+  }
+
   return {
     async cancelReasons(accessToken, externalOrderId, externalLineIds) {
       const { reasons } = await cancelEligibility(accessToken, externalOrderId, externalLineIds);
@@ -260,6 +290,38 @@ export function tiktokReturnMethods(
         throw new MarketplaceError('rejected', str(d?.ineligible_code) || 'not_rejectable', opt(d?.ineligible_reason) ?? 'Sàn không cho từ chối yêu cầu huỷ này');
       }
       return ((d.available_reject_reasons ?? []) as Row[]).map((r) => ({ id: str(r.name), label: str(r.text) || str(r.name) })).filter((r) => r.id);
+    },
+    async returnReasons(accessToken, externalReturnId) {
+      // Get Reject Reasons trả lý do theo bước hiện tại của yêu cầu: từ chối trả hàng và từ chối hoàn tiền dùng chung.
+      // Ảnh minh chứng (`images`) chưa gửi tới khi app lưu ảnh (#212), nên không đánh dấu lý do nào cần ảnh.
+      const data = await client.call<{ reasons?: Row[] }>('GET', REJECT_REASONS, {
+        token: accessToken,
+        query: { return_or_cancel_id: externalReturnId, locale: 'vi-VN' },
+      });
+      return (data?.reasons ?? [])
+        .map((r) => ({ id: str(r.name), label: str(r.text) || str(r.name), requiresImage: false }))
+        .filter((r) => r.id);
+    },
+    async decideReturn(accessToken, externalReturnId, _externalLineIds, decision, opts) {
+      const refundOnly = opts.kind === 'refund';
+      if (decision === 'accept') {
+        if (refundOnly) throw new MarketplaceError('rejected', 'refund_only_request', 'Yêu cầu chỉ hoàn tiền không có bước đồng ý trả hàng');
+        return decide(accessToken, externalReturnId, 'APPROVE_RETURN', {});
+      }
+      if (decision === 'refund') {
+        // Trả hàng mà hoàn luôn cho khách giữ hàng: APPROVE_RETURN kèm `buyer_keep_item` (docv2 Approve Return 202309).
+        return refundOnly
+          ? decide(accessToken, externalReturnId, 'APPROVE_REFUND', {})
+          : decide(accessToken, externalReturnId, 'APPROVE_RETURN', { buyer_keep_item: true });
+      }
+      // Từ chối bắt buộc lý do của Get Reject Reasons: kiểm trước khi gọi để không tốn lượt.
+      if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do khi từ chối yêu cầu trả');
+      const comment = opts.comment || (refundOnly ? 'Người bán không đồng ý hoàn tiền' : 'Người bán từ chối yêu cầu trả');
+      return decide(accessToken, externalReturnId, refundOnly ? 'REJECT_REFUND' : 'REJECT_RETURN', { reject_reason: opts.reasonId, comment }, opts.reasonId);
+    },
+    async confirmReturnReceived(accessToken, externalReturnId) {
+      // Kho quét nhận hàng trả (§20.1): sàn rời BUYER_SHIPPED_ITEM, tới bước hoàn tiền cho khách.
+      await decide(accessToken, externalReturnId, 'APPROVE_RECEIVED_PACKAGE', {});
     },
     async listReturns(accessToken, updatedAfter, cursor) {
       const { rows, nextCursor } = await searchPage(SEARCH_RETURNS, 'return_orders', accessToken, updatedAfter, cursor);

@@ -7,6 +7,7 @@ import { completeDueOrdersOnce } from '#src/modules/order/index.ts';
 import { updatePackage } from '#src/modules/order/fulfillment/repository/packages.ts';
 import { settleDeferredHandovers } from '#src/modules/order/fulfillment/service/handover-stock.ts';
 import { withCompany } from '#src/shared/db/client.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -349,7 +350,8 @@ describe('POST /fulfillment/packages/:id/report-lost, confirm-lost (spec #238 §
         [p.orderId],
       )).rows[0]!;
     expect(await order()).toMatchObject({ status: 'processing', cancelling: true });
-    await completeDueOrdersOnce();
+    // Ctx thật: việc hoàn tất quét mọi công ty của DB test dùng chung, phải tính hạn trả như worker (#236).
+    await completeDueOrdersOnce(new Date(), createModuleContext());
     expect(await order()).toEqual({ status: 'completed', cancelling: false, outcome: 'none' });
   });
 

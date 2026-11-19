@@ -10,6 +10,7 @@ import { testPool } from '../../helpers/db.ts';
 import { CANCELLING_SQL, stockOfVariant } from '../fulfillment/helpers.ts';
 import { ingest as ingestIn, remote as remoteOf, setup, withLineCancelled, withStatus } from '../fulfillment/platform-fixtures.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
+import { getOrder } from '#src/modules/order/sales/service/orders.ts';
 
 let companyId: string;
 let sku: string;
@@ -71,7 +72,7 @@ const all = async (sql: string, params: unknown[]) => (await testPool().query(sq
 
 async function orderOf(orderId: string) {
   return one(
-    `select status, outcome, raw_marketplace_status, is_cod, subtotal, total, ship_by, cancel_requested, ${CANCELLING_SQL} as cancelling, cancel_pending, cancel_reason, cancel_initiator,
+    `select status, outcome, raw_marketplace_status, is_cod, subtotal, total, ship_by, cancel_requested, ${CANCELLING_SQL} as cancelling, cancel_pending, cancel_reason,
             platform_cancelled, needs_attention, code from "order".orders where id = $1`,
     [orderId],
   );
@@ -318,7 +319,7 @@ describe('nhận đơn sàn (#105)', () => {
     const o = remote();
     const res = await ingest(o);
     await testPool().query(
-      `update "order".orders set cancel_pending = true, cancel_reason = 'Hết hàng', cancel_initiator = 'seller' where id = $1`,
+      `update "order".orders set cancel_pending = true, cancel_reason = 'Hết hàng' where id = $1`,
       [res.orderId],
     );
     expect(await orderOf(res.orderId)).toMatchObject({ cancelling: true });
@@ -330,30 +331,72 @@ describe('nhận đơn sàn (#105)', () => {
       cancelling: false,
       cancel_pending: false,
       cancel_reason: 'Hết hàng',
-      cancel_initiator: 'seller',
     });
     const changed = (await eventsOf(res.orderId)).filter((e) => e.type === 'sales.order_status_changed').at(-1);
     expect(changed?.payload).toMatchObject({ to: 'cancelled' });
     expect((changed?.payload as { flags: string[] }).flags).not.toContain('cancelling');
   });
 
-  it('DH-B06: sàn tự huỷ (không ai gửi huỷ trong app): lý do "Sàn huỷ đơn", người huỷ platform', async () => {
+  it('DH-B06: sàn tự huỷ, món không ghi người, lý do: lý do cấp đơn "Sàn huỷ đơn"', async () => {
     const o = remote();
     const res = await ingest(o);
     const cancelled = structuredClone(o);
     cancelled.lines[0]!.status = 'cancelled';
     await ingest(cancelled);
-    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn', cancel_initiator: 'platform', cancel_pending: false });
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn', cancel_pending: false });
+  });
+
+  it('DH-B06: khách huỷ thẳng trên sàn: lý do cấp đơn lấy từ món, người huỷ suy ra từ dòng là buyer', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: 'Đổi ý' });
+    const view = await withCompany(companyId, () => getOrder({} as never, res.orderId));
+    expect(view.cancelInitiators).toEqual(['buyer']);
+  });
+
+  it('DH-B06: người bán huỷ trên trang người bán, không qua app: người huỷ seller, không ghi "Sàn huỷ đơn"', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'seller', cancelReason: null, cancelKind: 'cancellation' };
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: null });
+    const view = await withCompany(companyId, () => getOrder({} as never, res.orderId));
+    expect(view.cancelInitiators).toEqual(['seller']);
+  });
+
+  it('DH-B06: hai món hai người huỷ khác lý do: đơn ghi cả hai người, lý do cấp đơn để trống (lý do ở từng dòng)', async () => {
+    const o = remote();
+    o.lines.push({ ...structuredClone(o.lines[0]!), externalLineId: `${o.lines[0]!.externalLineId}-b` });
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    cancelled.lines[1]!.status = 'cancelled';
+    cancelled.lines[1]!.info = { ...noLineInfo, cancelInitiator: 'platform', cancelReason: 'Hết hạn giao', cancelKind: 'cancellation' };
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: null });
+    const view = await withCompany(companyId, () => getOrder({} as never, res.orderId));
+    expect(view.cancelInitiators).toEqual(['buyer', 'platform']);
+    expect(view.lines.map((l) => [l.cancelInitiator, l.cancelReason])).toEqual([
+      ['buyer', 'Đổi ý'],
+      ['platform', 'Hết hạn giao'],
+    ]);
   });
 
   it('Sale đã gửi huỷ, kiện đã đóng gói: sàn xác nhận thì gỡ cancel_pending, cờ Đang huỷ còn theo kiện chờ mở', async () => {
     const o = remote({}, 'packed');
     const res = await ingest(o);
-    await testPool().query(`update "order".orders set cancel_pending = true, cancel_initiator = 'buyer', cancel_reason = 'Đổi ý' where id = $1`, [res.orderId]);
+    await testPool().query(`update "order".orders set cancel_pending = true, cancel_reason = 'Đổi ý' where id = $1`, [res.orderId]);
     const cancelled = structuredClone(o);
     cancelled.lines[0]!.status = 'cancelled';
     await ingest(cancelled);
-    expect(await orderOf(res.orderId)).toMatchObject({ status: 'processing', cancel_pending: false, cancelling: true, cancel_reason: 'Đổi ý', cancel_initiator: 'buyer' });
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'processing', cancel_pending: false, cancelling: true, cancel_reason: 'Đổi ý' });
   });
 
   it('DH-B04: Sale từ chối khách xin huỷ, lượt sau sàn không còn người huỷ: dòng bỏ thông tin huỷ; loại cancellation ghi nhầm thì bỏ', async () => {

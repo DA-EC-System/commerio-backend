@@ -1,4 +1,4 @@
-import { and, asc, count, eq, getTableColumns, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { MappedSku } from '../../fulfillment/index.ts';
 import type { OrderStatus } from '../domain/order.ts';
@@ -16,7 +16,6 @@ export interface MarketplaceOrderRow {
   cancelPending: boolean;
   platformCancelled: boolean;
   cancelReason: string | null;
-  cancelInitiator: 'buyer' | 'seller' | 'platform' | null;
   shippingAddress: unknown;
   platformPaymentMethod: string | null;
   buyerNote: string | null;
@@ -37,7 +36,6 @@ const rowColumns = {
   cancelPending: orders.cancelPending,
   platformCancelled: orders.platformCancelled,
   cancelReason: orders.cancelReason,
-  cancelInitiator: orders.cancelInitiator,
   shippingAddress: orders.shippingAddress,
   platformPaymentMethod: orders.platformPaymentMethod,
   buyerNote: orders.buyerNote,
@@ -66,17 +64,19 @@ const LINE_INFO_COLUMNS = [
 ] as const;
 
 /**
- * Cờ Đang huỷ (`cancelling`) suy ra lúc đọc (Documents/21 §19.2, 25 §8.2, §8.3): đơn còn mở và đã gửi lệnh huỷ chờ sàn
- * (`cancel_pending`), hoặc còn kiện chưa huỷ đang chờ mở vì món đã huỷ (mở để huỷ cả kiện, hay dòng chờ bỏ của dòng đơn
- * đã huỷ). Kho mở hết kiện đó thì cờ tự hết; không lưu nên không kẹt (test đêm 18/11/2026, DH-B03, KH-B09). Kiện chờ mở
- * vì kiểm kê hay chia lại không tính.
+ * Cờ Đang huỷ (`cancelling`) suy ra lúc đọc, chỉ cho huỷ **cả đơn** (Documents/25 §8.2 "Như dòng trên"): đơn còn mở và
+ * đã gửi lệnh huỷ chờ sàn (`cancel_pending`), hoặc mọi dòng đã huỷ hết mà còn kiện chưa huỷ đang chờ mở để huỷ (mở để
+ * huỷ cả kiện, hay dòng chờ bỏ). Kho mở hết kiện đó thì cờ tự hết; không lưu nên không kẹt (test đêm 18/11/2026,
+ * DH-B03). Huỷ một phần món (25 §8.3 Huỷ dòng, KH-B09) không bật cờ đơn: kiện mang cờ chờ mở, đơn chạy tiếp. Kiện chờ
+ * mở vì kiểm kê hay chia lại không tính.
  */
-export const cancellingSql = sql<boolean>`(${orders.status} in ('unpaid', 'processing') and (${orders.cancelPending} or exists (
-  select 1 from "order".packages p
-  where p.order_id = ${orders.id} and p.status <> 'cancelled' and p.needs_open
-    and (p.open_purpose = 'cancel' or exists (
-      select 1 from "order".package_lines pl join "order".order_lines ol on ol.id = pl.order_line_id
-      where pl.package_id = p.id and pl.pending_drop_qty > 0 and ol.cancelled_qty > 0)))))`;
+export const cancellingSql = sql<boolean>`(${orders.status} in ('unpaid', 'processing') and (${orders.cancelPending} or (
+  not exists (select 1 from "order".order_lines ol where ol.order_id = ${orders.id} and ol.cancelled_qty < ol.quantity)
+  and exists (
+    select 1 from "order".packages p
+    where p.order_id = ${orders.id} and p.status <> 'cancelled' and p.needs_open
+      and (p.open_purpose = 'cancel' or exists (
+        select 1 from "order".package_lines pl where pl.package_id = p.id and pl.pending_drop_qty > 0))))))`;
 
 /** Cờ Đang huỷ suy ra của một đơn (`cancellingSql`), đọc trong giao dịch của bên gọi (thấy cả ghi chưa commit). */
 export async function isCancelling(orderId: string): Promise<boolean> {
@@ -107,6 +107,14 @@ export async function allLinesCancelled(orderId: string): Promise<boolean> {
     .from(orderLines)
     .where(eq(orderLines.orderId, orderId));
   return !!row && row.lines > 0 && row.open === 0;
+}
+
+/** Người, lý do huỷ của các dòng đã huỷ (`cancelled_qty > 0`) của đơn, đọc trong giao dịch của bên gọi. */
+export async function cancelledLineInfo(orderId: string) {
+  return getDb()
+    .select({ cancelledQty: orderLines.cancelledQty, cancelReason: orderLines.cancelReason, cancelInitiator: orderLines.cancelInitiator })
+    .from(orderLines)
+    .where(and(eq(orderLines.orderId, orderId), gt(orderLines.cancelledQty, 0)));
 }
 
 /**
@@ -327,25 +335,29 @@ export async function updateOrderAt(id: string, version: number, patch: Partial<
 
 /**
  * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền tự hoàn tất: gọi ngoài `withCompany`
- * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở kiểm tiếp trong `withCompany` của từng đơn.
+ * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở, COD kiểm tiếp trong `withCompany` của công ty. Lật trang theo `id`
+ * tăng (`afterId` là `id` cuối trang trước, null là trang đầu), mỗi trang `limit` đơn.
  *
  * Đơn Đang huỷ: còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại; mọi kiện đã dừng thì chỉ còn `cancel_pending`. Mọi kiện đã dừng mà còn kiện
  * không huỷ (kiện hoá ra đã bàn giao) thì đi theo "Sàn huỷ đơn khi đã có kiện bàn giao" (25 §8.2): hoàn tất được, kể cả
  * khi lượt kéo đơn chưa chạy lại để gỡ cờ. Mọi kiện đều huỷ thì đơn phải sang `cancelled` (25 §8.2), không hoàn tất.
  */
-export async function findCompletionCandidates(): Promise<{ id: string; companyId: string }[]> {
+export async function findCompletionCandidates(afterId: string | null, limit: number): Promise<{ id: string; companyId: string }[]> {
   return getDb()
     .select({ id: orders.id, companyId: orders.companyId })
     .from(orders)
     .where(
       and(
         eq(orders.status, 'processing'),
+        afterId ? gt(orders.id, afterId) : undefined,
         sql`(not ${orders.cancelPending} or exists (select 1 from "order".packages p where p.order_id = ${orders.id} and p.status <> 'cancelled'))`,
         sql`exists (select 1 from "order".packages p where p.order_id = ${orders.id})`,
         sql`not exists (select 1 from "order".packages p where p.order_id = ${orders.id}
               and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,
       ),
-    );
+    )
+    .orderBy(asc(orders.id))
+    .limit(limit);
 }
 
 /** Đơn chưa xong: một vị từ cho `openOrders` của ngắt, `orders` của 409 và `pendingOrderCount` (§18.7.1), để không lệch. */

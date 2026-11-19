@@ -387,7 +387,7 @@ describe('mở lại kiện', () => {
   const cancelColumns = async (orderId: string) =>
     (
       await testPool().query(
-        `select cancel_pending, cancel_initiator, ${CANCELLING_SQL} as cancelling from "order".orders where id = $1`,
+        `select cancel_pending, ${CANCELLING_SQL} as cancelling from "order".orders where id = $1`,
         [orderId],
       )
     ).rows[0]!;
@@ -401,7 +401,7 @@ describe('mở lại kiện', () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(await orderOf(orderId)).toEqual({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn' });
-    expect(await cancelColumns(orderId)).toEqual({ cancel_pending: false, cancel_initiator: 'platform', cancelling: false });
+    expect(await cancelColumns(orderId)).toEqual({ cancel_pending: false, cancelling: false });
     const { rows } = await testPool().query(
       `select from_state, to_state, action, source from core.state_transitions where entity_type = 'orders' and entity_id = $1 order by id`,
       [orderId],
@@ -410,16 +410,16 @@ describe('mở lại kiện', () => {
     expect(await outboxOf(orderId, 'sales.order_cancelled')).toEqual([expect.objectContaining({ orderId, source: 'marketplace', by: 'platform' })]);
   });
 
-  it('DH-B06: Sale đã huỷ trên sàn, kho mở kiện cuối: đơn cancelled, giữ người huỷ seller và lý do Sale chọn', async () => {
+  it('DH-B06: Sale đã huỷ trên sàn, kho mở kiện cuối: đơn cancelled, giữ lý do Sale chọn', async () => {
     const { packageId, orderId, lineIds } = await seed('packed', { cancelPending: true, platformPackageCode: 'DROP-SELLER', lines: [{ variantId, quantity: 1, reserved: true }] });
-    await testPool().query(`update "order".orders set cancel_reason = 'Hết hàng', cancel_initiator = 'seller' where id = $1`, [orderId]);
+    await testPool().query(`update "order".orders set cancel_reason = 'Hết hàng' where id = $1`, [orderId]);
     await markPendingDrop(packageId, lineIds, 'cancel');
 
     const res = await post(packageId, 'open', { version: (await packageRow(packageId)).version }, { repack: vi.fn() });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(await orderOf(orderId)).toEqual({ status: 'cancelled', cancel_reason: 'Hết hàng' });
-    expect(await cancelColumns(orderId)).toEqual({ cancel_pending: false, cancel_initiator: 'seller', cancelling: false });
+    expect(await cancelColumns(orderId)).toEqual({ cancel_pending: false, cancelling: false });
   });
 
   it('đơn còn món chưa huỷ thì mở kiện huỷ không huỷ đơn', async () => {

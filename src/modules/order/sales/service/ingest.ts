@@ -4,10 +4,11 @@ import { Decimal } from 'decimal.js';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findPackagesOfOrders, type PackageEvent, type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
-import type { OrderFlag, OrderStatus } from '../domain/order.ts';
+import { type OrderFlag, type OrderStatus, orderCancelReasonFromLines } from '../domain/order.ts';
 import {
   allLinesCancelled,
   cancelledLineIds,
+  cancelledLineInfo,
   clearStaleLineCancel,
   hasUnmappedLines,
   insertMarketplaceOrder,
@@ -167,9 +168,16 @@ export async function eventFlags(orderId: string, o: StoredFlagColumns): Promise
   return flags;
 }
 
-/** Lý do và người huỷ cả đơn khi sàn tự huỷ: chỉ ghi khi đơn chưa có (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi; DH-B06). */
-const platformCancelReason = (row: Pick<MarketplaceOrderRow, 'cancelReason' | 'cancelInitiator'>) =>
-  row.cancelReason || row.cancelInitiator ? {} : { cancelReason: 'Sàn huỷ đơn', cancelInitiator: 'platform' as const };
+/**
+ * Lý do huỷ cả đơn khi sàn huỷ: chỉ ghi khi đơn chưa có (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi; DH-B06), lấy từ
+ * các món đã huỷ (`orderCancelReasonFromLines`). Người huỷ không lưu ở đơn: API suy ra từ dòng (`cancelInitiators`).
+ * Gọi sau khi đã ghi dòng (`upsertMarketplaceLines`, `markLinesCancelled`).
+ */
+async function platformCancelReason(orderId: string, row: Pick<MarketplaceOrderRow, 'cancelReason'>): Promise<{ cancelReason?: string }> {
+  if (row.cancelReason) return {};
+  const reason = orderCancelReasonFromLines(await cancelledLineInfo(orderId));
+  return reason ? { cancelReason: reason } : {};
+}
 
 function totals(o: PlatformOrder) {
   const subtotal = sum(o.lines.map((l) => l.unitPrice));
@@ -217,7 +225,7 @@ export async function settleCancelledOrder(orderId: string): Promise<void> {
   if ((await findPackagesOfOrders([orderId])).some((p) => p.status !== 'cancelled')) return;
   await transition(orderId, row.status, 'cancelled', 'platform_cancel');
   const after = { ...row, status: 'cancelled' as const, cancelPending: false, cancelRequested: false };
-  await updateOrder(orderId, { status: 'cancelled', cancelPending: false, cancelRequested: false, ...platformCancelReason(row) });
+  await updateOrder(orderId, { status: 'cancelled', cancelPending: false, cancelRequested: false, ...(await platformCancelReason(orderId, row)) });
   await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', by: 'platform' } });
   const flags = await eventFlags(orderId, after);
   await publishEvent({
@@ -374,7 +382,7 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
       cancelRequested: next.cancelRequested,
       cancelPending: next.cancelPending,
       platformCancelled: next.platformCancelled,
-      ...(cancelled ? platformCancelReason(row) : {}),
+      ...(cancelled ? await platformCancelReason(orderId, row) : {}),
     });
   }
   if (cancelled) {

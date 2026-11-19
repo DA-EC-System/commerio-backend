@@ -169,14 +169,17 @@ export const Order = OrderSummary.extend({
   note: z.string(),
   buyerNote: z.string().nullable().meta({ description: 'Ghi chú khách để lại trên sàn' }),
   cancelReason: z.string().nullable().meta({ description: 'Lý do huỷ cả đơn; huỷ một phần món thì null (lý do ở từng dòng)' }),
-  cancelInitiator: z.enum(['buyer', 'seller', 'platform']).nullable().meta({
+  cancelInitiators: z.array(z.enum(['buyer', 'seller', 'platform'])).meta({
     description:
-      'Người khởi xướng huỷ cả đơn: Sale huỷ trên sàn là `seller`, Sale đồng ý khách xin huỷ là `buyer`, sàn tự huỷ là `platform`; sàn xác nhận huỷ không ghi đè',
+      'Những người đã huỷ món của đơn, không trùng, thứ tự buyer, seller, platform; suy ra từ `cancelInitiator` của dòng đã huỷ (`cancelledQty > 0`), không lưu ở đơn. Khách huỷ một món, sàn huỷ món kia: `[buyer, platform]`. Chưa món nào huỷ, hay sàn không ghi người huỷ: `[]`',
   }),
   invoiceNumber: z.string().nullable(),
   lines: z.array(OrderLine),
   packages: z.array(PackageSummary),
-  returnWindowEndsAt: iso.nullable().meta({ description: 'Hết hạn trả hàng, tính từ kiện giao cuối' }),
+  returnWindowEndsAt: iso.nullable().meta({
+    description:
+      'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); đơn đã hoàn tất là hạn đã lưu',
+  }),
   completionBlocker: z
     .enum(['packages_open', 'return_window', 'return_requested', 'cod_unconfirmed'])
     .nullable()

@@ -76,6 +76,8 @@ export const attributeValues = catalogSchema.table(
   (t) => [
     uniqueIndex('attribute_values_attribute_lower_value_uq').on(t.attributeId, sql`lower(${t.value})`),
     unique().on(t.attributeId, t.code),
+    // Đích của khoá ngoại ghép `pavi_value_fk` (#340, migration `*_anh-phan-loai-rls`).
+    unique('attribute_values_id_attribute_uq').on(t.id, t.attributeId),
     check('attribute_values_code_format', sql`${t.code} ~ '^[A-Z0-9]{1,6}$'`),
   ],
 );
@@ -97,6 +99,12 @@ export const products = catalogSchema.table(
     description: text('description'),
     // Ảnh bảng kích cỡ (#347): một ảnh mỗi sản phẩm, tệp ở module `files` như ảnh sản phẩm (không khoá ngoại sang `core`).
     sizeChartFileId: uuid('size_chart_file_id'),
+    // Thuộc tính gắn ảnh (#340): trục mà mỗi giá trị mang một ảnh phân loại; null là chưa chọn. Service chỉ nhận trục
+    // của sản phẩm (khoá ngoại bỏ qua RLS).
+    imageAttributeId: uuid('image_attribute_id').references(() => attributes.id),
+    // Xuất xứ (mã ISO 3166-1 alpha-2) và thương hiệu dùng chung mọi sàn (#340); adapter sàn tự đổi sang giá trị của sàn.
+    originCountry: text('origin_country'),
+    brand: text('brand'),
     ...timestamps,
     ...version,
   },
@@ -105,6 +113,10 @@ export const products = catalogSchema.table(
     uniqueIndex('products_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
     uniqueIndex('products_company_code_uq').on(t.companyId, t.code),
     index().on(t.categoryId),
+    // Đích của khoá ngoại ghép `pavi_product_fk` (#340, migration `*_anh-phan-loai-rls`).
+    unique('products_id_image_attribute_uq').on(t.id, t.imageAttributeId),
+    check('products_origin_country', sql`${t.originCountry} is null or ${t.originCountry} ~ '^[A-Z]{2}$'`),
+    check('products_brand_length', sql`${t.brand} is null or char_length(${t.brand}) <= 100`),
   ],
 );
 
@@ -131,6 +143,28 @@ export const productImages = catalogSchema.table(
     uniqueIndex('product_images_product_position_uq').on(t.productId, t.position),
     check('product_images_position_nonneg', sql`${t.position} >= 0`),
   ],
+);
+
+/**
+ * Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/19 §3.2): áo 3 màu × 4 size có 3 dòng. Hai khoá
+ * ngoại ghép `pavi_product_fk` `(product_id, attribute_id) → products(id, image_attribute_id)` và `pavi_value_fk`
+ * `(attribute_value_id, attribute_id) → attribute_values(id, attribute_id)` viết ở migration `--custom`
+ * `*_anh-phan-loai-rls` (drizzle-kit sinh khoá ngoại trước unique đích, db/CLAUDE.md). `file_id` ở module files, không
+ * khoá ngoại chéo schema.
+ */
+export const productAttributeValueImages = catalogSchema.table(
+  'product_attribute_value_images',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    productId: uuid('product_id').notNull(),
+    attributeId: uuid('attribute_id').notNull(),
+    attributeValueId: uuid('attribute_value_id').notNull(),
+    fileId: uuid('file_id').notNull(),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [unique('pavi_product_value_uq').on(t.productId, t.attributeValueId), index().on(t.fileId)],
 );
 
 /** Trạng thái kinh doanh của SKU (Documents/21 mục 17, 25 §5.1). SKU mới luôn `selling`. */
