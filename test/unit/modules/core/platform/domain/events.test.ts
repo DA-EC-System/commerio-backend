@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { EVENT_SCHEMAS, EVENT_TYPES, type EventPayload, type EventType } from '#src/modules/core/platform/domain/events.ts';
 import { modules } from '#src/modules/registry.ts';
+import { listingStatus, shopStatus, syncState } from '#src/modules/channel/channel/repository/schema.ts';
+import { RETURN_STATUSES } from '#src/modules/order/sales/domain/return.ts';
 import { topicOf } from '#src/shared/events/envelope.ts';
 
 const id = () => randomUUID();
@@ -32,6 +34,9 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'sales.order_created': { orderId: id(), code: 'DH-0001', source: 'manual', total: '150000.00' },
   'sales.order_status_changed': { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] },
   'sales.order_cancelled': { orderId: id(), code: 'DH-000001', source: 'marketplace', by: 'platform' },
+  'sales.return_status_changed': { returnId: id(), orderId: id(), from: null, to: 'requested' },
+  'channel.shop_status_changed': { shopId: id(), from: 'active', to: 'needs_reauth' },
+  'channel.listing_sync_changed': { shopId: id(), listingId: id(), stockSync: 'pending', priceSync: 'synced', status: 'live' },
   'sales.return_refunded': { returnRequestId: id(), orderId: id(), shopId: id(), refundAmount: '32000.00', refundedAt: at },
   'fulfillment.package_status_changed': { packageId: id(), orderId: id(), from: 'reserved', to: 'packed' },
   'fulfillment.package_shipped': { packageId: id(), orderId: id(), lines: [{ variantId: id(), quantity: 2, unitCost: '100000.00' }] },
@@ -103,6 +108,20 @@ describe('danh mục sự kiện (AC-11)', () => {
   it('mỗi loại có mẫu, mẫu parse được bằng schema của loại đó', () => {
     expect([...EVENT_TYPES].sort()).toEqual(Object.keys(SAMPLES).sort());
     for (const type of EVENT_TYPES) expect(EVENT_SCHEMAS[type].safeParse(SAMPLES[type]).success, type).toBe(true);
+  });
+
+  it('enum của ba sự kiện mới trùng hằng của module sở hữu (AC12)', () => {
+    const sorted = (values: readonly string[]) => [...values].sort();
+    const returnSchema = EVENT_SCHEMAS['sales.return_status_changed'].shape;
+    expect(sorted(returnSchema.to.options)).toEqual(sorted(RETURN_STATUSES));
+    expect(sorted(returnSchema.from.unwrap().options)).toEqual(sorted(RETURN_STATUSES));
+    const shopSchema = EVENT_SCHEMAS['channel.shop_status_changed'].shape;
+    expect(sorted(shopSchema.to.options)).toEqual(sorted(shopStatus.enumValues));
+    expect(sorted(shopSchema.from.unwrap().options)).toEqual(sorted(shopStatus.enumValues));
+    const listingSchema = EVENT_SCHEMAS['channel.listing_sync_changed'].shape;
+    expect(sorted(listingSchema.status.options)).toEqual(sorted(listingStatus.enumValues));
+    expect(sorted(listingSchema.stockSync.options)).toEqual(sorted(syncState.enumValues));
+    expect(sorted(listingSchema.priceSync.options)).toEqual(sorted(syncState.enumValues));
   });
 
   it('tiền tố của type là một module có thật, topic mặc định là commerio.<module>', () => {

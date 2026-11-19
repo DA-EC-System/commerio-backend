@@ -13,21 +13,44 @@ interface Rule<T extends EventType> {
   readonly fields: (payload: EventPayload<T>) => Record<string, unknown>;
 }
 
-/** Loại không có ở đây thì không gửi ai. Thêm loại: chọn quyền và trường, rồi thêm dòng vào test và §13. */
+/**
+ * Loại không có ở đây thì không gửi ai (consumer `notification-sse` cũng không nghe). Thêm loại: chọn quyền và trường,
+ * rồi thêm dòng vào test và §13. `fulfillment.order_status_changed`, `payment.succeeded` đã bỏ ở #216.
+ */
 const RULES: { readonly [T in EventType]?: Rule<T> } = {
   'sales.order_created': {
     permissions: ['sales.order.view'],
     fields: ({ orderId, code, source, total }) => ({ orderId, code, source, total: dong(total) }),
   },
-  // Gồm "đơn thiếu hàng" (isShortStock).
-  'fulfillment.order_status_changed': {
+  // Mô hình đơn, kiện, trả, gian hàng (Documents/21 §13.2 "Sự kiện của mô hình mới", #216). FE gọi lại GET, payload
+  // chỉ mang id, from/to, cờ; riêng kiện giao không thành công, thất lạc mang `reason`/`claimCode` để dựng toast.
+  'sales.order_status_changed': {
     permissions: ['sales.order.view'],
-    fields: ({ orderId, from, to, isShortStock }) => ({ orderId, from, to, isShortStock }),
+    fields: ({ orderId, code, from, to, flags }) => ({ orderId, code, from, to, flags }),
   },
-  // A1: Sale hoặc người có quyền tài chính. Không gửi mã giao dịch và cổng (T13).
-  'payment.succeeded': {
-    permissions: ['sales.order.view', 'finance.invoice.view'],
-    fields: ({ orderId, amount }) => ({ orderId, amount: dong(amount) }),
+  'fulfillment.package_status_changed': {
+    permissions: ['sales.order.view', 'fulfillment.order.process'],
+    fields: ({ packageId, orderId, from, to }) => ({ packageId, orderId, from, to }),
+  },
+  'fulfillment.package_delivery_failed': {
+    permissions: ['sales.order.view', 'fulfillment.order.process'],
+    fields: ({ packageId, orderId, reason }) => ({ packageId, orderId, reason }),
+  },
+  'fulfillment.package_lost': {
+    permissions: ['sales.order.view', 'fulfillment.order.process'],
+    fields: ({ packageId, orderId, claimCode }) => ({ packageId, orderId, claimCode }),
+  },
+  'sales.return_status_changed': {
+    permissions: ['sales.return.view'],
+    fields: ({ returnId, orderId, from, to }) => ({ returnId, orderId, from, to }),
+  },
+  'channel.shop_status_changed': {
+    permissions: ['channel.shop.view'],
+    fields: ({ shopId, from, to }) => ({ shopId, from, to }),
+  },
+  'channel.listing_sync_changed': {
+    permissions: ['channel.shop.view'],
+    fields: ({ shopId, listingId, stockSync, priceSync, status }) => ({ shopId, listingId, stockSync, priceSync, status }),
   },
   'inventory.below_threshold': {
     permissions: ['inventory.stock.view'],

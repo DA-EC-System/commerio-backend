@@ -36,6 +36,12 @@ const packageStatus = z.enum([
 ]);
 /** Trạng thái kinh doanh của SKU (Documents/21 §17.1). */
 const businessStatus = z.enum(['selling', 'paused', 'discontinued', 'archived']);
+// Chép từ RETURN_STATUSES (sales/domain/return.ts) và enum của channel (channel/repository/schema.ts): platform ở lớp
+// thấp nhất, không import ngược; test events.test.ts so khớp (#216 AC12).
+const returnStatus = z.enum(['requested', 'rejected', 'refund_only', 'awaiting_return', 'received', 'closed']);
+const shopStatus = z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']);
+const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
+const syncState = z.enum(['synced', 'pending', 'error']);
 
 export const EVENT_SCHEMAS = {
   'inventory.stock_changed': z.object({ variantId: id, onHand: z.int(), reserved: z.int(), available: z.int() }),
@@ -101,6 +107,8 @@ export const EVENT_SCHEMAS = {
     refundAmount: money,
     refundedAt: timestamp,
   }),
+  // Yêu cầu trả đổi trạng thái, hoặc `from = to` khi cờ Cần xử lý, thông tin sàn hiện trên màn đổi (Documents/21 §13.2, #216).
+  'sales.return_status_changed': z.object({ returnId: id, orderId: id, from: returnStatus.nullable(), to: returnStatus }),
   'fulfillment.package_status_changed': z.object({
     packageId: id,
     orderId: id,
@@ -243,6 +251,9 @@ export const EVENT_SCHEMAS = {
   // Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền vừa xếp (#312). Không mang email, token: consumer đọc dòng
   // `channel.shop_reauth_mails` và danh sách CEO, Admin lúc gửi.
   'channel.shop_reauth_mail': z.object({ mailId: id, shopId: id }),
+  // Gian hàng đổi trạng thái; listing đổi `status`, `stockSync` hay `priceSync`, mang giá trị sau khi đổi (Documents/21 §13.2, #216).
+  'channel.shop_status_changed': z.object({ shopId: id, from: shopStatus.nullable(), to: shopStatus }),
+  'channel.listing_sync_changed': z.object({ shopId: id, listingId: id, stockSync: syncState, priceSync: syncState, status: listingStatus }),
 } as const;
 
 export type EventType = keyof typeof EVENT_SCHEMAS;
