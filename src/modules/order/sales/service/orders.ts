@@ -256,12 +256,13 @@ export async function getOrder(ctx: SalesContext, id: string) {
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
   const lastDelivered = lastDeliveredAt(f.packages);
-  // Đơn đã dừng trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12); đơn chưa trả: không có hạn.
+  // Đơn đã hoàn tất trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12). Đơn chưa trả, đơn đã huỷ:
+  // không có hạn (đơn đi qua cờ Đang huỷ có thể còn mốc sàn báo `CANCELLED` ghi lúc còn xử lý, #236 PR 2).
   const endsAt = open
     ? returnWindowEndsAt(policyOf(policies, o.shopId), lastDelivered, o.returnWindowEndsAt)
-    : o.status === 'unpaid'
-      ? null
-      : o.returnWindowEndsAt;
+    : o.status === 'completed'
+      ? o.returnWindowEndsAt
+      : null;
   const blocker = open
     ? completionBlocker({
         packages: f.packages.map((p) => p.status),

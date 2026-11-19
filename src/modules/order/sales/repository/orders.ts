@@ -21,6 +21,7 @@ export interface MarketplaceOrderRow {
   shippingFeeOriginal: string | null;
   shippingFeeDiscountSeller: string | null;
   shippingFeeDiscountPlatform: string | null;
+  returnWindowEndsAt: Date | null;
 }
 
 const rowColumns = {
@@ -40,6 +41,7 @@ const rowColumns = {
   shippingFeeOriginal: orders.shippingFeeOriginal,
   shippingFeeDiscountSeller: orders.shippingFeeDiscountSeller,
   shippingFeeDiscountPlatform: orders.shippingFeeDiscountPlatform,
+  returnWindowEndsAt: orders.returnWindowEndsAt,
 };
 
 /** Cột mô tả của dòng sàn (#260): kéo lại thì ghi đè, sàn trả null thì giữ giá trị đã lưu; biến thể, số lượng, tiền gốc giữ như lúc tạo. */

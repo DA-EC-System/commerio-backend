@@ -398,6 +398,11 @@ export interface RemoteOrder {
    * tính từ đây là việc của phía app.
    */
   deliveredAt?: Date | null;
+  /**
+   * Mốc sàn báo đơn hết quyền trả; chỉ sàn `returnWindow = 'platform_status'` điền (TikTok: `update_time` khi `status`
+   * là `COMPLETED` hoặc `CANCELLED`, #236 D14). Lazada không điền.
+   */
+  returnWindowEndedAt?: Date | null;
   info: RemoteOrderInfo;
   lines: RemoteOrderLine[];
   /** Hành trình kiện (spec #199 phần c §5.7), kéo đơn đọc riêng ngoài giao dịch; không có thì kiện lấy giờ đồng bộ. */
