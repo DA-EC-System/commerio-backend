@@ -30,8 +30,9 @@ async function load(ctx: SalesContext, actor: Actor, id: string) {
     const [row, lines] = await Promise.all([findOrder(order.id), findOrderLines([order.id])]);
     // Món chưa huỷ hết: phần Sale còn huỷ được. Gửi cả món sàn đã huỷ thì TikTok báo không hợp lệ (`cancelEligibility`).
     const open = lines.filter((l) => l.cancelledQty < l.quantity);
-    // Món khách đang xin huỷ (sàn chép người, lý do lên món); món đã huỷ trước giữ lý do cũ nên không tính.
-    const requested = open.filter((l) => l.cancelInitiator === 'buyer');
+    // Món khách đang xin huỷ (sàn chép người, lý do lên món); món đã huỷ trước giữ lý do cũ nên không tính. Món khách xin
+    // trả hàng, hoàn tiền (Lazada `return-customer`) cũng ghi người là khách nhưng không phải xin huỷ: bỏ.
+    const requested = open.filter((l) => l.cancelInitiator === 'buyer' && (l.cancelKind === null || l.cancelKind === 'cancellation'));
     return {
       order,
       shopId: row!.shopId,
@@ -99,11 +100,19 @@ function marketplaceRef(l: Awaited<ReturnType<typeof load>>) {
  */
 const cancelling = (order: OrderView) => order.flags.includes('cancelling');
 
+/** Mọi món đã huỷ (đơn chờ lượt khép lại): không gửi lên sàn lệnh huỷ không có món nào, báo rõ cho Sale. */
+function assertLinesLeft(order: OrderView, lineIds: readonly string[]) {
+  if (!lineIds.length) {
+    throw new AppError(409, 'invalid_transition', 'Đơn không còn món nào để huỷ: mọi món đã được huỷ trên sàn', { current: order });
+  }
+}
+
 export async function cancelReasons(ctx: SalesContext, actor: Actor, id: string) {
   const loaded = await load(ctx, actor, id);
   const { shopId, externalOrderId } = marketplaceRef(loaded);
   const { order, lineIds } = loaded;
   if ((order.status !== 'unpaid' && order.status !== 'processing') || cancelling(order)) throw invalid(order);
+  assertLinesLeft(order, lineIds);
   return { items: await marketplace(ctx).cancelReasons(actor.companyId, shopId, externalOrderId, lineIds) };
 }
 
@@ -112,6 +121,7 @@ export async function cancelOnPlatform(ctx: SalesContext, actor: Actor, id: stri
   const { order, lineIds } = loaded;
   checkVersion(order, input.version);
   if (cancelling(order)) throw invalid(order);
+  assertLinesLeft(order, lineIds);
   const packages = order.packages.map((p) => p.status);
   assertTransition(orderMachine, order.status, 'cancel_on_platform', {
     actor,

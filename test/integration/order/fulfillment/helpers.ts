@@ -21,8 +21,8 @@ export const CANCELLING_SQL = `(orders.status in ('unpaid', 'processing') and (o
     or not exists (select 1 from "order".order_lines ol where ol.order_id = orders.id and ol.cancelled_qty < ol.quantity))
   and exists (
     select 1 from "order".packages p where p.order_id = orders.id and p.status <> 'cancelled' and p.needs_open
-      and (p.open_purpose = 'cancel' or exists (
-        select 1 from "order".package_lines pl where pl.package_id = p.id and pl.pending_drop_qty > 0))))))`;
+      and (p.open_purpose = 'cancel' or (p.open_purpose = 'edit' and exists (
+        select 1 from "order".package_lines pl where pl.package_id = p.id and pl.pending_drop_qty > 0)))))))`;
 
 export interface SeedLine {
   variantId: string | null;
