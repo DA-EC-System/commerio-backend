@@ -33,7 +33,7 @@ export async function applySkuMapping(input: ApplySkuMappingInput): Promise<{ li
 
   const outcomes = await remapPackageLines(
     locked.map((l) => ({ orderLineId: l.id, to })),
-    { actorId: input.actorId, holdStock: input.holdStock, orderCutoffAt: input.orderCutoffAt, reason: `Ghép SKU ${sellerSku}` },
+    { actorId: input.actorId, holdStock: input.holdStock, orderCutoffAt: input.orderCutoffAt, reason: `Liên kết SKU ${sellerSku}` },
   );
   const changed = locked.filter((l) => (outcomes.get(l.id) ?? 'applied') === 'applied');
   const needsUnload = locked.filter((l) => outcomes.get(l.id) === 'needs_unload').length;

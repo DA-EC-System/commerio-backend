@@ -380,7 +380,7 @@ export async function deleteProduct(ctx: CatalogContext, caller: Caller, id: str
       throw productInUse('Sản phẩm có SKU đã hoàn thiện, không xoá hẳn được; lưu trữ từng SKU');
     }
     if ((await inUseOf(ctx, ids)).size) throw productInUse('Sản phẩm đã có chứng từ hoặc listing, không xoá hẳn được; lưu trữ từng SKU');
-    if (variants.some((v) => v.sourceRequestLineId)) throw productInUse('Sản phẩm sinh từ đề nghị nhập, không xoá hẳn được');
+    if (variants.some((v) => v.sourceRequestLineId)) throw productInUse('Sản phẩm sinh từ đơn đặt hàng nhập, không xoá hẳn được');
     await requirePort(ctx, 'deleteStockLevels')(ids);
     await deleteProductTree(id, ids);
     await recordAudit({

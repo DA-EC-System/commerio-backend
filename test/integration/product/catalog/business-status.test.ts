@@ -108,7 +108,7 @@ describe('ca bị chặn (B1)', () => {
     const res = await change(ceo, productId, 'archive', [variantId]);
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('/problems/archive_blocked');
-    expect(res.body.reasons).toEqual(['Còn 3 tồn thực']);
+    expect(res.body.reasons).toEqual(['Còn 3 tồn kho']);
     expect(await statusOf(productId, variantId)).toBe('discontinued');
   });
 
@@ -150,7 +150,7 @@ describe('thao tác trên cả sản phẩm cha', () => {
     const res = await change(ceo, product.id, 'archive');
     expect(res.status).toBe(200);
     expect(res.body.applied).toEqual([free]);
-    expect(res.body.skipped).toEqual([{ variantId: stocked, sku: expect.any(String), code: 'archive_blocked', reasons: ['Còn 2 tồn thực'] }]);
+    expect(res.body.skipped).toEqual([{ variantId: stocked, sku: expect.any(String), code: 'archive_blocked', reasons: ['Còn 2 tồn kho'] }]);
   });
 });
 
@@ -189,7 +189,7 @@ describe('chi tiết sản phẩm: archiveBlockers', () => {
     const res = await api(ceo).get(`/products/${product.id}`);
     const byId = new Map(res.body.variants.map((v: { id: string; archiveBlockers: string[] }) => [v.id, v.archiveBlockers]));
     expect(byId.get(selling)).toEqual([]);
-    expect(byId.get(stopped)).toEqual(['Còn 3 tồn thực']);
+    expect(byId.get(stopped)).toEqual(['Còn 3 tồn kho']);
     expect(ProductDetail.parse(res.body)).toEqual(res.body);
   });
 });
@@ -208,7 +208,7 @@ describe('review cuối PR 2', () => {
     await receive(companyId, variantId, 3, 100000);
     const blockersFor = async (token: string) =>
       (await api(token).get(`/products/${productId}`)).body.variants.find((v: { id: string }) => v.id === variantId).archiveBlockers;
-    expect(await blockersFor(ceo)).toEqual(['Còn 3 tồn thực']);
+    expect(await blockersFor(ceo)).toEqual(['Còn 3 tồn kho']);
     expect(await blockersFor(sale)).toEqual([]);
   });
 });

@@ -42,7 +42,7 @@ describe('ghi kết quả giao thiếu', () => {
     const wrong = await resolve(A.requester, receipt, { kind: 'follow_up', followUpNumber: other.receipt.number });
     expect(wrong.status).toBe(422);
     expect(wrong.body.code).toBe('follow_up_invalid');
-    expect(wrong.body.errors).toEqual({ followUpNumber: 'Không có phiếu nhận này trong cùng đề nghị' });
+    expect(wrong.body.errors).toEqual({ followUpNumber: 'Không có phiếu nhập kho này trong cùng đơn đặt hàng nhập' });
     expect((await resolve(A.requester, receipt, { kind: 'follow_up', followUpNumber: receipt.number })).body.code).toBe('follow_up_invalid');
 
     const second = await createReceipt(A.kho, req.id);

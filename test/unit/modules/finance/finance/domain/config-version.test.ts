@@ -208,11 +208,11 @@ describe('ngày theo giờ Việt Nam', () => {
 describe('nhãn nhật ký của phiên bản cấu hình (#352)', () => {
   it('phí sàn ghi tên gian hàng và ngày hiệu lực; loại khác ghi tên loại', () => {
     expect(configLabel('fee', 'Ngô gia phát 111', '2026-11-01')).toBe('Phí sàn Ngô gia phát 111 từ 01/11/2026');
-    expect(configLabel('tax_regime', null, '2026-12-01')).toBe('Loại hình thuế từ 01/12/2026');
+    expect(configLabel('tax_regime', null, '2026-12-01')).toBe('Loại hình kinh doanh từ 01/12/2026');
   });
 
   it('thiếu tên gian hàng hay ngày hiệu lực thì bỏ phần đó', () => {
     expect(configLabel('fee', null, '2026-11-01')).toBe('Phí sàn từ 01/11/2026');
-    expect(configLabel('min_margin', null, null)).toBe('Biên tối thiểu');
+    expect(configLabel('min_margin', null, null)).toBe('Lãi tối thiểu trên giá vốn');
   });
 });

@@ -45,7 +45,7 @@ export const AUDIT_ENTITY = 'product.purchase_requests';
 /** Đề nghị của công ty, đã khoá; không thấy (RLS, id sai) thì 404. */
 export async function lockOwnRequest(id: string): Promise<RequestRow> {
   const row = isUuid(id) ? await lockRequest(id) : undefined;
-  if (!row) throw notFound('đề nghị nhập');
+  if (!row) throw notFound('đơn đặt hàng nhập');
   return row;
 }
 
@@ -68,7 +68,7 @@ export async function listRequestPage(actor: Actor, q: RequestFilter) {
 export async function getRequest(actor: Actor, id: string): Promise<PurchaseRequestView> {
   return withCompany(actor.companyId, async () => {
     const row = isUuid(id) ? await findRequest(id) : undefined;
-    if (!row) throw notFound('đề nghị nhập');
+    if (!row) throw notFound('đơn đặt hàng nhập');
     return toDetail(row, actor);
   });
 }

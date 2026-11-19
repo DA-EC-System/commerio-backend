@@ -19,7 +19,7 @@ export type OptionalModule = (typeof OPTIONAL_MODULES)[number];
 
 /** Tên phân hệ người dùng thấy, cho nhãn nhật ký (#352; chữ chép `MODULE_LABELS` của FE `src/utils/modules.ts`). */
 export const MODULE_NAMES: Record<OptionalModule, string> = {
-  purchasing: 'Mua hàng',
+  purchasing: 'Nhập hàng',
   channel: 'Kênh bán',
   inbox: 'Hộp thư chung',
   assistant: 'Trợ lý AI',

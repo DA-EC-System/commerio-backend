@@ -14,7 +14,7 @@ import { type Actor, ownShop } from './shops.ts';
 
 const conflict = () => new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
 const belowFloor = () =>
-  new AppError(422, 'below_floor', 'Thực nhận theo giá này dưới giá thấp nhất (giá vốn cộng lãi tối thiểu)', {
+  new AppError(422, 'below_floor', 'Thực nhận theo giá này dưới giá tối thiểu (giá vốn cộng lãi tối thiểu trên giá vốn)', {
     errors: { price: ['Giá dưới giá thấp nhất'] },
   });
 

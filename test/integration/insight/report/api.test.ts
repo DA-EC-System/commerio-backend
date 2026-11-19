@@ -216,7 +216,7 @@ describe('GET /report/export (AC-4, AC-11)', () => {
     expect(res.headers['content-disposition']).toBe('attachment; filename="bao-cao-overview-2026-10-18-2026-10-20.csv"');
     expect([...body.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     expect(body.subarray(3).toString('utf8')).toBe(
-      'Từ ngày,Đến ngày,Doanh thu,Tiền đã thu,Phí sàn,Phí cổng,Phí vận chuyển,Giá vốn,Lãi,Phí sàn chờ đối soát\r\n' +
+      'Từ ngày,Đến ngày,Doanh thu,Tiền đã thu,Phí sàn,Phí cổng,Phí vận chuyển,Giá vốn,Lợi nhuận,Phí sàn chờ đối soát\r\n' +
         '2026-10-18,2026-10-20,280000,100000,12000,0,15000,170000,83000,có\r\n',
     );
   });
@@ -225,7 +225,7 @@ describe('GET /report/export (AC-4, AC-11)', () => {
     const { body } = await csv(`?report=shops&from=2026-10-18&to=2026-10-20`);
     const lines = body.subarray(3).toString('utf8').trimEnd().split('\r\n');
     expect(lines).toEqual([
-      'Nguồn,Sàn,Gian hàng,Doanh thu,Tiền đã thu,Phí sàn,Phí cổng,Phí vận chuyển,Giá vốn,Lãi,Phí sàn chờ đối soát',
+      'Nguồn,Sàn,Gian hàng,Doanh thu,Tiền đã thu,Phí sàn,Phí cổng,Phí vận chuyển,Giá vốn,Lợi nhuận,Phí sàn chờ đối soát',
       'Sàn,tiktok,Gian A,200000,0,12000,0,15000,120000,53000,không',
       'Sàn,tiktok,Gian B,80000,0,0,0,0,50000,30000,có',
       'Đơn tạo tay,,,0,100000,0,0,0,0,0,không',

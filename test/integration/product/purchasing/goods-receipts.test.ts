@@ -85,7 +85,7 @@ describe('lập phiếu nhận', () => {
     const other = await ordered();
     const foreign = await pur(B.ceo).post('/goods-receipts', { requestId: other.id, deliveryMode: 'waiting', note: '' });
     expect(foreign.status).toBe(422);
-    expect(foreign.body.errors).toEqual({ requestId: 'Chọn đề nghị nhập' });
+    expect(foreign.body.errors).toEqual({ requestId: 'Chọn đơn đặt hàng nhập' });
   });
 
   it('Sale không có purchasing.receipt.manage → 403', async () => {

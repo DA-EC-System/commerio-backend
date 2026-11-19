@@ -185,7 +185,7 @@ export const existingProduct = (s: RemoteSku): CreatedProduct => ({
 export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(skus: readonly T[], sellerSku: string): T | null {
   const found = skus.filter((s) => s.sellerSku === sellerSku && s.state !== 'deleted');
   if (found.length > 1) {
-    throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, ghép tay SKU đúng`);
+    throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, liên kết tay SKU đúng`);
   }
   return found[0] ?? null;
 }

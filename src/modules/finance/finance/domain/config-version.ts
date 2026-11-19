@@ -10,10 +10,10 @@ export type ConfigKind = (typeof CONFIG_KINDS)[number];
 /** Tên loại cấu hình người dùng thấy (chép `CONFIG_KINDS` của FE `src/features/finance/lifecycleShared.ts`). */
 const CONFIG_KIND_NAMES: Record<ConfigKind, string> = {
   fee: 'Phí sàn',
-  tax_regime: 'Loại hình thuế',
-  tax_rules: 'Quy tắc thuế',
-  mismatch_threshold: 'Ngưỡng lệch',
-  min_margin: 'Biên tối thiểu',
+  tax_regime: 'Loại hình kinh doanh',
+  tax_rules: 'Biểu thuế',
+  mismatch_threshold: 'Ngưỡng chênh lệch đối soát',
+  min_margin: 'Lãi tối thiểu trên giá vốn',
 };
 
 /** Nhãn nhật ký: "Phí sàn <gian hàng> từ dd/MM/yyyy"; thiếu gian hàng hay ngày thì bỏ phần đó (#352). */
@@ -45,11 +45,11 @@ const vnd = (label: string) => z.number(`${label} là số đồng`).int(`${labe
  */
 export const PAYLOAD_SCHEMAS = {
   fee: z.strictObject({
-    fixedPct: pct('Phí cố định'),
-    transactionPct: pct('Phí giao dịch'),
+    fixedPct: pct('Phí hoa hồng'),
+    transactionPct: pct('Phí thanh toán'),
     servicePct: pct('Phí dịch vụ'),
-    optionalPct: pct('Phí tuỳ chọn'),
-    returnFee: vnd('Phí hoàn hàng'),
+    optionalPct: pct('Phí tham gia chương trình'),
+    returnFee: vnd('Phí khi hàng hoàn'),
     // Bộ lọc giá theo gian hàng (#225, 25 §6.2). Tuỳ chọn vì bản lưu trước #225 không có; đọc qua `feeRoundingOf`.
     perItemFee: vnd('Phí cố định mỗi món').optional(),
     roundStep: vnd('Bậc làm tròn giá').min(1, 'Bậc làm tròn giá ít nhất 1 đồng').optional(),
@@ -60,13 +60,13 @@ export const PAYLOAD_SCHEMAS = {
   }),
   tax_regime: z.strictObject({ regime: z.enum(['company', 'household', 'individual'], 'Loại hình là company, household hoặc individual') }),
   tax_rules: z.strictObject({
-    vatPct: pct('Thuế GTGT'),
-    pitPct: pct('Thuế TNCN'),
-    outputVatPct: pct('Thuế GTGT đầu ra'),
-    milestones: z.array(vnd('Mốc doanh thu')).max(5, 'Tối đa 5 mốc doanh thu'),
+    vatPct: pct('Thuế GTGT sàn khấu trừ'),
+    pitPct: pct('Thuế TNCN sàn khấu trừ'),
+    outputVatPct: pct('Thuế suất GTGT đầu ra'),
+    milestones: z.array(vnd('Ngưỡng doanh thu năm')).max(5, 'Tối đa 5 ngưỡng doanh thu năm'),
   }),
-  mismatch_threshold: z.strictObject({ abs: vnd('Ngưỡng lệch'), pct: pct('Ngưỡng lệch theo phần trăm'), resolveLimit: vnd('Hạn mức tự chốt') }),
-  min_margin: z.strictObject({ pct: pct('Biên tối thiểu') }),
+  mismatch_threshold: z.strictObject({ abs: vnd('Ngưỡng chênh lệch đối soát'), pct: pct('Ngưỡng chênh lệch đối soát theo phần trăm'), resolveLimit: vnd('Hạn mức tự xử lý chênh lệch') }),
+  min_margin: z.strictObject({ pct: pct('Lãi tối thiểu trên giá vốn') }),
 } satisfies Record<ConfigKind, z.ZodType>;
 
 export type ConfigPayload<K extends ConfigKind = ConfigKind> = z.infer<(typeof PAYLOAD_SCHEMAS)[K]>;

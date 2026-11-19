@@ -28,10 +28,10 @@ export async function acknowledgeRemoteTitle(actor: Actor, shopId: string, listi
     };
     if (row.version !== version) throw await conflict();
     // Đang đẩy: tăng `version` làm việc đẩy bỏ kết quả, listing kẹt `pushing` (review diff #396).
-    if (row.status === 'pushing') throw new AppError(409, 'invalid_transition', 'Listing đang đẩy lên sàn, xác nhận tên sau', { current: toListing(row) });
+    if (row.status === 'pushing') throw new AppError(409, 'invalid_transition', 'Listing đang đăng bán lên sàn, xác nhận tên sau', { current: toListing(row) });
     const remote = row.externalSkuId ? await findRemoteSkuRow(shop.id, row.externalSkuId) : undefined;
     const changed = remoteTitleChanged(row, remote);
-    if (!changed) throw new AppError(409, 'invalid_transition', 'Tên trên sàn không đổi so với lúc ghép', { current: toListing(row) });
+    if (!changed) throw new AppError(409, 'invalid_transition', 'Tên trên sàn không đổi so với lúc liên kết', { current: toListing(row) });
     const updated = await updateListing(row.id, { version }, snapshotBaseline(remote));
     if (!updated) throw await conflict();
     await recordAudit({

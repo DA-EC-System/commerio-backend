@@ -24,10 +24,10 @@ const SOURCE_LABEL: Record<OrderSource, string> = { marketplace: 'Sàn', inbox: 
 
 const COST_COLUMNS: Column<ReportFigures>[] = [
   ['Giá vốn', (f) => f.cogs],
-  ['Lãi', (f) => f.profit],
+  ['Lợi nhuận', (f) => f.profit],
 ];
 
-/** Cột số theo `ReportFigures`; thiếu quyền giá vốn thì không có cột Giá vốn, Lãi (D18). */
+/** Cột số theo `ReportFigures`; thiếu quyền giá vốn thì không có cột Giá vốn, Lợi nhuận (D18). */
 function figureColumns(canCost: boolean): Column<ReportFigures>[] {
   return [
     ['Doanh thu', (f) => f.revenue],
