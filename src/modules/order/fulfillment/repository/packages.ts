@@ -389,6 +389,32 @@ export async function setLineSku(lineIds: readonly string[], to: MappedSku): Pro
     .where(inArray(packageLines.id, [...lineIds]));
 }
 
+/** Bật/xoá dấu chờ đổi ghép trên dòng kiện (spec 237 §5.6). Bên gọi đã khoá kiện. */
+export async function setRemapPending(lineIds: readonly string[], value: boolean): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({ remapPending: value, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
+    .where(inArray(packageLines.id, [...lineIds]));
+}
+
+/** Mở kiện xoá mọi dấu chờ đổi ghép của kiện (spec 237 §5.6). */
+export async function clearRemapPendingOf(packageId: string): Promise<void> {
+  await getDb()
+    .update(packageLines)
+    .set({ remapPending: false, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(packageLines.packageId, packageId), eq(packageLines.remapPending, true)));
+}
+
+/** Dòng vừa nhả phần giữ (đổi ghép, bảng 2): `reserved_qty = 0`. */
+export async function clearLinesReserved(lineIds: readonly string[]): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({ reservedQty: 0, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
+    .where(inArray(packageLines.id, [...lineIds]));
+}
+
 /** Dòng vừa giữ được hàng: `reserved_qty = quantity`. */
 export async function markLinesReserved(lineIds: readonly string[]): Promise<void> {
   if (!lineIds.length) return;

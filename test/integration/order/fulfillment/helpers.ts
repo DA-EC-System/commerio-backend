@@ -60,7 +60,7 @@ export async function seedPackage(
     fallbackVariantId?: string;
     needsOpen?: boolean;
     /** Mục đích mở khi `needsOpen` (mặc định `cancel`). */
-    openPurpose?: 'cancel' | 'edit' | 'resplit' | 'stocktake';
+    openPurpose?: 'cancel' | 'edit' | 'resplit' | 'stocktake' | 'remap';
     /** Mặc định: lúc seed nếu có dòng `reserved`, null nếu không. */
     reservedAt?: Date | null;
   },

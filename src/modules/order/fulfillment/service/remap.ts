@@ -4,14 +4,17 @@
 import { sql } from 'drizzle-orm';
 import { publishEvent, recordTransition } from '../../../core/index.ts';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
+import { logger } from '../../../../shared/logger.ts';
 import { type MappedSku, planRemap, type RemapOutcome, type RemapStock } from '../domain/remap.ts';
+import { replacementPairs } from '../domain/resplit.ts';
 import { takeAllocationLock } from '../repository/allocation.ts';
 import {
-  type HandoverPackage,
+  clearLinesReserved,
   lockPackagesOfOrderLines,
   markLinesReserved,
-  type PackageLineRow,
+  type RemapLockedPackage,
   setLineSku,
+  setRemapPending,
   setReserved,
   updatePackage,
 } from '../repository/packages.ts';
@@ -20,7 +23,7 @@ import { reportDelivered } from './delivery.ts';
 import { settleHandover, shipLateMappedLines } from './handover-stock.ts';
 import { stockPort } from './stock-port.ts';
 
-type LockedPackage = HandoverPackage & { lines: PackageLineRow[] };
+type LockedPackage = RemapLockedPackage;
 
 export interface RemapOptions {
   /** Người làm bước có hiệu lực (người ghép, hoặc CEO duyệt). */
@@ -41,12 +44,12 @@ const variantIdsOf = (lines: readonly { variantId: string | null }[]) =>
 
 /**
  * Áp ghép cho các dòng đơn (spec 237 §5.5). Thứ tự khoá: advisory phân hàng → kiện chứa dòng (id tăng) → dòng tồn (cổng
- * tồn). Mỗi kiện có dòng ghi: một dòng lịch sử `remap` (`from = to`), `version` tăng, rồi việc trên tồn theo `planRemap`,
- * rồi báo giao xong nếu kiện đã `delivered`. Chạy trong `withCompany` và giao dịch của bên gọi; lỗi nào cũng ném để cả
+ * tồn). Mỗi kiện đi qua `applyRemapToPackage`. Chạy trong `withCompany` và giao dịch của bên gọi; lỗi nào cũng ném để cả
  * giao dịch ghép rollback.
  *
  * Trả kết quả theo dòng đơn. Dòng đơn không có dòng kiện nào vắng trong `Map` (bên gọi coi là `applied`); dòng đơn có
- * nhiều dòng kiện: `applied` khi mọi dòng kiện `applied`, không thì kết quả nặng nhất (`needs_unload` > `kept`).
+ * nhiều dòng kiện: `applied` khi mọi dòng kiện **tính kết quả** `applied` (dòng của kiện huỷ, dòng chờ bỏ khi đổi ghép
+ * không tính, §5.4), không thì kết quả nặng nhất (`needs_unload` > `kept`).
  */
 export async function remapPackageLines(
   changes: readonly { orderLineId: string; to: MappedSku }[],
@@ -56,24 +59,67 @@ export async function remapPackageLines(
   if (!changes.length) return result;
   await takeAllocationLock(requireCompanyId('remapPackageLines'));
   const byLine = new Map(changes.map((c) => [c.orderLineId, c.to]));
-  for (const pkg of await lockPackagesOfOrderLines([...byLine.keys()])) {
-    const plan = planRemap(pkg, byLine, opts);
+  const locked = await lockPackagesOfOrderLines([...byLine.keys()]);
+  for (const pkg of locked) {
+    // Dòng chờ thay của kiện thay giữ ghép cũ (D26). Kiện cũ chứa dòng chờ bỏ cùng dòng đơn đã nằm trong tập khoá.
+    const awaitingLineIds = new Set(replacementPairs(locked, pkg.id).map((p) => p.newLineId));
+    const outcomes = await applyRemapToPackage(pkg, byLine, { ...opts, awaitingLineIds });
     for (const l of pkg.lines) {
-      const outcome = plan.outcomes.get(l.id);
+      const outcome = outcomes.get(l.id);
       if (!outcome) continue;
       const prev = result.get(l.orderLineId);
       if (!prev || WEIGHT[outcome] > WEIGHT[prev]) result.set(l.orderLineId, outcome);
     }
-    if (!plan.writes.length) continue;
-
-    await writeLines(pkg, plan.writes);
-    // Lịch sử `remap` trước `hold`/`reclaim` (P5): hai bước đó tự ghi lịch sử với người làm trống như lượt phân hàng.
-    await updatePackage(pkg.id, {});
-    await recordTransition({ entityType: 'packages', entityId: pkg.id, from: pkg.status, to: pkg.status, action: 'remap', actorId: opts.actorId, reason: opts.reason });
-    await applyStock(pkg, plan.stock, opts);
-    if (plan.reportDelivered) await reportDelivered(pkg.id);
   }
   return result;
+}
+
+/**
+ * Áp ghép lên một kiện đã khoá (spec 237 §5.5, §5.6), dùng chung cho đường ghép và đường mở kiện (`open-remap.ts`).
+ * Bên gọi đã giữ khoá advisory phân hàng. Thứ tự: nhả phần giữ theo ghép cũ → ghi dòng → dấu chờ đổi ghép → cờ Cần mở
+ * và `version` → lịch sử `remap` (trước `hold`/`reclaim`, P5) → việc trên tồn → xếp lượt thêm → báo giao xong. Không có
+ * gì để ghi thì không ghi gì (19e). Trả kết quả theo id dòng kiện; cập nhật `pkg` tại chỗ.
+ */
+export async function applyRemapToPackage(
+  pkg: LockedPackage,
+  changes: ReadonlyMap<string, MappedSku>,
+  opts: RemapOptions & { awaitingLineIds: ReadonlySet<string> },
+): Promise<Map<string, RemapOutcome>> {
+  const plan = planRemap(pkg, changes, opts);
+  const touched = plan.writes.length > 0 || plan.marks.length > 0 || plan.unmarks.length > 0 || plan.purpose !== null;
+  if (!touched) return plan.outcomes;
+
+  if (plan.releases.length) {
+    await stockPort().release(pkg.id, plan.releases.map((r) => ({ variantId: r.variantId, quantity: r.quantity })));
+    const ids = plan.releases.map((r) => r.lineId);
+    await clearLinesReserved(ids);
+    for (const l of pkg.lines) if (ids.includes(l.id)) l.reservedQty = 0;
+  }
+  await writeLines(pkg, plan.writes);
+  await setRemapPending(plan.marks, true);
+  await setRemapPending(plan.unmarks, false);
+  for (const l of pkg.lines) {
+    if (plan.marks.includes(l.id)) l.remapPending = true;
+    if (plan.unmarks.includes(l.id)) l.remapPending = false;
+  }
+  // Mọi lần có ghi thì `version` tăng: bước kiểm của mở kiện dựa vào điều này (§5.6, 20e).
+  await updatePackage(pkg.id, plan.purpose ?? {});
+  if (plan.purpose) Object.assign(pkg, plan.purpose);
+  const unloadOnly = plan.marks.length > 0 && !plan.writes.length;
+  await recordTransition({
+    entityType: 'packages',
+    entityId: pkg.id,
+    from: pkg.status,
+    to: pkg.status,
+    action: 'remap',
+    actorId: opts.actorId,
+    reason: unloadOnly ? `${opts.reason}: chờ dỡ kiện` : opts.reason,
+  });
+  if (plan.marks.length) logger.info({ packageId: pkg.id, reason: opts.reason }, 'kiện đã đóng chờ dỡ để đổi ghép');
+  await applyStock(pkg, plan.stock, opts);
+  await requestAllocation(plan.allocateAlso);
+  if (plan.reportDelivered) await reportDelivered(pkg.id);
+  return plan.outcomes;
 }
 
 /** Ghi ghép mới lên dòng kiện, gom theo đích; cập nhật `pkg.lines` tại chỗ cho bước tồn. */
