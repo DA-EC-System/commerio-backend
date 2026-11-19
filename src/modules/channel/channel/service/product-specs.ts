@@ -206,6 +206,9 @@ export interface SpecInput {
   version: number | null;
 }
 
+/** `path` của GetNextCascadeProp: cặp `propId:valueId` nối bằng `,` hoặc `;` (vd `120013644:162,100006867:160387`). */
+const CASCADE_PATH = /^\d+:\d+(?:[,;]\d+:\d+)*$/;
+
 const hasValue = (v: SpecAttributeValue | undefined) =>
   Array.isArray(v) ? v.some((x) => x.trim() !== '') : typeof v === 'string' && v.trim() !== '';
 
@@ -234,7 +237,13 @@ export function normalizeSpec(
     }
     if (!hasValue(value)) continue;
     const list = (Array.isArray(value) ? value : [value!]).map((v) => v.trim()).filter((v) => v !== '');
-    // Cascade (Lazada propCascade): lưu nguyên đường dẫn tới cấp lá.
+    // Cascade (Lazada propCascade, §18.5): lưu nguyên `path` tới cấp `leaf = true` (route `cascade`), một chuỗi các cặp
+    // `propId:valueId` nối bằng `,`/`;` như GetNextCascadeProp; bắt buộc xét như attribute khác (`specMissing`).
+    if (a.input === 'cascade') {
+      if (Array.isArray(value) || !CASCADE_PATH.test(list[0]!)) errors[key] = `${a.label}: chọn đủ các cấp tới cấp cuối`;
+      else out[a.code] = list[0]!;
+      continue;
+    }
     if (a.input !== 'select' && a.input !== 'multiselect') {
       out[a.code] = list.join(',');
       continue;
