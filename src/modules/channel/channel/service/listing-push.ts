@@ -6,20 +6,23 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, type RemoteState, STALE_PUSH_MS } from '../domain/listing.ts';
+import { permissionOf } from '../domain/product-spec.ts';
 import { sentBaseline, snapshotBaseline } from '../domain/remote-title.ts';
-import { listCategoryMaps } from '../repository/category-maps.ts';
 import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, markCreateAttempted, updateListing } from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
-import { findShopRow } from '../repository/shops.ts';
+import { lastPermissionCheck, upsertPermissions } from '../repository/product-specs.ts';
+import { findShopRow, type ShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
 import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
 import { moveListing, pushFailureOf } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
-import type { ProductPort } from './product-port.ts';
-import { listingText, pushBlock } from './push-block.ts';
+import type { ListingVariant, ProductPort } from './product-port.ts';
+import { ensureLeaf } from './platform-categories.ts';
+import { pushAttributes, specChecks } from './product-specs.ts';
+import { keepsPlatformContent, listingText, pushBlock, pushSpec } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 import { untrustedVariants } from './stock-trust.ts';
@@ -54,10 +57,30 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const { adapter, accessToken } = session;
 
   const variantId = row.variantId!;
+  // Sản phẩm người bán đã có trên sàn (#399 Ca 1): đẩy lại chỉ bật lại SKU, không gửi nội dung, ảnh của app, không xét spec
+  // (cùng vị từ với request, review BE2 P1-1); `take-over-content` (CEO) mới ghi nội dung lên.
+  const keepContent = keepsPlatformContent(row, job.takeOver);
+  // Spec của sản phẩm (#400): attribute leaf thiếu hay quá 7 ngày thì lấy lại trước khi kiểm (A16, ngoài giao dịch; sàn lỗi mà
+  // còn bản cũ thì kiểm theo bản cũ, chưa có bản nào thì kiểm theo category, trục và để sàn quyết).
+  const specOf = async (v: ListingVariant) =>
+    (await specChecks(shop, adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+  const first = await inCompany(async () => {
+    const [v] = await port.variants([variantId]);
+    return v ? specOf(v) : undefined;
+  });
+  // `ensureLeaf` tự bỏ qua khi bản trong bảng còn mới (review BE2 P2-3: trước chỉ gọi khi chưa có bản nào).
+  if (first && !keepContent && adapter.leafAttributes) {
+    try {
+      await ensureLeaf(shop.companyId, shop.platform, adapter, first.externalCategoryId, { shopId: shop.id });
+    } catch (err) {
+      if (!(err instanceof MarketplaceError) && !(err instanceof AppError)) throw err;
+    }
+  }
+  if (first && !keepContent) await refreshPermission(shop, adapter, accessToken, first.externalCategoryId);
   const data = await inCompany(async () => {
     const [v] = await port.variants([variantId]);
     if (!v) return null;
-    const [map] = await listCategoryMaps(shop.platform, [v.categoryId]);
+    const map = await specOf(v);
     // Giá đang bán (#225 phần 2): ghi đè tay > giá bộ lọc đã xác nhận lúc bấm đẩy > giá chuẩn.
     const own = (await currentPrices([variantId], [row], await port.standardPrices([variantId]))).get(variantId)!;
     // Giá bộ lọc kiểm lại giá thấp nhất với giá vốn, cấu hình lúc chạy (có thể đổi sau lúc bấm).
@@ -80,14 +103,11 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     return finish(job, row, 'fail', { pushError: errorOf('below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất') });
   }
   const quantity = untrusted ? 0 : data.quantity;
-  // Sản phẩm người bán đã có trên sàn (#399 Ca 1): đẩy lại chỉ bật lại SKU, không gửi nội dung, ảnh của app;
-  // `take-over-content` (CEO) mới ghi nội dung lên.
-  const keepContent = row.contentSource === 'platform' && !job.takeOver && Boolean(row.externalProductId && row.externalSkuId);
   const sizeChartRule = map && !keepContent ? await sizeChartRuleOf(adapter, accessToken, map) : null;
   const block = pushBlock(
     v,
     price,
-    map && { ...map, sizeChartRule },
+    pushSpec(keepContent, map && { ...map, sizeChartRule }),
     Boolean(row.externalImageUrls?.length || job.imageUrls.length),
     Boolean(job.sizeChartUrl),
   );
@@ -108,8 +128,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
-      attributes: map!.attributes,
+      attributes: pushAttributes(adapter, map!.attributes, map!.row, map!.product),
       responsible,
+      brand: v.brand ?? null,
       ...listingText(v),
       imageUrls,
       ...(sizeChartUri && { sizeChartUri }),
@@ -176,6 +197,8 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       externalSkuId: result.externalSkuId,
       externalImageUrls: imageUrls,
       pushError: null,
+      // Category thật của listing trên gian hàng (#400, cột thông tin, không tăng `version`, L029).
+      externalCategoryId: product.externalCategoryId,
       // Nội dung trên sàn giờ là của app (tạo mới, ghi lại, hay CEO ghi đè bằng `take-over-content`).
       contentSource: 'app',
       ...titleBaseline,
@@ -268,6 +291,38 @@ async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls:
  * Quy tắc bảng kích cỡ của danh mục (#347). Ghép mới đã lưu quy tắc; ghép trước #347 chưa có thì hỏi sàn một lần, lỗi thì
  * coi như chưa biết (sàn tự quyết khi tạo sản phẩm, lỗi `unauthorized` được xử lý ở bước gọi sàn sau đó).
  */
+/** Dòng quyền category quá hạn này thì việc đẩy đọc lại cây của gian hàng (#400 A17). */
+export const PERMISSION_TTL_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * Quyền category theo gian hàng (#400 A17, Documents/21 §18.5): sàn có quyền theo gian hàng (`categoryPermissionsPerShop`,
+ * TikTok) mà lần đọc cây gần nhất của gian hàng (`lastPermissionCheck`) chưa có hoặc quá `PERMISSION_TTL_MS`, thì đọc cây bằng
+ * token gian hàng (ngoài giao dịch) và ghi quyền mọi leaf một lần (`upsertPermissions`). Mốc theo gian hàng, không theo leaf
+ * (review BE2 P2-4): leaf không có trong cây (hay node không có `permission_statuses`) không có dòng, xét theo leaf thì mỗi lần
+ * đẩy lại đọc cả cây. Cây đọc được mà không leaf nào có quyền thì không có mốc, lần sau đọc lại. Sàn lỗi thì bỏ qua: không có
+ * dòng thì không chặn, sàn quyết.
+ */
+async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, accessToken: string, externalCategoryId: string): Promise<void> {
+  if (!adapter.categoryPermissionsPerShop || !adapter.categoryTree) return;
+  const last = await withCompany(shop.companyId, () => lastPermissionCheck(shop.id));
+  if (last && last.getTime() > Date.now() - PERMISSION_TTL_MS) return;
+  let nodes;
+  try {
+    nodes = await adapter.categoryTree(accessToken);
+  } catch (err) {
+    if (err instanceof MarketplaceError || err instanceof AppError) {
+      logger.warn({ err, shopId: shop.id, externalCategoryId }, 'đọc quyền category của gian hàng lỗi, để sàn quyết');
+      return;
+    }
+    throw err;
+  }
+  const items = nodes.flatMap((n) => {
+    const status = n.isLeaf && n.permissionStatuses ? permissionOf(n.permissionStatuses) : null;
+    return status ? [{ externalCategoryId: n.externalId, status }] : [];
+  });
+  await withCompany(shop.companyId, () => upsertPermissions(shop.companyId, shop.id, items, new Date()));
+}
+
 async function sizeChartRuleOf(
   adapter: MarketplaceAdapter,
   accessToken: string,

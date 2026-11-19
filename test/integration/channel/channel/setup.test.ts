@@ -141,6 +141,13 @@ describe('thiết lập lần đầu', () => {
     const boss = await jobBoss();
     expect(await boss.getSchedules(listingSyncQueue.name, shopId)).toHaveLength(1);
     expect(await boss.getSchedules(tokenRefreshQueue.name, shopId)).toHaveLength(1);
+    // #400 lát 12: SKU vừa ghép có việc dựng spec từ category trên sàn, cùng giao dịch thiết lập.
+    const spec = await testPool().query<{ ids: string[] }>(
+      "select data->'listingIds' as ids from pgboss.job where name = 'channel.spec_from_match' and data->>'shopId' = $1",
+      [shopId],
+    );
+    const listingId = (await testPool().query<{ id: string }>('select id from channel.listings where shop_id = $1', [shopId])).rows[0]!.id;
+    expect(spec.rows.map((r) => r.ids)).toEqual([[listingId]]);
   });
 
   it('đã thiết lập: 409 invalid_transition', async () => {

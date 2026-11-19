@@ -2,7 +2,9 @@
 import { createHmac } from 'node:crypto';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import {
+  type CascadeLevel,
   type CategoryAttribute,
+  type CategorySuggestion,
   DEFAULT_REFRESH_LEAD_MS,
   epochDate,
   existingProduct,
@@ -22,6 +24,7 @@ import {
   type RemoteLineStatus,
   type RemoteOrder,
   type RemotePackageEvent,
+  type RemoteProductCategory,
   type RemoteSku,
   type RemoteState,
   refreshBefore,
@@ -53,6 +56,24 @@ type LazadaResponse = Record<string, unknown> & { code?: string; message?: strin
 const TIMEOUT_MS = 10_000;
 /** Thương hiệu khi tạo sản phẩm mà ghép danh mục không có `brand` (createProduct). */
 const DEFAULT_BRAND = 'No Brand';
+
+/**
+ * Cấp kế của attribute `propCascade` (GetNextCascadeProp, open.lazada.com tra 19/11/2026): `data.prop { id, name, required }` là
+ * thuộc tính của cấp kế (vắng ở cấp cuối), `data.propValue[{ id, name, leaf }]` các giá trị chọn được.
+ */
+export function lazadaCascade(data: unknown): CascadeLevel {
+  const d = (data ?? {}) as { prop?: { id?: unknown; name?: unknown; required?: unknown } | null; propValue?: unknown };
+  const prop = d.prop && d.prop.id != null ? { id: String(d.prop.id), label: String(d.prop.name ?? ''), required: d.prop.required === true || d.prop.required === 'true' } : null;
+  const values = Array.isArray(d.propValue) ? (d.propValue as { id?: unknown; name?: unknown; leaf?: unknown }[]) : [];
+  return {
+    prop,
+    items: values.filter((v) => v.id != null).map((v) => ({ id: String(v.id), label: String(v.name ?? ''), leaf: v.leaf === true || v.leaf === 'true' })),
+  };
+}
+
+/** Lazada nhận giá trị multiSelect là chuỗi nối dấu phẩy (#400: spec lưu mảng). */
+const flatAttributes = (attrs: Record<string, string | string[]>): Record<string, string> =>
+  Object.fromEntries(Object.entries(attrs).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v]));
 /** Documents/21 §18.6.3: Lazada duyệt listing, ẩn bằng tắt, tách kiện từng đơn vị, hạn trả tính theo ngày của gian hàng. */
 const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
@@ -194,6 +215,41 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   return new MarketplaceError('rejected', code, message);
 }
 
+/** Đọc `data` của GetProductItem thành category và attribute (#400 lát 12): giá trị chuỗi, số; mảng thì từng phần tử. */
+export function lazadaProductCategory(data: unknown): RemoteProductCategory | null {
+  const d = data as { primary_category?: unknown; attributes?: unknown } | undefined;
+  if (d?.primary_category == null || d.primary_category === '') return null;
+  const attrs = d.attributes && typeof d.attributes === 'object' ? (d.attributes as Record<string, unknown>) : {};
+  const text = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v) : null);
+  return {
+    externalCategoryId: String(d.primary_category),
+    attributes: Object.entries(attrs).flatMap(([code, raw]) => {
+      const values = (Array.isArray(raw) ? raw : [raw]).map(text).filter((v): v is string => v !== null && v.trim() !== '');
+      return values.length ? [{ code, values: values.map((name) => ({ id: null, name })) }] : [];
+    }),
+  };
+}
+
+/** Đọc `data.categorySuggestions[]` của GetCategorySuggestion (#400 lát 9): giữ thứ tự sàn, bỏ phần tử không có mã. */
+export function lazadaSuggestions(data: unknown): CategorySuggestion[] {
+  const rows = (data as { categorySuggestions?: unknown } | undefined)?.categorySuggestions;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((r: { categoryId?: unknown; categoryPath?: unknown; categoryName?: unknown }) =>
+    r.categoryId == null
+      ? []
+      : [
+          {
+            externalId: String(r.categoryId),
+            path: String(r.categoryPath ?? r.categoryName ?? '')
+              .split('>')
+              .map((x) => x.trim())
+              .join(' > '),
+            permissionStatuses: null,
+          },
+        ],
+  );
+}
+
 /** Thoát ký tự đặc biệt khi ghép vào payload XML. */
 const xml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -210,6 +266,8 @@ type LazadaProduct = {
   rejectReason?: { violationDetail?: unknown }[];
   /** `name`: tên người mua VN thấy; `name_en`: tên tiếng Anh (Seller Center giao diện tiếng Anh hiện tên này, #396). */
   attributes?: { name?: unknown; name_en?: unknown };
+  /** Category lá (gọi thật 18/11/2026, request_id 0bb4a98017950174624497030: `primary_category: 10100278`). */
+  primary_category?: unknown;
   /** Giờ tạo, mili giây dạng chuỗi (gọi thật 12/11/2026): điểm chia của lần đọc trọn (review #309 vòng 5 C1). */
   created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
@@ -263,6 +321,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
   const { state, rejectReason } = remoteState(p);
   const productImage = firstImage(p.images);
   const createdAt = epochDate(Number(p.created_time));
+  const category = p.primary_category == null || p.primary_category === '' ? null : String(p.primary_category);
   return (p.skus ?? []).map((s) => ({
     externalProductId: String(p.item_id),
     externalSkuId: String(s.SkuId),
@@ -283,6 +342,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     ...(s.sellableStock !== undefined && s.sellableStock !== null && { sellableQuantity: Number(s.sellableStock) }),
     ...(s.price !== undefined && s.price !== null && s.price !== '' && { price: String(s.price) }),
     ...(createdAt && { createdAt }),
+    ...(category && { externalCategoryId: category }),
   }));
 }
 
@@ -889,6 +949,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // Cây và attribute không cần access_token (gọi thật 18/11/2026, request_id 2102e04417950174611345553,
     // 2141336017950174621405931): có token thì vẫn gửi, không có thì chỉ ký app (#400 A4).
     categoriesNeedToken: false,
+    productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
+    defaultBrand: DEFAULT_BRAND,
     async categoryTree(accessToken) {
       const params = { ...(accessToken && { access_token: accessToken }), language_code: 'vi_VN' };
       return lazadaCategoryNodes((await call(config.apiUrl, '/category/tree/get', params, 'GET')).data);
@@ -896,6 +958,29 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     async leafAttributes(accessToken, externalCategoryId) {
       const params = { ...(accessToken && { access_token: accessToken }), primary_category_id: externalCategoryId, language_code: 'vi_VN' };
       return lazadaLeafAttributes((await call(config.apiUrl, '/category/attributes/get', params, 'GET')).data);
+    },
+    async cascadeNext(accessToken, externalCategoryId, cascadeId, path) {
+      const params = { access_token: accessToken, categoryId: externalCategoryId, cascadeId, ...(path && { path }) };
+      return lazadaCascade((await call(config.apiUrl, '/category/cascade/getNextCascadeProp', params, 'GET')).data);
+    },
+    // GetCategorySuggestion (open.lazada.com, tra 19/11/2026): `product_name`, `image_url` đều bắt buộc, cần access_token;
+    // "E701: Empty category suggestion" là sàn không đoán được, trả rỗng. Đường dẫn sàn trả tiếng Anh nối ">" (gọi thật
+    // 18/11/2026, request_id 2102e04417950055354256958); service thay bằng đường dẫn cây tiếng Việt khi cây đã đồng bộ.
+    // GetProductItem (open.lazada.com, tra 19/11/2026): `item_id` bắt buộc; `data.primary_category`, `data.attributes` là map
+    // tên attribute → nhãn (gọi thật 18/11/2026, request_id 21412a8b17950174625785193: `material: "Stainless Steel"`).
+    async productCategory(accessToken, externalProductId) {
+      const body = await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: externalProductId }, 'GET');
+      return lazadaProductCategory(body.data);
+    },
+    suggestionRules: { needsImage: true },
+    async suggestCategories(accessToken, input) {
+      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl ?? '' };
+      try {
+        return lazadaSuggestions((await call(config.apiUrl, '/product/category/suggestion/get', params, 'GET')).data);
+      } catch (err) {
+        if (err instanceof MarketplaceError && err.platformCode === '701') return [];
+        throw err;
+      }
     },
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
@@ -952,7 +1037,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             // (gọi thật 17/11/2026, danh mục 10100278: thiếu thì E500 `brandProp` C006; gửi "No Brand" thì tạo được,
             // request_id 2141336017948496094571739). Bộ ghép danh mục không hỏi brand nên mặc định "No Brand"; ghép có
             // brand thì dùng brand đó. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
-            Attributes: { brand: DEFAULT_BRAND, ...p.attributes, name: p.name, description: p.description },
+            Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
             Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
           },
         },
@@ -973,7 +1058,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             ItemId: externalProductId,
             PrimaryCategory: p.externalCategoryId,
             Images: { Image: p.imageUrls },
-            Attributes: { ...p.attributes, ...(await deliveryOptions(accessToken, externalProductId)), name: p.name, description: p.description },
+            Attributes: { ...flatAttributes(p.attributes), ...(await deliveryOptions(accessToken, externalProductId)), name: p.name, description: p.description },
             Skus: { Sku: [{ SkuId: externalSkuId, ...skuPayload(p), Status: 'active' }] },
           },
         },

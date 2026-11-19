@@ -65,6 +65,15 @@ export const remoteSkusRefreshQueue = defineQueue('channel.remote_skus_refresh',
   expireInSeconds: REFRESH_STALE_MS / 1000,
 });
 
+/** Ghép SKU dựng spec từ sàn (#400 lát 12): các listing vừa ghép có hiệu lực của một gian hàng. */
+export const SpecFromMatchJobSchema = JobDataSchema.extend({ shopId: z.uuid(), listingIds: z.array(z.uuid()).min(1).max(200) });
+export type SpecFromMatchJob = z.infer<typeof SpecFromMatchJobSchema>;
+/**
+ * Đọc category, attribute của sản phẩm trên sàn cho listing vừa ghép (`runSpecFromMatch`). Hàng `standard` (mỗi lần ghép
+ * một việc, chạy lại vô hại: chỉ ghi cột thông tin và chèn spec khi chưa có). Thử 3 lần, cách 60 giây.
+ */
+export const specFromMatchQueue = defineQueue('channel.spec_from_match', SpecFromMatchJobSchema, { attempts: 3, retryDelaySeconds: 60 });
+
 const LISTING_SYNC_CRON = '*/15 * * * *';
 const ORDER_PULL_CRON = '*/5 * * * *';
 const TOKEN_REFRESH_CRON = '7 * * * *';

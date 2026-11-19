@@ -979,3 +979,31 @@ describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
     expect(await byId(id)).toMatchObject({ status: 'pushing', external_sku_id: null });
   });
 });
+
+// Ghép có hiệu lực xếp `channel.spec_from_match` cùng giao dịch (#400 lát 12); ghép chờ CEO thì chưa, CEO duyệt thì xếp.
+describe('#400: ghép SKU xếp việc dựng spec từ sàn', () => {
+  const specJobs = async (listingId: string) =>
+    (
+      await testPool().query<{ n: number }>(
+        "select count(*)::int as n from pgboss.job where name = 'channel.spec_from_match' and data->'listingIds' ? $1",
+        [listingId],
+      )
+    ).rows[0]!.n;
+
+  it('ghép áp ngay: có việc mang listing; ghép chờ CEO: chưa có; CEO duyệt: có', async () => {
+    const r = newRemote();
+    const v = newVariant();
+    const res = await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: v.id });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await specJobs(ChannelListing.parse(res.body).id)).toBe(1);
+
+    const r2 = newRemote();
+    const pending = await match(admin.token, { externalSkuId: r2.externalSkuId, variantId: null });
+    expect(pending.status).toBe(202);
+    const listing = ChannelListing.parse(pending.body);
+    expect(await specJobs(listing.id)).toBe(0);
+    const ok = await decide(company.ceo.token, listing.id, 'approve', { version: listing.version });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(await specJobs(listing.id)).toBe(1);
+  });
+});

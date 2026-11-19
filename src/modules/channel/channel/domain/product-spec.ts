@@ -90,6 +90,44 @@ export function resolveOption(attr: Pick<PlatformAttribute, 'options' | 'raw'>, 
   return null;
 }
 
+/**
+ * Attribute của spec dựng từ sản phẩm trên sàn (#400 lát 12, ghép SKU): chỉ attribute `tier = 'category'`, `kind = 'property'`
+ * của leaf (xuất xứ, thương hiệu ở catalog; trục ở `axis_map`). Lựa chọn đổi sang mã của leaf theo mã giá trị sàn trả rồi theo
+ * nhãn (`resolveOption`; multiselect dạng chuỗi nối dấu phẩy thì tách); không khớp mà attribute cho tự nhập thì giữ nhãn, không thì bỏ. Ô nhập chữ, số, ngày lấy giá trị đầu.
+ * Cascade, ảnh bỏ (người dùng chọn lại). Leaf chưa có attribute: rỗng.
+ */
+export function remoteSpecAttributes(
+  leaf: readonly PlatformAttribute[] | null,
+  remote: readonly { code: string; values: readonly { id: string | null; name: string }[] }[],
+): Record<string, SpecAttributeValue> {
+  const out: Record<string, SpecAttributeValue> = {};
+  if (!leaf) return out;
+  const byCode = new Map(remote.map((r) => [r.code, r.values]));
+  for (const a of leaf) {
+    if (a.tier !== 'category' || a.kind !== 'property') continue;
+    const values = byCode.get(a.code);
+    if (!values?.length) continue;
+    const known = (v: { id: string | null; name: string }) => (v.id !== null ? resolveOption(a, v.id) : null) ?? resolveOption(a, v.name);
+    const pick = (v: { id: string | null; name: string }) => known(v) ?? (a.allowCustom && v.name.trim() ? v.name.trim() : null);
+    if (a.input === 'select') {
+      const id = pick(values[0]!);
+      if (id) out[a.code] = id;
+    } else if (a.input === 'multiselect') {
+      // Lazada có thể trả nhiều lựa chọn trong một chuỗi nối dấu phẩy (cách app gửi lên, review BE2 P2-8): không khớp nguyên
+      // chuỗi thì tách từng phần.
+      const parts = values.flatMap((v) =>
+        known(v) === null && v.name.includes(',') ? v.name.split(',').map((name) => ({ id: null, name: name.trim() })).filter((p) => p.name) : [v],
+      );
+      const ids = [...new Set(parts.map(pick).filter((x): x is string => x !== null))];
+      if (ids.length) out[a.code] = ids;
+    } else if (a.input === 'text' || a.input === 'number' || a.input === 'date') {
+      const text = values[0]!.name.trim();
+      if (text) out[a.code] = text;
+    }
+  }
+  return out;
+}
+
 export type MissingReason = 'required' | 'required_when' | 'axis_unmapped' | 'category_changed' | 'category_removed';
 export interface MissingItem {
   code: string;
@@ -119,6 +157,9 @@ const hasValue = (v: SpecAttributeValue | string | null | undefined): boolean =>
 
 const CATEGORY_CODE = 'externalCategoryId';
 
+/** Nhãn của ô trong `missing`: attribute `tier = 'product'` (xuất xứ, thương hiệu) điền ở trang sản phẩm (AC-15, review BE2 P2-7). */
+const missingLabel = (a: Pick<PlatformAttribute, 'label' | 'tier'>) => (a.tier === 'product' ? `${a.label} (điền ở trang sản phẩm)` : a.label);
+
 /**
  * Phần còn thiếu của spec (`missing` của `21` §18.5), tính theo attribute hiện tại của leaf: category đổi hay bị bỏ; attribute
  * bắt buộc, bắt buộc theo điều kiện chưa có giá trị (sales attribute không tính `required`, chỉ kiểm qua trục); trục phân loại
@@ -137,9 +178,9 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
       if (a.kind === 'sales') continue;
       if (hasValue(spec.attributes[a.code]) || hasValue(fallbacks[a.code])) continue;
       if (a.required) {
-        out.push({ code: a.code, label: a.label, reason: 'required' });
+        out.push({ code: a.code, label: missingLabel(a), reason: 'required' });
       } else if (a.requiredWhen?.some((c) => conditionMet(c, spec.attributes[c.code]))) {
-        out.push({ code: a.code, label: a.label, reason: 'required_when' });
+        out.push({ code: a.code, label: missingLabel(a), reason: 'required_when' });
       }
     }
   }

@@ -15,7 +15,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
@@ -74,6 +74,9 @@ afterAll(() => {
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
+
+/** Spec sàn của mọi sản phẩm giả (#400 lát 15, thay ghép danh mục cũ); sản phẩm đã có thì giữ. */
+const seed = () => seedSpecs(company.companyId, 'lazada', '14275', variants, { brand: 'No Brand' });
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 const edit = (listingId: string, version: number, token?: string) =>
   auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${listingId}/update-content`), token).send({ version });
@@ -83,12 +86,6 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
-  const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '14275',
-    attributes: { brand: 'No Brand' },
-    version: null,
-  });
-  expect(map.status).toBe(200);
 });
 
 beforeEach(() => {
@@ -99,6 +96,7 @@ beforeEach(() => {
 /** Listing `live` của biến thể mới (hoặc `cols` ghi đè, tên cột SQL). */
 async function listing(cols: Record<string, unknown> = {}) {
   const v = variant();
+  await seed();
   const all = {
     company_id: company.companyId,
     shop_id: shopId,

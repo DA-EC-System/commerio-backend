@@ -83,6 +83,28 @@ export interface CategoryAttribute {
 /** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
 export type Responsible = ResponsibleOrg;
 
+/**
+ * Category và attribute của một sản phẩm trên sàn (#400 lát 12: ghép SKU dựng spec từ sàn). `values[].id` là mã giá trị khi sàn
+ * trả (TikTok, kể cả giá trị tự nhập), null khi sàn chỉ trả nhãn (Lazada); service đổi sang mã lựa chọn theo attribute leaf.
+ */
+export interface RemoteProductCategory {
+  externalCategoryId: string;
+  attributes: { code: string; values: { id: string | null; name: string }[] }[];
+}
+
+/** Một gợi ý category của sàn (#400 lát 9): `path` là đường dẫn sàn trả (Lazada tiếng Anh), service thay bằng cây khi có. */
+export interface CategorySuggestion {
+  externalId: string;
+  path: string;
+  permissionStatuses: string[] | null;
+}
+
+/** Một cấp của attribute cascade (#400, Documents/21 §18.5): thuộc tính cấp kế (null ở cấp cuối) và giá trị chọn được. */
+export interface CascadeLevel {
+  prop: { id: string; label: string; required: boolean } | null;
+  items: { id: string; label: string; leaf: boolean }[];
+}
+
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
 export type ImagePurpose = 'main' | 'size_chart';
@@ -99,7 +121,8 @@ export interface CategoryRules {
 
 export interface NewProduct {
   externalCategoryId: string;
-  attributes: Record<string, string>;
+  /** Giá trị gửi lên sàn theo mã attribute: nhãn lựa chọn (select) hoặc chuỗi tự nhập; multiselect là mảng nhãn (#400). */
+  attributes: Record<string, string | string[]>;
   name: string;
   description: string;
   /** Ảnh đã nằm trên sàn, đúng chuỗi `uploadImage` trả (Lazada URL, TikTok `uri`). */
@@ -120,6 +143,11 @@ export interface NewProduct {
   idempotencyKey?: string;
   /** Điền thuộc tính có `prefill` mà `attributes` không có giá trị (#292). */
   responsible?: Responsible;
+  /**
+   * Thương hiệu của sản phẩm cha ở catalog (#340), cho sàn có mã thương hiệu riêng ngoài attribute (TikTok `brand_id`, #400
+   * A1): adapter tra mã theo tên, không thấy hay lỗi thì không gửi. Sàn để thương hiệu trong attribute (Lazada) bỏ qua.
+   */
+  brand?: string | null;
 }
 
 /** Nội dung đưa lên sản phẩm đang bán (#293): dựng từ catalog như lúc đẩy, không gồm ảnh, SKU, giá, tồn. */
@@ -127,7 +155,7 @@ export interface ContentUpdate {
   externalCategoryId: string;
   name: string;
   description: string;
-  attributes: Record<string, string>;
+  attributes: Record<string, string | string[]>;
   responsible?: Responsible;
 }
 
@@ -193,6 +221,17 @@ export interface RemoteSku {
    * người mua VN thấy `name` = `title`). Sàn không có tên tiếng Anh (TikTok) hoặc rỗng thì null hay thiếu.
    */
   titleEn?: string | null;
+  /**
+   * Category lá của sản phẩm trên sàn khi danh sách SKU trả kèm (#400 lát 13: Lazada `primary_category` của GetProducts).
+   * Sàn không trả (TikTok Search Products) thì thiếu: lượt đồng bộ không đổi category của listing.
+   */
+  externalCategoryId?: string;
+  /**
+   * Lần đọc theo giờ sửa (`listSkusChanged`) chưa đọc được chi tiết (category, nhãn) của sản phẩm này vì vượt trần đọc chi tiết
+   * hay sàn dừng giữa chừng; giá trị là giờ sàn ghi nhận sửa sản phẩm (TikTok `update_time`). Bên gọi giữ mốc đọc sau không
+   * vượt qua giờ này cho sản phẩm cần category (review BE2 P2-1). Sàn trả category sẵn trong danh sách (Lazada) thì thiếu.
+   */
+  detailUnreadSince?: Date;
   state: RemoteState;
   rejectReason: string | null;
   quantity: number;
@@ -553,6 +592,32 @@ export interface MarketplaceAdapter {
    * attribute → `name` | `address`. Sàn không có thì không khai (#400 AC-5).
    */
   readonly responsibleFields?: Readonly<Record<string, keyof Responsible>>;
+  /**
+   * Attribute `tier = 'product'` lấy từ cột nào của catalog (#400 A1): mã attribute → `originCountry` (đổi mã ISO sang lựa
+   * chọn của sàn, A19) | `brand`. Sàn không có thì không khai.
+   */
+  readonly productFields?: Readonly<Record<string, 'originCountry' | 'brand'>>;
+  /** Thương hiệu gửi khi catalog để trống (Lazada "No Brand"); có thì attribute thương hiệu không bao giờ thiếu. */
+  readonly defaultBrand?: string;
+  /**
+   * Giá trị cấp kế của attribute `input = 'cascade'` (#400, Lazada GetNextCascadeProp, cần token gian hàng). `cascadeId` là id
+   * attribute của sàn (trong `raw`), `path` các cấp đã chọn theo định dạng của sàn. Sàn không có thì không khai.
+   */
+  cascadeNext?(accessToken: string, externalCategoryId: string, cascadeId: string, path: string | null): Promise<CascadeLevel>;
+  /**
+   * Gợi ý category của sàn theo tên và ảnh đầu của sản phẩm (#400, Documents/21 §18.5), đúng thứ tự sàn trả. Sàn không đoán
+   * được thì rỗng, không ném. `permissionStatuses`: quyền của gian hàng mang token với leaf đó (TikTok), sàn không có thì null.
+   */
+  suggestCategories?(accessToken: string, input: { name: string; imageUrl: string | null }): Promise<CategorySuggestion[]>;
+  /** Category lá và attribute của sản phẩm `externalProductId` trên sàn (#400 lát 12); sàn không trả category thì null. */
+  productCategory?(accessToken: string, externalProductId: string): Promise<RemoteProductCategory | null>;
+  /** Điều kiện sàn đặt cho lời gọi gợi ý, app kiểm trước khi gọi: cần ảnh (Lazada), độ dài tên tối thiểu (TikTok 25). */
+  readonly suggestionRules?: { needsImage?: true; minNameLength?: number };
+  /**
+   * Quyền category theo gian hàng (TikTok, A17): `categoryTree(token)` của gian hàng trả `permissionStatuses` cho từng node,
+   * việc nền đẩy dùng để ghi `shop_category_permissions` trước khi đẩy. Sàn không có quyền theo gian hàng thì không khai.
+   */
+  readonly categoryPermissionsPerShop?: true;
   /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
   categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**
@@ -592,9 +657,11 @@ export interface MarketplaceAdapter {
    * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), có nhãn biến thể như `listSkus`. Sản phẩm đã
    * xoá (`state: 'deleted'`) trả khi sàn trả trong cùng lời gọi (TikTok); Lazada không gọi thêm `filter=deleted` để giữ hạn
    * mức (review vòng 2 N2), lần đọc trọn mỗi ngày dọn. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
-   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn).
+   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn). `priorityProductIds`: sản phẩm đang có listing,
+   * cần category; sàn phải đọc chi tiết từng sản phẩm (TikTok) thì đọc các sản phẩm này trước, theo giờ sửa tăng dần, và đánh
+   * `detailUnreadSince` cho sản phẩm chưa đọc được.
    */
-  listSkusChanged?(accessToken: string, since: Date): Promise<RemoteSku[]>;
+  listSkusChanged?(accessToken: string, since: Date, opts?: { priorityProductIds?: ReadonlySet<string> }): Promise<RemoteSku[]>;
   /**
    * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
    * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của

@@ -150,10 +150,16 @@ export function tiktokRemoteState(productStatus: string, sku: Row): RemoteState 
   }
 }
 
-/** Chi tiết đọc bằng Get Product: `labels` mã SKU → nhãn biến thể, `images` mã sản phẩm → URL ảnh đầu tiên. */
+/**
+ * Chi tiết đọc bằng Get Product: `labels` mã SKU → nhãn biến thể, `images` mã sản phẩm → URL ảnh đầu tiên, `categories` mã
+ * sản phẩm → category lá (`category_chains` phần tử `is_leaf`, #400 lát 13).
+ */
 interface ProductDetails {
   labels: Map<string, string>;
   images: Map<string, string>;
+  categories: Map<string, string>;
+  /** Sản phẩm phải đọc chi tiết mà chưa đọc được (vượt trần, sàn dừng giữa chừng) → giờ sửa (`update_time`); thiếu giờ thì không có. */
+  unread: Map<string, Date>;
 }
 
 /**
@@ -161,11 +167,13 @@ interface ProductDetails {
  * SKU người bán, rồi mã SKU sàn. `imageUrl`: ảnh đầu tiên của sản phẩm (`main_images[0].urls[0]` của Get Product), null
  * khi không đọc chi tiết.
  */
-function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
+function skusOf(p: Row, details?: ProductDetails, markUnread = false): RemoteSku[] {
   const status = String(p.status ?? '');
   const skus = (p.skus ?? []) as Row[];
   const title = typeof p.title === 'string' ? p.title : '';
   const imageUrl = details?.images.get(String(p.id)) ?? null;
+  const category = details?.categories.get(String(p.id));
+  const unreadSince = markUnread ? details?.unread.get(String(p.id)) : undefined;
   // Search Products 202502: `create_time` "The time when the product is created. Unix timestamp." (giây, OAS cục bộ).
   const createdAt = epochDate(Number(p.create_time) * 1000);
   return skus.map((s) => {
@@ -189,6 +197,8 @@ function skusOf(p: Row, details?: ProductDetails): RemoteSku[] {
       sellableQuantity: quantity,
       ...(typeof (s.price as Row | undefined)?.tax_exclusive_price === 'string' && { price: (s.price as Row).tax_exclusive_price as string }),
       ...(createdAt && { createdAt }),
+      ...(category && { externalCategoryId: category }),
+      ...(unreadSince && { detailUnreadSince: unreadSince }),
     };
   });
 }
@@ -238,10 +248,11 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     return (await searchProducts(accessToken, filter)).flatMap((p) => skusOf(p));
   }
 
-  /** Chi tiết đã đọc của một sản phẩm: nhãn theo mã SKU, ảnh đầu tiên. */
+  /** Chi tiết đã đọc của một sản phẩm: nhãn theo mã SKU, ảnh đầu tiên, category lá. */
   interface ProductDetail {
     labels: [string, string][];
     image: string | null;
+    category: string | null;
   }
   const detailCache = new Map<string, { updateTime: string; at: number; detail: ProductDetail }>();
   const cacheKey = (shopId: string, p: Row) => `${shopId}:${String(p.id)}`;
@@ -258,8 +269,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     while (detailCache.size > DETAIL_CACHE_MAX) detailCache.delete(detailCache.keys().next().value!);
   }
 
-  /** Nhãn biến thể, ảnh đầu tiên trong phản hồi Get Product. */
-  function parseDetail(detail: { skus?: Row[]; main_images?: Row[] } | undefined): ProductDetail {
+  /** Nhãn biến thể, ảnh đầu tiên, category lá trong phản hồi Get Product. */
+  function parseDetail(detail: { skus?: Row[]; main_images?: Row[]; category_chains?: Row[] } | undefined): ProductDetail {
     const first = (detail?.main_images ?? [])[0]?.urls;
     const url = Array.isArray(first) ? first[0] : undefined;
     const labels: [string, string][] = [];
@@ -270,7 +281,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         .join(', ');
       if (label) labels.push([String(s.id), label]);
     }
-    return { labels, image: typeof url === 'string' && url ? url : null };
+    const leaf = (detail?.category_chains ?? []).find((c) => c.is_leaf === true)?.id;
+    return { labels, image: typeof url === 'string' && url ? url : null, category: leaf == null || leaf === '' ? null : String(leaf) };
   }
 
   /**
@@ -291,12 +303,15 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     accessToken: string,
     products: readonly Row[],
     skipSellerSkus?: ReadonlySet<string>,
+    priority?: ReadonlySet<string>,
   ): Promise<ProductDetails> {
     const shopId = unpackTiktokToken(accessToken).shopId;
     const labels = new Map<string, string>();
     const images = new Map<string, string>();
+    const categories = new Map<string, string>();
     const apply = (p: Row, d: ProductDetail) => {
       if (d.image) images.set(String(p.id), d.image);
+      if (d.category) categories.set(String(p.id), d.category);
       for (const [skuId, label] of d.labels) labels.set(skuId, label);
     };
     const isMulti = (p: Row) => ((p.skus ?? []) as Row[]).length > 1;
@@ -312,7 +327,13 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
       if (hit) apply(p, hit);
       else toRead.push(p);
     }
-    const picked = [...toRead.filter(isMulti), ...toRead.filter((p) => !isMulti(p))].slice(0, DETAIL_PRODUCT_MAX);
+    // Sản phẩm ưu tiên (đang có listing, cần category; review BE2 P2-1) trước, theo giờ sửa tăng dần để mốc đọc sau luôn tiến;
+    // rồi như cũ: nhiều SKU trước, một SKU sau.
+    const first = priority ? toRead.filter((p) => priority.has(String(p.id))).sort((a, b) => Number(a.update_time) - Number(b.update_time)) : [];
+    const rest = priority ? toRead.filter((p) => !priority.has(String(p.id))) : toRead;
+    const ordered = [...first, ...rest.filter(isMulti), ...rest.filter((p) => !isMulti(p))];
+    const picked = ordered.slice(0, DETAIL_PRODUCT_MAX);
+    const done = new Set<Row>();
     const codes: Record<string, number> = {};
     let failed = 0;
     let lastCode: string | null = null;
@@ -327,6 +348,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
             await client.call('GET', `/product/202309/products/${encodeURIComponent(String(p.id))}`, { token: accessToken }),
           );
           lastCode = null;
+          done.add(p);
           apply(p, detail);
           remember(shopId, p, detail);
         } catch (err) {
@@ -338,6 +360,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
           failed += 1;
           codes[code] = (codes[code] ?? 0) + 1;
           if (err.kind === 'unavailable' || LABEL_STOP_CODES.has(code) || code === lastCode) stoppedBy ??= code;
+          // Lỗi riêng của sản phẩm (sàn không dừng) không đọc lại: tính như đã xử lý.
+          else done.add(p);
           lastCode = code;
         }
       }
@@ -350,7 +374,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
         'Không đọc được chi tiết sản phẩm TikTok, dùng SKU người bán làm nhãn, không có ảnh',
       );
     }
-    return { labels, images };
+    const unread = new Map<string, Date>();
+    for (const p of ordered) {
+      const seconds = Number(p.update_time);
+      if (!done.has(p) && Number.isFinite(seconds) && seconds > 0) unread.set(String(p.id), new Date(seconds * 1000));
+    }
+    return { labels, images, categories, unread };
   }
 
   /**
@@ -498,7 +527,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     capabilities: TIKTOK_CAPABILITIES,
     // Cây, attribute của category theo gian hàng (`shop_cipher` bắt buộc, G2.6; #400 A4).
     categoriesNeedToken: true,
+    // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
+    suggestionRules: { minNameLength: 25 },
+    // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
+    categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,
+    productFields: { '100149': 'originCountry' },
     togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.
@@ -536,11 +570,11 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // are updated on or after the specified date and time. Unix timestamp." `status: ALL` gồm sản phẩm đã xoá (gọi thật
     // 11/11/2026), trả với `state: 'deleted'` để bản sao bỏ SKU đó (#220 đợt 2). Nhãn đọc như `listSkus` (bộ nhớ đệm theo
     // `update_time`), không đọc chi tiết sản phẩm đã xoá.
-    async listSkusChanged(accessToken, since) {
+    async listSkusChanged(accessToken, since, opts) {
       const products = await searchProducts(accessToken, { status: 'ALL', update_time_ge: Math.floor(since.getTime() / 1000) });
       const live = products.filter((p) => p.status !== 'DELETED');
-      const details = await productDetails(accessToken, live, undefined);
-      return products.flatMap((p) => skusOf(p, p.status === 'DELETED' ? undefined : details));
+      const details = await productDetails(accessToken, live, undefined, opts?.priorityProductIds);
+      return products.flatMap((p) => skusOf(p, p.status === 'DELETED' ? undefined : details, true));
     },
     countRemote,
     getSkus,
