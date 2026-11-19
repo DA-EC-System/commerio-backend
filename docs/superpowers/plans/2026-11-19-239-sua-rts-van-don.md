@@ -4,7 +4,7 @@
 
 **Goal:** Sửa bốn lỗi Thành báo trên #239 ngày 19/11/2026 (KH-B02, KH-B03, KH-B07, TRA-B06) ở BE, ghi mẫu smoke trên shop thử thật, viết lại E2E để đủ DoD đóng #239. Phần giao diện giao Khoa ở issue FE riêng.
 
-**Architecture:** Channel thêm năng lực tuỳ chọn `packageTracking` cho adapter (TikTok Get Package Detail) và cổng `readyToShip` trả `{ trackingCode }`; đổi mã sàn 21042061 sang mã app `cancel_requested`. Fulfillment ghi mã vận đơn sau khi báo giao, chặn báo giao khi đơn có cờ `cancel_requested` (không bật `label_error`), thêm cờ `cancel_requested` cho `Package`, chặn in vận đơn kiện chưa `awaiting_pickup`. Không đổi schema, không migration.
+**Architecture:** Channel thêm năng lực tuỳ chọn `packageTracking` cho adapter (TikTok Get Package Detail) và cổng `readyToShip` trả `{ trackingCode }`; đổi mã sàn 21042061 sang mã app `cancel_requested`. Fulfillment ghi mã vận đơn sau khi báo giao, chặn báo giao khi đơn có cờ `cancel_requested` (không bật `label_error`), thêm cờ `cancel_requested` cho `Package`, chỉ in vận đơn kiện có mã kiện sàn và mã vận đơn. Cổng in vận đơn đổi Lazada 50008 (đơn SOF) sang `document_not_supported`. Không đổi schema, không migration.
 
 **Tech Stack:** Node.js 24, Express 5, TypeScript 6, Zod 4, Drizzle + PostgreSQL 18, Vitest + Testcontainers. Smoke: `npm run smoke:tiktok`, `npm run smoke:lazada`.
 
@@ -12,8 +12,8 @@
 
 ## Quyết định (chờ Thành xác nhận ở Task 8)
 
-- **Q1 (KH-B03):** in vận đơn chỉ khi kiện đã báo sàn sẵn sàng giao. BE chặn kiện `backordered`, `reserved`, `packed` bằng 409 `document_not_ready`; kiện `awaiting_pickup` trở đi để sàn quyết. Đổi AC US-DH-07 dòng 2 và `21` §19.3.
-- **Q2 (SOF Lazada):** chưa đổi code tới khi smoke (Task 2) biết sàn có in vận đơn đơn SOF sau RTS không. Sàn vẫn từ chối thì Task 6 đổi mã đó sang `document_not_supported`.
+- **Q1 (KH-B03, Khang chốt lại 19/11 sau smoke Lazada):** in được khi kiện có mã kiện sàn **và** mã vận đơn (sàn đã cấp vận đơn), không xét trạng thái, không rẽ nhánh theo sàn. Lazada in ngay sau khi đóng gói (smoke: đơn thường in được trước RTS, request_id 0babf4c817950931301642182, và sau RTS); TikTok chỉ có vận đơn sau Ship Package, nên in sau khi báo giao (nhờ KH-B02). Thiếu thì 409 `document_not_ready`, không gọi sàn. Đổi AC US-DH-07 dòng 2 và `21` §19.3.
+- **Q2 (SOF Lazada, chốt sau smoke 19/11):** `/order/package/document/get` của đơn SOF (`shipping_provider_type: seller_own_fleet`) trả `result.error_code` "50008", `error_msg` "not support operation for  sof order" cả trước RTS (0bb4a98017950932714583794), sau RTS (0bafca0117950932788822131) lẫn khi đã giao. Lỗi KH-000123 là ca này. Task 6 đổi 50008 sang 409 `document_not_supported`, chỉ ở cổng in vận đơn.
 - **Q3 (KH-U13, báo nhiều kiện):** ngoài phạm vi #239, đề xuất issue riêng ở Task 8.
 - **Q4 (KH-B07):** chặn trước khi gọi sàn bằng cờ `cancel_requested` của đơn (lượt kéo 5 phút); sàn báo 21042061 (app chưa kịp thấy cờ) đi cùng mã. Cả hai không bật `label_error` vì bấm lại không giúp, phải chờ Sale.
 - **Q5 (KH-B02):** đọc mã sau RTS lỗi thì chỉ log `warn` và trả `trackingCode: null`: sàn đã nhận báo giao, lượt kéo đơn sẽ điền mã. Không làm hỏng request.
@@ -37,7 +37,8 @@
 2. **Đơn khác trong nhóm gói đang xin huỷ** (kiện bấm thuộc đơn không xin huỷ): vẫn 409 `cancel_requested`, không gọi sàn. Test ở Task 4.
 3. **Sàn từ chối 21042061 lúc app chưa thấy cờ**: kiện giữ `packed`, `label_error` không bật, `version` không tăng. Test ở Task 4.
 4. **Đọc mã vận đơn lỗi hay sàn chưa cấp**: request vẫn 200 `awaiting_pickup`, mã đã có (vd mã Lazada lúc pack) không bị ghi đè bằng null. Test ở Task 1 (cổng) và Task 3 (kiện).
-5. **In lô có kiện `packed` lẫn kiện `awaiting_pickup`**: 409 `document_not_ready` liệt kê đúng mã kiện chưa sẵn sàng, không gọi sàn cho kiện nào. Test ở Task 5.
+5. **In lô có kiện có vận đơn lẫn kiện chưa có**: 409 `document_not_ready` liệt kê đúng mã kiện chưa có vận đơn, không gọi sàn cho kiện nào. Test ở Task 5.
+6. **Lazada 50008 chỉ đổi ở cổng in vận đơn**: pack, RTS, repack gặp 50008 vẫn `marketplace_rejected`. Test ở Task 6.
 
 ---
 
@@ -53,7 +54,7 @@
 | `src/modules/order/fulfillment/service/packing.ts` | `markReady`: ghi mã vận đơn, chặn `cancel_requested`, câu `rts_package_not_found` |
 | `src/modules/order/fulfillment/service/views.ts`, `api/schemas.ts` | `PackageOrderRef.cancelRequested`, cờ `cancel_requested` |
 | `src/modules/order/sales/service/orders.ts` | `packageOrderRef` điền `cancelRequested` |
-| `src/modules/order/fulfillment/service/documents.ts`, `api/openapi.ts` | Chặn in kiện chưa sẵn sàng |
+| `src/modules/order/fulfillment/service/documents.ts`, `api/openapi.ts` | Chặn in kiện chưa có vận đơn trên sàn |
 | `src/modules/order/fulfillment/CLAUDE.md`, `src/modules/channel/channel/CLAUDE.md` | Ghi luật mới |
 | Documents: `21-hop-dong-api-fe-be.md`, `27-user-story.md`, `tich-hop-san/tiktok.md`, `tich-hop-san/lazada.md` | Hợp đồng, AC, mẫu smoke |
 | FE: `e2e/be/p4/dong-goi-rts-van-don.spec.ts` | E2E với BE thật, shop thử Lazada thật |
@@ -131,6 +132,8 @@ git commit -m "feat(channel): đọc mã vận đơn TikTok sau khi báo giao, �
 ---
 
 ### Task 2: Smoke trên shop thử thật (Khang thao tác Seller Center, Partner Center)
+
+**Trạng thái:** Lazada xong 19/11/2026 (Step 3, Step 4; kết quả ở Q1, Q2). TikTok (Step 1, Step 2) hoãn.
 
 Chạy trên `feature/239-sua-rts-van-don` sau Task 1. Ghi lại phản hồi gốc (bỏ token, URL ký) vào file nháp trong scratchpad để Task 7 chép vào Documents. Không có test tự động; kết quả quyết định Task 6.
 
@@ -245,60 +248,52 @@ git commit -m "fix(fulfillment): chặn báo sẵn sàng giao khi khách đang x
 
 ---
 
-### Task 5: Chặn in vận đơn kiện chưa báo sàn sẵn sàng giao (KH-B03)
+### Task 5: Chỉ in vận đơn kiện sàn đã cấp vận đơn (KH-B03)
 
 **Files:**
 - Modify: `src/modules/order/fulfillment/service/documents.ts` (`packageDocuments`, vòng gom `missing`)
-- Modify: `src/modules/order/fulfillment/api/openapi.ts:68` (mô tả route `documents`)
+- Modify: `src/modules/order/fulfillment/api/openapi.ts` (mô tả route `documents`)
 - Modify: `src/modules/order/fulfillment/CLAUDE.md` (bảng route `GET /packages/documents`)
-- Test: `test/integration/order/fulfillment/documents.test.ts`
+- Test: `test/integration/order/fulfillment/documents.test.ts`, `test/integration/order/fulfillment/packing-wiring.test.ts` (seed thêm mã vận đơn)
 
 **Interfaces:**
-- Produces: `GET /fulfillment/packages/documents` trả 409 `document_not_ready` khi có kiện `backordered`, `reserved`, `packed` hay thiếu mã sàn; `detail` liệt kê mã kiện.
+- Produces: `GET /fulfillment/packages/documents` trả 409 `document_not_ready` khi có kiện thiếu `shopId`, `platformPackageCode` hay `trackingCode`, không xét trạng thái; `detail` liệt kê mã kiện.
 
-- [ ] **Step 1: Viết test (fail)**:
-
-```ts
-it('US-DH-07 AC3 KH-B03: kiện chưa báo sàn sẵn sàng giao thì 409 document_not_ready, không gọi sàn', async () => {
-  const packed = await seedPackage(companyId, { status: 'packed', shopId: shop1, platformPackageCode: 'FP-PACKED', lines: [{ variantId, quantity: 1 }] });
-  const shippingDocuments = vi.fn();
-  const res = await get([ids[0]!, packed.packageId], { shippingDocuments });
-  expect(res.status).toBe(409);
-  expect(res.body.type).toBe('/problems/document_not_ready');
-  expect(res.body.detail).toContain(packed.packageCode);
-  expect(shippingDocuments).not.toHaveBeenCalled();
-});
-```
-
+- [ ] **Step 1: Viết test (fail)** trong `documents.test.ts`:
+  - `it('US-DH-07 AC3 KH-B03: kiện chưa có mã vận đơn thì 409 document_not_ready, không gọi sàn')`: kiện `packed` có mã sàn, `trackingCode: null` cùng một kiện in được → 409, `detail` chứa mã kiện (chỉ một mã), fake `shippingDocuments` không bị gọi.
+  - `it('KH-B03: kiện đã đóng gói có mã vận đơn in được, chưa cần báo sàn sẵn sàng giao')`: kiện `packed` có mã sàn và `trackingCode` → 200 PDF.
+  - Ca cũ seed `awaiting_pickup` không có `trackingCode` thì thêm `trackingCode` vào seed.
 - [ ] **Step 2: Chạy, thấy fail**
 
 Run: `npx vitest run --project integration test/integration/order/fulfillment/documents.test.ts`
-Expected: FAIL (sàn bị gọi; 500 vì fake trả `undefined`, hoặc 200).
+Expected: ca đầu FAIL (sàn bị gọi), ca thứ hai PASS sẵn.
 
-- [ ] **Step 3: Cài đặt**: kiện có `status` thuộc `['backordered', 'reserved', 'packed']` vào cùng danh sách với kiện thiếu mã; câu `Kiện ${list} chưa báo sàn sẵn sàng giao hoặc chưa có mã kiện sàn`. OpenAPI, CLAUDE.md: "Chỉ in kiện đã báo sàn sẵn sàng giao (`awaiting_pickup` trở đi)".
+- [ ] **Step 3: Cài đặt**: kiện thiếu `shopId`, `platformPackageCode` hoặc `trackingCode` vào một danh sách; câu `Kiện ${list} chưa có vận đơn trên sàn`. OpenAPI, CLAUDE.md: "In được kiện có mã kiện sàn và mã vận đơn; thiếu thì 409 `document_not_ready`".
 - [ ] **Step 4: Chạy cả thư mục fulfillment, thấy pass**
 
 Run: `npx vitest run --project integration test/integration/order/fulfillment`
-Expected: PASS (ca cũ seed `awaiting_pickup`; ca nào in kiện `packed` thì đổi seed sang `awaiting_pickup`).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/modules/order/fulfillment test/integration/order/fulfillment/documents.test.ts
-git commit -m "fix(fulfillment): chỉ in vận đơn kiện đã báo sàn sẵn sàng giao (#239 KH-B03)"
+git add src/modules/order/fulfillment test/integration/order/fulfillment
+git commit -m "fix(fulfillment): chỉ in vận đơn kiện sàn đã cấp vận đơn (#239 KH-B03)"
 ```
 
 ---
 
-### Task 6 (chỉ khi Task 2 Step 4 thấy sàn từ chối vận đơn SOF sau RTS): mã `document_not_supported`
+### Task 6: Lazada 50008 (đơn SOF) ở cổng in vận đơn sang `document_not_supported`
 
 **Files:**
-- Modify: `src/modules/channel/channel/service/order-actions.ts` (`packageErrors`)
+- Modify: `src/modules/channel/channel/service/order-actions.ts` (`onPackageAction` nhận bảng mã riêng tuỳ chọn; `marketplaceShippingDocuments` truyền `documentErrors`)
 - Modify: `src/modules/order/fulfillment/api/openapi.ts` (409 của `documents`), `src/modules/channel/channel/CLAUDE.md`
 - Test: `test/unit/modules/channel/channel/service/order-actions.test.ts`
 
-- [ ] **Step 1:** thêm `['<mã Lazada từ Task 2>', 'document_not_supported']` vào bảng `it.each`; chạy, thấy FAIL.
-- [ ] **Step 2:** `packageErrors` thêm mã đó → `['document_not_supported', 'Sàn không cấp vận đơn cho kiện người bán tự giao (SOF), in phiếu giao của shop']`; chạy lại, PASS.
+Không đưa 50008 vào bảng chung `packageErrors` (bảng đó dùng cho cả pack, RTS, repack; 50008 có thể là mã chung "không hỗ trợ thao tác").
+
+- [ ] **Step 1:** test: cổng in vận đơn gặp 50008 → 409 `document_not_supported`, giữ `platformCode`, `platformMessage`; cổng pack, RTS gặp 50008 vẫn `marketplace_rejected`. Chạy, thấy FAIL.
+- [ ] **Step 2:** `documentErrors` có `['50008', ['document_not_supported', 'Sàn không cấp vận đơn cho kiện người bán tự giao (SOF), in phiếu giao của shop']]`, truyền vào `onPackageAction` ở `marketplaceShippingDocuments`; chạy lại, PASS.
 - [ ] **Step 3: Commit** `fix(channel): đổi lỗi vận đơn đơn SOF Lazada sang document_not_supported (#239)`.
 
 ---
@@ -311,9 +306,9 @@ Repo `D:\DA-TMDT\Documents`, nhánh `docs/239-sua-rts-van-don` từ `origin/main
   - §19.2 `Package.flags[]` thêm `cancel_requested` ("khách đang xin huỷ, chờ Sale trả lời; chỉ khi kiện chưa bàn giao").
   - Bảng thao tác kiện, dòng `mark_ready`: "Sinh mã vận đơn: Lazada có từ lúc `pack`; TikTok app đọc từ sàn ngay sau khi báo giao, sàn chưa cấp thì lượt kéo đơn điền".
   - Route `POST /fulfillment/packages/:id/ready`: thêm 409 `cancel_requested` (đơn của kiện hay kiện cùng nhóm có cờ `cancel_requested`, kiểm trước khi gọi sàn); không bật `label_error`.
-  - Route `GET /fulfillment/packages/documents`: "Chỉ kiện đã báo sàn sẵn sàng giao (`awaiting_pickup` trở đi). Kiện chưa báo hay chưa có mã kiện sàn: 409 `document_not_ready`".
-  - Bảng mã lỗi sàn: thêm dòng `cancel_requested` | TikTok `21042061` | "Khách đang xin huỷ đơn, chờ Sale trả lời yêu cầu huỷ"; sửa câu FE của `rts_package_not_found` khi app chưa có mã: "Sàn chưa cấp mã kiện cho đơn này (đơn còn chờ sàn duyệt). Bấm Kéo đơn ngay rồi thử lại". Task 6 đã chạy thì thêm `document_not_supported`.
-- [ ] **Step 2: `27-user-story.md`** US-DH-07: dòng 2 "Chọn 1–50 kiện **đã báo sàn sẵn sàng giao**…"; dòng 3 thêm "hoặc chưa báo sàn sẵn sàng giao"; thêm dòng 6 "Đơn có cờ khách xin huỷ | Sẵn sàng giao | 409 `cancel_requested`, không gọi sàn, không bật cờ Lỗi lấy vận đơn | (chưa có ca)".
+  - Route `GET /fulfillment/packages/documents`: "In được kiện có mã kiện sàn và mã vận đơn (Lazada từ lúc đóng gói, TikTok sau khi báo giao). Thiếu thì 409 `document_not_ready`; đơn SOF Lazada 409 `document_not_supported`".
+  - Bảng mã lỗi sàn: thêm dòng `cancel_requested` | TikTok `21042061` | "Khách đang xin huỷ đơn, chờ Sale trả lời yêu cầu huỷ"; sửa câu FE của `rts_package_not_found` khi app chưa có mã: "Sàn chưa cấp mã kiện cho đơn này (đơn còn chờ sàn duyệt). Bấm Kéo đơn ngay rồi thử lại". Thêm dòng `document_not_supported` | Lazada `50008` (chỉ ở in vận đơn) | "Sàn không cấp vận đơn cho kiện người bán tự giao (SOF), in phiếu giao của shop".
+- [ ] **Step 2: `27-user-story.md`** US-DH-07: dòng 2 "Chọn 1–50 kiện **sàn đã cấp vận đơn**…"; dòng 3 thêm "hoặc chưa có vận đơn trên sàn"; thêm dòng 6 "Đơn có cờ khách xin huỷ | Sẵn sàng giao | 409 `cancel_requested`, không gọi sàn, không bật cờ Lỗi lấy vận đơn | (chưa có ca)".
 - [ ] **Step 3: `tich-hop-san/tiktok.md`**: Get Package Detail (đường dẫn, trường `shipping_info`, kết quả Task 2 Step 1 kèm request_id, độ trễ có mã), 21042061 (Task 2 Step 2).
 - [ ] **Step 4: `tich-hop-san/lazada.md`**: §11.2 thêm mẫu JSON pack, RTS, `document/get` (Task 2 Step 3, bỏ `pdf_url` ký); mục mới "Đơn SOF và vận đơn" (Task 2 Step 4).
 - [ ] **Step 5: Commit** `21, 27, sàn: báo giao ghi vận đơn, chặn khi khách xin huỷ, in sau RTS (commerio-backend#239)`.
@@ -335,6 +330,6 @@ Repo `D:\DA-TMDT\Documents`, nhánh `docs/239-sua-rts-van-don` từ `origin/main
 - Modify: `D:\DA-TMDT\FE\e2e\be\p4\dong-goi-rts-van-don.spec.ts` (nhánh FE `test/239-e2e-san-that`)
 
 - [ ] **Step 1:** Bỏ chặn `hostname !== '127.0.0.1'` và ghi chú sàn giả lập; điều kiện chạy chỉ còn đủ `E2E_PACKING_EMAIL`, `E2E_PACKING_PASSWORD`, `E2E_PACKING_COMPANY_ID`, `E2E_PACKING_CODE` (kiện `reserved` của đơn "Create Test Case" mới trên staging). Chú thích đầu file: chạy với `PW_BASE_URL` là FE staging, mỗi lần tốn một đơn thử (tối đa 10 đơn/ngày).
-- [ ] **Step 2:** Thay `platformPackageCode: 'FP600000000000001'` bằng `expect(pkg.platformPackageCode).toMatch(/^FP\d+$/)` và `expect(pkg.trackingCode).toBeTruthy()`; sau `ready` kiểm `status: 'awaiting_pickup'`; in vận đơn kiểm `content-type` `application/pdf`. Nút In vận đơn chỉ có sau `ready` (Q1, FE của Khoa).
+- [ ] **Step 2:** Thay `platformPackageCode: 'FP600000000000001'` bằng `expect(pkg.platformPackageCode).toMatch(/^FP\d+$/)` và `expect(pkg.trackingCode).toBeTruthy()`; sau `ready` kiểm `status: 'awaiting_pickup'`; in vận đơn kiểm `content-type` `application/pdf`. Nút In vận đơn có khi kiện có mã vận đơn (Q1; Lazada ngay sau đóng gói, FE của Khoa).
 - [ ] **Step 3:** Chạy `PW_BASE_URL=<FE staging> npx playwright test e2e/be/p4/dong-goi-rts-van-don.spec.ts --project=be` (máy Khang không có pnpm). Expected: 1 passed. Ghi request_id pack, RTS vào thân PR FE.
 - [ ] **Step 4 (Khang đồng ý):** commit, mở PR FE; tick hai ô "Việc cần làm" và các ô DoD đã đạt trên #239.
