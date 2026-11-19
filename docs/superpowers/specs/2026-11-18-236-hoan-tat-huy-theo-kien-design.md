@@ -124,8 +124,8 @@ Hạn trả `days` có hai cách: đọc cấu hình gian hàng **lúc kiểm** 
 - Mỗi lượt: gom ứng viên theo công ty; mỗi công ty gọi `ctx.returnPoliciesOf` **một lần** cho các gian hàng của ứng viên (trong `withCompany` của công ty đó). Mỗi đơn vẫn một `withCompany` riêng, lỗi một đơn không chặn đơn khác (như hiện tại).
 - Mỗi đơn: đọc đơn, kiện, yêu cầu trả mở; `closingStep`:
   - `complete`: như hiện tại; `return_window_ends_at` = `returnWindowEndsAt(…)` theo chính sách; giữ nhánh gỡ cờ Đang huỷ, bật Sàn đã huỷ (#238).
-  - `auto_cancel`, đơn có cờ `cancelling`: gọi `settleCancelledOrder(orderId)` (cùng file service, đã kiểm lại dưới khoá và đủ điều kiện dòng) — lưới đỡ khi lần gọi sau `open_cancel` lỗi. Ghi `platform_cancel` (D3).
-  - `auto_cancel`, không cờ `cancelling`: cập nhật theo `version` sang `cancelled`, `cancel_reason = 'Mọi kiện đã huỷ'`; `recordTransition` `action = 'auto_cancel'`, `source = 'system'`, người làm trống; phát `sales.order_cancelled` `{ orderId, code, source, by }` với `by` theo D4, rồi `sales.order_status_changed` (cờ lưu, cộng `unmapped_sku` nếu còn dòng chưa ghép, như `settleCancelledOrder`).
+  - Bước khép (sửa sau #417, plan PR 3 P2, P3): `settleCancelledOrder(orderId): Promise<boolean>` khoá đơn, kiểm lại: còn mở, mọi dòng huỷ đủ, mọi kiện `cancelled`. Đơn sàn → `platform_cancel` (D3; gồm lưới đỡ khi lần gọi sau `open_cancel` lỗi). Đơn khác → `auto_cancel`. Còn dòng chưa huỷ (chỉ có thể là dòng ngoài mọi kiện, do trigger `package_lines_line_total`) thì đơn giữ `processing`.
+  - `auto_cancel` (đơn không phải đơn sàn): sang `cancelled`, `cancel_reason = 'Mọi kiện đã huỷ'` khi chưa có lý do; `recordTransition` `action = 'auto_cancel'`, `source = 'system'`, người làm trống; phát `sales.order_cancelled` `{ orderId, code, source, by: 'seller' }`, rồi `sales.order_status_changed` (`eventFlags`). Bản đầu của spec chia theo cờ `cancelling`; #417 làm cờ này suy ra nên không còn dùng để chia nhánh.
   - `blocker`: không làm gì.
 - Tên log, tên hàm có thể đổi sang "khép đơn"; `completeDueOrdersOnce` vẫn export (test dùng), nhận thêm `ctx`.
 
@@ -179,7 +179,7 @@ Khang chốt: **D1** cách A (mục 4).
 
 **Claude đề xuất, Khang xem khi duyệt spec:**
 
-- **D4** `by` của `sales.order_cancelled` khi `auto_cancel`: `'platform'` cho đơn `marketplace`, `'seller'` cho đơn khác. Không đổi schema sự kiện dùng chung (không cần PR riêng, không báo bên nghe).
+- **D4** `by` của `sales.order_cancelled` khi `auto_cancel`: `'seller'` (chỉ đơn không phải đơn sàn đi `auto_cancel`). Sửa 19/11 sau #417 (plan PR 3 P3): đơn sàn mọi kiện huỷ, mọi dòng huỷ luôn là sàn huỷ hết món nên đi `platform_cancel` (`by: 'platform'`, D3), nhánh "đơn sàn không cờ Đang huỷ → `auto_cancel`" không còn đơn nào. Không đổi schema sự kiện dùng chung.
 - **D5** Hạn trả `days` tính lúc kiểm theo cấu hình hiện tại: Admin đổi số ngày thì áp cho mọi đơn chưa hoàn tất của gian hàng (#390). Gian hàng null hoặc không tìm thấy: 7 ngày.
 - **D6** Chính sách lấy qua hàm `ctx.returnPoliciesOf` mới, không mở rộng `getShops`: kết quả `getShops` bị trải vào object `shop` của API (`service/orders.ts:134`) và dùng chung cho finance, fulfillment; thêm trường sẽ lộ ra hợp đồng.
 - **D7** TikTok báo bằng `RemoteOrder.returnWindowEndedAt` (mốc = `update_time` của lượt thấy trạng thái kết thúc, ghi một lần, không đè). Sales không biết tên trạng thái sàn.
@@ -249,12 +249,12 @@ Khang chốt: **D1** cách A (mục 4).
 
 | # | Ca | Cho | Khi | Thì |
 |---|---|---|---|---|
-| 18 | D1-10 | Đơn `processing` không cờ Đang huỷ, mọi kiện `cancelled` | Job chạy | `cancelled`, lịch sử `auto_cancel` `source = system`, lý do "Mọi kiện đã huỷ"; phát `sales.order_cancelled` (`by` theo D4) và `sales.order_status_changed`; **không** `completed` |
+| 18 | D1-10 | Đơn tạo tay `processing`, mọi kiện `cancelled` (sửa sau #417: đơn sàn ở ca 23) | Job chạy | `cancelled`, lịch sử `auto_cancel` `source = system`, lý do "Mọi kiện đã huỷ"; phát `sales.order_cancelled` (`by: 'seller'`) và `sales.order_status_changed`; **không** `completed`. Đơn sàn mọi kiện huỷ còn dòng sống ngoài kiện: giữ `processing`, không phát |
 | 19 | D1-03 (điều kiện) | Máy trạng thái, kiện đều `cancelled` | `complete` | 409 `all_packages_cancelled` |
 | 20 | D1-10 (điều kiện) | Máy trạng thái, có kiện không huỷ | `auto_cancel` | 409 `packages_not_cancelled` |
 | 21 | D1-10x, D1-03x | Người dùng (có `actor`) | `auto_cancel`, `complete` | 409 `invalid_transition` |
 | 22 | D1-X01, X03, X04 | Đơn `unpaid` / `completed` / `cancelled` | `auto_cancel` | 409 `invalid_transition` |
-| 23 | | Đơn cờ Đang huỷ, mọi kiện `cancelled`, mọi dòng huỷ đủ, `settleCancelledOrder` chưa chạy | Job chạy | Đơn `cancelled`, lịch sử `platform_cancel`, lý do "Sàn huỷ đơn" (D3) |
+| 23 | | Đơn sàn mọi kiện `cancelled`, mọi dòng huỷ đủ, `settleCancelledOrder` chưa chạy (kể cả lần sau `open_cancel` lỗi; có từ #417) | Job chạy | Đơn `cancelled`, lịch sử `platform_cancel`, lý do "Sàn huỷ đơn" (D3) |
 | 24 | | Đơn Đang huỷ còn kiện chờ mở | Job chạy | Không đổi (ca hiện có) |
 | 24a | | Đơn processing mọi kiện `cancelled` | `GET` chi tiết | `completionBlocker = all_packages_cancelled` |
 | 25 | | Đơn `completed`, kiện `lost` | Kéo đơn: sàn báo kiện đã giao | Đơn giữ `completed`, `needs_attention`, `outcome` tính lại (vd `none` → `full`) |
@@ -267,7 +267,8 @@ Khang chốt: **D1** cách A (mục 4).
 
 ## 10. Giới hạn đã biết
 
-- Đơn mọi kiện huỷ hiện "Chờ hoàn tất" tới một giờ (job mỗi giờ). Hiện chỉ đơn Đang huỷ có `settleCancelledOrder` lỗi rơi vào ca này; đơn tạo tay sau này dùng nhánh này là chính.
+- Đơn mọi kiện huỷ hiện "Chờ hoàn tất" tới một giờ (job mỗi giờ). Hiện chỉ đơn có lần khép sau `open_cancel` lỗi rơi vào ca này; đơn tạo tay sau này dùng nhánh `auto_cancel`.
+- Đơn sàn mọi kiện huỷ mà còn dòng chưa huỷ ngoài mọi kiện (món trạng thái lạ #358, nhóm bỏ qua vì chia lại #238) giữ `processing` với `completionBlocker = all_packages_cancelled` tới khi sàn huỷ món đó hay món vào kiện; đơn đã mang Cần xử lý.
 - **TikTok `update_time` khi `DELIVERED → COMPLETED`:** chưa thử. Nếu sàn không tăng `update_time`, lượt kéo theo cửa sổ không thấy đơn đổi và đơn TikTok có kiện đã giao không bao giờ hoàn tất. Trước khi merge PR 2: `npm run smoke:tiktok -- order 586932266789143562` (đơn `COMPLETED` của shop thử), so `update_time` với `delivery_time`; cách xa nhiều ngày thì coi là sàn có tăng. Không tăng thì mở issue kéo lại đơn `DELIVERED`.
 - Mốc hết quyền trả TikTok là `update_time` của lượt thấy `COMPLETED`, không phải giờ chuyển thật trên sàn.
 - Sàn không có adapter (bộ thận trọng `platform_status`): đơn có kiện đã giao không tự hoàn tất. Sàn không có adapter thì không kéo được đơn nên chưa gặp.
