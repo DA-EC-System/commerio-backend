@@ -24,13 +24,18 @@ publishEvent (module phát, trong giao dịch) → outbox → relay (worker) →
 | Thông báo | Loại sự kiện | Quyền (một trong) | Trường gửi |
 |---|---|---|---|
 | Đơn mới | `sales.order_created` | `sales.order.view` | `orderId`, `code`, `source`, `total` |
-| Đơn đổi trạng thái, đơn thiếu hàng | `fulfillment.order_status_changed` | `sales.order.view` | `orderId`, `from`, `to`, `isShortStock` |
-| Thanh toán thành công | `payment.succeeded` | `sales.order.view`, `finance.invoice.view` | `orderId`, `amount` (không gửi mã giao dịch, cổng: T13) |
+| Đơn đổi trạng thái hoặc cờ | `sales.order_status_changed` | `sales.order.view` | `orderId`, `code`, `from`, `to`, `flags` |
+| Kiện đổi trạng thái | `fulfillment.package_status_changed` | `sales.order.view`, `fulfillment.order.process` | `packageId`, `orderId`, `from`, `to` |
+| Kiện giao không thành công (toast) | `fulfillment.package_delivery_failed` | `sales.order.view`, `fulfillment.order.process` | `packageId`, `orderId`, `reason` |
+| Kiện thất lạc (toast) | `fulfillment.package_lost` | `sales.order.view`, `fulfillment.order.process` | `packageId`, `orderId`, `claimCode` |
+| Yêu cầu trả đổi trạng thái (`from = to` khi chỉ cờ, thông tin sàn đổi) | `sales.return_status_changed` | `sales.return.view` | `returnId`, `orderId`, `from`, `to` |
+| Gian hàng đổi trạng thái | `channel.shop_status_changed` | `channel.shop.view` | `shopId`, `from`, `to` |
+| Listing đổi `status`, `stockSync`, `priceSync` | `channel.listing_sync_changed` | `channel.shop.view` | `shopId`, `listingId`, `stockSync`, `priceSync`, `status` |
 | Tồn dưới ngưỡng | `inventory.below_threshold` | `inventory.stock.view` | `variantId`, `available`, `minQty` |
 | Hàng nhập về | `inventory.receipt_posted` | `inventory.stock.view` | `receiptId`, `number`, `kind` |
 | Đề nghị nhập chờ duyệt | `purchasing.request_submitted` | `purchasing.request.approve` | `requestId`, `number` |
 
-Quyền của phân hệ đang tắt không tính. Loại không có trong bảng thì không gửi ai. `data` không có `companyId`, `aggregateId`.
+Bảy dòng của mô hình mới (đơn, kiện, trả, gian hàng, listing) thêm ở #216; `fulfillment.order_status_changed` và `payment.succeeded` không còn luật (schema còn ở `platform`, D2, D3 của spec #216). Quyền của phân hệ đang tắt không tính. Loại không có trong bảng thì không gửi ai. `data` không có `companyId`, `aggregateId`.
 
 ## Bất biến
 
@@ -45,4 +50,4 @@ Quyền của phân hệ đang tắt không tính. Loại không có trong bản
 - Consumer `instance` chưa dừng được khi tắt (platform chưa export hàm dừng): dừng theo tiến trình. Sửa ở PR dọn dẹp sau đợt.
 - `/metrics` chung cổng với stream; proxy (Caddy #37, Ingress #36) chỉ đưa `/api/v1/notification/stream*` ra ngoài.
 - Không giới hạn số kết nối, không phát lại sự kiện lỡ khi mất mạng hay khi realtime khởi động lại.
-- Test: `test/unit/modules/notification/`, `test/integration/notification/stream.test.ts` (app thật, đọc bằng `fetch`), `kafka.test.ts` (Kafka riêng ~15 s).
+- Test: `test/unit/modules/core/notification/`, `test/integration/core/notification/stream.test.ts` (app thật, đọc bằng `fetch`; ca AC4 parse payload bảy loại bằng schema strict, ca AC5 đi từ service thật qua outbox), `kafka.test.ts` (Kafka riêng ~15 s).

@@ -2,7 +2,8 @@
 // sau mỗi lượt kéo yêu cầu trả (`returnsAwaitingConfirm` → gọi sàn ngoài giao dịch → `markReturnConfirmed`); lần kéo thấy
 // sàn đã qua bước chờ hàng về thì gỡ cờ (`syncExisting` trong `return-ingest.ts`). Cờ nhận ra theo đầu câu, như
 // `UNKNOWN_STATUS_NOTE` của đơn: không thêm cột.
-import { findReturn, findReturnLines, findReturnsWithNote, updateReturnAt } from '../repository/returns.ts';
+import { findReturn, findReturnLines, findReturnsWithNote } from '../repository/returns.ts';
+import { updateReturnShown } from './returns.ts';
 
 export const CONFIRM_FAILED_NOTE = 'Chưa báo được sàn đã nhận hàng';
 
@@ -37,5 +38,5 @@ export async function returnsAwaitingConfirm(shopId: string): Promise<ReturnToCo
 export async function markReturnConfirmed(id: string): Promise<boolean> {
   const row = await findReturn(id, { lock: true });
   if (!row || !row.needsAttention || !isConfirmFailedNote(row.attentionNote)) return false;
-  return updateReturnAt(row.id, row.version, row.status, { needsAttention: false, attentionNote: null });
+  return updateReturnShown(row, { needsAttention: false, attentionNote: null });
 }

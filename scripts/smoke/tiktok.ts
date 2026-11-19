@@ -1,5 +1,5 @@
 // Smoke test TikTok Shop bằng chính adapter của app (#217): link uỷ quyền, đổi code, đọc gian hàng, làm mới, đọc SKU.
-// #221: đơn và kiện (liệt kê, chi tiết, thuộc tính tách, tách, giao). #227: yêu cầu trả, lần huỷ, lý do huỷ (chỉ đọc).
+// #221: đơn và kiện (liệt kê, chi tiết, thuộc tính tách, tách, giao). #239: mã vận đơn của kiện (`package`). #227: yêu cầu trả, lần huỷ, lý do huỷ (chỉ đọc).
 // #226, #219: kho, danh mục, thuộc tính, đẩy tồn, giá, tắt, bật, tải ảnh, tạo sản phẩm.
 // Lệnh ghi (split, ship, push-*, deactivate, activate, create-product) chỉ dùng trên shop thử của nhóm (SANDBOX), đặt lại
 // giá trị cũ sau khi thử. Mỗi lời gọi Open API in path, `code`, `request_id`.
@@ -203,6 +203,18 @@ async function cancelReasons(orderId: string | undefined): Promise<void> {
   printStep('cancelReasons (return_refund/202602/orders/{id}/aftersale_eligibility)', true, await adapter.cancelReasons!(packedFor(saved), orderId, []));
 }
 
+/** Lý do từ chối (Get Decision Eligibility 202601) và lịch sử (Get Return Records 202309) của một yêu cầu trả (#392). Chỉ đọc. */
+async function returnInfo(kind: 'reasons' | 'records', returnId: string | undefined, action: string | undefined): Promise<void> {
+  if (!returnId) throw new Error(kind === 'reasons' ? 'Cú pháp: return-reasons <returnId> [reject|refuse-refund]' : 'Cú pháp: return-records <returnId>');
+  const packed = packedFor(loadTokens<TiktokTokens>('tiktok'));
+  if (kind === 'records') {
+    printStep('returnHistory (return_refund/202309/returns/{id}/records)', true, await adapter.returnHistory!(packed, returnId, []));
+    return;
+  }
+  const which = action === 'refuse-refund' ? 'refuse-refund' : 'reject';
+  printStep('returnReasons ' + which + ' (return_refund/202601/decision_eligibility)', true, await adapter.returnReasons!(packed, returnId, which));
+}
+
 function session(): string {
   const saved = loadTokens<TiktokTokens>('tiktok');
   if (saved.accessExpiresAt && saved.accessExpiresAt * 1000 < Date.now()) console.log(`access token hết hạn từ ${iso(saved.accessExpiresAt)}.`);
@@ -357,6 +369,18 @@ async function ship(packageId: string | undefined, handover: string | undefined)
   printStep('shipPackage (fulfillment/202309/packages/{package_id}/ship)', true, { packageId });
 }
 
+/**
+ * `package <packageId>` (#239 KH-B02, chỉ đọc): mã vận đơn sau Ship Package. In phản hồi gốc của Get Package Detail để
+ * so `shipping_info`, `tracking_number`, rồi kết quả `packageTracking` của adapter.
+ */
+async function packageDetail(packageId: string | undefined): Promise<void> {
+  if (!packageId) throw new Error('Cú pháp: package <packageId>');
+  const packed = session();
+  const raw = await client.call('GET', `/fulfillment/202309/packages/${encodeURIComponent(packageId)}`, { token: packed });
+  console.log(JSON.stringify(raw, null, 2));
+  printStep('packageTracking (fulfillment/202309/packages/{package_id})', true, { packageId, trackingCode: await adapter.packageTracking!(packed, packageId) });
+}
+
 const [command, ...args] = process.argv.slice(2);
 const commands: Record<string, () => Promise<void> | void> = {
   link,
@@ -378,6 +402,9 @@ const commands: Record<string, () => Promise<void> | void> = {
   returns: () => aftersales('returns', args[0]),
   cancellations: () => aftersales('cancellations', args[0]),
   'cancel-reasons': () => cancelReasons(args[0]),
+  // return-reasons <returnId> [reject|refuse-refund], return-records <returnId> (#392, chỉ đọc)
+  'return-reasons': () => returnInfo('reasons', args[0], args[1]),
+  'return-records': () => returnInfo('records', args[0], undefined),
   warehouses,
   categories: () => categories(args[0]),
   attrs: () => attrs(args[0]),
@@ -388,12 +415,14 @@ const commands: Record<string, () => Promise<void> | void> = {
   'upload-image': () => uploadImage(args[0]),
   'create-product': () => createProduct(args[0], args[1], args.slice(2)),
   // orders [số ngày, mặc định 30] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [cách]
+  // | package <kiện> (chỉ đọc)
   orders: () => orders(false, Number(args[0] ?? 30)),
   'open-orders': () => orders(true, 0),
   order: () => order(args[0]),
   'split-attr': () => splitAttr(args[0]),
   split: () => split(args[0], args.slice(1)),
   ship: () => ship(args[0], args[1]),
+  package: () => packageDetail(args[0]),
 };
 const run = command ? commands[command] : undefined;
 if (!run) {
@@ -402,7 +431,8 @@ if (!run) {
       '  attrs <categoryId> | push-stock <sellerSku> <qty> | push-price <sellerSku> <giá> | deactivate <sellerSku> | activate <sellerSku> |\n' +
       '  upload-image <URL ảnh> | create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...] |\n' +
       '  returns [ngày] | cancellations [ngày] | cancel-reasons <orderId> |\n' +
-      '  orders [ngày] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [pickup|drop_off]',
+      '  return-reasons <returnId> [reject|refuse-refund] | return-records <returnId> |\n' +
+      '  orders [ngày] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [pickup|drop_off] | package <kiện>',
   );
   process.exitCode = 1;
 } else {

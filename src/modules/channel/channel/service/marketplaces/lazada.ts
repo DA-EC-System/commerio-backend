@@ -15,6 +15,7 @@ import {
   type Payout,
   partResults,
   type PerSkuResult,
+  type PlatformWarehouse,
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteCounts,
@@ -270,8 +271,61 @@ type LazadaProduct = {
   created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
   images?: unknown;
-  skus?: { SkuId?: unknown; SellerSku?: unknown; Status?: unknown; quantity?: unknown; sellableStock?: unknown; price?: unknown; Images?: unknown }[];
+  skus?: {
+    SkuId?: unknown;
+    SellerSku?: unknown;
+    Status?: unknown;
+    quantity?: unknown;
+    sellableStock?: unknown;
+    /** Tồn theo kho (gọi thật 12/11, 18/11/2026; tài liệu GetProducts không mô tả): `warehouseCode`, `sellableQuantity`… */
+    multiWarehouseInventories?: unknown;
+    price?: unknown;
+    Images?: unknown;
+  }[];
 };
+
+/**
+ * Kho nhận hàng trả của Lazada: `/rc/warehouse/get` trả kho này cùng cờ `defaultAddress` như kho bán (gọi thật 19/11/2026
+ * trên shop thử, request_id 21012a9617950795267112292: `customerreturn` "Preny Test" và `dropshipping` "Dropship" đều
+ * `defaultAddress: true`). Không có trường loại kho, nên nhận theo mã.
+ */
+const LAZADA_RETURN_WAREHOUSE = 'customerreturn';
+/** Kho mặc định khi người bán tự giao (Dropship): đẩy `SellableQuantity` không ghi kho thì Lazada ghi vào kho này (#430). */
+const LAZADA_DROPSHIP_WAREHOUSE = 'dropshipping';
+
+/**
+ * Kho app quản trên Lazada (#430, Thành chốt 19/11/2026: MVP chỉ quản kho mặc định, kho khác người bán dùng việc riêng,
+ * app không đụng). Tài liệu GetWarehouseBySellerId (`/rc/warehouse/get`, open.lazada.com tra 19/11/2026) chỉ ghi "get
+ * warehouse by seller id", không mô tả trường; gọi thật trả `module[]` gồm `code`, `name`, `detailAddress`,
+ * `defaultAddress`, `status`. Chọn kho bán đang dùng có `defaultAddress`; không có thì kho Dropship nếu còn; không thì null.
+ */
+export function lazadaWarehouses(rows: readonly Row[]): PlatformWarehouse[] {
+  const list = rows
+    .filter((w) => str(w.code) !== '' && str(w.status || 'ACTIVE').toUpperCase() === 'ACTIVE')
+    .map((w) => {
+      const code = str(w.code);
+      const kind: PlatformWarehouse['kind'] = code === LAZADA_RETURN_WAREHOUSE ? 'return' : 'sales';
+      return { code, name: str(w.name).trim() || code, address: opt(w.detailAddress), kind, isDefault: w.defaultAddress === true, managed: false };
+    });
+  const sales = list.filter((w) => w.kind === 'sales');
+  const pick = sales.find((w) => w.isDefault) ?? sales.find((w) => w.code === LAZADA_DROPSHIP_WAREHOUSE);
+  return list.map((w) => (w === pick ? { ...w, managed: true } : w));
+}
+
+/**
+ * Số bán được ở kho app quản (#430). SKU có `multiWarehouseInventories`: lấy `sellableQuantity` của đúng kho đó, SKU không
+ * có dòng cho kho đó thì 0 (hàng chỉ nằm ở kho khác, app không quản). Không có mảng kho: `sellableStock` (tổng, gian hàng
+ * một kho). Chưa biết kho app quản (`null`): không trả, lượt này không đối chiếu, thay vì so với tổng mọi kho.
+ */
+function managedSellable(s: NonNullable<LazadaProduct['skus']>[number], warehouse: string | null): number | undefined {
+  const rows = Array.isArray(s.multiWarehouseInventories) ? (s.multiWarehouseInventories as Row[]) : null;
+  if (rows) {
+    if (warehouse === null) return undefined;
+    const row = rows.find((r) => str(r.warehouseCode) === warehouse);
+    return row ? Number(row.sellableQuantity ?? 0) : 0;
+  }
+  return s.sellableStock !== undefined && s.sellableStock !== null ? Number(s.sellableStock) : undefined;
+}
 
 /** URL đầu tiên khác rỗng của `images` (GetProducts): mảng chuỗi hoặc chuỗi JSON của mảng; không có thì null. */
 function firstImage(images: unknown): string | null {
@@ -315,34 +369,41 @@ function skuState(product: RemoteState, status: unknown): RemoteState {
 }
 
 /** `imageUrl` (#282): ảnh đầu tiên của sản phẩm (`images`), sản phẩm không có ảnh thì ảnh đầu của SKU (`skus[].Images`). */
-function skusOf(p: LazadaProduct): RemoteSku[] {
+function skusOf(p: LazadaProduct, warehouse: string | null): RemoteSku[] {
   const { state, rejectReason } = remoteState(p);
   const productImage = firstImage(p.images);
   const createdAt = epochDate(Number(p.created_time));
   const category = p.primary_category == null || p.primary_category === '' ? null : String(p.primary_category);
-  return (p.skus ?? []).map((s) => ({
-    externalProductId: String(p.item_id),
-    externalSkuId: String(s.SkuId),
-    sellerSku: String(s.SellerSku ?? ''),
-    title: String(p.attributes?.name ?? ''),
-    titleEn: typeof p.attributes?.name_en === 'string' && p.attributes.name_en.trim() !== '' ? p.attributes.name_en : null,
-    imageUrl: productImage ?? firstImage(s.Images),
-    state: skuState(state, s.Status),
-    rejectReason,
-    quantity: Number(s.quantity ?? 0),
-    // Số bán được để đối chiếu tồn (#223). Tài liệu GetProducts không định nghĩa trường nào trong `skus`, chỉ ghi tham số
-    // `options`: "This value can be used to get more stock information. e.g., Options=1 means contain ReservedStock,
-    // RtsStock, PendingStock, RealTimeStock, FulfillmentBySellable." (open.lazada.com, tra 12/11/2026). Gọi thật
-    // `options=1` ngày 12/11/2026 trên shop thử (request_id d742e42a17944720668581466), 20 SKU: `quantity` = `Available`
-    // = `sellableStock` = tổng `multiWarehouseInventories[].sellableQuantity` = tổng (`totalQuantity` − `occupyQuantity` −
-    // `withholdQuantity`); 6 SKU có hàng bị đơn chiếm, vd tồn tổng 99, chiếm 2, `sellableStock` 97. App đẩy bằng
-    // UpdateSellableQuantity nên so với `sellableStock`; thiếu trường thì không đối chiếu.
-    ...(s.sellableStock !== undefined && s.sellableStock !== null && { sellableQuantity: Number(s.sellableStock) }),
-    ...(s.price !== undefined && s.price !== null && s.price !== '' && { price: String(s.price) }),
-    ...(createdAt && { createdAt }),
-    ...(category && { externalCategoryId: category }),
-  }));
+  return (p.skus ?? []).map((s) => {
+    const sellable = managedSellable(s, warehouse);
+    return {
+      externalProductId: String(p.item_id),
+      externalSkuId: String(s.SkuId),
+      sellerSku: String(s.SellerSku ?? ''),
+      title: String(p.attributes?.name ?? ''),
+      titleEn: typeof p.attributes?.name_en === 'string' && p.attributes.name_en.trim() !== '' ? p.attributes.name_en : null,
+      imageUrl: productImage ?? firstImage(s.Images),
+      state: skuState(state, s.Status),
+      rejectReason,
+      quantity: Number(s.quantity ?? 0),
+      // Số bán được để đối chiếu tồn (#223). Tài liệu GetProducts không định nghĩa trường nào trong `skus`, chỉ ghi tham số
+      // `options`: "This value can be used to get more stock information. e.g., Options=1 means contain ReservedStock,
+      // RtsStock, PendingStock, RealTimeStock, FulfillmentBySellable." (open.lazada.com, tra 12/11/2026). Gọi thật
+      // `options=1` ngày 12/11/2026 trên shop thử (request_id d742e42a17944720668581466), 20 SKU: `quantity` = `Available`
+      // = `sellableStock` = tổng `multiWarehouseInventories[].sellableQuantity` = tổng (`totalQuantity` − `occupyQuantity` −
+      // `withholdQuantity`); 6 SKU có hàng bị đơn chiếm, vd tồn tổng 99, chiếm 2, `sellableStock` 97. App đẩy bằng
+      // UpdateSellableQuantity. Từ #430 chỉ so số ở kho app quản (`managedSellable`), không so tổng mọi kho: kho khác người
+      // bán dùng việc riêng; so tổng thì app đẩy 46 vào kho mặc định mà sàn vẫn 136, ghi nhầm "Đã đồng bộ" (test đêm 18/11).
+      ...(sellable !== undefined && { sellableQuantity: sellable }),
+      ...(s.price !== undefined && s.price !== null && s.price !== '' && { price: String(s.price) }),
+      ...(createdAt && { createdAt }),
+      ...(category && { externalCategoryId: category }),
+    };
+  });
 }
+
+/** Món xuất từ kho app không quản (#430): bỏ. Món không ghi kho, hoặc chưa biết kho app quản, thì giữ. */
+const fromManagedWarehouse = (warehouse: string | null) => (i: Row) => warehouse === null || !str(i.warehouse_code) || str(i.warehouse_code) === warehouse;
 
 const SELLER_LIMIT_WAIT_MS = 1100;
 // GetOrders: `limit` tối đa 100.
@@ -601,11 +662,18 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
    * thì cả lô; hai API cùng cách báo lỗi ("please check the detail field in the API response").
    */
   async function priceQuantityBatch(accessToken: string, batch: PriceQuantity[], kind: 'price' | 'stock'): Promise<PerSkuResult[]> {
+    // Tồn ghi rõ vào kho app quản (#430), theo mẫu "multi warehouse demo" của tài liệu UpdateSellableQuantity; kho khác không
+    // liệt kê nên không đổi. Chưa biết kho thì gửi `SellableQuantity` trơn (Lazada ghi vào kho mặc định).
+    const warehouse = kind === 'stock' ? await managedWarehouse(accessToken) : null;
+    const stockXml = (q: number) =>
+      warehouse
+        ? `<MultiWarehouseInventories><MultiWarehouseInventory><WarehouseCode>${xml(warehouse)}</WarehouseCode><SellableQuantity>${q}</SellableQuantity></MultiWarehouseInventory></MultiWarehouseInventories>`
+        : `<SellableQuantity>${q}</SellableQuantity>`;
     const skus = batch
       .map(
         (i) =>
           `<Sku><ItemId>${xml(i.externalProductId)}</ItemId><SkuId>${xml(i.externalSkuId)}</SkuId>` +
-          (kind === 'price' ? `<Price>${xml(i.price!)}</Price>` : `<SellableQuantity>${i.quantity}</SellableQuantity>`) +
+          (kind === 'price' ? `<Price>${xml(i.price!)}</Price>` : stockXml(i.quantity!)) +
           '</Sku>',
       )
       .join('');
@@ -636,6 +704,40 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         message: String(d?.message ?? body.message ?? ''),
       };
     });
+  }
+
+  async function warehouseRows(accessToken: string): Promise<Row[]> {
+    const body = await call(config.apiUrl, '/rc/warehouse/get', { access_token: accessToken }, 'GET');
+    const result = (body.result ?? {}) as Row;
+    return Array.isArray(result.module) ? (result.module as Row[]) : [];
+  }
+
+  // Kho app quản theo token (mỗi token một người bán), giữ 10 phút: một lượt đồng bộ gọi một lần, người bán đổi kho mặc
+  // định thì lượt sau theo kho mới. Lỗi không giữ, trả null: lượt đó không đối chiếu tồn, không lọc món, đẩy không ghi kho.
+  // Chỉ tra kho khi dữ liệu sàn có ghi kho: SKU có `multiWarehouseInventories`, món có `warehouse_code`. Gian hàng một
+  // kho không tốn thêm lượt gọi.
+  const warehouseOfProducts = (accessToken: string, products: readonly LazadaProduct[]) =>
+    products.some((p) => p.skus?.some((s) => Array.isArray(s.multiWarehouseInventories) && s.multiWarehouseInventories.length))
+      ? managedWarehouse(accessToken)
+      : Promise.resolve(null);
+  const itemFilter = async (accessToken: string, items: readonly Row[]) =>
+    fromManagedWarehouse(items.some((i) => str(i.warehouse_code)) ? await managedWarehouse(accessToken) : null);
+
+  const warehouseCache = new Map<string, { at: number; code: Promise<string | null> }>();
+  const WAREHOUSE_TTL_MS = 10 * 60_000;
+  function managedWarehouse(accessToken: string): Promise<string | null> {
+    const hit = warehouseCache.get(accessToken);
+    if (hit && Date.now() - hit.at < WAREHOUSE_TTL_MS) return hit.code;
+    const code = warehouseRows(accessToken).then(
+      (rows) => lazadaWarehouses(rows).find((w) => w.managed)?.code ?? null,
+      (err: unknown) => {
+        if (err instanceof MarketplaceError && err.kind === 'unauthorized') throw err;
+        warehouseCache.delete(accessToken);
+        return null;
+      },
+    );
+    warehouseCache.set(accessToken, { at: Date.now(), code });
+    return code;
   }
 
   async function getSeller(accessToken: string): Promise<SellerInfo> {
@@ -726,7 +828,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         throw err;
       });
       const products = (body.data as { products?: LazadaProduct[] } | undefined)?.products ?? [];
-      out.push(...products.flatMap(skusOf).filter((s) => wanted.has(s.sellerSku)));
+      const warehouse = await warehouseOfProducts(accessToken, products);
+      out.push(...products.flatMap((p) => skusOf(p, warehouse)).filter((s) => wanted.has(s.sellerSku)));
     }
     return out;
   }
@@ -1058,14 +1161,18 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     // Lật `offset` (sàn không nói thứ tự khi lọc theo ngày nên không lật theo ngày được); bỏ sản phẩm đã xoá (#198).
     async listSkus(accessToken): Promise<RemoteSku[]> {
-      return (await productsAll(accessToken)).flatMap(skusOf).filter((s) => s.state !== 'deleted');
+      const products = await productsAll(accessToken);
+      const warehouse = await warehouseOfProducts(accessToken, products);
+      return products.flatMap((p) => skusOf(p, warehouse)).filter((s) => s.state !== 'deleted');
     },
     // GetProducts (open.lazada.com, tra 12/11/2026): "update_after String No Limits the returned products to those updated
     // after or on the specified date, given in ISO 8601 date format." Chỉ `filter=all` (không gồm sản phẩm đã xoá, gọi thật
     // 10/11/2026): không gọi thêm `filter=deleted` để giữ hạn mức gọi chung của app (review #309 vòng 2 N2); SKU đã xoá
     // trên sàn rời bản sao ở lần đọc trọn mỗi ngày hoặc khi bấm Tải lại.
     async listSkusChanged(accessToken, since): Promise<RemoteSku[]> {
-      return (await productsChanged(accessToken, since)).flatMap(skusOf);
+      const products = await productsChanged(accessToken, since);
+      const warehouse = await warehouseOfProducts(accessToken, products);
+      return products.flatMap((p) => skusOf(p, warehouse));
     },
     // Tồn trước, giá sau, mỗi loại theo lô 20; SKU có cả hai thì lỗi ở một trong hai là lỗi của SKU (giữ lỗi đầu tiên).
     async updatePriceQuantity(accessToken, items) {
@@ -1126,11 +1233,14 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       const next = page.next ? { status: state.status, inner: page.next } : state.status + 1 < OPEN_STATUSES.length ? fresh(state.status + 1) : null;
       return { orders: page.orders, nextCursor: next && JSON.stringify(next), safeUntil: page.safeUntil };
     },
+    async listWarehouses(accessToken) {
+      return lazadaWarehouses(await warehouseRows(accessToken));
+    },
     async getOrder(accessToken, externalOrderId): Promise<RemoteOrder> {
       const params = { access_token: accessToken, order_id: externalOrderId };
       const o = ((await call(config.apiUrl, '/order/get', params, 'GET')).data ?? {}) as Row;
       const items = ((await call(config.apiUrl, '/order/items/get', params, 'GET')).data ?? []) as Row[];
-      return toRemoteOrder(o, items);
+      return toRemoteOrder(o, items.filter(await itemFilter(accessToken, items)));
     },
     // Theo lô (#267): thông tin đơn lấy từ trang `/orders/get` đã đọc (`detail`), món lấy bằng `/orders/items/get` tối đa
     // 50 đơn mỗi lần (tài liệu GetMultipleOrderItems). Ref không có `detail` thì gọi `/order/get`; đơn sàn không trả món
@@ -1152,7 +1262,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         const own =
           items.get(ref.externalOrderId) ??
           ((await call(config.apiUrl, '/order/items/get', { access_token: accessToken, order_id: ref.externalOrderId }, 'GET')).data ?? []) as Row[];
-        out.push(toRemoteOrder(orders[i]!, own));
+        out.push(toRemoteOrder(orders[i]!, own.filter(await itemFilter(accessToken, own))));
       }
       return out;
     },

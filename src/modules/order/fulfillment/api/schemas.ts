@@ -22,7 +22,7 @@ export const PACKAGE_STATUS = [
   'lost',
   'cancelled',
 ] as const;
-export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'lost_reported', 'pickup_unconfirmed', 'label_error'] as const;
+export const PACKAGE_FLAGS = ['needs_open', 'needs_attention', 'cancel_requested', 'lost_reported', 'pickup_unconfirmed', 'label_error'] as const;
 
 export const ShopRef = z.object({ id: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'OrderShopRef' });
 
@@ -39,7 +39,7 @@ export const PackageSummary = z
     customerName: z.string().nullable(),
     status: z.enum(PACKAGE_STATUS),
     flags: z.array(z.enum(PACKAGE_FLAGS)).meta({
-      description: '`pickup_unconfirmed`: kho quét bàn giao quá 24 giờ mà sàn chưa xác nhận lấy. `label_error`: lần báo sẵn sàng giao gần nhất gặp lỗi từ sàn',
+      description: '`cancel_requested`: khách đang xin huỷ đơn, chờ Sale trả lời; kiện chưa báo sàn sẵn sàng giao được. `pickup_unconfirmed`: kho quét bàn giao quá 24 giờ mà sàn chưa xác nhận lấy. `label_error`: lần báo sẵn sàng giao gần nhất gặp lỗi từ sàn',
     }),
     flagNote: z.string().nullable(),
     notices: z

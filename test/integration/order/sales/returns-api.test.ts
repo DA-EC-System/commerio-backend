@@ -162,10 +162,22 @@ describe('xem yêu cầu trả (§20)', () => {
   });
 });
 
+/** Sự kiện `sales.return_status_changed` của một yêu cầu, theo thứ tự outbox (#216). */
+const statusEvents = async (returnId: string) =>
+  (
+    await testPool().query<{ payload: { from: string | null; to: string } }>(
+      `select payload from core.outbox_messages where type = 'sales.return_status_changed' and payload->>'returnId' = $1 order by id`,
+      [returnId],
+    )
+  ).rows.map((e) => [e.payload.from, e.payload.to]);
+
 describe('thao tác (§20, §20.1)', () => {
   it('chấp nhận: báo sàn kèm mã dòng rồi ghi; lệch version 409; sai trạng thái 409', async () => {
     const r = await seedReturn('requested');
+    const seeded = (await statusEvents(r.id)).length;
     expect((await act(r.id, 'accept', { version: 9 })).body.code).toBe('version_conflict');
+    // #216: 409 vì lệch version → không phát.
+    expect(await statusEvents(r.id)).toHaveLength(seeded);
     const res = await act(r.id, 'accept', { version: 1 }, sale.token);
     expect(res.status).toBe(200);
     expect(ReturnRequest.parse(res.body)).toMatchObject({ status: 'awaiting_return', version: 2 });
@@ -174,6 +186,8 @@ describe('thao tác (§20, §20.1)', () => {
     expect([again.status, again.body.code]).toEqual([409, 'invalid_transition']);
     const history = (await detail(r.id)).statusHistory;
     expect(history.at(-1)).toMatchObject({ from: 'requested', to: 'awaiting_return', source: 'user' });
+    const events = await statusEvents(r.id);
+    expect(events.slice(seeded)).toEqual([['requested', 'awaiting_return']]);
   });
 
   it('từ chối yêu cầu sàn bắt buộc reasonId trong danh sách sàn; lý do cần ảnh thì đòi ảnh', async () => {
@@ -307,9 +321,17 @@ describe('thử lại báo sàn đã nhận hàng (§20.1)', () => {
 
   it('báo sàn lỗi lúc quét thì bật cờ; lượt sau thử lại được thì gỡ cờ, lượt kế không gọi sàn nữa', async () => {
     const r = await scanFailing();
+    // #216 AC6: quét (awaiting_return → received), rồi bật cờ báo sàn (received = received).
+    expect((await statusEvents(r.id)).slice(-2)).toEqual([
+      ['awaiting_return', 'received'],
+      ['received', 'received'],
+    ]);
+    const flagged = (await statusEvents(r.id)).length;
     expect(await retryReturnConfirms(company.companyId, shopId, lazada, 'tok')).toBeGreaterThanOrEqual(1);
     expect(confirmReturnReceived).toHaveBeenCalledWith('tok', r.externalReturnId, ['RL-0', 'RL-1']);
     expect(await flagOf(r.id)).toEqual({ needs_attention: false, attention_note: null });
+    // Gỡ cờ: thêm đúng một sự kiện from = to.
+    expect((await statusEvents(r.id)).slice(flagged)).toEqual([['received', 'received']]);
     confirmReturnReceived.mockClear();
     await retryReturnConfirms(company.companyId, shopId, lazada, 'tok');
     expect(confirmReturnReceived).not.toHaveBeenCalledWith('tok', r.externalReturnId, expect.anything());

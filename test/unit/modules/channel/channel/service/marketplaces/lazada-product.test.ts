@@ -273,18 +273,20 @@ describe('adapter Lazada: sản phẩm', () => {
       quantity: i,
     }));
     const ok = { code: '0', data: {} };
-    const fn = fakeFetch(ok, ok, ok, ok);
+    const fn = fakeFetch(ok, ok, ok, ok, ok);
     const results = await createLazadaAdapter(config, fn).updatePriceQuantity('t', items);
     // Tồn đi UpdateSellableQuantity, giá đi UpdatePriceQuantity (#223), mỗi loại hai lô.
-    expect(fn).toHaveBeenCalledTimes(4);
+    // Lần gọi đầu là danh sách kho (#430); sàn trả rỗng thì tồn gửi SellableQuantity trơn.
+    expect(fn).toHaveBeenCalledTimes(5);
+    expect(sent(fn, 0).path).toBe('/rest/rc/warehouse/get');
     expect(results).toHaveLength(21);
     expect(results.every((r) => r.ok)).toBe(true);
-    expect(sent(fn, 1).path).toBe('/rest/product/stock/sellable/update');
-    expect(sent(fn, 1).body.payload).toBe(
+    expect(sent(fn, 2).path).toBe('/rest/product/stock/sellable/update');
+    expect(sent(fn, 2).body.payload).toBe(
       '<Request><Product><Skus><Sku><ItemId>I20</ItemId><SkuId>S20</SkuId><SellableQuantity>20</SellableQuantity></Sku></Skus></Product></Request>',
     );
-    expect(sent(fn, 3).path).toBe('/rest/product/price_quantity/update');
-    expect(sent(fn, 3).body.payload).toBe(
+    expect(sent(fn, 4).path).toBe('/rest/product/price_quantity/update');
+    expect(sent(fn, 4).body.payload).toBe(
       '<Request><Product><Skus><Sku><ItemId>I20</ItemId><SkuId>S20</SkuId><Price>1000</Price></Sku></Skus></Product></Request>',
     );
   });
@@ -295,6 +297,7 @@ describe('adapter Lazada: sản phẩm', () => {
       { externalProductId: 'I2', externalSkuId: 'S2', quantity: 2 },
     ];
     const fn = fakeFetch(
+      { code: '0', result: { module: [] } },
       {
         code: '501',
         type: 'ISP',

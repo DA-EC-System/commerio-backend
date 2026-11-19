@@ -96,6 +96,16 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
   ] as const)('%s, sàn báo %s → %s', (current, target, action) => {
     expect(syncAction(current, target)).toBe(action);
   });
+
+  it.each([
+    // Đã kiểm hàng và đóng trước khi sàn ghi nhận người bán đã nhận (báo sàn lỗi, đang thử lại): không bật cờ (TRA-B04).
+    ['inspected', null],
+    // Đóng vì khách huỷ hay không gửi hàng mà sàn báo hàng đang về: mâu thuẫn thật.
+    ['buyer_cancelled', 'conflict'],
+    ['no_show', 'conflict'],
+  ] as const)('closed (%s), sàn báo awaiting_return → %s', (closeResult, action) => {
+    expect(syncAction('closed', 'awaiting_return', closeResult)).toBe(action);
+  });
 });
 
 describe('tiền và giá vốn', () => {

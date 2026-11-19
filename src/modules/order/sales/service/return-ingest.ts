@@ -1,10 +1,18 @@
 // Yêu cầu trả từ sàn (#202, Documents/25 §9, Documents/21 §20.1): channel kéo về rồi gọi `ingestMarketplaceReturn` trong
 // `withCompany`; kiểm hàng hoàn xong (`inventory.return_inspected`) thì đóng yêu cầu. Sàn là nguồn của trạng thái yêu cầu
 // trước khi hàng về; app là nguồn của nhận hàng (quét) và kiểm hàng.
-import { Decimal } from 'decimal.js';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { deliverForReturn, packageLinesOfOrderLines } from '../../fulfillment/index.ts';
-import { distributeResell, refundAmountOf, type ReturnStatus, syncAction, syncTarget, weightedUnitCost } from '../domain/return.ts';
+import {
+  changedFields,
+  distributeResell,
+  RETURN_PLATFORM_SHOWN_FIELDS,
+  refundAmountOf,
+  type ReturnStatus,
+  syncAction,
+  syncTarget,
+  weightedUnitCost,
+} from '../domain/return.ts';
 import { lockMarketplaceOrder, takeNextNumber, updateOrder } from '../repository/orders.ts';
 import {
   findMarketplaceReturn,
@@ -15,11 +23,10 @@ import {
   orderLinesByExternal,
   type ReturnPatch,
   type ReturnRow,
-  updateReturnAt,
   updateReturnLine,
 } from '../repository/returns.ts';
 import { isConfirmFailedNote } from './return-confirm.ts';
-import { applyReturnStep } from './returns.ts';
+import { applyReturnStep, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
 export interface PlatformReturn {
@@ -147,24 +154,19 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
     ...platformFields(r),
   });
   if (!created) return undefined;
+  await publishReturnStatusChanged(created, null, created.status);
   await insertReturnLines(rows.map((l) => ({ ...l, companyId: created.companyId, requestId: created.id })));
   // Kiện đang hoàn, thất lạc (hoặc chưa rời kho): cả đơn bật Cần xử lý để đối chiếu với sàn (25 §9). Đơn đã khoá ở trên.
   if (held) await updateOrder(orderId, { needsAttention: true, attentionNote: `Yêu cầu trả ${created.code}: kiện chưa ở trạng thái đã giao, đối chiếu với sàn` });
   return created;
 }
 
-/** Trường khác giá trị đang lưu (tiền so theo số, thời điểm theo mốc): kéo lại không đổi gì thì không ghi, không tăng `version`. */
-function changedFields(row: ReturnRow, patch: ReturnPatch): ReturnPatch {
-  const same = (a: unknown, b: unknown) => {
-    if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
-    if (typeof a === 'string' && typeof b === 'string' && /^-?\d+(\.\d+)?$/.test(a) && /^-?\d+(\.\d+)?$/.test(b)) return new Decimal(a).equals(b);
-    return a === b;
-  };
-  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => !same(row[k as keyof ReturnRow], v))) as ReturnPatch;
-}
-
 /** Trạng thái sàn sau bước chờ hàng về: sàn đã ghi nhận hàng tới người bán. */
 const PAST_AWAITING: readonly ReturnStatus[] = ['received', 'refund_only', 'closed'];
+
+/** Đầu câu cờ khi sàn báo trạng thái app không đi tới được; lượt sau sàn khớp lại thì gỡ (nhận theo đầu câu, không thêm cột). */
+export const CONFLICT_NOTE = 'Sàn báo ';
+const isConflictNote = (note: string | null) => note?.startsWith(CONFLICT_NOTE) ?? false;
 
 /** Đưa yêu cầu tới trạng thái sàn báo nếu máy trạng thái cho phép; không cho thì bật Cần xử lý, giữ trạng thái app. */
 async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIngestOutcome> {
@@ -175,12 +177,18 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   if (row.needsAttention && isConfirmFailedNote(row.attentionNote) && r.status && PAST_AWAITING.includes(r.status)) {
     Object.assign(fields, { needsAttention: false, attentionNote: null });
   }
-  const action = r.status ? syncAction(row.status, r.status) : null;
+  const action = r.status ? syncAction(row.status, r.status, row.closeResult) : null;
   if (action === 'conflict') {
-    const note = `Sàn báo ${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
-    await updateReturnAt(row.id, row.version, row.status, { ...fields, needsAttention: true, attentionNote: note });
+    // Cờ báo sàn đã nhận còn đó thì giữ câu của nó: lượt thử lại tìm yêu cầu theo đầu câu này (`returnsAwaitingConfirm`).
+    const keep = row.needsAttention && isConfirmFailedNote(row.attentionNote) && !('attentionNote' in fields);
+    const note = keep ? row.attentionNote : `${CONFLICT_NOTE}${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
+    const diff = changedFields(row, { ...fields, needsAttention: true, attentionNote: note });
+    if (!Object.keys(diff).length) return 'unchanged';
+    await updateReturnShown(row, diff);
     return 'updated';
   }
+  // Sàn đã khớp lại với app: gỡ cờ mâu thuẫn của lượt trước. Cờ của luồng khác giữ nguyên.
+  if (row.needsAttention && isConflictNote(row.attentionNote)) Object.assign(fields, { needsAttention: false, attentionNote: null });
   if (action) {
     await applyReturnStep(
       row,
@@ -191,9 +199,8 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   }
   const diff = changedFields(row, fields);
   if (!Object.keys(diff).length) return 'unchanged';
-  await updateReturnAt(row.id, row.version, row.status, diff);
-  const shown = ['rawMarketplaceStatus', 'ofcStatus', 'disputeInProgress', 'returnTo', 'returnTrackingCode', 'refundAmount'] as const;
-  return shown.some((k) => k in diff) ? 'updated' : 'unchanged';
+  await updateReturnShown(row, diff);
+  return RETURN_PLATFORM_SHOWN_FIELDS.some((k) => k in diff) ? 'updated' : 'unchanged';
 }
 
 /**

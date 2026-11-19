@@ -76,6 +76,11 @@ async function withPackageEvents({ adapter, accessToken, shopId }: Session, remo
 /** Giao `order` một đơn đã lấy chi tiết và lưu bản gốc trong một giao dịch; hành trình kiện đọc trước, ngoài giao dịch. */
 async function ingestRemote(session: Session, fetched: RemoteOrder, result: PullResult) {
   const { companyId, shopId } = session;
+  // Mọi món xuất từ kho app không quản (#430, adapter đã bỏ): đơn không thuộc app, không nhận.
+  if (!fetched.lines.length) {
+    logger.info({ shopId, externalOrderId: fetched.externalOrderId }, 'bỏ đơn: mọi món xuất từ kho app không quản');
+    return;
+  }
   const remote = await withPackageEvents(session, fetched);
   // #358: món mang mã adapter chưa ánh xạ thì kiện giữ nguyên, đơn bật Cần xử lý; log mã thô để biết sàn vừa trả mã gì.
   const unknown = [...new Set(remote.lines.filter((l) => l.status === null).map((l) => l.rawStatus))];

@@ -261,6 +261,16 @@ export interface RemoteSku {
   price?: string;
 }
 
+/** Một kho của gian hàng trên sàn (#430). `kind`: kho bán hàng hay kho nhận hàng trả; `managed`: kho app quản. */
+export interface PlatformWarehouse {
+  code: string;
+  name: string;
+  address: string | null;
+  kind: 'sales' | 'return';
+  isDefault: boolean;
+  managed: boolean;
+}
+
 export interface PriceQuantity {
   externalProductId: string;
   externalSkuId: string;
@@ -702,6 +712,11 @@ export interface MarketplaceAdapter {
     accessToken: string,
     cursor: string | null,
   ): Promise<{ orders: RemoteOrderRef[]; nextCursor: string | null; safeUntil: Date | null }>;
+  /**
+   * Kho của gian hàng trên sàn (#430): mọi kho sàn trả, đánh dấu kho app quản (`managed`). MVP một kho: app chỉ quản kho
+   * mặc định của gian hàng; kho khác không đọc tồn, không đẩy tồn, không nhận món xuất từ đó. Sàn chỉ có một kho thì không cần.
+   */
+  listWarehouses?(accessToken: string): Promise<PlatformWarehouse[]>;
   /** Một đơn kèm các món (#105). */
   getOrder?(accessToken: string, externalOrderId: string): Promise<RemoteOrder>;
   /**
@@ -784,6 +799,11 @@ export interface MarketplaceAdapter {
   packItems?(accessToken: string, ref: PackageItemsRef & { carrierCode?: string }): Promise<PlatformPack>;
   /** Báo các kiện đã sẵn sàng giao. */
   readyToShip?(accessToken: string, packageCodes: readonly string[]): Promise<void>;
+  /**
+   * Mã vận đơn của kiện trên sàn sau khi báo giao; null khi sàn chưa cấp. Sàn có vận đơn từ lúc đóng gói (Lazada) không
+   * khai (#239 KH-B02).
+   */
+  packageTracking?(accessToken: string, packageCode: string): Promise<string | null>;
   /** Cho phép đóng gói lại một kiện chưa báo giao. */
   repackPackage?(accessToken: string, packageCode: string): Promise<void>;
   /** Mỗi phần tử là một tệp PDF, có thể chứa vận đơn của nhiều kiện. */

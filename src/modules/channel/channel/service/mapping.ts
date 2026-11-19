@@ -18,15 +18,14 @@ import {
   findListingByExternalSku,
   findListingByPendingExternalSku,
   findListingRow,
-  insertListing,
   type ListingPatch,
   type ListingRow,
   liveListingRows,
-  updateListing,
 } from '../repository/listings.ts';
 import { hasOrdersWithSellerSku, variantsBySellerSku } from '../repository/raw-orders.ts';
 import { findRemoteSkuRow, listRemoteSkuRows, type RemoteSkuRow } from '../repository/remote-skus.ts';
 import { lockShopRow, type ShopRow } from '../repository/shops.ts';
+import { insertListing, updateListing } from './listing-writes.ts';
 import { REFRESH_COOLDOWN_MS, RemoteSkusRetryLater, requestRemoteSkusRefresh } from './remote-skus.ts';
 import { type RefreshState, refreshState } from '../domain/remote-skus-refresh.ts';
 import { NO_PENDING } from '../domain/listing.ts';

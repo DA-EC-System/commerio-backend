@@ -3,7 +3,7 @@
 // tên, nhãn của biến thể app mà dòng kiện giữ do `packageVariantsOf` tra một lần cho cả trang (Documents/21 §19.2).
 import { getVariants } from '../../../product/index.ts';
 import { pickupUnconfirmed } from '../domain/handover.ts';
-import { isHandedOver } from '../domain/package.ts';
+import { isHandedOver, PRE_HANDOVER } from '../domain/package.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
 
 /** Dòng đơn mà dòng kiện trỏ tới, đã tính nhãn biến thể như chi tiết đơn. */
@@ -45,6 +45,8 @@ export interface PackageOrderRef {
   paymentMethod: 'prepaid' | 'cod' | null;
   cancelling: boolean;
   platformCancelled: boolean;
+  /** Khách đang xin huỷ trên sàn, chờ Sale trả lời (cờ `cancel_requested` của đơn, #239 KH-B07). */
+  cancelRequested: boolean;
   /** Khoá là `order_line_id`. */
   lines: Map<string, PackageOrderLineRef>;
 }
@@ -108,6 +110,7 @@ export function toPackageSummary(
     flags: [
       ...(p.needsOpen ? (['needs_open'] as const) : []),
       ...(p.needsAttention ? (['needs_attention'] as const) : []),
+      ...(order.cancelRequested && PRE_HANDOVER.includes(p.status) ? (['cancel_requested'] as const) : []),
       ...(p.lostReportedBy && p.status !== 'lost' ? (['lost_reported'] as const) : []),
       ...(p.labelError ? (['label_error'] as const) : []),
       ...(pickupUnconfirmed(p, now) ? (['pickup_unconfirmed'] as const) : []),

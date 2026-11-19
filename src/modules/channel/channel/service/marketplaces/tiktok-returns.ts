@@ -6,8 +6,11 @@
 // - Cancel reasons: https://partner.tiktokshop.com/docv2/page/cancel-reasons
 // - get-aftersale-eligibility-202602, cancel-order-202602, search-cancellations-202602, search-returns-202602,
 //   approve-cancellation-202309, reject-cancellation-202309, get-decision-eligibility-202601
-// - Approve Return 202309, Reject Return 202309, Get Reject Reasons 202309 (OAS cục bộ của skill `tts-openapi-guide`,
-//   tra 19/11/2026): TikTok quyết theo cả `return_id`, không theo từng món.
+// - Approve Return 202309 (OAS cục bộ của skill `tts-openapi-guide`, tra 19/11/2026): TikTok quyết theo cả `return_id`,
+//   không theo từng món.
+// - Reject Return 202606 (docv2 tra 19/11/2026): `reject_reason` bắt buộc, lấy từ Get Decision Eligibility 202601 theo đúng
+//   quyết định; lý do và quyền quyết đổi theo trạng thái yêu cầu nên đọc lại ngay trước khi từ chối.
+// - Get Return Records 202309 (docv2, OAS cục bộ tra 19/11/2026): lịch sử thao tác của yêu cầu, không có trạng thái.
 // Dạng phản hồi đối chiếu gọi thật trên shop thử VN ngày 07/11/2026 (`npm run smoke:tiktok -- returns|cancellations|cancel-reasons`).
 import {
   type MarketplaceAdapter,
@@ -29,10 +32,18 @@ const DECISION_ELIGIBILITY = '/return_refund/202601/decision_eligibility';
 const cancellationAction = (cancelId: string, action: 'approve' | 'reject') =>
   `/return_refund/202309/cancellations/${encodeURIComponent(cancelId)}/${action}`;
 const returnAction = (returnId: string, action: 'approve' | 'reject') =>
-  `/return_refund/202309/returns/${encodeURIComponent(returnId)}/${action}`;
-const REJECT_REASONS = '/return_refund/202309/reject_reasons';
+  action === 'approve'
+    ? `/return_refund/202309/returns/${encodeURIComponent(returnId)}/approve`
+    : `/return_refund/202606/returns/${encodeURIComponent(returnId)}/reject`;
+const returnRecords = (returnId: string) => `/return_refund/202309/returns/${encodeURIComponent(returnId)}/records`;
 
-/** `decision` của Approve Return / Reject Return 202309 mà app dùng. */
+/** Quyết định từ chối của Reject Return 202606 ứng với thao tác của app: từ chối trả hàng, từ chối hoàn tiền (chỉ hoàn tiền). */
+const REJECT_DECISION = { reject: 'REJECT_RETURN', 'refuse-refund': 'REJECT_REFUND' } as const;
+
+/** Vai trò trong Get Return Records. */
+const RECORD_ROLE: Record<string, string> = { BUYER: 'Khách', SELLER: 'Người bán', SYSTEM: 'Hệ thống', PLATFORM: 'Sàn' };
+
+/** `decision` của Approve Return 202309 / Reject Return 202606 mà app dùng. */
 type ReturnDecision = 'APPROVE_RETURN' | 'APPROVE_REFUND' | 'APPROVE_RECEIVED_PACKAGE' | 'REJECT_RETURN' | 'REJECT_REFUND';
 
 /** `page_size` tối đa 50 cho cả Search Returns (10–50) và Search Cancellations (1–50). */
@@ -187,6 +198,7 @@ export function tiktokReturnMethods(
   | 'returnReasons'
   | 'decideReturn'
   | 'confirmReturnReceived'
+  | 'returnHistory'
 > {
   /**
    * Người bán huỷ được những món nào và với lý do gì (Get Aftersale Eligibility, `SELLER`, `CANCEL`). Trả mọi món huỷ được
@@ -238,7 +250,7 @@ export function tiktokReturnMethods(
   }
 
   /**
-   * Approve Return / Reject Return 202309 cho cả yêu cầu. Thử lại cùng quyết định thì sàn nhận là một lần
+   * Approve Return 202309 / Reject Return 202606 cho cả yêu cầu. Thử lại cùng quyết định thì sàn nhận là một lần
    * (`idempotency_key` theo yêu cầu, quyết định và lý do từ chối).
    */
   async function decide(token: string, returnId: string, decision: ReturnDecision, body: Row, reasonId?: string) {
@@ -291,14 +303,20 @@ export function tiktokReturnMethods(
       }
       return ((d.available_reject_reasons ?? []) as Row[]).map((r) => ({ id: str(r.name), label: str(r.text) || str(r.name) })).filter((r) => r.id);
     },
-    async returnReasons(accessToken, externalReturnId) {
-      // Get Reject Reasons trả lý do theo bước hiện tại của yêu cầu: từ chối trả hàng và từ chối hoàn tiền dùng chung.
+    async returnReasons(accessToken, externalReturnId, action) {
+      // Get Decision Eligibility: lý do theo đúng quyết định sẽ gửi (Reject Return 202606), kèm sàn còn cho quyết không.
       // Ảnh minh chứng (`images`) chưa gửi tới khi app lưu ảnh (#212), nên không đánh dấu lý do nào cần ảnh.
-      const data = await client.call<{ reasons?: Row[] }>('GET', REJECT_REASONS, {
+      const decision = REJECT_DECISION[action];
+      const data = await client.call<{ decisions?: Row[] }>('GET', DECISION_ELIGIBILITY, {
         token: accessToken,
-        query: { return_or_cancel_id: externalReturnId, locale: 'vi-VN' },
+        query: { return_or_cancel_id: externalReturnId, check_decisions: decision, locale: 'vi-VN' },
       });
-      return (data?.reasons ?? [])
+      const d = (data?.decisions ?? []).find((x) => x.decision === decision);
+      if (!d || d.eligible !== true) {
+        const fallback = action === 'reject' ? 'Sàn không cho từ chối yêu cầu trả này lúc này' : 'Sàn không cho từ chối hoàn tiền yêu cầu này lúc này';
+        throw new MarketplaceError('rejected', str(d?.ineligible_code) || 'not_rejectable', opt(d?.ineligible_reason) ?? fallback);
+      }
+      return ((d.available_reject_reasons ?? []) as Row[])
         .map((r) => ({ id: str(r.name), label: str(r.text) || str(r.name), requiresImage: false }))
         .filter((r) => r.id);
     },
@@ -314,7 +332,7 @@ export function tiktokReturnMethods(
           ? decide(accessToken, externalReturnId, 'APPROVE_REFUND', {})
           : decide(accessToken, externalReturnId, 'APPROVE_RETURN', { buyer_keep_item: true });
       }
-      // Từ chối bắt buộc lý do của Get Reject Reasons: kiểm trước khi gọi để không tốn lượt.
+      // Từ chối bắt buộc lý do của Get Decision Eligibility: kiểm trước khi gọi để không tốn lượt.
       if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do khi từ chối yêu cầu trả');
       const comment = opts.comment || (refundOnly ? 'Người bán không đồng ý hoàn tiền' : 'Người bán từ chối yêu cầu trả');
       return decide(accessToken, externalReturnId, refundOnly ? 'REJECT_REFUND' : 'REJECT_RETURN', { reject_reason: opts.reasonId, comment }, opts.reasonId);
@@ -322,6 +340,20 @@ export function tiktokReturnMethods(
     async confirmReturnReceived(accessToken, externalReturnId) {
       // Kho quét nhận hàng trả (§20.1): sàn rời BUYER_SHIPPED_ITEM, tới bước hoàn tiền cho khách.
       await decide(accessToken, externalReturnId, 'APPROVE_RECEIVED_PACKAGE', {});
+    },
+    async returnHistory(accessToken, externalReturnId) {
+      // Sàn không trả trạng thái trong lịch sử: `reverseStatus` rỗng như Lazada; `note` ghép người làm, mô tả, lý do, ghi chú
+      // và số ảnh, video đính kèm. Mới nhất trước.
+      const data = await client.call<{ records?: Row[] }>('GET', returnRecords(externalReturnId), { token: accessToken, query: { locale: 'vi-VN' } });
+      return (data?.records ?? [])
+        .map((r) => {
+          const images = Array.isArray(r.images) ? r.images.length : 0;
+          const videos = Array.isArray(r.videos) ? r.videos.length : 0;
+          const role = RECORD_ROLE[str(r.role)] ?? opt(r.role);
+          const parts = [role, opt(r.description), opt(r.reason_text), opt(r.note), images ? `${images} ảnh` : null, videos ? `${videos} video` : null];
+          return { at: unixDate(r.create_time), reverseStatus: '', ofcStatus: null, note: parts.filter(Boolean).join(' · ') || null };
+        })
+        .sort((a, b) => b.at.getTime() - a.at.getTime());
     },
     async listReturns(accessToken, updatedAfter, cursor) {
       const { rows, nextCursor } = await searchPage(SEARCH_RETURNS, 'return_orders', accessToken, updatedAfter, cursor);

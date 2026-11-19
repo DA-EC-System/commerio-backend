@@ -115,16 +115,29 @@ export const STOCK_RECONCILED: readonly ListingStatus[] = ['under_review', 'live
  * biết gần nhất (lần đẩy, hoặc lần đối chiếu trước). `match`: khớp. `push`: sàn cao hơn, đẩy giảm ngay. `wait`: sàn thấp
  * hơn lần đầu, chờ lượt sau (kể cả listing đang Lệch tồn). `drift`: sàn vẫn thấp hơn ở lượt liền sau (số sàn biết trước
  * đó đã thấp hơn số có thể bán): đẩy tăng và bật cờ Lệch tồn (`stock_sync = error`, 21 §18.6.6).
+ *
+ * Sàn cao hơn lần đầu chỉ đẩy giảm (US-GH-08 dòng 3). Sàn vẫn cao hơn ngay sau khi app vừa đẩy đúng số có thể bán và sàn
+ * nhận lệnh (`synced`, `platformStock` = số đó, `lastPushedAt` trong `STUCK_PUSH_MS`) là `drift` (#430): đẩy lại không
+ * làm sàn giảm, ghi "Đã đồng bộ" là sai (test đêm 18/11: Lazada bán tổng hai kho, app đẩy một kho; mỗi lượt đẩy lại 46 mà
+ * sàn vẫn 136). Lúc khớp app không đẩy nên `lastPushedAt` cũ; kẹt thì lượt nào cũng đẩy. Vừa đẩy vì đơn rồi người bán
+ * tăng tồn trên sàn cũng ra `drift` một lượt, lượt sau khớp thì hết cờ. Vẫn đẩy lại mỗi lượt.
  */
 export type StockDecision = 'match' | 'push' | 'wait' | 'drift';
 
+/** Lần đẩy trước còn tính là "lượt liền trước" (hai lượt đồng bộ 15 phút). */
+export const STUCK_PUSH_MS = 30 * 60_000;
+
 export function stockDecision(
-  row: { stockSync: 'synced' | 'pending' | 'error'; platformStock: number | null },
+  row: { stockSync: 'synced' | 'pending' | 'error'; platformStock: number | null; lastPushedAt?: Date | null },
   remote: number,
   available: number,
+  now: Date = new Date(),
 ): StockDecision {
   if (remote === available) return 'match';
-  if (remote > available) return 'push';
+  if (remote > available) {
+    const justPushed = row.lastPushedAt != null && now.getTime() - row.lastPushedAt.getTime() < STUCK_PUSH_MS;
+    return row.stockSync === 'synced' && row.platformStock === available && justPushed ? 'drift' : 'push';
+  }
   if (row.platformStock !== null && row.platformStock < available) return 'drift';
   return 'wait';
 }

@@ -67,13 +67,14 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/packages/documents',
     summary: 'In vận đơn PDF',
-    description: 'Cần `fulfillment.order.process`. Gộp vận đơn 1–50 kiện thành một PDF, tên tệp theo giờ Việt Nam.',
+    description: 'Cần `fulfillment.order.process`. Gộp vận đơn 1–50 kiện thành một PDF, tên tệp theo giờ Việt Nam. In được kiện có mã kiện '
+      + 'sàn và mã vận đơn; thiếu thì 409 `document_not_ready`, liệt kê mã kiện, không gọi sàn.',
     security: bearer,
     request: { query: PackageDocumentsQuery },
     responses: {
       200: { description: 'Tệp vận đơn', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } },
       ...auth, 404: packageMissing,
-      409: problemResponse(`\`document_not_ready\`, \`package_status_not_allowed\`, \`rts_package_not_found\`, ${marketplaceConflict}`),
+      409: problemResponse(`\`document_not_ready\`, \`document_not_supported\` (sàn không cấp vận đơn cho kiện người bán tự giao, Lazada SOF), \`package_status_not_allowed\`, \`rts_package_not_found\`, ${marketplaceConflict}`),
       422: problemResponse('`validation_failed` (đầu vào hoặc tổng tệp quá 50 MB), `marketplace_unsupported`'),
       503: marketplaceUnavailable,
     },
@@ -82,7 +83,8 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     '`order_not_processing`, `package_group_not_ready`, `package_status_not_allowed`, `item_not_packable`',
     '`scan_mismatch` tại `errors["lines.<variantId>"]` hoặc `errors["untrackedLines.<lineId>"]`, `marketplace_unsupported`');
   registerPackingAction(registry, 'ready', ReadyBody, 'Báo kiện sẵn sàng giao',
-    '`self_delivery`, `awaiting_open` (kiện đang có cờ Cần mở hay kiện chờ thay, #238), `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`',
+    '`self_delivery`, `awaiting_open` (kiện đang có cờ Cần mở hay kiện chờ thay, #238), `cancel_requested` (đơn của kiện hay kiện cùng nhóm có khách đang xin huỷ, '
+      + 'kiểm trước khi gọi sàn; không bật `label_error`), `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`',
     '`marketplace_unsupported`');
   registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói (kiện `awaiting_pickup` chỉ khi có cờ Cần mở, giữ vận đơn)',
     '`shop_awaiting_stocktake`, `package_status_not_allowed`', '`insufficient_stock`, `marketplace_unsupported`');

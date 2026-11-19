@@ -8,12 +8,20 @@ import { logger } from '../../../../shared/logger.ts';
 import { type ListingAction, type RemoteState, STALE_PUSH_MS } from '../domain/listing.ts';
 import { permissionOf } from '../domain/product-spec.ts';
 import { sentBaseline, snapshotBaseline } from '../domain/remote-title.ts';
-import { findListingByExternalSku, findListingById, findListingByPendingExternalSku, type ListingPatch, type ListingRow, markCreateAttempted, updateListing } from '../repository/listings.ts';
+import {
+  findListingByExternalSku,
+  findListingById,
+  findListingByPendingExternalSku,
+  type ListingPatch,
+  type ListingRow,
+  markCreateAttempted,
+} from '../repository/listings.ts';
 import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
 import { lastPermissionCheck, upsertPermissions } from '../repository/product-specs.ts';
 import { findShopRow, type ShopRow } from '../repository/shops.ts';
+import { updateListing } from './listing-writes.ts';
 import { currentPrices } from './listing-prices.ts';
 import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
 import { moveListing, pushFailureOf } from './listings.ts';

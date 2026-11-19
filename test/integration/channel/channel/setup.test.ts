@@ -137,6 +137,9 @@ describe('thiết lập lần đầu', () => {
       { entity_type: 'listings', from_state: null, to_state: 'live', action: 'match' },
       { entity_type: 'shops', from_state: 'connecting', to_state: 'active', action: 'finish_setup' },
     ]);
+    // #216 AC7: finish_setup phát channel.shop_status_changed cùng giao dịch.
+    const events = await testPool().query(`select payload from core.outbox_messages where type = 'channel.shop_status_changed' and key = $1 order by id`, [shopId]);
+    expect(events.rows.map((r) => r.payload)).toContainEqual({ shopId, from: 'connecting', to: 'active' });
     // #102 A3: gian hàng vừa active thì có lịch đồng bộ listing và làm mới token.
     const boss = await jobBoss();
     expect(await boss.getSchedules(listingSyncQueue.name, shopId)).toHaveLength(1);

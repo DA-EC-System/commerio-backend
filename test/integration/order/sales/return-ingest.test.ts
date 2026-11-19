@@ -116,6 +116,15 @@ function remoteReturn(externalOrderId: string, patch: Partial<RemoteReturn> = {}
 
 const requestOf = async (externalId: string) =>
   (await db().query(`select * from "order".return_requests where shop_id = $1 and external_return_id = $2`, [shopId, externalId])).rows[0];
+/** Sự kiện `sales.return_status_changed` của một yêu cầu, theo thứ tự outbox (#216). */
+const returnEvents = async (returnId: string) =>
+  (
+    await db().query<{ key: string; payload: Record<string, unknown> }>(
+      `select key, payload from core.outbox_messages where type = 'sales.return_status_changed' and payload->>'returnId' = $1 order by id`,
+      [returnId],
+    )
+  ).rows;
+const statusEvents = async (returnId: string) => (await returnEvents(returnId)).map((e) => e.payload);
 const historyOf = async (id: string) =>
   (await db().query(`select action, source, to_state as to_status from core.state_transitions where entity_type = 'return_requests' and entity_id = $1 order by id`, [id])).rows;
 
@@ -138,11 +147,14 @@ describe('kéo yêu cầu trả từ sàn', () => {
     ]);
     const shop = await db().query(`select last_return_sync_at from channel.shops where id = $1`, [shopId]);
     expect(shop.rows[0].last_return_sync_at).not.toBeNull();
+    // #216 AC6: tạo mới phát một sự kiện null → requested, key là đơn.
+    expect(await returnEvents(row.id)).toEqual([{ key: orderId, payload: { returnId: row.id, orderId, from: null, to: 'requested' } }]);
 
     // Lượt sau kéo từ mốc mới (lùi 2 phút), cùng yêu cầu không tạo lần hai.
     seenSince.length = 0;
     expect(await pullShopReturns(company.companyId, shopId)).toMatchObject({ created: 0 });
     expect(seenSince[0]!.getTime()).toBe(shop.rows[0].last_return_sync_at.getTime() - 2 * 60_000);
+    expect(await returnEvents(row.id)).toHaveLength(1);
   });
 
   it('kéo lại yêu cầu không đổi gì thì không ghi, không tăng version (review #202 mục 9)', async () => {
@@ -154,6 +166,7 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(await pullShopReturns(company.companyId, shopId)).toMatchObject({ unchanged: 1 });
     const after = await requestOf(r.externalId);
     expect([after.version, after.updated_at]).toEqual([before.version, before.updated_at]);
+    expect(await statusEvents(after.id)).toHaveLength(1);
   });
 
   it('sàn đồng ý trả: requested → awaiting_return qua `accept` nguồn sàn; bản cũ hơn bị bỏ', async () => {
@@ -166,10 +179,15 @@ describe('kéo yêu cầu trả từ sàn', () => {
     const row = await requestOf(r.externalId);
     expect(row).toMatchObject({ status: 'awaiting_return', return_tracking_code: 'JNT-VE-1', raw_marketplace_status: 'REFUND_PENDING' });
     expect(await historyOf(row.id)).toEqual([{ action: 'accept', source: 'marketplace', to_status: 'awaiting_return' }]);
+    expect((await statusEvents(row.id)).map((e) => [e.from, e.to])).toEqual([
+      [null, 'requested'],
+      ['requested', 'awaiting_return'],
+    ]);
 
     remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() - 60_000) }];
     expect(await pullShopReturns(company.companyId, shopId)).toMatchObject({ unchanged: 1 });
     expect((await requestOf(r.externalId)).status).toBe('awaiting_return');
+    expect(await statusEvents(row.id)).toHaveLength(2);
   });
 
   it('lần đầu thấy đã hoàn tiền không cần trả hàng: đi tới refund_only, phát `sales.return_refunded`', async () => {
@@ -180,6 +198,11 @@ describe('kéo yêu cầu trả từ sàn', () => {
     const row = await requestOf(r.externalId);
     expect(row).toMatchObject({ status: 'refund_only', refunded: true, ofc_status: 'RETURN_CANCELED' });
     expect((await historyOf(row.id)).map((h) => h.action)).toEqual(['refund_only']);
+    // AC6: tạo khi sàn báo trạng thái khác → hai sự kiện theo thứ tự.
+    expect(await statusEvents(row.id)).toEqual([
+      { returnId: row.id, orderId: row.order_id, from: null, to: 'requested' },
+      { returnId: row.id, orderId: row.order_id, from: 'requested', to: 'refund_only' },
+    ]);
     const event = await db().query(`select payload from core.outbox_messages where type = 'sales.return_refunded' and payload->>'returnRequestId' = $1`, [row.id]);
     expect(Number(event.rows[0].payload.refundAmount)).toBe(64000);
   });
@@ -224,6 +247,82 @@ describe('kéo yêu cầu trả từ sàn', () => {
     const row = await requestOf(r.externalId);
     expect(row).toMatchObject({ status: 'rejected', needs_attention: true, raw_marketplace_status: 'REQUEST_INITIATE' });
     expect(row.attention_note).toContain('REQUEST_INITIATE');
+    // #216 D8: bật Cần xử lý, trạng thái giữ → một sự kiện from = to.
+    const events = await statusEvents(row.id);
+    expect(events.at(-1)).toEqual({ returnId: row.id, orderId: row.order_id, from: 'rejected', to: 'rejected' });
+    const count = events.length;
+
+    // Review Focus 1: lượt kéo sau báo lại cùng trạng thái sàn → không phát thêm.
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 2000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await statusEvents(row.id)).toHaveLength(count);
+  });
+
+  it('sàn chỉ đổi tranh chấp: một sự kiện from = to; chỉ đổi externalUpdatedAt: không phát', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(await statusEvents(row.id)).toHaveLength(1);
+
+    remote = [{ ...r, disputeInProgress: true, updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await requestOf(r.externalId)).dispute_in_progress).toBe(true);
+    expect(await statusEvents(row.id)).toEqual([
+      { returnId: row.id, orderId: row.order_id, from: null, to: 'requested' },
+      { returnId: row.id, orderId: row.order_id, from: 'requested', to: 'requested' },
+    ]);
+
+    const before = await requestOf(r.externalId);
+    remote = [{ ...r, disputeInProgress: true, updatedAt: new Date(Date.now() + 5000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await requestOf(r.externalId)).version).toBeGreaterThan(before.version);
+    expect(await statusEvents(row.id)).toHaveLength(2);
+  });
+
+  it('đã kiểm hàng và đóng mà sàn còn báo hàng đang về (báo sàn chưa xong): giữ closed, không bật cờ (TRA-B04)', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'AWAITING_BUYER_SHIP', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    await db().query(
+      `update "order".return_requests set status = 'closed', close_result = 'inspected', received_at = now()
+        where shop_id = $1 and external_return_id = $2`,
+      [shopId, r.externalId],
+    );
+    remote = [{ ...r, rawStatus: 'BUYER_SHIPPED_ITEM', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'closed', needs_attention: false, attention_note: null });
+  });
+
+  it('cờ báo sàn đã nhận còn đó mà sàn báo trạng thái lệch: giữ câu cờ báo sàn để lượt thử lại còn thấy', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'AWAITING_BUYER_SHIP', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const note = 'Chưa báo được sàn đã nhận hàng: sàn đang bận. App tự thử lại mỗi lượt đồng bộ';
+    await db().query(
+      `update "order".return_requests set status = 'received', received_at = now(), needs_attention = true, attention_note = $3
+        where shop_id = $1 and external_return_id = $2`,
+      [shopId, r.externalId, note],
+    );
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'received', needs_attention: true, attention_note: note });
+  });
+
+  it('mâu thuẫn rồi lượt sau sàn khớp lại: gỡ cờ', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'REQUEST_REJECT', status: 'rejected' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ needs_attention: true });
+    remote = [{ ...r, updatedAt: new Date(Date.now() + 2000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'rejected', needs_attention: false, attention_note: null });
   });
 
   it('kiện còn đang giao khi sàn mở yêu cầu: kiện nhảy tới Đã giao kèm cờ, yêu cầu bật Cần xử lý', async () => {
@@ -382,6 +481,14 @@ describe('kiểm hàng hoàn xong (`inventory.return_inspected`)', () => {
 
     const closed = await requestOf(r.externalId);
     expect(closed).toMatchObject({ status: 'closed', close_result: 'inspected', refunded: true });
+    // #216: received → closed, đứng trước sales.return_refunded trong outbox.
+    const order = await db().query<{ type: string; payload: Record<string, unknown> }>(
+      `select type, payload from core.outbox_messages where key = $1 and type in ('sales.return_status_changed', 'sales.return_refunded') order by id`,
+      [closed.order_id],
+    );
+    const closing = order.rows.findIndex((e) => e.type === 'sales.return_status_changed' && e.payload.to === 'closed');
+    expect(order.rows[closing]!.payload).toEqual({ returnId: row.id, orderId: closed.order_id, from: 'received', to: 'closed' });
+    expect(order.rows[closing + 1]!.type).toBe('sales.return_refunded');
     expect(Number(closed.resell_cost)).toBe(15000);
     const lines = await db().query(`select resell_qty from "order".return_request_lines where request_id = $1 order by external_line_id`, [row.id]);
     expect(lines.rows.map((l) => l.resell_qty).sort()).toEqual([0, 1]);

@@ -10,6 +10,7 @@ import {
   CascadeQuery,
   CategorySuggestionsQuery,
   CategorySuggestionsView,
+  ShopWarehousesView,
   CategorySyncBody,
   ProductSpecBody,
   ProductSpecParams,
@@ -294,6 +295,22 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       404: problemResponse('`not_found`: gian hàng `shopId` không có, của công ty khác hoặc khác sàn'),
       409: problemResponse('`shop_not_connected`: không có gian hàng `active` của sàn; `marketplace_rejected`, `marketplace_unauthorized`'),
       422: problemResponse('`validation_failed` (`errors.code`: không phải attribute cascade đã lưu của leaf); `marketplace_unsupported`: sàn không có cascade'),
+      503: problemResponse('`marketplace_unavailable`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/warehouses',
+    summary: 'Kho của gian hàng trên sàn (#430)',
+    description:
+      'Cần `channel.shop.view`. Gọi sàn mỗi lần (Lazada GetWarehouseBySellerId `/rc/warehouse/get`). MVP một kho: app chỉ quản kho mặc định (`managed`), kho khác người bán dùng việc riêng, app không đọc tồn, không đẩy tồn, không nhận món xuất từ đó. Không có ô chọn kho. Sàn chỉ có một kho bán (TikTok) thì `items: []`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      200: { description: 'Danh sách kho', ...json(ShopWarehousesView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
+      409: problemResponse('`shop_not_connected`; `marketplace_rejected`, `marketplace_unauthorized`'),
       503: problemResponse('`marketplace_unavailable`'),
     },
   });

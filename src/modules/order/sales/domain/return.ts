@@ -56,7 +56,11 @@ export const REFUNDING_ACTIONS: readonly ReturnAction[] = ['refund_only', 'platf
  * Bước máy trạng thái ứng với trạng thái sàn báo (25 §9). null: không đổi (trùng, hoặc `received` chờ kho quét).
  * `'conflict'`: sàn tới trạng thái app không có mũi tên tới (vd đã `closed` mà sàn mở lại), bật cờ Cần xử lý.
  */
-export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnAction | null | 'conflict' {
+export function syncAction(
+  current: ReturnStatus,
+  target: ReturnStatus,
+  closeResult: ReturnCloseResult | null = null,
+): ReturnAction | null | 'conflict' {
   if (current === target) return null;
   // Sàn báo hàng đã về người bán: app chờ kho quét (`receive` chỉ qua quét nhận, §20). Chưa đồng ý thì sàn đã đồng ý
   // thay người bán: đi tới `awaiting_return` (`syncTarget`) bằng bước hệ thống, không gọi lại sàn.
@@ -83,6 +87,9 @@ export function syncAction(current: ReturnStatus, target: ReturnStatus): ReturnA
   // Kho đã quét nhận mà sàn còn báo hàng đang về (TikTok BUYER_SHIPPED_ITEM tới khi sàn ghi nhận người bán đã nhận, #364):
   // app đi trước sàn là luồng thường (tich-hop-san/tiktok.md §2.3), không phải mâu thuẫn.
   if (current === 'received' && target === 'awaiting_return') return null;
+  // Cùng lý do khi app đã kiểm hàng và đóng (`inspected`) trước khi sàn ghi nhận người bán đã nhận (vd báo sàn lỗi, đang thử
+  // lại). Đóng vì khách huỷ hay không gửi hàng mà sàn báo hàng đang về thì mới là mâu thuẫn.
+  if (current === 'closed' && closeResult === 'inspected' && target === 'awaiting_return') return null;
   return 'conflict';
 }
 
@@ -121,4 +128,32 @@ export function distributeResell<L extends { id: string; variantId: string | nul
     if (l.unitCost !== null) cost = cost.plus(new Decimal(l.unitCost).times(take));
   }
   return { perLine, resellCost: cost.toFixed(2) };
+}
+
+/**
+ * Trường của yêu cầu trả hiện trên màn mà không phải trạng thái: một lần ghi đổi trường này (trạng thái giữ) thì phát
+ * `sales.return_status_changed` với `from = to` (#216 D8, Documents/21 §13.2). `externalUpdatedAt` không có ở đây.
+ */
+export const RETURN_SHOWN_FIELDS = [
+  'needsAttention',
+  'attentionNote',
+  'rawMarketplaceStatus',
+  'ofcStatus',
+  'disputeInProgress',
+  'returnTo',
+  'returnTrackingCode',
+  'refundAmount',
+] as const;
+
+/** Phần thông tin sàn của `RETURN_SHOWN_FIELDS` (bỏ cờ Cần xử lý): lượt kéo đổi trường này thì tính là `updated`. */
+export const RETURN_PLATFORM_SHOWN_FIELDS = RETURN_SHOWN_FIELDS.filter((k) => k !== 'needsAttention' && k !== 'attentionNote');
+
+/** Trường khác giá trị đang lưu (tiền so theo số, thời điểm theo mốc): kéo lại không đổi gì thì không ghi, không tăng `version`. */
+export function changedFields<T extends Record<string, unknown>>(row: T, patch: Partial<T>): Partial<T> {
+  const same = (a: unknown, b: unknown) => {
+    if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+    if (typeof a === 'string' && typeof b === 'string' && /^-?\d+(\.\d+)?$/.test(a) && /^-?\d+(\.\d+)?$/.test(b)) return new Decimal(a).equals(b);
+    return a === b;
+  };
+  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => !same(row[k], v))) as Partial<T>;
 }

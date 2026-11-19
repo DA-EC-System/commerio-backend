@@ -22,16 +22,7 @@ import {
 } from '../domain/listing.ts';
 import { platformPriceChanged } from '../domain/outside-price.ts';
 import { holdsStock } from '../domain/shop.ts';
-import {
-  findListingById,
-  type ListingPatch,
-  type ListingRow,
-  listListingRows,
-  markStockPendingIds,
-  markStockPendingRows,
-  setListingCategory,
-  updateListing,
-} from '../repository/listings.ts';
+import { findListingById, type ListingPatch, type ListingRow, listListingRows, setListingCategory } from '../repository/listings.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { markSpecCategory } from '../repository/product-specs.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
@@ -45,6 +36,7 @@ import {
   type PriceQuantity,
   type RemoteSku,
 } from './marketplaces/index.ts';
+import { markStockPendingIds, markStockPendingRows, updateListing } from './listing-writes.ts';
 import { currentPrices } from './listing-prices.ts';
 import { moveListing, pushFailureOf } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';
@@ -520,11 +512,14 @@ async function reconcileStock(
       if (app === undefined) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
       const decision = stockDecision(row, remote, app);
-      if (untrusted.has(row.variantId!) && (decision === 'wait' || decision === 'drift')) continue;
+      if (untrusted.has(row.variantId!) && remote < app) continue;
       if (decision === 'wait') waiting.add(row.id);
       const patch = reconcilePatch(row, decision, remote);
       if (!patch) continue;
-      if (decision === 'drift') logger.warn({ listingId: row.id, remote, available: app }, 'Lệch tồn: sàn thấp hơn số có thể bán hai lượt liền');
+      if (decision === 'drift') {
+        const why = remote > app ? 'Lệch tồn: đã đẩy đúng số mà sàn vẫn cao hơn' : 'Lệch tồn: sàn thấp hơn số có thể bán hai lượt liền';
+        logger.warn({ listingId: row.id, remote, available: app }, why);
+      }
       // Lệch `version` (tồn vừa đổi): bỏ, dòng đã chờ đẩy số mới.
       if (await updateListing(row.id, { version: row.version }, patch)) changed = true;
     }

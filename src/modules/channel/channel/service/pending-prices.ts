@@ -3,8 +3,9 @@
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { recordAudit } from '../../../core/index.ts';
-import { findListingById, type ListingRow, updateListing } from '../repository/listings.ts';
+import { findListingById, type ListingRow } from '../repository/listings.ts';
 import { confirmPending, pendingCalculations, pendingPage } from '../repository/price-calculations.ts';
+import { updateListing } from './listing-writes.ts';
 import { floorView, listingPrices } from './listing-prices.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import { requesterNames, toListing } from './listings.ts';
