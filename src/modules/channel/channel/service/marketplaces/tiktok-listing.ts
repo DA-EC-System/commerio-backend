@@ -248,8 +248,11 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (!filled[id] && value && byId.has(id)) filled[id] = value;
     }
     return Object.entries(filled).map(([id, value]) => {
-      const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
-      return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
+      const values = (Array.isArray(value) ? value : [value]).map((one) => {
+        const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === one);
+        return builtIn ? { id: String(builtIn.id) } : { name: one };
+      });
+      return { id, values };
     });
   }
 

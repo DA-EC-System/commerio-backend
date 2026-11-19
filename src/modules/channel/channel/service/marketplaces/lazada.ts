@@ -53,6 +53,10 @@ type LazadaResponse = Record<string, unknown> & { code?: string; message?: strin
 const TIMEOUT_MS = 10_000;
 /** Thương hiệu khi tạo sản phẩm mà ghép danh mục không có `brand` (createProduct). */
 const DEFAULT_BRAND = 'No Brand';
+
+/** Lazada nhận giá trị multiSelect là chuỗi nối dấu phẩy (#400: spec lưu mảng). */
+const flatAttributes = (attrs: Record<string, string | string[]>): Record<string, string> =>
+  Object.fromEntries(Object.entries(attrs).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v]));
 /** Documents/21 §18.6.3: Lazada duyệt listing, ẩn bằng tắt, tách kiện từng đơn vị, hạn trả tính theo ngày của gian hàng. */
 const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
@@ -889,6 +893,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // Cây và attribute không cần access_token (gọi thật 18/11/2026, request_id 2102e04417950174611345553,
     // 2141336017950174621405931): có token thì vẫn gửi, không có thì chỉ ký app (#400 A4).
     categoriesNeedToken: false,
+    productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
+    defaultBrand: DEFAULT_BRAND,
     async categoryTree(accessToken) {
       const params = { ...(accessToken && { access_token: accessToken }), language_code: 'vi_VN' };
       return lazadaCategoryNodes((await call(config.apiUrl, '/category/tree/get', params, 'GET')).data);
@@ -952,7 +958,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             // (gọi thật 17/11/2026, danh mục 10100278: thiếu thì E500 `brandProp` C006; gửi "No Brand" thì tạo được,
             // request_id 2141336017948496094571739). Bộ ghép danh mục không hỏi brand nên mặc định "No Brand"; ghép có
             // brand thì dùng brand đó. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
-            Attributes: { brand: DEFAULT_BRAND, ...p.attributes, name: p.name, description: p.description },
+            Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
             Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
           },
         },
@@ -973,7 +979,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             ItemId: externalProductId,
             PrimaryCategory: p.externalCategoryId,
             Images: { Image: p.imageUrls },
-            Attributes: { ...p.attributes, ...(await deliveryOptions(accessToken, externalProductId)), name: p.name, description: p.description },
+            Attributes: { ...flatAttributes(p.attributes), ...(await deliveryOptions(accessToken, externalProductId)), name: p.name, description: p.description },
             Skus: { Sku: [{ SkuId: externalSkuId, ...skuPayload(p), Status: 'active' }] },
           },
         },

@@ -8,6 +8,7 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
+import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
@@ -50,6 +51,8 @@ import {
   PlatformCategoriesQuery,
   PlatformLeafParams,
   LeafDetailQuery,
+  ProductSpecBody,
+  ProductSpecParams,
   ShopParams,
   TokenBody,
   ConfirmPriceBody,
@@ -195,6 +198,22 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
       const { shopId } = validated<typeof LeafDetailQuery>(res, 'query');
       res.json(await leafDetail(ctx, actor(res).companyId, platform, externalId, { shopId }));
+    },
+  );
+
+  router.get('/products/:productId/specs/:platform', view, validate({ params: ProductSpecParams }), async (_req, res) => {
+    const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
+    res.json(await getProductSpec(ctx, actor(res).companyId, productId, platform));
+  });
+
+  // Gọi sàn lấy attribute leaf (khi thiếu/cũ) ngoài giao dịch; service tự mở `withCompany` (A16).
+  router.put(
+    '/products/:productId/specs/:platform',
+    manage,
+    validate({ params: ProductSpecParams, body: ProductSpecBody }),
+    async (_req, res) => {
+      const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
+      res.json(await putProductSpec(ctx, actor(res), productId, platform, validated<typeof ProductSpecBody>(res, 'body')));
     },
   );
 

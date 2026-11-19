@@ -1,0 +1,94 @@
+// Spec sàn của sản phẩm cha (#400, Documents/21 §18.5, Documents/19 mục 3.3). Chạy trong `withCompany` của bên gọi (RLS).
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { getDb } from '../../../../shared/db/client.ts';
+import { type Marketplace, productSpecs } from './schema.ts';
+
+export type ProductSpecRow = typeof productSpecs.$inferSelect;
+
+const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+export async function findSpec(productId: string, platform: Marketplace): Promise<ProductSpecRow | undefined> {
+  if (!isUuid(productId)) return undefined;
+  const [row] = await getDb()
+    .select()
+    .from(productSpecs)
+    .where(and(eq(productSpecs.productId, productId), eq(productSpecs.platform, platform)));
+  return row;
+}
+
+/** Spec của nhiều sản phẩm trên một sàn, một câu (request đẩy, bảng listing). */
+export async function specsOf(productIds: readonly string[], platform: Marketplace): Promise<Map<string, ProductSpecRow>> {
+  const ids = [...new Set(productIds)].filter(isUuid);
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select()
+    .from(productSpecs)
+    .where(and(inArray(productSpecs.productId, ids), eq(productSpecs.platform, platform)));
+  return new Map(rows.map((r) => [r.productId, r]));
+}
+
+export type SpecValues = Pick<ProductSpecRow, 'externalCategoryId' | 'attributes' | 'axisMap' | 'valueMap'>;
+
+/** Tạo spec (`PUT` lần đầu: `version = 1`; bản chép: `version = 0`). Đã có dòng thì `undefined`. */
+export async function insertSpec(
+  values: SpecValues & { companyId: string; productId: string; platform: Marketplace; source: ProductSpecRow['source']; version: number },
+): Promise<ProductSpecRow | undefined> {
+  const [row] = await getDb()
+    .insert(productSpecs)
+    .values({ ...values, categoryStatus: 'ok' })
+    .onConflictDoNothing()
+    .returning();
+  return row;
+}
+
+/** Sửa khi còn đúng `version`; `PUT` luôn đặt `source = 'push'`, `categoryStatus = 'ok'`. Không trúng dòng thì `undefined`. */
+export async function updateSpec(
+  productId: string,
+  platform: Marketplace,
+  version: number,
+  patch: SpecValues & Partial<Pick<ProductSpecRow, 'source' | 'categoryStatus'>>,
+  opts: { keepVersion?: boolean } = {},
+): Promise<ProductSpecRow | undefined> {
+  const [row] = await getDb()
+    .update(productSpecs)
+    .set({ ...patch, ...(!opts.keepVersion && { version: sql`${productSpecs.version} + 1` }), updatedAt: sql`now()` })
+    .where(and(eq(productSpecs.productId, productId), eq(productSpecs.platform, platform), eq(productSpecs.version, version)))
+    .returning();
+  return row;
+}
+
+/**
+ * Bản chép (`version = 0`) của các sản phẩm thuộc một danh mục Commerio cập nhật theo ghép danh mục vừa lưu (A18: route cũ
+ * trong khe BE2–BE3). Spec đã lưu qua route mới (`version ≥ 1`) không bị đè.
+ */
+export async function refreshCopiedSpecs(
+  productIds: readonly string[],
+  platform: Marketplace,
+  values: Pick<ProductSpecRow, 'externalCategoryId' | 'attributes'>,
+): Promise<number> {
+  const ids = productIds.filter(isUuid);
+  if (!ids.length) return 0;
+  const rows = await getDb()
+    .update(productSpecs)
+    .set({ ...values, categoryStatus: 'ok', updatedAt: sql`now()` })
+    .where(and(inArray(productSpecs.productId, ids), eq(productSpecs.platform, platform), eq(productSpecs.version, 0)))
+    .returning({ id: productSpecs.id });
+  return rows.length;
+}
+
+/** Ghi category của sàn đọc được lên spec (đồng bộ thấy category đổi): chỉ đổi trạng thái, không tăng `version`. */
+export async function markSpecCategory(
+  productId: string,
+  platform: Marketplace,
+  fromCategory: string,
+  status: ProductSpecRow['categoryStatus'],
+): Promise<boolean> {
+  const rows = await getDb()
+    .update(productSpecs)
+    .set({ categoryStatus: status, updatedAt: sql`now()` })
+    .where(
+      and(eq(productSpecs.productId, productId), eq(productSpecs.platform, platform), eq(productSpecs.externalCategoryId, fromCategory)),
+    )
+    .returning({ id: productSpecs.id });
+  return rows.length > 0;
+}

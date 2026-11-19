@@ -499,6 +499,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Cây, attribute của category theo gian hàng (`shop_cipher` bắt buộc, G2.6; #400 A4).
     categoriesNeedToken: true,
     responsibleFields: RESPONSIBLE_ATTRS,
+    productFields: { '100149': 'originCountry' },
     togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.

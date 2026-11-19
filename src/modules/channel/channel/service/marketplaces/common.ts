@@ -99,7 +99,8 @@ export interface CategoryRules {
 
 export interface NewProduct {
   externalCategoryId: string;
-  attributes: Record<string, string>;
+  /** Giá trị gửi lên sàn theo mã attribute: nhãn lựa chọn (select) hoặc chuỗi tự nhập; multiselect là mảng nhãn (#400). */
+  attributes: Record<string, string | string[]>;
   name: string;
   description: string;
   /** Ảnh đã nằm trên sàn, đúng chuỗi `uploadImage` trả (Lazada URL, TikTok `uri`). */
@@ -127,7 +128,7 @@ export interface ContentUpdate {
   externalCategoryId: string;
   name: string;
   description: string;
-  attributes: Record<string, string>;
+  attributes: Record<string, string | string[]>;
   responsible?: Responsible;
 }
 
@@ -548,6 +549,13 @@ export interface MarketplaceAdapter {
    * attribute → `name` | `address`. Sàn không có thì không khai (#400 AC-5).
    */
   readonly responsibleFields?: Readonly<Record<string, keyof Responsible>>;
+  /**
+   * Attribute `tier = 'product'` lấy từ cột nào của catalog (#400 A1): mã attribute → `originCountry` (đổi mã ISO sang lựa
+   * chọn của sàn, A19) | `brand`. Sàn không có thì không khai.
+   */
+  readonly productFields?: Readonly<Record<string, 'originCountry' | 'brand'>>;
+  /** Thương hiệu gửi khi catalog để trống (Lazada "No Brand"); có thì attribute thương hiệu không bao giờ thiếu. */
+  readonly defaultBrand?: string;
   /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
   categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**

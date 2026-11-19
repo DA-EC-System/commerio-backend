@@ -7,6 +7,9 @@ import {
   CategoryAttributeList,
   CategorySyncResult,
   LeafDetailQuery,
+  ProductSpecBody,
+  ProductSpecParams,
+  ProductSpecView,
   PlatformCategoriesQuery,
   PlatformCategoryPage,
   PlatformLeafDetail,
@@ -253,6 +256,37 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ),
       422: problemResponse('`validation_failed`; `category_not_leaf`; `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm và chưa có bản nào'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/products/:productId/specs/:platform',
+    summary: 'Thông tin sàn của sản phẩm (category, attribute, ánh xạ trục) (#400)',
+    description: 'Cần `channel.shop.view`. `missing` tính theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `missing: []`.',
+    security: bearer,
+    request: { params: ProductSpecParams },
+    responses: {
+      200: { description: 'Spec', ...json(ProductSpecView) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
+      422: problemResponse('`marketplace_unsupported`'),
+    },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/products/:productId/specs/:platform',
+    summary: 'Lưu thông tin sàn của sản phẩm (#400)',
+    description:
+      'Cần `channel.listing.manage`. Attribute của leaf chưa có hoặc quá 7 ngày thì lấy từ sàn trước khi kiểm (TikTok bằng gian hàng `active` đầu tiên). Chỉ lưu `tier = category`; `company` trống hoặc trùng mặc định không lưu; `product` bỏ qua. Ghi nhật ký.',
+    security: bearer,
+    request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ProductSpecBody } } } },
+    responses: {
+      200: { description: 'Spec đã lưu', ...json(ProductSpecView) },
+      ...auth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
+      422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>`, `valueMap.<id>`); `marketplace_unsupported`'),
+      503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
     },
   });
   registry.registerPath({

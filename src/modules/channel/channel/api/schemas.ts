@@ -754,3 +754,47 @@ export const CategorySyncResult = z
   .object({ queued: z.boolean().meta({ description: 'false khi sàn đã có lượt chờ' }) })
   .strict()
   .meta({ id: 'CategorySyncResult' });
+
+// Spec sàn của sản phẩm (#400 lát 8, Documents/21 §18.5).
+export const ProductSpecParams = z.object({ productId: z.string().max(60), platform: z.string().max(40) });
+const specValue = z.union([z.string().trim().max(500), z.array(z.string().trim().max(500)).max(50)]);
+export const ProductSpecBody = z
+  .object({
+    externalCategoryId: z.string('Chọn category của sàn').trim().min(1, 'Chọn category của sàn').max(40),
+    attributes: z.record(z.string().max(60), specValue).default({}),
+    axisMap: z.record(z.string().max(60), z.string().max(60)).default({}),
+    valueMap: z.record(z.string().max(60), z.string().max(60)).default({}),
+    version: z.number().int().nonnegative().nullable().meta({ description: 'null khi tạo mới' }),
+  })
+  .meta({ id: 'ProductSpecInput' });
+export const ProductSpecSchema = z
+  .object({
+    productId: z.uuid(),
+    platform: z.string(),
+    externalCategoryId: z.string(),
+    categoryPath: z.string().nullable(),
+    categoryStatus: z.enum(['ok', 'changed', 'removed']),
+    attributes: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
+    axisMap: z.record(z.string(), z.string()),
+    valueMap: z.record(z.string(), z.string()),
+    source: z.enum(['push', 'match']),
+    version: z.number().int().meta({ description: '0 là bản chép từ ghép danh mục, chưa ai lưu lại' }),
+    updatedAt: iso,
+  })
+  .strict()
+  .meta({ id: 'ProductSpec' });
+export const ProductSpecView = z
+  .object({
+    spec: ProductSpecSchema.nullable(),
+    missing: z.array(
+      z
+        .object({
+          code: z.string(),
+          label: z.string(),
+          reason: z.enum(['required', 'required_when', 'axis_unmapped', 'category_changed', 'category_removed']),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ProductSpecView' });

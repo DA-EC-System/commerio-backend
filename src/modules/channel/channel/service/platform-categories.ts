@@ -128,6 +128,39 @@ export async function leafDetail(
   opts: { shopId?: string; now?: Date } = {},
 ): Promise<LeafDetail> {
   const { platform, adapter } = platformOf(raw);
+  const { category: found, stale } = await ensureLeaf(companyId, platform, adapter, externalId, opts);
+  const category = found;
+  if (!category) throw new AppError(404, 'not_found', 'Không tìm thấy category');
+  const attributes = await leafAttributesOf(platform, externalId);
+  const needOrg = attributes.some((a) => a.tier === 'company');
+  const { products, org } = await withCompany(companyId, async () => ({
+    products: await productsOn(ctx, platform, externalId),
+    org: needOrg ? await responsibleOrgOf(companyId) : null,
+  }));
+  return {
+    category: { ...toCategory(category), sizeChartRule: category.sizeChartRule },
+    attributes: attributes.map(({ raw: _raw, ...a }) => {
+      const field = a.tier === 'company' ? adapter.responsibleFields?.[a.code] : undefined;
+      return { ...a, defaultValue: (field && org?.[field]) || null };
+    }),
+    fetchedAt: category.attributesFetchedAt,
+    stale,
+    products,
+  };
+}
+
+/**
+ * Attribute của leaf còn dùng được (A3, A16): chưa có hoặc quá 7 ngày thì gọi sàn rồi thay cả tập. Gọi sàn lỗi mà bảng còn
+ * bản cũ: `stale`; chưa có bản nào thì ném (sàn lỗi tạm 503). Category `removed` không gọi sàn. Không phải lá: 422. Gọi ngoài
+ * `withCompany` (ghi bảng tham chiếu).
+ */
+export async function ensureLeaf(
+  companyId: string,
+  platform: Marketplace,
+  adapter: MarketplaceAdapter,
+  externalId: string,
+  opts: { shopId?: string; now?: Date } = {},
+): Promise<{ category: CategoryRow | undefined; stale: boolean }> {
   const now = opts.now ?? new Date();
   let category = await findCategory(platform, externalId);
   if (category && !category.isLeaf) throw notLeaf();
@@ -149,23 +182,7 @@ export async function leafDetail(
       stale = true;
     }
   }
-  if (!category) throw new AppError(404, 'not_found', 'Không tìm thấy category');
-  const attributes = await leafAttributesOf(platform, externalId);
-  const needOrg = attributes.some((a) => a.tier === 'company');
-  const { products, org } = await withCompany(companyId, async () => ({
-    products: await productsOn(ctx, platform, externalId),
-    org: needOrg ? await responsibleOrgOf(companyId) : null,
-  }));
-  return {
-    category: { ...toCategory(category), sizeChartRule: category.sizeChartRule },
-    attributes: attributes.map(({ raw: _raw, ...a }) => {
-      const field = a.tier === 'company' ? adapter.responsibleFields?.[a.code] : undefined;
-      return { ...a, defaultValue: (field && org?.[field]) || null };
-    }),
-    fetchedAt: category.attributesFetchedAt,
-    stale,
-    products,
-  };
+  return { category, stale };
 }
 
 /** Sản phẩm của công ty có spec trỏ tới leaf, mã và tên lấy qua `getVariants({ productIds })` (A13). */
