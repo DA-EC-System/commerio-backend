@@ -99,7 +99,13 @@ export const orders = salesSchema.table(
     needsAttention: boolean('needs_attention').notNull().default(false),
     attentionNote: text('attention_note'),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
-    cancelling: boolean('cancelling').notNull().default(false),
+    // Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của
+    // API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`).
+    cancelPending: boolean('cancel_pending').notNull().default(false),
+    // Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image (job migrate
+    // chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột bằng nhau, code
+    // mới không đọc, không ghi. PR sau bỏ trigger và cột.
+    legacyCancelling: boolean('cancelling').notNull().default(false),
     platformCancelled: boolean('platform_cancelled').notNull().default(false),
     shopDisconnected: boolean('shop_disconnected').notNull().default(false),
     shippingAddress: jsonb('shipping_address'),
@@ -134,6 +140,8 @@ export const orders = salesSchema.table(
       'orders_marketplace_ref',
       sql`${t.source} <> 'marketplace' or (${t.shopId} is not null and ${t.externalOrderId} is not null)`,
     ),
+    // CHECK `orders_cancel_pending_open`, `orders_cancel_requested_open` (cờ chờ sàn chỉ bật khi đơn còn mở, DH-B03) thêm ở
+    // PR bỏ cột `cancelling`: image cũ còn chạy lúc đổi image không gỡ `cancel_requested` khi hoàn tất, sẽ vướng CHECK.
   ],
 );
 
@@ -157,6 +165,9 @@ export const orderLines = salesSchema.table(
     quantity: integer('quantity').notNull(),
     /** Số món sàn đã huỷ khi kiện chứa món chưa rời kho; chỉ luồng nhận đơn ghi (spec 205 §5.10). */
     cancelledQty: integer('cancelled_qty').notNull().default(0),
+    // Lúc app ghi huỷ món theo sàn báo (#417), cho lịch sử đơn: vì sao tiền lúc đặt khác tiền còn thu. Null với món chưa huỷ
+    // và món huỷ trước #417.
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     unitPrice: money('unit_price').notNull(),
     sellerDiscount: money('seller_discount').notNull().default('0'),
     platformDiscount: money('platform_discount').notNull().default('0'),
@@ -187,6 +198,7 @@ export const orderLines = salesSchema.table(
     index().on(t.variantId),
     check('order_lines_quantity', sql`${t.quantity} > 0`),
     check('order_lines_cancelled_qty', sql`${t.cancelledQty} >= 0 and ${t.cancelledQty} <= ${t.quantity}`),
+    check('order_lines_cancelled_at', sql`${t.cancelledAt} is null or ${t.cancelledQty} > 0`),
     check('order_lines_unit_price', sql`${t.unitPrice} >= 0`),
     check('order_lines_item', sql`${t.variantId} is not null or ${t.externalSku} is not null`),
     check('order_lines_untracked', sql`not ${t.stockUntracked} or ${t.variantId} is null`),

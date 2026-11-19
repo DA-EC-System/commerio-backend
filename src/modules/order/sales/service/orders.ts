@@ -2,13 +2,14 @@
 import { Decimal } from 'decimal.js';
 import { findAccountSummaries, getStatusHistory } from '../../../core/index.ts';
 import { getVariants } from '../../../product/index.ts';
-import { findPackagesOfOrders, type PackageOrderRef, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
+import { findPackagesOfOrders, type PackageOrderRef, packageVariantsOf, type PackageViewRow, toPackageSummary } from '../../fulfillment/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
 import { policyOf, returnPoliciesFor } from './return-policy.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import {
+  cancelInitiatorsOf,
   codUnconfirmed,
   completionBlocker,
   isDueSoon,
@@ -116,6 +117,7 @@ function flagsOf(o: OrderViewRow, f: Facts, now: number): OrderFlag[] {
   if (o.needsAttention) flags.push('needs_attention');
   if (f.unmapped) flags.push('unmapped_sku');
   if (o.cancelRequested) flags.push('cancel_requested');
+  // Suy ra (`cancellingSql`): lệnh huỷ chờ sàn, hoặc còn kiện chờ mở vì món đã huỷ.
   if (o.cancelling) flags.push('cancelling');
   if (o.platformCancelled) flags.push('platform_cancelled');
   if (open && isDueSoon(isoOrNull(o.shipBy), statuses, now)) flags.push('due_soon');
@@ -181,7 +183,10 @@ export function packageOrderRef(o: OrderViewRow, lines: readonly OrderLineRow[],
     lines: new Map(
       lines
         .filter((l) => l.orderId === o.id)
-        .map((l) => [l.id, { sku: l.sku ?? l.externalSku ?? '', productName: l.productName, attributesLabel: attributesOf(l, labels) }]),
+        .map((l) => [
+          l.id,
+          { sku: l.sku ?? l.externalSku ?? '', productName: l.productName, attributesLabel: attributesOf(l, labels), externalSku: l.externalSku },
+        ]),
     ),
   };
 }
@@ -247,21 +252,24 @@ export async function getOrder(ctx: SalesContext, id: string) {
   ]);
   const f = facts.get(id)!;
   const reporters = [...new Set(f.packages.flatMap((p) => (p.lostReportedBy ? [p.lostReportedBy] : [])))];
-  const [labels, accounts] = await Promise.all([
+  const [labels, accounts, packageVariants] = await Promise.all([
     variantLabels(lines.map((l) => l.variantId)),
     // Tên người báo thất lạc của mọi kiện, một câu (spec #238 §5.3); đơn không có báo cáo thì không truy vấn.
     findAccountSummaries(reporters),
+    // Biến thể app mà dòng kiện giữ (Documents/21 §19.2), một câu cho mọi kiện của đơn.
+    packageVariantsOf(f.packages),
   ]);
   const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   const now = Date.now();
   const base = summary(o, f, shops, labels, now);
   const lastDelivered = lastDeliveredAt(f.packages);
-  // Đơn đã dừng trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12); đơn chưa trả: không có hạn.
+  // Đơn đã hoàn tất trả hạn đã lưu lúc hoàn tất, không tính lại theo cấu hình mới (#236 D12). Đơn chưa trả, đơn đã huỷ:
+  // không có hạn (đơn đi qua cờ Đang huỷ có thể còn mốc sàn báo `CANCELLED` ghi lúc còn xử lý, #236 PR 2).
   const endsAt = open
     ? returnWindowEndsAt(policyOf(policies, o.shopId), lastDelivered, o.returnWindowEndsAt)
-    : o.status === 'unpaid'
-      ? null
-      : o.returnWindowEndsAt;
+    : o.status === 'completed'
+      ? o.returnWindowEndsAt
+      : null;
   const blocker = open
     ? completionBlocker({
         packages: f.packages.map((p) => p.status),
@@ -290,6 +298,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
     note: '',
     buyerNote: o.buyerNote,
     cancelReason: o.cancelReason,
+    cancelInitiators: cancelInitiatorsOf(lines),
     invoiceNumber: o.invoiceNumber,
     lines: lines.map((l) => ({
       id: l.id,
@@ -299,6 +308,8 @@ export async function getOrder(ctx: SalesContext, id: string) {
       productName: l.productName,
       attributesLabel: attributesOf(l, labels),
       quantity: l.quantity,
+      cancelledQty: l.cancelledQty,
+      cancelledAt: isoOrNull(l.cancelledAt),
       unitPrice: toInt(l.unitPrice),
       lineTotal: toInt(l.lineTotal),
       externalSku: l.externalSku,
@@ -315,7 +326,7 @@ export async function getOrder(ctx: SalesContext, id: string) {
       reverseOrderId: l.reverseOrderId,
       returnStatus: l.returnStatus,
     })),
-    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, names)),
+    packages: f.packages.map((p) => toPackageSummary(p, packageOrderRef(o, lines, labels), base.shop, now, packageVariants, names)),
     returnWindowEndsAt: isoOrNull(endsAt),
     completionBlocker: blocker,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),

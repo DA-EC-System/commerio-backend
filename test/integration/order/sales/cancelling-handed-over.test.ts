@@ -11,7 +11,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive } from '../../product/inventory/helpers.ts';
-import { packageRow } from '../fulfillment/helpers.ts';
+import { CANCELLING_SQL, packageRow } from '../fulfillment/helpers.ts';
 import { ingest, remote, withStatus } from '../fulfillment/platform-fixtures.ts';
 
 const app = () => request(testApp());
@@ -30,7 +30,7 @@ beforeAll(async () => {
 const orderRow = async (id: string) =>
   (
     await testPool().query<{ status: string; outcome: string | null; cancelling: boolean; platform_cancelled: boolean }>(
-      'select status, outcome, cancelling, platform_cancelled from "order".orders where id = $1',
+      `select status, outcome, ${CANCELLING_SQL} as cancelling, platform_cancelled from "order".orders where id = $1`,
       [id],
     )
   ).rows[0]!;

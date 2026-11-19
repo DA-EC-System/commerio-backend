@@ -54,6 +54,14 @@ export const DisconnectBody = z
   })
   .meta({ id: 'ShopDisconnectInput' });
 
+/** Xoá gian hàng đã ngắt (#398): gõ đúng `XOA` để chặn gọi nhầm từ script hay client khác, không chỉ dựa vào FE. */
+export const ShopDeleteBody = z
+  .object({
+    confirm: z.literal('XOA', { error: 'Gõ đúng XOA để xác nhận xoá' }),
+    version: z.number('Thiếu version').int().positive(),
+  })
+  .meta({ id: 'ShopDeleteInput' });
+
 
 // Schema trả về: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1).
 const iso = z.iso.datetime();
@@ -183,6 +191,65 @@ export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
 }).meta({ id: 'ShopDisconnectConflict' });
 
 export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChangeSchema) }).meta({ id: 'ShopDetail' });
+
+const count = z.number().int().min(0);
+
+/** 200 của xoá gian hàng (#398): số dòng đã xoá theo nhóm để FE báo lại. */
+export const ShopDeleteResult = z
+  .object({
+    deleted: z
+      .object({
+        orders: count,
+        orderLines: count,
+        returnRequests: count,
+        returnRequestLines: count,
+        packages: count,
+        packageLines: count,
+        returnParcels: count,
+        listings: count,
+        priceCalculations: count,
+        rawOrders: count,
+        remoteSkus: count,
+        stockDocuments: count.meta({ description: 'Phiếu kho nháp, chờ duyệt của gian hàng' }),
+        configVersions: count,
+        orderSettlements: count,
+        reportRows: count,
+        messageChannels: count,
+      })
+      .strict(),
+    detached: z
+      .object({ stockDocuments: count.meta({ description: 'Phiếu kho đã ghi sổ (từ chối, huỷ) giữ lại, cắt `shop_id`, thêm ghi chú' }) })
+      .strict(),
+  })
+  .strict()
+  .meta({ id: 'ShopDeleteResult' });
+
+/** Số dòng dữ liệu tiền theo nhóm, có nhóm > 0 thì không xoá được gian hàng (#398). */
+export const FinanceDataCountsSchema = z
+  .object({
+    ledgerEntries: count,
+    ledgerPackageLines: count,
+    settlementStatements: count,
+    settlementBatches: count,
+    orderSettlements: count.meta({ description: 'Đối soát theo đơn khác `none`' }),
+    documents: count.meta({ description: 'Hoá đơn, phiếu thu, phiếu chi của đơn gian hàng' }),
+    payments: count.meta({ description: 'Trạng thái tiền, mã thanh toán, giao dịch cổng của đơn gian hàng' }),
+  })
+  .strict()
+  .meta({ id: 'ShopFinanceData' });
+
+/**
+ * 409 của xoá gian hàng: `shop_not_disconnected`, `version_conflict` kèm `current`; `shop_has_finance_data` kèm
+ * `financeData`; `shop_has_open_inspection` kèm `documents`.
+ */
+export const ShopDeleteConflict = ProblemDetailsSchema.extend({
+  current: Shop.optional().meta({ description: '`shop_not_disconnected`, `version_conflict`: gian hàng hiện tại' }),
+  financeData: FinanceDataCountsSchema.optional().meta({ description: 'Chỉ có với `shop_has_finance_data`' }),
+  documents: z
+    .array(z.object({ id: z.uuid(), number: z.string() }).strict())
+    .optional()
+    .meta({ description: 'Chỉ có với `shop_has_open_inspection`: phiếu kiểm hàng hoàn chưa ghi sổ đã cộng chờ xử lý' }),
+}).meta({ id: 'ShopDeleteConflict' });
 
 export const ShopList = z.object({ items: z.array(Shop) }).strict().meta({ id: 'ShopList' });
 
@@ -679,3 +746,82 @@ export const UpdateShopBody = z
   })
   .strict()
   .meta({ id: 'ShopUpdateInput' });
+
+// Category và attribute của sàn (#400, Documents/21 §18.5).
+/** Mã category của Lazada, TikTok đều là số (gọi thật #400 G2.1); chặn chuỗi khác để không ghi dòng rác vào bảng chung. */
+const categoryId = z.string().regex(/^\d{1,20}$/, 'Mã category không hợp lệ');
+export const PlatformLeafParams = z.object({ platform: z.string().max(40), externalId: categoryId });
+export const PlatformCategoriesQuery = z
+  .object({
+    search: z
+      .string()
+      .trim()
+      .min(2, 'Nhập ít nhất 2 ký tự')
+      .max(100)
+      .optional()
+      .meta({ description: 'Tìm leaf `active` theo đường dẫn (bỏ dấu); ưu tiên hơn `parentId`' }),
+    parentId: categoryId.optional().meta({ description: 'Con trực tiếp; không gửi cả hai là cấp gốc' }),
+  })
+  .meta({ id: 'PlatformCategoriesQuery' });
+export const LeafDetailQuery = z
+  .object({
+    shopId: z.uuid('Gian hàng không hợp lệ').optional().meta({ description: 'Gian hàng đang mở trang đẩy (sàn cần token, TikTok)' }),
+  })
+  .meta({ id: 'PlatformLeafQuery' });
+
+const platformCategoryShape = {
+  externalId: z.string(),
+  parentExternalId: z.string().nullable(),
+  name: z.string(),
+  path: z.string().meta({ description: 'Tên từ gốc nối " > "' }),
+  isLeaf: z.boolean(),
+  status: z.enum(['active', 'removed']),
+};
+export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
+export const PlatformCategoryPage = z
+  .object({
+    items: z.array(PlatformCategory),
+    syncedAt: iso.nullable().meta({ description: 'Lần đồng bộ cây gần nhất; null khi sàn chưa có dòng nào' }),
+  })
+  .strict()
+  .meta({ id: 'PlatformCategoryPage' });
+
+export const PlatformAttribute = z
+  .object({
+    code: z.string().meta({ description: 'Lazada `name`, TikTok id attribute' }),
+    label: z.string(),
+    kind: z.enum(['sales', 'property']),
+    input: z.enum(['select', 'multiselect', 'text', 'number', 'date', 'image', 'cascade']),
+    options: z.array(z.object({ id: z.string(), label: z.string() }).strict()),
+    allowCustom: z.boolean().meta({ description: 'Được nhập giá trị ngoài `options`' }),
+    required: z.boolean(),
+    requiredWhen: z
+      .array(z.object({ code: z.string(), optionIds: z.array(z.string()) }).strict())
+      .nullable()
+      .meta({ description: 'Bắt buộc khi attribute `code` có một trong `optionIds` (id lựa chọn)' }),
+    isKey: z.boolean(),
+    tier: z
+      .enum(['category', 'product', 'company'])
+      .meta({ description: '`product`: cột của catalog (xuất xứ, thương hiệu); `company`: hồ sơ công ty' }),
+    defaultValue: z.string().nullable().meta({ description: 'Giá trị từ hồ sơ công ty cho `tier = company`; còn lại null' }),
+  })
+  .strict()
+  .meta({ id: 'PlatformAttribute' });
+
+export const PlatformLeafDetail = z
+  .object({
+    category: z.object({ ...platformCategoryShape, sizeChartRule: z.enum(['required', 'optional', 'unsupported']).nullable() }).strict(),
+    attributes: z.array(PlatformAttribute),
+    fetchedAt: iso.nullable().meta({ description: 'Lúc lấy attribute từ sàn; quá 7 ngày thì lần mở sau lấy lại' }),
+    stale: z.boolean().meta({ description: 'Sàn lỗi (hoặc không có gian hàng để gọi) nên trả bản cũ' }),
+    products: z
+      .array(z.object({ productId: z.uuid(), code: z.string(), name: z.string(), source: z.enum(['push', 'match']) }).strict())
+      .meta({ description: 'Sản phẩm của công ty có spec trỏ tới leaf, tối đa 200 dòng (cũ trước)' }),
+  })
+  .strict()
+  .meta({ id: 'PlatformLeafDetail' });
+
+export const CategorySyncResult = z
+  .object({ queued: z.boolean().meta({ description: 'false khi sàn đã có lượt chờ' }) })
+  .strict()
+  .meta({ id: 'CategorySyncResult' });

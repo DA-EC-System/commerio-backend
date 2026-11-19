@@ -91,14 +91,14 @@ export function lastDeliveredAt(packages: readonly { deliveredAt: Date | null }[
 
 /**
  * Hết hạn trả của đơn đang xử lý; null khi chưa kiện nào giao (điều kiện hạn trả không áp).
- * PR 1 #236: sàn `platform_status` tạm tính như `days` 7 ngày (D13); `stored` chưa dùng,
- * PR 2 #236 đọc cột đã lưu cho nhánh `platform_status`.
+ * Sàn `days`: mốc giao của kiện giao cuối + số ngày của gian hàng (7 khi chưa nhập).
+ * Sàn `platform_status` (TikTok): mốc sàn báo hết quyền trả đã lưu (`stored`, nhận đơn ghi một lần); sàn chưa báo thì
+ * null, đơn có kiện đã giao chưa hoàn tất, không có hạn dự phòng theo ngày (#236 D8).
  */
 export function returnWindowEndsAt(policy: ReturnPolicy, lastDelivered: Date | null, stored: Date | null): Date | null {
-  void stored;
   if (!lastDelivered) return null;
-  const days = policy.returnWindow === 'days' ? (policy.returnWindowDays ?? DEFAULT_RETURN_WINDOW_DAYS) : DEFAULT_RETURN_WINDOW_DAYS;
-  return new Date(lastDelivered.getTime() + days * DAY_MS);
+  if (policy.returnWindow === 'platform_status') return stored;
+  return new Date(lastDelivered.getTime() + (policy.returnWindowDays ?? DEFAULT_RETURN_WINDOW_DAYS) * DAY_MS);
 }
 
 export interface CodPackage {
@@ -135,6 +135,39 @@ export function completionBlocker(i: CompletionInput): CompletionBlocker | null 
   if (i.openReturnRequests > 0) return 'return_requested';
   if (i.codUnconfirmed) return 'cod_unconfirmed';
   return null;
+}
+
+export type CancelInitiator = 'buyer' | 'seller' | 'platform';
+const CANCEL_INITIATOR_ORDER: readonly CancelInitiator[] = ['buyer', 'seller', 'platform'];
+/** Lý do cấp đơn khi sàn tự huỷ mà không món nào ghi người, lý do. */
+export const PLATFORM_CANCEL_REASON = 'Sàn huỷ đơn';
+
+/**
+ * Người đã huỷ món của đơn (Documents/21 §19.1 `cancelInitiators`): mỗi dòng đã huỷ (`cancelledQty > 0`) mang người huỷ
+ * do adapter sàn chuẩn hoá; đơn chỉ tổng hợp, không lưu riêng. Không trùng, thứ tự cố định buyer, seller, platform.
+ */
+export function cancelInitiatorsOf(
+  lines: readonly { cancelledQty: number; cancelInitiator: CancelInitiator | null }[],
+): CancelInitiator[] {
+  const seen = new Set(lines.filter((l) => l.cancelledQty > 0 && l.cancelInitiator).map((l) => l.cancelInitiator));
+  return CANCEL_INITIATOR_ORDER.filter((c) => seen.has(c));
+}
+
+/**
+ * Lý do huỷ cấp đơn khi sàn huỷ cả đơn mà đơn chưa có lý do (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi trước): **mọi**
+ * món đã huỷ cùng một lý do khác rỗng thì lấy lý do đó; không món nào có lý do lẫn người huỷ thì "Sàn huỷ đơn"; còn lại
+ * (nhiều lý do, có món không lý do, có người huỷ mà không lý do) thì để trống, lý do ở từng dòng. Trả `undefined` khi
+ * không ghi.
+ */
+export function orderCancelReasonFromLines(
+  lines: readonly { cancelledQty: number; cancelReason: string | null; cancelInitiator: CancelInitiator | null }[],
+): string | undefined {
+  const cancelled = lines.filter((l) => l.cancelledQty > 0);
+  const reasons = cancelled.map((l) => l.cancelReason?.trim() || null);
+  const [first] = reasons;
+  if (first && reasons.every((r) => r === first)) return first;
+  if (reasons.every((r) => r === null) && !cancelled.some((l) => l.cancelInitiator)) return PLATFORM_CANCEL_REASON;
+  return undefined;
 }
 
 /** Kết quả khi hoàn tất, tính trên kiện chưa huỷ. */

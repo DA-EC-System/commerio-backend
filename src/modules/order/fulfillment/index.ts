@@ -50,12 +50,14 @@ export { findPackagesOfOrders, type PackageViewRow } from './repository/packages
 export { PackageSummary, ScanLines, ShopRef, StatusChange } from './api/schemas.ts';
 // Số kho quét lúc nhận hàng về (21 §15.3): sales dùng chung cho `/returns/receive`.
 export { mergeReceiveLines, type ReceiveLine, type ScanLine } from './domain/delivery.ts';
-export { type PackageOrderLineRef, type PackageOrderRef, toPackageSummary } from './service/views.ts';
+export { type PackageOrderLineRef, type PackageOrderRef, type PackageVariantRef, packageVariantsOf, toPackageSummary } from './service/views.ts';
 export type { FulfillmentContext } from './service/packages.ts';
 // Hàm bù cho #198 (phiếu kiểm kê đầu kỳ ghi sổ) và dòng ghép SKU muộn cho #237; chạy trong `withCompany` của bên gọi.
 export { settleDeferredHandovers, shipLateMappedLines } from './service/handover-stock.ts';
 // Xếp lượt phân hàng cho #237 (ghép xong SKU), #239 (dỡ kiện về kệ); chạy trong `withCompany` của bên gọi.
 export { requestAllocation } from './service/allocation.ts';
+/** Xoá gian hàng đã ngắt (#398): channel xoá kiện của đơn gian hàng, nhả giữ hàng; chạy trước `purgeShopOrders`. */
+export { type OrderPackagesPurge, purgeOrderPackages, type ShopOrderRefs } from './service/shop-purge.ts';
 // Cho channel (#198 phần 2): gọi trong giao dịch thoát chờ kiểm kê, sau khi đặt `openingStocktake = null` (spec 199b §5.5).
 export { settleOpeningStocktake } from './service/allocation.ts';
 // Cho finance (E139, spec 199c §5.6): trạng thái kiện theo id, chạy trong `withCompany` của bên gọi.

@@ -115,6 +115,12 @@ function remote(status: PlatformOrder['lines'][number]['status'], o: Partial<Pla
     ...o,
   };
 }
+/** Đơn hai món, mã món `-1`, `-2` (thứ tự dòng theo mã món). */
+function twoLines(status: PlatformOrder['lines'][number]['status'], o: Partial<PlatformOrder> = {}): PlatformOrder {
+  const r = remote(status, o);
+  r.lines.push({ ...structuredClone(r.lines[0]!), externalLineId: `${r.externalOrderId}-2` });
+  return r;
+}
 const ingest = (o: PlatformOrder) => withCompany(company.companyId, () => ingestMarketplaceOrder(o));
 const detail = async (id: string) => Order.parse((await auth(app().get(`/api/v1/sales/orders/${id}`))).body);
 const post = (path: string, body?: object, token?: string) => auth(app().post(`/api/v1/sales/orders/${path}`), token).send(body);
@@ -157,7 +163,7 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     expect(res.status).toBe(200);
     expect(res.body.pendingOpen).toBe(1);
     const order = Order.parse(res.body.order);
-    expect(order).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng' });
+    expect(order).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng', cancelInitiators: [] });
     expect(order.flags).toContain('cancelling');
     expect(cancelOrder).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, [o.lines[0]!.externalLineId], '10000007');
 
@@ -177,6 +183,81 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     await ingest(confirmed);
     const after = await detail(orderId);
     expect(after.packages[0]!.flags).toContain('needs_open');
+    // Sàn xác nhận huỷ không ghi đè người và lý do Sale đã chọn (DH-B06); cờ Đang huỷ còn theo kiện chờ mở.
+    expect(after).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng', cancelInitiators: [] });
+    expect(after.flags).toContain('cancelling');
+  });
+
+  it('sàn đã huỷ mọi món, kiện đã đóng còn chờ mở: không gửi huỷ lần hai (cancel-reasons, platform-cancel 409)', async () => {
+    const o = remote('packed');
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
+    expect(res.status).toBe(200);
+    const confirmed = structuredClone(o);
+    confirmed.lines[0]!.status = 'cancelled';
+    await ingest(confirmed);
+    const after = await detail(orderId);
+    expect(after.flags).toContain('cancelling');
+    cancelReasons.mockClear();
+    cancelOrder.mockClear();
+
+    const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`));
+    expect(reasons.status).toBe(409);
+    expect(reasons.body.code).toBe('invalid_transition');
+    const again = await post(`${orderId}/platform-cancel`, { version: after.version, reasonId: '10000009' });
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('invalid_transition');
+    expect(cancelReasons).not.toHaveBeenCalled();
+    expect(cancelOrder).not.toHaveBeenCalled();
+    expect(await detail(orderId)).toMatchObject({ cancelReason: 'Hết hàng', version: after.version });
+  });
+
+  it('cột cũ cancelling ghi kèm theo cancel_pending (image cũ còn chạy lúc đổi image đọc cột này)', async () => {
+    const o = remote('pending');
+    const { orderId } = await ingest(o);
+    const columns = async () => (await testPool().query(`select cancelling, cancel_pending from "order".orders where id = $1`, [orderId])).rows[0];
+    await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
+    expect(await columns()).toEqual({ cancelling: true, cancel_pending: true });
+    const confirmed = structuredClone(o);
+    confirmed.lines[0]!.status = 'cancelled';
+    await ingest(confirmed);
+    expect(await columns()).toEqual({ cancelling: false, cancel_pending: false });
+  });
+
+  it('đơn có món đã huỷ: lý do huỷ và lệnh huỷ chỉ gửi món chưa huỷ', async () => {
+    const o = twoLines('pending');
+    o.lines[0]!.status = 'cancelled';
+    const { orderId } = await ingest(o);
+    const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`));
+    expect(reasons.status).toBe(200);
+    expect(cancelReasons).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, [o.lines[1]!.externalLineId]);
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
+    expect(res.status).toBe(200);
+    expect(cancelOrder).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, [o.lines[1]!.externalLineId], '10000007');
+  });
+
+  it('sàn mới huỷ một món của lệnh huỷ cả đơn: đơn vẫn Đang huỷ, không gửi lại được; sàn huỷ hết thì cancelled', async () => {
+    const o = twoLines('pending');
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
+    expect(res.status).toBe(200);
+
+    const oneCancelled = structuredClone(o);
+    oneCancelled.lines[0]!.status = 'cancelled';
+    await ingest(oneCancelled);
+    const mid = await detail(orderId);
+    expect(mid).toMatchObject({ status: 'processing', display: { stage: 'cancelling' }, cancelReason: 'Hết hàng' });
+    expect(mid.flags).toContain('cancelling');
+    const again = await post(`${orderId}/platform-cancel`, { version: mid.version, reasonId: '10000007' });
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('invalid_transition');
+
+    const allCancelled = structuredClone(oneCancelled);
+    allCancelled.lines[1]!.status = 'cancelled';
+    await ingest(allCancelled);
+    const after = await detail(orderId);
+    expect(after).toMatchObject({ status: 'cancelled', cancelReason: 'Hết hàng' });
+    expect(after.flags).not.toContain('cancelling');
   });
 
   it('lý do không có trong danh sách sàn: 422 errors.reasonId, không gọi huỷ', async () => {
@@ -231,7 +312,63 @@ describe('khách xin huỷ (§19.3)', () => {
     const order = Order.parse(res.body);
     expect(order.flags).toEqual(expect.arrayContaining(['cancelling']));
     expect(order.flags).not.toContain('cancel_requested');
+    expect(order).toMatchObject({ cancelInitiators: [], cancelReason: 'Khách xin huỷ' });
     expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, true, undefined);
+  });
+
+  it('DH-B06: đồng ý khách xin huỷ thì lý do huỷ của đơn là lý do khách ghi trên sàn', async () => {
+    const o = remote('pending', { cancelRequested: true });
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Muốn đổi địa chỉ' };
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'accept' });
+    expect(res.status).toBe(200);
+    expect(Order.parse(res.body)).toMatchObject({ cancelInitiators: [], cancelReason: 'Muốn đổi địa chỉ' });
+    // Sàn huỷ ở lượt sau: không ghi đè thành "Sàn huỷ đơn".
+    const confirmed = structuredClone(o);
+    confirmed.cancelRequested = false;
+    confirmed.lines[0]!.status = 'cancelled';
+    confirmed.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Muốn đổi địa chỉ', cancelKind: 'cancellation' };
+    await ingest(confirmed);
+    const after = await detail(orderId);
+    expect(after).toMatchObject({ status: 'cancelled', cancelInitiators: ['buyer'], cancelReason: 'Muốn đổi địa chỉ' });
+    expect(after.flags).not.toContain('cancelling');
+  });
+
+  it('DH-B06: đồng ý khách xin huỷ phần còn lại lấy lý do của món đang xin, không lấy lý do cũ của món đã huỷ', async () => {
+    const o = twoLines('pending', { cancelRequested: true });
+    o.lines[0]!.status = 'cancelled';
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đặt nhầm', cancelKind: 'cancellation' };
+    o.lines[1]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Giao chậm' };
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'accept' });
+    expect(res.status).toBe(200);
+    const order = Order.parse(res.body);
+    expect(order).toMatchObject({ cancelReason: 'Giao chậm' });
+    expect(order.flags).toContain('cancelling');
+  });
+
+  it('khách xin huỷ chỉ một phần món (Lazada): đồng ý là huỷ dòng, đơn không Đang huỷ, không ghi lý do cấp đơn', async () => {
+    const o = twoLines('pending', { cancelRequested: true });
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý' };
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'accept' });
+    expect(res.status).toBe(200);
+    expect(decideCancelRequest).toHaveBeenCalledWith(expect.any(String), o.externalOrderId, true, undefined);
+    const order = Order.parse(res.body);
+    expect(order).toMatchObject({ status: 'processing', cancelReason: null });
+    expect(order.flags).not.toContain('cancelling');
+    expect(order.flags).not.toContain('cancel_requested');
+
+    // Sàn huỷ món khách xin: đơn chạy tiếp, Sale vẫn huỷ được phần còn lại.
+    const confirmed = structuredClone(o);
+    confirmed.cancelRequested = false;
+    confirmed.lines[0]!.status = 'cancelled';
+    confirmed.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    await ingest(confirmed);
+    const after = await detail(orderId);
+    expect(after).toMatchObject({ status: 'processing', cancelReason: null, cancelInitiators: ['buyer'] });
+    expect(after.flags).not.toContain('cancelling');
+    expect((await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`))).status).toBe(200);
   });
 
   it('từ chối: báo sàn, bỏ cờ, đơn chạy tiếp', async () => {

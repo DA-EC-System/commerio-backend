@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { createTiktokAdapter } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
 import { pullOpenOrders } from '#src/modules/channel/channel/service/order-pull.ts';
+import { completeDueOrdersOnce } from '#src/modules/order/index.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -155,5 +157,56 @@ describe('kéo đơn TikTok qua order-pull (#221)', () => {
     expect(got.rows.map((r) => r.external_order_id)).toEqual(['T0', 'T1']);
     const shop = await testPool().query(`select open_orders_pulled_at is not null as pulled from channel.shops where id = $1`, [shopId]);
     expect(shop.rows[0].pulled).toBe(true);
+  });
+});
+
+// #236 PR 2 (AC 14, D14): adapter báo mốc hết quyền trả khi đơn `COMPLETED`/`CANCELLED`, nhận đơn ghi một lần, việc tự
+// hoàn tất đọc mốc đó. Kéo bằng route (lượt đơn mở không lấy `DELIVERED`).
+describe('hết quyền trả TikTok (#236 PR 2)', () => {
+  const DAY = 86_400_000;
+  const pull = () => auth(request(testApp()).post(`/api/v1/channel/shops/${shopId}/orders/pull`));
+  const orderOf = async (externalOrderId: string) =>
+    (
+      await testPool().query(`select id, status, outcome, return_window_ends_at from "order".orders where shop_id = $1 and external_order_id = $2`, [
+        shopId,
+        externalOrderId,
+      ])
+    ).rows[0];
+  /** Lùi mốc giao của kiện về 30 ngày trước rồi chạy việc hoàn tất theo giờ thật. */
+  async function ageAndComplete(orderId: string) {
+    await testPool().query(`update "order".packages set delivered_at = $2 where order_id = $1 and delivered_at is not null`, [
+      orderId,
+      new Date(Date.now() - 30 * DAY),
+    ]);
+    await completeDueOrdersOnce(new Date(), createModuleContext());
+  }
+
+  it('AC14: lượt kéo thấy COMPLETED ghi mốc = update_time; job chạy thì completed, outcome full', async () => {
+    orders = [order('TC', 'DELIVERED', '2026-11-08T09:00:00Z', sku, 'PK-C', 'PK-C')];
+    expect((await pull()).status).toBe(200);
+    expect(await orderOf('TC')).toMatchObject({ status: 'processing', return_window_ends_at: null });
+
+    orders = [order('TC', 'COMPLETED', '2026-11-15T09:00:00Z', sku, 'PK-C', 'PK-C')];
+    await pull();
+    const o = await orderOf('TC');
+    expect(o.return_window_ends_at).toEqual(new Date('2026-11-15T09:00:00Z'));
+
+    await ageAndComplete(o.id);
+
+    expect(await orderOf('TC')).toMatchObject({ status: 'completed', outcome: 'full', return_window_ends_at: new Date('2026-11-15T09:00:00Z') });
+  });
+
+  it('D14: đơn CANCELLED trên sàn mà kiện đã giao → mốc = update_time, job hoàn tất (không kẹt return_window)', async () => {
+    orders = [order('TX', 'DELIVERED', '2026-11-16T09:00:00Z', sku, 'PK-X', 'PK-X')];
+    await pull();
+    // Món giữ `display_status` DELIVERED (kiện đã giao), đơn sang CANCELLED.
+    orders = [{ ...order('TX', 'DELIVERED', '2026-11-17T09:00:00Z', sku, 'PK-X', 'PK-X'), status: 'CANCELLED' }];
+    await pull();
+    const o = await orderOf('TX');
+    expect(o).toMatchObject({ status: 'processing', return_window_ends_at: new Date('2026-11-17T09:00:00Z') });
+
+    await ageAndComplete(o.id);
+
+    expect((await orderOf('TX')).status).toBe('completed');
   });
 });

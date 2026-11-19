@@ -31,9 +31,14 @@ export function asManual<T>(fn: () => Promise<T>): Promise<T> {
   return store.run({ companyId: store.getStore()?.companyId ?? null, background: false }, fn);
 }
 
-/** Chạy `fn` với lời gọi sàn tính vào phần của `companyId`; giữ cờ việc nền của ngữ cảnh ngoài. */
+/**
+ * Chạy `fn` với lời gọi sàn tính vào phần của `companyId`; giữ cờ việc nền và cờ `appOnly` của ngữ cảnh ngoài (lượt đồng
+ * bộ cây category mượn phiên `shopSession` của một gian hàng, lớp bọc token gắn `forCompany` bên trong: vẫn chỉ tính trần
+ * chung, #400 A4).
+ */
 export function forCompany<T>(companyId: string, fn: () => T): T {
-  return store.run({ companyId, background: store.getStore()?.background ?? false }, fn);
+  const outer = store.getStore();
+  return store.run({ companyId, background: outer?.background ?? false, ...(outer?.appOnly && { appOnly: true }) }, fn);
 }
 
 /**

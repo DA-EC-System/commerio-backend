@@ -114,6 +114,32 @@ describe('GET /sales/orders (#105)', () => {
     expect(second.items).toHaveLength(1);
   });
 
+  it('lọc flag=cancelling theo cờ suy ra: lệnh huỷ chờ sàn, sàn huỷ cả đơn còn kiện chờ mở; huỷ một món, đơn đã huỷ không tính (DH-B03, KH-B09)', async () => {
+    const own = await createCompany();
+    const tag = randomUUID().slice(0, 6);
+    const add = (o: PlatformOrder) => withCompany(own.companyId, () => ingestMarketplaceOrder(o));
+    const two = (id: string) => [
+      { variantId: null, status: 'packed' as const, pkg: `FP-${id}-${tag}` },
+      { variantId: null, status: 'packed' as const, pkg: `FP-${id}-${tag}` },
+    ];
+    // Kiện hai món đã đóng, sàn huỷ một món: kiện chờ mở (`edit`), đơn chạy tiếp, không Đang huỷ (25 §8.3 Huỷ dòng).
+    const partialOrder = order(`P-${tag}`, two('P'));
+    await add(partialOrder);
+    await add({ ...partialOrder, lines: partialOrder.lines.map((l, i) => (i === 0 ? { ...l, status: 'cancelled' as const } : l)) });
+    // Kiện hai món đã đóng, sàn huỷ cả hai: kiện chờ mở để huỷ, đơn Đang huỷ (25 §8.2).
+    const wholeOrder = order(`W-${tag}`, two('W'));
+    const whole = (await add(wholeOrder)).orderId;
+    await add({ ...wholeOrder, lines: wholeOrder.lines.map((l) => ({ ...l, status: 'cancelled' as const })) });
+    const pending = (await add(order(`Q-${tag}`, [{ variantId: null, status: 'pending', pkg: `FP-Q-${tag}` }]))).orderId;
+    await testPool().query(`update "order".orders set cancel_pending = true where id = $1`, [pending]);
+    await add(order(`R-${tag}`, [{ variantId: null, status: 'pending', pkg: `FP-R-${tag}` }]));
+    const res = await app().get('/api/v1/sales/orders?flag=cancelling').set('Authorization', `Bearer ${own.ceo.token}`);
+    expect(res.status).toBe(200);
+    const page = OrderSummaryPage.parse(res.body);
+    expect(page.items.map((i) => i.id).sort()).toEqual([whole, pending].sort());
+    for (const i of page.items) expect(i.flags).toContain('cancelling');
+  });
+
   it('cờ có yêu cầu trả: lọc theo yêu cầu trả còn mở, yêu cầu đã đóng không tính', async () => {
     const insert = (status: string, close: string | null) =>
       testPool().query(
@@ -295,7 +321,8 @@ describe('thông tin đơn sàn ở danh sách và chi tiết (#260)', () => {
       shippingProviderType: 'standard',
       promisedShippingAt: null,
     });
-    expect(o.packages[0]!.lines[0]).toMatchObject({ attributesLabel: 'Màu: Đỏ' });
+    // Dòng kiện đã ghép hiện nhãn của biến thể app (21 §19.2); biến thể app không có thuộc tính thì dùng `variation` của sàn.
+    expect(o.packages[0]!.lines[0]).toMatchObject({ attributesLabel: 'Màu: Đỏ', externalSku: expect.any(String), untracked: false });
   });
 
   it('thứ tự dòng theo mã món sàn: …9 trước …10 ở chi tiết và dòng đầu của danh sách', async () => {
@@ -467,7 +494,7 @@ describe('báo cáo thất lạc của kiện ở chi tiết đơn (#238 §5.3)'
 describe('hạn trả theo gian hàng (#236)', () => {
   const DAY = 86_400_000;
   let co: Awaited<ReturnType<typeof createCompany>>;
-  let shop15: string;
+  let shop15: string, tiktok: string;
 
   beforeAll(async () => {
     co = await createCompany({ optionalModules: ['channel'] });
@@ -477,6 +504,12 @@ describe('hạn trả theo gian hàng (#236)', () => {
       [co.companyId, `s-${randomUUID().slice(0, 8)}`],
     );
     shop15 = r.rows[0]!.id;
+    const t = await testPool().query<{ id: string }>(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at)
+       values ($1, 'tiktok', $2, 'Shop TikTok', 'active', now()) returning id`,
+      [co.companyId, `t-${randomUUID().slice(0, 8)}`],
+    );
+    tiktok = t.rows[0]!.id;
   });
 
   /**
@@ -484,10 +517,14 @@ describe('hạn trả theo gian hàng (#236)', () => {
    * file khác chạy song song theo giờ thật (`complete.test.ts`, `lost.test.ts`): `prepare` ghi điều kiện chặn (yêu cầu
    * trả, cột COD, trạng thái) trước khi lùi mốc giao, để đơn không lúc nào vừa qua hạn trả vừa chưa bị chặn.
    */
-  async function deliveredOrder(daysAgo: number, prepare?: (orderId: string) => Promise<unknown>): Promise<{ orderId: string; deliveredAt: Date }> {
+  async function deliveredOrder(
+    daysAgo: number,
+    prepare?: (orderId: string) => Promise<unknown>,
+    shopId = shop15,
+  ): Promise<{ orderId: string; deliveredAt: Date }> {
     const tag = randomUUID().slice(0, 8);
     const { orderId } = await withCompany(co.companyId, () =>
-      ingestMarketplaceOrder(order(`R-${tag}`, [{ variantId: null, status: 'delivered', pkg: `FP-R-${tag}` }], { shopId: shop15 })),
+      ingestMarketplaceOrder(order(`R-${tag}`, [{ variantId: null, status: 'delivered', pkg: `FP-R-${tag}` }], { shopId })),
     );
     await prepare?.(orderId);
     const deliveredAt = new Date(Date.now() - daysAgo * DAY);
@@ -513,6 +550,27 @@ describe('hạn trả theo gian hàng (#236)', () => {
 
     expect(body.completionBlocker).toBe('return_window');
     expect(body.returnWindowEndsAt).toBe(new Date(deliveredAt.getTime() + 15 * DAY).toISOString());
+  });
+
+  it('AC13: gian hàng TikTok, giao 30 ngày trước, sàn còn DELIVERED → return_window, returnWindowEndsAt null', async () => {
+    const { orderId } = await deliveredOrder(30, undefined, tiktok);
+
+    const body = await detail(orderId);
+
+    expect(body.status).toBe('processing');
+    expect(body.completionBlocker).toBe('return_window');
+    expect(body.returnWindowEndsAt).toBeNull();
+  });
+
+  it('đơn đã huỷ trả returnWindowEndsAt null dù cột có mốc sàn báo lúc còn cờ Đang huỷ (review PR 2)', async () => {
+    // Sàn huỷ đơn còn kiện chờ mở: đơn processing cờ Đang huỷ nhận mốc CANCELLED; kho mở kiện xong thì đơn sang cancelled.
+    const { orderId } = await deliveredOrder(1, undefined, tiktok);
+    await testPool().query(`update "order".orders set status = 'cancelled', return_window_ends_at = now() - interval '1 day' where id = $1`, [orderId]);
+
+    const body = await detail(orderId);
+
+    expect(body.status).toBe('cancelled');
+    expect(body.returnWindowEndsAt).toBeNull();
   });
 
   it('D1-W (US-DH-16 2, AC7): qua hạn trả mà còn yêu cầu trả requested → việc hoàn tất bỏ qua, chi tiết đơn return_requested', async () => {

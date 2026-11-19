@@ -5,6 +5,12 @@ import {
   AuthorizeUrlQuery,
   CallbackBody,
   CategoryAttributeList,
+  CategorySyncResult,
+  LeafDetailQuery,
+  PlatformCategoriesQuery,
+  PlatformCategoryPage,
+  PlatformLeafDetail,
+  PlatformLeafParams,
   ChannelListing,
   DelistBody,
   UpdateContentBody,
@@ -37,6 +43,9 @@ import {
   CategoryParams,
   CategorySearchQuery,
   DisconnectBody,
+  ShopDeleteBody,
+  ShopDeleteConflict,
+  ShopDeleteResult,
   UpdateShopBody,
   PlatformCategoryList,
   PlatformParams,
@@ -195,6 +204,27 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     },
   });
 
+  registry.registerPath({
+    method: 'delete',
+    path: '/shops/:id',
+    summary: 'Xoá gian hàng đã ngắt (#398)',
+    description:
+      'Cần `channel.shop.disconnect` và vai trò CEO (403 trước 422). Body `confirm` phải đúng chuỗi `XOA`. Kiểm theo thứ tự, dừng ở lỗi đầu: 404 `not_found` → 409 `shop_not_disconnected` (chỉ xoá gian hàng `disconnected`) → 409 `version_conflict` → 409 `shop_has_finance_data` (còn sổ tiền, dòng hàng sổ, bảng kê, lần đối soát, đối soát theo đơn khác `none`, chứng từ hay dòng thanh toán của đơn; kèm `financeData`). Còn phiếu kiểm hàng hoàn nháp, chờ duyệt đã cộng chờ xử lý (kho đã quét): 409 `shop_has_open_inspection` kèm `documents`, ghi sổ phiếu rồi xoá lại. Việc nền của gian hàng giữ khoá quá 3 giây: 409 `shop_busy`. Xoá trong một giao dịch đơn, kiện (nhả hàng đang giữ), yêu cầu trả, kiện trả lạc, listing, lần tính giá, đơn gốc, SKU sàn, thư báo uỷ quyền, cấu hình phí, đối soát `none`, số liệu theo ngày, hộp thư; phiếu kho nháp, chờ duyệt xoá, phiếu đã ghi sổ giữ (`shop_id` null, thêm ghi chú). Không xoá lịch sử trạng thái, nhật ký thao tác, thẻ kho. Ghi một dòng nhật ký `delete` `channel.shops`.',
+    security: bearer,
+    request: { params: ShopParams, body: json(ShopDeleteBody) },
+    responses: {
+      200: { description: 'Số dòng đã xoá, đã tách theo nhóm', ...json(ShopDeleteResult) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không có, của công ty khác, hoặc id sai dạng'),
+      409: {
+        description:
+          '`shop_not_disconnected`, `version_conflict` kèm `current` là gian hàng; `shop_has_finance_data` kèm `financeData`; `shop_has_open_inspection` kèm `documents`; `shop_busy`',
+        content: { 'application/problem+json': { schema: ShopDeleteConflict } },
+      },
+      422: problemResponse('`validation_failed`: `errors.confirm` khi không gõ đúng `XOA`, `errors.version`'),
+    },
+  });
+
   const onShop = {
     ...auth,
     404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
@@ -202,6 +232,53 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
     503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm, thử lại'),
   };
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/categories',
+    summary: 'Cây category của sàn (#400)',
+    description:
+      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc.',
+    security: bearer,
+    request: { params: PlatformParams, query: PlatformCategoriesQuery },
+    responses: {
+      200: { description: 'Category', ...json(PlatformCategoryPage) },
+      ...auth,
+      422: problemResponse('`validation_failed`; `marketplace_unsupported`: sàn không có adapter'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/platforms/:platform/categories/sync',
+    summary: 'Đồng bộ ngay cây category của sàn (#400)',
+    description:
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua.',
+    security: bearer,
+    request: { params: PlatformParams },
+    responses: {
+      202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(CategorySyncResult) },
+      ...auth,
+      422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/categories/:externalId',
+    summary: 'Chi tiết một leaf: attribute, luật bảng kích cỡ, sản phẩm đang dùng (#400)',
+    description:
+      'Cần `channel.shop.view`. Attribute đọc từ bảng; chưa có hoặc quá 7 ngày thì gọi sàn (Lazada không cần token; TikTok bằng token gian hàng `shopId`, không gửi thì gian hàng `active` đầu tiên của công ty) rồi ghi bảng. Sàn lỗi hoặc không có gian hàng mà bảng còn bản cũ: trả bản cũ, `stale: true`.',
+    security: bearer,
+    request: { params: PlatformLeafParams, query: LeafDetailQuery },
+    responses: {
+      200: { description: 'Leaf', ...json(PlatformLeafDetail) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng `shopId` không có, của công ty khác hoặc khác sàn'),
+      409: problemResponse(
+        '`shop_not_connected`: phải gọi sàn mà không có gian hàng `active`; `marketplace_rejected`, `marketplace_unauthorized` kèm `platformCode`, `platformMessage`',
+      ),
+      422: problemResponse('`validation_failed`; `category_not_leaf`; `marketplace_unsupported`'),
+      503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm và chưa có bản nào'),
+    },
+  });
   registry.registerPath({
     method: 'get',
     path: '/shops/:id/categories',

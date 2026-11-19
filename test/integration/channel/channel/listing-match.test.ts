@@ -28,6 +28,8 @@ const newVariant = (extra: Partial<ListingVariant> = {}) => {
     sku: `CMR-${randomUUID().slice(0, 8)}`,
     categoryId: randomUUID(),
     attributesLabel: 'Trắng',
+    productCode: 'SP-TEST',
+    attributes: [],
     archived: false,
     businessStatus: 'selling',
     description: null,
