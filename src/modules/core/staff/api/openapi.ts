@@ -53,7 +53,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     request: { params: StaffParams, body: json(ChangeRolesBody) },
     responses: {
       200: { description: 'Nhân viên sau khi đổi', ...json(StaffMemberSchema) },
-      403: problemResponse('`protected_account`, `permission_not_held`, `forbidden`'),
+      403: problemResponse('`protected_account`, `ceo_only` (gán, gỡ vai Admin hay đích có vai Admin mà không phải CEO), `permission_not_held`, `forbidden`'),
       404: problemResponse('`not_found`: không có trong công ty'),
       409: problemResponse('`version_conflict` kèm `current`'),
       422: problemResponse('`validation_failed` (`errors.roleIds`, `errors.version`)'),
@@ -72,7 +72,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
       request: { params: StaffParams, body: json(VersionBody) },
       responses: {
         200: { description: 'Nhân viên sau khi đổi', ...json(StaffMemberSchema) },
-        403: problemResponse('`protected_account`, `forbidden`'),
+        403: problemResponse('`protected_account`, `ceo_only` (đích có vai Admin mà không phải CEO), `forbidden`'),
         404: problemResponse('`not_found`'),
         409: problemResponse(
           '`invalid_transition` kèm `current` (đã ở trạng thái đích, xét trước version), `version_conflict` kèm `current`',
@@ -94,7 +94,7 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     request: { body: json(CreateInvitationBody) },
     responses: {
       201: { description: 'Link mời, chỉ trả lần này', ...json(CreatedInvitationSchema) },
-      403: problemResponse('`protected_account` (có vai trò CEO), `permission_not_held`, `forbidden`'),
+      403: problemResponse('`protected_account` (có vai trò CEO), `ceo_only` (vai Admin mà không phải CEO), `permission_not_held`, `forbidden`'),
       422: problemResponse('`validation_failed` (`errors.roleIds`)'),
     },
   });
@@ -124,11 +124,11 @@ export function registerStaffOpenApi(registry: OpenAPIRegistry): void {
     request: { params: InvitationParams, body: json(VersionBody) },
     responses: {
       200: { description: 'Lời mời đã duyệt và nhân viên mới', ...json(ApprovedInvitationSchema) },
-      403: problemResponse('`protected_account`, `permission_not_held`, `forbidden`'),
+      403: problemResponse('`protected_account`, `ceo_only` (vai Admin mà không phải CEO), `permission_not_held`, `forbidden`'),
       404: problemResponse('`not_found`'),
       409: problemResponse(
         '`invalid_transition` kèm `current` (không còn `pending`, xét trước version), `version_conflict` kèm `current`, ' +
-          '`invitation_outdated`, `already_member`, `email_taken`',
+          '`invitation_outdated`, `already_member`, `email_taken` (hiếm: tài khoản cùng email vừa được tạo song song)',
       ),
       422: problemResponse('`validation_failed`'),
     },

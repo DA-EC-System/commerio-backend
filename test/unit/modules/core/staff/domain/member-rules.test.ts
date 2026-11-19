@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { RoleWithPermissions } from '#src/modules/core/access/index.ts';
-import { checkRoleGrant, isProtectedTarget } from '#src/modules/core/staff/domain/member-rules.ts';
+import { BUILTIN_ROLES, type RoleWithPermissions } from '#src/modules/core/access/index.ts';
+import { checkRoleGrant, isProtectedTarget, touchesAdmin } from '#src/modules/core/staff/domain/member-rules.ts';
 
 const role = (
   id: string,
@@ -94,5 +94,17 @@ describe('isProtectedTarget', () => {
 
   it('người khác không phải CEO thì không được bảo vệ', () => {
     expect(isProtectedTarget({ callerId: 'a', targetId: 'b', targetRoles: [sale] })).toBe(false);
+  });
+});
+
+describe('touchesAdmin (Documents/21 I5, 19/11/2026)', () => {
+  const admin = BUILTIN_ROLES.admin.id;
+  it('gán vai Admin, hoặc đích đang có vai Admin: chỉ CEO', () => {
+    expect(touchesAdmin({ requestedIds: [admin] })).toBe(true);
+    expect(touchesAdmin({ requestedIds: ['x'], currentRoles: [{ id: admin }] })).toBe(true);
+  });
+  it('chỉ Sale, Kho hay vai tự tạo: không cần CEO', () => {
+    expect(touchesAdmin({ requestedIds: [BUILTIN_ROLES.sale.id, BUILTIN_ROLES.kho.id], currentRoles: [{ id: 'x' }] })).toBe(false);
+    expect(touchesAdmin({})).toBe(false);
   });
 });
