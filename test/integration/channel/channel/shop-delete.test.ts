@@ -262,6 +262,19 @@ describe('DELETE /channel/shops/:id (#398)', () => {
     expect(await n('select count(*) as n from channel.listings where shop_id = $1', [s.id])).toBe(1);
   });
 
+  it('gian hàng có quyền category đã ghi (#400): 200, quyền của gian hàng xoá theo', async () => {
+    const s = await shop('disconnected');
+    await db.query(
+      `insert into channel.shop_category_permissions (company_id, shop_id, external_category_id, status, checked_at) values ($1, $2, '601218', 'available', now())`,
+      [company.companyId, s.id],
+    );
+
+    const res = await del(s.id, { confirm: 'XOA', version: s.version });
+
+    expect(res.status).toBe(200);
+    expect(await n('select count(*) as n from channel.shop_category_permissions where shop_id = $1', [s.id])).toBe(0);
+  });
+
   it('version cũ: 409 version_conflict kèm current', async () => {
     const s = await shop();
 

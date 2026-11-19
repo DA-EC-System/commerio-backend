@@ -28,6 +28,8 @@ const newVariant = (categoryId: string) => {
     sku: `SC-${randomUUID().slice(0, 8)}`,
     categoryId,
     attributesLabel: 'Đen / M',
+    productCode: 'SP-TEST',
+    attributes: [],
     archived: false,
     businessStatus: 'selling',
     description: 'Áo cotton',
