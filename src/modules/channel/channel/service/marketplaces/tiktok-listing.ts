@@ -24,6 +24,7 @@ import {
   type Responsible,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
+import { tiktokCategoryNodes, tiktokLeafAttributes } from './tiktok-categories.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
 
 export { isPrivateAddress } from './image-source.ts';
@@ -66,6 +67,8 @@ type ListingMethods = Pick<
   MarketplaceAdapter,
   | 'listCategories'
   | 'categoryAttributes'
+  | 'categoryTree'
+  | 'leafAttributes'
   | 'categoryRules'
   | 'uploadImage'
   | 'createProduct'
@@ -110,6 +113,12 @@ function leavesOf(categories: Row[]): PlatformCategory[] {
     .filter((c) => c.is_leaf === true)
     .filter((c) => !Array.isArray(c.permission_statuses) || c.permission_statuses.includes('AVAILABLE'))
     .map((c) => ({ externalId: String(c.id), name: pathOf(c) }));
+}
+
+/** Cây, attribute TikTok theo gian hàng: token null thì `unauthorized`, không gọi sàn (#400 A4). */
+function requireToken(token: string | null): string {
+  if (!token) throw new MarketplaceError('unauthorized', 'shop_token_required', 'TikTok cần token gian hàng để đọc category');
+  return token;
 }
 
 /** Gram → kg tối đa 3 chữ số thập phân; mm → cm số nguyên dương (create-product-202309, VN chỉ nhận KILOGRAM, CENTIMETER). */
@@ -264,6 +273,20 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
   }
 
   return {
+    // Cây đầy đủ (#400): mọi node, quyền của gian hàng mang token. Get Categories bắt `shop_cipher` (G2.6): không token thì
+    // không gọi.
+    async categoryTree(token) {
+      const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
+        token: requireToken(token),
+        query: { category_version: CATEGORY_VERSION },
+      });
+      return tiktokCategoryNodes(data?.categories ?? []);
+    },
+
+    async leafAttributes(token, externalCategoryId) {
+      return tiktokLeafAttributes(await rawAttributes(requireToken(token), externalCategoryId));
+    },
+
     async listCategories(token) {
       const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
         token,

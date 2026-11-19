@@ -33,6 +33,7 @@ import {
   type SettlementTxn,
   type TokenSet,
 } from './common.ts';
+import { lazadaCategoryNodes, lazadaLeafAttributes } from './lazada-categories.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
@@ -885,6 +886,17 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // RefreshAccessToken API." (open.lazada.com, Seller authorization introduction, mục 5, cập nhật 05/03/2026, đọc
     // 12/11/2026). Hạn cố định theo lần uỷ quyền: làm mới giữ hạn đã lưu (#312).
     refreshKeepsAuthDeadline: true,
+    // Cây và attribute không cần access_token (gọi thật 18/11/2026, request_id 2102e04417950174611345553,
+    // 2141336017950174621405931): có token thì vẫn gửi, không có thì chỉ ký app (#400 A4).
+    categoriesNeedToken: false,
+    async categoryTree(accessToken) {
+      const params = { ...(accessToken && { access_token: accessToken }), language_code: 'vi_VN' };
+      return lazadaCategoryNodes((await call(config.apiUrl, '/category/tree/get', params, 'GET')).data);
+    },
+    async leafAttributes(accessToken, externalCategoryId) {
+      const params = { ...(accessToken && { access_token: accessToken }), primary_category_id: externalCategoryId, language_code: 'vi_VN' };
+      return lazadaLeafAttributes((await call(config.apiUrl, '/category/attributes/get', params, 'GET')).data);
+    },
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };
       const body = await call(config.apiUrl, '/category/tree/get', params, 'GET');
