@@ -98,7 +98,10 @@ describe('POST /catalog/products với axes (AC-2, AC-S8)', () => {
       body(uniq('Áo'), group.id, [{ attributeId: color.id, values: [{ value: 'Xanh dưa' }, { value: '★' }, { value: '☆' }] }], [['Xanh dưa'], ['★'], ['☆']]),
     );
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    const values = (await attrs(token)).find((a) => a.id === color.id)!.values;
+    const after = (await attrs(token)).find((a) => a.id === color.id)! as Attr & { version: number };
+    // Thuộc tính có sẵn thêm giá trị qua form: version tăng để form sửa thuộc tính đang mở nhận 409.
+    expect(after.version).toBe((color as Attr & { version: number }).version + 1);
+    const values = after.values;
     expect(values.slice(-3).map((v) => [v.value, v.code])).toEqual([
       ['Xanh dưa', 'XANHD2'],
       ['★', 'V1'],
@@ -119,7 +122,7 @@ describe('POST /catalog/products: luật trục, lỗi theo ô (AC-3, AC-4)', ()
     ['tên trục 16 ký tự', [{ name: 'x'.repeat(16), values: [{ value: 'A' }] }], [['A']], 'axes.0.name'],
     ['giá trị 21 ký tự', [{ name: 'Mùi', values: [{ value: 'y'.repeat(21) }] }], [['y'.repeat(21)]], 'axes.0.values.0.value'],
     ['51 giá trị một trục', [{ name: 'Số', values: Array.from({ length: 51 }, (_, i) => ({ value: `G${i}` })) }], [['G0']], 'axes.0.values'],
-    ['giá trị trùng trong trục', [{ name: 'Mùi', values: [{ value: 'Cam' }, { value: ' cam' }] }], [['Cam']], 'axes'],
+    ['giá trị trùng trong trục', [{ name: 'Mùi', values: [{ value: 'Cam' }, { value: ' cam' }] }], [['Cam']], 'axes.0.values'],
     ['hai trục cùng tên', [{ name: 'Mùi', values: [{ value: 'Cam' }] }, { name: 'mùi', values: [{ value: 'Dâu' }] }], [['Cam', 'Dâu']], 'axes'],
     ['3 trục', [1, 2, 3].map((i) => ({ name: `T${i}`, values: [{ value: 'A' }] })), [['A', 'A', 'A']], 'axes'],
     ['`options` không khớp trục', [{ name: 'Mùi', values: [{ value: 'Cam' }] }], [['Dâu']], 'variants.0'],
@@ -149,6 +152,13 @@ describe('POST /catalog/products: luật trục, lỗi theo ô (AC-3, AC-4)', ()
     const foreignValue = await post([{ attributeId: ctx.color.id, values: [{ id: other.color.values[0]!.id, value: 'Đen' }] }], [['Đen']]);
     expect(foreignValue.body.errors['axes.0.values.0.value']).toBeTruthy();
     expect((await post([{ attributeId: randomUUID(), values: [{ value: 'A' }] }], [['A']])).body.errors['axes.0.name']).toBeTruthy();
+  });
+
+  it('gửi `id` kèm `value` khác chữ đang lưu → 422 errors["axes.0.values.0.value"], không để `id` lặng lẽ thắng', async () => {
+    const den = ctx.color.values.find((v) => v.value === 'Đen')!;
+    const res = await post([{ attributeId: ctx.color.id, values: [{ id: den.id, value: 'Đỏ' }] }], [['Đỏ']]);
+    expect(res.status).toBe(422);
+    expect(res.body.errors['axes.0.values.0.value']).toBe('Giá trị đang lưu là "Đen"');
   });
 
   it('SKU sinh ra quá 50 ký tự → 422 errors["variants.0"], thuộc tính, giá trị vừa tạo bị rollback (AC-3)', async () => {

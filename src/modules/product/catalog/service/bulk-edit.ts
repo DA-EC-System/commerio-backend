@@ -72,7 +72,7 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
     const [costs, reorder] = await Promise.all([ports.lastCostsOf(ids), ports.reorderRulesOf(ids)]);
     const noRule = ids.filter((id) => reorder.get(id)?.minQty == null);
     const sold = await ports.soldQtyOf(noRule, SALES_WINDOW_DAYS);
-    const company = suggestOf(await findSettings());
+    const company = suggestOf(await findSettings(viewer.companyId));
 
     const items = rows.map((row) => {
       const v = full.get(row.id)!;

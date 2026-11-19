@@ -18,9 +18,9 @@ const columns = {
 
 export type SettingsRow = Awaited<ReturnType<typeof findSettings>>;
 
-/** Dòng cài đặt của công ty đang chọn; thiếu là lỗi dữ liệu (tạo cùng công ty, `seedCompanyDefaults`). */
-export async function findSettings() {
-  const [row] = await getDb().select(columns).from(companyProductSettings);
+/** Dòng cài đặt của công ty; thiếu là lỗi dữ liệu (tạo cùng công ty, `seedCompanyDefaults`). Lọc cả `company_id`, không chỉ dựa RLS. */
+export async function findSettings(companyId: string) {
+  const [row] = await getDb().select(columns).from(companyProductSettings).where(eq(companyProductSettings.companyId, companyId));
   if (!row) throw new Error('Công ty chưa có cài đặt sản phẩm (chạy lại migration *_nhom-hang-du-lieu)');
   return row;
 }

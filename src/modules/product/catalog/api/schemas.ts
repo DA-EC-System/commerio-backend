@@ -184,9 +184,9 @@ function axesRules(body: { axes: z.infer<typeof Axis>[]; variants: { options: st
   if (new Set(ids).size !== ids.length || new Set(names).size !== names.length) {
     return fail(['axes'], 'Hai trục phải là hai thuộc tính khác nhau');
   }
-  for (const axis of axes) {
+  for (const [i, axis] of axes.entries()) {
     const values = axis.values.map((v) => lowerTrim(v.value));
-    if (new Set(values).size !== values.length) return fail(['axes'], 'Có giá trị bị trùng trong một trục');
+    if (new Set(values).size !== values.length) return fail(['axes', i, 'values'], 'Có giá trị bị trùng trong trục');
   }
   if (!axes.length && variants.length !== 1) return fail(['variants'], 'Sản phẩm không có thuộc tính phân loại chỉ có một biến thể');
   const combos = new Set<string>();
@@ -348,6 +348,10 @@ export const Attribute = z
   .object({
     id: z.uuid(),
     name: z.string(),
+    platformKind: z
+      .enum(['color', 'size'])
+      .nullable()
+      .meta({ description: 'Thuộc tính chuẩn sàn (chỉ đọc, hệ thống tạo khi lập công ty); bước Variants của trang đẩy ghép sang Màu sắc, Kích cỡ của sàn' }),
     values: z.array(
       z.object({
         id: z.uuid(),

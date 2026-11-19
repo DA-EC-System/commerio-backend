@@ -97,6 +97,13 @@ export async function updateAttributeIfVersion(id: string, version: number, name
   return rows.length > 0;
 }
 
+export async function bumpAttributeVersion(id: string): Promise<void> {
+  await getDb()
+    .update(attributes)
+    .set({ version: sql`${attributes.version} + 1`, updatedAt: sql`now()` })
+    .where(eq(attributes.id, id));
+}
+
 export async function updateValue(id: string, value: string, code: string): Promise<void> {
   await getDb()
     .update(attributeValues)

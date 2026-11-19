@@ -1,7 +1,7 @@
 // Trục phân loại khai ngay trong form tạo sản phẩm (Documents/21 mục 5.2, #447): thuộc tính, giá trị chưa có thì tạo
 // cùng giao dịch với sản phẩm. Luật hình dạng (15/20/50 ký tự, trùng trong trục, `options` khớp trục) đã kiểm ở Zod.
 import { uniqueValueCode } from '../domain/sku.ts';
-import { ensureAttribute, findAttributeIdByName, findAttributes, insertValues } from '../repository/attributes.ts';
+import { bumpAttributeVersion, ensureAttribute, findAttributeIdByName, findAttributes, insertValues } from '../repository/attributes.ts';
 import { isUuid } from './errors.ts';
 import type { ComboValue } from './sku-allocation.ts';
 
@@ -28,8 +28,9 @@ async function attributeOf(id: string): Promise<AttributeRow | undefined> {
 
 /**
  * Bước đọc (không ghi): thuộc tính theo id hoặc tên (đọc qua RLS, khoá ngoại bỏ qua RLS), giá trị gửi kèm `id` phải
- * thuộc đúng thuộc tính đó, hai trục khác thuộc tính. Trả lỗi theo ô hoặc thuộc tính có sẵn của từng trục (`null` là
- * tên mới, sẽ tạo).
+ * thuộc đúng thuộc tính đó và `value` khớp chữ đang lưu (`lower(trim)`, không để `id` lặng lẽ thắng chữ gửi lên), hai
+ * dòng của một trục không trỏ cùng một giá trị trong DB, hai trục khác thuộc tính. Trả lỗi theo ô hoặc thuộc tính có
+ * sẵn của từng trục (`null` là tên mới, sẽ tạo).
  */
 export async function checkAxes(axes: readonly AxisInput[]): Promise<{ errors: Record<string, string>; found: (AttributeRow | null)[] }> {
   const errors: Record<string, string> = {};
@@ -44,10 +45,16 @@ export async function checkAxes(axes: readonly AxisInput[]): Promise<{ errors: R
       attr = id ? await attributeOf(id) : undefined;
     }
     found.push(attr ?? null);
+    const targets = new Set<string>();
     for (const [j, v] of axis.values.entries()) {
-      if (v.id !== undefined && !attr?.values.some((x) => x.id === v.id)) {
-        errors[`axes.${i}.values.${j}.value`] = 'Giá trị không thuộc thuộc tính này';
+      const row = v.id === undefined ? attr?.values.find((x) => key(x.value) === key(v.value)) : attr?.values.find((x) => x.id === v.id);
+      if (v.id !== undefined && !row) errors[`axes.${i}.values.${j}.value`] = 'Giá trị không thuộc thuộc tính này';
+      else if (v.id !== undefined && key(row!.value) !== key(v.value)) {
+        errors[`axes.${i}.values.${j}.value`] = `Giá trị đang lưu là "${row!.value}"`;
       }
+      const target = row?.id ?? `new:${key(v.value)}`;
+      if (targets.has(target)) errors[`axes.${i}.values`] = 'Có giá trị trùng trong trục';
+      targets.add(target);
     }
   }
   const ids = found.flatMap((a) => (a ? [a.id] : []));
@@ -73,6 +80,9 @@ export async function createAxes(companyId: string, axes: readonly AxisInput[], 
       fresh.push({ value: v.value.trim(), code });
     }
     for (const row of await insertValues(companyId, attr.id, fresh)) existing.set(key(row.value), { ...row, inUse: false });
+    // Thuộc tính có sẵn vừa có thêm giá trị: tăng `version` để form sửa thuộc tính đang mở nhận 409 thay vì xoá mất
+    // giá trị vừa thêm (PUT xoá giá trị vắng mặt).
+    if (fresh.length && found[i]) await bumpAttributeVersion(attr.id);
     const byId = new Map(attr.values.map((v) => [v.id, v]));
     const values = new Map(
       axis.values.map((v) => {

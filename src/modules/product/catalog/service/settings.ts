@@ -15,7 +15,7 @@ export type SettingsView = ReturnType<typeof toView>;
 const conflict = (row: SettingsRow) => versionConflict('Cài đặt sản phẩm vừa được người khác sửa', toView(row));
 
 export async function getSettings(companyId: string): Promise<SettingsView> {
-  return toView(await withCompany(companyId, findSettings));
+  return toView(await withCompany(companyId, () => findSettings(companyId)));
 }
 
 /** Đổi mẫu chỉ áp cho SKU sinh sau (P3); `skuNextSeq` chỉ đọc. `suggest` không gửi thì giữ. */
@@ -24,11 +24,11 @@ export async function updateSettings(
   input: { skuPattern: string; suggest?: SuggestConfig | undefined; version: number },
 ): Promise<SettingsView> {
   return withCompany(caller.companyId, async () => {
-    const current = await findSettings();
+    const current = await findSettings(caller.companyId);
     if (current.version !== input.version) throw conflict(current);
     const suggest = input.suggest ?? suggestOf(current);
     if (!(await updateSettingsIfVersion(caller.companyId, input.version, input.skuPattern, columnsOf(suggest)))) {
-      throw conflict(await findSettings());
+      throw conflict(await findSettings(caller.companyId));
     }
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, caller.companyId),
@@ -36,6 +36,6 @@ export async function updateSettings(
       before: withSuggest({ skuPattern: current.skuPattern }, suggestOf(current)),
       after: withSuggest({ skuPattern: input.skuPattern }, suggest),
     });
-    return toView(await findSettings());
+    return toView(await findSettings(caller.companyId));
   });
 }

@@ -62,7 +62,7 @@ export type Allocation =
  * lại `sku_next_seq`, không đổi `version` cài đặt (P7). Trả kèm số `{SEQ}` của từng SKU (mã cha lấy số của SKU đầu).
  */
 export async function allocateSkus(companyId: string, combos: readonly (readonly ComboValue[])[]): Promise<Allocation> {
-  const { skuPattern, skuNextSeq } = await findSettings();
+  const { skuPattern, skuNextSeq } = await findSettings(companyId);
   // Mẫu thiếu {SEQ} (ghi thẳng DB, không qua API) sẽ sinh cùng một SKU mãi trong lúc giữ khoá công ty.
   if (skuPatternError(skuPattern)) throw new Error(`Mẫu SKU của công ty ${companyId} không hợp lệ`);
   let seq = skuNextSeq;
