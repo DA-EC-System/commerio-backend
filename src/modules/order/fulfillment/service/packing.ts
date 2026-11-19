@@ -35,14 +35,14 @@ export const awaitingOpen = () => new AppError(409, 'awaiting_open', 'Kiện đa
  * Kiện chờ thay (spec #238 D9) cũng không báo sẵn sàng, không quét bàn giao: hàng của nó còn trong kiện cũ chờ dỡ, kiện
  * cũ vẫn giữ phần đó (review #393: quét trước rồi sàn báo rời kho làm kẹt số đang giữ). Cùng mã `awaiting_open`.
  */
+export const awaitingReplacedOpen = () =>
+  new AppError(409, 'awaiting_open', 'Kiện thay đang chờ kho mở kiện cũ (sàn chia lại kiện), mở kiện cũ trước');
 /**
  * Khách đang xin huỷ (cờ `cancel_requested` của đơn, hay sàn báo khi app chưa kịp thấy cờ): báo giao phải chờ Sale trả lời.
  * Không bật `label_error`: bấm lại không giúp (#239 KH-B07).
  */
 const cancelRequestedError = () =>
   new AppError(409, 'cancel_requested', 'Khách đang xin huỷ đơn, chờ Sale trả lời yêu cầu huỷ rồi mới báo sàn sẵn sàng giao');
-export const awaitingReplacedOpen = () =>
-  new AppError(409, 'awaiting_open', 'Kiện thay đang chờ kho mở kiện cũ (sàn chia lại kiện), mở kiện cũ trước');
 
 /** Kiện `id` còn là kiện chờ thay thì ném `awaiting_open`. */
 export async function assertNotAwaitingReplaced(id: string): Promise<void> {
