@@ -154,20 +154,21 @@ export function cancelInitiatorsOf(
 }
 
 /**
- * Lý do huỷ cấp đơn khi sàn huỷ cả đơn mà đơn chưa có lý do (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi trước): mọi món
- * đã huỷ cùng một lý do thì lấy lý do đó; không món nào có lý do lẫn người huỷ thì "Sàn huỷ đơn"; nhiều lý do, hay có
- * người huỷ mà không lý do, thì để trống (lý do ở từng dòng). Trả `undefined` khi không ghi.
+ * Lý do huỷ cấp đơn khi sàn huỷ cả đơn mà đơn chưa có lý do (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi trước): **mọi**
+ * món đã huỷ cùng một lý do khác rỗng thì lấy lý do đó; không món nào có lý do lẫn người huỷ thì "Sàn huỷ đơn"; còn lại
+ * (nhiều lý do, có món không lý do, có người huỷ mà không lý do) thì để trống, lý do ở từng dòng. Trả `undefined` khi
+ * không ghi.
  */
 export function orderCancelReasonFromLines(
   lines: readonly { cancelledQty: number; cancelReason: string | null; cancelInitiator: CancelInitiator | null }[],
 ): string | undefined {
   const cancelled = lines.filter((l) => l.cancelledQty > 0);
-  const reasons = [...new Set(cancelled.map((l) => l.cancelReason?.trim()).filter((r): r is string => !!r))];
-  if (reasons.length === 1) return reasons[0];
-  if (reasons.length === 0 && !cancelled.some((l) => l.cancelInitiator)) return PLATFORM_CANCEL_REASON;
+  const reasons = cancelled.map((l) => l.cancelReason?.trim() || null);
+  const [first] = reasons;
+  if (first && reasons.every((r) => r === first)) return first;
+  if (reasons.every((r) => r === null) && !cancelled.some((l) => l.cancelInitiator)) return PLATFORM_CANCEL_REASON;
   return undefined;
 }
-
 
 /** Kết quả khi hoàn tất, tính trên kiện chưa huỷ. */
 export function outcomeOf(packages: readonly PackageStatus[]): OrderOutcome {

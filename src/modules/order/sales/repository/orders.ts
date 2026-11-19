@@ -67,13 +67,15 @@ const LINE_INFO_COLUMNS = [
 
 /**
  * Cờ Đang huỷ (`cancelling`) suy ra lúc đọc, chỉ cho huỷ **cả đơn** (Documents/25 §8.2 "Như dòng trên"): đơn còn mở và
- * đã gửi lệnh huỷ chờ sàn (`cancel_pending`), hoặc mọi dòng đã huỷ hết mà còn kiện chưa huỷ đang chờ mở để huỷ (mở để
- * huỷ cả kiện, hay dòng chờ bỏ). Kho mở hết kiện đó thì cờ tự hết; không lưu nên không kẹt (test đêm 18/11/2026,
- * DH-B03). Huỷ một phần món (25 §8.3 Huỷ dòng, KH-B09) không bật cờ đơn: kiện mang cờ chờ mở, đơn chạy tiếp. Kiện chờ
- * mở vì kiểm kê hay chia lại không tính.
+ * đã gửi lệnh huỷ cả đơn chờ sàn (`cancel_pending`), hoặc sàn đã huỷ cả đơn mà còn kiện chưa huỷ đang chờ mở để huỷ (mở
+ * để huỷ cả kiện, hay dòng chờ bỏ). "Sàn đã huỷ cả đơn": mọi dòng đã huỷ hết, hoặc cờ Sàn đã huỷ (sàn huỷ mọi món khi có
+ * kiện đã rời kho: dòng của kiện đó giữ `cancelled_qty = 0`, 25 §8.2 "cờ Đang huỷ gỡ khi không còn kiện chờ mở"). Kho
+ * mở hết kiện đó thì cờ tự hết; không lưu nên không kẹt (test đêm 18/11/2026, DH-B03). Huỷ một phần món (25 §8.3 Huỷ
+ * dòng, KH-B09) không bật cờ đơn: kiện mang cờ chờ mở, đơn chạy tiếp. Kiện chờ mở vì kiểm kê hay chia lại không tính.
  */
 export const cancellingSql = sql<boolean>`(${orders.status} in ('unpaid', 'processing') and (${orders.cancelPending} or (
-  not exists (select 1 from "order".order_lines ol where ol.order_id = ${orders.id} and ol.cancelled_qty < ol.quantity)
+  (${orders.platformCancelled}
+    or not exists (select 1 from "order".order_lines ol where ol.order_id = ${orders.id} and ol.cancelled_qty < ol.quantity))
   and exists (
     select 1 from "order".packages p
     where p.order_id = ${orders.id} and p.status <> 'cancelled' and p.needs_open
@@ -120,18 +122,23 @@ export async function cancelledLineInfo(orderId: string) {
 }
 
 /**
- * Tính lại tiền của đơn khi sàn huỷ một phần món (test đêm 18/11/2026, KH-B09): tạm tính, giảm giá, tổng chỉ gồm dòng
- * chưa huỷ hết; phí ship giữ nguyên. Đơn huỷ hết món giữ tiền lúc đặt (giá trị đơn đã huỷ). Không đổi thì không ghi.
+ * Tính lại tiền của đơn khi sàn huỷ món (test đêm 18/11/2026, KH-B09): còn món chưa huỷ thì tạm tính, giảm giá, tổng chỉ
+ * gồm dòng chưa huỷ hết; mọi món đã huỷ thì về tiền theo mọi món (giá trị đơn đã huỷ), dù sàn huỷ cùng lúc hay lần lượt
+ * từng món. Phí ship giữ nguyên. Chỉ đơn có món đã huỷ; không đổi thì không ghi. Migration `*_dang-huy-du-lieu` dùng
+ * cùng công thức.
  */
 export async function recomputeTotals(orderId: string): Promise<boolean> {
   const rows = await getDb().execute(sql`
     with s as (
-      select coalesce(sum(l.unit_price * (l.quantity - l.cancelled_qty)), 0)::numeric(18, 2) as subtotal,
-             coalesce(sum(l.seller_discount) filter (where l.cancelled_qty < l.quantity), 0)::numeric(18, 2) as seller_discount,
-             coalesce(sum(l.platform_discount) filter (where l.cancelled_qty < l.quantity), 0)::numeric(18, 2) as platform_discount
+      select (case when bool_and(l.cancelled_qty = l.quantity) then sum(l.unit_price * l.quantity)
+                   else sum(l.unit_price * (l.quantity - l.cancelled_qty)) end)::numeric(18, 2) as subtotal,
+             (case when bool_and(l.cancelled_qty = l.quantity) then sum(l.seller_discount)
+                   else coalesce(sum(l.seller_discount) filter (where l.cancelled_qty < l.quantity), 0) end)::numeric(18, 2) as seller_discount,
+             (case when bool_and(l.cancelled_qty = l.quantity) then sum(l.platform_discount)
+                   else coalesce(sum(l.platform_discount) filter (where l.cancelled_qty < l.quantity), 0) end)::numeric(18, 2) as platform_discount
       from "order".order_lines l
       where l.order_id = ${orderId}
-      having bool_or(l.cancelled_qty < l.quantity) and bool_or(l.cancelled_qty > 0)
+      having bool_or(l.cancelled_qty > 0)
     )
     update "order".orders o
     set subtotal = s.subtotal, seller_discount = s.seller_discount, platform_discount = s.platform_discount,

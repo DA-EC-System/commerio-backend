@@ -13,10 +13,12 @@ import { createOrder } from '../../helpers/sales.ts';
 
 /**
  * Cờ Đang huỷ suy ra như `cancellingSql` (`src/modules/order/sales/repository/orders.ts`), dùng trong câu `select … from
- * "order".orders`: lệnh huỷ chờ sàn, hoặc mọi dòng đã huỷ hết mà còn kiện chờ mở để huỷ (chỉ huỷ cả đơn, 25 §8.2).
+ * "order".orders`: lệnh huỷ cả đơn chờ sàn, hoặc sàn đã huỷ cả đơn (mọi dòng đã huỷ, hay cờ Sàn đã huỷ) mà còn kiện chờ
+ * mở để huỷ (chỉ huỷ cả đơn, 25 §8.2).
  */
 export const CANCELLING_SQL = `(orders.status in ('unpaid', 'processing') and (orders.cancel_pending or (
-  not exists (select 1 from "order".order_lines ol where ol.order_id = orders.id and ol.cancelled_qty < ol.quantity)
+  (orders.platform_cancelled
+    or not exists (select 1 from "order".order_lines ol where ol.order_id = orders.id and ol.cancelled_qty < ol.quantity))
   and exists (
     select 1 from "order".packages p where p.order_id = orders.id and p.status <> 'cancelled' and p.needs_open
       and (p.open_purpose = 'cancel' or exists (

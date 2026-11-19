@@ -338,9 +338,10 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
     }
   }
   const stillOpen = next.status === 'unpaid' || next.status === 'processing';
-  // Sàn đã trả lời lệnh huỷ (Documents/21 §19.3 "tới khi sàn xác nhận"): lượt này có món vừa ghi huỷ, sàn báo huỷ mọi
-  // món, hoặc đơn đã dừng. Phần còn chờ kho mở kiện do cờ suy ra giữ (DH-B03).
-  if (!stillOpen || allCancelled || packages.cancelledLines.some((id) => !done.has(id))) next.cancelPending = false;
+  // Lệnh huỷ cả đơn (Sale huỷ, Sale đồng ý khách xin huỷ cả đơn) chờ tới khi sàn huỷ mọi món, hoặc đơn đã dừng
+  // (Documents/21 §19.3 "tới khi sàn xác nhận"). Sàn mới huỷ một phần món (Lazada huỷ theo món) thì vẫn chờ: Sale không
+  // gửi lại, còn dấu vết nếu sàn từ chối phần còn lại. Phần chờ kho mở kiện do cờ suy ra giữ (DH-B03).
+  if (!stillOpen || allCancelled) next.cancelPending = false;
   next.cancelRequested = o.cancelRequested && stillOpen;
   // Sàn kéo lại kiện người dùng đã chuyển thất lạc/hoàn (spec #238 §5.4): bật cờ, đơn `completed` giữ trạng thái.
   if (packages.unknown || packages.resplit || packages.revived) next.needsAttention = true;

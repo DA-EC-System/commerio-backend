@@ -184,4 +184,10 @@ describe('người, lý do huỷ cấp đơn suy ra từ dòng (DH-B06)', () => 
     expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'platform', 'Hết hạn giao')])).toBeUndefined();
     expect(orderCancelReasonFromLines([line(1, 'seller')])).toBeUndefined();
   });
+
+  it('một món có lý do, món khác không người không lý do: để trống, không lấy lý do một món làm lý do cả đơn', () => {
+    // Khách huỷ món A "Đổi ý", sau đó sàn huỷ B, C không ghi gì: đơn không được trông như khách huỷ cả đơn.
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, null), line(1, null)])).toBeUndefined();
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'platform', '  ')])).toBeUndefined();
+  });
 });

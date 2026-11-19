@@ -64,7 +64,7 @@ export function registerSalesOpenApi(registry: OpenAPIRegistry): void {
     path: '/orders/:id/platform-cancel',
     summary: 'Người bán huỷ đơn sàn (§19.3)',
     description:
-      'Cần `sales.order.cancel`. Gửi huỷ lên sàn với lý do trong danh sách của sàn. Đơn giữ trạng thái, mang cờ `cancelling` tới khi lần kéo sau thấy sàn báo huỷ (còn kiện đã đóng gói thì tới khi kho mở hết); ghi lý do đã chọn vào `cancelReason` của đơn. Người huỷ (`seller`) nằm ở dòng khi sàn báo huỷ (`cancelInitiators`).',
+      'Cần `sales.order.cancel`. Gửi huỷ mọi món chưa huỷ lên sàn với lý do trong danh sách của sàn. Đơn giữ trạng thái, mang cờ `cancelling` tới khi lần kéo sau thấy sàn báo huỷ mọi món (còn kiện đã đóng gói thì tới khi kho mở hết); ghi lý do đã chọn vào `cancelReason` của đơn. Người huỷ (`seller`) nằm ở dòng khi sàn báo huỷ (`cancelInitiators`). Đơn đang có cờ `cancelling`: 409 `invalid_transition`.',
     security: bearer,
     request: { params: OrderParams, body: json(PlatformCancelBody) },
     responses: { 200: { description: 'Đơn sau khi gửi huỷ', ...json(PlatformCancelResult) }, ...onMarketplace },
@@ -74,7 +74,7 @@ export function registerSalesOpenApi(registry: OpenAPIRegistry): void {
     path: '/orders/:id/cancel-request',
     summary: 'Trả lời khách xin huỷ (§19.3)',
     description:
-      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. `accept`: đơn sang cờ `cancelling` chờ sàn xác nhận, ghi lý do khách ghi trên sàn vào `cancelReason` (không có thì "Khách xin huỷ"); `reject`: bỏ cờ. Đơn TikTok bắt buộc `rejectReasonId` khi `reject` (thiếu: 422 `validation_failed` tại `errors.rejectReasonId`); đơn Lazada bỏ qua trường này.',
+      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. `accept`: khách xin huỷ mọi món chưa huỷ (hay sàn không ghi món nào) thì đơn sang cờ `cancelling` chờ sàn xác nhận, ghi lý do khách ghi trên món chưa huỷ vào `cancelReason` (không có thì "Khách xin huỷ"); khách chỉ xin huỷ một phần món (Lazada) thì là huỷ dòng: chỉ bỏ cờ `cancel_requested`, không `cancelling`, không `cancelReason`; `reject`: bỏ cờ. Đơn TikTok bắt buộc `rejectReasonId` khi `reject` (thiếu: 422 `validation_failed` tại `errors.rejectReasonId`); đơn Lazada bỏ qua trường này.',
     security: bearer,
     request: { params: OrderParams, body: json(CancelRequestBody) },
     responses: { 200: { description: 'Đơn', ...json(Order) }, ...onMarketplace },

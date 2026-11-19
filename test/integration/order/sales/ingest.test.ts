@@ -632,6 +632,49 @@ describe('huỷ dòng', () => {
     expect((await all(`select pending_drop_qty from "order".package_lines where package_id = $1`, [packageId])).map((r) => r.pending_drop_qty)).toEqual([1, 1]);
     expect(await cancelledQtyOf(orderId)).toEqual([1, 1]);
   });
+
+  it('sàn huỷ cả đơn khi một kiện đã rời kho, một kiện đã đóng: đơn Đang huỷ kèm Sàn đã huỷ tới khi kho mở kiện đã đóng (25 §8.2)', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingestIn(v.companyId, o);
+    const split = withStatus(withStatus(o, 'in_transit', o.lines[0]!.packageCode!), 'packed', o.lines[1]!.packageCode!);
+    await ingestIn(v.companyId, split);
+
+    await ingestIn(v.companyId, withStatus(split, 'cancelled'));
+
+    // Món của kiện đã rời kho giữ `cancelled_qty = 0` (AC18) nên "mọi dòng đã huỷ" không đúng; sàn đã huỷ cả đơn vẫn là
+    // Đang huỷ khi còn kiện chờ mở để huỷ.
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 1]);
+    const ctx = { returnPoliciesOf: async () => new Map() } as never;
+    const flagsOf = async () => (await withCompany(v.companyId, () => getOrder(ctx, orderId))).flags;
+    expect(await flagsOf()).toEqual(expect.arrayContaining(['platform_cancelled', 'cancelling']));
+    expect(await orderOf(orderId)).toMatchObject({ status: 'processing', cancelling: true, platform_cancelled: true });
+
+    // Kho mở kiện đã đóng (open_cancel): cờ Đang huỷ tự hết, cờ Sàn đã huỷ còn.
+    await testPool().query(
+      `update "order".packages set status = 'cancelled', needs_open = false, open_purpose = null where order_id = $1 and status = 'packed'`,
+      [orderId],
+    );
+    const after = await flagsOf();
+    expect(after).toContain('platform_cancelled');
+    expect(after).not.toContain('cancelling');
+  });
+
+  it('huỷ lần lượt từng món tới hết: tiền của đơn trở lại tiền lúc đặt, như sàn huỷ mọi món cùng lúc', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId } = await ingestIn(v.companyId, o);
+    const totals = () => one(`select subtotal, total from "order".orders where id = $1`, [orderId]);
+    const placed = await totals();
+    expect(placed).toEqual({ subtotal: '300000.00', total: '300000.00' });
+
+    await ingestIn(v.companyId, withLineCancelled(o, 2));
+    expect(await totals()).toEqual({ subtotal: '200000.00', total: '200000.00' });
+
+    await ingestIn(v.companyId, withStatus(o, 'cancelled'));
+    expect((await orderOf(orderId)).status).toBe('cancelled');
+    expect(await totals()).toEqual(placed);
+  });
 });
 
 describe('ghép SKU của dòng khi nhận đơn (spec 237)', () => {
