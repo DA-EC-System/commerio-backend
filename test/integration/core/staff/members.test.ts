@@ -138,18 +138,45 @@ describe('đổi vai trò', () => {
     ]);
   });
 
-  it('#351 AC-5: quản lý tài khoản qua vai tự tạo: gán Kho được; gán hay gỡ vai Admin → 403 permission_not_held', async () => {
+  it('#351 AC-5: quản lý tài khoản qua vai tự tạo: gán Kho được; gán hay gỡ vai Admin → 403 ceo_only', async () => {
     const a = await createCompany();
     const manager = await addMember(a.companyId, await createCustomRole(a.companyId, ['identity.account.manage']));
     const sale = await addMember(a.companyId, 'sale');
     expect((await putRoles(manager.token, sale.accountId, { roleIds: [BUILTIN_ROLES.kho.id], version: 1 })).status).toBe(200);
     const promote = await putRoles(manager.token, sale.accountId, { roleIds: [BUILTIN_ROLES.admin.id], version: 2 });
-    expect(promote.body.code).toBe('permission_not_held');
+    expect(promote.body.code).toBe('ceo_only');
     const admin = await addMember(a.companyId, 'admin');
     const demote = await putRoles(manager.token, admin.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 1 });
     expect(demote.status).toBe(403);
-    expect(demote.body.code).toBe('permission_not_held');
+    expect(demote.body.code).toBe('ceo_only');
     expect((await memberAudits(admin.membershipId)).rows).toEqual([]);
+  });
+
+  it('I5 (19/11/2026): chỉ CEO gán, gỡ vai Admin, đổi vai hay khoá, mở khoá người có vai Admin; Admin làm → 403 ceo_only', async () => {
+    const a = await createCompany();
+    const admin = await addMember(a.companyId, 'admin');
+    const other = await addMember(a.companyId, 'admin');
+    const sale = await addMember(a.companyId, 'sale');
+    const tries = [
+      await putRoles(admin.token, sale.accountId, { roleIds: [BUILTIN_ROLES.admin.id], version: 1 }),
+      await putRoles(admin.token, other.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 1 }),
+      await putRoles(admin.token, other.accountId, { roleIds: [BUILTIN_ROLES.admin.id, BUILTIN_ROLES.kho.id], version: 1 }),
+      await lock(admin.token, other.accountId, 1),
+    ];
+    for (const res of tries) {
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('ceo_only');
+    }
+    expect((await memberAudits(other.membershipId)).rows).toEqual([]);
+    // Admin vẫn quản Sale, Kho như CEO.
+    expect((await putRoles(admin.token, sale.accountId, { roleIds: [BUILTIN_ROLES.kho.id], version: 1 })).status).toBe(200);
+    expect((await lock(admin.token, sale.accountId, 2)).status).toBe(200);
+    // CEO làm được cả.
+    const locked = await lock(a.ceo.token, other.accountId, 1);
+    expect(locked.status).toBe(200);
+    expect((await lock(admin.token, other.accountId, 2, 'unlock')).body.code).toBe('ceo_only');
+    expect((await lock(a.ceo.token, other.accountId, 2, 'unlock')).status).toBe(200);
+    expect((await putRoles(a.ceo.token, other.accountId, { roleIds: [BUILTIN_ROLES.sale.id], version: 3 })).status).toBe(200);
   });
 
   it('AC-B3: roleIds rỗng, không tồn tại, của công ty khác → 422 errors.roleIds', async () => {
