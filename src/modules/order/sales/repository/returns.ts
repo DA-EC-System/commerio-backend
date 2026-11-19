@@ -103,6 +103,25 @@ export async function findReturnLines(requestIds: readonly string[]): Promise<Re
   return rows.map((x) => ({ ...x.l, sku: x.sku, productName: x.productName, attributesLabel: x.attributesLabel, packageCode: x.packageCode }));
 }
 
+/** Yêu cầu từ sàn của gian hàng ở các trạng thái `statuses`, đang Cần xử lý với câu bắt đầu bằng `notePrefix`, cũ trước. */
+export async function findReturnsWithNote(shopId: string, statuses: readonly ReturnStatus[], notePrefix: string, limit: number): Promise<ReturnRow[]> {
+  const pattern = `${notePrefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return getDb()
+    .select()
+    .from(returnRequests)
+    .where(
+      and(
+        eq(returnRequests.shopId, shopId),
+        eq(returnRequests.source, 'marketplace'),
+        inArray(returnRequests.status, [...statuses]),
+        eq(returnRequests.needsAttention, true),
+        sql`${returnRequests.attentionNote} like ${pattern}`,
+      ),
+    )
+    .orderBy(returnRequests.updatedAt, returnRequests.id)
+    .limit(limit);
+}
+
 /** Ghi theo `version` và trạng thái đang có; false khi bản ghi vừa đổi (bên gọi đọc lại, 409). */
 export async function updateReturnAt(id: string, version: number, from: ReturnStatus, patch: ReturnPatch): Promise<boolean> {
   const rows = await getDb()

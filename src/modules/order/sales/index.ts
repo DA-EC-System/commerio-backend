@@ -63,3 +63,5 @@ export { orderArchiveBlockers, orderInUse } from './service/catalog-boundary.ts'
 export type { MarketplaceReturns } from './service/marketplace-returns.ts';
 // Yêu cầu trả từ sàn (#202): channel kéo về gọi trong `withCompany`.
 export { ingestMarketplaceReturn, type PlatformReturn, type ReturnIngestOutcome } from './service/return-ingest.ts';
+// Thử lại báo sàn đã nhận hàng trả (§20.1): channel gọi sau mỗi lượt kéo yêu cầu trả.
+export { markReturnConfirmed, type ReturnToConfirm, returnsAwaitingConfirm } from './service/return-confirm.ts';

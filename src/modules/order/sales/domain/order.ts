@@ -1,4 +1,5 @@
 // Máy trạng thái đơn và các luật suy ra (Documents/21 §19.1, sơ đồ D1), cùng bảng với FE `src/lib/machines/order.ts`.
+import { Decimal } from 'decimal.js';
 import { defineMachine } from '../../../core/index.ts';
 import { isHandedOver, isSealed, isStopped, holdsStock, type PackageStatus } from '../../fulfillment/index.ts';
 
@@ -67,22 +68,70 @@ export function cancelPlan(packages: readonly PackageStatus[]): 'now' | 'after_o
   return packages.some(isSealed) ? 'after_open' : 'now';
 }
 
-export const RETURN_WINDOW_DAYS = 7;
+/** Hạn trả khi gian hàng chưa nhập số ngày hay không tìm thấy gian hàng (#236 D5). */
+export const DEFAULT_RETURN_WINDOW_DAYS = 7;
 export const DUE_SOON_HOURS = 24;
+const DAY_MS = 86_400_000;
+
+/** Cách sàn tính hạn trả (`capabilities.returnWindow`) và số ngày của gian hàng. */
+export interface ReturnPolicy {
+  returnWindow: 'days' | 'platform_status';
+  returnWindowDays: number | null;
+}
+
+/** Chính sách cho đơn không có gian hàng hay gian hàng không tìm thấy. */
+export const DEFAULT_RETURN_POLICY: ReturnPolicy = { returnWindow: 'days', returnWindowDays: null };
+
+/** Mốc giao của kiện giao cuối; null khi chưa kiện nào giao. */
+export function lastDeliveredAt(packages: readonly { deliveredAt: Date | null }[]): Date | null {
+  let last: Date | null = null;
+  for (const p of packages) if (p.deliveredAt && (!last || p.deliveredAt > last)) last = p.deliveredAt;
+  return last;
+}
+
+/**
+ * Hết hạn trả của đơn đang xử lý; null khi chưa kiện nào giao (điều kiện hạn trả không áp).
+ * PR 1 #236: sàn `platform_status` tạm tính như `days` 7 ngày (D13); `stored` chưa dùng,
+ * PR 2 #236 đọc cột đã lưu cho nhánh `platform_status`.
+ */
+export function returnWindowEndsAt(policy: ReturnPolicy, lastDelivered: Date | null, stored: Date | null): Date | null {
+  void stored;
+  if (!lastDelivered) return null;
+  const days = policy.returnWindow === 'days' ? (policy.returnWindowDays ?? DEFAULT_RETURN_WINDOW_DAYS) : DEFAULT_RETURN_WINDOW_DAYS;
+  return new Date(lastDelivered.getTime() + days * DAY_MS);
+}
+
+export interface CodPackage {
+  selfDelivery: boolean;
+  status: PackageStatus;
+  codExpected: string | null;
+  codConfirmedAt: Date | null;
+}
+
+/** Có kiện tự giao đã giao, thu COD, mà chưa ai xác nhận số thực thu. */
+export function codUnconfirmed(packages: readonly CodPackage[]): boolean {
+  return packages.some(
+    (p) => p.selfDelivery && p.status === 'delivered' && p.codExpected !== null && new Decimal(p.codExpected).gt(0) && !p.codConfirmedAt,
+  );
+}
+
+export type CompletionBlocker = 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed';
 
 export interface CompletionInput {
   packages: readonly PackageStatus[];
-  lastDeliveredAt: string | null;
+  lastDeliveredAt: Date | null;
+  /** Hạn trả đã tính theo chính sách gian hàng (`returnWindowEndsAt`). */
+  returnWindowEndsAt: Date | null;
   openReturnRequests: number;
-  /** Đơn COD của người bán đã giao mà kế toán chưa xác nhận tiền. */
+  /** Kiện tự giao thu COD đã giao mà chưa xác nhận số thực thu. */
   codUnconfirmed: boolean;
   now: number;
 }
 
 /** Lý do chưa hoàn tất; null là hoàn tất được. */
-export function completionBlocker(i: CompletionInput): string | null {
+export function completionBlocker(i: CompletionInput): CompletionBlocker | null {
   if (!i.packages.length || !i.packages.every(isStopped)) return 'packages_open';
-  if (i.lastDeliveredAt && Date.parse(i.lastDeliveredAt) + RETURN_WINDOW_DAYS * 24 * 3600_000 > i.now) return 'return_window';
+  if (i.lastDeliveredAt && (!i.returnWindowEndsAt || i.returnWindowEndsAt.getTime() > i.now)) return 'return_window';
   if (i.openReturnRequests > 0) return 'return_requested';
   if (i.codUnconfirmed) return 'cod_unconfirmed';
   return null;
