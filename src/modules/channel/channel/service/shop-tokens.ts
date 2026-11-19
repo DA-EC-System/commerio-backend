@@ -1,6 +1,6 @@
 // Token gian hàng (#201; Documents/21 §18.4, Documents/16 bài toán 3): mã hoá, làm mới trong khoá theo gian hàng, lớp bọc
 // adapter làm mới khi sàn báo `unauthorized`, mất uỷ quyền.
-import { assertTransition, recordTransition } from '../../../core/index.ts';
+import { assertTransition } from '../../../core/index.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { decryptBytes, encryptBytes } from '../../../../shared/crypto/aes-gcm.ts';
 import { outsideTransaction, requireCompanyId, withCompany, withSessionLock } from '../../../../shared/db/client.ts';
@@ -11,6 +11,7 @@ import { DEFAULT_REFRESH_LEAD_MS, refreshBefore } from './marketplaces/common.ts
 import { appOnly, forCompany, getAdapter, type MarketplaceAdapter, MarketplaceError, type TokenSet } from './marketplaces/index.ts';
 import { queueDueReauthMail } from './reauth-mail.ts';
 import { stopShopJobs } from './shop-jobs.ts';
+import { recordShopTransition } from './shop-transition.ts';
 
 export function tokenKey(): Buffer {
   if (!env.CHANNEL_TOKEN_KEY) {
@@ -48,7 +49,7 @@ export async function markNeedsReauth(shopId: string, reason: string): Promise<v
   const { to } = assertTransition(shopMachine, row.status, 'lose_auth', { actor: null });
   const updated = await updateShop(shopId, { version: row.version, status: row.status }, { status: to, lastError: reason, ordersPulledOkAt: null });
   if (updated) {
-    await recordTransition({ entityType: 'shops', entityId: shopId, from: row.status, to, action: 'lose_auth', actorId: null, reason });
+    await recordShopTransition({ shopId, from: row.status, to, action: 'lose_auth', actorId: null, reason });
     // Thư đầu tiên báo CEO, Admin xếp ngay trong giao dịch này, không chờ việc nền 15 phút (#312).
     await queueDueReauthMail(shopId, new Date());
   }

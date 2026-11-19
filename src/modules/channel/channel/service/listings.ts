@@ -25,14 +25,13 @@ import {
   deleteListing,
   findListingById,
   findListingRow,
-  insertListing,
   type ListingPatch,
   type ListingRow,
-  updateListing,
 } from '../repository/listings.ts';
 import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
 import type { SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
+import { insertListing, updateListing } from './listing-writes.ts';
 import type { ProductPort } from './product-port.ts';
 import { insertConfirmed, type NewPriceCalculation } from '../repository/price-calculations.ts';
 import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';

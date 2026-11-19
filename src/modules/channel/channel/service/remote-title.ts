@@ -4,8 +4,9 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { remoteTitleChanged, snapshotBaseline } from '../domain/remote-title.ts';
-import { findListingById, updateListing } from '../repository/listings.ts';
+import { findListingById } from '../repository/listings.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
+import { updateListing } from './listing-writes.ts';
 import { type ChannelListing, requesterNames, toListing } from './listings.ts';
 import { type Actor, ownShop } from './shops.ts';
 

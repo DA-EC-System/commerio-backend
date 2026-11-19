@@ -1,10 +1,18 @@
 // Yêu cầu trả từ sàn (#202, Documents/25 §9, Documents/21 §20.1): channel kéo về rồi gọi `ingestMarketplaceReturn` trong
 // `withCompany`; kiểm hàng hoàn xong (`inventory.return_inspected`) thì đóng yêu cầu. Sàn là nguồn của trạng thái yêu cầu
 // trước khi hàng về; app là nguồn của nhận hàng (quét) và kiểm hàng.
-import { Decimal } from 'decimal.js';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { deliverForReturn, packageLinesOfOrderLines } from '../../fulfillment/index.ts';
-import { distributeResell, refundAmountOf, type ReturnStatus, syncAction, syncTarget, weightedUnitCost } from '../domain/return.ts';
+import {
+  changedFields,
+  distributeResell,
+  RETURN_PLATFORM_SHOWN_FIELDS,
+  refundAmountOf,
+  type ReturnStatus,
+  syncAction,
+  syncTarget,
+  weightedUnitCost,
+} from '../domain/return.ts';
 import { lockMarketplaceOrder, takeNextNumber, updateOrder } from '../repository/orders.ts';
 import {
   findMarketplaceReturn,
@@ -15,11 +23,10 @@ import {
   orderLinesByExternal,
   type ReturnPatch,
   type ReturnRow,
-  updateReturnAt,
   updateReturnLine,
 } from '../repository/returns.ts';
 import { isConfirmFailedNote } from './return-confirm.ts';
-import { applyReturnStep } from './returns.ts';
+import { applyReturnStep, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
 export interface PlatformReturn {
@@ -147,20 +154,11 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
     ...platformFields(r),
   });
   if (!created) return undefined;
+  await publishReturnStatusChanged(created, null, created.status);
   await insertReturnLines(rows.map((l) => ({ ...l, companyId: created.companyId, requestId: created.id })));
   // Kiện đang hoàn, thất lạc (hoặc chưa rời kho): cả đơn bật Cần xử lý để đối chiếu với sàn (25 §9). Đơn đã khoá ở trên.
   if (held) await updateOrder(orderId, { needsAttention: true, attentionNote: `Yêu cầu trả ${created.code}: kiện chưa ở trạng thái đã giao, đối chiếu với sàn` });
   return created;
-}
-
-/** Trường khác giá trị đang lưu (tiền so theo số, thời điểm theo mốc): kéo lại không đổi gì thì không ghi, không tăng `version`. */
-function changedFields(row: ReturnRow, patch: ReturnPatch): ReturnPatch {
-  const same = (a: unknown, b: unknown) => {
-    if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
-    if (typeof a === 'string' && typeof b === 'string' && /^-?\d+(\.\d+)?$/.test(a) && /^-?\d+(\.\d+)?$/.test(b)) return new Decimal(a).equals(b);
-    return a === b;
-  };
-  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => !same(row[k as keyof ReturnRow], v))) as ReturnPatch;
 }
 
 /** Trạng thái sàn sau bước chờ hàng về: sàn đã ghi nhận hàng tới người bán. */
@@ -186,7 +184,7 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
     const note = keep ? row.attentionNote : `${CONFLICT_NOTE}${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
     const diff = changedFields(row, { ...fields, needsAttention: true, attentionNote: note });
     if (!Object.keys(diff).length) return 'unchanged';
-    await updateReturnAt(row.id, row.version, row.status, diff);
+    await updateReturnShown(row, diff);
     return 'updated';
   }
   // Sàn đã khớp lại với app: gỡ cờ mâu thuẫn của lượt trước. Cờ của luồng khác giữ nguyên.
@@ -201,9 +199,8 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   }
   const diff = changedFields(row, fields);
   if (!Object.keys(diff).length) return 'unchanged';
-  await updateReturnAt(row.id, row.version, row.status, diff);
-  const shown = ['rawMarketplaceStatus', 'ofcStatus', 'disputeInProgress', 'returnTo', 'returnTrackingCode', 'refundAmount'] as const;
-  return shown.some((k) => k in diff) ? 'updated' : 'unchanged';
+  await updateReturnShown(row, diff);
+  return RETURN_PLATFORM_SHOWN_FIELDS.some((k) => k in diff) ? 'updated' : 'unchanged';
 }
 
 /**
