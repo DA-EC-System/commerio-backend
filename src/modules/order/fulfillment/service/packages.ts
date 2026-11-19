@@ -29,7 +29,7 @@ export interface FulfillmentContext extends ModuleContext {
    * Khép đơn sàn đang huỷ khi mọi kiện đã huỷ (sales, spec 205 D21): gọi sau khi mở kiện đi `open_cancel`, trong
    * `withCompany` riêng (khoá đơn, không giữ khoá kiện).
    */
-  readonly settleCancelledOrder?: (orderId: string) => Promise<void>;
+  readonly settleCancelledOrder?: (orderId: string) => Promise<unknown>;
 }
 
 export interface PlatformPackageItems {
