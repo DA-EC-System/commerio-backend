@@ -4,9 +4,8 @@
 import { publishEvent } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type MappedSku, remapPackageLines } from '../../fulfillment/index.ts';
-import type { OrderFlag } from '../domain/order.ts';
-import { findOrderRows, hasUnmappedLines, lockUnmappedLinesOfShopSku, setOrderLineSku } from '../repository/orders.ts';
-import { storedFlags } from './ingest.ts';
+import { findOrderRows, lockUnmappedLinesOfShopSku, setOrderLineSku } from '../repository/orders.ts';
+import { eventFlags } from './ingest.ts';
 
 export interface ApplySkuMappingInput {
   shopId: string;
@@ -47,8 +46,7 @@ export async function applySkuMapping(input: ApplySkuMappingInput): Promise<{ li
   const orderIds = [...new Set(changed.map((l) => l.orderId))];
   for (const row of await findOrderRows(orderIds)) {
     if (row.status !== 'unpaid' && row.status !== 'processing') continue;
-    const flags: OrderFlag[] = storedFlags(row);
-    if (await hasUnmappedLines(row.id)) flags.push('unmapped_sku');
+    const flags = await eventFlags(row.id, row);
     await publishEvent({
       type: 'sales.order_status_changed',
       aggregateId: row.id,

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
 import { platformUpdate } from '#src/modules/order/fulfillment/domain/package.ts';
 import {
+  cancelInitiatorsOf,
   cancelPlan,
   codUnconfirmed,
   completionBlocker,
   DEFAULT_RETURN_POLICY,
   isDueSoon,
   lastDeliveredAt,
+  orderCancelReasonFromLines,
   orderMachine,
   outcomeOf,
   returnWindowEndsAt,
@@ -155,5 +157,37 @@ describe('platformUpdate: sàn đẩy trạng thái kiện', () => {
     ['returned', 'in_transit', 'invalid'],
   ] as const)('%s → %s: %s', (from, to, expected) => {
     expect(platformUpdate(from, to)).toBe(expected);
+  });
+});
+
+describe('người, lý do huỷ cấp đơn suy ra từ dòng (DH-B06)', () => {
+  const line = (cancelledQty: number, cancelInitiator: 'buyer' | 'seller' | 'platform' | null, cancelReason: string | null = null) => ({
+    cancelledQty,
+    cancelInitiator,
+    cancelReason,
+  });
+
+  it('nhiều người huỷ: không trùng, thứ tự buyer, seller, platform; bỏ dòng chưa huỷ và dòng không ghi người', () => {
+    expect(cancelInitiatorsOf([line(1, 'platform'), line(1, 'buyer'), line(2, 'buyer'), line(0, 'seller'), line(1, null)])).toEqual(['buyer', 'platform']);
+    expect(cancelInitiatorsOf([line(0, 'buyer')])).toEqual([]);
+  });
+
+  it('mọi món cùng một lý do thì lấy lý do đó', () => {
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'buyer', ' Đổi ý '), line(0, null, 'Khác')])).toBe('Đổi ý');
+  });
+
+  it('không món nào ghi người lẫn lý do thì "Sàn huỷ đơn"', () => {
+    expect(orderCancelReasonFromLines([line(1, null)])).toBe('Sàn huỷ đơn');
+  });
+
+  it('nhiều lý do, hay có người huỷ mà không lý do, thì để trống', () => {
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'platform', 'Hết hạn giao')])).toBeUndefined();
+    expect(orderCancelReasonFromLines([line(1, 'seller')])).toBeUndefined();
+  });
+
+  it('một món có lý do, món khác không người không lý do: để trống, không lấy lý do một món làm lý do cả đơn', () => {
+    // Khách huỷ món A "Đổi ý", sau đó sàn huỷ B, C không ghi gì: đơn không được trông như khách huỷ cả đơn.
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, null), line(1, null)])).toBeUndefined();
+    expect(orderCancelReasonFromLines([line(1, 'buyer', 'Đổi ý'), line(1, 'platform', '  ')])).toBeUndefined();
   });
 });
