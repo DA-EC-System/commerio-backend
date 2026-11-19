@@ -144,7 +144,7 @@ const sameInfo = (a: OrderInfo, b: OrderInfo) =>
  * Note của cờ Cần xử lý khi sàn trả trạng thái món app chưa biết (#358). Note đầy đủ kèm mã thô (`<hằng>: <mã>`); dữ liệu
  * trước #358 chỉ có hằng. Gỡ cờ so theo tiền tố này nên khớp cả hai dạng.
  */
-const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
+export const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
 /**
  * Note của cờ Cần xử lý khi sàn chia lại kiện mà app không tự xử lý được (#238 D29: kiện đã bàn giao, sàn gộp món vào
  * mã kiện cũ, một món ở hai mã). Chia lại xử lý được thì fulfillment tự huỷ, lập kiện, đơn không bật cờ.

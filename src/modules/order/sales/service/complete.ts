@@ -24,6 +24,7 @@ import { allLinesCancelled, findCompletionCandidates, updateOrderAt } from '../r
 import { settleCancelledOrder } from './ingest.ts';
 import { registerSalesMetrics, recordAutoComplete } from './metrics.ts';
 import type { SalesContext } from './orders.ts';
+import { onPackageStatusChanged } from './package-reopened.ts';
 import { onReturnInspected } from './return-ingest.ts';
 import { policyOf, returnPoliciesFor } from './return-policy.ts';
 
@@ -177,13 +178,15 @@ export async function completeDueOrdersOnce(
   return completed;
 }
 
-/** Việc nền của `sales` trong worker: tự hoàn tất mỗi giờ. */
+/** Việc nền của `sales` trong worker: khép đơn mỗi giờ, consumer yêu cầu trả và kiện mở lại sau hoàn tất. */
 export async function startSalesBackground(ctx: SalesContext): Promise<() => Promise<void>> {
   const { returnPoliciesOf } = ctx;
   // `AppContext` khai bắt buộc; thiếu (ctx dựng tay) thì không khởi động việc nền thay vì chốt đơn theo 7 ngày.
   if (!returnPoliciesOf) throw new Error('startSalesBackground cần ctx.returnPoliciesOf');
   // Kiểm hàng hoàn của yêu cầu trả ghi sổ thì đóng yêu cầu, hoàn tiền (#202, §11.2).
   registerConsumer('inventory.return_inspected', onReturnInspected, { consumer: 'sales-return-inspected' });
+  // Kiện đổi trạng thái sau khi đơn hoàn tất: tính lại kết quả, bật Cần xử lý khi kiện mở lại (#236 PR 3, 5.5).
+  registerConsumer('fulfillment.package_status_changed', onPackageStatusChanged, { consumer: 'sales-package-reopened' });
   registerSalesMetrics();
   return every(3_600_000, () => completeDueOrdersOnce(new Date(), { returnPoliciesOf }), 'việc nền tự hoàn tất đơn lỗi');
 }
