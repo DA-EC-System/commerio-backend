@@ -84,7 +84,7 @@ function toListItem(p: ProductRow, thumbnailUrl: string | null, skus: readonly L
     id: p.id,
     name: p.name,
     code: p.code,
-    category: { id: p.groupId, name: p.groupName },
+    group: { id: p.groupId, name: p.groupName },
     ...counts,
     thumbnailUrl: thumbnailUrl || null,
     status: counts.variantCount > 0 ? ('active' as const) : ('archived' as const),

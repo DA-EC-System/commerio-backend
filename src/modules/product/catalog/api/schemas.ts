@@ -405,7 +405,7 @@ export const Variant = z
     readiness: z.enum(['ready', 'incomplete']).meta({ description: 'Độ hoàn thiện (Documents/25 §5.4): đủ mọi phần ở `missing` thì ready' }),
     missing: z.array(z.enum(MISSING_FIELDS)).meta({
       description:
-        'Phần còn thiếu theo thứ tự cố định; `name`, `category`, `image` ở sản phẩm cha, `price` là giá muốn bán (`targetNetPrice`)',
+        'Phần còn thiếu theo thứ tự cố định; `name`, `image` ở sản phẩm cha, `price` là giá muốn bán (`targetNetPrice`)',
     }),
     minQty: z.number().int().nullable().meta({ description: 'Ngưỡng tồn (inventory); null là chưa đặt' }),
     presence: z.enum(PRESENCES).meta({
@@ -428,7 +428,7 @@ export const ProductListItem = z
     id: z.uuid(),
     name: z.string(),
     code: z.string().meta({ description: 'Mã cha, cấp lúc tạo theo mẫu SKU của công ty, không sửa (#204 D5)' }),
-    category: z.object({ id: z.uuid(), name: z.string() }),
+    group: z.object({ id: z.uuid(), name: z.string() }),
     variantCount: z.number().int().meta({ description: 'Số SKU chưa lưu trữ' }),
     variantTotal: z.number().int().meta({ description: 'Số SKU, kể cả đã lưu trữ' }),
     labelCounts: LabelCounts,
