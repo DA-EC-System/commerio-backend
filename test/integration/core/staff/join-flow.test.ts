@@ -56,6 +56,15 @@ describe('tham gia qua link', () => {
     expect(row.rows[0]!.password_hash).toMatch(/^\$argon2id\$/);
     expect((await db.query('select 1 from core.accounts where email = $1', [email])).rowCount).toBe(0);
 
+    // Chưa duyệt: đúng mật khẩu vừa đặt thì báo đang chờ duyệt (403), sai thì vẫn 401 như email không có.
+    const early = await request(app).post('/api/v1/identity/login').send({ email, password });
+    expect(early.status).toBe(403);
+    expect(early.body).toMatchObject({ code: 'pending_approval' });
+    expect(early.body.detail).toContain(company.rows[0]!.name);
+    const wrong = await request(app).post('/api/v1/identity/login').send({ email, password: 'SaiMatKhau9' });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body).toMatchObject({ code: 'invalid_credentials' });
+
     const queue = await request(app).get('/api/v1/identity/invitations').set('Authorization', `Bearer ${ceo.token}`);
     const item = queue.body.items.find((i: { id: string }) => i.id === link.id);
     expect(item).toMatchObject({ email, fullName: 'Lê Văn Tâm', existingAccount: false, version: expect.any(Number) });

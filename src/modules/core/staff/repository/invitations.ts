@@ -260,3 +260,46 @@ export async function listInvitationRows(query: {
     .offset((query.page - 1) * query.pageSize);
   return { rows, total: counted?.total ?? 0 };
 }
+
+/**
+ * Dọn nháp quá hạn (việc nền `staff.invitation_purge`): link `open`, `claimed` đã hết hạn mà còn email, họ tên hay mã
+ * OTP thì xoá các cột đó, đánh `purged_at`; giữ dòng để trang Lời mời vẫn thấy link hết hạn và người tạo. Không động
+ * tới `pending` trở đi (hết hạn link không chặn duyệt). Chạy ngoài `withCompany` (role chủ bảng, mọi công ty). Trả số
+ * dòng đã dọn.
+ */
+export async function purgeExpiredDrafts(): Promise<number> {
+  const t = invitations;
+  const rows = await getDb()
+    .update(t)
+    .set({
+      email: null,
+      fullName: null,
+      otpHash: null,
+      otpExpiresAt: null,
+      purgedAt: sql`now()`,
+      ...bump,
+    })
+    .where(
+      and(
+        inArray(t.status, ['open', 'claimed']),
+        sql`${t.expiresAt} <= now()`,
+        sql`(${t.email} is not null or ${t.fullName} is not null or ${t.otpHash} is not null)`,
+      ),
+    )
+    .returning({ id: t.id });
+  return rows.length;
+}
+
+/**
+ * Yêu cầu tham gia đang chờ duyệt của email mới (đặt mật khẩu lúc nộp), mới nộp trước, mọi công ty. Đăng nhập dùng để
+ * báo "đang chờ duyệt" thay vì "sai mật khẩu". Chạy ngoài `withCompany`.
+ */
+export async function pendingJoinsByEmail(email: string): Promise<{ companyId: string; passwordHash: string }[]> {
+  const t = invitations;
+  const rows = await getDb()
+    .select({ companyId: t.companyId, passwordHash: t.passwordHash })
+    .from(t)
+    .where(and(eq(t.status, 'pending'), eq(t.email, email), isNotNull(t.passwordHash)))
+    .orderBy(desc(t.submittedAt));
+  return rows.map((r) => ({ companyId: r.companyId, passwordHash: r.passwordHash! }));
+}

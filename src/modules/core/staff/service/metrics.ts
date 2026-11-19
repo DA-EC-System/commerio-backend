@@ -27,3 +27,13 @@ export function countOtpRequest(result: OtpRequestResult): void {
 export function countTransition(to: InvitationStatus): void {
   transitions.inc({ to });
 }
+
+const purged = new client.Counter({
+  name: 'invitation_drafts_purged_total',
+  help: 'Số lời mời quá hạn chưa nộp đã được xoá email, họ tên, mã OTP',
+  registers: [metricsRegistry],
+});
+
+export function countPurged(n: number): void {
+  if (n > 0) purged.inc(n);
+}
