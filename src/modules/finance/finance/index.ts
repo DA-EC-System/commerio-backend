@@ -42,3 +42,5 @@ export { handleVerifiedPayment } from './service/verified-payment.ts';
 export type { FinanceContext, ShopInfo } from './service/settlement-views.ts';
 // Lệch ví của lần đối soát gần nhất có số, cho `Shop.walletMismatch` của channel (#251, Documents/21 §11.3).
 export { walletDiffOf } from './service/settlement-runs.ts';
+// Xoá gian hàng đã ngắt (#398): channel đếm dữ liệu tiền để chặn, rồi xoá đối soát `none`, cấu hình phí của gian hàng.
+export { type FinanceDataCounts, hasFinanceData, purgeShopFinance, shopFinanceData } from './service/shop-purge.ts';

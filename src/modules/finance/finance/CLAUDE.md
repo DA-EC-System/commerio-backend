@@ -65,6 +65,10 @@ Hợp đồng: `Documents/21` §21.2 (OrderPayment), §21.3 (SettlementRun, kh�
 - **Chốt lệch:** `POST /payments/:orderId/resolve` (`finance.settlement.resolve`, bắt lý do) người khác người soạn cấu hình phí đang áp dụng; lệch vượt `resolveLimit` (tính từ mốc lúc chốt trước) thì 409 `ceo_approval_required` tới khi `POST /payments/:orderId/ceo-approve` (`finance.settlement.approve`; không cần thì 409 `approval_not_needed`). Người duyệt tự chốt thì bỏ dấu duyệt.
 - **Khớp sao kê:** `GET /bank-matching` (dòng thực tế `withdrawal`, `supplier_refund`, `supplier_payment`, `lost_compensation`, lọc `matched`), `POST /ledger/:id/bank-match` ghi `bank_matches` một lần (409 `already_matched`, loại khác 422 `not_bank_matchable`); dòng sổ trả `bankMatch`.
 
+## Xoá gian hàng (#398)
+
+`service/shop-purge.ts`, channel gọi trong giao dịch xoá: `shopFinanceData(shopId, orderIds)` đếm (đọc, không khoá) theo `shop_id` hoặc đơn của gian hàng bảy nhóm: `ledgerEntries`, `ledgerPackageLines`, `settlementStatements`, `settlementBatches`, `orderSettlements` (chỉ `status <> 'none'`), `documents` (`sales_invoices`, `receipts`, `payment_vouchers` theo đơn), `payments` (`paymentRowsOfOrders` của payment: `order_payments`, `payment_links`, `payment_transactions`). Có nhóm > 0 (`hasFinanceData`) thì channel trả 409 `shop_has_finance_data`. `purgeShopFinance` xoá `order_settlements` `none` và mọi `config_versions` có `shop_id` (một câu, `supersedes_id` cùng gian hàng).
+
 ## Gọi module khác
 
 finance → payment (trạng thái tiền, giao dịch cổng), sales (`getOrdersForFinance`, `getOrderLines`, `getOrderForPayment`, `findMarketplaceOrders`), catalog (`getVariants` cho nhãn thuộc tính), staff (tên người), audit, platform (sự kiện). Không ai ở lớp dưới import finance: payment nhận hàm của finance qua `ctx`.

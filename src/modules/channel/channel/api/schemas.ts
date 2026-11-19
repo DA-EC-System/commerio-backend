@@ -54,6 +54,14 @@ export const DisconnectBody = z
   })
   .meta({ id: 'ShopDisconnectInput' });
 
+/** Xoá gian hàng đã ngắt (#398): gõ đúng `XOA` để chặn gọi nhầm từ script hay client khác, không chỉ dựa vào FE. */
+export const ShopDeleteBody = z
+  .object({
+    confirm: z.literal('XOA', { error: 'Gõ đúng XOA để xác nhận xoá' }),
+    version: z.number('Thiếu version').int().positive(),
+  })
+  .meta({ id: 'ShopDeleteInput' });
+
 
 // Schema trả về: Swagger và test integration parse body bằng chính các schema này (Documents/21 §1.1).
 const iso = z.iso.datetime();
@@ -183,6 +191,65 @@ export const ShopDisconnectConflict = ProblemDetailsSchema.extend({
 }).meta({ id: 'ShopDisconnectConflict' });
 
 export const ShopDetail = Shop.extend({ statusHistory: z.array(StatusChangeSchema) }).meta({ id: 'ShopDetail' });
+
+const count = z.number().int().min(0);
+
+/** 200 của xoá gian hàng (#398): số dòng đã xoá theo nhóm để FE báo lại. */
+export const ShopDeleteResult = z
+  .object({
+    deleted: z
+      .object({
+        orders: count,
+        orderLines: count,
+        returnRequests: count,
+        returnRequestLines: count,
+        packages: count,
+        packageLines: count,
+        returnParcels: count,
+        listings: count,
+        priceCalculations: count,
+        rawOrders: count,
+        remoteSkus: count,
+        stockDocuments: count.meta({ description: 'Phiếu kho nháp, chờ duyệt của gian hàng' }),
+        configVersions: count,
+        orderSettlements: count,
+        reportRows: count,
+        messageChannels: count,
+      })
+      .strict(),
+    detached: z
+      .object({ stockDocuments: count.meta({ description: 'Phiếu kho đã ghi sổ (từ chối, huỷ) giữ lại, cắt `shop_id`, thêm ghi chú' }) })
+      .strict(),
+  })
+  .strict()
+  .meta({ id: 'ShopDeleteResult' });
+
+/** Số dòng dữ liệu tiền theo nhóm, có nhóm > 0 thì không xoá được gian hàng (#398). */
+export const FinanceDataCountsSchema = z
+  .object({
+    ledgerEntries: count,
+    ledgerPackageLines: count,
+    settlementStatements: count,
+    settlementBatches: count,
+    orderSettlements: count.meta({ description: 'Đối soát theo đơn khác `none`' }),
+    documents: count.meta({ description: 'Hoá đơn, phiếu thu, phiếu chi của đơn gian hàng' }),
+    payments: count.meta({ description: 'Trạng thái tiền, mã thanh toán, giao dịch cổng của đơn gian hàng' }),
+  })
+  .strict()
+  .meta({ id: 'ShopFinanceData' });
+
+/**
+ * 409 của xoá gian hàng: `shop_not_disconnected`, `version_conflict` kèm `current`; `shop_has_finance_data` kèm
+ * `financeData`; `shop_has_open_inspection` kèm `documents`.
+ */
+export const ShopDeleteConflict = ProblemDetailsSchema.extend({
+  current: Shop.optional().meta({ description: '`shop_not_disconnected`, `version_conflict`: gian hàng hiện tại' }),
+  financeData: FinanceDataCountsSchema.optional().meta({ description: 'Chỉ có với `shop_has_finance_data`' }),
+  documents: z
+    .array(z.object({ id: z.uuid(), number: z.string() }).strict())
+    .optional()
+    .meta({ description: 'Chỉ có với `shop_has_open_inspection`: phiếu kiểm hàng hoàn chưa ghi sổ đã cộng chờ xử lý' }),
+}).meta({ id: 'ShopDeleteConflict' });
 
 export const ShopList = z.object({ items: z.array(Shop) }).strict().meta({ id: 'ShopList' });
 

@@ -92,3 +92,5 @@ export {
   marketplaceCarriers, marketplacePack, marketplaceReadyToShip, marketplaceRepack, marketplaceShipPackage,
   marketplaceShippingDocuments, marketplaceSplitAttributes, marketplaceSplitLevel, marketplaceSplitOrder,
 } from './service/order-actions.ts';
+// Xoá gian hàng đã ngắt (#398): `src/wiring.ts` tiêm `deleteShopSummaries` của insight vào `ctx` của router.
+export type { ChannelContext } from './service/shop-delete.ts';

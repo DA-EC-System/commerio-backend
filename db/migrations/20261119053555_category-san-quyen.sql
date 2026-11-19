@@ -12,6 +12,6 @@ CREATE POLICY company_isolation ON channel.shop_category_permissions
 REVOKE INSERT, UPDATE, DELETE ON channel.platform_categories, channel.platform_category_attributes FROM commerio_app;--> statement-breakpoint
 -- Quyền category của gian hàng mang đúng công ty của gian hàng (review BE1 P2-11): khoá ngoại kiểm bằng quyền chủ bảng,
 -- không qua RLS, nên ghi nhầm `company_id` hiện hành với `shop_id` của công ty khác cũng bị chặn. Đích `shops_id_company_uq`
--- khai ở `schema.ts`.
+-- khai ở `schema.ts`. `ON DELETE CASCADE`: xoá gian hàng (#398) xoá luôn quyền category đã ghi của nó.
 ALTER TABLE channel.shop_category_permissions
-  ADD CONSTRAINT shop_category_permissions_shop_company_fk FOREIGN KEY (shop_id, company_id) REFERENCES channel.shops (id, company_id);
+  ADD CONSTRAINT shop_category_permissions_shop_company_fk FOREIGN KEY (shop_id, company_id) REFERENCES channel.shops (id, company_id) ON DELETE CASCADE;
