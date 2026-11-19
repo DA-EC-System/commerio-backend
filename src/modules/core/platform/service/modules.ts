@@ -54,19 +54,19 @@ export function setCompanyModule(
   code: string,
   input: { enabled: boolean; aiConsent?: boolean | undefined },
 ) {
-  if (!isOptional(code)) throw new AppError(404, 'module_not_found', 'Không có phân hệ tuỳ chọn này');
+  if (!isOptional(code)) throw new AppError(404, 'module_not_found', 'Không có tính năng tuỳ chọn này');
   return withCompany(caller.companyId, async () => {
     const before = await lockModuleRow(caller.companyId, code);
     const current = async () => (await toViews(ctx, [code], [before]))[0]!;
     if (before.enabled === input.enabled) {
-      throw new AppError(409, 'module_state_changed', 'Phân hệ vừa được đổi ở phiên khác', { current: await current() });
+      throw new AppError(409, 'module_state_changed', 'Tính năng vừa được đổi ở phiên khác', { current: await current() });
     }
     const aiConsent = input.enabled && code === 'assistant';
     if (aiConsent && input.aiConsent !== true) {
       throw new AppError(422, 'ai_consent_required', 'Bật Trợ lý AI cần đồng ý gửi dữ liệu tới OpenAI');
     }
     if (!input.enabled && (await hasData(ctx, code))) {
-      throw new AppError(409, 'module_has_data', 'Phân hệ đã có dữ liệu nên không tắt được', { current: await current() });
+      throw new AppError(409, 'module_has_data', 'Tính năng đã có dữ liệu nên không tắt được', { current: await current() });
     }
     const saved = await saveModule(caller.companyId, code, { enabled: input.enabled, actorId: caller.accountId, aiConsent });
     await recordAudit({

@@ -46,7 +46,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const row = await inCompany(() => findListingById(job.listingId));
   if (row?.status !== 'pushing') return;
   if ((row.pushStartedAt?.getTime() ?? 0) < Date.now() - STALE_PUSH_MS) {
-    return finish(job, row, 'fail', { pushError: errorOf('marketplace_unavailable', 'Quá 30 phút chưa có kết quả từ sàn, đẩy lại') });
+    return finish(job, row, 'fail', { pushError: errorOf('marketplace_unavailable', 'Quá 30 phút chưa có kết quả từ sàn, đăng bán lại') });
   }
   const shop = await inCompany(() => findShopRow(job.shopId));
   if (!shop || shop.status === 'disconnected') {
@@ -161,7 +161,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
         async () => (await findListingByExternalSku(job.shopId, externalSkuId)) ?? (await findListingByPendingExternalSku(job.shopId, externalSkuId)),
       );
       if (owner && owner.id !== row.id) {
-        const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang ghép với biến thể khác; ghép tay hoặc đổi SKU`;
+        const message = `SKU người bán ${product.sellerSku} đã có trên sàn và đang liên kết với variant khác; liên kết SKU tay hoặc đổi SKU`;
         return finish(job, row, 'fail', { pushError: errorOf('marketplace_rejected', message), pushAttempts: row.pushAttempts + 1 });
       }
       // #399 Ca 2: sản phẩm của app sinh ra trong đúng lần gọi tạo ngay trước (sàn báo lỗi mà vẫn tạo, #346); nếu nó tồn tại
@@ -171,7 +171,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       const previousCall = row.createAttemptedAt;
       if (!previousCall || !result.createdAt || Math.abs(result.createdAt.getTime() - previousCall.getTime()) > CLOCK_SKEW_MS) {
         const named = result.title ? ` (${result.title})` : '';
-        const message = `SKU ${product.sellerSku} đã có trên ${adapter.name}${named}. Dùng Ghép SKU thay vì đẩy.`;
+        const message = `SKU ${product.sellerSku} đã có trên ${adapter.name}${named}. Dùng Liên kết SKU thay vì đăng bán.`;
         // Lần gọi này không tạo gì trên sàn: trả mốc về lần gọi trước. Giữ mốc vừa ghi thì sản phẩm người bán tạo trong
         // `CLOCK_SKEW_MS` trước lần gọi này sẽ bị lần đẩy lại nhận nhầm là của app và ghi đè (review #407).
         return finish(job, row, 'fail', {
@@ -228,7 +228,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       if (kept) throw err;
       return;
     }
-    const message = err.platformMessage ?? (err.kind === 'unsupported' ? 'Sàn chưa hỗ trợ đẩy sản phẩm' : 'Sàn từ chối sản phẩm');
+    const message = err.platformMessage ?? (err.kind === 'unsupported' ? 'Sàn chưa hỗ trợ đăng bán sản phẩm' : 'Sàn từ chối sản phẩm');
     // Bước kiểm trước khi tạo (#305) giữ mã riêng để FE báo đúng câu (Documents/21 §18.6.4).
     const code = err.platformCode && PRECHECK_CODES.has(err.platformCode) ? err.platformCode : 'marketplace_rejected';
     return finish(job, row, 'fail', { pushError: errorOf(code, message), pushAttempts: attempts }, err.platformCode);

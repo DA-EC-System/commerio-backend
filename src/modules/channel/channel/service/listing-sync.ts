@@ -360,7 +360,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   // Kẹt `pushing` (server chết giữa lúc gọi sàn): quá 30 phút thì báo lỗi đẩy (§18.3).
   const staleBefore = Date.now() - STALE_PUSH_MS;
   for (const row of rows.filter((r) => r.status === 'pushing' && (r.pushStartedAt?.getTime() ?? 0) < staleBefore)) {
-    const message = 'Quá 30 phút chưa có kết quả từ sàn, đẩy lại';
+    const message = 'Quá 30 phút chưa có kết quả từ sàn, đồng bộ lại';
     const pushError: SyncError = { code: 'marketplace_unavailable', message, at: new Date().toISOString() };
     // Lượt take-over xuất phát từ `live` kẹt quá 30 phút: về `live` như lỗi sàn, không `push_failed` (#399).
     await inCompany(async () => {
@@ -684,7 +684,7 @@ function lockPatch(remote: RemoteSku | undefined, at: Date): ListingPatch {
  */
 export async function pushZeroStock(actor: Actor, shopId: string): Promise<string[]> {
   const unavailable = () =>
-    new AppError(422, 'zero_stock_unavailable', 'Không đẩy được tồn 0 lên sàn lúc này; ngắt không kèm đẩy tồn 0, hoặc thử lại');
+    new AppError(422, 'zero_stock_unavailable', 'Không đồng bộ được tồn 0 lên sàn lúc này; ngắt kết nối không kèm đồng bộ tồn 0, hoặc thử lại');
   const session = await withCompany(actor.companyId, () => shopSession(shopId)).catch((err: unknown) => {
     throw err instanceof AppError && err.code === 'shop_not_connected' ? unavailable() : err;
   });

@@ -162,7 +162,7 @@ describe('luật hồi tố khi phiên bản sang active (25 §10.4)', () => {
     expect(v.status).toBe('active');
     const adj = await adjustments(s.companyId);
     expect(adj.map((a) => [a.package_id, a.amount])).toEqual([[pkg.packageId, '3870.00']]);
-    expect(adj[0].reason).toMatch(/loại hình thuế.*thuế sàn khấu trừ/);
+    expect(adj[0].reason).toMatch(/loại hình kinh doanh.*thuế sàn khấu trừ/);
 
     // 258.000 + 10.000 + 30.000 − 30.000 − 18.060 phí − 3.870 + 3.870 điều chỉnh − 23.455 GTGT đầu ra (258.000 − 258.000/1,1).
     const profit = await s.ceo.get(`/orders/${pkg.orderId}/profit`);

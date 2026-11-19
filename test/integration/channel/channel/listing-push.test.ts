@@ -259,7 +259,7 @@ describe('việc nền channel.listing_push', () => {
     expect(updateProduct).not.toHaveBeenCalled();
     const row = await listing(id);
     expect(row).toMatchObject({ status: 'push_failed', external_sku_id: null, push_error: { code: 'sku_exists_on_platform' } });
-    expect(row.push_error.message).toBe(`SKU ${v.sku} đã có trên Sàn giả (Áo thun cotton form rộng). Dùng Ghép SKU thay vì đẩy.`);
+    expect(row.push_error.message).toBe(`SKU ${v.sku} đã có trên Sàn giả (Áo thun cotton form rộng). Dùng Liên kết SKU thay vì đăng bán.`);
   });
 
   it('#346 (sửa sau review): đẩy lại listing `push_failed` sau hơn 5 phút, sản phẩm sàn tạo sát lần gọi tạo trước (lần trước E500 mà vẫn tạo) → nhận lại, `content_source = app`', async () => {

@@ -45,7 +45,7 @@ export interface ShopDeleteOutcome {
 const BUSY_WAIT_MS = 3000;
 
 const hasFinance = (counts: FinanceDataCounts) =>
-  new AppError(409, 'shop_has_finance_data', 'Gian hàng đã có dữ liệu tiền (sổ tiền, đối soát, chứng từ), không xoá được', {
+  new AppError(409, 'shop_has_finance_data', 'Gian hàng đã có dữ liệu tiền (sổ giao dịch, đối soát, chứng từ), không xoá được', {
     financeData: counts,
   });
 

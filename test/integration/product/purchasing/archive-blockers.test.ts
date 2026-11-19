@@ -29,27 +29,27 @@ describe('purchaseArchiveBlockers (#204)', () => {
   it('đề nghị nhập nháp có SKU', async () => {
     const v = await sku();
     await createRequest(t.ceo, supplierId, [{ variantId: v, quantity: 5, unitCost: 100000 }]);
-    expect(await blockersOf([v])).toEqual(new Map([[v, ['Còn 1 đề nghị nhập chưa xong']]]));
+    expect(await blockersOf([v])).toEqual(new Map([[v, ['Còn 1 đơn đặt hàng nhập chưa xong']]]));
   });
 
   it('đề nghị đã đặt NCC chưa nhận: đang về và đề nghị chưa xong', async () => {
     const v = await sku();
     await orderedRequest(t, supplierId, [{ variantId: v, quantity: 5, unitCost: 100000 }]);
-    expect(await blockersOf([v])).toEqual(new Map([[v, ['Đang về 5', 'Còn 1 đề nghị nhập chưa xong']]]));
+    expect(await blockersOf([v])).toEqual(new Map([[v, ['Đang về 5', 'Còn 1 đơn đặt hàng nhập chưa xong']]]));
   });
 
   it('phiếu nhận đang kiểm có SKU', async () => {
     const v = await sku();
     const req = await orderedRequest(t, supplierId, [{ variantId: v, quantity: 5, unitCost: 100000 }]);
     await createReceipt(t.kho, req.id);
-    expect((await blockersOf([v])).get(v)).toContain('Còn 1 phiếu nhận đang kiểm');
+    expect((await blockersOf([v])).get(v)).toContain('Còn 1 phiếu nhập kho đang kiểm');
   });
 
   it('phiếu trả NCC nháp sinh từ hàng lỗi giữ lại', async () => {
     const v = await sku();
     const { returnId } = await postedReceipt(t, supplierId, v, { accepted: 3, defectKept: 1 });
     expect(returnId).not.toBeNull();
-    expect((await blockersOf([v])).get(v)).toContain('Còn 1 phiếu trả NCC chưa có kết quả');
+    expect((await blockersOf([v])).get(v)).toContain('Còn 1 phiếu trả hàng NCC chưa có kết quả');
   });
 });
 

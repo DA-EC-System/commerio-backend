@@ -62,7 +62,7 @@ async function post(
   );
   if (!lines.some((l) => l.declaredQty > 0)) throw new AppError(409, 'empty_document', 'Phiếu chưa có số báo giao');
   if (needsEvidence(receipt.deliveryMode, lines) && !(await hasAttachments({ type: RECEIPT_ENTITY, id: receipt.id }))) {
-    throw new AppError(422, 'evidence_required', 'Người giao đã đi mà phiếu có hàng lỗi hoặc thiếu: đính ảnh mở thùng trước khi ghi sổ');
+    throw new AppError(422, 'evidence_required', 'Người giao đã đi mà phiếu có hàng lỗi hoặc thiếu: đính ảnh mở thùng trước khi nhập kho');
   }
 
   const byId = new Map(requestLines.map((l) => [l.id, l]));
@@ -184,7 +184,7 @@ export async function resolveShort(actor: Actor, id: string, input: ShortResolut
       const number = (input.followUpNumber ?? '').trim().toUpperCase();
       const found = number ? await findReceiptByNumber(request.id, number) : undefined;
       if (!found || found.id === receipt.id || found.status === 'cancelled') {
-        throw invalid({ followUpNumber: 'Không có phiếu nhận này trong cùng đề nghị' }, 'follow_up_invalid');
+        throw invalid({ followUpNumber: 'Không có phiếu nhập kho này trong cùng đơn đặt hàng nhập' }, 'follow_up_invalid');
       }
       followUpId = found.id;
     } else if (!note) {

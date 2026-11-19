@@ -79,7 +79,7 @@ export function listSettlementRuns(companyId: string, q: { shopId?: string; page
  */
 export function openRun(ctx: FinanceContext, companyId: string, accountId: string | null, shopId: string, now = new Date()) {
   return withCompany(companyId, async () => {
-    if (!ctx.settlementSource) throw new AppError(422, 'marketplace_unsupported', 'Chưa nối được sàn để kéo quyết toán');
+    if (!ctx.settlementSource) throw new AppError(422, 'marketplace_unsupported', 'Chưa nối được sàn để lấy sao kê sàn');
     if (!isUuid(shopId) || (ctx.shopsOf && !(await ctx.shopsOf([shopId])).has(shopId))) throw notFound('gian hàng');
     await lockShopRuns(shopId);
     const running = await findRunningRun(shopId);

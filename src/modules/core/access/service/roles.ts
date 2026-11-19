@@ -50,7 +50,7 @@ const nameTaken = () =>
   new AppError(409, 'role_name_taken', 'Tên vai trò đã được dùng', { errors: { name: 'Tên vai trò đã được dùng trong công ty' } });
 const moduleOff = () =>
   new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', {
-    errors: { permissions: 'Có quyền thuộc phân hệ chưa bật' },
+    errors: { permissions: 'Có quyền thuộc tính năng chưa bật' },
   });
 
 type Found = Awaited<ReturnType<typeof findRoles>>[number];

@@ -23,7 +23,7 @@ const companyOf = (res: Response) => getAuth(res).companyId!;
  */
 const channelEnabled: RequestHandler = (_req, res, next) => {
   if (!getAccess(res).enabledModules.includes('channel'))
-    throw new AppError(403, 'module_disabled', 'Phân hệ Kênh bán đang tắt');
+    throw new AppError(403, 'module_disabled', 'Tính năng Kênh bán đang tắt');
   next();
 };
 

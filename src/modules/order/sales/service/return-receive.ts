@@ -64,7 +64,7 @@ async function receiveRequest(row: ReturnRow, actor: Actor, scanned: readonly Sc
   if (!merged.some((l) => l.expected > 0 || l.scanned > 0)) {
     // Dòng yêu cầu chưa ghép SKU và kho chưa quét món nào: phiếu kiểm hàng hoàn không có dòng để lập.
     throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
-      errors: { lines: 'Yêu cầu chưa ghép SKU, quét món thực nhận vào lines' },
+      errors: { lines: 'Yêu cầu chưa liên kết SKU, quét món thực nhận vào lines' },
     });
   }
   const doc = await returnStockPort().receiveBack({ type: 'return_request', id: row.id }, merged, {

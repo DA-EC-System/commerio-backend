@@ -921,7 +921,7 @@ describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
     const { v } = await mapped();
     const taken = await match(sale.token, { externalSkuId: newRemote().externalSkuId, variantId: v.id });
     expect(taken.status).toBe(422);
-    expect(taken.body.errors.variantId).toBe('Biến thể đã ghép SKU sàn khác của gian hàng này');
+    expect(taken.body.errors.variantId).toBe('Variant đã liên kết SKU sàn khác của gian hàng này');
     const v2 = newVariant();
     await failedRow(v2.id, `PU-${randomUUID().slice(0, 6)}`, 'pushing');
     const busy = await match(sale.token, { externalSkuId: newRemote().externalSkuId, variantId: v2.id });
@@ -936,7 +936,7 @@ describe('#346: ghép vào biến thể có listing lỗi đẩy', () => {
     const res = await match(admin.token, { externalSkuId: r.externalSkuId, variantId: x.id });
     expect(res.status).toBe(200);
     expect(await byId(id)).toMatchObject({ status: 'delisted' });
-    expect((await transitionsOf(id)).at(-1)).toMatchObject({ action: 'delist', reason: 'Thay bằng ghép SKU sàn có sẵn' });
+    expect((await transitionsOf(id)).at(-1)).toMatchObject({ action: 'delist', reason: 'Thay bằng liên kết SKU sàn có sẵn' });
     expect(await rowOf(r.externalSkuId)).toMatchObject({ variant_id: x.id });
   });
 

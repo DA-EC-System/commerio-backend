@@ -20,9 +20,9 @@ export async function purchaseArchiveBlockers(variantIds: readonly string[]): Pr
     const reasons: string[] = [];
     const comingIn = incoming.get(id) ?? 0;
     if (comingIn) reasons.push(`Đang về ${comingIn}`);
-    if (requests.get(id)) reasons.push(`Còn ${requests.get(id)} đề nghị nhập chưa xong`);
-    if (receipts.get(id)) reasons.push(`Còn ${receipts.get(id)} phiếu nhận đang kiểm`);
-    if (returns.get(id)) reasons.push(`Còn ${returns.get(id)} phiếu trả NCC chưa có kết quả`);
+    if (requests.get(id)) reasons.push(`Còn ${requests.get(id)} đơn đặt hàng nhập chưa xong`);
+    if (receipts.get(id)) reasons.push(`Còn ${receipts.get(id)} phiếu nhập kho đang kiểm`);
+    if (returns.get(id)) reasons.push(`Còn ${returns.get(id)} phiếu trả hàng NCC chưa có kết quả`);
     if (reasons.length) result.set(id, reasons);
   }
   return result;

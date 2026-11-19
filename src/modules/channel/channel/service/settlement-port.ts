@@ -8,7 +8,7 @@ import { findActiveShopsAnyCompany } from '../repository/shops.ts';
 import { inBackground, type Payout, type SettlementTxn } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
-const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo quyết toán');
+const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ lấy sao kê sàn');
 
 /**
  * Sàn trả số tiền không đọc được (#349) là lỗi của hệ thống: ghi `error` kèm trường, chứng từ, giá trị gốc cho kỹ thuật

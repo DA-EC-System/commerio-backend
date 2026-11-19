@@ -152,6 +152,6 @@ export const NO_REVISION = { revisionStatus: null, revisionRejectReason: null, r
 /** Lý do khi sàn từ chối (sản phẩm hay bản sửa nội dung) mà không ghi câu nào. */
 export const NO_REASON = 'Sàn từ chối, không ghi lý do';
 /** Lý do ghi lịch sử khi ghép chờ bị bỏ vì listing đã gỡ (CHECK `listings_delisted_no_pending`, #220 đợt 2). */
-export const DELISTED_REASON = 'Listing đã gỡ, bỏ ghép chờ duyệt';
+export const DELISTED_REASON = 'Listing đã gỡ, bỏ liên kết SKU chờ duyệt';
 /** Dòng tạo ra chỉ để chờ duyệt "không quản tồn" của SKU chưa ghép (chưa có ghép hiệu lực). */
 export const pendingOnly = (r: { mode: 'mapped' | 'unmanaged'; approvedBy: string | null }): boolean => r.mode === 'unmanaged' && !r.approvedBy;
