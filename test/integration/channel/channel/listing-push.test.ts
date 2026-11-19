@@ -12,7 +12,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { fakeAdapter } from './helpers.ts';
+import { fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const productId = randomUUID();
@@ -113,12 +113,6 @@ beforeAll(async () => {
   company = await createCompany({ optionalModules: ['channel'] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
-  const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '14275',
-    attributes: { brand: 'No Brand' },
-    version: null,
-  });
-  expect(map.status).toBe(200);
 });
 
 beforeEach(() => {
@@ -136,6 +130,7 @@ beforeEach(() => {
 async function pushing(cols: Record<string, unknown> = {}, extra: Partial<ListingVariant> = {}) {
   const v = variant(`CMR-${randomUUID().slice(0, 8)}`, extra);
   variants.push(v);
+  await seedSpecs(company.companyId, 'lazada', '14275', [v], { brand: 'No Brand' });
   // Listing do app tạo (#399: cột mặc định `platform`); ca cần sản phẩm người bán thì ghi đè.
   const all = { company_id: company.companyId, shop_id: shopId, variant_id: v.id, seller_sku: v.sku, status: 'pushing', push_started_at: new Date(), content_source: 'app', ...cols };
   const keys = Object.keys(all);
@@ -596,11 +591,10 @@ describe('việc nền channel.listing_push', () => {
     it('AC-1 sàn bật theo cả sản phẩm (kiểu TikTok): chỉ `activate` theo sản phẩm, không updateProduct', async () => {
       const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
       const tiktokShop = res.body.shop.id as string;
-      const map = await auth(app().put(`/api/v1/channel/shops/${tiktokShop}/category-maps/${categoryId}`)).send({ externalCategoryId: '600042', attributes: {}, version: null });
-      expect(map.status).toBe(200);
       const tag = randomUUID().slice(0, 8);
       remote.set(`NB-${tag}`, { productId: `TP-${tag}`, skuId: `TS-${tag}`, state: 'inactive' });
-      const { id } = await pushing({ shop_id: tiktokShop, content_source: 'platform', seller_sku: `NB-${tag}`, external_product_id: `TP-${tag}`, external_sku_id: `TS-${tag}` });
+      const { id, v } = await pushing({ shop_id: tiktokShop, content_source: 'platform', seller_sku: `NB-${tag}`, external_product_id: `TP-${tag}`, external_sku_id: `TS-${tag}` });
+      await seedSpecs(company.companyId, 'tiktok', '600042', [v]);
       await runListingPush(port, { companyId: company.companyId, shopId: tiktokShop, listingId: id, imageUrls: ['https://img.test/a.png'] });
       expect(activate.mock.calls[0]![1]).toBe(`TP-${tag}`);
       expect(updateProduct).not.toHaveBeenCalled();

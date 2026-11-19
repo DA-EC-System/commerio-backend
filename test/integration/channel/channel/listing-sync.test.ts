@@ -13,7 +13,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const variant = (sku: string): ListingVariant => ({
@@ -121,11 +121,7 @@ beforeAll(async () => {
   });
   shopId = res.body.shop.id;
   await activateShop(shopId);
-  await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '1',
-    attributes: {},
-    version: null,
-  });
+  await seedSpecs(company.companyId, 'lazada', '1', [a, b, c]);
   const imageUrls = Object.fromEntries([a, b, c].map((v) => [v.productId, ['https://img.test/x.png']]));
   const pushed = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send({
     variantIds: [a.id, b.id, c.id],

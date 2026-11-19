@@ -15,7 +15,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const productId = randomUUID();
@@ -104,8 +104,21 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 /** Như FE: chỉ `{ variantIds }`; `imageUrls` cũ gửi kèm thì BE bỏ qua (#303). */
-const push = (variantIds: string[], imageUrls?: unknown) =>
-  auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(imageUrls === undefined ? { variantIds } : { variantIds, imageUrls });
+/** Sản phẩm dùng ghép danh mục cũ (ca A18), không chèn spec sẵn. */
+const legacy = new Set<string>();
+/** Spec sàn của mọi sản phẩm trong catalog giả (#400 lát 15), trừ sản phẩm "chưa ghép" và sản phẩm của ca ghép cũ. */
+const seedAll = () =>
+  seedSpecs(
+    company.companyId,
+    'lazada',
+    '14275',
+    all.filter((v) => v !== unmapped && !legacy.has(v.productId)),
+    { brand: 'No Brand' },
+  );
+const push = async (variantIds: string[], imageUrls?: unknown) => {
+  await seedAll();
+  return auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(imageUrls === undefined ? { variantIds } : { variantIds, imageUrls });
+};
 const results = async (variantIds: string[], imageUrls?: unknown) => {
   const res = await push(variantIds, imageUrls);
   expect(res.status).toBe(200);
@@ -131,6 +144,7 @@ async function jobsOf(listingId: string) {
 
 /** Chạy việc nền của listing như worker: listing có mã sàn, `under_review`. */
 async function runJob(listingId: string) {
+  await seedAll();
   await runListingPush(port, { companyId: company.companyId, shopId, listingId, imageUrls: CATALOG });
 }
 
@@ -139,12 +153,6 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
-  const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '14275',
-    attributes: { brand: 'No Brand' },
-    version: null,
-  });
-  expect(map.status).toBe(200);
 });
 
 describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
@@ -171,22 +179,30 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(history.rows).toEqual([{ from_state: null, to_state: 'pushing', action: 'push', by_system: false }]);
   });
 
+  // Ghép danh mục cũ (route `PUT category-maps`) còn tới lát 16; ca này dùng sản phẩm, danh mục riêng.
   it('#400 A18: lần đẩy chép ghép danh mục thành spec version 0, trục __custom; route ghép cũ cập nhật bản chép; category đổi chặn spec_incomplete', async () => {
+    const legacyCategory = randomUUID();
+    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: legacyCategory });
+    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: legacyCategory, weightG: null });
+    all.push(first, second);
+    legacy.add(first.productId);
+    catalogImages.set(first.productId, CATALOG);
+    const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${legacyCategory}`)).send({
+      externalCategoryId: '14275',
+      attributes: { brand: 'No Brand' },
+      version: null,
+    });
+    expect(map.status).toBe(200);
+    expect((await results([first.id]))[0]).toMatchObject({ status: 'pushing' });
     const spec = async () =>
-      (await testPool().query('select version, external_category_id, attributes, category_status from channel.product_specs where product_id = $1 and platform = $2', [ok.productId, 'lazada'])).rows[0];
+      (await testPool().query('select version, external_category_id, attributes, category_status from channel.product_specs where product_id = $1 and platform = $2', [first.productId, 'lazada'])).rows[0];
     expect(await spec()).toMatchObject({ version: 0, external_category_id: '14275', attributes: { brand: 'No Brand' }, category_status: 'ok' });
-    const cur = await auth(app().get(`/api/v1/channel/shops/${shopId}/category-maps`));
-    const version = cur.body.items.find((m: { categoryId: string }) => m.categoryId === categoryId).version;
-    const put = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({ externalCategoryId: '14276', attributes: {}, version });
+    const put = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${legacyCategory}`)).send({ externalCategoryId: '14276', attributes: {}, version: map.body.version });
     expect(put.status).toBe(200);
     expect(await spec()).toMatchObject({ version: 0, external_category_id: '14276' });
-    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [ok.productId]);
-    try {
-      const [r] = await results([noDims.id]);
-      expect(r).toMatchObject({ code: 'spec_incomplete' });
-    } finally {
-      await testPool().query("update channel.product_specs set category_status = 'ok', external_category_id = '14275' where product_id = $1", [ok.productId]);
-    }
+    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [first.productId]);
+    const [r] = await results([second.id]);
+    expect(r).toMatchObject({ code: 'spec_incomplete' });
   });
 
   it('sản phẩm không có ảnh catalog, listing chưa có ảnh trên sàn: images_missing (cổng không trả ảnh, không 5xx)', async () => {

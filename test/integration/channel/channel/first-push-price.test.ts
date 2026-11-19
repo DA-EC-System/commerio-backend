@@ -14,7 +14,7 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
@@ -71,6 +71,7 @@ async function variant(target: number | null, cost: number) {
     widthMm: 200,
     heightMm: 15,
   });
+  await seedSpecs(company.companyId, 'lazada', '1', variants.slice(-1));
   return variantId;
 }
 async function push(variantId: string) {
@@ -91,7 +92,6 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
-  expect((await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({ externalCategoryId: '1', attributes: {}, version: null })).status).toBe(200);
   await db().query(
     `insert into finance.config_versions (company_id, kind, shop_id, status, payload, effective_from, created_by, approved_by, approved_at)
      values ($1, 'fee', $2, 'active', $3, '2026-10-01', $4, $5, now()), ($1, 'min_margin', null, 'active', '{"pct":10}', '2026-10-01', $4, $5, now())`,
