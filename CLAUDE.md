@@ -34,6 +34,7 @@ Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn địn
 
 Chi tiết và cách sửa: `db/CLAUDE.md` mục "Hai nhánh cùng sinh migration".
 
+- **App chưa có người dùng thật** (Thành chốt 19/11/2026): staging chỉ có dữ liệu thử của nhóm. Được sửa, xoá dữ liệu staging tuỳ ý (đơn sai thì xoá), không cần giữ dữ liệu cũ vì sợ ảnh hưởng người dùng. Vẫn sửa triệt để: migration đúng, `db:ci-check` đạt, không vá tạm.
 - Mỗi PR chỉ sinh migration ở **bước cuối**, sau khi `schema.ts` đã chốt (`npm run db:generate -- --name <mo-ta>`, viết tay thì thêm `--custom`). Không sinh rồi sửa đi sửa lại giữa chừng.
 - PR khác có migration merge trước: gộp main vào nhánh (`git fetch origin && git merge origin/main`) rồi chạy `npm run db:regen`, commit lại `db/migrations`. Không tự ghép tay `_journal.json`.
 - CI (`npm run db:ci-check`) đỏ khi migration của PR không đứng sau mọi migration của main, journal hay snapshot đứt, hoặc `schema.ts` lệch migration.
