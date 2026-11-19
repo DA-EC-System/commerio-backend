@@ -17,14 +17,34 @@ const statements = (slug: string): string[] => {
   return readFileSync(join(MIGRATIONS, file), 'utf8').split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean);
 };
 
-async function rolledBack(fn: (c: pg.PoolClient) => Promise<void>) {
+async function rolledBackOnce(fn: (c: pg.PoolClient) => Promise<void>) {
   const c = await testPool().connect();
   try {
     await c.query('begin');
+    // Migration sửa cả bảng trong khi file khác chạy song song khoá đơn rồi ghi. Khoá `exclusive` trước mọi việc: câu đọc
+    // thường vẫn chạy, nhưng không ai giữ được khoá dòng của `orders` khi khối này chạy, nên không có vòng chờ (deadlock).
+    // Chờ khoá tối đa 500 ms rồi chạy lại cả khối, để file khác không phải xếp hàng lâu sau yêu cầu khoá này.
+    await c.query(`set local lock_timeout = '500ms'`);
+    await c.query('lock table "order".orders in exclusive mode');
     await fn(c);
   } finally {
     await c.query('rollback');
     c.release();
+  }
+}
+
+/** Lỗi khoá: hết `lock_timeout` (`55P03`) hay bị chọn huỷ vì deadlock (`40P01`). */
+const lockFailure = (err: unknown) => ['55P03', '40P01'].includes((err as { code?: string }).code ?? '');
+
+/** Chạy `fn` trong giao dịch có khoá `exclusive` trên `orders` rồi rollback; không lấy được khoá thì chạy lại cả khối. */
+async function rolledBack(fn: (c: pg.PoolClient) => Promise<void>) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await rolledBackOnce(fn);
+    } catch (err) {
+      if (!lockFailure(err) || attempt >= 20) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+    }
   }
 }
 
@@ -143,8 +163,11 @@ describe('chép cờ cũ sang cancel_pending, trigger giữ hai cột bằng nha
       await c.query(`update "order".orders set cancelling = true, cancel_pending = false where id = $1`, [waiting]);
       await c.query(`update "order".orders set cancelling = false, cancel_pending = false where id = $1`, [plain]);
 
-      for (const s of statements('dang-huy-chuyen-co')) await c.query(s);
-      for (const s of statements('dang-huy-chuyen-co')) await c.query(s);
+      // Chỉ câu dữ liệu: `drop trigger` cần khoá `AccessExclusive` (chặn cả câu đọc của file khác); trigger đã được migration
+      // thật tạo lúc dựng DB test, ca dưới kiểm hành vi của nó.
+      const data = statements('dang-huy-chuyen-co').filter((s) => !/\b(drop|create) trigger\b/i.test(s));
+      for (const s of data) await c.query(s);
+      for (const s of data) await c.query(s);
 
       const row = rowOf(c);
       expect(await row(waiting)).toMatchObject({ cancelling: true, cancel_pending: true });
