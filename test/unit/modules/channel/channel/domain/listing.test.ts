@@ -160,6 +160,22 @@ describe('stockDecision: đối chiếu tồn sàn với số có thể bán (25
   ] as const)('%s, platform_stock %s, sàn %i, app %i → %s', (stockSync, platformStock, remote, available, expected) => {
     expect(stockDecision({ stockSync, platformStock }, remote, available)).toBe(expected);
   });
+
+  // #430: sàn vẫn cao hơn ngay sau khi app vừa đẩy đúng số (Lazada bán tổng hai kho, app đẩy một kho).
+  const now = new Date('2026-11-19T10:00:00Z');
+  const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+  it.each([
+    // [stockSync, platformStock, lần đẩy trước (phút), kết quả]
+    ['synced', 5, 15, 'drift'],
+    ['synced', 5, 45, 'push'],
+    ['synced', 5, null, 'push'],
+    ['synced', 3, 15, 'push'],
+    ['pending', 5, 15, 'push'],
+    ['error', 5, 15, 'push'],
+  ] as const)('sàn 8, app 5: %s, platform_stock %s, đẩy %s phút trước → %s', (stockSync, platformStock, min, expected) => {
+    const lastPushedAt = min === null ? null : ago(min);
+    expect(stockDecision({ stockSync, platformStock, lastPushedAt }, 8, 5, now)).toBe(expected);
+  });
 });
 
 describe('ẩn, hiện theo trạng thái SKU (#224, 25 §6.4, ca C2-13, C2-14)', () => {

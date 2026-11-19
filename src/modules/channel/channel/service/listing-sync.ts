@@ -520,11 +520,14 @@ async function reconcileStock(
       if (app === undefined) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
       const decision = stockDecision(row, remote, app);
-      if (untrusted.has(row.variantId!) && (decision === 'wait' || decision === 'drift')) continue;
+      if (untrusted.has(row.variantId!) && remote < app) continue;
       if (decision === 'wait') waiting.add(row.id);
       const patch = reconcilePatch(row, decision, remote);
       if (!patch) continue;
-      if (decision === 'drift') logger.warn({ listingId: row.id, remote, available: app }, 'Lệch tồn: sàn thấp hơn số có thể bán hai lượt liền');
+      if (decision === 'drift') {
+        const why = remote > app ? 'Lệch tồn: đã đẩy đúng số mà sàn vẫn cao hơn' : 'Lệch tồn: sàn thấp hơn số có thể bán hai lượt liền';
+        logger.warn({ listingId: row.id, remote, available: app }, why);
+      }
       // Lệch `version` (tồn vừa đổi): bỏ, dòng đã chờ đẩy số mới.
       if (await updateListing(row.id, { version: row.version }, patch)) changed = true;
     }

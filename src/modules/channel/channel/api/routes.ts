@@ -6,6 +6,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { suggestCategories } from '../service/category-suggestions.ts';
+import { shopWarehouses } from '../service/shop-warehouses.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
@@ -261,6 +262,12 @@ export function channelRouter(ctx: ModuleContext): Router {
       res.json(await putProductSpec(ctx, actor(res), productId, platform, validated<typeof ProductSpecBody>(res, 'body')));
     },
   );
+
+  // Kho của gian hàng trên sàn (#430): gọi sàn ngoài giao dịch, service tự mở `withCompany`.
+  router.get('/shops/:id/warehouses', view, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await shopWarehouses(actor(res).companyId, id));
+  });
 
   router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
