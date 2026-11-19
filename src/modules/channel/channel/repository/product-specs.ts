@@ -119,7 +119,10 @@ export async function lastPermissionCheck(shopId: string): Promise<Date | null> 
   return row?.at ? new Date(row.at) : null;
 }
 
-/** Ghi quyền mọi leaf của một gian hàng bằng một câu upsert theo lô (A17). Gọi trong `withCompany`. */
+/**
+ * Ghi quyền mọi leaf của một gian hàng bằng một câu upsert theo lô (A17). Mã leaf, quyền đi trong một tham số JSON (không tự
+ * dựng literal mảng, review BE2 P2-9). Gọi trong `withCompany`.
+ */
 export async function upsertPermissions(
   companyId: string,
   shopId: string,
@@ -129,8 +132,7 @@ export async function upsertPermissions(
   if (!items.length) return;
   await getDb().execute(sql`
     insert into channel.shop_category_permissions (company_id, shop_id, external_category_id, status, checked_at)
-    select ${companyId}::uuid, ${shopId}::uuid, c, s, ${checkedAt.toISOString()}::timestamptz
-    from unnest(${`{${items.map((i) => `"${i.externalCategoryId.replace(/"/g, '')}"`).join(',')}}`}::text[],
-                ${`{${items.map((i) => i.status).join(',')}}`}::text[]) as t(c, s)
+    select ${companyId}::uuid, ${shopId}::uuid, t.c, t.s, ${checkedAt.toISOString()}::timestamptz
+    from jsonb_to_recordset(${JSON.stringify(items.map((i) => ({ c: i.externalCategoryId, s: i.status })))}::jsonb) as t(c text, s text)
     on conflict (shop_id, external_category_id) do update set status = excluded.status, checked_at = excluded.checked_at`);
 }

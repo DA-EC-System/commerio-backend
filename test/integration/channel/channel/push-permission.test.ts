@@ -8,6 +8,8 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformAttribute } from '#src/modules/channel/channel/domain/product-spec.ts';
 import { replaceLeaf } from '#src/modules/channel/channel/repository/platform-categories.ts';
+import { upsertPermissions } from '#src/modules/channel/channel/repository/product-specs.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { MarketplaceError, type NewProduct, type PlatformCategoryNode } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -248,5 +250,16 @@ describe('dữ liệu đẩy', () => {
     const { listingId } = await productWithSpec(leaf, 'Teas');
     await run(listingId);
     expect(createProduct.mock.calls[0]![1]).toMatchObject({ externalCategoryId: leaf, brand: 'Teas' });
+  });
+});
+
+// Review BE2 P2-9: `upsertPermissions` truyền mã leaf bằng tham số, không tự dựng literal mảng (trước chỉ bỏ `"`, không thoát `\`).
+describe('upsertPermissions', () => {
+  it('mã có dấu ngoặc kép, gạch chéo ngược, dấu phẩy, ngoặc nhọn ghi đúng nguyên văn', async () => {
+    const odd = [`${num()}"a`, `${num()}\b`, `${num()},c`, `${num()}{d}`];
+    await withCompany(company.companyId, () =>
+      upsertPermissions(company.companyId, shopId, odd.map((externalCategoryId) => ({ externalCategoryId, status: 'available' as const })), new Date()),
+    );
+    for (const id of odd) expect((await permissionOf(id))?.status).toBe('available');
   });
 });
