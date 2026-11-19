@@ -178,8 +178,9 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(history.rows).toEqual([{ from_state: null, to_state: 'pushing', action: 'push', by_system: false }]);
   });
 
-  // Sau BE3 không còn chép lười từ ghép danh mục: spec chỉ đến từ migration (bản chép `version = 0`), `PUT` spec hay ghép SKU.
-  it('#400 BE3: sản phẩm chưa có spec → category_unmapped (không chép lười); bản chép version 0 bị đồng bộ đánh changed → spec_incomplete', async () => {
+  // Spec chỉ đến từ migration (bản chép `version = 0`), `PUT` spec hay ghép SKU. Ca này không chứng minh việc bỏ chép lười
+  // (BE3; bảng ghép cũ đã xoá nên typecheck và schema bảo đảm), chỉ kiểm mã chặn khi thiếu spec và khi spec chép bị đánh changed.
+  it('#400: sản phẩm chưa có spec → category_unmapped, không tạo spec; bản chép version 0 bị đồng bộ đánh changed → spec_incomplete', async () => {
     const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: randomUUID() });
     const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: first.categoryId, weightG: null });
     all.push(first, second);
