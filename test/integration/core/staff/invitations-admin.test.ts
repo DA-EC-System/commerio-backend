@@ -415,8 +415,9 @@ const lockInvitation = (id: string) => (holder: PoolClient) =>
 describe('duyệt chạy đồng thời', () => {
   it('hai Admin duyệt cùng lúc: một 200, một 409 invalid_transition (đã duyệt); chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
-    // Mời làm Admin: Admin cấp được đủ quyền, nên hai bên chỉ khác nhau ở thứ tự giành khoá.
-    const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
+    // Mời làm Sale: CEO và Admin đều duyệt được (vai Admin chỉ CEO duyệt, I5), nên hai bên chỉ khác nhau ở thứ tự giành
+    // khoá.
+    const inv = await pending({ roleIds: [SALE] });
     const results = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
     );
