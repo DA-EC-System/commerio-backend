@@ -67,7 +67,8 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/packages/documents',
     summary: 'In vận đơn PDF',
-    description: 'Cần `fulfillment.order.process`. Gộp vận đơn 1–50 kiện thành một PDF, tên tệp theo giờ Việt Nam.',
+    description: 'Cần `fulfillment.order.process`. Gộp vận đơn 1–50 kiện thành một PDF, tên tệp theo giờ Việt Nam. In được kiện có mã kiện '
+      + 'sàn và mã vận đơn; thiếu thì 409 `document_not_ready`, liệt kê mã kiện, không gọi sàn.',
     security: bearer,
     request: { query: PackageDocumentsQuery },
     responses: {
