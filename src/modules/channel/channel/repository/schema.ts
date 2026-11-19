@@ -19,6 +19,16 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { bytea, money, timestamps, version } from '../../../../shared/db/columns.ts';
+import type {
+  AttributeInput,
+  AttributeKind,
+  AttributeOption,
+  AttributeTier,
+  CategoryPermission,
+  RequiredWhen,
+  SpecAttributeValue,
+  SpecCategoryStatus,
+} from '../domain/product-spec.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
@@ -396,19 +406,6 @@ export const platformCategories = channelSchema.table(
   ],
 );
 
-export type AttributeKind = 'sales' | 'property';
-export type AttributeInput = 'select' | 'multiselect' | 'text' | 'number' | 'date' | 'image' | 'cascade';
-export type AttributeTier = 'category' | 'product' | 'company';
-export interface AttributeOption {
-  id: string;
-  label: string;
-}
-/** Điều kiện bắt buộc theo attribute khác (TikTok `requirement_conditions`): bắt buộc khi `code` mang một trong `values`. */
-export interface RequiredWhen {
-  code: string;
-  values: string[];
-}
-
 /**
  * Attribute của một leaf category (#400, Documents/19 mục 3.3). Lấy khi có người mở leaf (route chi tiết, `PUT` spec, việc
  * nền), dùng lại 7 ngày; mỗi lần lấy thay cả tập của leaf (`replaceLeaf`). `code`: Lazada `name`, TikTok id attribute.
@@ -448,8 +445,6 @@ export const platformCategoryAttributes = channelSchema.table(
   ],
 );
 
-export type CategoryPermission = 'available' | 'invite_only' | 'non_main_category' | 'prohibited';
-
 /**
  * Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17). Ghi từ gợi ý và lần kiểm trước
  * khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
@@ -472,9 +467,6 @@ export const shopCategoryPermissions = channelSchema.table(
 );
 
 export type SpecSource = 'push' | 'match';
-export type SpecCategoryStatus = 'ok' | 'changed' | 'removed';
-/** Giá trị attribute trong spec: chuỗi (text, mã lựa chọn của select) hoặc mảng mã (multiselect). */
-export type SpecAttributeValue = string | string[];
 
 /**
  * Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay
