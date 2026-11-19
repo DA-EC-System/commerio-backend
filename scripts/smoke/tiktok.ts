@@ -1,5 +1,5 @@
 // Smoke test TikTok Shop bằng chính adapter của app (#217): link uỷ quyền, đổi code, đọc gian hàng, làm mới, đọc SKU.
-// #221: đơn và kiện (liệt kê, chi tiết, thuộc tính tách, tách, giao). #227: yêu cầu trả, lần huỷ, lý do huỷ (chỉ đọc).
+// #221: đơn và kiện (liệt kê, chi tiết, thuộc tính tách, tách, giao). #239: mã vận đơn của kiện (`package`). #227: yêu cầu trả, lần huỷ, lý do huỷ (chỉ đọc).
 // #226, #219: kho, danh mục, thuộc tính, đẩy tồn, giá, tắt, bật, tải ảnh, tạo sản phẩm.
 // Lệnh ghi (split, ship, push-*, deactivate, activate, create-product) chỉ dùng trên shop thử của nhóm (SANDBOX), đặt lại
 // giá trị cũ sau khi thử. Mỗi lời gọi Open API in path, `code`, `request_id`.
@@ -369,6 +369,18 @@ async function ship(packageId: string | undefined, handover: string | undefined)
   printStep('shipPackage (fulfillment/202309/packages/{package_id}/ship)', true, { packageId });
 }
 
+/**
+ * `package <packageId>` (#239 KH-B02, chỉ đọc): mã vận đơn sau Ship Package. In phản hồi gốc của Get Package Detail để
+ * so `shipping_info`, `tracking_number`, rồi kết quả `packageTracking` của adapter.
+ */
+async function packageDetail(packageId: string | undefined): Promise<void> {
+  if (!packageId) throw new Error('Cú pháp: package <packageId>');
+  const packed = session();
+  const raw = await client.call('GET', `/fulfillment/202309/packages/${encodeURIComponent(packageId)}`, { token: packed });
+  console.log(JSON.stringify(raw, null, 2));
+  printStep('packageTracking (fulfillment/202309/packages/{package_id})', true, { packageId, trackingCode: await adapter.packageTracking!(packed, packageId) });
+}
+
 const [command, ...args] = process.argv.slice(2);
 const commands: Record<string, () => Promise<void> | void> = {
   link,
@@ -403,12 +415,14 @@ const commands: Record<string, () => Promise<void> | void> = {
   'upload-image': () => uploadImage(args[0]),
   'create-product': () => createProduct(args[0], args[1], args.slice(2)),
   // orders [số ngày, mặc định 30] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [cách]
+  // | package <kiện> (chỉ đọc)
   orders: () => orders(false, Number(args[0] ?? 30)),
   'open-orders': () => orders(true, 0),
   order: () => order(args[0]),
   'split-attr': () => splitAttr(args[0]),
   split: () => split(args[0], args.slice(1)),
   ship: () => ship(args[0], args[1]),
+  package: () => packageDetail(args[0]),
 };
 const run = command ? commands[command] : undefined;
 if (!run) {
@@ -418,7 +432,7 @@ if (!run) {
       '  upload-image <URL ảnh> | create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...] |\n' +
       '  returns [ngày] | cancellations [ngày] | cancel-reasons <orderId> |\n' +
       '  return-reasons <returnId> [reject|refuse-refund] | return-records <returnId> |\n' +
-      '  orders [ngày] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [pickup|drop_off]',
+      '  orders [ngày] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [pickup|drop_off] | package <kiện>',
   );
   process.exitCode = 1;
 } else {

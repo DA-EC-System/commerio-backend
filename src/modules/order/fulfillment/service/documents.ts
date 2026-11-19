@@ -44,8 +44,10 @@ export async function packageDocuments(ctx: FulfillmentContext, companyId: strin
   const shops = new Map<string, Set<string>>();
   const missing: string[] = [];
   for (const row of ordered) {
-    const { code, shopId, platformPackageCode } = row!;
-    if (!shopId || !platformPackageCode) {
+    // In được khi sàn đã cấp vận đơn (mã kiện sàn và mã vận đơn), không xét trạng thái: Lazada có từ lúc đóng gói, TikTok
+    // sau khi báo giao (#239 KH-B03).
+    const { code, shopId, platformPackageCode, trackingCode } = row!;
+    if (!shopId || !platformPackageCode || !trackingCode) {
       missing.push(code);
       continue;
     }
@@ -53,7 +55,7 @@ export async function packageDocuments(ctx: FulfillmentContext, companyId: strin
     shops.get(shopId)!.add(platformPackageCode);
   }
   if (missing.length) {
-    throw new AppError(409, 'document_not_ready', `Kiện ${missing.join(', ')} chưa có mã kiện sàn`);
+    throw new AppError(409, 'document_not_ready', `Kiện ${missing.join(', ')} chưa có vận đơn trên sàn`);
   }
 
   const targets = [...shops];

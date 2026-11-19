@@ -63,7 +63,8 @@ export interface MarketplacePackages {
     trackingCode: string | null;
     carrier: { code: string; name: string } | null;
   } | null>;
-  readyToShip(companyId: string, shopId: string, packageCode: string): Promise<void>;
+  /** Báo sàn kiện sẵn sàng giao; trả mã vận đơn nếu sàn cấp ngay sau khi báo (TikTok), không thì null (#239 KH-B02). */
+  readyToShip(companyId: string, shopId: string, packageCode: string): Promise<{ trackingCode: string | null }>;
   repack(companyId: string, shopId: string, packageCode: string): Promise<'repacked' | 'not_supported'>;
   shippingDocuments(companyId: string, shopId: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
 }
