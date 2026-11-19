@@ -887,6 +887,26 @@ export const CascadeLevelSchema = z
   .strict()
   .meta({ id: 'CascadeLevel' });
 
+// Gợi ý category của sàn theo sản phẩm (#400 lát 9, Documents/21 §18.5).
+export const CategorySuggestionsQuery = z.object({
+  productId: z.string('Chọn sản phẩm').trim().min(1, 'Chọn sản phẩm').max(60),
+});
+export const CategorySuggestionsView = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          externalId: z.string(),
+          path: z.string(),
+          permission: z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable(),
+        })
+        .strict(),
+    ),
+    cached: z.boolean(),
+  })
+  .strict()
+  .meta({ id: 'CategorySuggestions' });
+
 // "Đồng bộ ngay" cây category (#400, Thành chốt 19/11/2026): `allowShrink` chỉ quản trị nền tảng.
 export const CategorySyncBody = z
   .object({

@@ -4,6 +4,7 @@ import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CascadeLevel,
   type CategoryAttribute,
+  type CategorySuggestion,
   DEFAULT_REFRESH_LEAD_MS,
   epochDate,
   existingProduct,
@@ -211,6 +212,26 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
   if (res.type === 'SYSTEM' || TRANSIENT_CODES.has(code)) return new MarketplaceError('unavailable', code, message);
   return new MarketplaceError('rejected', code, message);
+}
+
+/** Đọc `data.categorySuggestions[]` của GetCategorySuggestion (#400 lát 9): giữ thứ tự sàn, bỏ phần tử không có mã. */
+export function lazadaSuggestions(data: unknown): CategorySuggestion[] {
+  const rows = (data as { categorySuggestions?: unknown } | undefined)?.categorySuggestions;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((r: { categoryId?: unknown; categoryPath?: unknown; categoryName?: unknown }) =>
+    r.categoryId == null
+      ? []
+      : [
+          {
+            externalId: String(r.categoryId),
+            path: String(r.categoryPath ?? r.categoryName ?? '')
+              .split('>')
+              .map((x) => x.trim())
+              .join(' > '),
+            permissionStatuses: null,
+          },
+        ],
+  );
 }
 
 /** Thoát ký tự đặc biệt khi ghép vào payload XML. */
@@ -921,6 +942,19 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     async cascadeNext(accessToken, externalCategoryId, cascadeId, path) {
       const params = { access_token: accessToken, categoryId: externalCategoryId, cascadeId, ...(path && { path }) };
       return lazadaCascade((await call(config.apiUrl, '/category/cascade/getNextCascadeProp', params, 'GET')).data);
+    },
+    // GetCategorySuggestion (open.lazada.com, tra 19/11/2026): `product_name`, `image_url` đều bắt buộc, cần access_token;
+    // "E701: Empty category suggestion" là sàn không đoán được, trả rỗng. Đường dẫn sàn trả tiếng Anh nối ">" (gọi thật
+    // 18/11/2026, request_id 2102e04417950055354256958); service thay bằng đường dẫn cây tiếng Việt khi cây đã đồng bộ.
+    suggestionRules: { needsImage: true },
+    async suggestCategories(accessToken, input) {
+      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl ?? '' };
+      try {
+        return lazadaSuggestions((await call(config.apiUrl, '/product/category/suggestion/get', params, 'GET')).data);
+      } catch (err) {
+        if (err instanceof MarketplaceError && err.platformCode === '701') return [];
+        throw err;
+      }
     },
     async listCategories(accessToken): Promise<PlatformCategory[]> {
       const params = { access_token: accessToken, language_code: 'vi_VN' };

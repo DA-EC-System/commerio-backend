@@ -6,6 +6,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
+import { suggestCategories } from '../service/category-suggestions.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { getProductSpec, putProductSpec, refreshCopiesForCategory } from '../service/product-specs.ts';
@@ -54,6 +55,7 @@ import {
   PlatformLeafParams,
   LeafDetailQuery,
   CascadeQuery,
+  CategorySuggestionsQuery,
   CategorySyncBody,
   ProductSpecBody,
   ProductSpecParams,
@@ -234,6 +236,18 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
       res.json(await cascadeLevel(actor(res).companyId, platform, externalId, validated<typeof CascadeQuery>(res, 'query')));
+    },
+  );
+
+  // Gợi ý category (#400 lát 9): gọi sàn ngoài giao dịch, service tự mở `withCompany`.
+  router.get(
+    '/shops/:id/category-suggestions',
+    manage,
+    validate({ params: ShopParams, query: CategorySuggestionsQuery }),
+    async (_req, res) => {
+      const { id } = validated<typeof ShopParams>(res, 'params');
+      const { productId } = validated<typeof CategorySuggestionsQuery>(res, 'query');
+      res.json(await suggestCategories(ctx, actor(res).companyId, id, productId));
     },
   );
 

@@ -10,6 +10,7 @@
 import {
   type CategoryAttribute,
   type CategoryRules,
+  type CategorySuggestion,
   type CreatedProduct,
   existingProduct,
   type MarketplaceAdapter,
@@ -67,6 +68,7 @@ type ListingMethods = Pick<
   | 'categoryTree'
   | 'leafAttributes'
   | 'categoryRules'
+  | 'suggestCategories'
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
@@ -75,6 +77,16 @@ type ListingMethods = Pick<
   | 'deactivate'
   | 'activate'
 >;
+
+/** Đọc phản hồi Recommend Category (#400 lát 9): một leaf, đường dẫn nối tên các cấp theo `level`, quyền của leaf. */
+export function tiktokSuggestions(data: { categories?: Row[]; leaf_category_id?: unknown } | null | undefined): CategorySuggestion[] {
+  const leafId = data?.leaf_category_id;
+  if (leafId == null || leafId === '') return [];
+  const chain = [...(data?.categories ?? [])].sort((a, b) => Number(a.level ?? 0) - Number(b.level ?? 0));
+  const leaf = chain.find((c) => String(c.id) === String(leafId));
+  const statuses = Array.isArray(leaf?.permission_statuses) ? (leaf.permission_statuses as unknown[]).map(String) : null;
+  return [{ externalId: String(leafId), path: chain.map((c) => String(c.name ?? c.id)).join(' > '), permissionStatuses: statuses }];
+}
 
 /** Lỗi theo từng mục của API lô (`data.errors[]`): mã, câu của lỗi phụ đầu tiên nếu có (cụ thể hơn 12052990 "check failed"). */
 /**
@@ -281,6 +293,18 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         query: { category_version: CATEGORY_VERSION },
       });
       return tiktokCategoryNodes(data?.categories ?? []);
+    },
+
+    // Recommend Category 202309 (OAS cục bộ tts-openapi-guide, tra 19/11/2026): `product_title` (VN 25–255 ký tự, bên gọi
+    // kiểm trước), `category_version`. Sàn trả chuỗi cấp từ gốc tới một leaf (`leaf_category_id`) kèm quyền của gian hàng
+    // mang token. Gọi thật 18/11/2026: tên "Giày sneaker…" ra 601352 > 900616 > 601357.
+    async suggestCategories(token, input): Promise<CategorySuggestion[]> {
+      const data = await client.call<{ categories?: Row[]; leaf_category_id?: unknown }>('POST', '/product/202309/categories/recommend', {
+        token: requireToken(token),
+        query: { locale: 'vi-VN' },
+        body: { product_title: input.name, category_version: CATEGORY_VERSION },
+      });
+      return tiktokSuggestions(data);
     },
 
     async leafAttributes(token, externalCategoryId) {

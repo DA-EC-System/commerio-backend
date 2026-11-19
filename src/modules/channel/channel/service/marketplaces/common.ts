@@ -83,6 +83,13 @@ export interface CategoryAttribute {
 /** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
 export type Responsible = ResponsibleOrg;
 
+/** Một gợi ý category của sàn (#400 lát 9): `path` là đường dẫn sàn trả (Lazada tiếng Anh), service thay bằng cây khi có. */
+export interface CategorySuggestion {
+  externalId: string;
+  path: string;
+  permissionStatuses: string[] | null;
+}
+
 /** Một cấp của attribute cascade (#400, Documents/21 §18.5): thuộc tính cấp kế (null ở cấp cuối) và giá trị chọn được. */
 export interface CascadeLevel {
   prop: { id: string; label: string; required: boolean } | null;
@@ -567,6 +574,18 @@ export interface MarketplaceAdapter {
    * attribute của sàn (trong `raw`), `path` các cấp đã chọn theo định dạng của sàn. Sàn không có thì không khai.
    */
   cascadeNext?(accessToken: string, externalCategoryId: string, cascadeId: string, path: string | null): Promise<CascadeLevel>;
+  /**
+   * Gợi ý category của sàn theo tên và ảnh đầu của sản phẩm (#400, Documents/21 §18.5), đúng thứ tự sàn trả. Sàn không đoán
+   * được thì rỗng, không ném. `permissionStatuses`: quyền của gian hàng mang token với leaf đó (TikTok), sàn không có thì null.
+   */
+  suggestCategories?(accessToken: string, input: { name: string; imageUrl: string | null }): Promise<CategorySuggestion[]>;
+  /** Điều kiện sàn đặt cho lời gọi gợi ý, app kiểm trước khi gọi: cần ảnh (Lazada), độ dài tên tối thiểu (TikTok 25). */
+  readonly suggestionRules?: { needsImage?: true; minNameLength?: number };
+  /**
+   * Quyền category theo gian hàng (TikTok, A17): `categoryTree(token)` của gian hàng trả `permissionStatuses` cho từng node,
+   * việc nền đẩy dùng để ghi `shop_category_permissions` trước khi đẩy. Sàn không có quyền theo gian hàng thì không khai.
+   */
+  readonly categoryPermissionsPerShop?: true;
   /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
   categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**

@@ -9,6 +9,8 @@ import {
   LeafDetailQuery,
   CascadeLevelSchema,
   CascadeQuery,
+  CategorySuggestionsQuery,
+  CategorySuggestionsView,
   CategorySyncBody,
   ProductSpecBody,
   ProductSpecParams,
@@ -301,6 +303,23 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`shop_not_connected`: không có gian hàng `active` của sàn; `marketplace_rejected`, `marketplace_unauthorized`'),
       422: problemResponse('`validation_failed` (`errors.code`: không phải attribute cascade đã lưu của leaf); `marketplace_unsupported`: sàn không có cascade'),
       503: problemResponse('`marketplace_unavailable`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/category-suggestions',
+    summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
+    description:
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false.',
+    security: bearer,
+    request: { params: ShopParams, query: CategorySuggestionsQuery },
+    responses: {
+      200: { description: 'Gợi ý', ...json(CategorySuggestionsView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hay sản phẩm không có hoặc của công ty khác'),
+      409: problemResponse('`shop_not_connected` (gian hàng không `active`, kèm `current`); `marketplace_rejected`, `marketplace_unauthorized`'),
+      422: problemResponse('`product_name_too_short` (kèm `min`, TikTok 25), `images_missing` (Lazada), không gọi sàn; `validation_failed` (`errors.productId`); `marketplace_unsupported`'),
+      503: problemResponse('`marketplace_unavailable` sau một lần gọi lại'),
     },
   });
   registry.registerPath({

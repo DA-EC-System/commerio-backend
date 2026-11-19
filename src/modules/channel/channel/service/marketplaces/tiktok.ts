@@ -498,6 +498,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     capabilities: TIKTOK_CAPABILITIES,
     // Cây, attribute của category theo gian hàng (`shop_cipher` bắt buộc, G2.6; #400 A4).
     categoriesNeedToken: true,
+    // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
+    suggestionRules: { minNameLength: 25 },
     responsibleFields: RESPONSIBLE_ATTRS,
     productFields: { '100149': 'originCountry' },
     togglesByProduct: true,
