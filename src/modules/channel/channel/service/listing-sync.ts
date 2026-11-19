@@ -411,6 +411,12 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   return summary;
 }
 
+/** Mã sản phẩm sàn của listing đang theo dõi (cần category, review BE2 P2-1). Gọi trong `withCompany`. */
+export async function watchedProductIds(shopId: string): Promise<Set<string>> {
+  const rows = await listListingRows(shopId);
+  return new Set(rows.flatMap((r) => (WATCHED.includes(r.status) && r.externalProductId ? [r.externalProductId] : [])));
+}
+
 /**
  * Category của SKU sàn vừa sửa (#400 lát 13, TikTok, Thành chốt cách 2 ngày 19/11/2026): Search Products không trả category
  * nên lượt đồng bộ không biết; lần đọc theo giờ sửa (`listSkusChanged`, lọc `update_time_ge`) đã gọi Get Product cho sản phẩm

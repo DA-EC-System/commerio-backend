@@ -7,6 +7,7 @@ import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { runListingSync } from '#src/modules/channel/channel/service/background.ts';
+import { CHANGED_HOLD_MAX_MS, runRemoteSkusRefresh } from '#src/modules/channel/channel/service/remote-skus.ts';
 import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import type { RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -29,7 +30,7 @@ setProductPort(port);
 const remote: RemoteSku[] = [];
 /** SKU sàn trả cho lần đọc theo giờ sửa (`listSkusChanged`, TikTok lấy category từ Get Product của sản phẩm vừa sửa). */
 let changed: RemoteSku[] = [];
-const listSkusChanged = vi.fn(async () => changed);
+const listSkusChanged = vi.fn(async (_t: string, _since: Date, _opts?: { priorityProductIds?: ReadonlySet<string> }) => changed);
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -37,6 +38,7 @@ registerAdapter(
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
     updatePriceQuantity: async (_t, items) => items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true })),
     listSkusChanged,
+    listSkus: async () => remote,
   }),
 );
 afterAll(async () => {
@@ -157,5 +159,84 @@ describe('đồng bộ category theo sản phẩm sàn vừa sửa', () => {
     expect((await listing(quiet.listingId)).external_category_id).toBe(a);
     expect((await listing(same.listingId)).external_category_id).toBe(a);
     expect(await specStatus(same.productId)).toBe('ok');
+  });
+});
+
+// Review BE2 P2-1: lượt đọc theo giờ sửa không bỏ lỡ category vĩnh viễn. Sản phẩm của listing đang theo dõi đi trước khi cắt trần
+// (`priorityProductIds`); sản phẩm đó chưa đọc được chi tiết (`detailUnreadSince`) thì mốc `remote_skus_changed_since` chỉ tiến
+// tới giờ sửa sớm nhất của chúng; áp category lỗi thì mốc giữ; mốc không cũ quá `CHANGED_HOLD_MAX_MS`; đọc trọn không đẩy mốc.
+describe('mốc đọc theo giờ sửa (review BE2 P2-1)', () => {
+  const ago = (ms: number) => new Date(Math.floor((Date.now() - ms) / 1000) * 1000);
+  const marks = async () =>
+    (await testPool().query<{ remote_skus_changed_since: Date; remote_skus_synced_at: Date }>('select remote_skus_changed_since, remote_skus_synced_at from channel.shops where id = $1', [shopId])).rows[0]!;
+  const prime = (since: Date) =>
+    testPool().query("update channel.shops set remote_skus_synced_at = now() - interval '2 minutes', remote_skus_changed_since = $2 where id = $1", [shopId, since]);
+  const lone = (unread: Date): RemoteSku => ({
+    externalProductId: `lone-${randomUUID().slice(0, 6)}`,
+    externalSkuId: `lone-${randomUUID().slice(0, 6)}`,
+    sellerSku: 'LE',
+    title: 'Không có listing',
+    state: 'live',
+    rejectReason: null,
+    quantity: 1,
+    detailUnreadSince: unread,
+  });
+
+  it('truyền sản phẩm của listing đang theo dõi làm ưu tiên; đọc được hết thì mốc tiến tới lúc đọc', async () => {
+    const watched = await setup(num(), null, undefined);
+    await prime(ago(70 * 60_000));
+    changed = [watched.sku];
+    listSkusChanged.mockClear();
+    const before = new Date();
+    await runListingSync(port, { companyId, shopId });
+    expect(listSkusChanged).toHaveBeenCalledTimes(1);
+    expect(listSkusChanged.mock.calls[0]![2]?.priorityProductIds?.has(watched.sku.externalProductId)).toBe(true);
+    expect((await marks()).remote_skus_changed_since.getTime()).toBeGreaterThanOrEqual(before.getTime());
+  });
+
+  it('sản phẩm có listing chưa đọc được: mốc dừng ở giờ sửa sớm nhất của chúng; sản phẩm không có listing không giữ mốc', async () => {
+    const watched = await setup(num(), null, undefined);
+    const held = ago(30 * 60_000);
+    await prime(ago(70 * 60_000));
+    changed = [{ ...watched.sku, detailUnreadSince: held }, lone(ago(50 * 60_000))];
+    await runListingSync(port, { companyId, shopId });
+    expect((await marks()).remote_skus_changed_since).toEqual(held);
+  });
+
+  it('mốc giữ không lùi trước mốc cũ, và quá CHANGED_HOLD_MAX_MS thì bỏ, tiến tới lúc đọc', async () => {
+    const watched = await setup(num(), null, undefined);
+    const since = ago(40 * 60_000);
+    await prime(since);
+    changed = [{ ...watched.sku, detailUnreadSince: ago(41 * 60_000) }];
+    await runListingSync(port, { companyId, shopId });
+    expect((await marks()).remote_skus_changed_since).toEqual(since);
+
+    await prime(ago(CHANGED_HOLD_MAX_MS + 60 * 60_000));
+    changed = [{ ...watched.sku, detailUnreadSince: ago(CHANGED_HOLD_MAX_MS + 30 * 60_000) }];
+    const before = new Date();
+    await runListingSync(port, { companyId, shopId });
+    expect((await marks()).remote_skus_changed_since.getTime()).toBeGreaterThanOrEqual(before.getTime());
+  });
+
+  it('Tải lại: áp category lỗi thì mốc giữ nguyên; đọc trọn sau đó không đẩy mốc đọc theo giờ sửa', async () => {
+    const [a, b] = [num(), num()];
+    const moved = await setup(a, a, undefined);
+    const since = ago(20 * 60_000);
+    await testPool().query(
+      "update channel.shops set remote_skus_synced_at = now() - interval '30 minutes', remote_skus_changed_since = $2, remote_skus_refresh_requested_at = now() where id = $1",
+      [shopId, since],
+    );
+    changed = [{ ...moved.sku, externalCategoryId: b }];
+    const broken: ProductPort = {
+      ...port,
+      variants: async () => {
+        throw new Error('catalog lỗi');
+      },
+    };
+    const before = new Date();
+    await runRemoteSkusRefresh({ companyId, shopId }, { attempt: 1, lastAttempt: false }, broken);
+    const after = await marks();
+    expect(after.remote_skus_synced_at.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(after.remote_skus_changed_since).toEqual(since);
   });
 });

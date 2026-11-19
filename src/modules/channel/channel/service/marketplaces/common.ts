@@ -226,6 +226,12 @@ export interface RemoteSku {
    * Sàn không trả (TikTok Search Products) thì thiếu: lượt đồng bộ không đổi category của listing.
    */
   externalCategoryId?: string;
+  /**
+   * Lần đọc theo giờ sửa (`listSkusChanged`) chưa đọc được chi tiết (category, nhãn) của sản phẩm này vì vượt trần đọc chi tiết
+   * hay sàn dừng giữa chừng; giá trị là giờ sàn ghi nhận sửa sản phẩm (TikTok `update_time`). Bên gọi giữ mốc đọc sau không
+   * vượt qua giờ này cho sản phẩm cần category (review BE2 P2-1). Sàn trả category sẵn trong danh sách (Lazada) thì thiếu.
+   */
+  detailUnreadSince?: Date;
   state: RemoteState;
   rejectReason: string | null;
   quantity: number;
@@ -651,9 +657,11 @@ export interface MarketplaceAdapter {
    * SKU của các sản phẩm sàn ghi nhận sửa từ `since` trở đi (lấy cả mốc), có nhãn biến thể như `listSkus`. Sản phẩm đã
    * xoá (`state: 'deleted'`) trả khi sàn trả trong cùng lời gọi (TikTok); Lazada không gọi thêm `filter=deleted` để giữ hạn
    * mức (review vòng 2 N2), lần đọc trọn mỗi ngày dọn. Cho lượt làm mới bản sao SKU sàn sau đồng bộ listing (#220 đợt 2): rẻ hơn đọc trọn.
-   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn).
+   * Sàn không có bộ lọc theo giờ sửa thì không có hàm này (bên gọi đọc trọn). `priorityProductIds`: sản phẩm đang có listing,
+   * cần category; sàn phải đọc chi tiết từng sản phẩm (TikTok) thì đọc các sản phẩm này trước, theo giờ sửa tăng dần, và đánh
+   * `detailUnreadSince` cho sản phẩm chưa đọc được.
    */
-  listSkusChanged?(accessToken: string, since: Date): Promise<RemoteSku[]>;
+  listSkusChanged?(accessToken: string, since: Date, opts?: { priorityProductIds?: ReadonlySet<string> }): Promise<RemoteSku[]>;
   /**
    * Đếm nhanh hàng của gian hàng trên sàn bằng tổng sàn trả, không đọc hết danh sách; cho `remoteProductCount`,
    * `remoteSkuCount` lúc nối (§18.7.4). `productCount`: số sản phẩm chưa xoá trên sàn, bắt buộc. `skuCount`: số SKU của
