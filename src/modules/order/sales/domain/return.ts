@@ -129,3 +129,31 @@ export function distributeResell<L extends { id: string; variantId: string | nul
   }
   return { perLine, resellCost: cost.toFixed(2) };
 }
+
+/**
+ * Trường của yêu cầu trả hiện trên màn mà không phải trạng thái: một lần ghi đổi trường này (trạng thái giữ) thì phát
+ * `sales.return_status_changed` với `from = to` (#216 D8, Documents/21 §13.2). `externalUpdatedAt` không có ở đây.
+ */
+export const RETURN_SHOWN_FIELDS = [
+  'needsAttention',
+  'attentionNote',
+  'rawMarketplaceStatus',
+  'ofcStatus',
+  'disputeInProgress',
+  'returnTo',
+  'returnTrackingCode',
+  'refundAmount',
+] as const;
+
+/** Phần thông tin sàn của `RETURN_SHOWN_FIELDS` (bỏ cờ Cần xử lý): lượt kéo đổi trường này thì tính là `updated`. */
+export const RETURN_PLATFORM_SHOWN_FIELDS = RETURN_SHOWN_FIELDS.filter((k) => k !== 'needsAttention' && k !== 'attentionNote');
+
+/** Trường khác giá trị đang lưu (tiền so theo số, thời điểm theo mốc): kéo lại không đổi gì thì không ghi, không tăng `version`. */
+export function changedFields<T extends Record<string, unknown>>(row: T, patch: Partial<T>): Partial<T> {
+  const same = (a: unknown, b: unknown) => {
+    if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+    if (typeof a === 'string' && typeof b === 'string' && /^-?\d+(\.\d+)?$/.test(a) && /^-?\d+(\.\d+)?$/.test(b)) return new Decimal(a).equals(b);
+    return a === b;
+  };
+  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => !same(row[k], v))) as Partial<T>;
+}

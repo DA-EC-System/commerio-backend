@@ -22,16 +22,7 @@ import {
 } from '../domain/listing.ts';
 import { platformPriceChanged } from '../domain/outside-price.ts';
 import { holdsStock } from '../domain/shop.ts';
-import {
-  findListingById,
-  type ListingPatch,
-  type ListingRow,
-  listListingRows,
-  markStockPendingIds,
-  markStockPendingRows,
-  setListingCategory,
-  updateListing,
-} from '../repository/listings.ts';
+import { findListingById, type ListingPatch, type ListingRow, listListingRows, setListingCategory } from '../repository/listings.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { markSpecCategory } from '../repository/product-specs.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
@@ -45,6 +36,7 @@ import {
   type PriceQuantity,
   type RemoteSku,
 } from './marketplaces/index.ts';
+import { markStockPendingIds, markStockPendingRows, updateListing } from './listing-writes.ts';
 import { currentPrices } from './listing-prices.ts';
 import { moveListing, pushFailureOf } from './listings.ts';
 import { pullShopOrders } from './order-pull.ts';

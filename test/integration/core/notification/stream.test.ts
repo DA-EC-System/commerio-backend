@@ -9,9 +9,16 @@ import { login, PASSWORD, selectCompany, testApp } from '../../helpers/http.ts';
 import { lockCompany, setModuleEnabled, suspendMembership } from '../../helpers/state.ts';
 import { loadCompanyAccess } from '#src/modules/core/identity/index.ts';
 import { createHub } from '#src/modules/core/notification/index.ts';
+import { EVENT_SCHEMAS } from '#src/modules/core/platform/domain/events.ts';
+import type { OutboxRow } from '#src/modules/core/platform/repository/outbox.ts';
+import { toKafkaMessage } from '#src/modules/core/platform/service/outbox/relay.ts';
 import type { EventEnvelope, EventType } from '#src/modules/core/platform/index.ts';
+import { settleCancelledOrder } from '#src/modules/order/index.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { signAccessToken } from '#src/shared/auth/jwt.ts';
 import { closeServer } from '#src/shared/lifecycle.ts';
+import { createVariant } from '../../helpers/catalog.ts';
+import { seedPackage } from '../../order/fulfillment/helpers.ts';
 import { openStream, type Stream, startRealtime } from './helpers.ts';
 
 // Stream SSE của realtime trên app thật (createRealtimeApp) và PostgreSQL thật; sự kiện đưa thẳng vào hub
@@ -52,8 +59,8 @@ const event = (type: EventType, companyId: string, payload: Record<string, unkno
   ({ eventId: randomUUID(), type, companyId, aggregateId: randomUUID(), occurredAt: new Date().toISOString(), payload }) as EventEnvelope<EventType>;
 const orderCreated = (companyId: string) =>
   event('sales.order_created', companyId, { orderId: randomUUID(), code: 'DH-0001', source: 'manual', total: '150000.00' });
-const paymentSucceeded = (companyId: string) =>
-  event('payment.succeeded', companyId, { orderId: randomUUID(), paymentTransactionId: randomUUID(), gateway: 'vnpay', amount: '150000.00' });
+const packageLost = (companyId: string) =>
+  event('fulfillment.package_lost', companyId, { packageId: randomUUID(), orderId: randomUUID(), claimCode: null });
 const belowThreshold = (companyId: string) => event('inventory.below_threshold', companyId, { variantId: randomUUID(), available: 1, minQty: 5 });
 const poSubmitted = (companyId: string) => event('purchasing.request_submitted', companyId, { requestId: randomUUID(), number: 'DN-000001' });
 
@@ -111,41 +118,131 @@ describe('stream đang mở (AC-1, AC-3, AC-4, AC-5, AC-9, A9)', () => {
     await stream.until((t) => t.split(': ping\n\n').length > 2);
   });
 
-  it('đúng công ty, đúng quyền theo bảng D11 (A1 "hoặc" cho thanh toán)', async () => {
+  it('đúng công ty, đúng quyền theo bảng D11 (D1 "hoặc" cho kiện)', async () => {
     const [a, b] = await Promise.all([createCompany(), createCompany()]);
-    const financeOnly = await addMember(a.companyId, await createCustomRole(a.companyId, ['finance.invoice.view']));
-    const [ceo, admin, sale, warehouse, finance, otherCeo] = await Promise.all([
+    const packerOnly = await addMember(a.companyId, await createCustomRole(a.companyId, ['fulfillment.order.process']));
+    const [ceo, admin, sale, warehouse, packer, otherCeo] = await Promise.all([
       connect(a.ceo.token),
       addMember(a.companyId, 'admin').then((m) => connect(m.token)),
       addMember(a.companyId, 'sale').then((m) => connect(m.token)),
       addMember(a.companyId, 'warehouse').then((m) => connect(m.token)),
-      connect(financeOnly.token),
+      connect(packerOnly.token),
       connect(b.ceo.token),
     ]);
 
     const order = orderCreated(a.companyId);
-    const payment = paymentSucceeded(a.companyId);
+    const lost = packageLost(a.companyId);
     const stock = belowThreshold(a.companyId);
     const po = poSubmitted(a.companyId);
-    for (const e of [order, payment, stock, po]) hub.dispatch(e);
+    for (const e of [order, lost, stock, po]) hub.dispatch(e);
     await ceo.until((t) => t.includes(po.eventId));
 
-    const got = (s: Stream) => [order, payment, stock, po].filter((e) => s.text().includes(`id: ${e.eventId}`)).map((e) => e.type);
+    const got = (s: Stream) => [order, lost, stock, po].filter((e) => s.text().includes(`id: ${e.eventId}`)).map((e) => e.type);
     // CEO nhận cuối cùng (đơn mua) nên khi CEO đủ thì các kết nối khác cũng đã được ghi xong.
-    await sale.until((t) => t.includes(payment.eventId));
-    expect(got(ceo)).toEqual(['sales.order_created', 'payment.succeeded', 'inventory.below_threshold', 'purchasing.request_submitted']);
-    expect(got(admin)).toEqual(['sales.order_created', 'payment.succeeded', 'inventory.below_threshold']);
-    expect(got(sale)).toEqual(['sales.order_created', 'payment.succeeded']);
-    expect(got(warehouse)).toEqual(['inventory.below_threshold']);
-    expect(got(finance)).toEqual(['payment.succeeded']);
+    await sale.until((t) => t.includes(lost.eventId));
+    expect(got(ceo)).toEqual(['sales.order_created', 'fulfillment.package_lost', 'inventory.below_threshold', 'purchasing.request_submitted']);
+    expect(got(admin)).toEqual(['sales.order_created', 'fulfillment.package_lost', 'inventory.below_threshold']);
+    expect(got(sale)).toEqual(['sales.order_created', 'fulfillment.package_lost']);
+    expect(got(warehouse)).toEqual(['fulfillment.package_lost', 'inventory.below_threshold']);
+    expect(got(packer)).toEqual(['fulfillment.package_lost']);
     expect(got(otherCeo)).toEqual([]);
 
-    // Message thanh toán không mang mã giao dịch cổng, công ty, aggregateId (A4).
-    const payload = payment.payload as { paymentTransactionId: string };
-    expect(sale.text()).not.toContain(payload.paymentTransactionId);
-    expect(sale.text()).not.toContain(payment.aggregateId);
+    // Message không mang công ty, aggregateId (A4).
+    expect(sale.text()).not.toContain(lost.aggregateId);
     expect(sale.text()).not.toContain(a.companyId);
-    expect(sale.text()).toContain('"amount":150000');
+  });
+
+  it('bảy loại mới tới đúng vai trò, payload parse bằng schema strict (AC4)', async () => {
+    const { companyId, ceo: owner } = await createCompany({ optionalModules: ['channel'] });
+    const [ceo, admin, sale, warehouse] = await Promise.all([
+      connect(owner.token),
+      addMember(companyId, 'admin').then((m) => connect(m.token)),
+      addMember(companyId, 'sale').then((m) => connect(m.token)),
+      addMember(companyId, 'warehouse').then((m) => connect(m.token)),
+    ]);
+    const id = () => randomUUID();
+    const events = [
+      event('sales.order_status_changed', companyId, { orderId: id(), code: 'DH-000001', from: null, to: 'processing', flags: ['unmapped_sku'] }),
+      event('fulfillment.package_status_changed', companyId, { packageId: id(), orderId: id(), from: 'reserved', to: 'packed' }),
+      event('fulfillment.package_delivery_failed', companyId, { packageId: id(), orderId: id(), reason: 'Khách không nghe máy' }),
+      event('fulfillment.package_lost', companyId, { packageId: id(), orderId: id(), claimCode: 'KN-1' }),
+      event('sales.return_status_changed', companyId, { returnId: id(), orderId: id(), from: null, to: 'requested' }),
+      event('channel.shop_status_changed', companyId, { shopId: id(), from: 'active', to: 'needs_reauth' }),
+      event('channel.listing_sync_changed', companyId, { shopId: id(), listingId: id(), stockSync: 'pending', priceSync: 'synced', status: 'live' }),
+    ];
+    for (const e of events) hub.dispatch(e);
+    const last = events.at(-1)!;
+    await ceo.until((t) => t.includes(last.eventId));
+    // Kho không nhận loại cuối (listing): chờ loại cuối Kho nhận.
+    await warehouse.until((t) => t.includes(events[4]!.eventId));
+    await Promise.all([admin.until((t) => t.includes(last.eventId)), sale.until((t) => t.includes(last.eventId))]);
+
+    const got = (s: Stream) => events.filter((e) => s.text().includes(`id: ${e.eventId}`)).map((e) => e.type);
+    const all = events.map((e) => e.type);
+    expect(got(ceo)).toEqual(all);
+    expect(got(admin)).toEqual(all);
+    expect(got(sale)).toEqual(all);
+    expect(got(warehouse)).toEqual([
+      'fulfillment.package_status_changed',
+      'fulfillment.package_delivery_failed',
+      'fulfillment.package_lost',
+      'sales.return_status_changed',
+    ]);
+
+    const messages = ceo
+      .text()
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice('data: '.length)) as { type: EventType; payload: unknown });
+    expect(messages.map((m) => m.type)).toEqual(all);
+    for (const m of messages) expect(() => EVENT_SCHEMAS[m.type].strict().parse(m.payload), m.type).not.toThrow();
+  });
+
+  it('đổi trạng thái đơn bằng service thật thì stream của Sale nhận sales.order_status_changed (AC5)', async () => {
+    const { companyId } = await createCompany();
+    const sale = await addMember(companyId, 'sale').then((m) => connect(m.token));
+    const { variantId } = await createVariant(companyId);
+    const { orderId } = await seedPackage(companyId, { status: 'cancelled', orderStatus: 'processing', manual: true, lines: [{ variantId, quantity: 1 }] });
+    // Việc nền khép đơn của file khác có thể chạy trước; dòng outbox giống nhau dù ai khép.
+    await withCompany(companyId, () => settleCancelledOrder(orderId));
+
+    const { rows } = await testPool().query<{
+      id: string;
+      event_id: string;
+      company_id: string;
+      type: string;
+      topic: string;
+      key: string;
+      payload: Record<string, unknown>;
+      created_at: Date;
+      published_at: Date | null;
+    }>(
+      `select id, event_id, company_id, type, topic, key, payload, created_at, published_at from core.outbox_messages
+       where type = 'sales.order_status_changed' and key = $1 order by id desc limit 1`,
+      [orderId],
+    );
+    const r = rows[0]!;
+    const row = {
+      id: Number(r.id),
+      eventId: r.event_id,
+      companyId: r.company_id,
+      type: r.type,
+      topic: r.topic,
+      key: r.key,
+      payload: r.payload,
+      createdAt: r.created_at,
+      publishedAt: r.published_at,
+    } as OutboxRow;
+    hub.dispatch(JSON.parse(toKafkaMessage(row).value) as EventEnvelope<EventType>);
+
+    await sale.until((t) => t.includes(`id: ${r.event_id}`));
+    const line = sale
+      .text()
+      .split('\n')
+      .find((l) => l.startsWith('data: ') && l.includes(r.event_id))!;
+    const message = JSON.parse(line.slice('data: '.length)) as { type: string; payload: Record<string, unknown> };
+    expect(message.type).toBe('sales.order_status_changed');
+    expect(message.payload).toMatchObject({ orderId, from: 'processing', to: 'cancelled' });
   });
 
   it('phân hệ tắt lúc mở thì quyền của nó không tính', async () => {

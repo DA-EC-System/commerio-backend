@@ -2,7 +2,6 @@
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
-import type { ListingStatus } from '../domain/listing.ts';
 import { listings } from './schema.ts';
 
 export type ListingRow = typeof listings.$inferSelect;
@@ -96,34 +95,6 @@ export async function currentUnmanagedRows(shopId: string): Promise<ListingRow[]
   return rows.filter((r) => r.mode === 'unmanaged');
 }
 
-export async function insertListing(values: typeof listings.$inferInsert): Promise<ListingRow> {
-  const [row] = await getDb().insert(listings).values(values).returning();
-  return row!;
-}
-
-/**
- * Sửa listing khi còn đúng `version` (và đúng trạng thái `from` khi chuyển trạng thái), tăng `version`.
- * Không trúng dòng thì `undefined`, bên gọi đọc lại để báo 409.
- */
-export async function updateListing(
-  id: string,
-  expected: { version: number; status?: ListingStatus },
-  patch: ListingPatch,
-): Promise<ListingRow | undefined> {
-  const [row] = await getDb()
-    .update(listings)
-    .set({ ...patch, version: sql`${listings.version} + 1`, updatedAt: sql`now()` })
-    .where(
-      and(
-        eq(listings.id, id),
-        eq(listings.version, expected.version),
-        expected.status ? eq(listings.status, expected.status) : undefined,
-      ),
-    )
-    .returning();
-  return row;
-}
-
 /**
  * Ghi mốc `create_attempted_at` = lúc của lần gọi `createProduct` gần nhất, ghi đè mỗi lần, ngay trước lời gọi (#399). Là
  * cột hệ thống như `push_attempts`: không tăng `version` vì lượt đẩy đang giữ version lúc đọc. Phải commit trước khi gọi
@@ -145,42 +116,6 @@ export async function setListingCategory(ids: readonly string[], externalCategor
     .where(and(inArray(listings.id, [...ids]), sql`${listings.externalCategoryId} is distinct from ${externalCategoryId}`))
     .returning({ id: listings.id });
   return rows.map((r) => r.id);
-}
-
-/**
- * Tồn trên sàn vừa bị đẩy về 0 mà ngắt bị chặn (#207): như `markStockPendingRows`, thêm `platform_stock = 0`.
- */
-export async function markStockPendingIds(ids: readonly string[]): Promise<void> {
-  await getDb()
-    .update(listings)
-    .set({ ...stockPending(), platformStock: 0 })
-    .where(inArray(listings.id, [...ids]));
-}
-
-/**
- * `stock_sync = pending` (listing đang Lệch tồn giữ `error`, vẫn được đẩy; #223), tăng `version` để lượt đồng bộ đang chờ
- * sàn không ghi `synced` đè lên lần đánh dấu (#222).
- */
-function stockPending() {
-  return {
-    stockSync: sql`case when ${listings.stockSync} = 'error' then 'error' else 'pending' end::channel.sync_state`,
-    version: sql`${listings.version} + 1`,
-    updatedAt: sql`now()`,
-  };
-}
-
-/**
- * Listing của các biến thể ở các trạng thái cho trước chờ đẩy tồn (như `stockPending`). Trả id các gian hàng có dòng đổi,
- * để bên gọi xếp việc đẩy.
- */
-export async function markStockPendingRows(variantIds: readonly string[], statuses: readonly ListingStatus[]): Promise<string[]> {
-  if (!variantIds.length) return [];
-  const rows = await getDb()
-    .update(listings)
-    .set(stockPending())
-    .where(and(inArray(listings.variantId, [...variantIds]), inArray(listings.status, [...statuses])))
-    .returning({ shopId: listings.shopId });
-  return [...new Set(rows.map((r) => r.shopId))];
 }
 
 /**
