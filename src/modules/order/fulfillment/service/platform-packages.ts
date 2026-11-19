@@ -27,6 +27,7 @@ import {
   type PackageShipping,
   readOrderPackages,
   setReserved,
+  syncPackagesShipBy,
   updatePackage,
 } from '../repository/packages.ts';
 import { requireCompanyId } from '../../../../shared/db/client.ts';
@@ -760,5 +761,9 @@ export async function syncPlatformPackages(
     }
     result.cancelled.push('needs_open');
   }
+  // Hạn bàn giao (KH-B01): mọi kiện chưa bàn giao của đơn, kể cả kiện lập trước khi sàn có hạn (TikTok ON_HOLD), kiện
+  // tách (#205), kiện thay khi sàn chia lại (#238), nhận hạn đơn đang mang. Chỉ là thông tin như vận chuyển (#260):
+  // không phát sự kiện kiện, không bật `changed`; `version` của kiện tăng khi hạn đổi thật (Documents/21 §19.1).
+  await syncPackagesShipBy(order.id, order.shipBy);
   return { ...result, statuses: existing.map((p) => p.status) };
 }

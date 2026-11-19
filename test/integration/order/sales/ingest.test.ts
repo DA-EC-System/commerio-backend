@@ -829,6 +829,69 @@ describe('cờ "Sàn trả trạng thái app chưa biết" (#358 AC-5)', () => {
   });
 });
 
+describe('hạn bàn giao kiện (KH-B01)', () => {
+  const D1 = new Date('2026-11-20T10:00:00Z');
+  const D2 = new Date('2026-11-21T10:00:00Z');
+  const pkgOf = (orderId: string) => one(`select id, ship_by, version from "order".packages where order_id = $1`, [orderId]);
+  const pkgByCode = (orderId: string, code: string) =>
+    one(`select status, ship_by from "order".packages where order_id = $1 and platform_package_code = $2`, [orderId, code]);
+  const packageEvents = async (orderId: string) => (await eventsOf(orderId)).filter((e) => e.type === 'fulfillment.package_status_changed').length;
+
+  it('lượt đầu sàn chưa có hạn (TikTok ON_HOLD), lượt sau có hạn: kiện nhận hạn, version tăng, không phát sự kiện kiện', async () => {
+    const o = remote({ shipBy: null });
+    const { orderId } = await ingest(o);
+    const before = await pkgOf(orderId);
+    expect(before.ship_by).toBeNull();
+    const events = await packageEvents(orderId);
+
+    await ingest({ ...o, shipBy: D1 });
+
+    expect(await pkgOf(orderId)).toEqual({ id: before.id, ship_by: D1, version: before.version + 1 });
+    expect((await orderOf(orderId)).ship_by).toEqual(D1);
+    expect(await packageEvents(orderId)).toBe(events);
+  });
+
+  it('sàn dời hạn: đơn và kiện nhận hạn mới', async () => {
+    const o = remote({ shipBy: D1 });
+    const { orderId } = await ingest(o);
+    expect((await pkgOf(orderId)).ship_by).toEqual(D1);
+
+    await ingest({ ...o, shipBy: D2 });
+
+    expect((await pkgOf(orderId)).ship_by).toEqual(D2);
+    expect((await orderOf(orderId)).ship_by).toEqual(D2);
+  });
+
+  it('lượt sau sàn trả null: đơn và kiện giữ hạn đã lưu, version kiện không tăng (21 §19.1)', async () => {
+    const o = remote({ shipBy: D1 });
+    const { orderId } = await ingest(o);
+    const before = await pkgOf(orderId);
+
+    const again = await ingest({ ...o, shipBy: null });
+
+    expect(again.changed).toBe(false);
+    expect((await orderOf(orderId)).ship_by).toEqual(D1);
+    expect(await pkgOf(orderId)).toEqual(before);
+  });
+
+  it('kiện đã rời kho và kiện đã huỷ giữ hạn cũ; kiện chưa bàn giao nhận hạn mới', async () => {
+    const v = await setup(10);
+    const o = { ...remoteOf(v, { lines: 3, packages: 3 }), shipBy: D1 };
+    const [gone, cancelled, waiting] = o.lines.map((l) => l.packageCode!);
+    const { orderId } = await ingestIn(v.companyId, o);
+    const moved = withLineCancelled(withStatus(o, 'in_transit', gone), 1);
+    await ingestIn(v.companyId, moved);
+    expect(await pkgByCode(orderId, gone!)).toEqual({ status: 'in_transit', ship_by: D1 });
+    expect(await pkgByCode(orderId, cancelled!)).toEqual({ status: 'cancelled', ship_by: D1 });
+
+    await ingestIn(v.companyId, { ...moved, shipBy: D2 });
+
+    expect(await pkgByCode(orderId, gone!)).toEqual({ status: 'in_transit', ship_by: D1 });
+    expect(await pkgByCode(orderId, cancelled!)).toEqual({ status: 'cancelled', ship_by: D1 });
+    expect(await pkgByCode(orderId, waiting!)).toEqual({ status: 'reserved', ship_by: D2 });
+  });
+});
+
 // #236 PR 2 (D7): sàn `platform_status` báo mốc hết quyền trả; nhận đơn ghi cột một lần, chỉ cho đơn đang xử lý.
 describe('mốc sàn báo hết quyền trả (#236 PR 2)', () => {
   const t1 = new Date('2026-11-18T17:31:25Z');

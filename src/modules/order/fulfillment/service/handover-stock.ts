@@ -13,6 +13,7 @@ import {
   markLinesReserved,
   markLinesReverted,
   markLinesShipped,
+  ORDER_SHIP_BY,
   updatePackage,
 } from '../repository/packages.ts';
 import { reportDelivered } from './delivery.ts';
@@ -138,6 +139,8 @@ export async function revertHandover(pkg: HandoverPackage, actorId: string, reas
     handedOverBy: null,
     pickupConfirmedAt: null,
     handoverRevertedBy: actorId,
+    // Kiện về chờ lấy hàng nhận hạn đơn đang mang: hạn có thể đã đổi lúc kiện ở `in_transit` (KH-B01).
+    shipBy: ORDER_SHIP_BY,
     // Dòng vừa giữ hàng lại thì ghi lúc giữ (spec 199b §5.1); kiện đang hoãn trừ không có dòng nào được đảo.
     ...(deducted.length && { reservedAt: sql`now()` }),
   });
