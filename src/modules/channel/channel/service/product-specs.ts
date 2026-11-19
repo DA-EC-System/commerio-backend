@@ -264,8 +264,10 @@ export function normalizeSpec(
     }
     out[a.code] = a.input === 'multiselect' ? ids : ids[0]!;
   }
-  // Bắt buộc, bắt buộc theo điều kiện (sales không tính, chỉ kiểm qua trục).
+  // Bắt buộc, bắt buộc theo điều kiện (sales không tính, chỉ kiểm qua trục). `tier = 'product'` (xuất xứ) không báo theo ô: ô ở
+  // tab spec chỉ đọc, điền ở trang sản phẩm; `missing` báo và chặn đẩy (review BE2 P2-7).
   for (const m of specMissing({ spec: { attributes: out, axisMap: {}, categoryStatus: 'ok' }, attributes, axes: [], fallbacks: defaults })) {
+    if (byCode.get(m.code)?.tier === 'product') continue;
     if (m.reason === 'required' || m.reason === 'required_when') errors[`attributes.${m.code}`] ??= `Nhập ${m.label}`;
   }
   const sales = new Set(attributes.filter((a) => a.kind === 'sales').map((a) => a.code));

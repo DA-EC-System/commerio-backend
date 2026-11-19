@@ -152,6 +152,9 @@ const hasValue = (v: SpecAttributeValue | string | null | undefined): boolean =>
 
 const CATEGORY_CODE = 'externalCategoryId';
 
+/** Nhãn của ô trong `missing`: attribute `tier = 'product'` (xuất xứ, thương hiệu) điền ở trang sản phẩm (AC-15, review BE2 P2-7). */
+const missingLabel = (a: Pick<PlatformAttribute, 'label' | 'tier'>) => (a.tier === 'product' ? `${a.label} (điền ở trang sản phẩm)` : a.label);
+
 /**
  * Phần còn thiếu của spec (`missing` của `21` §18.5), tính theo attribute hiện tại của leaf: category đổi hay bị bỏ; attribute
  * bắt buộc, bắt buộc theo điều kiện chưa có giá trị (sales attribute không tính `required`, chỉ kiểm qua trục); trục phân loại
@@ -170,9 +173,9 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
       if (a.kind === 'sales') continue;
       if (hasValue(spec.attributes[a.code]) || hasValue(fallbacks[a.code])) continue;
       if (a.required) {
-        out.push({ code: a.code, label: a.label, reason: 'required' });
+        out.push({ code: a.code, label: missingLabel(a), reason: 'required' });
       } else if (a.requiredWhen?.some((c) => conditionMet(c, spec.attributes[c.code]))) {
-        out.push({ code: a.code, label: a.label, reason: 'required_when' });
+        out.push({ code: a.code, label: missingLabel(a), reason: 'required_when' });
       }
     }
   }

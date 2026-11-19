@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { PlatformAttribute } from '#src/modules/channel/channel/domain/product-spec.ts';
+import { type PlatformAttribute, specMissing } from '#src/modules/channel/channel/domain/product-spec.ts';
 import { lazadaLeafAttributes } from '#src/modules/channel/channel/service/marketplaces/lazada-categories.ts';
 import { createLazadaAdapter } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import { tiktokLeafAttributes } from '#src/modules/channel/channel/service/marketplaces/tiktok-categories.ts';
@@ -120,5 +120,20 @@ describe('specFallbacks', () => {
     expect(out['100149']).toBe('1000854');
     expect(out['101489']).toBe('Công ty A');
     expect(specFallbacks(tiktok, tiktokLeaf, noCatalog, null)['100149']).toBeNull();
+  });
+});
+
+// Review BE2 P2-7 (AC-15): attribute `tier = 'product'` (xuất xứ) điền ở trang sản phẩm, ô ở tab spec chỉ đọc. `PUT` không báo
+// 422 cho ô đó; `missing` báo kèm nhãn "(điền ở trang sản phẩm)" để FE dẫn sang trang sản phẩm.
+describe('attribute tier product (P2-7)', () => {
+  const origin: PlatformAttribute = { ...cascade, code: '100149', label: 'Quốc gia xuất xứ', input: 'select', options: [{ id: '1000854', label: 'Việt Nam' }], tier: 'product' };
+  it('PUT: catalog chưa có xuất xứ thì không lỗi theo ô, không lưu khoá', () => {
+    expect(run(undefined, origin)).toEqual({ values: { attributes: {}, axisMap: {}, valueMap: {} }, errors: {} });
+  });
+
+  it('missing: nhãn kèm "(điền ở trang sản phẩm)"; catalog có xuất xứ thì không thiếu', () => {
+    const spec = { attributes: {}, axisMap: {}, categoryStatus: 'ok' as const };
+    expect(specMissing({ spec, attributes: [origin], axes: [] })).toEqual([{ code: '100149', label: 'Quốc gia xuất xứ (điền ở trang sản phẩm)', reason: 'required' }]);
+    expect(specMissing({ spec, attributes: [origin], axes: [], fallbacks: { '100149': '1000854' } })).toEqual([]);
   });
 });
