@@ -359,6 +359,24 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(items.find((i) => i.sku === 'CMR-NOPRICE')).toMatchObject({ price: null, listing: null });
   });
 
+  it('#400 §18.5: specStatus theo sản phẩm với sàn của gian hàng (một spec cho mọi biến thể cùng sản phẩm)', async () => {
+    const statusOf = async () => {
+      const items = ListingList.parse((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`))).body).items;
+      return (sku: string) => items.find((i) => i.sku === sku)?.specStatus;
+    };
+    let of = await statusOf();
+    expect(of('CMR-OK')).toBe('complete');
+    expect(of('CMR-NOPRICE')).toBe('complete'); // cùng sản phẩm cha, một spec
+    expect(of('CMR-UNMAPPED')).toBe('missing');
+    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [ok.productId]);
+    try {
+      of = await statusOf();
+      expect(of('CMR-OK')).toBe('incomplete');
+    } finally {
+      await testPool().query("update channel.product_specs set category_status = 'ok' where product_id = $1", [ok.productId]);
+    }
+  });
+
   it('GET listings: thumbnailUrl là ảnh đại diện catalog, null khi sản phẩm không có ảnh (#303)', async () => {
     const bare = variant(`CMR-BARE-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
     all.push(bare);

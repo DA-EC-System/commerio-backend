@@ -496,6 +496,9 @@ export const ListingRow = z
     sku: z.string(),
     attributesLabel: z.string(),
     thumbnailUrl: z.string().nullable().meta({ description: 'Ảnh đại diện catalog của sản phẩm; null khi sản phẩm chưa có ảnh (#303)' }),
+    specStatus: z
+      .enum(['complete', 'incomplete', 'missing'])
+      .meta({ description: 'Spec của sản phẩm với sàn của gian hàng: chưa có (`missing`), còn thiếu (`incomplete`) (#400)' }),
     price: z.number().int().nullable().meta({ description: 'Giá đang bán: giá ghi đè tay, giá theo gian hàng đã xác nhận, hoặc giá chuẩn (#225)' }),
     priceSource: z.enum(['standard', 'shop', 'override']).nullable(),
     shopPrice: z.number().nullable().meta({ description: 'Giá theo bộ lọc giá của gian hàng đã xác nhận (Documents/25 §6.2); null khi chưa có' }),

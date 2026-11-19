@@ -419,12 +419,25 @@ export async function specChecks(
   for (const v of variants) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
   const categoryIds = [...new Set(variants.filter((v) => specs.has(v.productId)).map((v) => v.categoryId))];
   const maps = new Map((await listCategoryMaps(shop.platform, categoryIds)).map((m) => [m.categoryId, m]));
+  // Mỗi category đọc một lần cho cả lô (bảng listing nhiều sản phẩm cùng category), không đọc theo từng sản phẩm.
+  const leaves = new Map<string, Promise<{ category: Awaited<ReturnType<typeof findCategory>>; attributes: PlatformAttribute[] | null }>>();
+  const leafOf = (id: string) => {
+    let hit = leaves.get(id);
+    if (!hit) {
+      hit = (async () => {
+        const category = await findCategory(shop.platform, id);
+        return { category, attributes: category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, id) : null };
+      })();
+      leaves.set(id, hit);
+    }
+    return hit;
+  };
   const out = new Map<string, SpecCheckFull>();
   for (const [productId, row] of specs) {
     const vs = byProduct.get(productId) ?? [];
     const product = specProductOf(vs);
-    const { missing, attributes } = await missingOf(adapter, row, product, org);
-    const category = await findCategory(shop.platform, row.externalCategoryId);
+    const { category, attributes } = await leafOf(row.externalCategoryId);
+    const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: specFallbacks(adapter, attributes, product, org) });
     const map = vs[0] ? maps.get(vs[0].categoryId) : undefined;
     const legacyRule = map && map.externalCategoryId === row.externalCategoryId ? map.sizeChartRule : null;
     out.set(productId, {

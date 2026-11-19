@@ -38,7 +38,7 @@ import { insertConfirmed, type NewPriceCalculation } from '../repository/price-c
 import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
 import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
 import { firstPushCalculations } from './repricing.ts';
-import { pushAttributes, specChecks } from './product-specs.ts';
+import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { listingText, pushBlock, specBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
@@ -88,6 +88,7 @@ export interface ListingRowView extends ListingPrice {
   attributesLabel: string;
   /** Ảnh đại diện catalog của sản phẩm (#303); null khi chưa có ảnh. */
   thumbnailUrl: string | null;
+  specStatus: 'complete' | 'incomplete' | 'missing';
   listing: ChannelListing | null;
   /** Tên trên sàn khác tên lúc ghép (#396, 21 §18.3); tính từ bản sao SKU sàn lúc đọc. */
   remoteTitleChanged: RemoteTitleChanged | null;
@@ -177,6 +178,8 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
   const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
   // Tên hiện tại trong bản sao, một câu, chỉ cho listing đang có cờ.
+  // Trạng thái spec theo sản phẩm (#400 §18.5), theo lô: một câu spec, mỗi category một lần đọc.
+  const specs = await specChecks(shop, platformOf(shop.platform).adapter, variants);
   const titles = new Map(
     (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
   );
@@ -191,6 +194,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         sku: v.sku,
         attributesLabel: v.attributesLabel,
         thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
+        specStatus: specStatusOf(specs.get(v.productId)),
         ...price,
         listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
         remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
