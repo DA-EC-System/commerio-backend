@@ -9,3 +9,6 @@ export const reportModule: ModuleDefinition = {
   router: reportRouter,
   openapi: registerReportOpenApi,
 };
+
+/** Xoá gian hàng đã ngắt (#398): channel gọi qua `ctx.deleteShopSummaries` (`src/wiring.ts`, insight đã import channel). */
+export { deleteShopSummaries } from './repository/summary.ts';

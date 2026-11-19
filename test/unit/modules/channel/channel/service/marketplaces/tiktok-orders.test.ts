@@ -314,6 +314,15 @@ describe('toTiktokOrder (GET /order/202507/orders)', () => {
     expect(() => toTiktokOrder({ id: 'O', status: 'ON_HOLD', line_items: [] })).toThrow(MarketplaceError);
   });
 
+  it('DH-B04: món còn bán mà sàn vẫn giữ cancel_user: đang xin huỷ thì giữ người, lý do; từ chối xong thì bỏ hết dấu huỷ', () => {
+    const base = { id: 'O', create_time: 1, update_time: 2, status: 'AWAITING_SHIPMENT' };
+    const item = { id: 'L', display_status: 'AWAITING_SHIPMENT', package_status: 'TO_FULFILL', cancel_user: 'BUYER', cancel_reason: 'Đổi ý' };
+    const pending = toTiktokOrder({ ...base, is_buyer_request_cancel: true, line_items: [item] });
+    expect(pending.lines[0]).toMatchObject({ status: 'pending', info: { cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: null } });
+    const rejected = toTiktokOrder({ ...base, line_items: [item] });
+    expect(rejected.lines[0]).toMatchObject({ status: 'pending', info: { cancelInitiator: null, cancelReason: null, cancelKind: null } });
+  });
+
   it('AC12: DELIVERED → returnWindowEndedAt null; COMPLETED, CANCELLED → bằng update_time', () => {
     const u = 1795000000;
     const of = (status: string) => toTiktokOrder({ ...deliveredOrder(), status, update_time: u }).returnWindowEndedAt;

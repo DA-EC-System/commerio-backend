@@ -37,7 +37,14 @@ export {
 } from './service/finance-boundary.ts';
 export { getOrderChannels } from './service/daily-totals.ts';
 // Ngắt gian hàng (#207): channel đếm đơn chưa xong trong giao dịch ngắt; số đơn trên bảng gian hàng (#200 §18.7).
-export { countOpenOrders, oldestOpenOrders, type OpenOrderRef, orderCountsByShop } from './service/channel-boundary.ts';
+export {
+  countOpenOrders,
+  oldestOpenOrders,
+  type OpenOrderRef,
+  orderCountsByShop,
+  purgeShopOrders,
+  shopOrderRefs,
+} from './service/channel-boundary.ts';
 // Nhận đơn sàn (#105): channel kéo đơn gọi trong `withCompany`.
 export { ingestMarketplaceOrder, type PlatformOrder, settleCancelledOrder } from './service/ingest.ts';
 // Ghép SKU áp lên đơn đã về (spec 237): channel gọi trong giao dịch ghép.
@@ -56,3 +63,5 @@ export { orderArchiveBlockers, orderInUse } from './service/catalog-boundary.ts'
 export type { MarketplaceReturns } from './service/marketplace-returns.ts';
 // Yêu cầu trả từ sàn (#202): channel kéo về gọi trong `withCompany`.
 export { ingestMarketplaceReturn, type PlatformReturn, type ReturnIngestOutcome } from './service/return-ingest.ts';
+// Thử lại báo sàn đã nhận hàng trả (§20.1): channel gọi sau mỗi lượt kéo yêu cầu trả.
+export { markReturnConfirmed, type ReturnToConfirm, returnsAwaitingConfirm } from './service/return-confirm.ts';
