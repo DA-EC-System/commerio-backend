@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import {
-  marketplaceCancelRejectReasons, marketplaceCarriers, marketplaceDecideCancel, marketplacePack, marketplaceReadyToShip, marketplaceRepack, onPackageAction,
+  marketplaceCancelRejectReasons, marketplaceCarriers, marketplaceDecideCancel, marketplacePack, marketplaceReadyToShip, marketplaceRepack, marketplaceShippingDocuments, onPackageAction,
 } from '#src/modules/channel/channel/service/order-actions.ts';
 import { shopSession } from '#src/modules/channel/channel/service/shops.ts';
 
@@ -49,6 +49,16 @@ describe('cổng thao tác kiện trên sàn', () => {
     await expect(marketplaceCarriers('c', 's', ref)).resolves.toEqual([]);
     await expect(marketplaceRepack('c', 's', 'FP1')).resolves.toBe('repacked');
     expect(repackPackage).toHaveBeenCalledWith('token', 'FP1');
+  });
+
+  it('cổng in vận đơn đổi Lazada 50008 (đơn SOF) sang document_not_supported; pack, báo giao gặp 50008 thì không đổi (#239)', async () => {
+    const sof = async () => { throw new MarketplaceError('rejected', '50008', 'not support operation for  sof order'); };
+    session({ shippingDocuments: sof, packItems: sof, readyToShip: sof });
+    await expect(marketplaceShippingDocuments('c', 's', ['FP1'])).rejects.toMatchObject({
+      status: 409, code: 'document_not_supported', extensions: { platformCode: '50008', platformMessage: 'not support operation for  sof order' },
+    });
+    await expect(marketplacePack('c', 's', ref)).rejects.toMatchObject({ code: 'marketplace_rejected' });
+    await expect(marketplaceReadyToShip('c', 's', 'FP1')).rejects.toMatchObject({ code: 'marketplace_rejected' });
   });
 
   it('báo giao xong thì đọc mã vận đơn nếu sàn có; đọc lỗi hay sàn không có thì null, không ném (KH-B02)', async () => {

@@ -74,7 +74,7 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: { description: 'Tệp vận đơn', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } },
       ...auth, 404: packageMissing,
-      409: problemResponse(`\`document_not_ready\`, \`package_status_not_allowed\`, \`rts_package_not_found\`, ${marketplaceConflict}`),
+      409: problemResponse(`\`document_not_ready\`, \`document_not_supported\` (sàn không cấp vận đơn cho kiện người bán tự giao, Lazada SOF), \`package_status_not_allowed\`, \`rts_package_not_found\`, ${marketplaceConflict}`),
       422: problemResponse('`validation_failed` (đầu vào hoặc tổng tệp quá 50 MB), `marketplace_unsupported`'),
       503: marketplaceUnavailable,
     },

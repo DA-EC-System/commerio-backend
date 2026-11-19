@@ -174,7 +174,16 @@ const packageErrors = new Map<string, readonly [string, string]>([
   ['21042061', ['cancel_requested', 'Khách đang xin huỷ đơn trên sàn, chờ Sale trả lời yêu cầu huỷ']],
 ]);
 
-export function onPackageAction<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Mã chỉ đổi ở cổng in vận đơn: Lazada 50008 ("not support operation for sof order", smoke #239 19/11/2026) có thể là mã
+ * chung "không hỗ trợ thao tác" ở pack, RTS, repack nên không đưa vào `packageErrors`.
+ */
+const documentErrors = new Map<string, readonly [string, string]>([
+  ['50008', ['document_not_supported', 'Sàn không cấp vận đơn cho kiện người bán tự giao (SOF), in phiếu giao của shop']],
+]);
+
+/** `extra`: mã sàn riêng của một thao tác, xét trước bảng chung. */
+export function onPackageAction<T>(fn: () => Promise<T>, extra?: ReadonlyMap<string, readonly [string, string]>): Promise<T> {
   return onMarketplace(async () => {
     try {
       return await fn();
@@ -191,7 +200,7 @@ export function onPackageAction<T>(fn: () => Promise<T>): Promise<T> {
           ...platform, errors: { carrierCode: platformMessage ?? 'Chọn nhà vận chuyển trong danh sách' },
         });
       }
-      const mapped = packageErrors.get(platformCode);
+      const mapped = extra?.get(platformCode) ?? packageErrors.get(platformCode);
       if (mapped) throw new AppError(409, mapped[0], mapped[1], platform);
       throw err;
     }
@@ -237,5 +246,5 @@ export async function marketplaceRepack(companyId: string, shopId: string, packa
 export async function marketplaceShippingDocuments(companyId: string, shopId: string, packageCodes: readonly string[]): Promise<Uint8Array[]> {
   const { adapter, accessToken } = await session(companyId, shopId);
   if (!adapter.shippingDocuments) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ in vận đơn từ app');
-  return onPackageAction(() => adapter.shippingDocuments!(accessToken, packageCodes));
+  return onPackageAction(() => adapter.shippingDocuments!(accessToken, packageCodes), documentErrors);
 }
