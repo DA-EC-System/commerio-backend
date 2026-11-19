@@ -273,6 +273,36 @@ describe('báo sẵn sàng giao', () => {
     expect(res.body.trackingCode).toBe('LZ-OLD');
   });
 
+  const requestCancel = (orderId: string) => testPool().query('update "order".orders set cancel_requested = true where id = $1', [orderId]);
+  const rowOf = async (packageId: string) =>
+    (await testPool().query('select status, label_error, version from "order".packages where id = $1', [packageId])).rows[0];
+
+  it('KH-B07: đơn khách đang xin huỷ thì 409 cancel_requested, không gọi sàn, không bật label_error', async () => {
+    const { packageId, orderId } = await seed('packed', { platformPackageCode: 'FP-CANCEL-REQ' });
+    await requestCancel(orderId);
+    const readyToShip = vi.fn();
+    expectProblem(await post(packageId, 'ready', { version: 1 }, { readyToShip }), 409, 'cancel_requested');
+    expect(readyToShip).not.toHaveBeenCalled();
+    expect(await rowOf(packageId)).toEqual({ status: 'packed', label_error: false, version: 1 });
+  });
+
+  it('KH-B07: đơn khác trong nhóm gói đang xin huỷ cũng chặn', async () => {
+    const { packageId } = await seed('packed', { platformPackageCode: 'FP-CANCEL-GROUP' });
+    const other = await seed('packed', { platformPackageCode: 'FP-CANCEL-GROUP' });
+    await requestCancel(other.orderId);
+    const readyToShip = vi.fn();
+    expectProblem(await post(packageId, 'ready', { version: 1 }, { readyToShip }), 409, 'cancel_requested');
+    expect(readyToShip).not.toHaveBeenCalled();
+    expect(await rowOf(packageId)).toEqual({ status: 'packed', label_error: false, version: 1 });
+  });
+
+  it('KH-B07: sàn báo khách đang xin huỷ (21042061) thì giữ packed, không bật label_error', async () => {
+    const { packageId } = await seed('packed', { platformPackageCode: 'FP-CANCEL-PLATFORM' });
+    const readyToShip = async () => { throw new AppError(409, 'cancel_requested', 'Khách đang xin huỷ đơn trên sàn, chờ Sale trả lời yêu cầu huỷ'); };
+    expectProblem(await post(packageId, 'ready', { version: 1 }, { readyToShip }), 409, 'cancel_requested');
+    expect(await rowOf(packageId)).toEqual({ status: 'packed', label_error: false, version: 1 });
+  });
+
   it('D2-04g: kiện tự giao bị chặn trước khi gọi sàn', async () => {
     const { packageId } = await seed('packed', { selfDelivery: true, platformPackageCode: 'FP-SELF' });
     expectProblem(await post(packageId, 'ready', { version: 1 }), 409, 'self_delivery');

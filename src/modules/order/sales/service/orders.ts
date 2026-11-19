@@ -180,6 +180,7 @@ export function packageOrderRef(o: OrderViewRow, lines: readonly OrderLineRow[],
     paymentMethod: o.paymentMethod,
     cancelling: o.cancelling,
     platformCancelled: o.platformCancelled,
+    cancelRequested: o.cancelRequested,
     lines: new Map(
       lines
         .filter((l) => l.orderId === o.id)

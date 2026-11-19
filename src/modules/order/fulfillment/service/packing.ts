@@ -35,6 +35,12 @@ export const awaitingOpen = () => new AppError(409, 'awaiting_open', 'Kiện đa
  * Kiện chờ thay (spec #238 D9) cũng không báo sẵn sàng, không quét bàn giao: hàng của nó còn trong kiện cũ chờ dỡ, kiện
  * cũ vẫn giữ phần đó (review #393: quét trước rồi sàn báo rời kho làm kẹt số đang giữ). Cùng mã `awaiting_open`.
  */
+/**
+ * Khách đang xin huỷ (cờ `cancel_requested` của đơn, hay sàn báo khi app chưa kịp thấy cờ): báo giao phải chờ Sale trả lời.
+ * Không bật `label_error`: bấm lại không giúp (#239 KH-B07).
+ */
+const cancelRequestedError = () =>
+  new AppError(409, 'cancel_requested', 'Khách đang xin huỷ đơn, chờ Sale trả lời yêu cầu huỷ rồi mới báo sàn sẵn sàng giao');
 export const awaitingReplacedOpen = () =>
   new AppError(409, 'awaiting_open', 'Kiện thay đang chờ kho mở kiện cũ (sàn chia lại kiện), mở kiện cũ trước');
 
@@ -201,12 +207,17 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
       await transition(ctx, actor, pkg, 'mark_ready');
       if (pkg.needsOpen) throw awaitingOpen();
       const others = await otherGroupMembers(pkg);
+      // Đơn của kiện bấm hay của kiện khác trong nhóm gói đang có khách xin huỷ: sàn sẽ từ chối, chặn trước khi gọi.
+      const orders = await orderRefsLookupOf(ctx)([...new Set([pkg.orderId, ...others.map((member) => member.orderId)])]);
+      if ([...orders.values()].some((order) => order.cancelRequested)) throw cancelRequestedError();
       // Kiện chờ thay (của kiện bấm, hay của kiện khác trong nhóm gói): chưa báo sẵn sàng được.
       const replaced = await awaitingReplacementIds([pkg.id, ...others.map((member) => member.id)]);
       if (replaced.includes(pkg.id)) throw awaitingReplacedOpen();
       const waitingMembers = others.filter((member) => member.status === 'packed' && replaced.includes(member.id)).map((member) => member.code);
       checkGroup([...readyGroupBlockers(others), ...waitingMembers]);
-      if (pkg.shopId && !pkg.platformPackageCode) throw new AppError(409, 'rts_package_not_found', 'Kiện chưa có mã kiện trên sàn');
+      if (pkg.shopId && !pkg.platformPackageCode) {
+        throw new AppError(409, 'rts_package_not_found', 'Sàn chưa cấp mã kiện cho đơn này (đơn còn chờ sàn duyệt). Kéo đơn ngay rồi thử lại');
+      }
       return {
         shopId: pkg.shopId, code: pkg.platformPackageCode, ids: [pkg.id, ...others.map((member) => member.id)], waybillKept: pkg.waybillKept,
       };
@@ -219,6 +230,7 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
       try {
         ({ trackingCode } = await marketplacePackagesOf(ctx).readyToShip(companyId, target.shopId, target.code));
       } catch (err) {
+        if (err instanceof AppError && err.code === 'cancel_requested') throw err;
         await withCompany(companyId, async () => {
           const pkg = await lockPackingPackage(id);
           if (pkg?.status === 'packed') await updatePackage(id, { labelError: true });

@@ -63,6 +63,21 @@ it('chi tiết kiện trả nhà vận chuyển đã chọn và cờ Lỗi lấy
   expect(pkg.flags).toContain('label_error');
 });
 
+it('KH-B07: kiện chưa bàn giao của đơn khách đang xin huỷ mang cờ cancel_requested; kiện đã bàn giao thì không', async () => {
+  const { companyId, ceo } = await createCompany();
+  const variant = await createVariant(companyId);
+  const lines = [{ variantId: variant.variantId, quantity: 1 }];
+  const packed = await seedPackage(companyId, { status: 'packed', lines });
+  const inTransit = await seedPackage(companyId, { status: 'in_transit', lines });
+  await testPool().query('update "order".orders set cancel_requested = true where id = any($1)', [[packed.orderId, inTransit.orderId]]);
+  const pending = await get(`/packages/${packed.packageId}`, ceo.token);
+  expect(pending.status).toBe(200);
+  expect(Package.parse(pending.body).flags).toContain('cancel_requested');
+  const shipped = await get(`/packages/${inTransit.packageId}`, ceo.token);
+  expect(shipped.status).toBe(200);
+  expect(Package.parse(shipped.body).flags).not.toContain('cancel_requested');
+});
+
 describe('GET /fulfillment/packages (21 §19.2)', () => {
   it('AC12: mỗi tab đúng kiện; counts đủ 8 tab, không đổi theo tab', async () => {
     const pages = await Promise.all(TABS.map(async (tab) => [tab, PackagePage.parse((await get(`/packages?tab=${tab}`)).body)] as const));
