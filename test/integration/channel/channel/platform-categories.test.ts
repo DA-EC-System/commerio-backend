@@ -149,6 +149,42 @@ describe('syncTree', () => {
     expect(await syncTree('shopee', cut, t5, { allowShrink: true })).toMatchObject({ upserted: 103, removed: 20 });
     expect(await findCategory('shopee', 'SX119')).toMatchObject({ status: 'removed' });
   });
+
+  // Review BE2 P2-2: dòng tạm do migration `*_chep-spec-tu-ghep-danh-muc` chèn (`synced_at` null, tên và đường dẫn là mã, mang
+  // `size_chart_rule` của ghép cũ). Category còn trên cây (mã `category_maps` cùng dạng `String(id)` với cây, route ghép cũ
+  // `trim`) thì lượt đồng bộ ghi đè thành dòng thật, giữ quy tắc, spec chép vẫn `ok`; không còn trên cây thì `removed`.
+  it('dòng tạm của migration chép: category còn trên cây thành dòng thật, giữ size_chart_rule, spec ok; vắng thì removed', async () => {
+    const t6 = new Date('2026-11-23T19:00:00Z');
+    const { companyId } = await createCompany();
+    const kept = await createVariant(companyId);
+    const lost = await createVariant(companyId);
+    await testPool().query(
+      `insert into channel.platform_categories (platform, external_id, name, is_leaf, path, path_search, status, synced_at, size_chart_rule)
+       values ('shopee', 'SM1', 'SM1', true, 'SM1', 'sm1', 'active', null, 'required'), ('shopee', 'SM2', 'SM2', true, 'SM2', 'sm2', 'active', null, 'optional')`,
+    );
+    await insertSpec(companyId, kept.productId, 'shopee', 'SM1');
+    await insertSpec(companyId, lost.productId, 'shopee', 'SM2');
+    const { rows: active } = await testPool().query<{ external_id: string; parent_external_id: string | null; name: string; is_leaf: boolean; path: string }>(
+      "select external_id, parent_external_id, name, is_leaf, path from channel.platform_categories where platform = 'shopee' and status = 'active' and synced_at is not null",
+    );
+    const tree = [
+      ...active.map((r) => ({ externalId: r.external_id, parentExternalId: r.parent_external_id, name: r.name, isLeaf: r.is_leaf, path: r.path })),
+      { externalId: 'SM1', parentExternalId: 'S1', name: 'Đồng hồ thông minh', isLeaf: true, path: 'Đồng hồ > Đồng hồ thông minh' },
+    ];
+    expect(await syncTree('shopee', tree, t6)).toMatchObject({ removed: 1, specsRemoved: 1 });
+    expect(await findCategory('shopee', 'SM1')).toMatchObject({
+      name: 'Đồng hồ thông minh',
+      path: 'Đồng hồ > Đồng hồ thông minh',
+      status: 'active',
+      syncedAt: t6,
+      sizeChartRule: 'required',
+    });
+    expect(await findCategory('shopee', 'SM2')).toMatchObject({ status: 'removed' });
+    const status = async (productId: string) =>
+      (await testPool().query('select category_status from channel.product_specs where product_id = $1', [productId])).rows[0].category_status;
+    expect(await status(kept.productId)).toBe('ok');
+    expect(await status(lost.productId)).toBe('removed');
+  });
 });
 
 describe('tìm leaf (AC-4)', () => {
