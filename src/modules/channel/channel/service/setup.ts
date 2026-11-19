@@ -16,6 +16,7 @@ import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
 import type { RemoteState } from './marketplaces/common.ts';
 import { sendOpenOrderPull, startShopJobs } from './shop-jobs.ts';
+import { recordShopTransition } from './shop-transition.ts';
 import { sendSpecFromMatch } from './spec-from-match.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
@@ -331,7 +332,7 @@ export async function finishSetup(
       },
     );
     if (!updated) throw new AppError(409, 'version_conflict', 'Gian hàng vừa được cập nhật, thử lại');
-    await recordTransition({ entityType: 'shops', entityId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
+    await recordShopTransition({ shopId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
     // Lượt kéo đơn còn mở đi chung giao dịch: thiết lập rollback thì không có việc (#198 AC-12).
     await sendOpenOrderPull(actor.companyId, shop.id);
     // Spec theo category trên sàn của SKU vừa ghép (#400 lát 12), cùng giao dịch.

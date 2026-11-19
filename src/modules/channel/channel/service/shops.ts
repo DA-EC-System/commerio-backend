@@ -73,6 +73,7 @@ import {
 import { decryptAccessToken, tokenColumns, withTokenRefresh } from './shop-tokens.ts';
 import { setupOf, type ShopSetup } from '../domain/shop-setup.ts';
 import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
+import { recordShopTransition } from './shop-transition.ts';
 import { shopOrdersStale } from './stock-trust.ts';
 
 /** Người làm: `accountId`, `companyId` từ token, quyền và phân hệ từ `getAccess(res)`. */
@@ -614,7 +615,7 @@ async function writeShop(
       status: 'connecting',
       ...tokenColumns(id, c.tokens),
     });
-    await recordTransition({ entityType: ENTITY, entityId: id, from: null, to: 'connecting', action: 'connect', actorId: actor.accountId });
+    await recordShopTransition({ shopId: id, from: null, to: 'connecting', action: 'connect', actorId: actor.accountId });
     return { shop: await shopView(row), created: true, reconnect: null, previousStatus: null };
   }
 
@@ -638,7 +639,7 @@ async function writeShop(
     after: { ...connectionAudit(row), connectedVia: via },
   });
   if (action) {
-    await recordTransition({ entityType: ENTITY, entityId: row.id, from: existing.status, to, action, actorId: actor.accountId });
+    await recordShopTransition({ shopId: row.id, from: existing.status, to, action, actorId: actor.accountId });
   }
   // `relisted`, `jobsRun` điền sau khi commit (`attachAll`).
   const reconnect = action === 'reconnect' ? { pulledFrom: row.lastOrderSyncAt ?? row.orderCutoffAt, relisted: 0, jobsRun: 0 } : null;
@@ -702,7 +703,7 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       disconnectedAt: new Date(),
     },
   ))!;
-  await recordTransition({ entityType: ENTITY, entityId: id, from: row.status, to, action: 'disconnect', actorId: actor.accountId });
+  await recordShopTransition({ shopId: id, from: row.status, to, action: 'disconnect', actorId: actor.accountId });
   for (const listing of await delistForDisconnect(id)) {
     const to = listing.pending === 'deleted' ? listing.from : 'delisted';
     if (listing.pending !== 'deleted') {
