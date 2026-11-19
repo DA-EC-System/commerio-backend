@@ -79,6 +79,14 @@ const rowsOf = async (shopId: string) =>
     )
   ).rows;
 
+const listingEvents = async (shopId: string) =>
+  (
+    await testPool().query<{ payload: Record<string, unknown> }>(
+      `select payload from core.outbox_messages where type = 'channel.listing_sync_changed' and key = $1 order by id`,
+      [shopId],
+    )
+  ).rows.map((r) => r.payload);
+
 describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
   it('AC-16: listing gỡ do ngắt mà sàn còn sản phẩm → dòng mới theo trạng thái sàn, trỏ dòng cũ; relisted = số dòng tạo', async () => {
     const tag = randomUUID().slice(0, 6);
@@ -93,6 +101,8 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
     // #399: dòng mới chép chủ nội dung của dòng cũ.
     await testPool().query("update channel.listings set content_source = 'app' where shop_id = $1 and seller_sku = $2", [shopId, sku('A')]);
 
+    // #216 D12: ngắt không phát sự kiện listing.
+    expect(await listingEvents(shopId)).toEqual([]);
     const res = await reconnect();
     expect(res.status).toBe(200);
     expect(res.body.reconnect).toMatchObject({ relisted: 5 });
@@ -117,6 +127,14 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
       });
     }
     expect(bySku('A')[1]).toMatchObject({ content_source: 'app' });
+    // #216 D13: mỗi dòng đưa lên lại phát một channel.listing_sync_changed theo trạng thái sàn.
+    const got = await listingEvents(shopId);
+    expect(got).toHaveLength(5);
+    expect(got).toEqual(
+      expect.arrayContaining(
+        Object.entries(expected).map(([k, status]) => ({ shopId, listingId: bySku(k)[1].id, stockSync: 'pending', priceSync: 'pending', status })),
+      ),
+    );
     expect(bySku('B')[1]).toMatchObject({ content_source: 'platform' });
     expect(bySku('D')[1]).toMatchObject({ hidden_by: 'platform' });
     expect(bySku('E')[1]).toMatchObject({ reject_reason: 'Ảnh mờ' });

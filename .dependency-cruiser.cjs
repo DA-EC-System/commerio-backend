@@ -105,6 +105,13 @@ module.exports = {
       to: { path: '^src/modules/[^/]+/[^/]+/(api|service)/' },
     },
     {
+      name: 'ghi-listing-qua-lop-phat',
+      comment: 'status, stock_sync, price_sync của listing chỉ ghi qua service/listing-writes.ts (phát channel.listing_sync_changed, #216)',
+      severity: 'error',
+      from: { pathNot: '^src/modules/channel/channel/service/listing-writes\.ts$' },
+      to: { path: '^src/modules/channel/channel/repository/listing-writes\.ts$' },
+    },
+    {
       name: 'khong-vong-tron',
       severity: 'error',
       from: {},

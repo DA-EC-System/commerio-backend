@@ -30,13 +30,11 @@ import {
   tokenExpiringSoon,
 } from '../domain/shop.ts';
 import { DELISTED_REASON, type ListingStatus, NO_REASON, type RemoteState } from '../domain/listing.ts';
-import { currentListingRows, currentUnmanagedRows, insertListing } from '../repository/listings.ts';
+import { currentListingRows, currentUnmanagedRows } from '../repository/listings.ts';
 import { unmatchedRemoteCounts } from '../repository/remote-skus.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
   countListingsOnPlatform,
-  delistForDisconnect,
-  failPushingForDisconnect,
   findLiveCompanyOf,
   findShopByExternal,
   findShopRow,
@@ -70,6 +68,7 @@ import {
   startShopJobs,
   stopShopJobs,
 } from './shop-jobs.ts';
+import { delistForDisconnect, failPushingForDisconnect, insertListing } from './listing-writes.ts';
 import { decryptAccessToken, tokenColumns, withTokenRefresh } from './shop-tokens.ts';
 import { setupOf, type ShopSetup } from '../domain/shop-setup.ts';
 import { type OpeningStocktakeStatus, stocktakePort } from './stocktake-port.ts';
