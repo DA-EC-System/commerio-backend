@@ -41,7 +41,7 @@ Bản ghi của công ty khác trả 404 (RLS không thấy); id không phải u
   - Dữ liệu ngoài catalog vào qua `ctx.bulkEdit` (`BulkEditPorts`): giá nhập (`lastCostsOf`, purchasing), ngưỡng tồn (`reorderRulesOf`, `applyReorderRule`, inventory) do `src/modules/product/index.ts` tiêm bằng `withContext`; số bán 30 ngày (`soldQtyOf`, sales, lớp trên) do `src/wiring.ts` tiêm. Thiếu cổng là lỗi lập trình (`portsOf` ném).
   - Công thức: giá muốn bán gợi ý = giá nhập đề nghị đã duyệt gần nhất × `categories.margin_coefficient`, làm tròn LÊN theo `price_rounding` (không có thì bước 1 đồng); thiếu giá nhập hoặc hệ số thì chép từ SKU anh em. Ngưỡng tồn: có bán trong 30 ngày thì `ceil(bán/30 × reorder_lead_days) + reorder_safety_qty`, chưa bán thì `reorder_default_qty`; thiếu cấu hình thì không gợi ý (không có số mặc định cứng). Cân nặng, kích thước, giá chuẩn chép từ SKU anh em (SKU sửa gần nhất có số ở ô đó). Cấu hình là năm cột nullable của `categories`, sửa qua `suggest` của `POST`, `PUT /categories` (bỏ `suggest` ở PUT là giữ nguyên; nhật ký chỉ nêu `suggest` khi có giá trị đặt).
   - Không có `inventory.cost.view` thì `source.lastCost` là null và câu giải thích không nêu giá nhập (gợi ý giá vẫn có). `minQty` cần `inventory.reorder.manage`, thiếu thì lỗi ô `minQty` của dòng. `incomplete=true`: còn trống giá muốn bán, cân nặng hoặc một trong ba cạnh (ngưỡng tồn và giá chuẩn không tính).
-  - Chưa làm: nhập Excel (AC6 US-SP-04), chép danh mục sàn và thuộc tính sàn từ sản phẩm cha cùng danh mục (bảng `product_channel_specs` chưa có chỗ ghi).
+  - Chưa làm: nhập Excel (AC6 US-SP-04). Category và attribute của sàn theo sản phẩm do channel giữ (`channel.product_specs`, #400); bảng spec cũ của catalog đã xoá ở #400 BE3.
 - **Tạo sản phẩm** quá 2 thuộc tính mỗi biến thể: 422 `too_many_axes` (kiểm đầu `createProduct`, trước lỗi CHECK `variant_attribute_values_position`).
 
 ## Nhãn của SKU và sản phẩm (#204 PR 3, `Documents/21` §17.1, spec 204 mục 5.3)
@@ -56,7 +56,7 @@ Bản ghi của công ty khác trả 404 (RLS không thấy); id không phải u
 
 - `DELETE /products/:id?version=` (`deleteProduct`): chỉ khi mọi SKU `incomplete`, `inUseOf(ctx, ids)` rỗng, không SKU nào có `source_request_line_id`; ngược lại 409 `product_in_use`. Sai `version` 409 `version_conflict` kèm `current`.
 - `inUseOf` (`service/usage.ts`) gộp bốn nguồn "SKU đã dùng", chứng từ ở mọi trạng thái: `stockInUse` (thẻ kho, dòng phiếu kho), `purchaseInUse` (dòng đề nghị, phiếu nhận, phiếu trả NCC) nối ở `product/index.ts`; `orderInUse` (dòng đơn, yêu cầu trả, dòng kiện, kiện trả không khớp), `listingInUse` (listing kể cả đã gỡ, ghép chờ duyệt, lần tính giá) nối ở `src/wiring.ts`.
-- Xoá trong một giao dịch: giá trị thuộc tính, ảnh gắn và ảnh phân loại (không xoá tệp), `product_channel_specs`, biến thể, sản phẩm; dòng tồn qua `ctx.deleteStockLevels` (inventory). Khoá công ty → dòng SKU theo id → dòng sản phẩm → dòng tồn (cùng chiều PATCH SKU, sửa hàng loạt). Nhật ký `delete` có `before` đủ tên, mã, ảnh, SKU.
+- Xoá trong một giao dịch: giá trị thuộc tính, ảnh gắn và ảnh phân loại (không xoá tệp), biến thể, sản phẩm (spec sàn ở `channel.product_specs` không có khoá ngoại, channel lọc spec mồ côi lúc đọc, #400 A12); dòng tồn qua `ctx.deleteStockLevels` (inventory). Khoá công ty → dòng SKU theo id → dòng sản phẩm → dòng tồn (cùng chiều PATCH SKU, sửa hàng loạt). Nhật ký `delete` có `before` đủ tên, mã, ảnh, SKU.
 
 ## Trạng thái kinh doanh (#204, `Documents/21` §17.2, §17.3)
 

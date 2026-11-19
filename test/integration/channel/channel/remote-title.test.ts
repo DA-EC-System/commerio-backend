@@ -78,7 +78,6 @@ registerAdapter(
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
-    categoryAttributes: async () => [],
     listSkus: async () => remote.map((r) => ({ ...r })),
     getSkus: async (_t, skus) => remote.filter((r) => skus.includes(r.sellerSku)),
     uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,

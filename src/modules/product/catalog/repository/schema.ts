@@ -3,7 +3,6 @@ import {
   check,
   index,
   integer,
-  jsonb,
   numeric,
   pgSchema,
   primaryKey,
@@ -207,24 +206,6 @@ export const productVariants = catalogSchema.table(
       sql`${t.weightG} > 0 and ${t.lengthMm} > 0 and ${t.widthMm} > 0 and ${t.heightMm} > 0`,
     ),
   ],
-);
-
-/** Danh mục và thuộc tính bắt buộc theo sàn của một sản phẩm (25 §5.2); cây danh mục mỗi sàn một khác. */
-export const productChannelSpecs = catalogSchema.table(
-  'product_channel_specs',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
-    productId: uuid('product_id')
-      .notNull()
-      .references(() => products.id),
-    platform: text('platform').notNull(),
-    externalCategoryId: text('external_category_id').notNull(),
-    attributes: jsonb('attributes').notNull().default({}),
-    ...timestamps,
-    ...version,
-  },
-  (t) => [unique().on(t.productId, t.platform)],
 );
 
 /** Tổ hợp giá trị của biến thể; `position` giữ thứ tự thuộc tính để ghép {VAL} và nhãn (D8). */

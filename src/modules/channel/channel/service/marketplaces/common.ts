@@ -52,12 +52,6 @@ export interface ShopConnection extends SellerInfo {
   tokens: TokenSet;
 }
 
-/** Danh mục lá của sàn; `name` là cả đường dẫn ("Quần áo nam > Áo > Áo thun có cổ nam"). */
-export interface PlatformCategory {
-  externalId: string;
-  name: string;
-}
-
 /**
  * Một node của cây category sàn (#400, `channel.platform_categories`). `path` nối tên từ gốc bằng " > ". `permissionStatuses`
  * là quyền đăng của gian hàng mang token (TikTok `permission_statuses`), sàn không có thì bỏ.
@@ -69,15 +63,6 @@ export interface PlatformCategoryNode {
   isLeaf: boolean;
   path: string;
   permissionStatuses?: string[];
-}
-
-/** Thuộc tính bắt buộc ở cấp sản phẩm của một danh mục; `options` rỗng khi nhập tự do. */
-export interface CategoryAttribute {
-  name: string;
-  label: string;
-  options: string[];
-  /** Thuộc tính sàn điền từ hồ sơ công ty (#292); service đổi thành `defaultValue`, lúc đẩy lấy `NewProduct.responsible`. */
-  prefill?: keyof Responsible;
 }
 
 /** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
@@ -141,7 +126,7 @@ export interface NewProduct {
    * TikTok gửi làm `idempotency_key`; sàn không có khoá (Lazada tra theo SellerSku) thì bỏ qua.
    */
   idempotencyKey?: string;
-  /** Điền thuộc tính có `prefill` mà `attributes` không có giá trị (#292). */
+  /** Điền attribute `tier = 'company'` (`responsibleFields`) mà `attributes` không có giá trị (#292). */
   responsible?: Responsible;
   /**
    * Thương hiệu của sản phẩm cha ở catalog (#340), cho sàn có mã thương hiệu riêng ngoài attribute (TikTok `brand_id`, #400
@@ -570,8 +555,6 @@ export interface MarketplaceAdapter {
    * nhãn "Sắp hết hạn" và thư báo mất uỷ quyền #312 tưởng là hạn mới).
    */
   readonly refreshKeepsAuthDeadline?: boolean;
-  listCategories(accessToken: string): Promise<PlatformCategory[]>;
-  categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
   /**
    * Cây category và attribute của leaf có cần token gian hàng không (#400 A4): TikTok cần (`shop_cipher`), Lazada không
    * (G2.1, G2.2). Cần mà không có gian hàng `active` thì 409 `shop_not_connected`.
@@ -579,12 +562,12 @@ export interface MarketplaceAdapter {
   readonly categoriesNeedToken?: boolean;
   /**
    * Cả cây category của sàn, mọi node (#400, `channel.platform_categories`). `accessToken` null khi sàn không cần token;
-   * sàn cần token mà nhận null thì ném `unauthorized` không gọi sàn. Thay `listCategories` sau BE3.
+   * sàn cần token mà nhận null thì ném `unauthorized` không gọi sàn.
    */
   categoryTree?(accessToken: string | null): Promise<PlatformCategoryNode[]>;
   /**
    * Mọi attribute của một leaf, đã chuẩn hoá `kind`, `input`, `allowCustom`, `tier` (#400 A15), kèm bản gốc `raw`. Không gồm
-   * phần catalog cung cấp (giá, SKU, kích thước gói, tên, mô tả). `accessToken` như `categoryTree`. Thay `categoryAttributes`.
+   * phần catalog cung cấp (giá, SKU, kích thước gói, tên, mô tả). `accessToken` như `categoryTree`.
    */
   leafAttributes?(accessToken: string | null, externalCategoryId: string): Promise<PlatformAttribute[]>;
   /**

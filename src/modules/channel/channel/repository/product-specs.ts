@@ -58,25 +58,6 @@ export async function updateSpec(
   return row;
 }
 
-/**
- * Bản chép (`version = 0`) của các sản phẩm thuộc một danh mục Commerio cập nhật theo ghép danh mục vừa lưu (A18: route cũ
- * trong khe BE2–BE3). Spec đã lưu qua route mới (`version ≥ 1`) không bị đè.
- */
-export async function refreshCopiedSpecs(
-  productIds: readonly string[],
-  platform: Marketplace,
-  values: Pick<ProductSpecRow, 'externalCategoryId' | 'attributes'>,
-): Promise<number> {
-  const ids = productIds.filter(isUuid);
-  if (!ids.length) return 0;
-  const rows = await getDb()
-    .update(productSpecs)
-    .set({ ...values, categoryStatus: 'ok', updatedAt: sql`now()` })
-    .where(and(inArray(productSpecs.productId, ids), eq(productSpecs.platform, platform), eq(productSpecs.version, 0)))
-    .returning({ id: productSpecs.id });
-  return rows.length;
-}
-
 /** Ghi category của sàn đọc được lên spec (đồng bộ thấy category đổi): chỉ đổi trạng thái, không tăng `version`. */
 export async function markSpecCategory(
   productId: string,

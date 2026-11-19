@@ -151,7 +151,7 @@ describe('syncTree', () => {
   });
 
   // Review BE2 P2-2: dòng tạm do migration `*_chep-spec-tu-ghep-danh-muc` chèn (`synced_at` null, tên và đường dẫn là mã, mang
-  // `size_chart_rule` của ghép cũ). Category còn trên cây (mã `category_maps` cùng dạng `String(id)` với cây, route ghép cũ
+  // `size_chart_rule` của ghép cũ). Category còn trên cây (mã ghép danh mục cũ cùng dạng `String(id)` với cây, route ghép cũ
   // `trim`) thì lượt đồng bộ ghi đè thành dòng thật, giữ quy tắc, spec chép vẫn `ok`; không còn trên cây thì `removed`.
   it('dòng tạm của migration chép: category còn trên cây thành dòng thật, giữ size_chart_rule, spec ok; vắng thì removed', async () => {
     const t6 = new Date('2026-11-23T19:00:00Z');

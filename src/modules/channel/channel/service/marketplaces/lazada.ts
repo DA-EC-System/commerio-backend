@@ -3,7 +3,6 @@ import { createHmac } from 'node:crypto';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CascadeLevel,
-  type CategoryAttribute,
   type CategorySuggestion,
   DEFAULT_REFRESH_LEAD_MS,
   epochDate,
@@ -16,7 +15,6 @@ import {
   type Payout,
   partResults,
   type PerSkuResult,
-  type PlatformCategory,
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteCounts,
@@ -982,39 +980,6 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         throw err;
       }
     },
-    async listCategories(accessToken): Promise<PlatformCategory[]> {
-      const params = { access_token: accessToken, language_code: 'vi_VN' };
-      const body = await call(config.apiUrl, '/category/tree/get', params, 'GET');
-      type Node = { category_id?: unknown; name?: unknown; leaf?: unknown; children?: Node[] };
-      const leaves: PlatformCategory[] = [];
-      const walk = (n: Node, trail: string[]) => {
-        const path = [...trail, String(n.name ?? '')];
-        if (n.leaf) leaves.push({ externalId: String(n.category_id), name: path.join(' > ') });
-        else for (const c of n.children ?? []) walk(c, path);
-      };
-      for (const n of (body.data as Node[] | undefined) ?? []) walk(n, []);
-      return leaves;
-    },
-    async categoryAttributes(accessToken, externalCategoryId): Promise<CategoryAttribute[]> {
-      const params = { access_token: accessToken, primary_category_id: externalCategoryId, language_code: 'vi_VN' };
-      const body = await call(config.apiUrl, '/category/attributes/get', params, 'GET');
-      type Attr = {
-        name?: unknown;
-        label?: unknown;
-        is_mandatory?: unknown;
-        attribute_type?: unknown;
-        options?: { name?: unknown }[];
-      };
-      // `name`, `description` và thuộc tính cấp SKU (giá, kích thước gói) BE tự điền từ catalog.
-      return ((body.data as Attr[] | undefined) ?? [])
-        .filter((a) => String(a.is_mandatory) === '1' && a.attribute_type === 'normal')
-        .filter((a) => a.name !== 'name' && a.name !== 'description')
-        .map((a) => ({
-          name: String(a.name),
-          label: String(a.label ?? a.name),
-          options: (a.options ?? []).map((o) => String(o.name)),
-        }));
-    },
     async uploadImage(accessToken, url) {
       const payload = `<?xml version="1.0" encoding="UTF-8" ?><Request><Image><Url>${xml(url)}</Url></Image></Request>`;
       const body = await call(config.apiUrl, '/image/migrate', { access_token: accessToken, payload }, 'FORM');
@@ -1035,8 +1000,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             Images: { Image: p.imageUrls },
             // Lazada bắt Brand khi tạo dù GetCategoryAttributes ghi `brand` `is_mandatory: 0` và không kèm lựa chọn
             // (gọi thật 17/11/2026, danh mục 10100278: thiếu thì E500 `brandProp` C006; gửi "No Brand" thì tạo được,
-            // request_id 2141336017948496094571739). Bộ ghép danh mục không hỏi brand nên mặc định "No Brand"; ghép có
-            // brand thì dùng brand đó. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
+            // request_id 2141336017948496094571739). Việc đẩy luôn gửi brand (catalog, trống thì `defaultBrand`); mặc định
+            // ở đây chỉ chặn trường hợp bên gọi không gửi. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
             Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
           },

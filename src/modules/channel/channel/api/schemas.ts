@@ -314,61 +314,6 @@ export const ShopCallbackResult = z
 
 export const AuthorizeUrl = z.object({ url: z.url() }).strict().meta({ id: 'ShopAuthorizeUrl' });
 
-// Ghép danh mục (#104 A2).
-export const CategoryParams = z.object({ id: z.string(), externalId: z.string().trim().min(1).max(40) });
-export const CategoryMapParams = z.object({ id: z.string(), categoryId: z.uuid('Danh mục không hợp lệ') });
-export const CategorySearchQuery = z.object({ search: z.string().trim().max(100).default('') });
-
-export const CategoryMapBody = z
-  .object({
-    externalCategoryId: z.string('Chọn danh mục sàn').trim().min(1, 'Chọn danh mục sàn').max(40),
-    attributes: z.record(z.string().max(60), z.string().trim().max(500)).default({}),
-    version: z.number().int().positive().nullable().meta({ description: 'null khi ghép mới' }),
-  })
-  .meta({ id: 'CategoryMapInput' });
-
-export const PlatformCategoryList = z
-  .object({ items: z.array(z.object({ externalId: z.string(), name: z.string() }).strict()) })
-  .strict()
-  .meta({ id: 'PlatformCategoryList', description: 'Danh mục lá của sàn, `name` là cả đường dẫn' });
-
-export const CategoryAttributeList = z
-  .object({
-    items: z.array(
-      z
-        .object({
-          name: z.string(),
-          label: z.string(),
-          options: z.array(z.string()),
-          defaultValue: z
-            .string()
-            .nullable()
-            .meta({ description: 'Giá trị điền từ hồ sơ công ty khi để trống (TikTok 101489, 101490; #292); null là phải nhập' }),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-  .meta({ id: 'CategoryAttributeList', description: 'Thuộc tính bắt buộc cấp sản phẩm; `options` rỗng là nhập tự do' });
-
-export const CategoryMap = z
-  .object({
-    categoryId: z.uuid(),
-    platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
-    externalCategoryId: z.string(),
-    attributes: z.record(z.string(), z.string()),
-    sizeChartRule: z
-      .enum(['required', 'optional', 'unsupported'])
-      .nullable()
-      .meta({ description: 'Bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm cần ảnh bảng kích cỡ mới đẩy được; null là chưa biết' }),
-    version: z.number().int(),
-    updatedAt: iso,
-  })
-  .strict()
-  .meta({ id: 'CategoryMap' });
-
-export const CategoryMapList = z.object({ items: z.array(CategoryMap) }).strict().meta({ id: 'CategoryMapList' });
-
 // Listing (#104; Documents/21 §18.3, §18.4).
 export const ListingParams = z.object({ id: z.string(), variantId: z.uuid('Biến thể không hợp lệ') });
 

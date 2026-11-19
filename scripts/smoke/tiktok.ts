@@ -223,15 +223,15 @@ async function warehouses(): Promise<void> {
 }
 
 async function categories(keyword: string | undefined): Promise<void> {
-  const all = await adapter.listCategories(session());
+  const all = (await adapter.categoryTree!(session())).filter((c) => c.isLeaf && (c.permissionStatuses?.includes('AVAILABLE') ?? true));
   const q = keyword?.toLocaleLowerCase('vi');
-  const hit = q ? all.filter((c) => c.name.toLocaleLowerCase('vi').includes(q)) : all;
+  const hit = q ? all.filter((c) => c.path.toLocaleLowerCase('vi').includes(q)) : all;
   printStep('product/202309/categories (lá AVAILABLE)', true, { leaves: all.length, matched: hit.length, items: hit.slice(0, 15) });
 }
 
 async function attrs(categoryId: string | undefined): Promise<void> {
   if (!categoryId) throw new Error('Cú pháp: attrs <categoryId>');
-  printStep('product/202309/categories/{id}/attributes (bắt buộc)', true, await adapter.categoryAttributes(session(), categoryId));
+  printStep('product/202309/categories/{id}/attributes (bắt buộc)', true, (await adapter.leafAttributes!(session(), categoryId)).filter((a) => a.required));
 }
 
 async function pushStock(sellerSku: string | undefined, qty: string | undefined): Promise<void> {

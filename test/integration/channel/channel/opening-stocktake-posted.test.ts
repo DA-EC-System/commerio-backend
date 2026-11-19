@@ -163,7 +163,6 @@ beforeAll(() => {
         safeUntil: null,
       }),
       getOrder,
-      categoryAttributes: async () => [],
       uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,
       async createProduct(_t, product) {
         created.push(product);

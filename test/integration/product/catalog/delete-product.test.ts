@@ -40,7 +40,6 @@ async function rowsOf(p: ProductBody) {
        (select count(*)::int from product.product_variants where product_id = $1) as variants,
        (select count(*)::int from product.variant_attribute_values where variant_id = any($2::uuid[])) as values,
        (select count(*)::int from product.product_images where product_id = $1) as images,
-       (select count(*)::int from product.product_channel_specs where product_id = $1) as specs,
        (select count(*)::int from product.stock_levels where variant_id = any($2::uuid[])) as levels`,
     [p.id, ids],
   );
@@ -64,17 +63,13 @@ describe('DELETE /catalog/products/:id (#204, xoá hẳn)', () => {
       p.id,
       fileId,
     ]);
-    await testPool().query(
-      `insert into product.product_channel_specs (company_id, product_id, platform, external_category_id) values ($1, $2, 'lazada', '1001')`,
-      [companyId, p.id],
-    );
     await testPool().query('insert into product.stock_levels (company_id, variant_id, min_qty) values ($1, $2, 5)', [
       companyId,
       p.variants[0]!.id,
     ]);
     const res = await remove(p);
     expect(res.status, JSON.stringify(res.body)).toBe(204);
-    expect(await rowsOf(p)).toEqual({ products: 0, variants: 0, values: 0, images: 0, specs: 0, levels: 0 });
+    expect(await rowsOf(p)).toEqual({ products: 0, variants: 0, values: 0, images: 0, levels: 0 });
     expect((await api(token).get(`/products/${p.id}`)).status).toBe(404);
     const deleted = (await auditOf(p.id)).find((r) => r.action === 'delete');
     expect(deleted).toMatchObject({ entity_type: 'product.products', before: { name: p.name, code: p.code, imageFileIds: [fileId] } });

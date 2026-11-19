@@ -30,7 +30,6 @@ registerAdapter(
   'lazada',
   fakeAdapter({
     getSeller: async (accessToken) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' }),
-    categoryAttributes: async () => [],
     uploadImage: async (_t, url) => url,
     createProduct,
   }),

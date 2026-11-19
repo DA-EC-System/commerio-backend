@@ -228,44 +228,6 @@ describe('deactivate, activate', () => {
   });
 });
 
-describe('danh mục', () => {
-  it('listCategories: chỉ lá AVAILABLE, tên là đường dẫn từ gốc, cây v2', async () => {
-    const san = fakeSan({
-      'GET /product/202309/categories': ok({
-        categories: [
-          { id: '1', parent_id: '0', local_name: 'Đồ dùng nhà bếp', is_leaf: false, permission_statuses: ['AVAILABLE'] },
-          { id: '2', parent_id: '1', local_name: 'Đồ dùng uống nước', is_leaf: false, permission_statuses: ['AVAILABLE'] },
-          { id: '3', parent_id: '2', local_name: 'Cốc có quai', is_leaf: true, permission_statuses: ['AVAILABLE'] },
-          { id: '4', parent_id: '2', local_name: 'Bình', is_leaf: true, permission_statuses: ['INVITE_ONLY'] },
-          { id: '5', parent_id: '0', local_name: 'Khác', is_leaf: true },
-        ],
-      }),
-    });
-    expect(await san.methods().listCategories(TOKEN)).toEqual([
-      { externalId: '3', name: 'Đồ dùng nhà bếp > Đồ dùng uống nước > Cốc có quai' },
-      { externalId: '5', name: 'Khác' },
-    ]);
-    expect(san.calls[0]!.query.get('category_version')).toBe('v2');
-  });
-
-  it('categoryAttributes: chỉ thuộc tính sản phẩm luôn bắt buộc; name là mã; cho tự nhập thì options rỗng', async () => {
-    const san = fakeSan({
-      'GET /product/202309/categories/600042/attributes': ok({
-        attributes: [
-          { id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: true, values: [{ id: '1000854', name: 'Việt Nam' }] },
-          { id: '100200', name: 'Chất liệu', type: 'PRODUCT_PROPERTY', is_requried: true, is_customizable: false, values: [{ id: '9', name: 'Sứ' }] },
-          { id: '100300', name: 'Dịp', type: 'PRODUCT_PROPERTY', is_requried: false, values: [] },
-          { id: '100000', name: 'Màu', type: 'SALES_PROPERTY', values: [] },
-        ],
-      }),
-    });
-    expect(await san.methods().categoryAttributes(TOKEN, '600042')).toEqual([
-      { name: '100149', label: 'Quốc gia xuất xứ', options: [] },
-      { name: '100200', label: 'Chất liệu', options: ['Sứ'] },
-    ]);
-  });
-});
-
 describe('uploadImage: chặn nguồn ảnh trước khi nối (tải thật qua server cục bộ ở test/integration/channel/channel/image-source.test.ts)', () => {
   it.each([
     ['giao thức file', 'file:///etc/passwd', ['93.184.216.34']],
@@ -777,7 +739,7 @@ describe('getSkus: lý do sàn từ chối (#219 AC-19)', () => {
 
 it('adapter TikTok có đủ năng lực listing (không còn unsupported), kể cả activate', () => {
   const adapter = createTiktokAdapter(config, vi.fn<typeof fetch>());
-  for (const k of ['listCategories', 'categoryAttributes', 'uploadImage', 'createProduct', 'updateProduct', 'updatePriceQuantity', 'deactivate', 'activate'] as const) {
+  for (const k of ['categoryTree', 'leafAttributes', 'uploadImage', 'createProduct', 'updateProduct', 'updatePriceQuantity', 'deactivate', 'activate'] as const) {
     expect(typeof adapter[k]).toBe('function');
   }
   expect(adapter.capabilities.hideBy).toBe('zero_stock');
@@ -817,15 +779,6 @@ describe('tổ chức chịu trách nhiệm hàng hoá lấy từ hồ sơ công
     await san.methods().createProduct(TOKEN, p);
     return (san.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body as { product_attributes: unknown }).product_attributes;
   };
-
-  it('categoryAttributes đánh dấu 101489, 101490 để điền từ hồ sơ (AC-6)', async () => {
-    const attrs = await fakeSan(routes(RESPONSIBLE_ATTRS)).methods().categoryAttributes(TOKEN, '600042');
-    expect(attrs.map((a) => [a.name, a.prefill])).toEqual([
-      ['100149', undefined],
-      ['101489', 'name'],
-      ['101490', 'address'],
-    ]);
-  });
 
   it('map không có hai mã: gửi giá trị hồ sơ; map có giá trị người dùng thì giữ (AC-8)', async () => {
     const responsible = { name: 'Cty A', address: '1 Lê Lợi' };

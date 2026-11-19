@@ -61,8 +61,8 @@ const flag = (v: unknown) => String(v) === '1';
 /**
  * Attribute của một leaf (A15). Bỏ attribute `sku` không phải sales (giá, SellerSku, kích thước gói, tồn, giá KM: catalog
  * cung cấp) và trường nội dung app tự gửi. `is_sale_prop = 1` → `sales`. `allowCustom` khi kiểu nhập tự do hoặc không kèm
- * lựa chọn (vd `brand`). `propCascade` không có `input_type`, `label` → `cascade`, nhãn là mã. Mã là `name` (khớp khoá cũ
- * của `category_maps`). `data` không phải mảng (Lazada trả `code: "0"` mà thiếu `data`) là `unexpected_response`: coi là
+ * lựa chọn (vd `brand`). `propCascade` không có `input_type`, `label` → `cascade`, nhãn là mã. Mã là `name` (khớp khoá
+ * attribute của spec chép từ ghép danh mục cũ). `data` không phải mảng (Lazada trả `code: "0"` mà thiếu `data`) là `unexpected_response`: coi là
  * rỗng thì `replaceLeaf` xoá hết attribute của leaf cho mọi công ty (review BE1 P2-1).
  */
 export function lazadaLeafAttributes(data: unknown): PlatformAttribute[] {
