@@ -18,6 +18,7 @@ export async function findAttributes(id?: string) {
     .select({
       id: attributes.id,
       name: attributes.name,
+      platformKind: attributes.platformKind,
       version: attributes.version,
       // Sản phẩm có biến thể (kể cả ngừng bán) dùng một giá trị của thuộc tính (mock FE `toAttribute`).
       productCount: sql<number>`(select count(distinct pv.product_id)::int from product.product_variants pv
@@ -61,11 +62,30 @@ export async function insertAttribute(companyId: string, name: string): Promise<
   return row!.id;
 }
 
+/** Id thuộc tính cùng tên (không phân biệt hoa thường) của công ty đang chọn. */
+export async function findAttributeIdByName(name: string): Promise<string | undefined> {
+  const [row] = await getDb()
+    .select({ id: attributes.id })
+    .from(attributes)
+    .where(sql`lower(${attributes.name}) = lower(${name})`);
+  return row?.id;
+}
+
+/**
+ * Tạo thuộc tính theo tên hoặc dùng lại thuộc tính vừa được request khác tạo (unique `(company_id, lower(name))`):
+ * chèn bỏ qua khi trùng rồi đọc lại, không trả 409 cho người tạo sau (#447 A6).
+ */
+export async function ensureAttribute(companyId: string, name: string): Promise<string> {
+  await getDb().insert(attributes).values({ companyId, name }).onConflictDoNothing();
+  return (await findAttributeIdByName(name))!;
+}
+
 export async function insertValues(companyId: string, attributeId: string, values: { value: string; code: string }[]) {
-  if (!values.length) return;
-  await getDb()
+  if (!values.length) return [];
+  return getDb()
     .insert(attributeValues)
-    .values(values.map((v, i) => ({ companyId, attributeId, value: v.value, code: v.code, createdAt: orderedNow(i) })));
+    .values(values.map((v, i) => ({ companyId, attributeId, value: v.value, code: v.code, createdAt: orderedNow(i) })))
+    .returning({ id: attributeValues.id, value: attributeValues.value, code: attributeValues.code });
 }
 
 export async function updateAttributeIfVersion(id: string, version: number, name: string): Promise<boolean> {

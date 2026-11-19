@@ -4,6 +4,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { BulkRowInput } from '../domain/bulk-row.ts';
 import {
+  productSuggestConfig,
   SALES_WINDOW_DAYS,
   type SiblingField,
   type SiblingValues,
@@ -14,11 +15,13 @@ import {
 } from '../domain/suggestion.ts';
 import { type BulkFilter, findBulkVariants, findSiblingVariants } from '../repository/bulk.ts';
 import { touchProduct } from '../repository/products.ts';
+import { findSettings } from '../repository/settings.ts';
 import { findVariants } from '../repository/variants.ts';
 import { type Caller, isUuid } from './errors.ts';
 import { listedFieldErrors } from './listed-fields.ts';
 import { toDong } from './products.ts';
 import type { CatalogContext } from './usage.ts';
+import { suggestOf } from './suggest-config.ts';
 import { applyVariantUpdate } from './variants.ts';
 
 /** Dữ liệu của module khác mà catalog (lớp dưới) cần; `src/modules/product/index.ts` và `src/wiring.ts` nối vào. */
@@ -69,10 +72,12 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
     const [costs, reorder] = await Promise.all([ports.lastCostsOf(ids), ports.reorderRulesOf(ids)]);
     const noRule = ids.filter((id) => reorder.get(id)?.minQty == null);
     const sold = await ports.soldQtyOf(noRule, SALES_WINDOW_DAYS);
+    const company = suggestOf(await findSettings());
 
     const items = rows.map((row) => {
       const v = full.get(row.id)!;
       const rule = reorder.get(row.id);
+      const config = productSuggestConfig({ ...suggestOf(row), name: row.groupName }, company);
       const current = {
         standardPrice: toDong(v.standardPrice),
         targetNetPrice: toDong(v.targetNetPrice),
@@ -104,11 +109,15 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
         if (current[field] === null) set(field, suggestFromSiblings(field, siblings));
       }
       if (current.targetNetPrice === null) {
-        const margin = row.marginCoefficient === null ? null : Number(row.marginCoefficient);
+        const margin = config.marginCoefficient;
         set(
           'targetNetPrice',
-          cost && margin !== null
-            ? suggestTargetPrice(cost.unitCost, { marginCoefficient: margin, priceRounding: row.priceRounding }, canCost)
+          cost && margin
+            ? suggestTargetPrice(
+                cost.unitCost,
+                { marginCoefficient: margin.value, priceRounding: config.priceRounding?.value ?? null, source: margin.source },
+                canCost,
+              )
             : suggestFromSiblings('targetNetPrice', siblings),
         );
       }
@@ -117,9 +126,9 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
           'minQty',
           suggestMinQty({
             soldQty: sold.get(row.id) ?? 0,
-            leadDays: row.reorderLeadDays,
-            safetyQty: row.reorderSafetyQty,
-            defaultQty: row.reorderDefaultQty,
+            leadDays: config.reorderLeadDays,
+            safetyQty: config.reorderSafetyQty,
+            defaultQty: config.reorderDefaultQty,
           }),
         );
       }
@@ -129,7 +138,7 @@ export async function listBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, fil
         productName: row.productName,
         sku: row.sku,
         attributesLabel: v.attributes.map((a) => a.value).join(' / '),
-        categoryName: row.categoryName,
+        groupName: row.groupName,
         version: v.version,
         reorderVersion: rule && rule.version > 0 ? rule.version : null,
         current,

@@ -4,6 +4,7 @@ import {
   assertTokenCurrent,
   type CompanyAccess,
 } from '../../../../shared/auth/company-access.ts';
+import type { ModuleContext } from '../../../../shared/module.ts';
 import { type AccessClaims, signAccessToken } from '../../../../shared/auth/jwt.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { inTransaction, withCompany } from '../../../../shared/db/client.ts';
@@ -129,6 +130,16 @@ async function callerAccount(auth: AccessClaims): Promise<AccountRow> {
   return account;
 }
 
+/**
+ * Dữ liệu có sẵn của công ty mới do module lớp trên tạo (catalog `seedCompanyDefaults`, #447). core không import product
+ * (luật `lop-core`): `src/wiring.ts` tiêm qua `IdentityContext`, `register` gọi trong cùng giao dịch tạo công ty.
+ */
+export type SeedCompanyDefaults = (companyId: string) => Promise<void>;
+
+export interface IdentityContext extends ModuleContext {
+  readonly seedCompanyDefaults?: SeedCompanyDefaults;
+}
+
 export interface RegisterInput {
   company: { name: string; taxCode: string };
   ceo: { fullName: string; email: string; password: string };
@@ -137,7 +148,10 @@ export interface RegisterInput {
 }
 
 /** UC-PI-01: công ty, tài khoản CEO, phân hệ, nhật ký trong một transaction (Documents/21 V13). */
-export async function register(input: RegisterInput): Promise<{ companyId: string; email: string }> {
+export async function register(
+  input: RegisterInput,
+  seedCompanyDefaults: SeedCompanyDefaults,
+): Promise<{ companyId: string; email: string }> {
   // Băm trước khi mở transaction: argon2 chậm có chủ ý, không nên giữ transaction trong lúc đó.
   const passwordHash = await hashPassword(input.ceo.password);
   const emailTaken = () =>
@@ -152,6 +166,7 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
         aiConsent: input.assistantDataConsent,
         createdBy: accountId,
       });
+      await seedCompanyDefaults(companyId);
       const membershipId = await createMembership(companyId, accountId);
       await assignRole({ membershipId, roleId: BUILTIN_ROLES.ceo.id, companyId });
       await recordAudit({
