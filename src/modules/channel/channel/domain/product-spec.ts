@@ -93,7 +93,7 @@ export function resolveOption(attr: Pick<PlatformAttribute, 'options' | 'raw'>, 
 /**
  * Attribute của spec dựng từ sản phẩm trên sàn (#400 lát 12, ghép SKU): chỉ attribute `tier = 'category'`, `kind = 'property'`
  * của leaf (xuất xứ, thương hiệu ở catalog; trục ở `axis_map`). Lựa chọn đổi sang mã của leaf theo mã giá trị sàn trả rồi theo
- * nhãn (`resolveOption`); không khớp mà attribute cho tự nhập thì giữ nhãn, không thì bỏ. Ô nhập chữ, số, ngày lấy giá trị đầu.
+ * nhãn (`resolveOption`; multiselect dạng chuỗi nối dấu phẩy thì tách); không khớp mà attribute cho tự nhập thì giữ nhãn, không thì bỏ. Ô nhập chữ, số, ngày lấy giá trị đầu.
  * Cascade, ảnh bỏ (người dùng chọn lại). Leaf chưa có attribute: rỗng.
  */
 export function remoteSpecAttributes(
@@ -107,13 +107,18 @@ export function remoteSpecAttributes(
     if (a.tier !== 'category' || a.kind !== 'property') continue;
     const values = byCode.get(a.code);
     if (!values?.length) continue;
-    const pick = (v: { id: string | null; name: string }) =>
-      (v.id !== null ? resolveOption(a, v.id) : null) ?? resolveOption(a, v.name) ?? (a.allowCustom && v.name.trim() ? v.name.trim() : null);
+    const known = (v: { id: string | null; name: string }) => (v.id !== null ? resolveOption(a, v.id) : null) ?? resolveOption(a, v.name);
+    const pick = (v: { id: string | null; name: string }) => known(v) ?? (a.allowCustom && v.name.trim() ? v.name.trim() : null);
     if (a.input === 'select') {
       const id = pick(values[0]!);
       if (id) out[a.code] = id;
     } else if (a.input === 'multiselect') {
-      const ids = [...new Set(values.map(pick).filter((x): x is string => x !== null))];
+      // Lazada có thể trả nhiều lựa chọn trong một chuỗi nối dấu phẩy (cách app gửi lên, review BE2 P2-8): không khớp nguyên
+      // chuỗi thì tách từng phần.
+      const parts = values.flatMap((v) =>
+        known(v) === null && v.name.includes(',') ? v.name.split(',').map((name) => ({ id: null, name: name.trim() })).filter((p) => p.name) : [v],
+      );
+      const ids = [...new Set(parts.map(pick).filter((x): x is string => x !== null))];
       if (ids.length) out[a.code] = ids;
     } else if (a.input === 'text' || a.input === 'number' || a.input === 'date') {
       const text = values[0]!.name.trim();

@@ -238,6 +238,18 @@ describe('remoteSpecAttributes', () => {
   const sel = (code: string, options: { id: string; label: string }[], over: Partial<PlatformAttribute> = {}) =>
     attr({ code, input: 'select', options, allowCustom: false, ...over });
 
+  // Review BE2 P2-8: Lazada `/product/item/get` có thể trả multiSelect dạng một chuỗi nối dấu phẩy (cách app gửi lên).
+  it('multiselect: chuỗi nối dấu phẩy không khớp nguyên chuỗi thì tách từng phần; nhãn có dấu phẩy khớp nguyên thì giữ', () => {
+    const occasion = sel('occasion', [
+      { id: '2167', label: 'Thể thao' },
+      { id: '3015', label: 'Bình thường' },
+      { id: '9', label: 'Tiệc, cưới' },
+    ], { input: 'multiselect' });
+    expect(remoteSpecAttributes([occasion], [{ code: 'occasion', values: [{ id: null, name: 'Thể thao, Bình thường' }] }])).toEqual({ occasion: ['2167', '3015'] });
+    expect(remoteSpecAttributes([occasion], [{ code: 'occasion', values: [{ id: null, name: 'Tiệc, cưới' }] }])).toEqual({ occasion: ['9'] });
+    expect(remoteSpecAttributes([occasion], [{ code: 'occasion', values: [{ id: null, name: 'Thể thao,Lạ' }] }])).toEqual({ occasion: ['2167'] });
+  });
+
   it('lựa chọn theo mã sàn rồi theo nhãn; multiselect bỏ trùng; chữ lấy giá trị đầu', () => {
     const leaf = [
       sel('100149', [{ id: '1000854', label: 'Việt Nam' }]),
