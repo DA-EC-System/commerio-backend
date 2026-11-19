@@ -22,7 +22,7 @@ import { evaluatePrices } from './price-inputs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import { pushAttributes, specChecks } from './product-specs.ts';
-import { listingText, pushBlock } from './push-block.ts';
+import { keepsPlatformContent, listingText, pushBlock, pushSpec } from './push-block.ts';
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 import { untrustedVariants } from './stock-trust.ts';
@@ -57,6 +57,9 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const { adapter, accessToken } = session;
 
   const variantId = row.variantId!;
+  // Sản phẩm người bán đã có trên sàn (#399 Ca 1): đẩy lại chỉ bật lại SKU, không gửi nội dung, ảnh của app, không xét spec
+  // (cùng vị từ với request, review BE2 P1-1); `take-over-content` (CEO) mới ghi nội dung lên.
+  const keepContent = keepsPlatformContent(row, job.takeOver);
   // Spec của sản phẩm (#400): attribute leaf thiếu hay quá 7 ngày thì lấy lại trước khi kiểm (A16, ngoài giao dịch; sàn lỗi mà
   // còn bản cũ thì kiểm theo bản cũ, chưa có bản nào thì kiểm theo category, trục và để sàn quyết).
   const specOf = async (v: ListingVariant) =>
@@ -65,16 +68,13 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     const [v] = await port.variants([variantId]);
     return v ? specOf(v) : undefined;
   });
-  if (first && !first.attributes && adapter.leafAttributes) {
+  if (first && !keepContent && !first.attributes && adapter.leafAttributes) {
     try {
       await ensureLeaf(shop.companyId, shop.platform, adapter, first.externalCategoryId, { shopId: shop.id });
     } catch (err) {
       if (!(err instanceof MarketplaceError) && !(err instanceof AppError)) throw err;
     }
   }
-  // Sản phẩm người bán đã có trên sàn (#399 Ca 1): đẩy lại chỉ bật lại SKU, không gửi nội dung, ảnh của app;
-  // `take-over-content` (CEO) mới ghi nội dung lên.
-  const keepContent = row.contentSource === 'platform' && !job.takeOver && Boolean(row.externalProductId && row.externalSkuId);
   if (first && !keepContent) await refreshPermission(shop, adapter, accessToken, first.externalCategoryId);
   const data = await inCompany(async () => {
     const [v] = await port.variants([variantId]);
@@ -106,7 +106,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   const block = pushBlock(
     v,
     price,
-    map && { ...map, sizeChartRule, ...(keepContent && { missing: [], permission: null }) },
+    pushSpec(keepContent, map && { ...map, sizeChartRule }),
     Boolean(row.externalImageUrls?.length || job.imageUrls.length),
     Boolean(job.sizeChartUrl),
   );

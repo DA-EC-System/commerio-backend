@@ -42,6 +42,27 @@ export function specBlock(spec: SpecCheck | undefined): PushBlock | null {
 }
 
 /**
+ * Lượt đẩy chỉ bật lại SKU người bán đã có trên sàn, không gửi nội dung, ảnh (#399 Ca 1): listing `contentSource = 'platform'`
+ * có mã sàn, không phải `take-over-content`. Bản gỡ của listing ghép (`delisted`) cũng vậy: đẩy lại chép mã sàn và chủ nội dung.
+ */
+export function keepsPlatformContent(
+  row: { contentSource: 'app' | 'platform'; externalProductId: string | null; externalSkuId: string | null } | undefined,
+  takeOver = false,
+): boolean {
+  return Boolean(row && row.contentSource === 'platform' && !takeOver && row.externalProductId && row.externalSkuId);
+}
+
+/**
+ * Spec đem kiểm khi đẩy, dùng chung request (`listings.ts`) và việc nền (`listing-push.ts`) để hai bên không lệch (review BE2
+ * P1-1, Thành chốt 19/11/2026): đẩy lại SKU người bán chỉ bật lại trên sàn nên không xét spec (`category_unmapped`,
+ * `spec_incomplete`, `category_not_permitted`, luật bảng kích cỡ); đẩy mới, đẩy lại SKU do app tạo giữ spec như có.
+ */
+export function pushSpec(keepContent: boolean, spec: SpecCheck | undefined): SpecCheck | undefined {
+  if (!keepContent) return spec;
+  return { externalCategoryId: spec?.externalCategoryId ?? '', missing: [], permission: null, sizeChartRule: null };
+}
+
+/**
  * Dữ liệu đủ để đẩy chưa; dùng chung cho request (`listings.ts`) và việc nền (dữ liệu có thể đổi giữa hai lúc). Thứ tự giữ như
  * trước #400, chèn `spec_incomplete`, `category_not_permitted` ngay sau `category_unmapped` (A14).
  * `hasImages`: listing đã có ảnh trên sàn, hoặc sản phẩm có ảnh trong catalog (#303). `hasSizeChart`: sản phẩm có ảnh bảng

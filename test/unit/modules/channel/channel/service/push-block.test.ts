@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
 import type { ListingVariant } from '#src/modules/channel/channel/service/product-port.ts';
-import { pushBlock, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
+import { keepsPlatformContent, pushBlock, pushSpec, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
 
 // Mã chặn size_chart_missing (#347, Documents/21 §18.5).
 const variant: ListingVariant = {
@@ -74,5 +74,25 @@ describe('pushBlock: spec sàn', () => {
     expect(pushBlock(variant, price, map(null, { permission: 'invite_only' as SpecCheck['permission'] }), true)?.code).toBe('category_not_permitted');
     expect(pushBlock(variant, price, map(null, { permission: 'available' }), true)).toBeNull();
     expect(pushBlock(variant, price, map(null), true)).toBeNull();
+  });
+});
+
+// Đẩy lại SKU người bán (review BE2 P1-1, Thành chốt 19/11/2026): một vị từ cho request và việc nền.
+describe('keepsPlatformContent, pushSpec', () => {
+  const row = { contentSource: 'platform' as const, externalProductId: 'P', externalSkuId: 'S' };
+  it('platform có mã sàn, không take-over → giữ nội dung người bán; app, thiếu mã sàn, take-over hay chưa có listing → không', () => {
+    expect(keepsPlatformContent(row)).toBe(true);
+    expect(keepsPlatformContent(row, true)).toBe(false);
+    expect(keepsPlatformContent({ ...row, contentSource: 'app' })).toBe(false);
+    expect(keepsPlatformContent({ ...row, externalSkuId: null })).toBe(false);
+    expect(keepsPlatformContent(undefined)).toBe(false);
+  });
+
+  it('giữ nội dung: spec trung tính (chưa có spec, còn thiếu, không có quyền đều không chặn); không giữ: spec như có', () => {
+    const bad: SpecCheck = { externalCategoryId: 'L', missing: [{ code: 'a', label: 'A', reason: 'required' }], permission: 'invite_only', sizeChartRule: 'required' };
+    expect(pushBlock(variant, new Decimal(1), pushSpec(true, undefined), true)).toBeNull();
+    expect(pushBlock(variant, new Decimal(1), pushSpec(true, bad), true)).toBeNull();
+    expect(pushBlock(variant, new Decimal(1), pushSpec(false, undefined), true)?.code).toBe('category_unmapped');
+    expect(pushBlock(variant, new Decimal(1), pushSpec(false, bad), true)?.code).toBe('spec_incomplete');
   });
 });

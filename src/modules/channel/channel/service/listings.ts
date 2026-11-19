@@ -39,7 +39,7 @@ import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
 import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
 import { firstPushCalculations } from './repricing.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
-import { listingText, pushBlock, specBlock } from './push-block.ts';
+import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
@@ -337,7 +337,8 @@ export async function pushListings(
     const block = pushBlock(
       v,
       calc ? new Decimal(calc.roundedPrice) : (prices.get(v.id) ?? null),
-      specs.get(v.productId),
+      // Đẩy lại SKU người bán chỉ bật lại trên sàn: không xét spec (cùng vị từ với việc nền).
+      pushSpec(keepsPlatformContent(existing), specs.get(v.productId)),
       Boolean(existing?.externalImageUrls?.length || imageUrls.length),
       Boolean(sizeChartUrl),
     );
