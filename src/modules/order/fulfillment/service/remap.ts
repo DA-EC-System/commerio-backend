@@ -116,7 +116,7 @@ export async function applyRemapToPackage(
     reason: unloadOnly ? `${opts.reason}: chờ dỡ kiện` : opts.reason,
   });
   if (plan.marks.length) logger.info({ packageId: pkg.id, reason: opts.reason }, 'kiện đã đóng chờ dỡ để đổi ghép');
-  await applyStock(pkg, plan.stock, opts);
+  await applyRemapStock(pkg, plan.stock, opts);
   await requestAllocation(plan.allocateAlso);
   if (plan.reportDelivered) await reportDelivered(pkg.id);
   return plan.outcomes;
@@ -151,7 +151,8 @@ async function reclaim(pkg: LockedPackage) {
   pkg.status = 'backordered';
 }
 
-async function applyStock(pkg: LockedPackage, stock: RemapStock, opts: RemapOptions) {
+/** Việc trên tồn của một kiện sau khi ghi dòng; mở kiện áp lại ghép dùng lại để giữ dòng còn thiếu (`open-remap.ts`). */
+export async function applyRemapStock(pkg: LockedPackage, stock: RemapStock, opts: Pick<RemapOptions, 'actorId'>) {
   switch (stock.kind) {
     case 'none':
       return;

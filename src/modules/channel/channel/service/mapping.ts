@@ -7,7 +7,7 @@
 // Biến thể có listing lỗi đẩy chưa có mã sàn (#346): ghép SKU sàn chưa có listing thì dùng lại listing đó; ghép SKU sàn đã có
 // listing thì listing lỗi tự gỡ.
 import { canSelfApprove, findMembership, memberRolesOf, recordTransition } from '../../../core/index.ts';
-import { applySkuMapping } from '../../../order/index.ts';
+import { applySkuMapping, type LineSku } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -188,6 +188,14 @@ const applyPatch = (variantId: string | null, requestedBy: string, approvedBy: s
   stockSyncError: null,
   priceSyncError: null,
 });
+
+/**
+ * Ghép hiện hành theo SKU người bán của gian hàng (dòng listing thắng, D12) cho fulfillment mở kiện áp lại ghép (spec 237
+ * §5.6, D20), tiêm qua `ctx.skuMappingOf` ở `src/wiring.ts`. Chạy trong `withCompany` và giao dịch của bên gọi.
+ */
+export function skuMappingOf(shopId: string, sellerSkus: readonly string[]): Promise<Map<string, LineSku>> {
+  return variantsBySellerSku(shopId, sellerSkus);
+}
 
 /**
  * Áp ghép có hiệu lực lên đơn đã về (spec 237 §5.3). Gọi trong giao dịch đã khoá dòng gian hàng, sau khi ghi listing.

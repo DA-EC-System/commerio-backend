@@ -17,7 +17,8 @@ export type MappedSku = Exclude<LineSku, { kind: 'unmapped' }>;
 export const lineSkuOf = (l: { variantId: string | null; stockUntracked: boolean }): LineSku =>
   l.variantId ? { kind: 'variant', variantId: l.variantId } : l.stockUntracked ? { kind: 'untracked' } : { kind: 'unmapped' };
 
-const sameSku = (a: LineSku, b: LineSku) =>
+/** Hai trạng thái ghép như nhau (cùng loại, cùng biến thể). */
+export const sameSku = (a: LineSku, b: LineSku) =>
   a.kind === b.kind && (a.kind !== 'variant' || a.variantId === (b as { variantId: string }).variantId);
 
 /**

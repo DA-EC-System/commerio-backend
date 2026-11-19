@@ -31,6 +31,8 @@ export interface SeedLine {
   reserved?: boolean;
   /** Dòng đã trừ (spec 199c §5.3): chèn `unit_cost` và `stock_deducted = true`. */
   unitCost?: string;
+  /** SKU người bán trên sàn của dòng đơn (`order_lines.external_sku`, spec 237). */
+  externalSku?: string;
 }
 
 /**
@@ -122,6 +124,9 @@ export async function seedPackage(
     const index = orderLines.findIndex((line) => line.variant_id === (l.variantId ?? firstVariant) && line.quantity === l.quantity);
     if (index === -1) throw new Error('seedPackage: không thấy dòng đơn của món trong kiện');
     const [orderLine] = orderLines.splice(index, 1);
+    if (l.externalSku !== undefined) {
+      await db.query('update "order".order_lines set external_sku = $2 where id = $1', [orderLine!.id, l.externalSku]);
+    }
     const { rows } = await db.query<{ id: string }>(
       `insert into "order".package_lines (company_id, package_id, order_line_id, variant_id, quantity, reserved_qty, unit_cost, stock_deducted)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
@@ -288,9 +293,10 @@ export async function transitionReasonsOf(packageId: string, to: string) {
 
 const unexpectedMarketplace = async (): Promise<never> => { throw new Error('Cổng sàn không được gọi trong test này'); };
 
-export function packingApp(fake: Partial<MarketplacePackages> = {}) {
-  const ctx = createModuleContext();
+/** App với cổng sàn giả (`fake`); `ctx` ghi đè hàm tiêm của `src/wiring.ts` (vd `skuMappingOf` giả, spec 237). */
+export function packingApp(fake: Partial<MarketplacePackages> = {}, ctx: Partial<AppContext> = {}) {
   const appContext: AppContext = {
+    ...createModuleContext(),
     ...ctx,
     marketplacePackages: {
       splitLevel: unexpectedMarketplace,

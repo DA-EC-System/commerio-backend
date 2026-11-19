@@ -13,6 +13,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { receive } from '../../product/inventory/helpers.ts';
 import { fakeAdapter } from '../../channel/channel/helpers.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { packageRow, seedPackage } from './helpers.ts';
 
 const sàn = {
@@ -142,5 +143,32 @@ describe('đóng gói, báo sẵn sàng, in vận đơn qua cổng thật của 
     expect(res.headers['content-type']).toBe('application/pdf');
     expect(sàn.shippingDocuments).toHaveBeenCalledWith(accessToken, ['FP-WIRE-DOC-1', 'FP-WIRE-DOC-2']);
     expect((await PDFDocument.load(res.body as Buffer)).getPageCount()).toBe(2);
+  });
+});
+
+describe('mở kiện áp lại ghép SKU qua cổng thật của channel (spec 237 §5.6, D20)', () => {
+  it('createModuleContext() có skuMappingOf; app thật mở kiện của đơn sàn mà listing đã đổi ghép thì dòng thành B', async () => {
+    expect(typeof createModuleContext().skuMappingOf).toBe('function');
+    const { variantId: b } = await createVariant(companyId);
+    await receive(companyId, b, 10, 30_000);
+    const sellerSku = `LZ-${randomUUID().slice(0, 8)}`;
+    // Ghép hiện hành của SKU sàn là B (dòng listing thắng), như sau khi CEO đổi ghép qua `listings/match`.
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, mode, seller_sku, status, external_sku_id, external_product_id)
+       values ($1, $2, $3, 'mapped', $4, 'live', $5, $6)`,
+      [companyId, shopId, b, sellerSku, `sku-${randomUUID().slice(0, 8)}`, `item-${randomUUID().slice(0, 8)}`],
+    );
+    const p = await seedPackage(companyId, { status: 'packed', shopId, lines: [{ variantId, quantity: 1, reserved: true, externalSku: sellerSku }] });
+
+    const res = await auth(api().post(`/api/v1/fulfillment/packages/${p.packageId}/open`)).send({ version: (await packageRow(p.packageId)).version });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { rows } = await testPool().query(
+      `select pl.variant_id as package_variant, ol.variant_id as order_variant from "order".package_lines pl
+       join "order".order_lines ol on ol.id = pl.order_line_id where pl.package_id = $1`,
+      [p.packageId],
+    );
+    expect(rows).toEqual([{ package_variant: b, order_variant: b }]);
+    expect(await packageRow(p.packageId)).toMatchObject({ status: 'reserved' });
   });
 });

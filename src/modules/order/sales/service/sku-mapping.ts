@@ -4,7 +4,7 @@
 import { publishEvent } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { type LineSku, lineSkuOf, type MappedSku, remapPackageLines } from '../../fulfillment/index.ts';
-import { findOrderRows, lockLinesToRemap, setOrderLineSku } from '../repository/orders.ts';
+import { findOrderLinesByIds, findOrderRows, lockLinesToRemap, lockOrderLinesById, setOrderLineSku } from '../repository/orders.ts';
 import { eventFlags } from './ingest.ts';
 
 export interface ApplySkuMappingInput {
@@ -54,6 +54,27 @@ export async function applySkuMapping(input: ApplySkuMappingInput): Promise<{ li
 
 const sameMappedSku = (a: LineSku, b: MappedSku) =>
   a.kind === b.kind && (a.kind !== 'variant' || a.variantId === (b as { variantId: string }).variantId);
+
+/** Khoá dòng đơn theo id cho fulfillment mở kiện áp lại ghép (spec 237 D21), tiêm qua `order/index.ts`. */
+export const lockOrderLines = (ids: readonly string[]): Promise<void> => lockOrderLinesById(ids);
+
+/**
+ * Ghi ghép lên dòng đơn sau khi fulfillment mở kiện áp lại ghép (spec 237 §5.6, §5.4 bước 3, 4): gom theo đích, phát sự
+ * kiện đơn cho đơn có dòng đổi. Bên gọi đã khoá dòng đơn (`lockOrderLines`).
+ */
+export async function applyLineSkus(rows: readonly { orderLineId: string; to: MappedSku }[]): Promise<void> {
+  if (!rows.length) return;
+  const groups = new Map<string, { to: MappedSku; ids: string[] }>();
+  for (const r of rows) {
+    const key = r.to.kind === 'variant' ? r.to.variantId : r.to.kind;
+    const group = groups.get(key) ?? { to: r.to, ids: [] };
+    group.ids.push(r.orderLineId);
+    groups.set(key, group);
+  }
+  for (const { to, ids } of groups.values()) await setOrderLineSku(ids, to);
+  const lines = await findOrderLinesByIds(rows.map((r) => r.orderLineId));
+  await publishOrdersChanged([...new Set(lines.map((l) => l.orderId))]);
+}
 
 /**
  * Đơn `unpaid`, `processing` vừa có dòng đổi ghép: phát `sales.order_status_changed` (`from = to`) kèm cờ mới như ingest

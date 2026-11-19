@@ -231,6 +231,17 @@ export async function lockLinesToRemap(
     .for('update');
 }
 
+/** Khoá dòng đơn theo id tăng (mở kiện đơn sàn áp lại ghép, spec 237 D21: dòng đơn trước khoá phân hàng). */
+export async function lockOrderLinesById(ids: readonly string[]): Promise<void> {
+  if (!ids.length) return;
+  await getDb()
+    .select({ id: orderLines.id })
+    .from(orderLines)
+    .where(inArray(orderLines.id, [...ids]))
+    .orderBy(asc(orderLines.id))
+    .for('update');
+}
+
 /** Ghi ghép lên dòng đơn: biến thể (kèm `sku` = SKU người bán `external_sku`, như lúc nhận đơn) hoặc "không quản tồn" (`sku` null). */
 export async function setOrderLineSku(ids: readonly string[], to: MappedSku): Promise<void> {
   if (!ids.length) return;
@@ -245,6 +256,12 @@ export async function setOrderLineSku(ids: readonly string[], to: MappedSku): Pr
       updatedAt: sql`now()`,
     })
     .where(inArray(orderLines.id, [...ids]));
+}
+
+/** Dòng đơn theo id (đơn chứa nó), không khoá. */
+export async function findOrderLinesByIds(ids: readonly string[]): Promise<{ id: string; orderId: string }[]> {
+  if (!ids.length) return [];
+  return getDb().select({ id: orderLines.id, orderId: orderLines.orderId }).from(orderLines).where(inArray(orderLines.id, [...ids]));
 }
 
 /** Đơn theo id, không khoá (đọc cờ lưu để phát sự kiện). */
