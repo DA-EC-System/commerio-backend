@@ -5,6 +5,11 @@ import {
   AuthorizeUrlQuery,
   CallbackBody,
   CategoryAttributeList,
+  LeafDetailQuery,
+  PlatformCategoriesQuery,
+  PlatformCategoryPage,
+  PlatformLeafDetail,
+  PlatformLeafParams,
   ChannelListing,
   DelistBody,
   UpdateContentBody,
@@ -202,6 +207,39 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     422: problemResponse('`validation_failed`, `marketplace_unsupported`'),
     503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm, thử lại'),
   };
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/categories',
+    summary: 'Cây category của sàn (#400)',
+    description:
+      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc.',
+    security: bearer,
+    request: { params: PlatformParams, query: PlatformCategoriesQuery },
+    responses: {
+      200: { description: 'Category', ...json(PlatformCategoryPage) },
+      ...auth,
+      422: problemResponse('`validation_failed`; `marketplace_unsupported`: sàn không có adapter'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/categories/:externalId',
+    summary: 'Chi tiết một leaf: attribute, luật bảng kích cỡ, sản phẩm đang dùng (#400)',
+    description:
+      'Cần `channel.shop.view`. Attribute đọc từ bảng; chưa có hoặc quá 7 ngày thì gọi sàn (Lazada không cần token; TikTok bằng token gian hàng `shopId`, không gửi thì gian hàng `active` đầu tiên của công ty) rồi ghi bảng. Sàn lỗi hoặc không có gian hàng mà bảng còn bản cũ: trả bản cũ, `stale: true`.',
+    security: bearer,
+    request: { params: PlatformLeafParams, query: LeafDetailQuery },
+    responses: {
+      200: { description: 'Leaf', ...json(PlatformLeafDetail) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng `shopId` không có, của công ty khác hoặc khác sàn'),
+      409: problemResponse(
+        '`shop_not_connected`: phải gọi sàn mà không có gian hàng `active`; `marketplace_rejected`, `marketplace_unauthorized` kèm `platformCode`, `platformMessage`',
+      ),
+      422: problemResponse('`validation_failed`; `category_not_leaf`; `marketplace_unsupported`'),
+      503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm và chưa có bản nào'),
+    },
+  });
   registry.registerPath({
     method: 'get',
     path: '/shops/:id/categories',
