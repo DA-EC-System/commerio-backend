@@ -6,8 +6,8 @@ import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { seedPackage } from '../fulfillment/helpers.ts';
-import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
+import { outboxOf, seedPackage } from '../fulfillment/helpers.ts';
+import { allCancelledWithLiveLine, noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 let companyId: string;
 const shopId = randomUUID();
@@ -75,7 +75,17 @@ async function delivered(
 }
 
 const orderOf = async (id: string) =>
-  (await testPool().query(`select status, outcome, completed_at, return_window_ends_at from "order".orders where id = $1`, [id])).rows[0];
+  (await testPool().query(`select status, outcome, completed_at, return_window_ends_at, cancel_reason from "order".orders where id = $1`, [id]))
+    .rows[0];
+
+/** Dòng lịch sử cuối của đơn. */
+const lastOrderTransition = async (id: string) =>
+  (
+    await testPool().query<{ action: string; source: string }>(
+      `select action, source from core.state_transitions where entity_type = 'orders' and entity_id = $1 order by id desc limit 1`,
+      [id],
+    )
+  ).rows[0];
 
 /** Yêu cầu trả từ sàn của đơn (`requested` là còn mở, `refund_only` không chặn hoàn tất). */
 const returnRequest = (orderId: string, shop: string, status: 'requested' | 'refund_only') =>
@@ -197,6 +207,14 @@ describe('hạn trả theo gian hàng (#236)', () => {
       },
     });
     const { variantId } = await createVariant(companyId);
+    // #236 PR 3: đơn tạo tay mọi kiện huỷ (việc nền huỷ bằng auto_cancel), đơn sàn mọi kiện huỷ còn món sống ngoài kiện (P2).
+    ({ orderId: id.ac18 } = await seedPackage(companyId, {
+      status: 'cancelled',
+      manual: true,
+      orderStatus: 'processing',
+      lines: [{ variantId, quantity: 1 }],
+    }));
+    ({ orderId: id.lineAlive } = await allCancelledWithLiveLine(companyId));
     ({ orderId: manualOrder } = await seedPackage(companyId, {
       status: 'delivered',
       deliveredAt: new Date(now.getTime() - 8 * DAY),
@@ -267,8 +285,20 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect(await orderOf(id.ac16!)).toMatchObject({ status: 'completed', outcome: 'none' });
   });
 
-  it('AC11b: đơn không cờ Đang huỷ, mọi dòng và mọi kiện đã huỷ → cancelled, không hoàn tất (25 §8.2 "Mọi kiện đã cancelled thì đơn → cancelled")', async () => {
-    expect(await orderOf(id.ac11b!)).toMatchObject({ status: 'cancelled' });
+  it('AC11b, AC23 (lưới đỡ): đơn sàn mọi dòng, mọi kiện đã huỷ, chưa khép → cancelled bằng platform_cancel (25 §8.2, D3)', async () => {
+    expect(await orderOf(id.ac11b!)).toMatchObject({ status: 'cancelled', outcome: null, cancel_reason: 'Sàn huỷ đơn' });
+    expect(await lastOrderTransition(id.ac11b!)).toMatchObject({ action: 'platform_cancel' });
+    expect(await outboxOf(id.ac11b!, 'sales.order_cancelled')).toEqual([expect.objectContaining({ by: 'platform' })]);
+  });
+
+  it('AC18 (D1-10): đơn tạo tay mọi kiện huỷ → việc nền huỷ bằng auto_cancel, không completed', async () => {
+    expect(await orderOf(id.ac18!)).toMatchObject({ status: 'cancelled', outcome: null, completed_at: null, cancel_reason: 'Mọi kiện đã huỷ' });
+    expect(await lastOrderTransition(id.ac18!)).toMatchObject({ action: 'auto_cancel', source: 'system' });
+  });
+
+  it('P2, Review Focus 1: mọi kiện huỷ nhưng còn dòng sống ngoài kiện → giữ processing, không completed, không phát order_cancelled', async () => {
+    expect(await orderOf(id.lineAlive!)).toMatchObject({ status: 'processing', outcome: null, completed_at: null });
+    expect(await outboxOf(id.lineAlive!, 'sales.order_cancelled')).toEqual([]);
   });
 
   it('AC11: đơn ở nhiều gian hàng cùng công ty → một lượt đọc chính sách một lần cho công ty', () => {

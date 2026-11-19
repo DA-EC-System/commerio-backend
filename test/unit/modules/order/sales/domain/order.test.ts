@@ -119,6 +119,9 @@ describe('cancelPlan, outcomeOf, completionBlocker', () => {
     [{ packages: ['delivered'], ...past, codUnconfirmed: true }, 'cod_unconfirmed'],
     [{ packages: ['delivered', 'cancelled'], ...past }, null],
     [{ packages: ['returned'] }, null],
+    [{ packages: ['cancelled', 'cancelled'] }, 'all_packages_cancelled'],
+    [{ packages: ['cancelled'], openReturnRequests: 1, codUnconfirmed: true }, 'all_packages_cancelled'],
+    [{ packages: ['cancelled', 'reserved'] }, 'packages_open'],
   ] as const)('%o → %s', (input, expected) => {
     expect(completionBlocker({ ...base, ...input })).toBe(expected);
   });

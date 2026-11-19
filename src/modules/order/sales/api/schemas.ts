@@ -185,9 +185,12 @@ export const Order = OrderSummary.extend({
       'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); sàn báo hết quyền trả (TikTok): lúc app thấy sàn báo, null tới lúc đó; đơn đã hoàn tất là hạn đã lưu; đơn chưa trả, đơn đã huỷ: null',
   }),
   completionBlocker: z
-    .enum(['packages_open', 'return_window', 'return_requested', 'cod_unconfirmed'])
+    .enum(['packages_open', 'all_packages_cancelled', 'return_window', 'return_requested', 'cod_unconfirmed'])
     .nullable()
-    .meta({ description: 'Lý do chưa hoàn tất; null khi đơn đã dừng hoặc hoàn tất được' }),
+    .meta({
+      description:
+        'Lý do chưa hoàn tất; null khi đơn đã dừng hoặc hoàn tất được. all_packages_cancelled: đơn có kiện và mọi kiện đã huỷ, việc nền huỷ đơn khi mọi món đã huỷ',
+    }),
   statusHistory: z.array(StatusChange),
 })
   .strict()

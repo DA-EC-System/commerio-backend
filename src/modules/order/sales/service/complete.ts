@@ -1,8 +1,11 @@
-// Tự hoàn tất đơn (Documents/21 §19.1, #105 PR 2, #236): mọi kiện dừng, qua hạn trả của gian hàng tính từ kiện giao cuối
-// (`returnWindowDays`, chưa nhập hay không thấy gian hàng: 7 ngày), không còn yêu cầu trả mở, kiện tự giao thu COD đã
-// xác nhận → `completed` với kết quả theo kiện chưa huỷ. Đơn Đang huỷ còn kiện chờ mở thì chưa dừng nên chưa hoàn tất;
-// đơn sàn huỷ mọi món mà mọi kiện đã dừng, có kiện không huỷ (kiện hoá ra đã bàn giao), thì hoàn tất kèm cờ Sàn đã huỷ
-// (25 §8.2, #238). Huỷ một phần món thì hoàn tất như thường.
+// Khép đơn (Documents/21 §19.1, #105 PR 2, #236): tự hoàn tất và tự huỷ đơn mọi kiện đã huỷ.
+// - Hoàn tất: mọi kiện dừng, có kiện không huỷ, qua hạn trả của gian hàng tính từ kiện giao cuối (`returnWindowDays`,
+//   chưa nhập hay không thấy gian hàng: 7 ngày), không còn yêu cầu trả mở, kiện tự giao thu COD đã xác nhận →
+//   `completed` với kết quả theo kiện chưa huỷ. Đơn Đang huỷ còn kiện chờ mở thì chưa dừng nên chưa hoàn tất; đơn sàn huỷ
+//   mọi món mà có kiện không huỷ (kiện hoá ra đã bàn giao) thì hoàn tất kèm cờ Sàn đã huỷ (25 §8.2, #238). Huỷ một phần
+//   món thì hoàn tất như thường.
+// - Khép (#236 PR 3, D16): mọi kiện đã huỷ (`all_packages_cancelled`) thì không bao giờ hoàn tất; `settleCancelledOrder`
+//   huỷ đơn khi mọi món đã huỷ (đơn sàn `platform_cancel`, đơn khác `auto_cancel`), còn món sống ngoài kiện thì giữ.
 import { publishEvent, recordTransition, registerConsumer } from '../../../core/index.ts';
 import { findPackagesOfOrders } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
@@ -46,14 +49,9 @@ async function completeOne(orderId: string, now: Date, policy: ReturnPolicy): Pr
     codUnconfirmed: codUnconfirmed(packages),
     now: now.getTime(),
   });
+  // Mọi kiện đã huỷ cũng là blocker (`all_packages_cancelled`): đơn đó đi bước khép, không bao giờ hoàn tất.
   if (blocker) return false;
   const linesCancelled = await allLinesCancelled(orderId);
-  // Mọi kiện đều huỷ mà đơn đang chờ sàn huỷ hay sàn đã huỷ mọi món: phải sang `cancelled` (25 §8.2), không `completed`.
-  if (statuses.every((s) => s === 'cancelled') && (order.cancelPending || linesCancelled)) {
-    // Lần khép sau khi kho mở kiện huỷ lỗi (chỉ log): khép lại ở đây để đơn không nằm mãi ở `processing`.
-    if (linesCancelled) await settleCancelledOrder(orderId);
-    return false;
-  }
   const done = await updateOrderAt(orderId, order.version, {
     status: 'completed',
     outcome: outcomeOf(statuses),
@@ -79,8 +77,11 @@ async function completeOne(orderId: string, now: Date, policy: ReturnPolicy): Pr
   return true;
 }
 
+/** Bước của một đơn tới lượt: hoàn tất, hay khép vì mọi kiện đã huỷ. */
+type DueOrder = { orderId: string; policy: ReturnPolicy; step: 'complete' | 'close' };
+
 /**
- * Đơn của một công ty trong trang có thể hoàn tất ngay, kèm chính sách hạn trả: một `withCompany` đọc lô đơn, kiện,
+ * Đơn của một công ty trong trang tới lượt khép, kèm bước và chính sách hạn trả: một `withCompany` đọc lô đơn, kiện,
  * yêu cầu trả mở, chính sách gian hàng (số câu không tỉ lệ với số đơn đang chờ hạn trả).
  */
 async function dueOrdersOfCompany(
@@ -88,7 +89,7 @@ async function dueOrdersOfCompany(
   companyId: string,
   orderIds: readonly string[],
   now: Date,
-): Promise<{ orderId: string; policy: ReturnPolicy }[]> {
+): Promise<DueOrder[]> {
   return withCompany(companyId, async () => {
     const orders = await findOrders(orderIds);
     const [packages, returns, policies] = await Promise.all([
@@ -96,7 +97,7 @@ async function dueOrdersOfCompany(
       openReturnCounts(orderIds),
       returnPoliciesFor(ctx, orders.map((o) => o.shopId)),
     ]);
-    const due: { orderId: string; policy: ReturnPolicy }[] = [];
+    const due: DueOrder[] = [];
     for (const o of orders) {
       if (o.status !== 'processing') continue;
       const own = packages.filter((p) => p.orderId === o.id);
@@ -110,7 +111,8 @@ async function dueOrdersOfCompany(
         codUnconfirmed: codUnconfirmed(own),
         now: now.getTime(),
       });
-      if (blocker === null) due.push({ orderId: o.id, policy });
+      if (blocker === null) due.push({ orderId: o.id, policy, step: 'complete' });
+      else if (blocker === 'all_packages_cancelled') due.push({ orderId: o.id, policy, step: 'close' });
     }
     return due;
   });
@@ -118,7 +120,8 @@ async function dueOrdersOfCompany(
 
 /**
  * Một lượt tự hoàn tất cho mọi công ty, lật trang ứng viên theo `id`. Đọc lô của một công ty lỗi (kể cả đọc chính sách
- * gian hàng) thì bỏ công ty đó ở lượt này, không rơi về 7 ngày; đơn lỗi không chặn đơn khác. Trả số đơn đã hoàn tất.
+ * gian hàng) thì bỏ công ty đó ở lượt này, không rơi về 7 ngày; đơn lỗi không chặn đơn khác. Đơn mọi kiện đã huỷ đi
+ * bước khép (`settleCancelledOrder`). Trả số đơn đã hoàn tất.
  * `ctx.returnPoliciesOf` bắt buộc: thiếu thì ném ngay, không chạy lượt nào (không rơi về 7 ngày, #390).
  */
 export async function completeDueOrdersOnce(
@@ -130,6 +133,9 @@ export async function completeDueOrdersOnce(
   const started = Date.now();
   let candidates = 0;
   let completed = 0;
+  // Đơn mọi kiện huỷ: đã huỷ, và chưa huỷ được (còn món sống ngoài kiện, hay người khác vừa khép). Không log từng đơn.
+  let cancelled = 0;
+  let cancelSkipped = 0;
   let failedOrders = 0;
   let skippedCompanies = 0;
   let cursor: string | null = null;
@@ -141,7 +147,7 @@ export async function completeDueOrdersOnce(
     const byCompany = new Map<string, string[]>();
     for (const c of page) byCompany.set(c.companyId, [...(byCompany.get(c.companyId) ?? []), c.id]);
     for (const [companyId, orderIds] of byCompany) {
-      let due: { orderId: string; policy: ReturnPolicy }[];
+      let due: DueOrder[];
       try {
         due = await dueOrdersOfCompany(ctx, companyId, orderIds, now);
       } catch (err) {
@@ -149,9 +155,12 @@ export async function completeDueOrdersOnce(
         logger.error({ err, companyId }, 'đọc lô tự hoàn tất của công ty lỗi');
         continue;
       }
-      for (const { orderId, policy } of due) {
+      for (const { orderId, policy, step } of due) {
         try {
-          if (await withCompany(companyId, () => completeOne(orderId, now, policy))) completed += 1;
+          if (step === 'close') {
+            if (await withCompany(companyId, () => settleCancelledOrder(orderId))) cancelled += 1;
+            else cancelSkipped += 1;
+          } else if (await withCompany(companyId, () => completeOne(orderId, now, policy))) completed += 1;
         } catch (err) {
           failedOrders += 1;
           logger.error({ err, orderId, companyId }, 'tự hoàn tất đơn lỗi');
@@ -160,8 +169,11 @@ export async function completeDueOrdersOnce(
     }
     if (page.length < pageSize) break;
   }
-  logger.info({ candidates, completed, failedOrders, skippedCompanies, ms: Date.now() - started }, 'lượt tự hoàn tất đơn xong');
-  recordAutoComplete({ completed, failedOrders, skippedCompanies });
+  logger.info(
+    { candidates, completed, cancelled, cancelSkipped, failedOrders, skippedCompanies, ms: Date.now() - started },
+    'lượt tự hoàn tất đơn xong',
+  );
+  recordAutoComplete({ completed, cancelled, failedOrders, skippedCompanies });
   return completed;
 }
 

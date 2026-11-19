@@ -133,7 +133,7 @@ export function codUnconfirmed(packages: readonly CodPackage[]): boolean {
   );
 }
 
-export type CompletionBlocker = 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed';
+export type CompletionBlocker = 'packages_open' | 'all_packages_cancelled' | 'return_window' | 'return_requested' | 'cod_unconfirmed';
 
 export interface CompletionInput {
   packages: readonly PackageStatus[];
@@ -146,9 +146,13 @@ export interface CompletionInput {
   now: number;
 }
 
-/** Lý do chưa hoàn tất; null là hoàn tất được. */
+/**
+ * Lý do chưa hoàn tất; null là hoàn tất được. `all_packages_cancelled`: đơn không bao giờ hoàn tất, việc nền khép đơn
+ * khi mọi món đã huỷ (`settleCancelledOrder`, #236 PR 3, D16), như FE.
+ */
 export function completionBlocker(i: CompletionInput): CompletionBlocker | null {
   if (!i.packages.length || !i.packages.every(isStopped)) return 'packages_open';
+  if (allCancelled(i.packages)) return 'all_packages_cancelled';
   if (i.lastDeliveredAt && (!i.returnWindowEndsAt || i.returnWindowEndsAt.getTime() > i.now)) return 'return_window';
   if (i.openReturnRequests > 0) return 'return_requested';
   if (i.codUnconfirmed) return 'cod_unconfirmed';
