@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
-import { canReportLost, HANDED_OVER, isSealed, type PackageStatus } from '../domain/package.ts';
+import { canReportLost, HANDED_OVER, isSealed, type PackageStatus, PRE_HANDOVER } from '../domain/package.ts';
 import type { HandoverSource, PlanLine } from '../domain/handover.ts';
 import type { MappedSku } from '../domain/remap.ts';
 import { type OpenPurpose, type PackageNotice, packageLines, packages } from './schema.ts';
@@ -142,6 +142,8 @@ export async function updatePackage(
     reservedAt: Date | SQL | null;
     deliveryPostedAt: Date | SQL | null;
     waybillKept: boolean;
+    /** Kiện quay về trước bàn giao (huỷ bàn giao nhầm) nhận lại hạn của đơn: `ORDER_SHIP_BY` (KH-B01). */
+    shipBy: Date | SQL | null;
   }> &
     Partial<PackageShipping> &
     Partial<LostColumns>,
@@ -157,6 +159,32 @@ export async function updatePackage(
       updatedAt: sql`now()`,
     })
     .where(eq(packages.id, id));
+}
+
+/**
+ * Hạn bàn giao của đơn chứa kiện, dùng trong `UPDATE … SET` (SQL thô `"order".orders`: cùng schema, fulfillment không
+ * import sales). Kiện đơn sàn trước bàn giao phải mang đúng giá trị này (KH-B01, trigger `packages_ship_by_order`).
+ */
+export const ORDER_SHIP_BY = sql`(select o.ship_by from "order".orders o where o.id = ${packages.orderId})`;
+
+/**
+ * Kiện chưa bàn giao của đơn nhận hạn bàn giao của đơn (KH-B01, Documents/21 §19.1): kiện đã rời kho hay đã huỷ giữ hạn
+ * cũ. Hạn đổi thật thì tăng `version` dù không phát sự kiện. Trả số kiện đã ghi. Bên gọi đã khoá kiện của đơn.
+ */
+export async function syncPackagesShipBy(orderId: string, shipBy: Date | null): Promise<number> {
+  const value = shipBy ? shipBy.toISOString() : null;
+  const rows = await getDb()
+    .update(packages)
+    .set({ shipBy, version: sql`${packages.version} + 1`, updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(packages.orderId, orderId),
+        inArray(packages.status, [...PRE_HANDOVER]),
+        sql`${packages.shipBy} is distinct from ${value}::timestamptz`,
+      ),
+    )
+    .returning({ id: packages.id });
+  return rows.length;
 }
 
 /** Kiện kèm dòng cho lõi bàn giao trừ tồn (`service/handover-stock.ts`). */

@@ -89,3 +89,21 @@ describe('đồng bộ giữ cách chia kiện của app (spec 205 D10)', () => 
     expect((await orderOf(orderId)).needs_attention).toBe(false);
   });
 });
+
+describe('hạn bàn giao của kiện tách (KH-B01)', () => {
+  it('đơn đã tách thành hai kiện, sàn trả hạn mới: cả hai kiện nhận hạn', async () => {
+    const v = await setup(10);
+    const o = unpacked(remote(v, { lines: 2 }));
+    const { packageId } = await ingest(v.companyId, o);
+    const second = await splitByHand(packageId, o.lines[1]!.externalLineId);
+    const deadline = new Date('2026-11-22T03:00:00Z');
+
+    await ingest(v.companyId, { ...o, shipBy: deadline });
+
+    const { rows } = await testPool().query<{ ship_by: Date | null }>(
+      'select ship_by from "order".packages where id = any($1::uuid[])',
+      [[packageId, second]],
+    );
+    expect(rows.map((r) => r.ship_by)).toEqual([deadline, deadline]);
+  });
+});

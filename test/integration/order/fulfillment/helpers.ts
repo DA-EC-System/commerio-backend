@@ -73,8 +73,10 @@ export async function seedPackage(
   });
   const db = testPool();
   await db.query(
-    `update "order".orders set status = $2, cancel_pending = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at) where id = $1`,
-    [order.orderId, p.orderStatus ?? 'processing', p.cancelPending ?? false, p.shopId ?? null, p.orderCreatedAt ?? null],
+    // Hạn của đơn bằng hạn của kiện: kiện đơn sàn chưa bàn giao phải mang hạn của đơn (trigger `packages_ship_by_order`, KH-B01).
+    `update "order".orders set status = $2, cancel_pending = $3, shop_id = coalesce($4, shop_id), created_at = coalesce($5, created_at),
+       ship_by = $6 where id = $1`,
+    [order.orderId, p.orderStatus ?? 'processing', p.cancelPending ?? false, p.shopId ?? null, p.orderCreatedAt ?? null, p.shipBy ?? null],
   );
   const { rows: orderLines } = await db.query<{ id: string; variant_id: string; quantity: number }>(
     `with updated as (
@@ -262,8 +264,8 @@ export async function transitionsOf(packageId: string) {
 export async function splitByHand(packageId: string, externalLineId: string): Promise<string> {
   const db = testPool();
   const { rows } = await db.query<{ id: string }>(
-    `insert into "order".packages (company_id, code, order_id, shop_id, status, reserved_at)
-     select company_id, $2, order_id, shop_id, status, reserved_at from "order".packages where id = $1 returning id`,
+    `insert into "order".packages (company_id, code, order_id, shop_id, status, reserved_at, ship_by)
+     select company_id, $2, order_id, shop_id, status, reserved_at, ship_by from "order".packages where id = $1 returning id`,
     [packageId, `KH-T-${randomUUID().slice(0, 8)}`],
   );
   const id = rows[0]!.id;
