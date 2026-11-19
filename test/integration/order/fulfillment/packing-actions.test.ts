@@ -257,6 +257,22 @@ describe('báo sẵn sàng giao', () => {
     expect(await transitionsOf(packageId)).toEqual([expect.objectContaining({ action: 'mark_ready' })]);
   });
 
+  it('D2-04 KH-B02: lưu mã vận đơn sàn trả cho mọi kiện của nhóm gói', async () => {
+    const { packageId } = await seed('packed', { platformPackageCode: 'FP-TRACK' });
+    const other = await seed('packed', { platformPackageCode: 'FP-TRACK' });
+    const res = await post(packageId, 'ready', { version: 1 }, { readyToShip: async () => ({ trackingCode: 'TT-1' }) });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(Package.parse(res.body)).toMatchObject({ status: 'awaiting_pickup', trackingCode: 'TT-1' });
+    expect(await packageRow(other.packageId)).toMatchObject({ status: 'awaiting_pickup', tracking_code: 'TT-1' });
+  });
+
+  it('KH-B02: sàn chưa cấp mã vận đơn thì giữ mã đã có từ lúc đóng gói', async () => {
+    const { packageId } = await seed('packed', { platformPackageCode: 'FP-KEEP', trackingCode: 'LZ-OLD' });
+    const res = await post(packageId, 'ready', { version: 1 }, { readyToShip: async () => ({ trackingCode: null }) });
+    expect(res.status).toBe(200);
+    expect(res.body.trackingCode).toBe('LZ-OLD');
+  });
+
   it('D2-04g: kiện tự giao bị chặn trước khi gọi sàn', async () => {
     const { packageId } = await seed('packed', { selfDelivery: true, platformPackageCode: 'FP-SELF' });
     expectProblem(await post(packageId, 'ready', { version: 1 }), 409, 'self_delivery');

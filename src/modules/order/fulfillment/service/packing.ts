@@ -213,10 +213,11 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
     });
 
     // Kiện giữ vận đơn sau khi mở (spec #238 D25): sàn đã có vận đơn cũ, chỉ chuyển `packed → awaiting_pickup` trong app
-    // (`updatePackage` tự tắt `waybill_kept`).
+    // (`updatePackage` tự tắt `waybill_kept`). Sàn cấp mã vận đơn ngay sau khi báo giao (TikTok, KH-B02) thì ghi ở bước sau.
+    let trackingCode: string | null = null;
     if (target.shopId && target.code && !target.waybillKept) {
       try {
-        await marketplacePackagesOf(ctx).readyToShip(companyId, target.shopId, target.code);
+        ({ trackingCode } = await marketplacePackagesOf(ctx).readyToShip(companyId, target.shopId, target.code));
       } catch (err) {
         await withCompany(companyId, async () => {
           const pkg = await lockPackingPackage(id);
@@ -241,7 +242,8 @@ export async function markReady(ctx: FulfillmentContext, actor: Actor, id: strin
             logger.warn({ packageId: member.id, platformPackageCode: target.code }, 'kiện trong nhóm đã đổi khi báo sẵn sàng giao');
             continue;
           }
-          await updatePackage(member.id, { status: 'awaiting_pickup', labelError: false });
+          // Mã vận đơn sàn trả ghi lên mọi kiện vừa chuyển của nhóm; sàn chưa cấp thì giữ mã cũ (Lazada có từ lúc pack).
+          await updatePackage(member.id, { status: 'awaiting_pickup', labelError: false, ...(trackingCode !== null && { trackingCode }) });
           await recordPacking(member, 'awaiting_pickup', 'mark_ready', actor.accountId);
         }
         return getPackage(ctx, id);
