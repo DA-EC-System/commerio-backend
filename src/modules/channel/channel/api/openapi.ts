@@ -9,6 +9,7 @@ import {
   LeafDetailQuery,
   CascadeLevelSchema,
   CascadeQuery,
+  CategorySyncBody,
   ProductSpecBody,
   ProductSpecParams,
   ProductSpecView,
@@ -232,12 +233,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories/sync',
     summary: 'Đồng bộ ngay cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua.',
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua. Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
     security: bearer,
-    request: { params: PlatformParams },
+    request: { params: PlatformParams, body: { required: false, content: { 'application/json': { schema: CategorySyncBody } } } },
     responses: {
       202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(CategorySyncResult) },
       ...auth,
+      403: problemResponse('`forbidden`: thiếu `channel.shop.sync`, hoặc gửi `allowShrink: true` mà không phải quản trị nền tảng'),
       422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây'),
     },
   });

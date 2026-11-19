@@ -819,3 +819,14 @@ export const CascadeLevelSchema = z
   })
   .strict()
   .meta({ id: 'CascadeLevel' });
+
+// "Đồng bộ ngay" cây category (#400, Thành chốt 19/11/2026): `allowShrink` chỉ quản trị nền tảng.
+export const CategorySyncBody = z
+  .object({
+    allowShrink: z
+      .boolean('allowShrink phải là true hoặc false')
+      .optional()
+      .meta({ description: 'Cho lượt này ghi cả khi cây sàn trả thiếu quá ngưỡng (đánh `removed` hàng loạt). Chỉ quản trị nền tảng' }),
+  })
+  .default({})
+  .meta({ id: 'CategorySyncInput' });

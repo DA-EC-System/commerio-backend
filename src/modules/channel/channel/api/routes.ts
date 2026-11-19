@@ -52,6 +52,7 @@ import {
   PlatformLeafParams,
   LeafDetailQuery,
   CascadeQuery,
+  CategorySyncBody,
   ProductSpecBody,
   ProductSpecParams,
   ShopParams,
@@ -186,10 +187,18 @@ export function channelRouter(ctx: ModuleContext): Router {
   );
 
   // Xếp một lượt đồng bộ cây (`channel.category_sync`, mỗi sàn một lượt chờ); không gọi sàn trong request.
-  router.post('/platforms/:platform/categories/sync', ctx.authorize('channel.shop.sync'), validate({ params: PlatformParams }), async (_req, res) => {
-    const { platform } = validated<typeof PlatformParams>(res, 'params');
-    res.status(202).json(await requestCategorySync(platform));
-  });
+  // `allowShrink` bỏ chặn cây thiếu (`CategoryTreeShrunkError`), chỉ quản trị nền tảng (cờ đọc từ DB mỗi lần, như router
+  // `platform`); người khác gửi cờ: 403.
+  router.post(
+    '/platforms/:platform/categories/sync',
+    ctx.authorize('channel.shop.sync'),
+    validate({ params: PlatformParams, body: CategorySyncBody }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      const { allowShrink } = validated<typeof CategorySyncBody>(res, 'body');
+      res.status(202).json(await requestCategorySync(platform, { allowShrink: allowShrink === true, accountId: actor(res).accountId }));
+    },
+  );
 
   router.get(
     '/platforms/:platform/categories/:externalId',
