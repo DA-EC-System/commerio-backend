@@ -591,6 +591,10 @@ describe('huỷ dòng', () => {
     )).toEqual([{ external_line_id: o.lines[0]!.externalLineId }, { external_line_id: o.lines[1]!.externalLineId }]);
     expect(await reservedOf(v.companyId, v.variantId)).toBe(2);
     expect(await cancelledQtyOf(orderId)).toEqual([0, 0, 1]);
+    // Sự kiện tạo đơn mang tiền như `orders.total` (bỏ món huỷ), không phải tiền mọi món.
+    const { total } = await one(`select total from "order".orders where id = $1`, [orderId]);
+    const created = (await eventsOf(orderId)).find((e) => e.type === 'sales.order_created');
+    expect(created?.payload.total).toBe(total);
     const counter = await packageCounter(v.companyId);
 
     await ingestIn(v.companyId, o);
