@@ -383,7 +383,7 @@ describe('việc nền channel.listing_push', () => {
     const row = await listing(id);
     expect(row).toMatchObject({ status: 'push_failed', external_sku_id: null });
     expect(row.push_error).toMatchObject({ code: 'marketplace_rejected' });
-    expect(row.push_error.message).toMatch(/đang ghép với biến thể khác/);
+    expect(row.push_error.message).toMatch(/đang liên kết với variant khác/);
     expect(await listing(other.id)).toMatchObject({ status: 'live', external_sku_id: 'S-CHU' });
   });
 
