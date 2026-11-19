@@ -21,6 +21,7 @@ import {
   type ContentRevision,
 } from './common.ts';
 import { logger } from '../../../../../shared/logger.ts';
+import { RESPONSIBLE_ATTRS } from './tiktok-categories.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
 import {
   createTiktokClient,
@@ -497,6 +498,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     capabilities: TIKTOK_CAPABILITIES,
     // Cây, attribute của category theo gian hàng (`shop_cipher` bắt buộc, G2.6; #400 A4).
     categoriesNeedToken: true,
+    responsibleFields: RESPONSIBLE_ATTRS,
     togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.

@@ -21,10 +21,9 @@ import {
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteSku,
-  type Responsible,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
-import { tiktokCategoryNodes, tiktokLeafAttributes } from './tiktok-categories.ts';
+import { RESPONSIBLE_ATTRS, tiktokCategoryNodes, tiktokLeafAttributes } from './tiktok-categories.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
 
 export { isPrivateAddress } from './image-source.ts';
@@ -34,8 +33,6 @@ type Row = Record<string, unknown>;
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
 const htmlDescription = (text: string) => `<p>${escapeHtml(text)}</p>`;
-// Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026).
-const RESPONSIBLE_ATTRS: Record<string, keyof Responsible> = { '101489': 'name', '101490': 'address' };
 /** Commerio chỉ bán VND (một công ty, VN). */
 const CURRENCY = 'VND';
 /** Kho của shop ít đổi: giữ trong process một giờ, đỡ một lượt gọi mỗi lần đẩy. */

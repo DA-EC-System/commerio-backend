@@ -543,6 +543,11 @@ export interface MarketplaceAdapter {
    * phần catalog cung cấp (giá, SKU, kích thước gói, tên, mô tả). `accessToken` như `categoryTree`. Thay `categoryAttributes`.
    */
   leafAttributes?(accessToken: string | null, externalCategoryId: string): Promise<PlatformAttribute[]>;
+  /**
+   * Attribute `tier = 'company'` lấy giá trị mặc định từ trường nào của hồ sơ công ty (`responsibleOrgOf`, #292): mã
+   * attribute → `name` | `address`. Sàn không có thì không khai (#400 AC-5).
+   */
+  readonly responsibleFields?: Readonly<Record<string, keyof Responsible>>;
   /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
   categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**

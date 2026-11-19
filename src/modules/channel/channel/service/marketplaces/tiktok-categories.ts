@@ -2,12 +2,14 @@
 // Get Category Attributes 202309 (`category_version=v2`; OAS cục bộ của skill tts-openapi-guide, tra 19/11/2026; gọi thật
 // 18/11/2026 trên shop thử VN).
 import type { PlatformAttribute, RequiredWhen } from '../../domain/product-spec.ts';
-import type { PlatformCategoryNode } from './common.ts';
+import type { PlatformCategoryNode, Responsible } from './common.ts';
 
 type Row = Record<string, unknown>;
 
-/** Mã attribute tổ chức chịu trách nhiệm hàng hoá (#292): điền từ hồ sơ công ty. */
-const COMPANY_TIER = new Set(['101489', '101490']);
+/** Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026). */
+export const RESPONSIBLE_ATTRS: Readonly<Record<string, keyof Responsible>> = { '101489': 'name', '101490': 'address' };
+/** Attribute điền từ hồ sơ công ty: `tier = 'company'`. */
+const COMPANY_TIER = new Set(Object.keys(RESPONSIBLE_ATTRS));
 /** Quốc gia xuất xứ: cột `origin_country` của catalog (#340, A1). */
 const PRODUCT_TIER = new Set(['100149']);
 
