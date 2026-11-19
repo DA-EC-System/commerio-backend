@@ -35,6 +35,10 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'finance.bank_matches': ['SELECT', 'INSERT'],
   // Thư báo mất uỷ quyền đã xếp chỉ thêm: sửa hay xoá dòng thì cùng một mốc gửi lại được (#312).
   'channel.shop_reauth_mails': ['SELECT', 'INSERT'],
+  // Cây category và attribute của sàn là dữ liệu tham chiếu của nền tảng, không theo công ty (Documents/19 mục 2, #400):
+  // request chỉ đọc; ghi bằng role chủ bảng ngoài `withCompany` (`replaceLeaf`, việc nền đồng bộ cây).
+  'channel.platform_categories': ['SELECT'],
+  'channel.platform_category_attributes': ['SELECT'],
   // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.
   'pgboss.queue': ['SELECT'],
   'pgboss.job_common': ['INSERT'],

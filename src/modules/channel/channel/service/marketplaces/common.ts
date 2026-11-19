@@ -2,10 +2,11 @@
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
+import type { PlatformAttribute } from '../../domain/product-spec.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
 import type { ResponsibleOrg } from '../../../../core/index.ts';
 
-export type { ShopCapabilities };
+export type { PlatformAttribute, ShopCapabilities };
 
 /**
  * Token của một gian hàng. `accessToken`, `refreshToken` là **chuỗi mờ do adapter tự định dạng**: app chỉ mã hoá, lưu,
@@ -55,6 +56,19 @@ export interface ShopConnection extends SellerInfo {
 export interface PlatformCategory {
   externalId: string;
   name: string;
+}
+
+/**
+ * Một node của cây category sàn (#400, `channel.platform_categories`). `path` nối tên từ gốc bằng " > ". `permissionStatuses`
+ * là quyền đăng của gian hàng mang token (TikTok `permission_statuses`), sàn không có thì bỏ.
+ */
+export interface PlatformCategoryNode {
+  externalId: string;
+  parentExternalId: string | null;
+  name: string;
+  isLeaf: boolean;
+  path: string;
+  permissionStatuses?: string[];
 }
 
 /** Thuộc tính bắt buộc ở cấp sản phẩm của một danh mục; `options` rỗng khi nhập tự do. */
@@ -514,6 +528,26 @@ export interface MarketplaceAdapter {
   readonly refreshKeepsAuthDeadline?: boolean;
   listCategories(accessToken: string): Promise<PlatformCategory[]>;
   categoryAttributes(accessToken: string, externalCategoryId: string): Promise<CategoryAttribute[]>;
+  /**
+   * Cây category và attribute của leaf có cần token gian hàng không (#400 A4): TikTok cần (`shop_cipher`), Lazada không
+   * (G2.1, G2.2). Cần mà không có gian hàng `active` thì 409 `shop_not_connected`.
+   */
+  readonly categoriesNeedToken?: boolean;
+  /**
+   * Cả cây category của sàn, mọi node (#400, `channel.platform_categories`). `accessToken` null khi sàn không cần token;
+   * sàn cần token mà nhận null thì ném `unauthorized` không gọi sàn. Thay `listCategories` sau BE3.
+   */
+  categoryTree?(accessToken: string | null): Promise<PlatformCategoryNode[]>;
+  /**
+   * Mọi attribute của một leaf, đã chuẩn hoá `kind`, `input`, `allowCustom`, `tier` (#400 A15), kèm bản gốc `raw`. Không gồm
+   * phần catalog cung cấp (giá, SKU, kích thước gói, tên, mô tả). `accessToken` như `categoryTree`. Thay `categoryAttributes`.
+   */
+  leafAttributes?(accessToken: string | null, externalCategoryId: string): Promise<PlatformAttribute[]>;
+  /**
+   * Attribute `tier = 'company'` lấy giá trị mặc định từ trường nào của hồ sơ công ty (`responsibleOrgOf`, #292): mã
+   * attribute → `name` | `address`. Sàn không có thì không khai (#400 AC-5).
+   */
+  readonly responsibleFields?: Readonly<Record<string, keyof Responsible>>;
   /** Quy tắc của danh mục sàn mà app cần biết trước khi đẩy (#347). Sàn không có quy tắc nào thì không khai. */
   categoryRules?(accessToken: string, externalCategoryId: string): Promise<CategoryRules>;
   /**

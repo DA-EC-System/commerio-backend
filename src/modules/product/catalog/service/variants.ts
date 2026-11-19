@@ -38,6 +38,8 @@ export interface VariantSummary {
   id: string;
   productId: string;
   productName: string;
+  /** Mã cha của sản phẩm (#204 D5); channel dùng làm khoá sản phẩm trên sàn (#400 A5). */
+  productCode: string;
   sku: string;
   categoryId: string;
   categoryName: string;
@@ -62,17 +64,21 @@ export interface VariantSummary {
 
 /**
  * Bỏ trống `ids` = mọi biến thể của công ty (D10 lọc trong bộ nhớ). Id không thấy (RLS, không tồn tại, không phải
- * uuid) thì không có trong kết quả. Gọi trong `withCompany` của bên gọi.
+ * uuid) thì không có trong kết quả. `opts.productIds` lọc thêm theo sản phẩm (#400 A13): mảng rỗng là không có biến thể
+ * nào (không phải mọi biến thể), có cả `ids` thì lấy giao. Gọi trong `withCompany` của bên gọi.
  */
-export async function getVariants(ids?: readonly string[]): Promise<VariantSummary[]> {
+export async function getVariants(ids?: readonly string[], opts: { productIds?: readonly string[] } = {}): Promise<VariantSummary[]> {
   // Ngoài `withCompany` (role chủ bảng) RLS không có hiệu lực: hàm sẽ trả biến thể của mọi công ty.
   requireCompanyId('getVariants');
-  const rows = await findVariants(ids ? { ids: ids.filter(isUuid) } : {});
+  const productIds = opts.productIds?.filter(isUuid);
+  if (productIds?.length === 0) return [];
+  const rows = await findVariants({ ...(ids && { ids: ids.filter(isUuid) }), ...(productIds && { productIds }) });
   const images = await variantImagesOf(rows);
   return rows.map((v) => ({
     id: v.id,
     productId: v.productId,
     productName: v.productName,
+    productCode: v.productCode,
     sku: v.sku,
     categoryId: v.categoryId,
     categoryName: v.categoryName,

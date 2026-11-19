@@ -652,6 +652,20 @@
       "when": 1795034924061,
       "tag": "20261118204844_xoa-gian-hang-thu-bao",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1795066552574,
+      "tag": "20261119053552_category-san",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1795066555953,
+      "tag": "20261119053555_category-san-quyen",
+      "breakpoints": true
     }
   ]
 }
