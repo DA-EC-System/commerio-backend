@@ -273,7 +273,7 @@ function adapterOf(platform: string): MarketplaceAdapter {
 }
 
 /** Mã sàn từ URL: phải có adapter và có trong enum DB, không thì 422 `marketplace_unsupported` (21 §18.4). */
-function platformOf(platform: string): { platform: Platform; adapter: MarketplaceAdapter } {
+export function platformOf(platform: string): { platform: Platform; adapter: MarketplaceAdapter } {
   if (!isMarketplace(platform)) throw unsupported();
   return { platform, adapter: adapterOf(platform) };
 }

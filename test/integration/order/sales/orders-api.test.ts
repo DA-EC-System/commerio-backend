@@ -468,7 +468,7 @@ describe('báo cáo thất lạc của kiện ở chi tiết đơn (#238 §5.3)'
 describe('hạn trả theo gian hàng (#236)', () => {
   const DAY = 86_400_000;
   let co: Awaited<ReturnType<typeof createCompany>>;
-  let shop15: string;
+  let shop15: string, tiktok: string;
 
   beforeAll(async () => {
     co = await createCompany({ optionalModules: ['channel'] });
@@ -478,6 +478,12 @@ describe('hạn trả theo gian hàng (#236)', () => {
       [co.companyId, `s-${randomUUID().slice(0, 8)}`],
     );
     shop15 = r.rows[0]!.id;
+    const t = await testPool().query<{ id: string }>(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at)
+       values ($1, 'tiktok', $2, 'Shop TikTok', 'active', now()) returning id`,
+      [co.companyId, `t-${randomUUID().slice(0, 8)}`],
+    );
+    tiktok = t.rows[0]!.id;
   });
 
   /**
@@ -485,10 +491,14 @@ describe('hạn trả theo gian hàng (#236)', () => {
    * file khác chạy song song theo giờ thật (`complete.test.ts`, `lost.test.ts`): `prepare` ghi điều kiện chặn (yêu cầu
    * trả, cột COD, trạng thái) trước khi lùi mốc giao, để đơn không lúc nào vừa qua hạn trả vừa chưa bị chặn.
    */
-  async function deliveredOrder(daysAgo: number, prepare?: (orderId: string) => Promise<unknown>): Promise<{ orderId: string; deliveredAt: Date }> {
+  async function deliveredOrder(
+    daysAgo: number,
+    prepare?: (orderId: string) => Promise<unknown>,
+    shopId = shop15,
+  ): Promise<{ orderId: string; deliveredAt: Date }> {
     const tag = randomUUID().slice(0, 8);
     const { orderId } = await withCompany(co.companyId, () =>
-      ingestMarketplaceOrder(order(`R-${tag}`, [{ variantId: null, status: 'delivered', pkg: `FP-R-${tag}` }], { shopId: shop15 })),
+      ingestMarketplaceOrder(order(`R-${tag}`, [{ variantId: null, status: 'delivered', pkg: `FP-R-${tag}` }], { shopId })),
     );
     await prepare?.(orderId);
     const deliveredAt = new Date(Date.now() - daysAgo * DAY);
@@ -514,6 +524,27 @@ describe('hạn trả theo gian hàng (#236)', () => {
 
     expect(body.completionBlocker).toBe('return_window');
     expect(body.returnWindowEndsAt).toBe(new Date(deliveredAt.getTime() + 15 * DAY).toISOString());
+  });
+
+  it('AC13: gian hàng TikTok, giao 30 ngày trước, sàn còn DELIVERED → return_window, returnWindowEndsAt null', async () => {
+    const { orderId } = await deliveredOrder(30, undefined, tiktok);
+
+    const body = await detail(orderId);
+
+    expect(body.status).toBe('processing');
+    expect(body.completionBlocker).toBe('return_window');
+    expect(body.returnWindowEndsAt).toBeNull();
+  });
+
+  it('đơn đã huỷ trả returnWindowEndsAt null dù cột có mốc sàn báo lúc còn cờ Đang huỷ (review PR 2)', async () => {
+    // Sàn huỷ đơn còn kiện chờ mở: đơn processing cờ Đang huỷ nhận mốc CANCELLED; kho mở kiện xong thì đơn sang cancelled.
+    const { orderId } = await deliveredOrder(1, undefined, tiktok);
+    await testPool().query(`update "order".orders set status = 'cancelled', return_window_ends_at = now() - interval '1 day' where id = $1`, [orderId]);
+
+    const body = await detail(orderId);
+
+    expect(body.status).toBe('cancelled');
+    expect(body.returnWindowEndsAt).toBeNull();
   });
 
   it('D1-W (US-DH-16 2, AC7): qua hạn trả mà còn yêu cầu trả requested → việc hoàn tất bỏ qua, chi tiết đơn return_requested', async () => {

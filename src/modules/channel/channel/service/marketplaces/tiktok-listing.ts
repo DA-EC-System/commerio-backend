@@ -21,9 +21,9 @@ import {
   type PriceQuantity,
   PROMOTION_LOCKED,
   type RemoteSku,
-  type Responsible,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
+import { RESPONSIBLE_ATTRS, tiktokCategoryNodes, tiktokLeafAttributes } from './tiktok-categories.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
 
 export { isPrivateAddress } from './image-source.ts';
@@ -33,8 +33,6 @@ type Row = Record<string, unknown>;
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
 const htmlDescription = (text: string) => `<p>${escapeHtml(text)}</p>`;
-// Mã thuộc tính tổ chức chịu trách nhiệm hàng hoá, giống nhau ở 19 danh mục lá VN đã đo (#292, 17/11/2026).
-const RESPONSIBLE_ATTRS: Record<string, keyof Responsible> = { '101489': 'name', '101490': 'address' };
 /** Commerio chỉ bán VND (một công ty, VN). */
 const CURRENCY = 'VND';
 /** Kho của shop ít đổi: giữ trong process một giờ, đỡ một lượt gọi mỗi lần đẩy. */
@@ -66,6 +64,8 @@ type ListingMethods = Pick<
   MarketplaceAdapter,
   | 'listCategories'
   | 'categoryAttributes'
+  | 'categoryTree'
+  | 'leafAttributes'
   | 'categoryRules'
   | 'uploadImage'
   | 'createProduct'
@@ -110,6 +110,12 @@ function leavesOf(categories: Row[]): PlatformCategory[] {
     .filter((c) => c.is_leaf === true)
     .filter((c) => !Array.isArray(c.permission_statuses) || c.permission_statuses.includes('AVAILABLE'))
     .map((c) => ({ externalId: String(c.id), name: pathOf(c) }));
+}
+
+/** Cây, attribute TikTok theo gian hàng: token null thì `unauthorized`, không gọi sàn (#400 A4). */
+function requireToken(token: string | null): string {
+  if (!token) throw new MarketplaceError('unauthorized', 'shop_token_required', 'TikTok cần token gian hàng để đọc category');
+  return token;
 }
 
 /** Gram → kg tối đa 3 chữ số thập phân; mm → cm số nguyên dương (create-product-202309, VN chỉ nhận KILOGRAM, CENTIMETER). */
@@ -264,6 +270,28 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
   }
 
   return {
+    // Cây đầy đủ (#400): mọi node, quyền của gian hàng mang token. Get Categories bắt `shop_cipher` (G2.6): không token thì
+    // không gọi.
+    async categoryTree(token) {
+      const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
+        token: requireToken(token),
+        query: { category_version: CATEGORY_VERSION },
+      });
+      return tiktokCategoryNodes(data?.categories ?? []);
+    },
+
+    async leafAttributes(token, externalCategoryId) {
+      const data = await client.call<{ attributes?: unknown }>('GET', `/product/202309/categories/${encodeURIComponent(externalCategoryId)}/attributes`, {
+        token: requireToken(token),
+        query: { category_version: CATEGORY_VERSION },
+      });
+      // Không phải mảng thì không coi là "leaf không có attribute": `replaceLeaf` sẽ xoá cả tập (review BE1 P2-1).
+      if (!Array.isArray(data?.attributes)) {
+        throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn trả attribute của category không phải danh sách');
+      }
+      return tiktokLeafAttributes(data.attributes as Row[]);
+    },
+
     async listCategories(token) {
       const data = await client.call<{ categories?: Row[] }>('GET', '/product/202309/categories', {
         token,

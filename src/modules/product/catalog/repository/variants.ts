@@ -129,6 +129,7 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       heightMm: productVariants.heightMm,
       sourceRequestLineId: productVariants.sourceRequestLineId,
       productName: products.name,
+      productCode: products.code,
       description: products.description,
       originCountry: products.originCountry,
       brand: products.brand,
