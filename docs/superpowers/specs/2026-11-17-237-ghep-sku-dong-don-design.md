@@ -178,7 +178,7 @@ Với mỗi dòng kiện, "cũ" là trạng thái ghép hiện tại của dòng
 | `backordered` | Ghi dòng; `requestAllocation` cho mọi biến thể của kiện (kiện có thể vừa đủ điều kiện giữ) | `applied` |
 | `reserved`, `packed`, `awaiting_pickup` | Ghi dòng; mới là biến thể thì **giữ dòng mới** (dưới) | `applied` |
 | Đã rời kho, không `returned`, `handed_over_at` từ `orderCutoffAt` trở đi (hoặc mốc null) | Ghi dòng; mới là biến thể và `holdStock` thì `shipLateMappedLines(pkg.id)` (kiện `before_cutoff` hàm tự bỏ qua); sau đó kiện `delivered` mà `delivery_posted_at` null thì `reportDelivered(pkg.id)` | `applied` |
-| Đã rời kho trước `orderCutoffAt` (D11, chờ Khang chốt) | Ghi dòng, **không trừ**: kiện rời kho trước lúc đếm của phiếu đầu kỳ, phiếu đã không đếm món đó. Xảy ra khi kiện rời kho lúc gian hàng chờ kiểm kê mà mọi dòng còn chưa ghép: `lockDeferredPackages` chỉ chọn kiện có dòng đã ghép nên hàm bù chưa đánh `before_cutoff` cho nó | `applied` |
+| Đã rời kho trước `orderCutoffAt` (D11) | Ghi dòng, **không trừ**: kiện rời kho trước lúc đếm của phiếu đầu kỳ, phiếu đã không đếm món đó. Xảy ra khi kiện rời kho lúc gian hàng chờ kiểm kê mà mọi dòng còn chưa ghép: `lockDeferredPackages` chỉ chọn kiện có dòng đã ghép nên hàm bù chưa đánh `before_cutoff` cho nó | `applied` |
 | Đã rời kho, `holdStock = false` | Ghi dòng, không trừ: `settleDeferredHandovers` trừ khi phiếu đầu kỳ ghi sổ | `applied` |
 | `returned` | Ghi dòng, không trừ (hàng đã về kệ) | `applied` |
 
@@ -317,7 +317,7 @@ Claude đề xuất, Khang xem khi duyệt spec:
 - **D8** Gian hàng chờ kiểm kê đầu kỳ: chỉ ghi biến thể, không giữ, không trừ.
 - **D9** Chia hai PR như mục 6.
 - **D10** Kiện không còn gì để giữ vào `reserved` không qua cổng tồn (mục 5.2).
-- **D11 (chờ Khang chốt)** Ghép muộn trên kiện rời kho trước `order_cutoff_at` của gian hàng thì không trừ. Kiện rời kho trước một phiếu kiểm kê **thường** (#208) vẫn trừ theo `25` §8.4 quy tắc 3: nếu phiếu đó đã điều chỉnh mất món này thì tồn bị trừ hai lần, sửa bằng phiếu kiểm kê sau (ghi ở mục 10). Lý do không chặn: không có mốc kiểm kê theo SKU ở fulfillment, và `25` không nêu ngoại lệ.
+- **D11** (Khang chốt 19/11/2026: giữ như PR 1 đã làm) Ghép muộn trên kiện rời kho trước `order_cutoff_at` của gian hàng thì không trừ. Kiện rời kho trước một phiếu kiểm kê **thường** (#208) vẫn trừ theo `25` §8.4 quy tắc 3: nếu phiếu đó đã điều chỉnh mất món này thì tồn bị trừ hai lần, sửa bằng phiếu kiểm kê sau (ghi ở mục 10). Lý do không chặn: không có mốc kiểm kê theo SKU ở fulfillment, và `25` không nêu ngoại lệ.
 - **D12** `to` lấy theo dòng listing thắng của SKU người bán, không theo dòng vừa bấm (mục 5.3).
 - **D13** (thay bằng D20 ngày 19/11/2026) Mở kiện luôn so ghép hiện hành, không dựa vào ghi chú.
 - **D14** Kéo lại đơn dùng ghép đã lưu trên dòng đơn cho dòng kiện lập mới (mục 5.7).
