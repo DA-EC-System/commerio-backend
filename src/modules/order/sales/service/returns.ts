@@ -96,6 +96,7 @@ export async function returnView(ctx: SalesContext, row: ReturnRow, opts: ViewOp
             ofcStatus: row.ofcStatus,
             disputeInProgress: row.disputeInProgress,
             returnTo: row.returnTo as 'warehouse' | 'merchant' | null,
+            respondBy: row.respondBy?.toISOString() ?? null,
           }
         : null,
     rejectReason: row.rejectReasonId ? { id: row.rejectReasonId, label: row.rejectReasonLabel ?? '' } : null,

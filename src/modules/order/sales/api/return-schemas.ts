@@ -90,6 +90,10 @@ export const ReturnRequest = ReturnRequestSummary.extend({
       ofcStatus: z.string().nullable(),
       disputeInProgress: z.boolean(),
       returnTo: z.enum(['warehouse', 'merchant']).nullable(),
+      respondBy: z.iso
+        .datetime()
+        .nullable()
+        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok); null khi sàn không chờ người bán hoặc sàn không báo (Lazada)' }),
     })
     .strict()
     .nullable(),

@@ -3,6 +3,8 @@
 import type { MarketplaceReturns } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { findShopRow } from '../repository/shops.ts';
+import { getAdapter } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ xử lý yêu cầu trả từ app');
@@ -26,6 +28,10 @@ export const marketplaceReturns: MarketplaceReturns = {
     const { adapter, accessToken } = await session(companyId, shopId);
     if (!adapter.confirmReturnReceived) return;
     await onMarketplace(() => adapter.confirmReturnReceived!(accessToken, externalReturnId, externalLineIds));
+  },
+  async approvesRefundAfterInspection(companyId, shopId) {
+    const shop = await withCompany(companyId, () => findShopRow(shopId));
+    return Boolean(shop && getAdapter(shop.platform)?.approveReturnRefund);
   },
   async history(companyId, shopId, externalReturnId, externalLineIds) {
     const { adapter, accessToken } = await session(companyId, shopId);
