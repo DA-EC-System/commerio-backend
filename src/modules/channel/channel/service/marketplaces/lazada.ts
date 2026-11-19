@@ -24,6 +24,7 @@ import {
   type RemoteLineStatus,
   type RemoteOrder,
   type RemotePackageEvent,
+  type RemoteProductCategory,
   type RemoteSku,
   type RemoteState,
   refreshBefore,
@@ -212,6 +213,21 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
   if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
   if (res.type === 'SYSTEM' || TRANSIENT_CODES.has(code)) return new MarketplaceError('unavailable', code, message);
   return new MarketplaceError('rejected', code, message);
+}
+
+/** Đọc `data` của GetProductItem thành category và attribute (#400 lát 12): giá trị chuỗi, số; mảng thì từng phần tử. */
+export function lazadaProductCategory(data: unknown): RemoteProductCategory | null {
+  const d = data as { primary_category?: unknown; attributes?: unknown } | undefined;
+  if (d?.primary_category == null || d.primary_category === '') return null;
+  const attrs = d.attributes && typeof d.attributes === 'object' ? (d.attributes as Record<string, unknown>) : {};
+  const text = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v) : null);
+  return {
+    externalCategoryId: String(d.primary_category),
+    attributes: Object.entries(attrs).flatMap(([code, raw]) => {
+      const values = (Array.isArray(raw) ? raw : [raw]).map(text).filter((v): v is string => v !== null && v.trim() !== '');
+      return values.length ? [{ code, values: values.map((name) => ({ id: null, name })) }] : [];
+    }),
+  };
 }
 
 /** Đọc `data.categorySuggestions[]` của GetCategorySuggestion (#400 lát 9): giữ thứ tự sàn, bỏ phần tử không có mã. */
@@ -946,6 +962,12 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // GetCategorySuggestion (open.lazada.com, tra 19/11/2026): `product_name`, `image_url` đều bắt buộc, cần access_token;
     // "E701: Empty category suggestion" là sàn không đoán được, trả rỗng. Đường dẫn sàn trả tiếng Anh nối ">" (gọi thật
     // 18/11/2026, request_id 2102e04417950055354256958); service thay bằng đường dẫn cây tiếng Việt khi cây đã đồng bộ.
+    // GetProductItem (open.lazada.com, tra 19/11/2026): `item_id` bắt buộc; `data.primary_category`, `data.attributes` là map
+    // tên attribute → nhãn (gọi thật 18/11/2026, request_id 21412a8b17950174625785193: `material: "Stainless Steel"`).
+    async productCategory(accessToken, externalProductId) {
+      const body = await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: externalProductId }, 'GET');
+      return lazadaProductCategory(body.data);
+    },
     suggestionRules: { needsImage: true },
     async suggestCategories(accessToken, input) {
       const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl ?? '' };

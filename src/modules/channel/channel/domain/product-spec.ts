@@ -90,6 +90,39 @@ export function resolveOption(attr: Pick<PlatformAttribute, 'options' | 'raw'>, 
   return null;
 }
 
+/**
+ * Attribute của spec dựng từ sản phẩm trên sàn (#400 lát 12, ghép SKU): chỉ attribute `tier = 'category'`, `kind = 'property'`
+ * của leaf (xuất xứ, thương hiệu ở catalog; trục ở `axis_map`). Lựa chọn đổi sang mã của leaf theo mã giá trị sàn trả rồi theo
+ * nhãn (`resolveOption`); không khớp mà attribute cho tự nhập thì giữ nhãn, không thì bỏ. Ô nhập chữ, số, ngày lấy giá trị đầu.
+ * Cascade, ảnh bỏ (người dùng chọn lại). Leaf chưa có attribute: rỗng.
+ */
+export function remoteSpecAttributes(
+  leaf: readonly PlatformAttribute[] | null,
+  remote: readonly { code: string; values: readonly { id: string | null; name: string }[] }[],
+): Record<string, SpecAttributeValue> {
+  const out: Record<string, SpecAttributeValue> = {};
+  if (!leaf) return out;
+  const byCode = new Map(remote.map((r) => [r.code, r.values]));
+  for (const a of leaf) {
+    if (a.tier !== 'category' || a.kind !== 'property') continue;
+    const values = byCode.get(a.code);
+    if (!values?.length) continue;
+    const pick = (v: { id: string | null; name: string }) =>
+      (v.id !== null ? resolveOption(a, v.id) : null) ?? resolveOption(a, v.name) ?? (a.allowCustom && v.name.trim() ? v.name.trim() : null);
+    if (a.input === 'select') {
+      const id = pick(values[0]!);
+      if (id) out[a.code] = id;
+    } else if (a.input === 'multiselect') {
+      const ids = [...new Set(values.map(pick).filter((x): x is string => x !== null))];
+      if (ids.length) out[a.code] = ids;
+    } else if (a.input === 'text' || a.input === 'number' || a.input === 'date') {
+      const text = values[0]!.name.trim();
+      if (text) out[a.code] = text;
+    }
+  }
+  return out;
+}
+
 export type MissingReason = 'required' | 'required_when' | 'axis_unmapped' | 'category_changed' | 'category_removed';
 export interface MissingItem {
   code: string;

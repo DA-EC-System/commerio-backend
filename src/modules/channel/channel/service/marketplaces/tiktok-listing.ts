@@ -21,6 +21,7 @@ import {
   type PlatformCategory,
   type PriceQuantity,
   PROMOTION_LOCKED,
+  type RemoteProductCategory,
   type RemoteSku,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
@@ -69,6 +70,7 @@ type ListingMethods = Pick<
   | 'leafAttributes'
   | 'categoryRules'
   | 'suggestCategories'
+  | 'productCategory'
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
@@ -326,6 +328,23 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         body: { product_title: input.name, category_version: CATEGORY_VERSION },
       });
       return tiktokSuggestions(data);
+    },
+
+    // Get Product 202309 (OAS cục bộ, gọi thật 18/11/2026): `category_chains` từ gốc tới lá, `product_attributes[{id, values[{id,
+    // name}]}]` (giá trị tự nhập cũng có mã riêng).
+    async productCategory(token, externalProductId): Promise<RemoteProductCategory | null> {
+      const data = await client.call<Row>('GET', `/product/202309/products/${encodeURIComponent(externalProductId)}`, { token: requireToken(token) });
+      const leaf = ((data?.category_chains ?? []) as Row[]).find((c) => c.is_leaf === true);
+      if (!leaf?.id) return null;
+      return {
+        externalCategoryId: String(leaf.id),
+        attributes: ((data?.product_attributes ?? []) as Row[]).flatMap((a) => {
+          const values = ((a.values ?? []) as Row[])
+            .filter((v) => typeof v.name === 'string' && v.name !== '')
+            .map((v) => ({ id: v.id == null ? null : String(v.id), name: String(v.name) }));
+          return a.id != null && values.length ? [{ code: String(a.id), values }] : [];
+        }),
+      };
     },
 
     async leafAttributes(token, externalCategoryId) {

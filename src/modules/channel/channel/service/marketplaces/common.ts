@@ -83,6 +83,15 @@ export interface CategoryAttribute {
 /** Tổ chức chịu trách nhiệm hàng hoá hiệu lực của công ty (`responsibleOrgOf`, #292). */
 export type Responsible = ResponsibleOrg;
 
+/**
+ * Category và attribute của một sản phẩm trên sàn (#400 lát 12: ghép SKU dựng spec từ sàn). `values[].id` là mã giá trị khi sàn
+ * trả (TikTok, kể cả giá trị tự nhập), null khi sàn chỉ trả nhãn (Lazada); service đổi sang mã lựa chọn theo attribute leaf.
+ */
+export interface RemoteProductCategory {
+  externalCategoryId: string;
+  attributes: { code: string; values: { id: string | null; name: string }[] }[];
+}
+
 /** Một gợi ý category của sàn (#400 lát 9): `path` là đường dẫn sàn trả (Lazada tiếng Anh), service thay bằng cây khi có. */
 export interface CategorySuggestion {
   externalId: string;
@@ -584,6 +593,8 @@ export interface MarketplaceAdapter {
    * được thì rỗng, không ném. `permissionStatuses`: quyền của gian hàng mang token với leaf đó (TikTok), sàn không có thì null.
    */
   suggestCategories?(accessToken: string, input: { name: string; imageUrl: string | null }): Promise<CategorySuggestion[]>;
+  /** Category lá và attribute của sản phẩm `externalProductId` trên sàn (#400 lát 12); sàn không trả category thì null. */
+  productCategory?(accessToken: string, externalProductId: string): Promise<RemoteProductCategory | null>;
   /** Điều kiện sàn đặt cho lời gọi gợi ý, app kiểm trước khi gọi: cần ảnh (Lazada), độ dài tên tối thiểu (TikTok 25). */
   readonly suggestionRules?: { needsImage?: true; minNameLength?: number };
   /**

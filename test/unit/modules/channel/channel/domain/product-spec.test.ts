@@ -11,6 +11,7 @@ import {
   normalizePath,
   permissionOf,
   type PlatformAttribute,
+  remoteSpecAttributes,
   resolveOption,
   specMissing,
   treeShrinkBlocked,
@@ -229,5 +230,41 @@ describe('treeShrinkBlocked (review BE1 P2-3)', () => {
     expect(treeShrinkBlocked(100, 6)).toBe(true);
     expect(treeShrinkBlocked(99, 99)).toBe(false);
     expect(treeShrinkBlocked(0, 0)).toBe(false);
+  });
+});
+
+// Ghép SKU dựng spec từ sàn (#400 lát 12): giá trị sàn trả đổi sang mã lựa chọn của leaf.
+describe('remoteSpecAttributes', () => {
+  const sel = (code: string, options: { id: string; label: string }[], over: Partial<PlatformAttribute> = {}) =>
+    attr({ code, input: 'select', options, allowCustom: false, ...over });
+
+  it('lựa chọn theo mã sàn rồi theo nhãn; multiselect bỏ trùng; chữ lấy giá trị đầu', () => {
+    const leaf = [
+      sel('100149', [{ id: '1000854', label: 'Việt Nam' }]),
+      sel('material', [{ id: '11', label: 'Inox' }]),
+      attr({ code: 'features', input: 'multiselect', allowCustom: false, options: [{ id: '21', label: 'A' }, { id: '22', label: 'B' }] }),
+      attr({ code: 'capacity' }),
+    ];
+    expect(
+      remoteSpecAttributes(leaf, [
+        { code: '100149', values: [{ id: '1000854', name: 'Việt Nam' }] },
+        { code: 'material', values: [{ id: null, name: 'inox' }] },
+        { code: 'features', values: [{ id: null, name: 'A' }, { id: null, name: 'a' }, { id: null, name: 'B' }] },
+        { code: 'capacity', values: [{ id: '7709', name: ' 750ml ' }, { id: null, name: 'x' }] },
+      ]),
+    ).toEqual({ '100149': '1000854', material: '11', features: ['21', '22'], capacity: '750ml' });
+  });
+
+  it('không khớp: tự nhập thì giữ nhãn, không thì bỏ; tier khác category, sales, cascade, leaf null: bỏ', () => {
+    const leaf = [
+      sel('a', [{ id: '1', label: 'X' }]),
+      sel('b', [{ id: '1', label: 'X' }], { allowCustom: true }),
+      sel('brand', [{ id: '1', label: 'No Brand' }], { tier: 'product' }),
+      sel('color', [{ id: '1', label: 'Đen' }], { kind: 'sales' }),
+      attr({ code: 'propCascade', input: 'cascade' }),
+    ];
+    const remote = ['a', 'b', 'brand', 'color', 'propCascade'].map((code) => ({ code, values: [{ id: null, name: code === 'b' ? 'Riêng' : 'No Brand' }] }));
+    expect(remoteSpecAttributes(leaf, remote)).toEqual({ b: 'Riêng' });
+    expect(remoteSpecAttributes(null, remote)).toEqual({});
   });
 });

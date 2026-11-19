@@ -34,6 +34,7 @@ import { type RemoteTitleChanged, remoteTitleChanged, snapshotBaseline } from '.
 import { type ChannelListing, moveListing, requesterNames, toListing } from './listings.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, ownShop } from './shops.ts';
+import { sendSpecFromMatch } from './spec-from-match.ts';
 
 const ENTITY = 'listings';
 /** Dòng nhật ký của lần tự duyệt ghép SKU: nhãn là SKU người bán, thiếu thì mã SKU sàn (#352). */
@@ -272,12 +273,16 @@ export async function matchListing(
       const failed = variantId ? await variantSlot(port, shop.id, variantId, row?.id ?? null) : undefined;
       if (!row && failed) {
         const reused = await reuseFailed(failed, remote!, actor, selfOk);
-        if (!reused.pending) await applyToOrders(locked, reused.row.sellerSku, actor.accountId);
+        if (!reused.pending) {
+          await applyToOrders(locked, reused.row.sellerSku, actor.accountId);
+          await sendSpecFromMatch(actor.companyId, shop.id, [reused.row.id]);
+        }
         return reused;
       }
       if (row && effectiveMode(row) === (variantId ? 'mapped' : 'unmanaged') && row.variantId === variantId) {
         // Ghép đã đúng: vẫn áp, là cách chạy bù cho đơn về trước #237 và cho lần áp lỗi (spec 237 §5.3, §5.9).
         await applyToOrders(locked, row.sellerSku, actor.accountId);
+        await sendSpecFromMatch(actor.companyId, shop.id, [row.id]);
         return { row, pending: false };
       }
       // 25 §8.1, §11: "không quản tồn" luôn cần CEO duyệt; đổi ghép cần khi đã có đơn mang SKU người bán này.
@@ -334,6 +339,8 @@ export async function matchListing(
         audit: auditOf(saved),
       });
       await applyToOrders(locked, saved.sellerSku, actor.accountId);
+      // Spec của sản phẩm theo category trên sàn (#400 lát 12): việc nền, cùng giao dịch ghép.
+      await sendSpecFromMatch(actor.companyId, shop.id, [saved.id]);
       return { row: saved, pending: false };
     });
     return { listing: toListing(result.row, await inCompany(() => requesterNames([result.row]))), pending: result.pending };
@@ -464,6 +471,7 @@ async function decide(
       if (!saved) throw await conflictById(row.id);
       await recordTransition({ ...transition, to: saved.status, action: 'approve_mapping', selfApproved, audit: auditOf(saved) });
       await applyToOrders(locked, saved.sellerSku, actor.accountId);
+      await sendSpecFromMatch(actor.companyId, shop.id, [saved.id]);
       return toListing(saved);
     }
     const reason = input.reason ?? null;
