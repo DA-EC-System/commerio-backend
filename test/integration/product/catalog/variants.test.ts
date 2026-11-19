@@ -10,7 +10,7 @@ import {
   auditOf,
   businessStatus,
   createAttribute,
-  createCategory,
+  createGroup,
   createProduct,
   valueId,
   uniq,
@@ -30,10 +30,10 @@ beforeAll(async () => {
 });
 
 const shirt = async () => {
-  const category = await createCategory(token, uniq('Áo'), 'AO-{SEQ:4}-{VAL}');
+  const group = await createGroup(token, uniq('Áo'), 'AO-{SEQ:4}-{VAL}');
   return createProduct(token, {
     name: uniq('Áo'),
-    categoryId: category.id,
+    groupId: group.id,
     variants: [
       [valueId(color, 'Đen'), valueId(size, 'XL')],
       [valueId(color, 'Trắng'), valueId(size, 'XL')],
@@ -96,8 +96,8 @@ describe('POST /catalog/products/:id/variants', () => {
   });
 
   it('sản phẩm không có thuộc tính → 422 errors.attributeValueIds (B11)', async () => {
-    const category = await createCategory(token, uniq('Phụ kiện'), 'PK-{SEQ}');
-    const product = await createProduct(token, { name: uniq('Ví'), categoryId: category.id, variants: [[]] });
+    const group = await createGroup(token, uniq('Phụ kiện'), 'PK-{SEQ}');
+    const product = await createProduct(token, { name: uniq('Ví'), groupId: group.id, variants: [[]] });
     const res = await add(product.id, []);
     expect(res.status).toBe(422);
     expect(res.body.errors.attributeValueIds).toBe('Sản phẩm tạo không có thuộc tính nên chỉ có một biến thể');
@@ -117,12 +117,15 @@ describe('lưu trữ SKU (thay ngừng bán kiểu cũ, #204)', () => {
     const detail = await detailOf(product.id);
     expect(detail.variants.find((v: { id: string }) => v.id === target.id).archivedAt).toEqual(expect.any(String));
     expect(detail).toMatchObject({ variantCount: 1, version: 1 });
-    // Danh mục khác cùng quy tắc tới đúng số đó thì nhảy qua SKU đã lưu trữ.
-    const category = await createCategory(token, uniq('Cùng quy tắc'), 'AO-{SEQ:4}-{VAL}');
+    // Số {SEQ} chạy chung công ty nên không tự quay lại số cũ; đặt lại về đúng số của SKU đã lưu trữ (như khi đổi mẫu rồi trở
+    // lại) để SKU mới đầu tiên trùng nó và phải nhảy qua.
+    const seq = Number(/-(\d{4})-/.exec(target.sku)![1]);
+    await testPool().query('update product.company_product_settings set sku_next_seq = $2 where company_id = $1', [companyId, seq]);
+    const group = await createGroup(token, uniq('Cùng mẫu'), 'AO-{SEQ:4}-{VAL}');
     const again = await createProduct(token, {
       name: uniq('Áo'),
-      categoryId: category.id,
-      variants: [[valueId(color, 'Đen'), valueId(size, 'XL')], [valueId(color, 'Trắng'), valueId(size, 'XL')]],
+      groupId: group.id,
+      variants: [[valueId(color, 'Trắng'), valueId(size, 'XL')], [valueId(color, 'Đen'), valueId(size, 'XL')]],
     });
     expect(again.variants.map((v) => v.sku)).not.toContain(target.sku);
   });
@@ -162,7 +165,7 @@ describe('chạy đua (S-3 c, d; plan B5)', () => {
 // thêm biến thể chỉ nhận đúng bộ trục của sản phẩm, kể cả khi SKU đang có listing chưa gỡ.
 describe('không đổi được trục phân loại (#340, AC-13)', () => {
   it('thêm biến thể mang thêm trục hoặc thiếu trục → 422 errors.attributeValueIds, kể cả khi SKU có listing live', async () => {
-    const material = await createAttribute(token, uniq('Chất liệu'), ['Cotton']);
+    const material = await createAttribute(token, uniq('Chất'), ['Cotton']);
     const product = await shirt();
     const shop = await testPool().query<{ id: string }>(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name) values ($1, 'lazada', $2, 'Shop Thử') returning id`,

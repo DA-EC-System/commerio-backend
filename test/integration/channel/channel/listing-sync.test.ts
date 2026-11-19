@@ -15,13 +15,11 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variant = (sku: string): ListingVariant => ({
   id: randomUUID(),
   productId: randomUUID(),
   productName: 'Áo',
   sku,
-  categoryId,
   attributesLabel: '',
   productCode: 'SP-TEST',
   attributes: [],

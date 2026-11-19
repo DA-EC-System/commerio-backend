@@ -7,7 +7,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { api, archiveSku, auditOf, createCategory, productBody, uniq } from './helpers.ts';
+import { api, archiveSku, auditOf, createGroup, productBody, uniq } from './helpers.ts';
 
 // Ảnh sản phẩm ở catalog (#303; Documents/21 §5.2–5.4 P8, P10, V26). Kho tệp là bản giả: `setHeadObject` trả cỡ của
 // tệp đã "PUT"; ký URL tính trong máy. Link công khai theo `S3_PUBLIC_URL` của vitest.config.ts.
@@ -60,8 +60,8 @@ type Image = { id: string; fileId: string; url: string; position: number };
 const fileIdsOf = (images: Image[]) => images.map((i) => i.fileId);
 
 async function newProduct(imageFileIds: string[]) {
-  const category = await createCategory(token, uniq('Ảnh'), 'A-{SEQ}');
-  const res = await api(token).post('/products', productBody(uniq('SP ảnh'), category.id, [[]], { imageFileIds }));
+  const group = await createGroup(token, uniq('Ảnh'), 'A-{SEQ}');
+  const res = await api(token).post('/products', productBody(uniq('SP ảnh'), group.id, [[]], { imageFileIds }));
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   return res.body as {
     id: string;
@@ -134,8 +134,7 @@ describe('tạo, sửa sản phẩm có ảnh', () => {
 });
 
 describe('từ chối ảnh: không ghi gì', () => {
-  const categoryOf = async (id: string) =>
-    (await api(token).get('/categories')).body.find((c: { id: string }) => c.id === id) as { skuNextSeq: number };
+  const seqOf = async () => ((await api(token).get('/settings')).body as { skuNextSeq: number }).skuNextSeq;
 
   it.each([
     ['10 ảnh', async () => Promise.all(Array.from({ length: 10 }, () => image(token))).then((l) => l.map((f) => f.id)), 'Tối đa 9 ảnh'],
@@ -146,14 +145,15 @@ describe('từ chối ảnh: không ghi gì', () => {
     ['id không phải uuid', async () => ['abc'], 'Có ảnh chưa tải xong hoặc không thuộc công ty'],
   ])('tạo với %s → 422 errors.images, không tạo sản phẩm, không tiêu số SKU', async (_case, ids, message) => {
     const imageFileIds = await ids();
-    const category = await createCategory(token, uniq('Ảnh lỗi'), 'L-{SEQ}');
+    const group = await createGroup(token, uniq('Ảnh lỗi'), 'L-{SEQ}');
     const name = uniq('SP lỗi');
+    const seq = await seqOf();
     const before = heads;
-    const res = await api(token).post('/products', productBody(name, category.id, [[]], { imageFileIds }));
+    const res = await api(token).post('/products', productBody(name, group.id, [[]], { imageFileIds }));
     expect(res.status).toBe(422);
     expect(res.body.type).toBe('/problems/validation_failed');
     expect(res.body.errors.images).toBe(message);
-    expect((await categoryOf(category.id)).skuNextSeq).toBe(1);
+    expect(await seqOf()).toBe(seq);
     expect((await api(token).get(`/products?search=${encodeURIComponent(name)}`)).body.total).toBe(0);
     // Số ảnh, ảnh lặp kiểm ở Zod: không hỏi kho.
     if (message === 'Tối đa 9 ảnh' || message === 'Ảnh bị trùng') expect(heads).toBe(before);
@@ -183,10 +183,10 @@ describe('từ chối ảnh: không ghi gì', () => {
 
   it('kho không trả lời: 503 storage_unavailable, không tạo sản phẩm', async () => {
     const pending = await image(token, { put: false });
-    const category = await createCategory(token, uniq('Ảnh kho'), 'K-{SEQ}');
+    const group = await createGroup(token, uniq('Ảnh kho'), 'K-{SEQ}');
     const name = uniq('SP kho');
     storeDown = true;
-    const res = await api(token).post('/products', productBody(name, category.id, [[]], { imageFileIds: [pending.id] }));
+    const res = await api(token).post('/products', productBody(name, group.id, [[]], { imageFileIds: [pending.id] }));
     expect(res.status).toBe(503);
     expect(res.body.type).toBe('/problems/storage_unavailable');
     expect((await api(token).get(`/products?search=${encodeURIComponent(name)}`)).body.total).toBe(0);
@@ -211,10 +211,10 @@ describe('ảnh đại diện ở danh sách, ảnh cho module khác', () => {
   /** Hai sản phẩm cùng tiền tố tên: một có hai ảnh, một không ảnh. */
   async function pair() {
     const [a, b] = [await image(token), await image(token)];
-    const category = await createCategory(token, uniq('Ảnh DS'), 'D-{SEQ}');
+    const group = await createGroup(token, uniq('Ảnh DS'), 'D-{SEQ}');
     const prefix = uniq('DS');
-    const withImages = await api(token).post('/products', productBody(`${prefix} có ảnh`, category.id, [[]], { imageFileIds: [a.id, b.id] }));
-    const without = await api(token).post('/products', productBody(`${prefix} không ảnh`, category.id, [[]]));
+    const withImages = await api(token).post('/products', productBody(`${prefix} có ảnh`, group.id, [[]], { imageFileIds: [a.id, b.id] }));
+    const without = await api(token).post('/products', productBody(`${prefix} không ảnh`, group.id, [[]]));
     expect([withImages.status, without.status]).toEqual([201, 201]);
     return { prefix, a, b, withImages: withImages.body.id as string, without: without.body.id as string };
   }
