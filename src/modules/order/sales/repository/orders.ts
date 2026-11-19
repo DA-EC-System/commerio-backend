@@ -1,4 +1,4 @@
-import { and, asc, count, eq, getTableColumns, gt, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, inArray, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { MappedSku } from '../../fulfillment/index.ts';
 import type { OrderStatus } from '../domain/order.ts';
@@ -195,27 +195,44 @@ export async function hasUnmappedLines(orderId: string): Promise<boolean> {
 }
 
 /**
- * Dòng chưa ghép của các đơn thuộc gian hàng mang SKU người bán này (spec 237 §5.4, P1: PR 1 chỉ áp dòng chưa ghép), mọi
- * trạng thái đơn; khoá dòng đơn theo id tăng (P4: khoá dòng đơn trước kiện, như luồng nhận đơn).
+ * Dòng đơn của gian hàng mang SKU người bán này cần áp ghép `to` (spec 237 §5.4, D3, D27), khoá theo id tăng (P4: khoá
+ * dòng đơn trước kiện, như luồng nhận đơn):
+ * - dòng chưa ghép, mọi trạng thái đơn (cờ phải tắt ở mọi đơn; kiện bàn giao bắt buộc của đơn đã hoàn tất vẫn trừ);
+ * - dòng đã ghép khác `to` của đơn `unpaid`, `processing` (đổi ghép; đơn đã dừng không có gì đổi);
+ * - dòng đơn của đơn `unpaid`, `processing` có dòng kiện mang dấu chờ đổi ghép, kể cả khi đã bằng `to` (D27: đổi về như
+ *   cũ phải tới được dấu để xoá). `"order".package_lines` cùng schema, đọc bằng SQL thô (sales không import fulfillment).
  */
-export async function lockUnmappedLinesOfShopSku(shopId: string, sellerSku: string): Promise<{ id: string; orderId: string }[]> {
+export async function lockLinesToRemap(
+  shopId: string,
+  sellerSku: string,
+  to: MappedSku,
+): Promise<{ id: string; orderId: string; variantId: string | null; stockUntracked: boolean }[]> {
   const db = getDb();
+  const differs =
+    to.kind === 'variant'
+      ? sql`(${orderLines.variantId} is distinct from ${to.variantId}::uuid or ${orderLines.stockUntracked})`
+      : sql`not ${orderLines.stockUntracked}`;
+  const remapPending = sql`exists (select 1 from "order".package_lines pl where pl.order_line_id = ${orderLines.id} and pl.remap_pending)`;
+  const openOrders = db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), inArray(orders.status, ['unpaid', 'processing'])));
   return db
-    .select({ id: orderLines.id, orderId: orderLines.orderId })
+    .select({ id: orderLines.id, orderId: orderLines.orderId, variantId: orderLines.variantId, stockUntracked: orderLines.stockUntracked })
     .from(orderLines)
     .where(
       and(
         eq(orderLines.externalSku, sellerSku),
-        unmappedLine(orderLines),
         inArray(orderLines.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.shopId, shopId))),
+        or(unmappedLine(orderLines), and(inArray(orderLines.orderId, openOrders), or(differs, remapPending))),
       ),
     )
     .orderBy(asc(orderLines.id))
     .for('update');
 }
 
-/** Ghi ghép lên dòng đơn: biến thể (kèm `sku` = SKU người bán, như lúc nhận đơn) hoặc "không quản tồn" (`sku` null). */
-export async function setOrderLineSku(ids: readonly string[], to: MappedSku, sellerSku: string): Promise<void> {
+/** Ghi ghép lên dòng đơn: biến thể (kèm `sku` = SKU người bán `external_sku`, như lúc nhận đơn) hoặc "không quản tồn" (`sku` null). */
+export async function setOrderLineSku(ids: readonly string[], to: MappedSku): Promise<void> {
   if (!ids.length) return;
   const variant = to.kind === 'variant';
   await getDb()
@@ -223,7 +240,7 @@ export async function setOrderLineSku(ids: readonly string[], to: MappedSku, sel
     .set({
       variantId: variant ? to.variantId : null,
       stockUntracked: !variant,
-      sku: variant ? sellerSku : null,
+      sku: variant ? sql`${orderLines.externalSku}` : null,
       version: sql`${orderLines.version} + 1`,
       updatedAt: sql`now()`,
     })

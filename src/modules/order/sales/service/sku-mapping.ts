@@ -3,8 +3,8 @@
 // fulfillment (`remapPackageLines`); sales ghi dòng đơn và phát sự kiện đơn.
 import { publishEvent } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { type MappedSku, remapPackageLines } from '../../fulfillment/index.ts';
-import { findOrderRows, lockUnmappedLinesOfShopSku, setOrderLineSku } from '../repository/orders.ts';
+import { type LineSku, lineSkuOf, type MappedSku, remapPackageLines } from '../../fulfillment/index.ts';
+import { findOrderRows, lockLinesToRemap, setOrderLineSku } from '../repository/orders.ts';
 import { eventFlags } from './ingest.ts';
 
 export interface ApplySkuMappingInput {
@@ -21,29 +21,45 @@ export interface ApplySkuMappingInput {
 }
 
 /**
- * Gán ghép cho mọi dòng **chưa ghép** của đơn cùng gian hàng mang SKU người bán này (P1), trong giao dịch và
- * `withCompany` của bên gọi. Dòng đơn đổi khi mọi dòng kiện của nó `applied` (hoặc không có dòng kiện); đơn `unpaid`,
- * `processing` có dòng đổi phát `sales.order_status_changed` (`from = to`) kèm cờ mới (P6). Gọi lại khi đã áp xong không
- * chọn dòng nào: không ghi, không phát. Lỗi nào cũng ném để cả giao dịch ghép rollback.
+ * Áp ghép cho dòng đơn của gian hàng mang SKU người bán này (spec 237 §5.4), trong giao dịch và `withCompany` của bên
+ * gọi: dòng chưa ghép ở mọi đơn; dòng đã ghép khác (đổi ghép) và dòng có dòng kiện chờ đổi ghép (D27) ở đơn còn mở.
+ * Dòng đơn đổi khi mọi dòng kiện tính kết quả của nó `applied` (hoặc không có dòng kiện) và ghép đang có khác `to`; đơn
+ * `unpaid`, `processing` có dòng đổi phát `sales.order_status_changed` (`from = to`) kèm cờ mới (P6). Gọi lại khi đã áp
+ * xong không ghi, không phát. Lỗi nào cũng ném để cả giao dịch ghép rollback.
  */
 export async function applySkuMapping(input: ApplySkuMappingInput): Promise<{ lines: number; orders: number; needsUnload: number }> {
   const { shopId, sellerSku, to } = input;
-  const locked = await lockUnmappedLinesOfShopSku(shopId, sellerSku);
+  const locked = await lockLinesToRemap(shopId, sellerSku, to);
   if (!locked.length) return { lines: 0, orders: 0, needsUnload: 0 };
 
   const outcomes = await remapPackageLines(
     locked.map((l) => ({ orderLineId: l.id, to })),
     { actorId: input.actorId, holdStock: input.holdStock, orderCutoffAt: input.orderCutoffAt, reason: `Ghép SKU ${sellerSku}` },
   );
-  const changed = locked.filter((l) => (outcomes.get(l.id) ?? 'applied') === 'applied');
+  // Dòng đơn đã bằng `to` (chọn vì dấu, D27) không ghi: `version` giữ.
+  const changed = locked.filter((l) => (outcomes.get(l.id) ?? 'applied') === 'applied' && !sameMappedSku(lineSkuOf(l), to));
   const needsUnload = locked.filter((l) => outcomes.get(l.id) === 'needs_unload').length;
   await setOrderLineSku(
     changed.map((l) => l.id),
     to,
-    sellerSku,
   );
 
   const orderIds = [...new Set(changed.map((l) => l.orderId))];
+  await publishOrdersChanged(orderIds);
+
+  const result = { lines: changed.length, orders: orderIds.length, needsUnload };
+  logger.info({ shopId, sellerSku, ...result }, 'áp ghép SKU lên đơn đã về');
+  return result;
+}
+
+const sameMappedSku = (a: LineSku, b: MappedSku) =>
+  a.kind === b.kind && (a.kind !== 'variant' || a.variantId === (b as { variantId: string }).variantId);
+
+/**
+ * Đơn `unpaid`, `processing` vừa có dòng đổi ghép: phát `sales.order_status_changed` (`from = to`) kèm cờ mới như ingest
+ * (P6), để FE tải lại qua SSE. Đơn đã dừng không phát.
+ */
+export async function publishOrdersChanged(orderIds: readonly string[]): Promise<void> {
   for (const row of await findOrderRows(orderIds)) {
     if (row.status !== 'unpaid' && row.status !== 'processing') continue;
     const flags = await eventFlags(row.id, row);
@@ -53,8 +69,4 @@ export async function applySkuMapping(input: ApplySkuMappingInput): Promise<{ li
       payload: { orderId: row.id, code: row.code, from: row.status, to: row.status, flags },
     });
   }
-
-  const result = { lines: changed.length, orders: orderIds.length, needsUnload };
-  logger.info({ shopId, sellerSku, ...result }, 'áp ghép SKU lên đơn đã về');
-  return result;
 }

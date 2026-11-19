@@ -1,4 +1,4 @@
-// Ghép SKU có hiệu lực thì áp lên đơn đã về (spec 237 §5.3; AC1, AC9, AC10, AC13, AC14, AC16, 16e). Biến thể thật của
+// Ghép SKU có hiệu lực thì áp lên đơn đã về (spec 237 §5.3; AC1, AC9, AC10, AC13, AC14, AC16, 16e; PR 2: 17, 19, 25). Biến thể thật của
 // catalog, tồn thật; mỗi ca dùng SKU sàn và biến thể riêng.
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
@@ -134,12 +134,13 @@ describe('ghép SKU áp lên đơn đã về (spec 237 §5.3)', () => {
     expect(await flagsOf(orderId)).not.toContain('unmapped_sku');
   });
 
-  it('AC16: CEO đổi ghép A → B: đơn đã về giữ A; đơn về sau theo B', async () => {
+  // PR 1: đơn đã về giữ A (AC16). PR 2: đơn còn mở có kiện chưa rời kho đổi theo (ca D2-G10 17); kiện đã rời kho vẫn giữ A.
+  it('AC16, D2-G14 22: CEO đổi ghép A → B: đơn đã về có kiện đã rời kho giữ A; đơn về sau theo B', async () => {
     const r = newRemote();
     const a = await variant();
     const b = await variant();
     expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: a.variantId })).status).toBe(200);
-    const before = await orderOf(r.sellerSku, { variantId: a.variantId });
+    const before = await orderOf(r.sellerSku, { variantId: a.variantId, status: 'in_transit' });
 
     expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: b.variantId })).status).toBe(200);
 
@@ -212,5 +213,79 @@ describe('ghép SKU áp lên đơn đã về (spec 237 §5.3)', () => {
     );
 
     expect(res.status).toBe(200);
+  });
+});
+
+// Đổi ghép đã dùng qua API (spec 237 §9 PR 2: 17, 19, 25). CEO tự duyệt đổi ghép.
+describe('đổi ghép đã có đơn dùng (spec 237 §5.5 bảng 2, §5.6)', () => {
+  const packageLineOf = async (orderId: string) =>
+    (
+      await testPool().query(
+        `select l.variant_id, l.remap_pending from "order".package_lines l join "order".packages p on p.id = l.package_id where p.order_id = $1`,
+        [orderId],
+      )
+    ).rows[0];
+
+  it('D2-G10 17 qua listings/match: CEO đổi ghép A → B (200), đơn đã về có kiện reserved → dòng đơn và dòng kiện là B', async () => {
+    const r = newRemote();
+    const a = await variant();
+    const b = await variant();
+    expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: a.variantId })).status).toBe(200);
+    const { orderId, packageId } = await orderOf(r.sellerSku, { variantId: a.variantId });
+    expect((await testPool().query('select status from "order".packages where id = $1', [packageId])).rows[0].status).toBe('reserved');
+
+    expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: b.variantId })).status).toBe(200);
+
+    expect(await lineOf(orderId)).toEqual({ variant_id: b.variantId, stock_untracked: false });
+    expect(await packageLineOf(orderId)).toEqual({ variant_id: b.variantId, remap_pending: false });
+  });
+
+  it('D2-G11 19 qua listings/match: kiện packed → GET có openPurpose remap; ready 409 awaiting_open; kiện awaiting_pickup quét bàn giao failed[].code awaiting_open', async () => {
+    const r = newRemote();
+    const a = await variant();
+    const b = await variant();
+    expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: a.variantId })).status).toBe(200);
+    const { orderId, packageId } = await orderOf(r.sellerSku, { variantId: a.variantId, status: 'packed' });
+    const waiting = await orderOf(r.sellerSku, { variantId: a.variantId, status: 'awaiting_pickup' });
+
+    expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: b.variantId })).status).toBe(200);
+
+    expect(await lineOf(orderId)).toEqual({ variant_id: a.variantId, stock_untracked: false });
+    expect(await packageLineOf(orderId)).toEqual({ variant_id: a.variantId, remap_pending: true });
+    const pkg = (await as(app().get(`/api/v1/fulfillment/packages/${packageId}`), company.ceo.token).expect(200)).body;
+    expect(pkg.openPurpose).toBe('remap');
+    const ready = await as(app().post(`/api/v1/fulfillment/packages/${packageId}/ready`), company.ceo.token).send({ version: pkg.version });
+    expect(ready.status).toBe(409);
+    expect(ready.body.type).toMatch(/awaiting_open$/);
+    const other = (await as(app().get(`/api/v1/fulfillment/packages/${waiting.packageId}`), company.ceo.token).expect(200)).body;
+    expect(other.openPurpose).toBe('remap');
+    const scan = await as(app().post('/api/v1/fulfillment/packages/hand-over'), company.ceo.token).send({
+      packages: [{ id: waiting.packageId, version: other.version }],
+    });
+    expect(scan.status).toBe(200);
+    expect(scan.body.failed.map((f: { code: string }) => f.code)).toEqual(['awaiting_open']);
+  });
+
+  it('D2-G16 25: cổng tồn ném lỗi lúc đổi ghép → 500, listing vẫn ghép A, dòng đơn, dòng kiện, cờ không đổi', async () => {
+    const r = newRemote();
+    const a = await variant();
+    const b = await variant();
+    expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: a.variantId })).status).toBe(200);
+    const { orderId, packageId } = await orderOf(r.sellerSku, { variantId: a.variantId });
+    setStockPort({
+      reserve: async () => {
+        throw new Error('hỏng');
+      },
+    });
+
+    expect((await match(company.ceo.token, { externalSkuId: r.externalSkuId, variantId: b.variantId })).status).toBe(500);
+
+    expect((await rowOf(r.externalSkuId)).variant_id).toBe(a.variantId);
+    expect(await lineOf(orderId)).toEqual({ variant_id: a.variantId, stock_untracked: false });
+    expect(await packageLineOf(orderId)).toEqual({ variant_id: a.variantId, remap_pending: false });
+    expect((await testPool().query('select status, needs_open from "order".packages where id = $1', [packageId])).rows[0]).toEqual({
+      status: 'reserved',
+      needs_open: false,
+    });
   });
 });
