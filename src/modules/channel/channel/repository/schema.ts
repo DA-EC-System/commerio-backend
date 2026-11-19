@@ -347,31 +347,6 @@ export const listings = channelSchema.table(
   ],
 );
 
-/**
- * Ghép danh mục Commerio → danh mục lá của sàn, kèm thuộc tính bắt buộc của danh mục đó (#104 A2). Đẩy sản phẩm thuộc
- * danh mục chưa ghép thì lỗi theo dòng `category_unmapped`.
- */
-export const categoryMaps = channelSchema.table(
-  'category_maps',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
-    platform: marketplace('platform').notNull(),
-    categoryId: uuid('category_id').notNull(),
-    externalCategoryId: text('external_category_id').notNull(),
-    attributes: jsonb('attributes').$type<Record<string, string>>().notNull().default({}),
-    // Quy tắc bảng kích cỡ của danh mục sàn (#347): `required` thì sản phẩm phải có ảnh bảng kích cỡ mới đẩy được. Null là
-    // chưa biết (ghép trước #347, hoặc sàn không có quy tắc này): việc đẩy hỏi lại sàn.
-    sizeChartRule: text('size_chart_rule').$type<'required' | 'optional' | 'unsupported'>(),
-    ...timestamps,
-    ...version,
-  },
-  (t) => [
-    unique().on(t.companyId, t.platform, t.categoryId),
-    check('category_maps_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
-  ],
-);
-
 export type CategoryStatus = 'active' | 'removed';
 export type SizeChartRule = 'required' | 'optional' | 'unsupported';
 
@@ -473,10 +448,12 @@ export type SpecSource = 'push' | 'match';
 
 /**
  * Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay
- * `product.product_channel_specs` và `category_maps`. `product_id` là uuid thường (không khoá ngoại chéo schema).
+ * bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid
+ * thường (không khoá ngoại chéo schema).
  * `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục
  * Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn.
- * `version = 0` là bản chép từ ghép danh mục chưa ai lưu lại (#400 A18); `PUT` spec luôn ra `version ≥ 1`. RLS.
+ * `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn
+ * ra `version ≥ 1`. RLS.
  */
 export const productSpecs = channelSchema.table(
   'product_specs',

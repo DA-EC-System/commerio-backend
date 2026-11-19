@@ -127,7 +127,7 @@ function assertOutsideCompany(fn: string): void {
  * `size_chart_rule`, `attributes_fetched_at` (leaf không có attribute nào cũng không gọi sàn lại trong 7 ngày). Leaf chưa
  * có dòng (leaf mới sau lượt đồng bộ đêm) thì chèn dòng tạm `synced_at = null` (tìm kiếm bỏ qua; lượt đồng bộ sau ghi đè).
  * `sizeChartRule` `undefined` (sàn không có luật, hay hỏi luật lỗi tạm) giữ giá trị đang có; chỉ ghi null khi sàn nói rõ
- * (review BE1 P2-2: không xoá luật đã biết, kể cả giá trị BE2 chép từ `category_maps`).
+ * (review BE1 P2-2: không xoá luật đã biết, kể cả giá trị migration chép từ ghép danh mục cũ).
  */
 export async function replaceLeaf(
   platform: Marketplace,

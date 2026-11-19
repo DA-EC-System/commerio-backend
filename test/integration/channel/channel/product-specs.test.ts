@@ -128,11 +128,11 @@ describe('spec sàn của sản phẩm', () => {
     expect((await get(ceo.token, 'khong-phai-uuid')).status).toBe(404);
   });
 
-  it('review BE2 P2-5: GET chép lười như GET listing: danh mục đã ghép thì trả bản chép version 0, PUT theo version đó được', async () => {
+  it('bản chép version 0 do migration để lại: GET trả đúng bản đó, PUT theo version 0 được', async () => {
     const v = await createVariant(ceo.companyId);
     await testPool().query(
-      `insert into channel.category_maps (company_id, platform, category_id, external_category_id, attributes) values ($1, 'lazada', $2, $3, '{"material":"Cotton"}')`,
-      [ceo.companyId, v.categoryId, leaf],
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, version) values ($1, $2, 'lazada', $3, '{"material":"Cotton"}', 'push', 0)`,
+      [ceo.companyId, v.productId, leaf],
     );
     const res = await get(ceo.token, v.productId);
     expect(res.status).toBe(200);

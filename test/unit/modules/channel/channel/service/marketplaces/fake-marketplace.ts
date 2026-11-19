@@ -62,14 +62,6 @@ export function createFakeMarketplace(sàn: FakeMarketplace): MarketplaceAdapter
     async refreshToken() {
       throw new MarketplaceError('unsupported');
     },
-    async listCategories(accessToken) {
-      session(accessToken);
-      return [];
-    },
-    async categoryAttributes(accessToken) {
-      session(accessToken);
-      return [];
-    },
     async uploadImage(accessToken, url) {
       session(accessToken);
       return url;

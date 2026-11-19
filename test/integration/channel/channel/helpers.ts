@@ -44,8 +44,6 @@ export function fakeAdapter(
         }
       : unsupported,
     refreshToken: unsupported,
-    listCategories: unsupported,
-    categoryAttributes: unsupported,
     uploadImage: unsupported,
     createProduct: unsupported,
     getSkus: unsupported,
@@ -68,7 +66,7 @@ export async function activateShop(shopId: string): Promise<void> {
 }
 
 /**
- * Spec sàn của sản phẩm (#400 lát 15): dữ liệu đẩy dựng thẳng bằng spec thay cho ghép danh mục cũ (`PUT category-maps`, sẽ bỏ).
+ * Spec sàn của sản phẩm (#400 lát 15): dữ liệu đẩy dựng thẳng bằng spec thay cho ghép danh mục cũ (bỏ ở BE3).
  * Mỗi sản phẩm một dòng `version = 1`, trục của biến thể ánh xạ `__custom`; sản phẩm đã có spec của sàn thì giữ.
  */
 export async function seedSpecs(
