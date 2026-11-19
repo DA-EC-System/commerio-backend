@@ -16,10 +16,11 @@ export interface AttributeOption {
   label: string;
 }
 
-/** Điều kiện bắt buộc theo attribute khác (TikTok `requirement_conditions`): bắt buộc khi `code` mang một trong `values`. */
+/** Điều kiện bắt buộc theo attribute khác (TikTok `requirement_conditions`): bắt buộc khi `code` mang một trong `optionIds`
+ * (id lựa chọn; Documents/21 §18.5, Documents/19 §3.3 cột `required_when`). */
 export interface RequiredWhen {
   code: string;
-  values: string[];
+  optionIds: string[];
 }
 
 /** Attribute của một leaf category sau khi adapter chuẩn hoá (một dòng `channel.platform_category_attributes`). */
@@ -154,7 +155,7 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
 function conditionMet(c: RequiredWhen, value: SpecAttributeValue | undefined): boolean {
   if (value == null) return false;
   const values = Array.isArray(value) ? value : [value];
-  return values.some((v) => c.values.includes(v));
+  return values.some((v) => c.optionIds.includes(v));
 }
 
 const PERMISSION_PRIORITY: readonly [string, CategoryPermission][] = [
@@ -320,4 +321,18 @@ export function countryOption(
     if (!best || rank < best.rank) best = { id: o.id, rank };
   }
   return best?.id ?? null;
+}
+
+/**
+ * Chốt chặn cây thiếu bất thường (review BE1 P2-3): lượt đồng bộ sắp đánh `removed` hơn 5% số node `active` đã đồng bộ thì
+ * từ chối ghi. Lý do chọn: sàn thêm, bỏ category theo đợt nhỏ (vài chục node mỗi lần đổi), 5% của cây Lazada thật (3524
+ * node, đo 19/11/2026) là 176 node, cao hơn hẳn mức đổi thường; còn cây TikTok mượn gian hàng chỉ được phép vài nhóm
+ * category, hay phản hồi cụt, sẽ mất hàng chục phần trăm. Cây dưới 100 node (sàn mới, lần đầu) không xét: lệch vài node
+ * đã quá 5%. Sàn tái cấu trúc thật (vd đổi phiên bản cây) thì người vận hành chạy lại với `allowShrink`.
+ */
+export const TREE_SHRINK_MAX_RATIO = 0.05;
+export const TREE_SHRINK_MIN_ACTIVE = 100;
+
+export function treeShrinkBlocked(activeBefore: number, removing: number): boolean {
+  return activeBefore >= TREE_SHRINK_MIN_ACTIVE && removing > activeBefore * TREE_SHRINK_MAX_RATIO;
 }

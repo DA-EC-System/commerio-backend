@@ -52,7 +52,7 @@ function requiredWhenOf(conditions: unknown): RequiredWhen[] | null {
     const code = String(c.attribute_id);
     by.set(code, [...(by.get(code) ?? []), String(c.attribute_value_id)]);
   }
-  return by.size ? [...by].map(([code, values]) => ({ code, values })) : null;
+  return by.size ? [...by].map(([code, optionIds]) => ({ code, optionIds })) : null;
 }
 
 /**

@@ -9,4 +9,9 @@ ALTER TABLE channel.shop_category_permissions ENABLE ROW LEVEL SECURITY;--> stat
 CREATE POLICY company_isolation ON channel.shop_category_permissions
   USING (company_id = nullif(current_setting('app.company_id', true), '')::uuid)
   WITH CHECK (company_id = nullif(current_setting('app.company_id', true), '')::uuid);--> statement-breakpoint
-REVOKE INSERT, UPDATE, DELETE ON channel.platform_categories, channel.platform_category_attributes FROM commerio_app;
+REVOKE INSERT, UPDATE, DELETE ON channel.platform_categories, channel.platform_category_attributes FROM commerio_app;--> statement-breakpoint
+-- Quyền category của gian hàng mang đúng công ty của gian hàng (review BE1 P2-11): khoá ngoại kiểm bằng quyền chủ bảng,
+-- không qua RLS, nên ghi nhầm `company_id` hiện hành với `shop_id` của công ty khác cũng bị chặn. Đích `shops_id_company_uq`
+-- khai ở `schema.ts`.
+ALTER TABLE channel.shop_category_permissions
+  ADD CONSTRAINT shop_category_permissions_shop_company_fk FOREIGN KEY (shop_id, company_id) REFERENCES channel.shops (id, company_id);

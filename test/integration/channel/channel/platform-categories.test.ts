@@ -2,25 +2,30 @@
 // `replaceLeaf` thay cả tập ngoài `withCompany` (A3), chi tiết leaf dùng lại 7 ngày, bản cũ khi sàn lỗi (AC-S6).
 // DB test dùng chung: sàn `shopee` (adapter giả đăng ký trong test) chỉ file này dùng, dữ liệu Lazada có mã ngẫu nhiên.
 import { randomUUID } from 'node:crypto';
+import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PlatformAttribute } from '#src/modules/channel/channel/domain/product-spec.ts';
 import {
+  CategoryTreeShrunkError,
   childrenOf,
   findCategory,
   leafAttributesOf,
   replaceLeaf,
   searchLeaves,
+  SPEC_PRODUCTS_LIMIT,
+  specsOnCategory,
   syncTree,
 } from '#src/modules/channel/channel/repository/platform-categories.ts';
 import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { leafDetail, listPlatformCategories } from '#src/modules/channel/channel/service/platform-categories.ts';
-import { withCompany } from '#src/shared/db/client.ts';
+import { currentCompanyId, withCompany } from '#src/shared/db/client.ts';
 import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { fakeAdapter } from './helpers.ts';
+import { testApp } from '../../helpers/http.ts';
+import { activateShop, fakeAdapter } from './helpers.ts';
 
 afterEach(() => resetAdapters());
 
@@ -72,7 +77,7 @@ describe('syncTree', () => {
     const root = { externalId: 'S1', parentExternalId: null, name: 'Đồng hồ', isLeaf: false, path: 'Đồng hồ' };
     const keep = { externalId: 'S2', parentExternalId: 'S1', name: 'Đồng hồ nam', isLeaf: true, path: 'Đồng hồ > Đồng hồ nam' };
     const gone = { externalId: 'S3', parentExternalId: 'S1', name: 'Đồng hồ nữ', isLeaf: true, path: 'Đồng hồ > Đồng hồ nữ' };
-    expect(await syncTree('shopee', [root, keep, gone], t1)).toEqual({ upserted: 3, removed: 0, specsRemoved: 0 });
+    expect(await syncTree('shopee', [root, keep, gone], t1)).toEqual({ upserted: 3, removed: 0, specsRemoved: 0, specsRestored: 0, skipped: false });
     await replaceLeaf('shopee', 'S9', { attributes: [], sizeChartRule: null, fetchedAt: t1 });
     expect(await findCategory('shopee', 'S9')).toMatchObject({ syncedAt: null, status: 'active', isLeaf: true });
 
@@ -82,16 +87,29 @@ describe('syncTree', () => {
 
     const t2 = new Date('2026-11-19T19:00:00Z');
     const renamed = { ...keep, name: 'Đồng hồ Nam', path: 'Đồng hồ > Đồng hồ Nam' };
-    expect(await syncTree('shopee', [root, renamed], t2)).toEqual({ upserted: 2, removed: 2, specsRemoved: 1 });
+    expect(await syncTree('shopee', [root, renamed], t2)).toEqual({ upserted: 2, removed: 2, specsRemoved: 1, specsRestored: 0, skipped: false });
     expect(await findCategory('shopee', 'S2')).toMatchObject({ name: 'Đồng hồ Nam', pathSearch: 'dong ho > dong ho nam', status: 'active', syncedAt: t2 });
     expect(await findCategory('shopee', 'S3')).toMatchObject({ status: 'removed' });
     expect(await findCategory('shopee', 'S9')).toMatchObject({ status: 'removed' });
     const { rows } = await testPool().query('select category_status from channel.product_specs where product_id = $1', [productId]);
     expect(rows).toEqual([{ category_status: 'removed' }]);
 
-    // Category quay lại cây thì active lại; spec giữ removed tới khi người dùng lưu lại.
-    expect(await syncTree('shopee', [root, renamed, gone], new Date('2026-11-20T19:00:00Z'))).toMatchObject({ removed: 0, specsRemoved: 0 });
+    // Category quay lại cây thì active lại và spec về ok (review BE1 P2-3); sàn trả trùng mã trong lô thì khử trùng (P2-4).
+    const t3 = new Date('2026-11-20T19:00:00Z');
+    expect(await syncTree('shopee', [root, renamed, gone, { ...gone }], t3)).toEqual({
+      upserted: 3,
+      removed: 0,
+      specsRemoved: 0,
+      specsRestored: 1,
+      skipped: false,
+    });
     expect(await findCategory('shopee', 'S3')).toMatchObject({ status: 'active' });
+    const restored = await testPool().query('select category_status from channel.product_specs where product_id = $1', [productId]);
+    expect(restored.rows).toEqual([{ category_status: 'ok' }]);
+
+    // Lượt cũ hơn lượt đã ghi (hai lượt chồng nhau) không ghi gì: synced_at chỉ tiến, node không bị đánh removed (P2-4).
+    expect(await syncTree('shopee', [root], t2)).toEqual({ upserted: 0, removed: 0, specsRemoved: 0, specsRestored: 0, skipped: true });
+    expect(await findCategory('shopee', 'S3')).toMatchObject({ status: 'active', syncedAt: t3 });
 
     await expect(syncTree('shopee', [], t2)).rejects.toThrow(/cây rỗng/);
     await expect(withCompany(companyId, () => syncTree('shopee', [root], t2))).rejects.toThrow(/ngoài withCompany/);
@@ -104,6 +122,32 @@ describe('syncTree', () => {
     expect(roots.syncedAt).toEqual(new Date('2026-11-20T19:00:00Z'));
     const kids = await listPlatformCategories('shopee', { parentId: 'S1' });
     expect(kids.items.map((c) => c.externalId)).toEqual(['S2', 'S3']);
+  });
+
+  it('cây thiếu bất thường (bỏ hơn 5% node active, cây từ 100 node) thì không ghi gì; allowShrink thì ghi (review BE1 P2-3)', async () => {
+    const t4 = new Date('2026-11-21T19:00:00Z');
+    const base = [
+      { externalId: 'S1', parentExternalId: null, name: 'Đồng hồ', isLeaf: false, path: 'Đồng hồ' },
+      { externalId: 'S2', parentExternalId: 'S1', name: 'Đồng hồ Nam', isLeaf: true, path: 'Đồng hồ > Đồng hồ Nam' },
+      { externalId: 'S3', parentExternalId: 'S1', name: 'Đồng hồ nữ', isLeaf: true, path: 'Đồng hồ > Đồng hồ nữ' },
+    ];
+    const big = Array.from({ length: 120 }, (_, i) => ({
+      externalId: `SX${i}`,
+      parentExternalId: 'S1',
+      name: `Loại ${i}`,
+      isLeaf: true,
+      path: `Đồng hồ > Loại ${i}`,
+    }));
+    expect(await syncTree('shopee', [...base, ...big], t4)).toMatchObject({ upserted: 123, removed: 0 });
+
+    const t5 = new Date('2026-11-22T19:00:00Z');
+    const cut = [...base, ...big.slice(0, 100)];
+    await expect(syncTree('shopee', cut, t5)).rejects.toBeInstanceOf(CategoryTreeShrunkError);
+    expect(await findCategory('shopee', 'SX119')).toMatchObject({ status: 'active', syncedAt: t4 });
+    expect(await findCategory('shopee', 'S2')).toMatchObject({ syncedAt: t4 });
+
+    expect(await syncTree('shopee', cut, t5, { allowShrink: true })).toMatchObject({ upserted: 103, removed: 20 });
+    expect(await findCategory('shopee', 'SX119')).toMatchObject({ status: 'removed' });
   });
 });
 
@@ -146,6 +190,9 @@ describe('replaceLeaf', () => {
     });
     expect((await leafAttributesOf('shopee', leaf)).map((a) => a.code)).toEqual(['a', 'b', 'c']);
     expect(await findCategory('shopee', leaf)).toMatchObject({ sizeChartRule: 'required', attributesFetchedAt: t1 });
+    // Không truyền luật (sàn không có, hay hỏi lỗi) thì giữ luật đang có (review BE1 P2-2).
+    await replaceLeaf('shopee', leaf, { attributes: [attr('b'), attr('a', { required: true, options: [{ id: '1', label: 'Một' }] }), attr('c', { kind: 'sales' })], fetchedAt: t1 });
+    expect(await findCategory('shopee', leaf)).toMatchObject({ sizeChartRule: 'required' });
 
     const t2 = new Date('2026-11-27T01:00:00Z');
     await replaceLeaf('shopee', leaf, { attributes: [attr('a', { label: 'A mới' })], sizeChartRule: null, fetchedAt: t2 });
@@ -279,5 +326,75 @@ describe('leafDetail (AC-5, AC-S6)', () => {
       ['org_addr', null],
       ['x', null],
     ]);
+  });
+
+  it('sàn cần token: gọi sàn ngoài giao dịch (P1-2), luật bảng kích cỡ lỗi tạm giữ luật cũ (P2-2), shopId công ty khác 404 cả khi bảng còn hạn (P2-7)', async () => {
+    const inTx: (string | null)[] = [];
+    let rulesFail = false;
+    registerAdapter(
+      'shopee',
+      fakeAdapter({
+        categoriesNeedToken: true,
+        async getSeller(accessToken) {
+          return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
+        },
+        leafAttributes: async () => {
+          inTx.push(currentCompanyId());
+          return [attr('a')];
+        },
+        categoryRules: async () => {
+          inTx.push(currentCompanyId());
+          if (rulesFail) throw new MarketplaceError('unavailable', 'http_502');
+          return { sizeChart: 'required' };
+        },
+      }),
+    );
+    const app = testApp();
+    const shopeeShop = async (token: string) => {
+      const res = await request(app)
+        .post('/api/v1/channel/shops/shopee/token')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+      expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
+      const id = res.body.shops[0].shop.id as string;
+      await activateShop(id);
+      return id;
+    };
+    const { companyId, ceo } = await createCompany({ optionalModules: ['channel'] });
+    const shopId = await shopeeShop(ceo.token);
+    const leaf = `T-${randomUUID().slice(0, 8)}`;
+
+    const first = await leafDetail(ctx, companyId, 'shopee', leaf, { shopId, now });
+    expect(first.category.sizeChartRule).toBe('required');
+    expect(inTx).toEqual([null, null]);
+
+    rulesFail = true;
+    const again = await leafDetail(ctx, companyId, 'shopee', leaf, { now: later(8) });
+    expect(again).toMatchObject({ stale: false, fetchedAt: later(8) });
+    expect(again.category.sizeChartRule).toBe('required');
+    expect(inTx).toEqual([null, null, null, null]);
+
+    const other = await createCompany({ optionalModules: ['channel'] });
+    const theirs = await shopeeShop(other.ceo.token);
+    for (const id of [theirs, randomUUID()]) {
+      await expect(leafDetail(ctx, companyId, 'shopee', leaf, { shopId: id, now: later(9) })).rejects.toMatchObject({ status: 404, code: 'not_found' });
+    }
+    expect(inTx).toHaveLength(4);
+  });
+
+  it('specsOnCategory chặn 200 dòng, cũ trước (review BE1 P2-6)', async () => {
+    const { companyId } = await createCompany();
+    const leaf = `S-${randomUUID().slice(0, 8)}`;
+    const ids = Array.from({ length: SPEC_PRODUCTS_LIMIT + 1 }, () => randomUUID());
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, source, created_at)
+       select $1, p, 'shopee', $2, 'push', now() + ord * interval '1 second' from unnest($3::uuid[]) with ordinality as t(p, ord)`,
+      [companyId, leaf, ids],
+    );
+    const rows = await withCompany(companyId, () => specsOnCategory('shopee', leaf));
+    expect(SPEC_PRODUCTS_LIMIT).toBe(200);
+    expect(rows).toHaveLength(200);
+    expect(rows[0]!.productId).toBe(ids[0]);
+    expect(rows.at(-1)!.productId).toBe(ids[199]);
   });
 });

@@ -5,6 +5,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { completeDueOrdersOnce, type PlatformOrder } from '#src/modules/order/index.ts';
 import { outcomeOf } from '#src/modules/order/sales/domain/order.ts';
+import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -14,6 +15,8 @@ import { packageRow } from '../fulfillment/helpers.ts';
 import { ingest, remote, withStatus } from '../fulfillment/platform-fixtures.ts';
 
 const app = () => request(testApp());
+// Ctx thật: việc hoàn tất quét mọi công ty của DB test dùng chung, phải tính hạn trả như worker (#236).
+const ctx = createModuleContext();
 let companyId: string;
 let khoA: Awaited<ReturnType<typeof addMember>>;
 let khoB: Awaited<ReturnType<typeof addMember>>;
@@ -80,7 +83,7 @@ describe('đơn Đang huỷ có kiện đã bàn giao (25 §8.2)', () => {
     const o = await cancellingOrder();
     await loseOnUnload(o.packages[0]!.id);
 
-    await completeDueOrdersOnce();
+    await completeDueOrdersOnce(new Date(), ctx);
 
     expect(await orderRow(o.orderId)).toMatchObject({ status: 'completed', outcome: outcomeOf(['lost']), cancelling: false, platform_cancelled: true });
     const { rows } = await testPool().query(
@@ -95,13 +98,13 @@ describe('đơn Đang huỷ có kiện đã bàn giao (25 §8.2)', () => {
     expect(o.packages).toHaveLength(2);
     await loseOnUnload(o.packages[0]!.id);
 
-    await completeDueOrdersOnce();
+    await completeDueOrdersOnce(new Date(), ctx);
     expect(await orderRow(o.orderId)).toMatchObject({ status: 'processing', cancelling: true });
 
     // Lượt kéo sau: có kiện đã bàn giao nên bật Sàn đã huỷ, còn kiện chờ mở nên giữ Đang huỷ.
     await ingest(companyId, o.cancelled);
     expect(await orderRow(o.orderId)).toMatchObject({ status: 'processing', cancelling: true, platform_cancelled: true });
-    await completeDueOrdersOnce();
+    await completeDueOrdersOnce(new Date(), ctx);
     expect((await orderRow(o.orderId)).status).toBe('processing');
   });
 
@@ -109,7 +112,7 @@ describe('đơn Đang huỷ có kiện đã bàn giao (25 §8.2)', () => {
     const o = await cancellingOrder();
 
     await ingest(companyId, o.cancelled);
-    await completeDueOrdersOnce();
+    await completeDueOrdersOnce(new Date(), ctx);
 
     expect(await orderRow(o.orderId)).toMatchObject({ status: 'processing', cancelling: true, platform_cancelled: false });
     expect(await packageRow(o.packages[0]!.id)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });

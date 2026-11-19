@@ -169,7 +169,10 @@ export const Order = OrderSummary.extend({
   invoiceNumber: z.string().nullable(),
   lines: z.array(OrderLine),
   packages: z.array(PackageSummary),
-  returnWindowEndsAt: iso.nullable().meta({ description: 'Hết hạn trả hàng, tính từ kiện giao cuối' }),
+  returnWindowEndsAt: iso.nullable().meta({
+    description:
+      'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); đơn đã hoàn tất là hạn đã lưu',
+  }),
   completionBlocker: z
     .enum(['packages_open', 'return_window', 'return_requested', 'cod_unconfirmed'])
     .nullable()

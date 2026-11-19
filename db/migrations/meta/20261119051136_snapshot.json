@@ -1,6 +1,6 @@
 {
-  "id": "7106988f-ba5b-41c2-a410-f05e923240fd",
-  "prevId": "37bb5d2e-8d13-40dc-8a15-0c076470f23f",
+  "id": "45794d79-23fb-4e0f-be63-e71e69000c76",
+  "prevId": "e7a08893-5e3a-4d64-acf3-420880056df0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1649,22 +1649,7 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {
-        "shop_category_permissions_shop_id_shops_id_fk": {
-          "name": "shop_category_permissions_shop_id_shops_id_fk",
-          "tableFrom": "shop_category_permissions",
-          "columnsFrom": [
-            "shop_id"
-          ],
-          "tableTo": "shops",
-          "schemaTo": "channel",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {
         "shop_category_permissions_shop_id_external_category_id_pk": {
           "name": "shop_category_permissions_shop_id_external_category_id_pk",
@@ -2117,6 +2102,14 @@
             "company_id",
             "platform",
             "external_shop_id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "shops_id_company_uq": {
+          "name": "shops_id_company_uq",
+          "columns": [
+            "id",
+            "company_id"
           ],
           "nullsNotDistinct": false
         }

@@ -77,7 +77,8 @@ describe('runCategorySync (AC-S9)', () => {
   it('sàn cần token mà không có gian hàng active: bỏ lượt, không gọi sàn', async () => {
     register(true);
     const n = seen.length;
-    await inBackground(() => runCategorySync({ platform: 'mock' }));
+    // Không đọc gian hàng thật: file khác có thể nối gian hàng `mock` active trên DB dùng chung (review BE1 P2-8).
+    await inBackground(() => runCategorySync({ platform: 'mock' }, { borrowShop: async () => undefined }));
     expect(seen).toHaveLength(n);
   });
 

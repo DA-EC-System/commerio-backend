@@ -68,7 +68,7 @@ CREATE TABLE "channel"."shop_category_permissions" (
 --> statement-breakpoint
 ALTER TABLE "channel"."listings" ADD COLUMN "external_category_id" text;--> statement-breakpoint
 ALTER TABLE "channel"."platform_category_attributes" ADD CONSTRAINT "platform_category_attributes_category_fk" FOREIGN KEY ("platform","external_category_id") REFERENCES "channel"."platform_categories"("platform","external_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "channel"."shop_category_permissions" ADD CONSTRAINT "shop_category_permissions_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "channel"."shops"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "platform_categories_parent_idx" ON "channel"."platform_categories" USING btree ("platform","parent_external_id");--> statement-breakpoint
 CREATE INDEX "platform_categories_path_search_trgm" ON "channel"."platform_categories" USING gin ("path_search" gin_trgm_ops);--> statement-breakpoint
-CREATE INDEX "product_specs_category_idx" ON "channel"."product_specs" USING btree ("platform","external_category_id");
+CREATE INDEX "product_specs_category_idx" ON "channel"."product_specs" USING btree ("platform","external_category_id");--> statement-breakpoint
+ALTER TABLE "channel"."shops" ADD CONSTRAINT "shops_id_company_uq" UNIQUE("id","company_id");
