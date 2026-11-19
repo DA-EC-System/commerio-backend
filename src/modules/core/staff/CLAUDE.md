@@ -8,7 +8,7 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 |---|---|
 | `staff.accounts` | Tài khoản dùng chung mọi công ty, **không RLS**. Email chữ thường, unique; `google_sub` unique. `commerio_app` chỉ SELECT, INSERT (migration 0017): mọi UPDATE (mật khẩu, liên kết Google) chạy ngoài `withCompany` bằng role chủ bảng |
 | `staff.memberships` | (công ty, tài khoản) unique; `status` `active`/`suspended` (API gọi `suspended` là `locked`); `version` cho khoá lạc quan. RLS `company_isolation` |
-| `staff.invitations` | Lời mời bằng link (#7 [C], D39): `open → claimed → pending → approved \| rejected`, `open \| claimed → revoked` (Admin huỷ; `domain/invitation-machine.ts`), mỗi bước một UPDATE có điều kiện (`repository/invitations.ts`). `id` là `jti` của token link, DB không lưu token. OTP chỉ lưu bản băm (`domain/otp.ts`). CHECK đặt tên `invitations_*`; một yêu cầu `pending` mỗi email mỗi công ty (`invitations_one_pending_per_email`). RLS có `WITH CHECK`; `commerio_app` không DELETE (migration 0019) |
+| `staff.invitations` | Lời mời bằng link (#7 [C], D39): `open → claimed → pending → approved \| rejected`, `open \| claimed → revoked` (Admin huỷ; `domain/invitation-machine.ts`), mỗi bước một UPDATE có điều kiện (`repository/invitations.ts`). `id` là `jti` của token link, DB không lưu token. OTP chỉ lưu bản băm (`domain/otp.ts`). CHECK đặt tên `invitations_*`; một yêu cầu `pending` mỗi email mỗi công ty (`invitations_one_pending_per_email`). RLS có `WITH CHECK`; `commerio_app` không DELETE (migration 0019). Nháp quá hạn đã dọn có `purged_at` (CHECK `invitations_purged_shape`: không còn email, họ tên, OTP, mật khẩu) |
 
 ## API (gắn dưới `/api/v1/identity`, router do `identity` gắn sau router của `access`)
 
@@ -32,7 +32,9 @@ Tài khoản, membership (tài khoản thuộc công ty nào), quản lý nhân 
 - Thư sau bước nộp (`service/decision-consumer.ts`, đăng ký ở `service/background.ts`): consumer `staff-invitation-submitted-mail` gửi một thư tới thành viên `active` có quyền `identity.account.manage` (`activeMemberEmailsWithPermission`, qua `access.membershipIdsWithPermission`; trừ quản trị nền tảng), kèm link `<PUBLIC_WEB_URL>/admin/staff?tab=pending`; consumer `staff-invitation-decided-mail` gửi thư duyệt (link `/login`, mật khẩu đã đặt hay mật khẩu hiện có) hoặc từ chối tới email của lời mời. Đọc dòng lúc gửi, trạng thái đã khác thì bỏ; SMTP lỗi tạm ném để thử lại, lỗi vĩnh viễn log `error`. Mẫu thư ở `service/otp-mail.ts`, `service/decision-mail.ts`, khung HTML ở `service/mail-layout.ts` (mọi chuỗi người dùng gõ qua `escapeHtml`); link FE ở `service/web-links.ts`.
 - Duyệt khoá dòng lời mời trước (thứ tự lời mời → tài khoản → membership → vai trò), kiểm lại vai trò theo quyền người duyệt (409 `invitation_outdated` khi vai trò đã bị xoá). Hết hạn link không chặn duyệt.
 - Giới hạn theo IP đứng trước `validate`; theo email (băm SHA-256), theo lời mời đứng sau và chỉ tính token đã kiểm chữ ký (`readClaims`, `claimLimiter`), nên token rác kèm email người khác không đốt được bộ đếm của họ. Ngưỡng nhân `JOIN_RATE_LIMIT_SCALE`.
-- Metric `otp_requests_total{result}`, `invitation_transitions_total{to}` (`service/metrics.ts`).
+- Dọn nháp quá hạn (`service/invitation-purge.ts`): hàng pg-boss `staff.invitation_purge`, lịch `7 * * * *` (khoá `all`), đăng ký ở `service/background.ts`. Link `open`, `claimed` đã hết hạn mà còn email, họ tên, OTP thì xoá các cột đó, ghi `purged_at`, giữ dòng (`purgeExpiredDrafts`, chạy ngoài `withCompany`). Không động tới `pending` trở đi.
+- Đăng nhập lúc chờ duyệt: `identity.login` gọi `pendingJoinsByEmail` khi email chưa có tài khoản, so mật khẩu với `password_hash` của lời mời `pending` mới nộp nhất (vẫn một lần argon2). Đúng thì 403 `pending_approval` kèm tên công ty; sai vẫn 401 `invalid_credentials`.
+- Metric `otp_requests_total{result}`, `invitation_transitions_total{to}`, `invitation_drafts_purged_total` (`service/metrics.ts`).
 
 ## Bất biến
 
