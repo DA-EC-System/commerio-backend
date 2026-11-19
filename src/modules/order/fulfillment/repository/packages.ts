@@ -93,12 +93,12 @@ export const LEFT_WHILE_AWAITING_OPEN_NOTE = 'Sàn báo kiện rời kho khi cò
 /**
  * Cờ Cần mở chỉ có nghĩa khi kiện còn đóng trong kho (spec #238 §5.5, D27): kiện rời nhóm đã đóng (sau D28 chỉ còn đường
  * sàn báo rời kho) mà bên gọi không ghi cờ thì gỡ, để kiện không nằm mãi trong tab Cần mở. Mục đích `cancel`, `edit`,
- * `resplit` thì bật Cần xử lý (hộp đi theo sàn mà kho chưa dỡ); kiện đã có Cần xử lý thì giữ ghi chú cũ. `stocktake` gỡ
+ * `resplit`, `remap` (spec 237 D19: hộp đi với món theo ghép cũ) thì bật Cần xử lý (hộp đi theo sàn mà kho chưa dỡ); kiện đã có Cần xử lý thì giữ ghi chú cũ. `stocktake` gỡ
  * im. Trong `UPDATE … SET`, cột bên phải là giá trị cũ; bên gọi ghi `needsAttention`/`flagNote` tường minh thì thắng.
  */
 function openFlagRules(patch: { status?: PackageStatus; needsOpen?: boolean; openPurpose?: unknown; needsAttention?: boolean; flagNote?: unknown }) {
   if (patch.status === undefined || isSealed(patch.status) || patch.needsOpen !== undefined || patch.openPurpose !== undefined) return {};
-  const attention = sql`${packages.openPurpose} in ('cancel', 'edit', 'resplit')`;
+  const attention = sql`${packages.openPurpose} in ('cancel', 'edit', 'resplit', 'remap')`;
   return {
     needsOpen: sql`false`,
     openPurpose: sql`null`,

@@ -13,6 +13,7 @@ import {
   journeyTimes,
   lineStatus,
 } from '../domain/delivery.ts';
+import { raisePurpose } from '../domain/open-purpose.ts';
 import { type CancelLine, planLineCancel } from '../domain/line-cancel.ts';
 import { arrowAction, isHandedOver, isPlatformRevive, isSealed, type PackageStatus, platformUpdate } from '../domain/package.ts';
 import { planResplit, type ResplitGroup, type ResplitPackage } from '../domain/resplit.ts';
@@ -478,7 +479,7 @@ async function markPendingDrop(pkg: PackageRow, fresh: readonly CancelLine[]) {
 
 /**
  * Sàn huỷ cả kiện đã đóng gói (spec 205 §5.10, D21): mọi dòng chờ bỏ; kiện đang chờ mở để sửa (`edit`), vì kiểm kê
- * (`stocktake`, huỷ thắng, spec #238 mục 10) hay để chia lại (`resplit`, #238 D24) thì chuyển sang chờ mở để huỷ: kho mở
+ * (`stocktake`, huỷ thắng, spec #238 mục 10), để chia lại (`resplit`, #238 D24) hay đổi ghép (`remap`, spec 237 D17) thì chuyển sang chờ mở để huỷ: kho mở
  * ra là huỷ (`open_cancel`), không về `reserved`. Trả true khi có ghi.
  */
 async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
@@ -488,7 +489,8 @@ async function markWholePendingDrop(pkg: PackageRow): Promise<boolean> {
     for (const l of pkg.lines) l.pendingDropQty = l.quantity;
     changed = true;
   }
-  if (pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake' || pkg.openPurpose === 'resplit') {
+  // `cancel` thắng mọi mục đích đang có (spec 237 D17: gồm cả `remap`).
+  if (pkg.needsOpen && raisePurpose(pkg, 'cancel')) {
     await updatePackage(pkg.id, { openPurpose: 'cancel' });
     pkg.openPurpose = 'cancel';
     changed = true;

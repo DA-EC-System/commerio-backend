@@ -5,6 +5,7 @@
 import { assertTransition, publishEvent, recordTransition } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import type { PlatformPackageOrder } from '../domain/delivery.ts';
+import { purposeAfterClear, raisePurpose } from '../domain/open-purpose.ts';
 import { packageMachine } from '../domain/package.ts';
 import { replacementPairs, type ResplitPlan } from '../domain/resplit.ts';
 import { deleteLines, setPendingDrop } from '../repository/line-cancel.ts';
@@ -104,18 +105,14 @@ export async function applyResplit(
         reason: `${RESPLIT_REASON}: chuyển ${moving.reduce((n, l) => n + l.quantity, 0)} món`,
       });
     } else if (s.kind === 'mark_drop') {
-      // Kiện đã đóng: dòng chuyển đi chờ bỏ (vẫn giữ hàng) tới khi kho mở; mục đích theo D24 (`resplit` thắng `edit`,
-      // `stocktake`; `cancel` thắng `resplit`). Không ghi lịch sử (như `markPendingDrop` của #205).
+      // Kiện đã đóng: dòng chuyển đi chờ bỏ (vẫn giữ hàng) tới khi kho mở; mục đích theo D24 và spec 237 D17 (`resplit`
+      // thắng `edit`, `stocktake`, `remap`; `cancel` thắng `resplit`). Không ghi lịch sử (như `markPendingDrop` của #205).
       const pkg = byId(s.packageId);
       const ids = new Set(s.orderLineIds);
       const fresh = pkg.lines.filter((l) => ids.has(l.orderLineId) && l.pendingDropQty < l.quantity);
       await setPendingDrop(fresh.map((l) => l.id));
       for (const l of fresh) l.pendingDropQty = l.quantity;
-      const purpose = !pkg.needsOpen
-        ? ({ needsOpen: true, openPurpose: 'resplit' } as const)
-        : pkg.openPurpose === 'edit' || pkg.openPurpose === 'stocktake'
-          ? ({ openPurpose: 'resplit' } as const)
-          : {};
+      const purpose = raisePurpose(pkg, 'resplit') ?? {};
       await updatePackage(pkg.id, purpose);
       Object.assign(pkg, purpose);
       logger.info({ packageId: pkg.id, orderLineIds: s.orderLineIds }, 'kiện đã đóng chờ dỡ để chia lại');
@@ -188,8 +185,10 @@ export async function takeOverReplaced(order: PlatformPackageOrder, pkg: Package
       await publishEvent({ type: 'fulfillment.package_status_changed', aggregateId: order.id, payload: { packageId: old.id, orderId: order.id, from, to: 'cancelled' } });
       Object.assign(old, { status: 'cancelled', needsOpen: false, openPurpose: null, labelError: false });
     } else if (old.openPurpose === 'resplit' && !old.lines.some((l) => l.pendingDropQty > 0)) {
-      await updatePackage(old.id, { needsOpen: false, openPurpose: null });
-      Object.assign(old, { needsOpen: false, openPurpose: null });
+      // Còn dòng chờ đổi ghép thì không gỡ mà đổi mục đích sang `remap` (spec 237 D18).
+      const purpose = purposeAfterClear(old.lines.some((l) => l.remapPending));
+      await updatePackage(old.id, purpose);
+      Object.assign(old, purpose);
     } else await updatePackage(old.id, {});
   }
   return true;
