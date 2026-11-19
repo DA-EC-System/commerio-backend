@@ -681,7 +681,9 @@ export const UpdateShopBody = z
   .meta({ id: 'ShopUpdateInput' });
 
 // Category và attribute của sàn (#400, Documents/21 §18.5).
-export const PlatformLeafParams = z.object({ platform: z.string().max(40), externalId: z.string().trim().min(1).max(40) });
+/** Mã category của Lazada, TikTok đều là số (gọi thật #400 G2.1); chặn chuỗi khác để không ghi dòng rác vào bảng chung. */
+const categoryId = z.string().regex(/^\d{1,20}$/, 'Mã category không hợp lệ');
+export const PlatformLeafParams = z.object({ platform: z.string().max(40), externalId: categoryId });
 export const PlatformCategoriesQuery = z
   .object({
     search: z
@@ -691,7 +693,7 @@ export const PlatformCategoriesQuery = z
       .max(100)
       .optional()
       .meta({ description: 'Tìm leaf `active` theo đường dẫn (bỏ dấu); ưu tiên hơn `parentId`' }),
-    parentId: z.string().trim().min(1).max(40).optional().meta({ description: 'Con trực tiếp; không gửi cả hai là cấp gốc' }),
+    parentId: categoryId.optional().meta({ description: 'Con trực tiếp; không gửi cả hai là cấp gốc' }),
   })
   .meta({ id: 'PlatformCategoriesQuery' });
 export const LeafDetailQuery = z
@@ -708,10 +710,10 @@ const platformCategoryShape = {
   isLeaf: z.boolean(),
   status: z.enum(['active', 'removed']),
 };
-export const ChannelPlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'ChannelPlatformCategory' });
+export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
 export const PlatformCategoryPage = z
   .object({
-    items: z.array(ChannelPlatformCategory),
+    items: z.array(PlatformCategory),
     syncedAt: iso.nullable().meta({ description: 'Lần đồng bộ cây gần nhất; null khi sàn chưa có dòng nào' }),
   })
   .strict()
@@ -727,9 +729,9 @@ export const PlatformAttribute = z
     allowCustom: z.boolean().meta({ description: 'Được nhập giá trị ngoài `options`' }),
     required: z.boolean(),
     requiredWhen: z
-      .array(z.object({ code: z.string(), values: z.array(z.string()) }).strict())
+      .array(z.object({ code: z.string(), optionIds: z.array(z.string()) }).strict())
       .nullable()
-      .meta({ description: 'Bắt buộc khi attribute `code` có một trong `values` (id lựa chọn)' }),
+      .meta({ description: 'Bắt buộc khi attribute `code` có một trong `optionIds` (id lựa chọn)' }),
     isKey: z.boolean(),
     tier: z
       .enum(['category', 'product', 'company'])
@@ -745,7 +747,9 @@ export const PlatformLeafDetail = z
     attributes: z.array(PlatformAttribute),
     fetchedAt: iso.nullable().meta({ description: 'Lúc lấy attribute từ sàn; quá 7 ngày thì lần mở sau lấy lại' }),
     stale: z.boolean().meta({ description: 'Sàn lỗi (hoặc không có gian hàng để gọi) nên trả bản cũ' }),
-    products: z.array(z.object({ productId: z.uuid(), code: z.string(), name: z.string(), source: z.enum(['push', 'match']) }).strict()),
+    products: z
+      .array(z.object({ productId: z.uuid(), code: z.string(), name: z.string(), source: z.enum(['push', 'match']) }).strict())
+      .meta({ description: 'Sản phẩm của công ty có spec trỏ tới leaf, tối đa 200 dòng (cũ trước)' }),
   })
   .strict()
   .meta({ id: 'PlatformLeafDetail' });
