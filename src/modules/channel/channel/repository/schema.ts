@@ -5,11 +5,13 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
   numeric,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -198,6 +200,11 @@ export const listings = channelSchema.table(
     pushError: jsonb('push_error').$type<SyncError>(),
     pushAttempts: integer('push_attempts').notNull().default(0),
     pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
+    /**
+     * Category thật của listing trên gian hàng này (#400, Documents/19 mục 3.3): ghi khi đẩy xong, khi ghép SKU đọc sàn và khi
+     * đồng bộ thấy sàn đổi. Cột thông tin, ghi không tăng `version` (L029: không làm `runListingPush` bỏ kết quả).
+     */
+    externalCategoryId: text('external_category_id'),
     /** Lần đầu app gọi `createProduct` cho listing này (#399): mốc phân biệt sản phẩm app tạo với sản phẩm người bán có sẵn. Chỉ ghi khi null, không tăng `version`. */
     createAttemptedAt: timestamp('create_attempted_at', { withTimezone: true }),
     hiddenBy: hiddenBy('hidden_by'),
@@ -350,6 +357,155 @@ export const categoryMaps = channelSchema.table(
   (t) => [
     unique().on(t.companyId, t.platform, t.categoryId),
     check('category_maps_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
+  ],
+);
+
+export type CategoryStatus = 'active' | 'removed';
+export type SizeChartRule = 'required' | 'optional' | 'unsupported';
+
+/**
+ * Bản sao cây category của sàn (#400, Documents/19 mục 3.3). Dữ liệu tham chiếu của nền tảng, giống nhau mọi khách thuê:
+ * không `company_id`, không RLS; `commerio_app` chỉ `SELECT` (migration `*_category-san-quyen`), ghi bằng role chủ bảng
+ * ngoài `withCompany` (Documents/19 mục 2). Category sàn bỏ thì `status = 'removed'`, không xoá dòng (spec cũ còn trỏ tới).
+ * `synced_at` null là dòng tạm (leaf mới thấy khi lấy attribute, trước lượt đồng bộ cây): tìm kiếm bỏ qua, đồng bộ ghi đè.
+ * `attributes_fetched_at`: lần lấy attribute gần nhất, kể cả khi leaf không có attribute nào (dùng lại 7 ngày).
+ */
+export const platformCategories = channelSchema.table(
+  'platform_categories',
+  {
+    platform: marketplace('platform').notNull(),
+    externalId: text('external_id').notNull(),
+    parentExternalId: text('parent_external_id'),
+    name: text('name').notNull(),
+    isLeaf: boolean('is_leaf').notNull(),
+    path: text('path').notNull(),
+    /** Đường dẫn đã bỏ dấu (cả `đ` → `d`), chữ thường: `normalizePath` ở `domain/product-spec.ts`. */
+    pathSearch: text('path_search').notNull(),
+    status: text('status').$type<CategoryStatus>().notNull().default('active'),
+    syncedAt: timestamp('synced_at', { withTimezone: true }),
+    /** Luật bảng kích cỡ (#347), lấy cùng lúc với attribute của leaf; null là chưa hỏi. */
+    sizeChartRule: text('size_chart_rule').$type<SizeChartRule>(),
+    attributesFetchedAt: timestamp('attributes_fetched_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.platform, t.externalId] }),
+    index('platform_categories_parent_idx').on(t.platform, t.parentExternalId),
+    index('platform_categories_path_search_trgm').using('gin', t.pathSearch.op('gin_trgm_ops')),
+    check('platform_categories_status', sql`${t.status} in ('active', 'removed')`),
+    check('platform_categories_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
+  ],
+);
+
+export type AttributeKind = 'sales' | 'property';
+export type AttributeInput = 'select' | 'multiselect' | 'text' | 'number' | 'date' | 'image' | 'cascade';
+export type AttributeTier = 'category' | 'product' | 'company';
+export interface AttributeOption {
+  id: string;
+  label: string;
+}
+/** Điều kiện bắt buộc theo attribute khác (TikTok `requirement_conditions`): bắt buộc khi `code` mang một trong `values`. */
+export interface RequiredWhen {
+  code: string;
+  values: string[];
+}
+
+/**
+ * Attribute của một leaf category (#400, Documents/19 mục 3.3). Lấy khi có người mở leaf (route chi tiết, `PUT` spec, việc
+ * nền), dùng lại 7 ngày; mỗi lần lấy thay cả tập của leaf (`replaceLeaf`). `code`: Lazada `name`, TikTok id attribute.
+ * Không `company_id`, không RLS, `commerio_app` chỉ `SELECT` như `platform_categories`.
+ */
+export const platformCategoryAttributes = channelSchema.table(
+  'platform_category_attributes',
+  {
+    platform: marketplace('platform').notNull(),
+    externalCategoryId: text('external_category_id').notNull(),
+    code: text('code').notNull(),
+    label: text('label').notNull(),
+    kind: text('kind').$type<AttributeKind>().notNull(),
+    input: text('input').$type<AttributeInput>().notNull(),
+    options: jsonb('options').$type<AttributeOption[]>().notNull().default([]),
+    allowCustom: boolean('allow_custom').notNull().default(false),
+    required: boolean('required').notNull().default(false),
+    requiredWhen: jsonb('required_when').$type<RequiredWhen[] | null>(),
+    isKey: boolean('is_key').notNull().default(false),
+    tier: text('tier').$type<AttributeTier>().notNull(),
+    raw: jsonb('raw').$type<Record<string, unknown>>().notNull().default({}),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.platform, t.externalCategoryId, t.code] }),
+    foreignKey({
+      name: 'platform_category_attributes_category_fk',
+      columns: [t.platform, t.externalCategoryId],
+      foreignColumns: [platformCategories.platform, platformCategories.externalId],
+    }),
+    check('platform_category_attributes_kind', sql`${t.kind} in ('sales', 'property')`),
+    check(
+      'platform_category_attributes_input',
+      sql`${t.input} in ('select', 'multiselect', 'text', 'number', 'date', 'image', 'cascade')`,
+    ),
+    check('platform_category_attributes_tier', sql`${t.tier} in ('category', 'product', 'company')`),
+  ],
+);
+
+export type CategoryPermission = 'available' | 'invite_only' | 'non_main_category' | 'prohibited';
+
+/**
+ * Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17). Ghi từ gợi ý và lần kiểm trước
+ * khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
+ */
+export const shopCategoryPermissions = channelSchema.table(
+  'shop_category_permissions',
+  {
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id),
+    externalCategoryId: text('external_category_id').notNull(),
+    status: text('status').$type<CategoryPermission>().notNull(),
+    checkedAt: timestamp('checked_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.shopId, t.externalCategoryId] }),
+    check('shop_category_permissions_status', sql`${t.status} in ('available', 'invite_only', 'non_main_category', 'prohibited')`),
+  ],
+);
+
+export type SpecSource = 'push' | 'match';
+export type SpecCategoryStatus = 'ok' | 'changed' | 'removed';
+/** Giá trị attribute trong spec: chuỗi (text, mã lựa chọn của select) hoặc mảng mã (multiselect). */
+export type SpecAttributeValue = string | string[];
+
+/**
+ * Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay
+ * `product.product_channel_specs` và `category_maps`. `product_id` là uuid thường (không khoá ngoại chéo schema).
+ * `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục
+ * Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn.
+ * `version = 0` là bản chép từ ghép danh mục chưa ai lưu lại (#400 A18); `PUT` spec luôn ra `version ≥ 1`. RLS.
+ */
+export const productSpecs = channelSchema.table(
+  'product_specs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    productId: uuid('product_id').notNull(),
+    platform: marketplace('platform').notNull(),
+    externalCategoryId: text('external_category_id').notNull(),
+    attributes: jsonb('attributes').$type<Record<string, SpecAttributeValue>>().notNull().default({}),
+    axisMap: jsonb('axis_map').$type<Record<string, string>>().notNull().default({}),
+    valueMap: jsonb('value_map').$type<Record<string, string>>().notNull().default({}),
+    source: text('source').$type<SpecSource>().notNull(),
+    categoryStatus: text('category_status').$type<SpecCategoryStatus>().notNull().default('ok'),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    unique('product_specs_product_platform_uq').on(t.productId, t.platform),
+    // Sản phẩm của công ty đang dùng một leaf (route chi tiết leaf), spec trỏ tới category bị bỏ (đồng bộ cây).
+    index('product_specs_category_idx').on(t.platform, t.externalCategoryId),
+    check('product_specs_source', sql`${t.source} in ('push', 'match')`),
+    check('product_specs_category_status', sql`${t.categoryStatus} in ('ok', 'changed', 'removed')`),
+    check('product_specs_version', sql`${t.version} >= 0`),
   ],
 );
 

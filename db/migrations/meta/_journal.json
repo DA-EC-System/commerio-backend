@@ -645,6 +645,20 @@
       "when": 1795026741702,
       "tag": "20261118183221_anh-phan-loai-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1795059377024,
+      "tag": "20261119033617_category-san",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1795059389902,
+      "tag": "20261119033629_category-san-quyen",
+      "breakpoints": true
     }
   ]
 }
