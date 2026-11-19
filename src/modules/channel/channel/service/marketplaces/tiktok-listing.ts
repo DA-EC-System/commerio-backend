@@ -281,7 +281,15 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     },
 
     async leafAttributes(token, externalCategoryId) {
-      return tiktokLeafAttributes(await rawAttributes(requireToken(token), externalCategoryId));
+      const data = await client.call<{ attributes?: unknown }>('GET', `/product/202309/categories/${encodeURIComponent(externalCategoryId)}/attributes`, {
+        token: requireToken(token),
+        query: { category_version: CATEGORY_VERSION },
+      });
+      // Không phải mảng thì không coi là "leaf không có attribute": `replaceLeaf` sẽ xoá cả tập (review BE1 P2-1).
+      if (!Array.isArray(data?.attributes)) {
+        throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn trả attribute của category không phải danh sách');
+      }
+      return tiktokLeafAttributes(data.attributes as Row[]);
     },
 
     async listCategories(token) {

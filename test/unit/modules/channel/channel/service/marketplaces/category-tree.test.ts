@@ -113,6 +113,14 @@ describe('Lazada: cây và attribute không cần token', () => {
     expect(by('tax_class')).toBeUndefined();
   });
 
+  it('data không phải mảng thì unexpected_response (không coi là leaf không có attribute); mảng rỗng là rỗng (review P2-1)', async () => {
+    for (const data of [undefined, null, {}, 'x']) {
+      const { adapter } = lazada({ code: '0', request_id: 'r', ...(data !== undefined && { data }) });
+      await expect(adapter.leafAttributes!(null, '7930')).rejects.toMatchObject({ kind: 'rejected', platformCode: 'unexpected_response' });
+    }
+    await expect(lazada({ code: '0', request_id: 'r', data: [] }).adapter.leafAttributes!(null, '7930')).resolves.toEqual([]);
+  });
+
   it('is_key_prop = 1 thì isKey', async () => {
     const body = { code: '0', data: [{ name: 'model', label: 'Mẫu', input_type: 'text', attribute_type: 'normal', is_mandatory: 0, is_sale_prop: 0, advanced: { is_key_prop: 1 } }] };
     const { adapter } = lazada(body);
@@ -194,6 +202,17 @@ describe('TikTok: cây và attribute bằng token gian hàng', () => {
         ],
       },
     ]);
-    expect(by('900001')).toMatchObject({ allowCustom: false, input: 'select', requiredWhen: [{ code: '900000', values: ['yes', 'maybe'] }] });
+    expect(by('900001')).toMatchObject({ allowCustom: false, input: 'select', requiredWhen: [{ code: '900000', optionIds: ['yes', 'maybe'] }] });
+  });
+
+  it('attributes vắng hay không phải mảng thì unexpected_response; mảng rỗng là rỗng (review P2-1)', async () => {
+    const path = 'GET /product/202309/categories/601226/attributes';
+    for (const data of [{}, { attributes: null }, { attributes: {} }]) {
+      await expect(san({ [path]: data }).methods.leafAttributes!(TOKEN, '601226')).rejects.toMatchObject({
+        kind: 'rejected',
+        platformCode: 'unexpected_response',
+      });
+    }
+    await expect(san({ [path]: { attributes: [] } }).methods.leafAttributes!(TOKEN, '601226')).resolves.toEqual([]);
   });
 });

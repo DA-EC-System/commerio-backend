@@ -93,7 +93,7 @@ describe('specMissing', () => {
   });
 
   it('bắt buộc theo điều kiện chỉ khi attribute điều kiện mang giá trị kích hoạt', () => {
-    const attrs = [attr({ code: 'B', label: 'Giấy phép', requiredWhen: [{ code: 'A', values: ['yes'] }] })];
+    const attrs = [attr({ code: 'B', label: 'Giấy phép', requiredWhen: [{ code: 'A', optionIds: ['yes'] }] })];
     expect(specMissing({ spec: { ...base, attributes: { A: 'no' } }, attributes: attrs, axes: [] })).toEqual([]);
     expect(specMissing({ spec: { ...base, attributes: { A: 'yes' } }, attributes: attrs, axes: [] })).toEqual([
       { code: 'B', label: 'Giấy phép', reason: 'required_when' },

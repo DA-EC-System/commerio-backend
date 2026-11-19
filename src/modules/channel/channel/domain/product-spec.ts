@@ -16,10 +16,11 @@ export interface AttributeOption {
   label: string;
 }
 
-/** Điều kiện bắt buộc theo attribute khác (TikTok `requirement_conditions`): bắt buộc khi `code` mang một trong `values`. */
+/** Điều kiện bắt buộc theo attribute khác (TikTok `requirement_conditions`): bắt buộc khi `code` mang một trong `optionIds`
+ * (id lựa chọn; Documents/21 §18.5, Documents/19 §3.3 cột `required_when`). */
 export interface RequiredWhen {
   code: string;
-  values: string[];
+  optionIds: string[];
 }
 
 /** Attribute của một leaf category sau khi adapter chuẩn hoá (một dòng `channel.platform_category_attributes`). */
@@ -154,7 +155,7 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
 function conditionMet(c: RequiredWhen, value: SpecAttributeValue | undefined): boolean {
   if (value == null) return false;
   const values = Array.isArray(value) ? value : [value];
-  return values.some((v) => c.values.includes(v));
+  return values.some((v) => c.optionIds.includes(v));
 }
 
 const PERMISSION_PRIORITY: readonly [string, CategoryPermission][] = [

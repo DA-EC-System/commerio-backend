@@ -1,7 +1,7 @@
 // Cây category và attribute của leaf Lazada đổi sang kiểu chung (#400 lát 3, A15). Hàm thuần trên phản hồi
 // `/category/tree/get` và `/category/attributes/get` (gọi thật 18/11/2026, không cần access_token: G2.1, G2.2).
 import type { AttributeInput, PlatformAttribute } from '../../domain/product-spec.ts';
-import type { PlatformCategoryNode } from './common.ts';
+import { MarketplaceError, type PlatformCategoryNode } from './common.ts';
 
 type TreeNode = { category_id?: unknown; name?: unknown; leaf?: unknown; children?: TreeNode[] };
 
@@ -62,11 +62,13 @@ const flag = (v: unknown) => String(v) === '1';
  * Attribute của một leaf (A15). Bỏ attribute `sku` không phải sales (giá, SellerSku, kích thước gói, tồn, giá KM: catalog
  * cung cấp) và trường nội dung app tự gửi. `is_sale_prop = 1` → `sales`. `allowCustom` khi kiểu nhập tự do hoặc không kèm
  * lựa chọn (vd `brand`). `propCascade` không có `input_type`, `label` → `cascade`, nhãn là mã. Mã là `name` (khớp khoá cũ
- * của `category_maps`).
+ * của `category_maps`). `data` không phải mảng (Lazada trả `code: "0"` mà thiếu `data`) là `unexpected_response`: coi là
+ * rỗng thì `replaceLeaf` xoá hết attribute của leaf cho mọi công ty (review BE1 P2-1).
  */
 export function lazadaLeafAttributes(data: unknown): PlatformAttribute[] {
+  if (!Array.isArray(data)) throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn trả attribute của category không phải danh sách');
   const out: PlatformAttribute[] = [];
-  for (const a of Array.isArray(data) ? (data as RawAttr[]) : []) {
+  for (const a of data as RawAttr[]) {
     if (typeof a.name !== 'string' || a.name === '') continue;
     const sales = flag(a.is_sale_prop);
     if (a.attribute_type === 'sku' && !sales) continue;
