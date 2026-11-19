@@ -1000,8 +1000,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             Images: { Image: p.imageUrls },
             // Lazada bắt Brand khi tạo dù GetCategoryAttributes ghi `brand` `is_mandatory: 0` và không kèm lựa chọn
             // (gọi thật 17/11/2026, danh mục 10100278: thiếu thì E500 `brandProp` C006; gửi "No Brand" thì tạo được,
-            // request_id 2141336017948496094571739). Bộ ghép danh mục không hỏi brand nên mặc định "No Brand"; ghép có
-            // brand thì dùng brand đó. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
+            // request_id 2141336017948496094571739). Việc đẩy luôn gửi brand (catalog, trống thì `defaultBrand`); mặc định
+            // ở đây chỉ chặn trường hợp bên gọi không gửi. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
             Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
           },
