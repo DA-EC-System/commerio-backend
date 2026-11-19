@@ -4,7 +4,7 @@ import { defineMachine } from '../../../core/index.ts';
 import { isHandedOver, isSealed, isStopped, holdsStock, type PackageStatus } from '../../fulfillment/index.ts';
 
 export type OrderStatus = 'unpaid' | 'processing' | 'completed' | 'cancelled';
-export type OrderAction = 'confirm' | 'pay' | 'complete' | 'cancel' | 'platform_cancel' | 'cancel_on_platform';
+export type OrderAction = 'confirm' | 'pay' | 'complete' | 'cancel' | 'platform_cancel' | 'cancel_on_platform' | 'auto_cancel';
 export type OrderSource = 'marketplace' | 'inbox' | 'manual';
 export type PaymentMethod = 'prepaid' | 'cod';
 export type OrderOutcome = 'full' | 'partial' | 'none';
@@ -38,6 +38,10 @@ export interface OrderRecord {
   packages: readonly PackageStatus[];
 }
 
+/** Đơn có kiện và mọi kiện đã huỷ (như FE `allCancelled`). */
+export const allCancelled = (packages: readonly PackageStatus[]): boolean =>
+  packages.length > 0 && packages.every((s) => s === 'cancelled');
+
 const cancelGuard = (r: OrderRecord) =>
   r.source === 'marketplace' ? 'not_allowed_for_source' : r.packages.some(isHandedOver) ? 'already_handed_over' : null;
 
@@ -50,7 +54,13 @@ export const orderMachine = defineMachine<OrderStatus, OrderAction, OrderRecord>
     guard: (r) => (r.source === 'marketplace' ? 'not_allowed_for_source' : r.paymentMethod !== 'cod' ? 'payment_required' : null),
   },
   { from: 'unpaid', to: 'processing', action: 'pay', system: true },
-  { from: 'processing', to: 'completed', action: 'complete', system: true },
+  {
+    from: 'processing',
+    to: 'completed',
+    action: 'complete',
+    system: true,
+    guard: (r) => (allCancelled(r.packages) ? 'all_packages_cancelled' : null),
+  },
   { from: ['unpaid', 'processing'], to: 'cancelled', action: 'cancel', permission: 'sales.order.cancel', needsReason: true, guard: cancelGuard },
   { from: ['unpaid', 'processing'], to: 'cancelled', action: 'platform_cancel', system: true },
   {
@@ -60,6 +70,14 @@ export const orderMachine = defineMachine<OrderStatus, OrderAction, OrderRecord>
     permission: 'sales.order.cancel',
     guard: (r) =>
       r.source !== 'marketplace' ? 'not_allowed_for_source' : r.packages.some(isHandedOver) ? 'already_handed_over' : null,
+  },
+  // Mọi kiện đã huỷ, đơn không phải đơn sàn: hệ thống huỷ đơn (25 §8.2, #236 D2). Đơn sàn đi `platform_cancel`.
+  {
+    from: 'processing',
+    to: 'cancelled',
+    action: 'auto_cancel',
+    system: true,
+    guard: (r) => (allCancelled(r.packages) ? null : 'packages_not_cancelled'),
   },
 ]);
 
@@ -115,7 +133,7 @@ export function codUnconfirmed(packages: readonly CodPackage[]): boolean {
   );
 }
 
-export type CompletionBlocker = 'packages_open' | 'return_window' | 'return_requested' | 'cod_unconfirmed';
+export type CompletionBlocker = 'packages_open' | 'all_packages_cancelled' | 'return_window' | 'return_requested' | 'cod_unconfirmed';
 
 export interface CompletionInput {
   packages: readonly PackageStatus[];
@@ -128,9 +146,13 @@ export interface CompletionInput {
   now: number;
 }
 
-/** Lý do chưa hoàn tất; null là hoàn tất được. */
+/**
+ * Lý do chưa hoàn tất; null là hoàn tất được. `all_packages_cancelled`: đơn không bao giờ hoàn tất, việc nền khép đơn
+ * khi mọi món đã huỷ (`settleCancelledOrder`, #236 PR 3, D16), như FE.
+ */
 export function completionBlocker(i: CompletionInput): CompletionBlocker | null {
   if (!i.packages.length || !i.packages.every(isStopped)) return 'packages_open';
+  if (allCancelled(i.packages)) return 'all_packages_cancelled';
   if (i.lastDeliveredAt && (!i.returnWindowEndsAt || i.returnWindowEndsAt.getTime() > i.now)) return 'return_window';
   if (i.openReturnRequests > 0) return 'return_requested';
   if (i.codUnconfirmed) return 'cod_unconfirmed';
@@ -141,6 +163,8 @@ export type CancelInitiator = 'buyer' | 'seller' | 'platform';
 const CANCEL_INITIATOR_ORDER: readonly CancelInitiator[] = ['buyer', 'seller', 'platform'];
 /** Lý do cấp đơn khi sàn tự huỷ mà không món nào ghi người, lý do. */
 export const PLATFORM_CANCEL_REASON = 'Sàn huỷ đơn';
+/** Lý do cấp đơn khi hệ thống huỷ đơn không phải đơn sàn vì mọi kiện đã huỷ (`auto_cancel`). */
+export const AUTO_CANCEL_REASON = 'Mọi kiện đã huỷ';
 
 /**
  * Người đã huỷ món của đơn (Documents/21 §19.1 `cancelInitiators`): mỗi dòng đã huỷ (`cancelledQty > 0`) mang người huỷ

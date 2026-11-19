@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { assertTransition } from '#src/modules/core/index.ts';
-import { platformUpdate } from '#src/modules/order/fulfillment/domain/package.ts';
+import { type PackageStatus, platformUpdate } from '#src/modules/order/fulfillment/domain/package.ts';
 import {
+  allCancelled,
   cancelInitiatorsOf,
   cancelPlan,
   codUnconfirmed,
@@ -51,6 +52,45 @@ describe('máy trạng thái đơn', () => {
       expect.objectContaining({ code: 'invalid_transition' }),
     );
   });
+
+  const allCancelledOrder = { ...lazadaOrder, packages: ['cancelled', 'cancelled'] as const };
+
+  it('AC19 (D1-03): complete khi mọi kiện đã huỷ → all_packages_cancelled; có kiện không huỷ thì hoàn tất', () => {
+    expect(() => assertTransition(orderMachine, 'processing', 'complete', { actor: null, record: allCancelledOrder })).toThrow(
+      expect.objectContaining({ code: 'all_packages_cancelled' }),
+    );
+    expect(
+      assertTransition(orderMachine, 'processing', 'complete', { actor: null, record: { ...lazadaOrder, packages: ['cancelled', 'delivered'] } }).to,
+    ).toBe('completed');
+  });
+
+  it('AC20 (D1-10): auto_cancel chỉ khi có kiện và mọi kiện đã huỷ', () => {
+    const autoCancel = (packages: readonly PackageStatus[]) =>
+      assertTransition(orderMachine, 'processing', 'auto_cancel', { actor: null, record: { ...lazadaOrder, packages } });
+    expect(autoCancel(['cancelled']).to).toBe('cancelled');
+    expect(() => autoCancel(['cancelled', 'returned'])).toThrow(expect.objectContaining({ code: 'packages_not_cancelled' }));
+    expect(() => autoCancel([])).toThrow(expect.objectContaining({ code: 'packages_not_cancelled' }));
+  });
+
+  it('AC21 (D1-10x, D1-03x): người dùng gọi auto_cancel, complete → invalid_transition', () => {
+    for (const action of ['auto_cancel', 'complete'] as const) {
+      expect(() => assertTransition(orderMachine, 'processing', action, { actor: sale, record: allCancelledOrder })).toThrow(
+        expect.objectContaining({ code: 'invalid_transition' }),
+      );
+    }
+  });
+
+  it.each(['unpaid', 'completed', 'cancelled'] as const)('AC22 (D1-X01, X03, X04): %s gọi auto_cancel → invalid_transition', (from) => {
+    expect(() => assertTransition(orderMachine, from, 'auto_cancel', { actor: null, record: allCancelledOrder })).toThrow(
+      expect.objectContaining({ code: 'invalid_transition' }),
+    );
+  });
+
+  it('allCancelled: có kiện và mọi kiện đã huỷ', () => {
+    expect(allCancelled(['cancelled', 'cancelled'])).toBe(true);
+    expect(allCancelled(['cancelled', 'delivered'])).toBe(false);
+    expect(allCancelled([])).toBe(false);
+  });
 });
 
 describe('cancelPlan, outcomeOf, completionBlocker', () => {
@@ -79,6 +119,9 @@ describe('cancelPlan, outcomeOf, completionBlocker', () => {
     [{ packages: ['delivered'], ...past, codUnconfirmed: true }, 'cod_unconfirmed'],
     [{ packages: ['delivered', 'cancelled'], ...past }, null],
     [{ packages: ['returned'] }, null],
+    [{ packages: ['cancelled', 'cancelled'] }, 'all_packages_cancelled'],
+    [{ packages: ['cancelled'], openReturnRequests: 1, codUnconfirmed: true }, 'all_packages_cancelled'],
+    [{ packages: ['cancelled', 'reserved'] }, 'packages_open'],
   ] as const)('%o → %s', (input, expected) => {
     expect(completionBlocker({ ...base, ...input })).toBe(expected);
   });

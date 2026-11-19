@@ -6,6 +6,7 @@ import { metricsRegistry } from '../../../../shared/observability/metrics.ts';
 let metrics:
   | {
       completed: client.Counter;
+      cancelled: client.Counter;
       failures: client.Counter<'scope'>;
       lastRun: client.Gauge;
     }
@@ -17,6 +18,11 @@ export function registerSalesMetrics(): void {
     completed: new client.Counter({
       name: 'sales_orders_auto_completed_total',
       help: 'Số đơn việc nền đã tự hoàn tất',
+      registers: [metricsRegistry],
+    }),
+    cancelled: new client.Counter({
+      name: 'sales_orders_auto_cancelled_total',
+      help: 'Số đơn mọi kiện đã huỷ mà việc nền đã huỷ (platform_cancel đơn sàn, auto_cancel đơn khác; #236)',
       registers: [metricsRegistry],
     }),
     // Không nhãn theo công ty, đơn để không nổ số chuỗi.
@@ -35,9 +41,10 @@ export function registerSalesMetrics(): void {
 }
 
 /** Ghi kết quả một lượt đã chạy hết. */
-export function recordAutoComplete(r: { completed: number; failedOrders: number; skippedCompanies: number }): void {
+export function recordAutoComplete(r: { completed: number; cancelled: number; failedOrders: number; skippedCompanies: number }): void {
   if (!metrics) return;
   metrics.completed.inc(r.completed);
+  metrics.cancelled.inc(r.cancelled);
   metrics.failures.inc({ scope: 'order' }, r.failedOrders);
   metrics.failures.inc({ scope: 'company' }, r.skippedCompanies);
   metrics.lastRun.set(Date.now() / 1000);

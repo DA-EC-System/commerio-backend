@@ -11,7 +11,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
 import { seedPackage } from '../fulfillment/helpers.ts';
-import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
+import { allCancelledWithLiveLine, noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -542,6 +542,12 @@ describe('hạn trả theo gian hàng (#236)', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     return Order.parse(res.body);
   };
+
+  it('AC24a: đơn processing mọi kiện cancelled → completionBlocker all_packages_cancelled', async () => {
+    // Việc nền không khép đơn còn món sống ngoài kiện (P2), nên đơn giữ `processing` tất định.
+    const { orderId } = await allCancelledWithLiveLine(co.companyId);
+    expect(await detail(orderId)).toMatchObject({ status: 'processing', completionBlocker: 'all_packages_cancelled' });
+  });
 
   it('AC1: gian hàng 15 ngày, giao 8 ngày trước → chờ hạn trả, hạn = mốc giao + 15 ngày', async () => {
     const { orderId, deliveredAt } = await deliveredOrder(8);

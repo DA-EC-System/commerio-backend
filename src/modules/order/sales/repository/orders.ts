@@ -345,13 +345,13 @@ export async function updateOrderAt(id: string, version: number, patch: OrderPat
 }
 
 /**
- * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền tự hoàn tất: gọi ngoài `withCompany`
- * (role chủ bảng). Hạn trả hàng, yêu cầu trả mở, COD kiểm tiếp trong `withCompany` của công ty. Lật trang theo `id`
- * tăng (`afterId` là `id` cuối trang trước, null là trang đầu), mỗi trang `limit` đơn.
+ * Đơn `processing` có kiện và mọi kiện đã dừng, **mọi công ty**, cho việc nền khép đơn: gọi ngoài `withCompany` (role
+ * chủ bảng). Hạn trả hàng, yêu cầu trả mở, COD, bước khép (hoàn tất hay huỷ vì mọi kiện đã huỷ) kiểm tiếp trong
+ * `withCompany` của công ty. Lật trang theo `id` tăng (`afterId` là `id` cuối trang trước, null là trang đầu), mỗi trang
+ * `limit` đơn.
  *
- * Đơn Đang huỷ: còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại; mọi kiện đã dừng thì chỉ còn `cancel_pending`. Mọi kiện đã dừng mà còn kiện
- * không huỷ (kiện hoá ra đã bàn giao) thì đi theo "Sàn huỷ đơn khi đã có kiện bàn giao" (25 §8.2): hoàn tất được, kể cả
- * khi lượt kéo đơn chưa chạy lại để gỡ cờ. Mọi kiện đều huỷ thì đơn phải sang `cancelled` (25 §8.2), không hoàn tất.
+ * Đơn Đang huỷ còn kiện chờ mở thì kiện đó chưa dừng nên đơn tự bị loại. Mọi kiện đều huỷ (kể cả còn `cancel_pending`)
+ * thì vào danh sách để bước khép xét (#236 PR 3, spec 5.4): huỷ khi mọi món đã huỷ, không thì giữ.
  */
 export async function findCompletionCandidates(afterId: string | null, limit: number): Promise<{ id: string; companyId: string }[]> {
   return getDb()
@@ -361,7 +361,6 @@ export async function findCompletionCandidates(afterId: string | null, limit: nu
       and(
         eq(orders.status, 'processing'),
         afterId ? gt(orders.id, afterId) : undefined,
-        sql`(not ${orders.cancelPending} or exists (select 1 from "order".packages p where p.order_id = ${orders.id} and p.status <> 'cancelled'))`,
         sql`exists (select 1 from "order".packages p where p.order_id = ${orders.id})`,
         sql`not exists (select 1 from "order".packages p where p.order_id = ${orders.id}
               and p.status not in ('delivered', 'returned', 'lost', 'cancelled'))`,

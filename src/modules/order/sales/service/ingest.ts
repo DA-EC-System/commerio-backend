@@ -1,10 +1,11 @@
 // Nhận đơn sàn (#105): kéo định kỳ (channel) gọi `ingestMarketplaceOrder` trong `withCompany`.
 // Một đơn một giao dịch: đơn, dòng, kiện, giữ hàng, lịch sử, outbox.
 import { Decimal } from 'decimal.js';
-import { publishEvent, recordTransition } from '../../../core/index.ts';
+import { assertTransition, publishEvent, recordTransition } from '../../../core/index.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findPackagesOfOrders, type PackageEvent, type PlatformLineStatus, type PlatformPackageLine, syncPlatformPackages } from '../../fulfillment/index.ts';
-import { type OrderFlag, type OrderStatus, orderCancelReasonFromLines } from '../domain/order.ts';
+import { allCancelled, AUTO_CANCEL_REASON, type OrderFlag, orderCancelReasonFromLines, orderMachine, type OrderStatus } from '../domain/order.ts';
+import { findOrder } from '../repository/order-views.ts';
 import {
   allLinesCancelled,
   cancelledLineIds,
@@ -143,7 +144,7 @@ const sameInfo = (a: OrderInfo, b: OrderInfo) =>
  * Note của cờ Cần xử lý khi sàn trả trạng thái món app chưa biết (#358). Note đầy đủ kèm mã thô (`<hằng>: <mã>`); dữ liệu
  * trước #358 chỉ có hằng. Gỡ cờ so theo tiền tố này nên khớp cả hai dạng.
  */
-const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
+export const UNKNOWN_STATUS_NOTE = 'Sàn trả trạng thái app chưa biết';
 /**
  * Note của cờ Cần xử lý khi sàn chia lại kiện mà app không tự xử lý được (#238 D29: kiện đã bàn giao, sàn gộp món vào
  * mã kiện cũ, một món ở hai mã). Chia lại xử lý được thì fulfillment tự huỷ, lập kiện, đơn không bật cờ.
@@ -217,27 +218,54 @@ async function transition(orderId: string, from: OrderStatus | null, to: OrderSt
 }
 
 /**
- * Khép đơn sàn đang huỷ sau khi kho mở kiện cuối (`open_cancel`, spec 205 D21): sàn đã huỷ xong nên không đổi
- * `updated_at` nữa, lượt kéo không chạy lại luật huỷ đơn ở `ingestMarketplaceOrder`. Đơn còn mở, mọi dòng đã huỷ đủ và
- * không còn kiện chưa huỷ thì `platform_cancel` như lượt kéo (25 §8.3 "Mọi kiện của đơn đều huỷ thì đơn → `cancelled`"),
- * gỡ `cancel_pending`; lý do, người huỷ đã có (Sale huỷ, đồng ý khách xin huỷ) thì giữ. Gọi trong `withCompany`, giao dịch
- * riêng sau khi giao dịch mở kiện commit: khoá đơn trước, không giữ khoá kiện (cùng thứ tự với lượt kéo).
+ * Khép đơn mọi kiện, mọi dòng đã huỷ (spec 205 D24, #236 PR 3). Fulfillment gọi qua `ctx` sau khi kho mở kiện cuối
+ * (`open_cancel`), việc nền khép đơn gọi lại cho lần khép lỗi trước đó (chỉ log) và cho đơn không phải đơn sàn. Sàn đã
+ * huỷ xong nên không đổi `updated_at` nữa, lượt kéo không chạy lại luật huỷ đơn ở `ingestMarketplaceOrder`.
+ * - Đơn sàn: `platform_cancel` như lượt kéo (25 §8.3 "Mọi kiện của đơn đều huỷ thì đơn → `cancelled`", #236 D3); lý do
+ *   đã có (Sale huỷ, đồng ý khách xin huỷ) thì giữ, chưa có thì lấy từ dòng.
+ * - Đơn khác: `auto_cancel` (hệ thống, lý do "Mọi kiện đã huỷ", `by: 'seller'`), chỉ từ `processing` và khi có kiện.
+ * Còn dòng chưa huỷ (món ngoài mọi kiện mà sàn còn bán) hay kiện chưa huỷ thì không làm gì. Gỡ `cancel_pending`,
+ * `cancel_requested`. Trả `true` khi vừa huỷ đơn; gọi lại trên đơn đã khép trả `false`, không ghi, không phát. Gọi trong
+ * `withCompany`, giao dịch riêng: khoá đơn trước, không giữ khoá kiện (cùng thứ tự với lượt kéo).
  */
-export async function settleCancelledOrder(orderId: string): Promise<void> {
+export async function settleCancelledOrder(orderId: string): Promise<boolean> {
   const row = await lockOrderRow(orderId);
-  if (!row || (row.status !== 'unpaid' && row.status !== 'processing')) return;
-  if (!(await allLinesCancelled(orderId))) return;
-  if ((await findPackagesOfOrders([orderId])).some((p) => p.status !== 'cancelled')) return;
-  await transition(orderId, row.status, 'cancelled', 'platform_cancel');
+  if (!row || (row.status !== 'unpaid' && row.status !== 'processing')) return false;
+  if (!(await allLinesCancelled(orderId))) return false;
+  const statuses = (await findPackagesOfOrders([orderId])).map((p) => p.status);
+  if (statuses.some((s) => s !== 'cancelled')) return false;
+  // Dòng đơn đã khoá ở trên; đọc nguồn, phương thức trả.
+  const order = (await findOrder(orderId))!;
   const after = { ...row, status: 'cancelled' as const, cancelPending: false, cancelRequested: false };
-  await updateOrder(orderId, { status: 'cancelled', cancelPending: false, cancelRequested: false, ...(await platformCancelReason(orderId, row)) });
-  await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', by: 'platform' } });
-  const flags = await eventFlags(orderId, after);
+  if (order.source === 'marketplace') {
+    await transition(orderId, row.status, 'cancelled', 'platform_cancel');
+    await updateOrder(orderId, { status: 'cancelled', cancelPending: false, cancelRequested: false, ...(await platformCancelReason(orderId, row)) });
+    await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', by: 'platform' } });
+  } else {
+    if (row.status !== 'processing' || !allCancelled(statuses)) return false;
+    assertTransition(orderMachine, 'processing', 'auto_cancel', {
+      actor: null,
+      record: { source: order.source, paymentMethod: order.paymentMethod, packages: statuses },
+    });
+    await recordTransition({
+      entityType: 'orders',
+      entityId: orderId,
+      from: 'processing',
+      to: 'cancelled',
+      action: 'auto_cancel',
+      actorId: null,
+      source: 'system',
+      reason: AUTO_CANCEL_REASON,
+    });
+    await updateOrder(orderId, { status: 'cancelled', cancelPending: false, cancelRequested: false, cancelReason: row.cancelReason || AUTO_CANCEL_REASON });
+    await publishEvent({ type: 'sales.order_cancelled', aggregateId: orderId, payload: { orderId, code: row.code, source: order.source, by: 'seller' } });
+  }
   await publishEvent({
     type: 'sales.order_status_changed',
     aggregateId: orderId,
-    payload: { orderId, code: row.code, from: row.status, to: 'cancelled', flags },
+    payload: { orderId, code: row.code, from: row.status, to: 'cancelled', flags: await eventFlags(orderId, after) },
   });
+  return true;
 }
 
 export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderId: string; created: boolean; changed: boolean }> {
