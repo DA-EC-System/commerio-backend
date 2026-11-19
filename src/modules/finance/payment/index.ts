@@ -26,6 +26,8 @@ export {
   type RefundStatus,
 } from './service/boundary.ts';
 export { markPaid, revertPaid, revertRefunded } from './service/state.ts';
+// Xoá gian hàng đã ngắt (#398): finance đếm dòng tiền theo đơn để chặn xoá.
+export { paymentRowsOfOrders } from './repository/shop-purge.ts';
 // Webhook giao cho finance qua ctx (A11): payment không import finance, src/modules/finance/index.ts tiêm `onVerifiedPayment`.
 export {
   type PaymentContext,

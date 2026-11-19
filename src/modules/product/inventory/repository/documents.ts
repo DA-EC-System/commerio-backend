@@ -5,7 +5,7 @@ import { and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { getDb } from '../../../../shared/db/client.ts';
 import type { DocumentRef, SystemDocKind } from '../domain/documents.ts';
 import { companyOfTransaction } from './levels.ts';
-import { stockDocumentLines, stockDocuments } from './schema.ts';
+import { stockDocumentLines, stockDocuments, stockMoves } from './schema.ts';
 
 export type DocumentSourceType = 'package' | 'return_request' | 'unmatched_parcel';
 
@@ -339,4 +339,72 @@ export function docsFromSource(sourceType: string, sourceIds: readonly string[])
     .select({ id: stockDocuments.id, number: stockDocuments.number, sourceId: stockDocuments.sourceId })
     .from(stockDocuments)
     .where(and(eq(stockDocuments.sourceType, sourceType), inArray(stockDocuments.sourceId, [...sourceIds])));
+}
+
+/** Phạm vi phiếu kho của một gian hàng bị xoá (#398): id các chứng từ nguồn thuộc gian hàng. */
+export interface ShopDocumentRefs {
+  shopId: string;
+  orderIds: readonly string[];
+  packageIds: readonly string[];
+  returnRequestIds: readonly string[];
+  parcelIds: readonly string[];
+}
+
+/**
+ * Khoá (`FOR UPDATE`, id tăng dần) phiếu thuộc gian hàng: `shop_id` của gian hàng, kiểm kê đầu kỳ (`shop_setup`), phiếu
+ * theo kiện, yêu cầu trả, kiện trả lạc của gian hàng, hoặc `order_id` thuộc đơn của gian hàng.
+ */
+export async function lockShopDocuments(refs: ShopDocumentRefs): Promise<{ id: string; number: string; status: DocRow['status'] }[]> {
+  const t = stockDocuments;
+  const bySource = (type: string, ids: readonly string[]) => (ids.length ? and(eq(t.sourceType, type), inArray(t.sourceId, [...ids])) : undefined);
+  return getDb()
+    .select({ id: t.id, number: t.number, status: t.status })
+    .from(t)
+    .where(
+      or(
+        eq(t.shopId, refs.shopId),
+        and(eq(t.sourceType, 'shop_setup'), eq(t.sourceId, refs.shopId)),
+        bySource('package', refs.packageIds),
+        bySource('return_request', refs.returnRequestIds),
+        bySource('unmatched_parcel', refs.parcelIds),
+        refs.orderIds.length ? inArray(t.orderId, [...refs.orderIds]) : undefined,
+      ),
+    )
+    .orderBy(asc(t.id))
+    .for('update');
+}
+
+/** Id các phiếu đã có dòng thẻ kho trỏ tới (vd phiếu kiểm hàng hoàn nháp: `receiveBack` cộng chờ xử lý ngay). */
+export async function documentsWithMoves(ids: readonly string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await getDb()
+    .selectDistinct({ id: stockMoves.sourceId })
+    .from(stockMoves)
+    .where(and(eq(stockMoves.sourceType, 'stock_document'), inArray(stockMoves.sourceId, [...ids])));
+  return new Set(rows.map((r) => r.id));
+}
+
+/** Xoá phiếu (dòng trước) theo id; trả số phiếu đã xoá. */
+export async function deleteDocuments(ids: readonly string[]): Promise<number> {
+  if (!ids.length) return 0;
+  const db = getDb();
+  await db.delete(stockDocumentLines).where(inArray(stockDocumentLines.documentId, [...ids]));
+  const rows = await db.delete(stockDocuments).where(inArray(stockDocuments.id, [...ids])).returning({ id: stockDocuments.id });
+  return rows.length;
+}
+
+/** Cắt tham chiếu gian hàng: `shop_id` null, nối một dòng ghi chú; `source_id`, `order_id` giữ nguyên. Trả số phiếu. */
+export async function detachDocuments(ids: readonly string[], line: string): Promise<number> {
+  if (!ids.length) return 0;
+  const rows = await getDb()
+    .update(stockDocuments)
+    .set({
+      shopId: null,
+      note: sql`concat_ws(E'\n', ${stockDocuments.note}, ${line}::text)`,
+      version: sql`${stockDocuments.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(inArray(stockDocuments.id, [...ids]))
+    .returning({ id: stockDocuments.id });
+  return rows.length;
 }

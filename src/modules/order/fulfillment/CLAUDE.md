@@ -188,6 +188,7 @@ Danh sách và chi tiết dựng `PackageSummary` theo lô ở `service/packages
 - `shipLateMappedLines(packageId)` → phiếu `XK` mới: `remapPackageLines` gọi sau khi gán `variant_id` cho dòng kiện đã rời kho. Kiện chưa rời kho hoặc `before_cutoff` thì không làm gì.
 - `settleOpeningStocktake({ shopId, documentId, countedAt })` → `{ deducted, storedOnly, held }`: **channel #289** gọi trong giao dịch thoát chờ kiểm kê.
 - `requestAllocation(variantIds)`: xếp lượt phân hàng cùng giao dịch của bên gọi (#237, #239).
+- `purgeOrderPackages(refs)` → `{ packageIds, parcelIds, packages, packageLines, returnParcels }` (**channel xoá gian hàng**, #398): khoá kiện của `refs.orderIds` theo id, nhả phần đang giữ qua cổng tồn (không thẻ kho), xoá dòng kiện, kiện, kiện trả lạc (và dòng) gắn `refs.returnRequestIds`, `requestAllocation` cho SKU vừa nhả. Phải chạy trước `purgeShopOrders` của sales trong cùng giao dịch (trigger kiểm bằng). `ShopOrderRefs` khai ở đây (sales import fulfillment).
 - `getOrderCogs` (finance).
 - `packageStatusOf(packageIds)` → `Map<id, { orderId, status, deliveredAt }>` (**finance E139**): chạy trong `withCompany` của bên gọi; bỏ id sai dạng, rỗng thì không truy vấn; id công ty khác vắng trong `Map`.
 - Ghép SKU muộn (#237) bỏ qua kiện `returned` (hàng đã về kệ; trừ tồn lúc này là sai, spec 199c §10). Kiện `delivered` mà `delivery_posted_at` còn null thì `remapPackageLines` gọi `reportDelivered(packageId)` sau khi trừ.
