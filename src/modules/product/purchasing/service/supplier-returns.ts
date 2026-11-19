@@ -392,6 +392,49 @@ export async function checkReplacementSource(sourceReturnId: string, supplierId:
   return null;
 }
 
+/** Một dòng đề nghị như người lập gửi, đủ để kiểm với phiếu trả. */
+export interface ReplacementLineInput {
+  variantId?: string | null | undefined;
+  newProduct?: unknown;
+  quantity: number;
+  unitCost: number;
+}
+
+/**
+ * Dòng của đề nghị bù hàng phải lấy từ phiếu trả NCC (#365, Documents/25 §4.3 "giá bằng giá dòng gốc"): đúng SKU của
+ * phiếu, số không quá số đã trả, giá nhập bằng giá dòng gốc (làm tròn tới đồng như API trả). Trả lỗi theo
+ * `lines.<i>.<trường>` và giá đúng của từng SKU (chuỗi `numeric` của dòng gốc) để lưu nguyên, không mất phần lẻ.
+ * Dòng gốc chưa có giá (phiếu lập khi chưa có giá vốn) thì không khoá giá dòng đó.
+ */
+export async function checkReplacementLines(
+  sourceReturnId: string,
+  lines: readonly ReplacementLineInput[],
+): Promise<{ errors: Record<string, string>; costs: Map<string, string> }> {
+  const row = isUuid(sourceReturnId) ? await findReturn(sourceReturnId) : undefined;
+  const errors: Record<string, string> = {};
+  const costs = new Map<string, string>();
+  if (!row) return { errors, costs };
+  const returned = new Map<string, { quantity: number; unitCost: string | null }>();
+  for (const l of (await linesOfReturns([row.id])).get(row.id) ?? []) {
+    const prev = returned.get(l.variantId);
+    returned.set(l.variantId, { quantity: (prev?.quantity ?? 0) + l.quantity, unitCost: prev?.unitCost ?? l.unitCost });
+  }
+  lines.forEach((l, i) => {
+    const source = l.variantId ? returned.get(l.variantId) : undefined;
+    if (l.newProduct || !l.variantId || !source) {
+      errors[`lines.${i}.variantId`] = `Đề nghị bù hàng chỉ gồm SKU của phiếu trả ${row.number}`;
+      return;
+    }
+    if (l.quantity > source.quantity) errors[`lines.${i}.quantity`] = `Tối đa ${source.quantity} (số đã trả ở ${row.number})`;
+    if (source.unitCost === null) return;
+    costs.set(l.variantId, source.unitCost);
+    if (toDong(source.unitCost) !== l.unitCost) {
+      errors[`lines.${i}.unitCost`] = `Theo giá dòng gốc ${row.number}: ${toDong(source.unitCost).toLocaleString('vi-VN')} đ`;
+    }
+  });
+  return { errors, costs };
+}
+
 /** Gắn đề nghị bù hàng vào phiếu trả (cùng giao dịch lập đề nghị). */
 export async function linkReplacement(sourceReturnId: string, requestId: string): Promise<void> {
   const row = (await findReturn(sourceReturnId, 'update'))!;

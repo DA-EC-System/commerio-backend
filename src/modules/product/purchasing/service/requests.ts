@@ -22,7 +22,7 @@ import {
 } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail, toSummaries } from './request-views.ts';
-import { checkReplacementSource, linkReplacement } from './supplier-returns.ts';
+import { checkReplacementLines, checkReplacementSource, linkReplacement } from './supplier-returns.ts';
 
 export interface RequestLineInput {
   variantId?: string | null | undefined;
@@ -79,15 +79,21 @@ async function checkSupplier(supplierId: string, errors: Record<string, string>)
   else if (!supplier.active) errors.supplierId = 'Nhà cung cấp đã ngừng giao dịch';
 }
 
-/** Kiểm dòng cần đọc DB (biến thể, danh mục, tên sản phẩm mới); lỗi theo `lines.<i>.<trường>`. */
-async function buildLines(input: RequestInput): Promise<NewLine[]> {
+/**
+ * Kiểm dòng cần đọc DB (biến thể, danh mục, tên sản phẩm mới); lỗi theo `lines.<i>.<trường>`. `replacementOf`: phiếu
+ * trả NCC mà đề nghị này bù hàng (lập mới thì là `sourceReturnId` gửi lên, sửa thì là phiếu đã gắn): dòng phải theo
+ * phiếu đó, giá lưu đúng giá dòng gốc (#365).
+ */
+async function buildLines(input: RequestInput, replacementOf: string | null = input.sourceReturnId ?? null): Promise<NewLine[]> {
   const errors: Record<string, string> = {};
   await checkSupplier(input.supplierId, errors);
-  // Đề nghị bù hàng cần phiếu trả NCC `replaced` chưa có đề nghị bù, cùng NCC (B4, #210).
+  // Đề nghị bù hàng cần phiếu trả NCC `replaced` chưa có đề nghị bù, cùng NCC (B4, #210). Chỉ kiểm lúc lập.
   if (input.sourceReturnId) {
     const problem = await checkReplacementSource(input.sourceReturnId, input.supplierId);
     if (problem) errors.sourceReturnId = problem;
   }
+  const replacement = replacementOf ? await checkReplacementLines(replacementOf, input.lines) : null;
+  if (replacement) Object.assign(errors, replacement.errors);
 
   const variantIds = input.lines.flatMap((l) => (l.variantId ? [l.variantId] : []));
   const variants = new Map((await getVariants(variantIds)).map((v) => [v.id, v]));
@@ -111,7 +117,7 @@ async function buildLines(input: RequestInput): Promise<NewLine[]> {
     newProductName: l.newProduct?.name ?? null,
     newCategoryId: l.newProduct?.categoryId ?? null,
     orderedQty: l.quantity,
-    unitPrice: String(l.unitCost),
+    unitPrice: (l.variantId && replacement?.costs.get(l.variantId)) || String(l.unitCost),
   }));
 }
 
@@ -160,7 +166,7 @@ export async function updateRequestDraft(actor: Actor, id: string, input: Reques
     if (row.status !== 'draft' && row.status !== 'changes_requested') {
       throw new AppError(409, 'not_draft', 'Chỉ sửa được đề nghị nháp hoặc bị trả về');
     }
-    const lines = await buildLines({ ...input, sourceReturnId: null });
+    const lines = await buildLines({ ...input, sourceReturnId: null }, row.sourceReturnId);
     const old = await findLines([id]);
     const note = input.note || null;
     await deleteLines(id);
