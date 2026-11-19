@@ -16,7 +16,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
@@ -106,6 +106,9 @@ let other: Awaited<ReturnType<typeof createCompany>>;
 let sale: Awaited<ReturnType<typeof addMember>>;
 let warehouse: Awaited<ReturnType<typeof addMember>>;
 let shopId: string;
+
+/** Spec sàn của mọi sản phẩm giả (#400 lát 15, thay ghép danh mục cũ); sản phẩm đã có thì giữ. */
+const seed = () => seedSpecs(company.companyId, 'lazada', '14275', variants, { brand: 'No Brand' });
 const as = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 
 /** Đọc trọn bản sao như nút Tải lại (bỏ khoảng chờ 60 giây), chạy việc nền ngay. */
@@ -138,6 +141,7 @@ const flagOf = async (variantId: string, externalSkuId: string) => {
 async function mapped(extra: Partial<RemoteSku> = {}) {
   const r = newRemote(extra);
   const v = newVariant();
+  await seed();
   await reload();
   const res = await match(r.externalSkuId, v.id);
   expect(res.status).toBe(200);
@@ -152,12 +156,6 @@ beforeAll(async () => {
   const res = await as(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
-  const map = await as(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '14275',
-    attributes: { brand: 'No Brand' },
-    version: null,
-  });
-  expect(map.status).toBe(200);
 });
 
 describe('bản sao lưu tên tiếng Anh', () => {
@@ -326,6 +324,7 @@ describe('app đẩy, sửa nội dung thì không bật cờ (AC-5)', () => {
   /** Listing `pushing` của biến thể mới; `cols` ghi đè cột (tên cột SQL). */
   async function pushing(cols: Record<string, unknown> = {}) {
     const v = newVariant();
+    await seed();
     const all = { company_id: company.companyId, shop_id: shopId, variant_id: v.id, seller_sku: v.sku, status: 'pushing', push_started_at: new Date(), ...cols };
     const keys = Object.keys(all);
     const { rows } = await testPool().query<{ id: string }>(

@@ -308,6 +308,93 @@ describe('adapter TikTok: SKU', () => {
     ]);
   });
 
+  // Get Product 202309 (OAS cục bộ, gọi thật 18/11/2026, fixture tiktok-product.json): `category_chains` từ gốc tới lá, lá có `is_leaf`.
+  it('#400 lát 13: listSkusChanged điền externalCategoryId từ category_chains của Get Product; sản phẩm không đọc chi tiết thì không có', async () => {
+    const fetchFn = fakeFetch(
+      ok({ total_count: 2, next_page_token: '', products: [product('1', 'ACTIVATE', [sku('11', 'AO-M', [2])]), product('2', 'DELETED', [sku('21', 'CU')])] }),
+      ok({
+        id: '1',
+        main_images: [],
+        skus: [{ id: '11' }],
+        category_chains: [
+          { id: '600001', is_leaf: false, local_name: 'Nhà cửa', parent_id: '0' },
+          { id: '600042', is_leaf: true, local_name: 'Cốc có quai', parent_id: '600001' },
+        ],
+      }),
+    );
+    const skus = await createTiktokAdapter(config, fetchFn).listSkusChanged!(packed(), new Date('2026-11-12T01:00:00Z'));
+    expect(skus.map((s) => [s.externalSkuId, s.externalCategoryId])).toEqual([
+      ['11', '600042'],
+      ['21', undefined],
+    ]);
+    expect(skus[1]).not.toHaveProperty('externalCategoryId');
+  });
+
+  // Review BE2 P2-1: lượt đọc theo giờ sửa không bỏ lỡ category của sản phẩm đang có listing. Bên gọi truyền
+  // `priorityProductIds`; adapter đọc chi tiết các sản phẩm đó trước (giờ sửa tăng dần), và đánh `detailUnreadSince`
+  // (`update_time` của Search Products) cho SKU của sản phẩm chưa đọc được vì trần 50 hay sàn dừng giữa chừng.
+  describe('listSkusChanged: ưu tiên, sản phẩm chưa đọc được (review BE2 P2-1)', () => {
+    const at = (s: number) => new Date(s * 1000);
+    const changed = (products: object[], detail: (id: string) => Response, priority?: string[]) => {
+      const fetchFn = vi.fn<typeof fetch>(async (url) => {
+        const u = new URL(String(url));
+        return u.pathname.endsWith('/search') ? ok({ next_page_token: '', products }) : detail(u.pathname.split('/').pop()!);
+      });
+      const run = createTiktokAdapter(config, fetchFn).listSkusChanged!(packed(), new Date('2026-11-12T01:00:00Z'), priority && { priorityProductIds: new Set(priority) });
+      return { fetchFn, run };
+    };
+    const leafOf = (id: string) => ok({ skus: [], category_chains: [{ id: `c${id}`, is_leaf: true }] });
+    const called = (fetchFn: ReturnType<typeof vi.fn<typeof fetch>>) => fetchFn.mock.calls.map(([u]) => new URL(String(u)).pathname.split('/').pop()).filter((x) => x !== 'search');
+
+    it('sản phẩm ưu tiên đọc trước sản phẩm nhiều SKU; quá trần thì SKU chưa đọc mang detailUnreadSince, SKU đã đọc thì không', async () => {
+      const multi = Array.from({ length: 55 }, (_, i) => ({ ...product(`m${i}`, 'ACTIVATE', [sku(`m${i}a`, `M${i}A`), sku(`m${i}b`, `M${i}B`)]), update_time: 1794445300 + i }));
+      const listed = ['l0', 'l1', 'l2'].map((id, i) => ({ ...product(id, 'ACTIVATE', [sku(`${id}a`, id)]), update_time: 1794445200 + i }));
+      const { fetchFn, run } = changed([...multi, ...listed], leafOf, ['l0', 'l1', 'l2']);
+      const skus = await run;
+      expect(called(fetchFn)).toHaveLength(50);
+      expect(called(fetchFn).slice(0, 3).sort()).toEqual(['l0', 'l1', 'l2']);
+      expect(skus.find((s) => s.externalSkuId === 'l2a')).toMatchObject({ externalCategoryId: 'cl2' });
+      expect(skus.find((s) => s.externalSkuId === 'l2a')).not.toHaveProperty('detailUnreadSince');
+      // 3 ưu tiên + 47 nhiều SKU đọc được; m47…m54 vượt trần.
+      expect(skus.find((s) => s.externalSkuId === 'm46a')).not.toHaveProperty('detailUnreadSince');
+      expect(skus.find((s) => s.externalSkuId === 'm47b')).toMatchObject({ detailUnreadSince: at(1794445347) });
+      expect(skus.filter((s) => s.detailUnreadSince).length).toBe(16);
+    });
+
+    it('nhiều sản phẩm ưu tiên hơn trần: đọc theo giờ sửa tăng dần, phần chưa đọc là các sản phẩm sửa sau cùng', async () => {
+      const listed = Array.from({ length: 52 }, (_, i) => ({ ...product(`l${i}`, 'ACTIVATE', [sku(`l${i}a`, `L${i}`)]), update_time: 1794445400 - i }));
+      const { run } = changed(listed, leafOf, listed.map((p) => p.id));
+      const unread = (await run).filter((s) => s.detailUnreadSince).map((s) => [s.externalProductId, s.detailUnreadSince]);
+      expect(unread).toEqual([
+        ['l0', at(1794445400)],
+        ['l1', at(1794445399)],
+      ]);
+    });
+
+    it('sàn dừng giữa chừng (thiếu scope): sản phẩm chưa gọi và sản phẩm gây dừng mang detailUnreadSince', async () => {
+      const listed = Array.from({ length: 8 }, (_, i) => ({ ...product(`l${i}`, 'ACTIVATE', [sku(`l${i}a`, `L${i}`)]), update_time: 1794445200 + i }));
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const { fetchFn, run } = changed(listed, (id) => (id === 'l0' ? json({ code: 105005, message: 'no scope', request_id: 'r' }) : leafOf(id)), listed.map((p) => p.id));
+      const skus = await run;
+      warn.mockRestore();
+      const read = new Set(called(fetchFn).filter((id) => id !== 'l0'));
+      expect(read.size).toBe(4);
+      for (const s of skus) {
+        if (read.has(s.externalProductId)) expect(s).not.toHaveProperty('detailUnreadSince');
+        else expect(s.detailUnreadSince).toEqual(at(1794445200 + Number(s.externalProductId.slice(1))));
+      }
+    });
+
+    it('lỗi riêng của một sản phẩm (sàn không dừng): không đánh chưa đọc, để lần sửa sau', async () => {
+      const listed = ['l0', 'l1'].map((id, i) => ({ ...product(id, 'ACTIVATE', [sku(`${id}a`, id)]), update_time: 1794445200 + i }));
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const { run } = changed(listed, (id) => (id === 'l0' ? json({ code: 12052048, message: 'product not exist', request_id: 'r' }) : leafOf(id)), ['l0', 'l1']);
+      const skus = await run;
+      warn.mockRestore();
+      expect(skus.filter((s) => s.detailUnreadSince)).toEqual([]);
+    });
+  });
+
   it('review vòng 2 N1: trang rỗng giữa chừng (token vẫn khác rỗng) mà chưa đủ `total_count` thì rejected `incomplete_list`', async () => {
     const fetchFn = fakeFetch(
       ok({ total_count: 3, next_page_token: 'p2', products: [product('1', 'ACTIVATE', [sku('11', 'A')])] }),

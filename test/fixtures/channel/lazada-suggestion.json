@@ -1,0 +1,34 @@
+{
+  "data": {
+    "categorySuggestions": [
+      {
+        "categoryPath": "Men's Clothing>Tops>T-Shirts & Tanks",
+        "categoryName": "T-Shirts & Tanks",
+        "categoryId": 7930
+      },
+      {
+        "categoryPath": "Sports Shoes and Clothing>Men's Sports Clothing>T-Shirts & Tops",
+        "categoryName": "T-Shirts & Tops",
+        "categoryId": 7545
+      },
+      {
+        "categoryPath": "Women's Clothing>Tops>T-Shirts",
+        "categoryName": "T-Shirts",
+        "categoryId": 7932
+      },
+      {
+        "categoryPath": "Kids' Fashion>Kids' Clothing>Boy's Clothing>Tops>Tops, Tees & Polos",
+        "categoryName": "Tops, Tees & Polos",
+        "categoryId": 4184
+      },
+      {
+        "categoryPath": "Men's Clothing>Tops>Polo Shirts",
+        "categoryName": "Polo Shirts",
+        "categoryId": 14275
+      }
+    ]
+  },
+  "code": "0",
+  "request_id": "2102e04417950055354256958",
+  "_trace_id_": "2141042217950055354227414e9aa5"
+}

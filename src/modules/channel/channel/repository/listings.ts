@@ -134,6 +134,20 @@ export async function markCreateAttempted(id: string): Promise<void> {
 }
 
 /**
+ * Category thật của listing trên sàn (#400, `external_category_id`): cột thông tin, không tăng `version` (L029: việc đẩy, ghép
+ * đang giữ version lúc đọc). Trả id các dòng đã đổi giá trị.
+ */
+export async function setListingCategory(ids: readonly string[], externalCategoryId: string): Promise<string[]> {
+  if (!ids.length) return [];
+  const rows = await getDb()
+    .update(listings)
+    .set({ externalCategoryId })
+    .where(and(inArray(listings.id, [...ids]), sql`${listings.externalCategoryId} is distinct from ${externalCategoryId}`))
+    .returning({ id: listings.id });
+  return rows.map((r) => r.id);
+}
+
+/**
  * Tồn trên sàn vừa bị đẩy về 0 mà ngắt bị chặn (#207): như `markStockPendingRows`, thêm `platform_stock = 0`.
  */
 export async function markStockPendingIds(ids: readonly string[]): Promise<void> {

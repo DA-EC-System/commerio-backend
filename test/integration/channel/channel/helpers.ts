@@ -66,3 +66,29 @@ export async function activateShop(shopId: string): Promise<void> {
     [shopId],
   );
 }
+
+/**
+ * Spec sàn của sản phẩm (#400 lát 15): dữ liệu đẩy dựng thẳng bằng spec thay cho ghép danh mục cũ (`PUT category-maps`, sẽ bỏ).
+ * Mỗi sản phẩm một dòng `version = 1`, trục của biến thể ánh xạ `__custom`; sản phẩm đã có spec của sàn thì giữ.
+ */
+export async function seedSpecs(
+  companyId: string,
+  platform: string,
+  externalCategoryId: string,
+  variants: readonly { productId: string; attributes?: readonly { attributeId: string }[] }[],
+  attributes: Record<string, string | string[]> = {},
+): Promise<void> {
+  const byProduct = new Map<string, Record<string, string>>();
+  for (const v of variants) {
+    const axes = byProduct.get(v.productId) ?? {};
+    for (const a of v.attributes ?? []) axes[a.attributeId] = '__custom';
+    byProduct.set(v.productId, axes);
+  }
+  for (const [productId, axisMap] of byProduct) {
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, axis_map, source, version)
+       values ($1, $2, $3, $4, $5, $6, 'push', 1) on conflict (product_id, platform) do nothing`,
+      [companyId, productId, platform, externalCategoryId, JSON.stringify(attributes), JSON.stringify(axisMap)],
+    );
+  }
+}

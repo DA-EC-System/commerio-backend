@@ -15,7 +15,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const productId = randomUUID();
@@ -40,7 +40,8 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
 const ok = variant('CMR-OK');
 const noPrice = variant('CMR-NOPRICE');
 const noDims = variant('CMR-NODIMS', { weightG: null });
-const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID() });
+// Spec sàn theo sản phẩm cha (#400): sản phẩm khác, danh mục chưa ghép.
+const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID(), productId: randomUUID() });
 const paused = variant('CMR-PAUSED', { businessStatus: 'paused' });
 const archived = variant('CMR-ARCHIVED', { archived: true });
 const all = [ok, noPrice, noDims, unmapped, paused, archived];
@@ -70,7 +71,8 @@ const productImageUrls = vi.fn(async (ids: readonly string[], max: number) =>
   ),
 );
 const port = {
-  variants: async (ids?: readonly string[]) => all.filter((v) => !ids || ids.includes(v.id)),
+  variants: async (ids?: readonly string[], opts?: { productIds?: readonly string[] }) =>
+    all.filter((v) => (!ids || ids.includes(v.id)) && (!opts?.productIds || opts.productIds.includes(v.productId))),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, id === noPrice.id ? null : new Decimal(150000)])),
   availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
   productImageUrls,
@@ -102,8 +104,21 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 /** Như FE: chỉ `{ variantIds }`; `imageUrls` cũ gửi kèm thì BE bỏ qua (#303). */
-const push = (variantIds: string[], imageUrls?: unknown) =>
-  auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(imageUrls === undefined ? { variantIds } : { variantIds, imageUrls });
+/** Sản phẩm dùng ghép danh mục cũ (ca A18), không chèn spec sẵn. */
+const legacy = new Set<string>();
+/** Spec sàn của mọi sản phẩm trong catalog giả (#400 lát 15), trừ sản phẩm "chưa ghép" và sản phẩm của ca ghép cũ. */
+const seedAll = () =>
+  seedSpecs(
+    company.companyId,
+    'lazada',
+    '14275',
+    all.filter((v) => v !== unmapped && !legacy.has(v.productId)),
+    { brand: 'No Brand' },
+  );
+const push = async (variantIds: string[], imageUrls?: unknown) => {
+  await seedAll();
+  return auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(imageUrls === undefined ? { variantIds } : { variantIds, imageUrls });
+};
 const results = async (variantIds: string[], imageUrls?: unknown) => {
   const res = await push(variantIds, imageUrls);
   expect(res.status).toBe(200);
@@ -129,6 +144,7 @@ async function jobsOf(listingId: string) {
 
 /** Chạy việc nền của listing như worker: listing có mã sàn, `under_review`. */
 async function runJob(listingId: string) {
+  await seedAll();
   await runListingPush(port, { companyId: company.companyId, shopId, listingId, imageUrls: CATALOG });
 }
 
@@ -137,12 +153,6 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
-  const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '14275',
-    attributes: { brand: 'No Brand' },
-    version: null,
-  });
-  expect(map.status).toBe(200);
 });
 
 describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
@@ -167,6 +177,32 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       [row.id],
     );
     expect(history.rows).toEqual([{ from_state: null, to_state: 'pushing', action: 'push', by_system: false }]);
+  });
+
+  // Ghép danh mục cũ (route `PUT category-maps`) còn tới lát 16; ca này dùng sản phẩm, danh mục riêng.
+  it('#400 A18: lần đẩy chép ghép danh mục thành spec version 0, trục __custom; route ghép cũ cập nhật bản chép; category đổi chặn spec_incomplete', async () => {
+    const legacyCategory = randomUUID();
+    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: legacyCategory });
+    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: legacyCategory, weightG: null });
+    all.push(first, second);
+    legacy.add(first.productId);
+    catalogImages.set(first.productId, CATALOG);
+    const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${legacyCategory}`)).send({
+      externalCategoryId: '14275',
+      attributes: { brand: 'No Brand' },
+      version: null,
+    });
+    expect(map.status).toBe(200);
+    expect((await results([first.id]))[0]).toMatchObject({ status: 'pushing' });
+    const spec = async () =>
+      (await testPool().query('select version, external_category_id, attributes, category_status from channel.product_specs where product_id = $1 and platform = $2', [first.productId, 'lazada'])).rows[0];
+    expect(await spec()).toMatchObject({ version: 0, external_category_id: '14275', attributes: { brand: 'No Brand' }, category_status: 'ok' });
+    const put = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${legacyCategory}`)).send({ externalCategoryId: '14276', attributes: {}, version: map.body.version });
+    expect(put.status).toBe(200);
+    expect(await spec()).toMatchObject({ version: 0, external_category_id: '14276' });
+    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [first.productId]);
+    const [r] = await results([second.id]);
+    expect(r).toMatchObject({ code: 'spec_incomplete' });
   });
 
   it('sản phẩm không có ảnh catalog, listing chưa có ảnh trên sàn: images_missing (cổng không trả ảnh, không 5xx)', async () => {
@@ -337,6 +373,43 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect(items.map((i) => i.sku)).not.toContain('CMR-ARCHIVED');
     expect(items.find((i) => i.sku === 'CMR-OK')).toMatchObject({ price: 150000, listing: { status: 'under_review', pushError: null } });
     expect(items.find((i) => i.sku === 'CMR-NOPRICE')).toMatchObject({ price: null, listing: null });
+  });
+
+  it('#400 §18.5: specStatus theo sản phẩm với sàn của gian hàng (một spec cho mọi biến thể cùng sản phẩm)', async () => {
+    const statusOf = async () => {
+      const items = ListingList.parse((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`))).body).items;
+      return (sku: string) => items.find((i) => i.sku === sku)?.specStatus;
+    };
+    let of = await statusOf();
+    expect(of('CMR-OK')).toBe('complete');
+    expect(of('CMR-NOPRICE')).toBe('complete'); // cùng sản phẩm cha, một spec
+    expect(of('CMR-UNMAPPED')).toBe('missing');
+    await testPool().query("update channel.product_specs set category_status = 'changed' where product_id = $1", [ok.productId]);
+    try {
+      of = await statusOf();
+      expect(of('CMR-OK')).toBe('incomplete');
+    } finally {
+      await testPool().query("update channel.product_specs set category_status = 'ok' where product_id = $1", [ok.productId]);
+    }
+  });
+
+  it('review BE2 P2-6: specStatus và request đẩy xét cùng tập biến thể (cả biến thể lưu trữ): trục chỉ ở biến thể lưu trữ chưa ánh xạ', async () => {
+    const live = ownProduct('CMR-AXIS', CATALOG);
+    const axisId = randomUUID();
+    all.push(
+      variant(`CMR-AXIS-OLD-${randomUUID().slice(0, 6)}`, {
+        productId: live.productId,
+        archived: true,
+        attributes: [{ attributeId: axisId, attributeName: 'Màu', valueId: randomUUID(), value: 'Đỏ' }],
+      }),
+    );
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, version) values ($1, $2, 'lazada', '14275', '{"brand":"No Brand"}', 'push', 1)`,
+      [company.companyId, live.productId],
+    );
+    const items = ListingList.parse((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`))).body).items;
+    expect(items.find((i) => i.variantId === live.id)?.specStatus).toBe('incomplete');
+    expect((await results([live.id]))[0]).toMatchObject({ code: 'spec_incomplete' });
   });
 
   it('GET listings: thumbnailUrl là ảnh đại diện catalog, null khi sản phẩm không có ảnh (#303)', async () => {

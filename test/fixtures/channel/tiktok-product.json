@@ -1,0 +1,54 @@
+{
+  "category_chains": [
+    {
+      "id": "600024",
+      "is_leaf": false,
+      "local_name": "Đồ dùng nhà bếp",
+      "parent_id": "0"
+    },
+    {
+      "id": "859400",
+      "is_leaf": false,
+      "local_name": "Đồ dùng uống nước",
+      "parent_id": "600024"
+    },
+    {
+      "id": "600042",
+      "is_leaf": true,
+      "local_name": "Cốc có quai",
+      "parent_id": "859400"
+    }
+  ],
+  "product_attributes": [
+    {
+      "id": "100149",
+      "name": "Quốc gia xuất xứ",
+      "values": [
+        {
+          "id": "1000854",
+          "name": "Việt Nam"
+        }
+      ]
+    },
+    {
+      "id": "101489",
+      "name": "Tên tổ chức chịu trách nhiệm hàng hóa",
+      "values": [
+        {
+          "id": "7709039997785261830",
+          "name": "Nhóm đồ án Commerio (dữ liệu thử)"
+        }
+      ]
+    },
+    {
+      "id": "101490",
+      "name": "Địa chỉ tổ chức chịu trách nhiệm hàng hóa",
+      "values": [
+        {
+          "id": "7709040191014635316",
+          "name": "268 Lý Thường Kiệt, Phường 14, Quận 10, TP.HCM"
+        }
+      ]
+    }
+  ]
+}
