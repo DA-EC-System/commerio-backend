@@ -1,0 +1,3 @@
+ALTER TYPE "order"."open_purpose" ADD VALUE 'remap';--> statement-breakpoint
+ALTER TABLE "order"."package_lines" ADD COLUMN "remap_pending" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "order"."package_lines" ADD CONSTRAINT "package_lines_remap_pending" CHECK (not "order"."package_lines"."remap_pending" or "order"."package_lines"."variant_id" is not null or "order"."package_lines"."stock_untracked");

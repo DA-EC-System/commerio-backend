@@ -337,7 +337,7 @@ async function createPackage(
     replacesPackageId: resplit?.replacesPackageId ?? null,
     waybillKept: false,
     shipping,
-    lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false, pendingDropQty: 0 })),
+    lines: rows.map((l, i) => ({ ...l, id: lineIds[i]!, stockDeducted: false, pendingDropQty: 0, remapPending: false })),
   };
   // Kiện lần đầu thấy đã rời kho: đơn đặt trước mốc kéo đơn thì chỉ lưu (kiểm kê đã tính), còn lại trừ (25 §8.1).
   // Kiện vào thẳng `returned` (D9) cũng chỉ lưu: không phiếu `KT`, không `package_returned`.

@@ -227,8 +227,8 @@ const handoverColumns = {
   lostClaimCode: packages.lostClaimCode,
 };
 
-/** Dòng kiện kèm dòng đơn và số chờ bỏ (spec 205 §5.10). */
-export type PackageLineRow = PlanLine & { orderLineId: string; pendingDropQty: number };
+/** Dòng kiện kèm dòng đơn, số chờ bỏ (spec 205 §5.10) và dấu chờ đổi ghép (spec 237 §5.6). */
+export type PackageLineRow = PlanLine & { orderLineId: string; pendingDropQty: number; remapPending: boolean };
 
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
 export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, PackageLineRow[]>> {
@@ -245,6 +245,7 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
       stockDeducted: packageLines.stockDeducted,
       stockUntracked: packageLines.stockUntracked,
       pendingDropQty: packageLines.pendingDropQty,
+      remapPending: packageLines.remapPending,
     })
     .from(packageLines)
     .where(inArray(packageLines.packageId, [...packageIds]))
@@ -259,9 +260,16 @@ export async function packageShopOf(id: string): Promise<{ shopId: string | null
   return row;
 }
 
+/** Kiện đã khoá cho luật đổi ghép (spec 237 §5.5, §5.6): kèm mục đích Cần mở và dòng có dấu chờ đổi ghép. */
+export type RemapLockedPackage = Omit<HandoverPackage, 'lines'> & { openPurpose: OpenPurpose | null; lines: PackageLineRow[] };
+
 /** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
-export async function lockPackage(id: string): Promise<(Omit<HandoverPackage, 'lines'> & { lines: PackageLineRow[] }) | undefined> {
-  const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
+export async function lockPackage(id: string): Promise<RemapLockedPackage | undefined> {
+  const [row] = await getDb()
+    .select({ ...handoverColumns, openPurpose: packages.openPurpose })
+    .from(packages)
+    .where(eq(packages.id, id))
+    .for('update');
   if (!row) return undefined;
   return { ...row, lines: (await planLinesOf([row.id])).get(row.id)! };
 }
@@ -349,11 +357,11 @@ export function readOrderPackages(orderId: string): Promise<PackageRow[]> {
  * Kiện có dòng trỏ tới các dòng đơn (mọi trạng thái) kèm dòng, khoá theo id tăng dần tới hết giao dịch (spec 237 §5.5,
  * thứ tự khoá §5.8: sau khoá advisory phân hàng).
  */
-export async function lockPackagesOfOrderLines(orderLineIds: readonly string[]): Promise<(HandoverPackage & { lines: PackageLineRow[] })[]> {
+export async function lockPackagesOfOrderLines(orderLineIds: readonly string[]): Promise<RemapLockedPackage[]> {
   if (!orderLineIds.length) return [];
   const db = getDb();
   const rows = await db
-    .select(handoverColumns)
+    .select({ ...handoverColumns, openPurpose: packages.openPurpose })
     .from(packages)
     .where(
       inArray(

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { type AnyPgColumn, boolean, check, index, integer, jsonb, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
+import { OPEN_PURPOSES, type OpenPurpose } from '../domain/open-purpose.ts';
 
 // Mọi bảng của module con `fulfillment` khai báo trong schema của module lớn `order` (Documents/19 D1).
 // `order_id`, `order_line_id` (sales) và `variant_id` (product), người làm (staff) là uuid thường.
@@ -21,13 +22,9 @@ export const packageStatus = fulfillmentSchema.enum('package_status', [
   'lost',
   'cancelled',
 ]);
-/**
- * Vì sao kiện đã đóng chờ mở: `cancel` (đơn huỷ), `edit`, `resplit` (sàn chia lại kiện), `stocktake` (phiếu kiểm kê đếm
- * thấp hơn hàng trong kiện, spec #238 §5.5). Giá trị mới thêm bằng migration riêng: PostgreSQL không cho dùng giá trị
- * enum mới trong chính giao dịch thêm nó, nên không migration nào được ghi giá trị đó.
- */
-export const openPurpose = fulfillmentSchema.enum('open_purpose', ['cancel', 'edit', 'resplit', 'stocktake']);
-export type OpenPurpose = (typeof openPurpose.enumValues)[number];
+/** Mục đích mở kiện: danh sách và ý nghĩa ở `domain/open-purpose.ts`. */
+export const openPurpose = fulfillmentSchema.enum('open_purpose', OPEN_PURPOSES);
+export type { OpenPurpose };
 /**
  * Ai đưa kiện vào nhóm rời kho (spec 199a §5.1): `scan` kho quét, `marketplace` sàn báo (kể cả nhảy cóc), `forced`
  * bàn giao bắt buộc khi thiếu tồn, `before_cutoff` rời kho trước mốc kéo đơn (chỉ lưu, không trừ tồn).
@@ -172,6 +169,11 @@ export const packageLines = fulfillmentSchema.table(
     pendingDropQty: integer('pending_drop_qty').notNull().default(0),
     unitCost: money('unit_cost'),
     stockDeducted: boolean('stock_deducted').notNull().default(false),
+    /**
+     * Dòng sống của kiện đã đóng chờ áp ghép SKU mới (spec 237 §5.6, D16): món trong hộp theo ghép cũ, kho mở kiện thì
+     * áp. Chỉ có nghĩa khi kiện còn đóng; kiện huỷ hay rời kho thì dấu nằm im (D25). Mở kiện xoá mọi dấu của kiện.
+     */
+    remapPending: boolean('remap_pending').notNull().default(false),
     ...timestamps,
     ...version,
   },
@@ -187,6 +189,8 @@ export const packageLines = fulfillmentSchema.table(
     check('package_lines_unmapped', sql`${t.variantId} is not null or ${t.reservedQty} = 0`),
     check('package_lines_untracked', sql`not ${t.stockUntracked} or (${t.variantId} is null and ${t.reservedQty} = 0 and not ${t.stockDeducted})`),
     check('package_lines_deducted_cost', sql`not ${t.stockDeducted} or ${t.unitCost} is not null`),
+    // Chỉ dòng đã ghép mới chờ đổi ghép; dòng chưa ghép đi bảng 1 (spec 237 §5.6). Không dùng giá trị enum mới.
+    check('package_lines_remap_pending', sql`not ${t.remapPending} or ${t.variantId} is not null or ${t.stockUntracked}`),
   ],
 );
 

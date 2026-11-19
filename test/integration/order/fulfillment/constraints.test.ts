@@ -111,6 +111,23 @@ describe('ràng buộc dòng kiện', () => {
     await expect(insertLine(c, p, { pending_drop_qty: -1 })).rejects.toThrow(/"package_lines_pending_drop"/);
     await expect(insertLine(c, p, { pending_drop_qty: 3 })).resolves.toBeDefined();
   });
+
+  it('D2-G11 CHECK package_lines_remap_pending: dòng chưa ghép không mang dấu chờ đổi ghép', async () => {
+    const c = randomUUID();
+    const p = (await insertPackage(c, { status: 'packed' })).rows[0]!.id;
+    await expect(insertLine(c, p, { variant_id: null, remap_pending: true })).rejects.toMatchObject({
+      code: '23514', constraint: 'package_lines_remap_pending',
+    });
+    await expect(insertLine(c, p, { remap_pending: true })).resolves.toBeDefined();
+    await expect(insertLine(c, p, { variant_id: null, stock_untracked: true, remap_pending: true })).resolves.toBeDefined();
+  });
+
+  it('D2-G11 kiện đóng nhận Cần mở với mục đích remap', async () => {
+    const p = (await insertPackage(randomUUID(), { status: 'packed' })).rows[0]!.id;
+    await expect(
+      db().query(`update "order".packages set needs_open = true, open_purpose = 'remap' where id = $1`, [p]),
+    ).resolves.toMatchObject({ rowCount: 1 });
+  });
 });
 
 // Bất biến dòng kiện, kiểm bằng (spec 205 D1, D11, D19, §5.10; Documents/25 §8): với một dòng đơn, tổng
