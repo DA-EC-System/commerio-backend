@@ -743,3 +743,69 @@ describe('hạn bàn giao kiện (KH-B01)', () => {
     expect(await pkgByCode(orderId, waiting!)).toEqual({ status: 'reserved', ship_by: D2 });
   });
 });
+
+// #236 PR 2 (D7): sàn `platform_status` báo mốc hết quyền trả; nhận đơn ghi cột một lần, chỉ cho đơn đang xử lý.
+describe('mốc sàn báo hết quyền trả (#236 PR 2)', () => {
+  const t1 = new Date('2026-11-18T17:31:25Z');
+  const t2 = new Date('2026-11-19T02:00:00Z');
+  const endsOf = async (orderId: string) => (await one(`select return_window_ends_at from "order".orders where id = $1`, [orderId])).return_window_ends_at;
+  const statusEvents = async (orderId: string) => (await eventsOf(orderId)).filter((e) => e.type === 'sales.order_status_changed').length;
+
+  it('AC15: ghi lần đầu, lần kéo sau với mốc mới hơn giữ mốc đầu', async () => {
+    setStockPort({ reserve, release });
+    const o = remote({ rawStatus: 'COMPLETED', returnWindowEndedAt: t1 });
+    const { orderId } = await ingest(o);
+    expect(await endsOf(orderId)).toEqual(t1);
+
+    await ingest({ ...o, rawStatus: 'COMPLETED,X', returnWindowEndedAt: t2 });
+
+    expect(await endsOf(orderId)).toEqual(t1);
+  });
+
+  it('đơn đã hoàn tất giữ hạn đã lưu khi sàn mới báo', async () => {
+    setStockPort({ reserve, release });
+    const o = remote({ rawStatus: 'DELIVERED' });
+    const { orderId } = await ingest(o);
+    const stored = new Date('2026-11-10T00:00:00Z');
+    await testPool().query(`update "order".orders set status = 'completed', outcome = 'full', completed_at = now(), return_window_ends_at = $2 where id = $1`, [
+      orderId,
+      stored,
+    ]);
+
+    await ingest({ ...o, rawStatus: 'COMPLETED', returnWindowEndedAt: t1 });
+
+    expect(await endsOf(orderId)).toEqual(stored);
+  });
+
+  it('đơn không còn xử lý không nhận mốc: đơn đã huỷ, đơn hoàn tất không hạn trả (mọi kiện hoàn về)', async () => {
+    setStockPort({ reserve, release });
+    const cancelled = await ingest(remote({ rawStatus: 'CANCELLED', returnWindowEndedAt: t1 }, 'cancelled'));
+    expect((await orderOf(cancelled.orderId)).status).toBe('cancelled');
+    expect(await endsOf(cancelled.orderId)).toBeNull();
+
+    const o = remote({ rawStatus: 'DELIVERED' });
+    const { orderId } = await ingest(o);
+    await testPool().query(`update "order".orders set status = 'completed', outcome = 'none', completed_at = now() where id = $1`, [orderId]);
+    await ingest({ ...o, rawStatus: 'COMPLETED', returnWindowEndedAt: t1 });
+    expect(await endsOf(orderId)).toBeNull();
+  });
+
+  it('chỉ mốc đổi: ghi cột, không phát sales.order_status_changed', async () => {
+    setStockPort({ reserve, release });
+    const o = remote({ rawStatus: 'DELIVERED' });
+    const { orderId } = await ingest(o);
+    const before = await statusEvents(orderId);
+
+    const res = await ingest({ ...o, returnWindowEndedAt: t1 });
+
+    expect(await endsOf(orderId)).toEqual(t1);
+    expect(res.changed).toBe(false);
+    expect(await statusEvents(orderId)).toBe(before);
+  });
+
+  it('không có returnWindowEndedAt (Lazada) thì cột giữ null', async () => {
+    setStockPort({ reserve, release });
+    const { orderId } = await ingest(remote({ rawStatus: 'confirmed' }));
+    expect(await endsOf(orderId)).toBeNull();
+  });
+});

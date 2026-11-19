@@ -37,6 +37,7 @@ describe('getVariants', () => {
         id: shirt.variants[0]!.id,
         productId: shirt.id,
         productName: 'Áo thun',
+        productCode: shirt.code,
         sku: 'AO-0001-DEN-XL',
         categoryId: category.id,
         categoryName: 'Áo',
@@ -64,6 +65,30 @@ describe('getVariants', () => {
     );
     expect(some.map((v) => v.id)).toEqual([shirt.variants[0]!.id]);
     expect(await withCompany(companyId, () => getVariants([]))).toEqual([]);
+  });
+
+  it('lọc theo productIds: đúng biến thể của các sản phẩm đó (RLS), kèm productCode; [] là rỗng (#400 AC-S11)', async () => {
+    const { companyId, ceo } = await createCompany();
+    const color = await createAttribute(ceo.token, 'Màu', ['Đen', 'Trắng']);
+    const category = await createCategory(ceo.token, 'Áo', 'AO-{SEQ:4}-{VAL}');
+    const a = await createProduct(ceo.token, { name: 'Áo A', categoryId: category.id, variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]] });
+    const b = await createProduct(ceo.token, { name: 'Áo B', categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
+    const c = await createProduct(ceo.token, { name: 'Áo C', categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
+    const other = await createCompany();
+    const otherCategory = await createCategory(other.ceo.token, 'Của B', 'B-{SEQ}');
+    const theirs = await createProduct(other.ceo.token, { name: 'Của B', categoryId: otherCategory.id, variants: [[]] });
+
+    const rows = await withCompany(companyId, () => getVariants(undefined, { productIds: [a.id, b.id, theirs.id, randomUUID(), 'abc'] }));
+    expect(rows.map((v) => [v.id, v.productId, v.productCode])).toEqual([
+      [a.variants[0]!.id, a.id, a.code],
+      [a.variants[1]!.id, a.id, a.code],
+      [b.variants[0]!.id, b.id, b.code],
+    ]);
+    expect(a.code).not.toBe(b.code);
+    expect(await withCompany(companyId, () => getVariants(undefined, { productIds: [] }))).toEqual([]);
+    // Có cả `ids` và `productIds` thì lấy giao.
+    const both = await withCompany(companyId, () => getVariants([a.variants[1]!.id, c.variants[0]!.id], { productIds: [a.id] }));
+    expect(both.map((v) => v.id)).toEqual([a.variants[1]!.id]);
   });
 
   it('trả cân nặng, kích thước của SKU và mô tả của sản phẩm (#204, Lazada cần để tính phí ship)', async () => {

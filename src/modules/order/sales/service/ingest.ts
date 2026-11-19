@@ -42,6 +42,11 @@ export interface PlatformOrder {
   shippingAddress: { name: string; phone: string; address: string; ward?: string | null; postCode?: string | null; raw?: Record<string, string> } | null;
   shippingFee: string;
   cancelRequested: boolean;
+  /**
+   * Mốc sàn báo đơn hết quyền trả; chỉ sàn `returnWindow = 'platform_status'` điền (TikTok: `update_time` khi đơn
+   * `COMPLETED` hoặc `CANCELLED`, #236 D14). Lazada không điền. Ghi một lần vào `return_window_ends_at` (D7).
+   */
+  returnWindowEndedAt?: Date | null;
   /** Thông tin mô tả (#260): kéo lại thì ghi đè, sàn trả null thì giữ giá trị đã lưu; không tính là đơn đổi. Tiền là chuỗi thập phân. */
   info: {
     platformPaymentMethod: string | null;
@@ -335,10 +340,14 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   // Thông tin mô tả đổi thì ghi kèm, nhưng không phát sự kiện, không tính là đơn đổi (#260 AC-S1).
   const info = keepSaved(remoteInfo, row);
   const infoDirty = !sameInfo(info, row);
-  if (infoDirty && !dirty) await updateOrder(orderId, info);
+  // Mốc sàn báo hết quyền trả (#236 D7): ghi một lần cho đơn đang xử lý, không đè, không tính là đơn đổi. Đơn đã hoàn
+  // tất giữ hạn đã lưu lúc hoàn tất; đơn đã huỷ không có hạn trả.
+  const endedAt = next.status === 'processing' && !row.returnWindowEndsAt && o.returnWindowEndedAt ? o.returnWindowEndedAt : undefined;
+  if ((infoDirty || endedAt) && !dirty) await updateOrder(orderId, { ...(infoDirty ? info : {}), returnWindowEndsAt: endedAt });
   if (dirty) {
     await updateOrder(orderId, {
       ...(infoDirty ? info : {}),
+      returnWindowEndsAt: endedAt,
       status: next.status,
       rawMarketplaceStatus: next.rawMarketplaceStatus,
       shipBy: next.shipBy,

@@ -37,7 +37,7 @@ const DISPLAY_STATUS: Readonly<Record<string, RemoteLineStatus>> = {
   AWAITING_COLLECTION: 'awaiting_pickup',
   IN_TRANSIT: 'in_transit',
   DELIVERED: 'delivered',
-  // Hết hạn trả (returnWindow `platform_status`): kiện vẫn là đã giao, app đọc `rawStatus` = COMPLETED.
+  // Hết hạn trả (returnWindow `platform_status`): kiện vẫn là đã giao, adapter báo `returnWindowEndedAt` (#236).
   COMPLETED: 'delivered',
   CANCELLED: 'cancelled',
 };
@@ -125,6 +125,9 @@ export function toTiktokOrder(o: Row): RemoteOrder {
     // Hạn giao hàng cho hãng của sàn (`rts_sla_time`, "latest shipping time specified by the platform").
     shipBy: unix(o.rts_sla_time),
     deliveredAt: unix(o.delivery_time),
+    // Sàn chốt đơn hết quyền trả (`COMPLETED`), hay huỷ đơn mà kiện đã giao (`CANCELLED`, #236 D14): lần cập nhật đưa đơn
+    // sang trạng thái đó là mốc hết quyền trả. Gọi thật 19/11/2026: đơn sang `COMPLETED` thì `update_time` tăng.
+    returnWindowEndedAt: status === 'COMPLETED' || status === 'CANCELLED' ? unixRequired(o.update_time) : null,
     shippingAddress: tiktokAddress((o.recipient_address ?? null) as Row | null),
     // Phí ship khách trả (`shipping_fee` = gốc − giảm của người bán − giảm của sàn).
     shippingFee: str(pay.shipping_fee ?? 0) || '0',

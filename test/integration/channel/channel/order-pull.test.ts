@@ -183,6 +183,9 @@ describe('kéo đơn theo gian hàng (#105)', () => {
       { external_status: 'pending', linked: true },
       { external_status: 'packed', linked: true },
     ]);
+    // AC 17 (#236 PR 2): sàn `days` không báo mốc hết quyền trả, cột giữ null.
+    const ends = await testPool().query(`select return_window_ends_at from "order".orders where shop_id = $1`, [shopId]);
+    expect(ends.rows).toEqual([{ return_window_ends_at: null }, { return_window_ends_at: null }, { return_window_ends_at: null }]);
     expect(await cursor()).toEqual(at('2026-10-25T03:00:00Z'));
   });
 

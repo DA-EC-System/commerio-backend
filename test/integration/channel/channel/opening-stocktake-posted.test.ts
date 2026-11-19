@@ -82,6 +82,8 @@ const variant: ListingVariant = {
   sku: 'CMR-OS-1',
   categoryId: randomUUID(),
   attributesLabel: 'Trắng',
+  productCode: 'SP-TEST',
+  attributes: [],
   archived: false,
   businessStatus: 'selling',
   description: null,

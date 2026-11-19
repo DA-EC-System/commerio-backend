@@ -6,6 +6,8 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
+import { requestCategorySync } from '../service/category-sync.ts';
+import { leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
@@ -47,6 +49,9 @@ import {
   ShopDeleteBody,
   UpdateShopBody,
   PlatformParams,
+  PlatformCategoriesQuery,
+  PlatformLeafParams,
+  LeafDetailQuery,
   ShopParams,
   TokenBody,
   ConfirmPriceBody,
@@ -179,6 +184,34 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await recreateOpeningStocktake(actor(res), id));
   });
+
+  // Cây category của sàn (#400, 21 §18.5): đọc DB, không gọi sàn; `:platform` phải có adapter (422).
+  router.get(
+    '/platforms/:platform/categories',
+    view,
+    validate({ params: PlatformParams, query: PlatformCategoriesQuery }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      res.json(await listPlatformCategories(platform, validated<typeof PlatformCategoriesQuery>(res, 'query')));
+    },
+  );
+
+  // Xếp một lượt đồng bộ cây (`channel.category_sync`, mỗi sàn một lượt chờ); không gọi sàn trong request.
+  router.post('/platforms/:platform/categories/sync', ctx.authorize('channel.shop.sync'), validate({ params: PlatformParams }), async (_req, res) => {
+    const { platform } = validated<typeof PlatformParams>(res, 'params');
+    res.status(202).json(await requestCategorySync(platform));
+  });
+
+  router.get(
+    '/platforms/:platform/categories/:externalId',
+    view,
+    validate({ params: PlatformLeafParams, query: LeafDetailQuery }),
+    async (_req, res) => {
+      const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
+      const { shopId } = validated<typeof LeafDetailQuery>(res, 'query');
+      res.json(await leafDetail(ctx, actor(res).companyId, platform, externalId, { shopId }));
+    },
+  );
 
   router.get(
     '/shops/:id/categories',

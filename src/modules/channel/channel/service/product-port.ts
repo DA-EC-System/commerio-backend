@@ -16,10 +16,14 @@ export interface ListingVariant {
   id: string;
   productId: string;
   productName: string;
+  /** Mã cha của sản phẩm (#400 A5). */
+  productCode: string;
   sku: string;
   categoryId: string;
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
+  /** Giá trị thuộc tính theo `position` (#400: ánh xạ trục biến thể sang sales attribute của sàn). */
+  attributes: { attributeId: string; attributeName: string; valueId: string; value: string }[];
   archived: boolean;
   /**
    * Trạng thái kinh doanh của SKU. Tới khi #204 trả `readiness`, `paused` là SKU chưa sẵn sàng đẩy (`sku_not_ready`, #219
@@ -34,8 +38,8 @@ export interface ListingVariant {
 }
 
 export interface ProductPort {
-  /** Bỏ trống `ids` = mọi biến thể của công ty. */
-  variants(ids?: readonly string[]): Promise<ListingVariant[]>;
+  /** Bỏ trống `ids` = mọi biến thể của công ty; `opts.productIds` lọc theo sản phẩm, `[]` là rỗng (#400 A13). */
+  variants(ids?: readonly string[], opts?: { productIds?: readonly string[] }): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
   /** Có mọi biến thể của công ty (chưa có tồn thì 0); id lạ không có trong Map thì không đẩy tồn (#222). */
   availableOf(ids: readonly string[]): Promise<Map<string, number>>;
@@ -57,9 +61,11 @@ function toListingVariant(v: Extended): ListingVariant {
     id: v.id,
     productId: v.productId,
     productName: v.productName,
+    productCode: v.productCode,
     sku: v.sku,
     categoryId: v.categoryId,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
+    attributes: v.attributes.map(({ attributeId, attributeName, valueId, value }) => ({ attributeId, attributeName, valueId, value })),
     archived: v.archived,
     businessStatus: v.businessStatus,
     description: v.description ?? null,
@@ -75,7 +81,7 @@ let override: ProductPort | null = null;
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
-      variants: async (ids) => (await getVariants(ids)).map(toListingVariant),
+      variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
       productImageUrls,
