@@ -284,6 +284,21 @@ describe('adapter Lazada: sản phẩm', () => {
     ]);
   });
 
+  it('#400 lát 13: externalCategoryId từ primary_category của sản phẩm (GetProducts, gọi thật 18/11/2026 request_id 0bb4a98017950174624497030); thiếu thì không có', async () => {
+    const fn = fakeFetch({
+      code: '0',
+      data: {
+        products: [
+          { item_id: '8', status: 'Active', primary_category: 10100278, attributes: { name: 'Bình' }, skus: [{ SkuId: 81, SellerSku: 'BINH', quantity: 1 }] },
+          { item_id: '9', status: 'Active', attributes: { name: 'Cốc' }, skus: [{ SkuId: 91, SellerSku: 'COC', quantity: 1 }] },
+        ],
+      },
+    });
+    const skus = await createLazadaAdapter(config, fn).getSkus('t', ['BINH', 'COC']);
+    expect(skus[0]!.externalCategoryId).toBe('10100278');
+    expect(skus[1]).not.toHaveProperty('externalCategoryId');
+  });
+
   it('đổi giá và tồn: chia lô 20, gửi ItemId và SkuId', async () => {
     const items = Array.from({ length: 21 }, (_, i) => ({
       externalProductId: `I${i}`,

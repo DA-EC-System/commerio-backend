@@ -3,9 +3,8 @@
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { CategoryMapRow } from '#src/modules/channel/channel/repository/category-maps.ts';
 import { productPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
-import { pushBlock } from '#src/modules/channel/channel/service/push-block.ts';
+import { pushBlock, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -49,7 +48,7 @@ describe('ProductPort.variants (cổng thật, #204)', () => {
   it('SKU có đủ số đo trong catalog thì qua được bước kiểm đẩy lên sàn, không còn dimensions_missing', async () => {
     const { variantId } = await createVariant(companyId);
     const port = productPort(createModuleContext());
-    const map = {} as CategoryMapRow; // pushBlock chỉ kiểm có ghép danh mục hay không
+    const map: SpecCheck = { externalCategoryId: 'L1', missing: [], permission: null, sizeChartRule: null };
     const check = async () => {
       const [lv] = await withCompany(companyId, () => port.variants([variantId]));
       return pushBlock(lv!, new Decimal(150000), map, true);

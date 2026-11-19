@@ -30,6 +30,8 @@ import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import type { RemoteSku } from './marketplaces/common.ts';
 import { asManual } from './marketplaces/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { syncChangedCategories, watchedProductIds } from './listing-sync.ts';
+import type { ProductPort } from './product-port.ts';
 import { sendRemoteSkusRefresh } from './shop-jobs.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
@@ -41,6 +43,11 @@ export const FULL_REFRESH_EVERY_MS = 24 * 3600_000;
 export const CHANGED_EVERY_MS = 3600_000;
 /** Lùi mốc đọc theo giờ sửa, như kéo đơn: giờ của sàn và của app lệch nhau, sàn ghi giờ sửa trễ. */
 const CHANGED_LAG_MS = 2 * 60_000;
+/**
+ * Mốc đọc theo giờ sửa giữ lại cho sản phẩm cần category chưa đọc được (review BE2 P2-1) không cũ quá khoảng này: lỗi cấu hình
+ * (thiếu scope, sai chữ ký) làm mọi lần đều dừng thì mốc đứng yên mãi, mỗi lượt đọc lại cả khoảng. Quá thì bỏ, mốc tiến như cũ.
+ */
+export const CHANGED_HOLD_MAX_MS = 24 * 3600_000;
 
 /** 429 `remote_skus_retry_later`; route đặt header `Retry-After` theo `retryAfterSeconds`. */
 export class RemoteSkusRetryLater extends AppError {
@@ -72,7 +79,10 @@ export async function saveFullSnapshot(shopId: string, skus: readonly RemoteSku[
   } else {
     await dropRemoteSkusNotSeen(shopId, startedAt);
   }
-  await markRemoteSkus(shopId, { syncedAt: startedAt, changedSince: startedAt });
+  // Đọc trọn không áp category (`syncChangedCategories`) nên không đẩy mốc đọc theo giờ sửa: sản phẩm sửa từ lần đọc theo giờ
+  // sửa trước vẫn được đọc lại để lấy category (review BE2 P2-1). Chưa có mốc (lần đầu) thì đặt bằng lúc đọc.
+  const changedSince = shop?.remoteSkusChangedSince && shop.remoteSkusChangedSince < startedAt ? shop.remoteSkusChangedSince : startedAt;
+  await markRemoteSkus(shopId, { syncedAt: startedAt, changedSince });
 }
 
 /**
@@ -96,7 +106,7 @@ export async function requestRemoteSkusRefresh(shop: ShopRow): Promise<Date> {
  * Đọc trọn lỗi thì ghi mốc thử lại vào `shops` (1 giờ, 2 giờ, … tối đa 24 giờ; review vòng 3 R1): tới mốc mới đọc trọn
  * lại, giữa chừng vẫn đọc theo giờ sửa. Tải lại (`runRemoteSkusRefresh`) không chờ mốc. Lượt khác đang chạy thì bỏ. Mọi lỗi chỉ ghi log: không làm hỏng lượt đồng bộ.
  */
-export async function refreshRemoteSkusQuietly(companyId: string, shopId: string): Promise<void> {
+export async function refreshRemoteSkusQuietly(companyId: string, shopId: string, port?: ProductPort): Promise<void> {
   try {
     await withSessionLock(lockKey(shopId), async () => {
       const shop = await withCompany(companyId, () => findShopRow(shopId));
@@ -118,7 +128,7 @@ export async function refreshRemoteSkusQuietly(companyId: string, shopId: string
       if (Date.now() - since.getTime() < CHANGED_EVERY_MS) return;
       const session = await withCompany(companyId, () => shopSession(shopId));
       if (!session.adapter.listSkusChanged) return readFull(companyId, shopId, session);
-      await readChanged(companyId, shop, session);
+      await readChanged(companyId, shop, session, port);
     });
   } catch (err) {
     logger.warn(
@@ -163,7 +173,7 @@ const REFRESH_LOCK_WAIT_MS = 5 * 60_000;
  * Lời gọi sàn tính hạn mức như bấm tay (`asManual`, dừng ở 90%). Lỗi: lần cuối, hoặc lỗi không nên thử lại (mất token, ngắt,
  * hết hạn mức) thì ghi giờ lỗi, mã lỗi, xoá lượt chờ và không ném; còn lại ném để pg-boss chạy lại sau 30 giây.
  */
-export async function runRemoteSkusRefresh(job: { companyId: string; shopId: string }, attempt: JobAttempt): Promise<void> {
+export async function runRemoteSkusRefresh(job: { companyId: string; shopId: string }, attempt: JobAttempt, port?: ProductPort): Promise<void> {
   const { companyId, shopId } = job;
   const result = await withSessionLock(
     lockKey(shopId),
@@ -178,7 +188,7 @@ export async function runRemoteSkusRefresh(job: { companyId: string; shopId: str
       try {
         const { ms, skus } = await asManual(async () => {
           const session = await withCompany(companyId, () => shopSession(shopId));
-          await readChanged(companyId, shop, session);
+          await readChanged(companyId, shop, session, port);
           return readFull(companyId, shopId, session);
         });
         await withCompany(companyId, () => clearRefreshRequested(shopId));
@@ -200,16 +210,46 @@ export async function runRemoteSkusRefresh(job: { companyId: string; shopId: str
 
 type Session = Awaited<ReturnType<typeof shopSession>>;
 
-/** Đọc sản phẩm sửa từ `remote_skus_changed_since` trừ 2 phút rồi lưu; chưa có bản sao hay sàn không có thì thôi. */
-async function readChanged(companyId: string, shop: ShopRow, { adapter, accessToken }: Session): Promise<void> {
+/**
+ * Đọc sản phẩm sửa từ `remote_skus_changed_since` trừ 2 phút rồi lưu; chưa có bản sao hay sàn không có thì thôi. Có `port` thì
+ * áp category sàn trả kèm (`syncChangedCategories`, #400 lát 13: TikTok đọc category bằng Get Product của chính sản phẩm vừa
+ * sửa, tối đa `DETAIL_PRODUCT_MAX` sản phẩm mỗi lần như nhãn biến thể); lỗi khi áp chỉ ghi log, không làm hỏng lượt đọc.
+ *
+ * Mốc sau (review BE2 P2-1): có `port` thì sản phẩm đang có listing đi trước khi cắt trần (`priorityProductIds`, theo giờ sửa
+ * tăng dần); sản phẩm đó chưa đọc được chi tiết (vượt trần, sàn dừng giữa chừng: `detailUnreadSince`) thì mốc chỉ tiến tới
+ * giờ sửa sớm nhất của chúng; áp category lỗi thì mốc giữ nguyên. Mốc không lùi, không cũ quá `CHANGED_HOLD_MAX_MS`. Sản
+ * phẩm không có listing chưa đọc được nhãn thì như cũ (không giữ mốc, nhãn có ở lần sửa sau hay lần đọc trọn). Mốc đang
+ * giữ cũ hơn `CHANGED_EVERY_MS` thì lượt đồng bộ kế (15 phút) đọc lại ngay.
+ */
+async function readChanged(companyId: string, shop: ShopRow, { adapter, accessToken }: Session, port?: ProductPort): Promise<void> {
   const since = shop.remoteSkusChangedSince;
   if (!shop.remoteSkusSyncedAt || !since || !adapter.listSkusChanged) return;
   const startedAt = new Date();
-  const changed = await onMarketplace(() => adapter.listSkusChanged!(accessToken, new Date(since.getTime() - CHANGED_LAG_MS)));
-  await withCompany(companyId, async () => {
-    await upsertRemoteSkus(shop.id, changed, startedAt);
-    await markRemoteSkus(shop.id, { changedSince: startedAt });
-  });
+  const priority = port ? await withCompany(companyId, () => watchedProductIds(shop.id)) : undefined;
+  const changed = await onMarketplace(() =>
+    adapter.listSkusChanged!(accessToken, new Date(since.getTime() - CHANGED_LAG_MS), priority && { priorityProductIds: priority }),
+  );
+  await withCompany(companyId, () => upsertRemoteSkus(shop.id, changed, startedAt));
+  let next = startedAt;
+  if (port && priority) {
+    try {
+      await syncChangedCategories(port, companyId, shop, changed);
+      for (const s of changed) {
+        if (s.detailUnreadSince && priority.has(s.externalProductId) && s.detailUnreadSince < next) next = s.detailUnreadSince;
+      }
+    } catch (err) {
+      logger.warn({ shopId: shop.id, err }, 'Không cập nhật được category của listing từ SKU sàn vừa sửa, giữ mốc đọc');
+      next = since;
+    }
+    if (next < since) next = since;
+    if (next.getTime() < startedAt.getTime() - CHANGED_HOLD_MAX_MS) {
+      logger.warn({ shopId: shop.id, heldSince: next }, 'Mốc đọc theo giờ sửa giữ quá lâu, bỏ: category của sản phẩm chưa đọc được cập nhật ở lần sửa sau');
+      next = startedAt;
+    } else if (next !== startedAt) {
+      logger.info({ shopId: shop.id, heldSince: next }, 'Giữ mốc đọc theo giờ sửa: còn sản phẩm có listing chưa đọc được category');
+    }
+  }
+  await withCompany(companyId, () => markRemoteSkus(shop.id, { changedSince: next }));
 }
 
 /** Đọc trọn rồi lưu bản sao; trả thời gian gọi sàn và số SKU sàn trả. */

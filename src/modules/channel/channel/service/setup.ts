@@ -16,6 +16,7 @@ import { syncListings } from './listing-sync.ts';
 import { capabilitiesOf } from './marketplaces/index.ts';
 import type { RemoteState } from './marketplaces/common.ts';
 import { sendOpenOrderPull, startShopJobs } from './shop-jobs.ts';
+import { sendSpecFromMatch } from './spec-from-match.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
 
@@ -291,6 +292,7 @@ export async function finishSetup(
     if (raced) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { openingStock: raced } });
     const { shop } = await shopSession(shopId);
     const { to } = assertTransition(shopMachine, shop.status, 'finish_setup', { actor });
+    const matched: string[] = [];
     for (const p of picked) {
       const row = await insertListing({
         companyId: actor.companyId,
@@ -306,6 +308,7 @@ export async function finishSetup(
         remoteTitleAtMatch: p.title,
       });
       await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
+      matched.push(row.id);
     }
     // Bản tạm của cổng (chưa có #245) ném 501: cả giao dịch rollback, gian hàng vẫn `connecting` (Documents/21 §18.7.9).
     const doc =
@@ -331,6 +334,8 @@ export async function finishSetup(
     await recordTransition({ entityType: 'shops', entityId: shop.id, from: shop.status, to, action: 'finish_setup', actorId: actor.accountId });
     // Lượt kéo đơn còn mở đi chung giao dịch: thiết lập rollback thì không có việc (#198 AC-12).
     await sendOpenOrderPull(actor.companyId, shop.id);
+    // Spec theo category trên sàn của SKU vừa ghép (#400 lát 12), cùng giao dịch.
+    await sendSpecFromMatch(actor.companyId, shop.id, matched);
     return doc;
   }).catch((err: unknown) => {
     // Hai gian hàng cùng lập phiếu đầu kỳ một lúc: index một phần chặn phiếu thứ hai (#198 A12).

@@ -1,19 +1,20 @@
-// Ảnh bảng kích cỡ khi đẩy lên TikTok (#347, Documents/21 §18.5): quy tắc danh mục lưu lúc ghép, request chặn trước khi xếp
+// Ảnh bảng kích cỡ khi đẩy lên TikTok (#347, Documents/21 §18.5): quy tắc của category sàn (`platform_categories`, #400; ghép
+// danh mục cũ còn lưu quy tắc tới lát 16), request chặn trước khi xếp
 // việc, việc nền tải ảnh lên sàn rồi gửi `size_chart`. Sàn và cổng sản phẩm đều giả.
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PushResults } from '#src/modules/channel/channel/api/schemas.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
-import { type CategoryRules, MarketplaceError, type NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { type CategoryRules, MarketplaceError, type NewProduct, type SizeChartRule } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const IMAGES = ['https://files.commerio.test/a.jpg'];
 const CHART_URL = 'https://files.commerio.test/size-chart.png';
@@ -49,9 +50,14 @@ setProductPort({
   productSizeChartUrls: async (ids) => new Map(ids.flatMap((id) => (sizeCharts.has(id) ? [[id, sizeCharts.get(id)!] as const] : []))),
 });
 
-/** Quy tắc sàn theo mã danh mục sàn: `REQ` bắt buộc, `OPT` tuỳ chọn, `NONE` không hỗ trợ, còn lại lỗi tạm. */
+/** Quy tắc sàn theo mã category sàn: `REQ` bắt buộc, `OPT` tuỳ chọn, `NONE` không hỗ trợ, mã thêm theo ca; còn lại lỗi tạm. */
+const rules = new Map<string, CategoryRules['sizeChart']>([
+  ['REQ', 'required'],
+  ['OPT', 'optional'],
+  ['NONE', 'unsupported'],
+]);
 const categoryRules = vi.fn(async (_t: string, externalId: string): Promise<CategoryRules> => {
-  const rule = { REQ: 'required', OPT: 'optional', NONE: 'unsupported' }[externalId] as CategoryRules['sizeChart'] | undefined;
+  const rule = rules.get(externalId);
   if (!rule) throw new MarketplaceError('unavailable');
   return { sizeChart: rule };
 });
@@ -94,6 +100,24 @@ async function mapCategory(externalId: string) {
   });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   return { categoryId, body: res.body as { sizeChartRule: string | null } };
+}
+
+/**
+ * Spec TikTok của sản phẩm mới (#400 lát 15, thay ghép danh mục cũ) ở một category lá riêng; quy tắc bảng kích cỡ lưu ở
+ * `platform_categories.size_chart_rule` (`rule` null: chưa có quy tắc, như dữ liệu trước #347); `remote` là quy tắc sàn trả khi hỏi
+ * (undefined: sàn lỗi tạm). Trả biến thể.
+ */
+async function specVariant(rule: SizeChartRule | null, remote: SizeChartRule | undefined = rule ?? undefined) {
+  const leaf = String(randomInt(800_000_000, 900_000_000));
+  if (remote) rules.set(leaf, remote);
+  await testPool().query(
+    `insert into channel.platform_categories (platform, external_id, name, is_leaf, path, path_search, synced_at, size_chart_rule)
+     values ('tiktok', $1, 'Áo', true, 'Thời trang > Áo', 'thoi trang > ao', now(), $2)`,
+    [leaf, rule],
+  );
+  const v = newVariant(randomUUID());
+  await seedSpecs(company.companyId, 'tiktok', leaf, [v]);
+  return v;
 }
 
 const push = async (variantIds: string[]) => {
@@ -173,8 +197,7 @@ describe('ghép danh mục lưu quy tắc bảng kích cỡ của sàn', () => {
 
 describe('request đẩy: chặn size_chart_missing trước khi xếp việc', () => {
   it('danh mục bắt buộc mà sản phẩm chưa có ảnh bảng kích cỡ: size_chart_missing, không có bản ghi, không có việc', async () => {
-    const { categoryId } = await mapCategory('REQ');
-    const v = newVariant(categoryId);
+    const v = await specVariant('required');
     const [result] = await push([v.id]);
     expect(result).toMatchObject({ listingId: null, status: null, code: 'size_chart_missing' });
     expect(result!.message).toContain('bảng kích cỡ');
@@ -183,10 +206,10 @@ describe('request đẩy: chặn size_chart_missing trước khi xếp việc', 
   });
 
   it('có ảnh bảng kích cỡ thì xếp việc kèm sizeChartUrl; danh mục tuỳ chọn hay không hỗ trợ không bị chặn', async () => {
-    const required = newVariant((await mapCategory('REQ')).categoryId);
+    const required = await specVariant('required');
     sizeCharts.set(required.productId, CHART_URL);
-    const optional = newVariant((await mapCategory('OPT')).categoryId);
-    const none = newVariant((await mapCategory('NONE')).categoryId);
+    const optional = await specVariant('optional');
+    const none = await specVariant('unsupported');
     const results = await push([required.id, optional.id, none.id]);
     expect(results.map((r) => [r.status, r.code])).toEqual([
       ['pushing', null],
@@ -203,7 +226,7 @@ describe('request đẩy: chặn size_chart_missing trước khi xếp việc', 
 
 describe('việc nền đẩy lên sàn', () => {
   it('có ảnh bảng kích cỡ: tải lên với mục đích size_chart rồi gửi sizeChartUri trong sản phẩm', async () => {
-    const v = newVariant((await mapCategory('REQ')).categoryId);
+    const v = await specVariant('required');
     const id = await pushing(v);
     await run(id, CHART_URL);
     expect(uploadImage).toHaveBeenCalledWith(expect.any(String), CHART_URL, 'size_chart');
@@ -212,14 +235,14 @@ describe('việc nền đẩy lên sàn', () => {
   });
 
   it('danh mục không hỗ trợ bảng kích cỡ: không tải, không gửi dù sản phẩm có ảnh', async () => {
-    const v = newVariant((await mapCategory('NONE')).categoryId);
+    const v = await specVariant('unsupported');
     await run(await pushing(v), CHART_URL);
     expect(uploadImage).not.toHaveBeenCalledWith(expect.anything(), CHART_URL, 'size_chart');
     expect(createProduct.mock.calls[0]![1]).not.toHaveProperty('sizeChartUri');
   });
 
   it('danh mục bắt buộc mà việc không có ảnh (ảnh bị gỡ giữa lúc bấm và lúc chạy): fail size_chart_missing, không gọi sàn tạo sản phẩm', async () => {
-    const v = newVariant((await mapCategory('REQ')).categoryId);
+    const v = await specVariant('required');
     const id = await pushing(v);
     await run(id);
     expect(createProduct).not.toHaveBeenCalled();
@@ -227,10 +250,7 @@ describe('việc nền đẩy lên sàn', () => {
   });
 
   it('ghép trước #347 chưa có quy tắc: hỏi sàn một lần, bắt buộc thì cũng chặn', async () => {
-    const { categoryId } = await mapCategory('REQ');
-    await testPool().query('update channel.category_maps set size_chart_rule = null where category_id = $1', [categoryId]);
-    categoryRules.mockClear(); // lần hỏi lúc ghép không tính
-    const v = newVariant(categoryId);
+    const v = await specVariant(null, 'required');
     const id = await pushing(v);
     await run(id);
     expect(categoryRules).toHaveBeenCalledTimes(1);
@@ -239,9 +259,7 @@ describe('việc nền đẩy lên sàn', () => {
   });
 
   it('chưa có quy tắc và sàn lỗi tạm khi hỏi: coi như chưa biết, vẫn đẩy để sàn quyết', async () => {
-    const { categoryId } = await mapCategory('OPT');
-    await testPool().query("update channel.category_maps set size_chart_rule = null, external_category_id = 'LOI' where category_id = $1", [categoryId]);
-    const v = newVariant(categoryId);
+    const v = await specVariant(null, undefined);
     await run(await pushing(v));
     expect(createProduct).toHaveBeenCalledTimes(1);
   });

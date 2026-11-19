@@ -29,9 +29,11 @@ import {
   listListingRows,
   markStockPendingIds,
   markStockPendingRows,
+  setListingCategory,
   updateListing,
 } from '../repository/listings.ts';
 import { markPushed } from '../repository/price-calculations.ts';
+import { markSpecCategory } from '../repository/product-specs.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
 import type { SyncError } from '../repository/schema.ts';
 import {
@@ -392,6 +394,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     }
     const acted = new Set(actions.map((a) => a.row.id));
     await holdChangedPrices(inCompany, session, watched.filter((r) => !acted.has(r.id)), bySku, summary);
+    await syncCategories(port, inCompany, shop.platform, watched, bySku);
     rows = await inCompany(() => listListingRows(shop.id));
   }
   if (await checkRevisions(inCompany, adapter, accessToken, rows, summary)) rows = await inCompany(() => listListingRows(shop.id));
@@ -406,6 +409,62 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   // Lượt đẩy tồn đầu tiên sau thiết lập xong khi lượt này chạy hết (sàn lỗi cả lô thì ném trước, lượt sau đánh dấu).
   if (!holdStock && !shop.stockPushedAt) await inCompany(() => markStockPushed(shop.id));
   return summary;
+}
+
+/** Mã sản phẩm sàn của listing đang theo dõi (cần category, review BE2 P2-1). Gọi trong `withCompany`. */
+export async function watchedProductIds(shopId: string): Promise<Set<string>> {
+  const rows = await listListingRows(shopId);
+  return new Set(rows.flatMap((r) => (WATCHED.includes(r.status) && r.externalProductId ? [r.externalProductId] : [])));
+}
+
+/**
+ * Category của SKU sàn vừa sửa (#400 lát 13, TikTok, Thành chốt cách 2 ngày 19/11/2026): Search Products không trả category
+ * nên lượt đồng bộ không biết; lần đọc theo giờ sửa (`listSkusChanged`, lọc `update_time_ge`) đã gọi Get Product cho sản phẩm
+ * vừa sửa và adapter điền `externalCategoryId`. Áp lên listing đang theo dõi của gian hàng như nhánh Lazada (`syncCategories`).
+ * Gọi ngoài giao dịch, sau khi đã gọi sàn.
+ */
+export async function syncChangedCategories(
+  port: ProductPort,
+  companyId: string,
+  shop: Pick<ShopRow, 'id' | 'platform'>,
+  skus: readonly RemoteSku[],
+): Promise<void> {
+  const bySku = new Map(skus.filter((s) => s.externalCategoryId).map((s) => [s.externalSkuId, s]));
+  if (!bySku.size) return;
+  const inCompany: InCompany = (fn) => withCompany(companyId, fn);
+  const rows = (await inCompany(() => listListingRows(shop.id))).filter(
+    (r) => WATCHED.includes(r.status) && r.externalSkuId !== null && bySku.has(r.externalSkuId),
+  );
+  await syncCategories(port, inCompany, shop.platform, rows, bySku);
+}
+
+/**
+ * Category thật của listing trên sàn (#400 lát 13, Documents/19 mục 3.3): sàn trả category kèm SKU (`externalCategoryId`)
+ * khác cột thì ghi cột (không tăng `version`); giá trị cũ trùng category của spec sản phẩm thì spec `changed` (`markSpecCategory`
+ * chỉ đổi khi spec còn ở category cũ): người bán đổi category trên sàn, người dùng chọn lại trước lần đẩy sau. Cột còn trống
+ * (listing trước #400) thì chỉ ghi, không đoán spec.
+ */
+async function syncCategories(
+  port: ProductPort,
+  inCompany: InCompany,
+  platform: ShopRow['platform'],
+  watched: readonly ListingRow[],
+  bySku: ReadonlyMap<string, RemoteSku>,
+): Promise<void> {
+  const changes = watched.flatMap((row) => {
+    const category = bySku.get(row.externalSkuId!)?.externalCategoryId;
+    return category && category !== row.externalCategoryId ? [{ row, category }] : [];
+  });
+  if (!changes.length) return;
+  await inCompany(async () => {
+    const variantIds = changes.flatMap((c) => (c.row.externalCategoryId && c.row.variantId ? [c.row.variantId] : []));
+    const productOf = new Map((variantIds.length ? await port.variants(variantIds) : []).map((v) => [v.id, v.productId]));
+    for (const { row, category } of changes) {
+      await setListingCategory([row.id], category);
+      const productId = row.variantId ? productOf.get(row.variantId) : undefined;
+      if (row.externalCategoryId && productId) await markSpecCategory(productId, platform, row.externalCategoryId, 'changed');
+    }
+  });
 }
 
 /**

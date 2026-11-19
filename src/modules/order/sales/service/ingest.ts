@@ -281,7 +281,11 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   const orderId = row.id;
   if (created) {
     await transition(orderId, null, 'unpaid', 'create');
-    await publishEvent({ type: 'sales.order_created', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', total: totals(o).total.toFixed(2) } });
+    // Tiền như `orders.total` sau `recomputeTotals` cùng giao dịch: đơn lần đầu thấy đã có món huỷ (D23) bỏ món huỷ, trừ khi
+    // mọi món đã huỷ (giữ tiền lúc đặt).
+    const live = o.lines.filter((l) => l.status !== 'cancelled');
+    const total = totals(live.length ? { ...o, lines: live } : o).total;
+    await publishEvent({ type: 'sales.order_created', aggregateId: orderId, payload: { orderId, code: row.code, source: 'marketplace', total: total.toFixed(2) } });
   }
 
   const stored = await upsertMarketplaceLines(
@@ -339,13 +343,16 @@ export async function ingestMarketplaceOrder(o: PlatformOrder): Promise<{ orderI
   // Món sàn huỷ mà kiện chưa rời kho (gỡ, chờ bỏ, huỷ cùng kiện): ghi số đã huỷ trong cùng giao dịch; trigger kiểm bằng
   // lúc commit. Chỉ luồng này ghi `cancelled_qty`, không suy ngược từ dòng kiện (spec 205 §5.10).
   await markLinesCancelled(packages.cancelledLines);
-  // Huỷ một phần món: tiền của đơn chỉ gồm dòng chưa huỷ (KH-B09); không tính là đơn đổi trạng thái.
+  // Huỷ một phần món: tiền của đơn chỉ gồm dòng chưa huỷ (KH-B09). Tiền đổi thì tính là đơn có đổi (`changed`): phát
+  // `sales.order_status_changed` để màn đơn tải lại, dù trạng thái không đổi.
   const totalsChanged = packages.cancelledLines.length > 0 && (await recomputeTotals(orderId));
   // Món sàn không huỷ, khách không còn xin huỷ (Sale đã từ chối) thì bỏ thông tin xin huỷ cũ của dòng (DH-B04).
   const notCancelled = o.lines.filter((l) => l.status !== null && l.status !== 'cancelled');
   const hasRequest = (l: PlatformOrder['lines'][number]) => !!(l.info.cancelInitiator || l.info.cancelReason || l.info.cancelReasonDetail);
   await clearStaleLineCancel(orderId, {
-    clear: o.cancelRequested ? [] : notCancelled.filter((l) => !l.info.cancelKind && !hasRequest(l)).map((l) => l.externalLineId),
+    // Dọn theo từng món: sàn không còn báo người, lý do cho món đó thì món không còn xin huỷ, kể cả khi đơn vẫn có cờ
+    // khách xin huỷ (khách đang xin huỷ món khác). Để sót dấu cũ thì đồng ý yêu cầu một phần bị coi là huỷ cả đơn.
+    clear: notCancelled.filter((l) => !l.info.cancelKind && !hasRequest(l)).map((l) => l.externalLineId),
     keepRequest: notCancelled.filter((l) => !l.info.cancelKind && hasRequest(l)).map((l) => l.externalLineId),
   });
 

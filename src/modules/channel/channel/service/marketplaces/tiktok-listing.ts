@@ -10,6 +10,7 @@
 import {
   type CategoryAttribute,
   type CategoryRules,
+  type CategorySuggestion,
   type CreatedProduct,
   existingProduct,
   type MarketplaceAdapter,
@@ -20,6 +21,7 @@ import {
   type PlatformCategory,
   type PriceQuantity,
   PROMOTION_LOCKED,
+  type RemoteProductCategory,
   type RemoteSku,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
@@ -67,6 +69,8 @@ type ListingMethods = Pick<
   | 'categoryTree'
   | 'leafAttributes'
   | 'categoryRules'
+  | 'suggestCategories'
+  | 'productCategory'
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
@@ -75,6 +79,16 @@ type ListingMethods = Pick<
   | 'deactivate'
   | 'activate'
 >;
+
+/** Đọc phản hồi Recommend Category (#400 lát 9): một leaf, đường dẫn nối tên các cấp theo `level`, quyền của leaf. */
+export function tiktokSuggestions(data: { categories?: Row[]; leaf_category_id?: unknown } | null | undefined): CategorySuggestion[] {
+  const leafId = data?.leaf_category_id;
+  if (leafId == null || leafId === '') return [];
+  const chain = [...(data?.categories ?? [])].sort((a, b) => Number(a.level ?? 0) - Number(b.level ?? 0));
+  const leaf = chain.find((c) => String(c.id) === String(leafId));
+  const statuses = Array.isArray(leaf?.permission_statuses) ? (leaf.permission_statuses as unknown[]).map(String) : null;
+  return [{ externalId: String(leafId), path: chain.map((c) => String(c.name ?? c.id)).join(' > '), permissionStatuses: statuses }];
+}
 
 /** Lỗi theo từng mục của API lô (`data.errors[]`): mã, câu của lỗi phụ đầu tiên nếu có (cụ thể hơn 12052990 "check failed"). */
 /**
@@ -248,8 +262,11 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (!filled[id] && value && byId.has(id)) filled[id] = value;
     }
     return Object.entries(filled).map(([id, value]) => {
-      const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === value);
-      return { id, values: [builtIn ? { id: String(builtIn.id) } : { name: value }] };
+      const values = (Array.isArray(value) ? value : [value]).map((one) => {
+        const builtIn = ((byId.get(id)?.values ?? []) as Row[]).find((v) => v.name === one);
+        return builtIn ? { id: String(builtIn.id) } : { name: one };
+      });
+      return { id, values };
     });
   }
 
@@ -269,6 +286,27 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     };
   }
 
+  // Get Brands 202309 (OAS cục bộ tts-openapi-guide, tra 19/11/2026; #400 A1): `brand_name` lọc theo tiền tố, `category_id`
+  // cho biết thương hiệu đã uỷ quyền có dùng được ở category đó (`brand_status`). Lấy đúng tên, không phân biệt hoa thường.
+  // Dùng được: đã uỷ quyền và không `UNAVAILABLE`; chưa uỷ quyền mà không phải T1 (sàn nhận nhưng không hiện thương hiệu).
+  // T1 chưa uỷ quyền thì sàn chặn tạo: không gửi. Lỗi sàn: không gửi, để Create Product quyết (TikTok cho bỏ trống).
+  async function brandIdOf(token: string, categoryId: string, name: string): Promise<string | null> {
+    try {
+      const data = await client.call<{ brands?: Row[] }>('GET', '/product/202309/brands', {
+        token,
+        query: { brand_name: name, category_id: categoryId, category_version: CATEGORY_VERSION, page_size: '100' },
+      });
+      const wanted = name.toLocaleLowerCase('vi');
+      const usable = (b: Row) =>
+        b.authorized_status === 'AUTHORIZED' ? b.brand_status !== 'UNAVAILABLE' : b.is_t1_brand === false;
+      const hit = (data?.brands ?? []).find((b) => typeof b.id === 'string' && String(b.name ?? '').trim().toLocaleLowerCase('vi') === wanted && usable(b));
+      return hit ? String(hit.id) : null;
+    } catch (err) {
+      if (err instanceof MarketplaceError) return null;
+      throw err;
+    }
+  }
+
   return {
     // Cây đầy đủ (#400): mọi node, quyền của gian hàng mang token. Get Categories bắt `shop_cipher` (G2.6): không token thì
     // không gọi.
@@ -278,6 +316,35 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         query: { category_version: CATEGORY_VERSION },
       });
       return tiktokCategoryNodes(data?.categories ?? []);
+    },
+
+    // Recommend Category 202309 (OAS cục bộ tts-openapi-guide, tra 19/11/2026): `product_title` (VN 25–255 ký tự, bên gọi
+    // kiểm trước), `category_version`. Sàn trả chuỗi cấp từ gốc tới một leaf (`leaf_category_id`) kèm quyền của gian hàng
+    // mang token. Gọi thật 18/11/2026: tên "Giày sneaker…" ra 601352 > 900616 > 601357.
+    async suggestCategories(token, input): Promise<CategorySuggestion[]> {
+      const data = await client.call<{ categories?: Row[]; leaf_category_id?: unknown }>('POST', '/product/202309/categories/recommend', {
+        token: requireToken(token),
+        query: { locale: 'vi-VN' },
+        body: { product_title: input.name, category_version: CATEGORY_VERSION },
+      });
+      return tiktokSuggestions(data);
+    },
+
+    // Get Product 202309 (OAS cục bộ, gọi thật 18/11/2026): `category_chains` từ gốc tới lá, `product_attributes[{id, values[{id,
+    // name}]}]` (giá trị tự nhập cũng có mã riêng).
+    async productCategory(token, externalProductId): Promise<RemoteProductCategory | null> {
+      const data = await client.call<Row>('GET', `/product/202309/products/${encodeURIComponent(externalProductId)}`, { token: requireToken(token) });
+      const leaf = ((data?.category_chains ?? []) as Row[]).find((c) => c.is_leaf === true);
+      if (!leaf?.id) return null;
+      return {
+        externalCategoryId: String(leaf.id),
+        attributes: ((data?.product_attributes ?? []) as Row[]).flatMap((a) => {
+          const values = ((a.values ?? []) as Row[])
+            .filter((v) => typeof v.name === 'string' && v.name !== '')
+            .map((v) => ({ id: v.id == null ? null : String(v.id), name: String(v.name) }));
+          return a.id != null && values.length ? [{ code: String(a.id), values }] : [];
+        }),
+      };
     },
 
     async leafAttributes(token, externalCategoryId) {
@@ -356,9 +423,15 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         return existingProduct(existing);
       }
       // Kiểm điều kiện đăng trước khi tạo (#305, Documents/21 §18.6.4): gian hàng, rồi thử chính body tạo.
-      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p), assertShopEligible(token)]);
+      const [warehouseId, content, , brandId] = await Promise.all([
+        defaultWarehouse(token),
+        productContent(token, p),
+        assertShopEligible(token),
+        p.brand?.trim() ? brandIdOf(token, p.externalCategoryId, p.brand.trim()) : null,
+      ]);
       const listing = {
         ...content,
+        ...(brandId && { brand_id: brandId }),
         skus: [
           {
             seller_sku: p.sellerSku,

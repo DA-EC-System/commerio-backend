@@ -1,0 +1,32 @@
+{
+  "categories": [
+    {
+      "id": "601352",
+      "is_leaf": false,
+      "level": 1,
+      "name": "Giày dép",
+      "permission_statuses": [
+        "AVAILABLE"
+      ]
+    },
+    {
+      "id": "900616",
+      "is_leaf": false,
+      "level": 2,
+      "name": "Giày dép nam",
+      "permission_statuses": [
+        "AVAILABLE"
+      ]
+    },
+    {
+      "id": "601357",
+      "is_leaf": true,
+      "level": 3,
+      "name": "Giày thể thao thường ngày",
+      "permission_statuses": [
+        "AVAILABLE"
+      ]
+    }
+  ],
+  "leaf_category_id": "601357"
+}

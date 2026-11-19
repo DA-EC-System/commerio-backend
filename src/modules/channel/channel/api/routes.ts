@@ -6,8 +6,10 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
+import { suggestCategories } from '../service/category-suggestions.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
-import { leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
+import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
+import { getProductSpec, putProductSpec, refreshCopiesForCategory } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
@@ -52,6 +54,11 @@ import {
   PlatformCategoriesQuery,
   PlatformLeafParams,
   LeafDetailQuery,
+  CascadeQuery,
+  CategorySuggestionsQuery,
+  CategorySyncBody,
+  ProductSpecBody,
+  ProductSpecParams,
   ShopParams,
   TokenBody,
   ConfirmPriceBody,
@@ -197,10 +204,18 @@ export function channelRouter(ctx: ModuleContext): Router {
   );
 
   // Xếp một lượt đồng bộ cây (`channel.category_sync`, mỗi sàn một lượt chờ); không gọi sàn trong request.
-  router.post('/platforms/:platform/categories/sync', ctx.authorize('channel.shop.sync'), validate({ params: PlatformParams }), async (_req, res) => {
-    const { platform } = validated<typeof PlatformParams>(res, 'params');
-    res.status(202).json(await requestCategorySync(platform));
-  });
+  // `allowShrink` bỏ chặn cây thiếu (`CategoryTreeShrunkError`), chỉ quản trị nền tảng (cờ đọc từ DB mỗi lần, như router
+  // `platform`); người khác gửi cờ: 403.
+  router.post(
+    '/platforms/:platform/categories/sync',
+    ctx.authorize('channel.shop.sync'),
+    validate({ params: PlatformParams, body: CategorySyncBody }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      const { allowShrink } = validated<typeof CategorySyncBody>(res, 'body');
+      res.status(202).json(await requestCategorySync(platform, { allowShrink: allowShrink === true, accountId: actor(res).accountId }));
+    },
+  );
 
   router.get(
     '/platforms/:platform/categories/:externalId',
@@ -210,6 +225,45 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
       const { shopId } = validated<typeof LeafDetailQuery>(res, 'query');
       res.json(await leafDetail(ctx, actor(res).companyId, platform, externalId, { shopId }));
+    },
+  );
+
+  // Gọi sàn ngoài giao dịch; service tự mở `withCompany` lấy token gian hàng.
+  router.get(
+    '/platforms/:platform/categories/:externalId/cascade',
+    manage,
+    validate({ params: PlatformLeafParams, query: CascadeQuery }),
+    async (_req, res) => {
+      const { platform, externalId } = validated<typeof PlatformLeafParams>(res, 'params');
+      res.json(await cascadeLevel(actor(res).companyId, platform, externalId, validated<typeof CascadeQuery>(res, 'query')));
+    },
+  );
+
+  // Gợi ý category (#400 lát 9): gọi sàn ngoài giao dịch, service tự mở `withCompany`.
+  router.get(
+    '/shops/:id/category-suggestions',
+    manage,
+    validate({ params: ShopParams, query: CategorySuggestionsQuery }),
+    async (_req, res) => {
+      const { id } = validated<typeof ShopParams>(res, 'params');
+      const { productId } = validated<typeof CategorySuggestionsQuery>(res, 'query');
+      res.json(await suggestCategories(ctx, actor(res).companyId, id, productId));
+    },
+  );
+
+  router.get('/products/:productId/specs/:platform', view, validate({ params: ProductSpecParams }), async (_req, res) => {
+    const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
+    res.json(await getProductSpec(ctx, actor(res).companyId, productId, platform));
+  });
+
+  // Gọi sàn lấy attribute leaf (khi thiếu/cũ) ngoài giao dịch; service tự mở `withCompany` (A16).
+  router.put(
+    '/products/:productId/specs/:platform',
+    manage,
+    validate({ params: ProductSpecParams, body: ProductSpecBody }),
+    async (_req, res) => {
+      const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
+      res.json(await putProductSpec(ctx, actor(res), productId, platform, validated<typeof ProductSpecBody>(res, 'body')));
     },
   );
 
@@ -241,7 +295,14 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { id, categoryId } = validated<typeof CategoryMapParams>(res, 'params');
       const body = validated<typeof CategoryMapBody>(res, 'body');
-      res.json(await withCompany(actor(res).companyId, () => categories.putCategoryMap(id, categoryId, body)));
+      // Bản chép spec `version = 0` của sản phẩm thuộc danh mục này theo ghép mới, cùng giao dịch (#400 A18, khe BE2–BE3).
+      res.json(
+        await withCompany(actor(res).companyId, async () => {
+          const map = await categories.putCategoryMap(id, categoryId, body);
+          await refreshCopiesForCategory(ctx, map.platform, categoryId, map);
+          return map;
+        }),
+      );
     },
   );
 

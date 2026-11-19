@@ -371,6 +371,57 @@ describe('khách xin huỷ (§19.3)', () => {
     expect((await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`))).status).toBe(200);
   });
 
+  it('khách xin huỷ một món, món kia đang xin trả hàng: vẫn là huỷ dòng, không coi là huỷ cả đơn', async () => {
+    const o = twoLines('pending', { cancelRequested: true });
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý' };
+    o.lines[1]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Hàng lỗi', cancelKind: 'return' };
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'accept' });
+    expect(res.status).toBe(200);
+    const order = Order.parse(res.body);
+    expect(order).toMatchObject({ status: 'processing', cancelReason: null });
+    expect(order.flags).not.toContain('cancelling');
+  });
+
+  it('dấu xin huỷ cũ của món khác được dọn khi sàn không còn báo, kể cả lúc đơn còn cờ khách xin huỷ', async () => {
+    const o = twoLines('pending', { cancelRequested: true });
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý' };
+    const { orderId } = await ingest(o);
+    // Món kia mang dấu khách xin huỷ từ lần trước (Sale đã từ chối), sàn nay không còn báo.
+    await testPool().query(
+      `update "order".order_lines set cancel_initiator = 'buyer', cancel_reason = 'Đặt nhầm' where order_id = $1 and external_line_id = $2`,
+      [orderId, o.lines[1]!.externalLineId],
+    );
+    await ingest({ ...o, rawStatus: `${o.rawStatus}-x` });
+    const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'accept' });
+    expect(res.status).toBe(200);
+    const order = Order.parse(res.body);
+    expect(order.flags).not.toContain('cancelling');
+    expect(order.lines.find((l) => l.id && l.cancelReason === 'Đặt nhầm')).toBeUndefined();
+  });
+
+  it('mọi món đã huỷ mà đơn còn xử lý: lý do huỷ, huỷ trên sàn báo "không còn món nào để huỷ", không gọi sàn', async () => {
+    const o = twoLines('pending');
+    const { orderId } = await ingest(o);
+    // Kiện và dòng đơn đổi trong một giao dịch (trigger kiểm bằng lúc commit, db/CLAUDE.md).
+    await testPool().query(
+      `with p as (update "order".packages set status = 'cancelled' where order_id = $1)
+       update "order".order_lines set cancelled_qty = quantity where order_id = $1`,
+      [orderId],
+    );
+    cancelReasons.mockClear();
+    cancelOrder.mockClear();
+    const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`));
+    expect(reasons.status).toBe(409);
+    expect(reasons.body.code).toBe('invalid_transition');
+    expect(reasons.body.detail).toMatch(/không còn món nào để huỷ/);
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
+    expect(res.status).toBe(409);
+    expect(res.body.detail).toMatch(/không còn món nào để huỷ/);
+    expect(cancelReasons).not.toHaveBeenCalled();
+    expect(cancelOrder).not.toHaveBeenCalled();
+  });
+
   it('từ chối: báo sàn, bỏ cờ, đơn chạy tiếp', async () => {
     const { orderId } = await ingest(remote('pending', { cancelRequested: true }));
     const res = await post(`${orderId}/cancel-request`, { version: (await detail(orderId)).version, decision: 'reject' });

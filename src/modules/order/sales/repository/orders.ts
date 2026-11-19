@@ -79,8 +79,8 @@ export const cancellingSql = sql<boolean>`(${orders.status} in ('unpaid', 'proce
   and exists (
     select 1 from "order".packages p
     where p.order_id = ${orders.id} and p.status <> 'cancelled' and p.needs_open
-      and (p.open_purpose = 'cancel' or exists (
-        select 1 from "order".package_lines pl where pl.package_id = p.id and pl.pending_drop_qty > 0))))))`;
+      and (p.open_purpose = 'cancel' or (p.open_purpose = 'edit' and exists (
+        select 1 from "order".package_lines pl where pl.package_id = p.id and pl.pending_drop_qty > 0)))))))`;
 
 /** Cờ Đang huỷ suy ra của một đơn (`cancellingSql`), đọc trong giao dịch của bên gọi (thấy cả ghi chưa commit). */
 export async function isCancelling(orderId: string): Promise<boolean> {

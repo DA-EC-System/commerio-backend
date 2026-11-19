@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HoldJob } from '#src/modules/core/index.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
+import { replaceLeaf } from '#src/modules/channel/channel/repository/platform-categories.ts';
 import { PUSH_ATTEMPTS, runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { type CreatedProduct, MarketplaceError, type NewProduct, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -12,7 +13,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { fakeAdapter } from './helpers.ts';
+import { fakeAdapter, seedSpecs } from './helpers.ts';
 
 const categoryId = randomUUID();
 const productId = randomUUID();
@@ -69,6 +70,8 @@ registerAdapter(
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
     categoryAttributes: async () => [],
+    // Như Lazada thật (review BE2 P1-2): xuất xứ, thương hiệu lấy ở catalog.
+    productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
     uploadImage,
     createProduct,
     updateProduct,
@@ -113,12 +116,6 @@ beforeAll(async () => {
   company = await createCompany({ optionalModules: ['channel'] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
-  const map = await auth(app().put(`/api/v1/channel/shops/${shopId}/category-maps/${categoryId}`)).send({
-    externalCategoryId: '14275',
-    attributes: { brand: 'No Brand' },
-    version: null,
-  });
-  expect(map.status).toBe(200);
 });
 
 beforeEach(() => {
@@ -136,6 +133,7 @@ beforeEach(() => {
 async function pushing(cols: Record<string, unknown> = {}, extra: Partial<ListingVariant> = {}) {
   const v = variant(`CMR-${randomUUID().slice(0, 8)}`, extra);
   variants.push(v);
+  await seedSpecs(company.companyId, 'lazada', '14275', [v], { brand: 'No Brand' });
   // Listing do app tạo (#399: cột mặc định `platform`); ca cần sản phẩm người bán thì ghi đè.
   const all = { company_id: company.companyId, shop_id: shopId, variant_id: v.id, seller_sku: v.sku, status: 'pushing', push_started_at: new Date(), content_source: 'app', ...cols };
   const keys = Object.keys(all);
@@ -196,6 +194,34 @@ describe('việc nền channel.listing_push', () => {
     });
     expect(await history(id)).toEqual([{ from: 'pushing', to: 'under_review', action: 'send_review', actor_id: null }]);
     expect(v.sku).not.toBe('SKU-TREN-SAN');
+  });
+
+  it('review BE2 P1-2: spec lưu mã lựa chọn → lên sàn là nhãn; xuất xứ (ISO của catalog) thành nhãn sàn, thương hiệu catalog thắng khoá chép', async () => {
+    const leaf = String(700_000_000 + Math.floor(Math.random() * 99_000_000));
+    const option = (id: string, label: string) => ({ id, label });
+    const base = { kind: 'property' as const, allowCustom: false, required: false, requiredWhen: null, isKey: false, raw: {} };
+    await replaceLeaf('lazada', leaf, {
+      attributes: [
+        { ...base, code: 'clothing_material', label: 'Chất liệu', input: 'select', tier: 'category', options: [option('9937', 'Denim'), option('8544', 'Nhung')] },
+        { ...base, code: 'occasion', label: 'Dịp', input: 'multiselect', tier: 'category', options: [option('2167', 'Thể thao'), option('3015', 'Bình thường')] },
+        { ...base, code: 'country_origin_hb', label: 'Xuất xứ', input: 'select', tier: 'product', options: [option('3298', 'Trung Quốc'), option('61613', 'Việt Nam')] },
+        { ...base, code: 'brand', label: 'Thương hiệu', input: 'select', tier: 'product', allowCustom: true, options: [] },
+      ],
+      sizeChartRule: null,
+      fetchedAt: new Date(),
+    });
+    const own = randomUUID();
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, version) values ($1, $2, 'lazada', $3, $4, 'push', 2)`,
+      [company.companyId, own, leaf, JSON.stringify({ clothing_material: '9937', occasion: ['2167', '3015'], brand: 'Cũ' })],
+    );
+    const { id } = await pushing({}, { productId: own, originCountry: 'VN', brand: 'Acme' });
+    await runListingPush(port, job(id));
+    expect(await listing(id)).toMatchObject({ push_error: null });
+    expect(createProduct.mock.calls[0]![1]).toMatchObject({
+      externalCategoryId: leaf,
+      attributes: { clothing_material: 'Denim', occasion: ['Thể thao', 'Bình thường'], country_origin_hb: 'Việt Nam', brand: 'Acme' },
+    });
   });
 
   it('#292 AC-8: gửi tổ chức chịu trách nhiệm hiệu lực của hồ sơ công ty lúc đẩy (adapter điền khi map để trống)', async () => {
@@ -596,11 +622,10 @@ describe('việc nền channel.listing_push', () => {
     it('AC-1 sàn bật theo cả sản phẩm (kiểu TikTok): chỉ `activate` theo sản phẩm, không updateProduct', async () => {
       const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
       const tiktokShop = res.body.shop.id as string;
-      const map = await auth(app().put(`/api/v1/channel/shops/${tiktokShop}/category-maps/${categoryId}`)).send({ externalCategoryId: '600042', attributes: {}, version: null });
-      expect(map.status).toBe(200);
       const tag = randomUUID().slice(0, 8);
       remote.set(`NB-${tag}`, { productId: `TP-${tag}`, skuId: `TS-${tag}`, state: 'inactive' });
-      const { id } = await pushing({ shop_id: tiktokShop, content_source: 'platform', seller_sku: `NB-${tag}`, external_product_id: `TP-${tag}`, external_sku_id: `TS-${tag}` });
+      const { id, v } = await pushing({ shop_id: tiktokShop, content_source: 'platform', seller_sku: `NB-${tag}`, external_product_id: `TP-${tag}`, external_sku_id: `TS-${tag}` });
+      await seedSpecs(company.companyId, 'tiktok', '600042', [v]);
       await runListingPush(port, { companyId: company.companyId, shopId: tiktokShop, listingId: id, imageUrls: ['https://img.test/a.png'] });
       expect(activate.mock.calls[0]![1]).toBe(`TP-${tag}`);
       expect(updateProduct).not.toHaveBeenCalled();

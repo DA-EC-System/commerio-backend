@@ -35,6 +35,9 @@ export interface ListingVariant {
   lengthMm: number | null;
   widthMm: number | null;
   heightMm: number | null;
+  /** Xuất xứ (ISO alpha-2), thương hiệu của sản phẩm cha ở catalog (#340); adapter đổi sang giá trị sàn (#400 A1). */
+  originCountry?: string | null;
+  brand?: string | null;
 }
 
 export interface ProductPort {
@@ -73,6 +76,8 @@ function toListingVariant(v: Extended): ListingVariant {
     lengthMm: v.lengthMm ?? null,
     widthMm: v.widthMm ?? null,
     heightMm: v.heightMm ?? null,
+    originCountry: v.originCountry,
+    brand: v.brand,
   };
 }
 

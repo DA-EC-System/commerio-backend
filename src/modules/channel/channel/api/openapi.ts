@@ -7,6 +7,14 @@ import {
   CategoryAttributeList,
   CategorySyncResult,
   LeafDetailQuery,
+  CascadeLevelSchema,
+  CascadeQuery,
+  CategorySuggestionsQuery,
+  CategorySuggestionsView,
+  CategorySyncBody,
+  ProductSpecBody,
+  ProductSpecParams,
+  ProductSpecView,
   PlatformCategoriesQuery,
   PlatformCategoryPage,
   PlatformLeafDetail,
@@ -251,12 +259,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories/sync',
     summary: 'Đồng bộ ngay cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua.',
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua. Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
     security: bearer,
-    request: { params: PlatformParams },
+    request: { params: PlatformParams, body: { required: false, content: { 'application/json': { schema: CategorySyncBody } } } },
     responses: {
       202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(CategorySyncResult) },
       ...auth,
+      403: problemResponse('`forbidden`: thiếu `channel.shop.sync`, hoặc gửi `allowShrink: true` mà không phải quản trị nền tảng'),
       422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây'),
     },
   });
@@ -277,6 +286,71 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ),
       422: problemResponse('`validation_failed`; `category_not_leaf`; `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi tạm và chưa có bản nào'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/categories/:externalId/cascade',
+    summary: 'Giá trị cấp kế của attribute cascade (Lazada propCascade) (#400)',
+    description:
+      'Cần `channel.listing.manage`. Gọi sàn (Lazada GetNextCascadeProp), không lưu. Cần token gian hàng Lazada: `shopId`, không gửi thì gian hàng `active` đầu tiên. `path` là các cấp đã chọn theo định dạng `path` của sàn; `leaf = true` là cấp cuối, spec lưu `path` tới cấp đó.',
+    security: bearer,
+    request: { params: PlatformLeafParams, query: CascadeQuery },
+    responses: {
+      200: { description: 'Cấp kế', ...json(CascadeLevelSchema) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng `shopId` không có, của công ty khác hoặc khác sàn'),
+      409: problemResponse('`shop_not_connected`: không có gian hàng `active` của sàn; `marketplace_rejected`, `marketplace_unauthorized`'),
+      422: problemResponse('`validation_failed` (`errors.code`: không phải attribute cascade đã lưu của leaf); `marketplace_unsupported`: sàn không có cascade'),
+      503: problemResponse('`marketplace_unavailable`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/category-suggestions',
+    summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
+    description:
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false.',
+    security: bearer,
+    request: { params: ShopParams, query: CategorySuggestionsQuery },
+    responses: {
+      200: { description: 'Gợi ý', ...json(CategorySuggestionsView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hay sản phẩm không có hoặc của công ty khác'),
+      409: problemResponse('`shop_not_connected` (gian hàng không `active`, kèm `current`); `marketplace_rejected`, `marketplace_unauthorized`'),
+      422: problemResponse('`product_name_too_short` (kèm `min`, TikTok 25), `images_missing` (Lazada), không gọi sàn; `validation_failed` (`errors.productId`); `marketplace_unsupported`'),
+      503: problemResponse('`marketplace_unavailable` sau một lần gọi lại'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/products/:productId/specs/:platform',
+    summary: 'Thông tin sàn của sản phẩm (category, attribute, ánh xạ trục) (#400)',
+    description: 'Cần `channel.shop.view`. `missing` tính theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `missing: []`.',
+    security: bearer,
+    request: { params: ProductSpecParams },
+    responses: {
+      200: { description: 'Spec', ...json(ProductSpecView) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
+      422: problemResponse('`marketplace_unsupported`'),
+    },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/products/:productId/specs/:platform',
+    summary: 'Lưu thông tin sàn của sản phẩm (#400)',
+    description:
+      'Cần `channel.listing.manage`. Attribute của leaf chưa có hoặc quá 7 ngày thì lấy từ sàn trước khi kiểm (TikTok bằng gian hàng `active` đầu tiên). Chỉ lưu `tier = category`; `company` trống hoặc trùng mặc định không lưu; `product` bỏ qua. Ghi nhật ký.',
+    security: bearer,
+    request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ProductSpecBody } } } },
+    responses: {
+      200: { description: 'Spec đã lưu', ...json(ProductSpecView) },
+      ...auth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
+      422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>`, `valueMap.<id>`); `marketplace_unsupported`'),
+      503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
     },
   });
   registry.registerPath({

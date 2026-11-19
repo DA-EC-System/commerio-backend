@@ -43,7 +43,7 @@ async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknow
 export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
   return onActiveShop(job, 'đồng bộ listing', async () => {
     await syncListings(port, job.companyId, job.shopId);
-    await refreshRemoteSkusQuietly(job.companyId, job.shopId);
+    await refreshRemoteSkusQuietly(job.companyId, job.shopId, port);
   });
 }
 
