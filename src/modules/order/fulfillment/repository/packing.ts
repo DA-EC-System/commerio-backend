@@ -65,7 +65,7 @@ export async function pickListBase(filter: { ids: readonly string[] } | { limit:
   const page = db.$with('pick_page').as(selected);
   const rows = await db.with(page).select({
     packageId: page.packageId, orderId: page.orderId, orderLineId: packageLines.orderLineId,
-    variantId: packageLines.variantId, quantity: packageLines.quantity,
+    variantId: packageLines.variantId, stockUntracked: packageLines.stockUntracked, quantity: packageLines.quantity,
   }).from(page)
     .innerJoin(packages, eq(packages.id, page.packageId))
     .leftJoin(packageLines, eq(packageLines.packageId, page.packageId))
@@ -74,8 +74,10 @@ export async function pickListBase(filter: { ids: readonly string[] } | { limit:
   const truncated = 'limit' in filter && ids.length > filter.limit;
   const excluded = truncated ? ids.pop() : undefined;
   return {
-    rows: rows.flatMap(({ packageId, orderId, orderLineId, variantId, quantity }) =>
-      packageId !== excluded && orderLineId && quantity !== null ? [{ packageId, orderId, orderLineId, variantId, quantity }] : [],
+    rows: rows.flatMap(({ packageId, orderId, orderLineId, variantId, stockUntracked, quantity }) =>
+      packageId !== excluded && orderLineId && quantity !== null
+        ? [{ packageId, orderId, orderLineId, variantId, stockUntracked: stockUntracked ?? false, quantity }]
+        : [],
     ),
     packageIds: ids,
     truncated,

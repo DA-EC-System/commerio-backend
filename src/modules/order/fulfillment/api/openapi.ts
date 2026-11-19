@@ -80,7 +80,7 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
   });
   registerPackingAction(registry, 'pack', PackBody, 'Quét và đóng gói kiện',
     '`order_not_processing`, `package_group_not_ready`, `package_status_not_allowed`, `item_not_packable`',
-    '`scan_mismatch` tại `errors["lines.<variantId>"]`, `marketplace_unsupported`');
+    '`scan_mismatch` tại `errors["lines.<variantId>"]` hoặc `errors["untrackedLines.<lineId>"]`, `marketplace_unsupported`');
   registerPackingAction(registry, 'ready', ReadyBody, 'Báo kiện sẵn sàng giao',
     '`self_delivery`, `awaiting_open` (kiện đang có cờ Cần mở hay kiện chờ thay, #238), `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`',
     '`marketplace_unsupported`');

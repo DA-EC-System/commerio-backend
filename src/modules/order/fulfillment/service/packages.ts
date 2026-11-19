@@ -8,7 +8,7 @@ import type { PackageTab } from '../domain/package.ts';
 import type { SplitLevel } from '../domain/split.ts';
 import { countPackageTabs, findPackagePage, findPackagesByIds, type PackageFilter } from '../repository/package-list.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
-import { type PackageOrderRef, toPackageSummary } from './views.ts';
+import { type PackageOrderRef, packageVariantsOf, toPackageSummary } from './views.ts';
 
 /**
  * Hàm module khác tiêm vào: tên gian hàng của channel (`src/wiring.ts`), thông tin đơn của sales (`order/index.ts`
@@ -102,11 +102,13 @@ const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is st
 
 async function summaries(ctx: FulfillmentContext, rows: readonly PackageViewRow[], now: number) {
   const shopIds = unique(rows.map((r) => r.shopId));
-  const [orders, shops, accounts] = await Promise.all([
+  const [orders, shops, accounts, variants] = await Promise.all([
     orderRefsLookupOf(ctx)(unique(rows.map((r) => r.orderId))),
     ctx.shopsOf && shopIds.length ? ctx.shopsOf(shopIds) : Promise.resolve(new Map<string, { shopName: string; platform: string }>()),
     // Tên người báo thất lạc, một câu cho cả trang (spec #238 §5.3); trang không có báo cáo thì không truy vấn.
     findAccountSummaries(unique(rows.map((r) => r.lostReportedBy))),
+    // SKU, tên của biến thể app mà dòng kiện giữ, một câu cho cả trang (Documents/21 §19.2).
+    packageVariantsOf(rows),
   ]);
   const names = new Map(accounts.map((a) => [a.id, a.fullName]));
   return rows.map((p) => {
@@ -114,7 +116,7 @@ async function summaries(ctx: FulfillmentContext, rows: readonly PackageViewRow[
     // Kiện luôn có đơn cùng công ty; thiếu là dữ liệu hỏng.
     if (!order) throw new Error(`Kiện ${p.id} không có đơn ${p.orderId}`);
     const shop = p.shopId ? shops.get(p.shopId) : undefined;
-    return toPackageSummary(p, order, shop && p.shopId ? { id: p.shopId, shopName: shop.shopName, platform: shop.platform } : null, now, names);
+    return toPackageSummary(p, order, shop && p.shopId ? { id: p.shopId, shopName: shop.shopName, platform: shop.platform } : null, now, variants, names);
   });
 }
 

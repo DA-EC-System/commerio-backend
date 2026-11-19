@@ -295,7 +295,8 @@ describe('thông tin đơn sàn ở danh sách và chi tiết (#260)', () => {
       shippingProviderType: 'standard',
       promisedShippingAt: null,
     });
-    expect(o.packages[0]!.lines[0]).toMatchObject({ attributesLabel: 'Màu: Đỏ' });
+    // Dòng kiện đã ghép hiện nhãn của biến thể app (21 §19.2); biến thể app không có thuộc tính thì dùng `variation` của sàn.
+    expect(o.packages[0]!.lines[0]).toMatchObject({ attributesLabel: 'Màu: Đỏ', externalSku: expect.any(String), untracked: false });
   });
 
   it('thứ tự dòng theo mã món sàn: …9 trước …10 ở chi tiết và dòng đầu của danh sách', async () => {
