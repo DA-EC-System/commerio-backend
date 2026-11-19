@@ -52,9 +52,27 @@ export const REFUND_CLAIM_NOTE = 'Hàng trả về thiếu hoặc sai';
 export const refundClaimNote = (inspectionNumber: string | null) =>
   `${REFUND_CLAIM_NOTE}${inspectionNumber ? ` (phiếu ${inspectionNumber})` : ''}: app không báo sàn đồng ý hoàn tiền. Từ chối nhận hàng hoặc khiếu nại trên Seller Center trước hạn của sàn.`;
 
-/** Cờ của bước đồng ý hoàn tiền (báo lỗi, khiếu nại): lượt kéo thấy sàn đã qua bước này thì gỡ. */
-export const isRefundApprovalNote = (note: string | null) =>
-  (note?.startsWith(REFUND_APPROVAL_FAILED_NOTE) || note?.startsWith(REFUND_CLAIM_NOTE)) ?? false;
+/** Nối câu cờ cũ sau câu khiếu nại; gỡ câu khiếu nại thì trả lại câu cũ. */
+const PREVIOUS_FLAG = ' Cờ trước: ';
+
+/** Cờ khi phiếu có khiếu nại: câu khiếu nại đứng đầu (người bán phải làm trước hạn của sàn), câu cờ đang có giữ phía sau. */
+export function claimFlag(row: { needsAttention: boolean; attentionNote: string | null }, inspectionNumber: string | null) {
+  const previous = row.needsAttention && row.attentionNote ? `${PREVIOUS_FLAG}${row.attentionNote}` : '';
+  return { needsAttention: true, attentionNote: `${refundClaimNote(inspectionNumber)}${previous}` };
+}
+
+/**
+ * Sàn đã qua bước đồng ý hoàn tiền: gỡ cờ của bước này (báo lỗi, khiếu nại). Câu cờ cũ nối sau câu khiếu nại thì trả lại,
+ * cờ vẫn bật. Không phải cờ của bước này thì null (không đổi).
+ */
+export function clearRefundApprovalFlag(row: { needsAttention: boolean; attentionNote: string | null }) {
+  const note = row.attentionNote;
+  if (!row.needsAttention || !note) return null;
+  if (note.startsWith(REFUND_APPROVAL_FAILED_NOTE)) return { needsAttention: false, attentionNote: null };
+  if (!note.startsWith(REFUND_CLAIM_NOTE)) return null;
+  const at = note.indexOf(PREVIOUS_FLAG);
+  return at < 0 ? { needsAttention: false, attentionNote: null } : { needsAttention: true, attentionNote: note.slice(at + PREVIOUS_FLAG.length) };
+}
 
 /** Yêu cầu đã đóng sau kiểm hàng hoàn của gian hàng, chờ báo sàn đồng ý hoàn tiền. */
 export async function returnsAwaitingRefundApproval(shopId: string): Promise<ReturnToConfirm[]> {

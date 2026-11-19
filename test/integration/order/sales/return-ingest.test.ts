@@ -591,6 +591,18 @@ describe('đồng ý hoàn tiền sau kiểm hàng hoàn (#392)', () => {
     expect(await requestOf(r.externalId)).toMatchObject({ status: 'closed', refund_approval: 'done', needs_attention: false, attention_note: null });
   });
 
+  it('phiếu có khiếu nại khi yêu cầu đã có cờ khác: câu khiếu nại đứng đầu, gỡ thì trả lại cờ cũ', async () => {
+    const { r, row, inspectionId } = await receivedReturn(true);
+    await db().query(`update "order".return_requests set needs_attention = true, attention_note = 'Kiện KH-1 đã chuyển sang Đã giao' where id = $1`, [row.id]);
+    await inspect(inspectionId, approving);
+    const held = await requestOf(r.externalId);
+    expect(held.attention_note).toMatch(/^Hàng trả về thiếu hoặc sai .* Cờ trước: Kiện KH-1 đã chuyển sang Đã giao$/);
+
+    remote = [{ ...r, rawStatus: 'REJECT_RECEIVE_PACKAGE', status: 'received', sellerHandledReceipt: true, updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ refund_approval: 'done', needs_attention: true, attention_note: 'Kiện KH-1 đã chuyển sang Đã giao' });
+  });
+
   it('sàn không có bước này (Lazada): refund_approval null', async () => {
     const { r, inspectionId } = await receivedReturn();
     await inspect(inspectionId, { marketplaceReturns: { approvesRefundAfterInspection: async () => false } as never });

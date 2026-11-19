@@ -27,7 +27,7 @@ import {
 } from '../repository/returns.ts';
 import { returnInspectionClaimed } from '../../../product/index.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
-import { isConfirmFailedNote, isRefundApprovalNote, refundClaimNote } from './return-confirm.ts';
+import { claimFlag, clearRefundApprovalFlag, isConfirmFailedNote } from './return-confirm.ts';
 import { applyReturnStep, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
@@ -188,7 +188,7 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   // không còn gì phải báo, gỡ cờ báo lỗi của bước này.
   if (r.sellerHandledReceipt === true && (row.refundApproval === 'pending' || row.refundApproval === 'withheld')) {
     Object.assign(fields, { refundApproval: 'done' });
-    if (row.needsAttention && isRefundApprovalNote(row.attentionNote)) Object.assign(fields, { needsAttention: false, attentionNote: null });
+    Object.assign(fields, clearRefundApprovalFlag(row));
   }
   const action = r.status ? syncAction(row.status, r.status, row.closeResult, r.sellerHandledReceipt ?? false) : null;
   if (action === 'conflict') {
@@ -243,6 +243,5 @@ async function refundApprovalOf(row: ReturnRow, inspectionId: string, ctx?: { ma
   if (row.source !== 'marketplace' || !row.shopId || !ctx?.marketplaceReturns) return {};
   if (!(await ctx.marketplaceReturns.approvesRefundAfterInspection(row.companyId, row.shopId))) return {};
   if (!(await returnInspectionClaimed(inspectionId))) return { refundApproval: 'pending' };
-  // Cờ khác đang bật thì giữ câu của nó: yêu cầu vẫn Cần xử lý.
-  return { refundApproval: 'withheld', ...(!row.needsAttention && { needsAttention: true, attentionNote: refundClaimNote(row.inspectionNumber) }) };
+  return { refundApproval: 'withheld', ...claimFlag(row, row.inspectionNumber) };
 }
