@@ -1,7 +1,7 @@
 // Luật đổi nhân viên (#7 [B]) và gán vai trò khi tạo link mời, duyệt (#7 [C]). Thuần, không I/O.
 // Documents/21 I5: không gán CEO qua màn này; không thêm hay gỡ vai trò có quyền mình không có, trừ vai có sẵn Sale,
 // Nhân viên kho (đổi 17/11/2026, #351).
-import type { RoleWithPermissions } from '../../access/index.ts';
+import { BUILTIN_ROLES, type RoleWithPermissions } from '../../access/index.ts';
 
 export type RoleCheck = 'ok' | 'unknown_roles' | 'ceo_role' | 'not_held';
 
@@ -37,4 +37,13 @@ export function isProtectedTarget(input: {
   targetRoles: readonly RoleWithPermissions[];
 }): boolean {
   return input.callerId === input.targetId || input.targetRoles.some((r) => r.isCeo);
+}
+
+/**
+ * Việc chỉ CEO làm (Documents/21 I5, đổi 19/11/2026): mời (tạo link, duyệt) người vai Admin, gán hay gỡ vai Admin,
+ * khoá, mở khoá, đổi vai người đang có vai Admin. Admin và CEO ngang quyền ở mọi việc khác.
+ */
+export function touchesAdmin(input: { requestedIds?: readonly string[]; currentRoles?: readonly { id: string }[] }): boolean {
+  const admin = BUILTIN_ROLES.admin.id;
+  return (input.requestedIds ?? []).includes(admin) || (input.currentRoles ?? []).some((r) => r.id === admin);
 }

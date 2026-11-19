@@ -76,9 +76,10 @@ export async function handleInvitationDecided(event: Decided): Promise<void> {
     await deliver({ to: row.email, ...renderRejectedMail({ companyName: name, fullName: row.fullName }) }, 'invitation_rejected', log);
     return;
   }
-  // Tài khoản tạo lúc duyệt (email mới) sinh sau lúc nộp; tài khoản đã có thì có trước (như `existingAccount` của API).
+  // Tài khoản tạo lúc duyệt có `created_at` bằng `decided_at` (cùng giao dịch); tài khoản đã có thì có trước, kể cả
+  // tài khoản sinh sau lúc nộp (như `existingAccount` của API).
   const [account] = row.accountId ? await findAccountSummaries([row.accountId]) : [];
-  const existingAccount = !!account && !!row.submittedAt && account.createdAt < row.submittedAt;
+  const existingAccount = !!account && !!row.decidedAt && account.createdAt < row.decidedAt;
   const mail = renderApprovedMail({
     companyName: name,
     fullName: row.fullName,
