@@ -241,10 +241,19 @@ export async function insertMarketplaceOrder(
   return row;
 }
 
-export async function updateOrder(id: string, patch: Partial<typeof orders.$inferInsert>): Promise<void> {
+type OrderPatch = Partial<Omit<typeof orders.$inferInsert, 'legacyCancelling'>>;
+
+/**
+ * Cột cũ `cancelling` ghi kèm bằng giá trị `cancel_pending` (schema.ts): image cũ còn chạy trong lúc đổi image, hay lùi
+ * image, đọc cột đó. Bỏ cùng cột ở PR sau.
+ */
+const withLegacyCancelling = (patch: OrderPatch) =>
+  patch.cancelPending === undefined ? patch : { ...patch, legacyCancelling: patch.cancelPending };
+
+export async function updateOrder(id: string, patch: OrderPatch): Promise<void> {
   await getDb()
     .update(orders)
-    .set({ ...patch, version: sql`${orders.version} + 1`, updatedAt: sql`now()` })
+    .set({ ...withLegacyCancelling(patch), version: sql`${orders.version} + 1`, updatedAt: sql`now()` })
     .where(eq(orders.id, id));
 }
 
@@ -326,10 +335,10 @@ export async function takeNextNumber(docType: string): Promise<number> {
 }
 
 /** Sửa đơn khi còn đúng `version`, tăng `version`; không trúng dòng thì trả false để bên gọi báo 409. */
-export async function updateOrderAt(id: string, version: number, patch: Partial<typeof orders.$inferInsert>): Promise<boolean> {
+export async function updateOrderAt(id: string, version: number, patch: OrderPatch): Promise<boolean> {
   const rows = await getDb()
     .update(orders)
-    .set({ ...patch, version: sql`${orders.version} + 1`, updatedAt: sql`now()` })
+    .set({ ...withLegacyCancelling(patch), version: sql`${orders.version} + 1`, updatedAt: sql`now()` })
     .where(and(eq(orders.id, id), eq(orders.version, version)))
     .returning({ id: orders.id });
   return rows.length > 0;

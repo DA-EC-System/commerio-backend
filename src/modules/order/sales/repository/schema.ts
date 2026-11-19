@@ -99,9 +99,13 @@ export const orders = salesSchema.table(
     needsAttention: boolean('needs_attention').notNull().default(false),
     attentionNote: text('attention_note'),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
-    // Đã gửi lệnh huỷ lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn xác nhận. Cờ `cancelling` của API suy ra
-    // lúc đọc: cột này hoặc còn kiện chờ mở vì món đã huỷ (`cancellingSql` ở `repository/orders.ts`).
+    // Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của
+    // API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`).
     cancelPending: boolean('cancel_pending').notNull().default(false),
+    // Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy để image cũ còn chạy trong lúc đổi image (job
+    // migrate chạy trước); code mới không đọc, chỉ ghi kèm bằng giá trị `cancel_pending` (`withLegacyCancelling`) để lùi
+    // image vẫn đúng. Bỏ cột ở PR sau: một bản thôi ghi, rồi mới xoá.
+    legacyCancelling: boolean('cancelling').notNull().default(false),
     platformCancelled: boolean('platform_cancelled').notNull().default(false),
     shopDisconnected: boolean('shop_disconnected').notNull().default(false),
     shippingAddress: jsonb('shipping_address'),
