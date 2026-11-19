@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HoldJob } from '#src/modules/core/index.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
+import { replaceLeaf } from '#src/modules/channel/channel/repository/platform-categories.ts';
 import { PUSH_ATTEMPTS, runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { type CreatedProduct, MarketplaceError, type NewProduct, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
@@ -69,6 +70,8 @@ registerAdapter(
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
     },
     categoryAttributes: async () => [],
+    // Như Lazada thật (review BE2 P1-2): xuất xứ, thương hiệu lấy ở catalog.
+    productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
     uploadImage,
     createProduct,
     updateProduct,
@@ -191,6 +194,34 @@ describe('việc nền channel.listing_push', () => {
     });
     expect(await history(id)).toEqual([{ from: 'pushing', to: 'under_review', action: 'send_review', actor_id: null }]);
     expect(v.sku).not.toBe('SKU-TREN-SAN');
+  });
+
+  it('review BE2 P1-2: spec lưu mã lựa chọn → lên sàn là nhãn; xuất xứ (ISO của catalog) thành nhãn sàn, thương hiệu catalog thắng khoá chép', async () => {
+    const leaf = String(700_000_000 + Math.floor(Math.random() * 99_000_000));
+    const option = (id: string, label: string) => ({ id, label });
+    const base = { kind: 'property' as const, allowCustom: false, required: false, requiredWhen: null, isKey: false, raw: {} };
+    await replaceLeaf('lazada', leaf, {
+      attributes: [
+        { ...base, code: 'clothing_material', label: 'Chất liệu', input: 'select', tier: 'category', options: [option('9937', 'Denim'), option('8544', 'Nhung')] },
+        { ...base, code: 'occasion', label: 'Dịp', input: 'multiselect', tier: 'category', options: [option('2167', 'Thể thao'), option('3015', 'Bình thường')] },
+        { ...base, code: 'country_origin_hb', label: 'Xuất xứ', input: 'select', tier: 'product', options: [option('3298', 'Trung Quốc'), option('61613', 'Việt Nam')] },
+        { ...base, code: 'brand', label: 'Thương hiệu', input: 'select', tier: 'product', allowCustom: true, options: [] },
+      ],
+      sizeChartRule: null,
+      fetchedAt: new Date(),
+    });
+    const own = randomUUID();
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, version) values ($1, $2, 'lazada', $3, $4, 'push', 2)`,
+      [company.companyId, own, leaf, JSON.stringify({ clothing_material: '9937', occasion: ['2167', '3015'], brand: 'Cũ' })],
+    );
+    const { id } = await pushing({}, { productId: own, originCountry: 'VN', brand: 'Acme' });
+    await runListingPush(port, job(id));
+    expect(await listing(id)).toMatchObject({ push_error: null });
+    expect(createProduct.mock.calls[0]![1]).toMatchObject({
+      externalCategoryId: leaf,
+      attributes: { clothing_material: 'Denim', occasion: ['Thể thao', 'Bình thường'], country_origin_hb: 'Việt Nam', brand: 'Acme' },
+    });
   });
 
   it('#292 AC-8: gửi tổ chức chịu trách nhiệm hiệu lực của hồ sơ công ty lúc đẩy (adapter điền khi map để trống)', async () => {
