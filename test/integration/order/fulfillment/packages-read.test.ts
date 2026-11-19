@@ -173,3 +173,32 @@ describe('GET /fulfillment/packages/:id', () => {
     expect((await get('/packages/khong-phai-uuid')).status).toBe(404);
   });
 });
+
+it('D2-G17 26: GET /fulfillment/packages/:id của kiện chờ đổi ghép → openPurpose remap, lines[].remapPending, untracked đúng; kiện sang in_transit thì remapPending false', async () => {
+  const { companyId, ceo } = await createCompany();
+  const a = await createVariant(companyId);
+  const b = await createVariant(companyId);
+  const { packageId, lineIds } = await seedPackage(companyId, {
+    status: 'packed',
+    lines: [
+      { variantId: a.variantId, quantity: 1 },
+      { variantId: b.variantId, quantity: 1 },
+    ],
+  });
+  await testPool().query(`update "order".packages set needs_open = true, open_purpose = 'remap' where id = $1`, [packageId]);
+  await testPool().query('update "order".package_lines set remap_pending = true where id = $1', [lineIds[0]]);
+  await testPool().query('update "order".package_lines set variant_id = null, stock_untracked = true where id = $1', [lineIds[1]]);
+
+  const pkg = Package.parse((await get(`/packages/${packageId}`, ceo.token)).body);
+  expect(pkg.openPurpose).toBe('remap');
+  const byId = new Map(pkg.lines.map((l) => [l.id, l]));
+  expect(byId.get(lineIds[0]!)).toMatchObject({ remapPending: true, untracked: false });
+  expect(byId.get(lineIds[1]!)).toMatchObject({ remapPending: false, untracked: true });
+
+  await testPool().query(
+    `update "order".packages set status = 'in_transit', handed_over_at = now(), handover_source = 'marketplace', needs_open = false, open_purpose = null where id = $1`,
+    [packageId],
+  );
+  const out = Package.parse((await get(`/packages/${packageId}`, ceo.token)).body);
+  expect(out.lines.map((l) => l.remapPending)).toEqual([false, false]);
+});

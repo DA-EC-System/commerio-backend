@@ -84,7 +84,7 @@ export function registerFulfillmentOpenApi(registry: OpenAPIRegistry): void {
   registerPackingAction(registry, 'ready', ReadyBody, 'Báo kiện sẵn sàng giao',
     '`self_delivery`, `awaiting_open` (kiện đang có cờ Cần mở hay kiện chờ thay, #238), `package_group_not_ready`, `rts_package_not_found`, `package_status_not_allowed`',
     '`marketplace_unsupported`');
-  registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói (kiện `awaiting_pickup` chỉ khi có cờ Cần mở, giữ vận đơn)',
+  registerPackingAction(registry, 'open', OpenBody, 'Mở lại kiện đã đóng gói (kiện `awaiting_pickup` chỉ khi có cờ Cần mở, giữ vận đơn). Kiện đơn sàn: áp ghép hiện hành; dòng mới không giữ được thì kiện về `backordered`',
     '`shop_awaiting_stocktake`, `package_status_not_allowed`', '`insufficient_stock`, `marketplace_unsupported`');
   registry.registerPath({
     method: 'post',
