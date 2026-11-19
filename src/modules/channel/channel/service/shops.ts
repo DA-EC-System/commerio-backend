@@ -166,7 +166,7 @@ const ENTITY = 'shops';
 
 type Platform = ShopRow['platform'];
 
-const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
+export const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ thao tác này');
 
 interface ShopExtras {
