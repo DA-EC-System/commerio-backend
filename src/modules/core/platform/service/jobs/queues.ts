@@ -21,6 +21,11 @@ export class HoldJob extends Error {}
 /** Mọi việc mang công ty: API việc lỗi lọc theo đây, handler mở `withCompany` bằng nó. */
 export const JobDataSchema = z.object({ companyId: z.uuid(), shopId: z.uuid().optional() });
 export type JobData = z.infer<typeof JobDataSchema>;
+/**
+ * Dữ liệu tối thiểu của một việc: việc của công ty theo `JobData`; việc của nền tảng (đồng bộ cây category sàn, #400)
+ * không mang công ty nên API việc lỗi của công ty không thấy.
+ */
+export type BaseJobData = { companyId?: string; shopId?: string };
 
 export interface QueueOptions {
   /** `stately`: mỗi khoá chỉ một việc chờ và một việc đang chạy (đồng bộ theo gian hàng). Mặc định `standard`. */
@@ -33,21 +38,21 @@ export interface QueueOptions {
   expireInSeconds?: number;
 }
 
-export interface Queue<T extends JobData> {
+export interface Queue<T extends BaseJobData> {
   readonly name: string;
   readonly schema: z.ZodType<T>;
   readonly options: QueueOptions;
 }
 
 /** Khai một hàng việc. Tên `<module>.<việc>`, vd `channel.listing_sync`. */
-export function defineQueue<T extends JobData>(name: string, schema: z.ZodType<T>, options: QueueOptions = {}): Queue<T> {
+export function defineQueue<T extends BaseJobData>(name: string, schema: z.ZodType<T>, options: QueueOptions = {}): Queue<T> {
   return { name, schema, options };
 }
 
 const ensured = new Map<string, Promise<void>>();
 
 /** Tạo hàng nếu chưa có (một câu INSERT, không DDL). Lỗi thì lần sau thử lại. */
-function ensureQueue(queue: Queue<JobData>): Promise<void> {
+function ensureQueue(queue: Queue<BaseJobData>): Promise<void> {
   let done = ensured.get(queue.name);
   if (!done) {
     done = (async () => {
@@ -75,7 +80,7 @@ function ensureQueue(queue: Queue<JobData>): Promise<void> {
  * Gửi việc, đi chung giao dịch đang mở nếu có (giao dịch rollback thì không còn việc). `key` chống trùng
  * khi hàng là `stately`. Trả id việc, hoặc `null` khi đã có việc cùng khoá đang chờ.
  */
-export async function sendJob<T extends JobData>(
+export async function sendJob<T extends BaseJobData>(
   queue: Queue<T>,
   data: T,
   options: { key?: string; startAfter?: Date } = {},
@@ -101,7 +106,7 @@ export interface JobAttempt {
  * Nhận việc của một hàng (chỉ worker). Handler chạy ngoài giao dịch, tự mở `withCompany(data.companyId)`
  * cho phần ghi DB, để không giữ giao dịch trong lúc gọi sàn. Ném lỗi thì pg-boss thử lại theo hàng.
  */
-export async function workQueue<T extends JobData>(
+export async function workQueue<T extends BaseJobData>(
   queue: Queue<T>,
   handler: (data: T, attempt: JobAttempt) => Promise<void>,
   options: { concurrency?: number } = {},
@@ -165,6 +170,14 @@ export async function scheduleForShop<T extends JobData>(queue: Queue<T>, cron: 
   await ensureQueue(queue);
   const boss = await jobBoss();
   await boss.schedule(queue.name, cron, parsed, { key: data.shopId, singletonKey: data.shopId, tz: 'Asia/Ho_Chi_Minh' });
+}
+
+/** Lịch của việc nền tảng theo khoá tự đặt (vd mã sàn): mỗi khoá một lịch, một việc chờ (#400). */
+export async function schedulePlatform<T extends BaseJobData>(queue: Queue<T>, cron: string, data: T, key: string): Promise<void> {
+  const parsed = queue.schema.parse(data);
+  await ensureQueue(queue);
+  const boss = await jobBoss();
+  await boss.schedule(queue.name, cron, parsed, { key, singletonKey: key, tz: 'Asia/Ho_Chi_Minh' });
 }
 
 export async function unscheduleForShop(queue: Queue<JobData>, shopId: string): Promise<void> {

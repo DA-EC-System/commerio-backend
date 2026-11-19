@@ -6,6 +6,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import * as categories from '../service/categories.ts';
+import { requestCategorySync } from '../service/category-sync.ts';
 import { leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
@@ -179,6 +180,12 @@ export function channelRouter(ctx: ModuleContext): Router {
       res.json(await listPlatformCategories(platform, validated<typeof PlatformCategoriesQuery>(res, 'query')));
     },
   );
+
+  // Xếp một lượt đồng bộ cây (`channel.category_sync`, mỗi sàn một lượt chờ); không gọi sàn trong request.
+  router.post('/platforms/:platform/categories/sync', ctx.authorize('channel.shop.sync'), validate({ params: PlatformParams }), async (_req, res) => {
+    const { platform } = validated<typeof PlatformParams>(res, 'params');
+    res.status(202).json(await requestCategorySync(platform));
+  });
 
   router.get(
     '/platforms/:platform/categories/:externalId',

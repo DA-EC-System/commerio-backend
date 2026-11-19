@@ -7,7 +7,7 @@ import {
   type EventPayload,
   type EventType,
   type JobAttempt,
-  type JobData,
+  type BaseJobData,
   type Queue,
   registerConsumer,
   workQueue,
@@ -15,7 +15,7 @@ import {
 import { inBackground } from './marketplaces/index.ts';
 
 /** `workQueue` của core, handler chạy như việc nền. */
-export function workChannelQueue<T extends JobData>(
+export function workChannelQueue<T extends BaseJobData>(
   queue: Queue<T>,
   handler: (data: T, attempt: JobAttempt) => Promise<void>,
   options: { concurrency?: number } = {},

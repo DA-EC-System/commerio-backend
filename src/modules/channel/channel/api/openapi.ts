@@ -5,6 +5,7 @@ import {
   AuthorizeUrlQuery,
   CallbackBody,
   CategoryAttributeList,
+  CategorySyncResult,
   LeafDetailQuery,
   PlatformCategoriesQuery,
   PlatformCategoryPage,
@@ -219,6 +220,20 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Category', ...json(PlatformCategoryPage) },
       ...auth,
       422: problemResponse('`validation_failed`; `marketplace_unsupported`: sàn không có adapter'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/platforms/:platform/categories/sync',
+    summary: 'Đồng bộ ngay cây category của sàn (#400)',
+    description:
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua.',
+    security: bearer,
+    request: { params: PlatformParams },
+    responses: {
+      202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(CategorySyncResult) },
+      ...auth,
+      422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây'),
     },
   });
   registry.registerPath({

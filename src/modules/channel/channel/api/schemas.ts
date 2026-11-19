@@ -749,3 +749,8 @@ export const PlatformLeafDetail = z
   })
   .strict()
   .meta({ id: 'PlatformLeafDetail' });
+
+export const CategorySyncResult = z
+  .object({ queued: z.boolean().meta({ description: 'false khi sàn đã có lượt chờ' }) })
+  .strict()
+  .meta({ id: 'CategorySyncResult' });

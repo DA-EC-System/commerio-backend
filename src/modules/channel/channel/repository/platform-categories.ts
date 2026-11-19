@@ -1,7 +1,7 @@
 // Cây category, attribute của leaf của sàn (bảng tham chiếu nền tảng, không RLS) và spec trỏ tới chúng (#400).
 // Ghi hai bảng tham chiếu chỉ qua `replaceLeaf`, `syncTree`, chạy **ngoài** `withCompany`: `commerio_app` chỉ có `SELECT`
 // (migration `*_category-san-quyen`), role chủ bảng ghi được (A3).
-import { and, asc, eq, inArray, isNull, max, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, max, notInArray, or, sql } from 'drizzle-orm';
 import { currentCompanyId, getDb, inTransaction } from '../../../../shared/db/client.ts';
 import { normalizePath, type PlatformAttribute } from '../domain/product-spec.ts';
 import {
@@ -9,6 +9,7 @@ import {
   platformCategories,
   platformCategoryAttributes,
   productSpecs,
+  shops,
   type SizeChartRule,
   type SpecSource,
 } from './schema.ts';
@@ -272,4 +273,15 @@ export async function specsOnCategory(platform: Marketplace, externalId: string)
     .from(productSpecs)
     .where(and(eq(productSpecs.platform, platform), eq(productSpecs.externalCategoryId, externalId)))
     .orderBy(asc(productSpecs.createdAt));
+}
+
+/** Gian hàng `active` còn token, nối sớm nhất trên sàn, mọi công ty (lượt đồng bộ cây mượn token, A4). Gọi ngoài `withCompany`. */
+export async function oldestActiveShopOn(platform: Marketplace): Promise<{ id: string; companyId: string } | undefined> {
+  const [row] = await getDb()
+    .select({ id: shops.id, companyId: shops.companyId })
+    .from(shops)
+    .where(and(eq(shops.platform, platform), eq(shops.status, 'active'), isNotNull(shops.accessTokenEnc)))
+    .orderBy(asc(shops.createdAt), asc(shops.id))
+    .limit(1);
+  return row;
 }
