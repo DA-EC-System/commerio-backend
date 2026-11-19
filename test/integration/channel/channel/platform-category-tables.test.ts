@@ -148,6 +148,20 @@ describe('bảng theo công ty: spec sản phẩm, quyền category của gian h
     });
   });
 
+  it('company_id của quyền category phải là công ty của gian hàng (khoá ngoại ghép, cả role chủ bảng; review BE1 P2-11)', async () => {
+    const a = await createCompany();
+    const b = await createCompany();
+    const shopId = await seedShop(a.companyId);
+    const err = await errorOf(() =>
+      pool().query(
+        `insert into channel.shop_category_permissions (company_id, shop_id, external_category_id, status, checked_at)
+         values ($1, $2, '601226', 'available', now())`,
+        [b.companyId, shopId],
+      ),
+    );
+    expect(err).toMatchObject({ code: '23503', constraint: 'shop_category_permissions_shop_company_fk' });
+  });
+
   it('một spec mỗi (sản phẩm, sàn); bản chép từ ghép danh mục mang version 0', async () => {
     const { companyId } = await createCompany();
     const productId = await seedSpec(companyId, { version: 0 });

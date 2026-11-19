@@ -155,6 +155,8 @@ export const shops = channelSchema.table(
     check('shops_reauth_orders_pulled', sql`${t.status} <> 'needs_reauth' or ${t.ordersPulledOkAt} is null`),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
     uniqueIndex('shops_one_opening_stocktake_uq').on(t.companyId).where(sql`${t.openingStocktakeId} is not null`),
+    // Đích của khoá ngoại ghép `shop_category_permissions_shop_company_fk` (#400, migration `*_category-san-quyen`).
+    unique('shops_id_company_uq').on(t.id, t.companyId),
   ],
 );
 
@@ -453,9 +455,10 @@ export const shopCategoryPermissions = channelSchema.table(
   'shop_category_permissions',
   {
     companyId: uuid('company_id').notNull(),
-    shopId: uuid('shop_id')
-      .notNull()
-      .references(() => shops.id),
+    // Khoá ngoại ghép `(shop_id, company_id) → shops(id, company_id)` (`shop_category_permissions_shop_company_fk`) viết
+    // trong migration `*_category-san-quyen` (drizzle-kit sinh khoá ngoại trước unique đích, db/CLAUDE.md): RLS không chặn
+    // role chủ bảng ghi `company_id` khác công ty của gian hàng (review BE1 P2-11).
+    shopId: uuid('shop_id').notNull(),
     externalCategoryId: text('external_category_id').notNull(),
     status: text('status').$type<CategoryPermission>().notNull(),
     checkedAt: timestamp('checked_at', { withTimezone: true }).notNull(),
