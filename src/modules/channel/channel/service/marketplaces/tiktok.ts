@@ -500,6 +500,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     categoriesNeedToken: true,
     // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
     suggestionRules: { minNameLength: 25 },
+    // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
+    categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,
     productFields: { '100149': 'originCountry' },
     togglesByProduct: true,

@@ -284,6 +284,27 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     };
   }
 
+  // Get Brands 202309 (OAS cục bộ tts-openapi-guide, tra 19/11/2026; #400 A1): `brand_name` lọc theo tiền tố, `category_id`
+  // cho biết thương hiệu đã uỷ quyền có dùng được ở category đó (`brand_status`). Lấy đúng tên, không phân biệt hoa thường.
+  // Dùng được: đã uỷ quyền và không `UNAVAILABLE`; chưa uỷ quyền mà không phải T1 (sàn nhận nhưng không hiện thương hiệu).
+  // T1 chưa uỷ quyền thì sàn chặn tạo: không gửi. Lỗi sàn: không gửi, để Create Product quyết (TikTok cho bỏ trống).
+  async function brandIdOf(token: string, categoryId: string, name: string): Promise<string | null> {
+    try {
+      const data = await client.call<{ brands?: Row[] }>('GET', '/product/202309/brands', {
+        token,
+        query: { brand_name: name, category_id: categoryId, category_version: CATEGORY_VERSION, page_size: '100' },
+      });
+      const wanted = name.toLocaleLowerCase('vi');
+      const usable = (b: Row) =>
+        b.authorized_status === 'AUTHORIZED' ? b.brand_status !== 'UNAVAILABLE' : b.is_t1_brand === false;
+      const hit = (data?.brands ?? []).find((b) => typeof b.id === 'string' && String(b.name ?? '').trim().toLocaleLowerCase('vi') === wanted && usable(b));
+      return hit ? String(hit.id) : null;
+    } catch (err) {
+      if (err instanceof MarketplaceError) return null;
+      throw err;
+    }
+  }
+
   return {
     // Cây đầy đủ (#400): mọi node, quyền của gian hàng mang token. Get Categories bắt `shop_cipher` (G2.6): không token thì
     // không gọi.
@@ -383,9 +404,15 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         return existingProduct(existing);
       }
       // Kiểm điều kiện đăng trước khi tạo (#305, Documents/21 §18.6.4): gian hàng, rồi thử chính body tạo.
-      const [warehouseId, content] = await Promise.all([defaultWarehouse(token), productContent(token, p), assertShopEligible(token)]);
+      const [warehouseId, content, , brandId] = await Promise.all([
+        defaultWarehouse(token),
+        productContent(token, p),
+        assertShopEligible(token),
+        p.brand?.trim() ? brandIdOf(token, p.externalCategoryId, p.brand.trim()) : null,
+      ]);
       const listing = {
         ...content,
+        ...(brandId && { brand_id: brandId }),
         skus: [
           {
             seller_sku: p.sellerSku,

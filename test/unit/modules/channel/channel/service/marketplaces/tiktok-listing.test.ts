@@ -926,3 +926,71 @@ describe('updateContent, contentRevision: sửa nội dung sản phẩm đang b�
     expect(none.result).toEqual({ state: 'approved' });
   });
 });
+
+// Thương hiệu (#400 lát 11, A1): Get Brands 202309 (OAS cục bộ tts-openapi-guide, tra 19/11/2026) theo `brand_name` (tiền tố)
+// và `category_id`, lấy đúng tên (không phân biệt hoa thường); thương hiệu T1 chưa uỷ quyền không dùng được (sàn chặn tạo).
+describe('createProduct: brand_id theo thương hiệu catalog', () => {
+  const product = {
+    externalCategoryId: '600042',
+    attributes: {},
+    name: 'CM-TEST Cốc sứ có quai 350ml thử API',
+    description: 'Cốc',
+    imageUrls: ['tos-alisg/abc'],
+    sellerSku: 'CM-TEST-COC',
+    price: '99000',
+    quantity: 5,
+    weightG: 300,
+    lengthMm: 95,
+    widthMm: 100,
+    heightMm: 120,
+  };
+  const routes = (brands: Response) => ({
+    'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+    'GET /product/202309/categories/600042/attributes': ok({ attributes: [] }),
+    'GET /product/202309/brands': brands,
+    ...PRECHECK_OK,
+    'POST /product/202309/products': ok({ product_id: 'P9', skus: [{ id: 'S9' }] }),
+    'GET /product/202309/products/P9': ok({ status: 'PENDING' }),
+  });
+  const created = (san: ReturnType<typeof fakeSan>) =>
+    san.calls.find((c) => c.method === 'POST' && c.path === '/product/202309/products')!.body as Record<string, unknown>;
+
+  it('tra theo tên và category, lấy đúng tên không phân biệt hoa thường, gửi brand_id (cả ở listing_check)', async () => {
+    const san = fakeSan(
+      routes(
+        ok({
+          brands: [
+            { id: 'B0', name: 'Teas Pro', authorized_status: 'AUTHORIZED', brand_status: 'AVAILABLE', is_t1_brand: false },
+            { id: 'B1', name: 'TEAS', authorized_status: 'UNAUTHORIZED', is_t1_brand: false },
+          ],
+        }),
+      ),
+    );
+    await san.methods().createProduct(TOKEN, { ...product, brand: ' teas ' });
+    const q = san.calls.find((c) => c.path === '/product/202309/brands')!.query;
+    expect(Object.fromEntries(q)).toMatchObject({ brand_name: 'teas', category_id: '600042', category_version: 'v2', page_size: '100' });
+    expect(created(san).brand_id).toBe('B1');
+    expect((san.calls.find((c) => c.path === '/product/202309/products/listing_check')!.body as Record<string, unknown>).brand_id).toBe('B1');
+  });
+
+  it('T1 chưa uỷ quyền, uỷ quyền mà không dùng được ở category, không trùng tên: không gửi brand_id', async () => {
+    for (const brands of [
+      [{ id: 'B1', name: 'Teas', authorized_status: 'UNAUTHORIEZD', is_t1_brand: true }],
+      [{ id: 'B2', name: 'Teas', authorized_status: 'AUTHORIZED', brand_status: 'UNAVAILABLE', is_t1_brand: true }],
+      [{ id: 'B3', name: 'Teas Pro', authorized_status: 'AUTHORIZED', brand_status: 'AVAILABLE' }],
+    ]) {
+      const san = fakeSan(routes(ok({ brands })));
+      await san.methods().createProduct(TOKEN, { ...product, brand: 'Teas' });
+      expect(created(san)).not.toHaveProperty('brand_id');
+    }
+  });
+
+  it('Get Brands lỗi thì vẫn tạo, không brand_id; không có thương hiệu thì không gọi Get Brands', async () => {
+    const san = fakeSan(routes(fail(36009003, 'busy')));
+    expect((await san.methods().createProduct(TOKEN, { ...product, brand: 'Teas' })).externalProductId).toBe('P9');
+    expect(created(san)).not.toHaveProperty('brand_id');
+    const none = fakeSan(routes(ok({ brands: [] })));
+    await none.methods().createProduct(TOKEN, { ...product, brand: null });
+    expect(none.calls.some((c) => c.path === '/product/202309/brands')).toBe(false);
+  });
+});

@@ -134,6 +134,11 @@ export interface NewProduct {
   idempotencyKey?: string;
   /** Điền thuộc tính có `prefill` mà `attributes` không có giá trị (#292). */
   responsible?: Responsible;
+  /**
+   * Thương hiệu của sản phẩm cha ở catalog (#340), cho sàn có mã thương hiệu riêng ngoài attribute (TikTok `brand_id`, #400
+   * A1): adapter tra mã theo tên, không thấy hay lỗi thì không gửi. Sàn để thương hiệu trong attribute (Lazada) bỏ qua.
+   */
+  brand?: string | null;
 }
 
 /** Nội dung đưa lên sản phẩm đang bán (#293): dựng từ catalog như lúc đẩy, không gồm ảnh, SKU, giá, tồn. */

@@ -22,6 +22,7 @@ describe('Lazada suggestCategories', () => {
 
   it('bắt buộc ảnh, không giới hạn độ dài tên', () => {
     expect(createLazadaAdapter(config, vi.fn()).suggestionRules).toEqual({ needsImage: true });
+    expect(createLazadaAdapter(config, vi.fn()).categoryPermissionsPerShop).toBeUndefined();
   });
 
   it('gửi tên, ảnh, token; tối đa 5 đúng thứ tự sàn, đường dẫn sàn nối " > ", không có quyền', async () => {
@@ -55,6 +56,8 @@ describe('TikTok suggestCategories', () => {
 
   it('tên tối thiểu 25 ký tự, không cần ảnh', () => {
     expect(createTiktokAdapter(config, vi.fn()).suggestionRules).toEqual({ minNameLength: 25 });
+    // Quyền category theo gian hàng (A17): việc đẩy đọc cây bằng token gian hàng; Lazada không có.
+    expect(createTiktokAdapter(config, vi.fn()).categoryPermissionsPerShop).toBe(true);
   });
 
   it('POST recommend với tên và cây v2; một leaf, đường dẫn nối tên các cấp, quyền của leaf', async () => {
