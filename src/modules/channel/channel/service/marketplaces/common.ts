@@ -221,6 +221,11 @@ export interface RemoteSku {
    * người mua VN thấy `name` = `title`). Sàn không có tên tiếng Anh (TikTok) hoặc rỗng thì null hay thiếu.
    */
   titleEn?: string | null;
+  /**
+   * Category lá của sản phẩm trên sàn khi danh sách SKU trả kèm (#400 lát 13: Lazada `primary_category` của GetProducts).
+   * Sàn không trả (TikTok Search Products) thì thiếu: lượt đồng bộ không đổi category của listing.
+   */
+  externalCategoryId?: string;
   state: RemoteState;
   rejectReason: string | null;
   quantity: number;

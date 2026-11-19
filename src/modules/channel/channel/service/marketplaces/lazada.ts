@@ -266,6 +266,8 @@ type LazadaProduct = {
   rejectReason?: { violationDetail?: unknown }[];
   /** `name`: tên người mua VN thấy; `name_en`: tên tiếng Anh (Seller Center giao diện tiếng Anh hiện tên này, #396). */
   attributes?: { name?: unknown; name_en?: unknown };
+  /** Category lá (gọi thật 18/11/2026, request_id 0bb4a98017950174624497030: `primary_category: 10100278`). */
+  primary_category?: unknown;
   /** Giờ tạo, mili giây dạng chuỗi (gọi thật 12/11/2026): điểm chia của lần đọc trọn (review #309 vòng 5 C1). */
   created_time?: unknown;
   /** Ảnh sản phẩm: mảng URL (gọi thật 09/11/2026); ví dụ trên open.lazada.com ghi chuỗi JSON của mảng, đọc được cả hai. */
@@ -319,6 +321,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
   const { state, rejectReason } = remoteState(p);
   const productImage = firstImage(p.images);
   const createdAt = epochDate(Number(p.created_time));
+  const category = p.primary_category == null || p.primary_category === '' ? null : String(p.primary_category);
   return (p.skus ?? []).map((s) => ({
     externalProductId: String(p.item_id),
     externalSkuId: String(s.SkuId),
@@ -339,6 +342,7 @@ function skusOf(p: LazadaProduct): RemoteSku[] {
     ...(s.sellableStock !== undefined && s.sellableStock !== null && { sellableQuantity: Number(s.sellableStock) }),
     ...(s.price !== undefined && s.price !== null && s.price !== '' && { price: String(s.price) }),
     ...(createdAt && { createdAt }),
+    ...(category && { externalCategoryId: category }),
   }));
 }
 
