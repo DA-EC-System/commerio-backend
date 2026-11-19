@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HandoverSource } from '#src/modules/order/fulfillment/domain/handover.ts';
+import type { OpenPurpose } from '#src/modules/order/fulfillment/domain/open-purpose.ts';
 import type { PackageStatus } from '#src/modules/order/fulfillment/domain/package.ts';
 import { lineSkuOf, type MappedSku, nothingToHold, planRemap, type RemapPackage } from '#src/modules/order/fulfillment/domain/remap.ts';
 
@@ -26,8 +27,16 @@ describe('lineSkuOf, nothingToHold (spec 237)', () => {
   });
 });
 
-describe('planRemap: ghép lần đầu (spec 237 bảng 1)', () => {
-  type L = { variantId?: string | null; stockUntracked?: boolean; reservedQty?: number; quantity?: number; stockDeducted?: boolean };
+describe('planRemap (spec 237 bảng 1, 2, 3)', () => {
+  type L = {
+    variantId?: string | null;
+    stockUntracked?: boolean;
+    reservedQty?: number;
+    quantity?: number;
+    stockDeducted?: boolean;
+    pendingDropQty?: number;
+    remapPending?: boolean;
+  };
   const pl = (id: string, o: L = {}) => ({
     id,
     orderLineId: `ol-${id}`,
@@ -36,12 +45,21 @@ describe('planRemap: ghép lần đầu (spec 237 bảng 1)', () => {
     quantity: o.quantity ?? 1,
     reservedQty: o.reservedQty ?? 0,
     stockDeducted: o.stockDeducted ?? false,
+    pendingDropQty: o.pendingDropQty ?? 0,
+    remapPending: o.remapPending ?? false,
   });
   const pkg = (
     status: PackageStatus,
     lines: RemapPackage['lines'],
-    o: { handedOverAt?: Date | null; handoverSource?: HandoverSource | null } = {},
-  ): RemapPackage => ({ status, handedOverAt: o.handedOverAt ?? null, handoverSource: o.handoverSource ?? null, lines });
+    o: { handedOverAt?: Date | null; handoverSource?: HandoverSource | null; needsOpen?: boolean; openPurpose?: OpenPurpose | null } = {},
+  ): RemapPackage => ({
+    status,
+    handedOverAt: o.handedOverAt ?? null,
+    handoverSource: o.handoverSource ?? null,
+    needsOpen: o.needsOpen ?? false,
+    openPurpose: o.openPurpose ?? null,
+    lines,
+  });
   const V: MappedSku = { kind: 'variant', variantId: 'v' };
   const U: MappedSku = { kind: 'untracked' };
   const to = (...pairs: [string, MappedSku][]) => new Map(pairs.map(([id, sku]) => [`ol-${id}`, sku]));
@@ -144,8 +162,13 @@ describe('planRemap: ghép lần đầu (spec 237 bảng 1)', () => {
     expect(planRemap(p, to(['a', U]), HOLD)).toMatchObject({ stock: { kind: 'none' }, reportDelivered: true });
   });
 
-  it('dòng kiện đã ghép khác ghép mới: kept, không ghi (P1); đã đúng ghép mới: applied, không ghi; dòng ngoài changes không có kết quả', () => {
-    const p = pkg('backordered', [pl('a', { variantId: 'w' }), pl('b', { stockUntracked: true }), pl('c')]);
+  // PR 1 trả `kept` cho dòng đã ghép khác ghép mới (P1); từ PR 2 đổi ghép đi bảng 2, 3 (ca D2-G10 trở đi). Ca này giữ
+  // phần còn đúng: đã đúng ghép mới thì không ghi, kiện đã rời kho giữ ghép cũ.
+  it('dòng kiện đã ghép khác ghép mới ở kiện đã rời kho: kept, không ghi; đã đúng ghép mới: applied, không ghi; dòng ngoài changes không có kết quả', () => {
+    const p = pkg('in_transit', [pl('a', { variantId: 'w', stockDeducted: true }), pl('b', { stockUntracked: true }), pl('c')], {
+      handedOverAt: after,
+      handoverSource: 'scan',
+    });
     const plan = planRemap(p, to(['a', V], ['b', U]), HOLD);
     expect(plan.writes).toEqual([]);
     expect(plan.outcomes).toEqual(
@@ -155,5 +178,167 @@ describe('planRemap: ghép lần đầu (spec 237 bảng 1)', () => {
       ]),
     );
     expect(plan.stock).toEqual({ kind: 'none' });
+  });
+
+  // Đổi ghép đã dùng (spec 237 §5.5 bảng 2, 3; §5.6; D24, D26). A = 'a1', B = 'v'.
+  const A = 'a1';
+  const B: MappedSku = V;
+
+  it('D2-G10 bảng 2 reserved giữ A → B: writes B, releases A đủ số, stock reserve_new không sealed, allocateAlso = [A]', () => {
+    const plan = planRemap(pkg('reserved', [pl('a', { variantId: A, reservedQty: 2, quantity: 2 })]), to(['a', B]), HOLD);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: B }]);
+    expect(plan.releases).toEqual([{ lineId: 'a', variantId: A, quantity: 2 }]);
+    expect(plan.stock).toEqual({ kind: 'reserve_new', lineIds: ['a'], sealed: false });
+    expect(plan.allocateAlso).toEqual([A]);
+    expect(plan.outcomes.get('a')).toBe('applied');
+    expect(plan.marks).toEqual([]);
+    expect(plan.purpose).toBeNull();
+  });
+
+  it('D2-G10 bảng 2 backordered giữ một phần A → B: releases phần đang giữ, writes, stock allocate gồm B, allocateAlso có A', () => {
+    const p = pkg('backordered', [pl('a', { variantId: A, reservedQty: 1 }), pl('b', { variantId: 'w' })]);
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.releases).toEqual([{ lineId: 'a', variantId: A, quantity: 1 }]);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: B }]);
+    expect(plan.stock).toEqual({ kind: 'allocate', variantIds: ['v', 'w'] });
+    expect(plan.allocateAlso).toEqual([A]);
+  });
+
+  it('D2-G11 bảng 2 packed giữ A → B: không writes, marks = [dòng], purpose remap, outcome needs_unload, stock none', () => {
+    const plan = planRemap(pkg('packed', [pl('a', { variantId: A, reservedQty: 1 })]), to(['a', B]), HOLD);
+    expect(plan.writes).toEqual([]);
+    expect(plan.releases).toEqual([]);
+    expect(plan.marks).toEqual(['a']);
+    expect(plan.purpose).toEqual({ needsOpen: true, openPurpose: 'remap' });
+    expect(plan.outcomes.get('a')).toBe('needs_unload');
+    expect(plan.stock).toEqual({ kind: 'none' });
+    expect(plan.allocateAlso).toEqual([]);
+  });
+
+  it('D2-G11 bảng 2 packed đã có dấu, mục đích remap → B lần nữa: không marks, purpose null (19e)', () => {
+    const p = pkg('awaiting_pickup', [pl('a', { variantId: A, reservedQty: 1, remapPending: true })], { needsOpen: true, openPurpose: 'remap' });
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.marks).toEqual([]);
+    expect(plan.unmarks).toEqual([]);
+    expect(plan.purpose).toBeNull();
+    expect(plan.outcomes.get('a')).toBe('needs_unload');
+  });
+
+  it('D2-G11 bảng 2 packed mục đích stocktake → B: purpose thành remap (19b)', () => {
+    const p = pkg('packed', [pl('a', { variantId: A, reservedQty: 1 })], { needsOpen: true, openPurpose: 'stocktake' });
+    expect(planRemap(p, to(['a', B]), HOLD).purpose).toEqual({ needsOpen: true, openPurpose: 'remap' });
+  });
+
+  it('D2-G11 bảng 2 packed mục đích edit → B: marks, purpose null (giữ edit)', () => {
+    const p = pkg('packed', [pl('a', { variantId: A, reservedQty: 1 })], { needsOpen: true, openPurpose: 'edit' });
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.marks).toEqual(['a']);
+    expect(plan.purpose).toBeNull();
+  });
+
+  it('D2-G12 đổi về như cũ: dòng có dấu, from = to → unmarks, purpose stocktake, allocateAlso = biến thể của kiện (20b)', () => {
+    const p = pkg('packed', [pl('a', { variantId: A, reservedQty: 1, remapPending: true }), pl('b', { variantId: 'w', reservedQty: 1 })], {
+      needsOpen: true,
+      openPurpose: 'remap',
+    });
+    const plan = planRemap(p, to(['a', { kind: 'variant', variantId: A }]), HOLD);
+    expect(plan.unmarks).toEqual(['a']);
+    expect(plan.marks).toEqual([]);
+    expect(plan.writes).toEqual([]);
+    expect(plan.outcomes.get('a')).toBe('applied');
+    expect(plan.purpose).toEqual({ needsOpen: true, openPurpose: 'stocktake' });
+    expect(plan.allocateAlso).toEqual([A, 'w']);
+  });
+
+  it('D2-G12 hai dòng có dấu, đổi một về như cũ: unmarks một, purpose null (20c)', () => {
+    const p = pkg(
+      'packed',
+      [pl('a', { variantId: A, reservedQty: 1, remapPending: true }), pl('b', { variantId: 'w', reservedQty: 1, remapPending: true })],
+      { needsOpen: true, openPurpose: 'remap' },
+    );
+    const plan = planRemap(p, to(['a', { kind: 'variant', variantId: A }]), HOLD);
+    expect(plan.unmarks).toEqual(['a']);
+    expect(plan.purpose).toBeNull();
+    expect(plan.allocateAlso).toEqual([]);
+  });
+
+  it('D2-G14 bảng 2 in_transit đã trừ A: kept, không ghi gì (22)', () => {
+    const p = pkg('in_transit', [pl('a', { variantId: A, stockDeducted: true })], { handedOverAt: after, handoverSource: 'scan' });
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.outcomes.get('a')).toBe('kept');
+    expect(plan).toMatchObject({ writes: [], releases: [], marks: [], unmarks: [], purpose: null, allocateAlso: [], stock: { kind: 'none' } });
+  });
+
+  it('D2-G14 bảng 2 kiện cancelled: không có trong outcomes (22a)', () => {
+    const plan = planRemap(pkg('cancelled', [pl('a', { variantId: A })]), to(['a', B]), HOLD);
+    expect(plan.outcomes.has('a')).toBe(false);
+    expect(plan.writes).toEqual([]);
+  });
+
+  it('D2-G14 dòng đã ghép chờ bỏ: không có trong outcomes, không marks', () => {
+    const p = pkg('packed', [pl('a', { variantId: A, reservedQty: 1, pendingDropQty: 1 })], { needsOpen: true, openPurpose: 'edit' });
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.outcomes.has('a')).toBe(false);
+    expect(plan.marks).toEqual([]);
+    expect(plan.purpose).toBeNull();
+  });
+
+  it('D2-G15 bảng 2 reserved giữ A → không quản tồn: writes untracked, releases A, stock none, allocateAlso [A] (23)', () => {
+    const plan = planRemap(pkg('reserved', [pl('a', { variantId: A, reservedQty: 1 })]), to(['a', U]), HOLD);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: U }]);
+    expect(plan.releases).toEqual([{ lineId: 'a', variantId: A, quantity: 1 }]);
+    expect(plan.stock).toEqual({ kind: 'none' });
+    expect(plan.allocateAlso).toEqual([A]);
+  });
+
+  it('D2-G15 bảng 3 backordered untracked → B: writes, stock allocate (24)', () => {
+    const plan = planRemap(pkg('backordered', [pl('a', { stockUntracked: true })]), to(['a', B]), HOLD);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: B }]);
+    expect(plan.stock).toEqual({ kind: 'allocate', variantIds: ['v'] });
+    expect(plan.outcomes.get('a')).toBe('applied');
+  });
+
+  it('D2-G15 bảng 3 packed untracked → B, kiện đang giữ dòng khác: writes, stock reserve_new sealed (24a)', () => {
+    const p = pkg('packed', [pl('a', { stockUntracked: true }), pl('b', { variantId: 'w', reservedQty: 1 })]);
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: B }]);
+    expect(plan.stock).toEqual({ kind: 'reserve_new', lineIds: ['a'], sealed: true });
+    expect(plan.marks).toEqual([]);
+    expect(plan.purpose).toBeNull();
+  });
+
+  it('D2-G15 bảng 3 in_transit: kept', () => {
+    const p = pkg('in_transit', [pl('a', { stockUntracked: true })], { handedOverAt: after, handoverSource: 'scan' });
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.outcomes.get('a')).toBe('kept');
+    expect(plan.writes).toEqual([]);
+  });
+
+  it('D2-G18 dòng chờ thay (awaitingLineIds) → kept; kiện backordered có dòng chờ thay không hold dù dòng khác sang không quản tồn (18b, D26)', () => {
+    const awaitingLineIds = new Set(['a']);
+    const kept = planRemap(pkg('backordered', [pl('a', { variantId: A }), pl('b')]), to(['a', B]), { ...HOLD, awaitingLineIds });
+    expect(kept.outcomes.get('a')).toBe('kept');
+    expect(kept.writes).toEqual([]);
+    // Không có dòng chờ thay thì vẫn như PR 1: mọi dòng có biến thể đã giữ, dòng cuối sang "không quản tồn" → hold.
+    const free = planRemap(pkg('backordered', [pl('a', { variantId: A, reservedQty: 1 }), pl('b')]), to(['b', U]), HOLD);
+    expect(free.stock).toEqual({ kind: 'hold' });
+    const awaited = planRemap(pkg('backordered', [pl('a', { variantId: A, reservedQty: 1 }), pl('b')]), to(['b', U]), { ...HOLD, awaitingLineIds });
+    expect(awaited.writes).toEqual([{ lineId: 'b', to: U }]);
+    expect(awaited.stock).not.toEqual({ kind: 'hold' });
+  });
+
+  it('D2-G10 holdStock false, reserved giữ A → B: không releases', () => {
+    const plan = planRemap(pkg('reserved', [pl('a', { variantId: A, reservedQty: 1 })]), to(['a', B]), NO_HOLD);
+    expect(plan.releases).toEqual([]);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: B }]);
+    expect(plan.allocateAlso).toEqual([]);
+  });
+
+  it('D2-G10 reserved hai dòng A, B; A → B: writes dòng A, releases A, reserve_new chỉ dòng vừa đổi', () => {
+    const p = pkg('reserved', [pl('a', { variantId: A, reservedQty: 1 }), pl('b', { variantId: 'v', reservedQty: 1 })]);
+    const plan = planRemap(p, to(['a', B]), HOLD);
+    expect(plan.writes).toEqual([{ lineId: 'a', to: B }]);
+    expect(plan.releases).toEqual([{ lineId: 'a', variantId: A, quantity: 1 }]);
+    expect(plan.stock).toEqual({ kind: 'reserve_new', lineIds: ['a'], sealed: false });
   });
 });
