@@ -137,6 +137,39 @@ export function completionBlocker(i: CompletionInput): CompletionBlocker | null 
   return null;
 }
 
+export type CancelInitiator = 'buyer' | 'seller' | 'platform';
+const CANCEL_INITIATOR_ORDER: readonly CancelInitiator[] = ['buyer', 'seller', 'platform'];
+/** Lý do cấp đơn khi sàn tự huỷ mà không món nào ghi người, lý do. */
+export const PLATFORM_CANCEL_REASON = 'Sàn huỷ đơn';
+
+/**
+ * Người đã huỷ món của đơn (Documents/21 §19.1 `cancelInitiators`): mỗi dòng đã huỷ (`cancelledQty > 0`) mang người huỷ
+ * do adapter sàn chuẩn hoá; đơn chỉ tổng hợp, không lưu riêng. Không trùng, thứ tự cố định buyer, seller, platform.
+ */
+export function cancelInitiatorsOf(
+  lines: readonly { cancelledQty: number; cancelInitiator: CancelInitiator | null }[],
+): CancelInitiator[] {
+  const seen = new Set(lines.filter((l) => l.cancelledQty > 0 && l.cancelInitiator).map((l) => l.cancelInitiator));
+  return CANCEL_INITIATOR_ORDER.filter((c) => seen.has(c));
+}
+
+/**
+ * Lý do huỷ cấp đơn khi sàn huỷ cả đơn mà đơn chưa có lý do (Sale huỷ, Sale đồng ý khách xin huỷ đã ghi trước): **mọi**
+ * món đã huỷ cùng một lý do khác rỗng thì lấy lý do đó; không món nào có lý do lẫn người huỷ thì "Sàn huỷ đơn"; còn lại
+ * (nhiều lý do, có món không lý do, có người huỷ mà không lý do) thì để trống, lý do ở từng dòng. Trả `undefined` khi
+ * không ghi.
+ */
+export function orderCancelReasonFromLines(
+  lines: readonly { cancelledQty: number; cancelReason: string | null; cancelInitiator: CancelInitiator | null }[],
+): string | undefined {
+  const cancelled = lines.filter((l) => l.cancelledQty > 0);
+  const reasons = cancelled.map((l) => l.cancelReason?.trim() || null);
+  const [first] = reasons;
+  if (first && reasons.every((r) => r === first)) return first;
+  if (reasons.every((r) => r === null) && !cancelled.some((l) => l.cancelInitiator)) return PLATFORM_CANCEL_REASON;
+  return undefined;
+}
+
 /** Kết quả khi hoàn tất, tính trên kiện chưa huỷ. */
 export function outcomeOf(packages: readonly PackageStatus[]): OrderOutcome {
   const live = packages.filter((s) => s !== 'cancelled');

@@ -1,6 +1,6 @@
 {
-  "id": "87b5692c-3699-41e7-8443-5aae113d50d8",
-  "prevId": "b5a46059-ec77-4ed3-a932-cc5cf9621409",
+  "id": "e9b6a168-bdde-4e74-b246-b36304638c08",
+  "prevId": "ba85ccb0-5fc1-480d-ba81-e1ae251625a3",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -9213,6 +9213,12 @@
           "notNull": true,
           "default": 0
         },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "unit_price": {
           "name": "unit_price",
           "type": "numeric(18, 2)",
@@ -9429,6 +9435,10 @@
           "name": "order_lines_cancelled_qty",
           "value": "\"order\".\"order_lines\".\"cancelled_qty\" >= 0 and \"order\".\"order_lines\".\"cancelled_qty\" <= \"order\".\"order_lines\".\"quantity\""
         },
+        "order_lines_cancelled_at": {
+          "name": "order_lines_cancelled_at",
+          "value": "\"order\".\"order_lines\".\"cancelled_at\" is null or \"order\".\"order_lines\".\"cancelled_qty\" > 0"
+        },
         "order_lines_unit_price": {
           "name": "order_lines_unit_price",
           "value": "\"order\".\"order_lines\".\"unit_price\" >= 0"
@@ -9578,6 +9588,13 @@
         },
         "cancel_requested": {
           "name": "cancel_requested",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "cancel_pending": {
+          "name": "cancel_pending",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,

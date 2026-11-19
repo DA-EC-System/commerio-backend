@@ -125,6 +125,13 @@ const OrderLine = z
     productName: z.string(),
     attributesLabel: z.string(),
     quantity: z.number().int(),
+    cancelledQty: z.number().int().meta({
+      description: 'Số món sàn đã huỷ của dòng (0..quantity). Dòng huỷ hết không tính vào `subtotal`, `total` của đơn',
+    }),
+    cancelledAt: z.iso.datetime().nullable().meta({
+      description:
+        'Lúc app ghi huỷ món theo sàn báo (#417). FE xen vào lịch sử đơn để người xem biết vì sao tiền lúc đặt khác tiền còn thu. Null khi chưa huỷ, hay huỷ trước #417',
+    }),
     unitPrice: money,
     lineTotal: money,
     externalSku: z.string().nullable(),
@@ -165,7 +172,11 @@ export const Order = OrderSummary.extend({
   shippingFeeDiscountPlatform: money.nullable(),
   note: z.string(),
   buyerNote: z.string().nullable().meta({ description: 'Ghi chú khách để lại trên sàn' }),
-  cancelReason: z.string().nullable(),
+  cancelReason: z.string().nullable().meta({ description: 'Lý do huỷ cả đơn; huỷ một phần món thì null (lý do ở từng dòng)' }),
+  cancelInitiators: z.array(z.enum(['buyer', 'seller', 'platform'])).meta({
+    description:
+      'Những người đã huỷ món của đơn, không trùng, thứ tự buyer, seller, platform; suy ra từ `cancelInitiator` của dòng đã huỷ (`cancelledQty > 0`), không lưu ở đơn. Khách huỷ một món, sàn huỷ món kia: `[buyer, platform]`. Chưa món nào huỷ, hay sàn không ghi người huỷ: `[]`',
+  }),
   invoiceNumber: z.string().nullable(),
   lines: z.array(OrderLine),
   packages: z.array(PackageSummary),

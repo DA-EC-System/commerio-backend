@@ -60,10 +60,13 @@ export const PackageSummary = z
     shipBy: iso.nullable(),
     lines: z.array(
       z.object({
+        id: z.uuid().meta({ description: 'Id dòng kiện; `pack.untrackedLines[].lineId` trỏ tới đây' }),
         variantId: z.uuid().nullable(),
-        sku: z.string(),
-        productName: z.string(),
-        attributesLabel: z.string(),
+        untracked: z.boolean().meta({ description: 'Dòng "không quản tồn": không biến thể, không giữ, không trừ tồn (như dòng đơn §19.1)' }),
+        sku: z.string().meta({ description: 'Dòng đã ghép: SKU biến thể app mà dòng kiện giữ. Chưa ghép hay "không quản tồn": SKU sàn' }),
+        productName: z.string().meta({ description: 'Dòng đã ghép: tên sản phẩm app. Chưa ghép hay "không quản tồn": tên trên sàn' }),
+        attributesLabel: z.string().meta({ description: 'Dòng đã ghép: nhãn thuộc tính biến thể app. Chưa ghép hay "không quản tồn": của sàn' }),
+        externalSku: z.string().nullable().meta({ description: 'SKU người bán trên sàn; null với đơn tay' }),
         quantity: z.number().int().meta({ description: 'Số đang nằm trong kiện, gồm cả phần chờ bỏ' }),
         pendingDropQty: z.number().int().min(0).meta({
           description: 'Phần chờ bỏ (0..`quantity`): sàn đã huỷ món của kiện đã đóng gói, kho bỏ ra khi mở kiện (#205). 0 khi không chờ bỏ',
@@ -209,7 +212,10 @@ export const PickListQuery = z.object({ ids: idsCsv(200).optional() }).meta({ id
 
 export const PickList = z.object({
   items: z.array(z.object({
-    variantId: z.uuid().nullable(), sku: z.string(), productName: z.string(), attributesLabel: z.string(),
+    variantId: z.uuid().nullable(),
+    untracked: z.boolean().meta({ description: 'Dòng "không quản tồn" (gộp theo SKU sàn, tách khỏi dòng chưa ghép cùng SKU)' }),
+    sku: z.string().meta({ description: 'Đã ghép: SKU biến thể app (gộp theo biến thể). Chưa ghép hay "không quản tồn": SKU sàn (gộp theo SKU sàn)' }),
+    productName: z.string(), attributesLabel: z.string(),
     quantity: z.number().int().positive(), packageCount: z.number().int().positive(),
   }).strict()),
   packageCount: z.number().int().nonnegative(),
@@ -227,6 +233,11 @@ export const PackBody = z.object({
     variantId: z.uuid().transform((id) => id.toLowerCase()),
     quantity: z.number().int().min(1).max(10_000),
   })).max(200).refine((lines) => new Set(lines.map((line) => line.variantId)).size === lines.length, 'Mỗi biến thể chỉ quét một lần'),
+  untrackedLines: z.array(z.object({
+    lineId: z.uuid().transform((id) => id.toLowerCase()),
+    quantity: z.number().int().min(1).max(10_000),
+  })).max(200).refine((lines) => new Set(lines.map((line) => line.lineId)).size === lines.length, 'Mỗi dòng chỉ ghi một lần')
+    .optional().meta({ description: 'Số đã cho vào hộp của từng dòng "không quản tồn" (`Package.lines[].id`), phải đủ như dòng đã ghép' }),
   carrierCode: z.string().trim().min(1).max(100).optional(),
 }).meta({ id: 'PackBody' });
 

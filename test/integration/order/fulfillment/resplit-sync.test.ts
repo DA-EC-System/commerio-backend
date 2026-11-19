@@ -9,7 +9,7 @@ import type { PlatformOrder } from '#src/modules/order/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { testApp } from '../../helpers/http.ts';
 import { testPool } from '../../helpers/db.ts';
-import { packageDocuments, packageRow, packingApp, splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
+import { CANCELLING_SQL, packageDocuments, packageRow, packingApp, splitByHand, stockOfVariant, transitionReasonsOf, transitionsOf } from './helpers.ts';
 import { ingest, remote, withCancel, withLineCancelled, withStatus } from './platform-fixtures.ts';
 import {
   external,
@@ -366,7 +366,7 @@ describe('sàn chia lại kiện đã đóng: kiện chờ thay (#238 §5.6, D9,
 
     expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
     expect((await lineRows(packageId)).map((l) => l.drop)).toEqual([1, 1]);
-    const { rows } = await testPool().query<{ status: string; cancelling: boolean }>('select status, cancelling from "order".orders where id = $1', [orderId]);
+    const { rows } = await testPool().query<{ status: string; cancelling: boolean }>(`select status, ${CANCELLING_SQL} as cancelling from "order".orders where id = $1`, [orderId]);
     expect(rows[0]).toEqual({ status: 'processing', cancelling: true });
   });
 

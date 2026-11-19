@@ -4,7 +4,9 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { packageMachine, type PackageAction, type PackageStatus } from '../domain/package.ts';
-import { buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, type ScannedLine } from '../domain/packing.ts';
+import {
+  buildPickList, packGroupBlockers, readyGroupBlockers, scanMismatch, type ScannedLine, type ScannedUntrackedLine,
+} from '../domain/packing.ts';
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
 import { clearPendingDrop, deleteLines } from '../repository/line-cancel.ts';
 import { awaitingReplacementIds, takeAllocationLock } from '../repository/allocation.ts';
@@ -15,6 +17,7 @@ import {
   cancelledOrderSettlerOf, getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages,
 } from './packages.ts';
 import { stockPort } from './stock-port.ts';
+import { type PackageOrderRef, type PackageVariantRef, packageVariantsOf } from './views.ts';
 
 const PICK_LIST_LIMIT = 500;
 export const PACKAGE_LOCK_WAIT_MS = 10_000;
@@ -42,11 +45,20 @@ export async function assertNotAwaitingReplaced(id: string): Promise<void> {
 
 export async function pickList(ctx: FulfillmentContext, ids: readonly string[] | undefined) {
   const { rows, packageIds, truncated } = await pickListBase(ids ? { ids } : { limit: PICK_LIST_LIMIT });
-  const orders = rows.length ? await orderRefsLookupOf(ctx)([...new Set(rows.map((row) => row.orderId))]) : new Map();
-  const items = buildPickList(rows.map(({ orderId, orderLineId, ...row }) => {
+  const [orders, variants] = rows.length
+    ? await Promise.all([orderRefsLookupOf(ctx)([...new Set(rows.map((row) => row.orderId))]), packageVariantsOf([{ lines: rows }])])
+    : [new Map<string, PackageOrderRef>(), new Map<string, PackageVariantRef>()];
+  // Dòng đã ghép nhặt theo biến thể app (SKU, tên, nhãn của app); chưa ghép hay "không quản tồn" theo SKU sàn (21 §19.2).
+  const items = buildPickList(rows.map(({ packageId, orderId, orderLineId, variantId, stockUntracked, quantity }) => {
     const line = orders.get(orderId)?.lines.get(orderLineId);
-    if (!line) throw new Error(`Không tìm thấy dòng đơn ${orderLineId} của kiện ${row.packageId}`);
-    return { ...row, ...line };
+    if (!line) throw new Error(`Không tìm thấy dòng đơn ${orderLineId} của kiện ${packageId}`);
+    const variant = variantId ? variants.get(variantId) : undefined;
+    return {
+      packageId, variantId, untracked: stockUntracked, quantity,
+      sku: variant?.sku ?? line.sku,
+      productName: variant?.productName ?? line.productName,
+      attributesLabel: variant?.attributesLabel || line.attributesLabel,
+    };
   }));
   return { items, packageCount: packageIds.length, truncated };
 }
@@ -116,7 +128,9 @@ async function recordPacking(pkg: PackageIdentity, to: PackageStatus, action: Pa
 }
 
 export async function packPackage(
-  ctx: FulfillmentContext, actor: Actor, id: string, input: { version: number; lines: ScannedLine[]; carrierCode?: string | undefined },
+  ctx: FulfillmentContext, actor: Actor, id: string, input: {
+    version: number; lines: ScannedLine[]; untrackedLines?: ScannedUntrackedLine[] | undefined; carrierCode?: string | undefined;
+  },
 ): Promise<PackageDetail> {
   const { companyId } = actor;
   return withPackageLock(ctx, companyId, id, async () => {
@@ -124,7 +138,7 @@ export async function packPackage(
       const pkg = await readPackage(id);
       await checkVersion(ctx, pkg, input.version);
       await transition(ctx, actor, pkg, 'pack');
-      const errors = scanMismatch(pkg.lines, input.lines);
+      const errors = scanMismatch(pkg.lines, input.lines, input.untrackedLines ?? []);
       if (errors) throw new AppError(422, 'scan_mismatch', 'Số món quét chưa khớp với kiện', { errors });
 
       const others = await otherGroupMembers(pkg);

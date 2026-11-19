@@ -7,9 +7,10 @@ import { logger } from '#src/shared/logger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { stockOfVariant } from '../fulfillment/helpers.ts';
+import { CANCELLING_SQL, stockOfVariant } from '../fulfillment/helpers.ts';
 import { ingest as ingestIn, remote as remoteOf, setup, withLineCancelled, withStatus } from '../fulfillment/platform-fixtures.ts';
 import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
+import { getOrder } from '#src/modules/order/sales/service/orders.ts';
 
 let companyId: string;
 let sku: string;
@@ -71,7 +72,7 @@ const all = async (sql: string, params: unknown[]) => (await testPool().query(sq
 
 async function orderOf(orderId: string) {
   return one(
-    `select status, outcome, raw_marketplace_status, is_cod, subtotal, total, ship_by, cancel_requested, cancelling,
+    `select status, outcome, raw_marketplace_status, is_cod, subtotal, total, ship_by, cancel_requested, ${CANCELLING_SQL} as cancelling, cancel_pending, cancel_reason,
             platform_cancelled, needs_attention, code from "order".orders where id = $1`,
     [orderId],
   );
@@ -314,6 +315,110 @@ describe('nhận đơn sàn (#105)', () => {
     expect((await packagesOf(res.orderId))[0].status).toBe('in_transit');
   });
 
+  it('DH-B03 (DH-000010): Sale đã gửi huỷ, sàn huỷ mọi món, chưa kiện nào đóng gói: đơn cancelled, hết cờ Đang huỷ, giữ người và lý do Sale', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    await testPool().query(
+      `update "order".orders set cancel_pending = true, cancel_reason = 'Hết hàng' where id = $1`,
+      [res.orderId],
+    );
+    expect(await orderOf(res.orderId)).toMatchObject({ cancelling: true });
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({
+      status: 'cancelled',
+      cancelling: false,
+      cancel_pending: false,
+      cancel_reason: 'Hết hàng',
+    });
+    const changed = (await eventsOf(res.orderId)).filter((e) => e.type === 'sales.order_status_changed').at(-1);
+    expect(changed?.payload).toMatchObject({ to: 'cancelled' });
+    expect((changed?.payload as { flags: string[] }).flags).not.toContain('cancelling');
+  });
+
+  it('DH-B06: sàn tự huỷ, món không ghi người, lý do: lý do cấp đơn "Sàn huỷ đơn"', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: 'Sàn huỷ đơn', cancel_pending: false });
+  });
+
+  it('DH-B06: khách huỷ thẳng trên sàn: lý do cấp đơn lấy từ món, người huỷ suy ra từ dòng là buyer', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: 'Đổi ý' });
+    const view = await withCompany(companyId, () => getOrder({} as never, res.orderId));
+    expect(view.cancelInitiators).toEqual(['buyer']);
+  });
+
+  it('DH-B06: người bán huỷ trên trang người bán, không qua app: người huỷ seller, không ghi "Sàn huỷ đơn"', async () => {
+    const o = remote();
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'seller', cancelReason: null, cancelKind: 'cancellation' };
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: null });
+    const view = await withCompany(companyId, () => getOrder({} as never, res.orderId));
+    expect(view.cancelInitiators).toEqual(['seller']);
+  });
+
+  it('DH-B06: hai món hai người huỷ khác lý do: đơn ghi cả hai người, lý do cấp đơn để trống (lý do ở từng dòng)', async () => {
+    const o = remote();
+    o.lines.push({ ...structuredClone(o.lines[0]!), externalLineId: `${o.lines[0]!.externalLineId}-b` });
+    const res = await ingest(o);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    cancelled.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    cancelled.lines[1]!.status = 'cancelled';
+    cancelled.lines[1]!.info = { ...noLineInfo, cancelInitiator: 'platform', cancelReason: 'Hết hạn giao', cancelKind: 'cancellation' };
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'cancelled', cancel_reason: null });
+    const view = await withCompany(companyId, () => getOrder({} as never, res.orderId));
+    expect(view.cancelInitiators).toEqual(['buyer', 'platform']);
+    expect(view.lines.map((l) => [l.cancelInitiator, l.cancelReason])).toEqual([
+      ['buyer', 'Đổi ý'],
+      ['platform', 'Hết hạn giao'],
+    ]);
+  });
+
+  it('Sale đã gửi huỷ, kiện đã đóng gói: sàn xác nhận thì gỡ cancel_pending, cờ Đang huỷ còn theo kiện chờ mở', async () => {
+    const o = remote({}, 'packed');
+    const res = await ingest(o);
+    await testPool().query(`update "order".orders set cancel_pending = true, cancel_reason = 'Đổi ý' where id = $1`, [res.orderId]);
+    const cancelled = structuredClone(o);
+    cancelled.lines[0]!.status = 'cancelled';
+    await ingest(cancelled);
+    expect(await orderOf(res.orderId)).toMatchObject({ status: 'processing', cancel_pending: false, cancelling: true, cancel_reason: 'Đổi ý' });
+  });
+
+  it('DH-B04: Sale từ chối khách xin huỷ, lượt sau sàn không còn người huỷ: dòng bỏ thông tin huỷ; loại cancellation ghi nhầm thì bỏ', async () => {
+    const o = remote({ cancelRequested: true });
+    // Dữ liệu adapter TikTok cũ ghi: món mới xin huỷ đã mang loại `cancellation`.
+    o.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý', cancelKind: 'cancellation' };
+    const res = await ingest(o);
+    const lineOf = async () =>
+      one(`select cancel_initiator, cancel_reason, cancel_kind from "order".order_lines where order_id = $1`, [res.orderId]);
+    // Lượt kéo bằng adapter mới (còn xin huỷ, loại null): bỏ loại ghi nhầm, giữ người và lý do của yêu cầu.
+    const stillRequested = structuredClone(o);
+    stillRequested.lines[0]!.info = { ...noLineInfo, cancelInitiator: 'buyer', cancelReason: 'Đổi ý' };
+    await ingest(stillRequested);
+    expect(await lineOf()).toEqual({ cancel_initiator: 'buyer', cancel_reason: 'Đổi ý', cancel_kind: null });
+    const rejected = structuredClone(o);
+    rejected.cancelRequested = false;
+    rejected.lines[0]!.info = noLineInfo;
+    await ingest(rejected);
+    expect(await lineOf()).toEqual({ cancel_initiator: null, cancel_reason: null, cancel_kind: null });
+    expect((await orderOf(res.orderId)).cancel_requested).toBe(false);
+  });
+
   it('khách xin huỷ bật cờ, sàn bỏ thì tắt cờ', async () => {
     const o = remote({ cancelRequested: true });
     const res = await ingest(o);
@@ -526,6 +631,49 @@ describe('huỷ dòng', () => {
     expect(await one(`select needs_open, open_purpose from "order".packages where id = $1`, [packageId])).toEqual({ needs_open: true, open_purpose: 'cancel' });
     expect((await all(`select pending_drop_qty from "order".package_lines where package_id = $1`, [packageId])).map((r) => r.pending_drop_qty)).toEqual([1, 1]);
     expect(await cancelledQtyOf(orderId)).toEqual([1, 1]);
+  });
+
+  it('sàn huỷ cả đơn khi một kiện đã rời kho, một kiện đã đóng: đơn Đang huỷ kèm Sàn đã huỷ tới khi kho mở kiện đã đóng (25 §8.2)', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 2, packages: 2 });
+    const { orderId } = await ingestIn(v.companyId, o);
+    const split = withStatus(withStatus(o, 'in_transit', o.lines[0]!.packageCode!), 'packed', o.lines[1]!.packageCode!);
+    await ingestIn(v.companyId, split);
+
+    await ingestIn(v.companyId, withStatus(split, 'cancelled'));
+
+    // Món của kiện đã rời kho giữ `cancelled_qty = 0` (AC18) nên "mọi dòng đã huỷ" không đúng; sàn đã huỷ cả đơn vẫn là
+    // Đang huỷ khi còn kiện chờ mở để huỷ.
+    expect(await cancelledQtyOf(orderId)).toEqual([0, 1]);
+    const ctx = { returnPoliciesOf: async () => new Map() } as never;
+    const flagsOf = async () => (await withCompany(v.companyId, () => getOrder(ctx, orderId))).flags;
+    expect(await flagsOf()).toEqual(expect.arrayContaining(['platform_cancelled', 'cancelling']));
+    expect(await orderOf(orderId)).toMatchObject({ status: 'processing', cancelling: true, platform_cancelled: true });
+
+    // Kho mở kiện đã đóng (open_cancel): cờ Đang huỷ tự hết, cờ Sàn đã huỷ còn.
+    await testPool().query(
+      `update "order".packages set status = 'cancelled', needs_open = false, open_purpose = null where order_id = $1 and status = 'packed'`,
+      [orderId],
+    );
+    const after = await flagsOf();
+    expect(after).toContain('platform_cancelled');
+    expect(after).not.toContain('cancelling');
+  });
+
+  it('huỷ lần lượt từng món tới hết: tiền của đơn trở lại tiền lúc đặt, như sàn huỷ mọi món cùng lúc', async () => {
+    const v = await setup(10);
+    const o = remoteOf(v, { lines: 3 });
+    const { orderId } = await ingestIn(v.companyId, o);
+    const totals = () => one(`select subtotal, total from "order".orders where id = $1`, [orderId]);
+    const placed = await totals();
+    expect(placed).toEqual({ subtotal: '300000.00', total: '300000.00' });
+
+    await ingestIn(v.companyId, withLineCancelled(o, 2));
+    expect(await totals()).toEqual({ subtotal: '200000.00', total: '200000.00' });
+
+    await ingestIn(v.companyId, withStatus(o, 'cancelled'));
+    expect((await orderOf(orderId)).status).toBe('cancelled');
+    expect(await totals()).toEqual(placed);
   });
 });
 
