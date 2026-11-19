@@ -201,9 +201,10 @@ export const productVariants = catalogSchema.table(
     index().on(t.productId),
     check('product_variants_archived', sql`(${t.businessStatus} = 'archived') = (${t.archivedAt} is not null)`),
     check('product_variants_prices', sql`${t.standardPrice} >= 0 and ${t.targetNetPrice} >= 0`),
+    // Cùng trần với `domain/measure.ts` (Documents/21 §17.5, #434); số viết thẳng vì giá trị nội suy vào `sql` thành tham số.
     check(
       'product_variants_dimensions',
-      sql`${t.weightG} > 0 and ${t.lengthMm} > 0 and ${t.widthMm} > 0 and ${t.heightMm} > 0`,
+      sql`${t.weightG} between 1 and 50000 and ${t.lengthMm} between 1 and 2000 and ${t.widthMm} between 1 and 2000 and ${t.heightMm} between 1 and 2000`,
     ),
   ],
 );
