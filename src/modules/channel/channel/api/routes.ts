@@ -204,7 +204,7 @@ export function channelRouter(ctx: ModuleContext): Router {
     validate({ params: PlatformParams, query: PlatformCategoriesQuery }),
     async (_req, res) => {
       const { platform } = validated<typeof PlatformParams>(res, 'params');
-      res.json(await listPlatformCategories(platform, validated<typeof PlatformCategoriesQuery>(res, 'query')));
+      res.json(await listPlatformCategories(platform, validated<typeof PlatformCategoriesQuery>(res, 'query'), actor(res).companyId));
     },
   );
 

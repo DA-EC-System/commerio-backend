@@ -797,6 +797,10 @@ export const PlatformCategoriesQuery = z
       .optional()
       .meta({ description: 'Tìm leaf `active` theo đường dẫn (bỏ dấu); ưu tiên hơn `parentId`' }),
     parentId: categoryId.optional().meta({ description: 'Con trực tiếp; không gửi cả hai là cấp gốc' }),
+    shopId: z
+      .uuid('Gian hàng không hợp lệ')
+      .optional()
+      .meta({ description: 'Gian hàng của công ty (đúng sàn, không thì 404): leaf kèm `permission` của gian hàng đó (#448)' }),
   })
   .meta({ id: 'PlatformCategoriesQuery' });
 export const LeafDetailQuery = z
@@ -820,7 +824,15 @@ const platformCategoryShape = {
 export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
 export const PlatformCategoryPage = z
   .object({
-    items: z.array(PlatformCategory),
+    items: z.array(
+      PlatformCategory.extend({
+        permission: z
+          .enum(['available', 'invite_only', 'non_main_category', 'prohibited'])
+          .nullable()
+          .optional()
+          .meta({ description: 'Chỉ có khi gửi `shopId`; quyền của gian hàng với leaf (null: chưa kiểm, Lazada, hoặc không phải leaf)' }),
+      }).strict(),
+    ),
     syncedAt: iso.nullable().meta({ description: 'Lần đồng bộ cây gần nhất; null khi sàn chưa có dòng nào' }),
   })
   .strict()

@@ -249,12 +249,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories',
     summary: 'Cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc.',
+      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc. `shopId` (#448): gian hàng của công ty cùng sàn thì leaf kèm `permission` của gian hàng đó (đọc `shop_category_permissions`, null là chưa kiểm hoặc sàn không có quyền theo gian hàng như Lazada); không gửi thì không có trường `permission`.',
     security: bearer,
     request: { params: PlatformParams, query: PlatformCategoriesQuery },
     responses: {
       200: { description: 'Category', ...json(PlatformCategoryPage) },
       ...auth,
+      404: problemResponse('`not_found`: `shopId` không thuộc công ty hoặc khác sàn'),
       422: problemResponse('`validation_failed`; `marketplace_unsupported`: sàn không có adapter'),
     },
   });
