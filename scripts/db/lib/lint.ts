@@ -7,6 +7,7 @@ import {
   hashSql,
   listSnapshotFiles,
   listSqlFiles,
+  migrationKinds,
   readJournal,
   readSnapshot,
   ROOT_SNAPSHOT_ID,
@@ -67,6 +68,25 @@ export function lintFolder(dir: string): string[] {
     prevId = snapshot.id;
   }
   return errors;
+}
+
+/**
+ * Mỗi nhánh (PR) tối đa một migration sinh từ schema.ts: sinh rồi sửa schema rồi sinh tiếp để lại nhiều file cho cùng một
+ * thay đổi. `db:regen` gộp mọi migration sinh của nhánh thành một (migration viết tay giữ riêng).
+ */
+export function lintGeneratedPerBranch(dir: string, baseTags: ReadonlySet<string>): string[] {
+  let kinds: Map<string, string>;
+  try {
+    kinds = migrationKinds(dir);
+  } catch (error) {
+    return [(error as Error).message];
+  }
+  const generated = [...kinds].filter(([tag, kind]) => kind === 'generated' && !baseTags.has(tag)).map(([tag]) => tag);
+  if (generated.length <= 1) return [];
+  return [
+    `nhánh có ${generated.length} migration sinh từ schema.ts (${generated.join(', ')}): mỗi PR chỉ được một. ` +
+      'Chạy `npm run db:regen` để gộp thành một migration (migration viết tay giữ nguyên)',
+  ];
 }
 
 export interface BaseMigrations {

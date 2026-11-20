@@ -2,7 +2,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseJournal } from '../../../../../scripts/db/lib/journal.ts';
-import { lintAgainstBase, lintFolder } from '../../../../../scripts/db/lib/lint.ts';
+import { lintAgainstBase, lintFolder, lintGeneratedPerBranch } from '../../../../../scripts/db/lib/lint.ts';
 import { cleanupFakeDirs, fakeMigrations, journalText, writeJournal, writeSnapshot } from './fake-migrations.ts';
 
 afterEach(cleanupFakeDirs);
@@ -92,5 +92,28 @@ describe('kiểm migration của nhánh so với main', () => {
   it('nhánh thiếu migration của main (chưa gộp main) thì đỏ', () => {
     const dir = fakeMigrations([A, C]);
     expect(lintAgainstBase(dir, base([A, B], dir)).join('\n')).toContain(`nhánh thiếu migration ${B.tag}`);
+  });
+});
+
+describe('mỗi nhánh tối đa một migration sinh từ schema', () => {
+  const onMain = new Set([A.tag]);
+  const gen = (tag: string, when: number, tables: Record<string, unknown>) => ({ tag, when, tables });
+  const custom = (tag: string, when: number) => ({ tag, when });
+
+  it('một migration sinh kèm migration viết tay (RLS, dữ liệu) thì đạt', () => {
+    const dir = fakeMigrations([A, custom('20261101000000_du-lieu', 2000), gen('20261102000000_cot', 3000, { t1: {}, t2: {} }), custom('20261103000000_rls', 4000)]);
+    expect(lintGeneratedPerBranch(dir, onMain)).toEqual([]);
+  });
+
+  it('hai migration sinh trên nhánh thì đỏ, bảo chạy db:regen', () => {
+    const dir = fakeMigrations([A, gen('20261101000000_cot', 2000, { t1: {}, t2: {} }), gen('20261102000000_sua-cot', 3000, { t1: {}, t2: { x: 1 } })]);
+    const errors = lintGeneratedPerBranch(dir, onMain).join('\n');
+    expect(errors).toContain('nhánh có 2 migration sinh từ schema.ts (20261101000000_cot, 20261102000000_sua-cot)');
+    expect(errors).toContain('npm run db:regen');
+  });
+
+  it('migration sinh đã có trên main không tính vào nhánh', () => {
+    const dir = fakeMigrations([A, B, gen('20261102000000_cot', 3000, { t1: {}, t2: {}, t3: {} })]);
+    expect(lintGeneratedPerBranch(dir, new Set([A.tag, B.tag]))).toEqual([]);
   });
 });

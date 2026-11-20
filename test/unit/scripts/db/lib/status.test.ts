@@ -27,7 +27,7 @@ describe('so journal với drizzle.__drizzle_migrations', () => {
     const s = compareWithDb([a, b, c], [row(1, a), row(2, c)]);
     expect(s.outOfOrder.map((m) => m.tag)).toEqual([b.tag]);
     expect(s.pending).toEqual([]);
-    expect(formatStatus(s, true)).toContain(`Lệch thứ tự (drizzle sẽ bỏ qua im lặng): 1\n  ${b.tag}`);
+    expect(formatStatus(s, true)).toContain(`Lệch thứ tự (drizzle sẽ bỏ qua im lặng): 1\n  V1  ${b.tag}`);
   });
 
   it('migration chưa chạy có when bằng đúng dòng mới nhất cũng là lệch thứ tự', () => {
@@ -70,6 +70,19 @@ describe('so journal với drizzle.__drizzle_migrations', () => {
 
   it('không có lệch thứ tự, không có dòng NULL thì không chặn', () => {
     expect(blockingMessage(compareWithDb([a, b], [row(1, a)]))).toBeNull();
+  });
+
+  it('báo phiên bản V của DB (migration đã chạy đứng sau cùng trong journal) và của mã nguồn', () => {
+    const v = (m: LocalMigration, idx: number): LocalMigration => ({ ...m, idx });
+    const [va, vb, vc] = [v(a, 0), v(b, 1), v(c, 2)];
+    const s = compareWithDb([va, vb, vc], [row(1, va), row(2, vb)]);
+    expect(s.dbVersion?.tag).toBe(b.tag);
+    expect(formatStatus(s, false)).toContain(`Phiên bản DB: V2 (${b.tag}) · mã nguồn: V3 (${c.tag})`);
+    expect(formatStatus(s, false)).toContain(`Chưa chạy: 1\n  V3  ${c.tag}`);
+  });
+
+  it('DB chưa chạy migration nào thì phiên bản DB là chưa có', () => {
+    expect(formatStatus(compareWithDb([a], []), false)).toContain('Phiên bản DB: chưa có');
   });
 
   it('dòng trên DB không khớp migration nào được liệt kê riêng', () => {

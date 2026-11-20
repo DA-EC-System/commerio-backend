@@ -92,6 +92,40 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * Phiên bản của migration: vị trí trong journal tính từ 1 (`idx` + 1), viết `V105`. Journal của `main` chỉ thêm vào cuối
+ * (db:ci-check kiểm) nên số không đổi sau khi merge; migration trên nhánh mang số tạm, `db:regen` có thể đẩy lên.
+ */
+export function versionLabel(entry: Pick<JournalEntry, 'idx'>): string {
+  return `V${entry.idx + 1}`;
+}
+
+export type MigrationKind = 'generated' | 'custom';
+
+/**
+ * Loại của từng migration trong journal: `custom` (viết tay bằng `--custom`: RLS, quyền, trigger, dữ liệu) khi snapshot
+ * giống hệt snapshot cha, còn lại `generated` (drizzle-kit sinh từ schema.ts). Thiếu snapshot thì coi là `generated`.
+ */
+export function migrationKinds(dir: string): Map<string, MigrationKind> {
+  const entries = readJournal(dir).entries;
+  const snapshots = new Map<string, Snapshot>();
+  const bodies = new Map<string, string>();
+  for (const entry of entries) {
+    const file = snapshotName(entry.tag);
+    if (!existsSync(join(dir, 'meta', file))) continue;
+    const snapshot = readSnapshot(dir, file);
+    snapshots.set(entry.tag, snapshot);
+    bodies.set(snapshot.id, snapshotBody(snapshot));
+  }
+  const kinds = new Map<string, MigrationKind>();
+  for (const entry of entries) {
+    const snapshot = snapshots.get(entry.tag);
+    const parent = snapshot ? bodies.get(snapshot.prevId) : undefined;
+    kinds.set(entry.tag, snapshot && parent !== undefined && parent === bodies.get(snapshot.id) ? 'custom' : 'generated');
+  }
+  return kinds;
+}
+
 /** Giờ UTC dễ đọc của `when` (ms). */
 export function formatWhen(when: number): string {
   return new Date(when).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
