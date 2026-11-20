@@ -3,6 +3,7 @@
 // Consumer `finance-ledger` (`registerLedgerConsumers`, #228) gọi chúng trong giao dịch của khung sự kiện.
 import { Decimal } from 'decimal.js';
 import { type EventEnvelope, type EventPayload, type EventType, registerConsumer } from '../../../core/index.ts';
+import { flagReturnForReview, returnLinesOf } from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { addDays, outputVatPctOf, vnDate } from '../domain/config-version.ts';
 import {
@@ -15,6 +16,8 @@ import {
   postDelivered,
   postInspected,
   postRefund,
+  refundCap,
+  refundExcessNote,
   postReturned,
   postSupplierPayment,
   postSupplierRefund,
@@ -33,6 +36,7 @@ import {
   type LedgerRow,
   type LedgerSource,
   ledgerTotals,
+  refundBasisOf,
   lockOrders,
   lockSource,
   revenueSince,
@@ -170,21 +174,38 @@ export function recordPackageReturned(companyId: string, e: PackageReturned): Pr
   });
 }
 
-/** `sales.return_refunded`: tiền hoàn cho khách. */
+/**
+ * `sales.return_refunded`: tiền hoàn cho khách, tối đa bằng doanh thu đã ghi của các dòng trả (#355, `refundCap`). Tính
+ * trần dưới khoá nguồn và khoá đơn (hai yêu cầu cùng đơn ghi lần lượt). Phần vượt không ghi; yêu cầu bật Cần xử lý qua
+ * `flagReturnForReview` của sales (21 §11.3). Không còn gì để ghi thì nguồn không có dòng: sự kiện giao lại chỉ bật cờ
+ * lại (cổng bỏ qua khi câu đã có).
+ */
 export function recordReturnRefunded(companyId: string, e: ReturnRefunded): Promise<number> {
-  return withCompany(companyId, () =>
-    post(
-      companyId,
-      {
-        source: { type: 'return_refund', id: e.returnRequestId },
-        orderId: e.orderId,
-        shopId: e.shopId,
-        returnRequestId: e.returnRequestId,
-        occurredOn: dayOf(e.refundedAt),
-      },
-      postRefund(e.refundAmount),
-    ),
-  );
+  return withCompany(companyId, async () => {
+    await lockSource('return_refund', e.returnRequestId);
+    await lockOrders([e.orderId]);
+    if (await sourcePosted('return_refund', e.returnRequestId)) return 0;
+    const { cap, post: amount, excess } = refundCap({
+      refundAmount: e.refundAmount,
+      lines: await returnLinesOf(e.returnRequestId),
+      ...(await refundBasisOf(e.orderId)),
+    });
+    const written = amount.isZero()
+      ? 0
+      : await post(
+          companyId,
+          {
+            source: { type: 'return_refund', id: e.returnRequestId },
+            orderId: e.orderId,
+            shopId: e.shopId,
+            returnRequestId: e.returnRequestId,
+            occurredOn: dayOf(e.refundedAt),
+          },
+          postRefund(amount.toFixed(2)),
+        );
+    if (excess.gt(0)) await flagReturnForReview({ returnRequestId: e.returnRequestId, reason: refundExcessNote(e.refundAmount, cap, excess) });
+    return written;
+  });
 }
 
 /** `inventory.return_inspected`: giảm giá vốn phần hàng trả bán lại được. */
