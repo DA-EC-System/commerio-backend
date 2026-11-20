@@ -42,6 +42,14 @@ describe('lazadaReturnLineStatus', () => {
     ['REFUND_PENDING', null, 'refund', 'requested'],
     ['REFUND_SUCCESS', 'RETURN_CANCELED', 'return', 'refund_only'],
     ['REFUND_SUCCESS', 'INFO_ST_RETURN_RTM_DELIVERED', 'return', 'received'],
+    ['REFUND_SUCCESS', null, 'return', 'refund_only'],
+    ['REFUND_PENDING', 'INFO_ST_DRIVER_ASSIGNED', 'return', 'awaiting_return'],
+    ['REQUEST_CANCEL', null, 'return', 'closed'],
+    // #436: ba giá trị gặp thật mà trước đây trả null
+    ['SELLER_AGREE_RETURN', null, 'return', 'awaiting_return'],
+    ['SELLER_REJECT_RETURN', null, 'return', 'rejected'],
+    ['BUYER_RETURN_ITEM', 'INFO_ST_DRIVER_ASSIGNED', 'return', 'awaiting_return'],
+    ['BUYER_RETURN_ITEM', 'INFO_ST_RETURN_RTM_DELIVERED', 'return', 'received'],
   ] as const)('%s + %s (%s) → %s', (reverse, ofc, kind, status) => {
     expect(lazadaReturnLineStatus(reverse, ofc, kind)?.status).toBe(status);
   });
@@ -49,6 +57,8 @@ describe('lazadaReturnLineStatus', () => {
   it('khách huỷ thì kèm `buyer_cancelled`; giá trị lạ là null', () => {
     expect(lazadaReturnLineStatus('REQUEST_CANCEL', null, 'return')).toEqual({ status: 'closed', closeResult: 'buyer_cancelled' });
     expect(lazadaReturnLineStatus('SOMETHING_NEW', null, 'return')).toBeNull();
+    // #436: chiều về bị huỷ sau khi khách gửi, chưa rõ ai huỷ → chưa ánh xạ
+    expect(lazadaReturnLineStatus('BUYER_RETURN_ITEM', 'RETURN_CANCELED', 'return')).toBeNull();
   });
 });
 
@@ -80,6 +90,14 @@ describe('toLazadaReturn', () => {
     expect(mixed.status).toBe('requested');
     expect(mixed.rawStatus).toBe('REFUND_SUCCESS,REQUEST_INITIATE');
     expect(toLazadaReturn(item([line(1), line(2, { reverse_status: 'LA' })])).status).toBeNull();
+  });
+
+  it('hạn trả lời là `sla` sớm nhất khi còn chờ người bán; đã đồng ý hay từ chối thì không có hạn', () => {
+    const lines = [line(1, { sla: '1794200000000' }), line(2, { sla: '1794100000000' })];
+    expect(toLazadaReturn(item(lines)).respondBy).toEqual(new Date(1794100000000));
+    expect(toLazadaReturn(item([line(1)])).respondBy).toBeNull();
+    const agreed = lines.map((l) => ({ ...l, reverse_status: 'SELLER_AGREE_RETURN' }));
+    expect(toLazadaReturn(item(agreed)).respondBy).toBeNull();
   });
 
   it('`ONLY_REFUND` là chỉ hoàn tiền; `return_to_type` RTW là kho sàn', () => {
