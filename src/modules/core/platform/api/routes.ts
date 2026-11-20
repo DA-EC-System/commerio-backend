@@ -5,6 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import { listCompanies, listPlatformAuditLogs, platformOverview, setCompanyLock } from '../service/admin.ts';
 import { getCompanyProfile, updateCompanyProfile } from '../service/company-profile.ts';
+import { releaseTaxCode } from '../service/tax-code-release.ts';
 import type { PlatformContext } from '../service/context.ts';
 import { listDeadJobs, retryDeadJob } from '../service/jobs/dead.ts';
 import { listCompanyModules, setCompanyModule } from '../service/modules.ts';
@@ -14,6 +15,7 @@ import {
   DeadJobListQuery,
   DeadJobParams,
   LockCompanyBody,
+  ReleaseTaxCodeBody,
   ModuleParams,
   PlatformAuditQuery,
   SetModuleBody,
@@ -77,6 +79,16 @@ export function platformRouter(ctx: PlatformContext): Router {
     const { version } = validated<typeof UnlockCompanyBody>(res, 'body');
     res.json(await setCompanyLock(getAuth(res).accountId, id, { version, reason: null }));
   });
+
+  router.post(
+    '/companies/:id/release-tax-code',
+    platformAdmin,
+    validate({ params: CompanyParams, body: ReleaseTaxCodeBody }),
+    async (_req, res) => {
+      const { id } = validated<typeof CompanyParams>(res, 'params');
+      res.json(await releaseTaxCode(getAuth(res).accountId, id, validated<typeof ReleaseTaxCodeBody>(res, 'body')));
+    },
+  );
 
   router.get('/audit-logs', platformAdmin, validate({ query: PlatformAuditQuery }), async (_req, res) => {
     res.json(await listPlatformAuditLogs(validated<typeof PlatformAuditQuery>(res, 'query')));
