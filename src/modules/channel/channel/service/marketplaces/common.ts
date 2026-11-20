@@ -362,6 +362,42 @@ export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(sk
 }
 
 /**
+ * Chống tạo trùng cho sản phẩm nhiều SKU (#295). `found[i]` là SKU sàn của `sellerSkus[i]` (null là chưa có). Không thấy cái
+ * nào: null (đi tạo). Một SKU: như `existingProduct`. Nhiều SKU: thấy mọi SKU và cùng một sản phẩm sàn thì `existing: true`
+ * kèm `skus` đủ (`createdAt`, `title` của SKU đầu); thấy một phần hay lẫn nhiều sản phẩm thì ném `rejected`
+ * `sku_exists_on_platform`, vì tạo tiếp sẽ trùng seller sku, còn gộp bừa thì ghép nhầm.
+ */
+export function existingFromSkus(sellerSkus: readonly string[], found: readonly (RemoteSku | null)[]): CreatedProduct | null {
+  const hits = found.filter((s): s is RemoteSku => s !== null);
+  if (!hits.length) return null;
+  if (sellerSkus.length === 1) return existingProduct(hits[0]!);
+  const missing = sellerSkus.filter((_, i) => found[i] === null);
+  const products = new Set(hits.map((h) => h.externalProductId));
+  if (missing.length || products.size > 1) {
+    const have = hits.map((h) => `${h.sellerSku} (sản phẩm ${h.externalProductId})`).join(', ');
+    throw new MarketplaceError(
+      'rejected',
+      'sku_exists_on_platform',
+      missing.length
+        ? `Sàn đã có SKU ${have} nhưng chưa có ${missing.join(', ')}; xử lý tay trên sàn trước khi đẩy`
+        : `Các SKU ${have} thuộc nhiều sản phẩm khác nhau trên sàn; xử lý tay trên sàn trước khi đẩy`,
+    );
+  }
+  return { ...existingProduct(hits[0]!), skus: hits.map((h) => ({ sellerSku: h.sellerSku, externalSkuId: h.externalSkuId })) };
+}
+
+/** Giá trị từng trục của một phân loại (#295): nhãn theo `sku.values[i]`, kèm phần tử giá trị trên trục (ảnh, mã) nếu có. */
+export function skuAxes(
+  attrs: readonly SalesAttribute[] | undefined,
+  sku: ProductSku,
+): { attr: SalesAttribute; label: string; value: SalesAttribute['values'][number] | undefined }[] {
+  return (attrs ?? []).map((attr, i) => {
+    const label = sku.values[i] ?? '';
+    return { attr, label, value: attr.values.find((v) => v.label === label) };
+  });
+}
+
+/**
  * Trạng thái sản phẩm trên sàn, đã chuẩn hoá: `review` chờ duyệt, `live` đang bán, `rejected` bị từ chối,
  * `hold` sàn khoá, `inactive` đã tắt, `deleted` đã xoá.
  */
