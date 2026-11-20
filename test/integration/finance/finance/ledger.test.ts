@@ -12,6 +12,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
+import { createReturnRequest } from './return-helpers.ts';
 
 // Sổ tiền theo đơn (#116, Documents/21 §21.1, §11.2). Loại sự kiện của kiện, trả hàng chưa có trong danh mục (#106,
 // #107, #112): gọi thẳng hàm ghi sổ với payload giả. Giờ cố định 10:00 ngày 05/11/2026 giờ Việt Nam: chỉ giả `Date`.
@@ -112,7 +113,7 @@ describe('GET /finance/ledger, /orders/:orderId/profit (§21.1)', () => {
   it('lãi theo đơn: khách trả một áo bán lại được thì hoàn tiền, giảm giá vốn; Admin không thấy giá vốn', async () => {
     const s = await setup();
     await recordPackageDelivered(s.companyId, s.delivered);
-    const returnRequestId = randomUUID();
+    const { returnRequestId } = await createReturnRequest(s.companyId, { orderId: s.order.orderId, packageId: s.delivered.packageId, quantity: 1, unitPrice: 129000 });
     const base = { orderId: s.order.orderId, shopId: s.shopId };
     await recordReturnRefunded(s.companyId, { ...base, returnRequestId, refundAmount: '129000', refundedAt: '2026-11-05T02:00:00Z' });
     await recordReturnInspected(s.companyId, {

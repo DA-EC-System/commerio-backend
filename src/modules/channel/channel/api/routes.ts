@@ -14,6 +14,7 @@ import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
+import { matchPreview } from '../service/match-preview.ts';
 import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
@@ -36,6 +37,7 @@ import {
   MappingBody,
   MappingParams,
   MatchBody,
+  MatchPreviewQuery,
   AcknowledgeTitleBody,
   AcknowledgeTitleParams,
   OutsideChangeBody,
@@ -336,6 +338,12 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
     const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
     res.status(accepted ? 202 : 200).json(list);
+  });
+
+  // Xem trước số sẽ đẩy khi ghép (#460): hộp ghép gọi khi người dùng chọn một cặp.
+  router.get('/shops/:id/listings/match-preview', match, validate({ params: ShopParams, query: MatchPreviewQuery }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await matchPreview(productPort(ctx), actor(res), id, validated<typeof MatchPreviewQuery>(res, 'query')));
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {

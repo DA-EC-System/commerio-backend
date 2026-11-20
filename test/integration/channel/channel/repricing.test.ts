@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { onConfigActivated, onVariantPriceChanged } from '#src/modules/channel/channel/service/repricing.ts';
+import { onConfigActivated, onStockChanged, onVariantPriceChanged } from '#src/modules/channel/channel/service/repricing.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -166,5 +166,60 @@ describe('kích hoạt cấu hình', () => {
     const v = await listedVariant(companyId, [s], '200000');
     await activated(companyId, id, 'mismatch_threshold', null);
     expect(await pendingOf(s, v.variantId)).toEqual([]);
+  });
+});
+
+// Giá vốn tăng làm listing đang bán rơi dưới giá thấp nhất (#225 A1; 25 §6.2 "cảnh báo và đề xuất giá mới; không tự đổi").
+describe('giá vốn đổi', () => {
+  /** Listing đang bán giá 239.000 (thực nhận 202.540) trên gian hàng phí 14% + 3.000, lãi tối thiểu 10%; giá vốn bình quân `cost`. */
+  async function selling(target: string | null, cost: number | null) {
+    const { companyId } = await createCompany();
+    const s = await shop(companyId);
+    await activeConfig(companyId, 'fee', s, FEE);
+    await activeConfig(companyId, 'min_margin', null, { pct: 10 });
+    const { variantId, productId } = await createVariant(companyId);
+    await db().query('update product.product_variants set target_net_price = $2 where id = $1', [variantId, target]);
+    if (cost !== null) {
+      await db().query('insert into product.stock_levels (company_id, variant_id, on_hand, avg_cost) values ($1, $2, 5, $3)', [companyId, variantId, cost]);
+    }
+    await db().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, status, external_sku_id, listed_price) values ($1, $2, $3, 'live', $4, 239000)`,
+      [companyId, s, variantId, randomUUID()],
+    );
+    const changed = () => withCompany(companyId, () => onStockChanged({ variantId, onHand: 5, reserved: 0, available: 5 }));
+    return { companyId, s, variantId, productId, changed };
+  }
+
+  it('giá vốn 190.000 (giá thấp nhất 209.000) mà đang bán thực nhận 202.540: bản chờ trigger cost, giá đủ giá thấp nhất', async () => {
+    const t = await selling('200000', 190000);
+    await t.changed();
+    // Thực nhận cần ≥ 209.000: (209.000 + 3.000) / 0,86 = 246.512 → làm tròn lên 249.000, thực nhận 211.140.
+    expect(await pendingOf(t.s, t.variantId)).toMatchObject([{ rounded_price: '249000.00', net_received: '211140.00', below_floor: false, cost: '190000.00', trigger: 'cost' }]);
+  });
+
+  it('giá muốn bán cao hơn giá thấp nhất thì đề xuất theo giá muốn bán', async () => {
+    const t = await selling('230000', 190000);
+    await t.changed();
+    // (230.000 + 3.000) / 0,86 = 270.930 → 279.000.
+    expect(await pendingOf(t.s, t.variantId)).toMatchObject([{ rounded_price: '279000.00', below_floor: false, trigger: 'cost' }]);
+  });
+
+  it('giá đang bán còn đủ giá thấp nhất (giá vốn 150.000): không có bản chờ', async () => {
+    const t = await selling('200000', 150000);
+    await t.changed();
+    expect(await pendingOf(t.s, t.variantId)).toEqual([]);
+  });
+
+  it('đã có bản chờ đủ giá thấp nhất (đổi giá muốn bán trước đó): giữ bản đó', async () => {
+    const t = await selling('240000', 190000);
+    await priceChanged(t.companyId, { variantId: t.variantId, productId: t.productId }, '240000');
+    await t.changed();
+    expect(await pendingOf(t.s, t.variantId)).toMatchObject([{ trigger: 'target_changed' }]);
+  });
+
+  it('chưa có giá vốn: không đề xuất', async () => {
+    const t = await selling('200000', null);
+    await t.changed();
+    expect(await pendingOf(t.s, t.variantId)).toEqual([]);
   });
 });

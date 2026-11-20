@@ -54,6 +54,7 @@ Mỗi loại một bộ đếm `doc_counters` (`docType` = tên loại). `create
 Mọi hàm chạy trong `withCompany` của bên gọi (`docs/superpowers/specs/2026-10-28-111-cong-ton-ghi-so-design.md`).
 - `receiveGoods(receiptId, lines, actorId)`: phiếu nhận ghi sổ (#109); đạt vào tồn thực theo giá nhập, lỗi vào chờ xử lý (giá lưu trên thẻ kho, không vào giá vốn).
 - `availableOf(variantIds)`: khả dụng của biến thể thuộc công ty; id lạ không có trong Map. Channel đẩy số này lên sàn.
+- `countedOf(variantIds)` (#460, `repository/counted.ts`): tập SKU **đã có số tồn**: có thẻ `on_hand` tăng (trừ thẻ của phiếu `shipment_reversal`) hoặc nằm trên phiếu kiểm kê `stocktake` đã `posted` (kể cả đếm 0). Thẻ giảm do bàn giao bắt buộc không tính. Channel không đẩy tồn SKU chưa có số lên sàn, để không đè tồn có sẵn trên listing vừa ghép.
 - `recheckThresholds(variantIds)`: purchasing gọi sau khi đang về đổi.
 - `stockOf(variantIds)`: các con số và giá vốn (chưa có dòng tồn thì 0); purchasing lấy giá cho `add-line`.
 - `nextDocNumber(docType)`: số kế tiếp từ `doc_counters` dùng chung cả module lớn `product`; bên gọi ghép tiền tố (`DN-000001`).

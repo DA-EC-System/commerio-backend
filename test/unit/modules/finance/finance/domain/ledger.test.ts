@@ -9,6 +9,8 @@ import {
   postDelivered,
   postInspected,
   postRefund,
+  refundCap,
+  refundExcessNote,
   postReturned,
   profitOf,
   taxWarnings,
@@ -241,5 +243,51 @@ describe('chia doanh thu thuần theo ngày giao để chọn GTGT đầu ra (US
     const portions = netRevenuePortions([line('a', 'revenue', '100', '2026-11-10', false)], estimates);
     expect(portions.map((p) => p.amount)).toEqual(['33.00', '33.00', '34.00']);
     expect(netRevenuePortions([line('b', 'revenue', '100', '2026-11-10', false)], [])).toEqual([{ kind: 'revenue', amount: '100', day: '2026-11-10' }]);
+  });
+});
+
+describe('refundCap: trần ghi hoàn tiền (#355)', () => {
+  const rev = (entries: [string, string][]) => new Map(entries);
+  const line = (packageId: string | null, quantity: number, unitPrice = '100000') => ({ packageId, quantity, unitPrice });
+  const cap = (b: Parameters<typeof refundCap>[0]) => {
+    const r = refundCap(b);
+    return [r.cap.toFixed(0), r.post.toFixed(0), r.excess.toFixed(0)];
+  };
+
+  it('kiện của dòng trả chưa có doanh thu (COD hoàn về): ghi 0, vượt cả số', () => {
+    expect(cap({ refundAmount: '110000', lines: [line('p1', 1)], revenueByPackage: rev([]), refunded: '0' })).toEqual(['0', '0', '110000']);
+  });
+
+  it('trong trần: ghi đủ', () => {
+    expect(cap({ refundAmount: '100000', lines: [line('p1', 1)], revenueByPackage: rev([['p1', '200000']]), refunded: '0' })).toEqual([
+      '100000',
+      '100000',
+      '0',
+    ]);
+  });
+
+  it('trần là phần nhỏ hơn giữa doanh thu dòng trả và doanh thu đơn còn lại sau các lần hoàn trước', () => {
+    expect(cap({ refundAmount: '100000', lines: [line('p1', 1)], revenueByPackage: rev([['p1', '200000']]), refunded: '150000' })).toEqual([
+      '50000',
+      '50000',
+      '50000',
+    ]);
+  });
+
+  it('dòng không gắn kiện, hoặc kiện có tổng doanh thu không dương, không tính; trần không âm', () => {
+    expect(
+      cap({ refundAmount: '50000', lines: [line(null, 1), line('p2', 1)], revenueByPackage: rev([['p2', '0'], ['p3', '100000']]), refunded: '300000' }),
+    ).toEqual(['0', '0', '50000']);
+  });
+
+  it('số sàn báo âm được lấy trị tuyệt đối', () => {
+    expect(cap({ refundAmount: '-100000', lines: [line('p1', 1)], revenueByPackage: rev([['p1', '100000']]), refunded: '0' })[1]).toBe('100000');
+  });
+
+  it('câu cờ ghi số theo dấu chấm nghìn', () => {
+    const r = refundCap({ refundAmount: '1234567', lines: [line('p1', 1)], revenueByPackage: rev([['p1', '100000']]), refunded: '0' });
+    expect(refundExcessNote('1234567', r.cap, r.excess)).toBe(
+      'Sàn báo hoàn 1.234.567 ₫ vượt doanh thu đã ghi của phần trả (100.000 ₫); phần vượt 1.134.567 ₫ không ghi sổ (kiện chưa giao hoặc COD hoàn về), đối chiếu với sàn',
+    );
   });
 });

@@ -4,7 +4,16 @@
 // bắt đầu lượt khi đi hết các trang; lỗi giữa chừng thì lượt sau kéo lại từ mốc cũ (ghi lặp không sao, theo mã sàn).
 // Yêu cầu của đơn chưa có trong app (`unknown_order`) không giữ mốc: chỉ về lại khi sàn sửa yêu cầu đó lần nữa. Kéo đơn
 // chạy ngay trước trong cùng việc nên đơn mới thường đã có.
-import { ingestMarketplaceReturn, markReturnConfirmed, type PlatformReturn, type ReturnIngestOutcome, returnsAwaitingConfirm } from '../../../order/index.ts';
+import {
+  flagRefundApprovalFailed,
+  ingestMarketplaceReturn,
+  markRefundApproved,
+  markReturnConfirmed,
+  type PlatformReturn,
+  type ReturnIngestOutcome,
+  returnsAwaitingConfirm,
+  returnsAwaitingRefundApproval,
+} from '../../../order/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
@@ -31,6 +40,8 @@ export function toPlatformReturn(shopId: string, r: RemoteReturn): PlatformRetur
     disputeInProgress: r.disputeInProgress,
     returnTo: r.returnTo ?? null,
     returnTrackingCode: r.returnTrackingCode,
+    respondBy: r.respondBy,
+    sellerHandledReceipt: r.sellerHandledReceipt ?? false,
     reason: r.reason,
     refundAmount: r.refundAmount,
     lines: r.lines.map((l) => ({ externalLineId: l.externalLineId, externalReturnLineId: l.externalReturnLineId ?? null, quantity: l.quantity ?? 1 })),
@@ -60,11 +71,35 @@ export async function retryReturnConfirms(companyId: string, shopId: string, ada
   return confirmed;
 }
 
+/**
+ * Báo sàn đồng ý hoàn tiền cho yêu cầu đã đóng sau kiểm hàng hoàn (`refund_approval = pending`, #392): mỗi yêu cầu một
+ * lời gọi ngoài giao dịch; sàn nhận thì `done`, lỗi thì bật Cần xử lý một lần và thử lại lượt sau. Mất uỷ quyền thì ném.
+ */
+export async function approvePendingRefunds(companyId: string, shopId: string, adapter: MarketplaceAdapter, accessToken: string): Promise<number> {
+  if (!adapter.approveReturnRefund) return 0;
+  const pending = await withCompany(companyId, () => returnsAwaitingRefundApproval(shopId));
+  let approved = 0;
+  for (const r of pending) {
+    try {
+      await onMarketplace(() => adapter.approveReturnRefund!(accessToken, r.externalReturnId));
+    } catch (err) {
+      if (shopStopped(err)) throw err;
+      logger.warn({ err, shopId, returnRequestId: r.id }, 'báo sàn đồng ý hoàn tiền lỗi');
+      const message = err instanceof AppError ? err.message : 'lỗi không rõ';
+      await withCompany(companyId, () => flagRefundApprovalFailed(r.id, message));
+      continue;
+    }
+    if (await withCompany(companyId, () => markRefundApproved(r.id))) approved += 1;
+  }
+  return approved;
+}
+
 export async function pullShopReturns(companyId: string, shopId: string): Promise<ReturnPullResult> {
   const result: ReturnPullResult = { created: 0, updated: 0, unchanged: 0, unknown_order: 0, skipped: 0 };
   const { shop, adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
   // Trước lượt kéo: sàn nhận xong thì chính lượt này đọc được trạng thái mới.
   await retryReturnConfirms(companyId, shopId, adapter, accessToken);
+  await approvePendingRefunds(companyId, shopId, adapter, accessToken);
   if (!adapter.listReturns || !shop.orderCutoffAt) return result;
   const startedAt = new Date();
   const since = new Date((shop.lastReturnSyncAt ?? shop.orderCutoffAt).getTime() - OVERLAP_MS);

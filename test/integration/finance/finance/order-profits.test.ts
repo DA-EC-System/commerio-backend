@@ -11,6 +11,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
+import { createReturnRequest } from './return-helpers.ts';
 
 // Lãi theo danh sách đơn (#231; Documents/21 §21.1, 25 §10.2; AC US-TI-04, Documents/27 mục 6.8: chưa có mã ca).
 // Ghi sổ bằng hàm ghi theo sự kiện như ledger.test.ts; số quyết toán chèn thẳng dòng thực tế bằng role chủ bảng.
@@ -74,8 +75,12 @@ async function deliveredOrder(s: Setup, opts: { deliveredAt?: string; shopId?: s
     shippingIncome: '0',
     shippingCost: '0',
   });
-  return order;
+  return { ...order, packageId };
 }
+
+/** Yêu cầu trả một món (100.000) của kiện đã giao trong `deliveredOrder` (#355: hoàn tiền tối đa bằng doanh thu đã ghi). */
+const returnOf = async (s: Setup, order: { orderId: string; packageId: string }) =>
+  (await createReturnRequest(s.companyId, { orderId: order.orderId, packageId: order.packageId, quantity: 1, unitPrice: 100000 })).returnRequestId;
 
 /**
  * Một lô quyết toán của sàn cho đơn, như `applyRun`: mỗi khoản một dòng thực tế, nối về dòng ước tính còn hiệu lực
@@ -175,7 +180,7 @@ describe('GET /finance/orders/profits (§21.1)', () => {
     const s = await setup();
     const order = await deliveredOrder(s);
     await recordReturnRefunded(s.companyId, {
-      returnRequestId: randomUUID(),
+      returnRequestId: await returnOf(s, order),
       orderId: order.orderId,
       shopId: s.shopId,
       refundAmount: '100000',
@@ -194,7 +199,7 @@ describe('GET /finance/orders/profits (§21.1)', () => {
     await settle(s, ok.orderId, 150000, 10000); // thực nhận 140.000 ≥ 132.000
     const estimatedLow = await deliveredOrder(s);
     await recordReturnRefunded(s.companyId, {
-      returnRequestId: randomUUID(),
+      returnRequestId: await returnOf(s, estimatedLow),
       orderId: estimatedLow.orderId,
       shopId: s.shopId,
       refundAmount: '100000',
@@ -281,7 +286,7 @@ describe('dòng ghi sau lần quyết toán đầu (#231)', () => {
     const order = await deliveredOrder(s);
     await settle(s, order.orderId, 200000, 15000);
     const base = { orderId: order.orderId, shopId: s.shopId };
-    await recordReturnRefunded(s.companyId, { ...base, returnRequestId: randomUUID(), refundAmount: '100000', refundedAt: '2026-11-09T02:00:00Z' });
+    await recordReturnRefunded(s.companyId, { ...base, returnRequestId: await returnOf(s, order), refundAmount: '100000', refundedAt: '2026-11-09T02:00:00Z' });
     await recordReturnInspected(s.companyId, {
       ...base,
       inspectionId: randomUUID(),
@@ -339,7 +344,7 @@ describe('khoản thực tế về trước sự kiện của app, khoản khôn
     await settle(s, order.orderId, 200000, 15000);
     await settleLines(s, order.orderId, [['customer_refund', -100000]]);
     await recordReturnRefunded(s.companyId, {
-      returnRequestId: randomUUID(),
+      returnRequestId: await returnOf(s, order),
       orderId: order.orderId,
       shopId: s.shopId,
       refundAmount: '100000',
@@ -359,7 +364,7 @@ describe('khoản thực tế về trước sự kiện của app, khoản khôn
     const order = await deliveredOrder(s);
     await settle(s, order.orderId, 200000, 15000);
     await recordReturnRefunded(s.companyId, {
-      returnRequestId: randomUUID(),
+      returnRequestId: await returnOf(s, order),
       orderId: order.orderId,
       shopId: s.shopId,
       refundAmount: '100000',

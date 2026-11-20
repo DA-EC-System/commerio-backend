@@ -108,6 +108,18 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
   });
 });
 
+describe('syncAction: sàn báo người bán đã xử lý hàng về (#392)', () => {
+  it('chờ hàng về, sàn báo người bán đã xử lý (TikTok) → conflict', () => {
+    expect(syncAction('awaiting_return', 'received', null, true)).toBe('conflict');
+  });
+  it('chờ hàng về, ĐVVC chỉ giao về (Lazada) → chờ kho quét', () => {
+    expect(syncAction('awaiting_return', 'received', null, false)).toBeNull();
+  });
+  it.each(['received', 'closed'] as const)('%s, sàn báo người bán đã xử lý → không đổi', (current) => {
+    expect(syncAction(current, 'received', current === 'closed' ? 'inspected' : null, true)).toBeNull();
+  });
+});
+
 describe('tiền và giá vốn', () => {
   it('giá vốn bình quân gia quyền các dòng kiện đã giao (E99)', () => {
     expect(weightedUnitCost([{ quantity: 1, unitCost: '10000' }, { quantity: 3, unitCost: '14000' }])).toBe('13000.00');
