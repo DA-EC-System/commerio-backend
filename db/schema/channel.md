@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V130**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V128**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -181,7 +181,6 @@ Ràng buộc và index:
 - unique index (`shop_id`, `pending_external_sku_id`) `listings_shop_pending_external_sku_uq` where `pending_external_sku_id is not null`
 - index (`variant_id`) `listings_variant_id_index`
 - index (`shop_product_id`) `listings_shop_product_id_index`
-- check `listings_shop_product`: `external_product_id is null or shop_product_id is not null`
 - check `listings_mode`: `(mode = 'mapped') = (variant_id is not null)`
 - check `listings_unmanaged_approved`: `mode = 'mapped' or approved_by is not null or pending_requested_by is not null`
 - check `listings_pending_mapping`: `(pending_mode is null and pending_variant_id is null and pending_requested_by is null and pending_requested_at is null)

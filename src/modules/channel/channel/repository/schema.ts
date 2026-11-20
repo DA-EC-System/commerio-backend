@@ -382,7 +382,7 @@ export const listings = channelSchema.table(
       columns: [t.shopProductId, t.externalProductId],
       foreignColumns: [shopProducts.id, shopProducts.externalProductId],
     }),
-    check('listings_shop_product', sql`${t.externalProductId} is null or ${t.shopProductId} is not null`),
+    // CHECK `listings_shop_product` (có mã sản phẩm sàn thì có `shop_product_id`, #295) viết tay ở migration `*_san-pham-san-du-lieu`, sau bước điền dữ liệu.
     check('listings_mode', sql`(${t.mode} = 'mapped') = (${t.variantId} is not null)`),
     // "Không quản tồn" có hiệu lực phải có CEO duyệt; dòng mới tạo chờ duyệt ghép sang "không quản tồn" (#220) chưa có.
     check(

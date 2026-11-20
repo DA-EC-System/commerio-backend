@@ -18,3 +18,7 @@ WHERE l.external_product_id IS NOT NULL
   AND sp.shop_id = l.shop_id
   AND sp.external_product_id = l.external_product_id
   AND l.shop_product_id IS NULL;
+--> statement-breakpoint
+-- Có mã sản phẩm sàn thì phải trỏ `shop_products` (#295). Viết tay ở đây, không khai trong `schema.ts`: drizzle sẽ thêm ràng
+-- buộc trước bước điền dữ liệu, và `db:regen` gộp lại các migration sinh nên không tách được thành ba bước.
+ALTER TABLE channel.listings ADD CONSTRAINT listings_shop_product CHECK (external_product_id IS NULL OR shop_product_id IS NOT NULL);
