@@ -138,13 +138,22 @@ export async function variantsListedOn(shopIds: readonly string[]): Promise<{ va
   return rows.map((r) => ({ variantId: r.variantId!, shopId: r.shopId }));
 }
 
-/** Listing chưa gỡ của SKU sàn trên gian hàng (unique `listings_shop_external_sku_uq`, nhiều nhất một). */
-export async function findListingByExternalSku(shopId: string, externalSkuId: string): Promise<ListingRow | undefined> {
-  const [row] = await getDb()
+/**
+ * Listing chưa gỡ của SKU sàn trên gian hàng (unique `listings_shop_external_sku_uq`, nhiều nhất một). `lock`: khoá dòng
+ * (`FOR UPDATE`) tới hết giao dịch của bên gọi, để việc đẩy tồn, giá (ghi qua `listing-writes`) chờ thay vì đổi `version`
+ * giữa lúc đọc và lúc ghi (#411).
+ */
+export async function findListingByExternalSku(
+  shopId: string,
+  externalSkuId: string,
+  opts: { lock?: boolean } = {},
+): Promise<ListingRow | undefined> {
+  const query = getDb()
     .select()
     .from(listings)
     .where(and(eq(listings.shopId, shopId), eq(listings.externalSkuId, externalSkuId), sql`${listings.status} <> 'delisted'`))
     .limit(1);
+  const [row] = opts.lock ? await query.for('update') : await query;
   return row;
 }
 
