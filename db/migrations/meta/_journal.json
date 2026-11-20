@@ -890,6 +890,20 @@
       "when": 1795210914999,
       "tag": "20261120214154_anh-xa-thong-so-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1795211655248,
+      "tag": "20261120215415_can-nang-kich-thuoc-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1795211658201,
+      "tag": "20261120215418_can-nang-kich-thuoc-tran",
+      "breakpoints": true
     }
   ]
 }
