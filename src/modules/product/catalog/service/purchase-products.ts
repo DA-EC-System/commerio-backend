@@ -19,6 +19,8 @@ export interface NewProductOption {
 }
 
 export interface NewProductItem {
+  /** Chỉ số dòng trong đề nghị (từ 0), cho câu "Trùng phân loại với dòng N". */
+  line: number;
   parentId: string | null;
   parentName: string | null;
   groupId: string | null;
@@ -78,7 +80,7 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
       if (!v) return;
       const combo = v.map(key).join('|');
       if (taken.has(combo)) return fail(i, 'optionValues', taken.get(combo)!);
-      if (seen.has(combo)) return fail(i, 'optionValues', `Trùng phân loại với dòng ${seen.get(combo)! + 1}`);
+      if (seen.has(combo)) return fail(i, 'optionValues', `Trùng phân loại với dòng ${items[seen.get(combo)!]!.line + 1}`);
       seen.set(combo, i);
       lines.push({ index: i, values: v });
     });
@@ -89,16 +91,22 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
     if (parentKey.startsWith('new:')) {
       const first = rows[0]!.item;
       const name = normalizeName(first.parentName!);
+      // So với nhóm hợp lệ đầu tiên: dòng đầu sai nhóm thì chỉ dòng đó báo, dòng sau không bị kéo theo.
+      const groupId = rows.map(({ item }) => item.groupId).find((g) => g && groups.has(g));
       for (const { item, i } of rows) {
         if (!item.groupId || !groups.has(item.groupId)) fail(i, 'groupId', 'Chọn nhóm hàng');
-        else if (item.groupId !== first.groupId) fail(i, 'groupId', 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng');
+        else if (item.groupId !== groupId) fail(i, 'groupId', 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng');
       }
       if (await productNameExists(name)) rows.forEach(({ i }) => fail(i, 'parentName', 'Đã có sản phẩm cùng tên'));
       // Trục của cha mới: theo thứ tự xuất hiện, dòng đầu tiên trước (M1).
       const axes = firstOf(rows.flatMap(({ item }) => item.options.map((o) => normalizeName(o.axis))));
       if (axes.length > MAX_AXES) {
-        tooManyAxes = true;
-        rows.forEach(({ i }) => fail(i, 'optionValues', `Các dòng cùng sản phẩm cha có ${axes.length} trục phân loại; tối đa ${MAX_AXES}`));
+        // Mã `too_many_axes` chỉ khi có dòng thật sự báo lỗi trục (dòng đã có lỗi khác giữ lỗi đó).
+        for (const { i } of rows) {
+          if (errors.has(i)) continue;
+          tooManyAxes = true;
+          fail(i, 'optionValues', `Các dòng cùng sản phẩm cha có ${axes.length} trục phân loại; tối đa ${MAX_AXES}`);
+        }
         continue;
       }
       const values = rows.map(({ item, i }) => {
@@ -113,7 +121,7 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
       const lines = checkCombos(rows, values);
       overflow(axes, lines, [], rows, fail);
       if (rows.every(({ i }) => !errors.has(i))) {
-        parents.push({ kind: 'new', name, groupId: first.groupId!, groupName: groups.get(first.groupId!)!, axes, lines });
+        parents.push({ kind: 'new', name, groupId: groupId!, groupName: groups.get(groupId!)!, axes, lines });
       }
       continue;
     }

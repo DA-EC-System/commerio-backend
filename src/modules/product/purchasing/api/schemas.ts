@@ -81,7 +81,7 @@ export const RequestListQuery = z.object({
  */
 const NewProductInput = z
   .object({
-    parentId: z.string('Chọn sản phẩm cha').nullable(),
+    parentId: z.uuid('Chọn sản phẩm cha').nullable(),
     parentName: z.string('Nhập tên sản phẩm cha').trim().max(120, 'Tối đa 120 ký tự').nullable(),
     groupId: z.string('Chọn nhóm hàng').nullable(),
     optionValues: z.record(

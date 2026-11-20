@@ -45,7 +45,8 @@ const optionsOf = (values: Record<string, string>) =>
   Object.entries(values).map(([axis, value]) => ({ axis: normalizeName(axis), value: normalizeName(value) }));
 
 /** Dòng sản phẩm mới ở dạng catalog kiểm, tạo. */
-const newProductItem = (p: NewProductLineInput) => ({
+const newProductItem = (p: NewProductLineInput, line: number) => ({
+  line,
   parentId: p.parentId,
   parentName: p.parentName,
   groupId: p.parentId ? null : p.groupId,
@@ -122,12 +123,12 @@ async function buildLines(input: RequestInput): Promise<NewLine[]> {
   });
 
   const newIndexes = input.lines.flatMap((l, i) => (l.newProduct ? [i] : []));
-  const checked = await validateNewProducts(newIndexes.map((i) => newProductItem(input.lines[i]!.newProduct!)));
+  const checked = await validateNewProducts(newIndexes.map((i) => newProductItem(input.lines[i]!.newProduct!, i)));
   for (const [k, e] of checked.errors) errors[`lines.${newIndexes[k]}${e.field ? `.newProduct.${e.field}` : ''}`] = e.message;
 
   if (Object.keys(errors).length) throw invalid(errors, checked.code);
-  return input.lines.map((l) => {
-    const np = l.newProduct ? newProductItem(l.newProduct) : null;
+  return input.lines.map((l, i) => {
+    const np = l.newProduct ? newProductItem(l.newProduct, i) : null;
     return {
       variantId: l.variantId ?? null,
       newParentProductId: np?.parentId ?? null,

@@ -136,6 +136,22 @@ describe('cha mới', () => {
     expect(product.code).toBe(body.lines[0]!.sku);
   });
 
+  it('câu trùng phân loại đánh số theo dòng của đề nghị (có dòng SKU có sẵn đứng trước)', async () => {
+    const name = uniq('Áo');
+    const { variantId } = await createVariant(A.companyId);
+    const res = await post(A, [{ variantId, quantity: 1, unitCost: 1000 }, fresh(name, { 'Màu sắc': 'Đỏ' }), fresh(name, { 'Màu sắc': 'đỏ' })]);
+    expect(res.status).toBe(422);
+    expect(res.body.errors).toEqual({ 'lines.2.newProduct.optionValues': 'Trùng phân loại với dòng 2' });
+  });
+
+  it('tên cha trùng sản phẩm đã có và gộp quá 2 trục: lỗi tên, mã vẫn validation_failed', async () => {
+    const existing = await parentWithAxes(A, [['Đen', 'M']]);
+    const res = await post(A, [fresh(existing.name, { 'Màu sắc': 'Đen', 'Kích cỡ': 'M' }), fresh(existing.name, { 'Chất liệu': 'Len' })]);
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('validation_failed');
+    expect(Object.values(res.body.errors)).toEqual(['Đã có sản phẩm cùng tên', 'Đã có sản phẩm cùng tên']);
+  });
+
   it('gộp quá 2 trục → 422 too_many_axes ở mọi dòng của cha', async () => {
     const name = uniq('Áo');
     const res = await post(A, [fresh(name, { 'Màu sắc': 'Đen', 'Kích cỡ': 'M' }), fresh(name, { 'Chất liệu': 'Cotton' })]);
@@ -254,7 +270,7 @@ describe('cha có sẵn', () => {
 });
 
 describe('hình dạng newProduct', () => {
-  it('trường lạ (name, categoryId), cả parentId lẫn parentName, cha mới thiếu nhóm, tên trục, giá trị quá dài → 422', async () => {
+  it('trường lạ (name), cả parentId lẫn parentName, cha mới thiếu nhóm, tên trục, giá trị quá dài, parentId rỗng → 422', async () => {
     const parent = await parentWithAxes(A, [['Đen', 'M']]);
     const res = await post(A, [
       { newProduct: { parentId: null, parentName: uniq('Áo'), groupId: A.groupId, optionValues: {}, name: 'x' }, quantity: 1, unitCost: 1000 },
@@ -262,6 +278,7 @@ describe('hình dạng newProduct', () => {
       { newProduct: { parentId: null, parentName: uniq('Áo'), groupId: null, optionValues: {} }, quantity: 1, unitCost: 1000 },
       fresh(uniq('Áo'), { 'Tên trục rất là dài': 'Đen' }),
       fresh(uniq('Áo'), { 'Màu sắc': 'Đen tuyền pha xanh rêu' }),
+      { newProduct: { parentId: '', parentName: uniq('Áo'), groupId: A.groupId, optionValues: {} }, quantity: 1, unitCost: 1000 },
     ]);
     expect(res.status).toBe(422);
     const keys = Object.keys(res.body.errors);
@@ -270,6 +287,7 @@ describe('hình dạng newProduct', () => {
     expect(res.body.errors['lines.2.newProduct.groupId']).toBe('Chọn nhóm hàng');
     expect(keys.some((k) => k.startsWith('lines.3.newProduct.optionValues'))).toBe(true);
     expect(keys.some((k) => k.startsWith('lines.4.newProduct.optionValues'))).toBe(true);
+    expect(res.body.errors['lines.5.newProduct.parentId']).toBe('Chọn sản phẩm cha');
   });
 
   it('dòng cha mới bị loại khi duyệt thì không tạo sản phẩm', async () => {

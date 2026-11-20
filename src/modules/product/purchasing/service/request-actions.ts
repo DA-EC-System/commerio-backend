@@ -50,7 +50,8 @@ const RETURN_HINT = '. Trả về cho người lập sửa dòng này';
 async function createNewProducts(actor: Actor, row: RequestRow, lines: readonly LineRow[]): Promise<void> {
   const pending = lines.flatMap((l, i) => (!l.excluded && !l.variantId && (l.newParentProductId || l.newParentName) ? [{ l, i }] : []));
   if (!pending.length) return;
-  const items = pending.map(({ l }) => ({
+  const items = pending.map(({ l, i }) => ({
+    line: i,
     lineId: l.id,
     parentId: l.newParentProductId,
     parentName: l.newParentName,
