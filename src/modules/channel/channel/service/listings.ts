@@ -31,7 +31,7 @@ import {
 import { syncedPathsOf } from '../repository/platform-categories.ts';
 import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
 import type { CategoryChange, SyncError } from '../repository/schema.ts';
-import type { ShopRow } from '../repository/shops.ts';
+import { listShopRows, type ShopRow } from '../repository/shops.ts';
 import { insertListing, updateListing } from './listing-writes.ts';
 import type { ProductPort } from './product-port.ts';
 import { insertConfirmed, type NewPriceCalculation } from '../repository/price-calculations.ts';
@@ -193,12 +193,47 @@ function shownPriceSync(l: ListingRow, price: number | null): ListingRow['priceS
 /** Mọi biến thể đang bán kèm giá chuẩn và listing trên gian hàng này. Gọi trong `withCompany`. */
 export async function listListings(port: ProductPort, shopId: string): Promise<{ items: ListingRowView[] }> {
   const shop = await ownShop(shopId);
-  const catalog = await port.variants();
+  return { items: await shopListingRows(port, shop, await port.variants()) };
+}
+
+/** Dòng listing của trang sản phẩm: thêm gian hàng của dòng (21 §18.5 `ProductListingRow`, #467). */
+export interface ProductListingRowView extends ListingRowView {
+  shopId: string;
+  shopName: string;
+  platform: string;
+}
+
+/**
+ * Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5 `GET /channel/products/:productId/listings`, #467): mỗi
+ * biến thể chưa lưu trữ × mỗi gian hàng, tính như route theo gian hàng nhưng chỉ cho biến thể của sản phẩm này. Sản phẩm
+ * không có hoặc của công ty khác (không biến thể nào, kể cả lưu trữ): 404. Không gọi sàn. Gọi trong `withCompany`.
+ */
+export async function listProductListings(port: ProductPort, productId: string): Promise<{ items: ProductListingRowView[] }> {
+  const catalog = await port.variants(undefined, { productIds: [productId] });
+  if (!catalog.length) throw new AppError(404, 'not_found', 'Không tìm thấy sản phẩm');
+  const items: ProductListingRowView[] = [];
+  // Cùng một kết nối của giao dịch: đọc tuần tự từng gian hàng.
+  for (const shop of (await listShopRows()).filter((s) => s.status !== 'disconnected')) {
+    const rows = await shopListingRows(port, shop, catalog);
+    items.push(...rows.map((r) => ({ ...r, shopId: shop.id, shopName: shop.shopName, platform: shop.platform })));
+  }
+  return { items };
+}
+
+type CatalogVariant = Awaited<ReturnType<ProductPort['variants']>>[number];
+
+/**
+ * Dòng listing của các biến thể chưa lưu trữ trong `catalog` trên một gian hàng. `catalog` gồm cả biến thể lưu trữ của các
+ * sản phẩm đang xét (kiểm spec theo mọi biến thể, như request đẩy và `PUT` spec).
+ */
+async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readonly CatalogVariant[]): Promise<ListingRowView[]> {
   const variants = catalog.filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
   // Chỉ ảnh đầu (ảnh đại diện), một lần cho mọi sản phẩm.
   const thumbnails = await port.productImageUrls([...new Set(variants.map((v) => v.productId))], 1);
-  const rows = await currentListingRows(shop.id);
+  // Chỉ listing của các biến thể đang xét: trang sản phẩm không tính giá, tên, category cho cả gian hàng.
+  const ids = new Set(catalog.map((v) => v.id));
+  const rows = (await currentListingRows(shop.id)).filter((l) => ids.has(l.variantId!));
   const names = await requesterNames(rows);
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
   const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
@@ -212,27 +247,25 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   );
   // Category trên sàn của listing (#467): một câu cho mọi listing, tra cây đã đồng bộ, không gọi sàn.
   const categoryPaths = await syncedPathsOf(shop.platform, rows.flatMap((l) => (l.externalCategoryId ? [l.externalCategoryId] : [])));
-  return {
-    items: variants.map((v) => {
-      const listing = byVariant.get(v.id);
-      const price = shopPrices.get(v.id)!;
-      return {
-        variantId: v.id,
-        productId: v.productId,
-        productName: v.productName,
-        sku: v.sku,
-        attributesLabel: v.attributesLabel,
-        thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
-        specStatus: specStatusOf(specs.get(v.productId)),
-        ...price,
-        listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
-        remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
-        externalCategoryId: listing?.externalCategoryId ?? null,
-        externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
-        categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
-      };
-    }),
-  };
+  return variants.map((v) => {
+    const listing = byVariant.get(v.id);
+    const price = shopPrices.get(v.id)!;
+    return {
+      variantId: v.id,
+      productId: v.productId,
+      productName: v.productName,
+      sku: v.sku,
+      attributesLabel: v.attributesLabel,
+      thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
+      specStatus: specStatusOf(specs.get(v.productId)),
+      ...price,
+      listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
+      remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
+      externalCategoryId: listing?.externalCategoryId ?? null,
+      externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
+      categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
+    };
+  });
 }
 
 /**

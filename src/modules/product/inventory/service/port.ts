@@ -1,6 +1,7 @@
 // Hàm inventory cho module con khác cùng module lớn `product` (spec #111 mục 5.5). Chạy trong `withCompany` của bên gọi.
 import { getVariants } from '../../catalog/index.ts';
 import { availableQty } from '../domain/stock.ts';
+import { countedVariants } from '../repository/counted.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import { levelsOf } from '../repository/levels.ts';
 import { lockedOf } from './locked.ts';
@@ -52,6 +53,12 @@ export async function availableOf(variantIds: readonly string[]): Promise<Map<st
   // shortcut: getVariants nạp cả thuộc tính; đổi sang truy vấn chỉ lấy id nếu #104 gọi hàng nghìn id một lần.
   return new Map([...(await stockOf(variantIds))].map(([id, s]) => [id, s.available]));
 }
+
+/**
+ * SKU kho đã có số (#460): có thẻ kho hoặc nằm trên phiếu kiểm kê đã ghi sổ. SKU không có trong Set là chưa biết tồn:
+ * channel không đẩy tồn của nó lên sàn (Documents/25 §6.4 "Ghép listing có sẵn").
+ */
+export const countedOf = countedVariants;
 
 /** Số kế tiếp của một loại chứng từ trong công ty (bắt đầu từ 1); bên gọi tự ghép tiền tố (`DN-000001`). */
 export const nextDocNumber = takeNextNumber;

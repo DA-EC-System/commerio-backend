@@ -206,6 +206,40 @@ export function postRefund(refundAmount: string): Draft[] {
   return out;
 }
 
+export interface RefundBasis {
+  /** Số sàn báo hoàn (dương). */
+  refundAmount: string;
+  /** Dòng trả của yêu cầu (`returnLinesOf` của sales). */
+  lines: readonly { packageId: string | null; quantity: number; unitPrice: string }[];
+  /** Doanh thu ước tính đã ghi của đơn theo kiện (dòng `revenue` nguồn `package`). */
+  revenueByPackage: ReadonlyMap<string, string>;
+  /** Tiền hoàn đã ghi của đơn (số dương): `customer_refund` cộng dòng điều chỉnh của nguồn hoàn tiền. */
+  refunded: string;
+}
+
+/**
+ * Trần ghi hoàn tiền (#355; 25 §10.1 "tối đa bằng doanh thu đã ghi của các dòng trả", E174). Trần = min(Σ số trả × đơn
+ * giá của dòng trả mà kiện đã có doanh thu, doanh thu đã ghi của đơn − tiền hoàn đã ghi), không âm. Ghi min(số sàn báo,
+ * trần); phần còn lại là phần vượt: không ghi, yêu cầu bật Cần xử lý. Migration `*_tran-hoan-tien-du-lieu` dùng cùng
+ * công thức cho dữ liệu cũ (test so hai đường).
+ */
+export function refundCap(b: RefundBasis): { cap: Decimal; post: Decimal; excess: Decimal } {
+  const linesRevenue = b.lines
+    .filter((l) => l.packageId !== null && new Decimal(b.revenueByPackage.get(l.packageId) ?? 0).gt(0))
+    .reduce((s, l) => s.plus(new Decimal(l.unitPrice).times(l.quantity)), new Decimal(0));
+  const orderRevenue = [...b.revenueByPackage.values()].reduce((s, v) => s.plus(v), new Decimal(0));
+  const cap = Decimal.max(0, Decimal.min(linesRevenue, orderRevenue.minus(b.refunded)));
+  const refund = new Decimal(b.refundAmount).abs();
+  const post = Decimal.min(refund, cap);
+  return { cap, post, excess: refund.minus(post) };
+}
+
+const vnd = (d: Decimal) => `${round(d).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.')} ₫`;
+
+/** Câu cờ Cần xử lý của yêu cầu khi sàn báo hoàn vượt trần (#355). Migration dữ liệu cũ ghi đúng câu này. */
+export const refundExcessNote = (refundAmount: string, cap: Decimal, excess: Decimal) =>
+  `Sàn báo hoàn ${vnd(new Decimal(refundAmount).abs())} vượt doanh thu đã ghi của phần trả (${vnd(cap)}); phần vượt ${vnd(excess)} không ghi sổ (kiện chưa giao hoặc COD hoàn về), đối chiếu với sàn`;
+
 /**
  * Phiếu kiểm hàng về: phần bán lại được ghi giảm giá vốn của đơn; hỏng, xuất huỷ thì giá vốn vẫn tính (25 §10.1).
  * Dòng `unitCost` null (dòng kiện gốc không có giá vốn, chưa từng ghi `cogs`) không ghi giảm (21 §11.2, #229).

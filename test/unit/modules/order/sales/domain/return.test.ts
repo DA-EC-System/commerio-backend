@@ -92,6 +92,8 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     // Kho quét nhận trước khi sàn ghi nhận (TikTok còn BUYER_SHIPPED_ITEM, TRA-B04, #364): app đi trước, không bật cờ.
     ['received', 'awaiting_return', null],
     ['closed', 'awaiting_return', 'conflict'],
+    // Hoàn tiền, khách giữ hàng: Lazada `instantRefund` ra REFUND_PENDING, ánh xạ thành hàng đang về (LZ-TRA-B05, #364).
+    ['refund_only', 'awaiting_return', null],
     ['refund_only', 'rejected', 'conflict'],
   ] as const)('%s, sàn báo %s → %s', (current, target, action) => {
     expect(syncAction(current, target)).toBe(action);
@@ -105,6 +107,18 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     ['no_show', 'conflict'],
   ] as const)('closed (%s), sàn báo awaiting_return → %s', (closeResult, action) => {
     expect(syncAction('closed', 'awaiting_return', closeResult)).toBe(action);
+  });
+});
+
+describe('syncAction: sàn báo người bán đã xử lý hàng về (#392)', () => {
+  it('chờ hàng về, sàn báo người bán đã xử lý (TikTok) → conflict', () => {
+    expect(syncAction('awaiting_return', 'received', null, true)).toBe('conflict');
+  });
+  it('chờ hàng về, ĐVVC chỉ giao về (Lazada) → chờ kho quét', () => {
+    expect(syncAction('awaiting_return', 'received', null, false)).toBeNull();
+  });
+  it.each(['received', 'closed'] as const)('%s, sàn báo người bán đã xử lý → không đổi', (current) => {
+    expect(syncAction(current, 'received', current === 'closed' ? 'inspected' : null, true)).toBeNull();
   });
 });
 

@@ -254,6 +254,11 @@ export const returnRequests = salesSchema.table(
     disputeInProgress: boolean('dispute_in_progress').notNull().default(false),
     returnTo: text('return_to'),
     externalUpdatedAt: timestamp('external_updated_at', { withTimezone: true }),
+    // Hạn người bán phải trả lời của sàn (TikTok `seller_next_action_response`), chỉ để hiện (#392).
+    respondBy: timestamp('respond_by', { withTimezone: true }),
+    // Báo sàn đồng ý hoàn tiền sau kiểm hàng hoàn (#392, sàn có `approveReturnRefund`): `pending` chờ channel gọi sàn,
+    // `done` sàn đã qua bước đó, `withheld` phiếu có khiếu nại nên không báo. Null: sàn không có bước này.
+    refundApproval: text('refund_approval'),
     rejectReasonId: text('reject_reason_id'),
     rejectReasonLabel: text('reject_reason_label'),
     receivedAt: timestamp('received_at', { withTimezone: true }),
@@ -271,12 +276,17 @@ export const returnRequests = salesSchema.table(
     check('return_requests_refunded', sql`${t.refunded} = (${t.refundedAt} is not null)`),
     index().on(t.orderId),
     index().on(t.status),
+    index('return_requests_refund_approval_pending_idx').on(t.shopId).where(sql`${t.refundApproval} = 'pending'`),
     check('return_requests_closed', sql`(${t.status} = 'closed') = (${t.closeResult} is not null)`),
     check(
       'return_requests_marketplace_ref',
       sql`${t.source} <> 'marketplace' or (${t.shopId} is not null and ${t.externalReturnId} is not null)`,
     ),
     check('return_requests_refund', sql`${t.refundAmount} >= 0`),
+    check(
+      'return_requests_refund_approval',
+      sql`${t.refundApproval} is null or (${t.refundApproval} in ('pending', 'done', 'withheld') and ${t.status} = 'closed' and ${t.source} = 'marketplace')`,
+    ),
   ],
 );
 
