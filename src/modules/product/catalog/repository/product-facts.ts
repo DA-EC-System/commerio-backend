@@ -9,19 +9,20 @@ export interface ProductFactsRow {
   description: string | null;
   originCountry: string | null;
   brand: string | null;
+  sizeChartFileId: string | null;
 }
 
 /** Khoá dòng sản phẩm (`FOR UPDATE`) và đọc các trường điền được; không có thì `undefined`. */
 export async function lockProductFacts(id: string): Promise<ProductFactsRow | undefined> {
   const [row] = await getDb()
-    .select({ id: products.id, name: products.name, description: products.description, originCountry: products.originCountry, brand: products.brand })
+    .select({ id: products.id, name: products.name, description: products.description, originCountry: products.originCountry, brand: products.brand, sizeChartFileId: products.sizeChartFileId })
     .from(products)
     .where(eq(products.id, id))
     .for('update');
   return row;
 }
 
-export type ProductFactsPatch = Partial<Pick<ProductFactsRow, 'description' | 'originCountry' | 'brand'>>;
+export type ProductFactsPatch = Partial<Pick<ProductFactsRow, 'description' | 'originCountry' | 'brand' | 'sizeChartFileId'>>;
 
 /** Ghi các trường đã chọn, tăng `version`; dòng đã khoá ở `lockProductFacts`. */
 export async function writeProductFacts(id: string, patch: ProductFactsPatch): Promise<void> {

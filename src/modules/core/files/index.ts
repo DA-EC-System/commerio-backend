@@ -25,3 +25,4 @@ export {
   publicFileUrls,
   replaceAttachments,
 } from './service/attachments.ts';
+export { ingestRemoteImage } from './service/remote-images.ts';
