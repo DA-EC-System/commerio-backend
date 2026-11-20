@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V117**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V119**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -131,6 +131,8 @@ Cột:
   Lỗi lần đẩy gần nhất của riêng SKU này (§18.4): `{ code, message, at }`, null khi đã đồng bộ.
 - `price_sync_error` jsonb · null
 - `last_pushed_at` timestamptz · null
+- `last_price_pushed_at` timestamptz · null
+  Lần sàn nhận giá app đẩy gần nhất (#360). So giá sàn bị sửa ngoài app chờ 15 phút sau mốc này; không dùng `last_pushed_at` vì lần đẩy tồn cũng ghi mốc đó, SKU đổi tồn mỗi chu kỳ sẽ không bao giờ được so giá.
 - `external_image_urls` text[] · null: mã bên ngoài (sàn, cổng thanh toán)
   Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau.
 - `listed_price` numeric(18,2) · null
@@ -349,7 +351,7 @@ Cột:
 - `margin_pct` numeric(7,2) · null
 - `below_floor` boolean · null
 - `trigger` text · not null
-  Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính).
+  Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình, giá vốn tăng làm giá đang bán dưới giá thấp nhất (`cost`, #225: `target_net` là max(giá muốn bán, giá thấp nhất làm tròn lên đồng)).
 - `status` enum `channel.price_calc_status` · not null · mặc định `'pending_confirm'`: `pending_confirm` | `confirmed` | `pushed` | `superseded`
 - `confirmed_by` uuid · null → `core.accounts` (người thao tác)
 - `confirmed_at` timestamptz · null
@@ -364,7 +366,7 @@ Ràng buộc và index:
 - check `price_calculations_floor`: `not below_floor or status in ('pending_confirm', 'superseded')`
 - check `price_calculations_confirmed`: `status not in ('confirmed', 'pushed') or confirmed_by is not null`
 - check `price_calculations_cost_floor`: `(cost is null) = (below_floor is null)`
-- check `price_calculations_trigger`: `trigger in ('push', 'target_changed', 'config_activated')`
+- check `price_calculations_trigger`: `trigger in ('push', 'target_changed', 'config_activated', 'cost')`
 
 Trỏ vào bảng này:
 
@@ -446,6 +448,8 @@ Cột:
   Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có.
 - `state` text · not null
 - `quantity` integer · not null
+- `price` numeric(18,2) · null
+  Giá gốc trên sàn lúc đọc (`RemoteSku.price`: Lazada `skus[].price`, TikTok `tax_exclusive_price`), để hộp ghép so với giá app (#460). null khi sàn không trả hoặc bản sao đọc trước #460.
 - `seen_at` timestamptz · not null · mặc định `now()`
   Lần gần nhất đọc thấy SKU này trên sàn.
 
@@ -454,6 +458,7 @@ Ràng buộc và index:
 - unique index (`shop_id`, `external_sku_id`) `remote_skus_shop_external_sku_uq`
 - check `remote_skus_state`: `state in ('review', 'live', 'rejected', 'hold', 'inactive')`
 - check `remote_skus_quantity`: `quantity >= 0`
+- check `remote_skus_price`: `price >= 0`
 
 ## `channel.shop_category_permissions`
 

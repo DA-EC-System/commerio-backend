@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V117**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V119**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -433,6 +433,10 @@ Cột:
 - `dispute_in_progress` boolean · not null · mặc định `false`
 - `return_to` text · null
 - `external_updated_at` timestamptz · null: mã bên ngoài (sàn, cổng thanh toán)
+- `respond_by` timestamptz · null
+  Hạn người bán phải trả lời của sàn (TikTok `seller_next_action_response`), chỉ để hiện (#392).
+- `refund_approval` text · null
+  Báo sàn đồng ý hoàn tiền sau kiểm hàng hoàn (#392, sàn có `approveReturnRefund`): `pending` chờ channel gọi sàn, `done` sàn đã qua bước đó, `withheld` phiếu có khiếu nại nên không báo. Null: sàn không có bước này.
 - `reject_reason_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
 - `reject_reason_label` text · null
 - `received_at` timestamptz · null
@@ -449,12 +453,14 @@ Ràng buộc và index:
 - unique (`shop_id`, `external_return_id`) `return_requests_shop_id_external_return_id_unique`
 - index (`order_id`) `return_requests_order_id_index`
 - index (`status`) `return_requests_status_index`
+- index (`shop_id`) `return_requests_refund_approval_pending_idx` where `refund_approval = 'pending'`
 - check `return_requests_return_to`: `return_to is null or return_to in ('warehouse', 'merchant')`
 - check `return_requests_received`: `status not in ('received') or received_at is not null`
 - check `return_requests_refunded`: `refunded = (refunded_at is not null)`
 - check `return_requests_closed`: `(status = 'closed') = (close_result is not null)`
 - check `return_requests_marketplace_ref`: `source <> 'marketplace' or (shop_id is not null and external_return_id is not null)`
 - check `return_requests_refund`: `refund_amount >= 0`
+- check `return_requests_refund_approval`: `refund_approval is null or (refund_approval in ('pending', 'done', 'withheld') and status = 'closed' and source = 'marketplace')`
 
 Trỏ vào bảng này:
 

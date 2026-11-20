@@ -1,12 +1,14 @@
 // Tính lại giá theo gian hàng (#225; Documents/25 §6.2, 21 §11.2, §18.6.7). Đổi giá muốn bán hay kích hoạt cấu hình phí,
 // thuế, lãi tối thiểu thì mỗi listing có bản chờ xác nhận (`price_calculations`); giá đang bán chỉ đổi khi người dùng
-// xác nhận. Đổi giá vốn không tạo bản chờ: cờ Dưới giá thấp nhất của giá đang bán tính lúc đọc (`listings.ts`).
+// xác nhận. Đổi giá vốn: cờ Dưới giá thấp nhất của giá đang bán tính lúc đọc (`listings.ts`); listing đang bán rơi dưới
+// giá thấp nhất thì có thêm bản chờ đề xuất giá mới (`trigger = cost`), không tự đổi giá.
 // Consumer chạy trong `withCompany`.
+import { Decimal } from 'decimal.js';
 import type { EventPayload } from '../../../core/index.ts';
 import { targetNetPricesOf } from '../../../product/index.ts';
 import { priceFilter } from '../domain/price-filter.ts';
-import { currentListingRows } from '../repository/listings.ts';
-import { findCalculations, insertPending, type NewPriceCalculation, supersedePending } from '../repository/price-calculations.ts';
+import { currentListingRows, listListingRows } from '../repository/listings.ts';
+import { findCalculations, insertPending, type NewPriceCalculation, pendingCalculations, supersedePending } from '../repository/price-calculations.ts';
 import type { PriceCalcTrigger } from '../repository/schema.ts';
 import { listShopRows } from '../repository/shops.ts';
 import { costsOf, type ShopPriceConfig, shopPriceConfig } from './price-inputs.ts';
@@ -93,11 +95,53 @@ export async function firstPushCalculations(shopId: string, variantIds: readonly
   );
 }
 
+/**
+ * Giá vốn có thể đã đổi (#225 A1; 25 §6.2 "Listing nào rơi dưới giá thấp nhất thì cảnh báo và đề xuất giá mới; không tự
+ * đổi"). Với listing đang bán (`live`, `hidden`) của các SKU mà giá đang trên sàn (`listed_price`) cho thực nhận dưới giá
+ * thấp nhất theo giá vốn hiện tại: ra bản chờ `trigger = cost`, giá là bộ lọc chạy với thực nhận mục tiêu = max(giá muốn
+ * bán, giá thấp nhất làm tròn lên đồng), nên luôn đủ giá thấp nhất và xác nhận được. Đã có bản chờ đủ giá thấp nhất (vd vừa
+ * đổi giá muốn bán) thì giữ. Gian hàng chưa có phí, SKU chưa có giá vốn thì bỏ qua (cờ vẫn tính lúc đọc).
+ */
+export async function proposeForCost(shopId: string, variantIds: readonly string[], now = new Date()) {
+  // `live`, `hidden` là dòng hiện hành của SKU (mỗi SKU một dòng chưa gỡ), đọc theo SKU vì sự kiện bắn mỗi lần tồn đổi.
+  const rows = (await listListingRows(shopId, variantIds)).filter((l) => (l.status === 'live' || l.status === 'hidden') && l.listedPrice !== null);
+  if (!rows.length) return;
+  const config = await shopPriceConfig(shopId, now);
+  if (!config.fee) return;
+  const fee = config.fee;
+  const ids = rows.map((l) => l.variantId!);
+  const [targets, costs, pending] = await Promise.all([targetNetPricesOf(ids), costsOf(ids), pendingCalculations(shopId, ids)]);
+  const below = (cost: string, price: string) =>
+    priceFilter({ target: '0', fee, taxPct: config.taxPct, cost, minMarginPct: config.minMarginPct, manualPrice: price });
+  for (const l of rows) {
+    const variantId = l.variantId!;
+    const cost = costs.get(variantId) ?? null;
+    if (cost === null) continue;
+    const selling = below(cost, l.listedPrice!);
+    if (!selling.ok || !selling.belowFloor) continue;
+    const queued = pending.get(variantId);
+    if (queued) {
+      const r = below(cost, queued.roundedPrice);
+      if (r.ok && r.belowFloor === false) continue;
+    }
+    const floor = new Decimal(cost).times(new Decimal(1).plus(new Decimal(config.minMarginPct).div(100))).ceil();
+    const target = targets.get(variantId);
+    const net = target && new Decimal(target.toFixed()).gt(floor) ? new Decimal(target.toFixed()) : floor;
+    const calc = calculationOf(shopId, variantId, config, net, cost, 'cost');
+    if (calc) await insertPending(calc);
+  }
+}
+
 /** Gian hàng còn nối (chưa ngắt) của công ty. */
 const liveShops = async () => (await listShopRows()).filter((s) => s.status !== 'disconnected');
 
 export async function onVariantPriceChanged(e: EventPayload<'catalog.variant_price_changed'>): Promise<void> {
   for (const s of await liveShops()) await repriceShop(s.id, 'target_changed', [e.variantId]);
+}
+
+/** Tồn thực đổi (`inventory.stock_changed`): giá vốn bình quân chỉ đổi khi nhập có giá, hết tồn thì giá vốn lấy giá đề nghị nhập. */
+export async function onStockChanged(e: EventPayload<'inventory.stock_changed'>): Promise<void> {
+  for (const s of await liveShops()) await proposeForCost(s.id, [e.variantId]);
 }
 
 export async function onConfigActivated(e: EventPayload<'finance.fee_config_activated'>): Promise<void> {
