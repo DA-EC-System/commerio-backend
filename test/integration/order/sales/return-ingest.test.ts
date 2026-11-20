@@ -10,6 +10,7 @@ import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/ser
 import { pullShopReturns } from '#src/modules/channel/channel/service/return-pull.ts';
 import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
 import { onReturnInspected } from '#src/modules/order/sales/service/return-ingest.ts';
+import { lazadaReturnLineStatus } from '#src/modules/channel/channel/service/marketplaces/lazada-returns.ts';
 import { type ReturnStockPort, setReturnStockPort } from '#src/modules/order/sales/service/return-stock-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -410,6 +411,78 @@ describe('kiện đã hoàn về kho khi sàn mở yêu cầu (E109, 25 §9)', (
     } finally {
       setReturnStockPort();
     }
+  });
+});
+
+describe('Lazada: trạng thái mới ánh xạ, trạng thái lạ (#436)', () => {
+  /** Lượt kéo sau: sàn báo `rawStatus` với ánh xạ của adapter Lazada thật. */
+  const next = (r: RemoteReturn, rawStatus: string, ofc: string | null = null): RemoteReturn => {
+    const mapped = lazadaReturnLineStatus(rawStatus, ofc, 'return');
+    return { ...r, rawStatus, status: mapped?.status ?? null, closeResult: mapped?.closeResult ?? null, updatedAt: new Date(r.updatedAt.getTime() + 1000) };
+  };
+
+  it('người bán từ chối trên Seller Center (SELLER_REJECT_RETURN): requested → rejected, đơn hết cờ return_requested', async () => {
+    const { externalOrderId, orderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [next(r, 'SELLER_REJECT_RETURN')];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(row).toMatchObject({ status: 'rejected', needs_attention: false });
+    expect((await historyOf(row.id)).at(-1)).toEqual({ action: 'reject', source: 'marketplace', to_status: 'rejected' });
+    const order = await request(testApp()).get(`/api/v1/sales/orders/${orderId}`).set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(order.body.flags).not.toContain('return_requested');
+  });
+
+  it('người bán đồng ý trên Seller Center (SELLER_AGREE_RETURN): requested → awaiting_return', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [next(r, 'SELLER_AGREE_RETURN')];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(row).toMatchObject({ status: 'awaiting_return', needs_attention: false });
+    expect((await historyOf(row.id)).at(-1)).toEqual({ action: 'accept', source: 'marketplace', to_status: 'awaiting_return' });
+  });
+
+  it('trạng thái chưa ánh xạ: giữ trạng thái, bật Cần xử lý kèm mã; sàn khớp lại thì gỡ cờ', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId);
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const odd = next(r, 'SOMETHING_NEW');
+    remote = [odd];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({
+      status: 'requested',
+      needs_attention: true,
+      attention_note: 'Sàn báo trạng thái SOMETHING_NEW chưa hỗ trợ, kiểm trên Seller Center',
+    });
+    remote = [next(odd, 'SELLER_AGREE_RETURN')];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'awaiting_return', needs_attention: false, attention_note: null });
+  });
+
+  it('lần đầu thấy đã ở trạng thái chưa ánh xạ (BUYER_RETURN_ITEM + RETURN_CANCELED): tạo ở requested kèm Cần xử lý', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const base = remoteReturn(externalOrderId);
+    const r = { ...next(base, 'BUYER_RETURN_ITEM', 'RETURN_CANCELED'), updatedAt: base.updatedAt };
+    expect(r.status).toBeNull();
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'requested', needs_attention: true, attention_note: 'Sàn báo trạng thái BUYER_RETURN_ITEM chưa hỗ trợ, kiểm trên Seller Center' });
+  });
+
+  it('đã hoàn tiền ngay (refund_only) mà sàn còn REFUND_PENDING: giữ refund_only, không bật cờ (YCT-000033)', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { status: 'refund_only', rawStatus: 'REFUND_SUCCESS' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [next(r, 'REFUND_PENDING', 'INFO_ST_DRIVER_ASSIGNED')];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'refund_only', needs_attention: false });
   });
 });
 

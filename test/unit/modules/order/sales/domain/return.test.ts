@@ -93,6 +93,8 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     ['received', 'awaiting_return', null],
     ['closed', 'awaiting_return', 'conflict'],
     ['refund_only', 'rejected', 'conflict'],
+    // Đã hoàn tiền ngay mà sàn còn REFUND_PENDING (YCT-000033, #436): sàn trễ, không kéo lùi, không bật cờ.
+    ['refund_only', 'awaiting_return', null],
   ] as const)('%s, sàn báo %s → %s', (current, target, action) => {
     expect(syncAction(current, target)).toBe(action);
   });

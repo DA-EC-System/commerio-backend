@@ -89,7 +89,8 @@ export async function ingestMarketplaceReturn(r: PlatformReturn): Promise<Return
     return syncExisting((await findMarketplaceReturn(r.shopId, r.externalReturnId))!, r);
   }
   // Tạo ở `requested` rồi đi theo máy trạng thái tới trạng thái sàn: lịch sử, sự kiện tiền như một lần chuyển thường.
-  if (r.status && r.status !== 'requested') await syncExisting(row, r);
+  // Trạng thái chưa ánh xạ (`null`) cũng đi qua để bật Cần xử lý (#436).
+  if (r.status !== 'requested') await syncExisting(row, r);
   return 'created';
 }
 
@@ -174,6 +175,8 @@ const PAST_AWAITING: readonly ReturnStatus[] = ['received', 'refund_only', 'clos
 /** Đầu câu cờ khi sàn báo trạng thái app không đi tới được; lượt sau sàn khớp lại thì gỡ (nhận theo đầu câu, không thêm cột). */
 export const CONFLICT_NOTE = 'Sàn báo ';
 const isConflictNote = (note: string | null) => note?.startsWith(CONFLICT_NOTE) ?? false;
+/** Cờ khi adapter chưa ánh xạ trạng thái sàn (`status` null, #436). Cùng đầu câu `CONFLICT_NOTE` nên sàn khớp lại thì tự gỡ. */
+const unsupportedNote = (rawStatus: string) => `${CONFLICT_NOTE}trạng thái ${rawStatus} chưa hỗ trợ, kiểm trên Seller Center`;
 
 /** Đưa yêu cầu tới trạng thái sàn báo nếu máy trạng thái cho phép; không cho thì bật Cần xử lý, giữ trạng thái app. */
 async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIngestOutcome> {
@@ -191,10 +194,12 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
     Object.assign(fields, clearRefundApprovalFlag(row));
   }
   const action = r.status ? syncAction(row.status, r.status, row.closeResult, r.sellerHandledReceipt ?? false) : null;
-  if (action === 'conflict') {
+  // Sàn báo trạng thái app chưa hiểu: không đổi trạng thái, bật Cần xử lý thay vì im lặng (#436).
+  const unsupported = !r.status && r.rawStatus !== '';
+  if (action === 'conflict' || unsupported) {
     // Cờ báo sàn đã nhận còn đó thì giữ câu của nó: lượt thử lại tìm yêu cầu theo đầu câu này (`returnsAwaitingConfirm`).
     const keep = row.needsAttention && isConfirmFailedNote(row.attentionNote) && !('attentionNote' in fields);
-    const note = keep ? row.attentionNote : `${CONFLICT_NOTE}${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
+    const note = keep ? row.attentionNote : unsupported ? unsupportedNote(r.rawStatus) : `${CONFLICT_NOTE}${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
     const diff = changedFields(row, { ...fields, needsAttention: true, attentionNote: note });
     if (!Object.keys(diff).length) return 'unchanged';
     await updateReturnShown(row, diff);
