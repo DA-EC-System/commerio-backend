@@ -78,7 +78,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261119053555_category-san-quyen.sql` · viết tay
 
-- viết tay: RLS, quyền, khoá ngoại, dữ liệu
+- viết tay: RLS, quyền, khoá ngoại
 - Category và attribute của sàn (#400, Documents/19 mục 2, 3.3).
 
 ## V94 · 19/11/2026 · category-san
@@ -99,7 +99,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261118183221_anh-phan-loai-rls.sql` · viết tay
 
-- viết tay: RLS, khoá ngoại, dữ liệu
+- viết tay: RLS, khoá ngoại
 - Ảnh phân loại (#340, Documents/19 §3.2).
 
 ## V91 · 19/11/2026 · anh-phan-loai
@@ -289,7 +289,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261115075100_rls-han-muc-cong-ty.sql` · viết tay
 
-- viết tay: RLS, dữ liệu
+- viết tay: RLS
 - RLS cho `channel.api_usage` vừa có `company_id` (#215; vòng lặp của 0002 chỉ chạy một lần).
 
 ## V63 · 15/11/2026 · han-muc-theo-cong-ty
@@ -398,7 +398,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261112132934_rls-thu-bao-mat-uy-quyen.sql` · viết tay
 
-- viết tay: RLS, quyền, hàm, EXCLUDE, dữ liệu
+- viết tay: RLS, quyền, hàm, EXCLUDE
 - RLS, quyền và chống trùng theo ngưỡng lệch hạn cho bảng mới `channel.shop_reauth_mails` (#312; vòng lặp của 0002 chỉ chạy một lần).
 
 ## V47 · 12/11/2026 · thu-bao-mat-uy-quyen
@@ -417,7 +417,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261112115213_rls-ban-sao-sku-san.sql` · viết tay
 
-- viết tay: RLS, dữ liệu
+- viết tay: RLS
 - RLS cho bảng mới `channel.remote_skus` (vòng lặp của 0002 chỉ chạy một lần; #220 đợt 2).
 
 ## V44 · 12/11/2026 · quyen-ghep-sku
@@ -458,7 +458,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261112090848_rls-dong-kien-tra-la.sql` · viết tay
 
-- viết tay: RLS, dữ liệu
+- viết tay: RLS
 - RLS cho bảng mới `order.unmatched_return_parcel_lines` (#202; vòng lặp của 0002 chỉ chạy một lần).
 
 ## V38 · 12/11/2026 · yeu-cau-tra
@@ -658,7 +658,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/0009_rls-bank-matches.sql` · viết tay
 
-- viết tay: RLS, dữ liệu
+- viết tay: RLS
 - RLS cho bảng mới `finance.bank_matches` (#117; vòng lặp của 0002 chỉ chạy một lần).
 
 ## V9 · 29/10/2026 · doi-soat-lazada
@@ -681,7 +681,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/0006_rls-category-maps.sql` · viết tay
 
-- viết tay: RLS, dữ liệu
+- viết tay: RLS
 - RLS cho bảng mới `channel.category_maps` (vòng lặp của 0002 chỉ chạy một lần).
 
 ## V6 · 28/10/2026 · listing-lazada
@@ -708,7 +708,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/0002_rls-quyen.sql` · viết tay
 
-- viết tay: RLS, quyền, hàm, trigger, EXCLUDE, index, dữ liệu
+- viết tay: RLS, quyền, hàm, trigger, EXCLUDE, index
 - Cô lập dữ liệu giữa các công ty bằng Row-Level Security, quyền của role ứng dụng, và các ràng buộc Drizzle không sinh được.
 
 ## V2 · 28/10/2026 · tao-bang
@@ -730,7 +730,7 @@ Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 ## V1 · 28/10/2026 · mo-rong
 
-`db/migrations/0000_mo-rong.sql` · sinh từ schema
+`db/migrations/0000_mo-rong.sql` · viết tay
 
-- không đổi bảng, enum; câu lệnh: extension
+- viết tay: extension
 - Extension cần có trước khi tạo bảng.

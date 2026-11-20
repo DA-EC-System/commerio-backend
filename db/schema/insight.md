@@ -4,11 +4,13 @@
 
 Phiên bản **V105**, 4 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
+
 ## `insight.daily_channel_summary`
 
 Số liệu theo ngày và gian hàng (V28, D18), dựng lại bằng tính lại từ module nguồn (D7). `shop_id` trống với đơn hộp thư, đơn tạo tay, nên khoá unique coi hai giá trị trống là trùng. `fees_pending`: có đơn chưa đối soát nên phí sàn đang là 0.
 
-Khai ở `src/modules/insight/report/repository/schema.ts:15` · module con `report` · theo công ty (`company_id`)
+Khai ở `src/modules/insight/report/repository/schema.ts` · module con `report` · theo công ty (`company_id`)
 
 Cột:
 
@@ -37,7 +39,7 @@ Ràng buộc và index:
 
 Đoạn tài liệu và embedding 1536 chiều; `role_ids` chép từ `document_roles` để lọc lúc tìm kiếm.
 
-Khai ở `src/modules/insight/assistant/repository/schema.ts:35` · module con `assistant` · theo công ty (`company_id`)
+Khai ở `src/modules/insight/assistant/repository/schema.ts` · module con `assistant` · theo công ty (`company_id`)
 
 Cột:
 
@@ -58,12 +60,12 @@ Ràng buộc và index:
 
 Vai trò được hỏi trợ lý về tài liệu này.
 
-Khai ở `src/modules/insight/assistant/repository/schema.ts:53` · module con `assistant` · theo công ty (`company_id`)
+Khai ở `src/modules/insight/assistant/repository/schema.ts` · module con `assistant` · theo công ty (`company_id`)
 
 Cột:
 
 - `document_id` uuid · khoá chính → `insight.documents.id` (khoá ngoại)
-- `role_id` uuid · khoá chính
+- `role_id` uuid · khoá chính → `core.roles.id` (tham chiếu, không có khoá ngoại)
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
@@ -78,7 +80,7 @@ Ràng buộc và index:
 
 Tài liệu nội bộ trợ lý AI dùng để trả lời; tách đoạn và tạo embedding ở worker.
 
-Khai ở `src/modules/insight/assistant/repository/schema.ts:23` · module con `assistant` · theo công ty (`company_id`)
+Khai ở `src/modules/insight/assistant/repository/schema.ts` · module con `assistant` · theo công ty (`company_id`)
 
 Cột:
 

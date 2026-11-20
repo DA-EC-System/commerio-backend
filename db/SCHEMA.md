@@ -2,16 +2,18 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V105** (`20261119155251_don-nhap-loi-moi-qua-han`): 90 bảng trong 6 schema, 67 khoá ngoại, 74 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V105** (`20261119155251_don-nhap-loi-moi-qua-han`): 90 bảng trong 6 schema, 67 khoá ngoại, 77 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
-Nguồn: snapshot của migration mới nhất và comment trong `src/modules/<lớn>/<con>/repository/schema.ts`. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
+Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
+
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
 ## Trước khi thêm bảng, cột, enum
 
 - Tìm ở đây và trong `db/schema/<schema>.md` xem đã có thứ cùng nghĩa chưa. Có rồi thì dùng lại, không thêm bản thứ hai.
 - Không xây tiếp lên mục **Đã bỏ** bên dưới (thẻ `@deprecated` trong schema.ts).
 - Cột uuid trỏ sang bảng khác mà không có khoá ngoại: khai ở `scripts/db/lib/schema-refs.ts`, không thì `db:docs` báo lỗi.
-- Mỗi PR tối đa một migration sinh từ schema.ts (`db/CLAUDE.md`).
+- Không để hai migration sinh từ schema.ts liền nhau trong một PR (`db/CLAUDE.md`).
 
 ## Đã bỏ
 

@@ -36,11 +36,11 @@ Dùng **npm**, không dùng pnpm/yarn (client Kafka chưa hỗ trợ ổn địn
 Chi tiết và cách sửa: `db/CLAUDE.md` mục "Tài liệu schema và phiên bản", "Hai nhánh cùng sinh migration".
 
 - **Trước khi sửa `schema.ts`**: đọc `db/SCHEMA.md` (mục lục mọi bảng, mục **Đã bỏ**) và `db/schema/<schema>.md` (cột, enum, ràng buộc, ai trỏ vào). Đã có bảng, cột, enum cùng nghĩa thì dùng lại; không xây tiếp lên bảng, cột đã bỏ.
-- **Mỗi PR tối đa một migration sinh từ schema.ts** (CI chặn). Lỡ sinh nhiều lần thì `npm run db:regen` gộp lại; migration viết tay (RLS, quyền, trigger, dữ liệu) không tính.
+- **Không để hai migration sinh từ schema.ts liền nhau trong một PR** (CI chặn): sinh, sửa schema, sinh tiếp thì `npm run db:regen` gộp lại. Chỉ tách khi một migration viết tay (dữ liệu, RLS) phải chạy giữa hai lần đổi schema, vd thêm cột → chép dữ liệu → bỏ cột cũ.
 - **App chưa có người dùng thật** (Thành chốt 19/11/2026): staging chỉ có dữ liệu thử của nhóm. Được sửa, xoá dữ liệu staging tuỳ ý (đơn sai thì xoá), không cần giữ dữ liệu cũ vì sợ ảnh hưởng người dùng. Vẫn sửa triệt để: migration đúng, `db:ci-check` đạt, không vá tạm.
 - Mỗi PR chỉ sinh migration ở **bước cuối**, sau khi `schema.ts` đã chốt (`npm run db:generate -- --name <mo-ta>`, viết tay thì thêm `--custom`). Không sinh rồi sửa đi sửa lại giữa chừng.
 - PR khác có migration merge trước: gộp main vào nhánh (`git fetch origin && git merge origin/main`) rồi chạy `npm run db:regen`, commit lại `db/migrations`. Không tự ghép tay `_journal.json`.
-- CI (`npm run db:ci-check`) đỏ khi migration của PR không đứng sau mọi migration của main, journal hay snapshot đứt, `schema.ts` lệch migration, PR có hơn một migration sinh từ schema, hoặc tài liệu schema chưa ghi lại (`npm run db:docs`).
+- CI (`npm run db:ci-check`) đỏ khi migration của PR không đứng sau mọi migration của main, journal hay snapshot đứt, `schema.ts` lệch migration, PR có hai migration sinh từ schema liền nhau, hoặc tài liệu schema chưa ghi lại (`npm run db:docs`).
 - Deploy (`npm run db:migrate`) **dừng, không chạy gì** nếu có migration chưa chạy mà sinh trước migration mới nhất đã chạy trên DB (drizzle sẽ bỏ qua nó im lặng). Xem trước bằng `npm run db:migrate:check:staging`.
 
 ## Luật ranh giới (dependency-cruiser kiểm trong CI)

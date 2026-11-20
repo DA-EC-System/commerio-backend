@@ -4,11 +4,13 @@
 
 Phiên bản **V105**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
+
 ## `order.customer_identities`
 
 Danh tính của khách trên một kênh (sàn, hộp thư), gộp về một hồ sơ khách.
 
-Khai ở `src/modules/order/sales/repository/schema.ts:54` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -35,7 +37,7 @@ Trỏ vào bảng này:
 
 `shop_id` (channel), `conversation_id` (inbox), `variant_id` (catalog) là uuid thường, không khoá ngoại chéo schema (19-D1).
 
-Khai ở `src/modules/order/sales/repository/schema.ts:41` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -59,7 +61,7 @@ Trỏ vào bảng này:
 
 Bộ đếm mã đơn, cùng dạng `product.doc_counters` (plan chuẩn bị A4/K5).
 
-Khai ở `src/modules/order/sales/repository/schema.ts:320` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -76,7 +78,7 @@ Ràng buộc và index:
 
 Dòng đơn: chép SKU, tên sản phẩm, đơn giá lúc tạo đơn để đơn cũ không đổi khi sản phẩm đổi. Đơn sàn có SKU chưa ghép thì `variant_id` trống (cờ `unmapped_sku`), chưa giữ hàng tới khi ghép (E11).
 
-Khai ở `src/modules/order/sales/repository/schema.ts:154` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -130,6 +132,7 @@ Ràng buộc và index:
 - check `order_lines_unit_price`: `unit_price >= 0`
 - check `order_lines_item`: `variant_id is not null or external_sku is not null`
 - check `order_lines_untracked`: `not stock_untracked or variant_id is null`
+- trigger `order_lines_line_total`: `AFTER UPDATE OF quantity, cancelled_qty, kiểm lúc commit → order.check_order_line_total()`, ở `db/migrations/20261114122001_huy-dong-kiem-bang.sql`
 
 Trỏ vào bảng này:
 
@@ -141,7 +144,7 @@ Trỏ vào bảng này:
 
 Đơn hàng. Đơn sàn không có `payment_method` (sàn thu hộ), đơn hộp thư và đơn tạo tay bắt buộc có (19-D11); đơn sàn bắt buộc có gian hàng và mã đơn sàn, không trùng (19-D32). Thanh toán qua cổng ở `finance.order_payments`, tiền sàn quyết toán ở `finance.order_settlements`.
 
-Khai ở `src/modules/order/sales/repository/schema.ts:76` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -205,6 +208,8 @@ Ràng buộc và index:
 - check `orders_amounts`: `subtotal >= 0 and total >= 0 and shipping_fee >= 0`
 - check `orders_payment_method`: `(source = 'marketplace') = (payment_method is null)`
 - check `orders_marketplace_ref`: `source <> 'marketplace' or (shop_id is not null and external_order_id is not null)`
+- trigger `orders_sync_cancel_pending`: `before insert or update → order.orders_sync_cancel_pending()`, ở `db/migrations/20261119071502_dang-huy-chuyen-co.sql`
+- trigger `orders_ship_by_packages`: `AFTER UPDATE OF ship_by, kiểm lúc commit → order.assert_package_ship_by()`, ở `db/migrations/20261119074938_han-ban-giao-kien.sql`
 
 Trỏ vào bảng này:
 
@@ -227,7 +232,7 @@ Trỏ vào bảng này:
 
 Dòng kiện. Giữ nguyên dòng: `reserved_qty` là 0 hoặc đủ `quantity` (25 §7.4). `unit_cost` chốt lúc bàn giao; `stock_deducted` bảo đảm trừ tồn đúng một lần, kể cả khi sàn báo nhảy cóc. Dòng chưa ghép SKU thì `variant_id` trống.
 
-Khai ở `src/modules/order/fulfillment/repository/schema.ts:156` · module con `fulfillment` · theo công ty (`company_id`)
+Khai ở `src/modules/order/fulfillment/repository/schema.ts` · module con `fulfillment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -261,12 +266,13 @@ Ràng buộc và index:
 - check `package_lines_unmapped`: `variant_id is not null or reserved_qty = 0`
 - check `package_lines_untracked`: `not stock_untracked or (variant_id is null and reserved_qty = 0 and not stock_deducted)`
 - check `package_lines_deducted_cost`: `not stock_deducted or unit_cost is not null`
+- trigger `package_lines_line_total`: `AFTER INSERT OR DELETE OR UPDATE OF quantity, package_id, order_line_id, pending_drop_qty, kiểm lúc commit → order.check_package_line_total()`, ở `db/migrations/20261114122001_huy-dong-kiem-bang.sql`
 
 ## `order.packages`
 
 Một gói hàng đi chung một mã vận đơn, gồm món của một đơn. Đơn vị giữ hàng, đóng gói, bàn giao, giao, hoàn. Kiện tạm (sàn chưa gửi danh sách kiện) chưa có `platform_package_code`. Sàn gộp nhiều đơn vào một gói thì mỗi đơn một kiện, chung mã kiện sàn và mã vận đơn (nhóm gói). Thất lạc bằng tay cần mã khiếu nại và người thứ hai; xác nhận COD tự giao do người khác người giao.
 
-Khai ở `src/modules/order/fulfillment/repository/schema.ts:50` · module con `fulfillment` · theo công ty (`company_id`)
+Khai ở `src/modules/order/fulfillment/repository/schema.ts` · module con `fulfillment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -348,6 +354,8 @@ Ràng buộc và index:
 - check `packages_handed_over`: `status in ('backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled') or handed_over_at is not null`
 - check `packages_handover_source`: `status in ('backordered', 'reserved', 'packed', 'awaiting_pickup', 'cancelled') or handover_source is not null`
 - check `packages_cod`: `cod_expected >= 0 and cod_collected >= 0`
+- trigger `packages_line_total`: `AFTER UPDATE OF status, kiểm lúc commit → order.check_package_status_line_total()`, ở `db/migrations/20261114122001_huy-dong-kiem-bang.sql`
+- trigger `packages_ship_by_order`: `AFTER INSERT OR UPDATE OF ship_by, status, kiểm lúc commit → order.assert_package_ship_by()`, ở `db/migrations/20261119074938_han-ban-giao-kien.sql`
 
 Trỏ vào bảng này:
 
@@ -361,7 +369,7 @@ Trỏ vào bảng này:
 
 Dòng yêu cầu trả: gắn dòng đơn và kiện đã giao chứa phần đó; giá vốn là bình quân các dòng kiện (25 §9).
 
-Khai ở `src/modules/order/sales/repository/schema.ts:286` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -395,7 +403,7 @@ Ràng buộc và index:
 
 Khách trả sau khi đã nhận. Đơn sàn: do sàn đẩy về, khoá (gian hàng, mã yêu cầu sàn); đơn tạo tay: Sale lập. `inspection_id` là phiếu kiểm hàng về (product) sinh khi nhận hàng trả.
 
-Khai ở `src/modules/order/sales/repository/schema.ts:228` · module con `sales` · theo công ty (`company_id`)
+Khai ở `src/modules/order/sales/repository/schema.ts` · module con `sales` · theo công ty (`company_id`)
 
 Cột:
 
@@ -458,7 +466,7 @@ Trỏ vào bảng này:
 
 Dòng hàng của kiện trả không khớp: số kho quét lúc nhận, chỉ món đã rõ SKU (Documents/19, Documents/21 §20).
 
-Khai ở `src/modules/order/fulfillment/repository/schema.ts:226` · module con `fulfillment` · theo công ty (`company_id`)
+Khai ở `src/modules/order/fulfillment/repository/schema.ts` · module con `fulfillment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -480,7 +488,7 @@ Ràng buộc và index:
 
 Kiện hàng trả quét được mà không khớp yêu cầu trả nào; hàng nằm ở chờ xử lý tới khi gắn hoặc bỏ (Documents/21 mục 20).
 
-Khai ở `src/modules/order/fulfillment/repository/schema.ts:196` · module con `fulfillment` · theo công ty (`company_id`)
+Khai ở `src/modules/order/fulfillment/repository/schema.ts` · module con `fulfillment` · theo công ty (`company_id`)
 
 Cột:
 

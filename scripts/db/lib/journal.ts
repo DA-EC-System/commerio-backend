@@ -120,10 +120,20 @@ export function migrationKinds(dir: string): Map<string, MigrationKind> {
   const kinds = new Map<string, MigrationKind>();
   for (const entry of entries) {
     const snapshot = snapshots.get(entry.tag);
-    const parent = snapshot ? bodies.get(snapshot.prevId) : undefined;
+    // Migration đầu tiên: cha là snapshot rỗng (chưa có bảng, enum…), vd `0000_mo-rong` chỉ tạo extension là viết tay.
+    const parent = snapshot && snapshot.prevId === ROOT_SNAPSHOT_ID ? emptySnapshotBody(snapshot) : snapshot ? bodies.get(snapshot.prevId) : undefined;
     kinds.set(entry.tag, snapshot && parent !== undefined && parent === bodies.get(snapshot.id) ? 'custom' : 'generated');
   }
   return kinds;
+}
+
+/** Thân snapshot cùng khuôn với `snapshot` nhưng chưa có đối tượng nào. */
+function emptySnapshotBody(snapshot: Snapshot): string {
+  const empty: Snapshot = { ...snapshot };
+  for (const key of ['tables', 'enums', 'schemas', 'sequences', 'roles', 'policies', 'views']) {
+    if (key in empty) empty[key] = {};
+  }
+  return snapshotBody(empty);
 }
 
 /** Giờ UTC dễ đọc của `when` (ms). */

@@ -4,11 +4,13 @@
 
 Phiên bản **V105**, 20 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
+
 ## `product.attribute_values`
 
 Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36).
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:62` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -35,7 +37,7 @@ Trỏ vào bảng này:
 
 ## `product.attributes`
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:49` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -59,7 +61,7 @@ Trỏ vào bảng này:
 
 Danh mục và quy tắc SKU (Documents/21 5.1). Tên không trùng theo chữ thường trong công ty.
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:21` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -96,7 +98,7 @@ Trỏ vào bảng này:
 
 Bộ đếm số chứng từ của cả module lớn `product` (phiếu kho, đề nghị nhập, phiếu nhận, phiếu trả NCC): cấp số bằng `UPDATE … SET next_number = next_number + 1 RETURNING` trong giao dịch. `period` trống khi đánh số không theo kỳ.
 
-Khai ở `src/modules/product/inventory/repository/schema.ts:222` · module con `inventory` · theo công ty (`company_id`)
+Khai ở `src/modules/product/inventory/repository/schema.ts` · module con `inventory` · theo công ty (`company_id`)
 
 Cột:
 
@@ -113,7 +115,7 @@ Ràng buộc và index:
 
 Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ. `shortage_qty` tự tính. `đạt + lỗi ≤ còn chờ` của dòng đề nghị do service kiểm (khác bảng, `over_outstanding`).
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:189` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -143,7 +145,7 @@ Ràng buộc và index:
 
 Một đợt NCC giao hàng cho một đề nghị. Ghi sổ một lần (`posted_by` khác người lập đề nghị, service kiểm vì khác bảng); sau đó chỉ theo dõi chỗ giao thiếu. `check_deadline`: người giao đã đi thì phải kiểm xong trong 24 giờ.
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:139` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -192,7 +194,7 @@ Trỏ vào bảng này:
 
 Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/19 §3.2): áo 3 màu × 4 size có 3 dòng. Hai khoá ngoại ghép `pavi_product_fk` `(product_id, attribute_id) → products(id, image_attribute_id)` và `pavi_value_fk` `(attribute_value_id, attribute_id) → attribute_values(id, attribute_id)` viết ở migration `--custom` `*_anh-phan-loai-rls` (drizzle-kit sinh khoá ngoại trước unique đích, db/CLAUDE.md). `file_id` ở module files, không khoá ngoại chéo schema.
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:154` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -217,7 +219,7 @@ Ràng buộc và index:
 
 Ảnh sản phẩm theo thứ tự, `position` 0 là ảnh đại diện (#303); `file_id` ở module files, không đặt khoá ngoại chéo schema. Mỗi vị trí một ảnh; `PUT` thay toàn bộ bằng xoá rồi chèn trong một giao dịch.
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:126` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -241,7 +243,7 @@ Ràng buộc và index:
 
 Biến thể (SKU); SKU không cấp lại kể cả sau khi lưu trữ (Documents/21 P5). Giá chuẩn, giá muốn thực nhận và biên tối thiểu là đầu vào của bộ lọc giá theo sàn (25 §6.2); cân nặng, kích thước sàn dùng để tính phí ship. `source_request_line_id` là dòng đề nghị nhập sinh ra SKU (purchasing, không đặt khoá ngoại chéo module con).
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:177` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -278,6 +280,7 @@ Trỏ vào bảng này:
 - `product.purchase_request_lines.variant_id` (tham chiếu, không có khoá ngoại)
 - `product.stock_document_lines.variant_id` (tham chiếu, không có khoá ngoại)
 - `product.stock_document_lines.actual_variant_id` (tham chiếu, không có khoá ngoại)
+- `product.stock_levels.variant_id` (tham chiếu, không có khoá ngoại)
 - `product.stock_moves.variant_id` (tham chiếu, không có khoá ngoại)
 - `product.supplier_return_lines.variant_id` (tham chiếu, không có khoá ngoại)
 - `order.order_lines.variant_id` (tham chiếu, không có khoá ngoại)
@@ -294,7 +297,7 @@ Trỏ vào bảng này:
 
 Sản phẩm; không đổi danh mục sau khi tạo (Documents/21 P6). Không có trạng thái lưu riêng: trạng thái suy từ SKU con (#204). `code` là mã cha cấp lúc tạo, không route nào sửa (spec 204 D5).
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:88` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
@@ -335,7 +338,7 @@ Trỏ vào bảng này:
 
 Dòng đề nghị. Dòng sản phẩm mới chưa có `variant_id`; khi duyệt, hệ thống tạo SKU rồi điền vào. `còn chờ = ordered − received − defective − closed_short` (25 §3.1), luôn ≥ 0. `excluded`: CEO loại dòng khi duyệt.
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:82` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -378,7 +381,7 @@ Trỏ vào bảng này:
 
 Một lần xin nhập hàng của một NCC. Giá chốt cứng khi duyệt; số "đang về" tính từ dòng, không lưu.
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:45` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -426,7 +429,7 @@ Trỏ vào bảng này:
 
 Dòng phiếu kho. Kiểm kê: `book_qty`, `counted_qty` (chênh lệch = đếm − sổ). Kiểm hàng về: `expected_qty`, `scanned_qty` chia thành bán lại, hỏng, trả NCC; `actual_variant_id` khi sai mẫu. Loại khác dùng `quantity`. Phiếu xuất theo kiện: mỗi dòng kiện một dòng phiếu, `source_line_id` là id dòng kiện (uuid thường, không khoá ngoại sang `order`).
 
-Khai ở `src/modules/product/inventory/repository/schema.ts:176` · module con `inventory` · theo công ty (`company_id`)
+Khai ở `src/modules/product/inventory/repository/schema.ts` · module con `inventory` · theo công ty (`company_id`)
 
 Cột:
 
@@ -465,7 +468,7 @@ Ràng buộc và index:
 
 Phiếu kho. Phiếu giảm đang `pending` làm tạm khoá phần giảm (tính khi đọc). Kiểm kê lưu thời điểm đếm và tồn sổ lúc đó để chênh lệch không lẫn biến động giữa lúc đếm và lúc duyệt; `is_opening` là kiểm kê đầu kỳ khi kết nối gian hàng đầu tiên. `source_type`/`source_id` trỏ kiện, yêu cầu trả hoặc phiếu sinh ra phiếu này.
 
-Khai ở `src/modules/product/inventory/repository/schema.ts:120` · module con `inventory` · theo công ty (`company_id`)
+Khai ở `src/modules/product/inventory/repository/schema.ts` · module con `inventory` · theo công ty (`company_id`)
 
 Cột:
 
@@ -522,11 +525,11 @@ Trỏ vào bảng này:
 
 Các con số lưu của SKU (25 §7.1, Documents/21 mục 15.1). Tạm khoá, đang về, đang thiếu, khả dụng tính khi đọc. Bất biến kiểu "không làm tệ hơn": tồn thực âm hoặc nhỏ hơn đang giữ chỉ được khi bật `invariant_broken` (bàn giao bắt buộc theo sàn, kiểm kê CEO đã duyệt); cờ này là nhãn Tồn âm. `min_qty` là ngưỡng tồn (trống = chưa đặt).
 
-Khai ở `src/modules/product/inventory/repository/schema.ts:38` · module con `inventory` · theo công ty (`company_id`)
+Khai ở `src/modules/product/inventory/repository/schema.ts` · module con `inventory` · theo công ty (`company_id`)
 
 Cột:
 
-- `variant_id` uuid · khoá chính
+- `variant_id` uuid · khoá chính → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
 - `company_id` uuid · khoá chính → `core.companies` (theo công ty)
 - `on_hand` integer · not null · mặc định `0`
 - `reserved` integer · not null · mặc định `0`
@@ -552,7 +555,7 @@ Ràng buộc và index:
 
 Thẻ kho, chỉ thêm (role ứng dụng không UPDATE/DELETE). Mỗi biến động của tồn thực hoặc chờ xử lý là một dòng trỏ về chứng từ gốc (N2). Đang giữ không ghi thẻ kho: nguồn của nó là dòng kiện. `balance_after` là số của ngăn đó sau biến động, có thể âm trong hai ngoại lệ của `stock_levels`.
 
-Khai ở `src/modules/product/inventory/repository/schema.ts:69` · module con `inventory` · theo công ty (`company_id`)
+Khai ở `src/modules/product/inventory/repository/schema.ts` · module con `inventory` · theo công ty (`company_id`)
 
 Cột:
 
@@ -578,7 +581,7 @@ Ràng buộc và index:
 
 ## `product.supplier_return_lines`
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:289` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -603,7 +606,7 @@ Ràng buộc và index:
 
 Hàng lỗi trả NCC. Gửi xong thì chờ xử lý giảm. Người ghi kết quả khác người gửi; hoàn tiền bắt buộc số tiền; huỷ bắt buộc chọn nhập lại tồn hoặc xuất huỷ.
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:249` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -653,7 +656,7 @@ Trỏ vào bảng này:
 
 Nhà cung cấp; ngừng giao dịch thì `active = false` (`supplier_inactive`), không xoá. Tên không trùng (chữ thường).
 
-Khai ở `src/modules/product/purchasing/repository/schema.ts:11` · module con `purchasing` · theo công ty (`company_id`)
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
 Cột:
 
@@ -683,7 +686,7 @@ Trỏ vào bảng này:
 
 Tổ hợp giá trị của biến thể; `position` giữ thứ tự thuộc tính để ghép {VAL} và nhãn (D8).
 
-Khai ở `src/modules/product/catalog/repository/schema.ts:212` · module con `catalog` · theo công ty (`company_id`)
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 

@@ -4,11 +4,13 @@
 
 Phiên bản **V105**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
+
 ## `channel.api_usage`
 
 Số lời gọi sàn trong một ngày (giờ Việt Nam) (#102 A7, #215). Dòng `company_id` trống là tổng của cả app, mọi công ty cộng chung: hạn mức gọi do sàn đặt cho app (Lazada 10.000/ngày). Dòng có `company_id` là phần công ty đó đã dùng (Documents/21 §18.6.8). Một lượt gọi cộng cả hai dòng trong một giao dịch (`repository/api-usage.ts`). Chỉ đọc ghi bằng role chủ bảng ngoài `withCompany`; RLS bật theo luật bảng có `company_id` (migration `rls-han-muc-cong-ty`).
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:620` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -25,7 +27,7 @@ Ràng buộc và index:
 
 Ghi chú nội bộ trên hội thoại, khách không thấy.
 
-Khai ở `src/modules/channel/inbox/repository/schema.ts:60` · module con `inbox` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/inbox/repository/schema.ts` · module con `inbox` · theo công ty (`company_id`)
 
 Cột:
 
@@ -44,7 +46,7 @@ Ràng buộc và index:
 
 ## `channel.conversation_tags`
 
-Khai ở `src/modules/channel/inbox/repository/schema.ts:110` · module con `inbox` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/inbox/repository/schema.ts` · module con `inbox` · theo công ty (`company_id`)
 
 Cột:
 
@@ -62,7 +64,7 @@ Ràng buộc và index:
 
 ## `channel.conversations`
 
-Khai ở `src/modules/channel/inbox/repository/schema.ts:39` · module con `inbox` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/inbox/repository/schema.ts` · module con `inbox` · theo công ty (`company_id`)
 
 Cột:
 
@@ -95,7 +97,7 @@ Trỏ vào bảng này:
 
 Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app. Mã sàn trống khi chưa đẩy lần nào. Tồn và giá đồng bộ riêng (`stock_sync`, `price_sync`). `delisted_by_disconnect`: gỡ do ngắt, kết nối lại thì đưa lên.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:196` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -201,7 +203,7 @@ Trỏ vào bảng này:
 
 Kênh nhắn tin đã kết nối (trang Messenger, hộp thư, Zalo OA, chat sàn). Token lưu đã mã hoá.
 
-Khai ở `src/modules/channel/inbox/repository/schema.ts:21` · module con `inbox` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/inbox/repository/schema.ts` · module con `inbox` · theo công ty (`company_id`)
 
 Cột:
 
@@ -229,7 +231,7 @@ Trỏ vào bảng này:
 
 Tin nhắn; tin gửi đi chưa có mã ngoài cho tới khi nền tảng nhận. Chống lặp khi đồng bộ theo mã ngoài.
 
-Khai ở `src/modules/channel/inbox/repository/schema.ts:77` · module con `inbox` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/inbox/repository/schema.ts` · module con `inbox` · theo công ty (`company_id`)
 
 Cột:
 
@@ -240,7 +242,7 @@ Cột:
 - `direction` enum `channel.msg_direction` · not null: `inbound` | `outbound`
 - `type` text · not null
 - `content` jsonb · not null
-- `sender_id` uuid · null → `core.accounts` (người thao tác)
+- `sender_id` uuid · null: chưa có code ghi; tin đến (`inbound`) là của khách nên không trỏ cố định `core.accounts`
 - `send_status` enum `channel.send_status` · null: `pending` | `sent` | `failed`
 - `sent_at` timestamptz · null
 - `created_at` timestamptz · not null · mặc định `now()`
@@ -254,7 +256,7 @@ Ràng buộc và index:
 
 Bản sao cây category của sàn (#400, Documents/19 mục 3.3). Dữ liệu tham chiếu của nền tảng, giống nhau mọi khách thuê: không `company_id`, không RLS; `commerio_app` chỉ `SELECT` (migration `*_category-san-quyen`), ghi bằng role chủ bảng ngoài `withCompany` (Documents/19 mục 2). Category sàn bỏ thì `status = 'removed'`, không xoá dòng (spec cũ còn trỏ tới). `synced_at` null là dòng tạm (leaf mới thấy khi lấy attribute, trước lượt đồng bộ cây): tìm kiếm bỏ qua, đồng bộ ghi đè. `attributes_fetched_at`: lần lấy attribute gần nhất, kể cả khi leaf không có attribute nào (dùng lại 7 ngày).
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:360` · module con `channel`
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel`
 
 Cột:
 
@@ -288,7 +290,7 @@ Trỏ vào bảng này:
 
 Attribute của một leaf category (#400, Documents/19 mục 3.3). Lấy khi có người mở leaf (route chi tiết, `PUT` spec, việc nền), dùng lại 7 ngày; mỗi lần lấy thay cả tập của leaf (`replaceLeaf`). `code`: Lazada `name`, TikTok id attribute. Không `company_id`, không RLS, `commerio_app` chỉ `SELECT` như `platform_categories`.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:391` · module con `channel`
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel`
 
 Cột:
 
@@ -318,7 +320,7 @@ Ràng buộc và index:
 
 Một lần chạy bộ lọc giá cho một SKU trên một gian hàng (25 §6.2): lưu đầu vào, kết quả từng bước và phiên bản cấu hình phí, thuế đã dùng, để biết giá trên sàn ra từ đâu. Đổi phí thì sinh lần mới `pending_confirm`, chờ xác nhận.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:491` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -369,7 +371,7 @@ Trỏ vào bảng này:
 
 Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:458` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -399,7 +401,7 @@ Ràng buộc và index:
 
 Dữ liệu gốc của đơn sàn mỗi lần cập nhật; `order_id` có khi đã tạo đơn trong `order`.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:537` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -425,7 +427,7 @@ Ràng buộc và index:
 
 Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, Documents/21 §18.3 "đọc từ lần đồng bộ gần nhất"): trang ghép, kiểm SKU khi ghép và số SKU chưa ghép đọc từ đây, không gọi sàn mỗi lần. Ghi bằng `service/remote-skus.ts`: đọc trọn (thiết lập, Tải lại, mỗi ngày) hoặc đọc sản phẩm sửa từ lần trước (sau lượt đồng bộ listing). SKU sàn đã xoá thì xoá dòng.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:567` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -454,7 +456,7 @@ Ràng buộc và index:
 
 Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17). Ghi từ gợi ý và lần kiểm trước khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:429` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -475,7 +477,7 @@ Ràng buộc và index:
 
 Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền đã xếp (#312, Documents/19). Mỗi dòng là một thư cho CEO, Admin. `deadline` là hạn đang tính: `expiring_3d`, `expiring_1d` lấy hạn gần hơn trong `auth_expires_at`, `refresh_expires_at`; `lost` lấy lúc chuyển sang `needs_reauth` (`core.state_transitions`), `seq` là nhịp 6 giờ thứ mấy kể từ lúc đó. Chống trùng ép ở CSDL, dù việc nền chạy lại hay chạy trùng: - unique `(shop_id, deadline, stage, seq)`; - EXCLUDE `shop_reauth_mails_deadline_drift` (migration viết tay, Drizzle không sinh được): hai thư trước hạn cùng gian hàng, cùng mốc mà hạn cách nhau dưới 1 giờ là một mốc. Hạn tính lại từ "số giây còn lại" sau mỗi lần làm mới token lệch vài mili giây tới vài giây; hạn gia hạn thật hay nối lại thì cách xa, tính lại từ đầu. Kết quả gửi: `outcome` null là chưa xong (`sent` đã gửi, `stale` bỏ vì gian hàng đã đổi hoặc mốc sau đã thay, `failed` lỗi vĩnh viễn, không có người nhận, hoặc hết lượt xếp lại). `attempts` là số lần đã phát sự kiện, `queued_at` lần phát gần nhất: việc nền phát lại thư chưa xong khi outbox đã bỏ cuộc (SMTP hỏng lâu). `commerio_app` chỉ UPDATE được bốn cột kết quả, không DELETE (migration viết tay).
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:645` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -501,12 +503,13 @@ Ràng buộc và index:
 - check `shop_reauth_mails_outcome`: `outcome in ('sent', 'stale', 'failed')`
 - check `shop_reauth_mails_finished`: `(outcome is null) = (finished_at is null)`
 - check `shop_reauth_mails_attempts`: `attempts between 1 and 8`
+- EXCLUDE `shop_reauth_mails_deadline_drift`: `EXCLUDE USING gist (shop_id WITH =, stage WITH =, channel.reauth_deadline_window(deadline) WITH &&) WHERE (stage <> 'lost')`, ở `db/migrations/20261112132934_rls-thu-bao-mat-uy-quyen.sql`
 
 ## `channel.shops`
 
 Gian hàng sàn đã kết nối, định danh bằng (sàn, mã shop của sàn); kết nối lại cùng shop dùng lại bản ghi. Token lưu đã mã hoá. `order_cutoff_at` là mốc kéo đơn chọn lúc thiết lập; `settlement_cursor` là mốc kéo quyết toán.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:50` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
@@ -604,7 +607,7 @@ Trỏ vào bảng này:
 
 ## `channel.tags`
 
-Khai ở `src/modules/channel/inbox/repository/schema.ts:97` · module con `inbox` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/inbox/repository/schema.ts` · module con `inbox` · theo công ty (`company_id`)
 
 Cột:
 
@@ -630,7 +633,7 @@ Webhook sàn đã nhận, chống xử lý lặp theo `notification_id`.
 
 **Đã bỏ:** Không dùng: MVP không nhận push của sàn (#133, #135), kéo định kỳ là đường nhận đơn duy nhất. Xoá ở migration sau.
 
-Khai ở `src/modules/channel/channel/repository/schema.ts:598` · module con `channel` · theo công ty (`company_id`)
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 

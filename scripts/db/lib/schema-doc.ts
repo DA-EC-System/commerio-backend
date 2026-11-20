@@ -1,9 +1,13 @@
 // Tài liệu schema cho người và agent (db:docs): db/SCHEMA.md (mục lục, bảng đã bỏ) và db/schema/<schema>.md (cột,
 // ràng buộc, quan hệ). Nguồn: snapshot của migration mới nhất (khớp schema.ts nhờ db:ci-check), comment trong schema.ts,
-// khoá ngoại viết tay trong migration, cột tham chiếu khai ở schema-refs.ts.
+// khoá ngoại, trigger, index, EXCLUDE viết tay trong migration (sql-objects.ts), cột tham chiếu khai ở schema-refs.ts.
 import { readJournal, readSnapshot, snapshotName, versionLabel } from './journal.ts';
-import { classifyColumn, handWrittenForeignKeys, TENANT_COLUMN } from './schema-refs.ts';
+import { classifyColumn, TENANT_COLUMN, unusedRefKeys } from './schema-refs.ts';
 import { readSchemaSources, type SourceDoc } from './schema-source.ts';
+import { handWrittenObjects, type SqlIndex, type SqlTableObject } from './sql-objects.ts';
+
+/** Chuỗi đánh dấu file do db:docs sinh (docs.ts dựa vào đây để biết file nào được xoá). */
+export const GENERATED_MARK = 'Sinh tự động bởi `npm run db:docs`';
 
 /** Tên và lớp của module lớn (src/modules/CLAUDE.md). Schema chưa khai đứng cuối, tên là chính nó. */
 export const MODULES: Readonly<Record<string, { label: string; layer: number }>> = {
@@ -87,13 +91,16 @@ export interface DocTable {
   name: string;
   sub: string;
   file: string;
-  line: number;
   doc: SourceDoc;
   columns: DocColumn[];
   pk: string[];
   uniques: { name: string; cols: string[]; nullsNotDistinct: boolean }[];
   indexes: { name: string; cols: string[]; unique: boolean; method: string | null; where: string | null }[];
   checks: { name: string; expr: string }[];
+  /** Viết tay trong migration, snapshot không có. */
+  triggers: SqlTableObject[];
+  manualIndexes: SqlIndex[];
+  excludes: SqlTableObject[];
 }
 
 export interface SchemaModel {
@@ -151,6 +158,7 @@ export function buildSchemaModel(dir: string, root: string): SchemaModel {
   const tableIds = new Set(snapTables.map((t) => `${t.schema}.${t.name}`));
   const relations: Relation[] = [];
   const fkNames = new Set<string>();
+  const indexNames = new Set(snapTables.flatMap((t) => Object.keys(t.indexes)));
   for (const t of snapTables) {
     for (const fk of Object.values(t.foreignKeys)) {
       fkNames.add(fk.name);
@@ -165,9 +173,19 @@ export function buildSchemaModel(dir: string, root: string): SchemaModel {
       });
     }
   }
-  for (const fk of handWrittenForeignKeys(dir, tableIds, fkNames)) {
-    relations.push({ ...fk, kind: 'fk-sql', onDelete: fk.onDelete && fk.onDelete !== 'no action' ? fk.onDelete : null, migration: fk.migration });
+  const manual = handWrittenObjects(dir, tableIds, { foreignKeys: fkNames, indexes: indexNames });
+  for (const fk of manual.foreignKeys) {
+    relations.push({
+      from: fk.from,
+      fromCols: fk.fromCols,
+      to: fk.to,
+      toCols: fk.toCols,
+      kind: 'fk-sql',
+      onDelete: fk.onDelete && fk.onDelete !== 'no action' ? fk.onDelete : null,
+      migration: fk.migration,
+    });
   }
+  const usedRefKeys = new Set<string>();
 
   const tables: DocTable[] = snapTables.map((t) => {
     const id = `${t.schema}.${t.name}`;
@@ -180,7 +198,8 @@ export function buildSchemaModel(dir: string, root: string): SchemaModel {
       let ref: Relation | null = fk ?? null;
       let note: string | null = null;
       if (!ref) {
-        const cls = classifyColumn(id, c.name, c.type, pk.has(c.name));
+        const cls = classifyColumn(id, c.name, c.type, pk.has(c.name) && pk.size === 1);
+        if (cls.kind === 'logical' || cls.kind === 'not-ref') usedRefKeys.add(cls.key);
         if (cls.kind === 'logical' || cls.kind === 'actor' || cls.kind === 'tenant') {
           if (!tableIds.has(cls.table)) problems.push(`\`${id}.${c.name}\` khai trỏ tới \`${cls.table}\` nhưng bảng này không có`);
           ref = { from: id, fromCols: [c.name], to: cls.table, toCols: ['id'], kind: cls.kind, onDelete: null, migration: null };
@@ -214,7 +233,6 @@ export function buildSchemaModel(dir: string, root: string): SchemaModel {
       name: t.name,
       sub: src?.sub ?? '?',
       file: src?.file ?? '?',
-      line: src?.line ?? 0,
       doc: src ? { text: src.text, deprecated: src.deprecated } : NO_DOC,
       columns,
       pk: [...pk],
@@ -227,8 +245,14 @@ export function buildSchemaModel(dir: string, root: string): SchemaModel {
         where: ix.where ? prettySql(ix.where, t.schema, t.name) : null,
       })),
       checks: Object.values(t.checkConstraints).map((c) => ({ name: c.name, expr: prettySql(c.value, t.schema, t.name) })),
+      triggers: manual.triggers.filter((x) => x.table === id),
+      manualIndexes: manual.indexes.filter((x) => x.table === id),
+      excludes: manual.excludes.filter((x) => x.table === id),
     };
   });
+  for (const key of unusedRefKeys(usedRefKeys)) {
+    problems.push(`mục \`${key}\` trong scripts/db/lib/schema-refs.ts không khớp cột nào (cột đã xoá, đổi tên, hay đã có khoá ngoại): xoá hoặc sửa mục đó`);
+  }
 
   const enums = new Map<string, { values: string[]; doc: SourceDoc }>();
   for (const e of Object.values(snapshot.enums)) {
@@ -241,7 +265,9 @@ export function buildSchemaModel(dir: string, root: string): SchemaModel {
 
 // ---------------------------------------------------------------- in Markdown
 
-const GENERATED = '<!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->';
+const GENERATED = `<!-- ${GENERATED_MARK}. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->`;
+const NOT_LISTED =
+  '**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.';
 const c = (s: string): string => (s.includes('`') ? `\`\` ${s} \`\`` : `\`${s}\``);
 const list = (items: string[]): string => items.map(c).join(', ');
 
@@ -271,14 +297,16 @@ export function renderIndex(model: SchemaModel): string {
     '',
     `Phiên bản **${model.version}** (${c(model.tag)}): ${stats(model)}. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).`,
     '',
-    'Nguồn: snapshot của migration mới nhất và comment trong `src/modules/<lớn>/<con>/repository/schema.ts`. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.',
+    'Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.',
+    '',
+    NOT_LISTED,
     '',
     '## Trước khi thêm bảng, cột, enum',
     '',
     '- Tìm ở đây và trong `db/schema/<schema>.md` xem đã có thứ cùng nghĩa chưa. Có rồi thì dùng lại, không thêm bản thứ hai.',
     '- Không xây tiếp lên mục **Đã bỏ** bên dưới (thẻ `@deprecated` trong schema.ts).',
     '- Cột uuid trỏ sang bảng khác mà không có khoá ngoại: khai ở `scripts/db/lib/schema-refs.ts`, không thì `db:docs` báo lỗi.',
-    '- Mỗi PR tối đa một migration sinh từ schema.ts (`db/CLAUDE.md`).',
+    '- Không để hai migration sinh từ schema.ts liền nhau trong một PR (`db/CLAUDE.md`).',
     '',
     '## Đã bỏ',
     '',
@@ -334,12 +362,14 @@ export function renderSchemaFile(model: SchemaModel, schema: string): string {
     '',
     `Phiên bản **${model.version}**, ${tabs.length} bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).`,
     '',
+    NOT_LISTED,
+    '',
   ];
   for (const t of tabs) {
     out.push(`## ${c(t.id)}`, '');
     if (t.doc.text) out.push(t.doc.text, '');
     if (t.doc.deprecated !== null) out.push(`**Đã bỏ:** ${t.doc.deprecated || 'không ghi lý do'}`, '');
-    const meta = [`Khai ở ${c(`${t.file}:${t.line}`)}`, `module con ${c(t.sub)}`];
+    const meta = [`Khai ở ${c(t.file)}`, `module con ${c(t.sub)}`];
     if (t.columns.some((col) => col.name === TENANT_COLUMN)) meta.push(`theo công ty (${c(TENANT_COLUMN)})`);
     out.push(meta.join(' · '), '', 'Cột:', '');
     for (const col of t.columns) out.push(...columnLine(model, col));
@@ -351,9 +381,13 @@ export function renderSchemaFile(model: SchemaModel, schema: string): string {
       cons.push(`- ${kind} (${list(ix.cols)}) ${c(ix.name)}${ix.where ? ` where ${c(ix.where)}` : ''}`);
     }
     for (const ck of t.checks) cons.push(`- check ${c(ck.name)}: ${c(ck.expr)}`);
+    const at = (migration: string | null): string => `, ở ${c(`db/migrations/${migration}.sql`)}`;
     for (const r of model.relations.filter((x) => x.from === t.id && x.kind === 'fk-sql')) {
-      cons.push(`- khoá ngoại viết tay (${list(r.fromCols)}) → ${c(r.to)} (${list(r.toCols)})${r.onDelete ? `, ON DELETE ${r.onDelete}` : ''}, ở ${c(`db/migrations/${r.migration}.sql`)}`);
+      cons.push(`- khoá ngoại viết tay (${list(r.fromCols)}) → ${c(r.to)} (${list(r.toCols)})${r.onDelete ? `, ON DELETE ${r.onDelete}` : ''}${at(r.migration)}`);
     }
+    for (const ix of t.manualIndexes) cons.push(`- ${ix.unique ? 'unique index' : 'index'} viết tay ${c(ix.name)}: ${c(ix.definition)}${at(ix.migration)}`);
+    for (const x of t.excludes) cons.push(`- EXCLUDE ${c(x.name)}: ${c(x.definition)}${at(x.migration)}`);
+    for (const tr of t.triggers) cons.push(`- trigger ${c(tr.name)}: ${c(tr.definition)}${at(tr.migration)}`);
     if (cons.length) out.push('', 'Ràng buộc và index:', '', ...cons);
     const incoming = model.relations.filter((r) => r.to === t.id);
     const direct = incoming.filter((r) => r.kind === 'fk' || r.kind === 'fk-sql' || r.kind === 'logical');

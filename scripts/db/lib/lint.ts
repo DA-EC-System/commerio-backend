@@ -71,8 +71,9 @@ export function lintFolder(dir: string): string[] {
 }
 
 /**
- * Mỗi nhánh (PR) tối đa một migration sinh từ schema.ts: sinh rồi sửa schema rồi sinh tiếp để lại nhiều file cho cùng một
- * thay đổi. `db:regen` gộp mọi migration sinh của nhánh thành một (migration viết tay giữ riêng).
+ * Nhánh (PR) không được có hai migration sinh từ schema.ts liền nhau: sinh rồi sửa schema rồi sinh tiếp để lại nhiều file
+ * cho cùng một thay đổi, `db:regen` gộp lại được. Hai migration sinh có migration viết tay ở giữa thì được (mở rộng →
+ * chép dữ liệu → siết ràng buộc), vì gộp lại sẽ đưa câu dữ liệu ra sau phần siết.
  */
 export function lintGeneratedPerBranch(dir: string, baseTags: ReadonlySet<string>): string[] {
   let kinds: Map<string, string>;
@@ -81,12 +82,23 @@ export function lintGeneratedPerBranch(dir: string, baseTags: ReadonlySet<string
   } catch (error) {
     return [(error as Error).message];
   }
-  const generated = [...kinds].filter(([tag, kind]) => kind === 'generated' && !baseTags.has(tag)).map(([tag]) => tag);
-  if (generated.length <= 1) return [];
-  return [
-    `nhánh có ${generated.length} migration sinh từ schema.ts (${generated.join(', ')}): mỗi PR chỉ được một. ` +
-      'Chạy `npm run db:regen` để gộp thành một migration (migration viết tay giữ nguyên)',
-  ];
+  const runs: string[][] = [];
+  let run: string[] = [];
+  for (const [tag, kind] of kinds) {
+    if (baseTags.has(tag)) continue;
+    if (kind === 'generated') {
+      run.push(tag);
+    } else {
+      if (run.length > 1) runs.push(run);
+      run = [];
+    }
+  }
+  if (run.length > 1) runs.push(run);
+  return runs.map(
+    (r) =>
+      `nhánh có ${r.length} migration sinh từ schema.ts liền nhau (${r.join(', ')}): gộp thành một bằng \`npm run db:regen\`. ` +
+      'Chỉ tách khi có migration viết tay (dữ liệu, RLS) phải chạy giữa hai lần đổi schema',
+  );
 }
 
 export interface BaseMigrations {

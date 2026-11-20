@@ -4,11 +4,13 @@
 
 Phiên bản **V105**, 16 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
+
 ## `core.accounts`
 
 Tài khoản đăng nhập, dùng chung mọi công ty nên không có RLS (docs/19 D3, D25). Email lưu chữ thường; mật khẩu băm argon2id.
 
-Khai ở `src/modules/core/staff/repository/schema.ts:25` · module con `staff`
+Khai ở `src/modules/core/staff/repository/schema.ts` · module con `staff`
 
 Cột:
 
@@ -37,13 +39,13 @@ Trỏ vào bảng này:
 - `core.invitations.decided_by` (khoá ngoại)
 - `core.memberships.account_id` (khoá ngoại)
 - `core.refresh_tokens.account_id` (tham chiếu, không có khoá ngoại)
-- người thao tác, 51 cột: `core.attachments.created_by`, `core.audit_logs.actor_id`, `core.company_modules.enabled_by`, `core.company_modules.ai_consent_by`, `core.files.uploaded_by`, `core.state_transitions.actor_id`, `product.goods_receipts.resolved_by`, `product.goods_receipts.created_by`, `product.goods_receipts.posted_by`, `product.purchase_requests.created_by`, `product.purchase_requests.approved_by`, `product.purchase_requests.ordered_by`, `product.purchase_requests.closed_by`, `product.stock_documents.created_by`, `product.stock_documents.approved_by`, `product.stock_documents.posted_by`, `product.stock_moves.done_by`, `product.supplier_returns.created_by`, `product.supplier_returns.approved_by`, `product.supplier_returns.sent_by`, `product.supplier_returns.result_by`, `order.packages.packed_by`, `order.packages.handed_over_by`, `order.packages.handover_reverted_by`, `order.packages.delivered_by`, `order.packages.cod_confirmed_by`, `order.packages.lost_reported_by`, `order.packages.lost_confirmed_by`, `order.return_requests.received_by`, `order.return_requests.created_by`, `order.unmatched_return_parcels.received_by`, `order.unmatched_return_parcels.resolved_by`, `finance.bank_matches.matched_by`, `finance.config_versions.created_by`, `finance.config_versions.approved_by`, `finance.gateway_configs.updated_by`, `finance.ledger_entries.created_by`, `finance.order_settlements.resolved_by`, `finance.order_settlements.approved_by`, `finance.payment_links.created_by`, `finance.payment_vouchers.created_by`, `finance.payment_vouchers.posted_by`, `finance.settlement_batches.created_by`, `channel.conversation_notes.author_id`, `channel.conversations.assignee_id`, `channel.listings.approved_by`, `channel.listings.pending_requested_by`, `channel.listings.mapping_requested_by`, `channel.messages.sender_id`, `channel.price_calculations.confirmed_by`, `insight.documents.uploaded_by`
+- người thao tác, 50 cột: `core.attachments.created_by`, `core.audit_logs.actor_id`, `core.company_modules.enabled_by`, `core.company_modules.ai_consent_by`, `core.files.uploaded_by`, `core.state_transitions.actor_id`, `product.goods_receipts.resolved_by`, `product.goods_receipts.created_by`, `product.goods_receipts.posted_by`, `product.purchase_requests.created_by`, `product.purchase_requests.approved_by`, `product.purchase_requests.ordered_by`, `product.purchase_requests.closed_by`, `product.stock_documents.created_by`, `product.stock_documents.approved_by`, `product.stock_documents.posted_by`, `product.stock_moves.done_by`, `product.supplier_returns.created_by`, `product.supplier_returns.approved_by`, `product.supplier_returns.sent_by`, `product.supplier_returns.result_by`, `order.packages.packed_by`, `order.packages.handed_over_by`, `order.packages.handover_reverted_by`, `order.packages.delivered_by`, `order.packages.cod_confirmed_by`, `order.packages.lost_reported_by`, `order.packages.lost_confirmed_by`, `order.return_requests.received_by`, `order.return_requests.created_by`, `order.unmatched_return_parcels.received_by`, `order.unmatched_return_parcels.resolved_by`, `finance.bank_matches.matched_by`, `finance.config_versions.created_by`, `finance.config_versions.approved_by`, `finance.gateway_configs.updated_by`, `finance.ledger_entries.created_by`, `finance.order_settlements.resolved_by`, `finance.order_settlements.approved_by`, `finance.payment_links.created_by`, `finance.payment_vouchers.created_by`, `finance.payment_vouchers.posted_by`, `finance.settlement_batches.created_by`, `channel.conversation_notes.author_id`, `channel.conversations.assignee_id`, `channel.listings.approved_by`, `channel.listings.pending_requested_by`, `channel.listings.mapping_requested_by`, `channel.price_calculations.confirmed_by`, `insight.documents.uploaded_by`
 
 ## `core.attachments`
 
 Tệp đính kèm của một chứng từ (ảnh phiếu giao, video mở thùng, biên bản; Documents/21 mục 14.3). `entity_type` là tên bảng của chứng từ, vd `goods_receipts`; không khoá ngoại vì chứng từ nằm ở module khác.
 
-Khai ở `src/modules/core/files/repository/schema.ts:41` · module con `files` · theo công ty (`company_id`)
+Khai ở `src/modules/core/files/repository/schema.ts` · module con `files` · theo công ty (`company_id`)
 
 Cột:
 
@@ -67,7 +69,7 @@ Ràng buộc và index:
 
 Nhật ký thao tác, chỉ thêm, không sửa. `company_id` trống là nhật ký cấp nền tảng hoặc cấp tài khoản (docs/19 D4; Documents/21 V12).
 
-Khai ở `src/modules/core/audit/repository/schema.ts:12` · module con `audit` · theo công ty (`company_id`)
+Khai ở `src/modules/core/audit/repository/schema.ts` · module con `audit` · theo công ty (`company_id`)
 
 Cột:
 
@@ -93,7 +95,7 @@ Ràng buộc và index:
 
 Bảng chung của nền tảng, không thuộc công ty nào nên không có RLS.
 
-Khai ở `src/modules/core/platform/repository/schema.ts:30` · module con `platform`
+Khai ở `src/modules/core/platform/repository/schema.ts` · module con `platform`
 
 Cột:
 
@@ -119,7 +121,7 @@ Trỏ vào bảng này:
 
 Phân hệ đang bật của công ty. Chỉ có dòng cho phân hệ đã bật hoặc từng bật.
 
-Khai ở `src/modules/core/platform/repository/schema.ts:46` · module con `platform` · theo công ty (`company_id`)
+Khai ở `src/modules/core/platform/repository/schema.ts` · module con `platform` · theo công ty (`company_id`)
 
 Cột:
 
@@ -142,7 +144,7 @@ Ràng buộc và index:
 
 Thông tin tệp; nội dung tệp nằm ở kho đối tượng (Cloudflare R2 qua API S3) theo `storage_key`. Dòng được tạo lúc cấp vé tải lên (#212), trước khi FE PUT tệp: dòng có mà tệp chưa có trên kho là bình thường. `uploaded_at` ghi lần đầu thấy tệp trên kho (khi gắn vào chứng từ); trống là chưa xác nhận đã PUT xong.
 
-Khai ở `src/modules/core/files/repository/schema.ts:17` · module con `files` · theo công ty (`company_id`)
+Khai ở `src/modules/core/files/repository/schema.ts` · module con `files` · theo công ty (`company_id`)
 
 Cột:
 
@@ -177,7 +179,7 @@ Trỏ vào bảng này:
 
 Lời mời bằng link một lần (#7 [C], docs/19 D39, spec 6.3). `id` cũng là `jti` của token link; DB không lưu token. Chuyển trạng thái theo `domain/invitation-machine.ts`, ghi có điều kiện ở `repository/invitations.ts`. Không xoá: `commerio_app` không có quyền DELETE (migration 0019). RLS `company_isolation` có `WITH CHECK`.
 
-Khai ở `src/modules/core/staff/repository/schema.ts:69` · module con `staff` · theo công ty (`company_id`)
+Khai ở `src/modules/core/staff/repository/schema.ts` · module con `staff` · theo công ty (`company_id`)
 
 Cột:
 
@@ -232,11 +234,11 @@ Ràng buộc và index:
 
 Vai trò của một membership (core.memberships, không đặt khoá ngoại chéo module). Có `company_id` để RLS lọc thẳng, không phải tra sang staff. Trigger `member_roles_company_fk` (migration 0017, viết tay) bắt vai trò trống công ty hoặc cùng công ty, và membership cùng công ty (#62).
 
-Khai ở `src/modules/core/access/repository/schema.ts:57` · module con `access` · theo công ty (`company_id`)
+Khai ở `src/modules/core/access/repository/schema.ts` · module con `access` · theo công ty (`company_id`)
 
 Cột:
 
-- `membership_id` uuid · khoá chính
+- `membership_id` uuid · khoá chính → `core.memberships.id` (tham chiếu, không có khoá ngoại)
 - `role_id` uuid · khoá chính → `core.roles.id` (khoá ngoại)
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 
@@ -244,12 +246,13 @@ Ràng buộc và index:
 
 - khoá chính (`membership_id`, `role_id`)
 - index (`role_id`) `member_roles_role_id_index`
+- trigger `member_roles_company_fk`: `BEFORE INSERT OR UPDATE OF membership_id, role_id, company_id → core.check_member_role_company()`, ở `db/migrations/0002_rls-quyen.sql`
 
 ## `core.memberships`
 
 Tài khoản thuộc công ty nào; khoá tài khoản tính theo công ty (docs/19 D5).
 
-Khai ở `src/modules/core/staff/repository/schema.ts:40` · module con `staff` · theo công ty (`company_id`)
+Khai ở `src/modules/core/staff/repository/schema.ts` · module con `staff` · theo công ty (`company_id`)
 
 Cột:
 
@@ -266,11 +269,15 @@ Ràng buộc và index:
 - unique (`company_id`, `account_id`) `memberships_company_id_account_id_unique`
 - index (`account_id`) `memberships_account_id_index`
 
+Trỏ vào bảng này:
+
+- `core.member_roles.membership_id` (tham chiếu, không có khoá ngoại)
+
 ## `core.outbox_messages`
 
 Outbox (Documents/21 D4, D5): sự kiện ghi cùng giao dịch nghiệp vụ, relay của worker đẩy lên Kafka. `company_id` trống với sự kiện cấp nền tảng. Role ứng dụng chỉ được INSERT (0005), nên `event_id` sinh ở ứng dụng, không dùng RETURNING; relay đọc bằng role chủ bảng.
 
-Khai ở `src/modules/core/platform/repository/schema.ts:67` · module con `platform` · theo công ty (`company_id`)
+Khai ở `src/modules/core/platform/repository/schema.ts` · module con `platform` · theo công ty (`company_id`)
 
 Cột:
 
@@ -293,7 +300,7 @@ Ràng buộc và index:
 
 Danh mục quyền (Documents/21 mục 8). Dùng chung mọi công ty, không có RLS; seed bằng migration.
 
-Khai ở `src/modules/core/access/repository/schema.ts:11` · module con `access`
+Khai ở `src/modules/core/access/repository/schema.ts` · module con `access`
 
 Cột:
 
@@ -310,12 +317,12 @@ Trỏ vào bảng này:
 
 Sự kiện consumer đã xử lý, chống xử lý trùng (D7). Không thuộc công ty nên không có RLS.
 
-Khai ở `src/modules/core/platform/repository/schema.ts:84` · module con `platform`
+Khai ở `src/modules/core/platform/repository/schema.ts` · module con `platform`
 
 Cột:
 
 - `consumer` text · khoá chính
-- `event_id` uuid · khoá chính
+- `event_id` uuid · khoá chính: mã sự kiện của outbox, không phải khoá của bảng nào
 - `processed_at` timestamptz · not null · mặc định `now()`
 
 Ràng buộc và index:
@@ -326,7 +333,7 @@ Ràng buộc và index:
 
 Refresh token, chỉ lưu bản băm SHA-256. Thuộc tài khoản chứ không thuộc công ty, nên không có RLS; `company_id` là công ty đang chọn của phiên (để trống khi chưa chọn). Họ token (`family_id`): mọi token xoay vòng từ một lần đăng nhập. `rotated_at` là lúc token bị thay bằng token kế tiếp (còn dùng lại được trong hạn `REFRESH_REUSE_GRACE_SECONDS`); `revoked_at` là thu hồi hẳn (đăng xuất, đổi mật khẩu, phát hiện dùng lại), không có hạn dùng lại.
 
-Khai ở `src/modules/core/identity/repository/schema.ts:14` · module con `identity` · theo công ty (`company_id`)
+Khai ở `src/modules/core/identity/repository/schema.ts` · module con `identity` · theo công ty (`company_id`)
 
 Cột:
 
@@ -349,7 +356,7 @@ Ràng buộc và index:
 
 ## `core.role_permissions`
 
-Khai ở `src/modules/core/access/repository/schema.ts:39` · module con `access`
+Khai ở `src/modules/core/access/repository/schema.ts` · module con `access`
 
 Cột:
 
@@ -364,7 +371,7 @@ Ràng buộc và index:
 
 Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty. Tên không trùng theo chữ thường: index `roles_company_lower_name_uq` viết tay ở migration 0005 (Drizzle không sinh được). `kind` ràng với `company_id`: có sẵn thì trống công ty, tuỳ biến thì có (#62).
 
-Khai ở `src/modules/core/access/repository/schema.ts:23` · module con `access` · theo công ty (`company_id`)
+Khai ở `src/modules/core/access/repository/schema.ts` · module con `access` · theo công ty (`company_id`)
 
 Cột:
 
@@ -380,17 +387,19 @@ Ràng buộc và index:
 
 - unique (`company_id`, `name`) NULLS NOT DISTINCT `roles_company_id_name_unique`
 - check `roles_kind_company_check`: `(kind = 'builtin') = (company_id is null)`
+- unique index viết tay `roles_company_lower_name_uq`: `(company_id, lower(name)) NULLS NOT DISTINCT`, ở `db/migrations/0002_rls-quyen.sql`
 
 Trỏ vào bảng này:
 
 - `core.member_roles.role_id` (khoá ngoại)
 - `core.role_permissions.role_id` (khoá ngoại)
+- `insight.document_roles.role_id` (tham chiếu, không có khoá ngoại)
 
 ## `core.state_transitions`
 
 Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm. `entity_type` là tên bảng (vd `packages`), `actor_id` trống khi sàn hoặc hệ thống chuyển. Thực thể nằm ở module khác nên không có khoá ngoại.
 
-Khai ở `src/modules/core/platform/repository/schema.ts:101` · module con `platform` · theo công ty (`company_id`)
+Khai ở `src/modules/core/platform/repository/schema.ts` · module con `platform` · theo công ty (`company_id`)
 
 Cột:
 

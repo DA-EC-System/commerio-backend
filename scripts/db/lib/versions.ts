@@ -102,7 +102,8 @@ export function diffSnapshots(prev: DbSnapshot | null, cur: DbSnapshot): string[
 }
 
 const DRIZZLE_PLACEHOLDER = /Custom SQL migration file, put your code below!/i;
-const DML = /^\s*(update|insert\s+into|delete\s+from|with)\b/im;
+/** Câu sửa dữ liệu ở đầu dòng; CTE thì phải có `<tên> AS (`, để không khớp `WITH CHECK` của `CREATE POLICY`. */
+const DML = /^\s*(update|insert\s+into|delete\s+from)\b|^\s*with\s+(recursive\s+)?\w+\s+as\s*\(/im;
 const SQL_KINDS: [string, RegExp][] = [
   ['extension', /\bcreate\s+extension\b/i],
   ['schema', /\bcreate\s+schema\b/i],
@@ -116,8 +117,10 @@ const SQL_KINDS: [string, RegExp][] = [
   ['dữ liệu', DML],
 ];
 
+const lf = (s: string): string => s.replace(/\r\n?/g, '\n');
+
 function stripSqlComments(sql: string): string {
-  return sql
+  return lf(sql)
     .split('\n')
     .map((l) => l.replace(/--.*$/, ''))
     .join('\n');
@@ -126,7 +129,7 @@ function stripSqlComments(sql: string): string {
 /** Câu đầu của khối comment `--` mở đầu file SQL (bỏ dòng mẫu của drizzle-kit). */
 export function leadingSqlComment(sql: string): string {
   const lines: string[] = [];
-  for (const raw of sql.split('\n')) {
+  for (const raw of lf(sql).split('\n')) {
     const line = raw.trim();
     if (!line || DRIZZLE_PLACEHOLDER.test(line)) {
       if (lines.length) break;
@@ -160,7 +163,7 @@ export function renderVersions(dir: string): string {
   let prev: DbSnapshot | null = null;
   for (const entry of entries) {
     const snapshot = readSnapshot(dir, snapshotName(entry.tag)) as unknown as DbSnapshot;
-    const sql = readFileSync(join(dir, `${entry.tag}.sql`), 'utf8');
+    const sql = lf(readFileSync(join(dir, `${entry.tag}.sql`), 'utf8'));
     const kind = kinds.get(entry.tag);
     const comment = leadingSqlComment(sql);
     const lines: string[] = [];

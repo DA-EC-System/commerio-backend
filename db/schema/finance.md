@@ -4,11 +4,13 @@
 
 Phiên bản **V105**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
+**Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
+
 ## `finance.bank_matches`
 
 Khớp dòng sổ (rút tiền, NCC hoàn tiền, bồi thường) với sao kê ngân hàng (#117, Documents/21 §21.3). Bảng riêng vì sổ chỉ thêm, không cập nhật dòng; mỗi dòng sổ khớp tối đa một lần. RLS ở migration `--custom`.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:464` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -28,7 +30,7 @@ Ràng buộc và index:
 
 Phiên bản cấu hình phí (theo gian hàng), loại hình thuế, quy tắc thuế, ngưỡng lệch, biên tối thiểu. Nội dung trong `payload`, Zod kiểm theo `kind`. Chọn phiên bản theo ngày kiện giao. Không có hai bản `active` chồng ngày cho cùng (công ty, loại, gian hàng): ràng buộc EXCLUDE viết tay trong migration RLS (drizzle không sinh được).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:539` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -62,6 +64,7 @@ Ràng buộc và index:
 - check `config_versions_range`: `effective_to is null or effective_to >= effective_from`
 - check `config_versions_retroactive`: `retroactive_from is null or is_correction`
 - check `config_versions_approved`: `status not in ('scheduled', 'active', 'superseded') or approved_by is not null`
+- EXCLUDE `config_versions_no_overlap`: `EXCLUDE USING gist ( company_id WITH =, kind WITH =, (coalesce(shop_id, '00000000-0000-0000-0000-000000000000'::uuid)) WITH =, daterange(effective_from, effective_to, '[]') WITH && ) WHERE (status IN ('scheduled', 'active'))`, ở `db/migrations/0002_rls-quyen.sql`
 
 Trỏ vào bảng này:
 
@@ -76,7 +79,7 @@ Trỏ vào bảng này:
 
 Bộ đếm số hoá đơn, phiếu thu, phiếu chi; `period` theo tháng nếu #27 đánh số theo kỳ (plan chuẩn bị A4/K5).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:574` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -93,7 +96,7 @@ Ràng buộc và index:
 
 Khoá cổng của công ty, mã hoá AES-256-GCM. `webhook_receiver_key` là phần cuối URL webhook SePay riêng của công ty, unique toàn hệ thống vì webhook đến trước khi biết công ty (D16); tra bằng role chủ bảng.
 
-Khai ở `src/modules/finance/payment/repository/schema.ts:55` · module con `payment` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/payment/repository/schema.ts` · module con `payment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -117,7 +120,7 @@ Ràng buộc và index:
 
 Sổ tiền, chỉ thêm (T1): mỗi khoản một dòng, số có dấu (vào dương, ra âm), cờ ước tính hay thực tế. Có quyết toán thì thêm dòng thực tế, cặp thực tế–ước tính ghi ở `ledger_replacements` (#231; cột `replaces_entry_id` cũ không ghi nữa); sai thì thêm dòng `adjustment`, không sửa dòng cũ. Mỗi dòng lưu bản cấu hình phí, thuế đã dùng. Khoản không gắn đơn (quảng cáo, chi vận hành) để trống đơn và kiện.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:344` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -170,7 +173,7 @@ Trỏ vào bảng này:
 
 Dòng hàng của kiện đã giao (#231), chép từ payload `fulfillment.package_delivered` lúc ghi sổ: lãi theo SKU (25 §10.2) gộp trong schema finance, không đọc chéo bảng kiện. Chỉ thêm (RLS, REVOKE UPDATE, DELETE ở migration `--custom`); mỗi kiện ghi một lần (unique kiện, số thứ tự dòng).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:432` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -202,7 +205,7 @@ Ràng buộc và index:
 
 Quan hệ thay giữa dòng thực tế và dòng ước tính (#231): một dòng thực tế thay tối đa một dòng ước tính và ngược lại. Ghi ở hai lúc: lần quyết toán nối dòng thực tế về dòng ước tính còn hiệu lực cùng đơn, cùng loại; ghi dòng ước tính mà đơn đã có dòng thực tế cùng loại chưa nối (sàn quyết toán trước khi app nhận sự kiện) thì nối luôn. Chỉ thêm (RLS, REVOKE UPDATE, DELETE ở migration `--custom`), thay cho cột `ledger_entries.replaces_entry_id` (cột cũ giữ làm lịch sử, không ghi nữa; dữ liệu cũ đã chép sang bảng này). Chiều cặp ép ở CSDL: khoá ngoại ghép (`actual_id`, `false`) và (`estimate_id`, `true`) tới (`id`, `is_estimate`) của sổ; hai cột cờ là hằng (CHECK), chỉ để làm vế khoá ngoại. Hai khoá ngoại ghép viết ở migration `--custom` `rls-lai-theo-sku-bang-noi`, không khai ở đây: drizzle-kit sinh khoá ngoại trước unique (`id`, `is_estimate`) mà nó trỏ tới nên migration sinh ra chạy lỗi.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:405` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -230,7 +233,7 @@ Ràng buộc và index:
 
 Trạng thái tiền của đơn hộp thư, đơn tạo tay (đơn sàn không có dòng, 19-D11). Phương thức, số tiền đọc từ đơn (`sales.getOrderForPayment`). `paid_at` ghi khi sang `paid`/`cod_collected`; `delivered_at` do fulfillment ghi qua `markDelivered` khi giao xong, tab COD đọc cột này (R2).
 
-Khai ở `src/modules/finance/payment/repository/schema.ts:40` · module con `payment` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/payment/repository/schema.ts` · module con `payment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -248,7 +251,7 @@ Cột:
 
 Một dòng mỗi đơn sàn. `diff` = thực tế − ước tính; lệch vượt ngưỡng thì `mismatch`. Chốt lệch ghi người và lý do; lệch vượt ngưỡng chốt cần CEO duyệt (`approved_by`). `resolved_diff_base` là lệch lúc chốt, để lần điều chỉnh sau tính lệch từ đó.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:487` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -283,7 +286,7 @@ Ràng buộc và index:
 
 Mã thanh toán. `payment_code` unique toàn hệ thống (D14) vì webhook tìm mã trước khi biết công ty (D16); mỗi đơn tối đa một mã `active` (19-D21).
 
-Khai ở `src/modules/finance/payment/repository/schema.ts:75` · module con `payment` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/payment/repository/schema.ts` · module con `payment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -318,7 +321,7 @@ Trỏ vào bảng này:
 
 Giao dịch cổng báo về, ghi một lần (19-D19). Chống trùng theo `(gateway, gateway_txn_id)` toàn hệ thống (plan chuẩn bị A7). `fee` là phí cổng nếu cổng trả (QT-45), trống khi không biết.
 
-Khai ở `src/modules/finance/payment/repository/schema.ts:104` · module con `payment` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/payment/repository/schema.ts` · module con `payment` · theo công ty (`company_id`)
 
 Cột:
 
@@ -355,7 +358,7 @@ Phiếu chi: nháp → ghi sổ → (đảo). Trỏ tối đa một chứng từ
 
 **Đã bỏ:** Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:162` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -397,7 +400,7 @@ Trỏ vào bảng này:
 
 Phiếu thu, không có nháp. Chỉ phiếu đảo mang số âm.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:125` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -440,7 +443,7 @@ Dòng hoá đơn: chép từ dòng đơn; dòng của hoá đơn đảo mang s�
 
 **Đã bỏ:** Gỡ ở #235 cùng `sales_invoices`: không còn code ghi, chưa drop.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:87` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -465,7 +468,7 @@ Hoá đơn bán, tự sinh khi xuất kho. Một đơn tối đa một hoá đơ
 
 **Đã bỏ:** Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:56` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -499,7 +502,7 @@ Trỏ vào bảng này:
 
 Một lần kéo quyết toán của một gian hàng, bằng API hoặc file khi gian hàng đã ngắt. Mốc kéo của gian hàng (`channel.shops.settlement_cursor`) chỉ tiến khi lô `done`: chạy lại an toàn (D4.3).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:281` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -536,7 +539,7 @@ Trỏ vào bảng này:
 
 Dòng đối soát, một dòng mỗi giao dịch của bảng kê; chạy lại đối soát không sinh trùng nhờ `external_transaction_id`. Khớp khi `revenue − Σfees − shipping_cost ± adjustment = settlement` (API 12.8, T23); `raw` là bản gốc của sàn.
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:240` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -575,7 +578,7 @@ Trỏ vào bảng này:
 
 Bảng kê thanh toán của sàn; `shop_id` trỏ channel, `payment_status` giữ nguyên chữ của sàn (PAID, PROCESSING…).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:219` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -604,7 +607,7 @@ Trỏ vào bảng này:
 
 Hoá đơn nhà cung cấp (UC-PF-08); `supplier_id`, `purchase_request_id` trỏ purchasing, không khoá ngoại (19-D1).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:197` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -634,7 +637,7 @@ Trỏ vào bảng này:
 
 Tiền về không gán được vào đơn (không có mã, lệch tiền, đơn đã huỷ); gán hoặc hoàn sau (UC-PF-07).
 
-Khai ở `src/modules/finance/finance/repository/schema.ts:106` · module con `finance` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance` · theo công ty (`company_id`)
 
 Cột:
 
@@ -665,7 +668,7 @@ Trỏ vào bảng này:
 
 Webhook cổng đã nhận (sau khi kiểm chữ ký), chống xử lý lặp. Khoá gồm cả `gateway`: mã sự kiện của hai cổng đều là số, có thể trùng nhau trong một công ty.
 
-Khai ở `src/modules/finance/payment/repository/schema.ts:129` · module con `payment` · theo công ty (`company_id`)
+Khai ở `src/modules/finance/payment/repository/schema.ts` · module con `payment` · theo công ty (`company_id`)
 
 Cột:
 

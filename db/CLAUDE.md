@@ -6,7 +6,7 @@ Migration của PostgreSQL. Một database, **mỗi module lớn một schema c�
 
 ## Tài liệu schema và phiên bản
 
-Ba thứ **sinh tự động, không sửa tay** (`npm run db:docs`; `db:generate`, `db:regen` tự chạy), nguồn là snapshot của migration mới nhất, comment trong `schema.ts`, khoá ngoại viết tay trong migration (`scripts/db/lib/`):
+Ba thứ **sinh tự động, không sửa tay** (`npm run db:docs`; `db:generate`, `db:regen` tự chạy), nguồn là snapshot của migration mới nhất, comment trong `schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration (`scripts/db/lib/sql-objects.ts`, đọc câu SQL tĩnh; SQL động trong `DO $$ … $$` như vòng lặp RLS của 0002 không đọc). Không có: RLS, policy, quyền, hàm SQL:
 
 | File | Nội dung |
 |---|---|
@@ -17,13 +17,13 @@ Ba thứ **sinh tự động, không sửa tay** (`npm run db:docs`; `db:generat
 - **Đọc `SCHEMA.md` và `schema/<schema>.md` trước khi thêm bảng, cột, enum.** Đã có thứ cùng nghĩa thì dùng lại.
 - **Phiên bản `V<n>`** = migration thứ n trong `meta/_journal.json` (`versionLabel`). Journal của `main` chỉ thêm vào cuối nên số không đổi sau khi merge; migration của nhánh mang số tạm. Tên file migration giữ nguyên cách đặt theo giờ (số V không nằm trong tên file). `db:migrate:check` in phiên bản của DB và của mã nguồn.
 - **Đã bỏ**: thêm thẻ `@deprecated <lý do>` vào JSDoc của bảng hay cột trong `schema.ts` (IDE cũng gạch chỗ dùng). Xoá hẳn bảng, cột thì bỏ thẻ cùng lúc.
-- **Cột uuid tên `*_id` không có khoá ngoại** (trỏ sang schema khác, module con khác): khai bảng đích ở `LOGICAL_REFS`, hoặc lý do không trỏ bảng cố định ở `NOT_REFS` (`scripts/db/lib/schema-refs.ts`). Chưa khai thì `db:docs` báo lỗi. Cột `*_by` (người thao tác → `core.accounts`) và `company_id` không cần khai.
+- **Cột uuid tên `*_id` không có khoá ngoại** (trỏ sang schema khác, module con khác): khai bảng đích ở `LOGICAL_REFS`, hoặc lý do không trỏ bảng cố định ở `NOT_REFS` (`scripts/db/lib/schema-refs.ts`). Tên theo quy ước `<bảng số ít>_id` khai theo tên cột; tên mang nghĩa riêng khai theo `<schema>.<bảng>.<cột>`. Chưa khai, hoặc mục khai không còn khớp cột nào, thì `db:docs` báo lỗi. Cột `*_by` (người thao tác → `core.accounts`) và `company_id` không cần khai.
 - `db:ci-check` và `test/unit/db/docs.test.ts` đỏ khi ba thứ trên chưa ghi lại hoặc có cột chưa khai. Sửa comment `schema.ts` mà không sinh migration thì chạy `npm run db:docs`.
 - Gộp main bị xung đột ở `SCHEMA.md`, `schema/`, `VERSIONS.md`: để nguyên, `npm run db:regen` ghi lại (nhánh không có migration thì `npm run db:docs`).
 
 ## Migration
 
-- **Mỗi PR tối đa một migration sinh từ `schema.ts`** (`db:ci-check` đếm theo snapshot: migration viết tay có snapshot giống migration trước nên không tính). Lỡ sinh nhiều lần thì `npm run db:regen` gộp thành một; migration viết tay giữ riêng, cái đứng giữa hai migration sinh bị dời ra sau (lệnh cảnh báo).
+- **Không để hai migration sinh từ `schema.ts` liền nhau trong một PR** (`db:ci-check` xếp loại theo snapshot: migration viết tay có snapshot giống migration trước). Sinh, sửa schema, sinh tiếp thì `npm run db:regen` gộp thành một. Hai migration sinh có migration viết tay ở giữa thì được, cho kiểu thêm cột → chép dữ liệu → bỏ cột cũ hay siết ràng buộc. Lưu ý: `db:regen` (khi phải sinh lại sau khi gộp main) vẫn gộp mọi migration sinh và dời migration viết tay ở giữa ra sau, lệnh cảnh báo; khi đó viết câu dữ liệu vào giữa file sinh gộp, hoặc tách thành hai PR.
 - `migrations/`: do `drizzle-kit` sinh ra, **không sửa tay** file đã merge vào `main`. Muốn đổi thì sửa `schema.ts` rồi chạy `npm run db:generate -- --name <mo-ta>` để có migration mới (lệnh này gọi `drizzle-kit generate` rồi ghi lại tài liệu schema).
 - **Tên file từ 11/11/2026:** `<năm tháng ngày giờ phút giây>_<mo-ta>.sql` theo giờ UTC lúc sinh, vd `20261111030018_muc-dich-tep.sql` (`migrations.prefix: 'timestamp'` trong `drizzle.config.ts`), để hai nhánh cùng sinh migration không trùng tên. 29 file đầu `0000`–`0028` giữ tên theo số thứ tự: code, test và tài liệu đang gọi chúng theo số. Không đặt tên tay.
 - Bộ migration dựng lại từ đầu ngày 28/10/2026 khi gom 6 module lớn (chưa có dữ liệu thật; staging xoá DB rồi chạy lại):
@@ -79,7 +79,7 @@ Ba lớp chặn (`scripts/db/`):
 
 | Lệnh | Chạy ở | Chặn gì |
 |---|---|---|
-| `npm run db:ci-check` | Job `check` của CI ở mọi PR (`-- --base origin/main`), không cần DB | Migration của nhánh không đứng sau migration mới nhất của main (`when` và tên); nhánh sửa file `.sql` đã có trên main; journal đứt `idx`, `when` không tăng; file `.sql` hay snapshot không có trong journal; snapshot trỏ sai cha (`prevId` khác `id` của snapshot liền trước); `drizzle-kit generate` (chạy trên bản sao trong thư mục tạm) còn sinh ra file, tức `schema.ts` và migration lệch nhau; nhánh có hơn một migration sinh từ schema; tài liệu schema chưa ghi lại hoặc có cột uuid `*_id` chưa khai bảng đích |
+| `npm run db:ci-check` | Job `check` của CI ở mọi PR (`-- --base origin/main`), không cần DB | Migration của nhánh không đứng sau migration mới nhất của main (`when` và tên); nhánh sửa file `.sql` đã có trên main; journal đứt `idx`, `when` không tăng; file `.sql` hay snapshot không có trong journal; snapshot trỏ sai cha (`prevId` khác `id` của snapshot liền trước); `drizzle-kit generate` (chạy trên bản sao trong thư mục tạm) còn sinh ra file, tức `schema.ts` và migration lệch nhau; nhánh có hai migration sinh từ schema liền nhau; tài liệu schema chưa ghi lại hoặc có cột uuid `*_id` chưa khai bảng đích |
 | `npm run db:migrate` (`:staging`) | Job `migrate` của deploy staging, job `blackbox` của CI, máy dev | Thay `drizzle-kit migrate`. So journal với `drizzle.__drizzle_migrations` (đã chạy khi và chỉ khi có dòng `created_at` = `when`, như drizzle; hash chỉ để cảnh báo); có migration chưa chạy mà `when` ≤ dòng mới nhất, hoặc có dòng `created_at` NULL, thì **dừng, mã lỗi 1, in tên file, không chạy gì**; không thì chạy migrator của drizzle-orm như cũ, xong kiểm lại không còn sót. Giữ khoá advisory `commerio:db-migrate` trong lúc chạy |
 | `npm run db:migrate:check` (`:staging`) | Tay | Chỉ đọc (giao dịch `READ ONLY`, không tạo bảng): phiên bản `V<n>` của DB và của mã nguồn, liệt kê đã chạy, chưa chạy, lệch thứ tự, dòng trên DB không khớp journal, file `.sql` khác bản đã chạy. Mã lỗi 1 nếu có lệch thứ tự |
 

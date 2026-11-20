@@ -63,4 +63,16 @@ describe('tóm tắt migration viết tay', () => {
     expect(sqlKinds(sql)).toEqual(['RLS', 'quyền', 'dữ liệu']);
     expect(sqlKinds('-- update x\nALTER TABLE a ADD COLUMN b int;')).toEqual([]);
   });
+
+  it('WITH CHECK của CREATE POLICY không phải câu dữ liệu; CTE `WITH x AS (` thì là', () => {
+    const policy = 'CREATE POLICY company_isolation ON core.files\n  USING (company_id = 1)\n  WITH CHECK (company_id = 1);';
+    expect(sqlKinds(policy)).toEqual(['RLS']);
+    expect(sqlKinds('with moved as (select 1)\nupdate a set b = 1;')).toEqual(['dữ liệu']);
+  });
+
+  it('file lưu xuống dòng CRLF cho cùng kết quả với LF', () => {
+    const lines = ['-- Bỏ index cũ, update lại khoá.', 'ALTER TABLE a ADD COLUMN b int; -- foreign key, create index', 'UPDATE a SET b = 1;'];
+    expect(sqlKinds(lines.join('\r\n'))).toEqual(sqlKinds(lines.join('\n')));
+    expect(leadingSqlComment(lines.join('\r\n'))).toBe('Bỏ index cũ, update lại khoá.');
+  });
 });

@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { MIGRATIONS_DIR } from './journal.ts';
-import { buildSchemaModel, renderIndex, renderSchemaFile } from './schema-doc.ts';
+import { buildSchemaModel, GENERATED_MARK, renderIndex, renderSchemaFile } from './schema-doc.ts';
 import { renderVersions } from './versions.ts';
 
 export const SCHEMA_INDEX = 'db/SCHEMA.md';
@@ -26,14 +26,14 @@ export function renderDocs(root: string): RenderedDocs {
   return { files, problems: model.problems };
 }
 
-/** File .md trong db/schema/ không còn schema tương ứng. */
+/** File do db:docs sinh trong db/schema/ mà schema tương ứng không còn. File người viết (vd CLAUDE.md) không đụng. */
 function strayFiles(root: string, files: Map<string, string>): string[] {
   const dir = join(root, SCHEMA_DIR);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => f.endsWith('.md'))
     .map((f) => `${SCHEMA_DIR}/${f}`)
-    .filter((p) => !files.has(p));
+    .filter((p) => !files.has(p) && readFileSync(join(root, p), 'utf8').includes(GENERATED_MARK));
 }
 
 export interface DocsCheck {

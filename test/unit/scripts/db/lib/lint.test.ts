@@ -105,11 +105,21 @@ describe('mỗi nhánh tối đa một migration sinh từ schema', () => {
     expect(lintGeneratedPerBranch(dir, onMain)).toEqual([]);
   });
 
-  it('hai migration sinh trên nhánh thì đỏ, bảo chạy db:regen', () => {
+  it('hai migration sinh liền nhau trên nhánh thì đỏ, bảo chạy db:regen', () => {
     const dir = fakeMigrations([A, gen('20261101000000_cot', 2000, { t1: {}, t2: {} }), gen('20261102000000_sua-cot', 3000, { t1: {}, t2: { x: 1 } })]);
     const errors = lintGeneratedPerBranch(dir, onMain).join('\n');
-    expect(errors).toContain('nhánh có 2 migration sinh từ schema.ts (20261101000000_cot, 20261102000000_sua-cot)');
+    expect(errors).toContain('nhánh có 2 migration sinh từ schema.ts liền nhau (20261101000000_cot, 20261102000000_sua-cot)');
     expect(errors).toContain('npm run db:regen');
+  });
+
+  it('mở rộng → chép dữ liệu (viết tay) → siết ràng buộc thì đạt: gộp sẽ đưa câu dữ liệu ra sau phần siết', () => {
+    const dir = fakeMigrations([
+      A,
+      gen('20261101000000_them-cot', 2000, { t1: {}, t2: {} }),
+      custom('20261102000000_chep-du-lieu', 3000),
+      gen('20261103000000_bo-cot-cu', 4000, { t2: {} }),
+    ]);
+    expect(lintGeneratedPerBranch(dir, onMain)).toEqual([]);
   });
 
   it('migration sinh đã có trên main không tính vào nhánh', () => {
