@@ -5,7 +5,10 @@ import type { Decimal } from 'decimal.js';
 import {
   availableOf,
   countedOf,
+  fillProductFacts,
+  type FactsSource,
   getVariants,
+  type ProductFacts,
   productImageUrls,
   productSizeChartUrls,
   standardPricesOf,
@@ -55,6 +58,11 @@ export interface ProductPort {
   productImageUrls(productIds: readonly string[], max: number): Promise<Map<string, string[]>>;
   /** Link ảnh bảng kích cỡ theo sản phẩm (#347); sản phẩm chưa có ảnh không có trong Map. */
   productSizeChartUrls?(productIds: readonly string[]): Promise<Map<string, string>>;
+  /**
+   * Điền trường dùng chung đang trống của sản phẩm từ sàn (#497, Documents/21 §11.3); trả tên trường đã ghi. Thiếu (bản giả của
+   * test) thì ghép không điền gì.
+   */
+  fillProductFacts?(productId: string, facts: ProductFacts, source: FactsSource): Promise<{ filled: string[] }>;
 }
 
 // Trường #110 sẽ thêm; đọc tuỳ chọn để code không đổi khi Khang merge.
@@ -93,6 +101,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       countedOf,
       productImageUrls,
       productSizeChartUrls,
+      fillProductFacts,
     }
   );
 }

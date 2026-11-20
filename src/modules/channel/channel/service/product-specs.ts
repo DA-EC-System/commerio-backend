@@ -7,7 +7,9 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import {
   countryOption,
   CUSTOM_AXIS,
+  type FieldSource,
   type MissingItem,
+  nextFieldSources,
   type PlatformAttribute,
   resolveOption,
   type SpecAttributeValue,
@@ -23,6 +25,7 @@ import {
   updateSpec,
 } from '../repository/product-specs.ts';
 import type { Marketplace } from '../repository/schema.ts';
+import { findShopRow } from '../repository/shops.ts';
 import type { MarketplaceAdapter, Responsible } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import type { SpecCheck } from './push-block.ts';
@@ -39,13 +42,29 @@ export interface ProductSpec {
   axisMap: Record<string, string>;
   valueMap: Record<string, string>;
   source: ProductSpecRow['source'];
+  /** Nguồn từng attribute trong `attributes` (#497). */
+  fieldSources: Record<string, FieldSource>;
   version: number;
   updatedAt: Date;
+}
+
+/** Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497, Documents/21 §18.5). `shopId` null khi gian hàng đã xoá. */
+export interface RemoteSpec {
+  shopId: string | null;
+  shopName: string | null;
+  readAt: Date;
+  originCountry: string | null;
+  brand: string | null;
+  description: string | null;
+  sizeChartUrl: string | null;
+  imageUrls: string[];
+  variants: { variantId: string; weightG: number | null; lengthMm: number | null; widthMm: number | null; heightMm: number | null }[];
 }
 
 export interface SpecView {
   spec: ProductSpec | null;
   missing: MissingItem[];
+  remote: RemoteSpec | null;
 }
 
 /** Dữ liệu sản phẩm cần cho spec: trục phân loại, giá trị trục, xuất xứ, thương hiệu. */
@@ -152,6 +171,7 @@ const toSpec = (r: ProductSpecRow, categoryPath: string | null): ProductSpec => 
   axisMap: r.axisMap,
   valueMap: r.valueMap,
   source: r.source,
+  fieldSources: r.fieldSources,
   version: r.version,
   updatedAt: r.updatedAt,
 });
@@ -176,11 +196,19 @@ export async function missingOf(
 
 /** Spec kèm `missing` như route `GET` trả (cũng là `current` của 409 `version_conflict`). Gọi trong `withCompany`. */
 export async function specView(companyId: string, adapter: MarketplaceAdapter, row: ProductSpecRow | undefined, product: SpecProduct): Promise<SpecView> {
-  if (!row) return { spec: null, missing: [] };
+  if (!row) return { spec: null, missing: [], remote: null };
   const org = adapter.responsibleFields ? await responsibleOrgOf(companyId) : null;
   const { missing } = await missingOf(adapter, row, product, org);
   const category = await findCategory(row.platform, row.externalCategoryId);
-  return { spec: toSpec(row, category && category.syncedAt ? category.path : null), missing };
+  return { spec: toSpec(row, category && category.syncedAt ? category.path : null), missing, remote: await remoteOf(row) };
+}
+
+/** `remote` của spec: tên gian hàng hiện tại, gian hàng đã xoá thì tên lúc đọc. */
+async function remoteOf(row: ProductSpecRow): Promise<RemoteSpec | null> {
+  if (!row.remoteFacts || !row.remoteReadAt) return null;
+  const { shopName, ...facts } = row.remoteFacts;
+  const shop = row.remoteShopId ? await findShopRow(row.remoteShopId) : undefined;
+  return { shopId: shop?.id ?? null, shopName: shop?.shopName ?? shopName, readAt: row.remoteReadAt, ...facts };
 }
 
 /** Mọi biến thể của sản phẩm, kể cả biến thể lưu trữ (cùng tập với bảng listing và request đẩy, review BE2 P2-6). */
@@ -332,7 +360,7 @@ export async function putProductSpec(
       });
     };
     let row: ProductSpecRow | undefined;
-    const patch = { externalCategoryId: input.externalCategoryId, ...values };
+    const patch = { externalCategoryId: input.externalCategoryId, ...values, fieldSources: nextFieldSources(before, values.attributes) };
     if (input.version === null) {
       if (before) throw await conflict();
       row = await insertSpec({ ...patch, companyId, productId, platform, source: 'push', version: 1 });

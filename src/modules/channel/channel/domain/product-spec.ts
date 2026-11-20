@@ -11,6 +11,43 @@ export type SpecCategoryStatus = 'ok' | 'changed' | 'removed';
 /** Giá trị attribute trong spec: chuỗi (text, mã lựa chọn của select) hoặc mảng mã (multiselect). */
 export type SpecAttributeValue = string | string[];
 
+/** Nguồn của một attribute trong spec (#497, Documents/21 §18.5): đẩy (bản chép, lưu trước #497), đọc từ sàn khi ghép, người dùng sửa. */
+export type FieldSource = 'push' | 'match' | 'user';
+
+/**
+ * Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497, cột `product_specs.remote_facts`): giá trị đã chuẩn hoá theo catalog
+ * (xuất xứ là mã ISO, mô tả chữ trơn, cân nặng g, kích thước mm theo SKU Commerio đã ghép). `shopName` là tên gian hàng lúc
+ * đọc, dùng khi gian hàng đã xoá.
+ */
+export interface RemoteSpecFacts {
+  shopName: string | null;
+  originCountry: string | null;
+  brand: string | null;
+  description: string | null;
+  sizeChartUrl: string | null;
+  imageUrls: string[];
+  variants: { variantId: string; weightG: number | null; lengthMm: number | null; widthMm: number | null; heightMm: number | null }[];
+}
+
+/** Hai giá trị attribute bằng nhau; chọn nhiều so như tập (đổi thứ tự không phải sửa). */
+const canonical = (v: SpecAttributeValue | undefined) => JSON.stringify(Array.isArray(v) ? [...v].sort() : (v ?? null));
+const sameValue = (a: SpecAttributeValue | undefined, b: SpecAttributeValue | undefined) => canonical(a) === canonical(b);
+
+/**
+ * Nguồn từng attribute sau khi người dùng lưu spec (#497): attribute giữ nguyên giá trị thì giữ nguồn cũ (thiếu thì nguồn cũ
+ * của cả spec), đổi hoặc mới thì `user`; attribute đã bỏ thì bỏ khỏi bảng nguồn.
+ */
+export function nextFieldSources(
+  before: { attributes: Record<string, SpecAttributeValue>; fieldSources: Record<string, FieldSource>; source: 'push' | 'match' } | undefined,
+  attributes: Record<string, SpecAttributeValue>,
+): Record<string, FieldSource> {
+  const out: Record<string, FieldSource> = {};
+  for (const code of Object.keys(attributes)) {
+    out[code] = before && sameValue(before.attributes[code], attributes[code]) ? (before.fieldSources[code] ?? before.source) : 'user';
+  }
+  return out;
+}
+
 export interface AttributeOption {
   id: string;
   label: string;

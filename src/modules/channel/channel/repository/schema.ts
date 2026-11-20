@@ -25,6 +25,8 @@ import type {
   AttributeOption,
   AttributeTier,
   CategoryPermission,
+  FieldSource,
+  RemoteSpecFacts,
   RequiredWhen,
   SpecAttributeValue,
   SpecCategoryStatus,
@@ -497,6 +499,13 @@ export const productSpecs = channelSchema.table(
     valueMap: jsonb('value_map').$type<Record<string, string>>().notNull().default({}),
     source: text('source').$type<SpecSource>().notNull(),
     categoryStatus: text('category_status').$type<SpecCategoryStatus>().notNull().default('ok'),
+    /** Nguồn từng attribute trong `attributes` (#497): `push`, `match`, `user`. */
+    fieldSources: jsonb('field_sources').$type<Record<string, FieldSource>>().notNull().default({}),
+    /** Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497); bản có `remote_read_at` sau thắng. */
+    remoteFacts: jsonb('remote_facts').$type<RemoteSpecFacts>(),
+    remoteReadAt: timestamp('remote_read_at', { withTimezone: true }),
+    /** Gian hàng đã đọc; xoá gian hàng thì null, tên còn trong `remote_facts.shopName`. */
+    remoteShopId: uuid('remote_shop_id').references(() => shops.id, { onDelete: 'set null' }),
     ...timestamps,
     ...version,
   },
@@ -507,6 +516,7 @@ export const productSpecs = channelSchema.table(
     check('product_specs_source', sql`${t.source} in ('push', 'match')`),
     check('product_specs_category_status', sql`${t.categoryStatus} in ('ok', 'changed', 'removed')`),
     check('product_specs_version', sql`${t.version} >= 0`),
+    check('product_specs_remote', sql`(${t.remoteFacts} is null) = (${t.remoteReadAt} is null)`),
   ],
 );
 

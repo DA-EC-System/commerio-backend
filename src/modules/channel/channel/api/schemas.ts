@@ -868,6 +868,9 @@ export const ProductSpecSchema = z
     axisMap: z.record(z.string(), z.string()),
     valueMap: z.record(z.string(), z.string()),
     source: z.enum(['push', 'match']),
+    fieldSources: z
+      .record(z.string(), z.enum(['push', 'match', 'user']))
+      .meta({ description: 'Nguồn từng attribute: đẩy (bản chép), đọc từ sàn khi ghép, người dùng sửa (#497)' }),
     version: z.number().int().meta({ description: '0 là bản chép từ ghép danh mục, chưa ai lưu lại' }),
     updatedAt: iso,
   })
@@ -885,6 +888,31 @@ export const ProductSpecView = z
         })
         .strict(),
     ),
+    remote: z
+      .object({
+        shopId: z.uuid().nullable().meta({ description: 'null khi gian hàng đã xoá' }),
+        shopName: z.string().nullable(),
+        readAt: iso,
+        originCountry: z.string().nullable().meta({ description: 'Mã ISO 3166-1 alpha-2' }),
+        brand: z.string().nullable().meta({ description: 'null là sàn ghi không thương hiệu' }),
+        description: z.string().nullable().meta({ description: 'Chữ trơn, đã bỏ HTML, tối đa 5000 ký tự' }),
+        sizeChartUrl: z.string().nullable(),
+        imageUrls: z.array(z.string()),
+        variants: z.array(
+          z
+            .object({
+              variantId: z.uuid(),
+              weightG: z.number().int().nullable(),
+              lengthMm: z.number().int().nullable(),
+              widthMm: z.number().int().nullable(),
+              heightMm: z.number().int().nullable(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .nullable()
+      .meta({ description: 'Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497); null khi chưa đọc từ sàn' }),
   })
   .strict()
   .meta({ id: 'ProductSpecView' });

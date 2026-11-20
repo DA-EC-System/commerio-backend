@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V119**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V121**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -390,6 +390,13 @@ Cột:
 - `value_map` jsonb · not null · mặc định `'{}'::jsonb`
 - `source` text · not null
 - `category_status` text · not null · mặc định `'ok'`
+- `field_sources` jsonb · not null · mặc định `'{}'::jsonb`
+  Nguồn từng attribute trong `attributes` (#497): `push`, `match`, `user`.
+- `remote_facts` jsonb · null
+  Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497); bản có `remote_read_at` sau thắng.
+- `remote_read_at` timestamptz · null
+- `remote_shop_id` uuid · null → `channel.shops.id` (khoá ngoại, ON DELETE set null)
+  Gian hàng đã đọc; xoá gian hàng thì null, tên còn trong `remote_facts.shopName`.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -401,6 +408,7 @@ Ràng buộc và index:
 - check `product_specs_source`: `source in ('push', 'match')`
 - check `product_specs_category_status`: `category_status in ('ok', 'changed', 'removed')`
 - check `product_specs_version`: `version >= 0`
+- check `product_specs_remote`: `(remote_facts is null) = (remote_read_at is null)`
 
 ## `channel.raw_orders`
 
@@ -596,6 +604,7 @@ Trỏ vào bảng này:
 
 - `channel.listings.shop_id` (khoá ngoại)
 - `channel.price_calculations.shop_id` (khoá ngoại)
+- `channel.product_specs.remote_shop_id` (khoá ngoại)
 - `channel.raw_orders.shop_id` (khoá ngoại)
 - `channel.remote_skus.shop_id` (khoá ngoại)
 - `channel.shop_reauth_mails.shop_id` (khoá ngoại)
