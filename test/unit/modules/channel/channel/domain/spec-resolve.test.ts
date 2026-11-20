@@ -6,6 +6,7 @@ import {
   type FieldMapping,
   numberOption,
   resolveSpecAttributes,
+  reverseSpecValues,
   type ResolveInput,
 } from '#src/modules/channel/channel/domain/spec-resolve.ts';
 
@@ -130,5 +131,50 @@ describe('numberOption', () => {
   it('khớp số đúng bằng nhãn, bỏ dấu ngăn nghìn', () => {
     expect(numberOption({ options: [{ id: '1', label: '1.000 ml' }, { id: '2', label: '500 ml' }] }, '1000')).toBe('1');
     expect(numberOption({ options: [{ id: '2', label: '500 ml' }] }, '700')).toBeNull();
+  });
+});
+
+describe('reverseSpecValues (chiều ngược khi ghép SKU)', () => {
+  const fields = [
+    { id: 'f-material', input: 'multiselect' as const, options: [{ id: 'o-cotton', value: 'Cotton' }, { id: 'o-poly', value: 'Polyester' }] },
+    { id: 'f-date', input: 'date' as const, options: [] },
+    { id: 'f-cap', input: 'number' as const, options: [] },
+  ];
+  const mappings: FieldMapping[] = [
+    mapMaterial('100157', 1, { 'o-cotton': '1000039' }),
+    { fieldId: 'f-date', attributeCode: '103000', priority: 1, options: new Map() },
+    { fieldId: 'f-cap', attributeCode: 'cap', priority: 1, options: new Map() },
+  ];
+  const remote = [
+    { code: '100157', values: [{ id: '1000039', name: 'Bông' }, { id: '1000040', name: 'Polyester' }, { id: '9', name: 'Len' }] },
+    { code: '103000', values: [{ id: null, name: '09/03/2025' }] },
+    { code: 'cap', values: [{ id: null, name: '12000 mAh' }] },
+    { code: 'khac', values: [{ id: null, name: 'x' }] },
+  ];
+
+  it('đổi lựa chọn qua ánh xạ, rồi theo nhãn; không khớp thì bỏ; ngày về YYYY-MM-DD; số lấy phần số', () => {
+    const r = reverseSpecValues({ remote, mappings, fields, filled: new Set() });
+    expect(r.specs).toEqual([
+      { fieldId: 'f-material', optionIds: ['o-cotton', 'o-poly'] },
+      { fieldId: 'f-date', value: '2025-03-09' },
+      { fieldId: 'f-cap', value: '12000' },
+    ]);
+    expect([...r.mappedCodes].sort()).toEqual(['100157', '103000', 'cap']);
+  });
+
+  it('thông số đã có giá trị thì không ghi đè', () => {
+    const r = reverseSpecValues({ remote, mappings, fields, filled: new Set(['f-material', 'f-date', 'f-cap']) });
+    expect(r.specs).toEqual([]);
+    expect(r.mappedCodes.size).toBe(3);
+  });
+
+  it('Lazada multiselect nối dấu phẩy được tách', () => {
+    const r = reverseSpecValues({
+      remote: [{ code: 'm', values: [{ id: null, name: 'Cotton,Polyester' }] }],
+      mappings: [{ ...mapMaterial('m', 1), options: new Map() }],
+      fields,
+      filled: new Set(),
+    });
+    expect(r.specs[0]).toEqual({ fieldId: 'f-material', optionIds: ['o-cotton', 'o-poly'] });
   });
 });

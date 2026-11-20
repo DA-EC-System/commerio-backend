@@ -1,6 +1,6 @@
 // Giá trị từng attribute của leaf lúc đọc spec và lúc đẩy (#509, Documents/21 §18.8.2). Luật thuần, không I/O: bên gọi nạp
 // leaf, ghi đè, thông số catalog, ánh xạ, hồ sơ công ty. Thứ tự: ghi đè > catalog qua ánh xạ > hồ sơ công ty > mặc định sàn.
-import { countryOption, type PlatformAttribute, resolveOption, type SpecAttributeValue } from './product-spec.ts';
+import { countryOption, normalizePath, type PlatformAttribute, resolveOption, type SpecAttributeValue } from './product-spec.ts';
 
 export type ResolvedSource = 'override' | 'catalog' | 'company' | 'default';
 
@@ -170,3 +170,69 @@ export function resolveSpecAttributes(adapter: ResolveAdapter, input: ResolveInp
 /** Giá trị phẳng (cho `specMissing`, so trùng lúc `PUT`). */
 export const resolvedValues = (r: Record<string, ResolvedValue>): Record<string, SpecAttributeValue> =>
   Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.value]));
+
+/** Một thông số của công ty cần cho chiều ngược (cổng `getSpecFields`). */
+export interface ReverseField {
+  id: string;
+  input: SpecFieldInput;
+  options: readonly { id: string; value: string }[];
+}
+
+export interface ReverseSpecValue {
+  fieldId: string;
+  optionIds?: string[];
+  value?: string;
+}
+
+const ddmmyyyy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/;
+const isoDate = (text: string): string | null => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const m = ddmmyyyy.exec(text);
+  return m ? `${m[3]}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}` : null;
+};
+
+/**
+ * Chiều ngược khi ghép SKU (#509, Documents/21 §18.8.2): giá trị sàn đang ghi của attribute có ánh xạ điền vào thông số đang
+ * trống (`filled` là thông số đã có giá trị, không ghi đè). Mỗi thông số lấy mã có `priority` nhỏ nhất mà sàn có giá trị.
+ * Lựa chọn đổi ngược qua ánh xạ lựa chọn, không có thì khớp nhãn; không khớp thì bỏ, không tạo lựa chọn mới. `mappedCodes`:
+ * mọi mã có ánh xạ mà sàn có giá trị, để bên gọi không ghi lại vào `product_specs.attributes`.
+ */
+export function reverseSpecValues(input: {
+  remote: readonly { code: string; values: readonly { id: string | null; name: string }[] }[];
+  mappings: readonly FieldMapping[];
+  fields: readonly ReverseField[];
+  filled: ReadonlySet<string>;
+}): { specs: ReverseSpecValue[]; mappedCodes: Set<string> } {
+  const byCode = new Map(input.remote.filter((r) => r.values.some((v) => v.name.trim() !== '' || v.id)).map((r) => [r.code, r.values]));
+  const mappedCodes = new Set(input.mappings.map((m) => m.attributeCode).filter((c) => byCode.has(c)));
+  const specs: ReverseSpecValue[] = [];
+  for (const field of input.fields) {
+    if (input.filled.has(field.id)) continue;
+    const mapping = input.mappings
+      .filter((m) => m.fieldId === field.id && byCode.has(m.attributeCode))
+      .sort((a, b) => a.priority - b.priority)[0];
+    if (!mapping) continue;
+    const values = byCode.get(mapping.attributeCode)!;
+    if (field.input === 'select' || field.input === 'multiselect') {
+      const inverse = new Map([...mapping.options].map(([optionId, platformId]) => [platformId, optionId]));
+      const byLabel = new Map(field.options.map((o) => [normalizePath(o.value), o.id]));
+      // Lazada trả nhiều lựa chọn trong một chuỗi nối dấu phẩy (cách app gửi lên).
+      const parts = values.flatMap((v) => (v.id === null && v.name.includes(',') ? v.name.split(',').map((name) => ({ id: null, name })) : [v]));
+      const ids = [
+        ...new Set(parts.map((v) => (v.id !== null ? inverse.get(v.id) : undefined) ?? byLabel.get(normalizePath(v.name))).filter((x): x is string => x !== undefined)),
+      ];
+      if (ids.length) specs.push({ fieldId: field.id, optionIds: field.input === 'select' ? [ids[0]!] : ids });
+      continue;
+    }
+    const text = values[0]!.name.trim();
+    if (!text) continue;
+    if (field.input === 'number') {
+      const n = /-?\d+(?:[.,]\d+)?/.exec(text)?.[0]?.replace(',', '.');
+      if (n !== undefined && Number.isFinite(Number(n))) specs.push({ fieldId: field.id, value: String(Number(n)) });
+    } else if (field.input === 'date') {
+      const iso = isoDate(text);
+      if (iso) specs.push({ fieldId: field.id, value: iso });
+    } else specs.push({ fieldId: field.id, value: text });
+  }
+  return { specs, mappedCodes };
+}

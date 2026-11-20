@@ -5,10 +5,13 @@ import { logger } from '../../../../shared/logger.ts';
 import { CUSTOM_AXIS, isoOfCountryLabel, type PlatformAttribute, remoteSpecAttributes, type RemoteSpecFacts } from '../domain/product-spec.ts';
 import { findListingById, type ListingRow, setListingCategory } from '../repository/listings.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
+import { reverseSpecValues } from '../domain/spec-resolve.ts';
 import { findSpec, insertSpec, recordRemoteFacts } from '../repository/product-specs.ts';
+import { mappingsOf } from '../repository/spec-mappings.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { getAdapter, type MarketplaceAdapter, MarketplaceError, type RemoteProductCategory, type RemoteProductFacts } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
+import type { ProductFacts } from '../../../product/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { specProductOf } from './product-specs.ts';
 import { type SpecFromMatchJob, specFromMatchQueue } from './shop-jobs.ts';
@@ -57,6 +60,11 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
   const rows = (await inCompany(() => Promise.all(job.listingIds.map((id) => findListingById(id))))).filter(
     (r): r is ListingRow => r !== undefined && r.status !== 'delisted' && r.externalProductId !== null,
   );
+  // Chiều ngược (#509): thông số và ánh xạ của công ty trên sàn này, đọc một lần cho cả việc.
+  const specLibrary = await inCompany(async () => {
+    const fields = (await port.specFields?.()) ?? [];
+    return { fields, mappings: fields.length ? await mappingsOf(shop.platform) : [] };
+  });
   const byProduct = new Map<string, ListingRow[]>();
   for (const r of rows) byProduct.set(r.externalProductId!, [...(byProduct.get(r.externalProductId!) ?? []), r]);
 
@@ -111,11 +119,19 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
       const imageFileIds = gap?.images ? await media.images() : [];
       const sizeChartFileId = gap?.sizeChart ? await media.sizeChart() : null;
       await inCompany(async () => {
-        await port.fillProductFacts?.(productId, { ...shared, variants, imageFileIds, sizeChartFileId }, { shopId: shop.id, shopName: shop.shopName });
+        const filled = new Set(((await port.productSpecs?.([productId]))?.get(productId)?.values ?? []).map((v) => v.fieldId));
+        const reverse = reverseSpecValues({ remote: remote.attributes, ...specLibrary, filled });
+        const specFacts = reverse.specs.length ? { specs: reverse.specs } : {};
+        await port.fillProductFacts?.(
+          productId,
+          { ...shared, variants, imageFileIds, sizeChartFileId, ...specFacts } as ProductFacts,
+          { shopId: shop.id, shopName: shop.shopName },
+        );
         if (lacking.has(productId)) {
           const category = await findCategory(shop.platform, externalCategoryId);
           const leaf: PlatformAttribute[] | null = category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, externalCategoryId) : null;
-          const attributes = remoteSpecAttributes(leaf, remote.attributes);
+          // Attribute có ánh xạ đã về thông số catalog (đọc lại qua `resolved`), không chép vào phần ghi đè.
+          const attributes = Object.fromEntries(Object.entries(remoteSpecAttributes(leaf, remote.attributes)).filter(([code]) => !reverse.mappedCodes.has(code)));
           const product = specProductOf(await port.variants(undefined, { productIds: [productId] }));
           const created = await insertSpec({
             companyId: shop.companyId,
