@@ -1,5 +1,5 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
-import { and, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { type CategoryChange, type Marketplace, listings, shops } from './schema.ts';
@@ -316,4 +316,13 @@ export async function clearResolvedCategoryChange(ids: readonly string[]): Promi
     .update(listings)
     .set({ categoryChange: null })
     .where(and(inArray(listings.id, [...ids]), sql`${listings.categoryChange} ->> 'status' in ('failed', 'mismatch')`));
+}
+
+/** Listing `pushing` của một sản phẩm sàn chưa có SKU sàn: các phân loại của lượt đẩy theo cha (#295). */
+export async function pushingRowsOfShopProduct(shopProductId: string): Promise<ListingRow[]> {
+  return getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopProductId, shopProductId), eq(listings.status, 'pushing'), isNull(listings.externalSkuId)))
+    .orderBy(listings.createdAt, listings.id);
 }

@@ -422,6 +422,7 @@ Trỏ vào bảng này:
 - `product.product_attribute_value_images.product_id, attribute_id` (khoá ngoại viết tay)
 - `product.purchase_request_lines.new_parent_product_id` (tham chiếu, không có khoá ngoại)
 - `channel.product_specs.product_id` (tham chiếu, không có khoá ngoại)
+- `channel.shop_products.product_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.purchase_request_lines`
 

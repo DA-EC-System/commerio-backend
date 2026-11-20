@@ -5,18 +5,20 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V132**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V132 · 21/11/2026 · can-nang-kich-thuoc-tran
+## V132 · 21/11/2026 · san-pham-san-du-lieu
 
-`db/migrations/20261120220956_can-nang-kich-thuoc-tran.sql` · sinh từ schema
+`db/migrations/20261120221509_san-pham-san-du-lieu.sql` · viết tay
 
-- `product.product_variants`: đổi check `product_variants_dimensions`
+- viết tay: RLS, hàm, trigger, dữ liệu
+- Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1).
 
-## V131 · 21/11/2026 · can-nang-kich-thuoc-du-lieu
+## V131 · 21/11/2026 · san-pham-san-theo-gian-hang
 
-`db/migrations/20261120220954_can-nang-kich-thuoc-du-lieu.sql` · viết tay
+`db/migrations/20261120221503_san-pham-san-theo-gian-hang.sql` · sinh từ schema
 
-- viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- + bảng `channel.shop_products`
+- `channel.listings`: + cột `shop_product_id`; + khoá ngoại `listings_shop_product_id_shop_products_id_fk`, `listings_shop_product_external_fk`; + index `listings_shop_product_id_index`
+- + 2 enum `channel`: shop_product_origin, shop_product_status
 
 ## V130 · 21/11/2026 · ghep-truc-du-lieu
 

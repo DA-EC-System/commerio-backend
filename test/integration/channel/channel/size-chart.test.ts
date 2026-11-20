@@ -114,7 +114,11 @@ const push = async (variantIds: string[]) => {
 
 async function jobsOf(listingId: string) {
   const { rows } = await testPool().query<{ data: Record<string, unknown> }>(
-    "select data from pgboss.job where name = 'channel.listing_push' and data->>'listingId' = $1",
+    // SKU chưa có sản phẩm trên sàn đi việc theo cha `channel.product_push` (#295).
+    `select j.data from pgboss.job j join channel.listings l on l.id = $1
+      where (j.name = 'channel.listing_push' and j.data->>'listingId' = $1::text)
+         or (j.name = 'channel.product_push' and j.data->>'shopProductId' = l.shop_product_id::text
+             and (j.data->>'pushStartedAt')::timestamptz = l.push_started_at)`,
     [listingId],
   );
   return rows.map((r) => r.data);
@@ -181,10 +185,12 @@ describe('request đẩy: chặn size_chart_missing trước khi xếp việc', 
       ['pushing', null],
     ]);
     expect(await jobsOf(results[0]!.listingId!)).toEqual([
-      { companyId: company.companyId, shopId, listingId: results[0]!.listingId, imageUrls: IMAGES, sizeChartUrl: CHART_URL },
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES, sizeChartUrl: CHART_URL },
     ]);
     // Không có ảnh bảng kích cỡ thì việc không mang `sizeChartUrl` (dạng cũ).
-    expect(await jobsOf(results[1]!.listingId!)).toEqual([{ companyId: company.companyId, shopId, listingId: results[1]!.listingId, imageUrls: IMAGES }]);
+    expect(await jobsOf(results[1]!.listingId!)).toEqual([
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES },
+    ]);
   });
 });
 

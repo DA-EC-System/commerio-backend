@@ -11,19 +11,24 @@ import {
   type CategoryRules,
   type CategorySuggestion,
   type CreatedProduct,
-  existingProduct,
+  existingFromSkus,
   type ImagePurpose,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
+  type NewVariants,
   partResults,
   type PerSkuResult,
   type PriceQuantity,
   plainDescription,
+  type ProductSku,
+  productSkus,
   PROMOTION_LOCKED,
   type RemoteProductCategory,
   type RemoteProductFacts,
   type RemoteSku,
+  type SalesAttribute,
+  skuAxes,
   toGrams,
   toMillimeters,
 } from './common.ts';
@@ -107,6 +112,8 @@ type ListingMethods = Pick<
   | 'uploadImage'
   | 'createProduct'
   | 'updateProduct'
+  | 'addVariants'
+  | 'removeVariants'
   | 'updateContent'
   | 'changeCategory'
   | 'updatePriceQuantity'
@@ -152,6 +159,56 @@ function requireToken(token: string | null): string {
 const kg = (g: number) => String(Math.max(1, Math.round(g)) / 1000);
 const cm = (mm: number) => String(Math.max(1, Math.ceil(mm / 10)));
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** `skus[]` của Create Product và phân loại mới của Partial Edit (#295): trục `sales_attributes` theo thứ tự `salesAttributes`. */
+function newSkuBody(sku: ProductSku, attrs: readonly SalesAttribute[] | undefined, warehouseId: string) {
+  const sales = skuAxes(attrs, sku).map((x) => ({
+    ...(x.attr.code ? { id: x.attr.code } : { name: x.attr.name }),
+    value_name: x.label,
+    ...(x.value?.optionId && { value_id: x.value.optionId }),
+    ...(x.value?.imageUri && { sku_img: { uri: x.value.imageUri } }),
+  }));
+  return {
+    seller_sku: sku.sellerSku,
+    price: { amount: sku.price, currency: CURRENCY },
+    // docv2 ghi `quantity` khoảng [1, 99999]: tồn 0 thì bỏ `quantity`, chỉ gán kho.
+    inventory: [{ warehouse_id: warehouseId, ...(sku.quantity !== undefined && sku.quantity > 0 && { quantity: sku.quantity }) }],
+    ...(sales.length && { sales_attributes: sales }),
+  };
+}
+
+/** SKU đang có trên sàn (Get Product) dựng lại cho Partial Edit: `id`, giá, tồn theo kho, trục `{ id, value_id, sku_img }` (#295). */
+function remoteSkuBody(s: Row) {
+  const price = s.price as Row | undefined;
+  const amount = price?.sale_price ?? price?.amount;
+  const inventory = ((s.inventory ?? []) as Row[]).map((i) => ({ warehouse_id: i.warehouse_id, quantity: i.quantity }));
+  const sales = ((s.sales_attributes ?? []) as Row[]).map((a) => {
+    const img = a.sku_img as Row | undefined;
+    return { id: a.id, value_id: a.value_id, ...(typeof img?.uri === 'string' && { sku_img: { uri: img.uri } }) };
+  });
+  return {
+    id: String(s.id),
+    seller_sku: s.seller_sku,
+    ...(amount !== undefined && { price: { amount: String(amount), currency: typeof price?.currency === 'string' ? price.currency : CURRENCY } }),
+    ...(inventory.length && { inventory }),
+    ...(sales.length && { sales_attributes: sales }),
+  };
+}
+
+/**
+ * Ghép SKU sàn trả về với seller_sku đã gửi theo `seller_sku`. Một SKU mà sàn không ghi seller_sku thì lấy phần tử đầu
+ * (hành vi cũ), trừ khi `strict` (thêm phân loại: phản hồi lẫn SKU cũ, không đoán).
+ */
+function matchSkus(sellerSkus: readonly string[], rows: Row[] | undefined, strict = false): { sellerSku: string; externalSkuId: string }[] {
+  const list = rows ?? [];
+  if (!strict && sellerSkus.length === 1 && list.length >= 1 && list.every((r) => r.seller_sku === undefined)) {
+    return typeof list[0]!.id === 'string' ? [{ sellerSku: sellerSkus[0]!, externalSkuId: list[0]!.id }] : [];
+  }
+  return sellerSkus.flatMap((sellerSku) => {
+    const row = list.find((r) => r.seller_sku === sellerSku && typeof r.id === 'string');
+    return row ? [{ sellerSku, externalSkuId: String(row.id) }] : [];
+  });
+}
 
 export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDeps = {}): ListingMethods {
   const warehouses = new Map<string, { at: number; id: Promise<string> }>();
@@ -421,9 +478,14 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       // Idempotent theo `seller_sku`: lần đẩy trước đã tạo (mất kết quả vì lỗi mạng, tiến trình chết, token hỏng ở bước
       // đọc lại) thì trả sản phẩm đó, không tạo thêm. Search Products có thể trễ vài giây sau khi tạo (gọi thật 07/11/2026),
       // nên còn gửi `idempotency_key` của lượt đẩy (#219): sàn nhận lại khoá đã dùng thì trả `12052996`, không tạo trùng.
-      const existing = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
+      // Nhiều SKU (#295): tra từng seller_sku; đủ và cùng sản phẩm thì trả sản phẩm đó, một phần thì từ chối.
+      const skus = productSkus(p);
+      const sellerSkus = skus.map((x) => x.sellerSku);
+      const found: (RemoteSku | null)[] = [];
+      for (const sku of sellerSkus) found.push(deps.findSku ? await deps.findSku(token, sku) : null);
+      const existing = existingFromSkus(sellerSkus, found);
       if (existing) {
-        return existingProduct(existing);
+        return existing;
       }
       // Kiểm điều kiện đăng trước khi tạo (#305, Documents/21 §18.6.4): gian hàng, rồi thử chính body tạo.
       const [warehouseId, content, , brandId] = await Promise.all([
@@ -435,14 +497,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       const listing = {
         ...content,
         ...(brandId && { brand_id: brandId }),
-        skus: [
-          {
-            seller_sku: p.sellerSku,
-            price: { amount: p.price, currency: CURRENCY },
-            // docv2 ghi `quantity` khoảng [1, 99999]: tồn 0 thì bỏ `quantity`, chỉ gán kho.
-            inventory: [{ warehouse_id: warehouseId, ...(p.quantity !== undefined && p.quantity > 0 && { quantity: p.quantity }) }],
-          },
-        ],
+        skus: skus.map((x) => newSkuBody(x, p.salesAttributes, warehouseId)),
       };
       await assertListingPasses(token, listing);
       const body = { save_mode: 'LISTING', ...(p.idempotencyKey && { idempotency_key: p.idempotencyKey }), ...listing };
@@ -453,17 +508,66 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         if (!(err instanceof MarketplaceError) || err.platformCode !== DUPLICATE_REQUEST) throw err;
         // Lượt này đã tạo sản phẩm: tìm theo `seller_sku`. Search chưa thấy (trễ) thì là lỗi tạm, việc nền thử lại sau;
         // quá 30 phút thì đồng bộ đưa listing về `push_failed` (Documents/21 §18.3).
-        const found = deps.findSku ? await deps.findSku(token, p.sellerSku) : null;
-        if (found) return { externalProductId: found.externalProductId, externalSkuId: found.externalSkuId, live: found.state === 'live' };
+        const again: (RemoteSku | null)[] = [];
+        for (const sku of sellerSkus) again.push(deps.findSku ? await deps.findSku(token, sku) : null);
+        const hits = again.filter((x): x is RemoteSku => x !== null);
+        if (hits.length === sellerSkus.length && new Set(hits.map((x) => x.externalProductId)).size === 1) {
+          const head = hits[0]!;
+          return {
+            externalProductId: head.externalProductId,
+            externalSkuId: head.externalSkuId,
+            live: head.state === 'live',
+            ...(p.skus?.length && { skus: hits.map((x) => ({ sellerSku: x.sellerSku, externalSkuId: x.externalSkuId })) }),
+          };
+        }
         throw new MarketplaceError('unavailable', DUPLICATE_REQUEST, 'Sàn đã nhận lượt tạo sản phẩm này nhưng chưa tìm thấy sản phẩm, thử lại sau');
       }
-      const skuId = data?.skus?.[0]?.id;
+      // Ghép theo seller_sku, không theo vị trí. Một SKU mà sàn không ghi seller_sku thì lấy phần tử đầu như trước.
+      const created = matchSkus(sellerSkus, data?.skus);
+      const skuId = created.find((x) => x.sellerSku === sellerSkus[0])?.externalSkuId;
       if (typeof data?.product_id !== 'string' || typeof skuId !== 'string') throw new MarketplaceError('rejected', 'unexpected_response');
       // Phản hồi không có trạng thái: đọc lại (shop thử SANDBOX duyệt ngay, `ACTIVATE`, gọi thật 07/11/2026). Sản phẩm đã
       // tạo: mọi lỗi của bước đọc lại (kể cả `unauthorized`) coi như chờ duyệt và vẫn trả kết quả, trạng thái thật về qua
       // đồng bộ. Ném ở đây thì bên gọi tưởng chưa tạo, đẩy lại thành sản phẩm trùng.
       const status = await productStatus(token, data.product_id).catch(() => null);
-      return { externalProductId: data.product_id, externalSkuId: skuId, live: status === 'ACTIVATE' };
+      return { externalProductId: data.product_id, externalSkuId: skuId, live: status === 'ACTIVATE', ...(p.skus?.length && { skus: created }) };
+    },
+
+    // Thêm phân loại (#295): Partial Edit 202509 thay cả `skus` (SKU không có trong mảng bị xoá), nên gửi lại mọi SKU cũ kèm
+    // `id` (giá, tồn, thuộc tính đọc từ sàn để không ghi đè) cộng SKU mới (không `id`, giá trị gửi `value_name`; sàn tự cấp
+    // value_id). Đo 21/11/2026: id SKU cũ giữ nguyên; giá trị mới ở trục có ảnh bắt buộc `sku_img` (12052522). Sàn đưa sản
+    // phẩm đi duyệt lại (`AUDITING`), trong lúc đó Get Product vẫn trả bản cũ: `live: false`.
+    async addVariants(token, externalProductId, input: NewVariants) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const [current, warehouseId] = await Promise.all([client.call<Row>('GET', path, { token }), defaultWarehouse(token)]);
+      const sellerSkus = input.skus.map((x) => x.sellerSku);
+      const old = ((current?.skus ?? []) as Row[]).map(remoteSkuBody);
+      const dup = old.filter((x) => sellerSkus.includes(String(x.seller_sku)));
+      if (dup.length) {
+        throw new MarketplaceError('rejected', 'sku_exists_on_platform', `Sản phẩm trên sàn đã có SKU ${dup.map((x) => String(x.seller_sku)).join(', ')}`);
+      }
+      const skus = [...old, ...input.skus.map((x) => newSkuBody(x, input.salesAttributes, warehouseId))];
+      const edit = `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`;
+      const data = await client.call<{ skus?: Row[] }>('POST', edit, { token, body: { skus } });
+      let created = matchSkus(sellerSkus, data?.skus, true);
+      if (created.length < sellerSkus.length) {
+        // Phản hồi thiếu SKU mới: đọc lại sản phẩm (có thể còn là bản live cũ nếu sàn đang duyệt).
+        const again = await client.call<Row>('GET', path, { token });
+        created = matchSkus(sellerSkus, (again?.skus ?? []) as Row[], true);
+      }
+      if (created.length < sellerSkus.length) throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn không trả mã SKU vừa thêm');
+      return { skus: created, live: false };
+    },
+
+    // Gỡ phân loại (#295): Partial Edit gửi lại `skus` không có các SKU đó (không có API xoá riêng một SKU), sàn duyệt lại.
+    // Gỡ hết thì `last_variant`: bên gọi tắt cả sản phẩm.
+    async removeVariants(token, externalProductId, externalSkuIds) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const current = await client.call<Row>('GET', path, { token });
+      const drop = new Set(externalSkuIds);
+      const skus = ((current?.skus ?? []) as Row[]).filter((x) => !drop.has(String(x.id))).map(remoteSkuBody);
+      if (!skus.length) throw new MarketplaceError('rejected', 'last_variant', 'Không gỡ được SKU cuối cùng của sản phẩm trên sàn; tắt cả sản phẩm');
+      await client.call('POST', `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`, { token, body: { skus } });
     },
 
     // Edit Product 202509 ghi đè mọi trường gửi lên, kể cả trường để trống, trừ `price`, `inventory` (bỏ thì giữ); SKU

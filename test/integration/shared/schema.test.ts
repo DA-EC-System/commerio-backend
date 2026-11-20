@@ -101,6 +101,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'raw_orders',
     'remote_skus',
     'shop_category_permissions',
+    'shop_products',
     'shop_reauth_mails',
     'shops',
     'spec_field_mappings',

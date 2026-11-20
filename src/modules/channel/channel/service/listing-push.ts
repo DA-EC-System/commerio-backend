@@ -41,7 +41,7 @@ export const PUSH_ATTEMPTS = 5;
 /** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ của lần gọi tạo trước (`create_attempted_at`, #399). */
 export const CLOCK_SKEW_MS = 5 * 60_000;
 
-const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
+export const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
 
 /**
  * Chạy một việc đẩy. Listing không còn `pushing` (việc chạy lại sau khi đã xong, đồng bộ vừa `fail`) thì bỏ. Kết quả:
@@ -255,7 +255,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
  * Ghi kết quả của lượt đẩy. Listing đã đổi trong lúc gọi sàn (đồng bộ vừa `fail` vì quá 30 phút, gian hàng ngắt): không
  * ném, chỉ ghi mã sàn vừa tạo nếu listing chưa có, để lần đẩy sau sửa đúng sản phẩm đó thay vì tạo thêm.
  */
-async function finish(job: ListingPushJob, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
+export async function finish(job: Pick<ListingPushJob, 'companyId' | 'shopId'>, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
   await withCompany(job.companyId, async () => {
     try {
       const reasonText = reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null);
@@ -297,7 +297,7 @@ async function reactivate(session: Session, row: ListingRow): Promise<ListingAct
   throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${state})`);
 }
 
-async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls: readonly string[]): Promise<string[]> {
+export async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls: readonly string[]): Promise<string[]> {
   const out: string[] = [];
   for (const url of urls) out.push(await adapter.uploadImage(accessToken, url));
   return out;
@@ -318,7 +318,7 @@ export const PERMISSION_TTL_MS = 7 * 24 * 60 * 60_000;
  * đẩy lại đọc cả cây. Cây đọc được mà không leaf nào có quyền thì không có mốc, lần sau đọc lại. Sàn lỗi thì bỏ qua: không có
  * dòng thì không chặn, sàn quyết.
  */
-async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, accessToken: string, externalCategoryId: string): Promise<void> {
+export async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, accessToken: string, externalCategoryId: string): Promise<void> {
   if (!adapter.categoryPermissionsPerShop || !adapter.categoryTree) return;
   const last = await withCompany(shop.companyId, () => lastPermissionCheck(shop.id));
   if (last && last.getTime() > Date.now() - PERMISSION_TTL_MS) return;
@@ -339,7 +339,7 @@ async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, acc
   await withCompany(shop.companyId, () => upsertPermissions(shop.companyId, shop.id, items, new Date()));
 }
 
-async function sizeChartRuleOf(
+export async function sizeChartRuleOf(
   adapter: MarketplaceAdapter,
   accessToken: string,
   map: { externalCategoryId: string; sizeChartRule: SizeChartRule | null },

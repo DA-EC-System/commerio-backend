@@ -412,7 +412,7 @@ describe('runSpecFromMatch: ghép trục theo gợi ý (#448)', () => {
         productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
         defaultBrand: 'No Brand',
         standardSalesAttributes: { color: ['color_family'], size: ['size'] },
-        variantCapabilities: (l) => ({ maxAxes: l.filter((a) => a.kind === 'sales').length, customAxisName: false, salesRequired: [] }),
+        variantCapabilities: (l) => ({ maxAxes: l.filter((a) => a.kind === 'sales').length, customAxisName: false, salesRequired: [], addVariant: true }),
       }),
     );
     const v = variant([
