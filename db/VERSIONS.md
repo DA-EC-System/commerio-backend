@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V125**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V127**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V127 · 21/11/2026 · anh-xa-thong-so-rls
+
+`db/migrations/20261120210754_anh-xa-thong-so-rls.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Ánh xạ thông số sang sàn (#509, Documents/19 §3.3).
+
+## V126 · 21/11/2026 · anh-xa-thong-so-san
+
+`db/migrations/20261120210718_anh-xa-thong-so-san.sql` · sinh từ schema
+
+- + 2 bảng `channel`: spec_field_mappings, spec_option_mappings
 
 ## V125 · 21/11/2026 · thong-so-du-lieu
 
