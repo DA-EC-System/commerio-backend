@@ -27,6 +27,7 @@ import {
   findListingRow,
   type ListingPatch,
   type ListingRow,
+  listingsOfShopProduct,
   remoteProductListings,
 } from '../repository/listings.ts';
 import { syncedPathsOf } from '../repository/platform-categories.ts';
@@ -42,7 +43,7 @@ import { firstPushCalculations } from './repricing.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
-import { findAppShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
+import { findAppShopProduct, findShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
 
@@ -635,7 +636,7 @@ export async function updateListingContent(
   listingId: string,
   version: number,
 ): Promise<ChannelListing> {
-  const { shop, adapter, accessToken, row, productId, v, map, responsible } = await withCompany(actor.companyId, async () => {
+  const { shop, adapter, accessToken, row, productId, v, map, wholeProduct, responsible } = await withCompany(actor.companyId, async () => {
     const session = await shopSession(shopId);
     const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
     if (!row || row.shopId !== session.shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
@@ -659,14 +660,23 @@ export async function updateListingContent(
     const bySpec = specBlock(spec);
     if (bySpec && bySpec.code !== 'category_not_permitted') throw new AppError(409, bySpec.code, bySpec.message);
     const map = { externalCategoryId: spec!.externalCategoryId, attributes: pushAttributes(spec!.attributes, spec!.resolved) };
-    return { ...session, row, productId: row.externalProductId, v, map, responsible: await responsibleOrgOf(session.shop.companyId) };
+    // Sản phẩm sàn app tạo theo cha (#295): sửa cả sản phẩm, tiêu đề là tên cha như lúc đẩy.
+    const sp = row.shopProductId ? await findShopProduct(row.shopProductId) : undefined;
+    const wholeProduct = sp?.origin === 'app' ? sp.id : null;
+    return { ...session, row, productId: row.externalProductId, v, map, wholeProduct, responsible: await responsibleOrgOf(session.shop.companyId) };
   });
   const update = adapter.updateContent;
   if (!update) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ sửa nội dung sản phẩm đang bán');
-  const text = listingText(v);
+  const text = wholeProduct ? { name: v.productName, description: v.description ?? v.productName } : listingText(v);
   const { underReview } = await onMarketplace(async () => {
     try {
-      return await update(accessToken, productId, { externalCategoryId: map.externalCategoryId, ...text, attributes: map.attributes, responsible });
+      return await update(accessToken, productId, {
+        externalCategoryId: map.externalCategoryId,
+        ...text,
+        attributes: map.attributes,
+        responsible,
+        ...(wholeProduct && { wholeProduct: true }),
+      });
     } catch (err) {
       // Sản phẩm sàn nhiều SKU: mã riêng của route (§18.5), không phải lỗi chung của sàn.
       if (err instanceof MarketplaceError && err.platformCode === 'shared_remote_product') {
@@ -683,8 +693,32 @@ export async function updateListingContent(
     const remote = fresh.externalSkuId ? await findRemoteSkuRow(shop.id, fresh.externalSkuId) : undefined;
     let updated = await moveListing(fresh, 'update_content', actor, { ...revision, ...sentBaseline(text.name, remote, new Date()) });
     if (underReview) updated = await moveListing(updated, 'request_review', null);
+    if (wholeProduct) await applyToSiblings(shop.id, wholeProduct, fresh.id, text.name, revision, underReview);
     return toListing(updated, await requesterNames([updated]));
   });
+}
+
+/**
+ * Sửa nội dung cả sản phẩm sàn (#295): các phân loại khác của cùng sản phẩm cũng mang tên mới trên sàn, nên đặt lại mốc tên
+ * (không bật "Tên trên sàn đã đổi"), ghi cùng bản sửa đang duyệt; sàn ngừng bán để duyệt thì listing `live` cũng
+ * `request_review`. Listing đang `pushing` (lượt thêm phân loại) bỏ qua: lượt đẩy tự đặt mốc khi xong. Đổi `version` giữa
+ * chừng thì bỏ dòng đó, lượt đồng bộ sau đọc lại trạng thái sàn.
+ */
+async function applyToSiblings(
+  shopId: string,
+  shopProductId: string,
+  selfId: string,
+  name: string,
+  revision: ListingPatch,
+  underReview: boolean,
+): Promise<void> {
+  const at = new Date();
+  for (const sib of await listingsOfShopProduct(shopProductId)) {
+    if (sib.id === selfId || !sib.externalSkuId || !['live', 'hidden', 'under_review'].includes(sib.status)) continue;
+    const remote = await findRemoteSkuRow(shopId, sib.externalSkuId);
+    const patched = await updateListing(sib.id, { version: sib.version, status: sib.status }, { ...revision, ...sentBaseline(name, remote, at) });
+    if (patched && underReview && patched.status === 'live') await moveListing(patched, 'request_review', null);
+  }
 }
 
 /**

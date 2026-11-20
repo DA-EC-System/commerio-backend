@@ -326,3 +326,12 @@ export async function pushingRowsOfShopProduct(shopProductId: string): Promise<L
     .where(and(eq(listings.shopProductId, shopProductId), eq(listings.status, 'pushing'), isNull(listings.externalSkuId)))
     .orderBy(listings.createdAt, listings.id);
 }
+
+/** Listing chưa gỡ của một sản phẩm sàn (#295): các phân loại cùng sản phẩm, để áp thay đổi của cả sản phẩm. */
+export async function listingsOfShopProduct(shopProductId: string): Promise<ListingRow[]> {
+  return getDb()
+    .select()
+    .from(listings)
+    .where(and(eq(listings.shopProductId, shopProductId), ne(listings.status, 'delisted')))
+    .orderBy(listings.createdAt, listings.id);
+}
