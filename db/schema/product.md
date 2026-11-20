@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V109**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V110**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -361,6 +361,7 @@ Trỏ vào bảng này:
 - `product.product_images.product_id` (khoá ngoại)
 - `product.product_variants.product_id` (khoá ngoại)
 - `product.product_attribute_value_images.product_id, attribute_id` (khoá ngoại viết tay)
+- `product.purchase_request_lines.new_parent_product_id` (tham chiếu, không có khoá ngoại)
 - `channel.product_specs.product_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.purchase_request_lines`
@@ -375,9 +376,14 @@ Cột:
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `request_id` uuid · not null → `product.purchase_requests.id` (khoá ngoại)
 - `variant_id` uuid · null → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
-- `new_product_name` text · null
+- `new_parent_product_id` uuid · null → `product.products.id` (tham chiếu, không có khoá ngoại)
+  Dòng sản phẩm mới thuộc sản phẩm cha có sẵn (catalog `products`).
+- `new_parent_name` text · null
+  Tên sản phẩm cha mới (đã gộp khoảng trắng); các dòng cùng tên (chữ thường) trong đề nghị gộp một cha.
 - `new_group_id` uuid · null → `product.product_groups.id` (tham chiếu, không có khoá ngoại)
-- `new_variant_attrs` jsonb · null
+  Nhóm hàng của cha mới; cha có sẵn thì trống.
+- `new_option_values` jsonb · null
+  Giá trị phân loại theo thứ tự trục, mảng `[{ axis, value }]` (object jsonb tự sắp lại khoá, mất thứ tự trục).
 - `ordered_qty` integer · not null
 - `received_qty` integer · not null · mặc định `0`
 - `defective_qty` integer · not null · mặc định `0`
@@ -394,7 +400,9 @@ Ràng buộc và index:
 
 - unique (`request_id`, `variant_id`) `purchase_request_lines_request_variant_uq`
 - index (`variant_id`) `purchase_request_lines_variant_id_index`
-- check `purchase_request_lines_item`: `variant_id is not null or new_product_name is not null`
+- check `purchase_request_lines_item`: `variant_id is not null or new_parent_product_id is not null or new_parent_name is not null`
+- check `purchase_request_lines_one_parent`: `new_parent_product_id is null or new_parent_name is null`
+- check `purchase_request_lines_new_parent_group`: `new_parent_name is null or new_group_id is not null`
 - check `purchase_request_lines_ordered`: `ordered_qty > 0`
 - check `purchase_request_lines_excluded_reason`: `not excluded or excluded_reason is not null`
 - check `purchase_request_lines_counts`: `received_qty >= 0 and defective_qty >= 0 and closed_short_qty >= 0`
