@@ -640,13 +640,28 @@ export const SetupBody = z
       description: 'Cũ, giữ tới hết đợt 2: SKU sàn nhận biến thể gợi ý. Gửi cùng `decisions` thì 422 `errors.decisions` (21 §18.7.5)',
     }),
     decisions: z
-      .array(z.object({ externalSkuId: z.string().trim().min(1).max(40), variantId: z.uuid().nullable() }).strict())
+      .array(
+        z
+          .object({
+            externalSkuId: z.string().trim().min(1).max(40),
+            variantId: z.uuid().nullable(),
+            create: z.boolean().optional().meta({
+              description:
+                '`true` là tạo SKU kho từ SKU sàn rồi ghép (#500), kèm `variantId: null`; cần `catalog.product.manage` (thiếu: 403) và `canCreate` của dòng (21 §18.7.5)',
+            }),
+          })
+          .strict(),
+      )
       .max(10_000)
       .optional()
       .meta({
         description:
           'Biến thể người dùng chọn cho từng SKU sàn, `null` là bỏ qua; SKU không có trong mảng cũng bỏ qua. Dòng sai: 422 `errors["decisions.<i>"]` (21 §18.7.5)',
       }),
+    createGroupId: z
+      .uuid('Chọn nhóm hàng')
+      .optional()
+      .meta({ description: 'Nhóm hàng cho sản phẩm tạo từ SKU sàn; bắt buộc khi có dòng `create` (#500, 21 §18.7.5)' }),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
@@ -675,6 +690,11 @@ export const ShopSetupPreview = z
           status: z.enum(['live', 'review', 'rejected', 'hold', 'inactive']).meta({
             description: 'Trạng thái sản phẩm trên sàn đã chuẩn hoá: `live` đang bán, `review` chờ sàn duyệt, `rejected` sàn từ chối, `hold` sàn khoá, `inactive` người bán tắt hoặc nháp (21 §18.7.5)',
           }),
+          canCreate: z.boolean().meta({ description: 'Tạo được SKU kho từ SKU sàn này (#500, 21 §18.7.5)' }),
+          cannotCreateReason: z.enum(['no_seller_sku', 'sku_too_long', 'sku_taken', 'no_permission']).nullable().meta({
+            description:
+              'Lý do không tạo được, có khi và chỉ khi `canCreate = false`: sàn chưa có SKU người bán, SKU quá 50 ký tự, SKU đã là SKU kho, thiếu `catalog.product.manage`',
+          }),
         })
         .strict(),
     ),
@@ -695,6 +715,7 @@ export const ShopSetupResult = z
   .object({
     shop: Shop,
     matched: z.number().int(),
+    created: z.number().int().meta({ description: 'Số SKU kho vừa tạo từ SKU sàn (#500); đã tính trong `matched`' }),
     stocktakeNumber: z.string().nullable().meta({ description: 'Số phiếu kiểm kê đầu kỳ vừa lập khi `stocktake`; null với `push`' }),
   })
   .strict()

@@ -5,10 +5,13 @@ import type { Decimal } from 'decimal.js';
 import {
   availableOf,
   countedOf,
+  type CreateFromPlatformResult,
+  createProductsFromPlatform,
   fillProductFacts,
   productMediaGaps,
   type FactsSource,
   getVariants,
+  type PlatformProductInput,
   type ProductFacts,
   productImageUrls,
   productSizeChartUrls,
@@ -64,6 +67,16 @@ export interface ProductPort {
    * test) thì ghép không điền gì.
    */
   fillProductFacts?(productId: string, facts: ProductFacts, source: FactsSource): Promise<{ filled: string[] }>;
+  /**
+   * Tạo sản phẩm, biến thể từ SKU sàn (#500, Documents/21 §18.7.5) trong giao dịch của bên gọi. Thiếu (bản giả của test) thì
+   * thiết lập trả 422 cho dòng `create`.
+   */
+  createFromPlatform?(
+    caller: { companyId: string; accountId: string },
+    groupId: string,
+    products: readonly PlatformProductInput[],
+    source: { shopId: string; shopName: string },
+  ): Promise<CreateFromPlatformResult>;
   /** Sản phẩm thiếu ảnh, thiếu bảng size (#498); thiếu (bản giả của test) thì ghép không tải ảnh sàn. */
   productMediaGaps?(productIds: readonly string[]): Promise<Map<string, { images: boolean; sizeChart: boolean }>>;
 }
@@ -105,6 +118,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       productImageUrls,
       productSizeChartUrls,
       fillProductFacts,
+      createFromPlatform: createProductsFromPlatform,
       productMediaGaps,
     }
   );

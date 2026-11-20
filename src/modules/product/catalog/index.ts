@@ -38,4 +38,11 @@ export type { ArchiveBlockerSource, CatalogContext } from './service/usage.ts';
 export { productImageUrls, productSizeChartUrls } from './service/product-images.ts';
 // Hệ thống tự khôi phục SKU lưu trữ khi có hàng vào; inventory gọi trong `applyChange` (#204).
 export { restoreArchivedBySystem } from './service/business-status.ts';
+// Tạo SKU kho từ SKU sàn lúc thiết lập gian hàng (#500); channel gọi qua `ProductPort` trong giao dịch hoàn tất.
+export {
+  createProductsFromPlatform,
+  type CreateFromPlatformResult,
+  PLATFORM_SKU_MAX,
+  type PlatformProductInput,
+} from './service/platform-products.ts';
 export { fillProductFacts, productMediaGaps, type FactsSource, type ProductFacts, type VariantFacts } from './service/product-facts.ts';
