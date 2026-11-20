@@ -241,7 +241,7 @@ const ELIGIBILITY = `GET /return_refund/202602/orders/${ORDER}/aftersale_eligibi
 const eligible = (lines: string[], reasons: string[]) => ({ request_type: 'CANCEL', eligible: true, order_line_items_ids: lines, available_reason_names: reasons });
 
 describe('cancelReasons, cancelOrder', () => {
-  it('cancelReasons: hỏi người bán + CANCEL; lý do chung của các món, bỏ trùng, kèm tên tiếng Việt', async () => {
+  it('US-DH-13 AC1: cancelReasons hỏi người bán + CANCEL; lý do chung của các món, bỏ trùng, kèm tên tiếng Việt', async () => {
     const { adapter, calls } = fakeSan({
       [ELIGIBILITY]: () =>
         ok({
@@ -256,7 +256,7 @@ describe('cancelReasons, cancelOrder', () => {
     expect(calls[0]!.query.get('request_types')).toBe('CANCEL');
   });
 
-  it('cancelReasons: sàn chặn món được hỏi → rejected kèm mã, câu của sàn (gọi thật 07/11/2026)', async () => {
+  it('US-DH-13 AC4: cancelReasons sàn chặn món được hỏi → rejected kèm mã, câu của sàn (gọi thật 07/11/2026)', async () => {
     const { adapter } = fakeSan({
       [ELIGIBILITY]: () =>
         ok({
@@ -283,7 +283,7 @@ describe('cancelReasons, cancelOrder', () => {
     await expect(adapter.cancelReasons!(TOKEN, ORDER, [])).rejects.toMatchObject({ kind: 'rejected', platformCode: 'not_cancellable' });
   });
 
-  it('cancelOrder: huỷ cả đơn bằng Cancel Order 202602 (order_id, cancel_reason)', async () => {
+  it('D1-09 US-DH-13 AC2: cancelOrder huỷ cả đơn bằng Cancel Order 202602 (order_id, cancel_reason)', async () => {
     const { adapter, calls } = fakeSan({
       [ELIGIBILITY]: () => ok({ sku_eligibility: [{ line_item_eligibility: [eligible(['L1', 'L2'], ['seller_cancel_reason_out_of_stock'])] }] }),
       'POST /return_refund/202602/cancellations': () => ok({ cancel_id: '9', cancel_status: 'CANCELLATION_REQUEST_SUCCESS' }),
@@ -390,10 +390,10 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
   const records = `GET /return_refund/202309/returns/${RET}/records`;
 
   it.each([
-    ['accept', 'return', { decision: 'APPROVE_RETURN' }],
-    ['refund', 'return', { decision: 'APPROVE_RETURN', buyer_keep_item: true }],
-    ['refund', 'refund', { decision: 'APPROVE_REFUND' }],
-  ] as const)('%s yêu cầu loại %s → approve %j, có idempotency_key', async (decision, kind, body) => {
+    ['D3-01', 'accept', 'return', { decision: 'APPROVE_RETURN' }],
+    ['D3-03', 'refund', 'return', { decision: 'APPROVE_RETURN', buyer_keep_item: true }],
+    ['D3-03', 'refund', 'refund', { decision: 'APPROVE_REFUND' }],
+  ] as const)('%s: %s yêu cầu loại %s → approve %j, có idempotency_key', async (_ca, decision, kind, body) => {
     const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
     await adapter.decideReturn!(TOKEN, RET, ['L1'], decision, { kind });
     expect(calls).toHaveLength(1);
@@ -411,7 +411,7 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
   it.each([
     ['return', 'REJECT_RETURN', 'Người bán từ chối yêu cầu trả'],
     ['refund', 'REJECT_REFUND', 'Người bán không đồng ý hoàn tiền'],
-  ] as const)('từ chối yêu cầu loại %s → reject %s kèm lý do, câu mặc định khi trống', async (kind, decision, fallback) => {
+  ] as const)('D3-02: từ chối yêu cầu loại %s → reject %s kèm lý do, câu mặc định khi trống', async (kind, decision, fallback) => {
     const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
     await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1' });
     expect(calls[0]!.path).toBe(`/return_refund/202606/returns/${RET}/reject`);
@@ -421,7 +421,7 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
     expect((calls[1]!.body as { comment: string }).comment).toBe('Hàng còn nguyên tem');
   });
 
-  it('từ chối kèm ảnh minh chứng: images[].image_id là uri đã tải lên sàn (#476)', async () => {
+  it('D3-02: từ chối kèm ảnh minh chứng: images[].image_id là uri đã tải lên sàn (#476)', async () => {
     const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
     const images = [
       { name: 'tem.jpg', url: 'tos-alisg/tem' },
@@ -468,7 +468,7 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
     expect(adapter.confirmReturnReceived).toBeUndefined();
   });
 
-  it('approveReturnRefund → approve APPROVE_RECEIVED_PACKAGE, có idempotency_key', async () => {
+  it('D3-08: approveReturnRefund → approve APPROVE_RECEIVED_PACKAGE, có idempotency_key', async () => {
     const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
     await adapter.approveReturnRefund!(TOKEN, RET);
     expect(calls[0]!.body).toEqual({ decision: 'APPROVE_RECEIVED_PACKAGE' });

@@ -45,4 +45,4 @@ export {
   PLATFORM_SKU_MAX,
   type PlatformProductInput,
 } from './service/platform-products.ts';
-export { fillProductFacts, type FactsSource, type ProductFacts, type VariantFacts } from './service/product-facts.ts';
+export { fillProductFacts, productMediaGaps, type FactsSource, type ProductFacts, type VariantFacts } from './service/product-facts.ts';

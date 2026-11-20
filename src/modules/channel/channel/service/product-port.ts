@@ -8,6 +8,7 @@ import {
   type CreateFromPlatformResult,
   createProductsFromPlatform,
   fillProductFacts,
+  productMediaGaps,
   type FactsSource,
   getVariants,
   type PlatformProductInput,
@@ -76,6 +77,8 @@ export interface ProductPort {
     products: readonly PlatformProductInput[],
     source: { shopId: string; shopName: string },
   ): Promise<CreateFromPlatformResult>;
+  /** Sản phẩm thiếu ảnh, thiếu bảng size (#498); thiếu (bản giả của test) thì ghép không tải ảnh sàn. */
+  productMediaGaps?(productIds: readonly string[]): Promise<Map<string, { images: boolean; sizeChart: boolean }>>;
 }
 
 // Trường #110 sẽ thêm; đọc tuỳ chọn để code không đổi khi Khang merge.
@@ -116,6 +119,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       productSizeChartUrls,
       fillProductFacts,
       createFromPlatform: createProductsFromPlatform,
+      productMediaGaps,
     }
   );
 }
