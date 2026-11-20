@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V128**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V129**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -202,7 +202,7 @@ Ràng buộc và index:
 - check `listings_reject_reason`: `status <> 'rejected' or reject_reason is not null`
 - check `listings_push_attempts`: `push_attempts >= 0`
 - check `listings_prices`: `listed_price >= 0 and manual_price >= 0`
-- trigger `listings_attach_shop_product`: `BEFORE INSERT OR UPDATE OF external_product_id, shop_product_id → channel.listings_attach_shop_product()`, ở `db/migrations/20261120214915_san-pham-san-du-lieu.sql`
+- trigger `listings_attach_shop_product`: `BEFORE INSERT OR UPDATE OF external_product_id, shop_product_id → channel.listings_attach_shop_product()`, ở `db/migrations/20261120221250_san-pham-san-du-lieu.sql`
 
 Trỏ vào bảng này:
 

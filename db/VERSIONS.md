@@ -3,29 +3,35 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V128**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V129**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V128 · 21/11/2026 · san-pham-san-du-lieu
+## V129 · 21/11/2026 · san-pham-san-du-lieu
 
-`db/migrations/20261120214915_san-pham-san-du-lieu.sql` · viết tay
+`db/migrations/20261120221250_san-pham-san-du-lieu.sql` · viết tay
 
 - viết tay: RLS, hàm, trigger, dữ liệu
 - Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1).
 
+## V128 · 21/11/2026 · san-pham-san-theo-gian-hang
+
+`db/migrations/20261120221244_san-pham-san-theo-gian-hang.sql` · sinh từ schema
+
+- + bảng `channel.shop_products`
+- `channel.listings`: + cột `shop_product_id`; + khoá ngoại `listings_shop_product_id_shop_products_id_fk`, `listings_shop_product_external_fk`; + index `listings_shop_product_id_index`
+- + 2 enum `channel`: shop_product_origin, shop_product_status
+
 ## V127 · 21/11/2026 · anh-xa-thong-so-rls
 
-`db/migrations/20261120214912_anh-xa-thong-so-rls.sql` · viết tay
+`db/migrations/20261120214154_anh-xa-thong-so-rls.sql` · viết tay
 
 - viết tay: RLS, dữ liệu
 - Ánh xạ thông số sang sàn (#509, Documents/19 §3.3).
 
-## V126 · 21/11/2026 · anh-xa-thong-so-san-san-pham-san-theo-gian-hang-san-pham-san-rang-buoc
+## V126 · 21/11/2026 · anh-xa-thong-so-san
 
-`db/migrations/20261120214909_anh-xa-thong-so-san-san-pham-san-theo-gian-hang-san-pham-san-rang-buoc.sql` · sinh từ schema
+`db/migrations/20261120214152_anh-xa-thong-so-san.sql` · sinh từ schema
 
-- + 3 bảng `channel`: shop_products, spec_field_mappings, spec_option_mappings
-- `channel.listings`: + cột `shop_product_id`; + khoá ngoại `listings_shop_product_id_shop_products_id_fk`, `listings_shop_product_external_fk`; + index `listings_shop_product_id_index`
-- + 2 enum `channel`: shop_product_origin, shop_product_status
+- + 2 bảng `channel`: spec_field_mappings, spec_option_mappings
 
 ## V125 · 21/11/2026 · thong-so-du-lieu
 
