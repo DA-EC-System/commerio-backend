@@ -279,6 +279,11 @@ export interface ContentUpdate {
   description: string;
   attributes: Record<string, string | string[]>;
   responsible?: Responsible;
+  /**
+   * Sản phẩm sàn app tạo theo cha (#295, `shop_products.origin = 'app'`): mọi SKU là biến thể của cùng một sản phẩm Commerio,
+   * nên sửa tên, mô tả, thuộc tính áp cho cả sản phẩm. Không có thì adapter chặn sản phẩm nhiều SKU (`shared_remote_product`).
+   */
+  wholeProduct?: boolean;
 }
 
 /**
