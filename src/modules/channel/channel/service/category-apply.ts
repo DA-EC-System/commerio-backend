@@ -166,7 +166,7 @@ export async function applyCategory(
 
 /**
  * Chạy một việc đổi category. Listing không còn `queued` (đã xong, đã gỡ) thì bỏ. Kết quả: sàn nhận và đọc lại khớp thì
- * `category_change` về null kèm bản sửa `auditing` (như `update_content`; sàn ngừng bán để duyệt thì listing `live` chuyển
+ * `category_change` về null kèm bản sửa `auditing` khi sàn có bản sửa chờ duyệt (như `update_content`; sàn ngừng bán để duyệt thì listing `live` chuyển
  * `request_review`), đọc lại lệch thì `mismatch` kèm câu liệt kê; lỗi tạm thì tăng `attempts`, ghi mã, câu và ném để pg-boss
  * thử lại, tới lần thứ `CATEGORY_APPLY_ATTEMPTS` hoặc lần cuối của pg-boss (`attempt.lastAttempt`) thì `failed` (lỗi không dự
  * kiến cũng vậy: `internal`; không để listing kẹt `queued`); sàn từ chối thì `failed` ngay. Không đổi trạng thái listing hay
@@ -286,8 +286,10 @@ export async function runCategoryApply(
         }
       : null;
     // Sàn vẫn bán bản cũ: bản sửa đang duyệt (`revision_*`); sàn ngừng bán để duyệt: listing `live` chuyển `request_review`
-    // (như `update_content`, #293), listing ẩn giữ trạng thái kèm bản sửa.
-    const done = await finishCategoryChange(ids, change, true);
+    // (như `update_content`, #293), listing ẩn giữ trạng thái kèm bản sửa. Sàn không có bản sửa chờ duyệt (không khai
+    // `contentRevision`, như Lazada: đổi xong là áp ngay) thì không ghi `auditing`, kẻo không lượt đồng bộ nào gỡ và
+    // nhóm bị chặn đổi lại mãi (`category_change_in_progress`).
+    const done = await finishCategoryChange(ids, change, Boolean(adapter.contentRevision));
     if (!underReview) return;
     for (const row of done.filter((r) => r.status === 'live')) {
       try {

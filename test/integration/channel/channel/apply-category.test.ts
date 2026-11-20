@@ -57,7 +57,10 @@ let onChange: (productId: string, input: CategoryChangeInput) => Promise<Categor
 const changeCategory = vi.fn((_t: string, productId: string, input: CategoryChangeInput) => onChange(productId, input));
 const uploadImage = vi.fn(async (_t: string, url: string) => `tos/${encodeURIComponent(url)}`);
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: `Shop ${accessToken.slice(4, 9)}`, region: 'VN' });
-registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop', getSeller: seller, changeCategory, uploadImage, getSkus: async () => [] }));
+// Sàn có bản sửa chờ duyệt (`contentRevision`, như TikTok) thì lượt đổi ghi bản sửa `auditing` để lượt đồng bộ theo dõi
+const contentRevision = async () => ({ state: 'auditing' as const });
+const tiktokLike = fakeAdapter({ name: 'TikTok Shop', getSeller: seller, changeCategory, uploadImage, contentRevision, getSkus: async () => [] });
+registerAdapter('tiktok', tiktokLike);
 // Adapter giả tên `lazada` không khai `changeCategory` để thử nhánh 422 (adapter Lazada thật đã có, test ở unit `lazada-category-change`).
 registerAdapter('lazada', fakeAdapter({ name: 'Lazada', getSeller: seller, getSkus: async () => [] }));
 afterAll(async () => {
@@ -366,6 +369,17 @@ describe('việc nền channel.category_apply (#467)', () => {
     // Chạy lại (pg-boss giao lại) thì bỏ: listing không còn `queued`.
     await runCategoryApply(port, job);
     expect(changeCategory).toHaveBeenCalledTimes(1);
+  });
+
+  it('sàn không có bản sửa chờ duyệt (không khai `contentRevision`, như Lazada) → không ghi `auditing`, lượt đổi sau không bị chặn', async () => {
+    registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop', getSeller: seller, changeCategory, uploadImage, getSkus: async () => [] }));
+    try {
+      const { id, job } = await queued();
+      await runCategoryApply(port, job);
+      expect(await row(id)).toMatchObject({ status: 'live', category_change: null, revision_status: null });
+    } finally {
+      registerAdapter('tiktok', tiktokLike);
+    }
   });
 
   it('sàn ngừng bán để duyệt (`underReview`) → listing `live` chuyển `under_review`', async () => {
