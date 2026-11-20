@@ -62,6 +62,19 @@ export async function replaceFieldMapping(companyId: string, platform: Marketpla
   if (options.length) await db.insert(specOptionMappings).values(options);
 }
 
+/** Ánh xạ mặc định khi tạo công ty; dòng trùng (mã đã có) bỏ qua để chạy lại được. */
+export async function seedFieldMappings(
+  companyId: string,
+  platform: Marketplace,
+  rows: readonly { fieldId: string; attributeCode: string; priority: number }[],
+): Promise<void> {
+  if (!rows.length) return;
+  await getDb()
+    .insert(specFieldMappings)
+    .values(rows.map((r) => ({ ...r, companyId, platform })))
+    .onConflictDoNothing();
+}
+
 /** Dọn khi catalog xoá thông số (`catalog.spec_field_deleted`). */
 export async function deleteFieldMappings(fieldId: string): Promise<void> {
   await getDb().delete(specFieldMappings).where(eq(specFieldMappings.fieldId, fieldId));

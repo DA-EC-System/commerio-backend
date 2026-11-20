@@ -127,6 +127,15 @@ function toListingVariant(v: Extended): ListingVariant {
 
 let override: ProductPort | null = null;
 
+/**
+ * Cổng thông số của catalog (#509, Documents/21 §11.3): `getProductSpecs`, `getSpecFields`. Không cần `ctx`, nên seed ánh xạ
+ * (gọi từ core lúc tạo công ty) dùng được. Bản giả của test (`override`) thắng.
+ */
+export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specFields'> {
+  if (override) return override;
+  return {};
+}
+
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
@@ -137,6 +146,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       productImageUrls,
       productSizeChartUrls,
       fillProductFacts,
+      ...catalogSpecPort(),
       createFromPlatform: createProductsFromPlatform,
       productMediaGaps,
     }

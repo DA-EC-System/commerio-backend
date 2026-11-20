@@ -79,6 +79,8 @@ export const channelModule: ModuleDefinition = {
 };
 
 export { getShops, type ShopRef } from './service/shops-lookup.ts';
+// #509: ánh xạ thông số mặc định cho công ty mới; core gọi qua `src/wiring.ts` sau seed của catalog (Documents/21 §11.3).
+export { seedSpecMappings } from './service/spec-mappings.ts';
 // Hạn trả của gian hàng cho sales tính hạn trả, tự hoàn tất (#236), tiêm qua `ctx.returnPoliciesOf` ở `src/wiring.ts`.
 export { returnPoliciesOf, type ShopReturnPolicy } from './service/shops-lookup.ts';
 // Cho #133 (sàn báo gỡ app): `loseShopAuth` gọi ngoài giao dịch, đặt `needs_reauth` và dừng lịch việc nền của gian hàng.
