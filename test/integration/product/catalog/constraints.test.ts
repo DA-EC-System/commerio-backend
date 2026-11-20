@@ -184,3 +184,62 @@ describe('ràng buộc ảnh phân loại, xuất xứ, thương hiệu (#340, A
     await expect(set(null, null)).resolves.toBeDefined();
   });
 });
+
+// Thông số sản phẩm (#510, Documents/19 §3.2): ràng buộc DB của trục chuẩn và giá trị thông số.
+describe('ràng buộc thông số sản phẩm (#510)', () => {
+  async function field(companyId: string, code: string, input = 'select') {
+    const res = await db().query<{ id: string }>(
+      'insert into product.spec_fields (company_id, code, name, input) values ($1, $2, $2, $3) returning id',
+      [companyId, code, input],
+    );
+    return res.rows[0]!.id;
+  }
+  async function option(companyId: string, fieldId: string, value: string) {
+    const res = await db().query<{ id: string }>(
+      'insert into product.spec_field_options (company_id, field_id, value, position) values ($1, $2, $3, 0) returning id',
+      [companyId, fieldId, value],
+    );
+    return res.rows[0]!.id;
+  }
+  const insertSpecValue = (companyId: string, productId: string, fieldId: string, optionId: string | null, text: string | null) =>
+    db().query('insert into product.product_spec_values (company_id, product_id, field_id, option_id, value_text) values ($1, $2, $3, $4, $5)', [
+      companyId,
+      productId,
+      fieldId,
+      optionId,
+      text,
+    ]);
+
+  it('nhóm đặt trục 2 khi trục 1 trống bị CHECK chặn; hai trục trùng thuộc tính bị chặn', async () => {
+    const company = randomUUID();
+    const group = await insertGroup(company, 'Nhóm trục');
+    const a = await insertAttribute(company, 'Màu trục');
+    await expect(db().query('update product.product_groups set axis2_attribute_id = $2 where id = $1', [group, a])).rejects.toThrow(
+      /product_groups_axis_order/,
+    );
+    await expect(
+      db().query('update product.product_groups set axis1_attribute_id = $2, axis2_attribute_id = $2 where id = $1', [group, a]),
+    ).rejects.toThrow(/product_groups_axis_distinct/);
+  });
+
+  it('giá trị thông số có cả option_id lẫn value_text (hoặc không có gì) bị CHECK chặn', async () => {
+    const companyId = randomUUID();
+    const { productId } = await createVariant(companyId);
+    const f = await field(companyId, 'rb_one_of');
+    const o = await option(companyId, f, 'A');
+    await expect(insertSpecValue(companyId, productId, f, o, 'chữ')).rejects.toThrow(/product_spec_values_one_of/);
+    await expect(insertSpecValue(companyId, productId, f, null, null)).rejects.toThrow(/product_spec_values_one_of/);
+    await expect(insertSpecValue(companyId, productId, f, o, null)).resolves.toBeDefined();
+  });
+
+  it('lựa chọn của thông số khác bị khoá ngoại ghép chặn; xoá lựa chọn đang dùng bị chặn', async () => {
+    const companyId = randomUUID();
+    const { productId } = await createVariant(companyId);
+    const f1 = await field(companyId, 'rb_fk_1');
+    const f2 = await field(companyId, 'rb_fk_2');
+    const o2 = await option(companyId, f2, 'B');
+    await expect(insertSpecValue(companyId, productId, f1, o2, null)).rejects.toThrow(/psv_option_fk/);
+    await insertSpecValue(companyId, productId, f2, o2, null);
+    await expect(db().query('delete from product.spec_field_options where id = $1', [o2])).rejects.toThrow(/psv_option_fk/);
+  });
+});
