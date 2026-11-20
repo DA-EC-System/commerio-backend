@@ -171,6 +171,11 @@ export interface CategoryChangeInput {
 export interface CategoryChangeResult {
   underReview: boolean;
   mismatch: string[];
+  /**
+   * Category đọc lại trên sàn ngay sau khi đổi, khi sàn áp ngay (Lazada). Việc nền ghi vào `listings.external_category_id`;
+   * không có (TikTok: bản mới qua duyệt mới áp) thì lượt đồng bộ category ghi sau.
+   */
+  externalCategoryId?: string;
 }
 
 /** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */

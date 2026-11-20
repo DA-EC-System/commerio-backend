@@ -169,8 +169,9 @@ export async function applyCategory(
  * `category_change` về null kèm bản sửa `auditing` khi sàn có bản sửa chờ duyệt (như `update_content`; sàn ngừng bán để duyệt thì listing `live` chuyển
  * `request_review`), đọc lại lệch thì `mismatch` kèm câu liệt kê; lỗi tạm thì tăng `attempts`, ghi mã, câu và ném để pg-boss
  * thử lại, tới lần thứ `CATEGORY_APPLY_ATTEMPTS` hoặc lần cuối của pg-boss (`attempt.lastAttempt`) thì `failed` (lỗi không dự
- * kiến cũng vậy: `internal`; không để listing kẹt `queued`); sàn từ chối thì `failed` ngay. Không đổi trạng thái listing hay
- * `external_category_id` (lượt đồng bộ category ghi khi sàn duyệt xong). Gian hàng mất uỷ quyền thì việc được giữ (`HoldJob`).
+ * kiến cũng vậy: `internal`; không để listing kẹt `queued`); sàn từ chối thì `failed` ngay. Không đổi trạng thái listing;
+ * `external_category_id` ghi ngay khi sàn trả category đọc lại (áp ngay, Lazada), không thì lượt đồng bộ category ghi khi sàn
+ * duyệt xong (TikTok). Gian hàng mất uỷ quyền thì việc được giữ (`HoldJob`).
  */
 export async function runCategoryApply(
   port: ProductPort,
@@ -289,7 +290,9 @@ export async function runCategoryApply(
     // (như `update_content`, #293), listing ẩn giữ trạng thái kèm bản sửa. Sàn không có bản sửa chờ duyệt (không khai
     // `contentRevision`, như Lazada: đổi xong là áp ngay) thì không ghi `auditing`, kẻo không lượt đồng bộ nào gỡ và
     // nhóm bị chặn đổi lại mãi (`category_change_in_progress`).
-    const done = await finishCategoryChange(ids, change, Boolean(adapter.contentRevision));
+    // Sàn trả category đọc lại (áp ngay, như Lazada) thì ghi luôn vào listing, không chờ lượt đồng bộ: chưa ghi thì lượt
+    // đổi về category cũ bị 409 `category_in_sync` nhầm, lượt đồng bộ sau lại đánh spec `changed`.
+    const done = await finishCategoryChange(ids, change, Boolean(adapter.contentRevision), result.externalCategoryId ?? null);
     if (!underReview) return;
     for (const row of done.filter((r) => r.status === 'live')) {
       try {

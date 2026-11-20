@@ -252,13 +252,19 @@ export async function updateQueuedCategoryChange(ids: readonly string[], change:
  * `failed`/`mismatch`. `revision`: sàn đã nhận bản sửa nên ghi bản sửa đang duyệt (`revision_status = 'auditing'`) như
  * `update_content`, chỉ ở trạng thái còn giữ bản sửa (CHECK `listings_revision`). Trả các dòng đã ghi.
  */
-export async function finishCategoryChange(ids: readonly string[], change: CategoryChange | null, revision: boolean): Promise<ListingRow[]> {
+export async function finishCategoryChange(
+  ids: readonly string[],
+  change: CategoryChange | null,
+  revision: boolean,
+  externalCategoryId: string | null = null,
+): Promise<ListingRow[]> {
   if (!ids.length) return [];
   const keeps = sql`${listings.status} in ('live', 'hidden', 'platform_hold')`;
   return getDb()
     .update(listings)
     .set({
       categoryChange: change,
+      ...(externalCategoryId && { externalCategoryId }),
       ...(revision && {
         revisionStatus: sql`case when ${keeps} then 'auditing' else ${listings.revisionStatus} end::channel.listing_revision_status`,
         revisionRejectReason: sql`case when ${keeps} then null else ${listings.revisionRejectReason} end`,

@@ -91,6 +91,18 @@ describe('adapter Lazada changeCategory', () => {
     expect(product.Attributes).toEqual({ material: 'Da,Vải', delivery_option_standard: 'Yes' });
   });
 
+  it('đọc lại thấy category mới thì trả `externalCategoryId` để ghi vào listing (Lazada áp ngay)', async () => {
+    const skus = [sku('A')];
+    const fn = fakeFetch(item(skus, { primary_category: 11920 }), item(skus), OK, item(skus, { primary_category: 10100278 }));
+    expect(await run(fn)).toEqual({ underReview: false, mismatch: [], externalCategoryId: '10100278' });
+  });
+
+  it('đọc lại vẫn thấy category khác category gửi lên thì báo lệch', async () => {
+    const skus = [sku('A')];
+    const fn = fakeFetch(item(skus, { primary_category: 11920 }), item(skus), OK, item(skus, { primary_category: 11920 }));
+    expect(await run(fn)).toEqual({ underReview: false, mismatch: ['vẫn ở category 11920'], externalCategoryId: '11920' });
+  });
+
   it('SKU đã tắt bị bật lại thì tắt lại từng SKU', async () => {
     const was = [sku('A', { Status: 'inactive' }), sku('B')];
     const now = [sku('A'), sku('B')];
