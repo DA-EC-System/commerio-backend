@@ -1,3 +1,4 @@
+import { normalizeTaxCode, TAX_CODE_FORMAT_MESSAGE } from '../domain/tax-code.ts';
 import { z } from 'zod';
 import { vnDayParam } from '../../../../shared/http/vn-day.ts';
 import { OPTIONAL_MODULES } from '../domain/modules.ts';
@@ -38,10 +39,18 @@ const search = z.string().trim().max(100).optional();
 
 export const CompanyListQuery = z.object({ ...paging, search, status: z.enum(['active', 'locked']).optional() });
 
+/** Loại dòng của nhật ký nền tảng (Documents/21 V18; `company.tax_code_released` thêm 20/11/2026, #459). */
+export const PLATFORM_AUDIT_ACTIONS = [
+  'company.registered',
+  'company.locked',
+  'company.unlocked',
+  'company.tax_code_released',
+] as const;
+
 export const PlatformAuditQuery = z.object({
   ...paging,
   search,
-  action: z.enum(['company.registered', 'company.locked', 'company.unlocked']).optional(),
+  action: z.enum(PLATFORM_AUDIT_ACTIONS).optional(),
   from: vnDayParam('Từ ngày'),
   to: vnDayParam('Đến ngày', true),
 });
@@ -50,6 +59,11 @@ export const PlatformAuditQuery = z.object({
 export const CompanyParams = z.object({ id: z.string() });
 
 const version = z.coerce.number('Thiếu version').int().min(1);
+export const ReleaseTaxCodeBody = z.object({
+  reason: z.string('Cần nhập lý do gỡ').trim().min(1, 'Cần nhập lý do gỡ').max(500, 'Tối đa 500 ký tự'),
+  version,
+});
+
 export const LockCompanyBody = z.object({
   reason: z.string('Cần nhập lý do khoá').trim().min(1, 'Cần nhập lý do khoá').max(500, 'Tối đa 500 ký tự'),
   version,
@@ -60,7 +74,7 @@ export const Company = z
   .object({
     id: z.uuid(),
     name: z.string(),
-    taxCode: z.string(),
+    taxCode: z.string().nullable().meta({ description: 'null: chưa có mã số thuế (bị gỡ hoặc mã cũ không hợp lệ)' }),
     ceoName: z.string(),
     ceoEmail: z.string(),
     optionalModules: z.array(z.enum(OPTIONAL_MODULES)),
@@ -79,7 +93,7 @@ export const CompanyPage = z
 export const PlatformAuditLog = z
   .object({
     id: z.string(),
-    action: z.enum(['company.registered', 'company.locked', 'company.unlocked']),
+    action: z.enum(PLATFORM_AUDIT_ACTIONS),
     targetCompanyId: z.uuid(),
     targetCompanyName: z.string(),
     actorEmail: z.string(),
@@ -136,6 +150,17 @@ export const DeadJobPage = z
 // Hồ sơ công ty (#292, Documents/21 mục 4). `null` = theo tên, địa chỉ đăng ký của công ty.
 const profileText = z.string().trim().min(1, 'Không để trống, xoá thì gửi null').max(500, 'Tối đa 500 ký tự').nullable();
 export const UpdateCompanyProfileBody = z.object({
+  // Chỉ nhập được khi công ty đang không có mã số thuế (#459); dạng chuẩn như lúc đăng ký
+  taxCode: z
+    .string()
+    .max(40, TAX_CODE_FORMAT_MESSAGE)
+    .transform((value, c) => {
+      const normalized = normalizeTaxCode(value);
+      if (normalized) return normalized;
+      c.addIssue({ code: 'custom', message: TAX_CODE_FORMAT_MESSAGE });
+      return z.NEVER;
+    })
+    .optional(),
   address: profileText.optional(),
   responsibleName: profileText.optional(),
   responsibleAddress: profileText.optional(),
@@ -146,7 +171,7 @@ export const CompanyProfile = z
   .object({
     id: z.uuid(),
     name: z.string(),
-    taxCode: z.string(),
+    taxCode: z.string().nullable().meta({ description: 'null: chưa có mã số thuế' }),
     address: z.string().nullable().meta({ description: 'Địa chỉ đăng ký' }),
     responsibleName: z.string().nullable().meta({ description: 'Tên tổ chức chịu trách nhiệm hàng hoá; null = tên công ty' }),
     responsibleAddress: z.string().nullable().meta({ description: 'Địa chỉ tổ chức chịu trách nhiệm; null = `address`' }),

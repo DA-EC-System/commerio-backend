@@ -17,14 +17,12 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
   id: randomUUID(),
   productId,
   productName: 'Áo thun',
   sku,
-  categoryId,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
   attributes: [],
@@ -41,7 +39,7 @@ const ok = variant('CMR-OK');
 const noPrice = variant('CMR-NOPRICE');
 const noDims = variant('CMR-NODIMS', { weightG: null });
 // Spec sàn theo sản phẩm cha (#400): sản phẩm khác, danh mục chưa ghép.
-const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID(), productId: randomUUID() });
+const unmapped = variant('CMR-UNMAPPED', { productId: randomUUID() });
 const paused = variant('CMR-PAUSED', { businessStatus: 'paused' });
 const archived = variant('CMR-ARCHIVED', { archived: true });
 const all = [ok, noPrice, noDims, unmapped, paused, archived];
@@ -148,7 +146,7 @@ async function runJob(listingId: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -181,8 +179,8 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
   // Spec chỉ đến từ migration (bản chép `version = 0`), `PUT` spec hay ghép SKU. Ca này không chứng minh việc bỏ chép lười
   // (BE3; bảng ghép cũ đã xoá nên typecheck và schema bảo đảm), chỉ kiểm mã chặn khi thiếu spec và khi spec chép bị đánh changed.
   it('#400: sản phẩm chưa có spec → category_unmapped, không tạo spec; bản chép version 0 bị đồng bộ đánh changed → spec_incomplete', async () => {
-    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: randomUUID() });
-    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: first.categoryId, weightG: null });
+    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
+    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, weightG: null });
     all.push(first, second);
     legacy.add(first.productId);
     catalogImages.set(first.productId, CATALOG);
@@ -418,7 +416,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect((await push(Array.from({ length: 21 }, () => randomUUID()))).status).toBe(422);
     const sale = await addMember(company.companyId, 'sale');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`), sale.token).send({ variantIds: [ok.id] })).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`), other.ceo.token)).status).toBe(404);
     // Biến thể của công ty khác: cổng không thấy (RLS) nên not_found.
     expect((await results([randomUUID()]))[0]).toMatchObject({ code: 'not_found', status: null });

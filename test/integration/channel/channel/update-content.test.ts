@@ -17,7 +17,6 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
 const variant = (): ListingVariant => {
   const v: ListingVariant = {
@@ -25,7 +24,6 @@ const variant = (): ListingVariant => {
     productId: randomUUID(),
     productName: 'Áo thun',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
     attributes: [],
@@ -81,7 +79,7 @@ const edit = (listingId: string, version: number, token?: string) =>
   auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${listingId}/update-content`), token).send({ version });
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -220,7 +218,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect(stale.body.current).toMatchObject({ id, status: 'live' });
     const sale = await addMember(company.companyId, 'sale');
     expect((await edit(id, version, sale.token)).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const res = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${id}/update-content`), other.ceo.token).send({ version });
     expect(res.status).toBe(404);
     expect(updateContent).not.toHaveBeenCalled();

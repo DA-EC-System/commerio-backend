@@ -24,7 +24,7 @@ export async function createSupplier(token: string, overrides: Record<string, un
 
 export interface LineInput {
   variantId?: string;
-  newProduct?: { name: string; categoryId: string };
+  newProduct?: { parentId: string | null; parentName: string | null; groupId: string | null; optionValues: Record<string, string> };
   quantity: number;
   unitCost: number;
 }

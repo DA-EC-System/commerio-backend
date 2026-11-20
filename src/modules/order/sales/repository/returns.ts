@@ -15,6 +15,8 @@ export interface ReturnFilter {
   source?: 'marketplace' | 'manual' | undefined;
   orderId?: string | undefined;
   search?: string | undefined;
+  /** `respond_by`: hạn trả lời gần nhất trước, không có hạn xếp sau (#392). */
+  sort?: 'created' | 'respond_by' | undefined;
 }
 
 function where(f: ReturnFilter, withStatus = true): SQL | undefined {
@@ -40,7 +42,11 @@ export async function findReturnPage(f: ReturnFilter, page: number, pageSize: nu
       .innerJoin(orders, eq(orders.id, returnRequests.orderId))
       .leftJoin(customers, eq(customers.id, orders.customerId))
       .where(where(f))
-      .orderBy(desc(returnRequests.createdAt), desc(returnRequests.id))
+      .orderBy(
+        ...(f.sort === 'respond_by' ? [sql`${returnRequests.respondBy} asc nulls last`] : []),
+        desc(returnRequests.createdAt),
+        desc(returnRequests.id),
+      )
       .limit(pageSize)
       .offset((page - 1) * pageSize),
     db
@@ -118,6 +124,16 @@ export async function findReturnsWithNote(shopId: string, statuses: readonly Ret
         sql`${returnRequests.attentionNote} like ${pattern}`,
       ),
     )
+    .orderBy(returnRequests.updatedAt, returnRequests.id)
+    .limit(limit);
+}
+
+/** Yêu cầu đã đóng của gian hàng chờ báo sàn đồng ý hoàn tiền (`refund_approval = pending`, #392), cũ trước. */
+export async function findReturnsAwaitingRefundApproval(shopId: string, limit: number): Promise<ReturnRow[]> {
+  return getDb()
+    .select()
+    .from(returnRequests)
+    .where(and(eq(returnRequests.shopId, shopId), eq(returnRequests.refundApproval, 'pending')))
     .orderBy(returnRequests.updatedAt, returnRequests.id)
     .limit(limit);
 }

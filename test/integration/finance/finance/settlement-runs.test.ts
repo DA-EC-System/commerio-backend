@@ -36,6 +36,7 @@ const post = (token: string, path: string, body: object) => request(app).post(`$
 function fakeSource(txns: () => PlatformTxn[], payouts: () => PlatformPayout[] = () => []): FinanceContext {
   return {
     authorize: () => (_req, _res, next) => next(),
+    member: (_req, _res, next) => next(),
     settlementSource: { transactions: async () => txns(), payouts: async () => payouts(), shops: async () => [] },
   };
 }

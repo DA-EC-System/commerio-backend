@@ -7,6 +7,7 @@
 // Gọi thật 12/11/2026 trên shop thử (chỉ đọc): lọc `ReverseOrderLineModifiedTimeRangeStart` (ms) chạy, 26 yêu cầu sửa trong
 // 60 ngày; lịch sử chỉ có `time` (ms), `operator`, `picture`; lý do có `reason_id`, `muti_language_text`, `text`.
 // Chưa gọi thao tác ghi trên sàn thật (không chắc đơn nào của shop thử dùng chung là của nhóm).
+import { Decimal } from 'decimal.js';
 import { logger } from '../../../../../shared/logger.ts';
 import { type MarketplaceAdapter, MarketplaceError, type RemoteAftersaleLine, type RemoteReturn, type RemoteReturnStatus } from './common.ts';
 
@@ -24,9 +25,9 @@ const RANK: readonly RemoteReturnStatus[] = ['requested', 'awaiting_return', 're
 const delivered = (ofc: string | null) => Boolean(ofc && ofc.includes('DELIVERED') && !ofc.includes('CANCEL'));
 
 /**
- * Trạng thái app của một dòng đơn ngược (`reverse_status`, `ofc_status`). Đoán theo tên và các cặp gặp ở shop thử
- * (REQUEST_CANCEL, REFUND_REJECT, REFUND_SUCCESS kèm RETURN_CANCELED, REFUND_PENDING kèm INFO_ST_RETURN_RTM_DELIVERED);
- * tài liệu không liệt kê giá trị. Giá trị lạ → null (app chỉ cập nhật thông tin sàn).
+ * Trạng thái app của một dòng đơn ngược (`reverse_status`, `ofc_status`). Tài liệu Lazada (GetReverseOrdersForSeller,
+ * GetReverseOrderDetail, đọc 20/11/2026) không liệt kê giá trị của hai trường này: ánh xạ dựa trên các cặp gặp thật ở shop
+ * thử (bảng ở commerio-backend#436, ca test 18/11/2026). Giá trị lạ → null; `toLazadaReturn` ghi cảnh báo.
  */
 export function lazadaReturnLineStatus(
   reverseStatus: string,
@@ -37,9 +38,20 @@ export function lazadaReturnLineStatus(
   switch (reverseStatus) {
     case 'REQUEST_INITIATE':
       return s('requested');
+    // SELLER_REJECT_RETURN: người bán từ chối trên Seller Center (#436).
     case 'REQUEST_REJECT':
     case 'REFUND_REJECT':
+    case 'SELLER_REJECT_RETURN':
       return s('rejected');
+    // Người bán đã đồng ý trả (trong app hay trên Seller Center), chờ khách gửi hàng (#436).
+    case 'SELLER_AGREE_RETURN':
+      return s('awaiting_return');
+    // Khách đã gửi hàng: về tới người bán vẫn chờ kho quét (#436). Chiều về bị huỷ (`RETURN_CANCELED`): chưa quan sát được
+    // ai huỷ nên chưa ánh xạ (null, cần người xem Seller Center); khi thấy dữ liệu thật mà người mua huỷ thì sang
+    // `closed`/`buyer_cancelled`.
+    case 'BUYER_RETURN_ITEM':
+      if (ofcStatus?.includes('CANCEL')) return null;
+      return s(delivered(ofcStatus) ? 'received' : 'awaiting_return');
     case 'REQUEST_CANCEL':
     case 'CANCEL_SUCCESS':
       return { status: 'closed', closeResult: 'buyer_cancelled' };
@@ -54,10 +66,23 @@ export function lazadaReturnLineStatus(
   }
 }
 
+/** Hạn người bán phải trả lời: `sla` (ms) sớm nhất của các dòng, chỉ khi yêu cầu còn chờ người bán (#436). */
+function respondByOf(lines: readonly Row[], status: RemoteReturnStatus | null): Date | null {
+  if (status !== 'requested') return null;
+  const slas = lines.map((l) => Number(l.sla)).filter((n) => Number.isFinite(n) && n > 0);
+  return slas.length ? new Date(Math.min(...slas)) : null;
+}
+
 const unique = (values: readonly (string | null)[]) => [...new Set(values.filter((v): v is string => Boolean(v)))];
 
+/**
+ * Bộ đọc số tiền Lazada (`lazadaAmount` ở `lazada.ts`, #349), truyền vào vì `lazada.ts` import file này (không vòng).
+ * Ném `MarketplaceError` khi không đọc được; vắng thì `"0"`.
+ */
+export type LazadaAmountReader = (raw: unknown, where: string) => string;
+
 /** Một đơn ngược của `/reverse/getreverseordersforseller` → `RemoteReturn`. Loại `CANCEL` là huỷ đơn, bên gọi bỏ. */
-export function toLazadaReturn(item: Row): RemoteReturn {
+export function toLazadaReturn(item: Row, amount: LazadaAmountReader): RemoteReturn {
   const lines = ((item.reverse_order_lines ?? []) as Row[]).filter((l) => l && typeof l === 'object');
   const kind: RemoteReturn['kind'] = str(item.request_type) === 'ONLY_REFUND' ? 'refund' : 'return';
   const statuses = lines.map((l) => lazadaReturnLineStatus(str(l.reverse_status), opt(l.ofc_status), kind));
@@ -65,7 +90,22 @@ export function toLazadaReturn(item: Row): RemoteReturn {
   const pick = known.sort((a, b) => RANK.indexOf(a.status) - RANK.indexOf(b.status))[0] ?? null;
   // Có món còn trạng thái lạ thì không đổi trạng thái app (chưa hiểu hết).
   const status = statuses.includes(null) ? null : pick;
-  const refunds = lines.map((l) => (l.refund_amount === undefined || l.refund_amount === null ? null : Number(l.refund_amount)));
+  if (statuses.includes(null)) {
+    const unknown = unique(lines.filter((_, i) => statuses[i] === null).map((l) => opt(l.reverse_status)));
+    logger.warn({ reverseOrderId: str(item.reverse_order_id), reverseStatus: unknown }, 'Lazada: reverse_status chưa có trong ánh xạ (#436)');
+  }
+  // `refund_amount` có thể là số JSON hay chuỗi có dấu phẩy nghìn: đọc như tiền quyết toán. Món không đọc được thì tổng
+  // null (app giữ số tính từ dòng) và trả chuỗi gốc để yêu cầu bật Cần xử lý, không ghi 0.
+  const unreadable: string[] = [];
+  const refunds = lines.map((l) => {
+    if (l.refund_amount === undefined || l.refund_amount === null || l.refund_amount === '') return null;
+    try {
+      return amount(l.refund_amount, `refund_amount đơn ngược ${str(item.reverse_order_id)}`);
+    } catch {
+      unreadable.push(String(l.refund_amount));
+      return null;
+    }
+  });
   const times = (key: string) => lines.map((l) => Number(l[key]) || 0);
   const returnToType = str(item.return_to_type);
   return {
@@ -76,14 +116,15 @@ export function toLazadaReturn(item: Row): RemoteReturn {
     initiator: 'buyer',
     reasonCode: opt(lines[0]?.reason_code),
     reason: opt(lines[0]?.reason_text),
-    refundAmount: refunds.every((r) => r === null || Number.isNaN(r)) ? null : String(refunds.reduce<number>((s, r) => s + (r && !Number.isNaN(r) ? r : 0), 0)),
+    refundAmount: unreadable.length || refunds.every((r) => r === null) ? null : refunds.reduce((s, r) => s.plus(r ?? 0), new Decimal(0)).toString(),
+    refundAmountUnreadable: unreadable.length ? unique(unreadable).join(', ') : null,
     lines: lines.map(
-      (l): RemoteAftersaleLine => ({
+      (l, i): RemoteAftersaleLine => ({
         externalLineId: str(l.trade_order_line_id),
         externalReturnLineId: opt(l.reverse_order_line_id),
         externalSkuId: opt(l.platform_sku_id),
         sellerSku: opt(l.seller_sku_id),
-        refundAmount: opt(l.refund_amount),
+        refundAmount: refunds[i] ?? null,
         quantity: 1,
       }),
     ),
@@ -94,15 +135,18 @@ export function toLazadaReturn(item: Row): RemoteReturn {
     closeResult: status?.closeResult ?? null,
     disputeInProgress: lines.some((l) => l.is_dispute === true),
     returnTrackingCode: unique(lines.map((l) => opt(l.tracking_number)))[0] ?? null,
-    respondBy: null,
+    respondBy: respondByOf(lines, status?.status ?? null),
     returnTo: returnToType === 'RTW' ? 'warehouse' : returnToType === 'RTM' ? 'merchant' : item.is_rtm === true ? 'merchant' : item.is_rtm === false ? 'warehouse' : null,
   };
 }
 
 const idList = (ids: readonly string[]) => `[${ids.join(',')}]`;
 
+type Image = { name: string; url: string };
+
 export function lazadaReturnMethods(
   call: Call,
+  amount: LazadaAmountReader,
 ): Pick<Required<MarketplaceAdapter>, 'listReturns' | 'returnReasons' | 'decideReturn' | 'confirmReturnReceived' | 'returnHistory'> {
   /** Mã dòng đơn ngược đầu của yêu cầu (lý do, lịch sử theo dòng). */
   async function firstLineId(accessToken: string, reverseOrderId: string): Promise<string> {
@@ -127,9 +171,17 @@ export function lazadaReturnMethods(
   /**
    * Yêu cầu chỉ hoàn tiền (ReverseOrderOnlyRefundDecide, `/order/reverse/onlyrefund/seller/decide`, đọc 12/11/2026):
    * `action` agreeRefund hoặc startDispute; `reverse_order_item_ids` mỗi lần một dòng; startDispute bắt buộc `comment` và
-   * `image_info_list` (E0109, E0110). App chưa lưu ảnh (#212) nên chưa gửi ảnh: sàn sẽ từ chối tới khi có.
+   * `image_info_list` (E0109, E0110), mẫu `[{"file_url","file_name"}]` (đọc 20/11/2026). Ảnh là URL trên Lazada
+   * (`/image/migrate`, #437).
    */
-  async function decideOnlyRefund(accessToken: string, reverseOrderId: string, lineIds: readonly string[], decision: 'accept' | 'reject' | 'refund', comment?: string) {
+  async function decideOnlyRefund(
+    accessToken: string,
+    reverseOrderId: string,
+    lineIds: readonly string[],
+    decision: 'accept' | 'reject' | 'refund',
+    comment?: string,
+    images: readonly Image[] = [],
+  ) {
     if (decision === 'accept') throw new MarketplaceError('rejected', 'refund_only_request', 'Yêu cầu chỉ hoàn tiền không có bước đồng ý trả hàng');
     if (!lineIds.length) throw new MarketplaceError('rejected', 'return_lines_missing', 'Yêu cầu trả chưa có mã dòng của sàn');
     const action = decision === 'refund' ? 'agreeRefund' : 'startDispute';
@@ -139,7 +191,10 @@ export function lazadaReturnMethods(
         action,
         reverse_order_id: reverseOrderId,
         reverse_order_item_ids: idList([lineId]),
-        ...(action === 'startDispute' && { comment: comment || 'Người bán không đồng ý hoàn tiền' }),
+        ...(action === 'startDispute' && {
+          comment: comment || 'Người bán không đồng ý hoàn tiền',
+          ...(images.length && { image_info_list: JSON.stringify(images.map((i) => ({ file_url: i.url, file_name: i.name }))) }),
+        }),
       });
     }
   }
@@ -158,7 +213,7 @@ export function lazadaReturnMethods(
       const empty = items.filter((i) => !Array.isArray(i.reverse_order_lines) || !i.reverse_order_lines.length);
       if (empty.length) logger.warn({ reverseOrderIds: empty.map((i) => str(i.reverse_order_id)) }, 'Lazada trả đơn ngược không có dòng, bỏ qua');
       return {
-        items: items.filter((i) => str(i.request_type) !== 'CANCEL' && !empty.includes(i)).map(toLazadaReturn),
+        items: items.filter((i) => str(i.request_type) !== 'CANCEL' && !empty.includes(i)).map((i) => toLazadaReturn(i, amount)),
         nextCursor: items.length < PAGE_SIZE ? null : String(page + 1),
       };
     },
@@ -173,12 +228,17 @@ export function lazadaReturnMethods(
       }));
     },
     async decideReturn(accessToken, externalReturnId, externalLineIds, decision, opts) {
-      if (opts.kind === 'refund') return decideOnlyRefund(accessToken, externalReturnId, externalLineIds, decision, opts.comment);
+      if (opts.kind === 'refund') return decideOnlyRefund(accessToken, externalReturnId, externalLineIds, decision, opts.comment, opts.images);
       if (decision === 'accept') return update(accessToken, 'agreeReturn', externalReturnId, externalLineIds);
       if (decision === 'refund') return update(accessToken, 'instantRefund', externalReturnId, externalLineIds);
       if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'Từ chối cần lý do của sàn');
       // E0109 bắt buộc `comment`; E0111 không từ chối nhiều dòng một lần.
-      const extra = { reason_id: opts.reasonId, comment: opts.comment || 'Người bán từ chối yêu cầu trả' };
+      // `image_info` mẫu `[{"name","url"}]` (đọc 20/11/2026), URL trên Lazada (`/image/migrate`, #437).
+      const extra = {
+        reason_id: opts.reasonId,
+        comment: opts.comment || 'Người bán từ chối yêu cầu trả',
+        ...(opts.images?.length && { image_info: JSON.stringify(opts.images.map((i) => ({ name: i.name, url: i.url }))) }),
+      };
       for (const lineId of externalLineIds) await update(accessToken, 'refuseReturn', externalReturnId, [lineId], extra);
     },
     async confirmReturnReceived(accessToken, externalReturnId, externalLineIds) {

@@ -1,6 +1,6 @@
 // Gian hàng (#103). Chạy trong `withCompany` của bên gọi, trừ `findLiveCompanyOf`.
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import { getDb } from '../../../../shared/db/client.ts';
+import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { ShopStatus } from '../domain/shop.ts';
 import { listings, priceCalculations, rawOrders, remoteSkus, shops } from './schema.ts';
 
@@ -142,6 +142,17 @@ export async function countListingsOnPlatform(shopIds: readonly string[]): Promi
   return new Map(rows.map((r) => [r.shopId, r.n]));
 }
 
+/** Số listing của gian hàng có lượt đổi category `failed` hoặc `mismatch` (`Shop.categoryChangeIssues`, #467). */
+export async function countCategoryChangeIssues(shopIds: readonly string[]): Promise<Map<string, number>> {
+  if (shopIds.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ shopId: listings.shopId, n: count() })
+    .from(listings)
+    .where(and(inArray(listings.shopId, [...shopIds]), sql`${listings.categoryChange} ->> 'status' in ('failed', 'mismatch')`))
+    .groupBy(listings.shopId);
+  return new Map(rows.map((r) => [r.shopId, r.n]));
+}
+
 /**
  * Gian hàng khác của công ty (RLS lọc công ty): đã có gian hàng xong thiết lập chưa (có mốc, không chờ kiểm kê; kể cả đã
  * ngắt), và phiếu kiểm kê đầu kỳ đang chờ nếu có (#198 A1, A12).
@@ -241,10 +252,18 @@ export async function recordOpenOrderPullError(id: string, message: string): Pro
     .where(and(eq(shops.id, id), sql`${shops.openOrdersPulledAt} is null`));
 }
 
-/** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
-export async function hasChannelData(): Promise<boolean> {
-  const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
-  return !!row;
+/** Gian hàng chưa ngắt của công ty đang chọn (cũ trước) và số trong đó đã hoàn tất thiết lập (#461 onboarding). */
+export async function shopSetupState(): Promise<{ connected: { id: string; status: ShopStatus }[]; setUp: number }> {
+  const companyId = requireCompanyId('shopSetupState');
+  const rows = await getDb()
+    .select({ id: shops.id, status: shops.status, orderCutoffAt: shops.orderCutoffAt })
+    .from(shops)
+    .where(and(eq(shops.companyId, companyId), ne(shops.status, 'disconnected')))
+    .orderBy(asc(shops.createdAt), asc(shops.id));
+  return {
+    connected: rows.map(({ id, status }) => ({ id, status })),
+    setUp: rows.filter((r) => r.orderCutoffAt).length,
+  };
 }
 
 /**

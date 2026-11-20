@@ -1,6 +1,6 @@
 # src/modules/
 
-6 module lớn gồm 18 module con (`Documents/17` mục 2). Mỗi module lớn một schema PostgreSQL cùng tên (`Documents/19` D1); module con có đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
+6 module lớn gồm 19 module con (`Documents/17` mục 2). Mỗi module lớn một schema PostgreSQL cùng tên (`Documents/19` D1); module con có đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
 
 ## Cấu trúc
 
@@ -45,6 +45,7 @@ Import giữa module (dependency-cruiser kiểm):
 | | `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
 | `insight` | `report` | Bảng dựng từ sự kiện | Dựng lại bằng cách tính lại từ dữ liệu gốc, không phát lại Kafka (Documents/21 D7) |
 | | `assistant` | Tài liệu nội bộ, vector | pgvector |
+| | `onboarding` | Không có bảng | Checklist thiết lập ban đầu `GET /onboarding` (#461), đọc chéo core, product, channel qua cổng công khai |
 
 ## Lớp module lớn: ai được gọi ai
 

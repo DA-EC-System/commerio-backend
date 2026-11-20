@@ -98,14 +98,12 @@ export const orders = salesSchema.table(
     // Cờ lưu. Cờ suy ra được (chưa ghép SKU, sắp trễ hạn, có yêu cầu trả, lệch COD) không lưu (Documents/19 D4).
     needsAttention: boolean('needs_attention').notNull().default(false),
     attentionNote: text('attention_note'),
+    // Khách xin huỷ, chờ Sale trả lời. Chỉ bật khi đơn còn mở (CHECK `orders_cancel_requested_open`).
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     // Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của
-    // API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`).
+    // API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ
+    // (`cancellingSql` ở `repository/orders.ts`). Chỉ bật khi đơn còn mở (CHECK `orders_cancel_pending_open`).
     cancelPending: boolean('cancel_pending').notNull().default(false),
-    // Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image (job migrate
-    // chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột bằng nhau, code
-    // mới không đọc, không ghi. PR sau bỏ trigger và cột.
-    legacyCancelling: boolean('cancelling').notNull().default(false),
     platformCancelled: boolean('platform_cancelled').notNull().default(false),
     shopDisconnected: boolean('shop_disconnected').notNull().default(false),
     shippingAddress: jsonb('shipping_address'),
@@ -132,6 +130,8 @@ export const orders = salesSchema.table(
     index().on(t.customerId),
     index().on(t.conversationId),
     index().on(t.status),
+    check('orders_cancel_pending_open', sql`not ${t.cancelPending} or ${t.status} in ('unpaid', 'processing')`),
+    check('orders_cancel_requested_open', sql`not ${t.cancelRequested} or ${t.status} in ('unpaid', 'processing')`),
     check('orders_outcome', sql`(${t.status} = 'completed') = (${t.outcome} is not null)`),
     check('orders_cod', sql`${t.source} = 'marketplace' or not ${t.isCod}`),
     check('orders_amounts', sql`${t.subtotal} >= 0 and ${t.total} >= 0 and ${t.shippingFee} >= 0`),
@@ -254,6 +254,11 @@ export const returnRequests = salesSchema.table(
     disputeInProgress: boolean('dispute_in_progress').notNull().default(false),
     returnTo: text('return_to'),
     externalUpdatedAt: timestamp('external_updated_at', { withTimezone: true }),
+    // Hạn người bán phải trả lời của sàn (TikTok `seller_next_action_response`), chỉ để hiện (#392).
+    respondBy: timestamp('respond_by', { withTimezone: true }),
+    // Báo sàn đồng ý hoàn tiền sau kiểm hàng hoàn (#392, sàn có `approveReturnRefund`): `pending` chờ channel gọi sàn,
+    // `done` sàn đã qua bước đó, `withheld` phiếu có khiếu nại nên không báo. Null: sàn không có bước này.
+    refundApproval: text('refund_approval'),
     rejectReasonId: text('reject_reason_id'),
     rejectReasonLabel: text('reject_reason_label'),
     receivedAt: timestamp('received_at', { withTimezone: true }),
@@ -271,12 +276,17 @@ export const returnRequests = salesSchema.table(
     check('return_requests_refunded', sql`${t.refunded} = (${t.refundedAt} is not null)`),
     index().on(t.orderId),
     index().on(t.status),
+    index('return_requests_refund_approval_pending_idx').on(t.shopId).where(sql`${t.refundApproval} = 'pending'`),
     check('return_requests_closed', sql`(${t.status} = 'closed') = (${t.closeResult} is not null)`),
     check(
       'return_requests_marketplace_ref',
       sql`${t.source} <> 'marketplace' or (${t.shopId} is not null and ${t.externalReturnId} is not null)`,
     ),
     check('return_requests_refund', sql`${t.refundAmount} >= 0`),
+    check(
+      'return_requests_refund_approval',
+      sql`${t.refundApproval} is null or (${t.refundApproval} in ('pending', 'done', 'withheld') and ${t.status} = 'closed' and ${t.source} = 'marketplace')`,
+    ),
   ],
 );
 

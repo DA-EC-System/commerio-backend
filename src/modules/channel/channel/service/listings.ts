@@ -28,9 +28,10 @@ import {
   type ListingPatch,
   type ListingRow,
 } from '../repository/listings.ts';
+import { syncedPathsOf } from '../repository/platform-categories.ts';
 import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
-import type { SyncError } from '../repository/schema.ts';
-import type { ShopRow } from '../repository/shops.ts';
+import type { CategoryChange, SyncError } from '../repository/schema.ts';
+import { listShopRows, type ShopRow } from '../repository/shops.ts';
 import { insertListing, updateListing } from './listing-writes.ts';
 import type { ProductPort } from './product-port.ts';
 import { insertConfirmed, type NewPriceCalculation } from '../repository/price-calculations.ts';
@@ -76,8 +77,25 @@ export interface ChannelListing {
   pendingRevision: { status: 'auditing' | 'failed'; rejectReason: string | null; at: Date } | null;
   /** Ai tạo nội dung sản phẩm trên sàn (#399). */
   contentSource: ListingRow['contentSource'];
+  /** Lượt đổi category trên sàn (`apply-category`, #467). */
+  categoryChange: CategoryChangeView | null;
   version: number;
 }
+
+export interface CategoryChangeView {
+  status: CategoryChange['status'];
+  toCategoryId: string;
+  toCategoryPath: string | null;
+  code: string | null;
+  message: string | null;
+  attempts: number;
+  at: Date;
+}
+
+const toCategoryChange = (c: CategoryChange | null): CategoryChangeView | null =>
+  c
+    ? { status: c.status, toCategoryId: c.toCategoryId, toCategoryPath: c.toCategoryPath, code: c.code, message: c.message, attempts: c.attempts, at: new Date(c.at) }
+    : null;
 
 export interface ListingRowView extends ListingPrice {
   variantId: string;
@@ -91,6 +109,12 @@ export interface ListingRowView extends ListingPrice {
   listing: ChannelListing | null;
   /** Tên trên sàn khác tên lúc ghép (#396, 21 §18.3); tính từ bản sao SKU sàn lúc đọc. */
   remoteTitleChanged: RemoteTitleChanged | null;
+  /** Category của listing trên sàn (#467), null khi chưa có listing hay chưa biết category. */
+  externalCategoryId: string | null;
+  /** Đường dẫn của `externalCategoryId` của listing trong cây đã đồng bộ (#467); null khi chưa có category hay chưa có trong cây. */
+  externalCategoryPath: string | null;
+  /** Bằng `listing.categoryChange` (21 §18.5 ghi trên cả `ListingRow`), null khi chưa có listing. */
+  categoryChange: CategoryChangeView | null;
 }
 
 /**
@@ -151,6 +175,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     pendingRevision:
       r.revisionStatus && r.revisionAt ? { status: r.revisionStatus, rejectReason: r.revisionRejectReason, at: r.revisionAt } : null,
     contentSource: r.contentSource,
+    categoryChange: toCategoryChange(r.categoryChange),
     version: r.version,
   };
 }
@@ -168,12 +193,47 @@ function shownPriceSync(l: ListingRow, price: number | null): ListingRow['priceS
 /** Mọi biến thể đang bán kèm giá chuẩn và listing trên gian hàng này. Gọi trong `withCompany`. */
 export async function listListings(port: ProductPort, shopId: string): Promise<{ items: ListingRowView[] }> {
   const shop = await ownShop(shopId);
-  const catalog = await port.variants();
+  return { items: await shopListingRows(port, shop, await port.variants()) };
+}
+
+/** Dòng listing của trang sản phẩm: thêm gian hàng của dòng (21 §18.5 `ProductListingRow`, #467). */
+export interface ProductListingRowView extends ListingRowView {
+  shopId: string;
+  shopName: string;
+  platform: string;
+}
+
+/**
+ * Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5 `GET /channel/products/:productId/listings`, #467): mỗi
+ * biến thể chưa lưu trữ × mỗi gian hàng, tính như route theo gian hàng nhưng chỉ cho biến thể của sản phẩm này. Sản phẩm
+ * không có hoặc của công ty khác (không biến thể nào, kể cả lưu trữ): 404. Không gọi sàn. Gọi trong `withCompany`.
+ */
+export async function listProductListings(port: ProductPort, productId: string): Promise<{ items: ProductListingRowView[] }> {
+  const catalog = await port.variants(undefined, { productIds: [productId] });
+  if (!catalog.length) throw new AppError(404, 'not_found', 'Không tìm thấy sản phẩm');
+  const items: ProductListingRowView[] = [];
+  // Cùng một kết nối của giao dịch: đọc tuần tự từng gian hàng.
+  for (const shop of (await listShopRows()).filter((s) => s.status !== 'disconnected')) {
+    const rows = await shopListingRows(port, shop, catalog);
+    items.push(...rows.map((r) => ({ ...r, shopId: shop.id, shopName: shop.shopName, platform: shop.platform })));
+  }
+  return { items };
+}
+
+type CatalogVariant = Awaited<ReturnType<ProductPort['variants']>>[number];
+
+/**
+ * Dòng listing của các biến thể chưa lưu trữ trong `catalog` trên một gian hàng. `catalog` gồm cả biến thể lưu trữ của các
+ * sản phẩm đang xét (kiểm spec theo mọi biến thể, như request đẩy và `PUT` spec).
+ */
+async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readonly CatalogVariant[]): Promise<ListingRowView[]> {
   const variants = catalog.filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
   // Chỉ ảnh đầu (ảnh đại diện), một lần cho mọi sản phẩm.
   const thumbnails = await port.productImageUrls([...new Set(variants.map((v) => v.productId))], 1);
-  const rows = await currentListingRows(shop.id);
+  // Chỉ listing của các biến thể đang xét: trang sản phẩm không tính giá, tên, category cho cả gian hàng.
+  const ids = new Set(catalog.map((v) => v.id));
+  const rows = (await currentListingRows(shop.id)).filter((l) => ids.has(l.variantId!));
   const names = await requesterNames(rows);
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
   const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
@@ -185,24 +245,27 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const titles = new Map(
     (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
   );
-  return {
-    items: variants.map((v) => {
-      const listing = byVariant.get(v.id);
-      const price = shopPrices.get(v.id)!;
-      return {
-        variantId: v.id,
-        productId: v.productId,
-        productName: v.productName,
-        sku: v.sku,
-        attributesLabel: v.attributesLabel,
-        thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
-        specStatus: specStatusOf(specs.get(v.productId)),
-        ...price,
-        listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
-        remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
-      };
-    }),
-  };
+  // Category trên sàn của listing (#467): một câu cho mọi listing, tra cây đã đồng bộ, không gọi sàn.
+  const categoryPaths = await syncedPathsOf(shop.platform, rows.flatMap((l) => (l.externalCategoryId ? [l.externalCategoryId] : [])));
+  return variants.map((v) => {
+    const listing = byVariant.get(v.id);
+    const price = shopPrices.get(v.id)!;
+    return {
+      variantId: v.id,
+      productId: v.productId,
+      productName: v.productName,
+      sku: v.sku,
+      attributesLabel: v.attributesLabel,
+      thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
+      specStatus: specStatusOf(specs.get(v.productId)),
+      ...price,
+      listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
+      remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
+      externalCategoryId: listing?.externalCategoryId ?? null,
+      externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
+      categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
+    };
+  });
 }
 
 /**
@@ -230,7 +293,15 @@ export async function moveListing(
     row.id,
     { version: row.version, status: row.status },
     // Bản sửa nội dung chỉ còn ở trạng thái sàn vẫn duyệt nó (#293, CHECK `listings_revision`).
-    { ...(to !== 'hidden' && NO_OUTSIDE_CHANGE), ...patch, ...(dropPending && NO_PENDING), ...(!REVISION_KEPT.includes(to) && NO_REVISION), status: to },
+    {
+      ...(to !== 'hidden' && NO_OUTSIDE_CHANGE),
+      ...patch,
+      ...(dropPending && NO_PENDING),
+      ...(!REVISION_KEPT.includes(to) && NO_REVISION),
+      // Gỡ là trạng thái cuối: lượt đổi category không còn đối tượng (CHECK `listings_category_change`, #467).
+      ...(to === 'delisted' && { categoryChange: null }),
+      status: to,
+    },
   );
   if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });

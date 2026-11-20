@@ -6,7 +6,7 @@ import { addMember, createCompany, createCustomRole } from '../../helpers/compan
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
-import { type AttributeBody, api, archiveSku, auditOf, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, archiveSku, auditOf, createAttribute, createGroup, createProduct, uniq, valueId } from './helpers.ts';
 
 // Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/21 §17.2): chọn thuộc tính gắn ảnh ở PUT sản phẩm.
 let token: string;
@@ -36,9 +36,9 @@ interface Detail {
 
 /** Áo trục Màu (Trắng, Đen) × Size (M, L), 4 SKU. */
 async function shirt(): Promise<Detail> {
-  const category = await createCategory(token, uniq('Áo'), 'AO-{SEQ}-{VAL}');
+  const group = await createGroup(token, uniq('Áo'), 'AO-{SEQ}-{VAL}');
   const combos = ['Trắng', 'Đen'].flatMap((c) => ['M', 'L'].map((s) => [valueId(color, c), valueId(size, s)]));
-  const created = await createProduct(token, { name: uniq('Áo'), categoryId: category.id, variants: combos });
+  const created = await createProduct(token, { name: uniq('Áo'), groupId: group.id, variants: combos });
   return (await api(token).get(`/products/${created.id}`)).body as Detail;
 }
 
@@ -342,11 +342,11 @@ describe('PUT, DELETE /catalog/products/:id/attribute-value-images/:attributeVal
   });
 
   it('SKU có listing live: đặt, gỡ ảnh vẫn 200, listing không đổi trạng thái (AC-18)', async () => {
-    const shopOwner = await createCompany({ optionalModules: ['channel'] });
+    const shopOwner = await createCompany({ optionalModules: [] });
     const t = shopOwner.ceo.token;
     const c = await createAttribute(t, 'Màu', ['Trắng', 'Đen']);
-    const category = await createCategory(t, uniq('Áo'), 'AL-{SEQ}-{VAL}');
-    const created = await createProduct(t, { name: uniq('Áo'), categoryId: category.id, variants: [[valueId(c, 'Trắng')], [valueId(c, 'Đen')]] });
+    const group = await createGroup(t, uniq('Áo'), 'AL-{SEQ}-{VAL}');
+    const created = await createProduct(t, { name: uniq('Áo'), groupId: group.id, variants: [[valueId(c, 'Trắng')], [valueId(c, 'Đen')]] });
     const chosen = await api(t).put(`/products/${created.id}`, { name: created.name, description: '', version: created.version, imageAttributeId: c.id });
     expect(chosen.status).toBe(200);
     const shop = await testPool().query<{ id: string }>(

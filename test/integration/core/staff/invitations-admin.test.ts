@@ -110,7 +110,6 @@ describe('tạo link mời', () => {
   it('#351 AC-1: Admin tạo link vai có sẵn Sale, Nhân viên kho dù thiếu quyền của chúng (Documents/21 I5); nhật ký create', async () => {
     const admin = await addMember(company.companyId, 'admin');
     const adminId = await accountIdOf(admin.email);
-    expect((await as(admin.token).create([BUILTIN_ROLES.admin.id])).status).toBe(201);
     const cases: [string[], string[]][] = [
       [[SALE], ['Sale']],
       [[BUILTIN_ROLES.kho.id], ['Nhân viên kho']],
@@ -126,14 +125,26 @@ describe('tạo link mời', () => {
     }
   });
 
-  it('#351 AC-5: người quản lý tài khoản qua vai tự tạo: mời Kho được, mời vai Admin (có quyền mình không có) → 403', async () => {
+  it('#351 AC-5: người quản lý tài khoản qua vai tự tạo: mời Kho được, mời vai Admin → 403 ceo_only', async () => {
     const own = await createCompany();
     const manager = await addMember(own.companyId, await createCustomRole(own.companyId, ['identity.account.manage']));
     expect((await as(manager.token).create([BUILTIN_ROLES.kho.id])).status).toBe(201);
     const res = await as(manager.token).create([BUILTIN_ROLES.admin.id]);
     expect(res.status).toBe(403);
-    expect(res.body.code).toBe('permission_not_held');
+    expect(res.body.code).toBe('ceo_only');
     expect(await invitationCount(own.companyId)).toBe(1);
+  });
+
+  it('I5 (19/11/2026): chỉ CEO tạo link có vai Admin; Admin tạo → 403 ceo_only, không tạo dòng', async () => {
+    const own = await createCompany();
+    const admin = await addMember(own.companyId, 'admin');
+    for (const roleIds of [[BUILTIN_ROLES.admin.id], [BUILTIN_ROLES.admin.id, SALE]]) {
+      const res = await as(admin.token).create(roleIds);
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('ceo_only');
+    }
+    expect(await invitationCount(own.companyId)).toBe(0);
+    expect((await as(own.ceo.token).create([BUILTIN_ROLES.admin.id])).status).toBe(201);
   });
 });
 
@@ -297,16 +308,36 @@ describe('duyệt, từ chối', () => {
     const adminInv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
     const denied = await as(manager.token).approve(adminInv.id, adminInv.version);
     expect(denied.status).toBe(403);
-    expect(denied.body.code).toBe('permission_not_held');
+    expect(denied.body.code).toBe('ceo_only');
     expect(await invitationRow(adminInv.id)).toMatchObject({ status: 'pending', version: adminInv.version });
   });
 
-  it('AC-C16: email đã có tài khoản do đường khác → 409 email_taken; đã là thành viên → 409 already_member', async () => {
+  it('I5 (19/11/2026): yêu cầu có vai Admin chỉ CEO duyệt; Admin duyệt → 403 ceo_only, không tạo gì; CEO duyệt → 200', async () => {
+    const admin = await addMember(company.companyId, 'admin');
+    const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
+    const denied = await as(admin.token).approve(inv.id, inv.version);
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('ceo_only');
+    expect(await invitationRow(inv.id)).toMatchObject({ status: 'pending', version: inv.version });
+    expect((await db.query('select 1 from core.accounts where email = $1', [inv.email])).rowCount).toBe(0);
+    // Admin vẫn từ chối được (không gán vai trò nào).
+    const ok = await ceo.approve(inv.id, inv.version);
+    expect(ok.status).toBe(200);
+    expect(ok.body.member.roles).toEqual([{ id: BUILTIN_ROLES.admin.id, name: 'Admin' }]);
+  });
+
+  it('AC-C16: email mới mà lúc duyệt đã có tài khoản → gắn vào tài khoản đó, bỏ mật khẩu của lời mời; đã là thành viên → 409 already_member', async () => {
     const taken = await pending();
-    await db.query("insert into core.accounts (email, full_name) values ($1, 'Đăng Ký Riêng')", [taken.email]);
+    const other = await db.query<{ id: string }>(
+      "insert into core.accounts (email, full_name) values ($1, 'Đăng Ký Riêng') returning id",
+      [taken.email],
+    );
     const takenRes = await ceo.approve(taken.id, taken.version);
-    expect(takenRes.status).toBe(409);
-    expect(takenRes.body.code).toBe('email_taken');
+    expect(takenRes.status).toBe(200);
+    expect(takenRes.body.member).toMatchObject({ accountId: other.rows[0]!.id, email: taken.email });
+    expect(takenRes.body.invitation).toMatchObject({ status: 'approved', existingAccount: true });
+    expect(await invitationRow(taken.id)).toMatchObject({ account_id: other.rows[0]!.id, password_hash: null });
+    expect((await db.query('select count(*)::int n from core.accounts where email = $1', [taken.email])).rows[0].n).toBe(1);
 
     const member = await addMember(company.companyId, 'sale');
     const again = await pending({ existingAccountId: member.accountId, email: member.email });
@@ -314,10 +345,10 @@ describe('duyệt, từ chối', () => {
     expect(againRes.status).toBe(409);
     expect(againRes.body.code).toBe('already_member');
 
-    // Email mới nhưng tài khoản mang email đó đã vào công ty bằng đường khác: already_member trước email_taken.
+    // Email mới nhưng tài khoản mang email đó đã vào công ty bằng đường khác.
     const joined = await pending({ email: (await addMember(company.companyId, 'sale')).email });
     expect((await ceo.approve(joined.id, joined.version)).body.code).toBe('already_member');
-    for (const inv of [taken, again, joined]) expect((await invitationRow(inv.id)).status).toBe('pending');
+    for (const inv of [again, joined]) expect((await invitationRow(inv.id)).status).toBe('pending');
   });
 
   it('AC-C17: version lệch → 409 version_conflict kèm current', async () => {
@@ -384,8 +415,9 @@ const lockInvitation = (id: string) => (holder: PoolClient) =>
 describe('duyệt chạy đồng thời', () => {
   it('hai Admin duyệt cùng lúc: một 200, một 409 invalid_transition (đã duyệt); chỉ một tài khoản, một membership', async () => {
     const admin = await addMember(company.companyId, 'admin');
-    // Mời làm Admin: Admin cấp được đủ quyền, nên hai bên chỉ khác nhau ở thứ tự giành khoá.
-    const inv = await pending({ roleIds: [BUILTIN_ROLES.admin.id] });
+    // Mời làm Sale: CEO và Admin đều duyệt được (vai Admin chỉ CEO duyệt, I5), nên hai bên chỉ khác nhau ở thứ tự giành
+    // khoá.
+    const inv = await pending({ roleIds: [SALE] });
     const results = await raceBehindLock(lockInvitation(inv.id), 2, () =>
       Promise.all([ceo.approve(inv.id, inv.version), as(admin.token).approve(inv.id, inv.version)]),
     );

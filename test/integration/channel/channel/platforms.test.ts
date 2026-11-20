@@ -7,6 +7,7 @@ import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/ser
 import { createTiktokAdapter, type TiktokConfig } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testApp } from '../../helpers/http.ts';
+import { setModuleEnabled } from '../../helpers/state.ts';
 import { fakeAdapter } from './helpers.ts';
 
 // Môi trường test không đặt LAZADA_* (vitest.config.ts) nên adapter Lazada mặc định thiếu cấu hình.
@@ -37,7 +38,7 @@ const platforms = async () => {
 };
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 afterEach(() => resetAdapters());
 
@@ -155,6 +156,8 @@ describe('GET /channel/shops/platforms (#163)', () => {
     expect(denied.status).toBe(403);
     expect(denied.body.code).toBe('forbidden');
     const off = await createCompany();
+    // Kênh bán là phân hệ lõi từ #459; vẫn kiểm cổng phân hệ bằng dòng tắt trong DB.
+    await setModuleEnabled(off.companyId, 'channel', false);
     const disabled = await get('/shops/platforms', off.ceo.token);
     expect(disabled.status).toBe(403);
     expect(disabled.body.code).toBe('module_disabled');

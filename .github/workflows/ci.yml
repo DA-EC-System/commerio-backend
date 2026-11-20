@@ -6,33 +6,25 @@ on:
   pull_request:
 
 jobs:
+  # static + test chia 3 phần: .github/workflows/test-suite.yml (dùng chung với deploy-staging.yml).
+  suite:
+    uses: ./.github/workflows/test-suite.yml
+
+  # Giữ tên check cũ: PR xanh/đỏ ở một chỗ, đỏ khi static hoặc bất kỳ phần test nào không đạt.
   check:
+    needs: suite
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      # Migration của PR phải đứng sau mọi migration của nhánh đích, journal và snapshot liền mạch, schema.ts khớp
-      # migration (db/CLAUDE.md). Không cần DB.
-      - name: Kiểm migration
+      - name: Tổng hợp
         env:
-          BASE_REF: ${{ github.base_ref }}
+          SUITE: ${{ needs.suite.result }}
         run: |
-          if [ -n "$BASE_REF" ]; then
-            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
-            npm run db:ci-check -- --base "origin/$BASE_REF"
-          else
-            npm run db:ci-check
+          echo "static + test (3 phần): $SUITE"
+          if [ "$SUITE" != success ]; then
+            echo "::error title=suite $SUITE::static hoặc một phần test không đạt, xem các job suite / … màu đỏ"
+            exit 1
           fi
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run depcruise
-      - run: npm test
-      - name: Build image
-        run: docker build -f deploy/docker/Dockerfile -t commerio-backend .
 
   # Bộ test hộp đen (#120, test/CLAUDE.md mục Hộp đen): gọi HTTP vào api thật dựng ngay trong runner.
   # DB là container tạm của job, mật khẩu seed ở đây không phải bí mật.

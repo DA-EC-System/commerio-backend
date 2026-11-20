@@ -25,7 +25,9 @@ import {
   type ReturnRow,
   updateReturnLine,
 } from '../repository/returns.ts';
-import { isConfirmFailedNote } from './return-confirm.ts';
+import { returnInspectionClaimed } from '../../../product/index.ts';
+import type { MarketplaceReturns } from './marketplace-returns.ts';
+import { claimFlag, clearRefundApprovalFlag, isConfirmFailedNote } from './return-confirm.ts';
 import { applyReturnStep, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
@@ -44,6 +46,12 @@ export interface PlatformReturn {
   returnTrackingCode: string | null;
   reason: string | null;
   refundAmount: string | null;
+  /** Chuỗi gốc của số tiền hoàn sàn trả mà không đọc được (#436): bật Cần xử lý, giữ số app đang có. */
+  refundAmountUnreadable?: string | null;
+  /** Hạn người bán phải trả lời, null khi sàn không chờ người bán (#392). */
+  respondBy?: Date | null;
+  /** Sàn báo người bán đã xử lý hàng về (`syncAction`, #392); thiếu là false. */
+  sellerHandledReceipt?: boolean;
   lines: { externalLineId: string; externalReturnLineId: string | null; quantity: number }[];
   updatedAt: Date;
 }
@@ -60,6 +68,7 @@ function platformFields(r: PlatformReturn): ReturnPatch {
     disputeInProgress: r.disputeInProgress,
     returnTo: r.returnTo,
     returnTrackingCode: r.returnTrackingCode,
+    respondBy: r.respondBy ?? null,
     externalUpdatedAt: r.updatedAt,
     ...(r.refundAmount !== null && { refundAmount: r.refundAmount }),
   };
@@ -82,7 +91,8 @@ export async function ingestMarketplaceReturn(r: PlatformReturn): Promise<Return
     return syncExisting((await findMarketplaceReturn(r.shopId, r.externalReturnId))!, r);
   }
   // Tạo ở `requested` rồi đi theo máy trạng thái tới trạng thái sàn: lịch sử, sự kiện tiền như một lần chuyển thường.
-  if (r.status && r.status !== 'requested') await syncExisting(row, r);
+  // Trạng thái chưa ánh xạ (`null`) cũng đi qua để bật Cần xử lý (#436).
+  if (r.status !== 'requested') await syncExisting(row, r);
   return 'created';
 }
 
@@ -105,6 +115,7 @@ async function createRequest(orderId: string, r: PlatformReturn): Promise<Return
   const pkgLines = await packageLinesOfOrderLines([...lines.keys()]);
   const notes: string[] = [];
   if (missing.length) notes.push(`Sàn có món không khớp dòng đơn: ${missing.join(', ')}`);
+  if (r.refundAmountUnreadable) notes.push(unreadableAmountNote(r.refundAmountUnreadable));
   // Khách trả hàng thì kiện phải đã giao: mọi kiện chứa dòng trả còn trên đường nhảy tới `delivered` (25 §9); khác thì
   // người dùng đối chiếu. Làm trước khi tính giá vốn để kiện vừa nhảy cóc được tính là đã giao.
   const jumped = new Set<string>();
@@ -166,7 +177,29 @@ const PAST_AWAITING: readonly ReturnStatus[] = ['received', 'refund_only', 'clos
 
 /** Đầu câu cờ khi sàn báo trạng thái app không đi tới được; lượt sau sàn khớp lại thì gỡ (nhận theo đầu câu, không thêm cột). */
 export const CONFLICT_NOTE = 'Sàn báo ';
-const isConflictNote = (note: string | null) => note?.startsWith(CONFLICT_NOTE) ?? false;
+/** Cờ khi adapter chưa ánh xạ trạng thái sàn (`status` null, #436). Cũng là câu mâu thuẫn: sàn khớp lại thì tự gỡ. */
+const unsupportedNote = (rawStatus: string) => `${CONFLICT_NOTE}trạng thái ${rawStatus} chưa hỗ trợ, kiểm trên Seller Center`;
+const mismatchNote = (rawStatus: string, status: string) => `${CONFLICT_NOTE}${rawStatus} nhưng yêu cầu đang ${status}`;
+/**
+ * Đúng hai mẫu câu mâu thuẫn ở trên. Không nhận theo đầu câu `CONFLICT_NOTE`: câu của luồng khác cũng bắt đầu "Sàn báo "
+ * (hoàn tiền vượt doanh thu, #355) và không được tự gỡ.
+ */
+const CONFLICT_SEGMENT = /^Sàn báo (?:trạng thái \S+ chưa hỗ trợ, kiểm trên Seller Center|\S+ nhưng yêu cầu đang \S+)$/;
+/**
+ * Câu cờ bỏ các câu mâu thuẫn (câu nối nhau bằng ". ", như `flagReturnForReview`); null khi không còn gì. Cờ của luồng
+ * khác giữ nguyên chữ.
+ */
+/** Cờ khi số tiền hoàn sàn trả không đọc được (#436). Không tự gỡ: người dùng đối chiếu trên Seller Center rồi bỏ cờ. */
+const unreadableAmountNote = (raw: string) => `Số tiền hoàn sàn trả không đọc được (${raw}), kiểm trên Seller Center`;
+
+/** Câu cờ hiện hành của lượt này: đã đổi trong `fields` thì lấy đó, không thì câu đang lưu khi cờ bật. */
+const noteOf = (row: ReturnRow, fields: ReturnPatch): string | null =>
+  'attentionNote' in fields ? (fields.attentionNote ?? null) : row.needsAttention ? row.attentionNote : null;
+
+function withoutConflict(note: string | null): string | null {
+  const rest = (note ?? '').split('. ').filter((s) => s !== '' && !CONFLICT_SEGMENT.test(s));
+  return rest.length ? rest.join('. ') : null;
+}
 
 /** Đưa yêu cầu tới trạng thái sàn báo nếu máy trạng thái cho phép; không cho thì bật Cần xử lý, giữ trạng thái app. */
 async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIngestOutcome> {
@@ -177,18 +210,37 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   if (row.needsAttention && isConfirmFailedNote(row.attentionNote) && r.status && PAST_AWAITING.includes(r.status)) {
     Object.assign(fields, { needsAttention: false, attentionNote: null });
   }
-  const action = r.status ? syncAction(row.status, r.status, row.closeResult) : null;
-  if (action === 'conflict') {
+  // Sàn đã qua bước đồng ý hoàn tiền (lần báo của app vừa xong, hay người bán làm trên Seller Center, sàn tự hoàn):
+  // không còn gì phải báo, gỡ cờ báo lỗi của bước này.
+  if (r.sellerHandledReceipt === true && (row.refundApproval === 'pending' || row.refundApproval === 'withheld')) {
+    Object.assign(fields, { refundApproval: 'done' });
+    Object.assign(fields, clearRefundApprovalFlag(row));
+  }
+  // Số tiền hoàn không đọc được (#436): nối câu cờ một lần, `refundAmount` null nên số app đang có giữ nguyên.
+  if (r.refundAmountUnreadable) {
+    const amountNote = unreadableAmountNote(r.refundAmountUnreadable);
+    const current = noteOf(row, fields);
+    if (!current?.includes(amountNote)) Object.assign(fields, { needsAttention: true, attentionNote: current ? `${current}. ${amountNote}` : amountNote });
+  }
+  const action = r.status ? syncAction(row.status, r.status, row.closeResult, r.sellerHandledReceipt ?? false) : null;
+  // Sàn báo trạng thái app chưa hiểu: không đổi trạng thái, bật Cần xử lý thay vì im lặng (#436).
+  const unsupported = !r.status && r.rawStatus !== '';
+  if (action === 'conflict' || unsupported) {
     // Cờ báo sàn đã nhận còn đó thì giữ câu của nó: lượt thử lại tìm yêu cầu theo đầu câu này (`returnsAwaitingConfirm`).
     const keep = row.needsAttention && isConfirmFailedNote(row.attentionNote) && !('attentionNote' in fields);
-    const note = keep ? row.attentionNote : `${CONFLICT_NOTE}${r.rawStatus} nhưng yêu cầu đang ${row.status}`;
+    const conflict = unsupported ? unsupportedNote(r.rawStatus) : mismatchNote(r.rawStatus, row.status);
+    // Cờ của luồng khác đang bật (vd hoàn tiền vượt, #355): giữ câu đó, thay câu mâu thuẫn cũ bằng câu mới.
+    const others = withoutConflict(noteOf(row, fields));
+    const note = keep ? row.attentionNote : others ? `${others}. ${conflict}` : conflict;
     const diff = changedFields(row, { ...fields, needsAttention: true, attentionNote: note });
     if (!Object.keys(diff).length) return 'unchanged';
     await updateReturnShown(row, diff);
     return 'updated';
   }
-  // Sàn đã khớp lại với app: gỡ cờ mâu thuẫn của lượt trước. Cờ của luồng khác giữ nguyên.
-  if (row.needsAttention && isConflictNote(row.attentionNote)) Object.assign(fields, { needsAttention: false, attentionNote: null });
+  // Sàn đã khớp lại với app: gỡ câu mâu thuẫn của lượt trước; còn câu của luồng khác thì cờ vẫn bật với câu đó.
+  const before = noteOf(row, fields);
+  const rest = withoutConflict(before);
+  if (rest !== before) Object.assign(fields, { needsAttention: rest !== null, attentionNote: rest });
   if (action) {
     await applyReturnStep(
       row,
@@ -208,9 +260,10 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
  * `inspected`), chia số bán lại về dòng, tính `resellCost`, hoàn tiền (`sales.return_refunded` trong `applyReturnStep`).
  * Phiếu không thuộc yêu cầu nào (kiện hoàn, kiện không khớp) thì bỏ qua.
  */
-export async function onReturnInspected(event: {
-  payload: { inspectionId: string; lines: readonly { variantId: string; resellable: number }[] };
-}): Promise<void> {
+export async function onReturnInspected(
+  event: { payload: { inspectionId: string; lines: readonly { variantId: string; resellable: number }[] } },
+  ctx?: { marketplaceReturns?: MarketplaceReturns },
+): Promise<void> {
   const row = await findReturnByInspection(event.payload.inspectionId);
   if (!row || row.status !== 'received') return;
   const lines = await findReturnLines([row.id]);
@@ -218,5 +271,16 @@ export async function onReturnInspected(event: {
   for (const l of event.payload.lines) resellable.set(l.variantId, (resellable.get(l.variantId) ?? 0) + l.resellable);
   const { perLine, resellCost } = distributeResell(lines, resellable);
   for (const l of lines) await updateReturnLine(l.id, { resellQty: perLine.get(l.id) ?? 0 });
-  await applyReturnStep(row, { action: 'close', to: 'closed', actorId: null, source: 'system' }, { resellCost });
+  await applyReturnStep(row, { action: 'close', to: 'closed', actorId: null, source: 'system' }, { resellCost, ...(await refundApprovalOf(row, event.payload.inspectionId, ctx)) });
+}
+
+/**
+ * Sàn có bước đồng ý hoàn tiền sau kiểm hàng (#392, TikTok): phiếu không khiếu nại thì chờ channel báo sàn (`pending`); có
+ * khiếu nại (hàng về thiếu, sai) thì không báo, bật Cần xử lý để người bán từ chối nhận hàng hay khiếu nại trên sàn (25 mục 9).
+ */
+async function refundApprovalOf(row: ReturnRow, inspectionId: string, ctx?: { marketplaceReturns?: MarketplaceReturns }): Promise<ReturnPatch> {
+  if (row.source !== 'marketplace' || !row.shopId || !ctx?.marketplaceReturns) return {};
+  if (!(await ctx.marketplaceReturns.approvesRefundAfterInspection(row.companyId, row.shopId))) return {};
+  if (!(await returnInspectionClaimed(inspectionId))) return { refundApproval: 'pending' };
+  return { refundApproval: 'withheld', ...claimFlag(row, row.inspectionNumber) };
 }

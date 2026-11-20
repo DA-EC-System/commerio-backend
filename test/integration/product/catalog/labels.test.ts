@@ -6,7 +6,7 @@ import { variantReadiness } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { type AttributeBody, api, archiveSku, businessStatus, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, archiveSku, businessStatus, createAttribute, createGroup, createProduct, uniq, valueId } from './helpers.ts';
 
 // Ba lớp nhãn của SKU và nhãn cha suy từ con (#204 PR 3, Documents/21 §17.1, 25 §5.1–§5.4; spec mục 5.3; D7, D8).
 let companyId: string;
@@ -24,7 +24,7 @@ const newShop = async () => {
 };
 
 beforeAll(async () => {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   companyId = company.companyId;
   token = company.ceo.token;
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng', 'Xám', 'Nâu', 'Xanh', 'Đỏ']);
@@ -32,11 +32,11 @@ beforeAll(async () => {
   shopB = await newShop();
 });
 
-/** Sản phẩm `n` SKU (mỗi SKU một màu), danh mục riêng. */
+/** Sản phẩm `n` SKU (mỗi SKU một màu), nhóm hàng riêng. */
 async function product(n = 1, name = uniq('SP')) {
-  const category = await createCategory(token, uniq('Nhãn'), 'NH-{SEQ}-{VAL}');
+  const group = await createGroup(token, uniq('Nhãn'), 'NH-{SEQ}-{VAL}');
   const colors = ['Đen', 'Trắng', 'Xám', 'Nâu', 'Xanh', 'Đỏ'].slice(0, n);
-  return createProduct(token, { name, categoryId: category.id, variants: colors.map((c) => [valueId(color, c)]) });
+  return createProduct(token, { name, groupId: group.id, variants: colors.map((c) => [valueId(color, c)]) });
 }
 
 const listing = (variantId: string, status: string, shop = shopA) =>
@@ -207,10 +207,10 @@ describe('số câu truy vấn của trang danh sách (Review Focus 2)', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('trang 2 dòng và trang 20 dòng dùng cùng số câu', async () => {
-    const own = await createCompany({ optionalModules: ['channel'] });
-    const category = await createCategory(own.ceo.token, 'Đếm', 'DC-{SEQ}');
+    const own = await createCompany({ optionalModules: [] });
+    const group = await createGroup(own.ceo.token, 'Đếm', 'DC-{SEQ}');
     for (let i = 0; i < 20; i++) {
-      await createProduct(own.ceo.token, { name: `Đếm ${i}`, categoryId: category.id, variants: [[]] });
+      await createProduct(own.ceo.token, { name: `Đếm ${i}`, groupId: group.id, variants: [[]] });
     }
     const count = async (pageSize: number) => {
       const spy = vi.spyOn(pg.Client.prototype, 'query');

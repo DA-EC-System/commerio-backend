@@ -16,7 +16,7 @@ Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước
 
 | Job | Việc |
 |---|---|
-| `check` | `npm run check` |
+| `check` | Gọi `.github/workflows/test-suite.yml` (cùng bộ với CI): job `static` (`db:ci-check`, lint, typecheck, depcruise) và `npm test` chia 3 phần chạy song song (`test (phần n/3)`, `vitest --shard`) |
 | `image` | Build `linux/amd64` + `linux/arm64`, đẩy `ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (nhãn `org.opencontainers.image.revision` = commit) |
 | `migrate` | Từ runner: `npm run db:migrate` rồi `npm run db:seed` lên Supabase (image không có `drizzle-kit`, V36). `db:migrate` dừng, không chạy gì, nếu có migration lệch thứ tự (`db/CLAUDE.md`) |
 | `tag-develop` | Gắn tag `develop` cho image vừa build, chỉ sau khi migration xanh |
@@ -54,6 +54,23 @@ Worker gửi thư mã OTP, thư báo người duyệt và thư báo kết quả 
 5. Kiểm: `kubectl -n commerio logs deploy/worker | grep SMTP` có "SMTP dùng được"; tạo link mời, xin mã, thư tới trong vòng một phút. Người nhận thấy người gửi là `<địa chỉ>@<mã>.brevosend.com` vì địa chỉ Gmail không có bản ghi domain; muốn đẹp hơn thì xác thực domain riêng ở Brevo.
 
 Đã làm trên staging ngày 17/11/2026 với địa chỉ gửi của nhóm.
+
+## Mã thử đăng ký (#459)
+
+E2E trên staging (FE `e2e/be`, Bình ở #191) không đọc được hộp thư, nên dùng mã thử: email thuộc miền thử nhận mã cố định thay cho thư (`Documents/21` mục 2.1). Chỉ đặt ở staging, **không đặt ở production**. Không ghi giá trị vào repo, issue hay PR.
+
+1. Thêm vào `deploy/k8s/overlays/vps/.env` trên VPS:
+   ```
+   APP_ENV=staging
+   REGISTRATION_TEST_EMAIL_DOMAIN=<miền đuôi .test, .invalid hoặc .example>
+   REGISTRATION_TEST_CODE=<6 chữ số>
+   ```
+   Mã **không** dùng `246810`: giá trị đó là mã test ghi công khai trong `vitest.config.ts`. Đặt thiếu một biến, miền sai đuôi, mã không đủ 6 số hoặc `APP_ENV` khác `staging`/`test` thì api, worker không khởi động (`registrationTestIssues`, `src/shared/config/env.ts`).
+2. Áp vào Secret `app-env` như đoạn đầu trang, rồi `kubectl -n commerio rollout restart deploy/api deploy/worker deploy/realtime` (api kiểm cấu hình lúc khởi động, worker ghi mã thử).
+3. Đặt cùng giá trị cho hai secret của repo FE: `E2E_REGISTRATION_TEST_EMAIL_DOMAIN`, `E2E_REGISTRATION_TEST_CODE` (job `e2e-be`).
+4. Kiểm: đăng ký trên staging bằng email thuộc miền thử, nhập mã thử thì vào thẳng công ty; log worker có "lần đăng ký thử: đã đặt mã thử" và không có mã.
+
+Đổi mã thì đổi cả ba chỗ (VPS, hai secret của FE) cùng lúc.
 
 ## Cảnh báo qua email
 

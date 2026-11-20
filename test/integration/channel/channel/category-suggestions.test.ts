@@ -59,7 +59,6 @@ function product(name: string, withImage: boolean): string {
     productName: name,
     productCode: 'SP-TEST',
     sku: `SKU-${productId.slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     attributes: [],
     archived: false,
@@ -91,7 +90,7 @@ beforeAll(async () => {
      values ('lazada', $1, 'Áo thun', true, 'Thời trang nam > Áo > Áo thun', 'thoi trang nam > ao > ao thun', now())`,
     [lzLeaf],
   );
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   ceo = { token: c.ceo.token, companyId: c.companyId };
   lazadaShop = await connect('lazada');
   tiktokShop = await connect('tiktok');
@@ -189,7 +188,7 @@ describe('category-suggestions', () => {
   it('sản phẩm không có, gian hàng công ty khác hay id sai: 404; Sale: 403', async () => {
     expect((await get(lazadaShop, randomUUID())).status).toBe(404);
     expect((await get('khong-phai-uuid', randomUUID())).status).toBe(404);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await get(lazadaShop, product('Áo thun nam cổ tròn', true), other.ceo.token)).status).toBe(404);
     const sale = await addMember(ceo.companyId, 'sale');
     expect((await get(lazadaShop, product('Áo thun nam cổ tròn', true), sale.token)).status).toBe(403);

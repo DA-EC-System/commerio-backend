@@ -13,9 +13,15 @@ export interface MarketplaceReturns {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
-  ): Promise<void>;
+    /**
+     * `images`: ảnh minh chứng khi từ chối (#437), `url` là link ký sẵn của kho tệp, chỉ dùng ngay để đưa ảnh lên sàn.
+     * Sàn không nhận ảnh trong bước này thì bỏ qua ảnh. Kiểu ảnh sàn không nhận: 422 `validation_failed` ở `attachmentIds`.
+     */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string; contentType: string }[] },
+  ): Promise<{ platformImages: string[] }>;
   confirmReceived(companyId: string, shopId: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /** Sàn của gian hàng có bước đồng ý hoàn tiền sau kiểm hàng hoàn (#392, TikTok); chỉ đọc DB, không gọi sàn. */
+  approvesRefundAfterInspection(companyId: string, shopId: string): Promise<boolean>;
   history(
     companyId: string,
     shopId: string,

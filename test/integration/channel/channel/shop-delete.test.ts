@@ -33,7 +33,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let variantId: string;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   ({ variantId } = await createVariant(company.companyId));
   await receive(company.companyId, variantId, 100, 100000);
 });
@@ -187,7 +187,7 @@ describe('DELETE /channel/shops/:id (#398)', () => {
     const bPkg = await seedPackage(company.companyId, { status: 'reserved', shopId: b.id, lines: [{ variantId, quantity: 1, reserved: true }] });
     await listing(b.id, false);
     const manual = await createOrder(company.companyId, { lines: [{ variantId, quantity: 1, unitPrice: 100000 }] });
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const otherShop = await db.query<{ id: string }>(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status) values ($1, 'lazada', $2, 'Shop khác', 'connecting') returning id`,
       [other.companyId, `seller-${s.token}`],
@@ -348,7 +348,7 @@ describe('DELETE /channel/shops/:id (#398)', () => {
   });
 
   it('gian hàng công ty khác hay id sai dạng: 404', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const foreign = await db.query<{ id: string }>(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status) values ($1, 'lazada', $2, 'Shop khác', 'disconnected') returning id`,
       [other.companyId, randomUUID()],

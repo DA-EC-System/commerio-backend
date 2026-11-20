@@ -8,7 +8,7 @@ import { applyVariantUpdate } from '#src/modules/product/catalog/service/variant
 import { getDb, withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, uniq, valueId, archiveSku } from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createGroup, createProduct, uniq, valueId, archiveSku } from './helpers.ts';
 
 // Sửa một SKU: giá chuẩn, giá muốn bán, cân nặng, kích thước gói (#204, Documents/21 §17.1, §17.2).
 let companyId: string;
@@ -21,10 +21,10 @@ beforeAll(async () => {
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng']);
 });
 
-/** Sản phẩm một SKU không thuộc tính, danh mục riêng. */
+/** Sản phẩm một SKU không thuộc tính, nhóm hàng riêng. */
 const wallet = async () => {
-  const category = await createCategory(token, uniq('Ví'), 'VI-{SEQ}');
-  return createProduct(token, { name: uniq('Ví'), categoryId: category.id, variants: [[]] });
+  const group = await createGroup(token, uniq('Ví'), 'VI-{SEQ}');
+  return createProduct(token, { name: uniq('Ví'), groupId: group.id, variants: [[]] });
 };
 
 describe('chi tiết sản phẩm: trường của SKU (#204, Documents/21 §17.1)', () => {
@@ -177,10 +177,10 @@ describe('PATCH /catalog/products/:id/variants/:variantId (#204, Documents/21 §
   });
 
   it('SKU đã ngừng bán vẫn sửa được để điền cho đủ', async () => {
-    const category = await createCategory(token, uniq('Áo'), 'AO-{SEQ}-{VAL}');
+    const group = await createGroup(token, uniq('Áo'), 'AO-{SEQ}-{VAL}');
     const product = await createProduct(token, {
       name: uniq('Áo'),
-      categoryId: category.id,
+      groupId: group.id,
       variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
     });
     const stopped = product.variants[0]!;

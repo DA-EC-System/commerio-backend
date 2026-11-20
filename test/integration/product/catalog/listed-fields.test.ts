@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { BulkSaveResult } from '#src/modules/product/catalog/api/schemas.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { type AttributeBody, api, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, createAttribute, createGroup, createProduct, uniq, valueId } from './helpers.ts';
 
 // SKU còn listing chưa gỡ thì không xoá trống trường bắt buộc chung (#204, review #345; US-SP-03 dòng 7, Documents/25
 // §5.1, §5.2; Documents/21 §17.4 `listing_field_required`). Trường của SKU xét listing của chính SKU; ảnh xét mọi SKU.
@@ -13,7 +13,7 @@ let color: AttributeBody;
 let shop: string;
 
 beforeAll(async () => {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   companyId = company.companyId;
   token = company.ceo.token;
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng']);
@@ -28,10 +28,10 @@ const FULL = { targetNetPrice: 150000, weightG: 200, lengthMm: 100, widthMm: 100
 
 /** Sản phẩm hai SKU (Đen, Trắng), SKU đã đủ giá muốn bán và số đo (`version` SKU = 2). */
 async function product() {
-  const category = await createCategory(token, uniq('Listing'), 'LS-{SEQ}-{VAL}');
+  const group = await createGroup(token, uniq('Listing'), 'LS-{SEQ}-{VAL}');
   const p = await createProduct(token, {
     name: uniq('SP'),
-    categoryId: category.id,
+    groupId: group.id,
     variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
   });
   for (const v of p.variants) {

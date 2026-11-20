@@ -9,10 +9,12 @@ import { suggestCategories } from '../service/category-suggestions.ts';
 import { shopWarehouses } from '../service/shop-warehouses.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
+import { applyCategory } from '../service/category-apply.ts';
 import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
+import { matchPreview } from '../service/match-preview.ts';
 import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
@@ -25,6 +27,7 @@ import { type ChannelContext, deleteShop } from '../service/shop-delete.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
+  ApplyCategoryBody,
   AuthorizeUrlQuery,
   CallbackBody,
   DelistBody,
@@ -34,6 +37,7 @@ import {
   MappingBody,
   MappingParams,
   MatchBody,
+  MatchPreviewQuery,
   AcknowledgeTitleBody,
   AcknowledgeTitleParams,
   OutsideChangeBody,
@@ -54,6 +58,7 @@ import {
   CategorySuggestionsQuery,
   CategorySyncBody,
   ProductSpecBody,
+  ProductListingsParams,
   ProductSpecParams,
   ShopParams,
   TokenBody,
@@ -263,10 +268,27 @@ export function channelRouter(ctx: ModuleContext): Router {
     },
   );
 
+  // Đổi category trên sàn (#467, 21 §18.5): kiểm, ghi `queued`, xếp việc nền; không gọi sàn trong request.
+  router.post(
+    '/products/:productId/specs/:platform/apply-category',
+    manage,
+    validate({ params: ProductSpecParams, body: ApplyCategoryBody }),
+    async (_req, res) => {
+      const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
+      const { version } = validated<typeof ApplyCategoryBody>(res, 'body');
+      res.status(202).json(await applyCategory(productPort(ctx), actor(res), productId, platform, version, () => mapping.isCeo(actor(res))));
+    },
+  );
+
   // Kho của gian hàng trên sàn (#430): gọi sàn ngoài giao dịch, service tự mở `withCompany`.
   router.get('/shops/:id/warehouses', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await shopWarehouses(actor(res).companyId, id));
+  });
+
+  router.get('/products/:productId/listings', view, validate({ params: ProductListingsParams }), async (_req, res) => {
+    const { productId } = validated<typeof ProductListingsParams>(res, 'params');
+    res.json(await withCompany(actor(res).companyId, () => listings.listProductListings(productPort(ctx), productId)));
   });
 
   router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
@@ -316,6 +338,12 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
     const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
     res.status(accepted ? 202 : 200).json(list);
+  });
+
+  // Xem trước số sẽ đẩy khi ghép (#460): hộp ghép gọi khi người dùng chọn một cặp.
+  router.get('/shops/:id/listings/match-preview', match, validate({ params: ShopParams, query: MatchPreviewQuery }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await matchPreview(productPort(ctx), actor(res), id, validated<typeof MatchPreviewQuery>(res, 'query')));
   });
 
   router.post('/shops/:id/listings/match', match, validate({ params: ShopParams, body: MatchBody }), async (_req, res) => {

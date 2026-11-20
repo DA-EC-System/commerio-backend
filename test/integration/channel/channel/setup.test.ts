@@ -18,7 +18,6 @@ const variant = (sku: string): ListingVariant => ({
   productId: randomUUID(),
   productName: 'Áo',
   sku,
-  categoryId: randomUUID(),
   attributesLabel: '',
   productCode: 'SP-TEST',
   attributes: [],
@@ -80,7 +79,7 @@ const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.t
 const setup = (body: object) => auth(app().post(`/api/v1/channel/shops/${shopId}/setup`)).send({ returnWindowDays: 7, ...body });
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({
     accessToken: `tok-${randomUUID().slice(0, 12)}`,
   });
@@ -189,7 +188,7 @@ describe('returnWindowDays ở thiết lập', () => {
   let co: Awaited<ReturnType<typeof createCompany>>;
   const tiktokSkus = vi.fn(async (): Promise<RemoteSku[]> => []);
   beforeAll(async () => {
-    co = await createCompany({ optionalModules: ['channel'] });
+    co = await createCompany({ optionalModules: [] });
     const first = await newShop();
     await testPool().query("update channel.shops set status = 'active', order_cutoff_at = now() - interval '1 day' where id = $1", [first]);
     registerAdapter(

@@ -6,7 +6,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { api, auditOf, createCategory, productBody, uniq } from './helpers.ts';
+import { api, auditOf, createGroup, productBody, uniq } from './helpers.ts';
 
 // Ảnh bảng kích cỡ của sản phẩm (#347; Documents/21 §5.2, §18.5): một ảnh JPG/PNG ≤ 1 MB, dùng lại luồng tệp của #303.
 const stored = new Map<string, number>();
@@ -45,8 +45,8 @@ interface Detail {
   sizeChart: { fileId: string; url: string } | null;
 }
 async function newProduct(extra: object = {}) {
-  const category = await createCategory(token, uniq('Áo'), 'A-{SEQ}');
-  return api(token).post('/products', productBody(uniq('SP'), category.id, [[]], extra));
+  const group = await createGroup(token, uniq('Áo'), 'A-{SEQ}');
+  return api(token).post('/products', productBody(uniq('SP'), group.id, [[]], extra));
 }
 const put = (p: Detail, extra: object = {}) => api(token).put(`/products/${p.id}`, { name: p.name, description: '', version: p.version, ...extra });
 

@@ -5,7 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { type FilePurpose, PURPOSE_RULES, rejectUpload, type UploadRejection } from '../domain/upload-rules.ts';
-import { attachedFiles, countAttachments, type EntityRef, replaceAttachmentRows } from '../repository/attachments.ts';
+import { attachedFiles, countAttachments, deleteAttachmentRows, type EntityRef, replaceAttachmentRows } from '../repository/attachments.ts';
 import { type FileRow, findFiles, markUploaded } from '../repository/files.ts';
 import { headObject, signDownload, type StorageConfig, storageConfig } from './storage.ts';
 import { REJECTION_MESSAGES } from './uploads.ts';
@@ -132,6 +132,15 @@ export async function replaceAttachments(entity: EntityRef, fileIds: readonly st
   await replaceAttachmentRows(companyId, entity, fileIds, actorId);
 }
 
+/**
+ * Gỡ tệp của các chứng từ bị xoá hẳn (vd yêu cầu trả khi xoá gian hàng, Documents/21 §18.6.2); không xoá tệp. Gọi trong
+ * `withCompany`, cùng giao dịch xoá chứng từ.
+ */
+export async function detachAll(entityType: string, entityIds: readonly string[]): Promise<number> {
+  requireCompanyId('detachAll');
+  return deleteAttachmentRows(entityType, entityIds);
+}
+
 /** Id tệp đang gắn, theo thứ tự (cho nhật ký thao tác). Gọi trong `withCompany`. */
 export async function attachmentIdsOf(entity: EntityRef): Promise<string[]> {
   requireCompanyId('attachmentIdsOf');
@@ -145,13 +154,18 @@ export async function hasAttachments(entity: EntityRef): Promise<boolean> {
 }
 
 /**
- * Tệp của chứng từ kèm link ký sẵn 15 phút (ký trong máy, không gọi mạng). Gọi trong `withCompany`. Chứng từ không có
- * tệp thì không cần kho; có tệp mà kho chưa cấu hình thì 503.
+ * Link ký sẵn 15 phút của các tệp theo đúng thứ tự `fileIds` (#437: gửi ảnh minh chứng lên sàn trước khi gắn vào chứng
+ * từ). Link chỉ để dùng ngay, không lưu, không log. Id lạ, tệp công ty khác bị bỏ; bên gọi đã kiểm `attachmentProblem`.
+ * Gọi trong `withCompany`.
  */
-export async function attachmentsOf(entity: EntityRef): Promise<Attachment[]> {
-  requireCompanyId('attachmentsOf');
-  const rows = await attachedFiles(entity);
-  if (rows.length === 0) return [];
+export async function fileLinks(fileIds: readonly string[]): Promise<Attachment[]> {
+  requireCompanyId('fileLinks');
+  const byId = new Map((await findFiles(fileIds.filter(isUuid))).map((f) => [f.id, f]));
+  const rows = fileIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+  return rows.length ? sign(rows) : [];
+}
+
+async function sign(rows: readonly FileRow[]): Promise<Attachment[]> {
   const config = requireStorage();
   return Promise.all(
     rows.map(async (file) => ({
@@ -165,4 +179,14 @@ export async function attachmentsOf(entity: EntityRef): Promise<Attachment[]> {
       ),
     })),
   );
+}
+
+/**
+ * Tệp của chứng từ kèm link ký sẵn 15 phút (ký trong máy, không gọi mạng). Gọi trong `withCompany`. Chứng từ không có
+ * tệp thì không cần kho; có tệp mà kho chưa cấu hình thì 503.
+ */
+export async function attachmentsOf(entity: EntityRef): Promise<Attachment[]> {
+  requireCompanyId('attachmentsOf');
+  const rows = await attachedFiles(entity);
+  return rows.length ? sign(rows) : [];
 }

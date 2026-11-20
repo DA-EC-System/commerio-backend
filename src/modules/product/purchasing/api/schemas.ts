@@ -74,16 +74,36 @@ export const RequestListQuery = z.object({
   supplierId: z.uuid('Nhà cung cấp không hợp lệ').optional(),
 });
 
+/**
+ * Dòng sản phẩm mới (Documents/21 mục 16.3): cha có sẵn (`parentId`) hoặc cha mới (`parentName` + `groupId`).
+ * `optionValues` là `{ tên trục: giá trị }` theo thứ tự trục; luật 15/20 ký tự như trục ở mục 5.2. Số trục, trùng
+ * tổ hợp, trục của cha kiểm ở service (`too_many_axes` là mã riêng, mục 16.4).
+ */
+const NewProductInput = z
+  .object({
+    parentId: z.uuid('Chọn sản phẩm cha').nullable(),
+    parentName: z.string('Nhập tên sản phẩm cha').trim().max(120, 'Tối đa 120 ký tự').nullable(),
+    groupId: z.string('Chọn nhóm hàng').nullable(),
+    optionValues: z.record(
+      z.string().trim().min(1, 'Nhập tên trục phân loại').max(15, 'Tên trục tối đa 15 ký tự'),
+      z.string('Nhập giá trị phân loại').trim().min(1, 'Nhập giá trị phân loại').max(20, 'Giá trị tối đa 20 ký tự'),
+      'Nhập giá trị phân loại',
+    ),
+  })
+  .strict()
+  .superRefine((p, ctx) => {
+    if (!p.parentId === !p.parentName) {
+      ctx.addIssue({ code: 'custom', path: ['parentName'], message: 'Chọn sản phẩm cha có sẵn hoặc nhập tên sản phẩm cha mới' });
+    } else if (p.parentName && !p.groupId) {
+      ctx.addIssue({ code: 'custom', path: ['groupId'], message: 'Chọn nhóm hàng' });
+    }
+  });
+
 const costMessage = 'Giá nhập không hợp lệ';
 const RequestLineInput = z
   .object({
     variantId: z.uuid('Chọn sản phẩm').nullish(),
-    newProduct: z
-      .object({
-        name: z.string('Nhập tên sản phẩm mới').trim().min(1, 'Nhập tên sản phẩm mới').max(120, 'Tối đa 120 ký tự'),
-        categoryId: z.string('Chọn danh mục'),
-      })
-      .nullish(),
+    newProduct: NewProductInput.nullish(),
     quantity,
     unitCost: z.number(costMessage).int(costMessage).min(0, costMessage).max(MAX_UNIT_COST, costMessage),
   })
@@ -257,7 +277,18 @@ export const PurchaseRequestLine = z
     sku: z.string().nullable(),
     productName: z.string(),
     attributesLabel: z.string(),
-    newProduct: z.object({ name: z.string(), categoryId: z.string(), categoryName: z.string() }).strict().nullable(),
+    /** Dòng sản phẩm mới; `name`, `groupId`, `groupName` là của cha (cha có sẵn: theo sản phẩm). Sau duyệt `parentId` là cha đã tạo. */
+    newProduct: z
+      .object({
+        parentId: z.string().nullable(),
+        parentName: z.string().nullable(),
+        groupId: z.string(),
+        optionValues: z.record(z.string(), z.string()),
+        name: z.string(),
+        groupName: z.string(),
+      })
+      .strict()
+      .nullable(),
     quantity: z.number().int(),
     unitCost: money,
     excluded: z.boolean(),

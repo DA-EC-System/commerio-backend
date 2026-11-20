@@ -76,7 +76,6 @@ const mugWhite: ListingVariant = {
   productId: randomUUID(),
   productName: 'Cốc sứ Commerio',
   sku: 'CM-TEST-MUG-TRANG',
-  categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   productCode: 'SP-TEST',
   attributes: [],
@@ -101,7 +100,7 @@ beforeAll(async () => {
     productImageUrls: async () => new Map<string, string[]>(),
     availableOf: async (ids) => new Map(ids.map((id) => [id, 9])),
   });
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 afterAll(() => {
   resetAdapters();

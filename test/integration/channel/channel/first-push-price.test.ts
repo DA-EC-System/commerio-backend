@@ -16,7 +16,6 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
 const port = {
   variants: async (ids?: readonly string[]) => variants.filter((v) => !ids || ids.includes(v.id)),
@@ -58,7 +57,6 @@ async function variant(target: number | null, cost: number) {
     productId,
     productName: 'Áo thun',
     sku,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
     attributes: [],
@@ -87,7 +85,7 @@ const calcOf = async (listingId: string) =>
   ).rows[0];
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -99,6 +97,33 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   createProduct.mockClear();
+});
+
+/** Dòng của biến thể trên trang listing của gian hàng */
+async function row(variantId: string) {
+  const res = await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`));
+  expect(res.status).toBe(200);
+  return res.body.items.find((r: { variantId: string }) => r.variantId === variantId);
+}
+
+describe('trang listing: biến thể chưa lên sàn hiện giá sẽ đăng (bình luận LZ-KB-B01 của #225)', () => {
+  it('có giá muốn bán: hiện giá bộ lọc 239.000 (shop), thực nhận 202.540; lần đẩy ngay sau gửi đúng số đó', async () => {
+    const variantId = await variant(200000, 150000);
+    expect(await row(variantId)).toMatchObject({ price: 239000, priceSource: 'shop', shopPrice: 239000, netReceived: 202540, belowFloor: false });
+    const r = await push(variantId);
+    await runListingPush(port, { companyId: company.companyId, shopId, listingId: r.listingId!, imageUrls: ['https://files.commerio.test/a.jpg'] });
+    expect(createProduct.mock.calls[0]![1].price).toBe('239000');
+  });
+
+  it('dưới giá thấp nhất: vẫn hiện giá bộ lọc kèm cờ, để người dùng thấy vì sao bị chặn', async () => {
+    const variantId = await variant(200000, 200000);
+    expect(await row(variantId)).toMatchObject({ price: 239000, priceSource: 'shop', belowFloor: true });
+  });
+
+  it('không có giá muốn bán: hiện giá chuẩn như trước', async () => {
+    const variantId = await variant(null, 150000);
+    expect(await row(variantId)).toMatchObject({ price: 150000, priceSource: 'standard', shopPrice: null });
+  });
 });
 
 describe('đẩy lần đầu theo giá bộ lọc', () => {

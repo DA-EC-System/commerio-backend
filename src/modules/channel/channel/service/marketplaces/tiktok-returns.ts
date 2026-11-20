@@ -146,6 +146,9 @@ function respondBy(r: Row): Date | null {
   return deadlines.length ? new Date(Math.min(...deadlines) * 1000) : null;
 }
 
+/** Người bán đã xử lý hàng về: đồng ý hoàn tiền (người bán, hay sàn tự hoàn khi quá hạn) hoặc từ chối nhận hàng. */
+const SELLER_HANDLED = new Set(['REJECT_RECEIVE_PACKAGE', 'RETURN_OR_REFUND_REQUEST_SUCCESS', 'RETURN_OR_REFUND_REQUEST_COMPLETE']);
+
 export function toRemoteReturn(r: Row): RemoteReturn {
   const rawStatus = str(r.return_status);
   return {
@@ -161,6 +164,7 @@ export function toRemoteReturn(r: Row): RemoteReturn {
     disputeInProgress: r.arbitration_status === 'IN_PROGRESS',
     returnTrackingCode: opt(r.return_tracking_number),
     respondBy: respondBy(r),
+    sellerHandledReceipt: SELLER_HANDLED.has(rawStatus),
     createdAt: unixDate(r.create_time),
     updatedAt: unixDate(r.update_time),
   };
@@ -197,7 +201,7 @@ export function tiktokReturnMethods(
   | 'listCancellations'
   | 'returnReasons'
   | 'decideReturn'
-  | 'confirmReturnReceived'
+  | 'approveReturnRefund'
   | 'returnHistory'
 > {
   /**
@@ -262,6 +266,13 @@ export function tiktokReturnMethods(
     });
   }
 
+  /** Trạng thái hiện tại của một yêu cầu trả (Search Returns theo `return_ids`); không thấy thì null. */
+  async function returnStatusOf(token: string, returnId: string): Promise<string | null> {
+    const data = await client.call<Row>('POST', SEARCH_RETURNS, { token, query: { page_size: PAGE_SIZE }, body: { return_ids: [returnId] } });
+    const row = ((data?.return_orders ?? []) as Row[]).find((r) => str(r.return_id) === returnId);
+    return row ? str(row.return_status) : null;
+  }
+
   return {
     async cancelReasons(accessToken, externalOrderId, externalLineIds) {
       const { reasons } = await cancelEligibility(accessToken, externalOrderId, externalLineIds);
@@ -305,7 +316,8 @@ export function tiktokReturnMethods(
     },
     async returnReasons(accessToken, externalReturnId, action) {
       // Get Decision Eligibility: lý do theo đúng quyết định sẽ gửi (Reject Return 202606), kèm sàn còn cho quyết không.
-      // Ảnh minh chứng (`images`) chưa gửi tới khi app lưu ảnh (#212), nên không đánh dấu lý do nào cần ảnh.
+      // Get Decision Eligibility không cho biết lý do nào cần ảnh (`available_reject_reasons` chỉ có `name`, `text`, tra
+      // 20/11/2026), nên không đánh dấu lý do nào cần ảnh; ảnh người dùng gửi kèm vẫn được gửi (#476).
       const decision = REJECT_DECISION[action];
       const data = await client.call<{ decisions?: Row[] }>('GET', DECISION_ELIGIBILITY, {
         token: accessToken,
@@ -335,11 +347,22 @@ export function tiktokReturnMethods(
       // Từ chối bắt buộc lý do của Get Decision Eligibility: kiểm trước khi gọi để không tốn lượt.
       if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do khi từ chối yêu cầu trả');
       const comment = opts.comment || (refundOnly ? 'Người bán không đồng ý hoàn tiền' : 'Người bán từ chối yêu cầu trả');
-      return decide(accessToken, externalReturnId, refundOnly ? 'REJECT_REFUND' : 'REJECT_RETURN', { reject_reason: opts.reasonId, comment }, opts.reasonId);
+      // `images[].image_id` là `uri` của Upload Product Image (Reject Return 202606, tra 20/11/2026); `mime_type`, `width`,
+      // `height` không bắt buộc nên không gửi.
+      const images = opts.images?.length ? { images: opts.images.map((i) => ({ image_id: i.url })) } : {};
+      return decide(accessToken, externalReturnId, refundOnly ? 'REJECT_REFUND' : 'REJECT_RETURN', { reject_reason: opts.reasonId, comment, ...images }, opts.reasonId);
     },
-    async confirmReturnReceived(accessToken, externalReturnId) {
-      // Kho quét nhận hàng trả (§20.1): sàn rời BUYER_SHIPPED_ITEM, tới bước hoàn tiền cho khách.
-      await decide(accessToken, externalReturnId, 'APPROVE_RECEIVED_PACKAGE', {});
+    async approveReturnRefund(accessToken, externalReturnId) {
+      // APPROVE_RECEIVED_PACKAGE = người bán đã kiểm hàng và đồng ý hoàn tiền (docv2 Approve Return 202309), nên gửi sau
+      // phiếu kiểm hàng hoàn chứ không lúc quét (#392). Sàn từ chối vì đã qua bước này thì đọc lại trạng thái, coi là xong.
+      try {
+        await decide(accessToken, externalReturnId, 'APPROVE_RECEIVED_PACKAGE', {});
+      } catch (err) {
+        if (!(err instanceof MarketplaceError) || err.kind !== 'rejected') throw err;
+        const status = await returnStatusOf(accessToken, externalReturnId).catch(() => null);
+        if (status && (SELLER_HANDLED.has(status) || status === 'RETURN_OR_REFUND_REQUEST_CANCEL')) return;
+        throw err;
+      }
     },
     async returnHistory(accessToken, externalReturnId) {
       // Sàn không trả trạng thái trong lịch sử: `reverseStatus` rỗng như Lazada; `note` ghép người làm, mô tả, lý do, ghi chú

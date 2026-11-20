@@ -20,13 +20,12 @@ const CHART_URL = 'https://files.commerio.test/size-chart.png';
 
 const variants: ListingVariant[] = [];
 const sizeCharts = new Map<string, string>();
-const newVariant = (categoryId: string) => {
+const newVariant = () => {
   const v: ListingVariant = {
     id: randomUUID(),
     productId: randomUUID(),
     productName: 'Áo thun',
     sku: `SC-${randomUUID().slice(0, 8)}`,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
     attributes: [],
@@ -101,7 +100,7 @@ async function specVariant(rule: SizeChartRule | null, remote: SizeChartRule | u
      values ('tiktok', $1, 'Áo', true, 'Thời trang > Áo', 'thoi trang > ao', now(), $2)`,
     [leaf, rule],
   );
-  const v = newVariant(randomUUID());
+  const v = newVariant();
   await seedSpecs(company.companyId, 'tiktok', leaf, [v]);
   return v;
 }
@@ -145,7 +144,7 @@ async function listingOf(id: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   shopId = res.body.shop.id;

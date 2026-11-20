@@ -1,25 +1,23 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { registerBody, uniqueEmail } from '../../helpers/company.ts';
+import { KNOWN_REGISTRATION_CODE, startRegistration, uniqueEmail, uniqueTaxCode } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 
 const app = testApp();
 const db = testPool();
 
-// #51: hai lần đăng ký cùng email chạy song song. Cả hai qua được bước kiểm email trước khi ghi,
-// bên ghi sau đụng UNIQUE của core.accounts; Drizzle bọc lỗi nên mã 23505 nằm ở `cause`.
+// #51, #459: hai lần đăng ký cùng email nhập mã đúng cùng lúc. Cả hai qua bước kiểm email trước khi ghi, bên ghi sau
+// đụng UNIQUE của core.accounts; Drizzle bọc lỗi nên mã 23505 nằm ở `cause`.
 describe('đăng ký trùng email đồng thời (#51)', () => {
   it('một bên 201, bên kia 409 email_taken theo ô ceo.email; chỉ một tài khoản và một công ty', async () => {
-    // Lặp vài lượt để chắc có lượt cả hai cùng qua bước kiểm trước khi ghi.
     for (let round = 0; round < 5; round++) {
       const email = uniqueEmail('dua');
       const names = [`Công ty đua A ${email}`, `Công ty đua B ${email}`];
+      const ids = await Promise.all(names.map((name) => startRegistration(email, { company: { name, taxCode: uniqueTaxCode() } })));
       const results = await Promise.all(
-        names.map((name) =>
-          request(app)
-            .post('/api/v1/identity/register')
-            .send(registerBody(email, { company: { name, taxCode: '0312345678' } })),
+        ids.map((registrationId) =>
+          request(app).post('/api/v1/identity/register/verify').send({ registrationId, code: KNOWN_REGISTRATION_CODE }),
         ),
       );
 

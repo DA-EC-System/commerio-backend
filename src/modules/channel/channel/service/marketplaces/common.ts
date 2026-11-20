@@ -75,6 +75,82 @@ export type Responsible = ResponsibleOrg;
 export interface RemoteProductCategory {
   externalCategoryId: string;
   attributes: { code: string; values: { id: string | null; name: string }[] }[];
+  /** Trường dùng chung của sản phẩm trên sàn (#497): ghép SKU điền vào catalog khi đang trống, lưu làm "sàn đang ghi". */
+  facts: RemoteProductFacts;
+}
+
+/**
+ * Trường dùng chung đọc từ sản phẩm trên sàn (#497, Documents/21 §18.5). Xuất xứ không ở đây: service đọc từ `attributes` theo
+ * `productFields` của adapter. `brand` là chuỗi sàn ghi (cả thương hiệu mặc định như "No Brand", service bỏ). `description`
+ * đã bỏ HTML, tối đa 5000 ký tự (`plainDescription`). Ảnh, ảnh bảng size là URL của sàn, chưa tải (#498). Cân nặng (g), kích
+ * thước (mm) theo từng SKU sàn: sàn chỉ có số theo sản phẩm (TikTok) thì mọi SKU cùng số; null khi sàn không ghi.
+ */
+export interface RemoteProductFacts {
+  brand: string | null;
+  description: string | null;
+  imageUrls: string[];
+  sizeChartUrl: string | null;
+  skus: RemoteSkuMeasures[];
+}
+
+export interface RemoteSkuMeasures {
+  externalSkuId: string;
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+}
+
+/** Trần mô tả của catalog (`PUT /catalog/products`, 5000 ký tự). */
+export const DESCRIPTION_MAX = 5000;
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/**
+ * Mô tả HTML của sàn thành chữ trơn (#497): thẻ khối, `<br>` thành xuống dòng, bỏ mọi thẻ khác, giải mã thực thể thường gặp và
+ * mã số, gộp khoảng trắng, cắt 5000 ký tự. Rỗng thì null.
+ */
+export function plainDescription(html: unknown): string | null {
+  if (typeof html !== 'string') return null;
+  const text = html
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] === '#') {
+        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text ? text.slice(0, DESCRIPTION_MAX).trimEnd() : null;
+}
+
+const POSITIVE_INT_MAX = 2_147_483_647;
+
+/** Số sàn ghi (chuỗi hoặc số) nhân hệ số, làm tròn ra số nguyên dương; không đọc được, ≤ 0 hay vượt `integer` thì null. */
+function scaled(value: unknown, factor: number): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const out = Math.round(n * factor);
+  return out > 0 && out <= POSITIVE_INT_MAX ? out : null;
+}
+
+/** Cân nặng ra gam: `KILOGRAM` (mặc định), `GRAM`, `POUND`. Đơn vị lạ thì null. */
+export function toGrams(value: unknown, unit = 'KILOGRAM'): number | null {
+  const factor = { KILOGRAM: 1000, GRAM: 1, POUND: 453.59237 }[unit.toUpperCase()];
+  return factor === undefined ? null : scaled(value, factor);
+}
+
+/** Độ dài ra mm: `CENTIMETER` (mặc định), `MILLIMETER`, `INCH`. Đơn vị lạ thì null. */
+export function toMillimeters(value: unknown, unit = 'CENTIMETER'): number | null {
+  const factor = { CENTIMETER: 10, MILLIMETER: 1, INCH: 25.4 }[unit.toUpperCase()];
+  return factor === undefined ? null : scaled(value, factor);
 }
 
 /** Một gợi ý category của sàn (#400 lát 9): `path` là đường dẫn sàn trả (Lazada tiếng Anh), service thay bằng cây khi có. */
@@ -92,7 +168,8 @@ export interface CascadeLevel {
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
-export type ImagePurpose = 'main' | 'size_chart';
+/** `evidence`: ảnh minh chứng khi từ chối yêu cầu trả (#476), không phải ảnh sản phẩm; sàn không dùng thì coi như `main`. */
+export type ImagePurpose = 'main' | 'size_chart' | 'evidence';
 
 /**
  * Bảng kích cỡ của danh mục sàn: `required` bắt buộc (thiếu thì sàn từ chối), `optional` gửi được, `unsupported` danh mục
@@ -116,7 +193,11 @@ export interface NewProduct {
   sizeChartUri?: string;
   sellerSku: string;
   price: string;
-  quantity: number;
+  /**
+   * Tồn gửi kèm. Thiếu là không gửi: đẩy lại sản phẩm đã có trên sàn mà SKU chưa có số hay chưa tin được (#460, #223)
+   * thì giữ tồn trên sàn, lượt đẩy tồn quyết sau. Tạo mới luôn có.
+   */
+  quantity?: number;
   weightG: number;
   lengthMm: number;
   widthMm: number;
@@ -142,6 +223,35 @@ export interface ContentUpdate {
   description: string;
   attributes: Record<string, string | string[]>;
   responsible?: Responsible;
+}
+
+/**
+ * Đổi category của sản phẩm đang có trên sàn (`apply-category`, commerio-backend#467): chỉ category và attribute; tên, mô tả,
+ * ảnh, SKU, giá, tồn giữ như trên sàn. `sizeChartUrl` (ảnh của app) chỉ được đưa lên khi sản phẩm trên sàn chưa có bảng size.
+ */
+export interface CategoryChangeInput {
+  externalCategoryId: string;
+  /** Như `NewProduct.attributes` (nhãn lựa chọn hoặc chuỗi tự nhập). */
+  attributes: Record<string, string | string[]>;
+  responsible?: Responsible;
+  /** Ảnh bảng size của app: adapter đưa lên sàn chỉ khi sản phẩm trên sàn chưa có bảng size. */
+  sizeChartUrl?: string;
+  /** App đã ẩn listing (`hidden`): sau khi sửa phải tắt lại dù lần đọc này thấy sản phẩm đang bật (lượt thử lại). */
+  keepDeactivated?: boolean;
+}
+
+/**
+ * Kết quả đổi category: `underReview` sàn ngừng bán bản cũ để duyệt; `mismatch` các chỗ lệch khi đọc lại so với lúc đọc trước
+ * (số SKU, SKU người bán, giá, số ảnh), mỗi chỗ một cụm tiếng Việt viết thường đầu câu; rỗng là khớp.
+ */
+export interface CategoryChangeResult {
+  underReview: boolean;
+  mismatch: string[];
+  /**
+   * Category đọc lại trên sàn ngay sau khi đổi, khi sàn áp ngay (Lazada). Việc nền ghi vào `listings.external_category_id`;
+   * không có (TikTok: bản mới qua duyệt mới áp) thì lượt đồng bộ category ghi sau.
+   */
+  externalCategoryId?: string;
 }
 
 /** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */
@@ -634,6 +744,11 @@ export interface MarketplaceAdapter {
    * bản cũ để duyệt; false là vẫn bán bản cũ trong lúc duyệt bản sửa. Sàn chưa hỗ trợ thì không có hàm này.
    */
   updateContent?(accessToken: string, externalProductId: string, content: ContentUpdate): Promise<{ underReview: boolean }>;
+  /**
+   * Đổi category của sản phẩm đang bán (#467, Documents/21 §18.5): dựng bản sửa từ chính dữ liệu đọc trên sàn, chỉ thay
+   * category và attribute. Không bật, tắt sản phẩm. Sàn chưa hỗ trợ thì không có hàm này (route trả 422).
+   */
+  changeCategory?(accessToken: string, externalProductId: string, input: CategoryChangeInput): Promise<CategoryChangeResult>;
   /** Trạng thái bản sửa nội dung đang duyệt (#293), đồng bộ đọc cho listing có bản sửa `auditing`. */
   contentRevision?(accessToken: string, externalProductId: string): Promise<ContentRevision>;
   /**
@@ -756,11 +871,21 @@ export interface MarketplaceAdapter {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
-    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+    /**
+     * `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. `images`: ảnh minh chứng đã nằm trên
+     * sàn (chuỗi `uploadImage` trả), chỉ có khi sàn khai `returnImageTypes` (#437).
+     */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
-  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
+  readonly returnImageTypes?: readonly string[];
+  /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /**
+   * Báo sàn người bán đã kiểm hàng trả và đồng ý hoàn tiền, sau khi phiếu kiểm hàng hoàn ghi sổ (#392; TikTok
+   * `APPROVE_RECEIVED_PACKAGE`). Sàn đã qua bước này (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
+   */
+  approveReturnRefund?(accessToken: string, externalReturnId: string): Promise<void>;
   /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
   returnHistory?(
     accessToken: string,
@@ -837,8 +962,10 @@ interface RemoteAftersale {
   /** Mã lý do của sàn và câu hiển thị. */
   reasonCode: string | null;
   reason: string | null;
-  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả. */
+  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả hay có số không đọc được. */
   refundAmount: string | null;
+  /** Chuỗi gốc của số tiền hoàn sàn trả mà không đọc được (Lazada, #436); app bật Cần xử lý thay vì ghi 0. */
+  refundAmountUnreadable?: string | null;
   lines: RemoteAftersaleLine[];
   createdAt: Date;
   updatedAt: Date;
@@ -859,6 +986,11 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /**
+   * Sàn báo người bán đã xử lý hàng trả về (TikTok: đồng ý hoàn tiền sau kiểm hàng, hay từ chối nhận hàng), khác với ĐVVC
+   * chỉ giao hàng về (Lazada). App còn chờ hàng về mà sàn báo vậy thì hàng được xử lý ngoài app (#392). Thiếu là false.
+   */
+  sellerHandledReceipt?: boolean;
   /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
   ofcStatus?: string | null;
   /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */

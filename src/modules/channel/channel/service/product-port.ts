@@ -4,7 +4,11 @@
 import type { Decimal } from 'decimal.js';
 import {
   availableOf,
+  countedOf,
+  fillProductFacts,
+  type FactsSource,
   getVariants,
+  type ProductFacts,
   productImageUrls,
   productSizeChartUrls,
   standardPricesOf,
@@ -19,7 +23,6 @@ export interface ListingVariant {
   /** Mã cha của sản phẩm (#400 A5). */
   productCode: string;
   sku: string;
-  categoryId: string;
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
   /** Giá trị thuộc tính theo `position` (#400: ánh xạ trục biến thể sang sales attribute của sàn). */
@@ -46,6 +49,8 @@ export interface ProductPort {
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
   /** Có mọi biến thể của công ty (chưa có tồn thì 0); id lạ không có trong Map thì không đẩy tồn (#222). */
   availableOf(ids: readonly string[]): Promise<Map<string, number>>;
+  /** SKU kho đã có số (#460); thiếu (bản giả của test) thì coi mọi SKU đã có số. */
+  countedOf?(ids: readonly string[]): Promise<Set<string>>;
   /**
    * Link ảnh catalog theo sản phẩm (#303), tối đa `max` ảnh đầu theo thứ tự; sản phẩm chưa có ảnh (hoặc máy chủ chưa
    * cấu hình link ảnh) không có trong Map.
@@ -53,6 +58,11 @@ export interface ProductPort {
   productImageUrls(productIds: readonly string[], max: number): Promise<Map<string, string[]>>;
   /** Link ảnh bảng kích cỡ theo sản phẩm (#347); sản phẩm chưa có ảnh không có trong Map. */
   productSizeChartUrls?(productIds: readonly string[]): Promise<Map<string, string>>;
+  /**
+   * Điền trường dùng chung đang trống của sản phẩm từ sàn (#497, Documents/21 §11.3); trả tên trường đã ghi. Thiếu (bản giả của
+   * test) thì ghép không điền gì.
+   */
+  fillProductFacts?(productId: string, facts: ProductFacts, source: FactsSource): Promise<{ filled: string[] }>;
 }
 
 // Trường #110 sẽ thêm; đọc tuỳ chọn để code không đổi khi Khang merge.
@@ -66,7 +76,6 @@ function toListingVariant(v: Extended): ListingVariant {
     productName: v.productName,
     productCode: v.productCode,
     sku: v.sku,
-    categoryId: v.categoryId,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
     attributes: v.attributes.map(({ attributeId, attributeName, valueId, value }) => ({ attributeId, attributeName, valueId, value })),
     archived: v.archived,
@@ -89,8 +98,10 @@ export function productPort(ctx: ModuleContext): ProductPort {
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
+      countedOf,
       productImageUrls,
       productSizeChartUrls,
+      fillProductFacts,
     }
   );
 }

@@ -7,6 +7,7 @@ import {
   countryOption,
   CUSTOM_AXIS,
   isoOfCountryLabel,
+  nextFieldSources,
   NOT_COUNTRY_LABELS,
   normalizePath,
   permissionOf,
@@ -278,5 +279,22 @@ describe('remoteSpecAttributes', () => {
     const remote = ['a', 'b', 'brand', 'color', 'propCascade'].map((code) => ({ code, values: [{ id: null, name: code === 'b' ? 'Riêng' : 'No Brand' }] }));
     expect(remoteSpecAttributes(leaf, remote)).toEqual({ b: 'Riêng' });
     expect(remoteSpecAttributes(null, remote)).toEqual({});
+  });
+});
+
+describe('nextFieldSources (#497)', () => {
+  const before = { attributes: { material: '11', capacity: '750ml', color: ['1', '2'] }, fieldSources: { material: 'match' as const }, source: 'push' as const };
+
+  it('giá trị giữ nguyên thì giữ nguồn cũ (thiếu thì nguồn cả spec); đổi hay mới thì user; ô bỏ thì mất', () => {
+    expect(nextFieldSources(before, { material: '11', capacity: '1l', color: ['2', '1'], features: ['21'] })).toEqual({
+      material: 'match',
+      capacity: 'user',
+      color: 'push',
+      features: 'user',
+    });
+  });
+
+  it('chưa có spec: mọi ô là user', () => {
+    expect(nextFieldSources(undefined, { material: '11' })).toEqual({ material: 'user' });
   });
 });

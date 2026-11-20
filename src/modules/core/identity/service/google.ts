@@ -9,6 +9,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { recordAudit } from '../../audit/index.ts';
 import { type AccountRow, findAccountByEmail, findAccountByGoogleSub, findAccountById, linkGoogleSub } from '../../staff/index.ts';
+import { isTestEmail } from '../domain/registration.ts';
 import { countLogin } from './metrics.ts';
 import { type LoginResult, startSession } from './session.ts';
 
@@ -120,6 +121,8 @@ export async function loginWithGoogle(credential: string): Promise<LoginResult> 
     throw err;
   }
   try {
+    // Email thuộc miền thử của e2e (#459) không bao giờ đăng nhập bằng Google.
+    if (isTestEmail(identity.email, env.REGISTRATION_TEST_EMAIL_DOMAIN)) throw accountNotFound();
     let account = await findAccountByGoogleSub(identity.sub);
     if (!account) {
       const byEmail = await findAccountByEmail(identity.email);

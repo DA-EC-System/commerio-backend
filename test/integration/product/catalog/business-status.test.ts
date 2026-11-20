@@ -4,7 +4,7 @@ import type { BusinessAction, BusinessStatus } from '#src/modules/product/catalo
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { receive } from '../inventory/helpers.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createGroup, createProduct, uniq, valueId } from './helpers.ts';
 
 // Đổi trạng thái kinh doanh SKU (#204, Documents/21 §17.2, §17.3; kiem-thu/ca-theo-so-do.md B1).
 let companyId: string;
@@ -23,11 +23,11 @@ beforeAll(async () => {
   color = await createAttribute(ceo, uniq('Màu'), ['Đen', 'Trắng', 'Xám']);
 });
 
-/** Sản phẩm `n` SKU (1 đến 3), danh mục riêng. */
+/** Sản phẩm `n` SKU (1 đến 3), nhóm hàng riêng. */
 const shirt = async (n = 1) => {
-  const category = await createCategory(ceo, uniq('Áo'), 'AO-{SEQ}-{VAL}');
+  const group = await createGroup(ceo, uniq('Áo'), 'AO-{SEQ}-{VAL}');
   const values = ['Đen', 'Trắng', 'Xám'].slice(0, n).map((v) => [valueId(color, v)]);
-  return createProduct(ceo, { name: uniq('Áo'), categoryId: category.id, variants: values });
+  return createProduct(ceo, { name: uniq('Áo'), groupId: group.id, variants: values });
 };
 const change = (token: string, productId: string, action: BusinessAction, variantIds?: string[]) =>
   api(token).post(`/products/${productId}/business-status`, variantIds ? { action, variantIds } : { action });

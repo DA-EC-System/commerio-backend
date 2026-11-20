@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   check,
   index,
   integer,
@@ -17,34 +18,66 @@ import { money, timestamps, version } from '../../../../shared/db/columns.ts';
 // Mọi bảng của module `catalog` khai báo trong schema này.
 export const catalogSchema = pgSchema('product');
 
-/** Danh mục và quy tắc SKU (Documents/21 5.1). Tên không trùng theo chữ thường trong công ty. */
-export const categories = catalogSchema.table(
-  'categories',
+/**
+ * Gợi ý giá, ngưỡng tồn khi sửa hàng loạt (#242, Documents/25 §5.3), chung cho nhóm hàng và cài đặt công ty; `null` là chưa
+ * đặt. Giá muốn bán gợi ý = giá nhập × hệ số, làm tròn lên theo bước `price_rounding` (đồng). Ngưỡng tồn = tốc độ bán/ngày ×
+ * số ngày chờ hàng + tồn an toàn; SKU chưa có lịch sử bán thì lấy `reorder_default_qty`.
+ */
+const suggestColumns = {
+  marginCoefficient: numeric('margin_coefficient', { precision: 18, scale: 2 }),
+  priceRounding: integer('price_rounding'),
+  reorderLeadDays: integer('reorder_lead_days'),
+  reorderSafetyQty: integer('reorder_safety_qty'),
+  reorderDefaultQty: integer('reorder_default_qty'),
+};
+
+type SuggestColumns = { [K in keyof typeof suggestColumns]: AnyPgColumn };
+
+function suggestChecks(table: string, t: SuggestColumns) {
+  return [
+    check(`${table}_margin_coefficient`, sql`${t.marginCoefficient} >= 1`),
+    check(`${table}_price_rounding`, sql`${t.priceRounding} > 0`),
+    check(`${table}_reorder_config`, sql`${t.reorderLeadDays} >= 0 and ${t.reorderSafetyQty} >= 0 and ${t.reorderDefaultQty} >= 0`),
+  ];
+}
+
+/**
+ * Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU. Tên không trùng theo chữ thường trong
+ * công ty. Gợi ý `null` thì theo cài đặt công ty.
+ */
+export const productGroups = catalogSchema.table(
+  'product_groups',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
     name: text('name').notNull(),
-    skuPattern: text('sku_pattern').notNull(),
-    // Số thứ tự cấp cho biến thể kế tiếp của danh mục ({SEQ}).
-    skuNextSeq: integer('sku_next_seq').notNull().default(1),
-    // Cấu hình gợi ý khi sửa hàng loạt (#242, Documents/25 §5.3); `null` là chưa đặt thì không gợi ý số đó.
-    // Giá muốn bán gợi ý = giá nhập × hệ số, làm tròn lên theo bước `price_rounding` (đồng).
-    marginCoefficient: numeric('margin_coefficient', { precision: 18, scale: 2 }),
-    priceRounding: integer('price_rounding'),
-    // Ngưỡng tồn = tốc độ bán/ngày × số ngày chờ hàng + tồn an toàn; SKU chưa có lịch sử bán thì lấy `reorder_default_qty`.
-    reorderLeadDays: integer('reorder_lead_days'),
-    reorderSafetyQty: integer('reorder_safety_qty'),
-    reorderDefaultQty: integer('reorder_default_qty'),
+    ...suggestColumns,
     ...timestamps,
     ...version,
   },
-  (t) => [
-    uniqueIndex('categories_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
-    check('categories_margin_coefficient', sql`${t.marginCoefficient} >= 1`),
-    check('categories_price_rounding', sql`${t.priceRounding} > 0`),
-    check('categories_reorder_config', sql`${t.reorderLeadDays} >= 0 and ${t.reorderSafetyQty} >= 0 and ${t.reorderDefaultQty} >= 0`),
-  ],
+  (t) => [uniqueIndex('product_groups_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`), ...suggestChecks('product_groups', t)],
 );
+
+/**
+ * Cài đặt sản phẩm của công ty (D11): mẫu SKU, số {SEQ} kế tiếp, gợi ý mặc định. Một dòng mỗi công ty, tạo cùng công ty
+ * (`seedCompanyDefaults`); RLS ở migration `*_nhom-hang-rls-quyen`. Cấp số SKU không tăng `version` (khoá advisory
+ * `lockVariants` tuần tự hoá việc cấp số).
+ */
+export const companyProductSettings = catalogSchema.table(
+  'company_product_settings',
+  {
+    companyId: uuid('company_id').primaryKey(),
+    skuPattern: text('sku_pattern').notNull().default('SP{SEQ:5}-{VAL}'),
+    skuNextSeq: integer('sku_next_seq').notNull().default(1),
+    ...suggestColumns,
+    ...timestamps,
+    ...version,
+  },
+  (t) => [check('company_product_settings_sku_next_seq', sql`${t.skuNextSeq} >= 1`), ...suggestChecks('company_product_settings', t)],
+);
+
+/** Loại thuộc tính chuẩn sàn (21 mục 5.2): bước Variants của trang đẩy ghép `color`, `size` sang trục chuẩn của sàn. */
+export const PLATFORM_KINDS = ['color', 'size'] as const;
 
 export const attributes = catalogSchema.table(
   'attributes',
@@ -52,10 +85,18 @@ export const attributes = catalogSchema.table(
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
     name: text('name').notNull(),
+    // Thuộc tính chuẩn sàn, do hệ thống gắn khi lập công ty; API chỉ đọc.
+    platformKind: text('platform_kind', { enum: PLATFORM_KINDS }),
     ...timestamps,
     ...version,
   },
-  (t) => [uniqueIndex('attributes_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`)],
+  (t) => [
+    uniqueIndex('attributes_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('attributes_company_platform_kind_uq').on(t.companyId, t.platformKind).where(sql`${t.platformKind} is not null`),
+    check('attributes_platform_kind', sql`${t.platformKind} in ('color', 'size')`),
+    // Tên trục tối đa 15 ký tự (Lazada `VARIATION_*`, Documents/21 mục 5.2).
+    check('attributes_name_length', sql`char_length(${t.name}) <= 15`),
+  ],
 );
 
 /** Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36). */
@@ -78,11 +119,13 @@ export const attributeValues = catalogSchema.table(
     // Đích của khoá ngoại ghép `pavi_value_fk` (#340, migration `*_anh-phan-loai-rls`).
     unique('attribute_values_id_attribute_uq').on(t.id, t.attributeId),
     check('attribute_values_code_format', sql`${t.code} ~ '^[A-Z0-9]{1,6}$'`),
+    // Giá trị tối đa 20 ký tự (Lazada, Documents/21 mục 5.2).
+    check('attribute_values_value_length', sql`char_length(${t.value}) <= 20`),
   ],
 );
 
 /**
- * Sản phẩm; không đổi danh mục sau khi tạo (Documents/21 P6). Không có trạng thái lưu riêng: trạng thái suy từ SKU con
+ * Sản phẩm; đổi nhóm hàng được, SKU không đổi theo (Documents/21 P6, 19/11/2026). Không có trạng thái lưu riêng: trạng thái suy từ SKU con
  * (#204). `code` là mã cha cấp lúc tạo, không route nào sửa (spec 204 D5).
  */
 export const products = catalogSchema.table(
@@ -90,9 +133,9 @@ export const products = catalogSchema.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
-    categoryId: uuid('category_id')
+    groupId: uuid('group_id')
       .notNull()
-      .references(() => categories.id),
+      .references(() => productGroups.id),
     name: text('name').notNull(),
     code: text('code').notNull(),
     description: text('description'),
@@ -111,7 +154,7 @@ export const products = catalogSchema.table(
     // Tên không trùng trên mọi sản phẩm của công ty, kể cả sản phẩm mọi SKU đã lưu trữ (#204 D4, thay B1 của #12).
     uniqueIndex('products_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
     uniqueIndex('products_company_code_uq').on(t.companyId, t.code),
-    index().on(t.categoryId),
+    index().on(t.groupId),
     // Đích của khoá ngoại ghép `pavi_product_fk` (#340, migration `*_anh-phan-loai-rls`).
     unique('products_id_image_attribute_uq').on(t.id, t.imageAttributeId),
     check('products_origin_country', sql`${t.originCountry} is null or ${t.originCountry} ~ '^[A-Z]{2}$'`),
@@ -206,6 +249,8 @@ export const productVariants = catalogSchema.table(
       'product_variants_dimensions',
       sql`${t.weightG} between 1 and 50000 and ${t.lengthMm} between 1 and 2000 and ${t.widthMm} between 1 and 2000 and ${t.heightMm} between 1 and 2000`,
     ),
+    // `seller_sku` của TikTok tối đa 50 ký tự (Documents/21 mục 5.2).
+    check('product_variants_sku_length', sql`char_length(${t.sku}) <= 50`),
   ],
 );
 

@@ -88,7 +88,7 @@ const app = () => request(testApp());
 
 /** Gian hàng `active` của một công ty mới, có một listing `live` để lượt đồng bộ phải gọi sàn. */
 async function activeShop(opts: { refreshToken?: string } = {}) {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   const seller = randomUUID().replace(/-/g, '').slice(0, 12);
   const res = await app()
     .post('/api/v1/channel/shops/lazada/token')
@@ -119,7 +119,7 @@ const schedules = async (shopId: string) => {
 describe('lịch việc nền của gian hàng (#102 A3)', () => {
   it('AC-3: worker khởi động thì mọi gian hàng active có lịch đồng bộ listing, kéo đơn và làm mới token; gian hàng chưa active thì không', async () => {
     const { shopId } = await activeShop();
-    const company = await createCompany({ optionalModules: ['channel'] });
+    const company = await createCompany({ optionalModules: [] });
     const connecting = await app()
       .post('/api/v1/channel/shops/lazada/token')
       .set('Authorization', `Bearer ${company.ceo.token}`)

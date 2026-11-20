@@ -365,6 +365,38 @@ export async function insertBankMatch(values: typeof bankMatches.$inferInsert): 
 }
 
 /** Doanh thu luỹ kế từ ngày `from` (dòng còn hiệu lực), cho cảnh báo mốc thuế. */
+/**
+ * Cơ sở trần hoàn tiền của đơn (#355, `refundCap`): doanh thu ước tính đã ghi theo kiện (dòng `revenue` nguồn `package`),
+ * tiền hoàn đã ghi (dòng ước tính `customer_refund`, `adjustment` của nguồn `return_refund`) dưới dạng số dương.
+ */
+export async function refundBasisOf(orderId: string): Promise<{ revenueByPackage: Map<string, string>; refunded: string }> {
+  const revenue = await getDb()
+    .select({ packageId: ledgerEntries.packageId, total: sql<string>`sum(${ledgerEntries.amount})::text` })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.orderId, orderId),
+        eq(ledgerEntries.kind, 'revenue'),
+        eq(ledgerEntries.isEstimate, true),
+        eq(ledgerEntries.sourceType, 'package'),
+        isNotNull(ledgerEntries.packageId),
+      ),
+    )
+    .groupBy(ledgerEntries.packageId);
+  const [row] = await getDb()
+    .select({ refunded: sql<string>`(-coalesce(sum(${ledgerEntries.amount}), 0))::text` })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.orderId, orderId),
+        eq(ledgerEntries.isEstimate, true),
+        eq(ledgerEntries.sourceType, 'return_refund'),
+        inArray(ledgerEntries.kind, ['customer_refund', 'adjustment']),
+      ),
+    );
+  return { revenueByPackage: new Map(revenue.map((r) => [r.packageId!, r.total])), refunded: row!.refunded };
+}
+
 export async function revenueSince(from: string): Promise<string> {
   const [row] = await getDb()
     .select({ total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })

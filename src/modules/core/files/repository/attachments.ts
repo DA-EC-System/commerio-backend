@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { attachments, type FileRow, files } from './schema.ts';
 
@@ -53,4 +53,14 @@ export async function replaceAttachmentRows(
         createdAt: sql`now() + ${i} * interval '1 microsecond'`,
       })),
     );
+}
+
+/** Gỡ mọi tệp của các chứng từ cùng loại (chứng từ bị xoá hẳn); không xoá tệp. Trả số dòng gắn đã gỡ. */
+export async function deleteAttachmentRows(entityType: string, entityIds: readonly string[]): Promise<number> {
+  if (entityIds.length === 0) return 0;
+  const rows = await getDb()
+    .delete(attachments)
+    .where(and(eq(attachments.entityType, entityType), inArray(attachments.entityId, [...entityIds])))
+    .returning({ id: attachments.id });
+  return rows.length;
 }

@@ -265,3 +265,13 @@ export async function activeMemberEmails(membershipIds: readonly string[]): Prom
     .orderBy(accounts.email);
   return rows.map((r) => r.email);
 }
+
+/** Id membership đang hoạt động của công ty đang chọn (#461 onboarding). */
+export async function activeMembershipIds(): Promise<string[]> {
+  const companyId = requireCompanyId('activeMembershipIds');
+  const rows = await getDb()
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, companyId), eq(memberships.status, 'active')));
+  return rows.map((r) => r.id);
+}

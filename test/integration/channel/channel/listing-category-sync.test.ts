@@ -58,7 +58,6 @@ async function setup(current: string | null, specCategory: string | null, remote
     productId: randomUUID(),
     productName: 'Bình',
     sku: `CS-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     productCode: 'SP-TEST',
     attributes: [],
@@ -101,7 +100,7 @@ const specStatus = async (productId: string) =>
   (await testPool().query("select category_status from channel.product_specs where product_id = $1 and platform = 'lazada'", [productId])).rows[0]?.category_status;
 
 beforeAll(async () => {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   companyId = c.companyId;
   const shop = await request(testApp())
     .post('/api/v1/channel/shops/lazada/token')
@@ -132,6 +131,40 @@ describe('đồng bộ category của listing', () => {
     expect(await listing(same.listingId)).toEqual({ external_category_id: a, version: before[3].version });
     expect(await specStatus(same.productId)).toBe('ok');
     expect((await listing(silent.listingId)).external_category_id).toBe(a);
+  });
+});
+
+describe('category_change của lượt đổi category (#467)', () => {
+  const change = async (id: string, status: string, toCategoryId: string, at = new Date().toISOString()) =>
+    testPool().query('update channel.listings set category_change = $2::jsonb where id = $1', [
+      id,
+      JSON.stringify({ status, toCategoryId, toCategoryPath: null, code: 'x', message: 'm', attempts: 1, at }),
+    ]);
+  const changeOf = async (id: string) => (await testPool().query('select category_change from channel.listings where id = $1', [id])).rows[0].category_change;
+
+  it('sàn đã ở đúng category đích thì xoá `failed`, `mismatch` (cột đổi hay đã đúng từ trước); đích khác thì giữ', async () => {
+    const [a, b, c] = [num(), num(), num()];
+    const moved = await setup(a, a, b);
+    const already = await setup(b, b, b);
+    const other = await setup(a, a, b);
+    await change(moved.listingId, 'failed', b);
+    await change(already.listingId, 'mismatch', b);
+    await change(other.listingId, 'failed', c);
+    await syncListings(port, companyId, shopId);
+    expect(await changeOf(moved.listingId)).toBeNull();
+    expect(await changeOf(already.listingId)).toBeNull();
+    expect(await changeOf(other.listingId)).toMatchObject({ status: 'failed', toCategoryId: c });
+  });
+
+  it('`queued` quá 30 phút thì đồng bộ đánh `failed`; chưa quá giờ thì giữ', async () => {
+    const a = num();
+    const old = await setup(a, a, a);
+    const recent = await setup(a, a, a);
+    await change(old.listingId, 'queued', num(), new Date(Date.now() - 31 * 60_000).toISOString());
+    await change(recent.listingId, 'queued', num());
+    await syncListings(port, companyId, shopId);
+    expect(await changeOf(old.listingId)).toMatchObject({ status: 'failed', code: 'marketplace_unavailable', message: 'Quá 30 phút chưa có kết quả từ sàn, thử lại' });
+    expect(await changeOf(recent.listingId)).toMatchObject({ status: 'queued' });
   });
 });
 

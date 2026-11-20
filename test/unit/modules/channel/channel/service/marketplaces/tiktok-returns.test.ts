@@ -150,6 +150,7 @@ describe('listReturns, listCancellations', () => {
         disputeInProgress: false,
         returnTrackingCode: null,
         respondBy: null,
+        sellerHandledReceipt: true,
         createdAt: new Date(1793634765 * 1000),
         updatedAt: new Date(1793634867 * 1000),
       },
@@ -381,7 +382,7 @@ describe('decideCancelRequest, cancelRequestRejectReasons', () => {
 });
 
 // Approve Return, Reject Return, Get Reject Reasons 202309 (OAS cục bộ của skill tts-openapi-guide, tra 19/11/2026; #364).
-describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', () => {
+describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () => {
   const RET = '4035318504086604999';
   const approve = `POST /return_refund/202309/returns/${RET}/approve`;
   const reject = `POST /return_refund/202606/returns/${RET}/reject`;
@@ -420,6 +421,27 @@ describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', ()
     expect((calls[1]!.body as { comment: string }).comment).toBe('Hàng còn nguyên tem');
   });
 
+  it('từ chối kèm ảnh minh chứng: images[].image_id là uri đã tải lên sàn (#476)', async () => {
+    const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
+    const images = [
+      { name: 'tem.jpg', url: 'tos-alisg/tem' },
+      { name: 'hop.png', url: 'tos-alisg/hop' },
+    ];
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind: 'return', reasonId: 'seller_reject_r1', images });
+    expect(calls[0]!.body).toEqual({
+      decision: 'REJECT_RETURN',
+      reject_reason: 'seller_reject_r1',
+      comment: 'Người bán từ chối yêu cầu trả',
+      images: [{ image_id: 'tos-alisg/tem' }, { image_id: 'tos-alisg/hop' }],
+    });
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind: 'return', reasonId: 'seller_reject_r1', images: [] });
+    expect(calls[1]!.body).not.toHaveProperty('images');
+  });
+
+  it('TikTok khai kiểu ảnh minh chứng JPG, PNG như Lazada (#476)', () => {
+    expect(createTiktokAdapter(config).returnImageTypes).toEqual(['image/jpeg', 'image/png']);
+  });
+
   it('từ chối thiếu lý do → reject_reason_required, không gọi sàn', async () => {
     const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
     await expect(adapter.decideReturn!(TOKEN, RET, [], 'reject', { kind: 'return' })).rejects.toMatchObject({ kind: 'rejected', platformCode: 'reject_reason_required' });
@@ -441,11 +463,51 @@ describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', ()
     });
   });
 
-  it('confirmReturnReceived → approve APPROVE_RECEIVED_PACKAGE', async () => {
+  it('không báo sàn lúc quét: APPROVE_RECEIVED_PACKAGE là đồng ý hoàn tiền (#392)', () => {
+    const { adapter } = fakeSan({});
+    expect(adapter.confirmReturnReceived).toBeUndefined();
+  });
+
+  it('approveReturnRefund → approve APPROVE_RECEIVED_PACKAGE, có idempotency_key', async () => {
     const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
-    await adapter.confirmReturnReceived!(TOKEN, RET, ['L1']);
+    await adapter.approveReturnRefund!(TOKEN, RET);
     expect(calls[0]!.body).toEqual({ decision: 'APPROVE_RECEIVED_PACKAGE' });
     expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-APPROVE_RECEIVED_PACKAGE`);
+  });
+
+  const search = 'POST /return_refund/202602/returns/search';
+  it.each(['RETURN_OR_REFUND_REQUEST_SUCCESS', 'RETURN_OR_REFUND_REQUEST_COMPLETE', 'REJECT_RECEIVE_PACKAGE', 'RETURN_OR_REFUND_REQUEST_CANCEL'])(
+    'sàn từ chối vì yêu cầu đã ở %s → coi là xong',
+    async (status) => {
+      const { adapter, calls } = fakeSan({
+        [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
+        [search]: () => ok({ return_orders: [{ return_id: RET, return_status: status }] }),
+      });
+      await expect(adapter.approveReturnRefund!(TOKEN, RET)).resolves.toBeUndefined();
+      expect(calls[1]!.body).toEqual({ return_ids: [RET] });
+    },
+  );
+
+  it('sàn từ chối mà yêu cầu vẫn chờ người bán → ném lỗi của lệnh', async () => {
+    const { adapter } = fakeSan({
+      [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
+      [search]: () => ok({ return_orders: [{ return_id: RET, return_status: 'BUYER_SHIPPED_ITEM' }] }),
+    });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ kind: 'rejected', platformCode: '25011011' });
+  });
+
+  it('sàn từ chối, đọc lại cũng lỗi → ném lỗi của lệnh', async () => {
+    const { adapter } = fakeSan({
+      [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
+      [search]: () => json({ code: 36009003, message: 'busy' }),
+    });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ platformCode: '25011011' });
+  });
+
+  it('lỗi tạm của lệnh không đọc lại, ném luôn', async () => {
+    const { adapter, calls } = fakeSan({ [approve]: () => new Response('', { status: 503 }) });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(calls.every((c) => c.path.endsWith('/approve'))).toBe(true);
   });
 
   it.each([

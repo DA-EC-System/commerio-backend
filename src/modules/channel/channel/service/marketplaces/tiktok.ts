@@ -582,6 +582,9 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client, { findSku }),
     ...tiktokReturnMethods(client),
+    // Ảnh minh chứng khi từ chối đi Upload Product Image (`use_case` DESCRIPTION_IMAGE) rồi vào `images` (#476). Sàn nhận
+    // cả WEBP, HEIC, BMP; giữ JPG, PNG như Lazada để một luật cho ô ảnh ở FE.
+    returnImageTypes: ['image/jpeg', 'image/png'],
     ...tiktokOrderMethods(client, deps),
   };
 }

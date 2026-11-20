@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { newPasswordSchema } from '../../../../shared/auth/password-policy.ts';
-import { OPTIONAL_MODULES } from '../../platform/index.ts';
+import { normalizeTaxCode, TAX_CODE_FORMAT_MESSAGE } from '../../platform/index.ts';
 
 // Quy tắc khớp FE `src/features/auth/schemas.ts` (Documents/21 A5, V14).
 const email = z
@@ -23,25 +23,23 @@ export const RegisterBody = z
   .object({
     company: z.object({
       name: z.string().trim().min(2, 'Nhập tên công ty').max(200, 'Tên tối đa 200 ký tự'),
+      // Chuẩn hoá trước khi lưu và so trùng (Documents/21 mục 2.1).
       taxCode: z
         .string()
-        .trim()
-        .regex(/^\d{10}(-\d{3})?$/, 'Mã số thuế gồm 10 số, hoặc dạng 0123456789-001'),
+        .max(40, TAX_CODE_FORMAT_MESSAGE)
+        .transform((v, ctx) => {
+          const normalized = normalizeTaxCode(v);
+          if (normalized) return normalized;
+          ctx.addIssue({ code: 'custom', message: TAX_CODE_FORMAT_MESSAGE });
+          return z.NEVER;
+        })
+        .meta({ example: '0312345678' }),
     }),
     ceo: z.object({
       fullName: z.string().trim().min(2, 'Nhập họ tên').max(100, 'Họ tên tối đa 100 ký tự'),
-      email,
+      email: email.pipe(z.string().max(254, 'Email tối đa 254 ký tự')),
       password: newPassword,
     }),
-    optionalModules: z
-      .array(z.enum(OPTIONAL_MODULES))
-      .default([])
-      .transform((list) => [...new Set(list)]),
-    assistantDataConsent: z.boolean().default(false),
-  })
-  .refine((v) => !v.optionalModules.includes('assistant') || v.assistantDataConsent, {
-    path: ['assistantDataConsent'],
-    message: 'Cần đồng ý gửi dữ liệu tới OpenAI để bật Trợ lý AI',
   })
   .meta({ id: 'RegisterCompanyRequest' });
 
@@ -95,6 +93,26 @@ export const SelectCompanyResponse = z
   .object({ accessToken: z.string(), context: CompanyContext })
   .meta({ id: 'SelectCompanyResponse' });
 export const RefreshResponse = z.object({ accessToken: z.string() }).meta({ id: 'RefreshResponse' });
-export const RegisterResponse = z
-  .object({ companyId: z.uuid(), email: z.string() })
-  .meta({ id: 'RegisterCompanyResponse' });
+export const RegistrationStatus = z
+  .object({
+    registrationId: z.uuid(),
+    codeExpiresAt: z.string().meta({ description: 'Mã hết hạn lúc này (ISO 8601)' }),
+    registrationExpiresAt: z.string().meta({ description: 'Lần đăng ký hết hạn lúc này (ISO 8601), 30 phút từ lúc gửi form' }),
+    resendAfterSeconds: z.number().int().meta({ description: 'Số giây phải chờ trước khi xin mã lại' }),
+  })
+  .meta({ id: 'RegistrationStatus' });
+
+export const RegistrationIdBody = z
+  .object({ registrationId: z.uuid('Mã đăng ký không hợp lệ') })
+  .meta({ id: 'RegistrationResendRequest' });
+
+export const VerifyRegistrationBody = z
+  .object({
+    registrationId: z.uuid('Mã đăng ký không hợp lệ'),
+    code: z.string().regex(/^\d{6}$/, 'Mã gồm 6 chữ số'),
+  })
+  .meta({ id: 'RegistrationVerifyRequest' });
+
+export const VerifyRegistrationResponse = z
+  .object({ accessToken: z.string(), account: Account, memberships: z.array(Membership), context: CompanyContext })
+  .meta({ id: 'RegistrationVerifyResponse' });

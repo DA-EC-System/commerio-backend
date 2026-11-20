@@ -58,7 +58,7 @@ function register(needToken: boolean) {
 describe('route đồng bộ cây', () => {
   it('202 queued, bấm lần hai queued false; sàn không đọc được cây 422', async () => {
     register(false);
-    const { ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { ceo } = await createCompany({ optionalModules: [] });
     const post = (platform: string) =>
       request(app).post(`/api/v1/channel/platforms/${platform}/categories/sync`).set('Authorization', `Bearer ${ceo.token}`);
     const first = await post('mock');
@@ -84,7 +84,7 @@ describe('runCategorySync (AC-S9)', () => {
 
   it('mượn phiên gian hàng active: dòng công ty không tăng, dòng tổng tăng; ghi cây', async () => {
     register(true);
-    const { ceo, companyId } = await createCompany({ optionalModules: ['channel'] });
+    const { ceo, companyId } = await createCompany({ optionalModules: [] });
     const access = `tok-${randomUUID().slice(0, 12)}`;
     const res = await request(app).post('/api/v1/channel/shops/mock/token').set('Authorization', `Bearer ${ceo.token}`).send({ accessToken: access });
     expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
