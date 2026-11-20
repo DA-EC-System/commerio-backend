@@ -8,7 +8,7 @@ import type { ComboValue } from './sku-allocation.ts';
 export interface AxisInput {
   attributeId?: string | undefined;
   name?: string | undefined;
-  values: { id?: string | undefined; value: string }[];
+  values: { id?: string | undefined; value: string; imageFileId?: string | undefined }[];
 }
 
 /** Trục đã có thuộc tính thật: giá trị theo `lower(value)` gửi lên → giá trị trong DB. */

@@ -3,27 +3,49 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V125**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V128**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V125 · 21/11/2026 · ghep-truc-du-lieu
+## V128 · 21/11/2026 · ghep-truc-du-lieu
 
-`db/migrations/20261120210826_ghep-truc-du-lieu.sql` · viết tay
+`db/migrations/20261120214202_ghep-truc-du-lieu.sql` · viết tay
 
 - viết tay: dữ liệu
 - Ghép trục theo platform_kind cho spec có sẵn (#448, chỉ dữ liệu, chạy lại được): trục `__custom` của channel.product_specs đổi sang mã sales attribute chuẩn đầu tiên (theo attributes.platform_kind) mà leaf của spec có (kind = 'sales'), mỗi…
 
-## V124 · 21/11/2026 · anh-xa-truc-rls
+## V127 · 21/11/2026 · anh-xa-truc-rls
 
-`db/migrations/20261120205213_anh-xa-truc-rls.sql` · viết tay
+`db/migrations/20261120214159_anh-xa-truc-rls.sql` · viết tay
 
 - viết tay: RLS
 - Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/19 §3.3): RLS company_isolation cho channel.axis_mappings (vòng lặp của 0002 chỉ chạy một lần).
 
-## V123 · 21/11/2026 · anh-xa-truc
+## V126 · 21/11/2026 · anh-xa-truc
 
-`db/migrations/20261120205157_anh-xa-truc.sql` · sinh từ schema
+`db/migrations/20261120214156_anh-xa-truc.sql` · sinh từ schema
 
 - + bảng `channel.axis_mappings`
+
+## V125 · 21/11/2026 · thong-so-du-lieu
+
+`db/migrations/20261120210538_thong-so-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Thông số sản phẩm (#510, Documents/21 mục 5.5 "Seed"): công ty có trước nhận thứ công ty mới có từ `seedCompanyDefaults` ("Dung tích", "Hương vị", thư viện thông số, trục chuẩn và mẫu của 12 nhóm), không chép đè thứ đã có.
+
+## V124 · 21/11/2026 · thong-so-rls
+
+`db/migrations/20261120210458_thong-so-rls.sql` · viết tay
+
+- viết tay: RLS, khoá ngoại
+- Thông số sản phẩm (#510, Documents/19 §3.2).
+
+## V123 · 21/11/2026 · thong-so-san-pham
+
+`db/migrations/20261120210435_thong-so-san-pham.sql` · sinh từ schema
+
+- + 4 bảng `product`: group_spec_fields, product_spec_values, spec_field_options, spec_fields
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `axis1_attribute_id`, `axis2_attribute_id`; + khoá ngoại `product_groups_axis1_attribute_id_attributes_id_fk`, `product_groups_axis2_attribute_id_attributes_id_fk`; + check `product_groups_axis_order`, `product_groups_axis_distinct`
 
 ## V122 · 20/11/2026 · bo-daily-channel-summary
 

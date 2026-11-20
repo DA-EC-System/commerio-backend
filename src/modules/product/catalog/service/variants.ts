@@ -31,6 +31,7 @@ import { listedFieldErrors } from './listed-fields.ts';
 import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
 import { allocateSkus, comboKey, resolveCombos, SKU_TOO_LONG } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
+import type { PlatformKind } from '../repository/schema.ts';
 
 /** Biến thể kèm sản phẩm, nhóm hàng và giá trị thuộc tính (theo `position`) cho inventory, pricing, sales, channel. */
 export interface VariantSummary {
@@ -58,15 +59,8 @@ export interface VariantSummary {
   brand: string | null;
   /** Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); `url` rỗng khi thiếu `S3_PUBLIC_URL`. */
   image: VariantImage | null;
-  attributes: {
-    attributeId: string;
-    attributeName: string;
-    /** Loại thuộc tính để ghép trục với sales attribute của sàn (#448); null là thuộc tính tự đặt. */
-    platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
-    valueId: string;
-    value: string;
-    code: string;
-  }[];
+  // `platformKind`: loại thuộc tính chuẩn sàn của trục (#510), channel ghép sales attribute theo loại.
+  attributes: { attributeId: string; attributeName: string; platformKind: PlatformKind | null; valueId: string; value: string; code: string }[];
 }
 
 /**

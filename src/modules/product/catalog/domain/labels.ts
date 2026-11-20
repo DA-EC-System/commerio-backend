@@ -4,9 +4,9 @@ import type { BusinessStatus } from './business-status.ts';
 
 /**
  * Phần còn thiếu theo thứ tự cố định; `name`, `image`, `variantImages` ở cha, còn lại ở SKU. `price` là giá
- * muốn bán (D7). `variantImages`: ảnh phân loại có một phần (#340).
+ * muốn bán (D7). `variantImages`: ảnh phân loại có một phần (#340). `specs`: cha thiếu thông số bắt buộc của mẫu nhóm (#510).
  */
-export const MISSING_FIELDS = ['name', 'image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions'] as const;
+export const MISSING_FIELDS = ['name', 'image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions', 'specs'] as const;
 export type MissingField = (typeof MISSING_FIELDS)[number];
 
 /** Hiện diện trên sàn (D8, `25` §5.1): `live` > `error` > `pending` > `not_listed`. */
@@ -27,6 +27,8 @@ export interface ParentFields {
    * chưa lưu trữ đang dùng, và còn giá trị đang dùng khác chưa có ảnh. Chưa có ảnh nào thì không thiếu.
    */
   variantImagesPartial: boolean;
+  /** Thiếu giá trị của ít nhất một thông số `required` trong mẫu nhóm hiện tại (#510, Documents/21 §17.1). */
+  specsMissing: boolean;
 }
 
 export interface SkuFields {
@@ -49,6 +51,7 @@ export function readinessOf(parent: ParentFields, sku: SkuFields): { readiness: 
     minQty: sku.minQty === null,
     weight: sku.weightG === null,
     dimensions: sku.lengthMm === null || sku.widthMm === null || sku.heightMm === null,
+    specs: parent.specsMissing,
   };
   const missing = MISSING_FIELDS.filter((f) => lacks[f]);
   return { readiness: missing.length ? 'incomplete' : 'ready', missing };
