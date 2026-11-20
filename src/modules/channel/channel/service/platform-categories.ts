@@ -11,6 +11,7 @@ import {
   childrenOf,
   findCategory,
   leafAttributesOf,
+  pathIdsOf,
   replaceLeaf,
   searchLeaves,
   specsOnCategory,
@@ -32,6 +33,8 @@ export interface PlatformCategory {
   path: string;
   isLeaf: boolean;
   status: CategoryStatus;
+  /** `externalId` từ gốc tới chính category, cùng thứ tự với `path` (#467); cha chưa có trong bảng thì thiếu phần gốc. */
+  pathIds: string[];
 }
 
 export interface PlatformAttributeView {
@@ -56,13 +59,14 @@ export interface LeafDetail {
   products: { productId: string; code: string; name: string; source: SpecSource }[];
 }
 
-const toCategory = (r: CategoryRow): PlatformCategory => ({
+const toCategory = (r: CategoryRow, pathIds: ReadonlyMap<string, string[]>): PlatformCategory => ({
   externalId: r.externalId,
   parentExternalId: r.parentExternalId,
   name: r.name,
   path: r.path,
   isLeaf: r.isLeaf,
   status: r.status,
+  pathIds: pathIds.get(r.externalId) ?? [r.externalId],
 });
 
 /**
@@ -75,7 +79,8 @@ export async function listPlatformCategories(
 ): Promise<{ items: PlatformCategory[]; syncedAt: Date | null }> {
   const { platform } = platformOf(raw);
   const rows = query.search ? await searchLeaves(platform, query.search) : await childrenOf(platform, query.parentId ?? null);
-  return { items: rows.map(toCategory), syncedAt: await treeSyncedAt(platform) };
+  const pathIds = await pathIdsOf(platform, rows.map((r) => r.externalId));
+  return { items: rows.map((r) => toCategory(r, pathIds)), syncedAt: await treeSyncedAt(platform) };
 }
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ đọc category từ app');
@@ -148,7 +153,7 @@ export async function leafDetail(
     org: needOrg ? await responsibleOrgOf(companyId) : null,
   }));
   return {
-    category: { ...toCategory(category), sizeChartRule: category.sizeChartRule },
+    category: { ...toCategory(category, await pathIdsOf(platform, [externalId])), sizeChartRule: category.sizeChartRule },
     attributes: attributes.map(({ raw: _raw, ...a }) => {
       const field = a.tier === 'company' ? adapter.responsibleFields?.[a.code] : undefined;
       return { ...a, defaultValue: (field && org?.[field]) || null };

@@ -34,6 +34,7 @@ import { currentListingRows, currentUnmanagedRows } from '../repository/listings
 import { unmatchedRemoteCounts } from '../repository/remote-skus.ts';
 import { isMarketplace } from '../repository/schema.ts';
 import {
+  countCategoryChangeIssues,
   countListingsOnPlatform,
   findLiveCompanyOf,
   findShopByExternal,
@@ -116,6 +117,8 @@ export interface Shop {
   /** Hàng chờ đẩy khi chưa gọi được sàn: #102 làm, tới đó luôn 0. */
   pendingJobs: number;
   listingCount: number;
+  /** Số listing có lượt đổi category `failed` hoặc `mismatch` (21 §18.7.2, #467). */
+  categoryChangeIssues: number;
   /** Số đơn chưa `completed` hoặc `cancelled`, cùng cách đếm với `openOrders` của ngắt (§18.7.1). */
   pendingOrderCount: number;
   /** Số đơn đặt trên sàn (`placedAt`) trong 7 × 24 giờ tính lùi từ lúc gọi (§18.7.1). */
@@ -183,6 +186,8 @@ interface ShopExtras {
   walletDiff: Map<string, string>;
   /** Số SKU sàn chưa ghép, đếm từ bản sao `remote_skus` (#220 đợt 2). */
   unmatched: Map<string, number>;
+  /** Số listing có lượt đổi category lỗi hay lệch (#467). */
+  categoryIssues: Map<string, number>;
 }
 
 const ORDERS_WINDOW_MS = 7 * 24 * 3600_000;
@@ -194,7 +199,7 @@ const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'd
 async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
   const ids = rows.map((r) => r.id);
   const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
-  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched] = await Promise.all([
+  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched, categoryIssues] = await Promise.all([
     countListingsOnPlatform(ids),
     countHeld(ids),
     docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
@@ -203,8 +208,9 @@ async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
     lastTransitionsAt(ENTITY, ids),
     walletDiffOf(ids),
     unmatchedRemoteCounts(ids),
+    countCategoryChangeIssues(ids),
   ]);
-  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched };
+  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched, categoryIssues };
 }
 
 function toShop(row: ShopRow, extras: ShopExtras): Shop {
@@ -250,6 +256,7 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
     ),
     pendingJobs,
     listingCount,
+    categoryChangeIssues: extras.categoryIssues.get(row.id) ?? 0,
     pendingOrderCount: extras.orders.get(row.id)?.open ?? 0,
     orders7d: extras.orders.get(row.id)?.placed ?? 0,
     statusChangedAt: extras.statusChanged.get(row.id) ?? row.createdAt,

@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // Môi trường triển khai (NODE_ENV của staging vẫn là production). Mã thử đăng ký chỉ bật ở `staging`, `test`.
+  APP_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   API_PORT: z.coerce.number().int().positive().default(3000),
   // Cổng nội bộ của api cho /metrics; worker và realtime dùng luôn cổng của mình làm cổng vận hành.
@@ -103,7 +105,33 @@ const EnvSchema = z.object({
     .default('dev'),
   // Trần tổng dung lượng tệp của mọi công ty, byte. Mặc định 8 GiB: gói miễn phí của R2 là 10 GB, chừa 20%.
   STORAGE_QUOTA_BYTES: z.coerce.number().int().positive().default(8 * 1024 ** 3),
+  // Mã thử cho e2e đăng ký công ty (#459, Documents/21 mục 2.1): email có phần sau `@` đúng bằng miền này nhận mã cố
+  // định, không gửi thư. Đặt cả hai hoặc không đặt; kiểm ở `registrationTestIssues`.
+  REGISTRATION_TEST_EMAIL_DOMAIN: z.string().trim().toLowerCase().min(1).optional(),
+  REGISTRATION_TEST_CODE: z.string().optional(),
 });
+
+/** TLD dành riêng (RFC 2606, RFC 6761): không trùng hộp thư thật của ai. */
+const RESERVED_TLDS = ['test', 'invalid', 'example'];
+
+/** Lỗi cấu hình mã thử đăng ký; rỗng là hợp lệ (kể cả khi không bật). BE từ chối khởi động nếu có lỗi. */
+export function registrationTestIssues(e: Pick<Env, 'APP_ENV' | 'REGISTRATION_TEST_EMAIL_DOMAIN' | 'REGISTRATION_TEST_CODE'>): string[] {
+  const domain = e.REGISTRATION_TEST_EMAIL_DOMAIN;
+  const code = e.REGISTRATION_TEST_CODE;
+  if (domain === undefined && code === undefined) return [];
+  const issues: string[] = [];
+  if (domain === undefined || code === undefined) issues.push('Phải đặt cả REGISTRATION_TEST_EMAIL_DOMAIN và REGISTRATION_TEST_CODE');
+  if (e.APP_ENV !== 'staging' && e.APP_ENV !== 'test') issues.push('Mã thử đăng ký chỉ dùng khi APP_ENV là staging hoặc test');
+  if (domain !== undefined) {
+    const labels = domain.split('.');
+    const valid = labels.length >= 2 && labels.every((l) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(l));
+    if (!valid || !RESERVED_TLDS.includes(labels.at(-1)!)) {
+      issues.push('REGISTRATION_TEST_EMAIL_DOMAIN phải là tên miền thuộc .test, .invalid hoặc .example');
+    }
+  }
+  if (code !== undefined && !/^\d{6}$/.test(code)) issues.push('REGISTRATION_TEST_CODE phải gồm đúng 6 chữ số');
+  return issues;
+}
 
 export type Env = z.infer<typeof EnvSchema>;
 
@@ -112,6 +140,8 @@ function loadEnv(): Env {
   if (!result.success) {
     throw new Error(`Biến môi trường không hợp lệ:\n${z.prettifyError(result.error)}`);
   }
+  const issues = registrationTestIssues(result.data);
+  if (issues.length) throw new Error(`Biến môi trường không hợp lệ:\n${issues.join('\n')}`);
   return result.data;
 }
 
