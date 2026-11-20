@@ -3,7 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V114**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V115**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V115 · 20/11/2026 · tran-hoan-tien-du-lieu
+
+`db/migrations/20261120100550_tran-hoan-tien-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- #355: hoàn tiền khách chỉ ghi tới mức doanh thu đã ghi của các dòng trả (Documents/25 mục 10.1, E174).
 
 ## V114 · 20/11/2026 · bo-cot-dang-huy-cu
 
