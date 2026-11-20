@@ -214,7 +214,63 @@ export interface NewProduct {
    * A1): adapter tra mã theo tên, không thấy hay lỗi thì không gửi. Sàn để thương hiệu trong attribute (Lazada) bỏ qua.
    */
   brand?: string | null;
+  /**
+   * Trục bán hàng (#295, Documents/21 §18.8.4): có thì adapter tạo một sản phẩm nhiều phân loại, mỗi phần tử `skus` một
+   * phân loại; trục theo `axisMap`, ảnh chỉ trên một trục. Thiếu hay rỗng là sản phẩm một SKU như trước.
+   */
+  salesAttributes?: SalesAttribute[];
+  /**
+   * Các SKU của sản phẩm (#295). Có thì các trường SKU ở gốc (`sellerSku`, `price`, `quantity`, kích thước) bỏ qua; đọc
+   * bằng `productSkus(p)`. Tiêu đề là tên sản phẩm cha.
+   */
+  skus?: ProductSku[];
 }
+
+/** Một trục bán hàng (#295): mã sale prop của leaf (null là trục tự đặt tên), tên, giá trị (ảnh đã nằm trên sàn). */
+export interface SalesAttribute {
+  code: string | null;
+  name: string;
+  values: { optionId: string | null; label: string; imageUri?: string }[];
+}
+
+/** Một phân loại (#295): `values` là nhãn giá trị theo đúng thứ tự `salesAttributes`. */
+export interface ProductSku {
+  sellerSku: string;
+  price: string;
+  /** Như `NewProduct.quantity`: thiếu là không gửi tồn. */
+  quantity?: number;
+  values: string[];
+  weightG: number;
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+}
+
+/** Các SKU của `p`: `skus` khi có, không thì một SKU dựng từ các trường ở gốc (#295). */
+export function productSkus(p: NewProduct): ProductSku[] {
+  if (p.skus?.length) return p.skus;
+  return [
+    {
+      sellerSku: p.sellerSku,
+      price: p.price,
+      ...(p.quantity !== undefined && { quantity: p.quantity }),
+      values: [],
+      weightG: p.weightG,
+      lengthMm: p.lengthMm,
+      widthMm: p.widthMm,
+      heightMm: p.heightMm,
+    },
+  ];
+}
+
+/** SKU sàn sinh cho một phân loại, ghép theo `sellerSku` (không theo vị trí: Lazada đổi thứ tự `sku_list`). */
+export interface CreatedSku {
+  sellerSku: string;
+  externalSkuId: string;
+}
+
+/** Thêm phân loại vào sản phẩm sàn sẵn có (#295): trục và nội dung như lúc tạo, `skus` chỉ gồm SKU mới. */
+export type NewVariants = Omit<NewProduct, 'skus'> & { skus: ProductSku[] };
 
 /** Nội dung đưa lên sản phẩm đang bán (#293): dựng từ catalog như lúc đẩy, không gồm ảnh, SKU, giá, tồn. */
 export interface ContentUpdate {
@@ -273,6 +329,11 @@ export interface CreatedProduct {
    */
   createdAt?: Date;
   title?: string;
+  /**
+   * Mọi SKU của sản phẩm sàn ứng với các phân loại đã gửi (#295), ghép theo `sellerSku`. `externalSkuId` ở gốc là SKU của
+   * phân loại đầu (sản phẩm một SKU: chính SKU đó). Phân loại gửi lên mà không có ở đây là sàn không nhận.
+   */
+  skus?: CreatedSku[];
 }
 
 /** Mốc mili giây hợp lệ (dương) thành `Date`; không thì `undefined`. */
@@ -298,6 +359,42 @@ export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(sk
     throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, liên kết tay SKU đúng`);
   }
   return found[0] ?? null;
+}
+
+/**
+ * Chống tạo trùng cho sản phẩm nhiều SKU (#295). `found[i]` là SKU sàn của `sellerSkus[i]` (null là chưa có). Không thấy cái
+ * nào: null (đi tạo). Một SKU: như `existingProduct`. Nhiều SKU: thấy mọi SKU và cùng một sản phẩm sàn thì `existing: true`
+ * kèm `skus` đủ (`createdAt`, `title` của SKU đầu); thấy một phần hay lẫn nhiều sản phẩm thì ném `rejected`
+ * `sku_exists_on_platform`, vì tạo tiếp sẽ trùng seller sku, còn gộp bừa thì ghép nhầm.
+ */
+export function existingFromSkus(sellerSkus: readonly string[], found: readonly (RemoteSku | null)[]): CreatedProduct | null {
+  const hits = found.filter((s): s is RemoteSku => s !== null);
+  if (!hits.length) return null;
+  if (sellerSkus.length === 1) return existingProduct(hits[0]!);
+  const missing = sellerSkus.filter((_, i) => found[i] === null);
+  const products = new Set(hits.map((h) => h.externalProductId));
+  if (missing.length || products.size > 1) {
+    const have = hits.map((h) => `${h.sellerSku} (sản phẩm ${h.externalProductId})`).join(', ');
+    throw new MarketplaceError(
+      'rejected',
+      'sku_exists_on_platform',
+      missing.length
+        ? `Sàn đã có SKU ${have} nhưng chưa có ${missing.join(', ')}; xử lý tay trên sàn trước khi đẩy`
+        : `Các SKU ${have} thuộc nhiều sản phẩm khác nhau trên sàn; xử lý tay trên sàn trước khi đẩy`,
+    );
+  }
+  return { ...existingProduct(hits[0]!), skus: hits.map((h) => ({ sellerSku: h.sellerSku, externalSkuId: h.externalSkuId })) };
+}
+
+/** Giá trị từng trục của một phân loại (#295): nhãn theo `sku.values[i]`, kèm phần tử giá trị trên trục (ảnh, mã) nếu có. */
+export function skuAxes(
+  attrs: readonly SalesAttribute[] | undefined,
+  sku: ProductSku,
+): { attr: SalesAttribute; label: string; value: SalesAttribute['values'][number] | undefined }[] {
+  return (attrs ?? []).map((attr, i) => {
+    const label = sku.values[i] ?? '';
+    return { attr, label, value: attr.values.find((v) => v.label === label) };
+  });
 }
 
 /**
@@ -753,6 +850,18 @@ export interface MarketplaceAdapter {
    * listing đang bán (`update_content`) là việc của #293, không dùng hàm này. Sàn chưa có thì không có hàm này.
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
+  /**
+   * Thêm phân loại vào sản phẩm sàn sẵn có (#295, Documents/21 §18.8.4), id SKU cũ giữ nguyên. TikTok: partial_edit gửi
+   * lại mọi SKU cũ cộng SKU mới, sàn đưa đi duyệt lại (`live: false`). Lazada: CreateProduct với `AssociatedSku` = `sku_id`
+   * số của một SKU sẵn có; sàn trả item khác `externalProductId` (bẫy truyền nhầm `item_id`) thì adapter xoá item lạ và ném
+   * `rejected` `associated_item_mismatch`. Trả SKU mới ghép theo `sellerSku`. Sàn không hỗ trợ thì không có hàm này.
+   */
+  addVariants?(accessToken: string, externalProductId: string, input: NewVariants): Promise<{ skus: CreatedSku[]; live: boolean }>;
+  /**
+   * Gỡ các phân loại khỏi sản phẩm sàn còn SKU khác (#295). TikTok gửi lại `skus` không có các SKU đó (duyệt lại); Lazada
+   * RemoveProduct `SkuId_<item>_<sku>`. Gỡ hết mọi SKU thì bên gọi tắt cả sản phẩm, không gọi hàm này.
+   */
+  removeVariants?(accessToken: string, externalProductId: string, externalSkuIds: readonly string[]): Promise<void>;
   /**
    * Sửa nội dung sản phẩm đang bán (`update_content`, #293). Sản phẩm sàn nhiều SKU thì ném `rejected`
    * `shared_remote_product`, danh mục sàn khác `externalCategoryId` thì `category_mismatch`. `underReview`: sàn ngừng bán

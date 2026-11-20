@@ -162,6 +162,7 @@ async function rowsOf(s: Awaited<ReturnType<typeof fullShop>>) {
     packageLines: await one('select count(*) as n from "order".package_lines where package_id = any($1)', s.packageIds),
     returnParcels: await one('select count(*) as n from "order".unmatched_return_parcels where return_request_id = $1', s.requestId),
     listings: await one('select count(*) as n from channel.listings where shop_id = $1', s.id),
+    shopProducts: await one('select count(*) as n from channel.shop_products where shop_id = $1', s.id),
     priceCalculations: await one('select count(*) as n from channel.price_calculations where shop_id = $1', s.id),
     rawOrders: await one('select count(*) as n from channel.raw_orders where shop_id = $1', s.id),
     remoteSkus: await one('select count(*) as n from channel.remote_skus where shop_id = $1', s.id),

@@ -53,6 +53,22 @@ export type ListingPushJob = z.infer<typeof ListingPushJobSchema>;
 export const listingPushQueue = defineQueue('channel.listing_push', ListingPushJobSchema, { attempts: 5, retryDelaySeconds: 30 });
 
 /**
+ * Việc đẩy các SKU của một sản phẩm cha thành phân loại của **một** sản phẩm sàn (#295, Documents/21 §18.8.4): dòng
+ * `shop_products` `app` chưa có mã sàn thì tạo sản phẩm nhiều phân loại, có rồi thì thêm phân loại (`addVariants`). Listing
+ * của lượt là các dòng `pushing` trỏ `shopProductId` chưa có SKU sàn; `pushStartedAt` (ISO) là mốc lượt: lượt mới hơn ghi đè
+ * mốc trên dòng thì việc cũ bỏ. Hàng, số lần thử như `channel.listing_push`.
+ */
+export const ProductPushJobSchema = JobDataSchema.extend({
+  shopId: z.uuid(),
+  shopProductId: z.uuid(),
+  pushStartedAt: z.iso.datetime(),
+  imageUrls: z.array(z.string()).max(PUSH_IMAGE_MAX),
+  sizeChartUrl: z.string().nullish(),
+});
+export type ProductPushJob = z.infer<typeof ProductPushJobSchema>;
+export const productPushQueue = defineQueue('channel.product_push', ProductPushJobSchema, { attempts: 5, retryDelaySeconds: 30 });
+
+/**
  * Đổi category của một sản phẩm trên một gian hàng (`apply-category`, #467, Documents/21 §18.5): `listingIds` là các listing
  * của sản phẩm sàn `externalProductId` vừa chuyển `category_change = queued`, `toCategoryId` là category của spec lúc bấm.
  */
@@ -131,6 +147,11 @@ export async function sendStockPush(companyId: string, shopId: string): Promise<
 /** Xếp việc đẩy một listing, đi chung giao dịch vừa chuyển listing sang `pushing` (rollback thì không còn việc). */
 export async function sendListingPush(job: ListingPushJob): Promise<void> {
   await sendJob(listingPushQueue, job);
+}
+
+/** Xếp việc đẩy theo cha (#295), đi chung giao dịch vừa chuyển các listing sang `pushing`. */
+export async function sendProductPush(job: ProductPushJob): Promise<void> {
+  await sendJob(productPushQueue, job);
 }
 
 /** Xếp một lượt Tải lại SKU sàn; đã có việc chờ cùng gian hàng thì không thêm. Đi chung giao dịch đang mở. */

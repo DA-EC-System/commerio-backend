@@ -917,6 +917,7 @@ export const VariantCapabilitiesSchema = z
     maxAxes: z.number().int().min(0),
     customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt (Lazada)' }),
     salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
+    addVariant: z.boolean().meta({ description: 'true: thêm được phân loại vào sản phẩm sàn đã có; false thì SKU bị chặn ở lần đẩy đầu chặn cả cha (§18.8.4)' }),
   })
   .strict()
   .meta({ id: 'VariantCapabilities' });
