@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V125**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V127**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -356,7 +356,7 @@ Ràng buộc và index:
 - index (`product_id`) `product_variants_product_id_index`
 - check `product_variants_archived`: `(business_status = 'archived') = (archived_at is not null)`
 - check `product_variants_prices`: `standard_price >= 0 and target_net_price >= 0`
-- check `product_variants_dimensions`: `weight_g > 0 and length_mm > 0 and width_mm > 0 and height_mm > 0`
+- check `product_variants_dimensions`: `weight_g between 1 and 50000 and length_mm between 1 and 2000 and width_mm between 1 and 2000 and height_mm between 1 and 2000`
 - check `product_variants_sku_length`: `char_length(sku) <= 50`
 
 Trỏ vào bảng này:
