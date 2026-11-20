@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany, createCustomRole } from '../../helpers/company.ts';
-import { act, createRequest, createSupplier, pur, runActions } from './helpers.ts';
+import { act, countBody, createReceipt, createRequest, createSupplier, pur, runActions } from './helpers.ts';
 
 // Ca kiểm thử theo sơ đồ A1 Đề nghị nhập (Documents/kiem-thu/ca-theo-so-do.md, mục A1; #122, #120). Mỗi `it` mang mã
 // ca: `A1-nn` ca đúng, hậu tố `q` thiếu quyền, `p` người lập tự làm, `r` thiếu lý do, `X` thao tác ngoài bảng.
@@ -70,6 +70,15 @@ beforeAll(async () => {
   supplierId = (await createSupplier(c.ceo.token)).id;
 });
 
+/** CEO lập phiếu nhận, báo giao và đạt `accepted` cái của dòng duy nhất, ghi sổ (CEO được ghi sổ đề nghị Kho lập). */
+async function postReceipt(requestId: string, accepted: number) {
+  const draft = await createReceipt(tokens.ceo, requestId);
+  const saved = await pur(tokens.ceo).put(`/goods-receipts/${draft.id}`, countBody(draft, [{ announced: accepted, accepted }]));
+  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  const posted = await pur(tokens.ceo).post(`/goods-receipts/${draft.id}/post`, { version: saved.body.version });
+  expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+}
+
 /** Một đề nghị mới do Kho lập, đi tới `state`; trả id và `version` hiện tại. */
 async function reach(state: string) {
   const r = await createRequest(tokens.kho, supplierId, [{ variantId, quantity: 10, unitCost: 60000 }]);
@@ -95,8 +104,30 @@ describe('A1 Đề nghị nhập: mỗi mũi tên một ca đúng', () => {
     expect(last.by).not.toBeNull();
   });
 
-  it.todo('A1-08..A1-11: nhận một phần, nhận xong do phiếu nhận ghi sổ (chờ #109)');
-  it.todo('A1-12: đóng thiếu đề nghị đã nhận một phần (chờ #109)');
+
+  // Mũi tên của hệ thống (nguồn `system`): đề nghị đổi trạng thái khi phiếu nhận ghi sổ (Documents/21 mục 16.3).
+  it.each([
+    ['A1-08', [4], 'partially_received'],
+    ['A1-09', [4, 3], 'partially_received'],
+    ['A1-10', [10], 'received'],
+    ['A1-11', [4, 6], 'received'],
+  ] as const)('%s: phiếu nhận ghi sổ đạt %j trên 10 → %s, lịch sử nguồn hệ thống', async (_id, batches, to) => {
+    const r = await reach('ordered');
+    for (const accepted of batches) await postReceipt(r.id, accepted);
+    const body = (await pur(tokens.ceo).get(`/requests/${r.id}`)).body;
+    expect(body.status).toBe(to);
+    expect(body.statusHistory.at(-1)).toMatchObject({ to, source: 'system' });
+  });
+
+  it('A1-12: partially_received --close_short--> closed_short (CEO, có lý do)', async () => {
+    const r = await reach('ordered');
+    await postReceipt(r.id, 4);
+    const current = (await pur(tokens.ceo).get(`/requests/${r.id}`)).body;
+    const res = await act(tokens.ceo, r.id, 'close_short', { version: current.version, ...REASON });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('closed_short');
+    expect(res.body.statusHistory.at(-1)).toMatchObject({ from: 'partially_received', to: 'closed_short', reason: REASON.reason });
+  });
 });
 
 describe('A1 Đề nghị nhập: ca bị chặn', () => {
