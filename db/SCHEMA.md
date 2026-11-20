@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V114** (`20261120092655_dang-ky-cho-ma-quyen`): 92 bảng trong 6 schema, 67 khoá ngoại, 78 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V116** (`20261120100235_dang-ky-cho-ma-quyen`): 92 bảng trong 6 schema, 67 khoá ngoại, 78 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -17,7 +17,6 @@ Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớ
 
 ## Đã bỏ
 
-- `order.orders.cancelling` (cột): Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image (job migrate chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột bằng nhau, code mới không đọc, không ghi. PR sau bỏ trigger và cột.
 - `finance.ledger_entries.replaces_entry_id` (cột): Cặp thay ước tính đã chép sang `ledger_replacements` (#231), cột này không ghi nữa.
 - `finance.payment_vouchers` (bảng): Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
 - `finance.sales_invoice_lines` (bảng): Gỡ ở #235 cùng `sales_invoices`: không còn code ghi, chưa drop.
