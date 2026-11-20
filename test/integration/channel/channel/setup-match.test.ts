@@ -132,6 +132,9 @@ describe('gợi ý ghép theo SKU và theo tên (AC-22)', () => {
       // Ảnh đầu tiên và trạng thái sàn đi thẳng từ adapter (#282); adapter không trả ảnh thì null.
       imageUrl: 'https://img.test/ao.jpg',
       status: 'live',
+      // SKU người bán đã là SKU kho nên không tạo được (#500).
+      canCreate: false,
+      cannotCreateReason: 'sku_taken',
     });
     expect(rows[1]).toMatchObject({ match: 'name', variantId: vName.id, sku: 'CMR-2', available: 9 });
     expect(rows[1]!.score).toBeGreaterThanOrEqual(0.4);

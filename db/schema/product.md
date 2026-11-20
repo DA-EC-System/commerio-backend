@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V124**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V125**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -55,12 +55,14 @@ Ràng buộc và index:
 
 - unique index (`company_id`, `lower("name")`) `attributes_company_lower_name_uq`
 - unique index (`company_id`, `platform_kind`) `attributes_company_platform_kind_uq` where `platform_kind is not null`
-- check `attributes_platform_kind`: `platform_kind in ('color', 'size')`
+- check `attributes_platform_kind`: `platform_kind in ('color', 'size', 'volume', 'flavor')`
 - check `attributes_name_length`: `char_length(name) <= 15`
 
 Trỏ vào bảng này:
 
 - `product.attribute_values.attribute_id` (khoá ngoại)
+- `product.product_groups.axis1_attribute_id` (khoá ngoại)
+- `product.product_groups.axis2_attribute_id` (khoá ngoại)
 - `product.products.image_attribute_id` (khoá ngoại)
 
 ## `product.company_product_settings`
@@ -186,6 +188,28 @@ Trỏ vào bảng này:
 - `product.goods_receipts.follow_up_receipt_id` (tham chiếu, không có khoá ngoại)
 - `product.goods_receipts.follows_up_receipt_id` (tham chiếu, không có khoá ngoại)
 
+## `product.group_spec_fields`
+
+Mẫu thông số của nhóm hàng: thông số nào, bắt buộc hay không, thứ tự. `required` chỉ tính vào độ hoàn thiện (missing `specs`), không chặn lưu sản phẩm (sản phẩm từ đề nghị nhập, từ SKU sàn chưa có thông số).
+
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
+
+Cột:
+
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `group_id` uuid · khoá chính → `product.product_groups.id` (khoá ngoại, ON DELETE cascade)
+- `field_id` uuid · khoá chính → `product.spec_fields.id` (khoá ngoại, ON DELETE restrict)
+- `required` boolean · not null · mặc định `false`
+- `position` integer · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- khoá chính (`group_id`, `field_id`)
+- index (`field_id`) `group_spec_fields_field_id_index`
+- check `group_spec_fields_position`: `position >= 0`
+
 ## `product.product_attribute_value_images`
 
 Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/19 §3.2): áo 3 màu × 4 size có 3 dòng. Hai khoá ngoại ghép `pavi_product_fk` `(product_id, attribute_id) → products(id, image_attribute_id)` và `pavi_value_fk` `(attribute_value_id, attribute_id) → attribute_values(id, attribute_id)` viết ở migration `--custom` `*_anh-phan-loai-rls` (drizzle-kit sinh khoá ngoại trước unique đích, db/CLAUDE.md). `file_id` ở module files, không khoá ngoại chéo schema.
@@ -227,6 +251,9 @@ Cột:
 - `reorder_lead_days` integer · null
 - `reorder_safety_qty` integer · null
 - `reorder_default_qty` integer · null
+- `axis1_attribute_id` uuid · null → `product.attributes.id` (khoá ngoại, ON DELETE restrict)
+  Trục phân loại chuẩn của nhóm (thông số sản phẩm, Documents/19 §3.2, 21 §5.5): form tạo sản phẩm chọn sẵn, người dùng đổi được; không ràng buộc sản phẩm đã có. Không có cờ "nhóm cần bảng kích cỡ": luật theo category sàn (`size_chart_missing`, 21 §18.5).
+- `axis2_attribute_id` uuid · null → `product.attributes.id` (khoá ngoại, ON DELETE restrict)
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -237,9 +264,12 @@ Ràng buộc và index:
 - check `product_groups_margin_coefficient`: `margin_coefficient >= 1`
 - check `product_groups_price_rounding`: `price_rounding > 0`
 - check `product_groups_reorder_config`: `reorder_lead_days >= 0 and reorder_safety_qty >= 0 and reorder_default_qty >= 0`
+- check `product_groups_axis_order`: `axis2_attribute_id is null or axis1_attribute_id is not null`
+- check `product_groups_axis_distinct`: `axis1_attribute_id <> axis2_attribute_id`
 
 Trỏ vào bảng này:
 
+- `product.group_spec_fields.group_id` (khoá ngoại)
 - `product.products.group_id` (khoá ngoại)
 - `product.purchase_request_lines.new_group_id` (tham chiếu, không có khoá ngoại)
 
@@ -266,6 +296,33 @@ Ràng buộc và index:
 - index (`file_id`) `product_images_file_id_index`
 - unique index (`product_id`, `position`) `product_images_product_position_uq`
 - check `product_images_position_nonneg`: `position >= 0`
+
+## `product.product_spec_values`
+
+Giá trị thông số của sản phẩm cha: select một dòng `option_id`, multiselect mỗi lựa chọn một dòng, text/number/date một dòng `value_text`. Khoá ngoại ghép `psv_option_fk` `(option_id, field_id) → spec_field_options(id, field_id)` viết ở migration `*_thong-so-rls` (lựa chọn chỉ thuộc đúng thông số của nó). Không phụ thuộc mẫu nhóm.
+
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `product_id` uuid · not null → `product.products.id` (khoá ngoại, ON DELETE cascade)
+- `field_id` uuid · not null → `product.spec_fields.id` (khoá ngoại, ON DELETE restrict)
+- `option_id` uuid · null → `product.spec_field_options.id` (khoá ngoại viết tay, ON DELETE restrict)
+- `value_text` text · null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`product_id`, `field_id`, `option_id`) `product_spec_values_option_uq`
+- unique index (`product_id`, `field_id`) `product_spec_values_text_uq` where `option_id is null`
+- index (`field_id`) `product_spec_values_field_id_index`
+- index (`option_id`) `product_spec_values_option_id_index`
+- check `product_spec_values_one_of`: `(option_id is null) <> (value_text is null)`
+- check `product_spec_values_text_length`: `value_text is null or char_length(value_text) between 1 and 2000`
+- khoá ngoại viết tay (`option_id`, `field_id`) → `product.spec_field_options` (`id`, `field_id`), ON DELETE restrict, ở `db/migrations/20261120210458_thong-so-rls.sql`
 
 ## `product.product_variants`
 
@@ -299,7 +356,7 @@ Ràng buộc và index:
 - index (`product_id`) `product_variants_product_id_index`
 - check `product_variants_archived`: `(business_status = 'archived') = (archived_at is not null)`
 - check `product_variants_prices`: `standard_price >= 0 and target_net_price >= 0`
-- check `product_variants_dimensions`: `weight_g between 1 and 50000 and length_mm between 1 and 2000 and width_mm between 1 and 2000 and height_mm between 1 and 2000`
+- check `product_variants_dimensions`: `weight_g > 0 and length_mm > 0 and width_mm > 0 and height_mm > 0`
 - check `product_variants_sku_length`: `char_length(sku) <= 50`
 
 Trỏ vào bảng này:
@@ -359,6 +416,7 @@ Ràng buộc và index:
 Trỏ vào bảng này:
 
 - `product.product_images.product_id` (khoá ngoại)
+- `product.product_spec_values.product_id` (khoá ngoại)
 - `product.product_variants.product_id` (khoá ngoại)
 - `product.product_attribute_value_images.product_id, attribute_id` (khoá ngoại viết tay)
 - `product.purchase_request_lines.new_parent_product_id` (tham chiếu, không có khoá ngoại)
@@ -461,6 +519,69 @@ Trỏ vào bảng này:
 - `product.purchase_request_lines.request_id` (khoá ngoại)
 - `product.supplier_returns.replacement_request_id` (tham chiếu, không có khoá ngoại)
 - `finance.supplier_invoices.purchase_request_id` (tham chiếu, không có khoá ngoại)
+
+## `product.spec_field_options`
+
+Lựa chọn của thông số select/multiselect, mỗi lựa chọn một dòng (để khoá ngoại từ giá trị và ánh xạ sàn theo lựa chọn). `(id, field_id)` là đích khoá ngoại ghép `psv_option_fk` (migration `*_thong-so-rls`).
+
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `field_id` uuid · not null → `product.spec_fields.id` (khoá ngoại, ON DELETE cascade)
+- `value` text · not null
+- `position` integer · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`id`, `field_id`) `spec_field_options_id_field_uq`
+- unique index (`field_id`, `lower("value")`) `spec_field_options_field_lower_value_uq`
+- check `spec_field_options_value_length`: `char_length(value) between 1 and 60`
+- check `spec_field_options_position`: `position >= 0`
+
+Trỏ vào bảng này:
+
+- `product.product_spec_values.option_id, field_id` (khoá ngoại viết tay)
+
+## `product.spec_fields`
+
+Thư viện thông số của công ty (Documents/19 §3.2, 21 §5.5), dùng chung mọi nhóm hàng. `code` không sửa sau khi tạo: khoá để channel ánh xạ sang attribute sàn (`channel.spec_field_mappings`) và để AI nhập file đọc (#214). Thương hiệu, xuất xứ không ở đây (cột của `products`). RLS ở migration `*_thong-so-rls`.
+
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `code` text · not null
+- `name` text · not null
+- `input` text · not null
+- `unit` text · null
+- `allow_custom` boolean · not null · mặc định `false`
+  select/multiselect nhận giá trị ngoài danh sách: tạo lựa chọn mới cùng giao dịch lưu sản phẩm.
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`company_id`, `code`) `spec_fields_company_code_uq`
+- unique index (`company_id`, `lower("name")`) `spec_fields_company_lower_name_uq`
+- check `spec_fields_input`: `input in ('select', 'multiselect', 'text', 'number', 'date')`
+- check `spec_fields_code_format`: `code ~ '^[a-z0-9_]{1,40}$'`
+- check `spec_fields_name_length`: `char_length(name) between 1 and 40`
+- check `spec_fields_unit`: `unit is null or (input = 'number' and char_length(unit) between 1 and 10)`
+
+Trỏ vào bảng này:
+
+- `product.group_spec_fields.field_id` (khoá ngoại)
+- `product.product_spec_values.field_id` (khoá ngoại)
+- `product.spec_field_options.field_id` (khoá ngoại)
 
 ## `product.stock_document_lines`
 

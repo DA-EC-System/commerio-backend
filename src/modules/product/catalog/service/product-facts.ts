@@ -14,6 +14,7 @@ import { productImageRows, replaceProductImages } from '../repository/product-im
 import { sizeChartRows, touchProduct } from '../repository/products.ts';
 import { isUuid } from './errors.ts';
 import { MAX_PRODUCT_IMAGES } from './product-images.ts';
+import { fillEmptySpecs } from './product-specs.ts';
 
 export interface VariantFacts {
   variantId: string;
@@ -33,6 +34,11 @@ export interface ProductFacts {
   imageFileIds?: readonly string[];
   /** Tệp `product_image` của ảnh bảng size trên sàn; chỉ gắn khi sản phẩm chưa có (#498). */
   sizeChartFileId?: string | null;
+  /**
+   * Thông số (#510, Documents/21 mục 11.3, 18.8.2): channel đã đổi mã sàn sang lựa chọn qua ánh xạ. Chỉ ghi thông số đang
+   * trống; lựa chọn lạ, giá trị sai luật thì bỏ; không tạo lựa chọn mới. Tên trường `specs.<code>`.
+   */
+  specs?: readonly { fieldId: string; optionIds?: string[]; value?: string }[];
 }
 
 export interface FactsSource {
@@ -104,9 +110,10 @@ export async function fillProductFacts(productId: string, facts: ProductFacts, s
   }
   const images = facts.imageFileIds?.length && !(await productImageRows([productId], 1)).length ? await usableImages(facts.imageFileIds) : [];
   if (images.length) await replaceProductImages(companyId, productId, images);
-  if (Object.keys(patch).length || images.length) {
+  const specs = facts.specs?.length ? await fillEmptySpecs(companyId, productId, facts.specs) : { filled: [], after: {} };
+  if (Object.keys(patch).length || images.length || specs.filled.length) {
     await writeProductFacts(productId, patch);
-    filled.push(...Object.keys(patch), ...(images.length ? ['images'] : []));
+    filled.push(...Object.keys(patch), ...(images.length ? ['images'] : []), ...specs.filled);
     await recordAudit({
       companyId,
       actorId: null,
@@ -114,8 +121,12 @@ export async function fillProductFacts(productId: string, facts: ProductFacts, s
       entityType: 'product.products',
       entityId: productId,
       label: product.name,
-      before: { ...Object.fromEntries(Object.keys(patch).map((f) => [f, f === 'description' ? product.description : null])), ...(images.length ? { images: [] } : {}) },
-      after: { ...patch, ...(images.length ? { images } : {}), source: auditSource },
+      before: {
+        ...Object.fromEntries(Object.keys(patch).map((f) => [f, f === 'description' ? product.description : null])),
+        ...(images.length ? { images: [] } : {}),
+        ...(specs.filled.length ? { specs: Object.fromEntries(Object.keys(specs.after).map((c) => [c, null])) } : {}),
+      },
+      after: { ...patch, ...(images.length ? { images } : {}), ...(specs.filled.length ? { specs: specs.after } : {}), source: auditSource },
     });
   } else if (filled.length) {
     await touchProduct(productId);

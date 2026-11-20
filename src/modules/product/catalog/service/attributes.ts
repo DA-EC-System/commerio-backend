@@ -1,6 +1,7 @@
 // Thuộc tính và giá trị (UC-CP-01; Documents/21 5.2, 5.3, V21, V24).
 import { withCompany } from '../../../../shared/db/client.ts';
-import { recordAudit } from '../../../core/index.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
+import { publishEvent, recordAudit } from '../../../core/index.ts';
 import {
   attributeNameExists,
   deleteAttributeIfVersion,
@@ -11,6 +12,7 @@ import {
   updateAttributeIfVersion,
   updateValue,
 } from '../repository/attributes.ts';
+import { groupsUsingAxis } from '../repository/specs.ts';
 import { auditOf, type Caller, inUse, invalid, isUuid, nameTaken, notFound, pgError, versionConflict } from './errors.ts';
 
 /** `code` đã chuẩn hoá ở `api/schemas.ts` (bỏ trống thì sinh từ giá trị). */
@@ -104,7 +106,15 @@ export async function deleteAttribute(caller: Caller, id: string, version: numbe
     if (attribute.productCount > 0) {
       throw inUse(`Không xoá được thuộc tính ${attribute.name} vì có ${attribute.productCount} sản phẩm đang dùng`);
     }
+    // Trục chuẩn của nhóm (#510, Documents/21 mục 5.5): khoá ngoại RESTRICT cũng chặn, kiểm trước để báo có nghĩa.
+    const groupCount = await groupsUsingAxis(id);
+    if (groupCount > 0) {
+      throw new AppError(409, 'in_use', `Không xoá được thuộc tính ${attribute.name} vì là trục chuẩn của ${groupCount} nhóm hàng`, {
+        groupCount,
+      });
+    }
     if (!(await deleteAttributeIfVersion(id, version))) await lostRace(id);
+    await publishEvent({ type: 'catalog.attribute_deleted', aggregateId: id, payload: { attributeId: id } });
     await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), label: attribute.name, before: snapshot(attribute) });
   }).catch(race);
 }

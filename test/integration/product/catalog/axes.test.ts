@@ -78,7 +78,7 @@ describe('POST /catalog/products với axes (AC-2, AC-S8)', () => {
     const res = await api(token).post('/products', body(uniq('Áo'), group.id, [{ name: 'màu sắc', values: [{ value: 'đen' }] }], [['đen']]));
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const after = await attrs(token);
-    expect(after).toHaveLength(2);
+    expect(after).toHaveLength(4);
     expect(after.find((a) => a.id === color.id)!.values).toHaveLength(8);
     expect(res.body.variants[0].attributes[0]).toMatchObject({ value: 'Đen' });
   });

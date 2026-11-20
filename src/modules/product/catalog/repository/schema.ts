@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
+  boolean,
   check,
   index,
   integer,
@@ -14,6 +15,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
+import { PLATFORM_KINDS, SPEC_INPUTS } from '../domain/specs.ts';
 
 // Mọi bảng của module `catalog` khai báo trong schema này.
 export const catalogSchema = pgSchema('product');
@@ -52,10 +54,20 @@ export const productGroups = catalogSchema.table(
     companyId: uuid('company_id').notNull(),
     name: text('name').notNull(),
     ...suggestColumns,
+    // Trục phân loại chuẩn của nhóm (thông số sản phẩm, Documents/19 §3.2, 21 §5.5): form tạo sản phẩm chọn sẵn, người
+    // dùng đổi được; không ràng buộc sản phẩm đã có. Không có cờ "nhóm cần bảng kích cỡ": luật theo category sàn
+    // (`size_chart_missing`, 21 §18.5).
+    axis1AttributeId: uuid('axis1_attribute_id').references((): AnyPgColumn => attributes.id, { onDelete: 'restrict' }),
+    axis2AttributeId: uuid('axis2_attribute_id').references((): AnyPgColumn => attributes.id, { onDelete: 'restrict' }),
     ...timestamps,
     ...version,
   },
-  (t) => [uniqueIndex('product_groups_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`), ...suggestChecks('product_groups', t)],
+  (t) => [
+    uniqueIndex('product_groups_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    ...suggestChecks('product_groups', t),
+    check('product_groups_axis_order', sql`${t.axis2AttributeId} is null or ${t.axis1AttributeId} is not null`),
+    check('product_groups_axis_distinct', sql`${t.axis1AttributeId} <> ${t.axis2AttributeId}`),
+  ],
 );
 
 /**
@@ -76,8 +88,7 @@ export const companyProductSettings = catalogSchema.table(
   (t) => [check('company_product_settings_sku_next_seq', sql`${t.skuNextSeq} >= 1`), ...suggestChecks('company_product_settings', t)],
 );
 
-/** Loại thuộc tính chuẩn sàn (21 mục 5.2): bước Variants của trang đẩy ghép `color`, `size` sang trục chuẩn của sàn. */
-export const PLATFORM_KINDS = ['color', 'size'] as const;
+export { PLATFORM_KINDS, type PlatformKind } from '../domain/specs.ts';
 
 export const attributes = catalogSchema.table(
   'attributes',
@@ -93,7 +104,7 @@ export const attributes = catalogSchema.table(
   (t) => [
     uniqueIndex('attributes_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
     uniqueIndex('attributes_company_platform_kind_uq').on(t.companyId, t.platformKind).where(sql`${t.platformKind} is not null`),
-    check('attributes_platform_kind', sql`${t.platformKind} in ('color', 'size')`),
+    check('attributes_platform_kind', sql`${t.platformKind} in ('color', 'size', 'volume', 'flavor')`),
     // Tên trục tối đa 15 ký tự (Lazada `VARIATION_*`, Documents/21 mục 5.2).
     check('attributes_name_length', sql`char_length(${t.name}) <= 15`),
   ],
@@ -274,5 +285,116 @@ export const variantAttributeValues = catalogSchema.table(
     index().on(t.attributeValueId),
     // Tối đa hai trục phân loại (25 §5.4); `position` đếm từ 0.
     check('variant_attribute_values_position', sql`${t.position} in (0, 1)`),
+  ],
+);
+
+export { SPEC_INPUTS, type SpecInputKind as SpecInput } from '../domain/specs.ts';
+
+/**
+ * Thư viện thông số của công ty (Documents/19 §3.2, 21 §5.5), dùng chung mọi nhóm hàng. `code` không sửa sau khi tạo:
+ * khoá để channel ánh xạ sang attribute sàn (`channel.spec_field_mappings`) và để AI nhập file đọc (#214). Thương hiệu,
+ * xuất xứ không ở đây (cột của `products`). RLS ở migration `*_thong-so-rls`.
+ */
+export const specFields = catalogSchema.table(
+  'spec_fields',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    input: text('input', { enum: SPEC_INPUTS }).notNull(),
+    unit: text('unit'),
+    // select/multiselect nhận giá trị ngoài danh sách: tạo lựa chọn mới cùng giao dịch lưu sản phẩm.
+    allowCustom: boolean('allow_custom').notNull().default(false),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    unique('spec_fields_company_code_uq').on(t.companyId, t.code),
+    uniqueIndex('spec_fields_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    check('spec_fields_input', sql`${t.input} in ('select', 'multiselect', 'text', 'number', 'date')`),
+    check('spec_fields_code_format', sql`${t.code} ~ '^[a-z0-9_]{1,40}$'`),
+    check('spec_fields_name_length', sql`char_length(${t.name}) between 1 and 40`),
+    check('spec_fields_unit', sql`${t.unit} is null or (${t.input} = 'number' and char_length(${t.unit}) between 1 and 10)`),
+  ],
+);
+
+/**
+ * Lựa chọn của thông số select/multiselect, mỗi lựa chọn một dòng (để khoá ngoại từ giá trị và ánh xạ sàn theo lựa
+ * chọn). `(id, field_id)` là đích khoá ngoại ghép `psv_option_fk` (migration `*_thong-so-rls`).
+ */
+export const specFieldOptions = catalogSchema.table(
+  'spec_field_options',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    fieldId: uuid('field_id')
+      .notNull()
+      .references(() => specFields.id, { onDelete: 'cascade' }),
+    value: text('value').notNull(),
+    position: integer('position').notNull(),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    uniqueIndex('spec_field_options_field_lower_value_uq').on(t.fieldId, sql`lower(${t.value})`),
+    unique('spec_field_options_id_field_uq').on(t.id, t.fieldId),
+    check('spec_field_options_value_length', sql`char_length(${t.value}) between 1 and 60`),
+    check('spec_field_options_position', sql`${t.position} >= 0`),
+  ],
+);
+
+/**
+ * Mẫu thông số của nhóm hàng: thông số nào, bắt buộc hay không, thứ tự. `required` chỉ tính vào độ hoàn thiện (missing
+ * `specs`), không chặn lưu sản phẩm (sản phẩm từ đề nghị nhập, từ SKU sàn chưa có thông số).
+ */
+export const groupSpecFields = catalogSchema.table(
+  'group_spec_fields',
+  {
+    companyId: uuid('company_id').notNull(),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => productGroups.id, { onDelete: 'cascade' }),
+    fieldId: uuid('field_id')
+      .notNull()
+      .references(() => specFields.id, { onDelete: 'restrict' }),
+    required: boolean('required').notNull().default(false),
+    position: integer('position').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.fieldId] }),
+    index().on(t.fieldId),
+    check('group_spec_fields_position', sql`${t.position} >= 0`),
+  ],
+);
+
+/**
+ * Giá trị thông số của sản phẩm cha: select một dòng `option_id`, multiselect mỗi lựa chọn một dòng, text/number/date
+ * một dòng `value_text`. Khoá ngoại ghép `psv_option_fk` `(option_id, field_id) → spec_field_options(id, field_id)`
+ * viết ở migration `*_thong-so-rls` (lựa chọn chỉ thuộc đúng thông số của nó). Không phụ thuộc mẫu nhóm.
+ */
+export const productSpecValues = catalogSchema.table(
+  'product_spec_values',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    fieldId: uuid('field_id')
+      .notNull()
+      .references(() => specFields.id, { onDelete: 'restrict' }),
+    optionId: uuid('option_id'),
+    valueText: text('value_text'),
+    ...timestamps,
+  },
+  (t) => [
+    unique('product_spec_values_option_uq').on(t.productId, t.fieldId, t.optionId),
+    uniqueIndex('product_spec_values_text_uq').on(t.productId, t.fieldId).where(sql`${t.optionId} is null`),
+    index().on(t.fieldId),
+    index().on(t.optionId),
+    check('product_spec_values_one_of', sql`(${t.optionId} is null) <> (${t.valueText} is null)`),
+    check('product_spec_values_text_length', sql`${t.valueText} is null or char_length(${t.valueText}) between 1 and 2000`),
   ],
 );

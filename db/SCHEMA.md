@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V124** (`20261120170921_can-nang-kich-thuoc-tran`): 91 bảng trong 6 schema, 68 khoá ngoại, 77 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V125** (`20261120210538_thong-so-du-lieu`): 95 bảng trong 6 schema, 76 khoá ngoại, 77 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -45,7 +45,7 @@ Chi tiết: [schema/core.md](schema/core.md)
 - `core.roles` (access): Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
 - `core.state_transitions` (platform): Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm.
 
-## `product` · Sản phẩm · lớp 2 · 21 bảng
+## `product` · Sản phẩm · lớp 2 · 25 bảng
 
 Chi tiết: [schema/product.md](schema/product.md)
 
@@ -55,13 +55,17 @@ Chi tiết: [schema/product.md](schema/product.md)
 - `product.doc_counters` (inventory): Bộ đếm số chứng từ của cả module lớn `product` (phiếu kho, đề nghị nhập, phiếu nhận, phiếu trả NCC): cấp số bằng `UPDATE … SET next_number = next_number + 1 RETURNING` trong giao dịch.
 - `product.goods_receipt_lines` (purchasing): Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ.
 - `product.goods_receipts` (purchasing): Một đợt NCC giao hàng cho một đề nghị.
+- `product.group_spec_fields` (catalog): Mẫu thông số của nhóm hàng: thông số nào, bắt buộc hay không, thứ tự.
 - `product.product_attribute_value_images` (catalog): Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/19 §3.2): áo 3 màu × 4 size có 3 dòng.
 - `product.product_groups` (catalog): Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU.
 - `product.product_images` (catalog): Ảnh sản phẩm theo thứ tự, `position` 0 là ảnh đại diện (#303); `file_id` ở module files, không đặt khoá ngoại chéo schema.
+- `product.product_spec_values` (catalog): Giá trị thông số của sản phẩm cha: select một dòng `option_id`, multiselect mỗi lựa chọn một dòng, text/number/date một dòng `value_text`.
 - `product.product_variants` (catalog): Biến thể (SKU); SKU không cấp lại kể cả sau khi lưu trữ (Documents/21 P5).
 - `product.products` (catalog): Sản phẩm; đổi nhóm hàng được, SKU không đổi theo (Documents/21 P6, 19/11/2026).
 - `product.purchase_request_lines` (purchasing): Dòng đề nghị.
 - `product.purchase_requests` (purchasing): Một lần xin nhập hàng của một NCC.
+- `product.spec_field_options` (catalog): Lựa chọn của thông số select/multiselect, mỗi lựa chọn một dòng (để khoá ngoại từ giá trị và ánh xạ sàn theo lựa chọn).
+- `product.spec_fields` (catalog): Thư viện thông số của công ty (Documents/19 §3.2, 21 §5.5), dùng chung mọi nhóm hàng.
 - `product.stock_document_lines` (inventory): Dòng phiếu kho.
 - `product.stock_documents` (inventory): Phiếu kho.
 - `product.stock_levels` (inventory): Các con số lưu của SKU (25 §7.1, Documents/21 mục 15.1).

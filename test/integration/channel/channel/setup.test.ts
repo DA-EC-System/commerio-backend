@@ -92,7 +92,7 @@ describe('thiết lập lần đầu', () => {
     expect(res.status).toBe(200);
     expect(ShopSetupPreview.parse(res.body)).toEqual({
       suggestions: [
-        { externalSkuId: 'sku-1', title: 'Áo trên sàn', match: 'sku', score: null, variantId: onPlatform.id, sku: 'CMR-SAN-1', available: 9, platformStock: 4, imageUrl: null, status: 'live' },
+        { externalSkuId: 'sku-1', title: 'Áo trên sàn', match: 'sku', score: null, variantId: onPlatform.id, sku: 'CMR-SAN-1', available: 9, platformStock: 4, imageUrl: null, status: 'live', canCreate: false, cannotCreateReason: 'sku_taken' },
       ],
       unmatchedRemote: 0,
       nameMatchSkipped: false,
