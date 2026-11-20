@@ -5,7 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { type FilePurpose, PURPOSE_RULES, rejectUpload, type UploadRejection } from '../domain/upload-rules.ts';
-import { attachedFiles, countAttachments, type EntityRef, replaceAttachmentRows } from '../repository/attachments.ts';
+import { attachedFiles, countAttachments, deleteAttachmentRows, type EntityRef, replaceAttachmentRows } from '../repository/attachments.ts';
 import { type FileRow, findFiles, markUploaded } from '../repository/files.ts';
 import { headObject, signDownload, type StorageConfig, storageConfig } from './storage.ts';
 import { REJECTION_MESSAGES } from './uploads.ts';
@@ -130,6 +130,15 @@ export async function publicFileUrls(fileIds: readonly string[]): Promise<Map<st
 export async function replaceAttachments(entity: EntityRef, fileIds: readonly string[], actorId: string): Promise<void> {
   const companyId = requireCompanyId('replaceAttachments');
   await replaceAttachmentRows(companyId, entity, fileIds, actorId);
+}
+
+/**
+ * Gỡ tệp của các chứng từ bị xoá hẳn (vd yêu cầu trả khi xoá gian hàng, Documents/21 §18.6.2); không xoá tệp. Gọi trong
+ * `withCompany`, cùng giao dịch xoá chứng từ.
+ */
+export async function detachAll(entityType: string, entityIds: readonly string[]): Promise<number> {
+  requireCompanyId('detachAll');
+  return deleteAttachmentRows(entityType, entityIds);
 }
 
 /** Id tệp đang gắn, theo thứ tự (cho nhật ký thao tác). Gọi trong `withCompany`. */

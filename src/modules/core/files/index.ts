@@ -16,6 +16,7 @@ export {
   attachmentProblem,
   attachmentsOf,
   confirmUploads,
+  detachAll,
   type EntityRef,
   fileLinks,
   fileProblem,
