@@ -703,6 +703,11 @@ export interface MarketplaceAdapter {
   /** Thương hiệu gửi khi catalog để trống (Lazada "No Brand"); có thì attribute thương hiệu không bao giờ thiếu. */
   readonly defaultBrand?: string;
   /**
+   * Ánh xạ mặc định thông số của công ty → mã attribute của sàn theo `priority` (#509, Documents/21 §18.8.1): khoá là `code`
+   * của thông số mặc định (catalog `spec-defaults.ts`). `seedSpecMappings` ghi khi tạo công ty. Một mã chỉ thuộc một thông số.
+   */
+  readonly defaultSpecMappings?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Giá trị cấp kế của attribute `input = 'cascade'` (#400, Lazada GetNextCascadeProp, cần token gian hàng). `cascadeId` là id
    * attribute của sàn (trong `raw`), `path` các cấp đã chọn theo định dạng của sàn. Sàn không có thì không khai.
    */

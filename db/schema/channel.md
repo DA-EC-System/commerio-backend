@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V127**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V127**, 20 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -620,6 +620,57 @@ Trỏ vào bảng này:
 - `finance.settlement_batches.shop_id` (tham chiếu, không có khoá ngoại)
 - `finance.settlement_statements.shop_id` (tham chiếu, không có khoá ngoại)
 - `channel.message_channels.shop_id` (tham chiếu, không có khoá ngoại)
+
+## `channel.spec_field_mappings`
+
+Ánh xạ một thông số của công ty (`catalog.spec_fields`, uuid thường) sang attribute của một sàn (#509, Documents/19 mục 3.3, 21 §18.8.1). Một thông số có thể ứng với nhiều mã trên cùng sàn (mã đổi theo category): lúc đẩy lấy mã có `priority` nhỏ nhất mà leaf có; một mã của sàn chỉ nhận từ một thông số. Gợi ý ánh xạ tính lúc đọc, không lưu (§18.8.1). RLS.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `field_id` uuid · not null → `product.spec_fields.id` (tham chiếu, không có khoá ngoại)
+- `platform` enum `channel.marketplace` · not null: `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null
+  Mã attribute của sàn: TikTok `attribute_id`, Lazada `name`.
+- `priority` integer · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`company_id`, `field_id`, `platform`, `attribute_code`) `spec_field_mappings_code_uq`
+- unique (`company_id`, `field_id`, `platform`, `priority`) `spec_field_mappings_priority_uq`
+- unique (`company_id`, `platform`, `attribute_code`) `spec_field_mappings_attribute_uq`
+- check `spec_field_mappings_priority`: `priority >= 1`
+
+Trỏ vào bảng này:
+
+- `channel.spec_option_mappings.company_id, field_id, platform, attribute_code` (khoá ngoại)
+
+## `channel.spec_option_mappings`
+
+Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). Khoá ngoại ghép về `spec_field_mappings` `ON DELETE CASCADE`: bỏ mã của thông số thì bỏ luôn ánh xạ lựa chọn của mã đó. RLS.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `field_id` uuid · not null → `channel.spec_field_mappings.field_id` (khoá ngoại, ON DELETE cascade)
+- `option_id` uuid · not null → `product.spec_field_options.id` (tham chiếu, không có khoá ngoại)
+- `platform` enum `channel.marketplace` · not null → `channel.spec_field_mappings.platform` (khoá ngoại, ON DELETE cascade): `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null → `channel.spec_field_mappings.attribute_code` (khoá ngoại, ON DELETE cascade)
+- `platform_option_id` text · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`company_id`, `option_id`, `platform`, `attribute_code`) `spec_option_mappings_uq`
 
 ## `channel.tags`
 

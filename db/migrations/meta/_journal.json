@@ -880,15 +880,15 @@
     {
       "idx": 125,
       "version": "7",
-      "when": 1795210898660,
-      "tag": "20261120214138_can-nang-kich-thuoc-du-lieu",
+      "when": 1795210912170,
+      "tag": "20261120214152_anh-xa-thong-so-san",
       "breakpoints": true
     },
     {
       "idx": 126,
       "version": "7",
-      "when": 1795210900671,
-      "tag": "20261120214140_can-nang-kich-thuoc-tran",
+      "when": 1795210914999,
+      "tag": "20261120214154_anh-xa-thong-so-rls",
       "breakpoints": true
     }
   ]

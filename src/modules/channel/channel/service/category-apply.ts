@@ -24,7 +24,7 @@ import { MarketplaceError } from './marketplaces/index.ts';
 import { moveListing } from './listings.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import type { ProductPort } from './product-port.ts';
-import { missingOf, pushAttributes, specProductOf, specView } from './product-specs.ts';
+import { missingOf, pushAttributes, specProductOf, specResolver, specView } from './product-specs.ts';
 import { type CategoryApplyJob, sendCategoryApply } from './shop-jobs.ts';
 import { type Actor, loseShopAuth, platformOf, shopSession } from './shops.ts';
 
@@ -77,14 +77,14 @@ export async function applyCategory(
     const spec = await findSpec(productId, platform);
     if (!spec) throw new AppError(409, 'category_unmapped', `Sản phẩm chưa có category của ${adapter.name}`);
     const product = specProductOf(variants);
-    const org = adapter.responsibleFields ? await responsibleOrgOf(actor.companyId) : null;
-    const { missing } = await missingOf(adapter, spec, product, org);
+    const resolve = await specResolver(port, actor.companyId, adapter, platform, [productId]);
+    const { missing } = await missingOf(spec, product, resolve);
     if (spec.categoryStatus !== 'ok' || missing.length) {
       throw new AppError(409, 'spec_incomplete', `Thông tin ${adapter.name} của sản phẩm còn thiếu, bổ sung rồi lưu trước khi đổi category`);
     }
     if (spec.version !== version) {
       throw new AppError(409, 'version_conflict', 'Thông tin sàn của sản phẩm vừa được người khác sửa', {
-        current: (await specView(actor.companyId, adapter, spec, product)).spec,
+        current: (await specView(spec, product, resolve)).spec,
       });
     }
     const rows = await platformListingRows(platform, variants.map((v) => v.id));
@@ -228,7 +228,10 @@ export async function runCategoryApply(
     const attributes = category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, job.toCategoryId) : null;
     const chartUrl = category?.sizeChartRule === 'required' ? ((await port.productSizeChartUrls?.([job.productId]))?.get(job.productId) ?? null) : null;
     return {
-      attributes: pushAttributes(adapter, attributes, spec, specProductOf(variants)),
+      attributes: pushAttributes(
+        attributes,
+        (await specResolver(port, shop.companyId, adapter, shop.platform, [job.productId]))(specProductOf(variants), attributes, spec.attributes),
+      ),
       responsible: await responsibleOrgOf(shop.companyId),
       chartUrl,
     };

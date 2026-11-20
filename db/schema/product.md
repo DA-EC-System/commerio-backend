@@ -547,6 +547,7 @@ Ràng buộc và index:
 Trỏ vào bảng này:
 
 - `product.product_spec_values.option_id, field_id` (khoá ngoại viết tay)
+- `channel.spec_option_mappings.option_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.spec_fields`
 
@@ -582,6 +583,7 @@ Trỏ vào bảng này:
 - `product.group_spec_fields.field_id` (khoá ngoại)
 - `product.product_spec_values.field_id` (khoá ngoại)
 - `product.spec_field_options.field_id` (khoá ngoại)
+- `channel.spec_field_mappings.field_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.stock_document_lines`
 

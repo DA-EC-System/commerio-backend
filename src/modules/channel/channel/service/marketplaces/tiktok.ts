@@ -20,6 +20,7 @@ import {
   type TokenSet,
   type ContentRevision,
 } from './common.ts';
+import { TIKTOK_SPEC_MAPPINGS } from './tiktok-spec-mappings.ts';
 import { logger } from '../../../../../shared/logger.ts';
 import { RESPONSIBLE_ATTRS } from './tiktok-categories.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
@@ -533,6 +534,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,
     productFields: { '100149': 'originCountry' },
+    defaultSpecMappings: TIKTOK_SPEC_MAPPINGS,
     togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.

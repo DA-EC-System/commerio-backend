@@ -899,6 +899,20 @@ export const ProductSpecSchema = z
 export const ProductSpecView = z
   .object({
     spec: ProductSpecSchema.nullable(),
+    resolved: z
+      .record(
+        z.string(),
+        z
+          .object({
+            value: z.union([z.string(), z.array(z.string())]).meta({
+              description: 'Select/multiselect: id lựa chọn của sàn khi khớp, nhãn khi tự gõ; text/number/date: chuỗi đã đổi sang định dạng gửi sàn',
+            }),
+            source: z.enum(['override', 'catalog', 'company', 'default']),
+            fieldId: z.uuid().nullable().meta({ description: 'Thông số catalog đã điền ô này; null với nguồn khác và với thương hiệu, xuất xứ' }),
+          })
+          .strict(),
+      )
+      .meta({ description: 'Giá trị từng attribute sau khi áp ghi đè > thông số catalog > hồ sơ công ty > mặc định sàn (#509, Documents/21 §18.8.2). `{}` khi chưa có spec' }),
     missing: z.array(
       z
         .object({
@@ -1027,3 +1041,56 @@ export const CategorySyncBody = z
   })
   .default({})
   .meta({ id: 'CategorySyncInput' });
+
+// Ánh xạ thông số sang sàn (#509, Documents/21 §18.8.1).
+export const SpecMappingParams = z.object({ platform: z.string().max(40), fieldId: z.uuid('Thông số không hợp lệ') });
+export const SpecMappingBody = z
+  .object({
+    codes: z
+      .array(
+        z
+          .object({
+            attributeCode: z.string('Chọn thuộc tính của sàn').trim().min(1, 'Chọn thuộc tính của sàn').max(60),
+            options: z.array(z.object({ optionId: z.uuid(), platformOptionId: z.string().max(60).nullable() }).strict()).max(500).default([]),
+          })
+          .strict(),
+      )
+      .max(20)
+      .meta({ description: 'Thứ tự mảng là `priority`; `[]` là bỏ ánh xạ' }),
+  })
+  .strict()
+  .meta({ id: 'SpecMappingInput' });
+const mappingOption = z
+  .object({ optionId: z.uuid(), platformOptionId: z.string().nullable(), platformLabel: z.string().nullable() })
+  .strict();
+export const SpecMappingSchema = z
+  .object({
+    fieldId: z.uuid(),
+    codes: z.array(z.object({ attributeCode: z.string(), attributeLabel: z.string(), priority: z.number().int(), options: z.array(mappingOption) }).strict()),
+    suggestions: z
+      .array(z.object({ attributeCode: z.string(), attributeLabel: z.string(), options: z.array(mappingOption) }).strict())
+      .meta({ description: 'Tính lúc đọc, không lưu: attribute property trùng tên thông số, mã chưa ánh xạ cho thông số nào' }),
+  })
+  .strict()
+  .meta({ id: 'SpecMapping' });
+export const SpecMappingList = z.object({ items: z.array(SpecMappingSchema) }).strict().meta({ id: 'SpecMappingList' });
+export const AttributeCatalogQuery = z.object({
+  search: z.string('Nhập ít nhất 2 ký tự').trim().min(2, 'Nhập ít nhất 2 ký tự').max(60),
+  kind: z.enum(['sales', 'property']).optional(),
+});
+export const AttributeCatalogList = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          code: z.string(),
+          label: z.string(),
+          kind: z.enum(['sales', 'property']),
+          input: z.enum(['select', 'multiselect', 'text', 'number', 'date', 'image', 'cascade']),
+          options: z.array(z.object({ id: z.string(), label: z.string() }).strict()),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'AttributeCatalogList' });
