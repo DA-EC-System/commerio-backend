@@ -245,6 +245,11 @@ export const listings = channelSchema.table(
     stockSyncError: jsonb('stock_sync_error').$type<SyncError>(),
     priceSyncError: jsonb('price_sync_error').$type<SyncError>(),
     lastPushedAt: timestamp('last_pushed_at', { withTimezone: true }),
+    /**
+     * Lần sàn nhận giá app đẩy gần nhất (#360). So giá sàn bị sửa ngoài app chờ 15 phút sau mốc này; không dùng
+     * `last_pushed_at` vì lần đẩy tồn cũng ghi mốc đó, SKU đổi tồn mỗi chu kỳ sẽ không bao giờ được so giá.
+     */
+    lastPricePushedAt: timestamp('last_price_pushed_at', { withTimezone: true }),
     /** Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau. */
     externalImageUrls: text('external_image_urls').array(),
     listedPrice: money('listed_price'),

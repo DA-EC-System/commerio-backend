@@ -222,6 +222,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       priceSync: result.existing && !rewritten ? 'pending' : 'synced',
       priceSyncError: null,
       lastPushedAt: at,
+      ...(priceSent && { lastPricePushedAt: at }),
       // Tạo mới gửi kèm tồn; đẩy lại thì TikTok không gửi tồn (Edit Product giữ tồn cũ): để đồng bộ đẩy.
       // SKU chưa tin được: sàn nhận 0, chờ đẩy tồn thật (lấy đơn xong trọn thì `channel.stock_push` chạy lại).
       ...(rewritten || result.existing

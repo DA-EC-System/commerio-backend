@@ -677,6 +677,7 @@ async function pushDue(
         // Giá theo gian hàng đã lên sàn: lần tính `confirmed` → `pushed` (Documents/19 `price_calculations`).
         if (price?.ok && row.priceCalcId && row.manualPrice === null) await markPushed(row.priceCalcId);
         if (stock?.ok || price?.ok) patch = { ...patch, lastPushedAt: at };
+        if (price?.ok) patch = { ...patch, lastPricePushedAt: at };
       }
       patch = { ...patch, ...locked };
       // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
