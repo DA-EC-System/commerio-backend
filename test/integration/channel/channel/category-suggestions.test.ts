@@ -266,8 +266,9 @@ describe('category-suggestions: group, recent', () => {
     const res = await get(lazadaShop, product('Áo thun nam cổ tròn', true, group2));
     expect(res.body.group.map((g: { externalId: string }) => g.externalId)).toEqual([catC]);
     expect(res.body.recent.map((r: { externalId: string }) => r.externalId)).toEqual([catB, catA]);
+    // Không gọi sàn nên `items` rỗng: category trùng gợi ý (lzLeaf) không bị bỏ khỏi `group`.
     const noImage = await get(lazadaShop, product('Áo thun nam cổ tròn', false, group1));
     expect(noImage.body.suggestError).toMatchObject({ code: 'images_missing' });
-    expect(noImage.body.group.map((g: { externalId: string }) => g.externalId)).toEqual([catA, catB]);
+    expect(noImage.body.group.map((g: { externalId: string }) => g.externalId)).toEqual([catA, lzLeaf, catB]);
   });
 });

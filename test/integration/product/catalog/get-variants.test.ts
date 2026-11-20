@@ -52,8 +52,8 @@ describe('getVariants', () => {
         brand: null,
         image: null,
         attributes: [
-          { attributeId: color.id, attributeName: 'Màu', valueId: valueId(color, 'Đen'), value: 'Đen', code: 'DEN' },
-          { attributeId: size.id, attributeName: 'Size', valueId: valueId(size, 'XL'), value: 'XL', code: 'XL' },
+          { attributeId: color.id, attributeName: 'Màu', platformKind: null, valueId: valueId(color, 'Đen'), value: 'Đen', code: 'DEN' },
+          { attributeId: size.id, attributeName: 'Size', platformKind: null, valueId: valueId(size, 'XL'), value: 'XL', code: 'XL' },
         ],
       },
       expect.objectContaining({ id: shirt.variants[1]!.id, sku: 'AO-0002-TRANG-XL', archived: true, businessStatus: 'archived' }),
