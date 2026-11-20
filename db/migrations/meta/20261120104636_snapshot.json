@@ -1,6 +1,6 @@
 {
-  "id": "456dcf97-1137-4ad3-965a-32c47ad357ad",
-  "prevId": "e25fa84e-936c-4fc0-87d0-df1d981ae9ad",
+  "id": "28f761b8-c125-4b84-8f2f-963e7762152f",
+  "prevId": "d53cfae5-aa21-4c45-b4bc-40798d3a41b7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -330,6 +330,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "category_change": {
+          "name": "category_change",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "content_source": {
           "name": "content_source",
           "type": "listing_content_source",
@@ -564,6 +570,10 @@
         "listings_remote_title": {
           "name": "listings_remote_title",
           "value": "(\"channel\".\"listings\".\"remote_title_at_match\" is not null or (\"channel\".\"listings\".\"remote_title_en_at_match\" is null and \"channel\".\"listings\".\"remote_title_matched_at\" is null))\n        and (\"channel\".\"listings\".\"remote_title_changed_at\" is null or \"channel\".\"listings\".\"remote_title_matched_at\" is not null)"
+        },
+        "listings_category_change": {
+          "name": "listings_category_change",
+          "value": "\"channel\".\"listings\".\"category_change\" is null or (\"channel\".\"listings\".\"status\" <> 'delisted' and \"channel\".\"listings\".\"category_change\" ->> 'status' in ('queued', 'failed', 'mismatch'))"
         },
         "listings_reject_reason": {
           "name": "listings_reject_reason",
