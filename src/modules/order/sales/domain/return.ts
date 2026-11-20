@@ -92,6 +92,9 @@ export function syncAction(
   // Kho đã quét nhận mà sàn còn báo hàng đang về (TikTok BUYER_SHIPPED_ITEM tới khi sàn ghi nhận người bán đã nhận, #364):
   // app đi trước sàn là luồng thường (tich-hop-san/tiktok.md §2.3), không phải mâu thuẫn.
   if (current === 'received' && target === 'awaiting_return') return null;
+  // Đã hoàn tiền cho khách giữ hàng mà sàn còn báo trả hàng chưa xong: Lazada `instantRefund` của yêu cầu loại `return`
+  // ra REFUND_PENDING, ánh xạ thành hàng đang về (LZ-TRA-B05, #364). Sàn báo hàng đã về người bán mới là mâu thuẫn.
+  if (current === 'refund_only' && target === 'awaiting_return') return null;
   // Cùng lý do khi app đã kiểm hàng và đóng (`inspected`) trước khi sàn ghi nhận người bán đã nhận (vd báo sàn lỗi, đang thử
   // lại). Đóng vì khách huỷ hay không gửi hàng mà sàn báo hàng đang về thì mới là mâu thuẫn.
   if (current === 'closed' && closeResult === 'inspected' && target === 'awaiting_return') return null;
