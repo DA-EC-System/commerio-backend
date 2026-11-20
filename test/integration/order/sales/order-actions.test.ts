@@ -41,6 +41,12 @@ const tiktokDecide = vi.fn(async (_token: string, _orderId: string, accept: bool
   if (!accept && !rejectReasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do khi từ chối yêu cầu huỷ');
 });
 const tiktokRejectReasons = vi.fn(async () => [{ id: 'seller_reject_apply_product_has_been_packed', label: 'Hàng đã đóng gói' }]);
+// Lý do người bán huỷ như shop thử TikTok trả ngày 20/11/2026 (DH-000029, #364).
+const tiktokCancelReasons = vi.fn(async () => [
+  { id: 'seller_cancel_reason_out_of_stock', label: 'Hết hàng' },
+  { id: 'seller_cancel_reason_wrong_price', label: 'Sai giá' },
+]);
+const tiktokCancelOrder = vi.fn(async () => {});
 registerAdapter(
   'tiktok',
   fakeAdapter({
@@ -49,6 +55,8 @@ registerAdapter(
     },
     decideCancelRequest: tiktokDecide,
     cancelRequestRejectReasons: tiktokRejectReasons,
+    cancelReasons: tiktokCancelReasons,
+    cancelOrder: tiktokCancelOrder,
   }),
 );
 afterAll(() => resetAdapters());
@@ -79,6 +87,8 @@ beforeEach(() => {
   decideCancelRequest.mockClear();
   tiktokDecide.mockClear();
   tiktokRejectReasons.mockClear();
+  tiktokCancelReasons.mockClear();
+  tiktokCancelOrder.mockClear();
 });
 
 function remote(status: PlatformOrder['lines'][number]['status'], o: Partial<PlatformOrder> = {}): PlatformOrder {
@@ -281,6 +291,100 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     const after = await detail(orderId);
     expect(after.version).toBe(before.version);
     expect(after.flags).not.toContain('cancelling');
+  });
+});
+
+// Mã ca theo Documents/kiem-thu/ca-theo-so-do.md mục D1, AC theo 27-user-story.md US-DH-13. Gọi thật trên shop thử
+// TikTok ngày 20/11/2026: DH-000029 `processing` → platform-cancel → lượt kéo sau `cancelled`, kiện `cancelled` (#364).
+describe('TikTok: huỷ đơn sàn từ phía shop (US-DH-13)', () => {
+  const tt = (status: PlatformOrder['lines'][number]['status'], o: Partial<PlatformOrder> = {}) => remote(status, { shopId: tiktokShopId, ...o });
+  const confirmCancelled = (o: PlatformOrder) => {
+    const c = structuredClone(o);
+    for (const line of c.lines) line.status = 'cancelled';
+    return ingest(c);
+  };
+
+  it('D1-09 US-DH-13 AC1 AC2: lý do lấy từ sàn; kiện chưa đóng gói thì sàn xác nhận là đơn, kiện huỷ', async () => {
+    const o = twoLines('pending', { shopId: tiktokShopId });
+    const { orderId } = await ingest(o);
+    expect((await detail(orderId)).status).toBe('processing');
+
+    const reasons = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`));
+    expect(reasons.status).toBe(200);
+    expect(reasons.body.items.map((r: { id: string }) => r.id)).toEqual(['seller_cancel_reason_out_of_stock', 'seller_cancel_reason_wrong_price']);
+
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: 'seller_cancel_reason_out_of_stock' });
+    expect(res.status).toBe(200);
+    expect(res.body.pendingOpen).toBe(0);
+    expect(Order.parse(res.body.order)).toMatchObject({ status: 'processing', cancelReason: 'Hết hàng' });
+    expect(res.body.order.flags).toContain('cancelling');
+    // TikTok VN chỉ huỷ cả đơn: gửi mọi món chưa huỷ.
+    expect(tiktokCancelOrder).toHaveBeenCalledWith(
+      expect.any(String),
+      o.externalOrderId,
+      o.lines.map((l) => l.externalLineId),
+      'seller_cancel_reason_out_of_stock',
+    );
+    expect(cancelOrder).not.toHaveBeenCalled();
+
+    await confirmCancelled(o);
+    const after = await detail(orderId);
+    expect(after).toMatchObject({ status: 'cancelled', cancelReason: 'Hết hàng' });
+    expect(after.flags).not.toContain('cancelling');
+    expect(after.packages.map((p) => p.status)).toEqual(['cancelled']);
+  });
+
+  it('D1-08 US-DH-13 AC2: đơn chưa thanh toán huỷ được, sàn xác nhận thì cancelled', async () => {
+    const o = tt('pending', { paid: false });
+    const { orderId } = await ingest(o);
+    const before = await detail(orderId);
+    expect(before.status).toBe('unpaid');
+    const res = await post(`${orderId}/platform-cancel`, { version: before.version, reasonId: 'seller_cancel_reason_wrong_price' });
+    expect(res.status).toBe(200);
+    expect(res.body.order.flags).toContain('cancelling');
+    await confirmCancelled(o);
+    expect(await detail(orderId)).toMatchObject({ status: 'cancelled', cancelReason: 'Sai giá' });
+  });
+
+  it('US-DH-13 AC3: có kiện đã đóng gói thì Đang huỷ, kho nhận việc dỡ kiện về kệ', async () => {
+    const o = tt('packed');
+    const { orderId } = await ingest(o);
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: 'seller_cancel_reason_out_of_stock' });
+    expect(res.status).toBe(200);
+    expect(res.body.pendingOpen).toBe(1);
+    await confirmCancelled(o);
+    const after = await detail(orderId);
+    expect(after.status).toBe('processing');
+    expect(after.flags).toContain('cancelling');
+    expect(after.packages[0]!.flags).toContain('needs_open');
+  });
+
+  it('US-DH-13 AC4: sàn không cho huỷ thì 409 marketplace_rejected kèm nguyên câu của sàn', async () => {
+    const { orderId } = await ingest(tt('pending'));
+    // Câu thật của Get Aftersale Eligibility (tich-hop-san/tiktok.md mục 2.3, 07/11/2026).
+    tiktokCancelReasons.mockRejectedValueOnce(new MarketplaceError('rejected', '25011050', "seller can't cancel non-cod order after shipped"));
+    const res = await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'marketplace_rejected', platformMessage: "seller can't cancel non-cod order after shipped" });
+  });
+
+  it('D1-09g US-DH-13 AC5: đã có kiện bàn giao thì 409 already_handed_over, không gọi sàn', async () => {
+    const { orderId } = await ingest(tt('in_transit'));
+    const res = await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: 'seller_cancel_reason_out_of_stock' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('already_handed_over');
+    expect(tiktokCancelOrder).not.toHaveBeenCalled();
+  });
+
+  it('D1-09q US-DH-13 AC6: Nhân viên kho gọi lý do huỷ, huỷ thì 403, không gọi sàn', async () => {
+    const warehouse = await addMember(company.companyId, 'warehouse');
+    const { orderId } = await ingest(tt('pending'));
+    const version = (await detail(orderId)).version;
+    expect((await auth(app().get(`/api/v1/sales/orders/${orderId}/cancel-reasons`), warehouse.token)).status).toBe(403);
+    const res = await post(`${orderId}/platform-cancel`, { version, reasonId: 'seller_cancel_reason_out_of_stock' }, warehouse.token);
+    expect(res.status).toBe(403);
+    expect(tiktokCancelReasons).not.toHaveBeenCalled();
+    expect(tiktokCancelOrder).not.toHaveBeenCalled();
   });
 });
 
