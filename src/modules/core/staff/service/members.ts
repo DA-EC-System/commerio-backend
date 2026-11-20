@@ -13,7 +13,7 @@ import {
   type RoleWithPermissions,
 } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
-import { checkRoleGrant, isProtectedTarget } from '../domain/member-rules.ts';
+import { checkRoleGrant, isProtectedTarget, touchesAdmin } from '../domain/member-rules.ts';
 import {
   bumpMembershipVersion,
   findMemberByAccount,
@@ -56,6 +56,8 @@ const ENTITY = 'core.memberships';
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy nhân viên');
 export const protectedAccount = () =>
   new AppError(403, 'protected_account', 'Không đổi vai trò, khoá hay mở khoá CEO hoặc chính mình, không gán vai trò CEO');
+export const ceoOnly = () =>
+  new AppError(403, 'ceo_only', 'Chỉ CEO được mời, khoá, gán hoặc gỡ người vai Admin');
 export const notHeld = () =>
   new AppError(403, 'permission_not_held', 'Chỉ thêm hay gỡ vai trò gồm những quyền bạn đang có');
 export const invalidRoles = () =>
@@ -119,6 +121,18 @@ async function lostRace(accountId: string): Promise<AppError> {
   return conflict(toStaffMember(row, roles));
 }
 
+/** Người gọi có vai CEO trong công ty đang chọn. Chạy trong `withCompany`. */
+export async function callerIsCeo(caller: Caller): Promise<boolean> {
+  const me = await findMemberByAccount(caller.accountId);
+  if (!me) return false;
+  return ((await memberRolesOf([me.membershipId])).get(me.membershipId) ?? []).some((r) => r.isCeo);
+}
+
+/** Việc chạm tới vai Admin mà người gọi không phải CEO: 403 `ceo_only` (I5). */
+export async function assertCeoFor(caller: Caller, scope: Parameters<typeof touchesAdmin>[0]): Promise<void> {
+  if (touchesAdmin(scope) && !(await callerIsCeo(caller))) throw ceoOnly();
+}
+
 /** Đích là CEO hoặc chính mình: 403 trước mọi bước khác (sau 404). */
 async function loadTarget(caller: Caller, accountId: string) {
   const target = await loadMember(accountId);
@@ -160,6 +174,7 @@ export async function changeRoles(
     });
     if (check === 'unknown_roles') throw invalidRoles();
     if (check === 'ceo_role') throw protectedAccount();
+    await assertCeoFor(caller, { requestedIds: input.roleIds, currentRoles });
     if (check === 'not_held') throw notHeld();
     if (!(await bumpMembershipVersion(row.membershipId, input.version))) throw await lostRace(accountId);
     await replaceMemberRoles(row.membershipId, caller.companyId, input.roleIds);
@@ -191,6 +206,7 @@ export async function setLocked(caller: Caller, accountId: string, locked: boole
   const to = locked ? 'suspended' : 'active';
   return withCompany(caller.companyId, async () => {
     const { row, roles } = await loadTarget(caller, accountId);
+    await assertCeoFor(caller, { currentRoles: roles });
     if (row.status !== from) throw alreadyThere(toStaffMember(row, roles));
     if (row.version !== version) throw conflict(toStaffMember(row, roles));
     if (!(await updateMembershipStatus(row.membershipId, version, from, to))) throw await lostRace(accountId);

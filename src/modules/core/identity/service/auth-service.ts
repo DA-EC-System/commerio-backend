@@ -21,6 +21,7 @@ import {
   findAccountByEmail,
   findAccountById,
   findMembership,
+  pendingJoinsByEmail,
   updatePassword,
 } from '../../staff/index.ts';
 import {
@@ -176,7 +177,19 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
 /** UC-PI-03: đăng nhập chưa gắn công ty; sai email hay sai mật khẩu đều cùng một lỗi (Documents/21 V2). */
 export async function login(input: { email: string; password: string }): Promise<LoginResult> {
   const account = await findAccountByEmail(input.email);
-  const ok = await verifyPassword(account?.passwordHash, input.password);
+  // Email chưa có tài khoản mà vừa nộp yêu cầu tham gia (Documents/21 mục 3.1: tài khoản chỉ tạo lúc Admin duyệt): so
+  // với mật khẩu đặt lúc nộp. Vẫn đúng một lần argon2 như mọi nhánh, nên thời gian không lộ email nào đang chờ duyệt.
+  const pending = account ? undefined : (await pendingJoinsByEmail(input.email))[0];
+  const ok = await verifyPassword(account?.passwordHash ?? pending?.passwordHash, input.password);
+  if (!account && pending && ok) {
+    countLogin('password', 'pending_approval');
+    const company = (await getCompanies([pending.companyId])).get(pending.companyId)?.name ?? 'công ty';
+    throw new AppError(
+      403,
+      'pending_approval',
+      `Yêu cầu tham gia ${company} đang chờ Admin duyệt. Khi được duyệt, đăng nhập lại bằng mật khẩu vừa đặt`,
+    );
+  }
   if (!account || !ok) {
     countLogin('password', 'invalid');
     throw invalidCredentials();

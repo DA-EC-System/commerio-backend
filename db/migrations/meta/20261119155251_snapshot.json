@@ -1,5 +1,5 @@
 {
-  "id": "048cef3b-d75c-4b31-a210-0534dda646c7",
+  "id": "32d7c0cf-ea4c-47ba-b149-81d73e103526",
   "prevId": "e7e50b3d-37a9-4f03-b387-19653290eb87",
   "version": "7",
   "dialect": "postgresql",
@@ -4133,6 +4133,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "purged_at": {
+          "name": "purged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4332,7 +4338,11 @@
         },
         "invitations_identity_present": {
           "name": "invitations_identity_present",
-          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or \"core\".\"invitations\".\"purged_at\" is not null or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+        },
+        "invitations_purged_shape": {
+          "name": "invitations_purged_shape",
+          "value": "\"core\".\"invitations\".\"purged_at\" is null or (\"core\".\"invitations\".\"status\"::text in ('open', 'claimed', 'revoked') and \"core\".\"invitations\".\"email\" is null and \"core\".\"invitations\".\"full_name\" is null and \"core\".\"invitations\".\"otp_hash\" is null and \"core\".\"invitations\".\"password_hash\" is null)"
         },
         "invitations_pending_shape": {
           "name": "invitations_pending_shape",
@@ -7965,13 +7975,6 @@
           "notNull": true,
           "default": false
         },
-        "remap_pending": {
-          "name": "remap_pending",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -8088,10 +8091,6 @@
         "package_lines_deducted_cost": {
           "name": "package_lines_deducted_cost",
           "value": "not \"order\".\"package_lines\".\"stock_deducted\" or \"order\".\"package_lines\".\"unit_cost\" is not null"
-        },
-        "package_lines_remap_pending": {
-          "name": "package_lines_remap_pending",
-          "value": "not \"order\".\"package_lines\".\"remap_pending\" or \"order\".\"package_lines\".\"variant_id\" is not null or \"order\".\"package_lines\".\"stock_untracked\""
         }
       },
       "isRLSEnabled": false
@@ -13853,8 +13852,7 @@
         "cancel",
         "edit",
         "resplit",
-        "stocktake",
-        "remap"
+        "stocktake"
       ]
     },
     "order.package_status": {
