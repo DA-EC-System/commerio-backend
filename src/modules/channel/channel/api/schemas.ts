@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
+import { MISSING_REASONS } from '../domain/product-spec.ts';
 
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
@@ -796,6 +797,10 @@ export const PlatformCategoriesQuery = z
       .optional()
       .meta({ description: 'Tìm leaf `active` theo đường dẫn (bỏ dấu); ưu tiên hơn `parentId`' }),
     parentId: categoryId.optional().meta({ description: 'Con trực tiếp; không gửi cả hai là cấp gốc' }),
+    shopId: z
+      .uuid('Gian hàng không hợp lệ')
+      .optional()
+      .meta({ description: 'Gian hàng của công ty (đúng sàn, không thì 404): leaf kèm `permission` của gian hàng đó (#448)' }),
   })
   .meta({ id: 'PlatformCategoriesQuery' });
 export const LeafDetailQuery = z
@@ -819,7 +824,15 @@ const platformCategoryShape = {
 export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
 export const PlatformCategoryPage = z
   .object({
-    items: z.array(PlatformCategory),
+    items: z.array(
+      PlatformCategory.extend({
+        permission: z
+          .enum(['available', 'invite_only', 'non_main_category', 'prohibited'])
+          .nullable()
+          .optional()
+          .meta({ description: 'Chỉ có khi gửi `shopId`; quyền của gian hàng với leaf (null: chưa kiểm, Lazada, hoặc không phải leaf)' }),
+      }).strict(),
+    ),
     syncedAt: iso.nullable().meta({ description: 'Lần đồng bộ cây gần nhất; null khi sàn chưa có dòng nào' }),
   })
   .strict()
@@ -867,6 +880,9 @@ export const CategorySyncResult = z
 
 // Spec sàn của sản phẩm (#400 lát 8, Documents/21 §18.5).
 export const ProductSpecParams = z.object({ productId: z.string().max(60), platform: z.string().max(40) });
+export const ProductSpecQuery = z.object({
+  categoryId: z.string().trim().min(1).max(60).optional().meta({ description: 'Leaf chưa lưu cần tính gợi ý ghép trục (#448); không gửi thì theo leaf của spec' }),
+});
 const specValue = z.union([z.string().trim().max(500), z.array(z.string().trim().max(500)).max(50)]);
 export const ProductSpecBody = z
   .object({
@@ -896,6 +912,14 @@ export const ProductSpecSchema = z
   })
   .strict()
   .meta({ id: 'ProductSpec' });
+export const VariantCapabilitiesSchema = z
+  .object({
+    maxAxes: z.number().int().min(0),
+    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt (Lazada)' }),
+    salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
+  })
+  .strict()
+  .meta({ id: 'VariantCapabilities' });
 export const ProductSpecView = z
   .object({
     spec: ProductSpecSchema.nullable(),
@@ -913,12 +937,15 @@ export const ProductSpecView = z
           .strict(),
       )
       .meta({ description: 'Giá trị từng attribute sau khi áp ghi đè > thông số catalog > hồ sơ công ty > mặc định sàn (#509, Documents/21 §18.8.2). `{}` khi chưa có spec' }),
+    suggestedAxisMap: z.record(z.string(), z.string()).nullable().meta({ description: 'attributeId → mã sales attribute hoặc `__custom`; null khi không có leaf hay chưa có attribute' }),
+    suggestedValueMap: z.record(z.string(), z.string()).nullable().meta({ description: 'attributeValueId → mã lựa chọn của sales attribute' }),
+    variantCapabilities: VariantCapabilitiesSchema.nullable(),
     missing: z.array(
       z
         .object({
           code: z.string(),
           label: z.string(),
-          reason: z.enum(['required', 'required_when', 'axis_unmapped', 'category_changed', 'category_removed']),
+          reason: z.enum(MISSING_REASONS),
         })
         .strict(),
     ),
@@ -1015,6 +1042,10 @@ export const ShopWarehousesView = z
 export const CategorySuggestionsQuery = z.object({
   productId: z.string('Chọn sản phẩm').trim().min(1, 'Chọn sản phẩm').max(60),
 });
+const CATEGORY_PERMISSION = z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable();
+const UsedCategory = z
+  .object({ externalId: z.string(), path: z.string(), productCount: z.number().int().min(1), permission: CATEGORY_PERMISSION })
+  .strict();
 export const CategorySuggestionsView = z
   .object({
     items: z.array(
@@ -1022,11 +1053,23 @@ export const CategorySuggestionsView = z
         .object({
           externalId: z.string(),
           path: z.string(),
-          permission: z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable(),
+          permission: CATEGORY_PERMISSION,
+          usedByCompany: z.boolean().meta({ description: 'Công ty đã dùng category này trong spec của sản phẩm nào đó trên sàn' }),
         })
         .strict(),
     ),
+    group: z.array(UsedCategory).max(5).meta({ description: 'Category của sản phẩm cùng nhóm hàng trên sàn này, nhiều sản phẩm nhất trước (không đếm sản phẩm đang đẩy), tối đa 5' }),
+    recent: z.array(UsedCategory).max(5).meta({ description: 'Category công ty dùng gần đây, bỏ phần đã ở items, group, tối đa 5' }),
     cached: z.boolean(),
+    suggestError: z
+      .object({
+        code: z.enum(['product_name_too_short', 'images_missing', 'marketplace_unavailable']),
+        message: z.string(),
+        min: z.number().int().optional(),
+      })
+      .strict()
+      .optional()
+      .meta({ description: 'Không gọi được sàn: items rỗng, group và recent vẫn trả' }),
   })
   .strict()
   .meta({ id: 'CategorySuggestions' });
@@ -1042,6 +1085,30 @@ export const CategorySyncBody = z
   .default({})
   .meta({ id: 'CategorySyncInput' });
 
+// Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/21 §18.8.1).
+export const AxisMappingParams = z.object({ platform: z.string().max(40), attributeId: z.string().max(60) });
+export const AxisMappingBody = z
+  .object({
+    codes: z
+      .array(z.object({ attributeCode: z.string('Chọn mã thuộc tính').trim().min(1, 'Chọn mã thuộc tính').max(60) }).strict())
+      .max(10, 'Tối đa 10 mã')
+      .meta({ description: 'Thứ tự là `priority` (đầu tiên ưu tiên nhất); `[]` là bỏ ánh xạ' }),
+  })
+  .strict()
+  .meta({ id: 'AxisMappingInput' });
+const AXIS_KIND = z.enum(['color', 'size', 'volume', 'flavor']).nullable();
+export const AxisMappingItemSchema = z
+  .object({
+    attributeId: z.uuid(),
+    platformKind: AXIS_KIND,
+    codes: z.array(
+      z.object({ attributeCode: z.string(), attributeLabel: z.string().nullable(), priority: z.number().int().min(1) }).strict(),
+    ),
+    defaultCodes: z.array(z.string()).meta({ description: 'Mặc định của adapter theo `platformKind`, chỉ đọc' }),
+  })
+  .strict()
+  .meta({ id: 'AxisMappingItem' });
+export const AxisMappingList = z.object({ items: z.array(AxisMappingItemSchema) }).strict().meta({ id: 'AxisMappingList' });
 // Ánh xạ thông số sang sàn (#509, Documents/21 §18.8.1).
 export const SpecMappingParams = z.object({ platform: z.string().max(40), fieldId: z.uuid('Thông số không hợp lệ') });
 export const SpecMappingBody = z

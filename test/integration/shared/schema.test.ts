@@ -87,6 +87,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   ],
   channel: [
     'api_usage',
+    'axis_mappings',
     'conversation_notes',
     'conversation_tags',
     'conversations',

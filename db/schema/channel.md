@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V127**, 20 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V130**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -22,6 +22,30 @@ Cột:
 Ràng buộc và index:
 
 - unique (`platform`, `day`, `company_id`) NULLS NOT DISTINCT `api_usage_platform_day_company_uq`
+
+## `channel.axis_mappings`
+
+Ánh xạ thuộc tính phân loại của công ty sang sales attribute của sàn (#448, Documents/19 §3.3, Documents/21 §18.8.3 nguồn 2): mỗi (thuộc tính, sàn) một danh sách mã theo `priority` (1 là ưu tiên nhất). Thuộc tính có `platform_kind` không cần dòng: dùng mặc định của adapter; có dòng thì dòng thắng. `attribute_id` trỏ `product.attributes`, không có khoá ngoại chéo schema. RLS (migration `*_anh-xa-truc-rls`).
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `attribute_id` uuid · not null → `product.attributes.id` (tham chiếu, không có khoá ngoại)
+- `platform` enum `channel.marketplace` · not null: `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null
+  Mã sales attribute của sàn (`platform_category_attributes.code`, `kind = 'sales'`).
+- `priority` smallint · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`company_id`, `attribute_id`, `platform`, `attribute_code`) `axis_mappings_code_uq`
+- unique (`company_id`, `attribute_id`, `platform`, `priority`) `axis_mappings_priority_uq`
+- check `axis_mappings_priority`: `priority >= 1`
 
 ## `channel.conversation_notes`
 

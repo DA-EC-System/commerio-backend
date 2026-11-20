@@ -13,9 +13,14 @@ import {
   ShopWarehousesView,
   CategorySyncBody,
   ApplyCategoryBody,
+  AxisMappingBody,
+  AxisMappingItemSchema,
+  AxisMappingList,
+  AxisMappingParams,
   ApplyCategoryResult,
   ProductSpecBody,
   ProductSpecParams,
+  ProductSpecQuery,
   ProductSpecView,
   AttributeCatalogList,
   AttributeCatalogQuery,
@@ -250,12 +255,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories',
     summary: 'Cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc.',
+      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc. `shopId` (#448): gian hàng của công ty cùng sàn thì leaf kèm `permission` của gian hàng đó (đọc `shop_category_permissions`, null là chưa kiểm hoặc sàn không có quyền theo gian hàng như Lazada); không gửi thì không có trường `permission`.',
     security: bearer,
     request: { params: PlatformParams, query: PlatformCategoriesQuery },
     responses: {
       200: { description: 'Category', ...json(PlatformCategoryPage) },
       ...auth,
+      404: problemResponse('`not_found`: `shopId` không thuộc công ty hoặc khác sàn'),
       422: problemResponse('`validation_failed`; `marketplace_unsupported`: sàn không có adapter'),
     },
   });
@@ -331,7 +337,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/category-suggestions',
     summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false.',
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng nhóm hàng) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; TikTok gửi thêm mô tả sản phẩm.',
     security: bearer,
     request: { params: ShopParams, query: CategorySuggestionsQuery },
     responses: {
@@ -339,8 +345,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`: gian hàng hay sản phẩm không có hoặc của công ty khác'),
       409: problemResponse('`shop_not_connected` (gian hàng không `active`, kèm `current`); `marketplace_rejected`, `marketplace_unauthorized`'),
-      422: problemResponse('`product_name_too_short` (kèm `min`, TikTok 25), `images_missing` (Lazada), không gọi sàn; `validation_failed` (`errors.productId`); `marketplace_unsupported`'),
-      503: problemResponse('`marketplace_unavailable` sau một lần gọi lại'),
+      422: problemResponse('`validation_failed` (`errors.productId`); `marketplace_unsupported`'),
     },
   });
   registry.registerPath({
@@ -348,14 +353,14 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/specs/:platform',
     summary: 'Thông tin sàn của sản phẩm (category, attribute, ánh xạ trục) (#400)',
     description:
-      'Cần `channel.shop.view`. `resolved`: giá trị từng attribute theo thứ tự ghi đè > thông số catalog qua ánh xạ > hồ sơ công ty > mặc định sàn (#509). `missing` tính trên `resolved` theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `resolved: {}`, `missing: []`.',
+      'Cần `channel.shop.view`. `resolved`: giá trị từng attribute theo thứ tự ghi đè > thông số catalog qua ánh xạ > hồ sơ công ty > mặc định sàn (#509). `missing` tính trên `resolved` theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `resolved: {}`, `missing: []`. `suggestedAxisMap`, `suggestedValueMap`, `variantCapabilities` (#448) tính cho leaf `?categoryId` (chưa lưu) hoặc leaf của spec; null khi không có leaf hay chưa có attribute của leaf.',
     security: bearer,
-    request: { params: ProductSpecParams },
+    request: { params: ProductSpecParams, query: ProductSpecQuery },
     responses: {
       200: { description: 'Spec', ...json(ProductSpecView) },
       ...auth,
       404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
-      422: problemResponse('`marketplace_unsupported`'),
+      422: problemResponse('`marketplace_unsupported`; `validation_failed` kèm `errors.categoryId` (category không phải lá đang dùng được)'),
     },
   });
   registry.registerPath({
@@ -371,8 +376,37 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`'),
       409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
-      422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>`, `valueMap.<id>`); `marketplace_unsupported`'),
+      422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>` kể cả `__custom` ở sàn không nhận tên trục tự đặt, `valueMap.<id>`); `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/axis-mappings',
+    summary: 'Ánh xạ trục phân loại của công ty sang sales attribute của sàn (#448)',
+    description:
+      'Cần `catalog.product.view`. Mỗi thuộc tính phân loại của công ty một dòng: `codes` là ánh xạ của công ty theo `priority`, `defaultCodes` là mặc định của adapter theo `platformKind` (chỉ đọc). Không gọi sàn.',
+    security: bearer,
+    request: { params: PlatformParams },
+    responses: {
+      200: { description: 'Danh sách', ...json(AxisMappingList) },
+      ...auth,
+      422: problemResponse('`marketplace_unsupported`'),
+    },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/platforms/:platform/axis-mappings/:attributeId',
+    summary: 'Đặt ánh xạ trục của một thuộc tính trên sàn (#448)',
+    description:
+      'Cần `catalog.group.manage`. `codes` thay cả danh sách (thứ tự là `priority`, `[]` là bỏ). Mỗi mã phải là sales attribute đã gặp ở ít nhất một leaf của sàn. Ghi nhật ký.',
+    security: bearer,
+    request: { params: AxisMappingParams, body: { content: { 'application/json': { schema: AxisMappingBody } } } },
+    responses: {
+      200: { description: 'Dòng đã lưu', ...json(AxisMappingItemSchema) },
+      ...auth,
+      404: problemResponse('`not_found`: không phải thuộc tính của công ty'),
+      422: problemResponse('`validation_failed` kèm `errors["codes.<i>.attributeCode"]` (trùng, không phải sales attribute đã gặp); `marketplace_unsupported`'),
     },
   });
   registry.registerPath({

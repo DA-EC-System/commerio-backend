@@ -78,13 +78,13 @@ export async function applyCategory(
     if (!spec) throw new AppError(409, 'category_unmapped', `Sản phẩm chưa có category của ${adapter.name}`);
     const product = specProductOf(variants);
     const resolve = await specResolver(port, actor.companyId, adapter, platform, [productId]);
-    const { missing } = await missingOf(spec, product, resolve);
+    const { missing } = await missingOf(adapter, spec, product, resolve);
     if (spec.categoryStatus !== 'ok' || missing.length) {
       throw new AppError(409, 'spec_incomplete', `Thông tin ${adapter.name} của sản phẩm còn thiếu, bổ sung rồi lưu trước khi đổi category`);
     }
     if (spec.version !== version) {
       throw new AppError(409, 'version_conflict', 'Thông tin sàn của sản phẩm vừa được người khác sửa', {
-        current: (await specView(spec, product, resolve)).spec,
+        current: (await specView(adapter, spec, product, resolve)).spec,
       });
     }
     const rows = await platformListingRows(platform, variants.map((v) => v.id));

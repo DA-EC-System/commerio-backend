@@ -4,6 +4,7 @@ import { recordAudit, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import { type AxisInput, suggestAxes } from '../domain/axis-match.ts';
 import {
   CUSTOM_AXIS,
   type FieldSource,
@@ -13,8 +14,10 @@ import {
   resolveOption,
   type SpecAttributeValue,
   specMissing,
+  type VariantCapabilities,
 } from '../domain/product-spec.ts';
 import { type CatalogSpecValue, type ResolvedValue, resolvedValues, resolveSpecAttributes } from '../domain/spec-resolve.ts';
+import { axisCodesOf } from '../repository/axis-mappings.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
 import {
   findSpec,
@@ -68,30 +71,37 @@ export interface SpecView {
   resolved: Record<string, ResolvedValue>;
   missing: MissingItem[];
   remote: RemoteSpec | null;
+  /** Gợi ý ghép trục cho leaf đang xét (`?categoryId` hoặc leaf của spec); null khi không có leaf hay chưa có attribute (#448). */
+  suggestedAxisMap: Record<string, string> | null;
+  suggestedValueMap: Record<string, string> | null;
+  /** Khả năng khai biến thể của leaf đó; null khi sàn không khai hoặc không có leaf (#448). */
+  variantCapabilities: VariantCapabilities | null;
 }
 
 /** Dữ liệu sản phẩm cần cho spec: trục phân loại, giá trị trục, xuất xứ, thương hiệu. */
 export interface SpecProduct {
   productId: string;
-  axes: { attributeId: string; name: string }[];
+  axes: AxisInput[];
   valueIds: Map<string, string>; // attributeValueId → attributeId
   originCountry: string | null;
   brand: string | null;
 }
 
 export function specProductOf(variants: readonly ListingVariant[]): SpecProduct {
-  const axes = new Map<string, string>();
+  const axes = new Map<string, AxisInput>();
   const valueIds = new Map<string, string>();
   for (const v of variants) {
     for (const a of v.attributes) {
-      axes.set(a.attributeId, a.attributeName);
+      const axis = axes.get(a.attributeId) ?? { attributeId: a.attributeId, name: a.attributeName, platformKind: a.platformKind, values: [] };
+      if (!axis.values.some((x) => x.valueId === a.valueId)) axis.values.push({ valueId: a.valueId, value: a.value });
+      axes.set(a.attributeId, axis);
       valueIds.set(a.valueId, a.attributeId);
     }
   }
   const first = variants[0];
   return {
     productId: first?.productId ?? '',
-    axes: [...axes].map(([attributeId, name]) => ({ attributeId, name })),
+    axes: [...axes.values()],
     valueIds,
     originCountry: first?.originCountry ?? null,
     brand: first?.brand ?? null,
@@ -174,6 +184,7 @@ const toSpec = (r: ProductSpecRow, categoryPath: string | null): ProductSpec => 
 
 /** Phần còn thiếu của một spec theo attribute đã có trong bảng (chưa lấy thì chỉ xét category, trục). Gọi trong `withCompany`. */
 export async function missingOf(
+  adapter: MarketplaceAdapter,
   row: ProductSpecRow,
   product: SpecProduct,
   resolve: SpecResolver,
@@ -181,16 +192,70 @@ export async function missingOf(
   const category = await findCategory(row.platform, row.externalCategoryId);
   const attributes = category?.attributesFetchedAt ? await leafAttributesOf(row.platform, row.externalCategoryId) : null;
   const resolved = resolve(product, attributes, row.attributes);
-  const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: resolvedValues(resolved) });
+  const missing = specMissing({
+    spec: row,
+    attributes,
+    axes: product.axes,
+    fallbacks: resolvedValues(resolved),
+    caps: attributes ? (adapter.variantCapabilities?.(attributes) ?? null) : null,
+  });
   return { missing, attributes, resolved };
 }
 
+/** Attribute của leaf đã lấy về (chưa lấy thì null); đọc DB, không gọi sàn. Gọi trong `withCompany`. */
+async function fetchedLeaf(platform: Marketplace, externalId: string): Promise<PlatformAttribute[] | null> {
+  const category = await findCategory(platform, externalId);
+  return category?.attributesFetchedAt ? leafAttributesOf(platform, externalId) : null;
+}
+
+type AxisSuggestionView = Pick<SpecView, 'suggestedAxisMap' | 'suggestedValueMap' | 'variantCapabilities'>;
+
+const NO_SUGGESTION: AxisSuggestionView = { suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null };
+
+/**
+ * Gợi ý ghép trục của sản phẩm cho một leaf (#448, Documents/21 §18.8.3): trục `axis_mappings` của công ty rồi mặc định theo
+ * `platform_kind` của adapter, kèm khả năng khai biến thể của leaf. Leaf chưa có attribute thì cả ba null. Gọi trong `withCompany`.
+ */
+export async function axisSuggestion(
+  adapter: MarketplaceAdapter,
+  platform: Marketplace,
+  externalId: string | null,
+  product: SpecProduct,
+): Promise<AxisSuggestionView> {
+  const leaf = externalId ? await fetchedLeaf(platform, externalId) : null;
+  if (!leaf) return NO_SUGGESTION;
+  const caps = adapter.variantCapabilities?.(leaf) ?? null;
+  const { axisMap, valueMap } = suggestAxes({
+    axes: product.axes,
+    leaf,
+    companyCodes: await axisCodesOf(platform),
+    standard: adapter.standardSalesAttributes ?? {},
+    caps,
+  });
+  return { suggestedAxisMap: axisMap, suggestedValueMap: valueMap, variantCapabilities: caps };
+}
+
 /** Spec kèm `missing` như route `GET` trả (cũng là `current` của 409 `version_conflict`). Gọi trong `withCompany`. */
-export async function specView(row: ProductSpecRow | undefined, product: SpecProduct, resolve: SpecResolver): Promise<SpecView> {
-  if (!row) return { spec: null, resolved: {}, missing: [], remote: null };
-  const { missing, resolved } = await missingOf(row, product, resolve);
+export async function specView(
+  adapter: MarketplaceAdapter,
+  row: ProductSpecRow | undefined,
+  product: SpecProduct,
+  resolve: SpecResolver,
+  /** `platform` bắt buộc khi chưa có spec; `categoryId`: leaf chưa lưu cần tính gợi ý (#448), không có thì leaf của spec. */
+  opts: { platform?: Marketplace; categoryId?: string } = {},
+): Promise<SpecView> {
+  const platform = row?.platform ?? opts.platform;
+  const suggestion = platform ? await axisSuggestion(adapter, platform, opts.categoryId ?? row?.externalCategoryId ?? null, product) : NO_SUGGESTION;
+  if (!row) return { spec: null, resolved: {}, missing: [], remote: null, ...suggestion };
+  const { missing, resolved } = await missingOf(adapter, row, product, resolve);
   const category = await findCategory(row.platform, row.externalCategoryId);
-  return { spec: toSpec(row, category && category.syncedAt ? category.path : null), resolved, missing, remote: await remoteOf(row) };
+  return {
+    spec: toSpec(row, category && category.syncedAt ? category.path : null),
+    resolved,
+    missing,
+    remote: await remoteOf(row),
+    ...suggestion,
+  };
 }
 
 /** `remote` của spec: tên gian hàng hiện tại, gian hàng đã xoá thì tên lúc đọc. */
@@ -209,14 +274,39 @@ async function variantsOf(ctx: ModuleContext, productId: string): Promise<Listin
 }
 
 /** Đọc spec của sản phẩm trên sàn; chưa có thì `spec: null`. */
-export async function getProductSpec(ctx: ModuleContext, companyId: string, productId: string, raw: string): Promise<SpecView> {
+export async function getProductSpec(
+  ctx: ModuleContext,
+  companyId: string,
+  productId: string,
+  raw: string,
+  opts: { categoryId?: string } = {},
+): Promise<SpecView> {
   const { platform, adapter } = platformOf(raw);
+  // Leaf chưa lưu: lấy attribute (có thể gọi sàn) ngoài giao dịch như `PUT`, lỗi category thành 422 `errors.categoryId`.
+  if (opts.categoryId !== undefined) await ensureLeafOr422(companyId, platform, adapter, opts.categoryId, 'categoryId');
   return withCompany(companyId, async () => {
     const variants = await variantsOf(ctx, productId);
     const row = await findSpec(productId, platform);
     const resolve = await specResolver(productPort(ctx), companyId, adapter, platform, [productId]);
-    return specView(row, specProductOf(variants), resolve);
+    return specView(adapter, row, specProductOf(variants), resolve, {
+      platform,
+      ...(opts.categoryId !== undefined && { categoryId: opts.categoryId }),
+    });
   });
+}
+
+/** `ensureLeaf` đổi lỗi category (không phải lá, sàn từ chối) thành 422 `errors.<field>`. */
+async function ensureLeafOr422(companyId: string, platform: Marketplace, adapter: MarketplaceAdapter, externalId: string, field: string): Promise<void> {
+  try {
+    await ensureLeaf(companyId, platform, adapter, externalId);
+  } catch (err) {
+    if (err instanceof AppError && (err.code === 'category_not_leaf' || err.code === 'marketplace_rejected')) {
+      throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
+        errors: { [field]: 'Category không phải category lá đang dùng được của sàn' },
+      });
+    }
+    throw err;
+  }
 }
 
 export interface SpecInput {
@@ -247,6 +337,8 @@ export function normalizeSpec(
   attributes: readonly PlatformAttribute[],
   product: SpecProduct,
   defaults: Record<string, SpecAttributeValue>,
+  /** Khả năng khai biến thể của leaf (#448); có thì `__custom` chỉ nhận khi sàn cho tên trục tự đặt. */
+  caps: VariantCapabilities | null = null,
 ): { values: Pick<SpecInput, 'attributes' | 'axisMap' | 'valueMap'>; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
   const out: Record<string, SpecAttributeValue> = {};
@@ -288,7 +380,9 @@ export function normalizeSpec(
   const axisMap: Record<string, string> = {};
   for (const axis of product.axes) {
     const target = input.axisMap[axis.attributeId];
-    if (target == null || (target !== CUSTOM_AXIS && !sales.has(target))) {
+    if (target === CUSTOM_AXIS && caps && !caps.customAxisName) {
+      errors[`axisMap.${axis.attributeId}`] = 'Sàn này không nhận tên trục tự đặt, chọn thuộc tính phân loại của sàn';
+    } else if (target == null || (target !== CUSTOM_AXIS && !sales.has(target))) {
       errors[`axisMap.${axis.attributeId}`] = `Chọn thuộc tính phân loại của sàn cho ${axis.name}`;
     } else axisMap[axis.attributeId] = target;
   }
@@ -337,13 +431,15 @@ export async function putProductSpec(
   return withCompany(companyId, async () => {
     const resolve = await specResolver(productPort(ctx), companyId, adapter, platform, [productId]);
     const defaults = resolvedValues(resolve(product, attributes, {}));
-    const { values, errors } = normalizeSpec(input, attributes, product, defaults);
+    // Lần lưu đầu: trục, giá trị người dùng chưa chọn thì điền theo gợi ý (#448); lần sau không tự điền để không đè lựa chọn.
+    const body = input.version === null ? await withSuggestion(adapter, platform, product, input) : input;
+    const { values, errors } = normalizeSpec(body, attributes, product, defaults, adapter.variantCapabilities?.(attributes) ?? null);
     if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
     const before = await findSpec(productId, platform);
     const conflict = async () => {
       const current = await findSpec(productId, platform);
       return new AppError(409, 'version_conflict', 'Thông tin sàn của sản phẩm vừa được người khác sửa', {
-        current: current ? (await specView(current, product, resolve)).spec : null,
+        current: current ? (await specView(adapter, current, product, resolve)).spec : null,
       });
     };
     let row: ProductSpecRow | undefined;
@@ -366,8 +462,22 @@ export async function putProductSpec(
       before: before ? { externalCategoryId: before.externalCategoryId, attributes: before.attributes, version: before.version } : null,
       after: { externalCategoryId: row.externalCategoryId, attributes: row.attributes, version: row.version },
     });
-    return specView(row, product, resolve);
+    return specView(adapter, row, product, resolve);
   });
+}
+
+/** `input` với `axisMap`, `valueMap` còn thiếu được điền từ gợi ý ghép trục của leaf; giá trị đã gửi giữ nguyên. Gọi trong `withCompany`. */
+async function withSuggestion(adapter: MarketplaceAdapter, platform: Marketplace, product: SpecProduct, input: SpecInput): Promise<SpecInput> {
+  const { suggestedAxisMap, suggestedValueMap } = await axisSuggestion(adapter, platform, input.externalCategoryId, product);
+  if (!suggestedAxisMap || !suggestedValueMap) return input;
+  const axisMap = { ...input.axisMap };
+  for (const axis of product.axes) if (axisMap[axis.attributeId] == null && suggestedAxisMap[axis.attributeId] != null) axisMap[axis.attributeId] = suggestedAxisMap[axis.attributeId]!;
+  const valueMap = { ...input.valueMap };
+  for (const [valueId, optionId] of Object.entries(suggestedValueMap)) {
+    const axisId = product.valueIds.get(valueId);
+    if (valueMap[valueId] === undefined && axisId !== undefined && axisMap[axisId] === suggestedAxisMap[axisId]) valueMap[valueId] = optionId;
+  }
+  return { ...input, axisMap, valueMap };
 }
 
 /** Spec kèm attribute leaf đã đọc, để việc nền dựng `NewProduct` mà không đọc lại. */
@@ -413,7 +523,13 @@ export async function specChecks(
     const product = specProductOf(vs);
     const { category, attributes } = await leafOf(row.externalCategoryId);
     const resolved = resolve(product, attributes, row.attributes);
-    const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: resolvedValues(resolved) });
+    const missing = specMissing({
+      spec: row,
+      attributes,
+      axes: product.axes,
+      fallbacks: resolvedValues(resolved),
+      caps: attributes ? (adapter.variantCapabilities?.(attributes) ?? null) : null,
+    });
     out.set(productId, {
       externalCategoryId: row.externalCategoryId,
       missing,

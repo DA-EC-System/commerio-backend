@@ -26,6 +26,7 @@ const variant = (): ListingVariant => {
     sku: `CMR-${randomUUID().slice(0, 8)}`,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
