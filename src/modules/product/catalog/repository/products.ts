@@ -101,10 +101,17 @@ export async function productCodeTaken(code: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function insertProduct(companyId: string, groupId: string, name: string, description: string, code: string) {
+export async function insertProduct(
+  companyId: string,
+  groupId: string,
+  name: string,
+  description: string,
+  code: string,
+  extras: Pick<ProductExtras, 'originCountry' | 'brand'> = {},
+) {
   const [row] = await getDb()
     .insert(products)
-    .values({ companyId, groupId, name, description, code })
+    .values({ companyId, groupId, name, description, code, ...extras })
     .returning({ id: products.id });
   return row!.id;
 }
@@ -156,4 +163,14 @@ export async function sizeChartRows(productIds: readonly string[]): Promise<{ pr
     .from(products)
     .where(and(inArray(products.id, [...productIds]), isNotNull(products.sizeChartFileId)));
   return rows.map((r) => ({ productId: r.productId, fileId: r.fileId! }));
+}
+
+/** Nhóm hàng của các sản phẩm (đọc qua RLS); sản phẩm không thấy thì vắng mặt. */
+export async function productGroupIds(ids: readonly string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: products.id, groupId: products.groupId })
+    .from(products)
+    .where(inArray(products.id, [...ids]));
+  return new Map(rows.map((r) => [r.id, r.groupId]));
 }

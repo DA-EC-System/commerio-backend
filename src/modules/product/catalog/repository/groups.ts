@@ -17,6 +17,9 @@ const columns = {
   updatedAt: productGroups.updatedAt,
   // Đếm cả sản phẩm đã lưu trữ: cùng điều kiện với `in_use` khi xoá (V25).
   productCount: sql<number>`(select count(*)::int from product.products p where p.group_id = product_groups.id)`,
+  // Mẫu thông số (#510, Documents/21 mục 5.5).
+  specFieldCount: sql<number>`(select count(*)::int from product.group_spec_fields g where g.group_id = product_groups.id)`,
+  requiredCount: sql<number>`(select count(*)::int from product.group_spec_fields g where g.group_id = product_groups.id and g.required)`,
 };
 
 export type GroupRow = Awaited<ReturnType<typeof findGroups>>[number];
