@@ -35,7 +35,7 @@ export async function insertVariant(
   valueIds: readonly string[],
   order: number,
   sourceRequestLineId: string | null = null,
-  prices: { standardPrice?: string | null; targetNetPrice?: string | null } = {},
+  prices: Partial<Record<'standardPrice' | 'targetNetPrice', string | null> & Record<'weightG' | 'lengthMm' | 'widthMm' | 'heightMm', number | null>> = {},
 ) {
   const [row] = await getDb()
     .insert(productVariants)
