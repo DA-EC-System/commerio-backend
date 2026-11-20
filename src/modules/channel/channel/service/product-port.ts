@@ -97,7 +97,8 @@ export interface ProductPort {
    */
   productSpecs?(productIds: readonly string[]): Promise<Map<string, { groupId: string | null; values: CatalogSpecValue[] }>>;
   /** Thư viện thông số của công ty (cổng `getSpecFields`, #509). Thiếu thì trang ánh xạ rỗng. */
-  specFields?(): Promise<SpecFieldInfo[]>;
+  /** `companyId` khi gọi ngoài `withCompany` (seed lúc tạo công ty): lọc tường minh, không dựa vào RLS. */
+  specFields?(opts?: { companyId?: string }): Promise<SpecFieldInfo[]>;
   /** Sản phẩm thiếu ảnh, thiếu bảng size (#498); thiếu (bản giả của test) thì ghép không tải ảnh sàn. */
   productMediaGaps?(productIds: readonly string[]): Promise<Map<string, { images: boolean; sizeChart: boolean }>>;
 }

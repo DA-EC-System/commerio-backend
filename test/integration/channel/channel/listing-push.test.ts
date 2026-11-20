@@ -195,7 +195,7 @@ describe('việc nền channel.listing_push', () => {
     expect(v.sku).not.toBe('SKU-TREN-SAN');
   });
 
-  it('review BE2 P1-2: spec lưu mã lựa chọn → lên sàn là nhãn; xuất xứ (ISO của catalog) thành nhãn sàn, thương hiệu catalog thắng khoá chép', async () => {
+  it('review BE2 P1-2: spec lưu mã lựa chọn → lên sàn là nhãn; xuất xứ (ISO của catalog) thành nhãn sàn, thương hiệu ghi đè trong spec thắng catalog (E179, #509)', async () => {
     const leaf = String(700_000_000 + Math.floor(Math.random() * 99_000_000));
     const option = (id: string, label: string) => ({ id, label });
     const base = { kind: 'property' as const, allowCustom: false, required: false, requiredWhen: null, isKey: false, raw: {} };
@@ -219,7 +219,7 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({ push_error: null });
     expect(createProduct.mock.calls[0]![1]).toMatchObject({
       externalCategoryId: leaf,
-      attributes: { clothing_material: 'Denim', occasion: ['Thể thao', 'Bình thường'], country_origin_hb: 'Việt Nam', brand: 'Acme' },
+      attributes: { clothing_material: 'Denim', occasion: ['Thể thao', 'Bình thường'], country_origin_hb: 'Việt Nam', brand: 'Cũ' },
     });
   });
 

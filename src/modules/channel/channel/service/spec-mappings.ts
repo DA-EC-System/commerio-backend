@@ -161,23 +161,23 @@ export async function attributeCatalog(raw: string, search: string, kind: Attrib
 /**
  * Ánh xạ mặc định cho công ty mới (cổng `seedSpecMappings`, Documents/21 §11.3): mỗi sàn có adapter khai
  * `defaultSpecMappings`, tra thông số theo `code` qua `getSpecFields`, thông số không có thì bỏ. Chạy trong giao dịch tạo công
- * ty của bên gọi, sau `seedCompanyDefaults` của catalog. Chạy lại không trùng (bỏ dòng đã có). Lựa chọn không seed: lúc đẩy
+ * ty của bên gọi (không trong `withCompany`), sau `seedCompanyDefaults` của catalog. Chạy lại không trùng (bỏ dòng đã có). Lựa chọn không seed: lúc đẩy
  * khớp theo nhãn với lựa chọn của leaf (`resolveSpecAttributes`).
  */
 export async function seedSpecMappings(companyId: string): Promise<void> {
-  await withCompany(companyId, async () => {
-    const fields = (await catalogSpecPort().specFields?.()) ?? [];
-    const idOf = new Map(fields.map((f) => [f.code, f.id]));
-    for (const platform of registeredPlatforms()) {
-      const defaults = getAdapter(platform)?.defaultSpecMappings;
-      if (!defaults || !isMarketplace(platform)) continue;
-      const rows = Object.entries(defaults).flatMap(([code, attributeCodes]) => {
-        const fieldId = idOf.get(code);
-        return fieldId ? attributeCodes.map((attributeCode, i) => ({ fieldId, attributeCode, priority: i + 1 })) : [];
-      });
-      await seedFieldMappings(companyId, platform, rows);
-    }
-  });
+  // Giao dịch tạo công ty không thuộc công ty nào (role chủ bảng, chưa có `app.company_id`): không lồng `withCompany`
+  // được, nên đọc thông số lọc tường minh theo `companyId` và ghi `company_id` tường minh như seed của catalog.
+  const fields = (await catalogSpecPort().specFields?.({ companyId })) ?? [];
+  const idOf = new Map(fields.map((f) => [f.code, f.id]));
+  for (const platform of registeredPlatforms()) {
+    const defaults = getAdapter(platform)?.defaultSpecMappings;
+    if (!defaults || !isMarketplace(platform)) continue;
+    const rows = Object.entries(defaults).flatMap(([code, attributeCodes]) => {
+      const fieldId = idOf.get(code);
+      return fieldId ? attributeCodes.map((attributeCode, i) => ({ fieldId, attributeCode, priority: i + 1 })) : [];
+    });
+    await seedFieldMappings(companyId, platform, rows);
+  }
 }
 
 /** Catalog xoá thông số (`catalog.spec_field_deleted`, consumer `channel-spec-field-deleted`): bỏ mọi ánh xạ của nó. */

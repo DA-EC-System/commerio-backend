@@ -39,7 +39,7 @@ const attr = (code: string, extra: Partial<PlatformAttribute> = {}): PlatformAtt
 
 const leafAttrs = [
   attr(MATERIAL, { label: 'Chất liệu', input: 'multiselect', options: [{ id: 'm1', label: 'Bông' }, { id: 'm2', label: 'Polyester' }] }),
-  attr(STYLE, { label: 'Phong cách', required: true, allowCustom: true }),
+  attr(STYLE, { label: `Phong cách ${tag}`, required: true, allowCustom: true }),
 ];
 registerAdapter('lazada', fakeAdapter({ categoriesNeedToken: false, leafAttributes: async () => leafAttrs }));
 
@@ -55,13 +55,13 @@ const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 async function field(companyId: string, code: string, input: string, options: string[] = []) {
   const db = testPool();
   const { rows } = await db.query<{ id: string }>(
-    `insert into catalog.spec_fields (company_id, code, name, input, allow_custom) values ($1, $2, $3, $4, false) returning id`,
+    `insert into product.spec_fields (company_id, code, name, input, allow_custom) values ($1, $2, $3, $4, false) returning id`,
     [companyId, `${code}_${tag}`, `${code} ${tag}`, input],
   );
   const ids: string[] = [];
   for (const [i, value] of options.entries()) {
     const r = await db.query<{ id: string }>(
-      `insert into catalog.spec_field_options (company_id, field_id, value, position) values ($1, $2, $3, $4) returning id`,
+      `insert into product.spec_field_options (company_id, field_id, value, position) values ($1, $2, $3, $4) returning id`,
       [companyId, rows[0]!.id, value, i + 1],
     );
     ids.push(r.rows[0]!.id);
@@ -127,7 +127,7 @@ describe('ánh xạ thông số sang sàn', () => {
   });
 
   it('gợi ý tính lúc đọc: attribute trùng tên thông số, chưa ánh xạ; không ghi DB', async () => {
-    await testPool().query(`update catalog.spec_fields set name = 'Phong cách' || $2 where id = $1`, [styleField, '']);
+    await testPool().query(`update product.spec_fields set name = $2 where id = $1`, [styleField, `Phong cách ${tag}`]);
     const list = SpecMappingList.parse((await listMappings()).body);
     expect(list.items.find((i) => i.fieldId === styleField)!.suggestions.map((s) => s.attributeCode)).toContain(STYLE);
     const { rows } = await testPool().query(`select 1 from channel.spec_field_mappings where field_id = $1`, [styleField]);
@@ -171,10 +171,10 @@ describe('tự điền thông số khi đọc và lưu spec', () => {
   beforeAll(async () => {
     await putMapping(styleField, [{ attributeCode: STYLE }]);
     const db = testPool();
-    await db.query(`insert into catalog.product_spec_values (company_id, product_id, field_id, option_id) values ($1, $2, $3, $4), ($1, $2, $3, $5)`, [
+    await db.query(`insert into product.product_spec_values (company_id, product_id, field_id, option_id) values ($1, $2, $3, $4), ($1, $2, $3, $5)`, [
       ceo.companyId, productId, materialField.id, materialField.cotton, materialField.poly,
     ]);
-    await db.query(`insert into catalog.product_spec_values (company_id, product_id, field_id, value_text) values ($1, $2, $3, 'Basic')`, [ceo.companyId, productId, styleField]);
+    await db.query(`insert into product.product_spec_values (company_id, product_id, field_id, value_text) values ($1, $2, $3, 'Basic')`, [ceo.companyId, productId, styleField]);
   });
 
   const putSpec = (attributes: object, version: number | null) =>
