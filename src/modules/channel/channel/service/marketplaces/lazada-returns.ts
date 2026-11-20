@@ -7,6 +7,7 @@
 // Gọi thật 12/11/2026 trên shop thử (chỉ đọc): lọc `ReverseOrderLineModifiedTimeRangeStart` (ms) chạy, 26 yêu cầu sửa trong
 // 60 ngày; lịch sử chỉ có `time` (ms), `operator`, `picture`; lý do có `reason_id`, `muti_language_text`, `text`.
 // Chưa gọi thao tác ghi trên sàn thật (không chắc đơn nào của shop thử dùng chung là của nhóm).
+import { Decimal } from 'decimal.js';
 import { logger } from '../../../../../shared/logger.ts';
 import { type MarketplaceAdapter, MarketplaceError, type RemoteAftersaleLine, type RemoteReturn, type RemoteReturnStatus } from './common.ts';
 
@@ -74,8 +75,14 @@ function respondByOf(lines: readonly Row[], status: RemoteReturnStatus | null): 
 
 const unique = (values: readonly (string | null)[]) => [...new Set(values.filter((v): v is string => Boolean(v)))];
 
+/**
+ * Bộ đọc số tiền Lazada (`lazadaAmount` ở `lazada.ts`, #349), truyền vào vì `lazada.ts` import file này (không vòng).
+ * Ném `MarketplaceError` khi không đọc được; vắng thì `"0"`.
+ */
+export type LazadaAmountReader = (raw: unknown, where: string) => string;
+
 /** Một đơn ngược của `/reverse/getreverseordersforseller` → `RemoteReturn`. Loại `CANCEL` là huỷ đơn, bên gọi bỏ. */
-export function toLazadaReturn(item: Row): RemoteReturn {
+export function toLazadaReturn(item: Row, amount: LazadaAmountReader): RemoteReturn {
   const lines = ((item.reverse_order_lines ?? []) as Row[]).filter((l) => l && typeof l === 'object');
   const kind: RemoteReturn['kind'] = str(item.request_type) === 'ONLY_REFUND' ? 'refund' : 'return';
   const statuses = lines.map((l) => lazadaReturnLineStatus(str(l.reverse_status), opt(l.ofc_status), kind));
@@ -87,7 +94,18 @@ export function toLazadaReturn(item: Row): RemoteReturn {
     const unknown = unique(lines.filter((_, i) => statuses[i] === null).map((l) => opt(l.reverse_status)));
     logger.warn({ reverseOrderId: str(item.reverse_order_id), reverseStatus: unknown }, 'Lazada: reverse_status chưa có trong ánh xạ (#436)');
   }
-  const refunds = lines.map((l) => (l.refund_amount === undefined || l.refund_amount === null ? null : Number(l.refund_amount)));
+  // `refund_amount` có thể là số JSON hay chuỗi có dấu phẩy nghìn: đọc như tiền quyết toán. Món không đọc được thì tổng
+  // null (app giữ số tính từ dòng) và trả chuỗi gốc để yêu cầu bật Cần xử lý, không ghi 0.
+  const unreadable: string[] = [];
+  const refunds = lines.map((l) => {
+    if (l.refund_amount === undefined || l.refund_amount === null || l.refund_amount === '') return null;
+    try {
+      return amount(l.refund_amount, `refund_amount đơn ngược ${str(item.reverse_order_id)}`);
+    } catch {
+      unreadable.push(String(l.refund_amount));
+      return null;
+    }
+  });
   const times = (key: string) => lines.map((l) => Number(l[key]) || 0);
   const returnToType = str(item.return_to_type);
   return {
@@ -98,14 +116,15 @@ export function toLazadaReturn(item: Row): RemoteReturn {
     initiator: 'buyer',
     reasonCode: opt(lines[0]?.reason_code),
     reason: opt(lines[0]?.reason_text),
-    refundAmount: refunds.every((r) => r === null || Number.isNaN(r)) ? null : String(refunds.reduce<number>((s, r) => s + (r && !Number.isNaN(r) ? r : 0), 0)),
+    refundAmount: unreadable.length || refunds.every((r) => r === null) ? null : refunds.reduce((s, r) => s.plus(r ?? 0), new Decimal(0)).toString(),
+    refundAmountUnreadable: unreadable.length ? unique(unreadable).join(', ') : null,
     lines: lines.map(
-      (l): RemoteAftersaleLine => ({
+      (l, i): RemoteAftersaleLine => ({
         externalLineId: str(l.trade_order_line_id),
         externalReturnLineId: opt(l.reverse_order_line_id),
         externalSkuId: opt(l.platform_sku_id),
         sellerSku: opt(l.seller_sku_id),
-        refundAmount: opt(l.refund_amount),
+        refundAmount: refunds[i] ?? null,
         quantity: 1,
       }),
     ),
@@ -127,6 +146,7 @@ type Image = { name: string; url: string };
 
 export function lazadaReturnMethods(
   call: Call,
+  amount: LazadaAmountReader,
 ): Pick<Required<MarketplaceAdapter>, 'listReturns' | 'returnReasons' | 'decideReturn' | 'confirmReturnReceived' | 'returnHistory'> {
   /** Mã dòng đơn ngược đầu của yêu cầu (lý do, lịch sử theo dòng). */
   async function firstLineId(accessToken: string, reverseOrderId: string): Promise<string> {
@@ -193,7 +213,7 @@ export function lazadaReturnMethods(
       const empty = items.filter((i) => !Array.isArray(i.reverse_order_lines) || !i.reverse_order_lines.length);
       if (empty.length) logger.warn({ reverseOrderIds: empty.map((i) => str(i.reverse_order_id)) }, 'Lazada trả đơn ngược không có dòng, bỏ qua');
       return {
-        items: items.filter((i) => str(i.request_type) !== 'CANCEL' && !empty.includes(i)).map(toLazadaReturn),
+        items: items.filter((i) => str(i.request_type) !== 'CANCEL' && !empty.includes(i)).map((i) => toLazadaReturn(i, amount)),
         nextCursor: items.length < PAGE_SIZE ? null : String(page + 1),
       };
     },

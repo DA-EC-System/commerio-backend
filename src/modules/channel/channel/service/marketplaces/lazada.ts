@@ -1018,7 +1018,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
 
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
-    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
+    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET'), (raw, where) => lazadaAmount(raw, where)),
     // `/image/migrate` chỉ nhận JPG, PNG (như ảnh sản phẩm); ảnh minh chứng đi qua đó trước khi vào `image_info` (#437).
     returnImageTypes: ['image/jpeg', 'image/png'],
     ...lazadaPackingMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method), {

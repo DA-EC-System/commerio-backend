@@ -15,6 +15,10 @@ export const ReturnListQuery = z.object({
   search: z.string().trim().min(1).max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  sort: z
+    .enum(['created', 'respond_by'])
+    .default('created')
+    .meta({ description: '`created`: mới tạo trước; `respond_by`: hạn trả lời gần nhất trước, yêu cầu không có hạn xếp sau (#392)' }),
 });
 
 export const ReturnParams = z.object({ id: z.string() });
@@ -32,6 +36,10 @@ export const ReturnRequestSummary = z
     status: ReturnStatusSchema,
     closeResult: CloseResult.nullable(),
     rawMarketplaceStatus: z.string().nullable().meta({ description: 'Trạng thái gốc của sàn, chỉ để hiện (R11)' }),
+    respondBy: z.iso
+      .datetime()
+      .nullable()
+      .meta({ description: 'Hạn người bán phải trả lời của sàn; null khi không chờ người bán (khác `requested`) hoặc sàn không trả hạn (#392)' }),
     totalQty: z.number().int(),
     refundAmount: z.number().int(),
     createdAt: z.iso.datetime(),
@@ -93,7 +101,7 @@ export const ReturnRequest = ReturnRequestSummary.extend({
       respondBy: z.iso
         .datetime()
         .nullable()
-        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok); null khi sàn không chờ người bán hoặc sàn không báo (Lazada)' }),
+        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok; Lazada lấy `sla` khi còn chờ người bán, #436); null khi sàn không chờ người bán hoặc không trả hạn' }),
     })
     .strict()
     .nullable(),

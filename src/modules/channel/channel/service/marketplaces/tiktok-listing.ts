@@ -180,13 +180,19 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     return failed;
   }
 
+  /**
+   * `use_case` của Upload Product Image 202309 (OAS cục bộ, tra 20/11/2026). Ảnh minh chứng (#476) gửi `DESCRIPTION_IMAGE`:
+   * chỉ chịu giới hạn chung 100–20000 px; `MAIN_IMAGE` đòi 300–4000 px và ép ảnh lệch tỉ lệ 3:4–4:3 về 1:1.
+   */
+  const USE_CASE = { main: 'MAIN_IMAGE', size_chart: 'SIZE_CHART_IMAGE', evidence: 'DESCRIPTION_IMAGE' } as const;
+
   // Sàn chỉ nhận file (multipart), không nhận URL: tải ảnh nguồn rồi đưa lên. Không gửi `shop_cipher` (API không theo
   // gian hàng). Trả `uri`, chuỗi Create Product cần trong `main_images`.
   async function uploadImageFile(token: string, url: string, purpose: ImagePurpose = 'main'): Promise<string> {
     const image = await downloadImage(url, deps.image);
     const form = new FormData();
     form.append('data', new Blob([new Uint8Array(image.bytes)], { type: image.type }), image.name);
-    form.append('use_case', purpose === 'size_chart' ? 'SIZE_CHART_IMAGE' : 'MAIN_IMAGE');
+    form.append('use_case', USE_CASE[purpose]);
     const data = await client.call<{ uri?: unknown }>('POST', '/product/202309/images/upload', { token, form, shopCipher: false });
     if (typeof data?.uri !== 'string' || !data.uri) throw new MarketplaceError('rejected', 'unexpected_response');
     return data.uri;

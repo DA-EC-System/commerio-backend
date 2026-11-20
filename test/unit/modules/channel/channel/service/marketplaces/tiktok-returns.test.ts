@@ -421,6 +421,27 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
     expect((calls[1]!.body as { comment: string }).comment).toBe('Hàng còn nguyên tem');
   });
 
+  it('từ chối kèm ảnh minh chứng: images[].image_id là uri đã tải lên sàn (#476)', async () => {
+    const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
+    const images = [
+      { name: 'tem.jpg', url: 'tos-alisg/tem' },
+      { name: 'hop.png', url: 'tos-alisg/hop' },
+    ];
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind: 'return', reasonId: 'seller_reject_r1', images });
+    expect(calls[0]!.body).toEqual({
+      decision: 'REJECT_RETURN',
+      reject_reason: 'seller_reject_r1',
+      comment: 'Người bán từ chối yêu cầu trả',
+      images: [{ image_id: 'tos-alisg/tem' }, { image_id: 'tos-alisg/hop' }],
+    });
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind: 'return', reasonId: 'seller_reject_r1', images: [] });
+    expect(calls[1]!.body).not.toHaveProperty('images');
+  });
+
+  it('TikTok khai kiểu ảnh minh chứng JPG, PNG như Lazada (#476)', () => {
+    expect(createTiktokAdapter(config).returnImageTypes).toEqual(['image/jpeg', 'image/png']);
+  });
+
   it('từ chối thiếu lý do → reject_reason_required, không gọi sàn', async () => {
     const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
     await expect(adapter.decideReturn!(TOKEN, RET, [], 'reject', { kind: 'return' })).rejects.toMatchObject({ kind: 'rejected', platformCode: 'reject_reason_required' });

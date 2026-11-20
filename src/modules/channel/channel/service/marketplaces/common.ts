@@ -92,7 +92,8 @@ export interface CascadeLevel {
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
-export type ImagePurpose = 'main' | 'size_chart';
+/** `evidence`: ảnh minh chứng khi từ chối yêu cầu trả (#476), không phải ảnh sản phẩm; sàn không dùng thì coi như `main`. */
+export type ImagePurpose = 'main' | 'size_chart' | 'evidence';
 
 /**
  * Bảng kích cỡ của danh mục sàn: `required` bắt buộc (thiếu thì sàn từ chối), `optional` gửi được, `unsupported` danh mục
@@ -880,8 +881,10 @@ interface RemoteAftersale {
   /** Mã lý do của sàn và câu hiển thị. */
   reasonCode: string | null;
   reason: string | null;
-  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả. */
+  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả hay có số không đọc được. */
   refundAmount: string | null;
+  /** Chuỗi gốc của số tiền hoàn sàn trả mà không đọc được (Lazada, #436); app bật Cần xử lý thay vì ghi 0. */
+  refundAmountUnreadable?: string | null;
   lines: RemoteAftersaleLine[];
   createdAt: Date;
   updatedAt: Date;
