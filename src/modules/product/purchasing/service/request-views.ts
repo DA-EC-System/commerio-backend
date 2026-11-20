@@ -2,7 +2,7 @@
 import { Decimal } from 'decimal.js';
 import { findAccountById, getStatusHistory } from '../../../core/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { groupNames, getVariants, type VariantSummary } from '../../catalog/index.ts';
+import { groupNames, getVariants, parentProducts, type VariantSummary } from '../../catalog/index.ts';
 import { canSeeCost, outstanding, toDong } from '../domain/request.ts';
 import { findLines, type LineRow, receiptsOf, type RequestRow } from '../repository/requests.ts';
 import { findReturn } from '../repository/returns.ts';
@@ -92,6 +92,28 @@ export async function toSummaries(rows: readonly (RequestRow & { supplierName: s
   return rows.map((r) => summaryOf(r, { id: r.supplierId ?? '', name: r.supplierName ?? '' }, look));
 }
 
+/**
+ * `newProduct` của dòng sản phẩm mới (Documents/21 mục 16.3): `name`, `groupId`, `groupName` là của cha (cha có sẵn đọc
+ * theo sản phẩm); sau duyệt `parentId` là cha của SKU đã sinh. Dòng không phải sản phẩm mới: `null`.
+ */
+function newProductView(
+  l: LineRow,
+  v: VariantSummary | undefined,
+  groups: Map<string, string>,
+  parents: Map<string, { name: string; groupId: string; groupName: string }>,
+) {
+  if (!l.newParentProductId && !l.newParentName) return null;
+  const parent = l.newParentProductId ? parents.get(l.newParentProductId) : undefined;
+  return {
+    parentId: l.newParentProductId ?? v?.productId ?? null,
+    parentName: l.newParentName,
+    groupId: parent?.groupId ?? l.newGroupId ?? '',
+    optionValues: Object.fromEntries((l.newOptionValues ?? []).map((o) => [o.axis, o.value])),
+    name: parent?.name ?? l.newParentName ?? '',
+    groupName: parent?.groupName ?? groups.get(l.newGroupId ?? '') ?? '',
+  };
+}
+
 /** Bản chi tiết (R7): dòng, phiếu nhận, lịch sử trạng thái. */
 export async function toDetail(row: RequestRow, actor: Actor) {
   const look = await lookupsOf([row], actor);
@@ -100,22 +122,22 @@ export async function toDetail(row: RequestRow, actor: Actor) {
   const variants = new Map(
     (await getVariants(lines.flatMap((l) => (l.variantId ? [l.variantId] : [])))).map((v) => [v.id, v]),
   );
-  const categories = await groupNames(lines.flatMap((l) => (l.newGroupId ? [l.newGroupId] : [])));
+  const groups = await groupNames(lines.flatMap((l) => (l.newGroupId ? [l.newGroupId] : [])));
+  const parents = await parentProducts(lines.flatMap((l) => (l.newParentProductId ? [l.newParentProductId] : [])));
   const receipts = look.receipts.get(row.id) ?? [];
   const history = await getStatusHistory('purchase_requests', row.id);
   return {
     ...summaryOf(row, { id: supplier?.id ?? '', name: supplier?.name ?? '' }, look),
     lines: lines.map((l) => {
       const v = l.variantId ? variants.get(l.variantId) : undefined;
+      const np = newProductView(l, v, groups, parents);
       return {
         id: l.id,
         variantId: l.variantId,
         sku: v?.sku ?? null,
-        productName: v?.productName ?? l.newProductName ?? '',
-        attributesLabel: v ? attributesLabel(v) : '',
-        newProduct: l.newProductName
-          ? { name: l.newProductName, groupId: l.newGroupId!, groupName: categories.get(l.newGroupId!) ?? '' }
-          : null,
+        productName: v?.productName ?? np?.name ?? '',
+        attributesLabel: v ? attributesLabel(v) : (l.newOptionValues ?? []).map((o) => o.value).join(' / '),
+        newProduct: np,
         quantity: l.orderedQty,
         unitCost: look.showCost ? toDong(l.unitPrice) : null,
         excluded: l.excluded,

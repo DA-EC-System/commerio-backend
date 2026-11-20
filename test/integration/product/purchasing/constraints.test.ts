@@ -55,11 +55,16 @@ describe('ràng buộc đề nghị nhập', () => {
     ).resolves.toBeDefined();
   });
 
-  it('dòng sản phẩm mới không cần SKU; dòng không có SKU lẫn tên sản phẩm mới bị từ chối', async () => {
+  it('dòng sản phẩm mới không cần SKU; dòng không có SKU lẫn cha bị từ chối; không mang hai cha; cha mới cần nhóm', async () => {
     const c = randomUUID();
     const r = (await insertRequest(c, {})).rows[0]!.id;
-    await expect(insertLine(c, r, { new_product_name: 'Hộp cơm 1L' })).resolves.toBeDefined();
+    await expect(insertLine(c, r, { new_parent_name: 'Hộp cơm 1L', new_group_id: randomUUID() })).resolves.toBeDefined();
+    await expect(insertLine(c, r, { new_parent_product_id: randomUUID() })).resolves.toBeDefined();
     await expect(insertLine(c, r, {})).rejects.toThrow(/"purchase_request_lines_item"/);
+    await expect(insertLine(c, r, { new_parent_product_id: randomUUID(), new_parent_name: 'Hộp', new_group_id: randomUUID() })).rejects.toThrow(
+      /"purchase_request_lines_one_parent"/,
+    );
+    await expect(insertLine(c, r, { new_parent_name: 'Hộp cơm 2L' })).rejects.toThrow(/"purchase_request_lines_new_parent_group"/);
   });
 
   it('còn chờ = đặt − nhận − lỗi − đóng thiếu không âm; số đặt 0, giá âm bị từ chối', async () => {

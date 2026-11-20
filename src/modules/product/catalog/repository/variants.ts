@@ -27,10 +27,18 @@ export async function skuTaken(sku: string): Promise<boolean> {
 }
 
 /** Biến thể và tổ hợp giá trị; `valueIds` đã theo thứ tự thuộc tính của sản phẩm (`position`). */
-export async function insertVariant(companyId: string, productId: string, sku: string, valueIds: readonly string[], order: number) {
+/** `sourceRequestLineId`: dòng đề nghị nhập sinh ra SKU (#243), chặn xoá hẳn sản phẩm. */
+export async function insertVariant(
+  companyId: string,
+  productId: string,
+  sku: string,
+  valueIds: readonly string[],
+  order: number,
+  sourceRequestLineId: string | null = null,
+) {
   const [row] = await getDb()
     .insert(productVariants)
-    .values({ companyId, productId, sku, createdAt: orderedNow(order) })
+    .values({ companyId, productId, sku, sourceRequestLineId, createdAt: orderedNow(order) })
     .returning({ id: productVariants.id });
   if (valueIds.length) {
     await getDb()

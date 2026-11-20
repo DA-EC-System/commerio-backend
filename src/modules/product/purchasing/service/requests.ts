@@ -3,7 +3,7 @@ import { recordAudit, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
-import { getVariants, validateNewProducts } from '../../catalog/index.ts';
+import { getVariants, normalizeName, validateNewProducts } from '../../catalog/index.ts';
 import { nextDocNumber, stockOf } from '../../inventory/index.ts';
 import { docNumber, MAX_QTY, purchasable } from '../domain/request.ts';
 import {
@@ -26,11 +26,31 @@ import { checkReplacementSource, linkReplacement } from './supplier-returns.ts';
 
 export interface RequestLineInput {
   variantId?: string | null | undefined;
-  newProduct?: { name: string; groupId: string } | null | undefined;
+  newProduct?: NewProductLineInput | null | undefined;
   quantity: number;
   /** Số nguyên đồng. */
   unitCost: number;
 }
+
+export interface NewProductLineInput {
+  parentId: string | null;
+  parentName: string | null;
+  groupId: string | null;
+  /** `{ tên trục: giá trị }`, thứ tự khoá là thứ tự trục. */
+  optionValues: Record<string, string>;
+}
+
+/** `optionValues` → mảng theo thứ tự trục (lưu jsonb dạng mảng để giữ thứ tự, M1). */
+const optionsOf = (values: Record<string, string>) =>
+  Object.entries(values).map(([axis, value]) => ({ axis: normalizeName(axis), value: normalizeName(value) }));
+
+/** Dòng sản phẩm mới ở dạng catalog kiểm, tạo. */
+const newProductItem = (p: NewProductLineInput) => ({
+  parentId: p.parentId,
+  parentName: p.parentName,
+  groupId: p.parentId ? null : p.groupId,
+  options: optionsOf(p.optionValues),
+});
 
 export interface RequestInput {
   supplierId: string;
@@ -102,17 +122,22 @@ async function buildLines(input: RequestInput): Promise<NewLine[]> {
   });
 
   const newIndexes = input.lines.flatMap((l, i) => (l.newProduct ? [i] : []));
-  const newErrors = await validateNewProducts(newIndexes.map((i) => input.lines[i]!.newProduct!));
-  for (const [k, e] of newErrors) errors[`lines.${newIndexes[k]}${e.field ? `.newProduct.${e.field}` : ''}`] = e.message;
+  const checked = await validateNewProducts(newIndexes.map((i) => newProductItem(input.lines[i]!.newProduct!)));
+  for (const [k, e] of checked.errors) errors[`lines.${newIndexes[k]}${e.field ? `.newProduct.${e.field}` : ''}`] = e.message;
 
-  if (Object.keys(errors).length) throw invalid(errors);
-  return input.lines.map((l) => ({
-    variantId: l.variantId ?? null,
-    newProductName: l.newProduct?.name ?? null,
-    newGroupId: l.newProduct?.groupId ?? null,
-    orderedQty: l.quantity,
-    unitPrice: String(l.unitCost),
-  }));
+  if (Object.keys(errors).length) throw invalid(errors, checked.code);
+  return input.lines.map((l) => {
+    const np = l.newProduct ? newProductItem(l.newProduct) : null;
+    return {
+      variantId: l.variantId ?? null,
+      newParentProductId: np?.parentId ?? null,
+      newParentName: np?.parentName ? normalizeName(np.parentName) : null,
+      newGroupId: np?.groupId ?? null,
+      newOptionValues: np ? np.options : null,
+      orderedQty: l.quantity,
+      unitPrice: String(l.unitCost),
+    };
+  });
 }
 
 const snapshot = (supplierId: string | null, note: string | null, lines: readonly NewLine[]) => ({
@@ -219,7 +244,7 @@ export async function addLine(
     const existing = lines.find((l) => l.variantId === variant!.id);
     if (existing) await updateLine(existing.id, { orderedQty: Math.min(MAX_QTY, existing.orderedQty + input.quantity) });
     else {
-      const line = { variantId: variant!.id, newProductName: null, newGroupId: null, orderedQty: input.quantity, unitPrice };
+      const line = { variantId: variant!.id, newParentProductId: null, newParentName: null, newGroupId: null, newOptionValues: null, orderedQty: input.quantity, unitPrice };
       await insertLines(actor.companyId, id, [line], lines.length);
     }
     if (created) {

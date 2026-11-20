@@ -18,12 +18,15 @@ export { DEFAULT_ATTRIBUTES, DEFAULT_GROUPS } from './domain/defaults.ts';
 export { variantReadinessOf } from './service/labels.ts';
 // Sửa hàng loạt có gợi ý (#242): dữ liệu của purchasing, inventory, sales vào qua cổng này (src/modules/product/index.ts).
 export type { BulkEditContext, BulkEditPorts } from './service/bulk-edit.ts';
-// Sản phẩm mới từ đề nghị nhập (#108): purchasing kiểm khi lập, tạo khi duyệt, trong giao dịch của purchasing.
+// Sản phẩm mới từ đề nghị nhập (#108, #243): purchasing kiểm khi lập, tạo khi duyệt, trong giao dịch của purchasing.
 export {
   groupNames,
   createPurchaseProducts,
+  normalizeName,
   type NewProductErrors,
   type NewProductItem,
+  type NewProductOption,
+  parentProducts,
   validateNewProducts,
 } from './service/purchase-products.ts';
 // Giá chuẩn và giá muốn bán là cột của SKU (Documents/19 D9); channel đọc giá muốn bán cho bộ lọc giá (#225).
