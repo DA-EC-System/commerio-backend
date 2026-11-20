@@ -342,7 +342,7 @@ describe('PUT, DELETE /catalog/products/:id/attribute-value-images/:attributeVal
   });
 
   it('SKU có listing live: đặt, gỡ ảnh vẫn 200, listing không đổi trạng thái (AC-18)', async () => {
-    const shopOwner = await createCompany({ optionalModules: ['channel'] });
+    const shopOwner = await createCompany({ optionalModules: [] });
     const t = shopOwner.ceo.token;
     const c = await createAttribute(t, 'Màu', ['Trắng', 'Đen']);
     const group = await createGroup(t, uniq('Áo'), 'AL-{SEQ}-{VAL}');

@@ -53,7 +53,7 @@ function order(id: string, lines: { variantId: string | null; status: PlatformOr
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   ({ variantId, sku } = await createVariant(company.companyId));
   // Gian hàng thật để danh sách có tên gian hàng (channel qua `ctx.shopsOf`).
   const shop = await testPool().query(
@@ -216,7 +216,7 @@ describe('thông tin đơn sàn ở danh sách và chi tiết (#260)', () => {
   const richIds: Record<string, string> = {};
 
   beforeAll(async () => {
-    rich = await createCompany({ optionalModules: ['channel'] });
+    rich = await createCompany({ optionalModules: [] });
     const v = await createVariant(rich.companyId);
     const shop = await testPool().query(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Shop Lazada', 'active', now()) returning id`,
@@ -365,7 +365,7 @@ describe('lọc phương thức thanh toán và người nhận (review #261 đi
   const o: Record<string, string> = {};
 
   beforeAll(async () => {
-    c = await createCompany({ optionalModules: ['channel'] });
+    c = await createCompany({ optionalModules: [] });
     const v = await createVariant(c.companyId);
     const shop = await testPool().query(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Shop Lazada', 'active', now()) returning id`,
@@ -497,7 +497,7 @@ describe('hạn trả theo gian hàng (#236)', () => {
   let shop15: string, tiktok: string;
 
   beforeAll(async () => {
-    co = await createCompany({ optionalModules: ['channel'] });
+    co = await createCompany({ optionalModules: [] });
     const r = await testPool().query<{ id: string }>(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at, return_window_days)
        values ($1, 'lazada', $2, 'Shop 15 ngày', 'active', now(), 15) returning id`,

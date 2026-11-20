@@ -64,7 +64,7 @@ let sale: Awaited<ReturnType<typeof addMember>>;
 const as = (r: request.Test, token: string) => r.set('Authorization', `Bearer ${token}`);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   sale = await addMember(company.companyId, 'sale');
 });
 
@@ -343,7 +343,7 @@ describe('route `remote-skus`, `remote-skus/refresh` chạy nền (#361)', () =>
     expect((await app().post(`/api/v1/channel/shops/${id}/remote-skus/refresh`)).status).toBe(401);
     const warehouse = await addMember(company.companyId, 'warehouse');
     expect((await press(id, warehouse.token)).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await press(id, other.ceo.token)).status).toBe(404);
     expect(await jobs(id)).toBe(0);
 

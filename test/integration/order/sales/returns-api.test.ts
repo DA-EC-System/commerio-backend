@@ -50,7 +50,7 @@ let warehouse: Awaited<ReturnType<typeof addMember>>;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = now() where id = $1`, [shopId]);

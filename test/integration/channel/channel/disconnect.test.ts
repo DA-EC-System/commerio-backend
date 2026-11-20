@@ -56,7 +56,7 @@ const disconnect = (shopId: string, body: { version: number; zeroStock?: boolean
 
 /** Gian hàng `active` đã thiết lập, một listing `live` trên sàn đã đồng bộ tồn. */
 async function activeShop(): Promise<{ id: string; version: number }> {
-  company ??= await createCompany({ optionalModules: ['channel'] });
+  company ??= await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   const id = res.body.shop.id as string;
   const { rows } = await testPool().query<{ version: number }>(

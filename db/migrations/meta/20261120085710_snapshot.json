@@ -1,6 +1,6 @@
 {
-  "id": "7479c230-4263-4f76-94f1-133aff9379e4",
-  "prevId": "1c063edc-c2c6-447e-8f71-d5b20f7a48da",
+  "id": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
+  "prevId": "78075c6f-07a2-4b3f-8e67-9cbf0bb0db1e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3495,7 +3495,7 @@
           "name": "tax_code",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "address": {
           "name": "address",
@@ -3560,7 +3560,15 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "companies_tax_code_unique": {
+          "name": "companies_tax_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tax_code"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -10099,18 +10107,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "respond_by": {
-          "name": "respond_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refund_approval": {
-          "name": "refund_approval",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reject_reason_id": {
           "name": "reject_reason_id",
           "type": "text",
@@ -10199,22 +10195,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "return_requests_refund_approval_pending_idx": {
-          "name": "return_requests_refund_approval_pending_idx",
-          "columns": [
-            {
-              "expression": "shop_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"order\".\"return_requests\".\"refund_approval\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -10277,10 +10257,6 @@
         "return_requests_refund": {
           "name": "return_requests_refund",
           "value": "\"order\".\"return_requests\".\"refund_amount\" >= 0"
-        },
-        "return_requests_refund_approval": {
-          "name": "return_requests_refund_approval",
-          "value": "\"order\".\"return_requests\".\"refund_approval\" is null or (\"order\".\"return_requests\".\"refund_approval\" in ('pending', 'done', 'withheld') and \"order\".\"return_requests\".\"status\" = 'closed' and \"order\".\"return_requests\".\"source\" = 'marketplace')"
         }
       },
       "isRLSEnabled": false

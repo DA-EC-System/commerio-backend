@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { hashPassword } from '#src/modules/core/identity/service/passwords.ts';
-import { addMember, registerCompany, uniqueEmail } from '../../helpers/company.ts';
+import { addMember, registerCompany, uniqueEmail, uniqueTaxCode } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { login, PASSWORD, selectCompany, testApp } from '../../helpers/http.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
@@ -31,11 +31,9 @@ async function platformAdmin() {
 /** Công ty có tên riêng để tìm, kèm CEO đã chọn công ty. */
 async function namedCompany() {
   const name = `Công ty ${randomUUID().slice(0, 8)}`;
-  const { email, companyId } = await registerCompany(uniqueEmail(), {
-    company: { name, taxCode: '0399999999' },
-    optionalModules: ['channel'],
-  });
-  return { name, companyId, ceoEmail: email, ceoToken: await selectCompany((await login(email)).token, companyId) };
+  const taxCode = uniqueTaxCode();
+  const { email, companyId } = await registerCompany(uniqueEmail(), { company: { name, taxCode } });
+  return { name, taxCode, companyId, ceoEmail: email, ceoToken: await selectCompany((await login(email)).token, companyId) };
 }
 
 let admin: Awaited<ReturnType<typeof platformAdmin>>;
@@ -82,10 +80,10 @@ describe('GET /platform/companies', () => {
     expect(res.body.items[0]).toEqual({
       id: c.companyId,
       name: c.name,
-      taxCode: '0399999999',
+      taxCode: c.taxCode,
       ceoName: 'Nguyễn Văn Thử',
       ceoEmail: c.ceoEmail,
-      optionalModules: ['channel'],
+      optionalModules: ['purchasing'],
       status: 'active',
       lockReason: null,
       lockedAt: null,
@@ -93,7 +91,7 @@ describe('GET /platform/companies', () => {
       version: 1,
     });
     expect((await as(admin.token).get(`/platform/companies?search=${c.ceoEmail.toUpperCase()}`)).body.total).toBe(1);
-    expect((await as(admin.token).get('/platform/companies?search=0399999999&pageSize=1')).body.items).toHaveLength(1);
+    expect((await as(admin.token).get(`/platform/companies?search=${c.taxCode}&pageSize=1`)).body.items).toHaveLength(1);
     const locked = await as(admin.token).get(`/platform/companies?search=${encodeURIComponent(c.name)}&status=locked`);
     expect(locked.body.total).toBe(0);
     expect((await as(admin.token).get('/platform/companies?search=%25_')).status).toBe(200);
@@ -180,7 +178,6 @@ describe('nhật ký cấp nền tảng và tổng quan', () => {
     expect(res.body.registeredLast30Days).toBeGreaterThanOrEqual(1);
     expect(res.body.optionalModuleUsage.map((u: { module: string }) => u.module)).toEqual([
       'purchasing',
-      'channel',
       'inbox',
       'assistant',
       'report',

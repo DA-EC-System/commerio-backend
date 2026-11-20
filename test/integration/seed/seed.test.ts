@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { blackboxCompanies, seedDemo, type SeedDemoInput } from '../../../db/seed/demo.ts';
-import { registerCompany, uniqueEmail } from '../helpers/company.ts';
+import { registerCompany, uniqueEmail, uniqueTaxCode } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, PASSWORD, selectCompany } from '../helpers/http.ts';
 
@@ -11,7 +11,7 @@ const db = testPool();
 type Account = { email: string; fullName: string };
 function demoInput(): SeedDemoInput & { accounts: Record<'ceo' | 'admin' | 'sale' | 'kho', Account> } {
   return {
-    company: { name: 'Công ty Demo Thử', taxCode: '0300000037' },
+    company: { name: 'Công ty Demo Thử', taxCode: uniqueTaxCode() },
     password: PASSWORD,
     accounts: {
       ceo: { email: uniqueEmail('ceo'), fullName: 'CEO Demo' },
@@ -109,6 +109,7 @@ describe('seed dữ liệu demo P1 (#37 AC-4)', () => {
   it('công ty của bộ test hộp đen (#120): bật phân hệ tuỳ chọn, thêm Kho thứ hai, công ty chỉ có CEO', async () => {
     const [a, b] = blackboxCompanies(PASSWORD).map((input) => ({
       ...input,
+      company: { ...input.company, taxCode: uniqueTaxCode() },
       accounts: Object.fromEntries(Object.entries(input.accounts).map(([role, acc]) => [role, { ...acc, email: uniqueEmail(role) }])),
       extraStaff: input.extraStaff?.map((s) => ({ ...s, account: { ...s.account, email: uniqueEmail('lead') } })),
     })) as [SeedDemoInput, SeedDemoInput];

@@ -47,7 +47,7 @@ let sku: string;
 const db = () => testPool();
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await request(testApp())
     .post('/api/v1/channel/shops/lazada/token')
     .set('Authorization', `Bearer ${company.ceo.token}`)

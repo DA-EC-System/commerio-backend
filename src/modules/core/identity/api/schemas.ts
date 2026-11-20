@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { newPasswordSchema } from '../../../../shared/auth/password-policy.ts';
-import { OPTIONAL_MODULES } from '../../platform/index.ts';
+import { normalizeTaxCode, TAX_CODE_FORMAT_MESSAGE } from '../../platform/index.ts';
 
 // Quy tắc khớp FE `src/features/auth/schemas.ts` (Documents/21 A5, V14).
 const email = z
@@ -23,25 +23,23 @@ export const RegisterBody = z
   .object({
     company: z.object({
       name: z.string().trim().min(2, 'Nhập tên công ty').max(200, 'Tên tối đa 200 ký tự'),
+      // Chuẩn hoá trước khi lưu và so trùng (Documents/21 mục 2.1).
       taxCode: z
         .string()
-        .trim()
-        .regex(/^\d{10}(-\d{3})?$/, 'Mã số thuế gồm 10 số, hoặc dạng 0123456789-001'),
+        .max(40, TAX_CODE_FORMAT_MESSAGE)
+        .transform((v, ctx) => {
+          const normalized = normalizeTaxCode(v);
+          if (normalized) return normalized;
+          ctx.addIssue({ code: 'custom', message: TAX_CODE_FORMAT_MESSAGE });
+          return z.NEVER;
+        })
+        .meta({ example: '0312345678' }),
     }),
     ceo: z.object({
       fullName: z.string().trim().min(2, 'Nhập họ tên').max(100, 'Họ tên tối đa 100 ký tự'),
       email,
       password: newPassword,
     }),
-    optionalModules: z
-      .array(z.enum(OPTIONAL_MODULES))
-      .default([])
-      .transform((list) => [...new Set(list)]),
-    assistantDataConsent: z.boolean().default(false),
-  })
-  .refine((v) => !v.optionalModules.includes('assistant') || v.assistantDataConsent, {
-    path: ['assistantDataConsent'],
-    message: 'Cần đồng ý gửi dữ liệu tới OpenAI để bật Trợ lý AI',
   })
   .meta({ id: 'RegisterCompanyRequest' });
 
