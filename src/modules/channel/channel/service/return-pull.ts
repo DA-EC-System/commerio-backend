@@ -44,6 +44,7 @@ export function toPlatformReturn(shopId: string, r: RemoteReturn): PlatformRetur
     sellerHandledReceipt: r.sellerHandledReceipt ?? false,
     reason: r.reason,
     refundAmount: r.refundAmount,
+    refundAmountUnreadable: r.refundAmountUnreadable ?? null,
     lines: r.lines.map((l) => ({ externalLineId: l.externalLineId, externalReturnLineId: l.externalReturnLineId ?? null, quantity: l.quantity ?? 1 })),
     updatedAt: r.updatedAt,
   };

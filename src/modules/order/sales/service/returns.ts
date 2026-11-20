@@ -73,6 +73,7 @@ export async function returnView(ctx: SalesContext, row: ReturnRow, opts: ViewOp
     status: row.status,
     closeResult: row.closeResult,
     rawMarketplaceStatus: row.rawMarketplaceStatus,
+    respondBy: respondByOf(row),
     totalQty: lines.reduce((n, l) => n + l.quantity, 0),
     refundAmount: toInt(row.refundAmount)!,
     createdAt: row.createdAt.toISOString(),
@@ -128,6 +129,9 @@ export async function getReturn(ctx: SalesContext, actor: Actor, id: string): Pr
   });
 }
 
+/** Hạn trả lời chỉ có nghĩa khi yêu cầu còn chờ người bán (Documents/21 §20.1, #392). */
+const respondByOf = (r: Pick<ReturnRow, 'status' | 'respondBy'>) => (r.status === 'requested' && r.respondBy ? r.respondBy.toISOString() : null);
+
 export async function listReturns(ctx: SalesContext, companyId: string, q: ReturnFilter & { page: number; pageSize: number }) {
   return withCompany(companyId, async () => {
     const [{ items, total, byStatus }, unmatched] = await Promise.all([findReturnPage(q, q.page, q.pageSize), countOpenUnmatchedParcels()]);
@@ -147,6 +151,7 @@ export async function listReturns(ctx: SalesContext, companyId: string, q: Retur
         status: r.status,
         closeResult: r.closeResult,
         rawMarketplaceStatus: r.rawMarketplaceStatus,
+        respondBy: respondByOf(r),
         totalQty: r.totalQty,
         refundAmount: toInt(r.refundAmount)!,
         createdAt: r.createdAt.toISOString(),
