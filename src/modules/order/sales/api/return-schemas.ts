@@ -39,7 +39,7 @@ export const ReturnRequestSummary = z
     respondBy: z.iso
       .datetime()
       .nullable()
-      .meta({ description: 'Hạn người bán phải trả lời của sàn; null khi không chờ người bán (khác `requested`) hay sàn không có hạn (Lazada) (#392)' }),
+      .meta({ description: 'Hạn người bán phải trả lời của sàn; null khi không chờ người bán (khác `requested`) hoặc sàn không trả hạn (#392)' }),
     totalQty: z.number().int(),
     refundAmount: z.number().int(),
     createdAt: z.iso.datetime(),
@@ -101,7 +101,7 @@ export const ReturnRequest = ReturnRequestSummary.extend({
       respondBy: z.iso
         .datetime()
         .nullable()
-        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok); null khi sàn không chờ người bán hoặc sàn không báo (Lazada)' }),
+        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok; Lazada lấy `sla` khi còn chờ người bán, #436); null khi sàn không chờ người bán hoặc không trả hạn' }),
     })
     .strict()
     .nullable(),
