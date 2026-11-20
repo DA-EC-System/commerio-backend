@@ -83,6 +83,7 @@ function variant(attributes: ListingVariant['attributes'] = []) {
     sku: `SM-${randomUUID().slice(0, 8)}`,
     attributesLabel: '',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes,
     archived: false,
     businessStatus: 'selling',
@@ -146,7 +147,7 @@ beforeEach(() => {
 
 describe('runSpecFromMatch', () => {
   it('chưa có spec: tạo spec match version 1, attribute category đổi sang mã lựa chọn, trục __custom; ghi external_category_id không tăng version', async () => {
-    const v = variant([{ attributeId: 'A-COLOR', attributeName: 'Màu', valueId: 'V1', value: 'Trắng' }]);
+    const v = variant([{ attributeId: 'A-COLOR', attributeName: 'Màu', platformKind: null, valueId: 'V1', value: 'Trắng' }]);
     remote.set('item-1', {
       externalCategoryId: leaf,
       attributes: [

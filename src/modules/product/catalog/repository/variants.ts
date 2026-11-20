@@ -162,6 +162,7 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       variantId: variantAttributeValues.variantId,
       attributeId: attributes.id,
       attributeName: attributes.name,
+      platformKind: attributes.platformKind,
       valueId: attributeValues.id,
       value: attributeValues.value,
       code: attributeValues.code,

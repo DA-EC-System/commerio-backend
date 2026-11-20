@@ -58,7 +58,15 @@ export interface VariantSummary {
   brand: string | null;
   /** Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); `url` rỗng khi thiếu `S3_PUBLIC_URL`. */
   image: VariantImage | null;
-  attributes: { attributeId: string; attributeName: string; valueId: string; value: string; code: string }[];
+  attributes: {
+    attributeId: string;
+    attributeName: string;
+    /** Loại thuộc tính để ghép trục với sales attribute của sàn (#448); null là thuộc tính tự đặt. */
+    platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+    valueId: string;
+    value: string;
+    code: string;
+  }[];
 }
 
 /**

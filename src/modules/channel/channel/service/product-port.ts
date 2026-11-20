@@ -26,11 +26,19 @@ export interface ListingVariant {
   productName: string;
   /** Mã cha của sản phẩm (#400 A5). */
   productCode: string;
+  /** Nhóm hàng của sản phẩm (#448: category cùng nhóm). */
+  groupId: string;
   sku: string;
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
   /** Giá trị thuộc tính theo `position` (#400: ánh xạ trục biến thể sang sales attribute của sàn). */
-  attributes: { attributeId: string; attributeName: string; valueId: string; value: string }[];
+  attributes: {
+    attributeId: string;
+    attributeName: string;
+    platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+    valueId: string;
+    value: string;
+  }[];
   archived: boolean;
   /**
    * Trạng thái kinh doanh của SKU. Tới khi #204 trả `readiness`, `paused` là SKU chưa sẵn sàng đẩy (`sku_not_ready`, #219
@@ -91,9 +99,16 @@ function toListingVariant(v: Extended): ListingVariant {
     productId: v.productId,
     productName: v.productName,
     productCode: v.productCode,
+    groupId: v.groupId,
     sku: v.sku,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
-    attributes: v.attributes.map(({ attributeId, attributeName, valueId, value }) => ({ attributeId, attributeName, valueId, value })),
+    attributes: v.attributes.map(({ attributeId, attributeName, platformKind, valueId, value }) => ({
+      attributeId,
+      attributeName,
+      platformKind,
+      valueId,
+      value,
+    })),
     archived: v.archived,
     businessStatus: v.businessStatus,
     description: v.description ?? null,

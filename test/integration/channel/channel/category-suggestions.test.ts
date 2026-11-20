@@ -58,6 +58,7 @@ function product(name: string, withImage: boolean): string {
     productId,
     productName: name,
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     sku: `SKU-${productId.slice(0, 8)}`,
     attributesLabel: '',
     attributes: [],

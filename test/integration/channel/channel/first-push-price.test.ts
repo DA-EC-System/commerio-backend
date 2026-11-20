@@ -59,6 +59,7 @@ async function variant(target: number | null, cost: number) {
     sku,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',

@@ -22,6 +22,7 @@ const variant = (sku: string): ListingVariant => ({
   sku,
   attributesLabel: '',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
