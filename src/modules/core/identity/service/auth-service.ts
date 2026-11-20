@@ -4,6 +4,7 @@ import {
   assertTokenCurrent,
   type CompanyAccess,
 } from '../../../../shared/auth/company-access.ts';
+import type { ModuleContext } from '../../../../shared/module.ts';
 import { type AccessClaims, signAccessToken } from '../../../../shared/auth/jwt.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { inTransaction, withCompany } from '../../../../shared/db/client.ts';
@@ -21,6 +22,7 @@ import {
   findAccountByEmail,
   findAccountById,
   findMembership,
+  pendingJoinsByEmail,
   updatePassword,
 } from '../../staff/index.ts';
 import {
@@ -129,6 +131,16 @@ async function callerAccount(auth: AccessClaims): Promise<AccountRow> {
   return account;
 }
 
+/**
+ * Dữ liệu có sẵn của công ty mới do module lớp trên tạo (catalog `seedCompanyDefaults`, #447). core không import product
+ * (luật `lop-core`): `src/wiring.ts` tiêm qua `IdentityContext`, `register` gọi trong cùng giao dịch tạo công ty.
+ */
+export type SeedCompanyDefaults = (companyId: string) => Promise<void>;
+
+export interface IdentityContext extends ModuleContext {
+  readonly seedCompanyDefaults?: SeedCompanyDefaults;
+}
+
 export interface RegisterInput {
   company: { name: string; taxCode: string };
   ceo: { fullName: string; email: string; password: string };
@@ -137,7 +149,10 @@ export interface RegisterInput {
 }
 
 /** UC-PI-01: công ty, tài khoản CEO, phân hệ, nhật ký trong một transaction (Documents/21 V13). */
-export async function register(input: RegisterInput): Promise<{ companyId: string; email: string }> {
+export async function register(
+  input: RegisterInput,
+  seedCompanyDefaults: SeedCompanyDefaults,
+): Promise<{ companyId: string; email: string }> {
   // Băm trước khi mở transaction: argon2 chậm có chủ ý, không nên giữ transaction trong lúc đó.
   const passwordHash = await hashPassword(input.ceo.password);
   const emailTaken = () =>
@@ -152,6 +167,7 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
         aiConsent: input.assistantDataConsent,
         createdBy: accountId,
       });
+      await seedCompanyDefaults(companyId);
       const membershipId = await createMembership(companyId, accountId);
       await assignRole({ membershipId, roleId: BUILTIN_ROLES.ceo.id, companyId });
       await recordAudit({
@@ -176,7 +192,19 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
 /** UC-PI-03: đăng nhập chưa gắn công ty; sai email hay sai mật khẩu đều cùng một lỗi (Documents/21 V2). */
 export async function login(input: { email: string; password: string }): Promise<LoginResult> {
   const account = await findAccountByEmail(input.email);
-  const ok = await verifyPassword(account?.passwordHash, input.password);
+  // Email chưa có tài khoản mà vừa nộp yêu cầu tham gia (Documents/21 mục 3.1: tài khoản chỉ tạo lúc Admin duyệt): so
+  // với mật khẩu đặt lúc nộp. Vẫn đúng một lần argon2 như mọi nhánh, nên thời gian không lộ email nào đang chờ duyệt.
+  const pending = account ? undefined : (await pendingJoinsByEmail(input.email))[0];
+  const ok = await verifyPassword(account?.passwordHash ?? pending?.passwordHash, input.password);
+  if (!account && pending && ok) {
+    countLogin('password', 'pending_approval');
+    const company = (await getCompanies([pending.companyId])).get(pending.companyId)?.name ?? 'công ty';
+    throw new AppError(
+      403,
+      'pending_approval',
+      `Yêu cầu tham gia ${company} đang chờ Admin duyệt. Khi được duyệt, đăng nhập lại bằng mật khẩu vừa đặt`,
+    );
+  }
   if (!account || !ok) {
     countLogin('password', 'invalid');
     throw invalidCredentials();

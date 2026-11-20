@@ -28,6 +28,7 @@ import {
   revokeInvitationRow,
 } from '../repository/invitations.ts';
 import {
+  assertCeoFor,
   type Caller,
   invalidRoles,
   memberLabel,
@@ -110,8 +111,9 @@ async function views(rows: readonly InvitationRow[]): Promise<InvitationView[]> 
       fullName: r.status === 'open' ? null : r.fullName,
       roles: found.map((role) => ({ id: role.id, name: role.name })).sort((x, y) => x.name.localeCompare(y.name, 'vi')),
       outdated: found.length < new Set(r.roleIds).size,
-      // Tài khoản tạo lúc duyệt (email mới) sinh sau lúc nộp; tài khoản đã có thì có trước.
-      existingAccount: !!account && account.createdAt < (r.submittedAt ?? now),
+      // Tài khoản tạo lúc duyệt có `created_at` bằng `decided_at` (cùng giao dịch); tài khoản đã có thì có trước, kể cả tài
+      // khoản sinh sau lúc nộp (lời mời ở công ty khác vừa được duyệt).
+      existingAccount: !!account && account.createdAt < (r.decidedAt ?? now),
       createdBy: { id: r.createdBy, fullName: accounts.get(r.createdBy)?.fullName ?? '' },
       createdAt: r.createdAt.toISOString(),
       expiresAt: r.expiresAt.toISOString(),
@@ -150,10 +152,12 @@ function publishDecided(invitationId: string, decision: 'approved' | 'rejected')
   return publishEvent({ type: 'staff.invitation_decided', aggregateId: invitationId, payload: { invitationId, decision } });
 }
 
-function assertGrant(caller: Caller, requestedIds: readonly string[], found: readonly RoleWithPermissions[]) {
+/** Thứ tự: 422 `errors.roleIds` → 403 `protected_account` (vai CEO) → 403 `ceo_only` (vai Admin) → 403 `permission_not_held`. */
+async function assertGrant(caller: Caller, requestedIds: readonly string[], found: readonly RoleWithPermissions[]) {
   const check = checkRoleGrant({ requestedIds, found, currentRoles: [], callerPermissions: caller.permissions });
   if (check === 'unknown_roles') throw invalidRoles();
   if (check === 'ceo_role') throw protectedAccount();
+  await assertCeoFor(caller, { requestedIds });
   if (check === 'not_held') throw notHeld();
 }
 
@@ -164,7 +168,7 @@ export async function createInvitation(
 ): Promise<{ id: string; link: string; expiresAt: string }> {
   const row = await withCompany(caller.companyId, async () => {
     const found = await findRolesWithPermissions(roleIds);
-    assertGrant(caller, roleIds, found);
+    await assertGrant(caller, roleIds, found);
     const created = await insertInvitation({ companyId: caller.companyId, roleIds, createdBy: caller.accountId });
     await recordAudit({
       companyId: caller.companyId,
@@ -206,13 +210,13 @@ export async function approveInvitation(
     const row = await lockInvitation(id, version, 'approved');
     const found = await findRolesWithPermissions(row.roleIds);
     if (found.length < new Set(row.roleIds).size) throw outdated();
-    assertGrant(caller, row.roleIds, found);
+    await assertGrant(caller, row.roleIds, found);
     const existing = row.accountId ?? (await findAccountByEmail(row.email!))?.id;
     if (existing && (await findMemberByAccount(existing))) throw alreadyMember();
-    // Email mới mà lúc duyệt đã có tài khoản (đăng ký bằng đường khác, hay lời mời ở công ty khác vừa được duyệt).
-    if (!row.accountId && existing) throw emailTaken();
+    // Email mới mà lúc duyệt đã có tài khoản (đăng ký bằng đường khác, hay lời mời ở công ty khác vừa được duyệt): người
+    // này đã chứng minh sở hữu email bằng OTP, gắn vào tài khoản đó, bỏ mật khẩu đặt trong lời mời (Documents/21 mục 3.1).
     const accountId =
-      row.accountId ??
+      existing ??
       (await insertAccount({ email: row.email!, fullName: row.fullName!, passwordHash: row.passwordHash! }));
     const membershipId = await insertMembership(caller.companyId, accountId);
     await replaceMemberRoles(membershipId, caller.companyId, row.roleIds);
@@ -239,7 +243,7 @@ export async function approveInvitation(
     logger.info({ invitationId: row.id, membershipId, actorId: caller.accountId }, 'đã duyệt lời mời');
     return { invitation: await viewOf(decided), member };
   }).catch((err: unknown) => {
-    // Lưới cuối cho phiên chạy song song: tài khoản cùng email vừa được tạo, hay vai trò vừa bị xoá.
+    // Lưới cuối cho phiên chạy song song: tài khoản cùng email vừa được tạo (sau bước tìm tài khoản), hay vai trò vừa bị xoá.
     const { code, constraint } = pgError(err);
     if (code === '23505' && constraint === 'accounts_email_unique') throw emailTaken();
     if (code === '23505' && constraint === 'memberships_company_id_account_id_unique') throw alreadyMember();

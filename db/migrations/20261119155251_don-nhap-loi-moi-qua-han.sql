@@ -1,0 +1,4 @@
+ALTER TABLE "core"."invitations" DROP CONSTRAINT "invitations_identity_present";--> statement-breakpoint
+ALTER TABLE "core"."invitations" ADD COLUMN "purged_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "core"."invitations" ADD CONSTRAINT "invitations_purged_shape" CHECK ("core"."invitations"."purged_at" is null or ("core"."invitations"."status"::text in ('open', 'claimed', 'revoked') and "core"."invitations"."email" is null and "core"."invitations"."full_name" is null and "core"."invitations"."otp_hash" is null and "core"."invitations"."password_hash" is null));--> statement-breakpoint
+ALTER TABLE "core"."invitations" ADD CONSTRAINT "invitations_identity_present" CHECK ("core"."invitations"."status"::text in ('open', 'revoked') or "core"."invitations"."purged_at" is not null or ("core"."invitations"."email" is not null and "core"."invitations"."full_name" is not null));

@@ -2,6 +2,7 @@
 // Sinh lại migration của nhánh để chúng đứng sau mọi migration của main: lấy journal của main, xoá migration nhánh đã sinh,
 // chạy drizzle-kit generate, chép lại nguyên nội dung migration viết tay thành migration --custom mới (giữ thứ tự, giữ
 // slug). Chạy sau khi đã gộp main vào nhánh. Xem db/CLAUDE.md.
+import { docsProblemsText, writeDocs } from './lib/docs.ts';
 import { drizzleGenerate, git, gitOk, migrationsAtRef } from './lib/drizzle-kit.ts';
 import { MIGRATIONS_DIR } from './lib/journal.ts';
 import { applyRegen, planRegen } from './lib/regen.ts';
@@ -23,16 +24,31 @@ const containsBase =
 if (!containsBase) fail(`Nhánh chưa gộp ${baseRef}. Chạy git merge ${baseRef} (giải xung đột schema.ts) rồi chạy lại db:regen.`);
 
 const journalFile = `${MIGRATIONS_DIR}/meta/_journal.json`;
+// Tài liệu schema sinh tự động: xung đột thì db:regen ghi lại ở bước cuối.
+const generatedDoc = (f: string): boolean => f === 'db/SCHEMA.md' || f === 'db/VERSIONS.md' || f.startsWith('db/schema/');
 const unmerged = git(['diff', '--name-only', '--diff-filter=U'])
   .split('\n')
-  .filter((f) => f && f !== journalFile);
-if (unmerged.length > 0) fail(`Còn xung đột chưa giải (trừ _journal.json, db:regen tự lấy bản của ${baseRef}):\n  ${unmerged.join('\n  ')}`);
+  .filter((f) => f && f !== journalFile && !generatedDoc(f));
+if (unmerged.length > 0) {
+  fail(`Còn xung đột chưa giải (trừ _journal.json và tài liệu schema, db:regen tự lấy bản của ${baseRef} và ghi lại):\n  ${unmerged.join('\n  ')}`);
+}
+
+/** Ghi lại tài liệu schema theo bộ migration hiện tại (số V của nhánh đổi sau khi sinh lại). */
+function refreshDocs(): void {
+  const { changed, problems } = writeDocs('.');
+  if (changed.length) console.log(`\nĐã ghi lại tài liệu schema:\n  ${changed.join('\n  ')}`);
+  if (problems.length) {
+    console.error(`\nTài liệu schema cần sửa:\n${docsProblemsText(problems)}`);
+    process.exitCode = 1;
+  }
+}
 
 const base = migrationsAtRef(baseRef, MIGRATIONS_DIR);
 const plan = planRegen(MIGRATIONS_DIR, base.files);
 if (plan.migrations.length === 0) {
   console.log(`Nhánh không có migration nào ngoài ${baseRef}.`);
-  process.exit(0);
+  if (!dryRun) refreshDocs();
+  process.exit(process.exitCode ?? 0);
 }
 
 console.log(`Migration của nhánh (so với ${baseRef}):`);
@@ -66,5 +82,6 @@ if (result.errors.length > 0) {
   for (const e of result.errors) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log('\nTiếp theo: xem lại file mới, chạy npm run db:ci-check -- --base ' + baseRef + ', rồi git add db/migrations và commit.');
+refreshDocs();
+console.log('\nTiếp theo: xem lại file mới, chạy npm run db:ci-check -- --base ' + baseRef + ', rồi git add db/migrations db/SCHEMA.md db/schema db/VERSIONS.md và commit.');
 if (result.warnings.length > 0) process.exitCode = 1;

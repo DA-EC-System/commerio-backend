@@ -1,10 +1,12 @@
 import { type Response, Router } from 'express';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
-import { getAccess } from '../../../../shared/auth/authorize.ts';
+import { anyOf, getAccess } from '../../../../shared/auth/authorize.ts';
 import { moduleOfPermission } from '../../../../shared/auth/company-access.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
-import * as categories from '../service/categories.ts';
+import * as groups from '../service/groups.ts';
+import * as settings from '../service/settings.ts';
 import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
 import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
@@ -18,13 +20,15 @@ import {
   BusinessStatusBody,
   BulkEditQuery,
   BulkSaveBody,
-  CategoryBody,
   CreateProductBody,
+  GroupBody,
+  MoveProductsBody,
   IdParams,
   ProductListQuery,
   SetVariantImageBody,
+  SettingsBody,
   UpdateAttributeBody,
-  UpdateCategoryBody,
+  UpdateGroupBody,
   UpdateProductBody,
   UpdateVariantBody,
   VariantImageParams,
@@ -38,6 +42,7 @@ function caller(res: Response): Caller {
 }
 
 const MANAGE = 'catalog.product.manage';
+const SETUP = 'catalog.group.manage';
 
 /** Quyền phụ của route (`getAccess`, đọc DB lúc `authorize`); quyền của phân hệ đang tắt không tính. */
 function can(res: Response, permission: string): boolean {
@@ -62,26 +67,46 @@ function bulkViewer(res: Response): BulkViewer {
 export function catalogRouter(ctx: CatalogContext): Router {
   const router = Router();
   const view = ctx.authorize('catalog.product.view');
-  const setup = ctx.authorize('catalog.category.manage');
+  const setup = ctx.authorize(SETUP);
   const manage = ctx.authorize(MANAGE);
+  // Tạo nhanh nhóm (chỉ tên) từ form sản phẩm, đề nghị nhập (21 mục 5.2). `purchasing.request.manage` đứng cuối: `anyOf`
+  // chỉ thử tiếp khi `forbidden`, phân hệ purchasing tắt thì `module_disabled` trả ngay.
+  const quickGroup = anyOf(setup, manage, ctx.authorize('purchasing.request.manage'));
 
-  router.get('/categories', view, async (_req, res) => {
-    res.json(await categories.listCategories(caller(res).companyId));
+  router.get('/groups', view, async (_req, res) => {
+    res.json(await groups.listGroups(caller(res).companyId));
   });
 
-  router.post('/categories', setup, validate({ body: CategoryBody }), async (_req, res) => {
-    res.status(201).json(await categories.createCategory(caller(res), validated<typeof CategoryBody>(res, 'body')));
+  router.post('/groups', quickGroup, validate({ body: GroupBody }), async (_req, res) => {
+    const input = validated<typeof GroupBody>(res, 'body');
+    if (input.suggest !== undefined && !can(res, SETUP)) {
+      throw new AppError(403, 'forbidden', 'Bạn không có quyền đặt gợi ý của nhóm hàng');
+    }
+    res.status(201).json(await groups.createGroup(caller(res), input));
   });
 
-  router.put('/categories/:id', setup, validate({ params: IdParams, body: UpdateCategoryBody }), async (_req, res) => {
+  router.put('/groups/:id', setup, validate({ params: IdParams, body: UpdateGroupBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    res.json(await categories.updateCategory(caller(res), id, validated<typeof UpdateCategoryBody>(res, 'body')));
+    res.json(await groups.updateGroup(caller(res), id, validated<typeof UpdateGroupBody>(res, 'body')));
   });
 
-  router.delete('/categories/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
+  router.delete('/groups/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    await categories.deleteCategory(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
+    await groups.deleteGroup(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
     res.status(204).end();
+  });
+
+  router.post('/groups/:id/move-products', manage, validate({ params: IdParams, body: MoveProductsBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await groups.moveProducts(caller(res), id, validated<typeof MoveProductsBody>(res, 'body')));
+  });
+
+  router.get('/settings', view, async (_req, res) => {
+    res.json(await settings.getSettings(caller(res).companyId));
+  });
+
+  router.put('/settings', setup, validate({ body: SettingsBody }), async (_req, res) => {
+    res.json(await settings.updateSettings(caller(res), validated<typeof SettingsBody>(res, 'body')));
   });
 
   router.get('/attributes', view, async (_req, res) => {

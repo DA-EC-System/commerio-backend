@@ -1,5 +1,5 @@
 {
-  "id": "8e0a1a44-bd30-4e24-b1fd-5187a20150bb",
+  "id": "32d7c0cf-ea4c-47ba-b149-81d73e103526",
   "prevId": "e7e50b3d-37a9-4f03-b387-19653290eb87",
   "version": "7",
   "dialect": "postgresql",
@@ -4133,6 +4133,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "purged_at": {
+          "name": "purged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4332,7 +4338,11 @@
         },
         "invitations_identity_present": {
           "name": "invitations_identity_present",
-          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+          "value": "\"core\".\"invitations\".\"status\"::text in ('open', 'revoked') or \"core\".\"invitations\".\"purged_at\" is not null or (\"core\".\"invitations\".\"email\" is not null and \"core\".\"invitations\".\"full_name\" is not null)"
+        },
+        "invitations_purged_shape": {
+          "name": "invitations_purged_shape",
+          "value": "\"core\".\"invitations\".\"purged_at\" is null or (\"core\".\"invitations\".\"status\"::text in ('open', 'claimed', 'revoked') and \"core\".\"invitations\".\"email\" is null and \"core\".\"invitations\".\"full_name\" is null and \"core\".\"invitations\".\"otp_hash\" is null and \"core\".\"invitations\".\"password_hash\" is null)"
         },
         "invitations_pending_shape": {
           "name": "invitations_pending_shape",
@@ -10089,18 +10099,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "respond_by": {
-          "name": "respond_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refund_approval": {
-          "name": "refund_approval",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reject_reason_id": {
           "name": "reject_reason_id",
           "type": "text",
@@ -10189,22 +10187,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "return_requests_refund_approval_pending_idx": {
-          "name": "return_requests_refund_approval_pending_idx",
-          "columns": [
-            {
-              "expression": "shop_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"order\".\"return_requests\".\"refund_approval\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -10267,10 +10249,6 @@
         "return_requests_refund": {
           "name": "return_requests_refund",
           "value": "\"order\".\"return_requests\".\"refund_amount\" >= 0"
-        },
-        "return_requests_refund_approval": {
-          "name": "return_requests_refund_approval",
-          "value": "\"order\".\"return_requests\".\"refund_approval\" is null or (\"order\".\"return_requests\".\"refund_approval\" in ('pending', 'done', 'withheld') and \"order\".\"return_requests\".\"status\" = 'closed' and \"order\".\"return_requests\".\"source\" = 'marketplace')"
         }
       },
       "isRLSEnabled": false

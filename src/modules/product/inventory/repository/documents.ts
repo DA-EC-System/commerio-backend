@@ -2,7 +2,7 @@
 // `shipment`, phiếu đảo `shipment_reversal`, phiếu kiểm hàng hoàn `return_inspection`. Phiếu kho có duyệt (#208;
 // Documents/21 mục 15.2, 15.3). Mọi hàm chạy trong `withCompany` của bên gọi: RLS chỉ cho thấy phiếu của công ty đang chọn.
 import { and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import { getDb } from '../../../../shared/db/client.ts';
+import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { DocumentRef, SystemDocKind } from '../domain/documents.ts';
 import { companyOfTransaction } from './levels.ts';
 import { stockDocumentLines, stockDocuments, stockMoves } from './schema.ts';
@@ -407,4 +407,33 @@ export async function detachDocuments(ids: readonly string[], line: string): Pro
     .where(inArray(stockDocuments.id, [...ids]))
     .returning({ id: stockDocuments.id });
   return rows.length;
+}
+
+export interface OpeningStockState {
+  /** Đã có phiếu kiểm kê đầu kỳ ghi sổ */
+  openingPosted: boolean;
+  /** Phiếu đầu kỳ mới nhất chưa ghi sổ, chưa huỷ (nháp, chờ duyệt, bị từ chối) */
+  pendingOpening: { id: string; status: (typeof stockDocuments.$inferSelect)['status'] } | null;
+  /** Đã có dòng thẻ kho (tồn vào qua phiếu nhận khi chưa có gian hàng) */
+  hasMoves: boolean;
+}
+
+/** Tồn đầu kỳ của công ty đang chọn (#461 onboarding, Documents/21 mục 11.3). */
+export async function openingStockState(): Promise<OpeningStockState> {
+  const companyId = requireCompanyId('openingStockState');
+  const db = getDb();
+  const opening = and(eq(stockDocuments.companyId, companyId), eq(stockDocuments.isOpening, true));
+  const [posted] = await db
+    .select({ one: sql`1` })
+    .from(stockDocuments)
+    .where(and(opening, eq(stockDocuments.status, 'posted')))
+    .limit(1);
+  const [pending] = await db
+    .select({ id: stockDocuments.id, status: stockDocuments.status })
+    .from(stockDocuments)
+    .where(and(opening, sql`${stockDocuments.status} not in ('posted', 'cancelled')`))
+    .orderBy(desc(stockDocuments.createdAt), desc(stockDocuments.id))
+    .limit(1);
+  const [move] = await db.select({ one: sql`1` }).from(stockMoves).where(eq(stockMoves.companyId, companyId)).limit(1);
+  return { openingPosted: !!posted, pendingOpening: pending ?? null, hasMoves: !!move };
 }
