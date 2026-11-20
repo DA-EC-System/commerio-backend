@@ -98,7 +98,9 @@ export const ReturnRequest = ReturnRequestSummary.extend({
     .strict()
     .nullable(),
   rejectReason: z.object({ id: z.string(), label: z.string() }).strict().nullable(),
-  attachments: z.array(z.object({ id: z.uuid() })).meta({ description: 'Chưa lưu tệp đính kèm (#212): luôn rỗng' }),
+  attachments: z
+    .array(z.object({ fileId: z.uuid(), name: z.string(), url: z.string(), contentType: z.string() }).strict())
+    .meta({ description: 'Ảnh minh chứng gửi kèm bước từ chối (#437), như tệp của phiếu nhận: `url` là link ký sẵn 15 phút' }),
 })
   .strict()
   .meta({ id: 'ReturnRequest' });
