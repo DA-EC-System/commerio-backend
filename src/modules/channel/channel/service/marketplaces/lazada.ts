@@ -49,6 +49,7 @@ import { type LazadaCreatedSku, associatedSkuId, lazadaSkuIdentity, lazadaVariat
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
+import { lazadaDeleteMethods } from './lazada-delete.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -1165,7 +1166,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       // Nhiều SKU (#295): tra mọi SellerSku; thấy đủ và cùng một sản phẩm thì trả sản phẩm đó, thấy một phần thì từ chối.
       const skus = productSkus(p);
       const sellerSkus = skus.map((s) => s.sellerSku);
-      const found = await skusIn(accessToken, sellerSkus, 'all');
+      const found = p.skipExistingSkuCheck ? [] : await skusIn(accessToken, sellerSkus, 'all'); // #295 regroup: bỏ chống trùng
       const existing = existingFromSkus(sellerSkus, sellerSkus.map((sku) => existingSku(found, sku)));
       if (existing) {
         return existing;
@@ -1506,5 +1507,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         };
       });
     },
+    // Xoá sản phẩm sàn cho gom lại dữ liệu cũ (#295).
+    ...lazadaDeleteMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method)),
   };
 }

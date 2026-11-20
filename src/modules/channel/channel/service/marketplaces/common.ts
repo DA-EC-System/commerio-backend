@@ -224,6 +224,8 @@ export interface NewProduct {
    * bằng `productSkus(p)`. Tiêu đề là tên sản phẩm cha.
    */
   skus?: ProductSku[];
+  /** Bỏ bước chống trùng SellerSku của `createProduct` (gom lại dữ liệu cũ, #295): sản phẩm lẻ cũ vẫn mang các SKU này. */
+  skipExistingSkuCheck?: boolean;
 }
 
 /** Một trục bán hàng (#295): mã sale prop của leaf (null là trục tự đặt tên), tên, giá trị (ảnh đã nằm trên sàn). */
@@ -1057,6 +1059,11 @@ export interface MarketplaceAdapter {
   repackPackage?(accessToken: string, packageCode: string): Promise<void>;
   /** Mỗi phần tử là một tệp PDF, có thể chứa vận đơn của nhiều kiện. */
   shippingDocuments?(accessToken: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
+  /**
+   * Xoá hẳn các sản phẩm sàn (gom lại dữ liệu cũ, #295, Documents/21 §18.8.4): TikTok tắt rồi Delete Products, Lazada
+   * RemoveProduct mọi SKU của item. Sản phẩm đã xoá thì coi là xong (gọi lại an toàn). Sàn chưa có thì không có hàm này.
+   */
+  deleteProducts?(accessToken: string, externalProductIds: readonly string[]): Promise<void>;
 }
 
 /** Trạng thái yêu cầu trả của app (Documents/25 §9, Documents/21 §20; enum `sales.return_status`). */

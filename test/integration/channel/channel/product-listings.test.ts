@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ProductListingList } from '#src/modules/channel/channel/api/schemas.ts';
+import { ProductListingListWithSeparate } from '#src/modules/channel/channel/api/schemas.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -57,10 +57,10 @@ beforeAll(async () => {
 });
 
 describe('listing theo sản phẩm', () => {
-  it('mỗi biến thể chưa lưu trữ × mỗi gian hàng chưa ngắt, xếp theo gian hàng rồi biến thể; thân khớp ProductListingList', async () => {
+  it('mỗi biến thể chưa lưu trữ × mỗi gian hàng chưa ngắt, xếp theo gian hàng rồi biến thể; thân khớp ProductListingListWithSeparate', async () => {
     const res = await get(c.ceo.token, main.productId);
     expect(res.status).toBe(200);
-    const { items } = ProductListingList.parse(res.body);
+    const { items } = ProductListingListWithSeparate.parse(res.body);
     expect(items.map((i) => [i.shopName, i.variantId])).toEqual(
       expect.arrayContaining([
         ['Shop A', main.variantId],
@@ -76,7 +76,7 @@ describe('listing theo sản phẩm', () => {
   });
 
   it('dòng có listing mang listing và category trên sàn; dòng chưa lên sàn listing null', async () => {
-    const { items } = ProductListingList.parse((await get(c.ceo.token, main.productId)).body);
+    const { items } = ProductListingListWithSeparate.parse((await get(c.ceo.token, main.productId)).body);
     const live = items.find((i) => i.shopId === first && i.variantId === main.variantId)!;
     expect(live.listing).toMatchObject({ status: 'live', externalProductId: 'item-1', externalSkuId: 'sku-1' });
     expect(live.externalCategoryId).toBe('10001');
