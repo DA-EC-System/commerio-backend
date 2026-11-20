@@ -16,7 +16,10 @@ import {
 
 const optionUsed = sql`exists (select 1 from product.product_spec_values psv where psv.option_id = spec_field_options.id)`;
 
-export async function findSpecFields(id?: string) {
+/**
+ * `companyId`: lọc tường minh, cho luồng chạy bằng role chủ bảng (bỏ qua RLS), vd seed trong giao dịch đăng ký.
+ */
+export async function findSpecFields(id?: string, companyId?: string) {
   const rows = await getDb()
     .select({
       id: specFields.id,
@@ -31,7 +34,7 @@ export async function findSpecFields(id?: string) {
       version: specFields.version,
     })
     .from(specFields)
-    .where(id ? eq(specFields.id, id) : undefined);
+    .where(and(id ? eq(specFields.id, id) : undefined, companyId ? eq(specFields.companyId, companyId) : undefined));
   const options = rows.length ? await findOptions(rows.map((r) => r.id)) : [];
   const byField = Map.groupBy(options, (o) => o.fieldId);
   return rows.map((r) => ({

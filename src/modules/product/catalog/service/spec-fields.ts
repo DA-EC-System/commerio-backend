@@ -1,5 +1,5 @@
 // Thư viện thông số của công ty (Documents/21 mục 5.5, 19 §3.2): CRUD, cổng `getSpecFields` cho channel.
-import { withCompany } from '../../../../shared/db/client.ts';
+import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { publishEvent, recordAudit } from '../../../core/index.ts';
 import { specCodeFromName, type SpecInputKind, uniqueSpecCode } from '../domain/specs.ts';
@@ -128,9 +128,13 @@ export async function listSpecFields(companyId: string): Promise<{ items: SpecFi
   };
 }
 
-/** Cổng cho channel (Documents/21 mục 11.3): thư viện thông số, gọi trong `withCompany` của bên gọi. */
-export async function getSpecFields() {
-  const rows = await findSpecFields();
+/**
+ * Cổng cho channel (Documents/21 mục 11.3): thư viện thông số, gọi trong `withCompany` của bên gọi. Luồng không thuộc
+ * công ty nào (seed ánh xạ trong giao dịch đăng ký, role chủ bảng, RLS không lọc) phải truyền `companyId`.
+ */
+export async function getSpecFields(opts: { companyId?: string } = {}) {
+  if (!opts.companyId) requireCompanyId('getSpecFields');
+  const rows = await findSpecFields(undefined, opts.companyId);
   return rows.map((r) => ({
     id: r.id,
     code: r.code,
