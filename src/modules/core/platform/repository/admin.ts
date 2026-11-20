@@ -1,7 +1,7 @@
 // Truy vấn của quản trị nền tảng (#152, UC-PI-08): chạy ngoài `withCompany` bằng role chủ bảng, đọc mọi công ty.
 // Join `core.audit_logs` (audit) và `core.accounts` (staff) cùng schema `core` (luật 2 của backend/CLAUDE.md):
 // người đăng ký là CEO, lấy từ dòng nhật ký `create core.companies` lúc đăng ký.
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { OPTIONAL_MODULES } from '../domain/modules.ts';
 import { companies } from './schema.ts';
@@ -87,6 +87,16 @@ export async function setCompanyStatus(
   return rows.length === 1;
 }
 
+/** Gỡ mã số thuế theo `version`, chỉ khi đang có mã (#459); `false` khi không trúng dòng. */
+export async function clearTaxCode(id: string, version: number): Promise<boolean> {
+  const rows = await getDb()
+    .update(companies)
+    .set({ taxCode: null, updatedAt: new Date(), version: sql`${companies.version} + 1` })
+    .where(and(eq(companies.id, id), eq(companies.version, version), isNotNull(companies.taxCode)))
+    .returning({ id: companies.id });
+  return rows.length === 1;
+}
+
 export async function companyCounts() {
   const { rows } = await getDb().execute<{ total: number; active: number; locked: number; recent: number }>(sql`
     select count(*)::int as total,
@@ -110,6 +120,7 @@ export interface PlatformAuditRow {
   company_id: string;
   company_name: string;
   actor_email: string | null;
+  operation: string | null;
   after: Record<string, unknown> | null;
   created_at: Date;
   total: string;
@@ -120,6 +131,8 @@ const ACTION_SQL = {
   'company.registered': sql`a.action = 'create'`,
   'company.locked': sql`a.action = 'update' and a.after->>'status' = 'locked'`,
   'company.unlocked': sql`a.action = 'update' and a.after->>'status' = 'active'`,
+  // #459: gỡ mã số thuế; dòng `update` khác (không đổi trạng thái, không gỡ mã) không hiện
+  'company.tax_code_released': sql`a.action = 'update' and a.operation = 'release_tax_code'`,
 } as const;
 export type PlatformAuditAction = keyof typeof ACTION_SQL;
 
@@ -130,7 +143,7 @@ export async function listPlatformAudit(
   const pattern = f.search ? containsPattern(f.search) : null;
   const action = f.action ? ACTION_SQL[f.action] : sql`(${sql.join(Object.values(ACTION_SQL), sql` or `)})`;
   const { rows } = await getDb().execute<PlatformAuditRow & Record<string, unknown>>(sql`
-    select a.id::text as id, a.action, c.id as company_id, c.name as company_name, acc.email as actor_email,
+    select a.id::text as id, a.action, a.operation, c.id as company_id, c.name as company_name, acc.email as actor_email,
       a.after, a.created_at, count(*) over () as total
     from core.audit_logs a
     join core.companies c on c.id = a.entity_id
