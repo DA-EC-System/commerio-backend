@@ -39,7 +39,7 @@ export const marketplaceReturns: MarketplaceReturns = {
       });
     }
     const platformImages: string[] = [];
-    for (const image of sent) platformImages.push(await onMarketplace(() => adapter.uploadImage(accessToken, image.url)));
+    for (const image of sent) platformImages.push(await onMarketplace(() => adapter.uploadImage(accessToken, image.url, 'evidence')));
     const withImages = platformImages.length ? { ...opts, images: sent.map((i, n) => ({ name: i.name, url: platformImages[n]! })) } : opts;
     await onMarketplace(() => adapter.decideReturn!(accessToken, externalReturnId, externalLineIds, decision, withImages));
     return { platformImages };
