@@ -17,10 +17,24 @@ export const marketplaceReturns: MarketplaceReturns = {
     if (!adapter.returnReasons) throw unsupported();
     return onMarketplace(() => adapter.returnReasons!(accessToken, externalReturnId, action));
   },
-  async decide(companyId, shopId, externalReturnId, externalLineIds, decision, opts) {
+  async decide(companyId, shopId, externalReturnId, externalLineIds, decision, { images = [], ...opts }) {
     const { adapter, accessToken } = await session(companyId, shopId);
     if (!adapter.decideReturn) throw unsupported();
-    await onMarketplace(() => adapter.decideReturn!(accessToken, externalReturnId, externalLineIds, decision, opts));
+    // Ảnh minh chứng (#437): đưa từng ảnh lên sàn ngay bằng link ký sẵn (hết hạn 15 phút, không lưu), gửi chuỗi sàn trả.
+    // Sàn chưa nhận ảnh qua app (không khai `returnImageTypes`) thì bỏ ảnh, như trước #437.
+    const types = adapter.returnImageTypes;
+    const sent = types ? images : [];
+    const wrong = sent.find((i) => !types!.includes(i.contentType.toLowerCase()));
+    if (wrong) {
+      throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
+        errors: { attachmentIds: `Sàn chỉ nhận ảnh JPG, PNG làm minh chứng: "${wrong.name}" không đúng kiểu` },
+      });
+    }
+    const platformImages: string[] = [];
+    for (const image of sent) platformImages.push(await onMarketplace(() => adapter.uploadImage(accessToken, image.url)));
+    const withImages = platformImages.length ? { ...opts, images: sent.map((i, n) => ({ name: i.name, url: platformImages[n]! })) } : opts;
+    await onMarketplace(() => adapter.decideReturn!(accessToken, externalReturnId, externalLineIds, decision, withImages));
+    return { platformImages };
   },
   async confirmReceived(companyId, shopId, externalReturnId, externalLineIds) {
     const { adapter, accessToken } = await session(companyId, shopId);

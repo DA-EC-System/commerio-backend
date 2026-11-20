@@ -1,4 +1,5 @@
 // Đọc đơn cho channel (#207, #200 §18.7); xoá đơn của gian hàng bị xoá (#398). Gọi trong `withCompany` của bên gọi.
+import { detachAll } from '../../../core/index.ts';
 import type { ShopOrderRefs } from '../../fulfillment/index.ts';
 import { countOpenOrdersOfShop, oldestOpenOrdersOfShop, orderCountsOfShops } from '../repository/orders.ts';
 import { deleteShopOrderRows, findShopOrderRefs } from '../repository/shop-purge.ts';
@@ -11,10 +12,12 @@ export function shopOrderRefs(shopId: string): Promise<ShopOrderRefs> {
 /**
  * Xoá dòng yêu cầu trả, yêu cầu trả, dòng đơn, đơn của gian hàng (#398). Kiện của các đơn phải đã xoá trong cùng giao
  * dịch (`purgeOrderPackages` của fulfillment, gọi trước): xoá dòng đơn còn dòng kiện thì commit bị trigger kiểm bằng chặn.
+ * Ảnh minh chứng gắn vào yêu cầu trả (#437) được gỡ cùng giao dịch; tệp giữ lại.
  */
-export function purgeShopOrders(
+export async function purgeShopOrders(
   refs: ShopOrderRefs,
 ): Promise<{ orders: number; orderLines: number; returnRequests: number; returnRequestLines: number }> {
+  await detachAll('return_requests', refs.returnRequestIds);
   return deleteShopOrderRows(refs);
 }
 
