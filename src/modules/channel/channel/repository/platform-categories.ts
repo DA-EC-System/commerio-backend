@@ -407,3 +407,17 @@ export async function salesLabelsOf(platform: Marketplace): Promise<Map<string, 
     .groupBy(platformCategoryAttributes.code);
   return new Map(rows.map((r) => [r.code, r.label]));
 }
+
+/** Trạng thái và đường dẫn đã đồng bộ của các category (bảng tham chiếu); id không có dòng thì vắng trong Map (#448). */
+export async function categoryInfoOf(
+  platform: Marketplace,
+  externalIds: readonly string[],
+): Promise<Map<string, { status: 'active' | 'removed'; path: string | null }>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: platformCategories.externalId, status: platformCategories.status, path: platformCategories.path, syncedAt: platformCategories.syncedAt })
+    .from(platformCategories)
+    .where(and(eq(platformCategories.platform, platform), inArray(platformCategories.externalId, ids)));
+  return new Map(rows.map((r) => [r.id, { status: r.status as 'active' | 'removed', path: r.syncedAt ? r.path : null }]));
+}

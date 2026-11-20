@@ -1132,7 +1132,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     standardSalesAttributes: { color: ['color_family'], size: ['size'], volume: ['volume'], flavor: ['flavor'] },
     variantCapabilities: lazadaVariantCapabilities,
     async suggestCategories(accessToken, input) {
-      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl ?? '' };
+      // `image_url` bắt buộc khác rỗng (Documents#214 mục 2.3): service chặn `images_missing` trước; không có ảnh thì không gọi sàn.
+      if (!input.imageUrl) return [];
+      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl };
       try {
         return lazadaSuggestions((await call(config.apiUrl, '/product/category/suggestion/get', params, 'GET')).data);
       } catch (err) {

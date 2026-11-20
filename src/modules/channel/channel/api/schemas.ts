@@ -1016,6 +1016,10 @@ export const ShopWarehousesView = z
 export const CategorySuggestionsQuery = z.object({
   productId: z.string('Chọn sản phẩm').trim().min(1, 'Chọn sản phẩm').max(60),
 });
+const CATEGORY_PERMISSION = z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable();
+const UsedCategory = z
+  .object({ externalId: z.string(), path: z.string(), productCount: z.number().int().min(1), permission: CATEGORY_PERMISSION })
+  .strict();
 export const CategorySuggestionsView = z
   .object({
     items: z.array(
@@ -1023,11 +1027,23 @@ export const CategorySuggestionsView = z
         .object({
           externalId: z.string(),
           path: z.string(),
-          permission: z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable(),
+          permission: CATEGORY_PERMISSION,
+          usedByCompany: z.boolean().meta({ description: 'Công ty đã dùng category này trong spec của sản phẩm nào đó trên sàn' }),
         })
         .strict(),
     ),
+    group: z.array(UsedCategory).max(5).meta({ description: 'Category của sản phẩm cùng nhóm hàng trên sàn này, nhiều sản phẩm nhất trước (không đếm sản phẩm đang đẩy), tối đa 5' }),
+    recent: z.array(UsedCategory).max(5).meta({ description: 'Category công ty dùng gần đây, bỏ phần đã ở items, group, tối đa 5' }),
     cached: z.boolean(),
+    suggestError: z
+      .object({
+        code: z.enum(['product_name_too_short', 'images_missing', 'marketplace_unavailable']),
+        message: z.string(),
+        min: z.number().int().optional(),
+      })
+      .strict()
+      .optional()
+      .meta({ description: 'Không gọi được sàn: items rỗng, group và recent vẫn trả' }),
   })
   .strict()
   .meta({ id: 'CategorySuggestions' });

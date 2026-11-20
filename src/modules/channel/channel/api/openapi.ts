@@ -330,7 +330,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/category-suggestions',
     summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false.',
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng nhóm hàng) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; TikTok gửi thêm mô tả sản phẩm.',
     security: bearer,
     request: { params: ShopParams, query: CategorySuggestionsQuery },
     responses: {
@@ -338,8 +338,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`: gian hàng hay sản phẩm không có hoặc của công ty khác'),
       409: problemResponse('`shop_not_connected` (gian hàng không `active`, kèm `current`); `marketplace_rejected`, `marketplace_unauthorized`'),
-      422: problemResponse('`product_name_too_short` (kèm `min`, TikTok 25), `images_missing` (Lazada), không gọi sàn; `validation_failed` (`errors.productId`); `marketplace_unsupported`'),
-      503: problemResponse('`marketplace_unavailable` sau một lần gọi lại'),
+      422: problemResponse('`validation_failed` (`errors.productId`); `marketplace_unsupported`'),
     },
   });
   registry.registerPath({
