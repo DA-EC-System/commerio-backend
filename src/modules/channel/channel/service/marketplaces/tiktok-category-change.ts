@@ -16,12 +16,18 @@
 //   certifications[] {id, images[].uri, files[] {id, name, format}, expiration_date} → certifications[];
 //   is_pre_owned, minimum_order_quantity, shipping_insurance_requirement, external_product_id, manufacturer_ids,
 //   responsible_person_ids → cùng tên;
-//   skus[]: id, seller_sku, price.sale_price (giá hiển thị của người bán VN) → price.amount + price.currency,
+//   shipping_template_id → shipping_template_id;
+//   skus[]: id, seller_sku,
 //   sales_attributes[] {id, name, value_id, value_name, sku_img.uri, supplementary_sku_images[].uri},
-//   identifier_code {code, type}, extra_identifier_codes, external_sku_id, list_price {amount, currency} → cùng tên.
+//   identifier_code {code, type}, extra_identifier_codes, external_sku_id, list_price {amount, currency}, sku_unit_count,
+//   external_urls, fees[] {type, amount, additional_attribute}, external_list_prices[] {amount, currency, source} → cùng tên;
+//   combined_skus[] {product_id, sku_id, sku_count} → cùng tên (Get Product trả thêm brand, price, ... chỉ để đọc, bỏ).
+// Không gửi `skus[].price`: OAS cho bỏ để giữ giá cũ; giá đọc ở đây có thể cũ hơn lượt đẩy giá chạy đồng thời và đè lên.
+// `skus[].price` vẫn được đọc ở `tiktokCategoryMismatch` để so hai lần đọc.
+// Bỏ qua: `listing_platforms` (chỉ có ở Edit Product, Get Product không trả; gửi sai có thể ẩn sản phẩm khỏi sàn khác, bỏ thì
+// sàn giữ nguyên), `skus[].pre_sale` (không dùng ở VN), `replicated_products`, `subscribe_info_edit`, `skus[].inventory` (như dưới).
 // Không gửi `skus[].inventory`: OAS cho bỏ để giữ tồn cũ; gửi số đọc được có thể đè số mới hơn do đơn hay lượt đẩy tồn ghi
 // giữa lúc đọc và lúc sửa. Thay: category_id (+ category_version v2) và product_attributes (attribute của spec).
-import type { CategoryChangeInput } from './common.ts';
 
 type Row = Record<string, unknown>;
 
@@ -63,19 +69,31 @@ function salesAttributes(s: Row): Row[] {
 }
 
 function editSku(s: Row, currency: string): Row {
-  const price = isRow(s.price) ? (str(s.price.sale_price) ?? str(s.price.amount)) : undefined;
   const sales = salesAttributes(s);
   const code = isRow(s.identifier_code) && str(s.identifier_code.code) ? { code: s.identifier_code.code, type: s.identifier_code.type } : undefined;
   const listPrice = isRow(s.list_price) && str(s.list_price.amount) ? { amount: s.list_price.amount, currency: s.list_price.currency ?? currency } : undefined;
+  const combined = rows(s.combined_skus).flatMap((c) =>
+    str(c.sku_id) ? [{ ...(str(c.product_id) && { product_id: c.product_id }), sku_id: c.sku_id, ...(typeof c.sku_count === 'number' && { sku_count: c.sku_count }) }] : [],
+  );
+  const fees = rows(s.fees).flatMap((f) =>
+    str(f.type) ? [{ type: f.type, ...(str(f.amount) && { amount: f.amount }), ...(str(f.additional_attribute) && { additional_attribute: f.additional_attribute }) }] : [],
+  );
+  const externalPrices = rows(s.external_list_prices).flatMap((p) =>
+    str(p.amount) ? [{ amount: p.amount, currency: p.currency ?? currency, ...(str(p.source) && { source: p.source }) }] : [],
+  );
   return {
     id: String(s.id),
     ...(str(s.seller_sku) && { seller_sku: s.seller_sku }),
-    ...(price && { price: { amount: price, currency: (isRow(s.price) && str(s.price.currency)) || currency } }),
     ...(sales.length && { sales_attributes: sales }),
     ...(code && { identifier_code: code }),
     ...(strings(s.extra_identifier_codes).length && { extra_identifier_codes: strings(s.extra_identifier_codes) }),
     ...(str(s.external_sku_id) && { external_sku_id: s.external_sku_id }),
     ...(listPrice && { list_price: listPrice }),
+    ...(str(s.sku_unit_count) && { sku_unit_count: s.sku_unit_count }),
+    ...(strings(s.external_urls).length && { external_urls: strings(s.external_urls) }),
+    ...(combined.length && { combined_skus: combined }),
+    ...(fees.length && { fees }),
+    ...(externalPrices.length && { external_list_prices: externalPrices }),
   };
 }
 
@@ -110,7 +128,7 @@ function certificationsOf(current: Row | undefined): Row[] {
  */
 export function tiktokCategoryEditBody(
   current: Row | undefined,
-  input: Pick<CategoryChangeInput, 'externalCategoryId' | 'sizeChartUri'>,
+  input: { externalCategoryId: string; sizeChartUri?: string },
   attributes: readonly TiktokProductAttribute[],
   opts: { categoryVersion: string; currency: string },
 ): Row {
@@ -140,6 +158,7 @@ export function tiktokCategoryEditBody(
     ...copy('minimum_order_quantity'),
     ...copy('shipping_insurance_requirement'),
     ...copy('external_product_id'),
+    ...(str(current?.shipping_template_id) && { shipping_template_id: str(current?.shipping_template_id) }),
     ...(strings(current?.manufacturer_ids).length && { manufacturer_ids: strings(current?.manufacturer_ids) }),
     ...(strings(current?.responsible_person_ids).length && { responsible_person_ids: strings(current?.responsible_person_ids) }),
     ...(attributes.length && { product_attributes: attributes }),

@@ -290,13 +290,12 @@ async function changeCategory(productId: string | undefined, categoryId: string 
   const before = await client.call<P>('GET', path, { token: packed });
   if (!before?.title?.startsWith('CM-TEST-')) throw new Error('Chỉ đổi category sản phẩm thử có tên bắt đầu CM-TEST-');
   const leaf = (p: P | undefined) => p?.category_chains?.find((c) => c.is_leaf)?.id;
-  // `size-chart=<URL ảnh>`: category mới bắt buộc bảng size mà sản phẩm chưa có (ngoại lệ của #467) thì tải ảnh lên như việc nền.
+  // `size-chart=<URL ảnh>`: truyền URL như việc nền; adapter tự đưa ảnh lên chỉ khi sản phẩm chưa có bảng size.
   const chart = rest.find((a) => a.startsWith('size-chart='))?.slice('size-chart='.length);
-  const sizeChartUri = chart ? await adapter.uploadImage(packed, chart, 'size_chart') : undefined;
   const result = await adapter.changeCategory!(packed, productId, {
     externalCategoryId: categoryId,
     attributes: Object.fromEntries(rest.filter((a) => !a.startsWith('size-chart=')).map((a) => a.split('=') as [string, string])),
-    ...(sizeChartUri && { sizeChartUri }),
+    ...(chart && { sizeChartUrl: chart }),
   });
   const live = await client.call<P>('GET', path, { token: packed });
   const review = await client.call<P>('GET', path, { token: packed, query: { return_under_review_version: 'true' } }).catch(() => undefined);

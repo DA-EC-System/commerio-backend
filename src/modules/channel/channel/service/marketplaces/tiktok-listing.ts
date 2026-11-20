@@ -12,6 +12,7 @@ import {
   type CategorySuggestion,
   type CreatedProduct,
   existingProduct,
+  type ImagePurpose,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -177,6 +178,18 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       else for (const i of group) failed.set(i.externalSkuId, err);
     }
     return failed;
+  }
+
+  // Sàn chỉ nhận file (multipart), không nhận URL: tải ảnh nguồn rồi đưa lên. Không gửi `shop_cipher` (API không theo
+  // gian hàng). Trả `uri`, chuỗi Create Product cần trong `main_images`.
+  async function uploadImageFile(token: string, url: string, purpose: ImagePurpose = 'main'): Promise<string> {
+    const image = await downloadImage(url, deps.image);
+    const form = new FormData();
+    form.append('data', new Blob([new Uint8Array(image.bytes)], { type: image.type }), image.name);
+    form.append('use_case', purpose === 'size_chart' ? 'SIZE_CHART_IMAGE' : 'MAIN_IMAGE');
+    const data = await client.call<{ uri?: unknown }>('POST', '/product/202309/images/upload', { token, form, shopCipher: false });
+    if (typeof data?.uri !== 'string' || !data.uri) throw new MarketplaceError('rejected', 'unexpected_response');
+    return data.uri;
   }
 
   async function productStatus(token: string, productId: string): Promise<string | null> {
@@ -353,17 +366,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       return { sizeChart: 'optional' };
     },
 
-    // Sàn chỉ nhận file (multipart), không nhận URL: tải ảnh nguồn rồi đưa lên. Không gửi `shop_cipher` (API không theo
-    // gian hàng). Trả `uri`, chuỗi Create Product cần trong `main_images`.
-    async uploadImage(token, url, purpose = 'main') {
-      const image = await downloadImage(url, deps.image);
-      const form = new FormData();
-      form.append('data', new Blob([new Uint8Array(image.bytes)], { type: image.type }), image.name);
-      form.append('use_case', purpose === 'size_chart' ? 'SIZE_CHART_IMAGE' : 'MAIN_IMAGE');
-      const data = await client.call<{ uri?: unknown }>('POST', '/product/202309/images/upload', { token, form, shopCipher: false });
-      if (typeof data?.uri !== 'string' || !data.uri) throw new MarketplaceError('rejected', 'unexpected_response');
-      return data.uri;
-    },
+    uploadImage: uploadImageFile,
 
     // Một sản phẩm một SKU, gán kho mặc định. Sản phẩm mới qua duyệt của TikTok (create-product-202309: "After creation,
     // it will be sent for audit review"); `live` theo trạng thái đọc lại ngay sau khi tạo, còn lại về qua đồng bộ.
@@ -501,13 +504,20 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
         client.call<Row>('GET', path, { token }),
         productAttributes(token, { externalCategoryId: input.externalCategoryId, attributes: input.attributes, responsible: input.responsible }),
       ]);
-      const body = tiktokCategoryEditBody(current, input, attributes, { categoryVersion: CATEGORY_VERSION, currency: CURRENCY });
+      // Ảnh bảng size của app chỉ đưa lên khi sản phẩm trên sàn chưa có bảng size (mẫu hay ảnh).
+      const chart = current?.size_chart as Row | undefined;
+      const hasChart = Boolean(chart && (chart.template || chart.image));
+      const sizeChartUri = !hasChart && input.sizeChartUrl ? await uploadImageFile(token, input.sizeChartUrl, 'size_chart') : undefined;
+      const body = tiktokCategoryEditBody(current, { externalCategoryId: input.externalCategoryId, sizeChartUri }, attributes, {
+        categoryVersion: CATEGORY_VERSION,
+        currency: CURRENCY,
+      });
       await client.call('PUT', `/product/202509/products/${encodeURIComponent(externalProductId)}`, { token, body });
       // Edit Product (`save_mode = LISTING`) đăng lại sản phẩm: sản phẩm người bán đang tắt thành `ACTIVATE` (gọi thật 20/11/2026,
-      // request_id 2026112017530477A4AD0A7268C20A23EF: SELLER_DEACTIVATED → ACTIVATE). Đổi category không được bật bán: tắt lại;
+      // request_id 2026112017530477A4AD0A7268C20A23EF: SELLER_DEACTIVATED → ACTIVATE). Đổi category không được bật bán: tắt lại khi sản phẩm đang tắt lúc đọc hoặc app đã ẩn listing (`keepDeactivated`, lượt thử lại sau khi lần trước lỡ bật);
       // tắt lỗi thì báo lệch, không im lặng.
       const restore: string[] = [];
-      if (current?.status === 'SELLER_DEACTIVATED') {
+      if (current?.status === 'SELLER_DEACTIVATED' || input.keepDeactivated) {
         try {
           await toggle(token, 'deactivate', externalProductId);
         } catch (err) {

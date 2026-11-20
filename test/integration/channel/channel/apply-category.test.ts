@@ -272,6 +272,76 @@ describe('POST /channel/products/:productId/specs/:platform/apply-category (#467
   });
 });
 
+describe('apply-category: kẹt, dùng chung sản phẩm sàn, đang duyệt (#467)', () => {
+  const staleAt = () => new Date(Date.now() - 31 * 60_000).toISOString();
+  const setChange = (id: string, status: string, at: string) =>
+    testPool().query('update channel.listings set category_change = $2::jsonb where id = $1', [
+      id,
+      JSON.stringify({ status, toCategoryId: NEW, toCategoryPath: null, code: null, message: null, attempts: 0, at }),
+    ]);
+
+  it('`queued` quá 30 phút (việc rơi) không chặn: đánh `failed` rồi xếp lại, ra 202', async () => {
+    const { productId, v1 } = await product();
+    const id = await listing(v1, shops.a);
+    await setChange(id, 'queued', staleAt());
+    const res = await apply(productId, 1);
+    expect(res.status).toBe(202);
+    expect((await row(id)).category_change).toMatchObject({ status: 'queued', attempts: 0 });
+    expect(await jobsOf(productId)).toHaveLength(1);
+  });
+
+  it('`queued` mới của listing khác (đã đúng category) cùng sản phẩm sàn vẫn chặn → 409 `category_change_in_progress`', async () => {
+    const { productId, v1, v2 } = await product();
+    const pid = `P-${randomUUID().slice(0, 8)}`;
+    await listing(v1, shops.a, { external_product_id: pid });
+    const other = await listing(v2, shops.a, { external_product_id: pid, external_category_id: NEW });
+    await setChange(other, 'queued', new Date().toISOString());
+    const res = await apply(productId, 1);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/category_change_in_progress$/);
+  });
+
+  it('sản phẩm sàn chứa listing của sản phẩm khác trong app → 409 `shared_remote_product`, không xếp việc', async () => {
+    const { productId, v1 } = await product();
+    const pid = `P-${randomUUID().slice(0, 8)}`;
+    const id = await listing(v1, shops.a, { external_product_id: pid });
+    await listing(variant(), shops.a, { external_product_id: pid });
+    const res = await apply(productId, 1);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/shared_remote_product$/);
+    expect(res.body.detail).toContain('Seller Center');
+    expect((await row(id)).category_change).toBeNull();
+    expect(await jobsOf(productId)).toHaveLength(0);
+  });
+
+  it('CEO gate xét cả listing `platform` của cùng sản phẩm sàn đã ở đúng category: admin (không phải CEO) → 403', async () => {
+    const { productId, v1, v2 } = await product();
+    const pid = `P-${randomUUID().slice(0, 8)}`;
+    await listing(v1, shops.a, { external_product_id: pid });
+    await listing(v2, shops.a, { external_product_id: pid, external_category_id: NEW, content_source: 'platform' });
+    const admin = await addMember(company.companyId, 'admin');
+    const res = await auth(app().post(`/api/v1/channel/products/${productId}/specs/tiktok/apply-category`), admin.token).send({ version: 1 });
+    expect(res.status).toBe(403);
+    expect(await jobsOf(productId)).toHaveLength(0);
+    expect((await apply(productId, 1)).status).toBe(202);
+  });
+
+  it('mọi listing của nhóm đang có bản sửa `auditing` → bỏ nhóm; hết nhóm thì 409 `category_change_in_progress`; còn nhóm khác thì xếp nhóm đó', async () => {
+    const { productId, v1, v2 } = await product();
+    const a = await listing(v1, shops.a, { revision_status: 'auditing', revision_at: new Date() });
+    const res = await apply(productId, 1);
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/category_change_in_progress$/);
+    expect(res.body.detail).toContain('duyệt');
+    const b = await listing(v2, shops.b);
+    const ok = await apply(productId, 1);
+    expect(ok.status).toBe(202);
+    expect((ok.body.items as { shopId: string }[]).map((i) => i.shopId)).toEqual([shops.b]);
+    expect((await row(a)).category_change).toBeNull();
+    expect((await row(b)).category_change).toMatchObject({ status: 'queued' });
+  });
+});
+
 describe('việc nền channel.category_apply (#467)', () => {
   /** Xếp qua route rồi trả dữ liệu việc của gian hàng a. */
   async function queued(target = NEW, cols: Record<string, unknown> = {}) {
@@ -288,7 +358,8 @@ describe('việc nền channel.category_apply (#467)', () => {
     const before = await row(id);
     await runCategoryApply(port, job);
     expect(changeCategory).toHaveBeenCalledWith(expect.any(String), job.externalProductId, expect.objectContaining({ externalCategoryId: NEW }));
-    expect(changeCategory.mock.calls[0]![2]).not.toHaveProperty('sizeChartUri');
+    expect(changeCategory.mock.calls[0]![2]).not.toHaveProperty('sizeChartUrl');
+    expect(changeCategory.mock.calls[0]![2]).not.toHaveProperty('keepDeactivated');
     const after = await row(id);
     expect(after).toMatchObject({ status: 'live', category_change: null, revision_status: 'auditing', external_category_id: OLD });
     expect(after.version).toBeGreaterThan(before.version);
@@ -351,15 +422,39 @@ describe('việc nền channel.category_apply (#467)', () => {
     expect((await row(id)).category_change).toMatchObject({ status: 'failed', code: 'marketplace_unavailable' });
   });
 
-  it('category bắt buộc bảng size: đưa ảnh bảng size của app lên rồi truyền `sizeChartUri`', async () => {
+  it('category bắt buộc bảng size: truyền URL ảnh bảng size của app (`sizeChartUrl`), adapter tự quyết có đưa lên không', async () => {
     const p = await product(SIZED);
     sizeCharts.set(p.productId, 'https://img.test/size.png');
     await listing(p.v1, shops.a);
     expect((await apply(p.productId, 1)).status).toBe(202);
     const job = (await jobsOf(p.productId))[0]!;
     await runCategoryApply(port, job);
-    expect(uploadImage).toHaveBeenCalledWith(expect.any(String), 'https://img.test/size.png', 'size_chart');
-    expect(changeCategory.mock.calls[0]![2]).toMatchObject({ externalCategoryId: SIZED, sizeChartUri: 'tos/https%3A%2F%2Fimg.test%2Fsize.png' });
+    expect(uploadImage).not.toHaveBeenCalled();
+    expect(changeCategory.mock.calls[0]![2]).toMatchObject({ externalCategoryId: SIZED, sizeChartUrl: 'https://img.test/size.png' });
+    expect(changeCategory.mock.calls[0]![2]).not.toHaveProperty('sizeChartUri');
+  });
+
+  it('listing app đã ẩn (`hidden`) → truyền `keepDeactivated` để thử lại vẫn tắt sản phẩm', async () => {
+    const { job } = await queued(NEW, { status: 'hidden' });
+    await runCategoryApply(port, job);
+    expect(changeCategory.mock.calls[0]![2]).toMatchObject({ keepDeactivated: true });
+  });
+
+  it('lần thử cuối của pg-boss: lỗi tạm hay lỗi không dự kiến đều ghi `failed`, không ném (không kẹt `queued`); chưa phải lần cuối thì ném', async () => {
+    const { id, job } = await queued();
+    onChange = async () => {
+      throw new MarketplaceError('unavailable', '36009003', 'Sàn bận');
+    };
+    await expect(runCategoryApply(port, job, { lastAttempt: true })).resolves.toBeUndefined();
+    expect((await row(id)).category_change).toMatchObject({ status: 'failed', code: 'marketplace_unavailable', message: 'Sàn bận' });
+    const second = await queued();
+    onChange = async () => {
+      throw new Error('hỏng bất ngờ');
+    };
+    await expect(runCategoryApply(port, second.job, { lastAttempt: false })).rejects.toThrow('hỏng bất ngờ');
+    expect((await row(second.id)).category_change).toMatchObject({ status: 'queued' });
+    await expect(runCategoryApply(port, second.job, { lastAttempt: true })).resolves.toBeUndefined();
+    expect((await row(second.id)).category_change).toMatchObject({ status: 'failed', code: 'internal' });
   });
 
   it('gian hàng mất uỷ quyền khi việc chạy → giữ việc (`HoldJob`)', async () => {

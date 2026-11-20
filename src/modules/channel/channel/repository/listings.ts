@@ -1,5 +1,5 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
 import { type CategoryChange, type Marketplace, listings, shops } from './schema.ts';
@@ -269,4 +269,45 @@ export async function finishCategoryChange(ids: readonly string[], change: Categ
     })
     .where(and(inArray(listings.id, [...ids]), isQueued))
     .returning();
+}
+
+/**
+ * Mọi listing chưa gỡ của các sản phẩm sàn `(shopId, externalProductId)` trong công ty, kể cả biến thể của sản phẩm khác
+ * trong app (`apply-category`, #467: Edit Product ghi đè cả sản phẩm sàn). Gọi trong `withCompany`.
+ */
+export async function remoteProductListings(pairs: readonly { shopId: string; externalProductId: string }[]): Promise<ListingRow[]> {
+  if (!pairs.length) return [];
+  const any = or(...pairs.map((p) => and(eq(listings.shopId, p.shopId), eq(listings.externalProductId, p.externalProductId))));
+  return getDb().select().from(listings).where(and(any, ne(listings.status, 'delisted'))).orderBy(listings.shopId, listings.id);
+}
+
+/**
+ * Đánh `failed` các lượt đổi category `queued` có `at` trước `before` (kẹt vì việc rơi), không tăng `version`. Nếu `ids`
+ * không rỗng thì chỉ xét các listing này. Trả id đã ghi.
+ */
+export async function failStaleCategoryChanges(before: Date, message: string, ids?: readonly string[]): Promise<string[]> {
+  if (ids && !ids.length) return [];
+  const rows = await getDb()
+    .update(listings)
+    .set({
+      categoryChange: sql`jsonb_set(jsonb_set(jsonb_set(${listings.categoryChange}, '{status}', '"failed"'), '{code}', '"marketplace_unavailable"'), '{message}', to_jsonb(${message}::text))`,
+    })
+    .where(
+      and(
+        ids ? inArray(listings.id, [...ids]) : undefined,
+        isQueued,
+        sql`(${listings.categoryChange} ->> 'at')::timestamptz < ${before.toISOString()}::timestamptz`,
+      ),
+    )
+    .returning({ id: listings.id });
+  return rows.map((r) => r.id);
+}
+
+/** Xoá `category_change` `failed`/`mismatch` của các listing (sàn đã ở đúng category đích, #467). */
+export async function clearResolvedCategoryChange(ids: readonly string[]): Promise<void> {
+  if (!ids.length) return;
+  await getDb()
+    .update(listings)
+    .set({ categoryChange: null })
+    .where(and(inArray(listings.id, [...ids]), sql`${listings.categoryChange} ->> 'status' in ('failed', 'mismatch')`));
 }

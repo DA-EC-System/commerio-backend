@@ -980,6 +980,28 @@ describe('changeCategory: đổi category giữ trạng thái bán (#467)', () =
     expect(mismatch[0]).toMatch(/chưa tắt lại được/);
   });
 
+  it('lượt thử lại: sản phẩm đã bị bật lại (ACTIVATE) mà app ẩn listing (keepDeactivated) thì vẫn tắt', async () => {
+    const san = fakeSan(routes('ACTIVATE', ok({})));
+    await san.methods().changeCategory!(TOKEN, 'P9', { ...input, keepDeactivated: true });
+    expect(san.calls.some((c) => c.path === '/product/202309/products/deactivate')).toBe(true);
+  });
+
+  it('bảng size của app chỉ đưa lên khi sản phẩm sàn chưa có bảng size', async () => {
+    const withChart = fakeSan({
+      ...routes('ACTIVATE', ok({})),
+      'GET /product/202309/products/P9': () => ok({ id: 'P9', title: 'CM-TEST', status: 'ACTIVATE', size_chart: { image: { uri: 'tos/da-co' } }, skus: [{ id: 'S9', seller_sku: 'A' }] }),
+    });
+    await withChart.methods().changeCategory!(TOKEN, 'P9', { ...input, sizeChartUrl: 'https://img.test/size.png' });
+    expect(withChart.calls.some((c) => c.path === '/product/202309/images/upload')).toBe(false);
+    expect((withChart.calls.find((c) => c.method === 'PUT')!.body as { size_chart: unknown }).size_chart).toEqual({ image: { uri: 'tos/da-co' } });
+  });
+
+  it('sản phẩm sàn chưa có bảng size thì đưa ảnh của app lên (nguồn không an toàn bị chặn trước khi PUT)', async () => {
+    const san = fakeSan(routes('ACTIVATE', ok({})));
+    await expect(san.methods().changeCategory!(TOKEN, 'P9', { ...input, sizeChartUrl: 'file:///etc/passwd' })).rejects.toMatchObject({ platformCode: 'image_source_invalid' });
+    expect(san.calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
   it('sản phẩm đang bán thì không gọi tắt', async () => {
     const san = fakeSan(routes('ACTIVATE', ok({})));
     await san.methods().changeCategory!(TOKEN, 'P9', input);

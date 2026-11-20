@@ -60,7 +60,7 @@ export const CategoryApplyJobSchema = JobDataSchema.extend({
   shopId: z.uuid(),
   productId: z.uuid(),
   externalProductId: z.string().min(1),
-  listingIds: z.array(z.uuid()).min(1).max(200),
+  listingIds: z.array(z.uuid()).min(1),
   toCategoryId: z.string().min(1),
 });
 export type CategoryApplyJob = z.infer<typeof CategoryApplyJobSchema>;

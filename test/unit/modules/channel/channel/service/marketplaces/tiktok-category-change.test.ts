@@ -65,7 +65,7 @@ const product = () => ({
 const ATTRS = [{ id: '101400', values: [{ id: '55' }] }, { id: '100149', values: [{ name: 'Việt Nam' }] }];
 
 describe('tiktokCategoryEditBody', () => {
-  it('chép mọi SKU, giá, ảnh, kích thước, thương hiệu, bảng size, cách giao, COD, video, chứng nhận; chỉ đổi category_id và product_attributes', () => {
+  it('chép mọi SKU (không gửi giá), ảnh, kích thước, thương hiệu, bảng size, cách giao, COD, video, chứng nhận; chỉ đổi category_id và product_attributes', () => {
     const body = tiktokCategoryEditBody(product(), { externalCategoryId: '600777' }, ATTRS, OPTS);
     expect(body).toEqual({
       save_mode: 'LISTING',
@@ -87,24 +87,48 @@ describe('tiktokCategoryEditBody', () => {
         {
           id: 'S1',
           seller_sku: 'AO-DEN-M',
-          price: { amount: '150000', currency: 'VND' },
           sales_attributes: [{ id: '100000', name: 'Size', value_id: '9', value_name: 'M', sku_img: { uri: 'tos/sku-m' } }],
           identifier_code: { code: '8930000000011', type: 'EAN' },
         },
         {
           id: 'S2',
           seller_sku: 'AO-DEN-L',
-          price: { amount: '160000', currency: 'VND' },
           sales_attributes: [{ id: '100000', name: 'Size', value_id: '10', value_name: 'L' }],
         },
         {
           id: 'S3',
           seller_sku: 'AO-DEN-XL',
-          price: { amount: '170000', currency: 'VND' },
           sales_attributes: [{ id: '100000', name: 'Size', value_id: '11', value_name: 'XL' }],
         },
       ],
     });
+  });
+
+  it('không gửi giá SKU (OAS: bỏ thì giữ giá cũ, tránh đè lượt đẩy giá chạy đồng thời)', () => {
+    const body = tiktokCategoryEditBody(product(), { externalCategoryId: '600777' }, [], OPTS);
+    expect((body.skus as Record<string, unknown>[]).every((s) => !('price' in s))).toBe(true);
+  });
+
+  it('chép thêm shipping_template_id và combined_skus, fees, external_urls, sku_unit_count, external_list_prices của SKU', () => {
+    const p = product() as Record<string, unknown> & { skus: Record<string, unknown>[] };
+    p.shipping_template_id = 'ST1';
+    Object.assign(p.skus[0]!, {
+      combined_skus: [{ product_id: 'P8', sku_id: 'S8', sku_count: 2, title: 'chỉ đọc', price: { sale_price: '1' } }],
+      fees: [{ type: 'PFAND', amount: '1000', additional_attribute: 'SINGLE_USE' }],
+      external_urls: ['https://example.com/a'],
+      sku_unit_count: '500',
+      external_list_prices: [{ amount: '200000', currency: 'VND', source: 'SHOPEE' }],
+    });
+    const body = tiktokCategoryEditBody(p, { externalCategoryId: '600777' }, [], OPTS);
+    expect(body.shipping_template_id).toBe('ST1');
+    expect((body.skus as Record<string, unknown>[])[0]).toMatchObject({
+      combined_skus: [{ product_id: 'P8', sku_id: 'S8', sku_count: 2 }],
+      fees: [{ type: 'PFAND', amount: '1000', additional_attribute: 'SINGLE_USE' }],
+      external_urls: ['https://example.com/a'],
+      sku_unit_count: '500',
+      external_list_prices: [{ amount: '200000', currency: 'VND', source: 'SHOPEE' }],
+    });
+    expect(body).not.toHaveProperty('listing_platforms');
   });
 
   it('không gửi tồn (OAS: bỏ `inventory` thì giữ tồn cũ) và không mang attribute cũ của sản phẩm', () => {

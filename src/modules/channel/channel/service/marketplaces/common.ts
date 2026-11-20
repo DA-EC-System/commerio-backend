@@ -146,14 +146,17 @@ export interface ContentUpdate {
 
 /**
  * Đổi category của sản phẩm đang có trên sàn (`apply-category`, commerio-backend#467): chỉ category và attribute; tên, mô tả,
- * ảnh, SKU, giá, tồn giữ như trên sàn. `sizeChartUri` (ảnh đã nằm trên sàn) chỉ dùng khi sản phẩm trên sàn chưa có bảng size.
+ * ảnh, SKU, giá, tồn giữ như trên sàn. `sizeChartUrl` (ảnh của app) chỉ được đưa lên khi sản phẩm trên sàn chưa có bảng size.
  */
 export interface CategoryChangeInput {
   externalCategoryId: string;
   /** Như `NewProduct.attributes` (nhãn lựa chọn hoặc chuỗi tự nhập). */
   attributes: Record<string, string | string[]>;
   responsible?: Responsible;
-  sizeChartUri?: string;
+  /** Ảnh bảng size của app: adapter đưa lên sàn chỉ khi sản phẩm trên sàn chưa có bảng size. */
+  sizeChartUrl?: string;
+  /** App đã ẩn listing (`hidden`): sau khi sửa phải tắt lại dù lần đọc này thấy sản phẩm đang bật (lượt thử lại). */
+  keepDeactivated?: boolean;
 }
 
 /**
