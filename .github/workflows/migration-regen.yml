@@ -1,0 +1,122 @@
+# Tự gộp main và sinh lại migration cho PR đang mở khi main có migration mới (db/CLAUDE.md mục "Hai nhánh cùng sinh
+# migration"). Ba job:
+#   list  : chọn PR (mở, base main, cùng repo, không nhãn no-auto-regen, chưa chứa main, có tệp db/migrations/).
+#   regen : mỗi PR một job, chạy code của nhánh PR (npm ci, db:regen, db:ci-check) nên KHÔNG có token ghi, không secret.
+#   push  : không chạy code nhánh PR; tự gộp main lại bằng git, chỉ lấy tệp sinh ra từ gói của job regen, đẩy và bình
+#           luận. Token đẩy: secret MIGRATION_BOT_TOKEN (PAT, để CI chạy trên commit mới), không có thì GITHUB_TOKEN.
+# Script ở scripts/ci/migration-regen/, luôn lấy từ commit của workflow (không từ nhánh PR).
+name: Migration regen
+
+on:
+  push:
+    branches: [main, ci/migration-regen]  # THỬ: bỏ trước khi merge
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Số PR (bỏ trống: mọi PR đủ điều kiện)'
+        required: false
+
+concurrency:
+  group: migration-regen
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  BASE_BRANCH: tmp/regen-base  # THỬ: trả về main trước khi merge
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      main_sha: ${{ steps.list.outputs.main_sha }}
+      prs: ${{ steps.list.outputs.prs }}
+      count: ${{ steps.list.outputs.count }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/migration-regen
+      - id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr }}
+        run: bash scripts/ci/migration-regen/list.sh
+
+  regen:
+    needs: list
+    if: needs.list.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pr: ${{ fromJSON(needs.list.outputs.prs) }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Lấy script của workflow trước khi chuyển sang nhánh PR
+        run: |
+          cp -r scripts/ci/migration-regen "$RUNNER_TEMP/bot"
+          git fetch -q origin "$PR_SHA" "$MAIN_SHA"
+        env:
+          PR_SHA: ${{ matrix.pr.sha }}
+          MAIN_SHA: ${{ needs.list.outputs.main_sha }}
+      - name: Gộp main, db:regen, db:ci-check (#${{ matrix.pr.number }})
+        env:
+          PR_SHA: ${{ matrix.pr.sha }}
+          MAIN_SHA: ${{ needs.list.outputs.main_sha }}
+          OUT_DIR: ${{ runner.temp }}/out
+          LIB: ${{ runner.temp }}/bot/lib.sh
+        run: bash "$RUNNER_TEMP/bot/regen.sh"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: regen-${{ matrix.pr.number }}
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+          if-no-files-found: ignore
+
+  push:
+    needs: [list, regen]
+    if: always() && needs.list.result == 'success' && needs.list.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read # gh run download gói của job regen
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Lấy script của workflow
+        run: cp -r scripts/ci/migration-regen "$RUNNER_TEMP/bot"
+      - name: Đẩy lên nhánh PR, bình luận
+        env:
+          PRS: ${{ needs.list.outputs.prs }}
+          MAIN_SHA: ${{ needs.list.outputs.main_sha }}
+          ARTIFACTS: ${{ runner.temp }}/artifacts
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LIB: ${{ runner.temp }}/bot/lib.sh
+          GH_TOKEN: ${{ github.token }}
+          PUSH_TOKEN: ${{ secrets.MIGRATION_BOT_TOKEN }}
+          FALLBACK_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/bot/push.sh"

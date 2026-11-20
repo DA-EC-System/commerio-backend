@@ -1,7 +1,8 @@
-// npm run db:regen [-- --base origin/main] [--dry-run]
+// npm run db:regen [-- --base origin/main] [--dry-run] [--non-interactive]
 // Sinh lại migration của nhánh để chúng đứng sau mọi migration của main: lấy journal của main, xoá migration nhánh đã sinh,
 // chạy drizzle-kit generate, chép lại nguyên nội dung migration viết tay thành migration --custom mới (giữ thứ tự, giữ
-// slug). Chạy sau khi đã gộp main vào nhánh. Xem db/CLAUDE.md.
+// slug). Chạy sau khi đã gộp main vào nhánh. Xem db/CLAUDE.md. --non-interactive (Action migration-regen): drizzle-kit không
+// được hỏi; nếu nó hỏi đổi tên cột/bảng thì lệnh lỗi, không tự trả lời.
 import { docsProblemsText, writeDocs } from './lib/docs.ts';
 import { drizzleGenerate, git, gitOk, migrationsAtRef } from './lib/drizzle-kit.ts';
 import { MIGRATIONS_DIR } from './lib/journal.ts';
@@ -11,6 +12,7 @@ const args = process.argv.slice(2);
 const baseIndex = args.indexOf('--base');
 const baseRef = baseIndex >= 0 ? args[baseIndex + 1]! : 'origin/main';
 const dryRun = args.includes('--dry-run');
+const interactive = !args.includes('--non-interactive');
 
 function fail(message: string): never {
   console.error(message);
@@ -65,8 +67,13 @@ if (dryRun) {
 const result = applyRegen(MIGRATIONS_DIR, plan, {
   baseJournal: base.readText('meta/_journal.json'),
   generate: (kind, name) => {
-    const { status } = drizzleGenerate(kind === 'custom' ? ['--custom', '--name', name] : ['--name', name], { interactive: true });
-    if (status !== 0) fail(`drizzle-kit generate lỗi (mã ${status}). db/migrations đang dở: git checkout -- db/migrations để quay lại.`);
+    const { status, output } = drizzleGenerate(kind === 'custom' ? ['--custom', '--name', name] : ['--name', name], { interactive });
+    if (status !== 0) {
+      if (!interactive && output) console.error(output);
+      fail(
+        `drizzle-kit generate lỗi (mã ${status})${interactive ? '' : ', có thể đang hỏi đổi tên cột/bảng: chạy npm run db:regen trên máy để trả lời'}. db/migrations đang dở: git checkout -- db/migrations để quay lại.`,
+      );
+    }
   },
   waitNextSecond: () => {
     const second = Math.floor(Date.now() / 1000);
