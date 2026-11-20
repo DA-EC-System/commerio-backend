@@ -50,4 +50,4 @@ export { fillProductFacts, productMediaGaps, type FactsSource, type ProductFacts
 export { getProductSpecs } from './service/product-specs.ts';
 export { getSpecFields } from './service/spec-fields.ts';
 export { DEFAULT_GROUP_TEMPLATES, DEFAULT_SPEC_FIELDS, type DefaultSpecField } from './domain/spec-defaults.ts';
-export { PLATFORM_KINDS, type PlatformKind, SPEC_INPUTS } from './repository/schema.ts';
+export { PLATFORM_KINDS, type PlatformKind, SPEC_INPUTS } from './domain/specs.ts';

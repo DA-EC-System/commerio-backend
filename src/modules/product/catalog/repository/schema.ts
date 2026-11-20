@@ -15,7 +15,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
-import { SPEC_INPUTS } from '../domain/specs.ts';
+import { PLATFORM_KINDS, SPEC_INPUTS } from '../domain/specs.ts';
 
 // Mọi bảng của module `catalog` khai báo trong schema này.
 export const catalogSchema = pgSchema('product');
@@ -88,12 +88,7 @@ export const companyProductSettings = catalogSchema.table(
   (t) => [check('company_product_settings_sku_next_seq', sql`${t.skuNextSeq} >= 1`), ...suggestChecks('company_product_settings', t)],
 );
 
-/**
- * Loại thuộc tính chuẩn sàn (21 mục 5.2, 18.8.3): bước Variants của trang đẩy ghép sang sales attribute chuẩn của sàn.
- * `volume` (dung tích, khối lượng, quy cách) và `flavor` (hương vị) cho mỹ phẩm, thực phẩm (research P4, 21/11/2026).
- */
-export const PLATFORM_KINDS = ['color', 'size', 'volume', 'flavor'] as const;
-export type PlatformKind = (typeof PLATFORM_KINDS)[number];
+export { PLATFORM_KINDS, type PlatformKind } from '../domain/specs.ts';
 
 export const attributes = catalogSchema.table(
   'attributes',

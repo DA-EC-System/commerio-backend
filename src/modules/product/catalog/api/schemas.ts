@@ -3,7 +3,7 @@ import { BUSINESS_ACTIONS, BUSINESS_STATUSES } from '../domain/business-status.t
 import { MAIN_LABELS, type MainLabel, MISSING_FIELDS, PRESENCES } from '../domain/labels.ts';
 import { BulkRowInput } from '../domain/bulk-row.ts';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
-import { SPEC_INPUTS } from '../domain/specs.ts';
+import { PLATFORM_KINDS, SPEC_INPUTS } from '../domain/specs.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
 // Giới hạn (Documents/21 V24, mục 5.2): tên nhóm hàng 60, sản phẩm 200, mô tả 5000; tên thuộc tính 15, giá trị 20
@@ -420,11 +420,77 @@ export const ProductGroup = z
     id: z.uuid(),
     name: z.string(),
     productCount: z.number().int().meta({ description: 'Số sản phẩm, kể cả đã lưu trữ' }),
+    axes: z
+      .array(z.object({ attributeId: z.uuid(), name: z.string(), platformKind: z.enum(PLATFORM_KINDS).nullable() }))
+      .meta({ description: 'Trục phân loại chuẩn của nhóm (0–2, theo thứ tự; #510)' }),
+    specFieldCount: z.number().int().meta({ description: 'Số thông số trong mẫu nhóm' }),
+    requiredCount: z.number().int().meta({ description: 'Số thông số bắt buộc trong mẫu nhóm' }),
     suggest: SuggestConfig,
     updatedAt: z.string(),
     version: z.number().int(),
   })
   .meta({ id: 'ProductGroup' });
+
+const SpecOptionRef = z.object({ id: z.uuid(), value: z.string() });
+
+export const SpecField = z
+  .object({
+    id: z.uuid(),
+    code: z.string().meta({ description: 'Khoá ánh xạ sang sàn, không sửa' }),
+    name: z.string(),
+    input: z.enum(SPEC_INPUTS),
+    unit: z.string().nullable(),
+    allowCustom: z.boolean(),
+    options: z.array(SpecOptionRef.extend({ position: z.number().int(), inUse: z.boolean() })),
+    groupCount: z.number().int(),
+    productCount: z.number().int(),
+    updatedAt: z.string(),
+    version: z.number().int(),
+  })
+  .meta({ id: 'SpecField' });
+
+export const GroupTemplate = z
+  .object({
+    groupId: z.uuid(),
+    axes: z.array(
+      z.object({
+        attributeId: z.uuid(),
+        name: z.string(),
+        platformKind: z.enum(PLATFORM_KINDS).nullable(),
+        values: z.array(SpecOptionRef),
+      }),
+    ),
+    fields: z.array(
+      z.object({
+        fieldId: z.uuid(),
+        code: z.string(),
+        name: z.string(),
+        input: z.enum(SPEC_INPUTS),
+        unit: z.string().nullable(),
+        allowCustom: z.boolean(),
+        required: z.boolean(),
+        options: z.array(SpecOptionRef),
+      }),
+    ),
+    version: z.number().int().meta({ description: '`version` của nhóm' }),
+  })
+  .meta({ id: 'GroupTemplate' });
+
+export const ProductSpecValue = z
+  .object({
+    fieldId: z.uuid(),
+    code: z.string(),
+    name: z.string(),
+    input: z.enum(SPEC_INPUTS),
+    unit: z.string().nullable(),
+    allowCustom: z.boolean(),
+    required: z.boolean(),
+    inTemplate: z.boolean().meta({ description: 'false: thông số ngoài mẫu nhóm hiện tại đang có giá trị ("Thông số khác")' }),
+    selected: z.array(SpecOptionRef),
+    choices: z.array(SpecOptionRef).meta({ description: 'Mọi lựa chọn của thông số' }),
+    value: z.string().nullable().meta({ description: 'text, number (chuẩn hoá), date (YYYY-MM-DD)' }),
+  })
+  .meta({ id: 'ProductSpecValue' });
 
 export const ProductSettings = z
   .object({
@@ -558,6 +624,8 @@ export const ProductDetail = ProductListItem.extend({
     .meta({ description: 'Ảnh phân loại theo giá trị của thuộc tính gắn ảnh, theo thứ tự giá trị trong thuộc tính' }),
   originCountry: z.string().nullable().meta({ description: 'Xuất xứ, mã ISO 3166-1 alpha-2; null khi chưa đặt' }),
   brand: z.string().nullable().meta({ description: 'Thương hiệu; null là không thương hiệu' }),
+  specs: z.array(ProductSpecValue).meta({ description: 'Thông số của mẫu nhóm (theo thứ tự, kể cả trống), rồi thông số ngoài mẫu có giá trị' }),
+  missingSpecFieldIds: z.array(z.uuid()).meta({ description: 'Thông số bắt buộc của mẫu đang trống' }),
   variants: z.array(Variant),
 }).meta({ id: 'ProductDetail' });
 

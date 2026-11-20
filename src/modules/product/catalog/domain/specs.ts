@@ -1,6 +1,13 @@
 // Luật thuần của thông số sản phẩm (Documents/21 mục 5.5 "SpecInput"). Không I/O.
 import { Decimal } from 'decimal.js';
 
+/**
+ * Loại thuộc tính chuẩn sàn (21 mục 5.2, 18.8.3): bước Variants của trang đẩy ghép sang sales attribute chuẩn của sàn.
+ * `volume` (dung tích, khối lượng, quy cách) và `flavor` (hương vị) cho mỹ phẩm, thực phẩm (research P4, 21/11/2026).
+ */
+export const PLATFORM_KINDS = ['color', 'size', 'volume', 'flavor'] as const;
+export type PlatformKind = (typeof PLATFORM_KINDS)[number];
+
 /** Kiểu nhập của thông số (Documents/19 §3.2): `date` lưu `YYYY-MM-DD` (ngày cấp giấy phép, research P6). */
 export const SPEC_INPUTS = ['select', 'multiselect', 'text', 'number', 'date'] as const;
 export type SpecInputKind = (typeof SPEC_INPUTS)[number];
