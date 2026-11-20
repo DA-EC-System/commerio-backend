@@ -7,6 +7,8 @@ import { publishEvent } from '../../../core/index.ts';
 import type { ListingStatus } from '../domain/listing.ts';
 import type { ListingPatch, ListingRow } from '../repository/listings.ts';
 import * as writes from '../repository/listing-writes.ts';
+import { findListingById } from '../repository/listings.ts';
+import { ensureShopProduct } from '../repository/shop-products.ts';
 import type { SyncChange, SyncTriple } from '../repository/listing-writes.ts';
 
 const sameTriple = (a: SyncTriple, b: SyncTriple) => a.status === b.status && a.stockSync === b.stockSync && a.priceSync === b.priceSync;
@@ -25,7 +27,13 @@ async function publishChanges(changes: readonly SyncChange[]): Promise<void> {
   for (const c of changed) await publishSync(c.shopId, c.listingId, c.after);
 }
 
+// Listing có mã sản phẩm sàn luôn trỏ dòng `shop_products` cùng mã (#295, CHECK `listings_shop_product`, khoá ngoại ghép):
+// bên ghi không truyền `shopProductId` thì lớp này lấy dòng `active` của mã đó, chưa có thì tạo dòng `match`. Xoá mã sàn
+// (sàn xoá sản phẩm) thì bỏ luôn liên kết. Đường đẩy gom biến thể truyền thẳng dòng `app` của nó.
 export async function insertListing(values: Parameters<typeof writes.insertListing>[0]): Promise<ListingRow> {
+  if (values.externalProductId && !values.shopProductId) {
+    values = { ...values, shopProductId: await ensureShopProduct(values.companyId, values.shopId, values.externalProductId) };
+  }
   const row = await writes.insertListing(values);
   await publishSync(row.shopId, row.id, row);
   return row;
@@ -37,6 +45,12 @@ export async function updateListing(
   expected: { version: number; status?: ListingStatus },
   patch: ListingPatch,
 ): Promise<ListingRow | undefined> {
+  if (patch.externalProductId === null && patch.shopProductId === undefined) patch = { ...patch, shopProductId: null };
+  if (patch.externalProductId && patch.shopProductId === undefined) {
+    const current = await findListingById(id);
+    if (!current) return undefined;
+    patch = { ...patch, shopProductId: await ensureShopProduct(current.companyId, current.shopId, patch.externalProductId) };
+  }
   const result = await writes.updateListing(id, expected, patch);
   if (!result) return undefined;
   const { row, before } = result;

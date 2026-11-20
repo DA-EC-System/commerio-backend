@@ -205,6 +205,53 @@ export interface CategoryChange {
   at: string;
 }
 
+export const shopProductOrigin = channelSchema.enum('shop_product_origin', ['app', 'match']);
+export const shopProductStatus = channelSchema.enum('shop_product_status', ['active', 'delisted', 'failed']);
+
+/**
+ * Một sản phẩm cha trên một gian hàng ứng với một sản phẩm trên sàn (commerio-backend#295, Documents/19 câu chốt Q1, 21
+ * §18.8.4). `app`: app tạo bằng lần đẩy gom biến thể (`product_id` bắt buộc, mã sàn null tới khi sàn tạo xong); `match`:
+ * sản phẩm sàn có sẵn mà listing trỏ tới (ghép SKU, dữ liệu đẩy trước #295), `product_id` null vì một sản phẩm người bán có
+ * thể chứa SKU của nhiều sản phẩm Commerio. Luật "một cha một sản phẩm sàn" ép ở unique một phần theo `origin = 'app'`.
+ * `failed`: lần tạo của dòng `app` bị sàn từ chối (gom lại, §18.8.4), lỗi ở `push_error`. `delisted`: sản phẩm sàn đã bị
+ * thay (gom lại) hoặc sàn đã xoá. RLS `company_isolation`.
+ */
+export const shopProducts = channelSchema.table(
+  'shop_products',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id),
+    productId: uuid('product_id'),
+    externalProductId: text('external_product_id'),
+    origin: shopProductOrigin('origin').notNull(),
+    status: shopProductStatus('status').notNull().default('active'),
+    /** Lỗi của lần tạo gần nhất (`{ code, message, at }`), chỉ dòng `app`. */
+    pushError: jsonb('push_error').$type<SyncError>(),
+    /** Lúc bấm đẩy của lượt tạo đang chạy (dòng `app`): khoá chống tạo trùng `cm-sp-<id>-<mốc>` giữ qua các lần thử. */
+    pushStartedAt: timestamp('push_started_at', { withTimezone: true }),
+    /** Lần gọi tạo gần nhất (như `listings.create_attempted_at`, #399): phân biệt sản phẩm của lượt trước với sản phẩm người bán. */
+    createAttemptedAt: timestamp('create_attempted_at', { withTimezone: true }),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    uniqueIndex('shop_products_shop_external_uq')
+      .on(t.shopId, t.externalProductId)
+      .where(sql`${t.externalProductId} is not null and ${t.status} = 'active'`),
+    uniqueIndex('shop_products_shop_app_product_uq')
+      .on(t.shopId, t.productId)
+      .where(sql`${t.origin} = 'app' and ${t.status} = 'active'`),
+    // Đích của khoá ngoại ghép từ `listings`: mã sàn của listing phải bằng mã sàn của dòng nó trỏ tới.
+    unique('shop_products_id_external_uq').on(t.id, t.externalProductId),
+    check('shop_products_origin', sql`(${t.origin} = 'app') = (${t.productId} is not null)`),
+    check('shop_products_match_external', sql`${t.origin} = 'app' or ${t.externalProductId} is not null`),
+    check('shop_products_failed', sql`${t.status} <> 'failed' or (${t.origin} = 'app' and ${t.externalProductId} is null and ${t.pushError} is not null)`),
+  ],
+);
+
 /**
  * Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app. Mã sàn trống khi chưa đẩy lần nào.
  * Tồn và giá đồng bộ riêng (`stock_sync`, `price_sync`). `delisted_by_disconnect`: gỡ do ngắt, kết nối lại thì đưa lên.
@@ -308,6 +355,11 @@ export const listings = channelSchema.table(
     remoteTitleChangedAt: timestamp('remote_title_changed_at', { withTimezone: true }),
     /** Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1). */
     replacesListingId: uuid('replaces_listing_id').references((): AnyPgColumn => listings.id),
+    /**
+     * Sản phẩm sàn của listing (#295, `shop_products`): có `external_product_id` thì bắt buộc, và hai mã sàn phải bằng nhau
+     * (khoá ngoại ghép). Lần đẩy đầu của cha trỏ dòng `app` còn chưa có mã sàn.
+     */
+    shopProductId: uuid('shop_product_id').references(() => shopProducts.id),
     ...timestamps,
     ...version,
   },
@@ -324,6 +376,13 @@ export const listings = channelSchema.table(
       .on(t.shopId, t.pendingExternalSkuId)
       .where(sql`${t.pendingExternalSkuId} is not null`),
     index().on(t.variantId),
+    index().on(t.shopProductId),
+    foreignKey({
+      name: 'listings_shop_product_external_fk',
+      columns: [t.shopProductId, t.externalProductId],
+      foreignColumns: [shopProducts.id, shopProducts.externalProductId],
+    }),
+    check('listings_shop_product', sql`${t.externalProductId} is null or ${t.shopProductId} is not null`),
     check('listings_mode', sql`(${t.mode} = 'mapped') = (${t.variantId} is not null)`),
     // "Không quản tồn" có hiệu lực phải có CEO duyệt; dòng mới tạo chờ duyệt ghép sang "không quản tồn" (#220) chưa có.
     check(
