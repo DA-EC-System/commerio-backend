@@ -11,6 +11,7 @@ import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { applyCategory } from '../service/category-apply.ts';
 import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
+import { listAxisMappings, putAxisMapping } from '../service/axis-mappings.ts';
 import { attributeCatalog, listSpecMappings, putSpecMapping } from '../service/spec-mappings.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
@@ -29,6 +30,8 @@ import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
   ApplyCategoryBody,
+  AxisMappingBody,
+  AxisMappingParams,
   AuthorizeUrlQuery,
   CallbackBody,
   DelistBody,
@@ -61,6 +64,7 @@ import {
   ProductSpecBody,
   ProductListingsParams,
   ProductSpecParams,
+  ProductSpecQuery,
   ShopParams,
   TokenBody,
   ConfirmPriceBody,
@@ -204,7 +208,7 @@ export function channelRouter(ctx: ModuleContext): Router {
     validate({ params: PlatformParams, query: PlatformCategoriesQuery }),
     async (_req, res) => {
       const { platform } = validated<typeof PlatformParams>(res, 'params');
-      res.json(await listPlatformCategories(platform, validated<typeof PlatformCategoriesQuery>(res, 'query')));
+      res.json(await listPlatformCategories(platform, validated<typeof PlatformCategoriesQuery>(res, 'query'), actor(res).companyId));
     },
   );
 
@@ -256,9 +260,10 @@ export function channelRouter(ctx: ModuleContext): Router {
     },
   );
 
-  router.get('/products/:productId/specs/:platform', view, validate({ params: ProductSpecParams }), async (_req, res) => {
+  router.get('/products/:productId/specs/:platform', view, validate({ params: ProductSpecParams, query: ProductSpecQuery }), async (_req, res) => {
     const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
-    res.json(await getProductSpec(ctx, actor(res).companyId, productId, platform));
+    const { categoryId } = validated<typeof ProductSpecQuery>(res, 'query');
+    res.json(await getProductSpec(ctx, actor(res).companyId, productId, platform, { ...(categoryId !== undefined && { categoryId }) }));
   });
 
   // Gọi sàn lấy attribute leaf (khi thiếu/cũ) ngoài giao dịch; service tự mở `withCompany` (A16).
@@ -269,6 +274,23 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
       res.json(await putProductSpec(ctx, actor(res), productId, platform, validated<typeof ProductSpecBody>(res, 'body')));
+    },
+  );
+
+  // Ánh xạ trục phân loại sang sales attribute của sàn theo công ty (#448, 21 §18.8.1): đọc DB, không gọi sàn.
+  router.get('/platforms/:platform/axis-mappings', ctx.authorize('catalog.product.view'), validate({ params: PlatformParams }), async (_req, res) => {
+    const { platform } = validated<typeof PlatformParams>(res, 'params');
+    res.json(await listAxisMappings(ctx, actor(res).companyId, platform));
+  });
+
+  router.put(
+    '/platforms/:platform/axis-mappings/:attributeId',
+    ctx.authorize('catalog.group.manage'),
+    validate({ params: AxisMappingParams, body: AxisMappingBody }),
+    async (_req, res) => {
+      const { platform, attributeId } = validated<typeof AxisMappingParams>(res, 'params');
+      const { codes } = validated<typeof AxisMappingBody>(res, 'body');
+      res.json(await putAxisMapping(ctx, actor(res), platform, attributeId, codes.map((c) => c.attributeCode)));
     },
   );
 

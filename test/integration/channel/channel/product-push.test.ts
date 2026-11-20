@@ -78,7 +78,7 @@ beforeEach(() => {
   onAdd = async (_id, p) => ({ skus: echoSkus(p), live: false });
 });
 
-const color = (value: string) => [{ attributeId: 'a-color', attributeName: 'Màu', valueId: randomUUID(), value }];
+const color = (value: string) => [{ attributeId: 'a-color', attributeName: 'Màu', platformKind: 'color' as const, valueId: randomUUID(), value }];
 
 /** Một sản phẩm cha với các SKU theo màu, spec trục `__custom`. */
 async function product(colors: readonly string[]) {
@@ -90,6 +90,7 @@ async function product(colors: readonly string[]) {
     sku: `CMR-${randomUUID().slice(0, 8)}`,
     attributesLabel: c,
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: color(c),
     archived: false,
     businessStatus: 'selling' as const,

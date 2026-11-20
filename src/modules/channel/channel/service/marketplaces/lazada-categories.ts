@@ -1,6 +1,6 @@
 // Cây category và attribute của leaf Lazada đổi sang kiểu chung (#400 lát 3, A15). Hàm thuần trên phản hồi
 // `/category/tree/get` và `/category/attributes/get` (gọi thật 18/11/2026, không cần access_token: G2.1, G2.2).
-import type { AttributeInput, PlatformAttribute } from '../../domain/product-spec.ts';
+import type { AttributeInput, PlatformAttribute, VariantCapabilities } from '../../domain/product-spec.ts';
 import { MarketplaceError, type PlatformCategoryNode } from './common.ts';
 
 type TreeNode = { category_id?: unknown; name?: unknown; leaf?: unknown; children?: TreeNode[] };
@@ -93,4 +93,14 @@ export function lazadaLeafAttributes(data: unknown): PlatformAttribute[] {
     });
   }
   return out;
+}
+
+/**
+ * Khả năng khai biến thể của một leaf Lazada (#448, Documents#214 mục 3): sàn chỉ nhận trục là sale prop của category
+ * (`BIZ_CHECK_SALEPROP_ATTRIBUTE_INVALID` với tên ngoài), nên số trục tối đa là số sale prop của leaf, không nhận tên tự đặt,
+ * và sale prop bắt buộc (`is_mandatory`) phải có trong `axisMap`.
+ */
+export function lazadaVariantCapabilities(leaf: readonly PlatformAttribute[]): VariantCapabilities {
+  const sales = leaf.filter((a) => a.kind === 'sales');
+  return { maxAxes: sales.length, customAxisName: false, salesRequired: sales.filter((a) => a.required).map((a) => a.code), addVariant: true };
 }

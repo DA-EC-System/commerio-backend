@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V129**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V132**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -64,6 +64,7 @@ Trỏ vào bảng này:
 - `product.product_groups.axis1_attribute_id` (khoá ngoại)
 - `product.product_groups.axis2_attribute_id` (khoá ngoại)
 - `product.products.image_attribute_id` (khoá ngoại)
+- `channel.axis_mappings.attribute_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.company_product_settings`
 

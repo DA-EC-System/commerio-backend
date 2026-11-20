@@ -416,7 +416,12 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       const data = await client.call<{ categories?: Row[]; leaf_category_id?: unknown }>('POST', '/product/202309/categories/recommend', {
         token: requireToken(token),
         query: { locale: 'vi-VN' },
-        body: { product_title: input.name, category_version: CATEGORY_VERSION },
+        // `description` (HTML, tối đa 10000 ký tự) giúp khi tên chung chung nhưng không gỡ được luật tên 25 ký tự (Documents#214 mục 1.3).
+        body: {
+          product_title: input.name,
+          category_version: CATEGORY_VERSION,
+          ...(input.description?.trim() && { description: htmlDescription(input.description.trim().slice(0, 9_000)) }),
+        },
       });
       return tiktokSuggestions(data);
     },

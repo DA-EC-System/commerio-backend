@@ -78,6 +78,7 @@ const mugWhite: ListingVariant = {
   sku: 'CM-TEST-MUG-TRANG',
   attributesLabel: 'Trắng',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',

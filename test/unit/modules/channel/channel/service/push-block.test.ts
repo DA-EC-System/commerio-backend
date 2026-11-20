@@ -11,6 +11,7 @@ const variant: ListingVariant = {
   sku: 'A-1',
   attributesLabel: '',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',

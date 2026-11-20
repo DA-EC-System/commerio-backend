@@ -12,6 +12,8 @@ export const catalogModule: ModuleDefinition = {
 
 export { getVariants, type VariantSummary } from './service/variants.ts';
 export { hasCatalogData } from './repository/variants.ts';
+/** Thuộc tính phân loại của công ty kèm `platformKind` (#448: channel ghép trục, route axis-mappings). Gọi trong `withCompany`. */
+export { findAttributeKinds as attributeKindsOf } from './repository/attributes.ts';
 // Dữ liệu có sẵn của công ty mới (#447, Documents/21 mục 11.3); core gọi qua `ModuleContext` lúc đăng ký.
 export { seedCompanyDefaults } from './service/seed.ts';
 export { DEFAULT_ATTRIBUTES, DEFAULT_GROUPS } from './domain/defaults.ts';

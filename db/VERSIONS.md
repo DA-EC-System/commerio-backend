@@ -3,22 +3,42 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V129**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V132**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V129 · 21/11/2026 · san-pham-san-du-lieu
+## V132 · 21/11/2026 · san-pham-san-du-lieu
 
-`db/migrations/20261120221250_san-pham-san-du-lieu.sql` · viết tay
+`db/migrations/20261120221509_san-pham-san-du-lieu.sql` · viết tay
 
 - viết tay: RLS, hàm, trigger, dữ liệu
 - Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1).
 
-## V128 · 21/11/2026 · san-pham-san-theo-gian-hang
+## V131 · 21/11/2026 · san-pham-san-theo-gian-hang
 
-`db/migrations/20261120221244_san-pham-san-theo-gian-hang.sql` · sinh từ schema
+`db/migrations/20261120221503_san-pham-san-theo-gian-hang.sql` · sinh từ schema
 
 - + bảng `channel.shop_products`
 - `channel.listings`: + cột `shop_product_id`; + khoá ngoại `listings_shop_product_id_shop_products_id_fk`, `listings_shop_product_external_fk`; + index `listings_shop_product_id_index`
 - + 2 enum `channel`: shop_product_origin, shop_product_status
+
+## V130 · 21/11/2026 · ghep-truc-du-lieu
+
+`db/migrations/20261120215928_ghep-truc-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Ghép trục theo platform_kind cho spec có sẵn (#448, chỉ dữ liệu, chạy lại được): trục `__custom` của channel.product_specs đổi sang mã sales attribute chuẩn đầu tiên (theo attributes.platform_kind) mà leaf của spec có (kind = 'sales'), mỗi…
+
+## V129 · 21/11/2026 · anh-xa-truc-rls
+
+`db/migrations/20261120215924_anh-xa-truc-rls.sql` · viết tay
+
+- viết tay: RLS
+- Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/19 §3.3): RLS company_isolation cho channel.axis_mappings (vòng lặp của 0002 chỉ chạy một lần).
+
+## V128 · 21/11/2026 · anh-xa-truc
+
+`db/migrations/20261120215920_anh-xa-truc.sql` · sinh từ schema
+
+- + bảng `channel.axis_mappings`
 
 ## V127 · 21/11/2026 · anh-xa-thong-so-rls
 

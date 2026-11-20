@@ -143,3 +143,11 @@ export async function upsertPermissions(
     from jsonb_to_recordset(${JSON.stringify(items.map((i) => ({ c: i.externalCategoryId, s: i.status })))}::jsonb) as t(c text, s text)
     on conflict (shop_id, external_category_id) do update set status = excluded.status, checked_at = excluded.checked_at`);
 }
+
+/** Mọi spec của công ty trên một sàn, chỉ cột cần cho nguồn gợi ý category (#448). Gọi trong `withCompany`. */
+export async function specUsesOf(platform: Marketplace): Promise<{ productId: string; externalCategoryId: string; updatedAt: Date }[]> {
+  return getDb()
+    .select({ productId: productSpecs.productId, externalCategoryId: productSpecs.externalCategoryId, updatedAt: productSpecs.updatedAt })
+    .from(productSpecs)
+    .where(eq(productSpecs.platform, platform));
+}

@@ -394,3 +394,30 @@ export async function oldestActiveShopOn(platform: Marketplace): Promise<{ id: s
     .limit(1);
   return row;
 }
+
+/**
+ * Sales attribute đã gặp ở ít nhất một leaf của sàn: mã → một nhãn bất kỳ của mã đó (#448, route `axis-mappings`: kiểm mã
+ * hợp lệ, hiện nhãn). Bảng tham chiếu, đọc được cả trong `withCompany`.
+ */
+export async function salesLabelsOf(platform: Marketplace): Promise<Map<string, string>> {
+  const rows = await getDb()
+    .select({ code: platformCategoryAttributes.code, label: sql<string>`min(${platformCategoryAttributes.label})` })
+    .from(platformCategoryAttributes)
+    .where(and(eq(platformCategoryAttributes.platform, platform), eq(platformCategoryAttributes.kind, 'sales')))
+    .groupBy(platformCategoryAttributes.code);
+  return new Map(rows.map((r) => [r.code, r.label]));
+}
+
+/** Trạng thái và đường dẫn đã đồng bộ của các category (bảng tham chiếu); id không có dòng thì vắng trong Map (#448). */
+export async function categoryInfoOf(
+  platform: Marketplace,
+  externalIds: readonly string[],
+): Promise<Map<string, { status: 'active' | 'removed'; path: string | null }>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: platformCategories.externalId, status: platformCategories.status, path: platformCategories.path, syncedAt: platformCategories.syncedAt })
+    .from(platformCategories)
+    .where(and(eq(platformCategories.platform, platform), inArray(platformCategories.externalId, ids)));
+  return new Map(rows.map((r) => [r.id, { status: r.status as 'active' | 'removed', path: r.syncedAt ? r.path : null }]));
+}

@@ -78,6 +78,19 @@ describe('TikTok suggestCategories', () => {
     ]);
   });
 
+  it('gửi thêm mô tả (HTML đã escape) khi có; bỏ trường khi mô tả trống (#448)', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return json({ code: 0, message: 'Success', request_id: 'r', data: fixture('tiktok-suggestion.json') });
+    });
+    const methods = tiktokListingMethods(createTiktokClient(config, fetchFn));
+    await methods.suggestCategories!(TOKEN, { name: 'x'.repeat(30), imageUrl: null, description: 'Giày <b>da</b> thật' });
+    await methods.suggestCategories!(TOKEN, { name: 'x'.repeat(30), imageUrl: null, description: '   ' });
+    expect(bodies[0]!['description']).toBe('<p>Giày &lt;b&gt;da&lt;/b&gt; thật</p>');
+    expect(bodies[1]).not.toHaveProperty('description');
+  });
+
   it('không có leaf_category_id: rỗng', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => json({ code: 0, message: 'Success', request_id: 'r', data: { categories: [] } }));
     const methods = tiktokListingMethods(createTiktokClient(config, fetchFn));

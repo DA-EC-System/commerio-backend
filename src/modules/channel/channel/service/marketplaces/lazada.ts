@@ -43,7 +43,7 @@ import {
   type SettlementTxn,
   type TokenSet,
 } from './common.ts';
-import { lazadaCategoryNodes, lazadaLeafAttributes } from './lazada-categories.ts';
+import { lazadaCategoryNodes, lazadaLeafAttributes, lazadaVariantCapabilities } from './lazada-categories.ts';
 import { lazadaCategoryMismatch, lazadaReactivated, lazadaSkuViews, lazadaUnderReview } from './lazada-category-change.ts';
 import { type LazadaCreatedSku, associatedSkuId, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
@@ -1139,8 +1139,13 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return lazadaProductCategory(body.data);
     },
     suggestionRules: { needsImage: true },
+    // Lazada chỉ nhận trục là sale prop của category (Documents#214 mục 3).
+    standardSalesAttributes: { color: ['color_family'], size: ['size'], volume: ['volume'], flavor: ['flavor'] },
+    variantCapabilities: lazadaVariantCapabilities,
     async suggestCategories(accessToken, input) {
-      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl ?? '' };
+      // `image_url` bắt buộc khác rỗng (Documents#214 mục 2.3): service chặn `images_missing` trước; không có ảnh thì không gọi sàn.
+      if (!input.imageUrl) return [];
+      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl };
       try {
         return lazadaSuggestions((await call(config.apiUrl, '/product/category/suggestion/get', params, 'GET')).data);
       } catch (err) {

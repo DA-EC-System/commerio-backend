@@ -23,6 +23,7 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
   sku,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',

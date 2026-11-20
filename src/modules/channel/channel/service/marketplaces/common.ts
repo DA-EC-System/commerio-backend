@@ -2,7 +2,7 @@
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
-import type { PlatformAttribute } from '../../domain/product-spec.ts';
+import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
 import type { ResponsibleOrg } from '../../../../core/index.ts';
 
@@ -813,11 +813,21 @@ export interface MarketplaceAdapter {
    * Gợi ý category của sàn theo tên và ảnh đầu của sản phẩm (#400, Documents/21 §18.5), đúng thứ tự sàn trả. Sàn không đoán
    * được thì rỗng, không ném. `permissionStatuses`: quyền của gian hàng mang token với leaf đó (TikTok), sàn không có thì null.
    */
-  suggestCategories?(accessToken: string, input: { name: string; imageUrl: string | null }): Promise<CategorySuggestion[]>;
+  suggestCategories?(
+    accessToken: string,
+    input: { name: string; imageUrl: string | null; description?: string | null },
+  ): Promise<CategorySuggestion[]>;
   /** Category lá và attribute của sản phẩm `externalProductId` trên sàn (#400 lát 12); sàn không trả category thì null. */
   productCategory?(accessToken: string, externalProductId: string): Promise<RemoteProductCategory | null>;
   /** Điều kiện sàn đặt cho lời gọi gợi ý, app kiểm trước khi gọi: cần ảnh (Lazada), độ dài tên tối thiểu (TikTok 25). */
   readonly suggestionRules?: { needsImage?: true; minNameLength?: number };
+  /**
+   * Mã sales attribute mặc định của sàn cho từng loại thuộc tính phân loại của catalog (`platform_kind`), theo ưu tiên (#448,
+   * Documents/21 §18.8.3). Sàn không khai loại nào thì loại đó rơi về `customAxisName` hoặc `axis_unmapped`.
+   */
+  readonly standardSalesAttributes?: Partial<Record<PlatformKind, readonly string[]>>;
+  /** Khả năng khai biến thể của một category, tính từ attribute leaf (#448). Sàn không khai thì không xét `axis_shape`, `sales_required`. */
+  variantCapabilities?(leaf: readonly PlatformAttribute[]): VariantCapabilities;
   /**
    * Quyền category theo gian hàng (TikTok, A17): `categoryTree(token)` của gian hàng trả `permissionStatuses` cho từng node,
    * việc nền đẩy dùng để ghi `shop_category_permissions` trước khi đẩy. Sàn không có quyền theo gian hàng thì không khai.
