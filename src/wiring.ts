@@ -23,6 +23,7 @@ import {
   marketplaceSplitLevel,
   marketplaceSplitOrder,
   returnPoliciesOf,
+  seedSpecMappings,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
@@ -43,6 +44,12 @@ export type AppContext = ModuleContext &
   Required<Pick<PlatformContext, 'moduleData'>> &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
   Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>>;
+
+/** Dữ liệu có sẵn của công ty mới: catalog trước, rồi ánh xạ của channel (đọc thông số catalog vừa seed). Dùng cả ở seed demo. */
+export async function seedNewCompany(companyId: string): Promise<void> {
+  await seedCompanyDefaults(companyId);
+  await seedSpecMappings(companyId);
+}
 
 export function createModuleContext(): AppContext {
   return {
@@ -85,7 +92,8 @@ export function createModuleContext(): AppContext {
     soldQtyOf,
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` đọc sổ tiền của finance, không có dữ liệu riêng nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, inbox: hasInboxData, assistant: hasAssistantData },
-    // #447: công ty mới nhận nhóm hàng, thuộc tính chuẩn sàn, cài đặt sản phẩm trong giao dịch đăng ký.
-    seedCompanyDefaults,
+    // #447: công ty mới nhận nhóm hàng, thuộc tính chuẩn sàn, cài đặt sản phẩm trong giao dịch đăng ký; #509: sau đó ánh xạ
+    // thông số mặc định sang các sàn (channel), cùng giao dịch.
+    seedCompanyDefaults: seedNewCompany,
   };
 }

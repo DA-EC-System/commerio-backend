@@ -28,6 +28,9 @@ export const LOGICAL_REFS: Readonly<Record<string, string>> = {
   shop_id: 'channel.shops',
   supplier_id: 'product.suppliers',
   variant_id: 'product.product_variants',
+  // Ánh xạ thông số sang sàn (#509): thông số, lựa chọn ở schema product, channel dọn theo sự kiện catalog.
+  'channel.spec_field_mappings.field_id': 'product.spec_fields',
+  'channel.spec_option_mappings.option_id': 'product.spec_field_options',
   // Tên mang nghĩa riêng.
   'channel.listings.pending_variant_id': 'product.product_variants',
   'channel.price_calculations.fee_version_id': 'finance.config_versions',

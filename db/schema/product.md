@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V125**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V127**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -547,6 +547,7 @@ Ràng buộc và index:
 Trỏ vào bảng này:
 
 - `product.product_spec_values.option_id, field_id` (khoá ngoại viết tay)
+- `channel.spec_option_mappings.option_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.spec_fields`
 
@@ -582,6 +583,7 @@ Trỏ vào bảng này:
 - `product.group_spec_fields.field_id` (khoá ngoại)
 - `product.product_spec_values.field_id` (khoá ngoại)
 - `product.spec_field_options.field_id` (khoá ngoại)
+- `channel.spec_field_mappings.field_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.stock_document_lines`
 

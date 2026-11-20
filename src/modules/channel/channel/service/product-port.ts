@@ -10,6 +10,8 @@ import {
   fillProductFacts,
   productMediaGaps,
   type FactsSource,
+  getProductSpecs,
+  getSpecFields,
   getVariants,
   type PlatformProductInput,
   type ProductFacts,
@@ -19,6 +21,18 @@ import {
   type VariantSummary,
 } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import type { CatalogSpecValue } from '../domain/spec-resolve.ts';
+
+/** Thông số của công ty (cổng `getSpecFields` của catalog, Documents/21 §11.3). */
+export interface SpecFieldInfo {
+  id: string;
+  code: string;
+  name: string;
+  input: CatalogSpecValue['input'];
+  unit: string | null;
+  allowCustom: boolean;
+  options: { id: string; value: string; position: number }[];
+}
 
 export interface ListingVariant {
   id: string;
@@ -77,6 +91,14 @@ export interface ProductPort {
     products: readonly PlatformProductInput[],
     source: { shopId: string; shopName: string },
   ): Promise<CreateFromPlatformResult>;
+  /**
+   * Giá trị thông số của sản phẩm cha (cổng `getProductSpecs`, #509, Documents/21 §11.3), đã xếp theo mẫu nhóm. Thiếu (catalog
+   * chưa có cổng, bản giả của test) thì không có thông số catalog nào để tự điền.
+   */
+  productSpecs?(productIds: readonly string[]): Promise<Map<string, { groupId: string | null; values: CatalogSpecValue[] }>>;
+  /** Thư viện thông số của công ty (cổng `getSpecFields`, #509). Thiếu thì trang ánh xạ rỗng. */
+  /** `companyId` khi gọi ngoài `withCompany` (seed lúc tạo công ty): lọc tường minh, không dựa vào RLS. */
+  specFields?(opts?: { companyId?: string }): Promise<SpecFieldInfo[]>;
   /** Sản phẩm thiếu ảnh, thiếu bảng size (#498); thiếu (bản giả của test) thì ghép không tải ảnh sàn. */
   productMediaGaps?(productIds: readonly string[]): Promise<Map<string, { images: boolean; sizeChart: boolean }>>;
 }
@@ -108,6 +130,15 @@ function toListingVariant(v: Extended): ListingVariant {
 
 let override: ProductPort | null = null;
 
+/**
+ * Cổng thông số của catalog (#509, Documents/21 §11.3): `getProductSpecs`, `getSpecFields`. Không cần `ctx`, nên seed ánh xạ
+ * (gọi từ core lúc tạo công ty) dùng được. Bản giả của test (`override`) thắng.
+ */
+export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specFields'> {
+  if (override) return override;
+  return { productSpecs: getProductSpecs, specFields: getSpecFields };
+}
+
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
@@ -118,6 +149,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       productImageUrls,
       productSizeChartUrls,
       fillProductFacts,
+      ...catalogSpecPort(),
       createFromPlatform: createProductsFromPlatform,
       productMediaGaps,
     }

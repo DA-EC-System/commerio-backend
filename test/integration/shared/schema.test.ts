@@ -102,6 +102,8 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'shop_category_permissions',
     'shop_reauth_mails',
     'shops',
+    'spec_field_mappings',
+    'spec_option_mappings',
     'tags',
     'webhook_events',
   ],

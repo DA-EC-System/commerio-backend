@@ -5,7 +5,6 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import {
-  countryOption,
   CUSTOM_AXIS,
   type FieldSource,
   type MissingItem,
@@ -15,6 +14,7 @@ import {
   type SpecAttributeValue,
   specMissing,
 } from '../domain/product-spec.ts';
+import { type CatalogSpecValue, type ResolvedValue, resolvedValues, resolveSpecAttributes } from '../domain/spec-resolve.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
 import {
   findSpec,
@@ -26,10 +26,11 @@ import {
 } from '../repository/product-specs.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
-import type { MarketplaceAdapter, Responsible } from './marketplaces/index.ts';
+import { mappingsOf } from '../repository/spec-mappings.ts';
+import type { MarketplaceAdapter } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import type { SpecCheck } from './push-block.ts';
-import { type ListingVariant, productPort } from './product-port.ts';
+import { type ListingVariant, type ProductPort, productPort } from './product-port.ts';
 import { platformOf } from './shops.ts';
 
 export interface ProductSpec {
@@ -63,12 +64,15 @@ export interface RemoteSpec {
 
 export interface SpecView {
   spec: ProductSpec | null;
+  /** Giá trị từng attribute sau khi áp ghi đè, thông số catalog, hồ sơ công ty, mặc định sàn (#509, Documents/21 §18.8.2). */
+  resolved: Record<string, ResolvedValue>;
   missing: MissingItem[];
   remote: RemoteSpec | null;
 }
 
 /** Dữ liệu sản phẩm cần cho spec: trục phân loại, giá trị trục, xuất xứ, thương hiệu. */
 export interface SpecProduct {
+  productId: string;
   axes: { attributeId: string; name: string }[];
   valueIds: Map<string, string>; // attributeValueId → attributeId
   originCountry: string | null;
@@ -86,6 +90,7 @@ export function specProductOf(variants: readonly ListingVariant[]): SpecProduct 
   }
   const first = variants[0];
   return {
+    productId: first?.productId ?? '',
     axes: [...axes].map(([attributeId, name]) => ({ attributeId, name })),
     valueIds,
     originCountry: first?.originCountry ?? null,
@@ -95,34 +100,6 @@ export function specProductOf(variants: readonly ListingVariant[]): SpecProduct 
 
 const notFound = () => new AppError(404, 'not_found', 'Không tìm thấy sản phẩm');
 
-const optionsWithEn = (a: PlatformAttribute) => {
-  const raw = Array.isArray(a.raw['options']) ? (a.raw['options'] as { id?: unknown; en_name?: unknown }[]) : [];
-  const en = new Map(raw.map((o) => [String(o.id), typeof o.en_name === 'string' ? o.en_name : null]));
-  return a.options.map((o) => ({ ...o, enLabel: en.get(o.id) ?? null }));
-};
-
-/**
- * Giá trị lúc đẩy tự điền khi spec không có (A1, #292): hồ sơ công ty (`tier = 'company'`), xuất xứ đổi từ ISO sang lựa chọn
- * sàn (không khớp thì không đoán: vắng), thương hiệu của catalog, trống thì thương hiệu mặc định của sàn.
- */
-export function specFallbacks(
-  adapter: Pick<MarketplaceAdapter, 'responsibleFields' | 'productFields' | 'defaultBrand'>,
-  attributes: readonly PlatformAttribute[] | null,
-  product: Pick<SpecProduct, 'originCountry' | 'brand'>,
-  org: Responsible | null,
-): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
-  for (const [code, field] of Object.entries(adapter.responsibleFields ?? {})) out[code] = org?.[field] || null;
-  for (const [code, field] of Object.entries(adapter.productFields ?? {})) {
-    if (field === 'brand') out[code] = product.brand || adapter.defaultBrand || null;
-    else {
-      const attr = attributes?.find((a) => a.code === code);
-      out[code] = attr && product.originCountry ? countryOption(product.originCountry, optionsWithEn(attr)) : null;
-    }
-  }
-  return out;
-}
-
 /** Nhãn của một giá trị đã lưu (mã lựa chọn hoặc nhãn cũ); không khớp lựa chọn thì giữ nguyên chuỗi (tự nhập). */
 function labelOf(attr: PlatformAttribute | undefined, value: string): string {
   if (!attr) return value;
@@ -131,32 +108,51 @@ function labelOf(attr: PlatformAttribute | undefined, value: string): string {
 }
 
 /**
- * Giá trị gửi lên sàn theo mã attribute (AC-13, AC-15): spec (`tier = 'category'`, giá trị người dùng nhập ở `company`), rồi
- * xuất xứ, thương hiệu của catalog (A1; spec chép từ ghép danh mục còn khoá xuất xứ thì dùng khi catalog không đổi được, luật
- * chuyển tiếp AC-15). Select đổi sang nhãn của sàn (adapter tự đổi nhãn sang mã nếu sàn cần). Hồ sơ công ty adapter tự điền
- * (`NewProduct.responsible`).
+ * Tính `resolved` cho một lô sản phẩm trên một sàn (#509): đọc thông số catalog, ánh xạ của công ty, hồ sơ công ty một lần.
+ * Gọi trong `withCompany`.
+ */
+export type SpecResolver = (
+  product: SpecProduct,
+  attributes: readonly PlatformAttribute[] | null,
+  overrides: Record<string, SpecAttributeValue>,
+) => Record<string, ResolvedValue>;
+
+export async function specResolver(
+  port: Pick<ProductPort, 'productSpecs'>,
+  companyId: string,
+  adapter: MarketplaceAdapter,
+  platform: Marketplace,
+  productIds: readonly string[],
+): Promise<SpecResolver> {
+  const ids = [...new Set(productIds)];
+  const specs = ids.length && port.productSpecs ? await port.productSpecs(ids) : new Map<string, { values: CatalogSpecValue[] }>();
+  const fieldIds = [...new Set([...specs.values()].flatMap((s) => s.values.map((v) => v.fieldId)))];
+  const mappings = await mappingsOf(platform, fieldIds);
+  const org = adapter.responsibleFields ? await responsibleOrgOf(companyId) : null;
+  return (product, attributes, overrides) =>
+    resolveSpecAttributes(adapter, {
+      attributes,
+      overrides,
+      product: { brand: product.brand, originCountry: product.originCountry, specs: specs.get(product.productId)?.values ?? [] },
+      mappings,
+      org: org as Record<string, string | null> | null,
+    });
+}
+
+/**
+ * Giá trị gửi lên sàn theo mã attribute, lấy từ `resolved` (AC-13, AC-15 của #400; #509). Select đổi sang nhãn của sàn (adapter
+ * tự đổi nhãn sang mã nếu sàn cần). Hồ sơ công ty, thương hiệu mặc định adapter tự điền (`NewProduct.responsible`), nên bỏ.
  */
 export function pushAttributes(
-  adapter: Pick<MarketplaceAdapter, 'productFields' | 'defaultBrand'>,
   attributes: readonly PlatformAttribute[] | null,
-  spec: Pick<ProductSpecRow, 'attributes'>,
-  product: Pick<SpecProduct, 'originCountry' | 'brand'>,
+  resolved: Record<string, ResolvedValue>,
 ): Record<string, string | string[]> {
   const byCode = new Map((attributes ?? []).map((a) => [a.code, a]));
   const out: Record<string, string | string[]> = {};
-  for (const [code, value] of Object.entries(spec.attributes)) {
+  for (const [code, { value, source }] of Object.entries(resolved)) {
+    if (source === 'company' || source === 'default') continue;
     const attr = byCode.get(code);
     out[code] = Array.isArray(value) ? value.map((v) => labelOf(attr, v)) : labelOf(attr, value);
-  }
-  const fallbacks = specFallbacks({ ...adapter, responsibleFields: {} }, attributes, product, null);
-  for (const [code, field] of Object.entries(adapter.productFields ?? {})) {
-    const attr = byCode.get(code);
-    const fromCatalog = fallbacks[code];
-    if (field === 'brand') {
-      // Catalog có thương hiệu thì thắng; trống thì giữ giá trị cũ của spec chép, không có nữa thì để adapter tự điền mặc định.
-      if (product.brand) out[code] = product.brand;
-    } else if (fromCatalog) out[code] = labelOf(attr, fromCatalog);
-    // Catalog trống hoặc mã không đổi được: giữ khoá cũ của spec chép (nếu có), không gửi giá trị đoán.
   }
   return out;
 }
@@ -178,29 +174,23 @@ const toSpec = (r: ProductSpecRow, categoryPath: string | null): ProductSpec => 
 
 /** Phần còn thiếu của một spec theo attribute đã có trong bảng (chưa lấy thì chỉ xét category, trục). Gọi trong `withCompany`. */
 export async function missingOf(
-  adapter: MarketplaceAdapter,
   row: ProductSpecRow,
   product: SpecProduct,
-  org: Responsible | null,
-): Promise<{ missing: MissingItem[]; attributes: PlatformAttribute[] | null }> {
+  resolve: SpecResolver,
+): Promise<{ missing: MissingItem[]; attributes: PlatformAttribute[] | null; resolved: Record<string, ResolvedValue> }> {
   const category = await findCategory(row.platform, row.externalCategoryId);
   const attributes = category?.attributesFetchedAt ? await leafAttributesOf(row.platform, row.externalCategoryId) : null;
-  const missing = specMissing({
-    spec: row,
-    attributes,
-    axes: product.axes,
-    fallbacks: specFallbacks(adapter, attributes, product, org),
-  });
-  return { missing, attributes };
+  const resolved = resolve(product, attributes, row.attributes);
+  const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: resolvedValues(resolved) });
+  return { missing, attributes, resolved };
 }
 
 /** Spec kèm `missing` như route `GET` trả (cũng là `current` của 409 `version_conflict`). Gọi trong `withCompany`. */
-export async function specView(companyId: string, adapter: MarketplaceAdapter, row: ProductSpecRow | undefined, product: SpecProduct): Promise<SpecView> {
-  if (!row) return { spec: null, missing: [], remote: null };
-  const org = adapter.responsibleFields ? await responsibleOrgOf(companyId) : null;
-  const { missing } = await missingOf(adapter, row, product, org);
+export async function specView(row: ProductSpecRow | undefined, product: SpecProduct, resolve: SpecResolver): Promise<SpecView> {
+  if (!row) return { spec: null, resolved: {}, missing: [], remote: null };
+  const { missing, resolved } = await missingOf(row, product, resolve);
   const category = await findCategory(row.platform, row.externalCategoryId);
-  return { spec: toSpec(row, category && category.syncedAt ? category.path : null), missing, remote: await remoteOf(row) };
+  return { spec: toSpec(row, category && category.syncedAt ? category.path : null), resolved, missing, remote: await remoteOf(row) };
 }
 
 /** `remote` của spec: tên gian hàng hiện tại, gian hàng đã xoá thì tên lúc đọc. */
@@ -218,17 +208,14 @@ async function variantsOf(ctx: ModuleContext, productId: string): Promise<Listin
   return variants;
 }
 
-async function productOf(ctx: ModuleContext, productId: string): Promise<SpecProduct> {
-  return specProductOf(await variantsOf(ctx, productId));
-}
-
 /** Đọc spec của sản phẩm trên sàn; chưa có thì `spec: null`. */
 export async function getProductSpec(ctx: ModuleContext, companyId: string, productId: string, raw: string): Promise<SpecView> {
   const { platform, adapter } = platformOf(raw);
   return withCompany(companyId, async () => {
     const variants = await variantsOf(ctx, productId);
     const row = await findSpec(productId, platform);
-    return specView(companyId, adapter, row, specProductOf(variants));
+    const resolve = await specResolver(productPort(ctx), companyId, adapter, platform, [productId]);
+    return specView(row, specProductOf(variants), resolve);
   });
 }
 
@@ -246,29 +233,28 @@ const CASCADE_PATH = /^\d+:\d+(?:[,;]\d+:\d+)*$/;
 const hasValue = (v: SpecAttributeValue | undefined) =>
   Array.isArray(v) ? v.some((x) => x.trim() !== '') : typeof v === 'string' && v.trim() !== '';
 
+const sameValue = (a: SpecAttributeValue, b: SpecAttributeValue | undefined) =>
+  b !== undefined && (Array.isArray(a) ? [...a].sort().join(' ') : a) === (Array.isArray(b) ? [...b].sort().join(' ') : b);
+
 /**
- * Kiểm và chuẩn hoá spec theo attribute của leaf (AC-6, AC-7). Chỉ giữ `tier = 'category'`; `company` gửi trống hay trùng mặc
- * định thì bỏ (#292); `product` bỏ (catalog giữ). Select lưu mã lựa chọn. Trả lỗi theo ô.
+ * Kiểm và chuẩn hoá tập ghi đè theo attribute của leaf (AC-6, AC-7 của #400; #509, Documents/21 §18.8.2). `attributes` là toàn
+ * bộ tập ghi đè: khoá không gửi hoặc rỗng là không ghi đè; giá trị trùng giá trị của nguồn 2–4 (`defaults`: catalog, hồ sơ công
+ * ty, mặc định sàn) thì không lưu. Ghi đè được mọi attribute không phải `sales`, kể cả thương hiệu, xuất xứ. Select lưu mã lựa
+ * chọn. Bắt buộc kiểm trên giá trị sau khi áp ghi đè. Trả lỗi theo ô.
  */
 export function normalizeSpec(
   input: SpecInput,
   attributes: readonly PlatformAttribute[],
   product: SpecProduct,
-  defaults: Record<string, string | null>,
+  defaults: Record<string, SpecAttributeValue>,
 ): { values: Pick<SpecInput, 'attributes' | 'axisMap' | 'valueMap'>; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
   const out: Record<string, SpecAttributeValue> = {};
   const byCode = new Map(attributes.map((a) => [a.code, a]));
   for (const a of attributes) {
-    if (a.kind === 'sales' || a.tier === 'product') continue;
+    if (a.kind === 'sales') continue;
     const value = input.attributes[a.code];
     const key = `attributes.${a.code}`;
-    if (a.tier === 'company') {
-      const one = Array.isArray(value) ? value.join(',') : value?.trim();
-      if (one && one !== defaults[a.code]) out[a.code] = one;
-      else if (!defaults[a.code] && a.required) errors[key] = `Nhập ${a.label}`;
-      continue;
-    }
     if (!hasValue(value)) continue;
     const list = (Array.isArray(value) ? value : [value!]).map((v) => v.trim()).filter((v) => v !== '');
     // Cascade (Lazada propCascade, §18.5): lưu nguyên `path` tới cấp `leaf = true` (route `cascade`), một chuỗi các cặp
@@ -289,11 +275,12 @@ export function normalizeSpec(
       else if (a.allowCustom) ids.push(v);
       else errors[key] = `${a.label} không có trong lựa chọn của sàn`;
     }
-    out[a.code] = a.input === 'multiselect' ? ids : ids[0]!;
+    if (ids.length) out[a.code] = a.input === 'multiselect' ? ids : ids[0]!;
   }
+  for (const [code, value] of Object.entries(out)) if (sameValue(value, defaults[code])) delete out[code];
   // Bắt buộc, bắt buộc theo điều kiện (sales không tính, chỉ kiểm qua trục). `tier = 'product'` (xuất xứ) không báo theo ô: ô ở
   // tab spec chỉ đọc, điền ở trang sản phẩm; `missing` báo và chặn đẩy (review BE2 P2-7).
-  for (const m of specMissing({ spec: { attributes: out, axisMap: {}, categoryStatus: 'ok' }, attributes, axes: [], fallbacks: defaults })) {
+  for (const m of specMissing({ spec: { attributes: { ...defaults, ...out }, axisMap: {}, categoryStatus: 'ok' }, attributes, axes: [] })) {
     if (byCode.get(m.code)?.tier === 'product') continue;
     if (m.reason === 'required' || m.reason === 'required_when') errors[`attributes.${m.code}`] ??= `Nhập ${m.label}`;
   }
@@ -333,7 +320,7 @@ export async function putProductSpec(
 ): Promise<SpecView> {
   const { platform, adapter } = platformOf(raw);
   const { companyId } = actor;
-  const product = await withCompany(companyId, () => productOf(ctx, productId));
+  const product = await withCompany(companyId, async () => specProductOf(await variantsOf(ctx, productId)));
   const badCategory = () =>
     new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
       errors: { externalCategoryId: 'Category không phải category lá đang dùng được của sàn' },
@@ -348,15 +335,15 @@ export async function putProductSpec(
   if (!category || !category.isLeaf || category.status !== 'active') throw badCategory();
   const attributes = await leafAttributesOf(platform, input.externalCategoryId);
   return withCompany(companyId, async () => {
-    const org = adapter.responsibleFields ? await responsibleOrgOf(companyId) : null;
-    const defaults = specFallbacks(adapter, attributes, product, org);
+    const resolve = await specResolver(productPort(ctx), companyId, adapter, platform, [productId]);
+    const defaults = resolvedValues(resolve(product, attributes, {}));
     const { values, errors } = normalizeSpec(input, attributes, product, defaults);
     if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
     const before = await findSpec(productId, platform);
     const conflict = async () => {
       const current = await findSpec(productId, platform);
       return new AppError(409, 'version_conflict', 'Thông tin sàn của sản phẩm vừa được người khác sửa', {
-        current: current ? (await specView(companyId, adapter, current, product)).spec : null,
+        current: current ? (await specView(current, product, resolve)).spec : null,
       });
     };
     let row: ProductSpecRow | undefined;
@@ -379,7 +366,7 @@ export async function putProductSpec(
       before: before ? { externalCategoryId: before.externalCategoryId, attributes: before.attributes, version: before.version } : null,
       after: { externalCategoryId: row.externalCategoryId, attributes: row.attributes, version: row.version },
     });
-    return specView(companyId, adapter, row, product);
+    return specView(row, product, resolve);
   });
 }
 
@@ -388,6 +375,7 @@ export interface SpecCheckFull extends SpecCheck {
   row: ProductSpecRow;
   attributes: PlatformAttribute[] | null;
   product: SpecProduct;
+  resolved: Record<string, ResolvedValue>;
 }
 
 /**
@@ -395,13 +383,14 @@ export interface SpecCheckFull extends SpecCheck {
  * đã có, quyền category đã ghi của gian hàng, luật bảng kích cỡ của category (`platform_categories`). Gọi trong `withCompany`. `variants`: mọi biến thể của các sản phẩm cần xét.
  */
 export async function specChecks(
+  port: Pick<ProductPort, 'productSpecs'>,
   shop: { id: string; companyId: string; platform: Marketplace },
   adapter: MarketplaceAdapter,
   variants: readonly ListingVariant[],
 ): Promise<Map<string, SpecCheckFull>> {
   const specs = await specsOf([...new Set(variants.map((v) => v.productId))], shop.platform);
   if (!specs.size) return new Map();
-  const org = adapter.responsibleFields ? await responsibleOrgOf(shop.companyId) : null;
+  const resolve = await specResolver(port, shop.companyId, adapter, shop.platform, [...specs.keys()]);
   const permissions = await permissionsOf(shop.id, [...specs.values()].map((s) => s.externalCategoryId));
   const byProduct = new Map<string, ListingVariant[]>();
   for (const v of variants) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
@@ -423,7 +412,8 @@ export async function specChecks(
     const vs = byProduct.get(productId) ?? [];
     const product = specProductOf(vs);
     const { category, attributes } = await leafOf(row.externalCategoryId);
-    const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: specFallbacks(adapter, attributes, product, org) });
+    const resolved = resolve(product, attributes, row.attributes);
+    const missing = specMissing({ spec: row, attributes, axes: product.axes, fallbacks: resolvedValues(resolved) });
     out.set(productId, {
       externalCategoryId: row.externalCategoryId,
       missing,
@@ -432,6 +422,7 @@ export async function specChecks(
       row,
       attributes,
       product,
+      resolved,
     });
   }
   return out;
