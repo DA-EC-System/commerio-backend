@@ -756,9 +756,14 @@ export interface MarketplaceAdapter {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
-    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+    /**
+     * `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. `images`: ảnh minh chứng đã nằm trên
+     * sàn (chuỗi `uploadImage` trả), chỉ có khi sàn khai `returnImageTypes` (#437).
+     */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
+  /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
+  readonly returnImageTypes?: readonly string[];
   /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   /** Lịch sử đơn ngược phía sàn (#202, §20.1). */

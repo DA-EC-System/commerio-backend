@@ -17,6 +17,7 @@ export {
   attachmentsOf,
   confirmUploads,
   type EntityRef,
+  fileLinks,
   fileProblem,
   hasAttachments,
   MAX_ATTACHMENTS,

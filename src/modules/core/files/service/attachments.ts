@@ -145,13 +145,18 @@ export async function hasAttachments(entity: EntityRef): Promise<boolean> {
 }
 
 /**
- * Tệp của chứng từ kèm link ký sẵn 15 phút (ký trong máy, không gọi mạng). Gọi trong `withCompany`. Chứng từ không có
- * tệp thì không cần kho; có tệp mà kho chưa cấu hình thì 503.
+ * Link ký sẵn 15 phút của các tệp theo đúng thứ tự `fileIds` (#437: gửi ảnh minh chứng lên sàn trước khi gắn vào chứng
+ * từ). Link chỉ để dùng ngay, không lưu, không log. Id lạ, tệp công ty khác bị bỏ; bên gọi đã kiểm `attachmentProblem`.
+ * Gọi trong `withCompany`.
  */
-export async function attachmentsOf(entity: EntityRef): Promise<Attachment[]> {
-  requireCompanyId('attachmentsOf');
-  const rows = await attachedFiles(entity);
-  if (rows.length === 0) return [];
+export async function fileLinks(fileIds: readonly string[]): Promise<Attachment[]> {
+  requireCompanyId('fileLinks');
+  const byId = new Map((await findFiles(fileIds.filter(isUuid))).map((f) => [f.id, f]));
+  const rows = fileIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+  return rows.length ? sign(rows) : [];
+}
+
+async function sign(rows: readonly FileRow[]): Promise<Attachment[]> {
   const config = requireStorage();
   return Promise.all(
     rows.map(async (file) => ({
@@ -165,4 +170,14 @@ export async function attachmentsOf(entity: EntityRef): Promise<Attachment[]> {
       ),
     })),
   );
+}
+
+/**
+ * Tệp của chứng từ kèm link ký sẵn 15 phút (ký trong máy, không gọi mạng). Gọi trong `withCompany`. Chứng từ không có
+ * tệp thì không cần kho; có tệp mà kho chưa cấu hình thì 503.
+ */
+export async function attachmentsOf(entity: EntityRef): Promise<Attachment[]> {
+  requireCompanyId('attachmentsOf');
+  const rows = await attachedFiles(entity);
+  return rows.length ? sign(rows) : [];
 }
