@@ -12,6 +12,8 @@ const RLS_EXCEPTIONS: Record<string, string> = {
 /** Quyền của commerio_app khác mặc định (SELECT, INSERT, UPDATE, DELETE). */
 const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'core.refresh_tokens': [],
+  // Lần đăng ký chờ mã (#459): mật khẩu đã băm, chỉ luồng đăng ký (role chủ bảng) đụng tới.
+  'core.registrations': [],
   'core.companies': ['SELECT'],
   'core.permissions': ['SELECT'],
   'core.audit_logs': ['SELECT', 'INSERT'],

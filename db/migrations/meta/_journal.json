@@ -778,6 +778,20 @@
       "when": 1795163090797,
       "tag": "20261120082450_mst-unique",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1795164116491,
+      "tag": "20261120084156_dang-ky-cho-ma",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1795164124552,
+      "tag": "20261120084204_dang-ky-cho-ma-quyen",
+      "breakpoints": true
     }
   ]
 }
