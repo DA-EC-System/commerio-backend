@@ -9,7 +9,8 @@ name: Migration regen
 
 on:
   push:
-    branches: [main, ci/migration-regen]  # THỬ: bỏ trước khi merge
+    branches: [main]
+    paths: ['db/migrations/**']
   workflow_dispatch:
     inputs:
       pr:
@@ -23,7 +24,7 @@ concurrency:
 permissions: {}
 
 env:
-  BASE_BRANCH: tmp/regen-base  # THỬ: trả về main trước khi merge
+  BASE_BRANCH: main
 
 jobs:
   list:
