@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import request from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HoldJob } from '#src/modules/core/index.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { CATEGORY_APPLY_ATTEMPTS, runCategoryApply } from '#src/modules/channel/channel/service/category-apply.ts';
@@ -11,7 +11,9 @@ import {
   type CategoryChangeInput,
   type CategoryChangeResult,
   MarketplaceError,
+  type RemoteState,
 } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import type { CategoryApplyJob } from '#src/modules/channel/channel/service/shop-jobs.ts';
@@ -371,15 +373,49 @@ describe('việc nền channel.category_apply (#467)', () => {
     expect(changeCategory).toHaveBeenCalledTimes(1);
   });
 
-  it('sàn không có bản sửa chờ duyệt (không khai `contentRevision`, như Lazada) → không ghi `auditing`, lượt đổi sau không bị chặn', async () => {
-    registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop', getSeller: seller, changeCategory, uploadImage, getSkus: async () => [] }));
-    try {
-      const { id, job } = await queued();
+  describe('sàn không có bản sửa chờ duyệt (không khai `contentRevision`, như Lazada: đổi xong áp ngay)', () => {
+    const remote = new Map<string, RemoteState>();
+    const lazadaLike = fakeAdapter({
+      name: 'Lazada',
+      getSeller: seller,
+      changeCategory,
+      uploadImage,
+      updatePriceQuantity: async (_t: string, items: readonly { externalSkuId: string }[]) =>
+        items.map((it) => ({ externalSkuId: it.externalSkuId, ok: true as const })),
+      getSkus: async (_t: string, sellerSkus: readonly string[]) =>
+        sellerSkus.map((sellerSku) => ({
+          externalProductId: 'P', externalSkuId: `S-${sellerSku}`, sellerSku, title: 'Áo thun', quantity: 7,
+          state: remote.get(sellerSku) ?? 'live', rejectReason: null,
+        })),
+    });
+    beforeEach(() => registerAdapter('tiktok', lazadaLike));
+    afterEach(() => registerAdapter('tiktok', tiktokLike));
+
+    it('sàn nhận, đọc lại khớp → không ghi `auditing`, lượt đổi sau không bị chặn', async () => {
+      const { id, job, productId } = await queued();
       await runCategoryApply(port, job);
       expect(await row(id)).toMatchObject({ status: 'live', category_change: null, revision_status: null });
-    } finally {
-      registerAdapter('tiktok', tiktokLike);
-    }
+      expect((await apply(productId, 1)).status).not.toBe(409);
+    });
+
+    it('sàn ngừng bán để duyệt (Pending QC) → `under_review` không kèm `auditing`; lượt đồng bộ đọc sàn đã duyệt thì về `live`', async () => {
+      const shopId = await connect('tiktok');
+      const p = await product();
+      const id = await listing(p.v1, shopId, { external_sku_id: `S-${p.v1.sku}` });
+      expect((await apply(p.productId, 1)).status).toBe(202);
+      const job = (await jobsOf(p.productId)).find((j) => j.shopId === shopId)!;
+      onChange = async () => ({ underReview: true, mismatch: [] });
+      await runCategoryApply(port, job);
+      expect(await row(id)).toMatchObject({ status: 'under_review', category_change: null, revision_status: null });
+      // Sàn còn duyệt: giữ nguyên
+      remote.set(p.v1.sku, 'review');
+      await syncListings(port, company.companyId, shopId);
+      expect(await row(id)).toMatchObject({ status: 'under_review' });
+      // Sàn duyệt xong (Lazada `Active`): lượt đồng bộ theo lịch chuyển về `live`
+      remote.set(p.v1.sku, 'live');
+      await syncListings(port, company.companyId, shopId);
+      expect(await row(id)).toMatchObject({ status: 'live', revision_status: null });
+    });
   });
 
   it('sàn ngừng bán để duyệt (`underReview`) → listing `live` chuyển `under_review`', async () => {
