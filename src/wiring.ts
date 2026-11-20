@@ -85,7 +85,7 @@ export function createModuleContext(): AppContext {
     listingInUse,
     // #242: catalog (lớp dưới) gợi ý ngưỡng tồn theo số bán 30 ngày của sales khi sửa hàng loạt.
     soldQtyOf,
-    // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
+    // #152: phân hệ đã có dữ liệu thì không tắt được. `report` đọc sổ tiền của finance, không có dữ liệu riêng nên không có hàm (luôn tắt được).
     moduleData: { purchasing: hasPurchasingData, inbox: hasInboxData, assistant: hasAssistantData },
     // #447: công ty mới nhận nhóm hàng, thuộc tính chuẩn sàn, cài đặt sản phẩm trong giao dịch đăng ký.
     seedCompanyDefaults,
