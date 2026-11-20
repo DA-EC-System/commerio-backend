@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
+import { MISSING_REASONS } from '../domain/product-spec.ts';
 
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
@@ -904,7 +905,7 @@ export const ProductSpecView = z
         .object({
           code: z.string(),
           label: z.string(),
-          reason: z.enum(['required', 'required_when', 'axis_unmapped', 'category_changed', 'category_removed']),
+          reason: z.enum(MISSING_REASONS),
         })
         .strict(),
     ),

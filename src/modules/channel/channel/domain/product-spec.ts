@@ -79,6 +79,19 @@ export interface PlatformAttribute {
 /** Trục phân loại tự đặt, không ánh xạ sang sales attribute nào của sàn. */
 export const CUSTOM_AXIS = '__custom';
 
+/** Loại thuộc tính phân loại của catalog (`attributes.platform_kind`) dùng để ghép trục với sales attribute của sàn (#448). */
+export type PlatformKind = 'color' | 'size' | 'volume' | 'flavor';
+
+/**
+ * Khả năng khai biến thể của một category (#448, Documents/21 §18.8.3): số trục tối đa, sàn có nhận tên trục tự đặt không,
+ * sales attribute bắt buộc phải có trong `axisMap`.
+ */
+export interface VariantCapabilities {
+  maxAxes: number;
+  customAxisName: boolean;
+  salesRequired: string[];
+}
+
 /**
  * Chuẩn hoá đường dẫn để tìm không dấu: bỏ dấu (NFD), đổi `đ`/`Đ` → `d` (NFD không tách `đ`, G2.14), chữ thường, gộp khoảng
  * trắng. Dùng cho cột `path_search` và chuỗi tìm của người dùng.
@@ -165,7 +178,16 @@ export function remoteSpecAttributes(
   return out;
 }
 
-export type MissingReason = 'required' | 'required_when' | 'axis_unmapped' | 'category_changed' | 'category_removed';
+export const MISSING_REASONS = [
+  'required',
+  'required_when',
+  'axis_unmapped',
+  'category_changed',
+  'category_removed',
+  'sales_required',
+  'axis_shape',
+] as const;
+export type MissingReason = (typeof MISSING_REASONS)[number];
 export interface MissingItem {
   code: string;
   label: string;
@@ -187,6 +209,8 @@ export interface SpecMissingInput {
    * (`tier = 'product'`; Lazada `brand` trống thì "No Brand"). Có giá trị dự phòng thì attribute không tính là thiếu.
    */
   fallbacks?: Readonly<Record<string, string | null | undefined>>;
+  /** Khả năng khai biến thể của category (#448); không có (null) thì không xét `sales_required`, `axis_shape`, `__custom` luôn hợp lệ. */
+  caps?: VariantCapabilities | null;
 }
 
 const hasValue = (v: SpecAttributeValue | string | null | undefined): boolean =>
@@ -203,7 +227,7 @@ const missingLabel = (a: Pick<PlatformAttribute, 'label' | 'tier'>) => (a.tier =
  * chưa ánh xạ hoặc trỏ tới sales attribute leaf không còn.
  */
 export function specMissing(input: SpecMissingInput): MissingItem[] {
-  const { spec, attributes, axes, fallbacks = {} } = input;
+  const { spec, attributes, axes, fallbacks = {}, caps = null } = input;
   const out: MissingItem[] = [];
   if (spec.categoryStatus === 'changed') {
     out.push({ code: CATEGORY_CODE, label: 'Category trên sàn đã đổi, chọn lại category', reason: 'category_changed' });
@@ -224,8 +248,20 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
   const salesCodes = attributes ? new Set(attributes.filter((a) => a.kind === 'sales').map((a) => a.code)) : null;
   for (const axis of axes) {
     const target = spec.axisMap[axis.attributeId];
-    const mapped = target != null && (target === CUSTOM_AXIS || salesCodes === null || salesCodes.has(target));
+    const customOk = target === CUSTOM_AXIS && (caps === null || caps.customAxisName);
+    const mapped = target != null && (customOk || (target !== CUSTOM_AXIS && (salesCodes === null || salesCodes.has(target))));
     if (!mapped) out.push({ code: axis.attributeId, label: axis.name, reason: 'axis_unmapped' });
+  }
+  if (caps) {
+    const used = new Set(Object.values(spec.axisMap));
+    for (const code of caps.salesRequired) {
+      if (used.has(code)) continue;
+      const label = attributes?.find((a) => a.code === code)?.label ?? code;
+      out.push({ code, label, reason: 'sales_required' });
+    }
+    if (axes.length > caps.maxAxes) {
+      out.push({ code: 'axes', label: `Sản phẩm có ${axes.length} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
+    }
   }
   return out;
 }
