@@ -15,14 +15,12 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
   id: randomUUID(),
   productId,
   productName: 'Áo thun',
   sku,
-  categoryId,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
   attributes: [],

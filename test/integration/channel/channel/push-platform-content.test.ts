@@ -24,7 +24,6 @@ const variant = (): ListingVariant => {
     productId: randomUUID(),
     productName: 'Áo thun',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
     attributes: [],

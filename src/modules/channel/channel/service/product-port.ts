@@ -19,7 +19,6 @@ export interface ListingVariant {
   /** Mã cha của sản phẩm (#400 A5). */
   productCode: string;
   sku: string;
-  categoryId: string;
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
   /** Giá trị thuộc tính theo `position` (#400: ánh xạ trục biến thể sang sales attribute của sàn). */
@@ -66,7 +65,6 @@ function toListingVariant(v: Extended): ListingVariant {
     productName: v.productName,
     productCode: v.productCode,
     sku: v.sku,
-    categoryId: v.categoryId,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
     attributes: v.attributes.map(({ attributeId, attributeName, valueId, value }) => ({ attributeId, attributeName, valueId, value })),
     archived: v.archived,

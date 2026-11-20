@@ -3,7 +3,7 @@ import { boolean, check, date, index, integer, jsonb, pgSchema, text, timestamp,
 import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module con `purchasing` khai báo trong schema của module lớn `product` (Documents/19 D1).
-// Số chứng từ cấp từ `product.doc_counters` (inventory). `variant_id`, `category_id` (catalog), người làm (staff)
+// Số chứng từ cấp từ `product.doc_counters` (inventory). `variant_id`, `group_id` (catalog), người làm (staff)
 // là uuid thường: không đặt khoá ngoại sang module con khác.
 export const purchasingSchema = pgSchema('product');
 
@@ -89,7 +89,7 @@ export const purchaseRequestLines = purchasingSchema.table(
       .references(() => purchaseRequests.id),
     variantId: uuid('variant_id'),
     newProductName: text('new_product_name'),
-    newCategoryId: uuid('new_category_id'),
+    newGroupId: uuid('new_group_id'),
     newVariantAttrs: jsonb('new_variant_attrs'),
     orderedQty: integer('ordered_qty').notNull(),
     receivedQty: integer('received_qty').notNull().default(0),

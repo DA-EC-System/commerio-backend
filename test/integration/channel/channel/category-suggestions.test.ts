@@ -59,7 +59,6 @@ function product(name: string, withImage: boolean): string {
     productName: name,
     productCode: 'SP-TEST',
     sku: `SKU-${productId.slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     attributes: [],
     archived: false,

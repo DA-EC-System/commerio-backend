@@ -58,7 +58,6 @@ async function setup(current: string | null, specCategory: string | null, remote
     productId: randomUUID(),
     productName: 'Bình',
     sku: `CS-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     productCode: 'SP-TEST',
     attributes: [],

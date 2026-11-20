@@ -2,15 +2,18 @@
 import { expect } from 'vitest';
 import { api, type Res, uniq } from './client.ts';
 
-/** Danh mục và sản phẩm một biến thể mới; trả id biến thể. */
+/** Nhóm hàng và sản phẩm một biến thể mới; trả id biến thể. */
 export async function newVariant(ceo: string): Promise<string> {
   const code = uniq();
-  const category = await api(ceo).post('/catalog/categories', { name: `QA ${code}`, skuPattern: `QA${code}-{SEQ:3}` });
-  expect(category.status, JSON.stringify(category.body)).toBe(201);
+  const group = await api(ceo).post('/catalog/groups', { name: `QA ${code}` });
+  expect(group.status, JSON.stringify(group.body)).toBe(201);
   const product = await api(ceo).post('/catalog/products', {
     name: `Áo thun QA ${code}`,
-    categoryId: category.body.id,
-    variants: [{ attributeValueIds: [] }],
+    groupId: group.body.id,
+    description: '',
+    imageFileIds: [],
+    axes: [],
+    variants: [{ options: [] }],
   });
   expect(product.status, JSON.stringify(product.body)).toBe(201);
   return product.body.variants[0].id as string;

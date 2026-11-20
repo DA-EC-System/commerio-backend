@@ -26,7 +26,7 @@ import { checkReplacementSource, linkReplacement } from './supplier-returns.ts';
 
 export interface RequestLineInput {
   variantId?: string | null | undefined;
-  newProduct?: { name: string; categoryId: string } | null | undefined;
+  newProduct?: { name: string; groupId: string } | null | undefined;
   quantity: number;
   /** Số nguyên đồng. */
   unitCost: number;
@@ -79,7 +79,7 @@ async function checkSupplier(supplierId: string, errors: Record<string, string>)
   else if (!supplier.active) errors.supplierId = 'Nhà cung cấp đã ngừng giao dịch';
 }
 
-/** Kiểm dòng cần đọc DB (biến thể, danh mục, tên sản phẩm mới); lỗi theo `lines.<i>.<trường>`. */
+/** Kiểm dòng cần đọc DB (biến thể, nhóm hàng, tên sản phẩm mới); lỗi theo `lines.<i>.<trường>`. */
 async function buildLines(input: RequestInput): Promise<NewLine[]> {
   const errors: Record<string, string> = {};
   await checkSupplier(input.supplierId, errors);
@@ -103,13 +103,13 @@ async function buildLines(input: RequestInput): Promise<NewLine[]> {
 
   const newIndexes = input.lines.flatMap((l, i) => (l.newProduct ? [i] : []));
   const newErrors = await validateNewProducts(newIndexes.map((i) => input.lines[i]!.newProduct!));
-  for (const [k, e] of newErrors) errors[`lines.${newIndexes[k]}.newProduct.${e.field}`] = e.message;
+  for (const [k, e] of newErrors) errors[`lines.${newIndexes[k]}${e.field ? `.newProduct.${e.field}` : ''}`] = e.message;
 
   if (Object.keys(errors).length) throw invalid(errors);
   return input.lines.map((l) => ({
     variantId: l.variantId ?? null,
     newProductName: l.newProduct?.name ?? null,
-    newCategoryId: l.newProduct?.categoryId ?? null,
+    newGroupId: l.newProduct?.groupId ?? null,
     orderedQty: l.quantity,
     unitPrice: String(l.unitCost),
   }));
@@ -219,7 +219,7 @@ export async function addLine(
     const existing = lines.find((l) => l.variantId === variant!.id);
     if (existing) await updateLine(existing.id, { orderedQty: Math.min(MAX_QTY, existing.orderedQty + input.quantity) });
     else {
-      const line = { variantId: variant!.id, newProductName: null, newCategoryId: null, orderedQty: input.quantity, unitPrice };
+      const line = { variantId: variant!.id, newProductName: null, newGroupId: null, orderedQty: input.quantity, unitPrice };
       await insertLines(actor.companyId, id, [line], lines.length);
     }
     if (created) {
