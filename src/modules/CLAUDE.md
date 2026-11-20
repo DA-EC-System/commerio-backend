@@ -1,6 +1,6 @@
 # src/modules/
 
-6 module lớn gồm 18 module con (`Documents/17` mục 2). Mỗi module lớn một schema PostgreSQL cùng tên (`Documents/19` D1); module con có đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
+6 module lớn gồm 19 module con (`Documents/17` mục 2). Mỗi module lớn một schema PostgreSQL cùng tên (`Documents/19` D1); module con có đường dẫn `/api/v1/<con>`. `registry.ts` gộp mảng `<lớn>Modules` của 6 module lớn cho `app.ts`.
 
 ## Cấu trúc
 
