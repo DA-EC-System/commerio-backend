@@ -1,6 +1,6 @@
 {
-  "id": "4fe56f55-6df8-40c7-b483-1ea63b635597",
-  "prevId": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
+  "id": "4c01acb2-f412-45dc-8a8a-7e9c2bf791d8",
+  "prevId": "d53cfae5-aa21-4c45-b4bc-40798d3a41b7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -330,6 +330,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "category_change": {
+          "name": "category_change",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "content_source": {
           "name": "content_source",
           "type": "listing_content_source",
@@ -564,6 +570,10 @@
         "listings_remote_title": {
           "name": "listings_remote_title",
           "value": "(\"channel\".\"listings\".\"remote_title_at_match\" is not null or (\"channel\".\"listings\".\"remote_title_en_at_match\" is null and \"channel\".\"listings\".\"remote_title_matched_at\" is null))\n        and (\"channel\".\"listings\".\"remote_title_changed_at\" is null or \"channel\".\"listings\".\"remote_title_matched_at\" is not null)"
+        },
+        "listings_category_change": {
+          "name": "listings_category_change",
+          "value": "\"channel\".\"listings\".\"category_change\" is null or (\"channel\".\"listings\".\"status\" <> 'delisted' and \"channel\".\"listings\".\"category_change\" ->> 'status' in ('queued', 'failed', 'mismatch'))"
         },
         "listings_reject_reason": {
           "name": "listings_reject_reason",
@@ -3482,6 +3492,148 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "core.registrations": {
+      "name": "registrations",
+      "schema": "core",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_name": {
+          "name": "company_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tax_code": {
+          "name": "tax_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "otp_hash": {
+          "name": "otp_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "otp_requested_at": {
+          "name": "otp_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "otp_expires_at": {
+          "name": "otp_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "otp_attempts": {
+          "name": "otp_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "otp_send_count": {
+          "name": "otp_send_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "account_notice_at": {
+          "name": "account_notice_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "registrations_email_created_at_index": {
+          "name": "registrations_email_created_at_index",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "registrations_created_at_index": {
+          "name": "registrations_created_at_index",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "registrations_otp_counters_range": {
+          "name": "registrations_otp_counters_range",
+          "value": "\"core\".\"registrations\".\"otp_attempts\" between 0 and 5 and \"core\".\"registrations\".\"otp_send_count\" between 1 and 5"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.companies": {
@@ -9534,13 +9686,6 @@
           "notNull": true,
           "default": false
         },
-        "cancelling": {
-          "name": "cancelling",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "platform_cancelled": {
           "name": "platform_cancelled",
           "type": "boolean",
@@ -9743,6 +9888,14 @@
       },
       "policies": {},
       "checkConstraints": {
+        "orders_cancel_pending_open": {
+          "name": "orders_cancel_pending_open",
+          "value": "not \"order\".\"orders\".\"cancel_pending\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
+        },
+        "orders_cancel_requested_open": {
+          "name": "orders_cancel_requested_open",
+          "value": "not \"order\".\"orders\".\"cancel_requested\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
+        },
         "orders_outcome": {
           "name": "orders_outcome",
           "value": "(\"order\".\"orders\".\"status\" = 'completed') = (\"order\".\"orders\".\"outcome\" is not null)"
