@@ -92,6 +92,50 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * Phiên bản của migration: vị trí trong journal tính từ 1 (`idx` + 1), viết `V105`. Journal của `main` chỉ thêm vào cuối
+ * (db:ci-check kiểm) nên số không đổi sau khi merge; migration trên nhánh mang số tạm, `db:regen` có thể đẩy lên.
+ */
+export function versionLabel(entry: Pick<JournalEntry, 'idx'>): string {
+  return `V${entry.idx + 1}`;
+}
+
+export type MigrationKind = 'generated' | 'custom';
+
+/**
+ * Loại của từng migration trong journal: `custom` (viết tay bằng `--custom`: RLS, quyền, trigger, dữ liệu) khi snapshot
+ * giống hệt snapshot cha, còn lại `generated` (drizzle-kit sinh từ schema.ts). Thiếu snapshot thì coi là `generated`.
+ */
+export function migrationKinds(dir: string): Map<string, MigrationKind> {
+  const entries = readJournal(dir).entries;
+  const snapshots = new Map<string, Snapshot>();
+  const bodies = new Map<string, string>();
+  for (const entry of entries) {
+    const file = snapshotName(entry.tag);
+    if (!existsSync(join(dir, 'meta', file))) continue;
+    const snapshot = readSnapshot(dir, file);
+    snapshots.set(entry.tag, snapshot);
+    bodies.set(snapshot.id, snapshotBody(snapshot));
+  }
+  const kinds = new Map<string, MigrationKind>();
+  for (const entry of entries) {
+    const snapshot = snapshots.get(entry.tag);
+    // Migration đầu tiên: cha là snapshot rỗng (chưa có bảng, enum…), vd `0000_mo-rong` chỉ tạo extension là viết tay.
+    const parent = snapshot && snapshot.prevId === ROOT_SNAPSHOT_ID ? emptySnapshotBody(snapshot) : snapshot ? bodies.get(snapshot.prevId) : undefined;
+    kinds.set(entry.tag, snapshot && parent !== undefined && parent === bodies.get(snapshot.id) ? 'custom' : 'generated');
+  }
+  return kinds;
+}
+
+/** Thân snapshot cùng khuôn với `snapshot` nhưng chưa có đối tượng nào. */
+function emptySnapshotBody(snapshot: Snapshot): string {
+  const empty: Snapshot = { ...snapshot };
+  for (const key of ['tables', 'enums', 'schemas', 'sequences', 'roles', 'policies', 'views']) {
+    if (key in empty) empty[key] = {};
+  }
+  return snapshotBody(empty);
+}
+
 /** Giờ UTC dễ đọc của `when` (ms). */
 export function formatWhen(when: number): string {
   return new Date(when).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');

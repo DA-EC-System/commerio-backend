@@ -6,7 +6,7 @@
 //   if (!lastDbMigration || Number(lastDbMigration.created_at) < migration.folderMillis)
 // với `folderMillis` là `when` trong journal. Migration có `when` nhỏ hơn hoặc bằng migration mới nhất đã chạy bị bỏ qua
 // mà không báo gì. Ở đây gọi chúng là "lệch thứ tự".
-import { formatWhen, type JournalEntry } from './journal.ts';
+import { formatWhen, versionLabel, type JournalEntry } from './journal.ts';
 
 /** Một dòng của `drizzle.__drizzle_migrations`. `created_at` là bigint nên pg trả về chuỗi. */
 export interface AppliedRow {
@@ -36,6 +36,13 @@ export interface MigrationStatus {
   nullRows: AppliedRow[];
   /** `created_at` lớn nhất trên DB, null nếu chưa chạy gì. */
   lastAppliedAt: number | null;
+  /**
+   * Migration đã chạy đứng sau cùng trong journal: phiên bản của DB (`versionLabel`). Null nếu chưa chạy gì. Có migration
+   * lệch thứ tự thì DB thiếu chúng dù số này cao hơn; formatStatus in kèm danh sách thiếu.
+   */
+  dbVersion: LocalMigration | null;
+  /** Migration cuối của journal: phiên bản của mã nguồn. */
+  latest: LocalMigration | null;
 }
 
 /**
@@ -58,7 +65,18 @@ export function compareWithDb(local: LocalMigration[], rows: AppliedRow[]): Migr
   }, null);
 
   const matched = new Set<AppliedRow>();
-  const status: MigrationStatus = { applied: [], pending: [], outOfOrder: [], unknownRows: [], hashChanged: [], sameHashOtherWhen: [], nullRows, lastAppliedAt };
+  const status: MigrationStatus = {
+    applied: [],
+    pending: [],
+    outOfOrder: [],
+    unknownRows: [],
+    hashChanged: [],
+    sameHashOtherWhen: [],
+    nullRows,
+    lastAppliedAt,
+    dbVersion: null,
+    latest: local.at(-1) ?? null,
+  };
   for (const migration of local) {
     const row = byWhen.get(migration.when);
     if (!row && byHash.has(migration.hash)) status.sameHashOtherWhen.push(migration);
@@ -73,14 +91,21 @@ export function compareWithDb(local: LocalMigration[], rows: AppliedRow[]): Migr
     }
   }
   status.unknownRows = rows.filter((row) => !matched.has(row));
+  status.dbVersion = status.applied.reduce<LocalMigration | null>((top, m) => (top === null || m.idx > top.idx ? m : top), null);
   return status;
+}
+
+function versionOf(m: LocalMigration | null): string {
+  return m === null ? 'chưa có' : `${versionLabel(m)} (${m.tag})`;
 }
 
 /** Báo cáo dạng chữ cho người đọc; `full` liệt kê cả migration đã chạy. */
 export function formatStatus(status: MigrationStatus, full: boolean): string {
   const lines: string[] = [];
-  const item = (m: LocalMigration): string => `  ${m.tag}  (when ${m.when}, ${formatWhen(m.when)})`;
+  const item = (m: LocalMigration): string => `  ${versionLabel(m)}  ${m.tag}  (when ${m.when}, ${formatWhen(m.when)})`;
   const last = status.lastAppliedAt === null ? 'chưa có' : `${status.lastAppliedAt} (${formatWhen(status.lastAppliedAt)})`;
+  const missing = status.outOfOrder.length ? ` · thiếu ${status.outOfOrder.map(versionLabel).join(', ')} (lệch thứ tự, xem dưới)` : '';
+  lines.push(`Phiên bản DB: ${versionOf(status.dbVersion)}${missing} · mã nguồn: ${versionOf(status.latest)}`);
   lines.push(`Migration mới nhất đã chạy trên DB: ${last}`);
   lines.push(`Đã chạy: ${status.applied.length}`);
   if (full) lines.push(...status.applied.map(item));

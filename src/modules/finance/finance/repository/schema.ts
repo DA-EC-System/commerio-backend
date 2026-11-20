@@ -49,7 +49,10 @@ export const discrepancyReason = financeSchema.enum('discrepancy_reason', [
 // Chứng từ đảo (19-D20, D14): dòng mới cùng bảng, `reversal_of_id` trỏ gốc (mỗi chứng từ đảo một lần), số tiền âm,
 // bắt buộc có lý do.
 
-/** Hoá đơn bán, tự sinh khi xuất kho. Một đơn tối đa một hoá đơn `posted` chưa bị đảo (plan chuẩn bị A7). */
+/**
+ * Hoá đơn bán, tự sinh khi xuất kho. Một đơn tối đa một hoá đơn `posted` chưa bị đảo (plan chuẩn bị A7).
+ * @deprecated Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
+ */
 export const salesInvoices = financeSchema.table(
   'sales_invoices',
   {
@@ -77,7 +80,10 @@ export const salesInvoices = financeSchema.table(
   ],
 );
 
-/** Dòng hoá đơn: chép từ dòng đơn; dòng của hoá đơn đảo mang số âm. */
+/**
+ * Dòng hoá đơn: chép từ dòng đơn; dòng của hoá đơn đảo mang số âm.
+ * @deprecated Gỡ ở #235 cùng `sales_invoices`: không còn code ghi, chưa drop.
+ */
 export const salesInvoiceLines = financeSchema.table(
   'sales_invoice_lines',
   {
@@ -149,7 +155,10 @@ export const receipts = financeSchema.table(
   ],
 );
 
-/** Phiếu chi: nháp → ghi sổ → (đảo). Trỏ tối đa một chứng từ gốc theo `purpose`. Chỉ phiếu đảo mang số âm. */
+/**
+ * Phiếu chi: nháp → ghi sổ → (đảo). Trỏ tối đa một chứng từ gốc theo `purpose`. Chỉ phiếu đảo mang số âm.
+ * @deprecated Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
+ */
 export const paymentVouchers = financeSchema.table(
   'payment_vouchers',
   {
@@ -347,6 +356,7 @@ export const ledgerEntries = financeSchema.table(
     shopId: uuid('shop_id'),
     sourceType: text('source_type'),
     sourceId: uuid('source_id'),
+    /** @deprecated Cặp thay ước tính đã chép sang `ledger_replacements` (#231), cột này không ghi nữa. */
     replacesEntryId: uuid('replaces_entry_id').references((): AnyPgColumn => ledgerEntries.id),
     configVersionId: uuid('config_version_id'),
     settlementLineId: uuid('settlement_line_id').references(() => settlementLines.id),

@@ -591,7 +591,10 @@ export const remoteSkus = channelSchema.table(
   ],
 );
 
-/** Webhook sàn đã nhận, chống xử lý lặp theo `notification_id`. */
+/**
+ * Webhook sàn đã nhận, chống xử lý lặp theo `notification_id`.
+ * @deprecated Không dùng: MVP không nhận push của sàn (#133, #135), kéo định kỳ là đường nhận đơn duy nhất. Xoá ở migration sau.
+ */
 export const webhookEvents = channelSchema.table(
   'webhook_events',
   {
