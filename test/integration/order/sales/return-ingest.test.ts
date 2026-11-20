@@ -329,6 +329,45 @@ describe('kéo yêu cầu trả từ sàn', () => {
     expect(await requestOf(r.externalId)).toMatchObject({ status: 'rejected', needs_attention: false, attention_note: null });
   });
 
+  it('cờ của luồng khác (câu hoàn tiền vượt, #355) giữ qua mâu thuẫn và khi sàn khớp lại; chỉ gỡ câu mâu thuẫn', async () => {
+    const refundNote =
+      'Sàn báo hoàn 110.000 ₫ vượt doanh thu đã ghi của phần trả (0 ₫); phần vượt 110.000 ₫ không ghi sổ (kiện chưa giao hoặc COD hoàn về), đối chiếu với sàn';
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'REQUEST_REJECT', status: 'rejected' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    await testPool().query(`update "order".return_requests set needs_attention = true, attention_note = $2 where external_return_id = $1`, [r.externalId, refundNote]);
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await requestOf(r.externalId)).attention_note).toBe(`${refundNote}. Sàn báo REQUEST_INITIATE nhưng yêu cầu đang rejected`);
+    remote = [{ ...r, rawStatus: 'SOMETHING_NEW', status: null, updatedAt: new Date(Date.now() + 2000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await requestOf(r.externalId)).attention_note).toBe(`${refundNote}. Sàn báo trạng thái SOMETHING_NEW chưa hỗ trợ, kiểm trên Seller Center`);
+    remote = [{ ...r, updatedAt: new Date(Date.now() + 3000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'rejected', needs_attention: true, attention_note: refundNote });
+  });
+
+  it('sàn trả số tiền hoàn không đọc được: tạo với số tính từ dòng, bật Cần xử lý kèm chuỗi gốc; kéo lại không nối thêm; sửa số ở lượt sau không ghi đè bằng 0', async () => {
+    const note = 'Số tiền hoàn sàn trả không đọc được (1,600.02 VND), kiểm trên Seller Center';
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { refundAmount: null, refundAmountUnreadable: '1,600.02 VND' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const created = await requestOf(r.externalId);
+    expect(created).toMatchObject({ needs_attention: true, attention_note: note });
+    expect(Number(created.refund_amount)).toBeGreaterThan(0);
+    remote = [{ ...r, ofcStatus: 'INFO_ST_DRIVER_ASSIGNED', updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await requestOf(r.externalId)).attention_note).toBe(note);
+    // Lượt sau mâu thuẫn trạng thái: câu số tiền giữ, câu mâu thuẫn nối sau; sàn khớp lại thì còn câu số tiền.
+    remote = [{ ...r, rawStatus: 'REQUEST_REJECT', status: 'rejected', updatedAt: new Date(Date.now() + 2000) }];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, rawStatus: 'REQUEST_INITIATE', status: 'requested', updatedAt: new Date(Date.now() + 3000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect((await requestOf(r.externalId)).attention_note).toBe(`${note}. Sàn báo REQUEST_INITIATE nhưng yêu cầu đang rejected`);
+  });
+
   it('kiện còn đang giao khi sàn mở yêu cầu: kiện nhảy tới Đã giao kèm cờ, yêu cầu bật Cần xử lý', async () => {
     const { externalOrderId, orderId } = await marketplaceOrder('in_transit');
     const r = remoteReturn(externalOrderId);

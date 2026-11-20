@@ -1003,7 +1003,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
 
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
-    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
+    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET'), (raw, where) => lazadaAmount(raw, where)),
     ...lazadaPackingMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method), {
       download: deps.download ?? ((url) => downloadDocument(url, { trustedOrigin: new URL(config.apiUrl).origin })),
     }),
