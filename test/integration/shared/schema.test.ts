@@ -24,11 +24,12 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   product: [
     'attribute_values',
     'attributes',
-    'categories',
+    'company_product_settings',
     'doc_counters',
     'goods_receipt_lines',
     'goods_receipts',
     'product_attribute_value_images',
+    'product_groups',
     'product_images',
     'product_variants',
     'products',

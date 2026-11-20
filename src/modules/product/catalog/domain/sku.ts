@@ -1,4 +1,4 @@
-// Quy tắc SKU của danh mục (QT-11, Documents/21 5.1, mục 9). Chép đúng hành vi `FE src/utils/sku.ts` (D9):
+// Mẫu SKU (cài đặt sản phẩm của công ty) (QT-11, Documents/21 5.1, mục 9). Chép đúng hành vi `FE src/utils/sku.ts` (D9):
 // bản xem trước của FE và SKU thật phải trùng từng ký tự. Đổi ở đây thì đổi cả FE và bảng mục 9.
 
 const TOKEN = /\{(SEQ(?::(\d))?|VAL)\}/g;
@@ -43,4 +43,22 @@ export function renderSku(pattern: string, seq: number, codes: readonly string[]
       .replace(/([-_]){2,}/g, '$1')
       .replace(/^[-_]+|[-_]+$/g, '')
   );
+}
+
+/**
+ * Mã cho giá trị mới không trùng mã đang có của thuộc tính (Documents/21 mục 5.2, B1 chốt 19/11/2026): form tạo sản
+ * phẩm không có ô mã nên không trả 422 được. Trùng thì cắt còn 5 ký tự + số 2–9 (`XANHD2`), rồi 4 ký tự + 10–99; mã
+ * rỗng (giá trị không có chữ, số) thì `V` + số từ 1. `taken` gồm cả mã vừa cấp trong cùng lần.
+ */
+export function uniqueValueCode(value: string, taken: ReadonlySet<string>): string {
+  const base = valueCode(value);
+  if (!base) {
+    for (let n = 1; ; n++) if (!taken.has(`V${n}`)) return `V${n}`;
+  }
+  if (!taken.has(base)) return base;
+  for (let n = 2; n <= 99; n++) {
+    const code = `${base.slice(0, n < 10 ? 5 : 4)}${n}`;
+    if (!taken.has(code)) return code;
+  }
+  for (let n = 1; ; n++) if (!taken.has(`V${n}`)) return `V${n}`;
 }

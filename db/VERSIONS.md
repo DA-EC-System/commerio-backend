@@ -3,13 +3,46 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V106**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V110**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V106 · 20/11/2026 · gia-ban-sao-sku-san
+## V110 · 20/11/2026 · dong-san-pham-moi
 
-`db/migrations/20261120081932_gia-ban-sao-sku-san.sql` · sinh từ schema
+`db/migrations/20261120070207_dong-san-pham-moi.sql` · sinh từ schema
 
-- `channel.remote_skus`: + cột `price`; + check `remote_skus_price`
+- `product.purchase_request_lines`: + cột `new_parent_product_id`, `new_parent_name`, `new_option_values`; − cột `new_product_name`, `new_variant_attrs`; + check `purchase_request_lines_one_parent`, `purchase_request_lines_new_parent_group`; đổi check `purchase_request_lines_item`
+
+## V109 · 20/11/2026 · nhom-hang-du-lieu
+
+`db/migrations/20261119171451_nhom-hang-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Nhóm hàng (#447, plan A2): công ty có trước bản này nhận thứ công ty mới có từ `seedCompanyDefaults`, không chép đè.
+
+## V108 · 20/11/2026 · nhom-hang-rls-quyen
+
+`db/migrations/20261119171435_nhom-hang-rls-quyen.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Nhóm hàng (#447): RLS cho bảng mới `product.company_product_settings` (vòng lặp của 0002 chỉ chạy một lần; bảng `product_groups` đổi tên giữ nguyên policy cũ).
+
+## V107 · 20/11/2026 · nhom-hang
+
+`db/migrations/20261119171430_nhom-hang.sql` · sinh từ schema
+
+- + 2 bảng `product`: company_product_settings, product_groups
+- − bảng `product.categories`
+- `product.attribute_values`: + check `attribute_values_value_length`
+- `product.attributes`: + cột `platform_kind`; + index `attributes_company_platform_kind_uq`; + check `attributes_platform_kind`, `attributes_name_length`
+- `product.product_variants`: + check `product_variants_sku_length`
+- `product.products`: + cột `group_id`; − cột `category_id`; + khoá ngoại `products_group_id_product_groups_id_fk`; − khoá ngoại `products_category_id_categories_id_fk`; + index `products_group_id_index`; − index `products_category_id_index`
+- `product.purchase_request_lines`: + cột `new_group_id`; − cột `new_category_id`
+
+## V106 · 20/11/2026 · nhom-hang-cat-ten
+
+`db/migrations/20261119171400_nhom-hang-cat-ten.sql` · viết tay
+
+- viết tay: dữ liệu
+- Nhóm hàng (#447), chạy trước migration thêm CHECK tên thuộc tính <= 15, giá trị <= 20 ký tự (luật Lazada `VARIATION_*`, Documents/21 mục 5.2): cắt tên dài hơn, bỏ khoảng trắng cuối; trùng tên trong công ty (thuộc tính) hay trong thuộc tính…
 
 ## V105 · 19/11/2026 · don-nhap-loi-moi-qua-han
 

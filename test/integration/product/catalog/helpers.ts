@@ -21,10 +21,24 @@ export function api(token: string) {
   };
 }
 
-export async function createCategory(token: string, name: string, skuPattern = 'AO-{SEQ:4}-{VAL}') {
-  const res = await api(token).post('/categories', { name, skuPattern });
-  expect(res.status).toBe(201);
-  return res.body as { id: string; name: string; skuPattern: string; skuNextSeq: number; version: number };
+/** Đặt mẫu SKU của công ty (`PUT /catalog/settings`, #447); trả cài đặt sau khi sửa. */
+export async function setSkuPattern(token: string, skuPattern: string) {
+  const current = await api(token).get('/settings');
+  expect(current.status).toBe(200);
+  const res = await api(token).put('/settings', { skuPattern, version: current.body.version });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  return res.body as { skuPattern: string; skuNextSeq: number; version: number };
+}
+
+/**
+ * Nhóm hàng mới (#447). Mẫu SKU là của công ty: `skuPattern` (mặc định `AO-{SEQ:4}-{VAL}` như các test cũ) được đặt
+ * cho công ty trước khi tạo nhóm; `null` thì giữ mẫu đang có.
+ */
+export async function createGroup(token: string, name: string, skuPattern: string | null = 'AO-{SEQ:4}-{VAL}') {
+  if (skuPattern !== null) await setSkuPattern(token, skuPattern);
+  const res = await api(token).post('/groups', { name });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body as { id: string; name: string; productCount: number; version: number };
 }
 
 export interface AttributeBody {
@@ -35,10 +49,19 @@ export interface AttributeBody {
   values: { id: string; value: string; code: string; inUse: boolean }[];
 }
 
+/** Giá trị thuộc tính đã biết (id → thuộc tính, chữ), để `productBody` dựng `axes` từ id giá trị như test cũ. */
+const knownValues = new Map<string, { attributeId: string; value: string }>();
+
+/** Ghi nhớ giá trị của thuộc tính lấy từ response (`createAttribute` tự gọi; dùng sau `PUT /attributes`). */
+export function rememberAttribute(attribute: AttributeBody): AttributeBody {
+  for (const v of attribute.values) knownValues.set(v.id, { attributeId: attribute.id, value: v.value });
+  return attribute;
+}
+
 export async function createAttribute(token: string, name: string, values: string[]) {
   const res = await api(token).post('/attributes', { name, values: values.map((value) => ({ value })) });
-  expect(res.status).toBe(201);
-  return res.body as AttributeBody;
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return rememberAttribute(res.body as AttributeBody);
 }
 
 /** Id giá trị theo chữ, vd `valueId(color, 'Đen')`. */
@@ -61,21 +84,38 @@ export interface ProductBody {
 /** Tên không trùng giữa các test (dữ liệu dùng chung giữa file). */
 export const uniq = (prefix: string) => `${prefix} ${randomUUID().slice(0, 8)}`;
 
-/** Thân `POST /catalog/products` như FE gửi; `extra` ghi đè để thử ca lỗi. */
-export function productBody(name: string, categoryId: string, variants: string[][], extra: object = {}) {
+/**
+ * Thân `POST /catalog/products` (#447: `axes` + `variants[].options`) dựng từ id giá trị của thuộc tính có sẵn như test
+ * cũ: thứ tự trục theo biến thể đầu, mỗi trục gồm các giá trị được dùng. `extra` ghi đè để thử ca lỗi.
+ */
+export function productBody(name: string, groupId: string, variants: string[][], extra: object = {}) {
+  const rows = variants.map((ids) =>
+    ids.map((id) => {
+      const known = knownValues.get(id);
+      if (!known) throw new Error(`Giá trị ${id} chưa qua createAttribute/rememberAttribute`);
+      return { id, ...known };
+    }),
+  );
+  const order = (rows[0] ?? []).map((v) => v.attributeId);
+  const axes = order.map((attributeId) => {
+    const values = new Map<string, { id: string; value: string }>();
+    for (const row of rows) for (const v of row) if (v.attributeId === attributeId) values.set(v.id, { id: v.id, value: v.value });
+    return { attributeId, values: [...values.values()] };
+  });
   return {
     name,
-    categoryId,
+    groupId,
     description: '',
     imageFileIds: [],
-    variants: variants.map((attributeValueIds) => ({ attributeValueIds })),
+    axes,
+    variants: rows.map((row) => ({ options: order.map((a) => row.find((v) => v.attributeId === a)?.value ?? '') })),
     ...extra,
   };
 }
 
-export async function createProduct(token: string, body: { name: string; categoryId: string; variants: string[][] }) {
-  const res = await api(token).post('/products', productBody(body.name, body.categoryId, body.variants));
-  expect(res.status).toBe(201);
+export async function createProduct(token: string, body: { name: string; groupId: string; variants: string[][] }) {
+  const res = await api(token).post('/products', productBody(body.name, body.groupId, body.variants));
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
   return res.body as ProductBody;
 }
 

@@ -7,20 +7,20 @@ import { createOrder } from './helpers/sales.ts';
 
 // Helper dùng chung chạy được và tạo dữ liệu đúng như sản phẩm sẽ tạo (AC-13). PR sau thêm phần của mình.
 describe('helper test dùng chung', () => {
-  it('createVariant tạo danh mục, sản phẩm, biến thể của công ty; công ty khác không thấy', async () => {
+  it('createVariant tạo nhóm hàng, sản phẩm, biến thể của công ty; công ty khác không thấy', async () => {
     const { companyId } = await createCompany();
-    const v = await createVariant(companyId, { sku: 'AO-0001', categoryName: 'Áo thun' });
+    const v = await createVariant(companyId, { sku: 'AO-0001', groupName: 'Áo thun' });
     expect(v.sku).toBe('AO-0001');
 
     const seen = await asCompany(companyId, (c) =>
       c.query(
-        `select v.sku, p.id as product_id, c.name as category from product.product_variants v
-         join product.products p on p.id = v.product_id join product.categories c on c.id = p.category_id
+        `select v.sku, p.id as product_id, c.name as "group" from product.product_variants v
+         join product.products p on p.id = v.product_id join product.product_groups c on c.id = p.group_id
          where v.id = $1`,
         [v.variantId],
       ),
     );
-    expect(seen.rows).toEqual([{ sku: 'AO-0001', product_id: v.productId, category: 'Áo thun' }]);
+    expect(seen.rows).toEqual([{ sku: 'AO-0001', product_id: v.productId, group: 'Áo thun' }]);
 
     const other = await createCompany();
     const hidden = await asCompany(other.companyId, (c) =>
@@ -34,7 +34,7 @@ describe('helper test dùng chung', () => {
     const a = await createVariant(companyId);
     const b = await createVariant(companyId);
     expect(a.sku).not.toBe(b.sku);
-    expect(a.categoryId).not.toBe(b.categoryId);
+    expect(a.groupId).not.toBe(b.groupId);
   });
 
   it('createOrder tạo đơn tay với dòng đơn chép SKU, tên sản phẩm; tổng tính từ dòng; công ty khác không thấy', async () => {

@@ -5,7 +5,6 @@ import { authenticate, getAuth } from '../../../../shared/auth/authenticate.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
-import type { ModuleContext } from '../../../../shared/module.ts';
 import { accessRouter } from '../../access/index.ts';
 import { staffRouter } from '../../staff/index.ts';
 import * as auth from '../service/auth-service.ts';
@@ -48,11 +47,12 @@ const authLimiter = (options: Partial<Options> = {}) =>
 /** Số lần đổi mật khẩu lỗi tối đa mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). */
 const CHANGE_PASSWORD_LIMIT = 5;
 
-export function identityRouter(ctx: ModuleContext): Router {
+export function identityRouter(ctx: auth.IdentityContext): Router {
   const router = Router();
 
   router.post('/register', authLimiter(), validate({ body: RegisterBody }), async (_req, res) => {
-    res.status(201).json(await auth.register(body<typeof RegisterBody>(res)));
+    if (!ctx.seedCompanyDefaults) throw new Error('Chưa nối seedCompanyDefaults (src/wiring.ts)');
+    res.status(201).json(await auth.register(body<typeof RegisterBody>(res), ctx.seedCompanyDefaults));
   });
 
   router.post('/login', authLimiter(), validate({ body: LoginBody }), async (_req, res) => {

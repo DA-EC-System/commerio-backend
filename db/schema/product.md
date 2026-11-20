@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V106**, 20 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V110**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -29,6 +29,7 @@ Ràng buộc và index:
 - unique (`id`, `attribute_id`) `attribute_values_id_attribute_uq`
 - unique index (`attribute_id`, `lower("value")`) `attribute_values_attribute_lower_value_uq`
 - check `attribute_values_code_format`: `code ~ '^[A-Z0-9]{1,6}$'`
+- check `attribute_values_value_length`: `char_length(value) <= 20`
 
 Trỏ vào bảng này:
 
@@ -44,6 +45,8 @@ Cột:
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `name` text · not null
+- `platform_kind` text · null
+  Thuộc tính chuẩn sàn, do hệ thống gắn khi lập công ty; API chỉ đọc.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -51,31 +54,29 @@ Cột:
 Ràng buộc và index:
 
 - unique index (`company_id`, `lower("name")`) `attributes_company_lower_name_uq`
+- unique index (`company_id`, `platform_kind`) `attributes_company_platform_kind_uq` where `platform_kind is not null`
+- check `attributes_platform_kind`: `platform_kind in ('color', 'size')`
+- check `attributes_name_length`: `char_length(name) <= 15`
 
 Trỏ vào bảng này:
 
 - `product.attribute_values.attribute_id` (khoá ngoại)
 - `product.products.image_attribute_id` (khoá ngoại)
 
-## `product.categories`
+## `product.company_product_settings`
 
-Danh mục và quy tắc SKU (Documents/21 5.1). Tên không trùng theo chữ thường trong công ty.
+Cài đặt sản phẩm của công ty (D11): mẫu SKU, số {SEQ} kế tiếp, gợi ý mặc định. Một dòng mỗi công ty, tạo cùng công ty (`seedCompanyDefaults`); RLS ở migration `*_nhom-hang-rls-quyen`. Cấp số SKU không tăng `version` (khoá advisory `lockVariants` tuần tự hoá việc cấp số).
 
 Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
-- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
-- `name` text · not null
-- `sku_pattern` text · not null
+- `company_id` uuid · khoá chính → `core.companies` (theo công ty)
+- `sku_pattern` text · not null · mặc định `'SP{SEQ:5}-{VAL}'`
 - `sku_next_seq` integer · not null · mặc định `1`
-  Số thứ tự cấp cho biến thể kế tiếp của danh mục ({SEQ}).
 - `margin_coefficient` numeric(18,2) · null
-  Cấu hình gợi ý khi sửa hàng loạt (#242, Documents/25 §5.3); `null` là chưa đặt thì không gợi ý số đó. Giá muốn bán gợi ý = giá nhập × hệ số, làm tròn lên theo bước `price_rounding` (đồng).
 - `price_rounding` integer · null
 - `reorder_lead_days` integer · null
-  Ngưỡng tồn = tốc độ bán/ngày × số ngày chờ hàng + tồn an toàn; SKU chưa có lịch sử bán thì lấy `reorder_default_qty`.
 - `reorder_safety_qty` integer · null
 - `reorder_default_qty` integer · null
 - `created_at` timestamptz · not null · mặc định `now()`
@@ -84,15 +85,10 @@ Cột:
 
 Ràng buộc và index:
 
-- unique index (`company_id`, `lower("name")`) `categories_company_lower_name_uq`
-- check `categories_margin_coefficient`: `margin_coefficient >= 1`
-- check `categories_price_rounding`: `price_rounding > 0`
-- check `categories_reorder_config`: `reorder_lead_days >= 0 and reorder_safety_qty >= 0 and reorder_default_qty >= 0`
-
-Trỏ vào bảng này:
-
-- `product.products.category_id` (khoá ngoại)
-- `product.purchase_request_lines.new_category_id` (tham chiếu, không có khoá ngoại)
+- check `company_product_settings_sku_next_seq`: `sku_next_seq >= 1`
+- check `company_product_settings_margin_coefficient`: `margin_coefficient >= 1`
+- check `company_product_settings_price_rounding`: `price_rounding > 0`
+- check `company_product_settings_reorder_config`: `reorder_lead_days >= 0 and reorder_safety_qty >= 0 and reorder_default_qty >= 0`
 
 ## `product.doc_counters`
 
@@ -215,6 +211,38 @@ Ràng buộc và index:
 - khoá ngoại viết tay (`product_id`, `attribute_id`) → `product.products` (`id`, `image_attribute_id`), ở `db/migrations/20261118183221_anh-phan-loai-rls.sql`
 - khoá ngoại viết tay (`attribute_value_id`, `attribute_id`) → `product.attribute_values` (`id`, `attribute_id`), ở `db/migrations/20261118183221_anh-phan-loai-rls.sql`
 
+## `product.product_groups`
+
+Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU. Tên không trùng theo chữ thường trong công ty. Gợi ý `null` thì theo cài đặt công ty.
+
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `name` text · not null
+- `margin_coefficient` numeric(18,2) · null
+- `price_rounding` integer · null
+- `reorder_lead_days` integer · null
+- `reorder_safety_qty` integer · null
+- `reorder_default_qty` integer · null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique index (`company_id`, `lower("name")`) `product_groups_company_lower_name_uq`
+- check `product_groups_margin_coefficient`: `margin_coefficient >= 1`
+- check `product_groups_price_rounding`: `price_rounding > 0`
+- check `product_groups_reorder_config`: `reorder_lead_days >= 0 and reorder_safety_qty >= 0 and reorder_default_qty >= 0`
+
+Trỏ vào bảng này:
+
+- `product.products.group_id` (khoá ngoại)
+- `product.purchase_request_lines.new_group_id` (tham chiếu, không có khoá ngoại)
+
 ## `product.product_images`
 
 Ảnh sản phẩm theo thứ tự, `position` 0 là ảnh đại diện (#303); `file_id` ở module files, không đặt khoá ngoại chéo schema. Mỗi vị trí một ảnh; `PUT` thay toàn bộ bằng xoá rồi chèn trong một giao dịch.
@@ -272,6 +300,7 @@ Ràng buộc và index:
 - check `product_variants_archived`: `(business_status = 'archived') = (archived_at is not null)`
 - check `product_variants_prices`: `standard_price >= 0 and target_net_price >= 0`
 - check `product_variants_dimensions`: `weight_g > 0 and length_mm > 0 and width_mm > 0 and height_mm > 0`
+- check `product_variants_sku_length`: `char_length(sku) <= 50`
 
 Trỏ vào bảng này:
 
@@ -295,7 +324,7 @@ Trỏ vào bảng này:
 
 ## `product.products`
 
-Sản phẩm; không đổi danh mục sau khi tạo (Documents/21 P6). Không có trạng thái lưu riêng: trạng thái suy từ SKU con (#204). `code` là mã cha cấp lúc tạo, không route nào sửa (spec 204 D5).
+Sản phẩm; đổi nhóm hàng được, SKU không đổi theo (Documents/21 P6, 19/11/2026). Không có trạng thái lưu riêng: trạng thái suy từ SKU con (#204). `code` là mã cha cấp lúc tạo, không route nào sửa (spec 204 D5).
 
 Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
@@ -303,7 +332,7 @@ Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
-- `category_id` uuid · not null → `product.categories.id` (khoá ngoại)
+- `group_id` uuid · not null → `product.product_groups.id` (khoá ngoại)
 - `name` text · not null
 - `code` text · not null
 - `description` text · null
@@ -323,7 +352,7 @@ Ràng buộc và index:
 - unique (`id`, `image_attribute_id`) `products_id_image_attribute_uq`
 - unique index (`company_id`, `lower("name")`) `products_company_lower_name_uq`
 - unique index (`company_id`, `code`) `products_company_code_uq`
-- index (`category_id`) `products_category_id_index`
+- index (`group_id`) `products_group_id_index`
 - check `products_origin_country`: `origin_country is null or origin_country ~ '^[A-Z]{2}$'`
 - check `products_brand_length`: `brand is null or char_length(brand) <= 100`
 
@@ -332,6 +361,7 @@ Trỏ vào bảng này:
 - `product.product_images.product_id` (khoá ngoại)
 - `product.product_variants.product_id` (khoá ngoại)
 - `product.product_attribute_value_images.product_id, attribute_id` (khoá ngoại viết tay)
+- `product.purchase_request_lines.new_parent_product_id` (tham chiếu, không có khoá ngoại)
 - `channel.product_specs.product_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.purchase_request_lines`
@@ -346,9 +376,14 @@ Cột:
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `request_id` uuid · not null → `product.purchase_requests.id` (khoá ngoại)
 - `variant_id` uuid · null → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
-- `new_product_name` text · null
-- `new_category_id` uuid · null → `product.categories.id` (tham chiếu, không có khoá ngoại)
-- `new_variant_attrs` jsonb · null
+- `new_parent_product_id` uuid · null → `product.products.id` (tham chiếu, không có khoá ngoại)
+  Dòng sản phẩm mới thuộc sản phẩm cha có sẵn (catalog `products`).
+- `new_parent_name` text · null
+  Tên sản phẩm cha mới (đã gộp khoảng trắng); các dòng cùng tên (chữ thường) trong đề nghị gộp một cha.
+- `new_group_id` uuid · null → `product.product_groups.id` (tham chiếu, không có khoá ngoại)
+  Nhóm hàng của cha mới; cha có sẵn thì trống.
+- `new_option_values` jsonb · null
+  Giá trị phân loại theo thứ tự trục, mảng `[{ axis, value }]` (object jsonb tự sắp lại khoá, mất thứ tự trục).
 - `ordered_qty` integer · not null
 - `received_qty` integer · not null · mặc định `0`
 - `defective_qty` integer · not null · mặc định `0`
@@ -365,7 +400,9 @@ Ràng buộc và index:
 
 - unique (`request_id`, `variant_id`) `purchase_request_lines_request_variant_uq`
 - index (`variant_id`) `purchase_request_lines_variant_id_index`
-- check `purchase_request_lines_item`: `variant_id is not null or new_product_name is not null`
+- check `purchase_request_lines_item`: `variant_id is not null or new_parent_product_id is not null or new_parent_name is not null`
+- check `purchase_request_lines_one_parent`: `new_parent_product_id is null or new_parent_name is null`
+- check `purchase_request_lines_new_parent_group`: `new_parent_name is null or new_group_id is not null`
 - check `purchase_request_lines_ordered`: `ordered_qty > 0`
 - check `purchase_request_lines_excluded_reason`: `not excluded or excluded_reason is not null`
 - check `purchase_request_lines_counts`: `received_qty >= 0 and defective_qty >= 0 and closed_short_qty >= 0`

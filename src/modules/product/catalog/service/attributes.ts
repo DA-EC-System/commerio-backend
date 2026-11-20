@@ -87,7 +87,8 @@ export async function updateAttribute(caller: Caller, id: string, input: Attribu
     });
     const codes = new Set([...attribute.values.map((v) => v.code), ...input.values.map((v) => v.code)]);
     const temporary = temporaryCodes(codes, changed.length);
-    for (const [i, v] of changed.entries()) await updateValue(v.id, `~${v.id}`, temporary[i]!);
+    // Chữ tạm `~` + 19 ký tự đầu của id: vừa CHECK `attribute_values_value_length` (≤ 20, #447), vẫn khác nhau giữa các dòng.
+    for (const [i, v] of changed.entries()) await updateValue(v.id, `~${v.id.slice(0, 19)}`, temporary[i]!);
     for (const v of changed) await updateValue(v.id, v.value, v.code);
     await insertValues(caller.companyId, id, input.values.filter((v) => v.id === undefined));
 

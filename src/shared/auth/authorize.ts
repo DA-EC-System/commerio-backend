@@ -1,4 +1,4 @@
-import type { RequestHandler, Response } from 'express';
+import type { Request, RequestHandler, Response } from 'express';
 import { AppError } from '../errors/app-error.ts';
 import { readAccessClaims } from './authenticate.ts';
 import { type AccessLoader, assertCompanyAccess, type CompanyAccess, moduleOfPermission } from './company-access.ts';
@@ -17,20 +17,37 @@ export type Authorize = (permission: string) => RequestHandler;
  */
 export function createAuthorize(loader: AccessLoader): Authorize {
   return (permission) => async (req, res, next) => {
-    const claims = await readAccessClaims(req);
-    if (!claims.companyId) throw new AppError(403, 'company_not_selected', 'Chưa chọn công ty làm việc');
-    const access = await loader(claims.accountId, claims.companyId);
-    assertCompanyAccess(access, claims);
+    const access = await loadMemberAccess(req, res, loader);
     if (!access.enabledModules.includes(moduleOfPermission(permission))) {
       throw new AppError(403, 'module_disabled', 'Tính năng này đang tắt');
     }
     if (!access.permissions.includes(permission)) {
       throw new AppError(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
     }
-    res.locals.auth = claims;
-    res.locals.access = access;
     next();
   };
+}
+
+/**
+ * Thành viên còn làm việc được trong công ty, không đòi mã quyền: các bước của `authorize` trừ kiểm phân hệ và
+ * quyền. Dùng cho route mọi thành viên gọi được, rồi tự lọc theo quyền đọc ở `getAccess` (tệp đính kèm, onboarding).
+ */
+export function createMember(loader: AccessLoader): RequestHandler {
+  return async (req, res, next) => {
+    await loadMemberAccess(req, res, loader);
+    next();
+  };
+}
+
+/** Bước chung của `authorize` và `member`: token, đã chọn công ty, truy cập công ty; ghi vào `res.locals`. */
+async function loadMemberAccess(req: Request, res: Response, loader: AccessLoader): Promise<CompanyAccess> {
+  const claims = await readAccessClaims(req);
+  if (!claims.companyId) throw new AppError(403, 'company_not_selected', 'Chưa chọn công ty làm việc');
+  const access = await loader(claims.accountId, claims.companyId);
+  assertCompanyAccess(access, claims);
+  res.locals.auth = claims;
+  res.locals.access = access;
+  return access;
 }
 
 /**

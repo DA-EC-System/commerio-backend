@@ -6,7 +6,7 @@ Quyết định kiến trúc nằm ở repo tài liệu của đồ án: `Docume
 
 ## Kiến trúc
 
-Modular monolith: một mã nguồn, 6 module lớn gồm 18 module con; mỗi module con bốn lớp; mỗi module lớn một schema PostgreSQL. Một Docker image chạy ba tiến trình:
+Modular monolith: một mã nguồn, 6 module lớn gồm 19 module con; mỗi module con bốn lớp; mỗi module lớn một schema PostgreSQL. Một Docker image chạy ba tiến trình:
 
 | Tiến trình | File | Việc |
 |---|---|---|
@@ -24,6 +24,7 @@ npm run check          # lint + typecheck + depcruise + test, chạy trước kh
 npm run infra:up       # PostgreSQL, Redis, Kafka (deploy/compose.yaml)
 npm run db:generate    # sinh migration từ schema Drizzle, rồi ghi lại tài liệu schema
 npm run db:docs        # ghi lại db/SCHEMA.md, db/schema/*.md, db/VERSIONS.md (sau khi sửa comment schema.ts)
+npm run db:erd         # dựng ERD tương tác từ migration hiện tại (.erd/commerio-erd.html) và mở trình duyệt
 npm run db:regen       # sinh lại migration của nhánh sau khi gộp main
 npm run db:migrate     # chạy migration, dừng nếu có migration lệch thứ tự
 npm run db:migrate:check  # chỉ đọc: phiên bản V của DB, đã chạy, chưa chạy, lệch thứ tự

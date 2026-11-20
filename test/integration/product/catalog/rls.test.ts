@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { asCompany } from '../../helpers/rls.ts';
-import { createAttribute, createCategory, createProduct, valueId } from './helpers.ts';
+import { createAttribute, createGroup, createProduct, valueId } from './helpers.ts';
 
 // AC-1 vế RLS (issue #12; Documents/19 D30, Documents/21 C4): dưới công ty A chỉ thấy dòng của A.
 // `rls-coverage.test.ts` chỉ kiểm có policy tên `company_isolation`; ở đây kiểm biểu thức và đọc dữ liệu thật.
@@ -24,8 +24,8 @@ async function companyTables(): Promise<string[]> {
 async function seedCompany(prefix: string) {
   const { companyId, ceo } = await createCompany();
   const color = await createAttribute(ceo.token, `${prefix} Màu`, ['Đen']);
-  const category = await createCategory(ceo.token, `${prefix} Áo`, `${prefix}-{SEQ}-{VAL}`);
-  const product = await createProduct(ceo.token, { name: `${prefix} Áo`, categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
+  const group = await createGroup(ceo.token, `${prefix} Áo`, `${prefix}-{SEQ}-{VAL}`);
+  const product = await createProduct(ceo.token, { name: `${prefix} Áo`, groupId: group.id, variants: [[valueId(color, 'Đen')]] });
   const variantId = product.variants[0]!.id;
   await testPool().query(
     "insert into product.product_images (company_id, product_id, file_id, position) values ($1, $2, $3, 0)",
@@ -45,7 +45,7 @@ async function seedCompany(prefix: string) {
 describe('RLS schema product (AC-1)', () => {
   it('mọi bảng có company_id của schema product bật RLS và có đúng policy cô lập theo app.company_id', async () => {
     const tables = await companyTables();
-    expect(tables).toHaveLength(20); // #400 BE3 xoá product.product_channel_specs
+    expect(tables).toHaveLength(21); // #400 BE3 xoá product.product_channel_specs; #447 thêm product.company_product_settings
     const res = await testPool().query<{ name: string; rls: boolean; quals: string[] }>(
       `select n.nspname || '.' || c.relname as name, c.relrowsecurity as rls,
               coalesce((select array_agg(qual) from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname), '{}') as quals
@@ -60,7 +60,8 @@ describe('RLS schema product (AC-1)', () => {
     const a = await seedCompany(`RA${randomUUID().slice(0, 4).toUpperCase()}`);
     await seedCompany(`RB${randomUUID().slice(0, 4).toUpperCase()}`);
     const seeded = [
-      'product.categories',
+      'product.product_groups',
+      'product.company_product_settings',
       'product.attributes',
       'product.attribute_values',
       'product.products',
