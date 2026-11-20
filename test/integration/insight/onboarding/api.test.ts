@@ -40,21 +40,27 @@ async function insertOpening(companyId: string, shopId: string, status: 'draft' 
 }
 
 describe('GET /onboarding', () => {
-  it('công ty mới: 6 mục đúng thứ tự, chưa xong mục nào, mời nhân viên là tuỳ chọn, 0/5', async () => {
-    const { ceo } = await newCompany();
+  it('công ty mới: 4 mục bắt buộc rồi 3 mục tuỳ chọn, chưa xong mục nào, 0/4', async () => {
+    // Đăng ký thật để Báo cáo tắt (Documents/27 US-CT-12 ca 1); helper mặc định bật.
+    const { ceo } = await createCompany({ optionalModules: ['purchasing'] });
     const res = await get(ceo.token);
     expect(res.status).toBe(200);
     expect(res.body.items.map((i: { key: string }) => i.key)).toEqual([
       'company_profile',
-      'invite_staff',
       'connect_shop',
       'setup_shop',
-      'first_product',
       'opening_stock',
+      'first_product',
+      'invite_staff',
+      'enable_report',
     ]);
     expect(res.body.items.every((i: { done: boolean }) => !i.done)).toBe(true);
-    expect(itemOf(res.body, 'invite_staff')).toMatchObject({ optional: true });
-    expect(res.body).toMatchObject({ done: 0, total: 5 });
+    expect(res.body.items.filter((i: { optional: boolean }) => i.optional).map((i: { key: string }) => i.key)).toEqual([
+      'first_product',
+      'invite_staff',
+      'enable_report',
+    ]);
+    expect(res.body).toMatchObject({ done: 0, total: 4 });
   });
 
   it('khai địa chỉ công ty, tạo link mời, thêm sản phẩm: các mục tự đánh dấu xong; lưu trữ hết sản phẩm thì mục quay lại chưa xong', async () => {
@@ -76,7 +82,7 @@ describe('GET /onboarding', () => {
     expect(itemOf(res.body, 'company_profile')).toMatchObject({ done: true });
     expect(itemOf(res.body, 'invite_staff')).toMatchObject({ done: true });
     expect(itemOf(res.body, 'first_product')).toMatchObject({ done: true });
-    expect(res.body).toMatchObject({ done: 2, total: 5 });
+    expect(res.body).toMatchObject({ done: 1, total: 4 });
 
     await testPool().query(
       "update product.product_variants set business_status = 'archived', archived_at = now() where id = $1",
@@ -157,7 +163,12 @@ describe('GET /onboarding', () => {
   it('công ty tắt Báo cáo vẫn 200, không 403 module_disabled', async () => {
     const { companyId, ceo } = await newCompany();
     await setModuleEnabled(companyId, 'report', false);
-    expect((await get(ceo.token)).status).toBe(200);
+    const off = await get(ceo.token);
+    expect(off.status).toBe(200);
+    expect(itemOf(off.body, 'enable_report')).toMatchObject({ done: false, optional: true });
+
+    await setModuleEnabled(companyId, 'report', true);
+    expect(itemOf((await get(ceo.token)).body, 'enable_report')).toMatchObject({ done: true });
   });
 
   it('không thấy dữ liệu công ty khác', async () => {

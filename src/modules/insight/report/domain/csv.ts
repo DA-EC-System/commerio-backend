@@ -1,4 +1,4 @@
-// Tệp CSV của báo cáo (Documents/21 §12.7; plan #29 A9): UTF-8 có BOM để Excel đọc đúng tiếng Việt, CRLF. Thuần.
+// Tệp CSV của báo cáo (Documents/21 §21.5; plan #29 A9): UTF-8 có BOM để Excel đọc đúng tiếng Việt, CRLF. Thuần.
 import type { ReportFigures } from './figures.ts';
 import type { OrderSource } from './summary.ts';
 
@@ -24,19 +24,19 @@ const SOURCE_LABEL: Record<OrderSource, string> = { marketplace: 'Sàn', inbox: 
 
 const COST_COLUMNS: Column<ReportFigures>[] = [
   ['Giá vốn', (f) => f.cogs],
-  ['Lợi nhuận', (f) => f.profit],
+  ['Lãi gộp', (f) => f.profit],
 ];
 
-/** Cột số theo `ReportFigures`; thiếu quyền giá vốn thì không có cột Giá vốn, Lợi nhuận (D18). */
+/** Cột số theo `ReportFigures`; thiếu quyền giá vốn thì không có cột Giá vốn, Lãi gộp (D18). */
 function figureColumns(canCost: boolean): Column<ReportFigures>[] {
   return [
-    ['Doanh thu', (f) => f.revenue],
-    ['Tiền đã thu', (f) => f.cashCollected],
+    ['Doanh thu thuần', (f) => f.revenue],
+    ['Thực nhận', (f) => f.net],
+    ['Đã quyết toán', (f) => f.cashCollected],
     ['Phí sàn', (f) => f.platformFee],
-    ['Phí cổng', (f) => f.paymentFee],
     ['Phí vận chuyển', (f) => f.shippingFee],
     ...(canCost ? COST_COLUMNS : []),
-    ['Phí sàn chờ đối soát', (f) => (f.feesPending ? 'có' : 'không')],
+    ['Ước tính', (f) => (f.estimated ? 'có' : 'không')],
   ];
 }
 

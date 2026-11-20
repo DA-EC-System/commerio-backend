@@ -5,7 +5,12 @@ import { companyProfileFilled, teamSetupState } from '../../../core/index.ts';
 import { hasCatalogData, openingStockState } from '../../../product/index.ts';
 import { type Onboarding, onboardingItems } from '../domain/items.ts';
 
-export async function getOnboarding(companyId: string, can: (permission: string) => boolean): Promise<Onboarding> {
+/** `reportEnabled`: lấy từ ngữ cảnh truy cập của người gọi (phân hệ đang bật), không cần cổng đọc thêm. */
+export async function getOnboarding(
+  companyId: string,
+  can: (permission: string) => boolean,
+  reportEnabled: boolean,
+): Promise<Onboarding> {
   // Tuần tự: cùng một kết nối của giao dịch, chạy song song cũng xếp hàng ở pg.
   const facts = await withCompany(companyId, async () => ({
     profileFilled: await companyProfileFilled(),
@@ -14,5 +19,5 @@ export async function getOnboarding(companyId: string, can: (permission: string)
     hasProduct: await hasCatalogData(),
     opening: await openingStockState(),
   }));
-  return onboardingItems(facts, can);
+  return onboardingItems({ ...facts, reportEnabled }, can);
 }

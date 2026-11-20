@@ -33,6 +33,9 @@ export {
   type SupplierReturnRefunded,
 } from './service/ledger.ts';
 
+// Số liệu trang Tổng quan của insight (#333, Documents/21 §21.5): gom sổ theo ngày, gian hàng.
+export { type DailyFigureRow, getDailyLedgerFigures } from './service/daily-figures.ts';
+
 // Trạng thái tiền theo đơn cho `OrderSummary.paymentStatus` của sales (#234): src/wiring.ts tiêm qua ctx.paymentStatusOf.
 export { paymentStatusesOf } from './service/order-settlement-state.ts';
 
