@@ -70,7 +70,6 @@ async function productWithSpec(leaf: string, brand: string | null = null) {
     productId: randomUUID(),
     productName: 'Giày sneaker nam vải canvas đế cao su',
     sku: `PP-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     productCode: 'SP-TEST',
     attributes: [],

@@ -9,7 +9,6 @@ const variant: ListingVariant = {
   productId: 'p',
   productName: 'Áo',
   sku: 'A-1',
-  categoryId: 'c',
   attributesLabel: '',
   productCode: 'SP-TEST',
   attributes: [],

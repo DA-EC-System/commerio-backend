@@ -6,7 +6,7 @@ import { testPool } from '../../helpers/db.ts';
 import { createOrder } from '../../helpers/sales.ts';
 import { receive } from '../inventory/helpers.ts';
 import { createRequest, createSupplier } from '../purchasing/helpers.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, type ProductBody, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createGroup, createProduct, type ProductBody, uniq, valueId } from './helpers.ts';
 
 // Xoá hẳn sản phẩm (#204 spec mục 6, Documents/21 §17.2): chỉ khi mọi SKU chờ hoàn thiện, chưa dùng ở module nào, không
 // sinh từ đề nghị nhập. Review Focus 3: sản phẩm đã dùng ở bất kỳ nguồn nào thì 409 và không xoá gì.
@@ -21,10 +21,10 @@ beforeAll(async () => {
 });
 
 async function product(): Promise<ProductBody> {
-  const category = await createCategory(token, uniq('Xoá'), 'XH-{SEQ}-{VAL}');
+  const group = await createGroup(token, uniq('Xoá'), 'XH-{SEQ}-{VAL}');
   return createProduct(token, {
     name: uniq('SP xoá'),
-    categoryId: category.id,
+    groupId: group.id,
     variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
   });
 }

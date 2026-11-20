@@ -2,7 +2,7 @@
 import { Decimal } from 'decimal.js';
 import { findAccountById, getStatusHistory } from '../../../core/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { categoryNames, getVariants, type VariantSummary } from '../../catalog/index.ts';
+import { groupNames, getVariants, type VariantSummary } from '../../catalog/index.ts';
 import { canSeeCost, outstanding, toDong } from '../domain/request.ts';
 import { findLines, type LineRow, receiptsOf, type RequestRow } from '../repository/requests.ts';
 import { findReturn } from '../repository/returns.ts';
@@ -100,7 +100,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
   const variants = new Map(
     (await getVariants(lines.flatMap((l) => (l.variantId ? [l.variantId] : [])))).map((v) => [v.id, v]),
   );
-  const categories = await categoryNames(lines.flatMap((l) => (l.newCategoryId ? [l.newCategoryId] : [])));
+  const categories = await groupNames(lines.flatMap((l) => (l.newGroupId ? [l.newGroupId] : [])));
   const receipts = look.receipts.get(row.id) ?? [];
   const history = await getStatusHistory('purchase_requests', row.id);
   return {
@@ -114,7 +114,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
         productName: v?.productName ?? l.newProductName ?? '',
         attributesLabel: v ? attributesLabel(v) : '',
         newProduct: l.newProductName
-          ? { name: l.newProductName, categoryId: l.newCategoryId!, categoryName: categories.get(l.newCategoryId!) ?? '' }
+          ? { name: l.newProductName, groupId: l.newGroupId!, groupName: categories.get(l.newGroupId!) ?? '' }
           : null,
         quantity: l.orderedQty,
         unitCost: look.showCost ? toDong(l.unitPrice) : null,

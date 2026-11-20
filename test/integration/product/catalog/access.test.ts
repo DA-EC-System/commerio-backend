@@ -4,40 +4,42 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { login, testApp } from '../../helpers/http.ts';
 import { lockCompany } from '../../helpers/state.ts';
-import { api, createAttribute, createCategory, createProduct, type ProductBody, valueId } from './helpers.ts';
+import { api, createAttribute, createGroup, createProduct, type ProductBody, valueId } from './helpers.ts';
 
 // Quyền và cô lập công ty của /catalog/* (AC-15; Documents/21 C4, P11, mục 8, V1, V5).
 let ceo: string;
 let sale: string;
 let ownProductId: string;
-let theirs: { categoryId: string; attributeId: string; product: ProductBody };
+let theirs: { groupId: string; attributeId: string; product: ProductBody };
 beforeAll(async () => {
   const mine = await createCompany();
   ceo = mine.ceo.token;
   sale = (await addMember(mine.companyId, 'sale')).token;
-  const own = await createCategory(ceo, 'Phụ kiện', 'PK-{SEQ}');
-  ownProductId = (await createProduct(ceo, { name: 'Ví', categoryId: own.id, variants: [[]] })).id;
+  const own = await createGroup(ceo, 'Ví da', 'PK-{SEQ}');
+  ownProductId = (await createProduct(ceo, { name: 'Ví', groupId: own.id, variants: [[]] })).id;
   const other = await createCompany();
   const color = await createAttribute(other.ceo.token, 'Màu', ['Đen', 'Trắng']);
-  const category = await createCategory(other.ceo.token, 'Áo', 'B-{SEQ}-{VAL}');
+  const group = await createGroup(other.ceo.token, 'Áo', 'B-{SEQ}-{VAL}');
   const product = await createProduct(other.ceo.token, {
     name: 'Áo của B',
-    categoryId: category.id,
+    groupId: group.id,
     variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
   });
-  theirs = { categoryId: category.id, attributeId: color.id, product };
+  theirs = { groupId: group.id, attributeId: color.id, product };
 });
 
 describe('Sale chỉ có catalog.product.view (AC-15)', () => {
-  it.each(['/categories', '/attributes', '/products', 'detail'])('GET %s → 200', async (path) => {
+  it.each(['/groups', '/settings', '/attributes', '/products', 'detail'])('GET %s → 200', async (path) => {
     expect((await api(sale).get(path === 'detail' ? `/products/${ownProductId}` : path)).status).toBe(200);
   });
 
-  // 12 operation ghi; body rỗng vẫn 403 vì kiểm quyền đứng trước validate.
+  // Mọi operation ghi; body rỗng vẫn 403 vì kiểm quyền đứng trước validate.
   const writes: [string, (t: string) => request.Test][] = [
-    ['POST /categories', (t) => api(t).post('/categories', {})],
-    ['PUT /categories/:id', (t) => api(t).put(`/categories/${theirs.categoryId}`, {})],
-    ['DELETE /categories/:id', (t) => api(t).delete(`/categories/${theirs.categoryId}`)],
+    ['POST /groups', (t) => api(t).post('/groups', {})],
+    ['PUT /groups/:id', (t) => api(t).put(`/groups/${theirs.groupId}`, {})],
+    ['DELETE /groups/:id', (t) => api(t).delete(`/groups/${theirs.groupId}`)],
+    ['POST /groups/:id/move-products', (t) => api(t).post(`/groups/${theirs.groupId}/move-products`, {})],
+    ['PUT /settings', (t) => api(t).put('/settings', {})],
     ['POST /attributes', (t) => api(t).post('/attributes', {})],
     ['PUT /attributes/:id', (t) => api(t).put(`/attributes/${theirs.attributeId}`, {})],
     ['DELETE /attributes/:id', (t) => api(t).delete(`/attributes/${theirs.attributeId}`)],
@@ -57,8 +59,8 @@ describe('Sale chỉ có catalog.product.view (AC-15)', () => {
 
 describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)', () => {
   it.each([
-    ['PUT danh mục', () => api(ceo).put(`/categories/${theirs.categoryId}`, { name: 'X', skuPattern: 'X-{SEQ}', version: 1 })],
-    ['DELETE danh mục', () => api(ceo).delete(`/categories/${theirs.categoryId}?version=1`)],
+    ['PUT nhóm hàng', () => api(ceo).put(`/groups/${theirs.groupId}`, { name: 'X', version: 1 })],
+    ['DELETE nhóm hàng', () => api(ceo).delete(`/groups/${theirs.groupId}?version=1`)],
     ['PUT thuộc tính', () => api(ceo).put(`/attributes/${theirs.attributeId}`, { name: 'X', values: [{ value: 'X' }], version: 1 })],
     ['DELETE thuộc tính', () => api(ceo).delete(`/attributes/${theirs.attributeId}?version=1`)],
     ['GET sản phẩm', () => api(ceo).get(`/products/${theirs.product.id}`)],
@@ -76,8 +78,8 @@ describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)'
   it('danh sách không có bản ghi của công ty khác; bản ghi của B không đổi', async () => {
     const products = await api(ceo).get('/products?search=Áo của B');
     expect(products.body.total).toBe(0);
-    const categories = await api(ceo).get('/categories');
-    expect(categories.body.some((c: { id: string }) => c.id === theirs.categoryId)).toBe(false);
+    const groups = await api(ceo).get('/groups');
+    expect(groups.body.items.some((g: { id: string }) => g.id === theirs.groupId)).toBe(false);
     const { rows } = await testPool().query(
       `select p.version, count(*) filter (where v.business_status <> 'selling')::int as changed from product.products p
        join product.product_variants v on v.product_id = p.id where p.id = $1 group by p.id`,
@@ -89,9 +91,9 @@ describe('bản ghi của công ty khác → 404, không đổi gì (AC-15, C4)'
 
 describe('đăng nhập và công ty', () => {
   it('không token → 401; token chưa chọn công ty → 403 company_not_selected', async () => {
-    expect((await request(testApp()).get('/api/v1/catalog/categories')).status).toBe(401);
+    expect((await request(testApp()).get('/api/v1/catalog/groups')).status).toBe(401);
     const { token } = await login((await createCompany()).ceo.email);
-    const res = await api(token).get('/categories');
+    const res = await api(token).get('/groups');
     expect(res.status).toBe(403);
     expect(res.body.type).toBe('/problems/company_not_selected');
   });
@@ -99,7 +101,7 @@ describe('đăng nhập và công ty', () => {
   it('công ty bị khoá sau khi đã có token → 403 company_locked', async () => {
     const { companyId, ceo: owner } = await createCompany();
     await lockCompany(companyId);
-    const res = await api(owner.token).post('/categories', { name: 'X', skuPattern: 'X-{SEQ}' });
+    const res = await api(owner.token).post('/groups', { name: 'X' });
     expect(res.status).toBe(403);
     expect(res.body.type).toBe('/problems/company_locked');
   });

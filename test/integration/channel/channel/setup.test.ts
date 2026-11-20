@@ -18,7 +18,6 @@ const variant = (sku: string): ListingVariant => ({
   productId: randomUUID(),
   productName: 'Áo',
   sku,
-  categoryId: randomUUID(),
   attributesLabel: '',
   productCode: 'SP-TEST',
   attributes: [],

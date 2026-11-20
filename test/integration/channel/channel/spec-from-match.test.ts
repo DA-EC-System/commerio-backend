@@ -68,7 +68,6 @@ function variant(attributes: ListingVariant['attributes'] = []) {
     productId: randomUUID(),
     productName: 'Bình giữ nhiệt',
     sku: `SM-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     productCode: 'SP-TEST',
     attributes,

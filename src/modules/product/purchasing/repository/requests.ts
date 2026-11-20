@@ -97,7 +97,7 @@ const lineCols = {
   requestId: purchaseRequestLines.requestId,
   variantId: purchaseRequestLines.variantId,
   newProductName: purchaseRequestLines.newProductName,
-  newCategoryId: purchaseRequestLines.newCategoryId,
+  newGroupId: purchaseRequestLines.newGroupId,
   orderedQty: purchaseRequestLines.orderedQty,
   receivedQty: purchaseRequestLines.receivedQty,
   defectiveQty: purchaseRequestLines.defectiveQty,
@@ -131,7 +131,7 @@ export function lockLines(requestId: string) {
 export interface NewLine {
   variantId: string | null;
   newProductName: string | null;
-  newCategoryId: string | null;
+  newGroupId: string | null;
   orderedQty: number;
   /** Chuỗi thập phân của `numeric(18,2)`. */
   unitPrice: string;

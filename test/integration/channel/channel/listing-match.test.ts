@@ -26,7 +26,6 @@ const newVariant = (extra: Partial<ListingVariant> = {}) => {
     productId: randomUUID(),
     productName: 'Cốc sứ',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: 'Trắng',
     productCode: 'SP-TEST',
     attributes: [],

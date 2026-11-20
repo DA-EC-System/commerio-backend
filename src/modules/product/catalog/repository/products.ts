@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import {
-  categories,
+  productGroups,
   productAttributeValueImages,
   productImages,
   products,
@@ -20,8 +20,8 @@ const columns = {
   imageAttributeId: products.imageAttributeId,
   originCountry: products.originCountry,
   brand: products.brand,
-  categoryId: products.categoryId,
-  categoryName: categories.name,
+  groupId: products.groupId,
+  groupName: productGroups.name,
   updatedAt: products.updatedAt,
   version: products.version,
   // SQL có bí danh: cột trong `sql` của Drizzle không kèm tên bảng.
@@ -36,14 +36,14 @@ export async function findProduct(id: string) {
   const [row] = await getDb()
     .select(columns)
     .from(products)
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
     .where(eq(products.id, id));
   return row;
 }
 
 export interface ProductFilter {
   search?: string | undefined;
-  categoryId?: string | undefined;
+  groupId?: string | undefined;
   status: 'active' | 'archived';
   /** Có ít nhất một SKU ở trạng thái này (#204). */
   businessStatus?: 'selling' | 'paused' | 'discontinued' | undefined;
@@ -62,7 +62,7 @@ const hasLiveVariant = sql`exists (select 1 from product.product_variants pv
 export async function listProducts(filter: ProductFilter) {
   const where = and(
     filter.status === 'archived' ? sql`not ${hasLiveVariant}` : hasLiveVariant,
-    filter.categoryId ? eq(products.categoryId, filter.categoryId) : undefined,
+    filter.groupId ? eq(products.groupId, filter.groupId) : undefined,
     filter.businessStatus
       ? sql`exists (select 1 from product.product_variants pv
           where pv.product_id = products.id and pv.business_status = ${filter.businessStatus})`
@@ -77,7 +77,7 @@ export async function listProducts(filter: ProductFilter) {
   const rows = await getDb()
     .select(columns)
     .from(products)
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
     .where(where)
     .orderBy(desc(products.updatedAt), products.id)
     .limit(filter.pageSize)
@@ -101,10 +101,10 @@ export async function productCodeTaken(code: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function insertProduct(companyId: string, categoryId: string, name: string, description: string, code: string) {
+export async function insertProduct(companyId: string, groupId: string, name: string, description: string, code: string) {
   const [row] = await getDb()
     .insert(products)
-    .values({ companyId, categoryId, name, description, code })
+    .values({ companyId, groupId, name, description, code })
     .returning({ id: products.id });
   return row!.id;
 }
@@ -112,7 +112,7 @@ export async function insertProduct(companyId: string, categoryId: string, name:
 const current = (id: string, version: number) => and(eq(products.id, id), eq(products.version, version));
 
 /** Trường của sản phẩm ghi cùng câu (#340); khoá vắng mặt thì giữ nguyên. */
-export type ProductExtras = Partial<{ imageAttributeId: string | null; originCountry: string | null; brand: string | null }>;
+export type ProductExtras = Partial<{ imageAttributeId: string | null; originCountry: string | null; brand: string | null; groupId: string }>;
 
 export async function updateProductIfVersion(id: string, version: number, name: string, description: string, extras: ProductExtras = {}) {
   const rows = await getDb()

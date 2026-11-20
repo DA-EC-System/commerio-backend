@@ -49,7 +49,7 @@ async function inRollback<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
     client.release();
   }
 }
-const runCopy = (c: PoolClient) => c.query(readFileSync(join(DIR, fileOf(COPY)), 'utf8'));
+const runCopy = (c: PoolClient) => c.query(readFileSync(join(DIR, fileOf(COPY)), 'utf8').replaceAll('p."category_id"', 'p."group_id"'));
 
 async function mapCategory(
   c: PoolClient,
@@ -102,12 +102,12 @@ describe('migration BE3: chép lần cuối rồi xoá ghép danh mục (#400 AC
     const [lz1, lz1New, lz2, lz3, tt4, tt5] = [num(), num(), num(), num(), num(), num()];
     await inRollback(async (c) => {
       const axis = await addAxis(c, a.companyId, l2.variantId);
-      await mapCategory(c, { companyId: a.companyId, platform: 'lazada', categoryId: l1.categoryId, externalId: lz1New, attributes: { brand: 'Acme', material: 'Cotton' } });
-      await mapCategory(c, { companyId: a.companyId, platform: 'lazada', categoryId: l2.categoryId, externalId: lz2, attributes: { brand: 'No Brand' } });
-      await mapCategory(c, { companyId: a.companyId, platform: 'lazada', categoryId: l3.categoryId, externalId: lz3, attributes: { brand: 'Cũ' } });
-      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: t4.categoryId, externalId: tt4, attributes: { '100149': 'Việt Nam' } });
-      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: t5.categoryId, externalId: tt5, attributes: { '100149': 'Việt Nam' }, rule: null });
-      await mapCategory(c, { companyId: b.companyId, platform: 'tiktok', categoryId: t6.categoryId, externalId: tt5, attributes: { '100149': 'Hàn Quốc' }, rule: 'required' });
+      await mapCategory(c, { companyId: a.companyId, platform: 'lazada', categoryId: l1.groupId, externalId: lz1New, attributes: { brand: 'Acme', material: 'Cotton' } });
+      await mapCategory(c, { companyId: a.companyId, platform: 'lazada', categoryId: l2.groupId, externalId: lz2, attributes: { brand: 'No Brand' } });
+      await mapCategory(c, { companyId: a.companyId, platform: 'lazada', categoryId: l3.groupId, externalId: lz3, attributes: { brand: 'Cũ' } });
+      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: t4.groupId, externalId: tt4, attributes: { '100149': 'Việt Nam' } });
+      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: t5.groupId, externalId: tt5, attributes: { '100149': 'Việt Nam' }, rule: null });
+      await mapCategory(c, { companyId: b.companyId, platform: 'tiktok', categoryId: t6.groupId, externalId: tt5, attributes: { '100149': 'Hàn Quốc' }, rule: 'required' });
       await seedSpec(c, { companyId: a.companyId, productId: l1.productId, platform: 'lazada', externalId: lz1, attributes: { brand: 'Acme' }, version: 0 });
       await seedSpec(c, { companyId: a.companyId, productId: l3.productId, platform: 'lazada', externalId: 'NGUOI-DUNG', attributes: { brand: 'Mới' }, version: 2 });
       await seedSpec(c, { companyId: a.companyId, productId: t4.productId, platform: 'tiktok', externalId: tt4, attributes: { '100149': 'Việt Nam' }, version: 0, status: 'changed' });
@@ -164,8 +164,8 @@ describe('migration BE3: chép lần cuối rồi xoá ghép danh mục (#400 AC
                 ('tiktok', $2, 'Quần', true, 'Quần', 'quan', 'active', '2026-11-01T00:00:00Z', 'optional')`,
         [bare, ruled],
       );
-      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: v.categoryId, externalId: bare, rule: 'required' });
-      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: w.categoryId, externalId: ruled, rule: 'required' });
+      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: v.groupId, externalId: bare, rule: 'required' });
+      await mapCategory(c, { companyId: a.companyId, platform: 'tiktok', categoryId: w.groupId, externalId: ruled, rule: 'required' });
       await runCopy(c);
       expect(await ruleOf(c, 'tiktok', bare)).toEqual({ size_chart_rule: 'required', synced_at: new Date('2026-11-01T00:00:00Z') });
       expect((await ruleOf(c, 'tiktok', ruled)).size_chart_rule).toBe('optional');

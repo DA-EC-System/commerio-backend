@@ -76,7 +76,6 @@ const mugWhite: ListingVariant = {
   productId: randomUUID(),
   productName: 'Cốc sứ Commerio',
   sku: 'CM-TEST-MUG-TRANG',
-  categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   productCode: 'SP-TEST',
   attributes: [],

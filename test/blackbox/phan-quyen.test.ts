@@ -19,7 +19,7 @@ const FINANCE_VIEW = ['finance.config.manage', 'finance.config.approve', 'financ
 /** Route đọc và quyền mở nó (`anyOf` thì liệt kê đủ). */
 const ROUTES: [route: string, permissions: string[]][] = [
   ['GET /catalog/products', ['catalog.product.view']],
-  ['GET /catalog/categories', ['catalog.product.view']],
+  ['GET /catalog/groups', ['catalog.product.view']],
   ['GET /inventory/stock', ['inventory.stock.view']],
   ['GET /purchasing/requests', ['purchasing.request.manage', 'purchasing.request.approve', 'purchasing.receipt.manage', 'purchasing.return.manage']],
   ['GET /purchasing/suppliers', ['purchasing.request.manage', 'purchasing.request.approve', 'purchasing.receipt.manage', 'purchasing.return.manage']],

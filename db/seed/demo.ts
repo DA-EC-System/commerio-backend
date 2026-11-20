@@ -3,6 +3,7 @@
 // Không chạy luồng mời/OTP gửi email. Mọi tài khoản có sẵn phải đúng mật khẩu seed. Chạy lại nhiều lần không sinh trùng.
 import { assignRole, BUILTIN_ROLES, rolesAndPermissions } from '#src/modules/core/access/index.ts';
 import { hashPassword, register, verifyPassword } from '#src/modules/core/identity/index.ts';
+import { seedCompanyDefaults } from '#src/modules/product/index.ts';
 import {
   createAccount,
   createMembership,
@@ -91,7 +92,7 @@ export async function demoCompanyId(input: SeedDemoInput): Promise<string> {
           ceo: { ...input.accounts.ceo, password: input.password },
           optionalModules: modules,
           assistantDataConsent: modules.includes('assistant'),
-        })
+        }, seedCompanyDefaults)
       ).companyId;
     } catch (err) {
       // Hai lần seed chạy cùng lúc: lần thua đọc lại tài khoản lần thắng vừa tạo.

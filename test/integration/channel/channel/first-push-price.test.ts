@@ -16,7 +16,6 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
 const port = {
   variants: async (ids?: readonly string[]) => variants.filter((v) => !ids || ids.includes(v.id)),
@@ -58,7 +57,6 @@ async function variant(target: number | null, cost: number) {
     productId,
     productName: 'Áo thun',
     sku,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
     attributes: [],

@@ -16,7 +16,6 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
 const variant = (): ListingVariant => {
   const v: ListingVariant = {
@@ -24,7 +23,6 @@ const variant = (): ListingVariant => {
     productId: randomUUID(),
     productName: 'Áo thun basic',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
     attributes: [],

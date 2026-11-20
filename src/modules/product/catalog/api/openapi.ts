@@ -11,8 +11,6 @@ import {
   BulkEditQuery,
   BulkSaveDocBody,
   BulkSaveResult,
-  Category,
-  CategoryBody,
   CreateProductBody,
   IdParams,
   ProductDetail,
@@ -20,13 +18,18 @@ import {
   ProductPage,
   SetVariantImageBody,
   UpdateAttributeBody,
-  UpdateCategoryBody,
+  UpdateGroupBody,
   UpdateProductBody,
   UpdateVariantBody,
   Variant,
   VariantImageParams,
   VariantParams,
   VersionQuery,
+  GroupBody,
+  MoveProductsBody,
+  ProductGroup,
+  ProductSettings,
+  SettingsBody,
 } from './schemas.ts';
 
 const json = (description: string, schema: z.ZodType) => ({ description, content: { 'application/json': { schema } } });
@@ -45,43 +48,62 @@ const missing = (what: string) => ({ 404: problemResponse(`Không tìm thấy ${
 export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   const path = (route: RouteConfig) => registry.registerPath({ ...route, responses: { ...common, ...route.responses } });
 
-  // ----- Danh mục: quyền xem `catalog.product.view`, ghi `catalog.category.manage` -----
+  // ----- Nhóm hàng, cài đặt sản phẩm: xem `catalog.product.view`, ghi `catalog.group.manage` (21 mục 5.2) -----
   path({
     method: 'get',
-    path: '/categories',
-    summary: 'Danh sách danh mục kèm quy tắc SKU',
-    responses: { 200: json('Danh mục, sắp theo tên', z.array(Category)) },
+    path: '/groups',
+    summary: 'Danh sách nhóm hàng',
+    responses: { 200: json('Nhóm hàng, sắp theo tên', z.object({ items: z.array(ProductGroup) })) },
   });
   path({
     method: 'post',
-    path: '/categories',
-    summary: 'Tạo danh mục',
-    request: { body: body(CategoryBody) },
-    responses: { 201: json('Danh mục vừa tạo', Category), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
+    path: '/groups',
+    summary: 'Tạo nhóm hàng; chỉ gửi tên thì `catalog.product.manage` hoặc `purchasing.request.manage` cũng được',
+    request: { body: body(GroupBody) },
+    responses: { 201: json('Nhóm vừa tạo', ProductGroup), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
   });
   path({
     method: 'put',
-    path: '/categories/:id',
-    summary: 'Sửa danh mục; quy tắc mới chỉ áp dụng cho SKU sinh sau',
-    request: { params: IdParams, body: body(UpdateCategoryBody) },
+    path: '/groups/:id',
+    summary: 'Sửa nhóm hàng',
+    request: { params: IdParams, body: body(UpdateGroupBody) },
     responses: {
-      200: json('Danh mục sau khi sửa', Category),
+      200: json('Nhóm sau khi sửa', ProductGroup),
       409: problemResponse('`version_conflict` (kèm `current`) hoặc `name_taken`'),
-      ...missing('danh mục'),
+      ...missing('nhóm hàng'),
       ...invalid,
     },
   });
   path({
     method: 'delete',
-    path: '/categories/:id',
-    summary: 'Xoá danh mục chưa có sản phẩm nào (kể cả đã lưu trữ)',
+    path: '/groups/:id',
+    summary: 'Xoá nhóm hàng chưa có sản phẩm nào (kể cả đã lưu trữ)',
     request: { params: IdParams, query: VersionQuery },
+    responses: { 204: noContent, 409: problemResponse('`in_use` hoặc `version_conflict`'), ...missing('nhóm hàng'), ...invalid },
+  });
+  path({
+    method: 'post',
+    path: '/groups/:id/move-products',
+    summary: 'Chuyển sản phẩm (kể cả đã lưu trữ) sang nhóm khác; quyền `catalog.product.manage`',
+    request: { params: IdParams, body: body(MoveProductsBody) },
     responses: {
-      204: noContent,
-      409: problemResponse('`in_use` hoặc `version_conflict`'),
-      ...missing('danh mục'),
-      ...invalid,
+      200: json('Số sản phẩm đã chuyển', z.object({ moved: z.number().int() })),
+      ...missing('nhóm hàng nguồn'),
+      422: problemResponse('`errors.targetGroupId` (trùng nguồn, không có) hoặc `errors.productIds` (không thuộc nhóm)'),
     },
+  });
+  path({
+    method: 'get',
+    path: '/settings',
+    summary: 'Cài đặt sản phẩm của công ty: mẫu SKU, gợi ý mặc định',
+    responses: { 200: json('Cài đặt', ProductSettings) },
+  });
+  path({
+    method: 'put',
+    path: '/settings',
+    summary: 'Sửa cài đặt sản phẩm; mẫu mới chỉ áp cho SKU sinh sau',
+    request: { body: body(SettingsBody) },
+    responses: { 200: json('Cài đặt sau khi sửa', ProductSettings), 409: problemResponse('`version_conflict` (kèm `current`)'), ...invalid },
   });
 
   // ----- Thuộc tính -----
@@ -141,14 +163,14 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'post',
     path: '/products',
-    summary: 'Tạo sản phẩm; SKU sinh theo quy tắc của danh mục, theo thứ tự biến thể',
+    summary: 'Tạo sản phẩm; SKU sinh theo mẫu SKU của công ty, theo thứ tự biến thể; trục, giá trị mới tạo cùng lúc',
     request: { body: body(CreateProductBody) },
     responses: { 201: json('Sản phẩm vừa tạo', ProductDetail), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
   });
   path({
     method: 'put',
     path: '/products/:id',
-    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu; không đổi danh mục và biến thể',
+    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu, nhóm hàng (SKU giữ nguyên); không đổi biến thể',
     description:
       '`imageAttributeId` phải là một trục phân loại của sản phẩm; đổi sang thuộc tính khác hoặc `null` thì gỡ mọi ảnh phân loại ' +
       'cũ (không xoá tệp). `originCountry` cắt khoảng trắng, viết hoa; `originCountry`, `brand` rỗng lưu null.',
@@ -251,8 +273,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Lấy SKU để sửa hàng loạt, kèm giá trị gợi ý (không tự lưu)',
     description:
       'Chỉ SKU chưa lưu trữ của sản phẩm chưa lưu trữ. `incomplete=true`: còn ít nhất một ô giá muốn bán, cân nặng, dài, rộng, cao bỏ trống. ' +
-      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi của danh mục (làm tròn lên theo bước của danh mục), ' +
-      'không có thì chép từ SKU anh em; ngưỡng tồn theo tốc độ bán 30 ngày hoặc mặc định danh mục; cân nặng, kích thước, giá chuẩn chép từ SKU anh em. ' +
+      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi (nhóm hàng, trống thì cài đặt công ty) (làm tròn lên theo bước của danh mục), ' +
+      'không có thì chép từ SKU anh em; ngưỡng tồn theo tốc độ bán 30 ngày hoặc ngưỡng mặc định (nhóm, trống thì công ty); cân nặng, kích thước, giá chuẩn chép từ SKU anh em. ' +
       '`source.lastCost` là null khi thiếu quyền `inventory.cost.view`.',
     request: { query: BulkEditQuery },
     responses: { 200: json('Trang SKU kèm gợi ý', BulkEditPage), ...invalid },

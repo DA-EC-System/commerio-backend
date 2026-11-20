@@ -3,7 +3,7 @@ import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { confirmUploads, fileProblem, publicFileUrls, recordAudit } from '../../../core/index.ts';
 import { countLabels, type LabelledSku } from '../domain/labels.ts';
-import { findCategories } from '../repository/categories.ts';
+import { findGroups } from '../repository/groups.ts';
 import { productImageRows, replaceProductImages } from '../repository/product-images.ts';
 import {
   deleteProductTree,
@@ -30,25 +30,28 @@ import {
   notFound,
   pgError,
   productInUse,
-  tooManyAxes,
   versionConflict,
 } from './errors.ts';
 import { type SkuLabels, skuLabels } from './labels.ts';
 import { listedImageErrors } from './listed-fields.ts';
 import { attributeValueImagesOf, imagesOf, MAX_PRODUCT_IMAGES, sizeChartOf, type VariantImage, variantImagesOf } from './product-images.ts';
-import { allocateSkus, productCodeFor, resolveCombos } from './sku-allocation.ts';
+import { type AxisInput, checkAxes, createAxes } from './axes.ts';
+import { allocateSkus, productCodeFor, SKU_TOO_LONG } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
 import { archiveBlockersOf, inUseOf, requirePort } from './usage.ts';
 
 export interface CreateProductInput {
   name: string;
-  categoryId: string;
+  groupId: string;
   description: string;
   /** Id tệp ảnh theo thứ tự, ảnh đầu là ảnh đại diện (#303). */
   imageFileIds?: string[] | undefined;
   /** Id tệp ảnh bảng kích cỡ (#347); bỏ trống là chưa có. */
   sizeChartFileId?: string | null | undefined;
-  variants: { attributeValueIds: string[] }[];
+  /** Trục phân loại (tối đa 2, đã kiểm hình dạng ở Zod); thuộc tính, giá trị mới tạo cùng giao dịch. */
+  axes: AxisInput[];
+  /** `options[i]` là một giá trị của `axes[i]` (so `lower(trim)`). */
+  variants: { options: string[] }[];
 }
 
 export interface UpdateProductInput {
@@ -62,6 +65,8 @@ export interface UpdateProductInput {
   imageAttributeId?: string | null | undefined;
   originCountry?: string | null | undefined;
   brand?: string | null | undefined;
+  /** Đổi nhóm hàng (P6, 19/11/2026); SKU không đổi. */
+  groupId?: string | undefined;
   version: number;
 }
 
@@ -79,7 +84,7 @@ function toListItem(p: ProductRow, thumbnailUrl: string | null, skus: readonly L
     id: p.id,
     name: p.name,
     code: p.code,
-    category: { id: p.categoryId, name: p.categoryName },
+    group: { id: p.groupId, name: p.groupName },
     ...counts,
     thumbnailUrl: thumbnailUrl || null,
     status: counts.variantCount > 0 ? ('active' as const) : ('archived' as const),
@@ -140,7 +145,7 @@ export async function productDetail(
   const discontinued = archiveBlockers ? rows.filter((v) => v.businessStatus === 'discontinued').map((v) => v.id) : [];
   const blockers = await archiveBlockersOf(ctx, discontinued);
   const images = await imagesOf(p.id);
-  const labels = await skuLabels(ctx, rows, () => ({ name: p.name, categoryId: p.categoryId, imageCount: images.length }));
+  const labels = await skuLabels(ctx, rows, () => ({ name: p.name, imageCount: images.length }));
   const variantImages = await variantImagesOf(rows);
   const views = rows.map((v) =>
     toVariantView(v, labels.get(v.id)!, prices.get(v.id) ?? null, blockers.get(v.id), variantImages.get(v.id)),
@@ -168,7 +173,7 @@ export async function findOwnProduct(id: string): Promise<ProductRow> {
 
 function snapshot(
   p: { name: string; description: string | null },
-  category: string,
+  group: string,
   variants: { sku: string; archivedAt: unknown }[],
   imageFileIds: readonly string[],
   sizeChartFileId: string | null = null,
@@ -176,7 +181,7 @@ function snapshot(
 ) {
   return {
     name: p.name,
-    category,
+    group,
     description: p.description ?? '',
     imageFileIds: [...imageFileIds],
     ...(sizeChartFileId && { sizeChartFileId }),
@@ -198,8 +203,10 @@ async function imageIdsOf(productId: string): Promise<string[]> {
 function race(err: unknown): never {
   const { code, constraint } = pgError(err);
   if (code === '23505' && constraint?.startsWith('products_')) throw taken();
-  // Danh mục hay giá trị vừa bị xoá giữa lúc đọc và lúc ghi.
-  if (code === '23503' && constraint?.startsWith('products_category_id')) throw invalid({ categoryId: 'Danh mục vừa bị xoá' });
+  // Giá trị mới của trục đụng giá trị, mã vừa được `PUT /attributes` thêm (route đó không lấy khoá công ty).
+  if (code === '23505' && constraint?.startsWith('attribute_values_')) throw invalid({ axes: 'Thuộc tính vừa được sửa, thử lại' });
+  // Nhóm hàng hay giá trị vừa bị xoá giữa lúc đọc và lúc ghi.
+  if (code === '23503' && constraint?.startsWith('products_group_id')) throw invalid({ groupId: 'Nhóm hàng vừa bị xoá' });
   if (code === '23503' && constraint?.startsWith('variant_attribute_values_')) throw invalid({ variants: 'Có giá trị thuộc tính vừa bị xoá' });
   if (code === '23503' && constraint === 'products_image_attribute_id_attributes_id_fk') throw invalid({ imageAttributeId: NOT_AXIS });
   throw err;
@@ -214,7 +221,7 @@ export async function listProducts(ctx: CatalogContext, companyId: string, filte
     const { rows, total } = await findPage(filter);
     const variants = rows.length ? await findVariants({ productIds: rows.map((p) => p.id) }) : [];
     // Độ hoàn thiện chỉ cần cha có ảnh hay không: ảnh `position` 0 có khi và chỉ khi có ảnh.
-    const parents = new Map(rows.map((p) => [p.id, { name: p.name, categoryId: p.categoryId, imageCount: p.thumbnailFileId ? 1 : 0 }]));
+    const parents = new Map(rows.map((p) => [p.id, { name: p.name, imageCount: p.thumbnailFileId ? 1 : 0 }]));
     const labels = await skuLabels(ctx, variants, (id) => parents.get(id)!);
     const skusOf = Map.groupBy(
       variants.map((v) => ({ productId: v.productId, businessStatus: v.businessStatus, ...labels.get(v.id)! })),
@@ -246,27 +253,28 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
   const sizeChartId = input.sizeChartFileId ?? null;
   await confirmUploads(caller.companyId, sizeChartId ? [...imageIds, sizeChartId] : imageIds);
   return withCompany(caller.companyId, async () => {
-    // Tối đa 2 trục (#204): kiểm trước mọi lần đọc, thay lỗi CHECK `variant_attribute_values_position` của DB.
-    if (input.variants.some((v) => v.attributeValueIds.length > 2)) throw tooManyAxes();
     await lockVariants(caller.companyId);
-    // Khoá ngoại kiểm bằng quyền chủ bảng, bỏ qua RLS: phải đọc danh mục dưới công ty mình trước (ground-truth #12).
-    const [category] = isUuid(input.categoryId) ? await findCategories(input.categoryId) : [];
-    const resolved = await resolveCombos(input.variants.map((v) => v.attributeValueIds));
+    // Khoá ngoại kiểm bằng quyền chủ bảng, bỏ qua RLS: đọc nhóm, thuộc tính, giá trị dưới công ty mình trước khi ghi.
+    const [group] = isUuid(input.groupId) ? await findGroups(input.groupId) : [];
+    const checked = await checkAxes(input.axes);
     const imageError = await fileProblem(imageIds, 'product_image', MAX_PRODUCT_IMAGES);
-    const errors: Record<string, string> = {};
-    if (!category) errors.categoryId = 'Chọn danh mục';
-    if (!resolved.ok) errors.variants = resolved.message;
-    if (imageError) errors.images = imageError;
     const sizeChartError = sizeChartId ? await fileProblem([sizeChartId], 'product_image', 1) : null;
+    const errors: Record<string, string> = { ...checked.errors };
+    if (!group) errors.groupId = 'Chọn nhóm hàng';
+    if (imageError) errors.images = imageError;
     if (sizeChartError) errors.sizeChart = sizeChartError;
-    if (!category || !resolved.ok || imageError || sizeChartError) throw invalid(errors);
+    if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name)) throw taken();
 
-    const skus = await allocateSkus(category, resolved.combos);
-    const code = await productCodeFor(category.skuPattern, skus[0]!.seq);
-    const id = await insertProduct(caller.companyId, category.id, input.name, input.description, code);
-    for (const [i, combo] of resolved.combos.entries()) {
-      await insertVariant(caller.companyId, id, skus[i]!.sku, combo.map((v) => v.id), i);
+    // Từ đây là ghi: lỗi sau bước này (SKU quá dài) rollback cả thuộc tính, giá trị vừa tạo.
+    const axes = await createAxes(caller.companyId, input.axes, checked.found);
+    const combos = input.variants.map((v) => v.options.map((o, k) => axes[k]!.values.get(o.trim().toLowerCase())!));
+    const allocation = await allocateSkus(caller.companyId, combos);
+    if (!allocation.ok) throw invalid({ [`variants.${allocation.index}`]: SKU_TOO_LONG });
+    const code = await productCodeFor(allocation.pattern, allocation.skus[0]!.seq);
+    const id = await insertProduct(caller.companyId, group!.id, input.name, input.description, code);
+    for (const [i, combo] of combos.entries()) {
+      await insertVariant(caller.companyId, id, allocation.skus[i]!.sku, combo.map((v) => v.id), i);
     }
     await replaceProductImages(caller.companyId, id, imageIds);
     if (sizeChartId) await setSizeChart(id, sizeChartId);
@@ -274,7 +282,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     await recordAudit({
       ...auditOf(caller, 'create', ENTITY, id),
       label: input.name,
-      after: { ...snapshot(input, category.name, result.variants, imageIds, sizeChartId), code },
+      after: { ...snapshot(input, group!.name, result.variants, imageIds, sizeChartId), code },
     });
     return result;
   }).catch(race);
@@ -318,6 +326,10 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     const axes = new Set(variants.flatMap((v) => v.attributes.map((a) => a.attributeId)));
     // `!= null`: chuỗi rỗng cũng là id sai (422), không lọt xuống UPDATE thành 500.
     if (input.imageAttributeId != null && !axes.has(input.imageAttributeId)) errors.imageAttributeId = NOT_AXIS;
+    // Đổi nhóm (P6): nhóm đọc qua RLS, nhóm công ty khác hay id lạ là 422; SKU không đổi.
+    const changesGroup = input.groupId !== undefined && input.groupId !== product.groupId;
+    const [newGroup] = changesGroup && isUuid(input.groupId!) ? await findGroups(input.groupId) : [];
+    if (changesGroup && !newGroup) errors.groupId = 'Chọn nhóm hàng';
     if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name, id)) throw taken();
     const imagesBefore = await imageIdsOf(id);
@@ -328,6 +340,7 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
       ...(changesImageAttribute && { imageAttributeId: input.imageAttributeId }),
       ...(input.originCountry !== undefined && { originCountry: input.originCountry }),
       ...(input.brand !== undefined && { brand: input.brand }),
+      ...(newGroup && { groupId: newGroup.id }),
     };
     // Khoá ngoại ghép `pavi_product_fk` bắt xoá ảnh cũ trước khi đổi thuộc tính; sai `version` thì cả giao dịch lùi lại.
     // Ảnh phân loại gỡ kèm ghi vào nhật ký như route ảnh, để truy được ảnh nào mất (#340, review N2).
@@ -345,10 +358,13 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
       ...auditOf(caller, 'update', ENTITY, id),
       label: input.name ?? product.name,
       before: {
-        ...snapshot(product, product.categoryName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
+        ...snapshot(product, product.groupName, variants, imagesBefore, product.sizeChartFileId, extrasOf(product)),
         ...(removedImages.length && { attributeValueImages: removedImages }),
       },
-      after: snapshot(input, product.categoryName, variants, imageIds ?? imagesBefore, sizeChartAfter, { ...extrasOf(product), ...extras }),
+      after: snapshot(input, newGroup?.name ?? product.groupName, variants, imageIds ?? imagesBefore, sizeChartAfter, {
+        ...extrasOf(product),
+        ...extras,
+      }),
     });
     // Đổi thuộc tính gắn ảnh thì `variants` còn mang ảnh cũ: đọc lại.
     return productDetail(ctx, await findOwnProduct(id), changesImageAttribute ? undefined : variants);
@@ -374,7 +390,7 @@ export async function deleteProduct(ctx: CatalogContext, caller: Caller, id: str
     const variants = await findVariants({ productId: id });
     const ids = variants.map((v) => v.id);
     const imageIds = await imageIdsOf(id);
-    const parent = { name: product.name, categoryId: product.categoryId, imageCount: imageIds.length };
+    const parent = { name: product.name, imageCount: imageIds.length };
     const labels = await skuLabels(ctx, variants, () => parent);
     if (variants.some((v) => labels.get(v.id)!.readiness === 'ready')) {
       throw productInUse('Sản phẩm có SKU đã hoàn thiện, không xoá hẳn được; lưu trữ từng SKU');
@@ -386,7 +402,7 @@ export async function deleteProduct(ctx: CatalogContext, caller: Caller, id: str
     await recordAudit({
       ...auditOf(caller, 'delete', ENTITY, id),
       label: product.name,
-      before: { ...snapshot(product, product.categoryName, variants, imageIds, product.sizeChartFileId), code: product.code },
+      before: { ...snapshot(product, product.groupName, variants, imageIds, product.sizeChartFileId), code: product.code },
     });
   });
 }
