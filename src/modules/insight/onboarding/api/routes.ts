@@ -13,7 +13,7 @@ export function onboardingRouter({ member }: ModuleContext): Router {
   router.get('/', member, async (_req, res) => {
     const { permissions, enabledModules } = getAccess(res);
     const can = (p: string) => permissions.includes(p) && enabledModules.includes(moduleOfPermission(p));
-    res.json(await getOnboarding(getAuth(res).companyId!, can));
+    res.json(await getOnboarding(getAuth(res).companyId!, can, enabledModules.includes('report')));
   });
 
   return router;

@@ -6,24 +6,46 @@ const blank: OnboardingFacts = {
   team: { otherActiveMembers: 0, invitations: 0 },
   shops: { connected: [], setUp: 0 },
   hasProduct: false,
+  reportEnabled: false,
   opening: { openingPosted: false, pendingOpening: null, hasMoves: false },
 };
 const all = () => true;
 const item = (facts: OnboardingFacts, key: string) => onboardingItems(facts, all).items.find((i) => i.key === key)!;
 
 describe('onboardingItems (Documents/21 mục 23)', () => {
-  it('công ty mới: đủ 6 mục đúng thứ tự, chưa xong mục nào; mời nhân viên là tuỳ chọn, không tính vào total', () => {
+  it('công ty mới: 4 mục bắt buộc theo thứ tự làm rồi 3 mục tuỳ chọn; chưa xong mục nào; total chỉ đếm mục bắt buộc', () => {
     const r = onboardingItems(blank, all);
     expect(r.items.map((i) => i.key)).toEqual([...ONBOARDING_KEYS]);
     expect(r.items.every((i) => !i.done && i.ref === null)).toBe(true);
-    expect(r.items.filter((i) => i.optional).map((i) => i.key)).toEqual(['invite_staff']);
-    expect(r).toMatchObject({ done: 0, total: 5 });
+    expect(r.items.map((i) => i.key)).toEqual([
+      'company_profile',
+      'connect_shop',
+      'setup_shop',
+      'opening_stock',
+      'first_product',
+      'invite_staff',
+      'enable_report',
+    ]);
+    expect(r.items.filter((i) => i.optional).map((i) => i.key)).toEqual(['first_product', 'invite_staff', 'enable_report']);
+    expect(r).toMatchObject({ done: 0, total: 4 });
   });
 
   it('mời nhân viên xong khi có thành viên ngoài CEO hoặc đã có lời mời; done không đổi', () => {
     expect(item({ ...blank, team: { otherActiveMembers: 0, invitations: 1 } }, 'invite_staff').done).toBe(true);
     expect(item({ ...blank, team: { otherActiveMembers: 1, invitations: 0 } }, 'invite_staff').done).toBe(true);
     expect(onboardingItems({ ...blank, team: { otherActiveMembers: 1, invitations: 0 } }, all).done).toBe(0);
+  });
+
+  it('có sản phẩm, đã bật Báo cáo: hai mục tuỳ chọn xong, done không đổi', () => {
+    const r = onboardingItems({ ...blank, hasProduct: true, reportEnabled: true }, all);
+    expect(item({ ...blank, hasProduct: true }, 'first_product').done).toBe(true);
+    expect(item({ ...blank, reportEnabled: true }, 'enable_report').done).toBe(true);
+    expect(r).toMatchObject({ done: 0, total: 4 });
+  });
+
+  it('bật Báo cáo chỉ hiện với người có platform.module.manage', () => {
+    const r = onboardingItems(blank, (p) => p === 'platform.module.manage');
+    expect(r).toEqual({ items: [{ key: 'enable_report', done: false, optional: true, ref: null }], done: 0, total: 0 });
   });
 
   it('gian hàng đang kết nối chưa thiết lập: kết nối xong, thiết lập chưa xong và trỏ tới gian hàng cũ nhất đang chờ', () => {
@@ -52,8 +74,8 @@ describe('onboardingItems (Documents/21 mục 23)', () => {
 
   it('chỉ trả mục người xem có quyền, total đếm trên mục đã lọc', () => {
     const r = onboardingItems({ ...blank, hasProduct: true }, (p) => p === 'catalog.product.manage' || p === 'identity.account.manage');
-    expect(r.items.map((i) => i.key)).toEqual(['invite_staff', 'first_product']);
-    expect(r).toMatchObject({ done: 1, total: 1 });
+    expect(r.items.map((i) => i.key)).toEqual(['first_product', 'invite_staff']);
+    expect(r).toMatchObject({ done: 0, total: 0 });
   });
 
   it('không có quyền nào: danh sách rỗng, 0/0', () => {
