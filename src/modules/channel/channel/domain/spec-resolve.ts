@@ -13,19 +13,23 @@ export interface ResolvedValue {
 
 export type SpecFieldInput = 'select' | 'multiselect' | 'text' | 'number' | 'date';
 
-/** Một thông số của sản phẩm (cổng `getProductSpecs` của catalog), đã xếp: trong mẫu nhóm theo vị trí, ngoài mẫu theo `code`. */
+/** Một thông số của sản phẩm (cổng `getProductSpecs` của catalog). */
 export interface CatalogSpecValue {
   fieldId: string;
   code: string;
   input: SpecFieldInput;
-  /** Theo vị trí lựa chọn trong thông số; cùng thứ tự với `optionLabels`. */
+  unit?: string | null;
+  allowCustom?: boolean;
+  /** Vị trí trong mẫu nhóm; null khi thông số ngoài mẫu. */
+  position?: number | null;
+  /** Theo `spec_field_options.position`; cùng thứ tự với `optionLabels`. Vào attribute chọn một thì lấy lựa chọn đầu. */
   optionIds: string[];
   optionLabels: string[];
   /** `text`/`number`/`date` (date dạng `YYYY-MM-DD`). */
   value: string | null;
 }
 
-/** Một mã ánh xạ đã xác nhận (`suggested = false`) của thông số trên sàn đang xét. */
+/** Một mã ánh xạ của thông số trên sàn đang xét (`spec_field_mappings`). */
 export interface FieldMapping {
   fieldId: string;
   attributeCode: string;
@@ -111,10 +115,9 @@ function catalogValue(
 }
 
 /**
- * Giá trị theo mã attribute (Documents/21 §18.8.2). Thương hiệu, xuất xứ (`productFields`) là thông số catalog có sẵn: catalog
- * thắng khoá cũ trong `overrides` vì người dùng không ghi đè được attribute `tier = 'product'` (khoá đó chỉ còn ở spec chép từ
- * ghép SKU, luật chuyển tiếp AC-15 của #400). Mỗi attribute nhận từ tối đa một thông số: thông số đứng trước trong
- * `product.specs` thắng; mỗi thông số lấy mã có `priority` nhỏ nhất mà leaf có.
+ * Giá trị theo mã attribute (Documents/21 §18.8.2). Ghi đè thắng mọi nguồn, kể cả thương hiệu, xuất xứ (E179). Thương hiệu,
+ * xuất xứ (`productFields`) là thông số catalog có sẵn. Mỗi thông số lấy mã có `priority` nhỏ nhất mà leaf có; một mã của sàn
+ * chỉ nhận từ một thông số (CSDL ép unique `(company_id, platform, attribute_code)`).
  */
 export function resolveSpecAttributes(adapter: ResolveAdapter, input: ResolveInput): Record<string, ResolvedValue> {
   const { attributes, overrides, product, mappings, org } = input;
@@ -127,6 +130,7 @@ export function resolveSpecAttributes(adapter: ResolveAdapter, input: ResolveInp
 
   for (const [code, field] of Object.entries(adapter.productFields ?? {})) {
     const attr = byCode.get(code);
+    if (out[code]) continue;
     if (field === 'brand') {
       if (product.brand) out[code] = { value: product.brand, source: 'catalog', fieldId: null };
     } else if (attr && product.originCountry) {
@@ -136,7 +140,6 @@ export function resolveSpecAttributes(adapter: ResolveAdapter, input: ResolveInp
   }
 
   if (attributes) {
-    const taken = new Set<string>();
     for (const spec of product.specs) {
       const codes = mappings
         .filter((m) => m.fieldId === spec.fieldId)
@@ -145,9 +148,7 @@ export function resolveSpecAttributes(adapter: ResolveAdapter, input: ResolveInp
         const a = byCode.get(m.attributeCode);
         return a !== undefined && a.kind !== 'sales' && a.tier !== 'company' && a.tier !== 'product';
       });
-      if (!mapping || taken.has(mapping.attributeCode)) continue;
-      taken.add(mapping.attributeCode);
-      if (out[mapping.attributeCode]) continue; // ghi đè thắng
+      if (!mapping || out[mapping.attributeCode]) continue; // ghi đè thắng
       const value = catalogValue(byCode.get(mapping.attributeCode)!, spec, mapping, adapter);
       if (value !== null) out[mapping.attributeCode] = { value, source: 'catalog', fieldId: spec.fieldId };
     }

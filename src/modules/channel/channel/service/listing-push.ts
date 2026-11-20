@@ -71,7 +71,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   // Spec của sản phẩm (#400): attribute leaf thiếu hay quá 7 ngày thì lấy lại trước khi kiểm (A16, ngoài giao dịch; sàn lỗi mà
   // còn bản cũ thì kiểm theo bản cũ, chưa có bản nào thì kiểm theo category, trục và để sàn quyết).
   const specOf = async (v: ListingVariant) =>
-    (await specChecks(shop, adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+    (await specChecks(port, shop, adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
   const first = await inCompany(async () => {
     const [v] = await port.variants([variantId]);
     return v ? specOf(v) : undefined;
@@ -139,7 +139,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
-      attributes: pushAttributes(adapter, map!.attributes, map!.row, map!.product),
+      attributes: pushAttributes(map!.attributes, map!.resolved),
       responsible,
       brand: v.brand ?? null,
       ...listingText(v),

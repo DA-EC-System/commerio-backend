@@ -87,13 +87,6 @@ describe('resolveSpecAttributes', () => {
     expect(r['100157']?.value).toBe('Cotton');
   });
 
-  it('hai thông số cùng trỏ một mã: thông số đứng trước thắng', () => {
-    const second: CatalogSpecValue = { ...fieldMaterial, fieldId: 'f-2', optionIds: ['x'], optionLabels: ['Polyester'] };
-    const mappings = [mapMaterial('100157', 1), { ...mapMaterial('100157', 1), fieldId: 'f-2' }];
-    const r = resolveSpecAttributes({}, base({ mappings, product: { brand: null, originCountry: null, specs: [fieldMaterial, second] } }));
-    expect(r['100157']?.fieldId).toBe('f-material');
-  });
-
   it('không ánh xạ vào attribute sales, tier company, tier product', () => {
     const leaf = [attr({ code: 's', kind: 'sales' }), attr({ code: 'c', tier: 'company' }), attr({ code: 'p', tier: 'product' })];
     const mappings = ['s', 'c', 'p'].map((c, i) => mapMaterial(c, i + 1));
@@ -116,9 +109,11 @@ describe('resolveSpecAttributes', () => {
     expect(r['103000']?.value).toBe('09/03/2025');
   });
 
-  it('thương hiệu catalog thắng khoá cũ của spec chép; trống thì mặc định sàn; hồ sơ công ty cho tier company', () => {
+  it('thương hiệu: ghi đè riêng sàn thắng catalog; catalog thắng mặc định sàn; hồ sơ công ty cho tier company', () => {
     const adapter = { productFields: { brand: 'brand' as const }, responsibleFields: { '102872': 'name' }, defaultBrand: 'No Brand' };
-    const withBrand = resolveSpecAttributes(adapter, base({ overrides: { brand: 'Cũ' }, product: { brand: 'Acme', originCountry: null, specs: [] }, org: { name: 'Cty A' } }));
+    const overridden = resolveSpecAttributes(adapter, base({ overrides: { brand: 'Riêng sàn' }, product: { brand: 'Acme', originCountry: null, specs: [] } }));
+    expect(overridden['brand']).toEqual({ value: 'Riêng sàn', source: 'override', fieldId: null });
+    const withBrand = resolveSpecAttributes(adapter, base({ product: { brand: 'Acme', originCountry: null, specs: [] }, org: { name: 'Cty A' } }));
     expect(withBrand['brand']).toEqual({ value: 'Acme', source: 'catalog', fieldId: null });
     expect(withBrand['102872']).toEqual({ value: 'Cty A', source: 'company', fieldId: null });
     const empty = resolveSpecAttributes(adapter, base({ product: { brand: null, originCountry: null, specs: [] } }));

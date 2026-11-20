@@ -6,7 +6,8 @@ import { lazadaLeafAttributes } from '#src/modules/channel/channel/service/marke
 import { createLazadaAdapter } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import { tiktokLeafAttributes } from '#src/modules/channel/channel/service/marketplaces/tiktok-categories.ts';
 import { createTiktokAdapter } from '#src/modules/channel/channel/service/marketplaces/tiktok.ts';
-import { normalizeSpec, pushAttributes, specFallbacks, type SpecProduct } from '#src/modules/channel/channel/service/product-specs.ts';
+import { resolveSpecAttributes } from '#src/modules/channel/channel/domain/spec-resolve.ts';
+import { normalizeSpec, pushAttributes, type SpecProduct } from '#src/modules/channel/channel/service/product-specs.ts';
 
 // Attribute cascade trong spec (#400, Documents/21 §18.5, thêm 19/11/2026): lưu `path` tới cấp cuối, bắt buộc như mọi attribute.
 const cascade: PlatformAttribute = {
@@ -22,7 +23,7 @@ const cascade: PlatformAttribute = {
   tier: 'category',
   raw: { id: 35 },
 };
-const product: SpecProduct = { axes: [], valueIds: new Map(), originCountry: null, brand: null };
+const product: SpecProduct = { productId: 'p', axes: [], valueIds: new Map(), originCountry: null, brand: null };
 const run = (value: string | string[] | undefined, attr = cascade) =>
   normalizeSpec({ externalCategoryId: 'L', attributes: value === undefined ? {} : { propCascade: value }, axisMap: {}, valueMap: {}, version: null }, [attr], product, {});
 
@@ -57,69 +58,96 @@ const lazada = createLazadaAdapter({ appKey: 'k', appSecret: 's', redirectUrl: u
 const tiktok = createTiktokAdapter({ appKey: 'k', appSecret: 's', serviceId: 'svc', apiUrl: 'https://api.test', authUrl: 'https://auth.test' } as never, vi.fn());
 const noCatalog = { originCountry: null, brand: null };
 
+// Giá trị gửi lên sàn là `resolved` (#509, Documents/21 §18.8.2) bỏ phần adapter tự điền (hồ sơ công ty, thương hiệu mặc định),
+// select đổi mã → nhãn. Ghi đè thắng catalog, kể cả thương hiệu, xuất xứ (E179).
+const push = (
+  adapter: typeof lazada,
+  leaf: PlatformAttribute[] | null,
+  overrides: Record<string, string | string[]>,
+  catalog: { originCountry: string | null; brand: string | null },
+) => pushAttributes(leaf, resolveSpecAttributes(adapter, { attributes: leaf, overrides, product: { ...catalog, specs: [] }, mappings: [], org: null }));
+
 describe('pushAttributes: Lazada', () => {
-  it('select đổi mã → nhãn sàn; multiselect thành mảng nhãn; nhãn cũ của bản chép giữ nguyên; xuất xứ, thương hiệu theo catalog', () => {
-    const spec = { attributes: { clothing_material: '9937', occasion: ['2167', '3015'], Fit_Type: 'Thường xuyên', brand: 'Cũ' } };
-    expect(pushAttributes(lazada, lazadaLeaf, spec, { originCountry: 'VN', brand: 'Acme' })).toEqual({
+  it('select đổi mã → nhãn sàn; multiselect thành mảng nhãn; nhãn cũ giữ nguyên; ghi đè thương hiệu thắng catalog; xuất xứ theo catalog', () => {
+    const spec = { clothing_material: '9937', occasion: ['2167', '3015'], Fit_Type: 'Thường xuyên', brand: 'Riêng sàn' };
+    expect(push(lazada, lazadaLeaf, spec, { originCountry: 'VN', brand: 'Acme' })).toEqual({
       clothing_material: 'Denim',
       occasion: ['Thể thao', 'Bình thường'],
       Fit_Type: 'Thường xuyên',
-      brand: 'Acme',
+      brand: 'Riêng sàn',
       country_origin_hb: 'Việt Nam',
     });
   });
 
-  it('catalog trống: giữ khoá thương hiệu, xuất xứ của bản chép; không có khoá thì không gửi (adapter tự điền thương hiệu mặc định)', () => {
-    expect(pushAttributes(lazada, lazadaLeaf, { attributes: { brand: 'Cũ', country_origin_hb: 'Nhật Bản' } }, noCatalog)).toEqual({
-      brand: 'Cũ',
-      country_origin_hb: 'Nhật Bản',
-    });
-    expect(pushAttributes(lazada, lazadaLeaf, { attributes: {} }, noCatalog)).toEqual({});
+  it('không ghi đè: thương hiệu catalog; catalog trống thì không gửi (adapter tự điền thương hiệu mặc định)', () => {
+    expect(push(lazada, lazadaLeaf, {}, { originCountry: null, brand: 'Acme' })).toEqual({ brand: 'Acme' });
+    expect(push(lazada, lazadaLeaf, {}, noCatalog)).toEqual({});
   });
 
   it('xuất xứ của catalog không đổi được ra lựa chọn sàn: không gửi giá trị đoán', () => {
-    expect(pushAttributes(lazada, lazadaLeaf, { attributes: {} }, { originCountry: 'ZZ', brand: null })).toEqual({});
+    expect(push(lazada, lazadaLeaf, {}, { originCountry: 'ZZ', brand: null })).toEqual({});
   });
 
-  it('chưa có attribute leaf: gửi nguyên giá trị đã lưu, thương hiệu catalog vẫn thắng', () => {
-    expect(pushAttributes(lazada, null, { attributes: { clothing_material: '9937', brand: 'Cũ' } }, { originCountry: 'VN', brand: 'Acme' })).toEqual({
-      clothing_material: '9937',
-      brand: 'Acme',
-    });
+  it('chưa có attribute leaf: gửi nguyên giá trị đã lưu cộng thương hiệu catalog', () => {
+    expect(push(lazada, null, { clothing_material: '9937' }, { originCountry: 'VN', brand: 'Acme' })).toEqual({ clothing_material: '9937', brand: 'Acme' });
   });
 });
 
 describe('pushAttributes: TikTok', () => {
-  it('select, multiselect đổi mã → nhãn; 100149 lấy từ originCountry của catalog, thắng khoá của bản chép', () => {
-    const spec = { attributes: { '100395': '1001141', '100157': ['1000039', '1000044'], '100149': 'Việt Nam' } };
-    expect(pushAttributes(tiktok, tiktokLeaf, spec, { originCountry: 'US', brand: null })).toEqual({
+  it('select, multiselect đổi mã → nhãn; 100149 lấy từ originCountry của catalog khi không ghi đè', () => {
+    const spec = { '100395': '1001141', '100157': ['1000039', '1000044'] };
+    expect(push(tiktok, tiktokLeaf, spec, { originCountry: 'US', brand: null })).toEqual({
       '100395': 'Ngắn tay',
       '100157': ['Bông', 'Lụa'],
       '100149': 'Hoa Kỳ',
     });
   });
 
-  it('catalog trống: dùng khoá 100149 còn trong bản chép; không có thì không gửi', () => {
-    expect(pushAttributes(tiktok, tiktokLeaf, { attributes: { '100149': 'Việt Nam' } }, noCatalog)).toEqual({ '100149': 'Việt Nam' });
-    expect(pushAttributes(tiktok, tiktokLeaf, { attributes: {} }, noCatalog)).toEqual({});
+  it('ghi đè 100149 thắng catalog', () => {
+    expect(push(tiktok, tiktokLeaf, { '100149': 'Việt Nam' }, { originCountry: 'US', brand: null })).toEqual({ '100149': 'Việt Nam' });
   });
 
   it('giá trị tự nhập (không có trong lựa chọn) giữ nguyên chuỗi', () => {
-    expect(pushAttributes(tiktok, tiktokLeaf, { attributes: { '100395': 'Tay cánh tiên' } }, noCatalog)).toEqual({ '100395': 'Tay cánh tiên' });
+    expect(push(tiktok, tiktokLeaf, { '100395': 'Tay cánh tiên' }, noCatalog)).toEqual({ '100395': 'Tay cánh tiên' });
   });
 });
 
-describe('specFallbacks', () => {
-  it('Lazada: thương hiệu catalog, trống thì "No Brand"; xuất xứ ISO → mã lựa chọn của sàn', () => {
-    expect(specFallbacks(lazada, lazadaLeaf, { originCountry: 'VN', brand: null }, null)).toEqual({ brand: 'No Brand', country_origin_hb: '61613' });
-    expect(specFallbacks(lazada, lazadaLeaf, { originCountry: null, brand: 'Acme' }, null)).toEqual({ brand: 'Acme', country_origin_hb: null });
+describe('resolveSpecAttributes với adapter thật', () => {
+  const resolve = (adapter: typeof lazada, leaf: PlatformAttribute[], catalog: { originCountry: string | null; brand: string | null }, org: Record<string, string> | null = null) =>
+    resolveSpecAttributes(adapter, { attributes: leaf, overrides: {}, product: { ...catalog, specs: [] }, mappings: [], org });
+
+  it('Lazada: thương hiệu catalog, trống thì "No Brand" (nguồn mặc định); xuất xứ ISO → mã lựa chọn của sàn', () => {
+    const out = resolve(lazada, lazadaLeaf, { originCountry: 'VN', brand: null });
+    expect(out['brand']).toEqual({ value: 'No Brand', source: 'default', fieldId: null });
+    expect(out['country_origin_hb']).toEqual({ value: '61613', source: 'catalog', fieldId: null });
+    expect(resolve(lazada, lazadaLeaf, { originCountry: null, brand: 'Acme' })['brand']?.value).toBe('Acme');
   });
 
   it('TikTok: 100149 từ originCountry; hồ sơ công ty điền attribute tier company', () => {
-    const out = specFallbacks(tiktok, tiktokLeaf, { originCountry: 'VN', brand: null }, { name: 'Công ty A', address: 'Số 1 Đường B' } as never);
-    expect(out['100149']).toBe('1000854');
-    expect(out['101489']).toBe('Công ty A');
-    expect(specFallbacks(tiktok, tiktokLeaf, noCatalog, null)['100149']).toBeNull();
+    const out = resolve(tiktok, tiktokLeaf, { originCountry: 'VN', brand: null }, { name: 'Công ty A', address: 'Số 1 Đường B' });
+    expect(out['100149']?.value).toBe('1000854');
+    expect(out['101489']).toEqual({ value: 'Công ty A', source: 'company', fieldId: null });
+    expect(resolve(tiktok, tiktokLeaf, noCatalog)['100149']).toBeUndefined();
+  });
+});
+
+describe('normalizeSpec: tập ghi đè (#509)', () => {
+  const material: PlatformAttribute = { ...cascade, code: 'm', label: 'Chất liệu', input: 'select', required: false, allowCustom: false, options: [{ id: '1', label: 'Bông' }, { id: '2', label: 'Lụa' }] };
+  const put = (attributes: Record<string, string | string[]>, defaults: Record<string, string | string[]>, attr = material) =>
+    normalizeSpec({ externalCategoryId: 'L', attributes, axisMap: {}, valueMap: {}, version: null }, [attr], product, defaults);
+
+  it('giá trị trùng nguồn catalog thì không lưu; khác thì lưu thành ghi đè', () => {
+    expect(put({ m: 'Bông' }, { m: '1' }).values.attributes).toEqual({});
+    expect(put({ m: 'Lụa' }, { m: '1' }).values.attributes).toEqual({ m: '2' });
+  });
+
+  it('bắt buộc mà catalog đã có giá trị: không lỗi khi không ghi đè', () => {
+    expect(put({}, { m: '1' }, { ...material, required: true }).errors).toEqual({});
+    expect(put({}, {}, { ...material, required: true }).errors['attributes.m']).toBeDefined();
+  });
+
+  it('ghi đè được attribute tier product (thương hiệu, xuất xứ riêng sàn)', () => {
+    expect(put({ m: 'Lụa' }, { m: '1' }, { ...material, tier: 'product' }).values.attributes).toEqual({ m: '2' });
   });
 });
 
