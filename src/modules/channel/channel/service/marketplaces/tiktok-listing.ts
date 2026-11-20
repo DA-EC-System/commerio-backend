@@ -19,9 +19,13 @@ import {
   partResults,
   type PerSkuResult,
   type PriceQuantity,
+  plainDescription,
   PROMOTION_LOCKED,
   type RemoteProductCategory,
+  type RemoteProductFacts,
   type RemoteSku,
+  toGrams,
+  toMillimeters,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
 import { tiktokCategoryEditBody, tiktokCategoryMismatch } from './tiktok-category-change.ts';
@@ -31,6 +35,37 @@ import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
 export { isPrivateAddress } from './image-source.ts';
 
 type Row = Record<string, unknown>;
+
+/**
+ * Trường dùng chung của Get Product 202309 (#497; OAS cục bộ của skill `tts-openapi-guide`, tra 20/11/2026; gọi thật 20/11/2026
+ * trên shop thử, request_id 202611202334328A97039DD11D94143E7E): `brand.name`, `description` (HTML), `main_images[].urls[0]`,
+ * `size_chart.image.urls[0]` (bảng size dạng template không có ảnh: null), `package_weight { value, unit: KILOGRAM | POUND }`,
+ * `package_dimensions { length, width, height, unit: CENTIMETER | INCH }`. Cân nặng, kích thước ở cấp sản phẩm (202309 không
+ * có theo SKU): mọi `skus[].id` cùng số.
+ */
+export function tiktokProductFacts(data: Row | undefined): RemoteProductFacts {
+  const firstUrl = (img: unknown) => {
+    const urls = (img as { urls?: unknown } | undefined)?.urls;
+    return Array.isArray(urls) && typeof urls[0] === 'string' && urls[0] !== '' ? urls[0] : null;
+  };
+  const brand = (data?.brand as { name?: unknown } | undefined)?.name;
+  const weight = data?.package_weight as { value?: unknown; unit?: unknown } | undefined;
+  const dims = data?.package_dimensions as { length?: unknown; width?: unknown; height?: unknown; unit?: unknown } | undefined;
+  const dimUnit = typeof dims?.unit === 'string' ? dims.unit : undefined;
+  const measures = {
+    weightG: weight ? toGrams(weight.value, typeof weight.unit === 'string' ? weight.unit : undefined) : null,
+    lengthMm: dims ? toMillimeters(dims.length, dimUnit) : null,
+    widthMm: dims ? toMillimeters(dims.width, dimUnit) : null,
+    heightMm: dims ? toMillimeters(dims.height, dimUnit) : null,
+  };
+  return {
+    brand: typeof brand === 'string' && brand.trim() !== '' ? brand.trim() : null,
+    description: plainDescription(data?.description),
+    imageUrls: ((data?.main_images ?? []) as unknown[]).map(firstUrl).filter((u): u is string => u !== null),
+    sizeChartUrl: firstUrl((data?.size_chart as { image?: unknown } | undefined)?.image),
+    skus: ((data?.skus ?? []) as Row[]).flatMap((k) => (k.id == null ? [] : [{ externalSkuId: String(k.id), ...measures }])),
+  };
+}
 
 /** Cây danh mục 7 cấp: docv2 bắt shop US, EU, SEA (gồm VN) gửi `v2` cho danh mục, thuộc tính và tạo sản phẩm. */
 const CATEGORY_VERSION = 'v2';
@@ -330,7 +365,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     },
 
     // Get Product 202309 (OAS cục bộ, gọi thật 18/11/2026): `category_chains` từ gốc tới lá, `product_attributes[{id, values[{id,
-    // name}]}]` (giá trị tự nhập cũng có mã riêng).
+    // name}]}]` (giá trị tự nhập cũng có mã riêng). Trường dùng chung (#497): `tiktokProductFacts`.
     async productCategory(token, externalProductId): Promise<RemoteProductCategory | null> {
       const data = await client.call<Row>('GET', `/product/202309/products/${encodeURIComponent(externalProductId)}`, { token: requireToken(token) });
       const leaf = ((data?.category_chains ?? []) as Row[]).find((c) => c.is_leaf === true);
@@ -343,6 +378,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
             .map((v) => ({ id: v.id == null ? null : String(v.id), name: String(v.name) }));
           return a.id != null && values.length ? [{ code: String(a.id), values }] : [];
         }),
+        facts: tiktokProductFacts(data),
       };
     },
 

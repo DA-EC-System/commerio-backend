@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V119**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V121**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V121 · 20/11/2026 · ghep-tu-dien-spec-du-lieu
+
+`db/migrations/20261120154853_ghep-tu-dien-spec-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- #497: nguồn từng attribute của spec đã có.
+
+## V120 · 20/11/2026 · ghep-tu-dien-spec
+
+`db/migrations/20261120154829_ghep-tu-dien-spec.sql` · sinh từ schema
+
+- `channel.product_specs`: + cột `field_sources`, `remote_facts`, `remote_read_at`, `remote_shop_id`; + khoá ngoại `product_specs_remote_shop_id_shops_id_fk`; + check `product_specs_remote`
 
 ## V119 · 20/11/2026 · tran-hoan-tien-du-lieu
 
