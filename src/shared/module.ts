@@ -1,5 +1,5 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
-import type { Router } from 'express';
+import type { RequestHandler, Router } from 'express';
 import type { Authorize } from './auth/authorize.ts';
 
 /**
@@ -9,9 +9,11 @@ import type { Authorize } from './auth/authorize.ts';
 export interface ModuleContext {
   /** `ctx.authorize('catalog.product.manage')`: kiểm đăng nhập, công ty, quyền (src/shared/auth/authorize.ts). */
   readonly authorize: Authorize;
+  /** Thành viên còn làm việc được trong công ty, không đòi mã quyền (`createMember`, src/shared/auth/authorize.ts). */
+  readonly member: RequestHandler;
 }
 
-/** Mô tả một module cho app.ts: tên (trùng tên schema PostgreSQL) và router HTTP nếu có. */
+/** Mô tả một module cho app.ts: tên (trùng tên schema PostgreSQL nếu module có bảng) và router HTTP nếu có. */
 export interface ModuleDefinition {
   readonly name: string;
   /** Gắn tại /api/v1/<name>. */
