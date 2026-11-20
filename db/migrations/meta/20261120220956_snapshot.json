@@ -1,6 +1,6 @@
 {
-  "id": "5dbf86d4-d566-4981-98ab-c1335bd83a19",
-  "prevId": "1a03b337-3fb5-4b20-8646-3f0858bb31e2",
+  "id": "d8e0b300-9398-4edc-94eb-53854e6e5808",
+  "prevId": "ea5cd127-cbf7-4829-ba4b-945915f9be87",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -50,6 +50,97 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "channel.axis_mappings": {
+      "name": "axis_mappings",
+      "schema": "channel",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attribute_id": {
+          "name": "attribute_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "platform": {
+          "name": "platform",
+          "type": "marketplace",
+          "typeSchema": "channel",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attribute_code": {
+          "name": "attribute_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priority": {
+          "name": "priority",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "axis_mappings_code_uq": {
+          "name": "axis_mappings_code_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "company_id",
+            "attribute_id",
+            "platform",
+            "attribute_code"
+          ]
+        },
+        "axis_mappings_priority_uq": {
+          "name": "axis_mappings_priority_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "company_id",
+            "attribute_id",
+            "platform",
+            "priority"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "axis_mappings_priority": {
+          "name": "axis_mappings_priority",
+          "value": "\"channel\".\"axis_mappings\".\"priority\" >= 1"
+        }
+      },
       "isRLSEnabled": false
     },
     "channel.listings": {
