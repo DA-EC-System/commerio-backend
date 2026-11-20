@@ -105,4 +105,21 @@ describe('ràng buộc bảng sales (AC-9)', () => {
     await expect(line(true, null)).resolves.toBeDefined();
     await expect(line(false, randomUUID())).resolves.toBeDefined();
   });
+  it('cờ chờ sàn huỷ, cờ khách xin huỷ chỉ bật khi đơn còn mở (#427, DH-B03)', async () => {
+    const company = randomUUID();
+    const insert = (status: string, flags: { cancelPending?: boolean; cancelRequested?: boolean }) =>
+      testPool().query(
+        `insert into "order".orders (company_id, code, source, payment_method, status, outcome, cancel_pending, cancel_requested, subtotal, total)
+         values ($1, $2, 'manual', 'prepaid', $3, $4, $5, $6, 0, 0)`,
+        [company, `DH-${randomUUID().slice(0, 8)}`, status, status === 'completed' ? 'full' : null, flags.cancelPending ?? false, flags.cancelRequested ?? false],
+      );
+    for (const status of ['completed', 'cancelled']) {
+      await expect(insert(status, { cancelPending: true })).rejects.toThrow(/"orders_cancel_pending_open"/);
+      await expect(insert(status, { cancelRequested: true })).rejects.toThrow(/"orders_cancel_requested_open"/);
+      await expect(insert(status, {})).resolves.toBeDefined();
+    }
+    for (const status of ['unpaid', 'processing']) {
+      await expect(insert(status, { cancelPending: true, cancelRequested: true })).resolves.toBeDefined();
+    }
+  });
 });

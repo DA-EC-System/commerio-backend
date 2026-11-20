@@ -14,6 +14,12 @@ export async function insertCompany(input: { name: string; taxCode: string }): P
   return row!.id;
 }
 
+/** Mã số thuế (dạng chuẩn) đã thuộc một công ty chưa (#459). */
+export async function taxCodeExists(taxCode: string): Promise<boolean> {
+  const rows = await getDb().select({ id: companies.id }).from(companies).where(eq(companies.taxCode, taxCode)).limit(1);
+  return rows.length > 0;
+}
+
 export async function insertModules(
   companyId: string,
   codes: readonly ModuleCode[],

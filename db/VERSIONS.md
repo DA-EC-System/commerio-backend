@@ -3,13 +3,39 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V113**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V117**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V113 · 20/11/2026 · doi-category-san
+## V117 · 20/11/2026 · doi-category-san
 
-`db/migrations/20261120095515_doi-category-san.sql` · sinh từ schema
+`db/migrations/20261120102414_doi-category-san.sql` · sinh từ schema
 
 - `channel.listings`: + cột `category_change`; + check `listings_category_change`
+
+## V116 · 20/11/2026 · dang-ky-cho-ma-quyen
+
+`db/migrations/20261120100235_dang-ky-cho-ma-quyen.sql` · viết tay
+
+- viết tay: quyền
+- #459: lần đăng ký chờ mã chỉ luồng đăng ký (role chủ bảng, ngoài withCompany) đụng tới; commerio_app không có quyền nào.
+
+## V115 · 20/11/2026 · dang-ky-cho-ma
+
+`db/migrations/20261120100216_dang-ky-cho-ma.sql` · sinh từ schema
+
+- + bảng `core.registrations`
+
+## V114 · 20/11/2026 · bo-cot-dang-huy-cu
+
+`db/migrations/20261120094957_bo-cot-dang-huy-cu.sql` · sinh từ schema
+
+- `order.orders`: − cột `cancelling`; + check `orders_cancel_pending_open`, `orders_cancel_requested_open`
+
+## V113 · 20/11/2026 · bo-co-dang-huy-cu
+
+`db/migrations/20261120094954_bo-co-dang-huy-cu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Bỏ trigger, hàm giữ cột cờ cũ `cancelling` bằng `cancel_pending` (#417 bước một); dọn hai cờ chờ sàn của đơn đã dừng trước CHECK (#427), viết tay, chạy lại được.
 
 ## V112 · 20/11/2026 · mst-unique
 

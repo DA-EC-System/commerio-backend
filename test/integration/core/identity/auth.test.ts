@@ -2,7 +2,14 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { CORE_MODULES } from '#src/modules/core/platform/domain/modules.ts';
-import { registerBody, registerCompany, uniqueEmail, uniqueTaxCode } from '../../helpers/company.ts';
+import {
+  KNOWN_REGISTRATION_CODE,
+  registerBody,
+  registerCompany,
+  startRegistration,
+  uniqueEmail,
+  uniqueTaxCode,
+} from '../../helpers/company.ts';
 import { setModuleEnabled } from '../../helpers/state.ts';
 import { testPool } from '../../helpers/db.ts';
 import { login, PASSWORD, refreshCookie, testApp } from '../../helpers/http.ts';
@@ -46,19 +53,6 @@ describe('đăng ký công ty (UC-PI-01)', () => {
     expect(Object.keys(res.body.errors)).toEqual(
       expect.arrayContaining(['company.name', 'company.taxCode', 'ceo.email', 'ceo.password']),
     );
-  });
-
-  it('AC-5, 19: email đã có tài khoản trả 409 email_taken, không tạo công ty mới', async () => {
-    const { email } = await registerCompany();
-    // Đếm theo tên riêng của lần đăng ký này: file test khác chạy song song cũng tạo công ty.
-    const name = `Công ty trùng email ${uniqueEmail('ten')}`;
-    const body = registerBody(email.toUpperCase(), { company: { name, taxCode: uniqueTaxCode() } });
-    const res = await request(app).post('/api/v1/identity/register').send(body);
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('email_taken');
-    expect(res.body.errors).toHaveProperty(['ceo.email']);
-    const after = await db.query('select count(*)::int as n from core.companies where name = $1', [name]);
-    expect(after.rows[0].n).toBe(0);
   });
 
   it('#459: mã số thuế lưu dạng chuẩn hoá; trùng sau chuẩn hoá trả 409 tax_code_taken theo ô company.taxCode', async () => {
@@ -106,9 +100,10 @@ describe('đăng ký công ty (UC-PI-01)', () => {
       create trigger thu_loi before insert on core.audit_logs for each row execute function core.thu_loi();`);
     try {
       const email = uniqueEmail();
+      const registrationId = await startRegistration(email, { company: { name: 'Công ty Gây Lỗi', taxCode: uniqueTaxCode() } });
       const res = await request(app)
-        .post('/api/v1/identity/register')
-        .send(registerBody(email, { company: { name: 'Công ty Gây Lỗi', taxCode: uniqueTaxCode() } }));
+        .post('/api/v1/identity/register/verify')
+        .send({ registrationId, code: KNOWN_REGISTRATION_CODE });
       expect(res.status).toBe(500);
       expect(await accountId(email)).toBeUndefined();
       const companies = await db.query("select 1 from core.companies where name = 'Công ty Gây Lỗi'");

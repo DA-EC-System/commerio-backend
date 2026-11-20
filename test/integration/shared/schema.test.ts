@@ -17,6 +17,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'permissions',
     'processed_events',
     'refresh_tokens',
+    'registrations',
     'role_permissions',
     'roles',
     'state_transitions',

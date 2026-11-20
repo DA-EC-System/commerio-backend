@@ -22,6 +22,7 @@ export const platformModule: ModuleDefinition = {
 
 export { CORE_MODULES, DEFAULT_OPTIONAL_MODULES, OPTIONAL_MODULES };
 export { normalizeTaxCode, TAX_CODE_FORMAT_MESSAGE, TAX_CODE_TAKEN_MESSAGE } from './domain/tax-code.ts';
+export { taxCodeExists } from './repository/companies.ts';
 export type { CompanyRow, ModuleCode, OptionalModule };
 export type { PlatformContext } from './service/context.ts';
 

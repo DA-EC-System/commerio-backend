@@ -98,16 +98,12 @@ export const orders = salesSchema.table(
     // Cờ lưu. Cờ suy ra được (chưa ghép SKU, sắp trễ hạn, có yêu cầu trả, lệch COD) không lưu (Documents/19 D4).
     needsAttention: boolean('needs_attention').notNull().default(false),
     attentionNote: text('attention_note'),
+    // Khách xin huỷ, chờ Sale trả lời. Chỉ bật khi đơn còn mở (CHECK `orders_cancel_requested_open`).
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     // Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của
-    // API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`).
+    // API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ
+    // (`cancellingSql` ở `repository/orders.ts`). Chỉ bật khi đơn còn mở (CHECK `orders_cancel_pending_open`).
     cancelPending: boolean('cancel_pending').notNull().default(false),
-    /**
-     * @deprecated Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image
-     * (job migrate chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột
-     * bằng nhau, code mới không đọc, không ghi. PR sau bỏ trigger và cột.
-     */
-    legacyCancelling: boolean('cancelling').notNull().default(false),
     platformCancelled: boolean('platform_cancelled').notNull().default(false),
     shopDisconnected: boolean('shop_disconnected').notNull().default(false),
     shippingAddress: jsonb('shipping_address'),
@@ -134,6 +130,8 @@ export const orders = salesSchema.table(
     index().on(t.customerId),
     index().on(t.conversationId),
     index().on(t.status),
+    check('orders_cancel_pending_open', sql`not ${t.cancelPending} or ${t.status} in ('unpaid', 'processing')`),
+    check('orders_cancel_requested_open', sql`not ${t.cancelRequested} or ${t.status} in ('unpaid', 'processing')`),
     check('orders_outcome', sql`(${t.status} = 'completed') = (${t.outcome} is not null)`),
     check('orders_cod', sql`${t.source} = 'marketplace' or not ${t.isCod}`),
     check('orders_amounts', sql`${t.subtotal} >= 0 and ${t.total} >= 0 and ${t.shippingFee} >= 0`),

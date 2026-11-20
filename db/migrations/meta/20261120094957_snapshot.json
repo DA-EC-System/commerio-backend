@@ -1,6 +1,6 @@
 {
-  "id": "25dcd112-b4bd-4216-8bca-d23fe365ecc3",
-  "prevId": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
+  "id": "fb12b9fc-82cb-4a7e-8cbf-29eeaa83ba8b",
+  "prevId": "4998673d-3b80-4a69-a942-19d635c4f4a2",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -330,12 +330,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "category_change": {
-          "name": "category_change",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "content_source": {
           "name": "content_source",
           "type": "listing_content_source",
@@ -570,10 +564,6 @@
         "listings_remote_title": {
           "name": "listings_remote_title",
           "value": "(\"channel\".\"listings\".\"remote_title_at_match\" is not null or (\"channel\".\"listings\".\"remote_title_en_at_match\" is null and \"channel\".\"listings\".\"remote_title_matched_at\" is null))\n        and (\"channel\".\"listings\".\"remote_title_changed_at\" is null or \"channel\".\"listings\".\"remote_title_matched_at\" is not null)"
-        },
-        "listings_category_change": {
-          "name": "listings_category_change",
-          "value": "\"channel\".\"listings\".\"category_change\" is null or (\"channel\".\"listings\".\"status\" <> 'delisted' and \"channel\".\"listings\".\"category_change\" ->> 'status' in ('queued', 'failed', 'mismatch'))"
         },
         "listings_reject_reason": {
           "name": "listings_reject_reason",
@@ -9534,13 +9524,6 @@
           "notNull": true,
           "default": false
         },
-        "cancelling": {
-          "name": "cancelling",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "platform_cancelled": {
           "name": "platform_cancelled",
           "type": "boolean",
@@ -9743,6 +9726,14 @@
       },
       "policies": {},
       "checkConstraints": {
+        "orders_cancel_pending_open": {
+          "name": "orders_cancel_pending_open",
+          "value": "not \"order\".\"orders\".\"cancel_pending\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
+        },
+        "orders_cancel_requested_open": {
+          "name": "orders_cancel_requested_open",
+          "value": "not \"order\".\"orders\".\"cancel_requested\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
+        },
         "orders_outcome": {
           "name": "orders_outcome",
           "value": "(\"order\".\"orders\".\"status\" = 'completed') = (\"order\".\"orders\".\"outcome\" is not null)"
