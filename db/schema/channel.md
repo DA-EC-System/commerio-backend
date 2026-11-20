@@ -202,6 +202,7 @@ Ràng buộc và index:
 - check `listings_reject_reason`: `status <> 'rejected' or reject_reason is not null`
 - check `listings_push_attempts`: `push_attempts >= 0`
 - check `listings_prices`: `listed_price >= 0 and manual_price >= 0`
+- trigger `listings_attach_shop_product`: `BEFORE INSERT OR UPDATE OF external_product_id, shop_product_id → channel.listings_attach_shop_product()`, ở `db/migrations/20261120214915_san-pham-san-du-lieu.sql`
 
 Trỏ vào bảng này:
 

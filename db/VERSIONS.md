@@ -9,7 +9,7 @@ Mới nhất: **V128**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 `db/migrations/20261120214915_san-pham-san-du-lieu.sql` · viết tay
 
-- viết tay: RLS, dữ liệu
+- viết tay: RLS, hàm, trigger, dữ liệu
 - Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1).
 
 ## V127 · 21/11/2026 · anh-xa-thong-so-rls

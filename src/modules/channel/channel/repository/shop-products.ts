@@ -1,27 +1,11 @@
-// Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1, 21 §18.8.4). Chạy trong `withCompany` của bên gọi.
+// Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1, 21 §18.8.4). Chạy trong `withCompany` của bên gọi. Dòng
+// `match` do trigger `listings_attach_shop_product` tạo khi listing có mã sản phẩm sàn (migration `*_san-pham-san-du-lieu`).
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { SyncError } from './schema.ts';
 import { shopProducts } from './schema.ts';
 
 export type ShopProductRow = typeof shopProducts.$inferSelect;
-
-/**
- * Dòng `active` của sản phẩm sàn `(shopId, externalProductId)`, chưa có thì tạo dòng `match` (sản phẩm sàn có sẵn, ghép SKU,
- * dữ liệu trước #295). Có dòng `app` cùng mã thì trả dòng đó. Đua nhau thì unique một phần giữ một dòng.
- */
-export async function ensureShopProduct(companyId: string, shopId: string, externalProductId: string): Promise<string> {
-  const [row] = await getDb()
-    .insert(shopProducts)
-    .values({ companyId, shopId, externalProductId, origin: 'match' })
-    .onConflictDoUpdate({
-      target: [shopProducts.shopId, shopProducts.externalProductId],
-      targetWhere: sql`${shopProducts.externalProductId} is not null and ${shopProducts.status} = 'active'`,
-      set: { updatedAt: sql`now()` },
-    })
-    .returning({ id: shopProducts.id });
-  return row!.id;
-}
 
 /** Dòng `app` đang `active` của sản phẩm cha trên gian hàng (một cha một sản phẩm sàn), khoá `FOR UPDATE` khi `lock`. */
 export async function findAppShopProduct(shopId: string, productId: string, opts: { lock?: boolean } = {}): Promise<ShopProductRow | undefined> {
