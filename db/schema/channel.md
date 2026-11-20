@@ -351,7 +351,7 @@ Cột:
 - `margin_pct` numeric(7,2) · null
 - `below_floor` boolean · null
 - `trigger` text · not null
-  Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính).
+  Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình, giá vốn tăng làm giá đang bán dưới giá thấp nhất (`cost`, #225: `target_net` là max(giá muốn bán, giá thấp nhất làm tròn lên đồng)).
 - `status` enum `channel.price_calc_status` · not null · mặc định `'pending_confirm'`: `pending_confirm` | `confirmed` | `pushed` | `superseded`
 - `confirmed_by` uuid · null → `core.accounts` (người thao tác)
 - `confirmed_at` timestamptz · null
@@ -366,7 +366,7 @@ Ràng buộc và index:
 - check `price_calculations_floor`: `not below_floor or status in ('pending_confirm', 'superseded')`
 - check `price_calculations_confirmed`: `status not in ('confirmed', 'pushed') or confirmed_by is not null`
 - check `price_calculations_cost_floor`: `(cost is null) = (below_floor is null)`
-- check `price_calculations_trigger`: `trigger in ('push', 'target_changed', 'config_activated')`
+- check `price_calculations_trigger`: `trigger in ('push', 'target_changed', 'config_activated', 'cost')`
 
 Trỏ vào bảng này:
 
