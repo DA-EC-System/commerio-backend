@@ -3,6 +3,7 @@ import { BUSINESS_ACTIONS, BUSINESS_STATUSES } from '../domain/business-status.t
 import { MAIN_LABELS, type MainLabel, MISSING_FIELDS, PRESENCES } from '../domain/labels.ts';
 import { BulkRowInput } from '../domain/bulk-row.ts';
 import { skuPatternError, valueCode } from '../domain/sku.ts';
+import { SPEC_INPUTS } from '../domain/specs.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
 // Giới hạn (Documents/21 V24, mục 5.2): tên nhóm hàng 60, sản phẩm 200, mô tả 5000; tên thuộc tính 15, giá trị 20
@@ -62,7 +63,16 @@ export const SuggestConfig = z
 
 const keepSuggest = SuggestConfig.optional().meta({ description: 'Bỏ trống thì giữ cấu hình đang lưu (tạo mới: chưa đặt)' });
 
-export const GroupBody = z.object({ name: name('nhóm hàng', 60), suggest: keepSuggest }).meta({ id: 'ProductGroupRequest' });
+export const GroupBody = z
+  .object({
+    name: name('nhóm hàng', 60),
+    suggest: keepSuggest,
+    copyTemplateFromGroupId: z
+      .string()
+      .optional()
+      .meta({ description: 'Chép trục chuẩn và mẫu thông số của nhóm này (#510); PUT thay mẫu cũ. Cần catalog.group.manage' }),
+  })
+  .meta({ id: 'ProductGroupRequest' });
 export const UpdateGroupBody = GroupBody.extend({ version }).meta({ id: 'UpdateProductGroupRequest' });
 
 /** Không gửi `productIds` là chuyển cả nhóm (21 mục 5.2). */
@@ -116,6 +126,73 @@ const values = z
 
 export const AttributeBody = z.object({ name: name('thuộc tính', MAX_ATTRIBUTE_NAME), values }).meta({ id: 'AttributeRequest' });
 export const UpdateAttributeBody = AttributeBody.extend({ version }).meta({ id: 'UpdateAttributeRequest' });
+
+// ---------- Thông số sản phẩm (#510, Documents/21 mục 5.5) ----------
+
+const SPEC_CODE = /^[a-z0-9_]{1,40}$/;
+const specOption = z.string('Nhập lựa chọn').trim().min(1, 'Nhập lựa chọn').max(60, 'Mỗi lựa chọn tối đa 60 ký tự');
+const specUnit = z.string().trim().min(1, 'Nhập đơn vị').max(10, 'Đơn vị tối đa 10 ký tự').nullish();
+
+export const SpecFieldBody = z
+  .object({
+    code: z
+      .string()
+      .trim()
+      .regex(SPEC_CODE, 'Mã chỉ gồm a-z, 0-9, _, tối đa 40 ký tự')
+      .optional()
+      .meta({ description: 'Bỏ trống thì sinh từ tên (bỏ dấu, chữ thường, `_`; trùng thì thêm số). Không sửa sau khi tạo' }),
+    name: name('thông số', 40),
+    input: z.enum(SPEC_INPUTS, 'Chọn kiểu nhập'),
+    unit: specUnit.meta({ description: 'Chỉ khi `input = number`' }),
+    allowCustom: z.boolean('Chọn có nhận giá trị ngoài danh sách không'),
+    options: z.array(z.object({ value: specOption })).max(500, 'Tối đa 500 lựa chọn').optional(),
+  })
+  .meta({ id: 'SpecFieldRequest' });
+
+export const UpdateSpecFieldBody = z
+  .object({
+    name: name('thông số', 40),
+    unit: specUnit,
+    allowCustom: z.boolean('Chọn có nhận giá trị ngoài danh sách không'),
+    options: z
+      .array(z.object({ id: z.string().optional(), value: specOption }))
+      .max(500, 'Tối đa 500 lựa chọn')
+      .optional()
+      .meta({ description: 'Thứ tự mảng là `position`; lựa chọn cũ vắng mặt là xoá' }),
+    version,
+  })
+  .meta({ id: 'UpdateSpecFieldRequest' });
+
+export const GroupTemplateBody = z
+  .object({
+    axisAttributeIds: z
+      .array(z.string())
+      .max(2, 'Tối đa 2 trục phân loại')
+      .refine((ids) => new Set(ids).size === ids.length, 'Hai trục phải khác nhau'),
+    fields: z
+      .array(z.object({ fieldId: z.string(), required: z.boolean() }))
+      .max(100, 'Tối đa 100 thông số')
+      .superRefine((fields, ctx) => {
+        const seen = new Set<string>();
+        fields.forEach((f, i) => {
+          if (seen.has(f.fieldId)) ctx.addIssue({ code: 'custom', path: [i, 'fieldId'], message: 'Thông số bị trùng' });
+          seen.add(f.fieldId);
+        });
+      }),
+    version,
+  })
+  .meta({ id: 'GroupTemplateRequest' });
+
+/** Giá trị một thông số (Documents/21 mục 5.5 `SpecInput`); luật theo kiểu nhập kiểm ở service (cần định nghĩa thông số). */
+const SpecInputBody = z
+  .object({
+    fieldId: z.string('Chọn thông số'),
+    optionIds: z.array(z.string()).max(20, 'Chọn tối đa 20 giá trị').optional(),
+    newValues: z.array(z.string()).max(20, 'Chọn tối đa 20 giá trị').optional(),
+    value: z.string().max(4000, 'Giá trị quá dài').optional(),
+  })
+  .meta({ id: 'SpecInput' });
+const specs = z.array(SpecInputBody).max(200, 'Tối đa 200 thông số').optional();
 
 // ---------- Sản phẩm, biến thể ----------
 
@@ -219,6 +296,9 @@ export const CreateProductBody = z
       .array(z.object({ options: z.array(z.string(), 'Chọn giá trị thuộc tính') }), 'Cần ít nhất một biến thể')
       .min(1, 'Cần ít nhất một biến thể')
       .max(100, 'Tối đa 100 biến thể mỗi lần tạo'),
+    specs,
+    originCountry: z.lazy(() => originCountry),
+    brand: z.lazy(() => brand),
   })
   .superRefine(imageLimits)
   .superRefine(axesRules)
@@ -253,7 +333,18 @@ const groupId = z.string('Chọn nhóm hàng').min(1, 'Chọn nhóm hàng').opti
 
 /** Không có biến thể: gửi kèm thì bỏ qua (AC-13). */
 export const UpdateProductBody = z
-  .object({ name: name('sản phẩm', 200), description, imageFileIds, sizeChartFileId, imageAttributeId, originCountry, brand, groupId, version })
+  .object({
+    name: name('sản phẩm', 200),
+    description,
+    imageFileIds,
+    sizeChartFileId,
+    imageAttributeId,
+    originCountry,
+    brand,
+    groupId,
+    specs: specs.meta({ description: "Thay giá trị của từng `fieldId` có trong mảng; `optionIds: []` hoặc `value: ''` là xoá" }),
+    version,
+  })
   .superRefine(imageLimits)
   .meta({ id: 'UpdateProductRequest' });
 

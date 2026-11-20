@@ -15,6 +15,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { money, timestamps, version } from '../../../../shared/db/columns.ts';
+import { SPEC_INPUTS } from '../domain/specs.ts';
 
 // Mọi bảng của module `catalog` khai báo trong schema này.
 export const catalogSchema = pgSchema('product');
@@ -56,8 +57,8 @@ export const productGroups = catalogSchema.table(
     // Trục phân loại chuẩn của nhóm (thông số sản phẩm, Documents/19 §3.2, 21 §5.5): form tạo sản phẩm chọn sẵn, người
     // dùng đổi được; không ràng buộc sản phẩm đã có. Không có cờ "nhóm cần bảng kích cỡ": luật theo category sàn
     // (`size_chart_missing`, 21 §18.5).
-    axis1AttributeId: uuid('axis1_attribute_id').references((): AnyPgColumn => attributes.id),
-    axis2AttributeId: uuid('axis2_attribute_id').references((): AnyPgColumn => attributes.id),
+    axis1AttributeId: uuid('axis1_attribute_id').references((): AnyPgColumn => attributes.id, { onDelete: 'restrict' }),
+    axis2AttributeId: uuid('axis2_attribute_id').references((): AnyPgColumn => attributes.id, { onDelete: 'restrict' }),
     ...timestamps,
     ...version,
   },
@@ -291,9 +292,7 @@ export const variantAttributeValues = catalogSchema.table(
   ],
 );
 
-/** Kiểu nhập của thông số (Documents/19 §3.2): `date` lưu `YYYY-MM-DD` (ngày cấp giấy phép, research P6). */
-export const SPEC_INPUTS = ['select', 'multiselect', 'text', 'number', 'date'] as const;
-export type SpecInput = (typeof SPEC_INPUTS)[number];
+export { SPEC_INPUTS, type SpecInputKind as SpecInput } from '../domain/specs.ts';
 
 /**
  * Thư viện thông số của công ty (Documents/19 §3.2, 21 §5.5), dùng chung mọi nhóm hàng. `code` không sửa sau khi tạo:
@@ -362,7 +361,7 @@ export const groupSpecFields = catalogSchema.table(
       .references(() => productGroups.id, { onDelete: 'cascade' }),
     fieldId: uuid('field_id')
       .notNull()
-      .references(() => specFields.id),
+      .references(() => specFields.id, { onDelete: 'restrict' }),
     required: boolean('required').notNull().default(false),
     position: integer('position').notNull(),
     ...timestamps,
@@ -389,7 +388,7 @@ export const productSpecValues = catalogSchema.table(
       .references(() => products.id, { onDelete: 'cascade' }),
     fieldId: uuid('field_id')
       .notNull()
-      .references(() => specFields.id),
+      .references(() => specFields.id, { onDelete: 'restrict' }),
     optionId: uuid('option_id'),
     valueText: text('value_text'),
     ...timestamps,

@@ -240,6 +240,11 @@ export const EVENT_SCHEMAS = {
     to: money.nullable(),
     changedAt: timestamp,
   }),
+  // Thông số sản phẩm (#510, Documents/21 mục 5.5): channel xoá dòng ánh xạ tương ứng (bảng ánh xạ không khoá ngoại sang
+  // catalog), lúc đọc cũng bỏ qua dòng mồ côi.
+  'catalog.spec_field_deleted': z.object({ fieldId: id }),
+  'catalog.spec_option_deleted': z.object({ fieldId: id, optionIds: z.array(id).min(1) }),
+  'catalog.attribute_deleted': z.object({ attributeId: id }),
   // Người được mời xin mã OTP (#7 [C]). Không mang email, họ tên hay mã: consumer đọc dòng lời mời, sinh mã trong
   // worker. `requestedAt` (mili giây) trùng `otp_requested_at` của dòng; khác thì sự kiện đã cũ, bỏ qua.
   'staff.invitation_otp_requested': z.object({ invitationId: id, requestedAt: timestamp }),
