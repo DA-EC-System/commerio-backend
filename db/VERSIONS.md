@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V112**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V113**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V113 · 20/11/2026 · moc-day-gia-listing
+
+`db/migrations/20261120092820_moc-day-gia-listing.sql` · sinh từ schema
+
+- `channel.listings`: + cột `last_price_pushed_at`
 
 ## V112 · 20/11/2026 · mst-unique
 

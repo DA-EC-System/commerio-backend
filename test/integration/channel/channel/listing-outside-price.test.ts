@@ -44,17 +44,21 @@ async function connect(platform: 'lazada' | 'tiktok') {
   return res.body.shop.id as string;
 }
 
-/** Listing đã đồng bộ, giá đẩy lần cuối 100.000; `pushedAgoMs` null là chưa ghi lúc đẩy. */
-async function seed(shop: string, opts: { status?: 'live' | 'hidden'; pushedAgoMs?: number | null } = {}) {
+/**
+ * Listing đã đồng bộ, giá đẩy lần cuối 100.000; `pushedAgoMs` (lần đẩy giá, cũng là lần đẩy gần nhất) null là chưa ghi
+ * lúc đẩy; `stockPushedAgoMs` là lần đẩy tồn sau đó (chỉ dời `last_pushed_at`).
+ */
+async function seed(shop: string, opts: { status?: 'live' | 'hidden'; pushedAgoMs?: number | null; stockPushedAgoMs?: number } = {}) {
   const { variantId, sku } = await createVariant(company.companyId);
   await receive(company.companyId, variantId, 5, 1000);
   const status = opts.status ?? 'live';
   const pushedAt = opts.pushedAgoMs == null ? null : new Date(Date.now() - opts.pushedAgoMs);
+  const lastPushedAt = opts.stockPushedAgoMs === undefined ? pushedAt : new Date(Date.now() - opts.stockPushedAgoMs);
   const { rows } = await testPool().query(
     `insert into channel.listings (company_id, shop_id, variant_id, external_product_id, external_sku_id, seller_sku, status,
-       stock_sync, price_sync, platform_stock, listed_price, hidden_by, last_pushed_at)
-     values ($1, $2, $3, $4, $5, $6, $7, 'synced', 'synced', 5, 100000, $8, $9) returning id`,
-    [company.companyId, shop, variantId, `item-${sku}`, `sku-${sku}`, sku, status, status === 'hidden' ? 'platform' : null, pushedAt],
+       stock_sync, price_sync, platform_stock, listed_price, hidden_by, last_pushed_at, last_price_pushed_at)
+     values ($1, $2, $3, $4, $5, $6, $7, 'synced', 'synced', 5, 100000, $8, $9, $10) returning id`,
+    [company.companyId, shop, variantId, `item-${sku}`, `sku-${sku}`, sku, status, status === 'hidden' ? 'platform' : null, lastPushedAt, pushedAt],
   );
   return { variantId, sku, listingId: rows[0].id as string };
 }
@@ -92,6 +96,20 @@ beforeEach(() => {
 });
 
 describe('lượt đồng bộ: giá gốc trên sàn khác giá app đẩy lần cuối', () => {
+  it('đẩy giá lúc T, đẩy tồn lúc T+14 phút, sàn giá khác lúc T+16 phút → price_changed (lần đẩy tồn không dời mốc chờ giá)', async () => {
+    const { sku, listingId } = await seed(lazada, { pushedAgoMs: 16 * 60_000, stockPushedAgoMs: 2 * 60_000 });
+    remote = [remoteSku(sku, '95000')];
+    await sync(lazada);
+    expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'price_changed' });
+  });
+
+  it('đẩy giá chưa quá 15 phút thì chưa so (sàn có thể áp giá chậm)', async () => {
+    const { sku, listingId } = await seed(lazada, { pushedAgoMs: 5 * 60_000 });
+    remote = [remoteSku(sku, '95000')];
+    await sync(lazada);
+    expect(await listing(listingId)).toMatchObject({ status: 'live', outside_change_kind: null });
+  });
+
   it('Lazada: listing live, sàn 95.000 khác 100.000 → app tắt SKU, hidden, outsideChange price_changed 95.000, không đẩy giá', async () => {
     const { sku, listingId } = await seed(lazada);
     remote = [remoteSku(sku, '95000.00')];
