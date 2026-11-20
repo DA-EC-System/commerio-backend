@@ -5,6 +5,8 @@
 // #497: điền trường dùng chung đang trống qua cổng `fillProductFacts` (cả khi spec đã có) và ghi bản sàn đang ghi
 // (`remote_facts`), bản đọc sau thắng.
 import { randomInt, randomUUID } from 'node:crypto';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { Decimal } from 'decimal.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformAttribute } from '#src/modules/channel/channel/domain/product-spec.ts';
@@ -13,6 +15,8 @@ import { MarketplaceError, type RemoteProductCategory, type RemoteProductFacts }
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, type ProductPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { runSpecFromMatch, sendSpecFromMatch } from '#src/modules/channel/channel/service/spec-from-match.ts';
+import { setRemoteImageOptions } from '#src/modules/core/files/service/remote-images.ts';
+import { setPutObject } from '#src/modules/core/files/service/storage.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import request from 'supertest';
@@ -244,7 +248,8 @@ describe('runSpecFromMatch: tự điền và bản sàn đang ghi (#497)', () =>
       imageUrls: ['https://cdn.example/a.jpg', 'https://cdn.example/b.jpg'],
       variants: [{ variantId: v.id, weightG: 450, lengthMm: 250, widthMm: 80, heightMm: 80 }],
     };
-    expect(port.fillProductFacts).toHaveBeenCalledWith(v.productId, expected, { shopId, shopName: 'Shop thử' });
+    // Cổng giả không có `productMediaGaps`: không tải ảnh (#498), id tệp rỗng.
+    expect(port.fillProductFacts).toHaveBeenCalledWith(v.productId, { ...expected, imageFileIds: [], sizeChartFileId: null }, { shopId, shopName: 'Shop thử' });
     const spec = await specOf(v.productId);
     expect(spec).toMatchObject({
       attributes: { material: '11' },
@@ -314,5 +319,82 @@ describe('sendSpecFromMatch', () => {
       [shopId],
     );
     expect(rows.map((r) => r.data.listingIds)).toEqual([[id]]);
+  });
+});
+
+describe('ảnh, ảnh bảng size từ sàn (#498)', () => {
+  const JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2]);
+  let server: http.Server;
+  let base: string;
+  let hits: string[];
+  let puts: number;
+
+  beforeAll(async () => {
+    server = http.createServer((req, res) => {
+      hits.push(req.url ?? '');
+      if (req.url?.startsWith('/ok')) res.writeHead(200, { 'content-type': 'image/jpg' }).end(JPG);
+      else res.writeHead(404).end();
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    setRemoteImageOptions({ allowAddress: () => true });
+    setPutObject(async () => {
+      puts++;
+    });
+  });
+  afterAll(async () => {
+    delete port.productMediaGaps;
+    setRemoteImageOptions(null);
+    setPutObject(null);
+    await new Promise((r) => server.close(r));
+  });
+  beforeEach(() => {
+    hits = [];
+    puts = 0;
+  });
+
+  const gaps = (images: boolean, sizeChart: boolean) => {
+    port.productMediaGaps = vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, { images, sizeChart }])));
+  };
+  const withMedia = (item: string) =>
+    remote.set(item, {
+      externalCategoryId: leaf,
+      attributes: [],
+      facts: { ...NO_FACTS, imageUrls: [`${base}/ok/1.jpg`, `${base}/mat.jpg`, `${base}/ok/2.jpg`], sizeChartUrl: `${base}/ok/size.jpg` },
+    });
+  const lastFacts = () => vi.mocked(port.fillProductFacts!).mock.calls.at(-1)![1];
+
+  it('sản phẩm thiếu ảnh, bảng size: tải ảnh sàn về kho, ảnh lỗi bỏ qua, truyền id tệp vào fillProductFacts', async () => {
+    gaps(true, true);
+    const v = variant();
+    withMedia('item-m1');
+    await run([await listing(v.id, 'item-m1')]);
+    const facts = lastFacts();
+    expect(facts.imageFileIds).toHaveLength(2);
+    expect(facts.sizeChartFileId).toEqual(expect.any(String));
+    expect(puts).toBe(3);
+    const { rows } = await testPool().query('select id, content_type from core.files where id = any($1) order by created_at', [[...facts.imageFileIds!, facts.sizeChartFileId]]);
+    expect(rows.map((r) => r.content_type)).toEqual(['image/jpeg', 'image/jpeg', 'image/jpeg']);
+    expect(await specOf(v.productId)).toBeDefined();
+  });
+
+  it('sản phẩm đã có ảnh, bảng size: không tải gì', async () => {
+    gaps(false, false);
+    const v = variant();
+    withMedia('item-m2');
+    await run([await listing(v.id, 'item-m2')]);
+    expect(lastFacts()).toMatchObject({ imageFileIds: [], sizeChartFileId: null });
+    expect(hits).toEqual([]);
+  });
+
+  it('hai sản phẩm Commerio ghép cùng sản phẩm sàn: mỗi ảnh tải một lần, dùng chung id tệp', async () => {
+    gaps(true, false);
+    const [a, b] = [variant(), variant()];
+    withMedia('item-m3');
+    await run([await listing(a.id, 'item-m3'), await listing(b.id, 'item-m3')]);
+    const calls = vi.mocked(port.fillProductFacts!).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![1].imageFileIds).toEqual(calls[1]![1].imageFileIds);
+    expect(hits.sort()).toEqual(['/mat.jpg', '/ok/1.jpg', '/ok/2.jpg']);
   });
 });
