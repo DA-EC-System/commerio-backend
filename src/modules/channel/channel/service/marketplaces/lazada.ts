@@ -23,7 +23,11 @@ import {
   type RemoteLineStatus,
   type RemoteOrder,
   type RemotePackageEvent,
+  plainDescription,
   type RemoteProductCategory,
+  type RemoteProductFacts,
+  toGrams,
+  toMillimeters,
   type RemoteSku,
   type RemoteState,
   refreshBefore,
@@ -217,7 +221,7 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
 
 /** Đọc `data` của GetProductItem thành category và attribute (#400 lát 12): giá trị chuỗi, số; mảng thì từng phần tử. */
 export function lazadaProductCategory(data: unknown): RemoteProductCategory | null {
-  const d = data as { primary_category?: unknown; attributes?: unknown } | undefined;
+  const d = data as { primary_category?: unknown; attributes?: unknown; images?: unknown; skus?: unknown } | undefined;
   if (d?.primary_category == null || d.primary_category === '') return null;
   const attrs = d.attributes && typeof d.attributes === 'object' ? (d.attributes as Record<string, unknown>) : {};
   const text = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v) : null);
@@ -227,6 +231,39 @@ export function lazadaProductCategory(data: unknown): RemoteProductCategory | nu
       const values = (Array.isArray(raw) ? raw : [raw]).map(text).filter((v): v is string => v !== null && v.trim() !== '');
       return values.length ? [{ code, values: values.map((name) => ({ id: null, name })) }] : [];
     }),
+    facts: lazadaProductFacts(d.images, attrs, d.skus),
+  };
+}
+
+const isHttpUrl = (u: string) => /^https?:/i.test(u);
+
+/**
+ * Trường dùng chung của GetProductItem (#497; gọi thật 20/11/2026 trên shop thử, request_id 2101248d17951887633343753):
+ * `attributes.brand`, `attributes.description` (HTML), `images[]` (ảnh sản phẩm; `skus[].Images` là ảnh phân loại, không lấy),
+ * `attributes.size_chart` (attribute `input = 'text'` mang link ảnh, 22 category trên staging), `skus[]`: `SkuId`,
+ * `package_weight` (kg), `package_length`, `package_width`, `package_height` (cm), chuỗi số.
+ */
+export function lazadaProductFacts(images: unknown, attrs: Record<string, unknown>, skus: unknown): RemoteProductFacts {
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  const chart = text(attrs['size_chart']);
+  return {
+    brand: text(attrs['brand']),
+    description: plainDescription(attrs['description']),
+    imageUrls: (Array.isArray(images) ? images : []).map(text).filter((u): u is string => u !== null && isHttpUrl(u)),
+    sizeChartUrl: chart && isHttpUrl(chart) ? chart : null,
+    skus: (Array.isArray(skus) ? (skus as Record<string, unknown>[]) : []).flatMap((k) =>
+      k.SkuId == null
+        ? []
+        : [
+            {
+              externalSkuId: String(k.SkuId),
+              weightG: toGrams(k.package_weight),
+              lengthMm: toMillimeters(k.package_length),
+              widthMm: toMillimeters(k.package_width),
+              heightMm: toMillimeters(k.package_height),
+            },
+          ],
+    ),
   };
 }
 

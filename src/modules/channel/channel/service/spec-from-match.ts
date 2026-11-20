@@ -2,12 +2,12 @@ import { sendJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { CUSTOM_AXIS, type PlatformAttribute, remoteSpecAttributes } from '../domain/product-spec.ts';
+import { CUSTOM_AXIS, isoOfCountryLabel, type PlatformAttribute, remoteSpecAttributes, type RemoteSpecFacts } from '../domain/product-spec.ts';
 import { findListingById, type ListingRow, setListingCategory } from '../repository/listings.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
-import { findSpec, insertSpec } from '../repository/product-specs.ts';
+import { findSpec, insertSpec, recordRemoteFacts } from '../repository/product-specs.ts';
 import { findShopRow } from '../repository/shops.ts';
-import { getAdapter, MarketplaceError, type RemoteProductCategory } from './marketplaces/index.ts';
+import { getAdapter, type MarketplaceAdapter, MarketplaceError, type RemoteProductCategory } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import type { ProductPort } from './product-port.ts';
 import { specProductOf } from './product-specs.ts';
@@ -26,12 +26,17 @@ export async function sendSpecFromMatch(companyId: string, shopId: string, listi
 }
 
 /**
- * Việc `channel.spec_from_match` (#400 lát 12, Documents/19 mục 3.3): mỗi sản phẩm sàn đọc một lần (ngoài giao dịch)
- * category lá và attribute; luôn ghi `listings.external_category_id` (không tăng `version`); listing có biến thể mà sản phẩm
- * cha chưa có spec của sàn thì tạo spec `source = 'match'`, `version = 1` (bản đọc từ sàn, khác bản chép `version = 0`),
- * attribute đổi sang mã lựa chọn của leaf (`remoteSpecAttributes`), mọi trục `__custom`. Spec có sẵn giữ nguyên (người dùng đã
- * chọn). Gian hàng không gọi được sàn thì bỏ; sàn từ chối (sản phẩm đã xoá), mất uỷ quyền thì bỏ sản phẩm đó (lượt đồng bộ
- * xử lý uỷ quyền); lỗi tạm ném để pg-boss thử lại (chạy lại vô hại).
+ * Việc `channel.spec_from_match` (#400 lát 12, #497; Documents/19 mục 3.3, 21 §11.3, §18.5, 25 §6.4): mỗi sản phẩm sàn đọc một
+ * lần (ngoài giao dịch) category lá, attribute và trường dùng chung (`productCategory`); luôn ghi `listings.external_category_id`
+ * (không tăng `version`). Mỗi sản phẩm Commerio của các listing có biến thể, một giao dịch:
+ * - điền trường dùng chung đang trống qua cổng `fillProductFacts` của catalog (xuất xứ đổi từ lựa chọn sàn sang mã ISO, thương
+ *   hiệu bỏ thương hiệu mặc định của sàn, mô tả, cân nặng và kích thước theo SKU đã ghép), cả khi spec đã có;
+ * - chưa có spec của sàn thì tạo spec `source = 'match'`, `version = 1` (bản đọc từ sàn, khác bản chép `version = 0`), attribute
+ *   đổi sang mã lựa chọn của leaf (`remoteSpecAttributes`, nguồn `match`), mọi trục `__custom`; spec có sẵn giữ nguyên attribute
+ *   (người dùng đã chọn);
+ * - ghi bản sàn đang ghi (`remote_facts`) theo giờ đọc: bản đọc sau thắng (`recordRemoteFacts`).
+ * Gian hàng không gọi được sàn thì bỏ; sàn từ chối (sản phẩm đã xoá), mất uỷ quyền thì bỏ sản phẩm đó (lượt đồng bộ xử lý uỷ
+ * quyền); lỗi tạm ném để pg-boss thử lại (chạy lại vô hại: chỉ điền khi trống, bản sàn ghi theo giờ đọc).
  */
 export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob): Promise<void> {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(job.companyId, fn);
@@ -53,30 +58,33 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
 
   for (const [externalProductId, group] of byProduct) {
     let remote: RemoteProductCategory | null;
+    const readAt = new Date();
     try {
       remote = await adapter.productCategory!(accessToken, externalProductId);
     } catch (err) {
       if (err instanceof MarketplaceError && err.kind !== 'unavailable') {
-        logger.warn({ err, shopId: shop.id, externalProductId }, 'không đọc được category của sản phẩm trên sàn khi ghép');
+        logger.warn({ err, shopId: shop.id, externalProductId }, 'không đọc được sản phẩm trên sàn khi ghép');
         continue;
       }
       throw err;
     }
     if (!remote) continue;
     const { externalCategoryId } = remote;
-    const lacking = await inCompany(async () => {
+    const { products, lacking } = await inCompany(async () => {
       await setListingCategory(
         group.map((r) => r.id),
         externalCategoryId,
       );
       const variantIds = group.flatMap((r) => (r.variantId ? [r.variantId] : []));
-      const productIds = [...new Set((variantIds.length ? await port.variants(variantIds) : []).map((v) => v.productId))];
-      const out: string[] = [];
-      for (const productId of productIds) if (!(await findSpec(productId, shop.platform))) out.push(productId);
-      return out;
+      const variants = variantIds.length ? await port.variants(variantIds) : [];
+      const products = new Map<string, string[]>();
+      for (const v of variants) products.set(v.productId, [...(products.get(v.productId) ?? []), v.id]);
+      const lacking = new Set<string>();
+      for (const productId of products.keys()) if (!(await findSpec(productId, shop.platform))) lacking.add(productId);
+      return { products, lacking };
     });
-    if (!lacking.length) continue;
-    if (adapter.leafAttributes) {
+    if (!products.size) continue;
+    if (lacking.size && adapter.leafAttributes) {
       try {
         await ensureLeaf(shop.companyId, shop.platform, adapter, externalCategoryId, { shopId: shop.id });
       } catch (err) {
@@ -84,24 +92,63 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
         if (!(err instanceof MarketplaceError) && !(err instanceof AppError)) throw err;
       }
     }
-    await inCompany(async () => {
-      const category = await findCategory(shop.platform, externalCategoryId);
-      const leaf: PlatformAttribute[] | null = category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, externalCategoryId) : null;
-      const attributes = remoteSpecAttributes(leaf, remote.attributes);
-      for (const productId of lacking) {
-        const product = specProductOf(await port.variants(undefined, { productIds: [productId] }));
-        await insertSpec({
-          companyId: shop.companyId,
-          productId,
-          platform: shop.platform,
-          externalCategoryId,
-          attributes,
-          axisMap: Object.fromEntries(product.axes.map((a) => [a.attributeId, CUSTOM_AXIS])),
-          valueMap: {},
-          source: 'match',
-          version: 1,
-        });
-      }
-    });
+    const shared = sharedFacts(adapter, remote);
+    const skuOfVariant = new Map(group.flatMap((r) => (r.variantId && r.externalSkuId ? [[r.variantId, r.externalSkuId] as const] : [])));
+    const measures = new Map(remote.facts.skus.map((s) => [s.externalSkuId, s]));
+    for (const [productId, variantIds] of products) {
+      const variants = variantIds.flatMap((variantId) => {
+        const m = measures.get(skuOfVariant.get(variantId) ?? '');
+        return m ? [{ variantId, weightG: m.weightG, lengthMm: m.lengthMm, widthMm: m.widthMm, heightMm: m.heightMm }] : [];
+      });
+      const facts: RemoteSpecFacts = { shopName: shop.shopName, ...shared, variants };
+      await inCompany(async () => {
+        await port.fillProductFacts?.(productId, { ...shared, variants }, { shopId: shop.id, shopName: shop.shopName });
+        if (lacking.has(productId)) {
+          const category = await findCategory(shop.platform, externalCategoryId);
+          const leaf: PlatformAttribute[] | null = category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, externalCategoryId) : null;
+          const attributes = remoteSpecAttributes(leaf, remote.attributes);
+          const product = specProductOf(await port.variants(undefined, { productIds: [productId] }));
+          const created = await insertSpec({
+            companyId: shop.companyId,
+            productId,
+            platform: shop.platform,
+            externalCategoryId,
+            attributes,
+            axisMap: Object.fromEntries(product.axes.map((a) => [a.attributeId, CUSTOM_AXIS])),
+            valueMap: {},
+            fieldSources: Object.fromEntries(Object.keys(attributes).map((code) => [code, 'match' as const])),
+            source: 'match',
+            version: 1,
+            remoteFacts: facts,
+            remoteReadAt: readAt,
+            remoteShopId: shop.id,
+          });
+          if (created) return;
+        }
+        await recordRemoteFacts(productId, shop.platform, { facts, readAt, shopId: shop.id });
+      });
+    }
   }
+}
+
+/**
+ * Trường dùng chung của sản phẩm sàn theo dạng catalog: xuất xứ là lựa chọn của attribute mà adapter khai `originCountry` trong
+ * `productFields`, đổi sang mã ISO (`isoOfCountryLabel`, không khớp thì null); thương hiệu trùng thương hiệu mặc định của sàn
+ * ("No Brand") là không có thương hiệu.
+ */
+export function sharedFacts(
+  adapter: Pick<MarketplaceAdapter, 'productFields' | 'defaultBrand'>,
+  remote: RemoteProductCategory,
+): Omit<RemoteSpecFacts, 'shopName' | 'variants'> {
+  const originCode = Object.entries(adapter.productFields ?? {}).find(([, field]) => field === 'originCountry')?.[0];
+  const label = remote.attributes.find((a) => a.code === originCode)?.values[0]?.name;
+  const { brand, description, imageUrls, sizeChartUrl } = remote.facts;
+  const isDefault = brand !== null && adapter.defaultBrand !== undefined && brand.toLowerCase() === adapter.defaultBrand.toLowerCase();
+  return {
+    originCountry: label ? isoOfCountryLabel(label) : null,
+    brand: isDefault ? null : brand,
+    description,
+    sizeChartUrl,
+    imageUrls,
+  };
 }
