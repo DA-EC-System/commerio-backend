@@ -23,6 +23,7 @@ const returnReasons = vi.fn(async () => [
   { id: '1001', label: 'Hàng đã qua sử dụng', requiresImage: false },
   { id: '1002', label: 'Thiếu phụ kiện', requiresImage: true },
 ]);
+const uploadImage = vi.fn(async (_token: string, url: string) => `https://vn-live.slatic.net/p/${new URL(url).pathname.split('/').pop()}`);
 const lazada = fakeAdapter({
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' };
@@ -30,6 +31,8 @@ const lazada = fakeAdapter({
     decideReturn,
     confirmReturnReceived,
     returnReasons,
+    uploadImage,
+    returnImageTypes: ['image/jpeg', 'image/png'],
 });
 registerAdapter('lazada', lazada);
 afterAll(() => resetAdapters());
@@ -37,7 +40,19 @@ afterEach(() => {
   setReturnStockPort();
   decideReturn.mockClear();
   confirmReturnReceived.mockClear();
+  uploadImage.mockClear();
 });
+
+/** Tệp đính kèm đã tải lên kho (bỏ qua bước PUT): dòng `core.files` có `uploaded_at`. */
+async function attachmentFile(name: string, contentType = 'image/jpeg', companyId = company.companyId) {
+  const id = randomUUID();
+  await testPool().query(
+    `insert into core.files (id, company_id, storage_key, file_name, content_type, size_bytes, purpose, uploaded_at)
+     values ($1, $2, $3, $4, $5, 2048, 'attachment', now())`,
+    [id, companyId, `test/${id}.${contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg'}`, name, contentType],
+  );
+  return id;
+}
 
 const app = () => request(testApp());
 let company: Awaited<ReturnType<typeof createCompany>>;
@@ -203,6 +218,50 @@ describe('thao tác (§20, §20.1)', () => {
       comment: 'Ảnh cho thấy đã dùng',
       kind: 'return',
     });
+  });
+
+  it('từ chối kèm ảnh (#437): đưa ảnh lên sàn bằng link ký sẵn, gửi URL sàn, gắn ảnh vào yêu cầu, nhật ký giữ URL sàn', async () => {
+    const r = await seedReturn('requested');
+    const a = await attachmentFile('vet-xuoc.jpg');
+    const b = await attachmentFile('hop.png', 'image/png');
+    const res = ReturnRequest.parse((await act(r.id, 'reject', { version: 1, reasonId: '1002', attachmentIds: [a, b] })).body);
+    expect(res.status).toBe('rejected');
+    expect(uploadImage.mock.calls.map(([, url]) => [new URL(url).host, new URL(url).pathname])).toEqual([
+      ['commerio-test-private.test-account.r2.cloudflarestorage.com', `/test/${a}.jpg`],
+      ['commerio-test-private.test-account.r2.cloudflarestorage.com', `/test/${b}.png`],
+    ]);
+    const platformImages = [`https://vn-live.slatic.net/p/${a}.jpg`, `https://vn-live.slatic.net/p/${b}.png`];
+    expect(decideReturn).toHaveBeenCalledWith(expect.any(String), expect.any(String), ['RL-0', 'RL-1'], 'reject', {
+      reasonId: '1002',
+      kind: 'return',
+      images: [
+        { name: 'vet-xuoc.jpg', url: platformImages[0] },
+        { name: 'hop.png', url: platformImages[1] },
+      ],
+    });
+    expect(res.attachments.map((f) => [f.fileId, f.name, f.contentType])).toEqual([
+      [a, 'vet-xuoc.jpg', 'image/jpeg'],
+      [b, 'hop.png', 'image/png'],
+    ]);
+    const audit = await testPool().query(`select after from core.audit_logs where entity_id = $1 and operation = 'reject'`, [r.id]);
+    expect(audit.rows[0].after).toMatchObject({ attachmentIds: [a, b], platformImages });
+    // Link ký sẵn chỉ dùng để đưa ảnh lên sàn: không vào nhật ký.
+    expect(JSON.stringify(audit.rows[0].after)).not.toContain('X-Amz-Signature');
+  });
+
+  it('từ chối kèm ảnh sai kiểu sàn nhận, tệp lạ hay của công ty khác: 422 ở attachmentIds, không báo sàn, không gắn', async () => {
+    const r = await seedReturn('requested');
+    const webp = await attachmentFile('anh.webp', 'image/webp');
+    const wrong = await act(r.id, 'reject', { version: 1, reasonId: '1002', attachmentIds: [webp] });
+    expect([wrong.status, Object.keys(wrong.body.errors)]).toEqual([422, ['attachmentIds']]);
+    const other = await attachmentFile('khac.jpg', 'image/jpeg', (await createCompany({ optionalModules: [] })).companyId);
+    for (const ids of [[randomUUID()], [other]]) {
+      const res = await act(r.id, 'reject', { version: 1, reasonId: '1002', attachmentIds: ids });
+      expect([res.status, Object.keys(res.body.errors)]).toEqual([422, ['attachmentIds']]);
+    }
+    expect(decideReturn).not.toHaveBeenCalled();
+    expect(uploadImage).not.toHaveBeenCalled();
+    expect(ReturnRequest.parse(await detail(r.id))).toMatchObject({ status: 'requested', attachments: [] });
   });
 
   it('chỉ hoàn tiền (khách giữ hàng): refund_only, refunded, phát sales.return_refunded, đơn không còn cờ', async () => {
