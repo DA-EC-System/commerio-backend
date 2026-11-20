@@ -121,7 +121,7 @@ const KIND_LABEL: Readonly<Record<RelationKind, string>> = {
   actor: 'người thao tác',
   tenant: 'theo công ty',
 };
-const EXTERNAL_NOTE = 'mã bên ngoài (sàn, cổng thanh toán)';
+export const EXTERNAL_NOTE = 'mã bên ngoài (sàn, cổng thanh toán)';
 const NO_DOC: SourceDoc = { text: '', deprecated: null };
 
 const schemaRank = (s: string): number => (MODULE_ORDER.includes(s) ? MODULE_ORDER.indexOf(s) : MODULE_ORDER.length);

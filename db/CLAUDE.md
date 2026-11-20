@@ -20,6 +20,7 @@ Ba thứ **sinh tự động, không sửa tay** (`npm run db:docs`; `db:generat
 - **Cột uuid tên `*_id` không có khoá ngoại** (trỏ sang schema khác, module con khác): khai bảng đích ở `LOGICAL_REFS`, hoặc lý do không trỏ bảng cố định ở `NOT_REFS` (`scripts/db/lib/schema-refs.ts`). Tên theo quy ước `<bảng số ít>_id` khai theo tên cột; tên mang nghĩa riêng khai theo `<schema>.<bảng>.<cột>`. Chưa khai, hoặc mục khai không còn khớp cột nào, thì `db:docs` báo lỗi. Cột `*_by` (người thao tác → `core.accounts`) và `company_id` không cần khai.
 - `db:ci-check` và `test/unit/db/docs.test.ts` đỏ khi ba thứ trên chưa ghi lại hoặc có cột chưa khai. Sửa comment `schema.ts` mà không sinh migration thì chạy `npm run db:docs`.
 - Gộp main bị xung đột ở `SCHEMA.md`, `schema/`, `VERSIONS.md`: để nguyên, `npm run db:regen` ghi lại (nhánh không có migration thì `npm run db:docs`).
+- **ERD tương tác**: `npm run db:erd` dựng từ cùng mô hình (`scripts/db/lib/erd.ts`, bố cục bằng `elkjs`, trang `scripts/db/erd/page.html`), ghi `.erd/commerio-erd.html` (không commit) rồi mở trình duyệt; `-- --no-open` chỉ ghi file. Có tổng quan 6 schema, sơ đồ từng module (cột khoá hoặc mọi cột), quan hệ trực tiếp của một bảng, chi tiết cột và ràng buộc, phiên bản `V<n>` ở đầu trang. Có migration mới: `git pull` rồi chạy lại.
 
 ## Migration
 
