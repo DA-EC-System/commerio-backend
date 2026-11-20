@@ -116,7 +116,11 @@ export interface NewProduct {
   sizeChartUri?: string;
   sellerSku: string;
   price: string;
-  quantity: number;
+  /**
+   * Tồn gửi kèm. Thiếu là không gửi: đẩy lại sản phẩm đã có trên sàn mà SKU chưa có số hay chưa tin được (#460, #223)
+   * thì giữ tồn trên sàn, lượt đẩy tồn quyết sau. Tạo mới luôn có.
+   */
+  quantity?: number;
   weightG: number;
   lengthMm: number;
   widthMm: number;

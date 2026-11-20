@@ -19,6 +19,7 @@ export const inventoryModule: ModuleDefinition = {
 
 export {
   availableOf,
+  countedOf,
   type DocumentRef,
   nextDocNumber,
   type ReceiveBackMeta,

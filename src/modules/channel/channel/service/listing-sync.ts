@@ -526,7 +526,10 @@ async function reconcileStock(
     // SKU chưa tin được (#223): số app có thể chưa trừ đơn bán ở gian hàng khác, nên chỉ cao hơn số thật. Khớp, hoặc sàn
     // cao hơn (đẩy giảm) vẫn làm; sàn thấp hơn (sẽ đẩy tăng, bật Lệch tồn) thì bỏ lượt này.
     const untrusted = await untrustedVariants();
+    // SKU kho chưa có số (#460): không đối chiếu, không ghi `platform_stock`, không bật Lệch tồn.
+    const counted = await countedOf(port, candidates.map((r) => r.variantId!));
     for (const row of candidates) {
+      if (!zeroHidden(row) && !counted.has(row.variantId!)) continue;
       const app = zeroHidden(row) ? 0 : available.get(row.variantId!);
       if (app === undefined) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
@@ -601,9 +604,10 @@ async function pushDue(
   const due = onPlatform.filter((r) => (r.outsideChangeKind ? zeroHidden(r) && stockPending(r) : stockPending(r) || priceDueOf(r)));
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
-  const { available, untrusted } = await inCompany(async () => ({
+  const { available, untrusted, counted } = await inCompany(async () => ({
     available: holdStock ? new Map<string, number>() : await port.availableOf(ids),
     untrusted: holdStock ? new Map<string, ShopRow[]>() : await untrustedVariants(),
+    counted: holdStock ? null : await countedOf(port, ids),
   }));
   const at = new Date();
   // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
@@ -624,8 +628,12 @@ async function pushDue(
     // so với số sàn ĐỌC THẬT trong lượt này (`sellableQuantity`). Không so với `platform_stock`: đó là số app gửi lần trước,
     // sàn có thể đã bán bớt mà app chưa biết (review R2-1). Đường không đọc sàn (`pushPending`) vì thế không đẩy tồn SKU
     // này. Bị giữ thì `pending` kèm `orders_stale`; lượt đồng bộ 15 phút hoặc lấy đơn xong trọn thì đẩy lại.
+    // SKU kho chưa có số (#460, 25 §6.4 "Ghép listing có sẵn"): không đẩy số có thể bán (0) đè tồn trên sàn, thắng
+    // `orders_stale`. Listing ẩn bằng tồn 0 vẫn gửi 0: đó là lệnh ngừng bán, không phải số tồn.
+    const uncounted = wanted !== undefined && !zero && counted !== null && !counted.has(row.variantId!);
     const staleShops = untrusted.get(row.variantId!);
-    const blocked = staleShops !== undefined && wanted !== undefined && !zero && raisesStock(wanted, r?.sellableQuantity);
+    const stale = !uncounted && staleShops !== undefined && wanted !== undefined && !zero && raisesStock(wanted, r?.sellableQuantity);
+    const blocked = uncounted || stale;
     const quantity = blocked ? undefined : wanted;
     const item: PriceQuantity | null =
       !price && quantity === undefined
@@ -636,7 +644,7 @@ async function pushDue(
             ...(price && { price: price.toFixed(0) }),
             ...(quantity !== undefined && { quantity }),
           };
-    const held: ListingPatch = blocked ? { stockSyncError: ordersStaleError(staleShops, at) } : {};
+    const held: ListingPatch = uncounted ? { stockSyncError: notCountedError(at) } : stale ? { stockSyncError: ordersStaleError(staleShops!, at) } : {};
     return { row, item, stockDue: stockDue && !blocked, priceDue, locked: { ...lockPatch(r, at), ...held } };
   });
   const isMissing = (p: (typeof plan)[number]) => p.stockDue && !p.locked.stockSyncError && p.item?.quantity === undefined;
@@ -676,6 +684,23 @@ async function pushDue(
       await updateListing(row.id, { version: row.version }, patch);
     }
   });
+}
+
+/** Mã lỗi giữ tồn của SKU kho chưa có số (#460). */
+export const STOCK_NOT_COUNTED = 'stock_not_counted';
+
+/** SKU có số trong kho; cổng giả của test không có `countedOf` thì coi mọi SKU đã có số. */
+export async function countedOf(port: ProductPort, ids: readonly string[]): Promise<Set<string>> {
+  return port.countedOf ? port.countedOf(ids) : new Set(ids);
+}
+
+/** Lý do giữ tồn của SKU kho chưa có số (`stockSyncError.code = 'stock_not_counted'`, 21 §18.6.6). */
+function notCountedError(at: Date): SyncError {
+  return {
+    code: STOCK_NOT_COUNTED,
+    message: 'Chưa có số tồn: SKU chưa nhập kho, chưa kiểm kê nên app chưa đẩy tồn lên sàn',
+    at: at.toISOString(),
+  };
 }
 
 /** Sàn khoá tồn hoặc giá do khuyến mãi (`RemoteSku.stockLocked`, `priceLocked`): giữ số cũ trên sàn, ghi lỗi để báo. */
