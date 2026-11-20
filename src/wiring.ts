@@ -33,7 +33,7 @@ import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.
 import { deleteShopSummaries, hasAssistantData } from './modules/insight/index.ts';
 import { type FulfillmentContext, orderArchiveBlockers, orderInUse, type SalesContext, soldQtyOf } from './modules/order/index.ts';
 import { type CatalogContext, hasPurchasingData, seedCompanyDefaults } from './modules/product/index.ts';
-import { createAuthorize } from './shared/auth/authorize.ts';
+import { createAuthorize, createMember } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
 
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
@@ -49,6 +49,7 @@ export type AppContext = ModuleContext &
 export function createModuleContext(): AppContext {
   return {
     authorize: createAuthorize(loadCompanyAccess),
+    member: createMember(loadCompanyAccess),
     // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát; #105: sales cho danh sách đơn.
     shopsOf: getShops,
     // #117: finance kéo quyết toán qua token gian hàng của channel.

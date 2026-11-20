@@ -1,6 +1,6 @@
 // Gian hàng (#103). Chạy trong `withCompany` của bên gọi, trừ `findLiveCompanyOf`.
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import { getDb } from '../../../../shared/db/client.ts';
+import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { ShopStatus } from '../domain/shop.ts';
 import { listings, priceCalculations, rawOrders, remoteSkus, shops } from './schema.ts';
 
@@ -239,6 +239,20 @@ export async function recordOpenOrderPullError(id: string, message: string): Pro
     .update(shops)
     .set({ lastError: `${OPEN_ORDER_PULL_ERROR}: ${message}` })
     .where(and(eq(shops.id, id), sql`${shops.openOrdersPulledAt} is null`));
+}
+
+/** Gian hàng chưa ngắt của công ty đang chọn (cũ trước) và số trong đó đã hoàn tất thiết lập (#461 onboarding). */
+export async function shopSetupState(): Promise<{ connected: { id: string; status: ShopStatus }[]; setUp: number }> {
+  const companyId = requireCompanyId('shopSetupState');
+  const rows = await getDb()
+    .select({ id: shops.id, status: shops.status, orderCutoffAt: shops.orderCutoffAt })
+    .from(shops)
+    .where(and(eq(shops.companyId, companyId), ne(shops.status, 'disconnected')))
+    .orderBy(asc(shops.createdAt), asc(shops.id));
+  return {
+    connected: rows.map(({ id, status }) => ({ id, status })),
+    setUp: rows.filter((r) => r.orderCutoffAt).length,
+  };
 }
 
 /**

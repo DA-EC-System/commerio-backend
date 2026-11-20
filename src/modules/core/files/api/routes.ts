@@ -1,27 +1,12 @@
-import { type RequestHandler, Router } from 'express';
-import { getAuth, readAccessClaims } from '../../../../shared/auth/authenticate.ts';
-import { assertCompanyAccess, getAccess, moduleOfPermission } from '../../../../shared/auth/authorize.ts';
+import { Router } from 'express';
+import { getAuth } from '../../../../shared/auth/authenticate.ts';
+import { getAccess, moduleOfPermission } from '../../../../shared/auth/authorize.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import { loadCompanyAccess } from '../../identity/index.ts';
 import type { FilePurpose } from '../domain/upload-rules.ts';
 import { createUploadTicket } from '../service/uploads.ts';
 import { UploadBody } from './schemas.ts';
-
-/**
- * Thành viên còn làm việc được trong công ty, không đòi quyền nào: các bước của `authorize`
- * (`src/shared/auth/authorize.ts`) trừ kiểm phân hệ và mã quyền. Tệp đính kèm thì mọi thành viên tải được (§14.3).
- */
-const member: RequestHandler = async (req, res, next) => {
-  const claims = await readAccessClaims(req);
-  if (!claims.companyId) throw new AppError(403, 'company_not_selected', 'Chưa chọn công ty làm việc');
-  const access = await loadCompanyAccess(claims.accountId, claims.companyId);
-  assertCompanyAccess(access, claims);
-  res.locals.auth = claims;
-  res.locals.access = access;
-  next();
-};
 
 /** Quyền cần thêm theo mục đích; `null` là mọi thành viên. Ảnh sản phẩm như route sửa sản phẩm (§5.2). */
 const PURPOSE_PERMISSION: Readonly<Record<FilePurpose, string | null>> = {
@@ -30,7 +15,7 @@ const PURPOSE_PERMISSION: Readonly<Record<FilePurpose, string | null>> = {
 };
 
 /** Route của module `files`, gắn tại /api/v1/files. */
-export function filesRouter(_ctx: ModuleContext): Router {
+export function filesRouter({ member }: ModuleContext): Router {
   const router = Router();
 
   // Quyền phụ thuộc `purpose` trong body nên kiểm sau `validate()`; body sai của người không có quyền ra 422.
