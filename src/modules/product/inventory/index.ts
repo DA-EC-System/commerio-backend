@@ -37,6 +37,8 @@ export {
 export { InsufficientStock, moveSupplierReturn, type ReceivedLine, receiveGoods, type ReturnLine } from './service/posting.ts';
 // Số phiếu kho cho chứng từ của purchasing (nguồn, phiếu sinh tiếp của phiếu trả NCC, #210).
 export { docRefsOf as stockDocumentRefs, docsFromSource as stockDocumentsFrom } from './repository/documents.ts';
+// Phiếu kiểm hàng hoàn có phần thiếu (`claim_flag`): sales không báo sàn đồng ý hoàn tiền (commerio-backend#392).
+export { returnInspectionClaimed } from './service/return-claim.ts';
 // Phiếu kho có duyệt (#208): xuất huỷ chờ xử lý cho phiếu trả NCC bị huỷ (#210), kiểm kê đầu kỳ cho channel (#245).
 export { createOpeningStocktake, createQuarantineWriteOff } from './service/documents.ts';
 // Trạng thái phiếu kiểm kê đầu kỳ cho channel (#198, #245).

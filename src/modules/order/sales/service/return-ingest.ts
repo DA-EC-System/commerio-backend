@@ -25,7 +25,9 @@ import {
   type ReturnRow,
   updateReturnLine,
 } from '../repository/returns.ts';
-import { isConfirmFailedNote } from './return-confirm.ts';
+import { returnInspectionClaimed } from '../../../product/index.ts';
+import type { MarketplaceReturns } from './marketplace-returns.ts';
+import { claimFlag, clearRefundApprovalFlag, isConfirmFailedNote } from './return-confirm.ts';
 import { applyReturnStep, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
@@ -44,6 +46,10 @@ export interface PlatformReturn {
   returnTrackingCode: string | null;
   reason: string | null;
   refundAmount: string | null;
+  /** Hạn người bán phải trả lời, null khi sàn không chờ người bán (#392). */
+  respondBy?: Date | null;
+  /** Sàn báo người bán đã xử lý hàng về (`syncAction`, #392); thiếu là false. */
+  sellerHandledReceipt?: boolean;
   lines: { externalLineId: string; externalReturnLineId: string | null; quantity: number }[];
   updatedAt: Date;
 }
@@ -60,6 +66,7 @@ function platformFields(r: PlatformReturn): ReturnPatch {
     disputeInProgress: r.disputeInProgress,
     returnTo: r.returnTo,
     returnTrackingCode: r.returnTrackingCode,
+    respondBy: r.respondBy ?? null,
     externalUpdatedAt: r.updatedAt,
     ...(r.refundAmount !== null && { refundAmount: r.refundAmount }),
   };
@@ -177,7 +184,13 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   if (row.needsAttention && isConfirmFailedNote(row.attentionNote) && r.status && PAST_AWAITING.includes(r.status)) {
     Object.assign(fields, { needsAttention: false, attentionNote: null });
   }
-  const action = r.status ? syncAction(row.status, r.status, row.closeResult) : null;
+  // Sàn đã qua bước đồng ý hoàn tiền (lần báo của app vừa xong, hay người bán làm trên Seller Center, sàn tự hoàn):
+  // không còn gì phải báo, gỡ cờ báo lỗi của bước này.
+  if (r.sellerHandledReceipt === true && (row.refundApproval === 'pending' || row.refundApproval === 'withheld')) {
+    Object.assign(fields, { refundApproval: 'done' });
+    Object.assign(fields, clearRefundApprovalFlag(row));
+  }
+  const action = r.status ? syncAction(row.status, r.status, row.closeResult, r.sellerHandledReceipt ?? false) : null;
   if (action === 'conflict') {
     // Cờ báo sàn đã nhận còn đó thì giữ câu của nó: lượt thử lại tìm yêu cầu theo đầu câu này (`returnsAwaitingConfirm`).
     const keep = row.needsAttention && isConfirmFailedNote(row.attentionNote) && !('attentionNote' in fields);
@@ -208,9 +221,10 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
  * `inspected`), chia số bán lại về dòng, tính `resellCost`, hoàn tiền (`sales.return_refunded` trong `applyReturnStep`).
  * Phiếu không thuộc yêu cầu nào (kiện hoàn, kiện không khớp) thì bỏ qua.
  */
-export async function onReturnInspected(event: {
-  payload: { inspectionId: string; lines: readonly { variantId: string; resellable: number }[] };
-}): Promise<void> {
+export async function onReturnInspected(
+  event: { payload: { inspectionId: string; lines: readonly { variantId: string; resellable: number }[] } },
+  ctx?: { marketplaceReturns?: MarketplaceReturns },
+): Promise<void> {
   const row = await findReturnByInspection(event.payload.inspectionId);
   if (!row || row.status !== 'received') return;
   const lines = await findReturnLines([row.id]);
@@ -218,5 +232,16 @@ export async function onReturnInspected(event: {
   for (const l of event.payload.lines) resellable.set(l.variantId, (resellable.get(l.variantId) ?? 0) + l.resellable);
   const { perLine, resellCost } = distributeResell(lines, resellable);
   for (const l of lines) await updateReturnLine(l.id, { resellQty: perLine.get(l.id) ?? 0 });
-  await applyReturnStep(row, { action: 'close', to: 'closed', actorId: null, source: 'system' }, { resellCost });
+  await applyReturnStep(row, { action: 'close', to: 'closed', actorId: null, source: 'system' }, { resellCost, ...(await refundApprovalOf(row, event.payload.inspectionId, ctx)) });
+}
+
+/**
+ * Sàn có bước đồng ý hoàn tiền sau kiểm hàng (#392, TikTok): phiếu không khiếu nại thì chờ channel báo sàn (`pending`); có
+ * khiếu nại (hàng về thiếu, sai) thì không báo, bật Cần xử lý để người bán từ chối nhận hàng hay khiếu nại trên sàn (25 mục 9).
+ */
+async function refundApprovalOf(row: ReturnRow, inspectionId: string, ctx?: { marketplaceReturns?: MarketplaceReturns }): Promise<ReturnPatch> {
+  if (row.source !== 'marketplace' || !row.shopId || !ctx?.marketplaceReturns) return {};
+  if (!(await ctx.marketplaceReturns.approvesRefundAfterInspection(row.companyId, row.shopId))) return {};
+  if (!(await returnInspectionClaimed(inspectionId))) return { refundApproval: 'pending' };
+  return { refundApproval: 'withheld', ...claimFlag(row, row.inspectionNumber) };
 }

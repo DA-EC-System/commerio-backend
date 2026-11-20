@@ -16,6 +16,8 @@ export interface MarketplaceReturns {
     opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
   ): Promise<void>;
   confirmReceived(companyId: string, shopId: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /** Sàn của gian hàng có bước đồng ý hoàn tiền sau kiểm hàng hoàn (#392, TikTok); chỉ đọc DB, không gọi sàn. */
+  approvesRefundAfterInspection(companyId: string, shopId: string): Promise<boolean>;
   history(
     companyId: string,
     shopId: string,
