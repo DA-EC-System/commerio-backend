@@ -37,7 +37,7 @@ export const RegisterBody = z
     }),
     ceo: z.object({
       fullName: z.string().trim().min(2, 'Nhập họ tên').max(100, 'Họ tên tối đa 100 ký tự'),
-      email,
+      email: email.pipe(z.string().max(254, 'Email tối đa 254 ký tự')),
       password: newPassword,
     }),
   })
@@ -93,6 +93,26 @@ export const SelectCompanyResponse = z
   .object({ accessToken: z.string(), context: CompanyContext })
   .meta({ id: 'SelectCompanyResponse' });
 export const RefreshResponse = z.object({ accessToken: z.string() }).meta({ id: 'RefreshResponse' });
-export const RegisterResponse = z
-  .object({ companyId: z.uuid(), email: z.string() })
-  .meta({ id: 'RegisterCompanyResponse' });
+export const RegistrationStatus = z
+  .object({
+    registrationId: z.uuid(),
+    codeExpiresAt: z.string().meta({ description: 'Mã hết hạn lúc này (ISO 8601)' }),
+    registrationExpiresAt: z.string().meta({ description: 'Lần đăng ký hết hạn lúc này (ISO 8601), 30 phút từ lúc gửi form' }),
+    resendAfterSeconds: z.number().int().meta({ description: 'Số giây phải chờ trước khi xin mã lại' }),
+  })
+  .meta({ id: 'RegistrationStatus' });
+
+export const RegistrationIdBody = z
+  .object({ registrationId: z.uuid('Mã đăng ký không hợp lệ') })
+  .meta({ id: 'RegistrationResendRequest' });
+
+export const VerifyRegistrationBody = z
+  .object({
+    registrationId: z.uuid('Mã đăng ký không hợp lệ'),
+    code: z.string().regex(/^\d{6}$/, 'Mã gồm 6 chữ số'),
+  })
+  .meta({ id: 'RegistrationVerifyRequest' });
+
+export const VerifyRegistrationResponse = z
+  .object({ accessToken: z.string(), account: Account, memberships: z.array(Membership), context: CompanyContext })
+  .meta({ id: 'RegistrationVerifyResponse' });

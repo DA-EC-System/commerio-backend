@@ -9,6 +9,7 @@ import { suggestCategories } from '../service/category-suggestions.ts';
 import { shopWarehouses } from '../service/shop-warehouses.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
+import { applyCategory } from '../service/category-apply.ts';
 import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
@@ -26,6 +27,7 @@ import { type ChannelContext, deleteShop } from '../service/shop-delete.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
+  ApplyCategoryBody,
   AuthorizeUrlQuery,
   CallbackBody,
   DelistBody,
@@ -262,6 +264,18 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
       res.json(await putProductSpec(ctx, actor(res), productId, platform, validated<typeof ProductSpecBody>(res, 'body')));
+    },
+  );
+
+  // Đổi category trên sàn (#467, 21 §18.5): kiểm, ghi `queued`, xếp việc nền; không gọi sàn trong request.
+  router.post(
+    '/products/:productId/specs/:platform/apply-category',
+    manage,
+    validate({ params: ProductSpecParams, body: ApplyCategoryBody }),
+    async (_req, res) => {
+      const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
+      const { version } = validated<typeof ApplyCategoryBody>(res, 'body');
+      res.status(202).json(await applyCategory(productPort(ctx), actor(res), productId, platform, version, () => mapping.isCeo(actor(res))));
     },
   );
 

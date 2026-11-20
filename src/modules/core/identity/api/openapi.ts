@@ -10,7 +10,10 @@ import {
   MeResponse,
   RefreshResponse,
   RegisterBody,
-  RegisterResponse,
+  RegistrationIdBody,
+  RegistrationStatus,
+  VerifyRegistrationBody,
+  VerifyRegistrationResponse,
   SelectCompanyBody,
   SelectCompanyResponse,
 } from './schemas.ts';
@@ -26,12 +29,39 @@ export function registerIdentityOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'post',
     path: '/register',
-    summary: 'Đăng ký công ty, người đăng ký là CEO (UC-PI-01)',
+    summary: 'Đăng ký công ty bước 1: gửi form, nhận mã qua email (UC-PI-01, #459, Documents/21 mục 2.1)',
+    description: 'Như nhau dù email có tài khoản hay không. Thư gửi bằng việc nền.',
     request: { body: json(RegisterBody) },
     responses: {
-      201: { description: 'Đã tạo công ty', ...json(RegisterResponse) },
-      409: problemResponse('`email_taken`: email đã có tài khoản'),
+      202: { description: 'Đã nhận, chờ mã', ...json(RegistrationStatus) },
+      409: problemResponse('`tax_code_taken`: mã số thuế đã có công ty'),
       422: problemResponse('`validation_failed`'),
+      429: problemResponse('`too_many_requests` theo IP, hoặc theo email (3 đăng ký còn hạn, 5 thư mỗi giờ)'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/register/resend',
+    summary: 'Đăng ký công ty: xin mã mới (mã cũ mất hiệu lực)',
+    request: { body: json(RegistrationIdBody) },
+    responses: {
+      202: { description: 'Đã xếp việc gửi mã mới', ...json(RegistrationStatus) },
+      410: problemResponse('`registration_expired`'),
+      422: problemResponse('`validation_failed`'),
+      429: problemResponse('`too_many_requests` (chưa qua 60 giây, có `Retry-After`; hoặc trần theo email), `otp_send_limit`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/register/verify',
+    summary: 'Đăng ký công ty bước 2: nhập mã, tạo công ty và vào thẳng công ty',
+    description: 'Đặt cookie refresh như `/login`; access token có `cid` của công ty mới. `Cache-Control: no-store`.',
+    request: { body: json(VerifyRegistrationBody) },
+    responses: {
+      201: { description: 'Đã tạo công ty', ...json(VerifyRegistrationResponse) },
+      409: problemResponse('`email_taken`, `tax_code_taken`'),
+      410: problemResponse('`registration_expired`'),
+      422: problemResponse('`validation_failed`; `errors.code` khi mã sai, hết hạn, đã sai 5 lần'),
       429: problemResponse('`too_many_requests`'),
     },
   });

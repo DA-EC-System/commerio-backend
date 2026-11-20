@@ -148,6 +148,30 @@ export interface ContentUpdate {
   responsible?: Responsible;
 }
 
+/**
+ * Đổi category của sản phẩm đang có trên sàn (`apply-category`, commerio-backend#467): chỉ category và attribute; tên, mô tả,
+ * ảnh, SKU, giá, tồn giữ như trên sàn. `sizeChartUrl` (ảnh của app) chỉ được đưa lên khi sản phẩm trên sàn chưa có bảng size.
+ */
+export interface CategoryChangeInput {
+  externalCategoryId: string;
+  /** Như `NewProduct.attributes` (nhãn lựa chọn hoặc chuỗi tự nhập). */
+  attributes: Record<string, string | string[]>;
+  responsible?: Responsible;
+  /** Ảnh bảng size của app: adapter đưa lên sàn chỉ khi sản phẩm trên sàn chưa có bảng size. */
+  sizeChartUrl?: string;
+  /** App đã ẩn listing (`hidden`): sau khi sửa phải tắt lại dù lần đọc này thấy sản phẩm đang bật (lượt thử lại). */
+  keepDeactivated?: boolean;
+}
+
+/**
+ * Kết quả đổi category: `underReview` sàn ngừng bán bản cũ để duyệt; `mismatch` các chỗ lệch khi đọc lại so với lúc đọc trước
+ * (số SKU, SKU người bán, giá, số ảnh), mỗi chỗ một cụm tiếng Việt viết thường đầu câu; rỗng là khớp.
+ */
+export interface CategoryChangeResult {
+  underReview: boolean;
+  mismatch: string[];
+}
+
 /** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */
 export type ContentRevision = { state: 'auditing' | 'approved' } | { state: 'failed'; reason: string | null };
 
@@ -638,6 +662,11 @@ export interface MarketplaceAdapter {
    * bản cũ để duyệt; false là vẫn bán bản cũ trong lúc duyệt bản sửa. Sàn chưa hỗ trợ thì không có hàm này.
    */
   updateContent?(accessToken: string, externalProductId: string, content: ContentUpdate): Promise<{ underReview: boolean }>;
+  /**
+   * Đổi category của sản phẩm đang bán (#467, Documents/21 §18.5): dựng bản sửa từ chính dữ liệu đọc trên sàn, chỉ thay
+   * category và attribute. Không bật, tắt sản phẩm. Sàn chưa hỗ trợ thì không có hàm này (route trả 422).
+   */
+  changeCategory?(accessToken: string, externalProductId: string, input: CategoryChangeInput): Promise<CategoryChangeResult>;
   /** Trạng thái bản sửa nội dung đang duyệt (#293), đồng bộ đọc cho listing có bản sửa `auditing`. */
   contentRevision?(accessToken: string, externalProductId: string): Promise<ContentRevision>;
   /**

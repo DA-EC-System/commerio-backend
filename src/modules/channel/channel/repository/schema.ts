@@ -188,6 +188,20 @@ export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['dis
 export const contentSource = channelSchema.enum('listing_content_source', ['app', 'platform']);
 /** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
 export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
+/**
+ * Lượt đổi category trên sàn của listing (`apply-category`, commerio-backend#467, Documents/21 §18.5): `queued` đã xếp việc
+ * `channel.category_apply`, chưa xong; `failed` sàn từ chối hoặc hết lượt thử; `mismatch` sàn nhận nhưng đọc lại thấy lệch
+ * SKU, giá, ảnh. `at` là chuỗi ISO lúc ghi trạng thái (lúc xếp việc với `queued`).
+ */
+export interface CategoryChange {
+  status: 'queued' | 'failed' | 'mismatch';
+  toCategoryId: string;
+  toCategoryPath: string | null;
+  code: string | null;
+  message: string | null;
+  attempts: number;
+  at: string;
+}
 
 /**
  * Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app. Mã sàn trống khi chưa đẩy lần nào.
@@ -268,6 +282,11 @@ export const listings = channelSchema.table(
     revisionStatus: revisionStatus('revision_status'),
     revisionRejectReason: text('revision_reject_reason'),
     revisionAt: timestamp('revision_at', { withTimezone: true }),
+    /**
+     * Lượt đổi category trên sàn (`categoryChange`, commerio-backend#467): `{ status, toCategoryId, toCategoryPath, code,
+     * message, attempts, at }`, null khi không có hoặc sàn đã nhận mà không lệch (trạng thái duyệt ở `revision_*`). Xoá khi gỡ.
+     */
+    categoryChange: jsonb('category_change').$type<CategoryChange>(),
     /** Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị. */
     contentSource: contentSource('content_source').notNull().default('platform'),
     /**
@@ -340,6 +359,11 @@ export const listings = channelSchema.table(
       'listings_remote_title',
       sql`(${t.remoteTitleAtMatch} is not null or (${t.remoteTitleEnAtMatch} is null and ${t.remoteTitleMatchedAt} is null))
         and (${t.remoteTitleChangedAt} is null or ${t.remoteTitleMatchedAt} is not null)`,
+    ),
+    // Gỡ là trạng thái cuối: lượt đổi category không còn đối tượng (#467).
+    check(
+      'listings_category_change',
+      sql`${t.categoryChange} is null or (${t.status} <> 'delisted' and ${t.categoryChange} ->> 'status' in ('queued', 'failed', 'mismatch'))`,
     ),
     check('listings_reject_reason', sql`${t.status} <> 'rejected' or ${t.rejectReason} is not null`),
     check('listings_push_attempts', sql`${t.pushAttempts} >= 0`),

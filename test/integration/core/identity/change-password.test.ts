@@ -69,7 +69,8 @@ describe('đổi mật khẩu thu hồi mọi phiên khác (AC-B2)', () => {
     const { email } = await registerCompany();
     const first = await login(email);
     const second = await login(email);
-    expect(await activeTokens(email)).toBe(2);
+    // Hai lần đăng nhập cộng phiên vào thẳng công ty lúc đăng ký (#459).
+    expect(await activeTokens(email)).toBe(3);
 
     const res = await changePassword(first.token, { currentPassword: PASSWORD, newPassword: 'MatKhauMoi9' }, first.cookie);
     expect(res.status).toBe(204);
@@ -88,7 +89,7 @@ describe('đổi mật khẩu thu hồi mọi phiên khác (AC-B2)', () => {
     const second = await login(email);
     const res = await changePassword(first.token, { currentPassword: 'SaiSai123', newPassword: 'MatKhauMoi9' }, first.cookie);
     expect(res.status).toBe(422);
-    expect(await activeTokens(email)).toBe(2);
+    expect(await activeTokens(email)).toBe(3);
     expect((await refresh(second.cookie)).status).toBe(200);
   });
 });
