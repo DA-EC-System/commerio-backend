@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V114** (`20261120094957_bo-cot-dang-huy-cu`): 91 bảng trong 6 schema, 67 khoá ngoại, 78 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V117** (`20261120102414_doi-category-san`): 92 bảng trong 6 schema, 67 khoá ngoại, 78 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -23,7 +23,7 @@ Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớ
 - `finance.sales_invoices` (bảng): Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
 - `channel.webhook_events` (bảng): Không dùng: MVP không nhận push của sàn (#133, #135), kéo định kỳ là đường nhận đơn duy nhất. Xoá ở migration sau.
 
-## `core` · Lõi · lớp 1 · 16 bảng
+## `core` · Lõi · lớp 1 · 17 bảng
 
 Chi tiết: [schema/core.md](schema/core.md)
 
@@ -40,6 +40,7 @@ Chi tiết: [schema/core.md](schema/core.md)
 - `core.permissions` (access): Danh mục quyền (Documents/21 mục 8).
 - `core.processed_events` (platform): Sự kiện consumer đã xử lý, chống xử lý trùng (D7).
 - `core.refresh_tokens` (identity): Refresh token, chỉ lưu bản băm SHA-256.
+- `core.registrations` (identity): Lần đăng ký công ty đang chờ mã xác minh email (#459, Documents/21 mục 2.1).
 - `core.role_permissions` (access)
 - `core.roles` (access): Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
 - `core.state_transitions` (platform): Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm.

@@ -44,6 +44,14 @@ describe('đăng nhập Google', () => {
     expect((await linkLogs(row.id)).rows).toEqual([{ action: 'update', after: { googleLinked: true } }]);
   });
 
+  it('#459: email thuộc miền thử e2e bị từ chối 401 google_account_not_found dù đã có tài khoản', async () => {
+    const { email } = await registerCompany(`e2e-${randomUUID()}@dang-ky.test`);
+    const res = await google(await googleToken({ email, sub: `g-${randomUUID()}` }));
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('google_account_not_found');
+    expect((await account(email)).google_sub).toBeNull();
+  });
+
   it('email trong token viết hoa vẫn khớp tài khoản', async () => {
     const { email } = await registerCompany();
     expect((await google(await googleToken({ email: email.toUpperCase(), sub: `g-${randomUUID()}` }))).status).toBe(200);

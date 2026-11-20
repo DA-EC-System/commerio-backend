@@ -1,12 +1,14 @@
 # Module `identity`
 
-Đăng ký công ty, đăng nhập, phiên làm việc, đổi mật khẩu (UC-PI-01, 03, 04). Hợp đồng API: `Documents/21` mục 2 và mục 10 (V2–V14). Không có bảng nghiệp vụ riêng ngoài `identity.refresh_tokens`; tài khoản nằm ở `staff`, công ty ở `platform`, vai trò ở `access`.
+Đăng ký công ty, đăng nhập, phiên làm việc, đổi mật khẩu (UC-PI-01, 03, 04). Hợp đồng API: `Documents/21` mục 2 và mục 10 (V2–V14). Bảng riêng: `core.refresh_tokens`, `core.registrations` (lần đăng ký chờ mã, #459); tài khoản nằm ở `staff`, công ty ở `platform`, vai trò ở `access`.
 
 ## Luồng
 
 | API | Việc | Gọi module |
 |---|---|---|
-| `POST /register` | Công ty, tài khoản CEO, phân hệ (lõi gồm Kênh bán, cộng Nhập hàng bật sẵn: `DEFAULT_OPTIONAL_MODULES`; thân không còn `optionalModules`, `assistantDataConsent`, gửi thừa thì bị bỏ), vai trò CEO, nhật ký cấp nền tảng, **một transaction** (#459) | staff, platform, access, audit |
+| `POST /register` | Bước 1 (#459, `service/registration.ts`): kiểm trần theo email, MST chưa có công ty, băm mật khẩu, lưu `core.registrations`, xếp việc `identity.registration_mail` trong cùng giao dịch; 202 `RegistrationStatus`. Không xét email đã có tài khoản | platform, staff (worker) |
+| `POST /register/resend` | Xin mã mới sau 60 giây (`Retry-After`), tối đa 5 thư mỗi lần đăng ký; mã cũ mất hiệu lực, đặt lại bộ đếm sai | |
+| `POST /register/verify` | Mã đúng: xoá dòng và `createCompanyWithCeo` trong một giao dịch (lõi gồm Kênh bán, cộng Nhập hàng: `DEFAULT_OPTIONAL_MODULES`), trả phiên gắn công ty mới (`cid`) + cookie refresh, `no-store`; 201 | staff, platform, access, audit |
 | `POST /login` | Access token chưa gắn công ty + cookie refresh | staff, platform, access |
 | `POST /google` | Như `/login` nhưng bằng ID token Google (`service/google.ts`, #7 [A]): tìm theo `google_sub`, không có thì theo email đã xác minh rồi liên kết (nhật ký cấp tài khoản `update`, `after: { googleLinked: true }`). Không tạo tài khoản | staff, audit |
 | `POST /select-company` | Kiểm membership, công ty, cờ khoá rồi cấp token gắn công ty; trả `canSelfApprove`; phiên refresh nhớ công ty | staff, platform, access |
@@ -24,8 +26,10 @@
 - Access token: JWT EdDSA 15 phút, mang `sub` (tài khoản), `cid` (công ty), `perms` (đã bỏ quyền của phân hệ chưa bật), `pwc` (còn mật khẩu thư mời). Ký và kiểm ở `src/shared/auth/`.
 - Còn mật khẩu thư mời: chỉ `me`, `change-password`, `refresh`, `logout` chạy được. Đổi xong, mọi phiên khác mất refresh token (cookie cũ hết hiệu lực); phản hồi đặt cookie mới, FE gọi `refresh` bằng cookie đó để lấy token không còn `pwc`. Mọi access token đã phát trước lần đổi (kể cả của chính phiên vừa đổi) bị 401 ở request kế tiếp: token mang dấu `password_changed_at` (claim `pca`), `authorize`, kênh SSE, `me`, `select-company`, `change-password` so với DB (#62). Token còn `pwc` vẫn ra 403 `password_change_required` trước bước này ở route không cho phép `pwc`.
 - Mã số thuế (#459, Documents/21 mục 2.1): `normalizeTaxCode` (`platform/domain/tax-code.ts`) bỏ khoảng trắng, chấm, gạch; nhận 10 số, 12 số, 13 số (lưu `0123456789-001`), sai thì 422 `errors["company.taxCode"]`. Lưu dạng chuẩn, CSDL ép unique `companies_tax_code_unique`; trùng thì 409 `tax_code_taken` theo ô `company.taxCode` (bắt 23505 như `email_taken`). Cột null được: quản trị nền tảng gỡ, hoặc mã cũ sai định dạng/trùng bị migration `*_mst-chuan-hoa-kenh-ban-loi` đặt NULL.
+- Đăng ký hai bước (#459, Documents/21 mục 2.1): DB chỉ giữ bản băm mã (`registrationOtpHash`, gắn id lần đăng ký); mã 6 số sống 5 phút, sai 5 lần thì hỏng (đếm sai commit trước khi ném 422 `errors.code`); lần đăng ký sống 30 phút (410 `registration_expired`). Trần theo email đếm trong DB dưới khoá advisory: 3 lần còn hạn, 5 thư mỗi giờ (429). Email đã có tài khoản đi y như email mới ở request; chỉ worker biết, gửi thư "đã có tài khoản" không mã (tối đa một thư mỗi 24 giờ), không ghi mã nên mọi mã đều sai. Việc gửi thư cũ quá 5 phút, hoặc của lần xin trước, bị bỏ. Trùng email, MST lúc nhập mã: xoá dòng, 409. Việc `identity.registration_purge` mỗi giờ xoá dòng tạo quá 24 giờ. Bảng không cấp quyền nào cho `commerio_app`.
+- Mã thử e2e: `REGISTRATION_TEST_EMAIL_DOMAIN` + `REGISTRATION_TEST_CODE` đặt cùng nhau, chỉ khi `APP_ENV` là `staging`/`test`, miền đuôi `.test`/`.invalid`/`.example`, mã 6 số; sai thì BE không khởi động (`registrationTestIssues`, `shared/config/env.ts`). Email đúng miền (so nguyên phần sau `@`): worker ghi bản băm của mã thử, không gửi thư; mã thử đi chung đường kiểm (đếm sai, hạn); nhật ký tạo công ty ghi `testRegistration: true`; đăng nhập Google từ chối miền này.
 - Không thuộc công ty trả 404 `not_found`; công ty khoá 403 `company_locked`; tài khoản khoá trong công ty 403 `account_locked`.
-- `login`, `google`, `register` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP, mỗi API một bộ đếm riêng; `change-password` giới hạn 5 lần lỗi mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). Bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis.
+- `login`, `google`, `register`, `register/resend`, `register/verify` giới hạn `AUTH_RATE_LIMIT` lần mỗi 15 phút cho một IP, mỗi API một bộ đếm riêng; `change-password` giới hạn 5 lần lỗi mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). `register/verify` thêm 10 lần mỗi 15 phút cho một `registrationId`. Bộ đếm trong bộ nhớ của từng bản sao; chạy nhiều bản sao thì chuyển sang Redis.
 
 ## Cho module khác
 

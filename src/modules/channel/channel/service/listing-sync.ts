@@ -22,7 +22,15 @@ import {
 } from '../domain/listing.ts';
 import { platformPriceChanged } from '../domain/outside-price.ts';
 import { holdsStock } from '../domain/shop.ts';
-import { findListingById, type ListingPatch, type ListingRow, listListingRows, setListingCategory } from '../repository/listings.ts';
+import {
+  clearResolvedCategoryChange,
+  failStaleCategoryChanges,
+  findListingById,
+  type ListingPatch,
+  type ListingRow,
+  listListingRows,
+  setListingCategory,
+} from '../repository/listings.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { markSpecCategory } from '../repository/product-specs.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
@@ -362,6 +370,11 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     summary.changed++;
   }
 
+  // Kẹt `category_change = queued` (việc đổi category rơi): quá 30 phút thì `failed`, để người dùng đổi lại (#467).
+  await inCompany(() =>
+    failStaleCategoryChanges(new Date(staleBefore), 'Quá 30 phút chưa có kết quả từ sàn, thử lại', rows.filter((r) => r.categoryChange?.status === 'queued').map((r) => r.id)),
+  );
+
   const watched = rows.filter((r) => WATCHED.includes(r.status) && r.sellerSku && r.externalSkuId);
   summary.checked = watched.length;
   let bySku = new Map<string, RemoteSku>();
@@ -447,6 +460,12 @@ async function syncCategories(
     const category = bySku.get(row.externalSkuId!)?.externalCategoryId;
     return category && category !== row.externalCategoryId ? [{ row, category }] : [];
   });
+  // Sàn đã ở đúng category đích của lượt đổi: lượt `failed`/`mismatch` không còn đúng, xoá (#467).
+  const resolved = watched.filter((row) => {
+    const change = row.categoryChange;
+    return change && change.status !== 'queued' && bySku.get(row.externalSkuId!)?.externalCategoryId === change.toCategoryId;
+  });
+  if (resolved.length) await inCompany(() => clearResolvedCategoryChange(resolved.map((r) => r.id)));
   if (!changes.length) return;
   await inCompany(async () => {
     const variantIds = changes.flatMap((c) => (c.row.externalCategoryId && c.row.variantId ? [c.row.variantId] : []));

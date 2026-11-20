@@ -139,6 +139,7 @@ export async function delistForDisconnect(
         ...NO_PENDING,
         ...NO_OUTSIDE_CHANGE,
         ...NO_REVISION,
+        categoryChange: null,
         version: sql`${listings.version} + 1`,
         updatedAt: sql`now()`,
       })
