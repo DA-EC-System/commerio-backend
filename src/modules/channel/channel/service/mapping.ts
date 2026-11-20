@@ -229,6 +229,24 @@ const conflictById = async (id: string) => {
  * (409 `mapping_pending`) hay đang đẩy (409 `invalid_transition`), biến thể (422 `errors.variantId`), SKU sàn còn trên sàn
  * và có SKU người bán (422 `errors.externalSkuId`; chỉ đọc sàn khi SKU chưa có listing).
  */
+/** Cột quyết định ghép của listing (#411): đổi một trong số này giữa hai lần đọc là request khác vừa ghép, đổi, gỡ. */
+const MAPPING_FIELDS = [
+  'id',
+  'variantId',
+  'mode',
+  'status',
+  'approvedBy',
+  'pendingVariantId',
+  'pendingMode',
+  'pendingRequestedBy',
+  'pendingExternalSkuId',
+] as const satisfies readonly (keyof ListingRow)[];
+
+function mappingChanged(before: ListingRow | undefined, row: ListingRow | undefined): boolean {
+  if (!before || !row) return before !== row;
+  return MAPPING_FIELDS.some((k) => before[k] !== row[k]);
+}
+
 export async function matchListing(
   port: ProductPort,
   actor: Actor,
@@ -265,9 +283,10 @@ export async function matchListing(
       // Khoá dòng gian hàng chặn khoá chia sẻ của lượt nhận đơn (`lockShopForOrders`): đơn mang SellerSku này về giữa
       // lúc kiểm "đã có đơn" và lúc ghi thì không lọt bước CEO duyệt; lượt nhận đơn sau đó tra ra ghép mới (review #309 N1).
       const locked = (await lockShopRow(shop.id))!;
-      const row = await findListingByExternalSku(shop.id, externalSkuId);
-      // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc.
-      if (row?.id !== before?.id || (row && row.version !== before!.version)) throw conflict(row, row ? await requesterNames([row]) : undefined);
+      const row = await findListingByExternalSku(shop.id, externalSkuId, { lock: true });
+      // Request khác vừa ghép, đổi hay gỡ listing của SKU sàn này giữa hai lần đọc. Không so `version`: việc đẩy tồn, giá
+      // sau lần ghép trước cũng tăng `version` mà không đổi ghép (#411); ghi bên dưới dùng `version` vừa đọc dưới khoá.
+      if (mappingChanged(before, row)) throw conflict(row, row ? await requesterNames([row]) : undefined);
       if (await findListingByPendingExternalSku(shop.id, externalSkuId)) throw new AppError(409, 'mapping_pending', 'SKU sàn này đang chờ CEO duyệt liên kết');
       const failed = variantId ? await variantSlot(port, shop.id, variantId, row?.id ?? null) : undefined;
       if (!row && failed) {

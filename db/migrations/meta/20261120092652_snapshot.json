@@ -1,6 +1,6 @@
 {
-  "id": "019ebd53-8a50-400a-8476-c0486567275d",
-  "prevId": "c74bdf34-1b85-4da1-8d12-3432155072db",
+  "id": "92948f13-7d6a-47b9-a73d-92c13b11b3a0",
+  "prevId": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3472,6 +3472,148 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "core.registrations": {
+      "name": "registrations",
+      "schema": "core",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_name": {
+          "name": "company_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tax_code": {
+          "name": "tax_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "otp_hash": {
+          "name": "otp_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "otp_requested_at": {
+          "name": "otp_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "otp_expires_at": {
+          "name": "otp_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "otp_attempts": {
+          "name": "otp_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "otp_send_count": {
+          "name": "otp_send_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "account_notice_at": {
+          "name": "account_notice_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "registrations_email_created_at_index": {
+          "name": "registrations_email_created_at_index",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "registrations_created_at_index": {
+          "name": "registrations_created_at_index",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "registrations_otp_counters_range": {
+          "name": "registrations_otp_counters_range",
+          "value": "\"core\".\"registrations\".\"otp_attempts\" between 0 and 5 and \"core\".\"registrations\".\"otp_send_count\" between 1 and 5"
+        }
+      },
       "isRLSEnabled": false
     },
     "core.companies": {
@@ -12685,8 +12827,14 @@
           "primaryKey": false,
           "notNull": false
         },
-        "new_product_name": {
-          "name": "new_product_name",
+        "new_parent_product_id": {
+          "name": "new_parent_product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_parent_name": {
+          "name": "new_parent_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -12697,8 +12845,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "new_variant_attrs": {
-          "name": "new_variant_attrs",
+        "new_option_values": {
+          "name": "new_option_values",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -12819,7 +12967,15 @@
       "checkConstraints": {
         "purchase_request_lines_item": {
           "name": "purchase_request_lines_item",
-          "value": "\"product\".\"purchase_request_lines\".\"variant_id\" is not null or \"product\".\"purchase_request_lines\".\"new_product_name\" is not null"
+          "value": "\"product\".\"purchase_request_lines\".\"variant_id\" is not null or \"product\".\"purchase_request_lines\".\"new_parent_product_id\" is not null or \"product\".\"purchase_request_lines\".\"new_parent_name\" is not null"
+        },
+        "purchase_request_lines_one_parent": {
+          "name": "purchase_request_lines_one_parent",
+          "value": "\"product\".\"purchase_request_lines\".\"new_parent_product_id\" is null or \"product\".\"purchase_request_lines\".\"new_parent_name\" is null"
+        },
+        "purchase_request_lines_new_parent_group": {
+          "name": "purchase_request_lines_new_parent_group",
+          "value": "\"product\".\"purchase_request_lines\".\"new_parent_name\" is null or \"product\".\"purchase_request_lines\".\"new_group_id\" is not null"
         },
         "purchase_request_lines_ordered": {
           "name": "purchase_request_lines_ordered",

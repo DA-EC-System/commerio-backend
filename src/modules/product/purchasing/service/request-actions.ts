@@ -40,16 +40,29 @@ async function assertSupplierActive(row: RequestRow): Promise<void> {
   }
 }
 
-/** Duyệt: dòng sản phẩm mới sinh sản phẩm và SKU (Documents/25 §3.2); tên vừa bị dùng thì 422 và rollback cả lần duyệt. */
+/** Lỗi khi duyệt do dữ liệu đã đổi sau lúc lập (cha có thêm SKU, tên vừa bị dùng): CEO trả về để người lập sửa (S1). */
+const RETURN_HINT = '. Trả về cho người lập sửa dòng này';
+
+/**
+ * Duyệt: dòng sản phẩm mới (không bị loại) sinh SKU, các dòng cùng cha mới sinh một sản phẩm cha (Documents/21 mục
+ * 16.3); lỗi thì 422 và rollback cả lần duyệt.
+ */
 async function createNewProducts(actor: Actor, row: RequestRow, lines: readonly LineRow[]): Promise<void> {
-  const pending = lines.flatMap((l, i) => (!l.excluded && !l.variantId && l.newProductName ? [{ l, i }] : []));
+  const pending = lines.flatMap((l, i) => (!l.excluded && !l.variantId && (l.newParentProductId || l.newParentName) ? [{ l, i }] : []));
   if (!pending.length) return;
-  const items = pending.map(({ l }) => ({ name: l.newProductName!, groupId: l.newGroupId! }));
+  const items = pending.map(({ l, i }) => ({
+    line: i,
+    lineId: l.id,
+    parentId: l.newParentProductId,
+    parentName: l.newParentName,
+    groupId: l.newGroupId,
+    options: l.newOptionValues ?? [],
+  }));
   const result = await createPurchaseProducts(actor, items, `Tạo từ đơn đặt hàng nhập ${row.number}`);
   if (!result.ok) {
     const errors: Record<string, string> = {};
-    for (const [k, e] of result.errors) errors[`lines.${pending[k]!.i}${e.field ? `.newProduct.${e.field}` : ''}`] = e.message;
-    throw invalid(errors);
+    for (const [k, e] of result.errors) errors[`lines.${pending[k]!.i}${e.field ? `.newProduct.${e.field}` : ''}`] = e.field ? e.message + RETURN_HINT : e.message;
+    throw invalid(errors, result.code);
   }
   for (const [k, { l }] of pending.entries()) await updateLine(l.id, { variantId: result.variantIds[k]! });
 }

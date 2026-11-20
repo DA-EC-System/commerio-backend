@@ -3,33 +3,39 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V113**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V114**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V113 · 20/11/2026 · dang-ky-cho-ma-quyen
+## V114 · 20/11/2026 · dang-ky-cho-ma-quyen
 
-`db/migrations/20261120084204_dang-ky-cho-ma-quyen.sql` · viết tay
+`db/migrations/20261120092655_dang-ky-cho-ma-quyen.sql` · viết tay
 
 - viết tay: quyền
 - #459: lần đăng ký chờ mã chỉ luồng đăng ký (role chủ bảng, ngoài withCompany) đụng tới; commerio_app không có quyền nào.
 
-## V112 · 20/11/2026 · dang-ky-cho-ma
+## V113 · 20/11/2026 · dang-ky-cho-ma
 
-`db/migrations/20261120084156_dang-ky-cho-ma.sql` · sinh từ schema
+`db/migrations/20261120092652_dang-ky-cho-ma.sql` · sinh từ schema
 
 - + bảng `core.registrations`
 
-## V111 · 20/11/2026 · mst-unique
+## V112 · 20/11/2026 · mst-unique
 
-`db/migrations/20261120082450_mst-unique.sql` · sinh từ schema
+`db/migrations/20261120085710_mst-unique.sql` · sinh từ schema
 
 - `core.companies`: đổi cột `tax_code` (thành null); + unique `companies_tax_code_unique`
 
-## V110 · 20/11/2026 · mst-chuan-hoa-kenh-ban-loi
+## V111 · 20/11/2026 · mst-chuan-hoa-kenh-ban-loi
 
-`db/migrations/20261120082447_mst-chuan-hoa-kenh-ban-loi.sql` · viết tay
+`db/migrations/20261120085707_mst-chuan-hoa-kenh-ban-loi.sql` · viết tay
 
 - viết tay: dữ liệu
 - #459: chuẩn hoá mã số thuế công ty, đặt NULL mã sai định dạng hoặc trùng (giữ công ty cũ nhất), bật Kênh bán (phân hệ lõi) cho mọi công ty.
+
+## V110 · 20/11/2026 · dong-san-pham-moi
+
+`db/migrations/20261120070207_dong-san-pham-moi.sql` · sinh từ schema
+
+- `product.purchase_request_lines`: + cột `new_parent_product_id`, `new_parent_name`, `new_option_values`; − cột `new_product_name`, `new_variant_attrs`; + check `purchase_request_lines_one_parent`, `purchase_request_lines_new_parent_group`; đổi check `purchase_request_lines_item`
 
 ## V109 · 20/11/2026 · nhom-hang-du-lieu
 
