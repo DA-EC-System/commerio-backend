@@ -24,7 +24,7 @@ const newShop = async () => {
 };
 
 beforeAll(async () => {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   companyId = company.companyId;
   token = company.ceo.token;
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng', 'Xám', 'Nâu', 'Xanh', 'Đỏ']);
@@ -207,7 +207,7 @@ describe('số câu truy vấn của trang danh sách (Review Focus 2)', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('trang 2 dòng và trang 20 dòng dùng cùng số câu', async () => {
-    const own = await createCompany({ optionalModules: ['channel'] });
+    const own = await createCompany({ optionalModules: [] });
     const category = await createCategory(own.ceo.token, 'Đếm', 'DC-{SEQ}');
     for (let i = 0; i < 20; i++) {
       await createProduct(own.ceo.token, { name: `Đếm ${i}`, categoryId: category.id, variants: [[]] });

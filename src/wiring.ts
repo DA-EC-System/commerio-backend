@@ -5,7 +5,6 @@ import {
   awaitingStocktakeShops,
   type ChannelContext,
   getShops,
-  hasChannelData,
   hasInboxData,
   listingArchiveBlockers,
   listingInUse,
@@ -85,7 +84,7 @@ export function createModuleContext(): AppContext {
     // #242: catalog (lớp dưới) gợi ý ngưỡng tồn theo số bán 30 ngày của sales khi sửa hàng loạt.
     soldQtyOf,
     // #152: phân hệ đã có dữ liệu thì không tắt được. `report` chỉ có bảng dựng lại nên không có hàm (luôn tắt được).
-    moduleData: { purchasing: hasPurchasingData, channel: hasChannelData, inbox: hasInboxData, assistant: hasAssistantData },
+    moduleData: { purchasing: hasPurchasingData, inbox: hasInboxData, assistant: hasAssistantData },
     // #398: channel xoá gian hàng đã ngắt cùng số liệu theo ngày của insight (cùng lớp, insight đã import channel).
     deleteShopSummaries,
   };

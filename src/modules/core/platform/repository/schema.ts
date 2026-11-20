@@ -30,7 +30,8 @@ export const moduleCode = platformSchema.enum('module_code', [
 export const companies = platformSchema.table('companies', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
-  taxCode: text('tax_code').notNull(),
+  // Dạng chuẩn hoá (`domain/tax-code.ts`); null khi quản trị nền tảng gỡ hoặc mã cũ không hợp lệ (#459).
+  taxCode: text('tax_code').unique('companies_tax_code_unique'),
   // Hồ sơ công ty (#292): địa chỉ đăng ký; tổ chức chịu trách nhiệm hàng hoá, null = theo tên, địa chỉ công ty.
   address: text('address'),
   responsibleName: text('responsible_name'),

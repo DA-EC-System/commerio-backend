@@ -148,8 +148,8 @@ async function mapped(extra: Partial<RemoteSku> = {}) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
-  other = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
+  other = await createCompany({ optionalModules: [] });
   sale = await addMember(company.companyId, 'sale');
   warehouse = await addMember(company.companyId, 'warehouse');
   const res = await as(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });

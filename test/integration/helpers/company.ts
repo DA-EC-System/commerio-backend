@@ -3,20 +3,32 @@ import request from 'supertest';
 import { expect } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { hashPassword } from '#src/modules/core/identity/service/passwords.ts';
-import type { OptionalModule } from '#src/modules/core/platform/domain/modules.ts';
+import { OPTIONAL_MODULES, type OptionalModule } from '#src/modules/core/platform/domain/modules.ts';
 import { testPool } from './db.ts';
 import { login, PASSWORD, selectCompany, testApp } from './http.ts';
 
 export const uniqueEmail = (prefix = 'ceo') => `${prefix}-${randomUUID()}@test.vn`;
 
+/** Mã số thuế 10 số chưa công ty nào dùng (CSDL ép unique, #459). */
+export const uniqueTaxCode = () => String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
+
 export function registerBody(email: string, overrides: Record<string, unknown> = {}) {
   return {
-    company: { name: 'Công ty Thử Nghiệm', taxCode: '0312345678' },
+    company: { name: 'Công ty Thử Nghiệm', taxCode: uniqueTaxCode() },
     ceo: { fullName: 'Nguyễn Văn Thử', email, password: PASSWORD },
-    optionalModules: ['purchasing', 'report'],
-    assistantDataConsent: false,
     ...overrides,
   };
+}
+
+/** Đặt đúng bộ phân hệ tuỳ chọn đang bật (đăng ký chỉ bật sẵn Nhập hàng, #459). */
+async function setOptionalModules(companyId: string, enabled: readonly OptionalModule[]) {
+  for (const code of OPTIONAL_MODULES) {
+    await testPool().query(
+      `insert into core.company_modules (company_id, module_code, enabled) values ($1, $2, $3)
+       on conflict (company_id, module_code) do update set enabled = excluded.enabled`,
+      [companyId, code, enabled.includes(code)],
+    );
+  }
 }
 
 /** Đăng ký công ty qua API (UC-PI-01); chưa đăng nhập. */
@@ -26,10 +38,10 @@ export async function registerCompany(email = uniqueEmail(), overrides: Record<s
   return { email, companyId: res.body.companyId as string };
 }
 
-/** Công ty mới qua API, kèm token đã chọn công ty của CEO. Mặc định bật thêm `purchasing`, `report`. */
+/** Công ty mới qua API, kèm token đã chọn công ty của CEO. Phân hệ tuỳ chọn mặc định `purchasing`, `report`. */
 export async function createCompany(options: { optionalModules?: OptionalModule[] } = {}) {
-  const overrides = options.optionalModules ? { optionalModules: options.optionalModules } : {};
-  const { email, companyId } = await registerCompany(uniqueEmail(), overrides);
+  const { email, companyId } = await registerCompany(uniqueEmail());
+  await setOptionalModules(companyId, options.optionalModules ?? ['purchasing', 'report']);
   const { token } = await login(email);
   return { companyId, ceo: { email, token: await selectCompany(token, companyId) } };
 }

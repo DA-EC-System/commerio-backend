@@ -12,7 +12,14 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { BUILTIN_ROLES, assignRole, permissionModule, rolesAndPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
-import { createCompany, getCompanies, getEnabledModules, type OptionalModule } from '../../platform/index.ts';
+import {
+  createCompany,
+  DEFAULT_OPTIONAL_MODULES,
+  getCompanies,
+  getEnabledModules,
+  type OptionalModule,
+  TAX_CODE_TAKEN_MESSAGE,
+} from '../../platform/index.ts';
 import {
   type AccountRow,
   canSelfApprove,
@@ -133,14 +140,19 @@ async function callerAccount(auth: AccessClaims): Promise<AccountRow> {
 export interface RegisterInput {
   company: { name: string; taxCode: string };
   ceo: { fullName: string; email: string; password: string };
-  optionalModules: OptionalModule[];
-  assistantDataConsent: boolean;
+  /** Chỉ seed dùng; API đăng ký luôn bật `DEFAULT_OPTIONAL_MODULES` (Documents/21 mục 2.1). */
+  optionalModules?: readonly OptionalModule[];
+  assistantDataConsent?: boolean;
 }
+
+const taxCodeTaken = () =>
+  new AppError(409, 'tax_code_taken', TAX_CODE_TAKEN_MESSAGE, { errors: { 'company.taxCode': TAX_CODE_TAKEN_MESSAGE } });
 
 /** UC-PI-01: công ty, tài khoản CEO, phân hệ, nhật ký trong một transaction (Documents/21 V13). */
 export async function register(input: RegisterInput): Promise<{ companyId: string; email: string }> {
   // Băm trước khi mở transaction: argon2 chậm có chủ ý, không nên giữ transaction trong lúc đó.
   const passwordHash = await hashPassword(input.ceo.password);
+  const optionalModules = input.optionalModules ?? DEFAULT_OPTIONAL_MODULES;
   const emailTaken = () =>
     new AppError(409, 'email_taken', 'Email đã được dùng', { errors: { 'ceo.email': 'Email này đã có tài khoản' } });
   try {
@@ -149,8 +161,8 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
       const accountId = await createAccount({ email: input.ceo.email, fullName: input.ceo.fullName, passwordHash });
       const companyId = await createCompany({
         ...input.company,
-        optionalModules: input.optionalModules,
-        aiConsent: input.assistantDataConsent,
+        optionalModules,
+        aiConsent: input.assistantDataConsent ?? false,
         createdBy: accountId,
       });
       const membershipId = await createMembership(companyId, accountId);
@@ -162,7 +174,7 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
         entityType: 'core.companies',
         entityId: companyId,
         label: input.company.name,
-        after: { ...input.company, ceoEmail: input.ceo.email, optionalModules: input.optionalModules },
+        after: { ...input.company, ceoEmail: input.ceo.email, optionalModules },
       });
       return { companyId, email: input.ceo.email };
     });
@@ -170,6 +182,7 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
     // Hai người đăng ký cùng email cùng lúc: ràng buộc UNIQUE chặn người sau (#51).
     const { code, constraint } = pgError(err);
     if (code === '23505' && constraint === 'accounts_email_unique') throw emailTaken();
+    if (code === '23505' && constraint === 'companies_tax_code_unique') throw taxCodeTaken();
     throw err;
   }
 }

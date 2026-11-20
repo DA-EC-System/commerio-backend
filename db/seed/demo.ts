@@ -52,7 +52,7 @@ export function blackboxCompanies(password: string): SeedDemoInput[] {
   return [
     {
       company: { name: 'Công ty QA Hộp Đen A', taxCode: '0300000120' },
-      optionalModules: ['purchasing', 'channel', 'report'],
+      optionalModules: ['purchasing', 'report'],
       password,
       accounts: {
         ceo: account('qa-ceo', 'QA Giám Đốc A'),
@@ -66,7 +66,7 @@ export function blackboxCompanies(password: string): SeedDemoInput[] {
     },
     {
       company: { name: 'Công ty QA Hộp Đen B', taxCode: '0300000121' },
-      optionalModules: ['purchasing', 'channel', 'report'],
+      optionalModules: ['purchasing', 'report'],
       password,
       accounts: { ceo: account('qa-ceo-b', 'QA Giám Đốc B') },
     },

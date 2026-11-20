@@ -241,12 +241,6 @@ export async function recordOpenOrderPullError(id: string, message: string): Pro
     .where(and(eq(shops.id, id), sql`${shops.openOrdersPulledAt} is null`));
 }
 
-/** Công ty đang chọn đã từng nối gian hàng chưa (kể cả đã ngắt): có thì không tắt được phân hệ Kênh bán (#152). */
-export async function hasChannelData(): Promise<boolean> {
-  const [row] = await getDb().select({ one: sql`1` }).from(shops).limit(1);
-  return !!row;
-}
-
 /**
  * Gian hàng trong `ids` đang chờ kiểm kê đầu kỳ (có phiếu đầu kỳ chưa ghi sổ), cho fulfillment (spec 199b §5.6).
  * `lock`: khoá `FOR SHARE` tới hết giao dịch, cùng loại với `lockShopForOrders`, để gian hàng không thoát chờ giữa chừng.

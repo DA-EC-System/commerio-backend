@@ -101,7 +101,7 @@ const specStatus = async (productId: string) =>
   (await testPool().query("select category_status from channel.product_specs where product_id = $1 and platform = 'lazada'", [productId])).rows[0]?.category_status;
 
 beforeAll(async () => {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   companyId = c.companyId;
   const shop = await request(testApp())
     .post('/api/v1/channel/shops/lazada/token')

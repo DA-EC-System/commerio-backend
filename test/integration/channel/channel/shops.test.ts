@@ -51,7 +51,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let token: string;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   token = company.ceo.token;
 });
 
@@ -172,7 +172,7 @@ describe('kết nối bằng OAuth', () => {
 
   it('state sai, của người khác (kể cả CEO công ty khác) thì 422 oauth_state_invalid', async () => {
     const other = await addMember(company.companyId, 'admin');
-    const otherCompany = await createCompany({ optionalModules: ['channel'] });
+    const otherCompany = await createCompany({ optionalModules: [] });
     const call = (state: string) =>
       app()
         .post('/api/v1/channel/shops/lazada/callback')
@@ -187,7 +187,7 @@ describe('kết nối bằng OAuth', () => {
 
   it('state của chính người bấm nhưng thuộc công ty khác công ty trong token thì 409 company_mismatch, không gọi sàn (21 §18.7.4)', async () => {
     const id = seller();
-    const otherCompany = await createCompany({ optionalModules: ['channel'] });
+    const otherCompany = await createCompany({ optionalModules: [] });
     const own = await stateFor(token);
     const claims = JSON.parse(Buffer.from(own.split('.')[1]!, 'base64url').toString()) as { sub: string };
     const state = await signPurposeToken('oauth', { cid: otherCompany.companyId, sub: claims.sub, plt: 'lazada' });
@@ -281,7 +281,7 @@ describe('một lần uỷ quyền ra nhiều gian hàng (tất cả hoặc khô
 
   it('một gian hàng đang gắn công ty khác thì 409 shop_connected_elsewhere, không ghi gian hàng nào', async () => {
     const [a, b] = [seller(), seller()];
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await connect(other.ceo.token, b)).status).toBe(201);
     const res = await callback(token, `c-${a}+${b}`);
     expect(res.status).toBe(409);
@@ -322,7 +322,7 @@ describe('kết nối bằng token console', () => {
   it('seller đang gắn công ty khác thì 409 shop_connected_elsewhere; ngắt xong thì công ty khác nối được', async () => {
     const id = seller();
     const mine = await connect(token, id);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const blocked = await connect(other.ceo.token, id);
     expect(blocked.status).toBe(409);
     expect(blocked.body.code).toBe('shop_connected_elsewhere');
@@ -443,7 +443,7 @@ describe('ngắt và nối lại', () => {
 
 describe('quyền và công ty', () => {
   it('danh sách chỉ có gian hàng của công ty mình; gian hàng công ty khác 404', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const theirs = (await connect(other.ceo.token, seller())).body.shop;
     const list = await app().get('/api/v1/channel/shops').set('Authorization', `Bearer ${token}`);
     expect(list.status).toBe(200);
@@ -454,17 +454,16 @@ describe('quyền và công ty', () => {
     expect(res.status).toBe(404);
   });
 
-  it('401 không token; 403 thiếu quyền kết nối; 403 module_disabled khi tắt phân hệ', async () => {
+  it('401 không token; 403 thiếu quyền kết nối; Kênh bán là phân hệ lõi nên công ty mới nào cũng vào được (#459)', async () => {
     expect((await app().get('/api/v1/channel/shops')).status).toBe(401);
     const viewer = await addMember(company.companyId, await createCustomRole(company.companyId, ['channel.shop.view']));
     expect((await app().get('/api/v1/channel/shops').set('Authorization', `Bearer ${viewer.token}`)).status).toBe(200);
     const denied = await connect(viewer.token, seller());
     expect(denied.status).toBe(403);
     expect(denied.body.code).toBe('forbidden');
-    const off = await createCompany();
-    const disabled = await app().get('/api/v1/channel/shops').set('Authorization', `Bearer ${off.ceo.token}`);
-    expect(disabled.status).toBe(403);
-    expect(disabled.body.code).toBe('module_disabled');
+    const fresh = await createCompany();
+    const res = await app().get('/api/v1/channel/shops').set('Authorization', `Bearer ${fresh.ceo.token}`);
+    expect(res.status).toBe(200);
   });
 
   it('C1-04q: Sale, Kho gọi callback hay token thì 403 forbidden; không token 401', async () => {

@@ -41,7 +41,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 
 beforeAll(async () => {
   registerAdapter('tiktok', createTiktokAdapter(config, fetchFn));
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 afterAll(() => resetAdapters());
 beforeEach(() => {

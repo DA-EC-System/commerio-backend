@@ -145,7 +145,7 @@ async function listingOf(id: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   shopId = res.body.shop.id;

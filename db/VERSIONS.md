@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V105**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V107**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V107 · 20/11/2026 · mst-unique
+
+`db/migrations/20261120072533_mst-unique.sql` · sinh từ schema
+
+- `core.companies`: đổi cột `tax_code` (thành null); + unique `companies_tax_code_unique`
+
+## V106 · 20/11/2026 · mst-chuan-hoa-kenh-ban-loi
+
+`db/migrations/20261120072454_mst-chuan-hoa-kenh-ban-loi.sql` · viết tay
+
+- viết tay: dữ liệu
+- #459: chuẩn hoá mã số thuế công ty, đặt NULL mã sai định dạng hoặc trùng (giữ công ty cũ nhất), bật Kênh bán (phân hệ lõi) cho mọi công ty.
 
 ## V105 · 19/11/2026 · don-nhap-loi-moi-qua-han
 

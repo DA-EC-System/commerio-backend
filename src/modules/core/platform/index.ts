@@ -3,7 +3,7 @@
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerPlatformOpenApi } from './api/openapi.ts';
 import { platformRouter } from './api/routes.ts';
-import { CORE_MODULES, type ModuleCode, OPTIONAL_MODULES, type OptionalModule } from './domain/modules.ts';
+import { CORE_MODULES, DEFAULT_OPTIONAL_MODULES, type ModuleCode, OPTIONAL_MODULES, type OptionalModule } from './domain/modules.ts';
 import {
   type CompanyRow,
   enabledModuleCodes,
@@ -20,7 +20,8 @@ export const platformModule: ModuleDefinition = {
   startBackground: startPlatformBackground,
 };
 
-export { CORE_MODULES, OPTIONAL_MODULES };
+export { CORE_MODULES, DEFAULT_OPTIONAL_MODULES, OPTIONAL_MODULES };
+export { normalizeTaxCode, TAX_CODE_FORMAT_MESSAGE, TAX_CODE_TAKEN_MESSAGE } from './domain/tax-code.ts';
 export type { CompanyRow, ModuleCode, OptionalModule };
 export type { PlatformContext } from './service/context.ts';
 

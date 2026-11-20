@@ -148,7 +148,7 @@ async function runJob(listingId: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -418,7 +418,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect((await push(Array.from({ length: 21 }, () => randomUUID()))).status).toBe(422);
     const sale = await addMember(company.companyId, 'sale');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`), sale.token).send({ variantIds: [ok.id] })).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`), other.ceo.token)).status).toBe(404);
     // Biến thể của công ty khác: cổng không thấy (RLS) nên not_found.
     expect((await results([randomUUID()]))[0]).toMatchObject({ code: 'not_found', status: null });

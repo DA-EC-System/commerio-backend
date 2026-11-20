@@ -14,7 +14,7 @@ let companyId: string;
 let token: string;
 let color: AttributeBody;
 beforeAll(async () => {
-  const company = await createCompany({ optionalModules: ['channel', 'purchasing'] });
+  const company = await createCompany({ optionalModules: ['purchasing'] });
   companyId = company.companyId;
   token = company.ceo.token;
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng']);

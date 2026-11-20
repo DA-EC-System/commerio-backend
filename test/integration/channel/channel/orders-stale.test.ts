@@ -114,7 +114,7 @@ async function jobs(name: string, platform: Platform) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   for (const platform of ['lazada', 'tiktok'] as const) {
     const res = await auth(app().post(`/api/v1/channel/shops/${platform}/token`)).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
     shopIds[platform] = res.body.shop.id;
