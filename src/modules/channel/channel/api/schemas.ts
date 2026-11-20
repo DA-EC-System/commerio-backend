@@ -566,6 +566,11 @@ export const AcknowledgeTitleBody = z
 
 export const ListingList = z.object({ items: z.array(ListingRow) }).strict().meta({ id: 'ListingList' });
 
+/** Trang sản phẩm (21 §18.5 `GET /channel/products/:productId/listings`, #467). */
+export const ProductListingsParams = z.object({ productId: z.string().max(60) });
+export const ProductListingRow = ListingRow.extend({ shopId: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'ProductListingRow' });
+export const ProductListingList = z.object({ items: z.array(ProductListingRow) }).strict().meta({ id: 'ProductListingList' });
+
 export const PushResult = z
   .object({
     variantId: z.string(),

@@ -56,6 +56,7 @@ import {
   CategorySuggestionsQuery,
   CategorySyncBody,
   ProductSpecBody,
+  ProductListingsParams,
   ProductSpecParams,
   ShopParams,
   TokenBody,
@@ -281,6 +282,11 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id/warehouses', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await shopWarehouses(actor(res).companyId, id));
+  });
+
+  router.get('/products/:productId/listings', view, validate({ params: ProductListingsParams }), async (_req, res) => {
+    const { productId } = validated<typeof ProductListingsParams>(res, 'params');
+    res.json(await withCompany(actor(res).companyId, () => listings.listProductListings(productPort(ctx), productId)));
   });
 
   router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
