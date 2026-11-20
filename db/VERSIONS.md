@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V110**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V111**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V111 · 20/11/2026 · gia-ban-sao-sku-san
+
+`db/migrations/20261120085716_gia-ban-sao-sku-san.sql` · sinh từ schema
+
+- `channel.remote_skus`: + cột `price`; + check `remote_skus_price`
 
 ## V110 · 20/11/2026 · dong-san-pham-moi
 
