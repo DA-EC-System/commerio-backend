@@ -24,9 +24,9 @@ const RANK: readonly RemoteReturnStatus[] = ['requested', 'awaiting_return', 're
 const delivered = (ofc: string | null) => Boolean(ofc && ofc.includes('DELIVERED') && !ofc.includes('CANCEL'));
 
 /**
- * Trạng thái app của một dòng đơn ngược (`reverse_status`, `ofc_status`). Đoán theo tên và các cặp gặp ở shop thử
- * (REQUEST_CANCEL, REFUND_REJECT, REFUND_SUCCESS kèm RETURN_CANCELED, REFUND_PENDING kèm INFO_ST_RETURN_RTM_DELIVERED);
- * tài liệu không liệt kê giá trị. Giá trị lạ → null (app chỉ cập nhật thông tin sàn).
+ * Trạng thái app của một dòng đơn ngược (`reverse_status`, `ofc_status`). Tài liệu Lazada (GetReverseOrdersForSeller,
+ * GetReverseOrderDetail, đọc 20/11/2026) không liệt kê giá trị của hai trường này: ánh xạ dựa trên các cặp gặp thật ở shop
+ * thử (bảng ở commerio-backend#436, ca test 18/11/2026). Giá trị lạ → null; `toLazadaReturn` ghi cảnh báo.
  */
 export function lazadaReturnLineStatus(
   reverseStatus: string,
@@ -37,9 +37,20 @@ export function lazadaReturnLineStatus(
   switch (reverseStatus) {
     case 'REQUEST_INITIATE':
       return s('requested');
+    // SELLER_REJECT_RETURN: người bán từ chối trên Seller Center (#436).
     case 'REQUEST_REJECT':
     case 'REFUND_REJECT':
+    case 'SELLER_REJECT_RETURN':
       return s('rejected');
+    // Người bán đã đồng ý trả (trong app hay trên Seller Center), chờ khách gửi hàng (#436).
+    case 'SELLER_AGREE_RETURN':
+      return s('awaiting_return');
+    // Khách đã gửi hàng: về tới người bán vẫn chờ kho quét (#436). Chiều về bị huỷ (`RETURN_CANCELED`): chưa quan sát được
+    // ai huỷ nên chưa ánh xạ (null, cần người xem Seller Center); khi thấy dữ liệu thật mà người mua huỷ thì sang
+    // `closed`/`buyer_cancelled`.
+    case 'BUYER_RETURN_ITEM':
+      if (ofcStatus?.includes('CANCEL')) return null;
+      return s(delivered(ofcStatus) ? 'received' : 'awaiting_return');
     case 'REQUEST_CANCEL':
     case 'CANCEL_SUCCESS':
       return { status: 'closed', closeResult: 'buyer_cancelled' };
@@ -54,6 +65,13 @@ export function lazadaReturnLineStatus(
   }
 }
 
+/** Hạn người bán phải trả lời: `sla` (ms) sớm nhất của các dòng, chỉ khi yêu cầu còn chờ người bán (#436). */
+function respondByOf(lines: readonly Row[], status: RemoteReturnStatus | null): Date | null {
+  if (status !== 'requested') return null;
+  const slas = lines.map((l) => Number(l.sla)).filter((n) => Number.isFinite(n) && n > 0);
+  return slas.length ? new Date(Math.min(...slas)) : null;
+}
+
 const unique = (values: readonly (string | null)[]) => [...new Set(values.filter((v): v is string => Boolean(v)))];
 
 /** Một đơn ngược của `/reverse/getreverseordersforseller` → `RemoteReturn`. Loại `CANCEL` là huỷ đơn, bên gọi bỏ. */
@@ -65,6 +83,10 @@ export function toLazadaReturn(item: Row): RemoteReturn {
   const pick = known.sort((a, b) => RANK.indexOf(a.status) - RANK.indexOf(b.status))[0] ?? null;
   // Có món còn trạng thái lạ thì không đổi trạng thái app (chưa hiểu hết).
   const status = statuses.includes(null) ? null : pick;
+  if (statuses.includes(null)) {
+    const unknown = unique(lines.filter((_, i) => statuses[i] === null).map((l) => opt(l.reverse_status)));
+    logger.warn({ reverseOrderId: str(item.reverse_order_id), reverseStatus: unknown }, 'Lazada: reverse_status chưa có trong ánh xạ (#436)');
+  }
   const refunds = lines.map((l) => (l.refund_amount === undefined || l.refund_amount === null ? null : Number(l.refund_amount)));
   const times = (key: string) => lines.map((l) => Number(l[key]) || 0);
   const returnToType = str(item.return_to_type);
@@ -94,7 +116,7 @@ export function toLazadaReturn(item: Row): RemoteReturn {
     closeResult: status?.closeResult ?? null,
     disputeInProgress: lines.some((l) => l.is_dispute === true),
     returnTrackingCode: unique(lines.map((l) => opt(l.tracking_number)))[0] ?? null,
-    respondBy: null,
+    respondBy: respondByOf(lines, status?.status ?? null),
     returnTo: returnToType === 'RTW' ? 'warehouse' : returnToType === 'RTM' ? 'merchant' : item.is_rtm === true ? 'merchant' : item.is_rtm === false ? 'warehouse' : null,
   };
 }
