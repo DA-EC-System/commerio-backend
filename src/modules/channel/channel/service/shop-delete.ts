@@ -1,5 +1,5 @@
 // Xoá gian hàng đã ngắt (#398, issue mục "API", "Xoá gì"). Channel (lớp 5) điều phối, mỗi module xoá bảng của mình qua
-// `index.ts`; insight cùng lớp và đã import channel nên tiêm qua `ctx` (`src/wiring.ts`).
+// `index.ts`. insight không còn dữ liệu theo gian hàng (bảng số liệu theo ngày xoá ở #333).
 import { dropHeld, recordAudit } from '../../../core/index.ts';
 import { type FinanceDataCounts, hasFinanceData, purgeShopFinance, shopFinanceData } from '../../../finance/index.ts';
 import { purgeOrderPackages, purgeShopOrders, shopOrderRefs } from '../../../order/index.ts';
@@ -7,17 +7,11 @@ import { detachShopStockDocuments } from '../../../product/index.ts';
 import { withCompany, withSessionLock } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import { purgeShopInbox } from '../../inbox/index.ts';
 import { deleteShopRow, purgeShopRows } from '../repository/shops.ts';
 import { stopShopJobs } from './shop-jobs.ts';
 import { type Actor, lockShopOr404, notFound, shopView, versionConflict } from './shops.ts';
-
-/** `ctx` của router channel: hàm của insight (lớp cùng cấp, đã import channel) do `src/wiring.ts` tiêm. */
-export interface ChannelContext extends ModuleContext {
-  readonly deleteShopSummaries?: (shopId: string) => Promise<number>;
-}
 
 export interface ShopDeleteOutcome {
   deleted: {
@@ -35,7 +29,6 @@ export interface ShopDeleteOutcome {
     stockDocuments: number;
     configVersions: number;
     orderSettlements: number;
-    reportRows: number;
     messageChannels: number;
   };
   detached: { stockDocuments: number };
@@ -55,11 +48,8 @@ const hasFinance = (counts: FinanceDataCounts) =>
  * hàng. Thứ tự lỗi: 404 → 409 `shop_not_disconnected` → 409 `version_conflict` → 409 `shop_has_finance_data`; khoá bận
  * 409 `shop_busy`. Không xoá `state_transitions`, `audit_logs`, thẻ kho, phiếu kho đã ghi sổ (chỉ cắt `shop_id`).
  */
-export async function deleteShop(ctx: ChannelContext, actor: Actor, id: string, input: { version: number }): Promise<ShopDeleteOutcome> {
+export async function deleteShop(actor: Actor, id: string, input: { version: number }): Promise<ShopDeleteOutcome> {
   if (!isUuid(id)) throw notFound();
-  const deleteSummaries = ctx.deleteShopSummaries;
-  // Quên tiêm là lỗi lắp ráp: không im lặng bỏ số liệu của gian hàng lại.
-  if (!deleteSummaries) throw new Error('Thiếu ctx.deleteShopSummaries (src/wiring.ts)');
 
   const outcome = await withSessionLock(
     `channel.token:${id}`,
@@ -86,7 +76,6 @@ export async function deleteShop(ctx: ChannelContext, actor: Actor, id: string, 
         });
         const orders = await purgeShopOrders(refs);
         const finance = await purgeShopFinance(id, refs.orderIds);
-        const reportRows = await deleteSummaries(id);
         const messageChannels = await purgeShopInbox(id);
         const channel = await purgeShopRows(id);
         await deleteShopRow(id);
@@ -100,7 +89,6 @@ export async function deleteShop(ctx: ChannelContext, actor: Actor, id: string, 
             ...channel,
             stockDocuments: documents.deleted,
             ...finance,
-            reportRows,
             messageChannels,
           },
           detached: { stockDocuments: documents.detached },

@@ -43,7 +43,7 @@ Import giữa module (dependency-cruiser kiểm):
 | | `finance` | Hoá đơn, phiếu thu, phiếu chi, khoản thu chưa khớp, sổ tiền theo đơn, trạng thái tiền của đơn, đối soát, phiên bản cấu hình phí và thuế | Chứng từ đã ghi sổ không sửa, chỉ lập phiếu đảo; sổ tiền chỉ thêm |
 | `channel` | `channel` | Gian hàng sàn, token, listing kiêm ghép SKU, lần tính giá theo sàn, dữ liệu gốc sàn | Chỉ đọc số tồn khả dụng, không đổi tồn |
 | | `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
-| `insight` | `report` | Không bảng đang dùng (`daily_channel_summary` chờ xoá) | Số liệu Tổng quan gom thẳng sổ tiền qua `finance.getDailyLedgerFigures` mỗi lần gọi (#333, Documents/21 §21.5) |
+| `insight` | `report` | Không có bảng (`daily_channel_summary` xoá ở #333) | Số liệu Tổng quan gom thẳng sổ tiền qua `finance.getDailyLedgerFigures` mỗi lần gọi (#333, Documents/21 §21.5) |
 | | `assistant` | Tài liệu nội bộ, vector | pgvector |
 | | `onboarding` | Không có bảng | Checklist thiết lập ban đầu `GET /onboarding` (#461), đọc chéo core, product, channel qua cổng công khai |
 

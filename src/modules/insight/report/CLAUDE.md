@@ -26,9 +26,9 @@ GTGT đầu ra chưa trừ, cùng cách với `/finance/orders/profits` (đổi 
 
 `asOf`: `created_at` lớn nhất của các dòng trong khoảng; `null` khi không có dòng.
 
-## Bảng cũ `insight.daily_channel_summary`
+## Không có bảng
 
-Không còn đọc, không còn ghi số (#235 gỡ phần tính lại, #333 gỡ phần đọc). Bảng xoá ở một migration sau (`Documents/19` mục 3.6). Còn `deleteShopSummaries(shopId)` (export ở `index.ts`, #398): channel xoá gian hàng gọi qua `ctx.deleteShopSummaries` (`src/wiring.ts`) để dọn dòng cũ, `deleted.reportRows` của response xoá gian hàng đếm số đó. Xoá bảng thì bỏ luôn hàm, trường `ctx` và `reportRows` (hợp đồng #398).
+Bảng cũ `insight.daily_channel_summary` và enum `insight.order_source` đã xoá (migration `*_bo-daily-channel-summary`, #333; `Documents/19` mục 3.6). Response xoá gian hàng (#398) bỏ `reportRows` theo (`Documents/21` mục 18.6.12). Thêm bảng tính sẵn về sau thì phải có lý do đo được (sổ quá lớn), ghi vào Documents trước.
 
 ## API (`api/routes.ts`, gắn tại `/api/v1/report`)
 
@@ -38,4 +38,4 @@ CSV (`domain/csv.ts`): UTF-8 có BOM, CRLF, tiêu đề tiếng Việt; ô chữ
 
 ## Test
 
-`test/integration/insight/report/` (helper riêng `helpers.ts`: `shopOf`, `ledgerRow`, `replaces` ghi thẳng sổ tiền; `summaryRow` cho bảng cũ), `test/unit/modules/insight/report/domain/`.
+`test/integration/insight/report/` (helper riêng `helpers.ts`: `shopOf`, `ledgerRow`, `replaces` ghi thẳng sổ tiền), `test/unit/modules/insight/report/domain/`.
