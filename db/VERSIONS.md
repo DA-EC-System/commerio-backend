@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V114**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V116**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V116 · 20/11/2026 · dang-ky-cho-ma-quyen
+
+`db/migrations/20261120100235_dang-ky-cho-ma-quyen.sql` · viết tay
+
+- viết tay: quyền
+- #459: lần đăng ký chờ mã chỉ luồng đăng ký (role chủ bảng, ngoài withCompany) đụng tới; commerio_app không có quyền nào.
+
+## V115 · 20/11/2026 · dang-ky-cho-ma
+
+`db/migrations/20261120100216_dang-ky-cho-ma.sql` · sinh từ schema
+
+- + bảng `core.registrations`
 
 ## V114 · 20/11/2026 · bo-cot-dang-huy-cu
 

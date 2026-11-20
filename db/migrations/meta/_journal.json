@@ -799,6 +799,20 @@
       "when": 1795168197765,
       "tag": "20261120094957_bo-cot-dang-huy-cu",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1795168936496,
+      "tag": "20261120100216_dang-ky-cho-ma",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1795168955194,
+      "tag": "20261120100235_dang-ky-cho-ma-quyen",
+      "breakpoints": true
     }
   ]
 }

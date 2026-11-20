@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V114**, 16 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V116**, 17 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -358,6 +358,39 @@ Ràng buộc và index:
 - unique (`token_hash`) `refresh_tokens_token_hash_unique`
 - index (`account_id`) `refresh_tokens_account_id_index`
 - index (`family_id`) `refresh_tokens_family_id_index`
+
+## `core.registrations`
+
+Lần đăng ký công ty đang chờ mã xác minh email (#459, Documents/21 mục 2.1). Không thuộc công ty nào nên không RLS (luồng đăng ký chạy bằng role chủ bảng). Chỉ giữ mật khẩu đã băm argon2id và bản băm của mã (`sha256(mã + ':' + id)`, `domain/registration.ts`). Sống 30 phút (`expires_at`); việc nền dọn dòng tạo quá 24 giờ (giữ lâu hơn hạn để đếm trần thư theo email và thư "email đã có tài khoản" mỗi 24 giờ). Tạo công ty xong thì xoá.
+
+Khai ở `src/modules/core/identity/repository/schema.ts` · module con `identity`
+
+Cột:
+
+- `id` uuid · khoá chính
+- `email` text · not null
+  Email chữ thường, đã cắt khoảng trắng.
+- `full_name` text · not null
+- `password_hash` text · not null
+- `company_name` text · not null
+- `tax_code` text · not null
+  Dạng chuẩn hoá (`platform/domain/tax-code.ts`); chưa giữ chỗ, so trùng lại lúc tạo công ty.
+- `otp_hash` text · null
+  Null tới khi việc nền gửi thư mã; email đã có tài khoản thì luôn null (không mã nào đúng).
+- `otp_requested_at` timestamptz · not null
+- `otp_expires_at` timestamptz · not null
+- `otp_attempts` integer · not null · mặc định `0`
+- `otp_send_count` integer · not null · mặc định `1`
+- `account_notice_at` timestamptz · null
+  Lúc gửi thư "email đã có tài khoản" của lần đăng ký này (tối đa một thư mỗi email mỗi 24 giờ).
+- `expires_at` timestamptz · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- index (`email`, `created_at`) `registrations_email_created_at_index`
+- index (`created_at`) `registrations_created_at_index`
+- check `registrations_otp_counters_range`: `otp_attempts between 0 and 5 and otp_send_count between 1 and 5`
 
 ## `core.role_permissions`
 
