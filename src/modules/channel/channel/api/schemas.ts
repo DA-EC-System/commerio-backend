@@ -476,6 +476,37 @@ export const MatchBody = z
   })
   .meta({ id: 'ListingMatchInput' });
 
+export const MatchPreviewQuery = z.object({
+  externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+  variantId: z.uuid('Biến thể không hợp lệ'),
+});
+
+const money = z.string().meta({ description: 'Chuỗi số VND' });
+export const MatchPreview = z
+  .object({
+    platform: z
+      .object({
+        stock: z.number().int().meta({ description: 'Tồn trên sàn trong bản sao SKU sàn' }),
+        price: money.nullable().meta({ description: 'Giá gốc trên sàn; null khi sàn không trả hoặc bản sao đọc trước #460 (bấm Tải lại)' }),
+        syncedAt: z.iso.datetime({ offset: true }).meta({ description: 'Lần đọc thấy SKU này trên sàn gần nhất' }),
+      })
+      .strict(),
+    app: z
+      .object({
+        stock: z.number().int().nullable().meta({ description: 'Số có thể bán; null khi SKU kho chưa có số (chưa nhập, chưa kiểm kê)' }),
+        price: money.nullable().meta({ description: 'Giá đang bán sẽ đẩy; null khi chưa có giá chuẩn' }),
+      })
+      .strict(),
+    stockWillPush: z.boolean(),
+    stockHeldReason: z
+      .enum(['shop_waiting_opening', 'not_counted'])
+      .nullable()
+      .meta({ description: '`shop_waiting_opening`: gian hàng chờ kiểm kê lần đầu; `not_counted`: SKU kho chưa có số, tồn trên sàn giữ nguyên' }),
+    priceWillPush: z.boolean(),
+  })
+  .strict()
+  .meta({ id: 'ListingMatchPreview' });
+
 export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
 
 export const TakeOverContentParams = z.object({ id: z.string(), listingId: z.string() });

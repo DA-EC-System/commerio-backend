@@ -35,6 +35,8 @@ import {
   OutsideChangeBody,
   OutsideChangeParams,
   MatchBody,
+  MatchPreview,
+  MatchPreviewQuery,
   RemoteSkuList,
   RemoteSkusQuery,
   OrderPullResult,
@@ -413,6 +415,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`shop_not_connected` kèm `current`'),
       429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
     },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings/match-preview',
+    summary: 'Xem trước số sẽ đẩy khi ghép SKU sàn (#460, 21 §18.3)',
+    description:
+      'Cần `channel.listing.match`. Hộp ghép gọi khi người dùng chọn một cặp, trước nút Lưu. Đọc bản sao SKU sàn (tồn, giá gốc, lần đọc thấy gần nhất) và số của app (số có thể bán, giá đang bán sẽ đẩy: giá ghi đè tay của listing hiện có, không thì giá chuẩn), không gọi sàn, không ghi gì. Ghép xong giá app luôn được đẩy (`priceWillPush` false khi chưa có giá chuẩn). Tồn không đẩy khi gian hàng chờ kiểm kê lần đầu (`shop_waiting_opening`, xét trước) hoặc SKU kho chưa có số (`not_counted`, `app.stock` null: chưa nhập, chưa kiểm kê; tồn trên sàn giữ nguyên). Lỗi: 404 gian hàng → 422 `errors.externalSkuId` (SKU không có trong bản sao) → 422 `errors.variantId` (biến thể không thuộc công ty).',
+    security: bearer,
+    request: { params: ShopParams, query: MatchPreviewQuery },
+    responses: { 200: { description: 'Số sàn và số app', ...json(MatchPreview) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

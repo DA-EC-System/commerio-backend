@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V105**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V106**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -443,6 +443,8 @@ Cột:
   Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có.
 - `state` text · not null
 - `quantity` integer · not null
+- `price` numeric(18,2) · null
+  Giá gốc trên sàn lúc đọc (`RemoteSku.price`: Lazada `skus[].price`, TikTok `tax_exclusive_price`), để hộp ghép so với giá app (#460). null khi sàn không trả hoặc bản sao đọc trước #460.
 - `seen_at` timestamptz · not null · mặc định `now()`
   Lần gần nhất đọc thấy SKU này trên sàn.
 
@@ -451,6 +453,7 @@ Ràng buộc và index:
 - unique index (`shop_id`, `external_sku_id`) `remote_skus_shop_external_sku_uq`
 - check `remote_skus_state`: `state in ('review', 'live', 'rejected', 'hold', 'inactive')`
 - check `remote_skus_quantity`: `quantity >= 0`
+- check `remote_skus_price`: `price >= 0`
 
 ## `channel.shop_category_permissions`
 

@@ -581,6 +581,11 @@ export const remoteSkus = channelSchema.table(
     titleEn: text('title_en'),
     state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
     quantity: integer('quantity').notNull(),
+    /**
+     * Giá gốc trên sàn lúc đọc (`RemoteSku.price`: Lazada `skus[].price`, TikTok `tax_exclusive_price`), để hộp ghép so với
+     * giá app (#460). null khi sàn không trả hoặc bản sao đọc trước #460.
+     */
+    price: money('price'),
     /** Lần gần nhất đọc thấy SKU này trên sàn. */
     seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -588,6 +593,7 @@ export const remoteSkus = channelSchema.table(
     uniqueIndex('remote_skus_shop_external_sku_uq').on(t.shopId, t.externalSkuId),
     check('remote_skus_state', sql`${t.state} in ('review', 'live', 'rejected', 'hold', 'inactive')`),
     check('remote_skus_quantity', sql`${t.quantity} >= 0`),
+    check('remote_skus_price', sql`${t.price} >= 0`),
   ],
 );
 
