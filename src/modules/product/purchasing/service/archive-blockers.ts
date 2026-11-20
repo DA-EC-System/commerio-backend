@@ -28,7 +28,10 @@ export async function purchaseArchiveBlockers(variantIds: readonly string[]): Pr
   return result;
 }
 
-/** SKU nằm trên dòng đề nghị nhập, phiếu nhận, phiếu trả NCC (mọi trạng thái): catalog không xoá hẳn sản phẩm có SKU này. */
+/**
+ * SKU nằm trên dòng đề nghị nhập, phiếu nhận, phiếu trả NCC (mọi trạng thái), hoặc thuộc sản phẩm cha mà dòng sản phẩm
+ * mới của đề nghị chưa duyệt (nháp, chờ duyệt, bị trả về) trỏ tới (#243): catalog không xoá hẳn sản phẩm có SKU này.
+ */
 export async function purchaseInUse(variantIds: readonly string[]): Promise<Set<string>> {
   return usedVariants([...new Set(variantIds)]);
 }

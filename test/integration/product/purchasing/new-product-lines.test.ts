@@ -4,7 +4,7 @@ import { PurchaseRequest } from '#src/modules/product/purchasing/api/schemas.ts'
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { api, setSkuPattern, uniq } from '../catalog/helpers.ts';
+import { api, archiveSku, setSkuPattern, uniq } from '../catalog/helpers.ts';
 import { act, createRequest, createSupplier, pur, runActions } from './helpers.ts';
 
 // Dòng sản phẩm mới theo sản phẩm cha và trục phân loại (#243; Documents/21 mục 16.3, 25 §3.2, §5.4).
@@ -252,6 +252,25 @@ describe('cha có sẵn', () => {
       'lines.4.newProduct.optionValues': 'Sản phẩm cha không có phân loại, chọn SKU có sẵn',
       'lines.5.newProduct.optionValues': `Đã có SKU ${plain.sku}, chọn SKU có sẵn`,
     });
+  });
+
+  it('cha có sẵn đã lưu trữ mọi SKU → 422 parentId', async () => {
+    const parent = await parentWithAxes(A, [['Đen', 'M']]);
+    await archiveSku(A.ceo, parent.id, parent.variants[0]!.id);
+    const res = await post(A, [under(parent.id, { 'Màu sắc': 'Đen', 'Kích cỡ': 'L' })]);
+    expect(res.status).toBe(422);
+    expect(res.body.errors).toEqual({ 'lines.0.newProduct.parentId': 'Sản phẩm cha đã lưu trữ' });
+  });
+
+  it('cha đang được đề nghị chưa duyệt trỏ tới thì không xoá hẳn được (409 product_in_use); huỷ đề nghị thì xoá được', async () => {
+    const parent = await parentWithAxes(A, [['Đen', 'M']]);
+    const r = await createRequest(A.kho, A.supplierId, [under(parent.id, { 'Màu sắc': 'Đen', 'Kích cỡ': 'L' })] as never);
+    const version = (await api(A.ceo).get(`/products/${parent.id}`)).body.version;
+    const blocked = await api(A.ceo).delete(`/products/${parent.id}?version=${version}`);
+    expect(blocked.status, JSON.stringify(blocked.body)).toBe(409);
+    expect(blocked.body.code).toBe('product_in_use');
+    expect((await act(A.kho, r.id, 'cancel', { version: r.version })).status).toBe(200);
+    expect((await api(A.ceo).delete(`/products/${parent.id}?version=${version}`)).status).toBe(204);
   });
 
   it('S1: cha có thêm SKU cùng tổ hợp giữa lúc gửi và lúc duyệt → 422, giữ chờ duyệt, câu bảo trả về', async () => {
