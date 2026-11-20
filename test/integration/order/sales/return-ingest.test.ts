@@ -718,4 +718,31 @@ describe('sàn báo người bán đã xử lý hàng về khi app còn chờ h�
     expect(res.status).toBe(200);
     expect(res.body.platform.respondBy).toBe(respondBy.toISOString());
   });
+
+  it('danh sách trả `respondBy` khi còn chờ người bán (null khi đã quyết); `sort=respond_by` xếp hạn gần trước, không hạn sau', async () => {
+    const make = async (respondBy: Date | null) => {
+      const { externalOrderId } = await marketplaceOrder();
+      const r = remoteReturn(externalOrderId, { respondBy });
+      remote = [r];
+      await pullShopReturns(company.companyId, shopId);
+      return requestOf(r.externalId);
+    };
+    const later = await make(new Date('2030-01-03T00:00:00.000Z'));
+    const none = await make(null);
+    const sooner = await make(new Date('2030-01-02T00:00:00.000Z'));
+    const decided = await make(new Date('2030-01-01T00:00:00.000Z'));
+    await db().query(`update "order".return_requests set status = 'awaiting_return' where id = $1`, [decided.id]);
+    const list = await request(testApp())
+      .get('/api/v1/returns?status=requested&sort=respond_by&pageSize=100')
+      .set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(list.status).toBe(200);
+    const ids = list.body.items.map((i: { id: string }) => i.id);
+    expect(ids.indexOf(sooner.id)).toBeLessThan(ids.indexOf(later.id));
+    expect(ids.indexOf(later.id)).toBeLessThan(ids.indexOf(none.id));
+    const byId = new Map(list.body.items.map((i: { id: string; respondBy: string | null }) => [i.id, i.respondBy]));
+    expect(byId.get(sooner.id)).toBe('2030-01-02T00:00:00.000Z');
+    expect(byId.get(none.id)).toBeNull();
+    const all = await request(testApp()).get('/api/v1/returns?pageSize=100').set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(all.body.items.find((i: { id: string }) => i.id === decided.id).respondBy).toBeNull();
+  });
 });
