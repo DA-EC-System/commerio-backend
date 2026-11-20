@@ -118,7 +118,7 @@ describe('syncTree', () => {
   it('listPlatformCategories: cấp gốc, con trực tiếp, syncedAt là lần đồng bộ gần nhất', async () => {
     registerAdapter('shopee', fakeAdapter({}));
     const roots = await listPlatformCategories('shopee', {});
-    expect(roots.items).toEqual([{ externalId: 'S1', parentExternalId: null, name: 'Đồng hồ', path: 'Đồng hồ', isLeaf: false, status: 'active' }]);
+    expect(roots.items).toEqual([{ externalId: 'S1', parentExternalId: null, name: 'Đồng hồ', path: 'Đồng hồ', isLeaf: false, status: 'active', pathIds: ['S1'] }]);
     expect(roots.syncedAt).toEqual(new Date('2026-11-20T19:00:00Z'));
     const kids = await listPlatformCategories('shopee', { parentId: 'S1' });
     expect(kids.items.map((c) => c.externalId)).toEqual(['S2', 'S3']);

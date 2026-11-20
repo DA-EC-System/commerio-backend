@@ -5,6 +5,7 @@ import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runStockPush, runTokenRefresh } from './service/background.ts';
 import { registerChannelConsumer, workChannelQueue } from './service/background-jobs.ts';
+import { runCategoryApply } from './service/category-apply.ts';
 import { runListingPush } from './service/listing-push.ts';
 import { runRemoteSkusRefresh } from './service/remote-skus.ts';
 import { runSpecFromMatch } from './service/spec-from-match.ts';
@@ -14,6 +15,7 @@ import { onConfigActivated, onVariantPriceChanged } from './service/repricing.ts
 import { productPort } from './service/product-port.ts';
 import { handleReauthMail, REAUTH_MAIL_CONSUMER, startReauthMailLoop } from './service/reauth-mail.ts';
 import {
+  categoryApplyQueue,
   listingPushQueue,
   listingSyncQueue,
   openOrderPullQueue,
@@ -56,6 +58,8 @@ export const channelModule: ModuleDefinition = {
     await workChannelQueue(stockPushQueue, (job) => runStockPush(port, job));
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
+    // Đổi category trên sàn (#467): mỗi (gian hàng, sản phẩm sàn) một việc, như đẩy listing.
+    await workChannelQueue(categoryApplyQueue, (job) => runCategoryApply(port, job));
     // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.
     await workChannelQueue(remoteSkusRefreshQueue, (job, attempt) => runRemoteSkusRefresh(job, attempt, port));
     // Ghép SKU dựng spec từ category trên sàn (#400 lát 12).

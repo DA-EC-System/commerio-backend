@@ -12,6 +12,8 @@ import {
   CategorySuggestionsView,
   ShopWarehousesView,
   CategorySyncBody,
+  ApplyCategoryBody,
+  ApplyCategoryResult,
   ProductSpecBody,
   ProductSpecParams,
   ProductSpecView,
@@ -360,6 +362,24 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
       422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>`, `valueMap.<id>`); `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/products/:productId/specs/:platform/apply-category',
+    summary: 'Đổi category của sản phẩm trên sàn theo spec (commerio-backend#467)',
+    description:
+      'Cần `channel.listing.manage`. Chọn listing `live`, `hidden` của sản phẩm trên mọi gian hàng của sàn, có `externalProductId`, `externalCategoryId` khác category của spec; mỗi (gian hàng, sản phẩm sàn) một việc nền `channel.category_apply`, không gọi sàn trong request. Listing được xếp có `categoryChange.status = queued`. Việc nền chỉ đổi category và attribute (TikTok: Edit Product dựng từ Get Product), bảng size của app chỉ gửi khi sản phẩm trên sàn chưa có mà category mới bắt buộc.',
+    security: bearer,
+    request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ApplyCategoryBody } } } },
+    responses: {
+      202: { description: 'Mỗi dòng một sản phẩm trên sàn; `code = null` là đã xếp việc', ...json(ApplyCategoryResult) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
+      409: problemResponse(
+        '`category_unmapped` (chưa có spec); `spec_incomplete` (`categoryStatus` khác `ok` hoặc `missing` khác rỗng); `version_conflict` kèm `current`; `category_change_in_progress` (còn listing `queued`); `category_in_sync` (không listing nào lệch category); `size_chart_missing` (category mới bắt buộc bảng size mà sản phẩm chưa có)',
+      ),
+      422: problemResponse('`validation_failed`; `marketplace_unsupported` (sàn chưa hỗ trợ đổi category, Lazada)'),
     },
   });
   registry.registerPath({

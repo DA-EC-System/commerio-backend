@@ -23,6 +23,7 @@ import {
   type RemoteSku,
 } from './common.ts';
 import { downloadImage, type ImageSourceOptions } from './image-source.ts';
+import { tiktokCategoryEditBody, tiktokCategoryMismatch } from './tiktok-category-change.ts';
 import { RESPONSIBLE_ATTRS, tiktokCategoryNodes, tiktokLeafAttributes } from './tiktok-categories.ts';
 import { type TiktokClient, unpackTiktokToken } from './tiktok-client.ts';
 
@@ -71,6 +72,7 @@ type ListingMethods = Pick<
   | 'createProduct'
   | 'updateProduct'
   | 'updateContent'
+  | 'changeCategory'
   | 'updatePriceQuantity'
   | 'deactivate'
   | 'activate'
@@ -486,6 +488,39 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       // Sàn đã nhận bản sửa: đọc lại lỗi thì coi như vẫn bán, không ném (ném thì bên gọi tưởng chưa sửa, hay gửi lại).
       const status = await productStatus(token, externalProductId).catch(() => null);
       return { underReview: status === 'PENDING' };
+    },
+
+    // Đổi category (#467, Documents/21 §18.5; trường đã đối chiếu OAS ở `tiktok-category-change.ts`): Edit Product 202509 ghi
+    // đè mọi trường gửi lên nên body dựng từ chính Get Product, chỉ thay category và attribute. Không bật, tắt sản phẩm.
+    // Sau khi sửa: trạng thái bản đang bán (Get Product thường, `PENDING` là sàn ngừng bán để duyệt) và bản đang duyệt
+    // (`return_under_review_version=true`) để so với lần đọc trước. Sàn đã nhận bản sửa nên lỗi đọc lại không ném: không đọc
+    // được bản đang duyệt thì so với bản đang bán, cả hai lỗi thì báo lệch để người dùng kiểm trên sàn (không im lặng).
+    async changeCategory(token, externalProductId, input) {
+      const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
+      const [current, attributes] = await Promise.all([
+        client.call<Row>('GET', path, { token }),
+        productAttributes(token, { externalCategoryId: input.externalCategoryId, attributes: input.attributes, responsible: input.responsible }),
+      ]);
+      const body = tiktokCategoryEditBody(current, input, attributes, { categoryVersion: CATEGORY_VERSION, currency: CURRENCY });
+      await client.call('PUT', `/product/202509/products/${encodeURIComponent(externalProductId)}`, { token, body });
+      // Edit Product (`save_mode = LISTING`) đăng lại sản phẩm: sản phẩm người bán đang tắt thành `ACTIVATE` (gọi thật 20/11/2026,
+      // request_id 2026112017530477A4AD0A7268C20A23EF: SELLER_DEACTIVATED → ACTIVATE). Đổi category không được bật bán: tắt lại;
+      // tắt lỗi thì báo lệch, không im lặng.
+      const restore: string[] = [];
+      if (current?.status === 'SELLER_DEACTIVATED') {
+        try {
+          await toggle(token, 'deactivate', externalProductId);
+        } catch (err) {
+          if (!(err instanceof MarketplaceError)) throw err;
+          restore.push('bật lại sản phẩm đang tắt và chưa tắt lại được; tắt trên Seller Center');
+        }
+      }
+      const status = await productStatus(token, externalProductId).catch(() => null);
+      const after =
+        (await client.call<Row>('GET', path, { token, query: { return_under_review_version: 'true' } }).catch(() => undefined)) ??
+        (await client.call<Row>('GET', path, { token }).catch(() => undefined));
+      const mismatch = after ? tiktokCategoryMismatch(current, after) : ['chưa đọc lại được sản phẩm để kiểm SKU, giá, ảnh; kiểm trên sàn'];
+      return { underReview: status === 'PENDING', mismatch: [...restore, ...mismatch] };
     },
 
     // Hai API theo sản phẩm: tồn (`inventory/update`, kho mặc định) và giá (`prices/update`, chỉ nhận sản phẩm `ACTIVATE`).

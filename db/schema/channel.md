@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V110**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V111**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -155,6 +155,8 @@ Cột:
   Bản sửa nội dung chờ sàn duyệt (`pendingRevision`, #293): ghi khi `update_content` mà sàn vẫn bán bản cũ; đồng bộ xoá khi qua duyệt, ghi `failed` kèm lý do khi trượt. Giữ khi ẩn, sàn khoá; xoá khi rời các trạng thái đó.
 - `revision_reject_reason` text · null
 - `revision_at` timestamptz · null
+- `category_change` jsonb · null
+  Lượt đổi category trên sàn (`categoryChange`, commerio-backend#467): `{ status, toCategoryId, toCategoryPath, code, message, attempts, at }`, null khi không có hoặc sàn đã nhận mà không lệch (trạng thái duyệt ở `revision_*`). Xoá khi gỡ.
 - `content_source` enum `channel.listing_content_source` · not null · mặc định `'platform'`: `app` | `platform`
   Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị.
 - `remote_title_at_match` text · null
@@ -191,6 +193,7 @@ Ràng buộc và index:
         and (revision_status is null or status in ('live', 'hidden', 'platform_hold'))`
 - check `listings_remote_title`: `(remote_title_at_match is not null or (remote_title_en_at_match is null and remote_title_matched_at is null))
         and (remote_title_changed_at is null or remote_title_matched_at is not null)`
+- check `listings_category_change`: `category_change is null or (status <> 'delisted' and category_change ->> 'status' in ('queued', 'failed', 'mismatch'))`
 - check `listings_reject_reason`: `status <> 'rejected' or reject_reason is not null`
 - check `listings_push_attempts`: `push_attempts >= 0`
 - check `listings_prices`: `listed_price >= 0 and manual_price >= 0`

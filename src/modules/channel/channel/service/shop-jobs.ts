@@ -53,6 +53,29 @@ export type ListingPushJob = z.infer<typeof ListingPushJobSchema>;
 export const listingPushQueue = defineQueue('channel.listing_push', ListingPushJobSchema, { attempts: 5, retryDelaySeconds: 30 });
 
 /**
+ * Đổi category của một sản phẩm trên một gian hàng (`apply-category`, #467, Documents/21 §18.5): `listingIds` là các listing
+ * của sản phẩm sàn `externalProductId` vừa chuyển `category_change = queued`, `toCategoryId` là category của spec lúc bấm.
+ */
+export const CategoryApplyJobSchema = JobDataSchema.extend({
+  shopId: z.uuid(),
+  productId: z.uuid(),
+  externalProductId: z.string().min(1),
+  listingIds: z.array(z.uuid()).min(1).max(200),
+  toCategoryId: z.string().min(1),
+});
+export type CategoryApplyJob = z.infer<typeof CategoryApplyJobSchema>;
+/**
+ * Việc đổi category (`runCategoryApply`, `category-apply.ts`). Như `channel.listing_push`: hàng `standard` (chống trùng ở CSDL:
+ * chỉ listing vừa chuyển `queued` mới xếp việc), thử 5 lần, lần đầu sau 30 giây, gấp đôi; lần thứ 5 trước mốc 30 phút.
+ */
+export const categoryApplyQueue = defineQueue('channel.category_apply', CategoryApplyJobSchema, { attempts: 5, retryDelaySeconds: 30 });
+
+/** Xếp việc đổi category, đi chung giao dịch vừa ghi `queued` (rollback thì không còn việc). */
+export async function sendCategoryApply(job: CategoryApplyJob): Promise<void> {
+  await sendJob(categoryApplyQueue, job);
+}
+
+/**
  * Lượt Tải lại SKU sàn chạy nền (`runRemoteSkusRefresh`, #361, Documents/21 §18.3): đọc sản phẩm sửa từ lần trước rồi đọc
  * trọn. Không lịch: xếp khi bấm Tải lại hay mở trang ghép lần đầu. Mỗi gian hàng một lượt (`stately`, khoá gian hàng). Thử
  * 2 lần, lần sau cách 30 giây (lỗi `incomplete_list` do danh sách đổi giữa chừng hay qua ở lần sau); cho chạy tới 15 phút,
