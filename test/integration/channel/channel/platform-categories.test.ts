@@ -396,7 +396,7 @@ describe('leafDetail (AC-5, AC-S6)', () => {
       await activateShop(id);
       return id;
     };
-    const { companyId, ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { companyId, ceo } = await createCompany({ optionalModules: [] });
     const shopId = await shopeeShop(ceo.token);
     const leaf = `T-${randomUUID().slice(0, 8)}`;
 
@@ -410,7 +410,7 @@ describe('leafDetail (AC-5, AC-S6)', () => {
     expect(again.category.sizeChartRule).toBe('required');
     expect(inTx).toEqual([null, null, null, null]);
 
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const theirs = await shopeeShop(other.ceo.token);
     for (const id of [theirs, randomUUID()]) {
       await expect(leafDetail(ctx, companyId, 'shopee', leaf, { shopId: id, now: later(9) })).rejects.toMatchObject({ status: 404, code: 'not_found' });

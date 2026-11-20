@@ -13,8 +13,8 @@ const get = (token?: string) => {
   const req = request(testApp()).get('/api/v1/onboarding');
   return token ? req.set('Authorization', `Bearer ${token}`) : req;
 };
-// Trước commerio-backend#459 Kênh bán còn là phân hệ tuỳ chọn; bật để hai mục gian hàng áp dụng.
-const newCompany = () => createCompany({ optionalModules: ['channel'] });
+// Kênh bán là phân hệ lõi từ commerio-backend#459: hai mục gian hàng luôn áp dụng.
+const newCompany = () => createCompany();
 const itemOf = (body: { items: { key: string }[] }, key: string) => body.items.find((i) => i.key === key);
 
 async function insertShop(companyId: string, status: 'connecting' | 'active' | 'disconnected') {

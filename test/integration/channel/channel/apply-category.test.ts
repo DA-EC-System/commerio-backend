@@ -95,7 +95,7 @@ async function connect(platform: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany();
   shops.a = await connect('tiktok');
   shops.b = await connect('tiktok');
   shops.off = await connect('tiktok');

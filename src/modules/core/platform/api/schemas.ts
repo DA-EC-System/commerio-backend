@@ -60,7 +60,7 @@ export const Company = z
   .object({
     id: z.uuid(),
     name: z.string(),
-    taxCode: z.string(),
+    taxCode: z.string().nullable().meta({ description: 'null: chưa có mã số thuế (bị gỡ hoặc mã cũ không hợp lệ)' }),
     ceoName: z.string(),
     ceoEmail: z.string(),
     optionalModules: z.array(z.enum(OPTIONAL_MODULES)),
@@ -146,7 +146,7 @@ export const CompanyProfile = z
   .object({
     id: z.uuid(),
     name: z.string(),
-    taxCode: z.string(),
+    taxCode: z.string().nullable().meta({ description: 'null: chưa có mã số thuế' }),
     address: z.string().nullable().meta({ description: 'Địa chỉ đăng ký' }),
     responsibleName: z.string().nullable().meta({ description: 'Tên tổ chức chịu trách nhiệm hàng hoá; null = tên công ty' }),
     responsibleAddress: z.string().nullable().meta({ description: 'Địa chỉ tổ chức chịu trách nhiệm; null = `address`' }),

@@ -89,7 +89,7 @@ async function lastTransition(id: string) {
 const sent = () => updatePriceQuantity.mock.calls.flatMap(([, items]) => items);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   shops.lazada = await connect('lazada');
   shops.shopee = await connect('shopee');
 });

@@ -1,6 +1,6 @@
 {
-  "id": "e4500542-e540-4b5e-a40b-d7a23b2dd340",
-  "prevId": "1c063edc-c2c6-447e-8f71-d5b20f7a48da",
+  "id": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
+  "prevId": "78075c6f-07a2-4b3f-8e67-9cbf0bb0db1e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -330,12 +330,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "category_change": {
-          "name": "category_change",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "content_source": {
           "name": "content_source",
           "type": "listing_content_source",
@@ -570,10 +564,6 @@
         "listings_remote_title": {
           "name": "listings_remote_title",
           "value": "(\"channel\".\"listings\".\"remote_title_at_match\" is not null or (\"channel\".\"listings\".\"remote_title_en_at_match\" is null and \"channel\".\"listings\".\"remote_title_matched_at\" is null))\n        and (\"channel\".\"listings\".\"remote_title_changed_at\" is null or \"channel\".\"listings\".\"remote_title_matched_at\" is not null)"
-        },
-        "listings_category_change": {
-          "name": "listings_category_change",
-          "value": "\"channel\".\"listings\".\"category_change\" is null or (\"channel\".\"listings\".\"status\" <> 'delisted' and \"channel\".\"listings\".\"category_change\" ->> 'status' in ('queued', 'failed', 'mismatch'))"
         },
         "listings_reject_reason": {
           "name": "listings_reject_reason",
@@ -3505,7 +3495,7 @@
           "name": "tax_code",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "address": {
           "name": "address",
@@ -3570,7 +3560,15 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "companies_tax_code_unique": {
+          "name": "companies_tax_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tax_code"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

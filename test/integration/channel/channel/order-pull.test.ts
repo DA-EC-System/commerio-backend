@@ -115,7 +115,7 @@ const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorizatio
 const pull = (token?: string) => auth(app().post(`/api/v1/channel/shops/${shopId}/orders/pull`), token);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   // Thiết lập lần đầu đã có test riêng (setup.test.ts): ở đây chỉ đặt mốc kéo đơn và ghép một SKU.

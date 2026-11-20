@@ -110,7 +110,7 @@ type Company = Awaited<ReturnType<typeof createCompany>>;
 
 /** Gian hàng `active` vừa thiết lập (mốc đặt, chưa kéo đơn mở), một listing đã ghép. */
 async function setUpShop(platform = 'lazada'): Promise<{ c: Company; shopId: string; sku: string; variantId: string }> {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   const res = await request(testApp())
     .post(`/api/v1/channel/shops/${platform}/token`)
     .set('Authorization', `Bearer ${c.ceo.token}`)
@@ -143,7 +143,7 @@ const packagesOf = async (shopId: string) =>
 
 describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () => {
   it('AC-12: thiết lập xếp đúng một việc kéo đơn còn mở cho gian hàng; thiết lập lỗi thì không có việc', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shop = async () =>
       (
         await request(testApp())

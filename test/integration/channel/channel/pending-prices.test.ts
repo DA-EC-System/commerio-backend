@@ -13,7 +13,7 @@ const db = () => testPool();
 const FEE = { fixedPct: 4, transactionPct: 5, servicePct: 3, optionalPct: 2, returnFee: 0, perItemFee: 3000, roundStep: 10000, roundEnding: 9000 };
 
 async function setup() {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   const { rows } = await db().query<{ id: string }>(
     `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at)
      values ($1, 'lazada', $2, 'Shop Thử', 'active', now()) returning id`,

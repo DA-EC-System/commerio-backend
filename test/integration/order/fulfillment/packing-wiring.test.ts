@@ -44,7 +44,7 @@ let variantId: string;
 let shopId: string;
 let accessToken: string;
 beforeAll(async () => {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   companyId = company.companyId;
   warehouse = (await addMember(companyId, 'warehouse')).token;
   variantId = (await createVariant(companyId)).variantId;
