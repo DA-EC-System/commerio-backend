@@ -621,12 +621,12 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     },
 
     // Partial Edit 202509 (#293): chỉ gửi tiêu đề, mô tả, thuộc tính; không gửi `skus` (SKU thiếu trong danh sách bị sàn
-    // xoá) hay ảnh. Đọc sản phẩm trước để chặn sản phẩm nhiều SKU và danh mục lệch ghép (Partial Edit không đổi danh mục),
+    // xoá) hay ảnh. Đọc sản phẩm trước để chặn sản phẩm nhiều SKU (trừ `wholeProduct`, #295) và danh mục lệch ghép (Partial Edit không đổi danh mục),
     // đọc lại sau để biết sàn ngừng bán (`PENDING`) hay vẫn bán bản cũ trong lúc duyệt (gọi thật 09/11/2026: `ACTIVATE`).
     async updateContent(token, externalProductId, c) {
       const path = `/product/202309/products/${encodeURIComponent(externalProductId)}`;
       const [current, attributes] = await Promise.all([client.call<Row>('GET', path, { token }), productAttributes(token, c)]);
-      if (((current?.skus ?? []) as Row[]).length > 1) {
+      if (!c.wholeProduct && ((current?.skus ?? []) as Row[]).length > 1) {
         throw new MarketplaceError('rejected', 'shared_remote_product', 'Sản phẩm trên sàn có nhiều SKU; sửa nội dung từng SKU chưa hỗ trợ');
       }
       const leaf = ((current?.category_chains ?? []) as Row[]).find((x) => x.is_leaf === true)?.id;
