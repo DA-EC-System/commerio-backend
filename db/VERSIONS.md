@@ -7,14 +7,14 @@ Mới nhất: **V127**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 ## V127 · 21/11/2026 · anh-xa-thong-so-rls
 
-`db/migrations/20261120210754_anh-xa-thong-so-rls.sql` · viết tay
+`db/migrations/20261120214154_anh-xa-thong-so-rls.sql` · viết tay
 
 - viết tay: RLS, dữ liệu
 - Ánh xạ thông số sang sàn (#509, Documents/19 §3.3).
 
 ## V126 · 21/11/2026 · anh-xa-thong-so-san
 
-`db/migrations/20261120210718_anh-xa-thong-so-san.sql` · sinh từ schema
+`db/migrations/20261120214152_anh-xa-thong-so-san.sql` · sinh từ schema
 
 - + 2 bảng `channel`: spec_field_mappings, spec_option_mappings
 
