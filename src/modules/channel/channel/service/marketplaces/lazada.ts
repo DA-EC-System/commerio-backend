@@ -1187,7 +1187,11 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         }
       }
       if (failedOff) mismatch.push('bật lại SKU đang tắt và chưa tắt lại được; tắt trên Seller Center');
-      return { underReview: lazadaUnderReview(after), mismatch };
+      // Lazada áp category ngay (gọi thật 20/11/2026): trả category đọc lại để ghi vào listing, khác category gửi lên thì lệch
+      const category = (after as { primary_category?: unknown } | undefined)?.primary_category;
+      const externalCategoryId = category == null || category === '' ? undefined : String(category);
+      if (externalCategoryId && externalCategoryId !== input.externalCategoryId) mismatch.push(`vẫn ở category ${externalCategoryId}`);
+      return { underReview: lazadaUnderReview(after), mismatch, ...(externalCategoryId && { externalCategoryId }) };
     },
     getSkus,
     // Số sản phẩm: một lời gọi `limit=1`, đọc `total_products` (#198/#284: đọc từng trang quá hạn 10 giây với gian hàng

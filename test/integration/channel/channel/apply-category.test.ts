@@ -398,6 +398,17 @@ describe('việc nền channel.category_apply (#467)', () => {
       expect((await apply(productId, 1)).status).not.toBe(409);
     });
 
+    it('sàn trả category đọc lại → ghi `external_category_id`; lượt đổi sau thấy đã khớp (409 `category_in_sync`)', async () => {
+      const { id, job, productId } = await queued();
+      onChange = async (_p, input) => ({ underReview: false, mismatch: [], externalCategoryId: input.externalCategoryId });
+      await runCategoryApply(port, job);
+      expect(await row(id)).toMatchObject({ status: 'live', category_change: null, revision_status: null, external_category_id: NEW });
+      // Đã đúng category của spec: lượt đổi sau báo đã khớp
+      const again = await apply(productId, 1);
+      expect(again.status).toBe(409);
+      expect(again.body.type).toBe('/problems/category_in_sync');
+    });
+
     it('sàn ngừng bán để duyệt (Pending QC) → `under_review` không kèm `auditing`; lượt đồng bộ đọc sàn đã duyệt thì về `live`', async () => {
       const shopId = await connect('tiktok');
       const p = await product();
