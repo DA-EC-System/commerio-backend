@@ -67,3 +67,13 @@ export async function setShopProductStatus(id: string, status: 'active' | 'delis
     .set({ status, ...(pushError !== undefined && { pushError }), version: sql`${shopProducts.version} + 1`, updatedAt: sql`now()` })
     .where(eq(shopProducts.id, id));
 }
+
+/** Mốc lượt đẩy mới của dòng `app` (khoá chống tạo trùng, việc cũ thấy mốc khác thì bỏ). */
+export async function setShopProductPushStarted(id: string, at: Date): Promise<void> {
+  await getDb().update(shopProducts).set({ pushStartedAt: at, pushError: null, updatedAt: sql`now()` }).where(eq(shopProducts.id, id));
+}
+
+/** Ghi lúc gọi tạo (commit trước lời gọi sàn, như `markCreateAttempted` của listing, #399). */
+export async function markShopProductCreateAttempted(id: string, at: Date | null): Promise<void> {
+  await getDb().update(shopProducts).set({ createAttemptedAt: at }).where(eq(shopProducts.id, id));
+}
