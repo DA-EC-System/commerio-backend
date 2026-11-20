@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V112**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V114**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V114 · 20/11/2026 · bo-cot-dang-huy-cu
+
+`db/migrations/20261120094957_bo-cot-dang-huy-cu.sql` · sinh từ schema
+
+- `order.orders`: − cột `cancelling`; + check `orders_cancel_pending_open`, `orders_cancel_requested_open`
+
+## V113 · 20/11/2026 · bo-co-dang-huy-cu
+
+`db/migrations/20261120094954_bo-co-dang-huy-cu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Bỏ trigger, hàm giữ cột cờ cũ `cancelling` bằng `cancel_pending` (#417 bước một); dọn hai cờ chờ sàn của đơn đã dừng trước CHECK (#427), viết tay, chạy lại được.
 
 ## V112 · 20/11/2026 · mst-unique
 
