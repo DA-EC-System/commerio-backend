@@ -244,6 +244,26 @@ describe('POST /channel/products/:productId/specs/:platform/apply-category (#467
     expect(res.body.type).toMatch(/marketplace_unsupported$/);
   });
 
+  it('nhóm có listing người bán tự đăng (`platform`): người có `listing.manage` không phải CEO → 403, không xếp việc; CEO xếp được', async () => {
+    const { productId, v1 } = await product();
+    const id = await listing(v1, shops.a, { content_source: 'platform' });
+    const admin = await addMember(company.companyId, 'admin');
+    const res = await auth(app().post(`/api/v1/channel/products/${productId}/specs/tiktok/apply-category`), admin.token).send({ version: 1 });
+    expect(res.status).toBe(403);
+    expect(res.body.type).toBe('/problems/forbidden');
+    expect((await row(id)).category_change).toBeNull();
+    expect(await jobsOf(productId)).toHaveLength(0);
+    expect((await apply(productId, 1)).status).toBe(202);
+  });
+
+  it('listing nguồn app: người có `listing.manage` không phải CEO xếp được', async () => {
+    const { productId, v1 } = await product();
+    await listing(v1, shops.a);
+    const admin = await addMember(company.companyId, 'admin');
+    const res = await auth(app().post(`/api/v1/channel/products/${productId}/specs/tiktok/apply-category`), admin.token).send({ version: 1 });
+    expect(res.status).toBe(202);
+  });
+
   it('không có `listing.manage` → 403 trước kiểm body', async () => {
     const { productId } = await product();
     const warehouse = await addMember(company.companyId, 'sale');

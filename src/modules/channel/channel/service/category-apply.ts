@@ -60,6 +60,7 @@ export async function applyCategory(
   productId: string,
   raw: string,
   version: number,
+  isCeo: () => Promise<boolean>,
 ): Promise<{ items: CategoryApplyItem[] }> {
   const { platform, adapter } = platformOf(raw);
   return withCompany(actor.companyId, async () => {
@@ -90,6 +91,11 @@ export async function applyCategory(
       groups.set(key, [...(groups.get(key) ?? []), r]);
     }
     if (!groups.size) throw new AppError(409, 'category_in_sync', `Sản phẩm trên ${adapter.name} đã ở đúng category này`);
+    // Category là nội dung của người bán (`25-vong-doi-ly-tuong.md` §6.4): sản phẩm người bán tự đăng chỉ CEO đổi được, như
+    // `take-over-content` (acn-89 chốt 20/11/2026, commerio-backend#467).
+    if ([...groups.values()].flat().some((r) => r.contentSource === 'platform') && !(await isCeo())) {
+      throw new AppError(403, 'forbidden', 'Chỉ CEO đổi được category của sản phẩm người bán tự đăng trên sàn');
+    }
     const category = await findCategory(platform, target);
     if (category?.sizeChartRule === 'required') {
       const chart = (await port.productSizeChartUrls?.([productId]))?.get(productId);

@@ -273,7 +273,7 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
       const { version } = validated<typeof ApplyCategoryBody>(res, 'body');
-      res.status(202).json(await applyCategory(productPort(ctx), actor(res), productId, platform, version));
+      res.status(202).json(await applyCategory(productPort(ctx), actor(res), productId, platform, version, () => mapping.isCeo(actor(res))));
     },
   );
 

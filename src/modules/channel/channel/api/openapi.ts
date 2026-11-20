@@ -369,7 +369,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/specs/:platform/apply-category',
     summary: 'Đổi category của sản phẩm trên sàn theo spec (commerio-backend#467)',
     description:
-      'Cần `channel.listing.manage`. Chọn listing `live`, `hidden` của sản phẩm trên mọi gian hàng của sàn, có `externalProductId`, `externalCategoryId` khác category của spec; mỗi (gian hàng, sản phẩm sàn) một việc nền `channel.category_apply`, không gọi sàn trong request. Listing được xếp có `categoryChange.status = queued`. Việc nền chỉ đổi category và attribute (TikTok: Edit Product dựng từ Get Product), bảng size của app chỉ gửi khi sản phẩm trên sàn chưa có mà category mới bắt buộc.',
+      'Cần `channel.listing.manage`; nhóm sẽ xếp có listing `contentSource = platform` (sản phẩm người bán tự đăng) thì cần thêm vai trò CEO, không thì 403 `forbidden`. Chọn listing `live`, `hidden` của sản phẩm trên mọi gian hàng của sàn, có `externalProductId`, `externalCategoryId` khác category của spec; mỗi (gian hàng, sản phẩm sàn) một việc nền `channel.category_apply`, không gọi sàn trong request. Listing được xếp có `categoryChange.status = queued`. Việc nền chỉ đổi category và attribute (TikTok: Edit Product dựng từ Get Product), bảng size của app chỉ gửi khi sản phẩm trên sàn chưa có mà category mới bắt buộc. Sản phẩm đang tắt thì tắt lại sau Edit Product (sàn bật lại khi sửa).',
     security: bearer,
     request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ApplyCategoryBody } } } },
     responses: {
