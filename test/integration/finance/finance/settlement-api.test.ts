@@ -21,7 +21,7 @@ async function shop(companyId: string, shopName = 'Gian hàng thử') {
 }
 
 async function company() {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   const shopId = await shop(c.companyId);
   return { ...c, shopId, auth: `Bearer ${c.ceo.token}` };
 }
