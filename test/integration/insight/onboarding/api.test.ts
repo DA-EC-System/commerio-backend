@@ -28,7 +28,7 @@ async function insertShop(companyId: string, status: 'connecting' | 'active' | '
   return res.rows[0]!.id;
 }
 
-async function insertOpening(companyId: string, shopId: string, status: 'draft' | 'posted') {
+async function insertOpening(companyId: string, shopId: string, status: 'draft' | 'posted' | 'rejected' | 'cancelled') {
   const res = await testPool().query<{ id: string }>(
     `insert into product.stock_documents (company_id, number, kind, status, counted_at, is_opening, source_type, source_id, shop_id, posted_at)
      values ($1, $2, 'stocktake', $3::product.stock_document_status, now(), true, 'shop_setup', $4, $4,
@@ -59,7 +59,12 @@ describe('GET /onboarding', () => {
 
   it('khai địa chỉ công ty, tạo link mời, thêm sản phẩm: các mục tự đánh dấu xong; lưu trữ hết sản phẩm thì mục quay lại chưa xong', async () => {
     const { companyId, ceo } = await newCompany();
-    await testPool().query("update core.companies set address = '12 Đường Thử, Quận 1' where id = $1", [companyId]);
+    const profile = await request(testApp()).get('/api/v1/platform/company').set('Authorization', `Bearer ${ceo.token}`);
+    const saved = await request(testApp())
+      .put('/api/v1/platform/company')
+      .set('Authorization', `Bearer ${ceo.token}`)
+      .send({ address: '12 Đường Thử, Quận 1', version: profile.body.version });
+    expect(saved.status).toBe(200);
     const invite = await request(testApp())
       .post('/api/v1/identity/invitations')
       .set('Authorization', `Bearer ${ceo.token}`)
@@ -106,6 +111,19 @@ describe('GET /onboarding', () => {
     expect(itemOf((await get(ceo.token)).body, 'opening_stock')).toMatchObject({ done: true, ref: null });
   });
 
+  it('phiếu đầu kỳ bị từ chối vẫn chặn và được trỏ tới; phiếu bị huỷ thì bỏ qua', async () => {
+    const { companyId, ceo } = await newCompany();
+    const cancelledShop = await insertShop(companyId, 'active');
+    await insertOpening(companyId, cancelledShop, 'cancelled');
+    expect(itemOf((await get(ceo.token)).body, 'opening_stock')).toMatchObject({ done: false, ref: null });
+    const rejectedShop = await insertShop(companyId, 'active');
+    const rejected = await insertOpening(companyId, rejectedShop, 'rejected');
+    expect(itemOf((await get(ceo.token)).body, 'opening_stock')).toMatchObject({
+      done: false,
+      ref: { type: 'stock_document', id: rejected },
+    });
+  });
+
   it('chưa có gian hàng, tồn vào qua thẻ kho: tồn đầu kỳ xong', async () => {
     const { companyId, ceo } = await newCompany();
     const { variantId } = await createVariant(companyId);
@@ -117,23 +135,23 @@ describe('GET /onboarding', () => {
     expect(itemOf((await get(ceo.token)).body, 'opening_stock')).toMatchObject({ done: true });
   });
 
-  it('Sale chỉ thấy mục mình có quyền; total đếm trên mục đã lọc', async () => {
+  it('Nhân viên kho chỉ thấy mục mình có quyền; total đếm trên mục đã lọc', async () => {
     const { companyId } = await newCompany();
-    const sale = await addMember(companyId, 'sale');
-    const res = await get(sale.token);
+    const kho = await addMember(companyId, 'warehouse');
+    const res = await get(kho.token);
     expect(res.status).toBe(200);
     const keys = res.body.items.map((i: { key: string }) => i.key);
+    expect(keys).toContain('opening_stock');
     expect(keys).not.toContain('company_profile');
     expect(keys).not.toContain('invite_staff');
     expect(keys).not.toContain('connect_shop');
-    expect(res.body.total).toBe(res.body.items.filter((i: { optional: boolean }) => !i.optional).length);
+    expect(res.body.total).toBe(keys.length);
   });
 
-  it('Kênh bán tắt: không có hai mục gian hàng', async () => {
-    const { ceo } = await createCompany({ optionalModules: [] });
-    const keys = (await get(ceo.token)).body.items.map((i: { key: string }) => i.key);
-    expect(keys).not.toContain('connect_shop');
-    expect(keys).not.toContain('setup_shop');
+  it('Sale không có quyền mục nào: danh sách rỗng, 0/0', async () => {
+    const { companyId } = await newCompany();
+    const sale = await addMember(companyId, 'sale');
+    expect((await get(sale.token)).body).toEqual({ items: [], done: 0, total: 0 });
   });
 
   it('công ty tắt Báo cáo vẫn 200, không 403 module_disabled', async () => {
