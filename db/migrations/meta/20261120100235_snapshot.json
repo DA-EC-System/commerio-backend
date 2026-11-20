@@ -1,6 +1,6 @@
 {
-  "id": "61f7447f-1176-4d97-a444-3f0dfbcbe406",
-  "prevId": "92948f13-7d6a-47b9-a73d-92c13b11b3a0",
+  "id": "e25fa84e-936c-4fc0-87d0-df1d981ae9ad",
+  "prevId": "d9587abb-056f-476e-9e92-31ef427a9446",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -9666,13 +9666,6 @@
           "notNull": true,
           "default": false
         },
-        "cancelling": {
-          "name": "cancelling",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "platform_cancelled": {
           "name": "platform_cancelled",
           "type": "boolean",
@@ -9875,6 +9868,14 @@
       },
       "policies": {},
       "checkConstraints": {
+        "orders_cancel_pending_open": {
+          "name": "orders_cancel_pending_open",
+          "value": "not \"order\".\"orders\".\"cancel_pending\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
+        },
+        "orders_cancel_requested_open": {
+          "name": "orders_cancel_requested_open",
+          "value": "not \"order\".\"orders\".\"cancel_requested\" or \"order\".\"orders\".\"status\" in ('unpaid', 'processing')"
+        },
         "orders_outcome": {
           "name": "orders_outcome",
           "value": "(\"order\".\"orders\".\"status\" = 'completed') = (\"order\".\"orders\".\"outcome\" is not null)"
