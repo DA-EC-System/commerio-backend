@@ -848,6 +848,20 @@
       "when": 1795189733099,
       "tag": "20261120154853_ghep-tu-dien-spec-du-lieu",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1795191233629,
+      "tag": "20261120161353_can-nang-kich-thuoc-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1795191235583,
+      "tag": "20261120161355_can-nang-kich-thuoc-tran",
+      "breakpoints": true
     }
   ]
 }
