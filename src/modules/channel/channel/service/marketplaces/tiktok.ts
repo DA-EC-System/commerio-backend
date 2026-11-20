@@ -530,6 +530,10 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     categoriesNeedToken: true,
     // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
     suggestionRules: { minNameLength: 25 },
+    // Sales attribute chuẩn của TikTok: 100000 Màu sắc, 100007 / 100001 Kích cỡ, 100089 Dung tích, 100092 Hương vị; sản phẩm tối
+    // đa 3 trục, tên trục tự đặt được (Documents#214 mục 3).
+    standardSalesAttributes: { color: ['100000'], size: ['100007', '100001'], volume: ['100089'], flavor: ['100092'] },
+    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [] }),
     // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
     categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,

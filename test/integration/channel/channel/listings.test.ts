@@ -25,6 +25,7 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
   sku,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -390,7 +391,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       variant(`CMR-AXIS-OLD-${randomUUID().slice(0, 6)}`, {
         productId: live.productId,
         archived: true,
-        attributes: [{ attributeId: axisId, attributeName: 'Màu', valueId: randomUUID(), value: 'Đỏ' }],
+        attributes: [{ attributeId: axisId, attributeName: 'Màu', platformKind: 'color', valueId: randomUUID(), value: 'Đỏ' }],
       }),
     );
     await testPool().query(

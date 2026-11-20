@@ -19,6 +19,7 @@ import {
   productSizeChartUrls,
   standardPricesOf,
   type VariantSummary,
+  attributeKindsOf,
 } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import type { CatalogSpecValue } from '../domain/spec-resolve.ts';
@@ -40,11 +41,19 @@ export interface ListingVariant {
   productName: string;
   /** Mã cha của sản phẩm (#400 A5). */
   productCode: string;
+  /** Nhóm hàng của sản phẩm (#448: category cùng nhóm). */
+  groupId: string;
   sku: string;
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
   /** Giá trị thuộc tính theo `position` (#400: ánh xạ trục biến thể sang sales attribute của sàn). */
-  attributes: { attributeId: string; attributeName: string; valueId: string; value: string }[];
+  attributes: {
+    attributeId: string;
+    attributeName: string;
+    platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+    valueId: string;
+    value: string;
+  }[];
   archived: boolean;
   /**
    * Trạng thái kinh doanh của SKU. Tới khi #204 trả `readiness`, `paused` là SKU chưa sẵn sàng đẩy (`sku_not_ready`, #219
@@ -62,6 +71,8 @@ export interface ListingVariant {
 }
 
 export interface ProductPort {
+  /** Thuộc tính phân loại của công ty (#448); thiếu (bản giả của test) thì coi là không có thuộc tính nào. */
+  attributes?(): Promise<{ id: string; name: string; platformKind: 'color' | 'size' | 'volume' | 'flavor' | null }[]>;
   /** Bỏ trống `ids` = mọi biến thể của công ty; `opts.productIds` lọc theo sản phẩm, `[]` là rỗng (#400 A13). */
   variants(ids?: readonly string[], opts?: { productIds?: readonly string[] }): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
@@ -113,9 +124,16 @@ function toListingVariant(v: Extended): ListingVariant {
     productId: v.productId,
     productName: v.productName,
     productCode: v.productCode,
+    groupId: v.groupId,
     sku: v.sku,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
-    attributes: v.attributes.map(({ attributeId, attributeName, valueId, value }) => ({ attributeId, attributeName, valueId, value })),
+    attributes: v.attributes.map(({ attributeId, attributeName, platformKind, valueId, value }) => ({
+      attributeId,
+      attributeName,
+      platformKind,
+      valueId,
+      value,
+    })),
     archived: v.archived,
     businessStatus: v.businessStatus,
     description: v.description ?? null,
@@ -142,6 +160,7 @@ export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specField
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
+      attributes: attributeKindsOf,
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,

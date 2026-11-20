@@ -24,6 +24,7 @@ const variant = (sku: string, productName: string, attributesLabel = ''): Listin
   sku,
   attributesLabel,
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',

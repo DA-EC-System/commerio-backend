@@ -82,6 +82,7 @@ const variant: ListingVariant = {
   sku: 'CMR-OS-1',
   attributesLabel: 'Trắng',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',

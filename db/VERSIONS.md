@@ -3,20 +3,27 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V129**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V130**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V129 · 21/11/2026 · can-nang-kich-thuoc-tran
+## V130 · 21/11/2026 · ghep-truc-du-lieu
 
-`db/migrations/20261120215418_can-nang-kich-thuoc-tran.sql` · sinh từ schema
-
-- `product.product_variants`: đổi check `product_variants_dimensions`
-
-## V128 · 21/11/2026 · can-nang-kich-thuoc-du-lieu
-
-`db/migrations/20261120215415_can-nang-kich-thuoc-du-lieu.sql` · viết tay
+`db/migrations/20261120215928_ghep-truc-du-lieu.sql` · viết tay
 
 - viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- Ghép trục theo platform_kind cho spec có sẵn (#448, chỉ dữ liệu, chạy lại được): trục `__custom` của channel.product_specs đổi sang mã sales attribute chuẩn đầu tiên (theo attributes.platform_kind) mà leaf của spec có (kind = 'sales'), mỗi…
+
+## V129 · 21/11/2026 · anh-xa-truc-rls
+
+`db/migrations/20261120215924_anh-xa-truc-rls.sql` · viết tay
+
+- viết tay: RLS
+- Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/19 §3.3): RLS company_isolation cho channel.axis_mappings (vòng lặp của 0002 chỉ chạy một lần).
+
+## V128 · 21/11/2026 · anh-xa-truc
+
+`db/migrations/20261120215920_anh-xa-truc.sql` · sinh từ schema
+
+- + bảng `channel.axis_mappings`
 
 ## V127 · 21/11/2026 · anh-xa-thong-so-rls
 

@@ -72,6 +72,7 @@ async function productWithSpec(leaf: string, brand: string | null = null) {
     sku: `PP-${randomUUID().slice(0, 8)}`,
     attributesLabel: '',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',

@@ -51,13 +51,14 @@ let ceo: { token: string; companyId: string };
 let lazadaShop: string;
 let tiktokShop: string;
 
-function product(name: string, withImage: boolean): string {
+function product(name: string, withImage: boolean, groupId = 'GROUP-TEST'): string {
   const productId = randomUUID();
   variants.push({
     id: randomUUID(),
     productId,
     productName: name,
     productCode: 'SP-TEST',
+    groupId,
     sku: `SKU-${productId.slice(0, 8)}`,
     attributesLabel: '',
     attributes: [],
@@ -118,25 +119,35 @@ describe('category-suggestions', () => {
     CategorySuggestionsView.parse(res.body);
     expect(res.body).toEqual({
       items: [
-        { externalId: lzLeaf, path: 'Thời trang nam > Áo > Áo thun', permission: null },
-        { externalId: lzOther, path: "Women's Clothing > Tops", permission: null },
+        { externalId: lzLeaf, path: 'Thời trang nam > Áo > Áo thun', permission: null, usedByCompany: false },
+        { externalId: lzOther, path: "Women's Clothing > Tops", permission: null, usedByCompany: false },
       ],
+      group: [],
+      recent: [],
       cached: false,
     });
-    expect(lazadaSuggest).toHaveBeenCalledWith(expect.stringMatching(/^tok-/), { name: 'Áo thun nam cổ tròn', imageUrl: 'https://img.test/a.jpg' });
+    expect(lazadaSuggest).toHaveBeenCalledWith(expect.stringMatching(/^tok-/), {
+      name: 'Áo thun nam cổ tròn',
+      description: null,
+      imageUrl: 'https://img.test/a.jpg',
+    });
   });
 
-  it('Lazada sản phẩm chưa có ảnh: 422 images_missing, không gọi sàn', async () => {
+  it('Lazada sản phẩm chưa có ảnh: 200 items rỗng kèm suggestError images_missing, không gọi sàn', async () => {
     const res = await get(lazadaShop, product('Áo thun nam cổ tròn', false));
-    expect(res.status).toBe(422);
-    expect(res.body.type).toBe('/problems/images_missing');
+    expect(res.status).toBe(200);
+    CategorySuggestionsView.parse(res.body);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.suggestError).toMatchObject({ code: 'images_missing' });
     expect(lazadaSuggest).not.toHaveBeenCalled();
   });
 
   it('AC-2 TikTok: một leaf kèm quyền, ghi shop_category_permissions của gian hàng đó', async () => {
     const res = await get(tiktokShop, product('Giày sneaker nam vải canvas đế cao su', false));
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.items).toEqual([{ externalId: ttLeaf, path: 'Giày dép > Giày dép nam > Giày thể thao', permission: 'invite_only' }]);
+    expect(res.body.items).toEqual([
+      { externalId: ttLeaf, path: 'Giày dép > Giày dép nam > Giày thể thao', permission: 'invite_only', usedByCompany: false },
+    ]);
     const { rows } = await testPool().query(
       'select status, company_id, checked_at from channel.shop_category_permissions where shop_id = $1 and external_category_id = $2',
       [tiktokShop, ttLeaf],
@@ -155,11 +166,12 @@ describe('category-suggestions', () => {
     expect((again.rows[0].checked_at as Date).getTime()).toBeGreaterThanOrEqual(first.getTime());
   });
 
-  it('AC-3 TikTok tên dưới 25 ký tự: 422 product_name_too_short kèm min 25, không gọi sàn', async () => {
+  it('AC-3 TikTok tên dưới 25 ký tự: 200 items rỗng kèm suggestError product_name_too_short min 25, không gọi sàn', async () => {
     const res = await get(tiktokShop, product('Áo thun Oversize', true));
-    expect(res.status).toBe(422);
-    expect(res.body.type).toBe('/problems/product_name_too_short');
-    expect(res.body.min).toBe(25);
+    expect(res.status).toBe(200);
+    CategorySuggestionsView.parse(res.body);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.suggestError).toMatchObject({ code: 'product_name_too_short', min: 25 });
     expect(tiktokSuggest).not.toHaveBeenCalled();
   });
 
@@ -170,11 +182,12 @@ describe('category-suggestions', () => {
     expect(tiktokSuggest).toHaveBeenCalledTimes(2);
   });
 
-  it('sàn unavailable hai lần: 503 marketplace_unavailable, đúng hai lời gọi', async () => {
+  it('sàn unavailable hai lần: 200 items rỗng kèm suggestError marketplace_unavailable, đúng hai lời gọi', async () => {
     tiktokSuggest.mockRejectedValueOnce(new MarketplaceError('unavailable')).mockRejectedValueOnce(new MarketplaceError('unavailable'));
     const res = await get(tiktokShop, product('Giày sneaker nam vải canvas đế cao su', false));
-    expect(res.status).toBe(503);
-    expect(res.body.type).toBe('/problems/marketplace_unavailable');
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.suggestError).toMatchObject({ code: 'marketplace_unavailable' });
     expect(tiktokSuggest).toHaveBeenCalledTimes(2);
   });
 
@@ -199,5 +212,63 @@ describe('category-suggestions', () => {
     const res = await request(app).get(`/api/v1/channel/shops/${lazadaShop}/category-suggestions`).set('Authorization', `Bearer ${ceo.token}`);
     expect(res.status).toBe(422);
     expect(res.body.errors.productId).toBeDefined();
+  });
+});
+
+// Nguồn `group`, `recent`, `usedByCompany` (#448): đọc spec của công ty trên sàn, không gọi sàn cho hai nguồn này.
+describe('category-suggestions: group, recent', () => {
+  const catA = num();
+  const catB = num();
+  const catC = num();
+  const catRemoved = num();
+  const group1 = `G1-${randomUUID().slice(0, 6)}`;
+  const group2 = `G2-${randomUUID().slice(0, 6)}`;
+
+  const spec = (productId: string, externalCategoryId: string, updatedAt: string) =>
+    testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, source, version, updated_at)
+       values ($1, $2, 'lazada', $3, 'push', 1, $4)`,
+      [ceo.companyId, productId, externalCategoryId, updatedAt],
+    );
+
+  beforeAll(async () => {
+    await testPool().query(
+      `insert into channel.platform_categories (platform, external_id, name, is_leaf, path, path_search, synced_at, status)
+       values ('lazada', $1, 'A', true, 'Nhóm > A', 'nhom > a', now(), 'active'), ('lazada', $2, 'B', true, 'Nhóm > B', 'nhom > b', now(), 'active'),
+              ('lazada', $3, 'C', true, 'Khác > C', 'khac > c', now(), 'active'), ('lazada', $4, 'R', true, 'Đã bỏ', 'da bo', now(), 'removed')`,
+      [catA, catB, catC, catRemoved],
+    );
+    await activateShop(lazadaShop);
+    // 3 sản phẩm nhóm 1 ở A, 1 ở B, 1 ở category đã bỏ, 1 ở category sàn đang gợi ý (lzLeaf); sản phẩm nhóm 2 ở C.
+    for (const day of ['01', '02', '03']) await spec(product('Áo cùng nhóm', true, group1), catA, `2026-11-${day}T00:00:00Z`);
+    await spec(product('Áo cùng nhóm B', true, group1), catB, '2026-11-04T00:00:00Z');
+    await spec(product('Áo cùng nhóm đã bỏ', true, group1), catRemoved, '2026-11-05T00:00:00Z');
+    await spec(product('Áo cùng nhóm trùng gợi ý', true, group1), lzLeaf, '2026-11-06T00:00:00Z');
+    await spec(product('Áo nhóm khác', true, group2), catC, '2026-11-07T00:00:00Z');
+  });
+
+  it('group xếp theo số sản phẩm cùng nhóm, bỏ removed và category đã có trong items; recent là phần còn lại, bỏ trùng group', async () => {
+    const res = await get(lazadaShop, product('Áo thun nam cổ tròn', true, group1));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    CategorySuggestionsView.parse(res.body);
+    expect(res.body.items.map((i: { externalId: string; usedByCompany: boolean }) => [i.externalId, i.usedByCompany])).toEqual([
+      [lzLeaf, true],
+      [lzOther, false],
+    ]);
+    expect(res.body.group).toEqual([
+      { externalId: catA, path: 'Nhóm > A', productCount: 3, permission: null },
+      { externalId: catB, path: 'Nhóm > B', productCount: 1, permission: null },
+    ]);
+    expect(res.body.recent).toEqual([{ externalId: catC, path: 'Khác > C', productCount: 1, permission: null }]);
+  });
+
+  it('sản phẩm nhóm khác: group chỉ có category của nhóm đó, recent có category nhóm 1; thiếu ảnh vẫn trả group', async () => {
+    const res = await get(lazadaShop, product('Áo thun nam cổ tròn', true, group2));
+    expect(res.body.group.map((g: { externalId: string }) => g.externalId)).toEqual([catC]);
+    expect(res.body.recent.map((r: { externalId: string }) => r.externalId)).toEqual([catB, catA]);
+    // Không gọi sàn nên `items` rỗng: category trùng gợi ý (lzLeaf) không bị bỏ khỏi `group`.
+    const noImage = await get(lazadaShop, product('Áo thun nam cổ tròn', false, group1));
+    expect(noImage.body.suggestError).toMatchObject({ code: 'images_missing' });
+    expect(noImage.body.group.map((g: { externalId: string }) => g.externalId)).toEqual([catA, lzLeaf, catB]);
   });
 });
