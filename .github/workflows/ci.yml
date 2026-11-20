@@ -6,72 +6,23 @@ on:
   pull_request:
 
 jobs:
-  # Kiểm tĩnh và build image, không cần DB.
-  static:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      # Migration của PR phải đứng sau mọi migration của nhánh đích, journal và snapshot liền mạch, schema.ts khớp
-      # migration (db/CLAUDE.md). Không cần DB.
-      - name: Kiểm migration
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          if [ -n "$BASE_REF" ]; then
-            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
-            npm run db:ci-check -- --base "origin/$BASE_REF"
-          else
-            npm run db:ci-check
-          fi
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run depcruise
-      - name: Build image
-        run: docker build -f deploy/docker/Dockerfile -t commerio-backend .
-
-  # npm test chia 3 phần theo file (vitest --shard), mỗi phần một runner. Phần có test integration tự dựng container
-  # PostgreSQL riêng và chạy migration (test/integration/global-setup.ts), nên các phần không đụng nhau.
-  test:
-    name: test (phần ${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - name: npm test, phần ${{ matrix.shard }}/3
-        run: npx vitest run --shard=${{ matrix.shard }}/3
-      - name: Báo phần lỗi
-        if: failure()
-        run: echo "::error title=Test phần ${{ matrix.shard }}/3 lỗi::Xem log job test (phần ${{ matrix.shard }}/3). Chạy lại trên máy bằng npx vitest run --shard=${{ matrix.shard }}/3"
+  # static + test chia 3 phần: .github/workflows/test-suite.yml (dùng chung với deploy-staging.yml).
+  suite:
+    uses: ./.github/workflows/test-suite.yml
 
   # Giữ tên check cũ: PR xanh/đỏ ở một chỗ, đỏ khi static hoặc bất kỳ phần test nào không đạt.
   check:
-    needs: [static, test]
+    needs: suite
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Tổng hợp
         env:
-          STATIC: ${{ needs.static.result }}
-          TEST: ${{ needs.test.result }}
+          SUITE: ${{ needs.suite.result }}
         run: |
-          echo "static: $STATIC"
-          echo "test (3 phần): $TEST"
-          if [ "$STATIC" != success ] || [ "$TEST" != success ]; then
-            [ "$STATIC" != success ] && echo "::error title=static $STATIC::lint, typecheck, depcruise, db:ci-check hoặc build image không đạt"
-            [ "$TEST" != success ] && echo "::error title=test $TEST::Có phần test không đạt, xem các job test (phần n/3) màu đỏ"
+          echo "static + test (3 phần): $SUITE"
+          if [ "$SUITE" != success ]; then
+            echo "::error title=suite $SUITE::static hoặc một phần test không đạt, xem các job suite / … màu đỏ"
             exit 1
           fi
 

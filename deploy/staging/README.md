@@ -16,7 +16,7 @@ Workflow `.github/workflows/deploy-staging.yml` chạy tuần tự, job trước
 
 | Job | Việc |
 |---|---|
-| `check` | `npm run check` |
+| `check` | Gọi `.github/workflows/test-suite.yml` (cùng bộ với CI): job `static` (`db:ci-check`, lint, typecheck, depcruise) và `npm test` chia 3 phần chạy song song (`test (phần n/3)`, `vitest --shard`) |
 | `image` | Build `linux/amd64` + `linux/arm64`, đẩy `ghcr.io/da-ec-system/commerio-backend:sha-<7 ký tự>` (nhãn `org.opencontainers.image.revision` = commit) |
 | `migrate` | Từ runner: `npm run db:migrate` rồi `npm run db:seed` lên Supabase (image không có `drizzle-kit`, V36). `db:migrate` dừng, không chạy gì, nếu có migration lệch thứ tự (`db/CLAUDE.md`) |
 | `tag-develop` | Gắn tag `develop` cho image vừa build, chỉ sau khi migration xanh |
