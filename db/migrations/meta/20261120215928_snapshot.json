@@ -1,6 +1,6 @@
 {
-  "id": "65a1d4c2-f1c0-4136-be6c-e317eacb530f",
-  "prevId": "9f63c01e-221e-4d35-a671-3055b89bb14e",
+  "id": "9b200a97-7403-4240-971c-47bfadbc4e74",
+  "prevId": "deb431a7-66d7-453b-85b9-2943b1e95c7e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2228,6 +2228,209 @@
           "value": "\"channel\".\"shops\".\"status\" <> 'needs_reauth' or \"channel\".\"shops\".\"orders_pulled_ok_at\" is null"
         }
       },
+      "isRLSEnabled": false
+    },
+    "channel.spec_field_mappings": {
+      "name": "spec_field_mappings",
+      "schema": "channel",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_id": {
+          "name": "field_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "platform": {
+          "name": "platform",
+          "type": "marketplace",
+          "typeSchema": "channel",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attribute_code": {
+          "name": "attribute_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "spec_field_mappings_code_uq": {
+          "name": "spec_field_mappings_code_uq",
+          "columns": [
+            "company_id",
+            "field_id",
+            "platform",
+            "attribute_code"
+          ],
+          "nullsNotDistinct": false
+        },
+        "spec_field_mappings_priority_uq": {
+          "name": "spec_field_mappings_priority_uq",
+          "columns": [
+            "company_id",
+            "field_id",
+            "platform",
+            "priority"
+          ],
+          "nullsNotDistinct": false
+        },
+        "spec_field_mappings_attribute_uq": {
+          "name": "spec_field_mappings_attribute_uq",
+          "columns": [
+            "company_id",
+            "platform",
+            "attribute_code"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "spec_field_mappings_priority": {
+          "name": "spec_field_mappings_priority",
+          "value": "\"channel\".\"spec_field_mappings\".\"priority\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "channel.spec_option_mappings": {
+      "name": "spec_option_mappings",
+      "schema": "channel",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_id": {
+          "name": "field_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "option_id": {
+          "name": "option_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "platform": {
+          "name": "platform",
+          "type": "marketplace",
+          "typeSchema": "channel",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attribute_code": {
+          "name": "attribute_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "platform_option_id": {
+          "name": "platform_option_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "spec_option_mappings_field_fk": {
+          "name": "spec_option_mappings_field_fk",
+          "tableFrom": "spec_option_mappings",
+          "columnsFrom": [
+            "company_id",
+            "field_id",
+            "platform",
+            "attribute_code"
+          ],
+          "tableTo": "spec_field_mappings",
+          "schemaTo": "channel",
+          "columnsTo": [
+            "company_id",
+            "field_id",
+            "platform",
+            "attribute_code"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "spec_option_mappings_uq": {
+          "name": "spec_option_mappings_uq",
+          "columns": [
+            "company_id",
+            "option_id",
+            "platform",
+            "attribute_code"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "channel.webhook_events": {

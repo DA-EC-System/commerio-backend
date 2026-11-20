@@ -241,7 +241,7 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
   // Trạng thái spec theo sản phẩm (#400 §18.5), theo lô: một câu spec, mỗi category một lần đọc.
   // Mọi biến thể (kể cả lưu trữ) của sản phẩm đang hiện, cùng tập với request đẩy và `PUT` spec (review BE2 P2-6).
   const shown = new Set(variants.map((v) => v.productId));
-  const specs = await specChecks(shop, platformOf(shop.platform).adapter, catalog.filter((v) => shown.has(v.productId)));
+  const specs = await specChecks(port, shop, platformOf(shop.platform).adapter, catalog.filter((v) => shown.has(v.productId)));
   const titles = new Map(
     (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
   );
@@ -371,7 +371,7 @@ export async function pushListings(
     return {
       variants,
       prices: await port.standardPrices(ids),
-      specs: await specChecks(shop, adapter, await port.variants(undefined, { productIds })),
+      specs: await specChecks(port, shop, adapter, await port.variants(undefined, { productIds })),
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
       images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
       sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
@@ -558,10 +558,10 @@ export async function updateListingContent(
     }
     const [v] = await port.variants([row.variantId]);
     if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
-    const spec = (await specChecks(session.shop, session.adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+    const spec = (await specChecks(port, session.shop, session.adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
     const bySpec = specBlock(spec);
     if (bySpec && bySpec.code !== 'category_not_permitted') throw new AppError(409, bySpec.code, bySpec.message);
-    const map = { externalCategoryId: spec!.externalCategoryId, attributes: pushAttributes(session.adapter, spec!.attributes, spec!.row, spec!.product) };
+    const map = { externalCategoryId: spec!.externalCategoryId, attributes: pushAttributes(spec!.attributes, spec!.resolved) };
     return { ...session, row, productId: row.externalProductId, v, map, responsible: await responsibleOrgOf(session.shop.companyId) };
   });
   const update = adapter.updateContent;
@@ -634,7 +634,7 @@ export async function takeOverContent(
     if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
     const imageUrls = (await port.productImageUrls([v.productId], PUSH_IMAGE_MAX)).get(v.productId) ?? [];
     const sizeChartUrl = (await port.productSizeChartUrls?.([v.productId]))?.get(v.productId) ?? null;
-    const spec = (await specChecks(shop, platformOf(shop.platform).adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+    const spec = (await specChecks(port, shop, platformOf(shop.platform).adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
     const own = (await currentPrices([variantId], [row], await port.standardPrices([variantId]))).get(variantId)!;
     const block = pushBlock(v, own.price === null ? null : new Decimal(own.price), spec, imageUrls.length > 0, Boolean(sizeChartUrl));
     if (block) throw new AppError(409, block.code, block.message, current);

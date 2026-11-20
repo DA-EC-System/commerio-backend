@@ -546,6 +546,57 @@ export const axisMappings = channelSchema.table(
   ],
 );
 
+/**
+ * Ánh xạ một thông số của công ty (`catalog.spec_fields`, uuid thường) sang attribute của một sàn (#509, Documents/19 mục
+ * 3.3, 21 §18.8.1). Một thông số có thể ứng với nhiều mã trên cùng sàn (mã đổi theo category): lúc đẩy lấy mã có `priority`
+ * nhỏ nhất mà leaf có; một mã của sàn chỉ nhận từ một thông số. Gợi ý ánh xạ tính lúc đọc, không lưu (§18.8.1). RLS.
+ */
+export const specFieldMappings = channelSchema.table(
+  'spec_field_mappings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    fieldId: uuid('field_id').notNull(),
+    platform: marketplace('platform').notNull(),
+    /** Mã attribute của sàn: TikTok `attribute_id`, Lazada `name`. */
+    attributeCode: text('attribute_code').notNull(),
+    priority: integer('priority').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    unique('spec_field_mappings_code_uq').on(t.companyId, t.fieldId, t.platform, t.attributeCode),
+    unique('spec_field_mappings_priority_uq').on(t.companyId, t.fieldId, t.platform, t.priority),
+    unique('spec_field_mappings_attribute_uq').on(t.companyId, t.platform, t.attributeCode),
+    check('spec_field_mappings_priority', sql`${t.priority} >= 1`),
+  ],
+);
+
+/**
+ * Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). Khoá ngoại ghép về
+ * `spec_field_mappings` `ON DELETE CASCADE`: bỏ mã của thông số thì bỏ luôn ánh xạ lựa chọn của mã đó. RLS.
+ */
+export const specOptionMappings = channelSchema.table(
+  'spec_option_mappings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    fieldId: uuid('field_id').notNull(),
+    optionId: uuid('option_id').notNull(),
+    platform: marketplace('platform').notNull(),
+    attributeCode: text('attribute_code').notNull(),
+    platformOptionId: text('platform_option_id').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    unique('spec_option_mappings_uq').on(t.companyId, t.optionId, t.platform, t.attributeCode),
+    foreignKey({
+      name: 'spec_option_mappings_field_fk',
+      columns: [t.companyId, t.fieldId, t.platform, t.attributeCode],
+      foreignColumns: [specFieldMappings.companyId, specFieldMappings.fieldId, specFieldMappings.platform, specFieldMappings.attributeCode],
+    }).onDelete('cascade'),
+  ],
+);
+
 export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated' | 'cost';
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
 

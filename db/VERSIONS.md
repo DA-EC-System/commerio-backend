@@ -3,27 +3,40 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V128**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V130**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V128 · 21/11/2026 · ghep-truc-du-lieu
+## V130 · 21/11/2026 · ghep-truc-du-lieu
 
-`db/migrations/20261120214202_ghep-truc-du-lieu.sql` · viết tay
+`db/migrations/20261120215928_ghep-truc-du-lieu.sql` · viết tay
 
 - viết tay: dữ liệu
 - Ghép trục theo platform_kind cho spec có sẵn (#448, chỉ dữ liệu, chạy lại được): trục `__custom` của channel.product_specs đổi sang mã sales attribute chuẩn đầu tiên (theo attributes.platform_kind) mà leaf của spec có (kind = 'sales'), mỗi…
 
-## V127 · 21/11/2026 · anh-xa-truc-rls
+## V129 · 21/11/2026 · anh-xa-truc-rls
 
-`db/migrations/20261120214159_anh-xa-truc-rls.sql` · viết tay
+`db/migrations/20261120215924_anh-xa-truc-rls.sql` · viết tay
 
 - viết tay: RLS
 - Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/19 §3.3): RLS company_isolation cho channel.axis_mappings (vòng lặp của 0002 chỉ chạy một lần).
 
-## V126 · 21/11/2026 · anh-xa-truc
+## V128 · 21/11/2026 · anh-xa-truc
 
-`db/migrations/20261120214156_anh-xa-truc.sql` · sinh từ schema
+`db/migrations/20261120215920_anh-xa-truc.sql` · sinh từ schema
 
 - + bảng `channel.axis_mappings`
+
+## V127 · 21/11/2026 · anh-xa-thong-so-rls
+
+`db/migrations/20261120214154_anh-xa-thong-so-rls.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Ánh xạ thông số sang sàn (#509, Documents/19 §3.3).
+
+## V126 · 21/11/2026 · anh-xa-thong-so-san
+
+`db/migrations/20261120214152_anh-xa-thong-so-san.sql` · sinh từ schema
+
+- + 2 bảng `channel`: spec_field_mappings, spec_option_mappings
 
 ## V125 · 21/11/2026 · thong-so-du-lieu
 

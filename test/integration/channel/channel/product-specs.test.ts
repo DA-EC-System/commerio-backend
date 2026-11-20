@@ -73,7 +73,7 @@ describe('spec sàn của sản phẩm', () => {
   it('chưa có spec: spec null, missing rỗng', async () => {
     const res = await get();
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ spec: null, missing: [], remote: null, suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null });
+    expect(res.body).toEqual({ spec: null, resolved: {}, missing: [], remote: null, suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null });
   });
 
   it('AC-7: thiếu attribute bắt buộc 422 theo ô; lần đầu tự lấy attribute leaf (A16); đọc lại vẫn rỗng', async () => {
@@ -96,12 +96,12 @@ describe('spec sàn của sản phẩm', () => {
     expect(notLeaf.body.errors.externalCategoryId).toBeDefined();
   });
 
-  it('AC-6, AC-9, AC-S4: lưu theo nhãn tiếng Anh thành mã lựa chọn, bỏ tier product, đọc lại đúng; ghi nhật ký; không gọi sàn lần hai', async () => {
+  it('AC-6, AC-9, AC-S4: lưu theo nhãn tiếng Anh thành mã lựa chọn, thương hiệu khác catalog là ghi đè (E179), đọc lại đúng; ghi nhật ký; không gọi sàn lần hai', async () => {
     const res = await put({ externalCategoryId: leaf, attributes: { material: 'cotton en', brand: 'X' }, version: null });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     ProductSpecView.parse(res.body);
-    expect(res.body.spec).toMatchObject({ externalCategoryId: leaf, attributes: { material: '11' }, version: 1, source: 'push', categoryPath: 'Áo > Áo thun' });
-    expect(res.body.spec.attributes.brand).toBeUndefined();
+    expect(res.body.spec).toMatchObject({ externalCategoryId: leaf, attributes: { material: '11', brand: 'X' }, version: 1, source: 'push', categoryPath: 'Áo > Áo thun' });
+    expect(res.body.resolved.brand).toEqual({ value: 'X', source: 'override', fieldId: null });
     expect(res.body.missing).toEqual([]);
     expect(attrCalls).toBe(1);
     expect((await get()).body.spec.version).toBe(1);

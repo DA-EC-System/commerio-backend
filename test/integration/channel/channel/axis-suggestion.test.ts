@@ -123,7 +123,7 @@ describe('gợi ý ghép trục', () => {
   it('chưa có leaf: ba trường null', async () => {
     const res = await get('lazada');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ spec: null, missing: [], remote: null, suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null });
+    expect(res.body).toEqual({ spec: null, resolved: {}, missing: [], remote: null, suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null });
   });
 
   it('Lazada ?categoryId: Màu → color_family, Kích cỡ → size, giá trị Đỏ → 10; caps không nhận tên tự đặt', async () => {

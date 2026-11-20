@@ -204,11 +204,8 @@ export interface SpecMissingInput {
   attributes: readonly PlatformAttribute[] | null;
   /** Trục phân loại của sản phẩm (attributeId, tên trục). */
   axes: readonly { attributeId: string; name: string }[];
-  /**
-   * Giá trị lúc đẩy sẽ tự điền khi spec không có: hồ sơ công ty (`tier = 'company'`), xuất xứ, thương hiệu của catalog
-   * (`tier = 'product'`; Lazada `brand` trống thì "No Brand"). Có giá trị dự phòng thì attribute không tính là thiếu.
-   */
-  fallbacks?: Readonly<Record<string, string | null | undefined>>;
+  /** Giá trị đã tính từ mọi nguồn (`resolved`, #509): có giá trị thì attribute không tính là thiếu. */
+  fallbacks?: Readonly<Record<string, SpecAttributeValue | null | undefined>>;
   /** Khả năng khai biến thể của category (#448); không có (null) thì không xét `sales_required`, `axis_shape`, `__custom` luôn hợp lệ. */
   caps?: VariantCapabilities | null;
 }

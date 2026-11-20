@@ -12,6 +12,7 @@ import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/pla
 import { applyCategory } from '../service/category-apply.ts';
 import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { listAxisMappings, putAxisMapping } from '../service/axis-mappings.ts';
+import { attributeCatalog, listSpecMappings, putSpecMapping } from '../service/spec-mappings.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
@@ -71,6 +72,9 @@ import {
   ManualPriceBody,
   ManualPriceParams,
   PendingPricesQuery,
+  AttributeCatalogQuery,
+  SpecMappingBody,
+  SpecMappingParams,
 } from './schemas.ts';
 
 /** 201 khi lần nối có gian hàng tạo mới, kể cả không phải phần tử đầu; 200 khi chỉ nối lại (Documents/21 §18.4). */
@@ -299,6 +303,36 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
       const { version } = validated<typeof ApplyCategoryBody>(res, 'body');
       res.status(202).json(await applyCategory(productPort(ctx), actor(res), productId, platform, version, () => mapping.isCeo(actor(res))));
+    },
+  );
+
+  // Ánh xạ thông số sang sàn (#509, 21 §18.8.1): cấu hình sản phẩm của công ty, quyền như mẫu nhóm.
+  router.get(
+    '/platforms/:platform/spec-mappings',
+    ctx.authorize('catalog.product.view'),
+    validate({ params: PlatformParams }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      res.json(await listSpecMappings(ctx, actor(res).companyId, platform));
+    },
+  );
+  router.put(
+    '/platforms/:platform/spec-mappings/:fieldId',
+    ctx.authorize('catalog.group.manage'),
+    validate({ params: SpecMappingParams, body: SpecMappingBody }),
+    async (_req, res) => {
+      const { platform, fieldId } = validated<typeof SpecMappingParams>(res, 'params');
+      res.json(await putSpecMapping(ctx, actor(res), platform, fieldId, validated<typeof SpecMappingBody>(res, 'body')));
+    },
+  );
+  router.get(
+    '/platforms/:platform/attribute-catalog',
+    ctx.authorize('catalog.product.view'),
+    validate({ params: PlatformParams, query: AttributeCatalogQuery }),
+    async (_req, res) => {
+      const { platform } = validated<typeof PlatformParams>(res, 'params');
+      const { search, kind } = validated<typeof AttributeCatalogQuery>(res, 'query');
+      res.json(await withCompany(actor(res).companyId, () => attributeCatalog(platform, search, kind)));
     },
   );
 

@@ -22,6 +22,13 @@ import {
   ProductSpecParams,
   ProductSpecQuery,
   ProductSpecView,
+  AttributeCatalogList,
+  AttributeCatalogQuery,
+  PlatformParams,
+  SpecMappingBody,
+  SpecMappingList,
+  SpecMappingParams,
+  SpecMappingSchema,
   PlatformCategoriesQuery,
   PlatformCategoryPage,
   PlatformLeafDetail,
@@ -60,7 +67,6 @@ import {
   ShopDeleteConflict,
   ShopDeleteResult,
   UpdateShopBody,
-  PlatformParams,
   Shop,
   ShopCallbackResult,
   ShopDetail,
@@ -346,7 +352,8 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/products/:productId/specs/:platform',
     summary: 'Thông tin sàn của sản phẩm (category, attribute, ánh xạ trục) (#400)',
-    description: 'Cần `channel.shop.view`. `missing` tính theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `missing: []`. `suggestedAxisMap`, `suggestedValueMap`, `variantCapabilities` (#448) tính cho leaf `?categoryId` (chưa lưu) hoặc leaf của spec; null khi không có leaf hay chưa có attribute của leaf.',
+    description:
+      'Cần `channel.shop.view`. `resolved`: giá trị từng attribute theo thứ tự ghi đè > thông số catalog qua ánh xạ > hồ sơ công ty > mặc định sàn (#509). `missing` tính trên `resolved` theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `resolved: {}`, `missing: []`. `suggestedAxisMap`, `suggestedValueMap`, `variantCapabilities` (#448) tính cho leaf `?categoryId` (chưa lưu) hoặc leaf của spec; null khi không có leaf hay chưa có attribute của leaf.',
     security: bearer,
     request: { params: ProductSpecParams, query: ProductSpecQuery },
     responses: {
@@ -361,7 +368,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/specs/:platform',
     summary: 'Lưu thông tin sàn của sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Attribute của leaf chưa có hoặc quá 7 ngày thì lấy từ sàn trước khi kiểm (TikTok bằng gian hàng `active` đầu tiên). Chỉ lưu `tier = category`; `company` trống hoặc trùng mặc định không lưu; `product` bỏ qua. Ghi nhật ký.',
+      'Cần `channel.listing.manage`. Attribute của leaf chưa có hoặc quá 7 ngày thì lấy từ sàn trước khi kiểm (TikTok bằng gian hàng `active` đầu tiên). `attributes` là toàn bộ tập ghi đè (#509): khoá không gửi hoặc rỗng là không ghi đè; giá trị trùng giá trị catalog, hồ sơ công ty, mặc định sàn thì không lưu; ghi đè được mọi attribute không phải sales, kể cả thương hiệu, xuất xứ. Bắt buộc kiểm trên giá trị sau khi áp ghi đè. Ghi nhật ký.',
     security: bearer,
     request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ProductSpecBody } } } },
     responses: {
@@ -400,6 +407,43 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`: không phải thuộc tính của công ty'),
       422: problemResponse('`validation_failed` kèm `errors["codes.<i>.attributeCode"]` (trùng, không phải sales attribute đã gặp); `marketplace_unsupported`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/spec-mappings',
+    summary: 'Ánh xạ thông số của công ty sang attribute của sàn (#509)',
+    description: 'Cần `catalog.product.view`. Mỗi thông số một dòng; `codes` đã lưu theo `priority`; `suggestions` tính lúc đọc, không lưu. Không gọi sàn.',
+    security: bearer,
+    request: { params: PlatformParams },
+    responses: { 200: { description: 'Ánh xạ', ...json(SpecMappingList) }, ...auth, 422: problemResponse('`marketplace_unsupported`') },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/platforms/:platform/spec-mappings/:fieldId',
+    summary: 'Thay tập mã ánh xạ của một thông số trên một sàn (#509)',
+    description:
+      'Cần `catalog.group.manage`. Thứ tự mảng là `priority`, `[]` là bỏ. Bỏ một mã thì bỏ luôn ánh xạ lựa chọn của mã đó. Mã phải là attribute property đã gặp ở leaf nào đó của sàn; mỗi mã của sàn chỉ ánh xạ cho một thông số. Ghi nhật ký.',
+    security: bearer,
+    request: { params: SpecMappingParams, body: { content: { 'application/json': { schema: SpecMappingBody } } } },
+    responses: {
+      200: { description: 'Ánh xạ sau khi lưu', ...json(SpecMappingSchema) },
+      ...auth,
+      404: problemResponse('`not_found`: thông số không có hoặc của công ty khác'),
+      422: problemResponse('`validation_failed` kèm `errors["codes.<i>.attributeCode"]`, `errors["codes.<i>.options.<j>"]`; `marketplace_unsupported`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/attribute-catalog',
+    summary: 'Tìm attribute đã gặp của sàn để ánh xạ (#509)',
+    description: 'Cần `catalog.product.view`. Gộp theo mã các attribute ở mọi leaf đã lấy (lựa chọn gộp, bỏ trùng), tối đa 50. Đọc DB, không gọi sàn.',
+    security: bearer,
+    request: { params: PlatformParams, query: AttributeCatalogQuery },
+    responses: {
+      200: { description: 'Attribute', ...json(AttributeCatalogList) },
+      ...auth,
+      422: problemResponse('`validation_failed` (`errors.search`); `marketplace_unsupported`'),
     },
   });
   registry.registerPath({

@@ -1,5 +1,6 @@
 // Adapter Lazada Open Platform (Documents/tich-hop-san/lazada.md §2, §3, §7.1). Cách ký chép từ scripts/smoke/lazada.ts.
 import { createHmac } from 'node:crypto';
+import { LAZADA_SPEC_MAPPINGS } from './lazada-spec-mappings.ts';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CascadeLevel,
@@ -1106,6 +1107,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     categoriesNeedToken: false,
     productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
     defaultBrand: DEFAULT_BRAND,
+    defaultSpecMappings: LAZADA_SPEC_MAPPINGS,
     async categoryTree(accessToken) {
       const params = { ...(accessToken && { access_token: accessToken }), language_code: 'vi_VN' };
       return lazadaCategoryNodes((await call(config.apiUrl, '/category/tree/get', params, 'GET')).data);
