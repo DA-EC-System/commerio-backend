@@ -109,6 +109,8 @@ export interface ListingRowView extends ListingPrice {
   listing: ChannelListing | null;
   /** Tên trên sàn khác tên lúc ghép (#396, 21 §18.3); tính từ bản sao SKU sàn lúc đọc. */
   remoteTitleChanged: RemoteTitleChanged | null;
+  /** Category của listing trên sàn (#467), null khi chưa có listing hay chưa biết category. */
+  externalCategoryId: string | null;
   /** Đường dẫn của `externalCategoryId` của listing trong cây đã đồng bộ (#467); null khi chưa có category hay chưa có trong cây. */
   externalCategoryPath: string | null;
   /** Bằng `listing.categoryChange` (21 §18.5 ghi trên cả `ListingRow`), null khi chưa có listing. */
@@ -225,6 +227,7 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         ...price,
         listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
         remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
+        externalCategoryId: listing?.externalCategoryId ?? null,
         externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
         categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
       };

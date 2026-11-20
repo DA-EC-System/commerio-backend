@@ -547,6 +547,9 @@ export const ListingRow = z
     feeWarning: z.enum(['over_50']).nullable().meta({ description: 'Tổng phí và thuế của gian hàng trên 50%' }),
     listing: ChannelListing.nullable(),
     remoteTitleChanged: RemoteTitleChanged,
+    externalCategoryId: z.string().nullable().meta({
+      description: 'Category của listing trên sàn (`listings.external_category_id`, 21 §18.5, commerio-backend#467); null khi chưa có listing hoặc chưa biết category',
+    }),
     externalCategoryPath: z.string().nullable().meta({
       description:
         'Đường dẫn của `externalCategoryId` của listing trong cây category đã đồng bộ (21 §18.5, commerio-backend#467); null khi chưa có listing, listing chưa có category hoặc category chưa có trong cây',

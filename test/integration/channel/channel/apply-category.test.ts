@@ -498,7 +498,8 @@ describe('pathIds, externalCategoryPath (#467)', () => {
     const res = await auth(app().get(`/api/v1/channel/shops/${shops.b}/listings`));
     expect(res.status).toBe(200);
     const rows = res.body.items as { variantId: string; externalCategoryPath: string | null; categoryChange: unknown; listing: { categoryChange: unknown } }[];
-    expect(rows.find((r) => r.variantId === v1.id)).toMatchObject({ externalCategoryPath: 'Thời trang > Áo cũ', categoryChange: null, listing: { categoryChange: null } });
-    expect(rows.find((r) => r.variantId === v2.id)?.externalCategoryPath).toBeNull();
+    expect(rows.find((r) => r.variantId === v1.id)).toMatchObject({ externalCategoryId: OLD, externalCategoryPath: 'Thời trang > Áo cũ', categoryChange: null, listing: { categoryChange: null } });
+    expect(rows.find((r) => r.variantId === v2.id)).toMatchObject({ externalCategoryPath: null });
+    expect((rows.find((r) => r.variantId === v2.id) as { externalCategoryId?: string }).externalCategoryId).toBeTruthy();
   });
 });
