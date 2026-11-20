@@ -388,7 +388,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
             seller_sku: p.sellerSku,
             price: { amount: p.price, currency: CURRENCY },
             // docv2 ghi `quantity` khoảng [1, 99999]: tồn 0 thì bỏ `quantity`, chỉ gán kho.
-            inventory: [{ warehouse_id: warehouseId, ...(p.quantity > 0 && { quantity: p.quantity }) }],
+            inventory: [{ warehouse_id: warehouseId, ...(p.quantity !== undefined && p.quantity > 0 && { quantity: p.quantity }) }],
           },
         ],
       };

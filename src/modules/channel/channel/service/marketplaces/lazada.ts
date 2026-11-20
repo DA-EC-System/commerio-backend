@@ -846,7 +846,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
 
   /** SKU của `/product/create`, `/product/update`: tiền chuỗi, gam → kg, mm → cm. */
   const skuPayload = (p: NewProduct) => ({
-    quantity: String(p.quantity),
+    ...(p.quantity !== undefined && { quantity: String(p.quantity) }),
     price: p.price,
     package_weight: String(p.weightG / 1000),
     package_length: String(p.lengthMm / 10),

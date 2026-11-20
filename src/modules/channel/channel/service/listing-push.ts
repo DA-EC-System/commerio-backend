@@ -23,7 +23,7 @@ import { lastPermissionCheck, upsertPermissions } from '../repository/product-sp
 import { findShopRow, type ShopRow } from '../repository/shops.ts';
 import { updateListing } from './listing-writes.ts';
 import { currentPrices } from './listing-prices.ts';
-import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
+import { activateOnMarketplace, countedOf, remoteSkuOf, type Session } from './listing-sync.ts';
 import { moveListing, pushFailureOf } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
@@ -102,15 +102,18 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       quantity: (await port.availableOf([variantId])).get(variantId) ?? 0,
       // SKU chưa tin được (#223, 21 §18.6.6): sàn bắt buộc có số lượng nên gửi 0, listing chờ đẩy tồn tới khi lấy đơn xong.
       untrusted: (await untrustedVariants()).has(variantId),
+      // SKU chưa có số tồn (#460): tạo mới gửi 0 (sàn chưa có gì để đè), đẩy lại sản phẩm đã có thì không gửi tồn.
+      counted: (await countedOf(port, [variantId])).has(variantId),
       responsible: await responsibleOrgOf(shop.companyId),
     };
   });
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
-  const { v, map, price, untrusted, responsible, shopPrice, belowFloor } = data;
+  const { v, map, price, untrusted, counted, responsible, shopPrice, belowFloor } = data;
   if (belowFloor) {
     return finish(job, row, 'fail', { pushError: errorOf('below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất') });
   }
-  const quantity = untrusted ? 0 : data.quantity;
+  const holdStock = untrusted || !counted;
+  const quantity = holdStock ? 0 : data.quantity;
   const sizeChartRule = map && !keepContent ? await sizeChartRuleOf(adapter, accessToken, map) : null;
   const block = pushBlock(
     v,
@@ -156,8 +159,12 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     // Mốc lần gọi tạo gần nhất (#399): ghi đè mỗi lần, commit trước khi gọi sàn để lần thử sau thấy mốc dù lần gọi này lỗi hay ném.
     // `row` giữ giá trị của lần gọi trước.
     if (!reshelve) await inCompany(() => markCreateAttempted(row.id));
+    // Đẩy lại sản phẩm đã có trên sàn (#460, 25 §6.4): SKU chưa có số hay chưa tin được thì không gửi tồn, giữ số trên sàn;
+    // đẩy lại luôn để `stockSync = pending`, lượt đẩy tồn áp luật của `pushDue`.
+    const update: NewProduct = { ...product };
+    if (holdStock) delete update.quantity;
     let result = reshelve
-      ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, product)) }
+      ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, update)) }
       : await adapter.createProduct(accessToken, product);
     // Sàn đã có SKU cùng SellerSku (#346, Documents/21 §18.6.4): SKU đó thuộc listing khác thì không ghi đè; không thì ghi
     // nội dung, giá của app lên như đẩy lại.
@@ -189,7 +196,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
         });
       }
       if (adapter.updateProduct) {
-        result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, product)) };
+        result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, update)) };
         rewritten = true;
       }
     }

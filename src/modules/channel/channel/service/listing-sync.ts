@@ -671,7 +671,7 @@ async function pushDue(
 export const STOCK_NOT_COUNTED = 'stock_not_counted';
 
 /** SKU có số trong kho; cổng giả của test không có `countedOf` thì coi mọi SKU đã có số. */
-async function countedOf(port: ProductPort, ids: readonly string[]): Promise<Set<string>> {
+export async function countedOf(port: ProductPort, ids: readonly string[]): Promise<Set<string>> {
   return port.countedOf ? port.countedOf(ids) : new Set(ids);
 }
 
