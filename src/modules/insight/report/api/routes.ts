@@ -35,11 +35,12 @@ function viewerOf(res: Response): reports.Viewer {
   return { companyId: getAuth(res).companyId!, canCost: getAccess(res).permissions.includes('inventory.cost.view') };
 }
 
-/** Route của module `report`, gắn tại /api/v1/report (Documents/21 §12.7). */
+/** Route của module `report`, gắn tại /api/v1/report (Documents/21 §21.5). */
 export function reportRouter(ctx: ModuleContext): Router {
   const router = Router();
-  // `report.dashboard.view` đứng đầu: phân hệ Report tắt thì 403 `module_disabled` trước `forbidden`.
-  const view = [ctx.authorize('report.dashboard.view'), ctx.authorize('finance.invoice.view')];
+  // Chỉ `report.dashboard.view` (Documents/21 D18, §21.5; #333 bỏ `finance.invoice.view` để Admin xem doanh thu).
+  // Phân hệ Report tắt thì 403 `module_disabled`. Giá vốn, lãi khoá riêng bằng `inventory.cost.view` (`viewerOf`).
+  const view = [ctx.authorize('report.dashboard.view')];
 
   router.get('/overview', ...view, validate({ query: RangeQuery }), async (_req, res) => {
     const range = rangeOf(res);
@@ -89,7 +90,7 @@ export function reportRouter(ctx: ModuleContext): Router {
     }
     res
       .type('text/csv; charset=utf-8')
-      // Tên tệp trong ngoặc kép đúng như §12.7 (`attachment()` của Express bỏ ngoặc kép với tên ASCII).
+      // Tên tệp trong ngoặc kép đúng như hợp đồng cũ §12.7 (`attachment()` của Express bỏ ngoặc kép với tên ASCII).
       .set('Content-Disposition', `attachment; filename="bao-cao-${report}-${range.from}-${range.to}.csv"`)
       .send(csv);
   });
