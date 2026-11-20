@@ -1,6 +1,8 @@
 // Thông số sản phẩm (#510, Documents/21 mục 5.5): thư viện thông số, mẫu nhóm, giá trị thông số của sản phẩm, độ hoàn
 // thiện `specs`, cổng getProductSpecs / getVariants.platformKind, cô lập công ty.
-import { beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { setHeadObject } from '#src/modules/core/files/service/storage.ts';
 import { GroupTemplate, ProductDetail, SpecField } from '#src/modules/product/catalog/api/schemas.ts';
 import { getProductSpecs, getSpecFields, getVariants } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -252,5 +254,79 @@ describe('thông số của sản phẩm (#510)', () => {
     problem(await api(token).get(`/groups/${otherGroup.id}/template`), 404, 'not_found');
     const rows = await testPool().query('select count(*)::int as n from product.product_spec_values where company_id = $1 and field_id = $2', [companyId, theirs.id]);
     expect(rows.rows[0].n).toBe(0);
+  });
+});
+
+async function fileRow(owner: string, purpose: 'product_image' | 'attachment' = 'product_image') {
+  const id = randomUUID();
+  await testPool().query(
+    `insert into core.files (id, company_id, storage_key, file_name, content_type, size_bytes, purpose, uploaded_at)
+     values ($1, $2, $3, 'anh.png', 'image/png', 2048, $4, now())`,
+    [id, owner, `test/${id}.png`, purpose],
+  );
+  return id;
+}
+
+describe('POST /catalog/products: ảnh phân loại, giá và số đo lúc tạo (#510, Documents/21 mục 5.5)', () => {
+  beforeAll(() => setHeadObject(async () => null));
+  afterAll(() => setHeadObject(null));
+
+  it('imageAxis + imageFileId gắn ảnh cho giá trị mới tạo (một phần giá trị); giá, cân nặng, kích thước lưu theo SKU', async () => {
+    const group = await groupNamed('Khác');
+    const fileId = await fileRow(companyId);
+    const res = await api(token).post('/products', {
+      name: uniq('Ly'),
+      groupId: group.id,
+      axes: [{ name: uniq('Màu ly').slice(0, 15), values: [{ value: 'Đỏ', imageFileId: fileId }, { value: 'Lam' }] }],
+      imageAxis: 0,
+      variants: [
+        { options: ['Đỏ'], standardPrice: 120000, targetNetPrice: 90000, weightG: 250, lengthMm: 100, widthMm: 80, heightMm: 120 },
+        { options: ['Lam'] },
+      ],
+    });
+    ok(res, 201);
+    const d = ProductDetail.parse(res.body);
+    const red = d.variants.find((v) => v.attributes[0]!.value === 'Đỏ')!;
+    expect(d.imageAttributeId).toBe(red.attributes[0]!.attributeId);
+    expect(d.attributeValueImages).toEqual([{ attributeValueId: red.attributes[0]!.valueId, fileId, url: expect.any(String) }]);
+    expect(red).toMatchObject({ standardPrice: 120000, targetNetPrice: 90000, weightG: 250, lengthMm: 100, widthMm: 80, heightMm: 120 });
+    expect(d.variants.find((v) => v !== red)).toMatchObject({ standardPrice: null, weightG: null });
+  });
+
+  it('imageFileId ở trục không phải imageAxis, imageAxis ngoài số trục → 422 đúng ô; tệp không phải ảnh sản phẩm → 422 ở giá trị', async () => {
+    const group = await groupNamed('Khác');
+    const fileId = await fileRow(companyId);
+    const noAxis = await api(token).post('/products', {
+      name: uniq('Ly'),
+      groupId: group.id,
+      axes: [{ name: 'Màu', values: [{ value: 'Đỏ', imageFileId: fileId }] }],
+      variants: [{ options: ['Đỏ'] }],
+    });
+    problem(noAxis, 422, 'validation_failed');
+    expect(noAxis.body.errors).toHaveProperty(['axes.0.values.0.imageFileId']);
+    const outside = await api(token).post('/products', {
+      name: uniq('Ly'),
+      groupId: group.id,
+      axes: [{ name: 'Màu', values: [{ value: 'Đỏ' }] }],
+      imageAxis: 1,
+      variants: [{ options: ['Đỏ'] }],
+    });
+    problem(outside, 422, 'validation_failed');
+    expect(outside.body.errors).toHaveProperty('imageAxis');
+    const attachment = await fileRow(companyId, 'attachment');
+    const wrongFile = await api(token).post('/products', {
+      name: uniq('Ly'),
+      groupId: group.id,
+      axes: [{ name: 'Màu', values: [{ value: 'Đỏ' }, { value: 'Lam', imageFileId: attachment }] }],
+      imageAxis: 0,
+      variants: [{ options: ['Đỏ'] }, { options: ['Lam'] }],
+    });
+    problem(wrongFile, 422, 'validation_failed');
+    expect(wrongFile.body.errors).toHaveProperty(['axes.0.values.1.imageFileId']);
+    problem(
+      await api(token).post('/products', { name: uniq('Ly'), groupId: group.id, axes: [], variants: [{ options: [], weightG: 0 }] }),
+      422,
+      'validation_failed',
+    );
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../helpers/db.ts';
 
-/** Bảng của từng schema module lớn (Documents/19 mục 3, 79 bảng). Thêm bảng thì thêm vào đây. */
+/** Bảng của từng schema module lớn (Documents/19 mục 3; #510 thêm 4 bảng thông số ở `product`). Thêm bảng thì thêm vào đây. */
 const EXPECTED_TABLES: Record<string, readonly string[]> = {
   core: [
     'accounts',
@@ -29,13 +29,17 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'doc_counters',
     'goods_receipt_lines',
     'goods_receipts',
+    'group_spec_fields',
     'product_attribute_value_images',
     'product_groups',
     'product_images',
+    'product_spec_values',
     'product_variants',
     'products',
     'purchase_request_lines',
     'purchase_requests',
+    'spec_field_options',
+    'spec_fields',
     'stock_document_lines',
     'stock_documents',
     'stock_levels',
@@ -98,6 +102,8 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'shop_category_permissions',
     'shop_reauth_mails',
     'shops',
+    'spec_field_mappings',
+    'spec_option_mappings',
     'tags',
     'webhook_events',
   ],

@@ -18,7 +18,7 @@ import {
   setSizeChart,
   updateProductIfVersion,
 } from '../repository/products.ts';
-import { deleteVariantImages, variantImageRows } from '../repository/variant-images.ts';
+import { deleteVariantImages, upsertVariantImage, variantImageRows } from '../repository/variant-images.ts';
 import { findVariants, insertVariant, lockProductVariants, lockVariants, type VariantRow } from '../repository/variants.ts';
 import {
   auditOf,
@@ -51,8 +51,10 @@ export interface CreateProductInput {
   sizeChartFileId?: string | null | undefined;
   /** Trục phân loại (tối đa 2, đã kiểm hình dạng ở Zod); thuộc tính, giá trị mới tạo cùng giao dịch. */
   axes: AxisInput[];
-  /** `options[i]` là một giá trị của `axes[i]` (so `lower(trim)`). */
-  variants: { options: string[] }[];
+  /** `options[i]` là một giá trị của `axes[i]` (so `lower(trim)`); giá, số đo điền ngay lúc tạo (#510). */
+  variants: ({ options: string[] } & Partial<Record<VariantFact, number | null | undefined>>)[];
+  /** Chỉ số trục gắn ảnh; ảnh phân loại ở `axes[imageAxis].values[].imageFileId` (#510, đã kiểm hình dạng ở Zod). */
+  imageAxis?: 0 | 1 | undefined;
   /** Thông số (#510, Documents/21 mục 5.5); thiếu thông số bắt buộc không chặn lưu. */
   specs?: SpecValueInput[] | undefined;
   /** Xuất xứ, thương hiệu điền ngay lúc tạo (#510). */
@@ -120,7 +122,7 @@ export function toVariantView(
   return {
     id: v.id,
     sku: v.sku,
-    attributes: v.attributes.map(({ code: _, ...a }) => a),
+    attributes: v.attributes.map(({ code: _, platformKind: __, ...a }) => a),
     archivedAt: v.archivedAt?.toISOString() ?? null,
     businessStatus: v.businessStatus,
     standardPrice: toDong(standardPrice),
@@ -257,10 +259,26 @@ export async function getProduct(
  * Ảnh (#303): `confirmUploads` hỏi kho **trước** giao dịch (gọi mạng); trong giao dịch `fileProblem` kiểm tệp của công
  * ty, đúng `product_image`, đã PUT xong. Số ảnh, ảnh lặp đã kiểm ở Zod.
  */
+type VariantFact = 'standardPrice' | 'targetNetPrice' | 'weightG' | 'lengthMm' | 'widthMm' | 'heightMm';
+
+/** Giá, số đo của một biến thể lúc tạo: giá là cột `numeric` (chuỗi), số đo là `integer`; bỏ trường hay `null` là trống. */
+function variantFacts(v: CreateProductInput['variants'][number]) {
+  const out: Parameters<typeof insertVariant>[6] = {};
+  if (v.standardPrice != null) out.standardPrice = String(v.standardPrice);
+  if (v.targetNetPrice != null) out.targetNetPrice = String(v.targetNetPrice);
+  for (const k of ['weightG', 'lengthMm', 'widthMm', 'heightMm'] as const) if (v[k] != null) out[k] = v[k];
+  return out;
+}
+
 export async function createProduct(ctx: CatalogContext, caller: Caller, input: CreateProductInput) {
   const imageIds = input.imageFileIds ?? [];
   const sizeChartId = input.sizeChartFileId ?? null;
-  await confirmUploads(caller.companyId, sizeChartId ? [...imageIds, sizeChartId] : imageIds);
+  // Ảnh phân loại theo vị trí trục, giá trị (giá trị có thể mới tạo trong cùng request nên chưa có id; #510).
+  const valueImages =
+    input.imageAxis === undefined
+      ? []
+      : input.axes[input.imageAxis]!.values.flatMap((v, j) => (v.imageFileId === undefined ? [] : [{ j, value: v.value, fileId: v.imageFileId }]));
+  await confirmUploads(caller.companyId, [...imageIds, ...(sizeChartId ? [sizeChartId] : []), ...valueImages.map((v) => v.fileId)]);
   return withCompany(caller.companyId, async () => {
     await lockVariants(caller.companyId);
     // Khoá ngoại kiểm bằng quyền chủ bảng, bỏ qua RLS: đọc nhóm, thuộc tính, giá trị dưới công ty mình trước khi ghi.
@@ -273,6 +291,10 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     if (!group) errors.groupId = 'Chọn nhóm hàng';
     if (imageError) errors.images = imageError;
     if (sizeChartError) errors.sizeChart = sizeChartError;
+    for (const v of valueImages) {
+      const problem = await fileProblem([v.fileId], 'product_image', 1);
+      if (problem) errors[`axes.${input.imageAxis}.values.${v.j}.imageFileId`] = problem;
+    }
     if (Object.keys(errors).length) throw invalid(errors);
     if (await productNameExists(input.name)) throw taken();
 
@@ -285,11 +307,16 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     const createExtras: ProductExtras = {
       ...(input.originCountry && { originCountry: input.originCountry }),
       ...(input.brand && { brand: input.brand }),
+      ...(input.imageAxis !== undefined && { imageAttributeId: axes[input.imageAxis]!.attributeId }),
     };
     const id = await insertProduct(caller.companyId, group!.id, input.name, input.description, code, createExtras);
     const specLog = await applySpecs(caller.companyId, id, specCheck.plans);
     for (const [i, combo] of combos.entries()) {
-      await insertVariant(caller.companyId, id, allocation.skus[i]!.sku, combo.map((v) => v.id), i);
+      await insertVariant(caller.companyId, id, allocation.skus[i]!.sku, combo.map((v) => v.id), i, null, variantFacts(input.variants[i]!));
+    }
+    for (const v of valueImages) {
+      const value = axes[input.imageAxis!]!.values.get(v.value.trim().toLowerCase())!;
+      await upsertVariantImage({ companyId: caller.companyId, productId: id, attributeId: createExtras.imageAttributeId!, attributeValueId: value.id, fileId: v.fileId });
     }
     await replaceProductImages(caller.companyId, id, imageIds);
     if (sizeChartId) await setSizeChart(id, sizeChartId);

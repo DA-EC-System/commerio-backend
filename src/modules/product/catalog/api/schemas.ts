@@ -235,6 +235,10 @@ const Axis = z
         z.object({
           id: z.string().optional(),
           value: z.string('Nhập giá trị').trim().min(1, 'Nhập giá trị').max(MAX_VALUE, `Mỗi giá trị tối đa ${MAX_VALUE} ký tự`),
+          imageFileId: z
+            .string()
+            .optional()
+            .meta({ description: 'Chỉ `POST`: ảnh phân loại của giá trị (trục `imageAxis`), tệp purpose product_image (#510)' }),
         }),
         'Thêm ít nhất một giá trị',
       )
@@ -278,6 +282,26 @@ function axesRules(body: { axes: z.infer<typeof Axis>[]; variants: { options: st
   }
 }
 
+/**
+ * Ảnh phân loại lúc tạo (#510, Documents/21 mục 5.5): `imageAxis` phải là một trục có thật; `imageFileId` chỉ ở trục
+ * `imageAxis`. Được gắn ảnh cho một phần giá trị.
+ */
+function imageAxisRules(
+  body: { axes: { values: { imageFileId?: string | undefined }[] }[]; imageAxis?: 0 | 1 | undefined },
+  ctx: z.RefinementCtx,
+) {
+  if (body.imageAxis !== undefined && body.imageAxis >= body.axes.length) {
+    ctx.addIssue({ code: 'custom', path: ['imageAxis'], message: 'Trục gắn ảnh không có trong sản phẩm' });
+  }
+  body.axes.forEach((axis, i) =>
+    axis.values.forEach((v, j) => {
+      if (v.imageFileId !== undefined && i !== body.imageAxis) {
+        ctx.addIssue({ code: 'custom', path: ['axes', i, 'values', j, 'imageFileId'], message: 'Chỉ gắn ảnh cho giá trị của trục gắn ảnh' });
+      }
+    }),
+  );
+}
+
 // Ảnh bảng kích cỡ (#347): một tệp JPG/PNG ≤ 1 MB như ảnh sản phẩm; TikTok bắt buộc với quần áo, giày dép.
 const sizeChartFileId = z
   .string()
@@ -292,8 +316,24 @@ export const CreateProductBody = z
     imageFileIds,
     sizeChartFileId,
     axes: z.array(Axis, 'Gửi danh sách trục phân loại (rỗng nếu không có)'),
+    imageAxis: z
+      .union([z.literal(0), z.literal(1)], 'Trục gắn ảnh là 0 hoặc 1')
+      .optional()
+      .meta({ description: 'Chỉ số trục trong `axes` làm thuộc tính gắn ảnh (như `imageAttributeId` của PUT; #510)' }),
     variants: z
-      .array(z.object({ options: z.array(z.string(), 'Chọn giá trị thuộc tính') }), 'Cần ít nhất một biến thể')
+      .array(
+        z.object({
+          options: z.array(z.string(), 'Chọn giá trị thuộc tính'),
+          // Giá, cân nặng, kích thước gói điền ngay lúc tạo (#510), luật như PATCH …/variants/:variantId.
+          standardPrice: z.lazy(() => price),
+          targetNetPrice: z.lazy(() => price),
+          weightG: z.lazy(() => measure),
+          lengthMm: z.lazy(() => measure),
+          widthMm: z.lazy(() => measure),
+          heightMm: z.lazy(() => measure),
+        }),
+        'Cần ít nhất một biến thể',
+      )
       .min(1, 'Cần ít nhất một biến thể')
       .max(100, 'Tối đa 100 biến thể mỗi lần tạo'),
     specs,
@@ -302,6 +342,7 @@ export const CreateProductBody = z
   })
   .superRefine(imageLimits)
   .superRefine(axesRules)
+  .superRefine(imageAxisRules)
   .meta({ id: 'CreateProductRequest' });
 
 // Thuộc tính gắn ảnh, xuất xứ, thương hiệu (#340, Documents/21 §17.2): bỏ trường là giữ, `null` là bỏ chọn / xoá.
