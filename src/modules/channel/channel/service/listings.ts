@@ -40,7 +40,8 @@ import { currentPrices, type ListingPrice, listingPrices } from './listing-price
 import { firstPushCalculations } from './repricing.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
-import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
+import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
+import { findAppShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
 
@@ -384,6 +385,8 @@ export async function pushListings(
   });
   const calcs = await inCompany(() => firstPushCalculations(shop.id, firstPush));
   const results: PushResult[] = [];
+  // SKU chưa có sản phẩm trên sàn gom theo cha (#295, §18.8.4): một sản phẩm sàn nhiều phân loại mỗi gian hàng.
+  const groups = new Map<string, NewSku[]>();
   for (const variantId of ids) {
     const v = variants.get(variantId);
     const existing = current.get(variantId);
@@ -423,9 +426,86 @@ export async function pushListings(
       results.push(blocked(variantId, existing, 'below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất; sửa giá muốn bán hoặc cấu hình phí'));
       continue;
     }
+    if (!existing?.externalProductId) {
+      groups.set(v.productId, [...(groups.get(v.productId) ?? []), { variantId: v.id, sku: v.sku, existing, calc }]);
+      continue;
+    }
     results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, calc));
   }
+  for (const [productId, rows] of groups) {
+    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null)));
+  }
   return { results };
+}
+
+interface NewSku {
+  variantId: string;
+  sku: string;
+  existing: ListingRow | undefined;
+  calc: NewPriceCalculation | undefined;
+}
+
+/**
+ * Các SKU chưa có sản phẩm trên sàn của một cha (#295, Documents/21 §18.8.4), một giao dịch: lấy dòng `shop_products` `app`
+ * đang `active` của cha (chưa có thì tạo; unique một phần giữ một dòng mỗi cha), đặt mốc lượt mới, chuyển từng SKU sang
+ * `pushing` trỏ dòng đó, xếp một việc `channel.product_push`. Cha đã có mã sàn thì việc thêm phân loại; chưa có thì tạo sản
+ * phẩm, gồm cả SKU còn `pushing` của lượt trước (việc cũ thấy mốc khác thì bỏ). Đua cùng SKU hay cùng cha: `push_in_progress`.
+ */
+async function enqueueProduct(
+  actor: Actor,
+  shopId: string,
+  productId: string,
+  rows: readonly NewSku[],
+  imageUrls: string[],
+  sizeChartUrl: string | null,
+): Promise<PushResult[]> {
+  const pushStartedAt = new Date();
+  try {
+    const listed = await withCompany(actor.companyId, async () => {
+      const sp = (await findAppShopProduct(shopId, productId, { lock: true })) ?? (await insertAppShopProduct(actor.companyId, shopId, productId));
+      await setShopProductPushStarted(sp.id, pushStartedAt);
+      const out: ListingRow[] = [];
+      for (const r of rows) {
+        const priceCalcId = r.calc ? (await insertConfirmed(r.calc, actor.accountId, pushStartedAt)).id : undefined;
+        const lot = { pushStartedAt, shopProductId: sp.id, ...(priceCalcId && { priceCalcId }) };
+        if (r.existing && r.existing.status !== 'delisted') {
+          out.push(await moveListing(r.existing, 'push', actor, { ...lot, pushAttempts: 0, pushError: null, rejectReason: null }));
+          continue;
+        }
+        const row = await insertListing({
+          companyId: actor.companyId,
+          shopId,
+          variantId: r.variantId,
+          sellerSku: r.existing?.sellerSku ?? r.sku,
+          status: 'pushing',
+          replacesListingId: r.existing?.id ?? null,
+          priceCalcId: priceCalcId ?? null,
+          contentSource: 'app',
+          ...lot,
+        });
+        await recordTransition({ entityType: ENTITY, entityId: row.id, from: null, to: 'pushing', action: 'push', actorId: actor.accountId });
+        out.push(row);
+      }
+      await sendProductPush({
+        companyId: actor.companyId,
+        shopId,
+        shopProductId: sp.id,
+        pushStartedAt: pushStartedAt.toISOString(),
+        imageUrls,
+        ...(sizeChartUrl && { sizeChartUrl }),
+      });
+      return out;
+    });
+    return listed.map((row) => ({ variantId: row.variantId!, listingId: row.id, status: row.status, code: null, message: null }));
+  } catch (err) {
+    const constraint = pgError(err).constraint;
+    const raced =
+      (err instanceof AppError && err.code === 'version_conflict') ||
+      constraint === 'listings_shop_variant_uq' ||
+      constraint === 'shop_products_shop_app_product_uq';
+    if (raced) return rows.map((r) => inProgress(r.variantId, r.existing));
+    throw err;
+  }
 }
 
 const WAITING_MESSAGE = {

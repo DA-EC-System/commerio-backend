@@ -1,0 +1,1 @@
+ALTER TABLE "channel"."listings" ADD CONSTRAINT "listings_shop_product" CHECK ("channel"."listings"."external_product_id" is null or "channel"."listings"."shop_product_id" is not null);

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V127**, 20 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V130**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -106,7 +106,7 @@ Cột:
 - `shop_id` uuid · not null → `channel.shops.id` (khoá ngoại)
 - `mode` enum `channel.listing_mode` · not null · mặc định `'mapped'`: `mapped` | `unmanaged`
 - `variant_id` uuid · null → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
-- `external_product_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+- `external_product_id` text · null → `channel.shop_products.external_product_id` (khoá ngoại)
 - `external_sku_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
 - `seller_sku` text · null
 - `status` enum `channel.listing_status` · not null · mặc định `'pushing'`: `pushing` | `push_failed` | `under_review` | `rejected` | `live` | `hidden` | `platform_hold` | `delisted`
@@ -168,6 +168,8 @@ Cột:
 - `remote_title_changed_at` timestamptz · null
 - `replaces_listing_id` uuid · null → `channel.listings.id` (khoá ngoại)
   Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1).
+- `shop_product_id` uuid · null → `channel.shop_products.id` (khoá ngoại)
+  Sản phẩm sàn của listing (#295, `shop_products`): có `external_product_id` thì bắt buộc, và hai mã sàn phải bằng nhau (khoá ngoại ghép). Lần đẩy đầu của cha trỏ dòng `app` còn chưa có mã sàn.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -178,6 +180,8 @@ Ràng buộc và index:
 - unique index (`shop_id`, `external_sku_id`) `listings_shop_external_sku_uq` where `external_sku_id is not null and status <> 'delisted'`
 - unique index (`shop_id`, `pending_external_sku_id`) `listings_shop_pending_external_sku_uq` where `pending_external_sku_id is not null`
 - index (`variant_id`) `listings_variant_id_index`
+- index (`shop_product_id`) `listings_shop_product_id_index`
+- check `listings_shop_product`: `external_product_id is null or shop_product_id is not null`
 - check `listings_mode`: `(mode = 'mapped') = (variant_id is not null)`
 - check `listings_unmanaged_approved`: `mode = 'mapped' or approved_by is not null or pending_requested_by is not null`
 - check `listings_pending_mapping`: `(pending_mode is null and pending_variant_id is null and pending_requested_by is null and pending_requested_at is null)
@@ -489,6 +493,45 @@ Ràng buộc và index:
 - check `shop_category_permissions_status`: `status in ('available', 'invite_only', 'non_main_category', 'prohibited')`
 - khoá ngoại viết tay (`shop_id`, `company_id`) → `channel.shops` (`id`, `company_id`), ON DELETE cascade, ở `db/migrations/20261119053555_category-san-quyen.sql`
 
+## `channel.shop_products`
+
+Một sản phẩm cha trên một gian hàng ứng với một sản phẩm trên sàn (commerio-backend#295, Documents/19 câu chốt Q1, 21 §18.8.4). `app`: app tạo bằng lần đẩy gom biến thể (`product_id` bắt buộc, mã sàn null tới khi sàn tạo xong); `match`: sản phẩm sàn có sẵn mà listing trỏ tới (ghép SKU, dữ liệu đẩy trước #295), `product_id` null vì một sản phẩm người bán có thể chứa SKU của nhiều sản phẩm Commerio. Luật "một cha một sản phẩm sàn" ép ở unique một phần theo `origin = 'app'`. `failed`: lần tạo của dòng `app` bị sàn từ chối (gom lại, §18.8.4), lỗi ở `push_error`. `delisted`: sản phẩm sàn đã bị thay (gom lại) hoặc sàn đã xoá. RLS `company_isolation`.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `shop_id` uuid · not null → `channel.shops.id` (khoá ngoại)
+- `product_id` uuid · null → `product.products.id` (tham chiếu, không có khoá ngoại)
+- `external_product_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+- `origin` enum `channel.shop_product_origin` · not null: `app` | `match`
+- `status` enum `channel.shop_product_status` · not null · mặc định `'active'`: `active` | `delisted` | `failed`
+- `push_error` jsonb · null
+  Lỗi của lần tạo gần nhất (`{ code, message, at }`), chỉ dòng `app`.
+- `push_started_at` timestamptz · null
+  Lúc bấm đẩy của lượt tạo đang chạy (dòng `app`): khoá chống tạo trùng `cm-sp-<id>-<mốc>` giữ qua các lần thử.
+- `create_attempted_at` timestamptz · null
+  Lần gọi tạo gần nhất (như `listings.create_attempted_at`, #399): phân biệt sản phẩm của lượt trước với sản phẩm người bán.
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`id`, `external_product_id`) `shop_products_id_external_uq`
+- unique index (`shop_id`, `external_product_id`) `shop_products_shop_external_uq` where `external_product_id is not null and status = 'active'`
+- unique index (`shop_id`, `product_id`) `shop_products_shop_app_product_uq` where `origin = 'app' and status = 'active'`
+- check `shop_products_origin`: `(origin = 'app') = (product_id is not null)`
+- check `shop_products_match_external`: `origin = 'app' or external_product_id is not null`
+- check `shop_products_failed`: `status <> 'failed' or (origin = 'app' and external_product_id is null and push_error is not null)`
+
+Trỏ vào bảng này:
+
+- `channel.listings.shop_product_id` (khoá ngoại)
+- `channel.listings.shop_product_id, external_product_id` (khoá ngoại)
+
 ## `channel.shop_reauth_mails`
 
 Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền đã xếp (#312, Documents/19). Mỗi dòng là một thư cho CEO, Admin. `deadline` là hạn đang tính: `expiring_3d`, `expiring_1d` lấy hạn gần hơn trong `auth_expires_at`, `refresh_expires_at`; `lost` lấy lúc chuyển sang `needs_reauth` (`core.state_transitions`), `seq` là nhịp 6 giờ thứ mấy kể từ lúc đó. Chống trùng ép ở CSDL, dù việc nền chạy lại hay chạy trùng: - unique `(shop_id, deadline, stage, seq)`; - EXCLUDE `shop_reauth_mails_deadline_drift` (migration viết tay, Drizzle không sinh được): hai thư trước hạn cùng gian hàng, cùng mốc mà hạn cách nhau dưới 1 giờ là một mốc. Hạn tính lại từ "số giây còn lại" sau mỗi lần làm mới token lệch vài mili giây tới vài giây; hạn gia hạn thật hay nối lại thì cách xa, tính lại từ đầu. Kết quả gửi: `outcome` null là chưa xong (`sent` đã gửi, `stale` bỏ vì gian hàng đã đổi hoặc mốc sau đã thay, `failed` lỗi vĩnh viễn, không có người nhận, hoặc hết lượt xếp lại). `attempts` là số lần đã phát sự kiện, `queued_at` lần phát gần nhất: việc nền phát lại thư chưa xong khi outbox đã bỏ cuộc (SMTP hỏng lâu). `commerio_app` chỉ UPDATE được bốn cột kết quả, không DELETE (migration viết tay).
@@ -607,6 +650,7 @@ Trỏ vào bảng này:
 - `channel.product_specs.remote_shop_id` (khoá ngoại)
 - `channel.raw_orders.shop_id` (khoá ngoại)
 - `channel.remote_skus.shop_id` (khoá ngoại)
+- `channel.shop_products.shop_id` (khoá ngoại)
 - `channel.shop_reauth_mails.shop_id` (khoá ngoại)
 - `channel.shop_category_permissions.shop_id, company_id` (khoá ngoại viết tay)
 - `product.stock_documents.shop_id` (tham chiếu, không có khoá ngoại)
