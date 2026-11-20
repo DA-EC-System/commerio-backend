@@ -80,6 +80,7 @@ setProductPort(port);
 
 const createProduct = vi.fn(async (_t: string, p: NewProduct) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false }));
 const deactivate = vi.fn(async () => {});
+const removeVariants = vi.fn(async () => {});
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -89,6 +90,7 @@ registerAdapter(
     uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,
     createProduct,
     deactivate,
+    removeVariants,
   }),
 );
 afterAll(async () => {
@@ -134,7 +136,11 @@ async function rowsOf(variantId: string) {
 
 async function jobsOf(listingId: string) {
   const { rows } = await testPool().query<{ data: Record<string, unknown> }>(
-    "select data from pgboss.job where name = 'channel.listing_push' and data->>'listingId' = $1",
+    // SKU chưa có sản phẩm trên sàn đi việc theo cha `channel.product_push` (#295): khớp dòng `shop_products` và mốc lượt.
+    `select j.data from pgboss.job j join channel.listings l on l.id = $1
+      where (j.name = 'channel.listing_push' and j.data->>'listingId' = $1::text)
+         or (j.name = 'channel.product_push' and j.data->>'shopProductId' = l.shop_product_id::text
+             and (j.data->>'pushStartedAt')::timestamptz = l.push_started_at)`,
     [listingId],
   );
   return rows.map((r) => r.data);
@@ -168,7 +174,9 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     const [row] = await rowsOf(ok.id);
     // #399: đẩy tạo sản phẩm mới thì nội dung là của app.
     expect(row).toMatchObject({ status: 'pushing', seller_sku: 'CMR-OK', push_attempts: 0, content_source: 'app' });
-    expect(await jobsOf(row.id)).toEqual([{ companyId: company.companyId, shopId, listingId: row.id, imageUrls: CATALOG }]);
+    expect(await jobsOf(row.id)).toEqual([
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: CATALOG },
+    ]);
     expect(await rowsOf(noPrice.id)).toEqual([]);
     const history = await testPool().query(
       "select from_state, to_state, action, actor_id is null as by_system from core.state_transitions where entity_type = 'listings' and entity_id = $1",
@@ -219,14 +227,17 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     },
   );
 
-  it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, hai việc cùng URL (#303)', async () => {
+  it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, một việc theo cha (#303, #295)', async () => {
     const a = ownProduct('CMR-PAIR-A', ['https://files.commerio.test/pair.jpg']);
     const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, { productId: a.productId });
     all.push(b);
     productImageUrls.mockClear();
     const res = await results([a.id, b.id]);
     expect(productImageUrls).toHaveBeenCalledTimes(1);
-    for (const r of res) expect((await jobsOf(r.listingId!))[0]!.imageUrls).toEqual(['https://files.commerio.test/pair.jpg']);
+    const jobs = await Promise.all(res.map((r) => jobsOf(r.listingId!)));
+    expect(jobs.map((j) => j.length)).toEqual([1, 1]);
+    expect(jobs[0]).toEqual(jobs[1]);
+    expect(jobs[0]![0]!.imageUrls).toEqual(['https://files.commerio.test/pair.jpg']);
   });
 
   it('listing đã gỡ có ảnh trên sàn đẩy lại được khi catalog không có ảnh (#303)', async () => {
@@ -437,6 +448,32 @@ describe('gỡ listing', () => {
     expect(again.status).toBe(409);
     expect(again.body.code).toBe('invalid_transition');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${noPrice.id}/delist`)).send({ version: 1 })).status).toBe(404);
+  });
+
+  it('sản phẩm sàn còn SKU khác: gỡ riêng phân loại, bỏ mã sàn khỏi listing; SKU cuối cùng thì tắt (#295, §18.8.4)', async () => {
+    const [a, b] = [fresh('CMR-GO-A'), fresh('CMR-GO-B')];
+    const item = `item-go-${randomUUID().slice(0, 6)}`;
+    for (const v of [a, b]) {
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, content_source)
+         values ($1, $2, $3, $4, 'live', $5, $6, 'app')`,
+        [company.companyId, shopId, v.id, v.sku, item, `sku-${v.sku}`],
+      );
+    }
+    deactivate.mockClear();
+    const delist = async (v: { id: string }) => {
+      const [row] = await rowsOf(v.id);
+      return auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${v.id}/delist`)).send({ version: row.version });
+    };
+    expect((await delist(a)).status).toBe(200);
+    expect(removeVariants).toHaveBeenCalledWith(expect.any(String), item, [`sku-${a.sku}`]);
+    expect(deactivate).not.toHaveBeenCalled();
+    expect((await rowsOf(a.id))[0]).toMatchObject({ status: 'delisted', external_product_id: null, external_sku_id: null });
+    removeVariants.mockClear();
+    expect((await delist(b)).status).toBe(200);
+    expect(removeVariants).not.toHaveBeenCalled();
+    expect(deactivate).toHaveBeenCalledWith(expect.any(String), item, `sku-${b.sku}`);
+    expect((await rowsOf(b.id))[0]).toMatchObject({ status: 'delisted', external_product_id: item });
   });
 
   it('listing đang pushing thì gỡ 409 invalid_transition (21 §18.6.4)', async () => {

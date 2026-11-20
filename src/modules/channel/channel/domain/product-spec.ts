@@ -90,6 +90,8 @@ export interface VariantCapabilities {
   maxAxes: number;
   customAxisName: boolean;
   salesRequired: string[];
+  /** Thêm phân loại vào sản phẩm sàn đã có (`addVariants`, Documents/21 §18.8.4) */
+  addVariant: boolean;
 }
 
 /**

@@ -7,17 +7,20 @@ import {
   type CategorySuggestion,
   DEFAULT_REFRESH_LEAD_MS,
   epochDate,
-  existingProduct,
+  existingFromSkus,
   existingSku,
   INVALID_AMOUNT,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
+  type NewVariants,
   type Payout,
   partResults,
   type PerSkuResult,
   type PlatformWarehouse,
   type PriceQuantity,
+  type ProductSku,
+  productSkus,
   PROMOTION_LOCKED,
   type RemoteCounts,
   type RemoteLineInfo,
@@ -42,6 +45,7 @@ import {
 } from './common.ts';
 import { lazadaCategoryNodes, lazadaLeafAttributes, lazadaVariantCapabilities } from './lazada-categories.ts';
 import { lazadaCategoryMismatch, lazadaReactivated, lazadaSkuViews, lazadaUnderReview } from './lazada-category-change.ts';
+import { type LazadaCreatedSku, associatedSkuId, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
@@ -884,7 +888,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   }
 
   /** SKU của `/product/create`, `/product/update`: tiền chuỗi, gam → kg, mm → cm. */
-  const skuPayload = (p: NewProduct) => ({
+  const skuPayload = (p: Pick<ProductSku, 'quantity' | 'price' | 'weightG' | 'lengthMm' | 'widthMm' | 'heightMm'>) => ({
     ...(p.quantity !== undefined && { quantity: String(p.quantity) }),
     price: p.price,
     package_weight: String(p.weightG / 1000),
@@ -1040,6 +1044,11 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     return String(sku?.Status ?? '').toLowerCase() === 'inactive';
   }
 
+  async function removeSkus(accessToken: string, itemId: string, skuIds: readonly string[]): Promise<void> {
+    const sku_id_list = JSON.stringify(skuIds.map((id) => `SkuId_${itemId}_${id}`));
+    await call(config.apiUrl, '/product/remove', { access_token: accessToken, sku_id_list }, 'FORM');
+  }
+
   async function deactivateSku(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void> {
     const apiRequestBody =
       `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
@@ -1153,10 +1162,15 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     async createProduct(accessToken, p: NewProduct) {
       // Idempotent theo SellerSku: lần đẩy trước đã tạo mà bên gọi mất kết quả thì trả sản phẩm đó, không tạo thêm.
-      const existing = existingSku(await skusIn(accessToken, [p.sellerSku], 'all'), p.sellerSku);
+      // Nhiều SKU (#295): tra mọi SellerSku; thấy đủ và cùng một sản phẩm thì trả sản phẩm đó, thấy một phần thì từ chối.
+      const skus = productSkus(p);
+      const sellerSkus = skus.map((s) => s.sellerSku);
+      const found = await skusIn(accessToken, sellerSkus, 'all');
+      const existing = existingFromSkus(sellerSkus, sellerSkus.map((sku) => existingSku(found, sku)));
       if (existing) {
-        return existingProduct(existing);
+        return existing;
       }
+      const multi = Boolean(p.skus?.length);
       const payload = JSON.stringify({
         Request: {
           Product: {
@@ -1167,15 +1181,69 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             // request_id 2141336017948496094571739). Việc đẩy luôn gửi brand (catalog, trống thì `defaultBrand`); mặc định
             // ở đây chỉ chặn trường hợp bên gọi không gửi. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
-            Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
+            ...(multi && p.salesAttributes?.length && { Variation: lazadaVariation(p.salesAttributes) }),
+            Skus: { Sku: skus.map((s) => ({ ...lazadaSkuIdentity(s, p.salesAttributes), ...skuPayload(s) })) },
           },
         },
       });
       const body = await call(config.apiUrl, '/product/create', { access_token: accessToken, payload }, 'FORM');
-      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: { sku_id?: unknown }[] } | undefined;
-      const skuId = data?.sku_list?.[0]?.sku_id;
-      if (data?.item_id === undefined || skuId === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
-      return { externalProductId: String(data.item_id), externalSkuId: String(skuId), live: data.item_status === 'Active' };
+      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: LazadaCreatedSku[] } | undefined;
+      // Ghép theo seller_sku, không theo vị trí (Lazada đổi thứ tự `sku_list`, đo 21/11/2026).
+      const created = matchCreatedSkus(sellerSkus, data?.sku_list);
+      const first = created.find((c) => c.sellerSku === sellerSkus[0]);
+      if (data?.item_id === undefined || !first) throw new MarketplaceError('rejected', 'unexpected_response');
+      return {
+        externalProductId: String(data.item_id),
+        externalSkuId: first.externalSkuId,
+        live: data.item_status === 'Active',
+        ...(multi && { skus: created }),
+      };
+    },
+    // Thêm phân loại vào sản phẩm sẵn có (#295): UpdateProduct không thêm được SKU (mọi SKU phải có SkuId, 4216), nên gọi
+    // CreateProduct với `AssociatedSku` = sku_id của một SKU sẵn có (đo 21/11/2026, L2f). Chỉ gửi SKU mới, không gửi
+    // Variation (sàn tự thêm giá trị trục). BẪY: truyền item_id vào AssociatedSku thì sàn không báo lỗi mà tạo item mới (L2g);
+    // nên lấy sku_id từ sàn và kiểm item_id trả về.
+    async addVariants(accessToken, itemId, input: NewVariants) {
+      const associated = associatedSkuId((await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data);
+      const sellerSkus = input.skus.map((s) => s.sellerSku);
+      const payload = JSON.stringify({
+        Request: {
+          Product: {
+            PrimaryCategory: input.externalCategoryId,
+            AssociatedSku: associated,
+            Images: { Image: input.imageUrls },
+            Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(input.attributes), name: input.name, description: input.description },
+            Skus: { Sku: input.skus.map((s) => ({ ...lazadaSkuIdentity(s, input.salesAttributes), ...skuPayload(s) })) },
+          },
+        },
+      });
+      const body = await call(config.apiUrl, '/product/create', { access_token: accessToken, payload }, 'FORM');
+      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: LazadaCreatedSku[] } | undefined;
+      if (data?.item_id === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
+      if (String(data.item_id) !== itemId) {
+        // Sàn tạo item lạ: xoá ngay các SKU của nó (trùng SellerSku với SKU vừa thêm), rồi báo lỗi.
+        const strayIds = (data.sku_list ?? []).flatMap((s) => (s.sku_id === undefined ? [] : [String(s.sku_id)]));
+        let cleaned = true;
+        try {
+          if (strayIds.length) await removeSkus(accessToken, String(data.item_id), strayIds);
+        } catch (err) {
+          if (!(err instanceof MarketplaceError)) throw err;
+          cleaned = false;
+        }
+        throw new MarketplaceError(
+          'rejected',
+          'associated_item_mismatch',
+          `Sàn tạo sản phẩm mới ${String(data.item_id)} thay vì thêm vào ${itemId}${cleaned ? '; đã xoá sản phẩm đó' : '; chưa xoá được, xoá tay trên Seller Center'}`,
+        );
+      }
+      const skus = matchCreatedSkus(sellerSkus, data.sku_list);
+      if (skus.length < sellerSkus.length) throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn không trả đủ SKU vừa thêm');
+      return { skus, live: data.item_status === 'Active' };
+    },
+    // Gỡ phân loại (#295): RemoveProduct `sku_id_list` = JSON mảng `SkuId_<item>_<sku>` (đo 21/11/2026, L3); giá trị trục
+    // không còn SKU nào dùng thì sàn tự bỏ. Gỡ hết SKU thì mất cả item: bên gọi không gọi hàm này khi đó.
+    async removeVariants(accessToken, itemId, skuIds) {
+      await removeSkus(accessToken, itemId, skuIds);
     },
     // UpdateProduct (open.lazada.com "Update a product", tra 11/11/2026): payload như `/product/create`, `SkuId` bắt buộc
     // (mã 4216), không đổi được SellerSku; `Status: active` bật lại SKU đã tắt (lazada.md §11.4). Trạng thái sau khi ghi

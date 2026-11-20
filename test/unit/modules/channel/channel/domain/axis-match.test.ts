@@ -29,8 +29,8 @@ const color: AxisInput = {
 const size: AxisInput = { attributeId: 'a-size', name: 'Kích cỡ', platformKind: 'size', values: [{ valueId: 'v-m', value: 'M' }] };
 const custom: AxisInput = { attributeId: 'a-mat', name: 'Chất liệu', platformKind: null, values: [] };
 const tiktokStd = { color: ['100000'], size: ['100007', '100001'] };
-const tiktokCaps: VariantCapabilities = { maxAxes: 3, customAxisName: true, salesRequired: [] };
-const lazadaCaps: VariantCapabilities = { maxAxes: 2, customAxisName: false, salesRequired: [] };
+const tiktokCaps: VariantCapabilities = { maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true };
+const lazadaCaps: VariantCapabilities = { maxAxes: 2, customAxisName: false, salesRequired: [], addVariant: true };
 
 describe('suggestAxes', () => {
   it('TikTok leaf có 100000 và 100007: Màu, Kích cỡ ra hai mã chuẩn', () => {

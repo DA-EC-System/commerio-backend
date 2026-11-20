@@ -2,7 +2,7 @@
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { ShopStatus } from '../domain/shop.ts';
-import { listings, priceCalculations, rawOrders, remoteSkus, shops } from './schema.ts';
+import { listings, priceCalculations, rawOrders, remoteSkus, shopProducts, shops } from './schema.ts';
 
 export type ShopRow = typeof shops.$inferSelect;
 type Platform = ShopRow['platform'];
@@ -288,6 +288,8 @@ export async function awaitingStocktakeShops(ids: readonly string[], opts: { loc
 export async function purgeShopRows(shopId: string) {
   const db = getDb();
   const l = await db.delete(listings).where(eq(listings.shopId, shopId)).returning({ id: listings.id });
+  // Sản phẩm sàn theo gian hàng (#295) sau listing (khoá ngoại); không đếm vào kết quả (Documents/21 §18.7, `ShopDeleteResult`).
+  await db.delete(shopProducts).where(eq(shopProducts.shopId, shopId));
   const p = await db.delete(priceCalculations).where(eq(priceCalculations.shopId, shopId)).returning({ id: priceCalculations.id });
   const r = await db.delete(rawOrders).where(eq(rawOrders.shopId, shopId)).returning({ id: rawOrders.id });
   const s = await db.delete(remoteSkus).where(eq(remoteSkus.shopId, shopId)).returning({ id: remoteSkus.id });

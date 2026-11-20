@@ -30,7 +30,7 @@ registerAdapter(
   fakeAdapter({
     categoriesNeedToken: false,
     standardSalesAttributes: { color: ['100000'], size: ['100007'] },
-    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [] }),
+    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true }),
     leafAttributes: async () => [],
   }),
 );
@@ -133,13 +133,13 @@ describe('gợi ý ghép trục', () => {
     expect(res.body.spec).toBeNull();
     expect(res.body.suggestedAxisMap).toEqual({ [colorAttr]: 'color_family', [sizeAttr]: 'size' });
     expect(res.body.suggestedValueMap).toEqual({ [redId]: '10' });
-    expect(res.body.variantCapabilities).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: [] });
+    expect(res.body.variantCapabilities).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: [], addVariant: true });
   });
 
   it('TikTok leaf chỉ có 100000: trục size thành __custom', async () => {
     const res = await get('tiktok', `?categoryId=${leafs.ttColor}`);
     expect(res.body.suggestedAxisMap).toEqual({ [colorAttr]: '100000', [sizeAttr]: '__custom' });
-    expect(res.body.variantCapabilities).toEqual({ maxAxes: 3, customAxisName: true, salesRequired: [] });
+    expect(res.body.variantCapabilities).toEqual({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true });
   });
 
   it('Lazada leaf không có size: không gợi ý trục size (không __custom)', async () => {

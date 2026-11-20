@@ -102,5 +102,5 @@ export function lazadaLeafAttributes(data: unknown): PlatformAttribute[] {
  */
 export function lazadaVariantCapabilities(leaf: readonly PlatformAttribute[]): VariantCapabilities {
   const sales = leaf.filter((a) => a.kind === 'sales');
-  return { maxAxes: sales.length, customAxisName: false, salesRequired: sales.filter((a) => a.required).map((a) => a.code) };
+  return { maxAxes: sales.length, customAxisName: false, salesRequired: sales.filter((a) => a.required).map((a) => a.code), addVariant: true };
 }

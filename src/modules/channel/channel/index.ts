@@ -7,6 +7,7 @@ import { runListingSync, runOpenOrderPull, runOrderPull, runStockPush, runTokenR
 import { registerChannelConsumer, workChannelQueue } from './service/background-jobs.ts';
 import { runCategoryApply } from './service/category-apply.ts';
 import { runListingPush } from './service/listing-push.ts';
+import { runProductPush } from './service/product-push.ts';
 import { runRemoteSkusRefresh } from './service/remote-skus.ts';
 import { runSpecFromMatch } from './service/spec-from-match.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
@@ -18,6 +19,7 @@ import { handleReauthMail, REAUTH_MAIL_CONSUMER, startReauthMailLoop } from './s
 import {
   categoryApplyQueue,
   listingPushQueue,
+  productPushQueue,
   listingSyncQueue,
   openOrderPullQueue,
   orderPullQueue,
@@ -63,6 +65,8 @@ export const channelModule: ModuleDefinition = {
     await workChannelQueue(stockPushQueue, (job) => runStockPush(port, job));
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
+    // Đẩy theo cha (#295): một sản phẩm sàn nhiều phân loại.
+    await workChannelQueue(productPushQueue, (job) => runProductPush(port, job));
     // Đổi category trên sàn (#467): mỗi (gian hàng, sản phẩm sàn) một việc, như đẩy listing.
     await workChannelQueue(categoryApplyQueue, (job, attempt) => runCategoryApply(port, job, attempt));
     // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.
