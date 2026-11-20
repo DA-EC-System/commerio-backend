@@ -19,7 +19,7 @@ export const auditLogs = auditSchema.table(
     entityType: text('entity_type').notNull(),
     entityId: uuid('entity_id'),
     /** Tên đối tượng lúc ghi (#352); trống ở dòng ghi trước đó. */
-    entityLabel: text('entity_label'),
+    entityName: text('entity_name'),
     /** Mã thao tác cụ thể (`lock`, `change_roles`, `approve_send`…); trống khi chỉ là thêm/sửa/xoá thường. */
     operation: text('operation'),
     before: jsonb('before'),
