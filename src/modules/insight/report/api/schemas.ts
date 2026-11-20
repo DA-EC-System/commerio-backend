@@ -1,12 +1,11 @@
 import { z } from 'zod';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
-import { orderSource } from '../repository/schema.ts';
 
-// Hợp đồng /report (Documents/21 §12.7, §12.8). Khoảng ngày mặc định, giới hạn 366 ngày kiểm ở routes.ts
+// Hợp đồng /report (Documents/21 §21.5). Khoảng ngày mặc định, giới hạn 366 ngày kiểm ở routes.ts
 // (`resolveRange`, cần "hôm nay" giờ VN), lỗi vẫn là 422 theo ô như `validate()`.
 
 const day = (label: string) => z.iso.date(`${label} dạng YYYY-MM-DD`).optional();
-const source = z.enum(orderSource.enumValues, 'Nguồn là marketplace, inbox hoặc manual');
+const source = z.enum(['marketplace', 'inbox', 'manual'], 'Nguồn là marketplace, inbox hoặc manual');
 
 export const RangeQuery = z.object({ from: day('Từ ngày'), to: day('Đến ngày') });
 export const DailyQuery = RangeQuery.extend({
@@ -24,21 +23,23 @@ export const ExportQuery = DailyQuery.extend({
 const money = z.number().int();
 export const ReportFigures = z
   .object({
-    revenue: money,
-    cashCollected: money,
+    revenue: money.meta({ description: 'Doanh thu thuần: dòng `revenue` + `customer_refund`' }),
+    net: money.meta({ description: 'Thực nhận: dòng tiền của bán hàng, bỏ giá vốn, rút tiền, trả NCC, quảng cáo, chi vận hành' }),
+    cashCollected: money.meta({ description: 'Phần thực nhận sàn đã quyết toán' }),
     platformFee: money,
-    paymentFee: money,
+    paymentFee: money.meta({ description: 'Luôn 0: sàn không tách phí thanh toán' }),
     shippingFee: money,
-    cogs: money.nullable().meta({ description: '`null` khi thiếu `inventory.cost.view`' }),
-    profit: money.nullable().meta({ description: '`null` khi thiếu `inventory.cost.view`' }),
-    feesPending: z.boolean().meta({ description: 'Có ngày chưa đối soát nên phí sàn đang là 0' }),
+    cogs: money.nullable().meta({ description: 'Giá vốn, âm như sổ; `null` khi thiếu `inventory.cost.view`' }),
+    profit: money.nullable().meta({ description: 'Lãi gộp = `net` + `cogs`; `null` khi thiếu `inventory.cost.view`' }),
+    estimated: z.boolean().meta({ description: 'Còn dòng tiền ước tính chưa có số quyết toán thay: FE gắn nhãn "Ước tính"' }),
+    feesPending: z.boolean().meta({ description: 'Bằng `estimated`, giữ cho bên gọi cũ' }),
   })
-  .meta({ id: 'ReportFigures', description: 'Tiền là số nguyên đồng' });
+  .meta({ id: 'ReportFigures', description: 'Tiền là số nguyên đồng, mang dấu như sổ tiền (khoản ra âm)' });
 
 const head = {
   from: z.iso.date(),
   to: z.iso.date(),
-  asOf: z.string().nullable().meta({ description: 'Lần tính lại gần nhất của số trong khoảng; `null` khi chưa có số' }),
+  asOf: z.string().nullable().meta({ description: 'Lúc ghi dòng sổ mới nhất trong khoảng; `null` khi khoảng không có dòng nào' }),
 };
 
 export const OverviewResponse = z.object({ ...head, ...ReportFigures.shape }).meta({ id: 'ReportOverview' });

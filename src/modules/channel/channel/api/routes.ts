@@ -23,7 +23,7 @@ import { acknowledgeRemoteTitle } from '../service/remote-title.ts';
 import { productPort } from '../service/product-port.ts';
 import * as prices from '../service/pending-prices.ts';
 import * as setup from '../service/setup.ts';
-import { type ChannelContext, deleteShop } from '../service/shop-delete.ts';
+import { deleteShop } from '../service/shop-delete.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
@@ -173,7 +173,7 @@ export function channelRouter(ctx: ModuleContext): Router {
     async (_req, res) => {
       const { id } = validated<typeof ShopParams>(res, 'params');
       const { version } = validated<typeof ShopDeleteBody>(res, 'body');
-      res.json(await deleteShop(ctx as ChannelContext, actor(res), id, { version }));
+      res.json(await deleteShop(actor(res), id, { version }));
     },
   );
 

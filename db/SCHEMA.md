@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V123** (`20261120161355_can-nang-kich-thuoc-tran`): 92 bảng trong 6 schema, 68 khoá ngoại, 78 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V122** (`20261120165800_bo-daily-channel-summary`): 91 bảng trong 6 schema, 68 khoá ngoại, 77 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -136,11 +136,10 @@ Chi tiết: [schema/channel.md](schema/channel.md)
 - `channel.tags` (inbox)
 - `channel.webhook_events` (channel) **đã bỏ**: Webhook sàn đã nhận, chống xử lý lặp theo `notification_id`.
 
-## `insight` · Phân tích · lớp 5 · 4 bảng
+## `insight` · Phân tích · lớp 5 · 3 bảng
 
 Chi tiết: [schema/insight.md](schema/insight.md)
 
-- `insight.daily_channel_summary` (report): Số liệu theo ngày và gian hàng (V28, D18), dựng lại bằng tính lại từ module nguồn (D7).
 - `insight.document_chunks` (assistant): Đoạn tài liệu và embedding 1536 chiều; `role_ids` chép từ `document_roles` để lọc lúc tìm kiếm.
 - `insight.document_roles` (assistant): Vai trò được hỏi trợ lý về tài liệu này.
 - `insight.documents` (assistant): Tài liệu nội bộ trợ lý AI dùng để trả lời; tách đoạn và tạo embedding ở worker.

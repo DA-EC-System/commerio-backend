@@ -102,7 +102,6 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'webhook_events',
   ],
   insight: [
-    'daily_channel_summary',
     'document_chunks',
     'document_roles',
     'documents',
@@ -139,21 +138,6 @@ describe('schema sau migration', () => {
     expect(res.rows.length).toBeGreaterThan(0);
     const odd = res.rows.filter((r) => r.p !== 18 || r.s !== 2).map((r) => r.col);
     expect(odd.sort()).toEqual([...PERCENT_COLUMNS].sort());
-  });
-
-  it.each([
-    ['"order".order_source', 'insight.order_source'],
-  ])('enum %s và %s cùng giá trị, cùng thứ tự (A5)', async (a, b) => {
-    const labels = async (name: string) => {
-      const res = await testPool().query<{ label: string }>(
-        'select enumlabel as label from pg_enum where enumtypid = $1::regtype order by enumsortorder',
-        [name],
-      );
-      return res.rows.map((r) => r.label);
-    };
-    const left = await labels(a);
-    expect(left.length).toBeGreaterThan(0);
-    expect(await labels(b)).toEqual(left);
   });
 
   it('không có khoá ngoại chéo schema (19-D1)', async () => {
