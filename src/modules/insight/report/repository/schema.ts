@@ -28,6 +28,7 @@ export const dailyChannelSummary = reportSchema.table(
     cogs: money('cogs').notNull().default('0'),
     profit: money('profit').notNull().default('0'),
     feesPending: boolean('fees_pending').notNull().default(false),
+    testBase: boolean('test_base'),
     ...timestamps,
     ...version,
   },

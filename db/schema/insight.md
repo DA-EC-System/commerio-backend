@@ -27,6 +27,7 @@ Cột:
 - `cogs` numeric(18,2) · not null · mặc định `'0'`
 - `profit` numeric(18,2) · not null · mặc định `'0'`
 - `fees_pending` boolean · not null · mặc định `false`
+- `test_base` boolean · null
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`

@@ -5,11 +5,11 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V118**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V118 · 20/11/2026 · thu-regen-a
+## V118 · 20/11/2026 · thu-regen-base
 
-`db/migrations/20261120110240_thu-regen-a.sql` · sinh từ schema
+`db/migrations/20261120110344_thu-regen-base.sql` · sinh từ schema
 
-- `core.audit_logs`: + cột `test_a`
+- `insight.daily_channel_summary`: + cột `test_base`
 
 ## V117 · 20/11/2026 · doi-category-san
 
