@@ -75,6 +75,82 @@ export type Responsible = ResponsibleOrg;
 export interface RemoteProductCategory {
   externalCategoryId: string;
   attributes: { code: string; values: { id: string | null; name: string }[] }[];
+  /** Trường dùng chung của sản phẩm trên sàn (#497): ghép SKU điền vào catalog khi đang trống, lưu làm "sàn đang ghi". */
+  facts: RemoteProductFacts;
+}
+
+/**
+ * Trường dùng chung đọc từ sản phẩm trên sàn (#497, Documents/21 §18.5). Xuất xứ không ở đây: service đọc từ `attributes` theo
+ * `productFields` của adapter. `brand` là chuỗi sàn ghi (cả thương hiệu mặc định như "No Brand", service bỏ). `description`
+ * đã bỏ HTML, tối đa 5000 ký tự (`plainDescription`). Ảnh, ảnh bảng size là URL của sàn, chưa tải (#498). Cân nặng (g), kích
+ * thước (mm) theo từng SKU sàn: sàn chỉ có số theo sản phẩm (TikTok) thì mọi SKU cùng số; null khi sàn không ghi.
+ */
+export interface RemoteProductFacts {
+  brand: string | null;
+  description: string | null;
+  imageUrls: string[];
+  sizeChartUrl: string | null;
+  skus: RemoteSkuMeasures[];
+}
+
+export interface RemoteSkuMeasures {
+  externalSkuId: string;
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+}
+
+/** Trần mô tả của catalog (`PUT /catalog/products`, 5000 ký tự). */
+export const DESCRIPTION_MAX = 5000;
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/**
+ * Mô tả HTML của sàn thành chữ trơn (#497): thẻ khối, `<br>` thành xuống dòng, bỏ mọi thẻ khác, giải mã thực thể thường gặp và
+ * mã số, gộp khoảng trắng, cắt 5000 ký tự. Rỗng thì null.
+ */
+export function plainDescription(html: unknown): string | null {
+  if (typeof html !== 'string') return null;
+  const text = html
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] === '#') {
+        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text ? text.slice(0, DESCRIPTION_MAX).trimEnd() : null;
+}
+
+const POSITIVE_INT_MAX = 2_147_483_647;
+
+/** Số sàn ghi (chuỗi hoặc số) nhân hệ số, làm tròn ra số nguyên dương; không đọc được, ≤ 0 hay vượt `integer` thì null. */
+function scaled(value: unknown, factor: number): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const out = Math.round(n * factor);
+  return out > 0 && out <= POSITIVE_INT_MAX ? out : null;
+}
+
+/** Cân nặng ra gam: `KILOGRAM` (mặc định), `GRAM`, `POUND`. Đơn vị lạ thì null. */
+export function toGrams(value: unknown, unit = 'KILOGRAM'): number | null {
+  const factor = { KILOGRAM: 1000, GRAM: 1, POUND: 453.59237 }[unit.toUpperCase()];
+  return factor === undefined ? null : scaled(value, factor);
+}
+
+/** Độ dài ra mm: `CENTIMETER` (mặc định), `MILLIMETER`, `INCH`. Đơn vị lạ thì null. */
+export function toMillimeters(value: unknown, unit = 'CENTIMETER'): number | null {
+  const factor = { CENTIMETER: 10, MILLIMETER: 1, INCH: 25.4 }[unit.toUpperCase()];
+  return factor === undefined ? null : scaled(value, factor);
 }
 
 /** Một gợi ý category của sàn (#400 lát 9): `path` là đường dẫn sàn trả (Lazada tiếng Anh), service thay bằng cây khi có. */

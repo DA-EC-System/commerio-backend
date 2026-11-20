@@ -282,6 +282,35 @@ async function uploadImage(url: string | undefined): Promise<void> {
  * Đổi category của một sản phẩm thử (`CM-TEST-`, #467) bằng `changeCategory` của adapter: in category trước, kết quả so SKU,
  * giá, ảnh, rồi đọc lại category (bản đang bán và bản đang duyệt). Thuộc tính truyền `mã=giá trị` như create-product.
  */
+// #497: các trường dùng chung của một sản phẩm (Get Product 202309) để ghép SKU tự điền: in tên trường và giá trị rút gọn.
+async function productFacts(productId: string | undefined): Promise<void> {
+  if (!productId) throw new Error('Cú pháp: product <productId>');
+  type Img = { urls?: string[] };
+  type P = {
+    title?: string;
+    description?: string;
+    brand?: { name?: string };
+    main_images?: Img[];
+    size_chart?: { image?: Img; template?: { id?: string } };
+    package_weight?: unknown;
+    package_dimensions?: unknown;
+    product_attributes?: { id?: string; name?: string; values?: { id?: string; name?: string }[] }[];
+    skus?: { id?: string; seller_sku?: string }[];
+  };
+  const p = await client.call<P>('GET', `/product/202309/products/${encodeURIComponent(productId)}`, { token: session() });
+  printStep('product/202309/products/{id}', true, {
+    title: p?.title,
+    description: p?.description?.slice(0, 120),
+    brand: p?.brand,
+    mainImages: p?.main_images?.map((i) => i.urls?.[0]?.slice(0, 80)),
+    sizeChart: { image: p?.size_chart?.image?.urls?.[0]?.slice(0, 80) ?? null, template: p?.size_chart?.template ?? null },
+    packageWeight: p?.package_weight,
+    packageDimensions: p?.package_dimensions,
+    attributes: p?.product_attributes?.map((a) => `${a.id} ${a.name}: ${a.values?.map((v) => `${v.id}/${v.name}`).join(', ')}`),
+    skus: p?.skus?.map((s) => `${s.id} ${s.seller_sku}`),
+  });
+}
+
 async function changeCategory(productId: string | undefined, categoryId: string | undefined, rest: string[]): Promise<void> {
   if (!productId || !categoryId) throw new Error('Cú pháp: change-category <productId> <categoryId> [mãThuộcTính=giáTrị ...] [size-chart=<URL ảnh>]');
   const packed = session();
@@ -444,6 +473,7 @@ const commands: Record<string, () => Promise<void> | void> = {
   'upload-image': () => uploadImage(args[0]),
   'create-product': () => createProduct(args[0], args[1], args.slice(2)),
   'change-category': () => changeCategory(args[0], args[1], args.slice(2)),
+  product: () => productFacts(args[0]),
   // orders [số ngày, mặc định 30] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [cách]
   // | package <kiện> (chỉ đọc)
   orders: () => orders(false, Number(args[0] ?? 30)),
