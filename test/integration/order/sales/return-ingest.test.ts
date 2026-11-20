@@ -5,7 +5,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { markProcessed } from '#src/modules/core/platform/repository/outbox.ts';
 import { HandlerFailure, type IncomingMessage, processMessage } from '#src/modules/core/platform/service/outbox/consumer.ts';
-import type { RemoteReturn } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { MarketplaceError, type RemoteReturn } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { pullShopReturns } from '#src/modules/channel/channel/service/return-pull.ts';
 import { ingestMarketplaceOrder, type PlatformOrder } from '#src/modules/order/index.ts';
@@ -21,6 +21,8 @@ import { noLineInfo, noOrderInfo, noShipping } from './helpers.ts';
 
 let remote: RemoteReturn[] = [];
 const seenSince: Date[] = [];
+/** Báo sàn đồng ý hoàn tiền (#392): ca đổi hành vi bằng `mockImplementationOnce`. */
+const approveRefund = vi.fn(async (_token: string, _externalReturnId: string) => {});
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -33,6 +35,7 @@ registerAdapter(
       const half = Math.ceil(remote.length / 2);
       return cursor === null ? { items: remote.slice(0, half), nextCursor: '2' } : { items: remote.slice(half), nextCursor: null };
     },
+    approveReturnRefund: (token, externalReturnId) => approveRefund(token, externalReturnId),
   }),
 );
 afterAll(() => resetAdapters());
@@ -519,5 +522,127 @@ describe('kiểm hàng hoàn xong (`inventory.return_inspected`)', () => {
     // Sự kiện khác (eventId mới) tới sau khi đã đóng: handler bỏ qua theo trạng thái.
     await withCompany(company.companyId, () => onReturnInspected({ payload: { inspectionId, lines: [{ variantId, resellable: 2 }] } }));
     expect((await requestOf(r.externalId)).version).toBe(closed.version);
+  });
+});
+
+describe('đồng ý hoàn tiền sau kiểm hàng hoàn (#392)', () => {
+  const approving = { marketplaceReturns: { approvesRefundAfterInspection: async () => true } as never };
+
+  /** Yêu cầu đã quét nhận, có phiếu kiểm hàng hoàn; `claim` thì phiếu có phần thiếu. */
+  async function receivedReturn(claim = false) {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'BUYER_SHIPPED_ITEM', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    const doc = await db().query<{ id: string }>(
+      `insert into product.stock_documents (company_id, number, kind, claim_flag) values ($1, $2, 'return_inspection', $3) returning id`,
+      [company.companyId, `KT-${randomUUID().slice(0, 6)}`, claim],
+    );
+    const inspectionId = doc.rows[0]!.id;
+    await db().query(
+      `update "order".return_requests set status = 'received', received_at = now(), inspection_id = $2, inspection_number = 'KT-9', version = version + 1 where id = $1`,
+      [row.id, inspectionId],
+    );
+    return { r, row, inspectionId };
+  }
+  const inspect = (inspectionId: string, ctx?: Parameters<typeof onReturnInspected>[1]) =>
+    withCompany(company.companyId, () => onReturnInspected({ payload: { inspectionId, lines: [{ variantId, resellable: 2 }] } }, ctx));
+
+  it('phiếu không khiếu nại: đóng ở pending, lượt kéo báo sàn rồi done', async () => {
+    const { r, inspectionId } = await receivedReturn();
+    await inspect(inspectionId, approving);
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'closed', refund_approval: 'pending', needs_attention: false });
+
+    approveRefund.mockClear();
+    remote = [];
+    await pullShopReturns(company.companyId, shopId);
+    expect(approveRefund).toHaveBeenCalledWith(expect.any(String), r.externalId);
+    expect(await requestOf(r.externalId)).toMatchObject({ refund_approval: 'done', needs_attention: false });
+  });
+
+  it('sàn lỗi khi báo: bật Cần xử lý, giữ pending; lượt sau sàn nhận thì done và gỡ cờ', async () => {
+    const { r, inspectionId } = await receivedReturn();
+    await inspect(inspectionId, approving);
+    remote = [];
+    approveRefund.mockImplementationOnce(async () => {
+      throw new MarketplaceError('rejected', '25011011', 'reverse status cannot approve');
+    });
+    await pullShopReturns(company.companyId, shopId);
+    const failed = await requestOf(r.externalId);
+    expect(failed).toMatchObject({ refund_approval: 'pending', needs_attention: true });
+    expect(failed.attention_note).toMatch(/^Chưa báo được sàn đồng ý hoàn tiền/);
+
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ refund_approval: 'done', needs_attention: false, attention_note: null });
+  });
+
+  it('phiếu có khiếu nại: withheld, Cần xử lý, không báo sàn; sàn báo người bán đã xử lý thì done, gỡ cờ', async () => {
+    const { r, inspectionId } = await receivedReturn(true);
+    await inspect(inspectionId, approving);
+    const held = await requestOf(r.externalId);
+    expect(held).toMatchObject({ status: 'closed', refund_approval: 'withheld', needs_attention: true });
+    expect(held.attention_note).toMatch(/^Hàng trả về thiếu hoặc sai \(phiếu KT-9\)/);
+
+    approveRefund.mockClear();
+    remote = [{ ...r, rawStatus: 'REJECT_RECEIVE_PACKAGE', status: 'received', sellerHandledReceipt: true, updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(approveRefund).not.toHaveBeenCalled();
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'closed', refund_approval: 'done', needs_attention: false, attention_note: null });
+  });
+
+  it('phiếu có khiếu nại khi yêu cầu đã có cờ khác: câu khiếu nại đứng đầu, gỡ thì trả lại cờ cũ', async () => {
+    const { r, row, inspectionId } = await receivedReturn(true);
+    await db().query(`update "order".return_requests set needs_attention = true, attention_note = 'Kiện KH-1 đã chuyển sang Đã giao' where id = $1`, [row.id]);
+    await inspect(inspectionId, approving);
+    const held = await requestOf(r.externalId);
+    expect(held.attention_note).toMatch(/^Hàng trả về thiếu hoặc sai .* Cờ trước: Kiện KH-1 đã chuyển sang Đã giao$/);
+
+    remote = [{ ...r, rawStatus: 'REJECT_RECEIVE_PACKAGE', status: 'received', sellerHandledReceipt: true, updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    expect(await requestOf(r.externalId)).toMatchObject({ refund_approval: 'done', needs_attention: true, attention_note: 'Kiện KH-1 đã chuyển sang Đã giao' });
+  });
+
+  it('sàn không có bước này (Lazada): refund_approval null', async () => {
+    const { r, inspectionId } = await receivedReturn();
+    await inspect(inspectionId, { marketplaceReturns: { approvesRefundAfterInspection: async () => false } as never });
+    expect(await requestOf(r.externalId)).toMatchObject({ status: 'closed', refund_approval: null });
+  });
+
+  it('CHECK: refund_approval chỉ trên yêu cầu đã đóng', async () => {
+    const { row } = await receivedReturn();
+    await expect(db().query(`update "order".return_requests set refund_approval = 'pending' where id = $1`, [row.id])).rejects.toThrow(
+      /return_requests_refund_approval/,
+    );
+  });
+});
+
+describe('sàn báo người bán đã xử lý hàng về khi app còn chờ hàng về (#392)', () => {
+  it.each([
+    [true, true],
+    [false, false],
+  ])('sellerHandledReceipt = %s → Cần xử lý = %s', async (handled, flagged) => {
+    const { externalOrderId } = await marketplaceOrder();
+    const r = remoteReturn(externalOrderId, { rawStatus: 'BUYER_SHIPPED_ITEM', status: 'awaiting_return' });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    remote = [{ ...r, rawStatus: 'RETURN_OR_REFUND_REQUEST_SUCCESS', status: 'received', sellerHandledReceipt: handled, updatedAt: new Date(Date.now() + 1000) }];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(row).toMatchObject({ status: 'awaiting_return', needs_attention: flagged });
+    if (flagged) expect(row.attention_note).toBe('Sàn báo RETURN_OR_REFUND_REQUEST_SUCCESS nhưng yêu cầu đang awaiting_return');
+  });
+
+  it('lưu hạn người bán phải trả lời, API trả platform.respondBy', async () => {
+    const { externalOrderId } = await marketplaceOrder();
+    const respondBy = new Date('2026-11-21T10:00:00.000Z');
+    const r = remoteReturn(externalOrderId, { respondBy });
+    remote = [r];
+    await pullShopReturns(company.companyId, shopId);
+    const row = await requestOf(r.externalId);
+    expect(row.respond_by).toEqual(respondBy);
+    const res = await request(testApp()).get(`/api/v1/returns/${row.id}`).set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.platform.respondBy).toBe(respondBy.toISOString());
   });
 });

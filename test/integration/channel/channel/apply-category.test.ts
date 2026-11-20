@@ -58,7 +58,7 @@ const changeCategory = vi.fn((_t: string, productId: string, input: CategoryChan
 const uploadImage = vi.fn(async (_t: string, url: string) => `tos/${encodeURIComponent(url)}`);
 const seller = async (accessToken: string) => ({ externalShopId: accessToken.slice(4), shopName: `Shop ${accessToken.slice(4, 9)}`, region: 'VN' });
 registerAdapter('tiktok', fakeAdapter({ name: 'TikTok Shop', getSeller: seller, changeCategory, uploadImage, getSkus: async () => [] }));
-// Lazada chưa có `changeCategory` (PR hai của #467): 422.
+// Adapter giả tên `lazada` không khai `changeCategory` để thử nhánh 422 (adapter Lazada thật đã có, test ở unit `lazada-category-change`).
 registerAdapter('lazada', fakeAdapter({ name: 'Lazada', getSeller: seller, getSkus: async () => [] }));
 afterAll(async () => {
   resetAdapters();
@@ -236,7 +236,7 @@ describe('POST /channel/products/:productId/specs/:platform/apply-category (#467
     expect(res.body.type).toMatch(/size_chart_missing$/);
   });
 
-  it('sàn chưa có `changeCategory` (Lazada) → 422 `marketplace_unsupported`', async () => {
+  it('adapter sàn không khai `changeCategory` → 422 `marketplace_unsupported`', async () => {
     const { productId, v1 } = await product('14275', 'lazada');
     await listing(v1, shops.lazada, { external_category_id: '999' });
     const res = await apply(productId, 1, 'lazada');

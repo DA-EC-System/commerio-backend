@@ -60,6 +60,8 @@ export function syncAction(
   current: ReturnStatus,
   target: ReturnStatus,
   closeResult: ReturnCloseResult | null = null,
+  /** Sàn báo người bán đã xử lý hàng về (`RemoteReturn.sellerHandledReceipt`), không chỉ ĐVVC giao về (#392). */
+  sellerHandled = false,
 ): ReturnAction | null | 'conflict' {
   if (current === target) return null;
   // Sàn báo hàng đã về người bán: app chờ kho quét (`receive` chỉ qua quét nhận, §20). Chưa đồng ý thì sàn đã đồng ý
@@ -67,7 +69,10 @@ export function syncAction(
   if (target === 'received') {
     if (current === 'requested') return 'accept';
     if (current === 'rejected') return 'platform_reopen';
-    return current === 'awaiting_return' || current === 'closed' ? null : 'conflict';
+    // Còn chờ hàng về mà sàn báo người bán đã xử lý (đồng ý hoàn tiền, từ chối nhận) là hàng được xử lý ngoài app
+    // (tich-hop-san/tiktok.md §2.3); ĐVVC chỉ giao về (Lazada) thì chờ kho quét.
+    if (current === 'awaiting_return') return sellerHandled ? 'conflict' : null;
+    return current === 'closed' ? null : 'conflict';
   }
   const byPair: Partial<Record<`${ReturnStatus}>${ReturnStatus}`, ReturnAction>> = {
     'requested>awaiting_return': 'accept',
@@ -146,6 +151,7 @@ export const RETURN_SHOWN_FIELDS = [
   'returnTo',
   'returnTrackingCode',
   'refundAmount',
+  'respondBy',
 ] as const;
 
 /** Phần thông tin sàn của `RETURN_SHOWN_FIELDS` (bỏ cờ Cần xử lý): lượt kéo đổi trường này thì tính là `updated`. */
