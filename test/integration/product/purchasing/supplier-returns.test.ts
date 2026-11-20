@@ -104,6 +104,45 @@ describe('B4 phiếu trả NCC', () => {
     expect([again.status, again.body.errors?.sourceReturnId]).toEqual([422, expect.any(String)]);
   });
 
+  it('#365: đề nghị bù hàng theo dòng gốc: giá khác, SKU lạ, số quá số trả thì 422 theo dòng; sửa nháp cũng kiểm', async () => {
+    const s = await sent();
+    expect((await act(kho, s.id, 'record_replaced', { version: s.version })).status).toBe(200);
+    const other = (await createVariant(companyId)).variantId;
+    const body = (lines: object[]) => ({ supplierId, note: 'Bù hàng', sourceReturnId: s.id, lines });
+    const bad = await pur(kho).post('/requests', body([{ variantId, quantity: 3, unitCost: 45000 }, { variantId: other, quantity: 1, unitCost: 1000 }]));
+    expect(bad.status).toBe(422);
+    expect(bad.body.errors).toMatchObject({
+      'lines.0.unitCost': expect.stringContaining('40.000'),
+      'lines.0.quantity': expect.stringContaining('2'),
+      'lines.1.variantId': expect.stringContaining(s.number),
+    });
+    // Lần lập lỗi không gắn đề nghị vào phiếu: lập lại đúng giá vẫn được.
+    const ok = await pur(kho).post('/requests', body([{ variantId, quantity: 2, unitCost: 40000 }]));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect((await pur(ceo).get(`/requests/${ok.body.id}`)).body.lines[0]).toMatchObject({ quantity: 2, unitCost: 40000 });
+
+    const put = (version: number, lines: object[]) => pur(kho).put(`/requests/${ok.body.id}`, { supplierId, note: 'Bù hàng', version, lines });
+    const raised = await put(ok.body.version, [{ variantId, quantity: 2, unitCost: 12000 }]);
+    expect([raised.status, raised.body.errors?.['lines.0.unitCost']]).toEqual([422, expect.stringContaining('40.000')]);
+    const fewer = await put(ok.body.version, [{ variantId, quantity: 1, unitCost: 40000 }]);
+    expect(fewer.status, JSON.stringify(fewer.body)).toBe(200);
+  });
+
+  it('#365: giá dòng gốc có phần lẻ thì lưu nguyên giá gốc, người lập gửi số đã làm tròn', async () => {
+    const s = await sent();
+    await testPool().query('update product.supplier_return_lines set unit_cost = 40000.40 where return_id = $1', [s.id]);
+    await act(kho, s.id, 'record_replaced', { version: s.version });
+    const res = await pur(kho).post('/requests', { supplierId, note: '', sourceReturnId: s.id, lines: [{ variantId, quantity: 2, unitCost: 40000 }] });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { rows } = await testPool().query('select unit_price from product.purchase_request_lines where request_id = $1', [res.body.id]);
+    expect(rows).toEqual([{ unit_price: '40000.40' }]);
+  });
+
+  it('#365: đề nghị nhập thường không bị khoá giá', async () => {
+    const res = await pur(kho).post('/requests', { supplierId, note: '', lines: [{ variantId, quantity: 2, unitCost: 99000 }] });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+  });
+
   it('B4-04p: người gửi (không phải CEO) không tự ghi kết quả; CEO gửi rồi tự ghi được, có nhãn tự duyệt', async () => {
     const s = await sent(guiVaGhi);
     const self = await act(guiVaGhi, s.id, 'record_rejected', { version: s.version });
