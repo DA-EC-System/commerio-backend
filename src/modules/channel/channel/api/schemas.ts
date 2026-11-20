@@ -217,7 +217,6 @@ export const ShopDeleteResult = z
         stockDocuments: count.meta({ description: 'Phiếu kho nháp, chờ duyệt của gian hàng' }),
         configVersions: count,
         orderSettlements: count,
-        reportRows: count,
         messageChannels: count,
       })
       .strict(),
