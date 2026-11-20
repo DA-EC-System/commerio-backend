@@ -52,7 +52,7 @@ export async function enabledModuleCodes(companyId: string): Promise<ModuleCode[
 export interface CompanyProfileRow {
   id: string;
   name: string;
-  taxCode: string;
+  taxCode: string | null;
   address: string | null;
   responsibleName: string | null;
   responsibleAddress: string | null;

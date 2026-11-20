@@ -11,7 +11,7 @@ import { testPool } from '../../helpers/db.ts';
 let companyId: string;
 let shopId: string;
 beforeAll(async () => {
-  companyId = (await createCompany({ optionalModules: ['channel'] })).companyId;
+  companyId = (await createCompany({ optionalModules: [] })).companyId;
   shopId = await newShop();
 });
 

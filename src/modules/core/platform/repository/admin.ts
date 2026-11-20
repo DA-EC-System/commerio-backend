@@ -17,7 +17,7 @@ const OPTIONAL = sql`array[${sql.join(
 export interface CompanyAdminRow {
   id: string;
   name: string;
-  tax_code: string;
+  tax_code: string | null;
   status: 'active' | 'locked';
   lock_reason: string | null;
   locked_at: Date | null;

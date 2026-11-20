@@ -100,7 +100,7 @@ async function listing(id: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await app()
     .post('/api/v1/channel/shops/tiktok/token')
     .set('Authorization', `Bearer ${company.ceo.token}`)

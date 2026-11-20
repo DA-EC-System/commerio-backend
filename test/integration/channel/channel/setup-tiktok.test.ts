@@ -100,7 +100,7 @@ beforeAll(async () => {
     productImageUrls: async () => new Map<string, string[]>(),
     availableOf: async (ids) => new Map(ids.map((id) => [id, 9])),
   });
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 afterAll(() => {
   resetAdapters();

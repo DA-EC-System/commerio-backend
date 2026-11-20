@@ -2,7 +2,8 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { CORE_MODULES } from '#src/modules/core/platform/domain/modules.ts';
-import { registerBody, registerCompany, uniqueEmail } from '../../helpers/company.ts';
+import { registerBody, registerCompany, uniqueEmail, uniqueTaxCode } from '../../helpers/company.ts';
+import { setModuleEnabled } from '../../helpers/state.ts';
 import { testPool } from '../../helpers/db.ts';
 import { login, PASSWORD, refreshCookie, testApp } from '../../helpers/http.ts';
 
@@ -13,7 +14,7 @@ const accountId = async (email: string) =>
   (await db.query<{ id: string }>('select id from core.accounts where email = $1', [email])).rows[0]?.id;
 
 describe('đăng ký công ty (UC-PI-01)', () => {
-  it('AC-1, 2, 3: tạo công ty, CEO, phân hệ lõi cộng phân hệ đã chọn, nhật ký cấp nền tảng', async () => {
+  it('AC-1, 2, 3: tạo công ty, CEO, phân hệ lõi (gồm Kênh bán) cộng Nhập hàng bật sẵn, nhật ký cấp nền tảng (#459)', async () => {
     const { email, companyId } = await registerCompany();
     const account = await db.query('select id, password_hash, must_change_password from core.accounts where email = $1', [email]);
     expect(account.rows[0].password_hash).toMatch(/^\$argon2id\$/);
@@ -26,7 +27,8 @@ describe('đăng ký công ty (UC-PI-01)', () => {
       'select module_code from core.company_modules where company_id = $1 and enabled',
       [companyId],
     );
-    expect(modules.rows.map((m) => m.module_code).sort()).toEqual([...CORE_MODULES, 'purchasing', 'report'].sort());
+    expect(modules.rows.map((m) => m.module_code).sort()).toEqual([...CORE_MODULES, 'purchasing'].sort());
+    expect(CORE_MODULES).toContain('channel');
     const log = await db.query(
       "select company_id, actor_id, action from core.audit_logs where entity_type = 'core.companies' and entity_id = $1",
       [companyId],
@@ -50,7 +52,7 @@ describe('đăng ký công ty (UC-PI-01)', () => {
     const { email } = await registerCompany();
     // Đếm theo tên riêng của lần đăng ký này: file test khác chạy song song cũng tạo công ty.
     const name = `Công ty trùng email ${uniqueEmail('ten')}`;
-    const body = registerBody(email.toUpperCase(), { company: { name, taxCode: '0312345678' } });
+    const body = registerBody(email.toUpperCase(), { company: { name, taxCode: uniqueTaxCode() } });
     const res = await request(app).post('/api/v1/identity/register').send(body);
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('email_taken');
@@ -59,14 +61,38 @@ describe('đăng ký công ty (UC-PI-01)', () => {
     expect(after.rows[0].n).toBe(0);
   });
 
-  it('AC-6: chọn Trợ lý AI mà chưa đồng ý gửi dữ liệu thì 422 errors.assistantDataConsent', async () => {
+  it('#459: mã số thuế lưu dạng chuẩn hoá; trùng sau chuẩn hoá trả 409 tax_code_taken theo ô company.taxCode', async () => {
+    const digits = uniqueTaxCode();
+    const { companyId } = await registerCompany(uniqueEmail(), {
+      company: { name: 'Công ty MST gốc', taxCode: `${digits.slice(0, 4)}.${digits.slice(4, 7)} ${digits.slice(7)}` },
+    });
+    const saved = await db.query('select tax_code from core.companies where id = $1', [companyId]);
+    expect(saved.rows[0].tax_code).toBe(digits);
+
     const email = uniqueEmail();
     const res = await request(app)
       .post('/api/v1/identity/register')
-      .send(registerBody(email, { optionalModules: ['assistant'] }));
-    expect(res.status).toBe(422);
-    expect(res.body.errors).toHaveProperty('assistantDataConsent');
+      .send(registerBody(email, { company: { name: 'Công ty MST trùng', taxCode: ` ${digits} ` } }));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('tax_code_taken');
+    expect(res.body.errors).toHaveProperty(['company.taxCode']);
     expect(await accountId(email)).toBeUndefined();
+  });
+
+  it('#459: mã 13 số lưu dạng 0123456789-001; thân cũ có optionalModules thì bỏ qua, chỉ bật Nhập hàng', async () => {
+    const digits = uniqueTaxCode();
+    const { companyId } = await registerCompany(uniqueEmail(), {
+      company: { name: 'Công ty chi nhánh', taxCode: `${digits}001` },
+      optionalModules: ['assistant', 'report'],
+      assistantDataConsent: true,
+    });
+    const saved = await db.query('select tax_code from core.companies where id = $1', [companyId]);
+    expect(saved.rows[0].tax_code).toBe(`${digits}-001`);
+    const modules = await db.query<{ module_code: string }>(
+      'select module_code from core.company_modules where company_id = $1 and enabled',
+      [companyId],
+    );
+    expect(modules.rows.map((m) => m.module_code).sort()).toEqual([...CORE_MODULES, 'purchasing'].sort());
   });
 
   it('AC-21: lỗi giữa chừng thì không còn dòng nào của lần đăng ký đó', async () => {
@@ -82,7 +108,7 @@ describe('đăng ký công ty (UC-PI-01)', () => {
       const email = uniqueEmail();
       const res = await request(app)
         .post('/api/v1/identity/register')
-        .send(registerBody(email, { company: { name: 'Công ty Gây Lỗi', taxCode: '0312345678' } }));
+        .send(registerBody(email, { company: { name: 'Công ty Gây Lỗi', taxCode: uniqueTaxCode() } }));
       expect(res.status).toBe(500);
       expect(await accountId(email)).toBeUndefined();
       const companies = await db.query("select 1 from core.companies where name = 'Công ty Gây Lỗi'");
@@ -131,7 +157,8 @@ describe('đăng nhập (UC-PI-03)', () => {
 
 describe('chọn công ty', () => {
   it('AC-9: token gắn công ty; quyền của phân hệ chưa bật bị bỏ', async () => {
-    const { email, companyId } = await registerCompany(uniqueEmail(), { optionalModules: [] });
+    const { email, companyId } = await registerCompany();
+    await setModuleEnabled(companyId, 'purchasing', false);
     const { token } = await login(email);
     const res = await request(app)
       .post('/api/v1/identity/select-company')

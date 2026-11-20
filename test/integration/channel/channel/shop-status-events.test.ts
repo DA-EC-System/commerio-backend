@@ -27,7 +27,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 
 /** Nối bằng token; cùng token thì nối lại đúng gian hàng đó. */

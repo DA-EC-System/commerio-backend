@@ -121,7 +121,7 @@ async function resetListing(v: ListingVariant, platformStock: number) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   token = `tok-${randomUUID().slice(0, 12)}`;
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: token });
   shopId = res.body.shop.id;
