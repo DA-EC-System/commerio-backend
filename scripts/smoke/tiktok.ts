@@ -278,6 +278,35 @@ async function uploadImage(url: string | undefined): Promise<void> {
   printStep('uploadImage (product/202309/images/upload)', true, { uri: await adapter.uploadImage(session(), url) });
 }
 
+/**
+ * Đổi category của một sản phẩm thử (`CM-TEST-`, #467) bằng `changeCategory` của adapter: in category trước, kết quả so SKU,
+ * giá, ảnh, rồi đọc lại category (bản đang bán và bản đang duyệt). Thuộc tính truyền `mã=giá trị` như create-product.
+ */
+async function changeCategory(productId: string | undefined, categoryId: string | undefined, rest: string[]): Promise<void> {
+  if (!productId || !categoryId) throw new Error('Cú pháp: change-category <productId> <categoryId> [mãThuộcTính=giáTrị ...] [size-chart=<URL ảnh>]');
+  const packed = session();
+  const path = `/product/202309/products/${productId}`;
+  type P = { title?: string; category_chains?: { id: string; is_leaf?: boolean }[]; status?: string; skus?: { seller_sku?: string; price?: unknown }[] };
+  const before = await client.call<P>('GET', path, { token: packed });
+  if (!before?.title?.startsWith('CM-TEST-')) throw new Error('Chỉ đổi category sản phẩm thử có tên bắt đầu CM-TEST-');
+  const leaf = (p: P | undefined) => p?.category_chains?.find((c) => c.is_leaf)?.id;
+  // `size-chart=<URL ảnh>`: truyền URL như việc nền; adapter tự đưa ảnh lên chỉ khi sản phẩm chưa có bảng size.
+  const chart = rest.find((a) => a.startsWith('size-chart='))?.slice('size-chart='.length);
+  const result = await adapter.changeCategory!(packed, productId, {
+    externalCategoryId: categoryId,
+    attributes: Object.fromEntries(rest.filter((a) => !a.startsWith('size-chart=')).map((a) => a.split('=') as [string, string])),
+    ...(chart && { sizeChartUrl: chart }),
+  });
+  const live = await client.call<P>('GET', path, { token: packed });
+  const review = await client.call<P>('GET', path, { token: packed, query: { return_under_review_version: 'true' } }).catch(() => undefined);
+  printStep('changeCategory (Get Product → Edit Product 202509 → đọc lại)', result.mismatch.length === 0, {
+    before: { category: leaf(before), status: before.status, skus: before.skus?.map((s) => [s.seller_sku, s.price]) },
+    result,
+    after: { category: leaf(live), status: live?.status, skus: live?.skus?.map((s) => [s.seller_sku, s.price]) },
+    underReview: review ? { category: leaf(review), status: review.status } : null,
+  });
+}
+
 /** Tạo một sản phẩm thử tên bắt đầu `CM-TEST-` (#219); thuộc tính truyền `mã=giá trị`. */
 async function createProduct(categoryId: string | undefined, imageUrl: string | undefined, rest: string[]): Promise<void> {
   if (!categoryId || !imageUrl) throw new Error('Cú pháp: create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...]');
@@ -414,6 +443,7 @@ const commands: Record<string, () => Promise<void> | void> = {
   activate: () => toggle('activate', args[0]),
   'upload-image': () => uploadImage(args[0]),
   'create-product': () => createProduct(args[0], args[1], args.slice(2)),
+  'change-category': () => changeCategory(args[0], args[1], args.slice(2)),
   // orders [số ngày, mặc định 30] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [cách]
   // | package <kiện> (chỉ đọc)
   orders: () => orders(false, Number(args[0] ?? 30)),

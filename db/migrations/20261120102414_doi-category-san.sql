@@ -1,0 +1,2 @@
+ALTER TABLE "channel"."listings" ADD COLUMN "category_change" jsonb;--> statement-breakpoint
+ALTER TABLE "channel"."listings" ADD CONSTRAINT "listings_category_change" CHECK ("channel"."listings"."category_change" is null or ("channel"."listings"."status" <> 'delisted' and "channel"."listings"."category_change" ->> 'status' in ('queued', 'failed', 'mismatch')));
