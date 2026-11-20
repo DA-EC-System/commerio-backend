@@ -3,7 +3,6 @@
 // con cùng module lớn đặt trong index.ts của module lớn đó (vd `paymentContext` của finance).
 import {
   awaitingStocktakeShops,
-  type ChannelContext,
   getShops,
   hasInboxData,
   listingArchiveBlockers,
@@ -30,7 +29,7 @@ import {
 } from './modules/channel/index.ts';
 import { type IdentityContext, loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
-import { deleteShopSummaries, hasAssistantData } from './modules/insight/index.ts';
+import { hasAssistantData } from './modules/insight/index.ts';
 import { type FulfillmentContext, orderArchiveBlockers, orderInUse, type SalesContext, soldQtyOf } from './modules/order/index.ts';
 import { type CatalogContext, hasPurchasingData, seedCompanyDefaults } from './modules/product/index.ts';
 import { createAuthorize, createMember } from './shared/auth/authorize.ts';
@@ -43,7 +42,6 @@ export type AppContext = ModuleContext &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData'>> &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
-  Required<Pick<ChannelContext, 'deleteShopSummaries'>> &
   Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>>;
 
 export function createModuleContext(): AppContext {
@@ -89,7 +87,5 @@ export function createModuleContext(): AppContext {
     moduleData: { purchasing: hasPurchasingData, inbox: hasInboxData, assistant: hasAssistantData },
     // #447: công ty mới nhận nhóm hàng, thuộc tính chuẩn sàn, cài đặt sản phẩm trong giao dịch đăng ký.
     seedCompanyDefaults,
-    // #398: channel xoá gian hàng đã ngắt cùng số liệu theo ngày của insight (cùng lớp, insight đã import channel).
-    deleteShopSummaries,
   };
 }

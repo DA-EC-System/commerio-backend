@@ -119,7 +119,6 @@ async function fullShop() {
   await db.query(`insert into channel.shop_reauth_mails (company_id, shop_id, stage, deadline, seq) values ($1, $2, 'lost', now(), 1)`, [c, s.id]);
   await db.query(`insert into finance.config_versions (company_id, kind, shop_id, status, payload) values ($1, 'fee', $2, 'draft', '{}')`, [c, s.id]);
   await db.query(`insert into finance.order_settlements (order_id, company_id, shop_id, status) values ($1, $2, $3, 'none')`, [done.orderId, c, s.id]);
-  await db.query(`insert into insight.daily_channel_summary (company_id, day, source, shop_id) values ($1, '2026-11-01', 'marketplace', $2)`, [c, s.id]);
   const mc = await db.query<{ id: string }>(
     `insert into channel.message_channels (company_id, kind, external_account_id, display_name, shop_id)
      values ($1, 'tiktok_chat', $2, 'Chat sàn', $3) returning id`,
@@ -169,7 +168,6 @@ async function rowsOf(s: Awaited<ReturnType<typeof fullShop>>) {
     reauthMails: await one('select count(*) as n from channel.shop_reauth_mails where shop_id = $1', s.id),
     configVersions: await one('select count(*) as n from finance.config_versions where shop_id = $1', s.id),
     orderSettlements: await one('select count(*) as n from finance.order_settlements where shop_id = $1', s.id),
-    reportRows: await one('select count(*) as n from insight.daily_channel_summary where shop_id = $1', s.id),
     messageChannels: await one('select count(*) as n from channel.message_channels where shop_id = $1', s.id),
     inspection: await one('select count(*) as n from product.stock_documents where id = $1', s.inspection),
   };
@@ -217,7 +215,6 @@ describe('DELETE /channel/shops/:id (#398)', () => {
         stockDocuments: 1,
         configVersions: 1,
         orderSettlements: 1,
-        reportRows: 1,
         messageChannels: 1,
       },
       detached: { stockDocuments: 2 },

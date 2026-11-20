@@ -3,7 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V121**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V122**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V122 · 20/11/2026 · bo-daily-channel-summary
+
+`db/migrations/20261120165800_bo-daily-channel-summary.sql` · sinh từ schema
+
+- − bảng `insight.daily_channel_summary`
+- − enum `insight.order_source`
 
 ## V121 · 20/11/2026 · ghep-tu-dien-spec-du-lieu
 
