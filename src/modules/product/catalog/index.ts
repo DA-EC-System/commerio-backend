@@ -46,3 +46,8 @@ export {
   type PlatformProductInput,
 } from './service/platform-products.ts';
 export { fillProductFacts, productMediaGaps, type FactsSource, type ProductFacts, type VariantFacts } from './service/product-facts.ts';
+// Thông số sản phẩm (#510, Documents/21 mục 11.3): channel đọc giá trị, thư viện (ánh xạ, đẩy sàn) trong `withCompany` của mình.
+export { getProductSpecs } from './service/product-specs.ts';
+export { getSpecFields } from './service/spec-fields.ts';
+export { DEFAULT_GROUP_TEMPLATES, DEFAULT_SPEC_FIELDS, type DefaultSpecField } from './domain/spec-defaults.ts';
+export { PLATFORM_KINDS, type PlatformKind, SPEC_INPUTS } from './domain/specs.ts';

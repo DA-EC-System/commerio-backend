@@ -26,6 +26,11 @@ import {
   VariantParams,
   VersionQuery,
   GroupBody,
+  GroupTemplate,
+  GroupTemplateBody,
+  SpecField,
+  SpecFieldBody,
+  UpdateSpecFieldBody,
   MoveProductsBody,
   ProductGroup,
   ProductSettings,
@@ -90,6 +95,67 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       200: json('Số sản phẩm đã chuyển', z.object({ moved: z.number().int() })),
       ...missing('nhóm hàng nguồn'),
       422: problemResponse('`errors.targetGroupId` (trùng nguồn, không có) hoặc `errors.productIds` (không thuộc nhóm)'),
+    },
+  });
+  // ----- Thông số sản phẩm (#510, Documents/21 mục 5.5) -----
+  path({
+    method: 'get',
+    path: '/groups/:id/template',
+    summary: 'Mẫu thông số và trục chuẩn của nhóm (form tạo sản phẩm gọi khi chọn nhóm)',
+    request: { params: IdParams },
+    responses: { 200: json('Mẫu nhóm', GroupTemplate), ...missing('nhóm hàng') },
+  });
+  path({
+    method: 'put',
+    path: '/groups/:id/template',
+    summary: 'Đặt mẫu thông số và trục chuẩn của nhóm; tăng `version` nhóm. Không chạm sản phẩm',
+    request: { params: IdParams, body: body(GroupTemplateBody) },
+    responses: {
+      200: json('Mẫu sau khi sửa', GroupTemplate),
+      409: problemResponse('`version_conflict` (kèm `current` là mẫu mới nhất)'),
+      ...missing('nhóm hàng'),
+      422: problemResponse('`errors.axisAttributeIds`, `errors["fields.<i>.fieldId"]`'),
+    },
+  });
+  path({
+    method: 'get',
+    path: '/spec-fields',
+    summary: 'Thư viện thông số của công ty, xếp theo tên',
+    responses: { 200: json('Thông số', z.object({ items: z.array(SpecField) })) },
+  });
+  path({
+    method: 'post',
+    path: '/spec-fields',
+    summary: 'Tạo thông số; bỏ `code` thì sinh từ tên',
+    request: { body: body(SpecFieldBody) },
+    responses: {
+      201: json('Thông số vừa tạo', SpecField),
+      409: problemResponse('`name_taken` (`errors.name`) hoặc `code_taken` (`errors.code`)'),
+      422: problemResponse('`errors.unit` (không phải number), `errors.options` (không phải select/multiselect), `errors["options.<i>"]` trùng'),
+    },
+  });
+  path({
+    method: 'put',
+    path: '/spec-fields/:id',
+    summary: 'Sửa thông số (không đổi `code`, `input`); lựa chọn cũ vắng mặt là xoá, phát `catalog.spec_option_deleted`',
+    request: { params: IdParams, body: body(UpdateSpecFieldBody) },
+    responses: {
+      200: json('Thông số sau khi sửa', SpecField),
+      409: problemResponse('`version_conflict`, `name_taken`, hoặc `in_use` (xoá lựa chọn đang dùng, `errors["options.<i>"]`)'),
+      ...missing('thông số'),
+      422: problemResponse('`errors.unit` (đổi đơn vị khi đã có giá trị), `errors["options.<i>"]`'),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/spec-fields/:id',
+    summary: 'Xoá thông số không nhóm nào dùng, không sản phẩm nào có giá trị; phát `catalog.spec_field_deleted`',
+    request: { params: IdParams, query: VersionQuery },
+    responses: {
+      204: noContent,
+      409: problemResponse('`in_use` kèm `groupCount`, `productCount`, `groups: { id, name }[]` (≤ 20), hoặc `version_conflict`'),
+      ...missing('thông số'),
+      ...invalid,
     },
   });
   path({

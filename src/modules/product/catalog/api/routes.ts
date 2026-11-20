@@ -6,6 +6,8 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as groups from '../service/groups.ts';
+import { getGroupTemplate, putGroupTemplate } from '../service/group-templates.ts';
+import * as specFields from '../service/spec-fields.ts';
 import * as settings from '../service/settings.ts';
 import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
 import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
@@ -22,14 +24,17 @@ import {
   BulkSaveBody,
   CreateProductBody,
   GroupBody,
+  GroupTemplateBody,
   MoveProductsBody,
   IdParams,
   ProductListQuery,
   SetVariantImageBody,
   SettingsBody,
+  SpecFieldBody,
   UpdateAttributeBody,
   UpdateGroupBody,
   UpdateProductBody,
+  UpdateSpecFieldBody,
   UpdateVariantBody,
   VariantImageParams,
   VariantParams,
@@ -82,6 +87,9 @@ export function catalogRouter(ctx: CatalogContext): Router {
     if (input.suggest !== undefined && !can(res, SETUP)) {
       throw new AppError(403, 'forbidden', 'Bạn không có quyền đặt gợi ý của nhóm hàng');
     }
+    if (input.copyTemplateFromGroupId !== undefined && !can(res, SETUP)) {
+      throw new AppError(403, 'forbidden', 'Bạn không có quyền chép mẫu thông số của nhóm hàng');
+    }
     res.status(201).json(await groups.createGroup(caller(res), input));
   });
 
@@ -99,6 +107,37 @@ export function catalogRouter(ctx: CatalogContext): Router {
   router.post('/groups/:id/move-products', manage, validate({ params: IdParams, body: MoveProductsBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
     res.json(await groups.moveProducts(caller(res), id, validated<typeof MoveProductsBody>(res, 'body')));
+  });
+
+  // Mẫu thông số và trục chuẩn của nhóm (#510, Documents/21 mục 5.5).
+  router.get('/groups/:id/template', view, validate({ params: IdParams }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await getGroupTemplate(caller(res).companyId, id));
+  });
+
+  router.put('/groups/:id/template', setup, validate({ params: IdParams, body: GroupTemplateBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await putGroupTemplate(caller(res), id, validated<typeof GroupTemplateBody>(res, 'body')));
+  });
+
+  // Thư viện thông số (#510, Documents/21 mục 5.5).
+  router.get('/spec-fields', view, async (_req, res) => {
+    res.json(await specFields.listSpecFields(caller(res).companyId));
+  });
+
+  router.post('/spec-fields', setup, validate({ body: SpecFieldBody }), async (_req, res) => {
+    res.status(201).json(await specFields.createSpecField(caller(res), validated<typeof SpecFieldBody>(res, 'body')));
+  });
+
+  router.put('/spec-fields/:id', setup, validate({ params: IdParams, body: UpdateSpecFieldBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await specFields.updateSpecField(caller(res), id, validated<typeof UpdateSpecFieldBody>(res, 'body')));
+  });
+
+  router.delete('/spec-fields/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    await specFields.deleteSpecField(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
+    res.status(204).end();
   });
 
   router.get('/settings', view, async (_req, res) => {

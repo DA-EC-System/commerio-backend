@@ -45,7 +45,7 @@ async function seedCompany(prefix: string) {
 describe('RLS schema product (AC-1)', () => {
   it('mọi bảng có company_id của schema product bật RLS và có đúng policy cô lập theo app.company_id', async () => {
     const tables = await companyTables();
-    expect(tables).toHaveLength(21); // #400 BE3 xoá product.product_channel_specs; #447 thêm product.company_product_settings
+    expect(tables).toHaveLength(25); // #400 BE3 xoá product.product_channel_specs; #447 thêm product.company_product_settings; #510 thêm 4 bảng thông số
     const res = await testPool().query<{ name: string; rls: boolean; quals: string[] }>(
       `select n.nspname || '.' || c.relname as name, c.relrowsecurity as rls,
               coalesce((select array_agg(qual) from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname), '{}') as quals
@@ -70,6 +70,9 @@ describe('RLS schema product (AC-1)', () => {
       'product.product_variants',
       'product.variant_attribute_values',
       'product.stock_levels',
+      'product.spec_fields',
+      'product.spec_field_options',
+      'product.group_spec_fields',
     ];
     for (const table of await companyTables()) {
       const rows = await asCompany(a, async (c) => (await c.query<{ company_id: string }>(`select company_id from ${table}`)).rows);

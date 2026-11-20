@@ -5,7 +5,7 @@ import { registerCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 
 describe('dữ liệu mặc định của công ty mới (#447)', () => {
-  it('đăng ký công ty → 12 nhóm hàng, "Màu sắc" (color, 8 giá trị), "Kích cỡ" (size, 5), cài đặt SKU mặc định', async () => {
+  it('đăng ký công ty → 12 nhóm hàng, "Màu sắc" (color, 8 giá trị), "Kích cỡ" (size, 5), "Dung tích", "Hương vị", cài đặt SKU mặc định', async () => {
     const { companyId } = await registerCompany();
     const db = testPool();
     const groups = await db.query<{ name: string }>('select name from product.product_groups where company_id = $1 order by created_at, id', [companyId]);
@@ -46,6 +46,23 @@ describe('dữ liệu mặc định của công ty mới (#447)', () => {
         ],
       },
       { name: 'Kích cỡ', platform_kind: 'size', values: ['S', 'M', 'L', 'XL', 'XXL'].map((s) => [s, s]) },
+      {
+        name: 'Dung tích',
+        platform_kind: 'volume',
+        values: ['30ml', '50ml', '100ml', '250ml', '500ml', '1L', '100g', '250g', '500g', '1kg'].map((v) => [v, v.toUpperCase()]),
+      },
+      {
+        name: 'Hương vị',
+        platform_kind: 'flavor',
+        values: [
+          ['Nguyên bản', 'NGBAN'],
+          ['Socola', 'SOCOLA'],
+          ['Dâu', 'DAU'],
+          ['Vani', 'VANI'],
+          ['Matcha', 'MATCHA'],
+          ['Cà phê', 'CAPHE'],
+        ],
+      },
     ]);
     const settings = await db.query('select sku_pattern, sku_next_seq, margin_coefficient, price_rounding, reorder_lead_days, reorder_safety_qty, reorder_default_qty from product.company_product_settings where company_id = $1', [companyId]);
     expect(settings.rows).toEqual([
@@ -67,7 +84,8 @@ describe('dữ liệu mặc định của công ty mới (#447)', () => {
     const dir = join(process.cwd(), 'db', 'migrations');
     const sql = readFileSync(join(dir, readdirSync(dir).find((f) => f.endsWith('_nhom-hang-du-lieu.sql'))!), 'utf8');
     for (const g of DEFAULT_GROUPS) expect(sql).toContain(`'${g}')`);
-    for (const a of DEFAULT_ATTRIBUTES) {
+    // "Dung tích", "Hương vị" (#510) nằm ở `*_thong-so-du-lieu`, test `spec-defaults.test.ts`.
+    for (const a of DEFAULT_ATTRIBUTES.filter((x) => x.kind === 'color' || x.kind === 'size')) {
       expect(sql).toContain(`'${a.kind}', '${a.name}')`);
       a.values.forEach(([value, code], i) => expect(sql).toContain(`('${a.kind}', ${i}, '${value}', '${code}')`));
     }

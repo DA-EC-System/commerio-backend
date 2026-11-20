@@ -3,7 +3,29 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V122**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V125**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V125 · 21/11/2026 · thong-so-du-lieu
+
+`db/migrations/20261120210538_thong-so-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Thông số sản phẩm (#510, Documents/21 mục 5.5 "Seed"): công ty có trước nhận thứ công ty mới có từ `seedCompanyDefaults` ("Dung tích", "Hương vị", thư viện thông số, trục chuẩn và mẫu của 12 nhóm), không chép đè thứ đã có.
+
+## V124 · 21/11/2026 · thong-so-rls
+
+`db/migrations/20261120210458_thong-so-rls.sql` · viết tay
+
+- viết tay: RLS, khoá ngoại
+- Thông số sản phẩm (#510, Documents/19 §3.2).
+
+## V123 · 21/11/2026 · thong-so-san-pham
+
+`db/migrations/20261120210435_thong-so-san-pham.sql` · sinh từ schema
+
+- + 4 bảng `product`: group_spec_fields, product_spec_values, spec_field_options, spec_fields
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `axis1_attribute_id`, `axis2_attribute_id`; + khoá ngoại `product_groups_axis1_attribute_id_attributes_id_fk`, `product_groups_axis2_attribute_id_attributes_id_fk`; + check `product_groups_axis_order`, `product_groups_axis_distinct`
 
 ## V122 · 20/11/2026 · bo-daily-channel-summary
 
