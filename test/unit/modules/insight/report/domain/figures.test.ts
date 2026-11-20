@@ -1,51 +1,60 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRange, type StoredRow, sumFigures } from '#src/modules/insight/report/domain/figures.ts';
+import { type DayRow, resolveRange, sourceOf, sumFigures } from '#src/modules/insight/report/domain/figures.ts';
 
-const stored = (over: Partial<StoredRow> = {}): StoredRow => ({
+const row = (over: Partial<DayRow> = {}): DayRow => ({
   day: '2026-10-18',
-  source: 'manual',
-  shopId: null,
+  shopId: 'shop-a',
   revenue: '100000.00',
-  cashCollected: '50000.00',
-  platformFee: '0.00',
-  paymentFee: '1100.00',
-  shippingFee: '0.00',
-  cogs: '60000.00',
-  feesPending: false,
+  net: '80000.00',
+  cogs: '-60000.00',
+  cashCollected: '80000.00',
+  platformFee: '-15000.00',
+  shippingFee: '-5000.00',
+  estimated: false,
   ...over,
 });
 
-describe('sumFigures (AC-1, AC-2, AC-11, AC-12)', () => {
-  it('cộng các dòng thành số nguyên đồng; lãi = doanh thu − giá vốn − các phí; feesPending là OR', () => {
-    const f = sumFigures([stored(), stored({ source: 'marketplace', platformFee: '5000.00', shippingFee: '2000.00', feesPending: true })], true);
+describe('sumFigures (Documents/21 §21.5)', () => {
+  it('cộng các dòng thành số nguyên đồng; lãi gộp = thực nhận + giá vốn; estimated là OR', () => {
+    const f = sumFigures([row(), row({ cashCollected: '0', estimated: true })], true);
     expect(f).toEqual({
       revenue: 200000,
-      cashCollected: 100000,
-      platformFee: 5000,
-      paymentFee: 2200,
-      shippingFee: 2000,
-      cogs: 120000,
-      profit: 70800,
+      net: 160000,
+      cashCollected: 80000,
+      platformFee: -30000,
+      paymentFee: 0,
+      shippingFee: -10000,
+      cogs: -120000,
+      profit: 40000,
+      estimated: true,
       feesPending: true,
     });
   });
 
-  it('không có quyền giá vốn: cogs, profit là null', () => {
-    expect(sumFigures([stored()], false)).toMatchObject({ revenue: 100000, cogs: null, profit: null });
+  it('không có quyền giá vốn: cogs, profit là null, thực nhận vẫn trả', () => {
+    expect(sumFigures([row()], false)).toMatchObject({ revenue: 100000, net: 80000, cogs: null, profit: null });
   });
 
   it('không có dòng: mọi số 0, cogs/profit 0 hoặc null theo quyền', () => {
     expect(sumFigures([], true)).toEqual({
       revenue: 0,
+      net: 0,
       cashCollected: 0,
       platformFee: 0,
       paymentFee: 0,
       shippingFee: 0,
       cogs: 0,
       profit: 0,
+      estimated: false,
       feesPending: false,
     });
     expect(sumFigures([], false)).toMatchObject({ cogs: null, profit: null });
+  });
+});
+
+describe('sourceOf', () => {
+  it('có gian hàng là sàn, không có là ngoài sàn', () => {
+    expect([sourceOf('shop-a'), sourceOf(null)]).toEqual(['marketplace', 'manual']);
   });
 });
 
