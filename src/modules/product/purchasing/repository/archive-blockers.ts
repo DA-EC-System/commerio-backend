@@ -71,6 +71,10 @@ export async function usedVariants(variantIds: readonly string[]): Promise<Set<s
   const { rows } = await getDb().execute<{ id: string }>(sql`
     select variant_id as id from product.purchase_request_lines where variant_id in ${ids}
     union select variant_id from product.goods_receipt_lines where variant_id in ${ids}
-    union select variant_id from product.supplier_return_lines where variant_id in ${ids}`);
+    union select variant_id from product.supplier_return_lines where variant_id in ${ids}
+    union select v.id from product.product_variants v
+      join product.purchase_request_lines l on l.new_parent_product_id = v.product_id and l.variant_id is null
+      join product.purchase_requests r on r.id = l.request_id
+      where v.id in ${ids} and r.status in ('draft', 'pending_approval', 'changes_requested')`);
   return new Set(rows.map((r) => r.id));
 }

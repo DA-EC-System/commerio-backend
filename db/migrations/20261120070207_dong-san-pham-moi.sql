@@ -1,0 +1,7 @@
+ALTER TABLE "product"."purchase_request_lines" RENAME COLUMN "new_product_name" TO "new_parent_name";--> statement-breakpoint
+ALTER TABLE "product"."purchase_request_lines" RENAME COLUMN "new_variant_attrs" TO "new_option_values";--> statement-breakpoint
+ALTER TABLE "product"."purchase_request_lines" DROP CONSTRAINT "purchase_request_lines_item";--> statement-breakpoint
+ALTER TABLE "product"."purchase_request_lines" ADD COLUMN "new_parent_product_id" uuid;--> statement-breakpoint
+ALTER TABLE "product"."purchase_request_lines" ADD CONSTRAINT "purchase_request_lines_one_parent" CHECK ("product"."purchase_request_lines"."new_parent_product_id" is null or "product"."purchase_request_lines"."new_parent_name" is null);--> statement-breakpoint
+ALTER TABLE "product"."purchase_request_lines" ADD CONSTRAINT "purchase_request_lines_new_parent_group" CHECK ("product"."purchase_request_lines"."new_parent_name" is null or "product"."purchase_request_lines"."new_group_id" is not null);--> statement-breakpoint
+ALTER TABLE "product"."purchase_request_lines" ADD CONSTRAINT "purchase_request_lines_item" CHECK ("product"."purchase_request_lines"."variant_id" is not null or "product"."purchase_request_lines"."new_parent_product_id" is not null or "product"."purchase_request_lines"."new_parent_name" is not null);

@@ -3,20 +3,26 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V111**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V112**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V111 · 20/11/2026 · bo-cot-dang-huy-cu
+## V112 · 20/11/2026 · bo-cot-dang-huy-cu
 
-`db/migrations/20261120083843_bo-cot-dang-huy-cu.sql` · sinh từ schema
+`db/migrations/20261120090159_bo-cot-dang-huy-cu.sql` · sinh từ schema
 
 - `order.orders`: − cột `cancelling`; + check `orders_cancel_pending_open`, `orders_cancel_requested_open`
 
-## V110 · 20/11/2026 · bo-co-dang-huy-cu
+## V111 · 20/11/2026 · bo-co-dang-huy-cu
 
-`db/migrations/20261120083731_bo-co-dang-huy-cu.sql` · viết tay
+`db/migrations/20261120090149_bo-co-dang-huy-cu.sql` · viết tay
 
 - viết tay: dữ liệu
 - Bỏ trigger, hàm giữ cột cờ cũ `cancelling` bằng `cancel_pending` (#417 bước một); dọn hai cờ chờ sàn của đơn đã dừng trước CHECK (#427), viết tay, chạy lại được.
+
+## V110 · 20/11/2026 · dong-san-pham-moi
+
+`db/migrations/20261120070207_dong-san-pham-moi.sql` · sinh từ schema
+
+- `product.purchase_request_lines`: + cột `new_parent_product_id`, `new_parent_name`, `new_option_values`; − cột `new_product_name`, `new_variant_attrs`; + check `purchase_request_lines_one_parent`, `purchase_request_lines_new_parent_group`; đổi check `purchase_request_lines_item`
 
 ## V109 · 20/11/2026 · nhom-hang-du-lieu
 
