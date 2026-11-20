@@ -9,8 +9,7 @@
 //   thông số chỉ một sàn đòi (giấy phép TikTok `102872`…) để tuỳ chọn, sàn đó chặn qua `missing`.
 // - Thuộc tính đã là trục của nhóm không là thông số của cha: Mỹ phẩm bỏ "Dung tích / Khối lượng", Thực phẩm bỏ
 //   "Khối lượng tịnh" (trục `volume`).
-import type { PlatformKind } from '../repository/schema.ts';
-import type { SpecInput } from '../repository/schema.ts';
+import type { PlatformKind, SpecInputKind as SpecInput } from './specs.ts';
 
 export interface DefaultSpecField {
   readonly code: string;
