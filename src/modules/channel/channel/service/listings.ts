@@ -28,8 +28,9 @@ import {
   type ListingPatch,
   type ListingRow,
 } from '../repository/listings.ts';
+import { syncedPathsOf } from '../repository/platform-categories.ts';
 import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
-import type { SyncError } from '../repository/schema.ts';
+import type { CategoryChange, SyncError } from '../repository/schema.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import { insertListing, updateListing } from './listing-writes.ts';
 import type { ProductPort } from './product-port.ts';
@@ -76,8 +77,25 @@ export interface ChannelListing {
   pendingRevision: { status: 'auditing' | 'failed'; rejectReason: string | null; at: Date } | null;
   /** Ai tạo nội dung sản phẩm trên sàn (#399). */
   contentSource: ListingRow['contentSource'];
+  /** Lượt đổi category trên sàn (`apply-category`, #467). */
+  categoryChange: CategoryChangeView | null;
   version: number;
 }
+
+export interface CategoryChangeView {
+  status: CategoryChange['status'];
+  toCategoryId: string;
+  toCategoryPath: string | null;
+  code: string | null;
+  message: string | null;
+  attempts: number;
+  at: Date;
+}
+
+const toCategoryChange = (c: CategoryChange | null): CategoryChangeView | null =>
+  c
+    ? { status: c.status, toCategoryId: c.toCategoryId, toCategoryPath: c.toCategoryPath, code: c.code, message: c.message, attempts: c.attempts, at: new Date(c.at) }
+    : null;
 
 export interface ListingRowView extends ListingPrice {
   variantId: string;
@@ -91,6 +109,12 @@ export interface ListingRowView extends ListingPrice {
   listing: ChannelListing | null;
   /** Tên trên sàn khác tên lúc ghép (#396, 21 §18.3); tính từ bản sao SKU sàn lúc đọc. */
   remoteTitleChanged: RemoteTitleChanged | null;
+  /** Category của listing trên sàn (#467), null khi chưa có listing hay chưa biết category. */
+  externalCategoryId: string | null;
+  /** Đường dẫn của `externalCategoryId` của listing trong cây đã đồng bộ (#467); null khi chưa có category hay chưa có trong cây. */
+  externalCategoryPath: string | null;
+  /** Bằng `listing.categoryChange` (21 §18.5 ghi trên cả `ListingRow`), null khi chưa có listing. */
+  categoryChange: CategoryChangeView | null;
 }
 
 /**
@@ -151,6 +175,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     pendingRevision:
       r.revisionStatus && r.revisionAt ? { status: r.revisionStatus, rejectReason: r.revisionRejectReason, at: r.revisionAt } : null,
     contentSource: r.contentSource,
+    categoryChange: toCategoryChange(r.categoryChange),
     version: r.version,
   };
 }
@@ -185,6 +210,8 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   const titles = new Map(
     (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
   );
+  // Category trên sàn của listing (#467): một câu cho mọi listing, tra cây đã đồng bộ, không gọi sàn.
+  const categoryPaths = await syncedPathsOf(shop.platform, rows.flatMap((l) => (l.externalCategoryId ? [l.externalCategoryId] : [])));
   return {
     items: variants.map((v) => {
       const listing = byVariant.get(v.id);
@@ -200,6 +227,9 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
         ...price,
         listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
         remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
+        externalCategoryId: listing?.externalCategoryId ?? null,
+        externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
+        categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
       };
     }),
   };
@@ -230,7 +260,15 @@ export async function moveListing(
     row.id,
     { version: row.version, status: row.status },
     // Bản sửa nội dung chỉ còn ở trạng thái sàn vẫn duyệt nó (#293, CHECK `listings_revision`).
-    { ...(to !== 'hidden' && NO_OUTSIDE_CHANGE), ...patch, ...(dropPending && NO_PENDING), ...(!REVISION_KEPT.includes(to) && NO_REVISION), status: to },
+    {
+      ...(to !== 'hidden' && NO_OUTSIDE_CHANGE),
+      ...patch,
+      ...(dropPending && NO_PENDING),
+      ...(!REVISION_KEPT.includes(to) && NO_REVISION),
+      // Gỡ là trạng thái cuối: lượt đổi category không còn đối tượng (CHECK `listings_category_change`, #467).
+      ...(to === 'delisted' && { categoryChange: null }),
+      status: to,
+    },
   );
   if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });
