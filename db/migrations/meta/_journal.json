@@ -855,6 +855,20 @@
       "when": 1795193880687,
       "tag": "20261120165800_bo-daily-channel-summary",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1795194558119,
+      "tag": "20261120170918_can-nang-kich-thuoc-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1795194561043,
+      "tag": "20261120170921_can-nang-kich-thuoc-tran",
+      "breakpoints": true
     }
   ]
 }

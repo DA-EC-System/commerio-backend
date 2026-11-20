@@ -1,6 +1,6 @@
 {
-  "id": "a6ef1500-cc75-475b-acd6-679d7f189536",
-  "prevId": "b5ca1ecb-4808-4775-be42-3a8fe05bbbaf",
+  "id": "18565f97-d919-478b-a2d7-0f890c426626",
+  "prevId": "05b293d2-7fd0-40ae-a4d3-2277838fcd48",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7970,149 +7970,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "insight.daily_channel_summary": {
-      "name": "daily_channel_summary",
-      "schema": "insight",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "bigint",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "daily_channel_summary_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "insight",
-            "type": "always"
-          }
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "day": {
-          "name": "day",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source": {
-          "name": "source",
-          "type": "order_source",
-          "typeSchema": "insight",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "shop_id": {
-          "name": "shop_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "revenue": {
-          "name": "revenue",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "cash_collected": {
-          "name": "cash_collected",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "platform_fee": {
-          "name": "platform_fee",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "payment_fee": {
-          "name": "payment_fee",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "shipping_fee": {
-          "name": "shipping_fee",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "cogs": {
-          "name": "cogs",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "profit": {
-          "name": "profit",
-          "type": "numeric(18, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "fees_pending": {
-          "name": "fees_pending",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "daily_channel_summary_company_id_day_source_shop_id_unique": {
-          "name": "daily_channel_summary_company_id_day_source_shop_id_unique",
-          "columns": [
-            "company_id",
-            "day",
-            "source",
-            "shop_id"
-          ],
-          "nullsNotDistinct": true
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "order.package_lines": {
       "name": "package_lines",
       "schema": "order",
@@ -14224,15 +14081,6 @@
         "processing",
         "ready",
         "failed"
-      ]
-    },
-    "insight.order_source": {
-      "name": "order_source",
-      "schema": "insight",
-      "values": [
-        "marketplace",
-        "inbox",
-        "manual"
       ]
     },
     "order.handover_source": {
