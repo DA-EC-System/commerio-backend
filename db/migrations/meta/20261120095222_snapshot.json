@@ -1,6 +1,6 @@
 {
-  "id": "f2661710-6c6c-4b4a-9017-00ff3f5f62ae",
-  "prevId": "1c063edc-c2c6-447e-8f71-d5b20f7a48da",
+  "id": "4fe56f55-6df8-40c7-b483-1ea63b635597",
+  "prevId": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3505,7 +3505,7 @@
           "name": "tax_code",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "address": {
           "name": "address",
@@ -3570,7 +3570,15 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "companies_tax_code_unique": {
+          "name": "companies_tax_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tax_code"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

@@ -67,7 +67,7 @@ async function listing(variantId: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany();
   const res = await request(testApp())
     .post('/api/v1/channel/shops/lazada/token')
     .set('Authorization', `Bearer ${company.ceo.token}`)
