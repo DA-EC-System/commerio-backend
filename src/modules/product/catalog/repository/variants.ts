@@ -35,10 +35,11 @@ export async function insertVariant(
   valueIds: readonly string[],
   order: number,
   sourceRequestLineId: string | null = null,
+  prices: { standardPrice?: string | null; targetNetPrice?: string | null } = {},
 ) {
   const [row] = await getDb()
     .insert(productVariants)
-    .values({ companyId, productId, sku, sourceRequestLineId, createdAt: orderedNow(order) })
+    .values({ companyId, productId, sku, sourceRequestLineId, createdAt: orderedNow(order), ...prices })
     .returning({ id: productVariants.id });
   if (valueIds.length) {
     await getDb()
