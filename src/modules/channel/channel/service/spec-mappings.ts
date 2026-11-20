@@ -1,6 +1,6 @@
 // Trang ánh xạ thông số sang sàn (#509, Documents/21 §18.8.1): đọc kèm gợi ý tính lúc đọc, thay tập mã của một thông số, tìm
 // attribute đã gặp của sàn. Không gọi sàn: chỉ đọc `platform_category_attributes` đã lấy.
-import { recordAudit } from '../../../core/index.ts';
+import { type EventEnvelope, type EventPayload, recordAudit } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
@@ -11,6 +11,8 @@ import {
   attributesByCodes,
   type CatalogAttribute,
   codesTakenByOthers,
+  deleteFieldMappings,
+  deleteOptionMappings,
   mappingsOf,
   propertyAttributesOf,
   replaceFieldMapping,
@@ -176,4 +178,16 @@ export async function seedSpecMappings(companyId: string): Promise<void> {
       await seedFieldMappings(companyId, platform, rows);
     }
   });
+}
+
+/** Catalog xoá thông số (`catalog.spec_field_deleted`, consumer `channel-spec-field-deleted`): bỏ mọi ánh xạ của nó. */
+export async function onSpecFieldDeleted(e: EventEnvelope<'catalog.spec_field_deleted', EventPayload<'catalog.spec_field_deleted'>>): Promise<void> {
+  if (!e.companyId) return;
+  await withCompany(e.companyId, () => deleteFieldMappings(e.payload.fieldId));
+}
+
+/** Catalog xoá lựa chọn (`catalog.spec_option_deleted`, consumer `channel-spec-option-deleted`): bỏ ánh xạ lựa chọn đó. */
+export async function onSpecOptionDeleted(e: EventEnvelope<'catalog.spec_option_deleted', EventPayload<'catalog.spec_option_deleted'>>): Promise<void> {
+  if (!e.companyId) return;
+  await withCompany(e.companyId, () => deleteOptionMappings(e.payload.optionIds));
 }

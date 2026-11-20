@@ -10,6 +10,8 @@ import {
   fillProductFacts,
   productMediaGaps,
   type FactsSource,
+  getProductSpecs,
+  getSpecFields,
   getVariants,
   type PlatformProductInput,
   type ProductFacts,
@@ -133,7 +135,7 @@ let override: ProductPort | null = null;
  */
 export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specFields'> {
   if (override) return override;
-  return {};
+  return { productSpecs: getProductSpecs, specFields: getSpecFields };
 }
 
 export function productPort(ctx: ModuleContext): ProductPort {

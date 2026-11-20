@@ -81,8 +81,9 @@ export async function deleteFieldMappings(fieldId: string): Promise<void> {
 }
 
 /** Dọn khi catalog xoá lựa chọn (`catalog.spec_option_deleted`). */
-export async function deleteOptionMappings(optionId: string): Promise<void> {
-  await getDb().delete(specOptionMappings).where(eq(specOptionMappings.optionId, optionId));
+export async function deleteOptionMappings(optionIds: readonly string[]): Promise<void> {
+  if (!optionIds.length) return;
+  await getDb().delete(specOptionMappings).where(inArray(specOptionMappings.optionId, [...optionIds]));
 }
 
 export interface CatalogAttribute {

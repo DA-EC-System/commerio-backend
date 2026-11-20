@@ -11,7 +11,6 @@ import { mappingsOf } from '../repository/spec-mappings.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { getAdapter, type MarketplaceAdapter, MarketplaceError, type RemoteProductCategory, type RemoteProductFacts } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
-import type { ProductFacts } from '../../../product/index.ts';
 import type { ProductPort } from './product-port.ts';
 import { specProductOf } from './product-specs.ts';
 import { type SpecFromMatchJob, specFromMatchQueue } from './shop-jobs.ts';
@@ -124,7 +123,7 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
         const specFacts = reverse.specs.length ? { specs: reverse.specs } : {};
         await port.fillProductFacts?.(
           productId,
-          { ...shared, variants, imageFileIds, sizeChartFileId, ...specFacts } as ProductFacts,
+          { ...shared, variants, imageFileIds, sizeChartFileId, ...specFacts },
           { shopId: shop.id, shopName: shop.shopName },
         );
         if (lacking.has(productId)) {

@@ -10,6 +10,7 @@ import { runListingPush } from './service/listing-push.ts';
 import { runRemoteSkusRefresh } from './service/remote-skus.ts';
 import { runSpecFromMatch } from './service/spec-from-match.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
+import { onSpecFieldDeleted, onSpecOptionDeleted } from './service/spec-mappings.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
 import { onConfigActivated, onStockChanged, onVariantPriceChanged } from './service/repricing.ts';
 import { productPort } from './service/product-port.ts';
@@ -45,6 +46,8 @@ export const channelModule: ModuleDefinition = {
     // gọi sàn trong giao dịch của consumer. Thay consumer `inventory.stock_changed` cũ.
     registerChannelConsumer('fulfillment.allocation_done', (e) => onAvailableChanged(e.payload), { consumer: 'channel-stock-push' });
     // Giá theo gian hàng (#225, 21 §11.2): đổi giá muốn bán, kích hoạt phí, thuế, lãi tối thiểu thì có bản chờ xác nhận.
+    registerChannelConsumer('catalog.spec_field_deleted', onSpecFieldDeleted, { consumer: 'channel-spec-field-deleted' });
+    registerChannelConsumer('catalog.spec_option_deleted', onSpecOptionDeleted, { consumer: 'channel-spec-option-deleted' });
     registerChannelConsumer('catalog.variant_price_changed', (e) => onVariantPriceChanged(e.payload), { consumer: 'channel-reprice-target' });
     registerChannelConsumer('finance.fee_config_activated', (e) => onConfigActivated(e.payload), { consumer: 'channel-reprice-config' });
     // Giá vốn đổi làm listing đang bán dưới giá thấp nhất: bản chờ đề xuất giá mới (#225 A1, 25 §6.2).
