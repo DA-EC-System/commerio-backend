@@ -142,6 +142,17 @@ export async function countListingsOnPlatform(shopIds: readonly string[]): Promi
   return new Map(rows.map((r) => [r.shopId, r.n]));
 }
 
+/** Số listing của gian hàng có lượt đổi category `failed` hoặc `mismatch` (`Shop.categoryChangeIssues`, #467). */
+export async function countCategoryChangeIssues(shopIds: readonly string[]): Promise<Map<string, number>> {
+  if (shopIds.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ shopId: listings.shopId, n: count() })
+    .from(listings)
+    .where(and(inArray(listings.shopId, [...shopIds]), sql`${listings.categoryChange} ->> 'status' in ('failed', 'mismatch')`))
+    .groupBy(listings.shopId);
+  return new Map(rows.map((r) => [r.shopId, r.n]));
+}
+
 /**
  * Gian hàng khác của công ty (RLS lọc công ty): đã có gian hàng xong thiết lập chưa (có mốc, không chờ kiểm kê; kể cả đã
  * ngắt), và phiếu kiểm kê đầu kỳ đang chờ nếu có (#198 A1, A12).

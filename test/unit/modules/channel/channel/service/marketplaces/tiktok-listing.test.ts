@@ -947,3 +947,64 @@ describe('createProduct: brand_id theo thương hiệu catalog', () => {
     expect(none.calls.some((c) => c.path === '/product/202309/brands')).toBe(false);
   });
 });
+
+describe('changeCategory: đổi category giữ trạng thái bán (#467)', () => {
+  const input = { externalCategoryId: '600042', attributes: { '100149': 'Việt Nam' } };
+  const ATTRS = ok({
+    attributes: [
+      { id: '100149', name: 'Quốc gia xuất xứ', type: 'PRODUCT_PROPERTY', is_requried: true, values: [{ id: '1000854', name: 'Việt Nam' }] },
+    ],
+  });
+  const product = (status: string) =>
+    ok({ id: 'P9', title: 'CM-TEST', status, category_chains: [{ id: '601302', is_leaf: true }], main_images: [{ uri: 'u1' }], skus: [{ id: 'S9', seller_sku: 'A', price: { sale_price: '99000', currency: 'VND' } }] });
+  const routes = (status: string, deactivate: Response) => ({
+    'GET /product/202309/categories/600042/attributes': ATTRS,
+    'GET /product/202309/products/P9': () => product(status),
+    'PUT /product/202509/products/P9': ok({ product_id: 'P9' }),
+    'POST /product/202309/products/deactivate': deactivate,
+  });
+
+  it('sản phẩm đang tắt (SELLER_DEACTIVATED) thì tắt lại sau Edit Product, không lệch', async () => {
+    const san = fakeSan(routes('SELLER_DEACTIVATED', ok({})));
+    expect(await san.methods().changeCategory!(TOKEN, 'P9', input)).toEqual({ underReview: false, mismatch: [] });
+    const put = san.calls.findIndex((c) => c.method === 'PUT');
+    const off = san.calls.findIndex((c) => c.path === '/product/202309/products/deactivate');
+    expect(put).toBeGreaterThanOrEqual(0);
+    expect(off).toBeGreaterThan(put);
+    expect(san.calls[off]!.body).toEqual({ product_ids: ['P9'] });
+  });
+
+  it('tắt lại lỗi thì báo lệch, không ném', async () => {
+    const san = fakeSan(routes('SELLER_DEACTIVATED', json({ code: 12052901, message: 'product status invalid' }, 200)));
+    const { mismatch } = await san.methods().changeCategory!(TOKEN, 'P9', input);
+    expect(mismatch[0]).toMatch(/chưa tắt lại được/);
+  });
+
+  it('lượt thử lại: sản phẩm đã bị bật lại (ACTIVATE) mà app ẩn listing (keepDeactivated) thì vẫn tắt', async () => {
+    const san = fakeSan(routes('ACTIVATE', ok({})));
+    await san.methods().changeCategory!(TOKEN, 'P9', { ...input, keepDeactivated: true });
+    expect(san.calls.some((c) => c.path === '/product/202309/products/deactivate')).toBe(true);
+  });
+
+  it('bảng size của app chỉ đưa lên khi sản phẩm sàn chưa có bảng size', async () => {
+    const withChart = fakeSan({
+      ...routes('ACTIVATE', ok({})),
+      'GET /product/202309/products/P9': () => ok({ id: 'P9', title: 'CM-TEST', status: 'ACTIVATE', size_chart: { image: { uri: 'tos/da-co' } }, skus: [{ id: 'S9', seller_sku: 'A' }] }),
+    });
+    await withChart.methods().changeCategory!(TOKEN, 'P9', { ...input, sizeChartUrl: 'https://img.test/size.png' });
+    expect(withChart.calls.some((c) => c.path === '/product/202309/images/upload')).toBe(false);
+    expect((withChart.calls.find((c) => c.method === 'PUT')!.body as { size_chart: unknown }).size_chart).toEqual({ image: { uri: 'tos/da-co' } });
+  });
+
+  it('sản phẩm sàn chưa có bảng size thì đưa ảnh của app lên (nguồn không an toàn bị chặn trước khi PUT)', async () => {
+    const san = fakeSan(routes('ACTIVATE', ok({})));
+    await expect(san.methods().changeCategory!(TOKEN, 'P9', { ...input, sizeChartUrl: 'file:///etc/passwd' })).rejects.toMatchObject({ platformCode: 'image_source_invalid' });
+    expect(san.calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('sản phẩm đang bán thì không gọi tắt', async () => {
+    const san = fakeSan(routes('ACTIVATE', ok({})));
+    await san.methods().changeCategory!(TOKEN, 'P9', input);
+    expect(san.calls.some((c) => c.path === '/product/202309/products/deactivate')).toBe(false);
+  });
+});

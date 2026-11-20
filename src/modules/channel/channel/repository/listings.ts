@@ -1,8 +1,8 @@
 // Listing (#104). Chạy trong `withCompany` của bên gọi.
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
-import { listings } from './schema.ts';
+import { type CategoryChange, type Marketplace, listings, shops } from './schema.ts';
 
 export type ListingRow = typeof listings.$inferSelect;
 export type ListingPatch = Partial<typeof listings.$inferInsert>;
@@ -191,4 +191,123 @@ export async function shopsShowingVariant(variantId: string): Promise<string[]> 
     .from(listings)
     .where(and(eq(listings.variantId, variantId), inArray(listings.status, ['live', 'hidden'])));
   return rows.map((r) => r.shopId);
+}
+
+/** Các listing theo id (việc đổi category, #467); RLS của `withCompany` lọc công ty. */
+export async function listingsByIds(ids: readonly string[]): Promise<ListingRow[]> {
+  if (!ids.length) return [];
+  return getDb().select().from(listings).where(inArray(listings.id, [...ids])).orderBy(listings.id);
+}
+
+/** Listing chưa gỡ của các biến thể trên mọi gian hàng của sàn (`apply-category`, #467). Gọi trong `withCompany`. */
+export async function platformListingRows(platform: Marketplace, variantIds: readonly string[]): Promise<ListingRow[]> {
+  if (!variantIds.length) return [];
+  const rows = await getDb()
+    .select({ listing: listings })
+    .from(listings)
+    .innerJoin(shops, eq(shops.id, listings.shopId))
+    .where(and(eq(shops.platform, platform), inArray(listings.variantId, [...variantIds]), ne(listings.status, 'delisted')))
+    .orderBy(listings.shopId, listings.id);
+  return rows.map((r) => r.listing);
+}
+
+const isQueued = sql`${listings.categoryChange} ->> 'status' = 'queued'`;
+
+/**
+ * Xếp lượt đổi category (#467): ghi `category_change = queued` cho các listing chưa có lượt `queued` và chưa gỡ, tăng
+ * `version`. Trả số dòng đã ghi; bên gọi so với số id để biết request khác vừa xếp trước (rollback, 409).
+ */
+export async function markCategoryQueued(ids: readonly string[], change: CategoryChange): Promise<number> {
+  if (!ids.length) return 0;
+  const rows = await getDb()
+    .update(listings)
+    .set({ categoryChange: change, version: sql`${listings.version} + 1`, updatedAt: sql`now()` })
+    .where(
+      and(
+        inArray(listings.id, [...ids]),
+        ne(listings.status, 'delisted'),
+        sql`(${listings.categoryChange} is null or ${listings.categoryChange} ->> 'status' <> 'queued')`,
+      ),
+    )
+    .returning({ id: listings.id });
+  return rows.length;
+}
+
+/**
+ * Ghi lại lượt đổi category đang `queued` (lỗi tạm: số lần thử, mã, câu), không tăng `version` (cột hệ thống như
+ * `create_attempted_at`; L029). Dòng không còn `queued` (đã gỡ, đã xong) thì bỏ. Trả id đã ghi.
+ */
+export async function updateQueuedCategoryChange(ids: readonly string[], change: CategoryChange): Promise<string[]> {
+  if (!ids.length) return [];
+  const rows = await getDb()
+    .update(listings)
+    .set({ categoryChange: change })
+    .where(and(inArray(listings.id, [...ids]), isQueued))
+    .returning({ id: listings.id });
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Kết thúc lượt đổi category đang `queued` (#467), tăng `version`: `change` null là sàn nhận và không lệch, còn lại
+ * `failed`/`mismatch`. `revision`: sàn đã nhận bản sửa nên ghi bản sửa đang duyệt (`revision_status = 'auditing'`) như
+ * `update_content`, chỉ ở trạng thái còn giữ bản sửa (CHECK `listings_revision`). Trả các dòng đã ghi.
+ */
+export async function finishCategoryChange(ids: readonly string[], change: CategoryChange | null, revision: boolean): Promise<ListingRow[]> {
+  if (!ids.length) return [];
+  const keeps = sql`${listings.status} in ('live', 'hidden', 'platform_hold')`;
+  return getDb()
+    .update(listings)
+    .set({
+      categoryChange: change,
+      ...(revision && {
+        revisionStatus: sql`case when ${keeps} then 'auditing' else ${listings.revisionStatus} end::channel.listing_revision_status`,
+        revisionRejectReason: sql`case when ${keeps} then null else ${listings.revisionRejectReason} end`,
+        revisionAt: sql`case when ${keeps} then now() else ${listings.revisionAt} end`,
+      }),
+      version: sql`${listings.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(and(inArray(listings.id, [...ids]), isQueued))
+    .returning();
+}
+
+/**
+ * Mọi listing chưa gỡ của các sản phẩm sàn `(shopId, externalProductId)` trong công ty, kể cả biến thể của sản phẩm khác
+ * trong app (`apply-category`, #467: Edit Product ghi đè cả sản phẩm sàn). Gọi trong `withCompany`.
+ */
+export async function remoteProductListings(pairs: readonly { shopId: string; externalProductId: string }[]): Promise<ListingRow[]> {
+  if (!pairs.length) return [];
+  const any = or(...pairs.map((p) => and(eq(listings.shopId, p.shopId), eq(listings.externalProductId, p.externalProductId))));
+  return getDb().select().from(listings).where(and(any, ne(listings.status, 'delisted'))).orderBy(listings.shopId, listings.id);
+}
+
+/**
+ * Đánh `failed` các lượt đổi category `queued` có `at` trước `before` (kẹt vì việc rơi), không tăng `version`. Nếu `ids`
+ * không rỗng thì chỉ xét các listing này. Trả id đã ghi.
+ */
+export async function failStaleCategoryChanges(before: Date, message: string, ids?: readonly string[]): Promise<string[]> {
+  if (ids && !ids.length) return [];
+  const rows = await getDb()
+    .update(listings)
+    .set({
+      categoryChange: sql`jsonb_set(jsonb_set(jsonb_set(${listings.categoryChange}, '{status}', '"failed"'), '{code}', '"marketplace_unavailable"'), '{message}', to_jsonb(${message}::text))`,
+    })
+    .where(
+      and(
+        ids ? inArray(listings.id, [...ids]) : undefined,
+        isQueued,
+        sql`(${listings.categoryChange} ->> 'at')::timestamptz < ${before.toISOString()}::timestamptz`,
+      ),
+    )
+    .returning({ id: listings.id });
+  return rows.map((r) => r.id);
+}
+
+/** Xoá `category_change` `failed`/`mismatch` của các listing (sàn đã ở đúng category đích, #467). */
+export async function clearResolvedCategoryChange(ids: readonly string[]): Promise<void> {
+  if (!ids.length) return;
+  await getDb()
+    .update(listings)
+    .set({ categoryChange: null })
+    .where(and(inArray(listings.id, [...ids]), sql`${listings.categoryChange} ->> 'status' in ('failed', 'mismatch')`));
 }
