@@ -1,0 +1,1 @@
+ALTER TABLE "core"."audit_logs" ADD COLUMN "test_a" text;

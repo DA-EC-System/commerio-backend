@@ -22,6 +22,7 @@ export const auditLogs = auditSchema.table(
     entityLabel: text('entity_label'),
     /** Mã thao tác cụ thể (`lock`, `change_roles`, `approve_send`…); trống khi chỉ là thêm/sửa/xoá thường. */
     operation: text('operation'),
+    testA: text('test_a'),
     before: jsonb('before'),
     after: jsonb('after'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
