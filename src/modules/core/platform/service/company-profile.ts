@@ -1,5 +1,5 @@
 // Hồ sơ công ty: tổ chức chịu trách nhiệm hàng hoá cho thuộc tính sàn (#292, Documents/21 mục 4, 11.3).
-import { inTransaction } from '../../../../shared/db/client.ts';
+import { inTransaction, requireCompanyId } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { recordAudit } from '../../audit/index.ts';
 import {
@@ -33,6 +33,10 @@ export const getCompanyProfile = async (companyId: string) => toView(await load(
 
 /** Cổng cho channel điền thuộc tính sàn (Documents/21 mục 11.3). */
 export const responsibleOrgOf = async (companyId: string) => effectiveResponsible(await load(companyId));
+
+/** Cổng cho insight onboarding (#461, Documents/21 mục 11.3, 23): công ty đang chọn đã khai địa chỉ chưa. */
+export const companyProfileFilled = async (): Promise<boolean> =>
+  (await load(requireCompanyId('companyProfileFilled'))).address !== null;
 
 /**
  * Sửa theo `version`, lệch thì 409 `version_conflict` kèm `current`. Ghi bằng role chủ bảng như `setCompanyLock`.

@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { getDb } from '../../../../shared/db/client.ts';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { orderedNow } from './attributes.ts';
 import {
   attributes,
@@ -213,4 +213,15 @@ export async function lockProductVariants(productId: string): Promise<void> {
     .where(eq(productVariants.productId, productId))
     .orderBy(asc(productVariants.id))
     .for('update');
+}
+
+/** Công ty đang chọn có variant chưa lưu trữ nào chưa (#461 onboarding, Documents/21 mục 11.3). */
+export async function hasCatalogData(): Promise<boolean> {
+  const companyId = requireCompanyId('hasCatalogData');
+  const [row] = await getDb()
+    .select({ one: sql`1` })
+    .from(productVariants)
+    .where(and(eq(productVariants.companyId, companyId), isNull(productVariants.archivedAt)))
+    .limit(1);
+  return !!row;
 }

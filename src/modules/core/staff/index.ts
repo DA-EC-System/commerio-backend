@@ -21,6 +21,7 @@ export {
 } from './service/lifecycle.ts';
 // Người nhận thư theo vai trò (#312: thư báo gian hàng mất uỷ quyền cho CEO, Admin).
 export { activeMemberEmailsWithRoles } from './service/recipients.ts';
+export { teamSetupState, type TeamSetupState } from './service/team-setup.ts';
 // Đăng nhập báo "đang chờ duyệt" cho người vừa nộp yêu cầu tham gia (email mới).
 export { pendingJoinsByEmail } from './repository/invitations.ts';
 export {

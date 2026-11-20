@@ -11,6 +11,7 @@ export const catalogModule: ModuleDefinition = {
 };
 
 export { getVariants, type VariantSummary } from './service/variants.ts';
+export { hasCatalogData } from './repository/variants.ts';
 // Dữ liệu có sẵn của công ty mới (#447, Documents/21 mục 11.3); core gọi qua `ModuleContext` lúc đăng ký.
 export { seedCompanyDefaults } from './service/seed.ts';
 export { DEFAULT_ATTRIBUTES, DEFAULT_GROUPS } from './domain/defaults.ts';

@@ -82,7 +82,7 @@ export { settlementPayouts, settlementTransactions, shopsToSettle } from './serv
 export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
 
 /** Chặn tắt phân hệ Kênh bán khi đã có gian hàng (#152); `src/wiring.ts` đưa cho `platform`. */
-export { hasChannelData } from './repository/shops.ts';
+export { hasChannelData, shopSetupState } from './repository/shops.ts';
 // Trạng thái chờ kiểm kê đầu kỳ của gian hàng cho fulfillment (#199 phần b), tiêm qua `ctx.stockHoldOf` ở `src/wiring.ts`.
 export { awaitingStocktakeShops } from './repository/shops.ts';
 // Lý do chặn lưu trữ SKU phần sàn cho catalog (#204), tiêm qua `ctx.listingArchiveBlockers` ở `src/wiring.ts`.
